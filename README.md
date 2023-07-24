@@ -4,11 +4,11 @@
 
 This is a constantly updating template repository for creating [a native container image](https://fedoraproject.org/wiki/Changes/OstreeNativeContainerStable) designed to be customized however you want. GitHub will build your image for you, and then host it for you on [ghcr.io](https://github.com/features/packages). You then just tell your computer to boot off of that image. GitHub keeps 90 days worth image backups for you, thanks Microsoft!
 
-For more info, check out the [uBlue homepage](https://ublue.it/) and the [main uBlue repo](https://github.com/ublue-os/main/)
+For more info, check out the [uBlue homepage](https://universal-blue.org/) and the [main uBlue repo](https://github.com/ublue-os/main/)
 
 ## Getting started
 
-See the [Make Your Own -page in the documentation](https://ublue.it/making-your-own/) for quick setup instructions for setting up your own repository based on this template.
+See the [Make Your Own -page in the documentation](https://universal-blue.org/tinker/make-your-own/) for quick setup instructions for setting up your own repository based on this template.
 
 Don't worry, it only requires some basic knowledge about using the terminal and git.
 
@@ -22,7 +22,7 @@ Don't worry, it only requires some basic knowledge about using the terminal and 
 
 The easiest way to start customizing is by looking at and modifying `recipe.yml`. It's documented using comments and should be pretty easy to understand.
 
-For the base-image field, you can use any other native container image. You will get all the features of that image, plus the ones added here! Check out the [uBlue images list](https://ublue.it/images/) to decide what to use!
+For the base-image field, you can use any other native container image. You will get all the features of that image, plus the ones added here! Check out the [uBlue images list](https://universal-blue.org/images/) to decide what to use!
 
 If you want to add custom configuration files, you can just add them in the `usr/etc/` directory, which is the official OSTree "configuration template" directory. If you need to add other directories, you can look at the Containerfile to see how it's done. Writing to `/etc` or `/var` in Fedora's immutable OSTree-based distros *isn't supported* and will not work, as those are user-managed locations!
 
@@ -88,15 +88,31 @@ If you want to completely disable yafti, simply set the recipe's `firstboot.yaft
 
 To rebase an existing Silverblue/Kinoite installation to the latest build:
 
-```
-sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/ublue-os/startingpoint:latest
-```
+- First rebase to the image unsigned, to get the proper signing keys and policies installed:
+  ```
+  sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/ublue-os/startingpoint:latest
+  ```
+- Reboot to complete the rebase:
+  ```
+  systemctl reboot
+  ```
+- Then rebase to the signed image, like so:
+  ```
+  sudo rpm-ostree rebase ostree-image-signed:docker://ghcr.io/ublue-os/startingpoint:latest
+  ```
+- Reboot again to complete the installation
+  ```
+  systemctl reboot
+  ```
+
 
 This repository builds date tags as well, so if you want to rebase to a particular day's build:
 
 ```
-sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/ublue-os/startingpoint:20230403
+sudo rpm-ostree rebase ostree-image-signed:docker://ghcr.io/ublue-os/startingpoint:20230403
 ```
+
+This repository by default also supports signing 
 
 The `latest` tag will automatically point to the latest build. That build will still always use the Fedora version specified in `recipe.yml`, so you won't get accidentally updated to the next major version.
 
@@ -131,10 +147,3 @@ After doing that, you'll be able to run the following commands:
 
 Check the [just website](https://just.systems) for tips on modifying and adding your own recipes.
 
-## Verification
-
-These images are signed with sisgstore's [cosign](https://docs.sigstore.dev/cosign/overview/). You can verify the signature by downloading the `cosign.pub` key from this repo and running the following command:
-
-    cosign verify --key cosign.pub ghcr.io/ublue-os/startingpoint
-
-If you're forking this repo, the uBlue website has [instructions](https://ublue.it/making-your-own/) for setting up signing properly.
