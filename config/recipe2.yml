@@ -23,6 +23,7 @@ modules:
   - type: rpm-ostree
     repos:
         #- "https://raw.githubusercontent.com/elgabo86/gablue/live/netbird.repo"
+        - https://pkgs.tailscale.com/stable/fedora/tailscale.repo
     install:
         - python3-pip
         - libadwaita
