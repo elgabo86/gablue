@@ -22,7 +22,7 @@ modules:
 
   - type: rpm-ostree
     repos:
-        #- https://raw.githubusercontent.com/elgabo86/gablue/live/netbird.repo
+        - https://pkgs.tailscale.com/stable/fedora/tailscale.repo
     install:
         - python3-pip
         - libadwaita
@@ -44,6 +44,7 @@ modules:
         - btrfsmaintenance
         - snapper
         - intel-undervolt
+        - tailscale
     remove:
       - firefox # default firefox removed in favor of flatpak
       - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems
