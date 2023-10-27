@@ -14,3 +14,10 @@ alias flatpak-fix-overrides="sudo flatpak override --filesystem=xdg-config/gtk-3
 
 # Ignore duplicate
 HISTCONTROL=ignoredups
+
+# Pyenv control
+if grep -q 'ID=arch' /etc/os-release; then
+    export PYENV_ROOT="$HOME/.pyenv"
+	command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"
+	eval "$(pyenv init -)"
+fi
