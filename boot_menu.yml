@@ -3,3 +3,6 @@ ublue_variants:
     ks: /kickstart/ublue-os.ks
     flavors:
       - label: gablue-main
+        info: Gablue no nvidia
+      - label: gablink-nvidia
+        info: Gablue with nvidia
