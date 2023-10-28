@@ -2,4 +2,4 @@ ublue_variants:
   - label: elgabo86/gablue
     ks: /kickstart/ublue-os.ks
     flavors:
-      - label: gablue-main
+      - label: gablue-main:latest
