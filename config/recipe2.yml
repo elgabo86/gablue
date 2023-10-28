@@ -24,8 +24,6 @@ modules:
     repos:
         - https://pkgs.tailscale.com/stable/fedora/tailscale.repo
     install:
-        - python3-pip
-        - libadwaita
         - neofetch
         - goverlay
         - ksysguard
@@ -40,9 +38,6 @@ modules:
         - langpacks-fr
         - mc
         - ncdu
-        - btrfs-assistant
-        - btrfsmaintenance
-        - snapper
         - intel-undervolt
         - tailscale
         - gwenview
