@@ -1,7 +1,3 @@
- 
-# fr_CH fix
-export LANG=fr_CH.UTF-8
-
 # Personnal alias
 alias goarch="distrobox enter arch"
 alias goarchroot="distrobox enter --root arch"
@@ -21,9 +17,3 @@ alias tailscale-gab="sudo tailscale up  --login-server https://headscale.gabserv
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
-# Pyenv control
-if grep -q 'ID=arch' /etc/os-release; then
-    export PYENV_ROOT="$HOME/.pyenv"
-	command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"
-	eval "$(pyenv init -)"
-fi
