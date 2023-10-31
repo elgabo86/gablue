@@ -87,3 +87,4 @@ modules:
         - org.atheme.audacious
         - org.libreoffice.LibreOffice
         - org.videolan.VLC
+        - com.github.tchx84.Flatseal
