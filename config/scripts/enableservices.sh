@@ -7,6 +7,3 @@ set -oue pipefail
 
 systemctl enable sshd.service
 systemctl enable tailscaled.service
-
-firewall-cmd --add-masquerade --zone=FedoraWorkstation --permanent
-firewall-cmd --add-interface=tailscale0 --zone=trusted --permanent
