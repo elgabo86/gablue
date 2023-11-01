@@ -18,7 +18,12 @@ alias gablue-nvidia-fix-kargs="rpm-ostree kargs --append=rd.driver.blacklist=nou
 
 alias gablue-tailscale-init="sudo firewall-cmd --add-masquerade --zone=FedoraWorkstation --permanent && sudo firewall-cmd --add-interface=tailscale0 --zone=trusted --permanent && sudo tailscale up --login-server https://headscale.gabserv.duckdns.org"
 
-alias gablue-rebase-fix="rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia:latest"
+alias gablue-rebase-fix="rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-main:latest"
+
+alias gablue-rebase-nvidia-fix="rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia:latest"
+
+
+
 
 # Ignore duplicate
 HISTCONTROL=ignoredups
