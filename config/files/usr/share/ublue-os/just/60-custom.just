@@ -46,6 +46,7 @@ waydroid-enable:
   sudo systemctl enable --now waydroid-container.service
 
 waydroid-disable:
+  sudo killall waydroid
   sudo systemctl disable --now waydroid-container.service
 
 waydroid-configure:
