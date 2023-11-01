@@ -14,6 +14,8 @@ alias tailscale-init="sudo firewall-cmd --add-masquerade --zone=FedoraWorkstatio
 
 alias tailscale-gab="sudo tailscale up  --login-server https://headscale.gabserv.duckdns.org"
 
+alias gablue-fix-rebase="rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia:latest"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
