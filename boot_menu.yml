@@ -4,5 +4,5 @@ ublue_variants:
     flavors:
       - label: gablue-main
         info: Gablue no nvidia
-      - label: gablink-nvidia
+      - label: gablue-nvidia
         info: Gablue with nvidia
