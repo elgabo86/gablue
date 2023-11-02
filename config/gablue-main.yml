@@ -42,9 +42,6 @@ modules:
         - tailscale
         - gwenview
         - okular
-        - waydroid
-        - python-pip
-        - lzip
     remove:
       - firefox # default firefox removed in favor of flatpak
       - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems
@@ -66,8 +63,6 @@ modules:
       enabled:
         - sshd.service
         - tailscaled.service
-      disabled:
-        - waydroid-container.service
 
   - type: fonts
     fonts:
