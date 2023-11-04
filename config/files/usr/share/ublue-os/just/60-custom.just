@@ -30,6 +30,9 @@ flatpak-custom-overrides:
   flatpak override --user --filesystem=xdg-config/MangoHud:ro
   flatpak override --user --filesystem=xdg-config/gtk-4.0:ro
   flatpak override --user --env=OBS_VKCAPTURE=1
+  mkdir ~/.local/share/applications
+  flatpak override com.usebottles.bottles --user --filesystem=xdg-data/applications
+  flatpak override com.usebottles.bottles --user --filesystem=/run/media
 
 amd-corectrl-set-kargs:
   echo 'Setting needed kargs for CoreCtrl...'
