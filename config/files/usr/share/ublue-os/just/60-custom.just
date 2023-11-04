@@ -10,13 +10,13 @@ tailscale-up:
 distrobox-archgab:
   podman kill --all
   distrobox-rm -f archgab
-  distrobox-create --pull latest --name archgab --image ghcr.io/elgabo86/archgab:latest
+  distrobox-create --pull latest --name archgab --home ~/.archgab --image ghcr.io/elgabo86/archgab:latest
   distrobox enter archgab
 
 distrobox-archgab-nvidia:
   podman kill --all
   distrobox-rm -f archgab
-  distrobox-create --pull latest --name archgab --nvidia --image ghcr.io/elgabo86/archgab:latest
+  distrobox-create --pull latest --name archgab --home ~/.archgab --nvidia --image ghcr.io/elgabo86/archgab:latest
   distrobox enter archgab
 
 gablue-rebase-main:
