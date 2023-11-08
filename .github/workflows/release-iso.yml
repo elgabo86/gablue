@@ -13,7 +13,7 @@ jobs:
     permissions:
       contents: write
     container: 
-      image: fedora:38
+      image: fedora:39
       options: --privileged
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +22,7 @@ jobs:
         id: isogenerator
         with:
           image-name: ${{ github.event.repository.name }}
-          installer-repo: development
+          installer-repo: releases
           installer-major-version: 39
           boot-menu-path: boot_menu.yml
       - name: install github CLI
