@@ -65,6 +65,9 @@ modules:
       enabled:
         - sshd.service
         - tailscaled.service
+        - nvidia-persistenced.service
+      disabled:
+        - nvidia-powerd.service
 
   - type: fonts
     fonts:
