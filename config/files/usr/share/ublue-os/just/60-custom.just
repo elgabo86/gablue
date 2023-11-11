@@ -36,3 +36,9 @@ amd-corectrl-set-kargs:
   echo 'Setting needed kargs for CoreCtrl...'
   rpm-ostree kargs --append="amdgpu.ppfeaturemask=0xffffffff"
 
+mitigations-off:
+  rpm-ostree kargs --append-if-missing=mitigations=off
+
+gablue-setup:
+  just flatpak-custom-overrides
+  just mitigations-off
