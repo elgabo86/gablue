@@ -48,3 +48,36 @@ gablue-setup:
   flatpak override com.usebottles.bottles --user --filesystem=xdg-data/applications
   flatpak override com.usebottles.bottles --user --filesystem=/run/media
   rpm-ostree kargs --append-if-missing=mitigations=off
+
+get-sunshine:
+  wget \
+    $(curl -s https://api.github.com/repos/LizardByte/Sunshine/releases/latest | \
+    jq -r ".assets[] | select(.name | test(\"sunshine_x86_64.flatpak\")) | .browser_download_url") \
+    -O /tmp/sunshine.flatpak
+  sudo flatpak install --system /tmp/sunshine.flatpak -y
+  sudo mkdir -p /var/usrlocal/systemd/system
+  echo -e \
+  "[Unit]\n\
+  Description=Sunshine is a self-hosted game stream host for Moonlight.\n\
+  StartLimitIntervalSec=500\n\
+  StartLimitBurst=5\n\
+  \n\
+  [Service]\n\
+  Environment=PULSE_SERVER=unix:/run/user/1000/pulse/native\n\
+  ExecStart=flatpak run dev.lizardbyte.sunshine\n\
+  ExecStop=flatpak kill dev.lizardbyte.sunshine\n\
+  Restart=on-failure\n\
+  RestartSec=5s\n\
+  \n\
+  [Install]\n\
+  WantedBy=graphical.target" | \
+  sudo tee /var/usrlocal/systemd/system/sunshine.service
+  sudo systemctl enable sunshine --now
+  echo "Sunshine is installed!"
+
+remove-sunshine:
+  sudo systemctl disable sunshine.service
+  sudo systemctl stop sunshine.service
+  sudo flatpak remove --system dev.lizardbyte.sunshine -y
+  sudo rm /var/usrlocal/systemd/system/sunshine.service
+  echo "Sunshine successfully deinstalled."
