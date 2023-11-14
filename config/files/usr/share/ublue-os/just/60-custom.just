@@ -71,7 +71,7 @@ get-sunshine:
   \n\
   [Install]\n\
   WantedBy=graphical.target" | \
-  sudo tee /var/usrlocal/systemd/system/sunshine.service
+  sudo tee /etc/systemd/system/sunshine.service
   sudo systemctl enable sunshine --now
   echo "Sunshine is installed!"
 
@@ -79,5 +79,5 @@ remove-sunshine:
   sudo systemctl disable sunshine.service
   sudo systemctl stop sunshine.service
   sudo flatpak remove --system dev.lizardbyte.sunshine -y
-  sudo rm /var/usrlocal/systemd/system/sunshine.service
+  sudo rm /etc/systemd/system/sunshine.service
   echo "Sunshine successfully deinstalled."
