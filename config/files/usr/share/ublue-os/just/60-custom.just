@@ -40,5 +40,11 @@ mitigations-off:
   rpm-ostree kargs --append-if-missing=mitigations=off
 
 gablue-setup:
-  just flatpak-custom-overrides
-  just mitigations-off
+  flatpak override --user --filesystem=xdg-config/gtk-3.0:ro
+  flatpak override --user --filesystem=xdg-config/MangoHud:ro
+  flatpak override --user --filesystem=xdg-config/gtk-4.0:ro
+  flatpak override --user --env=OBS_VKCAPTURE=1
+  mkdir ~/.local/share/applications
+  flatpak override com.usebottles.bottles --user --filesystem=xdg-data/applications
+  flatpak override com.usebottles.bottles --user --filesystem=/run/media
+  rpm-ostree kargs --append-if-missing=mitigations=off
