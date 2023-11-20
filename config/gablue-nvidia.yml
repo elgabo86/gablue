@@ -96,3 +96,4 @@ modules:
         - org.libreoffice.LibreOffice
         - org.videolan.VLC
         - com.github.tchx84.Flatseal
+        - io.github.flattool.Warehouse
