@@ -47,6 +47,8 @@ modules:
         - yt-dlp
         - mangohud
         - meld
+        - vkmark
+        - glmark2
     remove:
       - firefox # default firefox removed in favor of flatpak
       - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems
@@ -62,7 +64,6 @@ modules:
     scripts:
       # this sets up the proper policy & signing files for signed images to work
       - signing.sh
-      - fixbluez.sh
 
   - type: systemd
     system:
