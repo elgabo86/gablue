@@ -38,6 +38,9 @@ amd-corectrl-set-kargs:
 mitigations-off:
     rpm-ostree kargs --append-if-missing=mitigations=off
 
+mitigations-on:
+    rpm-ostree kargs --delete-if-present=mitigations=off
+
 gablue-setup:
     flatpak override --user --filesystem=xdg-config/gtk-3.0:ro
     flatpak override --user --filesystem=xdg-config/MangoHud:ro
