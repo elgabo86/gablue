@@ -30,6 +30,7 @@ flatpak-custom-overrides:
     mkdir ~/.local/share/applications
     flatpak override com.usebottles.bottles --user --filesystem=xdg-data/applications
     flatpak override com.usebottles.bottles --user --filesystem=/run/media
+    flatpak override com.usebottles.bottles --user --filesystem=xdg-download
 
 amd-corectrl-set-kargs:
     echo 'Setting needed kargs for CoreCtrl...'
