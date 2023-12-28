@@ -50,3 +50,10 @@ gablue-setup:
     flatpak override com.usebottles.bottles --user --filesystem=/run/media
     flatpak override com.usebottles.bottles --user --filesystem=xdg-download
     rpm-ostree kargs --append-if-missing=mitigations=off
+
+miniconda-install:
+    mkdir -p ~/.miniconda3
+    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/.miniconda3/miniconda.sh
+    bash ~/.miniconda3/miniconda.sh -b -u -p ~/.miniconda3
+    rm -rf ~/.miniconda3/miniconda.sh
+    ~/.miniconda3/bin/conda init bash
