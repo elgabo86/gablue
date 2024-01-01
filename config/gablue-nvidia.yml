@@ -23,6 +23,7 @@ modules:
   - type: rpm-ostree
     repos:
         - https://pkgs.tailscale.com/stable/fedora/tailscale.repo
+        - https://copr.fedorainfracloud.org/coprs/sramanujam/atuin/repo/fedora-39/sramanujam-atuin-fedora-39.repo
     install:
         - neofetch
         - goverlay
@@ -46,10 +47,9 @@ modules:
         - unrar
         - yt-dlp
         - mangohud
-        - meld
         - speedtest-cli
         - duf
-        - fd-find
+        - atuin
     remove:
       - firefox # default firefox removed in favor of flatpak
       - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems
