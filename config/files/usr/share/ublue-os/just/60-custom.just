@@ -64,4 +64,4 @@ atuin-setup:
     cp -Rf ble-nightly/* ~/.local/share/blesh/
     rm -rf ble-nightly
     echo 'source ~/.local/share/blesh/ble.sh' >> ~/.bashrc
-    echo 'eval "$(atuin init bash)"' >> ~/.bashrc
+    echo 'eval "$(atuin init bash --disable-up-arrow)"' >> ~/.bashrc
