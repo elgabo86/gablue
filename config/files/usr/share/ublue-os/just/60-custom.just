@@ -57,3 +57,11 @@ miniconda-install:
     bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
     rm -rf ~/miniconda3/miniconda.sh
     ~/miniconda3/bin/conda init bash
+
+atuin-setup:
+    wget -O - https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz | tar xJf -
+    mkdir -p ~/.local/share/blesh
+    cp -Rf ble-nightly/* ~/.local/share/blesh/
+    rm -rf ble-nightly
+    echo 'source ~/.local/share/blesh/ble.sh' >> ~/.bashrc
+    echo 'eval "$(atuin init bash)"' >> ~/.bashrc
