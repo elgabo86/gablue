@@ -53,6 +53,8 @@ miniconda-install:
     rm -rf ~/.miniconda/miniconda.sh
     ~/.miniconda/bin/conda init bash
     ~/.miniconda/bin/conda config --set auto_activate_base false
+    ~/.miniconda/bin/conda config --add channels conda-forge
+    ~/.miniconda/bin/conda config --set channel_priority strict
 
 atuin-setup:
     wget -O - https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz | tar xJf -
