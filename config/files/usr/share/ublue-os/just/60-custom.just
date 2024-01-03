@@ -52,6 +52,7 @@ miniconda-install:
     bash ~/.miniconda/miniconda.sh -b -u -p ~/.miniconda
     rm -rf ~/.miniconda/miniconda.sh
     ~/.miniconda/bin/conda init bash
+    ~/.miniconda/bin/conda config --set auto_activate_base false
 
 atuin-setup:
     wget -O - https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz | tar xJf -
