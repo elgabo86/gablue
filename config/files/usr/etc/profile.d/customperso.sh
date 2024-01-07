@@ -8,6 +8,9 @@ alias dlv-mkv="yt-dlp --recode-video mkv --paths $(xdg-user-dir DOWNLOAD) -o '%(
 
 alias miniserve="podman run -v ./:/share:Z -p 8080:8080 --rm --rmi -it docker.io/svenstaro/miniserve /share"
 
+alias ffsend="podman run --rm --rmi -it -v $(pwd):/data:Z docker.io/timvisee/ffsend:latest upload -y"
+alias ffsendp="podman run --rm --rmi -it -v $(pwd):/data:Z docker.io/timvisee/ffsend:latest upload --password -y"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
