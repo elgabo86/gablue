@@ -30,6 +30,8 @@ flatpak-custom-overrides:
     flatpak override com.usebottles.bottles --user --filesystem=xdg-data/applications
     flatpak override com.usebottles.bottles --user --filesystem=/run/media
     flatpak override com.usebottles.bottles --user --filesystem=xdg-download
+    flatpak override com.usebottles.bottles --user --env=DXVK_ASYNC=1
+    flatpak override com.usebottles.bottles --user --env=DXVK_GPLASYNCCACHE=1
 
 # Add amd kargs to have advanced settings in CoreCtrl
 amd-corectrl-set-kargs:
@@ -54,6 +56,7 @@ gablue-setup:
     flatpak override com.usebottles.bottles --user --filesystem=/run/media
     flatpak override com.usebottles.bottles --user --filesystem=xdg-download
     flatpak override com.usebottles.bottles --user --env=DXVK_ASYNC=1
+    flatpak override com.usebottles.bottles --user --env=DXVK_GPLASYNCCACHE=1
     rpm-ostree kargs --append-if-missing=mitigations=off
 
 # Install miniconda, useful to make build python environment
