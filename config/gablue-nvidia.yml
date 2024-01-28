@@ -56,13 +56,6 @@ modules:
       - firefox # default firefox removed in favor of flatpak
       - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems
 
-  - type: bling # configure what to pull in from ublue-os/bling
-    install:
-      - justfiles # add "!include /usr/share/ublue-os/just/bling.just"
-                  # in your custom.just (added by default) or local justfile
-      - ublue-os-wallpapers
-      - ublue-update # https://github.com/ublue-os/ublue-update
-
   - type: script
     scripts:
       # this sets up the proper policy & signing files for signed images to work
@@ -91,6 +84,7 @@ modules:
         - Open Sans
 
   - type: default-flatpaks
+    notify: true   # Send notification after install/uninstall is finished (true/false)
     system:
     # If no repo information is specified, Flathub will be used by default
       repo-url: https://dl.flathub.org/repo/flathub.flatpakrepo
