@@ -24,7 +24,6 @@ modules:
     repos:
         - https://pkgs.tailscale.com/stable/fedora/tailscale.repo
         - https://copr.fedorainfracloud.org/coprs/sramanujam/atuin/repo/fedora-39/sramanujam-atuin-fedora-39.repo
-        - https://copr.fedorainfracloud.org/coprs/adrienverge/some-nice-fonts/repo/fedora-39/adrienverge-some-nice-fonts-fedora-39.repo
     install:
         - neofetch
         - goverlay
@@ -53,7 +52,6 @@ modules:
         - atuin
         - cpu-x
         - duperemove
-        - some-nice-fonts
     remove:
       - firefox # default firefox removed in favor of flatpak
       - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems
