@@ -103,5 +103,5 @@ modules:
         - io.github.flattool.Warehouse
 
   - type: bling # configure what to pull in from ublue-os/bling
-      install:
+    install:
         - ublue-update # https://github.com/ublue-os/ublue-update

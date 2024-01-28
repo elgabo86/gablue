@@ -100,6 +100,6 @@ modules:
         - com.github.tchx84.Flatseal
         - io.github.flattool.Warehouse
 
-  - type: bling # configure what to pull in from ublue-os/bling
-      install:
+   - type: bling # configure what to pull in from ublue-os/bling
+     install:
         - ublue-update # https://github.com/ublue-os/ublue-update
