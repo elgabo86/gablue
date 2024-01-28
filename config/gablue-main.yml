@@ -99,7 +99,3 @@ modules:
         - org.videolan.VLC
         - com.github.tchx84.Flatseal
         - io.github.flattool.Warehouse
-
-  - type: bling
-      install:
-        - ublue-update
