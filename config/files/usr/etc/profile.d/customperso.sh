@@ -11,6 +11,8 @@ alias miniserve="podman run -v ./:/share:Z --network host --rm --rmi -it docker.
 alias ffsend="podman run --rm --rmi -it -v $(pwd):/data:Z docker.io/timvisee/ffsend:latest upload -y"
 alias ffsendp="podman run --rm --rmi -it -v $(pwd):/data:Z docker.io/timvisee/ffsend:latest upload --password -y"
 
+alias gogpt="tgpt -i"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
