@@ -76,3 +76,11 @@ atuin-setup:
     rm -rf ble-nightly
     echo 'source ~/.local/share/blesh/ble.sh' >> ~/.bashrc
     echo 'eval "$(atuin init bash --disable-up-arrow)"' >> ~/.bashrc
+
+# Enable ssh remote connection
+ssh-on:
+    sudo systemctl enable sshd.service --now
+
+# Disable ssh remote connection
+ssh-off:
+    sudo systemctl disable sshd.service --now

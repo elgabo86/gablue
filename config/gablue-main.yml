@@ -27,7 +27,6 @@ modules:
     install:
         - neofetch
         - goverlay
-        - ksysguard
         - yakuake
         - papirus-icon-theme
         - x2goclient
@@ -67,7 +66,6 @@ modules:
   - type: systemd
     system:
       enabled:
-        - sshd.service
         - tailscaled.service
 
   - type: fonts
