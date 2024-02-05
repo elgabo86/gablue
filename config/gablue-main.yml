@@ -66,6 +66,7 @@ modules:
   - type: systemd
     system:
       enabled:
+        - sunshine-workaround.service
         - tailscaled.service
 
   - type: fonts
