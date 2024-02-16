@@ -21,6 +21,14 @@ gablue-rebase-main:
 gablue-rebase-nvidia:
     rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia:latest
 
+# Rebase Gablue to main non nvidia beta
+gablue-rebase-main-beta:
+    rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-main-beta:latest
+
+# Rebase Gablue to nvidia variant beta
+gablue-rebase-nvidia-beta:
+    rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia-beta:latest
+
 # Add custom flatpak rules for theme, vk capture, mangohud config and bottles permissions
 flatpak-custom-overrides:
     flatpak override --user --filesystem=xdg-config/gtk-3.0:ro
