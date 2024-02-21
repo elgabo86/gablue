@@ -67,15 +67,6 @@ gablue-setup:
     flatpak override com.usebottles.bottles --user --env=DXVK_GPLASYNCCACHE=1
     rpm-ostree kargs --append-if-missing=mitigations=off
 
-# Install miniconda, useful to make build python environment
-miniconda-install:
-    mkdir -p ~/.miniconda
-    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/.miniconda/miniconda.sh
-    bash ~/.miniconda/miniconda.sh -b -u -p ~/.miniconda
-    rm -rf ~/.miniconda/miniconda.sh
-    ~/.miniconda/bin/conda init bash
-    ~/.miniconda/bin/conda config --set auto_activate_base false
-
 # Install ble and atuin, for history bash sync and more
 atuin-setup:
     wget -O - https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz | tar xJf -
