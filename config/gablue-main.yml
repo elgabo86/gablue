@@ -48,7 +48,6 @@ modules:
         - yt-dlp
         - mangohud
         - speedtest-cli
-        - duf
         - atuin
         - cpu-x
         - duperemove
@@ -92,7 +91,7 @@ modules:
       install:
         - com.usebottles.bottles
         - io.freetubeapp.FreeTube
-        - io.gitlab.librewolf-community
+        - org.mozilla.firefox
         - org.atheme.audacious
         - org.libreoffice.LibreOffice
         - org.videolan.VLC

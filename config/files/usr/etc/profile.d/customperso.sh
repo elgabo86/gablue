@@ -13,7 +13,7 @@ alias ffsendp="podman run --rm --rmi -it -v $(pwd):/data:Z docker.io/timvisee/ff
 
 alias gogpt="tgpt -i"
 
-alias wine-kill="pgrep -i '(.*\.(exe|dll|msi|bat|com|lnk)$)|(.*(wine|proton).*))' |xargs -n1 kill -9"
+alias wkill="pgrep -i '(.*\.(exe|dll|msi|bat|com|lnk)$)|(.*(wine|proton).*))' |xargs -n1 kill -9"
 
 # Ignore duplicate
 HISTCONTROL=ignoredups

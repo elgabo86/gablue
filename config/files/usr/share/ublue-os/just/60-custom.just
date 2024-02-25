@@ -1,5 +1,3 @@
-# Include some of your custom scripts here!
-
 # Enable tailscale + firewall rules & connect to private network
 tailscale-up:
     sudo firewall-cmd --add-masquerade --zone=FedoraWorkstation --permanent
