@@ -59,7 +59,6 @@ modules:
   - type: script
     scripts:
       # this sets up the proper policy & signing files for signed images to work
-      - signing.sh
       - custombins.sh
       - sunshinedev.sh
 
@@ -105,3 +104,5 @@ modules:
   - type: bling # configure what to pull in from ublue-os/bling
     install:
         - ublue-update # https://github.com/ublue-os/ublue-update
+
+  - type: signing # this sets up the proper policy & signing files for signed images to work fully
