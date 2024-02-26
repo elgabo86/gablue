@@ -80,3 +80,11 @@ ssh-on:
 # Disable ssh remote connection
 ssh-off:
     sudo systemctl disable sshd.service --now
+
+# Enable update notification
+show-update:
+    sudo sed -i 's/dbus_notify = true/dbus_notify = false/g' /etc/ublue-update/ublue-update.toml
+
+# Disable update notification
+hide-update:
+    sudo sed -i 's/dbus_notify = false/dbus_notify = true/g' /etc/ublue-update/ublue-update.toml
