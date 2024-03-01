@@ -106,3 +106,15 @@ modules:
 
   - type: signing # this sets up the proper policy & signing files for signed images to work fully
 
+  - type: akmods
+    base: main # if not specified, classic "main" base is used by default
+    install:
+      - openrazer
+      - openrgb
+      - v4l2loopback
+      - winesync
+      - nct6687d
+      - gcadapter_oc
+      - bmi160
+      - bmi260
+      - bmi323
