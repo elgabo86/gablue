@@ -118,3 +118,8 @@ modules:
       - bmi160
       - bmi260
       - bmi323
+      - evdi
+      - rtl88xxau
+      - wl
+      - xpadneo
+      - xonedo
