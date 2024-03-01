@@ -120,4 +120,5 @@ modules:
       - rtl88xxau
       - wl
       - xpadneo
-      - xonedo
+      - xone
+      - zenergy
