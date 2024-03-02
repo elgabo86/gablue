@@ -60,6 +60,7 @@ modules:
       # this sets up the proper policy & signing files for signed images to work
       - custombins.sh
       - sunshinedev.sh
+      - nvidiasyncpatch.sh
 
   - type: systemd
     system:
