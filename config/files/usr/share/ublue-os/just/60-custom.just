@@ -66,7 +66,8 @@ gablue-setup:
 
 # Install ble and atuin, for history bash sync and more
 atuin-setup:
-    wget -O - https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz | tar xJf -
+    wget -O - https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz
+    tar xJf ble-nightly.tar.xz
     mkdir -p ~/.local/share/blesh
     cp -Rf ble-nightly/* ~/.local/share/blesh/
     rm -rf ble-nightly
@@ -75,11 +76,11 @@ atuin-setup:
 
 # Enable ssh remote connection
 ssh-on:
-    sudo systemctl enable sshd.service --now
+    sudo systemctl enable sshd.socket --now
 
 # Disable ssh remote connection
 ssh-off:
-    sudo systemctl disable sshd.service --now
+    sudo systemctl disable sshd.socket --now
 
 # Enable update notification
 show-update:
@@ -88,3 +89,27 @@ show-update:
 # Disable update notification
 hide-update:
     sudo sed -i 's/dbus_notify = false/dbus_notify = true/g' /etc/ublue-update/ublue-update.toml
+
+# Hide grub menu on boot
+hide-grub:
+    sudo sed -i 's/GRUB_TIMEOUT=5/GRUB_TIMEOUT=0/g' /etc/default/grub
+    echo 'GRUB_TIMEOUT_STYLE=hidden' | sudo tee -a /etc/default/grub 1>/dev/null
+    echo 'GRUB_HIDDEN_TIMEOUT=1' | sudo tee -a /etc/default/grub 1>/dev/null
+    if [ -d /sys/firmware/efi ]; then
+        sudo grub2-mkconfig -o /etc/grub2-efi.cfg
+    else
+        sudo grub2-mkconfig -o /etc/grub2.cfg
+    fi
+
+# Show grub menu on boot
+show-grub:
+    sudo sed -i '/GRUB_HIDDEN_TIMEOUT=1/d' /etc/default/grub
+    sudo sed -i '/GRUB_TIMEOUT_STYLE=hidden/d' /etc/default/grub
+    sudo sed -i 's/GRUB_TIMEOUT=0/GRUB_TIMEOUT=5/g' /etc/default/grub
+    if [ -d /sys/firmware/efi ]; then
+        sudo grub2-mkconfig -o /etc/grub2-efi.cfg
+    else
+        sudo grub2-mkconfig -o /etc/grub2.cfg
+    fi
+
+
