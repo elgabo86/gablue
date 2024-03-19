@@ -114,4 +114,16 @@ show-grub:
         sudo grub2-mkconfig -o /etc/grub2.cfg
     fi
 
+# Set sound in 432hz
+sound-432:
+    cp -rf /usr/share/pipewire ~/.config
+    sed -i 's/#default.clock.rate          = 48000/default.clock.rate          = 43200/g' ~/.config/pipewire/pipewire.conf
+    sed -i 's/#default.clock.allowed-rates = \[ 48000 \]/default.clock.allowed-rates = [ 43200 ]/g' ~/.config/pipewire/pipewire.conf
+    systemctl --user restart pipewire
+
+# Reset sound config
+sound-reset:
+    rm -rf ~/.config/pipewire
+    systemctl --user restart pipewire
+
 
