@@ -1,5 +1,5 @@
 # image will be published to ghcr.io/<user>/<name>
-name: gablue-nvidia
+name: gablue-nvidia-beta
 # description will be included in the image's metadata
 description: Kinoite boosted
 
@@ -23,7 +23,7 @@ modules:
   - type: rpm-ostree
     repos:
         - https://pkgs.tailscale.com/stable/fedora/tailscale.repo
-        - https://copr.fedorainfracloud.org/coprs/sramanujam/atuin/repo/fedora-39/sramanujam-atuin-fedora-39.repo
+        - https://copr.fedorainfracloud.org/coprs/sramanujam/atuin/repo/fedora-40/sramanujam-atuin-fedora-40.repo
     install:
         - neofetch
         - goverlay
@@ -60,6 +60,7 @@ modules:
       # this sets up the proper policy & signing files for signed images to work
       - custombins.sh
       - sunshinedev.sh
+      - nvidiasyncpatch.sh
 
   - type: systemd
     system:
@@ -97,7 +98,6 @@ modules:
         - org.atheme.audacious
         - org.libreoffice.LibreOffice
         - org.videolan.VLC
-        - com.github.tchx84.Flatseal
         - io.github.flattool.Warehouse
 
   - type: bling # configure what to pull in from ublue-os/bling
@@ -105,3 +105,18 @@ modules:
         - ublue-update # https://github.com/ublue-os/ublue-update
 
   - type: signing # this sets up the proper policy & signing files for signed images to work fully
+
+  - type: akmods
+    base: main # if not specified, classic "main" base is used by default
+    install:
+      - openrazer
+      - openrgb
+      - winesync
+      - nct6687d
+      - gcadapter_oc
+      - bmi160
+      - bmi260
+      - bmi323
+      - wl
+      - xone
+      - zenergy
