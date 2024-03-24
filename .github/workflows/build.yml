@@ -25,7 +25,6 @@ jobs:
           - gablue-main.yml
           - gablue-nvidia.yml
           - gablue-main-beta.yml
-          - gablue-nvidia-beta.yml
     steps:
        # the build is fully handled by the reusable github action
       - name: Build Custom Image
