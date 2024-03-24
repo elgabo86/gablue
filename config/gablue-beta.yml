@@ -1,5 +1,5 @@
 # image will be published to ghcr.io/<user>/<name>
-name: gablue-main-beta
+name: gablue-beta
 # description will be included in the image's metadata
 description: Kinoite boosted
 
