@@ -60,9 +60,11 @@ gablue-setup:
 
 # Install ble and atuin, for history bash sync and more
 atuin-setup:
-    curl -L https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz | tar xJf -
+    curl -L https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz --output ble-nightly.tar.xz
+    tar xJf ble-nightly.tar.xz
     bash ble-nightly/ble.sh --install ~/.local/share
     rm -rf ble-nightly
+    rm -f ble-nightly.tar.xz
     echo 'source ~/.local/share/blesh/ble.sh' >> ~/.bashrc
     echo 'eval "$(atuin init bash)"' >> ~/.bashrc
 
