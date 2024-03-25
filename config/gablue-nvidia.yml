@@ -61,6 +61,7 @@ modules:
       - custombins.sh
       - sunshinedev.sh
       - nvidiasyncpatch.sh
+      - removeatuin.sh
 
   - type: systemd
     system:
