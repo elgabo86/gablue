@@ -3,4 +3,4 @@
 # Tell build process to exit if there are any errors.
 set -oue pipefail
 
-rm /usr/etc/profile.d/atuin.sh
+rm /etc/profile.d/atuin.sh
