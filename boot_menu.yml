@@ -1,8 +1,0 @@
-ublue_variants:
-  - label: elgabo86/gablue
-    ks: /kickstart/ublue-os.ks
-    flavors:
-      - label: gablue-main
-        info: Gablue no nvidia
-      - label: gablue-nvidia
-        info: Gablue with nvidia
