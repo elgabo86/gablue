@@ -5,7 +5,7 @@ description: Kinoite boosted
 
 # the base image to build on top of (FROM) and the version tag to use
 base-image: ghcr.io/ublue-os/kinoite-main
-image-version: 39 # latest is also supported if you want new updates ASAP
+image-version: 40 # latest is also supported if you want new updates ASAP
 
 # module configuration, executed in order
 # you can include multiple instances of the same module
@@ -23,7 +23,7 @@ modules:
   - type: rpm-ostree
     repos:
         - https://pkgs.tailscale.com/stable/fedora/tailscale.repo
-        - https://copr.fedorainfracloud.org/coprs/sramanujam/atuin/repo/fedora-39/sramanujam-atuin-fedora-39.repo
+        - https://copr.fedorainfracloud.org/coprs/sramanujam/atuin/repo/fedora-40/sramanujam-atuin-fedora-40.repo
     install:
         - neofetch
         - goverlay
@@ -60,12 +60,11 @@ modules:
     scripts:
       # this sets up the proper policy & signing files for signed images to work
       - custombins.sh
-      - sunshinedev.sh
+      - removeatuin.sh
 
   - type: systemd
     system:
       enabled:
-        - sunshine-workaround.service
         - tailscaled.service
 
   - type: fonts
@@ -95,8 +94,8 @@ modules:
         - org.atheme.audacious
         - org.libreoffice.LibreOffice
         - org.videolan.VLC
-        - com.github.tchx84.Flatseal
         - io.github.flattool.Warehouse
+        - io.missioncenter.MissionCenter
 
   - type: bling # configure what to pull in from ublue-os/bling
     install:
@@ -109,16 +108,12 @@ modules:
     install:
       - openrazer
       - openrgb
-      - v4l2loopback
       - winesync
       - nct6687d
       - gcadapter_oc
       - bmi160
       - bmi260
       - bmi323
-      - evdi
-      - rtl88xxau
       - wl
-      - xpadneo
       - xone
       - zenergy

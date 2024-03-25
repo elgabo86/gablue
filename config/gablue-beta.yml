@@ -95,6 +95,7 @@ modules:
         - org.libreoffice.LibreOffice
         - org.videolan.VLC
         - io.github.flattool.Warehouse
+        - io.missioncenter.MissionCenter
 
   - type: bling # configure what to pull in from ublue-os/bling
     install:
