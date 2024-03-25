@@ -60,13 +60,11 @@ gablue-setup:
 
 # Install ble and atuin, for history bash sync and more
 atuin-setup:
-    wget -O - https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz
-    tar xJf ble-nightly.tar.xz
-    mkdir -p ~/.local/share/blesh
-    cp -Rf ble-nightly/* ~/.local/share/blesh/
+    curl -L https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz | tar xJf -
+    bash ble-nightly/ble.sh --install ~/.local/share
     rm -rf ble-nightly
     echo 'source ~/.local/share/blesh/ble.sh' >> ~/.bashrc
-    echo 'eval "$(atuin init bash --disable-up-arrow)"' >> ~/.bashrc
+    echo 'eval "$(atuin init bash)"' >> ~/.bashrc
 
 # Enable ssh remote connection
 ssh-on:
