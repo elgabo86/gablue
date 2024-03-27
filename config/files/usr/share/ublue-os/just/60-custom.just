@@ -121,4 +121,11 @@ sound-reset:
     rm -rf ~/.config/pipewire
     systemctl --user restart pipewire
 
+# Create gablue install iso
+create-iso-main:
+    sudo podman run --rm --privileged --volume $(xdg-user-dir DOWNLOAD):/isogenerator/output -e VERSION=40 -e IMAGE_VARIANT=Kinoite -e IMAGE_REPO=ghcr.io/elgabo86 -e IMAGE_NAME=gablue-main -e IMAGE_TAG=latest  ghcr.io/ublue-os/isogenerator:40
+
+# Create gablue install iso (nvidia)
+create-iso-nvidia:
+    sudo podman run --rm --privileged --volume $(xdg-user-dir DOWNLOAD):/isogenerator/output -e VERSION=40 -e IMAGE_VARIANT=Kinoite -e IMAGE_REPO=ghcr.io/elgabo86 -e IMAGE_NAME=gablue-nvidia -e IMAGE_TAG=latest  ghcr.io/ublue-os/isogenerator:40
 
