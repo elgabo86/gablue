@@ -11,7 +11,12 @@ alias miniserve="podman run -v ./:/share:Z --network host --rm --rmi -it docker.
 alias ffsend="podman run --rm --rmi -it -v $(pwd):/data:Z docker.io/timvisee/ffsend:latest upload -y"
 alias ffsendp="podman run --rm --rmi -it -v $(pwd):/data:Z docker.io/timvisee/ffsend:latest upload --password -y"
 
-alias gogpt="tgpt -i"
+alias gogpt="tgpt --provider opengpts -i"
+alias gogpt-phind="tgpt --provider phind -i"
+alias gogpt-koboldai="tgpt --provider koboldai -i"
+alias gogpt-llama2="tgpt --provider llama2 -i"
+alias gogpt-blackboxai="tgpt --provider blackboxai -i"
+
 
 alias wkill="pgrep -i '(.*\.(exe|dll|msi|bat|com|lnk)$)|(.*(wine|proton).*))' |xargs -n1 kill -9"
 
