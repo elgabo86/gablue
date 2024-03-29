@@ -1,5 +1,5 @@
 # image will be published to ghcr.io/<user>/<name>
-name: gablue-beta
+name: gablue-nvidia-beta
 # description will be included in the image's metadata
 description: Kinoite boosted
 
@@ -62,7 +62,6 @@ modules:
       # this sets up the proper policy & signing files for signed images to work
       - custombins.sh
       - removeatuin.sh
-      - nvidiasyncpatchbeta.sh
 
   - type: systemd
     system:

@@ -52,6 +52,8 @@ modules:
         - cpu-x
         - duperemove
         - wol
+        - google-roboto-fonts
+        - open-sans-fonts
     remove:
       - firefox # default firefox removed in favor of flatpak
       - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems
@@ -76,9 +78,6 @@ modules:
         - Terminus
         - JetBrainsMono
         - NerdFontsSymbolsOnly
-      google-fonts:
-        - Roboto
-        - Open Sans
 
   - type: default-flatpaks
     notify: true   # Send notification after install/uninstall is finished (true/false)
