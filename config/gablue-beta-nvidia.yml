@@ -62,6 +62,7 @@ modules:
       # this sets up the proper policy & signing files for signed images to work
       - custombins.sh
       - removeatuin.sh
+      - nvidiasyncpatchbeta.sh
 
   - type: systemd
     system:
