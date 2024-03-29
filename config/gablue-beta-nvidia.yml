@@ -51,6 +51,8 @@ modules:
         - cpu-x
         - duperemove
         - wol
+        - google-roboto-fonts
+        - open-sans-fonts
     remove:
       - firefox # default firefox removed in favor of flatpak
       - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems
@@ -60,7 +62,6 @@ modules:
       # this sets up the proper policy & signing files for signed images to work
       - custombins.sh
       - removeatuin.sh
-      - nvidiasyncpatchbeta.sh
 
   - type: systemd
     system:
