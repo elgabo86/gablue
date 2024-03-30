@@ -24,6 +24,7 @@ modules:
     repos:
         - https://pkgs.tailscale.com/stable/fedora/tailscale.repo
         - https://copr.fedorainfracloud.org/coprs/sramanujam/atuin/repo/fedora-40/sramanujam-atuin-fedora-40.repo
+        - https://copr.fedorainfracloud.org/coprs/matte-schwartz/sunshine/repo/fedora-40/matte-schwartz-sunshine-fedora-40.repo
     install:
         - neofetch
         - goverlay
@@ -51,8 +52,7 @@ modules:
         - cpu-x
         - duperemove
         - wol
-        - google-roboto-fonts
-        - open-sans-fonts
+        - sunshine
     remove:
       - firefox # default firefox removed in favor of flatpak
       - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems
@@ -82,6 +82,9 @@ modules:
         - Terminus
         - JetBrainsMono
         - NerdFontsSymbolsOnly
+      google-fonts:
+        - Roboto
+        - Open Sans
 
   - type: default-flatpaks
     notify: true   # Send notification after install/uninstall is finished (true/false)
