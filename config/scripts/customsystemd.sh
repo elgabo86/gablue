@@ -4,6 +4,6 @@
 set -oue pipefail
 
 
-sed -i 's/#DefaultLimitNOFILE=/DefaultLimitNOFILE=4096:524288/' /etc/systemd/user.conf && \
-sed -i 's/#DefaultTimeoutStopSec.*/DefaultTimeoutStopSec=15s/' /etc/systemd/user.conf && \
-sed -i 's/#DefaultTimeoutStopSec.*/DefaultTimeoutStopSec=15s/' /etc/systemd/system.conf
+sed -i 's/#DefaultLimitNOFILE=/DefaultLimitNOFILE=4096:524288/' /usr/etc/systemd/user.conf && \
+sed -i 's/#DefaultTimeoutStopSec.*/DefaultTimeoutStopSec=15s/' /usr/etc/systemd/user.conf && \
+sed -i 's/#DefaultTimeoutStopSec.*/DefaultTimeoutStopSec=15s/' /usr/etc/systemd/system.conf
