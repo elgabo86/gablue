@@ -118,6 +118,7 @@ modules:
       - gcadapter_oc
       - bmi160
       - bmi260
+      - bmi323
       - wl
       - xone
       - zenergy
