@@ -116,7 +116,6 @@ modules:
     install:
       - openrazer
       - openrgb
-      - v4l2loopback
       - winesync
       - nct6687d
       - gcadapter_oc
