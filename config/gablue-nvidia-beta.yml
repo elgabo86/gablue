@@ -63,6 +63,7 @@ modules:
       - custombins.sh
       - removeatuin.sh
       - nvidiasyncpatchbeta.sh
+      - customsystemd.sh
 
   - type: systemd
     system:
