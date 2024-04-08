@@ -126,5 +126,4 @@ modules:
       - xone
       - zenergy
       - evdi
-      - v4l2loopback
       - xpadneo
