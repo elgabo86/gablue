@@ -122,9 +122,9 @@ modules:
       - bmi160
       - bmi260
       - bmi323
-      - evdi
-      - rtl88xxau
       - wl
-      - xpadneo
       - xone
       - zenergy
+      - evdi
+      - v4l2loopback
+      - xpadneo
