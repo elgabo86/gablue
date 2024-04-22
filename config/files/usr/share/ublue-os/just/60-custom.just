@@ -129,3 +129,30 @@ create-iso-main:
 create-iso-nvidia:
     sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD):/isogenerator/output -e VERSION=40 -e IMAGE_VARIANT=Kinoite -e IMAGE_REPO=ghcr.io/elgabo86 -e IMAGE_NAME=gablue-nvidia -e IMAGE_TAG=latest  ghcr.io/ublue-os/isogenerator:40
 
+# Install/Update Ollama+openwebui (cpu only)
+ollama-cpu:
+    podman kill --all
+    podman create --pull always --replace --name ollama -p 11434:11434 -v ollama:/root/.ollama docker.io/ollama/ollama:latest
+    podman create -p 127.0.0.1:3000:8080 --network=pasta:-T,11434 --add-host=ollama.local:127.0.0.1 --env 'OLLAMA_BASE_URL=http://ollama.local:11434' --env 'ANONYMIZED_TELEMETRY=False' -v open-webui:/app/backend/data --label io.containers.autoupdate=registry --replace --name open-webui --pull always ghcr.io/open-webui/open-webui:main
+    podman start ollama open-webui
+
+# Install/Update Ollama+openwebui (nvidia)
+ollama-nvidia:
+    podman kill --all
+    podman create --pull always --replace --name ollama -p 11434:11434 -v ollama:/root/.ollama --security-opt label=disable --gpus all --device nvidia.com/gpu=all docker.io/ollama/ollama:latest
+    podman create -p 127.0.0.1:3000:8080 --network=pasta:-T,11434 --add-host=ollama.local:127.0.0.1 --env 'OLLAMA_BASE_URL=http://ollama.local:11434' --env 'ANONYMIZED_TELEMETRY=False' -v open-webui:/app/backend/data --label io.containers.autoupdate=registry --replace --name open-webui --pull always ghcr.io/open-webui/open-webui:main
+    podman start ollama open-webui
+
+# Install/Update Ollama+openwebui (nvidia)
+ollama-amd:
+    podman kill --all
+    podman create --pull always --name ollama -p 11434:11434 -v ollama:/root/.ollama --security-opt label=disable  --device /dev/dri --device /dev/kfd  --replace --env HSA_OVERRIDE_GFX_VERSION=10.3.0 docker.io/ollama/ollama:rocm
+    podman create -p 127.0.0.1:3000:8080 --network=pasta:-T,11434 --add-host=ollama.local:127.0.0.1 --env 'OLLAMA_BASE_URL=http://ollama.local:11434' --env 'ANONYMIZED_TELEMETRY=False' -v open-webui:/app/backend/data --label io.containers.autoupdate=registry --replace --name open-webui --pull always ghcr.io/open-webui/open-webui:main
+    podman start ollama open-webui
+
+# Remove Ollama+openwebui and models data
+ollama-remove:
+    podman kill --all
+    podman rm ollama open-webui
+    podman volume rm ollama open-webui
+    podman rmi --all
