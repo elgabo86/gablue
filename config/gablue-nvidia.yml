@@ -56,6 +56,7 @@ modules:
         - sunshine
         - pyenv
         - iotop-c
+        - kcalc
     remove:
       - firefox # default firefox removed in favor of flatpak
       - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems
@@ -102,9 +103,10 @@ modules:
         - org.mozilla.firefox
         - org.atheme.audacious
         - org.libreoffice.LibreOffice
-        - org.videolan.VLC
+        - org.kde.haruna
         - com.github.tchx84.Flatseal
         - io.github.flattool.Warehouse
+        - io.github.dvlv.boxbuddyrs
 
   - type: bling # configure what to pull in from ublue-os/bling
     install:
