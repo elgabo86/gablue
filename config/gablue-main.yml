@@ -117,12 +117,7 @@ modules:
     install:
       - openrazer
       - openrgb
-      - winesync
       - nct6687d
-      - gcadapter_oc
-      - bmi160
-      - bmi260
-      - bmi323
       - wl
       - xone
       - zenergy
