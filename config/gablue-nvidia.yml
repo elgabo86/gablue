@@ -68,6 +68,7 @@ modules:
       - custombins.sh
       - nvidiasyncpatch.sh
       - removeatuin.sh
+      - kernel-fsync.sh
 
   - type: systemd
     system:
