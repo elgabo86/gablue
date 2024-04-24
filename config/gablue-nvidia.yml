@@ -127,5 +127,5 @@ modules:
       - evdi
       - v4l2loopback
       - xpadneo
-      - xonedo
+      - xone
       - gcadapter_oc
