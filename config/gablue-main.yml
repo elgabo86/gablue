@@ -27,7 +27,7 @@ modules:
         - https://copr.fedorainfracloud.org/coprs/matte-schwartz/sunshine/repo/fedora-40/matte-schwartz-sunshine-fedora-40.repo
         - https://copr.fedorainfracloud.org/coprs/nili/pyenv/repo/fedora-40/nili-pyenv-fedora-40.repo
     install:
-        - neofetch
+        - fastfetch
         - goverlay
         - yakuake
         - papirus-icon-theme

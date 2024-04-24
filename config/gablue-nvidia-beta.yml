@@ -26,7 +26,7 @@ modules:
         - https://copr.fedorainfracloud.org/coprs/sramanujam/atuin/repo/fedora-40/sramanujam-atuin-fedora-40.repo
         - https://copr.fedorainfracloud.org/coprs/matte-schwartz/sunshine/repo/fedora-40/matte-schwartz-sunshine-fedora-40.repo
     install:
-        - neofetch
+        - fastfetch
         - goverlay
         - yakuake
         - papirus-icon-theme
