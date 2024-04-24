@@ -128,4 +128,3 @@ modules:
       - v4l2loopback
       - xpadneo
       - xone
-      - gcadapter_oc
