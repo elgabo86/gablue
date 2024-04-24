@@ -105,8 +105,8 @@ modules:
         - org.atheme.audacious
         - org.libreoffice.LibreOffice
         - org.kde.haruna
-        - com.github.tchx84.Flatseal
         - io.github.flattool.Warehouse
+        - io.missioncenter.MissionCenter
         - io.github.dvlv.boxbuddyrs
 
   - type: bling # configure what to pull in from ublue-os/bling
@@ -127,3 +127,5 @@ modules:
       - evdi
       - v4l2loopback
       - xpadneo
+      - xonedo
+      - gcadapter_oc
