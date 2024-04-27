@@ -122,3 +122,7 @@ modules:
       - v4l2loopback
       - xpadneo
       - xone
+      - openrgb
+      - nct6687d
+      - gcadapter_oc
+      - bmi260
