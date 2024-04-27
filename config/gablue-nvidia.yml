@@ -119,10 +119,8 @@ modules:
     base: main # if not specified, classic "main" base is used by default
     install:
       - openrazer
-      - nct6687d
       - wl
       - xone
-      - zenergy
       - evdi
       - v4l2loopback
       - xpadneo
