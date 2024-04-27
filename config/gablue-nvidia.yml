@@ -125,7 +125,3 @@ modules:
       - v4l2loopback
       - xpadneo
       - xone
-      - nct6687d
-      - gcadapter_oc
-      - bmi260
-      - zenergy

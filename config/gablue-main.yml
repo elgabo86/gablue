@@ -113,7 +113,7 @@ modules:
   - type: signing # this sets up the proper policy & signing files for signed images to work fully
 
   - type: akmods
-    #base: main # if not specified, classic "main" base is used by default
+    base: main # if not specified, classic "main" base is used by default
     install:
       - openrazer
       - wl
@@ -122,7 +122,3 @@ modules:
       - v4l2loopback
       - xpadneo
       - xone
-      - nct6687d
-      - gcadapter_oc
-      - bmi260
-      - zenergy
