@@ -20,6 +20,8 @@ alias gogpt-blackboxai="tgpt --provider blackboxai -i"
 
 alias wkill="pgrep -i '(.*\.(exe|dll|msi|bat|com|lnk)$)|(.*(wine|proton).*))' |xargs -n1 kill -9"
 
+alias neofetch="fastfetch -c /usr/share/ublue-os/gablue/fastfetch.jsonc"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
