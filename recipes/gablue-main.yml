@@ -120,9 +120,9 @@ modules:
       - v4l2loopback
       - xpadneo
       - xone
-      - gcadapter_oc
+      #- gcadapter_oc
       - bmi260
-      - facetimehd
+      #- facetimehd
       - nct6687d
       - openrgb
       - rtl88xxau
