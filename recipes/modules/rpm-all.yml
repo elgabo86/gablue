@@ -1,0 +1,45 @@
+type: rpm-ostree
+repos:
+  - https://pkgs.tailscale.com/stable/fedora/tailscale.repo
+  - https://copr.fedorainfracloud.org/coprs/sramanujam/atuin/repo/fedora-40/sramanujam-atuin-fedora-40.repo
+  - https://copr.fedorainfracloud.org/coprs/matte-schwartz/sunshine/repo/fedora-40/matte-schwartz-sunshine-fedora-40.repo
+  - https://copr.fedorainfracloud.org/coprs/nili/pyenv/repo/fedora-40/nili-pyenv-fedora-40.repo
+install:
+  # Tools cli
+  - fswatch
+  - iotop-c
+  - pyenv
+  - wol
+  - duperemove
+  - atuin
+  - speedtest-cli
+  - yt-dlp
+  - unrar
+  - btop
+  - tailscale
+  - intel-undervolt
+  - ncdu
+  - mc
+  - lm_sensors
+  - fastfetch
+  # Tools
+  - kcalc
+  - sunshine
+  - cpu-x
+  - okular
+  - gwenview
+  - corectrl
+  - solaar
+  - gnome-disk-utility
+  - skanlite
+  - x2goclient
+  - yakuake
+  - goverlay
+  - mangohud
+  # Themes
+  - papirus-icon-theme
+  # Others
+  - langpacks-fr
+remove:
+  - firefox # default firefox removed in favor of flatpak
+  - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems

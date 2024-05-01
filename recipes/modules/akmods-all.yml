@@ -1,0 +1,9 @@
+type: akmods
+install:
+  - openrazer
+  - wl
+  - xone
+  - evdi
+  - v4l2loopback
+  - xpadneo
+  - xone
