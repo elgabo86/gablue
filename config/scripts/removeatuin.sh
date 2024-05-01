@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Tell build process to exit if there are any errors.
-set -oue pipefail
+set -ouex pipefail
 
 if [ -f /etc/profile.d/atuin.sh ]; then
     # Supprime le fichier
