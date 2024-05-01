@@ -66,6 +66,7 @@ modules:
       - custombins.sh
       - removeatuin.sh
       - nvidiasyncpatchbeta.sh
+      - branding.sh
 
   - type: systemd
     system:
