@@ -1,0 +1,4 @@
+type: rpm-ostree
+install:
+  # X11
+  - plasma-workspace-x11
