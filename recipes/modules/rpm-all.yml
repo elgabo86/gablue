@@ -40,6 +40,8 @@ install:
   - papirus-icon-theme
   # Others
   - langpacks-fr
+  #Kde addons
+  - kdenetwork-filesharing
 remove:
   - firefox # default firefox removed in favor of flatpak
   - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems
