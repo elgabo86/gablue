@@ -7,3 +7,8 @@ install:
   - v4l2loopback
   - xpadneo
   - xone
+  - bmi260
+  - gcadapter_oc
+  - nct6687d
+  - openrgb
+  - rtl88xxau
