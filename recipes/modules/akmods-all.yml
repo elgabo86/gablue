@@ -11,4 +11,3 @@ install:
   - gcadapter_oc
   - nct6687d
   - openrgb
-  - rtl88xxau
