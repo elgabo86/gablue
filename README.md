@@ -1,43 +1,22 @@
-# BlueBuild Template &nbsp; [![build-ublue](https://github.com/blue-build/template/actions/workflows/build.yml/badge.svg)](https://github.com/blue-build/template/actions/workflows/build.yml)
+# Gablue &nbsp; [![build-ublue](https://github.com/elgabo86/gablue/actions/workflows/build.yml/badge.svg)](https://github.com/elgabo86/gablue/actions/workflows/build.yml)
 
-See the [BlueBuild docs](https://blue-build.org/how-to/setup/) for quick setup instructions for setting up your own repository based on this template.
+Gablue is an immutable system based on Fedora Kinoite and adds the following features:
 
-After setup, it is recommended you update this README to describe your custom image.
+- Full support for Displaylink
+- OpenRGB drivers for controlling RGB on certain motherboards.
+- Distrobox preinstalled with automatic updates for created containers.
+- OpenRazer drivers built in
+- Xone driver for Xbox controllers.
+- Flatpak application set installed by default (can be removed manually)
+- Kernel module for overclocking the Nintendo Wii U/Mayflash GameCube adapter
+- Kernel module for Nuvoton NCT6687-R found on AMD B550 chipset motherboards
+- Old Realtek RTL8812AU/21AU and RTL8814AU driver
+- Support for some legacy broadcom wifi devices
+- Kernel module driver for the Bosch BMI260 IMU
 
 ## Installation
 
-> **Warning**  
-> [This is an experimental feature](https://www.fedoraproject.org/wiki/Changes/OstreeNativeContainerStable), try at your own discretion.
+You can download the latest installation iso here:
 
-To rebase an existing atomic Fedora installation to the latest build:
-
-- First rebase to the unsigned image, to get the proper signing keys and policies installed:
-  ```
-  rpm-ostree rebase ostree-unverified-registry:ghcr.io/blue-build/template:latest
-  ```
-- Reboot to complete the rebase:
-  ```
-  systemctl reboot
-  ```
-- Then rebase to the signed image, like so:
-  ```
-  rpm-ostree rebase ostree-image-signed:docker://ghcr.io/blue-build/template:latest
-  ```
-- Reboot again to complete the installation
-  ```
-  systemctl reboot
-  ```
-
-The `latest` tag will automatically point to the latest build. That build will still always use the Fedora version specified in `recipe.yml`, so you won't get accidentally updated to the next major version.
-
-## ISO
-
-If build on Fedora Atomic, you can generate an offline ISO with the instructions available [here](https://blue-build.org/learn/universal-blue/#fresh-install-from-an-iso). These ISOs cannot unfortunately be distributed on GitHub for free due to large sizes, so for public projects something else has to be used for hosting.
-
-## Verification
-
-These images are signed with [Sigstore](https://www.sigstore.dev/)'s [cosign](https://github.com/sigstore/cosign). You can verify the signature by downloading the `cosign.pub` file from this repo and running the following command:
-
-```bash
-cosign verify --key cosign.pub ghcr.io/blue-build/template
-```
+[Intel/Amd iso]
+[Nvidia iso]
