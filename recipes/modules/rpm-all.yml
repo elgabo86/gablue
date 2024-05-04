@@ -22,6 +22,7 @@ install:
   - mc
   - lm_sensors
   - fastfetch
+  - stress-ng
   # Tools
   - kcalc
   - sunshine
@@ -42,6 +43,16 @@ install:
   - langpacks-fr
   #Kde addons
   - kdenetwork-filesharing
+  - libadwaita-qt5
+  - libadwaita-qt6
+  - kde-runtime-docs
+  - kdeplasma-addons
+  - plasma-wallpapers-dynamic
+  #Drivers
+  - epson-inkjet-printer-escpr
+  - epson-inkjet-printer-escpr2
+  - hplip
+  - printer-driver-brlaser
 remove:
   - firefox # default firefox removed in favor of flatpak
   - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems
