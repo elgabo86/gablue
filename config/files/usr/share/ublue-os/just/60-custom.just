@@ -123,11 +123,11 @@ sound-reset:
 
 # Create gablue install iso
 create-iso-main:
-    sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD):/isogenerator/output -e VERSION=40 -e IMAGE_VARIANT=Kinoite -e IMAGE_REPO=ghcr.io/elgabo86 -e IMAGE_NAME=gablue-main -e IMAGE_TAG=latest  ghcr.io/ublue-os/isogenerator:40
+    sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD):/isogenerator/output -e VERSION=40 -e IMAGE_VARIANT=Kinoite -e IMAGE_REPO=ghcr.io/elgabo86 -e IMAGE_NAME=gablue-main -e IMAGE_TAG=latest  ghcr.io/jasonn3/build-container-installer:latest
 
 # Create gablue install iso (nvidia)
 create-iso-nvidia:
-    sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD):/isogenerator/output -e VERSION=40 -e IMAGE_VARIANT=Kinoite -e IMAGE_REPO=ghcr.io/elgabo86 -e IMAGE_NAME=gablue-nvidia -e IMAGE_TAG=latest  ghcr.io/ublue-os/isogenerator:40
+    sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD):/isogenerator/output -e VERSION=40 -e IMAGE_VARIANT=Kinoite -e IMAGE_REPO=ghcr.io/elgabo86 -e IMAGE_NAME=gablue-nvidia -e IMAGE_TAG=latest  ghcr.io/jasonn3/build-container-installer:latest
 
 # Install/Update Ollama+openwebui (cpu only)
 ollama-cpu:
