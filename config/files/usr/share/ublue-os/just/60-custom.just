@@ -123,11 +123,11 @@ sound-reset:
 
 # Create gablue install iso
 create-iso-main:
-    sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD):/build-container-installer/build --security-opt label=disable --pull=newer -e IMAGE_VARIANT=Kinoite -e IMAGE_REPO=ghcr.io/elgabo86 -e IMAGE_NAME=gablue-main -e IMAGE_TAG=latest ghcr.io/jasonn3/build-container-installer:latest
+    sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD)/gablue-iso-main:/build-container-installer/build --security-opt label=disable ghcr.io/jasonn3/build-container-installer:latest VERSION=40 IMAGE_REPO=ghcr.io/elgabo86 IMAGE_NAME=gablue-main IMAGE_TAG=latest VARIANT=Kinoite FLATPAK_REMOTE_NAME=flathub FLATPAK_REMOTE_REFS="app/com.usebottles.bottles/x86_64/stable app/io.freetubeapp.FreeTube/x86_64/stable app/org.mozilla.firefox/x86_64/stable app/org.atheme.audacious/x86_64/stable app/org.libreoffice.LibreOffice/x86_64/stable app/org.kde.haruna/x86_64/stable app/org.kde.haruna/x86_64/stable app/io.github.flattool.Warehouse/x86_64/stable app/io.missioncenter.MissionCenter/x86_64/stable app/io.github.dvlv.boxbuddyrs/x86_64/stable runtime/org.gnome.Platform/x86_64/45 runtime/org.freedesktop.Platform/x86_64/23.08 runtime/org.kde.Platform/x86_64/6.6 runtime/org.kde.Platform/x86_64/5.15-23.08 runtime/org.gnome.Platform/x86_64/46"
 
 # Create gablue install iso (nvidia)
 create-iso-nvidia:
-    sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD):/build-container-installer/build --security-opt label=disable --pull=newer -e IMAGE_VARIANT=Kinoite -e IMAGE_REPO=ghcr.io/elgabo86 -e IMAGE_NAME=gablue-nvidia -e IMAGE_TAG=latest ghcr.io/jasonn3/build-container-installer:latest
+    sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD)/gablue-iso-nvidia:/build-container-installer/build --security-opt label=disable ghcr.io/jasonn3/build-container-installer:latest VERSION=40 IMAGE_REPO=ghcr.io/elgabo86 IMAGE_NAME=gablue-nvidia IMAGE_TAG=latest VARIANT=Kinoite FLATPAK_REMOTE_NAME=flathub FLATPAK_REMOTE_REFS="app/com.usebottles.bottles/x86_64/stable app/io.freetubeapp.FreeTube/x86_64/stable app/org.mozilla.firefox/x86_64/stable app/org.atheme.audacious/x86_64/stable app/org.libreoffice.LibreOffice/x86_64/stable app/org.kde.haruna/x86_64/stable app/org.kde.haruna/x86_64/stable app/io.github.flattool.Warehouse/x86_64/stable app/io.missioncenter.MissionCenter/x86_64/stable app/io.github.dvlv.boxbuddyrs/x86_64/stable runtime/org.gnome.Platform/x86_64/45 runtime/org.freedesktop.Platform/x86_64/23.08 runtime/org.kde.Platform/x86_64/6.6 runtime/org.kde.Platform/x86_64/5.15-23.08 runtime/org.gnome.Platform/x86_64/46"
 
 # Install/Update Ollama+openwebui (cpu only)
 ollama-cpu:
