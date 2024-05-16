@@ -23,6 +23,7 @@ install:
   - lm_sensors
   - fastfetch
   - stress-ng
+  - bash-color-prompt
   # Tools
   - kcalc
   - sunshine
@@ -37,6 +38,7 @@ install:
   - yakuake
   - goverlay
   - mangohud
+  - cool-retro-term
   # Themes
   - papirus-icon-theme
   # Others
@@ -53,6 +55,8 @@ install:
   - epson-inkjet-printer-escpr2
   - hplip
   - printer-driver-brlaser
+  - ifuse
+  - libimobiledevice
 remove:
   - firefox # default firefox removed in favor of flatpak
   - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems
