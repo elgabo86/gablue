@@ -23,7 +23,12 @@ install:
   - lm_sensors
   - fastfetch
   - stress-ng
+  # Goodies cli
   - bash-color-prompt
+  - asciiquarium
+  - figlet
+  - cmatrix
+  - nyancat
   # Tools
   - kcalc
   - sunshine
@@ -39,6 +44,8 @@ install:
   - goverlay
   - mangohud
   - cool-retro-term
+  - vkmark
+  - glmark2
   # Themes
   - papirus-icon-theme
   # Others
