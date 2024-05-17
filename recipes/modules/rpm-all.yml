@@ -23,10 +23,12 @@ install:
   - lm_sensors
   - fastfetch
   - stress-ng
+  - powertop
   # Goodies cli
   - bash-color-prompt
   - asciiquarium
   - figlet
+  - toilet
   - cmatrix
   - nyancat
   # Tools
