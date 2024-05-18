@@ -24,6 +24,7 @@ install:
   - fastfetch
   - stress-ng
   - powertop
+  - gcc
   # Goodies cli
   - bash-color-prompt
   - asciiquarium
