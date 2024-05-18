@@ -46,8 +46,6 @@ install:
   - goverlay
   - mangohud
   - cool-retro-term
-  - vkmark
-  - glmark2
   # Themes
   - papirus-icon-theme
   # Others
