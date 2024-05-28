@@ -28,6 +28,8 @@ install:
   - android-tools
   - SDL2_gfx
   - SDL2_mixer
+  - SDL2_ttf
+  - SDL2_sound
   # Goodies cli
   - bash-color-prompt
   - asciiquarium
