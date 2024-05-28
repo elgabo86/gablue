@@ -26,6 +26,7 @@ install:
   - powertop
   - gcc
   - android-tools
+  - sdl2
   # Goodies cli
   - bash-color-prompt
   - asciiquarium
