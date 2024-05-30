@@ -4,3 +4,4 @@ scripts:
   - custombins.sh
   - removeatuin.sh
   - branding.sh
+  - fixqdbus6.sh
