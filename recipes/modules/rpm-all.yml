@@ -4,6 +4,7 @@ repos:
   - https://copr.fedorainfracloud.org/coprs/sramanujam/atuin/repo/fedora-40/sramanujam-atuin-fedora-40.repo
   - https://copr.fedorainfracloud.org/coprs/matte-schwartz/sunshine/repo/fedora-40/matte-schwartz-sunshine-fedora-40.repo
   - https://copr.fedorainfracloud.org/coprs/nili/pyenv/repo/fedora-40/nili-pyenv-fedora-40.repo
+  - https://copr.fedorainfracloud.org/coprs/luisbocanegra/kde-material-you-colors/repo/fedora-40/luisbocanegra-kde-material-you-colors-fedora-40.repo
 install:
   # Tools cli
   - fswatch
@@ -63,6 +64,7 @@ install:
   - kde-runtime-docs
   - kdeplasma-addons
   - plasma-wallpapers-dynamic
+  - kde-material-you-colors
   #Drivers
   - epson-inkjet-printer-escpr
   - epson-inkjet-printer-escpr2
