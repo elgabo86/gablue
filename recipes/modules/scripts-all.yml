@@ -5,3 +5,4 @@ scripts:
   - removeatuin.sh
   - branding.sh
   - fixqdbus6.sh
+  - updateopenrgbrules.sh
