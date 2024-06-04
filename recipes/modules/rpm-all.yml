@@ -65,7 +65,6 @@ install:
   - kdeplasma-addons
   - plasma-wallpapers-dynamic
   - kde-material-you-colors
-  - kvantum
   #Drivers
   - epson-inkjet-printer-escpr
   - epson-inkjet-printer-escpr2
