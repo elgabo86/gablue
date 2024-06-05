@@ -25,13 +25,7 @@ install:
   - fastfetch
   - stress-ng
   - powertop
-  - gcc
   - android-tools
-  - SDL2_gfx
-  - SDL2_mixer
-  - SDL2_ttf
-  - SDL2_sound
-  - glibc.i686
   # Goodies cli
   - bash-color-prompt
   - asciiquarium
