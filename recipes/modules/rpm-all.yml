@@ -58,7 +58,6 @@ install:
   - libadwaita-qt6
   - kde-runtime-docs
   - kdeplasma-addons
-  - plasma-wallpapers-dynamic
   - kde-material-you-colors
   #Drivers
   - epson-inkjet-printer-escpr
