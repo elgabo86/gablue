@@ -156,3 +156,7 @@ ollama-remove:
     podman rm ollama open-webui
     podman volume rm ollama open-webui
     podman rmi --all
+
+# Install pyenv
+pyenv-setup:
+    git clone https://github.com/pyenv/pyenv.git ~/.pyenv

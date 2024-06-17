@@ -26,7 +26,7 @@ alias neofetch="fastfetch -c /usr/share/ublue-os/gablue/fastfetch.jsonc"
 HISTCONTROL=ignoredups
 
 # Init pyenv
-if [ -x /bin/pyenv ]; then
+if [ -x ~/.pyenv/bin/pyenv ]; then
 	export PYENV_ROOT="$HOME/.pyenv"
 	command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"
 	eval "$(pyenv init -)"
