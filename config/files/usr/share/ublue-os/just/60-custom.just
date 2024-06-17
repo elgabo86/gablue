@@ -60,7 +60,7 @@ gablue-setup:
 
 # Install ble and atuin, for history bash sync and more
 atuin-setup:
-    curl -L https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz --output ble-nightly.tar.xz
+    curl -L -o ble-nightly.tar.xz https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz
     tar xJf ble-nightly.tar.xz
     bash ble-nightly/ble.sh --install ~/.local/share
     rm -rf ble-nightly
@@ -165,3 +165,7 @@ pyenv-setup:
 # Update pyenv
 pyenv-update:
     git -C ~/.pyenv pull
+
+# Remove pyenv
+pyenv-remove:
+    rm -rf ~/.pyenv
