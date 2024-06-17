@@ -42,7 +42,7 @@ install:
   - corectrl
   - solaar
   - gnome-disk-utility
-  - skanlite
+  - skanpage
   - x2goclient
   - yakuake
   - goverlay
