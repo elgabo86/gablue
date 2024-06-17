@@ -160,3 +160,7 @@ ollama-remove:
 # Install pyenv
 pyenv-setup:
     git clone https://github.com/pyenv/pyenv.git ~/.pyenv
+
+# Update pyenv
+pyenv-update:
+    git -C ~/.pyenv pull
