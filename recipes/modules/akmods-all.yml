@@ -8,3 +8,5 @@ install:
   - gcadapter_oc
   - nct6687d
   - openrgb
+  - xpadneo
+  - xone
