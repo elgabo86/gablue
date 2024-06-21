@@ -57,6 +57,7 @@ install:
   - kde-runtime-docs
   - kdeplasma-addons
   - kde-material-you-colors
+  - krdp
   #Drivers
   - epson-inkjet-printer-escpr
   - epson-inkjet-printer-escpr2
