@@ -65,6 +65,14 @@ install:
   - printer-driver-brlaser
   - ifuse
   - libimobiledevice
+  #Dev deps
+  - gcc-c++
+  - libffi-devel
+  - readline-devel
+  - zlib-devel
+  - bzip2-devel
+  - openssl-devel
+  - sqlite-devel
 remove:
   - firefox # default firefox removed in favor of flatpak
   - firefox-langpacks # langpacks needs to also be removed to prevent dependency problems
