@@ -174,8 +174,8 @@ pyenv-remove:
 waydroid-install:
     sudo systemctl start waydroid-container
     sudo waydroid init -c 'https://ota.waydro.id/system' -v 'https://ota.waydro.id/vendor'
-    cp usr/share/ublue-os/gablue/desktops/Gabdroid.desktop ~/.local/share/applications/
-    cp usr/share/ublue-os/gablue/desktops/Gabdroid-windowed.desktop ~/.local/share/applications/
+    cp /usr/share/ublue-os/gablue/desktops/Gabdroid.desktop ~/.local/share/applications/
+    cp /usr/share/ublue-os/gablue/desktops/Gabdroid-windowed.desktop ~/.local/share/applications/
     sudo systemctl stop waydroid-container
 
 # Configure waydroid

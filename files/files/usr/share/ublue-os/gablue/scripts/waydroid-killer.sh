@@ -2,9 +2,8 @@
 
 set -eux
 
-sleep 15
+sleep 5
 
-echo add | exec sudo tee /sys/devices/virtual/input/input*/event*/uevent
 
 while [ -n "$(kdotool search Cage)" ]; do
     sleep 5
