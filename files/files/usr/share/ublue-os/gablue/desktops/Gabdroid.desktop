@@ -1,0 +1,13 @@
+[Desktop Entry]
+Comment=
+Exec=/usr/share/ublue-os/gablue/scripts/launch-waydroid-fullscreen.sh
+Icon=android-sdk
+Name=Gabdroid
+NoDisplay=false
+Path=
+StartupNotify=true
+Terminal=false
+TerminalOptions=
+Type=Application
+X-KDE-SubstituteUID=false
+X-KDE-Username=
