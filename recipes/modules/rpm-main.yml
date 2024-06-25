@@ -2,3 +2,7 @@ type: rpm-ostree
 install:
   # Tools cli
   - radeontop
+  # Waydroid
+  - waydroid
+  - cage
+  - wlr-randr

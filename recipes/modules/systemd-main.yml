@@ -1,0 +1,6 @@
+type: systemd
+system:
+  enabled:
+    - waydroid-workaround.service
+  disabled:
+    - waydroid-container.service

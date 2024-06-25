@@ -16,8 +16,10 @@ modules:
   - from-file: modules/rpm-main.yml
 
   - from-file: modules/scripts-all.yml
+  - from-file: modules/scripts-main.yml
 
   - from-file: modules/systemd-all.yml
+  - from-file: modules/systemd-main.yml
 
   - from-file: modules/fonts-all.yml
 
