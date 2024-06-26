@@ -70,11 +70,11 @@ atuin-setup:
 
 # Enable ssh remote connection
 ssh-on:
-    sudo systemctl enable sshd.socket --now
+    sudo systemctl enable sshd.service --now
 
 # Disable ssh remote connection
 ssh-off:
-    sudo systemctl disable sshd.socket --now
+    sudo systemctl disable sshd.service --now
 
 # Enable update notification
 show-update:
