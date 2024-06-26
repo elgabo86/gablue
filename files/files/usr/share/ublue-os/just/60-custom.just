@@ -176,6 +176,7 @@ waydroid-install:
     sudo waydroid init -c 'https://ota.waydro.id/system' -v 'https://ota.waydro.id/vendor'
     cp /usr/share/ublue-os/gablue/desktops/Gabdroid.desktop ~/.local/share/applications/
     cp /usr/share/ublue-os/gablue/desktops/Gabdroid-windowed.desktop ~/.local/share/applications/
+    update-desktop-database ~/.local/share/applications
     sudo systemctl stop waydroid-container
 
 # Configure waydroid
@@ -183,12 +184,13 @@ waydroid-configure:
     sudo systemctl start waydroid-container
     waydroid session start &
     sleep 8
+    sudo rm -rf /tmp/waydroid_script
     git clone https://github.com/ublue-os/waydroid_script.git --depth 1 /tmp/waydroid_script
     python -m venv /tmp/waydroid_script/venv
     source /tmp/waydroid_script/venv/bin/activate
-    pip install -r /tmp/waydroid_script/requirements.txt
+    /tmp/waydroid_script/venv/bin/pip install -r /tmp/waydroid_script/requirements.txt
     sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py
-    deactivate
+    exit
     sudo rm -rf /tmp/waydroid_script
     waydroid prop set persist.waydroid.udev true
     waydroid prop set persist.waydroid.uevent true
@@ -201,3 +203,4 @@ waydroid-remove:
     bash -c 'sudo rm -rf /var/lib/waydroid /home/.waydroid ~/waydroid ~/.share/waydroid ~/.local/share/applications/*aydroid* ~/.local/share/waydroid'
     rm ~/.local/share/applications/Gabdroid.desktop
     rm ~/.local/share/applications/Gabdroid-windowed.desktop
+    update-desktop-database ~/.local/share/applications

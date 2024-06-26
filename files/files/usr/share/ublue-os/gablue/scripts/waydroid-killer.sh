@@ -6,11 +6,11 @@ sleep 5
 
 
 while [ -n "$(kdotool search Cage)" ]; do
-    sleep 5
+    sleep 30
 done
 
 while [ -n "$(kdotool search Waydroid)" ]; do
-    sleep 5
+    sleep 30
 done
 
 waydroid session stop
