@@ -181,8 +181,8 @@ waydroid-install:
 # Configure waydroid
 waydroid-configure:
     sudo systemctl start waydroid-container
-    waydroid session start &> /dev/null
-    sleep 5
+    waydroid session start &
+    sleep 8
     git clone https://github.com/ublue-os/waydroid_script.git --depth 1 /tmp/waydroid_script
     python -m venv /tmp/waydroid_script/venv
     source /tmp/waydroid_script/venv/bin/activate
