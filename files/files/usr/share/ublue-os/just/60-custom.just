@@ -175,8 +175,7 @@ waydroid-install:
     sudo systemctl start waydroid-container
     sudo waydroid init -c 'https://ota.waydro.id/system' -v 'https://ota.waydro.id/vendor'
     mkdir -p ~/.local/share/applications/
-    cp /usr/share/ublue-os/gablue/desktops/Gabdroid.desktop ~/.local/share/applications/
-    cp /usr/share/ublue-os/gablue/desktops/Gabdroid-windowed.desktop ~/.local/share/applications/
+    cp /usr/share/ublue-os/gablue/desktops/WaydroidKiller.desktop ~/.local/share/applications/
     update-desktop-database ~/.local/share/applications
     sudo systemctl stop waydroid-container
 
@@ -204,6 +203,27 @@ waydroid-configure:
 waydroid-remove:
     sudo systemctl stop waydroid-container.service
     bash -c 'sudo rm -rf /var/lib/waydroid /home/.waydroid ~/waydroid ~/.share/waydroid ~/.local/share/applications/*aydroid* ~/.local/share/waydroid'
-    rm ~/.local/share/applications/Gabdroid.desktop
-    rm ~/.local/share/applications/Gabdroid-windowed.desktop
     update-desktop-database ~/.local/share/applications
+
+# Set waydroid multi windows mode
+waydroid-multiwin:
+    sudo systemctl stop waydroid-container
+    sudo systemctl start waydroid-container
+    waydroid session stop
+    waydroid session start &
+    sleep 15
+    waydroid prop set persist.waydroid.multi_windows true
+    waydroid session stop
+    sudo systemctl stop waydroid-container
+
+# Set waydroid only one window mode
+waydroid-onewin:
+    sudo systemctl stop waydroid-container
+    sudo systemctl start waydroid-container
+    waydroid session stop
+    waydroid session start &
+    sleep 15
+    waydroid prop set persist.waydroid.multi_windows false
+    waydroid session stop
+    sudo systemctl stop waydroid-container
+
