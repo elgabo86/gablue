@@ -215,6 +215,8 @@ waydroid-multiwin:
     waydroid prop set persist.waydroid.multi_windows true
     waydroid session stop
     sudo systemctl stop waydroid-container
+    cp /usr/share/ublue-os/gablue/desktops/WaydroidDesktop.desktop ~/.local/share/applications/
+    update-desktop-database ~/.local/share/applications
 
 # Set waydroid only one window mode
 waydroid-onewin:
@@ -226,4 +228,6 @@ waydroid-onewin:
     waydroid prop set persist.waydroid.multi_windows false
     waydroid session stop
     sudo systemctl stop waydroid-container
+    rm -f ~/.local/share/applications/WaydroidDesktop.desktop
+    update-desktop-database ~/.local/share/applications
 
