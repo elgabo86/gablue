@@ -199,7 +199,7 @@ waydroid-configure-intel:
     source /tmp/waydroid_script/venv/bin/activate
     /tmp/waydroid_script/venv/bin/pip install -r /tmp/waydroid_script/requirements.txt
     sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py remove libndk
-    sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py install {libhoudini,widevine,fdroidpriv}
+    sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py install {libhoudini,widevine}
     sudo rm -rf /tmp/waydroid_script
     waydroid session stop
     sudo systemctl stop waydroid-container
@@ -227,7 +227,34 @@ waydroid-configure-amd:
     source /tmp/waydroid_script/venv/bin/activate
     /tmp/waydroid_script/venv/bin/pip install -r /tmp/waydroid_script/requirements.txt
     sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py remove libhoudini
-    sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py install {libndk,widevine,fdroidpriv}
+    sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py install {libndk,widevine}
+    sudo rm -rf /tmp/waydroid_script
+    waydroid session stop
+    sudo systemctl stop waydroid-container
+    deactivate
+
+# Configure waydroid manualy
+waydroid-configure-custom:
+    sudo systemctl stop waydroid-container
+    sudo systemctl start waydroid-container
+    waydroid session stop
+    waydroid session start &
+    sleep 15
+    sudo sed -i "s/ro.hardware.gralloc=.*/ro.hardware.gralloc=${WAYDROID_GRALLOC:-minigbm_gbm_mesa}/g" /var/lib/waydroid/waydroid_base.prop
+    sudo mkdir -p /var/lib/waydroid/overlay/system/etc/init
+    sudo cp /usr/share/ublue-os/gablue/waydroid/audio.rc /var/lib/waydroid/overlay/system/etc/init/
+    sudo mkdir -p /var/lib/waydroid/overlay/system/etc
+    sudo cp /usr/share/ublue-os/gablue/waydroid/hosts /var/lib/waydroid/overlay/system/etc
+    sudo mkdir -p /var/lib/waydroid/overlay/system/lib64
+    sudo cp /usr/share/ublue-os/gablue/waydroid/libndk_fixer.so /var/lib/waydroid/overlay/system/lib64
+    waydroid prop set persist.waydroid.udev true
+    waydroid prop set persist.waydroid.uevent true
+    sudo rm -rf /tmp/waydroid_script
+    git clone https://github.com/ublue-os/waydroid_script.git --depth 1 /tmp/waydroid_script
+    python -m venv /tmp/waydroid_script/venv
+    source /tmp/waydroid_script/venv/bin/activate
+    /tmp/waydroid_script/venv/bin/pip install -r /tmp/waydroid_script/requirements.txt
+    sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py
     sudo rm -rf /tmp/waydroid_script
     waydroid session stop
     sudo systemctl stop waydroid-container
