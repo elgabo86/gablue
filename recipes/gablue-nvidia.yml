@@ -17,7 +17,6 @@ modules:
   - from-file: modules/scripts-all.yml
 
   - from-file: modules/systemd-all.yml
-  - from-file: modules/systemd-nvidia.yml
 
   - from-file: modules/fonts-all.yml
 

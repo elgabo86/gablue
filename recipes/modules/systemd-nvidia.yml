@@ -1,6 +1,0 @@
-type: systemd
-system:
-  enabled:
-    - nvidia-persistenced.service
-  disabled:
-    - nvidia-powerd.service
