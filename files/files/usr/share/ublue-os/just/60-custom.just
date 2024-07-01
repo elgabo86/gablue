@@ -184,7 +184,6 @@ waydroid-configure-intel:
     sudo systemctl stop waydroid-container
     waydroid session start &
     sleep 20
-    sudo sed -i "s/ro.hardware.gralloc=.*/ro.hardware.gralloc=${WAYDROID_GRALLOC:-minigbm_gbm_mesa}/g" /var/lib/waydroid/waydroid_base.prop
     sudo mkdir -p /var/lib/waydroid/overlay/system/etc/init
     sudo cp /usr/share/ublue-os/gablue/waydroid/audio.rc /var/lib/waydroid/overlay/system/etc/init/
     sudo mkdir -p /var/lib/waydroid/overlay/system/etc
@@ -199,6 +198,7 @@ waydroid-configure-intel:
     sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py remove libndk
     sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py install {libhoudini,widevine}
     sudo rm -rf /tmp/waydroid_script
+    sudo sed -i "s/ro.hardware.gralloc=.*/ro.hardware.gralloc=${WAYDROID_GRALLOC:-minigbm_gbm_mesa}/g" /var/lib/waydroid/waydroid_base.prop
     waydroid session stop
 
 # Configure waydroid for amd cpu
@@ -206,7 +206,6 @@ waydroid-configure-amd:
     sudo systemctl stop waydroid-container
     waydroid session start &
     sleep 20
-    sudo sed -i "s/ro.hardware.gralloc=.*/ro.hardware.gralloc=${WAYDROID_GRALLOC:-minigbm_gbm_mesa}/g" /var/lib/waydroid/waydroid_base.prop
     sudo mkdir -p /var/lib/waydroid/overlay/system/etc/init
     sudo cp /usr/share/ublue-os/gablue/waydroid/audio.rc /var/lib/waydroid/overlay/system/etc/init/
     sudo mkdir -p /var/lib/waydroid/overlay/system/etc
@@ -223,6 +222,8 @@ waydroid-configure-amd:
     sudo rm -rf /tmp/waydroid_script
     sudo mkdir -p /var/lib/waydroid/overlay/system/lib64
     sudo cp /usr/share/ublue-os/gablue/waydroid/libndk_fixer.so /var/lib/waydroid/overlay/system/lib64
+    sudo sed -i 's/ro.dalvik.vm.native.bridge=libndk_translation.so/ro.dalvik.vm.native.bridge=libndk_fixer.so/g' /var/lib/waydroid/waydroid_base.prop
+    sudo sed -i "s/ro.hardware.gralloc=.*/ro.hardware.gralloc=${WAYDROID_GRALLOC:-minigbm_gbm_mesa}/g" /var/lib/waydroid/waydroid_base.prop
     waydroid session stop
 
 # Configure waydroid manualy
@@ -230,7 +231,6 @@ waydroid-configure-custom:
     sudo systemctl stop waydroid-container
     waydroid session start &
     sleep 20
-    sudo sed -i "s/ro.hardware.gralloc=.*/ro.hardware.gralloc=${WAYDROID_GRALLOC:-minigbm_gbm_mesa}/g" /var/lib/waydroid/waydroid_base.prop
     sudo mkdir -p /var/lib/waydroid/overlay/system/etc/init
     sudo cp /usr/share/ublue-os/gablue/waydroid/audio.rc /var/lib/waydroid/overlay/system/etc/init/
     sudo mkdir -p /var/lib/waydroid/overlay/system/etc
@@ -244,6 +244,7 @@ waydroid-configure-custom:
     /tmp/waydroid_script/venv/bin/pip install -r /tmp/waydroid_script/requirements.txt
     sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py
     sudo rm -rf /tmp/waydroid_script
+    sudo sed -i "s/ro.hardware.gralloc=.*/ro.hardware.gralloc=${WAYDROID_GRALLOC:-minigbm_gbm_mesa}/g" /var/lib/waydroid/waydroid_base.prop
     waydroid session stop
 
 # Remove waydroid
@@ -258,7 +259,7 @@ waydroid-multiwin:
     sudo systemctl start waydroid-container
     waydroid session stop
     waydroid session start &
-    sleep 15
+    sleep 20
     waydroid prop set persist.waydroid.multi_windows true
     waydroid session stop
     sudo systemctl stop waydroid-container
@@ -271,7 +272,7 @@ waydroid-onewin:
     sudo systemctl start waydroid-container
     waydroid session stop
     waydroid session start &
-    sleep 15
+    sleep 20
     waydroid prop set persist.waydroid.multi_windows false
     waydroid session stop
     sudo systemctl stop waydroid-container
