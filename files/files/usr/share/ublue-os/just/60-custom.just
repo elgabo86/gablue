@@ -2,7 +2,7 @@
 tailscale-up:
     sudo firewall-cmd --add-masquerade --zone=FedoraWorkstation --permanent
     sudo firewall-cmd --add-interface=tailscale0 --zone=trusted --permanent
-    sudo tailscale up --login-server https://headscale.gabserv.duckdns.org
+    sudo tailscale up --operator=$USER --login-server https://headscale.gabserv.duckdns.org
 
 # Install/Reinstall custom Archlinux
 distrobox-archgab:
