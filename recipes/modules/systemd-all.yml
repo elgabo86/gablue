@@ -4,3 +4,4 @@ system:
     - sunshine-workaround.service
     - tailscaled.service
     - kde-sysmonitor-workaround.service
+    - gamescope-workaround.service

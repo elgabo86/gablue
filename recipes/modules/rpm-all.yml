@@ -46,6 +46,7 @@ install:
   - goverlay
   - mangohud
   - cool-retro-term
+  - gamescope
   # Themes
   - papirus-icon-theme
   # Others
