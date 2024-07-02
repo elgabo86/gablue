@@ -3,3 +3,4 @@ system:
   enabled:
     - sunshine-workaround.service
     - tailscaled.service
+    - kde-sysmonitor-workaround.service
