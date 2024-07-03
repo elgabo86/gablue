@@ -196,6 +196,7 @@ waydroid-configure-intel:
     source /tmp/waydroid_script/venv/bin/activate
     /tmp/waydroid_script/venv/bin/pip install -r /tmp/waydroid_script/requirements.txt
     sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py remove libndk
+    sleep 20
     sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py install {libhoudini,widevine}
     sudo rm -rf /tmp/waydroid_script
     sudo sed -i "s/ro.hardware.gralloc=.*/ro.hardware.gralloc=${WAYDROID_GRALLOC:-minigbm_gbm_mesa}/g" /var/lib/waydroid/waydroid_base.prop
@@ -218,6 +219,7 @@ waydroid-configure-amd:
     source /tmp/waydroid_script/venv/bin/activate
     /tmp/waydroid_script/venv/bin/pip install -r /tmp/waydroid_script/requirements.txt
     sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py remove libhoudini
+    sleep 20
     sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py install {libndk,widevine}
     sudo rm -rf /tmp/waydroid_script
     sudo mkdir -p /var/lib/waydroid/overlay/system/lib64
