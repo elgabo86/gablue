@@ -4,5 +4,3 @@ install:
   - radeontop
   # Waydroid
   - waydroid
-  - cage
-  - wlr-randr

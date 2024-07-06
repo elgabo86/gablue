@@ -47,6 +47,8 @@ install:
   - mangohud
   - cool-retro-term
   - gamescope
+  - cage
+  - wlr-randr
   # Themes
   - papirus-icon-theme
   # Others
