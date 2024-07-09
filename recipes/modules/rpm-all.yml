@@ -24,6 +24,7 @@ install:
   - stress-ng
   - powertop
   - android-tools
+  - byobu
   # Goodies cli
   - bash-color-prompt
   - asciiquarium
