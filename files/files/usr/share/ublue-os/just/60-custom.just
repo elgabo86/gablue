@@ -281,3 +281,11 @@ waydroid-onewin:
     rm -f ~/.local/share/applications/WaydroidDesktop.desktop
     update-desktop-database ~/.local/share/applications
 
+# Add Suyu flatpak repo & install suyu
+suyu-install:
+    flatpak remote-add suyu https://git.suyu.dev/suyu/flatpak/src/branch/main/org.suyu_emu.suyu.flatpakref
+    flatpak install org.suyu_emu.suyu -y
+
+# Remove suyu and his repo
+suyu-remove:
+    flatpak remote-delete suyu-flatpak --force
