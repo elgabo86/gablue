@@ -22,6 +22,8 @@ alias wkill="pgrep -i '(.*\.(exe|dll|msi|bat|com|lnk)$)|(.*(wine|proton).*))' |x
 
 alias neofetch="fastfetch -c /usr/share/ublue-os/gablue/fastfetch.jsonc"
 
+alias gablue-update="rpm-ostree upgrade && flatpak update -y"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
