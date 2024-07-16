@@ -292,7 +292,7 @@ suyu-remove:
 
 # Install default bottle and add default bottles folder with data user redirection and .desktop extras
 windows-install:
-    pgrep -f bottles-cli |xargs -n1 kill -9
+    pgrep -f bottles-cli |xargs -n1 kill -9 >/dev/null 2>&1 || true
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def*
     flatpak run --command=bottles-cli com.usebottles.bottles new --bottle-name "def" --environment gaming
     flatpak override com.usebottles.bottles --user --filesystem=~/Windows
@@ -312,7 +312,7 @@ windows-install:
 
 # Remove default bottle but keep user data
 windows-remove:
-    pgrep -f bottles-cli |xargs -n1 kill -9
+    pgrep -f bottles-cli |xargs -n1 kill -9 >/dev/null 2>&1 || true
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def*
     rm ~/Windows/WinDrive
     rm ~/.local/share/applications/com.usebottles.bottles.desktop
