@@ -308,7 +308,7 @@ windows-install:
     cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications/
     cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications/
     cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications/
-    update-desktop-database ~/.local/share/
+    update-desktop-database ~/.local/share/applications
 
 # Remove default bottle but keep user data
 windows-remove:
