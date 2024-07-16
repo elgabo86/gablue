@@ -295,9 +295,26 @@ windows-install:
     pgrep -f bottles-cli |xargs -n1 kill -9 &
     sleep 2
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def*
+    mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/ ~/.var/app/com.usebottles.bottles/data/bottles/runners/ ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/  ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
+    wget -O ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64.tar.xz  https://github.com/bottlesdevs/wine/releases/download/soda-9.0-1/soda-9.0-1-x86_64.tar.xz
+    tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64.tar.xz -C ~/.var/app/com.usebottles.bottles/data/bottles/runners/
+    mv ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64 ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1
+    rm -f ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64.tar.xz
+    wget -O ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.3.1-1.tar.gz https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/dxvk-gplasync-v2.3.1-1.tar.gz
+    tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.3.1-1.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/
+    rm -f ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.3.1-1.tar.gz
+    wget -O ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.13.tar.gz https://github.com/bottlesdevs/components/releases/download/vkd3d-proton-2.13/vkd3d-proton-2.13.tar.gz
+    tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.13.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/
+    rm -f ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.13.tar.gz
+    wget -O ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz https://github.com/bottlesdevs/components/releases/download/dxvk-nvapi-v0.7.1/dxvk-nvapi-v0.7.1.tar.gz
+    tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/
+    rm -f ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz
+    wget -O ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz https://github.com/bottlesdevs/components/releases/download/latencyflex-v0.1.1-2-3bc9636/latencyflex-v0.1.1-2-3bc9636.tar.gz
+    tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
+    rm -f ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz
     flatpak run --command=bottles-cli com.usebottles.bottles new --bottle-name "def" --environment gaming
     flatpak override com.usebottles.bottles --user --filesystem=~/Windows
-    mkdir -p ~/Windows/UserData ~/Windows/SteamData ~/Windows/Games ~/Windows/Applications
+    mkdir -p ~/Windows/UserData ~/Windows/SteamData ~/Windows/Games ~/Windows/Applications ~/Windows/Tools
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users/
     ln -s ~/Windows/UserData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users
     ln -s ~/Windows/SteamData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/Steam
@@ -310,6 +327,18 @@ windows-install:
     cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications/
     cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications/
     update-desktop-database ~/.local/share/applications
+    wget -O ~/Windows/Tools/vc2015_2022-x86.exe https://aka.ms/vs/17/release/VC_redist.x86.exe
+    wget -O ~/Windows/Tools/vc2015_2022-x64.exe https://aka.ms/vs/17/release/VC_redist.x64.exe
+    wget -O ~/Windows/Tools/runtime-6.0.16-x64.exe https://download.visualstudio.microsoft.com/download/pr/85473c45-8d91-48cb-ab41-86ec7abc1000/83cd0c82f0cde9a566bae4245ea5a65b/windowsdesktop-runtime-6.0.16-win-x64.exe
+    rm -rf ~/Windows/Tools
+    flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/vc2015_2022-x86.exe /quiet /norestart
+    flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/vc2015_2022-x64.exe /quiet /norestart
+    flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/runtime-6.0.16-x64.exe /quiet
+    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/23.08 -y
+    cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud/
+    flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params mangohud:true
+    flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params gamemode:true
+    echo "ALL DONE!!!"
 
 # Remove default bottle but keep user data
 windows-remove:
@@ -321,3 +350,4 @@ windows-remove:
     rm ~/.local/share/applications/Windows.desktop
     rm ~/.local/share/applications/KillWindows.desktop
     update-desktop-database ~/.local/share/applications
+    echo "ALL DONE!!!"
