@@ -330,14 +330,18 @@ windows-install:
     wget -O ~/Windows/Tools/vc2015_2022-x86.exe https://aka.ms/vs/17/release/VC_redist.x86.exe
     wget -O ~/Windows/Tools/vc2015_2022-x64.exe https://aka.ms/vs/17/release/VC_redist.x64.exe
     wget -O ~/Windows/Tools/runtime-6.0.16-x64.exe https://download.visualstudio.microsoft.com/download/pr/85473c45-8d91-48cb-ab41-86ec7abc1000/83cd0c82f0cde9a566bae4245ea5a65b/windowsdesktop-runtime-6.0.16-win-x64.exe
-    rm -rf ~/Windows/Tools
     flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/vc2015_2022-x86.exe /quiet /norestart
     flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/vc2015_2022-x64.exe /quiet /norestart
     flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/runtime-6.0.16-x64.exe /quiet
+    wget -O ~/Windows/Tools/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
+    chmod +x ~/Windows/Tools/winetricks
+    WINE=~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1/bin/wine WINEPREFIX=~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/Windows/Tools/winetricks -q corefonts d3dcompiler_43 d3dcompiler_47 d3dx9 msls31
+    rm -rf ~/Windows/Tools
     flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/23.08 -y
     cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud/
     flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params mangohud:true
     flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params gamemode:true
+    clear
     echo "ALL DONE!!!"
 
 # Remove default bottle but keep user data
@@ -350,4 +354,5 @@ windows-remove:
     rm ~/.local/share/applications/Windows.desktop
     rm ~/.local/share/applications/KillWindows.desktop
     update-desktop-database ~/.local/share/applications
+    clear
     echo "ALL DONE!!!"

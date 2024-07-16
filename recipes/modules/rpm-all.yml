@@ -25,6 +25,7 @@ install:
   - powertop
   - android-tools
   - byobu
+  - cabextract
   # Goodies cli
   - bash-color-prompt
   - asciiquarium
