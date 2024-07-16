@@ -298,6 +298,7 @@ windows-install:
     mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/ ~/.var/app/com.usebottles.bottles/data/bottles/runners/ ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/  ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
     wget -O ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64.tar.xz  https://github.com/bottlesdevs/wine/releases/download/soda-9.0-1/soda-9.0-1-x86_64.tar.xz
     tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64.tar.xz -C ~/.var/app/com.usebottles.bottles/data/bottles/runners/
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1/
     mv ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64 ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1
     rm -f ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64.tar.xz
     wget -O ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.3.1-1.tar.gz https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/dxvk-gplasync-v2.3.1-1.tar.gz
@@ -320,7 +321,7 @@ windows-install:
     ln -s ~/Windows/SteamData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/Steam
     ln -s ~/Windows/Applications/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/
     ln -s ~/Windows/Games/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/
-    ln -f -s ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ ~/Windows/WinDrive
+    ln -f -s -T ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ ~/Windows/WinDrive
     flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "Enable SDL" -d 1 -t "REG_DWORD"
     flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD"
     cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications/
@@ -333,9 +334,7 @@ windows-install:
     flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/vc2015_2022-x86.exe /quiet /norestart
     flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/vc2015_2022-x64.exe /quiet /norestart
     flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/runtime-6.0.16-x64.exe /quiet
-    wget -O ~/Windows/Tools/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
-    chmod +x ~/Windows/Tools/winetricks
-    WINE=~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1/bin/wine WINEPREFIX=~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/Windows/Tools/winetricks -q corefonts d3dcompiler_43 d3dcompiler_47 d3dx9 msls31
+    flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/soda-9.0-1/bin/wine --command=winetricks com.usebottles.bottles -q corefonts d3dcompiler_43 d3dcompiler_47 d3dx9 msls31
     rm -rf ~/Windows/Tools
     flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/23.08 -y
     cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud/
