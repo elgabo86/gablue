@@ -18,7 +18,7 @@ alias gogpt-llama2="tgpt --provider llama2 -i"
 alias gogpt-blackboxai="tgpt --provider blackboxai -i"
 
 
-alias wkill="pgrep -i '(.*\.(exe|dll|msi|bat|com|lnk)$)|(.*(wine|proton).*))' |xargs -n1 kill -9"
+alias wkill="pgrep -i '(.*\.(exe|dll|msi|bat|com|lnk)$)|(.*(wine|proton).*))' |xargs -n1 kill -9 && pgrep -f bottles-cli |xargs -n1 kill -9"
 
 alias neofetch="fastfetch -c /usr/share/ublue-os/gablue/fastfetch.jsonc"
 

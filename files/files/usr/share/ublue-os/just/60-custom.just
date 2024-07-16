@@ -289,3 +289,33 @@ suyu-install:
 # Remove suyu and his repo
 suyu-remove:
     flatpak remote-delete suyu-flatpak --force
+
+# Install default bottle and add default bottles folder with data user redirection and .desktop extras
+windows-install:
+    pgrep -f bottles-cli |xargs -n1 kill -9
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def*
+    flatpak run --command=bottles-cli com.usebottles.bottles new --bottle-name "def" --environment gaming
+    flatpak override com.usebottles.bottles --user --filesystem=~/Windows
+    mkdir -p ~/Windows/UserData ~/Windows/SteamData ~/Windows/Games ~/Windows/Applications
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users/
+    ln -s ~/Windows/UserData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users
+    ln -s ~/Windows/SteamData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/Steam
+    ln -s ~/Windows/Applications/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/
+    ln -s ~/Windows/Games/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/
+    ln -f -s ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ ~/Windows/WinDrive
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "Enable SDL" -d 1 -t "REG_DWORD"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD"
+    cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications/
+    cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications/
+    cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications/
+    update-desktop-database ~/.local/share/
+
+# Remove default bottle but keep user data
+windows-remove:
+    pgrep -f bottles-cli |xargs -n1 kill -9
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def*
+    rm ~/Windows/WinDrive
+    rm ~/.local/share/applications/com.usebottles.bottles.desktop
+    rm ~/.local/share/applications/Windows.desktop
+    rm ~/.local/share/applications/KillWindows.desktop
+    update-desktop-database ~/.local/share/applications

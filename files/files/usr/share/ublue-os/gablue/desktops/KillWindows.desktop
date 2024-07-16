@@ -1,0 +1,21 @@
+[Desktop Entry]
+Categories=Utility;
+Comment=Kill Windows
+Exec=pgrep -f bottles-cli |xargs -n1 kill -9
+GenericName=Windows killer
+Icon=com.usebottles.bottles
+Keywords[fr_CH]=wine;windows;
+Keywords=wine;windows;
+MimeType=
+Name=Kill Windows
+NoDisplay=false
+Path=
+StartupNotify=true
+StartupWMClass=
+Terminal=false
+TerminalOptions=
+Type=Application
+X-Flatpak=
+X-GNOME-UsesNotifications=true
+X-KDE-SubstituteUID=false
+X-KDE-Username=

@@ -1,0 +1,20 @@
+[Desktop Entry]
+Categories=Utility;GNOME;GTK;
+Comment=Exécutez des logiciels Windows
+Exec=/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles --file-forwarding com.usebottles.bottles @@u %u @@
+Icon=com.usebottles.bottles
+Keywords[fr_CH]=wine;windows;
+Keywords=wine;windows;
+MimeType=x-scheme-handler/bottles;
+Name=Bouteilles
+NoDisplay=false
+Path=
+StartupNotify=true
+StartupWMClass=bottles
+Terminal=false
+TerminalOptions=
+Type=Application
+X-Flatpak=com.usebottles.bottles
+X-GNOME-UsesNotifications=true
+X-KDE-SubstituteUID=false
+X-KDE-Username=
