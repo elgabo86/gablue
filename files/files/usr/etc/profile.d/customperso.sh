@@ -1,5 +1,7 @@
 # Personnal alias
 
+alias gablue-help="cat /usr/share/ublue-os/gablue/gablue-help.txt"
+
 alias goarch="distrobox enter archgab"
 
 alias dlv-mp3="yt-dlp -x --format bestaudio --audio-format mp3 --audio-quality 0 --embed-thumbnail --embed-metadata --paths $(xdg-user-dir DOWNLOAD) -o '%(title)s.%(ext)s'"
@@ -14,7 +16,6 @@ alias ffsendp="podman run --rm --rmi -it -v $(pwd):/data:Z docker.io/timvisee/ff
 alias gogpt="tgpt --provider opengpts -i"
 alias gogpt-phind="tgpt --provider phind -i"
 alias gogpt-koboldai="tgpt --provider koboldai -i"
-alias gogpt-llama2="tgpt --provider llama2 -i"
 alias gogpt-blackboxai="tgpt --provider blackboxai -i"
 
 

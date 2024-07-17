@@ -1,0 +1,84 @@
+# Liste des commandes personnalisée Gablue
+
+
+## Commandes recommandées à l'installation :
+
+
+- ujust flatpak-custom-overrides  # Ajoute les permissions flatpak customisée pour Gablue
+- ujust mitigations-off           # Désactive les securités CPU (boost de performance)
+
+
+## Commandes optionnelles à l'installation :
+
+- ujust hide-grub                 # Permet de cacher le menu de boot au démarrage de la machine
+- ujust hide-update               # Désactiver les messages de mise à jour du système
+- ujust distrobox-archgab         # Permet d'installer un système
+- ujust windows-install           # Installe ou réinstalle une bouteille windows où les .exe s'executent par défaut
+- ujust tailscale-up              # Permet de configuer et faire une demande d'ajout sur le réseau tailscale de Sucina
+- ujust ssh-on                    # Activer la connection à distance SSH de la machine
+
+
+## Outils système :
+
+- neofetch                        # Affiche la configuration actuelle du système
+
+- gablue-update                   # Permet de forcer la mise à jour système + les applications flatpak
+
+- goarch                          # Permet le lancer le système archlinux (à installer avant)
+
+- ujust toggle-updates            # Active/Désactive les mise à jour automatiques (activé par défaut)
+
+- ujust clean-system              # Nettoyage des packages flatpak, des images podman et rpm-ostree inutilisés
+
+- ujust bios                      # Redémarrer et entrer automatiquement dans la configuration BIOS de la machine
+
+- ujust changelogs                # Afficher les changements effectués de la mise à jour
+
+- ujust amd-corectrl-set-kargs    # Permet d'activer le controle avancé des cartes graphiques AMD (utile pour CoreCtl)
+
+- ujust ssh-off                   # Désactiver la connection à distance SSH de la machine
+
+- ujust waydroid-install          # Installer un système Android sur Gablue
+- ujust waydroid-configure-amd    # Configurer Android pour les CPU AMD
+- ujust waydroid-configure-intel  # Configurer Android pour les CPU Intel
+- ujust waydroid-remove           # Effacer le système android et effacer les données utilisateur
+
+- ujust sound-432                 # Change la sortie générale audio en 432hz
+- ujust sound-reset               # Réinitialise la sortie générale audio en mode par défaut
+
+- ujust create-iso-main           # Création d'un iso d'installation Gablue pour les machines non Nvidia (Destination dossier de Téléchargement)
+- ujust create-iso-nvidia         # Création d'un iso d'installation Gablue pour les machines Nvidia (Destination dossier de Téléchargement)
+
+
+- ujust mitigations-on            # Active les securités CPU (plus de sécurité)
+
+- ujust show-grub                 # Permet d'afficher le menu de boot au démarrage de la machine (par défaut)
+
+- ujust show-update               # Activer les messages de mise à jour du système
+
+- ujust update-firmware           # Met à jour les firmwares internes des périphériques compatibles
+
+- ujust windows-remove            # Effacer la bouteille windows par défaut (Mais conserve les données utilisateur)
+
+
+## Outils media:
+
+- dlv-mp3 $lienyoutube            # Permet de télécharger et convertir en mp3 une vidéo youtube (Destination dossier de Téléchargement)
+- dlv-mp4 $lienyoutube            # Permet de télécharger et convertir en mp4 une vidéo youtube (Destination dossier de Téléchargement)
+- dlv-mkv $lienyoutube            # Permet de télécharger et convertir en mkv une vidéo youtube (Destination dossier de Téléchargement)
+
+- miniserve                       # Lance un mini serveur de fichier dans le dossier courant
+
+- ffsend $nomdufichier            # Envoie un fichier sur les serveur ffsend pour ensuite recevoir un lien et le partager
+- ffsendp $nomdufichier           # Envoie un fichier sur les serveur ffsend pour ensuite recevoir un lien et le partager (avec mot de passe)
+
+
+## Outils AI :
+
+- gogpt                           # Chatter avec un bot généraliste
+- gogpt-phind                     # Chatter avec un bot spécialisé dans la technique
+
+- ujust ollama-amd                # Installe/démarre un système de bot local avec interface web (localhost:3000) (GPU AMD)
+- ujust ollama-nvidia             # Installe/démarre un système de bot local avec interface web (localhost:3000) (GPU Nvidia)
+- ujust ollama-cpu                # Installe/démarre un système de bot local avec interface web (localhost:3000) (Only CPU)
+- ujust ollama-remove             # Effacer le système de bot local ainsi que tous les bots installés (!!!)
