@@ -86,8 +86,7 @@
 
 ## Outils AI :
 
-- gogpt                           # Chatter avec un bot généraliste
-- gogpt-phind                     # Chatter avec un bot spécialisé dans la technique
+- gogpt                           # Chatter avec un bot (service tgpt)
 
 - ujust ollama-amd                # Installe/démarre un système de bot local avec interface web (localhost:3000) (GPU AMD)
 - ujust ollama-nvidia             # Installe/démarre un système de bot local avec interface web (localhost:3000) (GPU Nvidia)
