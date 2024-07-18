@@ -12,7 +12,7 @@
 
 - ujust hide-grub                 # Permet de cacher le menu de boot au démarrage de la machine
 - ujust hide-update               # Désactiver les messages de mise à jour du système
-- ujust distrobox-archgab         # Permet d'installer un système
+- ujust distrobox-archgab         # Permet d'installer un système archlinux
 - ujust windows-install           # Installe ou réinstalle une bouteille windows où les .exe s'executent par défaut
 - ujust tailscale-up              # Permet de configuer et faire une demande d'ajout sur le réseau tailscale de Sucina
 - ujust ssh-on                    # Activer la connection à distance SSH de la machine
@@ -49,7 +49,6 @@
 - ujust create-iso-main           # Création d'un iso d'installation Gablue pour les machines non Nvidia (Destination dossier de Téléchargement)
 - ujust create-iso-nvidia         # Création d'un iso d'installation Gablue pour les machines Nvidia (Destination dossier de Téléchargement)
 
-
 - ujust mitigations-on            # Active les securités CPU (plus de sécurité)
 
 - ujust show-grub                 # Permet d'afficher le menu de boot au démarrage de la machine (par défaut)
@@ -59,6 +58,18 @@
 - ujust update-firmware           # Met à jour les firmwares internes des périphériques compatibles
 
 - ujust windows-remove            # Effacer la bouteille windows par défaut (Mais conserve les données utilisateur)
+
+- speedtest-cli                   # Effectue un test de vitesse de la connection internet
+
+- sensors                         # Affiche tous les senseurs de température de la machine
+
+- btop                            # Gestionnaire de tâches + surveillance système
+
+- ncdu                            # Permet de lister les fichiers/dossier selon leur tailes et ainsi libèrer de la place
+
+- sudo iotop                      # Permet de voir l'utilisation disque en temps réel par processus/applications
+
+- mc                              # Gestionnaire de fichiers
 
 
 ## Outils media:
@@ -82,3 +93,20 @@
 - ujust ollama-nvidia             # Installe/démarre un système de bot local avec interface web (localhost:3000) (GPU Nvidia)
 - ujust ollama-cpu                # Installe/démarre un système de bot local avec interface web (localhost:3000) (Only CPU)
 - ujust ollama-remove             # Effacer le système de bot local ainsi que tous les bots installés (!!!)
+
+## Outils Dev :
+
+- pyenv-setup                     # Installe un système de gestion de version de Python
+- pyenv-update                    # Met à jour pyenv
+- pyenv-remove                    # Désintalle pyenv
+
+- atuin-setup                     # Installation d'atuin, un système d'historique avancé du terminal
+
+## Goodies :
+
+- cmatrix
+- asciquarium
+- nyancat
+- figlet
+- toilet
+- cool-retro-term
