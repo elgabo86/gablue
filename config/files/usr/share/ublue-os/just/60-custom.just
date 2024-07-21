@@ -292,7 +292,7 @@ suyu-remove:
 
 # Install default bottle and add default bottles folder with data user redirection and .desktop extras
 windows-install:
-    pgrep -f bottles-cli |xargs -n1 kill -9 &
+    pgrep -f bottles |xargs -n1 kill -9 &
     sleep 2
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def*
     mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/ ~/.var/app/com.usebottles.bottles/data/bottles/runners/ ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/  ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
@@ -301,9 +301,10 @@ windows-install:
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1/
     mv ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64 ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1
     rm -f ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64.tar.xz
-    wget -O ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.3.1-1.tar.gz https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/dxvk-gplasync-v2.3.1-1.tar.gz
-    tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.3.1-1.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/
-    rm -f ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.3.1-1.tar.gz
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/*
+    wget -O ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.4-1.tar.gz https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/dxvk-gplasync-v2.4-1.tar.gz
+    tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.4-1.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/
+    rm -f ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.4-1.tar.gz
     wget -O ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.13.tar.gz https://github.com/bottlesdevs/components/releases/download/vkd3d-proton-2.13/vkd3d-proton-2.13.tar.gz
     tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.13.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/
     rm -f ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.13.tar.gz
@@ -345,7 +346,7 @@ windows-install:
 
 # Remove default bottle but keep user data
 windows-remove:
-    pgrep -f bottles-cli |xargs -n1 kill -9 &
+    pgrep -f bottles |xargs -n1 kill -9 &
     sleep 2
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def*
     rm ~/Windows/WinDrive
