@@ -283,7 +283,7 @@ waydroid-onewin:
 
 # Add Suyu flatpak repo & install suyu
 suyu-install:
-    flatpak remote-add suyu https://git.suyu.dev/suyu/flatpak/src/branch/main/org.suyu_emu.suyu.flatpakref
+    flatpak remote-add suyu-flatpak https://git.suyu.dev/suyu/flatpak/src/branch/main/org.suyu_emu.suyu.flatpakref
     flatpak install org.suyu_emu.suyu -y
 
 # Remove suyu and his repo
