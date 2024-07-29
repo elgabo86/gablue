@@ -428,8 +428,14 @@ windows-install:
     flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD"
     cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications/
     cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications/
+    cp /usr/share/ublue-os/gablue/desktops/WindowsTerminal.desktop ~/.local/share/applications/
     cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications/
     update-desktop-database ~/.local/share/applications
+    xdg-mime default Windows.desktop application/x-ms-dos-executable
+    xdg-mime default Windows.desktop application/x-msi
+    xdg-mime default Windows.desktop application/x-ms-shortcut
+    xdg-mime default Windows.desktop application/x-wine-extension-msp
+    xdg-mime default Windows.desktop application/x-bat
     wget -O ~/Windows/Tools/vc2015_2022-x86.exe https://aka.ms/vs/17/release/VC_redist.x86.exe
     wget -O ~/Windows/Tools/vc2015_2022-x64.exe https://aka.ms/vs/17/release/VC_redist.x64.exe
     wget -O ~/Windows/Tools/runtime-6.0.16-x64.exe https://download.visualstudio.microsoft.com/download/pr/85473c45-8d91-48cb-ab41-86ec7abc1000/83cd0c82f0cde9a566bae4245ea5a65b/windowsdesktop-runtime-6.0.16-win-x64.exe
