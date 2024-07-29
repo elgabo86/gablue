@@ -17,6 +17,10 @@ alias gogpt="tgpt -i"
 
 alias wkill="pgrep -i '(.*\.(exe|dll|msi|bat|com|lnk)$)|(.*(wine|proton).*))' |xargs -n1 kill -9 && pgrep -f bottles |xargs -n1 kill -9"
 
+alias wrun="flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e"
+
+alias wtricks="flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/soda-9.0-1/bin/wine --command=winetricks com.usebottles.bottles"
+
 alias neofetch="fastfetch -c /usr/share/ublue-os/gablue/fastfetch.jsonc"
 
 alias gablue-update="rpm-ostree upgrade && flatpak update -y"
