@@ -88,10 +88,14 @@
 
 - gogpt                           # Chatter avec un bot (service tgpt)
 
-- ujust ollama-amd                # Installe/démarre un système de bot local avec interface web (localhost:3000) (GPU AMD)
-- ujust ollama-nvidia             # Installe/démarre un système de bot local avec interface web (localhost:3000) (GPU Nvidia)
-- ujust ollama-cpu                # Installe/démarre un système de bot local avec interface web (localhost:3000) (Only CPU)
+- ujust ollama-amd                # Installe/update un système de bot local avec interface web (localhost:3000) (GPU AMD)
+- ujust ollama-nvidia             # Installe/update un système de bot local avec interface web (localhost:3000) (GPU Nvidia)
+- ujust ollama-cpu                # Installe/update un système de bot local avec interface web (localhost:3000) (Only CPU)
 - ujust ollama-remove             # Effacer le système de bot local ainsi que tous les bots installés (!!!)
+
+- ollama-start                    # Démarre le système de bot local avec interface web déjà installé
+- ollama-stop                     # Stoppe le système de bot local avec interface web déjà installé
+- ollama-restart                  # Relance le système de bot local avec interface web déjà installé
 
 ## Outils Dev :
 

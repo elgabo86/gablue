@@ -25,6 +25,12 @@ alias neofetch="fastfetch -c /usr/share/ublue-os/gablue/fastfetch.jsonc"
 
 alias gablue-update="rpm-ostree upgrade && flatpak update -y"
 
+alias ollama-start="podman start ollama open-webui && echo 'Ollama WebGui http://localhost:3000'"
+
+alias ollama-restart="podman restart ollama open-webui"
+
+alias ollama-stop="podman stop ollama open-webui"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
