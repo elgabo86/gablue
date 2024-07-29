@@ -292,6 +292,7 @@ suyu-remove:
 
 # Install default bottle and add default bottles folder with data user redirection and .desktop extras
 windows-install:
+    #!/usr/bin/env bash
     pgrep -f bottles |xargs -n1 kill -9 &
     sleep 2
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def*

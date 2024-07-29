@@ -26,6 +26,7 @@ install:
   - android-tools
   - byobu
   - cabextract
+  - ripgrep
   # Goodies cli
   - bash-color-prompt
   - asciiquarium
