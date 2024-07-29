@@ -172,15 +172,17 @@ pyenv-remove:
 
 # Install waydroid
 waydroid-install:
+    #!/usr/bin/env bash
     sudo systemctl start waydroid-container
     sudo waydroid init -c 'https://ota.waydro.id/system' -v 'https://ota.waydro.id/vendor'
     mkdir -p ~/.local/share/applications/
-    cp /usr/share/ublue-os/gablue/desktops/WaydroidKiller.desktop ~/.local/share/applications/
+    cp /usr/share/ublue-os/gablue/desktops/KillWaydroid.desktop ~/.local/share/applications/
     update-desktop-database ~/.local/share/applications
     sudo systemctl stop waydroid-container
 
 # Configure waydroid for intel cpu
 waydroid-configure-intel:
+    #!/usr/bin/env bash
     sudo systemctl stop waydroid-container
     waydroid session start &
     sleep 20
@@ -204,6 +206,7 @@ waydroid-configure-intel:
 
 # Configure waydroid for amd cpu
 waydroid-configure-amd:
+    #!/usr/bin/env bash
     sudo systemctl stop waydroid-container
     waydroid session start &
     sleep 20
@@ -230,6 +233,7 @@ waydroid-configure-amd:
 
 # Configure waydroid manualy
 waydroid-configure-custom:
+    #!/usr/bin/env bash
     sudo systemctl stop waydroid-container
     waydroid session start &
     sleep 20
@@ -251,12 +255,14 @@ waydroid-configure-custom:
 
 # Remove waydroid
 waydroid-remove:
+    #!/usr/bin/env bash
     sudo systemctl stop waydroid-container.service
     bash -c 'sudo rm -rf /var/lib/waydroid /home/.waydroid ~/waydroid ~/.share/waydroid ~/.local/share/applications/*aydroid* ~/.local/share/waydroid'
     update-desktop-database ~/.local/share/applications
 
 # Set waydroid multi windows mode
 waydroid-multiwin:
+    #!/usr/bin/env bash
     sudo systemctl stop waydroid-container
     sudo systemctl start waydroid-container
     waydroid session stop
@@ -270,6 +276,7 @@ waydroid-multiwin:
 
 # Set waydroid only one window mode
 waydroid-onewin:
+    #!/usr/bin/env bash
     sudo systemctl stop waydroid-container
     sudo systemctl start waydroid-container
     waydroid session stop
@@ -341,6 +348,7 @@ windows-install:
     flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/soda-9.0-1/bin/wine --command=winetricks com.usebottles.bottles -q corefonts d3dcompiler_43 d3dcompiler_47 d3dx9 msls31
     rm -rf ~/Windows/Tools
     flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/23.08 -y
+    mkdir -p ~/.config/MangoHud/
     cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud/
     flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params mangohud:true
     flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params gamemode:true
@@ -349,6 +357,7 @@ windows-install:
 
 # Remove default bottle but keep user data
 windows-remove:
+    #!/usr/bin/env bash
     pgrep -f bottles |xargs -n1 kill -9 &
     sleep 2
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def*
