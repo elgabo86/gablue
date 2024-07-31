@@ -48,7 +48,7 @@ amd-corectrl-set-kargs:
     clear
     echo "ALL DONE!!!"
 
-# Remove cpu security, boost performance
+# Remove cpu security,systemctl enable scx-lavd.service boost performance
 mitigations-off:
     #!/usr/bin/bash
     rpm-ostree kargs --append-if-missing=mitigations=off
@@ -505,3 +505,11 @@ brew-reset:
     clear
     echo "ALL DONE!!!"
     echo "Restart computer to reuse brew"
+
+# Enable special scheduler for gaming (experimental)
+gameshed-enable:
+    sudo systemctl enable scx-lavd.service --now
+
+# Disable special scheduler for gaming
+gameshed-enable:
+    sudo systemctl disable scx-lavd.service --now
