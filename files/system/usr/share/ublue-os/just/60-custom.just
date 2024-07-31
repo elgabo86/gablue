@@ -511,5 +511,5 @@ gameshed-enable:
     sudo systemctl enable scx-lavd.service --now
 
 # Disable special scheduler for gaming
-gameshed-enable:
+gameshed-disable:
     sudo systemctl disable scx-lavd.service --now
