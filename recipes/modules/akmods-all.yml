@@ -1,12 +1,11 @@
 type: akmods
+base: fsync
 install:
   - openrazer
   - wl
   - evdi
   - v4l2loopback
   - bmi260
-  - gcadapter_oc
   - nct6687d
-  - openrgb
   - xpadneo
   - xone

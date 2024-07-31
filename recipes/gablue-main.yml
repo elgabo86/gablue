@@ -12,6 +12,12 @@ image-version: latest # latest is also supported if you want new updates ASAP
 modules:
   - from-file: modules/files-all.yml
 
+  - from-file: modules/containerfile-all.yml
+
+  - from-file: modules/scripts-kernel-main.yml
+
+  - from-file: modules/akmods-all.yml
+
   - from-file: modules/rpm-all.yml
   - from-file: modules/rpm-main.yml
 
@@ -29,7 +35,4 @@ modules:
 
   - from-file: modules/brew-all.yml
 
-  - from-file: modules/akmods-all.yml
-
   - type: signing # this sets up the proper policy & signing files for signed images to work fully
-

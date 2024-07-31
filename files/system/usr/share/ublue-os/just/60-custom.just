@@ -157,7 +157,7 @@ sound-432:
     sed -i 's\#node.latency       = 1024/48000\node.latency       = 2048/48000\g' ~/.config/pipewire/jack.conf
     systemctl --user restart pipewire
     clear
-    echo "ALL DONE!!!"
+    echo "The sound is now set to 432hz"
 
 # Reset sound config
 sound-reset:
@@ -165,21 +165,21 @@ sound-reset:
     rm -rf ~/.config/pipewire
     systemctl --user restart pipewire
     clear
-    echo "ALL DONE!!!"
+    echo "The sound is now at the default frequency"
 
 # Create gablue install iso
 create-iso-main:
     #!/usr/bin/env bash
     sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD):/build-container-installer/build --security-opt label=disable ghcr.io/jasonn3/build-container-installer:latest VERSION=40 IMAGE_REPO=ghcr.io/elgabo86 IMAGE_NAME=gablue-main IMAGE_TAG=latest VARIANT=Kinoite FLATPAK_REMOTE_NAME=flathub ISO_NAME=build/gablue-main.iso FLATPAK_REMOTE_REFS="app/com.usebottles.bottles/x86_64/stable app/io.freetubeapp.FreeTube/x86_64/stable app/org.mozilla.firefox/x86_64/stable app/org.atheme.audacious/x86_64/stable app/org.libreoffice.LibreOffice/x86_64/stable app/org.kde.haruna/x86_64/stable app/org.kde.haruna/x86_64/stable app/io.github.flattool.Warehouse/x86_64/stable app/io.missioncenter.MissionCenter/x86_64/stable app/io.github.dvlv.boxbuddyrs/x86_64/stable runtime/org.gnome.Platform/x86_64/45 runtime/org.freedesktop.Platform/x86_64/23.08 runtime/org.kde.Platform/x86_64/6.6 runtime/org.kde.Platform/x86_64/5.15-23.08 runtime/org.gnome.Platform/x86_64/46"
     clear
-    echo "ALL DONE!!!"
+    echo "The gablue iso is ready in your download folder"
 
 # Create gablue install iso (nvidia)
 create-iso-nvidia:
     #!/usr/bin/env bash
     sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD):/build-container-installer/build --security-opt label=disable ghcr.io/jasonn3/build-container-installer:latest VERSION=40 IMAGE_REPO=ghcr.io/elgabo86 IMAGE_NAME=gablue-nvidia IMAGE_TAG=latest VARIANT=Kinoite FLATPAK_REMOTE_NAME=flathub ISO_NAME=build/gablue-nvidia.iso FLATPAK_REMOTE_REFS="app/com.usebottles.bottles/x86_64/stable app/io.freetubeapp.FreeTube/x86_64/stable app/org.mozilla.firefox/x86_64/stable app/org.atheme.audacious/x86_64/stable app/org.libreoffice.LibreOffice/x86_64/stable app/org.kde.haruna/x86_64/stable app/org.kde.haruna/x86_64/stable app/io.github.flattool.Warehouse/x86_64/stable app/io.missioncenter.MissionCenter/x86_64/stable app/io.github.dvlv.boxbuddyrs/x86_64/stable runtime/org.gnome.Platform/x86_64/45 runtime/org.freedesktop.Platform/x86_64/23.08 runtime/org.kde.Platform/x86_64/6.6 runtime/org.kde.Platform/x86_64/5.15-23.08 runtime/org.gnome.Platform/x86_64/46"
     clear
-    echo "ALL DONE!!!"
+    echo "The gablue iso is ready in your download folder"
 
 # Install/Update Ollama+openwebui (cpu only)
 ollama-cpu:
