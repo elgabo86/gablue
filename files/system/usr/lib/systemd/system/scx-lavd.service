@@ -1,0 +1,9 @@
+[Unit]
+Description=Enables LAVD scheduler on boot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/scx_lavd
+
+[Install]
+WantedBy=multi-user.target
