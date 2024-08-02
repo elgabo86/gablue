@@ -10,7 +10,9 @@ rpm-ostree cliwrap install-to-root / && \
 rpm-ostree override replace --experimental \
         /tmp/kernel-rpms/kernel-[0-9]*.rpm \
         /tmp/kernel-rpms/kernel-core-*.rpm \
-        /tmp/kernel-rpms/kernel-modules-*.rpm
+        /tmp/kernel-rpms/kernel-modules-*.rpm \
+         /tmp/kernel-rpms/kernel-headers-*.rpm \
+         /tmp/kernel-rpms/kernel-tools-*.rpm
 
 curl -Lo /tmp/nvidia-install.sh https://raw.githubusercontent.com/ublue-os/hwe/main/nvidia-install.sh && \
 chmod +x /tmp/nvidia-install.sh && \
