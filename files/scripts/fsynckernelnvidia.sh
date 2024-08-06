@@ -5,11 +5,6 @@
 # builds actually ran successfully without any errors!
 set -oue pipefail
 
-rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        libstdc++
-
 rpm-ostree cliwrap install-to-root / && \
 
 rpm-ostree override replace --experimental \
