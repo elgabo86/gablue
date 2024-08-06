@@ -8,12 +8,6 @@ set -oue pipefail
 rpm-ostree override replace \
     --experimental \
     --from repo=updates \
-        libX11 \
-        libX11-common \
-        libX11-xcb \
-        mesa-libEGL \
-        mesa-libgbm \
-        mesa-libglapi \
         libstdc++
 
 rpm-ostree cliwrap install-to-root / && \
