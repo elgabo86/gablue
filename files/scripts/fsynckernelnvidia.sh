@@ -14,7 +14,6 @@ rpm-ostree override replace \
         mesa-libEGL \
         mesa-libgbm \
         mesa-libglapi \
-        libglvnd-glx \
         libstdc++
 
 rpm-ostree cliwrap install-to-root / && \
