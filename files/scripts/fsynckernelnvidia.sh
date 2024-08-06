@@ -5,7 +5,17 @@
 # builds actually ran successfully without any errors!
 set -oue pipefail
 
-ls -la /tmp/kernel-rpms/
+rpm-ostree override replace \
+    --experimental \
+    --from repo=updates \
+        libX11 \
+        libX11-common \
+        libX11-xcb \
+        mesa-libEGL \
+        mesa-libgbm \
+        mesa-libglapi \
+        libglvnd-glx \
+        libstdc++
 
 rpm-ostree cliwrap install-to-root / && \
 
