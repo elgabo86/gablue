@@ -16,7 +16,7 @@ modules:
 
   - from-file: modules/scripts-kernel-main.yml
 
-  #- from-file: modules/akmods-all.yml
+  - from-file: modules/akmods-all.yml
 
   - from-file: modules/rpm-all.yml
   - from-file: modules/rpm-main.yml
