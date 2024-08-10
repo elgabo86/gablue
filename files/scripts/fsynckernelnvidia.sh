@@ -14,5 +14,5 @@ rpm-ostree override replace --experimental \
 
 curl -Lo /tmp/nvidia-install.sh https://raw.githubusercontent.com/ublue-os/hwe/main/nvidia-install.sh && \
 chmod +x /tmp/nvidia-install.sh && \
-IMAGE_NAME="kinoite" RPMFUSION_MIRROR="" FEDORA_MAJOR_VERSION="40" /tmp/nvidia-install.sh
+IMAGE_NAME="kinoite-main" FEDORA_MAJOR_VERSION="40" /tmp/nvidia-install.sh
 rm -f /usr/share/vulkan/icd.d/nouveau_icd.*.json
