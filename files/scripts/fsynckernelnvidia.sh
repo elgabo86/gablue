@@ -12,6 +12,8 @@ rpm-ostree override replace --experimental \
         /tmp/kernel-rpms/kernel-core-*.rpm \
         /tmp/kernel-rpms/kernel-modules-*.rpm
 
+rpm-ostree override replace --experimental --from repo=copr:copr.fedorainfracloud.org:sentry:kernel-fsync kernel-tools kernel-tools-libs
+
 curl -Lo /tmp/nvidia-install.sh https://raw.githubusercontent.com/ublue-os/hwe/main/nvidia-install.sh && \
 chmod +x /tmp/nvidia-install.sh && \
 IMAGE_NAME="kinoite-main" FEDORA_MAJOR_VERSION="40" /tmp/nvidia-install.sh
