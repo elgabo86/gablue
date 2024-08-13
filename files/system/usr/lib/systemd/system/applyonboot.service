@@ -1,8 +1,0 @@
-[Unit]
-Description=Refresh flatpak default permissions & other
-
-[Service]
-Type=oneshot
-ExecStart=/usr/share/ublue-os/gablue/scripts/applyonboot.sh
-[Install]
-WantedBy=multi-user.target
