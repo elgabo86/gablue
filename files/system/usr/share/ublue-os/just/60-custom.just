@@ -109,14 +109,14 @@ ssh-off:
 # Enable update notification
 show-update:
     #!/usr/bin/bash
-    sudo sed -i 's/dbus_notify = true/dbus_notify = false/g' /etc/ublue-update/ublue-update.toml
+    sudo sed -i 's/dbus_notify = false/dbus_notify = true/g' /etc/ublue-update/ublue-update.toml
     clear
     echo "ALL DONE!!!"
 
 # Disable update notification
 hide-update:
     #!/usr/bin/bash
-    sudo sed -i 's/dbus_notify = false/dbus_notify = true/g' /etc/ublue-update/ublue-update.toml
+    sudo sed -i 's/dbus_notify = true/dbus_notify = false/g' /etc/ublue-update/ublue-update.toml
     clear
     echo "ALL DONE!!!"
 
@@ -513,3 +513,16 @@ gameshed-enable:
 # Disable special scheduler for gaming
 gameshed-disable:
     sudo systemctl disable scx-lavd.service --now
+
+# Remove grub double entry
+fix-grub-double-entry:
+    #!/usr/bin/bash
+    if [ -d /sys/firmware/efi ]; then
+      sudo grub2-switch-to-blscfg
+      sudo grub2-mkconfig -o /boot/efi/EFI/fedora/grub.cfg
+    else
+      block_device=$(lsblk -spnlo name $(grub2-probe --target=device /boot/grub2) | tail -n1)
+      sudo grub2-install $block_device
+      sudo touch /boot/grub2/.grub2-blscfg-supported
+      sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+    fi

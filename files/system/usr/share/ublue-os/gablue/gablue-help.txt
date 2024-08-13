@@ -11,7 +11,7 @@
 ## Commandes optionnelles à l'installation :
 
 - ujust hide-grub                 # Permet de cacher le menu de boot au démarrage de la machine
-- ujust hide-update               # Désactiver les messages de mise à jour du système
+- ujust fix-grub-double-entry     # Retire les lignes à double du menu de boot au démarrage de la machine
 - ujust distrobox-archgab         # Permet d'installer un système archlinux
 - ujust windows-install           # Installe ou réinstalle une bouteille windows où les .exe s'executent par défaut
 - ujust tailscale-up              # Permet de configuer et faire une demande d'ajout sur le réseau tailscale de Sucina
@@ -53,6 +53,8 @@
 
 - ujust show-grub                 # Permet d'afficher le menu de boot au démarrage de la machine (par défaut)
 
+- ujust hide-update               # Désactiver les messages de mise à jour du système (par défaut)
+
 - ujust show-update               # Activer les messages de mise à jour du système
 
 - ujust update-firmware           # Met à jour les firmwares internes des périphériques compatibles
@@ -84,6 +86,11 @@
 - ffsendp $nomdufichier           # Envoie un fichier sur les serveur ffsend pour ensuite recevoir un lien et le partager (avec mot de passe)
 
 
+## Outils Gaming :
+
+- ujust gameshed-enable                 # Active un mode expérimental de planificateur CPU pour le gaming
+- ujust gameshed-enable                 # Désactive le mode expérimental de planificateur CPU pour le gaming
+
 ## Outils AI :
 
 - gogpt                           # Chatter avec un bot (service tgpt)
@@ -93,17 +100,19 @@
 - ujust ollama-cpu                # Installe/update un système de bot local avec interface web (localhost:3000) (Only CPU)
 - ujust ollama-remove             # Effacer le système de bot local ainsi que tous les bots installés (!!!)
 
-- ollama-start                    # Démarre le système de bot local avec interface web déjà installé
-- ollama-stop                     # Stoppe le système de bot local avec interface web déjà installé
-- ollama-restart                  # Relance le système de bot local avec interface web déjà installé
+- ujust ollama-start                    # Démarre le système de bot local avec interface web déjà installé
+- ujust ollama-stop                     # Stoppe le système de bot local avec interface web déjà installé
+- ujust ollama-restart                  # Relance le système de bot local avec interface web déjà installé
 
 ## Outils Dev :
 
-- pyenv-setup                     # Installe un système de gestion de version de Python
-- pyenv-update                    # Met à jour pyenv
-- pyenv-remove                    # Désintalle pyenv
+- ujust pyenv-setup                     # Installe un système de gestion de version de Python
+- ujust pyenv-update                    # Met à jour pyenv
+- ujust pyenv-remove                    # Désintalle pyenv
 
-- atuin-setup                     # Installation d'atuin, un système d'historique avancé du terminal
+- ujust atuin-setup                     # Installation d'atuin, un système d'historique avancé du terminal
+
+- ujuste brew-reset                      # Réinitialise brew (!Efface tous les packages brew!)
 
 ## Goodies :
 
