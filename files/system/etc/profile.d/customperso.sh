@@ -31,6 +31,8 @@ alias ollama-restart="podman restart ollama open-webui"
 
 alias ollama-stop="podman stop ollama open-webui"
 
+alias open="xdg-open &>/dev/null"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
