@@ -5,3 +5,4 @@ system:
     - tailscaled.service
     - kde-sysmonitor-workaround.service
     - gamescope-workaround.service
+    - applyonboot.service
