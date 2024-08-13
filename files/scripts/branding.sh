@@ -9,3 +9,4 @@ sed -i "s,^PRETTY_NAME=.*,PRETTY_NAME=\"Gablue ${MAJOR_RELEASE_VERSION}.${IMAGE_
 
 
 #ln -sf ../places/distributor-logo.svg /usr/share/icons/hicolor/scalable/apps/start-here.svg
+ln -sf /usr/share/icons/hicolor/scalable/apps/start-here.svg /usr/share/icons/Papirus/64x64/apps/
