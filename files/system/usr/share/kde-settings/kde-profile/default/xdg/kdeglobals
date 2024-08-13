@@ -1,3 +1,11 @@
+[KDE]
+LookAndFeelPackage=org.kde.breezedark.desktop
+SingleClick=false
+ColorScheme=BreezeDark
+
+[Icons]
+Theme=Papirus
+
 [KDE Control Module Restrictions][$i]
 kcm_plymouth.desktop=false
 

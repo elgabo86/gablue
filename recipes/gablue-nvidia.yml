@@ -20,8 +20,6 @@ modules:
 
   - from-file: modules/rpm-all.yml
 
-  - from-file: modules/bling-all.yml
-
   - from-file: modules/scripts-all.yml
 
   - from-file: modules/systemd-all.yml
@@ -29,6 +27,8 @@ modules:
   - from-file: modules/fonts-all.yml
 
   - from-file: modules/flatpak-all.yml
+
+  - from-file: modules/bling-all.yml
 
   - from-file: modules/brew-all.yml
 
