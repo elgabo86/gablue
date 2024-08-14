@@ -1,5 +1,5 @@
 type: containerfile
 snippets:
-  - COPY --from=ghcr.io/ublue-os/akmods-nvidia:fsync-40-20240812  /rpms /tmp/akmods-rpms
-  - COPY --from=ghcr.io/ublue-os/fsync-kernel:40-6.9.12 /tmp/rpms/ /tmp/kernel-rpms
+  - COPY --from=ghcr.io/ublue-os/akmods-nvidia:fsync-40  /rpms /tmp/akmods-rpms
+  - COPY --from=ghcr.io/ublue-os/fsync-kernel:40 /tmp/rpms/ /tmp/kernel-rpms
   - RUN curl -Lo /usr/lib/sysctl.d/99-bore-scheduler.conf https://github.com/CachyOS/CachyOS-Settings/raw/master/usr/lib/sysctl.d/99-bore-scheduler.conf

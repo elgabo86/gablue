@@ -526,3 +526,9 @@ fix-grub-double-entry:
       sudo touch /boot/grub2/.grub2-blscfg-supported
       sudo grub2-mkconfig -o /boot/grub2/grub.cfg
     fi
+
+# Fix screen desactivation on kde plasma (until plasma 6.2)
+fix-screen:
+    #!/usr/bin/bash
+    rm -f ~/.config/kwinoutputconfig.json
+    killall -9 kwin_wayland
