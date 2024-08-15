@@ -447,6 +447,8 @@ windows-install:
     flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/soda-9.0-1/bin/wine --command=winetricks com.usebottles.bottles -q corefonts d3dcompiler_43 d3dcompiler_47 d3dx9 msls31
     rm -rf ~/Windows/Tools
     flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/23.08 -y
+    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.OBSVkCapture/x86_64/23.08 -y
+    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.gamescope/x86_64/23.08 -y
     mkdir -p ~/.config/MangoHud/
     cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud/
     flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params mangohud:true
