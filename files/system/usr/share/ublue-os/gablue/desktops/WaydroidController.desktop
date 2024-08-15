@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Waydroid (Activer les manettes de jeu)
-Exec=waydroid show-full-ui & sleep 3 && sudo sh -c 'for i in $(seq 7 9); do echo add > /sys/class/input/event$i/uevent; done'
+Exec=waydroid show-full-ui & sleep 4 && pkexec /usr/libexec/waydroid-fix-controllers
 Categories=X-WayDroid-App;
 X-Purism-FormFactor=Workstation;Mobile;
 Icon=waydroid
