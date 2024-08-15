@@ -5,6 +5,7 @@ repos:
   - https://copr.fedorainfracloud.org/coprs/matte-schwartz/sunshine/repo/fedora-40/matte-schwartz-sunshine-fedora-40.repo
   - https://copr.fedorainfracloud.org/coprs/luisbocanegra/kde-material-you-colors/repo/fedora-40/luisbocanegra-kde-material-you-colors-fedora-40.repo
   - https://copr.fedorainfracloud.org/coprs/kylegospo/scx_lavd/repo/fedora-40/kylegospo-scx_lavd-fedora-40.repo
+  - https://copr.fedorainfracloud.org/coprs/kylegospo/bazzite/repo/fedora-40/kylegospo-bazzite-fedora-40.repo
 install:
   # Tools cli
   - fswatch
@@ -54,6 +55,7 @@ install:
   - cage
   - wlr-randr
   - scx_lavd
+  - joystickwake
   # Themes
   - papirus-icon-theme
   # Others
