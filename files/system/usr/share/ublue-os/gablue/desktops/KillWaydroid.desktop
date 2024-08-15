@@ -3,6 +3,7 @@ Comment=
 Exec=waydroid session stop
 Icon=waydroid
 Categories=X-WayDroid-App;
+GenericName=Waydroid killer
 Name=Kill Waydroid
 NoDisplay=false
 Path=
@@ -10,4 +11,4 @@ Terminal=false
 TerminalOptions=
 Type=Application
 X-KDE-StartupNotify=false
-GenericName=Waydroid killer
+

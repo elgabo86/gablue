@@ -250,6 +250,7 @@ waydroid-install:
     sudo waydroid init -c 'https://ota.waydro.id/system' -v 'https://ota.waydro.id/vendor'
     mkdir -p ~/.local/share/applications/
     cp /usr/share/ublue-os/gablue/desktops/KillWaydroid.desktop ~/.local/share/applications/
+    cp /usr/share/ublue-os/gablue/desktops/WaydroidController.desktop ~/.local/share/applications/
     update-desktop-database ~/.local/share/applications
     sudo systemctl stop waydroid-container
     clear
