@@ -1,0 +1,23 @@
+{
+    "KPackageStructure": "Plasma/LookAndFeel",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "",
+                "Name": "Gablue"
+            }
+        ],
+        "Category": "",
+        "Description": "Gablue - Theme variant of KDE BreezeDark",
+        "Id": "dev.gablue.desktop",
+        "License": "GPLv2+",
+        "Name": "Gablue",
+        "ServiceTypes": [
+            "Plasma/LookAndFeel"
+        ],
+        "Version": "0.01",
+        "Website": "https://github.com/elgabo86/gablue"
+    },
+    "X-KDE-ParentApp": "",
+    "X-Plasma-MainScript": "defaults"
+}

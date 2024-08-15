@@ -1,5 +1,5 @@
 [KDE]
-LookAndFeelPackage=org.kde.breezedark.desktop
+LookAndFeelPackage=dev.gablue.desktop
 SingleClick=false
 ColorScheme=BreezeDark
 
