@@ -15,3 +15,8 @@ ln -sf ../../../hicolor/scalable/places/start-here.svg /usr/share/icons/Papirus/
 ln -sf ../../../hicolor/scalable/places/start-here.svg /usr/share/icons/Papirus/22x22/panel/start-here.svg
 ln -sf ../../../hicolor/scalable/places/start-here.svg /usr/share/icons/Papirus/24x24/panel/start-here.svg
 ln -sf ../../../hicolor/scalable/places/start-here.svg /usr/share/icons/Papirus/symbolic/places/start-here-symbolic.svg
+
+
+# Hide update & change min battery %
+sed -i 's/dbus_notify = true/dbus_notify = false/g' /etc/ublue-update/ublue-update.toml
+sed -i 's/min_battery_percent = 50\.0/min_battery_percent = 30.0/g' /etc/ublue-update/ublue-update.toml
