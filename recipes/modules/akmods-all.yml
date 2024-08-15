@@ -3,7 +3,7 @@ base: fsync
 install:
   - openrazer
   - wl
-  - evdi
+  #- evdi
   - v4l2loopback
   - bmi260
   - nct6687d
