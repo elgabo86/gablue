@@ -1,0 +1,12 @@
+#!/usr/bin/bash
+
+flatpak override --user --reset
+flatpak override --user --filesystem=xdg-config/gtk-3.0:ro
+flatpak override --user --filesystem=xdg-config/MangoHud:ro
+flatpak override --user --filesystem=xdg-config/gtk-4.0:ro
+flatpak override --user --env=OBS_VKCAPTURE=1
+flatpak override --user --filesystem=/run/media
+flatpak override --user --filesystem=xdg-download
+flatpak override com.usebottles.bottles --user --filesystem=xdg-data/applications
+flatpak override com.usebottles.bottles --user --env=DXVK_ASYNC=1
+flatpak override com.usebottles.bottles --user --env=DXVK_GPLASYNCCACHE=1
