@@ -444,7 +444,7 @@ windows-install:
     flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/vc2015_2022-x64.exe /quiet /norestart
     flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/runtime-6.0.16-x64.exe /quiet
     flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/wine-mono-9.2.0-x86.msi /quiet
-    flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/soda-9.0-1/bin/wine --command=winetricks com.usebottles.bottles -q corefonts d3dcompiler_43 d3dcompiler_47 d3dx9 msls31
+    flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/soda-9.0-1/bin/wine --command=winetricks com.usebottles.bottles -q corefonts d3dcompiler_43 d3dcompiler_47 d3dx9 msls31 vb6run
     rm -rf ~/Windows/Tools
     flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/23.08 -y
     flatpak install runtime/org.freedesktop.Platform.VulkanLayer.OBSVkCapture/x86_64/23.08 -y
