@@ -534,3 +534,15 @@ fix-screen:
     #!/usr/bin/bash
     rm -f ~/.config/kwinoutputconfig.json
     killall -9 kwin_wayland
+
+# Add and connect a shared protected 5ghz wifi network
+hotspot-add:
+    nmcli device wifi hotspot con-name Hotspot-5ghz ssid Hotspot-5ghz band a channel 161 password 4476525555
+    clear
+    echo "Done! Password is 4476525555"
+
+# Add and connect a shared protected 5ghz wifi network
+hotspot-remove:
+    nmcli connection delete Hotspot-5ghz
+    clear
+    echo "Hotspot is removed"
