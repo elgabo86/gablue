@@ -6,3 +6,4 @@ scripts:
   - branding.sh
   - fixqdbus6.sh
   - buildinitramfs.sh
+  - firewallperm.sh
