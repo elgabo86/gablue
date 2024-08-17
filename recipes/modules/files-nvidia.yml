@@ -1,5 +1,5 @@
 type: files
 files:
-  - source: system/all
+  - source: system/nvidia
     destination: /
 
