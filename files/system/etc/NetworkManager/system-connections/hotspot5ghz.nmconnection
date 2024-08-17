@@ -3,7 +3,6 @@ id=Hotspot-5ghz
 uuid=db51dbcb-68bf-4ee9-bb71-5ea314ab9e26
 type=wifi
 autoconnect=false
-permissions=user:gab:;
 
 [wifi]
 band=a
