@@ -1,14 +1,2 @@
 [General]
 FreeFloating=true
-count=1
-rules=7ae4899d-f2fa-47f6-b05e-17133e5a62ca
-
-[7ae4899d-f2fa-47f6-b05e-17133e5a62ca]
-Description=Waydroid fullscreen fix
-adaptivesync=false
-adaptivesyncrule=2
-fullscreen=true
-fullscreenrule=3
-wmclass=\sWaydroid
-wmclasscomplete=true
-wmclassmatch=1
