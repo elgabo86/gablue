@@ -4,7 +4,7 @@ adaptivesync=false
 adaptivesyncrule=2
 fullscreen=true
 fullscreenrule=3
-wmclass=\sWaydroid
+wmclass=Waydroid
 wmclasscomplete=true
 wmclassmatch=1
 
