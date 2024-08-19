@@ -1,5 +1,5 @@
 [waydroid-fix]
-Description=Waydroid fullscreen fix
+Description=waydroid-fix
 adaptivesync=false
 adaptivesyncrule=2
 fullscreen=true
@@ -29,7 +29,3 @@ desktopfile=com.google.Chrome
 desktopfilerule=3
 wmclass=google-chrome
 wmclassmatch=1
-
-[General]
-count=1
-rules=waydroid-fix
