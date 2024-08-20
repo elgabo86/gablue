@@ -15,3 +15,8 @@ rpm-ostree install \
     /tmp/akmods-extra-rpms/kmods/*nct6687*.rpm \
     /tmp/akmods-extra-rpms/kmods/*bmi260*.rpm && \
 sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/negativo17-fedora-multimedia.repo
+
+# cleanup
+rm -rf /tmp/* || true
+rm -rf /var/!(cache)
+rm -rf /var/cache/!(rpm-ostree)

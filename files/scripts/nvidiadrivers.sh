@@ -9,3 +9,8 @@ curl -Lo /tmp/nvidia-install.sh https://raw.githubusercontent.com/ublue-os/hwe/m
 chmod +x /tmp/nvidia-install.sh && \
 IMAGE_NAME="kinoite" FEDORA_MAJOR_VERSION="40" /tmp/nvidia-install.sh
 rm -f /usr/share/vulkan/icd.d/nouveau_icd.*.json
+
+# cleanup
+rm -rf /tmp/* || true
+rm -rf /var/!(cache)
+rm -rf /var/cache/!(rpm-ostree)
