@@ -1,0 +1,7 @@
+type: containerfile
+snippets:
+  - COPY --from=ghcr.io/ublue-os/akmods:fsync-40  /rpms /tmp/akmods-rpms
+  - COPY --from=ghcr.io/ublue-os/akmods-extra:fsync-40  /rpms /tmp/akmods-extra-rpms
+type: script
+scripts:
+  - akmodsfsync.sh

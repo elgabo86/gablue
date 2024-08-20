@@ -14,24 +14,24 @@ modules:
 
   - from-file: modules/files-nvidia.yml
 
-  - from-file: modules/containerfile-all.yml
+  - from-file: modules/kernel-fsync.yml
 
-  - from-file: modules/scripts-kernel-nvidia.yml
+  - from-file: modules/nvidia-fsync.yml
 
-  - from-file: modules/akmods-all.yml
-
-  - from-file: modules/rpm-all.yml
+  - from-file: modules/akmods-fsync.yml
 
   - from-file: modules/bling-all.yml
 
-  - from-file: modules/scripts-all.yml
-
-  - from-file: modules/systemd-all.yml
+  - from-file: modules/rpm-all.yml
 
   - from-file: modules/fonts-all.yml
 
   - from-file: modules/flatpak-all.yml
 
   - from-file: modules/brew-all.yml
+
+  - from-file: modules/systemd-all.yml
+
+  - from-file: modules/scripts-all.yml
 
   - type: signing # this sets up the proper policy & signing files for signed images to work fully
