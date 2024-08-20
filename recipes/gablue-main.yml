@@ -14,7 +14,7 @@ modules:
 
   - from-file: modules/kernel-fsync.yml
 
-  - from-file: modules/akmods-all.yml
+  - from-file: modules/akmods-fsync.yml
 
   - from-file: modules/bling-all.yml
 
