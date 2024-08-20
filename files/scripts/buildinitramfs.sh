@@ -12,6 +12,7 @@ QUALIFIED_KERNEL="$(rpm -qa | grep -P 'kernel-(|'"$KERNEL_SUFFIX"'-)(\d+\.\d+\.\
 chmod 0600 /lib/modules/$QUALIFIED_KERNEL/initramfs.img
 
 # cleanup
+shopt -s extglob
 rm -rf /tmp/* || true
 rm -rf /var/!(cache)
 rm -rf /var/cache/!(rpm-ostree)
