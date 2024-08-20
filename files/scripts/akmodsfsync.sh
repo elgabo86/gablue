@@ -18,6 +18,7 @@ rpm-ostree install \
 sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/negativo17-fedora-multimedia.repo
 
 # cleanup
+shopt -s extglob
 rm -rf /tmp/* || true
 rm -rf /var/!(cache)
 rm -rf /var/cache/!(rpm-ostree)

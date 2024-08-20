@@ -11,6 +11,7 @@ IMAGE_NAME="kinoite" FEDORA_MAJOR_VERSION="40" /tmp/nvidia-install.sh
 rm -f /usr/share/vulkan/icd.d/nouveau_icd.*.json
 
 # cleanup
+shopt -s extglob
 rm -rf /tmp/* || true
 rm -rf /var/!(cache)
 rm -rf /var/cache/!(rpm-ostree)
