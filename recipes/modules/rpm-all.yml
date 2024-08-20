@@ -56,7 +56,6 @@ install:
   - wlr-randr
   - scx_lavd
   - joystickwake
-  - fuse
   # Themes
   - papirus-icon-theme
   # Others
