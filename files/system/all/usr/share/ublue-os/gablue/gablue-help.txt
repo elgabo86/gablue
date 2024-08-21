@@ -88,8 +88,8 @@
 
 ## Outils Gaming :
 
-- ujust gameshed-enable                 # Active un mode expérimental de planificateur CPU pour le gaming
-- ujust gameshed-enable                 # Désactive le mode expérimental de planificateur CPU pour le gaming
+- ujust scx-enable                 # Active un mode expérimental de planificateur CPU pour le gaming
+- ujust scx-disable                 # Désactive le mode expérimental de planificateur CPU pour le gaming
 
 ## Outils AI :
 

@@ -509,12 +509,12 @@ brew-reset:
     echo "Restart computer to reuse brew"
 
 # Enable special scheduler for gaming (experimental)
-gameshed-enable:
-    sudo systemctl enable scx-lavd.service --now
+scx-enable:
+    sudo systemctl enable scx.service --now
 
 # Disable special scheduler for gaming
-gameshed-disable:
-    sudo systemctl disable scx-lavd.service --now
+scx-disable:
+    sudo systemctl disable scx.service --now
 
 # Remove grub double entry
 fix-grub-double-entry:
