@@ -55,6 +55,7 @@ install:
   - cage
   - wlr-randr
   - scx_lavd
+  - scx-scheds
   - joystickwake
   # Themes
   - papirus-icon-theme
