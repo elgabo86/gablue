@@ -55,6 +55,7 @@ install:
   - wlr-randr
   - scx-scheds
   - joystickwake
+  - earlyoom
   # Themes
   - papirus-icon-theme
   # Others
