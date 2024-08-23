@@ -1,7 +1,7 @@
 modules:
   - type: containerfile
     snippets:
-      - COPY --from=ghcr.io/ublue-os/fsync-ba-kernel:40 /tmp/rpms/ /tmp/kernel-rpms
+      - COPY --from=ghcr.io/ublue-os/fsync-ba-kernel:40-6.9.12-205.fsync.fc40.x86_64 /tmp/rpms/ /tmp/kernel-rpms
       - RUN curl -Lo /usr/lib/sysctl.d/99-bore-scheduler.conf https://github.com/CachyOS/CachyOS-Settings/raw/master/usr/lib/sysctl.d/99-bore-scheduler.conf
   - type: script
     scripts:

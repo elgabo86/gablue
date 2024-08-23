@@ -1,7 +1,7 @@
 modules:
   - type: containerfile
     snippets:
-      - COPY --from=ghcr.io/ublue-os/akmods-nvidia:fsync-ba-40  /rpms /tmp/akmods-rpms
+      - COPY --from=ghcr.io/ublue-os/akmods-nvidia:fsync-ba-40-6.9.12-205.fsync.fc40.x86_64  /rpms /tmp/akmods-rpms
   - type: script
     scripts:
       - nvidiadrivers.sh
