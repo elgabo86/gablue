@@ -4,7 +4,6 @@ ARG SOURCE_IMAGE="kinoite"
 ARG SOURCE_SUFFIX="-main"
 ARG SOURCE_TAG="40"
 ARG FEDORA_MAJOR_VERSION="40"
-ARG KERNEL_VERSION="6.9.12-205.fsync.fc40.x86_64"
 
 # Import main packages
 FROM ghcr.io/ublue-os/fsync-ba-kernel:${FEDORA_MAJOR_VERSION} AS fsync
@@ -18,13 +17,12 @@ COPY files/system/test /
 RUN chmod +x /usr/libexec/containerbuild/*.sh
 
 # Set environnement variables for scripts
-ENV GABLUE_VARIANT=$GABLUE_VARIANT
-ENV SOURCE_IMAGE=$SOURCE_IMAGE
-ENV SOURCE_SUFFIX=$SOURCE_SUFFIX
-ENV SOURCE_TAG=$SOURCE_TAG
-ENV FEDORA_MAJOR_VERSION=$FEDORA_MAJOR_VERSION
-ENV OS_VERSION=$FEDORA_MAJOR_VERSION
-ENV KERNEL_VERSION="6.9.12-205.fsync.fc40.x86_64"
+ENV GABLUE_VARIANT="main"
+ENV SOURCE_IMAGE="kinoite"
+ENV SOURCE_SUFFIX="-main"
+ENV SOURCE_TAG="40"
+ENV FEDORA_MAJOR_VERSION="40"
+ENV OS_VERSION="40"
 
 # Setup copr repos
 RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
