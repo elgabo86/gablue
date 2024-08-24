@@ -17,7 +17,7 @@ FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${SOURCE_TAG}
 COPY files/system/all /
 COPY files/system/test /
 COPY files/system/nvidia /
-RUN chmod +x /usr/libexec/containerbuild/*.
+RUN chmod +x /usr/libexec/containerbuild/*.sh
 
 # Set environnement variables for scripts
 ENV GABLUE_VARIANT=$GABLUE_VARIANT
