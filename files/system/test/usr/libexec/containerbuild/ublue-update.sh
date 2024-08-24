@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 
 # Tell build process to exit if there are any errors.
 set -euo pipefail
