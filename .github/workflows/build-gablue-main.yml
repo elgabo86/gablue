@@ -89,20 +89,29 @@ jobs:
             org.opencontainers.image.description=${{ env.MY_IMAGE_DESC }}
             org.opencontainers.image.title=${{ env.MY_IMAGE_NAME }}
 
-      # Build image using Buildah action
-      - name: Build Image
+     - name: Build Image
         id: build_image
-        uses: redhat-actions/buildah-build@v2
+        shell: bash
+        run: |
+          sudo buildah build \
+            --format "docker" \
+            --tag raw-img .
+
+     - name: Rechunk Image
+        id: rechunk
+        uses: hhd-dev/rechunk@v0.8.6
         with:
-          containerfiles: |
-            ./Containerfile-main
-          # Postfix image name with -custom to make it a little more descriptive
-          # Syntax: https://docs.github.com/en/actions/learn-github-actions/expressions#format
-          image: ${{ env.MY_IMAGE_NAME }}
-          tags: |
-            ${{ steps.generate-tags.outputs.alias_tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          oci: false
+          ref: "raw-img"
+          prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ env.MY_IMAGE_NAME }}:main"
+          version: main
+          rechunk: "ghcr.io/hhd-dev/rechunk:v0.8.6"
+
+      - name: Load in podman and tag
+        run: |
+          IMAGE=$(podman pull ${{ steps.rechunk.outputs.ref }})
+          sudo rm -rf ${{ steps.rechunk.outputs.output }}
+          podman tag $IMAGE ${{ env.MY_IMAGE_NAME }}:main
+
 
       # Workaround bug where capital letters in your GitHub username make it impossible to push to GHCR.
       # https://github.com/macbre/push-to-ghcr/issues/12
