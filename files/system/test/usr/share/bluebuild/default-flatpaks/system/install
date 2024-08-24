@@ -1,0 +1,12 @@
+# This file contains the image's default configuration for `system flatpaks install` used by the `default-flatpaks` BlueBuild module.
+# This list uses the Flatpak ID format, with one ID per line.
+
+com.usebottles.bottles
+io.freetubeapp.FreeTube
+org.mozilla.firefox
+org.atheme.audacious
+org.libreoffice.LibreOffice
+org.kde.haruna
+io.github.flattool.Warehouse
+io.missioncenter.MissionCenter
+io.github.dvlv.boxbuddyrs

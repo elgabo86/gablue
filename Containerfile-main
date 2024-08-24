@@ -1,0 +1,63 @@
+# Main arguments
+ARG SOURCE_IMAGE="kinoite"
+ARG SOURCE_SUFFIX="-main"
+ARG SOURCE_TAG="40"
+ARG FEDORA_MAJOR_VERSION=40
+
+ARG GABLUE_VARIANT="main"
+
+ARG KERNEL_VERSION="6.9.12-205.fsync.fc40.x86_64"
+
+
+# Import main packages
+FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${SOURCE_TAG}
+FROM ghcr.io/ublue-os/fsync-ba-kernel:${FEDORA_MAJOR_VERSION} AS fsync
+FROM ghcr.io/ublue-os/akmods:fsync-ba-${FEDORA_MAJOR_VERSION} AS akmods
+FROM ghcr.io/ublue-os/akmods-extra:fsync-ba-${FEDORA_MAJOR_VERSION} AS akmods-extra
+
+
+# Copy files
+COPY files/system/all /
+COPY files/system/test /
+
+# Setup copr repos
+RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
+    /usr/libexec/containerbuild/copr.sh && \
+    /usr/libexec/containerbuild/cleanup.sh && \
+    ostree container commit
+
+# Install kernel-fsync
+RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=fsync,src=/tmp/rpms,dst=/tmp/fsync-rpms \
+    /usr/libexec/containerbuild/kernel-fsync.sh && \
+    /usr/libexec/containerbuild/cleanup.sh && \
+    ostree container commit
+
+# Add ublue packages, add needed negativo17 repo and then immediately disable due to incompatibility with RPMFusion
+RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=akmods,src=/rpms,dst=/tmp/akmods-rpms \
+    --mount=type=bind,from=akmods-extra,src=/rpms,dst=/tmp/akmods-extra-rpms \
+    /usr/libexec/containerbuild/akmods-fsync.sh && \
+    /usr/libexec/containerbuild/cleanup.sh && \
+    ostree container commit
+
+# Install rpm
+RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
+    /usr/libexec/containerbuild/ublue-update.sh && \
+    /usr/libexec/containerbuild/rpm.sh && \
+    /usr/libexec/containerbuild/cleanup.sh && \
+    ostree container commit
+
+# Install brew
+RUN /usr/libexec/containerbuild/brew.sh && \
+    /usr/libexec/containerbuild/cleanup.sh && \
+    ostree container commit
+
+# Post-install
+RUN /usr/libexec/containerbuild/systemd.sh && \
+    /usr/libexec/containerbuild/post-install.sh && \
+    /usr/libexec/containerbuild/initramfs.sh && \
+    /usr/libexec/containerbuild/cleanup.sh && \
+    rm -rf /usr/libexec/containerbuild
+    ostree container commit
+
