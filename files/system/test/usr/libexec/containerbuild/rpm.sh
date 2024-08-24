@@ -94,8 +94,7 @@ bzip2-devel \
 openssl-devel \
 sqlite-devel \
 xz-devel \
-tk-devel \
-yq
+tk-devel
 
 #Remove firefox
 rpm-ostree override remove \
@@ -103,12 +102,6 @@ firefox \
 firefox-langpacks
 
 if [ "$GABLUE_VARIANT" == "main" ]; then
-    rpm-ostree install \
-    radeontop \
-    waydroid
-fi
-
-if [ "$GABLUE_VARIANT" == "nvidia" ]; then
     rpm-ostree install \
     radeontop \
     waydroid
