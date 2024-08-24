@@ -22,6 +22,7 @@ COPY files/system/test /
 
 # Setup copr repos
 RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
+    chmod +x /usr/libexec/containerbuild/*.sh && \
     /usr/libexec/containerbuild/copr.sh && \
     /usr/libexec/containerbuild/cleanup.sh && \
     ostree container commit
