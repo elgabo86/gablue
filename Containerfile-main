@@ -1,37 +1,40 @@
 # Main arguments
+ARG GABLUE_VARIANT="main"
 ARG SOURCE_IMAGE="kinoite"
 ARG SOURCE_SUFFIX="-main"
 ARG SOURCE_TAG="40"
-ARG FEDORA_MAJOR_VERSION=40
-
-ARG GABLUE_VARIANT="main"
-
+ARG FEDORA_MAJOR_VERSION="40"
 ARG KERNEL_VERSION="6.9.12-205.fsync.fc40.x86_64"
 
-
 # Import main packages
-FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${SOURCE_TAG}
+
 FROM ghcr.io/ublue-os/fsync-ba-kernel:${FEDORA_MAJOR_VERSION} AS fsync
 FROM ghcr.io/ublue-os/akmods:fsync-ba-${FEDORA_MAJOR_VERSION} AS akmods
 FROM ghcr.io/ublue-os/akmods-extra:fsync-ba-${FEDORA_MAJOR_VERSION} AS akmods-extra
-
+FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${SOURCE_TAG}
 
 # Copy files
 COPY files/system/all /
 COPY files/system/test /
+RUN chmod +x /usr/libexec/containerbuild/*.sh
 
-
-RUN echo coucou
-RUN usr/libexec/containerbuild/cleanup.sh
+# Set environnement variables for scripts
+ENV GABLUE_VARIANT=$GABLUE_VARIANT
+ENV SOURCE_IMAGE=$SOURCE_IMAGE
+ENV SOURCE_SUFFIX=$SOURCE_SUFFIX
+ENV SOURCE_TAG=$SOURCE_TAG
+ENV FEDORA_MAJOR_VERSION=$FEDORA_MAJOR_VERSION
+ENV OS_VERSION=$FEDORA_MAJOR_VERSION
+ENV KERNEL_VERSION="6.9.12-205.fsync.fc40.x86_64"
 
 # Setup copr repos
 RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
-    chmod +x /usr/libexec/containerbuild/*.sh && \
     /usr/libexec/containerbuild/copr.sh && \
     /usr/libexec/containerbuild/cleanup.sh && \
     ostree container commit
 
 # Install kernel-fsync
+COPY --from=fsync /tmp/rpms /tmp/fsync-rpms
 RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
     --mount=type=bind,from=fsync,src=/tmp/rpms,dst=/tmp/fsync-rpms \
     /usr/libexec/containerbuild/kernel-fsync.sh && \
@@ -61,8 +64,9 @@ RUN /usr/libexec/containerbuild/brew.sh && \
 # Post-install
 RUN /usr/libexec/containerbuild/systemd.sh && \
     /usr/libexec/containerbuild/post-install.sh && \
+    mkdir -p /var/tmp && chmod 1777 /var/tmp && \
     /usr/libexec/containerbuild/initramfs.sh && \
     /usr/libexec/containerbuild/cleanup.sh && \
+    mkdir -p /var/tmp && chmod 1777 /var/tmp && \
     rm -rf /usr/libexec/containerbuild
     ostree container commit
-

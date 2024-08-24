@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 
 set -euo pipefail
 
@@ -23,48 +23,25 @@ if ! command -v gcc &> /dev/null; then
 fi
 
 # Module-specific directories and paths
-MODULE_DIRECTORY="${MODULE_DIRECTORY:-/usr/libexec/containerbuild}"
+MODULE_DIRECTORY="/usr/libexec/containerbuild"
 
 # Configuration values
-AUTO_UPDATE=$(echo "${1}" | yq -I=0 ".auto-update")
-if [[ -z "${AUTO_UPDATE}" || "${AUTO_UPDATE}" == "null" ]]; then
-    AUTO_UPDATE=true
-fi
 
-UPDATE_INTERVAL=$(echo "${1}" | yq -I=0 ".update-interval")
-if [[ -z "${UPDATE_INTERVAL}" || "${UPDATE_INTERVAL}" == "null" ]]; then
-    UPDATE_INTERVAL="6h"
-fi
+AUTO_UPDATE=true
 
-UPDATE_WAIT_AFTER_BOOT=$(echo "${1}" | yq -I=0 ".update-wait-after-boot")
-if [[ -z "${UPDATE_WAIT_AFTER_BOOT}" || "${UPDATE_WAIT_AFTER_BOOT}" == "null" ]]; then
-    UPDATE_WAIT_AFTER_BOOT="10min"
-fi
+UPDATE_INTERVAL="6h"
 
-AUTO_UPGRADE=$(echo "${1}" | yq -I=0 ".auto-upgrade")
-if [[ -z "${AUTO_UPGRADE}" || "${AUTO_UPGRADE}" == "null" ]]; then
-    AUTO_UPGRADE=true
-fi
+UPDATE_WAIT_AFTER_BOOT="10min"
 
-UPGRADE_INTERVAL=$(echo "$1" | yq -I=0 ".upgrade-interval")
-if [[ -z "${UPGRADE_INTERVAL}" || "${UPGRADE_INTERVAL}" == "null" ]]; then
-    UPGRADE_INTERVAL="8h"
-fi
+AUTO_UPGRADE=true
 
-UPGRADE_WAIT_AFTER_BOOT=$(echo "${1}" | yq -I=0 ".upgrade-wait-after-boot")
-if [[ -z "${UPGRADE_WAIT_AFTER_BOOT}" || "${UPGRADE_WAIT_AFTER_BOOT}" == "null" ]]; then
-    UPGRADE_WAIT_AFTER_BOOT="30min"
-fi
+UPGRADE_INTERVAL="8h"
 
-NOFILE_LIMITS=$(echo "${1}" | yq -I=0 ".nofile-limits")
-if [[ -z "${NOFILE_LIMITS}" || "${NOFILE_LIMITS}" == "null" ]]; then
-    NOFILE_LIMITS=false
-fi
+UPGRADE_WAIT_AFTER_BOOT="30min"
 
-BREW_ANALYTICS=$(echo "${1}" | yq -I=0 ".brew-analytics")
-if [[ -z "${BREW_ANALYTICS}" || "${BREW_ANALYTICS}" == "null" ]]; then
-    BREW_ANALYTICS=true
-fi
+NOFILE_LIMITS=true
+
+BREW_ANALYTICS=false
 
 # Create necessary directories
 mkdir -p /var/home

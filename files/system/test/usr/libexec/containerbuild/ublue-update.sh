@@ -40,4 +40,4 @@ rpm-ostree install ublue-update
 # Remove ublue COPR
 rm /etc/yum.repos.d/ublue-os-staging-fedora-*.repo
 
-sed -i 's@enabled=0@enabled=1@g' /etc/yum.repos.d/_copr_kylegospo-bazzite.repo && \
+sed -i 's@enabled=0@enabled=1@g' /etc/yum.repos.d/_copr_kylegospo-bazzite.repo
