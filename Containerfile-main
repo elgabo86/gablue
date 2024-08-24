@@ -20,6 +20,10 @@ FROM ghcr.io/ublue-os/akmods-extra:fsync-ba-${FEDORA_MAJOR_VERSION} AS akmods-ex
 COPY files/system/all /
 COPY files/system/test /
 
+
+RUN echo coucou
+RUN usr/libexec/containerbuild/cleanup.sh
+
 # Setup copr repos
 RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
     chmod +x /usr/libexec/containerbuild/*.sh && \
