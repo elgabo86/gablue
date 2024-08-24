@@ -89,7 +89,7 @@ jobs:
             org.opencontainers.image.description=${{ env.MY_IMAGE_DESC }}
             org.opencontainers.image.title=${{ env.MY_IMAGE_NAME }}
 
-     - name: Build Image
+      - name: Build Image
         id: build_image
         shell: bash
         run: |
@@ -97,7 +97,7 @@ jobs:
             --format "docker" \
             --tag raw-img .
 
-     - name: Rechunk Image
+      - name: Rechunk Image
         id: rechunk
         uses: hhd-dev/rechunk@v0.8.6
         with:
