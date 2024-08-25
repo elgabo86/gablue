@@ -5,7 +5,8 @@ on:
     branches:
       - main
   schedule:
-    - cron: '05 10 * * *'  # 10:05am UTC everyday
+    - cron: "00 06 * * *" # build at 06:00 UTC every day
+                          # (20 minutes after last ublue images start building)
   push:
     branches:
       - main
@@ -76,6 +77,7 @@ jobs:
 
           echo "alias_tags=${alias_tags[*]}" >> $GITHUB_OUTPUT
 
+          # Take only the date for versionning
           echo "alias_date=${TIMESTAMP}" >> $GITHUB_OUTPUT
 
       # Build metadata
