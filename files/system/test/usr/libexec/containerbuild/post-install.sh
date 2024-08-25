@@ -52,3 +52,4 @@ fi
 
 # fix topgrade warning bypass
 sed -i '/^ExecStart/a Environment="TOPGRADE_SKIP_BRKC_NOTIFY=true"' /usr/lib/systemd/system/ublue-update.service
+echo "TOPGRADE_SKIP_BRKC_NOTIFY=true" >> "/etc/environment"
