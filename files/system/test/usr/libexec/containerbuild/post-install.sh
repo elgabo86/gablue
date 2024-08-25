@@ -2,7 +2,6 @@
 
 set -eoux pipefail
 
-
 #Use bore config from CachyOS
 curl -Lo /usr/lib/sysctl.d/99-bore-scheduler.conf https://github.com/CachyOS/CachyOS-Settings/raw/master/usr/lib/sysctl.d/99-bore-scheduler.conf
 
@@ -20,11 +19,9 @@ ln -sf ../../../hicolor/scalable/places/start-here.svg /usr/share/icons/Papirus/
 ln -sf ../../../hicolor/scalable/places/start-here.svg /usr/share/icons/Papirus/24x24/panel/start-here.svg
 ln -sf ../../../hicolor/scalable/places/start-here.svg /usr/share/icons/Papirus/symbolic/places/start-here-symbolic.svg
 
-
 # Hide update & change min battery %
 sed -i 's/dbus_notify = true/dbus_notify = false/g' /usr/etc/ublue-update/ublue-update.toml
 sed -i 's/min_battery_percent = 50\.0/min_battery_percent = 30.0/g' /usr/etc/ublue-update/ublue-update.toml
-
 
 # set scx_lavd default
 sed -i "s/^SCX_SCHEDULER=.*/SCX_SCHEDULER=scx_lavd/" /etc/default/scx
@@ -32,12 +29,10 @@ sed -i "s/^SCX_SCHEDULER=.*/SCX_SCHEDULER=scx_lavd/" /etc/default/scx
 # set userpace HID to true
 sed -i 's/#UserspaceHID.*/UserspaceHID=true/' /etc/bluetooth/input.conf
 
-
 if [ "$GABLUE_VARIANT" == "main" ]; then
     # Remove waydroid .desktop
     sed -i 's@\[Desktop Entry\]@\[Desktop Entry\]\nNoDisplay=true@g' /usr/share/applications/Waydroid.desktop
 fi
-
 
 # fix qt6 bus errors
 ln -s /bin/qdbus /bin/qdbus6
@@ -50,3 +45,6 @@ if [ -f /etc/profile.d/atuin.sh ]; then
 else
     echo "Le fichier /etc/profile.d/atuin.sh n'existe pas."
 fi
+
+# fix topgrade breaknews message bypass
+echo "TOPGRADE_SKIP_BRKC_NOTIFY=true" > "/etc/environment"
