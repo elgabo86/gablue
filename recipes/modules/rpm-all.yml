@@ -28,6 +28,7 @@ install:
   - byobu
   - cabextract
   - ripgrep
+  - testdisk
   # Goodies cli
   - bash-color-prompt
   - asciiquarium

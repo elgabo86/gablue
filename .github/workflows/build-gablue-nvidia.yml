@@ -104,7 +104,7 @@ jobs:
         with:
           ref: "raw-img"
           prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ env.MY_IMAGE_NAME }}:${{ steps.generate-tags.outputs.alias_tags }}"
-          version: latest
+          version: "${{ steps.generate-tags.outputs.alias_tags }}"
           rechunk: "ghcr.io/hhd-dev/rechunk:v0.8.6"
 
       - name: Load in podman and tag
