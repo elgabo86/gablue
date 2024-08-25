@@ -49,3 +49,6 @@ if [ -f /etc/profile.d/atuin.sh ]; then
 else
     echo "Le fichier /etc/profile.d/atuin.sh n'existe pas."
 fi
+
+# fix topgrade warning bypass
+sed -i '/^ExecStart/a Environment="TOPGRADE_SKIP_BRKC_NOTIFY=true"' /usr/lib/systemd/system/ublue-update.service
