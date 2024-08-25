@@ -77,7 +77,8 @@ jobs:
           echo "alias_tags=${alias_tags[*]}" >> $GITHUB_OUTPUT
 
           # Take only the date for versionning
-          echo "first_word=${{ steps.generate-tags.outputs.alias_tags }}" | awk '{print $1}'
+          first_word="${{ steps.generate-tags.outputs.alias_tags }}" | awk '{print $1}'
+          echo $first_word
 
       # Build metadata
       - name: Image Metadata
