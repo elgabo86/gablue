@@ -43,6 +43,7 @@ jobs:
         run: |
           # Generate a timestamp for creating an image version history
           TIMESTAMP="$(date +%Y%m%d)"
+          TIMESTAMPWT="$(date -d '+2 hours' +%Y%m%d-%Hh%M)"
           COMMIT_TAGS=()
           BUILD_TAGS=()
 
@@ -57,6 +58,7 @@ jobs:
           done
 
           BUILD_TAGS+=("${TIMESTAMP}")
+          BUILD_TAGS+=("${TIMESTAMPWT}")
           BUILD_TAGS+=("latest")
 
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
@@ -78,7 +80,7 @@ jobs:
           echo "alias_tags=${alias_tags[*]}" >> $GITHUB_OUTPUT
 
           # Take only the date for versionning
-          echo "alias_date=${TIMESTAMP}" >> $GITHUB_OUTPUT
+          echo "alias_date=${TIMESTAMPWT}" >> $GITHUB_OUTPUT
 
       # Build metadata
       - name: Image Metadata
@@ -116,6 +118,7 @@ jobs:
           IMAGE=$(podman pull ${{ steps.rechunk.outputs.ref }})
           sudo rm -rf ${{ steps.rechunk.outputs.output }}
           podman tag $IMAGE ${{ env.MY_IMAGE_NAME }}:${{ steps.generate-tags.outputs.alias_tags }}
+          podman tag $IMAGE ${{ env.MY_IMAGE_NAME }}:${{ steps.generate-tags.outputs.alias_date }}
           podman tag $IMAGE ${{ env.MY_IMAGE_NAME }}:latest
 
       # Workaround bug where capital letters in your GitHub username make it impossible to push to GHCR.
