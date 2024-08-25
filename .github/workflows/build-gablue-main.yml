@@ -76,6 +76,8 @@ jobs:
 
           echo "alias_tags=${alias_tags[*]}" >> $GITHUB_OUTPUT
 
+          echo "alias_date=${TIMESTAMP}" >> $GITHUB_OUTPUT
+
       # Build metadata
       - name: Image Metadata
         uses: docker/metadata-action@v5
@@ -104,7 +106,7 @@ jobs:
         with:
           ref: "raw-img"
           prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ env.MY_IMAGE_NAME }}:${{ steps.generate-tags.outputs.alias_tags }}"
-          version: "${{ steps.generate-tags.outputs.TIMESTAMP }}"
+          version: "${{ steps.generate-tags.outputs.alias_date }}"
           rechunk: "ghcr.io/hhd-dev/rechunk:v0.8.6"
 
       - name: Load in podman and tag
