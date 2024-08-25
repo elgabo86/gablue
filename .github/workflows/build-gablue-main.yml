@@ -43,6 +43,8 @@ jobs:
         run: |
           # Generate a timestamp for creating an image version history
           TIMESTAMP="$(date +%Y%m%d)"
+          TIMESTAMPWT="$(date +%Y%m%d-%Hh%M)"
+          COMMITONLY="${{ github.event.number }}"
           COMMIT_TAGS=()
           BUILD_TAGS=()
 
@@ -57,6 +59,8 @@ jobs:
           done
 
           BUILD_TAGS+=("${TIMESTAMP}")
+          BUILD_TAGS+=("${TIMESTAMPWT}")
+          BUILD_TAGS+=("${COMMITONLY}")
           BUILD_TAGS+=("latest")
 
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
@@ -78,7 +82,7 @@ jobs:
           echo "alias_tags=${alias_tags[*]}" >> $GITHUB_OUTPUT
 
           # Take only the date for versionning
-          echo "alias_date=${TIMESTAMP}" >> $GITHUB_OUTPUT
+          echo "alias_date=${TIMESTAMPWT}" >> $GITHUB_OUTPUT
 
       # Build metadata
       - name: Image Metadata
