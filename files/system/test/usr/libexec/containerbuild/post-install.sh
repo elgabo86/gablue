@@ -2,6 +2,10 @@
 
 set -eoux pipefail
 
+# Add tgpt bin
+wget https://github.com/aandrew-me/tgpt/releases/latest/download/tgpt-linux-amd64 -O /usr/bin/tgpt
+chmod +x /usr/bin/tgpt
+
 #Use bore config from CachyOS
 curl -Lo /usr/lib/sysctl.d/99-bore-scheduler.conf https://github.com/CachyOS/CachyOS-Settings/raw/master/usr/lib/sysctl.d/99-bore-scheduler.conf
 
@@ -45,6 +49,3 @@ if [ -f /etc/profile.d/atuin.sh ]; then
 else
     echo "Le fichier /etc/profile.d/atuin.sh n'existe pas."
 fi
-
-# fix topgrade breaknews message bypass
-echo "TOPGRADE_SKIP_BRKC_NOTIFY=true" > "/etc/environment"
