@@ -24,7 +24,8 @@ powertop \
 android-tools \
 byobu \
 cabextract \
-ripgrep
+ripgrep \
+testdisk
 
 #Goodies cli
 rpm-ostree install \
@@ -100,8 +101,6 @@ tk-devel
 rpm-ostree override remove \
 firefox \
 firefox-langpacks
-echo "GABLUE_VARIANT: $GABLUE_VARIANT"
-
 
 if [ "$GABLUE_VARIANT" == "main" ]; then
     rpm-ostree install \
