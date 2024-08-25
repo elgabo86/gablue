@@ -25,7 +25,7 @@ alias wtricks="flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=
 
 alias neofetch="fastfetch -c /usr/share/ublue-os/gablue/fastfetch.jsonc"
 
-alias gablue-update="rpm-ostree upgrade && flatpak update -y"
+alias gablue-update="/usr/libexec/gablue-update"
 
 alias ollama-start="podman start ollama open-webui && echo 'Ollama WebGui http://localhost:3000'"
 

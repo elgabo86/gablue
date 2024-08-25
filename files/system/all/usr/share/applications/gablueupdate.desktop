@@ -1,0 +1,15 @@
+[Desktop Entry]
+Comment=
+Exec=/usr/libexec/gablue-update
+GenericName=Provoquer la mise à jour Gablue
+Icon=dcc_nav_update
+Name=Provoquer la mise à jour Gablue
+NoDisplay=false
+Path=
+StartupNotify=true
+Terminal=true
+TerminalOptions=
+Type=Application
+Categories=System
+X-KDE-SubstituteUID=false
+X-KDE-Username=
