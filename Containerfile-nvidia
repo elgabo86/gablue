@@ -1,5 +1,5 @@
 # Main arguments
-ARG GABLUE_VARIANT="main"
+ARG GABLUE_VARIANT="nvidia"
 ARG SOURCE_IMAGE="kinoite"
 ARG SOURCE_SUFFIX="-main"
 ARG SOURCE_TAG="40"
@@ -18,7 +18,7 @@ COPY files/system/test /
 RUN chmod +x /usr/libexec/containerbuild/*.sh
 
 # Set environnement variables for scripts
-ENV GABLUE_VARIANT="main"
+ENV GABLUE_VARIANT="nvidia"
 ENV SOURCE_IMAGE="kinoite"
 ENV SOURCE_SUFFIX="-main"
 ENV SOURCE_TAG="40"
