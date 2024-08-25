@@ -94,7 +94,7 @@ jobs:
         shell: bash
         run: |
           sudo buildah build \
-            --file "Containerfile-main" \
+            --file "Containerfile-nvidia" \
             --format "docker" \
             --tag raw-img .
 
