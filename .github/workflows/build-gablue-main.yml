@@ -44,7 +44,6 @@ jobs:
           # Generate a timestamp for creating an image version history
           TIMESTAMP="$(date +%Y%m%d)"
           TIMESTAMPWT="$(date +%Y%m%d-%Hh%M)"
-          COMMITONLY="${{ github.event.number }}"
           COMMIT_TAGS=()
           BUILD_TAGS=()
 
@@ -60,7 +59,6 @@ jobs:
 
           BUILD_TAGS+=("${TIMESTAMP}")
           BUILD_TAGS+=("${TIMESTAMPWT}")
-          BUILD_TAGS+=("${COMMITONLY}")
           BUILD_TAGS+=("latest")
 
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
@@ -111,7 +109,7 @@ jobs:
         uses: hhd-dev/rechunk@v0.8.6
         with:
           ref: "raw-img"
-          prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ env.MY_IMAGE_NAME }}:${{ steps.generate-tags.outputs.alias_tags }}"
+          prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ env.MY_IMAGE_NAME }}:latest"
           version: "${{ steps.generate-tags.outputs.alias_date }}"
           rechunk: "ghcr.io/hhd-dev/rechunk:v0.8.6"
 
