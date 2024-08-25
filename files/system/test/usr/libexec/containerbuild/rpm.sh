@@ -100,8 +100,10 @@ tk-devel
 rpm-ostree override remove \
 firefox \
 firefox-langpacks
+echo "GABLUE_VARIANT: $GABLUE_VARIANT"
 
-if [ "$GABLUE_VARIANT" == "main" ]; then
+
+if [ "$GABLUE_VARIANT" = "main" ]; then
     rpm-ostree install \
     radeontop \
     waydroid
