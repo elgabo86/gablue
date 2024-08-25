@@ -1,19 +1,35 @@
 #!/usr/bin/bash
 
+echo 'Tentative de mise à jour du système'
 if rpm-ostree cancel && rpm-ostree upgrade; then
-    echo 'Tout est ok!'
+    echo 'Tout est ok! Système à jour!'
+    echo "Mise à jour des applications flatpak dans 5 secondes"
     for ((i=5; i>=1; i--))
     do
         echo "$i"
         sleep 1
     done
+    if flatpak update -y; then
+        echo 'Applications flatpak à jour!'
+        echo "Fermeture dans 5 secondes"
+        for ((i=5; i>=1; i--))
+        do
+            echo "$i"
+            sleep 1
+        done
+    else
+        echo 'Echec... Fermeture...'
+        for ((i=5; i>=1; i--))
+        do
+            echo "$i"
+            sleep 1
+        done
+    fi
 else
-    echo 'Echec...'
+    echo 'Echec... Fermeture'
     for ((i=5; i>=1; i--))
     do
         echo "$i"
         sleep 1
     done
 fi
-
-
