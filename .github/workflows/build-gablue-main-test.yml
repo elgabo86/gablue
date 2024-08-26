@@ -1,5 +1,5 @@
 ---
-name: build-gablue-main
+name: build-gablue-main-test
 on:
   pull_request:
     branches:

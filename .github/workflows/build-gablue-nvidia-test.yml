@@ -1,5 +1,5 @@
 ---
-name: build-gablue-nvidia
+name: build-gablue-nvidia-test
 on:
   pull_request:
     branches:
