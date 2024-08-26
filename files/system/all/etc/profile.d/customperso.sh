@@ -35,6 +35,8 @@ alias ollama-stop="podman stop ollama open-webui"
 
 alias open="xdg-open &>/dev/null"
 
+alias battery-info="upower -i /org/freedesktop/UPower/devices/battery_BAT0"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 

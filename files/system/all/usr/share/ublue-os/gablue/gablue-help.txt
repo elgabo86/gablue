@@ -65,6 +65,8 @@
 
 - sensors                         # Affiche tous les senseurs de température de la machine
 
+- battery-info                    # Affiche les informatsions sur la batterie
+
 - btop                            # Gestionnaire de tâches + surveillance système
 
 - ncdu                            # Permet de lister les fichiers/dossier selon leur tailes et ainsi libèrer de la place
