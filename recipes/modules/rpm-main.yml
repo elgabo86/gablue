@@ -1,6 +1,0 @@
-type: rpm-ostree
-install:
-  # Tools cli
-  - radeontop
-  # Waydroid
-  - waydroid

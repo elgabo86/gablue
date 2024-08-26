@@ -1,5 +1,0 @@
-type: files
-files:
-  - source: system/all
-    destination: /
-

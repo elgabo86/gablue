@@ -1,5 +1,5 @@
 ---
-name: build-gablue-nvidia
+name: build-gablue-main
 on:
   pull_request:
     branches:
@@ -15,8 +15,8 @@ on:
   workflow_dispatch:
 
 env:
-  MY_IMAGE_NAME: "gablue-nvidia"  # the name of the image produced by this build, matches repo names
-  MY_IMAGE_DESC: "Gablue nvidia image"
+  MY_IMAGE_NAME: "gablue-main-test"  # the name of the image produced by this build, matches repo names
+  MY_IMAGE_DESC: "Gablue main image"
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
 
 jobs:
@@ -100,7 +100,7 @@ jobs:
         shell: bash
         run: |
           sudo buildah build \
-            --file "Containerfile-nvidia" \
+            --file "Containerfile-main" \
             --format "docker" \
             --tag raw-img .
 
@@ -109,7 +109,7 @@ jobs:
         uses: hhd-dev/rechunk@v0.8.6
         with:
           ref: "raw-img"
-          prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ env.MY_IMAGE_NAME }}:${{ steps.generate-tags.outputs.alias_tags }}"
+          prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ env.MY_IMAGE_NAME }}:latest"
           version: "${{ steps.generate-tags.outputs.alias_date }}"
           rechunk: "ghcr.io/hhd-dev/rechunk:v0.8.6"
 

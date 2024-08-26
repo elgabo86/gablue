@@ -1,8 +1,0 @@
-type: script
-scripts:
-  # this sets up the proper policy & signing files for signed images to work
-  - custombins.sh
-  - removeatuin.sh
-  - branding.sh
-  - fixqdbus6.sh
-  - buildinitramfs.sh
