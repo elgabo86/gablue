@@ -23,7 +23,7 @@ alias wrun="flatpak run --command=bottles-cli com.usebottles.bottles run -b def 
 
 alias wtricks="flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/soda-9.0-1/bin/wine --command=winetricks com.usebottles.bottles"
 
-alias neofetch="fastfetch -c /usr/share/ublue-os/gablue/fastfetch.jsonc"
+alias neofetch="fastfetch --logo /usr/share/ublue-os/gablue/logoascii.ans -c /usr/share/ublue-os/gablue/fastfetch.jsonc"
 
 alias gablue-update="/usr/libexec/gablue-update"
 
