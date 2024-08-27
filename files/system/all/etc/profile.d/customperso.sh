@@ -37,6 +37,8 @@ alias open="xdg-open &>/dev/null"
 
 alias battery-info="upower -i /org/freedesktop/UPower/devices/battery_BAT0"
 
+alias sherlock="podman run --rm docker.io/sherlock/sherlock:latest"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
