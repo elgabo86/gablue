@@ -25,7 +25,8 @@ android-tools \
 byobu \
 cabextract \
 ripgrep \
-testdisk
+testdisk \
+gh
 
 #Goodies cli
 rpm-ostree install \
