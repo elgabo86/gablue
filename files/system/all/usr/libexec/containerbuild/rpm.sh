@@ -39,6 +39,7 @@ nyancat
 #Tools
 rpm-ostree install \
 kcalc \
+meld \
 sunshine \
 cpu-x \
 okular \
