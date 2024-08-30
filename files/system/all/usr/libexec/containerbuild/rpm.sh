@@ -73,7 +73,8 @@ krdp \
 nerd-fonts \
 adobe-source-code-pro-fonts \
 google-droid-sans-mono-fonts \
-google-go-mono-fonts
+google-go-mono-fonts \
+breeze-gtk
 
 
 #Drivers
