@@ -57,3 +57,6 @@ fi
 # fix topgrade warning bypass
 sed -i '/^ExecStart/a Environment="TOPGRADE_SKIP_BRKC_NOTIFY=true"' /usr/lib/systemd/system/ublue-update.service
 echo "TOPGRADE_SKIP_BRKC_NOTIFY=true" >> "/etc/environment"
+
+# alternatives cannot create symlinks on its own during a container build
+ln -sf /usr/bin/ld.bfd /etc/alternatives/ld && ln -sf /etc/alternatives/ld /usr/bin/ld
