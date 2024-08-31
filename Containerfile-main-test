@@ -64,7 +64,7 @@ RUN mkdir -p /var/tmp && chmod 1777 /var/tmp && \
     /usr/libexec/containerbuild/post-install.sh && \
     /usr/libexec/containerbuild/initramfs.sh && \
     /usr/libexec/containerbuild/cleanup.sh && \
-    ostree container commit
+    ostree container commit && \
     mkdir -p /var/lib && mv /staged-alternatives /var/lib/alternatives && \
     mkdir -p /var/tmp && chmod 1777 /var/tmp && \
     rm -rf /usr/libexec/containerbuild && \
