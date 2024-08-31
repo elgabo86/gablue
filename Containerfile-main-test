@@ -49,8 +49,8 @@ RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
     mkdir -p /var/lib/alternatives && \
     /usr/libexec/containerbuild/ublue-update.sh && \
     /usr/libexec/containerbuild/rpm.sh && \
-    /usr/libexec/containerbuild/cleanup.sh && \
     mv /var/lib/alternatives /staged-alternatives && \
+    /usr/libexec/containerbuild/cleanup.sh && \
     ostree container commit
 
 # Install brew
