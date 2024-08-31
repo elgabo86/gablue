@@ -46,9 +46,11 @@ RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
 
 # Install rpm
 RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
+    mkdir -p /var/lib/alternatives && \
     /usr/libexec/containerbuild/ublue-update.sh && \
     /usr/libexec/containerbuild/rpm.sh && \
     /usr/libexec/containerbuild/cleanup.sh && \
+    mv /var/lib/alternatives /staged-alternatives && \
     ostree container commit
 
 # Install brew
@@ -57,12 +59,10 @@ RUN /usr/libexec/containerbuild/brew.sh && \
     ostree container commit
 
 # Post-install
-RUN mkdir -p /var/lib/alternatives && \
-    mkdir -p /var/tmp && chmod 1777 /var/tmp && \
+RUN mkdir -p /var/tmp && chmod 1777 /var/tmp && \
     /usr/libexec/containerbuild/systemd.sh && \
     /usr/libexec/containerbuild/post-install.sh && \
     /usr/libexec/containerbuild/initramfs.sh && \
-    mv /var/lib/alternatives /staged-alternatives && \
     /usr/libexec/containerbuild/cleanup.sh && \
     mkdir -p /var/lib && mv /staged-alternatives /var/lib/alternatives && \
     mkdir -p /var/tmp && chmod 1777 /var/tmp && \
