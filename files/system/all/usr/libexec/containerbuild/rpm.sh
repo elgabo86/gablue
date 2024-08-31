@@ -98,7 +98,13 @@ bzip2-devel \
 openssl-devel \
 sqlite-devel \
 xz-devel \
-tk-devel
+tk-devel \
+patch \
+bzip2 \
+sqlite \
+libuuid-devel \
+gdbm-libs \
+libnsl2
 
 #Remove firefox
 rpm-ostree override remove \
