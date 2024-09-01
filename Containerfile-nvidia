@@ -9,7 +9,7 @@ ARG FEDORA_MAJOR_VERSION="40"
 FROM ghcr.io/ublue-os/fsync-ba-kernel:${FEDORA_MAJOR_VERSION} AS fsync
 FROM ghcr.io/ublue-os/akmods:fsync-ba-${FEDORA_MAJOR_VERSION} AS akmods
 FROM ghcr.io/ublue-os/akmods-extra:fsync-ba-${FEDORA_MAJOR_VERSION} AS akmods-extra
-FROM ghcr.io/ublue-os/akmods-nvidia:fsync-ba-${FEDORA_MAJOR_VERSION} AS akmods-nvidia
+FROM ghcr.io/ublue-os/akmods-nvidia:fsync-ba-${FEDORA_MAJOR_VERSION}-20240829 AS akmods-nvidia
 FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${SOURCE_TAG}
 
 # Copy files
