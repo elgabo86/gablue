@@ -39,6 +39,10 @@ alias battery-info="upower -i /org/freedesktop/UPower/devices/battery_BAT0"
 
 alias sherlock="podman run --rm docker.io/sherlock/sherlock:latest"
 
+alias waydroid-mount="pkexec mount --bind $(xdg-user-dir DOWNLOAD) ~/.local/share/waydroid/data/media/0/Download"
+
+alias waydroid-umount="pkexec umount /var/home/gab/.local/share/waydroid/data/media/0/Download"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
