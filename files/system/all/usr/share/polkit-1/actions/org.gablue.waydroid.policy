@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Gablue</vendor>
+  <vendor_url>https://github.com/elgabo86/gablue</vendor_url>
+
+  <action id="org.bazzite.policykit.waydroid.dlshare.mount">
+    <description>Share user linus download folder</description>
+    <icon_name>package-x-generic</icon_name>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/waydroid-dlshare-mount</annotate>
+  </action>
+
+  <action id="org.bazzite.policykit.waydroid.dlshare.umount">
+    <description>Stop sharing download folder</description>
+    <icon_name>package-x-generic</icon_name>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/waydroid-dlshare-umount</annotate>
+  </action>

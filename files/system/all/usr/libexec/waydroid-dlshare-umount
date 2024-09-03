@@ -1,0 +1,3 @@
+#!/usr/bin/bash
+
+umount -f ~/.local/share/waydroid/data/media/0/Download

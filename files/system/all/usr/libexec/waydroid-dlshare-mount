@@ -1,0 +1,3 @@
+#!/usr/bin/bash
+
+mount --bind $(xdg-user-dir DOWNLOAD) ~/.local/share/waydroid/data/media/0/Download
