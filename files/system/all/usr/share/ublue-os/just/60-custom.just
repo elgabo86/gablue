@@ -302,9 +302,6 @@ waydroid-configure-amd:
     sleep 20
     sudo /tmp/waydroid_script/venv/bin/python /tmp/waydroid_script/main.py install {libndk,widevine}
     sudo rm -rf /tmp/waydroid_script
-    sudo mkdir -p /var/lib/waydroid/overlay/system/lib64
-    sudo cp /usr/share/ublue-os/gablue/waydroid/libndk_fixer.so /var/lib/waydroid/overlay/system/lib64
-    sudo sed -i 's/ro.dalvik.vm.native.bridge=libndk_translation.so/ro.dalvik.vm.native.bridge=libndk_fixer.so/g' /var/lib/waydroid/waydroid_base.prop
     sudo sed -i "s/ro.hardware.gralloc=.*/ro.hardware.gralloc=${WAYDROID_GRALLOC:-minigbm_gbm_mesa}/g" /var/lib/waydroid/waydroid_base.prop
     waydroid session stop
     clear
