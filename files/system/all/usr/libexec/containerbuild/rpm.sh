@@ -26,7 +26,8 @@ byobu \
 cabextract \
 ripgrep \
 testdisk \
-gh
+gh \
+ryzenadj
 
 #Goodies cli
 rpm-ostree install \
