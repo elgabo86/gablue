@@ -27,6 +27,12 @@ ENV SOURCE_TAG="40"
 ENV FEDORA_MAJOR_VERSION="40"
 ENV OS_VERSION="40"
 
+# Update packages that commonly cause build issues
+RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
+    /usr/libexec/containerbuild/update-pkgs.sh && \
+    /usr/libexec/containerbuild/cleanup.sh && \
+    ostree container commit
+
 # Setup copr repos
 RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
     /usr/libexec/containerbuild/copr.sh && \
