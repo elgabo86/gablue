@@ -5,9 +5,7 @@
 # builds actually ran successfully without any errors!
 set -ouex pipefail
 
-rpm-ostree override replace \
-    --experimental \
-    --from repo=copr:copr.fedorainfracloud.org:kylegospo:bazzite-multilib \
+rpm-ostree install \
         mesa-libEGL.i686
 
 curl -Lo /tmp/nvidia-install.sh https://raw.githubusercontent.com/ublue-os/hwe/main/nvidia-install.sh && \
