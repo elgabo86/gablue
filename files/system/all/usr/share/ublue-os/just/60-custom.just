@@ -441,6 +441,18 @@ windows-install:
     flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/vc2015_2022-x64.exe /quiet /norestart
     flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/runtime-6.0.16-x64.exe /quiet
     flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/wine-mono-9.2.0-x86.msi /quiet
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "concrt140" -d "native,builtin" -t "REG_SZ"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140" -d "native,builtin" -t "REG_SZ"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140_1" -d "native,builtin" -t "REG_SZ"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140_2" -d "native,builtin" -t "REG_SZ"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140_atomic_wait" -d "native,builtin" -t "REG_SZ"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140_codecvt_ids" -d "native,builtin" -t "REG_SZ"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcamp140" -d "native,builtin" -t "REG_SZ"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vccorlib140" -d "native,builtin" -t "REG_SZ"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcomp140" -d "native,builtin" -t "REG_SZ"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcruntime140" -d "native,builtin" -t "REG_SZ"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcruntime140_1" -d "native,builtin" -t "REG_SZ"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "mscoree" -d "native,builtin" -t "REG_SZ"
     flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/soda-9.0-1/bin/wine --command=winetricks com.usebottles.bottles -q corefonts d3dcompiler_43 d3dcompiler_47 d3dx9 msls31 vb6run
     rm -rf ~/Windows/Tools
     flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/23.08 -y
