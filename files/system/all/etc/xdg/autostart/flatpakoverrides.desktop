@@ -3,7 +3,5 @@ Type=Application
 Name=Flatpak custom overrides
 Comment=Flatpak custom overrides
 NoDisplay=true
-X-KDE-StartupNotify=false
-X-systemd-skip=true
 Exec=/usr/share/ublue-os/gablue/scripts/flatpakoverrides.sh
 Terminal=false
