@@ -129,27 +129,24 @@ jobs:
         with:
           string: ${{ env.IMAGE_REGISTRY }}
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Push Image to GHCR
-        uses: redhat-actions/push-to-registry@v2
+      # Push the image to GHCR (Image Registry)
+      - name: Push To GHCR
+        uses: Wandalen/wretry.action@v3.5.0
         id: push
         env:
           REGISTRY_USER: ${{ github.actor }}
           REGISTRY_PASSWORD: ${{ github.token }}
         with:
-          image: ${{ env.MY_IMAGE_NAME }}
-          tags: ${{ steps.generate-tags.outputs.alias_tags }}
-          registry: ${{ steps.registry_case.outputs.lowercase }}
-          username: ${{ env.REGISTRY_USER }}
-          password: ${{ env.REGISTRY_PASSWORD }}
-          extra-args: |
-            --disable-content-trust
+          action: redhat-actions/push-to-registry@v2
+          attempt_limit: 3
+          attempt_delay: 15000
+          with: |
+            image: ${{ env.IMAGE_NAME }}
+            tags: ${{ steps.generate-tags.outputs.alias_tags }}
+            registry: ${{ steps.registry_case.outputs.lowercase }}
+            username: ${{ env.REGISTRY_USER }}
+            password: ${{ env.REGISTRY_PASSWORD }}
+
 
       # This section is optional and only needs to be enabled in you plan on distributing
       # your project to others to consume. You will need to create a public and private key
