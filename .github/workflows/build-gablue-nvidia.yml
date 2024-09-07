@@ -141,7 +141,7 @@ jobs:
           attempt_limit: 3
           attempt_delay: 15000
           with: |
-            image: ${{ env.IMAGE_NAME }}
+            image: ${{ env.MY_IMAGE_NAME }}
             tags: ${{ steps.generate-tags.outputs.alias_tags }}
             registry: ${{ steps.registry_case.outputs.lowercase }}
             username: ${{ env.REGISTRY_USER }}
