@@ -19,7 +19,7 @@ alias gogpt-pro="tgpt --provider phind -i"
 
 alias wkill="pgrep -i '(.*\.(exe|dll|msi|bat|com|lnk)$)|(.*(wine|proton).*))' |xargs -n1 kill -9 && pgrep -f bottles |xargs -n1 kill -9"
 
-alias wrun="flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e"
+alias wrun="/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable"
 
 alias wtricks="flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/soda-9.0-1/bin/wine --command=winetricks com.usebottles.bottles"
 
