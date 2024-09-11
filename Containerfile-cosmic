@@ -1,7 +1,7 @@
 # Main arguments
 ARG GABLUE_VARIANT="main"
-ARG SOURCE_IMAGE="kinoite"
-ARG SOURCE_SUFFIX="-main"
+ARG SOURCE_IMAGE="cosmic"
+ARG SOURCE_SUFFIX=""
 ARG SOURCE_TAG="40"
 ARG FEDORA_MAJOR_VERSION="40"
 ARG KERNEL_TYPE="fsync-ba"
@@ -15,13 +15,12 @@ FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${SOURCE_TAG}
 
 # Copy files
 COPY files/system/all /
-COPY files/system/kde /
 RUN chmod +x /usr/libexec/containerbuild/*.sh
 
 # Set environnement variables for scripts
 ENV GABLUE_VARIANT="main"
-ENV SOURCE_IMAGE="kinoite"
-ENV SOURCE_SUFFIX="-main"
+ENV SOURCE_IMAGE="cosmic"
+ENV SOURCE_SUFFIX=""
 ENV SOURCE_TAG="40"
 ENV FEDORA_MAJOR_VERSION="40"
 ENV OS_VERSION="40"

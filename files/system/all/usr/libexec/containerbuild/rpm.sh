@@ -41,18 +41,14 @@ nyancat
 
 #Tools
 rpm-ostree install \
-kcalc \
 meld \
 sunshine \
 cpu-x \
-okular \
-gwenview \
 corectrl \
 solaar \
 gnome-disk-utility \
 skanpage \
 x2goclient \
-yakuake \
 goverlay \
 mangohud \
 cool-retro-term \
@@ -64,22 +60,27 @@ joystickwake \
 earlyoom
 
 #Kde addons
-rpm-ostree install \
-papirus-icon-theme \
-langpacks-fr \
-kdenetwork-filesharing \
-libadwaita-qt5 \
-libadwaita-qt6 \
-kde-runtime-docs \
-kdeplasma-addons \
-kde-material-you-colors \
-krdp \
-nerd-fonts \
-adobe-source-code-pro-fonts \
-google-droid-sans-mono-fonts \
-google-go-mono-fonts \
-breeze-gtk
-
+if [ "$SOURCE_IMAGE" == "kinoite" ]; then
+    rpm-ostree install \
+    okular \
+    gwenview \
+    kcalc \
+    yakuake \
+    papirus-icon-theme \
+    langpacks-fr \
+    kdenetwork-filesharing \
+    libadwaita-qt5 \
+    libadwaita-qt6 \
+    kde-runtime-docs \
+    kdeplasma-addons \
+    kde-material-you-colors \
+    krdp \
+    nerd-fonts \
+    adobe-source-code-pro-fonts \
+    google-droid-sans-mono-fonts \
+    google-go-mono-fonts \
+    breeze-gtk
+fi
 
 #Drivers
 rpm-ostree install \
