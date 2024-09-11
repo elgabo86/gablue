@@ -62,3 +62,11 @@ echo "TOPGRADE_SKIP_BRKC_NOTIFY=true" >> "/etc/environment"
 
 # alternatives cannot create symlinks on its own during a container build
 ln -sf /usr/bin/ld.bfd /etc/alternatives/ld && ln -sf /etc/alternatives/ld /usr/bin/ld
+
+# fix cosmic login issues
+if [ "$SOURCE_IMAGE" == "cosmic" ]; then
+    grep -E '^greetd:' /usr/etc/passwd | sudo tee -a /etc/passwd
+    grep -E '^cosmic-greeter:' /usr/etc/passwd | sudo tee -a /etc/passwd
+    grep -E '^greetd:' /usr/etc/group | sudo tee -a /etc/group
+    grep -E '^cosmic-greeter:' /usr/etc/group | sudo tee -a /etc/group
+fi

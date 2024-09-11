@@ -119,3 +119,8 @@ if [ "$GABLUE_VARIANT" == "main" ]; then
     radeontop \
     waydroid
 fi
+
+if [ "$SOURCE_IMAGE" == "cosmic" ]; then
+    rpm-ostree install \
+    xdg-user-dirs
+fi
