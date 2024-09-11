@@ -6,7 +6,8 @@
 set -ouex pipefail
 
 rpm-ostree install \
-        mesa-libEGL.i686
+        mesa-libEGL.i686 \
+        expat.i686
 
 curl -Lo /tmp/nvidia-install.sh https://raw.githubusercontent.com/ublue-os/hwe/main/nvidia-install.sh && \
 chmod +x /tmp/nvidia-install.sh && \
