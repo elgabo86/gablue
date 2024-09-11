@@ -15,7 +15,7 @@ FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${SOURCE_TAG}
 
 # Copy files
 COPY files/system/all /
-COPY files/system/kde /
+COPY files/system/kinoite /
 RUN chmod +x /usr/libexec/containerbuild/*.sh
 
 # Set environnement variables for scripts

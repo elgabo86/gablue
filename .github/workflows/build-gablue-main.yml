@@ -111,6 +111,7 @@ jobs:
         with:
           ref: "raw-img"
           prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ env.MY_IMAGE_NAME }}:latest"
+          skip_compression: true
           version: "${{ steps.generate-tags.outputs.alias_date }}"
           rechunk: "ghcr.io/hhd-dev/rechunk:v0.8.6"
 
