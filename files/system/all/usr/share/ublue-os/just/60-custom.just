@@ -557,3 +557,10 @@ hotspot-remove:
     nmcli connection delete Hotspot-5ghz
     clear
     echo "Hotspot is removed"
+
+# Fix Swiss french Keyboard
+swisskey-fix:
+    #!/usr/bin/bash
+    localectl set-keymap ch-fr
+    clear
+    echo "Keyboard layout set to Swiss French"
