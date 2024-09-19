@@ -93,7 +93,7 @@ libimobiledevice \
 
 #Dev dep
 rpm-ostree install \
-gcc-c++ \
+gcc \
 libffi-devel \
 readline-devel \
 zlib-devel \
