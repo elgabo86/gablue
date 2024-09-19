@@ -133,6 +133,11 @@ rpm-ostree override replace \
     --from repo=updates \
         expat \
         || true && \
+rpm-ostree override replace \
+    --experimental \
+    --from repo=updates \
+        libgcc \
+        || true && \
 if grep -q "kinoite" <<< "${SOURCE_IMAGE}"; then \
     rpm-ostree override replace \
     --experimental \
