@@ -1,10 +1,9 @@
 [Desktop Entry]
+Categories=Utility;
 Comment=Kill Flatpak Apps
 Exec=ps aux | grep 'bwrap' | grep -v 'SyncThingy' | grep -v 'xdg-dbus-proxy' | grep -v 'grep' | awk '{print $2}' | xargs kill -9
 GenericName=Flatpak apps killer
 Icon=flatpak-discover
-Keywords[fr_CH]=wine;windows;
-Keywords=wine;windows;
 MimeType=
 Name=Kill Flatpak Apps
 NoDisplay=false
