@@ -43,6 +43,8 @@ alias waydroid-mount="pkexec mount --bind $(xdg-user-dir DOWNLOAD) ~/.local/shar
 
 alias waydroid-umount="pkexec umount /var/home/gab/.local/share/waydroid/data/media/0/Download"
 
+alias fkill="ps aux | grep 'bwrap' | grep -v 'SyncThingy' | grep -v 'xdg-dbus-proxy' | grep -v 'grep' | awk '{print $2}' | xargs kill -9"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
