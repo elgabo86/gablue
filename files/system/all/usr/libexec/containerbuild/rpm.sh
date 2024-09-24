@@ -75,7 +75,6 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     kdeplasma-addons \
     kde-material-you-colors \
     krdp \
-
     breeze-gtk
 fi
 
