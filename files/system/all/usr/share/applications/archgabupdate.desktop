@@ -1,0 +1,15 @@
+[Desktop Entry]
+Categories=System
+Comment=
+Exec=/usr/libexec/archgab-update
+GenericName=Provoquer la mise à jour Archgab
+Icon=org.kde.archUpdate
+Name=Provoquer la mise à jour Archgab
+NoDisplay=false
+Path=
+StartupNotify=true
+Terminal=true
+TerminalOptions=
+Type=Application
+X-KDE-SubstituteUID=false
+X-KDE-Username=

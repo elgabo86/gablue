@@ -75,12 +75,16 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     kdeplasma-addons \
     kde-material-you-colors \
     krdp \
-    nerd-fonts \
-    adobe-source-code-pro-fonts \
-    google-droid-sans-mono-fonts \
-    google-go-mono-fonts \
+
     breeze-gtk
 fi
+
+#Fonts
+rpm-ostree install \
+nerd-fonts \
+adobe-source-code-pro-fonts \
+google-droid-sans-mono-fonts \
+google-go-mono-fonts
 
 #Drivers
 rpm-ostree install \
@@ -89,7 +93,7 @@ epson-inkjet-printer-escpr2 \
 hplip \
 printer-driver-brlaser \
 ifuse \
-libimobiledevice \
+libimobiledevice
 
 #Dev dep
 rpm-ostree install \

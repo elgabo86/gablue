@@ -5,6 +5,7 @@ set -eoux pipefail
 # Make executable which need it
 chmod +x /usr/bin/system-flatpak-setup
 chmod +x /usr/libexec/gablue-update
+chmod +x /usr/libexec/archgab-update
 
 # Add tgpt bin
 wget https://github.com/aandrew-me/tgpt/releases/latest/download/tgpt-linux-amd64 -O /usr/bin/tgpt

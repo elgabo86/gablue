@@ -13,6 +13,7 @@ distrobox-archgab:
     podman kill --all
     distrobox-rm -f archgab
     distrobox-create --pull latest --name archgab --nvidia --image ghcr.io/elgabo86/archgab:latest
+    distrobox-enter -n archgab -- bash -c 'distrobox-export --bin /usr/bin/tochd; distrobox-export --bin /usr/bin/matm; distrobox-export --bin /usr/bin/hollywood; distrobox-export --app edex-ui'
     clear
     echo "ALL DONE!!!"
 
