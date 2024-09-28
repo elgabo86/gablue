@@ -8,6 +8,8 @@ chmod +x /usr/libexec/gablue-update
 chmod +x /usr/libexec/archgab-update
 chmod +x /usr/libexec/windows-update
 
+chmod +x /usr/share/ublue-os/gablue/scripts/*.sh
+
 
 # Add tgpt bin
 wget https://github.com/aandrew-me/tgpt/releases/latest/download/tgpt-linux-amd64 -O /usr/bin/tgpt
