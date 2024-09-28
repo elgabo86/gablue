@@ -401,9 +401,9 @@ windows-install:
     mv ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64 ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1
     rm -f ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64.tar.xz
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/*
-    wget -O ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.4-1.tar.gz https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/dxvk-gplasync-v2.4-1.tar.gz
-    tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.4-1.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/
-    rm -f ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.4-1.tar.gz
+    wget -O ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.4.1-1.tar.gz https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/dxvk-gplasync-v2.4.1-1.tar.gz
+    tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.4.1-1.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/
+    rm -f ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.4.1-1.tar.gz
     wget -O ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.13.tar.gz https://github.com/bottlesdevs/components/releases/download/vkd3d-proton-2.13/vkd3d-proton-2.13.tar.gz
     tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.13.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/
     rm -f ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.13.tar.gz
