@@ -465,6 +465,7 @@ windows-install:
     cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud/
     flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params mangohud:true
     flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params gamemode:true
+    mkdir -p ~/Windows/UserData/Public/Documents/Steam/
     clear
     echo "ALL DONE!!!"
 
