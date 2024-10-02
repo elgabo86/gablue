@@ -415,7 +415,7 @@ windows-install:
     rm -f ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz
     flatpak run --command=bottles-cli com.usebottles.bottles new --bottle-name "def" --environment gaming
     flatpak override com.usebottles.bottles --user --filesystem=~/Windows
-    mkdir -p ~/Windows/UserData ~/Windows/SteamData ~/Windows/Games ~/Windows/Applications ~/Windows/Tools
+    mkdir -p ~/Windows/UserData ~/Windows/SteamData ~/Windows/Games ~/Windows/Applications ~/Windows/Tools ~/.local/share/applications/
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users/
     ln -s ~/Windows/UserData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users
     ln -s ~/Windows/SteamData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/Steam
