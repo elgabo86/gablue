@@ -28,7 +28,8 @@ ripgrep \
 testdisk \
 gh \
 ryzenadj \
-yq
+yq \
+trash-cli
 
 #Goodies cli
 rpm-ostree install \
