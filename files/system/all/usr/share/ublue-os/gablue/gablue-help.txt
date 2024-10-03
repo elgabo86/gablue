@@ -38,11 +38,6 @@
 
 - ujust ssh-off                   # Désactiver la connection à distance SSH de la machine
 
-- ujust waydroid-install          # Installer un système Android sur Gablue
-- ujust waydroid-configure-amd    # Configurer Android pour les CPU AMD
-- ujust waydroid-configure-intel  # Configurer Android pour les CPU Intel
-- ujust waydroid-remove           # Effacer le système android et effacer les données utilisateur
-
 - ujust sound-432                 # Change la sortie générale audio en 432hz
 - ujust sound-reset               # Réinitialise la sortie générale audio en mode par défaut
 

@@ -120,8 +120,7 @@ firefox-langpacks
 
 if [ "$GABLUE_VARIANT" == "main" ]; then
     rpm-ostree install \
-    radeontop \
-    waydroid
+    radeontop
 fi
 
 if [ "$SOURCE_IMAGE" == "cosmic" ]; then

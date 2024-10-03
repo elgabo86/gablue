@@ -42,11 +42,6 @@ sed -i "s/^SCX_SCHEDULER=.*/SCX_SCHEDULER=scx_lavd/" /etc/default/scx
 # set userpace HID to true
 sed -i 's/#UserspaceHID.*/UserspaceHID=true/' /etc/bluetooth/input.conf
 
-if [ "$GABLUE_VARIANT" == "main" ]; then
-    # Remove waydroid .desktop
-    sed -i 's@\[Desktop Entry\]@\[Desktop Entry\]\nNoDisplay=true@g' /usr/share/applications/Waydroid.desktop
-fi
-
 # fix qt6 bus errors
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     ln -s /bin/qdbus /bin/qdbus6

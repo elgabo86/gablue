@@ -11,11 +11,6 @@ systemctl enable -f earlyoom.service
 
 systemctl disable -f scx.service
 
-if [ "$GABLUE_VARIANT" == "main" ]; then
-    systemctl enable -f waydroid-workaround.service
-    systemctl disable -f waydroid-container.service
-fi
-
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     systemctl enable -f kde-sysmonitor-workaround.service
 fi
