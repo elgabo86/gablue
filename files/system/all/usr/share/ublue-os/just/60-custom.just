@@ -421,7 +421,7 @@ hotspot-add:
     clear
     echo "Done! Password is 4476525555"
 
-# Add and connect a shared protected 5ghz wifi network
+# Remove the shared protected 5ghz wifi network
 hotspot-remove:
     #!/usr/bin/bash
     nmcli connection delete Hotspot-5ghz
