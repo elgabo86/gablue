@@ -3,7 +3,7 @@
 set -eoux pipefail
 
 rpm-ostree override remove \
-    mesa-va-drivers-freeworld && \
+    mesa-va-drivers && \
 rpm-ostree override replace \
     --experimental \
     --from repo=copr:copr.fedorainfracloud.org:kylegospo:bazzite-multilib \
@@ -29,6 +29,7 @@ rpm-ostree override replace \
         bluez-cups \
         bluez-libs \
         xorg-x11-server-Xwayland && \
+rpm-ostree install https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$OS_VERSION.noarch.rpm https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$OS_VERSION.noarch.rpm && \
 rpm-ostree install \
         mesa-va-drivers-freeworld \
         mesa-vdpau-drivers-freeworld.x86_64 \
