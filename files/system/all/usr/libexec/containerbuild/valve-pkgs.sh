@@ -36,4 +36,7 @@ rpm-ostree install \
         mesa-vdpau-drivers-freeworld.x86_64 \
         libaacs \
         libbdplus \
-        libbluray
+        libbluray && \
+rpm-ostree uninstall \
+        rpmfusion-free-release-$OS_VERSION.noarch.rpm \
+        rpmfusion-nonfree-release-$OS_VERSION.noarch.rpm
