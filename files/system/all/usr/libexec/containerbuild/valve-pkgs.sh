@@ -3,7 +3,8 @@
 set -eoux pipefail
 
 rpm-ostree override remove \
-    mesa-va-drivers && \
+    mesa-va-drivers \
+    pipewire-libs-extra && \
 rpm-ostree override replace \
     --experimental \
     --from repo=copr:copr.fedorainfracloud.org:kylegospo:bazzite-multilib \
