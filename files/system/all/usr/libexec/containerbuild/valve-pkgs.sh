@@ -38,5 +38,6 @@ rpm-ostree install \
         libbdplus \
         libbluray && \
 rpm-ostree uninstall \
-        rpmfusion-free-release-$OS_VERSION \
-        rpmfusion-nonfree-release-$OS_VERSION
+        rpmfusion-free-release-40-1.noarch \
+        rpmfusion-nonfree-release-40-1.noarch
+
