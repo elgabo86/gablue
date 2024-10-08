@@ -62,3 +62,6 @@ echo "TOPGRADE_SKIP_BRKC_NOTIFY=true" >> "/etc/environment"
 
 # alternatives cannot create symlinks on its own during a container build
 ln -sf /usr/bin/ld.bfd /etc/alternatives/ld && ln -sf /etc/alternatives/ld /usr/bin/ld
+
+# Disable negativo17 multi report
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/negativo17-fedora-multimedia.repo
