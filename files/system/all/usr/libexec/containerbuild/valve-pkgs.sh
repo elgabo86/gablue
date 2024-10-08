@@ -28,6 +28,7 @@ rpm-ostree override replace \
         xorg-x11-server-Xwayland && \
 sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_kylegospo-bazzite-multilib.repo && \
 rpm-ostree install \
+        pipewire-codec-aptx \
         libaacs \
         libbdplus \
         libbluray && \

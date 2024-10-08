@@ -12,4 +12,7 @@ curl -Lo /etc/yum.repos.d/_copr_matte-schwartz-sunshine.repo https://copr.fedora
 curl -Lo /etc/yum.repos.d/_copr_sramanujam-atuin.repo https://copr.fedorainfracloud.org/coprs/sramanujam/atuin/repo/fedora-"${FEDORA_MAJOR_VERSION}"/sramanujam-atuin-fedora-"${FEDORA_MAJOR_VERSION}".repo  && \
 curl -Lo /etc/yum.repos.d/_copr_luisbocanegra-kde-material-you-colors.repo https://copr.fedorainfracloud.org/coprs/luisbocanegra/kde-material-you-colors/repo/fedora-"${FEDORA_MAJOR_VERSION}"/luisbocanegra-kde-material-you-colors-fedora-"${FEDORA_MAJOR_VERSION}".repo && \
 curl -Lo /etc/yum.repos.d/tailscale.repo https://pkgs.tailscale.com/stable/fedora/tailscale.repo && \
-sed -i 's@gpgcheck=1@gpgcheck=0@g' /etc/yum.repos.d/tailscale.repo
+sed -i 's@gpgcheck=1@gpgcheck=0@g' /etc/yum.repos.d/tailscale.repo && \
+rpm-ostree install \
+        https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
+        https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
