@@ -51,9 +51,9 @@ gnome-disk-utility \
 skanpage \
 x2goclient \
 goverlay \
-mangohud \
+mangohud.x86_64 \
 cool-retro-term \
-gamescope \
+gamescope.x86_64 \
 cage \
 wlr-randr \
 scx-scheds \
