@@ -5,28 +5,24 @@ tailscale-up:
     sudo firewall-cmd --add-masquerade --zone=FedoraWorkstation --permanent
     sudo firewall-cmd --add-interface=tailscale0 --zone=trusted --permanent
     sudo tailscale up --operator=$USER --login-server https://headscale.gabserv.duckdns.org
-    clear
     echo "ALL DONE!!!"
 
 # Enable displaylink
 displaylink-enable:
     #!/usr/bin/bash
     sudo systemctl enable --now displaylink.service
-    clear
     echo "ALL DONE!!!"
 
 # Disable displaylink
 displaylink-disable:
     #!/usr/bin/bash
     sudo systemctl disable --now displaylink.service
-    clear
     echo "ALL DONE!!!"
 
 # Install/Reinstall custom Archlinux
 distrobox-archgab:
     #!/usr/bin/bash
     /usr/libexec/archgab-update
-    clear
     echo "ALL DONE!!!"
 
 # Rebase Gablue to main non nvidia
@@ -50,7 +46,6 @@ flatpak-custom-overrides:
     flatpak override com.usebottles.bottles --user --filesystem=xdg-data/applications
     flatpak override com.usebottles.bottles --user --env=DXVK_ASYNC=1
     flatpak override com.usebottles.bottles --user --env=DXVK_GPLASYNCCACHE=1
-    clear
     echo "ALL DONE!!!"
 
 # Add amd kargs to have advanced settings in CoreCtrl
@@ -58,21 +53,30 @@ amd-corectrl-set-kargs:
     #!/usr/bin/bash
     echo 'Setting needed kargs for CoreCtrl...'
     rpm-ostree kargs --append="amdgpu.ppfeaturemask=0xffffffff"
-    clear
     echo "ALL DONE!!!"
 
 # Remove cpu security,systemctl enable scx-lavd.service boost performance
 mitigations-off:
     #!/usr/bin/bash
     rpm-ostree kargs --append-if-missing=mitigations=off
-    clear
     echo "ALL DONE!!!"
 
 # Enable cpu security, more secure
 mitigations-on:
     #!/usr/bin/bash
     rpm-ostree kargs --delete-if-present=mitigations=off
-    clear
+    echo "ALL DONE!!!"
+
+# Enable fix id cpu for games like Hogwarts
+cpuid-fix-on:
+    #!/usr/bin/bash
+    rpm-ostree kargs --append-if-missing=clearcpuid=514
+    echo "ALL DONE!!!"
+
+# Disable fix id cpu for games like Hogwarts
+cpuid-fix-off:
+    #!/usr/bin/bash
+    rpm-ostree kargs --delete-if-present=clearcpuid=514
     echo "ALL DONE!!!"
 
 # Add flatpak custom rules and remove cpu security
@@ -89,7 +93,6 @@ gablue-setup:
     flatpak override com.usebottles.bottles --user --env=DXVK_ASYNC=1
     flatpak override com.usebottles.bottles --user --env=DXVK_GPLASYNCCACHE=1
     rpm-ostree kargs --append-if-missing=mitigations=off
-    clear
     echo "ALL DONE!!!"
 
 # Install ble and atuin, for history bash sync and more
@@ -102,35 +105,30 @@ atuin-setup:
     rm -f ble-nightly.tar.xz
     echo 'source ~/.local/share/blesh/ble.sh' >> ~/.bashrc
     echo 'eval "$(atuin init bash)"' >> ~/.bashrc
-    clear
     echo "ALL DONE!!!"
 
 # Enable ssh remote connection
 ssh-on:
     #!/usr/bin/bash
     sudo systemctl enable sshd.service --now
-    clear
     echo "ALL DONE!!!"
 
 # Disable ssh remote connection
 ssh-off:
     #!/usr/bin/bash
     sudo systemctl disable sshd.service --now
-    clear
     echo "ALL DONE!!!"
 
 # Enable update notification
 show-update:
     #!/usr/bin/bash
     sudo sed -i 's/dbus_notify = false/dbus_notify = true/g' /etc/ublue-update/ublue-update.toml
-    clear
     echo "ALL DONE!!!"
 
 # Disable update notification
 hide-update:
     #!/usr/bin/bash
     sudo sed -i 's/dbus_notify = true/dbus_notify = false/g' /etc/ublue-update/ublue-update.toml
-    clear
     echo "ALL DONE!!!"
 
 # Hide grub menu on boot
@@ -144,7 +142,6 @@ hide-grub:
     else
         sudo grub2-mkconfig -o /etc/grub2.cfg
     fi
-    clear
     echo "ALL DONE!!!"
 
 # Show grub menu on boot
@@ -158,116 +155,103 @@ show-grub:
     else
         sudo grub2-mkconfig -o /etc/grub2.cfg
     fi
-    clear
     echo "ALL DONE!!!"
 
 # Set sound in 432hz
 sound-432:
-    #!/usr/bin/env bash
+   #!/usr/bin/bash
     cp -rf /usr/share/pipewire ~/.config
     sed -i 's/#default.clock.rate          = 48000/default.clock.rate          = 43200/g' ~/.config/pipewire/pipewire.conf
     sed -i 's/#default.clock.allowed-rates = \[ 48000 \]/default.clock.allowed-rates = [ 43200 ]/g' ~/.config/pipewire/pipewire.conf
     sed -i 's\#node.latency       = 1024/48000\node.latency       = 2048/48000\g' ~/.config/pipewire/jack.conf
     systemctl --user restart pipewire
-    clear
     echo "The sound is now set to 432hz"
 
 # Reset sound config
 sound-reset:
-    #!/usr/bin/env bash
+    #!/usr/bin/bash
     rm -rf ~/.config/pipewire
     systemctl --user restart pipewire
-    clear
     echo "The sound is now at the default frequency"
 
 # Create gablue install iso
 create-iso-main:
-    #!/usr/bin/env bash
+    #!/usr/bin/bash
     sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD):/build-container-installer/build --security-opt label=disable ghcr.io/jasonn3/build-container-installer:latest VERSION=40 IMAGE_REPO=ghcr.io/elgabo86 IMAGE_NAME=gablue-main IMAGE_TAG=latest VARIANT=Kinoite ISO_NAME=build/gablue-main.iso
-    clear
     echo "The gablue iso is ready in your download folder"
 
 # Create gablue install iso (nvidia)
 create-iso-nvidia:
-    #!/usr/bin/env bash
+    #!/usr/bin/bash
     sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD):/build-container-installer/build --security-opt label=disable ghcr.io/jasonn3/build-container-installer:latest VERSION=40 IMAGE_REPO=ghcr.io/elgabo86 IMAGE_NAME=gablue-nvidia IMAGE_TAG=latest VARIANT=Kinoite ISO_NAME=build/gablue-nvidia.iso
-    clear
     echo "The gablue iso is ready in your download folder"
 
 # Install/Update Ollama+openwebui (cpu only)
 ollama-cpu:
-    #!/usr/bin/env bash
+    #!/usr/bin/bash
     podman kill --all
     podman create --pull always --replace --name ollama -p 11434:11434 -v ollama:/root/.ollama docker.io/ollama/ollama:latest
     podman create -p 127.0.0.1:3000:8080 --network=pasta:-T,11434 --add-host=ollama.local:127.0.0.1 --env 'OLLAMA_BASE_URL=http://ollama.local:11434' --env 'ANONYMIZED_TELEMETRY=False' -v open-webui:/app/backend/data --label io.containers.autoupdate=registry --replace --name open-webui --pull always ghcr.io/open-webui/open-webui:main
     podman start ollama open-webui
-    clear
     echo "ALL DONE!!!"
 
 # Install/Update Ollama+openwebui (nvidia)
 ollama-nvidia:
-    #!/usr/bin/env bash
+    #!/usr/bin/bash
     podman kill --all
     podman create --pull always --replace --name ollama -p 11434:11434 -v ollama:/root/.ollama --security-opt label=disable --device nvidia.com/gpu=all docker.io/ollama/ollama:latest
     podman create -p 127.0.0.1:3000:8080 --network=pasta:-T,11434 --add-host=ollama.local:127.0.0.1 --env 'OLLAMA_BASE_URL=http://ollama.local:11434' --env 'ANONYMIZED_TELEMETRY=False' -v open-webui:/app/backend/data --label io.containers.autoupdate=registry --replace --name open-webui --pull always ghcr.io/open-webui/open-webui:main
     podman start ollama open-webui
-    clear
     echo "ALL DONE!!!"
 
 # Install/Update Ollama+openwebui (nvidia)
 ollama-amd:
-    #!/usr/bin/env bash
+    #!/usr/bin/bash
     podman kill --all
     podman create --pull always --name ollama -p 11434:11434 -v ollama:/root/.ollama --security-opt label=disable  --device /dev/dri --device /dev/kfd  --replace --env HSA_OVERRIDE_GFX_VERSION=10.3.0 docker.io/ollama/ollama:rocm
     podman create -p 127.0.0.1:3000:8080 --network=pasta:-T,11434 --add-host=ollama.local:127.0.0.1 --env 'OLLAMA_BASE_URL=http://ollama.local:11434' --env 'ANONYMIZED_TELEMETRY=False' -v open-webui:/app/backend/data --label io.containers.autoupdate=registry --replace --name open-webui --pull always ghcr.io/open-webui/open-webui:main
     podman start ollama open-webui
-    clear
     echo "ALL DONE!!!"
 
 # Remove Ollama+openwebui and models data
 ollama-remove:
-    #!/usr/bin/env bash
+    #!/usr/bin/bash
     podman kill --all
     podman rm -f ollama open-webui
     podman volume rm -f ollama open-webui
     podman rmi --all
-    clear
     echo "ALL DONE!!!"
 
 # Install pyenv
 pyenv-setup:
-    #!/usr/bin/env bash
+    #!/usr/bin/bash
     git clone https://github.com/pyenv/pyenv.git ~/.pyenv
     cd ~/.pyenv && src/configure && make -C src
-    clear
     echo "ALL DONE!!!"
 
 # Update pyenv
 pyenv-update:
-    #!/usr/bin/env bash
+    #!/usr/bin/bashh
     git -C ~/.pyenv pull
-    clear
     echo "ALL DONE!!!"
 
 # Remove pyenv
 pyenv-remove:
-    #!/usr/bin/env bash
+    #!/usr/bin/bash
     rm -rf ~/.pyenv
-    clear
     echo "ALL DONE!!!"
 
 # Remove waydroid
 waydroid-remove:
-    #!/usr/bin/env bash
+    #!/usr/bin/bash
     sudo systemctl stop waydroid-container.service
     bash -c 'sudo rm -rf /var/lib/waydroid /home/.waydroid ~/waydroid ~/.share/waydroid ~/.local/share/applications/*aydroid* ~/.local/share/waydroid'
     update-desktop-database ~/.local/share/applications
-    clear
     echo "ALL DONE!!!"
 
 # Install default bottle and add default bottles folder with data user redirection and .desktop extras
 windows-install:
-    #!/usr/bin/env bash
+    #!/usr/bin/bash
     pgrep -f bottles |xargs -n1 kill -9 &
     sleep 2
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def*
@@ -343,12 +327,11 @@ windows-install:
     flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params mangohud:true
     flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params gamemode:true
     mkdir -p ~/Windows/UserData/Public/Documents/Steam/
-    clear
     echo "ALL DONE!!!"
 
 # Remove default bottle but keep user data
 windows-remove:
-    #!/usr/bin/env bash
+    #!/usr/bin/bash
     pgrep -f bottles |xargs -n1 kill -9 &
     sleep 2
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def*
@@ -358,12 +341,11 @@ windows-remove:
     rm ~/.local/share/applications/KillWindows.desktop
     rm ~/.local/share/kio/servicemenus/CreateWinShortcut.desktop
     update-desktop-database ~/.local/share/applications
-    clear
     echo "ALL DONE!!!"
 
 # Reset brew installation
 brew-reset:
-    #!/usr/bin/env bash
+    #!/usr/bin/bash
     if [[ -d "${HOME}/cache/Homebrew/" ]]; then
         echo "Removing '$HOME/cache/Homebrew/' directory"
         rm -r "${HOME}/cache/Homebrew/"
@@ -395,7 +377,6 @@ brew-reset:
     else
         echo "'/etc/.linuxbrew' file is already removed"
     fi
-    clear
     echo "ALL DONE!!!"
     echo "Restart computer to reuse brew"
 
@@ -430,12 +411,10 @@ fix-screen:
 hotspot-add:
     #!/usr/bin/bash
     nmcli device wifi hotspot con-name Hotspot-5ghz ssid Hotspot-5ghz band a channel 161 password 4476525555
-    clear
     echo "Done! Password is 4476525555"
 
 # Remove the shared protected 5ghz wifi network
 hotspot-remove:
     #!/usr/bin/bash
     nmcli connection delete Hotspot-5ghz
-    clear
     echo "Hotspot is removed"
