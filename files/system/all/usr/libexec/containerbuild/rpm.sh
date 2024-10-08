@@ -2,6 +2,9 @@
 
 set -eoux pipefail
 
+#Disable multilib repo to avoid i686 packages
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_kylegospo-bazzite-multilib.repo
+
 #Tools-cli
 rpm-ostree install \
 fswatch \
@@ -51,9 +54,9 @@ gnome-disk-utility \
 skanpage \
 x2goclient \
 goverlay \
-mangohud.x86_64 \
+mangohud \
 cool-retro-term \
-gamescope.x86_64 \
+gamescope \
 cage \
 wlr-randr \
 scx-scheds \
