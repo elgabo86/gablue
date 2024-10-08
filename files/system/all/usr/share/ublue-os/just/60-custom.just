@@ -1,9 +1,24 @@
 # Enable tailscale + firewall rules & connect to private network
 tailscale-up:
     #!/usr/bin/bash
+    sudo systemctl enable --now tailscaled.service
     sudo firewall-cmd --add-masquerade --zone=FedoraWorkstation --permanent
     sudo firewall-cmd --add-interface=tailscale0 --zone=trusted --permanent
     sudo tailscale up --operator=$USER --login-server https://headscale.gabserv.duckdns.org
+    clear
+    echo "ALL DONE!!!"
+
+# Enable displaylink
+displaylink-enable:
+    #!/usr/bin/bash
+    sudo systemctl enable --now displaylink.service
+    clear
+    echo "ALL DONE!!!"
+
+# Disable displaylink
+displaylink-disable:
+    #!/usr/bin/bash
+    sudo systemctl disable --now displaylink.service
     clear
     echo "ALL DONE!!!"
 

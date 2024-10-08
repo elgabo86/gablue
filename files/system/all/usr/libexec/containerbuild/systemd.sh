@@ -10,6 +10,8 @@ systemctl enable -f gamescope-workaround.service
 systemctl enable -f earlyoom.service
 
 systemctl disable -f scx.service
+systemctl disable -f tailscaled.service
+systemctl disable -f displaylink.service
 
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     systemctl enable -f kde-sysmonitor-workaround.service

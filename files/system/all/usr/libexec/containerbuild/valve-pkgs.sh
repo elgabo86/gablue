@@ -26,11 +26,9 @@ rpm-ostree override replace \
         bluez-cups \
         bluez-libs \
         xorg-x11-server-Xwayland && \
-sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_kylegospo-bazzite-multilib.repo && \
+sed -i 's@enabled=0@enabled=1@g' /etc/yum.repos.d/rpmfusion-*.repo && \
 rpm-ostree install \
-        pipewire-codec-aptx \
         libaacs \
         libbdplus \
         libbluray && \
-sed -i 's@enabled=0@enabled=1@g' /etc/yum.repos.d/_copr_kylegospo-bazzite-multilib.repo
-
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/rpmfusion-*.repo
