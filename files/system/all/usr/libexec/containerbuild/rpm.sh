@@ -14,7 +14,7 @@ duperemove \
 atuin \
 speedtest-cli \
 yt-dlp \
-unrar \
+rar \
 btop \
 tailscale \
 intel-undervolt \
