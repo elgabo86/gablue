@@ -2,13 +2,9 @@
 
 set -eoux pipefail
 
-rpm-ostree override remove \
-    mesa-va-drivers \
-    pipewire-libs-extra && \
 rpm-ostree override replace \
     --experimental \
     --from repo=copr:copr.fedorainfracloud.org:kylegospo:bazzite-multilib \
-        mesa-filesystem \
         mesa-libxatracker \
         mesa-libglapi \
         mesa-dri-drivers \
@@ -30,14 +26,10 @@ rpm-ostree override replace \
         bluez-cups \
         bluez-libs \
         xorg-x11-server-Xwayland && \
-rpm-ostree install https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$OS_VERSION.noarch.rpm https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$OS_VERSION.noarch.rpm && \
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_kylegospo-bazzite-multilib.repo && \
 rpm-ostree install \
-        mesa-va-drivers-freeworld \
-        mesa-vdpau-drivers-freeworld.x86_64 \
         libaacs \
         libbdplus \
         libbluray && \
-rpm-ostree uninstall \
-        rpmfusion-free-release-40-1.noarch \
-        rpmfusion-nonfree-release-40-1.noarch
+sed -i 's@enabled=0@enabled=1@g' /etc/yum.repos.d/_copr_kylegospo-bazzite-multilib.repo
 
