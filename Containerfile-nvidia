@@ -47,18 +47,18 @@ RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
     /usr/libexec/containerbuild/cleanup.sh && \
     ostree container commit
 
-# Install nvidia driver
-RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
-    --mount=type=bind,from=akmods-nvidia,src=/rpms,dst=/tmp/akmods-rpms \
-    /usr/libexec/containerbuild/nvidia.sh && \
-    /usr/libexec/containerbuild/cleanup.sh && \
-    ostree container commit
-
 # Add ublue packages
 RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
     --mount=type=bind,from=akmods,src=/rpms,dst=/tmp/akmods-rpms \
     --mount=type=bind,from=akmods-extra,src=/rpms,dst=/tmp/akmods-extra-rpms \
     /usr/libexec/containerbuild/akmods-fsync.sh && \
+    /usr/libexec/containerbuild/cleanup.sh && \
+    ostree container commit
+
+# Install nvidia driver
+RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=akmods-nvidia,src=/rpms,dst=/tmp/akmods-rpms \
+    /usr/libexec/containerbuild/nvidia.sh && \
     /usr/libexec/containerbuild/cleanup.sh && \
     ostree container commit
 
