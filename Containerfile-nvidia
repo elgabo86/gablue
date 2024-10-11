@@ -47,6 +47,13 @@ RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
     /usr/libexec/containerbuild/cleanup.sh && \
     ostree container commit
 
+# Install nvidia driver
+RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=akmods-nvidia,src=/rpms,dst=/tmp/akmods-rpms \
+    /usr/libexec/containerbuild/nvidia.sh && \
+    /usr/libexec/containerbuild/cleanup.sh && \
+    ostree container commit
+
 # Add ublue packages
 RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
     --mount=type=bind,from=akmods,src=/rpms,dst=/tmp/akmods-rpms \
@@ -58,13 +65,6 @@ RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
 # Install Valve's patched Mesa, Pipewire, Bluez, and Xwayland
 RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
     /usr/libexec/containerbuild/valve-pkgs.sh && \
-    /usr/libexec/containerbuild/cleanup.sh && \
-    ostree container commit
-
-# Install nvidia driver
-RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
-    --mount=type=bind,from=akmods-nvidia,src=/rpms,dst=/tmp/akmods-rpms \
-    /usr/libexec/containerbuild/nvidia.sh && \
     /usr/libexec/containerbuild/cleanup.sh && \
     ostree container commit
 
