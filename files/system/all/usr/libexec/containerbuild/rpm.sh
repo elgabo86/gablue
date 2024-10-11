@@ -71,6 +71,7 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     kcalc \
     yakuake \
     papirus-icon-theme \
+    papirus-icon-theme-dark \
     langpacks-fr \
     kdenetwork-filesharing \
     libadwaita-qt5 \
