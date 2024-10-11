@@ -4,7 +4,7 @@ SingleClick=false
 ColorScheme=BreezeDark
 
 [Icons]
-Theme=Papirus
+Theme=Papirus-Dark
 
 [KDE Control Module Restrictions][$i]
 kcm_plymouth.desktop=false
