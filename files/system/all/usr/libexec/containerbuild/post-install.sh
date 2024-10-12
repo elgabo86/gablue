@@ -66,3 +66,16 @@ ln -sf /usr/bin/ld.bfd /etc/alternatives/ld && ln -sf /etc/alternatives/ld /usr/
 # Disable repos
 sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/negativo17-fedora-rar.repo && \
 sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/negativo17-fedora-multimedia.repo
+
+# Remove some unused .Desktop
+rm -f /usr/share/applications/kde4/knetattach.desktop
+rm -f /usr/share/applications/org.kde.kdebugsettings.desktop
+rm -f /usr/share/applications/org.gnome.Meld.desktop
+rm -f /usr/share/applications/org.kde.kdeconnect.sms.desktop
+rm -f /usr/share/applications/byobu.desktop
+rm -f /usr/share/applications/org.kde.plasma-welcome.desktop
+rm -f /usr/share/applications/btop.desktop
+rm -f /usr/share/applications/htop.desktop
+rm -f /usr/share/applications/nvtop.desktop
+rm -f /usr/share/applications/firewall-config.desktop
+rm -f /usr/share/applications/org.kde.kjournaldbrowser.desktop

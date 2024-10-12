@@ -40,14 +40,12 @@ bash-color-prompt \
 asciiquarium \
 figlet \
 toilet \
-cmatrix \
-nyancat
+cmatrix
 
 #Tools
 rpm-ostree install \
 meld \
 sunshine \
-cpu-x \
 corectrl \
 solaar \
 gnome-disk-utility \
@@ -79,7 +77,6 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     kde-runtime-docs \
     kdeplasma-addons \
     kde-material-you-colors \
-    krdp \
     breeze-gtk
 fi
 

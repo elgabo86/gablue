@@ -8,7 +8,7 @@ if lspci | grep -i nvidia > /dev/null; then
 else
     distrobox-create --pull latest --name archgab --image ghcr.io/elgabo86/archgab:latest
 fi
-distrobox-enter -n archgab -- bash -c 'distrobox-export --bin /usr/bin/tochd; distrobox-export --bin /usr/bin/matm; distrobox-export --bin /usr/bin/hollywood; distrobox-export --app edex-ui; distrobox-export --bin /usr/bin/edex-ui'
+distrobox-enter -n archgab -- bash -c 'distrobox-export --bin /usr/bin/tochd; distrobox-export --bin /usr/bin/matm; distrobox-export --bin /usr/bin/hollywood;  distrobox-export --bin /usr/bin/edex-ui'
 
 echo "Fermeture dans 5 secondes"
 for ((i=5; i>=1; i--))
