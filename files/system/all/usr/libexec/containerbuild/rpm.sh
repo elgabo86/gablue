@@ -76,7 +76,6 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     libadwaita-qt6 \
     kde-runtime-docs \
     kdeplasma-addons \
-    kde-material-you-colors \
     breeze-gtk
 fi
 
