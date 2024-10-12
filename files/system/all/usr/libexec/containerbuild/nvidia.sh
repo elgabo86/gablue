@@ -11,6 +11,6 @@ rpm-ostree install \
         mesa-vdpau-drivers.i686 && \
 curl -Lo /tmp/nvidia-install.sh https://raw.githubusercontent.com/ublue-os/hwe/main/nvidia-install.sh && \
 chmod +x /tmp/nvidia-install.sh && \
-IMAGE_NAME="${SOURCE_IMAGE}" FEDORA_MAJOR_VERSION="${FEDORA_MAJOR_VERSION}" /tmp/nvidia-install.sh
+NVIDIA_FLAVOR="nvidia" IMAGE_NAME="${SOURCE_IMAGE}" FEDORA_MAJOR_VERSION="${FEDORA_MAJOR_VERSION}" /tmp/nvidia-install.sh
 rm -f /usr/share/vulkan/icd.d/nouveau_icd.*.json
 ln -s libnvidia-ml.so.1 /usr/lib64/libnvidia-ml.so
