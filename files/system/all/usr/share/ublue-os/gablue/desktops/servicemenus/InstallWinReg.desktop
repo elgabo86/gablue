@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=text/x-ms-regedit;
+Actions=InstallReg
+X-KDE-Submenu=Windows
+
+[Desktop Action InstallReg]
+Name=Installer dans le registre
+Icon=com.usebottles.bottles
+Exec=/usr/bin/flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/soda-9.0-1/bin/wine --command=regedit com.usebottles.bottles %f && kdialog --msgbox "Le .reg s'est bien installé"

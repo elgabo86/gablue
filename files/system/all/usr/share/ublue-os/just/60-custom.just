@@ -291,6 +291,7 @@ windows-install:
     cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications/
     mkdir -p ~/.local/share/kio/servicemenus/
     cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWinShortcut.desktop ~/.local/share/kio/servicemenus/
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/InstallWinReg.desktop ~/.local/share/kio/servicemenus/
     update-desktop-database ~/.local/share/applications
     xdg-mime default Windows.desktop application/x-ms-dos-executable
     xdg-mime default Windows.desktop application/x-msi
@@ -338,8 +339,10 @@ windows-remove:
     rm ~/Windows/WinDrive
     rm ~/.local/share/applications/com.usebottles.bottles.desktop
     rm ~/.local/share/applications/Windows.desktop
+    rm ~/.local/share/applications/WindowsTerminal.desktop
     rm ~/.local/share/applications/KillWindows.desktop
     rm ~/.local/share/kio/servicemenus/CreateWinShortcut.desktop
+    rm ~/.local/share/kio/servicemenus/InstallWinReg.desktop
     update-desktop-database ~/.local/share/applications
     echo "ALL DONE!!!"
 
