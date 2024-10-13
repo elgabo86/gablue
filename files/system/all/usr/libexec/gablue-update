@@ -1,9 +1,9 @@
 #!/usr/bin/bash
 
-echo 'Tentative de mise à jour du système' && \
-rpm-ostree cancel && \
-rpm-ostree upgrade && \
-echo 'Mise à jour des flatpaks' && \
-flatpak update -y && \
-kdialog --msgbox "Gablue est à jour, un rédemarrage est nécessaire pour appliquer les changements" || \
+echo 'Tentative de mise à jour du système'
+rpm-ostree cancel &&
+rpm-ostree upgrade &&
+echo 'Mise à jour des flatpaks' &&
+flatpak update -y &&
+kdialog --msgbox "Gablue est à jour, un rédemarrage est nécessaire pour appliquer les changements" ||
 kdialog --msgbox "Erreur de la mise à jour Gablue"
