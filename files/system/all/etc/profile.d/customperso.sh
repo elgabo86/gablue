@@ -25,8 +25,6 @@ alias wtricks="flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=
 
 alias neofetch="fastfetch --logo /usr/share/ublue-os/gablue/logoascii.ans -c /usr/share/ublue-os/gablue/fastfetch.jsonc"
 
-alias gablue-update="/usr/libexec/gablue-update"
-
 alias ollama-start="podman start ollama open-webui && echo 'Ollama WebGui http://localhost:3000'"
 
 alias ollama-restart="podman restart ollama open-webui"
@@ -40,6 +38,8 @@ alias battery-info="upower -i /org/freedesktop/UPower/devices/battery_BAT0"
 alias sherlock="podman run --rm docker.io/sherlock/sherlock:latest"
 
 alias fkill="ps aux | grep 'bwrap' | grep -v 'SyncThingy' | grep -v 'xdg-dbus-proxy' | grep -v 'grep' | awk '{print $2}' | xargs kill -9"
+
+alias gablue-update="ujust gablue-update"
 
 # Ignore duplicate
 HISTCONTROL=ignoredups

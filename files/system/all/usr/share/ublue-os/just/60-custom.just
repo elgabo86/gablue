@@ -9,6 +9,11 @@ tailscale-up:
     echo "Tailscale is ready!" || \
     echo "Error..."
 
+# Update gablue and flatpaks
+gablue-update:
+    #!/usr/bin/bash
+    /usr/libexec/gablue-update
+
 # Enable displaylink
 displaylink-enable:
     #!/usr/bin/bash
@@ -28,10 +33,7 @@ displaylink-disable:
 # Install/Reinstall custom Archlinux
 distrobox-archgab:
     #!/usr/bin/bash
-    /usr/libexec/archgab-update && \
-    clear && \
-    echo "Archgab is installed/updated" || \
-    echo "Error..."
+    /usr/libexec/archgab-update
 
 # Rebase Gablue to main non nvidia
 gablue-rebase-main:
@@ -40,21 +42,6 @@ gablue-rebase-main:
 # Rebase Gablue to nvidia variant
 gablue-rebase-nvidia:
     rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia:latest
-
-# Add custom flatpak rules for theme, vk capture, mangohud config and bottles permissions
-flatpak-custom-overrides:
-    #!/usr/bin/bash
-    flatpak override --user --reset
-    flatpak override --user --filesystem=xdg-config/gtk-3.0:ro
-    flatpak override --user --filesystem=xdg-config/MangoHud:ro
-    flatpak override --user --filesystem=xdg-config/gtk-4.0:ro
-    flatpak override --user --env=OBS_VKCAPTURE=1
-    flatpak override --user --filesystem=/run/media
-    flatpak override --user --filesystem=xdg-download
-    flatpak override com.usebottles.bottles --user --filesystem=xdg-data/applications
-    flatpak override com.usebottles.bottles --user --env=DXVK_ASYNC=1
-    flatpak override com.usebottles.bottles --user --env=DXVK_GPLASYNCCACHE=1
-    echo "ALL DONE!!!"
 
 # Add amd kargs to have advanced settings in CoreCtrl
 amd-corectrl-set-kargs:
@@ -87,33 +74,18 @@ cpuid-fix-off:
     rpm-ostree kargs --delete-if-present=clearcpuid=514
     echo "ALL DONE!!!"
 
-# Add flatpak custom rules and remove cpu security
-gablue-setup:
-    #!/usr/bin/bash
-    flatpak override --user --reset
-    flatpak override --user --filesystem=xdg-config/gtk-3.0:ro
-    flatpak override --user --filesystem=xdg-config/MangoHud:ro
-    flatpak override --user --filesystem=xdg-config/gtk-4.0:ro
-    flatpak override --user --env=OBS_VKCAPTURE=1
-    flatpak override --user --filesystem=/run/media
-    flatpak override --user --filesystem=xdg-download
-    flatpak override com.usebottles.bottles --user --filesystem=xdg-data/applications
-    flatpak override com.usebottles.bottles --user --env=DXVK_ASYNC=1
-    flatpak override com.usebottles.bottles --user --env=DXVK_GPLASYNCCACHE=1
-    rpm-ostree kargs --append-if-missing=mitigations=off
-    echo "ALL DONE!!!"
-
 # Install ble and atuin, for history bash sync and more
 atuin-setup:
     #!/usr/bin/bash
-    curl -L -o ble-nightly.tar.xz https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz
-    tar xJf ble-nightly.tar.xz
-    bash ble-nightly/ble.sh --install ~/.local/share
-    rm -rf ble-nightly
-    rm -f ble-nightly.tar.xz
-    echo 'source ~/.local/share/blesh/ble.sh' >> ~/.bashrc
-    echo 'eval "$(atuin init bash)"' >> ~/.bashrc
-    echo "ALL DONE!!!"
+    curl -L -o ble-nightly.tar.xz https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz && \
+    tar xJf ble-nightly.tar.xz && \
+    bash ble-nightly/ble.sh --install ~/.local/share && \
+    rm -rf ble-nightly && \
+    rm -f ble-nightly.tar.xz && \
+    echo 'source ~/.local/share/blesh/ble.sh' >> ~/.bashrc && \
+    echo 'eval "$(atuin init bash)"' >> ~/.bashrc && \
+    echo "Atuin is ready!" || \
+    echo "Error..."
 
 # Enable ssh remote connection
 ssh-on:
@@ -260,83 +232,7 @@ waydroid-remove:
 # Install default bottle and add default bottles folder with data user redirection and .desktop extras
 windows-install:
     #!/usr/bin/bash
-    pgrep -f bottles |xargs -n1 kill -9 &
-    sleep 2
-    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def*
-    mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/ ~/.var/app/com.usebottles.bottles/data/bottles/runners/ ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/  ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
-    wget -O ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64.tar.xz  https://github.com/bottlesdevs/wine/releases/download/soda-9.0-1/soda-9.0-1-x86_64.tar.xz
-    tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64.tar.xz -C ~/.var/app/com.usebottles.bottles/data/bottles/runners/
-    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1/
-    mv ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64 ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1
-    rm -f ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64.tar.xz
-    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/*
-    wget -O ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.4.1-1.tar.gz https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/dxvk-gplasync-v2.4.1-1.tar.gz
-    tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.4.1-1.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/
-    rm -f ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.4.1-1.tar.gz
-    wget -O ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.13.tar.gz https://github.com/bottlesdevs/components/releases/download/vkd3d-proton-2.13/vkd3d-proton-2.13.tar.gz
-    tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.13.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/
-    rm -f ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.13.tar.gz
-    wget -O ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz https://github.com/bottlesdevs/components/releases/download/dxvk-nvapi-v0.7.1/dxvk-nvapi-v0.7.1.tar.gz
-    tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/
-    rm -f ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz
-    wget -O ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz https://github.com/bottlesdevs/components/releases/download/latencyflex-v0.1.1-2-3bc9636/latencyflex-v0.1.1-2-3bc9636.tar.gz
-    tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
-    rm -f ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz
-    flatpak run --command=bottles-cli com.usebottles.bottles new --bottle-name "def" --environment gaming
-    flatpak override com.usebottles.bottles --user --filesystem=~/Windows
-    mkdir -p ~/Windows/UserData ~/Windows/SteamData ~/Windows/Games ~/Windows/Applications ~/Windows/Tools ~/.local/share/applications/
-    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users/
-    ln -s ~/Windows/UserData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users
-    ln -s ~/Windows/SteamData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/Steam
-    ln -s ~/Windows/Applications/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/
-    ln -s ~/Windows/Games/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/
-    ln -f -s -T ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ ~/Windows/WinDrive
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "Enable SDL" -d 1 -t "REG_DWORD"
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD"
-    cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications/
-    cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications/
-    cp /usr/share/ublue-os/gablue/desktops/WindowsTerminal.desktop ~/.local/share/applications/
-    cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications/
-    mkdir -p ~/.local/share/kio/servicemenus/
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWinShortcut.desktop ~/.local/share/kio/servicemenus/
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/InstallWinReg.desktop ~/.local/share/kio/servicemenus/
-    update-desktop-database ~/.local/share/applications
-    xdg-mime default Windows.desktop application/x-ms-dos-executable
-    xdg-mime default Windows.desktop application/x-msi
-    xdg-mime default Windows.desktop application/x-ms-shortcut
-    xdg-mime default Windows.desktop application/x-wine-extension-msp
-    xdg-mime default Windows.desktop application/x-bat
-    wget -O ~/Windows/Tools/vc2015_2022-x86.exe https://aka.ms/vs/17/release/VC_redist.x86.exe
-    wget -O ~/Windows/Tools/vc2015_2022-x64.exe https://aka.ms/vs/17/release/VC_redist.x64.exe
-    wget -O ~/Windows/Tools/runtime-6.0.16-x64.exe https://download.visualstudio.microsoft.com/download/pr/85473c45-8d91-48cb-ab41-86ec7abc1000/83cd0c82f0cde9a566bae4245ea5a65b/windowsdesktop-runtime-6.0.16-win-x64.exe
-    wget -O ~/Windows/Tools/wine-mono-9.2.0-x86.msi https://dl.winehq.org/wine/wine-mono/9.2.0/wine-mono-9.2.0-x86.msi
-    flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/vc2015_2022-x86.exe /quiet /norestart
-    flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/vc2015_2022-x64.exe /quiet /norestart
-    flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/runtime-6.0.16-x64.exe /quiet
-    flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/wine-mono-9.2.0-x86.msi /quiet
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "concrt140" -d "native,builtin" -t "REG_SZ"
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140" -d "native,builtin" -t "REG_SZ"
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140_1" -d "native,builtin" -t "REG_SZ"
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140_2" -d "native,builtin" -t "REG_SZ"
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140_atomic_wait" -d "native,builtin" -t "REG_SZ"
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140_codecvt_ids" -d "native,builtin" -t "REG_SZ"
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcamp140" -d "native,builtin" -t "REG_SZ"
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vccorlib140" -d "native,builtin" -t "REG_SZ"
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcomp140" -d "native,builtin" -t "REG_SZ"
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcruntime140" -d "native,builtin" -t "REG_SZ"
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcruntime140_1" -d "native,builtin" -t "REG_SZ"
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "mscoree" -d "native,builtin" -t "REG_SZ"
-    flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/soda-9.0-1/bin/wine --command=winetricks com.usebottles.bottles -q corefonts d3dcompiler_43 d3dcompiler_47 d3dx9 msls31 vb6run mfc42
-    rm -rf ~/Windows/Tools
-    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/23.08 -y
-    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.OBSVkCapture/x86_64/23.08 -y
-    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.gamescope/x86_64/23.08 -y
-    mkdir -p ~/.config/MangoHud/
-    cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud/
-    flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params mangohud:true
-    flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params gamemode:true
-    mkdir -p ~/Windows/UserData/Public/Documents/Steam/
-    echo "ALL DONE!!!"
+    /usr/libexec/windows-update
 
 # Remove default bottle but keep user data
 windows-remove:
