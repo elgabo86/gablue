@@ -6,7 +6,7 @@ distrobox-rm -f archgab && \
 if lspci | grep -i nvidia > /dev/null; then
     distrobox-create --pull latest --name archgab --nvidia --image ghcr.io/elgabo86/archgab:latest
 else
-    distrobox-create --puzll latest --name archgab --image ghcr.io/elgabo86/archgab:latest
+    distrobox-create --pull latest --name archgab --image ghcr.io/elgabo86/archgab:latest
 fi && \
 distrobox-enter -n archgab -- bash -c 'distrobox-export --bin /usr/bin/tochd; distrobox-export --bin /usr/bin/matm; distrobox-export --bin /usr/bin/hollywood;  distrobox-export --bin /usr/bin/edex-ui' && \
 kdialog --msgbox "Archgab est à jour" || \
