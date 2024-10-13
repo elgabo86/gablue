@@ -1,29 +1,37 @@
 # Enable tailscale + firewall rules & connect to private network
 tailscale-up:
     #!/usr/bin/bash
-    sudo systemctl enable --now tailscaled.service
-    sudo firewall-cmd --add-masquerade --zone=FedoraWorkstation --permanent
-    sudo firewall-cmd --add-interface=tailscale0 --zone=trusted --permanent
-    sudo tailscale up --operator=$USER --login-server https://headscale.gabserv.duckdns.org
-    echo "ALL DONE!!!"
+    sudo systemctl enable --now tailscaled.service && \
+    sudo firewall-cmd --add-masquerade --zone=FedoraWorkstation --permanent && \
+    sudo firewall-cmd --add-interface=tailscale0 --zone=trusted --permanent && \
+    sudo tailscale up --operator=$USER --login-server https://headscale.gabserv.duckdns.org && \
+    clear && \
+    echo "Tailscale is ready!" || \
+    echo "Error..."
 
 # Enable displaylink
 displaylink-enable:
     #!/usr/bin/bash
-    sudo systemctl enable --now displaylink.service
-    echo "ALL DONE!!!"
+    sudo systemctl enable --now displaylink.service && \
+    clear && \
+    echo "Displaylink is now activated" || \
+    echo "Error..."
 
 # Disable displaylink
 displaylink-disable:
     #!/usr/bin/bash
-    sudo systemctl disable --now displaylink.service
-    echo "ALL DONE!!!"
+    sudo systemctl disable --now displaylink.service && \
+    clear && \
+    echo "Displaylink is now disabled" || \
+    echo "Error..."
 
 # Install/Reinstall custom Archlinux
 distrobox-archgab:
     #!/usr/bin/bash
-    /usr/libexec/archgab-update
-    echo "ALL DONE!!!"
+    /usr/libexec/archgab-update && \
+    clear && \
+    echo "Archgab is installed/updated" || \
+    echo "Error..."
 
 # Rebase Gablue to main non nvidia
 gablue-rebase-main:
