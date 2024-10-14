@@ -12,7 +12,7 @@ curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86
 tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64.tar.xz -C ~/.var/app/com.usebottles.bottles/data/bottles/runners/ &&
 rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1/ &&
 mv ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64 ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1 &&
-rm -f ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64.tar.xz && \
+rm -f ~/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1-x86_64.tar.xz &&
 rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/* &&
 curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.4.1-1.tar.gz https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/dxvk-gplasync-v2.4.1-1.tar.gz &&
 tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.4.1-1.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/ &&
