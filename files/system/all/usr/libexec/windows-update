@@ -81,7 +81,7 @@ flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params ma
 flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params gamemode:true &&
 mkdir -p ~/Windows/UserData/Public/Documents/Steam/ &&
 rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak &&
-kdialog --msgbox "L'installataion/mise à jour de Windows est réussie"|| {
+kdialog --msgbox "L'installation/mise à jour de Windows est réussie"|| {
 rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
 mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
 kdialog --msgbox "Erreur de l'installation/mise à jour de Windows"
