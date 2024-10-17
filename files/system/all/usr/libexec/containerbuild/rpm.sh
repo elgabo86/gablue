@@ -113,6 +113,11 @@ libuuid-devel \
 gdbm-libs \
 libnsl2
 
+#Python
+rpm-ostree install \
+python3-pygame
+
+
 #Remove firefox
 rpm-ostree override remove \
 firefox \
