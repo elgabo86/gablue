@@ -9,6 +9,7 @@ chmod +x /usr/libexec/archgab-update
 chmod +x /usr/libexec/windows-update
 
 chmod +x /usr/share/ublue-os/gablue/scripts/*.sh
+chmod +x /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/*
 
 
 # Add tgpt bin

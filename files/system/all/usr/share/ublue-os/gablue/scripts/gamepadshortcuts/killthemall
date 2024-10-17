@@ -1,0 +1,23 @@
+#!/usr/bin/bash
+
+# Recherche et kill tous les processus windows (xbox360 inclu)
+pgrep -i '(.*\.(exe|dll|msi|bat|com|lnk)$)|(.*(wine|proton).*))' |xargs -n1 kill -9 && pgrep -f bottles |xargs -n1 kill -9
+
+# Recherche et kill tous les emulateurs ouverts
+pgrep -f suyu |xargs -n1 kill -9
+pgrep -f sudachi |xargs -n1 kill -9
+pgrep -f dolphin-emu |xargs -n1 kill -9
+pgrep -f yuzu |xargs -n1 kill -9
+pgrep -f retroarch |xargs -n1 kill -9
+pgrep -f xemu |xargs -n1 kill -9
+pgrep -f rpsc3 |xargs -n1 kill -9
+pgrep -f retroarch |xargs -n1 kill -9
+pgrep -f duckstation |xargs -n1 kill -9
+pgrep -f pcsx2 |xargs -n1 kill -9
+pgrep -f lime3ds |xargs -n1 kill -9
+pgrep -f ryujinx |xargs -n1 kill -9
+
+
+
+
+

@@ -1,0 +1,4 @@
+#!/usr/bin/bash
+
+#Fait une copie de l'écran actuel et enregistre sous le dossier Images/Screenshot
+spectacle -f -b -n -o ~/Images/Screenshots/screenshot_$(date +%Y%m%d_%H%M%S).png

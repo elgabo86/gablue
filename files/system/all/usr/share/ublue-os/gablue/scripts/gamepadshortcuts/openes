@@ -1,0 +1,12 @@
+#!/usr/bin/bash
+
+# Controle si ES est deja ouvert, le cas échéant, ouvrir ES
+
+if ! pgrep -f "esde.appimage" > /dev/null; then
+    ~/AppImages/esde.appimage &
+fi
+
+
+
+
+

@@ -1,0 +1,15 @@
+#!/bin/bash
+
+# Chemin vers le fichier de configuration
+CONFIG_FILE="$HOME/.config/MangoHud/MangoHud.conf"
+
+# Vérifie si la ligne no_display existe
+if grep -q "^no_display" $CONFIG_FILE; then
+    # Si elle existe, on la supprime
+    sed -i '/^no_display/d' "$CONFIG_FILE"
+    echo "La ligne 'no_display' a été supprimée."
+else
+    # Si elle n'existe pas, on l'ajoute
+    echo "no_display" >> "$CONFIG_FILE"
+    echo "La ligne 'no_display' a été ajoutée."
+fi
