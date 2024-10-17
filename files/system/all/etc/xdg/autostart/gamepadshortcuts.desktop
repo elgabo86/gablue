@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Shortcuts with gamepad
-Comment=Flatpak custom overrides
-NoDisplay=true
-Exec=python /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/gamepadshortcuts.py
-Terminal=false

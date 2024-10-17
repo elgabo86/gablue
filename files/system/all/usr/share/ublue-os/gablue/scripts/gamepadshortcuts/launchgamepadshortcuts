@@ -1,0 +1,6 @@
+#!/usr/bin/bash
+
+# Kill le process si existant
+pgrep -f gamepadshortcuts.py |xargs -n1 kill -9
+# Lance gamepadshortcuts
+/usr/bin/python /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/gamepadshortcuts.py

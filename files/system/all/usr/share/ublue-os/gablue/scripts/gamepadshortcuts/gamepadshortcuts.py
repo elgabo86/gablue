@@ -28,18 +28,18 @@ try:
             joystick.init()
 
             # Vérifier les boutons
-            home_button = joystick.get_button(10) # Remplacez par l'index correct pour le bouton Home
-            select_button = joystick.get_button(8) # Remplacez par l'index correct pour le bouton Select
-            start_button = joystick.get_button(9) # Remplacez par l'index correct pour le bouton Start
-            triangle_button= joystick.get_button(2)
-            square_button= joystick.get_button(3)
+            home_button = joystick.get_button(5) # Remplacez par l'index correct pour le bouton Home
+            select_button = joystick.get_button(4) # Remplacez par l'index correct pour le bouton Select
+            start_button = joystick.get_button(6) # Remplacez par l'index correct pour le bouton Start
+            triangle_button= joystick.get_button(3)
+            square_button= joystick.get_button(2)
             circle_button= joystick.get_button(1)
 
             # Vérifier les combinaisons de boutons
             if home_button and select_button:
                 execute_command("Commande pour Home + Select")
                 os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/killthemall &")
-                time.sleep(0.5) # Anti-rebond
+                time.sleep(1) # Anti-rebond
             elif home_button and start_button:
                 execute_command("Commande pour Home + Start")
                 os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/openes &")
@@ -55,7 +55,7 @@ try:
             elif home_button and circle_button:
                 execute_command("Commande pour Home + Circle")
                 os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/startstoprecord &")
-                time.sleep(0.5) # Anti-rebond
+                time.sleep(1) # Anti-rebond
 
         # Limiter l'utilisation du CPU
         time.sleep(0.01)
