@@ -3,11 +3,14 @@
 #Arrete et sauve l'enregistrement si il y en a en cours
 killall -SIGINT -q gpu-screen-recorder && exit 0
 
+#Controler que gpu-screen-recorder est bien fermé
+pgrep -f gpu-screen-recorder |xargs -n1 kill -9
+
 #Définition du dossier d'enregistrement + renommage de la vidéo par date
 video="$HOME/Vidéos/Captures/$(date +"Video_%Y-%m-%d_%H-%M-%S.mp4")"
 
 # Lancement d'un nouvel enregistrrement
-flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -w screen -f 60 -a default_output -o "$video"
+flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -f 60 -a default_output -o "$video"
 
 #Annoncer l'arrêt de l'enregistrement à l'utilisateur
 notify-send -t 2000 -u low "Enregistrement sauvé dans  $video"
