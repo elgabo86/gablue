@@ -16,7 +16,7 @@ pgrep -f duckstation |xargs -n1 kill -9
 pgrep -f pcsx2 |xargs -n1 kill -9
 pgrep -f lime3ds |xargs -n1 kill -9
 pgrep -f ryujinx |xargs -n1 kill -9
-pgrep -f cemu |xargs -n1 kill -9
+pgrep -f Cemu |xargs -n1 kill -9
 
 
 
