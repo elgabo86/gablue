@@ -8,6 +8,9 @@ pygame.init()
 # Configurer le nombre de manettes
 pygame.joystick.init()
 
+# Enlever la sortie sonore de pygame
+pygame.mixer.quit()
+
 # Fonction pour exécuter une commande spécifique
 def execute_command(command):
     print(f"Exécution de la commande: {command}")
