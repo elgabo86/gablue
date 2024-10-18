@@ -243,6 +243,7 @@ windows-remove:
     rm ~/Windows/WinDrive &&
     rm ~/.local/share/applications/com.usebottles.bottles.desktop &&
     rm ~/.local/share/applications/Windows.desktop &&
+    rm ~/.local/share/applications/WindowsFix.desktop &&
     rm ~/.local/share/applications/WindowsTerminal.desktop &&
     rm ~/.local/share/applications/KillWindows.desktop &&
     rm ~/.local/share/kio/servicemenus/CreateWinShortcut.desktop &&

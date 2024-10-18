@@ -2,10 +2,15 @@
 Type=Service
 X-KDE-ServiceTypes=KonqPopupMenu/Plugin
 MimeType=x-scheme-handler/bottles;application/x-ms-dos-executable;application/x-msi;application/x-ms-shortcut;application/x-wine-extension-msp;application/x-bat;
-Actions=CreateShortcut
+Actions=CreateShortcut;CreateShortcutFix
 X-KDE-Submenu=Windows
 
 [Desktop Action CreateShortcut]
 Name=Créer un raccourci
 Icon=com.usebottles.bottles
 Exec=/usr/share/ublue-os/gablue/scripts/createwinshortcut.sh %u
+
+[Desktop Action CreateShortcutFix]
+Name=Créer un raccourci avec le fix gamepad
+Icon=com.usebottles.bottles
+Exec=/usr/share/ublue-os/gablue/scripts/createwinshortcutfix.sh %u

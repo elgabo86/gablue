@@ -1,0 +1,19 @@
+[Desktop Entry]
+Comment=Exécutez des logiciels Windows
+Exec=flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 0 -t "REG_DWORD" && /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable %f ; flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD"
+Icon=com.usebottles.bottles
+Keywords[fr_CH]=wine;windows;
+Keywords=wine;windows;
+MimeType=x-scheme-handler/bottles;application/x-ms-dos-executable;application/x-msi;application/x-ms-shortcut;application/x-wine-extension-msp;application/x-bat;
+NoDisplay=true
+Path=
+StartupWMClass=bottles
+Terminal=false
+TerminalOptions=
+Type=Application
+X-Flatpak=com.usebottles.bottles
+X-GNOME-UsesNotifications=true
+X-KDE-SubstituteUID=false
+X-KDE-Username=
+X-KDE-StartupNotify=false
+Name=Windows (avec fix gamepad)

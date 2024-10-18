@@ -39,6 +39,7 @@ flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY
 flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD" &&
 cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications/ &&
 cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications/ &&
+cp /usr/share/ublue-os/gablue/desktops/WindowsFix.desktop ~/.local/share/applications/ &&
 cp /usr/share/ublue-os/gablue/desktops/WindowsTerminal.desktop ~/.local/share/applications/ &&
 cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications/ &&
 mkdir -p ~/.local/share/kio/servicemenus/ &&
