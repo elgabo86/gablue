@@ -10,11 +10,11 @@ pgrep -f gpu-screen-recorder |xargs -n1 kill -9
 video="$HOME/Vidéos/Captures/$(date +"Video_%Y-%m-%d_%H-%M-%S.mp4")"
 
 # Lancement d'un nouvel enregistrrement
+ffplay -nodisp -autoexit /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/beep.wav
 flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -f 60 -a default_output -o "$video"
 
 #Annoncer l'arrêt de l'enregistrement à l'utilisateur
+ffplay -nodisp -autoexit /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/stop.wav
 notify-send -t 2000 -u low "Enregistrement sauvé dans  $video"
-
-
 
 
