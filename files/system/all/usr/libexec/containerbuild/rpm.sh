@@ -127,8 +127,3 @@ if [ "$GABLUE_VARIANT" == "main" ]; then
     rpm-ostree install \
     radeontop
 fi
-
-if [ "$SOURCE_IMAGE" == "cosmic" ]; then
-    rpm-ostree install \
-    xdg-user-dirs
-fi
