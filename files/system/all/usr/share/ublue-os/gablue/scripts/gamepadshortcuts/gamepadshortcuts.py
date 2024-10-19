@@ -39,6 +39,7 @@ try:
             circle_button= joystick.get_button(1)
             left_button= joystick.get_button(13)
             right_button= joystick.get_button(14)
+            down_button= joystick.get_button(12)
 
             # Vérifier les combinaisons de boutons
             if home_button and select_button:
@@ -49,8 +50,8 @@ try:
                 execute_command("Commande pour Home + Start")
                 os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/openes &")
                 time.sleep(0.5) # Anti-rebond
-            elif home_button and triangle_button:
-                execute_command("Commande pour Home + Triangle")
+            elif home_button and down_button:
+                execute_command("Commande pour Home + Down")
                 os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/showhidemango &")
                 time.sleep(0.5) # Anti-rebond
             elif home_button and left_button:
