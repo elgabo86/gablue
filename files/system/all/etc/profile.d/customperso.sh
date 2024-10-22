@@ -41,6 +41,12 @@ alias fkill="ps aux | grep 'bwrap' | grep -v 'SyncThingy' | grep -v 'xdg-dbus-pr
 
 alias gablue-update="ujust gablue-update"
 
+alias gablue-switch-main="rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-main:latest"
+
+alias gablue-switch-main-test="rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-main-test:latest"
+
+alias gablue-switch-nvidia="rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia:latest"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
