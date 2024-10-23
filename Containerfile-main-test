@@ -22,9 +22,9 @@ RUN chmod +x /usr/libexec/containerbuild/*.sh
 ENV GABLUE_VARIANT="main"
 ENV SOURCE_IMAGE="kinoite"
 ENV SOURCE_SUFFIX="-main"
-ENV SOURCE_TAG="41"
-ENV FEDORA_MAJOR_VERSION="41"
-ENV OS_VERSION="41"
+ENV SOURCE_TAG="40"
+ENV FEDORA_MAJOR_VERSION="40"
+ENV OS_VERSION="40"
 
 # Update packages that commonly cause build issues
 RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
