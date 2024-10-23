@@ -77,11 +77,6 @@ RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
     /usr/libexec/containerbuild/cleanup.sh && \
     ostree container commit
 
-# Install brew
-RUN /usr/libexec/containerbuild/brew.sh && \
-    /usr/libexec/containerbuild/cleanup.sh && \
-    ostree container commit
-
 # Post-install
 RUN mkdir -p /var/tmp && chmod 1777 /var/tmp && \
     /usr/libexec/containerbuild/systemd.sh && \
