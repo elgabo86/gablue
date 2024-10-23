@@ -34,6 +34,10 @@ ryzenadj \
 yq \
 trash-cli
 
+#Libs
+rpm-ostree install \
+enet # for uyus
+
 #Goodies cli
 rpm-ostree install \
 bash-color-prompt \
