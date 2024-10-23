@@ -126,3 +126,10 @@ if [ "$GABLUE_VARIANT" == "main" ]; then
     rpm-ostree install \
     radeontop
 fi
+
+#Fix power-profile-daemon
+if [ "$OS_VERSION" == "40" ]; then
+    rpm-ostree override replace \
+    --experimental \
+    https://kojipkgs.fedoraproject.org//packages/power-profiles-daemon/0.21/3.fc40/x86_64/power-profiles-daemon-0.21-3.fc40.x86_64.rpm
+fi
