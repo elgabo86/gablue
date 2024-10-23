@@ -30,8 +30,10 @@ fi
 systemctl disable rpm-ostreed-automatic.timer
 
 # Fetch ublue COPR
-REPO="https://copr.fedorainfracloud.org/coprs/ublue-os/staging/repo/fedora-${OS_VERSION}/ublue-os-staging-fedora-${OS_VERSION}.repo"
-wget -O "/etc/yum.repos.d/ublue-os-staging-fedora-${OS_VERSION}.repo" "${REPO//[$'\t\r\n ']}"
+REPO_URL="https://copr.fedorainfracloud.org/coprs/ublue-os/staging/repo/fedora-${OS_VERSION}/ublue-os-staging-fedora-${OS_VERSION}.repo"
+echo "Downloading repo file ${REPO_URL}"
+curl -fLs --create-dirs "${REPO_URL}" -o "/etc/yum.repos.d/ublue-os-staging-fedora-${OS_VERSION}.repo"
+echo "Downloaded repo file ${REPO_URL}"
 
 # topgrade is REQUIRED by ublue-update to install
 rpm-ostree install topgrade
@@ -39,5 +41,6 @@ rpm-ostree install ublue-update
 
 # Remove ublue COPR
 rm /etc/yum.repos.d/ublue-os-staging-fedora-*.repo
+
 
 sed -i 's@enabled=0@enabled=1@g' /etc/yum.repos.d/_copr_kylegospo-bazzite.repo
