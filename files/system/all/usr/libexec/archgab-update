@@ -8,7 +8,6 @@ if lspci | grep -i nvidia > /dev/null; then
 else
     distrobox-create --pull latest --name archgab --image ghcr.io/elgabo86/archgab:latest
 fi &&
-distrobox-enter -n archgab -- bash -c 'distrobox-export --bin /usr/bin/tochd; distrobox-export --bin /usr/bin/matm; distrobox-export --bin /usr/bin/hollywood;  distrobox-export --bin /usr/bin/edex-ui;  distrobox-export --bin /usr/bin/lowfi' &&
+distrobox-enter -n archgab -- bash -c 'distrobox-export --bin /usr/bin/tochd' &&
 kdialog --msgbox "Archgab est à jour" ||
 kdialog --msgbox "Erreur de la mise à jour Archgab"
-
