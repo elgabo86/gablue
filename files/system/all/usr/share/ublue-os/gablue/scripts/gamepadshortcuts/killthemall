@@ -10,7 +10,7 @@ pgrep -f dolphin-emu |xargs -n1 kill -9
 pgrep -f yuzu |xargs -n1 kill -9
 pgrep -f retroarch |xargs -n1 kill -9
 pgrep -f xemu |xargs -n1 kill -9
-pgrep -f rpsc3 |xargs -n1 kill -9
+pgrep -f rpcs3 |xargs -n1 kill -9
 pgrep -f retroarch |xargs -n1 kill -9
 pgrep -f duckstation |xargs -n1 kill -9
 pgrep -f pcsx2 |xargs -n1 kill -9

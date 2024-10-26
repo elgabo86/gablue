@@ -337,6 +337,7 @@ audio-fix-enable:
 
 # Disable fix for hdmi/dp/usb audio drop
 audio-fix-disable:
+    #!/usr/bin/bash
     rm -f ~/.config/wireplumber/wireplumber.conf.d/50-sound-drop-fix.conf &&
     systemctl restart --user pipewire.socket wireplumber.service &&
     echo "Audio fix is removed"
