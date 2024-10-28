@@ -5,6 +5,9 @@ import os
 # Initialiser Pygame
 pygame.init()
 
+# Désactiver la prévention de mise en veille
+pygame.display.set_allow_screensaver(1)
+
 # Configurer le nombre de manettes
 pygame.joystick.init()
 
