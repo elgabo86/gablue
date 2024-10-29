@@ -159,4 +159,4 @@ if grep -q "kinoite" <<< "${SOURCE_IMAGE}"; then \
 ; fi && \
 rpm-ostree override remove \
     glibc32 \
-    || true && \
+    || true
