@@ -1,7 +1,7 @@
 [Desktop Entry]
 Categories=Utility;
 Comment=Kill Plasma Desktop
-Exec=pkill -9 systemsettings; pkill -9 discover; pkill -9 plasmashell
+Exec=pkill -9 systemsettings; pkill -9 discover; pkill -9 dolphin; pkill -9 plasmashell
 GenericName=Plasma Killer
 Icon=org.kde.plasma.simplemenu
 MimeType=
