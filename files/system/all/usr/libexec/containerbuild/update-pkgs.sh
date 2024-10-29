@@ -3,146 +3,150 @@
 set -eoux pipefail
 
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        vulkan-loader \
-        || true && \
+--experimental \
+--from repo=updates \
+    vulkan-loader \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        alsa-lib \
-        || true && \
+--experimental \
+--from repo=updates \
+    alsa-lib \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        gnutls \
-        || true && \
+--experimental \
+--from repo=updates \
+    gnutls \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        glib2 \
-        || true && \
+--experimental \
+--from repo=updates \
+    glib2 \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        nspr \
-        || true && \
+--experimental \
+--from repo=updates \
+    nspr \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        nss-softokn \
-        nss-softokn-freebl \
-        nss-util \
-        || true && \
+--experimental \
+--from repo=updates \
+    nss \
+    nss-softokn \
+    nss-softokn-freebl \
+    nss-sysinit \
+    nss-util \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        atk \
-        at-spi2-atk \
-        || true && \
+--experimental \
+--from repo=updates \
+    atk \
+    at-spi2-atk \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        libaom \
-        || true && \
+--experimental \
+--from repo=updates \
+    libaom \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        gstreamer1 \
-        gstreamer1-plugins-base \
-        || true && \
+--experimental \
+--from repo=updates \
+    gstreamer1 \
+    gstreamer1-plugins-base \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        libdecor \
-        || true && \
+--experimental \
+--from repo=updates \
+    libdecor \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        libtirpc \
-        || true && \
+--experimental \
+--from repo=updates \
+    libtirpc \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        libuuid \
-        || true && \
+--experimental \
+--from repo=updates \
+    libuuid \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        libblkid \
-        || true && \
+--experimental \
+--from repo=updates \
+    libblkid \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        libmount \
-        || true && \
+--experimental \
+--from repo=updates \
+    libmount \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        cups-libs \
-        || true && \
+--experimental \
+--from repo=updates \
+    cups-libs \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        libinput \
-        || true && \
+--experimental \
+--from repo=updates \
+    libinput \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        libopenmpt \
-        || true && \
+--experimental \
+--from repo=updates \
+    libopenmpt \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        llvm-libs \
-        || true && \
+--experimental \
+--from repo=updates \
+    llvm-libs \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        zlib-ng-compat \
-        || true && \
+--experimental \
+--from repo=updates \
+    zlib-ng-compat \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        fontconfig \
-        || true && \
+--experimental \
+--from repo=updates \
+    fontconfig \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        pciutils-libs \
-        || true && \
+--experimental \
+--from repo=updates \
+    pciutils-libs \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        libdrm \
-        || true && \
+--experimental \
+--from repo=updates \
+    libdrm \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        libX11 \
-        libX11-common \
-        libX11-xcb \
-        || true && \
+--experimental \
+--from repo=updates \
+    cpp \
+    libatomic \
+    libgcc \
+    libgfortran \
+    libgomp \
+    libobjc \
+    libstdc++ \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        libv4l \
-        || true && \
+--experimental \
+--from repo=updates \
+    libX11 \
+    libX11-common \
+    libX11-xcb \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        expat \
-        || true && \
+--experimental \
+--from repo=updates \
+    libv4l \
+    || true && \
 rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        libgcc \
-        || true && \
-rpm-ostree override replace \
-    --experimental \
-    --from repo=updates \
-        libstdc++ \
-        || true && \
+--experimental \
+--from repo=updates \
+    elfutils-libelf \
+    elfutils-libs \
+    || true && \
 if grep -q "kinoite" <<< "${SOURCE_IMAGE}"; then \
     rpm-ostree override replace \
     --experimental \
@@ -154,6 +158,5 @@ if grep -q "kinoite" <<< "${SOURCE_IMAGE}"; then \
         || true \
 ; fi && \
 rpm-ostree override remove \
-        glibc32 \
-        || true && \
-echo "ok"
+    glibc32 \
+    || true && \
