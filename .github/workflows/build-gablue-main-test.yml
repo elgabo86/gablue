@@ -107,7 +107,7 @@ jobs:
 
       - name: Rechunk Image
         id: rechunk
-        uses: hhd-dev/rechunk@v0.8.6
+        uses: hhd-dev/rechunk@v1.0.1
         with:
           ref: "raw-img"
           prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ env.MY_IMAGE_NAME }}:latest"
@@ -161,7 +161,7 @@ jobs:
 
       # Push the image to GHCR (Image Registry)
       - name: Push To GHCR
-        uses: Wandalen/wretry.action@v3.5.0
+        uses: Wandalen/wretry.action@v3.7.0
         id: push
         env:
           REGISTRY_USER: ${{ github.actor }}
