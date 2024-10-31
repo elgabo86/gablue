@@ -65,6 +65,15 @@ echo "TOPGRADE_SKIP_BRKC_NOTIFY=true" >> "/etc/environment"
 ln -sf /usr/bin/ld.bfd /etc/alternatives/ld && ln -sf /etc/alternatives/ld /usr/bin/ld
 
 # Disable repos
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_che-nerd-fonts.repo && \
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr:copr.fedorainfracloud.org:phracek:PyCharm.repo && \
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_kylegospo-bazzite.repo && \
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_matte-schwartz-sunshine.repo && \
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_sramanujam-atuin.repo && \
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_ublue-os-akmods.repo && \
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/tailscale.repo && \
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/ublue-os-staging-fedora.repo && \
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/zinix01-linux-wifi-hotspot.repo && \
 sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/negativo17-fedora-rar.repo && \
 sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/negativo17-fedora-multimedia.repo
 
