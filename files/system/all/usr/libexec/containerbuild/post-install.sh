@@ -89,3 +89,6 @@ rm -f /usr/share/applications/htop.desktop
 rm -f /usr/share/applications/nvtop.desktop
 rm -f /usr/share/applications/firewall-config.desktop
 rm -f /usr/share/applications/org.kde.kjournaldbrowser.desktop
+
+# Fix temp for some external screen on kde
+echo "POWERDEVIL_NO_DDCUTIL=1" >> "/etc/environment"
