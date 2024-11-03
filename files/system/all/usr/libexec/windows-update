@@ -71,7 +71,8 @@ flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU
 flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcruntime140" -d "native,builtin" -t "REG_SZ" &&
 flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcruntime140_1" -d "native,builtin" -t "REG_SZ" &&
 flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "mscoree" -d "native,builtin" -t "REG_SZ" &&
-flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/soda-9.0-1/bin/wine --command=winetricks com.usebottles.bottles -q corefonts d3dcompiler_43 d3dcompiler_47 d3dx9 msls31 vb6run mfc42 &&
+flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/soda-9.0-1/bin/wine --command=winetricks com.usebottles.bottles -q corefonts tahoma d3dcompiler_43 d3dcompiler_47 d3dx9 msls31 vb6run mfc42 &&
+flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/soda-9.0-1/bin/wine --command=winetricks com.usebottles.bottles -q settings fontsmooth=rgb &&
 rm -rf ~/Windows/Tools &&
 flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/24.08 -y &&
 flatpak install runtime/com.obsproject.Studio.Plugin.OBSVkCapture/x86_64/stable -y &&
