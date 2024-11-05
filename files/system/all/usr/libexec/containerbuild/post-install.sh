@@ -92,3 +92,6 @@ rm -f /usr/share/applications/org.kde.kjournaldbrowser.desktop
 
 # Fix temp for some external screen on kde
 echo "POWERDEVIL_NO_DDCUTIL=1" >> "/etc/environment"
+
+#Remove os-prober to fix long update reboot/shutdown
+rm -f /etc/grub.d/30_os-prober
