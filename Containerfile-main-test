@@ -54,10 +54,10 @@ RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
     ostree container commit
 
 # Install Valve's patched Mesa, Pipewire, Bluez, and Xwayland
-RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
-    /usr/libexec/containerbuild/valve-pkgs.sh && \
-    /usr/libexec/containerbuild/cleanup.sh && \
-    ostree container commit
+#RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
+#    /usr/libexec/containerbuild/valve-pkgs.sh && \
+#    /usr/libexec/containerbuild/cleanup.sh && \
+#   ostree container commit
 
 # Install rpm
 RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
