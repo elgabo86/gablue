@@ -75,7 +75,8 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     libadwaita-qt5 \
     libadwaita-qt6 \
     kde-runtime-docs \
-    kdeplasma-addons
+    kdeplasma-addons \
+    wallpaper-engine-kde-plugin
 fi
 
 #Fonts
