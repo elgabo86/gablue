@@ -7,7 +7,6 @@ rpm-ostree override replace \
     --from repo=copr:copr.fedorainfracloud.org:kylegospo:bazzite-multilib \
         mesa-libxatracker \
         mesa-libglapi \
-        mesa-dri-drivers \
         mesa-libgbm \
         mesa-libEGL \
         mesa-vulkan-drivers \
