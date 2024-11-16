@@ -141,12 +141,12 @@ rpm-ostree override replace \
 --from repo=updates \
     libv4l \
     || true && \
-rpm-ostree override replace \
---experimental \
---from repo=updates \
-    elfutils-libelf \
-    elfutils-libs \
-    || true && \
+#rpm-ostree override replace \
+#--experimental \
+#--from repo=updates \
+#    elfutils-libelf \
+#    elfutils-libs \
+#    || true && \
 if grep -q "kinoite" <<< "${SOURCE_IMAGE}"; then \
     rpm-ostree override replace \
     --experimental \
