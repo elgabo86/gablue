@@ -15,4 +15,5 @@ systemctl disable -f displaylink.service
 
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     systemctl enable -f kde-sysmonitor-workaround.service
+    systemctl enable -f usr-share-sddm-themes.mount
 fi
