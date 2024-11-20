@@ -161,7 +161,7 @@ jobs:
 
       # Push the image to GHCR (Image Registry)
       - name: Push To GHCR
-        uses: Wandalen/wretry.action@v3.7.2
+        uses: Wandalen/wretry.action@v3.7.3
         id: push
         env:
           REGISTRY_USER: ${{ github.actor }}
