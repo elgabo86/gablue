@@ -19,4 +19,5 @@ pgrep -f ryujinx |xargs -n1 kill -9
 pgrep -f Cemu |xargs -n1 kill -9
 pgrep -f flycast |xargs -n1 kill -9
 pgrep -f shadps4 |xargs -n1 kill -9
+pgrep -f PokeMMO |xargs -n1 kill -9
 pkill -9 jellyfin
