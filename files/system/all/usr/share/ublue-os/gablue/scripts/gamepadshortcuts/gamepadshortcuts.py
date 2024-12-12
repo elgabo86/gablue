@@ -52,19 +52,19 @@ try:
             elif home_button and start_button:
                 execute_command("Commande pour Home + Start")
                 os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/openes &")
-                time.sleep(0.5) # Anti-rebond
+                time.sleep(1) # Anti-rebond
             elif home_button and down_button:
                 execute_command("Commande pour Home + Down")
                 os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/showhidemango &")
-                time.sleep(0.5) # Anti-rebond
+                time.sleep(1) # Anti-rebond
             elif home_button and left_button:
                 execute_command("Commande pour Home + Left")
                 os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/takescreenshot &")
-                time.sleep(0.5) # Anti-rebond
+                time.sleep(1) # Anti-rebond
             elif home_button and right_button:
                 execute_command("Commande pour Home + Right")
                 os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/startstoprecord &")
-                time.sleep(1) # Anti-rebond
+                time.sleep(2) # Anti-rebond
 
         # Limiter l'utilisation du CPU
         time.sleep(0.01)
