@@ -5,5 +5,11 @@ pgrep -f gamepadshortcuts.py |xargs -n1 kill -9
 
 #Wait 2 seconds
 sleep 2
-# Lance gamepadshortcuts
-/usr/bin/python /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/gamepadshortcuts.py
+
+# Boucle pour relancer gamepadshortcuts.py si ça se termine
+while true; do
+    # Lance gamepadshortcuts
+    /usr/bin/python /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/gamepadshortcuts.py
+    # Attendre 1 seconde avant de relancer (optionnel)
+    sleep 1
+done
