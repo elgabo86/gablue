@@ -72,8 +72,6 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     papirus-icon-theme-dark \
     langpacks-fr \
     kdenetwork-filesharing \
-    libadwaita-qt5 \
-    libadwaita-qt6 \
     kde-runtime-docs \
     kdeplasma-addons
 fi
