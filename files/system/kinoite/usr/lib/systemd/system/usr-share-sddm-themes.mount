@@ -1,8 +1,13 @@
 # Workaround to allow KDE Discover to install sddm themes
+# TODO: Remove this whenever sddm allows installing themes other than in /usr/share.
+# See https://github.com/sddm/sddm/issues/1561
 
 [Unit]
 Description=KDE writable sddm workaround
-RequiresMountsFor=/usr/share/sddm/themes /var/sddm_themes/themes /var/sddm_themes/themes.work
+RequiresMountsFor=/usr /var
+ConditionPathExists=/usr/share/sddm
+ConditionPathExists=/var/sddm_themes/themes
+ConditionPathExists=/var/sddm_themes/themes.work
 
 [Mount]
 Type=overlay
