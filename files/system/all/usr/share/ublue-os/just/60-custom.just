@@ -211,7 +211,7 @@ pyenv-setup:
 
 # Update pyenv
 pyenv-update:
-    #!/usr/bin/bashh
+    #!/usr/bin/bash
     git -C ~/.pyenv pull &&
     echo "ALL DONE!!!"
 
