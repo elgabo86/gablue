@@ -341,3 +341,9 @@ audio-fix-disable:
     rm -f ~/.config/wireplumber/wireplumber.conf.d/50-sound-drop-fix.conf &&
     systemctl restart --user pipewire.socket wireplumber.service &&
     echo "Audio fix is removed"
+
+# Set recommended kernel parameters
+kernel-setup:
+    #!/usr/bin/bash
+    rpm-ostree kargs --append-if-missing=preempt=full --append-if-missing=bluetooth.disable_ertm=1 &&
+    echo "Done!"
