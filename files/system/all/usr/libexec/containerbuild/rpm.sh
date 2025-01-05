@@ -113,7 +113,8 @@ libnsl2
 
 #Python
 rpm-ostree install \
-python3-pygame
+python3-pygame \
+python3-typing-extensions
 
 
 #Remove firefox
