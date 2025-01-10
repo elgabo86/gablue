@@ -17,9 +17,9 @@ rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/* &&
 curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.5.2-1.tar.gz https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/dxvk-gplasync-v2.5.2-1.tar.gz &&
 tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.5.2-1.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/ &&
 rm -f ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.5.2-1.tar.gz &&
-curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.14.tar.zst https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v2.14/vkd3d-proton-2.14.tar.zst &&
-tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.14.tar.zst -C ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ &&
-rm -f ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.14.tar.zst &&
+curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.14.1.tar.zst https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v2.14.1/vkd3d-proton-2.14.1.tar.zst &&
+tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.14.1.tar.zst -C ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ &&
+rm -f ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.14.1.tar.zst &&
 curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz https://github.com/bottlesdevs/components/releases/download/dxvk-nvapi-v0.7.1/dxvk-nvapi-v0.7.1.tar.gz &&
 tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/ &&
 rm -f ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz &&
