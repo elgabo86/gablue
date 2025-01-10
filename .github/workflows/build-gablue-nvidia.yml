@@ -18,7 +18,7 @@ env:
   MY_IMAGE_NAME: "gablue-nvidia"  # the name of the image produced by this build, matches repo names
   MY_IMAGE_DESC: "Gablue nvidia image"
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
-  KERNEL_VER: "6.12.8-207.bazzite.fc41.x86_64"
+  KERNEL_VER: "6.12.8-201.bazzite.fc41.x86_64"
 
 jobs:
   build_push:
