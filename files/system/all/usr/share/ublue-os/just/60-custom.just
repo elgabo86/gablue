@@ -347,3 +347,17 @@ kernel-setup:
     #!/usr/bin/bash
     rpm-ostree kargs --append-if-missing=preempt=full --append-if-missing=bluetooth.disable_ertm=1 &&
     echo "Done!"
+
+# Enable wl legacy
+wl-enable:
+    #!/usr/bin/bash
+    sudo rm -f /etc/modprobe.d/broadcom-wl-blacklist.conf
+    sudo rm -f /etc/modprobe.d/default-disable-broadcom-wl.conf
+    echo "Done! Please reboot!"
+
+# Disable wl legacy
+wl-disable:
+    #!/usr/bin/bash
+    sudo bash -c '> /etc/modprobe.d/broadcom-wl-blacklist.conf'
+    sudo bash -c 'echo "blacklist wl" > /etc/modprobe.d/default-disable-broadcom-wl.conf'
+    echo "Done! Please reboot!"
