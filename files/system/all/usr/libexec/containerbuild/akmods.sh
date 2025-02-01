@@ -9,7 +9,6 @@ rpm-ostree install \
     /tmp/akmods-rpms/kmods/*v4l2loopback*.rpm \
     /tmp/akmods-rpms/kmods/*wl*.rpm \
     /tmp/akmods-extra-rpms/kmods/*evdi*.rpm \
-    /tmp/akmods-extra-rpms/kmods/*nct6687*.rpm \
     /tmp/akmods-extra-rpms/kmods/*gcadapter_oc*.rpm \
     /tmp/akmods-extra-rpms/kmods/*ryzen-smu*.rpm \
     /tmp/akmods-extra-rpms/kmods/*zenergy*.rpm \
