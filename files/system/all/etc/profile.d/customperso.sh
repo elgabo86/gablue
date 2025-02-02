@@ -57,6 +57,10 @@ alias gablue-switch-main-test="rpm-ostree rebase ostree-image-signed:docker://gh
 
 alias gablue-switch-nvidia="rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia:latest"
 
+alias vrr-on="kscreen-doctor output.1.vrrpolicy.automatic"
+
+alias vrr-off="kscreen-doctor output.1.vrrpolicy.never"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
