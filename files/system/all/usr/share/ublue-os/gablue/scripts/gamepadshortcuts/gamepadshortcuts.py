@@ -4,9 +4,6 @@ import os
 # Initialiser Pygame
 pygame.init()
 
-# Désactiver la prévention de mise en veille
-pygame.display.set_allow_screensaver(1)
-
 # Configurer le nombre de manettes
 pygame.joystick.init()
 
@@ -31,10 +28,16 @@ try:
                 print("Manette connectée.")
                 joystick = pygame.joystick.Joystick(0)
                 joystick.init()
+                # Activer la prévention de mise en veille
+                pygame.display.set_allow_screensaver(0)
+
 
         elif event.type == pygame.JOYDEVICEREMOVED:
                 print("Manette déconnectée.")
                 joystick.quit()
+                # Désactiver la prévention de mise en veille
+                pygame.display.set_allow_screensaver(1)
+
 
         elif event.type == pygame.JOYBUTTONDOWN:
                 # Vérifier les boutons
