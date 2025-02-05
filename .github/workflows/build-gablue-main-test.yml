@@ -18,7 +18,7 @@ env:
   MY_IMAGE_NAME: "gablue-main-test"  # the name of the image produced by this build, matches repo names
   MY_IMAGE_DESC: "Gablue main image"
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
-  KERNEL_VER: "6.12.11-202.bazzite.fc41.x86_64"
+  KERNEL_VER: "6.12.12-203.bazzite.fc41.x86_64"
 
 jobs:
   build_push:
@@ -107,7 +107,7 @@ jobs:
 
       - name: Rechunk Image
         id: rechunk
-        uses: hhd-dev/rechunk@v1.1.3
+        uses: hhd-dev/rechunk@v1.1.2
         with:
           ref: "raw-img"
           prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ env.MY_IMAGE_NAME }}:latest"
