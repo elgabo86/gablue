@@ -58,7 +58,6 @@ gamescope \
 cage \
 wlr-randr \
 scx-scheds \
-joystickwake \
 earlyoom
 
 #Kde addons

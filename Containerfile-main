@@ -9,7 +9,6 @@ ARG KERNEL_TYPE_NAME="bazzite"
 ARG KERNEL_VERSION="6.12.12-203"
 
 # Import main packages
-FROM ghcr.io/ublue-os/${KERNEL_TYPE}-kernel:${KERNEL_VERSION}.${KERNEL_TYPE_NAME}.fc${FEDORA_MAJOR_VERSION}.x86_64 AS kernel
 FROM ghcr.io/ublue-os/akmods:${KERNEL_TYPE}-${FEDORA_MAJOR_VERSION}-${KERNEL_VERSION}.${KERNEL_TYPE_NAME}.fc${FEDORA_MAJOR_VERSION}.x86_64 AS akmods
 FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_TYPE}-${FEDORA_MAJOR_VERSION}-${KERNEL_VERSION}.${KERNEL_TYPE_NAME}.fc${FEDORA_MAJOR_VERSION}.x86_64 AS akmods-extra
 FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${SOURCE_TAG}
@@ -41,7 +40,7 @@ RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
 
 # Install kernel
 RUN --mount=type=cache,dst=/var/cache/rpm-ostree \
-    --mount=type=bind,from=kernel,src=/tmp/rpms,dst=/tmp/kernel-rpms \
+    --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/tmp/kernel-rpms \
     /usr/libexec/containerbuild/kernel.sh && \
     /usr/libexec/containerbuild/cleanup.sh && \
     ostree container commit
