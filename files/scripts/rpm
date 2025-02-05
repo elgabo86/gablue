@@ -1,0 +1,122 @@
+#!/usr/bin/bash
+
+set -eoux pipefail
+
+#Tools-cli
+dnf5 -y install \
+fswatch \
+iotop-c \
+wol \
+duperemove \
+atuin \
+speedtest-cli \
+yt-dlp \
+rar \
+btop \
+tailscale \
+intel-undervolt \
+ncdu \
+mc \
+lm_sensors \
+fastfetch \
+stress-ng \
+powertop \
+android-tools \
+byobu \
+cabextract \
+ripgrep \
+testdisk \
+gh \
+ryzenadj \
+yq \
+trash-cli
+
+#Goodies cli
+dnf5 -y  install \
+bash-color-prompt \
+asciiquarium \
+figlet \
+toilet \
+cmatrix
+
+#Tools
+dnf5 -y install \
+meld \
+sunshine \
+corectrl \
+solaar \
+gnome-disk-utility \
+skanpage \
+x2goclient \
+goverlay \
+mangohud \
+cool-retro-term \
+gamescope \
+cage \
+wlr-randr \
+earlyoom
+
+#Kde addons
+if [ "$SOURCE_IMAGE" == "kinoite" ]; then
+    dnf5 -y install \
+    okular \
+    gwenview \
+    kcalc \
+    yakuake \
+    papirus-icon-theme \
+    papirus-icon-theme-dark \
+    langpacks-fr \
+    kdenetwork-filesharing \
+    kde-runtime-docs \
+    kdeplasma-addons
+fi
+
+#Fonts
+dnf5 -y install \
+nerd-fonts \
+adobe-source-code-pro-fonts \
+google-droid-sans-mono-fonts \
+google-go-mono-fonts
+
+#Drivers
+dnf5 -y install \
+epson-inkjet-printer-escpr \
+epson-inkjet-printer-escpr2 \
+hplip \
+printer-driver-brlaser \
+ifuse \
+libimobiledevice
+
+#Dev dep
+dnf5 -y  install \
+gcc \
+gcc-c++ \
+libffi-devel \
+readline-devel \
+zlib-devel \
+bzip2-devel \
+openssl-devel \
+sqlite-devel \
+xz-devel \
+tk-devel \
+patch \
+bzip2 \
+sqlite \
+libuuid-devel \
+gdbm-libs \
+libnsl2
+
+#Python
+dnf5 -y install \
+python3-pygame
+
+
+#Remove firefox
+dnf5 -y remove \
+firefox \
+firefox-langpacks
+
+if [ "$GABLUE_VARIANT" == "main" ]; then
+    dnf5 -y install \
+    radeontop
+fi

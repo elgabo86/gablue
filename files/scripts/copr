@@ -1,0 +1,23 @@
+#!/usr/bin/bash
+
+set -eoux pipefail
+
+for copr in \
+        kylegospo/bazzite \
+        ublue-os/staging \
+        che/nerd-fonts \
+        matte-schwartz/sunshine \
+        sramanujam/atuin; \
+do \
+        dnf5 -y copr enable $copr; \
+done && unset -v copr && \
+
+dnf5 -y config-manager addrepo --overwrite --from-repofile=https://pkgs.tailscale.com/stable/fedora/tailscale.repo && \
+
+dnf5 -y config-manager addrepo --from-repofile=https://negativo17.org/repos/fedora-rar.repo && \
+
+dnf5 -y install \
+        https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
+        https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm && \
+
+sed -i 's@enabled=0@enabled=1@g' /etc/yum.repos.d/negativo17-fedora-multimedia.repo
