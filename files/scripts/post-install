@@ -89,3 +89,15 @@ echo "POWERDEVIL_NO_DDCUTIL=1" >> "/etc/environment"
 
 #Remove os-prober to fix long update reboot/shutdown
 rm -f /etc/grub.d/30_os-prober
+
+# TODO: Fedora 41 specific -- re-evaluate with Fedora 42
+# negativo's libheif is broken somehow on older Intel machines
+# https://github.com/ublue-os/aurora/issues/8
+dnf5 -y swap \
+    --repo=fedora \
+        libheif libheif
+
+dnf5 -y swap \
+    --repo=fedora \
+        heif-pixbuf-loader heif-pixbuf-loader
+
