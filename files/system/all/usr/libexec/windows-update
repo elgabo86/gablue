@@ -76,6 +76,7 @@ flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/
 rm -rf ~/Windows/Tools &&
 flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/24.08 -y &&
 flatpak install runtime/com.obsproject.Studio.Plugin.OBSVkCapture/x86_64/stable -y &&
+flatpak install runtime/org.freedesktop.Platform.VulkanLayer.OBSVkCapture/x86_64/24.08 -y &&
 flatpak install runtime/org.freedesktop.Platform.VulkanLayer.gamescope/x86_64/24.08 -y &&
 mkdir -p ~/.config/MangoHud/ &&
 cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud/ &&
