@@ -1,4 +1,3 @@
----
 name: build-gablue-main
 on:
   pull_request:
@@ -10,8 +9,6 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - '**/README.md'
   workflow_dispatch:
 
 env:
@@ -24,6 +21,8 @@ jobs:
   build_push:
     name: Build and push image
     runs-on: ubuntu-24.04
+    # Condition : ne s'exécute que si le message de commit contient "[build]"
+    if: github.event_name != 'push' || contains(github.event.head_commit.message, '[build]')
 
     permissions:
       contents: read
