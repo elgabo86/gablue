@@ -39,7 +39,7 @@ sed -i "s/^SCX_SCHEDULER=.*/SCX_SCHEDULER=scx_lavd/" /etc/default/scx
 # change tuned ppd.conf
 sed -i 's/balanced=balanced$/balanced=balanced-gablue/' /etc/tuned/ppd.conf && \
 sed -i 's/performance=throughput-performance$/performance=throughput-performance-gablue/' /etc/tuned/ppd.conf && \
-sed -i 's/balanced=balanced-battery$/balanced=balanced-battery-gablue/'
+sed -i 's/balanced=balanced-battery$/balanced=balanced-battery-gablue/' /etc/tuned/ppd.conf
 
 # Enable 44100khz option in Pipewire by default to further eliminate popping in games
 sed -i 's|#default.clock.allowed-rates = \[ 48000 \]|default.clock.allowed-rates = [ 44100 48000 ]|' /usr/share/pipewire/pipewire.conf && \
