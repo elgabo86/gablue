@@ -76,7 +76,6 @@ done && unset -v copr && \
 sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr:copr.fedorainfracloud.org:phracek:PyCharm.repo && \
 sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_ublue-os-akmods.repo && \
 sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/tailscale.repo && \
-sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/zinix01-linux-wifi-hotspot.repo && \
 sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/negativo17-fedora-rar.repo && \
 sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/negativo17-fedora-multimedia.repo
 

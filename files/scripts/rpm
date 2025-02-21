@@ -111,10 +111,11 @@ dnf5 -y install \
 python3-pygame
 
 
-#Remove firefox
+#Remove some packages
 dnf5 -y remove \
 firefox \
-firefox-langpacks
+firefox-langpacks \
+htop
 
 if [ "$GABLUE_VARIANT" == "main" ]; then
     dnf5 -y install \
