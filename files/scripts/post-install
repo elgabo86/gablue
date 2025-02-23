@@ -41,10 +41,6 @@ sed -i 's/balanced=balanced$/balanced=balanced-gablue/' /etc/tuned/ppd.conf && \
 sed -i 's/performance=throughput-performance$/performance=throughput-performance-gablue/' /etc/tuned/ppd.conf && \
 sed -i 's/balanced=balanced-battery$/balanced=balanced-battery-gablue/' /etc/tuned/ppd.conf
 
-# Enable 44100khz option in Pipewire by default to further eliminate popping in games
-sed -i 's|#default.clock.allowed-rates = \[ 48000 \]|default.clock.allowed-rates = [ 44100 48000 ]|' /usr/share/pipewire/pipewire.conf && \
-sed -i 's|^ExecStart=.*|ExecStart=/usr/libexec/rtkit-daemon --no-canary|' /usr/lib/systemd/system/rtkit-daemon.service
-
 # set userpace HID to true
 sed -i 's/#UserspaceHID.*/UserspaceHID=true/' /etc/bluetooth/input.conf
 
