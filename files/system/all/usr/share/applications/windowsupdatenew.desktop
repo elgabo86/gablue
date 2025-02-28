@@ -1,10 +1,10 @@
 [Desktop Entry]
 Categories=System
 Comment=
-Exec=/usr/libexec/windows-update
-GenericName=Provoquer la mise à jour Windows (old)
+Exec=/usr/libexec/windows-update-new
+GenericName=Provoquer la mise à jour Windows (new)
 Icon=windows95
-Name=Provoquer la mise à jour Windows (old)
+Name=Provoquer la mise à jour Windows (new)
 NoDisplay=false
 Path=
 StartupNotify=true

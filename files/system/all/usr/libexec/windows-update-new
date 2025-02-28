@@ -1,0 +1,130 @@
+#!/usr/bin/bash
+
+echo "Installation/Mise à jour de Windows"
+pgrep -f bottles |xargs -n1 kill -9 &
+sleep 2 &&
+if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ]; then
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
+    mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
+fi &&
+rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def &&
+mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/ ~/.var/app/com.usebottles.bottles/data/bottles/runners/ ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/  ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/ &&
+rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/runners/* &&
+curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/runners/gwine-10.2.r9.tar.xz  https://github.com/elgabo86/gwine/releases/download/gwine-10.2.r9/gwine-10.2.r9.tar.xz &&
+tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/runners/gwine-10.2.r9.tar.xz -C ~/.var/app/com.usebottles.bottles/data/bottles/runners/ &&
+rm -f ~/.var/app/com.usebottles.bottles/data/bottles/runners/gwine-10.2.r9.tar.xz &&
+rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/* &&
+curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.5.3-1.tar.gz https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/dxvk-gplasync-v2.5.3-1.tar.gz &&
+tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.5.3-1.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/ &&
+rm -f ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-v2.5.3-1.tar.gz &&
+curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.14.1.tar.zst https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v2.14.1/vkd3d-proton-2.14.1.tar.zst &&
+tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.14.1.tar.zst -C ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ &&
+rm -f ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/vkd3d-proton-2.14.1.tar.zst &&
+curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz https://github.com/bottlesdevs/components/releases/download/dxvk-nvapi-v0.7.1/dxvk-nvapi-v0.7.1.tar.gz &&
+tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/ &&
+rm -f ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz &&
+curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz https://github.com/bottlesdevs/components/releases/download/latencyflex-v0.1.1-2-3bc9636/latencyflex-v0.1.1-2-3bc9636.tar.gz &&
+tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/ &&
+rm -f ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz &&
+flatpak run --command=bottles-cli com.usebottles.bottles new --bottle-name "def" --runner gwine-10.2.r9 --environment gaming &&
+sleep 1
+flatpak override com.usebottles.bottles --user --filesystem=~/Windows &&
+mkdir -p ~/Windows/UserData ~/Windows/SteamData ~/Windows/Games ~/Windows/Applications ~/Windows/Tools ~/.local/share/applications/ &&
+rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users/ &&
+ln -s ~/Windows/UserData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users &&
+ln -s ~/Windows/SteamData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/Steam &&
+ln -s ~/Windows/Applications/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ &&
+ln -s ~/Windows/Games/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ &&
+ln -f -s -T ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ ~/Windows/WinDrive &&
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "Enable SDL" -d 1 -t "REG_DWORD" &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD" &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_CURRENT_USER\Software\Wine\Drivers" -v "Graphics" -d "wayland" -t "REG_SZ" &&
+sleep 1
+cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications/ &&
+cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications/ &&
+cp /usr/share/ublue-os/gablue/desktops/WindowsFix.desktop ~/.local/share/applications/ &&
+cp /usr/share/ublue-os/gablue/desktops/WindowsTerminal.desktop ~/.local/share/applications/ &&
+cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications/ &&
+mkdir -p ~/.local/share/kio/servicemenus/ &&
+cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWinShortcut.desktop ~/.local/share/kio/servicemenus/ &&
+cp /usr/share/ublue-os/gablue/desktops/servicemenus/InstallWinReg.desktop ~/.local/share/kio/servicemenus/ &&
+update-desktop-database ~/.local/share/applications &&
+xdg-mime default Windows.desktop application/x-ms-dos-executable &&
+xdg-mime default Windows.desktop application/x-msi &&
+xdg-mime default Windows.desktop application/x-ms-shortcut &&
+xdg-mime default Windows.desktop application/x-wine-extension-msp &&
+xdg-mime default Windows.desktop application/x-bat &&
+wget -O ~/Windows/Tools/vc2015_2022-x86.exe https://aka.ms/vs/17/release/VC_redist.x86.exe &&
+wget -O ~/Windows/Tools/vc2015_2022-x64.exe https://aka.ms/vs/17/release/VC_redist.x64.exe &&
+curl -o ~/Windows/Tools/runtime-6.0.16-x64.exe https://download.visualstudio.microsoft.com/download/pr/85473c45-8d91-48cb-ab41-86ec7abc1000/83cd0c82f0cde9a566bae4245ea5a65b/windowsdesktop-runtime-6.0.16-win-x64.exe --retry-all-errors --retry-delay 1 --retry 20 --http1.1 &&
+#curl -o ~/Windows/Tools/wine-mono-9.3.0-x86.msi https://dl.winehq.org/wine/wine-mono/9.3.0/wine-mono-9.3.0-x86.msi &&
+flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/vc2015_2022-x86.exe /quiet /norestart &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/vc2015_2022-x64.exe /quiet /norestart &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/runtime-6.0.16-x64.exe /quiet &&
+#flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/wine-mono-9.3.0-x86.msi /quiet &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "concrt140" -d "native,builtin" -t "REG_SZ" &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140" -d "native,builtin" -t "REG_SZ" &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140_1" -d "native,builtin" -t "REG_SZ" &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140_2" -d "native,builtin" -t "REG_SZ" &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140_atomic_wait" -d "native,builtin" -t "REG_SZ" &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140_codecvt_ids" -d "native,builtin" -t "REG_SZ" &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcamp140" -d "native,builtin" -t "REG_SZ" &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vccorlib140" -d "native,builtin" -t "REG_SZ" &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcomp140" -d "native,builtin" -t "REG_SZ" &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcruntime140" -d "native,builtin" -t "REG_SZ" &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcruntime140_1" -d "native,builtin" -t "REG_SZ" &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "mscoree" -d "native,builtin" -t "REG_SZ" &&
+sleep 1
+flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/gwine-10.2.r9/bin/wine --command=winetricks com.usebottles.bottles -q corefonts tahoma d3dcompiler_43 d3dcompiler_47 d3dx9 msls31 vb6run mfc42 vcrun2012 &&
+sleep 1
+flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/gwine-10.2.r9/bin/wine --command=winetricks com.usebottles.bottles -q settings fontsmooth=rgb &&
+sleep 1
+rm -rf ~/Windows/Tools &&
+flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/24.08 -y &&
+flatpak install runtime/com.obsproject.Studio.Plugin.OBSVkCapture/x86_64/stable -y &&
+flatpak install runtime/org.freedesktop.Platform.VulkanLayer.OBSVkCapture/x86_64/24.08 -y &&
+flatpak install runtime/org.freedesktop.Platform.VulkanLayer.gamescope/x86_64/24.08 -y &&
+mkdir -p ~/.config/MangoHud/ &&
+cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud/ &&
+flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params mangohud:true &&
+sleep 1
+flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params gamemode:true &&
+mkdir -p ~/Windows/UserData/Public/Documents/Steam/ &&
+
+
+### Compatibilité des saves entre proton/wine
+user=$(whoami)
+dossieruser="~/Windows/UserData/$user"
+
+if [ -e "$dossieruser" ]; then
+    if [ ! -e "~/Windows/UserData/steamuser" ]; then
+        ln -s "./$user" "~/Windows/UserData/steamuser"
+    fi
+else
+    if [ -e "~/Windows/UserData/steamuser" ]; then
+        ln -s "./steamuser" "$dossieruser"
+    fi
+fi &&
+
+rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak &&
+kdialog --msgbox "L'installation/mise à jour de Windows est réussie"|| {
+rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
+mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
+kdialog --msgbox "Erreur de l'installation/mise à jour de Windows"
+}
