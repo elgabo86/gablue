@@ -13,10 +13,15 @@ fi
 FLATPAK_PID=$!
 wait $FLATPAK_PID
 
-# Récupérer le PID de wineserver supérieur à FLATPAK_PID
-WINESERVER_PID=$(ps aux | grep "[w]ineserver" | awk '{if ($2 > '"$FLATPAK_PID"') print $2}' | head -n 1)
+# Récupérer le PID de wineserver qui est un enfant direct de FLATPAK_PID
+WINESERVER_PID=$(ps -o pid= -C wineserver --ppid "$FLATPAK_PID" | tr -d ' ')
 
-# Boucle pour attendre que wineserver se termine
-while kill -0 "$WINESERVER_PID" 2>/dev/null; do
-    sleep 0.1
-done
+# Vérifier si un wineserver enfant a été trouvé
+if [ -z "$WINESERVER_PID" ]; then
+    echo "Aucun wineserver trouvé parmi les enfants de $FLATPAK_PID."
+    exit 1
+else
+    while kill -0 "$WINESERVER_PID" 2>/dev/null; do
+        sleep 0.1
+    done
+fi
