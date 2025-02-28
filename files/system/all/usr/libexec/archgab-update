@@ -1,13 +1,78 @@
 #!/usr/bin/bash
 
-echo 'Mise à jour de archgab'
-podman kill --all  &&
-distrobox-rm -f archgab &&
+# Lancer une barre de progression "busy" (sans pourcentage)
+dbusRef=$(kdialog --title "Mise à jour de Archgab" --progressbar "Mise à jour de Archgab en cours..." 0)
+
+# Mettre à jour le texte affiché
+qdbus $dbusRef setLabelText "Arrêt de tous les conteneurs Podman..."
+podman kill --all
+
+# Mettre à jour le texte
+qdbus $dbusRef setLabelText "Suppression de l'ancienne instance Archgab..."
+distrobox-rm -f archgab
+
+# Mettre à jour le texte
+qdbus $dbusRef setLabelText "Création de la nouvelle instance Archgab..."
 if lspci | grep -i nvidia > /dev/null; then
     distrobox-create --pull latest --name archgab --nvidia --image ghcr.io/elgabo86/archgab:latest
 else
     distrobox-create --pull latest --name archgab --image ghcr.io/elgabo86/archgab:latest
-fi &&
-distrobox-enter -n archgab -- bash -c 'distrobox-export --bin /usr/bin/tochd; distrobox-export --bin /usr/bin/extract-xiso' &&
-kdialog --msgbox "Archgab est à jour" ||
-kdialog --msgbox "Erreur de la mise à jour Archgab"
+fi
+
+# Mettre à jour le texte
+qdbus $dbusRef setLabelText "Exportation des binaires dans Archgab..."
+distrobox-enter -n archgab -- bash -c 'distrobox-export --bin /usr/bin/tochd; distrobox-export --bin /usr/bin/extract-xiso'
+
+# Fermer la barre de progression
+qdbus $dbusRef close
+
+# Vérifier si tout s'est bien passé
+if [ $? -eq 0 ]; then
+    kdialog --msgbox "Archgab est à jour"
+else
+    kdialog --msgbox "Erreur de la mise à jour Archgab"
+    exit 1
+fi
+
+# Boîte de dialogue avec cases à cocher pour installer des programmes supplémentaires
+CHOICES=$(kdialog --title "Installation de programmes supplémentaires" --checklist "Sélectionnez les programmes à installer :" \
+    "citron" "Citron" off \
+    "suyu" "Suyu" off \
+    "ryujinx" "Ryujinx" off \
+    "torzu" "Torzu" off)
+
+# Vérifier si l'utilisateur a cliqué sur "OK" (code de retour 0)
+if [ $? -eq 0 ]; then
+    # Lancer une nouvelle barre de progression pour les installations
+    dbusRef=$(kdialog --title "Installation des programmes" --progressbar "Installation en cours..." 0)
+
+    # Traiter les choix (les valeurs sont séparées par des espaces dans $CHOICES)
+    for choice in $CHOICES; do
+        case $choice in
+            '"citron"')
+                qdbus $dbusRef setLabelText "Installation de Citron..."
+                distrobox-enter -n archgab -- bash -c 'paru -Syu citron-git  --noconfirm && distrobox-export --app citron'
+                ;;
+            '"suyu"')
+                qdbus $dbusRef setLabelText "Installation de Suyu..."
+                distrobox-enter -n archgab -- bash -c 'paru -Syu suyu-dev-qt6-git --noconfirm && distrobox-export --app suyu'
+                ;;
+            '"ryujinx"')
+                qdbus $dbusRef setLabelText "Installation de Ryujinx..."
+                distrobox-enter -n archgab -- bash -c 'paru -Syu ryujinx  --noconfirm && distrobox-export --app ryujinx'
+                ;;
+            '"torzu"')
+                qdbus $dbusRef setLabelText "Installation de Torzu..."
+                distrobox-enter -n archgab -- bash -c 'paru -Syu torzu-qt6-git  --noconfirm && distrobox-export --app torzu'
+                ;;
+        esac
+    done
+
+    # Fermer la barre de progression après les installations
+    qdbus $dbusRef close
+
+    # Vérifier si des installations ont été effectuées et afficher un message
+    if [ -n "$CHOICES" ]; then
+        kdialog --msgbox "Les programmes sélectionnés ont été installés avec succès."
+    fi
+fi

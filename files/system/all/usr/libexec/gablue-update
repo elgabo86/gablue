@@ -1,9 +1,30 @@
 #!/usr/bin/bash
 
-echo 'Tentative de mise à jour du système'
-rpm-ostree cancel &&
-rpm-ostree upgrade &&
-echo 'Mise à jour des flatpaks' &&
-flatpak update -y &&
-kdialog --msgbox "Gablue est à jour, un rédemarrage est nécessaire pour appliquer les changements" ||
-kdialog --msgbox "Erreur de la mise à jour Gablue"
+# Lancer une barre de progression "busy" (sans pourcentage)
+dbusRef=$(kdialog --title "Mise à jour de Gablue" --progressbar "Tentative de mise à jour du système..." 0)
+
+# Mettre à jour le texte affiché
+qdbus $dbusRef setLabelText "Annulation des mises à jour en attente..."
+rpm-ostree cancel
+
+# Mettre à jour le texte
+qdbus $dbusRef setLabelText "Mise à jour du système via rpm-ostree..."
+rpm-ostree upgrade
+
+# Mettre à jour le texte
+qdbus $dbusRef setLabelText "Mise à jour des flatpaks..."
+flatpak update -y
+
+# Fermer la barre de progression
+qdbus $dbusRef close
+
+# Vérifier si tout s'est bien passé et afficher une boîte de dialogue avec option de redémarrage
+if [ $? -eq 0 ]; then
+    kdialog --title "Mise à jour réussie" --yesno "Gablue est à jour, un redémarrage est nécessaire pour appliquer les changements.\nVoulez-vous redémarrer maintenant ?"
+    if [ $? -eq 0 ]; then
+        # Redémarrer si l'utilisateur clique sur "Oui"
+        systemctl reboot
+    fi
+else
+    kdialog --msgbox "Erreur de la mise à jour Gablue"
+fi
