@@ -4,6 +4,7 @@ set -eoux pipefail
 
 # Make executable which need it
 chmod +x /usr/bin/system-flatpak-setup
+chmod +x /usr/bin/waitwine
 chmod +x /usr/libexec/gablue-update
 chmod +x /usr/libexec/archgab-update
 chmod +x /usr/libexec/windows-update

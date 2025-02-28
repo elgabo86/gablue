@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# Vérifier si une commande a été fournie
+if [ $# -eq 0 ]; then
+    echo "Usage: $0 <commande> [arguments...]"
+    exit 1
+fi
+
+# Exécuter la commande en mode détaché
+"$@" &
+
+# Récupérer le PID du processus lancé
+FLATPAK_PID=$!
+wait $FLATPAK_PID
+
+# Récupérer le PID de wineserver supérieur à FLATPAK_PID
+WINESERVER_PID=$(ps aux | grep "[w]ineserver" | awk '{if ($2 > '"$FLATPAK_PID"') print $2}' | head -n 1)
+
+# Boucle pour attendre que wineserver se termine
+while kill -0 "$WINESERVER_PID" 2>/dev/null; do
+    sleep 0.1
+done
