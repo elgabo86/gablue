@@ -1,5 +1,8 @@
 #!/usr/bin/bash
 
+user=$(whoami)
+
+
 echo "Installation/Mise à jour de Windows"
 pgrep -f bottles |xargs -n1 kill -9 &
 sleep 2 &&
@@ -26,8 +29,8 @@ rm -f ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar
 curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz https://github.com/bottlesdevs/components/releases/download/latencyflex-v0.1.1-2-3bc9636/latencyflex-v0.1.1-2-3bc9636.tar.gz &&
 tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/ &&
 rm -f ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz &&
-waitwine flatpak run --command=bottles-cli com.usebottles.bottles new --bottle-name "def" --runner gwine-10.2.r9 --environment gaming &&
-waitwine flatpak override com.usebottles.bottles --user --filesystem=~/Windows &&
+flatpak run --command=bottles-cli com.usebottles.bottles new --bottle-name "def" --runner gwine-10.2.r9 --environment gaming &&
+flatpak override com.usebottles.bottles --user --filesystem=~/Windows &&
 mkdir -p ~/Windows/UserData ~/Windows/SteamData ~/Windows/Games ~/Windows/Applications ~/Windows/Tools ~/.local/share/applications/ &&
 rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users/ &&
 ln -s ~/Windows/UserData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users &&
@@ -73,10 +76,8 @@ waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def
 waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vccorlib140" -d "native,builtin" -t "REG_SZ" &&
 waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcomp140" -d "native,builtin" -t "REG_SZ" &&
 waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcruntime140" -d "native,builtin" -t "REG_SZ" &&
-waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k wget -O ~/Windows/Tools/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks &&
-chmod +x ~/Windows/Tools/winetricks "HKCU\Software\Wine\DllOverrides" -v "vcruntime140_1" -d "native,builtin" -t "REG_SZ" &&
+waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "vcruntime140_1" -d "native,builtin" -t "REG_SZ" &&
 waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "mscoree" -d "native,builtin" -t "REG_SZ" &&
-user=$(whoami)
 waitwine flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/gwine-10.2.r9/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q corefonts tahoma d3dcompiler_43 d3dcompiler_47 d3dx9 msls31 vb6run mfc42 vcrun2012 &&
 waitwine flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/gwine-10.2.r9/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q settings fontsmooth=rgb &&
 #rm -rf ~/Windows/Tools &&
@@ -86,8 +87,8 @@ flatpak install runtime/org.freedesktop.Platform.VulkanLayer.OBSVkCapture/x86_64
 flatpak install runtime/org.freedesktop.Platform.VulkanLayer.gamescope/x86_64/24.08 -y &&
 mkdir -p ~/.config/MangoHud/ &&
 cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud/ &&
-waitwine  flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params mangohud:true &&
-waitwine flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params gamemode:true &&
+flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params mangohud:true &&
+flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params gamemode:true &&
 mkdir -p ~/Windows/UserData/Public/Documents/Steam/ &&
 
 ### Compatibilité des saves entre proton/wine
