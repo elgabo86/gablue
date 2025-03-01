@@ -1,7 +1,22 @@
 #!/usr/bin/bash
 
+# Arrêter le script à la moindre erreur
+set -e
+
 # Lancer une barre de progression "busy" (sans pourcentage)
 dbusRef=$(kdialog --title "Mise à jour de Archgab" --progressbar "Mise à jour de Archgab en cours..." 0)
+# Désactivation du bouton "Annuler"
+qdbus $dbusRef showCancelButton false
+
+# Fonction pour gérer les erreurs
+on_error() {
+    qdbus $dbusRef close
+    kdialog --msgbox "Erreur de la mise à jour Archgab"
+    exit 1
+}
+
+# Attraper les erreurs avec trap
+trap 'on_error' ERR
 
 # Mettre à jour le texte affiché
 qdbus $dbusRef setLabelText "Arrêt de tous les conteneurs Podman..."
@@ -26,13 +41,7 @@ distrobox-enter -n archgab -- bash -c 'distrobox-export --bin /usr/bin/tochd; di
 # Fermer la barre de progression
 qdbus $dbusRef close
 
-# Vérifier si tout s'est bien passé
-if [ $? -eq 0 ]; then
-    kdialog --msgbox "Archgab est à jour"
-else
-    kdialog --msgbox "Erreur de la mise à jour Archgab"
-    exit 1
-fi
+kdialog --msgbox "Archgab est à jour"
 
 # Boîte de dialogue avec cases à cocher pour installer des programmes supplémentaires
 CHOICES=$(kdialog --title "Installation de programmes supplémentaires" --checklist "Sélectionnez les programmes à installer :" \

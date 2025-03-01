@@ -1,5 +1,8 @@
 #!/usr/bin/bash
 
+# Arrêter le script à la moindre erreur
+set -e
+
 user=$(whoami)
 dossieruser="~/Windows/UserData/$user"
 wineversion="gwine-10.2.r10"
@@ -8,6 +11,23 @@ vkd3dversion="vkd3d-proton-2.14.1"
 
 # Lancer la barre de progression avec kdialog
 dbusRef=$(kdialog --title "Installation/Mise à jour de Windows" --progressbar "Initialisation..." 100)
+# Désactivation du bouton "Annuler"
+qdbus $dbusRef showCancelButton false
+
+# Fonction pour gérer les erreurs et restaurer la sauvegarde
+cleanup_on_error() {
+    qdbus $dbusRef setLabelText "Erreur détectée, restauration en cours..."
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
+    if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak ]; then
+        mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
+    fi
+    qdbus $dbusRef close
+    kdialog --msgbox "Erreur de l'installation/mise à jour de Windows"
+    exit 1
+}
+
+# Attraper les erreurs avec trap
+trap 'cleanup_on_error' ERR
 
 # Mettre à jour le texte et la progression
 qdbus $dbusRef Set "" "value" 0
@@ -16,11 +36,9 @@ qdbus $dbusRef setLabelText "Arrêt des processus bottles..."
 echo "Installation/Mise à jour de Windows"
 pgrep -f bottles | xargs -n1 kill -9 &
 sleep 2
-
 # Progression à 10%
 qdbus $dbusRef Set "" "value" 10
 qdbus $dbusRef setLabelText "Préparation des répertoires..."
-
 if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ]; then
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
     mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
@@ -106,9 +124,6 @@ xdg-mime default Windows.desktop application/x-ms-shortcut
 xdg-mime default Windows.desktop application/x-wine-extension-msp
 xdg-mime default Windows.desktop application/x-bat
 rm -rf ~/Windows/Tools/*
-wget -O ~/Windows/Tools/vc2015_2022-x86.exe https://aka.ms/vs/17/release/VC_redist.x86.exe
-wget -O ~/Windows/Tools/vc2015_2022-x64.exe https://aka.ms/vs/17/release/VC_redist.x64.exe
-curl -o ~/Windows/Tools/runtime-6.0.16-x64.exe https://download.visualstudio.microsoft.com/download/pr/85473c45-8d91-48cb-ab41-86ec7abc1000/83cd0c82f0cde9a566bae4245ea5a65b/windowsdesktop-runtime-6.0.16-win-x64.exe --retry-all-errors --retry-delay 1 --retry 20 --http1.1
 wget -O ~/Windows/Tools/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
 chmod +x ~/Windows/Tools/winetricks
 
@@ -116,13 +131,7 @@ chmod +x ~/Windows/Tools/winetricks
 qdbus $dbusRef Set "" "value" 90
 qdbus $dbusRef setLabelText "Installation des runtimes et finalisation..."
 
-waitwine flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/vc2015_2022-x86.exe /quiet /norestart
-waitwine flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/vc2015_2022-x64.exe /quiet /norestart
-waitwine flatpak run --command=bottles-cli com.usebottles.bottles run -b def -e ~/Windows/Tools/runtime-6.0.16-x64.exe /quiet
-waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "concrt140" -d "native,builtin" -t "REG_SZ"
-waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKCU\Software\Wine\DllOverrides" -v "msvcp140" -d "native,builtin" -t "REG_SZ"
-# (Autres commandes similaires omises pour brièveté)
-waitwine flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/$wineversion/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q corefonts tahoma d3dcompiler_43 d3dcompiler_47 d3dx9 msls31 vb6run mfc42 vcrun2012
+waitwine flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/$wineversion/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q corefonts tahoma d3dcompiler_43 d3dcompiler_47 d3dx9 msls31 vb6run mfc42 vcrun2012 vcrun2022 dotnetdesktop6
 waitwine flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/$wineversion/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q settings fontsmooth=rgb
 
 # Progression à 100%
@@ -156,10 +165,4 @@ rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
 qdbus $dbusRef close
 
 # Afficher le message final
-if [ $? -eq 0 ]; then
-    kdialog --msgbox "L'installation/mise à jour de Windows est réussie"
-else
-    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
-    mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
-    kdialog --msgbox "Erreur de l'installation/mise à jour de Windows"
-fi
+kdialog --msgbox "L'installation/mise à jour de Windows est réussie"
