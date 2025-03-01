@@ -51,6 +51,7 @@ try:
                 square_button= joystick.get_button(2)
                 circle_button= joystick.get_button(1)
                 left_button= joystick.get_button(13)
+                up_button= joystick.get_button(11)
                 right_button= joystick.get_button(14)
                 down_button= joystick.get_button(12)
                 l3_button= joystick.get_button(7)
@@ -66,6 +67,9 @@ try:
                 elif home_button and down_button:
                     print("MANGO")
                     os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/showhidemango &")
+                elif home_button and up_button:
+                    print("FPS")
+                    os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/changefps &")
                 elif home_button and left_button:
                     print("SCREEN")
                     os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/takescreenshot &")
