@@ -2,34 +2,21 @@
 
 CONFIG_FILE="$HOME/.config/MangoHud/MangoHud.conf"
 
-# Vérifie si le fichier existe
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "Erreur : Le fichier $CONFIG_FILE n'existe pas"
-    exit 1
-fi
-
 # Lit la valeur actuelle de fps_limit
 current_limit=$(grep "^fps_limit=" "$CONFIG_FILE" | cut -d'=' -f2)
 
-# Si la ligne n'existe pas, on l'ajoute avec la valeur par défaut 60
-if [ -z "$current_limit" ]; then
-    echo "fps_limit=60" >> "$CONFIG_FILE"
-    echo "Ligne ajoutée : fps_limit=60"
-    exit 0
-fi
-
 # Selon la valeur actuelle, on change vers la nouvelle valeur
 case "$current_limit" in
-    "60")
-        sed -i "s/fps_limit=60/fps_limit=240/" "$CONFIG_FILE"
+    "60,240")
+        sed -i "s/fps_limit=60,240/fps_limit=240,60/" "$CONFIG_FILE"
         echo "Changé de fps_limit=60 à fps_limit=240"
         ;;
-    "240")
-        sed -i "s/fps_limit=240/fps_limit=60/" "$CONFIG_FILE"
+    "240,60")
+        sed -i "s/fps_limit=240,60/fps_limit=60,240/" "$CONFIG_FILE"
         echo "Changé de fps_limit=240 à fps_limit=60"
         ;;
     *)
-        sed -i "s/fps_limit=$current_limit/fps_limit=60/" "$CONFIG_FILE"
+        sed -i "s/fps_limit=$current_limit/fps_limit=60,240/" "$CONFIG_FILE"
         echo "Changé de fps_limit=$current_limit à fps_limit=60"
         ;;
 esac
