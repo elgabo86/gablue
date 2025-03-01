@@ -7,6 +7,7 @@ for copr in \
         ublue-os/staging \
         che/nerd-fonts \
         matte-schwartz/sunshine \
+        karlisk/ventoy \
         sramanujam/atuin; \
 do \
         dnf5 -y copr enable $copr; \
