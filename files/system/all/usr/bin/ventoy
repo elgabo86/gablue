@@ -2,14 +2,26 @@
 
 # Définir le répertoire temporaire dans /tmp avec un nom unique
 TEMP_DIR=$(mktemp -d /tmp/ventoy-XXXXXX)
-DOWNLOAD_URL="https://sourceforge.net/projects/ventoy/files/v1.1.05/ventoy-1.1.05-linux.tar.gz"
-ARCHIVE_NAME="ventoy-1.1.05-linux.tar.gz"
+BASE_URL="https://sourceforge.net/projects/ventoy/files"
+
+# Récupérer la dernière version en analysant la page SourceForge
+echo "Recherche de la dernière version de Ventoy..."
+LATEST_VERSION=$(curl -s "$BASE_URL/" | grep -oP '[0-1]\.[0-1]\.[0-9]{2}' | sort -V | tail -n 1)
+
+if [ -z "$LATEST_VERSION" ]; then
+    echo "Erreur : impossible de trouver la dernière version."
+    rm -rf "$TEMP_DIR"
+    exit 1
+fi
+
+DOWNLOAD_URL="$BASE_URL/v$LATEST_VERSION/ventoy-$LATEST_VERSION-linux.tar.gz"
+ARCHIVE_NAME="ventoy-$LATEST_VERSION-linux.tar.gz"
 
 # Aller dans le répertoire temporaire
 cd "$TEMP_DIR" || exit 1
 
 # Télécharger le fichier
-echo "Téléchargement de Ventoy..."
+echo "Téléchargement de Ventoy $LATEST_VERSION..."
 wget -q "$DOWNLOAD_URL" -O "$ARCHIVE_NAME"
 
 # Vérifier si le téléchargement a réussi
@@ -23,7 +35,7 @@ fi
 echo "Décompression..."
 tar -xzf "$ARCHIVE_NAME"
 
-# Trouver le répertoire extrait (généralement ventoy-1.1.05)
+# Trouver le répertoire extrait
 VENTOY_DIR=$(find . -maxdepth 1 -type d -name "ventoy-*")
 
 # Vérifier si le répertoire existe
@@ -45,7 +57,7 @@ fi
 
 chmod +x VentoyGUI.x86_64
 
-# Lancer VentoyGUI avec kdesudo
+# Lancer VentoyGUI avec pkexec
 echo "Lancement de VentoyGUI..."
 ./VentoyGUI.x86_64
 
