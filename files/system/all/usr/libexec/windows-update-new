@@ -43,7 +43,6 @@ if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ]; then
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
     mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
 fi
-rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
 mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/ ~/.var/app/com.usebottles.bottles/data/bottles/runners/ ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/  ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
 
 # Progression à 20%
@@ -131,7 +130,24 @@ chmod +x ~/Windows/Tools/winetricks
 qdbus $dbusRef Set "" "value" 90
 qdbus $dbusRef setLabelText "Installation des runtimes et finalisation..."
 
-waitwine flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/$wineversion/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q corefonts tahoma d3dcompiler_43 d3dcompiler_47 d3dx9 msls31 vb6run mfc42 vcrun2012 vcrun2022 dotnetdesktop6
+waitwine flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/$wineversion/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q \
+    corefonts \
+    tahoma \
+    d3dcompiler_42 \
+    d3dcompiler_43 \
+    d3dcompiler_47 \
+    d3dx9 \
+    msls31 \
+    vb6run \
+    mfc42 \
+    physx \
+    vcrun2010 \
+    vcrun2012 \
+    vcrun2013 \
+    vcrun2022 \
+    dotnetdesktop6 \
+    dotnetdesktop7 \
+    dotnetdesktop8
 waitwine flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/$wineversion/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q settings fontsmooth=rgb
 
 # Progression à 100%
@@ -157,6 +173,12 @@ else
     if [ -e "~/Windows/UserData/steamuser" ]; then
         ln -s "./steamuser" "$dossieruser"
     fi
+fi
+
+
+if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/cache ]; then
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/cache
+    mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/cache  ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/
 fi
 
 rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
