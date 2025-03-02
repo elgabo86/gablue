@@ -1,0 +1,57 @@
+#!/bin/bash
+
+# Définir le répertoire temporaire dans /tmp avec un nom unique
+TEMP_DIR=$(mktemp -d /tmp/ventoy-XXXXXX)
+DOWNLOAD_URL="https://sourceforge.net/projects/ventoy/files/v1.1.05/ventoy-1.1.05-linux.tar.gz"
+ARCHIVE_NAME="ventoy-1.1.05-linux.tar.gz"
+
+# Aller dans le répertoire temporaire
+cd "$TEMP_DIR" || exit 1
+
+# Télécharger le fichier
+echo "Téléchargement de Ventoy..."
+wget -q "$DOWNLOAD_URL" -O "$ARCHIVE_NAME"
+
+# Vérifier si le téléchargement a réussi
+if [ $? -ne 0 ]; then
+    echo "Erreur lors du téléchargement."
+    rm -rf "$TEMP_DIR"
+    exit 1
+fi
+
+# Décompresser l'archive
+echo "Décompression..."
+tar -xzf "$ARCHIVE_NAME"
+
+# Trouver le répertoire extrait (généralement ventoy-1.1.05)
+VENTOY_DIR=$(find . -maxdepth 1 -type d -name "ventoy-*")
+
+# Vérifier si le répertoire existe
+if [ -z "$VENTOY_DIR" ]; then
+    echo "Erreur : répertoire Ventoy non trouvé après décompression."
+    rm -rf "$TEMP_DIR"
+    exit 1
+fi
+
+# Se déplacer dans le répertoire Ventoy
+cd "$VENTOY_DIR" || exit 1
+
+# Vérifier si VentoyGUI.x86_64 existe et est exécutable
+if [ ! -f "VentoyGUI.x86_64" ]; then
+    echo "Erreur : VentoyGUI.x86_64 non trouvé."
+    rm -rf "$TEMP_DIR"
+    exit 1
+fi
+
+chmod +x VentoyGUI.x86_64
+
+# Lancer VentoyGUI avec kdesudo
+echo "Lancement de VentoyGUI..."
+./VentoyGUI.x86_64
+
+# Nettoyage après fermeture
+echo "Nettoyage..."
+cd /tmp || exit 1
+rm -rf "$TEMP_DIR"
+
+echo "Terminé !"

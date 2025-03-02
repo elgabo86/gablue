@@ -54,8 +54,7 @@ cool-retro-term \
 gamescope \
 cage \
 wlr-randr \
-earlyoom \
-ventoy
+earlyoom
 
 #Kde addons
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
