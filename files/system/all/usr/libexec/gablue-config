@@ -1,0 +1,86 @@
+#!/bin/bash
+
+# Fonctions pour chaque action avec gestion des erreurs
+disable_mitigations() {
+    OUTPUT=$(konsole -e bash -c "ujust mitigations-off; exit \$?; echo 'Appuyez sur Entrée pour fermer...'; read" 2>&1)
+    if [ $? -eq 0 ]; then
+        kdialog --msgbox "Mitigations désactivées avec succès."
+    else
+        kdialog --error "Échec de la désactivation des mitigations.\nDétails : $OUTPUT"
+    fi
+}
+
+enable_mitigations() {
+    OUTPUT=$(konsole -e bash -c "ujust mitigations-on; exit \$?; echo 'Appuyez sur Entrée pour fermer...'; read" 2>&1)
+    if [ $? -eq 0 ]; then
+        kdialog --msgbox "Mitigations activées avec succès."
+    else
+        kdialog --error "Échec de l'activation des mitigations.\nDétails : $OUTPUT"
+    fi
+}
+
+kernel_setup() {
+    OUTPUT=$(konsole -e bash -c "ujust kernel-setup; exit \$?; echo 'Appuyez sur Entrée pour fermer...'; read" 2>&1)
+    if [ $? -eq 0 ]; then
+        kdialog --msgbox "Options du noyau configurées avec succès."
+    else
+        kdialog --error "Échec de la configuration du noyau.\nDétails : $OUTPUT"
+    fi
+}
+
+tailscale_up() {
+    OUTPUT=$(konsole -e bash -c "ujust tailscale-up; exit \$?; echo 'Appuyez sur Entrée pour fermer...'; read" 2>&1)
+    if [ $? -eq 0 ]; then
+        kdialog --msgbox "Tailscale activé avec succès."
+    else
+        kdialog --error "Échec de l'activation de Tailscale.\nDétails : $OUTPUT"
+    fi
+}
+
+sound_432() {
+    OUTPUT=$(konsole -e bash -c "ujust sound-432; exit \$?; echo 'Appuyez sur Entrée pour fermer...'; read" 2>&1)
+    if [ $? -eq 0 ]; then
+        kdialog --msgbox "Son passé à 432 Hz avec succès."
+    else
+        kdialog --error "Échec du passage à 432 Hz.\nDétails : $OUTPUT"
+    fi
+}
+
+sound_reset() {
+    OUTPUT=$(konsole -e bash -c "ujust sound-reset; exit \$?; echo 'Appuyez sur Entrée pour fermer...'; read" 2>&1)
+    if [ $? -eq 0 ]; then
+        kdialog --msgbox "Son remis par défaut avec succès."
+    else
+        kdialog --error "Échec de la réinitialisation du son.\nDétails : $OUTPUT"
+    fi
+}
+
+# Menu principal avec KDialog et geometry pour élargir la fenêtre
+while true; do
+    CHOICE=$(kdialog --title "Configurateur avancé Gablue" --menu "Choisissez une action :" \
+        --geometry 380x260 \
+        1 "Désactiver les mitigations (boost anciens CPU)" \
+        2 "Réactiver les mitigations" \
+        3 "Options d'optimisations pour le noyau (Recommandé)" \
+        4 "Activer Tailscale" \
+        5 "Passer le son en 432 Hz" \
+        6 "Remettre le son par défaut" \
+        7 "Quitter" \
+        --icon "system-settings")
+
+    # Si l'utilisateur clique sur "Annuler" (CHOICE est vide), on quitte
+    if [ -z "$CHOICE" ]; then
+        exit 0
+    fi
+
+    case $CHOICE in
+        1) disable_mitigations ;;
+        2) enable_mitigations ;;
+        3) kernel_setup ;;
+        4) tailscale_up ;;
+        5) sound_432 ;;
+        6) sound_reset ;;
+        7) break ;;
+        *) kdialog --error "Choix invalide" ;;
+    esac
+done
