@@ -14,3 +14,6 @@ flatpak override com.usebottles.bottles --user --env=DXVK_GPLASYNCCACHE=1
 flatpak override org.mozilla.firefox --user --filesystem=/run/udev:ro
 flatpak override app.zen_browser.zen --user --filesystem=/run/udev:ro
 flatpak override com.valvesoftware.Steam  --user --env=MANGOHUD=1
+
+#temp fix for retroarch
+flatpak override --nosocket=wayland org.libretro.RetroArch --user
