@@ -5,7 +5,7 @@ set -e
 
 user=$(whoami)
 dossieruser="~/Windows/UserData/$user"
-wineversion="gwine-10.2.r10"
+wineversion="gwine-10.2.r13"
 dxvkversion="dxvk-gplasync-v2.5.3-1"
 vkd3dversion="vkd3d-proton-2.14.1"
 
