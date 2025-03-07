@@ -110,3 +110,6 @@ dnf5 -y swap \
     --repo=fedora \
         heif-pixbuf-loader heif-pixbuf-loader
 
+# Remove flatpak verification at each boot
+sed -i -E 's|(; /usr/bin/flatpak --system repair)$||' /usr/lib/systemd/system/flatpak-system-update.service
+
