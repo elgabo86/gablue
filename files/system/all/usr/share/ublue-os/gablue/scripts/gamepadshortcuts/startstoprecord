@@ -1,17 +1,37 @@
 #!/usr/bin/bash
 
+#Définition du dossier d'enregistrement + renommage de la vidéo par date
+video="$HOME/Vidéos/Captures/$(date +"Video_%Y-%m-%d_%H-%M-%S.mp4")"
+
+# Commandes à exécuter selon le cas
+COMMANDE_INTEL="flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -f 60 -a default_output -q medium -o '$video'"
+COMMANDE_AUTRE="flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -f 60 -a default_output -o '$video'"
+
 #Arrete et sauve l'enregistrement si il y en a en cours
 killall -SIGINT -q gpu-screen-recorder && exit 0
 
 #Controler que gpu-screen-recorder est bien fermé
 pgrep -f gpu-screen-recorder |xargs -n1 kill -9
 
-#Définition du dossier d'enregistrement + renommage de la vidéo par date
-video="$HOME/Vidéos/Captures/$(date +"Video_%Y-%m-%d_%H-%M-%S.mp4")"
-
 # Lancement d'un nouvel enregistrrement
 ffplay -nodisp -autoexit /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/beep.wav
-flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -f 60 -a default_output -o "$video"
+# Vérifie si un GPU Intel intégré est détecté via lspci
+if lspci | grep -i "VGA" | grep -i "Intel" > /dev/null; then
+    # Vérifie si glxinfo est disponible et si le GPU Intel est actif
+    if command -v glxinfo > /dev/null && glxinfo | grep -i "renderer" | grep -i "Intel" > /dev/null; then
+        echo "GPU Intel intégré actif détecté."
+        # Exécute la commande pour GPU Intel actif
+        eval "$COMMANDE_INTEL"
+    else
+        echo "GPU Intel détecté mais non actif (ou glxinfo non installé)."
+        # Exécute la commande alternative
+        eval "$COMMANDE_AUTRE"
+    fi
+else
+    echo "Aucun GPU Intel intégré détecté."
+    # Exécute la commande alternative
+    eval "$COMMANDE_AUTRE"
+fi
 
 #Annoncer l'arrêt de l'enregistrement à l'utilisateur
 ffplay -nodisp -autoexit /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/stop.wav
