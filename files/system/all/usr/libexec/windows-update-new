@@ -5,9 +5,13 @@ set -e
 
 user=$(whoami)
 dossieruser="~/Windows/UserData/$user"
-wineversion="gwine-10.2.r13"
+#wineversion="gwine-10.3.r0"
 dxvkversion="dxvk-gplasync-v2.5.3-1"
 vkd3dversion="vkd3d-proton-2.14.1"
+
+#recup la dernière version de gwine
+API_URL="https://api.github.com/repos/elgabo86/gwine/releases/latest"
+wineversion=$(curl -s $API_URL | grep '"tag_name":' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
 
 # Lancer la barre de progression avec kdialog
 dbusRef=$(kdialog --title "Installation/Mise à jour de Windows" --progressbar "Initialisation..." 100)
