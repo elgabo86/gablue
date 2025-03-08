@@ -3,13 +3,19 @@
 # Chemin vers le fichier de configuration
 CONFIG_FILE="$HOME/.config/MangoHud/MangoHud.conf"
 
-# Vérifie si la ligne no_display existe
-if grep -q "^no_display" $CONFIG_FILE; then
-    # Si elle existe, on la supprime
+# Vérifie l'état actuel
+if grep -q "^no_display" "$CONFIG_FILE"; then
+    # État 1: Actuellement caché -> Passe à affiché horizontal
     sed -i '/^no_display/d' "$CONFIG_FILE"
-    echo "La ligne 'no_display' a été supprimée."
+    sed -i '/^horizontal/d' "$CONFIG_FILE"
+    echo "MangoHud est maintenant affiché en mode horizontal"
+elif ! grep -q "^horizontal" "$CONFIG_FILE"; then
+    # État 2: Actuellement affiché non horizontal -> Passe à vertical
+    echo "horizontal" >> "$CONFIG_FILE"
+    echo "MangoHud est maintenant affiché en mode vertical"
 else
-    # Si elle n'existe pas, on l'ajoute
+    # État 3: Actuellement vertical -> Passe à caché
+    sed -i '/^horizontal/d' "$CONFIG_FILE"
     echo "no_display" >> "$CONFIG_FILE"
-    echo "La ligne 'no_display' a été ajoutée."
+    echo "MangoHud est maintenant caché"
 fi

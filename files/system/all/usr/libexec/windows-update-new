@@ -5,18 +5,27 @@ set -e
 
 user=$(whoami)
 dossieruser="~/Windows/UserData/$user"
-#wineversion="gwine-10.3.r0"
 dxvkversion="dxvk-gplasync-v2.5.3-1"
 vkd3dversion="vkd3d-proton-2.14.1"
+nvapiversion="dxvk-nvapi-v0.8.0"
+latencyflexversion="latencyflex-v0.1.1-2-3bc9636"
 
-#recup la dernière version de gwine
+# Récupérer la dernière version de gwine
 API_URL="https://api.github.com/repos/elgabo86/gwine/releases/latest"
 wineversion=$(curl -s $API_URL | grep '"tag_name":' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
 
 # Lancer la barre de progression avec kdialog
 dbusRef=$(kdialog --title "Installation/Mise à jour de Windows" --progressbar "Initialisation..." 100)
-# Désactivation du bouton "Annuler"
 qdbus $dbusRef showCancelButton false
+
+# Fonction pour comparer les versions
+version_newer() {
+    local v1="$1" v2="$2"
+    if [ "$v1" = "$v2" ]; then
+        return 1 # égal
+    fi
+    [ "$(printf '%s\n' "$v1" "$v2" | sort -V | tail -n1)" = "$v1" ]
+}
 
 # Fonction pour gérer les erreurs et restaurer la sauvegarde
 cleanup_on_error() {
@@ -30,63 +39,124 @@ cleanup_on_error() {
     exit 1
 }
 
-# Attraper les erreurs avec trap
 trap 'cleanup_on_error' ERR
 
-# Mettre à jour le texte et la progression
 qdbus $dbusRef Set "" "value" 0
 qdbus $dbusRef setLabelText "Arrêt des processus bottles..."
 
 echo "Installation/Mise à jour de Windows"
 pgrep -f bottles | xargs -n1 kill -9 &
 sleep 2
-# Progression à 10%
+
 qdbus $dbusRef Set "" "value" 10
 qdbus $dbusRef setLabelText "Préparation des répertoires..."
 if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ]; then
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
     mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
 fi
-mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/ ~/.var/app/com.usebottles.bottles/data/bottles/runners/ ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/  ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
+mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/ ~/.var/app/com.usebottles.bottles/data/bottles/runners/ ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/ ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
 
-# Progression à 20%
+# Installation de Wine
 qdbus $dbusRef Set "" "value" 20
 qdbus $dbusRef setLabelText "Téléchargement et installation de Wine..."
+wine_dir=~/.var/app/com.usebottles.bottles/data/bottles/runners/
+if [ -d "$wine_dir/$(basename $wineversion .tar.xz)" ]; then
+    current_wine=$(ls -d $wine_dir/* | grep -o 'gwine-[0-9.r-]*' | head -n1)
+    if ! version_newer "$wineversion" "$current_wine"; then
+        echo "Version de Wine $wineversion déjà présente ou plus récente, téléchargement ignoré."
+    else
+        rm -rf "$wine_dir"/*
+        curl -L -o "$wine_dir/$wineversion.tar.xz" "https://github.com/elgabo86/gwine/releases/download/$wineversion/$wineversion.tar.xz"
+        tar -xf "$wine_dir/$wineversion.tar.xz" -C "$wine_dir/"
+        rm -f "$wine_dir/$wineversion.tar.xz"
+    fi
+else
+    curl -L -o "$wine_dir/$wineversion.tar.xz" "https://github.com/elgabo86/gwine/releases/download/$wineversion/$wineversion.tar.xz"
+    tar -xf "$wine_dir/$wineversion.tar.xz" -C "$wine_dir/"
+    rm -f "$wine_dir/$wineversion.tar.xz"
+fi
 
-rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/runners/*
-curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/runners/$wineversion.tar.xz https://github.com/elgabo86/gwine/releases/download/$wineversion/$wineversion.tar.xz
-tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/runners/$wineversion.tar.xz -C ~/.var/app/com.usebottles.bottles/data/bottles/runners/
-rm -f ~/.var/app/com.usebottles.bottles/data/bottles/runners/$wineversion.tar.xz
-
-# Progression à 30%
+# Installation de DXVK
 qdbus $dbusRef Set "" "value" 30
 qdbus $dbusRef setLabelText "Installation de DXVK..."
+dxvk_dir=~/.var/app/com.usebottles.bottles/data/bottles/dxvk/
+if [ -d "$dxvk_dir/$(basename $dxvkversion .tar.gz)" ]; then
+    current_dxvk=$(ls -d $dxvk_dir/* | grep -o 'dxvk-gplasync-v[0-9.-]*' | head -n1)
+    if ! version_newer "$dxvkversion" "$current_dxvk"; then
+        echo "Version de DXVK $dxvkversion déjà présente ou plus récente, téléchargement ignoré."
+    else
+        rm -rf "$dxvk_dir"/*
+        curl -L -o "$dxvk_dir/$dxvkversion.tar.gz" "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/$dxvkversion.tar.gz"
+        tar -xf "$dxvk_dir/$dxvkversion.tar.gz" -C "$dxvk_dir/"
+        rm -f "$dxvk_dir/$dxvkversion.tar.gz"
+    fi
+else
+    curl -L -o "$dxvk_dir/$dxvkversion.tar.gz" "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/$dxvkversion.tar.gz"
+    tar -xf "$dxvk_dir/$dxvkversion.tar.gz" -C "$dxvk_dir/"
+    rm -f "$dxvk_dir/$dxvkversion.tar.gz"
+fi
 
-rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/*
-curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/$dxvkversion.tar.gz https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/$dxvkversion.tar.gz
-tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/$dxvkversion.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/
-rm -f ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/$dxvkversion.tar.gz
-
-# Progression à 40%
+# Installation de VKD3D
 qdbus $dbusRef Set "" "value" 40
 qdbus $dbusRef setLabelText "Installation de VKD3D..."
+vkd3d_dir=~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/
+if [ -d "$vkd3d_dir/$(basename $vkd3dversion .tar.zst)" ]; then
+    current_vkd3d=$(ls -d $vkd3d_dir/* | grep -o 'vkd3d-proton-[0-9.-]*' | head -n1)
+    if ! version_newer "$vkd3dversion" "$current_vkd3d"; then
+        echo "Version de VKD3D $vkd3dversion déjà présente ou plus récente, téléchargement ignoré."
+    else
+        rm -rf "$vkd3d_dir"/*
+        curl -L -o "$vkd3d_dir/$vkd3dversion.tar.zst" "https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v2.14.1/$vkd3dversion.tar.zst"
+        tar -xf "$vkd3d_dir/$vkd3dversion.tar.zst" -C "$vkd3d_dir/"
+        rm -f "$vkd3d_dir/$vkd3dversion.tar.zst"
+    fi
+else
+    curl -L -o "$vkd3d_dir/$vkd3dversion.tar.zst" "https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v2.14.1/$vkd3dversion.tar.zst"
+    tar -xf "$vkd3d_dir/$vkd3dversion.tar.zst" -C "$vkd3d_dir/"
+    rm -f "$vkd3d_dir/$vkd3dversion.tar.zst"
+fi
 
-curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/$vkd3dversion.tar.zst https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v2.14.1/$vkd3dversion.tar.zst
-tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/$vkd3dversion.tar.zst -C ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/
-rm -f ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/$vkd3dversion.tar.zst
-
-# Progression à 50%
+# Installation de composants additionnels
 qdbus $dbusRef Set "" "value" 50
 qdbus $dbusRef setLabelText "Installation de composants additionnels..."
 
-curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz https://github.com/bottlesdevs/components/releases/download/dxvk-nvapi-v0.7.1/dxvk-nvapi-v0.7.1.tar.gz
-tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/
-rm -f ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/dxvk-nvapi-v0.7.1.tar.gz
-curl -L -o ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz https://github.com/bottlesdevs/components/releases/download/latencyflex-v0.1.1-2-3bc9636/latencyflex-v0.1.1-2-3bc9636.tar.gz
-tar -xf ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz -C ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
-rm -f ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/latencyflex-v0.1.1-2-3bc9636.tar.gz
+# Installation de dxvk-nvapi
+nvapi_dir=~/.var/app/com.usebottles.bottles/data/bottles/nvapi/
+if [ -d "$nvapi_dir/$(basename $nvapiversion .tar.gz)" ]; then
+    current_nvapi=$(ls -d $nvapi_dir/* | grep -o 'dxvk-nvapi-v[0-9.-]*' | head -n1)
+    if ! version_newer "$nvapiversion" "$current_nvapi"; then
+        echo "Version de dxvk-nvapi $nvapiversion déjà présente ou plus récente, téléchargement ignoré."
+    else
+        rm -rf "$nvapi_dir"/*
+        curl -L -o "$nvapi_dir/$nvapiversion.tar.gz" "https://github.com/bottlesdevs/components/releases/download/$nvapiversion/$nvapiversion.tar.gz"
+        tar -xf "$nvapi_dir/$nvapiversion.tar.gz" -C "$nvapi_dir/"
+        rm -f "$nvapi_dir/$nvapiversion.tar.gz"
+    fi
+else
+    curl -L -o "$nvapi_dir/$nvapiversion.tar.gz" "https://github.com/bottlesdevs/components/releases/download/$nvapiversion/$nvapiversion.tar.gz"
+    tar -xf "$nvapi_dir/$nvapiversion.tar.gz" -C "$nvapi_dir/"
+    rm -f "$nvapi_dir/$nvapiversion.tar.gz"
+fi
 
-# Progression à 60%
+# Installation de latencyflex
+latencyflex_dir=~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
+if [ -d "$latencyflex_dir/$(basename $latencyflexversion .tar.gz)" ]; then
+    current_latencyflex=$(ls -d $latencyflex_dir/* | grep -o 'latencyflex-v[0-9.-]*' | head -n1)
+    if ! version_newer "$latencyflexversion" "$current_latencyflex"; then
+        echo "Version de latencyflex $latencyflexversion déjà présente ou plus récente, téléchargement ignoré."
+    else
+        rm -rf "$latencyflex_dir"/*
+        curl -L -o "$latencyflex_dir/$latencyflexversion.tar.gz" "https://github.com/bottlesdevs/components/releases/download/$latencyflexversion/$latencyflexversion.tar.gz"
+        tar -xf "$latencyflex_dir/$latencyflexversion.tar.gz" -C "$latencyflex_dir/"
+        rm -f "$latencyflex_dir/$latencyflexversion.tar.gz"
+    fi
+else
+    curl -L -o "$latencyflex_dir/$latencyflexversion.tar.gz" "https://github.com/bottlesdevs/components/releases/download/$latencyflexversion/$latencyflexversion.tar.gz"
+    tar -xf "$latencyflex_dir/$latencyflexversion.tar.gz" -C "$latencyflex_dir/"
+    rm -f "$latencyflex_dir/$latencyflexversion.tar.gz"
+fi
+
+# Configuration de Bottles
 qdbus $dbusRef Set "" "value" 60
 qdbus $dbusRef setLabelText "Configuration de Bottles..."
 
@@ -100,7 +170,7 @@ ln -s ~/Windows/Applications/ ~/.var/app/com.usebottles.bottles/data/bottles/bot
 ln -s ~/Windows/Games/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/
 ln -f -s -T ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ ~/Windows/WinDrive
 
-# Progression à 70%
+# Ajout des clés de registre
 qdbus $dbusRef Set "" "value" 70
 qdbus $dbusRef setLabelText "Ajout des clés de registre..."
 
@@ -108,7 +178,7 @@ waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def
 waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD"
 waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_CURRENT_USER\Software\Wine\Drivers" -v "Graphics" -d "X11" -t "REG_SZ"
 
-# Progression à 80%
+# Configuration des raccourcis et outils
 qdbus $dbusRef Set "" "value" 80
 qdbus $dbusRef setLabelText "Configuration des raccourcis et outils..."
 
@@ -130,7 +200,7 @@ rm -rf ~/Windows/Tools/*
 wget -O ~/Windows/Tools/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
 chmod +x ~/Windows/Tools/winetricks
 
-# Progression à 90%
+# Installation des runtimes et finalisation
 qdbus $dbusRef Set "" "value" 90
 qdbus $dbusRef setLabelText "Installation des runtimes et finalisation..."
 
@@ -154,7 +224,6 @@ waitwine flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/
     dotnetdesktop8
 waitwine flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/$wineversion/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q settings fontsmooth=rgb
 
-# Progression à 100%
 qdbus $dbusRef Set "" "value" 100
 qdbus $dbusRef setLabelText "Finalisation..."
 
@@ -168,7 +237,7 @@ flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params ma
 flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params gamemode:true
 mkdir -p ~/Windows/UserData/Public/Documents/Steam/
 
-### Compatibilité des saves entre proton/wine
+# Compatibilité des saves entre proton/wine
 if [ -e "$dossieruser" ]; then
     if [ ! -e "~/Windows/UserData/steamuser" ]; then
         ln -s "./$user" "~/Windows/UserData/steamuser"
@@ -179,7 +248,6 @@ else
     fi
 fi
 
-
 if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/cache ]; then
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/cache
     mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/cache  ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/
@@ -187,8 +255,5 @@ fi
 
 rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
 
-# Fermer la barre de progression
 qdbus $dbusRef close
-
-# Afficher le message final
 kdialog --msgbox "L'installation/mise à jour de Windows est réussie"

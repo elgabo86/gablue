@@ -2,21 +2,25 @@
 
 CONFIG_FILE="$HOME/.config/MangoHud/MangoHud.conf"
 
-# Lit la valeur actuelle de fps_limit
-current_limit=$(grep "^fps_limit=" "$CONFIG_FILE" | cut -d'=' -f2)
-
-# Selon la valeur actuelle, on change vers la nouvelle valeur
-case "$current_limit" in
-    "60,240")
-        sed -i "s/fps_limit=60,240/fps_limit=240,60/" "$CONFIG_FILE"
-        echo "Changé de fps_limit=60 à fps_limit=240"
-        ;;
-    "240,60")
-        sed -i "s/fps_limit=240,60/fps_limit=60,240/" "$CONFIG_FILE"
-        echo "Changé de fps_limit=240 à fps_limit=60"
-        ;;
-    *)
-        sed -i "s/fps_limit=$current_limit/fps_limit=60,240/" "$CONFIG_FILE"
-        echo "Changé de fps_limit=$current_limit à fps_limit=60"
-        ;;
-esac
+# Vérifie l'état actuel
+if grep -q "^fps_limit=60" "$CONFIG_FILE"; then
+    # État 1: Actuellement à 60fps -> Passe à sans limite
+    sed -i '/^fps_limit=/d' "$CONFIG_FILE"
+    sed -i '/^show_fps_limit/d' "$CONFIG_FILE"
+    sed -i '/^fps_limit_method=late/d' "$CONFIG_FILE"
+    echo "FPS maintenant sans limite"
+else
+    # État 2 ou aucun: Sans limite ou non défini -> Passe à 60fps
+    sed -i '/^fps_limit=/d' "$CONFIG_FILE"  # Supprime toute ligne fps_limit existante
+    sed -i '/^fps_limit_method=late/d' "$CONFIG_FILE"  # Supprime fps_limit_method=late si présent
+    echo "fps_limit=60" >> "$CONFIG_FILE"
+    # Ajoute show_fps_limit s'il n'est pas déjà présent
+    if ! grep -q "^show_fps_limit" "$CONFIG_FILE"; then
+        echo "show_fps_limit" >> "$CONFIG_FILE"
+    fi
+    # Ajoute fps_limit_method=late s'il n'est pas déjà présent
+    if ! grep -q "^fps_limit_method=late" "$CONFIG_FILE"; then
+        echo "fps_limit_method=late" >> "$CONFIG_FILE"
+    fi
+    echo "Changé à 60 FPS"
+fi
