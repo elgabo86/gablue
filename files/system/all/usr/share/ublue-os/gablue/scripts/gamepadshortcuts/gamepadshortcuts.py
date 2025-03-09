@@ -77,12 +77,9 @@ try:
                     print("RECORD")
                     os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/startstoprecord &")
                     pygame.time.wait(2000)
-                elif home_button and l3_button:
-                    print("CLIC")
-                    os.system("ffplay -nodisp -autoexit /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/gun1.wav &")
-                elif home_button and r3_button:
-                    print("PAN")
-                    os.system("ffplay -nodisp -autoexit /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/gun2.wav &")
+                elif l3_button and r3_button:
+                    print("MOUSE")
+                    os.system("python /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/mouse.py")
 
         # Limiter la fréquence des événements
         clock.tick(30)
