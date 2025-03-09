@@ -77,7 +77,7 @@ try:
                     print("RECORD")
                     os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/startstoprecord &")
                     pygame.time.wait(2000)
-                elif l3_button and r3_button:
+                elif home_button and r3_button:
                     print("MOUSE")
                     os.system("python /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/mouse.py")
 

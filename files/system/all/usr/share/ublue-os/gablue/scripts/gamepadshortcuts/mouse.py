@@ -9,11 +9,14 @@ import math
 import subprocess
 
 # Configuration
-SPEED = 15       # Vitesse de base
-DEAD_ZONE = 30   # Zone morte
+SPEED = 10       # Vitesse de base
+DEAD_ZONE = 15   # Zone morte fixe, assez large pour couvrir X: -9
 UPDATE_DELAY = 0.01  # Délai (10 ms, 100 Hz)
-SMOOTHING = 0.05  # Lissage réactif
-SOUND_CMD = ["ffplay", "-nodisp", "-autoexit", "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/clic.wav"]
+SMOOTHING = 0.015  # Lissage léger
+SMALL_MOVEMENT_BOOST = 2  # Amplification légère des petits mouvements
+RESET_THRESHOLD = 10  # Seuil de base pour arrêter le mouvement
+START_SOUND_CMD = ["ffplay", "-nodisp", "-autoexit", "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/clic.wav"]
+EXIT_SOUND_CMD = ["ffplay", "-nodisp", "-autoexit", "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/noclic.wav"]
 
 def find_controller():
     devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
@@ -41,23 +44,51 @@ def setup_uinput_device():
         sys.exit(1)
 
 def calculate_movement(x_value, y_value, last_x, last_y, dt):
-    magnitude = math.sqrt(x_value ** 2 + y_value ** 2)
-    if magnitude < DEAD_ZONE:
+    # Applique une zone morte fixe
+    if abs(x_value) < DEAD_ZONE:
+        x_value = 0
+    if abs(y_value) < DEAD_ZONE:
+        y_value = 0
+
+    # Si pas de mouvement après ajustement, réinitialise
+    if x_value == 0 and y_value == 0:
         return 0, 0
+
+    # Amplification des petits mouvements
+    if abs(x_value) < 20:
+        x_value *= SMALL_MOVEMENT_BOOST
+    if abs(y_value) < 20:
+        y_value *= SMALL_MOVEMENT_BOOST
+
+    # Normalisation et calcul de la vitesse
     normalized_x = x_value / 128.0
     normalized_y = y_value / 128.0
     raw_move_x = SPEED * normalized_x
     raw_move_y = SPEED * normalized_y
+
+    # Limite la vitesse max
+    raw_move_x = max(min(raw_move_x, SPEED), -SPEED)
+    raw_move_y = max(min(raw_move_y, SPEED), -SPEED)
+
+    # Lissage
     move_x = int(last_x + (raw_move_x - last_x) * min(1.0, dt / SMOOTHING))
     move_y = int(last_y + (raw_move_y - last_y) * min(1.0, dt / SMOOTHING))
+
+    # Réinitialise si proche du centre
+    if abs(x_value) < RESET_THRESHOLD:
+        move_x = 0
+        last_x = 0
+    if abs(y_value) < RESET_THRESHOLD:
+        move_y = 0
+        last_y = 0
+
     return move_x, move_y
 
-def play_ready_sound():
+def play_sound(command):
     try:
-        subprocess.Popen(SOUND_CMD, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        print("Son de démarrage lancé en arrière-plan.")
+        subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except Exception as e:
-        print(f"Erreur lors du lancement du son en arrière-plan : {e}")
+        print(f"Erreur lors du lancement du son : {e}")
 
 def main():
     device_path = find_controller()
@@ -73,9 +104,8 @@ def main():
         sys.exit(1)
 
     mouse = setup_uinput_device()
-
-    # Joue le son en arrière-plan
-    play_ready_sound()
+    play_sound(START_SOUND_CMD)
+    print("Son de démarrage lancé en arrière-plan.")
 
     last_x, last_y = 0, 0
     last_time = time.time()
@@ -103,7 +133,7 @@ def main():
 
         left_state = controller.active_keys().count(evdev.ecodes.BTN_TR)  # R1
         right_state = controller.active_keys().count(evdev.ecodes.BTN_TL)  # L1
-        l3_state = controller.active_keys().count(evdev.ecodes.BTN_THUMBL)  # L3
+        ps_state = controller.active_keys().count(evdev.ecodes.BTN_MODE)  # Bouton PS (Home)
         r3_state = controller.active_keys().count(evdev.ecodes.BTN_THUMBR)  # R3
 
         if left_state != last_left:
@@ -116,8 +146,11 @@ def main():
             mouse.syn()
             last_right = right_state
 
-        if l3_state == 1 and r3_state == 1:
-            print("L3 et R3 pressés : arrêt.")
+        if ps_state == 1 and r3_state == 1:
+            print("Bouton PS et R3 pressés : arrêt.")
+            play_sound(EXIT_SOUND_CMD)
+            print("Son de sortie lancé en arrière-plan.")
+            time.sleep(0.7)  # Délai pour laisser le son jouer
             sys.exit(0)
 
         last_time = current_time
