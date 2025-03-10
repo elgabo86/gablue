@@ -1,7 +1,7 @@
 [Desktop Entry]
 Categories=Game
 Comment=
-Exec=/usr/libexec/sync-gamepads
+Exec=bash -c "/usr/libexec/sync-gamepads"
 GenericName=Gamepad Sync
 Icon=fern-wifi-cracker
 Name=Gamepad Sync
