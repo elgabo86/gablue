@@ -11,6 +11,7 @@ chmod +x /usr/libexec/gablue-config
 chmod +x /usr/libexec/archgab-update
 chmod +x /usr/libexec/windows-update
 chmod +x /usr/libexec/windows-update-new
+chmod +x /usr/libexec/sync-gamepads
 
 
 chmod +x /usr/share/ublue-os/gablue/scripts/*.sh

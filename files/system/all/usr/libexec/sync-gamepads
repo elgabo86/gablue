@@ -1,0 +1,153 @@
+#!/bin/bash
+
+# Script pour connecter les mannettes via Bluetooth avec mise à jour de kdialog
+
+# Fichier de verrouillage global et fichier temporaire
+LOCK_FILE="/tmp/sync-gamepad.lock"
+SCAN_LOG="/tmp/sync-gamepad-log-$$"
+
+# Vérification des dépendances
+check_dependency() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        echo "Erreur : $1 n'est pas installé. Installez $2 avec : sudo rpm-ostree install $2"
+        exit 1
+    fi
+}
+check_dependency "bluetoothctl" "bluez"
+check_dependency "kdialog" "kdialog"
+check_dependency "stdbuf" "coreutils"
+check_dependency "flock" "util-linux"
+
+# Tente d'obtenir un verrou exclusif
+exec 200>"$LOCK_FILE"
+if ! flock -n 200; then
+    echo "Une autre instance du script est déjà en cours d'exécution."
+    exit 1
+fi
+
+# Fonction de nettoyage
+cleanup() {
+    echo "Nettoyage..."
+    kill "$SCAN_PID" 2>/dev/null
+    bluetoothctl scan off >/dev/null 2>&1
+    bluetoothctl discoverable off >/dev/null 2>&1
+    rm -f "$SCAN_LOG"
+    exit 0
+}
+trap cleanup EXIT INT TERM
+
+# Vérifie et active Bluetooth
+if ! bluetoothctl show | grep -q "Powered: yes"; then
+    echo "Activation de Bluetooth..."
+    bluetoothctl power on >/dev/null 2>&1
+fi
+
+# Rend l'appareil découvrable
+echo "Rendre l'appareil découvrable..."
+bluetoothctl discoverable on >/dev/null 2>&1
+
+# Initialise les compteurs de manettes
+CONNECTED_CONTROLLERS=0
+DS4_COUNT=0
+DUALSENSE_COUNT=0
+WIIU_PRO_COUNT=0
+SWITCH_PRO_COUNT=0
+JOYCON_LEFT_COUNT=0
+JOYCON_RIGHT_COUNT=0
+CONTROLLER_LIST=""
+
+# Lance le scan Bluetooth
+echo "Lancement du scan pour détecter les manettes..."
+echo "Mettez vos manettes en mode pairing dès maintenant (ex: Share + PS pour DS4, PS + Create pour DualSense) !"
+stdbuf -oL bluetoothctl --timeout 3600 scan on > "$SCAN_LOG" 2>/dev/null &
+SCAN_PID=$!
+
+# Boîte de dialogue KDE initiale
+kdialog --title "Connexion des manettes (PID $$)" --msgbox "En attente de manettes...\nNombre de manettes connectées : $CONNECTED_CONTROLLERS\n\nCliquez sur 'Arrêter' pour stopper." --ok-label "Arrêter" &
+KDIALOG_PID=$!
+
+# Boucle principale pour détecter et connecter les manettes
+while kill -0 "$KDIALOG_PID" 2>/dev/null; do
+    # Extrait les appareils détectés avec RSSI
+    devices=$(grep -B1 "RSSI" "$SCAN_LOG" | grep -oP '(?<=Device )([0-9A-Fa-f:]{17})' | sort -u)
+    has_controller=false
+
+    if [ -n "$devices" ]; then
+        for device in $devices; do
+            device_name=$(bluetoothctl info "$device" | grep "Name" | cut -d ' ' -f 2-)
+            if echo "$device_name" | grep -q "Wireless Controller\|DualSense Wireless Controller\|Nintendo RVL-CNT-01-TR\|Pro Controller\|Joy-Con (L)\|Joy-Con (R)"; then
+                has_controller=true
+                echo "Manette active détectée (mode pairing) : $device_name ($device)"
+
+                # Ignore si déjà connectée
+                if bluetoothctl info "$device" | grep -q "Connected: yes"; then
+                    echo "Manette $device déjà connectée, ignorée."
+                    continue
+                fi
+
+                # Si déjà pairée, la supprimer avant de refaire le pairing
+                if bluetoothctl info "$device" | grep -q "Paired: yes"; then
+                    echo "Manette $device déjà pairée, suppression avant nouveau pairing..."
+                    bluetoothctl remove "$device" >/dev/null 2>&1
+                fi
+
+                # Pairing
+                echo "Tentative de pairing avec $device..."
+                bluetoothctl pair "$device" >/dev/null 2>&1
+
+                # Connexion si pairée
+                if bluetoothctl info "$device" | grep -q "Paired: yes"; then
+                    echo "Tentative de connexion à $device..."
+                    bluetoothctl trust "$device" >/dev/null 2>&1
+                    bluetoothctl connect "$device" >/dev/null 2>&1
+                    if bluetoothctl info "$device" | grep -q "Connected: yes"; then
+                        echo "Connexion réussie à $device_name ($device) !"
+                        CONNECTED_CONTROLLERS=$((CONNECTED_CONTROLLERS + 1))
+
+                        # Mise à jour des compteurs par type
+                        case "$device_name" in
+                            *"DualSense Wireless Controller"*) DUALSENSE_COUNT=$((DUALSENSE_COUNT + 1)) ;;
+                            *"Wireless Controller"*) DS4_COUNT=$((DS4_COUNT + 1)) ;;
+                            *"Nintendo RVL-CNT-01-TR"*) WIIU_PRO_COUNT=$((WIIU_PRO_COUNT + 1)) ;;
+                            *"Pro Controller"*) SWITCH_PRO_COUNT=$((SWITCH_PRO_COUNT + 1)) ;;
+                            *"Joy-Con (L)"*) JOYCON_LEFT_COUNT=$((JOYCON_LEFT_COUNT + 1)) ;;
+                            *"Joy-Con (R)"*) JOYCON_RIGHT_COUNT=$((JOYCON_RIGHT_COUNT + 1)) ;;
+                        esac
+
+                        # Construction de la liste des manettes
+                        CONTROLLER_LIST=""
+                        [ "$DS4_COUNT" -gt 0 ] && CONTROLLER_LIST="${CONTROLLER_LIST}${DS4_COUNT}x DS4\n"
+                        [ "$DUALSENSE_COUNT" -gt 0 ] && CONTROLLER_LIST="${CONTROLLER_LIST}${DUALSENSE_COUNT}x DualSense\n"
+                        [ "$WIIU_PRO_COUNT" -gt 0 ] && CONTROLLER_LIST="${CONTROLLER_LIST}${WIIU_PRO_COUNT}x Wii U Pro Controller\n"
+                        [ "$SWITCH_PRO_COUNT" -gt 0 ] && CONTROLLER_LIST="${CONTROLLER_LIST}${SWITCH_PRO_COUNT}x Switch Pro Controller\n"
+                        [ "$JOYCON_LEFT_COUNT" -gt 0 ] && CONTROLLER_LIST="${CONTROLLER_LIST}${JOYCON_LEFT_COUNT}x Joy-Con Gauche\n"
+                        [ "$JOYCON_RIGHT_COUNT" -gt 0 ] && CONTROLLER_LIST="${CONTROLLER_LIST}${JOYCON_RIGHT_COUNT}x Joy-Con Droite\n"
+                        CONTROLLER_LIST=$(echo -e "$CONTROLLER_LIST" | sed '/^$/d')
+
+                        # Mise à jour de la fenêtre kdialog
+                        kill "$KDIALOG_PID" 2>/dev/null
+                        if [ "$CONNECTED_CONTROLLERS" -gt 0 ]; then
+                            kdialog --title "Connexion des manettes (PID $$)" --msgbox "En attente de manettes...\nNombre de manettes connectées : $CONNECTED_CONTROLLERS\nListe des manettes connectées :\n$CONTROLLER_LIST\n\nCliquez sur 'Arrêter' pour stopper." --ok-label "Arrêter" &
+                        else
+                            kdialog --title "Connexion des manettes (PID $$)" --msgbox "En attente de manettes...\nNombre de manettes connectées : $CONNECTED_CONTROLLERS\n\nCliquez sur 'Arrêter' pour stopper." --ok-label "Arrêter" &
+                        fi
+                        KDIALOG_PID=$!
+                    else
+                        echo "Échec de la connexion à $device."
+                    fi
+                else
+                    echo "Échec du pairing pour $device."
+                fi
+            fi
+        done
+    fi
+
+    # Message si aucune manette détectée
+    if [ "$has_controller" = false ]; then
+        echo "Aucune manette active détectée pour l’instant..."
+    fi
+
+    sleep 0.5  # Pause recommandée pour éviter une surcharge
+done
+
+echo "Script terminé."
