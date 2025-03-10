@@ -12,7 +12,7 @@ chmod +x /usr/libexec/archgab-update
 chmod +x /usr/libexec/windows-update
 chmod +x /usr/libexec/windows-update-new
 chmod +x /usr/libexec/sync-gamepads
-
+chmod +x /usr/libexec/sync-gamepads-1m
 
 chmod +x /usr/share/ublue-os/gablue/scripts/*.sh
 chmod +x /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/*
