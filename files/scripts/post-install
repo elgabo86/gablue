@@ -66,7 +66,7 @@ fi
 
 # Disable repos
 for copr in \
-        kylegospo/bazzite \
+        bazzite-org/bazzite \
         ublue-os/staging \
         che/nerd-fonts \
         matte-schwartz/sunshine \
