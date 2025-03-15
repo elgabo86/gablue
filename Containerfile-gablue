@@ -1,0 +1,98 @@
+# Arguments pour configurer l'image de base et ses variantes, tous fournis par le workflow
+ARG VARIANT                           # Variante de l'image (main, nvidia, ou nvidia-open)
+ARG SOURCE_IMAGE                      # Image source de base (kinoite ou silverblue)
+ARG SOURCE_SUFFIX                     # Suffixe de l'image source
+ARG FEDORA_VERSION                    # Version de Fedora
+ARG KERNEL_TYPE                       # Type de kernel utilisé
+ARG KERNEL_VERSION                    # Version du kernel
+
+# Étape intermédiaire : récupération des paquets akmods depuis une image préconstruite
+FROM ghcr.io/ublue-os/akmods:${KERNEL_TYPE}-${FEDORA_VERSION}-${KERNEL_VERSION}.${KERNEL_TYPE}.fc${FEDORA_VERSION}.x86_64 AS akmods
+
+# Étape intermédiaire : récupération des paquets akmods-extra
+FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_TYPE}-${FEDORA_VERSION}-${KERNEL_VERSION}.${KERNEL_TYPE}.fc${FEDORA_VERSION}.x86_64 AS akmods-extra
+
+# Étape intermédiaire : récupération des paquets akmods NVIDIA (pour la variante nvidia)
+FROM ghcr.io/ublue-os/akmods-nvidia:${KERNEL_TYPE}-${FEDORA_VERSION}-${KERNEL_VERSION}.${KERNEL_TYPE}.fc${FEDORA_VERSION}.x86_64 AS nvidia-akmods
+
+# Étape intermédiaire : récupération des paquets akmods NVIDIA Open (pour la variante nvidia-open)
+FROM ghcr.io/ublue-os/akmods-nvidia-open:${KERNEL_TYPE}-${FEDORA_VERSION}-${KERNEL_VERSION}.${KERNEL_TYPE}.fc${FEDORA_VERSION}.x86_64 AS nvidia-open-akmods
+
+# Étape intermédiaire : création d'un contexte pour copier les scripts
+FROM scratch AS ctx
+COPY files/scripts /                   # Copie des scripts dans le contexte
+
+# Image de base pour la construction finale
+FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${FEDORA_VERSION}
+
+# Copie des fichiers système dans l'image
+COPY files/system/all /                # Fichiers communs à toutes les variantes
+COPY files/system/${SOURCE_IMAGE} /    # Fichiers spécifiques à l'image source (kinoite ou silverblue)
+
+# Copie conditionnelle des fichiers NVIDIA (pour les variantes nvidia et nvidia-open)
+RUN if [ "$VARIANT" = "nvidia" ] || [ "$VARIANT" = "nvidia-open" ]; then \
+        cp -r files/system/nvidia/* /; \
+    fi
+
+# Définition des variables d'environnement pour les scripts
+ENV GABLUE_VARIANT=${VARIANT}         # Variante de l'image (main, nvidia, ou nvidia-open)
+ENV SOURCE_IMAGE=${SOURCE_IMAGE}      # Image source (kinoite ou silverblue)
+
+# Configuration des dépôts Copr
+RUN --mount=type=cache,dst=/var/cache/libdnf5 \
+    --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    sh /ctx/copr && \                  # Exécution du script pour ajouter les dépôts Copr
+    sh /ctx/cleanup                    # Nettoyage après configuration
+
+# Installation du kernel
+RUN --mount=type=cache,dst=/var/cache/libdnf5 \
+    --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/tmp/kernel-rpms \
+    --mount=type=bind,from=akmods,src=/rpms,dst=/tmp/akmods-rpms \
+    --mount=type=bind,from=akmods-extra,src=/rpms,dst=/tmp/akmods-extra-rpms \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    sh /ctx/kernel && \                # Installation des paquets du kernel
+    sh /ctx/cleanup                    # Nettoyage après installation
+
+# Installation des pilotes NVIDIA (pour la variante nvidia uniquement)
+RUN --mount=type=cache,dst=/var/cache/libdnf5 \
+    --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=nvidia-akmods,src=/rpms,dst=/tmp/akmods-rpms \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    if [ "$VARIANT" = "nvidia" ]; then \
+        sh /ctx/nvidia && \            # Installation des pilotes NVIDIA
+        sh /ctx/cleanup; \             # Nettoyage après installation
+    fi
+
+# Installation des pilotes NVIDIA Open (pour la variante nvidia-open uniquement)
+RUN --mount=type=cache,dst=/var/cache/libdnf5 \
+    --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=nvidia-open-akmods,src=/rpms,dst=/tmp/akmods-rpms \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    if [ "$VARIANT" = "nvidia-open" ]; then \
+        sh /ctx/nvidia && \            # Installation des pilotes NVIDIA Open
+        sh /ctx/cleanup; \             # Nettoyage après installation
+    fi
+
+# Installation des paquets RPM supplémentaires
+RUN --mount=type=cache,dst=/var/cache/libdnf5 \
+    --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    sh /ctx/rpm && \                   # Installation des RPM
+    sh /ctx/cleanup                    # Nettoyage après installation
+
+# Post-installation : configuration finale
+RUN --mount=type=cache,dst=/var/cache/libdnf5 \
+    --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    sh /ctx/systemd && \               # Configuration des services systemd
+    sh /ctx/post-install && \          # Étapes de post-installation
+    sh /ctx/initramfs && \             # Génération de l'initramfs
+    sh /ctx/finalize                   # Finalisation de l'image
