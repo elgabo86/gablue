@@ -16,7 +16,7 @@ env:
 
 jobs:
   build_push:                                # Nom du job principal
-    name: Build and push images              # Nom affiché pour le job dans GitHub Actions
+    name: build-gablue-images              # Nom affiché pour le job dans GitHub Actions
     runs-on: ubuntu-24.04                    # Système d'exploitation utilisé pour exécuter le job
     if: github.event_name != 'push' || contains(github.event.head_commit.message, '[build]')  # Condition : exécution si commit contient "[build]" ou autre événement
 

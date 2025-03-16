@@ -1,4 +1,4 @@
-name: Build and Publish ISOs
+name: build-gablue-isos
 on:
   schedule:
     - cron: "0 0 */5 * *"  # Tous les 5 jours à minuit UTC
@@ -6,6 +6,7 @@ on:
 
 jobs:
   build-and-upload-isos:
+    name: build-gablue-isos
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -35,7 +36,7 @@ jobs:
         uses: jasonn3/build-container-installer@main
         id: build
         with:
-          arch: "x86_64"  # Par défaut, ajuste si besoin
+          arch: "x86_64"
           image_name: ${{ matrix.iso.name }}
           image_repo: ${{ matrix.iso.repo }}
           image_tag: ${{ matrix.iso.tag }}
@@ -43,20 +44,26 @@ jobs:
           variant: ${{ matrix.iso.variant }}
           iso_name: ${{ matrix.iso.name }}-${{ matrix.iso.tag }}-${{ matrix.iso.version }}.iso
 
-      - name: Upload ISO to Transfer.sh
+      - name: Upload ISO to GoFile.io
         id: upload
         run: |
           ISO_PATH="${{ steps.build.outputs.iso_path }}"
-          LINK=$(curl --upload-file "$ISO_PATH" "https://transfer.sh/${{ matrix.iso.name }}.iso")
-          echo "Download link for ${{ matrix.iso.name }}: $LINK"
-          echo "DOWNLOAD_LINK=$LINK" >> $GITHUB_ENV
-          # Stocker le lien dans une variable spécifique pour chaque ISO
-          echo "${{ matrix.iso.name }}_link=$LINK" >> $GITHUB_STATE
+          ISO_NAME="${{ matrix.iso.name }}"
+          RESPONSE=$(curl -F "file=@$ISO_PATH" https://store1.gofile.io/uploadFile)
+          LINK=$(echo "$RESPONSE" | grep -o 'https://gofile.io/d/[a-zA-Z0-9]\+' | head -n 1)
+          if [ -n "$LINK" ]; then
+            echo "Download link for $ISO_NAME: $LINK"
+            echo "DOWNLOAD_LINK=$LINK" >> $GITHUB_ENV
+            echo "${{ matrix.iso.name }}_link=$LINK" >> $GITHUB_STATE
+          else
+            echo "Échec de l’upload : $RESPONSE"
+            exit 1
+          fi
 
     outputs:
-      gablue_main_link: ${{ steps.upload.outputs.gablue-main_link }}
-      gablue_nvidia_link: ${{ steps.upload.outputs.gablue-nvidia_link }}
-      gablue_nvidia_open_link: ${{ steps.upload.outputs.gablue-nvidia-open_link }}
+      gablue_main_link: ${{ env.gablue-main_link }}
+      gablue_nvidia_link: ${{ env.gablue-nvidia_link }}
+      gablue_nvidia_open_link: ${{ env.gablue-nvidia-open_link }}
 
   create-release:
     needs: build-and-upload-isos
@@ -86,7 +93,7 @@ jobs:
           tag_name: "latest-iso"
           release_name: "Latest ISO Release"
           body: |
-            Téléchargez les ISOs ici (valides 14 jours) :
+            Téléchargez les ISOs ici (valides 7 jours sans téléchargement) :
             - **gablue-main**: ${{ needs.build-and-upload-isos.outputs.gablue_main_link }}
             - **gablue-nvidia**: ${{ needs.build-and-upload-isos.outputs.gablue_nvidia_link }}
             - **gablue-nvidia-open**: ${{ needs.build-and-upload-isos.outputs.gablue_nvidia_open_link }}
