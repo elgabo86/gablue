@@ -1,4 +1,9 @@
 name: build-gablue-isos
+
+# Ajout des permissions nécessaires
+permissions:
+  contents: write  # Pour créer et supprimer des releases
+
 on:
   schedule:
     - cron: "0 0 */5 * *"  # Tous les 5 jours à minuit UTC
@@ -53,17 +58,16 @@ jobs:
           LINK=$(echo "$RESPONSE" | grep -o 'https://gofile.io/d/[a-zA-Z0-9]\+' | head -n 1)
           if [ -n "$LINK" ]; then
             echo "Download link for $ISO_NAME: $LINK"
-            echo "DOWNLOAD_LINK=$LINK" >> $GITHUB_ENV
-            echo "${{ matrix.iso.name }}_link=$LINK" >> $GITHUB_STATE
+            echo "download_link=$LINK" >> $GITHUB_OUTPUT
           else
             echo "Échec de l’upload : $RESPONSE"
             exit 1
           fi
 
     outputs:
-      gablue_main_link: ${{ env.gablue-main_link }}
-      gablue_nvidia_link: ${{ env.gablue-nvidia_link }}
-      gablue_nvidia_open_link: ${{ env.gablue-nvidia-open_link }}
+      gablue_main_link: ${{ steps.upload.outputs.download_link }}  # Matrix "gablue-main"
+      gablue_nvidia_link: ${{ steps.upload.outputs.download_link }}  # Matrix "gablue-nvidia"
+      gablue_nvidia_open_link: ${{ steps.upload.outputs.download_link }}  # Matrix "gablue-nvidia-open"
 
   create-release:
     needs: build-and-upload-isos
