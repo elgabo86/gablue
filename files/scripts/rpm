@@ -118,7 +118,7 @@ firefox \
 firefox-langpacks \
 htop
 
-if [ "$GABLUE_VARIANT" == "main" ]; then
+if [ "$VARIANT" == "main" ]; then
     dnf5 -y install \
     radeontop
 fi

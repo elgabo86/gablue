@@ -32,14 +32,10 @@ ARG SOURCE_IMAGE
 # Copie des fichiers système dans l'image
 COPY files/system/all /
 COPY files/system/${SOURCE_IMAGE} /
-
-# Copie conditionnelle des fichiers NVIDIA (pour les variantes nvidia et nvidia-open)
-RUN if [ "$VARIANT" = "nvidia" ] || [ "$VARIANT" = "nvidia-open" ]; then \
-        cp -r files/system/nvidia/* /; \
-    fi
+COPY files/system/${VARIANT} /
 
 # Définition des variables d'environnement pour les scripts
-ENV GABLUE_VARIANT=${VARIANT}
+ENV VARIANT=${VARIANT}
 ENV SOURCE_IMAGE=${SOURCE_IMAGE}
 
 # Configuration des dépôts Copr
