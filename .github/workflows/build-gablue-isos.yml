@@ -1,13 +1,12 @@
 name: build-gablue-isos
 
-# Ajout des permissions nécessaires
 permissions:
-  contents: write  # Pour créer et supprimer des releases
+  contents: write
 
 on:
   schedule:
-    - cron: "0 0 */5 * *"  # Tous les 5 jours à minuit UTC
-  workflow_dispatch:       # Déclenchement manuel
+    - cron: "0 0 */5 * *"
+  workflow_dispatch:
 
 jobs:
   build-and-upload-isos:
@@ -49,25 +48,37 @@ jobs:
           variant: ${{ matrix.iso.variant }}
           iso_name: ${{ matrix.iso.name }}-${{ matrix.iso.tag }}-${{ matrix.iso.version }}.iso
 
+      - name: Verify ISO file
+        run: |
+          ISO_PATH="${{ steps.build.outputs.iso_path }}"
+          echo "Chemin de l’ISO : $ISO_PATH"
+          ls -lh "$ISO_PATH"
+          if [ ! -s "$ISO_PATH" ]; then
+            echo "Erreur : le fichier ISO est vide ou n’existe pas"
+            exit 1
+          fi
+
       - name: Upload ISO to GoFile.io
         id: upload
         run: |
           ISO_PATH="${{ steps.build.outputs.iso_path }}"
           ISO_NAME="${{ matrix.iso.name }}"
+          echo "Uploading $ISO_NAME from $ISO_PATH..."
           RESPONSE=$(curl -F "file=@$ISO_PATH" https://store1.gofile.io/uploadFile)
+          echo "Réponse de GoFile.io : $RESPONSE"
           LINK=$(echo "$RESPONSE" | grep -o 'https://gofile.io/d/[a-zA-Z0-9]\+' | head -n 1)
           if [ -n "$LINK" ]; then
             echo "Download link for $ISO_NAME: $LINK"
-            echo "download_link=$LINK" >> $GITHUB_OUTPUT
+            echo "download_link_$ISO_NAME=$LINK" >> $GITHUB_OUTPUT
           else
             echo "Échec de l’upload : $RESPONSE"
             exit 1
           fi
 
     outputs:
-      gablue_main_link: ${{ steps.upload.outputs.download_link }}  # Matrix "gablue-main"
-      gablue_nvidia_link: ${{ steps.upload.outputs.download_link }}  # Matrix "gablue-nvidia"
-      gablue_nvidia_open_link: ${{ steps.upload.outputs.download_link }}  # Matrix "gablue-nvidia-open"
+      gablue_main_link: ${{ steps.upload.outputs.download_link_gablue-main }}
+      gablue_nvidia_link: ${{ steps.upload.outputs.download_link_gablue-nvidia }}
+      gablue_nvidia_open_link: ${{ steps.upload.outputs.download_link_gablue-nvidia-open }}
 
   create-release:
     needs: build-and-upload-isos
