@@ -48,28 +48,17 @@ jobs:
           variant: ${{ matrix.iso.variant }}
           iso_name: ${{ matrix.iso.name }}-${{ matrix.iso.tag }}-${{ matrix.iso.version }}.iso
 
-      - name: Verify ISO file
-        run: |
-          ISO_PATH="${{ matrix.iso.name }}-${{ matrix.iso.tag }}-${{ matrix.iso.version }}.iso"
-          echo "Chemin de l’ISO : $ISO_PATH"
-          ls -lh "$ISO_PATH"
-          if [ ! -f "$ISO_PATH" ] || [ ! -s "$ISO_PATH" ]; then
-            echo "Erreur : le fichier ISO n’existe pas ou est vide"
-            ls -lh .
-            exit 1
-          fi
-
-      - name: Upload ISO to GoFile.io
+      - name: Upload ISO and Checksum to GoFile.io
         id: upload
         run: |
           ISO_PATH="${{ matrix.iso.name }}-${{ matrix.iso.tag }}-${{ matrix.iso.version }}.iso"
+          CHECKSUM_PATH="${{ matrix.iso.name }}-${{ matrix.iso.tag }}-${{ matrix.iso.version }}.iso-CHECKSUM"
           ISO_NAME="${{ matrix.iso.name }}"
-          echo "Uploading $ISO_NAME from $ISO_PATH..."
-          RESPONSE=$(curl --max-time 600 -F "file=@$ISO_PATH" https://store1.gofile.io/uploadFile)
-          echo "Réponse de GoFile.io : $RESPONSE"
+          echo "Uploading $ISO_NAME ISO and checksum from $ISO_PATH and $CHECKSUM_PATH..."
+          RESPONSE=$(curl -F "file=@$ISO_PATH" -F "file=@$CHECKSUM_PATH" https://store1.gofile.io/uploadFile)
           LINK=$(echo "$RESPONSE" | grep -o 'https://gofile.io/d/[a-zA-Z0-9]\+' | head -n 1)
           if [ -n "$LINK" ]; then
-            echo "Download link for $ISO_NAME: $LINK"
+            echo "Download link for $ISO_NAME (ISO + Checksum): $LINK"
             echo "download_link_$ISO_NAME=$LINK" >> $GITHUB_OUTPUT
           else
             echo "Échec de l’upload : $RESPONSE"
@@ -109,7 +98,7 @@ jobs:
           tag_name: "latest-iso"
           release_name: "Latest ISO Release"
           body: |
-            Téléchargez les ISOs ici (valides 7 jours sans téléchargement) :
+            Téléchargez les ISOs ici :
             - **gablue-main**: ${{ needs.build-and-upload-isos.outputs.gablue_main_link }}
             - **gablue-nvidia**: ${{ needs.build-and-upload-isos.outputs.gablue_nvidia_link }}
             - **gablue-nvidia-open**: ${{ needs.build-and-upload-isos.outputs.gablue_nvidia_open_link }}
