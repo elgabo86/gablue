@@ -50,23 +50,19 @@ jobs:
 
       - name: Verify ISO file
         run: |
-          ISO_PATH="${{ steps.build.outputs.iso_path }}"
+          ISO_PATH="${{ matrix.iso.name }}-${{ matrix.iso.tag }}-${{ matrix.iso.version }}.iso"
           echo "Chemin de l’ISO : $ISO_PATH"
-          if [ -z "$ISO_PATH" ] || [ "$ISO_PATH" = "." ]; then
-            echo "Erreur : ISO_PATH est vide ou incorrect"
-            ls -lh .
-            exit 1
-          fi
           ls -lh "$ISO_PATH"
-          if [ ! -s "$ISO_PATH" ]; then
-            echo "Erreur : le fichier ISO est vide ou n’existe pas"
+          if [ ! -f "$ISO_PATH" ] || [ ! -s "$ISO_PATH" ]; then
+            echo "Erreur : le fichier ISO n’existe pas ou est vide"
+            ls -lh .
             exit 1
           fi
 
       - name: Upload ISO to GoFile.io
         id: upload
         run: |
-          ISO_PATH="${{ steps.build.outputs.iso_path }}"
+          ISO_PATH="${{ matrix.iso.name }}-${{ matrix.iso.tag }}-${{ matrix.iso.version }}.iso"
           ISO_NAME="${{ matrix.iso.name }}"
           echo "Uploading $ISO_NAME from $ISO_PATH..."
           RESPONSE=$(curl --max-time 600 -F "file=@$ISO_PATH" https://store1.gofile.io/uploadFile)
