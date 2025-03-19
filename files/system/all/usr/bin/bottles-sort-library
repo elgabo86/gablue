@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# Chemin exact du fichier library.yml
+LIBRARY_FILE=~/.var/app/com.usebottles.bottles/data/bottles/library.yml
+BACKUP_FILE=~/.var/app/com.usebottles.bottles/data/bottles/library.yml.bak
+
+# Vérifier si le fichier existe
+if [ ! -f "$LIBRARY_FILE" ]; then
+    echo "Erreur : Le fichier $LIBRARY_FILE n'existe pas."
+    exit 1
+fi
+
+# Faire une sauvegarde du fichier original
+cp "$LIBRARY_FILE" "$BACKUP_FILE"
+echo "Sauvegarde créée : $BACKUP_FILE"
+
+# Trier et réattribuer les identifiants par ordre alphabétique des "name"
+python3 - <<EOF
+import yaml
+import os
+
+library_file = os.path.expanduser('$LIBRARY_FILE')
+
+# Lire le fichier YAML
+with open(library_file, 'r') as file:
+    data = yaml.safe_load(file)
+
+# Extraire les clés et les valeurs séparément
+keys = list(data.keys())
+values = list(data.values())
+
+# Trier les valeurs par "name" (insensible à la casse)
+sorted_values = sorted(values, key=lambda x: x['name'].lower())
+
+# Réassigner les clés originales aux valeurs triées
+sorted_data = dict(zip(keys, sorted_values))
+
+# Écrire le fichier modifié
+with open(library_file, 'w') as file:
+    yaml.safe_dump(sorted_data, file, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+print("Le fichier $LIBRARY_FILE a été modifié avec les identifiants réattribués par ordre alphabétique des 'name'.")
+EOF
+
+if [ $? -eq 0 ]; then
+    echo "Modification terminée avec succès."
+else
+    echo "Erreur lors de la modification. Restauration de la sauvegarde..."
+    mv "$BACKUP_FILE" "$LIBRARY_FILE"
+    exit 1
+fi
