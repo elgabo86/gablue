@@ -248,11 +248,39 @@ else
     fi
 fi
 
-if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/cache ]; then
-    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/cache
-    mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/cache  ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/
+# Récupération des dossiers cache, grids et icons
+qdbus $dbusRef setLabelText "Récupération des données de l'ancienne configuration..."
+for dir in cache grids icons; do
+    if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/$dir ]; then
+        rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/$dir
+        mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/$dir ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/
+    fi
+done
+
+# Copie de la section External_Programs de def.bak vers def
+qdbus $dbusRef setLabelText "Récupération des programmes externes..."
+if [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/bottle.yml ] && [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml ]; then
+    python3 - <<EOF
+import yaml
+import os
+
+source_file = os.path.expanduser('~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/bottle.yml')
+target_file = os.path.expanduser('~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml')
+
+with open(source_file, 'r') as file:
+    source_data = yaml.safe_load(file)
+external_programs = source_data.get('External_Programs', {})
+
+with open(target_file, 'r') as file:
+    target_data = yaml.safe_load(file)
+target_data['External_Programs'] = external_programs
+
+with open(target_file, 'w') as file:
+    yaml.safe_dump(target_data, file, default_flow_style=False, allow_unicode=True)
+EOF
 fi
 
+# Suppression de def.bak après la récupération
 rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
 
 qdbus $dbusRef close
