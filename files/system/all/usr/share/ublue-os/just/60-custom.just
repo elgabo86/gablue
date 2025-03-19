@@ -143,20 +143,44 @@ show-grub:
 
 # Set sound in 432hz
 sound-432:
-   #!/usr/bin/bash
-    cp -rf /usr/share/pipewire ~/.config &&
-    sed -i 's/#default.clock.rate          = 48000/default.clock.rate          = 43200/g' ~/.config/pipewire/pipewire.conf &&
-    sed -i 's/#default.clock.allowed-rates = \[ 48000 \]/default.clock.allowed-rates = [ 43200 ]/g' ~/.config/pipewire/pipewire.conf &&
-    sed -i 's\#node.latency       = 1024/48000\node.latency       = 2048/48000\g' ~/.config/pipewire/jack.conf &&
-    systemctl --user restart pipewire &&
-    echo "The sound is now set to 432hz"
+    #!/usr/bin/bash
+    # Crée le dossier de config utilisateur s'il n'existe pas
+    mkdir -p ~/.config/pipewire/pipewire.conf.d ~/.config/pipewire/jack.conf.d
+
+    # Ajoute une config spécifique pour la fréquence 432 Hz
+    echo "default.clock.rate = 43200" > ~/.config/pipewire/pipewire.conf.d/432hz.conf
+    echo "default.clock.allowed-rates = [ 43200 ]" >> ~/.config/pipewire/pipewire.conf.d/432hz.conf
+
+    # Ajuste la latence en cohérence avec 432 Hz
+    echo "node.latency = 1024/43200" > ~/.config/pipewire/jack.conf.d/432hz.conf
+
+    # Redémarre PipeWire
+    systemctl --user restart pipewire pipewire-pulse
+
+    # Vérifie si ça a marché
+    if pw-dump | grep -q "clock.rate.*43200"; then
+        echo "Le son est maintenant réglé à 432 Hz !"
+    else
+        echo "Erreur : la fréquence n'a pas été appliquée. Vérifiez votre matériel ou les logs avec 'journalctl --user -u pipewire'."
+        exit 1
+    fi
 
 # Reset sound config
 sound-reset:
     #!/usr/bin/bash
-    rm -rf ~/.config/pipewire &&
-    systemctl --user restart pipewire &&
-    echo "The sound is now at the default frequency"
+    # Supprime uniquement les fichiers liés à 432 Hz
+    rm -f ~/.config/pipewire/pipewire.conf.d/432hz.conf
+    rm -f ~/.config/pipewire/jack.conf.d/432hz.conf
+
+    # Redémarre PipeWire
+    systemctl --user restart pipewire pipewire-pulse
+
+    # Vérifie le retour à la fréquence par défaut
+    if pw-dump | grep -q "clock.rate.*48000"; then
+        echo "Le son est revenu à la fréquence par défaut (probablement 48000 Hz)."
+    else
+        echo "Attention : la fréquence par défaut n'est pas revenue. Vérifiez avec 'pw-dump'."
+    fi
 
 # Create gablue install iso
 create-iso-main:
@@ -232,11 +256,6 @@ waydroid-remove:
     bash -c 'sudo rm -rf /var/lib/waydroid /home/.waydroid ~/waydroid ~/.share/waydroid ~/.local/share/applications/*aydroid* ~/.local/share/waydroid' &&
     update-desktop-database ~/.local/share/applications &&
     echo "ALL DONE!!!"
-
-# Install default bottle and add default bottles folder with data user redirection and .desktop extras
-windows-install:
-    #!/usr/bin/bash
-    /usr/libexec/windows-update
 
 # Remove default bottle but keep user data
 windows-remove:
@@ -318,18 +337,6 @@ fix-screen:
     #!/usr/bin/bash
     rm -f ~/.config/kwinoutputconfig.json &&
     killall -9 kwin_wayland
-
-# Add and connect a shared protected 5ghz wifi network
-hotspot-add:
-    #!/usr/bin/bash
-    nmcli device wifi hotspot con-name Hotspot-5ghz ssid Hotspot-5ghz band a channel 161 password 4476525555 &&
-    echo "Done! Password is 4476525555"
-
-# Remove the shared protected 5ghz wifi network
-hotspot-remove:
-    #!/usr/bin/bash
-    nmcli connection delete Hotspot-5ghz &&
-    echo "Hotspot is removed"
 
 # Fix hdmi/dp/usb audio drop
 audio-fix-enable:
