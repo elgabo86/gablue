@@ -2,7 +2,7 @@
 
 # Recherche et kill tous les processus windows (xbox360 inclu)
 pgrep -i '(.*\.(exe|dll|msi|bat|com|lnk)$)|(.*(wine|proton).*))' |xargs -n1 kill -9
-pgrep -f bottles |xargs -n1 kill -9
+pgrep -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q "^bwrap$" && kill -9 {}'
 
 # Recherche et kill tous les emulateurs ouverts
 pgrep -f suyu |xargs -n1 kill -9

@@ -1,7 +1,7 @@
 [Desktop Entry]
 Categories=Utility;
 Comment=Kill Windows
-Exec=pgrep -f bottles |xargs -n1 kill -9
+Exec=pgrep -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q "^bwrap$" && kill -9 {}'
 GenericName=Windows killer
 Icon=com.usebottles.bottles
 Keywords[fr_CH]=wine;windows;
