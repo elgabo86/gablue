@@ -2,9 +2,9 @@
 Categories=System
 Comment=
 Exec=/usr/libexec/windows-update
-GenericName=Provoquer la mise à jour Windows (old)
+GenericName=Provoquer la mise à jour Windows
 Icon=windows95
-Name=Provoquer la mise à jour Windows (old)
+Name=Provoquer la mise à jour Windows
 NoDisplay=false
 Path=
 StartupNotify=true
