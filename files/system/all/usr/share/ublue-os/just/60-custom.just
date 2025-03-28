@@ -141,47 +141,6 @@ show-grub:
     fi &&
     echo "ALL DONE!!!"
 
-# Set sound in 432hz
-sound-432:
-    #!/usr/bin/bash
-    # Crée le dossier de config utilisateur s'il n'existe pas
-    mkdir -p ~/.config/pipewire/pipewire.conf.d ~/.config/pipewire/jack.conf.d
-
-    # Ajoute une config spécifique pour la fréquence 432 Hz
-    echo "default.clock.rate = 43200" > ~/.config/pipewire/pipewire.conf.d/432hz.conf
-    echo "default.clock.allowed-rates = [ 43200 ]" >> ~/.config/pipewire/pipewire.conf.d/432hz.conf
-
-    # Ajuste la latence en cohérence avec 432 Hz
-    echo "node.latency = 1024/43200" > ~/.config/pipewire/jack.conf.d/432hz.conf
-
-    # Redémarre PipeWire
-    systemctl --user restart pipewire pipewire-pulse
-
-    # Vérifie si ça a marché
-    if pw-dump | grep -q "clock.rate.*43200"; then
-        echo "Le son est maintenant réglé à 432 Hz !"
-    else
-        echo "Erreur : la fréquence n'a pas été appliquée. Vérifiez votre matériel ou les logs avec 'journalctl --user -u pipewire'."
-        exit 1
-    fi
-
-# Reset sound config
-sound-reset:
-    #!/usr/bin/bash
-    # Supprime uniquement les fichiers liés à 432 Hz
-    rm -f ~/.config/pipewire/pipewire.conf.d/432hz.conf
-    rm -f ~/.config/pipewire/jack.conf.d/432hz.conf
-
-    # Redémarre PipeWire
-    systemctl --user restart pipewire pipewire-pulse
-
-    # Vérifie le retour à la fréquence par défaut
-    if pw-dump | grep -q "clock.rate.*48000"; then
-        echo "Le son est revenu à la fréquence par défaut (probablement 48000 Hz)."
-    else
-        echo "Attention : la fréquence par défaut n'est pas revenue. Vérifiez avec 'pw-dump'."
-    fi
-
 # Create gablue install iso
 create-iso-main:
     #!/usr/bin/bash
