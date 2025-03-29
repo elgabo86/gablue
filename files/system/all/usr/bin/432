@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Créer le dossier de destination s'il n'existe pas
+mkdir -p ./432hz
+
+# Fonction pour traiter un fichier audio
+convert_to_432hz() {
+    local input_file="$1"
+    local relative_path="${input_file#./}"
+    local filename=$(basename "$input_file")
+    local dirname=$(dirname "$relative_path")
+    local ext="${filename##*.}"
+    local name="${filename%.*}"
+    local output_dir="./432hz/$dirname"
+    local output_file="$output_dir/${name} (432hz).$ext"  # Ajout d'un espace avant (432hz)
+
+    # Créer le dossier de destination avec la même structure
+    mkdir -p "$output_dir"
+
+    # Conversion avec ffmpeg en ajustant la fréquence à 432Hz
+    ffmpeg -i "$input_file" -af "asetrate=44100*432/440,aresample=44100" -c:a "$([ "$ext" = "mp3" ] && echo "libmp3lame" || echo "copy")" -q:a 0 "$output_file" -y 2>/dev/null
+
+    echo "Converti : $input_file -> $output_file"
+}
+
+# Export de la fonction pour l'utiliser avec find
+export -f convert_to_432hz
+
+# Recherche récursive des fichiers audio et conversion
+find . -type f \( -iname "*.mp3" -o -iname "*.ogg" -o -iname "*.flac" \) -not -path "./432hz/*" -exec bash -c 'convert_to_432hz "{}"' \;
+
+echo "Conversion terminée !"

@@ -7,6 +7,7 @@ chmod +x /usr/bin/system-flatpak-setup
 chmod +x /usr/bin/waitwine
 chmod +x /usr/bin/ventoy
 chmod +x /usr/bin/bottles-sort-library
+chmod +x /usr/bin/432
 chmod +x /usr/libexec/gablue-update
 chmod +x /usr/libexec/gablue-config
 chmod +x /usr/libexec/archgab-update
