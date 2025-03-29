@@ -29,7 +29,8 @@ testdisk \
 gh \
 ryzenadj \
 yq \
-trash-cli
+trash-cli\
+sox
 
 #Goodies cli
 dnf5 -y  install \

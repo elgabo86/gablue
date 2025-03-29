@@ -1,15 +1,12 @@
 #!/bin/bash
 
-# Vérifier si le script est exécuté à la racine du répertoire personnel
 if [ "$PWD" = "$HOME" ]; then
     echo "Erreur : Ce script ne peut pas être exécuté à la racine de votre répertoire personnel ($HOME). Déplacez-vous dans un sous-dossier."
     exit 1
 fi
 
-# Créer le dossier de destination s'il n'existe pas
 mkdir -p ./432hz
 
-# Fonction pour traiter un fichier audio
 convert_to_432hz() {
     local input_file="$1"
     local relative_path="${input_file#./}"
@@ -20,35 +17,15 @@ convert_to_432hz() {
     local output_dir="./432hz/$dirname"
     local output_file="$output_dir/${name} (432hz).$ext"
 
-    # Créer le dossier de destination avec la même structure
     mkdir -p "$output_dir"
 
-    # Déterminer le codec en fonction du format
-    case "$ext" in
-        [mM][pP]3)
-            codec="libmp3lame"
-            ;;
-        [fF][lL][aA][cC])
-            codec="flac"
-            ;;
-        [oO][gG][gG])
-            codec="libvorbis"
-            ;;
-        *)
-            codec="pcm_s16le"  # Fallback pour formats non reconnus (WAV par défaut)
-            ;;
-    esac
-
-    # Conversion avec ffmpeg et rubberband pour 432Hz sans changer le tempo
-    ffmpeg -i "$input_file" -af "rubberband=pitch=432/440" -c:a "$codec" -q:a 0 "$output_file" -y 2>/dev/null
+    sox "$input_file" "$output_file" pitch -31.76665363342927165015877324608
 
     echo "Converti : $input_file -> $output_file"
 }
 
-# Export de la fonction pour l'utiliser avec find
 export -f convert_to_432hz
 
-# Recherche récursive des fichiers audio et conversion
 find . -type f \( -iname "*.mp3" -o -iname "*.ogg" -o -iname "*.flac" \) -not -path "./432hz/*" -exec bash -c 'convert_to_432hz "{}"' \;
 
 echo "Conversion terminée !"
