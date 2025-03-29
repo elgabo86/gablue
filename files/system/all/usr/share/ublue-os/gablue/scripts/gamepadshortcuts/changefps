@@ -4,21 +4,29 @@ CONFIG_FILE="$HOME/.config/MangoHud/MangoHud.conf"
 
 # Vérifie l'état actuel
 if grep -q "^fps_limit=60" "$CONFIG_FILE"; then
-    # État 1: Actuellement à 60fps -> Passe à sans limite
+    # État 1: Actuellement à 60fps -> Passe à 120fps
+    sed -i 's/^fps_limit=60/fps_limit=120/' "$CONFIG_FILE"
+    if ! grep -q "^show_fps_limit" "$CONFIG_FILE"; then
+        echo "show_fps_limit" >> "$CONFIG_FILE"
+    fi
+    if ! grep -q "^fps_limit_method=late" "$CONFIG_FILE"; then
+        echo "fps_limit_method=late" >> "$CONFIG_FILE"
+    fi
+    echo "Changé à 120 FPS"
+elif grep -q "^fps_limit=120" "$CONFIG_FILE"; then
+    # État 2: Actuellement à 120fps -> Passe à sans limite
     sed -i '/^fps_limit=/d' "$CONFIG_FILE"
     sed -i '/^show_fps_limit/d' "$CONFIG_FILE"
     sed -i '/^fps_limit_method=late/d' "$CONFIG_FILE"
     echo "FPS maintenant sans limite"
 else
-    # État 2 ou aucun: Sans limite ou non défini -> Passe à 60fps
-    sed -i '/^fps_limit=/d' "$CONFIG_FILE"  # Supprime toute ligne fps_limit existante
-    sed -i '/^fps_limit_method=late/d' "$CONFIG_FILE"  # Supprime fps_limit_method=late si présent
+    # État 3 ou aucun: Sans limite ou non défini -> Passe à 60fps
+    sed -i '/^fps_limit=/d' "$CONFIG_FILE"
+    sed -i '/^fps_limit_method=late/d' "$CONFIG_FILE"
     echo "fps_limit=60" >> "$CONFIG_FILE"
-    # Ajoute show_fps_limit s'il n'est pas déjà présent
     if ! grep -q "^show_fps_limit" "$CONFIG_FILE"; then
         echo "show_fps_limit" >> "$CONFIG_FILE"
     fi
-    # Ajoute fps_limit_method=late s'il n'est pas déjà présent
     if ! grep -q "^fps_limit_method=late" "$CONFIG_FILE"; then
         echo "fps_limit_method=late" >> "$CONFIG_FILE"
     fi
