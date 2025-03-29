@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Vérifier si le script est exécuté à la racine du répertoire personnel
+if [ "$PWD" = "$HOME" ]; then
+    echo "Erreur : Ce script ne peut pas être exécuté à la racine de votre répertoire personnel ($HOME). Déplacez-vous dans un sous-dossier."
+    exit 1
+fi
+
 # Créer le dossier de destination s'il n'existe pas
 mkdir -p ./432hz
 
