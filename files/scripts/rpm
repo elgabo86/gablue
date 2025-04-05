@@ -41,10 +41,8 @@ cmatrix
 
 #Tools
 dnf5 -y install \
-meld \
 sunshine \
 corectrl \
-lact \
 solaar \
 gnome-disk-utility \
 skanpage \

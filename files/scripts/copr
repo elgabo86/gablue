@@ -8,7 +8,6 @@ for copr in \
         ublue-os/packages \
         che/nerd-fonts \
         matte-schwartz/sunshine \
-        ilyaz/LACT \
         sramanujam/atuin; \
 do \
         dnf5 -y copr enable $copr; \

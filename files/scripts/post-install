@@ -71,7 +71,6 @@ for copr in \
         ublue-os/packages \
         che/nerd-fonts \
         matte-schwartz/sunshine \
-        ilyaz/LACT \
         sramanujam/atuin; \
 do \
         dnf5 -y copr disable $copr; \
@@ -86,7 +85,6 @@ sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/negativo17-fedora-multimedia.r
 # Remove some unused .Desktop
 rm -f /usr/share/applications/kde4/knetattach.desktop
 rm -f /usr/share/applications/org.kde.kdebugsettings.desktop
-rm -f /usr/share/applications/org.gnome.Meld.desktop
 rm -f /usr/share/applications/org.kde.kdeconnect.sms.desktop
 rm -f /usr/share/applications/byobu.desktop
 rm -f /usr/share/applications/org.kde.plasma-welcome.desktop
