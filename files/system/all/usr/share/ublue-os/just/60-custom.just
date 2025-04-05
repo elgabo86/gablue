@@ -51,7 +51,7 @@ gablue-rebase-nvidia-open:
 amd-corectrl-set-kargs:
     #!/usr/bin/bash
     echo 'Setting needed kargs for CoreCtrl...'
-    rpm-ostree kargs --append="amdgpu.ppfeaturemask=0xffffffff"
+    rpm-ostree kargs --append-if-missing=$(printf 'amdgpu.ppfeaturemask=0x%x\n' "$(($(cat /sys/module/amdgpu/parameters/ppfeaturemask) | 0x4000))")
     echo "ALL DONE!!!"
 
 # Remove cpu security,systemctl enable scx-lavd.service boost performance
