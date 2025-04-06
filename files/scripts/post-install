@@ -17,6 +17,8 @@ chmod +x /usr/libexec/sync-gamepads-1m
 chmod +x /usr/share/ublue-os/gablue/scripts/*.sh
 chmod +x /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/*
 
+# Caps
+setcap 'cap_net_raw+ep' /usr/libexec/ksysguard/ksgrd_network_helper
 
 # Add tgpt bin
 wget https://github.com/aandrew-me/tgpt/releases/latest/download/tgpt-linux-amd64 -O /usr/bin/tgpt

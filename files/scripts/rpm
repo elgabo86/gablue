@@ -53,8 +53,7 @@ cool-retro-term \
 gamescope \
 cage \
 wlr-randr \
-earlyoom \
-waydroid
+earlyoom
 
 #Kde addons
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
@@ -120,5 +119,6 @@ htop
 
 if [ "$VARIANT" == "main" ]; then
     dnf5 -y install \
-    radeontop
+    radeontop \
+    waydroid
 fi
