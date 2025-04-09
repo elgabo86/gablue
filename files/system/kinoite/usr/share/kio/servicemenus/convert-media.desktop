@@ -7,4 +7,4 @@ Actions=ConvertMedia
 [Desktop Action ConvertMedia]
 Name=Convertir
 Icon=media-playback-start
-Exec=~/Temp/convert-media.sh %F
+Exec=/usr/share/ublue-os/gablue/scripts/convert-media.sh %F
