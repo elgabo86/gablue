@@ -65,7 +65,7 @@ Actions=LaunchFix;DeleteShortcut
 [Desktop Action LaunchFix]
 Name=Lancer avec fix gamepad
 Exec=/usr/share/ublue-os/gablue/scripts/launchwinfix.sh "$EXE_PATH"
-Icon=gamepad
+Icon=$ICON_PATH
 
 [Desktop Action DeleteShortcut]
 Name=Supprimer ce raccourci
