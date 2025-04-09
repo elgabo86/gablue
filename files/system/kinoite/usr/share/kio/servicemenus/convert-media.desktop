@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Service
 X-KDE-ServiceTypes=KonqPopupMenu/Plugin
-MimeType=audio/*;video/*;application/ogg;application/x-matroska;audio/x-flac;audio/flac;
+MimeType=audio/*;video/*;application/ogg;application/x-matroska;audio/x-flac;audio/flac;video/webm;video/x-msvideo;
 Actions=ConvertMedia
 
 [Desktop Action ConvertMedia]
-Name=Convertir le média
+Name=Convertir
 Icon=media-playback-start
-Exec=/usr/share/ublue-os/gablue/scripts/convert-media.sh %f
+Exec=~/Temp/convert-media.sh %F
