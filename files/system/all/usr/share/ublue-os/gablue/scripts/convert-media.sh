@@ -66,59 +66,99 @@ case "$OUTPUT_FORMAT" in
  QUALITY=$(kdialog --geometry 400x300 --title "Qualité Opus" --menu "Choisissez la qualité (recommandé : 128 kbps) :" \
  "64" "64 kbps" \
  "128" "128 kbps" \
- "256" "256 kbps")
+ "256" "256 kbps" \
+ "custom" "Valeur personnalisée (kbps)")
  [ $? -ne 0 ] && exit 0
+ if [ "$QUALITY" = "custom" ]; then
+ QUALITY=$(kdialog --inputbox "Entrez la qualité en kbps (ex. 192) :" "128")
+ [ $? -ne 0 ] && exit 0
+ fi
  ;;
  "aac")
  QUALITY=$(kdialog --geometry 400x300 --title "Qualité AAC" --menu "Choisissez la qualité (recommandé : 256 kbps) :" \
  "64" "64 kbps" \
  "128" "128 kbps" \
  "256" "256 kbps" \
- "vbr" "VBR (qualité variable, niveau 3)")
+ "vbr" "VBR (qualité variable, niveau 3)" \
+ "custom" "Valeur personnalisée (kbps)")
  [ $? -ne 0 ] && exit 0
+ if [ "$QUALITY" = "custom" ]; then
+ QUALITY=$(kdialog --inputbox "Entrez la qualité en kbps (ex. 192) :" "128")
+ [ $? -ne 0 ] && exit 0
+ fi
  ;;
  "mp3")
  QUALITY=$(kdialog --geometry 400x300 --title "Qualité MP3" --menu "Choisissez la qualité (recommandé : 192 ou 256 kbps) :" \
  "128" "128 kbps" \
  "192" "192 kbps" \
  "256" "256 kbps" \
- "vbr" "VBR (qualité variable)")
+ "vbr" "VBR (qualité variable)" \
+ "custom" "Valeur personnalisée (kbps)")
  [ $? -ne 0 ] && exit 0
+ if [ "$QUALITY" = "custom" ]; then
+ QUALITY=$(kdialog --inputbox "Entrez la qualité en kbps (ex. 192) :" "192")
+ [ $? -ne 0 ] && exit 0
+ fi
  ;;
  "ogg")
  QUALITY=$(kdialog --geometry 400x300 --title "Qualité OGG" --menu "Choisissez la qualité (recommandé : 6) :" \
  "3" "3 (≈96 kbps)" \
  "6" "6 (≈160 kbps)" \
- "9" "9 (≈320 kbps)")
+ "9" "9 (≈320 kbps)" \
+ "custom" "Valeur personnalisée (0-10)")
  [ $? -ne 0 ] && exit 0
+ if [ "$QUALITY" = "custom" ]; then
+ QUALITY=$(kdialog --inputbox "Entrez la qualité (0 à 10, ex. 5) :" "6")
+ [ $? -ne 0 ] && exit 0
+ fi
  ;;
  "wma")
  QUALITY=$(kdialog --geometry 400x300 --title "Qualité WMA" --menu "Choisissez la qualité (recommandé : 128 kbps) :" \
  "64" "64 kbps" \
  "128" "128 kbps" \
- "192" "192 kbps")
+ "192" "192 kbps" \
+ "custom" "Valeur personnalisée (kbps)")
  [ $? -ne 0 ] && exit 0
+ if [ "$QUALITY" = "custom" ]; then
+ QUALITY=$(kdialog --inputbox "Entrez la qualité en kbps (ex. 128) :" "128")
+ [ $? -ne 0 ] && exit 0
+ fi
  ;;
  "h264")
  QUALITY=$(kdialog --geometry 400x300 --title "Qualité H.264" --menu "Choisissez la qualité (recommandé : CRF 23) :" \
  "18" "CRF 18 (haute qualité)" \
  "23" "CRF 23 (standard)" \
- "28" "CRF 28 (basse qualité)")
+ "28" "CRF 28 (basse qualité)" \
+ "custom" "Valeur personnalisée (CRF)")
  [ $? -ne 0 ] && exit 0
+ if [ "$QUALITY" = "custom" ]; then
+ QUALITY=$(kdialog --inputbox "Entrez la valeur CRF (0 à 51, ex. 23) :" "23")
+ [ $? -ne 0 ] && exit 0
+ fi
  ;;
  "h265")
  QUALITY=$(kdialog --geometry 400x300 --title "Qualité H.265" --menu "Choisissez la qualité (recommandé : CRF 23) :" \
  "18" "CRF 18 (haute qualité)" \
  "23" "CRF 23 (standard)" \
- "28" "CRF 28 (basse qualité)")
+ "28" "CRF 28 (basse qualité)" \
+ "custom" "Valeur personnalisée (CRF)")
  [ $? -ne 0 ] && exit 0
+ if [ "$QUALITY" = "custom" ]; then
+ QUALITY=$(kdialog --inputbox "Entrez la valeur CRF (0 à 51, ex. 23) :" "23")
+ [ $? -ne 0 ] && exit 0
+ fi
  ;;
  "webm")
  QUALITY=$(kdialog --geometry 400x300 --title "Qualité WebM" --menu "Choisissez la qualité (recommandé : CRF 23) :" \
  "18" "CRF 18 (haute qualité)" \
  "23" "CRF 23 (standard)" \
- "28" "CRF 28 (basse qualité)")
+ "28" "CRF 28 (basse qualité)" \
+ "custom" "Valeur personnalisée (CRF)")
  [ $? -ne 0 ] && exit 0
+ if [ "$QUALITY" = "custom" ]; then
+ QUALITY=$(kdialog --inputbox "Entrez la valeur CRF (0 à 51, ex. 23) :" "23")
+ [ $? -ne 0 ] && exit 0
+ fi
  ;;
  "reencapsulate")
  CONTAINER=$(kdialog --geometry 600x400 --title "Choisir le conteneur" --menu "Choisissez le nouveau conteneur :" \
@@ -391,6 +431,7 @@ for INPUT_FILE in "$@"; do
             kill -9 $FFMPEG_PID 2>/dev/null
             wait $FFMPEG_PID 2>/dev/null
             [ -f "$OUTPUT_FILE" ] && rm -f "$OUTPUT_FILE"  # Supprime le fichier partiel
+Facilement
             echo "Conversion annulée pour $INPUT_FILE"
             exit 0
         fi
