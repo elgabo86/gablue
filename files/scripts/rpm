@@ -84,7 +84,8 @@ epson-inkjet-printer-escpr2 \
 hplip \
 printer-driver-brlaser \
 ifuse \
-libimobiledevice
+libimobiledevice \
+uld
 
 #Dev dep
 dnf5 -y  install \
