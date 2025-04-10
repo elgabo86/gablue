@@ -50,7 +50,7 @@ else
     mv "$ICON_TEMP" "$ICON_PATH"
 fi
 
-# Crée le fichier .desktop avec la catégorie choisie
+# Crée le fichier .desktop avec la catégorie choisie et qdbus avant les commandes des actions
 cat > "$DESKTOP_FILE" << EOF
 [Desktop Entry]
 Name=$CUSTOM_NAME
@@ -64,12 +64,12 @@ Actions=LaunchFix;DeleteShortcut
 
 [Desktop Action LaunchFix]
 Name=Lancer avec fix gamepad
-Exec=/usr/share/ublue-os/gablue/scripts/launchwinfix.sh "$EXE_PATH"
+Exec=qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.activateLauncherMenu && /usr/share/ublue-os/gablue/scripts/launchwinfix.sh "$EXE_PATH"
 Icon=$ICON_PATH
 
 [Desktop Action DeleteShortcut]
 Name=Supprimer ce raccourci
-Exec=rm -f "$DESKTOP_FILE" && update-desktop-database ~/.local/share/applications
+Exec=qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.activateLauncherMenu && rm -f "$DESKTOP_FILE" && update-desktop-database ~/.local/share/applications
 Icon=edit-delete
 EOF
 
