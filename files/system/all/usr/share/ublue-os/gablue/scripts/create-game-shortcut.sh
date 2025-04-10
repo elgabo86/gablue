@@ -37,8 +37,31 @@ if [ $? -ne 0 ]; then
     exit 0
 fi
 
-# Débogage : affiche la catégorie choisie
+# Demande à l'utilisateur le mode de lancement par défaut
+LAUNCH_MODE=$(kdialog --title "Mode de lancement" --radiolist "Choisissez le lancement par défaut :" \
+    "normal" "Lancement normal" on \
+    "fix" "Lancement avec fix gamepad" off)
+if [ $? -ne 0 ]; then
+    echo "Annulé par l'utilisateur"
+    exit 0
+fi
+
+# Définit la commande d'exécution principale et l'action alternative
+if [ "$LAUNCH_MODE" = "normal" ]; then
+    EXEC_COMMAND="/usr/share/ublue-os/gablue/scripts/launchwin.sh \"$EXE_PATH\""
+    ALT_ACTION="LaunchFix"
+    ALT_NAME="Lancer avec fix gamepad"
+    ALT_EXEC="qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.activateLauncherMenu && /usr/share/ublue-os/gablue/scripts/launchwinfix.sh \"$EXE_PATH\""
+else
+    EXEC_COMMAND="/usr/share/ublue-os/gablue/scripts/launchwinfix.sh \"$EXE_PATH\""
+    ALT_ACTION="LaunchNormal"
+    ALT_NAME="Lancer normal"
+    ALT_EXEC="/usr/share/ublue-os/gablue/scripts/launchwin.sh \"$EXE_PATH\""
+fi
+
+# Débogage : affiche la catégorie et le mode choisis
 echo "Catégorie sélectionnée : $CATEGORY"
+echo "Mode de lancement choisi : $LAUNCH_MODE"
 
 # Extrait l'icône du .exe
 /usr/bin/wrestool -x -t 14 "$EXE_PATH" > "$ICON_TEMP" 2>/dev/null
@@ -50,21 +73,21 @@ else
     mv "$ICON_TEMP" "$ICON_PATH"
 fi
 
-# Crée le fichier .desktop avec la catégorie choisie et qdbus avant les commandes des actions
+# Crée le fichier .desktop avec l'action alternative et la suppression
 cat > "$DESKTOP_FILE" << EOF
 [Desktop Entry]
 Name=$CUSTOM_NAME
-Exec=/usr/share/ublue-os/gablue/scripts/launchwin.sh "$EXE_PATH"
+Exec=$EXEC_COMMAND
 Type=Application
 Icon=$ICON_PATH
 Terminal=false
 Categories=$CATEGORY;
 X-KDE-StartupNotify=false
-Actions=LaunchFix;DeleteShortcut
+Actions=$ALT_ACTION;DeleteShortcut
 
-[Desktop Action LaunchFix]
-Name=Lancer avec fix gamepad
-Exec=qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.activateLauncherMenu && /usr/share/ublue-os/gablue/scripts/launchwinfix.sh "$EXE_PATH"
+[Desktop Action $ALT_ACTION]
+Name=$ALT_NAME
+Exec=$ALT_EXEC
 Icon=$ICON_PATH
 
 [Desktop Action DeleteShortcut]
@@ -81,3 +104,4 @@ update-desktop-database ~/.local/share/applications
 
 echo "Raccourci créé : $DESKTOP_FILE"
 echo "Il devrait apparaître dans la catégorie $CATEGORY du menu Plasma avec le nom : $CUSTOM_NAME"
+echo "Lancement par défaut : $(if [ "$LAUNCH_MODE" = "normal" ]; then echo "normal"; else echo "avec fix gamepad"; fi)"
