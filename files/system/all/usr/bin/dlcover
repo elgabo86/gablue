@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# Boucle principale pour permettre plusieurs recherches
+while true; do
+    # Demander le nom du jeu avec kdialog
+    GAME_NAME=$(kdialog --title "Recherche d'image de jeu" --inputbox "Entrez le nom du jeu :")
+
+    # Vérifier si l'utilisateur a annulé ou n'a rien entré
+    if [ $? -ne 0 ] || [ -z "$GAME_NAME" ]; then
+        kdialog --sorry "Aucun nom de jeu fourni. Fin du script."
+        exit 1
+    fi
+
+    # Remplacer les espaces par des tirets pour le nom du fichier
+    FILE_NAME=$(echo "$GAME_NAME" | sed 's/ /-/g')
+    CACHE_DIR="$HOME/.cache/game_covers"
+    OUTPUT_FILE="$CACHE_DIR/$FILE_NAME"
+
+    # Créer le dossier de cache s'il n'existe pas
+    mkdir -p "$CACHE_DIR"
+
+    # Vérifier si curl est installé
+    if ! command -v curl &> /dev/null; then
+        kdialog --error "Erreur : curl est requis. Installez-le avec 'sudo apt install curl' (Ubuntu/Debian)"
+        exit 1
+    fi
+
+    # Vérifier si gwenview est installé
+    if ! command -v gwenview &> /dev/null; then
+        kdialog --error "Erreur : gwenview est requis. Installez-le avec 'sudo apt install gwenview' (Ubuntu/Debian)"
+        exit 1
+    fi
+
+    # Encoder le nom du jeu pour l'URL
+    ENCODED_NAME=$(echo "$GAME_NAME" | sed 's/ /%20/g')
+
+    # Faire la requête à l'API
+    SEARCH_URL="https://steamgrid.usebottles.com/api/search/$ENCODED_NAME"
+    RESPONSE=$(curl -s "$SEARCH_URL")
+
+    # Vérifier si la réponse est valide
+    if [ -z "$RESPONSE" ]; then
+        kdialog --error "Erreur : impossible de contacter l'API pour $GAME_NAME"
+        exit 1
+    fi
+
+    # Extraire l'URL de l'image (accepte .jpg ou .png)
+    IMAGE_URL=$(echo "$RESPONSE" | grep -o 'https://[^"]*\.\(jpg\|png\)' | head -n 1)
+    if [ -z "$IMAGE_URL" ]; then
+        kdialog --sorry "Aucune image trouvée pour $GAME_NAME"
+        continue
+    fi
+
+    # Ajouter l'extension au fichier de sortie
+    EXT=$(echo "$IMAGE_URL" | grep -o '\.\(jpg\|png\)$')
+    OUTPUT_FILE="$OUTPUT_FILE$EXT"
+
+    # Télécharger l'image
+    curl -s "$IMAGE_URL" -o "$OUTPUT_FILE"
+    if [ $? -ne 0 ]; then
+        kdialog --error "Échec du téléchargement de l'image pour $GAME_NAME"
+        rm -f "$OUTPUT_FILE"
+        continue
+    fi
+
+    # Afficher l'image avec gwenview
+    gwenview "$OUTPUT_FILE" &
+
+    # Attendre que gwenview soit fermé (optionnel, pour synchroniser)
+    wait $!
+
+    # Demander si l'utilisateur veut relancer une recherche
+    kdialog --yesno "Voulez-vous rechercher une autre image ?"
+    if [ $? -ne 0 ]; then
+        # Si l'utilisateur clique sur "Non" ou annule, quitter
+        exit 0
+    fi
+done
