@@ -134,7 +134,7 @@ if [ $? -eq 0 ]; then
         if [ "$XDG_CURRENT_DESKTOP" = "GNOME" ]; then
             gio mime --reset
         elif [ "$XDG_CURRENT_DESKTOP" = "KDE" ]; then
-            kbuildsycoca5
+            kbuildsycoca6
         fi
         kdialog --title "Installation ES-DE" --msgbox "Installation de ES-DE terminée avec succès !"
     else
