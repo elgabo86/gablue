@@ -106,7 +106,7 @@ echo y | flatpak run it.mijorus.gearlever --integrate "$FILENAME"
 if [ $? -eq 0 ]; then
     DESKTOP_FILE="$HOME/.local/share/applications/esde.desktop"
     if [ -f "$DESKTOP_FILE" ]; then
-        if grep -q "Name=ES-DE (.*)" "$DESKTOP_FILE"; then
+        if grep -q "Name=ES-DE (.*/" "$DESKTOP_FILE"; then
             sed -i 's/Name=ES-DE (.*/Name=ES-DE/' "$DESKTOP_FILE"
             sed -i '/NoDisplay=true/d' "$DESKTOP_FILE"  # Supprimer NoDisplay si présent
             echo "Fichier .desktop modifié avec succès !"
@@ -129,6 +129,21 @@ if [ $? -eq 0 ]; then
         else
             echo "Erreur lors de la mise à jour de la base de données des applications."
             kdialog --title "Installation ES-DE" --error "Erreur lors de la mise à jour de la base de données des applications."
+        fi
+        # Copier le dossier custom_systems dans ~/ES-DE/
+        if [ -d "/usr/share/ublue-os/gablue/esde/custom_systems" ]; then
+            echo "Copie du dossier custom_systems vers ~/ES-DE/..."
+            mkdir -p "$HOME/ES-DE"
+            cp -r "/usr/share/ublue-os/gablue/esde/custom_systems" "$HOME/ES-DE/"
+            if [ $? -eq 0 ]; then
+                echo "Dossier custom_systems copié avec succès !"
+            else
+                echo "Erreur lors de la copie du dossier custom_systems."
+                kdialog --title "Installation ES-DE" --error "Erreur lors de la copie du dossier custom_systems."
+            fi
+        else
+            echo "Le dossier /usr/share/ublue-os/gablue/esde/custom_systems n'existe pas."
+            kdialog --title "Installation ES-DE" --warningcontinuecancel "Le dossier custom_systems n'a pas été trouvé à l'emplacement attendu."
         fi
         # Rafraîchir selon l'environnement
         if [ "$XDG_CURRENT_DESKTOP" = "GNOME" ]; then

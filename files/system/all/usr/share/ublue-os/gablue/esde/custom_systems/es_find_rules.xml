@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<ruleList>
+    <emulator name="SUYU">
+        <!-- Nintendo Switch emulator Yuzu -->
+        <rule type="systempath">
+            <entry>suyu</entry>
+        </rule>
+        <rule type="staticpath">
+            <entry>~/AppImages/suyu.appimage</entry>
+        </rule>
+    </emulator>
+    <emulator name="RYUJINX">
+        <!-- Nintendo Switch emulator Yuzu -->
+        <rule type="systempath">
+            <entry>ryujinx</entry>
+        </rule>
+        <rule type="staticpath">
+            <entry>~/AppImages/ryujinx.appimage</entry>
+        </rule>
+    </emulator>
+    <emulator name="SUDACHI">
+        <!-- Nintendo Switch emulator Yuzu -->
+        <rule type="systempath">
+            <entry>sudachi</entry>
+        </rule>
+        <rule type="staticpath">
+            <entry>~/AppImages/sudachi</entry>
+        </rule>
+    </emulator>
+</ruleList>

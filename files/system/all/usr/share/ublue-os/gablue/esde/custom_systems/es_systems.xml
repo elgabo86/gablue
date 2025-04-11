@@ -1,0 +1,58 @@
+<?xml version="1.0"?>
+<systemList>
+    <system>
+        <name>ps3</name>
+        <fullname>Sony PlayStation 3</fullname>
+        <path>%ROMPATH%/ps3</path>
+        <extension>.desktop .ps3 .PS3 .ps3dir .PS3DIR</extension>
+        <command label="RPCS3 Shortcut (Standalone)">%ENABLESHORTCUTS% %EMULATOR_OS-SHELL% %ROM%</command>
+        <command label="RPCS3 Directory (Standalone)">%EMULATOR_RPCS3% --no-gui %ROM%</command>
+        <command label="RPCS3 Directory (Standalone) (Mangohud)">mangohud %EMULATOR_RPCS3% --no-gui %ROM%</command>
+        <platform>ps3</platform>
+        <theme>ps3</theme>
+    </system>
+    <system>
+        <name>switch</name>
+        <fullname>Nintendo Switch</fullname>
+        <path>%ROMPATH%/switch</path>
+        <extension>.nca .NCA .nro .NRO .nso .NSO .nsp .NSP .xci .XCI</extension>
+        <command label="Suyu (appimage)">%EMULATOR_SUYU% -f -g %ROM%</command>
+        <command label="Suyu (archgab)">/usr/bin/distrobox-enter  -n archgab  --  suyu -f -g %ROM%</command>
+        <command label="Suyu (archgab) (Mangohud)">/usr/bin/distrobox-enter  -n archgab  --  mangohud suyu -f -g %ROM%</command>
+        <command label="Torzu (archgab)">/usr/bin/distrobox-enter  -n archgab  --   yuzu -f -g %ROM%</command>
+        <command label="Torzu (archgab) (Mangohud)">/usr/bin/distrobox-enter  -n archgab  -- mangohud yuzu -f -g %ROM%</command>
+        <command label="Sudachi">%EMULATOR_SUDACHI% -f -g %ROM%</command>
+        <command label="Ryujinx (appimage)">%EMULATOR_RYUJINX% %ROM%</command>
+        <command label="Ryujinx (archgab)">/usr/bin/distrobox-enter  -n archgab  --   ryujinx -f  %ROM%</command>
+        <command label="Ryujinx (archgab) (Mangohud)">/usr/bin/distrobox-enter  -n archgab  --  mangohud ryujinx -f  %ROM%</command>
+        <platform>switch</platform>
+        <theme>switch</theme>
+    </system>
+    <system>
+        <name>tools</name>
+        <fullname>Tools</fullname>
+        <path>%ROMPATH%/tools</path>
+        <extension>.AppImage .desktop .sh</extension>
+        <command label="Suspend ES-DE">%ENABLESHORTCUTS% %EMULATOR_OS-SHELL% %ROM%</command>
+        <platform>linux</platform>
+        <theme>tools</theme>
+    </system>
+    <system>
+        <name>xbox360</name>
+        <fullname>Microsoft Xbox 360</fullname>
+        <path>%ROMPATH%/xbox360</path>
+        <extension>. .desktop .iso .ISO .sh .xex .XEX .zar .ZAR</extension>
+        <command label="Xenia (Bottles)">/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable '~/Windows/Applications/xenia/xenia_canary.exe' '%ROM%'</command>
+        <platform>xbox360</platform>
+        <theme>xbox360</theme>
+    </system>
+    <system>
+        <name>wiiu</name>
+        <fullname>Nintendo Wii U</fullname>
+        <path>%ROMPATH%/wiiu</path>
+        <extension>.elf .ELF .rpx .RPX .tmd .TMD .wua .WUA .wud .WUD .wuhb .WUHB .wux .WUX</extension>
+        <command label="Cemu (Standalone)">mangohud %EMULATOR_CEMU% -f -g %ROM%</command>
+        <platform>wiiu</platform>
+        <theme>wiiu</theme>
+    </system>
+</systemList>
