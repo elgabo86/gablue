@@ -12,10 +12,10 @@ Exec=/usr/share/ublue-os/gablue/scripts/createwinshortcut.sh %u
 
 [Desktop Action CreateGameShortcut]
 Name=Ajouter dans le menu Plasma
-Icon=com.usebottles.bottles
+Icon=org.kde.plasma.excalibur
 Exec=/usr/share/ublue-os/gablue/scripts/create-game-shortcut.sh %u
 
 [Desktop Action AddToES]
 Name=Ajouter dans ES
-Icon=com.usebottles.bottles
+Icon=org.es_de.emulationstation-de
 Exec=/usr/share/ublue-os/gablue/scripts/add-to-es.sh %u
