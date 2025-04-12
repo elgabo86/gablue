@@ -32,9 +32,7 @@ if [ -z "$DOWNLOAD_DIR" ] || [ ! -d "$DOWNLOAD_DIR" ]; then
 fi
 
 # Définir le dossier où Gearlever stocke les AppImages
-APPIMAGES_DIR="$HOME/AppImages"
-# Si votre système utilise un chemin spécifique comme /var/home/gab/AppImages, décommentez la ligne suivante :
-# APPIMAGES_DIR="/var/home/gab/AppImages"
+APPIMAGES_DIR="/var/home/gab/AppImages"  # Adapté à ton chemin
 APPIMAGE_FILE="$APPIMAGES_DIR/esde.appimage"
 
 # Vérifier si ES-DE est déjà installé via Gearlever dans ~/AppImages
@@ -76,10 +74,17 @@ fi
 # Nom du fichier de destination dans le dossier de téléchargement
 FILENAME="$DOWNLOAD_DIR/esde.appimage"
 
+# Afficher une boîte de dialogue avec une barre qui tourne pendant le téléchargement
+DBUS_REF=$(kdialog --title "Installation ES-DE" --progressbar "Téléchargement de ES-DE en cours..." 0)
+qdbus $DBUS_REF Set "" value 0 >/dev/null  # Pas de progression réelle
+
 # Télécharger le fichier avec barre de progression visible dans le terminal
 echo "Téléchargement de $DOWNLOAD_URL vers $FILENAME..."
 curl -L --progress-bar "$DOWNLOAD_URL" -o "$FILENAME"
 DOWNLOAD_STATUS=$?
+
+# Fermer la boîte de dialogue
+qdbus $DBUS_REF close >/dev/null
 
 if [ $DOWNLOAD_STATUS -ne 0 ]; then
     rm -f "$FILENAME"
@@ -98,16 +103,23 @@ fi
 echo "Rendre $FILENAME exécutable..."
 chmod +x "$FILENAME"
 
+# Afficher une boîte de dialogue avec une barre qui tourne pendant l'intégration
+DBUS_REF=$(kdialog --title "Installation ES-DE" --progressbar "Intégration de ES-DE avec Gearlever en cours..." 0)
+qdbus $DBUS_REF Set "" value 0 >/dev/null  # Pas de progression réelle
+
 # Installer avec Gearlever
 echo "Intégration de ES-DE avec Gearlever..."
 echo y | flatpak run it.mijorus.gearlever --integrate "$FILENAME"
+
+# Fermer la boîte de dialogue
+qdbus $DBUS_REF close >/dev/null
 
 # Vérifier si l'installation a réussi
 if [ $? -eq 0 ]; then
     DESKTOP_FILE="$HOME/.local/share/applications/esde.desktop"
     if [ -f "$DESKTOP_FILE" ]; then
-        if grep -q "Name=ES-DE (.*/" "$DESKTOP_FILE"; then
-            sed -i 's/Name=ES-DE (.*/Name=ES-DE/' "$DESKTOP_FILE"
+        if grep -q "Name=ES-DE (.*)" "$DESKTOP_FILE"; then
+            sed -i 's/Name=ES-DE (.*)/Name=ES-DE/' "$DESKTOP_FILE"
             sed -i '/NoDisplay=true/d' "$DESKTOP_FILE"  # Supprimer NoDisplay si présent
             echo "Fichier .desktop modifié avec succès !"
         fi
@@ -144,12 +156,6 @@ if [ $? -eq 0 ]; then
         else
             echo "Le dossier /usr/share/ublue-os/gablue/esde/custom_systems n'existe pas."
             kdialog --title "Installation ES-DE" --warningcontinuecancel "Le dossier custom_systems n'a pas été trouvé à l'emplacement attendu."
-        fi
-        # Rafraîchir selon l'environnement
-        if [ "$XDG_CURRENT_DESKTOP" = "GNOME" ]; then
-            gio mime --reset
-        elif [ "$XDG_CURRENT_DESKTOP" = "KDE" ]; then
-            kbuildsycoca6
         fi
         kdialog --title "Installation ES-DE" --msgbox "Installation de ES-DE terminée avec succès !"
     else
