@@ -74,8 +74,7 @@ for copr in \
         ublue-os/staging \
         ublue-os/packages \
         che/nerd-fonts \
-        lizardbyte/beta \
-        sramanujam/atuin; \
+        lizardbyte/beta; \
 do \
         dnf5 -y copr disable $copr; \
 done && unset -v copr && \
