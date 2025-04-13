@@ -8,7 +8,6 @@ fswatch \
 iotop-c \
 wol \
 duperemove \
-atuin \
 speedtest-cli \
 yt-dlp \
 rar \
@@ -30,6 +29,9 @@ gh \
 ryzenadj \
 yq \
 trash-cli
+
+#atuin is in testing for now
+dnf5 -y install atuin --enablerepo=updates-testing
 
 #Goodies cli
 dnf5 -y  install \
