@@ -46,7 +46,6 @@ kdialog --msgbox "Archgab est à jour"
 # Boîte de dialogue avec cases à cocher pour installer des programmes supplémentaires
 CHOICES=$(kdialog --title "Installation de programmes supplémentaires" --checklist "Sélectionnez les programmes à installer :" \
     "citron" "Citron" off \
-    "suyu" "Suyu" off \
     "ryujinx" "Ryujinx" off \
     "torzu" "Torzu" off)
 
@@ -61,10 +60,6 @@ if [ $? -eq 0 ]; then
             '"citron"')
                 qdbus $dbusRef setLabelText "Installation de Citron..."
                 distrobox-enter -n archgab -- bash -c 'paru -Syu citron-git  --noconfirm && distrobox-export --app citron'
-                ;;
-            '"suyu"')
-                qdbus $dbusRef setLabelText "Installation de Suyu..."
-                distrobox-enter -n archgab -- bash -c 'paru -Syu suyu-dev-qt6-git --noconfirm && distrobox-export --app suyu'
                 ;;
             '"ryujinx"')
                 qdbus $dbusRef setLabelText "Installation de Ryujinx..."
