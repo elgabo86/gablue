@@ -30,7 +30,7 @@ jobs:
             source_suffix: "-main"
             fedora_version: "41"
             kernel_type: "bazzite"
-            kernel_version: ""  # Laissez vide pour récupérer automatiquement
+            kernel_version: ""
           - name: "gablue-nvidia"
             desc: "Gablue nvidia image"
             variant: "nvidia"
@@ -38,7 +38,7 @@ jobs:
             source_suffix: "-main"
             fedora_version: "41"
             kernel_type: "bazzite"
-            kernel_version: ""  # Laissez vide pour récupérer automatiquement
+            kernel_version: ""
           - name: "gablue-nvidia-open"
             desc: "Gablue nvidia-open image"
             variant: "nvidia-open"
@@ -46,7 +46,7 @@ jobs:
             source_suffix: "-main"
             fedora_version: "41"
             kernel_type: "bazzite"
-            kernel_version: ""  # Laissez vide pour récupérer automatiquement
+            kernel_version: ""
 
     permissions:
       contents: read
@@ -78,16 +78,16 @@ jobs:
           if [[ "$TAGS" =~ bazzite-[0-9]+-([0-9]+\.[0-9]+\.[0-9]+-[0-9]+)\.bazzite\.fc[0-9]+\.x86_64 ]]; then
             KERNEL_VERSION="${BASH_REMATCH[1]}"
           else
-            echo "Erreur : Impossible d'extraire la version du noyau depuis $TAGS"
+            echo "Erreur : Impossible d- d'extraire la version du noyau depuis $TAGS"
             exit 1
           fi
 
           echo "LATEST_TAG=$TAGS" >> $GITHUB_OUTPUT
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_OUTPUT
 
-      # Définir la version du noyau à utiliser
-      - name: Set kernel version
-        id: set_kernel_version
+      # Étape pour définir la version du noyau
+      - name: Determine kernel version
+        id: determine_kernel_version
         shell: bash
         run: |
           if [[ -n "${{ matrix.image.kernel_version }}" ]]; then
@@ -131,18 +131,6 @@ jobs:
           echo "alias_tags=${alias_tags[*]}" >> $GITHUB_OUTPUT
           echo "alias_date=${TIMESTAMPWT}" >> $GITHUB_OUTPUT
 
-      # Définir la version du noyau à utiliser
-      - name: Set kernel version
-        id: set_kernel_version
-        shell: bash
-        run: |
-          if [[ -n "${{ matrix.image.kernel_version }}" ]]; then
-            KERNEL_VERSION="${{ matrix.image.kernel_version }}"
-          else
-            KERNEL_VERSION="${{ steps.get_kernel_version.outputs.LATEST_TAG }}"
-          fi
-          echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_OUTPUT
-
       # Métadonnées de l'image
       - name: Image Metadata
         uses: docker/metadata-action@v5
@@ -162,7 +150,7 @@ jobs:
           sudo buildah build \
             --file "Containerfile-gablue" \
             --format "docker" \
-            --build-arg KERNEL_VERSION="${{ steps.set_kernel_version.outputs.KERNEL_VERSION }}" \
+            --build-arg KERNEL_VERSION="${{ steps.determine_kernel_version.outputs.KERNEL_VERSION }}" \
             --build-arg VARIANT="${{ matrix.image.variant }}" \
             --build-arg SOURCE_IMAGE="${{ matrix.image.source_image }}" \
             --build-arg SOURCE_SUFFIX="${{ matrix.image.source_suffix }}" \
@@ -201,7 +189,7 @@ jobs:
             sudo apt install sbsigntool curl openssl
           fi
           TMP=$(podman create rechunked-img bash)
-          podman cp $TMP:/usr/lib/modules/${{ steps.set_kernel_version.outputs.KERNEL_VERSION }}.${{ matrix.image.kernel_type }}.fc${{ matrix.image.fedora_version }}.x86_64/vmlinuz .
+          podman cp $TMP:/usr/lib/modules/${{ steps.determine_kernel_version.outputs.KERNEL_VERSION }}.${{ matrix.image.kernel_type }}.fc${{ matrix.image.fedora_version }}.x86_64/vmlinuz .
           podman rm $TMP
           sbverify --list vmlinuz
           curl --retry 3 -Lo kernel-sign.der https://github.com/ublue-os/kernel-cache/raw/main/certs/public_key.der
