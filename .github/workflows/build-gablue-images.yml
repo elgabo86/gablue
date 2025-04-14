@@ -32,7 +32,7 @@ jobs:
             source_suffix: "-main"           # Suffixe de l'image source
             fedora_version: "41"             # Version de Fedora
             kernel_type: "bazzite"           # Type de kernel utilisé
-            kernel_version: "6.13.9-101"     # Version spécifique du kernel
+            kernel_version: "6.13.9-104"     # Version spécifique du kernel
           - name: "gablue-nvidia"            # Nom de l'image NVIDIA
             desc: "Gablue nvidia image"      # Description de l'image NVIDIA
             variant: "nvidia"                # Variante de l'image (nvidia)
@@ -40,7 +40,7 @@ jobs:
             source_suffix: "-main"           # Suffixe de l'image source
             fedora_version: "41"             # Version de Fedora
             kernel_type: "bazzite"           # Type de kernel utilisé
-            kernel_version: "6.13.9-101"     # Version spécifique du kernel
+            kernel_version: "6.13.9-104"     # Version spécifique du kernel
           - name: "gablue-nvidia-open"       # Nom de l'image NVIDIA Open
             desc: "Gablue nvidia-open image" # Description de l'image NVIDIA Open
             variant: "nvidia-open"           # Variante de l'image (nvidia-open)
@@ -48,7 +48,7 @@ jobs:
             source_suffix: "-main"           # Suffixe de l'image source
             fedora_version: "41"             # Version de Fedora
             kernel_type: "bazzite"           # Type de kernel utilisé
-            kernel_version: "6.13.9-101"     # Version spécifique du kernel
+            kernel_version: "6.13.9-104"     # Version spécifique du kernel
 
     # Permissions nécessaires pour le job
     permissions:
