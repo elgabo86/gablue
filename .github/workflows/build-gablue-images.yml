@@ -1,118 +1,136 @@
-name: build-gablue-images                    # Nom du workflow affiché dans GitHub Actions
+name: build-gablue-images
 on:
-  pull_request:                              # Événement déclencheur pour les pull requests
+  pull_request:
     branches:
-      - main                                 # Branche cible pour les pull requests
-  schedule:                                  # Événement déclencheur pour les builds planifiés
-    - cron: "00 06 * * *"                    # Construction quotidienne à 06:00 UTC
-  push:                                      # Événement déclencheur pour les push
+      - main
+  schedule:
+    - cron: "00 06 * * *"
+  push:
     branches:
-      - main                                 # Branche cible pour les push
-  workflow_dispatch:                         # Permet un déclenchement manuel via l'interface GitHub
+      - main
+  workflow_dispatch:
 
-# Variables d'environnement globales (communes à toutes les images)
 env:
-  IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # Registre où les images seront poussées (GHCR)
+  IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"
 
 jobs:
-  build_push:                                # Nom du job principal
-    name: build-gablue-images              # Nom affiché pour le job dans GitHub Actions
-    runs-on: ubuntu-24.04                    # Système d'exploitation utilisé pour exécuter le job
-    if: github.event_name != 'push' || contains(github.event.head_commit.message, '[build]')  # Condition : exécution si commit contient "[build]" ou autre événement
+  build_push:
+    name: build-gablue-images
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'push' || contains(github.event.head_commit.message, '[build]')
 
-    # Stratégie de matrice pour construire les images en parallèle
     strategy:
-      fail-fast: false  # Empêche l'arrêt des autres jobs si un échoue
+      fail-fast: false
       matrix:
         image:
-          - name: "gablue-main"              # Nom de l'image principale
-            desc: "Gablue main image"        # Description de l'image principale
-            variant: "main"                  # Variante de l'image (main)
-            source_image: "kinoite"          # Image source de base (kinoite)
-            source_suffix: "-main"           # Suffixe de l'image source
-            fedora_version: "41"             # Version de Fedora
-            kernel_type: "bazzite"           # Type de kernel utilisé
-            kernel_version: "6.13.9-104"     # Version spécifique du kernel
-          - name: "gablue-nvidia"            # Nom de l'image NVIDIA
-            desc: "Gablue nvidia image"      # Description de l'image NVIDIA
-            variant: "nvidia"                # Variante de l'image (nvidia)
-            source_image: "kinoite"          # Image source de base (kinoite)
-            source_suffix: "-main"           # Suffixe de l'image source
-            fedora_version: "41"             # Version de Fedora
-            kernel_type: "bazzite"           # Type de kernel utilisé
-            kernel_version: "6.13.9-104"     # Version spécifique du kernel
-          - name: "gablue-nvidia-open"       # Nom de l'image NVIDIA Open
-            desc: "Gablue nvidia-open image" # Description de l'image NVIDIA Open
-            variant: "nvidia-open"           # Variante de l'image (nvidia-open)
-            source_image: "kinoite"          # Image source de base (kinoite)
-            source_suffix: "-main"           # Suffixe de l'image source
-            fedora_version: "41"             # Version de Fedora
-            kernel_type: "bazzite"           # Type de kernel utilisé
-            kernel_version: "6.13.9-104"     # Version spécifique du kernel
+          - name: "gablue-main"
+            desc: "Gablue main image"
+            variant: "main"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "41"
+            kernel_type: "bazzite"
+            kernel_version: ""  # Laissez vide pour récupérer automatiquement
+          - name: "gablue-nvidia"
+            desc: "Gablue nvidia image"
+            variant: "nvidia"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "41"
+            kernel_type: "bazzite"
+            kernel_version: ""  # Laissez vide pour récupérer automatiquement
+          - name: "gablue-nvidia-open"
+            desc: "Gablue nvidia-open image"
+            variant: "nvidia-open"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "41"
+            kernel_type: "bazzite"
+            kernel_version: ""  # Laissez vide pour récupérer automatiquement
 
-    # Permissions nécessaires pour le job
     permissions:
-      contents: read                       # Permission en lecture pour le contenu du dépôt
-      packages: write                      # Permission en écriture pour publier les images
-      id-token: write                      # Permission pour gérer les jetons d'identification
+      contents: read
+      packages: write
+      id-token: write
 
     steps:
-      # Étape 1 : Checkout du dépôt pour accéder aux fichiers
-      - name: Checkout repository            # Nom de l'étape
-        uses: actions/checkout@v4            # Action utilisée pour cloner le dépôt
-
-      # Étape 2 : Optimisation de l'espace de construction
-      - name: Maximize build space           # Nom de l'étape
-        uses: ublue-os/remove-unwanted-software@v9  # Action pour libérer de l'espace disque
-
-      # Étape 3 : Génération des tags pour chaque image
-      - name: Generate tags                  # Nom de l'étape
-        id: generate-tags                    # Identifiant pour récupérer les sorties
-        shell: bash                          # Shell utilisé pour exécuter le script
+      # Étape pour récupérer le dernier tag si kernel_version est vide
+      - name: Get latest kernel version
+        id: get_kernel_version
+        if: matrix.image.kernel_version == ''
         run: |
-          # Création d'un horodatage pour l'historique des versions
-          TIMESTAMP="$(date +%Y%m%d)"        # Timestamp au format AAAAMMJJ
-          TIMESTAMPWT="$(date -d '+2 hours' +%Y%m%d-%Hh%M)"  # Timestamp avec heure +2h
-          COMMIT_TAGS=()                     # Tableau pour les tags des commits
-          BUILD_TAGS=()                      # Tableau pour les tags des builds
-          SHA_SHORT="${GITHUB_SHA::7}"       # Hash court du commit (7 premiers caractères)
-          COMMIT_TAGS+=("pr-${{ github.event.number }}")  # Tag pour les pull requests
-          COMMIT_TAGS+=("${SHA_SHORT}")      # Tag avec le hash court
-          for TAG in "${BUILD_TAGS[@]}"; do  # Boucle pour ajouter les timestamps aux tags
+          # Récupérer le dernier tag via l'API GitHub
+          LATEST_TAG=$(curl -s https://api.github.com/repos/bazzite-org/kernel-bazzite/tags | jq -r '.[0].name')
+          echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Checkout du dépôt
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Optimisation de l'espace
+      - name: Maximize build space
+        uses: ublue-os/remove-unwanted-software@v9
+
+      # Génération des tags
+      - name: Generate tags
+        id: generate-tags
+        shell: bash
+        run: |
+          TIMESTAMP="$(date +%Y%m%d)"
+          TIMESTAMPWT="$(date -d '+2 hours' +%Y%m%d-%Hh%M)"
+          COMMIT_TAGS=()
+          BUILD_TAGS=()
+          SHA_SHORT="${GITHUB_SHA::7}"
+          COMMIT_TAGS+=("pr-${{ github.event.number }}")
+          COMMIT_TAGS+=("${SHA_SHORT}")
+          for TAG in "${BUILD_TAGS[@]}"; do
               BUILD_TAGS+=("${TAG}-${TIMESTAMP}")
           done
-          BUILD_TAGS+=("${TIMESTAMP}")       # Ajout du tag avec la date
-          BUILD_TAGS+=("${TIMESTAMPWT}")     # Ajout du tag avec date et heure
-          BUILD_TAGS+=("latest")             # Ajout du tag "latest"
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then  # Condition pour les pull requests
-              alias_tags=("${COMMIT_TAGS[@]}")  # Utilisation des tags de commit pour PR
+          BUILD_TAGS+=("${TIMESTAMP}")
+          BUILD_TAGS+=("${TIMESTAMPWT}")
+          BUILD_TAGS+=("latest")
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+              alias_tags=("${COMMIT_TAGS[@]}")
           else
-              alias_tags=("${BUILD_TAGS[@]}")   # Utilisation des tags de build sinon
+              alias_tags=("${BUILD_TAGS[@]}")
           fi
-          echo "alias_tags=${alias_tags[*]}" >> $GITHUB_OUTPUT  # Exportation des tags
-          echo "alias_date=${TIMESTAMPWT}" >> $GITHUB_OUTPUT    # Exportation de la date
+          echo "alias_tags=${alias_tags[*]}" >> $GITHUB_OUTPUT
+          echo "alias_date=${TIMESTAMPWT}" >> $GITHUB_OUTPUT
 
-      # Étape 4 : Ajout des métadonnées pour l'image
-      - name: Image Metadata                 # Nom de l'étape
-        uses: docker/metadata-action@v5      # Action pour générer les métadonnées
-        id: meta                             # Identifiant pour récupérer les sorties
-        with:
-          images: ${{ matrix.image.name }}   # Nom de l'image depuis la matrice
-          labels: |
-            io.artifacthub.package.readme-url=https://raw.githubusercontent.com/${{ github.repository }}/main/README.md  # URL du README
-            org.opencontainers.image.description=${{ matrix.image.desc }}  # Description de l'image
-            org.opencontainers.image.title=${{ matrix.image.name }}        # Titre de l'image
-
-      # Étape 5 : Construction de l'image avec buildah
-      - name: Build Image                    # Nom de l'étape
-        id: build_image                      # Identifiant pour récupérer les sorties
-        shell: bash                          # Shell utilisé pour exécuter le script
+      # Définir la version du noyau à utiliser
+      - name: Set kernel version
+        id: set_kernel_version
+        shell: bash
         run: |
-          # Construction de l'image avec les arguments nécessaires
+          if [[ -n "${{ matrix.image.kernel_version }}" ]]; then
+            KERNEL_VERSION="${{ matrix.image.kernel_version }}"
+          else
+            KERNEL_VERSION="${{ steps.get_kernel_version.outputs.LATEST_TAG }}"
+          fi
+          echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_OUTPUT
+
+      # Métadonnées de l'image
+      - name: Image Metadata
+        uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ matrix.image.name }}
+          labels: |
+            io.artifacthub.package.readme-url=https://raw.githubusercontent.com/${{ github.repository }}/main/README.md
+            org.opencontainers.image.description=${{ matrix.image.desc }}
+            org.opencontainers.image.title=${{ matrix.image.name }}
+
+      # Construction de l'image
+      - name: Build Image
+        id: build_image
+        shell: bash
+        run: |
           sudo buildah build \
             --file "Containerfile-gablue" \
             --format "docker" \
-            --build-arg KERNEL_VERSION="${{ matrix.image.kernel_version }}" \
+            --build-arg KERNEL_VERSION="${{ steps.set_kernel_version.outputs.KERNEL_VERSION }}" \
             --build-arg VARIANT="${{ matrix.image.variant }}" \
             --build-arg SOURCE_IMAGE="${{ matrix.image.source_image }}" \
             --build-arg SOURCE_SUFFIX="${{ matrix.image.source_suffix }}" \
@@ -120,94 +138,90 @@ jobs:
             --build-arg KERNEL_TYPE="${{ matrix.image.kernel_type }}" \
             --tag raw-img .
 
-      # Étape 6 : Rechunk de l'image pour optimisation
-      - name: Rechunk Image                  # Nom de l'étape
-        id: rechunk                          # Identifiant pour récupérer les sorties
-        uses: hhd-dev/rechunk@v1.2.1         # Action pour rechunker l'image
+      # Rechunk de l'image
+      - name: Rechunk Image
+        id: rechunk
+        uses: hhd-dev/rechunk@v1.2.1
         with:
-          ref: "raw-img"                     # Référence de l'image brute
-          prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ matrix.image.name }}:latest"  # Référence précédente
-          skip_compression: true             # Désactivation de la compression
-          version: "${{ steps.generate-tags.outputs.alias_date }}"  # Version avec timestamp
-          rechunk: "ghcr.io/hhd-dev/rechunk:v1.2.1"  # Version de l'outil rechunk
+          ref: "raw-img"
+          prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ matrix.image.name }}:latest"
+          skip_compression: true
+          version: "${{ steps.generate-tags.outputs.alias_date }}"
+          rechunk: "ghcr.io/hhd-dev/rechunk:v1.2.1"
 
-      # Étape 7 : Chargement et tag de l'image dans podman
-      - name: Load in podman and tag         # Nom de l'étape
+      # Chargement et tag
+      - name: Load in podman and tag
         run: |
-          # Chargement de l'image rechunkée
-          IMAGE=$(podman pull ${{ steps.rechunk.outputs.ref }})  # Récupération de l'image
-          sudo rm -rf ${{ steps.rechunk.outputs.output }}  # Suppression des fichiers temporaires
-          podman tag $IMAGE ${{ matrix.image.name }}:${{ steps.generate-tags.outputs.alias_tags }}  # Tag personnalisé
-          podman tag $IMAGE ${{ matrix.image.name }}:${{ steps.generate-tags.outputs.alias_date }}  # Tag avec date
-          podman tag $IMAGE ${{ matrix.image.name }}:latest  # Tag "latest"
-          podman tag $IMAGE rechunked-img    # Tag pour vérification Secureboot
+          IMAGE=$(podman pull ${{ steps.rechunk.outputs.ref }})
+          sudo rm -rf ${{ steps.rechunk.outputs.output }}
+          podman tag $IMAGE ${{ matrix.image.name }}:${{ steps.generate-tags.outputs.alias_tags }}
+          podman tag $IMAGE ${{ matrix.image.name }}:${{ steps.generate-tags.outputs.alias_date }}
+          podman tag $IMAGE ${{ matrix.image.name }}:latest
+          podman tag $IMAGE rechunked-img
 
-      # Étape 8 : Vérification de Secureboot
-      - name: Check Secureboot               # Nom de l'étape
-        shell: bash                          # Shell utilisé pour exécuter le script
+      # Vérification Secureboot
+      - name: Check Secureboot
+        shell: bash
         run: |
-          set -x                             # Activation du mode debug
-          # Installation des outils si absents
+          set -x
           if [[ ! $(command -v sbverify) || ! $(command -v curl) || ! $(command -v openssl) ]]; then
-            sudo apt update                  # Mise à jour des paquets
-            sudo apt install sbsigntool curl openssl  # Installation des outils nécessaires
+            sudo apt update
+            sudo apt install sbsigntool curl openssl
           fi
-          # Extraction du kernel pour vérification
-          TMP=$(podman create rechunked-img bash)  # Création d'un conteneur temporaire
-          podman cp $TMP:/usr/lib/modules/${{ matrix.image.kernel_version }}.${{ matrix.image.kernel_type }}.fc${{ matrix.image.fedora_version }}.x86_64/vmlinuz .  # Copie du kernel
-          podman rm $TMP                     # Suppression du conteneur temporaire
-          sbverify --list vmlinuz            # Liste des signatures
-          curl --retry 3 -Lo kernel-sign.der https://github.com/ublue-os/kernel-cache/raw/main/certs/public_key.der  # Téléchargement du certificat kernel
-          curl --retry 3 -Lo akmods.der https://github.com/ublue-os/kernel-cache/raw/main/certs/public_key_2.der  # Téléchargement du certificat akmods
-          openssl x509 -in kernel-sign.der -out kernel-sign.crt  # Conversion du certificat kernel
-          openssl x509 -in akmods.der -out akmods.crt  # Conversion du certificat akmods
-          sbverify --cert kernel-sign.crt vmlinuz || exit 1  # Vérification avec le certificat kernel
-          sbverify --cert akmods.crt vmlinuz || exit 1  # Vérification avec le certificat akmods
+          TMP=$(podman create rechunked-img bash)
+          podman cp $TMP:/usr/lib/modules/${{ steps.set_kernel_version.outputs.KERNEL_VERSION }}.${{ matrix.image.kernel_type }}.fc${{ matrix.image.fedora_version }}.x86_64/vmlinuz .
+          podman rm $TMP
+          sbverify --list vmlinuz
+          curl --retry 3 -Lo kernel-sign.der https://github.com/ublue-os/kernel-cache/raw/main/certs/public_key.der
+          curl --retry 3 -Lo akmods.der https://github.com/ublue-os/kernel-cache/raw/main/certs/public_key_2.der
+          openssl x509 -in kernel-sign.der -out kernel-sign.crt
+          openssl x509 -in akmods.der -out akmods.crt
+          sbverify --cert kernel-sign.crt vmlinuz || exit 1
+          sbverify --cert akmods.crt vmlinuz || exit 1
 
-      # Étape 9 : Conversion du registre en minuscules
-      - name: Lowercase Registry             # Nom de l'étape
-        id: registry_case                    # Identifiant pour récupérer les sorties
-        uses: ASzc/change-string-case-action@v6  # Action pour convertir en minuscules
+      # Conversion registre en minuscules
+      - name: Lowercase Registry
+        id: registry_case
+        uses: ASzc/change-string-case-action@v6
         with:
-          string: ${{ env.IMAGE_REGISTRY }}  # Chaîne à convertir (registre)
+          string: ${{ env.IMAGE_REGISTRY }}
 
-      # Étape 10 : Connexion au registre GitHub Container Registry
-      - name: Login to GitHub Container Registry  # Nom de l'étape
-        uses: docker/login-action@v3         # Action pour se connecter à GHCR
+      # Connexion à GHCR
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          registry: ghcr.io                  # Registre cible
-          username: ${{ github.actor }}      # Nom d'utilisateur GitHub
-          password: ${{ secrets.GITHUB_TOKEN }}  # Token d'authentification
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Étape 11 : Pousser l'image vers GHCR
-      - name: Push To GHCR                   # Nom de l'étape
-        uses: Wandalen/wretry.action@v3.8.0  # Action pour retenter en cas d'échec
-        id: push                             # Identifiant pour récupérer les sorties
+      # Pousser l'image
+      - name: Push To GHCR
+        uses: Wandalen/wretry.action@v3.8.0
+        id: push
         env:
-          REGISTRY_USER: ${{ github.actor }}    # Utilisateur pour le push
-          REGISTRY_PASSWORD: ${{ github.token }}  # Mot de passe/token
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ github.token }}
         with:
-          action: redhat-actions/push-to-registry@v2  # Action pour pousser l'image
-          attempt_limit: 3                   # Nombre maximum de tentatives
-          attempt_delay: 15000               # Délai entre tentatives (15 secondes)
+          action: redhat-actions/push-to-registry@v2
+          attempt_limit: 3
+          attempt_delay: 15000
           with: |
-            image: ${{ matrix.image.name }}  # Nom de l'image à pousser
-            tags: ${{ steps.generate-tags.outputs.alias_tags }}  # Tags à appliquer
-            registry: ${{ steps.registry_case.outputs.lowercase }}  # Registre en minuscules
-            username: ${{ env.REGISTRY_USER }}  # Nom d'utilisateur
-            password: ${{ env.REGISTRY_PASSWORD }}  # Mot de passe
+            image: ${{ matrix.image.name }}
+            tags: ${{ steps.generate-tags.outputs.alias_tags }}
+            registry: ${{ steps.registry_case.outputs.lowercase }}
+            username: ${{ env.REGISTRY_USER }}
+            password: ${{ env.REGISTRY_PASSWORD }}
 
-      # Étape 12 : Installation de Cosign pour signature (optionnel)
-      - uses: sigstore/cosign-installer@v3.8.1  # Action pour installer Cosign
-        if: github.event_name != 'pull_request'  # Condition : hors pull requests
+      # Installation Cosign
+      - uses: sigstore/cosign-installer@v3.8.1
+        if: github.event_name != 'pull_request'
 
-      # Étape 13 : Signature de l'image
-      - name: Sign container image           # Nom de l'étape
-        if: github.event_name != 'pull_request'  # Condition : hors pull requests
+      # Signature de l'image
+      - name: Sign container image
+        if: github.event_name != 'pull_request'
         run: |
-          # Signature de l'image avec Cosign
           cosign sign -y --key env://COSIGN_PRIVATE_KEY ${{ steps.registry_case.outputs.lowercase }}/${{ matrix.image.name }}@${TAGS}
         env:
-          TAGS: ${{ steps.push.outputs.outputs && fromJSON(steps.push.outputs.outputs).digest }}  # Digest de l'image poussée
-          COSIGN_EXPERIMENTAL: false         # Désactivation du mode expérimental
-          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}  # Clé privée pour la signature
+          TAGS: ${{ steps.push.outputs.outputs && fromJSON(steps.push.outputs.outputs).digest }}
+          COSIGN_EXPERIMENTAL: false
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
