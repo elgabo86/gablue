@@ -59,10 +59,6 @@ jobs:
         id: get_kernel_version
         if: matrix.image.kernel_version == ''
         run: |
-          # Installer skopeo
-          sudo apt-get update
-          sudo apt-get install -y skopeo
-
           # Lister les tags du conteneur, filtrer par fedora_version
           TAGS=$(skopeo list-tags docker://ghcr.io/ublue-os/akmods | \
             jq -r --arg fedora_version "${{ matrix.image.fedora_version }}" \
@@ -78,7 +74,7 @@ jobs:
           if [[ "$TAGS" =~ bazzite-[0-9]+-([0-9]+\.[0-9]+\.[0-9]+-[0-9]+)\.bazzite\.fc[0-9]+\.x86_64 ]]; then
             KERNEL_VERSION="${BASH_REMATCH[1]}"
           else
-            echo "Erreur : Impossible d- d'extraire la version du noyau depuis $TAGS"
+            echo "Erreur : Impossible d'extraire la version du noyau depuis $TAGS"
             exit 1
           fi
 
@@ -92,8 +88,11 @@ jobs:
         run: |
           if [[ -n "${{ matrix.image.kernel_version }}" ]]; then
             KERNEL_VERSION="${{ matrix.image.kernel_version }}"
-          else
+          elif [[ -n "${{ steps.get_kernel_version.outputs.KERNEL_VERSION }}" ]]; then
             KERNEL_VERSION="${{ steps.get_kernel_version.outputs.KERNEL_VERSION }}"
+          else
+            echo "Erreur : Aucune version du noyau spécifiée ou trouvée pour Fedora ${{ matrix.image.fedora_version }}"
+            exit 1
           fi
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_OUTPUT
 
