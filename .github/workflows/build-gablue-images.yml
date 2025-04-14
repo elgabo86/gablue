@@ -54,16 +54,48 @@ jobs:
       id-token: write
 
     steps:
-      # Étape pour récupérer le dernier tag si kernel_version est vide
+      # Étape pour récupérer le dernier tag bazzite correspondant à fedora_version
       - name: Get latest kernel version
         id: get_kernel_version
         if: matrix.image.kernel_version == ''
         run: |
-          # Récupérer le dernier tag via l'API GitHub
-          LATEST_TAG=$(curl -s https://api.github.com/repos/bazzite-org/kernel-bazzite/tags | jq -r '.[0].name')
-          echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_OUTPUT
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Installer skopeo
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+          # Lister les tags du conteneur, filtrer par fedora_version
+          TAGS=$(skopeo list-tags docker://ghcr.io/ublue-os/akmods | \
+            jq -r --arg fedora_version "${{ matrix.image.fedora_version }}" \
+            '.Tags[] | select(startswith("bazzite-" + $fedora_version + "-"))' | \
+            sort -r | head -n 1)
+
+          if [[ -z "$TAGS" ]]; then
+            echo "Erreur : Aucun tag bazzite trouvé pour Fedora ${{ matrix.image.fedora_version }} dans ghcr.io/ublue-os/akmods"
+            exit 1
+          fi
+
+          # Extraire la version du noyau (par exemple, 6.13.9-104)
+          if [[ "$TAGS" =~ bazzite-[0-9]+-([0-9]+\.[0-9]+\.[0-9]+-[0-9]+)\.bazzite\.fc[0-9]+\.x86_64 ]]; then
+            KERNEL_VERSION="${BASH_REMATCH[1]}"
+          else
+            echo "Erreur : Impossible d'extraire la version du noyau depuis $TAGS"
+            exit 1
+          fi
+
+          echo "LATEST_TAG=$TAGS" >> $GITHUB_OUTPUT
+          echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_OUTPUT
+
+      # Définir la version du noyau à utiliser
+      - name: Set kernel version
+        id: set_kernel_version
+        shell: bash
+        run: |
+          if [[ -n "${{ matrix.image.kernel_version }}" ]]; then
+            KERNEL_VERSION="${{ matrix.image.kernel_version }}"
+          else
+            KERNEL_VERSION="${{ steps.get_kernel_version.outputs.KERNEL_VERSION }}"
+          fi
+          echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_OUTPUT
 
       # Checkout du dépôt
       - name: Checkout repository
