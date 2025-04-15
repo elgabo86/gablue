@@ -8,6 +8,7 @@ chmod +x /usr/bin/waitwine
 chmod +x /usr/bin/ventoy
 chmod +x /usr/bin/bottles-sort-library
 chmod +x /usr/bin/dlcover
+chmod +x /usr/bin/ssdcheck
 chmod +x /usr/libexec/gablue-update
 chmod +x /usr/libexec/gablue-config
 chmod +x /usr/libexec/archgab-update
