@@ -1,0 +1,158 @@
+#!/bin/bash
+
+# Script pour afficher des infos sur le CPU
+# Version : 1.1 (2025-04-17)
+
+# Vérifier si le script est exécuté avec les privilèges root
+if [ "$EUID" -ne 0 ]; then
+    echo "Ce script nécessite des privilèges root pour certaines informations. Relance avec sudo..."
+    exec sudo "$0" "$@"
+fi
+
+echo "Exécution de cpucheck (Version 1.1)"
+
+# Vérifier si lscpu est installé
+if ! command -v lscpu >/dev/null 2>&1; then
+    echo "Erreur : lscpu n'est pas installé. Installez-le avec :"
+    echo "Sur Ubuntu/Debian : sudo apt install util-linux"
+    echo "Sur Fedora : sudo dnf install util-linux"
+    exit 1
+fi
+
+# Vérifier si dmidecode est installé
+if ! command -v dmidecode >/dev/null 2>&1; then
+    echo "Erreur : dmidecode n'est pas installé. Installez-le avec :"
+    echo "Sur Ubuntu/Debian : sudo apt install dmidecode"
+    echo "Sur Fedora : sudo dnf install dmidecode"
+    exit 1
+fi
+
+# Vérifier si lspci est installé (pour GPU)
+if ! command -v lspci >/dev/null 2>&1; then
+    echo "Avertissement : lspci n'est pas installé. La détection du GPU sera moins précise."
+    echo "Installez-le avec :"
+    echo "Sur Ubuntu/Debian : sudo apt install pciutils"
+    echo "Sur Fedora : sudo dnf install pciutils"
+fi
+
+# Récupérer les informations sur le CPU avec lscpu
+CPU_INFO=$(lscpu 2>/dev/null)
+
+# Récupérer les informations détaillées avec dmidecode
+CPU_DMI=$(dmidecode -t 4 2>/dev/null)
+
+# Vérifier si des informations CPU sont disponibles
+if [ -z "$CPU_INFO" ]; then
+    echo "Aucune information sur le CPU détectée."
+    exit 1
+fi
+
+# Extraire les informations clés
+cpu_name=$(echo "$CPU_INFO" | grep "Model name" | sed 's/Model name:[ \t]*//')
+core_count=$(echo "$CPU_INFO" | grep "Core(s) per socket" | awk '{print $4}')
+thread_count=$(echo "$CPU_INFO" | grep "Thread(s) per core" | awk '{print $4}')
+total_threads=$(echo "$CPU_INFO" | grep "^CPU(s):" | awk '{print $2}')
+thread_count=$((total_threads / core_count))
+freq_max=$(echo "$CPU_INFO" | grep "CPU max MHz" | awk '{print $4}' | sed 's/\..*//')
+cache_l3=$(echo "$CPU_INFO" | grep "L3 cache" | awk '{print $3}')
+
+# Extraire la fréquence actuelle (peut nécessiter root)
+freq_current=$(cat /proc/cpuinfo | grep "cpu MHz" | head -n 1 | awk '{print $4}' | sed 's/\..*//')
+
+# Vérifier la présence d'un GPU intégré
+gpu_integrated="Non détecté"
+if [[ "$cpu_name" =~ "Intel" ]]; then
+    # Vérification via lspci
+    if command -v lspci >/dev/null 2>&1; then
+        lspci_output=$(lspci | grep -i "VGA.*Intel\|Display.*Intel")
+        if [[ -n "$lspci_output" ]]; then
+            # Vérification via les fichiers DRM pour le nom précis du GPU
+            if ls /sys/class/drm/card*/device/driver/module >/dev/null 2>&1; then
+                driver_path=$(ls -d /sys/class/drm/card*/device/driver/module | head -n 1)
+                if [[ -n "$driver_path" ]]; then
+                    driver_name=$(basename "$(readlink "$driver_path")")
+                    if [[ "$driver_name" == "i915" ]]; then
+                        # Extraire le nom du GPU depuis les registres ou lspci
+                        if [[ "$lspci_output" =~ "Skylake GT3e" || "$lspci_output" =~ "Iris Graphics 540" ]]; then
+                            gpu_integrated="Intel Iris Graphics 540 (48 EUs, 300-950 MHz)"
+                        elif [[ "$lspci_output" =~ "HD Graphics" ]]; then
+                            gpu_integrated="Intel HD Graphics (modèle exact non identifié)"
+                        else
+                            gpu_integrated="Intel GPU intégré (possiblement Iris ou HD Graphics)"
+                        fi
+                    else
+                        gpu_integrated="Intel GPU intégré (pilote non standard)"
+                    fi
+                fi
+            else
+                gpu_integrated="Intel GPU intégré (informations DRM non disponibles)"
+            fi
+        fi
+    else
+        gpu_integrated="Intel GPU intégré (installez lspci pour plus de précision)"
+    fi
+elif [[ "$cpu_name" =~ "AMD" && "$cpu_name" =~ "Ryzen" ]]; then
+    # Vérification pour AMD via lspci
+    if command -v lspci >/dev/null 2>&1; then
+        lspci_output=$(lspci | grep -i "VGA.*AMD\|Display.*AMD")
+        if [[ -n "$lspci_output" ]]; then
+            if [[ "$lspci_output" =~ "Vega" ]]; then
+                gpu_integrated="AMD Radeon Vega (modèle exact non identifié)"
+            else
+                gpu_integrated="AMD GPU intégré (possiblement Radeon)"
+            fi
+        fi
+    else
+        gpu_integrated="AMD GPU intégré (installez lspci pour plus de précision)"
+    fi
+fi
+
+# Extraire le socket et la version du CPU avec dmidecode
+socket=$(echo "$CPU_DMI" | grep "Socket Designation" | sed 's/.*: //')
+version=$(echo "$CPU_DMI" | grep "Version:" | sed 's/.*: //')
+
+# Gérer les valeurs non détectées
+freq_max=${freq_max:-"N/A"}
+freq_current=${freq_current:-"N/A"}
+cache_l3=${cache_l3:-"N/A"}
+socket=${socket:-"N/A"}
+version=${version:-"N/A"}
+
+# Afficher les détails
+echo -e "\033[1;34m========================================\033[0m"
+echo -e "\033[1;33mInformations sur le CPU\033[0m"
+echo -e "\033[1;34m========================================\033[0m"
+
+echo -e "\033[1;36mNom du CPU\033[0m"
+echo -e "Modèle : \033[1;32m${cpu_name}\033[0m"
+echo -e "Version : \033[1;32m${version}\033[0m"
+echo -e "Socket : \033[1;32m${socket}\033[0m"
+echo -e "\033[1;34m----------------------------------------\033[0m"
+
+echo -e "\033[1;36mCaractéristiques\033[0m"
+echo -e "Nombre de cœurs : \033[1;32m${core_count}\033[0m"
+echo -e "Nombre de threads : \033[1;32m${total_threads}\033[0m"
+echo -e "Cache L3 : \033[1;32m${cache_l3}\033[0m"
+echo -e "\033[1;34m----------------------------------------\033[0m"
+
+echo -e "\033[1;36mFréquences\033[0m"
+echo -e "Fréquence maximale : \033[1;32m${freq_max} MHz\033[0m"
+echo -e "Fréquence actuelle (premier cœur) : \033[1;32m${freq_current} MHz\033[0m"
+echo -e "\033[1;34m----------------------------------------\033[0m"
+
+echo -e "\033[1;36mGPU intégré\033[0m"
+echo -e "GPU : \033[1;32m${gpu_integrated}\033[0m"
+echo -e "\033[1;34m========================================\033[0m"
+
+# Résumé
+echo -e "\033[1;33mRésumé\033[0m"
+echo -e "Processeur : \033[1;36m${cpu_name}\033[0m"
+echo -e "Cœurs/Threads : \033[1;36m${core_count}/${total_threads}\033[0m"
+echo -e "Fréquence max : \033[1;36m${freq_max} MHz\033[0m"
+echo -e "GPU intégré : \033[1;36m${gpu_integrated}\033[0m"
+echo -e "\033[1;34m========================================\033[0m"
+
+# Message si aucune information critique n'est détectée
+if [ -z "$cpu_name" ]; then
+    echo -e "\033[1;31mAucune information CPU fonctionnelle détectée.\033[0m"
+fi
