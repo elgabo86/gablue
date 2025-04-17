@@ -1,0 +1,123 @@
+#!/bin/bash
+
+# Script pour afficher des infos sur les barrettes de RAM
+# Version : 2.3 (2025-04-18)
+
+# Vérifier si le script est exécuté avec les privilèges root
+if [ "$EUID" -ne 0 ]; then
+    echo "Ce script nécessite des privilèges root. Relance avec sudo..."
+    exec sudo "$0" "$@"
+fi
+
+echo "Exécution de ramcheck (Version 2.3)"
+
+# Vérifier si lshw est installé
+if ! command -v lshw >/dev/null 2>&1; then
+    echo "Erreur : lshw n'est pas installé. Installez-le avec :"
+    echo "Sur Ubuntu/Debian : sudo apt install lshw"
+    echo "Sur Fedora : sudo dnf install lshw"
+    exit 1
+fi
+
+# Vérifier si dmidecode est installé (pour la capacité maximale)
+if ! command -v dmidecode >/dev/null 2>&1; then
+    echo "Erreur : dmidecode n'est pas installé. Installez-le avec :"
+    echo "Sur Ubuntu/Debian : sudo apt install dmidecode"
+    echo "Sur Fedora : sudo dnf install dmidecode"
+    exit 1
+fi
+
+# Récupérer les informations sur la RAM avec lshw
+RAM_INFO=$(lshw -C memory 2>/dev/null)
+
+# Récupérer la capacité maximale avec dmidecode
+ARRAY_INFO=$(dmidecode -t 16 2>/dev/null)
+
+# Vérifier si des informations RAM sont disponibles
+if [ -z "$RAM_INFO" ]; then
+    echo "Aucune information sur la RAM détectée."
+    exit 1
+fi
+
+# Compter le nombre total de slots
+TOTAL_SLOTS=$(echo "$RAM_INFO" | grep -c "*-bank")
+
+# Récupérer la capacité maximale
+MAX_CAPACITY=$(echo "$ARRAY_INFO" | grep "Maximum Capacity" | awk '{print $3 " " $4}' || echo "N/A")
+
+# Initialisation des variables
+total_capacity=0
+ram_count=0
+
+# Fonction pour convertir la capacité en Go
+convert_to_gb() {
+    local size="$1"
+    if [[ "$size" =~ ([0-9]+)GiB ]]; then
+        echo "${BASH_REMATCH[1]}"
+    elif [[ "$size" =~ ([0-9]+)MiB ]]; then
+        echo $(( ${BASH_REMATCH[1]} / 1024 ))
+    else
+        echo "0"
+    fi
+}
+
+# Afficher les détails pour chaque barrette
+echo -e "\033[1;34m========================================\033[0m"
+echo -e "\033[1;33mInformations sur les barrettes de RAM\033[0m"
+echo -e "\033[1;34m========================================\033[0m"
+
+# Parcourir les sections *-bank
+for bank in 0 1; do
+    # Extraire les 10 lignes suivantes après *-bank:$bank
+    section=$(echo "$RAM_INFO" | grep -A10 "*-bank:$bank" | head -n 10)
+
+    # Extraire les champs avec sed pour nettoyer les indentations
+    description=$(echo "$section" | grep "description:" | sed 's/^[ \t]*description: //')
+    size=$(echo "$section" | grep "size:" | sed 's/^[ \t]*size: //')
+    slot=$(echo "$section" | grep "slot:" | sed 's/^[ \t]*slot: //')
+    speed=$(echo "$section" | grep "clock:" | sed 's/^[ \t]*clock: //')
+
+    # Ignorer les slots vides
+    if [[ "$description" =~ "\[empty\]" || -z "$size" ]]; then
+        continue
+    fi
+
+    # Définir le type
+    type="DDR4"
+    if [[ ! "$description" =~ "DDR" ]]; then
+        type="DDR4 (détection partielle)"
+    fi
+
+    # Vérifier la vitesse
+    if [[ -z "$speed" ]]; then
+        speed="N/A (non détectée)"
+    fi
+
+    # Incrémenter le compteur de barrettes
+    ((ram_count++))
+
+    # Convertir la capacité en Go
+    capacity_gb=$(convert_to_gb "$size")
+    if [[ "$capacity_gb" != "0" ]]; then
+        total_capacity=$((total_capacity + capacity_gb))
+    fi
+
+    echo -e "\033[1;36mBarette dans $slot\033[0m"
+    echo -e "Capacité : \033[1;32m${size}\033[0m"
+    echo -e "Type : \033[1;32m${type}\033[0m"
+    echo -e "Fréquence : \033[1;32m${speed}\033[0m"
+    echo -e "\033[1;34m----------------------------------------\033[0m"
+done
+
+# Afficher le résumé
+echo -e "\033[1;33mRésumé\033[0m"
+echo -e "Nombre de barrettes installées : \033[1;36m${ram_count}\033[0m"
+echo -e "Nombre total de slots : \033[1;36m${TOTAL_SLOTS}\033[0m"
+echo -e "Capacité totale : \033[1;36m${total_capacity} Go\033[0m"
+echo -e "Capacité maximale : \033[1;36m${MAX_CAPACITY}\033[0m"
+echo -e "\033[1;34m========================================\033[0m"
+
+# Message si aucune barrette détectée
+if [ "$ram_count" -eq 0 ]; then
+    echo -e "\033[1;31mAucune barrette de RAM fonctionnelle détectée.\033[0m"
+fi

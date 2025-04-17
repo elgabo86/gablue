@@ -3,6 +3,12 @@
 # Script pour afficher des infos sur la santé de tous les SSD
 # Version : 4.1 (2025-04-15) - Release finale, syntaxe corrigée
 
+# Vérifier si l'utilisateur a les privilèges root
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Ce script nécessite des privilèges root. Relance avec sudo..."
+    exec sudo "$0" "$@"
+fi
+
 echo "Exécution de ssdcheck (Version 4.1)"
 
 # Vérifier si smartctl est installé
