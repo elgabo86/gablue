@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script pour afficher des infos sur les barrettes de RAM
-# Version : 2.3 (2025-04-18)
+# Version : 2.5 (2025-04-18)
 
 # Vérifier si le script est exécuté avec les privilèges root
 if [ "$EUID" -ne 0 ]; then
@@ -9,17 +9,9 @@ if [ "$EUID" -ne 0 ]; then
     exec sudo "$0" "$@"
 fi
 
-echo "Exécution de ramcheck (Version 2.3)"
+echo "Exécution de ramcheck (Version 2.5)"
 
-# Vérifier si lshw est installé
-if ! command -v lshw >/dev/null 2>&1; then
-    echo "Erreur : lshw n'est pas installé. Installez-le avec :"
-    echo "Sur Ubuntu/Debian : sudo apt install lshw"
-    echo "Sur Fedora : sudo dnf install lshw"
-    exit 1
-fi
-
-# Vérifier si dmidecode est installé (pour la capacité maximale)
+# Vérifier si dmidecode est installé
 if ! command -v dmidecode >/dev/null 2>&1; then
     echo "Erreur : dmidecode n'est pas installé. Installez-le avec :"
     echo "Sur Ubuntu/Debian : sudo apt install dmidecode"
@@ -27,10 +19,8 @@ if ! command -v dmidecode >/dev/null 2>&1; then
     exit 1
 fi
 
-# Récupérer les informations sur la RAM avec lshw
-RAM_INFO=$(lshw -C memory 2>/dev/null)
-
-# Récupérer la capacité maximale avec dmidecode
+# Récupérer les informations sur la RAM avec dmidecode
+RAM_INFO=$(dmidecode -t 17 2>/dev/null)
 ARRAY_INFO=$(dmidecode -t 16 2>/dev/null)
 
 # Vérifier si des informations RAM sont disponibles
@@ -40,7 +30,7 @@ if [ -z "$RAM_INFO" ]; then
 fi
 
 # Compter le nombre total de slots
-TOTAL_SLOTS=$(echo "$RAM_INFO" | grep -c "*-bank")
+TOTAL_SLOTS=$(echo "$RAM_INFO" | grep -c "Memory Device")
 
 # Récupérer la capacité maximale
 MAX_CAPACITY=$(echo "$ARRAY_INFO" | grep "Maximum Capacity" | awk '{print $3 " " $4}' || echo "N/A")
@@ -52,10 +42,12 @@ ram_count=0
 # Fonction pour convertir la capacité en Go
 convert_to_gb() {
     local size="$1"
-    if [[ "$size" =~ ([0-9]+)GiB ]]; then
+    if [[ "$size" =~ ([0-9]+)\ *GiB ]]; then
         echo "${BASH_REMATCH[1]}"
-    elif [[ "$size" =~ ([0-9]+)MiB ]]; then
+    elif [[ "$size" =~ ([0-9]+)\ *MiB ]]; then
         echo $(( ${BASH_REMATCH[1]} / 1024 ))
+    elif [[ "$size" =~ ([0-9]+)\ *GB ]]; then
+        echo "${BASH_REMATCH[1]}"
     else
         echo "0"
     fi
@@ -66,48 +58,48 @@ echo -e "\033[1;34m========================================\033[0m"
 echo -e "\033[1;33mInformations sur les barrettes de RAM\033[0m"
 echo -e "\033[1;34m========================================\033[0m"
 
-# Parcourir les sections *-bank
-for bank in 0 1; do
-    # Extraire les 10 lignes suivantes après *-bank:$bank
-    section=$(echo "$RAM_INFO" | grep -A10 "*-bank:$bank" | head -n 10)
+# Parcourir chaque Memory Device
+while IFS= read -r line; do
+    if [[ "$line" =~ "Memory Device" ]]; then
+        # Extraire les informations de la section courante
+        section=$(echo "$RAM_INFO" | sed -n "/$line/,/^$/p")
 
-    # Extraire les champs avec sed pour nettoyer les indentations
-    description=$(echo "$section" | grep "description:" | sed 's/^[ \t]*description: //')
-    size=$(echo "$section" | grep "size:" | sed 's/^[ \t]*size: //')
-    slot=$(echo "$section" | grep "slot:" | sed 's/^[ \t]*slot: //')
-    speed=$(echo "$section" | grep "clock:" | sed 's/^[ \t]*clock: //')
+        size=$(echo "$section" | grep "Size:" | awk '{print $2 " " $3}' | head -n 1)
+        type=$(echo "$section" | grep "Type:" | awk '{print $2}' | head -n 1)
+        speed=$(echo "$section" | grep "Configured Memory Speed:" | awk '{print $4 " " $5}' | head -n 1)
+        locator=$(echo "$section" | grep "Locator:" | awk '{print $2}' | head -n 1)
 
-    # Ignorer les slots vides
-    if [[ "$description" =~ "\[empty\]" || -z "$size" ]]; then
-        continue
+        # Ignorer les slots vides
+        if [[ "$size" =~ "No Module Installed" || -z "$size" ]]; then
+            continue
+        fi
+
+        # Définir le type si non détecté
+        if [[ -z "$type" || "$type" == "Unknown" ]]; then
+            type="Non détecté"
+        fi
+
+        # Définir la vitesse si non détectée
+        if [[ -z "$speed" ]]; then
+            speed="N/A"
+        fi
+
+        # Incrémenter le compteur de barrettes
+        ((ram_count++))
+
+        # Convertir la capacité en Go
+        capacity_gb=$(convert_to_gb "$size")
+        if [[ "$capacity_gb" =~ ^[0-9]+$ && "$capacity_gb" != "0" ]]; then
+            total_capacity=$((total_capacity + capacity_gb))
+        fi
+
+        echo -e "\033[1;36mBarette dans $locator\033[0m"
+        echo -e "Capacité : \033[1;32m${size}\033[0m"
+        echo -e "Type : \033[1;32m${type}\033[0m"
+        echo -e "Fréquence : \033[1;32m${speed}\033[0m"
+        echo -e "\033[1;34m----------------------------------------\033[0m"
     fi
-
-    # Définir le type
-    type="DDR4"
-    if [[ ! "$description" =~ "DDR" ]]; then
-        type="DDR4 (détection partielle)"
-    fi
-
-    # Vérifier la vitesse
-    if [[ -z "$speed" ]]; then
-        speed="N/A (non détectée)"
-    fi
-
-    # Incrémenter le compteur de barrettes
-    ((ram_count++))
-
-    # Convertir la capacité en Go
-    capacity_gb=$(convert_to_gb "$size")
-    if [[ "$capacity_gb" != "0" ]]; then
-        total_capacity=$((total_capacity + capacity_gb))
-    fi
-
-    echo -e "\033[1;36mBarette dans $slot\033[0m"
-    echo -e "Capacité : \033[1;32m${size}\033[0m"
-    echo -e "Type : \033[1;32m${type}\033[0m"
-    echo -e "Fréquence : \033[1;32m${speed}\033[0m"
-    echo -e "\033[1;34m----------------------------------------\033[0m"
-done
+done <<< "$RAM_INFO"
 
 # Afficher le résumé
 echo -e "\033[1;33mRésumé\033[0m"

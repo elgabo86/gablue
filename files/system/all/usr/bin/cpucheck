@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script pour afficher des infos sur le CPU
-# Version : 1.1 (2025-04-17)
+# Version : 1.4 (2025-04-18)
 
 # Vérifier si le script est exécuté avec les privilèges root
 if [ "$EUID" -ne 0 ]; then
@@ -9,7 +9,7 @@ if [ "$EUID" -ne 0 ]; then
     exec sudo "$0" "$@"
 fi
 
-echo "Exécution de cpucheck (Version 1.1)"
+echo "Exécution de cpucheck (Version 1.4)"
 
 # Vérifier si lscpu est installé
 if ! command -v lscpu >/dev/null 2>&1; then
@@ -54,7 +54,26 @@ thread_count=$(echo "$CPU_INFO" | grep "Thread(s) per core" | awk '{print $4}')
 total_threads=$(echo "$CPU_INFO" | grep "^CPU(s):" | awk '{print $2}')
 thread_count=$((total_threads / core_count))
 freq_max=$(echo "$CPU_INFO" | grep "CPU max MHz" | awk '{print $4}' | sed 's/\..*//')
-cache_l3=$(echo "$CPU_INFO" | grep "L3 cache" | awk '{print $3}')
+
+# Extraire le cache L3 (inclure l'unité)
+cache_l3=$(echo "$CPU_INFO" | grep "L3 cache" | awk '{print $3 " " $4}' | sed 's/(.*)//')
+# Valider et formater le cache L3
+if [[ "$cache_l3" =~ "MiB" ]]; then
+    cache_l3=$(echo "$cache_l3" | sed 's/MiB//')" MiB"
+elif [[ "$cache_l3" =~ "KiB" ]]; then
+    cache_l3_val=$(echo "$cache_l3" | sed 's/KiB//')
+    cache_l3=$((cache_l3_val / 1024))" MiB"
+elif [[ -n "$cache_l3" ]]; then
+    cache_l3="$cache_l3 MiB"  # Suppose MiB si unité absente
+else
+    # Fallback : vérifier via /sys/devices/system/cpu
+    if [ -f /sys/devices/system/cpu/cpu0/cache/index3/size ]; then
+        cache_l3_val=$(cat /sys/devices/system/cpu/cpu0/cache/index3/size | sed 's/K//')
+        cache_l3=$((cache_l3_val / 1024))" MiB"
+    else
+        cache_l3="N/A"
+    fi
+fi
 
 # Extraire la fréquence actuelle (peut nécessiter root)
 freq_current=$(cat /proc/cpuinfo | grep "cpu MHz" | head -n 1 | awk '{print $4}' | sed 's/\..*//')
@@ -62,17 +81,15 @@ freq_current=$(cat /proc/cpuinfo | grep "cpu MHz" | head -n 1 | awk '{print $4}'
 # Vérifier la présence d'un GPU intégré
 gpu_integrated="Non détecté"
 if [[ "$cpu_name" =~ "Intel" ]]; then
-    # Vérification via lspci
+    # Vérification via lspci pour Intel
     if command -v lspci >/dev/null 2>&1; then
         lspci_output=$(lspci | grep -i "VGA.*Intel\|Display.*Intel")
         if [[ -n "$lspci_output" ]]; then
-            # Vérification via les fichiers DRM pour le nom précis du GPU
             if ls /sys/class/drm/card*/device/driver/module >/dev/null 2>&1; then
                 driver_path=$(ls -d /sys/class/drm/card*/device/driver/module | head -n 1)
                 if [[ -n "$driver_path" ]]; then
                     driver_name=$(basename "$(readlink "$driver_path")")
                     if [[ "$driver_name" == "i915" ]]; then
-                        # Extraire le nom du GPU depuis les registres ou lspci
                         if [[ "$lspci_output" =~ "Skylake GT3e" || "$lspci_output" =~ "Iris Graphics 540" ]]; then
                             gpu_integrated="Intel Iris Graphics 540 (48 EUs, 300-950 MHz)"
                         elif [[ "$lspci_output" =~ "HD Graphics" ]]; then
@@ -81,7 +98,7 @@ if [[ "$cpu_name" =~ "Intel" ]]; then
                             gpu_integrated="Intel GPU intégré (possiblement Iris ou HD Graphics)"
                         fi
                     else
-                        gpu_integrated="Intel GPU intégré (pilote non standard)"
+                        gpu_integrated="Intel GPU intégré (pilote non standard: $driver_name)"
                     fi
                 fi
             else
@@ -91,15 +108,42 @@ if [[ "$cpu_name" =~ "Intel" ]]; then
     else
         gpu_integrated="Intel GPU intégré (installez lspci pour plus de précision)"
     fi
-elif [[ "$cpu_name" =~ "AMD" && "$cpu_name" =~ "Ryzen" ]]; then
-    # Vérification pour AMD via lspci
+elif [[ "$cpu_name" =~ "AMD" ]]; then
+    # Vérification pour AMD via lspci et DRM
     if command -v lspci >/dev/null 2>&1; then
-        lspci_output=$(lspci | grep -i "VGA.*AMD\|Display.*AMD")
+        # Recherche élargie pour inclure les GPU AMD modernes
+        lspci_output=$(lspci | grep -i "VGA.*AMD\|Display.*AMD\|AMD.*Phoenix\|AMD/ATI")
         if [[ -n "$lspci_output" ]]; then
-            if [[ "$lspci_output" =~ "Vega" ]]; then
-                gpu_integrated="AMD Radeon Vega (modèle exact non identifié)"
+            # Vérification via DRM pour confirmer le pilote
+            if ls /sys/class/drm/card*/device/driver/module >/dev/null 2>&1; then
+                driver_path=$(ls -d /sys/class/drm/card*/device/driver/module | head -n 1)
+                if [[ -n "$driver_path" ]]; then
+                    driver_name=$(basename "$(readlink "$driver_path")")
+                    if [[ "$driver_name" == "amdgpu" ]]; then
+                        # Extraire l'identifiant matériel pour plus de précision
+                        device_id=$(lspci -n | grep -i "VGA\|Display" | grep "1002:" | awk '{print $3}' | cut -d: -f2)
+                        # Liste des Device IDs connus pour RDNA 3 (indicatif, peut être étendue)
+                        case "$device_id" in
+                            "15bf"|"15c8")  # Phoenix3 (Radeon 780M/760M)
+                                gpu_integrated="AMD Radeon Integrated GPU (RDNA 3, Phoenix, ~2700 MHz)"
+                                ;;
+                            *)
+                                gpu_integrated="AMD Radeon Integrated GPU (RDNA, modèle non identifié)"
+                                ;;
+                        esac
+                    else
+                        gpu_integrated="AMD GPU intégré (pilote non standard: $driver_name)"
+                    fi
+                fi
             else
-                gpu_integrated="AMD GPU intégré (possiblement Radeon)"
+                gpu_integrated="AMD GPU intégré (informations DRM non disponibles)"
+            fi
+        else
+            # Vérification supplémentaire via Vendor/Device ID pour AMD
+            lspci_amd=$(lspci -n | grep "1002:" | grep -i "VGA\|Display")
+            if [[ -n "$lspci_amd" ]]; then
+                device_id=$(echo "$lspci_amd" | awk '{print $3}' | cut -d: -f2)
+                gpu_integrated="AMD Radeon Integrated GPU (Device ID: $device_id, modèle non identifié)"
             fi
         fi
     else
