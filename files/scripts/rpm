@@ -77,7 +77,7 @@ dnf5 -y install \
 nerd-fonts \
 adobe-source-code-pro-fonts \
 google-droid-sans-mono-fonts \
-google-go-mono-fonts
+google-noto-fonts-all
 
 #Drivers
 dnf5 -y install \
