@@ -28,10 +28,8 @@ testdisk \
 gh \
 ryzenadj \
 yq \
-trash-cli
-
-#atuin is in testing for now
-dnf5 -y install atuin --enablerepo=updates-testing
+trash-cli \
+atuin
 
 #Goodies cli
 dnf5 -y  install \
