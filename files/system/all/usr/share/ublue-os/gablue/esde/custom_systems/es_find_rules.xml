@@ -27,4 +27,15 @@
             <entry>~/AppImages/sudachi</entry>
         </rule>
     </emulator>
+    <emulator name="AZAHAR">
+        <!-- Nintendo 3DS emulator Azahar -->
+        <rule type="staticpath">
+            <entry>/var/lib/flatpak/exports/bin/org.azahar_emu.Azahar</entry>
+            <entry>~/Applications/azahar*.AppImage</entry>
+            <entry>~/.local/share/applications/azahar*.AppImage</entry>
+            <entry>~/.local/bin/azahar*.AppImage</entry>
+            <entry>~/bin/azahar*.AppImage</entry>
+        </rule>
+    </emulator>
+
 </ruleList>
