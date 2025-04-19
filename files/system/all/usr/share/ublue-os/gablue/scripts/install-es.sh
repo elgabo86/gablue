@@ -135,6 +135,7 @@ if [ $? -eq 0 ]; then
             }
         fi
         # Mettre à jour la base de données des applications
+        kbuildsycoca6
         update-desktop-database "$HOME/.local/share/applications"
         if [ $? -eq 0 ]; then
             echo "Base de données des applications mise à jour avec succès !"
