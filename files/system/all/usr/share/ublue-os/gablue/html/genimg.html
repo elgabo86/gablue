@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Générateur d'images IA</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --primary: #7c3aed; /* Violet vif pour les accents */
+            --primary-dark: #6d28d9; /* Violet plus foncé pour hover */
+            --secondary: #22d3ee; /* Cyan pour contraste */
+            --dark: #1f2937; /* Fond sombre principal */
+            --light: #e5e7eb; /* Gris clair pour textes */
+            --danger: #ef4444; /* Rouge pour suppression */
+            --success: #10b981; /* Vert pour succès */
+            --warning: #f59e0b; /* Jaune pour alertes */
+            --background: #111827; /* Fond très sombre */
+            --card-background: #1f2937; /* Fond des cartes */
+            --text: #d1d5db; /* Texte clair */
+            --text-muted: #9ca3af; /* Texte secondaire */
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background-color: var(--background);
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            color: var(--light);
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+        }
+
+        .app-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            background: var(--card-background);
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .controls {
+            padding: 2rem;
+            background: var(--card-background);
+        }
+
+        .image-preview {
+            padding: 2rem;
+            background: var(--dark);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 600px;
+            position: relative;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        input, textarea, select {
+            width: 100%;
+            padding: 0.8rem 1rem;
+            border: 1px solid var(--text-muted);
+            border-radius: 8px;
+            font-size: 1rem;
+            background: var(--dark);
+            color: var(--text);
+            transition: all 0.3s ease;
+        }
+
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 0.8rem 1.5rem;
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+
+        .btn:hover {
+            background-color: var(--primary-dark);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(124, 58, 237, 0.4);
+        }
+
+        .btn-block {
+            display: block;
+            width: 100%;
+        }
+
+        .btn-secondary {
+            background-color: var(--secondary);
+        }
+
+        .btn-secondary:hover {
+            background-color: #06b6d4;
+        }
+
+        .btn-danger {
+            background-color: var(--danger);
+        }
+
+        .btn-danger:hover {
+            background-color: #dc2626;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .checkbox-group input {
+            width: auto;
+        }
+
+        .checkbox-group label {
+            margin-bottom: 0;
+            font-weight: normal;
+        }
+
+        .generated-image {
+            max-width: 100%;
+            max-height: 500px;
+            border-radius: 8px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+            display: none;
+            cursor: pointer;
+        }
+
+        .placeholder {
+            text-align: center;
+            color: var(--text-muted);
+        }
+
+        .placeholder i {
+            font-size: 4rem;
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+        }
+
+        .loading {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid var(--text-muted);
+            border-top: 5px solid var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 1rem;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .history {
+            margin-top: 2rem;
+            display: none;
+        }
+
+        .history.show {
+            display: block;
+        }
+
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .history h3 {
+            margin-bottom: 1rem;
+            color: var(--primary);
+        }
+
+        .history-items {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+
+        .history-item {
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .history-item:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        .history-item img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+            display: block;
+        }
+
+        .history-item .prompt {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 0.5rem;
+            font-size: 0.8rem;
+            display: none;
+        }
+
+        .history-item:hover .prompt {
+            display: block;
+        }
+
+        .history-delete-btn {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: var(--danger);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+
+        .history-item:hover .history-delete-btn {
+            display: flex;
+        }
+
+        .history-delete-btn:hover {
+            background: #dc2626;
+            transform: scale(1.1);
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 2rem;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 768px) {
+            .app-container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: var(--dark);
+            color: white;
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.4);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 3000;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.success {
+            background: var(--success);
+        }
+
+        .toast.error {
+            background: var(--danger);
+        }
+
+        .image-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+
+        .image-overlay.show {
+            display: flex;
+        }
+
+        .image-overlay img {
+            max-width: 90%;
+            max-height: 90vh;
+            border-radius: 8px;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        .image-overlay .close-btn {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: var(--danger);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            font-size: 1.2rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+
+        .image-overlay .close-btn:hover {
+            background: #dc2626;
+            transform: scale(1.1);
+        }
+
+        .image-overlay .overlay-buttons {
+            position: absolute;
+            bottom: 1rem;
+            right: 1rem;
+            display: flex;
+            gap: 1rem;
+        }
+
+        .image-overlay .copy-btn,
+        .image-overlay .download-btn {
+            background: var(--primary);
+            color: white;
+            padding: 0.8rem 1.5rem;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .image-overlay .copy-btn:hover,
+        .image-overlay .download-btn:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+        }
+
+        .image-overlay .delete-btn {
+            position: absolute;
+            bottom: 1rem;
+            left: 1rem;
+            background: var(--danger);
+            color: white;
+            padding: 0.8rem 1.5rem;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .image-overlay .delete-btn:hover {
+            background: #dc2626;
+            transform: translateY(-2px);
+        }
+
+        .seed-container {
+            position: relative;
+        }
+
+        .clear-seed-btn {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1rem;
+            cursor: pointer;
+            padding: 0.2rem;
+            transition: all 0.3s ease;
+        }
+
+        .clear-seed-btn:hover {
+            color: var(--danger);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Générateur d'images IA</h1>
+        </header>
+
+        <div class="app-container">
+            <div class="controls">
+                <div class="form-group">
+                    <label for="prompt">Description de l'image</label>
+                    <textarea id="prompt" placeholder="Décrivez l'image que vous souhaitez générer..."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="model">Modèle</label>
+                    <select id="model">
+                        <option value="flux" selected>Flux (par défaut)</option>
+                        <option value="turbo">Turbo</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="dimensions">Dimensions</label>
+                    <select id="dimensions">
+                        <!-- Carré -->
+                        <option value="512x512">512x512 (Carré)</option>
+                        <option value="1024x1024">1024x1024 (Carré)</option>
+                        <!-- Paysage -->
+                        <option value="800x600">800x600 (Paysage)</option>
+                        <option value="1024x576">1024x576 (Paysage)</option>
+                        <option value="1280x720" selected>1280x720 (Paysage)</option>
+                        <!-- Portrait -->
+                        <option value="600x800">600x800 (Portrait)</option>
+                        <option value="576x1024">576x1024 (Portrait)</option>
+                        <option value="720x1280">720x1280 (Portrait)</option>
+                        <!-- Ultrawide (pour logos et bannières) -->
+                        <option value="1600x400">1600x400 (Ultrawide)</option>
+                        <option value="1920x480">1920x480 (Ultrawide)</option>
+                        <option value="2048x512">2048x512 (Ultrawide)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="seed">Graine (laisser vide pour aléatoire)</label>
+                    <div class="seed-container">
+                        <input type="text" id="seed" placeholder="Graine aléatoire" pattern="[0-9]*">
+                        <button class="clear-seed-btn" id="clear-seed-btn"><i class="fas fa-times"></i></button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Options</label>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="enhance" checked>
+                        <label for="enhance">Améliorer la description avec l'IA</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="safe">
+                        <label for="safe">Filtre NSFW</label>
+                    </div>
+                </div>
+
+                <button id="generate-btn" class="btn btn-block">
+                    <i class="fas fa-magic"></i> Générer l'image
+                </button>
+            </div>
+
+            <div class="image-preview">
+                <div id="loading" class="loading" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Génération de votre image...</p>
+                </div>
+
+                <div id="placeholder" class="placeholder">
+                    <i class="fas fa-image"></i>
+                    <p>Votre image générée apparaîtra ici</p>
+                </div>
+
+                <img id="generated-image" class="generated-image" alt="Image générée">
+            </div>
+        </div>
+
+        <div class="history">
+            <div class="history-header">
+                <h3>Historique des générations</h3>
+                <button id="clear-history-btn" class="btn btn-danger">
+                    <i class="fas fa-trash"></i> Effacer l'Historique
+                </button>
+            </div>
+            <div id="history-items" class="history-items">
+                <!-- Les éléments de l'historique seront ajoutés ici -->
+            </div>
+        </div>
+
+        <footer>
+            <p>Propulsé par Elgabo ✨</p><br>
+        </footer>
+    </div>
+
+    <div id="image-overlay" class="image-overlay">
+        <img id="overlay-image" src="" alt="Image agrandie">
+        <button class="close-btn" id="close-overlay"><i class="fas fa-times"></i></button>
+        <button class="delete-btn" id="overlay-delete"><i class="fas fa-trash"></i> Supprimer</button>
+        <div class="overlay-buttons">
+            <button class="copy-btn" id="overlay-copy"><i class="fas fa-copy"></i> Copier</button>
+            <button class="download-btn" id="overlay-download"><i class="fas fa-download"></i> Télécharger</button>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Variable pour suivre si une génération est en cours
+            let isGenerating = false;
+            let currentPrompt = ''; // Stocker le prompt pour le nom du fichier
+
+            // Initialiser les champs au chargement de la page
+            document.getElementById('prompt').value = '';
+            document.getElementById('model').value = 'flux';
+            document.getElementById('dimensions').value = '1280x720';
+            document.getElementById('seed').value = '';
+
+            // Generate button click
+            const generateBtn = document.getElementById('generate-btn');
+            generateBtn.addEventListener('click', generateImage);
+
+            // Clear history button click
+            const clearHistoryBtn = document.getElementById('clear-history-btn');
+            clearHistoryBtn.addEventListener('click', () => {
+                if (window.confirm('Voulez-vous vraiment effacer tout l\'historique des images générées ? Cette action est irréversible.')) {
+                    clearHistory();
+                }
+            });
+
+            // Clear seed button click
+            const clearSeedBtn = document.getElementById('clear-seed-btn');
+            clearSeedBtn.addEventListener('click', () => {
+                document.getElementById('seed').value = '';
+            });
+
+            // Image click to show overlay
+            const generatedImage = document.getElementById('generated-image');
+            const imageOverlay = document.getElementById('image-overlay');
+            const overlayImage = document.getElementById('overlay-image');
+            const overlayDownload = document.getElementById('overlay-download');
+            const overlayCopy = document.getElementById('overlay-copy');
+            const overlayDelete = document.getElementById('overlay-delete');
+            const closeOverlay = document.getElementById('close-overlay');
+
+            generatedImage.addEventListener('click', () => {
+                if (generatedImage.style.display === 'block') {
+                    overlayImage.src = generatedImage.src;
+                    imageOverlay.classList.add('show');
+                }
+            });
+
+            // Fonction pour générer un nom de fichier à partir du prompt
+            function generateFileName(prompt) {
+                let cleanPrompt = prompt
+                    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Supprimer accents
+                    .replace(/[^a-zA-Z0-9\s-]/g, '') // Supprimer caractères spéciaux
+                    .trim()
+                    .replace(/\s+/g, '-') // Remplacer espaces par tirets
+                    .toLowerCase();
+                if (cleanPrompt.length > 50) {
+                    cleanPrompt = cleanPrompt.substring(0, 50);
+                    cleanPrompt = cleanPrompt.substring(0, cleanPrompt.lastIndexOf('-') + 1) || cleanPrompt;
+                }
+                return cleanPrompt ? `${cleanPrompt}.jpg` : 'image-ia.jpg';
+            }
+
+            // Fonction pour convertir une image en PNG via un canvas
+            function convertToPng(imageSrc) {
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.crossOrigin = 'Anonymous'; // Nécessaire pour éviter les erreurs CORS
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0);
+                        canvas.toBlob(blob => {
+                            if (blob) {
+                                resolve(blob);
+                            } else {
+                                reject(new Error('Failed to convert image to PNG'));
+                            }
+                        }, 'image/png');
+                    };
+                    img.onerror = () => reject(new Error('Failed to load image for conversion'));
+                    img.src = imageSrc;
+                });
+            }
+
+            // Download button
+            overlayDownload.addEventListener('click', () => {
+                fetch(overlayImage.src)
+                    .then(response => response.blob())
+                    .then(blob => {
+                        const url = window.URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = generateFileName(currentPrompt);
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        window.URL.revokeObjectURL(url);
+                    })
+                    .catch(error => {
+                        console.error('Failed to download image:', error);
+                        showToast('Erreur lors du téléchargement de l\'image.', 'error');
+                    });
+            });
+
+            // Copy button
+            overlayCopy.addEventListener('click', () => {
+                convertToPng(overlayImage.src)
+                    .then(blob => {
+                        const item = new ClipboardItem({ 'image/png': blob });
+                        return navigator.clipboard.write([item]);
+                    })
+                    .then(() => {
+                        showToast('Image copiée dans le presse-papier !', 'success');
+                    })
+                    .catch(error => {
+                        console.error('Failed to copy image:', error);
+                        showToast('Erreur lors de la copie de l\'image. Essayez un autre navigateur.', 'error');
+                    });
+            });
+
+            // Delete button (overlay)
+            overlayDelete.addEventListener('click', () => {
+                const imageUrl = overlayImage.src;
+                let history = JSON.parse(localStorage.getItem('imageHistory') || '[]');
+                history = history.filter(item => item.imageUrl !== imageUrl);
+                localStorage.setItem('imageHistory', JSON.stringify(history));
+                loadHistory();
+                showToast('Image supprimée de l\'historique !', 'success');
+                // Masquer l'image générée et réinitialiser les champs
+                generatedImage.style.display = 'none';
+                document.getElementById('placeholder').style.display = 'block';
+                document.getElementById('prompt').value = '';
+                document.getElementById('model').value = 'flux';
+                document.getElementById('dimensions').value = '1280x720';
+                document.getElementById('seed').value = '';
+                imageOverlay.classList.remove('show');
+            });
+
+            // Close overlay
+            closeOverlay.addEventListener('click', () => {
+                imageOverlay.classList.remove('show');
+            });
+
+            // Close overlay when clicking outside the image
+            imageOverlay.addEventListener('click', (e) => {
+                if (e.target === imageOverlay) {
+                    imageOverlay.classList.remove('show');
+                }
+            });
+
+            // Load history from localStorage
+            function loadHistory() {
+                const history = JSON.parse(localStorage.getItem('imageHistory') || '[]');
+                const historyContainer = document.getElementById('history-items');
+                const historySection = document.querySelector('.history');
+
+                // Clear existing content to prevent duplicate event listeners
+                historyContainer.innerHTML = '';
+
+                if (history.length === 0) {
+                    historySection.classList.remove('show');
+                    return;
+                }
+
+                historySection.classList.add('show');
+
+                history.forEach(item => {
+                    const historyItem = document.createElement('div');
+                    historyItem.className = 'history-item';
+                    historyItem.innerHTML = `
+                        <img src="${item.imageUrl}" alt="${item.prompt}">
+                        <button class="history-delete-btn"><i class="fas fa-times"></i></button>
+                        <div class="prompt">${item.prompt}</div>
+                    `;
+
+                    // Ajouter un événement pour la suppression
+                    const deleteBtn = historyItem.querySelector('.history-delete-btn');
+                    deleteBtn.addEventListener('click', (e) => {
+                        e.stopPropagation(); // Empêcher le clic sur l'image
+                        let history = JSON.parse(localStorage.getItem('imageHistory') || '[]');
+                        history = history.filter(h => h.imageUrl !== item.imageUrl);
+                        localStorage.setItem('imageHistory', JSON.stringify(history));
+                        loadHistory();
+                        showToast('Image supprimée de l\'historique !', 'success');
+                        // Réinitialiser les champs
+                        document.getElementById('generated-image').style.display = 'none';
+                        document.getElementById('placeholder').style.display = 'block';
+                        document.getElementById('prompt').value = '';
+                        document.getElementById('model').value = 'flux';
+                        document.getElementById('dimensions').value = '1280x720';
+                        document.getElementById('seed').value = '';
+                    });
+
+                    // Clic sur l'image pour afficher
+                    historyItem.addEventListener('click', () => {
+                        document.getElementById('prompt').value = item.prompt;
+                        const generatedImage = document.getElementById('generated-image');
+                        generatedImage.src = item.imageUrl;
+                        generatedImage.style.display = 'block';
+                        document.getElementById('placeholder').style.display = 'none';
+                        document.getElementById('seed').value = item.seed || '';
+                        document.getElementById('model').value = item.model || 'flux'; // Mettre à jour le modèle
+                        document.getElementById('dimensions').value = item.dimensions || '1280x720'; // Mettre à jour les dimensions
+                        currentPrompt = item.prompt;
+                    });
+
+                    historyContainer.appendChild(historyItem);
+                });
+            }
+
+            // Clear history
+            function clearHistory() {
+                localStorage.removeItem('imageHistory');
+                loadHistory();
+                // Masquer l'image générée et réinitialiser les champs
+                document.getElementById('generated-image').style.display = 'none';
+                document.getElementById('placeholder').style.display = 'block';
+                document.getElementById('prompt').value = '';
+                document.getElementById('model').value = 'flux';
+                document.getElementById('dimensions').value = '1280x720';
+                document.getElementById('seed').value = '';
+            }
+
+            // Show toast notification
+            function showToast(message, type = '') {
+                const toast = document.getElementById('toast');
+                toast.textContent = message;
+                toast.className = 'toast';
+                toast.classList.add(type);
+                toast.classList.add('show');
+
+                setTimeout(() => {
+                    toast.classList.remove('show');
+                }, 3000);
+            }
+
+            // Generate image function
+            function generateImage() {
+                const prompt = document.getElementById('prompt').value.trim();
+                if (!prompt) {
+                    showToast('Veuillez entrer une description', 'error');
+                    return;
+                }
+
+                // Stocker le prompt pour le nom du fichier
+                currentPrompt = prompt;
+
+                // Indiquer qu'une génération est en cours
+                isGenerating = true;
+
+                // Show loading state
+                document.getElementById('loading').style.display = 'flex';
+                document.getElementById('placeholder').style.display = 'none';
+                document.getElementById('generated-image').style.display = 'none';
+
+                // Get all parameters
+                const model = document.getElementById('model').value;
+                const dimensions = document.getElementById('dimensions').value.split('x');
+                const width = dimensions[0];
+                const height = dimensions[1];
+                let seed = document.getElementById('seed').value;
+                const enhance = document.getElementById('enhance').checked;
+                const safe = document.getElementById('safe').checked;
+
+                // Generate a random seed if none is provided
+                if (!seed) {
+                    seed = Math.floor(Math.random() * 1000000);
+                } else {
+                    seed = parseInt(seed);
+                    if (isNaN(seed)) {
+                        seed = Math.floor(Math.random() * 1000000);
+                    }
+                }
+
+                // Build URL
+                let url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}`;
+                url += `?model=${model}&width=${width}&height=${height}`;
+                url += `&nologo=true&private=true`; // Forcer nologo et private
+                if (seed) url += `&seed=${seed}`;
+                if (enhance) url += `&enhance=true`;
+                if (safe) url += `&safe=true`;
+
+                // Add timestamp to prevent caching
+                url += `&tamp=${Date.now()}`;
+
+                // Fetch image
+                const img = document.getElementById('generated-image');
+                img.onload = function() {
+                    if (isGenerating) {
+                        document.getElementById('loading').style.display = 'none';
+                        img.style.display = 'block';
+
+                        // Add to history with the seed, model, and dimensions
+                        addToHistory(prompt, url, seed, model, `${width}x${height}`);
+
+                        showToast('Image générée avec succès !', 'success');
+
+                        // Clear the seed field after generation
+                        document.getElementById('seed').value = '';
+                    }
+                    // Reset generating state
+                    isGenerating = false;
+                };
+
+                img.onerror = function() {
+                    console.error('Failed to load image from URL:', url);
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('placeholder').style.display = 'block';
+                    showToast('Erreur lors de la génération de l\'image. Vérifiez votre connexion ou essayez plus tard.', 'error');
+                    document.getElementById('seed').value = ''; // Clear seed on error
+                    isGenerating = false;
+                };
+
+                img.src = url;
+            }
+
+            // Add to history
+            function addToHistory(prompt, imageUrl, seed, model, dimensions) {
+                let history = JSON.parse(localStorage.getItem('imageHistory') || '[]');
+                history.unshift({
+                    prompt: prompt,
+                    imageUrl: imageUrl,
+                    seed: seed || null,
+                    model: model,
+                    dimensions: dimensions,
+                    timestamp: new Date().toISOString()
+                });
+                if (history.length > 10) {
+                    history = history.slice(0, 10);
+                }
+                localStorage.setItem('imageHistory', JSON.stringify(history));
+                loadHistory();
+            }
+
+            // Load history on page load
+            loadHistory();
+
+            // Example prompts
+            const examplePrompts = [
+                "Un magnifique coucher de soleil sur l'océan avec des palmiers",
+                "Une ville futuriste avec des voitures volantes et des néons",
+                "Un chiot corgi adorable jouant dans un champ de fleurs",
+                "Un astronaute chevauchant un cheval sur Mars",
+                "Un dirigeable steampunk volant à travers les nuages"
+            ];
+
+            // Random example prompt button
+            const randomPromptBtn = document.createElement('button');
+            randomPromptBtn.className = 'btn btn-secondary';
+            randomPromptBtn.innerHTML = '<i class="fas fa-random"></i> Exemple aléatoire';
+            randomPromptBtn.style.marginTop = '0.5rem';
+            randomPromptBtn.addEventListener('click', () => {
+                const randomPrompt = examplePrompts[Math.floor(Math.random() * examplePrompts.length)];
+                document.getElementById('prompt').value = randomPrompt;
+            });
+
+            document.querySelector('.form-group:first-child').appendChild(randomPromptBtn);
+        });
+    </script>
+</body>
+</html>
