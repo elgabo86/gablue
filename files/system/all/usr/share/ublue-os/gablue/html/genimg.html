@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="fr">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,18 +8,18 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {
-            --primary: #7c3aed; /* Violet vif pour les accents */
-            --primary-dark: #6d28d9; /* Violet plus foncé pour hover */
-            --secondary: #22d3ee; /* Cyan pour contraste */
-            --dark: #1f2937; /* Fond sombre principal */
-            --light: #e5e7eb; /* Gris clair pour textes */
-            --danger: #ef4444; /* Rouge pour suppression */
-            --success: #10b981; /* Vert pour succès */
-            --warning: #f59e0b; /* Jaune pour alertes */
-            --background: #111827; /* Fond très sombre */
-            --card-background: #1f2937; /* Fond des cartes */
-            --text: #d1d5db; /* Texte clair */
-            --text-muted: #9ca3af; /* Texte secondaire */
+            --primary: #7c3aed;
+            --primary-dark: #6d28d9;
+            --secondary: #22d3ee;
+            --dark: #1f2937;
+            --light: #e5e7eb;
+            --danger: #ef4444;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --background: #111827;
+            --card-background: #1f2937;
+            --text: #d1d5db;
+            --text-muted: #9ca3af;
         }
 
         * {
@@ -64,7 +65,6 @@
             background: var(--card-background);
             border-radius: 12px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-            overflow: hidden;
         }
 
         .controls {
@@ -94,7 +94,9 @@
             color: var(--text);
         }
 
-        input, textarea, select {
+        input,
+        textarea,
+        select {
             width: 100%;
             padding: 0.8rem 1rem;
             border: 1px solid var(--text-muted);
@@ -110,10 +112,138 @@
             resize: vertical;
         }
 
-        input:focus, textarea:focus, select:focus {
+        input:focus,
+        textarea:focus,
+        select:focus {
             outline: none;
             border-color: var(--primary);
             box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
+        }
+
+        .custom-select {
+            position: relative;
+            width: 100%;
+        }
+
+        .custom-select-toggle {
+            width: 100%;
+            padding: 0.8rem 1rem;
+            border: 1px solid var(--text-muted);
+            border-radius: 8px;
+            font-size: 1rem;
+            background: var(--dark);
+            color: var(--text);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.3s ease;
+        }
+
+        .custom-select-toggle:hover {
+            border-color: var(--primary);
+        }
+
+        .custom-select-toggle:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
+        }
+
+        .custom-select-options {
+            position: absolute;
+            left: 0;
+            right: 0;
+            max-height: 400px;
+            overflow-y: auto;
+            background: var(--card-background);
+            border: 1px solid var(--text-muted);
+            border-radius: 8px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+            display: none;
+        }
+
+        .custom-select-options.show {
+            display: block;
+        }
+
+        .custom-select-options.open-up {
+            bottom: 100%;
+            top: auto;
+        }
+
+        .custom-select-options.open-down {
+            top: 100%;
+            bottom: auto;
+        }
+
+        .custom-select-option {
+            padding: 0.5rem 1rem;
+            color: var(--text);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .custom-select-option:hover {
+            background: var(--primary-dark);
+            color: white;
+        }
+
+        .custom-select-option.category {
+            background: var(--dark);
+            color: var(--text-muted);
+            font-weight: bold;
+            padding: 0.5rem 1rem;
+            border-top: 1px solid var(--text-muted);
+            cursor: default;
+        }
+
+        .tooltip {
+            position: fixed;
+            background: var(--primary-dark);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            z-index: 2000;
+            display: none;
+            max-width: 300px;
+            pointer-events: none;
+        }
+
+        .tooltip.show {
+            display: block;
+        }
+
+        .tooltip::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: -6px;
+            transform: translateY(-50%);
+            border-width: 6px;
+            border-style: solid;
+            border-color: transparent var(--primary-dark) transparent transparent;
+        }
+
+        @media (max-width: 768px) {
+            .custom-select-toggle {
+                font-size: 0.9rem;
+                padding: 0.6rem;
+            }
+
+            .custom-select-option {
+                font-size: 0.9rem;
+                padding: 0.6rem 1rem;
+            }
+
+            .tooltip {
+                font-size: 0.8rem;
+                max-width: 200px;
+            }
         }
 
         .btn {
@@ -221,12 +351,17 @@
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin-bottom: 1rem;
-            will-change: transform; /* Optimisation pour l'animation */
+            will-change: transform;
         }
 
         @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(360deg);
+            }
         }
 
         .history {
@@ -383,6 +518,8 @@
             max-height: 90vh;
             border-radius: 8px;
             box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+            display: block;
+            margin: auto;
         }
 
         .image-overlay .close-btn {
@@ -474,8 +611,19 @@
         .clear-seed-btn:hover {
             color: var(--danger);
         }
+
+        .custom-select-option.popular {
+            background: rgba(124, 58, 237, 0.1);
+            font-weight: bold;
+        }
+
+        .custom-select-option.popular:hover {
+            background: var(--primary-dark);
+            color: white;
+        }
     </style>
 </head>
+
 <body>
     <div class="container">
         <header>
@@ -500,18 +648,14 @@
                 <div class="form-group">
                     <label for="dimensions">Dimensions</label>
                     <select id="dimensions">
-                        <!-- Carré (1:1) -->
                         <option value="512x512">512x512 (Carré, 1:1)</option>
                         <option value="1024x1024">1024x1024 (Carré, 1:1)</option>
-                        <!-- Paysage (4:3, 16:9) -->
                         <option value="800x600">800x600 (Paysage, 4:3)</option>
                         <option value="1024x576">1024x576 (Paysage, 16:9)</option>
                         <option value="1280x720" selected>1280x720 (Paysage, 16:9)</option>
-                        <!-- Portrait (3:4, 9:16) -->
                         <option value="600x800">600x800 (Portrait, 3:4)</option>
                         <option value="576x1024">576x1024 (Portrait, 9:16)</option>
                         <option value="720x1280">720x1280 (Portrait, 9:16)</option>
-                        <!-- Ultrawide (4:1) -->
                         <option value="1600x400">1600x400 (Ultrawide, 4:1)</option>
                         <option value="1920x480">1920x480 (Ultrawide, 4:1)</option>
                         <option value="2048x512">2048x512 (Ultrawide, 4:1)</option>
@@ -528,19 +672,214 @@
 
                 <div class="form-group">
                     <label for="style">Style</label>
-                    <select id="style">
-                        <option value="default" selected>Défaut</option>
-                        <option value="anime">Anime</option>
-                        <option value="realistic">Réaliste</option>
-                        <option value="cyberpunk">Cyperpunk</option>
-                        <option value="pixelart">Pixel Art</option>
-                        <option value="fantasy">Fantaisie</option>
-                        <option value="watercolor">Aquarelle</option>
-                        <option value="surrealist">Surréaliste</option>
-                        <option value="steampunk">Steampunk</option>
-                        <option value="minimalist">Minimaliste</option>
-                        <option value="artdeco">Art Déco</option>
-                    </select>
+                    <div class="custom-select" id="style">
+                        <div class="custom-select-toggle">
+                            <span class="custom-select-label">Défaut</span>
+                            <i class="fas fa-chevron-down"></i>
+                        </div>
+                        <div class="custom-select-options">
+                            <div class="custom-select-option" data-value="default"
+                                data-tooltip="Style par défaut sans modification esthétique">Défaut</div>
+                            <div class="custom-select-option category">──── Populaires ────</div>
+                            <div class="custom-select-option popular" data-value="anime"
+                                data-tooltip="Style d'animation japonaise avec lignes nettes, couleurs vibrantes et expressions exagérées">
+                                Anime</div>
+                            <div class="custom-select-option popular" data-value="realistic"
+                                data-tooltip="Rendu photoréaliste avec détails précis et textures naturelles">Réaliste
+                            </div>
+                            <div class="custom-select-option popular" data-value="cartoon"
+                                data-tooltip="Style animé avec contours nets et couleurs vives, comme un dessin animé">
+                                Cartoon</div>
+                            <div class="custom-select-option popular" data-value="oilpainting"
+                                data-tooltip="Peinture à l'huile classique avec coups de pinceau épais et couleurs riches">
+                                Peinture à l'huile</div>
+                            <div class="custom-select-option popular" data-value="watercolor"
+                                data-tooltip="Effet de peinture à l'aquarelle avec des couleurs douces et translucides">
+                                Aquarelle</div>
+                            <div class="custom-select-option popular" data-value="sketch"
+                                data-tooltip="Croquis au crayon ou à l'encre avec traits visibles et esthétique minimaliste">
+                                Croquis</div>
+                            <div class="custom-select-option category">──── Artistiques Classiques ────</div>
+                            <div class="custom-select-option" data-value="artdeco"
+                                data-tooltip="Style élégant des années 1920 avec des motifs géométriques et dorés">Art
+                                Déco</div>
+                            <div class="custom-select-option" data-value="baroque"
+                                data-tooltip="Esthétique opulente du XVIIe siècle avec des détails riches et dorés">
+                                Baroque</div>
+                            <div class="custom-select-option" data-value="bauhaus"
+                                data-tooltip="Style moderniste avec des formes géométriques et des couleurs primaires">
+                                Bauhaus</div>
+                            <div class="custom-select-option" data-value="chiaroscuro"
+                                data-tooltip="Jeu dramatique de lumière et d'ombre, inspiré des peintures de Caravage">
+                                Chiaroscuro</div>
+                            <div class="custom-select-option" data-value="expressionist"
+                                data-tooltip="Émotions brutes avec des couleurs contrastées et des formes exagérées">
+                                Expressionniste</div>
+                            <div class="custom-select-option" data-value="gouache"
+                                data-tooltip="Peinture épaisse et texturée avec des couleurs vibrantes et des coups de pinceau">
+                                Gouache</div>
+                            <div class="custom-select-option" data-value="marble"
+                                data-tooltip="Esthétique de marbre sculpté avec veines élégantes et tons luxueux">Marbre
+                            </div>
+                            <div class="custom-select-option" data-value="mosaic"
+                                data-tooltip="Motifs composés de petites tuiles colorées, comme l'art byzantin">Mosaïque
+                            </div>
+                            <div class="custom-select-option" data-value="popart"
+                                data-tooltip="Couleurs audacieuses et motifs répétitifs, inspiré d'Andy Warhol">Pop Art
+                            </div>
+                            <div class="custom-select-option" data-value="surrealist"
+                                data-tooltip="Scènes irréelles et oniriques, comme les œuvres de Dalí">Surréaliste</div>
+                            <div class="custom-select-option" data-value="ukiyo-e"
+                                data-tooltip="Estampes japonaises traditionnelles avec des lignes fluides et des scènes poétiques">
+                                Ukiyo-e</div>
+                            <div class="custom-select-option category">──── Modernes/Graphiques ────</div>
+                            <div class="custom-select-option" data-value="chalkboard"
+                                data-tooltip="Style tableau noir avec des traits de craie et une vibe rétro éducative">
+                                Tableau Craie</div>
+                            <div class="custom-select-option" data-value="glitchart"
+                                data-tooltip="Effets visuels numériques cassés avec des distorsions et artefacts colorés">
+                                Glitch Art</div>
+                            <div class="custom-select-option" data-value="holographic"
+                                data-tooltip="Effets irisés et brillants, comme des hologrammes futuristes">
+                                Holographique</div>
+                            <div class="custom-select-option" data-value="holographicretro"
+                                data-tooltip="Holographie rétrofuturiste avec reflets irisés et vibe années 80">
+                                Holographique Rétro</div>
+                            <div class="custom-select-option" data-value="lowpoly"
+                                data-tooltip="Formes géométriques polygonales en 3D minimaliste">Low Poly</div>
+                            <div class="custom-select-option" data-value="minimalist"
+                                data-tooltip="Design épuré avec peu de détails et des couleurs simples">Minimaliste
+                            </div>
+                            <div class="custom-select-option" data-value="papercut"
+                                data-tooltip="Découpages de papier avec couches superposées et ombres délicates">
+                                Papercut</div>
+                            <div class="custom-select-option" data-value="pixelart"
+                                data-tooltip="Esthétique rétro des jeux vidéo avec des pixels visibles">Pixel Art</div>
+                            <div class="custom-select-option" data-value="vectorart"
+                                data-tooltip="Graphismes épurés avec des lignes nettes et des formes plates">Vector Art
+                            </div>
+                            <div class="custom-select-option category">──── Futuristes ────</div>
+                            <div class="custom-select-option" data-value="afrofuturism"
+                                data-tooltip="Fusion de science-fiction et culture africaine avec des motifs vibrants">
+                                Afrofuturisme</div>
+                            <div class="custom-select-option" data-value="biopunk"
+                                data-tooltip="Technologie organique et mutations dans une vibe dystopique">Biopunk</div>
+                            <div class="custom-select-option" data-value="cyberpunk"
+                                data-tooltip="Ambiance high-tech sombre avec néons et dystopie urbaine">Cyberpunk</div>
+                            <div class="custom-select-option" data-value="dieselpunk"
+                                data-tooltip="Style rétro-futuriste des années 30-40 avec machines robustes">Dieselpunk
+                            </div>
+                            <div class="custom-select-option" data-value="neonnoir"
+                                data-tooltip="Mélange de cyberpunk et film noir avec néons et ambiance pluvieuse">Néon
+                                Noir</div>
+                            <div class="custom-select-option" data-value="retrofuture"
+                                data-tooltip="Vision du futur des années 50-60 avec fusées et dômes vintage">
+                                Rétrofuturiste</div>
+                            <div class="custom-select-option" data-value="solarpunk"
+                                data-tooltip="Futur écologique utopique avec technologies vertes et nature">Solarpunk
+                            </div>
+                            <div class="custom-select-option" data-value="synthwave"
+                                data-tooltip="Esthétique rétro-futuriste des années 80 avec néons et grilles">Synthwave
+                            </div>
+                            <div class="custom-select-option category">──── Fantastiques/Magiques ────</div>
+                            <div class="custom-select-option" data-value="bioluminescent"
+                                data-tooltip="Lueurs néon comme des organismes bioluminescents, vibe sous-marine magique">
+                                Bioluminescent</div>
+                            <div class="custom-select-option" data-value="biopoetic"
+                                data-tooltip="Formes organiques fluides avec une ambiance vivante et poétique">
+                                Biopoétique</div>
+                            <div class="custom-select-option" data-value="dreamscape"
+                                data-tooltip="Scènes irréelles et floues, comme dans un rêve">Paysage Onirique</div>
+                            <div class="custom-select-option" data-value="enchanted"
+                                data-tooltip="Ambiance magique avec lueurs douces et éléments féeriques">Enchanté</div>
+                            <div class="custom-select-option" data-value="ethereal"
+                                data-tooltip="Esthétique aérienne avec tons pastel et légèreté surnaturelle">Éthéré
+                            </div>
+                            <div class="custom-select-option" data-value="fantasy"
+                                data-tooltip="Univers épiques avec créatures et paysages fantastiques">Fantaisie</div>
+                            <div class="custom-select-option" data-value="luminist"
+                                data-tooltip="Ambiance centrée sur la lumière avec halos et reflets divins">Luministe
+                            </div>
+                            <div class="custom-select-option" data-value="mythic"
+                                data-tooltip="Scènes inspirées des mythologies avec une aura sacrée">Mythique</div>
+                            <div class="custom-select-option" data-value="whimsical"
+                                data-tooltip="Ambiance ludique avec éléments excentriques et couleurs douces">
+                                Fantaisiste</div>
+                            <div class="custom-select-option category">──── Sombres/Dramatiques ────</div>
+                            <div class="custom-select-option" data-value="apocalyptic"
+                                data-tooltip="Scènes post-apocalyptiques avec ruines et cieux sombres">Apocalyptique
+                            </div>
+                            <div class="custom-select-option" data-value="gothic"
+                                data-tooltip="Ambiance mystérieuse avec tons sombres et détails ornés">Gothique</div>
+                            <div class="custom-select-option" data-value="noir"
+                                data-tooltip="Esthétique monochrome des films noirs avec ombres dramatiques">Noir (Film
+                                Noir)</div>
+                            <div class="custom-select-option" data-value="xenomorphic"
+                                data-tooltip="Formes biomécaniques extraterrestres, inspirées de H.R. Giger">Xénomorphe
+                            </div>
+                            <div class="custom-select-option category">──── Vibrants/Alternatifs ────</div>
+                            <div class="custom-select-option" data-value="fractal"
+                                data-tooltip="Motifs géométriques complexes et répétitifs, comme des fractales">Fractal
+                            </div>
+                            <div class="custom-select-option" data-value="graffiti"
+                                data-tooltip="Style urbain avec couleurs vives et motifs de street art">Graffiti</div>
+                            <div class="custom-select-option" data-value="grunge"
+                                data-tooltip="Esthétique brute avec textures rugueuses et couleurs désaturées">Grunge
+                            </div>
+                            <div class="custom-select-option" data-value="kawaii"
+                                data-tooltip="Style japonais mignon avec personnages adorables et pastel">Kawaii</div>
+                            <div class="custom-select-option" data-value="prismatic"
+                                data-tooltip="Couleurs éclatantes réfractées, comme à travers un prisme">Prismatique
+                            </div>
+                            <div class="custom-select-option" data-value="psychedelic"
+                                data-tooltip="Couleurs vives et motifs tourbillonnants, ambiance années 60">
+                                Psychédélique</div>
+                            <div class="custom-select-option" data-value="vaporwave"
+                                data-tooltip="Nostalgie rétro des années 80-90 avec néons et pastel">Vaporwave</div>
+                            <div class="custom-select-option category">──── Décoratifs ────</div>
+                            <div class="custom-select-option" data-value="claymation"
+                                data-tooltip="Style pâte à modeler avec textures douces et vibe artisanale">Claymation
+                            </div>
+                            <div class="custom-select-option" data-value="knitted"
+                                data-tooltip="Textures de laine avec motifs entrelacés, vibe chaleureuse et artisanale">
+                                Tricoté</div>
+                            <div class="custom-select-option" data-value="origami"
+                                data-tooltip="Esthétique de pliage de papier avec formes géométriques nettes">Origami
+                            </div>
+                            <div class="custom-select-option" data-value="stainedglass"
+                                data-tooltip="Couleurs vibrantes séparées par des lignes noires, comme un vitrail">
+                                Vitrail</div>
+                            <div class="custom-select-option" data-value="velvet"
+                                data-tooltip="Textures riches de velours avec couleurs profondes et ambiance opulente">
+                                Velours</div>
+                            <div class="custom-select-option category">──── Cosmiques ────</div>
+                            <div class="custom-select-option" data-value="cosmic"
+                                data-tooltip="Ambiance spatiale avec étoiles, galaxies et tons profonds">Cosmique</div>
+                            <div class="custom-select-option" data-value="microscopic"
+                                data-tooltip="Images au microscope avec détails cellulaires et couleurs fluorescentes">
+                                Microscopique</div>
+                            <div class="custom-select-option category">──── Steampunk ────</div>
+                            <div class="custom-select-option" data-value="steampunk"
+                                data-tooltip="Machines rétro-futuristes avec engrenages et vapeur">Steampunk</div>
+                            <div class="custom-select-option category">──── Audacieux ────</div>
+                            <div class="custom-select-option" data-value="boudoir"
+                                data-tooltip="Style intime et luxueux avec textures soyeuses et sensualité raffinée">
+                                Boudoir</div>
+                            <div class="custom-select-option" data-value="cabaret"
+                                data-tooltip="Spectacles burlesques avec couleurs riches et vibe théâtrale provocante">
+                                Cabaret</div>
+                            <div class="custom-select-option" data-value="erotic"
+                                data-tooltip="Art sensuel avec formes fluides et ambiance suggestive">
+                                Érotique</div>
+                            <div class="custom-select-option" data-value="fetishnoir"
+                                data-tooltip="Ambiance sombre avec cuir, contrastes forts et mystère audacieux">Fetish
+                                Noir</div>
+                            <div class="custom-select-option" data-value="pinup"
+                                data-tooltip="Style rétro des années 50 avec poses audacieuses et glamour espiègle">
+                                Pin-Up</div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="style-value" name="style" value="default">
                 </div>
 
                 <div class="form-group">
@@ -583,7 +922,6 @@
                 </button>
             </div>
             <div id="history-items" class="history-items">
-                <!-- Les éléments de l'historique seront ajoutés ici -->
             </div>
         </div>
 
@@ -604,38 +942,103 @@
 
     <div id="toast" class="toast"></div>
 
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            // Variable pour suivre si une génération est en cours
-            let isGenerating = false;
-            let isWaiting = false; // Nouvelle variable pour suivre l'état d'attente
-            let currentPrompt = ''; // Stocker le prompt pour le nom du fichier
-            let generationTimeout = null; // Timeout pour la génération
+    <div id="tooltip" class="tooltip"></div>
 
-            // Initialiser les champs au chargement de la page
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            let isGenerating = false;
+            let isWaiting = false;
+            let currentPrompt = '';
+            let abortController = null;
+
             document.getElementById('prompt').value = '';
             document.getElementById('model').value = 'flux';
             document.getElementById('dimensions').value = '1280x720';
             document.getElementById('seed').value = '';
-            document.getElementById('style').value = 'default';
+            document.getElementById('style-value').value = 'default';
             document.getElementById('generated-image').style.display = 'none';
             document.getElementById('placeholder').style.display = 'block';
-            document.getElementById('image-overlay').classList.remove('show'); // Assurer que l'overlay est caché
+            document.getElementById('image-overlay').classList.remove('show');
 
-            // Gérer les touches Enter et Maj+Enter dans le textarea
             const promptTextarea = document.getElementById('prompt');
             promptTextarea.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault(); // Empêche le retour à la ligne par défaut
+                    e.preventDefault();
+                    if (!isGenerating) generateImage();
+                }
+            });
+
+            const customSelect = document.querySelector('.custom-select');
+            const toggle = customSelect.querySelector('.custom-select-toggle');
+            const options = customSelect.querySelector('.custom-select-options');
+            const selectLabel = customSelect.querySelector('.custom-select-label');
+            const styleInput = document.getElementById('style-value');
+            const tooltip = document.getElementById('tooltip');
+
+            toggle.addEventListener('click', () => {
+                const toggleRect = toggle.getBoundingClientRect();
+                const optionsHeight = 400;
+                const spaceBelow = window.innerHeight - toggleRect.bottom;
+                const spaceAbove = toggleRect.top;
+
+                options.classList.remove('open-up', 'open-down');
+                if (spaceBelow < optionsHeight && spaceAbove > spaceBelow) {
+                    options.classList.add('open-up');
+                } else {
+                    options.classList.add('open-down');
+                }
+
+                options.classList.toggle('show');
+            });
+
+            document.querySelectorAll('.custom-select-option:not(.category)').forEach(option => {
+                option.addEventListener('click', () => {
+                    const value = option.getAttribute('data-value');
+                    selectLabel.textContent = option.textContent;
+                    styleInput.value = value;
+                    options.classList.remove('show');
+                });
+
+                option.addEventListener('mousemove', (e) => {
+                    const tooltipText = option.getAttribute('data-tooltip');
+                    if (tooltipText) {
+                        tooltip.textContent = tooltipText;
+                        tooltip.classList.add('show');
+
+                        const rect = option.getBoundingClientRect();
+                        tooltip.style.top = `${rect.top + (rect.height / 2) - (tooltip.offsetHeight / 2)}px`;
+                        tooltip.style.left = `${rect.right + window.scrollX + 10}px`;
+
+                        const tooltipRect = tooltip.getBoundingClientRect();
+                        if (tooltipRect.right > window.innerWidth) {
+                            tooltip.style.left = `${rect.left + window.scrollX - tooltipRect.width - 10}px`;
+                            tooltip.classList.add('left');
+                        } else {
+                            tooltip.classList.remove('left');
+                        }
+                    }
+                });
+
+                option.addEventListener('mouseleave', () => {
+                    tooltip.classList.remove('show');
+                });
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!customSelect.contains(e.target)) {
+                    options.classList.remove('show');
+                }
+            });
+
+            const generateBtn = document.getElementById('generate-btn');
+            generateBtn.addEventListener('click', () => {
+                if (isGenerating) {
+                    stopGeneration();
+                } else {
                     generateImage();
                 }
             });
 
-            // Generate button click
-            const generateBtn = document.getElementById('generate-btn');
-            generateBtn.addEventListener('click', generateImage);
-
-            // Clear history button click
             const clearHistoryBtn = document.getElementById('clear-history-btn');
             clearHistoryBtn.addEventListener('click', () => {
                 if (window.confirm('Voulez-vous vraiment effacer tout l\'historique des images générées ? Cette action est irréversible.')) {
@@ -643,13 +1046,11 @@
                 }
             });
 
-            // Clear seed button click
             const clearSeedBtn = document.getElementById('clear-seed-btn');
             clearSeedBtn.addEventListener('click', () => {
                 document.getElementById('seed').value = '';
             });
 
-            // Image click to show overlay
             const generatedImage = document.getElementById('generated-image');
             const imageOverlay = document.getElementById('image-overlay');
             const overlayImage = document.getElementById('overlay-image');
@@ -665,7 +1066,6 @@
                 }
             });
 
-            // Download button
             overlayDownload.addEventListener('click', () => {
                 fetch(overlayImage.src)
                     .then(response => response.blob())
@@ -685,7 +1085,6 @@
                     });
             });
 
-            // Copy button
             overlayCopy.addEventListener('click', () => {
                 convertToPng(overlayImage.src)
                     .then(blob => {
@@ -701,7 +1100,6 @@
                     });
             });
 
-            // Delete button (overlay)
             overlayDelete.addEventListener('click', () => {
                 const imageUrl = overlayImage.src;
                 let history = JSON.parse(localStorage.getItem('imageHistory') || '[]');
@@ -709,36 +1107,32 @@
                 localStorage.setItem('imageHistory', JSON.stringify(history));
                 loadHistory();
                 showToast('Image supprimée de l\'historique !', 'success');
-                // Masquer l'image générée et réinitialiser les champs
                 generatedImage.style.display = 'none';
                 document.getElementById('placeholder').style.display = 'block';
                 document.getElementById('prompt').value = '';
                 document.getElementById('model').value = 'flux';
                 document.getElementById('dimensions').value = '1280x720';
                 document.getElementById('seed').value = '';
-                document.getElementById('style').value = 'default';
+                document.getElementById('style-value').value = 'default';
+                document.querySelector('.custom-select-label').textContent = 'Défaut';
                 imageOverlay.classList.remove('show');
             });
 
-            // Close overlay
             closeOverlay.addEventListener('click', () => {
                 imageOverlay.classList.remove('show');
             });
 
-            // Close overlay when clicking outside the image
             imageOverlay.addEventListener('click', (e) => {
                 if (e.target === imageOverlay) {
                     imageOverlay.classList.remove('show');
                 }
             });
 
-            // Load history from localStorage
             function loadHistory() {
                 const history = JSON.parse(localStorage.getItem('imageHistory') || '[]');
                 const historyContainer = document.getElementById('history-items');
                 const historySection = document.querySelector('.history');
 
-                // Clear existing content to prevent duplicate event listeners
                 historyContainer.innerHTML = '';
 
                 if (history.length === 0) {
@@ -757,26 +1151,24 @@
                         <div class="prompt">${item.prompt}</div>
                     `;
 
-                    // Ajouter un événement pour la suppression
                     const deleteBtn = historyItem.querySelector('.history-delete-btn');
                     deleteBtn.addEventListener('click', (e) => {
-                        e.stopPropagation(); // Empêcher le clic sur l'image
+                        e.stopPropagation();
                         let history = JSON.parse(localStorage.getItem('imageHistory') || '[]');
                         history = history.filter(h => h.imageUrl !== item.imageUrl);
                         localStorage.setItem('imageHistory', JSON.stringify(history));
                         loadHistory();
                         showToast('Image supprimée de l\'historique !', 'success');
-                        // Réinitialiser les champs
                         document.getElementById('generated-image').style.display = 'none';
                         document.getElementById('placeholder').style.display = 'block';
                         document.getElementById('prompt').value = '';
                         document.getElementById('model').value = 'flux';
                         document.getElementById('dimensions').value = '1280x720';
                         document.getElementById('seed').value = '';
-                        document.getElementById('style').value = 'default';
+                        document.getElementById('style-value').value = 'default';
+                        document.querySelector('.custom-select-label').textContent = 'Défaut';
                     });
 
-                    // Clic sur l'image pour afficher
                     historyItem.addEventListener('click', () => {
                         document.getElementById('prompt').value = item.prompt;
                         const generatedImage = document.getElementById('generated-image');
@@ -784,9 +1176,11 @@
                         generatedImage.style.display = 'block';
                         document.getElementById('placeholder').style.display = 'none';
                         document.getElementById('seed').value = item.seed || '';
-                        document.getElementById('model').value = item.model || 'flux'; // Mettre à jour le modèle
-                        document.getElementById('dimensions').value = item.dimensions || '1280x720'; // Mettre à jour les dimensions
-                        document.getElementById('style').value = item.style || 'default'; // Mettre à jour le style
+                        document.getElementById('model').value = item.model || 'flux';
+                        document.getElementById('dimensions').value = item.dimensions || '1280x720';
+                        document.getElementById('style-value').value = item.style || 'default';
+                        document.querySelector('.custom-select-label').textContent =
+                            document.querySelector(`.custom-select-option[data-value="${item.style || 'default'}"]`).textContent;
                         currentPrompt = item.prompt;
                     });
 
@@ -794,22 +1188,20 @@
                 });
             }
 
-            // Clear history
             function clearHistory() {
                 localStorage.removeItem('imageHistory');
                 loadHistory();
-                // Masquer l'image générée et réinitialiser les champs
                 document.getElementById('generated-image').style.display = 'none';
                 document.getElementById('placeholder').style.display = 'block';
                 document.getElementById('prompt').value = '';
                 document.getElementById('model').value = 'flux';
                 document.getElementById('dimensions').value = '1280x720';
                 document.getElementById('seed').value = '';
-                document.getElementById('style').value = 'default';
+                document.getElementById('style-value').value = 'default';
+                document.querySelector('.custom-select-label').textContent = 'Défaut';
                 document.getElementById('image-overlay').classList.remove('show');
             }
 
-            // Show toast notification
             function showToast(message, type = '') {
                 const toast = document.getElementById('toast');
                 toast.textContent = message;
@@ -822,12 +1214,11 @@
                 }, 3000);
             }
 
-            // Fonction pour gérer le compte à rebours
             function startCooldown() {
                 isWaiting = true;
-                let timeLeft = 3; // 3 secondes d'attente
+                let timeLeft = 3;
                 generateBtn.disabled = true;
-                const originalText = generateBtn.innerHTML;
+                const originalText = '<i class="fas fa-magic"></i> Générer l\'image';
                 generateBtn.innerHTML = `Attendez ${timeLeft}s`;
 
                 const countdown = setInterval(() => {
@@ -842,13 +1233,12 @@
                 }, 1000);
             }
 
-            // Fonction pour générer un nom de fichier à partir du prompt
             function generateFileName(prompt) {
                 let cleanPrompt = prompt
-                    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Supprimer accents
-                    .replace(/[^a-zA-Z0-9\s-]/g, '') // Supprimer caractères spéciaux
+                    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+                    .replace(/[^a-zA-Z0-9\s-]/g, '')
                     .trim()
-                    .replace(/\s+/g, '-') // Remplacer espaces par tirets
+                    .replace(/\s+/g, '-')
                     .toLowerCase();
                 if (cleanPrompt.length > 50) {
                     cleanPrompt = cleanPrompt.substring(0, 50);
@@ -857,11 +1247,10 @@
                 return cleanPrompt ? `${cleanPrompt}.jpg` : 'image-ia.jpg';
             }
 
-            // Fonction pour convertir une image en PNG via un canvas
             function convertToPng(imageSrc) {
                 return new Promise((resolve, reject) => {
                     const img = new Image();
-                    img.crossOrigin = 'Anonymous'; // Nécessaire pour éviter les erreurs CORS
+                    img.crossOrigin = 'Anonymous';
                     img.onload = () => {
                         const canvas = document.createElement('canvas');
                         canvas.width = img.width;
@@ -881,7 +1270,19 @@
                 });
             }
 
-            // Generate image function
+            function stopGeneration() {
+                if (abortController) {
+                    abortController.abort();
+                }
+                isGenerating = false;
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('placeholder').style.display = 'block';
+                generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
+                showToast('Génération arrêtée.', 'error');
+                document.getElementById('seed').value = '';
+                startCooldown();
+            }
+
             function generateImage() {
                 if (isWaiting) {
                     showToast('Veuillez attendre avant de générer une nouvelle image.', 'error');
@@ -894,30 +1295,26 @@
                     return;
                 }
 
-                // Stocker le prompt pour le nom du fichier et l'historique
                 currentPrompt = prompt;
-
-                // Indiquer qu'une génération est en cours
                 isGenerating = true;
 
-                // Show loading state
                 const loading = document.getElementById('loading');
                 loading.style.display = 'flex';
                 document.getElementById('placeholder').style.display = 'none';
                 document.getElementById('generated-image').style.display = 'none';
-                document.getElementById('image-overlay').classList.remove('show'); // Assurer que l'overlay est caché
+                document.getElementById('image-overlay').classList.remove('show');
 
-                // Get all parameters
+                generateBtn.innerHTML = '<i class="fas fa-stop"></i> Arrêter la génération';
+
                 const model = document.getElementById('model').value;
                 const dimensions = document.getElementById('dimensions').value.split('x');
                 const width = parseInt(dimensions[0]);
                 const height = parseInt(dimensions[1]);
                 let seed = document.getElementById('seed').value;
-                const style = document.getElementById('style').value;
+                const style = document.getElementById('style-value').value;
                 const enhance = document.getElementById('enhance').checked;
                 const safe = document.getElementById('safe').checked;
 
-                // Déterminer le ratio d'aspect
                 let aspectRatio;
                 if (width === height) {
                     aspectRatio = '1:1';
@@ -932,20 +1329,17 @@
                 } else if ((width === 1600 && height === 400) || (width === 1920 && height === 480) || (width === 2048 && height === 512)) {
                     aspectRatio = '4:1';
                 } else {
-                    aspectRatio = `${width}:${height}`; // Fallback pour ratios non standards
+                    aspectRatio = `${width}:${height}`;
                 }
 
-                // Générer le prompt modifié avec le style et le ratio d'aspect
                 let modifiedPrompt = prompt;
                 if (style !== 'default') {
                     modifiedPrompt += `, style ${style}`;
                 }
                 modifiedPrompt += `, aspect ratio ${aspectRatio}`;
 
-                // Nettoyer le prompt pour éviter les erreurs d'encodage
-                modifiedPrompt = modifiedPrompt.replace(/[^\x20-\x7E]/g, ''); // Supprimer les caractères non-ASCII
+                modifiedPrompt = modifiedPrompt.replace(/[^\x20-\x7E]/g, '');
 
-                // Generate a random seed if none is provided
                 if (!seed) {
                     seed = Math.floor(Math.random() * 1000000);
                 } else {
@@ -955,75 +1349,72 @@
                     }
                 }
 
-                // Build URL
                 let url = `https://image.pollinations.ai/prompt/${encodeURIComponent(modifiedPrompt)}`;
                 url += `?model=${model}&width=${width}&height=${height}`;
-                url += `&nologo=true&private=true`; // Forcer nologo et private
+                url += `&nologo=true&private=true`;
                 if (seed) url += `&seed=${seed}`;
                 if (enhance) url += `&enhance=true`;
                 if (safe) url += `&safe=true`;
-
-                // Add timestamp to prevent caching
                 url += `&tamp=${Date.now()}`;
 
-                // Fetch image
                 const img = document.getElementById('generated-image');
 
-                // Configurer le timeout de 10 secondes
-                generationTimeout = setTimeout(() => {
-                    if (isGenerating) {
-                        console.error('Image generation timed out');
+                abortController = new AbortController();
+                const signal = abortController.signal;
+
+                fetch(url, { signal })
+                    .then(response => response.blob())
+                    .then(blob => {
+                        if (isGenerating) {
+                            const imageUrl = URL.createObjectURL(blob);
+                            img.src = imageUrl;
+                            document.getElementById('loading').style.display = 'none';
+                            img.style.display = 'block';
+                            document.getElementById('image-overlay').classList.remove('show');
+
+                            addToHistory(prompt, imageUrl, seed, model, `${width}x${height}`, style);
+
+                            showToast('Image générée avec succès !', 'success');
+
+                            document.getElementById('seed').value = '';
+
+                            generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
+
+                            startCooldown();
+                        }
+                        isGenerating = false;
+                    })
+                    .catch(error => {
+                        if (error.name === 'AbortError') {
+                            // Géré par stopGeneration
+                            return;
+                        }
+                        console.error('Failed to load image from URL:', url, error);
                         document.getElementById('loading').style.display = 'none';
                         document.getElementById('placeholder').style.display = 'block';
-                        showToast('Délai de génération dépassé. Veuillez réessayer.', 'error');
-                        document.getElementById('seed').value = ''; // Clear seed on error
+                        showToast('Erreur lors de la génération de l\'image (serveur indisponible ou entrée invalide). Réessayez plus tard.', 'error');
+                        document.getElementById('seed').value = '';
+                        generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
                         isGenerating = false;
                         startCooldown();
-                    }
-                }, 10000);
+                    });
 
-                img.onload = function() {
-                    clearTimeout(generationTimeout); // Annuler le timeout
-                    if (isGenerating) {
-                        document.getElementById('loading').style.display = 'none';
-                        img.style.display = 'block';
-                        document.getElementById('image-overlay').classList.remove('show'); // Assurer que l'overlay reste caché
-
-                        // Add to history with the seed, model, dimensions, and style
-                        addToHistory(prompt, url, seed, model, `${width}x${height}`, style);
-
-                        showToast('Image générée avec succès !', 'success');
-
-                        // Clear the seed field after generation
-                        document.getElementById('seed').value = '';
-
-                        // Lancer le compte à rebours
-                        startCooldown();
-                    }
-                    // Reset generating state
-                    isGenerating = false;
-                };
-
-                img.onerror = function() {
-                    clearTimeout(generationTimeout); // Annuler le timeout
+                img.onerror = function () {
                     console.error('Failed to load image from URL:', url);
                     document.getElementById('loading').style.display = 'none';
                     document.getElementById('placeholder').style.display = 'block';
-                    showToast('Erreur lors de la génération de l\'image (serveur indisponible ou entrée invalide). Réessayez plus tard.', 'error');
-                    document.getElementById('seed').value = ''; // Clear seed on error
+                    showToast('Erreur lors de la génération de l\'image.', 'error');
+                    document.getElementById('seed').value = '';
+                    generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
                     isGenerating = false;
-                    // Lancer le compte à rebours même en cas d'erreur
                     startCooldown();
                 };
-
-                img.src = url;
             }
 
-            // Add to history
             function addToHistory(prompt, imageUrl, seed, model, dimensions, style) {
                 let history = JSON.parse(localStorage.getItem('imageHistory') || '[]');
                 history.unshift({
-                    prompt: prompt, // Stocker le prompt original sans le style ni le ratio
+                    prompt: prompt,
                     imageUrl: imageUrl,
                     seed: seed || null,
                     model: model,
@@ -1038,10 +1429,8 @@
                 loadHistory();
             }
 
-            // Load history on page load
             loadHistory();
 
-            // Example prompts
             const examplePrompts = [
                 "Un magnifique coucher de soleil sur l'ocean avec des palmiers",
                 "Une ville futuriste avec des voitures volantes et des neons",
@@ -1050,7 +1439,6 @@
                 "Un dirigeable steampunk volant a travers les nuages"
             ];
 
-            // Random example prompt button
             const randomPromptBtn = document.createElement('button');
             randomPromptBtn.className = 'btn btn-secondary';
             randomPromptBtn.innerHTML = '<i class="fas fa-random"></i> Exemple aléatoire';
@@ -1064,4 +1452,5 @@
         });
     </script>
 </body>
+
 </html>
