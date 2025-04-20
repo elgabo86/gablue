@@ -207,7 +207,6 @@
             right: 0;
             bottom: 0;
             background: rgba(0, 0, 0, 0.8);
-            display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
@@ -222,11 +221,12 @@
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin-bottom: 1rem;
+            will-change: transform; /* Optimisation pour l'animation */
         }
 
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
         }
 
         .history {
@@ -500,21 +500,21 @@
                 <div class="form-group">
                     <label for="dimensions">Dimensions</label>
                     <select id="dimensions">
-                        <!-- Carré -->
-                        <option value="512x512">512x512 (Carré)</option>
-                        <option value="1024x1024">1024x1024 (Carré)</option>
-                        <!-- Paysage -->
-                        <option value="800x600">800x600 (Paysage)</option>
-                        <option value="1024x576">1024x576 (Paysage)</option>
-                        <option value="1280x720" selected>1280x720 (Paysage)</option>
-                        <!-- Portrait -->
-                        <option value="600x800">600x800 (Portrait)</option>
-                        <option value="576x1024">576x1024 (Portrait)</option>
-                        <option value="720x1280">720x1280 (Portrait)</option>
-                        <!-- Ultrawide (pour logos et bannières) -->
-                        <option value="1600x400">1600x400 (Ultrawide)</option>
-                        <option value="1920x480">1920x480 (Ultrawide)</option>
-                        <option value="2048x512">2048x512 (Ultrawide)</option>
+                        <!-- Carré (1:1) -->
+                        <option value="512x512">512x512 (Carré, 1:1)</option>
+                        <option value="1024x1024">1024x1024 (Carré, 1:1)</option>
+                        <!-- Paysage (4:3, 16:9) -->
+                        <option value="800x600">800x600 (Paysage, 4:3)</option>
+                        <option value="1024x576">1024x576 (Paysage, 16:9)</option>
+                        <option value="1280x720" selected>1280x720 (Paysage, 16:9)</option>
+                        <!-- Portrait (3:4, 9:16) -->
+                        <option value="600x800">600x800 (Portrait, 3:4)</option>
+                        <option value="576x1024">576x1024 (Portrait, 9:16)</option>
+                        <option value="720x1280">720x1280 (Portrait, 9:16)</option>
+                        <!-- Ultrawide (4:1) -->
+                        <option value="1600x400">1600x400 (Ultrawide, 4:1)</option>
+                        <option value="1920x480">1920x480 (Ultrawide, 4:1)</option>
+                        <option value="2048x512">2048x512 (Ultrawide, 4:1)</option>
                     </select>
                 </div>
 
@@ -524,6 +524,23 @@
                         <input type="text" id="seed" placeholder="Graine aléatoire" pattern="[0-9]*">
                         <button class="clear-seed-btn" id="clear-seed-btn"><i class="fas fa-times"></i></button>
                     </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="style">Style</label>
+                    <select id="style">
+                        <option value="default" selected>Défaut</option>
+                        <option value="anime">Anime</option>
+                        <option value="realistic">Réaliste</option>
+                        <option value="cyberpunk">Cyperpunk</option>
+                        <option value="pixelart">Pixel Art</option>
+                        <option value="fantasy">Fantaisie</option>
+                        <option value="watercolor">Aquarelle</option>
+                        <option value="surrealist">Surréaliste</option>
+                        <option value="steampunk">Steampunk</option>
+                        <option value="minimalist">Minimaliste</option>
+                        <option value="artdeco">Art Déco</option>
+                    </select>
                 </div>
 
                 <div class="form-group">
@@ -544,7 +561,7 @@
             </div>
 
             <div class="image-preview">
-                <div id="loading" class="loading" style="display: none;">
+                <div id="loading" class="loading">
                     <div class="spinner"></div>
                     <p>Génération de votre image...</p>
                 </div>
@@ -593,12 +610,17 @@
             let isGenerating = false;
             let isWaiting = false; // Nouvelle variable pour suivre l'état d'attente
             let currentPrompt = ''; // Stocker le prompt pour le nom du fichier
+            let generationTimeout = null; // Timeout pour la génération
 
             // Initialiser les champs au chargement de la page
             document.getElementById('prompt').value = '';
             document.getElementById('model').value = 'flux';
             document.getElementById('dimensions').value = '1280x720';
             document.getElementById('seed').value = '';
+            document.getElementById('style').value = 'default';
+            document.getElementById('generated-image').style.display = 'none';
+            document.getElementById('placeholder').style.display = 'block';
+            document.getElementById('image-overlay').classList.remove('show'); // Assurer que l'overlay est caché
 
             // Gérer les touches Enter et Maj+Enter dans le textarea
             const promptTextarea = document.getElementById('prompt');
@@ -637,50 +659,11 @@
             const closeOverlay = document.getElementById('close-overlay');
 
             generatedImage.addEventListener('click', () => {
-                if (generatedImage.style.display === 'block') {
+                if (generatedImage.style.display === 'block' && generatedImage.src) {
                     overlayImage.src = generatedImage.src;
                     imageOverlay.classList.add('show');
                 }
             });
-
-            // Fonction pour générer un nom de fichier à partir du prompt
-            function generateFileName(prompt) {
-                let cleanPrompt = prompt
-                    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Supprimer accents
-                    .replace(/[^a-zA-Z0-9\s-]/g, '') // Supprimer caractères spéciaux
-                    .trim()
-                    .replace(/\s+/g, '-') // Remplacer espaces par tirets
-                    .toLowerCase();
-                if (cleanPrompt.length > 50) {
-                    cleanPrompt = cleanPrompt.substring(0, 50);
-                    cleanPrompt = cleanPrompt.substring(0, cleanPrompt.lastIndexOf('-') + 1) || cleanPrompt;
-                }
-                return cleanPrompt ? `${cleanPrompt}.jpg` : 'image-ia.jpg';
-            }
-
-            // Fonction pour convertir une image en PNG via un canvas
-            function convertToPng(imageSrc) {
-                return new Promise((resolve, reject) => {
-                    const img = new Image();
-                    img.crossOrigin = 'Anonymous'; // Nécessaire pour éviter les erreurs CORS
-                    img.onload = () => {
-                        const canvas = document.createElement('canvas');
-                        canvas.width = img.width;
-                        canvas.height = img.height;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0);
-                        canvas.toBlob(blob => {
-                            if (blob) {
-                                resolve(blob);
-                            } else {
-                                reject(new Error('Failed to convert image to PNG'));
-                            }
-                        }, 'image/png');
-                    };
-                    img.onerror = () => reject(new Error('Failed to load image for conversion'));
-                    img.src = imageSrc;
-                });
-            }
 
             // Download button
             overlayDownload.addEventListener('click', () => {
@@ -733,6 +716,7 @@
                 document.getElementById('model').value = 'flux';
                 document.getElementById('dimensions').value = '1280x720';
                 document.getElementById('seed').value = '';
+                document.getElementById('style').value = 'default';
                 imageOverlay.classList.remove('show');
             });
 
@@ -789,6 +773,7 @@
                         document.getElementById('model').value = 'flux';
                         document.getElementById('dimensions').value = '1280x720';
                         document.getElementById('seed').value = '';
+                        document.getElementById('style').value = 'default';
                     });
 
                     // Clic sur l'image pour afficher
@@ -801,6 +786,7 @@
                         document.getElementById('seed').value = item.seed || '';
                         document.getElementById('model').value = item.model || 'flux'; // Mettre à jour le modèle
                         document.getElementById('dimensions').value = item.dimensions || '1280x720'; // Mettre à jour les dimensions
+                        document.getElementById('style').value = item.style || 'default'; // Mettre à jour le style
                         currentPrompt = item.prompt;
                     });
 
@@ -819,6 +805,8 @@
                 document.getElementById('model').value = 'flux';
                 document.getElementById('dimensions').value = '1280x720';
                 document.getElementById('seed').value = '';
+                document.getElementById('style').value = 'default';
+                document.getElementById('image-overlay').classList.remove('show');
             }
 
             // Show toast notification
@@ -837,7 +825,7 @@
             // Fonction pour gérer le compte à rebours
             function startCooldown() {
                 isWaiting = true;
-                let timeLeft = 5; // 5 secondes d'attente
+                let timeLeft = 3; // 3 secondes d'attente
                 generateBtn.disabled = true;
                 const originalText = generateBtn.innerHTML;
                 generateBtn.innerHTML = `Attendez ${timeLeft}s`;
@@ -854,6 +842,45 @@
                 }, 1000);
             }
 
+            // Fonction pour générer un nom de fichier à partir du prompt
+            function generateFileName(prompt) {
+                let cleanPrompt = prompt
+                    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Supprimer accents
+                    .replace(/[^a-zA-Z0-9\s-]/g, '') // Supprimer caractères spéciaux
+                    .trim()
+                    .replace(/\s+/g, '-') // Remplacer espaces par tirets
+                    .toLowerCase();
+                if (cleanPrompt.length > 50) {
+                    cleanPrompt = cleanPrompt.substring(0, 50);
+                    cleanPrompt = cleanPrompt.substring(0, cleanPrompt.lastIndexOf('-') + 1) || cleanPrompt;
+                }
+                return cleanPrompt ? `${cleanPrompt}.jpg` : 'image-ia.jpg';
+            }
+
+            // Fonction pour convertir une image en PNG via un canvas
+            function convertToPng(imageSrc) {
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.crossOrigin = 'Anonymous'; // Nécessaire pour éviter les erreurs CORS
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0);
+                        canvas.toBlob(blob => {
+                            if (blob) {
+                                resolve(blob);
+                            } else {
+                                reject(new Error('Failed to convert image to PNG'));
+                            }
+                        }, 'image/png');
+                    };
+                    img.onerror = () => reject(new Error('Failed to load image for conversion'));
+                    img.src = imageSrc;
+                });
+            }
+
             // Generate image function
             function generateImage() {
                 if (isWaiting) {
@@ -867,25 +894,56 @@
                     return;
                 }
 
-                // Stocker le prompt pour le nom du fichier
+                // Stocker le prompt pour le nom du fichier et l'historique
                 currentPrompt = prompt;
 
                 // Indiquer qu'une génération est en cours
                 isGenerating = true;
 
                 // Show loading state
-                document.getElementById('loading').style.display = 'flex';
+                const loading = document.getElementById('loading');
+                loading.style.display = 'flex';
                 document.getElementById('placeholder').style.display = 'none';
                 document.getElementById('generated-image').style.display = 'none';
+                document.getElementById('image-overlay').classList.remove('show'); // Assurer que l'overlay est caché
 
                 // Get all parameters
                 const model = document.getElementById('model').value;
                 const dimensions = document.getElementById('dimensions').value.split('x');
-                const width = dimensions[0];
-                const height = dimensions[1];
+                const width = parseInt(dimensions[0]);
+                const height = parseInt(dimensions[1]);
                 let seed = document.getElementById('seed').value;
+                const style = document.getElementById('style').value;
                 const enhance = document.getElementById('enhance').checked;
                 const safe = document.getElementById('safe').checked;
+
+                // Déterminer le ratio d'aspect
+                let aspectRatio;
+                if (width === height) {
+                    aspectRatio = '1:1';
+                } else if (width === 800 && height === 600) {
+                    aspectRatio = '4:3';
+                } else if ((width === 1024 && height === 576) || (width === 1280 && height === 720)) {
+                    aspectRatio = '16:9';
+                } else if (width === 600 && height === 800) {
+                    aspectRatio = '3:4';
+                } else if ((width === 576 && height === 1024) || (width === 720 && height === 1280)) {
+                    aspectRatio = '9:16';
+                } else if ((width === 1600 && height === 400) || (width === 1920 && height === 480) || (width === 2048 && height === 512)) {
+                    aspectRatio = '4:1';
+                } else {
+                    aspectRatio = `${width}:${height}`; // Fallback pour ratios non standards
+                }
+
+                // Générer le prompt modifié avec le style et le ratio d'aspect
+                let modifiedPrompt = prompt;
+                if (style !== 'default') {
+                    modifiedPrompt += `, style ${style}`;
+                }
+                modifiedPrompt += `, aspect ratio ${aspectRatio}`;
+
+                // Nettoyer le prompt pour éviter les erreurs d'encodage
+                modifiedPrompt = modifiedPrompt.replace(/[^\x20-\x7E]/g, ''); // Supprimer les caractères non-ASCII
 
                 // Generate a random seed if none is provided
                 if (!seed) {
@@ -898,7 +956,7 @@
                 }
 
                 // Build URL
-                let url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}`;
+                let url = `https://image.pollinations.ai/prompt/${encodeURIComponent(modifiedPrompt)}`;
                 url += `?model=${model}&width=${width}&height=${height}`;
                 url += `&nologo=true&private=true`; // Forcer nologo et private
                 if (seed) url += `&seed=${seed}`;
@@ -910,13 +968,29 @@
 
                 // Fetch image
                 const img = document.getElementById('generated-image');
+
+                // Configurer le timeout de 10 secondes
+                generationTimeout = setTimeout(() => {
+                    if (isGenerating) {
+                        console.error('Image generation timed out');
+                        document.getElementById('loading').style.display = 'none';
+                        document.getElementById('placeholder').style.display = 'block';
+                        showToast('Délai de génération dépassé. Veuillez réessayer.', 'error');
+                        document.getElementById('seed').value = ''; // Clear seed on error
+                        isGenerating = false;
+                        startCooldown();
+                    }
+                }, 10000);
+
                 img.onload = function() {
+                    clearTimeout(generationTimeout); // Annuler le timeout
                     if (isGenerating) {
                         document.getElementById('loading').style.display = 'none';
                         img.style.display = 'block';
+                        document.getElementById('image-overlay').classList.remove('show'); // Assurer que l'overlay reste caché
 
-                        // Add to history with the seed, model, and dimensions
-                        addToHistory(prompt, url, seed, model, `${width}x${height}`);
+                        // Add to history with the seed, model, dimensions, and style
+                        addToHistory(prompt, url, seed, model, `${width}x${height}`, style);
 
                         showToast('Image générée avec succès !', 'success');
 
@@ -931,10 +1005,11 @@
                 };
 
                 img.onerror = function() {
+                    clearTimeout(generationTimeout); // Annuler le timeout
                     console.error('Failed to load image from URL:', url);
                     document.getElementById('loading').style.display = 'none';
                     document.getElementById('placeholder').style.display = 'block';
-                    showToast('Erreur lors de la génération de l\'image. Vérifiez votre connexion ou essayez plus tard.', 'error');
+                    showToast('Erreur lors de la génération de l\'image (serveur indisponible ou entrée invalide). Réessayez plus tard.', 'error');
                     document.getElementById('seed').value = ''; // Clear seed on error
                     isGenerating = false;
                     // Lancer le compte à rebours même en cas d'erreur
@@ -945,14 +1020,15 @@
             }
 
             // Add to history
-            function addToHistory(prompt, imageUrl, seed, model, dimensions) {
+            function addToHistory(prompt, imageUrl, seed, model, dimensions, style) {
                 let history = JSON.parse(localStorage.getItem('imageHistory') || '[]');
                 history.unshift({
-                    prompt: prompt,
+                    prompt: prompt, // Stocker le prompt original sans le style ni le ratio
                     imageUrl: imageUrl,
                     seed: seed || null,
                     model: model,
                     dimensions: dimensions,
+                    style: style,
                     timestamp: new Date().toISOString()
                 });
                 if (history.length > 10) {
@@ -967,11 +1043,11 @@
 
             // Example prompts
             const examplePrompts = [
-                "Un magnifique coucher de soleil sur l'océan avec des palmiers",
-                "Une ville futuriste avec des voitures volantes et des néons",
+                "Un magnifique coucher de soleil sur l'ocean avec des palmiers",
+                "Une ville futuriste avec des voitures volantes et des neons",
                 "Un chiot corgi adorable jouant dans un champ de fleurs",
                 "Un astronaute chevauchant un cheval sur Mars",
-                "Un dirigeable steampunk volant à travers les nuages"
+                "Un dirigeable steampunk volant a travers les nuages"
             ];
 
             // Random example prompt button
