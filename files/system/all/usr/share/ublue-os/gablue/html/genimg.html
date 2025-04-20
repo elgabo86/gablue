@@ -136,6 +136,13 @@
             box-shadow: 0 5px 15px rgba(124, 58, 237, 0.4);
         }
 
+        .btn:disabled {
+            background-color: var(--text-muted);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
         .btn-block {
             display: block;
             width: 100%;
@@ -584,6 +591,7 @@
         document.addEventListener('DOMContentLoaded', function() {
             // Variable pour suivre si une génération est en cours
             let isGenerating = false;
+            let isWaiting = false; // Nouvelle variable pour suivre l'état d'attente
             let currentPrompt = ''; // Stocker le prompt pour le nom du fichier
 
             // Initialiser les champs au chargement de la page
@@ -817,8 +825,33 @@
                 }, 3000);
             }
 
+            // Fonction pour gérer le compte à rebours
+            function startCooldown() {
+                isWaiting = true;
+                let timeLeft = 3; // 3 secondes d'attente
+                generateBtn.disabled = true;
+                const originalText = generateBtn.innerHTML;
+                generateBtn.innerHTML = `Attendez ${timeLeft}s`;
+
+                const countdown = setInterval(() => {
+                    timeLeft--;
+                    generateBtn.innerHTML = `Attendez ${timeLeft}s`;
+                    if (timeLeft <= 0) {
+                        clearInterval(countdown);
+                        generateBtn.innerHTML = originalText;
+                        generateBtn.disabled = false;
+                        isWaiting = false;
+                    }
+                }, 1000);
+            }
+
             // Generate image function
             function generateImage() {
+                if (isWaiting) {
+                    showToast('Veuillez attendre avant de générer une nouvelle image.', 'error');
+                    return;
+                }
+
                 const prompt = document.getElementById('prompt').value.trim();
                 if (!prompt) {
                     showToast('Veuillez entrer une description', 'error');
@@ -880,6 +913,9 @@
 
                         // Clear the seed field after generation
                         document.getElementById('seed').value = '';
+
+                        // Lancer le compte à rebours
+                        startCooldown();
                     }
                     // Reset generating state
                     isGenerating = false;
@@ -892,6 +928,8 @@
                     showToast('Erreur lors de la génération de l\'image. Vérifiez votre connexion ou essayez plus tard.', 'error');
                     document.getElementById('seed').value = ''; // Clear seed on error
                     isGenerating = false;
+                    // Lancer le compte à rebours même en cas d'erreur
+                    startCooldown();
                 };
 
                 img.src = url;
