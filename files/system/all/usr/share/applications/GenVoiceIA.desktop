@@ -1,0 +1,14 @@
+[Desktop Entry]
+Comment=
+Exec=xdg-open /usr/share/ublue-os/gablue/html/genaudio.html
+Icon=vocal
+Name=Générateur Vocal IA
+NoDisplay=false
+Path=
+StartupNotify=false
+Terminal=false
+TerminalOptions=
+Type=Application
+X-KDE-SubstituteUID=false
+X-KDE-Username=
+Categories=Multimedia
