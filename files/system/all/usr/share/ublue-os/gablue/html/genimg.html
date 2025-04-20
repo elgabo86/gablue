@@ -600,6 +600,15 @@
             document.getElementById('dimensions').value = '1280x720';
             document.getElementById('seed').value = '';
 
+            // Gérer les touches Enter et Maj+Enter dans le textarea
+            const promptTextarea = document.getElementById('prompt');
+            promptTextarea.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault(); // Empêche le retour à la ligne par défaut
+                    generateImage();
+                }
+            });
+
             // Generate button click
             const generateBtn = document.getElementById('generate-btn');
             generateBtn.addEventListener('click', generateImage);
