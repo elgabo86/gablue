@@ -4,8 +4,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="img-src 'self' data:;">
     <title>Générateur d'images IA</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" as="style"
+        onload="this.rel='stylesheet'">
     <style>
         :root {
             --primary: #7c3aed;
@@ -38,53 +40,48 @@
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            padding: 2rem;
+            padding: 1.5rem;
         }
 
         header {
             text-align: center;
-            margin-bottom: 2rem;
+            margin-bottom: 1.5rem;
         }
 
         h1 {
-            font-size: 2.5rem;
+            font-size: 2rem;
             margin-bottom: 0.5rem;
             color: var(--light);
             text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
         }
 
-        .subtitle {
-            color: var(--text-muted);
-            font-size: 1.1rem;
-        }
-
         .app-container {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 2rem;
+            gap: 1.5rem;
             background: var(--card-background);
             border-radius: 12px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
         }
 
         .controls {
-            padding: 2rem;
+            padding: 1.5rem;
             background: var(--card-background);
         }
 
         .image-preview {
-            padding: 2rem;
+            padding: 1.5rem;
             background: var(--dark);
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-height: 600px;
+            min-height: 500px;
             position: relative;
         }
 
         .form-group {
-            margin-bottom: 1.5rem;
+            margin-bottom: 1rem;
         }
 
         label {
@@ -92,23 +89,24 @@
             margin-bottom: 0.5rem;
             font-weight: 600;
             color: var(--text);
+            font-size: 0.95rem;
         }
 
         input,
         textarea,
         select {
             width: 100%;
-            padding: 0.8rem 1rem;
+            padding: 0.7rem;
             border: 1px solid var(--text-muted);
             border-radius: 8px;
-            font-size: 1rem;
+            font-size: 0.9rem;
             background: var(--dark);
             color: var(--text);
             transition: all 0.3s ease;
         }
 
         textarea {
-            min-height: 120px;
+            min-height: 100px;
             resize: vertical;
         }
 
@@ -127,10 +125,10 @@
 
         .custom-select-toggle {
             width: 100%;
-            padding: 0.8rem 1rem;
+            padding: 0.7rem;
             border: 1px solid var(--text-muted);
             border-radius: 8px;
-            font-size: 1rem;
+            font-size: 0.9rem;
             background: var(--dark);
             color: var(--text);
             cursor: pointer;
@@ -154,7 +152,7 @@
             position: absolute;
             left: 0;
             right: 0;
-            max-height: 400px;
+            max-height: 300px;
             overflow-y: auto;
             background: var(--card-background);
             border: 1px solid var(--text-muted);
@@ -179,11 +177,12 @@
         }
 
         .custom-select-option {
-            padding: 0.5rem 1rem;
+            padding: 0.5rem 0.7rem;
             color: var(--text);
             cursor: pointer;
             transition: all 0.3s ease;
             position: relative;
+            font-size: 0.85rem;
         }
 
         .custom-select-option:hover {
@@ -195,7 +194,7 @@
             background: var(--dark);
             color: var(--text-muted);
             font-weight: bold;
-            padding: 0.5rem 1rem;
+            padding: 0.5rem 0.7rem;
             border-top: 1px solid var(--text-muted);
             cursor: default;
         }
@@ -204,14 +203,16 @@
             position: fixed;
             background: var(--primary-dark);
             color: white;
-            padding: 0.5rem 1rem;
+            padding: 0.5rem 0.8rem;
             border-radius: 4px;
-            font-size: 0.9rem;
+            font-size: 0.8rem;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
             z-index: 2000;
             display: none;
-            max-width: 300px;
+            max-width: 250px;
             pointer-events: none;
+            word-break: break-word;
+            overflow-wrap: break-word;
         }
 
         .tooltip.show {
@@ -229,31 +230,14 @@
             border-color: transparent var(--primary-dark) transparent transparent;
         }
 
-        @media (max-width: 768px) {
-            .custom-select-toggle {
-                font-size: 0.9rem;
-                padding: 0.6rem;
-            }
-
-            .custom-select-option {
-                font-size: 0.9rem;
-                padding: 0.6rem 1rem;
-            }
-
-            .tooltip {
-                font-size: 0.8rem;
-                max-width: 200px;
-            }
-        }
-
         .btn {
             display: inline-block;
-            padding: 0.8rem 1.5rem;
+            padding: 0.7rem 1.2rem;
             background-color: var(--primary);
             color: white;
             border: none;
             border-radius: 8px;
-            font-size: 1rem;
+            font-size: 0.9rem;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
@@ -278,14 +262,6 @@
             width: 100%;
         }
 
-        .btn-secondary {
-            background-color: var(--secondary);
-        }
-
-        .btn-secondary:hover {
-            background-color: #06b6d4;
-        }
-
         .btn-danger {
             background-color: var(--danger);
         }
@@ -307,15 +283,24 @@
         .checkbox-group label {
             margin-bottom: 0;
             font-weight: normal;
+            font-size: 0.85rem;
         }
 
         .generated-image {
             max-width: 100%;
-            max-height: 500px;
+            max-height: 400px;
             border-radius: 8px;
             box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-            display: none;
             cursor: pointer;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease-in-out, visibility 0.3s ease-in-out;
+            object-fit: contain;
+        }
+
+        .generated-image.show {
+            opacity: 1;
+            visibility: visible;
         }
 
         .placeholder {
@@ -324,9 +309,9 @@
         }
 
         .placeholder i {
-            font-size: 4rem;
+            font-size: 3rem;
             color: var(--text-muted);
-            margin-bottom: 1rem;
+            margin-bottom: 0.8rem;
         }
 
         .loading {
@@ -344,14 +329,13 @@
         }
 
         .spinner {
-            width: 50px;
-            height: 50px;
-            border: 5px solid var(--text-muted);
-            border-top: 5px solid var(--primary);
+            width: 40px;
+            height: 40px;
+            border: 4px solid var(--text-muted);
+            border-top: 4px solid var(--primary);
             border-radius: 50%;
             animation: spin 1s linear infinite;
-            margin-bottom: 1rem;
-            will-change: transform;
+            margin-bottom: 0.8rem;
         }
 
         @keyframes spin {
@@ -365,7 +349,7 @@
         }
 
         .history {
-            margin-top: 2rem;
+            margin-top: 1.5rem;
             display: none;
         }
 
@@ -377,18 +361,19 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 1rem;
+            margin-bottom: 0.8rem;
         }
 
         .history h3 {
-            margin-bottom: 1rem;
+            margin-bottom: 0.8rem;
             color: var(--primary);
+            font-size: 1.2rem;
         }
 
         .history-items {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-            gap: 1rem;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 0.8rem;
         }
 
         .history-item {
@@ -397,6 +382,16 @@
             cursor: pointer;
             transition: all 0.3s ease;
             position: relative;
+            opacity: 0;
+            transform: translateY(20px);
+            animation: fadeInUp 0.3s ease forwards;
+        }
+
+        @keyframes fadeInUp {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .history-item:hover {
@@ -406,7 +401,7 @@
 
         .history-item img {
             width: 100%;
-            height: 150px;
+            height: 120px;
             object-fit: cover;
             display: block;
         }
@@ -418,8 +413,8 @@
             right: 0;
             background: rgba(0, 0, 0, 0.7);
             color: white;
-            padding: 0.5rem;
-            font-size: 0.8rem;
+            padding: 0.4rem;
+            font-size: 0.7rem;
             display: none;
         }
 
@@ -429,15 +424,15 @@
 
         .history-delete-btn {
             position: absolute;
-            top: 5px;
-            right: 5px;
+            top: 4px;
+            right: 4px;
             background: var(--danger);
             color: white;
             border: none;
             border-radius: 50%;
-            width: 24px;
-            height: 24px;
-            font-size: 0.8rem;
+            width: 20px;
+            height: 20px;
+            font-size: 0.7rem;
             cursor: pointer;
             display: none;
             align-items: center;
@@ -454,32 +449,54 @@
             transform: scale(1.1);
         }
 
-        footer {
-            text-align: center;
-            margin-top: 2rem;
-            color: var(--text-muted);
-            font-size: 0.9rem;
+        .history-preview-btn {
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            font-size: 0.7rem;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
         }
 
-        @media (max-width: 768px) {
-            .app-container {
-                grid-template-columns: 1fr;
-            }
+        .history-item:hover .history-preview-btn {
+            display: flex;
+        }
+
+        .history-preview-btn:hover {
+            background: var(--primary-dark);
+            transform: scale(1.1);
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 1.5rem;
+            color: var(--text-muted);
+            font-size: 0.8rem;
         }
 
         .toast {
             position: fixed;
-            bottom: 20px;
-            right: 20px;
+            bottom: 15px;
+            right: 15px;
             background: var(--dark);
             color: white;
-            padding: 1rem 1.5rem;
+            padding: 0.8rem 1.2rem;
             border-radius: 8px;
             box-shadow: 0 5px 15px rgba(0, 0, 0, 0.4);
             transform: translateY(100px);
             opacity: 0;
             transition: all 0.3s ease;
             z-index: 3000;
+            font-size: 0.9rem;
         }
 
         .toast.show {
@@ -496,7 +513,6 @@
         }
 
         .image-overlay {
-            display: none;
             position: fixed;
             top: 0;
             left: 0;
@@ -504,35 +520,48 @@
             bottom: 0;
             background: rgba(0, 0, 0, 0.9);
             z-index: 2000;
+            display: flex;
             align-items: center;
             justify-content: center;
             padding: 1rem;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease-in-out;
         }
 
         .image-overlay.show {
-            display: flex;
+            opacity: 1;
+            pointer-events: auto;
         }
 
         .image-overlay img {
             max-width: 90%;
-            max-height: 90vh;
+            max-height: 80vh;
             border-radius: 8px;
             box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
-            display: block;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             margin: auto;
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out 0.05s;
+        }
+
+        .image-overlay.show img {
+            opacity: 1;
         }
 
         .image-overlay .close-btn {
             position: absolute;
-            top: 1rem;
-            right: 1rem;
+            top: 0.8rem;
+            right: 0.8rem;
             background: var(--danger);
             color: white;
             border: none;
             border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            font-size: 1.2rem;
+            width: 32px;
+            height: 32px;
+            font-size: 1rem;
             cursor: pointer;
             display: flex;
             align-items: center;
@@ -547,22 +576,23 @@
 
         .image-overlay .overlay-buttons {
             position: absolute;
-            bottom: 1rem;
-            right: 1rem;
+            bottom: 0.8rem;
+            right: 0.8rem;
             display: flex;
-            gap: 1rem;
+            gap: 0.8rem;
         }
 
         .image-overlay .copy-btn,
         .image-overlay .download-btn {
             background: var(--primary);
             color: white;
-            padding: 0.8rem 1.5rem;
+            padding: 0.6rem 1rem;
             border-radius: 8px;
             border: none;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
+            font-size: 0.85rem;
         }
 
         .image-overlay .copy-btn:hover,
@@ -573,16 +603,17 @@
 
         .image-overlay .delete-btn {
             position: absolute;
-            bottom: 1rem;
-            left: 1rem;
+            bottom: 0.8rem;
+            left: 0.8rem;
             background: var(--danger);
             color: white;
-            padding: 0.8rem 1.5rem;
+            padding: 0.6rem 1rem;
             border-radius: 8px;
             border: none;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
+            font-size: 0.85rem;
         }
 
         .image-overlay .delete-btn:hover {
@@ -596,13 +627,13 @@
 
         .clear-seed-btn {
             position: absolute;
-            right: 10px;
+            right: 8px;
             top: 50%;
             transform: translateY(-50%);
             background: transparent;
             border: none;
             color: var(--text-muted);
-            font-size: 1rem;
+            font-size: 0.9rem;
             cursor: pointer;
             padding: 0.2rem;
             transition: all 0.3s ease;
@@ -620,6 +651,149 @@
         .custom-select-option.popular:hover {
             background: var(--primary-dark);
             color: white;
+        }
+
+        .batch-container {
+            display: flex;
+            gap: 0.8rem;
+            align-items: center;
+        }
+
+        .tooltip-mobile {
+            max-width: 150px;
+            font-size: 0.7rem;
+            text-align: center;
+        }
+
+        @media (max-width: 768px) {
+            .app-container {
+                grid-template-columns: 1fr;
+            }
+
+            .container {
+                padding: 1rem;
+            }
+
+            h1 {
+                font-size: 1.8rem;
+            }
+
+            .controls,
+            .image-preview {
+                padding: 1rem;
+            }
+
+            .image-preview {
+                min-height: 300px;
+            }
+
+            .generated-image {
+                max-height: 300px;
+            }
+
+            .form-group {
+                margin-bottom: 0.8rem;
+            }
+
+            label {
+                font-size: 0.9rem;
+            }
+
+            input,
+            textarea,
+            select {
+                font-size: 0.85rem;
+                padding: 0.6rem;
+            }
+
+            .btn {
+                font-size: 0.85rem;
+                padding: 0.6rem 1rem;
+            }
+
+            .history-items {
+                grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            }
+
+            .history-item img {
+                height: 100px;
+            }
+
+            .history-item .prompt {
+                font-size: 0.65rem;
+            }
+
+            .toast {
+                font-size: 0.8rem;
+                padding: 0.6rem 1rem;
+            }
+
+            .tooltip-mobile {
+                left: auto !important;
+                right: 10px !important;
+            }
+
+            .tooltip-mobile::before {
+                left: auto;
+                right: -6px;
+                border-color: transparent transparent transparent var(--primary-dark);
+            }
+
+            .image-overlay {
+                align-items: center;
+                justify-content: center;
+            }
+
+            .image-overlay img {
+                max-height: 70vh;
+                margin: auto;
+            }
+        }
+
+        @media (max-width: 480px) {
+            h1 {
+                font-size: 1.5rem;
+            }
+
+            .image-preview {
+                min-height: 200px;
+            }
+
+            .generated-image {
+                max-height: 200px;
+            }
+
+            .history-items {
+                grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+            }
+
+            .history-item img {
+                height: 80px;
+            }
+
+            .history-delete-btn,
+            .history-preview-btn {
+                width: 18px;
+                height: 18px;
+                font-size: 0.6rem;
+            }
+
+            .image-overlay img {
+                max-height: 70vh;
+            }
+
+            .image-overlay .copy-btn,
+            .image-overlay .download-btn,
+            .image-overlay .delete-btn {
+                font-size: 0.8rem;
+                padding: 0.5rem 0.8rem;
+            }
+
+            .image-overlay .close-btn {
+                width: 28px;
+                height: 28px;
+                font-size: 0.9rem;
+            }
         }
     </style>
 </head>
@@ -869,8 +1043,7 @@
                                 data-tooltip="Spectacles burlesques avec couleurs riches et vibe théâtrale provocante">
                                 Cabaret</div>
                             <div class="custom-select-option" data-value="erotic"
-                                data-tooltip="Art sensuel avec formes fluides et ambiance suggestive">
-                                Érotique</div>
+                                data-tooltip="Art sensuel avec formes fluides et ambiance suggestive">Érotique</div>
                             <div class="custom-select-option" data-value="fetishnoir"
                                 data-tooltip="Ambiance sombre avec cuir, contrastes forts et mystère audacieux">Fetish
                                 Noir</div>
@@ -889,16 +1062,33 @@
                         <label for="enhance">Améliorer la description avec l'IA</label>
                     </div>
                     <div class="checkbox-group">
+                        <input type="checkbox" id="high-detail">
+                        <label for="high-detail">Haute résolution (8k, détails élevés)</label>
+                    </div>
+                    <div class="checkbox-group">
                         <input type="checkbox" id="safe">
                         <label for="safe">Filtre NSFW</label>
                     </div>
                 </div>
 
-                <button id="generate-btn" class="btn btn-block">
-                    <i class="fas fa-magic"></i> Générer l'image
-                </button>
+                <div class="batch-container">
+                    <select id="batch-size" style="width: 80px;">
+                        <option value="1" selected>1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8</option>
+                        <option value="9">9</option>
+                        <option value="10">10</option>
+                    </select>
+                    <button id="generate-btn" class="btn btn-block">
+                        <i class="fas fa-magic"></i> Générer l'image
+                    </button>
+                </div>
             </div>
-
             <div class="image-preview">
                 <div id="loading" class="loading">
                     <div class="spinner"></div>
@@ -935,7 +1125,7 @@
         <button class="close-btn" id="close-overlay"><i class="fas fa-times"></i></button>
         <button class="delete-btn" id="overlay-delete"><i class="fas fa-trash"></i> Supprimer</button>
         <div class="overlay-buttons">
-            <button class="copy-btn" id="overlay-copy"><i class="fas fa-copy"></i> Copier</button>
+            <button class="copy-btn copy-btn-mobile" id="overlay-copy"><i class="fas fa-copy"></i> Copier</button>
             <button class="download-btn" id="overlay-download"><i class="fas fa-download"></i> Télécharger</button>
         </div>
     </div>
@@ -944,27 +1134,85 @@
 
     <div id="tooltip" class="tooltip"></div>
 
+    <script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+            return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+            if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+                try {
+                    var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                    var firstSheetName = workbook.SheetNames[0];
+                    var worksheet = workbook.Sheets[firstSheetName];
+
+                    // Convert sheet to JSON to filter blank rows
+                    var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                    // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                    var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                    // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                    var headerRowIndex = filteredData.findIndex((row, index) =>
+                        row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                    );
+                    // Fallback
+                    if (headerRowIndex === -1 || headerRowIndex > 25) {
+                        headerRowIndex = 0;
+                    }
+
+                    // Convert filtered JSON back to CSV
+                    var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                    csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                    return csv;
+                } catch (e) {
+                    console.error(e);
+                    return "";
+                }
+            }
+            return gk_fileData[filename] || "";
+        }
+    </script>
+
     <script>
         document.addEventListener('DOMContentLoaded', function () {
             let isGenerating = false;
             let isWaiting = false;
             let currentPrompt = '';
             let abortController = null;
+            let batchInProgress = false;
+            let batchCount = 0;
+            let currentBatchSize = 0;
+            let lastClickTime = 0;
+            const isMobile = window.matchMedia("(max-width: 768px)").matches;
+
+            // Masquer le bouton Copier sur mobile
+            const copyBtn = document.querySelector('.copy-btn-mobile');
+            if (isMobile && copyBtn) {
+                copyBtn.style.display = 'none';
+            }
 
             document.getElementById('prompt').value = '';
             document.getElementById('model').value = 'flux';
             document.getElementById('dimensions').value = '1280x720';
             document.getElementById('seed').value = '';
             document.getElementById('style-value').value = 'default';
-            document.getElementById('generated-image').style.display = 'none';
+            document.getElementById('batch-size').value = '1';
+            document.getElementById('generated-image').classList.remove('show');
             document.getElementById('placeholder').style.display = 'block';
             document.getElementById('image-overlay').classList.remove('show');
 
             const promptTextarea = document.getElementById('prompt');
             promptTextarea.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    if (!isGenerating) generateImage();
+                    if (!isMobile) {
+                        e.preventDefault(); // Prevent newline on desktop
+                        if (!isGenerating && !batchInProgress) {
+                            generateImage();
+                        }
+                    }
+                    // On mobile, allow default behavior (newline)
                 }
             });
 
@@ -977,7 +1225,7 @@
 
             toggle.addEventListener('click', () => {
                 const toggleRect = toggle.getBoundingClientRect();
-                const optionsHeight = 400;
+                const optionsHeight = 300;
                 const spaceBelow = window.innerHeight - toggleRect.bottom;
                 const spaceAbove = toggleRect.top;
 
@@ -997,29 +1245,37 @@
                     selectLabel.textContent = option.textContent;
                     styleInput.value = value;
                     options.classList.remove('show');
+                    tooltip.classList.remove('show');
                 });
 
-                option.addEventListener('mousemove', (e) => {
+                option.addEventListener('mouseover', () => {
                     const tooltipText = option.getAttribute('data-tooltip');
                     if (tooltipText) {
                         tooltip.textContent = tooltipText;
                         tooltip.classList.add('show');
 
                         const rect = option.getBoundingClientRect();
-                        tooltip.style.top = `${rect.top + (rect.height / 2) - (tooltip.offsetHeight / 2)}px`;
-                        tooltip.style.left = `${rect.right + window.scrollX + 10}px`;
-
-                        const tooltipRect = tooltip.getBoundingClientRect();
-                        if (tooltipRect.right > window.innerWidth) {
-                            tooltip.style.left = `${rect.left + window.scrollX - tooltipRect.width - 10}px`;
-                            tooltip.classList.add('left');
+                        if (isMobile) {
+                            tooltip.classList.add('tooltip-mobile');
+                            tooltip.style.top = `${rect.top - tooltip.offsetHeight - 5 + window.scrollY}px`;
+                            tooltip.style.right = '10px';
+                            tooltip.style.left = 'auto';
                         } else {
-                            tooltip.classList.remove('left');
+                            tooltip.style.top = `${rect.top + (rect.height / 2) - (tooltip.offsetHeight / 2)}px`;
+                            tooltip.style.left = `${rect.right + window.scrollX + 10}px`;
+
+                            const tooltipRect = tooltip.getBoundingClientRect();
+                            if (tooltipRect.right > window.innerWidth) {
+                                tooltip.style.left = `${rect.left + window.scrollX - tooltipRect.width - 10}px`;
+                                tooltip.classList.add('left');
+                            } else {
+                                tooltip.classList.remove('left');
+                            }
                         }
                     }
                 });
 
-                option.addEventListener('mouseleave', () => {
+                option.addEventListener('mouseout', () => {
                     tooltip.classList.remove('show');
                 });
             });
@@ -1027,15 +1283,23 @@
             document.addEventListener('click', (e) => {
                 if (!customSelect.contains(e.target)) {
                     options.classList.remove('show');
+                    tooltip.classList.remove('show');
                 }
             });
 
             const generateBtn = document.getElementById('generate-btn');
             generateBtn.addEventListener('click', () => {
-                if (isGenerating) {
+                if (batchInProgress) {
+                    stopBatchGeneration();
+                } else if (isGenerating) {
                     stopGeneration();
                 } else {
-                    generateImage();
+                    const batchSize = parseInt(document.getElementById('batch-size').value);
+                    if (batchSize > 1) {
+                        startBatchGeneration(batchSize);
+                    } else {
+                        generateImage();
+                    }
                 }
             });
 
@@ -1060,44 +1324,51 @@
             const closeOverlay = document.getElementById('close-overlay');
 
             generatedImage.addEventListener('click', () => {
-                if (generatedImage.style.display === 'block' && generatedImage.src) {
+                if (generatedImage.classList.contains('show') && generatedImage.src) {
                     overlayImage.src = generatedImage.src;
-                    imageOverlay.classList.add('show');
+                    setTimeout(() => {
+                        imageOverlay.classList.add('show');
+                    }, 0);
                 }
             });
 
             overlayDownload.addEventListener('click', () => {
-                fetch(overlayImage.src)
-                    .then(response => response.blob())
-                    .then(blob => {
-                        const url = window.URL.createObjectURL(blob);
-                        const link = document.createElement('a');
-                        link.href = url;
-                        link.download = generateFileName(currentPrompt);
-                        document.body.appendChild(link);
-                        link.click();
-                        document.body.removeChild(link);
-                        window.URL.revokeObjectURL(url);
-                    })
-                    .catch(error => {
-                        console.error('Failed to download image:', error);
-                        showToast('Erreur lors du téléchargement de l\'image.', 'error');
-                    });
+                const base64Data = overlayImage.src.split(',')[1];
+                const byteCharacters = atob(base64Data);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                    byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                const blob = new Blob([byteArray], { type: 'image/jpeg' });
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = generateFileName(currentPrompt);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                window.URL.revokeObjectURL(url);
             });
 
             overlayCopy.addEventListener('click', () => {
-                convertToPng(overlayImage.src)
-                    .then(blob => {
-                        const item = new ClipboardItem({ 'image/png': blob });
-                        return navigator.clipboard.write([item]);
-                    })
-                    .then(() => {
-                        showToast('Image copiée dans le presse-papier !', 'success');
-                    })
-                    .catch(error => {
-                        console.error('Failed to copy image:', error);
-                        showToast('Erreur lors de la copie de l\'image. Essayez un autre navigateur.', 'error');
-                    });
+                try {
+                    convertToPng(overlayImage.src)
+                        .then(blob => {
+                            const item = new ClipboardItem({ 'image/png': blob });
+                            return navigator.clipboard.write([item]);
+                        })
+                        .then(() => {
+                            showToast('Image copiée dans le presse-papiers !', 'success');
+                        })
+                        .catch(error => {
+                            console.error('Failed to copy image:', error);
+                            showToast('Erreur lors de la copie de l\'image. Essayez un autre navigateur.', 'error');
+                        });
+                } catch (error) {
+                    console.error('Clipboard error:', error);
+                    showToast('Erreur d\'accès au presse-papiers. Vérifiez les permissions.', 'error');
+                }
             });
 
             overlayDelete.addEventListener('click', () => {
@@ -1107,7 +1378,8 @@
                 localStorage.setItem('imageHistory', JSON.stringify(history));
                 loadHistory();
                 showToast('Image supprimée de l\'historique !', 'success');
-                generatedImage.style.display = 'none';
+                generatedImage.classList.remove('show');
+                generatedImage.src = '';
                 document.getElementById('placeholder').style.display = 'block';
                 document.getElementById('prompt').value = '';
                 document.getElementById('model').value = 'flux';
@@ -1128,6 +1400,15 @@
                 }
             });
 
+            function centerImageOnMobile() {
+                if (isMobile) {
+                    const imagePreview = document.querySelector('.image-preview');
+                    setTimeout(() => {
+                        imagePreview.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }, 200);
+                }
+            }
+
             function loadHistory() {
                 const history = JSON.parse(localStorage.getItem('imageHistory') || '[]');
                 const historyContainer = document.getElementById('history-items');
@@ -1146,10 +1427,20 @@
                     const historyItem = document.createElement('div');
                     historyItem.className = 'history-item';
                     historyItem.innerHTML = `
-                        <img src="${item.imageUrl}" alt="${item.prompt}">
+                        <img src="${item.imageUrl}" alt="${item.originalPrompt}">
+                        <button class="history-preview-btn"><i class="fas fa-eye"></i></button>
                         <button class="history-delete-btn"><i class="fas fa-times"></i></button>
-                        <div class="prompt">${item.prompt}</div>
+                        <div class="prompt">${item.originalPrompt}</div>
                     `;
+
+                    const previewBtn = historyItem.querySelector('.history-preview-btn');
+                    previewBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        overlayImage.src = item.imageUrl;
+                        setTimeout(() => {
+                            imageOverlay.classList.add('show');
+                        }, 0);
+                    });
 
                     const deleteBtn = historyItem.querySelector('.history-delete-btn');
                     deleteBtn.addEventListener('click', (e) => {
@@ -1159,39 +1450,45 @@
                         localStorage.setItem('imageHistory', JSON.stringify(history));
                         loadHistory();
                         showToast('Image supprimée de l\'historique !', 'success');
-                        document.getElementById('generated-image').style.display = 'none';
-                        document.getElementById('placeholder').style.display = 'block';
-                        document.getElementById('prompt').value = '';
-                        document.getElementById('model').value = 'flux';
-                        document.getElementById('dimensions').value = '1280x720';
-                        document.getElementById('seed').value = '';
-                        document.getElementById('style-value').value = 'default';
-                        document.querySelector('.custom-select-label').textContent = 'Défaut';
+                        if (generatedImage.src === item.imageUrl) {
+                            generatedImage.classList.remove('show');
+                            generatedImage.src = '';
+                            document.getElementById('placeholder').style.display = 'block';
+                        }
                     });
 
                     historyItem.addEventListener('click', () => {
-                        document.getElementById('prompt').value = item.prompt;
-                        const generatedImage = document.getElementById('generated-image');
-                        generatedImage.src = item.imageUrl;
-                        generatedImage.style.display = 'block';
-                        document.getElementById('placeholder').style.display = 'none';
+                        const now = Date.now();
+                        if (now - lastClickTime < 300) return;
+                        lastClickTime = now;
+
+                        document.getElementById('prompt').value = item.originalPrompt;
+
+                        generatedImage.classList.remove('show');
+                        setTimeout(() => {
+                            generatedImage.src = item.imageUrl;
+                            generatedImage.classList.add('show');
+                            document.getElementById('placeholder').style.display = 'none';
+                        }, 300);
+
                         document.getElementById('seed').value = item.seed || '';
                         document.getElementById('model').value = item.model || 'flux';
                         document.getElementById('dimensions').value = item.dimensions || '1280x720';
                         document.getElementById('style-value').value = item.style || 'default';
                         document.querySelector('.custom-select-label').textContent =
                             document.querySelector(`.custom-select-option[data-value="${item.style || 'default'}"]`).textContent;
-                        currentPrompt = item.prompt;
+                        currentPrompt = item.originalPrompt;
                     });
 
-                    historyContainer.appendChild(historyItem);
+                    historyContainer.prepend(historyItem);
                 });
             }
 
             function clearHistory() {
                 localStorage.removeItem('imageHistory');
                 loadHistory();
-                document.getElementById('generated-image').style.display = 'none';
+                generatedImage.classList.remove('show');
+                generatedImage.src = '';
                 document.getElementById('placeholder').style.display = 'block';
                 document.getElementById('prompt').value = '';
                 document.getElementById('model').value = 'flux';
@@ -1200,6 +1497,7 @@
                 document.getElementById('style-value').value = 'default';
                 document.querySelector('.custom-select-label').textContent = 'Défaut';
                 document.getElementById('image-overlay').classList.remove('show');
+                showToast('Historique effacé !', 'success');
             }
 
             function showToast(message, type = '') {
@@ -1207,7 +1505,12 @@
                 toast.textContent = message;
                 toast.className = 'toast';
                 toast.classList.add(type);
-                toast.classList.add('show');
+                if (isMobile) {
+                    toast.style.fontSize = '0.8rem';
+                }
+                setTimeout(() => {
+                    toast.classList.add('show');
+                }, 100);
 
                 setTimeout(() => {
                     toast.classList.remove('show');
@@ -1226,7 +1529,7 @@
                     generateBtn.innerHTML = `Attendez ${timeLeft}s`;
                     if (timeLeft <= 0) {
                         clearInterval(countdown);
-                        generateBtn.innerHTML = originalText;
+                        generateBtn.innerHTML = batchInProgress ? '<i class="fas fa-stop"></i> Arrêter le batch' : originalText;
                         generateBtn.disabled = false;
                         isWaiting = false;
                     }
@@ -1245,6 +1548,15 @@
                     cleanPrompt = cleanPrompt.substring(0, cleanPrompt.lastIndexOf('-') + 1) || cleanPrompt;
                 }
                 return cleanPrompt ? `${cleanPrompt}.jpg` : 'image-ia.jpg';
+            }
+
+            function blobToBase64(blob) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
             }
 
             function convertToPng(imageSrc) {
@@ -1277,14 +1589,68 @@
                 isGenerating = false;
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('placeholder').style.display = 'block';
+                generatedImage.classList.remove('show');
+                generatedImage.src = '';
                 generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
                 showToast('Génération arrêtée.', 'error');
                 document.getElementById('seed').value = '';
                 startCooldown();
             }
 
-            function generateImage() {
-                if (isWaiting) {
+            function stopBatchGeneration() {
+                if (abortController) {
+                    abortController.abort();
+                }
+                isGenerating = false;
+                batchInProgress = false;
+                batchCount = 0;
+                currentBatchSize = 0;
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('placeholder').style.display = 'block';
+                generatedImage.classList.remove('show');
+                generatedImage.src = '';
+                generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
+                showToast('Génération par batch arrêtée.', 'error');
+                document.getElementById('seed').value = '';
+                startCooldown();
+            }
+
+            async function startBatchGeneration(batchSize) {
+                if (isWaiting || batchInProgress) {
+                    showToast('Veuillez attendre avant de lancer un nouveau batch.', 'error');
+                    return;
+                }
+
+                const prompt = document.getElementById('prompt').value.trim();
+                if (!prompt) {
+                    showToast('Veuillez entrer une description', 'error');
+                    return;
+                }
+
+                currentPrompt = prompt;
+                batchInProgress = true;
+                currentBatchSize = batchSize;
+                batchCount = 0;
+
+                generateBtn.innerHTML = '<i class="fas fa-stop"></i> Arrêter le batch';
+
+                for (let i = 0; i < batchSize && batchInProgress; i++) {
+                    await generateImage();
+                    if (batchInProgress && i < batchSize - 1) {
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                    }
+                }
+
+                if (batchInProgress) {
+                    batchInProgress = false;
+                    batchCount = 0;
+                    currentBatchSize = 0;
+                    generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
+                }
+            }
+
+            async function generateImage() {
+                if (isWaiting && !batchInProgress) {
                     showToast('Veuillez attendre avant de générer une nouvelle image.', 'error');
                     return;
                 }
@@ -1297,158 +1663,100 @@
 
                 currentPrompt = prompt;
                 isGenerating = true;
+                abortController = new AbortController();
 
-                const loading = document.getElementById('loading');
-                loading.style.display = 'flex';
+                document.getElementById('loading').style.display = 'flex';
                 document.getElementById('placeholder').style.display = 'none';
-                document.getElementById('generated-image').style.display = 'none';
-                document.getElementById('image-overlay').classList.remove('show');
-
-                generateBtn.innerHTML = '<i class="fas fa-stop"></i> Arrêter la génération';
+                generatedImage.classList.remove('show');
+                generateBtn.innerHTML = '<i class="fas fa-stop"></i> Arrêter';
+                generateBtn.disabled = false;
 
                 const model = document.getElementById('model').value;
-                const dimensions = document.getElementById('dimensions').value.split('x');
-                const width = parseInt(dimensions[0]);
-                const height = parseInt(dimensions[1]);
-                let seed = document.getElementById('seed').value;
+                const dimensions = document.getElementById('dimensions').value;
+                const [width, height] = dimensions.split('x').map(Number);
+                let seed = document.getElementById('seed').value.trim();
                 const style = document.getElementById('style-value').value;
                 const enhance = document.getElementById('enhance').checked;
+                const highDetail = document.getElementById('high-detail').checked;
                 const safe = document.getElementById('safe').checked;
 
-                let aspectRatio;
-                if (width === height) {
-                    aspectRatio = '1:1';
-                } else if (width === 800 && height === 600) {
-                    aspectRatio = '4:3';
-                } else if ((width === 1024 && height === 576) || (width === 1280 && height === 720)) {
-                    aspectRatio = '16:9';
-                } else if (width === 600 && height === 800) {
-                    aspectRatio = '3:4';
-                } else if ((width === 576 && height === 1024) || (width === 720 && height === 1280)) {
-                    aspectRatio = '9:16';
-                } else if ((width === 1600 && height === 400) || (width === 1920 && height === 480) || (width === 2048 && height === 512)) {
-                    aspectRatio = '4:1';
-                } else {
-                    aspectRatio = `${width}:${height}`;
-                }
-
-                let modifiedPrompt = prompt;
+                let finalPrompt = prompt;
                 if (style !== 'default') {
-                    modifiedPrompt += `, style ${style}`;
+                    finalPrompt += `, in ${style} style`;
                 }
-                modifiedPrompt += `, aspect ratio ${aspectRatio}`;
+                if (highDetail) {
+                    finalPrompt = `highly detailed, 8k resolution, ${finalPrompt}`;
+                }
 
-                modifiedPrompt = modifiedPrompt.replace(/[^\x20-\x7E]/g, '');
+                let aspectRatio;
+                if (width === height) aspectRatio = '1:1';
+                else if (width === 800 && height === 600) aspectRatio = '4:3';
+                else if ((width === 1024 && height === 576) || (width === 1280 && height === 720)) aspectRatio = '16:9';
+                else if (width === 600 && height === 800) aspectRatio = '3:4';
+                else if ((width === 576 && height === 1024) || (width === 720 && height === 1280)) aspectRatio = '9:16';
+                else if ((width === 1600 && height === 400) || (width === 1920 && height === 480) || (width === 2048 && height === 512)) aspectRatio = '4:1';
+                else aspectRatio = `${width}:${height}`;
+
+                finalPrompt += `, aspect ratio ${aspectRatio}`;
+                finalPrompt = finalPrompt.replace(/[^\x20-\x7E]/g, '');
 
                 if (!seed) {
-                    seed = Math.floor(Math.random() * 1000000);
+                    seed = Math.floor(Math.random() * 1000000).toString();
                 } else {
                     seed = parseInt(seed);
-                    if (isNaN(seed)) {
-                        seed = Math.floor(Math.random() * 1000000);
-                    }
+                    if (isNaN(seed)) seed = Math.floor(Math.random() * 1000000).toString();
                 }
 
-                let url = `https://image.pollinations.ai/prompt/${encodeURIComponent(modifiedPrompt)}`;
-                url += `?model=${model}&width=${width}&height=${height}`;
-                url += `&nologo=true&private=true`;
-                if (seed) url += `&seed=${seed}`;
-                if (enhance) url += `&enhance=true`;
-                if (safe) url += `&safe=true`;
-                url += `&tamp=${Date.now()}`;
+                let apiUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(finalPrompt)}`;
+                apiUrl += `?model=${model}&width=${width}&height=${height}`;
+                apiUrl += `&nologo=true&private=true`;
+                if (seed) apiUrl += `&seed=${seed}`;
+                if (enhance) apiUrl += `&enhance=true`;
+                if (safe) apiUrl += `&safe=true`;
+                apiUrl += `&tamp=${Date.now()}`;
 
-                const img = document.getElementById('generated-image');
+                try {
+                    const response = await fetch(apiUrl, { signal: abortController.signal });
+                    if (!response.ok) throw new Error('Échec de la génération de l\'image.');
 
-                abortController = new AbortController();
-                const signal = abortController.signal;
+                    const blob = await response.blob();
+                    const base64Image = await blobToBase64(blob);
 
-                fetch(url, { signal })
-                    .then(response => response.blob())
-                    .then(blob => {
-                        if (isGenerating) {
-                            const imageUrl = URL.createObjectURL(blob);
-                            img.src = imageUrl;
-                            document.getElementById('loading').style.display = 'none';
-                            img.style.display = 'block';
-                            document.getElementById('image-overlay').classList.remove('show');
-
-                            addToHistory(prompt, imageUrl, seed, model, `${width}x${height}`, style);
-
-                            showToast('Image générée avec succès !', 'success');
-
-                            document.getElementById('seed').value = '';
-
-                            generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
-
-                            startCooldown();
-                        }
-                        isGenerating = false;
-                    })
-                    .catch(error => {
-                        if (error.name === 'AbortError') {
-                            // Géré par stopGeneration
-                            return;
-                        }
-                        console.error('Failed to load image from URL:', url, error);
-                        document.getElementById('loading').style.display = 'none';
-                        document.getElementById('placeholder').style.display = 'block';
-                        showToast('Erreur lors de la génération de l\'image (serveur indisponible ou entrée invalide). Réessayez plus tard.', 'error');
-                        document.getElementById('seed').value = '';
-                        generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
-                        isGenerating = false;
-                        startCooldown();
-                    });
-
-                img.onerror = function () {
-                    console.error('Failed to load image from URL:', url);
+                    generatedImage.src = base64Image;
+                    generatedImage.classList.add('show');
                     document.getElementById('loading').style.display = 'none';
-                    document.getElementById('placeholder').style.display = 'block';
-                    showToast('Erreur lors de la génération de l\'image.', 'error');
+
                     document.getElementById('seed').value = '';
-                    generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
+
+                    addToHistory({ originalPrompt: prompt, imageUrl: base64Image, model, dimensions, style, seed });
+                    showToast('Image générée avec succès !', 'success');
+                    centerImageOnMobile();
+                } catch (error) {
+                    if (error.name === 'AbortError') {
+                        showToast('Génération annulée.', 'error');
+                    } else {
+                        console.error('Erreur lors de la génération:', error);
+                        showToast(error.message || 'Erreur lors de la génération de l\'image.', 'error');
+                        document.getElementById('placeholder').style.display = 'block';
+                    }
+                    document.getElementById('seed').value = '';
+                } finally {
                     isGenerating = false;
+                    document.getElementById('loading').style.display = 'none';
+                    generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
                     startCooldown();
-                };
+                }
             }
 
-            function addToHistory(prompt, imageUrl, seed, model, dimensions, style) {
+            function addToHistory(item) {
                 let history = JSON.parse(localStorage.getItem('imageHistory') || '[]');
-                history.unshift({
-                    prompt: prompt,
-                    imageUrl: imageUrl,
-                    seed: seed || null,
-                    model: model,
-                    dimensions: dimensions,
-                    style: style,
-                    timestamp: new Date().toISOString()
-                });
-                if (history.length > 10) {
-                    history = history.slice(0, 10);
-                }
+                history.unshift(item);
+                if (history.length > 50) history = history.slice(0, 50);
                 localStorage.setItem('imageHistory', JSON.stringify(history));
                 loadHistory();
             }
 
             loadHistory();
-
-            const examplePrompts = [
-                "Un magnifique coucher de soleil sur l'ocean avec des palmiers",
-                "Une ville futuriste avec des voitures volantes et des neons",
-                "Un chiot corgi adorable jouant dans un champ de fleurs",
-                "Un astronaute chevauchant un cheval sur Mars",
-                "Un dirigeable steampunk volant a travers les nuages"
-            ];
-
-            const randomPromptBtn = document.createElement('button');
-            randomPromptBtn.className = 'btn btn-secondary';
-            randomPromptBtn.innerHTML = '<i class="fas fa-random"></i> Exemple aléatoire';
-            randomPromptBtn.style.marginTop = '0.5rem';
-            randomPromptBtn.addEventListener('click', () => {
-                const randomPrompt = examplePrompts[Math.floor(Math.random() * examplePrompts.length)];
-                document.getElementById('prompt').value = randomPrompt;
-            });
-
-            document.querySelector('.form-group:first-child').appendChild(randomPromptBtn);
         });
     </script>
 </body>
