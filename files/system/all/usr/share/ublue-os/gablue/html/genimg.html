@@ -6,8 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="img-src 'self' data:;">
     <title>Générateur d'images IA</title>
-    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" as="style"
-        onload="this.rel='stylesheet'">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <style>
         :root {
             --primary: #7c3aed;
@@ -45,12 +44,11 @@
 
         header {
             text-align: center;
-            margin-bottom: 1.5rem;
+            margin: 0.5rem 0;
         }
 
         h1 {
-            font-size: 2rem;
-            margin-bottom: 0.5rem;
+            font-size: 1.5rem;
             color: var(--light);
             text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
         }
@@ -60,17 +58,16 @@
             grid-template-columns: 1fr 1fr;
             gap: 1.5rem;
             background: var(--card-background);
-            border-radius: 12px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            border-radius: 12px數 box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
         }
 
-        .controls {
+        .controls,
+        .image-preview {
             padding: 1.5rem;
-            background: var(--card-background);
         }
 
         .image-preview {
-            padding: 1.5rem;
             background: var(--dark);
             display: flex;
             flex-direction: column;
@@ -88,7 +85,6 @@
             display: block;
             margin-bottom: 0.5rem;
             font-weight: 600;
-            color: var(--text);
             font-size: 0.95rem;
         }
 
@@ -118,120 +114,39 @@
             box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
         }
 
-        .custom-select {
+        .seed-container {
             position: relative;
-            width: 100%;
-        }
-
-        .custom-select-toggle {
-            width: 100%;
-            padding: 0.7rem;
-            border: 1px solid var(--text-muted);
-            border-radius: 8px;
-            font-size: 0.9rem;
-            background: var(--dark);
-            color: var(--text);
-            cursor: pointer;
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            transition: all 0.3s ease;
         }
 
-        .custom-select-toggle:hover {
-            border-color: var(--primary);
+        .seed-container input {
+            padding-right: 2.5rem;
+            /* Espace pour le bouton */
         }
 
-        .custom-select-toggle:focus {
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
-        }
-
-        .custom-select-options {
+        .clear-seed-btn {
             position: absolute;
-            left: 0;
-            right: 0;
-            max-height: 300px;
-            overflow-y: auto;
-            background: var(--card-background);
-            border: 1px solid var(--text-muted);
-            border-radius: 8px;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-            z-index: 1000;
-            display: none;
-        }
-
-        .custom-select-options.show {
-            display: block;
-        }
-
-        .custom-select-options.open-up {
-            bottom: 100%;
-            top: auto;
-        }
-
-        .custom-select-options.open-down {
-            top: 100%;
-            bottom: auto;
-        }
-
-        .custom-select-option {
-            padding: 0.5rem 0.7rem;
-            color: var(--text);
-            cursor: pointer;
-            transition: all 0.3s ease;
-            position: relative;
-            font-size: 0.85rem;
-        }
-
-        .custom-select-option:hover {
-            background: var(--primary-dark);
-            color: white;
-        }
-
-        .custom-select-option.category {
-            background: var(--dark);
-            color: var(--text-muted);
-            font-weight: bold;
-            padding: 0.5rem 0.7rem;
-            border-top: 1px solid var(--text-muted);
-            cursor: default;
-        }
-
-        .tooltip {
-            position: fixed;
-            background: var(--primary-dark);
-            color: white;
-            padding: 0.5rem 0.8rem;
-            border-radius: 4px;
-            font-size: 0.8rem;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-            z-index: 2000;
-            display: none;
-            max-width: 250px;
-            pointer-events: none;
-            word-break: break-word;
-            overflow-wrap: break-word;
-        }
-
-        .tooltip.show {
-            display: block;
-        }
-
-        .tooltip::before {
-            content: '';
-            position: absolute;
+            right: 0.5rem;
             top: 50%;
-            left: -6px;
             transform: translateY(-50%);
-            border-width: 6px;
-            border-style: solid;
-            border-color: transparent var(--primary-dark) transparent transparent;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            cursor: pointer;
+            padding: 0.2rem;
+            transition: color 0.3s ease;
+            display: flex;
+            align-items: center;
+            z-index: 10;
+        }
+
+        .clear-seed-btn:hover {
+            color: var(--danger);
         }
 
         .btn {
-            display: inline-block;
             padding: 0.7rem 1.2rem;
             background-color: var(--primary);
             color: white;
@@ -241,7 +156,6 @@
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
-            text-align: center;
         }
 
         .btn:hover {
@@ -310,7 +224,6 @@
 
         .placeholder i {
             font-size: 3rem;
-            color: var(--text-muted);
             margin-bottom: 0.8rem;
         }
 
@@ -339,10 +252,6 @@
         }
 
         @keyframes spin {
-            from {
-                transform: rotate(0deg);
-            }
-
             to {
                 transform: rotate(360deg);
             }
@@ -382,8 +291,6 @@
             cursor: pointer;
             transition: all 0.3s ease;
             position: relative;
-            opacity: 0;
-            transform: translateY(20px);
             animation: fadeInUp 0.3s ease forwards;
         }
 
@@ -403,7 +310,6 @@
             width: 100%;
             height: 120px;
             object-fit: cover;
-            display: block;
         }
 
         .history-item .prompt {
@@ -422,10 +328,10 @@
             display: block;
         }
 
-        .history-delete-btn {
+        .history-delete-btn,
+        .history-preview-btn {
             position: absolute;
             top: 4px;
-            right: 4px;
             background: var(--danger);
             color: white;
             border: none;
@@ -440,35 +346,23 @@
             transition: all 0.3s ease;
         }
 
-        .history-item:hover .history-delete-btn {
+        .history-preview-btn {
+            left: 4px;
+            background: var(--primary);
+        }
+
+        .history-delete-btn {
+            right: 4px;
+        }
+
+        .history-item:hover .history-delete-btn,
+        .history-item:hover .history-preview-btn {
             display: flex;
         }
 
         .history-delete-btn:hover {
             background: #dc2626;
             transform: scale(1.1);
-        }
-
-        .history-preview-btn {
-            position: absolute;
-            top: 4px;
-            left: 4px;
-            background: var(--primary);
-            color: white;
-            border: none;
-            border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
-            cursor: pointer;
-            display: none;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.3s ease;
-        }
-
-        .history-item:hover .history-preview-btn {
-            display: flex;
         }
 
         .history-preview-btn:hover {
@@ -539,10 +433,6 @@
             max-height: 80vh;
             border-radius: 8px;
             box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: auto;
             opacity: 0;
             transition: opacity 0.3s ease-in-out 0.05s;
         }
@@ -621,53 +511,26 @@
             transform: translateY(-2px);
         }
 
-        .seed-container {
-            position: relative;
-        }
-
-        .clear-seed-btn {
-            position: absolute;
-            right: 8px;
-            top: 50%;
-            transform: translateY(-50%);
-            background: transparent;
-            border: none;
-            color: var(--text-muted);
-            font-size: 0.9rem;
-            cursor: pointer;
-            padding: 0.2rem;
-            transition: all 0.3s ease;
-        }
-
-        .clear-seed-btn:hover {
-            color: var(--danger);
-        }
-
-        .custom-select-option.popular {
-            background: rgba(124, 58, 237, 0.1);
-            font-weight: bold;
-        }
-
-        .custom-select-option.popular:hover {
-            background: var(--primary-dark);
-            color: white;
-        }
-
         .batch-container {
             display: flex;
             gap: 0.8rem;
             align-items: center;
         }
 
-        .tooltip-mobile {
-            max-width: 150px;
-            font-size: 0.7rem;
-            text-align: center;
+        .batch-container select {
+            width: 80px;
+            padding: 0.7rem;
+            border: 1px solid var(--text-muted);
+            border-radius: 8px;
+            font-size: 0.9rem;
+            background: var(--dark);
+            color: var(--text);
         }
 
         @media (max-width: 768px) {
             .app-container {
                 grid-template-columns: 1fr;
+                border-radius: 12px;
             }
 
             .container {
@@ -675,7 +538,7 @@
             }
 
             h1 {
-                font-size: 1.8rem;
+                font-size: 1.2rem;
             }
 
             .controls,
@@ -706,6 +569,15 @@
                 padding: 0.6rem;
             }
 
+            .seed-container input {
+                padding-right: 2rem;
+            }
+
+            .clear-seed-btn {
+                right: 0.3rem;
+                font-size: 0.8rem;
+            }
+
             .btn {
                 font-size: 0.85rem;
                 padding: 0.6rem 1rem;
@@ -723,36 +595,33 @@
                 font-size: 0.65rem;
             }
 
+            .history h3 {
+                font-size: 0.9rem;
+            }
+
+            .history-header {
+                flex-wrap: nowrap;
+                gap: 0.5rem;
+            }
+
+            .history-header .btn {
+                font-size: 0.8rem;
+                padding: 0.5rem 0.8rem;
+            }
+
             .toast {
                 font-size: 0.8rem;
                 padding: 0.6rem 1rem;
             }
 
-            .tooltip-mobile {
-                left: auto !important;
-                right: 10px !important;
-            }
-
-            .tooltip-mobile::before {
-                left: auto;
-                right: -6px;
-                border-color: transparent transparent transparent var(--primary-dark);
-            }
-
-            .image-overlay {
-                align-items: center;
-                justify-content: center;
-            }
-
             .image-overlay img {
                 max-height: 70vh;
-                margin: auto;
             }
         }
 
         @media (max-width: 480px) {
             h1 {
-                font-size: 1.5rem;
+                font-size: 1rem;
             }
 
             .image-preview {
@@ -807,13 +676,8 @@
         <div class="app-container">
             <div class="controls">
                 <div class="form-group">
-                    <label for="prompt">Description de l'image</label>
-                    <textarea id="prompt" placeholder="Décrivez l'image que vous souhaitez générer..."></textarea>
-                </div>
-
-                <div class="form-group">
                     <label for="model">Modèle</label>
-                    <select id="model">
+                    <select id="model" name="model">
                         <option value="flux" selected>Flux (par défaut)</option>
                         <option value="turbo">Turbo</option>
                     </select>
@@ -821,7 +685,7 @@
 
                 <div class="form-group">
                     <label for="dimensions">Dimensions</label>
-                    <select id="dimensions">
+                    <select id="dimensions" name="dimensions">
                         <option value="512x512">512x512 (Carré, 1:1)</option>
                         <option value="1024x1024">1024x1024 (Carré, 1:1)</option>
                         <option value="800x600">800x600 (Paysage, 4:3)</option>
@@ -839,220 +703,226 @@
                 <div class="form-group">
                     <label for="seed">Graine (laisser vide pour aléatoire)</label>
                     <div class="seed-container">
-                        <input type="text" id="seed" placeholder="Graine aléatoire" pattern="[0-9]*">
+                        <input type="number" id="seed" placeholder="Graine aléatoire">
                         <button class="clear-seed-btn" id="clear-seed-btn"><i class="fas fa-times"></i></button>
                     </div>
                 </div>
 
                 <div class="form-group">
                     <label for="style">Style</label>
-                    <div class="custom-select" id="style">
-                        <div class="custom-select-toggle">
-                            <span class="custom-select-label">Défaut</span>
-                            <i class="fas fa-chevron-down"></i>
-                        </div>
-                        <div class="custom-select-options">
-                            <div class="custom-select-option" data-value="default"
-                                data-tooltip="Style par défaut sans modification esthétique">Défaut</div>
-                            <div class="custom-select-option category">──── Populaires ────</div>
-                            <div class="custom-select-option popular" data-value="anime"
-                                data-tooltip="Style d'animation japonaise avec lignes nettes, couleurs vibrantes et expressions exagérées">
-                                Anime</div>
-                            <div class="custom-select-option popular" data-value="realistic"
-                                data-tooltip="Rendu photoréaliste avec détails précis et textures naturelles">Réaliste
-                            </div>
-                            <div class="custom-select-option popular" data-value="cartoon"
-                                data-tooltip="Style animé avec contours nets et couleurs vives, comme un dessin animé">
-                                Cartoon</div>
-                            <div class="custom-select-option popular" data-value="oilpainting"
-                                data-tooltip="Peinture à l'huile classique avec coups de pinceau épais et couleurs riches">
-                                Peinture à l'huile</div>
-                            <div class="custom-select-option popular" data-value="watercolor"
-                                data-tooltip="Effet de peinture à l'aquarelle avec des couleurs douces et translucides">
-                                Aquarelle</div>
-                            <div class="custom-select-option popular" data-value="sketch"
-                                data-tooltip="Croquis au crayon ou à l'encre avec traits visibles et esthétique minimaliste">
-                                Croquis</div>
-                            <div class="custom-select-option category">──── Artistiques Classiques ────</div>
-                            <div class="custom-select-option" data-value="artdeco"
-                                data-tooltip="Style élégant des années 1920 avec des motifs géométriques et dorés">Art
-                                Déco</div>
-                            <div class="custom-select-option" data-value="baroque"
-                                data-tooltip="Esthétique opulente du XVIIe siècle avec des détails riches et dorés">
-                                Baroque</div>
-                            <div class="custom-select-option" data-value="bauhaus"
-                                data-tooltip="Style moderniste avec des formes géométriques et des couleurs primaires">
-                                Bauhaus</div>
-                            <div class="custom-select-option" data-value="chiaroscuro"
-                                data-tooltip="Jeu dramatique de lumière et d'ombre, inspiré des peintures de Caravage">
-                                Chiaroscuro</div>
-                            <div class="custom-select-option" data-value="expressionist"
-                                data-tooltip="Émotions brutes avec des couleurs contrastées et des formes exagérées">
-                                Expressionniste</div>
-                            <div class="custom-select-option" data-value="gouache"
-                                data-tooltip="Peinture épaisse et texturée avec des couleurs vibrantes et des coups de pinceau">
-                                Gouache</div>
-                            <div class="custom-select-option" data-value="marble"
-                                data-tooltip="Esthétique de marbre sculpté avec veines élégantes et tons luxueux">Marbre
-                            </div>
-                            <div class="custom-select-option" data-value="mosaic"
-                                data-tooltip="Motifs composés de petites tuiles colorées, comme l'art byzantin">Mosaïque
-                            </div>
-                            <div class="custom-select-option" data-value="popart"
-                                data-tooltip="Couleurs audacieuses et motifs répétitifs, inspiré d'Andy Warhol">Pop Art
-                            </div>
-                            <div class="custom-select-option" data-value="surrealist"
-                                data-tooltip="Scènes irréelles et oniriques, comme les œuvres de Dalí">Surréaliste</div>
-                            <div class="custom-select-option" data-value="ukiyo-e"
-                                data-tooltip="Estampes japonaises traditionnelles avec des lignes fluides et des scènes poétiques">
-                                Ukiyo-e</div>
-                            <div class="custom-select-option category">──── Modernes/Graphiques ────</div>
-                            <div class="custom-select-option" data-value="chalkboard"
-                                data-tooltip="Style tableau noir avec des traits de craie et une vibe rétro éducative">
-                                Tableau Craie</div>
-                            <div class="custom-select-option" data-value="glitchart"
-                                data-tooltip="Effets visuels numériques cassés avec des distorsions et artefacts colorés">
-                                Glitch Art</div>
-                            <div class="custom-select-option" data-value="holographic"
-                                data-tooltip="Effets irisés et brillants, comme des hologrammes futuristes">
-                                Holographique</div>
-                            <div class="custom-select-option" data-value="holographicretro"
-                                data-tooltip="Holographie rétrofuturiste avec reflets irisés et vibe années 80">
-                                Holographique Rétro</div>
-                            <div class="custom-select-option" data-value="lowpoly"
-                                data-tooltip="Formes géométriques polygonales en 3D minimaliste">Low Poly</div>
-                            <div class="custom-select-option" data-value="minimalist"
-                                data-tooltip="Design épuré avec peu de détails et des couleurs simples">Minimaliste
-                            </div>
-                            <div class="custom-select-option" data-value="papercut"
-                                data-tooltip="Découpages de papier avec couches superposées et ombres délicates">
-                                Papercut</div>
-                            <div class="custom-select-option" data-value="pixelart"
-                                data-tooltip="Esthétique rétro des jeux vidéo avec des pixels visibles">Pixel Art</div>
-                            <div class="custom-select-option" data-value="vectorart"
-                                data-tooltip="Graphismes épurés avec des lignes nettes et des formes plates">Vector Art
-                            </div>
-                            <div class="custom-select-option category">──── Futuristes ────</div>
-                            <div class="custom-select-option" data-value="afrofuturism"
-                                data-tooltip="Fusion de science-fiction et culture africaine avec des motifs vibrants">
-                                Afrofuturisme</div>
-                            <div class="custom-select-option" data-value="biopunk"
-                                data-tooltip="Technologie organique et mutations dans une vibe dystopique">Biopunk</div>
-                            <div class="custom-select-option" data-value="cyberpunk"
-                                data-tooltip="Ambiance high-tech sombre avec néons et dystopie urbaine">Cyberpunk</div>
-                            <div class="custom-select-option" data-value="dieselpunk"
-                                data-tooltip="Style rétro-futuriste des années 30-40 avec machines robustes">Dieselpunk
-                            </div>
-                            <div class="custom-select-option" data-value="neonnoir"
-                                data-tooltip="Mélange de cyberpunk et film noir avec néons et ambiance pluvieuse">Néon
-                                Noir</div>
-                            <div class="custom-select-option" data-value="retrofuture"
-                                data-tooltip="Vision du futur des années 50-60 avec fusées et dômes vintage">
-                                Rétrofuturiste</div>
-                            <div class="custom-select-option" data-value="solarpunk"
-                                data-tooltip="Futur écologique utopique avec technologies vertes et nature">Solarpunk
-                            </div>
-                            <div class="custom-select-option" data-value="synthwave"
-                                data-tooltip="Esthétique rétro-futuriste des années 80 avec néons et grilles">Synthwave
-                            </div>
-                            <div class="custom-select-option category">──── Fantastiques/Magiques ────</div>
-                            <div class="custom-select-option" data-value="bioluminescent"
-                                data-tooltip="Lueurs néon comme des organismes bioluminescents, vibe sous-marine magique">
-                                Bioluminescent</div>
-                            <div class="custom-select-option" data-value="biopoetic"
-                                data-tooltip="Formes organiques fluides avec une ambiance vivante et poétique">
-                                Biopoétique</div>
-                            <div class="custom-select-option" data-value="dreamscape"
-                                data-tooltip="Scènes irréelles et floues, comme dans un rêve">Paysage Onirique</div>
-                            <div class="custom-select-option" data-value="enchanted"
-                                data-tooltip="Ambiance magique avec lueurs douces et éléments féeriques">Enchanté</div>
-                            <div class="custom-select-option" data-value="ethereal"
-                                data-tooltip="Esthétique aérienne avec tons pastel et légèreté surnaturelle">Éthéré
-                            </div>
-                            <div class="custom-select-option" data-value="fantasy"
-                                data-tooltip="Univers épiques avec créatures et paysages fantastiques">Fantaisie</div>
-                            <div class="custom-select-option" data-value="luminist"
-                                data-tooltip="Ambiance centrée sur la lumière avec halos et reflets divins">Luministe
-                            </div>
-                            <div class="custom-select-option" data-value="mythic"
-                                data-tooltip="Scènes inspirées des mythologies avec une aura sacrée">Mythique</div>
-                            <div class="custom-select-option" data-value="whimsical"
-                                data-tooltip="Ambiance ludique avec éléments excentriques et couleurs douces">
-                                Fantaisiste</div>
-                            <div class="custom-select-option category">──── Sombres/Dramatiques ────</div>
-                            <div class="custom-select-option" data-value="apocalyptic"
-                                data-tooltip="Scènes post-apocalyptiques avec ruines et cieux sombres">Apocalyptique
-                            </div>
-                            <div class="custom-select-option" data-value="gothic"
-                                data-tooltip="Ambiance mystérieuse avec tons sombres et détails ornés">Gothique</div>
-                            <div class="custom-select-option" data-value="noir"
-                                data-tooltip="Esthétique monochrome des films noirs avec ombres dramatiques">Noir (Film
-                                Noir)</div>
-                            <div class="custom-select-option" data-value="xenomorphic"
-                                data-tooltip="Formes biomécaniques extraterrestres, inspirées de H.R. Giger">Xénomorphe
-                            </div>
-                            <div class="custom-select-option category">──── Vibrants/Alternatifs ────</div>
-                            <div class="custom-select-option" data-value="fractal"
-                                data-tooltip="Motifs géométriques complexes et répétitifs, comme des fractales">Fractal
-                            </div>
-                            <div class="custom-select-option" data-value="graffiti"
-                                data-tooltip="Style urbain avec couleurs vives et motifs de street art">Graffiti</div>
-                            <div class="custom-select-option" data-value="grunge"
-                                data-tooltip="Esthétique brute avec textures rugueuses et couleurs désaturées">Grunge
-                            </div>
-                            <div class="custom-select-option" data-value="kawaii"
-                                data-tooltip="Style japonais mignon avec personnages adorables et pastel">Kawaii</div>
-                            <div class="custom-select-option" data-value="prismatic"
-                                data-tooltip="Couleurs éclatantes réfractées, comme à travers un prisme">Prismatique
-                            </div>
-                            <div class="custom-select-option" data-value="psychedelic"
-                                data-tooltip="Couleurs vives et motifs tourbillonnants, ambiance années 60">
-                                Psychédélique</div>
-                            <div class="custom-select-option" data-value="vaporwave"
-                                data-tooltip="Nostalgie rétro des années 80-90 avec néons et pastel">Vaporwave</div>
-                            <div class="custom-select-option category">──── Décoratifs ────</div>
-                            <div class="custom-select-option" data-value="claymation"
-                                data-tooltip="Style pâte à modeler avec textures douces et vibe artisanale">Claymation
-                            </div>
-                            <div class="custom-select-option" data-value="knitted"
-                                data-tooltip="Textures de laine avec motifs entrelacés, vibe chaleureuse et artisanale">
-                                Tricoté</div>
-                            <div class="custom-select-option" data-value="origami"
-                                data-tooltip="Esthétique de pliage de papier avec formes géométriques nettes">Origami
-                            </div>
-                            <div class="custom-select-option" data-value="stainedglass"
-                                data-tooltip="Couleurs vibrantes séparées par des lignes noires, comme un vitrail">
-                                Vitrail</div>
-                            <div class="custom-select-option" data-value="velvet"
-                                data-tooltip="Textures riches de velours avec couleurs profondes et ambiance opulente">
-                                Velours</div>
-                            <div class="custom-select-option category">──── Cosmiques ────</div>
-                            <div class="custom-select-option" data-value="cosmic"
-                                data-tooltip="Ambiance spatiale avec étoiles, galaxies et tons profonds">Cosmique</div>
-                            <div class="custom-select-option" data-value="microscopic"
-                                data-tooltip="Images au microscope avec détails cellulaires et couleurs fluorescentes">
-                                Microscopique</div>
-                            <div class="custom-select-option category">──── Steampunk ────</div>
-                            <div class="custom-select-option" data-value="steampunk"
-                                data-tooltip="Machines rétro-futuristes avec engrenages et vapeur">Steampunk</div>
-                            <div class="custom-select-option category">──── Audacieux ────</div>
-                            <div class="custom-select-option" data-value="boudoir"
-                                data-tooltip="Style intime et luxueux avec textures soyeuses et sensualité raffinée">
-                                Boudoir</div>
-                            <div class="custom-select-option" data-value="cabaret"
-                                data-tooltip="Spectacles burlesques avec couleurs riches et vibe théâtrale provocante">
-                                Cabaret</div>
-                            <div class="custom-select-option" data-value="erotic"
-                                data-tooltip="Art sensuel avec formes fluides et ambiance suggestive">Érotique</div>
-                            <div class="custom-select-option" data-value="fetishnoir"
-                                data-tooltip="Ambiance sombre avec cuir, contrastes forts et mystère audacieux">Fetish
-                                Noir</div>
-                            <div class="custom-select-option" data-value="pinup"
-                                data-tooltip="Style rétro des années 50 avec poses audacieuses et glamour espiègle">
-                                Pin-Up</div>
-                        </div>
-                    </div>
-                    <input type="hidden" id="style-value" name="style" value="default">
+                    <select id="style" name="style">
+                        <option value="default" selected>Défaut</option>
+                        <optgroup label="Populaires">
+                            <option value="anime">Anime</option>
+                            <option value="realistic">Réaliste</option>
+                            <option value="cartoon">Cartoon</option>
+                            <option value="oilpainting">Peinture à l'huile</option>
+                            <option value="watercolor">Aquarelle</option>
+                            <option value="sketch">Croquis</option>
+                            <option value="photorealistic">Photoréaliste</option>
+                            <option value="digitalart">Art numérique</option>
+                            <option value="3drender">Rendu 3D</option>
+                            <option value="comic">Bande dessinée</option>
+                        </optgroup>
+                        <optgroup label="Artistiques Classiques">
+                            <option value="artdeco">Art Déco</option>
+                            <option value="baroque">Baroque</option>
+                            <option value="bauhaus">Bauhaus</option>
+                            <option value="chiaroscuro">Chiaroscuro</option>
+                            <option value="expressionist">Expressionniste</option>
+                            <option value="gouache">Gouache</option>
+                            <option value="marble">Marbre</option>
+                            <option value="mosaic">Mosaïque</option>
+                            <option value="popart">Pop Art</option>
+                            <option value="surrealist">Surréaliste</option>
+                            <option value="ukiyo-e">Ukiyo-e</option>
+                            <option value="renaissance">Renaissance</option>
+                            <option value="impressionist">Impressionniste</option>
+                            <option value="cubist">Cubiste</option>
+                            <option value="fauvist">Fauviste</option>
+                            <option value="romanticism">Romantisme</option>
+                            <option value="neoclassical">Néo-classique</option>
+                            <option value="pointillism">Pointillisme</option>
+                            <option value="symbolism">Symbolisme</option>
+                            <option value="artnouveau">Art Nouveau</option>
+                        </optgroup>
+                        <optgroup label="Modernes/Graphiques">
+                            <option value="chalkboard">Tableau Craie</option>
+                            <option value="glitchart">Glitch Art</option>
+                            <option value="holographic">Holographique</option>
+                            <option value="holographicretro">Holographique Rétro</option>
+                            <option value="lowpoly">Low Poly</option>
+                            <option value="minimalist">Minimaliste</option>
+                            <option value="papercut">Papercut</option>
+                            <option value="pixelart">Pixel Art</option>
+                            <option value="vectorart">Vector Art</option>
+                            <option value="flatdesign">Design Plat</option>
+                            <option value="isometric">Isométrique</option>
+                            <option value="lineart">Art au trait</option>
+                            <option value="silhouette">Silhouette</option>
+                            <option value="geometric">Géométrique</option>
+                            <option value="abstract">Abstrait</option>
+                            <option value="futuristic">Futuriste</option>
+                            <option value="collage">Collage</option>
+                            <option value="retro">Rétro</option>
+                            <option value="vintage">Vintage</option>
+                            <option value="monochrome">Monochrome</option>
+                        </optgroup>
+                        <optgroup label="Futuristes">
+                            <option value="afrofuturism">Afrofuturisme</option>
+                            <option value="biopunk">Biopunk</option>
+                            <option value="cyberpunk">Cyberpunk</option>
+                            <option value="dieselpunk">Dieselpunk</option>
+                            <option value="neonnoir">Néon Noir</option>
+                            <option value="retrofuture">Rétrofuturiste</option>
+                            <option value="solarpunk">Solarpunk</option>
+                            <option value="synthwave">Synthwave</option>
+                            <option value="steampunk">Steampunk</option>
+                            <option value="nanopunk">Nanopunk</option>
+                            <option value="postcyberpunk">Post-Cyberpunk</option>
+                            <option value="atompunk">Atompunk</option>
+                            <option value="raypunk">Raypunk</option>
+                            <option value="cyberprep">Cyberprep</option>
+                            <option value="teslapunk">Teslapunk</option>
+                            <option value="spaceopera">Opéra spatial</option>
+                            <option value="scifi">Science-fiction</option>
+                            <option value="technoir">Tech Noir</option>
+                            <option value="arcology">Arcology</option>
+                            <option value="transhuman">Transhumaniste</option>
+                        </optgroup>
+                        <optgroup label="Fantastiques/Magiques">
+                            <option value="bioluminescent">Bioluminescent</option>
+                            <option value="biopoetic">Biopoétique</option>
+                            <option value="dreamscape">Paysage Onirique</option>
+                            <option value="enchanted">Enchanté</option>
+                            <option value="ethereal">Éthéré</option>
+                            <option value="fantasy">Fantaisie</option>
+                            <option value="luminist">Luministe</option>
+                            <option value="mythic">Mythique</option>
+                            <option value="whimsical">Fantaisiste</option>
+                            <option value="magicalrealism">Réalisme magique</option>
+                            <option value="fairytale">Conte de fées</option>
+                            <option value="otherworldly">Autre monde</option>
+                            <option value="arcane">Arcane</option>
+                            <option value="celestial">Céleste</option>
+                            <option value="divine">Divin</option>
+                            <option value="mystical">Mystique</option>
+                            <option value="occult">Occulte</option>
+                            <option value="storybook">Livre d'histoires</option>
+                            <option value="epicfantasy">Fantaisie épique</option>
+                            <option value="darkfantasy">Fantaisie sombre</option>
+                        </optgroup>
+                        <optgroup label="Sombres/Dramatiques">
+                            <option value="apocalyptic">Apocalyptique</option>
+                            <option value="gothic">Gothique</option>
+                            <option value="noir">Noir (Film Noir)</option>
+                            <option value="xenomorphic">Xénomorphe</option>
+                            <option value="horror">Horreur</option>
+                            <option value="grimdark">Grimdark</option>
+                            <option value="dystopian">Dystopique</option>
+                            <option value="postapocalyptic">Post-apocalyptique</option>
+                            <option value="macabre">Macabre</option>
+                            <option value="surrealhorror">Horreur surréaliste</option>
+                            <option value="cosmic horror">Horreur cosmique</option>
+                            <option value="gothpunk">Gothpunk</option>
+                            <option value="darkart">Art sombre</option>
+                            <option value="haunted">Hanté</option>
+                            <option value="melancholic">Mélancolique</option>
+                            <option value="tragic">Tragique</option>
+                            <option value="shadowy">Ombrageux</option>
+                            <option value="eerie">Étrange</option>
+                            <option value="sinister">Sinistre</option>
+                            <option value="brooding">Méditatif</option>
+                        </optgroup>
+                        <optgroup label="Vibrants/Alternatifs">
+                            <option value="fractal">Fractal</option>
+                            <option value="graffiti">Graffiti</option>
+                            <option value="grunge">Grunge</option>
+                            <option value="kawaii">Kawaii</option>
+                            <option value="prismatic">Prismatique</option>
+                            <option value="psychedelic">Psychédélique</option>
+                            <option value="vaporwave">Vaporwave</option>
+                            <option value="retrowave">Retrowave</option>
+                            <option value="synthpop">Synthpop</option>
+                            <option value="streetart">Art de rue</option>
+                            <option value="popculture">Culture pop</option>
+                            <option value="neon">Néon</option>
+                            <option value="chromatic">Chromatique</option>
+                            <option value="bold">Audacieux</option>
+                            <option value="eclectic">Éclectique</option>
+                            <option value="bohemian">Bohème</option>
+                            <option value="tropical">Tropical</option>
+                            <option value="floral">Floral</option>
+                            <option value="vibrant">Vibrant</option>
+                            <option value="retrocomic">Bande dessinée rétro</option>
+                        </optgroup>
+                        <optgroup label="Décoratifs">
+                            <option value="claymation">Claymation</option>
+                            <option value="knitted">Tricoté</option>
+                            <option value="origami">Origami</option>
+                            <option value="stainedglass">Vitrail</option>
+                            <option value="velvet">Velours</option>
+                            <option value="embroidery">Broderie</option>
+                            <option value="quilted">Matelassé</option>
+                            <option value="porcelain">Porcelaine</option>
+                            <option value="woodcarving">Sculpture sur bois</option>
+                            <option value="metalwork">Travail du métal</option>
+                            <option value="calligraphy">Calligraphie</option>
+                            <option value="illuminated">Enluminé</option>
+                            <option value="tapestry">Tapisserie</option>
+                            <option value="ceramic">Céramique</option>
+                            <option value="mosaicglass">Mosaïque de verre</option>
+                            <option value="lace">Dentelle</option>
+                            <option value="beaded">Perlé</option>
+                            <option value="etched">Gravé</option>
+                            <option value="woven">Tissé</option>
+                            <option value="sculptural">Sculptural</option>
+                        </optgroup>
+                        <optgroup label="Cosmiques">
+                            <option value="cosmic">Cosmique</option>
+                            <option value="microscopic">Microscopique</option>
+                            <option value="astral">Astral</option>
+                            <option value="nebula">Nébuleuse</option>
+                            <option value="stellar">Stellaire</option>
+                            <option value="galactic">Galactique</option>
+                            <option value="interstellar">Interstellaire</option>
+                            <option value="planetary">Planétaire</option>
+                            <option value="lunar">Lunaire</option>
+                            <option value="solar">Solaire</option>
+                            <option value="astrological">Astrologique</option>
+                            <option value="space">Espace</option>
+                            <option value="void">Vide</option>
+                            <option value="etherealcosmic">Cosmique éthéré</option>
+                            <option value="darkcosmic">Cosmique sombre</option>
+                            <option value="starglow">Éclat d'étoiles</option>
+                            <option value="meteor">Météore</option>
+                            <option value="aurora">Aurore</option>
+                            <option value="blackhole">Trou noir</option>
+                            <option value="supernova">Supernova</option>
+                        </optgroup>
+                        <optgroup label="Audacieux">
+                            <option value="boudoir">Boudoir</option>
+                            <option value="cabaret">Cabaret</option>
+                            <option value="erotic">Érotique</option>
+                            <option value="fetishnoir">Fetish Noir</option>
+                            <option value="pinup">Pin-Up</option>
+                            <option value="burlesque">Burlesque</option>
+                            <option value="glamour">Glamour</option>
+                            <option value="provocative">Provocateur</option>
+                            <option value="seductive">Séducteur</option>
+                            <option value="noirglam">Glamour Noir</option>
+                            <option value="retroglam">Glamour rétro</option>
+                            <option value="avantgarde">Avant-garde</option>
+                            <option value="extravagant">Extravagant</option>
+                            <option value="baroque glamour">Glamour baroque</option>
+                            <option value="highfashion">Haute couture</option>
+                            <option value="edgy">Audacieux</option>
+                            <option value="rebellious">Rebelle</option>
+                            <option value="dramatic">Dramatique</option>
+                            <option value="theatrical">Théâtral</option>
+                            <option value="opulent">Opulent</option>
+                        </optgroup>
+                    </select>
                 </div>
 
                 <div class="form-group">
@@ -1071,18 +941,23 @@
                     </div>
                 </div>
 
+                <div class="form-group">
+                    <label for="prompt">Description de l'image</label>
+                    <textarea id="prompt" placeholder="Décrivez l'image que vous souhaitez générer..."></textarea>
+                </div>
+
                 <div class="batch-container">
-                    <select id="batch-size" style="width: 80px;">
-                        <option value="1" selected>1</option>
-                        <option value="2">2</option>
-                        <option value="3">3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
-                        <option value="6">6</option>
-                        <option value="7">7</option>
-                        <option value="8">8</option>
-                        <option value="9">9</option>
-                        <option value="10">10</option>
+                    <select id="batch-size">
+                        <option value="1" selected>1x</option>
+                        <option value="2">2x</option>
+                        <option value="3">3x</option>
+                        <option value="4">4x</option>
+                        <option value="5">5x</option>
+                        <option value="6">6x</option>
+                        <option value="7">7x</option>
+                        <option value="8">8x</option>
+                        <option value="9">9x</option>
+                        <option value="10">10x</option>
                     </select>
                     <button id="generate-btn" class="btn btn-block">
                         <i class="fas fa-magic"></i> Générer l'image
@@ -1094,12 +969,10 @@
                     <div class="spinner"></div>
                     <p>Génération de votre image...</p>
                 </div>
-
                 <div id="placeholder" class="placeholder">
                     <i class="fas fa-image"></i>
                     <p>Votre image générée apparaîtra ici</p>
                 </div>
-
                 <img id="generated-image" class="generated-image" alt="Image générée">
             </div>
         </div>
@@ -1111,8 +984,7 @@
                     <i class="fas fa-trash"></i> Effacer l'Historique
                 </button>
             </div>
-            <div id="history-items" class="history-items">
-            </div>
+            <div id="history-items" class="history-items"></div>
         </div>
 
         <footer>
@@ -1132,51 +1004,10 @@
 
     <div id="toast" class="toast"></div>
 
-    <div id="tooltip" class="tooltip"></div>
-
-    <script type="text/javascript">
-        var gk_isXlsx = false;
-        var gk_xlsxFileLookup = {};
-        var gk_fileData = {};
-        function filledCell(cell) {
-            return cell !== '' && cell != null;
-        }
-        function loadFileData(filename) {
-            if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
-                try {
-                    var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
-                    var firstSheetName = workbook.SheetNames[0];
-                    var worksheet = workbook.Sheets[firstSheetName];
-
-                    // Convert sheet to JSON to filter blank rows
-                    var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
-                    // Filter out blank rows (rows where all cells are empty, null, or undefined)
-                    var filteredData = jsonData.filter(row => row.some(filledCell));
-
-                    // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
-                    var headerRowIndex = filteredData.findIndex((row, index) =>
-                        row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
-                    );
-                    // Fallback
-                    if (headerRowIndex === -1 || headerRowIndex > 25) {
-                        headerRowIndex = 0;
-                    }
-
-                    // Convert filtered JSON back to CSV
-                    var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
-                    csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
-                    return csv;
-                } catch (e) {
-                    console.error(e);
-                    return "";
-                }
-            }
-            return gk_fileData[filename] || "";
-        }
-    </script>
-
     <script>
-        document.addEventListener('DOMContentLoaded', function () {
+        // Version: 1.0.4
+        document.addEventListener('DOMContentLoaded', () => {
+            // State variables
             let isGenerating = false;
             let isWaiting = false;
             let currentPrompt = '';
@@ -1187,158 +1018,86 @@
             let lastClickTime = 0;
             const isMobile = window.matchMedia("(max-width: 768px)").matches;
 
-            // Masquer le bouton Copier sur mobile
-            const copyBtn = document.querySelector('.copy-btn-mobile');
-            if (isMobile && copyBtn) {
-                copyBtn.style.display = 'none';
-            }
+            // DOM elements
+            const elements = {
+                prompt: document.getElementById('prompt'),
+                model: document.getElementById('model'),
+                dimensions: document.getElementById('dimensions'),
+                seed: document.getElementById('seed'),
+                style: document.getElementById('style'),
+                batchSize: document.getElementById('batch-size'),
+                generateBtn: document.getElementById('generate-btn'),
+                clearSeedBtn: document.getElementById('clear-seed-btn'),
+                clearHistoryBtn: document.getElementById('clear-history-btn'),
+                generatedImage: document.getElementById('generated-image'),
+                placeholder: document.getElementById('placeholder'),
+                loading: document.getElementById('loading'),
+                imageOverlay: document.getElementById('image-overlay'),
+                overlayImage: document.getElementById('overlay-image'),
+                overlayDownload: document.getElementById('overlay-download'),
+                overlayCopy: document.getElementById('overlay-copy'),
+                overlayDelete: document.getElementById('overlay-delete'),
+                closeOverlay: document.getElementById('close-overlay'),
+                enhance: document.getElementById('enhance'),
+                highDetail: document.getElementById('high-detail'),
+                safe: document.getElementById('safe')
+            };
 
-            document.getElementById('prompt').value = '';
-            document.getElementById('model').value = 'flux';
-            document.getElementById('dimensions').value = '1280x720';
-            document.getElementById('seed').value = '';
-            document.getElementById('style-value').value = 'default';
-            document.getElementById('batch-size').value = '1';
-            document.getElementById('generated-image').classList.remove('show');
-            document.getElementById('placeholder').style.display = 'block';
-            document.getElementById('image-overlay').classList.remove('show');
+            // Initial reset
+            resetForm();
 
-            const promptTextarea = document.getElementById('prompt');
-            promptTextarea.addEventListener('keydown', (e) => {
+            // Hide copy button on mobile
+            if (isMobile) elements.overlayCopy.style.display = 'none';
+
+            // Handle Enter key on prompt textarea
+            elements.prompt.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     if (!isMobile) {
-                        e.preventDefault(); // Prevent newline on desktop
-                        if (!isGenerating && !batchInProgress) {
-                            generateImage();
-                        }
+                        e.preventDefault();
+                        if (!isGenerating && !batchInProgress) generateImage();
                     }
-                    // On mobile, allow default behavior (newline)
                 }
             });
 
-            const customSelect = document.querySelector('.custom-select');
-            const toggle = customSelect.querySelector('.custom-select-toggle');
-            const options = customSelect.querySelector('.custom-select-options');
-            const selectLabel = customSelect.querySelector('.custom-select-label');
-            const styleInput = document.getElementById('style-value');
-            const tooltip = document.getElementById('tooltip');
-
-            toggle.addEventListener('click', () => {
-                const toggleRect = toggle.getBoundingClientRect();
-                const optionsHeight = 300;
-                const spaceBelow = window.innerHeight - toggleRect.bottom;
-                const spaceAbove = toggleRect.top;
-
-                options.classList.remove('open-up', 'open-down');
-                if (spaceBelow < optionsHeight && spaceAbove > spaceBelow) {
-                    options.classList.add('open-up');
-                } else {
-                    options.classList.add('open-down');
-                }
-
-                options.classList.toggle('show');
-            });
-
-            document.querySelectorAll('.custom-select-option:not(.category)').forEach(option => {
-                option.addEventListener('click', () => {
-                    const value = option.getAttribute('data-value');
-                    selectLabel.textContent = option.textContent;
-                    styleInput.value = value;
-                    options.classList.remove('show');
-                    tooltip.classList.remove('show');
-                });
-
-                option.addEventListener('mouseover', () => {
-                    const tooltipText = option.getAttribute('data-tooltip');
-                    if (tooltipText) {
-                        tooltip.textContent = tooltipText;
-                        tooltip.classList.add('show');
-
-                        const rect = option.getBoundingClientRect();
-                        if (isMobile) {
-                            tooltip.classList.add('tooltip-mobile');
-                            tooltip.style.top = `${rect.top - tooltip.offsetHeight - 5 + window.scrollY}px`;
-                            tooltip.style.right = '10px';
-                            tooltip.style.left = 'auto';
-                        } else {
-                            tooltip.style.top = `${rect.top + (rect.height / 2) - (tooltip.offsetHeight / 2)}px`;
-                            tooltip.style.left = `${rect.right + window.scrollX + 10}px`;
-
-                            const tooltipRect = tooltip.getBoundingClientRect();
-                            if (tooltipRect.right > window.innerWidth) {
-                                tooltip.style.left = `${rect.left + window.scrollX - tooltipRect.width - 10}px`;
-                                tooltip.classList.add('left');
-                            } else {
-                                tooltip.classList.remove('left');
-                            }
-                        }
-                    }
-                });
-
-                option.addEventListener('mouseout', () => {
-                    tooltip.classList.remove('show');
-                });
-            });
-
-            document.addEventListener('click', (e) => {
-                if (!customSelect.contains(e.target)) {
-                    options.classList.remove('show');
-                    tooltip.classList.remove('show');
-                }
-            });
-
-            const generateBtn = document.getElementById('generate-btn');
-            generateBtn.addEventListener('click', () => {
+            // Generate button handler
+            elements.generateBtn.addEventListener('click', () => {
                 if (batchInProgress) {
                     stopBatchGeneration();
                 } else if (isGenerating) {
                     stopGeneration();
                 } else {
-                    const batchSize = parseInt(document.getElementById('batch-size').value);
-                    if (batchSize > 1) {
-                        startBatchGeneration(batchSize);
-                    } else {
-                        generateImage();
-                    }
+                    const batchSize = parseInt(elements.batchSize.value);
+                    if (batchSize > 1) startBatchGeneration(batchSize);
+                    else generateImage();
                 }
             });
 
-            const clearHistoryBtn = document.getElementById('clear-history-btn');
-            clearHistoryBtn.addEventListener('click', () => {
+            // Clear seed button
+            elements.clearSeedBtn.addEventListener('click', () => {
+                elements.seed.value = '';
+            });
+
+            // Clear history button
+            elements.clearHistoryBtn.addEventListener('click', () => {
                 if (window.confirm('Voulez-vous vraiment effacer tout l\'historique des images générées ? Cette action est irréversible.')) {
                     clearHistory();
                 }
             });
 
-            const clearSeedBtn = document.getElementById('clear-seed-btn');
-            clearSeedBtn.addEventListener('click', () => {
-                document.getElementById('seed').value = '';
-            });
-
-            const generatedImage = document.getElementById('generated-image');
-            const imageOverlay = document.getElementById('image-overlay');
-            const overlayImage = document.getElementById('overlay-image');
-            const overlayDownload = document.getElementById('overlay-download');
-            const overlayCopy = document.getElementById('overlay-copy');
-            const overlayDelete = document.getElementById('overlay-delete');
-            const closeOverlay = document.getElementById('close-overlay');
-
-            generatedImage.addEventListener('click', () => {
-                if (generatedImage.classList.contains('show') && generatedImage.src) {
-                    overlayImage.src = generatedImage.src;
-                    setTimeout(() => {
-                        imageOverlay.classList.add('show');
-                    }, 0);
+            // Generated image click to show overlay
+            elements.generatedImage.addEventListener('click', () => {
+                if (elements.generatedImage.classList.contains('show') && elements.generatedImage.src) {
+                    elements.overlayImage.src = elements.generatedImage.src;
+                    setTimeout(() => elements.imageOverlay.classList.add('show'), 0);
                 }
             });
 
-            overlayDownload.addEventListener('click', () => {
-                const base64Data = overlayImage.src.split(',')[1];
+            // Overlay download button
+            elements.overlayDownload.addEventListener('click', () => {
+                const base64Data = elements.overlayImage.src.split(',')[1];
                 const byteCharacters = atob(base64Data);
                 const byteNumbers = new Array(byteCharacters.length);
-                for (let i = 0; i < byteCharacters.length; i++) {
-                    byteNumbers[i] = byteCharacters.charCodeAt(i);
-                }
+                for (let i = 0; i < byteCharacters.length; i++) byteNumbers[i] = byteCharacters.charCodeAt(i);
                 const byteArray = new Uint8Array(byteNumbers);
                 const blob = new Blob([byteArray], { type: 'image/jpeg' });
                 const url = window.URL.createObjectURL(blob);
@@ -1351,60 +1110,64 @@
                 window.URL.revokeObjectURL(url);
             });
 
-            overlayCopy.addEventListener('click', () => {
-                try {
-                    convertToPng(overlayImage.src)
-                        .then(blob => {
-                            const item = new ClipboardItem({ 'image/png': blob });
-                            return navigator.clipboard.write([item]);
-                        })
-                        .then(() => {
-                            showToast('Image copiée dans le presse-papiers !', 'success');
-                        })
-                        .catch(error => {
-                            console.error('Failed to copy image:', error);
-                            showToast('Erreur lors de la copie de l\'image. Essayez un autre navigateur.', 'error');
-                        });
-                } catch (error) {
-                    console.error('Clipboard error:', error);
-                    showToast('Erreur d\'accès au presse-papiers. Vérifiez les permissions.', 'error');
-                }
+            // Overlay copy button
+            elements.overlayCopy.addEventListener('click', () => {
+                convertToPng(elements.overlayImage.src)
+                    .then(blob => {
+                        const item = new ClipboardItem({ 'image/png': blob });
+                        return navigator.clipboard.write([item]);
+                    })
+                    .then(() => showToast('Image copiée dans le presse-papiers !', 'success'))
+                    .catch(error => {
+                        console.error('Failed to copy image:', error);
+                        showToast('Erreur lors de la copie de l\'image. Essayez un autre navigateur.', 'error');
+                    });
             });
 
-            overlayDelete.addEventListener('click', () => {
-                const imageUrl = overlayImage.src;
+            // Overlay delete button
+            elements.overlayDelete.addEventListener('click', () => {
+                const imageUrl = elements.overlayImage.src;
                 let history = JSON.parse(localStorage.getItem('imageHistory') || '[]');
                 history = history.filter(item => item.imageUrl !== imageUrl);
                 localStorage.setItem('imageHistory', JSON.stringify(history));
                 loadHistory();
                 showToast('Image supprimée de l\'historique !', 'success');
-                generatedImage.classList.remove('show');
-                generatedImage.src = '';
-                document.getElementById('placeholder').style.display = 'block';
-                document.getElementById('prompt').value = '';
-                document.getElementById('model').value = 'flux';
-                document.getElementById('dimensions').value = '1280x720';
-                document.getElementById('seed').value = '';
-                document.getElementById('style-value').value = 'default';
-                document.querySelector('.custom-select-label').textContent = 'Défaut';
-                imageOverlay.classList.remove('show');
+                elements.generatedImage.classList.remove('show');
+                elements.generatedImage.src = '';
+                elements.placeholder.style.display = 'block';
+                resetForm();
+                elements.imageOverlay.classList.remove('show');
             });
 
-            closeOverlay.addEventListener('click', () => {
-                imageOverlay.classList.remove('show');
+            // Close overlay
+            elements.closeOverlay.addEventListener('click', () => {
+                elements.imageOverlay.classList.remove('show');
             });
 
-            imageOverlay.addEventListener('click', (e) => {
-                if (e.target === imageOverlay) {
-                    imageOverlay.classList.remove('show');
-                }
+            elements.imageOverlay.addEventListener('click', (e) => {
+                if (e.target === elements.imageOverlay) elements.imageOverlay.classList.remove('show');
             });
+
+            // Utility functions
+            function resetForm() {
+                elements.prompt.value = '';
+                elements.model.value = 'flux';
+                elements.dimensions.value = '1280x720';
+                elements.seed.value = '';
+                elements.style.value = 'default';
+                elements.batchSize.value = '1';
+                elements.generatedImage.classList.remove('show');
+                elements.placeholder.style.display = 'block';
+                elements.imageOverlay.classList.remove('show');
+                elements.enhance.checked = true;
+                elements.highDetail.checked = false;
+                elements.safe.checked = false;
+            }
 
             function centerImageOnMobile() {
                 if (isMobile) {
-                    const imagePreview = document.querySelector('.image-preview');
                     setTimeout(() => {
-                        imagePreview.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        document.querySelector('.image-preview').scrollIntoView({ behavior: 'smooth', block: 'center' });
                     }, 200);
                 }
             }
@@ -1415,13 +1178,7 @@
                 const historySection = document.querySelector('.history');
 
                 historyContainer.innerHTML = '';
-
-                if (history.length === 0) {
-                    historySection.classList.remove('show');
-                    return;
-                }
-
-                historySection.classList.add('show');
+                historySection.classList.toggle('show', history.length > 0);
 
                 history.forEach(item => {
                     const historyItem = document.createElement('div');
@@ -1433,27 +1190,23 @@
                         <div class="prompt">${item.originalPrompt}</div>
                     `;
 
-                    const previewBtn = historyItem.querySelector('.history-preview-btn');
-                    previewBtn.addEventListener('click', (e) => {
+                    historyItem.querySelector('.history-preview-btn').addEventListener('click', (e) => {
                         e.stopPropagation();
-                        overlayImage.src = item.imageUrl;
-                        setTimeout(() => {
-                            imageOverlay.classList.add('show');
-                        }, 0);
+                        elements.overlayImage.src = item.imageUrl;
+                        setTimeout(() => elements.imageOverlay.classList.add('show'), 0);
                     });
 
-                    const deleteBtn = historyItem.querySelector('.history-delete-btn');
-                    deleteBtn.addEventListener('click', (e) => {
+                    historyItem.querySelector('.history-delete-btn').addEventListener('click', (e) => {
                         e.stopPropagation();
                         let history = JSON.parse(localStorage.getItem('imageHistory') || '[]');
                         history = history.filter(h => h.imageUrl !== item.imageUrl);
                         localStorage.setItem('imageHistory', JSON.stringify(history));
                         loadHistory();
                         showToast('Image supprimée de l\'historique !', 'success');
-                        if (generatedImage.src === item.imageUrl) {
-                            generatedImage.classList.remove('show');
-                            generatedImage.src = '';
-                            document.getElementById('placeholder').style.display = 'block';
+                        if (elements.generatedImage.src === item.imageUrl) {
+                            elements.generatedImage.classList.remove('show');
+                            elements.generatedImage.src = '';
+                            elements.placeholder.style.display = 'block';
                         }
                     });
 
@@ -1462,41 +1215,32 @@
                         if (now - lastClickTime < 300) return;
                         lastClickTime = now;
 
-                        document.getElementById('prompt').value = item.originalPrompt;
-
-                        generatedImage.classList.remove('show');
+                        elements.prompt.value = item.originalPrompt;
+                        elements.generatedImage.classList.remove('show');
                         setTimeout(() => {
-                            generatedImage.src = item.imageUrl;
-                            generatedImage.classList.add('show');
-                            document.getElementById('placeholder').style.display = 'none';
+                            elements.generatedImage.src = item.imageUrl;
+                            elements.generatedImage.classList.add('show');
+                            elements.placeholder.style.display = 'none';
                         }, 300);
 
-                        document.getElementById('seed').value = item.seed || '';
-                        document.getElementById('model').value = item.model || 'flux';
-                        document.getElementById('dimensions').value = item.dimensions || '1280x720';
-                        document.getElementById('style-value').value = item.style || 'default';
-                        document.querySelector('.custom-select-label').textContent =
-                            document.querySelector(`.custom-select-option[data-value="${item.style || 'default'}"]`).textContent;
+                        elements.seed.value = item.seed || '';
+                        elements.model.value = item.model || 'flux';
+                        elements.dimensions.value = item.dimensions || '1280x720';
+                        elements.style.value = item.style || 'default';
                         currentPrompt = item.originalPrompt;
                     });
 
-                    historyContainer.prepend(historyItem);
+                    historyContainer.appendChild(historyItem);
                 });
             }
 
             function clearHistory() {
                 localStorage.removeItem('imageHistory');
                 loadHistory();
-                generatedImage.classList.remove('show');
-                generatedImage.src = '';
-                document.getElementById('placeholder').style.display = 'block';
-                document.getElementById('prompt').value = '';
-                document.getElementById('model').value = 'flux';
-                document.getElementById('dimensions').value = '1280x720';
-                document.getElementById('seed').value = '';
-                document.getElementById('style-value').value = 'default';
-                document.querySelector('.custom-select-label').textContent = 'Défaut';
-                document.getElementById('image-overlay').classList.remove('show');
+                elements.generatedImage.classList.remove('show');
+                elements.generatedImage.src = '';
+                elements.placeholder.style.display = 'block';
+                resetForm();
                 showToast('Historique effacé !', 'success');
             }
 
@@ -1504,33 +1248,26 @@
                 const toast = document.getElementById('toast');
                 toast.textContent = message;
                 toast.className = 'toast';
-                toast.classList.add(type);
-                if (isMobile) {
-                    toast.style.fontSize = '0.8rem';
-                }
-                setTimeout(() => {
-                    toast.classList.add('show');
-                }, 100);
-
-                setTimeout(() => {
-                    toast.classList.remove('show');
-                }, 3000);
+                if (type) toast.classList.add(type);
+                if (isMobile) toast.style.fontSize = '0.8rem';
+                setTimeout(() => toast.classList.add('show'), 100);
+                setTimeout(() => toast.classList.remove('show'), 3000);
             }
 
             function startCooldown() {
                 isWaiting = true;
                 let timeLeft = 3;
-                generateBtn.disabled = true;
+                elements.generateBtn.disabled = true;
                 const originalText = '<i class="fas fa-magic"></i> Générer l\'image';
-                generateBtn.innerHTML = `Attendez ${timeLeft}s`;
+                elements.generateBtn.innerHTML = `Attendez ${timeLeft}s`;
 
                 const countdown = setInterval(() => {
                     timeLeft--;
-                    generateBtn.innerHTML = `Attendez ${timeLeft}s`;
+                    elements.generateBtn.innerHTML = `Attendez ${timeLeft}s`;
                     if (timeLeft <= 0) {
                         clearInterval(countdown);
-                        generateBtn.innerHTML = batchInProgress ? '<i class="fas fa-stop"></i> Arrêter le batch' : originalText;
-                        generateBtn.disabled = false;
+                        elements.generateBtn.innerHTML = batchInProgress ? '<i class="fas fa-stop"></i> Arrêter le batch' : originalText;
+                        elements.generateBtn.disabled = false;
                         isWaiting = false;
                     }
                 }, 1000);
@@ -1569,13 +1306,7 @@
                         canvas.height = img.height;
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(img, 0, 0);
-                        canvas.toBlob(blob => {
-                            if (blob) {
-                                resolve(blob);
-                            } else {
-                                reject(new Error('Failed to convert image to PNG'));
-                            }
-                        }, 'image/png');
+                        canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Failed to convert image to PNG')), 'image/png');
                     };
                     img.onerror = () => reject(new Error('Failed to load image for conversion'));
                     img.src = imageSrc;
@@ -1583,35 +1314,31 @@
             }
 
             function stopGeneration() {
-                if (abortController) {
-                    abortController.abort();
-                }
+                if (abortController) abortController.abort();
                 isGenerating = false;
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('placeholder').style.display = 'block';
-                generatedImage.classList.remove('show');
-                generatedImage.src = '';
-                generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
+                elements.loading.style.display = 'none';
+                elements.placeholder.style.display = 'block';
+                elements.generatedImage.classList.remove('show');
+                elements.generatedImage.src = '';
+                elements.generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
                 showToast('Génération arrêtée.', 'error');
-                document.getElementById('seed').value = '';
+                elements.seed.value = '';
                 startCooldown();
             }
 
             function stopBatchGeneration() {
-                if (abortController) {
-                    abortController.abort();
-                }
+                if (abortController) abortController.abort();
                 isGenerating = false;
                 batchInProgress = false;
                 batchCount = 0;
                 currentBatchSize = 0;
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('placeholder').style.display = 'block';
-                generatedImage.classList.remove('show');
-                generatedImage.src = '';
-                generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
+                elements.loading.style.display = 'none';
+                elements.placeholder.style.display = 'block';
+                elements.generatedImage.classList.remove('show');
+                elements.generatedImage.src = '';
+                elements.generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
                 showToast('Génération par batch arrêtée.', 'error');
-                document.getElementById('seed').value = '';
+                elements.seed.value = '';
                 startCooldown();
             }
 
@@ -1621,7 +1348,7 @@
                     return;
                 }
 
-                const prompt = document.getElementById('prompt').value.trim();
+                const prompt = elements.prompt.value.trim();
                 if (!prompt) {
                     showToast('Veuillez entrer une description', 'error');
                     return;
@@ -1632,20 +1359,18 @@
                 currentBatchSize = batchSize;
                 batchCount = 0;
 
-                generateBtn.innerHTML = '<i class="fas fa-stop"></i> Arrêter le batch';
+                elements.generateBtn.innerHTML = '<i class="fas fa-stop"></i> Arrêter le batch';
 
                 for (let i = 0; i < batchSize && batchInProgress; i++) {
                     await generateImage();
-                    if (batchInProgress && i < batchSize - 1) {
-                        await new Promise(resolve => setTimeout(resolve, 3000));
-                    }
+                    if (batchInProgress && i < batchSize - 1) await new Promise(resolve => setTimeout(resolve, 3000));
                 }
 
                 if (batchInProgress) {
                     batchInProgress = false;
                     batchCount = 0;
                     currentBatchSize = 0;
-                    generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
+                    elements.generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
                 }
             }
 
@@ -1655,7 +1380,7 @@
                     return;
                 }
 
-                const prompt = document.getElementById('prompt').value.trim();
+                const prompt = elements.prompt.value.trim();
                 if (!prompt) {
                     showToast('Veuillez entrer une description', 'error');
                     return;
@@ -1665,51 +1390,49 @@
                 isGenerating = true;
                 abortController = new AbortController();
 
-                document.getElementById('loading').style.display = 'flex';
-                document.getElementById('placeholder').style.display = 'none';
-                generatedImage.classList.remove('show');
-                generateBtn.innerHTML = '<i class="fas fa-stop"></i> Arrêter';
-                generateBtn.disabled = false;
+                elements.loading.style.display = 'flex';
+                elements.placeholder.style.display = 'none';
+                elements.generatedImage.classList.remove('show');
+                elements.generateBtn.innerHTML = '<i class="fas fa-stop"></i> Arrêter';
+                elements.generateBtn.disabled = false;
 
-                const model = document.getElementById('model').value;
-                const dimensions = document.getElementById('dimensions').value;
+                centerImageOnMobile();
+
+                const model = elements.model.value;
+                const dimensions = elements.dimensions.value;
                 const [width, height] = dimensions.split('x').map(Number);
-                let seed = document.getElementById('seed').value.trim();
-                const style = document.getElementById('style-value').value;
-                const enhance = document.getElementById('enhance').checked;
-                const highDetail = document.getElementById('high-detail').checked;
-                const safe = document.getElementById('safe').checked;
+                let seed = elements.seed.value.trim();
+                const style = elements.style.value;
+                const enhance = elements.enhance.checked;
+                const highDetail = elements.highDetail.checked;
+                const safe = elements.safe.checked;
 
                 let finalPrompt = prompt;
-                if (style !== 'default') {
-                    finalPrompt += `, in ${style} style`;
-                }
-                if (highDetail) {
-                    finalPrompt = `highly detailed, 8k resolution, ${finalPrompt}`;
-                }
+                if (style !== 'default') finalPrompt += `, in ${style} style`;
+                if (highDetail) finalPrompt = `highly detailed, 8k resolution, ${finalPrompt}`;
 
-                let aspectRatio;
-                if (width === height) aspectRatio = '1:1';
-                else if (width === 800 && height === 600) aspectRatio = '4:3';
-                else if ((width === 1024 && height === 576) || (width === 1280 && height === 720)) aspectRatio = '16:9';
-                else if (width === 600 && height === 800) aspectRatio = '3:4';
-                else if ((width === 576 && height === 1024) || (width === 720 && height === 1280)) aspectRatio = '9:16';
-                else if ((width === 1600 && height === 400) || (width === 1920 && height === 480) || (width === 2048 && height === 512)) aspectRatio = '4:1';
-                else aspectRatio = `${width}:${height}`;
+                const aspectRatio = {
+                    '512x512': '1:1',
+                    '1024x1024': '1:1',
+                    '800x600': '4:3',
+                    '1024x576': '16:9',
+                    '1280x720': '16:9',
+                    '600x800': '3:4',
+                    '576x1024': '9:16',
+                    '720x1280': '9:16',
+                    '1600x400': '4:1',
+                    '1920x480': '4:1',
+                    '2048x512': '4:1'
+                }[dimensions] || `${width}:${height}`;
 
                 finalPrompt += `, aspect ratio ${aspectRatio}`;
                 finalPrompt = finalPrompt.replace(/[^\x20-\x7E]/g, '');
 
-                if (!seed) {
-                    seed = Math.floor(Math.random() * 1000000).toString();
-                } else {
-                    seed = parseInt(seed);
-                    if (isNaN(seed)) seed = Math.floor(Math.random() * 1000000).toString();
-                }
+                seed = seed || Math.floor(Math.random() * 1000000).toString();
+                if (isNaN(parseInt(seed))) seed = Math.floor(Math.random() * 1000000).toString();
 
                 let apiUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(finalPrompt)}`;
-                apiUrl += `?model=${model}&width=${width}&height=${height}`;
-                apiUrl += `&nologo=true&private=true`;
+                apiUrl += `?model=${model}&width=${width}&height=${height}&nologo=true&private=true`;
                 if (seed) apiUrl += `&seed=${seed}`;
                 if (enhance) apiUrl += `&enhance=true`;
                 if (safe) apiUrl += `&safe=true`;
@@ -1722,11 +1445,10 @@
                     const blob = await response.blob();
                     const base64Image = await blobToBase64(blob);
 
-                    generatedImage.src = base64Image;
-                    generatedImage.classList.add('show');
-                    document.getElementById('loading').style.display = 'none';
-
-                    document.getElementById('seed').value = '';
+                    elements.generatedImage.src = base64Image;
+                    elements.generatedImage.classList.add('show');
+                    elements.loading.style.display = 'none';
+                    elements.seed.value = '';
 
                     addToHistory({ originalPrompt: prompt, imageUrl: base64Image, model, dimensions, style, seed });
                     showToast('Image générée avec succès !', 'success');
@@ -1737,13 +1459,13 @@
                     } else {
                         console.error('Erreur lors de la génération:', error);
                         showToast(error.message || 'Erreur lors de la génération de l\'image.', 'error');
-                        document.getElementById('placeholder').style.display = 'block';
+                        elements.placeholder.style.display = 'block';
                     }
-                    document.getElementById('seed').value = '';
+                    elements.seed.value = '';
                 } finally {
                     isGenerating = false;
-                    document.getElementById('loading').style.display = 'none';
-                    generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
+                    elements.loading.style.display = 'none';
+                    elements.generateBtn.innerHTML = '<i class="fas fa-magic"></i> Générer l\'image';
                     startCooldown();
                 }
             }
@@ -1751,7 +1473,7 @@
             function addToHistory(item) {
                 let history = JSON.parse(localStorage.getItem('imageHistory') || '[]');
                 history.unshift(item);
-                if (history.length > 50) history = history.slice(0, 50);
+                if (history.length > 30) history.pop(); // Remove oldest item if history exceeds 30
                 localStorage.setItem('imageHistory', JSON.stringify(history));
                 loadHistory();
             }
@@ -1759,6 +1481,3 @@
             loadHistory();
         });
     </script>
-</body>
-
-</html>
