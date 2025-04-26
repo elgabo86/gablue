@@ -1,0 +1,141 @@
+#!/bin/bash
+# Version: 1.0.20
+
+# Valeurs par défaut
+DIMENSIONS="1280x720"
+ENHANCE="&enhance=true"
+HIGH_DETAIL=""
+MODEL="flux"
+INTERVAL=5
+SAFE="&safe=false"
+CUSTOM_DIMENSIONS=false
+
+# Message d'utilisation
+usage() {
+    echo "Usage: $0 [options] \"prompt\""
+    echo "Options:"
+    echo "  -h: Enable high detail (8k resolution)"
+    echo "  -m: Disable AI prompt enhancement"
+    echo "  -t: Use turbo model instead of flux"
+    echo "  -d WIDTHxHEIGHT: Set dimensions (default: random between 1280x720, 720x1280, 1024x1024)"
+    exit 1
+}
+
+# Vérifier si des arguments sont fournis
+if [ $# -eq 0 ]; then
+    echo "Error: No arguments provided."
+    usage
+fi
+
+# Parser les options avec getopt
+PARSED_OPTIONS=$(getopt -o hmt:d: -- "$@")
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to parse arguments."
+    usage
+fi
+eval set -- "$PARSED_OPTIONS"
+
+# Initialiser les variables
+PROMPT=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h) HIGH_DETAIL="highly detailed, 8k resolution, "; shift ;;
+        -m) ENHANCE=""; shift ;;
+        -t) MODEL="turbo"; shift ;;
+        -d) DIMENSIONS="$2"; CUSTOM_DIMENSIONS=true; shift 2 ;;
+        --) shift; PROMPT="$@"; break ;;
+        -*) echo "Error: Invalid option $1"; usage ;;
+        *) PROMPT="$1"; shift; break ;;
+    esac
+done
+
+# Vérifier si le prompt est fourni
+if [ -z "$PROMPT" ]; then
+    echo "Error: Prompt is required."
+    usage
+fi
+
+# Valider les dimensions si fournies
+if [ "$CUSTOM_DIMENSIONS" = true ]; then
+    if ! [[ $DIMENSIONS =~ ^[0-9]+x[0-9]+$ ]]; then
+        echo "Error: Invalid dimensions format. Use WIDTHxHEIGHT (e.g., 1280x720)"
+        exit 1
+    fi
+fi
+
+# Vérifier les dépendances
+if ! command -v jq &> /dev/null; then
+    echo "Error: 'jq' is required for URL encoding. Please install it."
+    exit 1
+fi
+if ! command -v xdg-user-dir &> /dev/null; then
+    echo "Error: 'xdg-user-dir' is required to determine the download directory. Please install it."
+    exit 1
+fi
+
+# Récupérer le répertoire de téléchargement
+DOWNLOAD_DIR=$(xdg-user-dir DOWNLOAD)
+if [ -z "$DOWNLOAD_DIR" ] || [ ! -d "$DOWNLOAD_DIR" ]; then
+    echo "Error: Could not determine download directory."
+    exit 1
+fi
+
+# Créer le répertoire de sortie
+FIRST_WORD=$(echo "$PROMPT" | cut -d',' -f1 | tr -s ' ' '-' | tr -dc 'a-zA-Z0-9-' | tr '[:upper:]' '[:lower:]')
+DATE=$(date +%Y%m%d)
+OUTPUT_DIR="${DOWNLOAD_DIR}/${FIRST_WORD}_${DATE}"
+mkdir -p "$OUTPUT_DIR" || {
+    echo "Error: Failed to create output directory $OUTPUT_DIR"
+    exit 1
+}
+
+# Nettoyer le prompt pour le nom de fichier
+clean_prompt() {
+    echo "$1" | iconv -c -f UTF-8 -t ASCII//TRANSLIT | tr -s ' ' '-' | tr -dc 'a-zA-Z0-9-' | tr '[:upper:]' '[:lower:]' | cut -c1-50
+}
+
+# Fonction pour générer une image
+generate_image() {
+    local seed=$((RANDOM % 1000000))
+    local final_prompt="${HIGH_DETAIL}${PROMPT}"
+    local local_dimensions="$DIMENSIONS"
+    if [ "$CUSTOM_DIMENSIONS" = false ]; then
+        local resolutions=("1280x720" "720x1280" "1024x1024")
+        local_dimensions=${resolutions[$((RANDOM % 3))]}
+    fi
+    local WIDTH=$(echo "$local_dimensions" | cut -d'x' -f1)
+    local HEIGHT=$(echo "$local_dimensions" | cut -d'x' -f2)
+
+    local ASPECT_RATIO="${WIDTH}:${HEIGHT}"
+    final_prompt="${final_prompt}, aspect ratio ${ASPECT_RATIO}"
+    final_prompt=$(echo "$final_prompt" | tr -dc '[:print:]')
+    local encoded_prompt=$(echo -n "$final_prompt" | jq -sRr @uri)
+
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local clean_prompt=$(clean_prompt "$PROMPT")
+    local filename="${OUTPUT_DIR}/${clean_prompt}_${timestamp}_${seed}.jpg"
+
+    local api_url="https://image.pollinations.ai/prompt/${encoded_prompt}?model=${MODEL}&width=${WIDTH}&height=${HEIGHT}&nologo=true&private=true&seed=${seed}${ENHANCE}${SAFE}&tamp=$(date +%s)"
+
+    echo "Generating image: $filename"
+    curl -s -o "$filename" "$api_url" || {
+        echo "Error: Failed to generate image."
+        rm -f "$filename"
+    }
+    [ -s "$filename" ] && echo "Image generated successfully: $filename" || {
+        echo "Error: Image file is empty or not created."
+        rm -f "$filename"
+    }
+}
+
+# Gérer Ctrl+C
+trap 'echo -e "\nStopping image generation..."; exit 0' INT
+
+# Boucle principale
+echo "Generating images for prompt: \"$PROMPT\""
+echo "Output directory: $OUTPUT_DIR"
+echo "Press Ctrl+C to stop"
+while true; do
+    generate_image
+    sleep $INTERVAL
+done

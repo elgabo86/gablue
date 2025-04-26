@@ -11,6 +11,7 @@ chmod +x /usr/bin/dlcover
 chmod +x /usr/bin/ssdcheck
 chmod +x /usr/bin/ramcheck
 chmod +x /usr/bin/cpucheck
+chmod +x /usr/bin/genimg
 chmod +x /usr/libexec/gablue-update
 chmod +x /usr/libexec/gablue-config
 chmod +x /usr/libexec/archgab-update
