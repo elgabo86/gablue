@@ -29,6 +29,7 @@ gh \
 ryzenadj \
 yq \
 trash-cli \
+inotify-tools \
 atuin
 
 #Goodies cli
@@ -74,8 +75,7 @@ fi
 dnf5 -y install \
 nerd-fonts \
 adobe-source-code-pro-fonts \
-google-droid-sans-mono-fonts \
-google-noto-fonts-all
+google-droid-sans-mono-fonts
 
 #Drivers
 dnf5 -y install \
@@ -109,8 +109,8 @@ libnsl2
 #Python
 dnf5 -y install \
 python3-pygame \
-python3-uinput
-
+python3-uinput \
+python3-pip
 
 #Remove some packages
 dnf5 -y remove \
