@@ -61,6 +61,8 @@ alias vrr-on="kscreen-doctor output.1.vrrpolicy.automatic"
 
 alias vrr-off="kscreen-doctor output.1.vrrpolicy.never"
 
+alias watchdir='function _watchdir() { inotifywait -m "$1" -r -e modify,create,delete,move --format "%w%f %e %T" --timefmt "%F %T" | tee -a /tmp/watchdir.log; }; _watchdir'
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
