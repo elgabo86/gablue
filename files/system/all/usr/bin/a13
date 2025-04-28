@@ -10,7 +10,7 @@ PROPERTY="ro.hardware.gralloc=minigbm_gbm_mesa"
 WAYDROID_SCRIPT_DIR="/tmp/waydroid_script"
 WAYDROID_SCRIPT_URL="https://github.com/aleasto/waydroid_script.git"
 USER_WAYDROID_DIR="$HOME/.local/share/waydroid"
-LOCALE="fr_CH"  # Français suisse
+LOCALE="fr_CH" # Français suisse
 FDROID_APK_URL="https://f-droid.org/F-Droid.apk"
 FDROID_APK="/tmp/F-Droid.apk"
 AURORA_APK_URL="https://auroraoss.com/downloads/AuroraStore/Latest/latest.apk"
@@ -26,21 +26,21 @@ wait_waydroid_ready() {
     local log_file="/tmp/waydroid_session.log"
 
     # Rediriger la sortie de waydroid session start vers un fichier
-    waydroid session start > "$log_file" 2>&1 &
+    waydroid session start >"$log_file" 2>&1 &
     WAYDROID_PID=$!
 
     while true; do
         # Vérifier si le message est présent dans le fichier de log
         if grep -q ".*Android with user 0 is ready" "$log_file"; then
             echo "Waydroid est prêt."
-            rm -f "$log_file"  # Nettoyer le fichier temporaire
+            rm -f "$log_file" # Nettoyer le fichier temporaire
             return 0
         fi
         local current_time=$(date +%s)
         if [ $((current_time - start_time)) -ge $timeout ]; then
             echo "Délai d'attente dépassé pour Waydroid."
             kdialog --error "Délai d'attente dépassé pour Waydroid."
-            rm -f "$log_file"  # Nettoyer le fichier temporaire
+            rm -f "$log_file" # Nettoyer le fichier temporaire
             kill $WAYDROID_PID 2>/dev/null
             return 1
         fi
@@ -71,7 +71,10 @@ check_adb() {
 
 # Initialiser et maintenir les privilèges sudo
 sudo -v
-while true; do sudo -v; sleep 60; done &
+while true; do
+    sudo -v
+    sleep 60
+done &
 SUDO_KEEP_ALIVE_PID=$!
 
 # Nettoyer le processus sudo à la fin
@@ -79,7 +82,7 @@ trap 'kill $SUDO_KEEP_ALIVE_PID 2>/dev/null' EXIT
 
 # Vérifier les paramètres
 if [ $# -eq 0 ]; then
-    if ! command -v kdialog &> /dev/null; then
+    if ! command -v kdialog &>/dev/null; then
         echo "kdialog n'est pas installé."
         exit 1
     fi
@@ -105,7 +108,7 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 # Vérifier si Waydroid est installé
-if ! command -v waydroid &> /dev/null; then
+if ! command -v waydroid &>/dev/null; then
     echo "Waydroid n'est pas installé. Veuillez l'installer d'abord."
     kdialog --error "Waydroid n'est pas installé. Veuillez l'installer d'abord."
     exit 1
@@ -133,20 +136,40 @@ if [ "$1" = "remove" ]; then
 
     # Supprimer les données selon le choix
     if [ "$CHOICE" = "all" ] || [ "$CHOICE" = "keep_images" ]; then
-        sudo rm -rf "$USER_WAYDROID_DIR" || { echo "Échec de la suppression de $USER_WAYDROID_DIR."; kdialog --error "Échec de la suppression de $USER_WAYDROID_DIR."; exit 1; }
+        sudo rm -rf "$USER_WAYDROID_DIR" || {
+            echo "Échec de la suppression de $USER_WAYDROID_DIR."
+            kdialog --error "Échec de la suppression de $USER_WAYDROID_DIR."
+            exit 1
+        }
     fi
     if [ "$CHOICE" = "all" ] || [ "$CHOICE" = "keep_data" ]; then
-        sudo rm -rf "$EXTRA_IMAGE_DIR" || { echo "Échec de la suppression de $EXTRA_IMAGE_DIR."; kdialog --error "Échec de la suppression de $EXTRA_IMAGE_DIR."; exit 1; }
+        sudo rm -rf "$EXTRA_IMAGE_DIR" || {
+            echo "Échec de la suppression de $EXTRA_IMAGE_DIR."
+            kdialog --error "Échec de la suppression de $EXTRA_IMAGE_DIR."
+            exit 1
+        }
     fi
-    sudo rm -rf /var/lib/waydroid || { echo "Échec de la suppression de /var/lib/waydroid."; kdialog --error "Échec de la suppression de /var/lib/waydroid."; exit 1; }
+    sudo rm -rf /var/lib/waydroid || {
+        echo "Échec de la suppression de /var/lib/waydroid."
+        kdialog --error "Échec de la suppression de /var/lib/waydroid."
+        exit 1
+    }
 
     # Supprimer les fichiers .desktop liés à Waydroid
     DESKTOP_FILES=$(ls "$USER_DESKTOP_DIR/waydroid"*.desktop "$USER_DESKTOP_DIR/Waydroid.desktop" "$USER_DESKTOP_DIR/KillWaydroid.desktop" 2>/dev/null)
     if [ -n "$DESKTOP_FILES" ]; then
         echo "Suppression des fichiers .desktop : $DESKTOP_FILES"
-        rm -f "$USER_DESKTOP_DIR/waydroid"*.desktop "$USER_DESKTOP_DIR/Waydroid.desktop" "$USER_DESKTOP_DIR/KillWaydroid.desktop" || { echo "Échec de la suppression des fichiers .desktop."; kdialog --error "Échec de la suppression des fichiers .desktop."; exit 1; }
+        rm -f "$USER_DESKTOP_DIR/waydroid"*.desktop "$USER_DESKTOP_DIR/Waydroid.desktop" "$USER_DESKTOP_DIR/KillWaydroid.desktop" || {
+            echo "Échec de la suppression des fichiers .desktop."
+            kdialog --error "Échec de la suppression des fichiers .desktop."
+            exit 1
+        }
         echo "Mise à jour du cache du menu Plasma..."
-        update-desktop-database -v "$USER_DESKTOP_DIR" || { echo "Échec de la mise à jour du cache du menu Plasma."; kdialog --error "Échec de la mise à jour du cache du menu Plasma."; exit 1; }
+        update-desktop-database -v "$USER_DESKTOP_DIR" || {
+            echo "Échec de la mise à jour du cache du menu Plasma."
+            kdialog --error "Échec de la mise à jour du cache du menu Plasma."
+            exit 1
+        }
         kbuildsycoca6
     else
         echo "Aucun fichier .desktop Waydroid ou KillWaydroid trouvé."
@@ -160,7 +183,11 @@ fi
 
 # Commande install
 # Créer le répertoire des images extra
-sudo mkdir -p "$EXTRA_IMAGE_DIR" || { echo "Échec de la création de $EXTRA_IMAGE_DIR."; kdialog --error "Échec de la création de $EXTRA_IMAGE_DIR."; exit 1; }
+sudo mkdir -p "$EXTRA_IMAGE_DIR" || {
+    echo "Échec de la création de $EXTRA_IMAGE_DIR."
+    kdialog --error "Échec de la création de $EXTRA_IMAGE_DIR."
+    exit 1
+}
 
 # Vérifier si Waydroid est initialisé
 WAYDROID_INITIALIZED=true
@@ -222,11 +249,27 @@ fi
 # Cloner waydroid_script et configurer l'environnement virtuel si nécessaire
 if [ "$UPDATE_NEEDED" = true ]; then
     echo "Clonage de waydroid_script..."
-    sudo rm -rf "$WAYDROID_SCRIPT_DIR" || { echo "Échec de la suppression de $WAYDROID_SCRIPT_DIR."; kdialog --error "Échec de la suppression de $WAYDROID_SCRIPT_DIR."; exit 1; }
-    git clone "$WAYDROID_SCRIPT_URL" "$WAYDROID_SCRIPT_DIR" || { echo "Échec du clonage de waydroid_script."; kdialog --error "Échec du clonage de waydroid_script."; exit 1; }
+    sudo rm -rf "$WAYDROID_SCRIPT_DIR" || {
+        echo "Échec de la suppression de $WAYDROID_SCRIPT_DIR."
+        kdialog --error "Échec de la suppression de $WAYDROID_SCRIPT_DIR."
+        exit 1
+    }
+    git clone "$WAYDROID_SCRIPT_URL" "$WAYDROID_SCRIPT_DIR" || {
+        echo "Échec du clonage de waydroid_script."
+        kdialog --error "Échec du clonage de waydroid_script."
+        exit 1
+    }
     cd "$WAYDROID_SCRIPT_DIR"
-    python3 -m venv venv || { echo "Échec de la création de l'environnement virtuel."; kdialog --error "Échec de la création de l'environnement virtuel."; exit 1; }
-    venv/bin/pip install -r requirements.txt || { echo "Échec de l'installation des dépendances Python."; kdialog --error "Échec de l'installation des dépendances Python."; exit 1; }
+    python3 -m venv venv || {
+        echo "Échec de la création de l'environnement virtuel."
+        kdialog --error "Échec de la création de l'environnement virtuel."
+        exit 1
+    }
+    venv/bin/pip install -r requirements.txt || {
+        echo "Échec de l'installation des dépendances Python."
+        kdialog --error "Échec de l'installation des dépendances Python."
+        exit 1
+    }
     cd ..
 fi
 
@@ -239,25 +282,49 @@ if [ "$UPDATE_NEEDED" = true ]; then
     # Télécharger les nouvelles images si l'utilisateur n'a pas choisi les existantes
     if [ "$USE_EXISTING_IMAGES" = false ]; then
         echo "Téléchargement de $SYSTEM_FILE..."
-        sudo wget -O /tmp/waydroid_system.zip "$SYSTEM_URL" || { echo "Échec du téléchargement system."; kdialog --error "Échec du téléchargement system."; exit 1; }
+        sudo wget -O /tmp/waydroid_system.zip "$SYSTEM_URL" || {
+            echo "Échec du téléchargement system."
+            kdialog --error "Échec du téléchargement system."
+            exit 1
+        }
         echo "Extraction de l'image system..."
-        sudo unzip -o /tmp/waydroid_system.zip -d "$EXTRA_IMAGE_DIR" || { echo "Échec de l'extraction system."; kdialog --error "Échec de l'extraction system."; exit 1; }
+        sudo unzip -o /tmp/waydroid_system.zip -d "$EXTRA_IMAGE_DIR" || {
+            echo "Échec de l'extraction system."
+            kdialog --error "Échec de l'extraction system."
+            exit 1
+        }
         sudo mv /tmp/waydroid_system.zip "$EXTRA_IMAGE_DIR/$SYSTEM_FILE"
 
         echo "Téléchargement de $VENDOR_FILE..."
-        sudo wget -O /tmp/waydroid_vendor.zip "$VENDOR_URL" || { echo "Échec du téléchargement vendor."; kdialog --error "Échec du téléchargement vendor."; exit 1; }
+        sudo wget -O /tmp/waydroid_vendor.zip "$VENDOR_URL" || {
+            echo "Échec du téléchargement vendor."
+            kdialog --error "Échec du téléchargement vendor."
+            exit 1
+        }
         echo "Extraction de l'image vendor..."
-        sudo unzip -o /tmp/waydroid_vendor.zip -d "$EXTRA_IMAGE_DIR" || { echo "Échec de l'extraction vendor."; kdialog --error "Échec de l'extraction vendor."; exit 1; }
+        sudo unzip -o /tmp/waydroid_vendor.zip -d "$EXTRA_IMAGE_DIR" || {
+            echo "Échec de l'extraction vendor."
+            kdialog --error "Échec de l'extraction vendor."
+            exit 1
+        }
         sudo mv /tmp/waydroid_vendor.zip "$EXTRA_IMAGE_DIR/$VENDOR_FILE"
     fi
 
     # Supprimer les images dans /var/lib/waydroid mais conserver celles dans EXTRA_IMAGE_DIR
     echo "Suppression des anciennes images dans /var/lib/waydroid..."
-    sudo rm -f /var/lib/waydroid/images/system.img /var/lib/waydroid/images/vendor.img || { echo "Échec de la suppression des images dans /var/lib/waydroid."; kdialog --error "Échec de la suppression des images dans /var/lib/waydroid."; exit 1; }
+    sudo rm -f /var/lib/waydroid/images/system.img /var/lib/waydroid/images/vendor.img || {
+        echo "Échec de la suppression des images dans /var/lib/waydroid."
+        kdialog --error "Échec de la suppression des images dans /var/lib/waydroid."
+        exit 1
+    }
 
     # Initialiser Waydroid
     echo "Initialisation de Waydroid..."
-    sudo waydroid init -i "$EXTRA_IMAGE_DIR" -f || { echo "Échec de l'initialisation."; kdialog --error "Échec de l'initialisation."; exit 1; }
+    sudo waydroid init -i "$EXTRA_IMAGE_DIR" -f || {
+        echo "Échec de l'initialisation."
+        kdialog --error "Échec de l'initialisation."
+        exit 1
+    }
 fi
 
 # Déterminer le type de CPU et effectuer les configurations
@@ -328,16 +395,36 @@ if [ "$UPDATE_NEEDED" = true ]; then
 
     # Installer F-Droid
     echo "Téléchargement de l'APK F-Droid..."
-    wget -O "$FDROID_APK" "$FDROID_APK_URL" || { echo "Échec du téléchargement de F-Droid."; kdialog --error "Échec du téléchargement de F-Droid."; kill $WAYDROID_PID 2>/dev/null; exit 1; }
+    wget -O "$FDROID_APK" "$FDROID_APK_URL" || {
+        echo "Échec du téléchargement de F-Droid."
+        kdialog --error "Échec du téléchargement de F-Droid."
+        kill $WAYDROID_PID 2>/dev/null
+        exit 1
+    }
     echo "Installation de F-Droid..."
-    adb install "$FDROID_APK" || { echo "Échec de l'installation de F-Droid."; kdialog --error "Échec de l'installation de F-Droid."; kill $WAYDROID_PID 2>/dev/null; exit 1; }
+    adb install "$FDROID_APK" || {
+        echo "Échec de l'installation de F-Droid."
+        kdialog --error "Échec de l'installation de F-Droid."
+        kill $WAYDROID_PID 2>/dev/null
+        exit 1
+    }
     rm -f "$FDROID_APK"
 
     # Installer Aurora Store
     echo "Téléchargement de l'APK Aurora Store..."
-    wget -O "$AURORA_APK" "$AURORA_APK_URL" || { echo "Échec du téléchargement d'Aurora Store."; kdialog --error "Échec du téléchargement d'Aurora Store."; kill $WAYDROID_PID 2>/dev/null; exit 1; }
+    wget -O "$AURORA_APK" "$AURORA_APK_URL" || {
+        echo "Échec du téléchargement d'Aurora Store."
+        kdialog --error "Échec du téléchargement d'Aurora Store."
+        kill $WAYDROID_PID 2>/dev/null
+        exit 1
+    }
     echo "Installation d'Aurora Store..."
-    adb install "$AURORA_APK" || { echo "Échec de l'installation d'Aurora Store."; kdialog --error "Échec de l'installation d'Aurora Store."; kill $WAYDROID_PID 2>/dev/null; exit 1; }
+    adb install "$AURORA_APK" || {
+        echo "Échec de l'installation d'Aurora Store."
+        kdialog --error "Échec de l'installation d'Aurora Store."
+        kill $WAYDROID_PID 2>/dev/null
+        exit 1
+    }
     rm -f "$AURORA_APK"
 
     # Vérifier la connexion ADB
@@ -347,7 +434,12 @@ if [ "$UPDATE_NEEDED" = true ]; then
     if [ -d "$WAYDROID_SCRIPT_DIR" ]; then
         echo "Installation de $TRANSLATION_LIB..."
         cd "$WAYDROID_SCRIPT_DIR"
-        sudo venv/bin/python3 -W ignore main.py -a 13 install "$TRANSLATION_LIB" 2>&1 || { echo "Échec de l'installation de $TRANSLATION_LIB."; kdialog --error "Échec de l'installation de $TRANSLATION_LIB."; kill $WAYDROID_PID 2>/dev/null; exit 1; }
+        sudo venv/bin/python3 -W ignore main.py -a 13 install "$TRANSLATION_LIB" 2>&1 || {
+            echo "Échec de l'installation de $TRANSLATION_LIB."
+            kdialog --error "Échec de l'installation de $TRANSLATION_LIB."
+            kill $WAYDROID_PID 2>/dev/null
+            exit 1
+        }
         cd ..
     fi
 
@@ -362,7 +454,11 @@ if [ "$UPDATE_NEEDED" = true ]; then
         echo "Fichiers .desktop à supprimer : $DESKTOP_FILES"
         rm -f "$USER_DESKTOP_DIR/waydroid"*.desktop 2>/dev/null
         echo "Mise à jour du cache du menu Plasma..."
-        update-desktop-database -v "$USER_DESKTOP_DIR" || { echo "Échec de la mise à jour du cache du menu Plasma."; kdialog --error "Échec de la mise à jour du cache du menu Plasma."; exit 1; }
+        update-desktop-database -v "$USER_DESKTOP_DIR" || {
+            echo "Échec de la mise à jour du cache du menu Plasma."
+            kdialog --error "Échec de la mise à jour du cache du menu Plasma."
+            exit 1
+        }
         kbuildsycoca6
     else
         echo "Aucun fichier .desktop waydroid* trouvé (sauf Waydroid.desktop)."
@@ -372,10 +468,18 @@ if [ "$UPDATE_NEEDED" = true ]; then
     if [ -f "$KILLWAYDROID_DESKTOP" ]; then
         echo "Copie de $KILLWAYDROID_DESKTOP vers $USER_DESKTOP_DIR..."
         mkdir -p "$USER_DESKTOP_DIR"
-        cp "$KILLWAYDROID_DESKTOP" "$USER_DESKTOP_DIR/" || { echo "Échec de la copie de KillWaydroid.desktop."; kdialog --error "Échec de la copie de KillWaydroid.desktop."; exit 1; }
+        cp "$KILLWAYDROID_DESKTOP" "$USER_DESKTOP_DIR/" || {
+            echo "Échec de la copie de KillWaydroid.desktop."
+            kdialog --error "Échec de la copie de KillWaydroid.desktop."
+            exit 1
+        }
         chmod 644 "$USER_DESKTOP_DIR/KillWaydroid.desktop"
         echo "Mise à jour du cache du menu Plasma après ajout de KillWaydroid.desktop..."
-        update-desktop-database -v "$USER_DESKTOP_DIR" || { echo "Échec de la mise à jour du cache du menu Plasma."; kdialog --error "Échec de la mise à jour du cache du menu Plasma."; exit 1; }
+        update-desktop-database -v "$USER_DESKTOP_DIR" || {
+            echo "Échec de la mise à jour du cache du menu Plasma."
+            kdialog --error "Échec de la mise à jour du cache du menu Plasma."
+            exit 1
+        }
         kbuildsycoca6
     else
         echo "Le fichier $KILLWAYDROID_DESKTOP n'existe pas."
@@ -396,30 +500,38 @@ if [ "$UPDATE_NEEDED" = true ]; then
         echo "$PROPERTY" | sudo tee "$CONFIG_FILE" >/dev/null
     fi
 
-    # Ajouter la configuration KWin pour Waydroid
+    # Ajouter la configuration KWin pour Waydroid et ses applications
     KWIN_RULES_FILE="$HOME/.config/kwinrulesrc"
     KWIN_RULE_SECTION="[c9f9faae-07c4-435a-b931-8763d5d640c9]"
     if [ -f "$KWIN_RULES_FILE" ] && grep -q "$KWIN_RULE_SECTION" "$KWIN_RULES_FILE"; then
         echo "La règle KWin pour Waydroid existe déjà dans $KWIN_RULES_FILE."
     else
-        echo "Ajout de la règle KWin pour Waydroid dans $KWIN_RULES_FILE..."
+        echo "Ajout de la règle KWin pour Waydroid et ses applications dans $KWIN_RULES_FILE..."
         {
             echo "$KWIN_RULE_SECTION"
-            echo "Description=Paramètres d'application pour « Waydroid »"
+            echo "Description=Paramètres d'application pour Waydroid et ses applications"
             echo "adaptivesync=false"
             echo "adaptivesyncrule=2"
             echo "fullscreen=true"
             echo "fullscreenrule=3"
-            echo "wmclass=\\sWaydroid"
+            echo "wmclass=^Waydroid|waydroid.*"
             echo "wmclasscomplete=true"
-            echo "wmclassmatch=1"
+            echo "wmclassmatch=3"
             echo ""
-        } >>"$KWIN_RULES_FILE" || { echo "Échec de l'ajout de la règle KWin dans $KWIN_RULES_FILE."; kdialog --error "Échec de l'ajout de la règle KWin dans $KWIN_RULES_FILE."; exit 1; }
+        } >>"$KWIN_RULES_FILE" || {
+            echo "Échec de l'ajout de la règle KWin dans $KWIN_RULES_FILE."
+            kdialog --error "Échec de l'ajout de la règle KWin dans $KWIN_RULES_FILE."
+            exit 1
+        }
     fi
 fi
 
 # Nettoyer waydroid_script et l'environnement virtuel
-sudo rm -rf "$WAYDROID_SCRIPT_DIR" || { echo "Échec du nettoyage de $WAYDROID_SCRIPT_DIR."; kdialog --error "Échec du nettoyage de $WAYDROID_SCRIPT_DIR."; exit 1; }
+sudo rm -rf "$WAYDROID_SCRIPT_DIR" || {
+    echo "Échec du nettoyage de $WAYDROID_SCRIPT_DIR."
+    kdialog --error "Échec du nettoyage de $WAYDROID_SCRIPT_DIR."
+    exit 1
+}
 
 kdialog --title "Succès" --msgbox "Mise à jour et configuration de Waydroid terminées avec succès.\nVous pouvez lancer Waydroid depuis le menu Plasma."
 exit 0
