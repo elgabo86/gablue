@@ -367,6 +367,13 @@ if [ "$UPDATE_NEEDED" = true ]; then
     # Vérifier la connexion ADB
     check_adb
 
+    # Activation des manettes de jeu
+    waydroid prop set persist.waydroid.uevent true
+    waydroid prop set persist.waydroid.udev true
+
+    # Vérifier la connexion ADB
+    check_adb
+
     # Configurer la langue français suisse
     echo "Configuration de la langue Android en français suisse..."
     adb shell "setprop persist.sys.locale $LOCALE; setprop persist.sys.language fr; setprop persist.sys.country CH"
