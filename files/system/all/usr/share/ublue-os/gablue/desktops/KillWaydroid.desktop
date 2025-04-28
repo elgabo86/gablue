@@ -1,0 +1,14 @@
+[Desktop Entry]
+Comment=
+Exec=waydroid session stop
+Icon=waydroid
+Categories=X-WayDroid-App;Utility;
+GenericName=Waydroid killer
+Name=Kill Waydroid
+NoDisplay=false
+Path=
+Terminal=false
+TerminalOptions=
+Type=Application
+X-KDE-StartupNotify=false
+
