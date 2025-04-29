@@ -1,5 +1,5 @@
 #!/bin/bash
-# Version: 1.24
+# Version: 1.27
 
 # Configuration
 SYSTEM_URL_BASE="https://sourceforge.net/projects/waydroid/files/images/system/lineage/waydroid_x86_64/"
@@ -10,11 +10,12 @@ PROPERTY="ro.hardware.gralloc=minigbm_gbm_mesa"
 WAYDROID_SCRIPT_DIR="/tmp/waydroid_script"
 WAYDROID_SCRIPT_URL="https://github.com/aleasto/waydroid_script.git"
 USER_WAYDROID_DIR="$HOME/.local/share/waydroid"
+USER_CACHE_DIR="$HOME/.cache/waydroid"
 LOCALE="fr_CH" # Français suisse
 FDROID_APK_URL="https://f-droid.org/F-Droid.apk"
-FDROID_APK="/tmp/F-Droid.apk"
+FDROID_APK="$USER_CACHE_DIR/F-Droid.apk"
 AURORA_APK_URL="https://auroraoss.com/downloads/AuroraStore/Latest/latest.apk"
-AURORA_APK="/tmp/AuroraStore.apk"
+AURORA_APK="$USER_CACHE_DIR/AuroraStore.apk"
 KILLWAYDROID_DESKTOP="/usr/share/ublue-os/gablue/desktops/KillWaydroid.desktop"
 USER_DESKTOP_DIR="$HOME/.local/share/applications"
 
@@ -23,7 +24,7 @@ wait_waydroid_ready() {
     echo "Attente que Waydroid soit prêt..."
     local timeout=60
     local start_time=$(date +%s)
-    local log_file="/tmp/waydroid_session.log"
+    local log_file="$USER_CACHE_DIR/waydroid_session.log"
 
     # Rediriger la sortie de waydroid session start vers un fichier
     waydroid session start >"$log_file" 2>&1 &
@@ -181,7 +182,13 @@ if [ "$1" = "remove" ]; then
     exit 0
 fi
 
-# Commande install
+# Créer le répertoire de cache utilisateur
+mkdir -p "$USER_CACHE_DIR" || {
+    echo "Échec de la création de $USER_CACHE_DIR."
+    kdialog --error "Échec de la création de $USER_CACHE_DIR."
+    exit 1
+}
+
 # Créer le répertoire des images extra
 sudo mkdir -p "$EXTRA_IMAGE_DIR" || {
     echo "Échec de la création de $EXTRA_IMAGE_DIR."
@@ -282,32 +289,32 @@ if [ "$UPDATE_NEEDED" = true ]; then
     # Télécharger les nouvelles images si l'utilisateur n'a pas choisi les existantes
     if [ "$USE_EXISTING_IMAGES" = false ]; then
         echo "Téléchargement de $SYSTEM_FILE..."
-        sudo wget -O /tmp/waydroid_system.zip "$SYSTEM_URL" || {
+        sudo wget -O "$USER_CACHE_DIR/waydroid_system.zip" "$SYSTEM_URL" || {
             echo "Échec du téléchargement system."
             kdialog --error "Échec du téléchargement system."
             exit 1
         }
         echo "Extraction de l'image system..."
-        sudo unzip -o /tmp/waydroid_system.zip -d "$EXTRA_IMAGE_DIR" || {
+        sudo unzip -o "$USER_CACHE_DIR/waydroid_system.zip" -d "$EXTRA_IMAGE_DIR" || {
             echo "Échec de l'extraction system."
             kdialog --error "Échec de l'extraction system."
             exit 1
         }
-        sudo mv /tmp/waydroid_system.zip "$EXTRA_IMAGE_DIR/$SYSTEM_FILE"
+        sudo mv "$USER_CACHE_DIR/waydroid_system.zip" "$EXTRA_IMAGE_DIR/$SYSTEM_FILE"
 
         echo "Téléchargement de $VENDOR_FILE..."
-        sudo wget -O /tmp/waydroid_vendor.zip "$VENDOR_URL" || {
+        sudo wget -O "$USER_CACHE_DIR/waydroid_vendor.zip" "$VENDOR_URL" || {
             echo "Échec du téléchargement vendor."
             kdialog --error "Échec du téléchargement vendor."
             exit 1
         }
         echo "Extraction de l'image vendor..."
-        sudo unzip -o /tmp/waydroid_vendor.zip -d "$EXTRA_IMAGE_DIR" || {
+        sudo unzip -o "$USER_CACHE_DIR/waydroid_vendor.zip" -d "$EXTRA_IMAGE_DIR" || {
             echo "Échec de l'extraction vendor."
             kdialog --error "Échec de l'extraction vendor."
             exit 1
         }
-        sudo mv /tmp/waydroid_vendor.zip "$EXTRA_IMAGE_DIR/$VENDOR_FILE"
+        sudo mv "$USER_CACHE_DIR/waydroid_vendor.zip" "$EXTRA_IMAGE_DIR/$VENDOR_FILE"
     fi
 
     # Supprimer les images dans /var/lib/waydroid mais conserver celles dans EXTRA_IMAGE_DIR
@@ -396,6 +403,10 @@ if [ "$UPDATE_NEEDED" = true ]; then
     # Désactiver le clavier virtuel par défaut pour favoriser le clavier physique
     echo "Désactivation du clavier virtuel par défaut..."
     adb shell "settings put secure show_ime_with_hard_keyboard 0"
+
+    # Activer la simulation du touch avec la souris
+    echo "Activation de la simulation du touch avec la souris..."
+    waydroid prop set persist.waydroid.fake_touch "*"
 
     # Vérifier la connexion ADB
     check_adb
@@ -506,6 +517,32 @@ if [ "$UPDATE_NEEDED" = true ]; then
         echo "Création de $CONFIG_FILE avec ro.hardware.gralloc..."
         echo "$PROPERTY" | sudo tee "$CONFIG_FILE" >/dev/null
     fi
+
+    # Ajouter les propriétés personnalisées à la fin de waydroid_base.prop
+    echo "Ajout des propriétés personnalisées à $CONFIG_FILE..."
+    {
+        echo ""
+        echo "# start of custom build prop - you can safely delete if this causes issue"
+        echo "ro.product.brand=google"
+        echo "ro.product.manufacturer=Valve"
+        echo "ro.system.build.product=redfin"
+        echo "ro.product.name=redfin"
+        echo "ro.product.device=redfin"
+        echo "ro.product.model=Steam Deck"
+        echo "ro.system.build.flavor=redfin-user"
+        echo "ro.build.fingerprint=google/redfin/redfin:11/RQ3A.211001.001/eng.electr.20230318.111310:user/release-keys"
+        echo "ro.system.build.description=redfin-user 11 RQ3A.211001.001 eng.electr.20230318.111310 release-keys"
+        echo "ro.bootimage.build.fingerprint=google/redfin/redfin:11/RQ3A.211001.001/eng.electr.20230318.111310:user/release-keys"
+        echo "ro.build.display.id=google/redfin/redfin:11/RQ3A.211001.001/eng.electr.20230318.111310:user/release-keys"
+        echo "ro.build.tags=release-keys"
+        echo "ro.build.description=redfin-user 11 RQ3A.211001.001 eng.electr.20230318.111310 release-keys"
+        echo "ro.vendor.build.fingerprint=google/redfin/redfin:11/RQ3A.211001.001/eng.electr.20230318.111310:user/release-keys"
+        echo "ro.vendor.build.id=RQ3A.211001.001"
+        echo "ro.vendor.build.tags=release-keys"
+        echo "ro.vendor.build.type=user"
+        echo "ro.odm.build.tags=release-keys"
+        echo "# end of custom build prop - you can safely delete if this causes issue"
+    } | sudo tee -a "$CONFIG_FILE" >/dev/null
 
     # Ajouter la configuration KWin pour Waydroid et ses applications
     KWIN_RULES_FILE="$HOME/.config/kwinrulesrc"
