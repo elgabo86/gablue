@@ -2,3 +2,4 @@
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/cpupower
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/a13
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/waydroid
+%wheel ALL=(ALL) NOPASSWD: /usr/bin/mkdir ~/.local/share/waydroid/data/media/0/Sharedl

@@ -1,0 +1,4 @@
+#!/bin/bash
+
+sudo mkdir ~/.local/share/waydroid/data/media/0/Sharedl
+sudo mount --bind "$(xdg-user-dir DOWNLOAD)" ~/.local/share/waydroid/data/media/0/Sharedl

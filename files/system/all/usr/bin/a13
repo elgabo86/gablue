@@ -566,7 +566,6 @@ if [ "$UPDATE_NEEDED" = true ]; then
             echo "fullscreen=true"
             echo "fullscreenrule=3"
             echo "wmclass=^Waydroid|waydroid.*"
-            echo "wmclasscomplete=true"
             echo "wmclassmatch=3"
             echo ""
         } >>"$KWIN_RULES_FILE" || {

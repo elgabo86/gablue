@@ -14,6 +14,7 @@ chmod +x /usr/bin/cpucheck
 chmod +x /usr/bin/genimg
 chmod +x /usr/bin/a13
 chmod +x /usr/bin/a13-id
+chmod +x /usr/bin/a13-share
 chmod +x /usr/libexec/gablue-update
 chmod +x /usr/libexec/gablue-config
 chmod +x /usr/libexec/archgab-update
