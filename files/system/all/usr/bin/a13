@@ -411,6 +411,13 @@ if [ "$UPDATE_NEEDED" = true ]; then
     # Vérifier la connexion ADB
     check_adb
 
+    # Désactiver le setup wizard
+    adb shell settings put secure show_first_crash_dialog 0
+    adb shell pm disable-user --user 0 com.google.android.setupwizard
+
+    # Vérifier la connexion ADB
+    check_adb
+
     # Installer F-Droid
     echo "Téléchargement de l'APK F-Droid..."
     wget -O "$FDROID_APK" "$FDROID_APK_URL" || {

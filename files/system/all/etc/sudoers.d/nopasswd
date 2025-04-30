@@ -1,3 +1,4 @@
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/ryzenadj
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/cpupower
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/a13
+%wheel ALL=(ALL) NOPASSWD: /usr/bin/waydroid
