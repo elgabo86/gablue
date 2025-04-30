@@ -429,6 +429,12 @@ if [ "$UPDATE_NEEDED" = true ]; then
     # Vérifier la connexion ADB
     check_adb
 
+    # Change timezone
+    waydroid prop set persist.sys.timezone Europe/Zurich
+
+    # Vérifier la connexion ADB
+    check_adb
+
     # Installer F-Droid
     echo "Téléchargement de l'APK F-Droid..."
     wget -O "$FDROID_APK" "$FDROID_APK_URL" || {
