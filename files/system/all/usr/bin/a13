@@ -415,6 +415,17 @@ if [ "$UPDATE_NEEDED" = true ]; then
     adb shell settings put secure show_first_crash_dialog 0
     adb shell pm disable-user --user 0 com.google.android.setupwizard
 
+    # Desactiver google vocal et autre truc inutiles
+    adb shell pm disable-user --user 0 com.google.android.googlequicksearchbox
+    adb shell pm disable-user --user 0 com.google.android.apps.safetyhub
+    adb shell pm disable-user --user 0 com.google.android.apps.messaging
+    adb shell pm disable-user --user 0 com.google.android.contacts
+    adb shell pm disable-user --user 0 org.lineageos.aperture
+    adb shell pm disable-user --user 0 org.lineageos.etar
+    adb shell pm disable-user --user 0 org.lineageos.recorder
+    adb shell pm disable-user --user 0 com.android.calculator2
+    adb shell pm disable-user --user 0 org.lineageos.jelly
+
     # Vérifier la connexion ADB
     check_adb
 
@@ -451,6 +462,39 @@ if [ "$UPDATE_NEEDED" = true ]; then
         exit 1
     }
     rm -f "$AURORA_APK"
+
+    # Installer Fennec F-Droid
+    echo "Téléchargement de l'APK Fennec F-Droid..."
+    FENNEC_APK_URL=$(curl -s https://f-droid.org/packages/org.mozilla.fennec_fdroid/ | grep -oP 'href="[^"]*org\.mozilla\.fennec_fdroid_[0-9]+[^"]*\.apk"' | sort -r | head -1 | cut -d'"' -f2)
+    FENNEC_APK="$USER_CACHE_DIR/Fennec_FDroid.apk"
+    if [ -z "$FENNEC_APK_URL" ]; then
+        echo "Échec de la récupération de l'URL de Fennec F-Droid."
+        kdialog --error "Échec de la récupération de l'URL de Fennec F-Droid."
+        kill $WAYDROID_PID 2>/dev/null
+        exit 1
+    fi
+    wget -O "$FENNEC_APK" "$FENNEC_APK_URL" || {
+        echo "Échec du téléchargement de Fennec F-Droid."
+        kdialog --error "Échec du téléchargement de Fennec F-Droid."
+        kill $WAYDROID_PID 2>/dev/null
+        exit 1
+    }
+    # Vérifier la taille du fichier (doit être ~96-108 Mo)
+    FILE_SIZE=$(stat -c%s "$FENNEC_APK")
+    if [ "$FILE_SIZE" -lt 90000000 ]; then
+        echo "L'APK téléchargé est trop petit ($FILE_SIZE bytes). Échec."
+        kdialog --error "L'APK Fennec F-Droid téléchargé est invalide (trop petit)."
+        kill $WAYDROID_PID 2>/dev/null
+        exit 1
+    fi
+    echo "Installation de Fennec F-Droid..."
+    adb install "$FENNEC_APK" || {
+        echo "Échec de l'installation de Fennec F-Droid."
+        kdialog --error "Échec de l'installation de Fennec F-Droid."
+        kill $WAYDROID_PID 2>/dev/null
+        exit 1
+    }
+    rm -f "$FENNEC_APK"
 
     # Vérifier la connexion ADB
     check_adb
