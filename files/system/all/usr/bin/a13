@@ -415,6 +415,9 @@ if [ "$UPDATE_NEEDED" = true ]; then
     adb shell settings put secure show_first_crash_dialog 0
     adb shell pm disable-user --user 0 com.google.android.setupwizard
 
+    # Désactiver la reconnaissance vocal pour le clavier
+    adb shell settings put secure enabled_input_methods bcom.android.inputmethod.latin/.LatinIME
+
     # Desactiver google vocal et autre truc inutiles
     adb shell pm disable-user --user 0 com.google.android.googlequicksearchbox
     adb shell pm disable-user --user 0 com.google.android.apps.safetyhub
@@ -571,11 +574,11 @@ if [ "$UPDATE_NEEDED" = true ]; then
         echo ""
         echo "# start of custom build prop - you can safely delete if this causes issue"
         echo "ro.product.brand=google"
-        echo "ro.product.manufacturer=Valve"
+        echo "ro.product.manufacturer=Google"
         echo "ro.system.build.product=redfin"
         echo "ro.product.name=redfin"
         echo "ro.product.device=redfin"
-        echo "ro.product.model=Steam Deck"
+        echo "ro.product.model=Pixel 5"
         echo "ro.system.build.flavor=redfin-user"
         echo "ro.build.fingerprint=google/redfin/redfin:11/RQ3A.211001.001/eng.electr.20230318.111310:user/release-keys"
         echo "ro.system.build.description=redfin-user 11 RQ3A.211001.001 eng.electr.20230318.111310 release-keys"
