@@ -127,6 +127,11 @@ if [ "$1" = "remove" ]; then
     echo "Suppression de Waydroid..."
     waydroid session stop 2>/dev/null || true
 
+    # Enlever le share dl si existant
+    if mountpoint -q ~/.local/share/waydroid/data/media/0/Sharedl; then
+    sudo umount -f ~/.local/share/waydroid/data/media/0/Sharedl
+    fi
+
     # Demander à l'utilisateur ce qu'il veut garder
     CHOICE=$(kdialog --title "Suppression de Waydroid" --menu "Que voulez-vous supprimer ?" all "Tout supprimer (données utilisateur et images)" keep_data "Garder les données utilisateur" keep_images "Garder les images system et vendor" keep_all "Garder les données utilisateur et les images" cancel "Annuler")
     if [ $? -ne 0 ] || [ "$CHOICE" = "cancel" ]; then
