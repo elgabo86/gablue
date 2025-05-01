@@ -420,6 +420,12 @@ if [ "$UPDATE_NEEDED" = true ]; then
     adb shell settings put secure show_first_crash_dialog 0
     adb shell pm disable-user --user 0 com.google.android.setupwizard
 
+    # Mettre le volume à 100%
+    adb shell cmd media_session volume --stream 3 --set 15
+
+    # Désactiver la localisation
+    adb shell settings put secure location_mode 0
+
     # Désactiver la reconnaissance vocal pour le clavier
     adb shell settings put secure enabled_input_methods bcom.android.inputmethod.latin/.LatinIME
 
@@ -433,6 +439,9 @@ if [ "$UPDATE_NEEDED" = true ]; then
     adb shell pm disable-user --user 0 org.lineageos.recorder
     adb shell pm disable-user --user 0 com.android.calculator2
     adb shell pm disable-user --user 0 org.lineageos.jelly
+    adb shell pm disable-user --user 0 com.android.safetycenter.resources
+    adb shell pm disable-user --user 0 com.android.emergency
+    adb shell pm disable-user --user 0 com.google.android.overlay.gmsconfig.personalsafety
 
     # Vérifier la connexion ADB
     check_adb
