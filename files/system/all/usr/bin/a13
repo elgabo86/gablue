@@ -445,6 +445,7 @@ if [ "$UPDATE_NEEDED" = true ]; then
     adb shell pm disable-user --user 0 com.android.safetycenter.resources
     adb shell pm disable-user --user 0 com.android.emergency
     adb shell pm disable-user --user 0 com.google.android.overlay.gmsconfig.personalsafety
+    adb shell pm disable-user --user 0 com.google.android.apps.restore
 
     # Vérifier la connexion ADB
     check_adb
