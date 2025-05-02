@@ -370,6 +370,9 @@ if [ "$UPDATE_NEEDED" = true ]; then
     # Vérifier la connexion ADB
     check_adb
 
+    # Désactiver la mise en veille de Waydroid
+    waydroid prop set persist.waydroid.suspend false
+
     # Désactiver les notifications Google Play Protect
     echo "Désactivation des notifications Google Play Protect..."
     adb shell pm revoke com.google.android.gms android.permission.POST_NOTIFICATIONS
@@ -524,6 +527,9 @@ if [ "$UPDATE_NEEDED" = true ]; then
         }
         cd ..
     fi
+
+    # Rétablir la mise en veille de Waydroid
+    waydroid prop set persist.waydroid.suspend true
 
     # Arrêter Waydroid après l'installation
     echo "Arrêt de Waydroid..."
