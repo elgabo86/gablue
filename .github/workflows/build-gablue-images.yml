@@ -160,7 +160,7 @@ jobs:
       # Rechunk de l'image
       - name: Rechunk Image
         id: rechunk
-        uses: hhd-dev/rechunk@v1.2.1
+        uses: hhd-dev/rechunk@v1.2.2
         with:
           ref: "raw-img"
           prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ matrix.image.name }}:latest"
