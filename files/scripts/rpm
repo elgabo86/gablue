@@ -79,8 +79,6 @@ google-droid-sans-mono-fonts
 
 #Drivers
 dnf5 -y install \
-epson-inkjet-printer-escpr \
-epson-inkjet-printer-escpr2 \
 hplip \
 printer-driver-brlaser \
 ifuse \
