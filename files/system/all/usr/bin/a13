@@ -222,26 +222,6 @@ else
     UPDATE_NEEDED=true
 fi
 
-# Obtenir la dernière image system pour LineageOS 20 (GAPPS)
-echo "Recherche de la dernière image system LineageOS 20 GAPPS..."
-SYSTEM_FILE=$(curl -s "$SYSTEM_URL_BASE" | grep -o 'lineage-20-[0-9]\{8\}-GAPPS-waydroid_x86_64-system.zip' | sort -r | head -n 1)
-if [ -z "$SYSTEM_FILE" ]; then
-    echo "Aucune image system LineageOS 20 GAPPS trouvée."
-    kdialog --error "Aucune image system LineageOS 20 GAPPS trouvée."
-    exit 1
-fi
-SYSTEM_URL="${SYSTEM_URL_BASE}${SYSTEM_FILE}"
-
-# Obtenir la dernière image vendor pour LineageOS 20 (MAINLINE)
-echo "Recherche de la dernière image vendor LineageOS 20 MAINLINE..."
-VENDOR_FILE=$(curl -s "$VENDOR_URL_BASE" | grep -o 'lineage-20-[0-9]\{8\}-MAINLINE-waydroid_x86_64-vendor.zip' | sort -r | head -n 1)
-if [ -z "$VENDOR_FILE" ]; then
-    echo "Aucune image vendor LineageOS 20 MAINLINE trouvée."
-    kdialog --error "Aucune image vendor LineageOS 20 MAINLINE trouvée."
-    exit 1
-fi
-VENDOR_URL="${VENDOR_URL_BASE}${VENDOR_FILE}"
-
 # Vérifier si des images existent
 USE_EXISTING_IMAGES=false
 if [ "$UPDATE_NEEDED" = true ]; then
@@ -254,7 +234,47 @@ if [ "$UPDATE_NEEDED" = true ]; then
             exit 0
         elif [ "$CHOICE" = "existing" ]; then
             USE_EXISTING_IMAGES=true
+        elif [ "$CHOICE" = "download" ]; then
+            # Obtenir la dernière image system pour LineageOS 20 (GAPPS)
+            echo "Recherche de la dernière image system LineageOS 20 GAPPS..."
+            SYSTEM_FILE=$(curl -s "$SYSTEM_URL_BASE" | grep -o 'lineage-20-[0-9]\{8\}-GAPPS-waydroid_x86_64-system.zip' | sort -r | head -n 1)
+            if [ -z "$SYSTEM_FILE" ]; then
+                echo "Aucune image system LineageOS 20 GAPPS trouvée."
+                kdialog --error "Aucune image system LineageOS 20 GAPPS trouvée."
+                exit 1
+            fi
+            SYSTEM_URL="${SYSTEM_URL_BASE}${SYSTEM_FILE}"
+
+            # Obtenir la dernière image vendor pour LineageOS 20 (MAINLINE)
+            echo "Recherche de la dernière image vendor LineageOS 20 MAINLINE..."
+            VENDOR_FILE=$(curl -s "$VENDOR_URL_BASE" | grep -o 'lineage-20-[0-9]\{8\}-MAINLINE-waydroid_x86_64-vendor.zip' | sort -r | head -n 1)
+            if [ -z "$VENDOR_FILE" ]; then
+                echo "Aucune image vendor LineageOS 20 MAINLINE trouvée."
+                kdialog --error "Aucune image vendor LineageOS 20 MAINLINE trouvée."
+                exit 1
+            fi
+            VENDOR_URL="${VENDOR_URL_BASE}${VENDOR_FILE}"
         fi
+    else
+        # Si aucune image n'existe, vérifier les images à distance
+        echo "Aucune image trouvée dans $EXTRA_IMAGE_DIR. Recherche des dernières images..."
+        echo "Recherche de la dernière image system LineageOS 20 GAPPS..."
+        SYSTEM_FILE=$(curl -s "$SYSTEM_URL_BASE" | grep -o 'lineage-20-[0-9]\{8\}-GAPPS-waydroid_x86_64-system.zip' | sort -r | head -n 1)
+        if [ -z "$SYSTEM_FILE" ]; then
+            echo "Aucune image system LineageOS 20 GAPPS trouvée."
+            kdialog --error "Aucune image system LineageOS 20 GAPPS trouvée."
+            exit 1
+        fi
+        SYSTEM_URL="${SYSTEM_URL_BASE}${SYSTEM_FILE}"
+
+        echo "Recherche de la dernière image vendor LineageOS 20 MAINLINE..."
+        VENDOR_FILE=$(curl -s "$VENDOR_URL_BASE" | grep -o 'lineage-20-[0-9]\{8\}-MAINLINE-waydroid_x86_64-vendor.zip' | sort -r | head -n 1)
+        if [ -z "$VENDOR_FILE" ]; then
+            echo "Aucune image vendor LineageOS 20 MAINLINE trouvée."
+            kdialog --error "Aucune image vendor LineageOS 20 MAINLINE trouvée."
+            exit 1
+        fi
+        VENDOR_URL="${VENDOR_URL_BASE}${VENDOR_FILE}"
     fi
 fi
 
@@ -456,7 +476,11 @@ if [ "$UPDATE_NEEDED" = true ]; then
     # Vérifier la connexion ADB
     check_adb
 
-    # Installer F-Droid
+    # Installer F-Droid si non installé
+echo "Vérification de F-Droid..."
+if adb shell pm list packages | grep -q org.fdroid.fdroid; then
+    echo "F-Droid est déjà installé."
+else
     echo "Téléchargement de l'APK F-Droid..."
     wget -O "$FDROID_APK" "$FDROID_APK_URL" || {
         echo "Échec du téléchargement de F-Droid."
@@ -472,8 +496,13 @@ if [ "$UPDATE_NEEDED" = true ]; then
         exit 1
     }
     rm -f "$FDROID_APK"
+fi
 
-    # Installer Aurora Store
+    # Installer Aurora Store si non installé
+echo "Vérification d'Aurora Store..."
+if adb shell pm list packages | grep -q com.aurora.store; then
+    echo "Aurora Store est déjà installé."
+else
     echo "Téléchargement de l'APK Aurora Store..."
     wget -O "$AURORA_APK" "$AURORA_APK_URL" || {
         echo "Échec du téléchargement d'Aurora Store."
@@ -489,8 +518,13 @@ if [ "$UPDATE_NEEDED" = true ]; then
         exit 1
     }
     rm -f "$AURORA_APK"
+fi
 
-    # Installer Fennec F-Droid (x86)
+    # Installer Fennec F-Droid si non installé
+echo "Vérification de Fennec F-Droid..."
+if adb shell pm list packages | grep -q org.mozilla.fennec_fdroid; then
+    echo "Fennec F-Droid est déjà installé."
+else
     echo "Téléchargement de l'APK Fennec F-Droid (x86)..."
     FENNEC_APK_URL=$(curl -s https://f-droid.org/packages/org.mozilla.fennec_fdroid/ | grep -oP 'href="[^"]*org\.mozilla\.fennec_fdroid_1370010\.apk"' | head -1 | cut -d'"' -f2)
     FENNEC_APK="$USER_CACHE_DIR/Fennec_FDroid.apk"
@@ -512,6 +546,7 @@ if [ "$UPDATE_NEEDED" = true ]; then
         exit 1
     }
     rm -f "$FENNEC_APK"
+fi
 
     # Vérifier la connexion ADB
     check_adb
