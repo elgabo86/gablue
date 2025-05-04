@@ -108,6 +108,7 @@ libnsl2
 dnf5 -y install \
 python3-pygame \
 python3-uinput \
+python3-tqdm \
 python3-pip
 
 #Remove some packages

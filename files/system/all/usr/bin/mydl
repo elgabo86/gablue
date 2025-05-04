@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+# Version: 2.10
+import argparse
+import os
+import sys
+import re
+import urllib.parse
+import requests
+import shutil
+import subprocess
+from tqdm import tqdm
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import signal
+
+# Gestionnaire pour interrompre proprement avec Ctrl+C
+shutdown_event = threading.Event()
+
+def signal_handler(sig, frame):
+    print("\nInterruption détectée, arrêt des téléchargements...")
+    shutdown_event.set()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+
+# Initialiser le verrou global pour tqdm
+tqdm.set_lock(threading.Lock())
+
+# Parse les arguments
+parser = argparse.ArgumentParser(description="Télécharge les fichiers Myrient directement avec 3 téléchargements simultanés.")
+parser.add_argument("url", help="URL de la page Myrient")
+parser.add_argument("--fr-only", action="store_true", help="Ne conserve que les versions (France) et (Fr)")
+parser.add_argument("--eu-only", action="store_true", help="Ne liste que les jeux avec une version (France), (Fr), (Europe) ou (USA) avec Fr")
+parser.add_argument("--all", action="store_true", help="Télécharge tous les fichiers sans filtrer par région")
+args = parser.parse_args()
+
+URL = args.url
+FR_ONLY = args.fr_only
+EU_ONLY = args.eu_only
+ALL = args.all
+
+# Vérifie les arguments
+if sum([FR_ONLY, EU_ONLY, ALL]) > 1:
+    print("Erreur : Les options --fr-only, --eu-only et --all ne peuvent pas être utilisées ensemble.")
+    sys.exit(1)
+
+# Menu interactif si aucune option n’est spécifiée
+if not (FR_ONLY or EU_ONLY or ALL):
+    print("Aucune option de filtrage spécifiée. Veuillez choisir une option :")
+    print("1. --eu-only (par défaut)")
+    print("2. --fr-only : Jeux uniquement en français")
+    print("3. --all : Tous les fichiers sans filtrage par région")
+    choice = input("Entrez votre choix (1, 2, 3) ou appuyez sur Entrée pour --eu-only : ").strip()
+
+    if choice == "" or choice == "1":
+        EU_ONLY = True
+        print("Option choisie : --eu-only")
+    elif choice == "2":
+        FR_ONLY = True
+        print("Option choisie : --fr-only")
+    elif choice == "3":
+        ALL = True
+        print("Option choisie : --all")
+    else:
+        print("Choix invalide. Utilisation de --eu-only par défaut.")
+        EU_ONLY = True
+
+# Détermine le dossier de téléchargement
+current_dir = os.path.realpath(os.getcwd())  # Normalise le chemin courant
+home_dir = os.path.realpath(os.path.expanduser("~"))  # Normalise le chemin personnel
+download_dir = current_dir
+
+if current_dir == home_dir:
+    try:
+        download_dir = subprocess.check_output(["xdg-user-dir", "DOWNLOAD"], text=True).strip()
+        print(f"Chemin de téléchargement détecté via xdg-user-dir : {download_dir}")
+    except subprocess.CalledProcessError:
+        print("Avertissement : Impossible de déterminer le dossier de téléchargements via xdg-user-dir. Utilisation de ~/Downloads comme secours.")
+        download_dir = os.path.join(home_dir, "Downloads")
+    download_dir = os.path.join(download_dir, "myrientdl")
+    os.makedirs(download_dir, exist_ok=True)
+    print(f"Téléchargements dans : {download_dir}")
+else:
+    print(f"Téléchargements dans : {current_dir}")
+
+# Chemins temporaires
+RAW_OUTPUT = "/tmp/raw_download_links.txt"
+FILTERED_OUTPUT = os.path.join(download_dir, "filtered_download_links.txt")
+
+# Récupère la page et extrait les liens de fichiers
+response = requests.get(URL)
+links = re.findall(r'href="([^"]+\.(?:bin|cue|iso|zip|7z|rar))"', response.text)
+if not links:
+    print("Aucun lien de fichier trouvé.")
+    sys.exit(1)
+
+# Stocke les liens bruts temporairement
+with open(RAW_OUTPUT, 'w') as f:
+    for link in links:
+        f.write(f"{URL}{link}\n")
+
+# Vérifie la taille d'un fichier sur le serveur
+def get_server_file_size(url):
+    try:
+        response = requests.head(url, allow_redirects=True, timeout=10)
+        if response.status_code == 200:
+            return int(response.headers.get("content-length", 0))
+        return None
+    except requests.RequestException:
+        return None
+
+def contains_term(filename, term):
+    return term.lower() in filename.lower()
+
+def get_game_name(filename):
+    name = re.sub(r'\s*\([^\)]*\)', '', filename)
+    name = re.sub(r'\s*-\s*Disc\s*[0-9]+', '', name)
+    name = re.sub(r'\.[a-zA-Z0-9]+$', '', name)
+    name = name.lower()
+    name = re.sub(r'[^a-z0-9]+', '-', name)
+    name = re.sub(r'-+', '-', name)
+    name = name.strip('-')
+    return name
+
+def get_disc_num(filename):
+    match = re.search(r'Disc\s*([0-9]+)', filename, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return "0"
+
+# Stocke les versions par jeu et disque, en vérifiant les fichiers existants
+game_versions = {}
+game_regions = {}
+existing_files = {f for f in os.listdir(download_dir) if os.path.isfile(os.path.join(download_dir, f))}
+with open(RAW_OUTPUT, 'r') as f:
+    for link in f:
+        link = link.strip()
+        filename = urllib.parse.unquote(os.path.basename(link))
+
+        # Vérifie si le fichier existe déjà et correspond à la taille du serveur
+        if filename in existing_files:
+            server_size = get_server_file_size(link)
+            local_size = os.path.getsize(os.path.join(download_dir, filename))
+            if server_size and local_size == server_size:
+                continue
+
+        if contains_term(filename, "Demo") or contains_term(filename, "Beta"):
+            continue
+
+        if ALL:
+            # Avec --all, inclure tous les fichiers sauf Demo/Beta
+            priority = 0
+            region = "All"
+        else:
+            # Logique de filtrage pour --fr-only ou --eu-only
+            priority = None
+            region = None
+            if contains_term(filename, "USA") and (contains_term(filename, "Fr,") or contains_term(filename, ",Fr,") or contains_term(filename, ",Fr)")):
+                priority = 0
+                region = "USA_Fr"
+            elif contains_term(filename, "France"):
+                priority = 1
+                region = "France"
+            elif contains_term(filename, "Fr,") or contains_term(filename, ",Fr,") or contains_term(filename, ",Fr)"):
+                priority = 2
+                region = "Fr"
+            elif (not FR_ONLY or EU_ONLY) and contains_term(filename, "Europe"):
+                priority = 3
+                region = "Europe"
+            elif not FR_ONLY and contains_term(filename, "USA"):
+                priority = 4
+                region = "USA"
+            else:
+                continue
+
+        game_name = get_game_name(filename)
+        disc_num = get_disc_num(filename)
+        key = f"{game_name}_disc_{disc_num}"
+        if game_name not in game_regions:
+            game_regions[game_name] = set()
+        game_regions[game_name].add(region)
+        if key not in game_versions or priority < game_versions[key][1]:
+            game_versions[key] = (link, priority, filename)
+
+# Filtre les jeux en mode --eu-only
+selected_links = []
+if EU_ONLY:
+    for key, (link, priority, filename) in game_versions.items():
+        game_name = key.split('_disc_')[0]
+        if any(r in {"France", "Fr", "Europe", "USA_Fr"} for r in game_regions[game_name]):
+            selected_links.append(link)
+else:
+    selected_links = [version[0] for version in game_versions.values()]
+
+# Écrit les liens sélectionnés
+if selected_links:
+    with open(FILTERED_OUTPUT, 'w') as f:
+        for link in sorted(selected_links):
+            f.write(f"{link}\n")
+else:
+    print("Aucun lien filtré trouvé.")
+    os.remove(RAW_OUTPUT)
+    sys.exit(1)
+
+# Lit les liens
+with open(FILTERED_OUTPUT, 'r') as f:
+    links = [line.strip() for line in f if line.strip()]
+
+# Supprime les fichiers temporaires
+os.remove(RAW_OUTPUT)
+os.remove(FILTERED_OUTPUT)
+
+# Fonction pour tronquer les noms de fichiers
+def truncate_filename(filename, max_length=15):
+    if len(filename) <= max_length:
+        return filename
+    return filename[:max_length-3] + "..."
+
+# Fonction pour télécharger un fichier avec reprise et barre de progression
+def download_file(url, dest_dir):
+    if shutdown_event.is_set():
+        return False, url
+
+    filename = urllib.parse.unquote(os.path.basename(url))
+    dest_path = os.path.join(dest_dir, filename)
+    display_name = truncate_filename(filename)
+
+    # Vérifie si le fichier existe déjà
+    resume_byte_pos = 0
+    if os.path.exists(dest_path):
+        resume_byte_pos = os.path.getsize(dest_path)
+        print(f"{filename} déjà présent, reprise à {resume_byte_pos} octets")
+    else:
+        pass  # Pas de message "Téléchargement de"
+
+    # Configure la requête avec reprise
+    headers = {"Range": f"bytes={resume_byte_pos}-"} if resume_byte_pos else {}
+    try:
+        response = requests.get(url, headers=headers, stream=True, timeout=30)
+    except requests.RequestException as e:
+        print(f"Échec du téléchargement de {filename} : {e}")
+        return False, url
+
+    if response.status_code == 416:
+        server_size = get_server_file_size(url)
+        if server_size and resume_byte_pos >= server_size:
+            print(f"{filename} déjà téléchargé (taille complète : {resume_byte_pos} octets)")
+            return True, url
+        print(f"Échec du téléchargement de {filename} : Requête de reprise invalide")
+        return False, url
+
+    if response.status_code not in (200, 206):
+        print(f"Échec du téléchargement de {filename} : Statut {response.status_code}")
+        return False, url
+
+    # Obtient la taille totale pour la barre de progression
+    total_size = int(response.headers.get("content-length", 0)) + resume_byte_pos
+    block_size = 1024  # 1 Ko
+
+    # Télécharge avec barre de progression
+    with tqdm(total=total_size, initial=resume_byte_pos, unit="B", unit_scale=True, desc=display_name, position=links.index(url) % 3, leave=True, mininterval=0.2, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") as progress_bar:
+        with open(dest_path, "ab" if resume_byte_pos else "wb") as f:
+            try:
+                for chunk in response.iter_content(chunk_size=block_size):
+                    if shutdown_event.is_set():
+                        return False, url
+                    if chunk:
+                        f.write(chunk)
+                        progress_bar.update(len(chunk))
+            except requests.RequestException as e:
+                print(f"Échec du téléchargement de {filename} : {e}")
+                return False, url
+
+    # Vérifie si le téléchargement est complet
+    server_size = get_server_file_size(url)
+    local_size = os.path.getsize(dest_path)
+    if server_size and local_size == server_size:
+        print(f"{filename} terminé")
+        return True, url
+    else:
+        print(f"Téléchargement de {filename} incomplet (local: {local_size}, serveur: {server_size})")
+        return False, url
+
+# Télécharge les fichiers en parallèle (3 à la fois)
+print("Lancement des téléchargements (3 fichiers simultanés)...")
+try:
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_to_url = {executor.submit(download_file, link, download_dir): link for link in sorted(links)}
+        for future in as_completed(future_to_url):
+            if shutdown_event.is_set():
+                break
+            try:
+                success, url = future.result()
+                if not success:
+                    print(f"Erreur lors du téléchargement de {urllib.parse.unquote(os.path.basename(url))}. Consultez les logs.")
+            except Exception as e:
+                print(f"Erreur dans le thread pour {urllib.parse.unquote(os.path.basename(future_to_url[future]))} : {e}")
+except KeyboardInterrupt:
+    shutdown_event.set()
+    print("\nTéléchargement interrompu par l'utilisateur.")
+    sys.exit(0)
+
+if not shutdown_event.is_set():
+    print("Tous les téléchargements terminés.")
