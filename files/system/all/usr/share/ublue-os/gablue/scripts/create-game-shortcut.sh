@@ -1,4 +1,5 @@
 #!/bin/bash
+# Version: 1.2
 
 # Vérifie qu'un fichier .exe est passé en argument
 if [ -z "$1" ] || [ ! -f "$1" ]; then
@@ -10,6 +11,8 @@ EXE_PATH="$1"
 EXE_NAME=$(basename "$EXE_PATH" .exe)
 DESKTOP_NAME=$(echo "$EXE_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
 DESKTOP_FILE="$HOME/.local/share/applications/$DESKTOP_NAME.desktop"
+DESKTOP_DIR=$(xdg-user-dir DESKTOP)
+DESKTOP_SHORTCUT="$DESKTOP_DIR/$DESKTOP_NAME.desktop"
 ICON_TEMP=$(mktemp).png
 
 # Demande le nom personnalisé via kdialog
@@ -45,6 +48,10 @@ if [ $? -ne 0 ]; then
     echo "Annulé par l'utilisateur"
     exit 0
 fi
+
+# Demande si l'utilisateur veut un raccourci sur le bureau
+CREATE_DESKTOP=$(kdialog --title "Raccourci sur le bureau" --yesno "Voulez-vous également ajouter un raccourci sur le bureau ?")
+CREATE_DESKTOP_STATUS=$?
 
 # Définit la commande d'exécution principale et l'action alternative
 if [ "$LAUNCH_MODE" = "normal" ]; then
@@ -92,14 +99,21 @@ Icon=$ICON_PATH
 
 [Desktop Action DeleteShortcut]
 Name=Supprimer ce raccourci
-Exec=qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.activateLauncherMenu && rm -f "$DESKTOP_FILE" && update-desktop-database ~/.local/share/applications
+Exec=qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.activateLauncherMenu && rm -f "$DESKTOP_FILE" "$DESKTOP_SHORTCUT" && kbuildsycoca6 && update-desktop-database ~/.local/share/applications
 Icon=edit-delete
 EOF
 
 # Applique les permissions
 chmod +x "$DESKTOP_FILE"
 
+# Crée un lien symbolique sur le bureau si demandé
+if [ $CREATE_DESKTOP_STATUS -eq 0 ]; then
+    ln -sf "$DESKTOP_FILE" "$DESKTOP_SHORTCUT"
+    echo "Raccourci créé sur le bureau : $DESKTOP_SHORTCUT"
+fi
+
 # Met à jour la base de données des applications
+kbuildsycoca6
 update-desktop-database ~/.local/share/applications
 
 echo "Raccourci créé : $DESKTOP_FILE"
