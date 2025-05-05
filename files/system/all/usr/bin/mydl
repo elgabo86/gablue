@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: 2.10
+# Version: 2.11
 import argparse
 import os
 import sys
@@ -19,7 +19,6 @@ shutdown_event = threading.Event()
 def signal_handler(sig, frame):
     print("\nInterruption détectée, arrêt des téléchargements...")
     shutdown_event.set()
-    sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
 
@@ -230,8 +229,6 @@ def download_file(url, dest_dir):
     if os.path.exists(dest_path):
         resume_byte_pos = os.path.getsize(dest_path)
         print(f"{filename} déjà présent, reprise à {resume_byte_pos} octets")
-    else:
-        pass  # Pas de message "Téléchargement de"
 
     # Configure la requête avec reprise
     headers = {"Range": f"bytes={resume_byte_pos}-"} if resume_byte_pos else {}
@@ -288,6 +285,7 @@ try:
         future_to_url = {executor.submit(download_file, link, download_dir): link for link in sorted(links)}
         for future in as_completed(future_to_url):
             if shutdown_event.is_set():
+                executor.shutdown(wait=False)  # Arrête immédiatement les threads
                 break
             try:
                 success, url = future.result()
@@ -298,6 +296,8 @@ try:
 except KeyboardInterrupt:
     shutdown_event.set()
     print("\nTéléchargement interrompu par l'utilisateur.")
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        executor.shutdown(wait=False)  # Arrête les threads restants
     sys.exit(0)
 
 if not shutdown_event.is_set():
