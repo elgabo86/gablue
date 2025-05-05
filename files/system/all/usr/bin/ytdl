@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# v1.4
+# v1.5
 import os
 import signal
 import sys
@@ -8,6 +8,7 @@ import yt_dlp
 import subprocess
 from datetime import datetime
 from pathlib import Path
+import glob
 
 # Gestion du signal Ctrl+C
 stop_download = False
@@ -22,15 +23,23 @@ def get_download_dir():
     current_dir = os.getcwd()
     home_dir = os.path.expanduser("~")
     if current_dir == home_dir:
-        # Obtenir le dossier des téléchargements via xdg-user-dir
         try:
             download_dir = subprocess.check_output(['xdg-user-dir', 'DOWNLOAD']).decode().strip()
         except:
-            download_dir = os.path.join(home_dir, 'Downloads')  # Fallback
+            download_dir = os.path.join(home_dir, 'Downloads')
         ytdl_dir = os.path.join(download_dir, 'ytdl')
         os.makedirs(ytdl_dir, exist_ok=True)
         return ytdl_dir
     return current_dir
+
+def clean_partial_files(download_dir):
+    # Supprime les fichiers .part et autres fichiers temporaires
+    for partial in glob.glob(os.path.join(download_dir, "*.part")):
+        try:
+            os.remove(partial)
+            print(f"Supprimé fichier partiel : {partial}")
+        except:
+            pass
 
 def get_playlist_videos(playlist_url):
     ydl_opts = {
@@ -41,10 +50,8 @@ def get_playlist_videos(playlist_url):
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         result = ydl.extract_info(playlist_url, download=False)
-        # Vérifie si c'est une playlist et récupère les entrées
         entries = result.get('entries', [])
         if not entries and 'id' in result:
-            # Cas où une seule vidéo est retournée
             entries = [{'id': result['id'], 'title': result['title'], 'upload_date': result.get('upload_date', '')}]
         if not entries:
             raise ValueError("Aucune vidéo trouvée dans la playlist.")
@@ -60,19 +67,24 @@ def check_video_integrity(filepath):
     except:
         return False
 
-def download_video(video, index, total, state_file):
+def download_video(video, index, total, state_file, download_dir):
     global stop_download
     video_url = f"https://www.youtube.com/watch?v={video['id']}"
     output_template = f"{index:03d} - {video['title'].replace('/', '_')}.%(ext)s"
+    output_path = os.path.join(download_dir, output_template % {'ext': 'mp4'})
 
-    if os.path.exists(os.path.join(get_download_dir(), output_template % {'ext': 'mp4'})):
-        if check_video_integrity(os.path.join(get_download_dir(), output_template % {'ext': 'mp4'})):
+    # Vérifie si le fichier existe et est valide
+    if os.path.exists(output_path):
+        if check_video_integrity(output_path):
             print(f"[{index}/{total}] Vidéo {video['title']} déjà téléchargée et valide.")
             return True
+        else:
+            print(f"[{index}/{total}] Fichier {output_path} corrompu, suppression.")
+            os.remove(output_path)
 
     ydl_opts = {
         'format': 'bestvideo+bestaudio/best',
-        'outtmpl': os.path.join(get_download_dir(), output_template),
+        'outtmpl': os.path.join(download_dir, output_template),
         'merge_output_format': 'mp4',
         'postprocessors': [
             {'key': 'FFmpegVideoConvertor', 'preferedformat': 'mp4'},
@@ -89,6 +101,11 @@ def download_video(video, index, total, state_file):
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([video_url])
+        # Vérifie l'intégrité après téléchargement
+        if not check_video_integrity(output_path):
+            print(f"[{index}/{total}] Fichier téléchargé corrompu, suppression.")
+            os.remove(output_path)
+            return False
         # Mise à jour de l'état
         with open(state_file, 'r') as f:
             state = json.load(f)
@@ -108,6 +125,9 @@ def main():
     playlist_url = sys.argv[1]
     download_dir = get_download_dir()
     state_file = os.path.join(download_dir, "download_state.json")
+
+    # Nettoyage des fichiers partiels au démarrage
+    clean_partial_files(download_dir)
 
     # Initialisation ou chargement de l'état
     if os.path.exists(state_file):
@@ -132,7 +152,7 @@ def main():
         if stop_download:
             print("Arrêt du programme.")
             break
-        if not download_video(video, i, total_videos, state_file):
+        if not download_video(video, i, total_videos, state_file, download_dir):
             print(f"Arrêt après erreur sur la vidéo {i}.")
             break
 
