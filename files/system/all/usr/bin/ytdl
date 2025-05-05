@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+# v1.4
+import os
+import signal
+import sys
+import json
+import yt_dlp
+import subprocess
+from datetime import datetime
+from pathlib import Path
+
+# Gestion du signal Ctrl+C
+stop_download = False
+def signal_handler(sig, frame):
+    global stop_download
+    stop_download = True
+    print("\nArrêt demandé, fin après la vidéo en cours...")
+
+signal.signal(signal.SIGINT, signal_handler)
+
+def get_download_dir():
+    current_dir = os.getcwd()
+    home_dir = os.path.expanduser("~")
+    if current_dir == home_dir:
+        # Obtenir le dossier des téléchargements via xdg-user-dir
+        try:
+            download_dir = subprocess.check_output(['xdg-user-dir', 'DOWNLOAD']).decode().strip()
+        except:
+            download_dir = os.path.join(home_dir, 'Downloads')  # Fallback
+        ytdl_dir = os.path.join(download_dir, 'ytdl')
+        os.makedirs(ytdl_dir, exist_ok=True)
+        return ytdl_dir
+    return current_dir
+
+def get_playlist_videos(playlist_url):
+    ydl_opts = {
+        'quiet': True,
+        'extract_flat': 'in_playlist',
+        'force_generic_extractor': False,
+        'playlist_items': '0-999999',
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        result = ydl.extract_info(playlist_url, download=False)
+        # Vérifie si c'est une playlist et récupère les entrées
+        entries = result.get('entries', [])
+        if not entries and 'id' in result:
+            # Cas où une seule vidéo est retournée
+            entries = [{'id': result['id'], 'title': result['title'], 'upload_date': result.get('upload_date', '')}]
+        if not entries:
+            raise ValueError("Aucune vidéo trouvée dans la playlist.")
+        return sorted(entries, key=lambda x: x.get('upload_date', '') or '19700101')
+
+def check_video_integrity(filepath):
+    if not os.path.exists(filepath):
+        return False
+    try:
+        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+            ydl.extract_info(f"file://{filepath}", download=False)
+        return True
+    except:
+        return False
+
+def download_video(video, index, total, state_file):
+    global stop_download
+    video_url = f"https://www.youtube.com/watch?v={video['id']}"
+    output_template = f"{index:03d} - {video['title'].replace('/', '_')}.%(ext)s"
+
+    if os.path.exists(os.path.join(get_download_dir(), output_template % {'ext': 'mp4'})):
+        if check_video_integrity(os.path.join(get_download_dir(), output_template % {'ext': 'mp4'})):
+            print(f"[{index}/{total}] Vidéo {video['title']} déjà téléchargée et valide.")
+            return True
+
+    ydl_opts = {
+        'format': 'bestvideo+bestaudio/best',
+        'outtmpl': os.path.join(get_download_dir(), output_template),
+        'merge_output_format': 'mp4',
+        'postprocessors': [
+            {'key': 'FFmpegVideoConvertor', 'preferedformat': 'mp4'},
+            {'key': 'FFmpegMetadata'},
+            {'key': 'EmbedThumbnail'},
+        ],
+        'writethumbnail': True,
+        'progress_hooks': [lambda d: stop_download and d['status'] == 'downloading' and sys.exit(0)],
+        'quiet': False,
+        'no_warnings': True,
+    }
+
+    print(f"[{index}/{total}] Téléchargement : {video['title']}")
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([video_url])
+        # Mise à jour de l'état
+        with open(state_file, 'r') as f:
+            state = json.load(f)
+        state['last_downloaded'] = index
+        with open(state_file, 'w') as f:
+            json.dump(state, f)
+        return True
+    except Exception as e:
+        print(f"Erreur lors du téléchargement de {video['title']}: {e}")
+        return False
+
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python script.py <playlist_url>")
+        sys.exit(1)
+
+    playlist_url = sys.argv[1]
+    download_dir = get_download_dir()
+    state_file = os.path.join(download_dir, "download_state.json")
+
+    # Initialisation ou chargement de l'état
+    if os.path.exists(state_file):
+        with open(state_file, 'r') as f:
+            state = json.load(f)
+    else:
+        state = {'playlist_url': playlist_url, 'last_downloaded': 0}
+        with open(state_file, 'w') as f:
+            json.dump(state, f)
+
+    # Vérification si la playlist a changé
+    if state['playlist_url'] != playlist_url:
+        print("Nouvelle playlist détectée, réinitialisation.")
+        state = {'playlist_url': playlist_url, 'last_downloaded': 0}
+        with open(state_file, 'w') as f:
+            json.dump(state, f)
+
+    videos = get_playlist_videos(playlist_url)
+    total_videos = len(videos)
+
+    for i, video in enumerate(videos[state['last_downloaded']:], start=state['last_downloaded'] + 1):
+        if stop_download:
+            print("Arrêt du programme.")
+            break
+        if not download_video(video, i, total_videos, state_file):
+            print(f"Arrêt après erreur sur la vidéo {i}.")
+            break
+
+    # Nettoyage si tout est terminé
+    if i == total_videos:
+        print("Téléchargement complet, suppression de l'état.")
+        os.remove(state_file)
+
+if __name__ == "__main__":
+    main()
