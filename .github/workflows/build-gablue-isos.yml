@@ -134,8 +134,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: checksums/gablue-main-checksum/gablue-main-latest-41.iso.sha256
-          asset_name: gablue-main-latest-41.iso.sha256
+          asset_path: checksums/gablue-main-checksum/gablue-main-latest-42.iso.sha256
+          asset_name: gablue-main-latest-42.iso.sha256
           asset_content_type: text/plain
 
       - name: Upload Checksum Files to Release (gablue-nvidia)
@@ -144,8 +144,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: checksums/gablue-nvidia-checksum/gablue-nvidia-latest-41.iso.sha256
-          asset_name: gablue-nvidia-latest-41.iso.sha256
+          asset_path: checksums/gablue-nvidia-checksum/gablue-nvidia-latest-42.iso.sha256
+          asset_name: gablue-nvidia-latest-42.iso.sha256
           asset_content_type: text/plain
 
       - name: Upload Checksum Files to Release (gablue-nvidia-open)
@@ -154,6 +154,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: checksums/gablue-nvidia-open-checksum/gablue-nvidia-open-latest-41.iso.sha256
-          asset_name: gablue-nvidia-open-latest-41.iso.sha256
+          asset_path: checksums/gablue-nvidia-open-checksum/gablue-nvidia-open-latest-42.iso.sha256
+          asset_name: gablue-nvidia-open-latest-42.iso.sha256
           asset_content_type: text/plain
