@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: 2.11
+# Version: 2.15
 import argparse
 import os
 import sys
@@ -19,6 +19,7 @@ shutdown_event = threading.Event()
 def signal_handler(sig, frame):
     print("\nInterruption détectée, arrêt des téléchargements...")
     shutdown_event.set()
+    sys.exit(1)
 
 signal.signal(signal.SIGINT, signal_handler)
 
@@ -65,8 +66,8 @@ if not (FR_ONLY or EU_ONLY or ALL):
         EU_ONLY = True
 
 # Détermine le dossier de téléchargement
-current_dir = os.path.realpath(os.getcwd())  # Normalise le chemin courant
-home_dir = os.path.realpath(os.path.expanduser("~"))  # Normalise le chemin personnel
+current_dir = os.path.realpath(os.getcwd())
+home_dir = os.path.realpath(os.path.expanduser("~"))
 download_dir = current_dir
 
 if current_dir == home_dir:
@@ -82,9 +83,45 @@ if current_dir == home_dir:
 else:
     print(f"Téléchargements dans : {current_dir}")
 
-# Chemins temporaires
+# Chemins temporaires et fichiers de progression/check
 RAW_OUTPUT = "/tmp/raw_download_links.txt"
 FILTERED_OUTPUT = os.path.join(download_dir, "filtered_download_links.txt")
+PROGRESS_FILE_PATH = os.path.join(download_dir, "progression.txt")
+CHECK_FILE_PATH = os.path.join(download_dir, "check.txt")
+
+# Fonction pour lire les fichiers déjà téléchargés dans progression.txt
+def read_progress_file(progress_file_path):
+    downloaded_files = set()
+    if os.path.exists(progress_file_path):
+        try:
+            with open(progress_file_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    downloaded_files.add(line.strip())
+        except Exception as e:
+            print(f"Erreur lors de la lecture de {progress_file_path}: {e}")
+    return downloaded_files
+
+# Fonction pour ajouter un fichier à progression.txt
+def append_to_progress_file(progress_file_path, filename):
+    try:
+        with open(progress_file_path, 'a', encoding='utf-8') as f:
+            f.write(f"{filename}\n")
+    except Exception as e:
+        print(f"Erreur lors de l'écriture dans {progress_file_path}: {e}")
+
+# Fonction pour écrire dans check.txt
+def write_check_file(check_file_path, selected_links):
+    try:
+        with open(check_file_path, 'w', encoding='utf-8') as f:
+            f.write("Fichiers à télécharger :\n")
+            if selected_links:
+                for link in sorted(selected_links):
+                    filename = urllib.parse.unquote(os.path.basename(link))
+                    f.write(f"- {filename}\n")
+            else:
+                f.write("Aucun fichier trouvé.\n")
+    except Exception as e:
+        print(f"Erreur lors de l'écriture dans {check_file_path}: {e}")
 
 # Récupère la page et extrait les liens de fichiers
 response = requests.get(URL)
@@ -109,7 +146,9 @@ def get_server_file_size(url):
         return None
 
 def contains_term(filename, term):
-    return term.lower() in filename.lower()
+    # Recherche des mots entiers pour éviter les correspondances partielles (ex: "Demon" != "Demo")
+    pattern = r'\b' + re.escape(term) + r'\b'
+    return bool(re.search(pattern, filename, re.IGNORECASE))
 
 def get_game_name(filename):
     name = re.sub(r'\s*\([^\)]*\)', '', filename)
@@ -131,27 +170,34 @@ def get_disc_num(filename):
 game_versions = {}
 game_regions = {}
 existing_files = {f for f in os.listdir(download_dir) if os.path.isfile(os.path.join(download_dir, f))}
+downloaded_files = read_progress_file(PROGRESS_FILE_PATH)
 with open(RAW_OUTPUT, 'r') as f:
     for link in f:
         link = link.strip()
         filename = urllib.parse.unquote(os.path.basename(link))
+
+        # Vérifie si le fichier est déjà marqué comme téléchargé
+        if filename in downloaded_files:
+            print(f"{filename} déjà marqué comme téléchargé dans progression.txt, ignoré.")
+            continue
 
         # Vérifie si le fichier existe déjà et correspond à la taille du serveur
         if filename in existing_files:
             server_size = get_server_file_size(link)
             local_size = os.path.getsize(os.path.join(download_dir, filename))
             if server_size and local_size == server_size:
+                print(f"{filename} déjà présent avec la bonne taille, marqué comme téléchargé.")
+                append_to_progress_file(PROGRESS_FILE_PATH, filename)
                 continue
 
         if contains_term(filename, "Demo") or contains_term(filename, "Beta"):
+            print(f"{filename} ignoré : contient Demo ou Beta")
             continue
 
         if ALL:
-            # Avec --all, inclure tous les fichiers sauf Demo/Beta
             priority = 0
             region = "All"
         else:
-            # Logique de filtrage pour --fr-only ou --eu-only
             priority = None
             region = None
             if contains_term(filename, "USA") and (contains_term(filename, "Fr,") or contains_term(filename, ",Fr,") or contains_term(filename, ",Fr)")):
@@ -163,12 +209,15 @@ with open(RAW_OUTPUT, 'r') as f:
             elif contains_term(filename, "Fr,") or contains_term(filename, ",Fr,") or contains_term(filename, ",Fr)"):
                 priority = 2
                 region = "Fr"
-            elif (not FR_ONLY or EU_ONLY) and contains_term(filename, "Europe"):
+            elif contains_term(filename, "Europe") and (contains_term(filename, "Fr,") or contains_term(filename, ",Fr,") or contains_term(filename, ",Fr)")):
                 priority = 3
-                region = "Europe"
-            elif not FR_ONLY and contains_term(filename, "USA"):
+                region = "Europe_Fr"
+            elif contains_term(filename, "USA"):
                 priority = 4
                 region = "USA"
+            elif contains_term(filename, "Europe"):
+                priority = 5
+                region = "Europe"
             else:
                 continue
 
@@ -186,10 +235,13 @@ selected_links = []
 if EU_ONLY:
     for key, (link, priority, filename) in game_versions.items():
         game_name = key.split('_disc_')[0]
-        if any(r in {"France", "Fr", "Europe", "USA_Fr"} for r in game_regions[game_name]):
+        if any(r in {"France", "Fr", "Europe", "USA_Fr", "USA", "Europe_Fr"} for r in game_regions[game_name]):
             selected_links.append(link)
 else:
     selected_links = [version[0] for version in game_versions.values()]
+
+# Écrit dans check.txt
+write_check_file(CHECK_FILE_PATH, selected_links)
 
 # Écrit les liens sélectionnés
 if selected_links:
@@ -224,6 +276,12 @@ def download_file(url, dest_dir):
     dest_path = os.path.join(dest_dir, filename)
     display_name = truncate_filename(filename)
 
+    # Vérifie si le fichier est déjà marqué comme téléchargé
+    downloaded_files = read_progress_file(PROGRESS_FILE_PATH)
+    if filename in downloaded_files:
+        print(f"{filename} déjà marqué comme téléchargé dans progression.txt, ignoré.")
+        return True, url
+
     # Vérifie si le fichier existe déjà
     resume_byte_pos = 0
     if os.path.exists(dest_path):
@@ -242,6 +300,7 @@ def download_file(url, dest_dir):
         server_size = get_server_file_size(url)
         if server_size and resume_byte_pos >= server_size:
             print(f"{filename} déjà téléchargé (taille complète : {resume_byte_pos} octets)")
+            append_to_progress_file(PROGRESS_FILE_PATH, filename)
             return True, url
         print(f"Échec du téléchargement de {filename} : Requête de reprise invalide")
         return False, url
@@ -273,6 +332,7 @@ def download_file(url, dest_dir):
     local_size = os.path.getsize(dest_path)
     if server_size and local_size == server_size:
         print(f"{filename} terminé")
+        append_to_progress_file(PROGRESS_FILE_PATH, filename)
         return True, url
     else:
         print(f"Téléchargement de {filename} incomplet (local: {local_size}, serveur: {server_size})")
@@ -285,7 +345,8 @@ try:
         future_to_url = {executor.submit(download_file, link, download_dir): link for link in sorted(links)}
         for future in as_completed(future_to_url):
             if shutdown_event.is_set():
-                executor.shutdown(wait=False)  # Arrête immédiatement les threads
+                executor._threads.clear()
+                executor.shutdown(wait=False)
                 break
             try:
                 success, url = future.result()
@@ -296,9 +357,11 @@ try:
 except KeyboardInterrupt:
     shutdown_event.set()
     print("\nTéléchargement interrompu par l'utilisateur.")
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        executor.shutdown(wait=False)  # Arrête les threads restants
-    sys.exit(0)
+    executor._threads.clear()
+    executor.shutdown(wait=False)
+    sys.exit(1)
+except Exception as e:
+    print(f"Erreur inattendue dans les téléchargements : {e}")
 
 if not shutdown_event.is_set():
     print("Tous les téléchargements terminés.")
