@@ -30,7 +30,7 @@ jobs:
             source_suffix: "-main"
             fedora_version: "42"
             kernel_type: "bazzite"
-            kernel_version: "6.14.3-101"
+            kernel_version: ""
           - name: "gablue-nvidia"
             desc: "Gablue nvidia image"
             variant: "nvidia"
@@ -38,7 +38,7 @@ jobs:
             source_suffix: "-main"
             fedora_version: "42"
             kernel_type: "bazzite"
-            kernel_version: "6.14.3-101"
+            kernel_version: ""
           - name: "gablue-nvidia-open"
             desc: "Gablue nvidia-open image"
             variant: "nvidia-open"
@@ -46,7 +46,7 @@ jobs:
             source_suffix: "-main"
             fedora_version: "42"
             kernel_type: "bazzite"
-            kernel_version: "6.14.3-101"
+            kernel_version: ""
 
     permissions:
       contents: read
