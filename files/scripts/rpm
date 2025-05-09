@@ -118,6 +118,12 @@ firefox \
 firefox-langpacks \
 htop
 
+if [ "$SOURCE_IMAGE" == "kinoite" ]; then
+    dnf5 -y remove \
+    plasma-discover-rpm-ostree
+fi
+
+
 if [ "$VARIANT" == "main" ]; then
     dnf5 -y install \
     radeontop \
