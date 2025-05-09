@@ -384,9 +384,9 @@ if [ "$need_rebuild" = true ]; then
 
     qdbus $dbusRef Set "" "value" 70
     qdbus $dbusRef setLabelText "Ajout des clés de registre..."
-    waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "Enable SDL" -d 1 -t "REG_DWORD"
-    waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD"
-    waitwine flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_CURRENT_USER\Software\Wine\Drivers" -v "Graphics" -d "X11" -t "REG_SZ"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "Enable SDL" -d 1 -t "REG_DWORD"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_CURRENT_USER\Software\Wine\Drivers" -v "Graphics" -d "X11" -t "REG_SZ"
 
     qdbus $dbusRef Set "" "value" 80
     qdbus $dbusRef setLabelText "Configuration des raccourcis et outils..."
@@ -412,7 +412,7 @@ if [ "$need_rebuild" = true ]; then
 
     qdbus $dbusRef Set "" "value" 85
     qdbus $dbusRef setLabelText "Installation des runtimes..."
-    waitwine flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/"$wineversion"/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q \
+    flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/"$wineversion"/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q \
         corefonts \
         tahoma \
         d3dcompiler_42 \
@@ -430,7 +430,7 @@ if [ "$need_rebuild" = true ]; then
         dotnetdesktop6 \
         dotnetdesktop7 \
         dotnetdesktop8
-    waitwine flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/"$wineversion"/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q settings fontsmooth=rgb
+    flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/"$wineversion"/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q settings fontsmooth=rgb
 
     qdbus $dbusRef Set "" "value" 90
     qdbus $dbusRef setLabelText "Finalisation des runtimes et configuration..."

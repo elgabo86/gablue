@@ -4,7 +4,6 @@ set -eoux pipefail
 
 # Make executable which need it
 chmod +x /usr/bin/system-flatpak-setup
-chmod +x /usr/bin/waitwine
 chmod +x /usr/bin/ventoy
 chmod +x /usr/bin/bottles-sort-library
 chmod +x /usr/bin/dlcover
