@@ -19,14 +19,6 @@ alias gogpt-web="tgpt --provider blackboxai -i"
 
 alias gogpt-pro="tgpt --provider phind -i"
 
-function genimg() {
-       tgpt -img "$*"
-}
-
-function ask() {
-       tgpt --provider duckduckgo "$*"
-}
-
 alias wkill="pgrep -i '(.*\\.(exe|dll|msi|bat|com|lnk)$)|(.*(wine|proton).*)' | xargs -n1 kill -9 ; pgrep -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q \"^bwrap$\" && kill -9 {}'"
 
 alias wrun="/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable"
