@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: 2.16
+# Version: 2.21
 import argparse
 import os
 import sys
@@ -8,6 +8,8 @@ import urllib.parse
 import requests
 import shutil
 import subprocess
+import zipfile
+import tempfile
 from tqdm import tqdm
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -27,24 +29,39 @@ signal.signal(signal.SIGINT, signal_handler)
 tqdm.set_lock(threading.Lock())
 
 # Parse les arguments
-parser = argparse.ArgumentParser(description="Télécharge les fichiers Myrient directement avec 3 téléchargements simultanés.")
+parser = argparse.ArgumentParser(description="Télécharge les fichiers Myrient avec options de filtrage et traitement.")
 parser.add_argument("url", help="URL de la page Myrient")
 parser.add_argument("--fr-only", action="store_true", help="Ne conserve que les versions (France) et (Fr)")
 parser.add_argument("--eu-only", action="store_true", help="Ne liste que les jeux avec une version (France), (Fr), (Europe) ou (USA) avec Fr")
 parser.add_argument("--all", action="store_true", help="Télécharge tous les fichiers sans filtrer par région")
+parser.add_argument("--extract", action="store_true", help="Télécharge le .zip dans /tmp, décompresse dans le dossier final")
+parser.add_argument("--chd", action="store_true", help="Télécharge le .zip dans /tmp, décompresse dans /tmp, convertit en .chd dans le dossier final")
+parser.add_argument("--max", type=int, default=3, help="Nombre maximum de téléchargements ou traitements simultanés (défaut : 3 pour standard, 1 pour --extract/--chd)")
 args = parser.parse_args()
 
 URL = args.url
 FR_ONLY = args.fr_only
 EU_ONLY = args.eu_only
 ALL = args.all
+EXTRACT = args.extract
+CHD = args.chd
+MAX_WORKERS_DEFAULT = args.max
 
 # Vérifie les arguments
 if sum([FR_ONLY, EU_ONLY, ALL]) > 1:
     print("Erreur : Les options --fr-only, --eu-only et --all ne peuvent pas être utilisées ensemble.")
     sys.exit(1)
+if sum([EXTRACT, CHD]) > 1:
+    print("Erreur : Les options --extract et --chd ne peuvent pas être utilisées ensemble.")
+    sys.exit(1)
+if CHD and shutil.which("chdman") is None:
+    print("Erreur : L'outil 'chdman' est requis pour l'option --chd mais n'est pas installé.")
+    sys.exit(1)
+if MAX_WORKERS_DEFAULT < 1:
+    print("Erreur : L'option --max doit être un entier positif (minimum 1).")
+    sys.exit(1)
 
-# Menu interactif si aucune option n’est spécifiée
+# Menu interactif si aucune option de filtrage n’est spécifiée
 if not (FR_ONLY or EU_ONLY or ALL):
     print("Aucune option de filtrage spécifiée. Veuillez choisir une option :")
     print("1. --eu-only (par défaut)")
@@ -89,7 +106,7 @@ FILTERED_OUTPUT = os.path.join(download_dir, "filtered_download_links.txt")
 PROGRESS_FILE_PATH = os.path.join(download_dir, "progression.txt")
 CHECK_FILE_PATH = os.path.join(download_dir, "check.txt")
 
-# Fonction pour lire les fichiers déjà téléchargés dans progression.txt
+# Fonction pour lire les fichiers déjà traités dans progression.txt
 def read_progress_file(progress_file_path):
     downloaded_files = set()
     if os.path.exists(progress_file_path):
@@ -146,7 +163,6 @@ def get_server_file_size(url):
         return None
 
 def contains_term(filename, term):
-    # Recherche des mots entiers pour éviter les correspondances partielles (ex: "Demon" != "Demo")
     pattern = r'\b' + re.escape(term) + r'\b'
     return bool(re.search(pattern, filename, re.IGNORECASE))
 
@@ -157,8 +173,7 @@ def get_game_name(filename):
     name = name.lower()
     name = re.sub(r'[^a-z0-9]+', '-', name)
     name = re.sub(r'-+', '-', name)
-    name = name.strip('-')
-    return name
+    return name.strip('-')
 
 def get_disc_num(filename):
     match = re.search(r'Disc\s*([0-9]+)', filename, re.IGNORECASE)
@@ -176,19 +191,28 @@ with open(RAW_OUTPUT, 'r') as f:
         link = link.strip()
         filename = urllib.parse.unquote(os.path.basename(link))
 
-        # Vérifie si le fichier est déjà marqué comme téléchargé
-        if filename in downloaded_files:
-            print(f"{filename} déjà marqué comme téléchargé dans progression.txt, ignoré.")
-            continue
-
-        # Vérifie si le fichier existe déjà et correspond à la taille du serveur
-        if filename in existing_files:
-            server_size = get_server_file_size(link)
-            local_size = os.path.getsize(os.path.join(download_dir, filename))
-            if server_size and local_size == server_size:
-                print(f"{filename} déjà présent avec la bonne taille, marqué comme téléchargé.")
-                append_to_progress_file(PROGRESS_FILE_PATH, filename)
+        # Pour --chd, vérifier uniquement si le .chd est dans progression.txt
+        if CHD:
+            game_name = get_game_name(filename)
+            disc_num = get_disc_num(filename)
+            chd_filename = f"{game_name}.chd" if disc_num == "0" else f"{game_name}_disc_{disc_num}.chd"
+            if chd_filename in downloaded_files:
+                print(f"Un .chd pour {filename} ({chd_filename}) déjà marqué dans progression.txt, ignoré.")
                 continue
+        else:
+            # Pour --extract ou mode standard, vérifier le .zip
+            if filename in downloaded_files:
+                print(f"{filename} déjà marqué comme traité dans progression.txt, ignoré.")
+                continue
+
+            # Vérifie si le fichier .zip existe déjà et correspond à la taille du serveur
+            if filename in existing_files and not EXTRACT:
+                server_size = get_server_file_size(link)
+                local_size = os.path.getsize(os.path.join(download_dir, filename))
+                if server_size and local_size == server_size:
+                    print(f"{filename} déjà présent avec la bonne taille, marqué comme téléchargé.")
+                    append_to_progress_file(PROGRESS_FILE_PATH, filename)
+                    continue
 
         if contains_term(filename, "Demo") or contains_term(filename, "Beta"):
             print(f"{filename} ignoré : contient Demo ou Beta")
@@ -198,8 +222,8 @@ with open(RAW_OUTPUT, 'r') as f:
         disc_num = get_disc_num(filename)
         key = f"{game_name}_disc_{disc_num}"
 
-        # Vérifie si une version de ce jeu (même game_name et disc_num) est déjà téléchargée
-        if any(f in downloaded_files or f in existing_files for f in existing_files if get_game_name(f) == game_name and get_disc_num(f) == disc_num):
+        # Vérifie si une version de ce jeu est déjà téléchargée
+        if any(f in downloaded_files for f in existing_files if get_game_name(f) == game_name and get_disc_num(f) == disc_num):
             print(f"Une version de {game_name} (disque {disc_num}) est déjà téléchargée, ignoré : {filename}")
             continue
 
@@ -272,14 +296,177 @@ with open(FILTERED_OUTPUT, 'r') as f:
 os.remove(RAW_OUTPUT)
 os.remove(FILTERED_OUTPUT)
 
-# Fonction pour tronquer les noms de fichiers
+# Fonction pour tronquer les noms
 def truncate_filename(filename, max_length=15):
     if len(filename) <= max_length:
         return filename
     return filename[:max_length-3] + "..."
 
 # Fonction pour télécharger un fichier avec reprise et barre de progression
-def download_file(url, dest_dir):
+def download_file_to_tmp(url, tmp_path, position=0):
+    if shutdown_event.is_set():
+        return False, url
+
+    filename = urllib.parse.unquote(os.path.basename(url))
+    display_name = truncate_filename(filename)
+
+    resume_byte_pos = 0
+    if os.path.exists(tmp_path):
+        resume_byte_pos = os.path.getsize(tmp_path)
+        print(f"{filename} déjà présent dans /tmp, reprise à {resume_byte_pos} octets")
+
+    headers = {"Range": f"bytes={resume_byte_pos}-"} if resume_byte_pos else {}
+    try:
+        response = requests.get(url, headers=headers, stream=True, timeout=30)
+    except requests.RequestException as e:
+        print(f"Échec du téléchargement de {filename} : {e}")
+        return False, url
+
+    if response.status_code == 416:
+        server_size = get_server_file_size(url)
+        if server_size and resume_byte_pos >= server_size:
+            print(f"{filename} déjà téléchargé dans /tmp (taille complète : {resume_byte_pos} octets)")
+            return True, url
+        print(f"Échec du téléchargement de {filename} : Requête de reprise invalide")
+        return False, url
+
+    if response.status_code not in (200, 206):
+        print(f"Échec du téléchargement de {filename} : Statut {response.status_code}")
+        return False, url
+
+    total_size = int(response.headers.get("content-length", 0)) + resume_byte_pos
+    block_size = 1024
+
+    with tqdm(total=total_size, initial=resume_byte_pos, unit="B", unit_scale=True, desc=display_name, position=position, leave=True, mininterval=0.2, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") as progress_bar:
+        with open(tmp_path, "ab" if resume_byte_pos else "wb") as f:
+            try:
+                for chunk in response.iter_content(chunk_size=block_size):
+                    if shutdown_event.is_set():
+                        return False, url
+                    if chunk:
+                        f.write(chunk)
+                        progress_bar.update(len(chunk))
+            except requests.RequestException as e:
+                print(f"Échec du téléchargement de {filename} : {e}")
+                return False, url
+
+    server_size = get_server_file_size(url)
+    local_size = os.path.getsize(tmp_path)
+    if server_size and local_size == server_size:
+        print(f"{filename} téléchargé dans /tmp")
+        return True, url
+    else:
+        print(f"Téléchargement de {filename} incomplet (local: {local_size}, serveur: {server_size})")
+        return False, url
+
+# Fonction pour décompresser un .zip
+def extract_zip(zip_path, dest_dir):
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(dest_dir)
+        print(f"Décompression de {os.path.basename(zip_path)} terminée dans {dest_dir}")
+        return True
+    except Exception as e:
+        print(f"Échec de la décompression de {os.path.basename(zip_path)} : {e}")
+        return False
+
+# Fonction pour convertir en .chd avec chdman
+def convert_to_chd(cue_or_iso_path, dest_dir, downloaded_files):
+    output_chd = os.path.join(dest_dir, os.path.splitext(os.path.basename(cue_or_iso_path))[0] + ".chd")
+    chd_filename = os.path.basename(output_chd)
+
+    # Supprimer un .chd partiel s'il existe mais n'est pas dans progression.txt
+    if os.path.exists(output_chd) and chd_filename not in downloaded_files:
+        print(f"Suppression du .chd partiel : {chd_filename}")
+        os.remove(output_chd)
+
+    try:
+        result = subprocess.run(["chdman", "createcd", "-i", cue_or_iso_path, "-o", output_chd], capture_output=True, text=True, check=True)
+        print(f"Conversion de {os.path.basename(cue_or_iso_path)} en {chd_filename} terminée")
+        return True, output_chd
+    except subprocess.CalledProcessError as e:
+        print(f"Échec de la conversion de {os.path.basename(cue_or_iso_path)} : {e.stderr}")
+        return False, None
+    except Exception as e:
+        print(f"Erreur lors de la conversion de {os.path.basename(cue_or_iso_path)} : {e}")
+        return False, None
+
+# Fonction principale pour traiter un fichier avec --extract
+def process_extract(url, download_dir, position=0):
+    filename = urllib.parse.unquote(os.path.basename(url))
+    downloaded_files = read_progress_file(PROGRESS_FILE_PATH)
+    if filename in downloaded_files:
+        print(f"{filename} déjà marqué comme décompressé dans progression.txt, ignoré.")
+        return True, url
+
+    tmp_zip = os.path.join("/tmp", f"myrientdl_{os.path.basename(url)}")
+    try:
+        # Télécharge dans /tmp
+        success, _ = download_file_to_tmp(url, tmp_zip, position)
+        if not success or shutdown_event.is_set():
+            if os.path.exists(tmp_zip):
+                os.remove(tmp_zip)
+            return False, url
+
+        # Décompresse dans download_dir
+        if not extract_zip(tmp_zip, download_dir):
+            os.remove(tmp_zip)
+            return False, url
+
+        # Marque comme terminé après décompression réussie
+        append_to_progress_file(PROGRESS_FILE_PATH, filename)
+        print(f"Traitement de {filename} terminé")
+        return True, url
+    finally:
+        if os.path.exists(tmp_zip):
+            os.remove(tmp_zip)
+
+# Fonction principale pour traiter un fichier avec --chd
+def process_chd(url, download_dir, position=0):
+    filename = urllib.parse.unquote(os.path.basename(url))
+    downloaded_files = read_progress_file(PROGRESS_FILE_PATH)
+
+    tmp_zip = os.path.join("/tmp", f"myrientdl_{os.path.basename(url)}")
+    with tempfile.TemporaryDirectory(prefix="myrientdl_", dir="/tmp") as tmp_extract_dir:
+        try:
+            # Télécharge dans /tmp
+            success, _ = download_file_to_tmp(url, tmp_zip, position)
+            if not success or shutdown_event.is_set():
+                return False, url
+
+            # Décompresse dans tmp_extract_dir
+            if not extract_zip(tmp_zip, tmp_extract_dir):
+                return False, url
+
+            # Recherche des fichiers .cue ou .iso
+            chd_created = False
+            for root, _, files in os.walk(tmp_extract_dir):
+                for file in files:
+                    if file.lower().endswith(('.cue', '.iso')):
+                        cue_or_iso_path = os.path.join(root, file)
+                        success, output_chd = convert_to_chd(cue_or_iso_path, download_dir, downloaded_files)
+                        if success and output_chd:
+                            chd_filename = os.path.basename(output_chd)
+                            if chd_filename in downloaded_files:
+                                print(f"{chd_filename} déjà marqué comme converti dans progression.txt, ignoré.")
+                                continue
+                            append_to_progress_file(PROGRESS_FILE_PATH, chd_filename)
+                            chd_created = True
+                        if not success or shutdown_event.is_set():
+                            return False, url
+
+            if not chd_created:
+                print(f"Aucun fichier .cue ou .iso trouvé dans {filename}")
+                return False, url
+
+            print(f"Traitement de {filename} terminé")
+            return True, url
+        finally:
+            if os.path.exists(tmp_zip):
+                os.remove(tmp_zip)
+
+# Fonction pour télécharger un fichier directement
+def download_file(url, dest_dir, position=0):
     if shutdown_event.is_set():
         return False, url
 
@@ -287,19 +474,16 @@ def download_file(url, dest_dir):
     dest_path = os.path.join(dest_dir, filename)
     display_name = truncate_filename(filename)
 
-    # Vérifie si le fichier est déjà marqué comme téléchargé
     downloaded_files = read_progress_file(PROGRESS_FILE_PATH)
     if filename in downloaded_files:
         print(f"{filename} déjà marqué comme téléchargé dans progression.txt, ignoré.")
         return True, url
 
-    # Vérifie si le fichier existe déjà
     resume_byte_pos = 0
     if os.path.exists(dest_path):
         resume_byte_pos = os.path.getsize(dest_path)
         print(f"{filename} déjà présent, reprise à {resume_byte_pos} octets")
 
-    # Configure la requête avec reprise
     headers = {"Range": f"bytes={resume_byte_pos}-"} if resume_byte_pos else {}
     try:
         response = requests.get(url, headers=headers, stream=True, timeout=30)
@@ -320,12 +504,10 @@ def download_file(url, dest_dir):
         print(f"Échec du téléchargement de {filename} : Statut {response.status_code}")
         return False, url
 
-    # Obtient la taille totale pour la barre de progression
     total_size = int(response.headers.get("content-length", 0)) + resume_byte_pos
-    block_size = 1024  # 1 Ko
+    block_size = 1024
 
-    # Télécharge avec barre de progression
-    with tqdm(total=total_size, initial=resume_byte_pos, unit="B", unit_scale=True, desc=display_name, position=links.index(url) % 3, leave=True, mininterval=0.2, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") as progress_bar:
+    with tqdm(total=total_size, initial=resume_byte_pos, unit="B", unit_scale=True, desc=display_name, position=position, leave=True, mininterval=0.2, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") as progress_bar:
         with open(dest_path, "ab" if resume_byte_pos else "wb") as f:
             try:
                 for chunk in response.iter_content(chunk_size=block_size):
@@ -338,7 +520,6 @@ def download_file(url, dest_dir):
                 print(f"Échec du téléchargement de {filename} : {e}")
                 return False, url
 
-    # Vérifie si le téléchargement est complet
     server_size = get_server_file_size(url)
     local_size = os.path.getsize(dest_path)
     if server_size and local_size == server_size:
@@ -349,30 +530,66 @@ def download_file(url, dest_dir):
         print(f"Téléchargement de {filename} incomplet (local: {local_size}, serveur: {server_size})")
         return False, url
 
-# Télécharge les fichiers en parallèle (3 à la fois)
-print("Lancement des téléchargements (3 fichiers simultanés)...")
+# Exécution des téléchargements ou traitements
+# Ajuster MAX_WORKERS en fonction du mode
+MAX_WORKERS = MAX_WORKERS_DEFAULT
+if (EXTRACT or CHD) and args.max == 3:  # Utiliser 1 pour --extract/--chd si --max n'est pas spécifié
+    MAX_WORKERS = 1
+
+print(f"Lancement du traitement avec maximum {MAX_WORKERS} tâches simultanées...")
 try:
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        future_to_url = {executor.submit(download_file, link, download_dir): link for link in sorted(links)}
-        for future in as_completed(future_to_url):
-            if shutdown_event.is_set():
-                executor._threads.clear()
-                executor.shutdown(wait=False)
-                break
-            try:
-                success, url = future.result()
-                if not success:
-                    print(f"Erreur lors du téléchargement de {urllib.parse.unquote(os.path.basename(url))}. Consultez les logs.")
-            except Exception as e:
-                print(f"Erreur dans le thread pour {urllib.parse.unquote(os.path.basename(future_to_url[future]))} : {e}")
+    if EXTRACT:
+        print("Mode --extract : Téléchargement et décompression...")
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_to_url = {executor.submit(process_extract, link, download_dir, i % MAX_WORKERS): link for i, link in enumerate(sorted(links))}
+            for future in as_completed(future_to_url):
+                if shutdown_event.is_set():
+                    executor._threads.clear()
+                    executor.shutdown(wait=False)
+                    break
+                try:
+                    success, url = future.result()
+                    if not success:
+                        print(f"Erreur lors du traitement de {urllib.parse.unquote(os.path.basename(url))}")
+                except Exception as e:
+                    print(f"Erreur dans le thread pour {urllib.parse.unquote(os.path.basename(future_to_url[future]))} : {e}")
+    elif CHD:
+        print("Mode --chd : Téléchargement, décompression et conversion en CHD...")
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_to_url = {executor.submit(process_chd, link, download_dir, i % MAX_WORKERS): link for i, link in enumerate(sorted(links))}
+            for future in as_completed(future_to_url):
+                if shutdown_event.is_set():
+                    executor._threads.clear()
+                    executor.shutdown(wait=False)
+                    break
+                try:
+                    success, url = future.result()
+                    if not success:
+                        print(f"Erreur lors du traitement de {urllib.parse.unquote(os.path.basename(url))}")
+                except Exception as e:
+                    print(f"Erreur dans le thread pour {urllib.parse.unquote(os.path.basename(future_to_url[future]))} : {e}")
+    else:
+        print("Mode standard : Téléchargement des fichiers...")
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_to_url = {executor.submit(download_file, link, download_dir, i % MAX_WORKERS): link for i, link in enumerate(sorted(links))}
+            for future in as_completed(future_to_url):
+                if shutdown_event.is_set():
+                    executor._threads.clear()
+                    executor.shutdown(wait=False)
+                    break
+                try:
+                    success, url = future.result()
+                    if not success:
+                        print(f"Erreur lors du téléchargement de {urllib.parse.unquote(os.path.basename(url))}")
+                except Exception as e:
+                    print(f"Erreur dans le thread pour {urllib.parse.unquote(os.path.basename(future_to_url[future]))} : {e}")
 except KeyboardInterrupt:
     shutdown_event.set()
-    print("\nTéléchargement interrompu par l'utilisateur.")
-    executor._threads.clear()
-    executor.shutdown(wait=False)
+    print("\nTraitement interrompu par l'utilisateur.")
     sys.exit(1)
 except Exception as e:
-    print(f"Erreur inattendue dans les téléchargements : {e}")
+    print(f"Erreur inattendue : {e}")
+    sys.exit(1)
 
 if not shutdown_event.is_set():
-    print("Tous les téléchargements terminés.")
+    print("Tous les traitements terminés.")

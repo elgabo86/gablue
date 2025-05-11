@@ -104,13 +104,14 @@ libuuid-devel \
 gdbm-libs \
 libnsl2
 
-#Python
+#Python et autre
 dnf5 -y install \
 python3-pygame \
 python3-uinput \
 python3-tqdm \
 python3-beautifulsoup4 \
-python3-pip
+python3-pip \
+mame-tools
 
 #Remove some packages
 dnf5 -y remove \
