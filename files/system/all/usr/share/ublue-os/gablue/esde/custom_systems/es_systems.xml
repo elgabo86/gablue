@@ -18,6 +18,8 @@
         <extension>.nca .NCA .nro .NRO .nso .NSO .nsp .NSP .xci .XCI</extension>
         <command label="Citron (archgab)">/usr/bin/distrobox-enter  -n archgab  --  citron -f -g %ROM%</command>
         <command label="Citron (archgab) (Mangohud)">/usr/bin/distrobox-enter  -n archgab  --  mangohud citron -f -g %ROM%</command>
+        <command label="Citron (appimage)">%EMULATOR_CITRON% -f -g %ROM%</</command>
+        <command label="Eden (appimage)">%EMULATOR_EDEN% -f -g %ROM%</</command>
         <command label="Suyu (appimage)">%EMULATOR_SUYU% -f -g %ROM%</command>
         <command label="Suyu (archgab)">/usr/bin/distrobox-enter  -n archgab  --  suyu -f -g %ROM%</command>
         <command label="Suyu (archgab) (Mangohud)">/usr/bin/distrobox-enter  -n archgab  --  mangohud suyu -f -g %ROM%</command>

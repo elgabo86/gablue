@@ -9,6 +9,24 @@
             <entry>~/AppImages/suyu.appimage</entry>
         </rule>
     </emulator>
+    <emulator name="CITRON">
+        <!-- Nintendo Switch emulator Yuzu -->
+        <rule type="systempath">
+            <entry>citron</entry>
+        </rule>
+        <rule type="staticpath">
+            <entry>~/AppImages/citron.appimage</entry>
+        </rule>
+    </emulator>
+    <emulator name="EDEN">
+        <!-- Nintendo Switch emulator Yuzu -->
+        <rule type="systempath">
+            <entry>eden</entry>
+        </rule>
+        <rule type="staticpath">
+            <entry>~/AppImages/eden.appimage</entry>
+        </rule>
+    </emulator>
     <emulator name="RYUJINX">
         <!-- Nintendo Switch emulator Yuzu -->
         <rule type="systempath">
