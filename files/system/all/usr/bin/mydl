@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: 2.22
+# Version: 2.24
 import argparse
 import os
 import sys
@@ -34,7 +34,7 @@ parser.add_argument("url", help="URL de la page Myrient")
 parser.add_argument("--fr-only", action="store_true", help="Ne conserve que les versions (France) et (Fr)")
 parser.add_argument("--eu-only", action="store_true", help="Ne liste que les jeux avec une version (France), (Fr), (Europe) ou (USA) avec Fr")
 parser.add_argument("--all", action="store_true", help="Télécharge tous les fichiers sans filtrer par région")
-parser.add_argument("--extract", action="store_true", help="Télécharge le .zip dans /tmp, décompresse dans le dossier final")
+parser.add_argument("--extract", action="store_true", help="Télécharge le .zip dans /tmp, décompresse dans le dossier final, marque le .zip dans progression.txt après extraction")
 parser.add_argument("--chd", action="store_true", help="Télécharge le .zip dans /tmp, décompresse dans /tmp, convertit en .chd dans le dossier final")
 parser.add_argument("--max", type=int, default=3, help="Nombre maximum de téléchargements ou traitements simultanés (défaut : 3 pour standard, 1 pour --extract/--chd)")
 parser.add_argument("--name", type=str, help="Ne télécharge que les jeux commençant par la chaîne spécifiée (ex: 'ab' pour les jeux commençant par 'ab', '0' pour les chiffres)")
@@ -196,22 +196,21 @@ with open(RAW_OUTPUT, 'r') as f:
         link = link.strip()
         filename = urllib.parse.unquote(os.path.basename(link))
 
-        # Pour --chd, vérifier uniquement si le .chd est dans progression.txt
-        if CHD:
-            game_name = get_game_name(filename)
-            disc_num = get_disc_num(filename)
-            chd_filename = f"{game_name}.chd" if disc_num == "0" else f"{game_name}_disc_{disc_num}.chd"
-            if chd_filename in downloaded_files:
-                print(f"Un .chd pour {filename} ({chd_filename}) déjà marqué dans progression.txt, ignoré.")
+        game_name = get_game_name(filename)
+        disc_num = get_disc_num(filename)
+
+        # Vérifier si une version de ce jeu est déjà dans progression.txt
+        if EXTRACT or CHD:
+            if any(get_game_name(f) == game_name and get_disc_num(f) == disc_num for f in downloaded_files):
+                print(f"Une version de {game_name} (disque {disc_num}) est déjà dans progression.txt, ignoré : {filename}")
                 continue
         else:
-            # Pour --extract ou mode standard, vérifier le .zip
+            # Pour le mode standard, vérifier le .zip exact
             if filename in downloaded_files:
-                print(f"{filename} déjà marqué comme traité dans progression.txt, ignoré.")
+                print(f"{filename} déjà marqué comme téléchargé dans progression.txt, ignoré.")
                 continue
-
-            # Vérifie si le fichier .zip existe déjà et correspond à la taille du serveur
-            if filename in existing_files and not EXTRACT:
+            # Vérifier si le .zip existe déjà dans download_dir
+            if filename in existing_files:
                 server_size = get_server_file_size(link)
                 local_size = os.path.getsize(os.path.join(download_dir, filename))
                 if server_size and local_size == server_size:
@@ -223,14 +222,7 @@ with open(RAW_OUTPUT, 'r') as f:
             print(f"{filename} ignoré : contient Demo ou Beta")
             continue
 
-        game_name = get_game_name(filename)
-        disc_num = get_disc_num(filename)
         key = f"{game_name}_disc_{disc_num}"
-
-        # Vérifie si une version de ce jeu est déjà téléchargée
-        if any(f in downloaded_files for f in existing_files if get_game_name(f) == game_name and get_disc_num(f) == disc_num):
-            print(f"Une version de {game_name} (disque {disc_num}) est déjà téléchargée, ignoré : {filename}")
-            continue
 
         if ALL:
             priority = 0
@@ -470,6 +462,10 @@ def process_chd(url, download_dir, position=0):
             if not extract_zip(tmp_zip, tmp_extract_dir):
                 return False, url
 
+            # Supprime le .zip immédiatement après extraction pour libérer l'espace
+            if os.path.exists(tmp_zip):
+                os.remove(tmp_zip)
+
             # Recherche des fichiers .cue ou .iso
             chd_created = False
             for root, _, files in os.walk(tmp_extract_dir):
@@ -494,6 +490,7 @@ def process_chd(url, download_dir, position=0):
             print(f"Traitement de {filename} terminé")
             return True, url
         finally:
+            # Nettoyage final (le .zip est déjà supprimé, mais on vérifie au cas où)
             if os.path.exists(tmp_zip):
                 os.remove(tmp_zip)
 
