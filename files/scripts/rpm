@@ -110,8 +110,7 @@ python3-pygame \
 python3-uinput \
 python3-tqdm \
 python3-beautifulsoup4 \
-python3-pip \
-mame-tools
+python3-pip
 
 #Remove some packages
 dnf5 -y remove \

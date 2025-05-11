@@ -17,6 +17,7 @@ chmod +x /usr/bin/a13-share
 chmod +x /usr/bin/lol
 chmod +x /usr/bin/mydl
 chmod +x /usr/bin/ytdl
+chmod +x /usr/bin/chdman
 chmod +x /usr/libexec/gablue-update
 chmod +x /usr/libexec/gablue-config
 chmod +x /usr/libexec/archgab-update
