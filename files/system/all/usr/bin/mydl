@@ -469,21 +469,22 @@ def get_rom_priority(filename, is_japan_specific=False, mode=None):
         for part in parenthetical_parts
     )
     is_japanese = '(japan)' in filename_lower or '(j)' in filename_lower or '(ja)' in filename_lower
+    has_europe = any('europe' in part.lower() for part in parenthetical_parts)
 
     if mode == "ra":
         if is_japan_specific and is_japanese:
-            return 0  # Priorité pour ROMs japonaises spécifiques
+            return 0
         if '(usa)' in filename_lower and has_french:
             return 1
         if '(canada)' in filename_lower and has_french:
             return 2
-        if '(france)' in filename_lower or '(fr)' in filename_lower:
+        if '(france)' in filename_lower or has_french:
             return 3
-        if '(europe)' in filename_lower and has_french:
+        if has_europe and has_french:
             return 4
         if '(usa)' in filename_lower:
             return 5
-        if '(europe)' in filename_lower:
+        if has_europe:
             return 6
         if is_japanese:
             return 7
@@ -493,32 +494,31 @@ def get_rom_priority(filename, is_japan_specific=False, mode=None):
             return 1
         if '(canada)' in filename_lower and has_french:
             return 2
-        if '(france)' in filename_lower or '(fr)' in filename_lower:
+        if '(france)' in filename_lower or has_french:
             return 3
-        if '(europe)' in filename_lower and has_french:
+        if has_europe and has_french:
             return 4
         if '(usa)' in filename_lower:
             return 5
-        if '(europe)' in filename_lower:
+        if has_europe:
             return 6
         if is_japanese:
             return 7
         return 8
     else:
-        # Priorités par défaut (pour --all ou autres)
         if is_japan_specific and is_japanese:
             return 0
         if '(usa)' in filename_lower and has_french:
             return 1
         if '(canada)' in filename_lower and has_french:
             return 2
-        if '(france)' in filename_lower or '(fr)' in filename_lower:
+        if '(france)' in filename_lower or has_french:
             return 3
-        if '(europe)' in filename_lower and has_french:
+        if has_europe and has_french:
             return 4
         if '(usa)' in filename_lower:
             return 5
-        if '(europe)' in filename_lower:
+        if has_europe:
             return 6
         if is_japanese:
             return 7
@@ -799,22 +799,29 @@ else:
             else:
                 priority = None
                 region = None
-                if contains_term(filename, "USA") and (contains_term(filename, "Fr,") or contains_term(filename, ",Fr,") or contains_term(filename, ",Fr)")):
+                # Extraire toutes les parties entre parenthèses pour une détection plus précise
+                parenthetical_parts = [part for part in re.findall(r'\((.*?)\)', filename, re.IGNORECASE)]
+                has_french = any(
+                    'fr' in part.lower().split(',') or part.strip().lower() == 'fr'
+                    for part in parenthetical_parts
+                )
+                # Vérifier les régions, y compris les tags combinés comme (Europe, Australia)
+                if contains_term(filename, "USA") and has_french:
                     priority = 1
                     region = "USA_Fr"
-                elif contains_term(filename, "Canada") and (contains_term(filename, "Fr,") or contains_term(filename, ",Fr,") or contains_term(filename, ",Fr)")):
+                elif contains_term(filename, "Canada") and has_french:
                     priority = 2
                     region = "Canada_Fr"
-                elif contains_term(filename, "France") or contains_term(filename, "Fr,") or contains_term(filename, ",Fr,") or contains_term(filename, ",Fr)"):
+                elif contains_term(filename, "France") or has_french:
                     priority = 3
                     region = "France"
-                elif contains_term(filename, "Europe") and (contains_term(filename, "Fr,") or contains_term(filename, ",Fr,") or contains_term(filename, ",Fr)")):
+                elif (contains_term(filename, "Europe") or any("europe" in part.lower() for part in parenthetical_parts)) and has_french:
                     priority = 4
                     region = "Europe_Fr"
                 elif contains_term(filename, "USA"):
                     priority = 5
                     region = "USA"
-                elif contains_term(filename, "Europe"):
+                elif contains_term(filename, "Europe") or any("europe" in part.lower() for part in parenthetical_parts):
                     priority = 6
                     region = "Europe"
                 else:
