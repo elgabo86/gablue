@@ -774,21 +774,18 @@ else:
             disc_num = get_disc_num(filename)
 
             # Vérifier si une version de ce jeu est déjà dans progression.txt
-            if EXTRACT or CHD:
-                if any(get_game_name(f) == game_name and get_disc_num(f) == disc_num for f in downloaded_files):
-                    print(f"Une version de {game_name} (disque {disc_num}) est déjà dans progression.txt, ignoré : {filename}")
+            if any(get_game_name(f) == game_name and get_disc_num(f) == disc_num for f in downloaded_files):
+                print(f"Une version de {game_name} (disque {disc_num}) est déjà dans progression.txt, ignoré : {filename}")
+                continue
+
+            # Vérifier si le fichier existe déjà dans le dossier de destination
+            if filename in existing_files:
+                server_size = get_server_file_size(link)
+                local_size = os.path.getsize(os.path.join(download_dir, filename))
+                if server_size and local_size == server_size:
+                    print(f"{filename} déjà présent avec la bonne taille, marqué comme téléchargé.")
+                    append_to_progress_file(PROGRESS_FILE_PATH, filename)
                     continue
-            else:
-                if filename in downloaded_files:
-                    print(f"{filename} déjà marqué comme téléchargé dans progression.txt, ignoré.")
-                    continue
-                if filename in existing_files:
-                    server_size = get_server_file_size(link)
-                    local_size = os.path.getsize(os.path.join(download_dir, filename))
-                    if server_size and local_size == server_size:
-                        print(f"{filename} déjà présent avec la bonne taille, marqué comme téléchargé.")
-                        append_to_progress_file(PROGRESS_FILE_PATH, filename)
-                        continue
 
             if contains_term(filename, "Demo") or contains_term(filename, "Beta"):
                 print(f"{filename} ignoré : contient Demo ou Beta")
@@ -834,16 +831,13 @@ else:
         for key, (link, priority, filename) in game_versions.items():
             game_name = key.split('_disc_')[0]
             regions = game_regions[game_name]
-            # Vérifier si une version prioritaire existe (USA_Fr, Canada_Fr, France, Europe_Fr, USA)
-            has_priority_version = any(r in {"USA_Fr", "Canada_Fr", "France", "Europe_Fr", "USA"} for r in regions)
-            if has_priority_version:
-                # Inclure uniquement si la région est USA_Fr, Canada_Fr, France, Europe_Fr ou USA
-                if any(r in {"USA_Fr", "Canada_Fr", "France", "Europe_Fr", "USA"} for r in regions):
-                    selected_links.append(link)
-            else:
-                # Inclure Europe seulement si aucune autre option n'est disponible
-                if "Europe" in regions:
-                    selected_links.append(link)
+            # Vérifier si une version du jeu est déjà téléchargée
+            if any(get_game_name(f) == game_name and get_disc_num(f) == key.split('_disc_')[1] for f in downloaded_files):
+                print(f"Jeu {game_name} (disque {key.split('_disc_')[1]}) déjà téléchargé, ignoré.")
+                continue
+                # Inclure uniquement les versions des régions prioritaires
+            if any(r in {"USA_Fr", "Canada_Fr", "France", "Europe_Fr", "USA", "Europe"} for r in regions):
+                selected_links.append(link)
     elif FR_ONLY:
         for key, (link, priority, filename) in game_versions.items():
             game_name = key.split('_disc_')[0]
