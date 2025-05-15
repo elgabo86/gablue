@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: 2.33
+# Version: 2.39
 import argparse
 import os
 import sys
@@ -141,43 +141,60 @@ os.makedirs(work_dir, exist_ok=True)
 HASH_DIR = os.path.expanduser("~/.local/share/mydl/hash")
 HASH_ZIP = "/usr/share/ublue-os/gablue/ra/hash.zip"
 
-# Chemins temporaires et fichiers de progression/check
+# Chemins temporaires et fichiers de check
 RAW_OUTPUT = "/tmp/raw_download_links.txt"
 FILTERED_OUTPUT = os.path.join(download_dir, "filtered_download_links.txt")
-PROGRESS_FILE_PATH = os.path.join(download_dir, "progression.txt")
 CHECK_FILE_PATH = os.path.join(download_dir, "check.txt")
 
-# Fonction pour lire ou créer progression.txt
-def initialize_progress_file(progress_file_path, download_dir):
-    if os.path.exists(progress_file_path):
-        try:
-            with open(progress_file_path, 'r', encoding='utf-8') as f:
-                return set(line.strip() for line in f)
-        except Exception as e:
-            print(f"Erreur lors de la lecture de {progress_file_path}: {e}")
-            return set()
-    else:
-        downloaded_files = set()
-        try:
-            for f in os.listdir(download_dir):
-                if os.path.isfile(os.path.join(download_dir, f)):
-                    downloaded_files.add(f)
-            with open(progress_file_path, 'w', encoding='utf-8') as f:
-                for filename in sorted(downloaded_files):
-                    f.write(f"{filename}\n")
-            print(f"{progress_file_path} créé avec {len(downloaded_files)} fichiers existants.")
-            return downloaded_files
-        except Exception as e:
-            print(f"Erreur lors de la création de {progress_file_path}: {e}")
-            return set()
+# Fonction pour vérifier les fichiers dans le dossier
+def initialize_progress_file(download_dir, all_selected_links=None):
+    notinlist_dir = os.path.join(download_dir, "notinlist")
+    os.makedirs(notinlist_dir, exist_ok=True)
 
-# Fonction pour ajouter un fichier à progression.txt
-def append_to_progress_file(progress_file_path, filename):
+    # Créer la liste des fichiers prioritaires à partir de all_selected_links
+    selected_filenames = {urllib.parse.unquote(os.path.basename(link)) for link in all_selected_links} if all_selected_links else set()
+    # Inclure les versions .chd en mode --chd
+    expected_filenames = selected_filenames.copy()
+    if CHD:
+        chd_filenames = {
+            os.path.splitext(fn)[0] + ".chd" for fn in selected_filenames
+            if fn.lower().endswith(('.zip', '.7z', '.rar'))
+        }
+        expected_filenames.update(chd_filenames)
+
+    # Déterminer le nom du script en cours d'exécution
+    script_name = os.path.basename(sys.argv[0])
+    # Liste des fichiers à exclure
+    excluded_files = {'check.txt', script_name, 'filtered_download_links.txt'}
+
+    # Initialiser la liste des fichiers existants prioritaires
+    existing_files = set()
+
+    # Vérifier tous les fichiers dans le dossier de destination
     try:
-        with open(progress_file_path, 'a', encoding='utf-8') as f:
-            f.write(f"{filename}\n")
+        for f in os.listdir(download_dir):
+            src_path = os.path.join(download_dir, f)
+            # Exclure les dossiers et les fichiers spécifiques
+            if not os.path.isfile(src_path) or f in excluded_files:
+                if not os.path.isfile(src_path):
+                    print(f"{f} ignoré : c'est un dossier")
+                else:
+                    print(f"{f} ignoré : fichier exclu ({f})")
+                continue
+            if f not in expected_filenames:
+                dest_path = os.path.join(notinlist_dir, f)
+                try:
+                    shutil.move(src_path, dest_path)
+                    print(f"Fichier non listé dans check.txt déplacé : {f} -> {notinlist_dir}")
+                except Exception as e:
+                    print(f"Erreur lors du déplacement de {f} : {e}")
+            else:
+                existing_files.add(f)
+        print(f"{len(existing_files)} fichiers prioritaires trouvés dans {download_dir}.")
+        return existing_files
     except Exception as e:
-        print(f"Erreur lors de l'écriture dans {progress_file_path}: {e}")
+        print(f"Erreur lors de la gestion des fichiers dans {download_dir}: {e}")
+        return existing_files
 
 # Fonction pour écrire dans check.txt
 def write_check_file(check_file_path, selected_links, missing_games=None):
@@ -206,7 +223,7 @@ def write_check_file(check_file_path, selected_links, missing_games=None):
                         f.write("  Aucun hash disponible.\n")
     except Exception as e:
         print(f"Erreur lors de l'écriture dans {check_file_path}: {e}")
-        
+
 # Fonction pour vérifier et extraire hash.zip si nécessaire
 def ensure_hash_directory():
     if os.path.exists(HASH_DIR):
@@ -218,19 +235,13 @@ def ensure_hash_directory():
         return False
     
     try:
-        # Créer le dossier parent ~/.local/mydl si nécessaire
         os.makedirs(os.path.dirname(HASH_DIR), exist_ok=True)
-        
-        # Extraire hash.zip dans ~/.local/mydl
         with zipfile.ZipFile(HASH_ZIP, 'r') as zip_ref:
             zip_ref.extractall(os.path.dirname(HASH_DIR))
         print(f"Fichier {HASH_ZIP} extrait dans {os.path.dirname(HASH_DIR)}")
-        
-        # Vérifier que le dossier hash a été créé
         if not os.path.exists(HASH_DIR):
             print(f"Erreur : Le dossier {HASH_DIR} n'a pas été créé après l'extraction.")
             return False
-        
         return True
     except Exception as e:
         print(f"Erreur lors de l'extraction de {HASH_ZIP} : {e}")
@@ -242,7 +253,6 @@ def get_ra_credentials():
     username = None
     api_key = None
 
-    # Vérifier si le fichier de configuration existe
     if os.path.exists(CONFIG_FILE):
         try:
             config.read(CONFIG_FILE)
@@ -256,13 +266,11 @@ def get_ra_credentials():
         except Exception as e:
             print(f"Erreur lors de la lecture de {CONFIG_FILE}: {e}")
 
-    # Si les identifiants sont manquants ou invalides, demander à l'utilisateur
     if not username or not api_key:
         print("\nIdentifiants RetroAchievements requis.")
         username = input("Entrez votre nom d'utilisateur RetroAchievements : ").strip()
         api_key = input("Entrez votre clé API RetroAchievements : ").strip()
 
-        # Sauvegarder les identifiants
         try:
             os.makedirs(CONFIG_DIR, exist_ok=True)
             config['RetroAchievements'] = {
@@ -331,15 +339,13 @@ def get_ra_games():
     while retry:
         retry = False
         try:
-            # Obtenir les identifiants
             username, api_key = get_ra_credentials()
-
             console = select_ra_console(username, api_key)
             if not console:
                 print("Aucune console sélectionnée.")
                 return None
 
-            params = {"i": console["ID"], "f": 3, "h": 1}  # f=3 pour main set, h=1 pour hashes
+            params = {"i": console["ID"], "f": 3, "h": 1}
             games = call_ra_api("API_GetGameList.php", params, username, api_key)
             if not games:
                 print("Impossible de récupérer les jeux RetroAchievements.")
@@ -363,7 +369,6 @@ def get_ra_games():
                     "compatible_roms": []
                 })
 
-            # Vérifier et extraire le dossier hash si nécessaire
             if not ensure_hash_directory():
                 print(f"Aucun fichier de hachage disponible. Les noms de fichiers ROM ne seront pas associés.")
                 for game in game_list:
@@ -379,7 +384,7 @@ def get_ra_games():
             for root, _, files in os.walk(HASH_DIR):
                 for file in files:
                     if file.lower().endswith('.txt'):
-                     hash_files.append(os.path.join(root, file))
+                        hash_files.append(os.path.join(root, file))
 
             if not hash_files:
                 print(f"Aucun fichier .txt trouvé dans {HASH_DIR}. Les noms de fichiers ROM ne seront pas associés.")
@@ -448,9 +453,8 @@ def get_ra_games():
 
 # Fonction pour nettoyer un nom de fichier
 def clean_filename(filename, region=None):
-    name = re.sub(r'\.[a-zA-Z0-9]+$', '', filename)  # Supprime l'extension
+    name = re.sub(r'\.[a-zA-Z0-9]+$', '', filename)
     if region:
-        # Supprime uniquement le tag de région spécifié
         name = re.sub(r'\s*\(' + re.escape(region) + r'\)\s*', '', name, flags=re.IGNORECASE)
     name = re.sub(r'\s+', ' ', name).strip().lower()
     return name
@@ -534,7 +538,6 @@ def filter_single_version(game_list):
             filtered_list.append(filtered_game)
             continue
 
-        # Déterminer si le jeu est spécifique à une région japonaise
         is_japan_specific = "Japan" in game["title"] or game["title"].startswith("Pocket Monsters")
 
         hash_to_roms = {}
@@ -683,7 +686,6 @@ def get_game_name(filename):
     name = re.sub(r'\.[a-zA-Z0-9]+$', '', name)
     name = name.lower()
     name = re.sub(r'[^a-z0-9]+', '-', name)
-    name = re.sub(r'-+', '-', name)
     return name.strip('-')
 
 def get_disc_num(filename):
@@ -692,25 +694,21 @@ def get_disc_num(filename):
         return match.group(1)
     return "0"
 
-# Stocke les versions par jeu et disque, en vérifiant les fichiers existants
+# Stocke les versions par jeu et disque
 game_versions = {}
 game_regions = {}
-existing_files = {f for f in os.listdir(download_dir) if os.path.isfile(os.path.join(download_dir, f))}
-downloaded_files = initialize_progress_file(PROGRESS_FILE_PATH, download_dir)
+all_selected_links = []
 selected_links = []
 missing_games = []
 
 if RA_ONLY:
-    # Récupérer les jeux RetroAchievements
     ra_games = get_ra_games()
     if not ra_games:
         print("Aucun jeu RetroAchievements trouvé. Arrêt du script.")
         sys.exit(1)
 
-    # Filtrer une seule version par jeu
     ra_games = filter_single_version(ra_games)
 
-    # Créer un dictionnaire de noms de fichiers RA nettoyés, indexé par (gameId, cleaned_name)
     ra_filenames = {}
     for game in ra_games:
         is_japan_specific = "Japan" in game["title"] or game["title"].startswith("Pocket Monsters")
@@ -723,12 +721,10 @@ if RA_ONLY:
                     ra_filenames[key] = []
                 ra_filenames[key].append((game, rom["filename"]))
 
-    # Filtrer les liens Myrient
     with open(RAW_OUTPUT, 'r') as f:
         for link in f:
             link = link.strip()
             filename = urllib.parse.unquote(os.path.basename(link))
-            # Tester la correspondance avec et sans tag de région
             cleaned_filename = clean_filename(filename)
             cleaned_filename_japan = clean_filename(filename, region="Japan")
             cleaned_filename_usa = clean_filename(filename, region="USA")
@@ -752,7 +748,6 @@ if RA_ONLY:
             if not matched:
                 print(f"Aucune correspondance RA pour : {filename} (noms nettoyés : {cleaned_filename}, {cleaned_filename_japan}, {cleaned_filename_usa}, {cleaned_filename_europe})")
 
-    # Identifier les jeux manquants
     found_titles = set()
     for key, (link, priority, filename) in game_versions.items():
         game_id = key.split('_')[-1]
@@ -762,8 +757,31 @@ if RA_ONLY:
                 break
     missing_games = [game for game in ra_games if game["title"] not in found_titles]
 
-    # Sélectionner les liens
-    selected_links = [version[0] for version in game_versions.values()]
+    # Créer all_selected_links pour check.txt et notinlist
+    all_selected_links = [version[0] for version in game_versions.values()]
+
+    # Créer selected_links pour le téléchargement, filtré par --name
+    selected_links = []
+    for link in all_selected_links:
+        filename = urllib.parse.unquote(os.path.basename(link))
+        if NAME_FILTER:
+            # Normaliser le nom pour le filtrage
+            cleaned_name = re.sub(r'\s*\([^\)]*\)', '', filename).lower()
+            cleaned_name = re.sub(r'\.[a-zA-Z0-9]+$', '', cleaned_name)
+            if NAME_FILTER.lower() == '0':
+                if re.match(r'^\d', cleaned_name, re.IGNORECASE):
+                    selected_links.append(link)
+            else:
+                if cleaned_name.startswith(NAME_FILTER.lower()):
+                    selected_links.append(link)
+                    print(f"Lien sélectionné pour téléchargement : {filename}")
+        else:
+            selected_links.append(link)
+            print(f"Lien sélectionné pour téléchargement : {filename}")
+
+    if not selected_links:
+        print(f"Aucun jeu trouvé correspondant au filtre {'--name ' + NAME_FILTER if NAME_FILTER else 'RA'} après filtrage.")
+        sys.exit(1)
 else:
     with open(RAW_OUTPUT, 'r') as f:
         for link in f:
@@ -772,20 +790,6 @@ else:
 
             game_name = get_game_name(filename)
             disc_num = get_disc_num(filename)
-
-            # Vérifier si une version de ce jeu est déjà dans progression.txt
-            if any(get_game_name(f) == game_name and get_disc_num(f) == disc_num for f in downloaded_files):
-                print(f"Une version de {game_name} (disque {disc_num}) est déjà dans progression.txt, ignoré : {filename}")
-                continue
-
-            # Vérifier si le fichier existe déjà dans le dossier de destination
-            if filename in existing_files:
-                server_size = get_server_file_size(link)
-                local_size = os.path.getsize(os.path.join(download_dir, filename))
-                if server_size and local_size == server_size:
-                    print(f"{filename} déjà présent avec la bonne taille, marqué comme téléchargé.")
-                    append_to_progress_file(PROGRESS_FILE_PATH, filename)
-                    continue
 
             if contains_term(filename, "Demo") or contains_term(filename, "Beta"):
                 print(f"{filename} ignoré : contient Demo ou Beta")
@@ -799,13 +803,12 @@ else:
             else:
                 priority = None
                 region = None
-                # Extraire toutes les parties entre parenthèses pour une détection plus précise
                 parenthetical_parts = [part for part in re.findall(r'\((.*?)\)', filename, re.IGNORECASE)]
                 has_french = any(
                     'fr' in part.lower().split(',') or part.strip().lower() == 'fr'
                     for part in parenthetical_parts
                 )
-                # Vérifier les régions, y compris les tags combinés comme (Europe, Australia)
+                has_europe = any("europe" in part.lower() for part in parenthetical_parts)
                 if contains_term(filename, "USA") and has_french:
                     priority = 1
                     region = "USA_Fr"
@@ -815,13 +818,13 @@ else:
                 elif contains_term(filename, "France") or has_french:
                     priority = 3
                     region = "France"
-                elif (contains_term(filename, "Europe") or any("europe" in part.lower() for part in parenthetical_parts)) and has_french:
+                elif has_europe and has_french:
                     priority = 4
                     region = "Europe_Fr"
                 elif contains_term(filename, "USA"):
                     priority = 5
                     region = "USA"
-                elif contains_term(filename, "Europe") or any("europe" in part.lower() for part in parenthetical_parts):
+                elif has_europe:
                     priority = 6
                     region = "Europe"
                 else:
@@ -833,55 +836,60 @@ else:
                 if key not in game_versions or priority < game_versions[key][1]:
                     game_versions[key] = (link, get_rom_priority(filename, mode="eu_only"), filename)
 
-    # Filtre les jeux en mode --eu-only ou --fr-only
+    # Créer all_selected_links pour check.txt et notinlist
     if EU_ONLY:
         for key, (link, priority, filename) in game_versions.items():
             game_name = key.split('_disc_')[0]
             regions = game_regions[game_name]
-            # Vérifier si une version du jeu est déjà téléchargée
-            if any(get_game_name(f) == game_name and get_disc_num(f) == key.split('_disc_')[1] for f in downloaded_files):
-                print(f"Jeu {game_name} (disque {key.split('_disc_')[1]}) déjà téléchargé, ignoré.")
-                continue
-                # Inclure uniquement les versions des régions prioritaires
             if any(r in {"USA_Fr", "Canada_Fr", "France", "Europe_Fr", "USA", "Europe"} for r in regions):
-                selected_links.append(link)
+                all_selected_links.append(link)
     elif FR_ONLY:
         for key, (link, priority, filename) in game_versions.items():
             game_name = key.split('_disc_')[0]
             if any(r in {"France", "Fr", "USA_Fr", "Europe_Fr"} for r in game_regions[game_name]):
-                selected_links.append(link)
+                all_selected_links.append(link)
     else:  # ALL
-        selected_links = [version[0] for version in game_versions.values()]
+        all_selected_links = [version[0] for version in game_versions.values()]
 
-# Filtre supplémentaire basé sur --name
-if NAME_FILTER:
-    filtered_links = []
-    for link in selected_links:
+    # Créer selected_links pour le téléchargement, filtré par --name
+    selected_links = []
+    for link in all_selected_links:
         filename = urllib.parse.unquote(os.path.basename(link))
-        if NAME_FILTER.lower() == '0':
-            if re.match(r'^\d', filename, re.IGNORECASE):
-                filtered_links.append(link)
+        if NAME_FILTER:
+            # Normaliser le nom pour le filtrage
+            cleaned_name = re.sub(r'\s*\([^\)]*\)', '', filename).lower()
+            cleaned_name = re.sub(r'\.[a-zA-Z0-9]+$', '', cleaned_name)
+            if NAME_FILTER.lower() == '0':
+                if re.match(r'^\d', cleaned_name, re.IGNORECASE):
+                    selected_links.append(link)
+            else:
+                if cleaned_name.startswith(NAME_FILTER.lower()):
+                    selectedBios.append(link)
+                    print(f"Lien sélectionné pour téléchargement : {filename}")
         else:
-            if filename.lower().startswith(NAME_FILTER.lower()):
-                filtered_links.append(link)
-    selected_links = filtered_links
+            selected_links.append(link)
+            print(f"Lien sélectionné pour téléchargement : {filename}")
+
     if not selected_links:
-        print(f"Aucun jeu trouvé commençant par '{NAME_FILTER}' après filtrage.")
+        print(f"Aucun jeu trouvé correspondant au filtre {'--name ' + NAME_FILTER if NAME_FILTER else 'de région'} après filtrage.")
         sys.exit(1)
 
-# Écrit dans check.txt
-write_check_file(CHECK_FILE_PATH, selected_links, missing_games if RA_ONLY else None)
+# Initialiser existing_files après la création de all_selected_links
+existing_files = initialize_progress_file(download_dir, all_selected_links)
 
-# Écrit les liens sélectionnés
+# Écrit dans check.txt avec all_selected_links
+write_check_file(CHECK_FILE_PATH, all_selected_links, missing_games if RA_ONLY else None)
+
+# Écrit les liens sélectionnés pour le téléchargement
 if selected_links:
     with open(FILTERED_OUTPUT, 'w') as f:
         for link in sorted(selected_links):
             f.write(f"{link}\n")
 else:
-    print("Aucun lien filtré trouvé.")
+    print("Aucun lien filtré trouvé pour le téléchargement.")
     sys.exit(1)
 
-# Lit les liens
+# Lit les liens pour le téléchargement
 with open(FILTERED_OUTPUT, 'r') as f:
     links = [line.strip() for line in f if line.strip()]
 
@@ -964,11 +972,11 @@ def extract_zip(zip_path, dest_dir):
         return False
 
 # Fonction pour convertir en .chd avec chdman
-def convert_to_chd(cue_or_iso_path, work_dir, downloaded_files):
+def convert_to_chd(cue_or_iso_path, work_dir, existing_files):
     output_chd = os.path.join(work_dir, os.path.splitext(os.path.basename(cue_or_iso_path))[0] + ".chd")
     chd_filename = os.path.basename(output_chd)
 
-    if os.path.exists(output_chd) and chd_filename not in downloaded_files:
+    if os.path.exists(output_chd) and chd_filename not in existing_files:
         print(f"Suppression du .chd partiel : {chd_filename}")
         os.remove(output_chd)
 
@@ -1011,11 +1019,10 @@ def move_to_final(work_dir, download_dir, filenames):
     return True
 
 # Fonction principale pour traiter un fichier avec --extract
-def process_extract(url, download_dir, work_dir, position=0):
+def process_extract(url, download_dir, work_dir, existing_files, position=0):
     filename = urllib.parse.unquote(os.path.basename(url))
-    downloaded_files = initialize_progress_file(PROGRESS_FILE_PATH, download_dir)
-    if filename in downloaded_files:
-        print(f"{filename} déjà marqué comme décompressé dans progression.txt, ignoré.")
+    if filename in existing_files:
+        print(f"{filename} déjà présent dans le dossier, ignoré.")
         return True, url
 
     tmp_zip = os.path.join("/tmp", f"myrientdl_{os.path.basename(url)}")
@@ -1040,7 +1047,6 @@ def process_extract(url, download_dir, work_dir, position=0):
             os.remove(tmp_zip)
             return False, url
 
-        append_to_progress_file(PROGRESS_FILE_PATH, filename)
         print(f"Traitement de {filename} terminé")
         return True, url
     finally:
@@ -1048,9 +1054,12 @@ def process_extract(url, download_dir, work_dir, position=0):
             os.remove(tmp_zip)
 
 # Fonction principale pour traiter un fichier avec --chd
-def process_chd(url, download_dir, work_dir, position=0):
+def process_chd(url, download_dir, work_dir, existing_files, position=0):
     filename = urllib.parse.unquote(os.path.basename(url))
-    downloaded_files = initialize_progress_file(PROGRESS_FILE_PATH, download_dir)
+    chd_filename = os.path.splitext(filename)[0] + ".chd"
+    if chd_filename in existing_files:
+        print(f"{chd_filename} déjà présent dans le dossier, ignoré.")
+        return True, url
 
     tmp_zip = os.path.join("/tmp", f"myrientdl_{os.path.basename(url)}")
     with tempfile.TemporaryDirectory(prefix="myrientdl_", dir="/tmp") as tmp_extract_dir:
@@ -1071,7 +1080,7 @@ def process_chd(url, download_dir, work_dir, position=0):
                 for file in files:
                     if file.lower().endswith(('.cue', '.iso')):
                         cue_or_iso_path = os.path.join(root, file)
-                        success, output_chd = convert_to_chd(cue_or_iso_path, work_dir, downloaded_files)
+                        success, output_chd = convert_to_chd(cue_or_iso_path, work_dir, existing_files)
                         if success and output_chd:
                             chd_filename = os.path.basename(output_chd)
                             chd_files.append(chd_filename)
@@ -1086,12 +1095,6 @@ def process_chd(url, download_dir, work_dir, position=0):
             if not move_to_final(work_dir, download_dir, chd_files):
                 return False, url
 
-            for chd_filename in chd_files:
-                if chd_filename in downloaded_files:
-                    print(f"{chd_filename} déjà marqué comme converti dans progression.txt, ignoré.")
-                    continue
-                append_to_progress_file(PROGRESS_FILE_PATH, chd_filename)
-
             print(f"Traitement de {filename} terminé")
             return True, url
         finally:
@@ -1099,7 +1102,7 @@ def process_chd(url, download_dir, work_dir, position=0):
                 os.remove(tmp_zip)
 
 # Fonction pour télécharger un fichier directement
-def download_file(url, download_dir, work_dir, position=0):
+def download_file(url, download_dir, work_dir, existing_files, position=0):
     if shutdown_event.is_set():
         return False, url
 
@@ -1108,9 +1111,8 @@ def download_file(url, download_dir, work_dir, position=0):
     dest_path = os.path.join(download_dir, filename)
     display_name = truncate_filename(filename)
 
-    downloaded_files = initialize_progress_file(PROGRESS_FILE_PATH, download_dir)
-    if filename in downloaded_files:
-        print(f"{filename} déjà marqué comme téléchargé dans progression.txt, ignoré.")
+    if filename in existing_files:
+        print(f"{filename} déjà présent dans le dossier, ignoré.")
         return True, url
 
     resume_byte_pos = 0
@@ -1122,7 +1124,6 @@ def download_file(url, download_dir, work_dir, position=0):
         local_size = os.path.getsize(dest_path)
         if server_size and local_size == server_size:
             print(f"{filename} déjà présent dans le dossier final avec la bonne taille.")
-            append_to_progress_file(PROGRESS_FILE_PATH, filename)
             return True, url
 
     headers = {"Range": f"bytes={resume_byte_pos}-"} if resume_byte_pos else {}
@@ -1137,7 +1138,7 @@ def download_file(url, download_dir, work_dir, position=0):
         if server_size and resume_byte_pos >= server_size:
             print(f"{filename} déjà téléchargé dans work/ (taille complète : {resume_byte_pos} octets)")
             if move_to_final(work_dir, download_dir, [filename]):
-                append_to_progress_file(PROGRESS_FILE_PATH, filename)
+                print(f"Traitement de {filename} terminé")
             return True, url
         print(f"Échec du téléchargement de {filename} : Requête de reprise invalide")
         return False, url
@@ -1167,7 +1168,6 @@ def download_file(url, download_dir, work_dir, position=0):
     if server_size and local_size == server_size:
         print(f"{filename} téléchargé dans work/")
         if move_to_final(work_dir, download_dir, [filename]):
-            append_to_progress_file(PROGRESS_FILE_PATH, filename)
             print(f"Traitement de {filename} terminé")
             return True, url
         else:
@@ -1186,7 +1186,7 @@ try:
     if EXTRACT:
         print("Mode --extract : Téléchargement et décompression...")
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            future_to_url = {executor.submit(process_extract, link, download_dir, work_dir, i % MAX_WORKERS): link for i, link in enumerate(sorted(links))}
+            future_to_url = {executor.submit(process_extract, link, download_dir, work_dir, existing_files, i % MAX_WORKERS): link for i, link in enumerate(sorted(links))}
             for future in as_completed(future_to_url):
                 if shutdown_event.is_set():
                     executor._threads.clear()
@@ -1201,7 +1201,7 @@ try:
     elif CHD:
         print("Mode --chd : Téléchargement, décompression et conversion en CHD...")
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            future_to_url = {executor.submit(process_chd, link, download_dir, work_dir, i % MAX_WORKERS): link for i, link in enumerate(sorted(links))}
+            future_to_url = {executor.submit(process_chd, link, download_dir, work_dir, existing_files, i % MAX_WORKERS): link for i, link in enumerate(sorted(links))}
             for future in as_completed(future_to_url):
                 if shutdown_event.is_set():
                     executor._threads.clear()
@@ -1216,7 +1216,7 @@ try:
     else:
         print("Mode standard : Téléchargement des fichiers...")
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            future_to_url = {executor.submit(download_file, link, download_dir, work_dir, i % MAX_WORKERS): link for i, link in enumerate(sorted(links))}
+            future_to_url = {executor.submit(download_file, link, download_dir, work_dir, existing_files, i % MAX_WORKERS): link for i, link in enumerate(sorted(links))}
             for future in as_completed(future_to_url):
                 if shutdown_event.is_set():
                     executor._threads.clear()
