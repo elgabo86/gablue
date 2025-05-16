@@ -136,17 +136,23 @@ if not UPDATE and not (FR_ONLY or EU_ONLY or ALL or RA_ONLY):
 
     if choice == "" or choice == "1":
         EU_ONLY = True
+        sys.argv.append("--eu-only")  # Ajouter --eu-only à sys.argv pour .check.txt
     elif choice == "2":
         FR_ONLY = True
+        sys.argv.append("--fr-only")
     elif choice == "3":
         ALL = True
+        sys.argv.append("--all")
     elif choice == "4":
         RA_ONLY = True
+        sys.argv.append("--ra")
     else:
         print("Choix invalide. Utilisation de --eu-only par défaut.")
         EU_ONLY = True
+        sys.argv.append("--eu-only")
 
 # Détermine le dossier de téléchargement
+original_command = None
 if UPDATE:
     current_dir = os.path.realpath(os.getcwd())
     home_dir = os.path.realpath(os.path.expanduser("~"))
@@ -175,8 +181,8 @@ if UPDATE:
         if not lines or not lines[0].startswith("Commande exécutée :"):
             print("Erreur : Format de .check.txt invalide ou commande manquante.")
             sys.exit(1)
-        command = lines[0].split("Commande exécutée :")[1].strip()
-        command_args = command.split()
+        original_command = lines[0].split("Commande exécutée :")[1].strip()
+        command_args = original_command.split()
         temp_args = parser.parse_args(command_args[1:])
         URL = temp_args.url
         FR_ONLY = temp_args.fr_only
@@ -197,11 +203,9 @@ if UPDATE:
                     try:
                         CONSOLE_ID = int(line.split(":")[1].strip())
                     except ValueError:
-                        print("Erreur : ID de console invalide dans .check.txt.")
-                        sys.exit(1)
-            if CONSOLE_ID is None:
-                print("Erreur : Aucun ID de console trouvé dans .check.txt pour --ra.")
-                sys.exit(1)
+                        print("ID de console invalide dans .check.txt, une nouvelle sélection sera demandée.")
+                        CONSOLE_ID = None
+                        break
     except Exception as e:
         print(f"Erreur lors de la lecture de .check.txt : {e}")
         sys.exit(1)
@@ -234,6 +238,45 @@ HASH_ZIP = "/usr/share/ublue-os/gablue/ra/hash.zip"
 # Chemins temporaires et fichiers de check
 RAW_OUTPUT = "/tmp/raw_download_links.txt"
 CHECK_FILE_PATH = os.path.join(download_dir, ".check.txt")
+
+# Récupérer les liens à traiter
+links = []
+if UPDATE:
+    try:
+        response = requests.get(URL)
+        links = re.findall(r'href="([^"]+\.(?:bin|cue|iso|zip|7z|rar|z64))"', response.text)
+        if not links:
+            print("Aucun lien de fichier trouvé.")
+            sys.exit(1)
+
+        with open(RAW_OUTPUT, 'w') as f:
+            for link in links:
+                f.write(f"{URL}{link}\n")
+    except Exception as e:
+        print(f"Erreur lors de la récupération des liens depuis {URL} : {e}")
+        sys.exit(1)
+
+    # Mettre à jour les données RetroAchievements si --ra est activé
+    if RA_ONLY:
+        ra_games = get_ra_games()
+        if not ra_games:
+            print("Aucun jeu RetroAchievements trouvé. Arrêt du script.")
+            sys.exit(1)
+        ra_games = filter_single_version(ra_games)
+else:
+    try:
+        response = requests.get(URL)
+        links = re.findall(r'href="([^"]+\.(?:bin|cue|iso|zip|7z|rar|z64))"', response.text)
+        if not links:
+            print("Aucun lien de fichier trouvé.")
+            sys.exit(1)
+
+        with open(RAW_OUTPUT, 'w') as f:
+            for link in links:
+                f.write(f"{URL}{link}\n")
+    except Exception as e:
+        print(f"Erreur lors de la récupération des liens depuis {URL} : {e}")
+        sys.exit(1)
 
 # Fonction pour vérifier les fichiers dans le dossier
 def initialize_progress_file(download_dir, selected_links=None):
@@ -277,7 +320,8 @@ def initialize_progress_file(download_dir, selected_links=None):
 def write_check_file(check_file_path, selected_links, missing_games=None, console_id=None):
     try:
         with open(check_file_path, 'w', encoding='utf-8') as f:
-            command = " ".join(sys.argv)
+            # Utiliser la commande originale si en mode --update, sinon sys.argv
+            command = original_command if UPDATE and original_command else " ".join(sys.argv)
             f.write(f"Commande exécutée : {command}\n")
             if RA_ONLY and console_id is not None:
                 f.write(f"Console ID pour RetroAchievements : {console_id}\n")
@@ -714,258 +758,193 @@ def filter_single_version(game_list):
         filtered_list.append(filtered_game)
     return filtered_list
 
-# Récupère les liens à traiter
-links = []
+# Initialiser les listes
 selected_links = []
 missing_games = []
 
-if UPDATE:
+# Traiter les liens
+def get_server_file_size(url):
     try:
-        with open(CHECK_FILE_PATH, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-        start_files = False
-        for line in lines:
-            line = line.strip()
-            if line == "Fichiers à télécharger :":
-                start_files = True
-                continue
-            if start_files and line.startswith("- "):
-                filename = line[2:].strip()
-                link = f"{URL}{urllib.parse.quote(filename)}"
-                selected_links.append(link)
-        if not selected_links:
-            print("Aucun fichier à télécharger trouvé dans .check.txt.")
-            sys.exit(1)
+        response = requests.head(url, allow_redirects=True, timeout=10)
+        if response.status_code == 200:
+            return int(response.headers.get("content-length", 0))
+        return None
+    except requests.RequestException:
+        return None
 
-        filtered_links = []
-        for link in selected_links:
+def contains_term(filename, term):
+    pattern = r'\b' + re.escape(term) + r'\b'
+    return bool(re.search(pattern, filename, re.IGNORECASE))
+
+def get_game_name(filename):
+    name = re.sub(r'\s*\([^\)]*\)', '', filename)
+    name = re.sub(r'\s*-\s*Disc\s*[0-9]+', '', name)
+    name = re.sub(r'\.[a-zA-Z0-9]+$', '', name)
+    name = name.lower()
+    name = re.sub(r'[^a-z0-9]+', '-', name)
+    return name.strip('-')
+
+def get_disc_num(filename):
+    match = re.search(r'Disc\s*([0-9]+)', filename, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return "0"
+
+game_versions = {}
+game_regions = {}
+
+if RA_ONLY:
+    ra_games = get_ra_games()
+    if not ra_games:
+        print("Aucun jeu RetroAchievements trouvé. Arrêt du script.")
+        sys.exit(1)
+
+    ra_games = filter_single_version(ra_games)
+
+    ra_filenames = {}
+    for game in ra_games:
+        is_japan_specific = "Japan" in game["title"] or game["title"].startswith("Pocket Monsters")
+        region = "Japan" if is_japan_specific else None
+        for rom in game["compatible_roms"]:
+            if rom["filename"]:
+                cleaned_name = clean_filename(rom["filename"], region=region)
+                key = (game["gameId"], cleaned_name)
+                if key not in ra_filenames:
+                    ra_filenames[key] = []
+                ra_filenames[key].append((game, rom["filename"]))
+
+    with open(RAW_OUTPUT, 'r') as f:
+        for link in f:
+            link = link.strip()
             filename = urllib.parse.unquote(os.path.basename(link))
-            if NAME_FILTER:
-                cleaned_name = re.sub(r'\s*\([^\)]*\)', '', filename).lower()
-                cleaned_name = re.sub(r'\.[a-zA-Z0-9]+$', '', cleaned_name)
-                if NAME_FILTER.lower() == '0':
-                    if re.match(r'^\d', cleaned_name, re.IGNORECASE):
-                        filtered_links.append(link)
-                else:
-                    if cleaned_name.startswith(NAME_FILTER.lower()):
-                        filtered_links.append(link)
-            else:
-                filtered_links.append(link)
+            cleaned_filename = clean_filename(filename)
+            cleaned_filename_japan = clean_filename(filename, region="Japan")
+            cleaned_filename_usa = clean_filename(filename, region="USA")
+            cleaned_filename_europe = clean_filename(filename, region="Europe")
 
-        if not filtered_links:
-            print(f"Aucun fichier correspondant au filtre {'--name ' + NAME_FILTER if NAME_FILTER else ''} dans .check.txt.")
-            sys.exit(1)
+            for cleaned_name in [cleaned_filename, cleaned_filename_japan, cleaned_filename_usa, cleaned_filename_europe]:
+                for (game_id, rom_cleaned_name), game_roms in ra_filenames.items():
+                    if rom_cleaned_name == cleaned_name:
+                        for game, _ in game_roms:
+                            key = f"{get_game_name(filename)}_disc_{get_disc_num(filename)}_{game['gameId']}"
+                            is_japan_specific = "Japan" in game["title"] or game["title"].startswith("Pocket Monsters")
+                            priority = get_rom_priority(filename, is_japan_specific, mode="ra")
+                            if key not in game_versions or priority < game_versions[key][1]:
+                                game_versions[key] = (link, priority, filename)
+                            if game["title"] not in game_regions:
+                                game_regions[game["title"]] = set()
+                            game_regions[game["title"]].add("RA")
 
-        existing_files = initialize_progress_file(download_dir, selected_links)
+    found_titles = set()
+    for key, (link, _, _) in game_versions.items():
+        game_id = key.split('_')[-1]
+        for game in ra_games:
+            if str(game["gameId"]) == game_id:
+                found_titles.add(game["title"])
+                break
+    missing_games = [game for game in ra_games if game["title"] not in found_titles]
 
-        links = []
-        for link in filtered_links:
-            filename = urllib.parse.unquote(os.path.basename(link))
-            if CHD:
-                chd_filename = os.path.splitext(filename)[0] + ".chd"
-                if chd_filename not in existing_files:
-                    links.append(link)
-            else:
-                if filename not in existing_files:
-                    links.append(link)
-
-        if not links:
-            print("Tous les fichiers sont déjà téléchargés ou traités.")
-            sys.exit(0)
-    except Exception as e:
-        print(f"Erreur lors de la lecture des liens dans {CHECK_FILE_PATH} : {e}")
+    selected_links = [version[0] for version in game_versions.values()]
+    if not selected_links:
+        print("Aucun jeu trouvé correspondant au filtre RA après filtrage.")
         sys.exit(1)
 else:
-    response = requests.get(URL)
-    links = re.findall(r'href="([^"]+\.(?:bin|cue|iso|zip|7z|rar|z64))"', response.text)
-    if not links:
-        print("Aucun lien de fichier trouvé.")
+    with open(RAW_OUTPUT, 'r') as f:
+        for link in f:
+            link = link.strip()
+            filename = urllib.parse.unquote(os.path.basename(link))
+
+            game_name = get_game_name(filename)
+            disc_num = get_disc_num(filename)
+
+            if contains_term(filename, "Demo") or contains_term(filename, "Beta"):
+                continue
+
+            key = f"{game_name}_disc_{disc_num}"
+
+            if ALL:
+                priority = 0
+                region = "All"
+            else:
+                priority = None
+                region = None
+                parenthetical_parts = [part for part in re.findall(r'\((.*?)\)', filename, re.IGNORECASE)]
+                has_french = any(
+                    'fr' in part.lower().split(',') or part.strip().lower() == 'fr'
+                    for part in parenthetical_parts
+                )
+                has_europe = any("europe" in part.lower() for part in parenthetical_parts)
+                if contains_term(filename, "USA") and has_french:
+                    priority = 1
+                    region = "USA_Fr"
+                elif contains_term(filename, "Canada") and has_french:
+                    priority = 2
+                    region = "Canada_Fr"
+                elif contains_term(filename, "France") or has_french:
+                    priority = 3
+                    region = "France"
+                elif has_europe and has_french:
+                    priority = 4
+                    region = "Europe_Fr"
+                elif contains_term(filename, "USA"):
+                    priority = 5
+                    region = "USA"
+                elif has_europe:
+                    priority = 6
+                    region = "Europe"
+                else:
+                    continue
+
+                if game_name not in game_regions:
+                    game_regions[game_name] = set()
+                game_regions[game_name].add(region)
+                if key not in game_versions or priority < game_versions[key][1]:
+                    game_versions[key] = (link, get_rom_priority(filename, mode="eu_only"), filename)
+
+    selected_links = []
+    for key, (link, _, filename) in game_versions.items():
+        game_name = key.split('_disc_')[0]
+        regions = game_regions[game_name]
+        if EU_ONLY and not any(r in {"USA_Fr", "Canada_Fr", "France", "Europe_Fr", "USA", "Europe"} for r in regions):
+            continue
+        if FR_ONLY and not any(r in {"France", "USA_Fr", "Europe_Fr"} for r in regions):
+            continue
+        selected_links.append(link)
+
+    if not selected_links:
+        print(f"Aucun jeu trouvé correspondant au filtre de région après filtrage.")
         sys.exit(1)
 
-    with open(RAW_OUTPUT, 'w') as f:
-        for link in links:
-            f.write(f"{URL}{link}\n")
+# Écrire .check.txt avec les nouveaux liens
+write_check_file(CHECK_FILE_PATH, selected_links, missing_games if RA_ONLY else None, CONSOLE_ID if RA_ONLY else None)
 
-    def get_server_file_size(url):
-        try:
-            response = requests.head(url, allow_redirects=True, timeout=10)
-            if response.status_code == 200:
-                return int(response.headers.get("content-length", 0))
-            return None
-        except requests.RequestException:
-            return None
+# Filtrer les liens selon --name et vérifier les fichiers existants
+existing_files = initialize_progress_file(download_dir, selected_links)
 
-    def contains_term(filename, term):
-        pattern = r'\b' + re.escape(term) + r'\b'
-        return bool(re.search(pattern, filename, re.IGNORECASE))
-
-    def get_game_name(filename):
-        name = re.sub(r'\s*\([^\)]*\)', '', filename)
-        name = re.sub(r'\s*-\s*Disc\s*[0-9]+', '', name)
-        name = re.sub(r'\.[a-zA-Z0-9]+$', '', name)
-        name = name.lower()
-        name = re.sub(r'[^a-z0-9]+', '-', name)
-        return name.strip('-')
-
-    def get_disc_num(filename):
-        match = re.search(r'Disc\s*([0-9]+)', filename, re.IGNORECASE)
-        if match:
-            return match.group(1)
-        return "0"
-
-    game_versions = {}
-    game_regions = {}
-
-    if RA_ONLY:
-        ra_games = get_ra_games()
-        if not ra_games:
-            print("Aucun jeu RetroAchievements trouvé. Arrêt du script.")
-            sys.exit(1)
-
-        ra_games = filter_single_version(ra_games)
-
-        ra_filenames = {}
-        for game in ra_games:
-            is_japan_specific = "Japan" in game["title"] or game["title"].startswith("Pocket Monsters")
-            region = "Japan" if is_japan_specific else None
-            for rom in game["compatible_roms"]:
-                if rom["filename"]:
-                    cleaned_name = clean_filename(rom["filename"], region=region)
-                    key = (game["gameId"], cleaned_name)
-                    if key not in ra_filenames:
-                        ra_filenames[key] = []
-                    ra_filenames[key].append((game, rom["filename"]))
-
-        with open(RAW_OUTPUT, 'r') as f:
-            for link in f:
-                link = link.strip()
-                filename = urllib.parse.unquote(os.path.basename(link))
-                cleaned_filename = clean_filename(filename)
-                cleaned_filename_japan = clean_filename(filename, region="Japan")
-                cleaned_filename_usa = clean_filename(filename, region="USA")
-                cleaned_filename_europe = clean_filename(filename, region="Europe")
-
-                for cleaned_name in [cleaned_filename, cleaned_filename_japan, cleaned_filename_usa, cleaned_filename_europe]:
-                    for (game_id, rom_cleaned_name), game_roms in ra_filenames.items():
-                        if rom_cleaned_name == cleaned_name:
-                            for game, _ in game_roms:
-                                key = f"{get_game_name(filename)}_disc_{get_disc_num(filename)}_{game['gameId']}"
-                                is_japan_specific = "Japan" in game["title"] or game["title"].startswith("Pocket Monsters")
-                                priority = get_rom_priority(filename, is_japan_specific, mode="ra")
-                                if key not in game_versions or priority < game_versions[key][1]:
-                                    game_versions[key] = (link, priority, filename)
-                                if game["title"] not in game_regions:
-                                    game_regions[game["title"]] = set()
-                                game_regions[game["title"]].add("RA")
-
-        found_titles = set()
-        for key, (link, _, _) in game_versions.items():
-            game_id = key.split('_')[-1]
-            for game in ra_games:
-                if str(game["gameId"]) == game_id:
-                    found_titles.add(game["title"])
-                    break
-        missing_games = [game for game in ra_games if game["title"] not in found_titles]
-
-        selected_links = [version[0] for version in game_versions.values()]
-        if not selected_links:
-            print("Aucun jeu trouvé correspondant au filtre RA après filtrage.")
-            sys.exit(1)
+links = []
+for link in selected_links:
+    filename = urllib.parse.unquote(os.path.basename(link))
+    if NAME_FILTER:
+        cleaned_name = re.sub(r'\s*\([^\)]*\)', '', filename).lower()
+        cleaned_name = re.sub(r'\.[a-zA-Z0-9]+$', '', cleaned_name)
+        if NAME_FILTER.lower() == '0':
+            if not re.match(r'^\d', cleaned_name, re.IGNORECASE):
+                continue
+        elif not cleaned_name.startswith(NAME_FILTER.lower()):
+            continue
+    if CHD:
+        chd_filename = os.path.splitext(filename)[0] + ".chd"
+        if chd_filename not in existing_files:
+            links.append(link)
     else:
-        with open(RAW_OUTPUT, 'r') as f:
-            for link in f:
-                link = link.strip()
-                filename = urllib.parse.unquote(os.path.basename(link))
+        if filename not in existing_files:
+            links.append(link)
 
-                game_name = get_game_name(filename)
-                disc_num = get_disc_num(filename)
-
-                if contains_term(filename, "Demo") or contains_term(filename, "Beta"):
-                    continue
-
-                key = f"{game_name}_disc_{disc_num}"
-
-                if ALL:
-                    priority = 0
-                    region = "All"
-                else:
-                    priority = None
-                    region = None
-                    parenthetical_parts = [part for part in re.findall(r'\((.*?)\)', filename, re.IGNORECASE)]
-                    has_french = any(
-                        'fr' in part.lower().split(',') or part.strip().lower() == 'fr'
-                        for part in parenthetical_parts
-                    )
-                    has_europe = any("europe" in part.lower() for part in parenthetical_parts)
-                    if contains_term(filename, "USA") and has_french:
-                        priority = 1
-                        region = "USA_Fr"
-                    elif contains_term(filename, "Canada") and has_french:
-                        priority = 2
-                        region = "Canada_Fr"
-                    elif contains_term(filename, "France") or has_french:
-                        priority = 3
-                        region = "France"
-                    elif has_europe and has_french:
-                        priority = 4
-                        region = "Europe_Fr"
-                    elif contains_term(filename, "USA"):
-                        priority = 5
-                        region = "USA"
-                    elif has_europe:
-                        priority = 6
-                        region = "Europe"
-                    else:
-                        continue
-
-                    if game_name not in game_regions:
-                        game_regions[game_name] = set()
-                    game_regions[game_name].add(region)
-                    if key not in game_versions or priority < game_versions[key][1]:
-                        game_versions[key] = (link, get_rom_priority(filename, mode="eu_only"), filename)
-
-        selected_links = []
-        for key, (link, _, filename) in game_versions.items():
-            game_name = key.split('_disc_')[0]
-            regions = game_regions[game_name]
-            if EU_ONLY and not any(r in {"USA_Fr", "Canada_Fr", "France", "Europe_Fr", "USA", "Europe"} for r in regions):
-                continue
-            if FR_ONLY and not any(r in {"France", "USA_Fr", "Europe_Fr"} for r in regions):
-                continue
-            selected_links.append(link)
-
-        if not selected_links:
-            print(f"Aucun jeu trouvé correspondant au filtre de région après filtrage.")
-            sys.exit(1)
-
-    write_check_file(CHECK_FILE_PATH, selected_links, missing_games if RA_ONLY else None, CONSOLE_ID if RA_ONLY else None)
-
-    existing_files = initialize_progress_file(download_dir, selected_links)
-
-    links = []
-    for link in selected_links:
-        filename = urllib.parse.unquote(os.path.basename(link))
-        if NAME_FILTER:
-            cleaned_name = re.sub(r'\s*\([^\)]*\)', '', filename).lower()
-            cleaned_name = re.sub(r'\.[a-zA-Z0-9]+$', '', cleaned_name)
-            if NAME_FILTER.lower() == '0':
-                if not re.match(r'^\d', cleaned_name, re.IGNORECASE):
-                    continue
-            elif not cleaned_name.startswith(NAME_FILTER.lower()):
-                continue
-        if CHD:
-            chd_filename = os.path.splitext(filename)[0] + ".chd"
-            if chd_filename not in existing_files:
-                links.append(link)
-        else:
-            if filename not in existing_files:
-                links.append(link)
-
-    if not links:
-        print("Tous les fichiers sont déjà téléchargés ou traités.")
-        if os.path.exists(RAW_OUTPUT):
-            os.remove(RAW_OUTPUT)
-        sys.exit(0)
+if not links:
+    print("Tous les fichiers sont déjà téléchargés ou traités.")
+    if os.path.exists(RAW_OUTPUT):
+        os.remove(RAW_OUTPUT)
+    sys.exit(0)
 
 # Fonction pour tronquer les noms
 def truncate_filename(filename, max_length=15):
