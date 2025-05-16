@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: 2.39
+# Version: 2.50
 import argparse
 import os
 import sys
@@ -41,16 +41,43 @@ class AuthenticationError(Exception):
 
 # Parse les arguments
 parser = argparse.ArgumentParser(description="Télécharge les fichiers Myrient avec options de filtrage et traitement.")
-parser.add_argument("url", help="URL de la page Myrient")
+parser.add_argument("url", nargs='?', help="URL de la page Myrient")
 parser.add_argument("--fr-only", action="store_true", help="Ne conserve que les versions (France) et (Fr)")
 parser.add_argument("--eu-only", action="store_true", help="Ne liste que les jeux avec une version (France), (Fr), (Europe) ou (USA) avec Fr")
 parser.add_argument("--all", action="store_true", help="Télécharge tous les fichiers sans filtrer par région")
 parser.add_argument("--ra", action="store_true", help="Ne télécharge que les jeux compatibles RetroAchievements")
-parser.add_argument("--extract", action="store_true", help="Télécharge le .zip dans /tmp, décompresse dans work/, déplace dans le dossier final")
-parser.add_argument("--chd", action="store_true", help="Télécharge le .zip dans /tmp, décompresse dans /tmp, convertit en .chd dans work/, déplace dans le dossier final")
+parser.add_argument("--extract", action="store_true", help="Télécharge le .zip dans /tmp, décompresse dans .work/, déplace dans le dossier final")
+parser.add_argument("--chd", action="store_true", help="Télécharge le .zip dans /tmp, décompresse dans /tmp, convertit en .chd dans .work/, déplace dans le dossier final")
 parser.add_argument("--max", type=int, default=3, help="Nombre maximum de téléchargements ou traitements simultanés (défaut : 3 pour standard, 1 pour --extract/--chd)")
 parser.add_argument("--name", type=str, help="Ne télécharge que les jeux commençant par la chaîne spécifiée (ex: 'ab' pour les jeux commençant par 'ab', '0' pour les chiffres)")
 parser.add_argument("--path", type=str, help="Chemin personnalisé pour les téléchargements (remplace le dossier courant ou ~/Downloads)")
+parser.add_argument("--update", action="store_true", help="Reprend le téléchargement à partir de .check.txt")
+
+# Vérifier si aucun argument n'est fourni
+if len(sys.argv) == 1:
+    current_dir = os.path.realpath(os.getcwd())
+    home_dir = os.path.realpath(os.path.expanduser("~"))
+    possible_dirs = [current_dir]
+    try:
+        download_dir = subprocess.check_output(["xdg-user-dir", "DOWNLOAD"], text=True).strip()
+        possible_dirs.append(os.path.join(download_dir, "mydl"))
+    except subprocess.CalledProcessError:
+        possible_dirs.append(os.path.join(home_dir, "Downloads", "mydl"))
+
+    check_file_path = None
+    for dir_path in possible_dirs:
+        potential_check = os.path.join(dir_path, ".check.txt")
+        if os.path.exists(potential_check):
+            check_file_path = potential_check
+            download_dir = dir_path
+            break
+
+    if check_file_path:
+        sys.argv.append("--update")
+    else:
+        parser.print_help()
+        sys.exit(0)
+
 args = parser.parse_args()
 
 URL = args.url
@@ -63,31 +90,43 @@ CHD = args.chd
 MAX_WORKERS_DEFAULT = args.max
 NAME_FILTER = args.name
 CUSTOM_PATH = args.path
+UPDATE = args.update
+
+# Variable globale pour stocker l'ID de la console
+CONSOLE_ID = None
 
 # Vérifie les arguments
-if sum([FR_ONLY, EU_ONLY, ALL, RA_ONLY]) > 1:
-    print("Erreur : Les options --fr-only, --eu-only, --all et --ra ne peuvent pas être utilisées ensemble.")
-    sys.exit(1)
-if sum([EXTRACT, CHD]) > 1:
-    print("Erreur : Les options --extract et --chd ne peuvent pas être utilisées ensemble.")
-    sys.exit(1)
-if CHD and shutil.which("chdman") is None:
-    print("Erreur : L'outil 'chdman' est requis pour l'option --chd mais n'est pas installé.")
-    sys.exit(1)
-if MAX_WORKERS_DEFAULT < 1:
-    print("Erreur : L'option --max doit être un entier positif (minimum 1).")
-    sys.exit(1)
-if NAME_FILTER and not re.match(r'^[a-zA-Z0-9]+$', NAME_FILTER):
-    print("Erreur : L'option --name doit contenir uniquement des lettres ou des chiffres (ex: 'ab', '0').")
-    sys.exit(1)
-if CUSTOM_PATH:
-    CUSTOM_PATH = os.path.expanduser(CUSTOM_PATH)
-    if not os.path.isdir(CUSTOM_PATH):
-        print(f"Erreur : Le chemin spécifié avec --path ('{CUSTOM_PATH}') n'est pas un dossier valide.")
+if UPDATE:
+    if any([URL, FR_ONLY, EU_ONLY, ALL, RA_ONLY, EXTRACT, CHD, NAME_FILTER, CUSTOM_PATH]):
+        print("Erreur : L'option --update ne peut pas être combinée avec d'autres options ou URL.")
         sys.exit(1)
+else:
+    if not URL:
+        print("Erreur : Une URL Myrient est requise sauf avec --update.")
+        sys.exit(1)
+    if sum([FR_ONLY, EU_ONLY, ALL, RA_ONLY]) > 1:
+        print("Erreur : Les options --fr-only, --eu-only, --all et --ra ne peuvent pas être utilisées ensemble.")
+        sys.exit(1)
+    if sum([EXTRACT, CHD]) > 1:
+        print("Erreur : Les options --extract et --chd ne peuvent pas être utilisées ensemble.")
+        sys.exit(1)
+    if CHD and shutil.which("chdman") is None:
+        print("Erreur : L'outil 'chdman' est requis pour l'option --chd mais n'est pas installé.")
+        sys.exit(1)
+    if MAX_WORKERS_DEFAULT < 1:
+        print("Erreur : L'option --max doit être un entier positif (minimum 1).")
+        sys.exit(1)
+    if NAME_FILTER and not re.match(r'^[a-zA-Z0-9]+$', NAME_FILTER):
+        print("Erreur : L'option --name doit contenir uniquement des lettres ou des chiffres (ex: 'ab', '0').")
+        sys.exit(1)
+    if CUSTOM_PATH:
+        CUSTOM_PATH = os.path.expanduser(CUSTOM_PATH)
+        if not os.path.isdir(CUSTOM_PATH):
+            print(f"Erreur : Le chemin spécifié avec --path ('{CUSTOM_PATH}') n'est pas un dossier valide.")
+            sys.exit(1)
 
 # Menu interactif si aucune option de filtrage n’est spécifiée
-if not (FR_ONLY or EU_ONLY or ALL or RA_ONLY):
+if not UPDATE and not (FR_ONLY or EU_ONLY or ALL or RA_ONLY):
     print("Aucune option de filtrage spécifiée. Veuillez choisir une option :")
     print("1. --eu-only (par défaut)")
     print("2. --fr-only : Jeux uniquement en français")
@@ -97,44 +136,95 @@ if not (FR_ONLY or EU_ONLY or ALL or RA_ONLY):
 
     if choice == "" or choice == "1":
         EU_ONLY = True
-        print("Option choisie : --eu-only")
     elif choice == "2":
         FR_ONLY = True
-        print("Option choisie : --fr-only")
     elif choice == "3":
         ALL = True
-        print("Option choisie : --all")
     elif choice == "4":
         RA_ONLY = True
-        print("Option choisie : --ra")
     else:
         print("Choix invalide. Utilisation de --eu-only par défaut.")
         EU_ONLY = True
 
 # Détermine le dossier de téléchargement
-if CUSTOM_PATH:
-    download_dir = os.path.realpath(CUSTOM_PATH)
-    print(f"Téléchargements dans : {download_dir} (spécifié via --path)")
-else:
+if UPDATE:
     current_dir = os.path.realpath(os.getcwd())
     home_dir = os.path.realpath(os.path.expanduser("~"))
-    download_dir = current_dir
+    possible_dirs = [current_dir]
+    try:
+        download_dir = subprocess.check_output(["xdg-user-dir", "DOWNLOAD"], text=True).strip()
+        possible_dirs.append(os.path.join(download_dir, "mydl"))
+    except subprocess.CalledProcessError:
+        possible_dirs.append(os.path.join(home_dir, "Downloads", "mydl"))
 
-    if current_dir == home_dir:
-        try:
-            download_dir = subprocess.check_output(["xdg-user-dir", "DOWNLOAD"], text=True).strip()
-            print(f"Chemin de téléchargement détecté via xdg-user-dir : {download_dir}")
-        except subprocess.CalledProcessError:
-            print("Avertissement : Impossible de déterminer le dossier de téléchargements via xdg-user-dir. Utilisation de ~/Downloads comme secours.")
-            download_dir = os.path.join(home_dir, "Downloads")
-        download_dir = os.path.join(download_dir, "mydl")
-        os.makedirs(download_dir, exist_ok=True)
-        print(f"Téléchargements dans : {download_dir}")
+    check_file_path = None
+    for dir_path in possible_dirs:
+        potential_check = os.path.join(dir_path, ".check.txt")
+        if os.path.exists(potential_check):
+            check_file_path = potential_check
+            download_dir = dir_path
+            break
+
+    if not check_file_path:
+        print("Erreur : Aucun fichier .check.txt trouvé dans le dossier courant ou ~/Downloads/mydl.")
+        sys.exit(1)
+
+    try:
+        with open(check_file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        if not lines or not lines[0].startswith("Commande exécutée :"):
+            print("Erreur : Format de .check.txt invalide ou commande manquante.")
+            sys.exit(1)
+        command = lines[0].split("Commande exécutée :")[1].strip()
+        command_args = command.split()
+        temp_args = parser.parse_args(command_args[1:])
+        URL = temp_args.url
+        FR_ONLY = temp_args.fr_only
+        EU_ONLY = temp_args.eu_only
+        ALL = temp_args.all
+        RA_ONLY = temp_args.ra
+        EXTRACT = temp_args.extract
+        CHD = temp_args.chd
+        MAX_WORKERS_DEFAULT = temp_args.max
+        NAME_FILTER = temp_args.name
+        CUSTOM_PATH = temp_args.path
+        if CUSTOM_PATH:
+            CUSTOM_PATH = os.path.expanduser(CUSTOM_PATH)
+            download_dir = os.path.realpath(CUSTOM_PATH)
+        if RA_ONLY:
+            for line in lines:
+                if line.startswith("Console ID pour RetroAchievements :"):
+                    try:
+                        CONSOLE_ID = int(line.split(":")[1].strip())
+                    except ValueError:
+                        print("Erreur : ID de console invalide dans .check.txt.")
+                        sys.exit(1)
+            if CONSOLE_ID is None:
+                print("Erreur : Aucun ID de console trouvé dans .check.txt pour --ra.")
+                sys.exit(1)
+    except Exception as e:
+        print(f"Erreur lors de la lecture de .check.txt : {e}")
+        sys.exit(1)
+else:
+    if CUSTOM_PATH:
+        download_dir = os.path.realpath(CUSTOM_PATH)
     else:
-        print(f"Téléchargements dans : {current_dir}")
+        current_dir = os.path.realpath(os.getcwd())
+        home_dir = os.path.realpath(os.path.expanduser("~"))
+        download_dir = current_dir
 
-# Créer le dossier work
-work_dir = os.path.join(download_dir, "work")
+        if current_dir == home_dir:
+            try:
+                download_dir = subprocess.check_output(["xdg-user-dir", "DOWNLOAD"], text=True).strip()
+            except subprocess.CalledProcessError:
+                download_dir = os.path.join(home_dir, "Downloads")
+            download_dir = os.path.join(download_dir, "mydl")
+            os.makedirs(download_dir, exist_ok=True)
+        else:
+            download_dir = current_dir
+
+# Créer le dossier .work
+work_dir = os.path.join(download_dir, ".work")
 os.makedirs(work_dir, exist_ok=True)
 
 # Dossier pour les fichiers hash (pour --ra)
@@ -143,64 +233,55 @@ HASH_ZIP = "/usr/share/ublue-os/gablue/ra/hash.zip"
 
 # Chemins temporaires et fichiers de check
 RAW_OUTPUT = "/tmp/raw_download_links.txt"
-FILTERED_OUTPUT = os.path.join(download_dir, "filtered_download_links.txt")
-CHECK_FILE_PATH = os.path.join(download_dir, "check.txt")
+CHECK_FILE_PATH = os.path.join(download_dir, ".check.txt")
 
 # Fonction pour vérifier les fichiers dans le dossier
-def initialize_progress_file(download_dir, all_selected_links=None):
-    notinlist_dir = os.path.join(download_dir, "notinlist")
+def initialize_progress_file(download_dir, selected_links=None):
+    notinlist_dir = os.path.join(download_dir, ".notinlist")
     os.makedirs(notinlist_dir, exist_ok=True)
 
-    # Créer la liste des fichiers prioritaires à partir de all_selected_links
-    selected_filenames = {urllib.parse.unquote(os.path.basename(link)) for link in all_selected_links} if all_selected_links else set()
-    # Inclure les versions .chd en mode --chd
-    expected_filenames = selected_filenames.copy()
+    selected_filenames = {urllib.parse.unquote(os.path.basename(link)) for link in selected_links} if selected_links else set()
+    expected_filenames = set()
     if CHD:
         chd_filenames = {
             os.path.splitext(fn)[0] + ".chd" for fn in selected_filenames
             if fn.lower().endswith(('.zip', '.7z', '.rar'))
         }
         expected_filenames.update(chd_filenames)
+    else:
+        expected_filenames.update(selected_filenames)
 
-    # Déterminer le nom du script en cours d'exécution
     script_name = os.path.basename(sys.argv[0])
-    # Liste des fichiers à exclure
-    excluded_files = {'check.txt', script_name, 'filtered_download_links.txt'}
+    excluded_files = {'.check.txt', script_name}
 
-    # Initialiser la liste des fichiers existants prioritaires
     existing_files = set()
 
-    # Vérifier tous les fichiers dans le dossier de destination
     try:
         for f in os.listdir(download_dir):
             src_path = os.path.join(download_dir, f)
-            # Exclure les dossiers et les fichiers spécifiques
             if not os.path.isfile(src_path) or f in excluded_files:
-                if not os.path.isfile(src_path):
-                    print(f"{f} ignoré : c'est un dossier")
-                else:
-                    print(f"{f} ignoré : fichier exclu ({f})")
                 continue
-            if f not in expected_filenames:
+            if f in expected_filenames and os.path.exists(src_path):
+                existing_files.add(f)
+            elif f not in excluded_files:
                 dest_path = os.path.join(notinlist_dir, f)
                 try:
                     shutil.move(src_path, dest_path)
-                    print(f"Fichier non listé dans check.txt déplacé : {f} -> {notinlist_dir}")
-                except Exception as e:
-                    print(f"Erreur lors du déplacement de {f} : {e}")
-            else:
-                existing_files.add(f)
-        print(f"{len(existing_files)} fichiers prioritaires trouvés dans {download_dir}.")
+                except Exception:
+                    pass
         return existing_files
-    except Exception as e:
-        print(f"Erreur lors de la gestion des fichiers dans {download_dir}: {e}")
+    except Exception:
         return existing_files
 
-# Fonction pour écrire dans check.txt
-def write_check_file(check_file_path, selected_links, missing_games=None):
+# Fonction pour écrire dans .check.txt
+def write_check_file(check_file_path, selected_links, missing_games=None, console_id=None):
     try:
         with open(check_file_path, 'w', encoding='utf-8') as f:
-            f.write("Fichiers à télécharger :\n")
+            command = " ".join(sys.argv)
+            f.write(f"Commande exécutée : {command}\n")
+            if RA_ONLY and console_id is not None:
+                f.write(f"Console ID pour RetroAchievements : {console_id}\n")
+            f.write("\nFichiers à télécharger :\n")
             if selected_links:
                 for link in sorted(selected_links):
                     filename = urllib.parse.unquote(os.path.basename(link))
@@ -228,23 +309,16 @@ def write_check_file(check_file_path, selected_links, missing_games=None):
 def ensure_hash_directory():
     if os.path.exists(HASH_DIR):
         return True
-    
-    print(f"Le dossier {HASH_DIR} n'existe pas.")
+
     if not os.path.exists(HASH_ZIP):
-        print(f"Le fichier {HASH_ZIP} n'existe pas. Impossible de récupérer les fichiers de hachage.")
         return False
-    
+
     try:
         os.makedirs(os.path.dirname(HASH_DIR), exist_ok=True)
         with zipfile.ZipFile(HASH_ZIP, 'r') as zip_ref:
             zip_ref.extractall(os.path.dirname(HASH_DIR))
-        print(f"Fichier {HASH_ZIP} extrait dans {os.path.dirname(HASH_DIR)}")
-        if not os.path.exists(HASH_DIR):
-            print(f"Erreur : Le dossier {HASH_DIR} n'a pas été créé après l'extraction.")
-            return False
-        return True
-    except Exception as e:
-        print(f"Erreur lors de l'extraction de {HASH_ZIP} : {e}")
+        return os.path.exists(HASH_DIR)
+    except Exception:
         return False
 
 # Fonction pour lire ou sauvegarder les identifiants RetroAchievements
@@ -260,14 +334,12 @@ def get_ra_credentials():
                 username = config['RetroAchievements'].get('username', '').strip()
                 api_key = config['RetroAchievements'].get('api_key', '').strip()
                 if not username or not api_key:
-                    print("Identifiants incomplets dans le fichier de configuration.")
                     username = None
                     api_key = None
-        except Exception as e:
-            print(f"Erreur lors de la lecture de {CONFIG_FILE}: {e}")
+        except Exception:
+            pass
 
     if not username or not api_key:
-        print("\nIdentifiants RetroAchievements requis.")
         username = input("Entrez votre nom d'utilisateur RetroAchievements : ").strip()
         api_key = input("Entrez votre clé API RetroAchievements : ").strip()
 
@@ -279,7 +351,6 @@ def get_ra_credentials():
             }
             with open(CONFIG_FILE, 'w', encoding='utf-8') as configfile:
                 config.write(configfile)
-            print(f"Identifiants sauvegardés dans {CONFIG_FILE}")
         except Exception as e:
             print(f"Erreur lors de la sauvegarde des identifiants dans {CONFIG_FILE}: {e}")
 
@@ -295,26 +366,25 @@ def call_ra_api(endpoint, params, username, api_key):
         return response.json()
     except requests.exceptions.HTTPError as e:
         if response.status_code == 401:
-            print("Erreur 401: Authentification échouée. Suppression des identifiants invalides.")
             try:
                 if os.path.exists(CONFIG_FILE):
                     os.remove(CONFIG_FILE)
-                    print(f"Fichier de configuration {CONFIG_FILE} supprimé.")
-            except Exception as e:
-                print(f"Erreur lors de la suppression de {CONFIG_FILE}: {e}")
+            except Exception:
+                pass
             raise AuthenticationError("Authentification échouée. Veuillez fournir de nouveaux identifiants.")
-        print(f"Erreur HTTP avec l'API RetroAchievements: {e}")
         return None
-    except Exception as e:
-        print(f"Erreur inattendue avec l'API RetroAchievements: {e}")
+    except Exception:
         return None
 
 # Fonction pour sélectionner une console RetroAchievements
-def select_ra_console(username, api_key):
+def select_ra_console(username, api_key, console_id=None):
     consoles = call_ra_api("API_GetConsoleIDs.php", {}, username, api_key)
     if not consoles:
-        print("Impossible de récupérer les consoles RetroAchievements.")
         return None
+
+    if console_id is not None:
+        console = next((c for c in consoles if str(c["ID"]) == str(console_id)), None)
+        return console
 
     print("\nConsoles disponibles avec RetroAchievements :")
     for console in sorted(consoles, key=lambda x: x["Name"]):
@@ -326,12 +396,12 @@ def select_ra_console(username, api_key):
             return None
         console = next((c for c in consoles if str(c["ID"]) == console_id), None)
         if console:
-            print(f"Console choisie : {console['Name']} (ID: {console['ID']})")
             return console
         print("ID de console invalide. Veuillez réessayer.")
 
 # Fonction pour récupérer les jeux RetroAchievements
 def get_ra_games():
+    global CONSOLE_ID
     if not RA_ONLY:
         return None
 
@@ -340,15 +410,15 @@ def get_ra_games():
         retry = False
         try:
             username, api_key = get_ra_credentials()
-            console = select_ra_console(username, api_key)
+            console = select_ra_console(username, api_key, CONSOLE_ID)
             if not console:
-                print("Aucune console sélectionnée.")
                 return None
+
+            CONSOLE_ID = console["ID"]
 
             params = {"i": console["ID"], "f": 3, "h": 1}
             games = call_ra_api("API_GetGameList.php", params, username, api_key)
             if not games:
-                print("Impossible de récupérer les jeux RetroAchievements.")
                 return None
 
             game_list = []
@@ -358,8 +428,6 @@ def get_ra_games():
                 if any(tag in title for tag in ["[Subset", "~Hack~", "~Homebrew~", "~Demo~", "~Prototype~", "~Unlicensed~"]):
                     continue
                 hashes = game.get("Hashes", []) if isinstance(game.get("Hashes"), list) else []
-                if not hashes:
-                    print(f"Avertissement : Aucun hash trouvé pour {title} (ID: {game['ID']})")
                 all_hashes.update(h.lower() for h in hashes)
                 game_list.append({
                     "title": title,
@@ -370,7 +438,6 @@ def get_ra_games():
                 })
 
             if not ensure_hash_directory():
-                print(f"Aucun fichier de hachage disponible. Les noms de fichiers ROM ne seront pas associés.")
                 for game in game_list:
                     for hash_value in game["hashes"]:
                         game["compatible_roms"].append({
@@ -387,7 +454,6 @@ def get_ra_games():
                         hash_files.append(os.path.join(root, file))
 
             if not hash_files:
-                print(f"Aucun fichier .txt trouvé dans {HASH_DIR}. Les noms de fichiers ROM ne seront pas associés.")
                 for game in game_list:
                     for hash_value in game["hashes"]:
                         game["compatible_roms"].append({
@@ -417,8 +483,8 @@ def get_ra_games():
                                     hash_to_filenames[md5] = []
                                 if not any(info["game_name"] == game_name for info in hash_to_filenames[md5]):
                                     hash_to_filenames[md5].append({"game_name": game_name, "filename": game_name})
-                except Exception as e:
-                    print(f"Erreur lors du parsing du fichier {hash_file}: {e}")
+                except Exception:
+                    pass
 
             for game in game_list:
                 for hash_value in game["hashes"]:
@@ -442,13 +508,10 @@ def get_ra_games():
             return game_list
 
         except AuthenticationError:
-            print("Tentative de ré-authentification avec de nouveaux identifiants.")
             retry = True
-        except Exception as e:
-            print(f"Erreur inattendue dans get_ra_games: {e}")
+        except Exception:
             return None
 
-    print("Échec de l'authentification après nouvelle tentative.")
     return None
 
 # Fonction pour nettoyer un nom de fichier
@@ -559,7 +622,6 @@ def filter_single_version(game_list):
                     )
                 )
                 filtered_hash_to_roms[hash_value] = [best_rom]
-                print(f"ROM sélectionnée pour {game['title']} (ID: {game['gameId']}): {best_rom['filename']} (Hash: {hash_value})")
             else:
                 best_rom = max(
                     roms,
@@ -569,7 +631,6 @@ def filter_single_version(game_list):
                     )
                 )
                 filtered_hash_to_roms[hash_value] = [best_rom]
-                print(f"ROM sélectionnée (par défaut) pour {game['title']} (ID: {game['gameId']}): {best_rom['filename'] or 'Aucun nom'} (Hash: {hash_value})")
 
         is_multi_disc = any(
             "(disc" in rom["filename"].lower() for roms in filtered_hash_to_roms.values() for rom in roms if rom["filename"]
@@ -622,7 +683,6 @@ def filter_single_version(game_list):
                         best_revision = revision
                 if best_region:
                     filtered_game["compatible_roms"] = region_to_roms[best_region]
-                    print(f"Région choisie pour {game['title']} (ID: {game['gameId']}): {best_region}")
                 else:
                     filtered_game["compatible_roms"] = [rom for roms in filtered_hash_to_roms.values() for rom in roms]
         else:
@@ -654,248 +714,258 @@ def filter_single_version(game_list):
         filtered_list.append(filtered_game)
     return filtered_list
 
-# Récupère la page et extrait les liens de fichiers
-response = requests.get(URL)
-links = re.findall(r'href="([^"]+\.(?:bin|cue|iso|zip|7z|rar|z64))"', response.text)
-if not links:
-    print("Aucun lien de fichier trouvé.")
-    sys.exit(1)
-
-# Stocke les liens bruts temporairement
-with open(RAW_OUTPUT, 'w') as f:
-    for link in links:
-        f.write(f"{URL}{link}\n")
-
-# Vérifie la taille d'un fichier sur le serveur
-def get_server_file_size(url):
-    try:
-        response = requests.head(url, allow_redirects=True, timeout=10)
-        if response.status_code == 200:
-            return int(response.headers.get("content-length", 0))
-        return None
-    except requests.RequestException:
-        return None
-
-def contains_term(filename, term):
-    pattern = r'\b' + re.escape(term) + r'\b'
-    return bool(re.search(pattern, filename, re.IGNORECASE))
-
-def get_game_name(filename):
-    name = re.sub(r'\s*\([^\)]*\)', '', filename)
-    name = re.sub(r'\s*-\s*Disc\s*[0-9]+', '', name)
-    name = re.sub(r'\.[a-zA-Z0-9]+$', '', name)
-    name = name.lower()
-    name = re.sub(r'[^a-z0-9]+', '-', name)
-    return name.strip('-')
-
-def get_disc_num(filename):
-    match = re.search(r'Disc\s*([0-9]+)', filename, re.IGNORECASE)
-    if match:
-        return match.group(1)
-    return "0"
-
-# Stocke les versions par jeu et disque
-game_versions = {}
-game_regions = {}
-all_selected_links = []
+# Récupère les liens à traiter
+links = []
 selected_links = []
 missing_games = []
 
-if RA_ONLY:
-    ra_games = get_ra_games()
-    if not ra_games:
-        print("Aucun jeu RetroAchievements trouvé. Arrêt du script.")
-        sys.exit(1)
+if UPDATE:
+    try:
+        with open(CHECK_FILE_PATH, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        start_files = False
+        for line in lines:
+            line = line.strip()
+            if line == "Fichiers à télécharger :":
+                start_files = True
+                continue
+            if start_files and line.startswith("- "):
+                filename = line[2:].strip()
+                link = f"{URL}{urllib.parse.quote(filename)}"
+                selected_links.append(link)
+        if not selected_links:
+            print("Aucun fichier à télécharger trouvé dans .check.txt.")
+            sys.exit(1)
 
-    ra_games = filter_single_version(ra_games)
-
-    ra_filenames = {}
-    for game in ra_games:
-        is_japan_specific = "Japan" in game["title"] or game["title"].startswith("Pocket Monsters")
-        region = "Japan" if is_japan_specific else None
-        for rom in game["compatible_roms"]:
-            if rom["filename"]:
-                cleaned_name = clean_filename(rom["filename"], region=region)
-                key = (game["gameId"], cleaned_name)
-                if key not in ra_filenames:
-                    ra_filenames[key] = []
-                ra_filenames[key].append((game, rom["filename"]))
-
-    with open(RAW_OUTPUT, 'r') as f:
-        for link in f:
-            link = link.strip()
+        filtered_links = []
+        for link in selected_links:
             filename = urllib.parse.unquote(os.path.basename(link))
-            cleaned_filename = clean_filename(filename)
-            cleaned_filename_japan = clean_filename(filename, region="Japan")
-            cleaned_filename_usa = clean_filename(filename, region="USA")
-            cleaned_filename_europe = clean_filename(filename, region="Europe")
-
-            matched = False
-            for cleaned_name in [cleaned_filename, cleaned_filename_japan, cleaned_filename_usa, cleaned_filename_europe]:
-                for (game_id, rom_cleaned_name), game_roms in ra_filenames.items():
-                    if rom_cleaned_name == cleaned_name:
-                        for game, rom_filename in game_roms:
-                            print(f"Correspondance trouvée : {filename} -> {game['title']} (ID: {game['gameId']}, ROM: {rom_filename})")
-                            key = f"{get_game_name(filename)}_disc_{get_disc_num(filename)}_{game['gameId']}"
-                            is_japan_specific = "Japan" in game["title"] or game["title"].startswith("Pocket Monsters")
-                            priority = get_rom_priority(filename, is_japan_specific, mode="ra")
-                            if key not in game_versions or priority < game_versions[key][1]:
-                                game_versions[key] = (link, priority, filename)
-                            if game["title"] not in game_regions:
-                                game_regions[game["title"]] = set()
-                            game_regions[game["title"]].add("RA")
-                            matched = True
-            if not matched:
-                print(f"Aucune correspondance RA pour : {filename} (noms nettoyés : {cleaned_filename}, {cleaned_filename_japan}, {cleaned_filename_usa}, {cleaned_filename_europe})")
-
-    found_titles = set()
-    for key, (link, priority, filename) in game_versions.items():
-        game_id = key.split('_')[-1]
-        for game in ra_games:
-            if str(game["gameId"]) == game_id:
-                found_titles.add(game["title"])
-                break
-    missing_games = [game for game in ra_games if game["title"] not in found_titles]
-
-    # Créer all_selected_links pour check.txt et notinlist
-    all_selected_links = [version[0] for version in game_versions.values()]
-
-    # Créer selected_links pour le téléchargement, filtré par --name
-    selected_links = []
-    for link in all_selected_links:
-        filename = urllib.parse.unquote(os.path.basename(link))
-        if NAME_FILTER:
-            # Normaliser le nom pour le filtrage
-            cleaned_name = re.sub(r'\s*\([^\)]*\)', '', filename).lower()
-            cleaned_name = re.sub(r'\.[a-zA-Z0-9]+$', '', cleaned_name)
-            if NAME_FILTER.lower() == '0':
-                if re.match(r'^\d', cleaned_name, re.IGNORECASE):
-                    selected_links.append(link)
+            if NAME_FILTER:
+                cleaned_name = re.sub(r'\s*\([^\)]*\)', '', filename).lower()
+                cleaned_name = re.sub(r'\.[a-zA-Z0-9]+$', '', cleaned_name)
+                if NAME_FILTER.lower() == '0':
+                    if re.match(r'^\d', cleaned_name, re.IGNORECASE):
+                        filtered_links.append(link)
+                else:
+                    if cleaned_name.startswith(NAME_FILTER.lower()):
+                        filtered_links.append(link)
             else:
-                if cleaned_name.startswith(NAME_FILTER.lower()):
-                    selected_links.append(link)
-                    print(f"Lien sélectionné pour téléchargement : {filename}")
-        else:
-            selected_links.append(link)
-            print(f"Lien sélectionné pour téléchargement : {filename}")
+                filtered_links.append(link)
 
-    if not selected_links:
-        print(f"Aucun jeu trouvé correspondant au filtre {'--name ' + NAME_FILTER if NAME_FILTER else 'RA'} après filtrage.")
+        if not filtered_links:
+            print(f"Aucun fichier correspondant au filtre {'--name ' + NAME_FILTER if NAME_FILTER else ''} dans .check.txt.")
+            sys.exit(1)
+
+        existing_files = initialize_progress_file(download_dir, selected_links)
+
+        links = []
+        for link in filtered_links:
+            filename = urllib.parse.unquote(os.path.basename(link))
+            if CHD:
+                chd_filename = os.path.splitext(filename)[0] + ".chd"
+                if chd_filename not in existing_files:
+                    links.append(link)
+            else:
+                if filename not in existing_files:
+                    links.append(link)
+
+        if not links:
+            print("Tous les fichiers sont déjà téléchargés ou traités.")
+            sys.exit(0)
+    except Exception as e:
+        print(f"Erreur lors de la lecture des liens dans {CHECK_FILE_PATH} : {e}")
         sys.exit(1)
 else:
-    with open(RAW_OUTPUT, 'r') as f:
-        for link in f:
-            link = link.strip()
-            filename = urllib.parse.unquote(os.path.basename(link))
+    response = requests.get(URL)
+    links = re.findall(r'href="([^"]+\.(?:bin|cue|iso|zip|7z|rar|z64))"', response.text)
+    if not links:
+        print("Aucun lien de fichier trouvé.")
+        sys.exit(1)
 
-            game_name = get_game_name(filename)
-            disc_num = get_disc_num(filename)
+    with open(RAW_OUTPUT, 'w') as f:
+        for link in links:
+            f.write(f"{URL}{link}\n")
 
-            if contains_term(filename, "Demo") or contains_term(filename, "Beta"):
-                print(f"{filename} ignoré : contient Demo ou Beta")
-                continue
+    def get_server_file_size(url):
+        try:
+            response = requests.head(url, allow_redirects=True, timeout=10)
+            if response.status_code == 200:
+                return int(response.headers.get("content-length", 0))
+            return None
+        except requests.RequestException:
+            return None
 
-            key = f"{game_name}_disc_{disc_num}"
+    def contains_term(filename, term):
+        pattern = r'\b' + re.escape(term) + r'\b'
+        return bool(re.search(pattern, filename, re.IGNORECASE))
 
-            if ALL:
-                priority = 0
-                region = "All"
-            else:
-                priority = None
-                region = None
-                parenthetical_parts = [part for part in re.findall(r'\((.*?)\)', filename, re.IGNORECASE)]
-                has_french = any(
-                    'fr' in part.lower().split(',') or part.strip().lower() == 'fr'
-                    for part in parenthetical_parts
-                )
-                has_europe = any("europe" in part.lower() for part in parenthetical_parts)
-                if contains_term(filename, "USA") and has_french:
-                    priority = 1
-                    region = "USA_Fr"
-                elif contains_term(filename, "Canada") and has_french:
-                    priority = 2
-                    region = "Canada_Fr"
-                elif contains_term(filename, "France") or has_french:
-                    priority = 3
-                    region = "France"
-                elif has_europe and has_french:
-                    priority = 4
-                    region = "Europe_Fr"
-                elif contains_term(filename, "USA"):
-                    priority = 5
-                    region = "USA"
-                elif has_europe:
-                    priority = 6
-                    region = "Europe"
-                else:
+    def get_game_name(filename):
+        name = re.sub(r'\s*\([^\)]*\)', '', filename)
+        name = re.sub(r'\s*-\s*Disc\s*[0-9]+', '', name)
+        name = re.sub(r'\.[a-zA-Z0-9]+$', '', name)
+        name = name.lower()
+        name = re.sub(r'[^a-z0-9]+', '-', name)
+        return name.strip('-')
+
+    def get_disc_num(filename):
+        match = re.search(r'Disc\s*([0-9]+)', filename, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        return "0"
+
+    game_versions = {}
+    game_regions = {}
+
+    if RA_ONLY:
+        ra_games = get_ra_games()
+        if not ra_games:
+            print("Aucun jeu RetroAchievements trouvé. Arrêt du script.")
+            sys.exit(1)
+
+        ra_games = filter_single_version(ra_games)
+
+        ra_filenames = {}
+        for game in ra_games:
+            is_japan_specific = "Japan" in game["title"] or game["title"].startswith("Pocket Monsters")
+            region = "Japan" if is_japan_specific else None
+            for rom in game["compatible_roms"]:
+                if rom["filename"]:
+                    cleaned_name = clean_filename(rom["filename"], region=region)
+                    key = (game["gameId"], cleaned_name)
+                    if key not in ra_filenames:
+                        ra_filenames[key] = []
+                    ra_filenames[key].append((game, rom["filename"]))
+
+        with open(RAW_OUTPUT, 'r') as f:
+            for link in f:
+                link = link.strip()
+                filename = urllib.parse.unquote(os.path.basename(link))
+                cleaned_filename = clean_filename(filename)
+                cleaned_filename_japan = clean_filename(filename, region="Japan")
+                cleaned_filename_usa = clean_filename(filename, region="USA")
+                cleaned_filename_europe = clean_filename(filename, region="Europe")
+
+                for cleaned_name in [cleaned_filename, cleaned_filename_japan, cleaned_filename_usa, cleaned_filename_europe]:
+                    for (game_id, rom_cleaned_name), game_roms in ra_filenames.items():
+                        if rom_cleaned_name == cleaned_name:
+                            for game, _ in game_roms:
+                                key = f"{get_game_name(filename)}_disc_{get_disc_num(filename)}_{game['gameId']}"
+                                is_japan_specific = "Japan" in game["title"] or game["title"].startswith("Pocket Monsters")
+                                priority = get_rom_priority(filename, is_japan_specific, mode="ra")
+                                if key not in game_versions or priority < game_versions[key][1]:
+                                    game_versions[key] = (link, priority, filename)
+                                if game["title"] not in game_regions:
+                                    game_regions[game["title"]] = set()
+                                game_regions[game["title"]].add("RA")
+
+        found_titles = set()
+        for key, (link, _, _) in game_versions.items():
+            game_id = key.split('_')[-1]
+            for game in ra_games:
+                if str(game["gameId"]) == game_id:
+                    found_titles.add(game["title"])
+                    break
+        missing_games = [game for game in ra_games if game["title"] not in found_titles]
+
+        selected_links = [version[0] for version in game_versions.values()]
+        if not selected_links:
+            print("Aucun jeu trouvé correspondant au filtre RA après filtrage.")
+            sys.exit(1)
+    else:
+        with open(RAW_OUTPUT, 'r') as f:
+            for link in f:
+                link = link.strip()
+                filename = urllib.parse.unquote(os.path.basename(link))
+
+                game_name = get_game_name(filename)
+                disc_num = get_disc_num(filename)
+
+                if contains_term(filename, "Demo") or contains_term(filename, "Beta"):
                     continue
 
-                if game_name not in game_regions:
-                    game_regions[game_name] = set()
-                game_regions[game_name].add(region)
-                if key not in game_versions or priority < game_versions[key][1]:
-                    game_versions[key] = (link, get_rom_priority(filename, mode="eu_only"), filename)
+                key = f"{game_name}_disc_{disc_num}"
 
-    # Créer all_selected_links pour check.txt et notinlist
-    if EU_ONLY:
-        for key, (link, priority, filename) in game_versions.items():
+                if ALL:
+                    priority = 0
+                    region = "All"
+                else:
+                    priority = None
+                    region = None
+                    parenthetical_parts = [part for part in re.findall(r'\((.*?)\)', filename, re.IGNORECASE)]
+                    has_french = any(
+                        'fr' in part.lower().split(',') or part.strip().lower() == 'fr'
+                        for part in parenthetical_parts
+                    )
+                    has_europe = any("europe" in part.lower() for part in parenthetical_parts)
+                    if contains_term(filename, "USA") and has_french:
+                        priority = 1
+                        region = "USA_Fr"
+                    elif contains_term(filename, "Canada") and has_french:
+                        priority = 2
+                        region = "Canada_Fr"
+                    elif contains_term(filename, "France") or has_french:
+                        priority = 3
+                        region = "France"
+                    elif has_europe and has_french:
+                        priority = 4
+                        region = "Europe_Fr"
+                    elif contains_term(filename, "USA"):
+                        priority = 5
+                        region = "USA"
+                    elif has_europe:
+                        priority = 6
+                        region = "Europe"
+                    else:
+                        continue
+
+                    if game_name not in game_regions:
+                        game_regions[game_name] = set()
+                    game_regions[game_name].add(region)
+                    if key not in game_versions or priority < game_versions[key][1]:
+                        game_versions[key] = (link, get_rom_priority(filename, mode="eu_only"), filename)
+
+        selected_links = []
+        for key, (link, _, filename) in game_versions.items():
             game_name = key.split('_disc_')[0]
             regions = game_regions[game_name]
-            if any(r in {"USA_Fr", "Canada_Fr", "France", "Europe_Fr", "USA", "Europe"} for r in regions):
-                all_selected_links.append(link)
-    elif FR_ONLY:
-        for key, (link, priority, filename) in game_versions.items():
-            game_name = key.split('_disc_')[0]
-            if any(r in {"France", "Fr", "USA_Fr", "Europe_Fr"} for r in game_regions[game_name]):
-                all_selected_links.append(link)
-    else:  # ALL
-        all_selected_links = [version[0] for version in game_versions.values()]
+            if EU_ONLY and not any(r in {"USA_Fr", "Canada_Fr", "France", "Europe_Fr", "USA", "Europe"} for r in regions):
+                continue
+            if FR_ONLY and not any(r in {"France", "USA_Fr", "Europe_Fr"} for r in regions):
+                continue
+            selected_links.append(link)
 
-    # Créer selected_links pour le téléchargement, filtré par --name
-    selected_links = []
-    for link in all_selected_links:
+        if not selected_links:
+            print(f"Aucun jeu trouvé correspondant au filtre de région après filtrage.")
+            sys.exit(1)
+
+    write_check_file(CHECK_FILE_PATH, selected_links, missing_games if RA_ONLY else None, CONSOLE_ID if RA_ONLY else None)
+
+    existing_files = initialize_progress_file(download_dir, selected_links)
+
+    links = []
+    for link in selected_links:
         filename = urllib.parse.unquote(os.path.basename(link))
         if NAME_FILTER:
-            # Normaliser le nom pour le filtrage
             cleaned_name = re.sub(r'\s*\([^\)]*\)', '', filename).lower()
             cleaned_name = re.sub(r'\.[a-zA-Z0-9]+$', '', cleaned_name)
             if NAME_FILTER.lower() == '0':
-                if re.match(r'^\d', cleaned_name, re.IGNORECASE):
-                    selected_links.append(link)
-            else:
-                if cleaned_name.startswith(NAME_FILTER.lower()):
-                    selectedBios.append(link)
-                    print(f"Lien sélectionné pour téléchargement : {filename}")
+                if not re.match(r'^\d', cleaned_name, re.IGNORECASE):
+                    continue
+            elif not cleaned_name.startswith(NAME_FILTER.lower()):
+                continue
+        if CHD:
+            chd_filename = os.path.splitext(filename)[0] + ".chd"
+            if chd_filename not in existing_files:
+                links.append(link)
         else:
-            selected_links.append(link)
-            print(f"Lien sélectionné pour téléchargement : {filename}")
+            if filename not in existing_files:
+                links.append(link)
 
-    if not selected_links:
-        print(f"Aucun jeu trouvé correspondant au filtre {'--name ' + NAME_FILTER if NAME_FILTER else 'de région'} après filtrage.")
-        sys.exit(1)
-
-# Initialiser existing_files après la création de all_selected_links
-existing_files = initialize_progress_file(download_dir, all_selected_links)
-
-# Écrit dans check.txt avec all_selected_links
-write_check_file(CHECK_FILE_PATH, all_selected_links, missing_games if RA_ONLY else None)
-
-# Écrit les liens sélectionnés pour le téléchargement
-if selected_links:
-    with open(FILTERED_OUTPUT, 'w') as f:
-        for link in sorted(selected_links):
-            f.write(f"{link}\n")
-else:
-    print("Aucun lien filtré trouvé pour le téléchargement.")
-    sys.exit(1)
-
-# Lit les liens pour le téléchargement
-with open(FILTERED_OUTPUT, 'r') as f:
-    links = [line.strip() for line in f if line.strip()]
-
-# Supprime les fichiers temporaires
-os.remove(RAW_OUTPUT)
-os.remove(FILTERED_OUTPUT)
+    if not links:
+        print("Tous les fichiers sont déjà téléchargés ou traités.")
+        if os.path.exists(RAW_OUTPUT):
+            os.remove(RAW_OUTPUT)
+        sys.exit(0)
 
 # Fonction pour tronquer les noms
 def truncate_filename(filename, max_length=15):
@@ -914,7 +984,6 @@ def download_file_to_tmp(url, tmp_path, position=0):
     resume_byte_pos = 0
     if os.path.exists(tmp_path):
         resume_byte_pos = os.path.getsize(tmp_path)
-        print(f"{filename} déjà présent dans /tmp, reprise à {resume_byte_pos} octets")
 
     headers = {"Range": f"bytes={resume_byte_pos}-"} if resume_byte_pos else {}
     try:
@@ -926,7 +995,6 @@ def download_file_to_tmp(url, tmp_path, position=0):
     if response.status_code == 416:
         server_size = get_server_file_size(url)
         if server_size and resume_byte_pos >= server_size:
-            print(f"{filename} déjà téléchargé dans /tmp (taille complète : {resume_byte_pos} octets)")
             return True, url
         print(f"Échec du téléchargement de {filename} : Requête de reprise invalide")
         return False, url
@@ -954,7 +1022,6 @@ def download_file_to_tmp(url, tmp_path, position=0):
     server_size = get_server_file_size(url)
     local_size = os.path.getsize(tmp_path)
     if server_size and local_size == server_size:
-        print(f"{filename} téléchargé dans /tmp")
         return True, url
     else:
         print(f"Téléchargement de {filename} incomplet (local: {local_size}, serveur: {server_size})")
@@ -965,7 +1032,6 @@ def extract_zip(zip_path, dest_dir):
     try:
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(dest_dir)
-        print(f"Décompression de {os.path.basename(zip_path)} terminée dans {dest_dir}")
         return True
     except Exception as e:
         print(f"Échec de la décompression de {os.path.basename(zip_path)} : {e}")
@@ -977,7 +1043,6 @@ def convert_to_chd(cue_or_iso_path, work_dir, existing_files):
     chd_filename = os.path.basename(output_chd)
 
     if os.path.exists(output_chd) and chd_filename not in existing_files:
-        print(f"Suppression du .chd partiel : {chd_filename}")
         os.remove(output_chd)
 
     command = ["chdman"]
@@ -992,8 +1057,7 @@ def convert_to_chd(cue_or_iso_path, work_dir, existing_files):
     command.extend(["-i", cue_or_iso_path, "-o", output_chd])
 
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
-        print(f"Conversion de {os.path.basename(cue_or_iso_path)} en {chd_filename} terminée")
+        subprocess.run(command, capture_output=True, text=True, check=True)
         return True, output_chd
     except subprocess.CalledProcessError as e:
         print(f"Échec de la conversion de {os.path.basename(cue_or_iso_path)} : {e.stderr}")
@@ -1002,7 +1066,7 @@ def convert_to_chd(cue_or_iso_path, work_dir, existing_files):
         print(f"Erreur lors de la conversion de {os.path.basename(cue_or_iso_path)} : {e}")
         return False, None
 
-# Fonction pour déplacer les fichiers du dossier work vers le dossier final
+# Fonction pour déplacer les fichiers du dossier .work vers le dossier final
 def move_to_final(work_dir, download_dir, filenames):
     for filename in filenames:
         src_path = os.path.join(work_dir, filename)
@@ -1010,9 +1074,7 @@ def move_to_final(work_dir, download_dir, filenames):
         try:
             if os.path.exists(dest_path):
                 os.remove(dest_path)
-                print(f"Fichier existant remplacé : {filename}")
             shutil.move(src_path, dest_path)
-            print(f"Déplacé {filename} vers {download_dir}")
         except Exception as e:
             print(f"Erreur lors du déplacement de {filename} : {e}")
             return False
@@ -1022,7 +1084,6 @@ def move_to_final(work_dir, download_dir, filenames):
 def process_extract(url, download_dir, work_dir, existing_files, position=0):
     filename = urllib.parse.unquote(os.path.basename(url))
     if filename in existing_files:
-        print(f"{filename} déjà présent dans le dossier, ignoré.")
         return True, url
 
     tmp_zip = os.path.join("/tmp", f"myrientdl_{os.path.basename(url)}")
@@ -1047,7 +1108,6 @@ def process_extract(url, download_dir, work_dir, existing_files, position=0):
             os.remove(tmp_zip)
             return False, url
 
-        print(f"Traitement de {filename} terminé")
         return True, url
     finally:
         if os.path.exists(tmp_zip):
@@ -1058,7 +1118,6 @@ def process_chd(url, download_dir, work_dir, existing_files, position=0):
     filename = urllib.parse.unquote(os.path.basename(url))
     chd_filename = os.path.splitext(filename)[0] + ".chd"
     if chd_filename in existing_files:
-        print(f"{chd_filename} déjà présent dans le dossier, ignoré.")
         return True, url
 
     tmp_zip = os.path.join("/tmp", f"myrientdl_{os.path.basename(url)}")
@@ -1095,7 +1154,6 @@ def process_chd(url, download_dir, work_dir, existing_files, position=0):
             if not move_to_final(work_dir, download_dir, chd_files):
                 return False, url
 
-            print(f"Traitement de {filename} terminé")
             return True, url
         finally:
             if os.path.exists(tmp_zip):
@@ -1112,18 +1170,15 @@ def download_file(url, download_dir, work_dir, existing_files, position=0):
     display_name = truncate_filename(filename)
 
     if filename in existing_files:
-        print(f"{filename} déjà présent dans le dossier, ignoré.")
         return True, url
 
     resume_byte_pos = 0
     if os.path.exists(work_path):
         resume_byte_pos = os.path.getsize(work_path)
-        print(f"{filename} déjà présent dans work/, reprise à {resume_byte_pos} octets")
     elif os.path.exists(dest_path):
         server_size = get_server_file_size(url)
         local_size = os.path.getsize(dest_path)
         if server_size and local_size == server_size:
-            print(f"{filename} déjà présent dans le dossier final avec la bonne taille.")
             return True, url
 
     headers = {"Range": f"bytes={resume_byte_pos}-"} if resume_byte_pos else {}
@@ -1136,10 +1191,8 @@ def download_file(url, download_dir, work_dir, existing_files, position=0):
     if response.status_code == 416:
         server_size = get_server_file_size(url)
         if server_size and resume_byte_pos >= server_size:
-            print(f"{filename} déjà téléchargé dans work/ (taille complète : {resume_byte_pos} octets)")
             if move_to_final(work_dir, download_dir, [filename]):
-                print(f"Traitement de {filename} terminé")
-            return True, url
+                return True, url
         print(f"Échec du téléchargement de {filename} : Requête de reprise invalide")
         return False, url
 
@@ -1166,12 +1219,9 @@ def download_file(url, download_dir, work_dir, existing_files, position=0):
     server_size = get_server_file_size(url)
     local_size = os.path.getsize(work_path)
     if server_size and local_size == server_size:
-        print(f"{filename} téléchargé dans work/")
         if move_to_final(work_dir, download_dir, [filename]):
-            print(f"Traitement de {filename} terminé")
             return True, url
-        else:
-            return False, url
+        return False, url
     else:
         print(f"Téléchargement de {filename} incomplet (local: {local_size}, serveur: {server_size})")
         return False, url
@@ -1181,10 +1231,8 @@ MAX_WORKERS = MAX_WORKERS_DEFAULT
 if (EXTRACT or CHD) and args.max == 3:
     MAX_WORKERS = 1
 
-print(f"Lancement du traitement avec maximum {MAX_WORKERS} tâches simultanées...")
 try:
     if EXTRACT:
-        print("Mode --extract : Téléchargement et décompression...")
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             future_to_url = {executor.submit(process_extract, link, download_dir, work_dir, existing_files, i % MAX_WORKERS): link for i, link in enumerate(sorted(links))}
             for future in as_completed(future_to_url):
@@ -1199,7 +1247,6 @@ try:
                 except Exception as e:
                     print(f"Erreur dans le thread pour {urllib.parse.unquote(os.path.basename(future_to_url[future]))} : {e}")
     elif CHD:
-        print("Mode --chd : Téléchargement, décompression et conversion en CHD...")
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             future_to_url = {executor.submit(process_chd, link, download_dir, work_dir, existing_files, i % MAX_WORKERS): link for i, link in enumerate(sorted(links))}
             for future in as_completed(future_to_url):
@@ -1214,7 +1261,6 @@ try:
                 except Exception as e:
                     print(f"Erreur dans le thread pour {urllib.parse.unquote(os.path.basename(future_to_url[future]))} : {e}")
     else:
-        print("Mode standard : Téléchargement des fichiers...")
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             future_to_url = {executor.submit(download_file, link, download_dir, work_dir, existing_files, i % MAX_WORKERS): link for i, link in enumerate(sorted(links))}
             for future in as_completed(future_to_url):
@@ -1236,13 +1282,16 @@ except Exception as e:
     print(f"Erreur inattendue : {e}")
     sys.exit(1)
 
-# Nettoyage du dossier work
+# Nettoyage du dossier .work
 try:
     if os.path.exists(work_dir):
         shutil.rmtree(work_dir)
-        print(f"Dossier {work_dir} supprimé.")
 except Exception as e:
     print(f"Erreur lors de la suppression de {work_dir} : {e}")
+
+# Supprime les fichiers temporaires
+if os.path.exists(RAW_OUTPUT):
+    os.remove(RAW_OUTPUT)
 
 if not shutdown_event.is_set():
     print("Tous les traitements terminés.")
