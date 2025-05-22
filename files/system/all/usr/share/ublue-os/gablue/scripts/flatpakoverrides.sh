@@ -15,7 +15,4 @@ flatpak override org.mozilla.firefox --user --filesystem=/run/udev:ro
 flatpak override app.zen_browser.zen --user --filesystem=/run/udev:ro
 flatpak override com.valvesoftware.Steam  --user --env=MANGOHUD=1
 
-flatpak override com.valvesoftware.Steam  --user --env=MANGOHUD=1
-
-#temp fix for retroarch
 flatpak override io.github.hedge_dev.hedgemodmanager --user --filesystem=~/.var/app/io.github.hedge_dev.unleashedrecomp:ro
