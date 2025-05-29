@@ -1,0 +1,83 @@
+#!/bin/bash
+
+# Vérifier si waydroid et kdialog sont installés
+if ! command -v waydroid &> /dev/null; then
+    kdialog --error "Erreur : waydroid n'est pas installé."
+    exit 1
+fi
+if ! command -v kdialog &> /dev/null; then
+    kdialog --error "Erreur : kdialog n'est pas installé. Installez-le avec 'sudo dnf install kdialog'."
+    exit 1
+fi
+
+# Récupérer la liste des applications avec waydroid app list
+APP_LIST=$(waydroid app list)
+
+# Extraire les noms et packageNames dans des tableaux
+# Utiliser une approche plus robuste pour parser les lignes
+NAMES=()
+PACKAGES=()
+while IFS= read -r line; do
+    if [[ "$line" =~ ^Name:[[:space:]]*(.+)$ ]]; then
+        NAMES+=("${BASH_REMATCH[1]}")
+    elif [[ "$line" =~ ^packageName:[[:space:]]*(.+)$ ]]; then
+        PACKAGES+=("${BASH_REMATCH[1]}")
+    fi
+done <<< "$APP_LIST"
+
+# Vérifier si des applications ont été trouvées
+if [ ${#NAMES[@]} -eq 0 ]; then
+    kdialog --error "Aucune application trouvée avec waydroid app list."
+    exit 1
+fi
+
+# Construire la liste pour kdialog (format: "index Name off")
+KDIALOG_LIST=()
+for i in "${!NAMES[@]}"; do
+    # Exclure les applications système (par exemple, com.android.*)
+    if [[ "${PACKAGES[$i]}" != com.android* ]]; then
+        KDIALOG_LIST+=("$i" "${NAMES[$i]}" "off")
+    fi
+done
+
+# Vérifier si la liste est vide après filtrage
+if [ ${#KDIALOG_LIST[@]} -eq 0 ]; then
+    kdialog --error "Aucune application non-système trouvée."
+    exit 1
+fi
+
+# Afficher la boîte de dialogue à choix multiple avec kdialog
+SELECTED=$(kdialog --checklist "Sélectionnez les applications pour activer persist.waydroid.fake_touch :" "${KDIALOG_LIST[@]}")
+
+# Vérifier si l'utilisateur a annulé
+if [ $? -ne 0 ]; then
+    kdialog --msgbox "Opération annulée."
+    exit 0
+fi
+
+# Convertir la sortie de kdialog (indices séparés par des espaces) en une liste de packages
+SELECTED_PACKAGES=""
+for index in $SELECTED; do
+    # Supprimer les guillemets et récupérer le package correspondant à l'index
+    index_clean=$(echo "$index" | tr -d '"')
+    if [ -n "${PACKAGES[$index_clean]}" ]; then
+        if [ -z "$SELECTED_PACKAGES" ]; then
+            SELECTED_PACKAGES="${PACKAGES[$index_clean]}"
+        else
+            SELECTED_PACKAGES="$SELECTED_PACKAGES,${PACKAGES[$index_clean]}"
+        fi
+    fi
+done
+
+# Réinitialiser persist.waydroid.fake_touch
+waydroid prop set persist.waydroid.fake_touch ""
+
+# Si des packages ont été sélectionnés, définir la propriété avec la liste
+if [ -n "$SELECTED_PACKAGES" ]; then
+    waydroid prop set persist.waydroid.fake_touch "$SELECTED_PACKAGES"
+    kdialog --msgbox "persist.waydroid.fake_touch défini à : $SELECTED_PACKAGES"
+else
+    kdialog --msgbox "Aucune application sélectionnée. persist.waydroid.fake_touch a été réinitialisé."
+fi
+
+exit 0
