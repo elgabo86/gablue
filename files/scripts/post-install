@@ -37,6 +37,10 @@ setcap 'cap_sys_nice=eip' /usr/bin/gamescope
 wget https://github.com/aandrew-me/tgpt/releases/latest/download/tgpt-linux-amd64 -O /usr/bin/tgpt
 chmod +x /usr/bin/tgpt
 
+# Add lowfi
+wget https://github.com/talwat/lowfi/releases/latest/download/lowfi-linux-x86_64 -O /usr/bin/lowfi
+chmod +x /usr/bin/lowfi
+
 #Use bore config from CachyOS
 curl -Lo /usr/lib/sysctl.d/99-bore-scheduler.conf https://github.com/CachyOS/CachyOS-Settings/raw/master/usr/lib/sysctl.d/99-bore-scheduler.conf
 
