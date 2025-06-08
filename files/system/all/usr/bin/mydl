@@ -9,7 +9,6 @@ import requests
 import shutil
 import subprocess
 import zipfile
-import tempfile
 from tqdm import tqdm
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -46,8 +45,8 @@ parser.add_argument("--fr-only", action="store_true", help="Ne conserve que les 
 parser.add_argument("--eu-only", action="store_true", help="Ne liste que les jeux avec une version (France), (Fr), (Europe) ou (USA) avec Fr")
 parser.add_argument("--all", action="store_true", help="Télécharge tous les fichiers sans filtrer par région")
 parser.add_argument("--ra", action="store_true", help="Ne télécharge que les jeux compatibles RetroAchievements")
-parser.add_argument("--extract", action="store_true", help="Télécharge le .zip dans /tmp, décompresse dans .work/, déplace dans le dossier final")
-parser.add_argument("--chd", action="store_true", help="Télécharge le .zip dans /tmp, décompresse dans /tmp, convertit en .chd dans .work/, déplace dans le dossier final")
+parser.add_argument("--extract", action="store_true", help="Télécharge le .zip dans .work/, décompresse dans .work/, déplace dans le dossier final")
+parser.add_argument("--chd", action="store_true", help="Télécharge le .zip dans .work/, décompresse dans .work/, convertit en .chd dans .work/, déplace dans le dossier final")
 parser.add_argument("--max", type=int, default=3, help="Nombre maximum de téléchargements ou traitements simultanés (défaut : 3 pour standard, 1 pour --extract/--chd)")
 parser.add_argument("--name", type=str, help="Ne télécharge que les jeux commençant par la chaîne spécifiée (ex: 'ab' pour les jeux commençant par 'ab', '0' pour les chiffres)")
 parser.add_argument("--path", type=str, help="Chemin personnalisé pour les téléchargements (remplace le dossier courant ou ~/Downloads)")
@@ -136,7 +135,7 @@ if not UPDATE and not (FR_ONLY or EU_ONLY or ALL or RA_ONLY):
 
     if choice == "" or choice == "1":
         EU_ONLY = True
-        sys.argv.append("--eu-only")  # Ajouter --eu-only à sys.argv pour .check.txt
+        sys.argv.append("--eu-only")
     elif choice == "2":
         FR_ONLY = True
         sys.argv.append("--fr-only")
@@ -236,7 +235,7 @@ HASH_DIR = os.path.expanduser("~/.local/share/mydl/hash")
 HASH_ZIP = "/usr/share/ublue-os/gablue/ra/hash.zip"
 
 # Chemins temporaires et fichiers de check
-RAW_OUTPUT = "/tmp/raw_download_links.txt"
+RAW_OUTPUT = os.path.join(work_dir, "raw_download_links.txt")
 CHECK_FILE_PATH = os.path.join(download_dir, ".check.txt")
 
 # Récupérer les liens à traiter
@@ -255,14 +254,6 @@ if UPDATE:
     except Exception as e:
         print(f"Erreur lors de la récupération des liens depuis {URL} : {e}")
         sys.exit(1)
-
-    # Mettre à jour les données RetroAchievements si --ra est activé
-    if RA_ONLY:
-        ra_games = get_ra_games()
-        if not ra_games:
-            print("Aucun jeu RetroAchievements trouvé. Arrêt du script.")
-            sys.exit(1)
-        ra_games = filter_single_version(ra_games)
 else:
     try:
         response = requests.get(URL)
@@ -320,7 +311,6 @@ def initialize_progress_file(download_dir, selected_links=None):
 def write_check_file(check_file_path, selected_links, missing_games=None, console_id=None):
     try:
         with open(check_file_path, 'w', encoding='utf-8') as f:
-            # Utiliser la commande originale si en mode --update, sinon sys.argv
             command = original_command if UPDATE and original_command else " ".join(sys.argv)
             f.write(f"Commande exécutée : {command}\n")
             if RA_ONLY and console_id is not None:
@@ -953,7 +943,7 @@ def truncate_filename(filename, max_length=15):
     return filename[:max_length-3] + "..."
 
 # Fonction pour télécharger un fichier avec reprise et barre de progression
-def download_file_to_tmp(url, tmp_path, position=0):
+def download_file_to_work(url, work_path, position=0):
     if shutdown_event.is_set():
         return False, url
 
@@ -961,8 +951,8 @@ def download_file_to_tmp(url, tmp_path, position=0):
     display_name = truncate_filename(filename)
 
     resume_byte_pos = 0
-    if os.path.exists(tmp_path):
-        resume_byte_pos = os.path.getsize(tmp_path)
+    if os.path.exists(work_path):
+        resume_byte_pos = os.path.getsize(work_path)
 
     headers = {"Range": f"bytes={resume_byte_pos}-"} if resume_byte_pos else {}
     try:
@@ -986,7 +976,7 @@ def download_file_to_tmp(url, tmp_path, position=0):
     block_size = 1024
 
     with tqdm(total=total_size, initial=resume_byte_pos, unit="B", unit_scale=True, desc=display_name, position=position, leave=True, mininterval=0.2, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") as progress_bar:
-        with open(tmp_path, "ab" if resume_byte_pos else "wb") as f:
+        with open(work_path, "ab" if resume_byte_pos else "wb") as f:
             try:
                 for chunk in response.iter_content(chunk_size=block_size):
                     if shutdown_event.is_set():
@@ -999,7 +989,7 @@ def download_file_to_tmp(url, tmp_path, position=0):
                 return False, url
 
     server_size = get_server_file_size(url)
-    local_size = os.path.getsize(tmp_path)
+    local_size = os.path.getsize(work_path)
     if server_size and local_size == server_size:
         return True, url
     else:
@@ -1065,32 +1055,32 @@ def process_extract(url, download_dir, work_dir, existing_files, position=0):
     if filename in existing_files:
         return True, url
 
-    tmp_zip = os.path.join("/tmp", f"myrientdl_{os.path.basename(url)}")
+    work_zip = os.path.join(work_dir, f"myrientdl_{os.path.basename(url)}")
     try:
-        success, _ = download_file_to_tmp(url, tmp_zip, position)
+        success, _ = download_file_to_work(url, work_zip, position)
         if not success or shutdown_event.is_set():
-            if os.path.exists(tmp_zip):
-                os.remove(tmp_zip)
+            if os.path.exists(work_zip):
+                os.remove(work_zip)
             return False, url
 
-        if not extract_zip(tmp_zip, work_dir):
-            os.remove(tmp_zip)
+        if not extract_zip(work_zip, work_dir):
+            os.remove(work_zip)
             return False, url
 
         extracted_files = [f for f in os.listdir(work_dir) if os.path.isfile(os.path.join(work_dir, f))]
         if not extracted_files:
             print(f"Aucun fichier extrait pour {filename}")
-            os.remove(tmp_zip)
+            os.remove(work_zip)
             return False, url
 
         if not move_to_final(work_dir, download_dir, extracted_files):
-            os.remove(tmp_zip)
+            os.remove(work_zip)
             return False, url
 
         return True, url
     finally:
-        if os.path.exists(tmp_zip):
-            os.remove(tmp_zip)
+        if os.path.exists(work_zip):
+            os.remove(work_zip)
 
 # Fonction principale pour traiter un fichier avec --chd
 def process_chd(url, download_dir, work_dir, existing_files, position=0):
@@ -1099,44 +1089,47 @@ def process_chd(url, download_dir, work_dir, existing_files, position=0):
     if chd_filename in existing_files:
         return True, url
 
-    tmp_zip = os.path.join("/tmp", f"myrientdl_{os.path.basename(url)}")
-    with tempfile.TemporaryDirectory(prefix="myrientdl_", dir="/tmp") as tmp_extract_dir:
-        try:
-            success, _ = download_file_to_tmp(url, tmp_zip, position)
-            if not success or shutdown_event.is_set():
-                return False, url
+    work_zip = os.path.join(work_dir, f"myrientdl_{os.path.basename(url)}")
+    work_extract_dir = os.path.join(work_dir, f"extract_{os.path.basename(url)}")
+    os.makedirs(work_extract_dir, exist_ok=True)
+    try:
+        success, _ = download_file_to_work(url, work_zip, position)
+        if not success or shutdown_event.is_set():
+            return False, url
 
-            if not extract_zip(tmp_zip, tmp_extract_dir):
-                return False, url
+        if not extract_zip(work_zip, work_extract_dir):
+            return False, url
 
-            if os.path.exists(tmp_zip):
-                os.remove(tmp_zip)
+        if os.path.exists(work_zip):
+            os.remove(work_zip)
 
-            chd_created = False
-            chd_files = []
-            for root, _, files in os.walk(tmp_extract_dir):
-                for file in files:
-                    if file.lower().endswith(('.cue', '.iso')):
-                        cue_or_iso_path = os.path.join(root, file)
-                        success, output_chd = convert_to_chd(cue_or_iso_path, work_dir, existing_files)
-                        if success and output_chd:
-                            chd_filename = os.path.basename(output_chd)
-                            chd_files.append(chd_filename)
-                            chd_created = True
-                        if not success or shutdown_event.is_set():
-                            return False, url
+        chd_created = False
+        chd_files = []
+        for root, _, files in os.walk(work_extract_dir):
+            for file in files:
+                if file.lower().endswith(('.cue', '.iso')):
+                    cue_or_iso_path = os.path.join(root, file)
+                    success, output_chd = convert_to_chd(cue_or_iso_path, work_dir, existing_files)
+                    if success and output_chd:
+                        chd_filename = os.path.basename(output_chd)
+                        chd_files.append(chd_filename)
+                        chd_created = True
+                    if not success or shutdown_event.is_set():
+                        return False, url
 
-            if not chd_created:
-                print(f"Aucun fichier .cue ou .iso trouvé dans {filename}")
-                return False, url
+        if not chd_created:
+            print(f"Aucun fichier .cue ou .iso trouvé dans {filename}")
+            return False, url
 
-            if not move_to_final(work_dir, download_dir, chd_files):
-                return False, url
+        if not move_to_final(work_dir, download_dir, chd_files):
+            return False, url
 
-            return True, url
-        finally:
-            if os.path.exists(tmp_zip):
-                os.remove(tmp_zip)
+        return True, url
+    finally:
+        if os.path.exists(work_zip):
+            os.remove(work_zip)
+        if os.path.exists(work_extract_dir):
+            shutil.rmtree(work_extract_dir)
 
 # Fonction pour télécharger un fichier directement
 def download_file(url, download_dir, work_dir, existing_files, position=0):

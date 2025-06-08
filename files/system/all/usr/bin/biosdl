@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+import requests
+from bs4 import BeautifulSoup
+import os
+import zipfile
+import curses
+import urllib.parse
+from urllib.parse import urljoin
+
+# URL de la page
+url = "https://myrient.erista.me/files/Internet%20Archive/chadmaster/RetroarchSystemFiles/Retroarch-System/"
+
+def get_zip_links(url):
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    links = []
+    for a in soup.find_all('a'):
+        href = a.get('href')
+        if href and href.endswith('.zip'):
+            # Décoder le nom du fichier et supprimer l'extension .zip
+            clean_name = urllib.parse.unquote(href).rsplit('.zip', 1)[0]
+            links.append((href, clean_name))  # Stocker le lien original et le nom propre
+    return links
+
+def curses_menu(stdscr, items):
+    selected = []
+    cursor = 0
+    scroll_top = 0
+    max_y, _ = stdscr.getmaxyx()
+    display_max = max_y - 2
+
+    while True:
+        stdscr.clear()
+        stdscr.addstr(0, 0, "Pour quel émulateur RetroArch voulez-vous le bios correspondant ? (ESPACE pour sélectionner, ENTRÉE pour confirmer)")
+
+        # Affichage des éléments avec défilement
+        for i in range(scroll_top, min(scroll_top + display_max, len(items))):
+            item_idx = i
+            display_row = i - scroll_top + 1
+            _, clean_name = items[item_idx]  # Utiliser le nom propre
+            prefix = "[x] " if item_idx in selected else "[ ] "
+            display_text = prefix + clean_name
+            if item_idx == cursor:
+                stdscr.addstr(display_row, 0, display_text, curses.A_REVERSE)
+            else:
+                stdscr.addstr(display_row, 0, display_text)
+
+        stdscr.refresh()
+
+        key = stdscr.getch()
+
+        if key == curses.KEY_UP and cursor > 0:
+            cursor -= 1
+            if cursor < scroll_top:
+                scroll_top -= 1
+        elif key == curses.KEY_DOWN and cursor < len(items) - 1:
+            cursor += 1
+            if cursor >= scroll_top + display_max:
+                scroll_top += 1
+        elif key == curses.KEY_PPAGE and cursor > 0:  # Page Up
+            cursor = max(0, cursor - 10)
+            scroll_top = max(0, scroll_top - 10)
+        elif key == curses.KEY_NPAGE and cursor < len(items) - 1:  # Page Down
+            cursor = min(len(items) - 1, cursor + 10)
+            if cursor >= scroll_top + display_max:
+                scroll_top = min(len(items) - display_max, scroll_top + 10)
+        elif key == ord(' '):
+            if cursor in selected:
+                selected.remove(cursor)
+            else:
+                selected.append(cursor)
+        elif key == ord('\n'):
+            return [items[i][0] for i in selected]  # Retourner les liens originaux
+
+def download_and_extract_zips(zip_urls, base_url, dest_dir):
+    os.makedirs(dest_dir, exist_ok=True)
+
+    for zip_url in zip_urls:
+        full_url = urljoin(base_url, zip_url)
+        zip_name = os.path.basename(urllib.parse.unquote(zip_url))
+        zip_path = os.path.join(dest_dir, zip_name)
+
+        # Téléchargement
+        print(f"Téléchargement de {zip_name}...")
+        response = requests.get(full_url)
+        with open(zip_path, 'wb') as f:
+            f.write(response.content)
+
+        # Décompression
+        print(f"Décompression de {zip_name}...")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(dest_dir)
+
+        # Suppression du fichier zip
+        os.remove(zip_path)
+        print(f"{zip_name} décompressé et supprimé")
+
+def main():
+    # Obtenir le dossier de téléchargement
+    download_dir = os.popen('xdg-user-dir DOWNLOAD').read().strip()
+    bios_dir = os.path.join(download_dir, 'bios')
+
+    # Récupérer les liens des fichiers zip
+    zip_links = get_zip_links(url)
+    if not zip_links:
+        print("Aucun fichier .zip trouvé sur la page")
+        return
+
+    # Interface de sélection avec curses
+    selected_zips = curses.wrapper(curses_menu, zip_links)
+
+    if not selected_zips:
+        print("Aucun fichier sélectionné")
+        return
+
+    # Téléchargement et décompression des fichiers sélectionnés
+    download_and_extract_zips(selected_zips, url, bios_dir)
+    print(f"Tous les fichiers ont été décompressés dans {bios_dir}")
+
+if __name__ == "__main__":
+    main()
