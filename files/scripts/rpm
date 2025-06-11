@@ -30,7 +30,8 @@ ryzenadj \
 yq \
 trash-cli \
 inotify-tools \
-atuin
+atuin \
+tldr
 
 #Goodies cli
 dnf5 -y  install \
