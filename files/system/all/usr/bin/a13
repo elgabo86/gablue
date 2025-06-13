@@ -8,7 +8,7 @@ EXTRA_IMAGE_DIR="/etc/waydroid-extra/images"
 CONFIG_FILE="/var/lib/waydroid/waydroid_base.prop"
 PROPERTY="ro.hardware.gralloc=minigbm_gbm_mesa"
 WAYDROID_SCRIPT_DIR="/tmp/waydroid_script"
-WAYDROID_SCRIPT_URL="https://github.com/aleasto/waydroid_script.git"
+WAYDROID_SCRIPT_URL="https://github.com/casualsnek/waydroid_script.git"
 USER_WAYDROID_DIR="$HOME/.local/share/waydroid"
 USER_CACHE_DIR="$HOME/.cache/waydroid"
 LOCALE="fr_CH" # Français suisse
