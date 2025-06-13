@@ -80,8 +80,8 @@ cleanup() {
     done
     rm -rf "$temp_dir"
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
-    if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak ]; then
-        mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
+    if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak ]; then
+        mv ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
     fi
     qdbus $dbusRef close 2>/dev/null
     kdialog --msgbox "Opération annulée ou erreur survenue. L'ancienne bouteille est restaurée." 2>/dev/null
@@ -117,9 +117,10 @@ fi
 
 qdbus $dbusRef Set "" "value" 5
 qdbus $dbusRef setLabelText "Préparation des répertoires..."
+mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/bak
 if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ]; then
-    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
-    mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
+    mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
 fi
 mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/ ~/.var/app/com.usebottles.bottles/data/bottles/runners/ ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/ ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
 
@@ -130,10 +131,10 @@ dxvk_dir=~/.var/app/com.usebottles.bottles/data/bottles/dxvk/
 vkd3d_dir=~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/
 nvapi_dir=~/.var/app/com.usebottles.bottles/data/bottles/nvapi/
 latencyflex_dir=~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
-bottle_yml=~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/bottle.yml
+bottle_yml=~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml
 
 # Vérification si def.ready existe et comparaison du runner actuel avec celui dans bottle.yml
-if [ ! -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.ready ]; then
+if [ ! -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready ]; then
     echo "def.ready n'existe pas, rebuild requis."
     need_rebuild=true
 elif [ -f "$bottle_yml" ]; then
@@ -153,7 +154,7 @@ elif [ -f "$bottle_yml" ]; then
         fi
     fi
 else
-    echo "bottle.yml non trouvé dans def.bak/, rebuild requis par précaution."
+    echo "bottle.yml non trouvé dans bak/def.bak/, rebuild requis par précaution."
     need_rebuild=true
 fi
 
@@ -319,27 +320,27 @@ fi
 
 if [ "$need_rebuild" = false ]; then
     qdbus $dbusRef Set "" "value" 60
-    qdbus $dbusRef setLabelText "Restauration de la bouteille prête depuis def.ready..."
+    qdbus $dbusRef setLabelText "Restauration de la bouteille prête depuis bak/def.ready..."
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
-    cp -r ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.ready ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
+    cp -r ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
 
     qdbus $dbusRef Set "" "value" 70
     qdbus $dbusRef setLabelText "Récupération des données de l'ancienne configuration..."
     for dir in cache grids icons; do
-        if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/$dir ]; then
+        if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ]; then
             rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/$dir
-            mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/$dir ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/
+            mv ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/
         fi
     done
 
     qdbus $dbusRef Set "" "value" 80
     qdbus $dbusRef setLabelText "Récupération des programmes externes..."
-    if [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/bottle.yml ] && [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml ]; then
+    if [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml ] && [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml ]; then
         python3 - <<EOF
 import yaml
 import os
 
-source_file = os.path.expanduser('~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/bottle.yml')
+source_file = os.path.expanduser('~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml')
 target_file = os.path.expanduser('~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml')
 
 with open(source_file, 'r') as file:
@@ -355,7 +356,7 @@ with open(target_file, 'w') as file:
 EOF
     fi
 
-    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
     rm -rf "$temp_dir"
     qdbus $dbusRef Set "" "value" 100
     qdbus $dbusRef setLabelText "Finalisation..."
@@ -457,19 +458,19 @@ if [ "$need_rebuild" = true ]; then
     qdbus $dbusRef Set "" "value" 95
     qdbus $dbusRef setLabelText "Récupération des données de l'ancienne configuration..."
     for dir in cache grids icons; do
-        if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/$dir ]; then
+        if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ]; then
             rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/$dir
-            mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/$dir ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/
+            mv ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/
         fi
     done
 
     qdbus $dbusRef setLabelText "Récupération des programmes externes..."
-    if [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/bottle.yml ] && [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml ]; then
+    if [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml ] && [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml ]; then
         python3 - <<EOF
 import yaml
 import os
 
-source_file = os.path.expanduser('~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak/bottle.yml')
+source_file = os.path.expanduser('~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml')
 target_file = os.path.expanduser('~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml')
 
 with open(source_file, 'r') as file:
@@ -485,10 +486,10 @@ with open(target_file, 'w') as file:
 EOF
     fi
 
-    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.bak
-    qdbus $dbusRef setLabelText "Création de la bouteille prête (def.ready)..."
-    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.ready
-    cp -r ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def.ready
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
+    qdbus $dbusRef setLabelText "Création de la bouteille prête (bak/def.ready)..."
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready
+    cp -r ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready
 fi
 
 rm -rf "$temp_dir"
