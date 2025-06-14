@@ -2,6 +2,7 @@
 import pygame
 import os
 import subprocess
+import time
 
 # Initialiser Pygame
 pygame.init()
@@ -19,9 +20,11 @@ pygame.font.quit()
 # Créer une horloge
 clock = pygame.time.Clock()
 
-# Variable pour suivre l'état d'exécution de mouse.py
+# Variable pour suivre l'état d'exécution de mouse.py et menuvsr.py
 mouse_script_running = False
+menuvsr_script_running = False
 mouse_process = None
+menuvsr_process = None
 
 # Variables pour éviter les répétitions rapides des commandes de volume
 last_volume_time = 0
@@ -32,6 +35,11 @@ last_left_button = 0
 last_right_button = 0
 last_up_button = 0
 last_down_button = 0
+
+# Variables pour gérer la pression prolongée du bouton home
+home_button_pressed = False
+home_press_start_time = 0
+home_press_duration = 1500  # 1.5 seconde en millisecondes
 
 # Boucle principale
 try:
@@ -65,6 +73,11 @@ try:
                 l3_button = joystick.get_button(7) if num_buttons > 7 else 0
                 r3_button = joystick.get_button(8) if num_buttons > 8 else 0
 
+                # Vérifier si le bouton home est pressé
+                if home_button and not home_button_pressed:
+                    home_button_pressed = True
+                    home_press_start_time = pygame.time.get_ticks()
+
                 # Vérifier les combinaisons de boutons (actions instantanées)
                 if home_button and select_button:
                     print("KILL")
@@ -89,6 +102,13 @@ try:
                     os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/launchyt &")
                     pygame.time.wait(1000)
 
+            elif event.type == pygame.JOYBUTTONUP and joystick:
+                num_buttons = joystick.get_numbuttons()
+                home_button = joystick.get_button(5) if num_buttons > 5 else 0
+                if not home_button and home_button_pressed:
+                    home_button_pressed = False
+                    home_press_start_time = 0  # Réinitialiser le compteur
+
         # Vérifier en continu l'état du joystick si connecté
         if joystick:
             # Vérifier l'état actuel des boutons, axes et hat
@@ -100,6 +120,21 @@ try:
             up_button = 1 if hat_value == (0, 1) else 0
             right_button = 1 if hat_value == (1, 0) else 0
             down_button = 1 if hat_value == (0, -1) else 0
+
+            # Gestion de la pression prolongée du bouton home
+            if home_button and home_button_pressed and not menuvsr_script_running:
+                if pygame.time.get_ticks() - home_press_start_time >= home_press_duration:
+                    print("MENUVSR")
+                    menuvsr_process = subprocess.Popen(
+                        ["python", "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/menuvsr.py"]
+                    )
+                    menuvsr_script_running = True
+                    menuvsr_process.wait()  # Attendre la fin de l'exécution de menuvsr.py
+                    menuvsr_script_running = False
+                    menuvsr_process = None
+                    home_button_pressed = False  # Réinitialiser après exécution
+                    home_press_start_time = 0  # Réinitialiser le compteur
+                    print("Le script menuvsr.py s'est terminé.")
 
             # Gestion des combinaisons avec le hat
             if home_button:
@@ -152,4 +187,6 @@ except KeyboardInterrupt:
 finally:
     if mouse_process:
         mouse_process.terminate()  # Terminer le processus si encore actif
+    if menuvsr_process:
+        menuvsr_process.terminate()  # Terminer le processus si encore actif
     pygame.quit()

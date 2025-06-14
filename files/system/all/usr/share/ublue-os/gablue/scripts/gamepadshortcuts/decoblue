@@ -1,0 +1,4 @@
+#!/bin/bash
+bluetoothctl devices | grep Device | awk '{print $2}' | while read -r device; do
+    bluetoothctl disconnect "$device"
+done
