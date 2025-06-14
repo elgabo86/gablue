@@ -82,6 +82,7 @@ try:
                 # Mode confirmation
                 if cross_button and not last_cross:
                     print(f"Confirmation de l'action: {confirm_action}")
+                    pygame.display.quit()  # Fermer la fenêtre avant l'action
                     if confirm_action == "Éteindre":
                         subprocess.run(["systemctl", "poweroff"])
                     elif confirm_action == "Redémarrer":
@@ -107,11 +108,13 @@ try:
                 if cross_button and not last_cross:
                     print(f"Action choisie: {options[selected_option]}")
                     if selected_option == 0:  # Déconnecter Bluetooth
+                        pygame.display.quit()  # Fermer la fenêtre avant l'action
                         subprocess.run(["/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/decoblue"])
                         running = False
                     elif selected_option == 1:  # Mettre en veille
-                        running = False
+                        pygame.display.quit()  # Fermer la fenêtre avant l'action
                         subprocess.run(["systemctl", "suspend"])
+                        running = False
                     elif selected_option == 2:  # Éteindre
                         confirm_mode = True
                         confirm_action = "Éteindre"
