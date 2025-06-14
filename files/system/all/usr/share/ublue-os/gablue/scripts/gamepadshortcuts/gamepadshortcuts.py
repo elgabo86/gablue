@@ -84,6 +84,10 @@ try:
                 elif home_button and l3_button:
                     print("MUTE")
                     os.system("pactl set-sink-mute @DEFAULT_SINK@ toggle")
+                elif home_button and triangle_button:
+                    print("LAUNCHYT")
+                    os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/launchyt &")
+                    pygame.time.wait(1000)
 
         # Vérifier en continu l'état du joystick si connecté
         if joystick:

@@ -1,0 +1,6 @@
+#!/bin/bash
+if flatpak ps | grep -q "rocks.shy.VacuumTube"; then
+    flatpak kill rocks.shy.VacuumTube
+else
+    flatpak run rocks.shy.VacuumTube --fullscreen &
+fi
