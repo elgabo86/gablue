@@ -31,7 +31,8 @@ yq \
 trash-cli \
 inotify-tools \
 atuin \
-tldr
+tldr \
+trash-cli
 
 #Goodies cli
 dnf5 -y  install \

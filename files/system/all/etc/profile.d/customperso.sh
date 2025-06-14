@@ -55,16 +55,12 @@ alias vrr-off="kscreen-doctor output.1.vrrpolicy.never"
 
 alias watchdir='function _watchdir() { local dir="${1:-$PWD}"; inotifywait -m "$dir" -r -e modify,create,delete,move --format "%w%f %e %T" --timefmt "%F %T" | tee -a /tmp/watchdir.log; }; _watchdir'
 
-alias a13-faketouch-on='waydroid prop set persist.waydroid.fake_touch "*"'
-alias a13-faketouch-off='waydroid prop set persist.waydroid.fake_touch ""'
-
-alias a13-fakewifi-on='waydroid prop set persist.waydroid.fake_wifi "*"'
-alias a13-fakewifi-off='waydroid prop set persist.waydroid.fake_wifi ""'
-
 alias a13-up="adb shell wm user-rotation lock 0"
 alias a13-down="adb shell wm user-rotation lock 2"
 alias a13-left="adb shell wm user-rotation lock 3"
 alias a13-right="adb shell wm user-rotation lock 1"
+
+alias tp="trash-put"
 
 # Ignore duplicate
 HISTCONTROL=ignoredups
