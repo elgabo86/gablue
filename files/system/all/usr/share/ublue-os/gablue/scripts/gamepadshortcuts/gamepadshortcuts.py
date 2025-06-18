@@ -1,4 +1,4 @@
-# Version 1.4
+# Version 1.5
 import pygame
 import os
 import subprocess
@@ -36,14 +36,57 @@ last_right_button = 0
 last_up_button = 0
 last_down_button = 0
 
-# Variables pour gérer la pression prolongée du bouton home
-home_button_pressed = False
-home_press_start_time = 0
-home_press_duration = 1500  # 1.5 seconde en millisecondes
+# Fonction pour obtenir les indices des boutons selon le type de manette
+def get_button_indices(joystick):
+    controller_name = joystick.get_name().lower()
+    print(f"Controller detected: {controller_name}")
+
+    # Par défaut, utiliser les indices pour DualSense/DualShock (PS4/PS5)
+    home_button_idx = 5  # PS Button
+    select_button_idx = 4  # Share Button
+    start_button_idx = 6  # Options Button
+    triangle_button_idx = 3  # Triangle
+    square_button_idx = 2  # Square
+    circle_button_idx = 1  # Circle
+    l3_button_idx = 7  # L3
+    r3_button_idx = 8  # R3
+
+    if "xbox" in controller_name:
+        # Xbox 360/One/Series
+        home_button_idx = 10  # Guide Button
+        select_button_idx = 6  # Back Button
+        start_button_idx = 7  # Start Button
+        triangle_button_idx = 3  # Y Button
+        square_button_idx = 2  # X Button
+        circle_button_idx = 1  # B Button
+        l3_button_idx = 8  # L. Stick In
+        r3_button_idx = 9  # R. Stick In
+    elif "nintendo switch pro" in controller_name:
+        # Nintendo Switch Pro Controller
+        home_button_idx = 5  # Home Button
+        select_button_idx = 4  # - Button
+        start_button_idx = 6  # + Button
+        triangle_button_idx = 3  # Y Button
+        square_button_idx = 2  # X Button
+        circle_button_idx = 1  # B Button
+        l3_button_idx = 7  # L. Stick In
+        r3_button_idx = 8  # R. Stick In
+
+    return {
+        "home": home_button_idx,
+        "select": select_button_idx,
+        "start": start_button_idx,
+        "triangle": triangle_button_idx,
+        "square": square_button_idx,
+        "circle": circle_button_idx,
+        "l3": l3_button_idx,
+        "r3": r3_button_idx
+    }
 
 # Boucle principale
 try:
     joystick = None
+    button_indices = None
     while True:
         # Traiter tous les événements en file d'attente
         for event in pygame.event.get():
@@ -53,30 +96,28 @@ try:
                 joystick.init()
                 num_buttons = joystick.get_numbuttons()
                 print(f"Nombre de boutons détectés : {num_buttons}")
+                button_indices = get_button_indices(joystick)
                 pygame.display.set_allow_screensaver(0)
 
             elif event.type == pygame.JOYDEVICEREMOVED:
                 print("Manette déconnectée.")
                 if joystick:
                     joystick.quit()
+                joystick = None
+                button_indices = None
                 # Désactiver la prévention de mise en veille
                 pygame.display.set_allow_screensaver(1)
 
-            elif event.type == pygame.JOYBUTTONDOWN and joystick:
+            elif event.type == pygame.JOYBUTTONDOWN and joystick and button_indices:
                 num_buttons = joystick.get_numbuttons()
-                home_button = joystick.get_button(5) if num_buttons > 5 else 0
-                select_button = joystick.get_button(4) if num_buttons > 4 else 0
-                start_button = joystick.get_button(6) if num_buttons > 6 else 0
-                triangle_button = joystick.get_button(3) if num_buttons > 3 else 0
-                square_button = joystick.get_button(2) if num_buttons > 2 else 0
-                circle_button = joystick.get_button(1) if num_buttons > 1 else 0
-                l3_button = joystick.get_button(7) if num_buttons > 7 else 0
-                r3_button = joystick.get_button(8) if num_buttons > 8 else 0
-
-                # Vérifier si le bouton home est pressé
-                if home_button and not home_button_pressed:
-                    home_button_pressed = True
-                    home_press_start_time = pygame.time.get_ticks()
+                home_button = joystick.get_button(button_indices["home"]) if num_buttons > button_indices["home"] else 0
+                select_button = joystick.get_button(button_indices["select"]) if num_buttons > button_indices["select"] else 0
+                start_button = joystick.get_button(button_indices["start"]) if num_buttons > button_indices["start"] else 0
+                triangle_button = joystick.get_button(button_indices["triangle"]) if num_buttons > button_indices["triangle"] else 0
+                square_button = joystick.get_button(button_indices["square"]) if num_buttons > button_indices["square"] else 0
+                circle_button = joystick.get_button(button_indices["circle"]) if num_buttons > button_indices["circle"] else 0
+                l3_button = joystick.get_button(button_indices["l3"]) if num_buttons > button_indices["l3"] else 0
+                r3_button = joystick.get_button(button_indices["r3"]) if num_buttons > button_indices["r3"] else 0
 
                 # Vérifier les combinaisons de boutons (actions instantanées)
                 if home_button and select_button:
@@ -101,40 +142,28 @@ try:
                     print("LAUNCHYT")
                     os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/launchyt &")
                     pygame.time.wait(1000)
-
-            elif event.type == pygame.JOYBUTTONUP and joystick:
-                num_buttons = joystick.get_numbuttons()
-                home_button = joystick.get_button(5) if num_buttons > 5 else 0
-                if not home_button and home_button_pressed:
-                    home_button_pressed = False
-                    home_press_start_time = 0  # Réinitialiser le compteur
+                elif home_button and circle_button and not menuvsr_script_running:
+                    print("MENUVR")
+                    menuvsr_process = subprocess.Popen(
+                        ["python", "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/menuvsr.py"]
+                    )
+                    menuvsr_script_running = True
+                    menuvsr_process.wait()  # Attendre la fin de l'exécution
+                    menuvsr_script_running = False
+                    menuvsr_process = None
+                    print("Le script menuvsr.py s'est terminé.")
 
         # Vérifier en continu l'état du joystick si connecté
-        if joystick:
+        if joystick and button_indices:
             # Vérifier l'état actuel des boutons, axes et hat
             num_buttons = joystick.get_numbuttons()
-            home_button = joystick.get_button(5) if num_buttons > 5 else 0
+            home_button = joystick.get_button(button_indices["home"]) if num_buttons > button_indices["home"] else 0
             axis_1 = joystick.get_axis(1)  # -1 = haut, 1 = bas
             hat_value = joystick.get_hat(0) if joystick.get_numhats() > 0 else (0, 0)
             left_button = 1 if hat_value == (-1, 0) else 0
             up_button = 1 if hat_value == (0, 1) else 0
             right_button = 1 if hat_value == (1, 0) else 0
             down_button = 1 if hat_value == (0, -1) else 0
-
-            # Gestion de la pression prolongée du bouton home
-            if home_button and home_button_pressed and not menuvsr_script_running:
-                if pygame.time.get_ticks() - home_press_start_time >= home_press_duration:
-                    print("MENUVSR")
-                    menuvsr_process = subprocess.Popen(
-                        ["python", "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/menuvsr.py"]
-                    )
-                    menuvsr_script_running = True
-                    menuvsr_process.wait()  # Attendre la fin de l'exécution de menuvsr.py
-                    menuvsr_script_running = False
-                    menuvsr_process = None
-                    home_button_pressed = False  # Réinitialiser après exécution
-                    home_press_start_time = 0  # Réinitialiser le compteur
-                    print("Le script menuvsr.py s'est terminé.")
 
             # Gestion des combinaisons avec le hat
             if home_button:

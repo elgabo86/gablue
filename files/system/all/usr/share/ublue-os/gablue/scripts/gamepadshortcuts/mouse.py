@@ -10,7 +10,7 @@ import subprocess
 
 # Configuration
 SPEED = 10       # Vitesse de base
-DEAD_ZONE = 15   # Zone morte fixe, assez large pour couvrir X: -9
+DEAD_ZONE = 20   # Zone morte fixe, assez large pour couvrir X: -9
 UPDATE_DELAY = 0.01  # Délai (10 ms, 100 Hz)
 SMOOTHING = 0.015  # Lissage léger
 SMALL_MOVEMENT_BOOST = 2  # Amplification légère des petits mouvements
@@ -22,10 +22,12 @@ def find_controller():
     devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
     for dev in devices:
         print(f"Device: {dev.path} - {dev.name}")
-        if ("Sony" in dev.name or "DualSense" in dev.name or "DualShock" in dev.name or "Wireless Controller" in dev.name) and "Touchpad" not in dev.name and "Motion Sensors" not in dev.name:
+        if (("Sony" in dev.name or "DualSense" in dev.name or "DualShock" in dev.name or
+             "Nintendo" in dev.name or "Xbox" in dev.name or "Microsoft" in dev.name)
+            and "Touchpad" not in dev.name and "Motion Sensors" not in dev.name):
             print(f"Trouvé : {dev.path} - {dev.name}")
             return dev.path
-    print("Erreur : Aucune manette Sony valide trouvée (touchpad et motion sensors exclus).")
+    print("Erreur : Aucune manette valide trouvée (Sony, Nintendo, Xbox).")
     sys.exit(1)
 
 def setup_uinput_device():
@@ -56,6 +58,44 @@ def setup_uinput_device():
     except PermissionError:
         print("Erreur : Permissions insuffisantes pour uinput. Essayez avec sudo.")
         sys.exit(1)
+
+def get_button_mappings(controller_name):
+    controller_name = controller_name.lower()
+    # Par défaut : Sony DualSense/DualShock
+    mappings = {
+        "south": evdev.ecodes.BTN_SOUTH,    # Croix (PS) / A (Xbox) / B (Switch)
+        "east": evdev.ecodes.BTN_EAST,      # Rond (PS) / B (Xbox) / A (Switch)
+        "north": evdev.ecodes.BTN_NORTH,    # Triangle (PS) / Y (Xbox) / Y (Switch)
+        "west": evdev.ecodes.BTN_WEST,      # Carré (PS) / X (Xbox) / X (Switch)
+        "tr": evdev.ecodes.BTN_TR,          # R1
+        "tl": evdev.ecodes.BTN_TL,          # L1
+        "tr2": evdev.ecodes.BTN_TR2,        # R2
+        "tl2": evdev.ecodes.BTN_TL2,        # L2
+        "thumbl": evdev.ecodes.BTN_THUMBL,  # L3
+        "thumbr": evdev.ecodes.BTN_THUMBR,  # R3
+        "start": evdev.ecodes.BTN_START,    # Options (PS) / Start (Xbox) / + (Switch)
+        "select": evdev.ecodes.BTN_SELECT,  # Share (PS) / Back (Xbox) / - (Switch)
+        "mode": evdev.ecodes.BTN_MODE,      # PS (PS) / Guide (Xbox) / Home (Switch)
+    }
+
+    if "xbox" in controller_name or "microsoft" in controller_name:
+        # Xbox : mêmes codes evdev, mais A = South, B = East, etc.
+        mappings.update({
+            "south": evdev.ecodes.BTN_SOUTH,    # A
+            "east": evdev.ecodes.BTN_EAST,      # B
+            "north": evdev.ecodes.BTN_NORTH,    # Y
+            "west": evdev.ecodes.BTN_WEST,      # X
+        })
+    elif "nintendo" in controller_name:
+        # Switch Pro : B = South, A = East, etc.
+        mappings.update({
+            "south": evdev.ecodes.BTN_SOUTH,    # B
+            "east": evdev.ecodes.BTN_EAST,      # A
+            "north": evdev.ecodes.BTN_NORTH,    # Y
+            "west": evdev.ecodes.BTN_WEST,      # X
+        })
+
+    return mappings
 
 def calculate_movement(x_value, y_value, last_x, last_y, dt):
     if abs(x_value) < DEAD_ZONE:
@@ -111,6 +151,7 @@ def main():
         sys.exit(1)
 
     mouse = setup_uinput_device()
+    button_mappings = get_button_mappings(controller.name)
     play_sound(START_SOUND_CMD)
     print("Son de démarrage lancé en arrière-plan.")
 
@@ -130,14 +171,18 @@ def main():
     last_l2 = 0
     last_r2 = 0
     last_start = 0
-    last_select = 0  # Ajout pour suivre l'état de Select
+    last_select = 0
+    last_mode = 0
+    last_r3 = 0
 
     while True:
         current_time = time.time()
         dt = current_time - last_time
 
-        x_value = controller.absinfo(evdev.ecodes.ABS_RX).value - 128
-        y_value = controller.absinfo(evdev.ecodes.ABS_RY).value - 128
+        abs_info_x = controller.absinfo(evdev.ecodes.ABS_RX)
+        abs_info_y = controller.absinfo(evdev.ecodes.ABS_RY)
+        x_value = ((abs_info_x.value - abs_info_x.min) / (abs_info_x.max - abs_info_x.min)) * 255 - 128
+        y_value = ((abs_info_y.value - abs_info_y.min) / (abs_info_y.max - abs_info_y.min)) * 255 - 128
 
         move_x, move_y = calculate_movement(x_value, y_value, last_x, last_y, dt)
 
@@ -151,28 +196,26 @@ def main():
         last_x = move_x
         last_y = move_y
 
-        # Boutons existants
-        left_state = controller.active_keys().count(evdev.ecodes.BTN_TR)    # R1
-        right_state = controller.active_keys().count(evdev.ecodes.BTN_TL)   # L1
-        ps_state = controller.active_keys().count(evdev.ecodes.BTN_MODE)    # Bouton PS
-        r3_state = controller.active_keys().count(evdev.ecodes.BTN_THUMBR)  # R3
-        l3_state = controller.active_keys().count(evdev.ecodes.BTN_THUMBL)  # L3
-        l2_state = controller.active_keys().count(evdev.ecodes.BTN_TL2)     # L2
-        r2_state = controller.active_keys().count(evdev.ecodes.BTN_TR2)     # R2
-        start_state = controller.active_keys().count(evdev.ecodes.BTN_START)  # Start
-        select_state = controller.active_keys().count(evdev.ecodes.BTN_SELECT)  # Select
+        # Boutons
+        left_state = controller.active_keys().count(button_mappings["tr"])       # R1
+        right_state = controller.active_keys().count(button_mappings["tl"])      # L1
+        mode_state = controller.active_keys().count(button_mappings["mode"])     # PS / Guide / Home
+        r3_state = controller.active_keys().count(button_mappings["thumbr"])     # R3
+        l3_state = controller.active_keys().count(button_mappings["thumbl"])     # L3
+        l2_state = controller.active_keys().count(button_mappings["tl2"])        # L2
+        r2_state = controller.active_keys().count(button_mappings["tr2"])        # R2
+        start_state = controller.active_keys().count(button_mappings["start"])   # Start
+        select_state = controller.active_keys().count(button_mappings["select"]) # Select
+        cross_state = controller.active_keys().count(button_mappings["south"])   # Croix / A / B
+        circle_state = controller.active_keys().count(button_mappings["east"])   # Rond / B / A
+        triangle_state = controller.active_keys().count(button_mappings["north"]) # Triangle / Y
+        square_state = controller.active_keys().count(button_mappings["west"])   # Carré / X
 
         # D-pad
         dpad_up_state = controller.absinfo(evdev.ecodes.ABS_HAT0Y).value == -1
         dpad_down_state = controller.absinfo(evdev.ecodes.ABS_HAT0Y).value == 1
         dpad_left_state = controller.absinfo(evdev.ecodes.ABS_HAT0X).value == -1
         dpad_right_state = controller.absinfo(evdev.ecodes.ABS_HAT0X).value == 1
-
-        # Boutons face
-        cross_state = controller.active_keys().count(evdev.ecodes.BTN_SOUTH)   # Croix
-        circle_state = controller.active_keys().count(evdev.ecodes.BTN_EAST)    # Rond
-        triangle_state = controller.active_keys().count(evdev.ecodes.BTN_NORTH) # Triangle
-        square_state = controller.active_keys().count(evdev.ecodes.BTN_WEST)    # Carré
 
         # Gestion des clics souris
         if left_state != last_left:
@@ -218,7 +261,7 @@ def main():
             mouse.syn()
             last_l2 = l2_state
 
-        # R2 -> Shift gauche (majuscule)
+        # R2 -> Shift gauche
         if r2_state != last_r2:
             mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFTSHIFT), 1 if r2_state else 0)
             mouse.syn()
@@ -261,8 +304,8 @@ def main():
             last_triangle = triangle_state
 
         # Condition de sortie
-        if ps_state == 1 and r3_state == 1:
-            print("Bouton PS et R3 pressés : arrêt.")
+        if mode_state == 1 and r3_state == 1:
+            print("Bouton Home/Guide et R3 pressés : arrêt.")
             play_sound(EXIT_SOUND_CMD)
             print("Son de sortie lancé en arrière-plan.")
             time.sleep(0.7)
