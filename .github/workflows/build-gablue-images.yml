@@ -232,7 +232,7 @@ jobs:
             password: ${{ env.REGISTRY_PASSWORD }}
 
       # Installation Cosign
-      - uses: sigstore/cosign-installer@v3.8.2
+      - uses: sigstore/cosign-installer@v3.9.0
         if: github.event_name != 'pull_request'
 
       # Signature de l'image
