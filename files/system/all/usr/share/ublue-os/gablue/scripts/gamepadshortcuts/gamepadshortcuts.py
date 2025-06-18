@@ -38,24 +38,39 @@ try:
     button_indices = None
     num_buttons = 0
     num_hats = 0
+
+    def init_first_joystick():
+        global joystick, button_indices, num_buttons, num_hats
+        if pygame.joystick.get_count() > 0:
+            joystick = pygame.joystick.Joystick(0)
+            joystick.init()
+            num_buttons = joystick.get_numbuttons()
+            num_hats = joystick.get_numhats()
+            button_indices = get_button_indices(joystick)
+            pygame.display.set_allow_screensaver(0)
+            print(f"Manette connectée, boutons: {num_buttons}")
+        else:
+            joystick = None
+            button_indices = None
+            pygame.display.set_allow_screensaver(1)
+            print("Aucune manette détectée.")
+
+    # Initialiser la première manette au démarrage
+    init_first_joystick()
+
     while True:
         for event in pygame.event.get():
             if event.type == pygame.JOYDEVICEADDED:
-                joystick = pygame.joystick.Joystick(0)
-                joystick.init()
-                num_buttons = joystick.get_numbuttons()
-                num_hats = joystick.get_numhats()
-                button_indices = get_button_indices(joystick)
-                pygame.display.set_allow_screensaver(0)
-                print(f"Manette connectée, boutons: {num_buttons}")
+                if not joystick:  # Si aucune manette n'est active
+                    init_first_joystick()
 
             elif event.type == pygame.JOYDEVICEREMOVED:
                 if joystick:
                     joystick.quit()
-                joystick = None
-                button_indices = None
-                pygame.display.set_allow_screensaver(1)
-                print("Manette déconnectée.")
+                    joystick = None
+                    button_indices = None
+                    print("Manette déconnectée.")
+                    init_first_joystick()  # Tenter de réinitialiser avec une autre manette
 
             elif event.type == pygame.JOYBUTTONDOWN and joystick and button_indices:
                 home = joystick.get_button(button_indices["home"]) if num_buttons > button_indices["home"] else 0
@@ -135,7 +150,7 @@ try:
             mouse_process = None
             print("mouse.py terminé.")
 
-        clock.tick(15)
+        clock.tick(10)
 
 except KeyboardInterrupt:
     print("Arrêt du script.")
