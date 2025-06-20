@@ -131,3 +131,7 @@ if [ "$VARIANT" == "main" ]; then
     radeontop \
     waydroid
 fi
+
+#tempfix
+dnf5 -y install \
+tesseract
