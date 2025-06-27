@@ -2,6 +2,10 @@
 
 set -eoux pipefail
 
+# Create dummy /etc/default/grub to avoid 99-uki-uefi-setup.install error
+mkdir -p /etc/default
+echo 'GRUB_TIMEOUT=5' > /etc/default/grub
+
 dnf5 -y remove --no-autoremove kernel kernel-core kernel-modules kernel-modules-core kernel-modules-extra
 
 dnf5 -y install \
@@ -29,3 +33,6 @@ dnf5 -y copr enable bieszczaders/kernel-cachyos-addons && \
 dnf5 -y install \
     scx-scheds && \
 dnf5 -y copr disable bieszczaders/kernel-cachyos-addons
+
+# Remove dummy /etc/default/grub to avoid conflicts during deployment
+rm -f /etc/default/grub
