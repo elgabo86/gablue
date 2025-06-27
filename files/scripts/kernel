@@ -2,10 +2,15 @@
 
 set -eoux pipefail
 
-# Create dummy EFI mount point
-mkdir -p /boot/EFI
+# Disable 99-uki-uefi-setup.install to avoid EFI partition check
+mv /usr/lib/kernel/install.d/99-uki-uefi-setup.install /usr/lib/kernel/install.d/99-uki-uefi-setup.install.bak || true
+echo '#!/bin/sh\nexit 0' > /usr/lib/kernel/install.d/99-uki-uefi-setup.install
+chmod +x /usr/lib/kernel/install.d/99-uki-uefi-setup.install
 
 dnf5 -y remove --no-autoremove kernel kernel-core kernel-modules kernel-modules-core kernel-modules-extra
+
+# Restore original 99-uki-uefi-setup.install
+mv /usr/lib/kernel/install.d/99-uki-uefi-setup.install.bak /usr/lib/kernel/install.d/99-uki-uefi-setup.install || true
 
 dnf5 -y install \
     /tmp/kernel-rpms/kernel-[0-9]*.rpm \
@@ -32,6 +37,3 @@ dnf5 -y copr enable bieszczaders/kernel-cachyos-addons && \
 dnf5 -y install \
     scx-scheds && \
 dnf5 -y copr disable bieszczaders/kernel-cachyos-addons
-
-# Clean up dummy EFI mount point
-rm -rf /boot/EFI
