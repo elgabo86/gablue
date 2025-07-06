@@ -133,3 +133,7 @@ dnf5 -y swap \
 # Remove flatpak verification at each boot
 sed -i -E 's|(; /usr/bin/flatpak --system repair)$||' /usr/lib/systemd/system/flatpak-system-update.service
 
+# Workaround for kscreenlocker regression
+# see https://bugzilla.redhat.com/show_bug.cgi?id=2375356
+dnf5 -y downgrade qt6-qtwayland-6.9.1-1$(rpm -E %{dist})
+
