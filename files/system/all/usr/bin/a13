@@ -1,5 +1,5 @@
 #!/bin/bash
-# Version: 1.27
+# Version 1.27
 
 # Configuration
 SYSTEM_URL_BASE="https://sourceforge.net/projects/waydroid/files/images/system/lineage/waydroid_x86_64/"
@@ -19,29 +19,29 @@ AURORA_APK="$USER_CACHE_DIR/AuroraStore.apk"
 KILLWAYDROID_DESKTOP="/usr/share/ublue-os/gablue/desktops/KillWaydroid.desktop"
 USER_DESKTOP_DIR="$HOME/.local/share/applications"
 
-# Fonction pour attendre que Waydroid soit prêt
+# Function to wait for Waydroid to be ready
 wait_waydroid_ready() {
     echo "Attente que Waydroid soit prêt..."
     local timeout=60
     local start_time=$(date +%s)
     local log_file="$USER_CACHE_DIR/waydroid_session.log"
 
-    # Rediriger la sortie de waydroid session start vers un fichier
+    # Redirect waydroid session start output to a file
     waydroid session start >"$log_file" 2>&1 &
     WAYDROID_PID=$!
 
     while true; do
-        # Vérifier si le message est présent dans le fichier de log
+        # Check if the ready message is in the log file
         if grep -q ".*Android with user 0 is ready" "$log_file"; then
             echo "Waydroid est prêt."
-            rm -f "$log_file" # Nettoyer le fichier temporaire
+            rm -f "$log_file" # Clean up temporary file
             return 0
         fi
         local current_time=$(date +%s)
         if [ $((current_time - start_time)) -ge $timeout ]; then
             echo "Délai d'attente dépassé pour Waydroid."
             kdialog --error "Délai d'attente dépassé pour Waydroid."
-            rm -f "$log_file" # Nettoyer le fichier temporaire
+            rm -f "$log_file" # Clean up temporary file
             kill $WAYDROID_PID 2>/dev/null
             return 1
         fi
@@ -49,7 +49,7 @@ wait_waydroid_ready() {
     done
 }
 
-# Fonction pour vérifier et attendre la connexion ADB
+# Function to check and wait for ADB connection
 check_adb() {
     echo "Vérification de la connexion ADB..."
     for i in {1..3}; do
@@ -70,7 +70,7 @@ check_adb() {
     exit 1
 }
 
-# Initialiser et maintenir les privilèges sudo
+# Initialize and maintain sudo privileges?.
 sudo -v
 while true; do
     sudo -v
@@ -78,10 +78,10 @@ while true; do
 done &
 SUDO_KEEP_ALIVE_PID=$!
 
-# Nettoyer le processus sudo à la fin
+# Clean up sudo process on exit
 trap 'kill $SUDO_KEEP_ALIVE_PID 2>/dev/null' EXIT
 
-# Vérifier les paramètres
+# Check parameters
 if [ $# -eq 0 ]; then
     if ! command -v kdialog &>/dev/null; then
         echo "kdialog n'est pas installé."
@@ -101,38 +101,38 @@ if [ $# -ne 1 ] || { [ "$1" != "install" ] && [ "$1" != "remove" ]; }; then
     exit 1
 fi
 
-# Vérifier que le script n'est pas exécuté en root
+# Check if script is not run as root
 if [ "$(id -u)" = "0" ]; then
     echo "Ce script doit être exécuté en tant qu'utilisateur non-root (pas avec sudo)."
     kdialog --error "Ce script doit être exécuté en tant qu'utilisateur non-root (pas avec sudo)."
     exit 1
 fi
 
-# Vérifier si Waydroid est installé
+# Check if Waydroid is installed
 if ! command -v waydroid &>/dev/null; then
     echo "Waydroid n'est pas installé. Veuillez l'installer d'abord."
     kdialog --error "Waydroid n'est pas installé. Veuillez l'installer d'abord."
     exit 1
 fi
 
-# Vérifier que XDG_RUNTIME_DIR est défini
+# Check if XDG_RUNTIME_DIR is set
 if [ -z "$XDG_RUNTIME_DIR" ]; then
     echo "XDG_RUNTIME_DIR n'est pas défini. Exécutez ce script dans une session utilisateur avec Wayland."
     kdialog --error "XDG_RUNTIME_DIR n'est pas défini. Exécutez ce script dans une session utilisateur avec Wayland."
     exit 1
 fi
 
-# Commande remove
+# Remove command
 if [ "$1" = "remove" ]; then
     echo "Suppression de Waydroid..."
     waydroid session stop 2>/dev/null || true
 
-    # Enlever le share dl si existant
+    # Unmount shared directory if it exists
     if mountpoint -q ~/.local/share/waydroid/data/media/0/Sharedl; then
-    sudo umount -f ~/.local/share/waydroid/data/media/0/Sharedl
+        sudo umount -f ~/.local/share/waydroid/data/media/0/Sharedl
     fi
 
-    # Demander à l'utilisateur ce qu'il veut garder
+    # Ask user what to keep
     CHOICE=$(kdialog --title "Suppression de Waydroid" --menu "Que voulez-vous supprimer ?" all "Tout supprimer (données utilisateur et images)" keep_data "Garder les données utilisateur" keep_images "Garder les images system et vendor" keep_all "Garder les données utilisateur et les images" cancel "Annuler")
     if [ $? -ne 0 ] || [ "$CHOICE" = "cancel" ]; then
         echo "Suppression annulée."
@@ -140,7 +140,7 @@ if [ "$1" = "remove" ]; then
         exit 0
     fi
 
-    # Supprimer les données selon le choix
+    # Delete data based on choice
     if [ "$CHOICE" = "all" ] || [ "$CHOICE" = "keep_images" ]; then
         sudo rm -rf "$USER_WAYDROID_DIR" || {
             echo "Échec de la suppression de $USER_WAYDROID_DIR."
@@ -161,7 +161,7 @@ if [ "$1" = "remove" ]; then
         exit 1
     }
 
-    # Supprimer les fichiers .desktop liés à Waydroid
+    # Delete Waydroid-related .desktop files
     DESKTOP_FILES=$(ls "$USER_DESKTOP_DIR/waydroid"*.desktop "$USER_DESKTOP_DIR/Waydroid.desktop" "$USER_DESKTOP_DIR/KillWaydroid.desktop" 2>/dev/null)
     if [ -n "$DESKTOP_FILES" ]; then
         echo "Suppression des fichiers .desktop : $DESKTOP_FILES"
@@ -187,27 +187,27 @@ if [ "$1" = "remove" ]; then
     exit 0
 fi
 
-# Créer le répertoire de cache utilisateur
+# Create user cache directory
 mkdir -p "$USER_CACHE_DIR" || {
     echo "Échec de la création de $USER_CACHE_DIR."
     kdialog --error "Échec de la création de $USER_CACHE_DIR."
     exit 1
 }
 
-# Créer le répertoire des images extra
+# Create extra images directory
 sudo mkdir -p "$EXTRA_IMAGE_DIR" || {
     echo "Échec de la création de $EXTRA_IMAGE_DIR."
     kdialog --error "Échec de la création de $EXTRA_IMAGE_DIR."
     exit 1
 }
 
-# Vérifier si Waydroid est initialisé
+# Check if Waydroid is initialized
 WAYDROID_INITIALIZED=true
 if [ ! -f "/var/lib/waydroid/waydroid.cfg" ] || ! waydroid status >/dev/null 2>&1; then
     WAYDROID_INITIALIZED=false
 fi
 
-# Si Waydroid est déjà initialisé, demander si réinstaller
+# If Waydroid is already initialized, ask if reinstall
 UPDATE_NEEDED=false
 if [ "$WAYDROID_INITIALIZED" = true ]; then
     CHOICE=$(kdialog --title "Waydroid déjà installé" --yesno "Waydroid est déjà installé.\nVoulez-vous refaire une installation complète ?")
@@ -222,7 +222,7 @@ else
     UPDATE_NEEDED=true
 fi
 
-# Vérifier si des images existent
+# Check if images exist
 USE_EXISTING_IMAGES=false
 if [ "$UPDATE_NEEDED" = true ]; then
     if [ -f "$EXTRA_IMAGE_DIR/system.img" ] && [ -f "$EXTRA_IMAGE_DIR/vendor.img" ]; then
@@ -235,7 +235,7 @@ if [ "$UPDATE_NEEDED" = true ]; then
         elif [ "$CHOICE" = "existing" ]; then
             USE_EXISTING_IMAGES=true
         elif [ "$CHOICE" = "download" ]; then
-            # Obtenir la dernière image system pour LineageOS 20 (GAPPS)
+            # Get the latest LineageOS 20 GAPPS system image
             echo "Recherche de la dernière image system LineageOS 20 GAPPS..."
             SYSTEM_FILE=$(curl -s "$SYSTEM_URL_BASE" | grep -o 'lineage-20-[0-9]\{8\}-GAPPS-waydroid_x86_64-system.zip' | sort -r | head -n 1)
             if [ -z "$SYSTEM_FILE" ]; then
@@ -245,7 +245,7 @@ if [ "$UPDATE_NEEDED" = true ]; then
             fi
             SYSTEM_URL="${SYSTEM_URL_BASE}${SYSTEM_FILE}"
 
-            # Obtenir la dernière image vendor pour LineageOS 20 (MAINLINE)
+            # Get the latest LineageOS 20 MAINLINE vendor image
             echo "Recherche de la dernière image vendor LineageOS 20 MAINLINE..."
             VENDOR_FILE=$(curl -s "$VENDOR_URL_BASE" | grep -o 'lineage-20-[0-9]\{8\}-MAINLINE-waydroid_x86_64-vendor.zip' | sort -r | head -n 1)
             if [ -z "$VENDOR_FILE" ]; then
@@ -256,7 +256,7 @@ if [ "$UPDATE_NEEDED" = true ]; then
             VENDOR_URL="${VENDOR_URL_BASE}${VENDOR_FILE}"
         fi
     else
-        # Si aucune image n'existe, vérifier les images à distance
+        # If no images exist, check remote images
         echo "Aucune image trouvée dans $EXTRA_IMAGE_DIR. Recherche des dernières images..."
         echo "Recherche de la dernière image system LineageOS 20 GAPPS..."
         SYSTEM_FILE=$(curl -s "$SYSTEM_URL_BASE" | grep -o 'lineage-20-[0-9]\{8\}-GAPPS-waydroid_x86_64-system.zip' | sort -r | head -n 1)
@@ -278,7 +278,7 @@ if [ "$UPDATE_NEEDED" = true ]; then
     fi
 fi
 
-# Cloner waydroid_script et configurer l'environnement virtuel si nécessaire
+# Clone waydroid_script and set up virtual environment if needed
 if [ "$UPDATE_NEEDED" = true ]; then
     echo "Clonage de waydroid_script..."
     sudo rm -rf "$WAYDROID_SCRIPT_DIR" || {
@@ -305,13 +305,13 @@ if [ "$UPDATE_NEEDED" = true ]; then
     cd ..
 fi
 
-# Mettre à jour ou initialiser Waydroid si nécessaire
+# Update or initialize Waydroid if needed
 if [ "$UPDATE_NEEDED" = true ]; then
-    # Arrêter Waydroid
+    # Stop Waydroid
     echo "Arrêt de Waydroid..."
     waydroid session stop 2>/dev/null || true
 
-    # Télécharger les nouvelles images si l'utilisateur n'a pas choisi les existantes
+    # Download new images if user didn't choose existing ones
     if [ "$USE_EXISTING_IMAGES" = false ]; then
         echo "Téléchargement de $SYSTEM_FILE..."
         sudo wget -O "$USER_CACHE_DIR/waydroid_system.zip" "$SYSTEM_URL" || {
@@ -342,7 +342,7 @@ if [ "$UPDATE_NEEDED" = true ]; then
         sudo mv "$USER_CACHE_DIR/waydroid_vendor.zip" "$EXTRA_IMAGE_DIR/$VENDOR_FILE"
     fi
 
-    # Supprimer les images dans /var/lib/waydroid mais conserver celles dans EXTRA_IMAGE_DIR
+    # Delete old images in /var/lib/waydroid but keep those in EXTRA_IMAGE_DIR
     echo "Suppression des anciennes images dans /var/lib/waydroid..."
     sudo rm -f /var/lib/waydroid/images/system.img /var/lib/waydroid/images/vendor.img || {
         echo "Échec de la suppression des images dans /var/lib/waydroid."
@@ -350,7 +350,7 @@ if [ "$UPDATE_NEEDED" = true ]; then
         exit 1
     }
 
-    # Initialiser Waydroid
+    # Initialize Waydroid
     echo "Initialisation de Waydroid..."
     sudo waydroid init -i "$EXTRA_IMAGE_DIR" -f || {
         echo "Échec de l'initialisation."
@@ -359,11 +359,42 @@ if [ "$UPDATE_NEEDED" = true ]; then
     }
 fi
 
-# Déterminer le type de CPU et effectuer les configurations
+# Determine CPU type and perform configurations
 if [ "$UPDATE_NEEDED" = true ]; then
     CPU_VENDOR=$(grep -m1 "vendor_id" /proc/cpuinfo | awk '{print $3}')
     if [ "$CPU_VENDOR" = "AuthenticAMD" ]; then
-        TRANSLATION_LIB="libndk"
+        echo "CPU AMD détecté. Installation de libhoudini_bluestacks..."
+        # Clone libhoudini_bluestacks repository
+        git clone https://github.com/mrvictory1/libhoudini_bluestacks.git /tmp/libhoudini_bluestacks || {
+            echo "Échec du clonage de libhoudini_bluestacks."
+            kdialog --error "Échec du clonage de libhoudini_bluestacks."
+            exit 1
+        }
+        # Stop Waydroid
+        waydroid session stop 2>/dev/null || true
+        # Extract system/ files to /var/lib/waydroid/overlay/system
+        sudo mkdir -p /var/lib/waydroid/overlay/system
+        sudo cp -r /tmp/libhoudini_bluestacks/system/* /var/lib/waydroid/overlay/system/ || {
+            echo "Échec de la copie des fichiers libhoudini_bluestacks."
+            kdialog --error "Échec de la copie des fichiers libhoudini_bluestacks."
+            exit 1
+        }
+        # Clean up cloned repository
+        sudo rm -rf /tmp/libhoudini_bluestacks
+        # Configure ro.dalvik.vm.native.bridge to libnb.so
+        if [ -f "$CONFIG_FILE" ]; then
+            if sudo grep -q "ro.dalvik.vm.native.bridge" "$CONFIG_FILE"; then
+                echo "Modification de ro.dalvik.vm.native.bridge dans $CONFIG_FILE..."
+                sudo sed -i "s/ro.dalvik.vm.native.bridge=.*/ro.dalvik.vm.native.bridge=libnb.so/" "$CONFIG_FILE"
+            else
+                echo "Ajout de ro.dalvik.vm.native.bridge dans $CONFIG_FILE..."
+                echo "ro.dalvik.vm.native.bridge=libnb.so" | sudo tee -a "$CONFIG_FILE" >/dev/null
+            fi
+        else
+            echo "Création de $CONFIG_FILE avec ro.dalvik.vm.native.bridge..."
+            echo "ro.dalvik.vm.native.bridge=libnb.so" | sudo tee "$CONFIG_FILE" >/dev/null
+        fi
+        TRANSLATION_LIB="libnb"
     elif [ "$CPU_VENDOR" = "GenuineIntel" ]; then
         TRANSLATION_LIB="libhoudini"
     else
@@ -371,7 +402,7 @@ if [ "$UPDATE_NEEDED" = true ]; then
         TRANSLATION_LIB="libndk"
     fi
 
-    # Démarrer Waydroid pour les configurations et installations
+    # Start Waydroid for configurations and installations
     echo "Démarrage de Waydroid pour les configurations et installations..."
     if ! wait_waydroid_ready; then
         echo "Échec de l'attente de Waydroid."
@@ -379,7 +410,7 @@ if [ "$UPDATE_NEEDED" = true ]; then
         exit 1
     fi
 
-    # Vérifier que Waydroid est opérationnel
+    # Check if Waydroid is fully started
     if ! waydroid status | grep -q "Session.*RUNNING"; then
         echo "Waydroid n'est pas complètement démarré."
         kdialog --error "Waydroid n'est pas complètement démarré."
@@ -387,37 +418,50 @@ if [ "$UPDATE_NEEDED" = true ]; then
         exit 1
     fi
 
-    # Vérifier la connexion ADB
+    # Check ADB connection
     check_adb
 
-    # Désactiver la mise en veille de Waydroid
+    # Install translation library for Intel or unrecognized CPU
+    if [ "$TRANSLATION_LIB" != "libnb" ] && [ -d "$WAYDROID_SCRIPT_DIR" ]; then
+        echo "Installation de $TRANSLATION_LIB..."
+        cd "$WAYDROID_SCRIPT_DIR"
+        sudo venv/bin/python3 -W ignore main.py -a 13 install "$TRANSLATION_LIB" 2>&1 || {
+            echo "Échec de l'installation de $TRANSLATION_LIB."
+            kdialog --error "Échec de l'installation de $TRANSLATION_LIB."
+            kill $WAYDROID_PID 2>/dev/null
+            exit 1
+        }
+        cd ..
+    fi
+
+    # Disable Waydroid suspend
     waydroid prop set persist.waydroid.suspend false
 
-    # Désactiver les notifications Google Play Protect
+    # Disable Google Play Protect notifications
     echo "Désactivation des notifications Google Play Protect..."
     adb shell pm revoke com.google.android.gms android.permission.POST_NOTIFICATIONS
     adb shell "pm clear com.google.android.gms --user 0"
     adb shell pm revoke com.google.android.gms android.permission.POST_NOTIFICATIONS
 
-    # Vérifier la connexion ADB
+    # Check ADB connection
     check_adb
 
-    # Activation des manettes de jeu
+    # Enable game controllers
     waydroid prop set persist.waydroid.uevent true
     waydroid prop set persist.waydroid.udev true
 
-    # Vérifier la connexion ADB
+    # Check ADB connection
     check_adb
 
-    # Configurer la langue français suisse
+    # Configure Android language to Swiss French
     echo "Configuration de la langue Android en français suisse..."
     adb shell "setprop persist.sys.locale $LOCALE; setprop persist.sys.language fr; setprop persist.sys.country CH"
     adb shell "settings put system system_locales fr-CH"
 
-    # Vérifier la connexion ADB avant la configuration du clavier
+    # Check ADB connection before keyboard configuration
     check_adb
 
-    # Configurer le clavier virtuel en français suisse
+    # Configure virtual keyboard to Swiss French
     echo "Configuration du clavier virtuel Android en français suisse..."
     adb shell "settings put secure default_input_method com.android.inputmethod.latin/.LatinIME"
     adb shell "ime enable com.android.inputmethod.latin/.LatinIME"
@@ -425,34 +469,34 @@ if [ "$UPDATE_NEEDED" = true ]; then
     adb shell "settings put secure spell_checker_language $LOCALE"
     adb shell "settings put secure enabled_accessibility_services com.android.inputmethod.latin/.LatinIME"
 
-    # Vérifier la connexion ADB
+    # Check ADB connection
     check_adb
 
-    # Désactiver le clavier virtuel par défaut pour favoriser le clavier physique
+    # Disable default virtual keyboard to favor physical keyboard
     echo "Désactivation du clavier virtuel par défaut..."
     adb shell "settings put secure show_ime_with_hard_keyboard 0"
 
-    # Activer la simulation du touch avec la souris
+    # Enable mouse touch simulation
     echo "Activation de la simulation du touch avec la souris..."
     waydroid prop set persist.waydroid.fake_touch "*"
 
-    # Vérifier la connexion ADB
+    # Check ADB connection
     check_adb
 
-    # Désactiver le setup wizard
+    # Disable setup wizard
     adb shell settings put secure show_first_crash_dialog 0
     adb shell pm disable-user --user 0 com.google.android.setupwizard
 
-    # Mettre le volume à 100%
+    # Set volume to 100%
     adb shell cmd media_session volume --stream 3 --set 15
 
-    # Désactiver la localisation
+    # Disable location
     adb shell settings put secure location_mode 0
 
-    # Désactiver la reconnaissance vocal pour le clavier
-    adb shell settings put secure enabled_input_methods bcom.android.inputmethod.latin/.LatinIME
+    # Disable voice recognition for keyboard
+    adb shell settings put secure enabled_input_methods com.android.inputmethod.latin/.LatinIME
 
-    # Desactiver google vocal et autre truc inutiles
+    # Disable Google voice and other unnecessary apps
     adb shell pm disable-user --user 0 com.google.android.googlequicksearchbox
     adb shell pm disable-user --user 0 com.google.android.apps.safetyhub
     adb shell pm disable-user --user 0 com.google.android.apps.messaging
@@ -467,111 +511,98 @@ if [ "$UPDATE_NEEDED" = true ]; then
     adb shell pm disable-user --user 0 com.google.android.overlay.gmsconfig.personalsafety
     adb shell pm disable-user --user 0 com.google.android.apps.restore
 
-    # Vérifier la connexion ADB
+    # Check ADB connection
     check_adb
 
     # Change timezone
     waydroid prop set persist.sys.timezone Europe/Zurich
 
-    # Vérifier la connexion ADB
+    # Check ADB connection
     check_adb
 
-    # Installer F-Droid si non installé
-echo "Vérification de F-Droid..."
-if adb shell pm list packages | grep -q org.fdroid.fdroid; then
-    echo "F-Droid est déjà installé."
-else
-    echo "Téléchargement de l'APK F-Droid..."
-    wget -O "$FDROID_APK" "$FDROID_APK_URL" || {
-        echo "Échec du téléchargement de F-Droid."
-        kdialog --error "Échec du téléchargement de F-Droid."
-        kill $WAYDROID_PID 2>/dev/null
-        exit 1
-    }
-    echo "Installation de F-Droid..."
-    adb install "$FDROID_APK" || {
-        echo "Échec de l'installation de F-Droid."
-        kdialog --error "Échec de l'installation de F-Droid."
-        kill $WAYDROID_PID 2>/dev/null
-        exit 1
-    }
-    rm -f "$FDROID_APK"
-fi
-
-    # Installer Aurora Store si non installé
-echo "Vérification d'Aurora Store..."
-if adb shell pm list packages | grep -q com.aurora.store; then
-    echo "Aurora Store est déjà installé."
-else
-    echo "Téléchargement de l'APK Aurora Store..."
-    wget -O "$AURORA_APK" "$AURORA_APK_URL" || {
-        echo "Échec du téléchargement d'Aurora Store."
-        kdialog --error "Échec du téléchargement d'Aurora Store."
-        kill $WAYDROID_PID 2>/dev/null
-        exit 1
-    }
-    echo "Installation d'Aurora Store..."
-    adb install "$AURORA_APK" || {
-        echo "Échec de l'installation d'Aurora Store."
-        kdialog --error "Échec de l'installation d'Aurora Store."
-        kill $WAYDROID_PID 2>/dev/null
-        exit 1
-    }
-    rm -f "$AURORA_APK"
-fi
-
-    # Installer Fennec F-Droid si non installé
-echo "Vérification de Fennec F-Droid..."
-if adb shell pm list packages | grep -q org.mozilla.fennec_fdroid; then
-    echo "Fennec F-Droid est déjà installé."
-else
-    echo "Téléchargement de l'APK Fennec F-Droid (x86)..."
-    FENNEC_APK_URL=$(curl -s https://f-droid.org/packages/org.mozilla.fennec_fdroid/ | grep -oP 'href="[^"]*org\.mozilla\.fennec_fdroid_1370010\.apk"' | head -1 | cut -d'"' -f2)
-    FENNEC_APK="$USER_CACHE_DIR/Fennec_FDroid.apk"
-    if [ -z "$FENNEC_APK_URL" ]; then
-        echo "Échec de la récupération de l'URL de Fennec F-Droid (x86). Utilisation de l'URL directe."
-        FENNEC_APK_URL="https://f-droid.org/repo/org.mozilla.fennec_fdroid_1370010.apk"
-    fi
-    wget -O "$FENNEC_APK" "$FENNEC_APK_URL" || {
-        echo "Échec du téléchargement de Fennec F-Droid."
-        kdialog --error "Échec du téléchargement de Fennec F-Droid."
-        kill $WAYDROID_PID 2>/dev/null
-        exit 1
-    }
-    echo "Installation de Fennec F-Droid..."
-    adb install "$FENNEC_APK" || {
-        echo "Échec de l'installation de Fennec F-Droid."
-        kdialog --error "Échec de l'installation de Fennec F-Droid."
-        kill $WAYDROID_PID 2>/dev/null
-        exit 1
-    }
-    rm -f "$FENNEC_APK"
-fi
-
-    # Vérifier la connexion ADB
-    check_adb
-
-    # Installer la bibliothèque de traduction
-    if [ -d "$WAYDROID_SCRIPT_DIR" ]; then
-        echo "Installation de $TRANSLATION_LIB..."
-        cd "$WAYDROID_SCRIPT_DIR"
-        sudo venv/bin/python3 -W ignore main.py -a 13 install "$TRANSLATION_LIB" 2>&1 || {
-            echo "Échec de l'installation de $TRANSLATION_LIB."
-            kdialog --error "Échec de l'installation de $TRANSLATION_LIB."
+    # Install F-Droid if not installed
+    echo "Vérification de F-Droid..."
+    if adb shell pm list packages | grep -q org.fdroid.fdroid; then
+        echo "F-Droid est déjà installé."
+    else
+        echo "Téléchargement de l'APK F-Droid..."
+        wget -O "$FDROID_APK" "$FDROID_APK_URL" || {
+            echo "Échec du téléchargement de F-Droid."
+            kdialog --error "Échec du téléchargement de F-Droid."
             kill $WAYDROID_PID 2>/dev/null
             exit 1
         }
-        cd ..
+        echo "Installation de F-Droid..."
+        adb install "$FDROID_APK" || {
+            echo "Échec de l'installation de F-Droid."
+            kdialog --error "Échec de l'installation de F-Droid."
+            kill $WAYDROID_PID 2>/dev/null
+            exit 1
+        }
+        rm -f "$FDROID_APK"
     fi
 
-    # Rétablir la mise en veille de Waydroid
+    # Install Aurora Store if not installed
+    echo "Vérification d'Aurora Store..."
+    if adb shell pm list packages | grep -q com.aurora.store; then
+        echo "Aurora Store est déjà installé."
+    else
+        echo "Téléchargement de l'APK Aurora Store..."
+        wget -O "$AURORA_APK" "$AURORA_APK_URL" || {
+            echo "Échec du téléchargement d'Aurora Store."
+            kdialog --error "Échec du téléchargement d'Aurora Store."
+            kill $WAYDROID_PID 2>/dev/null
+            exit 1
+        }
+        echo "Installation d'Aurora Store..."
+        adb install "$AURORA_APK" || {
+            echo "Échec de l'installation d'Aurora Store."
+            kdialog --error "Échec de l'installation d'Aurora Store."
+            kill $WAYDROID_PID 2>/dev/null
+            exit 1
+        }
+        rm -f "$AURORA_APK"
+    fi
+
+    # Install Fennec F-Droid if not installed
+    echo "Vérification de Fennec F-Droid..."
+    if adb shell pm list packages | grep -q org.mozilla.fennec_fdroid; then
+        echo "Fennec F-Droid est déjà installé."
+    else
+        echo "Téléchargement de l'APK Fennec F-Droid (x86)..."
+        FENNEC_APK_URL=$(curl -s https://f-droid.org/packages/org.mozilla.fennec_fdroid/ | grep -oP 'href="[^"]*org\.mozilla\.fennec_fdroid_1370010\.apk"' | head -1 | cut -d'"' -f2)
+        FENNEC_APK="$USER_CACHE_DIR/Fennec_FDroid.apk"
+        if [ -z "$FENNEC_APK_URL" ]; then
+            echo "Échec de la récupération de l'URL de Fennec F-Droid (x86). Utilisation de l'URL directe."
+            FENNEC_APK_URL="https://f-droid.org/repo/org.mozilla.fennec_fdroid_1370010.apk"
+        fi
+        wget -O "$FENNEC_APK" "$FENNEC_APK_URL" || {
+            echo "Échec du téléchargement de Fennec F-Droid."
+            kdialog --error "Échec de l'installation de Fennec F-Droid."
+            kill $WAYDROID_PID 2>/dev/null
+            exit 1
+        }
+        echo "Installation de Fennec F-Droid..."
+        adb install "$FENNEC_APK" || {
+            echo "Échec de l'installation de Fennec F-Droid."
+            kdialog --error "Échec de l'installation de Fennec F-Droid."
+            kill $WAYDROID_PID 2>/dev/null
+            exit 1
+        }
+        rm -f "$FENNEC_APK"
+    fi
+
+    # Check ADB connection
+    check_adb
+
+    # Restore Waydroid suspend
     waydroid prop set persist.waydroid.suspend true
 
-    # Arrêter Waydroid après l'installation
+    # Stop Waydroid after installation
     echo "Arrêt de Waydroid..."
     waydroid session stop 2>/dev/null || true
 
-    # Supprimer les fichiers waydroid*.desktop (sauf Waydroid.desktop)
+    # Delete waydroid*.desktop files (except Waydroid.desktop)
     echo "Suppression des fichiers .desktop waydroid* (sauf Waydroid.desktop)..."
     DESKTOP_FILES=$(ls "$USER_DESKTOP_DIR/waydroid"*.desktop 2>/dev/null | grep -v "Waydroid.desktop")
     if [ -n "$DESKTOP_FILES" ]; then
@@ -588,7 +619,7 @@ fi
         echo "Aucun fichier .desktop waydroid* trouvé (sauf Waydroid.desktop)."
     fi
 
-    # Copier KillWaydroid.desktop
+    # Copy KillWaydroid.desktop
     if [ -f "$KILLWAYDROID_DESKTOP" ]; then
         echo "Copie de $KILLWAYDROID_DESKTOP vers $USER_DESKTOP_DIR..."
         mkdir -p "$USER_DESKTOP_DIR"
@@ -610,7 +641,7 @@ fi
         kdialog --warningcontinue "Le fichier $KILLWAYDROID_DESKTOP n'existe pas."
     fi
 
-    # Configurer ro.hardware.gralloc après l'installation de la bibliothèque
+    # Configure ro.hardware.gralloc after library installation
     if [ -f "$CONFIG_FILE" ]; then
         if sudo grep -q "ro.hardware.gralloc" "$CONFIG_FILE"; then
             echo "Modification de ro.hardware.gralloc dans $CONFIG_FILE..."
@@ -624,7 +655,7 @@ fi
         echo "$PROPERTY" | sudo tee "$CONFIG_FILE" >/dev/null
     fi
 
-    # Ajouter les propriétés personnalisées à la fin de waydroid_base.prop
+    # Add custom properties to waydroid_base.prop
     echo "Ajout des propriétés personnalisées à $CONFIG_FILE..."
     {
         echo ""
@@ -650,19 +681,19 @@ fi
         echo "# end of custom build prop - you can safely delete if this causes issue"
     } | sudo tee -a "$CONFIG_FILE" >/dev/null
 
-    # Mettre le clavier physique en fr suisse
+    # Set physical keyboard to Swiss French
     echo -ne '\x41\x42\x58\x00\x10\x32\xff\xff\x00\x13\x69\x6e\x70\x75\x74\x2d\x6d\x61\x6e\x61\x67\x65\x72\x2d\x73\x74\x61\x74\x65\x32\xff\xff\x00\x0d\x69\x6e\x70\x75\x74\x2d\x64\x65\x76\x69\x63\x65\x73\x32\xff\xff\x00\x0c\x69\x6e\x70\x75\x74\x2d\x64\x65\x76\x69\x63\x65\x2f\xff\xff\x00\x0a\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x00\x28\x32\x34\x38\x62\x37\x62\x63\x37\x30\x31\x66\x66\x66\x64\x65\x36\x65\x63\x63\x64\x62\x65\x61\x64\x37\x66\x36\x64\x31\x37\x31\x35\x38\x39\x65\x39\x35\x37\x63\x63\x33\x00\x02\x32\x00\x02\x2f\x00\x03\x00\x12\x76\x65\x6e\x64\x6f\x72\x3a\x31\x2c\x70\x72\x6f\x64\x75\x63\x74\x3a\x31\x32\xff\xff\x00\x0f\x6b\x65\x79\x62\x6f\x61\x72\x64\x2d\x6c\x61\x79\x6f\x75\x74\x2f\x00\x03\x00\x62\x63\x6f\x6d\x2e\x61\x6e\x64\x72\x6f\x69\x64\x2e\x69\x6e\x70\x75\x74\x64\x65\x76\x69\x63\x65\x73\x2f\x63\x6f\x6d\x2e\x61\x6e\x64\x72\x6f\x69\x64\x2e\x69\x6e\x70\x75\x74\x64\x65\x76\x69\x63\x65\x73\x2e\x49\x6e\x70\x75\x74\x44\x65\x76\x69\x63\x65\x52\x65\x63\x65\x69\x76\x65\x72\x2f\x6b\x65\x79\x62\x6f\x61\x72\x64\x5f\x6c\x61\x79\x6f\x75\x74\x5f\x73\x77\x69\x73\x73\x5f\x66\x72\x65\x6e\x63\x68\xcf\xff\xff\x00\x07\x63\x75\x72\x72\x65\x6e\x74\x33\x00\x04\x33\x00\x02\x33\x00\x01\x33\x00\x00\x11' | sudo dd of=/var/home/gab/.local/share/waydroid/data/system/input-manager-state.xml bs=1 conv=notrunc
 
-    #Réduire la latence audio
+    # Reduce audio latency
     sudo mkdir -p /var/lib/waydroid/overlay/system/etc/init
     sudo cp /usr/share/ublue-os/gablue/waydroid/audio.rc /var/lib/waydroid/overlay/system/etc/init/
 
-    #Ajouter une liste hosts antipub
+    # Add ad-blocking hosts list
     wget -O ~/.cache/waydroid/hosts https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
     sudo mkdir -p /var/lib/waydroid/overlay/system/etc
     sudo mv ~/.cache/waydroid/hosts /var/lib/waydroid/overlay/system/etc
 
-    # Ajouter la configuration KWin pour Waydroid et ses applications
+    # Add KWin configuration for Waydroid and its applications
     KWIN_RULES_FILE="$HOME/.config/kwinrulesrc"
     KWIN_RULE_SECTION="[c9f9faae-07c4-435a-b931-8763d5d640c9]"
     if [ -f "$KWIN_RULES_FILE" ] && grep -q "$KWIN_RULE_SECTION" "$KWIN_RULES_FILE"; then
@@ -687,7 +718,7 @@ fi
     fi
 fi
 
-# Nettoyer waydroid_script et l'environnement virtuel
+# Clean up waydroid_script and virtual environment
 sudo rm -rf "$WAYDROID_SCRIPT_DIR" || {
     echo "Échec du nettoyage de $WAYDROID_SCRIPT_DIR."
     kdialog --error "Échec du nettoyage de $WAYDROID_SCRIPT_DIR."
