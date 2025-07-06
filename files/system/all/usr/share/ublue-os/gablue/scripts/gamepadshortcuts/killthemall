@@ -25,3 +25,4 @@ pgrep -f shadps4 |xargs -n1 kill -9
 pgrep -f PokeMMO |xargs -n1 kill -9
 pgrep -f PPSSPP |xargs -n1 kill -9
 pkill -9 jellyfin
+pkill -9 sober
