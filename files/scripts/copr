@@ -10,7 +10,7 @@ for copr in \
         ublue-os/staging \
         ublue-os/packages \
         che/nerd-fonts \
-        lizardbyte/beta; \
+        lizardbyte/stable; \
 do \
         dnf5 -y copr enable $copr; \
 done && unset -v copr && \
