@@ -9,7 +9,6 @@ iotop-c \
 wol \
 duperemove \
 speedtest-cli \
-yt-dlp \
 rar \
 btop \
 tailscale \
@@ -33,6 +32,9 @@ inotify-tools \
 atuin \
 tldr \
 trash-cli
+
+# Install yt-dlp with fedora-updates-archive disabled
+dnf5 -y install --disablerepo=fedora-updates-archive yt-dlp
 
 #Goodies cli
 dnf5 -y  install \
