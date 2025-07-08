@@ -62,7 +62,7 @@ jobs:
           # Lister les tags du conteneur, filtrer par fedora_version
           TAGS=$(skopeo list-tags docker://ghcr.io/ublue-os/akmods | \
             jq -r --arg fedora_version "${{ matrix.image.fedora_version }}" \
-            '.Tags[] | select(startswith("bazzite-" + $fedora_version + "-"))' | \
+            '.Tags[] | select(startswith("bazzite-" + $fedora_version + "-") and match("bazzite-" + $fedora_version + "-([0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+)\\.bazzite\\.fc[0-9]+\\.x86_64"))' | \
             sort -r | head -n 1)
 
           if [[ -z "$TAGS" ]]; then
