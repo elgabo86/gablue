@@ -376,6 +376,7 @@ if [ "$need_rebuild" = true ]; then
     qdbus $dbusRef setLabelText "Configuration de Bottles..."
     flatpak run --command=bottles-cli com.usebottles.bottles new --bottle-name "def" --runner "$wineversion" --environment gaming
     flatpak override com.usebottles.bottles --user --filesystem=~/Windows
+    flatpak override com.usebottles.bottles --user --filesystem=/tmp
     mkdir -p ~/Windows/UserData ~/Windows/SteamData ~/Windows/Games ~/Windows/Applications ~/Windows/Tools ~/.local/share/applications/
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users/
     ln -s ~/Windows/UserData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users
