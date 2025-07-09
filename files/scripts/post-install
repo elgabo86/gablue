@@ -42,6 +42,9 @@ chmod +x /usr/bin/tgpt
 wget https://github.com/talwat/lowfi/releases/latest/download/lowfi-linux-x86_64 -O /usr/bin/lowfi
 chmod +x /usr/bin/lowfi
 
+# Add zxtune
+curl -s https://storage.zxtune.ru/builds/public/r5100/linux/x86_64/zxtune_r5100_linux_x86_64.tar.gz | tar -xzf - -C / --exclude=./usr/bin/zxtune123 --exclude=./usr/bin/xtractor
+
 #Use bore config from CachyOS
 curl -Lo /usr/lib/sysctl.d/99-bore-scheduler.conf https://github.com/CachyOS/CachyOS-Settings/raw/master/usr/lib/sysctl.d/99-bore-scheduler.conf
 
