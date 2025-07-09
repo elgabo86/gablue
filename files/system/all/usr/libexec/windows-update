@@ -389,6 +389,9 @@ if [ "$need_rebuild" = true ]; then
     flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD"
     flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_CURRENT_USER\Software\Wine\Drivers" -v "Graphics" -d "X11" -t "REG_SZ"
 
+    # Désactiver coremessaging.dll (fix wine proton)
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_CURRENT_USER\Software\Wine\DllOverrides" -v "coremessaging" -d "" -t "REG_SZ"
+
     qdbus $dbusRef Set "" "value" 80
     qdbus $dbusRef setLabelText "Configuration des raccourcis et outils..."
     cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications/
