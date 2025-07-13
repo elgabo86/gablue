@@ -5,7 +5,7 @@ set -e
 
 user=$(whoami)
 dossieruser="~/Windows/UserData/$user"
-dxvkversion="dxvk-gplasync-v2.6.2-1"
+dxvkversion="dxvk-gplasync-v2.7-1"
 vkd3dversion="vkd3d-proton-2.14.1"
 nvapiversion="dxvk-nvapi-v0.9.0"
 latencyflexversion="latencyflex-v0.1.1-2-3bc9636"
