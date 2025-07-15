@@ -32,7 +32,8 @@ inotify-tools \
 atuin \
 tldr \
 trash-cli \
-git
+git \
+nmap
 
 # Install yt-dlp
 dnf5 -y install  yt-dlp
