@@ -33,8 +33,12 @@ fi
 
 # Récupérer la dernière version de gwine ou gwine-proton si sélectionné
 if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ]; then
-    API_URL="https://api.github.com/repos/elgabo86/gwine/releases/latest"
-    wineversion=$(curl -s $API_URL | grep '"tag_name":' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
+    API_URL="https://api.github.com/repos/elgabo86/gwine/releases"
+    wineversion=$(curl -s "$API_URL" | grep '"tag_name":' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/' | grep "^${runner_choice}-" | head -n1)
+    if [ -z "$wineversion" ]; then
+        kdialog --msgbox "Aucune version trouvée pour $runner_choice."
+        exit 1
+    fi
 else
     wineversion="$soda_version"
 fi
@@ -167,7 +171,7 @@ if [ -d "$wine_dir/$wineversion" ] && [ "$need_rebuild" = false ]; then
 else
     if [ -d "$wine_dir" ] && ls "$wine_dir"/* >/dev/null 2>&1; then
         current_wine=$(ls -d "$wine_dir"/* | grep -o '[a-z-]*-[0-9.r-]*' | head -n1)
-        if [ -n "$current_wine" ] && [ "$current_wine" != "$wineversion" ] || [ ! -d "$wine_dir/$wineversion" ]; then
+        if [ -n "$current_wine" ] && [ "$current_wine" != "$wineversion" ]; then
             echo "Mise à jour ou réinstallation de $runner_choice vers $wineversion, sauvegarde de l'ancienne version ($current_wine) si présente..."
             mkdir -p "$temp_dir/wine"
             if [ -d "$wine_dir/$current_wine" ]; then
