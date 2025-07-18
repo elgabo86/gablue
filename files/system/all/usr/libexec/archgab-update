@@ -47,7 +47,8 @@ kdialog --msgbox "Archgab est à jour"
 CHOICES=$(kdialog --title "Installation de programmes supplémentaires" --checklist "Sélectionnez les programmes à installer :" \
     "citron" "Citron" off \
     "ryujinx" "Ryujinx" off \
-    "torzu" "Torzu" off)
+    "torzu" "Torzu" off \
+    "eden" "Eden" off)
 
 # Vérifier si l'utilisateur a cliqué sur "OK" (code de retour 0)
 if [ $? -eq 0 ]; then
@@ -68,6 +69,10 @@ if [ $? -eq 0 ]; then
             '"torzu"')
                 qdbus $dbusRef setLabelText "Installation de Torzu..."
                 distrobox-enter -n archgab -- bash -c 'paru -Syu torzu-qt6-git  --noconfirm && distrobox-export --app torzu'
+                ;;
+            '"eden"')
+                qdbus $dbusRef setLabelText "Installation de Eden..."
+                distrobox-enter -n archgab -- bash -c 'paru -Syu eden-git  --noconfirm && distrobox-export --app eden'
                 ;;
         esac
     done
