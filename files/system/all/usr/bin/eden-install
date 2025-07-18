@@ -1,0 +1,62 @@
+#!/bin/bash
+
+# Script pour télécharger et installer/mettre à jour l'AppImage Eden Nightly (Common-light x86_64_v3) avec GearLever
+
+# Dépendances : curl, jq, flatpak (GearLever installé comme it.mijorus.gearlever), yes
+
+set -e
+
+REPO="pflyly/eden-nightly"
+CACHE_DIR="$HOME/.cache/eden-nightly"
+APPIMAGES_DIR="$HOME/AppImages"
+mkdir -p "$CACHE_DIR"
+
+# Obtenir les infos de la dernière release via GitHub API
+RELEASE_JSON=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest")
+
+# Extraire l'URL de téléchargement pour l'AppImage spécifique
+ASSET_NAME_PATTERN="-Common-light-x86_64_v3.AppImage"
+DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r --arg pattern "$ASSET_NAME_PATTERN" '.assets[] | select(.name | endswith($pattern)) | .browser_download_url')
+
+if [ -z "$DOWNLOAD_URL" ]; then
+    echo "Erreur : AppImage non trouvé dans la dernière release."
+    exit 1
+fi
+
+# Extraire le nom du fichier
+ASSET_NAME=$(basename "$DOWNLOAD_URL")
+
+# Chemin du fichier à télécharger
+NEW_APPIMAGE_PATH="$CACHE_DIR/$ASSET_NAME"
+
+# Vérifier si une version est déjà installée et la supprimer
+INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -name "eden.appimage" | sort -V | tail -n1 || true)
+
+if [ -n "$INSTALLED_APPIMAGE" ]; then
+    echo "Suppression de la version installée existante."
+    yes | flatpak run it.mijorus.gearlever --remove "$INSTALLED_APPIMAGE"
+fi
+
+# Télécharger la nouvelle AppImage
+echo "Téléchargement de $ASSET_NAME..."
+curl -L -o "$NEW_APPIMAGE_PATH" "$DOWNLOAD_URL"
+
+# Installer avec GearLever sans confirmation
+echo "Installation/Mise à jour avec GearLever..."
+yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH"
+
+# Corriger le .desktop pour enlever le (hash)
+DESKTOP_DIR="$HOME/.local/share/applications"
+DESKTOP_FILE=$(find "$DESKTOP_DIR" -name "eden.desktop" -type f | head -n1)
+if [ -n "$DESKTOP_FILE" ]; then
+    sed -i 's/^Name=eden (.*)$/Name=eden/' "$DESKTOP_FILE"
+    sed -i '/^X-AppImage-Version=/d' "$DESKTOP_FILE"  # Optionnel: enlever la ligne version
+fi
+
+# Nettoyer le cache si le fichier existe encore (GearLever le déplace normalement)
+if [ -f "$NEW_APPIMAGE_PATH" ]; then
+    rm "$NEW_APPIMAGE_PATH"
+fi
+rmdir --ignore-fail-on-non-empty "$CACHE_DIR"
+
+echo "Opération terminée."
