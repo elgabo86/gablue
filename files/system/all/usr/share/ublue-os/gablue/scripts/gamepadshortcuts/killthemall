@@ -6,7 +6,7 @@ pgrep -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q "^bwrap$" && k
 
 # Recherche et kill tous les emulateurs ouverts
 pgrep -f suyu |xargs -n1 kill -9
-pgrep -f eden |xargs -n1 kill -9
+pgrep -f eden | xargs -n1 kill -9 && sleep 1 && fusermount -u /tmp/.mount_eden*
 pgrep -f sudachi |xargs -n1 kill -9
 pgrep -f dolphin-emu |xargs -n1 kill -9
 pgrep -f yuzu |xargs -n1 kill -9
