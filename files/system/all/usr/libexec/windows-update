@@ -444,10 +444,10 @@ if [ "$need_rebuild" = true ]; then
 
     qdbus $dbusRef Set "" "value" 90
     qdbus $dbusRef setLabelText "Finalisation des runtimes et configuration..."
-    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/24.08 -y
-    flatpak install runtime/com.obsproject.Studio.Plugin.OBSVkCapture/x86_64/stable -y
-    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.OBSVkCapture/x86_64/24.08 -y
-    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.gamescope/x86_64/24.08 -y
+    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/24.08 -y --system
+    flatpak install runtime/com.obsproject.Studio.Plugin.OBSVkCapture/x86_64/stable -y --system
+    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.OBSVkCapture/x86_64/24.08 -y --system
+    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.gamescope/x86_64/24.08 -y --system
     mkdir -p ~/.config/MangoHud/
     cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud/
     flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params mangohud:true
