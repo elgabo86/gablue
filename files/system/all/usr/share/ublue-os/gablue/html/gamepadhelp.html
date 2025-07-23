@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mode d'Emploi - Raccourcis Manette</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+        h1, h2 {
+            color: #4a4a8c;
+            margin-bottom: 20px;
+        }
+        .shortcuts, .mouse-mode {
+            max-width: 800px;
+            width: 100%;
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+        }
+        .shortcut {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 15px;
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .shortcut:last-child {
+            border-bottom: none;
+        }
+        .combo {
+            font-weight: bold;
+            color: #007bff;
+            flex: 1;
+            text-align: left;
+            display: flex;
+            align-items: center;
+        }
+        .action {
+            flex: 2;
+            text-align: left;
+            margin-left: 20px;
+        }
+        .button {
+            display: inline-block;
+            padding: 2px 6px;
+            margin: 0 3px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #f8f8f8;
+            font-size: 1.1em;
+            font-weight: bold;
+        }
+        .ps-home {
+            background-color: #0070d2;
+            color: white;
+            border-color: #0056a7;
+        }
+        .triangle {
+            color: #007D00;
+        }
+        .circle {
+            color: #E60012;
+        }
+        .cross {
+            color: #003791;
+        }
+        .square {
+            color: #ED4C97;
+        }
+        .dpad {
+            font-size: 1.2em;
+        }
+        footer {
+            margin-top: 30px;
+            font-size: 0.8em;
+            color: #777;
+        }
+        @media (max-width: 600px) {
+            .shortcut {
+                flex-direction: column;
+                text-align: left;
+            }
+            .action {
+                margin-left: 0;
+                margin-top: 5px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Mode d'Emploi : Raccourcis à la Manette</h1>
+    <div class="shortcuts">
+        <h2>Raccourcis Principaux</h2>
+        <p>Tous les raccourcis sont activés en maintenant le bouton <span class="button ps-home">Home</span> pressé, combiné avec un autre bouton ou direction.</p>
+        <div class="shortcut">
+            <span class="combo"><span class="button ps-home">Home</span> + <span class="button">Select</span></span>
+            <span class="action">Tuer tous les processus des jeux windows ou des émulateurs</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button ps-home">Home</span> + <span class="button">Start</span></span>
+            <span class="action">Ouvrir EmulationStation (ES)</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button ps-home">Home</span> + <span class="button">R3</span></span>
+            <span class="action">Activer/Désactiver le mode souris (utiliser la manette comme souris)</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button ps-home">Home</span> + <span class="button">L3</span></span>
+            <span class="action">Activer/Désactiver le mute audio</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button ps-home">Home</span> + <span class="button triangle">△</span></span>
+            <span class="action">Lancer ou fermer Youtube en plein écran</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button ps-home">Home</span> + <span class="button circle">○</span></span>
+            <span class="action">Ouvrir le menu pour désactiver les manettes bluetooth et redémarrer ou éteindre la machine</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button ps-home">Home</span> + <span class="button dpad">←</span></span>
+            <span class="action">Prendre une capture d'écran</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button ps-home">Home</span> + <span class="button dpad">→</span></span>
+            <span class="action">Démarrer/Arrêter l'enregistrement vidéo</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button ps-home">Home</span> + <span class="button dpad">↑</span></span>
+            <span class="action">Changer la limite FPS (60/120/sans limite)</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button ps-home">Home</span> + <span class="button dpad">↓</span></span>
+            <span class="action">Afficher/Cacher MangoHud (overlay FPS) - Permet de basculer entre mode horizontal, vertical et caché</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button ps-home">Home</span> + Stick Gauche <span class="dpad">↑</span></span>
+            <span class="action">Augmenter le volume (+10%)</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button ps-home">Home</span> + Stick Gauche <span class="dpad">↓</span></span>
+            <span class="action">Diminuer le volume (-10%)</span>
+        </div>
+    </div>
+    <div class="mouse-mode">
+        <h2>Mode Souris (Activé par Home + R3)</h2>
+        <p>En mode souris, la manette simule une souris et un clavier. Pour quitter le mode : <span class="button ps-home">Home</span> + <span class="button">R3</span>.</p>
+        <div class="shortcut">
+            <span class="combo">Stick Droit</span>
+            <span class="action">Déplacement de la souris</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button">R1</span></span>
+            <span class="action">Clic gauche</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button">L1</span></span>
+            <span class="action">Clic droit</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo">D-Pad <span class="dpad">← ↑ → ↓</span></span>
+            <span class="action">Touches fléchées</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button">L3</span></span>
+            <span class="action">Esc</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button">L2</span></span>
+            <span class="action">Alt gauche</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button">R2</span></span>
+            <span class="action">Shift gauche</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button">Start</span></span>
+            <span class="action">Entrée</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button">Select</span></span>
+            <span class="action">F11</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button square">□</span></span>
+            <span class="action">Backspace</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button cross">×</span></span>
+            <span class="action">Espace</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button circle">○</span></span>
+            <span class="action">Tab</span>
+        </div>
+        <div class="shortcut">
+            <span class="combo"><span class="button triangle">△</span></span>
+            <span class="action">F4</span>
+        </div>
+    </div>
+    <footer>Page générée pour les raccourcis gamepad sur uBlue OS.</footer>
+</body>
+</html>

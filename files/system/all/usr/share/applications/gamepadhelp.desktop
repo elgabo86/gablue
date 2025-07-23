@@ -1,0 +1,17 @@
+[Desktop Entry]
+Categories=Documentation
+Comment=Aide sur les raccourcis de la manette
+Exec=xdg-open /usr/share/ublue-os/gablue/html/gamepadhelp.html
+Icon=applications-games
+Path=
+Terminal=false
+TerminalOptions=
+Type=Application
+X-Flatpak=com.usebottles.bottles
+X-GNOME-UsesNotifications=true
+X-KDE-SubstituteUID=false
+X-KDE-Username=
+X-KDE-StartupNotify=false
+NoDisplay=false
+GenericName=Gamepad Shortcuts Help
+Name=Gamepad Shortcuts Help
