@@ -7,9 +7,6 @@ chmod +x /usr/bin/system-flatpak-setup
 chmod +x /usr/bin/ventoy
 chmod +x /usr/bin/bottles-sort-library
 chmod +x /usr/bin/dlcover
-chmod +x /usr/bin/ssdcheck
-chmod +x /usr/bin/ramcheck
-chmod +x /usr/bin/cpucheck
 chmod +x /usr/bin/genimg
 chmod +x /usr/bin/a13
 chmod +x /usr/bin/a13-id
