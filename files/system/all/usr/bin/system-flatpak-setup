@@ -40,7 +40,9 @@ done
 if rpm -q fedora-third-party &>/dev/null; then
   if [[ ! "$(fedora-third-party query)" == *"disabled." ]]; then
     echo "Disabling Fedora third-party repos..."
-    /usr/bin/gnome-software --quit
+    if command -v gnome-software &> /dev/null; then
+      /usr/bin/gnome-software --quit
+    fi
     /usr/lib/fedora-third-party/fedora-third-party-opt-out
     /usr/bin/fedora-third-party disable
   else
