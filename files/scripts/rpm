@@ -33,7 +33,8 @@ atuin \
 tldr \
 trash-cli \
 git \
-nmap
+nmap \
+terminus-fonts
 
 # Install yt-dlp
 dnf5 -y install  yt-dlp
