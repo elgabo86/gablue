@@ -34,7 +34,7 @@ tldr \
 trash-cli \
 git \
 nmap \
-terminus-fonts
+terminus-fonts-console
 
 # Install yt-dlp
 dnf5 -y install  yt-dlp

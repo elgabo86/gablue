@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+
+import os
+import threading
+from evdev import InputDevice, ecodes, list_devices
+
+# Trouve les devices clavier basés sur capabilities (EV_KEY présent, EV_REL absent)
+keyboard_paths = []
+for path in list_devices():
+    try:
+        dev = InputDevice(path)
+        caps = dev.capabilities()
+        if ecodes.EV_KEY in caps and ecodes.EV_REL not in caps:
+            keyboard_paths.append(path)
+            # Commenté pour minimiser l'output et CPU (inutile en prod)
+            # print(f"Clavier trouvé : {path} ({dev.name})")
+    except Exception:
+        pass  # Silencieux pour éviter output inutile
+
+if not keyboard_paths:
+    # print("Aucun clavier trouvé !")
+    exit(1)
+
+# Fonction pour écouter un device spécifique
+def listen_to_device(device_path):
+    try:
+        device = InputDevice(device_path)
+        # print(f"Écoute sur {device.path} ({device.name}).")
+        pressed = set()
+
+        for event in device.read_loop():
+            if event.type == ecodes.EV_KEY:
+                key = event.code
+                if event.value == 1:  # Key down
+                    pressed.add(key)
+                elif event.value == 0:  # Key up
+                    if key in pressed:
+                        pressed.remove(key)
+
+                # Codes pour Ctrl (gauche/droite), Alt (gauche/droite), K
+                ctrl_codes = {ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL}
+                alt_codes = {ecodes.KEY_LEFTALT, ecodes.KEY_RIGHTALT}
+                k_code = ecodes.KEY_K
+
+                if (any(c in pressed for c in ctrl_codes) and
+                    any(a in pressed for a in alt_codes) and
+                    k_code in pressed):
+                    os.system("pkill gamescope")
+                    # print(f"Processus gamescope tués ! (détecté sur {device.name})")
+                    # Optionnel : os._exit(0) pour quitter tout le script après l'action
+    except Exception:
+        pass  # Silencieux
+
+# Lance un thread par clavier
+threads = []
+for path in keyboard_paths:
+    t = threading.Thread(target=listen_to_device, args=(path,))
+    t.daemon = True
+    t.start()
+    threads.append(t)
+
+# Commenté pour minimiser output
+# print("Tous les claviers sont écoutés. Appuie sur Ctrl+Alt+K sur n'importe quel clavier pour tuer gamescope.")
+# print("Pour quitter ce script, presse Ctrl+C dans ce terminal.")
+
+# Bloque le main thread pour garder le script en vie
+for t in threads:
+    t.join()
