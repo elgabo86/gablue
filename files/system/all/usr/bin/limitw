@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# Vérifie si un argument est fourni
+if [ $# -ne 1 ]; then
+    echo "Usage: $0 <watts> (ex. : $0 35 pour 35W)"
+    exit 1
+fi
+
+# Récupère l'argument et vérifie s'il est un nombre entier positif
+WATTS=$1
+if ! [[ $WATTS =~ ^[0-9]+$ ]] || [ $WATTS -lt 5 ] || [ $WATTS -gt 100 ]; then
+    echo "Erreur : L'argument doit être un nombre entier entre 5 et 100 (en watts)."
+    exit 1
+fi
+
+# Convertit en milliwatts
+MW=$((WATTS * 1000))
+
+# Exécute la commande sudo ryzenadj
+echo "Réglage des limites TDP à ${WATTS}W (${MW} mW)..."
+sudo ryzenadj --stapm-limit=$MW --fast-limit=$MW --slow-limit=$MW
+
+if [ $? -eq 0 ]; then
+    echo "Succès : TDP limité à ${WATTS}W."
+else
+    echo "Erreur : Échec de l'exécution de ryzenadj. Vérifiez si l'outil est installé et si vous avez les droits sudo."
+fi
