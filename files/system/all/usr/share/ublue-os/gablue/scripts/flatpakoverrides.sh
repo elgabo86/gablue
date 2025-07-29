@@ -12,11 +12,12 @@ flatpak override --user --filesystem=xdg-download
 flatpak override com.usebottles.bottles --user --filesystem=xdg-data/applications
 flatpak override com.usebottles.bottles --user --env=DXVK_ASYNC=1
 flatpak override com.usebottles.bottles --user --env=DXVK_GPLASYNCCACHE=1
-flatpak override com.usebottles.bottles --user --env=WINENTSYNC=1
+flatpak override com.usebottles.bottles --user --env=WINENTSYNC=0
 flatpak override com.usebottles.bottles --user --filesystem=~/Windows
 flatpak override com.usebottles.bottles --user --filesystem=/tmp
 flatpak override org.mozilla.firefox --user --filesystem=/run/udev:ro
 flatpak override app.zen_browser.zen --user --filesystem=/run/udev:ro
 flatpak override com.valvesoftware.Steam  --user --env=MANGOHUD=1
+flatpak override com.valvesoftware.Steam --user --env=PROTON_USE_NTSYNC=0
 
 flatpak override io.github.hedge_dev.hedgemodmanager --user --filesystem=~/.var/app/io.github.hedge_dev.unleashedrecomp:ro
