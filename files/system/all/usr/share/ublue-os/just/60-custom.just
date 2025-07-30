@@ -87,7 +87,7 @@ atuin-setup:
     rm -rf ble-nightly &&
     rm -f ble-nightly.tar.xz &&
     echo 'source ~/.local/share/blesh/ble.sh' >> ~/.bashrc &&
-    echo 'eval "$(atuin init bash)"' >> ~/.bashrc &&
+    echo 'eval "$(atuin init bash --disable-up-arrow)"' >> ~/.bashrc &&
     echo "Atuin is ready!" ||
     echo "Error..."
 
