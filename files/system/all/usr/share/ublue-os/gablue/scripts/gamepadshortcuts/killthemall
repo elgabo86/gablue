@@ -1,28 +1,25 @@
 #!/usr/bin/bash
 
-# Recherche et kill tous les processus windows (xbox360 inclu)
-pgrep -i '(.*\.(exe|dll|msi|bat|com|lnk)$)|(.*(wine|proton).*))' |xargs -n1 kill -9
-pgrep -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q "^bwrap$" && kill -9 {}'
+# Exécuter toutes les commandes en arrière-plan en regroupant les tâches indépendantes
+{
+  # Recherche et kill tous les processus Windows (xbox360 inclus)
+  pgrep -f -i '(.*\.(exe|dll|msi|bat|com|lnk).*|.*(wine|proton).*)' | grep -v -E "^($(pgrep -i '^(steam|steamwebhelper|steam-runtime-l)$' | paste -sd '|' -))$" | xargs kill -9 &
 
-# Recherche et kill tous les emulateurs ouverts
-pgrep -f suyu |xargs -n1 kill -9
-pgrep -f eden | xargs -n1 kill -9 && sleep 1 && fusermount -u /tmp/.mount_eden*
-pgrep -f sudachi |xargs -n1 kill -9
-pgrep -f dolphin-emu |xargs -n1 kill -9
-pgrep -f yuzu |xargs -n1 kill -9
-pgrep -f citron |xargs -n1 kill -9
-pgrep -f retroarch |xargs -n1 kill -9
-pgrep -f xemu |xargs -n1 kill -9
-pgrep -f rpcs3 |xargs -n1 kill -9
-pgrep -f retroarch |xargs -n1 kill -9
-pgrep -f duckstation |xargs -n1 kill -9
-pgrep -f pcsx2 |xargs -n1 kill -9
-pgrep -f lime3ds |xargs -n1 kill -9
-pgrep -f ryujinx |xargs -n1 kill -9
-pgrep -f Cemu |xargs -n1 kill -9
-pgrep -f flycast |xargs -n1 kill -9
-pgrep -f shadps4 |xargs -n1 kill -9
-pgrep -f PokeMMO |xargs -n1 kill -9
-pgrep -f PPSSPP |xargs -n1 kill -9
-pkill -9 jellyfin
-pkill -9 sober
+  # Gestion des processus bottles (spécifique avec vérification bwrap)
+  pgrep -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q "^bwrap$" && kill -9 {}' &
+
+  # Kill des émulateurs (tous en parallèle)
+  for emu in suyu sudachi dolphin-emu yuzu citron retroarch xemu rpcs3 duckstation pcsx2 lime3ds ryujinx Cemu flycast shadps4 PokeMMO PPSSPP; do
+    pgrep -f "$emu" | xargs -n1 kill -9 &
+  done
+
+  # Commande spécifique pour eden avec fusermount
+  (pgrep -f eden | xargs -n1 kill -9 && sleep 1 && fusermount -u /tmp/.mount_eden*) &
+
+  # Kill des processus jellyfin et sober
+  pkill -9 jellyfin &
+  pkill -9 sober &
+} > /dev/null 2>&1 &
+
+# Attendre que toutes les tâches en arrière-plan soient terminées (optionnel)
+wait
