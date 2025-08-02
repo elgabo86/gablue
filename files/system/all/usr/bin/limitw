@@ -1,13 +1,64 @@
 #!/bin/bash
 
-# Vérifie si un argument est fourni
-if [ $# -ne 1 ]; then
-    echo "Usage: $0 <watts> (ex. : $0 35 pour 35W)"
+# Vérifie les arguments
+usage() {
+    echo "Usage: $0 <watts> [--save]"
+    echo "   or: $0 --reset"
+    echo "ex. : $0 35 pour 35W"
+    echo "--save : Crée ou met à jour un fichier .desktop dans ~/.config/autostart pour exécution automatique à l'ouverture de session."
+    echo "--reset : Supprime le fichier .desktop pour enlever l'exécution automatique."
     exit 1
+}
+
+SAVE=0
+RESET=0
+WATTS=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --save)
+            SAVE=1
+            shift
+            ;;
+        --reset)
+            RESET=1
+            shift
+            ;;
+        -*)
+            echo "Option inconnue : $1"
+            usage
+            ;;
+        *)
+            if [[ -n "$WATTS" ]]; then
+                usage
+            fi
+            WATTS=$1
+            shift
+            ;;
+    esac
+done
+
+if [ $RESET -eq 1 ]; then
+    if [[ -n "$WATTS" ]] || [ $SAVE -eq 1 ]; then
+        echo "Erreur : --reset ne peut pas être combiné avec d'autres options ou arguments."
+        usage
+    fi
+    AUTOSTART_DIR="$HOME/.config/autostart"
+    DESKTOP_FILE="$AUTOSTART_DIR/limit-tdp.desktop"
+    if [ -f "$DESKTOP_FILE" ]; then
+        rm "$DESKTOP_FILE"
+        echo "Succès : Entrée autostart supprimée."
+    else
+        echo "Aucune entrée autostart à supprimer."
+    fi
+    exit 0
 fi
 
-# Récupère l'argument et vérifie s'il est un nombre entier positif
-WATTS=$1
+if [[ -z "$WATTS" ]]; then
+    usage
+fi
+
+# Vérifie si l'argument est un nombre entier positif
 if ! [[ $WATTS =~ ^[0-9]+$ ]] || [ $WATTS -lt 5 ] || [ $WATTS -gt 100 ]; then
     echo "Erreur : L'argument doit être un nombre entier entre 5 et 100 (en watts)."
     exit 1
@@ -24,4 +75,28 @@ if [ $? -eq 0 ]; then
     echo "Succès : TDP limité à ${WATTS}W."
 else
     echo "Erreur : Échec de l'exécution de ryzenadj. Vérifiez si l'outil est installé et si vous avez les droits sudo."
+    exit 1
+fi
+
+# Si --save est spécifié, crée ou met à jour le fichier .desktop
+if [ $SAVE -eq 1 ]; then
+    SCRIPT_PATH=$(readlink -f "$0")
+    AUTOSTART_DIR="$HOME/.config/autostart"
+    mkdir -p "$AUTOSTART_DIR"
+    DESKTOP_FILE="$AUTOSTART_DIR/limit-tdp.desktop"
+
+    cat << EOF > "$DESKTOP_FILE"
+[Desktop Entry]
+Type=Application
+Exec=$SCRIPT_PATH $WATTS
+Name=Limit TDP
+Comment=Set TDP limit to $WATTS W
+Terminal=false
+EOF
+
+    if [ $? -eq 0 ]; then
+        echo "Succès : Entrée autostart créée ou mise à jour pour ${WATTS}W."
+    else
+        echo "Erreur : Échec de la création de l'entrée autostart."
+    fi
 fi
