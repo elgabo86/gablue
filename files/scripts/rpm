@@ -45,7 +45,8 @@ bash-color-prompt \
 asciiquarium \
 figlet \
 toilet \
-cmatrix
+cmatrix \
+genact
 
 #Tools
 dnf5 -y install \
