@@ -3,7 +3,7 @@
 # Exécuter toutes les commandes en arrière-plan en regroupant les tâches indépendantes
 {
   # Recherche et kill tous les processus Windows (xbox360 inclus)
-  pgrep -f -i '(.*\.(exe|dll|msi|bat|com|lnk).*|.*(wine|proton).*)' | grep -v -E "^($(pgrep -i '^(steam|steamwebhelper|steam-runtime-l)$' | paste -sd '|' -))$" | xargs kill -9 &
+  pgrep -f -i '(.*\.(exe|bat).*|.*(wine|proton).*)' | grep -v -E "^($(pgrep -i '^(steam|steamwebhelper|steam-runtime-l)$' | paste -sd '|' -))$" | xargs kill -9 &
 
   # Gestion des processus bottles (spécifique avec vérification bwrap)
   pgrep -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q "^bwrap$" && kill -9 {}' &
