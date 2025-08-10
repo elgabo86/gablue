@@ -263,12 +263,12 @@ fi
 if [ "$UPDATE_NEEDED" = true ]; then
     CPU_VENDOR=$(grep -m1 "vendor_id" /proc/cpuinfo | awk '{print $3}')
     if [ "$CPU_VENDOR" = "AuthenticAMD" ]; then
-        TRANSLATION_LIB="libndk"
+        TRANSLATION_LIB="libhoudini"
     elif [ "$CPU_VENDOR" = "GenuineIntel" ]; then
         TRANSLATION_LIB="libhoudini"
     else
-        echo "CPU non reconnu ($CPU_VENDOR). Installation de libndk par défaut."
-        TRANSLATION_LIB="libndk"
+        echo "CPU non reconnu ($CPU_VENDOR). Installation de libhoudini par défaut."
+        TRANSLATION_LIB="libhoudini"
     fi
 
     # Démarrage de Waydroid pour les configurations et installations
