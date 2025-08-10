@@ -407,6 +407,7 @@ if [ "$need_rebuild" = true ]; then
     cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications/
     mkdir -p ~/.local/share/kio/servicemenus/
     cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWinShortcut.desktop ~/.local/share/kio/servicemenus/
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/LaunchWin.desktop ~/.local/share/kio/servicemenus/
     cp /usr/share/ublue-os/gablue/desktops/servicemenus/InstallWinReg.desktop ~/.local/share/kio/servicemenus/
     update-desktop-database ~/.local/share/applications
     xdg-mime default Windows.desktop application/x-ms-dos-executable
