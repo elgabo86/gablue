@@ -15,7 +15,7 @@ alias ffsendp="podman run --rm --rmi -it -v $(pwd):/data:Z docker.io/timvisee/ff
 
 alias gogpt="tgpt --provider sky -i"
 
-alias gogpt-pro="tgpt --provider kimi -i"
+alias gogpt-web="tgpt --provider kimi -i"
 
 alias wkill="pgrep -i '(.*\\.(exe|dll|msi|bat|com|lnk)$)|(.*(wine|proton).*)' | xargs -n1 kill -9 ; pgrep -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q \"^bwrap$\" && kill -9 {}'"
 
