@@ -20,9 +20,10 @@ mkdir -p "$temp_dir"
 flag_file="/tmp/kdialog_monitor_flag_$$"
 touch "$flag_file"
 
-# Choix entre gwine, gwine-proton et soda avec kdialog
+# Choix entre gwine, gwine-proton, gwine-proton-wow64 et soda avec kdialog
 runner_choice=$(kdialog --title "Choix de wine" --radiolist "Sélectionnez la version de wine à utiliser :" \
     "gwine-proton" "Gwine-Proton (dernière version)" on \
+    "gwine-proton-wow64" "Gwine-Proton-WoW64 (dernière version)" off \
     "gwine" "Gwine (dernière version)" off \
     "soda" "Soda (ancienne version)" off)
 
@@ -31,10 +32,17 @@ if [ $? -ne 0 ] || [ -z "$runner_choice" ]; then
     exit 1
 fi
 
-# Récupérer la dernière version de gwine ou gwine-proton si sélectionné
-if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ]; then
+# Récupérer la dernière version de gwine, gwine-proton ou gwine-proton-wow64 si sélectionné
+if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ] || [ "$runner_choice" = "gwine-proton-wow64" ]; then
     API_URL="https://api.github.com/repos/elgabo86/gwine/releases"
-    wineversion=$(curl -s "$API_URL" | grep '"tag_name":' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/' | grep "^${runner_choice}-" | head -n1)
+    # Use exact match for runner_choice to avoid overlap between gwine-proton and gwine-proton-wow64
+    if [ "$runner_choice" = "gwine-proton" ]; then
+        wineversion=$(curl -s "$API_URL" | grep '"tag_name":' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/' | grep "^gwine-proton-[0-9]" | head -n1)
+    elif [ "$runner_choice" = "gwine-proton-wow64" ]; then
+        wineversion=$(curl -s "$API_URL" | grep '"tag_name":' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/' | grep "^gwine-proton-wow64-[0-9]" | head -n1)
+    else
+        wineversion=$(curl -s "$API_URL" | grep '"tag_name":' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/' | grep "^gwine-[0-9]" | head -n1)
+    fi
     if [ -z "$wineversion" ]; then
         kdialog --msgbox "Aucune version trouvée pour $runner_choice."
         exit 1
@@ -177,7 +185,7 @@ else
             if [ -d "$wine_dir/$current_wine" ]; then
                 mv "$wine_dir/$current_wine" "$temp_dir/wine/"
             fi
-            if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ]; then
+            if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ] || [ "$runner_choice" = "gwine-proton-wow64" ]; then
                 curl -L -o "$wine_dir/$wineversion.tar.xz" "https://github.com/elgabo86/gwine/releases/download/$wineversion/$wineversion.tar.xz"
                 tar -xf "$wine_dir/$wineversion.tar.xz" -C "$wine_dir/"
                 rm -f "$wine_dir/$wineversion.tar.xz"
@@ -197,7 +205,7 @@ else
         fi
     else
         echo "Installation initiale de $runner_choice $wineversion..."
-        if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ]; then
+        if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ] || [ "$runner_choice" = "gwine-proton-wow64" ]; then
             curl -L -o "$wine_dir/$wineversion.tar.xz" "https://github.com/elgabo86/gwine/releases/download/$wineversion/$wineversion.tar.xz"
             tar -xf "$wine_dir/$wineversion.tar.xz" -C "$wine_dir/"
             rm -f "$wine_dir/$wineversion.tar.xz"
