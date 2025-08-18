@@ -80,7 +80,8 @@ fi
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     dnf5 -y install --setopt=install_weak_deps=0 \
     plasma-discover-flatpak \
-    plasma-discover-notifier
+    plasma-discover-notifier \
+    plasma-discover-kns
 fi
 
 #Fonts
