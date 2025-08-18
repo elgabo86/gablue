@@ -77,6 +77,12 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     kdeplasma-addons
 fi
 
+if [ "$SOURCE_IMAGE" == "kinoite" ]; then
+    dnf5 -y install -setopt=install_weak_deps=0 \
+    plasma-discover-flatpak \
+    plasma-discover-notifier
+fi
+
 #Fonts
 dnf5 -y install \
 nerd-fonts \
