@@ -78,7 +78,7 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
 fi
 
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
-    dnf5 -y install -setopt=install_weak_deps=0 \
+    dnf5 -y install --setopt=install_weak_deps=0 \
     plasma-discover-flatpak \
     plasma-discover-notifier
 fi
