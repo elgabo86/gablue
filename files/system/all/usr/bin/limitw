@@ -2,9 +2,10 @@
 
 # Vérifie les arguments
 usage() {
-    echo "Usage: $0 <watts> [--save]"
+    echo "Usage: $0 <watts> [--temp <temp>] [--save]"
     echo "   or: $0 --reset"
     echo "ex. : $0 35 pour 35W"
+    echo "--temp <temp> : Définit la température maximale en °C (entre 50 et 105)."
     echo "--save : Crée ou met à jour un fichier .desktop dans ~/.config/autostart pour exécution automatique à l'ouverture de session."
     echo "--reset : Supprime le fichier .desktop pour enlever l'exécution automatique."
     exit 1
@@ -13,6 +14,7 @@ usage() {
 SAVE=0
 RESET=0
 WATTS=""
+TEMP=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -23,6 +25,14 @@ while [[ $# -gt 0 ]]; do
         --reset)
             RESET=1
             shift
+            ;;
+        --temp)
+            if [[ $# -lt 2 ]]; then
+                echo "Erreur : --temp nécessite une valeur."
+                usage
+            fi
+            TEMP=$2
+            shift 2
             ;;
         -*)
             echo "Option inconnue : $1"
@@ -39,7 +49,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ $RESET -eq 1 ]; then
-    if [[ -n "$WATTS" ]] || [ $SAVE -eq 1 ]; then
+    if [[ -n "$WATTS" ]] || [[ -n "$TEMP" ]] || [ $SAVE -eq 1 ]; then
         echo "Erreur : --reset ne peut pas être combiné avec d'autres options ou arguments."
         usage
     fi
@@ -58,21 +68,41 @@ if [[ -z "$WATTS" ]]; then
     usage
 fi
 
-# Vérifie si l'argument est un nombre entier positif
+# Vérifie si watts est un nombre entier positif
 if ! [[ $WATTS =~ ^[0-9]+$ ]] || [ $WATTS -lt 5 ] || [ $WATTS -gt 100 ]; then
-    echo "Erreur : L'argument doit être un nombre entier entre 5 et 100 (en watts)."
+    echo "Erreur : <watts> doit être un nombre entier entre 5 et 100."
     exit 1
+fi
+
+# Vérifie si temp est fourni et valide
+if [[ -n "$TEMP" ]]; then
+    if ! [[ $TEMP =~ ^[0-9]+$ ]] || [ $TEMP -lt 50 ] || [ $TEMP -gt 105 ]; then
+        echo "Erreur : --temp doit être un nombre entier entre 50 et 105."
+        exit 1
+    fi
 fi
 
 # Convertit en milliwatts
 MW=$((WATTS * 1000))
 
-# Exécute la commande sudo ryzenadj
+# Construit la commande ryzenadj
+RYZENADJ_CMD="sudo ryzenadj --stapm-limit=$MW --fast-limit=$MW --slow-limit=$MW"
+if [[ -n "$TEMP" ]]; then
+    RYZENADJ_CMD="$RYZENADJ_CMD -f $TEMP"
+fi
+
+# Exécute la commande
 echo "Réglage des limites TDP à ${WATTS}W (${MW} mW)..."
-sudo ryzenadj --stapm-limit=$MW --fast-limit=$MW --slow-limit=$MW
+if [[ -n "$TEMP" ]]; then
+    echo "Réglage de la température maximale à ${TEMP}°C..."
+fi
+eval "$RYZENADJ_CMD"
 
 if [ $? -eq 0 ]; then
     echo "Succès : TDP limité à ${WATTS}W."
+    if [[ -n "$TEMP" ]]; then
+        echo "Succès : Température maximale définie à ${TEMP}°C."
+    fi
 else
     echo "Erreur : Échec de l'exécution de ryzenadj. Vérifiez si l'outil est installé et si vous avez les droits sudo."
     exit 1
@@ -85,17 +115,24 @@ if [ $SAVE -eq 1 ]; then
     mkdir -p "$AUTOSTART_DIR"
     DESKTOP_FILE="$AUTOSTART_DIR/limit-tdp.desktop"
 
+    EXEC_LINE="$SCRIPT_PATH $WATTS"
+    COMMENT="Set TDP limit to $WATTS W"
+    if [[ -n "$TEMP" ]]; then
+        EXEC_LINE="$EXEC_LINE --temp $TEMP"
+        COMMENT="$COMMENT and max temp to $TEMP C"
+    fi
+
     cat << EOF > "$DESKTOP_FILE"
 [Desktop Entry]
 Type=Application
-Exec=$SCRIPT_PATH $WATTS
+Exec=$EXEC_LINE
 Name=Limit TDP
-Comment=Set TDP limit to $WATTS W
+Comment=$COMMENT
 Terminal=false
 EOF
 
     if [ $? -eq 0 ]; then
-        echo "Succès : Entrée autostart créée ou mise à jour pour ${WATTS}W."
+        echo "Succès : Entrée autostart créée ou mise à jour pour ${WATTS}W${TEMP:+ et temp ${TEMP}°C}."
     else
         echo "Erreur : Échec de la création de l'entrée autostart."
     fi
