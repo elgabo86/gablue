@@ -14,7 +14,7 @@
   done
 
   # Commande spécifique pour eden avec fusermount
-  (pgrep -f eden | xargs -n1 kill -9 && sleep 1 && fusermount -u /tmp/.mount_eden*) &
+  (pgrep -f mount_eden | xargs -n1 kill -9 && sleep 1 && fusermount -u /tmp/.mount_eden*) &
 
   # Kill des processus jellyfin et sober
   pkill -9 jellyfin &
