@@ -20,5 +20,6 @@ flatpak override app.zen_browser.zen --user --filesystem=/run/udev:ro
 flatpak override com.valvesoftware.Steam  --user --env=MANGOHUD=1
 flatpak override com.valvesoftware.Steam --user --env=PROTON_USE_NTSYNC=1
 flatpak override com.heroicgameslauncher.hgl --user --env=PROTON_USE_NTSYNC=1
+flatpak override io.github.radiolamp.mangojuice --user --filesystem=xdg-config/MangoHud
 
 flatpak override io.github.hedge_dev.hedgemodmanager --user --filesystem=~/.var/app/io.github.hedge_dev.unleashedrecomp:ro
