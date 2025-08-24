@@ -153,42 +153,6 @@ create-iso-nvidia:
     sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD):/build-container-installer/build --security-opt label=disable ghcr.io/jasonn3/build-container-installer:latest VERSION=42 IMAGE_REPO=ghcr.io/elgabo86 IMAGE_NAME=gablue-nvidia IMAGE_TAG=latest VARIANT=Kinoite ISO_NAME=build/gablue-nvidia.iso &&
     echo "The gablue iso is ready in your download folder"
 
-# Install/Update Ollama+openwebui (cpu only)
-ollama-cpu:
-    #!/usr/bin/bash
-    podman kill --all &&
-    podman create --pull always --replace --name ollama -p 11434:11434 -v ollama:/root/.ollama docker.io/ollama/ollama:latest &&
-    podman create -p 127.0.0.1:3000:8080 --network=pasta:-T,11434 --add-host=ollama.local:127.0.0.1 --env 'OLLAMA_BASE_URL=http://ollama.local:11434' --env 'ANONYMIZED_TELEMETRY=False' -v open-webui:/app/backend/data --label io.containers.autoupdate=registry --replace --name open-webui --pull always ghcr.io/open-webui/open-webui:main &&
-    podman start ollama open-webui &&
-    echo "ALL DONE!!!"
-
-# Install/Update Ollama+openwebui (nvidia)
-ollama-nvidia:
-    #!/usr/bin/bash
-    podman kill --all &&
-    podman create --pull always --replace --name ollama -p 11434:11434 -v ollama:/root/.ollama --security-opt label=disable --device nvidia.com/gpu=all docker.io/ollama/ollama:latest &&
-    podman create -p 127.0.0.1:3000:8080 --network=pasta:-T,11434 --add-host=ollama.local:127.0.0.1 --env 'OLLAMA_BASE_URL=http://ollama.local:11434' --env 'ANONYMIZED_TELEMETRY=False' -v open-webui:/app/backend/data --label io.containers.autoupdate=registry --replace --name open-webui --pull always ghcr.io/open-webui/open-webui:main &&
-    podman start ollama open-webui &&
-    echo "ALL DONE!!!"
-
-# Install/Update Ollama+openwebui (amd)
-ollama-amd:
-    #!/usr/bin/bash
-    podman kill --all &&
-    podman create --pull always --name ollama -p 11434:11434 -v ollama:/root/.ollama --security-opt label=disable  --device /dev/dri --device /dev/kfd  --replace --env HSA_OVERRIDE_GFX_VERSION=10.3.0 docker.io/ollama/ollama:rocm &&
-    podman create -p 127.0.0.1:3000:8080 --network=pasta:-T,11434 --add-host=ollama.local:127.0.0.1 --env 'OLLAMA_BASE_URL=http://ollama.local:11434' --env 'ANONYMIZED_TELEMETRY=False' -v open-webui:/app/backend/data --label io.containers.autoupdate=registry --replace --name open-webui --pull always ghcr.io/open-webui/open-webui:main &&
-    podman start ollama open-webui &&
-    echo "ALL DONE!!!"
-
-# Remove Ollama+openwebui and models data
-ollama-remove:
-    #!/usr/bin/bash
-    podman kill --all &&
-    podman rm -f ollama open-webui &&
-    podman volume rm -f ollama open-webui &&
-    podman rmi --all &&
-    echo "ALL DONE!!!"
-
 # Install pyenv
 pyenv-setup:
     #!/usr/bin/bash
@@ -315,7 +279,7 @@ audio-fix-disable:
 # Set recommended kernel parameters
 kernel-setup:
     #!/usr/bin/bash
-    rpm-ostree kargs --append-if-missing=preempt=full --append-if-missing=bluetooth.disable_ertm=1 &&
+    rpm-ostree kargs --delete-if-present=preempt=full --append-if-missing=bluetooth.disable_ertm=1 &&
     echo "Done!"
 
 # Enable wl legacy
