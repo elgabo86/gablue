@@ -48,9 +48,6 @@ chmod +x /usr/bin/lowfi
 # Add zxtune
 curl -s https://files.catbox.moe/8vzfoc.gz | tar -xzf - -C / --exclude=./usr/bin/zxtune123 --exclude=./usr/bin/xtractor
 
-#Use bore config from CachyOS
-curl -Lo /usr/lib/sysctl.d/99-bore-scheduler.conf https://github.com/CachyOS/CachyOS-Settings/raw/master/usr/lib/sysctl.d/99-bore-scheduler.conf
-
 # Branding for Gablue
 IMAGE_DATE=$(date +%Y%m%d.%H)
 MAJOR_RELEASE_VERSION=$(grep -oP '[0-9]*' /etc/fedora-release)
