@@ -1,7 +1,11 @@
 #!/bin/bash
 
-# Définir le dossier Téléchargements
-DOWNLOADS_DIR="$HOME/Téléchargements"
+# Définir le dossier Téléchargements en utilisant xdg-user-dir
+if command -v xdg-user-dir >/dev/null 2>&1; then
+  DOWNLOADS_DIR=$(xdg-user-dir DOWNLOAD)
+else
+  DOWNLOADS_DIR="$HOME/Téléchargements"  # Fallback si xdg-user-dir n'est pas disponible
+fi
 
 # Vérifier si le dossier Téléchargements existe
 if [ ! -d "$DOWNLOADS_DIR" ]; then
