@@ -1,0 +1,114 @@
+#!/bin/bash
+
+# Définir le dossier Téléchargements
+DOWNLOADS_DIR="$HOME/Téléchargements"
+
+# Vérifier si le dossier Téléchargements existe
+if [ ! -d "$DOWNLOADS_DIR" ]; then
+  echo "Erreur : Le dossier $DOWNLOADS_DIR n'existe pas."
+  exit 1
+fi
+
+# Changer pour le dossier Téléchargements
+cd "$DOWNLOADS_DIR" || exit 1
+
+# Tableau des noms de mois en français
+declare -a months=("janvier" "février" "mars" "avril" "mai" "juin" "juillet" "août" "septembre" "octobre" "novembre" "décembre")
+
+# Tableau associatif pour mapper nom de mois à numéro
+declare -A month_to_num
+month_to_num["janvier"]=1
+month_to_num["février"]=2
+month_to_num["mars"]=3
+month_to_num["avril"]=4
+month_to_num["mai"]=5
+month_to_num["juin"]=6
+month_to_num["juillet"]=7
+month_to_num["août"]=8
+month_to_num["septembre"]=9
+month_to_num["octobre"]=10
+month_to_num["novembre"]=11
+month_to_num["décembre"]=12
+
+# Regex pour identifier les dossiers de mois (ex: septembre2025)
+month_regex="^($(IFS='|'; echo "${months[*]}"))[0-9]{4}$"
+
+# Obtenir le mois et l'année actuels
+current_month_num=$(date +%m)
+current_month_num=$((10#${current_month_num}))
+current_year=$(date +%Y)
+current_month_name="${months[$((current_month_num - 1))]}"
+current_dir_name="${current_month_name}${current_year}"
+
+# Créer le dossier old si nécessaire
+mkdir -p "old"
+
+# Parcourir tous les éléments à la racine
+for item in *; do
+  if [ -e "$item" ]; then
+    # Sauter explicitement le dossier "old"
+    if [ "$item" = "old" ]; then
+      echo "Saut du dossier old."
+      continue
+    fi
+
+    if [[ "$item" =~ $month_regex ]]; then
+      # C'est un dossier de mois, parser pour vérifier si passé
+      year="${item: -4}"
+      month_name="${item%${year}}"
+      month_num="${month_to_num[$month_name]}"
+      if [ -z "$month_num" ]; then
+        echo "Mois invalide pour $item, ignoré."
+        continue
+      fi
+      if (( 10#${year} < ${current_year} || (10#${year} == ${current_year} && ${month_num} < ${current_month_num}) )); then
+        # Mois passé, déplacer/fusionner dans old
+        target="old/$item"
+        if [ -d "$target" ]; then
+          # Fusionner le contenu
+          mv "$item"/* "$target"/ 2>/dev/null
+          mv "$item"/.* "$target"/ 2>/dev/null
+          rmdir "$item"
+          echo "Fusionné $item dans $target/"
+        else
+          mv "$item" "old"/
+          echo "Déplacé $item vers old/"
+        fi
+      else
+        echo "Saut du dossier de mois actuel : $item"
+      fi
+      continue
+    fi
+
+    # Pour les autres éléments (fichiers ou dossiers non-mois)
+    timestamp=$(stat -c %Y "$item" 2>/dev/null)
+    if [ -z "$timestamp" ]; then
+      echo "Impossible d'obtenir la date pour $item, ignoré."
+      continue
+    fi
+
+    # Extraire le numéro du mois et l'année
+    month_num=$(date -d @"$timestamp" +%m)
+    month_num=$((10#${month_num}))
+    year=$(date -d @"$timestamp" +%Y)
+
+    # Obtenir le nom du mois en français
+    month_name="${months[$((month_num - 1))]}"
+
+    # Nom du dossier cible
+    dir_name="${month_name}${year}"
+
+    # Vérifier si passé
+    if (( ${year} < ${current_year} || (${year} == ${current_year} && ${month_num} < ${current_month_num}) )); then
+      # Passé, déplacer dans old/dir_name
+      target_dir="old/$dir_name"
+      mkdir -p "$target_dir"
+      mv "$item" "$target_dir"/
+      echo "Déplacé $item vers $target_dir/"
+    else
+      echo "Saut (mois actuel) : $item"
+    fi
+  fi
+done
+
+echo "Tri par mois terminé !"
