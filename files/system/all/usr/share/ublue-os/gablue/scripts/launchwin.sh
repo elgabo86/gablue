@@ -11,7 +11,6 @@ replace_accents_in_path() {
     local temp_base="/tmp/game_launcher_$(date +%s)"
     local new_path=""
     local current_path=""
-    local remaining_path=""
     local IFS='/'
     read -ra segments <<< "$path"
 
@@ -20,15 +19,16 @@ replace_accents_in_path() {
             current_path="$current_path/$segment"
             if echo "$segment" | grep -P '[^\x00-\x7F]' > /dev/null; then
                 mkdir -p "$temp_base"
+                # Créer un lien symbolique vers le dossier avec accents
                 ln -s "$(realpath "$current_path")" "$temp_base/no_accents"
-                remaining_path=$(echo "$path" | sed "s|^$current_path/||")
                 new_path="$temp_base/no_accents"
                 break
             fi
         fi
     done
 
-    [ -n "$remaining_path" ] && new_path="$new_path/$remaining_path"
+    # Si aucun accent n'a été trouvé, retourner le chemin original
+    [ -z "$new_path" ] && new_path="$path"
     echo "$new_path"
 }
 
