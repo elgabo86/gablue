@@ -70,6 +70,7 @@ sed -i "s/^SCX_SCHEDULER=.*/SCX_SCHEDULER=scx_lavd/" /etc/default/scx
 sed -i 's/balanced=balanced$/balanced=balanced-gablue/' /etc/tuned/ppd.conf && \
 sed -i 's/performance=throughput-performance$/performance=throughput-performance-gablue/' /etc/tuned/ppd.conf && \
 sed -i 's/balanced=balanced-battery$/balanced=balanced-battery-gablue/' /etc/tuned/ppd.conf
+sed -i 's/power-saver=powersave$/power-saver=powersave-gablue/' /etc/tuned/ppd.conf
 
 # set userpace HID to true
 sed -i 's/#UserspaceHID.*/UserspaceHID=true/' /etc/bluetooth/input.conf
