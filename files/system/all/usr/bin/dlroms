@@ -1,0 +1,831 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import sys
+import requests
+import subprocess
+import curses
+from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
+
+API_BASE_URL = "https://api.crocdb.net"
+
+class CrocDBClient:
+    def __init__(self):
+        self.base_url = API_BASE_URL
+    
+    def _make_request(self, endpoint: str, method: str = "POST", data: Optional[Dict] = None) -> Dict:
+        """Make a request to the CrocDB API"""
+        url = f"{self.base_url}/{endpoint}"
+        headers = {"Content-Type": "application/json"}
+        
+        try:
+            if method == "POST":
+                response = requests.post(url, headers=headers, json=data)
+            else:
+                response = requests.get(url, headers=headers)
+            
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error making request to {url}: {e}")
+            sys.exit(1)
+        except json.JSONDecodeError as e:
+            print(f"Error parsing JSON response: {e}")
+            sys.exit(1)
+    
+    def search_entries(self, search_key: str = "", platforms: List[str] = [], 
+                      regions: List[str] = [], rom_id: str = "", 
+                      max_results: int = 100, page: int = 1) -> Dict:
+        """Search for ROM entries"""
+        data = {
+            "max_results": min(max_results, 100),  # API max is 100 per page
+            "page": page
+        }
+        
+        if search_key:
+            data["search_key"] = search_key
+        if platforms:
+            data["platforms"] = platforms
+        if regions:
+            data["regions"] = regions
+        if rom_id:
+            data["rom_id"] = rom_id
+            
+        return self._make_request("search", "POST", data)
+    
+    def search_entries_all_pages(self, search_key: str = "", platforms: List[str] = [], 
+                                regions: List[str] = [], rom_id: str = "", 
+                                max_results: int = 500) -> List[Dict]:
+        """Search for ROM entries and fetch multiple pages if needed"""
+        all_results = []
+        current_page = 1
+        max_pages = min((max_results + 99) // 100, 5)  # Limit to 5 pages max (500 results)
+        
+        while current_page <= max_pages:
+            # Fetch one page
+            result = self.search_entries(
+                search_key=search_key,
+                platforms=platforms,
+                regions=regions,
+                rom_id=rom_id,
+                max_results=100,  # Always fetch max per page
+                page=current_page
+            )
+            
+            page_results = result.get("data", {}).get("results", [])
+            all_results.extend(page_results)
+            
+            # Check if we have enough results or if this is the last page
+            total_results = result.get("data", {}).get("total_results", 0)
+            total_pages = result.get("data", {}).get("total_pages", 1)
+            
+            # Stop if we've reached the desired number of results or there are no more pages
+            if len(all_results) >= max_results or current_page >= total_pages:
+                break
+                
+            current_page += 1
+        
+        # Return only up to max_results
+        return all_results[:max_results]
+    
+    def get_entry(self, slug: str) -> Dict:
+        """Get a specific entry by slug"""
+        data = {"slug": slug}
+        return self._make_request("entry", "POST", data)
+    
+    def get_random_entry(self) -> Dict:
+        """Get a random entry"""
+        return self._make_request("entry/random", "GET")
+    
+    def get_platforms(self) -> Dict:
+        """Get available platforms"""
+        return self._make_request("platforms", "GET")
+    
+    def get_regions(self) -> Dict:
+        """Get available regions"""
+        return self._make_request("regions", "GET")
+    
+    def get_database_info(self) -> Dict:
+        """Get database information"""
+        return self._make_request("info", "GET")
+
+def format_search_results(results: List[Dict], show_links: bool = False) -> str:
+    """Format search results for display"""
+    if not results:
+        return "No results found."
+    
+    formatted = []
+    for i, entry in enumerate(results, 1):
+        formatted.append(f"{i}. {entry['title']} ({entry['platform']})")
+        formatted.append(f"   Slug: {entry['slug']}")
+        if entry.get('regions'):
+            formatted.append(f"   Regions: {', '.join(entry['regions'])}")
+        if entry.get('rom_id'):
+            formatted.append(f"   ROM ID: {entry['rom_id']}")
+        
+        if show_links and entry.get('links'):
+            formatted.append("   Download links:")
+            for j, link in enumerate(entry['links'], 1):
+                formatted.append(f"     {j}. {link['name']} ({link['size_str']}) - {link['host']}")
+        
+        formatted.append("")
+    
+    return "\n".join(formatted)
+
+def format_entry_details(entry: Dict) -> str:
+    """Format detailed entry information"""
+    if not entry:
+        return "No entry data available."
+    
+    lines = [
+        f"Title: {entry['title']}",
+        f"Platform: {entry['platform']}",
+        f"Slug: {entry['slug']}",
+        f"Regions: {', '.join(entry.get('regions', []))}",
+    ]
+    
+    if entry.get('rom_id'):
+        lines.append(f"ROM ID: {entry['rom_id']}")
+    
+    if entry.get('boxart_url'):
+        lines.append(f"Boxart: {entry['boxart_url']}")
+    
+    if entry.get('links'):
+        lines.append("\nDownload Links:")
+        for i, link in enumerate(entry['links'], 1):
+            lines.append(f"  {i}. {link['name']}")
+            lines.append(f"     Format: {link['format']}")
+            lines.append(f"     Size: {link['size_str']}")
+            lines.append(f"     Host: {link['host']}")
+            lines.append(f"     URL: {link['url']}")
+            lines.append("")
+    
+    return "\n".join(lines)
+
+def download_rom(link: Dict, output_dir: str = ".", verbose: bool = True) -> bool:
+    """Download a ROM file"""
+    url = link["url"]
+    filename = link["filename"]
+    filepath = os.path.join(output_dir, filename)
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    if verbose:
+        print(f"Downloading {filename}...")
+        print(f"URL: {url}")
+        print(f"Size: {link.get('size_str', 'Unknown')}")
+    
+    try:
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        
+        total_size = int(response.headers.get('content-length', 0))
+        downloaded_size = 0
+        
+        with open(filepath, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    downloaded_size += len(chunk)
+                    if verbose and total_size > 0:
+                        percent = (downloaded_size / total_size) * 100
+                        print(f"\rProgress: {percent:.1f}%", end='', flush=True)
+        
+        if verbose:
+            print(f"\nDownloaded {filename} successfully to {filepath}!")
+        return True
+    except Exception as e:
+        if verbose:
+            print(f"\nError downloading {filename}: {e}")
+        return False
+
+def select_link_interactive(links: List[Dict]) -> Optional[Dict]:
+    """Let user select a download link interactively"""
+    if len(links) == 1:
+        return links[0]
+    
+    print("\nMultiple download links available:")
+    for i, link in enumerate(links, 1):
+        print(f"  {i}. {link['name']} ({link['size_str']}) - {link['host']}")
+    
+    while True:
+        try:
+            choice = input(f"\nSelect a link (1-{len(links)}) or 'q' to quit: ").strip()
+            if choice.lower() == 'q':
+                return None
+            choice_idx = int(choice) - 1
+            if 0 <= choice_idx < len(links):
+                return links[choice_idx]
+            else:
+                print("Invalid selection. Please try again.")
+        except ValueError:
+            print("Invalid input. Please enter a number or 'q'.")
+
+def get_download_directory() -> str:
+    """Get the user's download directory"""
+    try:
+        result = subprocess.run(["xdg-user-dir", "DOWNLOAD"], capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # Fallback to ~/Downloads if xdg-user-dir is not available
+        return os.path.expanduser("~/Downloads")
+
+class InteractiveBrowser:
+    def __init__(self, client: CrocDBClient):
+        self.client = client
+        self.results = []
+        self.selected = set()
+        self.current_pos = 0
+        self.viewport_start = 0
+        self.search_term = ""
+        self.download_dir = get_download_directory()
+        self.first_run = True
+    
+    def search(self, term: str = ""):
+        """Perform a search and update results"""
+        self.search_term = term
+        
+        # Improve search terms for common patterns
+        search_term = term
+        if term:
+            term_lower = term.lower()
+            # Handle common search patterns
+            if term_lower == "mario 64":
+                search_term = "Super Mario 64"
+            elif term_lower == "zelda oot":
+                search_term = "The Legend of Zelda Ocarina of Time"
+            elif term_lower == "metroid prime":
+                search_term = "Metroid Prime"
+            
+        # Use paginated search to get more results
+        self.results = self.client.search_entries_all_pages(search_key=search_term, max_results=500)
+        
+        # If we have a specific search term, try to improve relevance
+        if term and self.results:
+            # Sort results by relevance - exact matches first, then partial matches
+            term_lower = term.lower()
+            search_term_lower = search_term.lower()
+            def relevance_score(entry):
+                title = entry.get('title', '').lower()
+                platform = entry.get('platform', '').lower()
+                
+                # Score based on how well the search term matches the title
+                score = 0
+                
+                # Exact match in title gets highest score
+                if term_lower == title or search_term_lower == title:
+                    score += 1000
+                # Title starts with search term
+                elif title.startswith(term_lower) or title.startswith(search_term_lower):
+                    score += 500
+                # Search term is contained in title
+                elif term_lower in title or search_term_lower in title:
+                    score += 100
+                    # Boost score based on position (earlier is better)
+                    pos1 = title.find(term_lower) if term_lower in title else 999
+                    pos2 = title.find(search_term_lower) if search_term_lower in title else 999
+                    best_pos = min(pos1, pos2)
+                    score += 50 - min(50, best_pos)
+                
+                # Bonus for platform mentions in search term
+                if platform and (platform in term_lower or platform in search_term_lower):
+                    score += 200
+                
+                # Bonus for well-known games patterns
+                if "mario" in term_lower and "mario" in title:
+                    score += 50
+                if "zelda" in term_lower and "zelda" in title:
+                    score += 50
+                if "64" in term_lower and "64" in title:
+                    score += 30
+                    
+                return score
+            
+            # Sort by relevance score (descending)
+            self.results.sort(key=relevance_score, reverse=True)
+        
+        self.selected.clear()
+        self.current_pos = 0
+        self.viewport_start = 0
+    
+    def format_entry_line(self, entry: Dict, is_selected: bool, is_current: bool) -> str:
+        """Format a single entry line for display"""
+        marker = "[*] " if is_selected else "[ ] "
+        title = entry.get('title', 'Unknown')
+        platform = entry.get('platform', 'Unknown')
+        regions = ", ".join(entry.get('regions', [])) if entry.get('regions') else ""
+        
+        # Truncate if too long
+        max_title_len = 50
+        if len(title) > max_title_len:
+            title = title[:max_title_len-3] + "..."
+        
+        line = f"{marker}{title:<50} ({platform}) {regions}"
+        return line[: curses.COLS - 1]  # Ensure it fits on screen
+    
+    def draw_screen(self, stdscr):
+        """Draw the main interface"""
+        stdscr.clear()
+        
+        # Draw header
+        header = f"ROM Browser - Search: {self.search_term or '(all)'} | {len(self.results)} results | {len(self.selected)} selected"
+        stdscr.addstr(0, 0, header[:curses.COLS-1], curses.A_REVERSE)
+        
+        # Draw results
+        if not self.results:
+            if self.first_run:
+                stdscr.addstr(2, 0, "Press any key to start searching...")
+            else:
+                stdscr.addstr(2, 0, "No results found. Press any key to search again...")
+        else:
+            # Calculate viewport
+            max_lines = curses.LINES - 3  # Leave space for header and status
+            if self.current_pos < self.viewport_start:
+                self.viewport_start = self.current_pos
+            elif self.current_pos >= self.viewport_start + max_lines:
+                self.viewport_start = self.current_pos - max_lines + 1
+            
+            # Draw entries
+            for i in range(max_lines):
+                idx = self.viewport_start + i
+                if idx >= len(self.results):
+                    break
+                
+                entry = self.results[idx]
+                is_selected = idx in self.selected
+                is_current = idx == self.current_pos
+                
+                try:
+                    line = self.format_entry_line(entry, is_selected, is_current)
+                    if is_current:
+                        # Highlight the entire line for the current selection
+                        stdscr.addstr(i + 1, 0, line, curses.A_REVERSE)
+                    else:
+                        stdscr.addstr(i + 1, 0, line)
+                except curses.error:
+                    pass  # Ignore drawing errors for lines that don't fit
+        
+        # Draw status bar
+        status = "↑/↓: Navigate | Space: Select | Enter: Download | /: Search | q: Quit | PgUp/PgDn or ←/→: Page"
+        stdscr.addstr(curses.LINES - 1, 0, status[:curses.COLS-1], curses.A_REVERSE)
+        
+        stdscr.refresh()
+    
+    def run(self, stdscr):
+        """Main interactive loop"""
+        # Setup curses
+        curses.curs_set(0)  # Hide cursor
+        stdscr.nodelay(False)
+        stdscr.keypad(True)
+        
+        # Don't perform initial search, wait for user input
+        self.first_run = True
+        
+        while True:
+            self.draw_screen(stdscr)
+            
+            try:
+                key = stdscr.getch()
+                
+                if key == ord('q'):
+                    break
+                elif self.first_run or not self.results:
+                    # If first run or no results, any key (except q) triggers search
+                    if key != ord('q'):
+                        self.first_run = False
+                        # Search mode
+                        curses.echo()
+                        stdscr.addstr(curses.LINES - 1, 0, "Search: " + " " * (curses.COLS - 10))
+                        stdscr.refresh()
+                        search_term = stdscr.getstr(curses.LINES - 1, 8, 50).decode('utf-8')
+                        curses.noecho()
+                        self.search(search_term)
+                elif key == curses.KEY_DOWN:
+                    # Move down
+                    if self.results and self.current_pos < len(self.results) - 1:
+                        self.current_pos += 1
+                elif key == curses.KEY_UP:
+                    # Move up
+                    if self.current_pos > 0:
+                        self.current_pos -= 1
+                elif key == curses.KEY_NPAGE or key == curses.KEY_RIGHT:
+                    # Page down (also right arrow)
+                    if self.results:
+                        self.current_pos = min(self.current_pos + 10, len(self.results) - 1)
+                elif key == curses.KEY_PPAGE or key == curses.KEY_LEFT:
+                    # Page up (also left arrow)
+                    self.current_pos = max(self.current_pos - 10, 0)
+                elif key == ord(' '):
+                    # Toggle selection
+                    if self.results:
+                        if self.current_pos in self.selected:
+                            self.selected.remove(self.current_pos)
+                        else:
+                            self.selected.add(self.current_pos)
+                elif key == ord('\n') or key == curses.KEY_ENTER:
+                    # Download selected or current
+                    to_download = list(self.selected) if self.selected else ([self.current_pos] if self.results else [])
+                    if to_download:
+                        self.download_selected(stdscr, to_download)
+                        self.selected.clear()  # Clear selections after download
+                    else:
+                        # No selection, do nothing
+                        pass
+                else:
+                    # Any other key triggers search
+                    curses.echo()
+                    stdscr.addstr(curses.LINES - 1, 0, "Search: " + " " * (curses.COLS - 10))
+                    stdscr.refresh()
+                    search_term = stdscr.getstr(curses.LINES - 1, 8, 50).decode('utf-8')
+                    curses.noecho()
+                    self.search(search_term)
+            except Exception as e:
+                # Handle any errors gracefully
+                pass
+    
+    def download_selected(self, stdscr, indices):
+        """Download selected ROMs"""
+        curses.curs_set(1)  # Show cursor for progress
+        stdscr.clear()
+        stdscr.addstr(0, 0, f"Downloading {len(indices)} ROM(s) to {self.download_dir}")
+        stdscr.refresh()
+        
+        success_count = 0
+        for i, idx in enumerate(indices):
+            if idx >= len(self.results):
+                continue
+                
+            entry = self.results[idx]
+            stdscr.addstr(i + 2, 0, f"Downloading: {entry['title'][:50]}...")
+            stdscr.refresh()
+            
+            # Get full entry details
+            try:
+                full_entry_result = self.client.get_entry(entry['slug'])
+                full_entry = full_entry_result.get("data", {}).get("entry", {})
+                
+                if not full_entry:
+                    stdscr.addstr(i + 2, 0, f"Failed: {entry['title'][:40]}... (no details)")
+                    stdscr.refresh()
+                    continue
+                
+                links = full_entry.get("links", [])
+                if not links:
+                    stdscr.addstr(i + 2, 0, f"Failed: {entry['title'][:40]}... (no links)")
+                    stdscr.refresh()
+                    continue
+                
+                # Select first link
+                selected_link = links[0]
+                
+                # Download the ROM
+                if download_rom(selected_link, self.download_dir, verbose=False):
+                    stdscr.addstr(i + 2, 0, f"Success: {entry['title'][:40]}...")
+                    success_count += 1
+                else:
+                    stdscr.addstr(i + 2, 0, f"Failed: {entry['title'][:40]}...")
+                
+                stdscr.refresh()
+            except Exception as e:
+                stdscr.addstr(i + 2, 0, f"Error: {entry['title'][:40]}... ({str(e)[:20]})")
+                stdscr.refresh()
+        
+        stdscr.addstr(len(indices) + 3, 0, f"Downloads complete: {success_count}/{len(indices)} successful")
+        stdscr.addstr(len(indices) + 4, 0, "Press any key to continue...")
+        stdscr.refresh()
+        stdscr.getch()
+        curses.curs_set(0)  # Hide cursor again
+
+def interactive_search_curses(client: CrocDBClient):
+    """Enhanced interactive search mode with curses interface"""
+    browser = InteractiveBrowser(client)
+    curses.wrapper(browser.run)
+
+def interactive_search(client: CrocDBClient):
+    """Interactive search mode with dynamic search and multiple selection"""
+    print("=== Interactive ROM Search ===")
+    print("Leave search term empty to list all ROMs")
+    print("Type 'quit' or 'q' to exit")
+    print()
+    
+    # Get default download directory
+    download_dir = get_download_directory()
+    print(f"ROMs will be downloaded to: {download_dir}")
+    print()
+    
+    while True:
+        # Get search term
+        search_term = input("Enter search term: ").strip()
+        if search_term.lower() in ['quit', 'q']:
+            print("Goodbye!")
+            break
+        
+        # Perform search with improved term handling
+        print("Searching...")
+        # Improve search terms for common patterns
+        improved_search_term = search_term
+        if search_term:
+            term_lower = search_term.lower()
+            # Handle common search patterns
+            if term_lower == "mario 64":
+                improved_search_term = "Super Mario 64"
+            elif term_lower == "zelda oot":
+                improved_search_term = "The Legend of Zelda Ocarina of Time"
+            elif term_lower == "metroid prime":
+                improved_search_term = "Metroid Prime"
+        
+        # Use paginated search to get more results
+        results = client.search_entries_all_pages(search_key=improved_search_term, max_results=500)
+        
+        # Apply relevance sorting if we have results
+        if search_term and results:
+            # Sort results by relevance - exact matches first, then partial matches
+            term_lower = search_term.lower()
+            improved_term_lower = improved_search_term.lower()
+            def relevance_score(entry):
+                title = entry.get('title', '').lower()
+                platform = entry.get('platform', '').lower()
+                
+                # Score based on how well the search term matches the title
+                score = 0
+                
+                # Exact match in title gets highest score
+                if term_lower == title or improved_term_lower == title:
+                    score += 1000
+                # Title starts with search term
+                elif title.startswith(term_lower) or title.startswith(improved_term_lower):
+                    score += 500
+                # Search term is contained in title
+                elif term_lower in title or improved_term_lower in title:
+                    score += 100
+                    # Boost score based on position (earlier is better)
+                    pos1 = title.find(term_lower) if term_lower in title else 999
+                    pos2 = title.find(improved_term_lower) if improved_term_lower in title else 999
+                    best_pos = min(pos1, pos2)
+                    score += 50 - min(50, best_pos)
+                
+                # Bonus for platform mentions in search term
+                if platform and (platform in term_lower or platform in improved_term_lower):
+                    score += 200
+                
+                # Bonus for well-known games patterns
+                if "mario" in term_lower and "mario" in title:
+                    score += 50
+                if "zelda" in term_lower and "zelda" in title:
+                    score += 50
+                if "64" in term_lower and "64" in title:
+                    score += 30
+                    
+                return score
+            
+            # Sort by relevance score (descending)
+            results.sort(key=relevance_score, reverse=True)
+        
+        if not results:
+            print("No results found. Try another search term.")
+            continue
+        
+        # Display results
+        print(f"\nFound {len(results)} results:")
+        print("-" * 50)
+        for i, entry in enumerate(results, 1):
+            print(f"{i:2d}. {entry['title']}")
+            print(f"     Platform: {entry['platform']}")
+            if entry.get('regions'):
+                print(f"     Regions: {', '.join(entry['regions'])}")
+            print()
+        
+        # Let user select ROMs to download
+        while True:
+            try:
+                selection = input("Enter ROM numbers to download (comma-separated), 'all' for all, or 'back' to search again: ").strip()
+                if selection.lower() == 'back':
+                    break
+                elif selection.lower() == 'all':
+                    selected_indices = list(range(len(results)))
+                    break
+                else:
+                    try:
+                        # Parse comma-separated numbers
+                        selected_indices = []
+                        for part in selection.split(','):
+                            part = part.strip()
+                            if part:  # Skip empty parts
+                                idx = int(part) - 1
+                                if 0 <= idx < len(results):
+                                    selected_indices.append(idx)
+                                else:
+                                    print(f"Invalid selection: {part}")
+                                    raise ValueError("Invalid selection")
+                        break
+                    except ValueError:
+                        print("Invalid input. Please enter comma-separated numbers, 'all', or 'back'.")
+            except (EOFError, KeyboardInterrupt):
+                print("\nExiting...")
+                return
+        
+        # If going back to search, continue the loop
+        if selection.lower() == 'back':
+            continue
+        
+        # Download selected ROMs
+        for idx in selected_indices:
+            entry = results[idx]
+            print(f"\n--- Downloading: {entry['title']} ---")
+            
+            # Get full entry details
+            full_entry_result = client.get_entry(entry['slug'])
+            full_entry = full_entry_result.get("data", {}).get("entry", {})
+            
+            if not full_entry:
+                print(f"Could not get details for {entry['title']}")
+                continue
+            
+            links = full_entry.get("links", [])
+            if not links:
+                print(f"No download links available for {entry['title']}")
+                continue
+            
+            # Select link (automatically choose first one in non-interactive mode)
+            selected_link = links[0]
+            if len(links) > 1:
+                print(f"Multiple links available for {entry['title']}:")
+                for i, link in enumerate(links, 1):
+                    print(f"  {i}. {link['name']} ({link['size_str']}) - {link['host']}")
+                # For simplicity, we'll auto-select the first one
+                print("Auto-selecting the first link.")
+            
+            # Download the ROM
+            if download_rom(selected_link, download_dir, verbose=True):
+                print(f"Successfully downloaded {entry['title']}!")
+            else:
+                print(f"Failed to download {entry['title']}")
+        
+        print("\n" + "="*50)
+        print("Downloads completed!")
+        print("Enter a new search term, or 'quit' to exit.")
+
+def main():
+    parser = argparse.ArgumentParser(description="CLI tool for searching and downloading ROMs using CrocDB API")
+    parser.add_argument("--search", "-s", help="Search term for ROMs")
+    parser.add_argument("--platforms", "-p", nargs="+", help="Filter by platforms (e.g., snes n64)")
+    parser.add_argument("--regions", "-r", nargs="+", help="Filter by regions (e.g., us eu)")
+    parser.add_argument("--max-results", "-m", type=int, default=500, help="Maximum number of results (default: 500, max: 500)")
+    parser.add_argument("--page", type=int, default=1, help="Page number for pagination (default: 1)")
+    parser.add_argument("--rom-id", help="Filter by specific ROM ID")
+    parser.add_argument("--get-entry", "-g", help="Get specific entry by slug")
+    parser.add_argument("--random", action="store_true", help="Get a random entry")
+    parser.add_argument("--list-platforms", action="store_true", help="List available platforms")
+    parser.add_argument("--list-regions", action="store_true", help="List available regions")
+    parser.add_argument("--info", action="store_true", help="Get database information")
+    parser.add_argument("--download", "-d", help="Download ROM by slug")
+    parser.add_argument("--output-dir", "-o", default=".", help="Output directory for downloads (default: current directory)")
+    parser.add_argument("--show-links", "-l", action="store_true", help="Show download links in search results")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
+    parser.add_argument("--interactive", "-i", action="store_true", help="Run in interactive mode")
+    parser.add_argument("--enhanced", "-e", action="store_true", help="Run in enhanced curses-based interactive mode")
+    
+    args = parser.parse_args()
+    
+    client = CrocDBClient()
+    
+    # Handle enhanced interactive mode
+    if args.enhanced:
+        interactive_search_curses(client)
+        return
+    
+    # Handle interactive mode
+    if args.interactive:
+        interactive_search(client)
+        return
+    
+    # Handle different command options
+    if args.list_platforms:
+        result = client.get_platforms()
+        platforms = result.get("data", {}).get("platforms", {})
+        print("Available platforms:")
+        # Sort platforms by brand and name
+        sorted_platforms = sorted(platforms.items(), key=lambda x: (x[1]['brand'], x[1]['name']))
+        for platform_id, info in sorted_platforms:
+            print(f"  {platform_id}: {info['brand']} - {info['name']}")
+        return
+    
+    if args.list_regions:
+        result = client.get_regions()
+        regions = result.get("data", {}).get("regions", {})
+        print("Available regions:")
+        for region_id, name in regions.items():
+            print(f"  {region_id}: {name}")
+        return
+    
+    if args.info:
+        result = client.get_database_info()
+        total_entries = result.get("data", {}).get("total_entries", 0)
+        print(f"Database contains {total_entries} entries")
+        return
+    
+    if args.random:
+        result = client.get_random_entry()
+        entry = result.get("data", {}).get("entry", {})
+        if entry:
+            if args.verbose:
+                print(format_entry_details(entry))
+            else:
+                print(json.dumps(entry, indent=2))
+        else:
+            print("No random entry found")
+        return
+    
+    if args.get_entry:
+        result = client.get_entry(args.get_entry)
+        entry = result.get("data", {}).get("entry", {})
+        if entry:
+            if args.verbose:
+                print(format_entry_details(entry))
+            else:
+                print(json.dumps(entry, indent=2))
+        else:
+            print(f"No entry found with slug: {args.get_entry}")
+        return
+    
+    if args.download:
+        result = client.get_entry(args.download)
+        entry = result.get("data", {}).get("entry", {})
+        if not entry:
+            print(f"No entry found with slug: {args.download}")
+            return
+        
+        links = entry.get("links", [])
+        if not links:
+            print("No download links available for this entry")
+            return
+        
+        # Let user select which link to download
+        selected_link = select_link_interactive(links)
+        if not selected_link:
+            print("Download cancelled.")
+            return
+        
+        # Get download directory if not specified
+        output_dir = args.output_dir
+        if output_dir == ".":
+            output_dir = get_download_directory()
+        
+        if download_rom(selected_link, output_dir, args.verbose):
+            print("Download completed successfully!")
+        else:
+            print("Download failed!")
+        return
+    
+    # Default behavior: search
+    if args.search or args.platforms or args.regions or args.rom_id:
+        # Use paginated search for command-line searches too
+        if args.page == 1 and args.max_results > 100:
+            # For first page with high max_results, use paginated search
+            results_list = client.search_entries_all_pages(
+                search_key=args.search or "",
+                platforms=args.platforms or [],
+                regions=args.regions or [],
+                rom_id=args.rom_id or "",
+                max_results=min(args.max_results, 500)
+            )
+            # Create a mock result structure to maintain compatibility
+            result = {
+                "data": {
+                    "results": results_list,
+                    "current_results": len(results_list),
+                    "total_results": len(results_list),  # We don't have total from API in this case
+                    "current_page": 1,
+                    "total_pages": 1
+                }
+            }
+            results = results_list
+        else:
+            # Use regular search for specific pages or small result sets
+            result = client.search_entries(
+                search_key=args.search or "",
+                platforms=args.platforms or [],
+                regions=args.regions or [],
+                rom_id=args.rom_id or "",
+                max_results=min(args.max_results, 100),
+                page=args.page
+            )
+            results = result.get("data", {}).get("results", [])
+        if results:
+            print(format_search_results(results, args.show_links))
+            total_results = result.get('data', {}).get('total_results', 0)
+            current_page = result.get('data', {}).get('current_page', 1)
+            total_pages = result.get('data', {}).get('total_pages', 1)
+            print(f"Showing {len(results)} of {total_results} results (Page {current_page} of {total_pages})")
+        else:
+            print("No results found matching your criteria")
+    else:
+        # If no arguments provided, run in enhanced interactive mode by default
+        interactive_search_curses(client)
+
+if __name__ == "__main__":
+    main()
