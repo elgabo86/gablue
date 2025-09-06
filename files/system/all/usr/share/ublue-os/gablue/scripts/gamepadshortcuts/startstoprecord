@@ -1,19 +1,32 @@
 #!/usr/bin/bash
 
-#Définition du dossier d'enregistrement + renommage de la vidéo par date
+# Définition du dossier d'enregistrement + renommage de la vidéo par date
 video="$HOME/Vidéos/Captures/$(date +"Video_%Y-%m-%d_%H-%M-%S.mp4")"
 
-# Commandes à exécuter selon le cas
-COMMANDE_INTEL="flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -f 60 -a default_output -q medium -o '$video'"
-COMMANDE_AUTRE="flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -f 60 -a default_output -o '$video'"
+# Chemin du fichier de configuration
+CONFIG_FILE="$HOME/.var/app/com.dec05eba.gpu_screen_recorder/config/gpu-screen-recorder/config"
 
-#Arrete et sauve l'enregistrement si il y en a en cours
+# Lecture du FPS depuis le fichier de config, fallback à 60 si non trouvé
+if [ -f "$CONFIG_FILE" ]; then
+    FPS=$(grep '^main.fps' "$CONFIG_FILE" | awk '{print $2}')
+    if [ -z "$FPS" ]; then
+        FPS=60
+    fi
+else
+    FPS=60
+fi
+
+# Commandes à exécuter selon le cas
+COMMANDE_INTEL="flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -f $FPS -a default_output -q medium -o '$video'"
+COMMANDE_AUTRE="flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -f $FPS -a default_output -o '$video'"
+
+# Arrête et sauve l'enregistrement si il y en a en cours
 killall -SIGINT -q gpu-screen-recorder && exit 0
 
-#Controler que gpu-screen-recorder est bien fermé
-pgrep -f gpu-screen-recorder |xargs -n1 kill -9
+# Contrôler que gpu-screen-recorder est bien fermé
+pgrep -f gpu-screen-recorder | xargs -n1 kill -9
 
-# Lancement d'un nouvel enregistrrement
+# Lancement d'un nouvel enregistrement
 ffplay -nodisp -autoexit /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/beep.wav
 # Vérifie si un GPU Intel intégré est détecté via lspci
 if lspci | grep -i "VGA" | grep -i "Intel" > /dev/null; then
@@ -33,8 +46,6 @@ else
     eval "$COMMANDE_AUTRE"
 fi
 
-#Annoncer l'arrêt de l'enregistrement à l'utilisateur
+# Annoncer l'arrêt de l'enregistrement à l'utilisateur
 ffplay -nodisp -autoexit /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/stop.wav
-notify-send -t 2000 -u low "Enregistrement sauvé dans  $video"
-
-
+notify-send -t 2000 -u low "Enregistrement sauvé dans $video"
