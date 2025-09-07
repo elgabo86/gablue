@@ -7,6 +7,9 @@ import sys
 import requests
 import subprocess
 import curses
+import time
+import signal
+import threading
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
 
@@ -15,36 +18,36 @@ API_BASE_URL = "https://api.crocdb.net"
 class CrocDBClient:
     def __init__(self):
         self.base_url = API_BASE_URL
-    
+
     def _make_request(self, endpoint: str, method: str = "POST", data: Optional[Dict] = None) -> Dict:
-        """Make a request to the CrocDB API"""
+        """Effectuer une requête vers l'API CrocDB"""
         url = f"{self.base_url}/{endpoint}"
         headers = {"Content-Type": "application/json"}
-        
+
         try:
             if method == "POST":
                 response = requests.post(url, headers=headers, json=data)
             else:
                 response = requests.get(url, headers=headers)
-            
+
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            print(f"Error making request to {url}: {e}")
+            print(f"Erreur lors de la requête vers {url}: {e}")
             sys.exit(1)
         except json.JSONDecodeError as e:
-            print(f"Error parsing JSON response: {e}")
+            print(f"Erreur lors de l'analyse de la réponse JSON: {e}")
             sys.exit(1)
-    
-    def search_entries(self, search_key: str = "", platforms: List[str] = [], 
-                      regions: List[str] = [], rom_id: str = "", 
+
+    def search_entries(self, search_key: str = "", platforms: List[str] = [],
+                      regions: List[str] = [], rom_id: str = "",
                       max_results: int = 100, page: int = 1) -> Dict:
-        """Search for ROM entries"""
+        """Rechercher des entrées ROM"""
         data = {
-            "max_results": min(max_results, 100),  # API max is 100 per page
+            "max_results": min(max_results, 100),  # API max est 100 par page
             "page": page
         }
-        
+
         if search_key:
             data["search_key"] = search_key
         if platforms:
@@ -53,186 +56,240 @@ class CrocDBClient:
             data["regions"] = regions
         if rom_id:
             data["rom_id"] = rom_id
-            
+
         return self._make_request("search", "POST", data)
-    
-    def search_entries_all_pages(self, search_key: str = "", platforms: List[str] = [], 
-                                regions: List[str] = [], rom_id: str = "", 
+
+    def search_entries_all_pages(self, search_key: str = "", platforms: List[str] = [],
+                                regions: List[str] = [], rom_id: str = "",
                                 max_results: int = 500) -> List[Dict]:
-        """Search for ROM entries and fetch multiple pages if needed"""
+        """Rechercher des entrées ROM et récupérer plusieurs pages si nécessaire"""
         all_results = []
         current_page = 1
-        max_pages = min((max_results + 99) // 100, 5)  # Limit to 5 pages max (500 results)
-        
+        max_pages = min((max_results + 99) // 100, 5)  # Limite à 5 pages max (500 résultats)
+
         while current_page <= max_pages:
-            # Fetch one page
+            # Récupérer une page
             result = self.search_entries(
                 search_key=search_key,
                 platforms=platforms,
                 regions=regions,
                 rom_id=rom_id,
-                max_results=100,  # Always fetch max per page
+                max_results=100,  # Toujours récupérer le maximum par page
                 page=current_page
             )
-            
+
             page_results = result.get("data", {}).get("results", [])
             all_results.extend(page_results)
-            
-            # Check if we have enough results or if this is the last page
+
+            # Vérifier si nous avons assez de résultats ou si c'est la dernière page
             total_results = result.get("data", {}).get("total_results", 0)
             total_pages = result.get("data", {}).get("total_pages", 1)
-            
-            # Stop if we've reached the desired number of results or there are no more pages
+
+            # Arrêter si nous avons atteint le nombre de résultats souhaité ou s'il n'y a plus de pages
             if len(all_results) >= max_results or current_page >= total_pages:
                 break
-                
+
             current_page += 1
-        
-        # Return only up to max_results
+
+        # Retourner uniquement jusqu'à max_results
         return all_results[:max_results]
-    
+
     def get_entry(self, slug: str) -> Dict:
-        """Get a specific entry by slug"""
+        """Obtenir une entrée spécifique par slug"""
         data = {"slug": slug}
         return self._make_request("entry", "POST", data)
-    
+
     def get_random_entry(self) -> Dict:
-        """Get a random entry"""
+        """Obtenir une entrée aléatoire"""
         return self._make_request("entry/random", "GET")
-    
+
     def get_platforms(self) -> Dict:
-        """Get available platforms"""
+        """Obtenir les plateformes disponibles"""
         return self._make_request("platforms", "GET")
-    
+
     def get_regions(self) -> Dict:
-        """Get available regions"""
+        """Obtenir les régions disponibles"""
         return self._make_request("regions", "GET")
-    
+
     def get_database_info(self) -> Dict:
-        """Get database information"""
+        """Obtenir les informations de la base de données"""
         return self._make_request("info", "GET")
 
 def format_search_results(results: List[Dict], show_links: bool = False) -> str:
-    """Format search results for display"""
+    """Formater les résultats de recherche pour l'affichage"""
     if not results:
-        return "No results found."
-    
+        return "Aucun résultat trouvé."
+
     formatted = []
     for i, entry in enumerate(results, 1):
         formatted.append(f"{i}. {entry['title']} ({entry['platform']})")
         formatted.append(f"   Slug: {entry['slug']}")
         if entry.get('regions'):
-            formatted.append(f"   Regions: {', '.join(entry['regions'])}")
+            formatted.append(f"   Régions: {', '.join(entry['regions'])}")
         if entry.get('rom_id'):
-            formatted.append(f"   ROM ID: {entry['rom_id']}")
-        
+            formatted.append(f"   ID ROM: {entry['rom_id']}")
+
         if show_links and entry.get('links'):
-            formatted.append("   Download links:")
+            formatted.append("   Liens de téléchargement:")
             for j, link in enumerate(entry['links'], 1):
                 formatted.append(f"     {j}. {link['name']} ({link['size_str']}) - {link['host']}")
-        
+
         formatted.append("")
-    
+
     return "\n".join(formatted)
 
 def format_entry_details(entry: Dict) -> str:
-    """Format detailed entry information"""
+    """Formater les informations détaillées d'une entrée"""
     if not entry:
-        return "No entry data available."
-    
+        return "Aucune donnée d'entrée disponible."
+
     lines = [
-        f"Title: {entry['title']}",
-        f"Platform: {entry['platform']}",
+        f"Titre: {entry['title']}",
+        f"Plateforme: {entry['platform']}",
         f"Slug: {entry['slug']}",
-        f"Regions: {', '.join(entry.get('regions', []))}",
+        f"Régions: {', '.join(entry.get('regions', []))}",
     ]
-    
+
     if entry.get('rom_id'):
-        lines.append(f"ROM ID: {entry['rom_id']}")
-    
+        lines.append(f"ID ROM: {entry['rom_id']}")
+
     if entry.get('boxart_url'):
         lines.append(f"Boxart: {entry['boxart_url']}")
-    
+
     if entry.get('links'):
-        lines.append("\nDownload Links:")
+        lines.append("\nLiens de téléchargement:")
         for i, link in enumerate(entry['links'], 1):
             lines.append(f"  {i}. {link['name']}")
             lines.append(f"     Format: {link['format']}")
-            lines.append(f"     Size: {link['size_str']}")
-            lines.append(f"     Host: {link['host']}")
+            lines.append(f"     Taille: {link['size_str']}")
+            lines.append(f"     Hôte: {link['host']}")
             lines.append(f"     URL: {link['url']}")
             lines.append("")
-    
+
     return "\n".join(lines)
 
 def download_rom(link: Dict, output_dir: str = ".", verbose: bool = True) -> bool:
-    """Download a ROM file"""
+    """Télécharger un fichier ROM"""
+    global download_cancelled
+    download_cancelled = False
+
+    # Configurer le gestionnaire de signal pour l'annulation
+    signal.signal(signal.SIGINT, signal_handler)
+
     url = link["url"]
     filename = link["filename"]
     filepath = os.path.join(output_dir, filename)
-    
-    # Create output directory if it doesn't exist
+
+    # Créer le répertoire de sortie s'il n'existe pas
     os.makedirs(output_dir, exist_ok=True)
-    
+
     if verbose:
-        print(f"Downloading {filename}...")
+        print(f"Téléchargement de {filename}...")
         print(f"URL: {url}")
-        print(f"Size: {link.get('size_str', 'Unknown')}")
-    
+        print(f"Taille: {link.get('size_str', 'Inconnue')}")
+        print("Appuyez sur Ctrl+C pour annuler le téléchargement")
+
     try:
         response = requests.get(url, stream=True)
         response.raise_for_status()
-        
+
         total_size = int(response.headers.get('content-length', 0))
         downloaded_size = 0
-        
-        with open(filepath, "wb") as f:
+        last_print_time = time.time()
+
+        # Ouvrir le fichier temporaire pour le téléchargement
+        temp_filepath = filepath + ".tmp"
+        with open(temp_filepath, "wb") as f:
+            start_time = time.time()
             for chunk in response.iter_content(chunk_size=8192):
+                # Vérifier si l'utilisateur a annulé le téléchargement
+                if download_cancelled:
+                    if verbose:
+                        print("\\nTéléchargement annulé par l'utilisateur.")
+                    # Supprimer le fichier partiellement téléchargé
+                    if os.path.exists(temp_filepath):
+                        os.remove(temp_filepath)
+                    return False
+
                 if chunk:
                     f.write(chunk)
                     downloaded_size += len(chunk)
+
+                    # Calculer la vitesse et la progression
+                    current_time = time.time()
+                    elapsed_time = current_time - start_time
+                    speed = downloaded_size / elapsed_time if elapsed_time > 0 else 0
+
                     if verbose and total_size > 0:
-                        percent = (downloaded_size / total_size) * 100
-                        print(f"\rProgress: {percent:.1f}%", end='', flush=True)
-        
+                        # Mettre à jour l'affichage toutes les 0,5 secondes pour éviter un affichage excessif
+                        if current_time - last_print_time >= 0.5 or downloaded_size == total_size:
+                            percent = (downloaded_size / total_size) * 100
+
+                            # Formater la vitesse pour l'affichage
+                            if speed > 1024 * 1024:  # MB/s
+                                speed_str = f"{speed / (1024 * 1024):.2f} MB/s"
+                            elif speed > 1024:  # KB/s
+                                speed_str = f"{speed / 1024:.2f} KB/s"
+                            else:  # B/s
+                                speed_str = f"{speed:.2f} B/s"
+
+                            print(f"\\rProgression: {percent:.1f}% | Vitesse: {speed_str}", end='', flush=True)
+                            last_print_time = current_time
+
+        # Renommer le fichier temporaire en fichier final
+        os.rename(temp_filepath, filepath)
+
         if verbose:
-            print(f"\nDownloaded {filename} successfully to {filepath}!")
+            print(f"\\nTéléchargé {filename} avec succès dans {output_dir}!")
         return True
     except Exception as e:
+        # Supprimer le fichier partiellement téléchargé en cas d'erreur
+        if os.path.exists(temp_filepath):
+            os.remove(temp_filepath)
+
         if verbose:
-            print(f"\nError downloading {filename}: {e}")
+            print(f"\\nErreur lors du téléchargement de {filename}: {e}")
         return False
 
 def select_link_interactive(links: List[Dict]) -> Optional[Dict]:
-    """Let user select a download link interactively"""
+    """Laisser l'utilisateur sélectionner un lien de téléchargement de manière interactive"""
     if len(links) == 1:
         return links[0]
-    
-    print("\nMultiple download links available:")
+
+    print("\nPlusieurs liens de téléchargement disponibles:")
     for i, link in enumerate(links, 1):
         print(f"  {i}. {link['name']} ({link['size_str']}) - {link['host']}")
-    
+
     while True:
         try:
-            choice = input(f"\nSelect a link (1-{len(links)}) or 'q' to quit: ").strip()
+            choice = input(f"\nSélectionnez un lien (1-{len(links)}) ou 'q' pour quitter: ").strip()
             if choice.lower() == 'q':
                 return None
             choice_idx = int(choice) - 1
             if 0 <= choice_idx < len(links):
                 return links[choice_idx]
             else:
-                print("Invalid selection. Please try again.")
+                print("Sélection invalide. Veuillez réessayer.")
         except ValueError:
-            print("Invalid input. Please enter a number or 'q'.")
+            print("Entrée invalide. Veuillez entrer un nombre ou 'q'.")
 
 def get_download_directory() -> str:
-    """Get the user's download directory"""
+    """Obtenir le répertoire de téléchargement de l'utilisateur"""
     try:
         result = subprocess.run(["xdg-user-dir", "DOWNLOAD"], capture_output=True, text=True, check=True)
         return result.stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
-        # Fallback to ~/Downloads if xdg-user-dir is not available
-        return os.path.expanduser("~/Downloads")
+        # Repli sur ~/Téléchargements si xdg-user-dir n'est pas disponible
+        return os.path.expanduser("~/Téléchargements")
+
+        pass  # Ignorer les erreurs de dessin pour les lignes qui ne tiennent pas
+
+        # Dessiner la barre de statut
+        status = "↑/↓: Naviguer | Espace: Sélectionner | Entrée: Télécharger | Clavier: Rechercher | q: Quitter | PgUp/PgDn ou ←/→: Page"
+        stdscr.addstr(curses.LINES - 1, 0, status[:curses.COLS-1], curses.A_REVERSE)
+
+        stdscr.refresh()
+
 
 class InteractiveBrowser:
     def __init__(self, client: CrocDBClient):
@@ -243,12 +300,12 @@ class InteractiveBrowser:
         self.viewport_start = 0
         self.search_term = ""
         self.download_dir = get_download_directory()
-        self.first_run = True
-    
+        self.first_run = False  # Changé de True à False
+
     def search(self, term: str = ""):
         """Perform a search and update results"""
         self.search_term = term
-        
+
         # Improve search terms for common patterns
         search_term = term
         if term:
@@ -260,10 +317,10 @@ class InteractiveBrowser:
                 search_term = "The Legend of Zelda Ocarina of Time"
             elif term_lower == "metroid prime":
                 search_term = "Metroid Prime"
-            
+
         # Use paginated search to get more results
         self.results = self.client.search_entries_all_pages(search_key=search_term, max_results=500)
-        
+
         # If we have a specific search term, try to improve relevance
         if term and self.results:
             # Sort results by relevance - exact matches first, then partial matches
@@ -272,10 +329,10 @@ class InteractiveBrowser:
             def relevance_score(entry):
                 title = entry.get('title', '').lower()
                 platform = entry.get('platform', '').lower()
-                
+
                 # Score based on how well the search term matches the title
                 score = 0
-                
+
                 # Exact match in title gets highest score
                 if term_lower == title or search_term_lower == title:
                     score += 1000
@@ -290,11 +347,11 @@ class InteractiveBrowser:
                     pos2 = title.find(search_term_lower) if search_term_lower in title else 999
                     best_pos = min(pos1, pos2)
                     score += 50 - min(50, best_pos)
-                
+
                 # Bonus for platform mentions in search term
                 if platform and (platform in term_lower or platform in search_term_lower):
                     score += 200
-                
+
                 # Bonus for well-known games patterns
                 if "mario" in term_lower and "mario" in title:
                     score += 50
@@ -302,45 +359,42 @@ class InteractiveBrowser:
                     score += 50
                 if "64" in term_lower and "64" in title:
                     score += 30
-                    
+
                 return score
-            
+
             # Sort by relevance score (descending)
             self.results.sort(key=relevance_score, reverse=True)
-        
+
         self.selected.clear()
         self.current_pos = 0
         self.viewport_start = 0
-    
+
     def format_entry_line(self, entry: Dict, is_selected: bool, is_current: bool) -> str:
         """Format a single entry line for display"""
         marker = "[*] " if is_selected else "[ ] "
         title = entry.get('title', 'Unknown')
         platform = entry.get('platform', 'Unknown')
         regions = ", ".join(entry.get('regions', [])) if entry.get('regions') else ""
-        
+
         # Truncate if too long
         max_title_len = 50
         if len(title) > max_title_len:
             title = title[:max_title_len-3] + "..."
-        
+
         line = f"{marker}{title:<50} ({platform}) {regions}"
         return line[: curses.COLS - 1]  # Ensure it fits on screen
-    
+
     def draw_screen(self, stdscr):
         """Draw the main interface"""
         stdscr.clear()
-        
+
         # Draw header
         header = f"ROM Browser - Search: {self.search_term or '(all)'} | {len(self.results)} results | {len(self.selected)} selected"
         stdscr.addstr(0, 0, header[:curses.COLS-1], curses.A_REVERSE)
-        
+
         # Draw results
         if not self.results:
-            if self.first_run:
-                stdscr.addstr(2, 0, "Press any key to start searching...")
-            else:
-                stdscr.addstr(2, 0, "No results found. Press any key to search again...")
+            stdscr.addstr(2, 0, "No results found. Press any key to search again...")
         else:
             # Calculate viewport
             max_lines = curses.LINES - 3  # Leave space for header and status
@@ -348,17 +402,17 @@ class InteractiveBrowser:
                 self.viewport_start = self.current_pos
             elif self.current_pos >= self.viewport_start + max_lines:
                 self.viewport_start = self.current_pos - max_lines + 1
-            
+
             # Draw entries
             for i in range(max_lines):
                 idx = self.viewport_start + i
                 if idx >= len(self.results):
                     break
-                
+
                 entry = self.results[idx]
                 is_selected = idx in self.selected
                 is_current = idx == self.current_pos
-                
+
                 try:
                     line = self.format_entry_line(entry, is_selected, is_current)
                     if is_current:
@@ -368,42 +422,728 @@ class InteractiveBrowser:
                         stdscr.addstr(i + 1, 0, line)
                 except curses.error:
                     pass  # Ignore drawing errors for lines that don't fit
-        
-        # Draw status bar
-        status = "↑/↓: Navigate | Space: Select | Enter: Download | /: Search | q: Quit | PgUp/PgDn or ←/→: Page"
+
+    def __init__(self, client: CrocDBClient):
+        self.client = client
+        self.results = []
+        self.selected = set()
+        self.current_pos = 0
+        self.viewport_start = 0
+        self.search_term = ""
+        self.download_dir = get_download_directory()
+        self.first_run = False  # Changé de True à False
+
+    def search(self, term: str = ""):
+        """Effectuer une recherche et mettre à jour les résultats"""
+        self.search_term = term
+
+        # Améliorer les termes de recherche pour les motifs courants
+        search_term = term
+        if term:
+            term_lower = term.lower()
+            # Gérer les motifs de recherche courants
+            if term_lower == "mario 64":
+                search_term = "Super Mario 64"
+            elif term_lower == "zelda oot":
+                search_term = "The Legend of Zelda Ocarina of Time"
+            elif term_lower == "metroid prime":
+                search_term = "Metroid Prime"
+
+        # Utiliser la recherche paginée pour obtenir plus de résultats
+        self.results = self.client.search_entries_all_pages(search_key=search_term, max_results=500)
+
+        # Si nous avons un terme de recherche spécifique, essayer d'améliorer la pertinence
+        if term and self.results:
+            # Trier les résultats par pertinence - correspondances exactes en premier, puis correspondances partielles
+            term_lower = term.lower()
+            search_term_lower = search_term.lower()
+            def relevance_score(entry):
+                title = entry.get('title', '').lower()
+                platform = entry.get('platform', '').lower()
+
+                # Score basé sur la correspondance du terme de recherche avec le titre
+                score = 0
+
+                # Correspondance exacte dans le titre obtient le score le plus élevé
+                if term_lower == title or search_term_lower == title:
+                    score += 1000
+                # Le titre commence par le terme de recherche
+                elif title.startswith(term_lower) or title.startswith(search_term_lower):
+                    score += 500
+                # Le terme de recherche est contenu dans le titre
+                elif term_lower in title or search_term_lower in title:
+                    score += 100
+                    # Booster le score basé sur la position (plus tôt est mieux)
+                    pos1 = title.find(term_lower) if term_lower in title else 999
+                    pos2 = title.find(search_term_lower) if search_term_lower in title else 999
+                    best_pos = min(pos1, pos2)
+                    score += 50 - min(50, best_pos)
+
+                # Bonus pour les mentions de plateforme dans le terme de recherche
+                if platform and (platform in term_lower or platform in search_term_lower):
+                    score += 200
+
+                # Bonus pour les motifs de jeux bien connus
+                if "mario" in term_lower and "mario" in title:
+                    score += 50
+                if "zelda" in term_lower and "zelda" in title:
+                    score += 50
+                if "64" in term_lower and "64" in title:
+                    score += 30
+
+                return score
+
+            # Trier par score de pertinence (décroissant)
+            self.results.sort(key=relevance_score, reverse=True)
+
+        self.selected.clear()
+        self.current_pos = 0
+        self.viewport_start = 0
+
+    def format_entry_line(self, entry: Dict, is_selected: bool, is_current: bool) -> str:
+        """Formater une ligne d'entrée pour l'affichage"""
+        marker = "[*] " if is_selected else "[ ] "
+        title = entry.get('title', 'Inconnu')
+        platform = entry.get('platform', 'Inconnu')
+        regions = ", ".join(entry.get('regions', [])) if entry.get('regions') else ""
+
+        # Tronquer si trop long
+        max_title_len = 50
+        if len(title) > max_title_len:
+            title = title[:max_title_len-3] + "..."
+
+        line = f"{marker}{title:<50} ({platform}) {regions}"
+        return line[: curses.COLS - 1]  # S'assurer qu'il tient sur l'écran
+
+    def draw_screen(self, stdscr):
+        """Dessiner l'interface principale"""
+        stdscr.clear()
+
+        # Dessiner l'en-tête
+        header = f"Navigateur ROM - Recherche: {self.search_term or '(tous)'} | {len(self.results)} résultats | {len(self.selected)} sélectionnés"
+        stdscr.addstr(0, 0, header[:curses.COLS-1], curses.A_REVERSE)
+
+        # Dessiner les résultats
+        if not self.results:
+            stdscr.addstr(2, 0, "Aucun résultat trouvé. Appuyez sur une touche pour rechercher à nouveau...")
+        else:
+            # Calculer la fenêtre d'affichage
+            max_lines = curses.LINES - 3  # Laisser de l'espace pour l'en-tête et le statut
+            if self.current_pos < self.viewport_start:
+                self.viewport_start = self.current_pos
+            elif self.current_pos >= self.viewport_start + max_lines:
+                self.viewport_start = self.current_pos - max_lines + 1
+
+            # Dessiner les entrées
+            for i in range(max_lines):
+                idx = self.viewport_start + i
+                if idx >= len(self.results):
+                    break
+
+                entry = self.results[idx]
+                is_selected = idx in self.selected
+                is_current = idx == self.current_pos
+
+                try:
+                    line = self.format_entry_line(entry, is_selected, is_current)
+                    if is_current:
+                        # Surligner toute la ligne pour la sélection actuelle
+                        stdscr.addstr(i + 1, 0, line, curses.A_REVERSE)
+                    else:
+                        stdscr.addstr(i + 1, 0, line)
+                except curses.error:
+                    pass  # Ignorer les erreurs de dessin pour les lignes qui ne tiennent pas
+
+        # Dessiner la barre de statut
+        status = "↑/↓: Naviguer | Espace: Sélectionner | Entrée: Télécharger | Clavier: Rechercher | q: Quitter | PgUp/PgDn ou ←/→: Page"
         stdscr.addstr(curses.LINES - 1, 0, status[:curses.COLS-1], curses.A_REVERSE)
-        
+
         stdscr.refresh()
-    
+
+
+        status = "↑/↓: Naviguer | Espace: Sélectionner | Entrée: Télécharger | Rechercher | q: Quitter | PgUp/PgDn ou ←/→: Page"
+        stdscr.addstr(curses.LINES - 1, 0, status[:curses.COLS-1], curses.A_REVERSE)
+
+        stdscr.refresh()
+
+    def run(self, stdscr):
+        """Boucle interactive principale"""
+        # Configuration de curses
+        curses.curs_set(0)  # Masquer le curseur
+        stdscr.nodelay(False)
+        stdscr.keypad(True)
+
+        # Effectuer la recherche initiale immédiatement
+        self.first_run = False
+        self.prompt_search(stdscr)
+
+        while True:
+            self.draw_screen(stdscr)
+
+            try:
+                key = stdscr.getch()
+
+                if key == ord('q'):
+                    break
+                elif not self.results:
+                    # Si aucun résultat, toute touche (sauf q) déclenche la recherche
+                    if key != ord('q'):
+                        self.prompt_search(stdscr)
+                elif key == curses.KEY_DOWN:
+                    # Descendre
+                    if self.results and self.current_pos < len(self.results) - 1:
+                        self.current_pos += 1
+                elif key == curses.KEY_UP:
+                    # Monter
+                    if self.current_pos > 0:
+                        self.current_pos -= 1
+                elif key == curses.KEY_NPAGE or key == curses.KEY_RIGHT:
+                    # Page suivante (aussi flèche droite)
+                    if self.results:
+                        self.current_pos = min(self.current_pos + 10, len(self.results) - 1)
+                elif key == curses.KEY_PPAGE or key == curses.KEY_LEFT:
+                    # Page précédente (aussi flèche gauche)
+                    self.current_pos = max(self.current_pos - 10, 0)
+                elif key == ord(' '):
+                    # Basculer la sélection
+                    if self.results:
+                        if self.current_pos in self.selected:
+                            self.selected.remove(self.current_pos)
+                        else:
+                            self.selected.add(self.current_pos)
+                elif key == ord('\n') or key == curses.KEY_ENTER:
+                    # Télécharger les éléments sélectionnés ou l'élément actuel
+                    to_download = list(self.selected) if self.selected else ([self.current_pos] if self.results else [])
+                    if to_download:
+                        self.download_selected(stdscr, to_download)
+                        self.selected.clear()  # Effacer les sélections après le téléchargement
+                    else:
+                        # Aucune sélection, ne rien faire
+                        pass
+                else:
+                    # Toute autre touche déclenche la recherche
+                    self.prompt_search(stdscr)
+            except Exception as e:
+                # Gérer les erreurs de manière élégante
+                pass
+
+    def prompt_search(self, stdscr):
+        """Demander le terme de recherche à l'utilisateur"""
+        curses.echo()
+        # Make sure we don't exceed the screen dimensions
+        prompt_text = "Rechercher: "
+        max_width = max(0, curses.COLS - len(prompt_text) - 1)
+        stdscr.addstr(curses.LINES - 1, 0, prompt_text + " " * max_width)
+        stdscr.refresh()
+        search_term = stdscr.getstr(curses.LINES - 1, len(prompt_text), max_width).decode('utf-8')
+        curses.noecho()
+        self.search(search_term)
+
+    def download_selected(self, stdscr, indices):
+        """Télécharger les ROMs sélectionnés"""
+        curses.curs_set(1)  # Afficher le curseur pour la progression
+        stdscr.clear()
+        stdscr.addstr(0, 0, f"Téléchargement de {len(indices)} ROM(s) dans {self.download_dir}")
+        stdscr.refresh()
+
+        success_count = 0
+        for i, idx in enumerate(indices):
+            if idx >= len(self.results):
+                continue
+
+            entry = self.results[idx]
+            stdscr.addstr(i + 2, 0, f"Téléchargement: {entry['title'][:50]}...")
+            stdscr.refresh()
+
+            # Obtenir les détails complets de l'entrée
+            try:
+                full_entry_result = self.client.get_entry(entry['slug'])
+                full_entry = full_entry_result.get("data", {}).get("entry", {})
+
+                if not full_entry:
+                    stdscr.addstr(i + 2, 0, f"Échec: {entry['title'][:40]}... (pas de détails)")
+                    stdscr.refresh()
+                    continue
+
+                links = full_entry.get("links", [])
+                if not links:
+                    stdscr.addstr(i + 2, 0, f"Échec: {entry['title'][:40]}... (pas de liens)")
+                    stdscr.refresh()
+                    continue
+
+                # Sélectionner le premier lien
+                selected_link = links[0]
+
+                # Télécharger la ROM avec l'affichage de la progression
+                if self.download_rom_with_progress(stdscr, i + 2, selected_link):
+                    stdscr.addstr(i + 2, 0, f"Succès: {entry['title'][:40]}...")
+                    success_count += 1
+                else:
+                    stdscr.addstr(i + 2, 0, f"Échec: {entry['title'][:40]}...")
+
+                stdscr.refresh()
+            except Exception as e:
+                stdscr.addstr(i + 2, 0, f"Erreur: {entry['title'][:40]}... ({str(e)[:20]})")
+                stdscr.refresh()
+
+        stdscr.addstr(len(indices) + 3, 0, f"Téléchargements terminés: {success_count}/{len(indices)} réussis")
+        stdscr.addstr(len(indices) + 4, 0, "Fermeture automatique...")
+        stdscr.refresh()
+        time.sleep(2)  # Attendre 2 secondes pour afficher le message
+        # Quitter automatiquement après le téléchargement
+        sys.exit(0)
+
+    def download_rom_with_progress(self, stdscr, row, link):
+        """Télécharger un fichier ROM avec l'affichage de la progression dans curses"""
+        url = link["url"]
+        filename = link["filename"]
+        filepath = os.path.join(self.download_dir, filename)
+
+        # Variable pour gérer l'annulation du téléchargement
+        download_cancelled = threading.Event()
+
+        # Fonction pour vérifier les touches pendant le téléchargement
+        def check_keys():
+            while not download_cancelled.is_set():
+                try:
+                    key = stdscr.getch()
+                    if key == ord(' ') or key == 3:  # Espace ou Ctrl+C
+                        download_cancelled.set()
+                        break
+                except:
+                    pass
+                time.sleep(0.1)
+
+        # Démarrer le thread de vérification des touches
+        key_thread = threading.Thread(target=check_keys, daemon=True)
+        key_thread.start()
+
+        try:
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded_size = 0
+            last_update_time = time.time()
+
+            # Créer le répertoire de sortie s'il n'existe pas
+            os.makedirs(self.download_dir, exist_ok=True)
+
+            # Ouvrir le fichier temporaire pour le téléchargement
+            temp_filepath = filepath + ".tmp"
+            with open(temp_filepath, "wb") as f:
+                start_time = time.time()
+                for chunk in response.iter_content(chunk_size=8192):
+                    # Vérifier si l'utilisateur a annulé le téléchargement
+                    if download_cancelled.is_set():
+                        # Supprimer le fichier partiellement téléchargé
+                        if os.path.exists(temp_filepath):
+                            os.remove(temp_filepath)
+
+                        # Afficher le message d'annulation
+                        stdscr.addstr(row, 0, f"Téléchargement annulé: {filename[:50]}..."[:curses.COLS-1])
+                        stdscr.refresh()
+                        return False
+
+                    if chunk:
+                        f.write(chunk)
+                        downloaded_size += len(chunk)
+
+                        # Mettre à jour l'affichage toutes les 0,5 secondes
+                        current_time = time.time()
+                        if current_time - last_update_time >= 0.5 or downloaded_size == total_size:
+                            elapsed_time = current_time - start_time
+                            speed = downloaded_size / elapsed_time if elapsed_time > 0 else 0
+
+                            if total_size > 0:
+                                percent = (downloaded_size / total_size) * 100
+
+                                # Formater la vitesse pour l'affichage
+                                if speed > 1024 * 1024:  # MB/s
+                                    speed_str = f"{speed / (1024 * 1024):.2f} MB/s"
+                                elif speed > 1024:  # KB/s
+                                    speed_str = f"{speed / 1024:.2f} KB/s"
+                                else:  # B/s
+                                    speed_str = f"{speed:.2f} B/s"
+
+                                # Tronquer le nom de fichier s'il est trop long
+                                display_filename = filename[:30] + "..." if len(filename) > 33 else filename
+
+                                progress_str = f"Téléchargement: {display_filename} ({percent:.1f}%, {speed_str})"
+                                stdscr.addstr(row, 0, progress_str[:curses.COLS-1])
+                                stdscr.refresh()
+
+                            last_update_time = current_time
+
+            # Renommer le fichier temporaire en fichier final
+            os.rename(temp_filepath, filepath)
+
+            return True
+        except Exception as e:
+            # Supprimer le fichier partiellement téléchargé en cas d'erreur
+            if os.path.exists(temp_filepath):
+                os.remove(temp_filepath)
+
+            stdscr.addstr(row, 0, f"Erreur: {str(e)[:curses.COLS-1]}")
+            stdscr.refresh()
+            return False
+
+def interactive_search_curses(client: CrocDBClient):
+    """Mode de recherche interactive amélioré avec interface curses"""
+    browser = InteractiveBrowser(client)
+    curses.wrapper(browser.run)
+
+def interactive_search(client: CrocDBClient):
+    """Mode de recherche interactive avec recherche dynamique et sélection multiple"""
+    print("=== Recherche interactive de ROM ===")
+    print("Laissez le terme de recherche vide pour lister toutes les ROM")
+    print("Tapez 'quit' ou 'q' pour quitter")
+    print()
+
+    # Obtenir le répertoire de téléchargement par défaut
+    download_dir = get_download_directory()
+    print(f"Les ROMs seront téléchargées dans: {download_dir}")
+    print()
+
+    while True:
+        # Obtenir le terme de recherche
+        search_term = input("Entrez un terme de recherche: ").strip()
+        if search_term.lower() in ['quit', 'q']:
+            print("Au revoir!")
+            break
+
+        # Effectuer la recherche avec gestion améliorée des termes
+        print("Recherche en cours...")
+        # Améliorer les termes de recherche pour les motifs courants
+        improved_search_term = search_term
+        if search_term:
+            term_lower = search_term.lower()
+            # Gérer les motifs de recherche courants
+            if term_lower == "mario 64":
+                improved_search_term = "Super Mario 64"
+            elif term_lower == "zelda oot":
+                improved_search_term = "The Legend of Zelda Ocarina of Time"
+            elif term_lower == "metroid prime":
+                improved_search_term = "Metroid Prime"
+
+        # Utiliser la recherche paginée pour obtenir plus de résultats
+        results = client.search_entries_all_pages(search_key=improved_search_term, max_results=500)
+
+        # Appliquer le tri par pertinence si nous avons des résultats
+        if search_term and results:
+            # Trier les résultats par pertinence - correspondances exactes en premier, puis correspondances partielles
+            term_lower = search_term.lower()
+            improved_term_lower = improved_search_term.lower()
+            def relevance_score(entry):
+                title = entry.get('title', '').lower()
+                platform = entry.get('platform', '').lower()
+
+                # Score basé sur la correspondance du terme de recherche avec le titre
+                score = 0
+
+                # Correspondance exacte dans le titre obtient le score le plus élevé
+                if term_lower == title or improved_term_lower == title:
+                    score += 1000
+                # Le titre commence par le terme de recherche
+                elif title.startswith(term_lower) or title.startswith(improved_term_lower):
+                    score += 500
+                # Le terme de recherche est contenu dans le titre
+                elif term_lower in title or improved_term_lower in title:
+                    score += 100
+                    # Booster le score basé sur la position (plus tôt est mieux)
+                    pos1 = title.find(term_lower) if term_lower in title else 999
+                    pos2 = title.find(improved_term_lower) if improved_term_lower in title else 999
+                    best_pos = min(pos1, pos2)
+                    score += 50 - min(50, best_pos)
+
+                # Bonus pour les mentions de plateforme dans le terme de recherche
+                if platform and (platform in term_lower or platform in improved_term_lower):
+                    score += 200
+
+                # Bonus pour les motifs de jeux bien connus
+                if "mario" in term_lower and "mario" in title:
+                    score += 50
+                if "zelda" in term_lower and "zelda" in title:
+                    score += 50
+                if "64" in term_lower and "64" in title:
+                    score += 30
+
+                return score
+
+            # Trier par score de pertinence (décroissant)
+            results.sort(key=relevance_score, reverse=True)
+
+        if not results:
+            print("Aucun résultat trouvé. Essayez un autre terme de recherche.")
+            continue
+
+        print(f"Trouvé {len(results)} résultats:")
+        print(f"Trouvé {len(results)} résultats:")
+        print("-" * 50)
+        for i, entry in enumerate(results, 1):
+            print(f"{i:2d}. {entry['title']}")
+            print(f"     Plateforme: {entry['platform']}")
+            if entry.get('regions'):
+                print(f"     Régions: {', '.join(entry['regions'])}")
+            print()
+
+        # Laisser l'utilisateur sélectionner les ROM à télécharger
+        while True:
+            try:
+                selection = input("Entrez les numéros de ROM à télécharger (séparés par des virgules), 'all' pour tous, ou 'back' pour rechercher à nouveau: ").strip()
+                if selection.lower() == 'back':
+                    break
+                elif selection.lower() == 'all':
+                    selected_indices = list(range(len(results)))
+                    break
+                else:
+                    try:
+                        # Analyser les nombres séparés par des virgules
+                        selected_indices = []
+                        for part in selection.split(','):
+                            part = part.strip()
+                            if part:  # Ignorer les parties vides
+                                idx = int(part) - 1
+                                if 0 <= idx < len(results):
+                                    selected_indices.append(idx)
+                                else:
+                                    print(f"Sélection invalide: {part}")
+                                    raise ValueError("Sélection invalide")
+                        break
+                    except ValueError:
+                        print("Entrée invalide. Veuillez entrer des nombres séparés par des virgules, 'all', ou 'back'.")
+            except (EOFError, KeyboardInterrupt):
+                print("Fermeture...")
+                print("Fermeture...")
+                return
+
+        # Si on retourne à la recherche, continuer la boucle
+        if selection.lower() == 'back':
+            continue
+
+        # Télécharger les ROM sélectionnés
+        for idx in selected_indices:
+            entry = results[idx]
+            print(f"--- Téléchargement: {entry['title']} ---")
+            print(f"--- Téléchargement: {entry['title']} ---")
+
+            # Obtenir les détails complets de l'entrée
+            full_entry_result = client.get_entry(entry['slug'])
+            full_entry = full_entry_result.get("data", {}).get("entry", {})
+
+            if not full_entry:
+                print(f"Impossible d'obtenir les détails pour {entry['title']}")
+                continue
+
+            links = full_entry.get("links", [])
+            if not links:
+                print(f"Aucun lien de téléchargement disponible pour {entry['title']}")
+                continue
+
+            # Sélectionner le lien (choisir automatiquement le premier en mode non interactif)
+            selected_link = links[0]
+            if len(links) > 1:
+                print(f"Plusieurs liens disponibles pour {entry['title']}:")
+                for i, link in enumerate(links, 1):
+                    print(f"  {i}. {link['name']} ({link['size_str']}) - {link['host']}")
+                # Pour simplifier, nous sélectionnerons automatiquement le premier
+                print("Sélection automatique du premier lien.")
+
+            # Télécharger la ROM
+            if download_rom(selected_link, download_dir, verbose=True):
+                print(f"Téléchargé {entry['title']} avec succès!")
+            else:
+                print(f"Échec du téléchargement de {entry['title']}")
+
+        print("\n" + "="*50)
+        print("\n" + "="*50)
+        print("Téléchargements terminés!")
+        print("Entrez un nouveau terme de recherche, ou 'quit' pour quitter.")
+
+def main():
+    parser = argparse.ArgumentParser(description="Outil CLI pour rechercher et télécharger des ROMs en utilisant l'API CrocDB")
+    parser.add_argument("--search", "-s", help="Terme de recherche pour les ROMs")
+    parser.add_argument("--platforms", "-p", nargs="+", help="Filtrer par plateformes (ex: snes n64)")
+    parser.add_argument("--regions", "-r", nargs="+", help="Filtrer par régions (ex: us eu)")
+    parser.add_argument("--max-results", "-m", type=int, default=500, help="Nombre maximum de résultats (défaut: 500, max: 500)")
+    parser.add_argument("--page", type=int, default=1, help="Numéro de page pour la pagination (défaut: 1)")
+    parser.add_argument("--rom-id", help="Filtrer par ID ROM spécifique")
+    parser.add_argument("--get-entry", "-g", help="Obtenir une entrée spécifique par slug")
+    parser.add_argument("--random", action="store_true", help="Obtenir une entrée aléatoire")
+    parser.add_argument("--list-platforms", action="store_true", help="Lister les plateformes disponibles")
+    parser.add_argument("--list-regions", action="store_true", help="Lister les régions disponibles")
+    parser.add_argument("--info", action="store_true", help="Obtenir les informations de la base de données")
+    parser.add_argument("--download", "-d", help="Télécharger une ROM par slug")
+    parser.add_argument("--output-dir", "-o", default=".", help="Répertoire de sortie pour les téléchargements (défaut: répertoire courant)")
+    parser.add_argument("--show-links", "-l", action="store_true", help="Afficher les liens de téléchargement dans les résultats de recherche")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Activer la sortie verbeuse")
+    parser.add_argument("--interactive", "-i", action="store_true", help="Exécuter en mode interactif")
+    parser.add_argument("--enhanced", "-e", action="store_true", help="Exécuter en mode interactif amélioré basé sur curses")
+
+    args = parser.parse_args()
+
+    client = CrocDBClient()
+
+    # Gérer le mode interactif amélioré
+    if args.enhanced:
+        interactive_search_curses(client)
+        return
+
+    # Gérer le mode interactif
+    if args.interactive:
+        interactive_search(client)
+        return
+
+    # Gérer les différentes options de commande
+    if args.list_platforms:
+        result = client.get_platforms()
+        platforms = result.get("data", {}).get("platforms", {})
+        print("Plateformes disponibles:")
+        # Trier les plateformes par marque et nom
+        sorted_platforms = sorted(platforms.items(), key=lambda x: (x[1]['brand'], x[1]['name']))
+        for platform_id, info in sorted_platforms:
+            print(f"  {platform_id}: {info['brand']} - {info['name']}")
+        return
+
+    if args.list_regions:
+        result = client.get_regions()
+        regions = result.get("data", {}).get("regions", {})
+        print("Régions disponibles:")
+        for region_id, name in regions.items():
+            print(f"  {region_id}: {name}")
+        return
+
+    if args.info:
+        result = client.get_database_info()
+        total_entries = result.get("data", {}).get("total_entries", 0)
+        print(f"La base de données contient {total_entries} entrées")
+        return
+
+    if args.random:
+        result = client.get_random_entry()
+        entry = result.get("data", {}).get("entry", {})
+        if entry:
+            if args.verbose:
+                print(format_entry_details(entry))
+            else:
+                print(json.dumps(entry, indent=2))
+        else:
+            print("Aucune entrée aléatoire trouvée")
+        return
+
+    if args.get_entry:
+        result = client.get_entry(args.get_entry)
+        entry = result.get("data", {}).get("entry", {})
+        if entry:
+            if args.verbose:
+                print(format_entry_details(entry))
+            else:
+                print(json.dumps(entry, indent=2))
+        else:
+            print(f"Aucune entrée trouvée avec le slug: {args.get_entry}")
+        return
+
+    if args.download:
+        result = client.get_entry(args.download)
+        entry = result.get("data", {}).get("entry", {})
+        if not entry:
+            print(f"Aucune entrée trouvée avec le slug: {args.download}")
+            return
+
+        links = entry.get("links", [])
+        if not links:
+            print("Aucun lien de téléchargement disponible pour cette entrée")
+            return
+
+        # Laisser l'utilisateur sélectionner quel lien télécharger
+        selected_link = select_link_interactive(links)
+        if not selected_link:
+            print("Téléchargement annulé.")
+            return
+
+        # Obtenir le répertoire de téléchargement si non spécifié
+        output_dir = args.output_dir
+        if output_dir == ".":
+            output_dir = get_download_directory()
+
+        if download_rom(selected_link, output_dir, args.verbose):
+            print("Téléchargement terminé avec succès!")
+        else:
+            print("Échec du téléchargement!")
+        return
+
+    # Comportement par défaut: recherche
+    if args.search or args.platforms or args.regions or args.rom_id:
+        # Utiliser la recherche paginée pour les recherches en ligne de commande aussi
+        if args.page == 1 and args.max_results > 100:
+            # Pour la première page avec max_results élevé, utiliser la recherche paginée
+            results_list = client.search_entries_all_pages(
+                search_key=args.search or "",
+                platforms=args.platforms or [],
+                regions=args.regions or [],
+                rom_id=args.rom_id or "",
+                max_results=min(args.max_results, 500)
+            )
+            # Créer une structure de résultat fictive pour maintenir la compatibilité
+            result = {
+                "data": {
+                    "results": results_list,
+                    "current_results": len(results_list),
+                    "total_results": len(results_list),  # Nous n'avons pas le total de l'API dans ce cas
+                    "current_page": 1,
+                    "total_pages": 1
+                }
+            }
+            results = results_list
+        else:
+            # Utiliser la recherche normale pour des pages spécifiques ou de petits ensembles de résultats
+            result = client.search_entries(
+                search_key=args.search or "",
+                platforms=args.platforms or [],
+                regions=args.regions or [],
+                rom_id=args.rom_id or "",
+                max_results=min(args.max_results, 100),
+                page=args.page
+            )
+            results = result.get("data", {}).get("results", [])
+        if results:
+            print(format_search_results(results, args.show_links))
+            total_results = result.get('data', {}).get('total_results', 0)
+            current_page = result.get('data', {}).get('current_page', 1)
+            total_pages = result.get('data', {}).get('total_pages', 1)
+            print(f"Affichage de {len(results)} sur {total_results} résultats (Page {current_page} sur {total_pages})")
+        else:
+            print("Aucun résultat trouvé correspondant à vos critères")
+    else:
+        # Si aucun argument fourni, exécuter en mode interactif amélioré par défaut
+        interactive_search_curses(client)
+
+if __name__ == "__main__":
+    main()
+
     def run(self, stdscr):
         """Main interactive loop"""
         # Setup curses
         curses.curs_set(0)  # Hide cursor
         stdscr.nodelay(False)
         stdscr.keypad(True)
-        
-        # Don't perform initial search, wait for user input
-        self.first_run = True
-        
+
+        # Perform initial search immediately
+        self.first_run = False
+        self.prompt_search(stdscr)
+
         while True:
             self.draw_screen(stdscr)
-            
+
             try:
                 key = stdscr.getch()
-                
+
                 if key == ord('q'):
                     break
-                elif self.first_run or not self.results:
-                    # If first run or no results, any key (except q) triggers search
+                elif not self.results:
+                    # If no results, any key (except q) triggers search
                     if key != ord('q'):
-                        self.first_run = False
-                        # Search mode
-                        curses.echo()
-                        stdscr.addstr(curses.LINES - 1, 0, "Search: " + " " * (curses.COLS - 10))
-                        stdscr.refresh()
-                        search_term = stdscr.getstr(curses.LINES - 1, 8, 50).decode('utf-8')
-                        curses.noecho()
-                        self.search(search_term)
+                        self.prompt_search(stdscr)
                 elif key == curses.KEY_DOWN:
                     # Move down
                     if self.results and self.current_pos < len(self.results) - 1:
@@ -437,68 +1177,170 @@ class InteractiveBrowser:
                         pass
                 else:
                     # Any other key triggers search
-                    curses.echo()
-                    stdscr.addstr(curses.LINES - 1, 0, "Search: " + " " * (curses.COLS - 10))
-                    stdscr.refresh()
-                    search_term = stdscr.getstr(curses.LINES - 1, 8, 50).decode('utf-8')
-                    curses.noecho()
-                    self.search(search_term)
+                    self.prompt_search(stdscr)
             except Exception as e:
                 # Handle any errors gracefully
                 pass
-    
+
+    def prompt_search(self, stdscr):
+        """Prompt user for search term"""
+        curses.echo()
+        stdscr.addstr(curses.LINES - 1, 0, "Search: " + " " * (curses.COLS - 10))
+        stdscr.refresh()
+        search_term = stdscr.getstr(curses.LINES - 1, 8, 50).decode('utf-8')
+        curses.noecho()
+        self.search(search_term)
+
     def download_selected(self, stdscr, indices):
         """Download selected ROMs"""
         curses.curs_set(1)  # Show cursor for progress
         stdscr.clear()
         stdscr.addstr(0, 0, f"Downloading {len(indices)} ROM(s) to {self.download_dir}")
         stdscr.refresh()
-        
+
         success_count = 0
         for i, idx in enumerate(indices):
             if idx >= len(self.results):
                 continue
-                
+
             entry = self.results[idx]
             stdscr.addstr(i + 2, 0, f"Downloading: {entry['title'][:50]}...")
             stdscr.refresh()
-            
+
             # Get full entry details
             try:
                 full_entry_result = self.client.get_entry(entry['slug'])
                 full_entry = full_entry_result.get("data", {}).get("entry", {})
-                
+
                 if not full_entry:
                     stdscr.addstr(i + 2, 0, f"Failed: {entry['title'][:40]}... (no details)")
                     stdscr.refresh()
                     continue
-                
+
                 links = full_entry.get("links", [])
                 if not links:
                     stdscr.addstr(i + 2, 0, f"Failed: {entry['title'][:40]}... (no links)")
                     stdscr.refresh()
                     continue
-                
+
                 # Select first link
                 selected_link = links[0]
-                
-                # Download the ROM
-                if download_rom(selected_link, self.download_dir, verbose=False):
+
+                # Download the ROM with progress display
+                if self.download_rom_with_progress(stdscr, i + 2, selected_link):
                     stdscr.addstr(i + 2, 0, f"Success: {entry['title'][:40]}...")
                     success_count += 1
                 else:
                     stdscr.addstr(i + 2, 0, f"Failed: {entry['title'][:40]}...")
-                
+
                 stdscr.refresh()
             except Exception as e:
                 stdscr.addstr(i + 2, 0, f"Error: {entry['title'][:40]}... ({str(e)[:20]})")
                 stdscr.refresh()
-        
+
         stdscr.addstr(len(indices) + 3, 0, f"Downloads complete: {success_count}/{len(indices)} successful")
-        stdscr.addstr(len(indices) + 4, 0, "Press any key to continue...")
+        stdscr.addstr(len(indices) + 4, 0, "Closing automatically...")
         stdscr.refresh()
-        stdscr.getch()
-        curses.curs_set(0)  # Hide cursor again
+        time.sleep(2)  # Wait 2 seconds to display the message
+        # Quit automatically after download
+        sys.exit(0)
+
+    def download_rom_with_progress(self, stdscr, row, link):
+        """Télécharger un fichier ROM avec l'affichage de la progression dans curses"""
+        url = link["url"]
+        filename = link["filename"]
+        filepath = os.path.join(self.download_dir, filename)
+
+        # Variable pour gérer l'annulation du téléchargement
+        download_cancelled = threading.Event()
+
+        # Fonction pour vérifier les touches pendant le téléchargement
+        def check_keys():
+            while not download_cancelled.is_set():
+                try:
+                    key = stdscr.getch()
+                    if key == ord(' ') or key == 3:  # Espace ou Ctrl+C
+                        download_cancelled.set()
+                        break
+                except:
+                    pass
+                time.sleep(0.1)
+
+        # Démarrer le thread de vérification des touches
+        key_thread = threading.Thread(target=check_keys, daemon=True)
+        key_thread.start()
+
+        try:
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded_size = 0
+            last_update_time = time.time()
+
+            # Créer le répertoire de sortie s'il n'existe pas
+            os.makedirs(self.download_dir, exist_ok=True)
+
+            # Ouvrir le fichier temporaire pour le téléchargement
+            temp_filepath = filepath + ".tmp"
+            with open(temp_filepath, "wb") as f:
+                start_time = time.time()
+                for chunk in response.iter_content(chunk_size=8192):
+                    # Vérifier si l'utilisateur a annulé le téléchargement
+                    if download_cancelled.is_set():
+                        # Supprimer le fichier partiellement téléchargé
+                        if os.path.exists(temp_filepath):
+                            os.remove(temp_filepath)
+
+                        # Afficher le message d'annulation
+                        stdscr.addstr(row, 0, f"Téléchargement annulé: {filename[:50]}..."[:curses.COLS-1])
+                        stdscr.refresh()
+                        return False
+
+                    if chunk:
+                        f.write(chunk)
+                        downloaded_size += len(chunk)
+
+                        # Mettre à jour l'affichage toutes les 0,5 secondes
+                        current_time = time.time()
+                        if current_time - last_update_time >= 0.5 or downloaded_size == total_size:
+                            elapsed_time = current_time - start_time
+                            speed = downloaded_size / elapsed_time if elapsed_time > 0 else 0
+
+                            if total_size > 0:
+                                percent = (downloaded_size / total_size) * 100
+
+                                # Formater la vitesse pour l'affichage
+                                if speed > 1024 * 1024:  # MB/s
+                                    speed_str = f"{speed / (1024 * 1024):.2f} MB/s"
+                                elif speed > 1024:  # KB/s
+                                    speed_str = f"{speed / 1024:.2f} KB/s"
+                                else:  # B/s
+                                    speed_str = f"{speed:.2f} B/s"
+
+                                # Tronquer le nom de fichier s'il est trop long
+                                display_filename = filename[:30] + "..." if len(filename) > 33 else filename
+
+                                progress_str = f"Téléchargement: {display_filename} ({percent:.1f}%, {speed_str})"
+                                stdscr.addstr(row, 0, progress_str[:curses.COLS-1])
+                                stdscr.refresh()
+
+                            last_update_time = current_time
+
+            # Renommer le fichier temporaire en fichier final
+            os.rename(temp_filepath, filepath)
+
+            return True
+        except Exception as e:
+            # Supprimer le fichier partiellement téléchargé en cas d'erreur
+            if os.path.exists(temp_filepath):
+                os.remove(temp_filepath)
+
+            stdscr.addstr(row, 0, f"Erreur: {str(e)[:curses.COLS-1]}")
+            stdscr.refresh()
+            return False
+        except Exception as e:
+            return False
 
 def interactive_search_curses(client: CrocDBClient):
     """Enhanced interactive search mode with curses interface"""
@@ -511,19 +1353,19 @@ def interactive_search(client: CrocDBClient):
     print("Leave search term empty to list all ROMs")
     print("Type 'quit' or 'q' to exit")
     print()
-    
+
     # Get default download directory
     download_dir = get_download_directory()
     print(f"ROMs will be downloaded to: {download_dir}")
     print()
-    
+
     while True:
         # Get search term
         search_term = input("Enter search term: ").strip()
         if search_term.lower() in ['quit', 'q']:
             print("Goodbye!")
             break
-        
+
         # Perform search with improved term handling
         print("Searching...")
         # Improve search terms for common patterns
@@ -537,10 +1379,10 @@ def interactive_search(client: CrocDBClient):
                 improved_search_term = "The Legend of Zelda Ocarina of Time"
             elif term_lower == "metroid prime":
                 improved_search_term = "Metroid Prime"
-        
+
         # Use paginated search to get more results
         results = client.search_entries_all_pages(search_key=improved_search_term, max_results=500)
-        
+
         # Apply relevance sorting if we have results
         if search_term and results:
             # Sort results by relevance - exact matches first, then partial matches
@@ -549,10 +1391,10 @@ def interactive_search(client: CrocDBClient):
             def relevance_score(entry):
                 title = entry.get('title', '').lower()
                 platform = entry.get('platform', '').lower()
-                
+
                 # Score based on how well the search term matches the title
                 score = 0
-                
+
                 # Exact match in title gets highest score
                 if term_lower == title or improved_term_lower == title:
                     score += 1000
@@ -567,11 +1409,11 @@ def interactive_search(client: CrocDBClient):
                     pos2 = title.find(improved_term_lower) if improved_term_lower in title else 999
                     best_pos = min(pos1, pos2)
                     score += 50 - min(50, best_pos)
-                
+
                 # Bonus for platform mentions in search term
                 if platform and (platform in term_lower or platform in improved_term_lower):
                     score += 200
-                
+
                 # Bonus for well-known games patterns
                 if "mario" in term_lower and "mario" in title:
                     score += 50
@@ -579,16 +1421,16 @@ def interactive_search(client: CrocDBClient):
                     score += 50
                 if "64" in term_lower and "64" in title:
                     score += 30
-                    
+
                 return score
-            
+
             # Sort by relevance score (descending)
             results.sort(key=relevance_score, reverse=True)
-        
+
         if not results:
             print("No results found. Try another search term.")
             continue
-        
+
         # Display results
         print(f"\nFound {len(results)} results:")
         print("-" * 50)
@@ -598,7 +1440,7 @@ def interactive_search(client: CrocDBClient):
             if entry.get('regions'):
                 print(f"     Regions: {', '.join(entry['regions'])}")
             print()
-        
+
         # Let user select ROMs to download
         while True:
             try:
@@ -627,29 +1469,29 @@ def interactive_search(client: CrocDBClient):
             except (EOFError, KeyboardInterrupt):
                 print("\nExiting...")
                 return
-        
+
         # If going back to search, continue the loop
         if selection.lower() == 'back':
             continue
-        
+
         # Download selected ROMs
         for idx in selected_indices:
             entry = results[idx]
             print(f"\n--- Downloading: {entry['title']} ---")
-            
+
             # Get full entry details
             full_entry_result = client.get_entry(entry['slug'])
             full_entry = full_entry_result.get("data", {}).get("entry", {})
-            
+
             if not full_entry:
                 print(f"Could not get details for {entry['title']}")
                 continue
-            
+
             links = full_entry.get("links", [])
             if not links:
                 print(f"No download links available for {entry['title']}")
                 continue
-            
+
             # Select link (automatically choose first one in non-interactive mode)
             selected_link = links[0]
             if len(links) > 1:
@@ -658,13 +1500,13 @@ def interactive_search(client: CrocDBClient):
                     print(f"  {i}. {link['name']} ({link['size_str']}) - {link['host']}")
                 # For simplicity, we'll auto-select the first one
                 print("Auto-selecting the first link.")
-            
+
             # Download the ROM
             if download_rom(selected_link, download_dir, verbose=True):
                 print(f"Successfully downloaded {entry['title']}!")
             else:
                 print(f"Failed to download {entry['title']}")
-        
+
         print("\n" + "="*50)
         print("Downloads completed!")
         print("Enter a new search term, or 'quit' to exit.")
@@ -688,21 +1530,21 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     parser.add_argument("--interactive", "-i", action="store_true", help="Run in interactive mode")
     parser.add_argument("--enhanced", "-e", action="store_true", help="Run in enhanced curses-based interactive mode")
-    
+
     args = parser.parse_args()
-    
+
     client = CrocDBClient()
-    
+
     # Handle enhanced interactive mode
     if args.enhanced:
         interactive_search_curses(client)
         return
-    
+
     # Handle interactive mode
     if args.interactive:
         interactive_search(client)
         return
-    
+
     # Handle different command options
     if args.list_platforms:
         result = client.get_platforms()
@@ -713,7 +1555,7 @@ def main():
         for platform_id, info in sorted_platforms:
             print(f"  {platform_id}: {info['brand']} - {info['name']}")
         return
-    
+
     if args.list_regions:
         result = client.get_regions()
         regions = result.get("data", {}).get("regions", {})
@@ -721,13 +1563,13 @@ def main():
         for region_id, name in regions.items():
             print(f"  {region_id}: {name}")
         return
-    
+
     if args.info:
         result = client.get_database_info()
         total_entries = result.get("data", {}).get("total_entries", 0)
         print(f"Database contains {total_entries} entries")
         return
-    
+
     if args.random:
         result = client.get_random_entry()
         entry = result.get("data", {}).get("entry", {})
@@ -739,7 +1581,7 @@ def main():
         else:
             print("No random entry found")
         return
-    
+
     if args.get_entry:
         result = client.get_entry(args.get_entry)
         entry = result.get("data", {}).get("entry", {})
@@ -751,36 +1593,36 @@ def main():
         else:
             print(f"No entry found with slug: {args.get_entry}")
         return
-    
+
     if args.download:
         result = client.get_entry(args.download)
         entry = result.get("data", {}).get("entry", {})
         if not entry:
             print(f"No entry found with slug: {args.download}")
             return
-        
+
         links = entry.get("links", [])
         if not links:
             print("No download links available for this entry")
             return
-        
+
         # Let user select which link to download
         selected_link = select_link_interactive(links)
         if not selected_link:
             print("Download cancelled.")
             return
-        
+
         # Get download directory if not specified
         output_dir = args.output_dir
         if output_dir == ".":
             output_dir = get_download_directory()
-        
+
         if download_rom(selected_link, output_dir, args.verbose):
             print("Download completed successfully!")
         else:
             print("Download failed!")
         return
-    
+
     # Default behavior: search
     if args.search or args.platforms or args.regions or args.rom_id:
         # Use paginated search for command-line searches too
