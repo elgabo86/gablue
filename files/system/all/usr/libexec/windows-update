@@ -288,7 +288,9 @@ else
             echo "Mise à jour de dxvk-nvapi vers $nvapiversion, sauvegarde de l'ancienne version ($current_nvapi)..."
             mkdir -p "$temp_dir/nvapi"
             mv "$nvapi_dir/$current_nvapi" "$temp_dir/nvapi/"
-            curl -L -o "$nvapi_dir/$nvapiversion.tar.gz" "https://github.com/bottlesdevs/components/releases/download/$nvapiversion/$nvapiversion.tar.gz"
+            # Extraction de la version à partir du nom (ex: dxvk-nvapi-v0.9.0 -> v0.9.0)
+            nvapi_version_tag=$(echo "$nvapiversion" | sed 's/dxvk-nvapi-//')
+            curl -L -o "$nvapi_dir/$nvapiversion.tar.gz" "https://github.com/jp7677/dxvk-nvapi/releases/download/$nvapi_version_tag/$nvapiversion.tar.gz"
             tar -xf "$nvapi_dir/$nvapiversion.tar.gz" -C "$nvapi_dir/"
             rm -f "$nvapi_dir/$nvapiversion.tar.gz"
             need_rebuild=true
@@ -297,7 +299,9 @@ else
         fi
     else
         echo "Installation initiale de dxvk-nvapi $nvapiversion..."
-        curl -L -o "$nvapi_dir/$nvapiversion.tar.gz" "https://github.com/bottlesdevs/components/releases/download/$nvapiversion/$nvapiversion.tar.gz"
+        # Extraction de la version à partir du nom (ex: dxvk-nvapi-v0.9.0 -> v0.9.0)
+        nvapi_version_tag=$(echo "$nvapiversion" | sed 's/dxvk-nvapi-//')
+        curl -L -o "$nvapi_dir/$nvapiversion.tar.gz" "https://github.com/jp7677/dxvk-nvapi/releases/download/$nvapi_version_tag/$nvapiversion.tar.gz"
         tar -xf "$nvapi_dir/$nvapiversion.tar.gz" -C "$nvapi_dir/"
         rm -f "$nvapi_dir/$nvapiversion.tar.gz"
         need_rebuild=true
