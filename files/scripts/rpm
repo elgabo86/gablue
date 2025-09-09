@@ -78,7 +78,7 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
 fi
 
 #Fonts
-dnf5 -y install \
+dnf5 -y --setopt=install_weak_deps=False install \
 nerd-fonts \
 adobe-source-code-pro-fonts \
 google-droid-sans-mono-fonts
