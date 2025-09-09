@@ -47,6 +47,14 @@ jobs:
             fedora_version: "42"
             kernel_type: "bazzite"
             kernel_version: ""
+          - name: "gablue-main-test"
+            desc: "Gablue main test image with Mesa Terra"
+            variant: "main"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "42"
+            kernel_type: "bazzite"
+            kernel_version: ""
 
     permissions:
       contents: read
@@ -146,8 +154,15 @@ jobs:
         id: build_image
         shell: bash
         run: |
+          # Choisir le bon Containerfile selon la variante
+          if [[ "${{ matrix.image.name }}" == "gablue-main-test" ]]; then
+            CONTAINERFILE="Containerfile-gablue-test"
+          else
+            CONTAINERFILE="Containerfile-gablue"
+          fi
+          
           sudo buildah build \
-            --file "Containerfile-gablue" \
+            --file "$CONTAINERFILE" \
             --format "docker" \
             --build-arg KERNEL_VERSION="${{ steps.determine_kernel_version.outputs.KERNEL_VERSION }}" \
             --build-arg VARIANT="${{ matrix.image.variant }}" \

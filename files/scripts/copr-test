@@ -1,0 +1,32 @@
+#!/usr/bin/bash
+
+set -eoux pipefail
+
+#Fix gpg error on dnf5 install
+mkdir -p /var/roothome && \
+
+for copr in \
+        bazzite-org/bazzite \
+        ublue-os/staging \
+        ublue-os/packages \
+        che/nerd-fonts \
+        lizardbyte/stable; \
+do \
+        dnf5 -y copr enable $copr; \
+done && unset -v copr && \
+
+dnf5 -y config-manager addrepo --overwrite --from-repofile=https://pkgs.tailscale.com/stable/fedora/tailscale.repo && \
+
+dnf5 -y config-manager addrepo --from-repofile=https://negativo17.org/repos/fedora-rar.repo && \
+
+dnf5 -y install \
+        https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
+        https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm && \
+
+# Installation Terra pour Mesa plus récent (VERSION TEST)
+dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release terra-release-extras && \
+
+# Activer le stream Mesa de Terra (VERSION TEST)
+dnf5 -y config-manager setopt terra-mesa.enabled=1 && \
+
+sed -i 's@enabled=0@enabled=1@g' /etc/yum.repos.d/negativo17-fedora-multimedia.repo

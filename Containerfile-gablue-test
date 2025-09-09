@@ -1,0 +1,78 @@
+# Arguments pour configurer l'image de base et ses variantes, tous fournis par le workflow
+ARG VARIANT
+ARG SOURCE_IMAGE
+ARG SOURCE_SUFFIX
+ARG FEDORA_VERSION
+ARG KERNEL_TYPE
+ARG KERNEL_VERSION
+
+# Étape intermédiaire : récupération des paquets akmods depuis une image préconstruite
+FROM ghcr.io/ublue-os/akmods:${KERNEL_TYPE}-${FEDORA_VERSION}-${KERNEL_VERSION}.${KERNEL_TYPE}.fc${FEDORA_VERSION}.x86_64 AS akmods
+
+# Étape intermédiaire : récupération des paquets akmods-extra
+FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_TYPE}-${FEDORA_VERSION}-${KERNEL_VERSION}.${KERNEL_TYPE}.fc${FEDORA_VERSION}.x86_64 AS akmods-extra
+
+# Étape intermédiaire : création d'un contexte pour copier les scripts
+FROM scratch AS ctx
+COPY files/scripts /
+
+# Image de base pour la construction finale
+FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${FEDORA_VERSION}
+
+# Redéfinition des arguments après le FROM pour les rendre disponibles
+ARG VARIANT
+ARG SOURCE_IMAGE
+
+# Copie des fichiers système dans l'image
+COPY files/system/all /
+COPY files/system/${SOURCE_IMAGE} /
+COPY files/system/${VARIANT} /
+
+# Définition des variables d'environnement pour les scripts
+ENV VARIANT=${VARIANT}
+ENV SOURCE_IMAGE=${SOURCE_IMAGE}
+
+# Configuration des dépôts Copr (VERSION TEST avec Terra)
+RUN --mount=type=cache,dst=/var/cache/libdnf5 \
+    --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    sh /ctx/copr-test && \
+    sh /ctx/cleanup
+
+# Installation du kernel
+RUN --mount=type=cache,dst=/var/cache/libdnf5 \
+    --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/tmp/kernel-rpms \
+    --mount=type=bind,from=akmods,src=/rpms,dst=/tmp/akmods-rpms \
+    --mount=type=bind,from=akmods-extra,src=/rpms,dst=/tmp/akmods-extra-rpms \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    sh /ctx/kernel && \
+    sh /ctx/cleanup
+
+# Installation des paquets RPM supplémentaires
+RUN --mount=type=cache,dst=/var/cache/libdnf5 \
+    --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    sh /ctx/rpm && \
+    sh /ctx/cleanup
+
+# Installation Mesa Terra (VERSION TEST)
+RUN --mount=type=cache,dst=/var/cache/libdnf5 \
+    --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    sh /ctx/mesa-test && \
+    sh /ctx/cleanup
+
+# Post-installation : configuration finale
+RUN --mount=type=cache,dst=/var/cache/libdnf5 \
+    --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    sh /ctx/systemd && \
+    sh /ctx/post-install && \
+    sh /ctx/initramfs && \
+    sh /ctx/finalize
