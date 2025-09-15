@@ -22,6 +22,7 @@ chmod +x /usr/bin/gskill
 chmod +x /usr/bin/limitw
 chmod +x /usr/bin/dltri
 chmod +x /usr/bin/dlroms
+chmod +x /usr/bin/setfr
 chmod +x /usr/libexec/gablue-update
 chmod +x /usr/libexec/gablue-config
 chmod +x /usr/libexec/archgab-update

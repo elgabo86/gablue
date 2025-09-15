@@ -1,0 +1,89 @@
+#!/bin/bash
+
+# Script pour modifier les fichiers .ini selon les spécifications
+# Usage: ./modify_ini.sh [dossier]
+# Si aucun dossier n'est spécifié, utilise le dossier courant
+
+# Définir le dossier cible
+if [ -z "$1" ]; then
+    TARGET_DIR="."
+else
+    TARGET_DIR="$1"
+fi
+
+# Vérifier que le dossier existe
+if [ ! -d "$TARGET_DIR" ]; then
+    echo "Erreur: Le dossier '$TARGET_DIR' n'existe pas."
+    exit 1
+fi
+
+# Empêcher l'exécution à la racine du home
+REAL_TARGET=$(realpath "$TARGET_DIR")
+HOME_DIR=$(realpath "$HOME")
+if [ "$REAL_TARGET" = "$HOME_DIR" ]; then
+    echo "Erreur: Impossible d'exécuter le script à la racine du dossier home ($HOME)"
+    echo "Veuillez spécifier un sous-dossier."
+    exit 1
+fi
+
+# Obtenir le nom de l'utilisateur actuel
+CURRENT_USER=$(whoami)
+
+echo "Modification des fichiers .ini dans le dossier: $TARGET_DIR (récursif)"
+echo "Nom d'utilisateur: $CURRENT_USER"
+
+# Compteurs
+files_processed=0
+total_changes=0
+french_already_set=0
+french_changed=0
+
+# Trouver tous les fichiers .ini dans le dossier et ses sous-dossiers
+while IFS= read -r -d '' ini_file; do
+    # Vérifier si le fichier contient au moins une des variables à modifier
+    if grep -qE "^[[:space:]]*(account_name|account_steamid|language|user)[[:space:]]*=" "$ini_file"; then
+        ((files_processed++))
+
+        # Créer un fichier temporaire
+        temp_file=$(mktemp)
+
+        # Traiter le fichier ligne par ligne
+        while IFS= read -r line; do
+            # Modifier account_name= avec le nom d'utilisateur actuel
+            if [[ $line =~ ^[[:space:]]*account_name[[:space:]]*= ]]; then
+                echo "account_name=$CURRENT_USER"
+            # Commenter account_steamid= si trouvé et non déjà commenté
+            elif [[ $line =~ ^[[:space:]]*account_steamid[[:space:]]*= ]]; then
+                echo "# $line"
+            # Modifier language= pour mettre french
+            elif [[ $line =~ ^[[:space:]]*language[[:space:]]*= ]]; then
+                current_value=$(echo "$line" | cut -d'=' -f2- | tr -d ' "'"'"'')
+                if [ "$current_value" = "french" ]; then
+                    ((french_already_set++))
+                else
+                    ((french_changed++))
+                fi
+                echo "language=french"
+            # Modifier user= avec le nom d'utilisateur actuel
+            elif [[ $line =~ ^[[:space:]]*user[[:space:]]*= ]]; then
+                echo "user=$CURRENT_USER"
+            else
+                echo "$line"
+            fi
+        done < "$ini_file" > "$temp_file"
+
+        # Remplacer le fichier original
+        mv "$temp_file" "$ini_file"
+    fi
+done < <(find "$TARGET_DIR" -name "*.ini" -type f -print0)
+
+echo ""
+if [ $french_changed -gt 0 ] && [ $french_already_set -gt 0 ]; then
+    echo "✓ Jeu mis en français ($french_changed fichier(s) modifié(s), $french_already_set déjà en français)"
+elif [ $french_changed -gt 0 ]; then
+    echo "✓ Jeu mis en français ($french_changed fichier(s) modifié(s))"
+elif [ $french_already_set -gt 0 ]; then
+    echo "• Jeu déjà en français ($french_already_set fichier(s))"
+else
+    echo "• Aucun fichier avec paramètre language trouvé"
+fi
