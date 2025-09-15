@@ -5,10 +5,9 @@
 # builds actually ran successfully without any errors!
 set -ouex pipefail
 
-sed -i 's@enabled=0@enabled=1@g' /etc/yum.repos.d/negativo17-fedora-multimedia.repo && \
-dnf5 -y install \
-        mesa-vdpau-drivers.x86_64 \
-        mesa-vdpau-drivers.i686 && \
+
+dnf5 -y remove nvidia-gpu-firmware
+
 curl -Lo /tmp/nvidia-install.sh https://raw.githubusercontent.com/ublue-os/main/main/build_files/nvidia-install.sh && \
 chmod +x /tmp/nvidia-install.sh && \
 IMAGE_NAME="${SOURCE_IMAGE}" /tmp/nvidia-install.sh
