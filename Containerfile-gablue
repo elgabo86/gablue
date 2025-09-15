@@ -87,6 +87,14 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5 \
     sh /ctx/rpm && \
     sh /ctx/cleanup
 
+# Installation Mesa Terra
+RUN --mount=type=cache,dst=/var/cache/libdnf5 \
+    --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    sh /ctx/mesa && \
+    sh /ctx/cleanup
+
 # Post-installation : configuration finale
 RUN --mount=type=cache,dst=/var/cache/libdnf5 \
     --mount=type=cache,dst=/var/cache/rpm-ostree \
