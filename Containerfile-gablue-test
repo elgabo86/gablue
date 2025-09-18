@@ -32,12 +32,12 @@ COPY files/system/${VARIANT} /
 ENV VARIANT=${VARIANT}
 ENV SOURCE_IMAGE=${SOURCE_IMAGE}
 
-# Configuration des dépôts Copr (VERSION TEST avec Terra)
+# Configuration des dépôts Copr
 RUN --mount=type=cache,dst=/var/cache/libdnf5 \
     --mount=type=cache,dst=/var/cache/rpm-ostree \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=tmpfs,dst=/tmp \
-    sh /ctx/copr-test && \
+    sh /ctx/copr && \
     sh /ctx/cleanup
 
 # Installation du kernel
@@ -59,12 +59,12 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5 \
     sh /ctx/rpm && \
     sh /ctx/cleanup
 
-# Installation Mesa Terra (VERSION TEST)
+# Installation Mesa Terra
 RUN --mount=type=cache,dst=/var/cache/libdnf5 \
     --mount=type=cache,dst=/var/cache/rpm-ostree \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=tmpfs,dst=/tmp \
-    sh /ctx/mesa-test && \
+    sh /ctx/mesa && \
     sh /ctx/cleanup
 
 # Post-installation : configuration finale
