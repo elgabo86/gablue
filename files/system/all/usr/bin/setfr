@@ -41,7 +41,7 @@ french_changed=0
 # Trouver tous les fichiers .ini dans le dossier et ses sous-dossiers
 while IFS= read -r -d '' ini_file; do
     # Vérifier si le fichier contient au moins une des variables à modifier
-    if grep -qE "^[[:space:]]*(account_name|account_steamid|language|user)[[:space:]]*=" "$ini_file"; then
+    if grep -qiE "^[[:space:]]*(account_name|account_steamid|language|user|username)[[:space:]]*=" "$ini_file"; then
         ((files_processed++))
 
         # Créer un fichier temporaire
@@ -49,14 +49,14 @@ while IFS= read -r -d '' ini_file; do
 
         # Traiter le fichier ligne par ligne
         while IFS= read -r line; do
-            # Modifier account_name= avec le nom d'utilisateur actuel
-            if [[ $line =~ ^[[:space:]]*account_name[[:space:]]*= ]]; then
+            # Modifier account_name= avec le nom d'utilisateur actuel (insensible à la casse)
+            if [[ $line =~ ^[[:space:]]*[Aa]ccount_[Nn]ame[[:space:]]*= ]]; then
                 echo "account_name=$CURRENT_USER"
-            # Commenter account_steamid= si trouvé et non déjà commenté
-            elif [[ $line =~ ^[[:space:]]*account_steamid[[:space:]]*= ]]; then
+            # Commenter account_steamid= si trouvé et non déjà commenté (insensible à la casse)
+            elif [[ $line =~ ^[[:space:]]*[Aa]ccount_[Ss]teamid[[:space:]]*= ]]; then
                 echo "# $line"
-            # Modifier language= pour mettre french
-            elif [[ $line =~ ^[[:space:]]*language[[:space:]]*= ]]; then
+            # Modifier language= pour mettre french (insensible à la casse)
+            elif [[ $line =~ ^[[:space:]]*[Ll]anguage[[:space:]]*= ]]; then
                 current_value=$(echo "$line" | cut -d'=' -f2- | tr -d ' "'"'"'')
                 if [ "$current_value" = "french" ]; then
                     ((french_already_set++))
@@ -64,9 +64,12 @@ while IFS= read -r -d '' ini_file; do
                     ((french_changed++))
                 fi
                 echo "language=french"
-            # Modifier user= avec le nom d'utilisateur actuel
-            elif [[ $line =~ ^[[:space:]]*user[[:space:]]*= ]]; then
+            # Modifier user= avec le nom d'utilisateur actuel (insensible à la casse)
+            elif [[ $line =~ ^[[:space:]]*[Uu]ser[[:space:]]*= ]]; then
                 echo "user=$CURRENT_USER"
+            # Modifier username= avec le nom d'utilisateur actuel (insensible à la casse)
+            elif [[ $line =~ ^[[:space:]]*[Uu]ser[Nn]ame[[:space:]]*= ]]; then
+                echo "UserName=$CURRENT_USER"
             else
                 echo "$line"
             fi
