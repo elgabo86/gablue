@@ -1,0 +1,255 @@
+#!/bin/bash
+
+# Vérifier que zxtune-qt est installé
+if ! command -v zxtune-qt &> /dev/null; then
+    echo "zxtune-qt n'est pas installé. Veuillez l'installer pour utiliser ce script."
+    exit 1
+fi
+
+# Vérifier que fzf est installé
+if ! command -v fzf &> /dev/null; then
+    echo "fzf n'est pas installé. Veuillez l'installer pour utiliser ce script."
+    echo "Sur Debian/Ubuntu: sudo apt install fzf"
+    echo "Sur Arch: sudo pacman -S fzf"
+    echo "Sur macOS: brew install fzf"
+    exit 1
+fi
+
+# Vérifier que curl est installé
+if ! command -v curl &> /dev/null; then
+    echo "curl n'est pas installé. Veuillez l'installer pour utiliser ce script."
+    exit 1
+fi
+
+# Variables globales
+TEMP_DIR="${HOME}/.cache"
+mkdir -p "$TEMP_DIR"
+
+BASE_SITES=(
+    "https://spc.joshw.info"
+    "https://nsf.joshw.info"
+    "https://usf.joshw.info"
+    "https://smd.joshw.info"
+    "https://psf.joshw.info"
+    "https://psf2.joshw.info"
+    "https://gbs.joshw.info"
+    "https://gsf.joshw.info"
+    "https://2sf.joshw.info"
+)
+
+# Fonction pour rechercher et jouer un fichier
+search_and_play() {
+    local search_term="$1"
+    
+    # Récupérer les fichiers
+    mapfile -t RESULTS < <(fetch_files "$search_term")
+    
+    if [ ${#RESULTS[@]} -eq 0 ]; then
+        echo "Aucun fichier trouvé."
+        return 1
+    fi
+    
+    echo "${#RESULTS[@]} fichiers trouvés."
+    
+    # Utiliser fzf pour sélectionner un fichier
+    echo "Appuyez sur les flèches pour naviguer, Entrée pour sélectionner"
+    echo "Vous pouvez aussi taper pour filtrer la liste"
+    
+    # Extraire uniquement les noms de fichiers pour fzf
+    FILE_NAMES=()
+    for line in "${RESULTS[@]}"; do
+        file_name=$(echo "$line" | cut -d'|' -f2)
+        FILE_NAMES+=("$file_name")
+    done
+    
+    # Utiliser fzf pour la sélection sans filtrage
+    echo "Appuyez sur les flèches pour naviguer, Entrée pour sélectionner, Espace pour nouvelle recherche"
+    
+    # Utiliser fzf pour la sélection sans permettre le filtrage
+    selected_name=$(printf '%s
+' "${FILE_NAMES[@]}" | fzf --height=80% --layout=reverse --prompt="Sélectionnez un fichier > " --bind "space:abort" --no-multi --no-mouse --no-sort --exact --print-query 2>/dev/null | tail -n 1)
+    
+    # Capturer le code de sortie
+    fzf_exit_code=$?
+    
+    # Si l'utilisateur a appuyé sur espace, retourner 2 pour indiquer une nouvelle recherche
+    if [ $fzf_exit_code -eq 130 ]; then
+        return 2
+    fi
+    
+    # Si aucun fichier n'a été sélectionné
+    if [ -z "$selected_name" ]; then
+        echo "Aucun fichier sélectionné."
+        return 1
+    fi
+    
+    # Trouver l'entrée correspondante
+    for line in "${RESULTS[@]}"; do
+        file_name=$(echo "$line" | cut -d'|' -f2)
+        if [ "$file_name" = "$selected_name" ]; then
+            selected_line="$line"
+            break
+        fi
+    done
+    
+    # Extraire les informations du fichier sélectionné
+    site=$(echo "$selected_line" | cut -d'|' -f1)
+    file_name=$(echo "$selected_line" | cut -d'|' -f2)
+    file_url=$(echo "$selected_line" | cut -d'|' -f3)
+    
+    echo "Fichier sélectionné: $file_name"
+    
+    # Créer le chemin du fichier temporaire
+    temp_file="$TEMP_DIR/$file_name"
+    
+    # Supprimer les playlists existantes dans ZXTune
+    playlists_dir="$HOME/.local/share/ZXTune/Playlists"
+    if [ -d "$playlists_dir" ]; then
+        rm -f "$playlists_dir"/*.xspf 2>/dev/null
+    fi
+    
+    # Télécharger le fichier
+    echo "Téléchargement en cours..."
+    if curl -s -L "$file_url" -o "$temp_file"; then
+        echo "Fichier téléchargé: $temp_file"
+    else
+        echo "Échec du téléchargement."
+        return 1
+    fi
+    
+    # Jouer avec zxtune-qt
+    echo "Lancement de zxtune-qt..."
+    zxtune-qt "$temp_file"
+    
+    # Supprimer le fichier après fermeture
+    if rm "$temp_file"; then
+        echo "Fichier temporaire supprimé."
+    else
+        echo "Erreur lors de la suppression du fichier."
+    fi
+    
+    return 0
+}
+
+# Fonction pour récupérer les fichiers
+fetch_files() {
+    local search_term="$1"
+    
+    # Convertir le terme de recherche en minuscules pour la comparaison
+    local search_term_lower=$(echo "$search_term" | tr '[:upper:]' '[:lower:]')
+    
+    # Parcourir les sites
+    local temp_results=$(mktemp)
+    
+    # Parcourir tous les sites en parallèle avec un nombre limité de processus
+    local max_jobs=5
+    local job_count=0
+    
+    for site in "${BASE_SITES[@]}"; do
+        {
+            # Parcourir les dossiers de manière intelligente
+            local folders=()
+            
+            # Ajouter d'abord le dossier correspondant à la première lettre du terme de recherche
+            if [[ "$search_term_lower" =~ ^[a-zA-Z] ]]; then
+                first_letter="${search_term_lower:0:1}"
+                folders+=("${first_letter,,}")
+            fi
+            
+            # Ajouter les dossiers numériques pour les jeux qui commencent par des chiffres
+            folders+=(0-9)
+            
+            # Ajouter quelques dossiers courants pour les jeux populaires
+            folders+=(m s t g r p d k c zzz_prototypes zzz_unlicensed)
+            
+            # Limiter à 3 dossiers maximum pour éviter les temps de recherche trop longs
+            folders=("${folders[@]:0:3}")
+            
+            # Parcourir les dossiers avec un timeout plus court
+            for folder in "${folders[@]}"; do
+                # Récupérer le contenu du dossier
+                local url="$site/$folder/"
+                local html
+                html=$(curl -s --max-time 2 "$url" 2>/dev/null)
+                
+                # Extraire tous les liens .7z (tous les sites utilisent .7z)
+                echo "$html" | grep -oE "href=\"[^\"]*\.7z\">[^<]*" 2>/dev/null | while read -r line; do
+                    # Extraire le fichier et le nom
+                    local file=$(echo "$line" | sed -E 's/href="([^"]*)">.*/\1/')
+                    local file_name=$(echo "$line" | sed -E 's/href="[^"]*">(.*)/\1/')
+                    
+                    # Convertir le nom du fichier en minuscules pour la comparaison
+                    local file_name_lower=$(echo "$file_name" | tr '[:upper:]' '[:lower:]')
+                    
+                    # Vérifier si TOUS les mots du terme de recherche sont présents dans le nom du fichier
+                    local found=true
+                    for word in $search_term_lower; do
+                        if [[ "$file_name_lower" != *"$word"* ]]; then
+                            found=false
+                            break
+                        fi
+                    done
+                    
+                    if [ "$found" = true ]; then
+                        echo "$site|$file_name|$url$file"
+                    fi
+                done
+            done
+        } >> "$temp_results" 2>/dev/null &
+        
+        # Limiter le nombre de jobs parallèles
+        ((job_count++))
+        if [ $job_count -ge $max_jobs ]; then
+            wait -n
+            ((job_count--))
+        fi
+    done
+    
+    # Attendre que tous les processus restants se terminent
+    wait
+    
+    # Supprimer les doublons et afficher les résultats
+    sort -u "$temp_results"
+    
+    # Nettoyer
+    rm -f "$temp_results"
+}
+
+# Si aucun argument n'est fourni, demander interactivement le terme de recherche
+if [ $# -eq 0 ]; then
+    echo "Recherche interactive de fichiers musicaux"
+    echo ""
+    
+    # Boucle interactive
+    while true; do
+        # Demander le terme de recherche
+        read -p "Entrez les mots clés de recherche: " SEARCH_TERM
+        
+        # Si l'utilisateur n'a rien entré, quitter
+        if [ -z "$SEARCH_TERM" ]; then
+            echo "Aucun terme de recherche fourni. Au revoir!"
+            exit 0
+        fi
+        
+        # Exécuter la recherche
+        search_and_play "$SEARCH_TERM"
+        result=$?
+        
+        # Si la recherche a retourné 2, c'est qu'on veut une nouvelle recherche
+        if [ $result -eq 2 ]; then
+            echo ""
+            echo "Nouvelle recherche..."
+            echo ""
+            continue
+        fi
+        
+        echo ""
+        echo "Recherche terminée."
+        echo ""
+    done
+else
+    # Mode avec argument
+    SEARCH_TERM="$1"
+    echo "Recherche de fichiers contenant '$SEARCH_TERM'..."
+    search_and_play "$SEARCH_TERM"
+fi
