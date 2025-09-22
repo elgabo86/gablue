@@ -45,6 +45,15 @@ mkdir -p "$TEMP_DIR"
 
 DB_FILE="$TEMP_DIR/retroplayer.db"
 
+# Fonction de nettoyage pour supprimer les fichiers temporaires laissés par des exécutions précédentes
+cleanup_previous_sessions() {
+    # Supprimer silencieusement les fichiers .7z dans le dossier temporaire
+    find "$TEMP_DIR" -maxdepth 1 -name "*.7z" -type f -delete 2>/dev/null
+}
+
+# Exécuter le nettoyage au démarrage
+cleanup_previous_sessions
+
 BASE_SITES=(
     "https://spc.joshw.info"
     "https://nsf.joshw.info"
