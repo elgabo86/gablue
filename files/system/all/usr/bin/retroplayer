@@ -30,6 +30,15 @@ if ! command -v sqlite3 &> /dev/null; then
     exit 1
 fi
 
+# Vérifier que 7z est installé
+if ! command -v 7z &> /dev/null; then
+    echo "7z n'est pas installé. Veuillez l'installer pour utiliser ce script."
+    echo "Sur Debian/Ubuntu: sudo apt install p7zip-full"
+    echo "Sur Arch: sudo pacman -S p7zip"
+    echo "Sur macOS: brew install p7zip"
+    exit 1
+fi
+
 # Variables globales
 TEMP_DIR="${HOME}/.cache/retroplayer"
 mkdir -p "$TEMP_DIR"
@@ -53,6 +62,10 @@ cleanup() {
     echo -e "\nNettoyage des fichiers temporaires..."
     # Supprimer tous les fichiers .7z dans le dossier temporaire
     rm -f "$TEMP_DIR"/*.7z 2>/dev/null
+
+    # Fermer proprement la base de données
+    sqlite3 "$DB_FILE" "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null
+
     echo "Fichiers temporaires supprimés."
     exit 0
 }
@@ -62,7 +75,13 @@ trap cleanup SIGINT SIGTERM
 
 # Initialiser la base de données SQLite
 init_db() {
-    sqlite3 "$DB_FILE" <<EOF
+    sqlite3 "$DB_FILE" <<EOF >/dev/null 2>&1
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA cache_size = 10000;
+PRAGMA temp_store = MEMORY;
+PRAGMA mmap_size = 268435456;
+
 CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     site TEXT NOT NULL,
@@ -75,6 +94,7 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE INDEX IF NOT EXISTS idx_files_site ON files(site);
 CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder);
 CREATE INDEX IF NOT EXISTS idx_files_name ON files(file_name);
+CREATE INDEX IF NOT EXISTS idx_files_composite ON files(site, folder, file_name);
 EOF
 }
 
@@ -90,6 +110,9 @@ scrape_folder() {
         return
     fi
 
+    # Début de la transaction
+    echo "BEGIN TRANSACTION;" > /tmp/retroplayer_inserts.sql
+
     # Extraire tous les liens .7z (tous les sites utilisent .7z)
     echo "$html" | grep -oE "href=\"[^\"]*\.7z\">[^<]*" 2>/dev/null | while read -r line; do
         # Extraire le fichier et le nom
@@ -100,9 +123,18 @@ scrape_folder() {
         local escaped_file_name=$(echo "$file_name" | sed "s/'/''/g")
         local escaped_file_path=$(echo "$file" | sed "s/'/''/g")
 
-        # Insérer dans la base de données (ignorer les doublons)
-        sqlite3 "$DB_FILE" "INSERT OR IGNORE INTO files (site, folder, file_name, file_path) VALUES ('$site', '$folder', '$escaped_file_name', '$escaped_file_path');"
+        # Ajouter l'instruction d'insertion au fichier SQL
+        echo "INSERT OR IGNORE INTO files (site, folder, file_name, file_path) VALUES ('$site', '$folder', '$escaped_file_name', '$escaped_file_path');" >> /tmp/retroplayer_inserts.sql
     done
+
+    # Fin de la transaction
+    echo "COMMIT;" >> /tmp/retroplayer_inserts.sql
+
+    # Exécuter toutes les insertions en une seule transaction
+    sqlite3 "$DB_FILE" < /tmp/retroplayer_inserts.sql 2>/dev/null
+
+    # Nettoyer le fichier temporaire
+    rm -f /tmp/retroplayer_inserts.sql
 }
 
 # Fonction pour scraper tous les dossiers d'un site
@@ -116,15 +148,64 @@ scrape_site() {
     done
     folders+=(zzz_prototypes zzz_unlicensed)
 
-    # Parcourir tous les dossiers
+    # Parcourir tous les dossiers avec parallélisation (max 5 processus simultanés)
     local total=${#folders[@]}
-    local current=0
+    local batch_size=5
 
-    for folder in "${folders[@]}"; do
-        current=$((current + 1))
-        echo -ne "Mise à jour du cache: $current/$total ($folder)\r"
-        scrape_folder "$site" "$folder"
+    # Créer un fichier temporaire pour stocker toutes les insertions
+    local temp_sql_file="/tmp/retroplayer_site_inserts_$.sql"
+    echo "BEGIN TRANSACTION;" > "$temp_sql_file"
+
+    # Traitement par lots
+    for ((i=0; i<total; i+=batch_size)); do
+        # Créer un tableau pour les PIDs des processus
+        local pids=()
+
+        # Lancer un lot de processus
+        for ((j=0; j<batch_size && i+j<total; j++)); do
+            local folder_index=$((i+j))
+            local folder="${folders[$folder_index]}"
+
+            # Lancer le scraping du dossier en arrière-plan
+            (
+                # Récupérer le contenu du dossier
+                local html=$(curl -s --max-time 5 "$site/$folder/" 2>/dev/null)
+
+                if [ -n "$html" ]; then
+                    # Extraire tous les liens .7z et générer les insertions SQL
+                    echo "$html" | grep -oE "href=\"[^\"]*\.7z\">[^<]*" 2>/dev/null | while read -r line; do
+                        # Extraire le fichier et le nom
+                        local file=$(echo "$line" | sed -E 's/href="([^"]*)">.*/\1/')
+                        local file_name=$(echo "$line" | sed -E 's/href="[^"]*">(.*)/\1/')
+
+                        # Échapper les apostrophes pour SQLite
+                        local escaped_file_name=$(echo "$file_name" | sed "s/'/''/g")
+                        local escaped_file_path=$(echo "$file" | sed "s/'/''/g")
+
+                        # Afficher l'instruction d'insertion
+                        echo "INSERT OR IGNORE INTO files (site, folder, file_name, file_path) VALUES ('$site', '$folder', '$escaped_file_name', '$escaped_file_path');"
+                    done
+                fi
+            ) >> "$temp_sql_file" &
+
+            # Stocker le PID du processus
+            pids+=($!)
+        done
+
+        # Attendre que tous les processus du lot se terminent
+        for pid in "${pids[@]}"; do
+            wait "$pid"
+        done
     done
+
+    # Terminer la transaction
+    echo "COMMIT;" >> "$temp_sql_file"
+
+    # Exécuter toutes les insertions en une seule transaction
+    sqlite3 "$DB_FILE" < "$temp_sql_file" 2>/dev/null
+
+    # Nettoyer le fichier temporaire
+    rm -f "$temp_sql_file"
 }
 
 # Fonction pour mettre à jour le cache
@@ -133,13 +214,44 @@ update_cache() {
     echo "Cela peut prendre quelques minutes lors de la première exécution."
     echo ""
 
-    # Scraping séquentiel des sites pour éviter les problèmes de verrouillage
-    for site in "${BASE_SITES[@]}"; do
-        scrape_site "$site"
+    # Paralléliser le scraping des sites (max 3 sites simultanément)
+    local batch_size=3
+    local total_sites=${#BASE_SITES[@]}
+    local processed_sites=0
+
+    # Afficher la première ligne de progression
+    echo -ne "Sites traités: $processed_sites/$total_sites\r"
+
+    # Traitement par lots de sites
+    for ((i=0; i<total_sites; i+=batch_size)); do
+        # Créer un tableau pour les PIDs des processus
+        local pids=()
+
+        # Lancer un lot de processus pour les sites
+        for ((j=0; j<batch_size && i+j<total_sites; j++)); do
+            local site_index=$((i+j))
+            local site="${BASE_SITES[$site_index]}"
+
+            # Lancer le scraping du site en arrière-plan
+            (
+                scrape_site "$site"
+            ) &
+
+            # Stocker le PID du processus
+            pids+=($!)
+        done
+
+        # Attendre que tous les processus du lot se terminent
+        for pid in "${pids[@]}"; do
+            wait "$pid"
+            processed_sites=$((processed_sites + 1))
+            # Mettre à jour la ligne de progression
+            echo -ne "Sites traités: $processed_sites/$total_sites\r"
+        done
     done
 
-    echo ""
-    echo "Mise à jour du cache terminée."
+    # Afficher la ligne terminée
+    echo -e "\nMise à jour du cache terminée."
     echo ""
 }
 
@@ -167,6 +279,8 @@ search_and_play() {
     FILE_NAMES=()
     for line in "${RESULTS[@]}"; do
         file_name=$(echo "$line" | cut -d$'\t' -f2)
+        # Décoder les entités HTML dans le nom du fichier
+        file_name=$(decode_html_entities "$file_name")
         FILE_NAMES+=("$file_name")
     done
 
@@ -182,7 +296,9 @@ search_and_play() {
     # Trouver l'entrée correspondante
     for line in "${RESULTS[@]}"; do
         file_name=$(echo "$line" | cut -d$'\t' -f2)
-        if [ "$file_name" = "$selected_name" ]; then
+        # Décoder les entités HTML pour la comparaison
+        file_name_decoded=$(decode_html_entities "$file_name")
+        if [ "$file_name_decoded" = "$selected_name" ]; then
             selected_line="$line"
             break
         fi
@@ -210,14 +326,21 @@ search_and_play() {
     # S'assurer qu'il y a un / entre le site et le chemin du fichier
     # Les chemins dans la base de données sont déjà encodés
     # Pour SPC, NSF, SMD, GBS, PSF, PSF2, 2SF, USF, GSF : utiliser la première lettre du fichier comme répertoire
-    if [[ "$site" == *"spc.joshw.info"* ]] || [[ "$site" == *"nsf.joshw.info"* ]] || [[ "$site" == *"smd.joshw.info"* ]] || [[ "$site" == *"gbs.joshw.info"* ]] || [[ "$site" == *"psf.joshw.info"* ]] || [[ "$site" == *"psf2.joshw.info"* ]] || [[ "$site" == *"2sf.joshw.info"* ]] || [[ "$site" == *"usf.joshw.info"* ]] || [[ "$site" == *"gsf.joshw.info"* ]]; then
+    if [[ "$site" == *".joshw.info"* ]]; then
+        # Décoder les entités HTML dans le chemin du fichier
+        # Remplacer &amp; par & dans le chemin
+        fixed_file_path=$(echo "$file_path" | sed 's/&amp;/\&/g')
+
         # Extraire la première lettre du fichier
-        first_letter=$(echo "$file_path" | cut -c1 | tr '[:upper:]' '[:lower:]')
+        # Décoder l'URL pour obtenir le nom réel du fichier
+        decoded_file_path=$(printf '%b' "${fixed_file_path//%/\\x}")
+        first_letter=$(echo "$decoded_file_path" | cut -c1 | tr '[:upper:]' '[:lower:]')
         # Si c'est un chiffre, utiliser 0-9
         if [[ "$first_letter" =~ [0-9] ]]; then
             first_letter="0-9"
         fi
-        file_url="$site/$first_letter/$file_path"
+        # Utiliser le chemin corrigé
+        file_url="$site/$first_letter/$fixed_file_path"
     else
         # Pour tous les autres sites, utiliser le chemin direct
         file_url="$site/$file_path"
@@ -255,20 +378,30 @@ search_and_play() {
     echo "Téléchargement en cours..."
 
     if curl -s -L "$file_url" -o "$temp_file"; then
-        echo "Lancement de zxtune-qt..."
+        # Vérifier si le fichier est une archive 7z valide
+        if 7z t "$temp_file" >/dev/null 2>&1; then
+            echo "Lancement de zxtune-qt..."
 
-        # Jouer avec zxtune-qt (il gère les archives .7z automatiquement)
-        # Cacher les sorties de zxtune
-        zxtune-qt "$temp_file" >/dev/null 2>&1
+            # Jouer avec zxtune-qt (il gère les archives .7z automatiquement)
+            # Cacher les sorties de zxtune
+            zxtune-qt "$temp_file" >/dev/null 2>&1
 
-        # Supprimer le fichier après fermeture
-        if rm "$temp_file"; then
-            echo "Fichier temporaire supprimé."
+            # Supprimer le fichier après fermeture
+            if rm "$temp_file"; then
+                echo "Fichier temporaire supprimé."
+            else
+                echo "Erreur lors de la suppression du fichier."
+            fi
         else
-            echo "Erreur lors de la suppression du fichier."
+            echo "Erreur: L'archive téléchargée n'est pas valide ou corrompue."
+            echo "URL problématique: $file_url"
+            echo "Fichier temporaire: $temp_file"
+            # Supprimer le fichier corrompu
+            rm "$temp_file" 2>/dev/null
         fi
     else
         echo "Échec du téléchargement."
+        echo "URL problématique: $file_url"
         return 1
     fi
 
@@ -300,6 +433,12 @@ fetch_files() {
 
     # Exécuter la requête SQL
     sqlite3 "$DB_FILE" ".mode tabs" "$sql_query;"
+}
+
+# Fonction pour décoder les entités HTML dans les noms de fichiers
+decode_html_entities() {
+    local input="$1"
+    echo "$input" | sed 's/&amp;/\&/g'
 }
 
 # Initialiser la base de données
