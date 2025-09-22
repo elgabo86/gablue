@@ -108,7 +108,6 @@ scrape_folder() {
 # Fonction pour scraper tous les dossiers d'un site
 scrape_site() {
     local site="$1"
-    echo "Scraping $site..."
 
     # Créer une liste de tous les dossiers
     local folders=("0-9")
@@ -123,11 +122,9 @@ scrape_site() {
 
     for folder in "${folders[@]}"; do
         current=$((current + 1))
-        echo -ne "  Progress: $current/$total ($folder)\r"
+        echo -ne "Mise à jour du cache: $current/$total ($folder)\r"
         scrape_folder "$site" "$folder"
     done
-
-    echo "  Completed: $site"
 }
 
 # Fonction pour mettre à jour le cache
@@ -165,12 +162,7 @@ search_and_play() {
         return 1
     fi
 
-    echo "${#RESULTS[@]} fichiers trouvés."
-
     # Utiliser fzf pour sélectionner un fichier
-    echo "Appuyez sur les flèches pour naviguer, Entrée pour sélectionner"
-    echo "Vous pouvez aussi taper pour filtrer la liste"
-
     # Extraire uniquement les noms de fichiers pour fzf
     FILE_NAMES=()
     for line in "${RESULTS[@]}"; do
@@ -199,22 +191,10 @@ search_and_play() {
     # Vérifier si selected_line a été trouvé
     if [ -z "$selected_line" ]; then
         echo "Erreur: Impossible de trouver le fichier sélectionné dans les résultats."
-        echo "selected_name = $selected_name"
         return 1
     fi
 
     # Extraire les informations du fichier sélectionné
-    # Afficher la ligne sélectionnée pour le débogage
-    echo "Debug: selected_line = $selected_line"
-
-    # Compter le nombre de champs séparés par des tabulations
-    field_count=$(echo "$selected_line" | awk -F$'\t' '{print NF}')
-
-    if [ "$field_count" -lt 3 ]; then
-        echo "Erreur: selected_line n'a pas le bon format (pas assez de champs)."
-        return 1
-    fi
-
     # Extraire les champs en utilisant la tabulation comme délimiteur
     site=$(echo "$selected_line" | cut -d$'\t' -f1)
     file_name=$(echo "$selected_line" | cut -d$'\t' -f2)
@@ -223,9 +203,6 @@ search_and_play() {
     # Vérifier si les variables sont vides
     if [ -z "$site" ] || [ -z "$file_name" ] || [ -z "$file_path" ]; then
         echo "Erreur: Impossible d'extraire les informations du fichier."
-        echo "site = $site"
-        echo "file_name = $file_name"
-        echo "file_path = $file_path"
         return 1
     fi
 
@@ -268,10 +245,6 @@ search_and_play() {
         temp_file="${temp_file}.7z"
     fi
 
-    echo "Fichier sélectionné: $file_name"
-    echo "URL: $file_url"
-    echo "Fichier temporaire: $temp_file"
-
     # Supprimer les playlists existantes dans ZXTune
     playlists_dir="$HOME/.local/share/ZXTune/Playlists"
     if [ -d "$playlists_dir" ]; then
@@ -280,19 +253,13 @@ search_and_play() {
 
     # Télécharger le fichier
     echo "Téléchargement en cours..."
-    echo "URL: $file_url"
-    echo "Fichier temporaire: $temp_file"
 
     if curl -s -L "$file_url" -o "$temp_file"; then
-        echo "Fichier téléchargé: $temp_file"
-
-        # Vérifier la taille du fichier
-        file_size=$(stat -c%s "$temp_file")
-        echo "Taille du fichier: $file_size octets"
+        echo "Lancement de zxtune-qt..."
 
         # Jouer avec zxtune-qt (il gère les archives .7z automatiquement)
-        echo "Lancement de zxtune-qt..."
-        zxtune-qt "$temp_file"
+        # Cacher les sorties de zxtune
+        zxtune-qt "$temp_file" >/dev/null 2>&1
 
         # Supprimer le fichier après fermeture
         if rm "$temp_file"; then
