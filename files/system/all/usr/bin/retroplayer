@@ -21,9 +21,20 @@ if ! command -v curl &> /dev/null; then
     exit 1
 fi
 
+# Vérifier que sqlite3 est installé
+if ! command -v sqlite3 &> /dev/null; then
+    echo "sqlite3 n'est pas installé. Veuillez l'installer pour utiliser ce script."
+    echo "Sur Debian/Ubuntu: sudo apt install sqlite3"
+    echo "Sur Arch: sudo pacman -S sqlite"
+    echo "Sur macOS: brew install sqlite"
+    exit 1
+fi
+
 # Variables globales
-TEMP_DIR="${HOME}/.cache"
+TEMP_DIR="${HOME}/.cache/retroplayer"
 mkdir -p "$TEMP_DIR"
+
+DB_FILE="$TEMP_DIR/retroplayer.db"
 
 BASE_SITES=(
     "https://spc.joshw.info"
@@ -37,204 +48,330 @@ BASE_SITES=(
     "https://2sf.joshw.info"
 )
 
+# Fonction de nettoyage pour supprimer les fichiers temporaires
+cleanup() {
+    echo -e "\nNettoyage des fichiers temporaires..."
+    # Supprimer tous les fichiers .7z dans le dossier temporaire
+    rm -f "$TEMP_DIR"/*.7z 2>/dev/null
+    echo "Fichiers temporaires supprimés."
+    exit 0
+}
+
+# Enregistrer la fonction de nettoyage pour s'exécuter lors d'une interruption
+trap cleanup SIGINT SIGTERM
+
+# Initialiser la base de données SQLite
+init_db() {
+    sqlite3 "$DB_FILE" <<EOF
+CREATE TABLE IF NOT EXISTS files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    site TEXT NOT NULL,
+    folder TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    UNIQUE(site, folder, file_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_files_site ON files(site);
+CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder);
+CREATE INDEX IF NOT EXISTS idx_files_name ON files(file_name);
+EOF
+}
+
+# Fonction pour scraper un dossier et mettre à jour la base de données
+scrape_folder() {
+    local site="$1"
+    local folder="$2"
+
+    # Récupérer le contenu du dossier
+    local html=$(curl -s --max-time 5 "$site/$folder/" 2>/dev/null)
+
+    if [ -z "$html" ]; then
+        return
+    fi
+
+    # Extraire tous les liens .7z (tous les sites utilisent .7z)
+    echo "$html" | grep -oE "href=\"[^\"]*\.7z\">[^<]*" 2>/dev/null | while read -r line; do
+        # Extraire le fichier et le nom
+        local file=$(echo "$line" | sed -E 's/href="([^"]*)">.*/\1/')
+        local file_name=$(echo "$line" | sed -E 's/href="[^"]*">(.*)/\1/')
+
+        # Échapper les apostrophes pour SQLite
+        local escaped_file_name=$(echo "$file_name" | sed "s/'/''/g")
+        local escaped_file_path=$(echo "$file" | sed "s/'/''/g")
+
+        # Insérer dans la base de données (ignorer les doublons)
+        sqlite3 "$DB_FILE" "INSERT OR IGNORE INTO files (site, folder, file_name, file_path) VALUES ('$site', '$folder', '$escaped_file_name', '$escaped_file_path');"
+    done
+}
+
+# Fonction pour scraper tous les dossiers d'un site
+scrape_site() {
+    local site="$1"
+    echo "Scraping $site..."
+
+    # Créer une liste de tous les dossiers
+    local folders=("0-9")
+    for letter in {a..z}; do
+        folders+=("$letter")
+    done
+    folders+=(zzz_prototypes zzz_unlicensed)
+
+    # Parcourir tous les dossiers
+    local total=${#folders[@]}
+    local current=0
+
+    for folder in "${folders[@]}"; do
+        current=$((current + 1))
+        echo -ne "  Progress: $current/$total ($folder)\r"
+        scrape_folder "$site" "$folder"
+    done
+
+    echo "  Completed: $site"
+}
+
+# Fonction pour mettre à jour le cache
+update_cache() {
+    echo "Mise à jour du cache en cours..."
+    echo "Cela peut prendre quelques minutes lors de la première exécution."
+    echo ""
+
+    # Scraping séquentiel des sites pour éviter les problèmes de verrouillage
+    for site in "${BASE_SITES[@]}"; do
+        scrape_site "$site"
+    done
+
+    echo ""
+    echo "Mise à jour du cache terminée."
+    echo ""
+}
+
 # Fonction pour rechercher et jouer un fichier
 search_and_play() {
     local search_term="$1"
-    
+
+    # Vérifier si la base de données existe et contient des données
+    local count=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM files;" 2>/dev/null)
+    if [ -z "$count" ] || [ "$count" -eq 0 ]; then
+        echo "Base de données vide. Mise à jour du cache requise."
+        update_cache
+    fi
+
     # Récupérer les fichiers
     mapfile -t RESULTS < <(fetch_files "$search_term")
-    
+
     if [ ${#RESULTS[@]} -eq 0 ]; then
         echo "Aucun fichier trouvé."
         return 1
     fi
-    
+
     echo "${#RESULTS[@]} fichiers trouvés."
-    
+
     # Utiliser fzf pour sélectionner un fichier
     echo "Appuyez sur les flèches pour naviguer, Entrée pour sélectionner"
     echo "Vous pouvez aussi taper pour filtrer la liste"
-    
+
     # Extraire uniquement les noms de fichiers pour fzf
     FILE_NAMES=()
     for line in "${RESULTS[@]}"; do
-        file_name=$(echo "$line" | cut -d'|' -f2)
+        file_name=$(echo "$line" | cut -d$'\t' -f2)
         FILE_NAMES+=("$file_name")
     done
-    
-    # Utiliser fzf pour la sélection sans filtrage
-    echo "Appuyez sur les flèches pour naviguer, Entrée pour sélectionner, Espace pour nouvelle recherche"
-    
-    # Utiliser fzf pour la sélection sans permettre le filtrage
-    selected_name=$(printf '%s
-' "${FILE_NAMES[@]}" | fzf --height=80% --layout=reverse --prompt="Sélectionnez un fichier > " --bind "space:abort" --no-multi --no-mouse --no-sort --exact --print-query 2>/dev/null | tail -n 1)
-    
-    # Capturer le code de sortie
-    fzf_exit_code=$?
-    
-    # Si l'utilisateur a appuyé sur espace, retourner 2 pour indiquer une nouvelle recherche
-    if [ $fzf_exit_code -eq 130 ]; then
-        return 2
-    fi
-    
-    # Si aucun fichier n'a été sélectionné
+
+    # Utiliser fzf pour la sélection
+    selected_name=$(printf '%s\n' "${FILE_NAMES[@]}" | fzf --prompt="Sélectionnez un fichier > " --height=40%)
+
+    # Vérifier si l'utilisateur a annulé la sélection
     if [ -z "$selected_name" ]; then
         echo "Aucun fichier sélectionné."
         return 1
     fi
-    
+
     # Trouver l'entrée correspondante
     for line in "${RESULTS[@]}"; do
-        file_name=$(echo "$line" | cut -d'|' -f2)
+        file_name=$(echo "$line" | cut -d$'\t' -f2)
         if [ "$file_name" = "$selected_name" ]; then
             selected_line="$line"
             break
         fi
     done
-    
+
+    # Vérifier si selected_line a été trouvé
+    if [ -z "$selected_line" ]; then
+        echo "Erreur: Impossible de trouver le fichier sélectionné dans les résultats."
+        echo "selected_name = $selected_name"
+        return 1
+    fi
+
     # Extraire les informations du fichier sélectionné
-    site=$(echo "$selected_line" | cut -d'|' -f1)
-    file_name=$(echo "$selected_line" | cut -d'|' -f2)
-    file_url=$(echo "$selected_line" | cut -d'|' -f3)
-    
+    # Afficher la ligne sélectionnée pour le débogage
+    echo "Debug: selected_line = $selected_line"
+
+    # Compter le nombre de champs séparés par des tabulations
+    field_count=$(echo "$selected_line" | awk -F$'\t' '{print NF}')
+
+    if [ "$field_count" -lt 3 ]; then
+        echo "Erreur: selected_line n'a pas le bon format (pas assez de champs)."
+        return 1
+    fi
+
+    # Extraire les champs en utilisant la tabulation comme délimiteur
+    site=$(echo "$selected_line" | cut -d$'\t' -f1)
+    file_name=$(echo "$selected_line" | cut -d$'\t' -f2)
+    file_path=$(echo "$selected_line" | cut -d$'\t' -f3)
+
+    # Vérifier si les variables sont vides
+    if [ -z "$site" ] || [ -z "$file_name" ] || [ -z "$file_path" ]; then
+        echo "Erreur: Impossible d'extraire les informations du fichier."
+        echo "site = $site"
+        echo "file_name = $file_name"
+        echo "file_path = $file_path"
+        return 1
+    fi
+
+    # Construire l'URL complète correctement
+    # S'assurer qu'il y a un / entre le site et le chemin du fichier
+    # Les chemins dans la base de données sont déjà encodés
+    # Pour SPC, NSF, SMD, GBS, PSF, PSF2, 2SF, USF, GSF : utiliser la première lettre du fichier comme répertoire
+    if [[ "$site" == *"spc.joshw.info"* ]] || [[ "$site" == *"nsf.joshw.info"* ]] || [[ "$site" == *"smd.joshw.info"* ]] || [[ "$site" == *"gbs.joshw.info"* ]] || [[ "$site" == *"psf.joshw.info"* ]] || [[ "$site" == *"psf2.joshw.info"* ]] || [[ "$site" == *"2sf.joshw.info"* ]] || [[ "$site" == *"usf.joshw.info"* ]] || [[ "$site" == *"gsf.joshw.info"* ]]; then
+        # Extraire la première lettre du fichier
+        first_letter=$(echo "$file_path" | cut -c1 | tr '[:upper:]' '[:lower:]')
+        # Si c'est un chiffre, utiliser 0-9
+        if [[ "$first_letter" =~ [0-9] ]]; then
+            first_letter="0-9"
+        fi
+        file_url="$site/$first_letter/$file_path"
+    else
+        # Pour tous les autres sites, utiliser le chemin direct
+        file_url="$site/$file_path"
+    fi
+
+    # Créer le chemin du fichier temporaire avec le nom décrypté
+    # Extraire le nom de fichier de file_path (tout ce qui suit le dernier /)
+    # Décoder l'URL pour obtenir le nom de fichier réel
+    encoded_file_name=$(basename "$file_path")
+    decoded_file_name=$(printf '%b' "${encoded_file_name//%/\\x}")
+
+    # S'assurer que decoded_file_name n'est pas vide
+    if [ -z "$decoded_file_name" ]; then
+        echo "Erreur: Impossible de décoder le nom du fichier."
+        return 1
+    fi
+
+    # Remplacer les apostrophes par des espaces dans le nom du fichier pour éviter les problèmes
+    decoded_file_name=$(echo "$decoded_file_name" | sed "s/'/ /g")
+
+    temp_file="$TEMP_DIR/$decoded_file_name"
+
+    # Vérifier si le nom de fichier se termine par .7z, sinon l'ajouter
+    if [[ "$temp_file" != *.7z ]]; then
+        temp_file="${temp_file}.7z"
+    fi
+
     echo "Fichier sélectionné: $file_name"
-    
-    # Créer le chemin du fichier temporaire
-    temp_file="$TEMP_DIR/$file_name"
-    
+    echo "URL: $file_url"
+    echo "Fichier temporaire: $temp_file"
+
     # Supprimer les playlists existantes dans ZXTune
     playlists_dir="$HOME/.local/share/ZXTune/Playlists"
     if [ -d "$playlists_dir" ]; then
         rm -f "$playlists_dir"/*.xspf 2>/dev/null
     fi
-    
+
     # Télécharger le fichier
     echo "Téléchargement en cours..."
+    echo "URL: $file_url"
+    echo "Fichier temporaire: $temp_file"
+
     if curl -s -L "$file_url" -o "$temp_file"; then
         echo "Fichier téléchargé: $temp_file"
+
+        # Vérifier la taille du fichier
+        file_size=$(stat -c%s "$temp_file")
+        echo "Taille du fichier: $file_size octets"
+
+        # Jouer avec zxtune-qt (il gère les archives .7z automatiquement)
+        echo "Lancement de zxtune-qt..."
+        zxtune-qt "$temp_file"
+
+        # Supprimer le fichier après fermeture
+        if rm "$temp_file"; then
+            echo "Fichier temporaire supprimé."
+        else
+            echo "Erreur lors de la suppression du fichier."
+        fi
     else
         echo "Échec du téléchargement."
         return 1
     fi
-    
-    # Jouer avec zxtune-qt
-    echo "Lancement de zxtune-qt..."
-    zxtune-qt "$temp_file"
-    
-    # Supprimer le fichier après fermeture
-    if rm "$temp_file"; then
-        echo "Fichier temporaire supprimé."
-    else
-        echo "Erreur lors de la suppression du fichier."
-    fi
-    
+
     return 0
 }
 
 # Fonction pour récupérer les fichiers
 fetch_files() {
     local search_term="$1"
-    
+
     # Convertir le terme de recherche en minuscules pour la comparaison
     local search_term_lower=$(echo "$search_term" | tr '[:upper:]' '[:lower:]')
-    
-    # Parcourir les sites
-    local temp_results=$(mktemp)
-    
-    # Parcourir tous les sites en parallèle avec un nombre limité de processus
-    local max_jobs=5
-    local job_count=0
-    
-    for site in "${BASE_SITES[@]}"; do
-        {
-            # Parcourir les dossiers de manière intelligente
-            local folders=()
-            
-            # Ajouter d'abord le dossier correspondant à la première lettre du terme de recherche
-            if [[ "$search_term_lower" =~ ^[a-zA-Z] ]]; then
-                first_letter="${search_term_lower:0:1}"
-                folders+=("${first_letter,,}")
-            fi
-            
-            # Ajouter les dossiers numériques pour les jeux qui commencent par des chiffres
-            folders+=(0-9)
-            
-            # Ajouter quelques dossiers courants pour les jeux populaires
-            folders+=(m s t g r p d k c zzz_prototypes zzz_unlicensed)
-            
-            # Limiter à 3 dossiers maximum pour éviter les temps de recherche trop longs
-            folders=("${folders[@]:0:3}")
-            
-            # Parcourir les dossiers avec un timeout plus court
-            for folder in "${folders[@]}"; do
-                # Récupérer le contenu du dossier
-                local url="$site/$folder/"
-                local html
-                html=$(curl -s --max-time 2 "$url" 2>/dev/null)
-                
-                # Extraire tous les liens .7z (tous les sites utilisent .7z)
-                echo "$html" | grep -oE "href=\"[^\"]*\.7z\">[^<]*" 2>/dev/null | while read -r line; do
-                    # Extraire le fichier et le nom
-                    local file=$(echo "$line" | sed -E 's/href="([^"]*)">.*/\1/')
-                    local file_name=$(echo "$line" | sed -E 's/href="[^"]*">(.*)/\1/')
-                    
-                    # Convertir le nom du fichier en minuscules pour la comparaison
-                    local file_name_lower=$(echo "$file_name" | tr '[:upper:]' '[:lower:]')
-                    
-                    # Vérifier si TOUS les mots du terme de recherche sont présents dans le nom du fichier
-                    local found=true
-                    for word in $search_term_lower; do
-                        if [[ "$file_name_lower" != *"$word"* ]]; then
-                            found=false
-                            break
-                        fi
-                    done
-                    
-                    if [ "$found" = true ]; then
-                        echo "$site|$file_name|$url$file"
-                    fi
-                done
-            done
-        } >> "$temp_results" 2>/dev/null &
-        
-        # Limiter le nombre de jobs parallèles
-        ((job_count++))
-        if [ $job_count -ge $max_jobs ]; then
-            wait -n
-            ((job_count--))
+
+    # Diviser le terme de recherche en mots
+    read -ra SEARCH_WORDS <<< "$search_term_lower"
+
+    # Construire la requête SQL avec plusieurs conditions LIKE
+    local sql_query="SELECT site, file_name, file_path FROM files WHERE "
+    local first_word=1
+
+    for word in "${SEARCH_WORDS[@]}"; do
+        if [ $first_word -eq 1 ]; then
+            sql_query+="LOWER(file_name) LIKE '%$word%'"
+            first_word=0
+        else
+            sql_query+=" AND LOWER(file_name) LIKE '%$word%'"
         fi
     done
-    
-    # Attendre que tous les processus restants se terminent
-    wait
-    
-    # Supprimer les doublons et afficher les résultats
-    sort -u "$temp_results"
-    
-    # Nettoyer
-    rm -f "$temp_results"
+
+    # Exécuter la requête SQL
+    sqlite3 "$DB_FILE" ".mode tabs" "$sql_query;"
 }
+
+# Initialiser la base de données
+init_db
+
+# Vérifier si la base de données existe et contient des données
+# Si elle est vide, mettre à jour le cache automatiquement
+count=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM files;" 2>/dev/null)
+if [ -z "$count" ] || [ "$count" -eq 0 ]; then
+    echo "Base de données vide. Mise à jour du cache automatique..."
+    update_cache
+fi
 
 # Si aucun argument n'est fourni, demander interactivement le terme de recherche
 if [ $# -eq 0 ]; then
     echo "Recherche interactive de fichiers musicaux"
     echo ""
-    
+
     # Boucle interactive
     while true; do
         # Demander le terme de recherche
         read -p "Entrez les mots clés de recherche: " SEARCH_TERM
-        
+
         # Si l'utilisateur n'a rien entré, quitter
         if [ -z "$SEARCH_TERM" ]; then
             echo "Aucun terme de recherche fourni. Au revoir!"
             exit 0
         fi
-        
+
+        # Si l'utilisateur tape "update", mettre à jour le cache
+        if [ "$SEARCH_TERM" = "update" ]; then
+            update_cache
+            continue
+        fi
+
         # Exécuter la recherche
         search_and_play "$SEARCH_TERM"
         result=$?
-        
+
         # Si la recherche a retourné 2, c'est qu'on veut une nouvelle recherche
         if [ $result -eq 2 ]; then
             echo ""
@@ -242,7 +379,7 @@ if [ $# -eq 0 ]; then
             echo ""
             continue
         fi
-        
+
         echo ""
         echo "Recherche terminée."
         echo ""
