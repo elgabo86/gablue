@@ -1,0 +1,80 @@
+#!/bin/bash
+
+# Script optimisé pour monter les dossiers RetroAchievements de Myrient avec rclone
+# Source: https://myrient.erista.me/files/RetroAchievements/
+# Destination: ~/Roms/RA
+# Aucun renommage de dossiers, optimisation des performances rclone
+
+# Chemin de destination
+MOUNT_POINT="$HOME/Roms/RA"
+
+# Vérifier si rclone est installé
+if ! command -v rclone &> /dev/null; then
+    echo "Erreur : rclone n'est pas installé. Veuillez l'installer avant d'utiliser ce script."
+    exit 1
+fi
+
+# Fonction de nettoyage et de sortie
+cleanup_and_exit() {
+    echo -e "\nArrêt du montage en cours..."
+    if mountpoint -q "$MOUNT_POINT"; then
+        fusermount -u "$MOUNT_POINT" 2>/dev/null || umount "$MOUNT_POINT" 2>/dev/null || echo "Impossible de démonter $MOUNT_POINT"
+    else
+        echo "$MOUNT_POINT n'était pas monté"
+    fi
+    exit 0
+}
+
+# Gestion du signal pour Ctrl+C
+trap cleanup_and_exit INT TERM
+
+# Démonter le point de montage s'il est dans un état corrompu
+fusermount -u "$MOUNT_POINT" 2>/dev/null || true
+sleep 2
+
+# Supprimer le répertoire s'il existe dans un état corrompu
+rm -rf "$MOUNT_POINT" 2>/dev/null
+
+# S'assurer que le point de montage existe
+mkdir -p "$MOUNT_POINT"
+
+# Vérifier si le point de montage est déjà utilisé
+if mountpoint -q "$MOUNT_POINT"; then
+    echo "$MOUNT_POINT est déjà monté."
+    echo "Veuillez démonter le système existant avant de continuer."
+    exit 1
+fi
+
+# Créer un fichier de configuration rclone temporaire
+CONFIG_FILE="/tmp/rclone_myrient_opt.conf"
+cat > "$CONFIG_FILE" << 'EOF'
+[Myrient]
+type = http
+url = https://myrient.erista.me
+EOF
+
+echo "Tentative de montage de Myrient sur $MOUNT_POINT avec optimisations..."
+echo "Source: https://myrient.erista.me/files/RetroAchievements/"
+echo "Destination: $MOUNT_POINT"
+
+# Options minimales pour rclone
+rclone mount Myrient:/files/RetroAchievements "$MOUNT_POINT" \
+    --config="$CONFIG_FILE" &
+
+# Attendre un moment pour que le montage soit effectif
+sleep 3
+
+# Vérifier si le montage a réussi
+if mountpoint -q "$MOUNT_POINT"; then
+    echo "Montage réussi de Myrient sur $MOUNT_POINT"
+    echo "Dossiers accessibles dans: $MOUNT_POINT"
+    echo "Appuyez sur Ctrl+C pour arrêter le montage."
+    
+    # Attendre indéfiniment jusqu'à l'interruption
+    while true; do
+        sleep 1
+    done
+else
+    echo "Échec du montage de Myrient sur $MOUNT_POINT"
+    exit 1
+fi
