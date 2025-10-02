@@ -291,8 +291,21 @@ else
             # Extraction de la version à partir du nom (ex: dxvk-nvapi-v0.9.0 -> v0.9.0)
             nvapi_version_tag=$(echo "$nvapiversion" | sed 's/dxvk-nvapi-//')
             curl -L -o "$nvapi_dir/$nvapiversion.tar.gz" "https://github.com/jp7677/dxvk-nvapi/releases/download/$nvapi_version_tag/$nvapiversion.tar.gz"
-            tar -xf "$nvapi_dir/$nvapiversion.tar.gz" -C "$nvapi_dir/"
+            # Extraire dans un répertoire temporaire pour vérifier la structure de l'archive
+            temp_extract_dir="$temp_dir/nvapi_extract"
+            mkdir -p "$temp_extract_dir"
+            tar -xf "$nvapi_dir/$nvapiversion.tar.gz" -C "$temp_extract_dir/"
+            # Vérifier si l'archive contient déjà un sous-dossier avec le nom de la version
+            if [ -d "$temp_extract_dir/$nvapiversion" ]; then
+                mv "$temp_extract_dir/$nvapiversion" "$nvapi_dir/"
+            else
+                # Si ce n'est pas le cas, créer le sous-dossier et déplacer le contenu
+                mkdir -p "$nvapi_dir/$nvapiversion"
+                # Déplacer le contenu vers le sous-dossier approprié
+                mv "$temp_extract_dir"/* "$nvapi_dir/$nvapiversion/"
+            fi
             rm -f "$nvapi_dir/$nvapiversion.tar.gz"
+            rm -rf "$temp_extract_dir"
             need_rebuild=true
         else
             echo "Version de dxvk-nvapi $nvapiversion déjà présente ou plus récente, téléchargement ignoré."
@@ -302,8 +315,21 @@ else
         # Extraction de la version à partir du nom (ex: dxvk-nvapi-v0.9.0 -> v0.9.0)
         nvapi_version_tag=$(echo "$nvapiversion" | sed 's/dxvk-nvapi-//')
         curl -L -o "$nvapi_dir/$nvapiversion.tar.gz" "https://github.com/jp7677/dxvk-nvapi/releases/download/$nvapi_version_tag/$nvapiversion.tar.gz"
-        tar -xf "$nvapi_dir/$nvapiversion.tar.gz" -C "$nvapi_dir/"
+        # Extraire dans un répertoire temporaire pour vérifier la structure de l'archive
+        temp_extract_dir="$temp_dir/nvapi_extract"
+        mkdir -p "$temp_extract_dir"
+        tar -xf "$nvapi_dir/$nvapiversion.tar.gz" -C "$temp_extract_dir/"
+        # Vérifier si l'archive contient déjà un sous-dossier avec le nom de la version
+        if [ -d "$temp_extract_dir/$nvapiversion" ]; then
+            mv "$temp_extract_dir/$nvapiversion" "$nvapi_dir/"
+        else
+            # Si ce n'est pas le cas, créer le sous-dossier et déplacer le contenu
+            mkdir -p "$nvapi_dir/$nvapiversion"
+            # Déplacer le contenu vers le sous-dossier approprié
+            mv "$temp_extract_dir"/* "$nvapi_dir/$nvapiversion/"
+        fi
         rm -f "$nvapi_dir/$nvapiversion.tar.gz"
+        rm -rf "$temp_extract_dir"
         need_rebuild=true
     fi
 fi
