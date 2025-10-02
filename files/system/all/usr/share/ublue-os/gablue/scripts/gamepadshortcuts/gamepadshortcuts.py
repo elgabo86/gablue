@@ -18,14 +18,14 @@ menuvsr_process = None
 last_volume_time = 0
 volume_cooldown = 200
 last_hat_state = (0, 0)
-DEBUG = True  # Activé pour voir les messages
+DEBUG = False  # Activé pour voir les messages
 
 def get_button_indices(joystick):
     controller_name = joystick.get_name().lower()
     print(f"Controller detected: {controller_name}")
     indices = {
-        "home": 5, "select": 4, "start": 6, "triangle": 3,
-        "square": 2, "circle": 1, "l3": 7, "r3": 8
+        "home": 10, "select": 8, "start": 9, "triangle": 2,
+        "square": 3, "circle": 1, "l3": 11, "r3": 12
     }
     if "xbox" in controller_name:
         indices.update({"home": 10, "select": 6, "start": 7, "triangle": 3, "square": 2, "circle": 1, "l3": 8, "r3": 9})
