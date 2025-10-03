@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# Function to encode to Base64
+encode_base64() {
+    if [ -z "$1" ]; then
+        # Interactive mode
+        echo "Mode interactif - Entrez une chaîne à encoder en Base64 (ou 'q' pour quitter):"
+        while true; do
+            read -p "> " input
+            if [ "$input" = "q" ] || [ "$input" = "quit" ]; then
+                break
+            fi
+            if [ -n "$input" ]; then
+                echo -n "Résultat: "
+                echo -n "$input" | base64
+                echo  # Add a newline
+            fi
+        done
+    else
+        # Encode the string to Base64 from command line argument
+        echo -n "$1" | base64
+        echo  # Add a newline at the end
+    fi
+}
+
+# Call the function with the first argument
+encode_base64 "$1"

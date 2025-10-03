@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# Function to decode Base64
+decode_base64() {
+    if [ -z "$1" ]; then
+        # Interactive mode
+        echo "Mode interactif - Entrez une chaîne Base64 à décoder (ou 'q' pour quitter):"
+        while true; do
+            read -p "> " input
+            if [ "$input" = "q" ] || [ "$input" = "quit" ]; then
+                break
+            fi
+            if [ -n "$input" ]; then
+                echo -n "Résultat: "
+                echo "$input" | base64 --decode
+                echo  # Add a newline
+            fi
+        done
+    else
+        # Decode the Base64 string from command line argument
+        echo "$1" | base64 --decode
+        echo  # Add a newline at the end
+    fi
+}
+
+# Call the function with the first argument
+decode_base64 "$1"
