@@ -4,6 +4,7 @@ set -eoux pipefail
 
 #Tools-cli
 dnf5 -y install \
+ublue-brew \
 fswatch \
 iotop-c \
 wol \
