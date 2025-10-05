@@ -1,0 +1,146 @@
+#!/usr/bin/bash
+
+set -eoux pipefail
+
+#Tools-cli
+dnf5 -y install \
+ublue-brew \
+fswatch \
+iotop-c \
+wol \
+duperemove \
+speedtest-cli \
+rar \
+btop \
+tailscale \
+intel-undervolt \
+ncdu \
+mc \
+lm_sensors \
+fastfetch \
+stress-ng \
+powertop \
+android-tools \
+byobu \
+cabextract \
+ripgrep \
+testdisk \
+gh \
+ryzenadj \
+yq \
+trash-cli \
+inotify-tools \
+atuin \
+tldr \
+trash-cli \
+git \
+nmap \
+terminus-fonts-console
+
+#Docker
+dnf5 -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Install yt-dlp
+dnf5 -y install  yt-dlp
+
+#Goodies cli
+dnf5 -y  install \
+bash-color-prompt \
+asciiquarium \
+figlet \
+toilet \
+cmatrix
+
+#Tools
+dnf5 -y install \
+sunshine \
+corectrl \
+solaar \
+gnome-disk-utility \
+skanpage \
+x2goclient \
+mangohud \
+cool-retro-term \
+gamescope \
+cage \
+wlr-randr \
+earlyoom \
+rclone
+
+#Kde addons
+if [ "$SOURCE_IMAGE" == "kinoite" ]; then
+    dnf5 -y install \
+    okular \
+    gwenview \
+    kcalc \
+    yakuake \
+    papirus-icon-theme \
+    papirus-icon-theme-dark \
+    langpacks-fr \
+    kdenetwork-filesharing \
+    kde-runtime-docs \
+    kdeplasma-addons
+fi
+
+#Fonts
+dnf5 -y --setopt=install_weak_deps=False install \
+nerd-fonts \
+adobe-source-code-pro-fonts \
+google-droid-sans-mono-fonts
+
+#Drivers
+dnf5 -y install \
+hplip \
+printer-driver-brlaser \
+ifuse \
+libimobiledevice \
+uld
+
+#Dev dep
+dnf5 -y  install \
+gcc \
+gcc-c++ \
+libffi-devel \
+readline-devel \
+zlib-devel \
+bzip2-devel \
+openssl-devel \
+sqlite-devel \
+xz-devel \
+tk-devel \
+patch \
+bzip2 \
+sqlite \
+libuuid-devel \
+gdbm-libs \
+libnsl2
+
+#Python et autre
+dnf5 -y install \
+python3-pygame \
+python3-uinput \
+python3-tqdm \
+python3-beautifulsoup4 \
+python3-pip
+
+#Remove some packages
+dnf5 -y remove \
+firefox \
+firefox-langpacks \
+htop
+
+if [ "$SOURCE_IMAGE" == "kinoite" ]; then
+    dnf5 -y remove \
+    plasma-discover-rpm-ostree
+fi
+
+
+if [ "$VARIANT" == "main" ]; then
+    dnf5 -y install \
+    radeontop \
+    waydroid
+fi
+
+#tempfix
+dnf5 -y install \
+tesseract
