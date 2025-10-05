@@ -4,16 +4,22 @@ dx-group:
     append_group() {
         local group_name="$1"
         if ! grep -q "^$group_name:" /etc/group; then
-            echo "Appending $group_name to /etc/group"
-            grep "^$group_name:" /usr/lib/group | sudo tee -a /etc/group > /dev/null
+            if grep -q "^$group_name:" /usr/lib/group; then
+                echo "Appending $group_name to /etc/group"
+                grep "^$group_name:" /usr/lib/group | sudo tee -a /etc/group > /dev/null
+            else
+                echo "Warning: Group $group_name does not exist in /usr/lib/group"
+                return 1
+            fi
         fi
     }
 
     GROUPS_ADD=("docker" "incus-admin" "libvirt" "dialout")
 
     for GROUP_ADD in "${GROUPS_ADD[@]}" ; do
-        append_group $GROUP_ADD
-        usermod -aG $GROUP_ADD $USER
+        if append_group $GROUP_ADD; then
+            usermod -aG $GROUP_ADD $USER
+        fi
     done
 
     echo "Reboot system and log back in to use docker, libvirt, incus, and serial connections."
