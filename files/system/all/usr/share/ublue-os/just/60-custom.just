@@ -555,3 +555,18 @@ qwen-uninstall:
     echo "Update desktop database..."
     update-desktop-database ~/.local/share/applications
     echo "Qwen has been uninstalled!"
+
+# Install VSCodium
+code-install:
+    #!/usr/bin/bash
+    echo "Installing VSCodium via Homebrew..."
+    brew tap elgabo86/tap
+    brew install elgabo86/tap/vscodium-linux --cask
+    echo "VSCodium has been installed!"
+
+# Uninstall VSCodium
+code-uninstall:
+    #!/usr/bin/bash
+    echo "Removing VSCodium via Homebrew..."
+    brew uninstall elgabo86/tap/vscodium-linux --cask
+    echo "VSCodium has been uninstalled!"
