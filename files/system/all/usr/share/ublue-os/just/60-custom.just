@@ -532,3 +532,26 @@ toggle-iwd:
         echo "Invalid choice. Exiting without changes."
         ;;
     esac
+
+# Install Qwen
+qwen-install:
+    #!/usr/bin/bash
+    echo "Installing qwen-code via Homebrew..."
+    brew install qwen-code
+    echo "Copying qwen.desktop to applications folder..."
+    mkdir -p ~/.local/share/applications
+    cp /usr/share/ublue-os/gablue/desktops/qwen.desktop ~/.local/share/applications/
+    echo "Update desktop database..."
+    update-desktop-database ~/.local/share/applications
+    echo "Qwen has been installed!"
+
+# Uninstall Qwen
+qwen-uninstall:
+    #!/usr/bin/bash
+    echo "Removing qwen-code via Homebrew..."
+    brew uninstall qwen-code
+    echo "Removing qwen.desktop from applications folder..."
+    rm -f ~/.local/share/applications/qwen.desktop
+    echo "Update desktop database..."
+    update-desktop-database ~/.local/share/applications
+    echo "Qwen has been uninstalled!"
