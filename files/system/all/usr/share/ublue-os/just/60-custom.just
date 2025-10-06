@@ -588,6 +588,7 @@ vscodium-install:
     echo "Installing VSCodium via Homebrew..."
     brew tap elgabo86/tap
     brew install elgabo86/tap/vscodium-linux --cask
+    codium --install-extension ms-ceintl.vscode-language-pack-fr
     echo "VSCodium has been installed!"
 
 # Uninstall VSCodium
@@ -603,6 +604,7 @@ vscode-install:
     echo "Installing VSCodium via Homebrew..."
     brew tap ublue/tap
     brew install ublue/tap/visual-studio-code-linux --cask
+    code --install-extension ms-ceintl.vscode-language-pack-fr
     echo "VSCode has been installed!"
 
 # Uninstall VSCode
