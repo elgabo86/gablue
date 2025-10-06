@@ -2,13 +2,17 @@
 dx-group:
     #!/usr/bin/env bash
 
+    # Sauvegarder le nom d'utilisateur avant d'exécuter les commandes privilégiées
+    CURRENT_USER=$(logname)
+
     # Script temporaire pour les opérations privilégiées
     TEMP_SCRIPT=$(mktemp)
     cat > "$TEMP_SCRIPT" << 'EOF'
     #!/bin/bash
     setup_privileged_groups() {
+        local current_user="$1"
+        shift
         local groups_to_add=("$@")
-        local current_user="$USER"
         
         for group_name in "${groups_to_add[@]}"; do
             if ! grep -q "^$group_name:" /etc/group; then
@@ -34,7 +38,7 @@ dx-group:
     chmod +x "$TEMP_SCRIPT"
 
     # Exécuter toutes les opérations privilégiées via pkexec
-    pkexec "$TEMP_SCRIPT" "docker" "incus-admin" "libvirt" "dialout"
+    pkexec "$TEMP_SCRIPT" "$CURRENT_USER" "docker" "incus-admin" "libvirt" "dialout"
 
     # Nettoyer
     rm "$TEMP_SCRIPT"
