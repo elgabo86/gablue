@@ -601,7 +601,7 @@ vscodium-uninstall:
 vscode-install:
     #!/usr/bin/bash
     echo "Installing VSCodium via Homebrew..."
-    brew tap ublue/tap
+    brew tap ublue-os/tap
     brew install ublue/tap/visual-studio-code-linux --cask
     echo "VSCode has been installed!"
 
@@ -616,7 +616,7 @@ vscode-uninstall:
 lmstudio-install:
     #!/usr/bin/bash
     echo "Installing LMStudio via Homebrew..."
-    brew tap ublue/tap
+    brew tap ublue-os/tap
     brew install ublue/tap/lm-studio-linux --cask
     echo "LMStudio has been installed!"
 
@@ -631,7 +631,7 @@ lmstudio-uninstall:
 jetbrain-install:
     #!/usr/bin/bash
     echo "Installing Jetbrain Toolbox via Homebrew..."
-    brew tap ublue/tap
+    brew tap ublue-os/tap
     brew install ublue/tap/jetbrains-toolbox-linux --cask
     echo "Jetbrain Toolbox has been installed!"
 
