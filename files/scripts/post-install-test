@@ -155,4 +155,13 @@ mkdir -p /etc/modules-load.d && cat >>/etc/modules-load.d/ip_tables.conf <<EOF
 iptable_nat
 EOF
 
+#Fix Slow boot with Docker enabled
+mkdir -p /etc/systemd/system/NetworkManager-wait-online.service.d
+cat > /etc/systemd/system/NetworkManager-wait-online.service.d/override.conf << 'EOF'
+[Service]
+Type=oneshot
+ExecStart=
+ExecStart=/bin/true
+EOF
+
 
