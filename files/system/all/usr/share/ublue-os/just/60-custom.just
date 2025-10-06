@@ -1,33 +1,49 @@
 # Add dx-group to user
 dx-group:
-    #!/usr/bin/pkexec bash
-    append_group() {
-        local group_name="$1"
-        if ! grep -q "^$group_name:" /etc/group; then
-            if grep -q "^$group_name:" /usr/lib/group; then
-                echo "Appending $group_name to /etc/group"
-                grep "^$group_name:" /usr/lib/group | sudo tee -a /etc/group > /dev/null
-            else
-                echo "Warning: Group $group_name does not exist in /usr/lib/group"
-                return 1
+    #!/usr/bin/env bash
+
+    # Script temporaire pour les opérations privilégiées
+    TEMP_SCRIPT=$(mktemp)
+    cat > "$TEMP_SCRIPT" << 'EOF'
+    #!/bin/bash
+    setup_privileged_groups() {
+        local groups_to_add=("$@")
+        local current_user="$USER"
+        
+        for group_name in "${groups_to_add[@]}"; do
+            if ! grep -q "^$group_name:" /etc/group; then
+                if grep -q "^$group_name:" /usr/lib/group; then
+                    echo "Appending $group_name to /etc/group"
+                    grep "^$group_name:" /usr/lib/group >> /etc/group
+                else
+                    echo "Warning: Group $group_name does not exist in /usr/lib/group"
+                    continue
+                fi
             fi
-        fi
+            
+            # Ajouter l'utilisateur au groupe
+            usermod -aG "$group_name" "$current_user"
+            echo "Added $current_user to group $group_name"
+        done
     }
 
-    GROUPS_ADD=("docker" "incus-admin" "libvirt" "dialout")
+    setup_privileged_groups "$@"
+    EOF
 
-    for GROUP_ADD in "${GROUPS_ADD[@]}" ; do
-        if append_group $GROUP_ADD; then
-            usermod -aG $GROUP_ADD $USER
-        fi
-    done
+    # Rendre le script exécutable
+    chmod +x "$TEMP_SCRIPT"
+
+    # Exécuter toutes les opérations privilégiées via pkexec
+    pkexec "$TEMP_SCRIPT" "docker" "incus-admin" "libvirt" "dialout"
+
+    # Nettoyer
+    rm "$TEMP_SCRIPT"
 
     echo "Reboot system and log back in to use docker, libvirt, incus, and serial connections."
 
 # Enable docker
 docker-enable:
     #!/usr/bin/bash
-    ujust dx-group
     sudo systemctl enable --now docker.service &&
     clear &&
     echo "Docker is now activated" ||
