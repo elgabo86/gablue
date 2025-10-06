@@ -1,0 +1,25 @@
+#!/usr/bin/bash
+
+set -eoux pipefail
+
+
+systemctl enable -f system-flatpak-setup.service
+systemctl enable -f earlyoom.service
+systemctl enable -f ublue-os-libvirt-workarounds.service
+
+systemctl disable -f scx.service
+systemctl disable -f scx_loader.service
+systemctl disable -f tailscaled.service
+systemctl disable -f displaylink.service
+
+if [ "$SOURCE_IMAGE" == "kinoite" ]; then
+    systemctl enable -f usr-share-sddm-themes.mount
+fi
+
+if [ "$VARIANT" == "main" ]; then
+    systemctl disable -f  waydroid-container.service
+fi
+
+systemctl enable rpm-ostreed-automatic.timer
+systemctl enable flatpak-system-update.timer
+systemctl --global enable flatpak-user-update.timer

@@ -40,6 +40,9 @@ terminus-fonts-console
 #Docker
 dnf5 -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
+#Libvirt
+dnf5 -y install libvirt libvirt-nss edk2-ovmf qemu-char-spice qemu-device-display-virtio-gpu qemu-device-display-virtio-vga qemu-device-usb-redirect qemu-img qemu-system-x86-core qemu-user-binfmt qemu-user-static qemu virt-manager ublue-os-libvirt-workarounds
+
 # Install yt-dlp
 dnf5 -y install  yt-dlp
 
