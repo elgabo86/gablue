@@ -1,0 +1,158 @@
+#!/usr/bin/bash
+
+set -eoux pipefail
+
+# Make executable which need it
+chmod +x /usr/bin/system-flatpak-setup
+chmod +x /usr/bin/ventoy
+chmod +x /usr/bin/bottles-sort-library
+chmod +x /usr/bin/dlcover
+chmod +x /usr/bin/genimg
+chmod +x /usr/bin/a13
+chmod +x /usr/bin/a13-id
+chmod +x /usr/bin/a13-share
+chmod +x /usr/bin/a13-faketouch
+chmod +x /usr/bin/lol
+chmod +x /usr/bin/mydl
+chmod +x /usr/bin/ytdl
+chmod +x /usr/bin/chdman
+chmod +x /usr/bin/biosdl
+chmod +x /usr/bin/eden-install
+chmod +x /usr/bin/gskill
+chmod +x /usr/bin/limitw
+chmod +x /usr/bin/dltri
+chmod +x /usr/bin/dlroms
+chmod +x /usr/bin/setfr
+chmod +x /usr/bin/retroplayer
+chmod +x /usr/bin/raroms
+chmod +x /usr/bin/encode64
+chmod +x /usr/bin/decode64
+chmod +x /usr/libexec/gablue-update
+chmod +x /usr/libexec/gablue-config
+chmod +x /usr/libexec/archgab-update
+chmod +x /usr/libexec/windows-update
+chmod +x /usr/libexec/sync-gamepads
+chmod +x /usr/libexec/sync-gamepads-1m
+chmod +x /usr/libexec/gablue-dx-groups
+
+chmod +x /usr/share/ublue-os/gablue/scripts/*.sh
+chmod +x /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/*
+
+# Caps
+setcap 'cap_net_raw+ep' /usr/libexec/ksysguard/ksgrd_network_helper
+setcap 'cap_sys_nice=eip' /usr/bin/gamescope
+
+# Add tgpt bin
+wget https://github.com/aandrew-me/tgpt/releases/latest/download/tgpt-linux-amd64 -O /usr/bin/tgpt
+chmod +x /usr/bin/tgpt
+
+# Add lowfi
+wget https://github.com/talwat/lowfi/releases/latest/download/lowfi-linux-x86_64 -O /usr/bin/lowfi
+chmod +x /usr/bin/lowfi
+
+# Add zxtune
+#curl -s https://storage.zxtune.ru/builds/public/r5100/linux/x86_64/zxtune_r5100_linux_x86_64.tar.gz | tar #-xzf - -C / --exclude=./usr/bin/zxtune123 --exclude=./usr/bin/xtractor
+
+# Add zxtune
+curl -s https://files.catbox.moe/8vzfoc.gz | tar -xzf - -C / --exclude=./usr/bin/zxtune123 --exclude=./usr/bin/xtractor
+
+# Branding for Gablue
+IMAGE_DATE=$(date +%Y%m%d.%H)
+MAJOR_RELEASE_VERSION=$(grep -oP '[0-9]*' /etc/fedora-release)
+sed -i "s,^PRETTY_NAME=.*,PRETTY_NAME=\"Gablue ${MAJOR_RELEASE_VERSION}.${IMAGE_DATE}\"," /usr/lib/os-release
+
+if [ "$SOURCE_IMAGE" == "kinoite" ]; then
+    sed -i 's/<default>start-here-kde-symbolic<\/default>/<default>start-here<\/default>/g' /usr/share/plasma/plasmoids/org.kde.plasma.kickoff/contents/config/main.xml
+    sed -i 's/const defaultIconName = "start-here-kde-symbolic";/const defaultIconName = "start-here";/' /usr/share/plasma/plasmoids/org.kde.plasma.kickoff/contents/ui/code/tools.js
+    ln -sf ../../../hicolor/scalable/places/start-here.svg /usr/share/icons/Papirus/16x16/panel/start-here.svg
+    ln -sf ../../../hicolor/scalable/places/start-here.svg /usr/share/icons/Papirus/22x22/panel/start-here.svg
+    ln -sf ../../../hicolor/scalable/places/start-here.svg /usr/share/icons/Papirus/24x24/panel/start-here.svg
+fi
+
+# set scx_lavd default
+sed -i "s/^SCX_SCHEDULER=.*/SCX_SCHEDULER=scx_lavd/" /etc/default/scx
+
+# change tuned ppd.conf
+sed -i 's/balanced=balanced$/balanced=balanced-gablue/' /etc/tuned/ppd.conf && \
+sed -i 's/performance=throughput-performance$/performance=throughput-performance-gablue/' /etc/tuned/ppd.conf && \
+sed -i 's/balanced=balanced-battery$/balanced=balanced-battery-gablue/' /etc/tuned/ppd.conf
+sed -i 's/power-saver=powersave$/power-saver=powersave-gablue/' /etc/tuned/ppd.conf
+sed -i 's/balanced=balanced-battery$/balanced=balanced-battery-gablue\npower-saver=powersave-battery-gablue/' /etc/tuned/ppd.conf
+
+# set userpace HID to true
+sed -i 's/#UserspaceHID.*/UserspaceHID=true/' /etc/bluetooth/input.conf
+
+# fix qt6 bus errors
+if [ "$SOURCE_IMAGE" == "kinoite" ]; then
+    ln -s /bin/qdbus /bin/qdbus6
+fi
+
+#remove atuin default config
+if [ -f /etc/profile.d/atuin.sh ]; then
+    # Supprime le fichier
+    rm -f /etc/profile.d/atuin.sh
+    echo "Le fichier /etc/profile.d/atuin.sh a été supprimé."
+else
+    echo "Le fichier /etc/profile.d/atuin.sh n'existe pas."
+fi
+
+# Disable repos
+for copr in \
+        bazzite-org/bazzite \
+        ublue-os/staging \
+        ublue-os/packages \
+        che/nerd-fonts \
+        lizardbyte/stable; \
+do \
+        dnf5 -y copr disable $copr; \
+done && unset -v copr && \
+
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr:copr.fedorainfracloud.org:phracek:PyCharm.repo && \
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_ublue-os-akmods.repo && \
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/tailscale.repo && \
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/negativo17-fedora-rar.repo && \
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/negativo17-fedora-multimedia.repo && \
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/docker-ce.repo && \
+dnf5 -y config-manager setopt "terra".enabled=false
+
+# Remove some unused .Desktop
+rm -f /usr/share/applications/kde4/knetattach.desktop
+rm -f /usr/share/applications/org.kde.kdebugsettings.desktop
+rm -f /usr/share/applications/org.kde.kdeconnect.sms.desktop
+rm -f /usr/share/applications/byobu.desktop
+rm -f /usr/share/applications/org.kde.plasma-welcome.desktop
+rm -f /usr/share/applications/btop.desktop
+rm -f /usr/share/applications/htop.desktop
+rm -f /usr/share/applications/nvtop.desktop
+rm -f /usr/share/applications/firewall-config.desktop
+rm -f /usr/share/applications/org.kde.kjournaldbrowser.desktop
+if [ "$VARIANT" == "main" ]; then
+    rm -f /usr/share/applications/Waydroid.desktop
+fi
+
+#Remove os-prober to fix long update reboot/shutdown
+rm -f /etc/grub.d/30_os-prober
+
+# TODO: Fedora 42 specific -- re-evaluate with Fedora 43
+# negativo's libheif is broken somehow on older Intel machines
+# https://github.com/ublue-os/aurora/issues/8
+dnf5 -y swap \
+    --repo=fedora \
+        libheif libheif
+
+dnf5 -y swap \
+    --repo=fedora \
+        heif-pixbuf-loader heif-pixbuf-loader
+
+# Remove flatpak verification at each boot
+sed -i -E 's|(; /usr/bin/flatpak --system repair)$||' /usr/lib/systemd/system/flatpak-system-update.service
+
+# Load iptable_nat module for docker-in-docker.
+# See:
+#   - https://github.com/ublue-os/bluefin/issues/2365
+#   - https://github.com/devcontainers/features/issues/1235
+mkdir -p /etc/modules-load.d && cat >>/etc/modules-load.d/ip_tables.conf <<EOF
+iptable_nat
+EOF
+
+
