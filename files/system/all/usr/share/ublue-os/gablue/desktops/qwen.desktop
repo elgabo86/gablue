@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Qwen
-Exec=konsole --workdir /tmp -e bash -c "mkdir -p /tmp/qwen && if [ -n '%f' ] && [ -d '%f' ]; then cd '%f'; else cd /tmp/qwen; fi && /home/linuxbrew/.linuxbrew/bin/qwen; read -p 'Qwen s''est terminé, appuyez sur Entrée pour continuer...'"
+Exec=konsole --workdir /tmp -e bash -c "mkdir -p /tmp/qwen && if [ -n '%f' ] && [ -d '%f' ]; then cd '%f'; else cd /tmp/qwen; fi && /home/linuxbrew/.linuxbrew/bin/qwen || true; echo 'Appuyez sur Entrée pour fermer la fenêtre ou Ctrl+C pour quitter immédiatement...'; trap 'exit 0' INT; read -n 1"
 Type=Application
 Terminal=false
 MimeType=inode/directory;
