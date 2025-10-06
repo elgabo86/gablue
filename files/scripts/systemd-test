@@ -6,6 +6,7 @@ set -eoux pipefail
 systemctl enable -f system-flatpak-setup.service
 systemctl enable -f earlyoom.service
 systemctl enable -f ublue-os-libvirt-workarounds.service
+systemctl enable -f gablue-dx-groups.service
 
 systemctl disable -f scx.service
 systemctl disable -f scx_loader.service
