@@ -2,7 +2,7 @@
 Version=1.0
 Type=Application
 Name=Qwen
-Comment=Ouvre un terminal avec qwen dans /tmp/qwen ou dans le dossier sélectionné
+Comment=Ouvre un terminal avec qwen
 Exec=sh -c "trap 'exit 0' INT; if [ -n '%f' ] && [ -d '%f' ]; then cd '%f' && qwen; else mkdir -p /tmp/qwen && cd /tmp/qwen && qwen; fi && read -p 'Appuyez sur Entrée pour fermer le terminal...'"
 Icon=terminal
 Terminal=true
