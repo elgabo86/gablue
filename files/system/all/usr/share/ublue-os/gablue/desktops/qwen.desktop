@@ -1,10 +1,10 @@
 [Desktop Entry]
-Name=Qwen
-Exec=bash -i -c "mkdir -p /tmp/qwen && if [ -n '%f' ] && [ -d '%f' ]; then cd '%f'; else cd /tmp/qwen; fi && qwen || true; echo 'Appuyez sur Entrée pour fermer la fenêtre ou Ctrl+C pour quitter immédiatement...'; trap 'exit 0' INT; read -n 1"
+Version=1.0
 Type=Application
+Name=Qwen
+Comment=Ouvre un terminal avec qwen dans /tmp/qwen ou dans le dossier sélectionné
+Exec=sh -c "trap 'exit 0' INT; if [ -n '%f' ] && [ -d '%f' ]; then cd '%f' && qwen; else mkdir -p /tmp/qwen && cd /tmp/qwen && qwen; fi && read -p 'Appuyez sur Entrée pour fermer le terminal...'"
+Icon=terminal
 Terminal=true
+Categories=Utility;System;
 MimeType=inode/directory;
-Icon=utilities-terminal
-Categories=Utility;Core;Qt;
-StartupNotify=false
-NoDisplay=false

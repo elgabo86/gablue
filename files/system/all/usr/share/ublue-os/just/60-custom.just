@@ -562,13 +562,7 @@ toggle-iwd:
 # Install Qwen
 qwen-install:
     #!/usr/bin/bash
-    echo "Installing qwen-code via Homebrew..."
-    brew install qwen-code
-    echo "Copying qwen.desktop to applications folder..."
-    mkdir -p ~/.local/share/applications
-    cp /usr/share/ublue-os/gablue/desktops/qwen.desktop ~/.local/share/applications/
-    echo "Update desktop database..."
-    update-desktop-database ~/.local/share/applications
+    qwen-install
     echo "Qwen has been installed!"
 
 # Uninstall Qwen

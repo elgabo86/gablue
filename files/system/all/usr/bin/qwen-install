@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+
+# Script d'installation de Qwen
+
+set -e  # Arrêter le script en cas d'erreur
+
+echo "Démarrage de l'installation de Qwen..."
+
+# Vérifier si l'utilisateur est root pour les opérations sur /etc/hosts
+if [[ $EUID -eq 0 ]]; then
+    echo "Le script est exécuté en tant que root, ce qui n'est pas recommandé pour des raisons de sécurité."
+    echo "Veuillez exécuter ce script sans sudo/root."
+    exit 1
+fi
+
+# Ajouter 127.0.0.1 host.docker.internal à /etc/hosts si pas déjà existant
+echo "Vérification de l'entrée host.docker.internal dans /etc/hosts..."
+if ! grep -q "127.0.0.1[[:space:]]*host.docker.internal" /etc/hosts; then
+    echo "Ajout de '127.0.0.1 host.docker.internal' à /etc/hosts..."
+    echo "Veuillez entrer votre mot de passe sudo pour modifier /etc/hosts :"
+    
+    # Utiliser pkexec si disponible pour une interface graphique, sinon utiliser sudo
+    if command -v pkexec &> /dev/null; then
+        # pkexec est généralement disponible sur les systèmes avec un environnement de bureau
+        if pkexec sh -c 'echo "127.0.0.1 host.docker.internal" >> /etc/hosts'; then
+            echo "Entrée ajoutée avec succès."
+        else
+            echo "Erreur lors de l'ajout de l'entrée à /etc/hosts. L'opération sudo a échoué."
+            exit 1
+        fi
+    else
+        # Fallback à sudo standard
+        if sudo sh -c 'echo "127.0.0.1 host.docker.internal" >> /etc/hosts'; then
+            echo "Entrée ajoutée avec succès."
+        else
+            echo "Erreur lors de l'ajout de l'entrée à /etc/hosts. L'opération sudo a échoué."
+            exit 1
+        fi
+    fi
+else
+    echo "L'entrée '127.0.0.1 host.docker.internal' existe déjà dans /etc/hosts."
+fi
+
+# Créer le répertoire si nécessaire
+mkdir -p ~/.local/share/applications
+
+# Copier le fichier .desktop
+echo "Copie du fichier qwen.desktop dans ~/.local/share/applications..."
+if [ -f "/usr/share/ublue-os/gablue/desktops/qwen.desktop" ]; then
+    cp "/usr/share/ublue-os/gablue/desktops/qwen.desktop" ~/.local/share/applications/
+    echo "Fichier .desktop copié avec succès."
+else
+    echo "Le fichier /usr/share/ublue-os/gablue/desktops/qwen.desktop n'existe pas, impossible de le copier."
+    exit 1
+fi
+
+# Mettre à jour la base de données desktop
+echo "Mise à jour de la base de données desktop..."
+update-desktop-database ~/.local/share/applications/
+echo "Base de données desktop mise à jour."
+
+# Exécuter les commandes dans la distrobox archgab
+echo "Exécution des commandes dans la distrobox archgab..."
+if command -v distrobox &> /dev/null; then
+    distrobox enter archgab -- bash << 'EOF'
+        # Vérifier si npm est déjà installé
+        if ! command -v npm &> /dev/null; then
+            echo "npm n'est pas installé, mise à jour du système et installation de npm..."
+            # Mettre à jour le système et installer npm
+            paru -Syu --noconfirm || true
+            paru -S npm --noconfirm
+        else
+            echo "npm est déjà installé."
+        fi
+        
+        # Installer qwen-code globalement
+        sudo npm install -g @qwen-code/qwen-code@latest
+        
+        # Exporter l'exécutable qwen
+        distrobox-export --bin /usr/bin/qwen
+EOF
+    echo "Commandes dans distrobox terminées."
+else
+    echo "Erreur : distrobox n'est pas installé ou disponible dans le PATH."
+    exit 1
+fi
+
+echo "Installation de Qwen terminée avec succès !"
+echo "Vous pouvez maintenant utiliser la commande 'qwen' pour lancer l'application."
