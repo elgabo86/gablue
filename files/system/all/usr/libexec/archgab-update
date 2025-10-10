@@ -38,6 +38,9 @@ fi
 qdbus $dbusRef setLabelText "Exportation des binaires dans Archgab..."
 distrobox-enter -n archgab -- bash -c 'distrobox-export --bin /usr/bin/tochd;distrobox-export --bin /usr/bin/xdvdfs'
 
+# Purger les images Podman sans tag
+podman image prune -f
+
 # Fermer la barre de progression
 qdbus $dbusRef close
 
