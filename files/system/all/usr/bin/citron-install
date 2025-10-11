@@ -1,25 +1,25 @@
 #!/bin/bash
 
-# Script pour télécharger et installer/mettre à jour l'AppImage Eden Nightly (Common-light x86_64_v3) avec GearLever
+# Script pour télécharger et installer/mettre à jour l'AppImage Citron (x86_64_v3) avec GearLever
 
 # Dépendances : curl, jq, flatpak (GearLever installé comme it.mijorus.gearlever), yes
 
 set -e
 
-REPO="pflyly/eden-nightly"
-CACHE_DIR="$HOME/.cache/eden-nightly"
+REPO="pkgforge-dev/Citron-AppImage"
+CACHE_DIR="$HOME/.cache/citron"
 APPIMAGES_DIR="$HOME/AppImages"
 mkdir -p "$CACHE_DIR"
 
 # Obtenir les infos de la dernière release via GitHub API
 RELEASE_JSON=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest")
 
-# Extraire l'URL de téléchargement pour l'AppImage spécifique
-ASSET_NAME_PATTERN="-Common-light-x86_64_v3.AppImage"
+# Extraire l'URL de téléchargement pour l'AppImage spécifique (x86_64_v3)
+ASSET_NAME_PATTERN="x86_64_v3.AppImage"
 DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r --arg pattern "$ASSET_NAME_PATTERN" '.assets[] | select(.name | endswith($pattern)) | .browser_download_url')
 
 if [ -z "$DOWNLOAD_URL" ]; then
-    echo "Erreur : AppImage non trouvé dans la dernière release."
+    echo "Erreur : AppImage x86_64_v3 non trouvé dans la dernière release."
     exit 1
 fi
 
@@ -30,7 +30,7 @@ ASSET_NAME=$(basename "$DOWNLOAD_URL")
 NEW_APPIMAGE_PATH="$CACHE_DIR/$ASSET_NAME"
 
 # Vérifier si une version est déjà installée et la supprimer
-INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -name "eden.appimage" | sort -V | tail -n1 || true)
+INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -name "citron.appimage" | sort -V | tail -n1 || true)
 
 if [ -n "$INSTALLED_APPIMAGE" ]; then
     echo "Suppression de la version installée existante."
@@ -45,11 +45,12 @@ curl -L -o "$NEW_APPIMAGE_PATH" "$DOWNLOAD_URL"
 echo "Installation/Mise à jour avec GearLever..."
 yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH"
 
-# Corriger le .desktop pour enlever le (hash)
+# Corriger le .desktop pour enlever le (hash) et mettre la première lettre en majuscule
 DESKTOP_DIR="$HOME/.local/share/applications"
-DESKTOP_FILE=$(find "$DESKTOP_DIR" -name "eden.desktop" -type f | head -n1)
+DESKTOP_FILE=$(find "$DESKTOP_DIR" -name "citron.desktop" -type f | head -n1)
 if [ -n "$DESKTOP_FILE" ]; then
-    sed -i 's/^Name=Eden (.*)$/Name=Eden/' "$DESKTOP_FILE"
+    sed -i 's/^Name=citron (.*)$/Name=Citron/' "$DESKTOP_FILE"
+    sed -i 's/^Name=citron$/Name=Citron/' "$DESKTOP_FILE"
     sed -i '/^X-AppImage-Version=/d' "$DESKTOP_FILE"  # Optionnel: enlever la ligne version
 fi
 
