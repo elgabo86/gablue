@@ -110,6 +110,10 @@ gablue-rebase-nvidia:
 gablue-rebase-nvidia-open:
     rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia-open:latest
 
+# Rebase Gablue to main test
+gablue-rebase-main-test:
+    rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-main-test:latest
+
 # Add amd kargs to have advanced settings in CoreCtrl
 amd-corectrl-set-kargs:
     #!/usr/bin/bash
