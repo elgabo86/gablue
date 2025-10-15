@@ -23,6 +23,10 @@ alias wrun="/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles
 
 alias wtricks="flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/gwine-10.2.r9/bin/wine --command=winetricks com.usebottles.bottles"
 
+alias wwayland='flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_CURRENT_USER\Software\Wine\Drivers" -v "Graphics" -d "wayland" -t "REG_SZ"'
+
+alias wx11='flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_CURRENT_USER\Software\Wine\Drivers" -v "Graphics" -d "X11" -t "REG_SZ"'
+
 alias neofetch="fastfetch --logo /usr/share/ublue-os/gablue/logoascii.ans -c /usr/share/ublue-os/gablue/fastfetch.jsonc"
 
 alias ollama-start="podman start ollama open-webui && echo 'Ollama WebGui http://localhost:3000'"
