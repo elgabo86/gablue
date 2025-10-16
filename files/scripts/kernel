@@ -15,6 +15,7 @@ dnf5 versionlock add kernel kernel-devel kernel-devel-matched kernel-core kernel
 
 shopt -s nullglob
 dnf5 -y install \
+    /tmp/akmods-rpms/kmods/*kvmfr*.rpm \
     /tmp/akmods-rpms/kmods/*xone*.rpm \
     /tmp/akmods-rpms/kmods/*openrazer*.rpm \
     /tmp/akmods-rpms/kmods/*v4l2loopback*.rpm \
