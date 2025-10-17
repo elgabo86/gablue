@@ -10,6 +10,7 @@ for copr in \
         ublue-os/staging \
         ublue-os/packages \
         che/nerd-fonts \
+        hikariknight/looking-glass-kvmfr \
         lizardbyte/stable; \
 do \
         dnf5 -y copr enable $copr; \
