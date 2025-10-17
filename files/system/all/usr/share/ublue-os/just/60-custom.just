@@ -584,15 +584,15 @@ qwen-uninstall:
 vscodium-install:
     #!/usr/bin/bash
     echo "Installing VSCodium via Homebrew..."
-    brew tap elgabo86/tap
-    brew install elgabo86/tap/vscodium-linux --cask
+    brew tap ublue-os/tap
+    brew install ublue-os/tap/vscodium-linux --cask
     echo "VSCodium has been installed!"
 
 # Uninstall VSCodium
 vscodium-uninstall:
     #!/usr/bin/bash
     echo "Removing VSCodium via Homebrew..."
-    brew uninstall elgabo86/tap/vscodium-linux --cask
+    brew uninstall ublue-os/tap/vscodium-linux --cask
     echo "VSCodium has been uninstalled!"
 
 # Install VSCode
