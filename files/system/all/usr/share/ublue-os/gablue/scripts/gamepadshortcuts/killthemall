@@ -8,14 +8,14 @@
   # Gestion des processus bottles (spécifique avec vérification bwrap)
   pgrep -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q "^bwrap$" && kill -9 {}' &
 
-  # Kill des émulateurs (tous en parallèle)
-  for emu in suyu sudachi dolphin-emu yuzu citron retroarch xemu rpcs3 duckstation pcsx2 lime3ds ryujinx Cemu flycast shadps4 PokeMMO PPSSPP; do
-    pgrep -f "$emu" | xargs -n1 kill -9 &
-  done
-
   # Commande spécifique pour eden et citron avec fusermount
   (pgrep -f mount_eden | xargs -n1 kill -9 && sleep 1 && fusermount -u /tmp/.mount_eden*) &
   (pgrep -f mount_citro | xargs -n1 kill -9 && sleep 1 && fusermount -u /tmp/.mount_citro*) &
+
+   # Kill des émulateurs (tous en parallèle)
+  for emu in suyu sudachi dolphin-emu yuzu citron retroarch xemu rpcs3 duckstation pcsx2 lime3ds ryujinx Cemu flycast shadps4 PokeMMO PPSSPP; do
+    pgrep -f "$emu" | xargs -n1 kill -9 &
+  done
 
   # Kill des processus jellyfin et sober
   pkill -9 jellyfin &
