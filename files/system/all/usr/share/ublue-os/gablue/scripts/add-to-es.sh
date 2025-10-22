@@ -32,8 +32,8 @@ fi
 # Demander le nom du .sh avec kdialog, défaut = nom du .exe
 sh_name=$(kdialog --inputbox "Entrez le nom du fichier .sh" "$onlyapp")
 if [ $? -ne 0 ] || [ -z "$sh_name" ]; then
-    echo "Annulation ou nom vide, utilisation de '$onlyapp' par défaut"
-    sh_name="$onlyapp"
+    echo "Annulation par l'utilisateur, arrêt du script"
+    exit 1
 fi
 
 # Demander le mode de lancement avec un menu
