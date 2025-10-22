@@ -29,11 +29,30 @@ if [ -z "$output_dir" ]; then
     mkdir -p "$output_dir"
 fi
 
+# Si une catégorie est spécifiée, créer les sous-dossiers
+if [ -n "$category" ]; then
+    output_dir="$output_dir/$category"
+    mkdir -p "$output_dir"
+fi
+
 # Demander le nom du .sh avec kdialog, défaut = nom du .exe
 sh_name=$(kdialog --inputbox "Entrez le nom du fichier .sh" "$onlyapp")
 if [ $? -ne 0 ] || [ -z "$sh_name" ]; then
     echo "Annulation par l'utilisateur, arrêt du script"
     exit 1
+fi
+
+# Demander si le jeu doit être catégorisé
+category_choice=$(kdialog --yesno "Voulez-vous ajouter ce jeu à une catégorie ?" --yes-label "Oui" --no-label "Non")
+if [ $? -eq 0 ]; then
+    category=$(kdialog --inputbox "Entrez le nom de la catégorie" "")
+    if [ $? -ne 0 ] || [ -z "$category" ]; then
+        echo "Aucune catégorie spécifiée, le jeu sera placé dans le dossier principal"
+        category=""
+    fi
+else
+    echo "Le jeu sera placé dans le dossier principal"
+    category=""
 fi
 
 # Demander le mode de lancement avec un menu
@@ -82,6 +101,12 @@ done
 # Si aucune variante n'existe, utiliser le défaut et créer si nécessaire
 if [ -z "$cover_dir" ]; then
     cover_dir="$default_esde"
+    mkdir -p "$cover_dir"
+fi
+
+# Si une catégorie est spécifiée, créer le sous-dossier correspondant pour les couvertures
+if [ -n "$category" ]; then
+    cover_dir="$cover_dir/$category"
     mkdir -p "$cover_dir"
 fi
 
