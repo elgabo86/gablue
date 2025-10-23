@@ -28,6 +28,7 @@ chmod +x /usr/bin/raroms
 chmod +x /usr/bin/encode64
 chmod +x /usr/bin/decode64
 chmod +x /usr/bin/qwen-install
+chmod +x /usr/bin/clean-media
 chmod +x /usr/libexec/gablue-update
 chmod +x /usr/libexec/gablue-config
 chmod +x /usr/libexec/archgab-update

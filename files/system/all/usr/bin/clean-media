@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# Nettoyage auto des dossiers vides dans /run/media/$USER (niveau 1)
+USER_DIR="/run/media/$USER"
+if [ ! -d "$USER_DIR" ]; then
+    echo "Aucun dossier media à nettoyer."
+    exit 0
+fi
+
+# Commande à élever (avec pkexec pour GUI)
+pkexec env DISPLAY=$DISPLAY XAUTHORITY=$XAUTHORITY bash -c "
+    for d in '$USER_DIR'/*/; do
+        if [ -d \"\$d\" ] && [ -z \"\$(ls -A \"\$d\" 2>/dev/null)\" ]; then
+            rmdir \"\$d\" 2>/dev/null && echo \"Supprimé: \$d\"
+        fi
+    done
+    echo 'Nettoyage terminé !'
+"
