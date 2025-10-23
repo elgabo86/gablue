@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Script pour installer VSCodium et npm dans une distrobox Arch Linux
+# et exporter l'application Codium depuis l'hôte
+
+# Nom de la distrobox (à adapter si nécessaire)
+DISTROBOX_NAME="archgab"
+
+echo "Mise à jour du système dans la distrobox $DISTROBOX_NAME..."
+distrobox-enter $DISTROBOX_NAME -- sh -c "paru -Syu --noconfirm || true"
+
+echo "Installation de VSCodium et npm dans la distrobox $DISTROBOX_NAME..."
+
+# Entrer dans la distrobox et installer les paquets, puis exporter l'application
+distrobox-enter $DISTROBOX_NAME -- sh -c "paru -S vscodium npm --noconfirm && distrobox-export --app codium"
+
+echo "Script terminé. VSCodium devrait maintenant être disponible sur l'hôte."
