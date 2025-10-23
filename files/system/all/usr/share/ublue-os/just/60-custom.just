@@ -471,53 +471,6 @@ brew-reset:
     echo "ALL DONE!!!"
     echo "Restart computer to reuse brew"
 
-# Install Qwen
-qwen-install:
-    #!/usr/bin/bash
-    qwen-install
-    echo "Qwen has been installed!"
-
-# Uninstall Qwen
-qwen-uninstall:
-    #!/usr/bin/bash
-    echo "Removing qwen-code via Homebrew..."
-    brew uninstall qwen-code
-    echo "Removing qwen.desktop from applications folder..."
-    rm -f ~/.local/share/applications/qwen.desktop
-    echo "Update desktop database..."
-    update-desktop-database ~/.local/share/applications
-    echo "Qwen has been uninstalled!"
-
-# Install VSCodium
-vscodium-install:
-    #!/usr/bin/bash
-    echo "Installing VSCodium via Homebrew..."
-    brew tap ublue-os/tap
-    brew install ublue-os/tap/vscodium-linux --cask
-    echo "VSCodium has been installed!"
-
-# Uninstall VSCodium
-vscodium-uninstall:
-    #!/usr/bin/bash
-    echo "Removing VSCodium via Homebrew..."
-    brew uninstall ublue-os/tap/vscodium-linux --cask
-    echo "VSCodium has been uninstalled!"
-
-# Install VSCode
-vscode-install:
-    #!/usr/bin/bash
-    echo "Installing VSCodium via Homebrew..."
-    brew tap ublue-os/tap
-    brew install ublue-os/tap/visual-studio-code-linux --cask
-    echo "VSCode has been installed!"
-
-# Uninstall VSCode
-vscode-uninstall:
-    #!/usr/bin/bash
-    echo "Removing VSCodium via Homebrew..."
-    brew uninstall ublue-os/tap/visual-studio-code-linux --cask
-    echo "VSCode has been uninstalled!"
-
 # Install LMStudio
 lmstudio-install:
     #!/usr/bin/bash
