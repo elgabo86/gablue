@@ -54,10 +54,7 @@ wget https://github.com/talwat/lowfi/releases/latest/download/lowfi-linux-x86_64
 chmod +x /usr/bin/lowfi
 
 # Add zxtune
-#curl -s https://storage.zxtune.ru/builds/public/r5100/linux/x86_64/zxtune_r5100_linux_x86_64.tar.gz | tar #-xzf - -C / --exclude=./usr/bin/zxtune123 --exclude=./usr/bin/xtractor
-
-# Add zxtune
-curl -s https://files.catbox.moe/8vzfoc.gz | tar -xzf - -C / --exclude=./usr/bin/zxtune123 --exclude=./usr/bin/xtractor
+curl -s https://storage.zxtune.ru/builds/public/r5100/linux/x86_64/zxtune_r5100_linux_x86_64.tar.gz | tar -xzf - -C / --exclude=./usr/bin/zxtune123 --exclude=./usr/bin/xtractor
 
 # Branding for Gablue
 IMAGE_DATE=$(date +%Y%m%d.%H)
