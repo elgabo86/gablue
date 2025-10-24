@@ -1,0 +1,70 @@
+#!/bin/bash
+
+# Script pour télécharger et installer/mettre à jour Xenia Edge (Linux version) avec GearLever
+
+# Dépendances : curl, jq, flatpak (GearLever installé comme it.mijorus.gearlever), yes
+
+set -e
+
+REPO="has207/xenia-edge"
+CACHE_DIR="$HOME/.cache/xenia"
+APPIMAGES_DIR="$HOME/AppImages"
+mkdir -p "$CACHE_DIR"
+
+# Vérifier si une version est déjà installée et la supprimer
+INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -name "xenia*.AppImage" | grep -i edge | head -n1 || true)
+
+if [ -n "$INSTALLED_APPIMAGE" ]; then
+    echo "Suppression de la version installée existante."
+    yes | flatpak run it.mijorus.gearlever --remove "$INSTALLED_APPIMAGE" 2>/dev/null || true
+fi
+
+# Obtenir les infos de la dernière release via GitHub API
+RELEASE_JSON=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest")
+
+# Extraire l'URL de téléchargement pour l'AppImage
+ASSET_NAME_PATTERN="xenia_edge_linux.AppImage"
+DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r --arg pattern "$ASSET_NAME_PATTERN" '.assets[] | select(.name | contains($pattern)) | .browser_download_url')
+
+if [ -z "$DOWNLOAD_URL" ]; then
+    echo "Erreur : AppImage non trouvé dans la dernière release."
+    exit 1
+fi
+
+# Extraire le nom du fichier
+ASSET_NAME=$(basename "$DOWNLOAD_URL")
+
+# Chemin du fichier à télécharger
+NEW_APPIMAGE_PATH="$CACHE_DIR/$ASSET_NAME"
+
+# Télécharger l'AppImage
+echo "Téléchargement de $ASSET_NAME..."
+curl -L -o "$NEW_APPIMAGE_PATH" "$DOWNLOAD_URL"
+
+# Rendre l'AppImage exécutable
+chmod +x "$NEW_APPIMAGE_PATH"
+
+# Installer avec GearLever sans confirmation
+echo "Installation/Mise à jour avec GearLever..."
+yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH"
+
+# Corriger le .desktop pour enlever le (hash) et mettre la première lettre en majuscule
+DESKTOP_DIR="$HOME/.local/share/applications"
+DESKTOP_FILE=$(find "$DESKTOP_DIR" -name "xenia_edge*.desktop" -type f | head -n1)
+if [ -n "$DESKTOP_FILE" ]; then
+    sed -i 's/^Name=Xenia Edge (.*)$/Name=Xenia Edge/' "$DESKTOP_FILE"
+    sed -i 's/^Name=xenia_edge (.*)$/Name=Xenia Edge/' "$DESKTOP_FILE"
+    sed -i 's/^Name=xenia_edge$/Name=Xenia Edge/' "$DESKTOP_FILE"
+    sed -i '/^X-AppImage-Version=/d' "$DESKTOP_FILE"  # Optionnel: enlever la ligne version
+fi
+
+# Nettoyer le cache
+if [ -f "$NEW_APPIMAGE_PATH" ]; then
+    rm "$NEW_APPIMAGE_PATH"
+fi
+rmdir --ignore-fail-on-non-empty "$CACHE_DIR"
+
+# Rafraîchir les fichiers .desktop
+kbuildsycoca6
+
+echo "Opération terminée."

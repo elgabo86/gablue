@@ -1,0 +1,83 @@
+#!/bin/bash
+
+# Script pour télécharger et installer/mettre à jour AzaharPlus (Linux version) avec GearLever
+
+# Dépendances : curl, jq, flatpak (GearLever installé comme it.mijorus.gearlever), unzip, yes
+
+set -e
+
+REPO="AzaharPlus/AzaharPlus"
+CACHE_DIR="$HOME/.cache/azahar"
+APPIMAGES_DIR="$HOME/AppImages"
+mkdir -p "$CACHE_DIR"
+
+# Obtenir les infos de la dernière release via GitHub API
+RELEASE_JSON=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest")
+
+# Extraire l'URL de téléchargement pour l'archive Linux
+ASSET_NAME_PATTERN="linux.zip"
+DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r --arg pattern "$ASSET_NAME_PATTERN" '.assets[] | select(.name | contains($pattern)) | .browser_download_url')
+
+if [ -z "$DOWNLOAD_URL" ]; then
+    echo "Erreur : Archive Linux non trouvée dans la dernière release."
+    exit 1
+fi
+
+# Extraire le nom du fichier
+ASSET_NAME=$(basename "$DOWNLOAD_URL")
+
+# Chemin du fichier à télécharger
+NEW_ZIP_PATH="$CACHE_DIR/$ASSET_NAME"
+
+# Télécharger l'archive ZIP
+echo "Téléchargement de $ASSET_NAME..."
+curl -L -o "$NEW_ZIP_PATH" "$DOWNLOAD_URL"
+
+# Extraire l'archive et trouver l'AppImage
+EXTRACT_DIR="$CACHE_DIR/extracted"
+mkdir -p "$EXTRACT_DIR"
+unzip -o "$NEW_ZIP_PATH" -d "$EXTRACT_DIR"
+
+# Chercher spécifiquement l'AppImage azahar.AppImage dans le sous-répertoire
+APPIMAGE_FILE=$(find "$EXTRACT_DIR" -name "azahar.AppImage" -type f | head -n1)
+
+if [ -z "$APPIMAGE_FILE" ]; then
+    echo "Erreur : azahar.AppImage non trouvé dans l'archive."
+    exit 1
+fi
+
+echo "AppImage trouvé : $(basename "$APPIMAGE_FILE")"
+
+# Vérifier si une version est déjà installée et la supprimer
+INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -name "azahar.AppImage" | head -n1 || true)
+
+if [ -n "$INSTALLED_APPIMAGE" ]; then
+    echo "Suppression de la version installée existante."
+    yes | flatpak run it.mijorus.gearlever --remove "$INSTALLED_APPIMAGE" 2>/dev/null || true
+fi
+
+# Installer avec GearLever sans confirmation (comme dans le script original)
+echo "Installation/Mise à jour avec GearLever..."
+yes | flatpak run it.mijorus.gearlever --integrate "$APPIMAGE_FILE"
+
+# Corriger le .desktop pour enlever le (hash) et mettre la première lettre en majuscule
+DESKTOP_DIR="$HOME/.local/share/applications"
+DESKTOP_FILE=$(find "$DESKTOP_DIR" -name "azahar*.desktop" -type f | head -n1)
+if [ -n "$DESKTOP_FILE" ]; then
+    sed -i 's/^Name=Azahar (.*)$/Name=Azahar/' "$DESKTOP_FILE"
+    sed -i 's/^Name=azahar (.*)$/Name=Azahar/' "$DESKTOP_FILE"
+    sed -i 's/^Name=azahar$/Name=Azahar/' "$DESKTOP_FILE"
+    sed -i '/^X-AppImage-Version=/d' "$DESKTOP_FILE"  # Optionnel: enlever la ligne version
+fi
+
+# Nettoyer le cache
+rm -rf "$EXTRACT_DIR"
+if [ -f "$NEW_ZIP_PATH" ]; then
+    rm "$NEW_ZIP_PATH"
+fi
+rmdir --ignore-fail-on-non-empty "$CACHE_DIR"
+
+# Rafraîchir les fichiers .desktop
+kbuildsycoca6
+
+echo "Opération terminée."

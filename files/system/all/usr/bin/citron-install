@@ -60,4 +60,7 @@ if [ -f "$NEW_APPIMAGE_PATH" ]; then
 fi
 rmdir --ignore-fail-on-non-empty "$CACHE_DIR"
 
+# Rafraîchir les fichiers .desktop
+kbuildsycoca6
+
 echo "Opération terminée."
