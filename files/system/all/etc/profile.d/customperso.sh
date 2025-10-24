@@ -64,6 +64,8 @@ alias a13-right="adb shell wm user-rotation lock 1"
 
 alias tp="trash-put"
 
+alias changefps="/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/changefps"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
