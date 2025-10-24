@@ -1,0 +1,98 @@
+#!/bin/bash
+
+# Script pour télécharger et installer/mettre à jour Ryujinx (Linux version AppImage x64) avec GearLever
+
+# Dépendances : curl, jq, flatpak (GearLever installé comme it.mijorus.gearlever), yes
+
+set -e
+
+# Utilisation de l'API GitLab pour récupérer les releases
+# Le dépôt Ryujinx est hébergé sur git.ryujinx.app
+PROJECT_ID="ryubing%2Fryujinx"  # Encodé URL: / devient %2F
+GITLAB_URL="https://git.ryujinx.app"
+CACHE_DIR="$HOME/.cache/ryujinx"
+APPIMAGES_DIR="$HOME/AppImages"
+mkdir -p "$CACHE_DIR"
+
+# Vérifier si une version est déjà installée et la supprimer
+INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -name "Ryujinx*.AppImage" -o -name "ryujinx*.AppImage" | head -n1 || true)
+
+if [ -n "$INSTALLED_APPIMAGE" ]; then
+    echo "Suppression de la version installée existante."
+    yes | flatpak run it.mijorus.gearlever --remove "$INSTALLED_APPIMAGE" 2>/dev/null || true
+fi
+
+# Obtenir les infos de la dernière release via GitLab API
+RELEASES_JSON=$(curl -sL "$GITLAB_URL/api/v4/projects/$PROJECT_ID/releases")
+
+# Extraire la dernière release
+LATEST_RELEASE=$(echo "$RELEASES_JSON" | jq -r '.[0]')
+RELEASE_TAG=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+
+if [ -z "$RELEASE_TAG" ]; then
+    echo "Erreur : Impossible de trouver une release."
+    exit 1
+fi
+
+echo "Dernière version disponible : $RELEASE_TAG"
+
+# Extraire l'URL de téléchargement pour l'AppImage x64
+DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets.links[]? | select(.name | contains("x64.AppImage")) | .direct_asset_url // .url')
+
+if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+    # Si aucune version x64.AppImage n'est trouvée, chercher une version AppImage générique
+    DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets.links[]? | select(.name | contains("AppImage") and (contains("x64") or contains("linux"))) | .direct_asset_url // .url')
+fi
+
+if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+    # En dernier recours, prendre le premier AppImage trouvé
+    DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets.links[]? | select(.name | contains("AppImage")) | .direct_asset_url // .url')
+fi
+
+if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+    echo "Erreur : Aucun AppImage trouvé dans la dernière release."
+    exit 1
+fi
+
+if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+    echo "Erreur : Aucun AppImage trouvé dans la dernière release."
+    exit 1
+fi
+
+# Extraire le nom du fichier
+ASSET_NAME=$(basename "$DOWNLOAD_URL")
+
+# Chemin du fichier à télécharger
+NEW_APPIMAGE_PATH="$CACHE_DIR/$ASSET_NAME"
+
+# Télécharger l'AppImage
+echo "Téléchargement de $ASSET_NAME..."
+curl -L -o "$NEW_APPIMAGE_PATH" "$DOWNLOAD_URL"
+
+# Rendre l'AppImage exécutable
+chmod +x "$NEW_APPIMAGE_PATH"
+
+# Installer avec GearLever sans confirmation
+echo "Installation/Mise à jour avec GearLever..."
+yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH"
+
+# Corriger le .desktop pour enlever le (hash) et mettre la première lettre en majuscule
+DESKTOP_DIR="$HOME/.local/share/applications"
+DESKTOP_FILE=$(find "$DESKTOP_DIR" -name "*ryujinx*.desktop" -o -name "*Ryujinx*.desktop" -type f | head -n1)
+if [ -n "$DESKTOP_FILE" ]; then
+    sed -i 's/^Name=Ryujinx (.*)$/Name=Ryujinx/' "$DESKTOP_FILE"
+    sed -i 's/^Name=ryujinx (.*)$/Name=Ryujinx/' "$DESKTOP_FILE"
+    sed -i 's/^Name=ryujinx$/Name=Ryujinx/' "$DESKTOP_FILE"
+    sed -i '/^X-AppImage-Version=/d' "$DESKTOP_FILE"  # Optionnel: enlever la ligne version
+fi
+
+# Nettoyer le cache
+if [ -f "$NEW_APPIMAGE_PATH" ]; then
+    rm "$NEW_APPIMAGE_PATH"
+fi
+rmdir --ignore-fail-on-non-empty "$CACHE_DIR"
+
+# Rafraîchir les fichiers .desktop
+kbuildsycoca6
+
+echo "Opération terminée."
