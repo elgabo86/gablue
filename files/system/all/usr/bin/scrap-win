@@ -1,0 +1,130 @@
+#!/bin/bash
+
+# Chemins des dossiers
+ROMS_DIR="$HOME/Roms/windows"
+COVERS_DIR="$HOME/ES-DE/downloaded_media/windows/covers"
+
+# Vérifier que les dossiers existent
+if [ ! -d "$ROMS_DIR" ]; then
+    echo "Erreur : Le dossier $ROMS_DIR n'existe pas."
+    exit 1
+fi
+
+if [ ! -d "$COVERS_DIR" ]; then
+    echo "Erreur : Le dossier $COVERS_DIR n'existe pas."
+    exit 1
+fi
+
+# Fonction pour extraire le nom d'un jeu à partir du nom du fichier .sh
+extract_game_name() {
+    local filename="$1"
+    # Enlever l'extension .sh
+    local basename="${filename%.*}"
+    echo "$basename"
+}
+
+# Fonction pour convertir le nom du jeu comme le fait dlcover (espaces -> tirets)
+format_game_name_for_cache() {
+    local game_name="$1"
+    echo "$game_name" | sed 's/ /-/g'
+}
+
+# Fonction qui effectue le téléchargement de la couverture
+download_cover() {
+    local game_name="$1"
+    local dest_dir="$2"
+    
+    # Remplacer les espaces par des tirets pour la recherche dans le cache
+    local file_name=$(format_game_name_for_cache "$game_name")
+    local cache_dir="$HOME/.cache/game_covers"
+    local temp_cache_dir=$(mktemp -d)
+    
+    # Créer le dossier de cache s'il n'existe pas
+    mkdir -p "$cache_dir"
+    
+    # Vérifier si curl est installé
+    if ! command -v curl &> /dev/null; then
+        echo "Erreur : curl est requis."
+        return 1
+    fi
+
+    # Encoder le nom du jeu pour l'URL
+    local encoded_name=$(echo "$game_name" | sed 's/ /%20/g')
+
+    # Faire la requête à l'API
+    local search_url="https://steamgrid.usebottles.com/api/search/$encoded_name"
+    local response
+    response=$(curl -s "$search_url")
+
+    # Vérifier si la réponse est valide
+    if [ -z "$response" ]; then
+        echo "Erreur : impossible de contacter l'API pour $game_name"
+        return 1
+    fi
+
+    # Extraire l'URL de l'image (accepte .jpg ou .png)
+    local image_url
+    image_url=$(echo "$response" | grep -o 'https://[^"]*\.\(jpg\|png\)' | head -n 1)
+    if [ -z "$image_url" ]; then
+        echo "Aucune image trouvée pour $game_name"
+        return 1
+    fi
+
+    # Télécharger l'image dans le cache
+    local ext
+    ext=$(echo "$image_url" | grep -o '\.\(jpg\|png\)$')
+    local output_file="$cache_dir/$file_name$ext"
+    
+    curl -s "$image_url" -o "$output_file"
+    if [ $? -ne 0 ]; then
+        echo "Échec du téléchargement de l'image pour $game_name"
+        rm -f "$output_file"
+        return 1
+    fi
+    
+    # Copier dans le dossier de destination
+    local dest_file="$dest_dir/$(basename "$script_file" .sh)$ext"
+    cp "$output_file" "$dest_file"
+    
+    echo "SUCCÈS: Couverture téléchargée et copiée vers '$dest_file'"
+    return 0
+}
+
+# Parcourir tous les fichiers .sh dans le dossier ROMS_DIR et ses sous-dossiers
+find "$ROMS_DIR" -type f -iname "*.sh" | while read -r script_file; do
+    # Obtenir le nom du jeu (sans extension)
+    game_name=$(extract_game_name "$(basename "$script_file")")
+    
+    # Obtenir le chemin relatif par rapport à $ROMS_DIR
+    relative_path="${script_file#$ROMS_DIR/}"
+    cover_subdir=$(dirname "$relative_path")
+    
+    # Déterminer le chemin de destination pour la couverture dans le dossier ES-DE
+    if [ "$cover_subdir" = "." ]; then
+        dest_cover_dir="$COVERS_DIR"
+    else
+        dest_cover_dir="$COVERS_DIR/$cover_subdir"
+        mkdir -p "$dest_cover_dir"
+    fi
+    
+    # Vérifier si une image existe déjà (tous formats: .png, .jpg)
+    existing_cover=""
+    for ext in "png" "jpg"; do
+        if [ -f "$dest_cover_dir/$game_name.$ext" ]; then
+            existing_cover="$dest_cover_dir/$game_name.$ext"
+            break
+        fi
+    done
+    
+    if [ -n "$existing_cover" ]; then
+        echo "INFO: Couverture existe déjà pour '$game_name' -> $existing_cover"
+    else
+        echo "INFO: Couverture manquante pour '$game_name', tentative de téléchargement..."
+        download_cover "$game_name" "$dest_cover_dir"
+        if [ $? -ne 0 ]; then
+            echo "ÉCHEC: Impossible de télécharger la couverture pour '$game_name'"
+        fi
+    fi
+done
+
+echo "Scraping des couvertures terminé."

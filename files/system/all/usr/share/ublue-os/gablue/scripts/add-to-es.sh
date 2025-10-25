@@ -11,30 +11,6 @@ fullpath="$1"
 onlypath=$(dirname "$fullpath")
 onlyapp=$(basename "$fullpath" .exe)
 
-# Déterminer le dossier de sortie pour Roms (insensible à la casse)
-default_dir="$HOME/Roms/windows"
-output_dir=""
-
-# Chercher une variante existante de ~/Roms/windows
-for dir in "$HOME"/[Rr][Oo][Mm][Ss]/[Ww][Ii][Nn][Dd][Oo][Ww][Ss]; do
-    if [ -d "$dir" ]; then
-        output_dir="$dir"
-        break
-    fi
-done
-
-# Si aucune variante n'existe, utiliser le défaut et créer si nécessaire
-if [ -z "$output_dir" ]; then
-    output_dir="$default_dir"
-    mkdir -p "$output_dir"
-fi
-
-# Si une catégorie est spécifiée, créer les sous-dossiers
-if [ -n "$category" ]; then
-    output_dir="$output_dir/$category"
-    mkdir -p "$output_dir"
-fi
-
 # Demander le nom du .sh avec kdialog, défaut = nom du .exe
 sh_name=$(kdialog --inputbox "Entrez le nom du fichier .sh" "$onlyapp")
 if [ $? -ne 0 ] || [ -z "$sh_name" ]; then
@@ -55,6 +31,9 @@ else
     category=""
 fi
 
+# Déterminer le dossier de sortie pour le script dans le même répertoire que le .exe
+script_sh="$onlypath/$sh_name.sh"
+
 # Demander le mode de lancement avec un menu
 choice=$(kdialog --menu "Choisissez le mode de lancement :" \
     "normal" "Lancement normal" \
@@ -67,24 +46,52 @@ if [ $? -ne 0 ] || [ -z "$choice" ]; then
 fi
 
 # Générer le script selon le choix
-output_sh="$output_dir/$sh_name.sh"
-echo "#!/bin/bash" > "$output_sh"
+echo "#!/bin/bash" > "$script_sh"
 
 case "$choice" in
     "normal")
-        echo "sed -i 's/\"DisableHidraw\"=dword:00000000/\"DisableHidraw\"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg" >> "$output_sh"
-        echo "/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable \"$fullpath\"" >> "$output_sh"
+        echo "sed -i 's/\"DisableHidraw\"=dword:00000000/\"DisableHidraw\"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg" >> "$script_sh"
+        echo "/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable \"$fullpath\"" >> "$script_sh"
         ;;
     "fix")
-        echo "sed -i 's/\"DisableHidraw\"=dword:00000001/\"DisableHidraw\"=dword:00000000/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg" >> "$output_sh"
-        echo "/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable \"$fullpath\" ;" >> "$output_sh"
-        echo "sleep 2" >> "$output_sh"
-        echo "sed -i 's/\"DisableHidraw\"=dword:00000000/\"DisableHidraw\"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg" >> "$output_sh"
+        echo "sed -i 's/\"DisableHidraw\"=dword:00000001/\"DisableHidraw\"=dword:00000000/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg" >> "$script_sh"
+        echo "/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable \"$fullpath\" ;" >> "$script_sh"
+        echo "sleep 2" >> "$script_sh"
+        echo "sed -i 's/\"DisableHidraw\"=dword:00000000/\"DisableHidraw\"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg" >> "$script_sh"
         ;;
 esac
 
-chmod +x "$output_sh"
-echo "Fichier créé : $output_sh"
+chmod +x "$script_sh"
+echo "Fichier créé : $script_sh"
+
+# Déterminer le dossier de sortie pour le lien symbolique dans Roms (insensible à la casse)
+default_dir="$HOME/Roms/windows"
+link_dir=""
+
+# Chercher une variante existante de ~/Roms/windows
+for dir in "$HOME"/[Rr][Oo][Mm][Ss]/[Ww][Ii][Nn][Dd][Oo][Ww][Ss]; do
+    if [ -d "$dir" ]; then
+        link_dir="$dir"
+        break
+    fi
+done
+
+# Si aucune variante n'existe, utiliser le défaut et créer si nécessaire
+if [ -z "$link_dir" ]; then
+    link_dir="$default_dir"
+    mkdir -p "$link_dir"
+fi
+
+# Si une catégorie est spécifiée, créer les sous-dossiers
+if [ -n "$category" ]; then
+    link_dir="$link_dir/$category"
+    mkdir -p "$link_dir"
+fi
+
+# Créer le lien symbolique dans le dossier Windows
+link_sh="$link_dir/$sh_name.sh"
+ln -sf "$script_sh" "$link_sh"
+echo "Lien symbolique créé : $link_sh -> $script_sh"
 
 # Déterminer le dossier pour ES-DE (insensible à la casse)
 default_esde="$HOME/ES-DE/downloaded_media/windows/covers"
