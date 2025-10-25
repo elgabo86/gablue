@@ -36,11 +36,6 @@ download_cover() {
     
     # Remplacer les espaces par des tirets pour la recherche dans le cache
     local file_name=$(format_game_name_for_cache "$game_name")
-    local cache_dir="$HOME/.cache/game_covers"
-    local temp_cache_dir=$(mktemp -d)
-    
-    # Créer le dossier de cache s'il n'existe pas
-    mkdir -p "$cache_dir"
     
     # Vérifier si curl est installé
     if ! command -v curl &> /dev/null; then
@@ -70,21 +65,17 @@ download_cover() {
         return 1
     fi
 
-    # Télécharger l'image dans le cache
+    # Télécharger l'image directement dans le dossier de destination
     local ext
     ext=$(echo "$image_url" | grep -o '\.\(jpg\|png\)$')
-    local output_file="$cache_dir/$file_name$ext"
+    local dest_file="$dest_dir/$(basename "$script_file" .sh)$ext"
     
-    curl -s "$image_url" -o "$output_file"
+    curl -s "$image_url" -o "$dest_file"
     if [ $? -ne 0 ]; then
         echo "Échec du téléchargement de l'image pour $game_name"
-        rm -f "$output_file"
+        rm -f "$dest_file"
         return 1
     fi
-    
-    # Copier dans le dossier de destination
-    local dest_file="$dest_dir/$(basename "$script_file" .sh)$ext"
-    cp "$output_file" "$dest_file"
     
     echo "SUCCÈS: Couverture téléchargée et copiée vers '$dest_file'"
     return 0
