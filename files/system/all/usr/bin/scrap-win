@@ -82,7 +82,7 @@ download_cover() {
 }
 
 # Parcourir tous les fichiers .sh dans le dossier ROMS_DIR et ses sous-dossiers
-find "$ROMS_DIR" -type f -iname "*.sh" | while read -r script_file; do
+find "$ROMS_DIR" -name "*.sh" | while read -r script_file; do
     # Obtenir le nom du jeu (sans extension)
     game_name=$(extract_game_name "$(basename "$script_file")")
     
