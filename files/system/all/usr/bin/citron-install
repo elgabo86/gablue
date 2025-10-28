@@ -6,17 +6,16 @@
 
 set -e
 
-REPO="pkgforge-dev/Citron-AppImage"
+REPO_ID="citron%2Femulator"  # Encoded as citron/emulator
 CACHE_DIR="$HOME/.cache/citron"
 APPIMAGES_DIR="$HOME/AppImages"
 mkdir -p "$CACHE_DIR"
 
-# Obtenir les infos de la dernière release via GitHub API
-RELEASE_JSON=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest")
+# Obtenir les infos de la dernière release via GitLab API
+RELEASE_JSON=$(curl -sL -H "Accept: application/json" "https://git.citron-emu.org/api/v4/projects/$REPO_ID/releases/permalink/latest")
 
-# Extraire l'URL de téléchargement pour l'AppImage spécifique (x86_64_v3)
-ASSET_NAME_PATTERN="x86_64_v3.AppImage"
-DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r --arg pattern "$ASSET_NAME_PATTERN" '.assets[] | select(.name | endswith($pattern)) | .browser_download_url')
+# Extraire l'URL de téléchargement pour l'AppImage spécifique (x86_64_v3) depuis les assets links
+DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r '.assets.links[] | select(.name | contains("Linux v3") and contains("AppImage")) | .direct_asset_url')
 
 if [ -z "$DOWNLOAD_URL" ]; then
     echo "Erreur : AppImage x86_64_v3 non trouvé dans la dernière release."
@@ -47,10 +46,11 @@ yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH"
 
 # Corriger le .desktop pour enlever le (hash) et mettre la première lettre en majuscule
 DESKTOP_DIR="$HOME/.local/share/applications"
-DESKTOP_FILE=$(find "$DESKTOP_DIR" -name "citron.desktop" -type f | head -n1)
+DESKTOP_FILE=$(find "$DESKTOP_DIR" -name "citron*.desktop" -type f | head -n1)
 if [ -n "$DESKTOP_FILE" ]; then
     sed -i 's/^Name=citron (.*)$/Name=Citron/' "$DESKTOP_FILE"
     sed -i 's/^Name=citron$/Name=Citron/' "$DESKTOP_FILE"
+    sed -i 's/^Name=citron \([^()]*\) (.*$/Name=Citron \1/' "$DESKTOP_FILE"  # Pour gérer "citron nightly (17f8a2)" -> "Citron nightly"
     sed -i '/^X-AppImage-Version=/d' "$DESKTOP_FILE"  # Optionnel: enlever la ligne version
 fi
 

@@ -16,6 +16,7 @@
         </rule>
         <rule type="staticpath">
             <entry>~/AppImages/citron.appimage</entry>
+            <entry>~/AppImages/citron_nightly.appimage</entry>
         </rule>
     </emulator>
     <emulator name="EDEN">
