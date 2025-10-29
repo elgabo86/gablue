@@ -6,16 +6,18 @@
 
 set -e
 
-REPO_ID="citron%2Femulator"  # Encoded as citron/emulator
+REPO_OWNER="pkgforge-dev"
+REPO_NAME="Citron-AppImage"
 CACHE_DIR="$HOME/.cache/citron"
 APPIMAGES_DIR="$HOME/AppImages"
 mkdir -p "$CACHE_DIR"
 
-# Obtenir les infos de la dernière release via GitLab API
-RELEASE_JSON=$(curl -sL -H "Accept: application/json" "https://git.citron-emu.org/api/v4/projects/$REPO_ID/releases/permalink/latest")
+# Obtenir les infos de la dernière release via l'API GitHub
+RELEASES_JSON=$(curl -sL -H "Accept: application/json" "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases")
+LATEST_RELEASE=$(echo "$RELEASES_JSON" | jq '.[0]')  # Prendre la première release (la plus récente)
 
-# Extraire l'URL de téléchargement pour l'AppImage spécifique (x86_64_v3) depuis les assets links
-DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r '.assets.links[] | select(.name | contains("Linux v3") and contains("AppImage")) | .direct_asset_url')
+# Extraire l'URL de téléchargement pour l'AppImage spécifique (x86_64_v3) depuis les assets
+DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name | contains("x86_64_v3") and contains("AppImage") and (contains(".zsync") | not)) | .browser_download_url')
 
 if [ -z "$DOWNLOAD_URL" ]; then
     echo "Erreur : AppImage x86_64_v3 non trouvé dans la dernière release."
@@ -60,7 +62,9 @@ if [ -f "$NEW_APPIMAGE_PATH" ]; then
 fi
 rmdir --ignore-fail-on-non-empty "$CACHE_DIR"
 
-# Rafraîchir les fichiers .desktop
-kbuildsycoca6
+# Rafraîchir les fichiers .desktop si la commande est disponible
+if command -v kbuildsycoca6 &> /dev/null; then
+    kbuildsycoca6
+fi
 
 echo "Opération terminée."
