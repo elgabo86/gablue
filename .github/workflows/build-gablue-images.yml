@@ -52,7 +52,7 @@ jobs:
             variant: "main"
             source_image: "kinoite"
             source_suffix: "-main"
-            fedora_version: "42"
+            fedora_version: "43"
             kernel_type: "bazzite"
             kernel_version: ""
 
