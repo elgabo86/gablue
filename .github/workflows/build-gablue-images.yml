@@ -48,7 +48,7 @@ jobs:
             kernel_type: "bazzite"
             kernel_version: ""
           - name: "gablue-main-test"
-            desc: "Gablue main test image with Mesa Terra"
+            desc: "Gablue main test image"
             variant: "main"
             source_image: "kinoite"
             source_suffix: "-main"
