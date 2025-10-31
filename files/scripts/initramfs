@@ -6,7 +6,7 @@
 set -ouex pipefail
 
 KERNEL_SUFFIX=""
-QUALIFIED_KERNEL="$(rpm -q --queryformat='%{evr}.%{arch}' "kernel${KERNEL_SUFFIX:+-${KERNEL_SUFFIX}}")"
+QUALIFIED_KERNEL="$(ls /lib/modules/ | head -n1)"
 /usr/bin/dracut --no-hostonly --kver "$QUALIFIED_KERNEL" --reproducible --zstd -v --add ostree -f "/usr/lib/modules/$QUALIFIED_KERNEL/initramfs.img"
 
 chmod 0600 /usr/lib/modules/"$QUALIFIED_KERNEL"/initramfs.img
