@@ -90,8 +90,7 @@ dnf5 -y install \
 hplip \
 printer-driver-brlaser \
 ifuse \
-libimobiledevice \
-uld
+libimobiledevice
 
 #Dev dep
 dnf5 -y  install \
