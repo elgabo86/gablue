@@ -1,17 +1,76 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 
-# Tell this script to exit if there are any errors.
-# You should have this in every custom script, to ensure that your completed
-# builds actually ran successfully without any errors!
-set -ouex pipefail
+set -eoux pipefail
 
-dnf5 -y remove nvidia-gpu-firmware
+echo "::group::Executing install-nvidia"
+trap 'echo "::group::"' EXIT
 
-# Install NVIDIA drivers from OCI container
+FRELEASE=$(rpm -E %fedora)
+
+# Enable staging for supergfxctl if repo file exists
+if [[ -f /etc/yum.repos.d/_copr_ublue-os-staging.repo ]]; then
+ sed -i 's@enabled=0@enabled=1@g' /etc/yum.repos.d/_copr_ublue-os-staging.repo
+else
+ # Otherwise, retrieve the repo file for staging
+ curl -Lo /etc/yum.repos.d/_copr_ublue-os-staging.repo https://copr.fedorainfracloud.org/coprs/ublue-os/staging/repo/fedora-\"${FRELEASE}\"/ublue-os-staging-fedora-\"${FRELEASE}\".repo
+fi
+
+if [[ "${SOURCE_IMAGE}" == "kinoite" ]]; then
+ VARIANT_PKGS="supergfxctl-plasmoid supergfxctl"
+elif [[ "${SOURCE_IMAGE}" == "silverblue" ]]; then
+ VARIANT_PKGS="gnome-shell-extension-supergfxctl-gex supergfxctl"
+else
+ VARIANT_PKGS=""
+fi
+
+# Both nvidia and nvidia-open variants install the SAME proprietary drivers
+# The only difference is the kernel: kernel-nvidia-closed-lts vs kernel-nvidia
+# Both use proprietary user-space drivers (nvidia-driver, nvidia-kmod)
+
 # Filter out problematic packages (Debian/Ubuntu packages that don't work on Fedora)
 shopt -s nullglob
-dnf5 -y install \
-    $(find "/rpms/nvidia" -type f ! -name "*debuginfo*" ! -name "*debugsource*" ! -name "*libseccomp2*")
+dnf5 install -y \
+ /rpms/nvidia/libnvidia-cfg-* \
+ /rpms/nvidia/libnvidia-fbc-* \
+ /rpms/nvidia/libnvidia-gpucomp-* \
+ /rpms/nvidia/libnvidia-ml-* \
+ /rpms/nvidia/nvidia-driver-* \
+ /rpms/nvidia/nvidia-kmod-common-* \
+ /rpms/nvidia/nvidia-modprobe-5* \
+ /rpms/nvidia/nvidia-persistenced-5* \
+ /rpms/nvidia/xorg-x11* \
+ /rpms/nvidia/nvidia-container-toolkit-1* \
+ /rpms/nvidia/nvidia-container-toolkit-base-1* \
+ /rpms/nvidia/libnvidia-container1-1* \
+ /rpms/nvidia/libnvidia-container-tools-1* \
+ ${VARIANT_PKGS}
 
-rm -f /usr/share/vulkan/icd.d/nouveau_icd.*.json
-ln -s libnvidia-ml.so.1 /usr/lib64/libnvidia-ml.so
+# Remove problematic packages
+dnf5 -y remove nvidia-gpu-firmware || true
+
+# Disable staging
+sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_ublue-os-staging.repo
+
+# Enable services
+systemctl enable ublue-nvctk-cdi.service 2>/dev/null || true
+
+# Install SELinux policies
+if [ -f /usr/share/selinux/packages/nvidia-container.pp ]; then
+ semodule --verbose --install /usr/share/selinux/packages/nvidia-container.pp || true
+fi
+
+# Universal Blue specific Initramfs fixes
+if [ -f /etc/modprobe.d/nvidia-modeset.conf ]; then
+ cp /etc/modprobe.d/nvidia-modeset.conf /usr/lib/modprobe.d/nvidia-modeset.conf
+fi
+
+# we must force driver load to fix black screen on boot for nvidia desktops
+if [ -f /usr/lib/dracut/dracut.conf.d/99-nvidia.conf ]; then
+ sed -i 's@omit_drivers@force_drivers@g' /usr/lib/dracut/dracut.conf.d/99-nvidia.conf
+ # as we need forced load, also must pre-load intel/amd iGPU else chromium web browsers fail to use hardware acceleration
+ sed -i 's@ nvidia @ i915 amdgpu nvidia @g' /usr/lib/dracut/dracut.conf.d/99-nvidia.conf
+fi
+
+# Remove nouveau Vulkan ICD
+rm -f /usr/share/vulkan/icd.d/nouveau_icd.*.json || true
+ln -s libnvidia-ml.so.1 /usr/lib64/libnvidia-ml.so 2>/dev/null || true
