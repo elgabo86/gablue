@@ -6,7 +6,6 @@ set -eoux pipefail
 systemctl enable -f system-flatpak-setup.service
 systemctl enable -f earlyoom.service
 
-systemctl disable -f scx.service
 systemctl disable -f scx_loader.service
 systemctl disable -f tailscaled.service
 systemctl disable -f displaylink.service

@@ -28,7 +28,7 @@ jobs:
             variant: "main"
             source_image: "kinoite"
             source_suffix: "-main"
-            fedora_version: "42"
+            fedora_version: "43"
             kernel_type: "bazzite"
             kernel_version: ""
           - name: "gablue-nvidia"
@@ -36,7 +36,7 @@ jobs:
             variant: "nvidia"
             source_image: "kinoite"
             source_suffix: "-main"
-            fedora_version: "42"
+            fedora_version: "43"
             kernel_type: "bazzite"
             kernel_version: ""
           - name: "gablue-nvidia-open"
@@ -44,7 +44,7 @@ jobs:
             variant: "nvidia-open"
             source_image: "kinoite"
             source_suffix: "-main"
-            fedora_version: "42"
+            fedora_version: "43"
             kernel_type: "bazzite"
             kernel_version: ""
           - name: "gablue-main-test"
@@ -62,31 +62,32 @@ jobs:
       id-token: write
 
     steps:
-      # Étape pour récupérer le dernier tag bazzite correspondant à fedora_version
+      # Étape pour récupérer la version du kernel via skopeo inspect
       - name: Get latest kernel version
         id: get_kernel_version
         if: matrix.image.kernel_version == ''
         run: |
-          # Lister les tags du conteneur, filtrer par fedora_version
-          TAGS=$(skopeo list-tags docker://ghcr.io/ublue-os/akmods | \
-            jq -r --arg fedora_version "${{ matrix.image.fedora_version }}" \
-            '.Tags[] | select(startswith("bazzite-" + $fedora_version + "-") and match("bazzite-" + $fedora_version + "-([0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+)\\.bazzite\\.fc[0-9]+\\.x86_64"))' | \
-            sort -r | head -n 1)
+          # Construire l'URI du conteneur kernel
+          KERNEL_URI="ghcr.io/bazzite-org/kernel-bazzite:latest-f${{ matrix.image.fedora_version }}-x86_64"
 
-          if [[ -z "$TAGS" ]]; then
-            echo "Erreur : Aucun tag bazzite trouvé pour Fedora ${{ matrix.image.fedora_version }} dans ghcr.io/ublue-os/akmods"
+          echo "Kernel URI: $KERNEL_URI"
+
+          # Utiliser skopeo inspect pour récupérer les labels
+          KERNEL_INFO=$(skopeo inspect "docker://$KERNEL_URI")
+          if [[ -z "$KERNEL_INFO" ]]; then
+            echo "Erreur : Impossible de récupérer les informations du kernel depuis $KERNEL_URI"
             exit 1
           fi
 
-          # Extraire la version du noyau (par exemple, 6.13.9-104)
-          if [[ "$TAGS" =~ bazzite-[0-9]+-([0-9]+\.[0-9]+\.[0-9]+-[0-9]+)\.bazzite\.fc[0-9]+\.x86_64 ]]; then
-            KERNEL_VERSION="${BASH_REMATCH[1]}"
-          else
-            echo "Erreur : Impossible d'extraire la version du noyau depuis $TAGS"
-            exit 1
+          # Extraire la version du kernel depuis les labels (ou utiliser "latest" comme fallback)
+          KERNEL_VERSION=$(echo "$KERNEL_INFO" | jq -r '.config.config.Labels["org.bazzite.kernel.version"] // "latest"')
+
+          # Fallback: si le label n'existe pas, on utilise "latest" et on extraira depuis le tag plus tard
+          if [[ "$KERNEL_VERSION" == "null" ]] || [[ -z "$KERNEL_VERSION" ]]; then
+            KERNEL_VERSION="latest"
           fi
 
-          echo "LATEST_TAG=$TAGS" >> $GITHUB_OUTPUT
+          echo "LATEST_TAG=$KERNEL_URI" >> $GITHUB_OUTPUT
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_OUTPUT
 
       # Étape pour définir la version du noyau

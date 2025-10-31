@@ -6,11 +6,8 @@ ARG FEDORA_VERSION
 ARG KERNEL_TYPE
 ARG KERNEL_VERSION
 
-# Étape intermédiaire : récupération des paquets akmods depuis une image préconstruite
-FROM ghcr.io/ublue-os/akmods:${KERNEL_TYPE}-${FEDORA_VERSION}-${KERNEL_VERSION}.${KERNEL_TYPE}.fc${FEDORA_VERSION}.x86_64 AS akmods
-
-# Étape intermédiaire : récupération des paquets akmods-extra
-FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_TYPE}-${FEDORA_VERSION}-${KERNEL_VERSION}.${KERNEL_TYPE}.fc${FEDORA_VERSION}.x86_64 AS akmods-extra
+# Étape intermédiaire : récupération du kernel depuis le conteneur OCI bazzite
+FROM ghcr.io/bazzite-org/kernel-bazzite:latest-f${FEDORA_VERSION}-x86_64 AS akmods
 
 # Étape intermédiaire : création d'un contexte pour copier les scripts
 FROM scratch AS ctx
@@ -43,9 +40,8 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5 \
 # Installation du kernel
 RUN --mount=type=cache,dst=/var/cache/libdnf5 \
     --mount=type=cache,dst=/var/cache/rpm-ostree \
-    --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/tmp/kernel-rpms \
-    --mount=type=bind,from=akmods,src=/rpms,dst=/tmp/akmods-rpms \
-    --mount=type=bind,from=akmods-extra,src=/rpms,dst=/tmp/akmods-extra-rpms \
+    --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/rpms/kernel \
+    --mount=type=bind,from=akmods,src=/rpms,dst=/rpms \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=tmpfs,dst=/tmp \
     sh /ctx/kernel && \
