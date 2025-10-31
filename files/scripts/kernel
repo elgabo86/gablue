@@ -44,7 +44,8 @@ shopt -s nullglob
 PKG_PAT=()
 for pkg in "${pkgs[@]}"; do
  # Look for kernel packages in /rpms/kernel/
- for file in "/rpms/kernel/${pkg}-"*.rpm; do
+ # Use - for exact match: kernel-6... (not kernel-nvidia-6...)
+ for file in "/rpms/kernel/${pkg}-6"*.rpm; do
      [ -f "$file" ] && PKG_PAT+=("$file")
  done
 done
