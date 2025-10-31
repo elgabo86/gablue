@@ -6,20 +6,16 @@ set -eoux pipefail
 dnf5 -y remove --no-autoremove kernel kernel-core kernel-modules kernel-modules-core kernel-modules-extra
 
 # Install kernel from OCI container
+# With bazzite OCI kernel, we mount src=/ to dst=/rpms/kernel, so RPMs are in /rpms/kernel/kernel-rpms/
 shopt -s nullglob
-dnf5 -y install \
-    /rpms/kernel/*.rpm
+KERNEL_RPMS=(/rpms/kernel/kernel-rpms/*.rpm)
+if [ ${#KERNEL_RPMS[@]} -gt 0 ] && [ -f "${KERNEL_RPMS[0]}" ]; then
+    dnf5 -y install "${KERNEL_RPMS[@]}"
+fi
 
 dnf5 versionlock add kernel kernel-devel kernel-devel-matched kernel-core kernel-modules kernel-modules-core kernel-modules-extra kernel-uki-virt
 
-# Install additional kmods
-shopt -s nullglob
-dnf5 -y install \
-    /rpms/*kvmfr*.rpm \
-    /rpms/*xone*.rpm \
-    /rpms/*openrazer*.rpm \
-    /rpms/*v4l2loopback*.rpm \
-    /rpms/*wl*.rpm
+# Additional kmods will be handled by bazzite kernel image or omitted for now
 
 dnf5 -y copr enable bieszczaders/kernel-cachyos-addons && \
 dnf5 -y install \
