@@ -2,10 +2,10 @@
 
 set -eoux pipefail
 
-# Force update all packages to avoid version mixing
-# Update all packages to latest version before installing additional packages
+# Lock plasma-desktop version to avoid version mixing
+# This prevents plasma-desktop from being upgraded during package installation
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
-    dnf5 -y update --refresh
+    dnf5 versionlock add plasma-desktop
 fi
 
 #Tools-cli

@@ -2,6 +2,12 @@
 
 set -eoux pipefail
 
+# Lock plasma-desktop version to avoid version mixing
+# This prevents plasma-desktop from being upgraded during package installation
+if [ "$SOURCE_IMAGE" == "kinoite" ]; then
+    dnf5 versionlock add plasma-desktop
+fi
+
 #Tools-cli
 dnf5 -y install \
 ublue-brew \
