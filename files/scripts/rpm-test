@@ -2,6 +2,12 @@
 
 set -eoux pipefail
 
+# Force Plasma update to avoid version mixing
+# Update all Plasma components to latest version before installing packages
+if [ "$SOURCE_IMAGE" == "kinoite" ]; then
+    dnf5 -y update @plasma-desktop-environment-core --refresh
+fi
+
 #Tools-cli
 dnf5 -y install \
 ublue-brew \
