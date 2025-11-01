@@ -82,7 +82,7 @@ jobs:
           BUILD_TAGS+=("${SHA_SHORT}")
           BUILD_TAGS+=("${TIMESTAMP}")
           BUILD_TAGS+=("${TIMESTAMPWT}")
-          BUILD_TAGS+=("test-latest")
+          BUILD_TAGS+=("latest")
           alias_tags=("${BUILD_TAGS[@]}")
           echo "alias_tags=${alias_tags[*]}" >> $GITHUB_OUTPUT
           echo "alias_date=${TIMESTAMPWT}" >> $GITHUB_OUTPUT
@@ -134,7 +134,6 @@ jobs:
           for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
             podman tag $IMAGE gablue-main-test:$tag
           done
-          podman tag $IMAGE gablue-main-test:test-latest
           podman tag $IMAGE rechunked-img
 
       # Conversion registre en minuscules
