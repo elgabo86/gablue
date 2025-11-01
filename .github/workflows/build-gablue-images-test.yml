@@ -130,8 +130,10 @@ jobs:
         run: |
           IMAGE=$(podman pull ${{ steps.rechunk.outputs.ref }})
           sudo rm -rf ${{ steps.rechunk.outputs.output }}
-          podman tag $IMAGE gablue-main-test:${{ steps.generate-tags.outputs.alias_tags }}
-          podman tag $IMAGE gablue-main-test:${{ steps.generate-tags.outputs.alias_date }}
+          # Tag every tag from alias_tags array
+          for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
+            podman tag $IMAGE gablue-main-test:$tag
+          done
           podman tag $IMAGE gablue-main-test:test-latest
           podman tag $IMAGE rechunked-img
 
