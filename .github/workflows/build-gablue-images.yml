@@ -47,14 +47,6 @@ jobs:
             fedora_version: "43"
             kernel_type: "bazzite"
             kernel_version: ""
-          - name: "gablue-main-test"
-            desc: "Gablue main test image"
-            variant: "main"
-            source_image: "kinoite"
-            source_suffix: "-main"
-            fedora_version: "43"
-            kernel_type: "bazzite"
-            kernel_version: ""
 
     permissions:
       contents: read
