@@ -68,7 +68,7 @@ jobs:
 
       # Optimisation de l'espace
       - name: Maximize build space
-        uses: ublue-os/remove-unwanted-software@v8
+        uses: ublue-os/remove-unwanted-software@v9
 
       # Génération des tags
       - name: Generate tags
