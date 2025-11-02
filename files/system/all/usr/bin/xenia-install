@@ -11,13 +11,18 @@ CACHE_DIR="$HOME/.cache/xenia"
 APPIMAGES_DIR="$HOME/AppImages"
 mkdir -p "$CACHE_DIR"
 
-# Vérifier si une version est déjà installée et la supprimer
-INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -name "xenia*.AppImage" | grep -i edge | head -n1 || true)
+# Vérifier et supprimer TOUTES les versions installées de Xenia Edge
+echo "Recherche et suppression des versions existantes de Xenia Edge..."
+for appimage in $(find "$APPIMAGES_DIR" -name "xenia*.AppImage" | grep -i edge || true); do
+    echo "Suppression de: $appimage"
+    yes | flatpak run it.mijorus.gearlever --remove "$appimage" 2>/dev/null || true
+done
 
-if [ -n "$INSTALLED_APPIMAGE" ]; then
-    echo "Suppression de la version installée existante."
-    yes | flatpak run it.mijorus.gearlever --remove "$INSTALLED_APPIMAGE" 2>/dev/null || true
-fi
+# Nettoyer également les entrées desktop potentiellement multiples
+for desktop_file in $(find "$HOME/.local/share/applications" -name "xenia_edge*.desktop" 2>/dev/null || true); do
+    echo "Suppression du fichier desktop: $desktop_file"
+    rm -f "$desktop_file"
+done
 
 # Obtenir les infos de la dernière release via GitHub API
 RELEASE_JSON=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest")
