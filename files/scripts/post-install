@@ -134,3 +134,7 @@ rm -f /etc/grub.d/30_os-prober
 
 # Remove flatpak verification at each boot
 sed -i -E 's|(; /usr/bin/flatpak --system repair)$||' /usr/lib/systemd/system/flatpak-system-update.service
+
+# Fix SDDM startup - wait for driver loading to be complete
+# (https://github.com/sddm/sddm/issues/1917)
+sed -i '/^StartLimitBurst=2$/a # Wait for driver loading to be complete so that graphics work\n# (https://github.com/sddm/sddm/issues/1917)\nWants=systemd-udev-settle.service\nAfter=systemd-udev-settle.service' /usr/lib/systemd/system/sddm.service
