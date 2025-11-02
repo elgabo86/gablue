@@ -24,7 +24,7 @@ check_internet_connection() {
 }
 
 # Opt out of and remove Fedora's system flatpak repos
-FLATPAK_SYSTEM_REMOTES=($(flatpak --system remotes))
+FLATPAK_SYSTEM_REMOTES=($(flatpak --system remotes --show-disabled))
 
 fedora_system=false
 fedora_testing_system=false
