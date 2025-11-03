@@ -8,6 +8,20 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     dnf5 versionlock add plasma-desktop
 fi
 
+# Fix SDDM startup - install specific KWin packages and lock them
+# Prevents SDDM/KWin issues by using working KWin version
+# (https://github.com/ublue-os/bazzite/commit/1ad684382338b51b0080aee6aa8aefabe1dbfe11)
+if [ "$SOURCE_IMAGE" == "kinoite" ]; then
+    dnf5 -y install --allowerasing \
+https://kojipkgs.fedoraproject.org/packages/kwin/6.5.1/2.fc43/x86_64/kwin-6.5.1-2.fc43.x86_64.rpm \
+https://kojipkgs.fedoraproject.org/packages/kwin/6.5.1/2.fc43/x86_64/kwin-common-6.5.1-2.fc43.x86_64.rpm \
+https://kojipkgs.fedoraproject.org/packages/kwin/6.5.1/2.fc43/x86_64/kwin-libs-6.5.1-2.fc43.x86_64.rpm && \
+dnf5 versionlock add \
+kwin \
+kwin-common \
+kwin-libs
+fi
+
 #Tools-cli
 dnf5 -y install \
 ublue-brew \
