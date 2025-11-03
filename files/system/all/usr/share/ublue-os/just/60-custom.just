@@ -405,15 +405,59 @@ toggle-iwd:
 # Install ble and atuin, for history bash sync and more
 atuin-setup:
     #!/usr/bin/bash
-    curl -L -o ble-nightly.tar.xz https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz &&
-    tar xJf ble-nightly.tar.xz &&
-    bash ble-nightly/ble.sh --install ~/.local/share &&
-    rm -rf ble-nightly &&
-    rm -f ble-nightly.tar.xz &&
-    echo 'source ~/.local/share/blesh/ble.sh' >> ~/.bashrc &&
-    echo 'eval "$(atuin init bash --disable-up-arrow)"' >> ~/.bashrc &&
-    echo "Atuin is ready!" ||
-    echo "Error..."
+    set -e
+
+    # Install ble.sh (optional, for syntax highlighting)
+    if [ ! -d "~/.local/share/blesh" ]; then
+        echo "Installing ble.sh for syntax highlighting..."
+        curl -L -o ble-nightly.tar.xz https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz
+        tar xJf ble-nightly.tar.xz
+        bash ble-nightly/ble.sh --install ~/.local/share
+        rm -rf ble-nightly
+        rm -f ble-nightly.tar.xz
+    fi
+
+    # Configure for bash only
+    BASHRC="$HOME/.bashrc"
+    BASH_PROFILE="$HOME/.bash_profile"
+
+    # Determine which file to use (prefer .bashrc if it exists and is sourced from .bash_profile)
+    if [ -f "$BASHRC" ]; then
+        CONFIG_FILE="$BASHRC"
+    elif [ -f "$BASH_PROFILE" ]; then
+        CONFIG_FILE="$BASH_PROFILE"
+    else
+        CONFIG_FILE="$BASHRC"
+        touch "$CONFIG_FILE"
+    fi
+
+    # Check if configuration already exists
+    CONFIG_BLOCK='if [ -x /bin/atuin ]; then
+    if [[ "$TERM_PROGRAM" != "vscode" ]]; then
+        source ~/.local/share/blesh/ble.sh
+        eval "$(atuin init bash)"
+    fi
+fi'
+
+    if grep -q "if \[ -x /bin/atuin \]" "$CONFIG_FILE"; then
+        echo "Atuin configuration already exists in $CONFIG_FILE"
+    else
+        echo "" >> "$CONFIG_FILE"
+        echo "# ble.sh - syntax highlighting and auto-suggestions" >> "$CONFIG_FILE"
+        echo "# Atuin - improved shell history" >> "$CONFIG_FILE"
+        echo "$CONFIG_BLOCK" >> "$CONFIG_FILE"
+        echo "Configuration added to $CONFIG_FILE"
+    fi
+
+    echo ""
+    echo "Configuration complete!"
+    echo "Atuin and ble.sh have been configured for bash."
+    echo "Please restart your terminal or run 'source ~/.bashrc' to start using them."
+    echo ""
+    echo "Usage tips:"
+    echo "  - Use 'atuin history' to search your command history"
+    echo "  - Use arrow keys to navigate history"
+    echo "  - Press Ctrl+R to start a reverse search"
 
 # Install pyenv
 pyenv-setup:
