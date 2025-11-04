@@ -5,9 +5,7 @@ set -eoux pipefail
 #Fix gpg error on dnf5 install
 mkdir -p /var/roothome && \
 
-# Configure repositories following Bazzite pattern to avoid mesa conflicts
-# This ensures terra-mesa priority and prevents i686/x86_64 conflicts
-dnf5 -y config-manager setopt "*terra*".priority=3 "*terra*".exclude="nerd-fonts topgrade scx-scheds steam python3-protobuf"
+# Configure repository exclusions for fedora and rpmfusion (terra will be configured after installation)
 dnf5 -y config-manager setopt "*fedora*".exclude="mesa-* kernel-core-* kernel-modules-* kernel-uki-virt-*"
 dnf5 -y config-manager setopt "*rpmfusion*".exclude="mesa-*"
 
@@ -38,5 +36,8 @@ dnf5 -y config-manager setopt terra-mesa.enabled=1
 if [ "$VARIANT" == "nvidia" ] || [ "$VARIANT" == "nvidia-open" ]; then
     dnf5 -y config-manager setopt terra-nvidia.enabled=1
 fi
+
+# Configure terra repository exclusions (now available after terra installation)
+dnf5 -y config-manager setopt "*terra*".priority=3 "*terra*".exclude="nerd-fonts topgrade scx-scheds steam python3-protobuf"
 
 sed -i 's@enabled=0@enabled=1@g' /etc/yum.repos.d/negativo17-fedora-multimedia.repo
