@@ -29,7 +29,7 @@ dx-group:
         local current_user="$1"
         shift
         local groups_to_add=("$@")
-        
+
         for group_name in "${groups_to_add[@]}"; do
             if ! grep -q "^$group_name:" /etc/group; then
                 if grep -q "^$group_name:" /usr/lib/group; then
@@ -40,7 +40,7 @@ dx-group:
                     continue
                 fi
             fi
-            
+
             # Ajouter l'utilisateur au groupe
             usermod -aG "$group_name" "$current_user"
             echo "Added $current_user to group $group_name"
@@ -134,18 +134,6 @@ cpuid-fix-off:
     rpm-ostree kargs --delete-if-present=clearcpuid=514
     echo "ALL DONE!!!"
 
-# Enable update notification
-show-update:
-    #!/usr/bin/bash
-    sudo sed -i 's/dbus_notify = false/dbus_notify = true/g' /etc/ublue-update/ublue-update.toml
-    echo "ALL DONE!!!"
-
-# Disable update notification
-hide-update:
-    #!/usr/bin/bash
-    sudo sed -i 's/dbus_notify = true/dbus_notify = false/g' /etc/ublue-update/ublue-update.toml
-    echo "ALL DONE!!!"
-
 # Remove grub double entry
 fix-grub-double-entry:
     #!/usr/bin/bash
@@ -164,20 +152,6 @@ kernel-setup:
     #!/usr/bin/bash
     rpm-ostree kargs --delete-if-present=preempt=full --append-if-missing=bluetooth.disable_ertm=1 &&
     echo "Done!"
-
-# Enable wl legacy
-wl-enable:
-    #!/usr/bin/bash
-    sudo rm -f /etc/modprobe.d/broadcom-wl-blacklist.conf
-    sudo rm -f /etc/modprobe.d/default-disable-broadcom-wl.conf
-    echo "Done! Please reboot!"
-
-# Disable wl legacy
-wl-disable:
-    #!/usr/bin/bash
-    sudo bash -c '> /etc/modprobe.d/broadcom-wl-blacklist.conf'
-    sudo bash -c 'echo "blacklist wl" > /etc/modprobe.d/default-disable-broadcom-wl.conf'
-    echo "Done! Please reboot!"
 
 # Enable tailscale + firewall rules & connect to private network
 tailscale-up:
@@ -405,59 +379,15 @@ toggle-iwd:
 # Install ble and atuin, for history bash sync and more
 atuin-setup:
     #!/usr/bin/bash
-    set -e
-
-    # Install ble.sh (optional, for syntax highlighting)
-    if [ ! -d "~/.local/share/blesh" ]; then
-        echo "Installing ble.sh for syntax highlighting..."
-        curl -L -o ble-nightly.tar.xz https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz
-        tar xJf ble-nightly.tar.xz
-        bash ble-nightly/ble.sh --install ~/.local/share
-        rm -rf ble-nightly
-        rm -f ble-nightly.tar.xz
-    fi
-
-    # Configure for bash only
-    BASHRC="$HOME/.bashrc"
-    BASH_PROFILE="$HOME/.bash_profile"
-
-    # Determine which file to use (prefer .bashrc if it exists and is sourced from .bash_profile)
-    if [ -f "$BASHRC" ]; then
-        CONFIG_FILE="$BASHRC"
-    elif [ -f "$BASH_PROFILE" ]; then
-        CONFIG_FILE="$BASH_PROFILE"
-    else
-        CONFIG_FILE="$BASHRC"
-        touch "$CONFIG_FILE"
-    fi
-
-    # Check if configuration already exists
-    CONFIG_BLOCK='if [ -x /bin/atuin ]; then
-    if [[ "$TERM_PROGRAM" != "vscode" ]]; then
-        source ~/.local/share/blesh/ble.sh
-        eval "$(atuin init bash)"
-    fi
-fi'
-
-    if grep -q "if \[ -x /bin/atuin \]" "$CONFIG_FILE"; then
-        echo "Atuin configuration already exists in $CONFIG_FILE"
-    else
-        echo "" >> "$CONFIG_FILE"
-        echo "# ble.sh - syntax highlighting and auto-suggestions" >> "$CONFIG_FILE"
-        echo "# Atuin - improved shell history" >> "$CONFIG_FILE"
-        echo "$CONFIG_BLOCK" >> "$CONFIG_FILE"
-        echo "Configuration added to $CONFIG_FILE"
-    fi
-
-    echo ""
-    echo "Configuration complete!"
-    echo "Atuin and ble.sh have been configured for bash."
-    echo "Please restart your terminal or run 'source ~/.bashrc' to start using them."
-    echo ""
-    echo "Usage tips:"
-    echo "  - Use 'atuin history' to search your command history"
-    echo "  - Use arrow keys to navigate history"
-    echo "  - Press Ctrl+R to start a reverse search"
+    curl -L -o ble-nightly.tar.xz https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz &&
+    tar xJf ble-nightly.tar.xz &&
+    bash ble-nightly/ble.sh --install ~/.local/share &&
+    rm -rf ble-nightly &&
+    rm -f ble-nightly.tar.xz &&
+    echo 'source ~/.local/share/blesh/ble.sh' >> ~/.bashrc &&
+    echo 'eval "$(atuin init bash --disable-up-arrow)"' >> ~/.bashrc &&
+    echo "Atuin is ready!" ||
+    echo "Error..."
 
 # Install pyenv
 pyenv-setup:
@@ -574,21 +504,6 @@ windows-remove:
     rm ~/.local/share/kio/servicemenus/InstallWinReg.desktop &&
     update-desktop-database ~/.local/share/applications &&
     echo "ALL DONE!!!"
-
-# Fix hdmi/dp/usb audio drop
-audio-fix-enable:
-    #!/usr/bin/bash
-    mkdir -p ~/.config/wireplumber/wireplumber.conf.d/ &&
-    cp -f /usr/share/ublue-os/gablue/fixes/50-sound-drop-fix.conf ~/.config/wireplumber/wireplumber.conf.d/ &&
-    systemctl restart --user pipewire.socket wireplumber.service &&
-    echo "Audio fix is installed"
-
-# Disable fix for hdmi/dp/usb audio drop
-audio-fix-disable:
-    #!/usr/bin/bash
-    rm -f ~/.config/wireplumber/wireplumber.conf.d/50-sound-drop-fix.conf &&
-    systemctl restart --user pipewire.socket wireplumber.service &&
-    echo "Audio fix is removed"
 
 # Enable special scheduler for gaming (experimental)
 scx-enable:
