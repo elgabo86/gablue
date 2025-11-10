@@ -20,6 +20,9 @@
   # Kill des processus jellyfin et sober
   pkill -9 jellyfin &
   pkill -9 sober &
+
+  # Kill x2go
+  pkill -9 x2goclient &
 } > /dev/null 2>&1 &
 
 # Attendre que toutes les tâches en arrière-plan soient terminées (optionnel)
