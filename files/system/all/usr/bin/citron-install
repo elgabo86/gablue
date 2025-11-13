@@ -49,10 +49,16 @@ yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH"
 # Corriger le .desktop créé par GearLever pour enlever le versionning
 DESKTOP_DIR="$HOME/.local/share/applications"
 DESKTOP_FILE="$DESKTOP_DIR/citron.desktop"
+NEW_DESKTOP_FILE="$DESKTOP_DIR/Citron.desktop"
+
 if [ -f "$DESKTOP_FILE" ]; then
     # Corriger le nom dans le fichier pour enlever le versionning (avec hash)
-    sed -i 's/^Name=Citron (.*)$/Name=Citron/' "$DESKTOP_FILE"
-    sed -i 's/^Name=citron$/Name=Citron/' "$DESKTOP_FILE"
+    # Couvre les cas : "Citron (version)" et "citron (version)" et "citron"
+    sed -i 's/^Name=[Cc]itron\s*(.*)$/Name=Citron/' "$DESKTOP_FILE"
+    sed -i 's/^Name=[Cc]itron$/Name=Citron/' "$DESKTOP_FILE"
+    
+    # Renommer le fichier .desktop lui-même
+    mv "$DESKTOP_FILE" "$NEW_DESKTOP_FILE"
 fi
 
 # Nettoyer le cache si le fichier existe encore (GearLever le déplace normalement)
