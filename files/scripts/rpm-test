@@ -71,13 +71,11 @@ skanpage \
 x2goclient \
 mangohud \
 cool-retro-term \
+gamescope \
 cage \
 wlr-randr \
 earlyoom \
 rclone
-
-# Install gamescope depuis le dépôt Bazzite (même version que Bazzite)
-dnf5 -y install --repo copr:copr.fedorainfracloud.org:bazzite-org:bazzite gamescope gamescope-libs gamescope-shaders
 
 #Kde addons
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
