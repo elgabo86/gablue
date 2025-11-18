@@ -29,10 +29,10 @@ dnf5 -y install \
         https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm && \
 
 # Installation Terra pour Mesa plus récent (TOUTES les variantes l'ont maintenant)
-dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release terra-release-extras && \
+# terra-release-mesa active automatiquement le dépôt mesa terra
+dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release terra-release-extras terra-release-mesa && \
 
-# Activer le stream Mesa de Terra et terra-nvidia pour les variants NVIDIA
-dnf5 -y config-manager setopt terra-mesa.enabled=1
+# Activer terra-nvidia pour les variants NVIDIA seulement (terra-mesa est déjà activé par terra-release-mesa)
 if [ "$VARIANT" == "nvidia" ] || [ "$VARIANT" == "nvidia-open" ]; then
     dnf5 -y config-manager setopt terra-nvidia.enabled=1
 fi
