@@ -6,7 +6,7 @@ set -e
 user=$(whoami)
 dossieruser="~/Windows/UserData/$user"
 dxvkversion="dxvk-gplasync-v2.7.1-1"
-vkd3dversion="vkd3d-proton-2.14.1-19-25c8bbf"
+vkd3dversion="vkd3d-proton-3.0"
 nvapiversion="dxvk-nvapi-v0.9.0"
 latencyflexversion="latencyflex-v0.1.1-2-3bc9636"
 soda_version="soda-9.0-1"
@@ -379,7 +379,7 @@ if [ "$need_rebuild" = false ]; then
     qdbus $dbusRef Set "" "value" 80
     qdbus $dbusRef setLabelText "Récupération des programmes externes..."
     if [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml ] && [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml ]; then
-        python3 - <<EOF
+        /usr/bin/python3 - <<EOF
 import yaml
 import os
 
@@ -514,7 +514,7 @@ if [ "$need_rebuild" = true ]; then
 
     qdbus $dbusRef setLabelText "Récupération des programmes externes..."
     if [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml ] && [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml ]; then
-        python3 - <<EOF
+        /usr/bin/python3 - <<EOF
 import yaml
 import os
 
