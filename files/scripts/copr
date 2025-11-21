@@ -32,10 +32,7 @@ dnf5 -y install \
 # terra-release-mesa active automatiquement le dépôt mesa terra
 dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release terra-release-extras terra-release-mesa && \
 
-# Activer terra-nvidia pour les variants NVIDIA seulement (terra-mesa est déjà activé par terra-release-mesa)
-if [ "$VARIANT" == "nvidia" ] || [ "$VARIANT" == "nvidia-open" ]; then
-    dnf5 -y config-manager setopt terra-nvidia.enabled=1
-fi
+dnf5 -y config-manager setopt "terra-mesa".enabled=true && \
 
 # Configure terra repository exclusions (now available after terra installation)
 dnf5 -y config-manager setopt "*terra*".priority=3 "*terra*".exclude="nerd-fonts topgrade scx-scheds steam python3-protobuf"
