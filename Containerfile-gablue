@@ -52,6 +52,14 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5 \
     sh /ctx/kernel && \
     sh /ctx/cleanup
 
+# Installation Mesa Terra (TOUTES les variantes - AVANT NVIDIA pour éviter les conflits)
+RUN --mount=type=cache,dst=/var/cache/libdnf5 \
+    --mount=type=cache,dst=/var/cache/rpm-ostree \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    sh /ctx/mesa && \
+    sh /ctx/cleanup
+
 # Installation des pilotes NVIDIA (pour la variante nvidia uniquement)
 RUN --mount=type=cache,dst=/var/cache/libdnf5 \
     --mount=type=cache,dst=/var/cache/rpm-ostree \
@@ -81,16 +89,6 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5 \
     --mount=type=tmpfs,dst=/tmp \
     sh /ctx/rpm && \
     sh /ctx/cleanup
-
-# Installation Mesa Terra (seulement pour les variantes non-NVIDIA)
-RUN --mount=type=cache,dst=/var/cache/libdnf5 \
-    --mount=type=cache,dst=/var/cache/rpm-ostree \
-    --mount=type=bind,from=ctx,source=/,target=/ctx \
-    --mount=type=tmpfs,dst=/tmp \
-    if [ "$VARIANT" != "nvidia" ] && [ "$VARIANT" != "nvidia-open" ]; then \
-        sh /ctx/mesa && \
-        sh /ctx/cleanup; \
-    fi
 
 # Post-installation : configuration finale
 RUN --mount=type=cache,dst=/var/cache/libdnf5 \
