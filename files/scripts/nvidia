@@ -28,6 +28,8 @@ dnf5 install -y \
     /rpms/nvidia/libnvidia-fbc-* \
     /rpms/nvidia/libnvidia-gpucomp-* \
     /rpms/nvidia/libnvidia-ml-* \
+    /rpms/nvidia/nvidia-libXNVCtrl-5* \
+    /rpms/nvidia/nvidia-settings-5* \
     /rpms/nvidia/nvidia-driver-* \
     /rpms/nvidia/nvidia-kmod-common-* \
     /rpms/nvidia/nvidia-modprobe-5* \
@@ -37,6 +39,7 @@ dnf5 install -y \
     /rpms/nvidia/nvidia-container-toolkit-base-1* \
     /rpms/nvidia/libnvidia-container1-1* \
     /rpms/nvidia/libnvidia-container-tools-1* \
+    libva-nvidia-driver \
     ${VARIANT_PKGS}
 
 # Disable staging
