@@ -24,7 +24,7 @@ else
 fi
 
 # Désactiver temporairement le dépôt akmods pour éviter akmod-nvidia comme dépendance
-dnf5 -y config-manager setopt "*_copr_ublue-os-akmods*".enabled=0
+dnf5 -y config-manager setopt "*copr:copr.fedorainfracloud.org:ublue-os:akmods*".enabled=0
 
 dnf5 install -y \
     /rpms/nvidia/libnvidia-cfg-* \
@@ -46,7 +46,7 @@ dnf5 install -y \
     ${VARIANT_PKGS}
 
 # Réactiver le dépôt akmods après l'installation NVIDIA
-dnf5 -y config-manager setopt "*_copr_ublue-os-akmods*".enabled=1
+dnf5 -y config-manager setopt "*copr:copr.fedorainfracloud.org:ublue-os:akmods*".enabled=1
 
 # Disable staging
 sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_ublue-os-staging.repo
