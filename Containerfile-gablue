@@ -23,6 +23,7 @@ FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${FEDORA_VERSION}
 # Redéfinition des arguments après le FROM pour les rendre disponibles
 ARG VARIANT
 ARG SOURCE_IMAGE
+ARG DX_MODE
 
 # Copie des fichiers système dans l'image
 COPY files/scripts /ctx/
@@ -34,6 +35,7 @@ COPY files/system/${VARIANT} /
 # Définition des variables d'environnement pour les scripts
 ENV VARIANT=${VARIANT}
 ENV SOURCE_IMAGE=${SOURCE_IMAGE}
+ENV DX_MODE=${DX_MODE}
 
 # Configuration des dépôts Copr
 RUN --mount=type=cache,dst=/var/cache \
