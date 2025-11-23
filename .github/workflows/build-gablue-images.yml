@@ -14,7 +14,7 @@ env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"
 
 jobs:
-  build_push:
+  build:
     name: ${{ matrix.image.name }}-${{ matrix.image.fedora_version }}
     runs-on: ubuntu-24.04
     if: |
@@ -30,47 +30,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image:
-          - name: "gablue-main"
-            desc: "Gablue main image"
-            variant: "main"
-            source_image: "kinoite"
-            source_suffix: "-main"
-            fedora_version: "43"
-            kernel_type: "bazzite"
-            kernel_version: ""
-          - name: "gablue-nvidia"
-            desc: "Gablue nvidia image"
-            variant: "nvidia"
-            source_image: "kinoite"
-            source_suffix: "-main"
-            fedora_version: "43"
-            kernel_type: "bazzite"
-            kernel_version: ""
-          - name: "gablue-nvidia-open"
-            desc: "Gablue nvidia-open image"
-            variant: "nvidia-open"
-            source_image: "kinoite"
-            source_suffix: "-main"
-            fedora_version: "43"
-            kernel_type: "bazzite"
-            kernel_version: ""
-          - name: "gablue-main-dx"
-            desc: "Gablue main-dx image (développement avec virtualisation)"
-            variant: "main"
-            source_image: "kinoite"
-            source_suffix: "-main"
-            fedora_version: "43"
-            kernel_type: "bazzite"
-            kernel_version: ""
-          - name: "gablue-main-test"
-            desc: "Gablue main test image"
-            variant: "main"
-            source_image: "kinoite"
-            source_suffix: "-main"
-            fedora_version: "43"
-            kernel_type: "bazzite"
-            kernel_version: ""
+        include:
+          - ${{ contains(github.event.head_commit.message, '[test]') && fromJson('{"name": "gablue-main-test", "desc": "Gablue main test image", "variant": "main", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""}') || '' }}
+          - ${{ contains(github.event.head_commit.message, '[dx]') && fromJson('{"name": "gablue-main-dx", "desc": "Gablue main-dx image (développement avec virtualisation)", "variant": "main", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""}') || '' }}
+          - ${{ contains(github.event.head_commit.message, '[nvidia]') && fromJson('{"name": "gablue-nvidia", "desc": "Gablue nvidia image", "variant": "nvidia", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""}') || '' }}
+          - ${{ contains(github.event.head_commit.message, '[nvidia]') && fromJson('{"name": "gablue-nvidia-open", "desc": "Gablue nvidia-open image", "variant": "nvidia-open", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""}') || '' }}
+          - ${{ contains(github.event.head_commit.message, '[main]') && fromJson('{"name": "gablue-main", "desc": "Gablue main image", "variant": "main", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""}') || '' }}
+          - ${{ contains(github.event.head_commit.message, '[main]') && fromJson('{"name": "gablue-main-dx", "desc": "Gablue main-dx image (développement avec virtualisation)", "variant": "main", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""}') || '' }}
+          - ${{ (contains(github.event.head_commit.message, '[all]') || github.event_name != 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJson('[
+            {"name": "gablue-main", "desc": "Gablue main image", "variant": "main", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""},
+            {"name": "gablue-nvidia", "desc": "Gablue nvidia image", "variant": "nvidia", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""},
+            {"name": "gablue-nvidia-open", "desc": "Gablue nvidia-open image", "variant": "nvidia-open", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""},
+            {"name": "gablue-main-dx", "desc": "Gablue main-dx image (développement avec virtualisation)", "variant": "main", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""},
+            {"name": "gablue-main-test", "desc": "Gablue main test image", "variant": "main", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""}]') || '' }}
 
     permissions:
       contents: read
@@ -177,13 +149,7 @@ jobs:
       # Construction de l'image
       - name: Build Image
         id: build_image
-        if: |
-          contains(github.event.head_commit.message, '[all]') ||
-          (contains(github.event.head_commit.message, '[test]') && matrix.image.name == 'gablue-main-test') ||
-          (contains(github.event.head_commit.message, '[dx]') && matrix.image.name == 'gablue-main-dx') ||
-          (contains(github.event.head_commit.message, '[nvidia]') && contains(matrix.image.name, 'nvidia')) ||
-          (contains(github.event.head_commit.message, '[main]') && (matrix.image.name == 'gablue-main' || matrix.image.name == 'gablue-main-dx')) ||
-          github.event_name != 'push'
+        # Le filtrage est déjà fait au niveau de la matrix
         shell: bash
         run: |
           # Choisir le bon Containerfile selon la variante
