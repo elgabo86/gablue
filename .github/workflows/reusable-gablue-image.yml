@@ -1,48 +1,39 @@
-name: build-gablue-images
+name: Reusable Build Image
 on:
-  pull_request:
-    branches:
-      - main
-  schedule:
-    - cron: "00 06 * * *"
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      image_name:
+        required: true
+        type: string
+      image_desc:
+        required: true
+        type: string
+      image_variant:
+        required: true
+        type: string
+      source_image:
+        required: true
+        type: string
+      source_suffix:
+        required: true
+        type: string
+      fedora_version:
+        required: true
+        type: string
+      kernel_type:
+        required: true
+        type: string
+      kernel_version:
+        required: true
+        type: string
 
 env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"
 
 jobs:
   build:
-    name: ${{ matrix.image.name }}-${{ matrix.image.fedora_version }}
+    name: ${{ inputs.image_name }}-${{ inputs.fedora_version }}
     runs-on: ubuntu-24.04
-    if: |
-      github.event_name != 'push' ||
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, '[all]') ||
-      contains(github.event.head_commit.message, '[test]') ||
-      contains(github.event.head_commit.message, '[dx]') ||
-      contains(github.event.head_commit.message, '[nvidia]') ||
-      contains(github.event.head_commit.message, '[main]')
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - ${{ contains(github.event.head_commit.message, '[test]') && fromJson('{"name": "gablue-main-test", "desc": "Gablue main test image", "variant": "main", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""}') || '' }}
-          - ${{ contains(github.event.head_commit.message, '[dx]') && fromJson('{"name": "gablue-main-dx", "desc": "Gablue main-dx image (développement avec virtualisation)", "variant": "main", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""}') || '' }}
-          - ${{ contains(github.event.head_commit.message, '[nvidia]') && fromJson('{"name": "gablue-nvidia", "desc": "Gablue nvidia image", "variant": "nvidia", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""}') || '' }}
-          - ${{ contains(github.event.head_commit.message, '[nvidia]') && fromJson('{"name": "gablue-nvidia-open", "desc": "Gablue nvidia-open image", "variant": "nvidia-open", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""}') || '' }}
-          - ${{ contains(github.event.head_commit.message, '[main]') && fromJson('{"name": "gablue-main", "desc": "Gablue main image", "variant": "main", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""}') || '' }}
-          - ${{ contains(github.event.head_commit.message, '[main]') && fromJson('{"name": "gablue-main-dx", "desc": "Gablue main-dx image (développement avec virtualisation)", "variant": "main", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""}') || '' }}
-          - ${{ (contains(github.event.head_commit.message, '[all]') || github.event_name != 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJson('[
-            {"name": "gablue-main", "desc": "Gablue main image", "variant": "main", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""},
-            {"name": "gablue-nvidia", "desc": "Gablue nvidia image", "variant": "nvidia", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""},
-            {"name": "gablue-nvidia-open", "desc": "Gablue nvidia-open image", "variant": "nvidia-open", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""},
-            {"name": "gablue-main-dx", "desc": "Gablue main-dx image (développement avec virtualisation)", "variant": "main", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""},
-            {"name": "gablue-main-test", "desc": "Gablue main test image", "variant": "main", "source_image": "kinoite", "source_suffix": "-main", "fedora_version": "43", "kernel_type": "bazzite", "kernel_version": ""}]') || '' }}
 
     permissions:
       contents: read
@@ -53,10 +44,10 @@ jobs:
       # Étape pour récupérer la version du kernel via skopeo inspect
       - name: Get latest kernel version
         id: get_kernel_version
-        if: matrix.image.kernel_version == ''
+        if: inputs.kernel_version == ''
         run: |
           # Construire l'URI du conteneur kernel
-          KERNEL_URI="ghcr.io/bazzite-org/kernel-bazzite:latest-f${{ matrix.image.fedora_version }}-x86_64"
+          KERNEL_URI="ghcr.io/bazzite-org/kernel-bazzite:latest-f${{ inputs.fedora_version }}-x86_64"
 
           echo "Kernel URI: $KERNEL_URI"
 
@@ -91,12 +82,12 @@ jobs:
         id: determine_kernel_version
         shell: bash
         run: |
-          if [[ -n "${{ matrix.image.kernel_version }}" ]]; then
-            KERNEL_VERSION="${{ matrix.image.kernel_version }}"
+          if [[ -n "${{ inputs.kernel_version }}" ]]; then
+            KERNEL_VERSION="${{ inputs.kernel_version }}"
           elif [[ -n "${{ steps.get_kernel_version.outputs.KERNEL_VERSION }}" ]]; then
             KERNEL_VERSION="${{ steps.get_kernel_version.outputs.KERNEL_VERSION }}"
           else
-            echo "Erreur : Aucune version du noyau spécifiée ou trouvée pour Fedora ${{ matrix.image.fedora_version }}"
+            echo "Erreur : Aucune version du noyau spécifiée ou trouvée pour Fedora ${{ inputs.fedora_version }}"
             exit 1
           fi
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_OUTPUT
@@ -140,20 +131,19 @@ jobs:
         uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ${{ matrix.image.name }}
+          images: ${{ inputs.image_name }}
           labels: |
             io.artifacthub.package.readme-url=https://raw.githubusercontent.com/${{ github.repository }}/main/README.md
-            org.opencontainers.image.description=${{ matrix.image.desc }}
-            org.opencontainers.image.title=${{ matrix.image.name }}
+            org.opencontainers.image.description=${{ inputs.image_desc }}
+            org.opencontainers.image.title=${{ inputs.image_name }}
 
       # Construction de l'image
       - name: Build Image
         id: build_image
-        # Le filtrage est déjà fait au niveau de la matrix
         shell: bash
         run: |
           # Choisir le bon Containerfile selon la variante
-          if [[ "${{ matrix.image.name }}" == "gablue-main-test" ]]; then
+          if [[ "${{ inputs.image_name }}" == "gablue-main-test" ]]; then
             CONTAINERFILE="Containerfile-gablue-test"
           else
             CONTAINERFILE="Containerfile-gablue"
@@ -161,7 +151,7 @@ jobs:
 
           # Définir DX_MODE pour la variante main-dx
           DX_MODE_ARG=""
-          if [[ "${{ matrix.image.name }}" == "gablue-main-dx" ]]; then
+          if [[ "${{ inputs.image_name }}" == "gablue-main-dx" ]]; then
             DX_MODE_ARG="--build-arg DX_MODE=true"
           fi
 
@@ -170,11 +160,11 @@ jobs:
             --format "docker" \
             --build-arg KERNEL_VERSION="${{ steps.determine_kernel_version.outputs.KERNEL_VERSION }}" \
             --build-arg NVIDIA_VERSION="${{ steps.get_kernel_version.outputs.NVIDIA_VERSION }}" \
-            --build-arg VARIANT="${{ matrix.image.variant }}" \
-            --build-arg SOURCE_IMAGE="${{ matrix.image.source_image }}" \
-            --build-arg SOURCE_SUFFIX="${{ matrix.image.source_suffix }}" \
-            --build-arg FEDORA_VERSION="${{ matrix.image.fedora_version }}" \
-            --build-arg KERNEL_TYPE="${{ matrix.image.kernel_type }}" \
+            --build-arg VARIANT="${{ inputs.image_variant }}" \
+            --build-arg SOURCE_IMAGE="${{ inputs.source_image }}" \
+            --build-arg SOURCE_SUFFIX="${{ inputs.source_suffix }}" \
+            --build-arg FEDORA_VERSION="${{ inputs.fedora_version }}" \
+            --build-arg KERNEL_TYPE="${{ inputs.kernel_type }}" \
             $DX_MODE_ARG \
             --tag raw-img .
 
@@ -184,7 +174,7 @@ jobs:
         uses: hhd-dev/rechunk@v1.2.4
         with:
           ref: "raw-img"
-          prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ matrix.image.name }}:latest"
+          prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ inputs.image_name }}:latest"
           skip_compression: true
           version: "${{ steps.generate-tags.outputs.alias_date }}"
           rechunk: "ghcr.io/hhd-dev/rechunk:v1.2.1"
@@ -194,9 +184,9 @@ jobs:
         run: |
           IMAGE=$(podman pull ${{ steps.rechunk.outputs.ref }})
           sudo rm -rf ${{ steps.rechunk.outputs.output }}
-          podman tag $IMAGE ${{ matrix.image.name }}:${{ steps.generate-tags.outputs.alias_tags }}
-          podman tag $IMAGE ${{ matrix.image.name }}:${{ steps.generate-tags.outputs.alias_date }}
-          podman tag $IMAGE ${{ matrix.image.name }}:latest
+          podman tag $IMAGE ${{ inputs.image_name }}:${{ steps.generate-tags.outputs.alias_tags }}
+          podman tag $IMAGE ${{ inputs.image_name }}:${{ steps.generate-tags.outputs.alias_date }}
+          podman tag $IMAGE ${{ inputs.image_name }}:latest
           podman tag $IMAGE rechunked-img
 
       # Conversion registre en minuscules
@@ -226,7 +216,7 @@ jobs:
           attempt_limit: 3
           attempt_delay: 15000
           with: |
-            image: ${{ matrix.image.name }}
+            image: ${{ inputs.image_name }}
             tags: ${{ steps.generate-tags.outputs.alias_tags }}
             registry: ${{ steps.registry_case.outputs.lowercase }}
             username: ${{ env.REGISTRY_USER }}
@@ -240,7 +230,7 @@ jobs:
       - name: Sign container image
         if: github.event_name != 'pull_request'
         run: |
-          cosign sign -y --key env://COSIGN_PRIVATE_KEY ${{ steps.registry_case.outputs.lowercase }}/${{ matrix.image.name }}@${TAGS}
+          cosign sign -y --key env://COSIGN_PRIVATE_KEY ${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@${TAGS}
         env:
           TAGS: ${{ steps.push.outputs.outputs && fromJSON(steps.push.outputs.outputs).digest }}
           COSIGN_EXPERIMENTAL: false

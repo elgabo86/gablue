@@ -1,0 +1,167 @@
+name: build-gablue-images
+on:
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "00 06 * * *"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  # Job pour [all] ou événements par défaut
+  build_all:
+    if: |
+      github.event_name != 'push' ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[all]')
+    strategy:
+      matrix:
+        include:
+          - image_name: "gablue-main"
+            image_desc: "Gablue main image"
+            image_variant: "main"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "43"
+            kernel_type: "bazzite"
+            kernel_version: ""
+          - image_name: "gablue-nvidia"
+            image_desc: "Gablue nvidia image"
+            image_variant: "nvidia"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "43"
+            kernel_type: "bazzite"
+            kernel_version: ""
+          - image_name: "gablue-nvidia-open"
+            image_desc: "Gablue nvidia-open image"
+            image_variant: "nvidia-open"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "43"
+            kernel_type: "bazzite"
+            kernel_version: ""
+          - image_name: "gablue-main-dx"
+            image_desc: "Gablue main-dx image (développement avec virtualisation)"
+            image_variant: "main"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "43"
+            kernel_type: "bazzite"
+            kernel_version: ""
+          - image_name: "gablue-main-test"
+            image_desc: "Gablue main test image"
+            image_variant: "main"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "43"
+            kernel_type: "bazzite"
+            kernel_version: ""
+    uses: ./.github/workflows/reusable-gablue-image.yml
+    with:
+      image_name: ${{ matrix.image_name }}
+      image_desc: ${{ matrix.image_desc }}
+      image_variant: ${{ matrix.image_variant }}
+      source_image: ${{ matrix.source_image }}
+      source_suffix: ${{ matrix.source_suffix }}
+      fedora_version: ${{ matrix.fedora_version }}
+      kernel_type: ${{ matrix.kernel_type }}
+      kernel_version: ${{ matrix.kernel_version }}
+
+  # Job pour [test]
+  build_test:
+    if: contains(github.event.head_commit.message, '[test]')
+    uses: ./.github/workflows/reusable-gablue-image.yml
+    with:
+      image_name: "gablue-main-test"
+      image_desc: "Gablue main test image"
+      image_variant: "main"
+      source_image: "kinoite"
+      source_suffix: "-main"
+      fedora_version: "43"
+      kernel_type: "bazzite"
+      kernel_version: ""
+
+  # Job pour [dx]
+  build_dx:
+    if: contains(github.event.head_commit.message, '[dx]')
+    uses: ./.github/workflows/reusable-gablue-image.yml
+    with:
+      image_name: "gablue-main-dx"
+      image_desc: "Gablue main-dx image (développement avec virtualisation)"
+      image_variant: "main"
+      source_image: "kinoite"
+      source_suffix: "-main"
+      fedora_version: "43"
+      kernel_type: "bazzite"
+      kernel_version: ""
+
+  # Job pour [nvidia]
+  build_nvidia:
+    if: contains(github.event.head_commit.message, '[nvidia]')
+    strategy:
+      matrix:
+        include:
+          - image_name: "gablue-nvidia"
+            image_desc: "Gablue nvidia image"
+            image_variant: "nvidia"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "43"
+            kernel_type: "bazzite"
+            kernel_version: ""
+          - image_name: "gablue-nvidia-open"
+            image_desc: "Gablue nvidia-open image"
+            image_variant: "nvidia-open"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "43"
+            kernel_type: "bazzite"
+            kernel_version: ""
+    uses: ./.github/workflows/reusable-gablue-image.yml
+    with:
+      image_name: ${{ matrix.image_name }}
+      image_desc: ${{ matrix.image_desc }}
+      image_variant: ${{ matrix.image_variant }}
+      source_image: ${{ matrix.source_image }}
+      source_suffix: ${{ matrix.source_suffix }}
+      fedora_version: ${{ matrix.fedora_version }}
+      kernel_type: ${{ matrix.kernel_type }}
+      kernel_version: ${{ matrix.kernel_version }}
+
+  # Job pour [main]
+  build_main:
+    if: contains(github.event.head_commit.message, '[main]')
+    strategy:
+      matrix:
+        include:
+          - image_name: "gablue-main"
+            image_desc: "Gablue main image"
+            image_variant: "main"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "43"
+            kernel_type: "bazzite"
+            kernel_version: ""
+          - image_name: "gablue-main-dx"
+            image_desc: "Gablue main-dx image (développement avec virtualisation)"
+            image_variant: "main"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "43"
+            kernel_type: "bazzite"
+            kernel_version: ""
+    uses: ./.github/workflows/reusable-gablue-image.yml
+    with:
+      image_name: ${{ matrix.image_name }}
+      image_desc: ${{ matrix.image_desc }}
+      image_variant: ${{ matrix.image_variant }}
+      source_image: ${{ matrix.source_image }}
+      source_suffix: ${{ matrix.source_suffix }}
+      fedora_version: ${{ matrix.fedora_version }}
+      kernel_type: ${{ matrix.kernel_type }}
+      kernel_version: ${{ matrix.kernel_version }}
