@@ -166,3 +166,20 @@ jobs:
       fedora_version: ${{ matrix.fedora_version }}
       kernel_type: ${{ matrix.kernel_type }}
       kernel_version: ${{ matrix.kernel_version }}
+
+  # Job fallback pour éviter le startup failure
+  fallback:
+    if: |
+      github.event_name == 'push' &&
+      !contains(github.event.head_commit.message, '[test]') &&
+      !contains(github.event.head_commit.message, '[dx]') &&
+      !contains(github.event.head_commit.message, '[nvidia]') &&
+      !contains(github.event.head_commit.message, '[main]') &&
+      !contains(github.event.head_commit.message, '[all]')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: No specific tag detected
+        run: |
+          echo "No build tag detected, using default behavior"
+          echo "Available tags: [test], [dx], [nvidia], [main], [all]"
+          exit 0
