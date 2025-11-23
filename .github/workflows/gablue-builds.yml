@@ -99,6 +99,7 @@ jobs:
   # Build DX image
   build-dx:
     name: Build DX
+    runs-on: ubuntu-latest
     if: contains(github.event.head_commit.message, '[dx]')
     uses: ./.github/workflows/reusable-gablue-image.yml
     with:
