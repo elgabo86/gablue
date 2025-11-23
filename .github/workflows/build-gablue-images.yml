@@ -19,10 +19,13 @@ jobs:
     runs-on: ubuntu-24.04
     if: |
       github.event_name != 'push' ||
-      contains(github.event.head_commit.message, '[build]') ||
+      contains(github.event.head_commit.message, '[all]') ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && contains(github.event.head_commit.message, '[test]'))
+      contains(github.event.head_commit.message, '[test]') ||
+      contains(github.event.head_commit.message, '[dx]') ||
+      contains(github.event.head_commit.message, '[nvidia]') ||
+      contains(github.event.head_commit.message, '[main]')
 
     strategy:
       fail-fast: false
@@ -95,13 +98,21 @@ jobs:
           # Extraire la version du kernel depuis les labels (ou utiliser "latest" comme fallback)
           KERNEL_VERSION=$(echo "$KERNEL_INFO" | jq -r '.config.config.Labels["org.bazzite.kernel.version"] // "latest"')
 
+          # Extraire la version NVIDIA depuis les labels pour compatibilité exacte
+          NVIDIA_VERSION=$(echo "$KERNEL_INFO" | jq -r '.config.config.Labels["org.bazzite.kernel.nvidia"] // "latest"')
+
           # Fallback: si le label n'existe pas, on utilise "latest" et on extraira depuis le tag plus tard
           if [[ "$KERNEL_VERSION" == "null" ]] || [[ -z "$KERNEL_VERSION" ]]; then
             KERNEL_VERSION="latest"
           fi
 
+          if [[ "$NVIDIA_VERSION" == "null" ]] || [[ -z "$NVIDIA_VERSION" ]]; then
+            NVIDIA_VERSION="latest"
+          fi
+
           echo "LATEST_TAG=$KERNEL_URI" >> $GITHUB_OUTPUT
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_OUTPUT
+          echo "NVIDIA_VERSION=$NVIDIA_VERSION" >> $GITHUB_OUTPUT
 
       # Étape pour définir la version du noyau
       - name: Determine kernel version
@@ -167,9 +178,18 @@ jobs:
       - name: Build Image
         id: build_image
         if: |
-          matrix.image.name != 'gablue-main-test' ||
-          github.event_name != 'push' ||
-          contains(github.event.head_commit.message, '[test]')
+          # [all] - construit toutes les variantes
+          contains(github.event.head_commit.message, '[all]') ||
+          # [test] - uniquement gablue-main-test
+          (contains(github.event.head_commit.message, '[test]') && matrix.image.name == 'gablue-main-test') ||
+          # [dx] - uniquement gablue-main-dx
+          (contains(github.event.head_commit.message, '[dx]') && matrix.image.name == 'gablue-main-dx') ||
+          # [nvidia] - toutes les variantes NVIDIA
+          (contains(github.event.head_commit.message, '[nvidia]') && contains(matrix.image.name, 'nvidia')) ||
+          # [main] - main et main-dx
+          (contains(github.event.head_commit.message, '[main]') && (matrix.image.name == 'gablue-main' || matrix.image.name == 'gablue-main-dx')) ||
+          # événements non-push (pull_request, schedule, workflow_dispatch)
+          github.event_name != 'push'
         shell: bash
         run: |
           # Choisir le bon Containerfile selon la variante
@@ -189,6 +209,7 @@ jobs:
             --file "$CONTAINERFILE" \
             --format "docker" \
             --build-arg KERNEL_VERSION="${{ steps.determine_kernel_version.outputs.KERNEL_VERSION }}" \
+            --build-arg NVIDIA_VERSION="${{ steps.get_kernel_version.outputs.NVIDIA_VERSION }}" \
             --build-arg VARIANT="${{ matrix.image.variant }}" \
             --build-arg SOURCE_IMAGE="${{ matrix.image.source_image }}" \
             --build-arg SOURCE_SUFFIX="${{ matrix.image.source_suffix }}" \
