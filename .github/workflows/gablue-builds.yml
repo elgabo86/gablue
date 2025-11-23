@@ -16,8 +16,9 @@ permissions:
   id-token: write
 
 jobs:
-  # Job pour [all] ou événements par défaut
-  build_all:
+  # Build all images
+  Build all:
+    name: Build all
     if: |
       github.event_name != 'push' ||
       github.event_name == 'schedule' ||
@@ -78,8 +79,9 @@ jobs:
       kernel_type: ${{ matrix.kernel_type }}
       kernel_version: ${{ matrix.kernel_version }}
 
-  # Job pour [test]
-  build_test:
+  # Build test image
+  Build test:
+    name: Build test
     if: contains(github.event.head_commit.message, '[test]')
     uses: ./.github/workflows/reusable-gablue-image.yml
     with:
@@ -92,8 +94,9 @@ jobs:
       kernel_type: "bazzite"
       kernel_version: ""
 
-  # Job pour [dx]
-  build_dx:
+  # Build DX image
+  Build DX:
+    name: Build DX
     if: contains(github.event.head_commit.message, '[dx]')
     uses: ./.github/workflows/reusable-gablue-image.yml
     with:
@@ -106,8 +109,9 @@ jobs:
       kernel_type: "bazzite"
       kernel_version: ""
 
-  # Job pour [nvidia]
-  build_nvidia:
+  # Build NVIDIA images
+  Build NVIDIA:
+    name: Build NVIDIA
     if: contains(github.event.head_commit.message, '[nvidia]')
     strategy:
       matrix:
@@ -139,8 +143,9 @@ jobs:
       kernel_type: ${{ matrix.kernel_type }}
       kernel_version: ${{ matrix.kernel_version }}
 
-  # Job pour [main]
-  build_main:
+  # Build main images
+  Build main:
+    name: Build main
     if: contains(github.event.head_commit.message, '[main]')
     strategy:
       matrix:
@@ -171,20 +176,3 @@ jobs:
       fedora_version: ${{ matrix.fedora_version }}
       kernel_type: ${{ matrix.kernel_type }}
       kernel_version: ${{ matrix.kernel_version }}
-
-  # Job fallback pour éviter le startup failure
-  fallback:
-    if: |
-      github.event_name == 'push' &&
-      !contains(github.event.head_commit.message, '[test]') &&
-      !contains(github.event.head_commit.message, '[dx]') &&
-      !contains(github.event.head_commit.message, '[nvidia]') &&
-      !contains(github.event.head_commit.message, '[main]') &&
-      !contains(github.event.head_commit.message, '[all]')
-    runs-on: ubuntu-24.04
-    steps:
-      - name: No specific tag detected
-        run: |
-          echo "No build tag detected, using default behavior"
-          echo "Available tags: [test], [dx], [nvidia], [main], [all]"
-          exit 0
