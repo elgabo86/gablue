@@ -6,6 +6,7 @@ ARG FEDORA_VERSION
 ARG KERNEL_TYPE
 ARG KERNEL_VERSION
 ARG NVIDIA_VERSION
+ARG DX_MODE
 
 # Étape intermédiaire : récupération du kernel depuis le conteneur OCI bazzite
 FROM ghcr.io/bazzite-org/kernel-bazzite:latest-f${FEDORA_VERSION}-x86_64 AS kernel
@@ -53,7 +54,7 @@ RUN --mount=type=cache,dst=/var/cache \
     sh /ctx/mesa && \
     sh /ctx/cleanup
 
-# Installation des pilotes NVIDIA (pour la variante nvidia uniquement)
+    # Installation des pilotes NVIDIA (pour la variante nvidia uniquement)
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=bind,from=nvidia,src=/,dst=/rpms/nvidia \
