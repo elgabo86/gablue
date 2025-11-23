@@ -59,10 +59,10 @@ jobs:
           fi
 
           # Extraire la version du kernel depuis les labels (ou utiliser "latest" comme fallback)
-          KERNEL_VERSION=$(echo "$KERNEL_INFO" | jq -r '.config.config.Labels["org.bazzite.kernel.version"] // "latest"')
+          KERNEL_VERSION=$(echo "$KERNEL_INFO" | jq -r '.Labels["org.bazzite.kernel.version"] // "latest"')
 
           # Extraire la version NVIDIA depuis les labels pour compatibilité exacte
-          NVIDIA_VERSION=$(echo "$KERNEL_INFO" | jq -r '.config.config.Labels["org.bazzite.kernel.nvidia"] // "latest"')
+          NVIDIA_VERSION=$(echo "$KERNEL_INFO" | jq -r '.Labels["org.bazzite.kernel.nvidia"] // "latest"')
 
           # Fallback: si le label n'existe pas, on utilise "latest" et on extraira depuis le tag plus tard
           if [[ "$KERNEL_VERSION" == "null" ]] || [[ -z "$KERNEL_VERSION" ]]; then
