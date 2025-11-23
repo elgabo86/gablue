@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   # Build all images
-  Build all:
+  build-all:
     name: Build all
     if: |
       github.event_name != 'push' ||
@@ -80,7 +80,7 @@ jobs:
       kernel_version: ${{ matrix.kernel_version }}
 
   # Build test image
-  Build test:
+  build-test:
     name: Build test
     if: contains(github.event.head_commit.message, '[test]')
     uses: ./.github/workflows/reusable-gablue-image.yml
@@ -95,7 +95,7 @@ jobs:
       kernel_version: ""
 
   # Build DX image
-  Build DX:
+  build-dx:
     name: Build DX
     if: contains(github.event.head_commit.message, '[dx]')
     uses: ./.github/workflows/reusable-gablue-image.yml
@@ -110,7 +110,7 @@ jobs:
       kernel_version: ""
 
   # Build NVIDIA images
-  Build NVIDIA:
+  build-nvidia:
     name: Build NVIDIA
     if: contains(github.event.head_commit.message, '[nvidia]')
     strategy:
@@ -144,7 +144,7 @@ jobs:
       kernel_version: ${{ matrix.kernel_version }}
 
   # Build main images
-  Build main:
+  build-main:
     name: Build main
     if: contains(github.event.head_commit.message, '[main]')
     strategy:
