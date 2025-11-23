@@ -19,13 +19,13 @@ jobs:
     runs-on: ubuntu-24.04
     if: |
       github.event_name != 'push' ||
-      contains(github.event.head_commit.message, '[all]') ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, '[test]') ||
-      contains(github.event.head_commit.message, '[dx]') ||
-      contains(github.event.head_commit.message, '[nvidia]') ||
-      contains(github.event.head_commit.message, '[main]')
+      contains(github.event.head_commit.message, '[all]') ||
+      (contains(github.event.head_commit.message, '[test]') && matrix.image.name == 'gablue-main-test') ||
+      (contains(github.event.head_commit.message, '[dx]') && matrix.image.name == 'gablue-main-dx') ||
+      (contains(github.event.head_commit.message, '[nvidia]') && contains(matrix.image.name, 'nvidia')) ||
+      (contains(github.event.head_commit.message, '[main]') && (matrix.image.name == 'gablue-main' || matrix.image.name == 'gablue-main-dx'))
 
     strategy:
       fail-fast: false
@@ -177,13 +177,7 @@ jobs:
       # Construction de l'image
       - name: Build Image
         id: build_image
-        if: |
-          contains(github.event.head_commit.message, '[all]') ||
-          (contains(github.event.head_commit.message, '[test]') && matrix.image.name == 'gablue-main-test') ||
-          (contains(github.event.head_commit.message, '[dx]') && matrix.image.name == 'gablue-main-dx') ||
-          (contains(github.event.head_commit.message, '[nvidia]') && contains(matrix.image.name, 'nvidia')) ||
-          (contains(github.event.head_commit.message, '[main]') && (matrix.image.name == 'gablue-main' || matrix.image.name == 'gablue-main-dx')) ||
-          github.event_name != 'push'
+        # Le filtrage est déjà fait au niveau du job
         shell: bash
         run: |
           # Choisir le bon Containerfile selon la variante
