@@ -76,5 +76,6 @@ popd
 
 dnf5 -y copr enable bieszczaders/kernel-cachyos-addons && \
 dnf5 -y install \
-    scx-scheds && \
+    scx-scheds  \
+    scx-tools && \
 dnf5 -y copr disable bieszczaders/kernel-cachyos-addons

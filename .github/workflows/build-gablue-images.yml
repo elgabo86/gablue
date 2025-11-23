@@ -15,9 +15,14 @@ env:
 
 jobs:
   build_push:
-    name: build-gablue-images
+    name: ${{ matrix.image.name }}-${{ matrix.image.fedora_version }}
     runs-on: ubuntu-24.04
-    if: github.event_name != 'push' || contains(github.event.head_commit.message, '[build]')
+    if: |
+      github.event_name != 'push' ||
+      contains(github.event.head_commit.message, '[build]') ||
+      (github.event_name == 'push' && matrix.image.name == 'gablue-main-test' && contains(github.event.head_commit.message, '[test]')) ||
+      (github.event_name == 'schedule' && matrix.image.name == 'gablue-main-test') ||
+      (github.event_name == 'workflow_dispatch' && matrix.image.name == 'gablue-main-test')
 
     strategy:
       fail-fast: false
@@ -42,6 +47,22 @@ jobs:
           - name: "gablue-nvidia-open"
             desc: "Gablue nvidia-open image"
             variant: "nvidia-open"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "43"
+            kernel_type: "bazzite"
+            kernel_version: ""
+          - name: "gablue-main-dx"
+            desc: "Gablue main-dx image (développement avec virtualisation)"
+            variant: "main"
+            source_image: "kinoite"
+            source_suffix: "-main"
+            fedora_version: "43"
+            kernel_type: "bazzite"
+            kernel_version: ""
+          - name: "gablue-main-test"
+            desc: "Gablue main test image"
+            variant: "main"
             source_image: "kinoite"
             source_suffix: "-main"
             fedora_version: "43"
@@ -153,7 +174,13 @@ jobs:
           else
             CONTAINERFILE="Containerfile-gablue"
           fi
-          
+
+          # Définir DX_MODE pour la variante main-dx
+          DX_MODE_ARG=""
+          if [[ "${{ matrix.image.name }}" == "gablue-main-dx" ]]; then
+            DX_MODE_ARG="--build-arg DX_MODE=true"
+          fi
+
           sudo buildah build \
             --file "$CONTAINERFILE" \
             --format "docker" \
@@ -163,6 +190,7 @@ jobs:
             --build-arg SOURCE_SUFFIX="${{ matrix.image.source_suffix }}" \
             --build-arg FEDORA_VERSION="${{ matrix.image.fedora_version }}" \
             --build-arg KERNEL_TYPE="${{ matrix.image.kernel_type }}" \
+            $DX_MODE_ARG \
             --tag raw-img .
 
       # Rechunk de l'image

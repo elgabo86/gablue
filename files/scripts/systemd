@@ -10,6 +10,12 @@ systemctl disable -f scx_loader.service
 systemctl disable -f tailscaled.service
 systemctl disable -f displaylink.service
 
+# Services supplémentaires pour le mode DX
+if [ "${DX_MODE:-false}" == "true" ]; then
+    systemctl enable -f ublue-os-libvirt-workarounds.service
+    systemctl enable -f gablue-dx-groups.service
+fi
+
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     systemctl enable -f usr-share-sddm-themes.mount
 fi

@@ -1,155 +1,235 @@
 #!/usr/bin/bash
 
+# Script d'installation des paquets RPM pour Gablue (version de test)
+# Installe tous les paquets nécessaires : outils CLI, applications graphiques, polices, drivers, dépendances de développement ET virtualisation
+
 set -eoux pipefail
 
-# Lock plasma-desktop version to avoid version mixing
-# This prevents plasma-desktop from being upgraded during package installation
+# =============================================================================
+# PRÉPARATION ET VERROUILLAGES
+# =============================================================================
+
+# Verrouiller la version de plasma-desktop pour éviter les conflits de version
+# Cela empêche plasma-desktop d'être mis à niveau pendant l'installation de paquets
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     dnf5 versionlock add plasma-desktop
 fi
 
-#Tools-cli
-dnf5 -y install \
-ublue-brew \
-fswatch \
-iotop-c \
-wol \
-duperemove \
-speedtest-cli \
-rar \
-btop \
-tailscale \
-intel-undervolt \
-ncdu \
-mc \
-lm_sensors \
-fastfetch \
-stress-ng \
-powertop \
-android-tools \
-byobu \
-cabextract \
-ripgrep \
-testdisk \
-gh \
-ryzenadj \
-yq \
-trash-cli \
-inotify-tools \
-atuin \
-tldr \
-trash-cli \
-git \
-nmap \
-terminus-fonts-console \
-plocate
+# =============================================================================
+# OUTILS EN LIGNE DE COMMANDE (CLI)
+# =============================================================================
 
-#Docker
+# Outils système et monitoring
+dnf5 -y install \
+    ublue-brew \
+    fswatch \
+    iotop-c \
+    wol \
+    duperemove \
+    speedtest-cli \
+    btop \
+    intel-undervolt \
+    ncdu \
+    mc \
+    lm_sensors \
+    fastfetch \
+    stress-ng \
+    powertop \
+    android-tools \
+    byobu \
+    cabextract \
+    ripgrep \
+    testdisk \
+    gh \
+    ryzenadj \
+    yq \
+    trash-cli \
+    inotify-tools \
+    atuin \
+    tldr \
+    git \
+    nmap \
+    terminus-fonts-console \
+    plocate
+
+# Outils réseau et cloud
+dnf5 -y install \
+    tailscale \
+    rar
+
+# Outils multimédia
+dnf5 -y install yt-dlp
+
+# =============================================================================
+# VIRTUALISATION ET CONTENEURS (TEST/DEV)
+# =============================================================================
+
+# Docker et composants associés pour le développement conteneurisé
 dnf5 -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-#Libvirt
-dnf5 -y install libvirt libvirt-nss edk2-ovmf qemu-char-spice qemu-device-display-virtio-gpu qemu-device-display-virtio-vga qemu-device-usb-redirect qemu-img qemu-system-x86-core qemu-user-binfmt qemu-user-static qemu virt-manager ublue-os-libvirt-workarounds
-
-# Install yt-dlp
-dnf5 -y install  yt-dlp
-
-#Goodies cli
-dnf5 -y  install \
-bash-color-prompt \
-asciiquarium \
-figlet \
-toilet \
-cmatrix
-
-#Tools
+# Libvirt et QEMU pour la virtualisation complète
+# Installation complète pour machines virtuelles et développement
 dnf5 -y install \
-sunshine \
-corectrl \
-solaar \
-gnome-disk-utility \
-skanpage \
-x2goclient \
-mangohud \
-cool-retro-term \
-terra-gamescope \
-cage \
-wlr-randr \
-earlyoom \
-rclone
+    libvirt \
+    libvirt-nss \
+    edk2-ovmf \
+    qemu-char-spice \
+    qemu-device-display-virtio-gpu \
+    qemu-device-display-virtio-vga \
+    qemu-device-usb-redirect \
+    qemu-img \
+    qemu-system-x86-core \
+    qemu-user-binfmt \
+    qemu-user-static \
+    qemu \
+    virt-manager \
+    ublue-os-libvirt-workarounds
 
-#Kde addons
+# =============================================================================
+# UTILITAIRES TERMINAL AMUSANTS
+# =============================================================================
+
+# Améliorations visuelles du terminal
+dnf5 -y install \
+    bash-color-prompt \
+    asciiquarium \
+    figlet \
+    toilet \
+    cmatrix
+
+# =============================================================================
+# APPLICATIONS GRAPHIQUES
+# =============================================================================
+
+# Outil de streaming et contrôle système
+dnf5 -y install \
+    sunshine \
+    corectrl \
+    solaar
+
+# Utilitaires système et bureautique
+dnf5 -y install \
+    gnome-disk-utility \
+    skanpage \
+    x2goclient
+
+# Gaming et performance
+dnf5 -y install \
+    mangohud \
+    terra-gamescope \
+    cage \
+    wlr-randr
+
+# Optimisation et sauvegarde
+dnf5 -y install \
+    earlyoom \
+    rclone \
+    cool-retro-term
+
+# =============================================================================
+# EXTENSIONS KDE (UNIQUEMENT KINOITE)
+# =============================================================================
+
+# Extensions et applications KDE
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     dnf5 -y install \
-    okular \
-    gwenview \
-    kcalc \
-    yakuake \
-    papirus-icon-theme \
-    papirus-icon-theme-dark \
-    langpacks-fr \
-    kdenetwork-filesharing \
-    kde-runtime-docs \
-    kdeplasma-addons
+        okular \
+        gwenview \
+        kcalc \
+        yakuake \
+        papirus-icon-theme \
+        papirus-icon-theme-dark \
+        langpacks-fr \
+        kdenetwork-filesharing \
+        kde-runtime-docs \
+        kdeplasma-addons
 fi
 
-#Fonts
+# =============================================================================
+# POLICES
+# =============================================================================
+
+# Polices de qualité pour développement et usage général
 dnf5 -y --setopt=install_weak_deps=False install \
-nerd-fonts \
-adobe-source-code-pro-fonts \
-google-droid-sans-mono-fonts
+    nerd-fonts \
+    adobe-source-code-pro-fonts \
+    google-droid-sans-mono-fonts
 
-#Drivers
+# =============================================================================
+# PILOTES ET SUPPORT MATÉRIEL
+# =============================================================================
+
+# Pilotes d'impression et support mobile
 dnf5 -y install \
-hplip \
-printer-driver-brlaser \
-ifuse \
-libimobiledevice
+    hplip \
+    printer-driver-brlaser \
+    ifuse \
+    libimobiledevice
 
-#Dev dep
-dnf5 -y  install \
-gcc \
-gcc-c++ \
-libffi-devel \
-readline-devel \
-zlib-devel \
-bzip2-devel \
-openssl-devel \
-sqlite-devel \
-xz-devel \
-tk-devel \
-patch \
-bzip2 \
-sqlite \
-libuuid-devel \
-gdbm-libs \
-libnsl2
+# =============================================================================
+# DÉPENDANCES DE DÉVELOPPEMENT
+# =============================================================================
 
-#Python et autre
+# Compilateurs et outils de développement
 dnf5 -y install \
-python3-pygame \
-python3-uinput \
-python3-tqdm \
-python3-beautifulsoup4 \
-python3-pip
+    gcc \
+    gcc-c++ \
+    libffi-devel \
+    readline-devel \
+    zlib-devel \
+    bzip2-devel \
+    openssl-devel \
+    sqlite-devel \
+    xz-devel \
+    tk-devel \
+    patch \
+    bzip2 \
+    sqlite \
+    libuuid-devel \
+    gdbm-libs \
+    libnsl2
 
-#Remove some packages
-dnf5 -y remove \
-firefox \
-firefox-langpacks \
-htop
+# =============================================================================
+# MODULES PYTHON ET OUTILS ASSOCIÉS
+# =============================================================================
 
-if [ "$SOURCE_IMAGE" == "kinoite" ]; then
-    dnf5 -y remove \
-    plasma-discover-rpm-ostree
-fi
+# Modules Python pour gaming et développement
+dnf5 -y install \
+    python3-pygame \
+    python3-uinput \
+    python3-tqdm \
+    python3-beautifulsoup4 \
+    python3-pip
 
+# =============================================================================
+# PAQUETS SPÉCIFIQUES AUX VARIANTES
+# =============================================================================
 
+# Paquets supplémentaires pour la variante main
 if [ "$VARIANT" == "main" ]; then
     dnf5 -y install \
-    radeontop \
-    waydroid
+        radeontop \
+        waydroid
 fi
 
-#tempfix
-dnf5 -y install \
-tesseract
+# =============================================================================
+# CORRECTIONS TEMPORAIRES
+# =============================================================================
+
+# Correction temporaire pour tesseract (nécessaire pour certaines fonctionnalités)
+dnf5 -y install tesseract
+
+# =============================================================================
+# NETTOYAGE DES PAQUETS SUPERFLUS
+# =============================================================================
+
+# Suppression des paquets non désirés
+dnf5 -y remove \
+    firefox \
+    firefox-langpacks \
+    htop
+
+# Suppression spécifique à Kinoite
+if [ "$SOURCE_IMAGE" == "kinoite" ]; then
+    dnf5 -y remove plasma-discover-rpm-ostree
+fi

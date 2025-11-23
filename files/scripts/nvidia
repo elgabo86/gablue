@@ -5,16 +5,6 @@ set -ouex pipefail
 echo "::group::Executing install-nvidia"
 trap 'echo "::group::"' EXIT
 
-FRELEASE=$(rpm -E %fedora)
-
-# Enable staging for supergfxctl if repo file exists
-if [[ -f /etc/yum.repos.d/_copr_ublue-os-staging.repo ]]; then
-    sed -i 's@enabled=0@enabled=1@g' /etc/yum.repos.d/_copr_ublue-os-staging.repo
-else
-    # Otherwise, retrieve the repo file for staging
-    curl -Lo /etc/yum.repos.d/_copr_ublue-os-staging.repo https://copr.fedorainfracloud.org/coprs/ublue-os/staging/repo/fedora-"${FRELEASE}"/ublue-os-staging-fedora-"${FRELEASE}".repo
-fi
-
 if [[ "${SOURCE_IMAGE}" == "kinoite" ]]; then
  VARIANT_PKGS="supergfxctl-plasmoid supergfxctl"
 elif [[ "${SOURCE_IMAGE}" == "silverblue" ]]; then
@@ -23,8 +13,7 @@ else
  VARIANT_PKGS=""
 fi
 
-# Désactiver temporairement le dépôt akmods pour éviter akmod-nvidia comme dépendance
-dnf5 -y config-manager setopt "*copr:copr.fedorainfracloud.org:ublue-os:akmods*".enabled=0
+dnf5 -y copr enable ublue-os/staging && \
 
 dnf5 install -y \
     /rpms/nvidia/libnvidia-cfg-* \
@@ -45,11 +34,7 @@ dnf5 install -y \
     libva-nvidia-driver \
     ${VARIANT_PKGS}
 
-# Réactiver le dépôt akmods après l'installation NVIDIA
-dnf5 -y config-manager setopt "*copr:copr.fedorainfracloud.org:ublue-os:akmods*".enabled=1
-
-# Disable staging
-sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_ublue-os-staging.repo
+dnf5 -y copr disable ublue-os/staging && \
 
 systemctl enable ublue-nvctk-cdi.service
 semodule --verbose --install /usr/share/selinux/packages/nvidia-container.pp

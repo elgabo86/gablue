@@ -1,8 +1,15 @@
 #!/usr/bin/bash
 
+# Script post-installation pour Gablue
+# Configure les permissions, installe les binaires externes et effectue le branding
+
 set -eoux pipefail
 
-# Make executable which need it
+# =============================================================================
+# PERMISSIONS DES EXÉCUTABLES
+# =============================================================================
+
+# Rendre exécutables les scripts système Gablue
 chmod +x /usr/bin/system-flatpak-setup
 chmod +x /usr/bin/ventoy
 chmod +x /usr/bin/bottles-sort-library
@@ -35,6 +42,8 @@ chmod +x /usr/bin/xenia-install
 chmod +x /usr/bin/shadps4-install
 chmod +x /usr/bin/ryu-install
 chmod +x /usr/bin/scrap-win
+
+# Rendre exécutables les scripts d'administration Gablue
 chmod +x /usr/libexec/gablue-update
 chmod +x /usr/libexec/gablue-config
 chmod +x /usr/libexec/archgab-update
@@ -43,78 +52,111 @@ chmod +x /usr/libexec/sync-gamepads
 chmod +x /usr/libexec/sync-gamepads-1m
 chmod +x /usr/libexec/gablue-dx-groups
 
+# Rendre exécutables les scripts supplémentaires Gablue
 chmod +x /usr/share/ublue-os/gablue/scripts/*.sh
 chmod +x /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/*
 
-# Caps
+# =============================================================================
+# CAPACITÉS SYSTÈME (CAPABILITIES)
+# =============================================================================
+
+# Donner les capacités réseau nécessaires à KDE System Guard
 setcap 'cap_net_raw+ep' /usr/libexec/ksysguard/ksgrd_network_helper
+
+# Donner les capacités d'ordonnancement temps réel à Gamescope
 setcap 'cap_sys_nice=eip' /usr/bin/gamescope
 
-# Add tgpt bin
+# =============================================================================
+# INSTALLATION DES BINAIRES EXTERNES
+# =============================================================================
+
+# Installation de tgpt (client terminal ChatGPT)
 wget https://github.com/aandrew-me/tgpt/releases/latest/download/tgpt-linux-amd64 -O /usr/bin/tgpt
 chmod +x /usr/bin/tgpt
 
-# Add lowfi
+# Installation de lowfi (lecteur audio minimaliste)
 wget https://github.com/talwat/lowfi/releases/latest/download/lowfi-linux-x86_64 -O /usr/bin/lowfi
 chmod +x /usr/bin/lowfi
 
-# Add zxtune
+# Installation de ZXTune (lecteur de musique tracker/chiptune)
+# Exclusion des binaires non nécessaires
 curl -s https://storage.zxtune.ru/builds/public/r5100/linux/x86_64/zxtune_r5100_linux_x86_64.tar.gz | tar -xzf - -C / --exclude=./usr/bin/zxtune123 --exclude=./usr/bin/xtractor
 
-# Branding for Gablue
+# =============================================================================
+# BRANDING GABLUE
+# =============================================================================
+
+# Configuration de l'identité du système
 IMAGE_DATE=$(date +%Y%m%d.%H)
 MAJOR_RELEASE_VERSION=$(grep -oP '[0-9]*' /etc/fedora-release)
 sed -i "s,^PRETTY_NAME=.*,PRETTY_NAME=\"Gablue ${MAJOR_RELEASE_VERSION}.${IMAGE_DATE}\"," /usr/lib/os-release
 
+# Configuration des icônes KDE pour Kinoite
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     ln -sf /usr/share/icons/Papirus/24x24/apps/distributor-logo-fedora.svg /usr/share/icons/Papirus/16x16/symbolic/places/start-here-kde-symbolic.svg
     ln -sf /usr/share/icons/Papirus/24x24/apps/distributor-logo-fedora.svg /usr/share/icons/Papirus/22x22/symbolic/places/start-here-kde-symbolic.svg
     ln -sf /usr/share/icons/Papirus/24x24/apps/distributor-logo-fedora.svg /usr/share/icons/Papirus/24x24/symbolic/places/start-here-kde-symbolic.svg
 fi
 
-# change tuned ppd.conf
-sed -i 's/balanced=balanced$/balanced=balanced-gablue/' /etc/tuned/ppd.conf && \
-sed -i 's/performance=throughput-performance$/performance=throughput-performance-gablue/' /etc/tuned/ppd.conf && \
+# =============================================================================
+# CONFIGURATION SYSTÈME
+# =============================================================================
+
+# Configuration des profils tuned pour Gablue
+sed -i 's/balanced=balanced$/balanced=balanced-gablue/' /etc/tuned/ppd.conf
+sed -i 's/performance=throughput-performance$/performance=throughput-performance-gablue/' /etc/tuned/ppd.conf
 sed -i 's/balanced=balanced-battery$/balanced=balanced-battery-gablue/' /etc/tuned/ppd.conf
 sed -i 's/power-saver=powersave$/power-saver=powersave-gablue/' /etc/tuned/ppd.conf
 sed -i 's/balanced=balanced-battery$/balanced=balanced-battery-gablue\npower-saver=powersave-battery-gablue/' /etc/tuned/ppd.conf
 
-# set userpace HID to true
+# Activer le support HID userspace pour Bluetooth
 sed -i 's/#UserspaceHID.*/UserspaceHID=true/' /etc/bluetooth/input.conf
 
-# fix qt6 bus errors
+# Corriger les erreurs de bus QT6 sur Kinoite
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     ln -s /bin/qdbus /bin/qdbus6
 fi
 
-#remove atuin default config
+# =============================================================================
+# NETTOYAGE DES CONFIGURATIONS
+# =============================================================================
+
+# Supprimer la configuration par défaut d'Atuin
 if [ -f /etc/profile.d/atuin.sh ]; then
-    # Supprime le fichier
     rm -f /etc/profile.d/atuin.sh
     echo "Le fichier /etc/profile.d/atuin.sh a été supprimé."
 else
     echo "Le fichier /etc/profile.d/atuin.sh n'existe pas."
 fi
 
-# Disable repos
+# =============================================================================
+# DÉSACTIVATION DES DÉPÔTS
+# =============================================================================
+
+# Désactiver les dépôts COPR après installation
 for copr in \
         bazzite-org/bazzite \
         ublue-os/staging \
         ublue-os/packages \
         che/nerd-fonts \
         hikariknight/looking-glass-kvmfr \
-        lizardbyte/beta; \
-do \
-        dnf5 -y copr disable $copr; \
-done && unset -v copr && \
+        lizardbyte/beta;
+do
+        dnf5 -y copr disable $copr
+done && unset -v copr
 
+# Désactiver les dépôts supplémentaires
 test -f /etc/yum.repos.d/_copr:copr.fedorainfracloud.org:phracek:PyCharm.repo && sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr:copr.fedorainfracloud.org:phracek:PyCharm.repo || true
 test -f /etc/yum.repos.d/_copr_ublue-os-akmods.repo && sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/_copr_ublue-os-akmods.repo || true
 test -f /etc/yum.repos.d/tailscale.repo && sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/tailscale.repo || true
 test -f /etc/yum.repos.d/docker-ce.repo && sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/docker-ce.repo || true
 dnf5 -y config-manager setopt "terra".enabled=false || true
 
-# Remove some unused .Desktop
+# =============================================================================
+# NETTOYAGE DES FICHIERS DE BUREAU
+# =============================================================================
+
+# Supprimer les raccourcis d'applications non utilisés
 rm -f /usr/share/applications/kde4/knetattach.desktop
 rm -f /usr/share/applications/org.kde.kdebugsettings.desktop
 rm -f /usr/share/applications/org.kde.kdeconnect.sms.desktop
@@ -125,13 +167,43 @@ rm -f /usr/share/applications/htop.desktop
 rm -f /usr/share/applications/nvtop.desktop
 rm -f /usr/share/applications/firewall-config.desktop
 rm -f /usr/share/applications/org.kde.kjournaldbrowser.desktop
+
+# Supprimer Waydroid uniquement sur la variante main
 if [ "$VARIANT" == "main" ]; then
     rm -f /usr/share/applications/Waydroid.desktop
 fi
 
-#Remove os-prober to fix long update reboot/shutdown
+# =============================================================================
+# OPTIMISATIONS FINALES
+# =============================================================================
+
+# Supprimer os-prober pour accélérer les redémarrages après mise à jour
 rm -f /etc/grub.d/30_os-prober
 
-# Remove flatpak verification at each boot
+# Désactiver la vérification Flatpak à chaque démarrage
 sed -i -E 's|(; /usr/bin/flatpak --system repair)$||' /usr/lib/systemd/system/flatpak-system-update.service
 
+# =============================================================================
+# CONFIGURATIONS SUPPLÉMENTAIRES (MODE DX)
+# =============================================================================
+
+# Configuration supplémentaire uniquement pour le mode DX (développement)
+if [ "${DX_MODE:-false}" == "true" ]; then
+    # Charger le module iptable_nat pour Docker-in-Docker
+    # Voir:
+    #   - https://github.com/ublue-os/bluefin/issues/2365
+    #   - https://github.com/devcontainers/features/issues/1235
+    mkdir -p /etc/modules-load.d && cat >>/etc/modules-load.d/ip_tables.conf <<EOF
+iptable_nat
+EOF
+
+    # Optimisation du démarrage avec Docker activé
+    # Évite les ralentissements au démarrage quand Docker est activé
+    mkdir -p /etc/systemd/system/NetworkManager-wait-online.service.d
+    cat > /etc/systemd/system/NetworkManager-wait-online.service.d/override.conf << 'EOF'
+[Service]
+Type=oneshot
+ExecStart=
+ExecStart=/bin/true
+EOF
+fi

@@ -1,40 +1,81 @@
 #!/usr/bin/bash
 
+# Configuration des dépôts COPR pour uBlue/Fedora
+# Ce script configure tous les dépôts tiers nécessaires pour Gablue
+
 set -eoux pipefail
 
-#Fix gpg error on dnf5 install
-mkdir -p /var/roothome && \
+# =============================================================================
+# PRÉPARATION INITIALE
+# =============================================================================
 
-# Configure repository exclusions for fedora and rpmfusion (terra will be configured after installation)
+# Création du répertoire pour éviter les erreurs GPG avec dnf5
+mkdir -p /var/roothome
+
+# =============================================================================
+# CONFIGURATION DES EXCLUSIONS FEDORA
+# =============================================================================
+
+# Exclusion des paquets Mesa et kernel des dépôts Fedora officiels
+# Ces paquets seront fournis par des dépôts tiers (Terra, RPMFusion)
 dnf5 -y config-manager setopt "*fedora*".exclude="mesa-* kernel-core-* kernel-modules-* kernel-uki-virt-*"
-dnf5 -y config-manager setopt "*rpmfusion*".exclude="mesa-*"
 
+# =============================================================================
+# DÉPÔTS COPR
+# =============================================================================
+
+# Activation des dépôts COPR nécessaires
 for copr in \
         bazzite-org/bazzite \
         ublue-os/staging \
         ublue-os/packages \
         che/nerd-fonts \
         hikariknight/looking-glass-kvmfr \
-        lizardbyte/beta; \
-do \
-        dnf5 -y copr enable $copr; \
-done && unset -v copr && \
+        lizardbyte/beta;
+do
+        dnf5 -y copr enable $copr
+done && unset -v copr
 
-dnf5 -y config-manager addrepo --overwrite --from-repofile=https://pkgs.tailscale.com/stable/fedora/tailscale.repo && \
+# =============================================================================
+# DÉPÔTS TIERS
+# =============================================================================
 
-dnf5 -y config-manager addrepo --from-repofile=https://negativo17.org/repos/fedora-rar.repo && \
+# Ajout du dépôt Tailscale
+dnf5 -y config-manager addrepo --overwrite --from-repofile=https://pkgs.tailscale.com/stable/fedora/tailscale.repo
 
+# Ajout du dépôt Negativo17 (RAR et autres logiciels)
+dnf5 -y config-manager addrepo --from-repofile=https://negativo17.org/repos/fedora-rar.repo
+
+# =============================================================================
+# RPMFUSION
+# =============================================================================
+
+# Installation des dépôts RPMFusion (logiciels libres et non-libres)
 dnf5 -y install \
         https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
-        https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm && \
+        https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
 
-# Installation Terra pour Mesa plus récent (TOUTES les variantes l'ont maintenant)
-# terra-release-mesa active automatiquement le dépôt mesa terra
-dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release terra-release-extras terra-release-mesa && \
+# Configuration de RPMFusion : priorité basse et exclusion Mesa
+# Mesa sera fourni par Terra pour avoir une version plus récente
+dnf5 -y config-manager setopt "*rpmfusion*".priority=5 "*rpmfusion*".exclude="mesa-*"
 
-dnf5 -y config-manager setopt "terra-mesa".enabled=true && \
+# =============================================================================
+# TERRA (FyraLabs)
+# =============================================================================
 
-# Configure terra repository exclusions (now available after terra installation)
+# Installation des dépôts Terra pour des versions plus récentes
+# terra-release-mesa active automatiquement le dépôt Mesa Terra
+dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release terra-release-extras terra-release-mesa
+
+# Activation explicite du dépôt Terra Mesa
+dnf5 -y config-manager setopt "terra-mesa".enabled=true
+
+# Configuration des exclusions Terra : priorité haute et exclusions spécifiques
 dnf5 -y config-manager setopt "*terra*".priority=3 "*terra*".exclude="nerd-fonts topgrade scx-scheds steam python3-protobuf"
 
+# =============================================================================
+# FINALISATION
+# =============================================================================
+
+# Activation du dépôt multimédia Negativo17
 sed -i 's@enabled=0@enabled=1@g' /etc/yum.repos.d/negativo17-fedora-multimedia.repo
