@@ -120,7 +120,7 @@ jobs:
 
       # Checkout du dépôt
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       # Optimisation de l'espace
       - name: Maximize build space
