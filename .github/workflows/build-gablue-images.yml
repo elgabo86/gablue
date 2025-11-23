@@ -178,17 +178,11 @@ jobs:
       - name: Build Image
         id: build_image
         if: |
-          # [all] - construit toutes les variantes
           contains(github.event.head_commit.message, '[all]') ||
-          # [test] - uniquement gablue-main-test
           (contains(github.event.head_commit.message, '[test]') && matrix.image.name == 'gablue-main-test') ||
-          # [dx] - uniquement gablue-main-dx
           (contains(github.event.head_commit.message, '[dx]') && matrix.image.name == 'gablue-main-dx') ||
-          # [nvidia] - toutes les variantes NVIDIA
           (contains(github.event.head_commit.message, '[nvidia]') && contains(matrix.image.name, 'nvidia')) ||
-          # [main] - main et main-dx
           (contains(github.event.head_commit.message, '[main]') && (matrix.image.name == 'gablue-main' || matrix.image.name == 'gablue-main-dx')) ||
-          # événements non-push (pull_request, schedule, workflow_dispatch)
           github.event_name != 'push'
         shell: bash
         run: |
