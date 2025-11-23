@@ -19,6 +19,7 @@ jobs:
   # Build all images (for non-push events)
   build-all:
     name: Build all
+    runs-on: ubuntu-latest
     continue-on-error: true
     if: |
       github.event_name == 'schedule' ||
@@ -113,6 +114,7 @@ jobs:
   # Build NVIDIA images
   build-nvidia:
     name: Build NVIDIA
+    runs-on: ubuntu-latest
     continue-on-error: true
     if: contains(github.event.head_commit.message, '[nvidia]')
     strategy:
@@ -149,6 +151,7 @@ jobs:
   # Build main images
   build-main:
     name: Build main
+    runs-on: ubuntu-latest
     continue-on-error: true
     if: contains(github.event.head_commit.message, '[main]')
     strategy:
