@@ -19,17 +19,22 @@ jobs:
           - name: "gablue-main"
             repo: "ghcr.io/elgabo86"
             tag: "latest"
-            version: "42"
+            version: "43"
+            variant: "Kinoite"
+          - name: "gablue-main-dx"
+            repo: "ghcr.io/elgabo86"
+            tag: "latest"
+            version: "43"
             variant: "Kinoite"
           - name: "gablue-nvidia"
             repo: "ghcr.io/elgabo86"
             tag: "latest"
-            version: "42"
+            version: "43"
             variant: "Kinoite"
           - name: "gablue-nvidia-open"
             repo: "ghcr.io/elgabo86"
             tag: "latest"
-            version: "42"
+            version: "43"
             variant: "Kinoite"
 
     steps:
@@ -81,6 +86,7 @@ jobs:
 
     outputs:
       gablue_main_link: ${{ steps.upload.outputs.download_link_gablue-main }}
+      gablue_main_dx_link: ${{ steps.upload.outputs.download_link_gablue-main-dx }}
       gablue_nvidia_link: ${{ steps.upload.outputs.download_link_gablue-nvidia }}
       gablue_nvidia_open_link: ${{ steps.upload.outputs.download_link_gablue-nvidia-open }}
 
@@ -123,6 +129,7 @@ jobs:
           body: |
             Téléchargez les ISOs ici :
             - **gablue-main**: ${{ needs.build-and-upload-isos.outputs.gablue_main_link }}
+            - **gablue-main-dx**: ${{ needs.build-and-upload-isos.outputs.gablue_main_dx_link }}
             - **gablue-nvidia**: ${{ needs.build-and-upload-isos.outputs.gablue_nvidia_link }}
             - **gablue-nvidia-open**: ${{ needs.build-and-upload-isos.outputs.gablue_nvidia_open_link }}
           draft: false
@@ -134,8 +141,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: checksums/gablue-main-checksum/gablue-main-latest-42.iso.sha256
-          asset_name: gablue-main-latest-42.iso.sha256
+          asset_path: checksums/gablue-main-checksum/gablue-main-latest-43.iso.sha256
+          asset_name: gablue-main-latest-43.iso.sha256
+          asset_content_type: text/plain
+
+      - name: Upload Checksum Files to Release (gablue-main-dx)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: checksums/gablue-main-dx-checksum/gablue-main-dx-latest-43.iso.sha256
+          asset_name: gablue-main-dx-latest-43.iso.sha256
           asset_content_type: text/plain
 
       - name: Upload Checksum Files to Release (gablue-nvidia)
@@ -144,8 +161,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: checksums/gablue-nvidia-checksum/gablue-nvidia-latest-42.iso.sha256
-          asset_name: gablue-nvidia-latest-42.iso.sha256
+          asset_path: checksums/gablue-nvidia-checksum/gablue-nvidia-latest-43.iso.sha256
+          asset_name: gablue-nvidia-latest-43.iso.sha256
           asset_content_type: text/plain
 
       - name: Upload Checksum Files to Release (gablue-nvidia-open)
@@ -154,6 +171,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: checksums/gablue-nvidia-open-checksum/gablue-nvidia-open-latest-42.iso.sha256
-          asset_name: gablue-nvidia-open-latest-42.iso.sha256
+          asset_path: checksums/gablue-nvidia-open-checksum/gablue-nvidia-open-latest-43.iso.sha256
+          asset_name: gablue-nvidia-open-latest-43.iso.sha256
           asset_content_type: text/plain
