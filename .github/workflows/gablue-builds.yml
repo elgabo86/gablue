@@ -19,12 +19,14 @@ jobs:
   # Build all images (for non-push events)
   build-all:
     name: Build all
+    continue-on-error: true
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.head_commit.message, '[all]') ||
       github.event_name == 'pull_request'
     strategy:
+      fail-fast: false
       matrix:
         include:
           - image_name: "gablue-main"
@@ -111,8 +113,10 @@ jobs:
   # Build NVIDIA images
   build-nvidia:
     name: Build NVIDIA
+    continue-on-error: true
     if: contains(github.event.head_commit.message, '[nvidia]')
     strategy:
+      fail-fast: false
       matrix:
         include:
           - image_name: "gablue-nvidia"
@@ -145,8 +149,10 @@ jobs:
   # Build main images
   build-main:
     name: Build main
+    continue-on-error: true
     if: contains(github.event.head_commit.message, '[main]')
     strategy:
+      fail-fast: false
       matrix:
         include:
           - image_name: "gablue-main"
