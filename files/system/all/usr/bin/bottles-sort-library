@@ -15,7 +15,7 @@ cp "$LIBRARY_FILE" "$BACKUP_FILE"
 echo "Sauvegarde créée : $BACKUP_FILE"
 
 # Trier et réattribuer les identifiants par ordre alphabétique des "name"
-python3 - <<EOF
+/usr/bin/python3 - <<EOF
 import yaml
 import os
 
