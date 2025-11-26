@@ -98,7 +98,8 @@ dnf5 -y install \
     asciiquarium \
     figlet \
     toilet \
-    cmatrix
+    cmatrix \
+    bucklespring-wayland
 
 # =============================================================================
 # APPLICATIONS GRAPHIQUES

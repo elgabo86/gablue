@@ -31,7 +31,8 @@ for copr in \
         ublue-os/packages \
         che/nerd-fonts \
         hikariknight/looking-glass-kvmfr \
-        lizardbyte/beta;
+        lizardbyte/beta \
+        dani/bucklespring;
 do
         dnf5 -y copr enable $copr
 done && unset -v copr
