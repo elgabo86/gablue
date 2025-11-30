@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# Script pour installer octo (octofriend) et npm dans une distrobox Arch Linux
+
+# Nom de la distrobox (à adapter si nécessaire)
+DISTROBOX_NAME="archgab"
+
+echo "Mise à jour du système dans la distrobox $DISTROBOX_NAME..."
+distrobox-enter $DISTROBOX_NAME -- sh -c "paru -Syu --noconfirm || true"
+
+echo "Installation de npm dans la distrobox $DISTROBOX_NAME..."
+
+# Entrer dans la distrobox et installer npm, puis octo et exporter le binaire
+distrobox-enter $DISTROBOX_NAME -- sh -c "paru -S npm --noconfirm && sudo npm install -g --omit=dev octofriend && distrobox-export --bin octo"
+
+echo "Script terminé. octo devrait maintenant être disponible sur l'hôte."

@@ -37,6 +37,7 @@ chmod +x /usr/bin/decode64
 chmod +x /usr/bin/qwen-install
 chmod +x /usr/bin/clean-media
 chmod +x /usr/bin/vscodium-install
+chmod +x /usr/bin/octo-install
 chmod +x /usr/bin/azahar-install
 chmod +x /usr/bin/xenia-install
 chmod +x /usr/bin/shadps4-install
