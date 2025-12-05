@@ -229,8 +229,9 @@ if [ -d "$dxvk_dir/$dxvkversion" ]; then
     echo "Version exacte de DXVK $dxvkversion déjà présente, téléchargement ignoré."
 else
     if [ -d "$dxvk_dir" ] && ls "$dxvk_dir"/* >/dev/null 2>&1; then
-        current_dxvk=$(ls -d "$dxvk_dir"/* | grep -o 'dxvk-gplasync-v[0-9.-]*' | head -n1)
-        if [ -n "$current_dxvk" ] && version_newer "$dxvkversion" "$current_dxvk"; then
+        current_dxvk=$(ls -d "$dxvk_dir"/* 2>/dev/null | xargs -n1 basename 2>/dev/null | grep -E '^dxvk-gplasync-v[0-9.-]+' | head -n1)
+        echo "DXVK détecté: '$current_dxvk' (attendu: '$dxvkversion')"
+        if [ -n "$current_dxvk" ] && [ -d "$dxvk_dir/$current_dxvk" ] && version_newer "$dxvkversion" "$current_dxvk"; then
             echo "Mise à jour de DXVK vers $dxvkversion, sauvegarde de l'ancienne version ($current_dxvk)..."
             mkdir -p "$temp_dir/dxvk"
             mv "$dxvk_dir/$current_dxvk" "$temp_dir/dxvk/"
@@ -256,8 +257,9 @@ if [ -d "$vkd3d_dir/$vkd3dversion" ]; then
     echo "Version exacte de VKD3D $vkd3dversion déjà présente, téléchargement ignoré."
 else
     if [ -d "$vkd3d_dir" ] && ls "$vkd3d_dir"/* >/dev/null 2>&1; then
-        current_vkd3d=$(ls -d "$vkd3d_dir"/* | grep -o 'vkd3d-proton-[0-9.-]*' | head -n1)
-        if [ -n "$current_vkd3d" ] && version_newer "$vkd3dversion" "$current_vkd3d"; then
+        current_vkd3d=$(ls -d "$vkd3d_dir"/* 2>/dev/null | xargs -n1 basename 2>/dev/null | grep -E '^vkd3d-proton-[0-9.-]+' | head -n1)
+        echo "VKD3D détecté: '$current_vkd3d' (attendu: '$vkd3dversion')"
+        if [ -n "$current_vkd3d" ] && [ -d "$vkd3d_dir/$current_vkd3d" ] && version_newer "$vkd3dversion" "$current_vkd3d"; then
             echo "Mise à jour de VKD3D vers $vkd3dversion, sauvegarde de l'ancienne version ($current_vkd3d)..."
             mkdir -p "$temp_dir/vkd3d"
             mv "$vkd3d_dir/$current_vkd3d" "$temp_dir/vkd3d/"
@@ -283,8 +285,9 @@ if [ -d "$nvapi_dir/$nvapiversion" ]; then
     echo "Version exacte de dxvk-nvapi $nvapiversion déjà présente, téléchargement ignoré."
 else
     if [ -d "$nvapi_dir" ] && ls "$nvapi_dir"/* >/dev/null 2>&1; then
-        current_nvapi=$(ls -d "$nvapi_dir"/* | grep -o 'dxvk-nvapi-v[0-9.-]*' | head -n1)
-        if [ -n "$current_nvapi" ] && version_newer "$nvapiversion" "$current_nvapi"; then
+        current_nvapi=$(ls -d "$nvapi_dir"/* 2>/dev/null | xargs -n1 basename 2>/dev/null | grep -E '^dxvk-nvapi-v[0-9.-]+' | head -n1)
+        echo "NVAPI détecté: '$current_nvapi' (attendu: '$nvapiversion')"
+        if [ -n "$current_nvapi" ] && [ -d "$nvapi_dir/$current_nvapi" ] && version_newer "$nvapiversion" "$current_nvapi"; then
             echo "Mise à jour de dxvk-nvapi vers $nvapiversion, sauvegarde de l'ancienne version ($current_nvapi)..."
             mkdir -p "$temp_dir/nvapi"
             mv "$nvapi_dir/$current_nvapi" "$temp_dir/nvapi/"
@@ -340,8 +343,9 @@ if [ -d "$latencyflex_dir/$latencyflexversion" ]; then
     echo "Version exacte de LatencyFlex $latencyflexversion déjà présente, téléchargement ignoré."
 else
     if [ -d "$latencyflex_dir" ] && ls "$latencyflex_dir"/* >/dev/null 2>&1; then
-        current_latencyflex=$(ls -d "$latencyflex_dir"/* | grep -o 'latencyflex-v[0-9.-]*[-a-z0-9]*' | head -n1)
-        if [ -n "$current_latencyflex" ] && version_newer "$latencyflexversion" "$current_latencyflex"; then
+        current_latencyflex=$(ls -d "$latencyflex_dir"/* 2>/dev/null | xargs -n1 basename 2>/dev/null | grep -E '^latencyflex-v[0-9.-]+[-a-z0-9]*' | head -n1)
+        echo "LatencyFlex détecté: '$current_latencyflex' (attendu: '$latencyflexversion')"
+        if [ -n "$current_latencyflex" ] && [ -d "$latencyflex_dir/$current_latencyflex" ] && version_newer "$latencyflexversion" "$current_latencyflex"; then
             echo "Mise à jour de LatencyFlex vers $latencyflexversion, sauvegarde de l'ancienne version ($current_latencyflex)..."
             mkdir -p "$temp_dir/latencyflex"
             mv "$latencyflex_dir/$current_latencyflex" "$temp_dir/latencyflex/"
