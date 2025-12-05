@@ -135,15 +135,15 @@ if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ]; then
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
     mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
 fi
-mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/ ~/.var/app/com.usebottles.bottles/data/bottles/runners/ ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/ ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
+mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/ ~/.var/app/com.usebottles.bottles/data/bottles/runners/ ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/ ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/ ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex
 
 # Vérification des versions actuelles
 need_rebuild=false
-wine_dir=~/.var/app/com.usebottles.bottles/data/bottles/runners/
-dxvk_dir=~/.var/app/com.usebottles.bottles/data/bottles/dxvk/
-vkd3d_dir=~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/
-nvapi_dir=~/.var/app/com.usebottles.bottles/data/bottles/nvapi/
-latencyflex_dir=~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/
+wine_dir=~/.var/app/com.usebottles.bottles/data/bottles/runners
+dxvk_dir=~/.var/app/com.usebottles.bottles/data/bottles/dxvk
+vkd3d_dir=~/.var/app/com.usebottles.bottles/data/bottles/vkd3d
+nvapi_dir=~/.var/app/com.usebottles.bottles/data/bottles/nvapi
+latencyflex_dir=~/.var/app/com.usebottles.bottles/data/bottles/latencyflex
 bottle_yml=~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml
 
 # Vérification si def.ready existe et comparaison du runner actuel avec celui dans bottle.yml
@@ -376,7 +376,7 @@ if [ "$need_rebuild" = false ]; then
     for dir in cache grids icons; do
         if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ]; then
             rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/$dir
-            mv ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/
+            mv ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
         fi
     done
 
@@ -423,12 +423,12 @@ if [ "$need_rebuild" = true ]; then
     flatpak run --command=bottles-cli com.usebottles.bottles new --bottle-name "def" --runner "$wineversion" --environment gaming
     flatpak override com.usebottles.bottles --user --filesystem=~/Windows
     flatpak override com.usebottles.bottles --user --filesystem=/tmp
-    mkdir -p ~/Windows/UserData ~/Windows/SteamData ~/Windows/Games ~/Windows/Applications ~/Windows/Tools ~/.local/share/applications/
-    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users/
+    mkdir -p ~/Windows/UserData ~/Windows/SteamData ~/Windows/Games ~/Windows/Applications ~/Windows/Tools ~/.local/share/applications
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users
     ln -s ~/Windows/UserData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users
     ln -s ~/Windows/SteamData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/Steam
-    ln -s ~/Windows/Applications/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/
-    ln -s ~/Windows/Games/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/
+    ln -s ~/Windows/Applications/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c
+    ln -s ~/Windows/Games/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c
     ln -f -s -T ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ ~/Windows/WinDrive
 
     qdbus $dbusRef Set "" "value" 70
@@ -442,15 +442,15 @@ if [ "$need_rebuild" = true ]; then
 
     qdbus $dbusRef Set "" "value" 80
     qdbus $dbusRef setLabelText "Configuration des raccourcis et outils..."
-    cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications/
-    cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications/
-    cp /usr/share/ublue-os/gablue/desktops/WindowsFix.desktop ~/.local/share/applications/
-    cp /usr/share/ublue-os/gablue/desktops/WindowsTerminal.desktop ~/.local/share/applications/
-    cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications/
-    mkdir -p ~/.local/share/kio/servicemenus/
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWinShortcut.desktop ~/.local/share/kio/servicemenus/
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/LaunchWin.desktop ~/.local/share/kio/servicemenus/
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/InstallWinReg.desktop ~/.local/share/kio/servicemenus/
+    cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications
+    cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications
+    cp /usr/share/ublue-os/gablue/desktops/WindowsFix.desktop ~/.local/share/applications
+    cp /usr/share/ublue-os/gablue/desktops/WindowsTerminal.desktop ~/.local/share/applications
+    cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications
+    mkdir -p ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWinShortcut.desktop ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/LaunchWin.desktop ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/InstallWinReg.desktop ~/.local/share/kio/servicemenus
     update-desktop-database ~/.local/share/applications
     xdg-mime default Windows.desktop application/x-ms-dos-executable
     xdg-mime default Windows.desktop application/x-msi
@@ -491,11 +491,11 @@ if [ "$need_rebuild" = true ]; then
     flatpak install runtime/com.obsproject.Studio.Plugin.OBSVkCapture/x86_64/stable -y --system
     flatpak install runtime/org.freedesktop.Platform.VulkanLayer.OBSVkCapture/x86_64/25.08 -y --system
     flatpak install runtime/org.freedesktop.Platform.VulkanLayer.gamescope/x86_64/25.08 -y --system
-    mkdir -p ~/.config/MangoHud/
-    cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud/
+    mkdir -p ~/.config/MangoHud
+    cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud
     flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params mangohud:true
     flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params gamemode:true
-    mkdir -p ~/Windows/UserData/Public/Documents/Steam/
+    mkdir -p ~/Windows/UserData/Public/Documents/Steam
 
     if [ -e "$dossieruser" ]; then
         if [ ! -e "~/Windows/UserData/steamuser" ]; then
@@ -512,7 +512,7 @@ if [ "$need_rebuild" = true ]; then
     for dir in cache grids icons; do
         if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ]; then
             rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/$dir
-            mv ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/
+            mv ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
         fi
     done
 
