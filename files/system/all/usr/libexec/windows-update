@@ -20,6 +20,13 @@ mkdir -p "$temp_dir"
 flag_file="/tmp/kdialog_monitor_flag_$$"
 touch "$flag_file"
 
+# Vérifier l'argument --rebuild
+force_rebuild=false
+if [ "$1" = "--rebuild" ]; then
+    force_rebuild=true
+    echo "Mode forcé --rebuild activé"
+fi
+
 # Choix entre gwine, gwine-proton, gwine-proton-wow64 et soda avec kdialog
 runner_choice=$(kdialog --title "Choix de wine" --radiolist "Sélectionnez la version de wine à utiliser :" \
     "gwine-proton" "Gwine-Proton (dernière version)" on \
@@ -147,7 +154,10 @@ latencyflex_dir=~/.var/app/com.usebottles.bottles/data/bottles/latencyflex
 bottle_yml=~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml
 
 # Vérification si def.ready existe et comparaison du runner actuel avec celui dans bottle.yml
-if [ ! -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready ]; then
+if [ "$force_rebuild" = true ]; then
+    echo "Argument --rebuild détecté, rebuild forcé."
+    need_rebuild=true
+elif [ ! -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready ]; then
     echo "def.ready n'existe pas, rebuild requis."
     need_rebuild=true
 elif [ -f "$bottle_yml" ]; then
@@ -201,7 +211,22 @@ else
             fi
             need_rebuild=true
         else
-            echo "Version de $runner_choice $wineversion déjà présente ou plus récente, mais rebuild requis si signalé."
+            echo "Installation de $runner_choice $wineversion (runner non détecté dans le répertoire)..."
+            if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ] || [ "$runner_choice" = "gwine-proton-wow64" ]; then
+                curl -L -o "$wine_dir/$wineversion.tar.xz" "https://github.com/elgabo86/gwine/releases/download/$wineversion/$wineversion.tar.xz"
+                tar -xf "$wine_dir/$wineversion.tar.xz" -C "$wine_dir/"
+                rm -f "$wine_dir/$wineversion.tar.xz"
+            else
+                # Pour Soda, extraire dans un dossier temporaire et renommer
+                temp_extract_dir="$temp_dir/wine_extract"
+                mkdir -p "$temp_extract_dir"
+                curl -L -o "$temp_extract_dir/$soda_version.tar.xz" "$soda_url"
+                tar -xf "$temp_extract_dir/$soda_version.tar.xz" -C "$temp_extract_dir/"
+                mv "$temp_extract_dir/$soda_version-x86_64" "$wine_dir/$wineversion"
+                rm -f "$temp_extract_dir/$soda_version.tar.xz"
+                rm -rf "$temp_extract_dir"
+            fi
+            need_rebuild=true
         fi
     else
         echo "Installation initiale de $runner_choice $wineversion..."
