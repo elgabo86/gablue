@@ -30,34 +30,49 @@ ASSET_NAME=$(basename "$DOWNLOAD_URL")
 # Chemin du fichier à télécharger
 NEW_APPIMAGE_PATH="$CACHE_DIR/$ASSET_NAME"
 
-# Vérifier si une version Citron est déjà installée et la supprimer
-INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -name "Citron*.appimage" | sort -V | tail -n1 || true)
-
-if [ -n "$INSTALLED_APPIMAGE" ]; then
-    echo "Suppression de la version Citron installée existante."
-    yes | flatpak run it.mijorus.gearlever --remove "$INSTALLED_APPIMAGE"
-fi
-
 # Télécharger la nouvelle AppImage
 echo "Téléchargement de $ASSET_NAME..."
 curl -L -o "$NEW_APPIMAGE_PATH" "$DOWNLOAD_URL"
 
 # Installer avec GearLever sans confirmation
 echo "Installation/Mise à jour avec GearLever..."
-# Si une version est déjà installée, on la supprime d'abord pour forcer la réintégration
-if find "$APPIMAGES_DIR" -name "*citron*.appimage" | grep -q .; then
-    echo "Suppression de l'ancienne version pour forcer la mise à jour..."
-    INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -name "*citron*.appimage" | head -n1)
-    if flatpak run it.mijorus.gearlever --remove "$INSTALLED_APPIMAGE" 2>/dev/null; then
-        echo "Ancienne version supprimée avec succès."
-    else
-        echo "Erreur lors de la suppression de l'ancienne version (fichiers manquants), nettoyage manuel..."
-        # Si GearLever ne peut pas supprimer, on nettoie manuellement
-        rm -f "$INSTALLED_APPIMAGE"
-        # Nettoyer les fichiers desktop et icônes restants
-        find "$HOME/.local/share/applications" -name "*citron*.desktop" -delete 2>/dev/null || true
-        find "$HOME/.local/share/icons" -name "*citron*" -delete 2>/dev/null || true
-    fi
+
+# Vérifier et supprimer les anciennes versions de Citron
+if find "$APPIMAGES_DIR" -name "*citron*.appimage" -o -name "Citron*.appimage" | grep -q .; then
+    echo "Suppression des anciennes versions pour forcer la mise à jour..."
+
+    # Supprimer toutes les anciennes AppImages Citron trouvées
+    for OLD_APPIMAGE in $(find "$APPIMAGES_DIR" -name "*citron*.appimage" -o -name "Citron*.appimage"); do
+        echo "Suppression de $OLD_APPIMAGE (peut prendre 30-60 secondes)..."
+        echo -n "GearLever en cours de désintégration"
+
+        # Lancer GearLever avec un timeout plus long et afficher la progression
+        if timeout 120s bash -c "yes | flatpak run it.mijorus.gearlever --remove '$OLD_APPIMAGE'" 2>/dev/null;
+        then
+            echo -e "\n✓ Ancienne version supprimée avec succès via GearLever."
+        else
+            echo -e "\n✗ Erreur lors de la suppression via GearLever, nettoyage manuel..."
+            # Suppression manuelle si GearLever échoue ou dépasse le timeout
+            echo "Nettoyage manuel du fichier AppImage..."
+            rm -f "$OLD_APPIMAGE"
+
+            # Nettoyage manuel complet des fichiers système
+            echo "Nettoyage manuel des fichiers desktop et icônes..."
+            find "$HOME/.local/share/applications" -name "*citron*.desktop" -delete 2>/dev/null || true
+            find "$HOME/.local/share/icons/hicolor" -name "*citron*" -delete 2>/dev/null || true
+            find "$HOME/.local/share/icons" -name "*citron*" -delete 2>/dev/null || true
+
+            # Forcer la reconstruction de la base de données des applications
+            if command -v update-desktop-database &> /dev/null; then
+                update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+            fi
+
+            echo "✓ Fichiers supprimés manuellement."
+        fi
+    done
+
+else
+    echo "Aucune ancienne version trouvée, installation directe..."
 fi
 
 yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH"
