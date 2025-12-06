@@ -7,20 +7,20 @@
 
 set -e
 
-REPO_OWNER="pkgforge-dev"
-REPO_NAME="Citron-AppImage"
+REPO_OWNER="Zephyron-Dev"
+REPO_NAME="Citron-CI"
 CACHE_DIR="$HOME/.cache/citron"
 APPIMAGES_DIR="$HOME/AppImages"
 mkdir -p "$CACHE_DIR"
 
-# Obtenir les infos de la dernière release via l'API GitHub
-RELEASES_JSON=$(curl -sL -H "Accept: application/json" "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest")
+# Obtenir les infos de la release nightly-linux via l'API GitHub
+RELEASES_JSON=$(curl -sL -H "Accept: application/json" "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/tags/nightly-linux")
 
 # Extraire l'URL de téléchargement pour l'AppImage spécifique (x86_64_v3) depuis les assets
-DOWNLOAD_URL=$(echo "$RELEASES_JSON" | jq -r '.assets[] | select(.name | contains("anylinux-x86_64_v3.AppImage") and (contains(".zsync") | not)) | .browser_download_url')
+DOWNLOAD_URL=$(echo "$RELEASES_JSON" | jq -r '.assets[] | select(.name | contains("nightly-") and contains("linux-x86_64_v3.AppImage") and (contains(".zsync") | not)) | .browser_download_url')
 
 if [ -z "$DOWNLOAD_URL" ]; then
-    echo "Erreur : AppImage x86_64_v3 non trouvé dans la dernière release."
+    echo "Erreur : AppImage nightly x86_64_v3 non trouvé dans la release nightly-linux."
     exit 1
 fi
 
@@ -44,19 +44,37 @@ curl -L -o "$NEW_APPIMAGE_PATH" "$DOWNLOAD_URL"
 
 # Installer avec GearLever sans confirmation
 echo "Installation/Mise à jour avec GearLever..."
+# Si une version est déjà installée, on la supprime d'abord pour forcer la réintégration
+if find "$APPIMAGES_DIR" -name "*citron*.appimage" | grep -q .; then
+    echo "Suppression de l'ancienne version pour forcer la mise à jour..."
+    INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -name "*citron*.appimage" | head -n1)
+    if flatpak run it.mijorus.gearlever --remove "$INSTALLED_APPIMAGE" 2>/dev/null; then
+        echo "Ancienne version supprimée avec succès."
+    else
+        echo "Erreur lors de la suppression de l'ancienne version (fichiers manquants), nettoyage manuel..."
+        # Si GearLever ne peut pas supprimer, on nettoie manuellement
+        rm -f "$INSTALLED_APPIMAGE"
+        # Nettoyer les fichiers desktop et icônes restants
+        find "$HOME/.local/share/applications" -name "*citron*.desktop" -delete 2>/dev/null || true
+        find "$HOME/.local/share/icons" -name "*citron*" -delete 2>/dev/null || true
+    fi
+fi
+
 yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH"
 
 # Corriger le .desktop créé par GearLever pour enlever le versionning
 DESKTOP_DIR="$HOME/.local/share/applications"
-DESKTOP_FILE="$DESKTOP_DIR/citron.desktop"
-NEW_DESKTOP_FILE="$DESKTOP_DIR/Citron.desktop"
+# GearLever crée des noms différents, on cherche le fichier citron existant
+DESKTOP_FILE=$(find "$DESKTOP_DIR" -name "*citron*.desktop" | head -n1)
+NEW_DESKTOP_FILE="$DESKTOP_DIR/citron.desktop"
 
 if [ -f "$DESKTOP_FILE" ]; then
     # Corriger le nom dans le fichier pour enlever le versionning (avec hash)
-    # Couvre les cas : "Citron (version)" et "citron (version)" et "citron"
+    # Couvre les cas : "Citron (version)", "citron (version)", "citron", "citron nightly (version)"
     sed -i 's/^Name=[Cc]itron\s*(.*)$/Name=Citron/' "$DESKTOP_FILE"
     sed -i 's/^Name=[Cc]itron$/Name=Citron/' "$DESKTOP_FILE"
-    
+    sed -i 's/^Name=citron nightly\s*(.*)$/Name=Citron Nightly/' "$DESKTOP_FILE"
+
     # Renommer le fichier .desktop lui-même
     mv "$DESKTOP_FILE" "$NEW_DESKTOP_FILE"
 fi
