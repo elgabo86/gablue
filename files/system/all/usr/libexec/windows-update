@@ -490,7 +490,7 @@ if [ "$need_rebuild" = true ]; then
 
     qdbus $dbusRef Set "" "value" 85
     qdbus $dbusRef setLabelText "Installation des runtimes..."
-    flatpak run --env=WINEPREFIX=$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles/def --env=WINE=$HOME/.var/app/com.usebottles.bottles/data/bottles/runners/"$wineversion"/bin/wine --command=$HOME/Windows/Tools/winetricks com.usebottles.bottles -q \
+    flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/"$wineversion"/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q \
         corefonts \
         tahoma \
         d3dcompiler_42 \
@@ -508,7 +508,7 @@ if [ "$need_rebuild" = true ]; then
         dotnetdesktop6 \
         dotnetdesktop7 \
         dotnetdesktop8
-    flatpak run --env=WINEPREFIX=$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles/def --env=WINE=$HOME/.var/app/com.usebottles.bottles/data/bottles/runners/"$wineversion"/bin/wine --command=$HOME/Windows/Tools/winetricks com.usebottles.bottles -q settings fontsmooth=rgb
+    flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/"$wineversion"/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q settings fontsmooth=rgb
 
     qdbus $dbusRef Set "" "value" 90
     qdbus $dbusRef setLabelText "Finalisation des runtimes et configuration..."
