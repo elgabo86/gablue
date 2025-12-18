@@ -13,7 +13,7 @@
   (pgrep -f citron | xargs -n1 kill -9 && fusermount -uz /tmp/.mount_citro*) &
 
    # Kill des émulateurs (tous en parallèle)
-  for emu in suyu sudachi dolphin-emu yuzu retroarch xemu rpcs3 duckstation pcsx2 lime3ds ryujinx Cemu flycast shadps4 PokeMMO PPSSPP; do
+  for emu in azahar suyu sudachi dolphin-emu yuzu retroarch xemu rpcs3 duckstation pcsx2 lime3ds ryujinx Cemu flycast shadps4 PokeMMO PPSSPP; do
     pgrep -f "$emu" | xargs -n1 kill -9 &
   done
 
