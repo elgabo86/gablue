@@ -1,0 +1,108 @@
+#!/bin/bash
+
+# Script pour télécharger et installer/mettre à jour l'AppImage Eden (Linux PGO) avec GearLever
+# Source : GitHub eden-emulator/Releases releases
+# PGO = Profile Guided Optimization (optimisations de performance)
+
+# Dépendances : curl, jq, flatpak (GearLever installé comme it.mijorus.gearlever), yes
+
+set -e
+
+REPO_OWNER="eden-emulator"
+REPO_NAME="Releases"
+CACHE_DIR="$HOME/.cache/eden"
+APPIMAGES_DIR="$HOME/AppImages"
+mkdir -p "$CACHE_DIR"
+
+# Obtenir les infos de la release la plus récente via l'API GitHub
+RELEASES_JSON=$(curl -sL -H "Accept: application/json" "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest")
+
+# Extraire l'URL de téléchargement pour l'AppImage PGO spécifique (Linux amd64 clang-pgo)
+DOWNLOAD_URL=$(echo "$RELEASES_JSON" | jq -r '.assets[] | select(.name | contains("Linux") and contains("amd64") and contains("clang-pgo") and contains(".AppImage")) | .browser_download_url' | head -n1)
+
+if [ -z "$DOWNLOAD_URL" ]; then
+    echo "Erreur : AppImage Eden PGO Linux amd64 non trouvé dans la release la plus récente."
+    exit 1
+fi
+
+# Extraire le nom du fichier
+ASSET_NAME=$(basename "$DOWNLOAD_URL")
+
+# Chemin du fichier à télécharger
+NEW_APPIMAGE_PATH="$CACHE_DIR/$ASSET_NAME"
+
+# Télécharger la nouvelle AppImage
+echo "Téléchargement de $ASSET_NAME..."
+curl -L -o "$NEW_APPIMAGE_PATH" "$DOWNLOAD_URL"
+
+# Installer avec GearLever sans confirmation
+echo "Installation/Mise à jour avec GearLever..."
+
+# Vérifier et supprimer les anciennes versions d'Eden
+if find "$APPIMAGES_DIR" -name "*eden*.appimage" -o -name "Eden*.appimage" | grep -q .; then
+    echo "Suppression des anciennes versions pour forcer la mise à jour..."
+
+    # Supprimer toutes les anciennes AppImages Eden trouvées
+    for OLD_APPIMAGE in $(find "$APPIMAGES_DIR" -name "*eden*.appimage" -o -name "Eden*.appimage"); do
+        echo "Suppression de $OLD_APPIMAGE (peut prendre 30-60 secondes)..."
+        echo -n "GearLever en cours de désintégration"
+
+        # Lancer GearLever avec un timeout plus long et afficher la progression
+        if timeout 120s bash -c "yes | flatpak run it.mijorus.gearlever --remove '$OLD_APPIMAGE'" 2>/dev/null;
+        then
+            echo -e "\n✓ Ancienne version supprimée avec succès via GearLever."
+        else
+            echo -e "\n✗ Erreur lors de la suppression via GearLever, nettoyage manuel..."
+            # Suppression manuelle si GearLever échoue ou dépasse le timeout
+            echo "Nettoyage manuel du fichier AppImage..."
+            rm -f "$OLD_APPIMAGE"
+
+            # Nettoyage manuel complet des fichiers système
+            echo "Nettoyage manuel des fichiers desktop et icônes..."
+            find "$HOME/.local/share/applications" -name "*eden*.desktop" -delete 2>/dev/null || true
+            find "$HOME/.local/share/icons/hicolor" -name "*eden*" -delete 2>/dev/null || true
+            find "$HOME/.local/share/icons" -name "*eden*" -delete 2>/dev/null || true
+
+            # Forcer la reconstruction de la base de données des applications
+            if command -v update-desktop-database &> /dev/null; then
+                update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+            fi
+
+            echo "✓ Fichiers supprimés manuellement."
+        fi
+    done
+
+else
+    echo "Aucune ancienne version trouvée, installation directe..."
+fi
+
+yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH"
+
+# Corriger le .desktop créé par GearLever pour enlever le versionning
+DESKTOP_DIR="$HOME/.local/share/applications"
+# GearLever crée des noms différents, on cherche le fichier eden existant
+DESKTOP_FILE=$(find "$DESKTOP_DIR" -name "*eden*.desktop" | head -n1)
+NEW_DESKTOP_FILE="$DESKTOP_DIR/eden.desktop"
+
+if [ -f "$DESKTOP_FILE" ]; then
+    # Corriger le nom dans le fichier pour enlever le versionning
+    # Couvre les cas : "Eden (version)", "eden (version)", "eden"
+    sed -i 's/^Name=[Ee]den\s*(.*)$/Name=Eden/' "$DESKTOP_FILE"
+    sed -i 's/^Name=[Ee]den$/Name=Eden/' "$DESKTOP_FILE"
+
+    # Renommer le fichier .desktop lui-même
+    mv "$DESKTOP_FILE" "$NEW_DESKTOP_FILE"
+fi
+
+# Nettoyer le cache si le fichier existe encore (GearLever le déplace normalement)
+if [ -f "$NEW_APPIMAGE_PATH" ]; then
+    rm "$NEW_APPIMAGE_PATH"
+fi
+rmdir --ignore-fail-on-non-empty "$CACHE_DIR"
+
+# Rafraîchir les fichiers .desktop si la commande est disponible
+if command -v kbuildsycoca6 &> /dev/null; then
+    kbuildsycoca6
+fi
+
+echo "Opération terminée pour Eden (version PGO optimisée)."
