@@ -17,8 +17,7 @@
     pgrep -f "$emu" | xargs -n1 kill -9 &
   done
 
-  # Kill des processus jellyfin et sober
-  pkill -9 jellyfin &
+  # Kill des processus sober
   pkill -9 sober &
 
   # Kill x2go
