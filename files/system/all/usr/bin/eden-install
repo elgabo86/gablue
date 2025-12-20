@@ -90,8 +90,10 @@ if [ -f "$DESKTOP_FILE" ]; then
     sed -i 's/^Name=[Ee]den\s*(.*)$/Name=Eden/' "$DESKTOP_FILE"
     sed -i 's/^Name=[Ee]den$/Name=Eden/' "$DESKTOP_FILE"
 
-    # Renommer le fichier .desktop lui-même
-    mv "$DESKTOP_FILE" "$NEW_DESKTOP_FILE"
+    # Renommer le fichier .desktop lui-même seulement si le nom est différent
+    if [ "$DESKTOP_FILE" != "$NEW_DESKTOP_FILE" ]; then
+        mv "$DESKTOP_FILE" "$NEW_DESKTOP_FILE"
+    fi
 fi
 
 # Nettoyer le cache si le fichier existe encore (GearLever le déplace normalement)
