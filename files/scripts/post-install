@@ -25,6 +25,7 @@ chmod +x /usr/bin/ytdl
 chmod +x /usr/bin/chdman
 chmod +x /usr/bin/biosdl
 chmod +x /usr/bin/citron-install
+chmod +x /usr/bin/eden-install
 chmod +x /usr/bin/gskill
 chmod +x /usr/bin/limitw
 chmod +x /usr/bin/dltri
