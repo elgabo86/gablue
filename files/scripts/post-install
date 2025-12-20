@@ -118,6 +118,11 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     ln -s /bin/qdbus /bin/qdbus6
 fi
 
+# Configurer la fréquence des mises à jour automatiques (hebdomadaire au lieu de quotidienne)
+sed -i 's/OnCalendar=*-*-* 4:00:00/OnCalendar=Sat *-*-* 04:00:00/' /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
+sed -i 's/OnCalendar=*-*-* 4:00:00/OnCalendar=Sat *-*-* 04:00:00/' /usr/lib/systemd/user/flatpak-user-update.timer
+sed -i 's/OnCalendar=*-*-* 4:00:00/OnCalendar=Sat *-*-* 04:00:00/' /usr/lib/systemd/system/flatpak-system-update.timer
+
 # =============================================================================
 # NETTOYAGE DES CONFIGURATIONS
 # =============================================================================
