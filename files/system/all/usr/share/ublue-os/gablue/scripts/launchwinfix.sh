@@ -6,6 +6,8 @@ if [[ "$fullpath" == *.wgp ]]; then
     # Mode pack wgp
     WGP_FILE="$(realpath "$fullpath")"
     WGP_NAME="$(basename "$WGP_FILE" .wgp)"
+    # Nettoyer les points et espaces terminaux ( Wine n'aime pas)
+    WGP_NAME="${WGP_NAME%.}"
     MOUNT_BASE="/tmp/wgpackmount"
     MOUNT_DIR="$MOUNT_BASE/$WGP_NAME"
 

@@ -6,6 +6,8 @@ if [[ "$fullpath" == *.wgp ]]; then
     # Mode pack wgpack
     WGPACK_FILE="$(realpath "$fullpath")"
     WGPACK_NAME="$(basename "$WGPACK_FILE" .wgp)"
+    # Nettoyer les points et espaces terminaux ( Wine n'aime pas)
+    WGPACK_NAME="${WGPACK_NAME%.}"
     MOUNT_BASE="/tmp/wgpackmount"
     MOUNT_DIR="$MOUNT_BASE/$WGPACK_NAME"
 
