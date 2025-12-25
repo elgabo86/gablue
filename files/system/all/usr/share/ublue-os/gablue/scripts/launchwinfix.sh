@@ -40,7 +40,21 @@ if [[ "$fullpath" == *.wgp ]]; then
     # Fonction de nettoyage
     cleanup() {
         echo "Démontage de $WGP_NAME..."
-        fusermount -u "$MOUNT_DIR" 2>/dev/null
+        # D'abord tenter un démontage normal
+        if ! fusermount -u "$MOUNT_DIR" 2>/dev/null; then
+            # Si échec, tuer le processus squashfuse correspondant
+            FUSE_PID=$(fuser -m "$MOUNT_DIR" 2>/dev/null | head -n1)
+            if [ -n "$FUSE_PID" ]; then
+                kill -9 "$FUSE_PID" 2>/dev/null
+                sleep 0.5
+            fi
+            # Puis force unmount lazy si nécessaire
+            fusermount -uz "$MOUNT_DIR" 2>/dev/null
+        fi
+        # Nettoyer le dossier s'il existe et n'est plus monté
+        if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
+            umount -f "$MOUNT_DIR" 2>/dev/null
+        fi
         rmdir "$MOUNT_DIR" 2>/dev/null
     }
 

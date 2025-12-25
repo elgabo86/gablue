@@ -1,6 +1,6 @@
 [Desktop Entry]
 Comment=Exécutez des logiciels Windows
-Exec=/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable %f; exec bash
+Exec=/usr/share/ublue-os/gablue/scripts/launchwinterm.sh %f; exec bash
 Icon=com.usebottles.bottles
 Keywords[fr_CH]=wine;windows;
 Keywords=wine;windows;
