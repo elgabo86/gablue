@@ -146,6 +146,7 @@ if command -v kdialog &> /dev/null; then
             kill -9 $MKSQUASH_PID 2>/dev/null
             pkill -9 mksquashfs 2>/dev/null
             rm -f "$WGPACK_NAME"
+            rm -f "$LAUNCH_FILE"
             echo ""
             echo "Compression annulée"
             exit 0
@@ -181,6 +182,9 @@ SIZE_BEFORE_GB=$(echo "scale=2; $SIZE_BEFORE / 1024 / 1024" | bc)
 SIZE_AFTER=$(du -s "$WGPACK_NAME" | cut -f1)
 SIZE_AFTER_GB=$(echo "scale=2; $SIZE_AFTER / 1024 / 1024" | bc)
 COMPRESSION_RATIO=$(echo "scale=1; (1 - $SIZE_AFTER / $SIZE_BEFORE) * 100" | bc)
+
+# Supprimer le fichier .launch du dossier source
+rm -f "$LAUNCH_FILE"
 
 echo ""
 echo "=== Paquet créé avec succès ==="
