@@ -121,14 +121,9 @@ echo ""
 echo "=== Extraction terminée avec succès ==="
 echo "Dossier: $OUTPUT_DIR"
 
-# Vérifier le fichier .launch
-if [ -f "$OUTPUT_DIR/.launch" ]; then
-    EXE_REL_PATH=$(cat "$OUTPUT_DIR/.launch")
-    echo "Exécutable: $EXE_REL_PATH"
-    rm -f "$OUTPUT_DIR/.launch"
-else
-    echo "Attention: aucun exécutable par défaut défini (.launch manquant)"
-fi
+# Supprimer les fichiers temporaires
+rm -f "$OUTPUT_DIR/.launch"
+rm -f "$OUTPUT_DIR/.args"
 
 # Afficher le nombre de fichiers extraits
 FILE_COUNT=$(find "$OUTPUT_DIR" -type f | wc -l)
@@ -139,9 +134,6 @@ if command -v kdialog &> /dev/null; then
     MSG="Paquet extrait avec succès !\n\n"
     MSG+="Fichier: $(basename "$WGPACK_FILE")\n"
     MSG+="Dossier: $OUTPUT_DIR\n"
-    MSG+="Fichiers: $FILE_COUNT\n"
-    if [ -f "$OUTPUT_DIR/.launch" ]; then
-        MSG+="\nExécutable: $EXE_REL_PATH"
-    fi
+    MSG+="Fichiers: $FILE_COUNT"
     kdialog --title "Succès" --msgbox "$MSG"
 fi
