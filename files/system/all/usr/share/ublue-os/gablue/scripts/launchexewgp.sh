@@ -8,6 +8,8 @@ fi
 
 WGP_FILE="$(realpath "$1")"
 WGP_NAME=$(basename "$WGP_FILE" .wgp)
+# Nettoyer les points et espaces terminaux ( Wine n'aime pas)
+WGP_NAME="${WGP_NAME%.}"
 MOUNT_BASE="/tmp/wgpackmount"
 MOUNT_DIR="$MOUNT_BASE/$WGP_NAME"
 
@@ -69,9 +71,9 @@ fi
 menu_args=("Choisissez un exécutable à lancer :")
 
 for exe in "${exe_array[@]}"; do
-    # Chemin relatif pour l'affichage
+    # Chemin relatif pour l'affichage et pour kdialog
     rel_path="${exe#$MOUNT_DIR/}"
-    menu_args+=("$exe" "$rel_path")
+    menu_args+=("$rel_path" "$rel_path")
 done
 
 # Afficher le menu
