@@ -1,6 +1,6 @@
 [Desktop Entry]
 Comment=Exécutez des logiciels Windows
-Exec=/usr/share/ublue-os/gablue/scripts/launchwinfix.sh %f
+Exec=/usr/share/ublue-os/gablue/scripts/launchwin.sh --fix %f
 Icon=com.usebottles.bottles
 Keywords[fr_CH]=wine;windows;
 Keywords=wine;windows;

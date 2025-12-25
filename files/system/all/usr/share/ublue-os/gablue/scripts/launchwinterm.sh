@@ -1,9 +1,28 @@
 #!/bin/bash
-fullpath="$1"
 
-# Si c'est un .wgp, utiliser launchwin.sh
+# Analyse des paramètres
+fix_mode=false
+fullpath=""
+
+# Vérifier si le paramètre --fix est présent
+if [ "$1" = "--fix" ]; then
+    fix_mode=true
+    fullpath="$2"
+elif [ "$2" = "--fix" ]; then
+    fullpath="$1"
+    fix_mode=true
+else
+    fullpath="$1"
+fi
+
+# Vérifier si c'est un .wgp
 if [[ "$fullpath" == *.wgp ]]; then
-    exec /usr/share/ublue-os/gablue/scripts/launchwin.sh "$fullpath"
+    # Appeler launchwin.sh avec le paramètre --fix si demandé
+    if [ "$fix_mode" = true ]; then
+        exec /usr/share/ublue-os/gablue/scripts/launchwin.sh "$fullpath" --fix
+    else
+        exec /usr/share/ublue-os/gablue/scripts/launchwin.sh "$fullpath"
+    fi
 fi
 
 # Sinon, lancer avec bottles en mode terminal
@@ -54,11 +73,22 @@ fi
 # Nettoyage du dossier temporaire en cas d'interruption
 [ -n "$temp_base" ] && trap 'rm -rf "$temp_base"' EXIT
 
-# Appliquer la modification du registre
-sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
+if [ "$fix_mode" = true ]; then
+    # Mode fix: désactiver DisableHidraw
+    sed -i 's/"DisableHidraw"=dword:00000001/"DisableHidraw"=dword:00000000/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
+else
+    # Mode normal: activer DisableHidraw
+    sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
+fi
 
 # Lancer le jeu avec le chemin en mode terminal
 /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$new_fullpath"
+
+if [ "$fix_mode" = true ]; then
+    # Réactiver DisableHidraw après le lancement en mode fix
+    sleep 2
+    sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
+fi
 
 # Nettoyer le dossier temporaire si créé
 [ -n "$temp_base" ] && rm -rf "$temp_base"

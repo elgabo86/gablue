@@ -61,119 +61,12 @@ fi
 # Générer le script selon le choix
 echo "#!/bin/bash" > "$script_sh"
 
-if [ "$filetype" = "wgp" ]; then
-    # Script pour fichier .wgp
-    cat >> "$script_sh" << WGPEOF
-WGP_FILE="\$(realpath "$fullpath")"
-WGP_NAME="$onlyapp"
-MOUNT_BASE="/tmp/wgpackmount"
-MOUNT_DIR="\$MOUNT_BASE/\$WGP_NAME"
-
-# Créer le dossier de montage
-mkdir -p "\$MOUNT_BASE"
-
-# Vérifier si déjà monté
-if mountpoint -q "\$MOUNT_DIR"; then
-    echo "Erreur: \$WGP_NAME est déjà monté"
-    exit 1
-fi
-
-# Vérifier que squashfuse est disponible
-if ! command -v squashfuse &> /dev/null; then
-    echo "Erreur: squashfuse n'est pas installé"
-    echo "Installez-le avec: paru -S squashfuse"
-    rmdir "\$MOUNT_BASE" 2>/dev/null
-    exit 1
-fi
-
-# Créer et monter le squashfs
-mkdir -p "\$MOUNT_DIR"
-echo "Montage de \$WGP_FILE sur \$MOUNT_DIR..."
-squashfuse -r "\$WGP_FILE" "\$MOUNT_DIR"
-
-if [ \$? -ne 0 ]; then
-    echo "Erreur lors du montage du squashfs"
-    rmdir "\$MOUNT_DIR"
-    exit 1
-fi
-
-# Fonction de nettoyage
-cleanup() {
-    echo "Démontage de \$WGP_NAME..."
-    fusermount -u "\$MOUNT_DIR" 2>/dev/null
-    rmdir "\$MOUNT_DIR" 2>/dev/null
-}
-
-# Nettoyer en cas d'interruption
-trap cleanup EXIT
-
-# Lire le fichier .launch pour connaître l'exécutable
-LAUNCH_FILE="\$MOUNT_DIR/.launch"
-if [ ! -f "\$LAUNCH_FILE" ]; then
-    echo "Erreur: fichier .launch introuvable dans le pack"
-    cleanup
-    exit 1
-fi
-
-EXE_PATH=\$(cat "\$LAUNCH_FILE")
-FULL_EXE_PATH="\$MOUNT_DIR/\$EXE_PATH"
-
-if [ ! -f "\$FULL_EXE_PATH" ]; then
-    echo "Erreur: exécutable introuvable: \$EXE_PATH"
-    cleanup
-    exit 1
-fi
-
-WGPEOF
-
-    if [ "$choice" = "normal" ]; then
-        cat >> "$script_sh" << WGPEOF
-# Appliquer la modification du registre
-sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
-
-# Lancer le jeu
-echo "Lancement de \$WGP_NAME..."
-/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "\$FULL_EXE_PATH"
-
-# Nettoyage automatique (le trap EXIT le fera aussi)
-cleanup
-exit 0
-WGPEOF
-    else
-        cat >> "$script_sh" << WGPEOF
-# Désactiver DisableHidraw
-sed -i 's/"DisableHidraw"=dword:00000001/"DisableHidraw"=dword:00000000/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
-
-# Lancer le jeu
-echo "Lancement de \$WGP_NAME..."
-/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "\$FULL_EXE_PATH"
-
-# Attendre 2 secondes
-sleep 2
-
-# Réactiver DisableHidraw
-sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
-
-# Nettoyage automatique (le trap EXIT le fera aussi)
-cleanup
-exit 0
-WGPEOF
-    fi
-
+# Déterminer le script de lancement à utiliser
+LAUNCH_SCRIPT="/usr/share/ublue-os/gablue/scripts/launchwin.sh"
+if [ "$choice" = "fix" ]; then
+    echo "exec \"$LAUNCH_SCRIPT\" --fix \"$fullpath\"" >> "$script_sh"
 else
-    # Script pour fichier .exe (mode classique)
-    case "$choice" in
-        "normal")
-            echo "sed -i 's/\"DisableHidraw\"=dword:00000000/\"DisableHidraw\"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg" >> "$script_sh"
-            echo "/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable \"$fullpath\"" >> "$script_sh"
-            ;;
-        "fix")
-            echo "sed -i 's/\"DisableHidraw\"=dword:00000001/\"DisableHidraw\"=dword:00000000/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg" >> "$script_sh"
-            echo "/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable \"$fullpath\" ;" >> "$script_sh"
-            echo "sleep 2" >> "$script_sh"
-            echo "sed -i 's/\"DisableHidraw\"=dword:00000000/\"DisableHidraw\"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg" >> "$script_sh"
-            ;;
-    esac
+    echo "exec \"$LAUNCH_SCRIPT\" \"$fullpath\"" >> "$script_sh"
 fi
 
 chmod +x "$script_sh"

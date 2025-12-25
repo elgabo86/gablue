@@ -9,7 +9,7 @@ X-KDE-StartupNotify=false
 [Desktop Action LaunchFix]
 Name=Lancer avec fix gamepad
 Icon=com.usebottles.bottles
-Exec=/usr/share/ublue-os/gablue/scripts/launchwinfix.sh %f
+Exec=/usr/share/ublue-os/gablue/scripts/launchwin.sh --fix %f
 
 [Desktop Action LaunchTerm]
 Name=Lancer dans le terminal

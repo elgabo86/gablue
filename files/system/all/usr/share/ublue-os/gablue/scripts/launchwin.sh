@@ -1,5 +1,19 @@
 #!/bin/bash
-fullpath="$1"
+
+# Analyse des paramètres
+fix_mode=false
+fullpath=""
+
+# Vérifier si le paramètre --fix est présent
+if [ "$1" = "--fix" ]; then
+    fix_mode=true
+    fullpath="$2"
+elif [ "$2" = "--fix" ]; then
+    fullpath="$1"
+    fix_mode=true
+else
+    fullpath="$1"
+fi
 
 # Vérifier si c'est un fichier .wgp
 if [[ "$fullpath" == *.wgp ]]; then
@@ -80,12 +94,23 @@ if [[ "$fullpath" == *.wgp ]]; then
         exit 1
     fi
 
-    # Appliquer la modification du registre
-    sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
+    if [ "$fix_mode" = true ]; then
+        # Mode fix: désactiver DisableHidraw avant le lancement
+        sed -i 's/"DisableHidraw"=dword:00000001/"DisableHidraw"=dword:00000000/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
+    else
+        # Mode normal: activer DisableHidraw
+        sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
+    fi
 
     # Lancer le jeu
     echo "Lancement de $WGPACK_NAME..."
     /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH"
+
+    if [ "$fix_mode" = true ]; then
+        # Réactiver DisableHidraw après le lancement en mode fix
+        sleep 2
+        sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
+    fi
 
     # Nettoyage automatique (le trap EXIT le fera aussi)
     cleanup
@@ -140,11 +165,22 @@ fi
 # Nettoyage du dossier temporaire en cas d'interruption
 [ -n "$temp_base" ] && trap 'rm -rf "$temp_base"' EXIT
 
-# Appliquer la modification du registre
-sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
+if [ "$fix_mode" = true ]; then
+    # Mode fix: désactiver DisableHidraw
+    sed -i 's/"DisableHidraw"=dword:00000001/"DisableHidraw"=dword:00000000/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
+else
+    # Mode normal: activer DisableHidraw
+    sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
+fi
 
 # Lancer le jeu avec le chemin
 /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$new_fullpath"
+
+if [ "$fix_mode" = true ]; then
+    # Réactiver DisableHidraw après le lancement en mode fix
+    sleep 2
+    sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
+fi
 
 # Nettoyer le dossier temporaire si créé
 [ -n "$temp_base" ] && rm -rf "$temp_base"
