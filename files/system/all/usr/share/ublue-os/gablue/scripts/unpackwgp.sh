@@ -124,6 +124,7 @@ echo "Dossier: $OUTPUT_DIR"
 # Supprimer les fichiers temporaires
 rm -f "$OUTPUT_DIR/.launch"
 rm -f "$OUTPUT_DIR/.args"
+rm -f "$OUTPUT_DIR/.fix"
 
 # Afficher le nombre de fichiers extraits
 FILE_COUNT=$(find "$OUTPUT_DIR" -type f | wc -l)

@@ -48,13 +48,46 @@ if [ $? -ne 0 ]; then
     exit 0
 fi
 
-# Demande à l'utilisateur le mode de lancement par défaut
-LAUNCH_MODE=$(kdialog --title "Mode de lancement" --radiolist "Choisissez le lancement par défaut :" \
-    "normal" "Lancement normal" on \
-    "fix" "Lancement avec fix gamepad" off)
-if [ $? -ne 0 ]; then
-    echo "Annulé par l'utilisateur"
-    exit 0
+# Vérifier si le .fix existe dans le pack .wgp
+HAS_FIX=false
+if [ "$FILETYPE" = "wgp" ]; then
+    MOUNT_BASE="/tmp/wgpack_shortcut_check_$(date +%s)"
+    MOUNT_DIR="$MOUNT_BASE/mount"
+    mkdir -p "$MOUNT_DIR"
+
+    if command -v squashfuse &> /dev/null; then
+        squashfuse -r "$EXE_PATH" "$MOUNT_DIR" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            if [ -f "$MOUNT_DIR/.fix" ]; then
+                HAS_FIX=true
+            fi
+            fusermount -u "$MOUNT_DIR" 2>/dev/null
+        fi
+    fi
+    rm -rf "$MOUNT_BASE"
+
+    # Si .fix existe, utiliser le mode fix directement sans demander
+    if [ "$HAS_FIX" = true ]; then
+        LAUNCH_MODE="fix"
+    fi
+fi
+
+if [ "$LAUNCH_MODE" != "fix" ]; then
+    # Demande à l'utilisateur le mode de lancement par défaut
+    DEFAULT_NORMAL="on"
+    DEFAULT_FIX="off"
+    if [ "$HAS_FIX" = true ]; then
+        DEFAULT_NORMAL="off"
+        DEFAULT_FIX="on"
+    fi
+
+    LAUNCH_MODE=$(kdialog --title "Mode de lancement" --radiolist "Choisissez le lancement par défaut :" \
+        "normal" "Lancement normal" $DEFAULT_NORMAL \
+        "fix" "Lancement avec fix gamepad" $DEFAULT_FIX)
+    if [ $? -ne 0 ]; then
+        echo "Annulé par l'utilisateur"
+        exit 0
+    fi
 fi
 
 # Demande si l'utilisateur veut un raccourci sur le bureau

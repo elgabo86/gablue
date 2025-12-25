@@ -110,6 +110,12 @@ if [[ "$fullpath" == *.wgp ]]; then
         fi
     fi
 
+    # Lire le fichier .fix si présent (active le fix manette)
+    FIX_FILE="$MOUNT_DIR/.fix"
+    if [ -f "$FIX_FILE" ]; then
+        fix_mode=true
+    fi
+
     if [ "$fix_mode" = true ]; then
         # Mode fix: désactiver DisableHidraw avant le lancement
         sed -i 's/"DisableHidraw"=dword:00000001/"DisableHidraw"=dword:00000000/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg

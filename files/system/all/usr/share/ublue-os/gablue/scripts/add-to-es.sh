@@ -47,15 +47,50 @@ if [ "$filetype" = "wgp" ]; then
 fi
 script_sh="$onlypath/$sh_name.sh"
 
-# Demander le mode de lancement avec un menu
-choice=$(kdialog --menu "Choisissez le mode de lancement :" \
-    "normal" "Lancement normal" \
-    "fix" "Lancement avec fix gamepad")
+# Vérifier si le .fix existe dans le pack .wgp
+if [ "$filetype" = "wgp" ]; then
+    MOUNT_BASE="/tmp/wgpack_es_check_$(date +%s)"
+    MOUNT_DIR="$MOUNT_BASE/mount"
+    mkdir -p "$MOUNT_DIR"
+    HAS_FIX=false
 
-# Vérifier si l'utilisateur a annulé
-if [ $? -ne 0 ] || [ -z "$choice" ]; then
-    echo "Aucun choix effectué, utilisation du lancement normal par défaut"
-    choice="normal"
+    if command -v squashfuse &> /dev/null; then
+        squashfuse -r "$fullpath" "$MOUNT_DIR" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            if [ -f "$MOUNT_DIR/.fix" ]; then
+                HAS_FIX=true
+            fi
+            fusermount -u "$MOUNT_DIR" 2>/dev/null
+        fi
+    fi
+    rm -rf "$MOUNT_BASE"
+
+    # Si .fix existe, utiliser le mode fix directement sans demander
+    if [ "$HAS_FIX" = true ]; then
+        choice="fix"
+    else
+        # Demander le mode de lancement avec un menu
+        choice=$(kdialog --menu "Choisissez le mode de lancement :" \
+            "normal" "Lancement normal" \
+            "fix" "Lancement avec fix gamepad")
+
+        # Vérifier si l'utilisateur a annulé
+        if [ $? -ne 0 ] || [ -z "$choice" ]; then
+            echo "Aucun choix effectué, utilisation du lancement normal par défaut"
+            choice="normal"
+        fi
+    fi
+else
+    # Pour les .exe, demander toujours le mode
+    choice=$(kdialog --menu "Choisissez le mode de lancement :" \
+        "normal" "Lancement normal" \
+        "fix" "Lancement avec fix gamepad")
+
+    # Vérifier si l'utilisateur a annulé
+    if [ $? -ne 0 ] || [ -z "$choice" ]; then
+        echo "Aucun choix effectué, utilisation du lancement normal par défaut"
+        choice="normal"
+    fi
 fi
 
 # Générer le script selon le choix

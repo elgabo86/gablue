@@ -128,6 +128,27 @@ if [ -n "$BOTTLE_ARGS" ]; then
     echo "Fichier .args créé: $ARGS_FILE (arguments: $BOTTLE_ARGS)"
 fi
 
+# Demander si l'utilisateur veut activer le fix manette
+FIX_ENABLED=false
+if command -v kdialog &> /dev/null; then
+    kdialog --yesno "Voulez-vous activer le fix manette pour ce jeu ?\\n\\nCela modifie une clé de registre Wine (DisableHidraw)\\npour résoudre des problèmes de compatibilité manette." --yes-label "Oui" --no-label "Non"
+    if [ $? -eq 0 ]; then
+        FIX_ENABLED=true
+    fi
+else
+    read -p "Activer le fix manette ? (o/N): " FIX_INPUT
+    if [[ "$FIX_INPUT" =~ ^[oOyY]$ ]]; then
+        FIX_ENABLED=true
+    fi
+fi
+
+# Créer le fichier .fix si activé
+if [ "$FIX_ENABLED" = true ]; then
+    FIX_FILE="$GAME_DIR/.fix"
+    touch "$FIX_FILE"
+    echo "Fichier .fix créé: $FIX_FILE"
+fi
+
 echo ""
 echo "=== Création du squashfs ==="
 
@@ -169,6 +190,7 @@ if command -v kdialog &> /dev/null; then
             rm -f "$WGPACK_NAME"
             rm -f "$LAUNCH_FILE"
             [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE"
+            [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE"
             echo ""
             echo "Compression annulée"
             exit 0
@@ -208,6 +230,7 @@ COMPRESSION_RATIO=$(echo "scale=1; (1 - $SIZE_AFTER / $SIZE_BEFORE) * 100" | bc)
 # Supprimer les fichiers temporaires du dossier source
 rm -f "$LAUNCH_FILE"
 [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE"
+[ -f "$FIX_FILE" ] && rm -f "$FIX_FILE"
 
 echo ""
 echo "=== Paquet créé avec succès ==="
