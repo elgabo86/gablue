@@ -430,6 +430,40 @@ EOF
 
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
     rm -rf "$temp_dir"
+    qdbus $dbusRef Set "" "value" 80
+    qdbus $dbusRef setLabelText "Configuration des raccourcis et outils..."
+    cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications
+    cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications
+    cp /usr/share/ublue-os/gablue/desktops/WindowsFix.desktop ~/.local/share/applications
+    cp /usr/share/ublue-os/gablue/desktops/WindowsTerminal.desktop ~/.local/share/applications
+    cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications
+    mkdir -p ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWinShortcut.desktop ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/LaunchWin.desktop ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/InstallWinReg.desktop ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWGP.desktop ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/EditWGP.desktop ~/.local/share/kio/servicemenus
+    mkdir -p ~/.local/share/mime/packages/
+    cp /usr/share/ublue-os/gablue/desktops/mime/wgp-mime.xml ~/.local/share/mime/packages/
+    update-mime-database ~/.local/share/mime
+    update-desktop-database ~/.local/share/applications
+    xdg-mime default Windows.desktop application/x-ms-dos-executable
+    xdg-mime default Windows.desktop application/x-msi
+    xdg-mime default Windows.desktop application/x-ms-shortcut
+    xdg-mime default Windows.desktop application/x-wine-extension-msp
+    xdg-mime default Windows.desktop application/x-bat
+    xdg-mime default Windows.desktop application/x-wgp
+    mkdir -p ~/Windows/Tools
+    for file in ~/Windows/Tools/*; do
+        if [ -f "$file" ] && [ "$(basename "$file")" != "winetricks" ]; then
+            rm -f "$file"
+        fi
+    done
+    if [ ! -f ~/Windows/Tools/winetricks ]; then
+        wget -O ~/Windows/Tools/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
+        chmod +x ~/Windows/Tools/winetricks
+    fi
+
     qdbus $dbusRef Set "" "value" 100
     qdbus $dbusRef setLabelText "Finalisation..."
     qdbus $dbusRef close 2>/dev/null
@@ -488,11 +522,14 @@ if [ "$need_rebuild" = true ]; then
     xdg-mime default Windows.desktop application/x-wine-extension-msp
     xdg-mime default Windows.desktop application/x-bat
     xdg-mime default Windows.desktop application/x-wgp
-    rm -rf ~/Windows/Tools/*
-    if [ ! -f ~/Windows/Tools/winetricks ]; then
-        wget -O ~/Windows/Tools/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
-        chmod +x ~/Windows/Tools/winetricks
-    fi
+    mkdir -p ~/Windows/Tools
+    for file in ~/Windows/Tools/*; do
+        if [ -f "$file" ] && [ "$(basename "$file")" != "winetricks" ]; then
+            rm -f "$file"
+        fi
+    done
+    wget -O ~/Windows/Tools/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
+    chmod +x ~/Windows/Tools/winetricks
 
     qdbus $dbusRef Set "" "value" 85
     qdbus $dbusRef setLabelText "Installation des runtimes..."
