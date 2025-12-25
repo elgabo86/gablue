@@ -102,8 +102,13 @@ if [ "$FILETYPE" = "wgp" ]; then
                 ICON_EXE_PATH="$MOUNT_DIR/$EXE_IN_WGP"
 
                 if [ -f "$ICON_EXE_PATH" ]; then
-                    # Extraire l'icône depuis l'exécutable dans le pack
-                    /usr/bin/wrestool -x -t 14 "$ICON_EXE_PATH" > "$ICON_TEMP" 2>/dev/null
+                    # Extraire l'icône de meilleure qualité depuis l'exécutable dans le pack
+                    wrestool -x -t 14 "$ICON_EXE_PATH" > "$ICON_TEMP" 2>/dev/null
+                    if [ -s "$ICON_TEMP" ]; then
+                        icotool -x -o "$HOME/.local/share/icons/" --largest "$ICON_TEMP" 2>/dev/null
+                        # Move extracted icon to final location
+                        mv -f "$HOME/.local/share/icons/"*.png "$ICON_PATH" 2>/dev/null
+                    fi
                 fi
             fi
 
@@ -115,16 +120,21 @@ if [ "$FILETYPE" = "wgp" ]; then
     # Nettoyer le dossier de montage
     rm -rf "$MOUNT_BASE"
 else
-    # Pour les .exe : extraction directe
-    /usr/bin/wrestool -x -t 14 "$EXE_PATH" > "$ICON_TEMP" 2>/dev/null
+    # Pour les .exe : extraction directe avec meilleure qualité
+    wrestool -x -t 14 "$EXE_PATH" > "$ICON_TEMP" 2>/dev/null
+    if [ -s "$ICON_TEMP" ]; then
+        icotool -x -o "$HOME/.local/share/icons/" --largest "$ICON_TEMP" 2>/dev/null
+        # Move extracted icon to final location
+        mv -f "$HOME/.local/share/icons/"*.png "$ICON_PATH" 2>/dev/null
+    fi
 fi
 
-if [ ! -s "$ICON_TEMP" ]; then
+# Définir le chemin final de l'icône
+ICON_PATH="$HOME/.local/share/icons/$DESKTOP_NAME.png"
+mkdir -p "$HOME/.local/share/icons"
+
+if [ ! -f "$ICON_PATH" ]; then
     ICON_PATH="applications-games"  # Fallback si pas d'icône
-else
-    ICON_PATH="$HOME/.local/share/icons/$DESKTOP_NAME.png"
-    mkdir -p "$HOME/.local/share/icons"
-    mv "$ICON_TEMP" "$ICON_PATH"
 fi
 
 # Crée le fichier .desktop avec l'action alternative et la suppression
