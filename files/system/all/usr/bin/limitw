@@ -69,8 +69,8 @@ if [[ -z "$WATTS" ]]; then
 fi
 
 # Vérifie si watts est un nombre entier positif
-if ! [[ $WATTS =~ ^[0-9]+$ ]] || [ $WATTS -lt 5 ] || [ $WATTS -gt 100 ]; then
-    echo "Erreur : <watts> doit être un nombre entier entre 5 et 100."
+if ! [[ $WATTS =~ ^[0-9]+$ ]] || [ $WATTS -lt 5 ] || [ $WATTS -gt 120 ]; then
+    echo "Erreur : <watts> doit être un nombre entier entre 5 et 120."
     exit 1
 fi
 
