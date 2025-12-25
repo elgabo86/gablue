@@ -39,7 +39,12 @@ else
     category=""
 fi
 
-# Déterminer le dossier de sortie pour le script dans le même répertoire que le .exe
+# Déterminer le dossier de sortie pour le script
+# Pour les .wgp, utiliser un sous-dossier .es-wgp
+if [ "$filetype" = "wgp" ]; then
+    onlypath="$onlypath/.es-wgp"
+    mkdir -p "$onlypath"
+fi
 script_sh="$onlypath/$sh_name.sh"
 
 # Demander le mode de lancement avec un menu
