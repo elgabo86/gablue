@@ -50,7 +50,8 @@ dnf5 -y install \
     git \
     nmap \
     terminus-fonts-console \
-    plocate
+    plocate \
+    squashfuse
 
 # Outils réseau et cloud
 dnf5 -y install \
