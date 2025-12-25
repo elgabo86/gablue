@@ -52,13 +52,13 @@ case "$INPUT" in
 esac
 
 echo ""
-echo "=== Recherche des exécutables .exe ==="
+echo "=== Recherche des exécutables (.exe et .bat) ==="
 
-# Scanner le dossier pour trouver les .exe
-EXE_LIST=$(find "$GAME_DIR" -type f -iname "*.exe" 2>/dev/null)
+# Scanner le dossier pour trouver les .exe et .bat
+EXE_LIST=$(find "$GAME_DIR" -type f \( -iname "*.exe" -o -iname "*.bat" \) 2>/dev/null)
 
 if [ -z "$EXE_LIST" ]; then
-    echo "Erreur: aucun fichier .exe trouvé dans $GAME_DIR"
+    echo "Erreur: aucun fichier .exe ou .bat trouvé dans $GAME_DIR"
     exit 1
 fi
 
