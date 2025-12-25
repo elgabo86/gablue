@@ -107,6 +107,27 @@ LAUNCH_FILE="$GAME_DIR/.launch"
 echo "$EXE_REL_PATH" > "$LAUNCH_FILE"
 echo "Fichier .launch créé: $LAUNCH_FILE"
 
+# Demander si l'utilisateur veut ajouter des arguments de lancement
+BOTTLE_ARGS=""
+if command -v kdialog &> /dev/null; then
+    ADD_ARGS=$(kdialog --yesno "Voulez-vous ajouter des arguments de lancement ?\\n(ex: --dx12, --window, --no-borders, etc.)" --yes-label "Oui" --no-label "Non")
+    if [ $? -eq 0 ]; then
+        BOTTLE_ARGS=$(kdialog --inputbox "Entrez les arguments de lancement (sans le --dx12 précédent)")
+    fi
+else
+    read -p "Voulez-vous ajouter des arguments de lancement ? (o/N): " ADD_ARGS
+    if [[ "$ADD_ARGS" =~ ^[oOyY]$ ]]; then
+        read -p "Entrez les arguments de lancement (ex: dx12, window, etc.): " BOTTLE_ARGS
+    fi
+fi
+
+# Créer le fichier .args si des arguments ont été fournis
+if [ -n "$BOTTLE_ARGS" ]; then
+    ARGS_FILE="$GAME_DIR/.args"
+    echo "$BOTTLE_ARGS" > "$ARGS_FILE"
+    echo "Fichier .args créé: $ARGS_FILE (arguments: $BOTTLE_ARGS)"
+fi
+
 echo ""
 echo "=== Création du squashfs ==="
 
@@ -147,6 +168,7 @@ if command -v kdialog &> /dev/null; then
             pkill -9 mksquashfs 2>/dev/null
             rm -f "$WGPACK_NAME"
             rm -f "$LAUNCH_FILE"
+            [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE"
             echo ""
             echo "Compression annulée"
             exit 0
@@ -183,8 +205,9 @@ SIZE_AFTER=$(du -s "$WGPACK_NAME" | cut -f1)
 SIZE_AFTER_GB=$(echo "scale=2; $SIZE_AFTER / 1024 / 1024" | bc)
 COMPRESSION_RATIO=$(echo "scale=1; (1 - $SIZE_AFTER / $SIZE_BEFORE) * 100" | bc)
 
-# Supprimer le fichier .launch du dossier source
+# Supprimer les fichiers temporaires du dossier source
 rm -f "$LAUNCH_FILE"
+[ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE"
 
 echo ""
 echo "=== Paquet créé avec succès ==="
@@ -193,8 +216,13 @@ echo "Taille avant: ${SIZE_BEFORE_GB} Go"
 echo "Taille après: ${SIZE_AFTER_GB} Go"
 echo "Gain: ${COMPRESSION_RATIO}%"
 echo "Exécutable: $EXE_REL_PATH"
+[ -n "$BOTTLE_ARGS" ] && echo "Arguments: $BOTTLE_ARGS"
 
 # Fenêtre de succès
 if command -v kdialog &> /dev/null; then
-    kdialog --title "Succès" --msgbox "Paquet créé avec succès !\n\nFichier: $WGPACK_NAME\n\nTaille avant: ${SIZE_BEFORE_GB} Go\nTaille après: ${SIZE_AFTER_GB} Go\nGain: ${COMPRESSION_RATIO}%\n\nExécutable: $EXE_REL_PATH"
+    if [ -n "$BOTTLE_ARGS" ]; then
+        kdialog --title "Succès" --msgbox "Paquet créé avec succès !\n\nFichier: $WGPACK_NAME\n\nTaille avant: ${SIZE_BEFORE_GB} Go\nTaille après: ${SIZE_AFTER_GB} Go\nGain: ${COMPRESSION_RATIO}%\n\nExécutable: $EXE_REL_PATH\nArguments: $BOTTLE_ARGS"
+    else
+        kdialog --title "Succès" --msgbox "Paquet créé avec succès !\n\nFichier: $WGPACK_NAME\n\nTaille avant: ${SIZE_BEFORE_GB} Go\nTaille après: ${SIZE_AFTER_GB} Go\nGain: ${COMPRESSION_RATIO}%\n\nExécutable: $EXE_REL_PATH"
+    fi
 fi

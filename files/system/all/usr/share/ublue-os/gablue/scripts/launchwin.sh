@@ -2,18 +2,25 @@
 
 # Analyse des paramètres
 fix_mode=false
+args=""
 fullpath=""
 
-# Vérifier si le paramètre --fix est présent
-if [ "$1" = "--fix" ]; then
-    fix_mode=true
-    fullpath="$2"
-elif [ "$2" = "--fix" ]; then
-    fullpath="$1"
-    fix_mode=true
-else
-    fullpath="$1"
-fi
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --fix)
+            fix_mode=true
+            shift
+            ;;
+        --args)
+            args="$2"
+            shift 2
+            ;;
+        *)
+            fullpath="$1"
+            shift
+            ;;
+    esac
+done
 
 # Vérifier si c'est un fichier .wgp
 if [[ "$fullpath" == *.wgp ]]; then
@@ -94,6 +101,15 @@ if [[ "$fullpath" == *.wgp ]]; then
         exit 1
     fi
 
+    # Lire le fichier .args si présent (surcharge les arguments en ligne de commande)
+    ARGS_FILE="$MOUNT_DIR/.args"
+    if [ -f "$ARGS_FILE" ]; then
+        wgp_args=$(cat "$ARGS_FILE")
+        if [ -n "$wgp_args" ]; then
+            args="$wgp_args"
+        fi
+    fi
+
     if [ "$fix_mode" = true ]; then
         # Mode fix: désactiver DisableHidraw avant le lancement
         sed -i 's/"DisableHidraw"=dword:00000001/"DisableHidraw"=dword:00000000/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
@@ -104,7 +120,11 @@ if [[ "$fullpath" == *.wgp ]]; then
 
     # Lancer le jeu
     echo "Lancement de $WGPACK_NAME..."
-    /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH"
+    if [ -n "$args" ]; then
+        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH" --args " $args"
+    else
+        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH"
+    fi
 
     if [ "$fix_mode" = true ]; then
         # Réactiver DisableHidraw après le lancement en mode fix
@@ -174,7 +194,11 @@ else
 fi
 
 # Lancer le jeu avec le chemin
-/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$new_fullpath"
+if [ -n "$args" ]; then
+    /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$new_fullpath" --args " $args"
+else
+    /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$new_fullpath"
+fi
 
 if [ "$fix_mode" = true ]; then
     # Réactiver DisableHidraw après le lancement en mode fix
