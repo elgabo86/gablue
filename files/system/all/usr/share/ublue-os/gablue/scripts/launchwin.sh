@@ -1,7 +1,82 @@
 #!/bin/bash
 fullpath="$1"
 
-# Extraire le dossier parent et le nom du fichier
+# Vérifier si c'est un fichier .wgp
+if [[ "$fullpath" == *.wgp ]]; then
+    # Mode pack wgpack
+    WGPACK_FILE="$(realpath "$fullpath")"
+    WGPACK_NAME="$(basename "$WGPACK_FILE" .wgp)"
+    MOUNT_BASE="/tmp/wgpackmount"
+    MOUNT_DIR="$MOUNT_BASE/$WGPACK_NAME"
+
+    # Créer le dossier de montage
+    mkdir -p "$MOUNT_BASE"
+
+    # Vérifier si déjà monté
+    if mountpoint -q "$MOUNT_DIR"; then
+        echo "Erreur: $WGPACK_NAME est déjà monté"
+        exit 1
+    fi
+
+    # Vérifier que squashfuse est disponible
+    if ! command -v squashfuse &> /dev/null; then
+        echo "Erreur: squashfuse n'est pas installé"
+        echo "Installez-le avec: paru -S squashfuse"
+        rmdir "$MOUNT_BASE" 2>/dev/null
+        exit 1
+    fi
+
+    # Créer et monter le squashfs
+    mkdir -p "$MOUNT_DIR"
+    echo "Montage de $WGPACK_FILE sur $MOUNT_DIR..."
+    squashfuse -r "$WGPACK_FILE" "$MOUNT_DIR"
+
+    if [ $? -ne 0 ]; then
+        echo "Erreur lors du montage du squashfs"
+        rmdir "$MOUNT_DIR"
+        exit 1
+    fi
+
+    # Fonction de nettoyage
+    cleanup() {
+        echo "Démontage de $WGPACK_NAME..."
+        fusermount -u "$MOUNT_DIR" 2>/dev/null
+        rmdir "$MOUNT_DIR" 2>/dev/null
+    }
+
+    # Nettoyer en cas d'interruption
+    trap cleanup EXIT
+
+    # Lire le fichier .launch pour connaître l'exécutable
+    LAUNCH_FILE="$MOUNT_DIR/.launch"
+    if [ ! -f "$LAUNCH_FILE" ]; then
+        echo "Erreur: fichier .launch introuvable dans le pack"
+        cleanup
+        exit 1
+    fi
+
+    EXE_PATH=$(cat "$LAUNCH_FILE")
+    FULL_EXE_PATH="$MOUNT_DIR/$EXE_PATH"
+
+    if [ ! -f "$FULL_EXE_PATH" ]; then
+        echo "Erreur: exécutable introuvable: $EXE_PATH"
+        cleanup
+        exit 1
+    fi
+
+    # Appliquer la modification du registre
+    sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
+
+    # Lancer le jeu
+    echo "Lancement de $WGPACK_NAME..."
+    /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH"
+
+    # Nettoyage automatique (le trap EXIT le fera aussi)
+    cleanup
+    exit 0
+fi
+
+# Mode classique (fichier .exe)
 dirpath=$(dirname "$fullpath")
 filename=$(basename "$fullpath")
 

@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Service
 X-KDE-ServiceTypes=KonqPopupMenu/Plugin
-MimeType=x-scheme-handler/bottles;application/x-ms-dos-executable;application/x-msi;application/x-ms-shortcut;application/x-wine-extension-msp;application/x-bat;
+MimeType=x-scheme-handler/bottles;application/x-ms-dos-executable;application/x-msi;application/x-ms-shortcut;application/x-wine-extension-msp;application/x-bat;application/x-wgp;
 Actions=LaunchFix;LaunchTerm
 X-KDE-Submenu=Windows
 X-KDE-StartupNotify=false

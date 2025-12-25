@@ -1,14 +1,22 @@
 #!/bin/bash
 # Version: 1.2
 
-# Vérifie qu'un fichier .exe est passé en argument
+# Vérifie qu'un fichier .exe ou .wgp est passé en argument
 if [ -z "$1" ] || [ ! -f "$1" ]; then
-    echo "Erreur : spécifie un fichier .exe en argument"
+    echo "Erreur : spécifie un fichier .exe ou .wgp en argument"
     exit 1
 fi
 
 EXE_PATH="$1"
-EXE_NAME=$(basename "$EXE_PATH" .exe)
+
+# Déterminer le type de fichier et extraire le nom sans extension
+if [[ "$EXE_PATH" == *.wgp ]]; then
+    EXE_NAME=$(basename "$EXE_PATH" .wgp)
+    FILETYPE="wgp"
+else
+    EXE_NAME=$(basename "$EXE_PATH" .exe)
+    FILETYPE="exe"
+fi
 DESKTOP_NAME=$(echo "$EXE_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
 DESKTOP_FILE="$HOME/.local/share/applications/$DESKTOP_NAME.desktop"
 DESKTOP_DIR=$(xdg-user-dir DESKTOP)
@@ -70,8 +78,47 @@ fi
 echo "Catégorie sélectionnée : $CATEGORY"
 echo "Mode de lancement choisi : $LAUNCH_MODE"
 
-# Extrait l'icône du .exe
-/usr/bin/wrestool -x -t 14 "$EXE_PATH" > "$ICON_TEMP" 2>/dev/null
+# Extrait l'icône (support .exe et .wgp)
+if [ "$FILETYPE" = "wgp" ]; then
+    # Pour les .wgp : monter temporairement et extraire l'icône depuis l'exécutable
+    WGP_FILE="$(realpath "$EXE_PATH")"
+    MOUNT_BASE="/tmp/icon_extract_$(date +%s)"
+    MOUNT_DIR="$MOUNT_BASE/mount"
+
+    # Créer les dossiers de montage
+    mkdir -p "$MOUNT_BASE"
+
+    # Vérifier que squashfuse est disponible
+    if command -v squashfuse &> /dev/null; then
+        # Monter le squashfs
+        mkdir -p "$MOUNT_DIR"
+        squashfuse -r "$WGP_FILE" "$MOUNT_DIR" 2>/dev/null
+
+        if [ $? -eq 0 ]; then
+            # Lire le fichier .launch pour connaître l'exécutable
+            LAUNCH_FILE="$MOUNT_DIR/.launch"
+            if [ -f "$LAUNCH_FILE" ]; then
+                EXE_IN_WGP=$(cat "$LAUNCH_FILE")
+                ICON_EXE_PATH="$MOUNT_DIR/$EXE_IN_WGP"
+
+                if [ -f "$ICON_EXE_PATH" ]; then
+                    # Extraire l'icône depuis l'exécutable dans le pack
+                    /usr/bin/wrestool -x -t 14 "$ICON_EXE_PATH" > "$ICON_TEMP" 2>/dev/null
+                fi
+            fi
+
+            # Démonter le squashfs
+            fusermount -u "$MOUNT_DIR" 2>/dev/null
+        fi
+    fi
+
+    # Nettoyer le dossier de montage
+    rm -rf "$MOUNT_BASE"
+else
+    # Pour les .exe : extraction directe
+    /usr/bin/wrestool -x -t 14 "$EXE_PATH" > "$ICON_TEMP" 2>/dev/null
+fi
+
 if [ ! -s "$ICON_TEMP" ]; then
     ICON_PATH="applications-games"  # Fallback si pas d'icône
 else

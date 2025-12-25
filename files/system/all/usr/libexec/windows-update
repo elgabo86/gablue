@@ -476,12 +476,18 @@ if [ "$need_rebuild" = true ]; then
     cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWinShortcut.desktop ~/.local/share/kio/servicemenus
     cp /usr/share/ublue-os/gablue/desktops/servicemenus/LaunchWin.desktop ~/.local/share/kio/servicemenus
     cp /usr/share/ublue-os/gablue/desktops/servicemenus/InstallWinReg.desktop ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWGP.desktop ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/EditWGP.desktop ~/.local/share/kio/servicemenus
+    mkdir -p ~/.local/share/mime/packages/
+    cp /usr/share/ublue-os/gablue/desktops/mime/wgp-mime.xml ~/.local/share/mime/packages/
+    update-mime-database ~/.local/share/mime
     update-desktop-database ~/.local/share/applications
     xdg-mime default Windows.desktop application/x-ms-dos-executable
     xdg-mime default Windows.desktop application/x-msi
     xdg-mime default Windows.desktop application/x-ms-shortcut
     xdg-mime default Windows.desktop application/x-wine-extension-msp
     xdg-mime default Windows.desktop application/x-bat
+    xdg-mime default Windows.desktop application/x-wgp
     rm -rf ~/Windows/Tools/*
     if [ ! -f ~/Windows/Tools/winetricks ]; then
         wget -O ~/Windows/Tools/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
