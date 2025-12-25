@@ -21,9 +21,11 @@ DESKTOP_NAME=$(echo "$EXE_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
 DESKTOP_FILE="$HOME/.local/share/applications/$DESKTOP_NAME.desktop"
 DESKTOP_DIR=$(xdg-user-dir DESKTOP)
 DESKTOP_SHORTCUT="$DESKTOP_DIR/$DESKTOP_NAME.desktop"
-ICON_TEMP=$(mktemp).png
 
-# Demande le nom personnalisé via kdialog
+# Définir le chemin final de l'icône AVANT l'extraction
+ICON_PATH="$HOME/.local/share/icons/$DESKTOP_NAME.png"
+mkdir -p "$HOME/.local/share/icons"
+
 CUSTOM_NAME=$(kdialog --title "Nom du raccourci" --inputbox "Entrez le nom à afficher dans le menu (par défaut : $EXE_NAME)" "$EXE_NAME")
 if [ $? -ne 0 ]; then
     echo "Annulé par l'utilisateur"
@@ -135,13 +137,15 @@ if [ "$FILETYPE" = "wgp" ]; then
                 ICON_EXE_PATH="$MOUNT_DIR/$EXE_IN_WGP"
 
                 if [ -f "$ICON_EXE_PATH" ]; then
-                    # Extraire l'icône de meilleure qualité depuis l'exécutable dans le pack
-                    wrestool -x -t 14 "$ICON_EXE_PATH" > "$ICON_TEMP" 2>/dev/null
-                    if [ -s "$ICON_TEMP" ]; then
-                        icotool -x -o "$HOME/.local/share/icons/" --largest "$ICON_TEMP" 2>/dev/null
-                        # Move extracted icon to final location
-                        mv -f "$HOME/.local/share/icons/"*.png "$ICON_PATH" 2>/dev/null
+                    # Extraire l'icône avec icotool et prendre le PNG le plus gros
+                    TMP_ICO=$(mktemp -d)
+                    wrestool -x -t 14 "$ICON_EXE_PATH" -o "$TMP_ICO" 2>/dev/null
+                    icotool --extract --output="$TMP_ICO" "$TMP_ICO"/*.ico 2>/dev/null
+                    BIGGEST_PNG=$(ls -S "$TMP_ICO"/*.png 2>/dev/null | head -1)
+                    if [ -n "$BIGGEST_PNG" ]; then
+                        cp "$BIGGEST_PNG" "$ICON_PATH"
                     fi
+                    rm -rf "$TMP_ICO"
                 fi
             fi
 
@@ -153,21 +157,20 @@ if [ "$FILETYPE" = "wgp" ]; then
     # Nettoyer le dossier de montage
     rm -rf "$MOUNT_BASE"
 else
-    # Pour les .exe : extraction directe avec meilleure qualité
-    wrestool -x -t 14 "$EXE_PATH" > "$ICON_TEMP" 2>/dev/null
-    if [ -s "$ICON_TEMP" ]; then
-        icotool -x -o "$HOME/.local/share/icons/" --largest "$ICON_TEMP" 2>/dev/null
-        # Move extracted icon to final location
-        mv -f "$HOME/.local/share/icons/"*.png "$ICON_PATH" 2>/dev/null
+    # Pour les .exe : extraction avec icotool et prendre le PNG le plus gros
+    TMP_ICO=$(mktemp -d)
+    wrestool -x -t 14 "$EXE_PATH" -o "$TMP_ICO" 2>/dev/null
+    icotool --extract --output="$TMP_ICO" "$TMP_ICO"/*.ico 2>/dev/null
+    BIGGEST_PNG=$(ls -S "$TMP_ICO"/*.png 2>/dev/null | head -1)
+    if [ -n "$BIGGEST_PNG" ]; then
+        cp "$BIGGEST_PNG" "$ICON_PATH"
     fi
+    rm -rf "$TMP_ICO"
 fi
 
-# Définir le chemin final de l'icône
-ICON_PATH="$HOME/.local/share/icons/$DESKTOP_NAME.png"
-mkdir -p "$HOME/.local/share/icons"
-
+# Fallback si pas d'icône extraite
 if [ ! -f "$ICON_PATH" ]; then
-    ICON_PATH="applications-games"  # Fallback si pas d'icône
+    ICON_PATH="applications-games"
 fi
 
 # Crée le fichier .desktop avec l'action alternative et la suppression

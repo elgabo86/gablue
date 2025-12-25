@@ -51,7 +51,8 @@ dnf5 -y install \
     nmap \
     terminus-fonts-console \
     plocate \
-    squashfuse
+    squashfuse \
+    icoutils
 
 # Outils réseau et cloud
 dnf5 -y install \
