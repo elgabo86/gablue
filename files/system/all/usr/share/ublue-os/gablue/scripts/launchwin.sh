@@ -116,6 +116,53 @@ if [[ "$fullpath" == *.wgp ]]; then
         fix_mode=true
     fi
 
+    # Gestion des sauvegardes depuis le fichier .savepath
+    SAVE_FILE="$MOUNT_DIR/.savepath"
+    if [ -f "$SAVE_FILE" ]; then
+        SAVE_REL_PATH=$(cat "$SAVE_FILE")
+        if [ -n "$SAVE_REL_PATH" ]; then
+            # Chemin vers le dossier de saves externe
+            WINDOWS_HOME="$HOME/Windows"
+            SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+            SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
+            FINAL_SAVE_DIR="$SAVES_DIR/$SAVE_REL_PATH"
+
+            # Créer le dossier de sauvegardes s'il n'existe pas
+            if [ ! -d "$FINAL_SAVE_DIR" ]; then
+                echo "Création du dossier de sauvegardes: $FINAL_SAVE_DIR"
+                mkdir -p "$FINAL_SAVE_DIR"
+            fi
+        fi
+    fi
+
+    # Gestion des fichiers d'options depuis le fichier .keeppath
+    KEEPPATH_FILE="$MOUNT_DIR/.keeppath"
+    KEEP_WGP_DIR="$MOUNT_DIR/.keep"
+    if [ -f "$KEEPPATH_FILE" ]; then
+        # Lire ligne par ligne (par fichier)
+        while IFS= read -r KEEP_REL_PATH; do
+            if [ -n "$KEEP_REL_PATH" ]; then
+                KEEP_FILE_NAME=$(basename "$KEEP_REL_PATH")
+                # Remplacer les / par _ pour récupérer le fichier stocké
+                KEEP_STORED_NAME="${KEEP_REL_PATH//\//_}"
+                # Chemin vers le dossier de saves externe
+                WINDOWS_HOME="$HOME/Windows"
+                SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+                SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
+                FINAL_KEEP_FILE="$SAVES_DIR/$KEEP_STORED_NAME"
+
+                # Vérifier si le fichier existe dans le dossier de sauvegardes
+                if [ ! -f "$FINAL_KEEP_FILE" ]; then
+                    # Le fichier n'existe pas, le copier depuis .keep
+                    if [ -d "$KEEP_WGP_DIR" ] && [ -f "$KEEP_WGP_DIR/$KEEP_FILE_NAME" ]; then
+                        echo "Fichier d'options introuvable ($KEEP_FILE_NAME), copie depuis .keep..."
+                        cp "$KEEP_WGP_DIR/$KEEP_FILE_NAME" "$FINAL_KEEP_FILE"
+                    fi
+                fi
+            fi
+        done < "$KEEPPATH_FILE"
+    fi
+
     if [ "$fix_mode" = true ]; then
         # Mode fix: désactiver DisableHidraw avant le lancement
         sed -i 's/"DisableHidraw"=dword:00000001/"DisableHidraw"=dword:00000000/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg

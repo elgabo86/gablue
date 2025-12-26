@@ -121,10 +121,69 @@ echo ""
 echo "=== Extraction terminée avec succès ==="
 echo "Dossier: $OUTPUT_DIR"
 
+# Gestion des sauvegardes depuis le fichier .savepath
+SAVE_FILE="$OUTPUT_DIR/.savepath"
+if [ -f "$SAVE_FILE" ]; then
+    SAVE_REL_PATH=$(cat "$SAVE_FILE")
+    if [ -n "$SAVE_REL_PATH" ]; then
+        # Chemin vers le dossier de saves externe
+        WINDOWS_HOME="$HOME/Windows"
+        SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+        SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+        FINAL_SAVE_DIR="$SAVES_DIR/$SAVE_REL_PATH"
+
+        # Copier les sauvegardes si elles existent
+        if [ -d "$FINAL_SAVE_DIR" ]; then
+            echo ""
+            echo "Copie des sauvegardes depuis $FINAL_SAVE_DIR..."
+            cp -r "$FINAL_SAVE_DIR"/. "$OUTPUT_DIR/$SAVE_REL_PATH/"
+            echo "Sauvegardes copiées avec succès."
+        else
+            echo ""
+            echo "Avertissement: le dossier de sauvegardes n'existe pas: $FINAL_SAVE_DIR"
+        fi
+    fi
+fi
+
+# Gestion des fichiers d'options depuis le fichier .keeppath
+KEEPPATH_FILE="$OUTPUT_DIR/.keeppath"
+if [ -f "$KEEPPATH_FILE" ]; then
+    # Lire ligne par ligne (par fichier)
+    while IFS= read -r KEEP_REL_PATH; do
+        if [ -n "$KEEP_REL_PATH" ]; then
+            KEEP_FILE_NAME=$(basename "$KEEP_REL_PATH")
+            OUTPUT_KEEP_FILE="$OUTPUT_DIR/$KEEP_REL_PATH"
+
+            # Chemin vers le dossier de saves externe
+            WINDOWS_HOME="$HOME/Windows"
+            SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+            SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+            # Remplacer les / par _ pour récupérer le fichier stocké
+            KEEP_STORED_NAME="${KEEP_REL_PATH//\//_}"
+            FINAL_KEEP_FILE="$SAVES_DIR/$KEEP_STORED_NAME"
+
+            # Copier le fichier d'options s'il existe
+            if [ -f "$FINAL_KEEP_FILE" ]; then
+                echo ""
+                echo "Copie du fichier d'options ($KEEP_FILE_NAME) depuis $FINAL_KEEP_FILE..."
+                mkdir -p "$(dirname "$OUTPUT_KEEP_FILE")"
+                cp "$FINAL_KEEP_FILE" "$OUTPUT_KEEP_FILE"
+                echo "Fichier d'options copié avec succès."
+            else
+                echo ""
+                echo "Avertissement: le fichier d'options n'existe pas: $FINAL_KEEP_FILE"
+            fi
+        fi
+    done < "$KEEPPATH_FILE"
+fi
+
 # Supprimer les fichiers temporaires
 rm -f "$OUTPUT_DIR/.launch"
 rm -f "$OUTPUT_DIR/.args"
 rm -f "$OUTPUT_DIR/.fix"
+rm -f "$OUTPUT_DIR/.savepath"
+rm -f "$OUTPUT_DIR/.keeppath"
+rm -rf "$OUTPUT_DIR/.keep"
 
 # Afficher le nombre de fichiers extraits
 FILE_COUNT=$(find "$OUTPUT_DIR" -type f | wc -l)
