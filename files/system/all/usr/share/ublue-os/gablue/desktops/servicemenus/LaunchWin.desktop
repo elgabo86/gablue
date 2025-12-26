@@ -14,4 +14,4 @@ Exec=/usr/share/ublue-os/gablue/scripts/launchwin.sh --fix %f
 [Desktop Action LaunchTerm]
 Name=Lancer dans le terminal
 Icon=com.usebottles.bottles
-Exec=konsole -e bash -c "/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable '%f'; bash"
+Exec=konsole --hold -e bash -c '/usr/share/ublue-os/gablue/scripts/launchwinterm.sh "$@"; exec bash' bash %F
