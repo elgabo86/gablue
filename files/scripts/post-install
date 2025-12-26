@@ -119,10 +119,22 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     ln -s /bin/qdbus /bin/qdbus6
 fi
 
-# Configurer la fréquence des mises à jour automatiques (hebdomadaire au lieu de quotidienne)
-sed -i 's/OnCalendar=\*-\*-\* 4:00:00/OnCalendar=Sat \*-\*-\* 04:00:00/' /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
-sed -i 's/OnCalendar=\*-\*-\* 4:00:00/OnCalendar=Sat \*-\*-\* 04:00:00/' /usr/lib/systemd/user/flatpak-user-update.timer
+#MAJ Seulement le samedi
+# 1. Flatpak : passer de quotidien à samedi (tes sed originaux – indispensables)
 sed -i 's/OnCalendar=\*-\*-\* 4:00:00/OnCalendar=Sat \*-\*-\* 04:00:00/' /usr/lib/systemd/system/flatpak-system-update.timer
+sed -i 's/OnCalendar=\*-\*-\* 4:00:00/OnCalendar=Sat \*-\*-\* 04:00:00/' /usr/lib/systemd/user/flatpak-user-update.timer
+
+# 2. Flatpak : supprimer le déclenchement 2 min après boot
+sed -i '/OnBootSec=/d' /usr/lib/systemd/system/flatpak-system-update.timer
+sed -i '/OnBootSec=/d' /usr/lib/systemd/user/flatpak-user-update.timer
+
+# 3. rpm-ostree : d'abord ton sed (remplace le quotidien par samedi)
+sed -i 's/OnCalendar=\*-\*-\* 4:00:00/OnCalendar=Sat \*-\*-\* 04:00:00/' /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
+
+# Puis nettoyage complet + réassurance du samedi (neutralise boot/quotidien monotome)
+sed -i '/OnBootSec=/d'        /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
+sed -i '/OnUnitInactiveSec=/d' /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
+sed -i '/\[Timer\]/a OnBootSec=\nOnUnitInactiveSec=\nOnCalendar=Sat *-*-* 04:00:00\nRandomizedDelaySec=10m\nPersistent=true' /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
 
 # =============================================================================
 # NETTOYAGE DES CONFIGURATIONS
