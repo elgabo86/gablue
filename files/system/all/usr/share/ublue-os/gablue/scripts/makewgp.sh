@@ -336,7 +336,9 @@ while [ "$SAVE_LOOP" = true ]; do
                     fi
 
                     if [ $OVERWRITE_SAVES -ne 0 ]; then
-                        echo "Conserve les sauvegardes existantes (les anciennes seront remplacées)"
+                        echo "Annulation de cette sauvegarde (sauvegardes existantes conservées)"
+                        SAVE_LOOP=false
+                        continue
                     else
                         echo "Remplacement des sauvegardes existantes..."
                         rm -rf "$FINAL_SAVE_DIR"
@@ -410,7 +412,9 @@ while [ "$SAVE_LOOP" = true ]; do
                     fi
 
                     if [ $OVERWRITE_SAVE -ne 0 ]; then
-                        echo "Conserve le fichier existant"
+                        echo "Annulation de cette sauvegarde (fichier existant conservé)"
+                        SAVE_LOOP=false
+                        continue
                     else
                         echo "Remplacement du fichier existant..."
                         rm -f "$FINAL_SAVE_FILE"
@@ -568,7 +572,9 @@ while [ "$KEEP_LOOP" = true ]; do
                     fi
 
                     if [ $OVERWRITE_KEEP -ne 0 ]; then
-                        echo "Conserve le dossier existant (les anciens fichiers seront remplacés)"
+                        echo "Annulation de cette option (dossier existant conservé)"
+                        KEEP_LOOP=false
+                        continue
                     else
                         echo "Remplacement du dossier existant..."
                         rm -rf "$FINAL_KEEP_DIR"
@@ -639,7 +645,9 @@ while [ "$KEEP_LOOP" = true ]; do
                     fi
 
                     if [ $OVERWRITE_KEEP -ne 0 ]; then
-                        echo "Conserve le fichier existant"
+                        echo "Annulation de cette option (fichier existant conservé)"
+                        KEEP_LOOP=false
+                        continue
                     else
                         echo "Remplacement du fichier existant..."
                         rm -f "$FINAL_KEEP_FILE"
