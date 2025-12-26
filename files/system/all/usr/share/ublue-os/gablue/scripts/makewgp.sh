@@ -18,6 +18,87 @@ fi
 GAME_NAME="$(basename "$GAME_DIR")"
 WGPACK_NAME="$(dirname "$GAME_DIR")/${GAME_NAME}.wgp"
 
+# Chemins pour la restauration
+WINDOWS_HOME="$HOME/Windows/UserData"
+SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+
+# Fonction de restauration des sauvegardes et options
+restore_game_files() {
+    echo "Restauration des fichiers dans le dossier de jeu..."
+
+    # Restaurer les sauvegardes depuis UserData
+    if [ -f "$GAME_DIR/.savepath" ]; then
+        while IFS= read -r SAVE_REL_PATH; do
+            if [ -n "$SAVE_REL_PATH" ]; then
+                SAVE_ITEM="$GAME_DIR/$SAVE_REL_PATH"
+                FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
+
+                # Supprimer le symlink
+                if [ -L "$SAVE_ITEM" ]; then
+                    echo "Restauration des sauvegardes: $SAVE_REL_PATH"
+                    rm -f "$SAVE_ITEM"
+                    rm -rf "$SAVE_ITEM"
+
+                    # Restaurer depuis UserData
+                    if [ -d "$FINAL_SAVE_ITEM" ]; then
+                        cp -r "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
+                    elif [ -f "$FINAL_SAVE_ITEM" ]; then
+                        cp "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
+                    fi
+                elif [ -d "$FINAL_SAVE_ITEM" ] && [ ! -e "$SAVE_ITEM" ]; then
+                    # Symlink cassé, restaurer depuis UserData
+                    echo "Restauration des sauvegardes: $SAVE_REL_PATH"
+                    mkdir -p "$(dirname "$SAVE_ITEM")"
+                    if [ -d "$FINAL_SAVE_ITEM" ]; then
+                        cp -r "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
+                    elif [ -f "$FINAL_SAVE_ITEM" ]; then
+                        cp "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
+                    fi
+                fi
+            fi
+        done < "$GAME_DIR/.savepath"
+    fi
+
+    # Restaurer les options depuis UserData
+    if [ -f "$GAME_DIR/.keeppath" ]; then
+        while IFS= read -r KEEP_REL_PATH; do
+            if [ -n "$KEEP_REL_PATH" ]; then
+                KEEP_ITEM="$GAME_DIR/$KEEP_REL_PATH"
+                FINAL_KEEP_ITEM="$SAVES_DIR/$KEEP_REL_PATH"
+
+                # Supprimer le symlink
+                if [ -L "$KEEP_ITEM" ]; then
+                    echo "Restauration des options: $KEEP_REL_PATH"
+                    rm -f "$KEEP_ITEM"
+                    rm -rf "$KEEP_ITEM"
+
+                    # Restaurer depuis UserData
+                    if [ -d "$FINAL_KEEP_ITEM" ]; then
+                        cp -r "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
+                    elif [ -f "$FINAL_KEEP_ITEM" ]; then
+                        cp "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
+                    fi
+                elif [ -d "$FINAL_KEEP_ITEM" ] && [ ! -e "$KEEP_ITEM" ]; then
+                    # Symlink cassé, restaurer depuis UserData
+                    echo "Restauration des options: $KEEP_REL_PATH"
+                    mkdir -p "$(dirname "$KEEP_ITEM")"
+                    if [ -d "$FINAL_KEEP_ITEM" ]; then
+                        cp -r "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
+                    elif [ -f "$FINAL_KEEP_ITEM" ]; then
+                        cp "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
+                    fi
+                fi
+            fi
+        done < "$GAME_DIR/.keeppath"
+    fi
+
+    echo "Restauration terminée."
+}
+
+# Cleanup en cas d'interruption (Ctrl+C)
+trap 'echo ""; echo "Interruption détectée, restauration en cours..."; restore_game_files; exit 1' INT
+
 echo "=== Création du paquet pour: $GAME_NAME ==="
 echo "Dossier source: $GAME_DIR"
 echo ""
@@ -162,7 +243,7 @@ while [ "$SAVE_LOOP" = true ]; do
     # Demander si le jeu utilise des saves dans le dossier du jeu
     SAVE_ENABLED=false
     if command -v kdialog &> /dev/null; then
-        kdialog --yesno "Y a-t-il un dossier ou fichier de sauvegarde à gérer ?\\\\n\\\\nIl sera déplacé vers\\\\n~/Windows/$USER/AppData/Local/LocalSaves/$GAME_NAME/\\\\net remplacé par un lien symbolique dans le paquet.\\\\n\\\\nUne copie sera conservée dans le dossier .save\\\\npour permettre la restauration sur un autre ordi." --yes-label "Oui" --no-label "Non"
+        kdialog --yesno "Y a-t-il un dossier ou fichier de sauvegarde à gérer ?\\n\\nIl sera déplacé dans le dossier utilisateur\\net remplacé par un lien symbolique dans le paquet.\\n\\nUne copie sera conservée dans le dossier .save\\npour permettre la restauration sur un autre ordi." --yes-label "Oui" --no-label "Non"
         if [ $? -eq 0 ]; then
             SAVE_ENABLED=true
         fi
@@ -287,7 +368,7 @@ while [ "$SAVE_LOOP" = true ]; do
 
                 # Déplacer le dossier vers UserData pour le WGP (création du symlink temporaire)
                 echo "Déplacement du dossier vers $FINAL_SAVE_DIR..."
-                rm -rf "$SAVE_ITEM_ABSOLUTE"
+                mv "$SAVE_ITEM_ABSOLUTE" "$FINAL_SAVE_DIR"
                 ln -s "$FINAL_SAVE_DIR" "$SAVE_ITEM_ABSOLUTE"
 
                 echo "Dossier de sauvegardes déplacé et lié (temporaire)."
@@ -357,7 +438,7 @@ while [ "$SAVE_LOOP" = true ]; do
 
                 # Déplacer le fichier vers UserData pour le WGP (création du symlink temporaire)
                 echo "Déplacement du fichier vers $FINAL_SAVE_FILE..."
-                rm -f "$SAVE_FILE_ABSOLUTE"
+                mv "$SAVE_FILE_ABSOLUTE" "$FINAL_SAVE_FILE"
                 ln -s "$FINAL_SAVE_FILE" "$SAVE_FILE_ABSOLUTE"
 
                 echo "Fichier de sauvegardes déplacé et lié (temporaire)."
@@ -393,7 +474,7 @@ while [ "$KEEP_LOOP" = true ]; do
     # Demander si le jeu a un fichier ou dossier d'options à conserver
     KEEP_ENABLED=false
     if command -v kdialog &> /dev/null; then
-        kdialog --yesno "Y a-t-il un fichier ou dossier d'options de configuration à conserver ?\\\\n\\\\nIl sera déplacé vers\\\\n~/Windows/$USER/AppData/Local/LocalSaves/$GAME_NAME/\\\\net remplacé par un lien symbolique dans le paquet.\\\\n\\\\nUne copie sera conservée dans le dossier .keep\\\\npour permettre la restauration sur un autre ordi." --yes-label "Oui" --no-label "Non"
+        kdialog --yesno "Y a-t-il un fichier ou dossier d'options de configuration à conserver ?\\n\\nIl sera déplacé dans le dossier utilisateur\\net remplacé par un lien symbolique dans le paquet.\\n\\nUne copie sera conservée dans le dossier .keep\\npour permettre la restauration sur un autre ordi." --yes-label "Oui" --no-label "Non"
         if [ $? -eq 0 ]; then
             KEEP_ENABLED=true
         fi
@@ -643,15 +724,17 @@ if command -v kdialog &> /dev/null; then
             kill -9 $MKSQUASH_PID 2>/dev/null
             pkill -9 mksquashfs 2>/dev/null
             rm -f "$WGPACK_NAME"
+            echo ""
+            echo "Compression annulée, restauration en cours..."
+            restore_game_files
+            # Nettoyer les fichiers temporaires
             rm -f "$LAUNCH_FILE"
             [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE"
             [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE"
-            [ -f "$SAVE_FILE" ] && rm -f "$SAVE_FILE"
+            [ -f "$GAME_DIR/.savepath" ] && rm -f "$GAME_DIR/.savepath"
             [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save"
-            [ -f "$KEEPPATH_FILE" ] && rm -f "$KEEPPATH_FILE"
-            [ -d "$KEEP_WGP_DIR" ] && rm -rf "$KEEP_WGP_DIR"
-            echo ""
-            echo "Compression annulée"
+            [ -f "$GAME_DIR/.keeppath" ] && rm -f "$GAME_DIR/.keeppath"
+            [ -d "$GAME_DIR/.keep" ] && rm -rf "$GAME_DIR/.keep"
             exit 0
         fi
         sleep 0.2
@@ -689,77 +772,16 @@ COMPRESSION_RATIO=$(echo "scale=1; (1 - $SIZE_AFTER / $SIZE_BEFORE) * 100" | bc)
 echo ""
 echo "=== Restauration du dossier source ==="
 
-# Restaurer les sauvegardes depuis UserData
-SAVEPATH_FILE="$GAME_DIR/.savepath"
-if [ -f "$SAVEPATH_FILE" ]; then
-    WINDOWS_HOME="$HOME/Windows/UserData"
-    SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-    SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-
-    while IFS= read -r SAVE_REL_PATH; do
-        if [ -n "$SAVE_REL_PATH" ]; then
-            SAVE_ITEM="$GAME_DIR/$SAVE_REL_PATH"
-            FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
-
-            # Supprimer le symlink
-            if [ -L "$SAVE_ITEM" ]; then
-                echo "Suppression du symlink: $SAVE_REL_PATH"
-                rm -f "$SAVE_ITEM"
-                rm -rf "$SAVE_ITEM"
-
-                # Restaurer depuis UserData
-                if [ -d "$FINAL_SAVE_ITEM" ]; then
-                    echo "Restauration du dossier depuis UserData..."
-                    cp -r "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
-                elif [ -f "$FINAL_SAVE_ITEM" ]; then
-                    echo "Restauration du fichier depuis UserData..."
-                    cp "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
-                fi
-            fi
-        fi
-    done < "$SAVEPATH_FILE"
-fi
-
-# Restaurer les options depuis UserData
-KEEPPATH_FILE="$GAME_DIR/.keeppath"
-if [ -f "$KEEPPATH_FILE" ]; then
-    WINDOWS_HOME="$HOME/Windows/UserData"
-    SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-    SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-
-    while IFS= read -r KEEP_REL_PATH; do
-        if [ -n "$KEEP_REL_PATH" ]; then
-            KEEP_ITEM="$GAME_DIR/$KEEP_REL_PATH"
-            FINAL_KEEP_ITEM="$SAVES_DIR/$KEEP_REL_PATH"
-
-            # Supprimer le symlink
-            if [ -L "$KEEP_ITEM" ]; then
-                echo "Suppression du symlink: $KEEP_REL_PATH"
-                rm -f "$KEEP_ITEM"
-                rm -rf "$KEEP_ITEM"
-
-                # Restaurer depuis UserData
-                if [ -d "$FINAL_KEEP_ITEM" ]; then
-                    echo "Restauration du dossier depuis UserData..."
-                    cp -r "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
-                elif [ -f "$FINAL_KEEP_ITEM" ]; then
-                    echo "Restauration du fichier depuis UserData..."
-                    cp "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
-                fi
-            fi
-        fi
-    done < "$KEEPPATH_FILE"
-fi
-
-echo "Restauration terminée."
+# Appeler la fonction de restauration
+restore_game_files
 
 # Supprimer les fichiers temporaires du dossier source
 rm -f "$LAUNCH_FILE"
 [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE"
 [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE"
-[ -f "$SAVEPATH_FILE" ] && rm -f "$SAVEPATH_FILE"
+[ -f "$GAME_DIR/.savepath" ] && rm -f "$GAME_DIR/.savepath"
 [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save"
-[ -f "$KEEPPATH_FILE" ] && rm -f "$KEEPPATH_FILE"
+[ -f "$GAME_DIR/.keeppath" ] && rm -f "$GAME_DIR/.keeppath"
 [ -d "$GAME_DIR/.keep" ] && rm -rf "$GAME_DIR/.keep"
 
 echo ""
