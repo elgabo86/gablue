@@ -152,73 +152,100 @@ fi
 echo ""
 echo "=== Gestion des sauvegardes ==="
 
-SAVE_REL_PATH=""
-SAVE_DIR_ABSOLUTE=""
+# Créer le dossier .savepath dans le wgp avec la structure complète
+SAVE_WGP_DIR=""
+SAVE_FILE=""
 
-# Demander si le jeu utilise des saves dans le dossier du jeu
-SAVE_ENABLED=false
-if command -v kdialog &> /dev/null; then
-    kdialog --yesno "Ce jeu utilise-t-il ses sauvegardes dans le dossier du même jeu ?\\\\n\\\\nSi oui, le dossier de save sera déplacé vers\\\\n~/Windows/$USER/AppData/Local/LocalSaves/$GAME_NAME/\\\\net remplacé par un lien symbolique dans le paquet." --yes-label "Oui" --no-label "Non"
-    if [ $? -eq 0 ]; then
-        SAVE_ENABLED=true
-    fi
-else
-    read -p "Le jeu utilise-t-il des sauvegardes dans le dossier du jeu ? (o/N): " SAVE_INPUT
-    if [[ "$SAVE_INPUT" =~ ^[oOyY]$ ]]; then
-        SAVE_ENABLED=true
-    fi
-fi
-
-if [ "$SAVE_ENABLED" = true ]; then
-    # Lister les dossiers dans le dossier du jeu (jusqu'à 3 niveaux de profondeur)
-    DIR_LIST=$(find "$GAME_DIR" -mindepth 1 -maxdepth 3 -type d 2>/dev/null | sort)
-
-    if [ -z "$DIR_LIST" ]; then
-        echo "Aucun sous-dossier trouvé dans $GAME_DIR"
+# Boucle pour ajouter plusieurs sauvegardes
+SAVE_LOOP=true
+while [ "$SAVE_LOOP" = true ]; do
+    # Demander si le jeu utilise des saves dans le dossier du jeu
+    SAVE_ENABLED=false
+    if command -v kdialog &> /dev/null; then
+        kdialog --yesno "Y a-t-il un dossier ou fichier de sauvegarde à gérer ?\\\\n\\\\nIl sera déplacé vers\\\\n~/Windows/$USER/AppData/Local/LocalSaves/$GAME_NAME/\\\\net remplacé par un lien symbolique dans le paquet.\\\\n\\\\nUne copie sera conservée dans le dossier .save\\\\npour permettre la restauration sur un autre ordi." --yes-label "Oui" --no-label "Non"
+        if [ $? -eq 0 ]; then
+            SAVE_ENABLED=true
+        fi
     else
-        # Préparer la liste pour kdialog ou sélection console
-        COUNT=0
-        DIR_ARRAY=()
-        while IFS= read -r dir; do
-            REL_PATH="${dir#$GAME_DIR/}"
-            DIR_ARRAY+=("$dir")
-            DIR_ARRAY+=("$REL_PATH")
-            DIR_ARRAY+=("off")
-            COUNT=$((COUNT + 1))
-        done <<< "$DIR_LIST"
+        read -p "Y a-t-il un dossier ou fichier de sauvegarde à gérer ? (o/N): " SAVE_INPUT
+        if [[ "$SAVE_INPUT" =~ ^[oOyY]$ ]]; then
+            SAVE_ENABLED=true
+        fi
+    fi
 
-        if [ $COUNT -gt 0 ]; then
-            if command -v kdialog &> /dev/null; then
-                SELECTED_DIR=$(kdialog --radiolist "Sélectionnez le dossier des sauvegardes:" "${DIR_ARRAY[@]}")
+    if [ "$SAVE_ENABLED" = false ]; then
+        SAVE_LOOP=false
+        break
+    fi
+
+    # Demander le type (dossier ou fichier)
+    SAVE_TYPE=""
+    if command -v kdialog &> /dev/null; then
+        SAVE_TYPE=$(kdialog --radiolist "Que voulez-vous conserver ?" "dir" "Dossier" "on" "file" "Fichier" "off")
+    else
+        read -p "Type à conserver [d]ossier ou [f]ichier ? (D/f): " TYPE_INPUT
+        if [[ "$TYPE_INPUT" =~ ^[fF]$ ]]; then
+            SAVE_TYPE="file"
+        else
+            SAVE_TYPE="dir"
+        fi
+    fi
+
+    # Utiliser le sélecteur de fichiers KDE pour dossier ou fichier
+    if command -v kdialog &> /dev/null; then
+        if [ "$SAVE_TYPE" = "dir" ]; then
+            SELECTED_ITEM=$(kdialog --getexistingdirectory "$GAME_DIR")
+        else
+            SELECTED_ITEM=$(kdialog --getopenfilename "$GAME_DIR" "Tous les fichiers (*)")
+        fi
+    else
+        if [ "$SAVE_TYPE" = "dir" ]; then
+            echo "Dossiers disponibles dans $GAME_DIR:"
+            DIR_LIST=$(find "$GAME_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+            i=0
+            while IFS= read -r dir; do
+                echo "  $((i+1)). $(basename "$dir")"
+                i=$((i + 1))
+            done <<< "$DIR_LIST"
+            read -p "Entrez le numéro du dossier (0 pour annuler): " SELECTED_NUM
+            SELECTED_NUM=$((SELECTED_NUM - 1))
+            if [ $SELECTED_NUM -ge 0 ]; then
+                SELECTED_ITEM=$(echo "$DIR_LIST" | sed -n "${SELECTED_NUM}p")
             else
-                echo "Dossiers trouvés:"
-                i=0
-                while IFS= read -r dir; do
-                    echo "  $((i+1)). ${dir#$GAME_DIR/}"
-                    i=$((i + 1))
-                done <<< "$DIR_LIST"
-                read -p "Entrez le numéro du dossier de sauvegardes (0 pour annuler): " SELECTED_NUM
-                SELECTED_NUM=$((SELECTED_NUM - 1))
-                if [ $SELECTED_NUM -ge 0 ] && [ $SELECTED_NUM -lt $COUNT ]; then
-                    SELECTED_DIR="${DIR_ARRAY[$((SELECTED_NUM * 3))]}"
-                else
-                    SELECTED_DIR=""
-                fi
+                SELECTED_ITEM=""
             fi
+        else
+            echo "Entrez le chemin relatif du fichier de sauvegardes (depuis $GAME_DIR):"
+            read -r REL_INPUT
+            if [ -n "$REL_INPUT" ]; then
+                SELECTED_ITEM="$GAME_DIR/$REL_INPUT"
+            else
+                SELECTED_ITEM=""
+            fi
+        fi
+    fi
 
-            if [ -n "$SELECTED_DIR" ] && [ -d "$SELECTED_DIR" ]; then
-                SAVE_DIR_NAME=$(basename "$SELECTED_DIR")
-                SAVE_REL_PATH="$SAVE_DIR_NAME"
-                SAVE_DIR_ABSOLUTE="$SELECTED_DIR"
+    if [ -n "$SELECTED_ITEM" ]; then
+        if [ "$SAVE_TYPE" = "dir" ]; then
+            if [ ! -d "$SELECTED_ITEM" ]; then
+                echo "Erreur: le dossier n'existe pas"
+                SAVE_LOOP=false
+                continue
+            fi
+            SAVE_ITEM_NAME=$(basename "$SELECTED_ITEM")
+            SAVE_REL_PATH="${SELECTED_ITEM#$GAME_DIR/}"
+            SAVE_ITEM_ABSOLUTE="$SELECTED_ITEM"
 
+            # Vérifier que c'est bien dans le dossier du jeu
+            if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
                 # Chemin vers le dossier de saves externe
                 WINDOWS_HOME="$HOME/Windows"
                 SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
                 SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-                FINAL_SAVE_DIR="$SAVES_DIR/$SAVE_DIR_NAME"
+                FINAL_SAVE_DIR="$SAVES_DIR/$SAVE_REL_PATH"
 
                 # Créer les dossiers parents
-                mkdir -p "$SAVES_DIR"
+                mkdir -p "$(dirname "$FINAL_SAVE_DIR")"
 
                 echo ""
                 echo "Dossier de sauvegardes sélectionné: $SAVE_REL_PATH"
@@ -232,10 +259,10 @@ if [ "$SAVE_ENABLED" = true ]; then
 
                     OVERWRITE_SAVES=1
                     if command -v kdialog &> /dev/null; then
-                        kdialog --warningyesno "Le dossier de sauvegardes existe déjà et contient des fichiers:\\n\\n$FINAL_SAVE_DIR\\n\\nVoulez-vous les écraser ?" --yes-label "Oui" --no-label "Non"
+                        kdialog --warningyesno "Le dossier de sauvegardes existe déjà:\\n\\n$FINAL_SAVE_DIR\\n\\nVoulez-vous l'écraser ?" --yes-label "Oui" --no-label "Non"
                         OVERWRITE_SAVES=$?
                     else
-                        read -p "Voulez-vous les écraser ? (o/N): " SAVE_CONFIRM
+                        read -p "Voulez-vous l'écraser ? (o/N): " SAVE_CONFIRM
                         [[ "$SAVE_CONFIRM" =~ ^[oOyY]$ ]] && OVERWRITE_SAVES=0 || OVERWRITE_SAVES=1
                     fi
 
@@ -250,27 +277,104 @@ if [ "$SAVE_ENABLED" = true ]; then
                 # Créer le dossier final si nécessaire
                 mkdir -p "$FINAL_SAVE_DIR"
 
-                # Déplacer le contenu (récursivement)
+                # Créer le dossier .save dans le wgp avec la structure complète
+                SAVE_WGP_DIR="$GAME_DIR/.save/$SAVE_REL_PATH"
+                mkdir -p "$(dirname "$SAVE_WGP_DIR")"
+
+                # Copier le dossier vers le dossier .save (sauvegarde pour restauration)
+                echo "Copie du dossier dans .save..."
+                cp -r "$SAVE_ITEM_ABSOLUTE" "$SAVE_WGP_DIR"
+
+                # Déplacer le contenu vers le dossier de sauvegardes externe
                 echo "Déplacement des sauvegardes vers $FINAL_SAVE_DIR..."
-                cp -r "$SAVE_DIR_ABSOLUTE"/. "$FINAL_SAVE_DIR/"
-
-                # Supprimer le dossier original
-                rm -rf "$SAVE_DIR_ABSOLUTE"
-
-                # Créer un lien symbolique
-                echo "Création du lien symbolique dans le paquet..."
-                ln -s "$FINAL_SAVE_DIR" "$SAVE_DIR_ABSOLUTE"
+                rm -rf "$SAVE_ITEM_ABSOLUTE"
+                ln -s "$FINAL_SAVE_DIR" "$SAVE_ITEM_ABSOLUTE"
 
                 echo "Sauvegardes déplacées et liées avec succès."
 
-                # Créer le fichier .savepath
+                # Créer/Mettre à jour le fichier .savepath (ajouter une ligne par dossier)
                 SAVE_FILE="$GAME_DIR/.savepath"
-                echo "$SAVE_REL_PATH" > "$SAVE_FILE"
-                echo "Fichier .savepath créé: $SAVE_FILE"
+                echo "$SAVE_REL_PATH" >> "$SAVE_FILE"
+                echo "Fichier .savepath mis à jour: $SAVE_FILE"
+            else
+                echo "Erreur: le dossier doit être dans le dossier du jeu: $GAME_DIR"
+            fi
+        else
+            if [ ! -f "$SELECTED_ITEM" ]; then
+                echo "Erreur: le fichier n'existe pas"
+                SAVE_LOOP=false
+                continue
+            fi
+            SAVE_FILE_NAME=$(basename "$SELECTED_ITEM")
+            SAVE_REL_PATH="${SELECTED_ITEM#$GAME_DIR/}"
+            SAVE_FILE_ABSOLUTE="$SELECTED_ITEM"
+
+            # Vérifier que c'est bien dans le dossier du jeu
+            if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
+                # Chemin vers le dossier de saves externe
+                WINDOWS_HOME="$HOME/Windows"
+                SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+                SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+                FINAL_SAVE_FILE="$SAVES_DIR/$SAVE_REL_PATH"
+
+                # Créer les dossiers parents
+                mkdir -p "$(dirname "$FINAL_SAVE_FILE")"
+
+                echo ""
+                echo "Fichier de sauvegardes sélectionné: $SAVE_REL_PATH"
+                echo "Destination: $FINAL_SAVE_FILE"
+
+                # Vérifier si le fichier existe déjà
+                if [ -f "$FINAL_SAVE_FILE" ]; then
+                    echo ""
+                    echo "Attention: le fichier de sauvegardes existe déjà."
+                    echo "Fichier: $FINAL_SAVE_FILE"
+
+                    OVERWRITE_SAVE=1
+                    if command -v kdialog &> /dev/null; then
+                        kdialog --warningyesno "Le fichier de sauvegardes existe déjà:\\n\\n$FINAL_SAVE_FILE\\n\\nVoulez-vous l'écraser ?" --yes-label "Oui" --no-label "Non"
+                        OVERWRITE_SAVE=$?
+                    else
+                        read -p "Voulez-vous l'écraser ? (o/N): " SAVE_CONFIRM
+                        [[ "$SAVE_CONFIRM" =~ ^[oOyY]$ ]] && OVERWRITE_SAVE=0 || OVERWRITE_SAVE=1
+                    fi
+
+                    if [ $OVERWRITE_SAVE -ne 0 ]; then
+                        echo "Conserve le fichier existant"
+                    else
+                        echo "Remplacement du fichier existant..."
+                        rm -f "$FINAL_SAVE_FILE"
+                    fi
+                fi
+
+                # Créer le dossier .save dans le wgp avec la structure complète
+                SAVE_WGP_DIR="$GAME_DIR/.save/$SAVE_REL_PATH"
+                mkdir -p "$(dirname "$SAVE_WGP_DIR")"
+
+                # Copier le fichier vers le dossier .save (sauvegarde pour restauration)
+                echo "Copie du fichier dans .save..."
+                cp "$SAVE_FILE_ABSOLUTE" "$SAVE_WGP_DIR"
+
+                # Déplacer le fichier vers le dossier de sauvegardes externe
+                echo "Déplacement du fichier vers $FINAL_SAVE_FILE..."
+                rm -f "$SAVE_FILE_ABSOLUTE"
+                ln -s "$FINAL_SAVE_FILE" "$SAVE_FILE_ABSOLUTE"
+
+                echo "Sauvegardes déplacées et liées avec succès."
+
+                # Créer/Mettre à jour le fichier .savepath (ajouter une ligne par fichier)
+                SAVE_FILE="$GAME_DIR/.savepath"
+                echo "$SAVE_REL_PATH" >> "$SAVE_FILE"
+                echo "Fichier .savepath mis à jour: $SAVE_FILE"
+            else
+                echo "Erreur: le fichier doit être dans le dossier du jeu: $GAME_DIR"
             fi
         fi
+    else
+        echo "Aucun élément sélectionné."
+        SAVE_LOOP=false
     fi
-fi
+done
 
 echo ""
 echo "=== Gestion des fichiers d'options ==="
@@ -549,6 +653,7 @@ if command -v kdialog &> /dev/null; then
             [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE"
             [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE"
             [ -f "$SAVE_FILE" ] && rm -f "$SAVE_FILE"
+            [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save"
             [ -f "$KEEPPATH_FILE" ] && rm -f "$KEEPPATH_FILE"
             [ -d "$KEEP_WGP_DIR" ] && rm -rf "$KEEP_WGP_DIR"
             echo ""
@@ -592,6 +697,7 @@ rm -f "$LAUNCH_FILE"
 [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE"
 [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE"
 [ -f "$SAVE_FILE" ] && rm -f "$SAVE_FILE"
+[ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save"
 [ -f "$KEEPPATH_FILE" ] && rm -f "$KEEPPATH_FILE"
 [ -d "$KEEP_WGP_DIR" ] && rm -rf "$KEEP_WGP_DIR"
 

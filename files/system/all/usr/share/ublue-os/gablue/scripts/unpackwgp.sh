@@ -124,25 +124,38 @@ echo "Dossier: $OUTPUT_DIR"
 # Gestion des sauvegardes depuis le fichier .savepath
 SAVE_FILE="$OUTPUT_DIR/.savepath"
 if [ -f "$SAVE_FILE" ]; then
-    SAVE_REL_PATH=$(cat "$SAVE_FILE")
-    if [ -n "$SAVE_REL_PATH" ]; then
-        # Chemin vers le dossier de saves externe
-        WINDOWS_HOME="$HOME/Windows"
-        SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-        SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-        FINAL_SAVE_DIR="$SAVES_DIR/$SAVE_REL_PATH"
+    # Lire ligne par ligne (par dossier/fichier)
+    while IFS= read -r SAVE_REL_PATH; do
+        if [ -n "$SAVE_REL_PATH" ]; then
+            SAVE_ITEM_NAME=$(basename "$SAVE_REL_PATH")
+            OUTPUT_SAVE_ITEM="$OUTPUT_DIR/$SAVE_REL_PATH"
 
-        # Copier les sauvegardes si elles existent
-        if [ -d "$FINAL_SAVE_DIR" ]; then
-            echo ""
-            echo "Copie des sauvegardes depuis $FINAL_SAVE_DIR..."
-            cp -r "$FINAL_SAVE_DIR"/. "$OUTPUT_DIR/$SAVE_REL_PATH/"
-            echo "Sauvegardes copiées avec succès."
-        else
-            echo ""
-            echo "Avertissement: le dossier de sauvegardes n'existe pas: $FINAL_SAVE_DIR"
+            # Chemin vers le dossier de saves externe avec la structure complète
+            WINDOWS_HOME="$HOME/Windows"
+            SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+            SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+
+            # Vérifier si c'est un fichier dans le dossier de sauvegardes
+            FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
+            if [ -f "$FINAL_SAVE_ITEM" ]; then
+                echo ""
+                echo "Copie du fichier de sauvegardes ($SAVE_ITEM_NAME) depuis $FINAL_SAVE_ITEM..."
+                mkdir -p "$(dirname "$OUTPUT_SAVE_ITEM")"
+                cp "$FINAL_SAVE_ITEM" "$OUTPUT_SAVE_ITEM"
+                echo "Fichier de sauvegardes copié avec succès."
+            # Sinon vérifier si c'est un dossier
+            elif [ -d "$FINAL_SAVE_ITEM" ]; then
+                echo ""
+                echo "Copie du dossier de sauvegardes ($SAVE_ITEM_NAME) depuis $FINAL_SAVE_ITEM..."
+                mkdir -p "$(dirname "$OUTPUT_SAVE_ITEM")"
+                cp -r "$FINAL_SAVE_ITEM" "$OUTPUT_SAVE_ITEM"
+                echo "Dossier de sauvegardes copié avec succès."
+            else
+                echo ""
+                echo "Avertissement: l'élément de sauvegardes n'existe pas: $FINAL_SAVE_ITEM"
+            fi
         fi
-    fi
+    done < "$SAVE_FILE"
 fi
 
 # Gestion des fichiers et dossiers d'options depuis le fichier .keeppath
@@ -189,6 +202,7 @@ rm -f "$OUTPUT_DIR/.fix"
 rm -f "$OUTPUT_DIR/.savepath"
 rm -f "$OUTPUT_DIR/.keeppath"
 rm -rf "$OUTPUT_DIR/.keep"
+rm -rf "$OUTPUT_DIR/.save"
 
 # Afficher le nombre de fichiers extraits
 FILE_COUNT=$(find "$OUTPUT_DIR" -type f | wc -l)

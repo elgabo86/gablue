@@ -118,21 +118,64 @@ if [[ "$fullpath" == *.wgp ]]; then
 
     # Gestion des sauvegardes depuis le fichier .savepath
     SAVE_FILE="$MOUNT_DIR/.savepath"
+    SAVE_WGP_DIR="$MOUNT_DIR/.save"
     if [ -f "$SAVE_FILE" ]; then
-        SAVE_REL_PATH=$(cat "$SAVE_FILE")
-        if [ -n "$SAVE_REL_PATH" ]; then
-            # Chemin vers le dossier de saves externe
-            WINDOWS_HOME="$HOME/Windows"
-            SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-            SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
-            FINAL_SAVE_DIR="$SAVES_DIR/$SAVE_REL_PATH"
+        # Lire ligne par ligne (par dossier/fichier)
+        while IFS= read -r SAVE_REL_PATH; do
+            if [ -n "$SAVE_REL_PATH" ]; then
+                SAVE_MOUNT_ITEM="$MOUNT_DIR/$SAVE_REL_PATH"
+                # Chemin vers le dossier .save avec la structure complète
+                SAVE_WGP_ITEM="$SAVE_WGP_DIR/$SAVE_REL_PATH"
 
-            # Créer le dossier de sauvegardes s'il n'existe pas
-            if [ ! -d "$FINAL_SAVE_DIR" ]; then
-                echo "Création du dossier de sauvegardes: $FINAL_SAVE_DIR"
-                mkdir -p "$FINAL_SAVE_DIR"
+                # Vérifier si c'est un dossier ou un fichier
+                if [ -d "$SAVE_MOUNT_ITEM" ]; then
+                    # C'est un dossier
+                    # Chemin vers le dossier de saves externe avec la structure complète
+                    WINDOWS_HOME="$HOME/Windows"
+                    SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+                    SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
+                    FINAL_SAVE_DIR="$SAVES_DIR/$SAVE_REL_PATH"
+
+                    # Créer le dossier de sauvegardes s'il n'existe pas
+                    if [ ! -d "$FINAL_SAVE_DIR" ]; then
+                        # Le dossier n'existe pas, le copier depuis .save
+                        if [ -d "$SAVE_WGP_ITEM" ]; then
+                            echo "Restauration des sauvegardes depuis .save..."
+                            mkdir -p "$(dirname "$FINAL_SAVE_DIR")"
+                            cp -r "$SAVE_WGP_ITEM" "$FINAL_SAVE_DIR"
+                        else
+                            # Créer le dossier vide si pas de sauvegarde dans .save
+                            echo "Création du dossier de sauvegardes: $FINAL_SAVE_DIR"
+                            mkdir -p "$FINAL_SAVE_DIR"
+                        fi
+                    fi
+                elif [ -f "$SAVE_MOUNT_ITEM" ]; then
+                    # C'est un fichier
+                    # Chemin vers le dossier de saves externe avec la structure complète
+                    WINDOWS_HOME="$HOME/Windows"
+                    SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+                    SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
+                    FINAL_SAVE_FILE="$SAVES_DIR/$SAVE_REL_PATH"
+
+                    # Créer le fichier de sauvegarde s'il n'existe pas
+                    if [ ! -f "$FINAL_SAVE_FILE" ]; then
+                        # Le fichier n'existe pas, le copier depuis .save
+                        if [ -f "$SAVE_WGP_ITEM" ]; then
+                            echo "Restauration de la sauvegarde depuis .save..."
+                            mkdir -p "$(dirname "$FINAL_SAVE_FILE")"
+                            cp "$SAVE_WGP_ITEM" "$FINAL_SAVE_FILE"
+                        else
+                            # Créer le dossier parent vide si pas de sauvegarde dans .save
+                            SAVE_DIR_OF_FILE=$(dirname "$FINAL_SAVE_FILE")
+                            if [ ! -d "$SAVE_DIR_OF_FILE" ]; then
+                                echo "Création du dossier de sauvegardes: $SAVE_DIR_OF_FILE"
+                                mkdir -p "$SAVE_DIR_OF_FILE"
+                            fi
+                        fi
+                    fi
+                fi
             fi
-        fi
+        done < "$SAVE_FILE"
     fi
 
     # Gestion des fichiers et dossiers d'options depuis le fichier .keeppath
