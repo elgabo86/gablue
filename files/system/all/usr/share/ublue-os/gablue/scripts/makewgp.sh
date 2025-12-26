@@ -34,27 +34,24 @@ restore_game_files() {
                 SAVE_ITEM="$GAME_DIR/$SAVE_REL_PATH"
                 FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
 
-                # Supprimer le symlink
-                if [ -L "$SAVE_ITEM" ]; then
+                # Supprimer le symlink ou le dossier existant
+                if [ -L "$SAVE_ITEM" ] || [ -d "$SAVE_ITEM" ]; then
                     echo "Restauration des sauvegardes: $SAVE_REL_PATH"
-                    rm -f "$SAVE_ITEM"
                     rm -rf "$SAVE_ITEM"
 
                     # Restaurer depuis UserData
                     if [ -d "$FINAL_SAVE_ITEM" ]; then
-                        cp -r "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
+                        mkdir -p "$(dirname "$SAVE_ITEM")"
+                        cp -r "$FINAL_SAVE_ITEM/"* "$SAVE_ITEM/" 2>/dev/null
                     elif [ -f "$FINAL_SAVE_ITEM" ]; then
+                        mkdir -p "$(dirname "$SAVE_ITEM")"
                         cp "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
                     fi
                 elif [ -d "$FINAL_SAVE_ITEM" ] && [ ! -e "$SAVE_ITEM" ]; then
-                    # Symlink cassé, restaurer depuis UserData
+                    # Dossier n'existe pas encore, restaurer depuis UserData
                     echo "Restauration des sauvegardes: $SAVE_REL_PATH"
-                    mkdir -p "$(dirname "$SAVE_ITEM")"
-                    if [ -d "$FINAL_SAVE_ITEM" ]; then
-                        cp -r "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
-                    elif [ -f "$FINAL_SAVE_ITEM" ]; then
-                        cp "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
-                    fi
+                    mkdir -p "$SAVE_ITEM"
+                    cp -r "$FINAL_SAVE_ITEM/"* "$SAVE_ITEM/" 2>/dev/null
                 fi
             fi
         done < "$GAME_DIR/.savepath"
@@ -67,27 +64,24 @@ restore_game_files() {
                 KEEP_ITEM="$GAME_DIR/$KEEP_REL_PATH"
                 FINAL_KEEP_ITEM="$SAVES_DIR/$KEEP_REL_PATH"
 
-                # Supprimer le symlink
-                if [ -L "$KEEP_ITEM" ]; then
+                # Supprimer le symlink ou le dossier existant
+                if [ -L "$KEEP_ITEM" ] || [ -d "$KEEP_ITEM" ]; then
                     echo "Restauration des options: $KEEP_REL_PATH"
-                    rm -f "$KEEP_ITEM"
                     rm -rf "$KEEP_ITEM"
 
                     # Restaurer depuis UserData
                     if [ -d "$FINAL_KEEP_ITEM" ]; then
-                        cp -r "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
+                        mkdir -p "$(dirname "$KEEP_ITEM")"
+                        cp -r "$FINAL_KEEP_ITEM/"* "$KEEP_ITEM/" 2>/dev/null
                     elif [ -f "$FINAL_KEEP_ITEM" ]; then
+                        mkdir -p "$(dirname "$KEEP_ITEM")"
                         cp "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
                     fi
                 elif [ -d "$FINAL_KEEP_ITEM" ] && [ ! -e "$KEEP_ITEM" ]; then
-                    # Symlink cassé, restaurer depuis UserData
+                    # Dossier n'existe pas encore, restaurer depuis UserData
                     echo "Restauration des options: $KEEP_REL_PATH"
-                    mkdir -p "$(dirname "$KEEP_ITEM")"
-                    if [ -d "$FINAL_KEEP_ITEM" ]; then
-                        cp -r "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
-                    elif [ -f "$FINAL_KEEP_ITEM" ]; then
-                        cp "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
-                    fi
+                    mkdir -p "$KEEP_ITEM"
+                    cp -r "$FINAL_KEEP_ITEM/"* "$KEEP_ITEM/" 2>/dev/null
                 fi
             fi
         done < "$GAME_DIR/.keeppath"
@@ -101,6 +95,12 @@ trap 'echo ""; echo "Interruption détectée, restauration en cours..."; restore
 
 echo "=== Création du paquet pour: $GAME_NAME ==="
 echo "Dossier source: $GAME_DIR"
+
+# Nettoyer les dossiers temporaires d'une exécution précédente
+echo ""
+echo "Nettoyage des dossiers temporaires..."
+rm -rf "$GAME_DIR/.save" "$GAME_DIR/.keep"
+rm -f "$GAME_DIR/.savepath" "$GAME_DIR/.keeppath"
 echo ""
 
 # Demander le niveau de compression zstd

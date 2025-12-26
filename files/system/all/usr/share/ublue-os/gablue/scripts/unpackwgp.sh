@@ -147,8 +147,8 @@ if [ -f "$SAVE_FILE" ]; then
             elif [ -d "$FINAL_SAVE_ITEM" ]; then
                 echo ""
                 echo "Copie du dossier de sauvegardes ($SAVE_ITEM_NAME) depuis $FINAL_SAVE_ITEM..."
-                mkdir -p "$(dirname "$OUTPUT_SAVE_ITEM")"
-                cp -r "$FINAL_SAVE_ITEM" "$OUTPUT_SAVE_ITEM"
+                mkdir -p "$OUTPUT_SAVE_ITEM"
+                cp -r "$FINAL_SAVE_ITEM/"* "$OUTPUT_SAVE_ITEM/" 2>/dev/null
                 echo "Dossier de sauvegardes copié avec succès."
             else
                 echo ""
@@ -184,8 +184,8 @@ if [ -f "$KEEPPATH_FILE" ]; then
             elif [ -d "$FINAL_KEEP_ITEM" ]; then
                 echo ""
                 echo "Copie du dossier d'options ($KEEP_ITEM_NAME) depuis $FINAL_KEEP_ITEM..."
-                mkdir -p "$(dirname "$OUTPUT_KEEP_ITEM")"
-                cp -r "$FINAL_KEEP_ITEM" "$OUTPUT_KEEP_ITEM"
+                mkdir -p "$OUTPUT_KEEP_ITEM"
+                cp -r "$FINAL_KEEP_ITEM/"* "$OUTPUT_KEEP_ITEM/" 2>/dev/null
                 echo "Dossier d'options copié avec succès."
             else
                 echo ""
