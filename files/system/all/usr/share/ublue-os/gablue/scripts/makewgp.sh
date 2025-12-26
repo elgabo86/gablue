@@ -286,15 +286,15 @@ KEEPPATH_FILE=""
 # Boucle pour ajouter plusieurs fichiers d'options
 KEEP_LOOP=true
 while [ "$KEEP_LOOP" = true ]; do
-    # Demander si le jeu a un fichier d'options à conserver
+    # Demander si le jeu a un fichier ou dossier d'options à conserver
     KEEP_ENABLED=false
     if command -v kdialog &> /dev/null; then
-        kdialog --yesno "Y a-t-il un fichier d'options de configuration à conserver ?\\\\n\\\\nLe fichier sera déplacé vers\\\\n~/Windows/$USER/AppData/Local/LocalSaves/$GAME_NAME/\\\\net remplacé par un lien symbolique dans le paquet.\\\\n\\\\nUne copie sera conservée dans un dossier .keep\\\\npour permettre la restauration sur un autre ordi." --yes-label "Oui" --no-label "Non"
+        kdialog --yesno "Y a-t-il un fichier ou dossier d'options de configuration à conserver ?\\\\n\\\\nIl sera déplacé vers\\\\n~/Windows/$USER/AppData/Local/LocalSaves/$GAME_NAME/\\\\net remplacé par un lien symbolique dans le paquet.\\\\n\\\\nUne copie sera conservée dans le dossier .keep\\\\npour permettre la restauration sur un autre ordi." --yes-label "Oui" --no-label "Non"
         if [ $? -eq 0 ]; then
             KEEP_ENABLED=true
         fi
     else
-        read -p "Y a-t-il un fichier d'options à conserver ? (o/N): " KEEP_INPUT
+        read -p "Y a-t-il un fichier ou dossier d'options à conserver ? (o/N): " KEEP_INPUT
         if [[ "$KEEP_INPUT" =~ ^[oOyY]$ ]]; then
             KEEP_ENABLED=true
         fi
@@ -305,91 +305,203 @@ while [ "$KEEP_LOOP" = true ]; do
         break
     fi
 
-    # Utiliser le sélecteur de fichiers KDE
+    # Demander le type (fichier ou dossier)
+    KEEP_TYPE=""
     if command -v kdialog &> /dev/null; then
-        SELECTED_FILE=$(kdialog --getopenfilename "$GAME_DIR" "Tous les fichiers (*)")
+        KEEP_TYPE=$(kdialog --radiolist "Que voulez-vous conserver ?" "file" "Fichier" "on" "dir" "Dossier" "off")
     else
-        echo "Entrez le chemin relatif du fichier d'options (depuis $GAME_DIR):"
-        read -r REL_INPUT
-        if [ -n "$REL_INPUT" ]; then
-            SELECTED_FILE="$GAME_DIR/$REL_INPUT"
+        read -p "Type à conserver [f]ichier ou [d]ossier ? (f/D): " TYPE_INPUT
+        if [[ "$TYPE_INPUT" =~ ^[fF]$ ]]; then
+            KEEP_TYPE="file"
         else
-            SELECTED_FILE=""
+            KEEP_TYPE="dir"
         fi
     fi
 
-    if [ -n "$SELECTED_FILE" ] && [ -f "$SELECTED_FILE" ]; then
-        KEEP_FILE_NAME=$(basename "$SELECTED_FILE")
-        KEEP_REL_PATH="${SELECTED_FILE#$GAME_DIR/}"
-        KEEP_FILE_ABSOLUTE="$SELECTED_FILE"
-
-        # Vérifier que c'est bien dans le dossier du jeu
-        if [[ "$SELECTED_FILE" == "$GAME_DIR/"* ]]; then
-            # Chemin vers le dossier de saves externe
-            WINDOWS_HOME="$HOME/Windows"
-            SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-            SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-            # Remplacer les / par _ pour éviter les collisions
-            KEEP_STORED_NAME="${KEEP_REL_PATH//\//_}"
-            FINAL_KEEP_FILE="$SAVES_DIR/$KEEP_STORED_NAME"
-
-            # Créer les dossiers parents
-            mkdir -p "$SAVES_DIR"
-
-            echo ""
-            echo "Fichier d'options sélectionné: $KEEP_REL_PATH"
-            echo "Destination: $FINAL_KEEP_FILE"
-
-            # Vérifier si le fichier existe déjà
-            if [ -f "$FINAL_KEEP_FILE" ]; then
-                echo ""
-                echo "Attention: le fichier d'options existe déjà."
-                echo "Fichier: $FINAL_KEEP_FILE"
-
-                OVERWRITE_KEEP=1
-                if command -v kdialog &> /dev/null; then
-                    kdialog --warningyesno "Le fichier d'options existe déjà:\\n\\n$FINAL_KEEP_FILE\\n\\nVoulez-vous l'écraser ?" --yes-label "Oui" --no-label "Non"
-                    OVERWRITE_KEEP=$?
-                else
-                    read -p "Voulez-vous l'écraser ? (o/N): " KEEP_CONFIRM
-                    [[ "$KEEP_CONFIRM" =~ ^[oOyY]$ ]] && OVERWRITE_KEEP=0 || OVERWRITE_KEEP=1
-                fi
-
-                if [ $OVERWRITE_KEEP -ne 0 ]; then
-                    echo "Conserve le fichier existant"
-                else
-                    echo "Remplacement du fichier existant..."
-                    rm -f "$FINAL_KEEP_FILE"
-                fi
-            fi
-
-            # Créer le dossier .keep dans le wgp
-            KEEP_WGP_DIR="$GAME_DIR/.keep"
-            mkdir -p "$KEEP_WGP_DIR"
-
-            # Copier le fichier vers le dossier .keep (sauvegarde pour restauration)
-            echo "Copie du fichier dans .keep..."
-            cp "$KEEP_FILE_ABSOLUTE" "$KEEP_WGP_DIR/$KEEP_FILE_NAME"
-
-            # Déplacer le fichier vers le dossier de sauvegardes externe
-            echo "Déplacement du fichier vers $FINAL_KEEP_FILE..."
-            mv "$KEEP_FILE_ABSOLUTE" "$FINAL_KEEP_FILE"
-
-            # Créer un lien symbolique
-            echo "Création du lien symbolique dans le paquet..."
-            ln -s "$FINAL_KEEP_FILE" "$KEEP_FILE_ABSOLUTE"
-
-            echo "Fichier d'options déplacé et lié avec succès."
-
-            # Créer/Mettre à jour le fichier .keeppath (ajouter une ligne par fichier)
-            KEEPPATH_FILE="$GAME_DIR/.keeppath"
-            echo "$KEEP_REL_PATH" >> "$KEEPPATH_FILE"
-            echo "Fichier .keeppath mis à jour: $KEEPPATH_FILE"
+    # Utiliser le sélecteur de fichiers KDE pour fichier ou dossier
+    if command -v kdialog &> /dev/null; then
+        if [ "$KEEP_TYPE" = "dir" ]; then
+            SELECTED_ITEM=$(kdialog --getexistingdirectory "$GAME_DIR")
         else
-            echo "Erreur: le fichier doit être dans le dossier du jeu: $GAME_DIR"
+            SELECTED_ITEM=$(kdialog --getopenfilename "$GAME_DIR" "Tous les fichiers (*)")
         fi
     else
-        echo "Aucun fichier sélectionné."
+        if [ "$KEEP_TYPE" = "dir" ]; then
+            echo "Dossiers disponibles dans $GAME_DIR:"
+            DIR_LIST=$(find "$GAME_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+            i=0
+            while IFS= read -r dir; do
+                echo "  $((i+1)). $(basename "$dir")"
+                i=$((i + 1))
+            done <<< "$DIR_LIST"
+            read -p "Entrez le numéro du dossier (0 pour annuler): " SELECTED_NUM
+            SELECTED_NUM=$((SELECTED_NUM - 1))
+            if [ $SELECTED_NUM -ge 0 ]; then
+                SELECTED_ITEM=$(echo "$DIR_LIST" | sed -n "${SELECTED_NUM}p")
+            else
+                SELECTED_ITEM=""
+            fi
+        else
+            echo "Entrez le chemin relatif du fichier d'options (depuis $GAME_DIR):"
+            read -r REL_INPUT
+            if [ -n "$REL_INPUT" ]; then
+                SELECTED_ITEM="$GAME_DIR/$REL_INPUT"
+            else
+                SELECTED_ITEM=""
+            fi
+        fi
+    fi
+
+    if [ -n "$SELECTED_ITEM" ]; then
+        if [ "$KEEP_TYPE" = "dir" ]; then
+            if [ ! -d "$SELECTED_ITEM" ]; then
+                echo "Erreur: le dossier n'existe pas"
+                KEEP_LOOP=false
+                continue
+            fi
+            KEEP_ITEM_NAME=$(basename "$SELECTED_ITEM")
+            KEEP_REL_PATH="${SELECTED_ITEM#$GAME_DIR/}"
+            KEEP_ITEM_ABSOLUTE="$SELECTED_ITEM"
+
+            # Vérifier que c'est bien dans le dossier du jeu
+            if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
+                # Chemin vers le dossier de saves externe
+                WINDOWS_HOME="$HOME/Windows"
+                SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+                SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+                FINAL_KEEP_DIR="$SAVES_DIR/$KEEP_REL_PATH"
+
+                # Créer les dossiers parents
+                mkdir -p "$(dirname "$FINAL_KEEP_DIR")"
+
+                echo ""
+                echo "Dossier d'options sélectionné: $KEEP_REL_PATH"
+                echo "Destination: $FINAL_KEEP_DIR"
+
+                # Vérifier si le dossier existe déjà
+                if [ -d "$FINAL_KEEP_DIR" ]; then
+                    echo ""
+                    echo "Attention: le dossier d'options existe déjà."
+                    echo "Dossier: $FINAL_KEEP_DIR"
+
+                    OVERWRITE_KEEP=1
+                    if command -v kdialog &> /dev/null; then
+                        kdialog --warningyesno "Le dossier d'options existe déjà:\\n\\n$FINAL_KEEP_DIR\\n\\nVoulez-vous l'écraser ?" --yes-label "Oui" --no-label "Non"
+                        OVERWRITE_KEEP=$?
+                    else
+                        read -p "Voulez-vous l'écraser ? (o/N): " KEEP_CONFIRM
+                        [[ "$KEEP_CONFIRM" =~ ^[oOyY]$ ]] && OVERWRITE_KEEP=0 || OVERWRITE_KEEP=1
+                    fi
+
+                    if [ $OVERWRITE_KEEP -ne 0 ]; then
+                        echo "Conserve le dossier existant (les anciens fichiers seront remplacés)"
+                    else
+                        echo "Remplacement du dossier existant..."
+                        rm -rf "$FINAL_KEEP_DIR"
+                    fi
+                fi
+
+                # Créer le dossier .keep dans le wgp avec la structure complète
+                KEEP_WGP_DIR="$GAME_DIR/.keep/$KEEP_REL_PATH"
+                mkdir -p "$(dirname "$KEEP_WGP_DIR")"
+
+                # Copier le dossier vers le dossier .keep (sauvegarde pour restauration)
+                echo "Copie du dossier dans .keep..."
+                cp -r "$KEEP_ITEM_ABSOLUTE" "$KEEP_WGP_DIR"
+
+                # Déplacer le dossier vers le dossier de sauvegardes externe
+                echo "Déplacement du dossier vers $FINAL_KEEP_DIR..."
+                mv "$KEEP_ITEM_ABSOLUTE" "$FINAL_KEEP_DIR"
+
+                # Créer un lien symbolique
+                echo "Création du lien symbolique dans le paquet..."
+                ln -s "$FINAL_KEEP_DIR" "$KEEP_ITEM_ABSOLUTE"
+
+                echo "Dossier d'options déplacé et lié avec succès."
+
+                # Créer/Mettre à jour le fichier .keeppath (ajouter une ligne par dossier)
+                KEEPPATH_FILE="$GAME_DIR/.keeppath"
+                echo "$KEEP_REL_PATH" >> "$KEEPPATH_FILE"
+                echo "Fichier .keeppath mis à jour: $KEEPPATH_FILE"
+            else
+                echo "Erreur: le dossier doit être dans le dossier du jeu: $GAME_DIR"
+            fi
+        else
+            if [ ! -f "$SELECTED_ITEM" ]; then
+                echo "Erreur: le fichier n'existe pas"
+                KEEP_LOOP=false
+                continue
+            fi
+            KEEP_FILE_NAME=$(basename "$SELECTED_ITEM")
+            KEEP_REL_PATH="${SELECTED_ITEM#$GAME_DIR/}"
+            KEEP_FILE_ABSOLUTE="$SELECTED_ITEM"
+
+            # Vérifier que c'est bien dans le dossier du jeu
+            if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
+                # Chemin vers le dossier de saves externe
+                WINDOWS_HOME="$HOME/Windows"
+                SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+                SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+                FINAL_KEEP_FILE="$SAVES_DIR/$KEEP_REL_PATH"
+
+                # Créer les dossiers parents
+                mkdir -p "$(dirname "$FINAL_KEEP_FILE")"
+
+                echo ""
+                echo "Fichier d'options sélectionné: $KEEP_REL_PATH"
+                echo "Destination: $FINAL_KEEP_FILE"
+
+                # Vérifier si le fichier existe déjà
+                if [ -f "$FINAL_KEEP_FILE" ]; then
+                    echo ""
+                    echo "Attention: le fichier d'options existe déjà."
+                    echo "Fichier: $FINAL_KEEP_FILE"
+
+                    OVERWRITE_KEEP=1
+                    if command -v kdialog &> /dev/null; then
+                        kdialog --warningyesno "Le fichier d'options existe déjà:\\n\\n$FINAL_KEEP_FILE\\n\\nVoulez-vous l'écraser ?" --yes-label "Oui" --no-label "Non"
+                        OVERWRITE_KEEP=$?
+                    else
+                        read -p "Voulez-vous l'écraser ? (o/N): " KEEP_CONFIRM
+                        [[ "$KEEP_CONFIRM" =~ ^[oOyY]$ ]] && OVERWRITE_KEEP=0 || OVERWRITE_KEEP=1
+                    fi
+
+                    if [ $OVERWRITE_KEEP -ne 0 ]; then
+                        echo "Conserve le fichier existant"
+                    else
+                        echo "Remplacement du fichier existant..."
+                        rm -f "$FINAL_KEEP_FILE"
+                    fi
+                fi
+
+                # Créer le dossier .keep dans le wgp avec la structure complète
+                KEEP_WGP_DIR="$GAME_DIR/.keep/$KEEP_REL_PATH"
+                mkdir -p "$(dirname "$KEEP_WGP_DIR")"
+
+                # Copier le fichier vers le dossier .keep (sauvegarde pour restauration)
+                echo "Copie du fichier dans .keep..."
+                cp "$KEEP_FILE_ABSOLUTE" "$KEEP_WGP_DIR"
+
+                # Déplacer le fichier vers le dossier de sauvegardes externe
+                echo "Déplacement du fichier vers $FINAL_KEEP_FILE..."
+                mv "$KEEP_FILE_ABSOLUTE" "$FINAL_KEEP_FILE"
+
+                # Créer un lien symbolique
+                echo "Création du lien symbolique dans le paquet..."
+                ln -s "$FINAL_KEEP_FILE" "$KEEP_FILE_ABSOLUTE"
+
+                echo "Fichier d'options déplacé et lié avec succès."
+
+                # Créer/Mettre à jour le fichier .keeppath (ajouter une ligne par fichier)
+                KEEPPATH_FILE="$GAME_DIR/.keeppath"
+                echo "$KEEP_REL_PATH" >> "$KEEPPATH_FILE"
+                echo "Fichier .keeppath mis à jour: $KEEPPATH_FILE"
+            else
+                echo "Erreur: le fichier doit être dans le dossier du jeu: $GAME_DIR"
+            fi
+        fi
+    else
+        echo "Aucun élément sélectionné."
         KEEP_LOOP=false
     fi
 done

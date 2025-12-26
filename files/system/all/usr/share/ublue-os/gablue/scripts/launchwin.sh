@@ -135,28 +135,51 @@ if [[ "$fullpath" == *.wgp ]]; then
         fi
     fi
 
-    # Gestion des fichiers d'options depuis le fichier .keeppath
+    # Gestion des fichiers et dossiers d'options depuis le fichier .keeppath
     KEEPPATH_FILE="$MOUNT_DIR/.keeppath"
     KEEP_WGP_DIR="$MOUNT_DIR/.keep"
     if [ -f "$KEEPPATH_FILE" ]; then
-        # Lire ligne par ligne (par fichier)
+        # Lire ligne par ligne (par fichier/dossier)
         while IFS= read -r KEEP_REL_PATH; do
             if [ -n "$KEEP_REL_PATH" ]; then
-                KEEP_FILE_NAME=$(basename "$KEEP_REL_PATH")
-                # Remplacer les / par _ pour récupérer le fichier stocké
-                KEEP_STORED_NAME="${KEEP_REL_PATH//\//_}"
-                # Chemin vers le dossier de saves externe
-                WINDOWS_HOME="$HOME/Windows"
-                SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-                SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
-                FINAL_KEEP_FILE="$SAVES_DIR/$KEEP_STORED_NAME"
+                KEEP_MOUNT_ITEM="$MOUNT_DIR/$KEEP_REL_PATH"
+                # Chemin vers le dossier .keep avec la structure complète
+                KEEP_WGP_ITEM="$KEEP_WGP_DIR/$KEEP_REL_PATH"
 
-                # Vérifier si le fichier existe dans le dossier de sauvegardes
-                if [ ! -f "$FINAL_KEEP_FILE" ]; then
-                    # Le fichier n'existe pas, le copier depuis .keep
-                    if [ -d "$KEEP_WGP_DIR" ] && [ -f "$KEEP_WGP_DIR/$KEEP_FILE_NAME" ]; then
-                        echo "Fichier d'options introuvable ($KEEP_FILE_NAME), copie depuis .keep..."
-                        cp "$KEEP_WGP_DIR/$KEEP_FILE_NAME" "$FINAL_KEEP_FILE"
+                # Vérifier si c'est un dossier ou un fichier
+                if [ -d "$KEEP_MOUNT_ITEM" ]; then
+                    # C'est un dossier
+                    # Chemin vers le dossier de saves externe avec la structure complète
+                    WINDOWS_HOME="$HOME/Windows"
+                    SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+                    SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
+                    FINAL_KEEP_DIR="$SAVES_DIR/$KEEP_REL_PATH"
+
+                    # Vérifier si le dossier existe dans le dossier de sauvegardes
+                    if [ ! -d "$FINAL_KEEP_DIR" ]; then
+                        # Le dossier n'existe pas, le copier depuis .keep
+                        if [ -d "$KEEP_WGP_ITEM" ]; then
+                            echo "Dossier d'options introuvable, copie depuis .keep..."
+                            mkdir -p "$(dirname "$FINAL_KEEP_DIR")"
+                            cp -r "$KEEP_WGP_ITEM" "$FINAL_KEEP_DIR"
+                        fi
+                    fi
+                elif [ -f "$KEEP_MOUNT_ITEM" ]; then
+                    # C'est un fichier
+                    # Chemin vers le dossier de saves externe avec la structure complète
+                    WINDOWS_HOME="$HOME/Windows"
+                    SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+                    SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
+                    FINAL_KEEP_FILE="$SAVES_DIR/$KEEP_REL_PATH"
+
+                    # Vérifier si le fichier existe dans le dossier de sauvegardes
+                    if [ ! -f "$FINAL_KEEP_FILE" ]; then
+                        # Le fichier n'existe pas, le copier depuis .keep
+                        if [ -f "$KEEP_WGP_ITEM" ]; then
+                            echo "Fichier d'options introuvable, copie depuis .keep..."
+                            mkdir -p "$(dirname "$FINAL_KEEP_FILE")"
+                            cp "$KEEP_WGP_ITEM" "$FINAL_KEEP_FILE"
+                        fi
                     fi
                 fi
             fi

@@ -145,33 +145,38 @@ if [ -f "$SAVE_FILE" ]; then
     fi
 fi
 
-# Gestion des fichiers d'options depuis le fichier .keeppath
+# Gestion des fichiers et dossiers d'options depuis le fichier .keeppath
 KEEPPATH_FILE="$OUTPUT_DIR/.keeppath"
 if [ -f "$KEEPPATH_FILE" ]; then
-    # Lire ligne par ligne (par fichier)
+    # Lire ligne par ligne (par fichier/dossier)
     while IFS= read -r KEEP_REL_PATH; do
         if [ -n "$KEEP_REL_PATH" ]; then
-            KEEP_FILE_NAME=$(basename "$KEEP_REL_PATH")
-            OUTPUT_KEEP_FILE="$OUTPUT_DIR/$KEEP_REL_PATH"
+            KEEP_ITEM_NAME=$(basename "$KEEP_REL_PATH")
+            OUTPUT_KEEP_ITEM="$OUTPUT_DIR/$KEEP_REL_PATH"
 
-            # Chemin vers le dossier de saves externe
+            # Chemin vers le dossier de saves externe avec la structure complète
             WINDOWS_HOME="$HOME/Windows"
             SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
             SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-            # Remplacer les / par _ pour récupérer le fichier stocké
-            KEEP_STORED_NAME="${KEEP_REL_PATH//\//_}"
-            FINAL_KEEP_FILE="$SAVES_DIR/$KEEP_STORED_NAME"
 
-            # Copier le fichier d'options s'il existe
-            if [ -f "$FINAL_KEEP_FILE" ]; then
+            # Vérifier si c'est un fichier dans le dossier de sauvegardes
+            FINAL_KEEP_ITEM="$SAVES_DIR/$KEEP_REL_PATH"
+            if [ -f "$FINAL_KEEP_ITEM" ]; then
                 echo ""
-                echo "Copie du fichier d'options ($KEEP_FILE_NAME) depuis $FINAL_KEEP_FILE..."
-                mkdir -p "$(dirname "$OUTPUT_KEEP_FILE")"
-                cp "$FINAL_KEEP_FILE" "$OUTPUT_KEEP_FILE"
+                echo "Copie du fichier d'options ($KEEP_ITEM_NAME) depuis $FINAL_KEEP_ITEM..."
+                mkdir -p "$(dirname "$OUTPUT_KEEP_ITEM")"
+                cp "$FINAL_KEEP_ITEM" "$OUTPUT_KEEP_ITEM"
                 echo "Fichier d'options copié avec succès."
+            # Sinon vérifier si c'est un dossier
+            elif [ -d "$FINAL_KEEP_ITEM" ]; then
+                echo ""
+                echo "Copie du dossier d'options ($KEEP_ITEM_NAME) depuis $FINAL_KEEP_ITEM..."
+                mkdir -p "$(dirname "$OUTPUT_KEEP_ITEM")"
+                cp -r "$FINAL_KEEP_ITEM" "$OUTPUT_KEEP_ITEM"
+                echo "Dossier d'options copié avec succès."
             else
                 echo ""
-                echo "Avertissement: le fichier d'options n'existe pas: $FINAL_KEEP_FILE"
+                echo "Avertissement: l'élément d'options n'existe pas: $FINAL_KEEP_ITEM"
             fi
         fi
     done < "$KEEPPATH_FILE"
