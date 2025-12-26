@@ -714,7 +714,7 @@ if command -v kdialog &> /dev/null; then
     KDIALOG_PID=$!
 
     # Lancer mksquashfs (avec sortie pour voir la progression)
-    mksquashfs "$GAME_DIR" "$WGPACK_NAME" $COMPRESS_CMD -all-root &
+    mksquashfs "$GAME_DIR" "$WGPACK_NAME" $COMPRESS_CMD &
     MKSQUASH_PID=$!
 
     # Surveiller tant que mksquashfs tourne
@@ -754,7 +754,7 @@ if command -v kdialog &> /dev/null; then
 else
     # Mode console: simplement lancer mksquashfs
     echo "Création de $WGPACK_NAME en cours..."
-    mksquashfs "$GAME_DIR" "$WGPACK_NAME" $COMPRESS_CMD -all-root
+    mksquashfs "$GAME_DIR" "$WGPACK_NAME" $COMPRESS_CMD
 
     if [ $? -ne 0 ]; then
         echo "Erreur lors de la création du squashfs"
