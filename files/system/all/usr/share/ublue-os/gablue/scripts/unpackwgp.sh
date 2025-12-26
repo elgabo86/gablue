@@ -131,7 +131,7 @@ if [ -f "$SAVE_FILE" ]; then
             OUTPUT_SAVE_ITEM="$OUTPUT_DIR/$SAVE_REL_PATH"
 
             # Chemin vers le dossier de saves externe avec la structure complète
-            WINDOWS_HOME="$HOME/Windows"
+            WINDOWS_HOME="$HOME/Windows/UserData"
             SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
             SAVES_DIR="$SAVES_BASE/$GAME_NAME"
 
@@ -168,7 +168,7 @@ if [ -f "$KEEPPATH_FILE" ]; then
             OUTPUT_KEEP_ITEM="$OUTPUT_DIR/$KEEP_REL_PATH"
 
             # Chemin vers le dossier de saves externe avec la structure complète
-            WINDOWS_HOME="$HOME/Windows"
+            WINDOWS_HOME="$HOME/Windows/UserData"
             SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
             SAVES_DIR="$SAVES_BASE/$GAME_NAME"
 

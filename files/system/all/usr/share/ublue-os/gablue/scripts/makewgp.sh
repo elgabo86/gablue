@@ -239,7 +239,7 @@ while [ "$SAVE_LOOP" = true ]; do
             # Vérifier que c'est bien dans le dossier du jeu
             if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
                 # Chemin vers le dossier de saves externe
-                WINDOWS_HOME="$HOME/Windows"
+                WINDOWS_HOME="$HOME/Windows/UserData"
                 SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
                 SAVES_DIR="$SAVES_BASE/$GAME_NAME"
                 FINAL_SAVE_DIR="$SAVES_DIR/$SAVE_REL_PATH"
@@ -285,12 +285,12 @@ while [ "$SAVE_LOOP" = true ]; do
                 echo "Copie du dossier dans .save..."
                 cp -r "$SAVE_ITEM_ABSOLUTE" "$SAVE_WGP_DIR"
 
-                # Déplacer le contenu vers le dossier de sauvegardes externe
-                echo "Déplacement des sauvegardes vers $FINAL_SAVE_DIR..."
+                # Déplacer le dossier vers UserData pour le WGP (création du symlink temporaire)
+                echo "Déplacement du dossier vers $FINAL_SAVE_DIR..."
                 rm -rf "$SAVE_ITEM_ABSOLUTE"
                 ln -s "$FINAL_SAVE_DIR" "$SAVE_ITEM_ABSOLUTE"
 
-                echo "Sauvegardes déplacées et liées avec succès."
+                echo "Dossier de sauvegardes déplacé et lié (temporaire)."
 
                 # Créer/Mettre à jour le fichier .savepath (ajouter une ligne par dossier)
                 SAVE_FILE="$GAME_DIR/.savepath"
@@ -312,7 +312,7 @@ while [ "$SAVE_LOOP" = true ]; do
             # Vérifier que c'est bien dans le dossier du jeu
             if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
                 # Chemin vers le dossier de saves externe
-                WINDOWS_HOME="$HOME/Windows"
+                WINDOWS_HOME="$HOME/Windows/UserData"
                 SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
                 SAVES_DIR="$SAVES_BASE/$GAME_NAME"
                 FINAL_SAVE_FILE="$SAVES_DIR/$SAVE_REL_PATH"
@@ -355,12 +355,12 @@ while [ "$SAVE_LOOP" = true ]; do
                 echo "Copie du fichier dans .save..."
                 cp "$SAVE_FILE_ABSOLUTE" "$SAVE_WGP_DIR"
 
-                # Déplacer le fichier vers le dossier de sauvegardes externe
+                # Déplacer le fichier vers UserData pour le WGP (création du symlink temporaire)
                 echo "Déplacement du fichier vers $FINAL_SAVE_FILE..."
                 rm -f "$SAVE_FILE_ABSOLUTE"
                 ln -s "$FINAL_SAVE_FILE" "$SAVE_FILE_ABSOLUTE"
 
-                echo "Sauvegardes déplacées et liées avec succès."
+                echo "Fichier de sauvegardes déplacé et lié (temporaire)."
 
                 # Créer/Mettre à jour le fichier .savepath (ajouter une ligne par fichier)
                 SAVE_FILE="$GAME_DIR/.savepath"
@@ -470,7 +470,7 @@ while [ "$KEEP_LOOP" = true ]; do
             # Vérifier que c'est bien dans le dossier du jeu
             if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
                 # Chemin vers le dossier de saves externe
-                WINDOWS_HOME="$HOME/Windows"
+                WINDOWS_HOME="$HOME/Windows/UserData"
                 SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
                 SAVES_DIR="$SAVES_BASE/$GAME_NAME"
                 FINAL_KEEP_DIR="$SAVES_DIR/$KEEP_REL_PATH"
@@ -513,15 +513,12 @@ while [ "$KEEP_LOOP" = true ]; do
                 echo "Copie du dossier dans .keep..."
                 cp -r "$KEEP_ITEM_ABSOLUTE" "$KEEP_WGP_DIR"
 
-                # Déplacer le dossier vers le dossier de sauvegardes externe
+                # Déplacer le dossier vers UserData pour le WGP (création du symlink temporaire)
                 echo "Déplacement du dossier vers $FINAL_KEEP_DIR..."
                 mv "$KEEP_ITEM_ABSOLUTE" "$FINAL_KEEP_DIR"
-
-                # Créer un lien symbolique
-                echo "Création du lien symbolique dans le paquet..."
                 ln -s "$FINAL_KEEP_DIR" "$KEEP_ITEM_ABSOLUTE"
 
-                echo "Dossier d'options déplacé et lié avec succès."
+                echo "Dossier d'options déplacé et lié (temporaire)."
 
                 # Créer/Mettre à jour le fichier .keeppath (ajouter une ligne par dossier)
                 KEEPPATH_FILE="$GAME_DIR/.keeppath"
@@ -543,7 +540,7 @@ while [ "$KEEP_LOOP" = true ]; do
             # Vérifier que c'est bien dans le dossier du jeu
             if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
                 # Chemin vers le dossier de saves externe
-                WINDOWS_HOME="$HOME/Windows"
+                WINDOWS_HOME="$HOME/Windows/UserData"
                 SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
                 SAVES_DIR="$SAVES_BASE/$GAME_NAME"
                 FINAL_KEEP_FILE="$SAVES_DIR/$KEEP_REL_PATH"
@@ -586,15 +583,12 @@ while [ "$KEEP_LOOP" = true ]; do
                 echo "Copie du fichier dans .keep..."
                 cp "$KEEP_FILE_ABSOLUTE" "$KEEP_WGP_DIR"
 
-                # Déplacer le fichier vers le dossier de sauvegardes externe
+                # Déplacer le fichier vers UserData pour le WGP (création du symlink temporaire)
                 echo "Déplacement du fichier vers $FINAL_KEEP_FILE..."
                 mv "$KEEP_FILE_ABSOLUTE" "$FINAL_KEEP_FILE"
-
-                # Créer un lien symbolique
-                echo "Création du lien symbolique dans le paquet..."
                 ln -s "$FINAL_KEEP_FILE" "$KEEP_FILE_ABSOLUTE"
 
-                echo "Fichier d'options déplacé et lié avec succès."
+                echo "Fichier d'options déplacé et lié (temporaire)."
 
                 # Créer/Mettre à jour le fichier .keeppath (ajouter une ligne par fichier)
                 KEEPPATH_FILE="$GAME_DIR/.keeppath"
@@ -692,14 +686,81 @@ SIZE_AFTER=$(du -s "$WGPACK_NAME" | cut -f1)
 SIZE_AFTER_GB=$(echo "scale=2; $SIZE_AFTER / 1024 / 1024" | bc)
 COMPRESSION_RATIO=$(echo "scale=1; (1 - $SIZE_AFTER / $SIZE_BEFORE) * 100" | bc)
 
+echo ""
+echo "=== Restauration du dossier source ==="
+
+# Restaurer les sauvegardes depuis UserData
+SAVEPATH_FILE="$GAME_DIR/.savepath"
+if [ -f "$SAVEPATH_FILE" ]; then
+    WINDOWS_HOME="$HOME/Windows/UserData"
+    SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+    SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+
+    while IFS= read -r SAVE_REL_PATH; do
+        if [ -n "$SAVE_REL_PATH" ]; then
+            SAVE_ITEM="$GAME_DIR/$SAVE_REL_PATH"
+            FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
+
+            # Supprimer le symlink
+            if [ -L "$SAVE_ITEM" ]; then
+                echo "Suppression du symlink: $SAVE_REL_PATH"
+                rm -f "$SAVE_ITEM"
+                rm -rf "$SAVE_ITEM"
+
+                # Restaurer depuis UserData
+                if [ -d "$FINAL_SAVE_ITEM" ]; then
+                    echo "Restauration du dossier depuis UserData..."
+                    cp -r "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
+                elif [ -f "$FINAL_SAVE_ITEM" ]; then
+                    echo "Restauration du fichier depuis UserData..."
+                    cp "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
+                fi
+            fi
+        fi
+    done < "$SAVEPATH_FILE"
+fi
+
+# Restaurer les options depuis UserData
+KEEPPATH_FILE="$GAME_DIR/.keeppath"
+if [ -f "$KEEPPATH_FILE" ]; then
+    WINDOWS_HOME="$HOME/Windows/UserData"
+    SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+    SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+
+    while IFS= read -r KEEP_REL_PATH; do
+        if [ -n "$KEEP_REL_PATH" ]; then
+            KEEP_ITEM="$GAME_DIR/$KEEP_REL_PATH"
+            FINAL_KEEP_ITEM="$SAVES_DIR/$KEEP_REL_PATH"
+
+            # Supprimer le symlink
+            if [ -L "$KEEP_ITEM" ]; then
+                echo "Suppression du symlink: $KEEP_REL_PATH"
+                rm -f "$KEEP_ITEM"
+                rm -rf "$KEEP_ITEM"
+
+                # Restaurer depuis UserData
+                if [ -d "$FINAL_KEEP_ITEM" ]; then
+                    echo "Restauration du dossier depuis UserData..."
+                    cp -r "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
+                elif [ -f "$FINAL_KEEP_ITEM" ]; then
+                    echo "Restauration du fichier depuis UserData..."
+                    cp "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
+                fi
+            fi
+        fi
+    done < "$KEEPPATH_FILE"
+fi
+
+echo "Restauration terminée."
+
 # Supprimer les fichiers temporaires du dossier source
 rm -f "$LAUNCH_FILE"
 [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE"
 [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE"
-[ -f "$SAVE_FILE" ] && rm -f "$SAVE_FILE"
+[ -f "$SAVEPATH_FILE" ] && rm -f "$SAVEPATH_FILE"
 [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save"
 [ -f "$KEEPPATH_FILE" ] && rm -f "$KEEPPATH_FILE"
-[ -d "$KEEP_WGP_DIR" ] && rm -rf "$KEEP_WGP_DIR"
+[ -d "$GAME_DIR/.keep" ] && rm -rf "$GAME_DIR/.keep"
 
 echo ""
 echo "=== Paquet créé avec succès ==="

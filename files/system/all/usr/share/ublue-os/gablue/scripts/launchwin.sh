@@ -131,7 +131,7 @@ if [[ "$fullpath" == *.wgp ]]; then
                 if [ -d "$SAVE_MOUNT_ITEM" ]; then
                     # C'est un dossier
                     # Chemin vers le dossier de saves externe avec la structure complète
-                    WINDOWS_HOME="$HOME/Windows"
+                    WINDOWS_HOME="$HOME/Windows/UserData"
                     SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
                     SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
                     FINAL_SAVE_DIR="$SAVES_DIR/$SAVE_REL_PATH"
@@ -141,8 +141,8 @@ if [[ "$fullpath" == *.wgp ]]; then
                         # Le dossier n'existe pas, le copier depuis .save
                         if [ -d "$SAVE_WGP_ITEM" ]; then
                             echo "Restauration des sauvegardes depuis .save..."
-                            mkdir -p "$(dirname "$FINAL_SAVE_DIR")"
-                            cp -r "$SAVE_WGP_ITEM" "$FINAL_SAVE_DIR"
+                            mkdir -p "$FINAL_SAVE_DIR"
+                            cp -r "$SAVE_WGP_ITEM/." "$FINAL_SAVE_DIR/"
                         else
                             # Créer le dossier vide si pas de sauvegarde dans .save
                             echo "Création du dossier de sauvegardes: $FINAL_SAVE_DIR"
@@ -152,7 +152,7 @@ if [[ "$fullpath" == *.wgp ]]; then
                 elif [ -f "$SAVE_MOUNT_ITEM" ]; then
                     # C'est un fichier
                     # Chemin vers le dossier de saves externe avec la structure complète
-                    WINDOWS_HOME="$HOME/Windows"
+                    WINDOWS_HOME="$HOME/Windows/UserData"
                     SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
                     SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
                     FINAL_SAVE_FILE="$SAVES_DIR/$SAVE_REL_PATH"
@@ -193,7 +193,7 @@ if [[ "$fullpath" == *.wgp ]]; then
                 if [ -d "$KEEP_MOUNT_ITEM" ]; then
                     # C'est un dossier
                     # Chemin vers le dossier de saves externe avec la structure complète
-                    WINDOWS_HOME="$HOME/Windows"
+                    WINDOWS_HOME="$HOME/Windows/UserData"
                     SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
                     SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
                     FINAL_KEEP_DIR="$SAVES_DIR/$KEEP_REL_PATH"
@@ -203,14 +203,14 @@ if [[ "$fullpath" == *.wgp ]]; then
                         # Le dossier n'existe pas, le copier depuis .keep
                         if [ -d "$KEEP_WGP_ITEM" ]; then
                             echo "Dossier d'options introuvable, copie depuis .keep..."
-                            mkdir -p "$(dirname "$FINAL_KEEP_DIR")"
-                            cp -r "$KEEP_WGP_ITEM" "$FINAL_KEEP_DIR"
+                            mkdir -p "$FINAL_KEEP_DIR"
+                            cp -r "$KEEP_WGP_ITEM/." "$FINAL_KEEP_DIR/"
                         fi
                     fi
                 elif [ -f "$KEEP_MOUNT_ITEM" ]; then
                     # C'est un fichier
                     # Chemin vers le dossier de saves externe avec la structure complète
-                    WINDOWS_HOME="$HOME/Windows"
+                    WINDOWS_HOME="$HOME/Windows/UserData"
                     SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
                     SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
                     FINAL_KEEP_FILE="$SAVES_DIR/$KEEP_REL_PATH"
