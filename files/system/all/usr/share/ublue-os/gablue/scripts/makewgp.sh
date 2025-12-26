@@ -34,24 +34,18 @@ restore_game_files() {
                 SAVE_ITEM="$GAME_DIR/$SAVE_REL_PATH"
                 FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
 
-                # Supprimer le symlink ou le dossier existant
-                if [ -L "$SAVE_ITEM" ] || [ -d "$SAVE_ITEM" ]; then
+                # Restaurer depuis UserData (supprime et recrée si nécessaire)
+                if [ -L "$SAVE_ITEM" ] || [ -e "$SAVE_ITEM" ]; then
                     echo "Restauration des sauvegardes: $SAVE_REL_PATH"
                     rm -rf "$SAVE_ITEM"
+                fi
 
-                    # Restaurer depuis UserData
-                    if [ -d "$FINAL_SAVE_ITEM" ]; then
-                        mkdir -p "$(dirname "$SAVE_ITEM")"
-                        cp -r "$FINAL_SAVE_ITEM/"* "$SAVE_ITEM/" 2>/dev/null
-                    elif [ -f "$FINAL_SAVE_ITEM" ]; then
-                        mkdir -p "$(dirname "$SAVE_ITEM")"
-                        cp "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
-                    fi
-                elif [ -d "$FINAL_SAVE_ITEM" ] && [ ! -e "$SAVE_ITEM" ]; then
-                    # Dossier n'existe pas encore, restaurer depuis UserData
-                    echo "Restauration des sauvegardes: $SAVE_REL_PATH"
-                    mkdir -p "$SAVE_ITEM"
-                    cp -r "$FINAL_SAVE_ITEM/"* "$SAVE_ITEM/" 2>/dev/null
+                if [ -d "$FINAL_SAVE_ITEM" ]; then
+                    mkdir -p "$(dirname "$SAVE_ITEM")"
+                    cp -a -r "$FINAL_SAVE_ITEM/." "$SAVE_ITEM"
+                elif [ -f "$FINAL_SAVE_ITEM" ]; then
+                    mkdir -p "$(dirname "$SAVE_ITEM")"
+                    cp -a "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
                 fi
             fi
         done < "$GAME_DIR/.savepath"
@@ -64,24 +58,18 @@ restore_game_files() {
                 KEEP_ITEM="$GAME_DIR/$KEEP_REL_PATH"
                 FINAL_KEEP_ITEM="$SAVES_DIR/$KEEP_REL_PATH"
 
-                # Supprimer le symlink ou le dossier existant
-                if [ -L "$KEEP_ITEM" ] || [ -d "$KEEP_ITEM" ]; then
+                # Restaurer depuis UserData (supprime et recrée si nécessaire)
+                if [ -L "$KEEP_ITEM" ] || [ -e "$KEEP_ITEM" ]; then
                     echo "Restauration des options: $KEEP_REL_PATH"
                     rm -rf "$KEEP_ITEM"
+                fi
 
-                    # Restaurer depuis UserData
-                    if [ -d "$FINAL_KEEP_ITEM" ]; then
-                        mkdir -p "$(dirname "$KEEP_ITEM")"
-                        cp -r "$FINAL_KEEP_ITEM/"* "$KEEP_ITEM/" 2>/dev/null
-                    elif [ -f "$FINAL_KEEP_ITEM" ]; then
-                        mkdir -p "$(dirname "$KEEP_ITEM")"
-                        cp "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
-                    fi
-                elif [ -d "$FINAL_KEEP_ITEM" ] && [ ! -e "$KEEP_ITEM" ]; then
-                    # Dossier n'existe pas encore, restaurer depuis UserData
-                    echo "Restauration des options: $KEEP_REL_PATH"
-                    mkdir -p "$KEEP_ITEM"
-                    cp -r "$FINAL_KEEP_ITEM/"* "$KEEP_ITEM/" 2>/dev/null
+                if [ -d "$FINAL_KEEP_ITEM" ]; then
+                    mkdir -p "$(dirname "$KEEP_ITEM")"
+                    cp -a -r "$FINAL_KEEP_ITEM/." "$KEEP_ITEM"
+                elif [ -f "$FINAL_KEEP_ITEM" ]; then
+                    mkdir -p "$(dirname "$KEEP_ITEM")"
+                    cp -a "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
                 fi
             fi
         done < "$GAME_DIR/.keeppath"
