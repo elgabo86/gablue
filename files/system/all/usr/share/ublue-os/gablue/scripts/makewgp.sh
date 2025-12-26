@@ -355,16 +355,17 @@ while [ "$SAVE_LOOP" = true ]; do
                     fi
                 fi
 
-                # Créer le dossier final si nécessaire
-                mkdir -p "$FINAL_SAVE_DIR"
+                # Créer le dossier final si nécessaire (sans créer la destination de mv)
+                mkdir -p "$(dirname "$FINAL_SAVE_DIR")"
 
                 # Créer le dossier .save dans le wgp avec la structure complète
                 SAVE_WGP_DIR="$GAME_DIR/.save/$SAVE_REL_PATH"
                 mkdir -p "$(dirname "$SAVE_WGP_DIR")"
 
-                # Copier le dossier vers le dossier .save (sauvegarde pour restauration)
-                echo "Copie du dossier dans .save..."
-                cp -r "$SAVE_ITEM_ABSOLUTE" "$SAVE_WGP_DIR"
+                # Copier le contenu du dossier vers le dossier .save (sauvegarde pour restauration)
+                echo "Copie du contenu du dossier dans .save..."
+                mkdir -p "$SAVE_WGP_DIR"
+                cp -r "$SAVE_ITEM_ABSOLUTE/."* "$SAVE_WGP_DIR/" 2>/dev/null
 
                 # Déplacer le dossier vers UserData pour le WGP (création du symlink temporaire)
                 echo "Déplacement du dossier vers $FINAL_SAVE_DIR..."
@@ -590,9 +591,10 @@ while [ "$KEEP_LOOP" = true ]; do
                 KEEP_WGP_DIR="$GAME_DIR/.keep/$KEEP_REL_PATH"
                 mkdir -p "$(dirname "$KEEP_WGP_DIR")"
 
-                # Copier le dossier vers le dossier .keep (sauvegarde pour restauration)
-                echo "Copie du dossier dans .keep..."
-                cp -r "$KEEP_ITEM_ABSOLUTE" "$KEEP_WGP_DIR"
+                # Copier le contenu du dossier vers le dossier .keep (sauvegarde pour restauration)
+                echo "Copie du contenu du dossier dans .keep..."
+                mkdir -p "$KEEP_WGP_DIR"
+                cp -r "$KEEP_ITEM_ABSOLUTE/."* "$KEEP_WGP_DIR/" 2>/dev/null
 
                 # Déplacer le dossier vers UserData pour le WGP (création du symlink temporaire)
                 echo "Déplacement du dossier vers $FINAL_KEEP_DIR..."
