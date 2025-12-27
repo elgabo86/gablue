@@ -158,41 +158,40 @@ if [ -f "$SAVE_FILE" ]; then
     done < "$SAVE_FILE"
 fi
 
-# Gestion des fichiers et dossiers d'options depuis le fichier .keeppath
-KEEPPATH_FILE="$OUTPUT_DIR/.keeppath"
-if [ -f "$KEEPPATH_FILE" ]; then
+# Gestion des fichiers et dossiers d'extra depuis le fichier .extrapath
+EXTRAPATH_FILE="$OUTPUT_DIR/.extrapath"
+if [ -f "$EXTRAPATH_FILE" ]; then
     # Lire ligne par ligne (par fichier/dossier)
-    while IFS= read -r KEEP_REL_PATH; do
-        if [ -n "$KEEP_REL_PATH" ]; then
-            KEEP_ITEM_NAME=$(basename "$KEEP_REL_PATH")
-            OUTPUT_KEEP_ITEM="$OUTPUT_DIR/$KEEP_REL_PATH"
+    while IFS= read -r EXTRA_REL_PATH; do
+        if [ -n "$EXTRA_REL_PATH" ]; then
+            EXTRA_ITEM_NAME=$(basename "$EXTRA_REL_PATH")
+            OUTPUT_EXTRA_ITEM="$OUTPUT_DIR/$EXTRA_REL_PATH"
 
-            # Chemin vers le dossier de saves externe avec la structure complète
-            WINDOWS_HOME="$HOME/Windows/UserData"
-            SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-            SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+            # Chemin vers le dossier d'extra dans le cache
+            EXTRA_BASE="$HOME/.cache/wgp-extra"
+            EXTRA_DIR="$EXTRA_BASE/$GAME_NAME"
 
-            # Vérifier si c'est un fichier dans le dossier de sauvegardes
-            FINAL_KEEP_ITEM="$SAVES_DIR/$KEEP_REL_PATH"
-            if [ -f "$FINAL_KEEP_ITEM" ]; then
+            # Vérifier si c'est un fichier dans le cache
+            FINAL_EXTRA_ITEM="$EXTRA_DIR/$EXTRA_REL_PATH"
+            if [ -f "$FINAL_EXTRA_ITEM" ]; then
                 echo ""
-                echo "Copie du fichier d'options ($KEEP_ITEM_NAME) depuis $FINAL_KEEP_ITEM..."
-                mkdir -p "$(dirname "$OUTPUT_KEEP_ITEM")"
-                cp "$FINAL_KEEP_ITEM" "$OUTPUT_KEEP_ITEM"
-                echo "Fichier d'options copié avec succès."
+                echo "Copie du fichier d'extra ($EXTRA_ITEM_NAME) depuis $FINAL_EXTRA_ITEM..."
+                mkdir -p "$(dirname "$OUTPUT_EXTRA_ITEM")"
+                cp "$FINAL_EXTRA_ITEM" "$OUTPUT_EXTRA_ITEM"
+                echo "Fichier d'extra copié avec succès."
             # Sinon vérifier si c'est un dossier
-            elif [ -d "$FINAL_KEEP_ITEM" ]; then
+            elif [ -d "$FINAL_EXTRA_ITEM" ]; then
                 echo ""
-                echo "Copie du dossier d'options ($KEEP_ITEM_NAME) depuis $FINAL_KEEP_ITEM..."
-                mkdir -p "$OUTPUT_KEEP_ITEM"
-                cp -r "$FINAL_KEEP_ITEM/"* "$OUTPUT_KEEP_ITEM/" 2>/dev/null
-                echo "Dossier d'options copié avec succès."
+                echo "Copie du dossier d'extra ($EXTRA_ITEM_NAME) depuis $FINAL_EXTRA_ITEM..."
+                mkdir -p "$OUTPUT_EXTRA_ITEM"
+                cp -r "$FINAL_EXTRA_ITEM/"* "$OUTPUT_EXTRA_ITEM/" 2>/dev/null
+                echo "Dossier d'extra copié avec succès."
             else
                 echo ""
-                echo "Avertissement: l'élément d'options n'existe pas: $FINAL_KEEP_ITEM"
+                echo "Avertissement: l'élément d'extra n'existe pas: $FINAL_EXTRA_ITEM"
             fi
         fi
-    done < "$KEEPPATH_FILE"
+    done < "$EXTRAPATH_FILE"
 fi
 
 # Supprimer les fichiers temporaires
@@ -200,8 +199,8 @@ rm -f "$OUTPUT_DIR/.launch"
 rm -f "$OUTPUT_DIR/.args"
 rm -f "$OUTPUT_DIR/.fix"
 rm -f "$OUTPUT_DIR/.savepath"
-rm -f "$OUTPUT_DIR/.keeppath"
-rm -rf "$OUTPUT_DIR/.keep"
+rm -f "$OUTPUT_DIR/.extrapath"
+rm -rf "$OUTPUT_DIR/.extra"
 rm -rf "$OUTPUT_DIR/.save"
 
 # Afficher le nombre de fichiers extraits

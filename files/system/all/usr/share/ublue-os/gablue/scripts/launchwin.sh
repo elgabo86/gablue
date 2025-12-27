@@ -119,114 +119,69 @@ if [[ "$fullpath" == *.wgp ]]; then
     # Gestion des sauvegardes depuis le fichier .savepath
     SAVE_FILE="$MOUNT_DIR/.savepath"
     SAVE_WGP_DIR="$MOUNT_DIR/.save"
+    WINDOWS_HOME="$HOME/Windows/UserData"
+    SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+    SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
     if [ -f "$SAVE_FILE" ]; then
         # Lire ligne par ligne (par dossier/fichier)
         while IFS= read -r SAVE_REL_PATH; do
             if [ -n "$SAVE_REL_PATH" ]; then
-                SAVE_MOUNT_ITEM="$MOUNT_DIR/$SAVE_REL_PATH"
-                # Chemin vers le dossier .save avec la structure complète
                 SAVE_WGP_ITEM="$SAVE_WGP_DIR/$SAVE_REL_PATH"
+                FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
 
-                # Vérifier si c'est un dossier ou un fichier
-                if [ -d "$SAVE_MOUNT_ITEM" ]; then
+                # Vérifier si c'est un dossier ou un fichier dans .save
+                if [ -d "$SAVE_WGP_ITEM" ]; then
                     # C'est un dossier
-                    # Chemin vers le dossier de saves externe avec la structure complète
-                    WINDOWS_HOME="$HOME/Windows/UserData"
-                    SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-                    SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
-                    FINAL_SAVE_DIR="$SAVES_DIR/$SAVE_REL_PATH"
-
-                    # Créer le dossier de sauvegardes s'il n'existe pas
-                    if [ ! -d "$FINAL_SAVE_DIR" ]; then
-                        # Le dossier n'existe pas, le copier depuis .save
-                        if [ -d "$SAVE_WGP_ITEM" ]; then
-                            echo "Restauration des sauvegardes depuis .save..."
-                            mkdir -p "$FINAL_SAVE_DIR"
-                            cp -r "$SAVE_WGP_ITEM/." "$FINAL_SAVE_DIR/"
-                        else
-                            # Créer le dossier vide si pas de sauvegarde dans .save
-                            echo "Création du dossier de sauvegardes: $FINAL_SAVE_DIR"
-                            mkdir -p "$FINAL_SAVE_DIR"
-                        fi
+                    # Copier vers UserData si n'existe pas
+                    if [ ! -d "$FINAL_SAVE_ITEM" ]; then
+                        echo "Restauration des sauvegardes: $SAVE_REL_PATH"
+                        mkdir -p "$FINAL_SAVE_ITEM"
+                        cp -r "$SAVE_WGP_ITEM/." "$FINAL_SAVE_ITEM/"
                     fi
-                elif [ -f "$SAVE_MOUNT_ITEM" ]; then
+                elif [ -f "$SAVE_WGP_ITEM" ]; then
                     # C'est un fichier
-                    # Chemin vers le dossier de saves externe avec la structure complète
-                    WINDOWS_HOME="$HOME/Windows/UserData"
-                    SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-                    SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
-                    FINAL_SAVE_FILE="$SAVES_DIR/$SAVE_REL_PATH"
-
-                    # Créer le fichier de sauvegarde s'il n'existe pas
-                    if [ ! -f "$FINAL_SAVE_FILE" ]; then
-                        # Le fichier n'existe pas, le copier depuis .save
-                        if [ -f "$SAVE_WGP_ITEM" ]; then
-                            echo "Restauration de la sauvegarde depuis .save..."
-                            mkdir -p "$(dirname "$FINAL_SAVE_FILE")"
-                            cp "$SAVE_WGP_ITEM" "$FINAL_SAVE_FILE"
-                        else
-                            # Créer le dossier parent vide si pas de sauvegarde dans .save
-                            SAVE_DIR_OF_FILE=$(dirname "$FINAL_SAVE_FILE")
-                            if [ ! -d "$SAVE_DIR_OF_FILE" ]; then
-                                echo "Création du dossier de sauvegardes: $SAVE_DIR_OF_FILE"
-                                mkdir -p "$SAVE_DIR_OF_FILE"
-                            fi
-                        fi
+                    # Copier vers UserData si n'existe pas
+                    if [ ! -f "$FINAL_SAVE_ITEM" ]; then
+                        echo "Restauration des sauvegardes: $SAVE_REL_PATH"
+                        mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
+                        cp "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
                     fi
                 fi
             fi
         done < "$SAVE_FILE"
     fi
 
-    # Gestion des fichiers et dossiers d'options depuis le fichier .keeppath
-    KEEPPATH_FILE="$MOUNT_DIR/.keeppath"
-    KEEP_WGP_DIR="$MOUNT_DIR/.keep"
-    if [ -f "$KEEPPATH_FILE" ]; then
+    # Gestion des fichiers et dossiers d'extra depuis le fichier .extrapath
+    EXTRAPATH_FILE="$MOUNT_DIR/.extrapath"
+    EXTRA_WGP_DIR="$MOUNT_DIR/.extra"
+    EXTRA_DIR="$HOME/.cache/wgp-extra/$WGPACK_NAME"
+    if [ -f "$EXTRAPATH_FILE" ]; then
         # Lire ligne par ligne (par fichier/dossier)
-        while IFS= read -r KEEP_REL_PATH; do
-            if [ -n "$KEEP_REL_PATH" ]; then
-                KEEP_MOUNT_ITEM="$MOUNT_DIR/$KEEP_REL_PATH"
-                # Chemin vers le dossier .keep avec la structure complète
-                KEEP_WGP_ITEM="$KEEP_WGP_DIR/$KEEP_REL_PATH"
+        while IFS= read -r EXTRA_REL_PATH; do
+            if [ -n "$EXTRA_REL_PATH" ]; then
+                EXTRA_WGP_ITEM="$EXTRA_WGP_DIR/$EXTRA_REL_PATH"
+                FINAL_EXTRA_ITEM="$EXTRA_DIR/$EXTRA_REL_PATH"
 
-                # Vérifier si c'est un dossier ou un fichier
-                if [ -d "$KEEP_MOUNT_ITEM" ]; then
+                # Vérifier si c'est un dossier ou un fichier dans .extra
+                if [ -d "$EXTRA_WGP_ITEM" ]; then
                     # C'est un dossier
-                    # Chemin vers le dossier de saves externe avec la structure complète
-                    WINDOWS_HOME="$HOME/Windows/UserData"
-                    SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-                    SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
-                    FINAL_KEEP_DIR="$SAVES_DIR/$KEEP_REL_PATH"
-
-                    # Vérifier si le dossier existe dans le dossier de sauvegardes
-                    if [ ! -d "$FINAL_KEEP_DIR" ]; then
-                        # Le dossier n'existe pas, le copier depuis .keep
-                        if [ -d "$KEEP_WGP_ITEM" ]; then
-                            echo "Dossier d'options introuvable, copie depuis .keep..."
-                            mkdir -p "$FINAL_KEEP_DIR"
-                            cp -r "$KEEP_WGP_ITEM/." "$FINAL_KEEP_DIR/"
-                        fi
+                    # Copier vers cache si n'existe pas
+                    if [ ! -d "$FINAL_EXTRA_ITEM" ]; then
+                        echo "Restauration des extra: $EXTRA_REL_PATH"
+                        mkdir -p "$FINAL_EXTRA_ITEM"
+                        cp -r "$EXTRA_WGP_ITEM/." "$FINAL_EXTRA_ITEM/"
                     fi
-                elif [ -f "$KEEP_MOUNT_ITEM" ]; then
+                elif [ -f "$EXTRA_WGP_ITEM" ]; then
                     # C'est un fichier
-                    # Chemin vers le dossier de saves externe avec la structure complète
-                    WINDOWS_HOME="$HOME/Windows/UserData"
-                    SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-                    SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
-                    FINAL_KEEP_FILE="$SAVES_DIR/$KEEP_REL_PATH"
-
-                    # Vérifier si le fichier existe dans le dossier de sauvegardes
-                    if [ ! -f "$FINAL_KEEP_FILE" ]; then
-                        # Le fichier n'existe pas, le copier depuis .keep
-                        if [ -f "$KEEP_WGP_ITEM" ]; then
-                            echo "Fichier d'options introuvable, copie depuis .keep..."
-                            mkdir -p "$(dirname "$FINAL_KEEP_FILE")"
-                            cp "$KEEP_WGP_ITEM" "$FINAL_KEEP_FILE"
-                        fi
+                    # Copier vers cache si n'existe pas
+                    if [ ! -f "$FINAL_EXTRA_ITEM" ]; then
+                        echo "Restauration des extra: $EXTRA_REL_PATH"
+                        mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
+                        cp "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
                     fi
                 fi
             fi
-        done < "$KEEPPATH_FILE"
+        done < "$EXTRAPATH_FILE"
     fi
 
     if [ "$fix_mode" = true ]; then

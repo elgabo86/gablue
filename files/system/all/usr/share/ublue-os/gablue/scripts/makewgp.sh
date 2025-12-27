@@ -23,7 +23,7 @@ WINDOWS_HOME="$HOME/Windows/UserData"
 SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
 SAVES_DIR="$SAVES_BASE/$GAME_NAME"
 
-# Fonction de restauration des sauvegardes et options
+# Fonction de restauration des sauvegardes et extra
 restore_game_files() {
     echo "Restauration des fichiers dans le dossier de jeu..."
 
@@ -51,28 +51,30 @@ restore_game_files() {
         done < "$GAME_DIR/.savepath"
     fi
 
-    # Restaurer les options depuis UserData
-    if [ -f "$GAME_DIR/.keeppath" ]; then
-        while IFS= read -r KEEP_REL_PATH; do
-            if [ -n "$KEEP_REL_PATH" ]; then
-                KEEP_ITEM="$GAME_DIR/$KEEP_REL_PATH"
-                FINAL_KEEP_ITEM="$SAVES_DIR/$KEEP_REL_PATH"
+    # Restaurer les extra depuis le cache
+    if [ -f "$GAME_DIR/.extrapath" ]; then
+        EXTRA_BASE="$HOME/.cache/wgp-extra"
+        EXTRA_DIR="$EXTRA_BASE/$GAME_NAME"
+        while IFS= read -r EXTRA_REL_PATH; do
+            if [ -n "$EXTRA_REL_PATH" ]; then
+                EXTRA_ITEM="$GAME_DIR/$EXTRA_REL_PATH"
+                FINAL_EXTRA_ITEM="$EXTRA_DIR/$EXTRA_REL_PATH"
 
-                # Restaurer depuis UserData (supprime et recrée si nécessaire)
-                if [ -L "$KEEP_ITEM" ] || [ -e "$KEEP_ITEM" ]; then
-                    echo "Restauration des options: $KEEP_REL_PATH"
-                    rm -rf "$KEEP_ITEM"
+                # Restaurer depuis le cache (supprime et recrée si nécessaire)
+                if [ -L "$EXTRA_ITEM" ] || [ -e "$EXTRA_ITEM" ]; then
+                    echo "Restauration des extra: $EXTRA_REL_PATH"
+                    rm -rf "$EXTRA_ITEM"
                 fi
 
-                if [ -d "$FINAL_KEEP_ITEM" ]; then
-                    mkdir -p "$(dirname "$KEEP_ITEM")"
-                    cp -a -r "$FINAL_KEEP_ITEM/." "$KEEP_ITEM"
-                elif [ -f "$FINAL_KEEP_ITEM" ]; then
-                    mkdir -p "$(dirname "$KEEP_ITEM")"
-                    cp -a "$FINAL_KEEP_ITEM" "$KEEP_ITEM"
+                if [ -d "$FINAL_EXTRA_ITEM" ]; then
+                    mkdir -p "$(dirname "$EXTRA_ITEM")"
+                    cp -a -r "$FINAL_EXTRA_ITEM/." "$EXTRA_ITEM"
+                elif [ -f "$FINAL_EXTRA_ITEM" ]; then
+                    mkdir -p "$(dirname "$EXTRA_ITEM")"
+                    cp -a "$FINAL_EXTRA_ITEM" "$EXTRA_ITEM"
                 fi
             fi
-        done < "$GAME_DIR/.keeppath"
+        done < "$GAME_DIR/.extrapath"
     fi
 
     echo "Restauration terminée."
@@ -87,8 +89,8 @@ echo "Dossier source: $GAME_DIR"
 # Nettoyer les dossiers temporaires d'une exécution précédente
 echo ""
 echo "Nettoyage des dossiers temporaires..."
-rm -rf "$GAME_DIR/.save" "$GAME_DIR/.keep"
-rm -f "$GAME_DIR/.savepath" "$GAME_DIR/.keeppath"
+rm -rf "$GAME_DIR/.save" "$GAME_DIR/.extra"
+rm -f "$GAME_DIR/.savepath" "$GAME_DIR/.extrapath"
 echo ""
 
 # Demander le niveau de compression zstd
@@ -451,60 +453,60 @@ while [ "$SAVE_LOOP" = true ]; do
 done
 
 echo ""
-echo "=== Gestion des fichiers d'options ==="
+echo "=== Gestion des fichiers d'extra ==="
 
-KEEP_REL_PATH=""
-KEEP_FILE_ABSOLUTE=""
-KEEP_FILE_NAME=""
+EXTRA_REL_PATH=""
+EXTRA_FILE_ABSOLUTE=""
+EXTRA_FILE_NAME=""
 
-# Créer le dossier .keep dans le wgp
-KEEP_WGP_DIR=""
-KEEPPATH_FILE=""
+# Créer le dossier .extra dans le wgp
+EXTRA_WGP_DIR=""
+EXTRAPATH_FILE=""
 
-# Boucle pour ajouter plusieurs fichiers d'options
-KEEP_LOOP=true
-while [ "$KEEP_LOOP" = true ]; do
-    # Demander si le jeu a un fichier ou dossier d'options à conserver
-    KEEP_ENABLED=false
+# Boucle pour ajouter plusieurs fichiers d'extra
+EXTRA_LOOP=true
+while [ "$EXTRA_LOOP" = true ]; do
+    # Demander si le jeu a un fichier ou dossier d'extra à conserver
+    EXTRA_ENABLED=false
     if command -v kdialog &> /dev/null; then
-        kdialog --yesno "Y a-t-il un fichier ou dossier d'options de configuration à conserver ?\\n\\nIl sera déplacé dans le dossier utilisateur\\net remplacé par un lien symbolique dans le paquet.\\n\\nUne copie sera conservée dans le dossier .keep\\npour permettre la restauration sur un autre ordi." --yes-label "Oui" --no-label "Non"
+        kdialog --yesno "Y a-t-il un fichier ou dossier d'extra de configuration à conserver ?\\n\\nIl sera déplacé dans le dossier utilisateur\\net remplacé par un lien symbolique dans le paquet.\\n\\nUne copie sera conservée dans le dossier .extra\\npour permettre la restauration sur un autre ordi." --yes-label "Oui" --no-label "Non"
         if [ $? -eq 0 ]; then
-            KEEP_ENABLED=true
+            EXTRA_ENABLED=true
         fi
     else
-        read -p "Y a-t-il un fichier ou dossier d'options à conserver ? (o/N): " KEEP_INPUT
-        if [[ "$KEEP_INPUT" =~ ^[oOyY]$ ]]; then
-            KEEP_ENABLED=true
+        read -p "Y a-t-il un fichier ou dossier d'extra à conserver ? (o/N): " EXTRA_INPUT
+        if [[ "$EXTRA_INPUT" =~ ^[oOyY]$ ]]; then
+            EXTRA_ENABLED=true
         fi
     fi
 
-    if [ "$KEEP_ENABLED" = false ]; then
-        KEEP_LOOP=false
+    if [ "$EXTRA_ENABLED" = false ]; then
+        EXTRA_LOOP=false
         break
     fi
 
     # Demander le type (fichier ou dossier)
-    KEEP_TYPE=""
+    EXTRA_TYPE=""
     if command -v kdialog &> /dev/null; then
-        KEEP_TYPE=$(kdialog --radiolist "Que voulez-vous conserver ?" "file" "Fichier" "on" "dir" "Dossier" "off")
+        EXTRA_TYPE=$(kdialog --radiolist "Que voulez-vous conserver ?" "file" "Fichier" "on" "dir" "Dossier" "off")
     else
         read -p "Type à conserver [f]ichier ou [d]ossier ? (f/D): " TYPE_INPUT
         if [[ "$TYPE_INPUT" =~ ^[fF]$ ]]; then
-            KEEP_TYPE="file"
+            EXTRA_TYPE="file"
         else
-            KEEP_TYPE="dir"
+            EXTRA_TYPE="dir"
         fi
     fi
 
     # Utiliser le sélecteur de fichiers KDE pour fichier ou dossier
     if command -v kdialog &> /dev/null; then
-        if [ "$KEEP_TYPE" = "dir" ]; then
+        if [ "$EXTRA_TYPE" = "dir" ]; then
             SELECTED_ITEM=$(kdialog --getexistingdirectory "$GAME_DIR")
         else
             SELECTED_ITEM=$(kdialog --getopenfilename "$GAME_DIR" "Tous les fichiers (*)")
         fi
     else
-        if [ "$KEEP_TYPE" = "dir" ]; then
+        if [ "$EXTRA_TYPE" = "dir" ]; then
             echo "Dossiers disponibles dans $GAME_DIR:"
             DIR_LIST=$(find "$GAME_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
             i=0
@@ -520,7 +522,7 @@ while [ "$KEEP_LOOP" = true ]; do
                 SELECTED_ITEM=""
             fi
         else
-            echo "Entrez le chemin relatif du fichier d'options (depuis $GAME_DIR):"
+            echo "Entrez le chemin relatif du fichier d'extra (depuis $GAME_DIR):"
             read -r REL_INPUT
             if [ -n "$REL_INPUT" ]; then
                 SELECTED_ITEM="$GAME_DIR/$REL_INPUT"
@@ -531,155 +533,151 @@ while [ "$KEEP_LOOP" = true ]; do
     fi
 
     if [ -n "$SELECTED_ITEM" ]; then
-        if [ "$KEEP_TYPE" = "dir" ]; then
+        if [ "$EXTRA_TYPE" = "dir" ]; then
             if [ ! -d "$SELECTED_ITEM" ]; then
                 echo "Erreur: le dossier n'existe pas"
-                KEEP_LOOP=false
+                EXTRA_LOOP=false
                 continue
             fi
-            KEEP_ITEM_NAME=$(basename "$SELECTED_ITEM")
-            KEEP_REL_PATH="${SELECTED_ITEM#$GAME_DIR/}"
-            KEEP_ITEM_ABSOLUTE="$SELECTED_ITEM"
+            EXTRA_ITEM_NAME=$(basename "$SELECTED_ITEM")
+            EXTRA_REL_PATH="${SELECTED_ITEM#$GAME_DIR/}"
+            EXTRA_ITEM_ABSOLUTE="$SELECTED_ITEM"
 
             # Vérifier que c'est bien dans le dossier du jeu
             if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
-                # Chemin vers le dossier de saves externe
-                WINDOWS_HOME="$HOME/Windows/UserData"
-                SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-                SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-                FINAL_KEEP_DIR="$SAVES_DIR/$KEEP_REL_PATH"
+                # Chemin vers le dossier d'extra dans le cache
+                EXTRA_BASE="$HOME/.cache/wgp-extra"
+                FINAL_EXTRA_DIR="$EXTRA_BASE/$GAME_NAME/$EXTRA_REL_PATH"
 
                 # Créer les dossiers parents
-                mkdir -p "$(dirname "$FINAL_KEEP_DIR")"
+                mkdir -p "$(dirname "$FINAL_EXTRA_DIR")"
 
                 echo ""
-                echo "Dossier d'options sélectionné: $KEEP_REL_PATH"
-                echo "Destination: $FINAL_KEEP_DIR"
+                echo "Dossier d'extra sélectionné: $EXTRA_REL_PATH"
+                echo "Destination: $FINAL_EXTRA_DIR"
 
                 # Vérifier si le dossier existe déjà
-                if [ -d "$FINAL_KEEP_DIR" ]; then
+                if [ -d "$FINAL_EXTRA_DIR" ]; then
                     echo ""
-                    echo "Attention: le dossier d'options existe déjà."
-                    echo "Dossier: $FINAL_KEEP_DIR"
+                    echo "Attention: le dossier d'extra existe déjà."
+                    echo "Dossier: $FINAL_EXTRA_DIR"
 
-                    OVERWRITE_KEEP=1
+                    OVERWRITE_EXTRA=1
                     if command -v kdialog &> /dev/null; then
-                        kdialog --warningyesno "Le dossier d'options existe déjà:\\n\\n$FINAL_KEEP_DIR\\n\\nVoulez-vous l'écraser ?" --yes-label "Oui" --no-label "Non"
-                        OVERWRITE_KEEP=$?
+                        kdialog --warningyesno "Le dossier d'extra existe déjà:\\n\\n$FINAL_EXTRA_DIR\\n\\nVoulez-vous l'écraser ?" --yes-label "Oui" --no-label "Non"
+                        OVERWRITE_EXTRA=$?
                     else
-                        read -p "Voulez-vous l'écraser ? (o/N): " KEEP_CONFIRM
-                        [[ "$KEEP_CONFIRM" =~ ^[oOyY]$ ]] && OVERWRITE_KEEP=0 || OVERWRITE_KEEP=1
+                        read -p "Voulez-vous l'écraser ? (o/N): " EXTRA_CONFIRM
+                        [[ "$EXTRA_CONFIRM" =~ ^[oOyY]$ ]] && OVERWRITE_EXTRA=0 || OVERWRITE_EXTRA=1
                     fi
 
-                    if [ $OVERWRITE_KEEP -ne 0 ]; then
+                    if [ $OVERWRITE_EXTRA -ne 0 ]; then
                         echo "Annulation de cette option (dossier existant conservé)"
-                        KEEP_LOOP=false
+                        EXTRA_LOOP=false
                         continue
                     else
                         echo "Remplacement du dossier existant..."
-                        rm -rf "$FINAL_KEEP_DIR"
+                        rm -rf "$FINAL_EXTRA_DIR"
                     fi
                 fi
 
-                # Créer le dossier .keep dans le wgp avec la structure complète
-                KEEP_WGP_DIR="$GAME_DIR/.keep/$KEEP_REL_PATH"
-                mkdir -p "$(dirname "$KEEP_WGP_DIR")"
+                # Créer le dossier .extra dans le wgp avec la structure complète
+                EXTRA_WGP_DIR="$GAME_DIR/.extra/$EXTRA_REL_PATH"
+                mkdir -p "$(dirname "$EXTRA_WGP_DIR")"
 
-                # Copier le contenu du dossier vers le dossier .keep (sauvegarde pour restauration)
-                echo "Copie du contenu du dossier dans .keep..."
-                mkdir -p "$KEEP_WGP_DIR"
-                cp -r "$KEEP_ITEM_ABSOLUTE/."* "$KEEP_WGP_DIR/" 2>/dev/null
+                # Copier le contenu du dossier vers le dossier .extra (sauvegarde pour restauration)
+                echo "Copie du contenu du dossier dans .extra..."
+                mkdir -p "$EXTRA_WGP_DIR"
+                cp -r "$EXTRA_ITEM_ABSOLUTE/."* "$EXTRA_WGP_DIR/" 2>/dev/null
 
                 # Déplacer le dossier vers UserData pour le WGP (création du symlink temporaire)
-                echo "Déplacement du dossier vers $FINAL_KEEP_DIR..."
-                mv "$KEEP_ITEM_ABSOLUTE" "$FINAL_KEEP_DIR"
-                ln -s "$FINAL_KEEP_DIR" "$KEEP_ITEM_ABSOLUTE"
+                echo "Déplacement du dossier vers $FINAL_EXTRA_DIR..."
+                mv "$EXTRA_ITEM_ABSOLUTE" "$FINAL_EXTRA_DIR"
+                ln -s "$FINAL_EXTRA_DIR" "$EXTRA_ITEM_ABSOLUTE"
 
-                echo "Dossier d'options déplacé et lié (temporaire)."
+                echo "Dossier d'extra déplacé et lié (temporaire)."
 
-                # Créer/Mettre à jour le fichier .keeppath (ajouter une ligne par dossier)
-                KEEPPATH_FILE="$GAME_DIR/.keeppath"
-                echo "$KEEP_REL_PATH" >> "$KEEPPATH_FILE"
-                echo "Fichier .keeppath mis à jour: $KEEPPATH_FILE"
+                # Créer/Mettre à jour le fichier .extrapath (ajouter une ligne par dossier)
+                EXTRAPATH_FILE="$GAME_DIR/.extrapath"
+                echo "$EXTRA_REL_PATH" >> "$EXTRAPATH_FILE"
+                echo "Fichier .extrapath mis à jour: $EXTRAPATH_FILE"
             else
                 echo "Erreur: le dossier doit être dans le dossier du jeu: $GAME_DIR"
             fi
         else
             if [ ! -f "$SELECTED_ITEM" ]; then
                 echo "Erreur: le fichier n'existe pas"
-                KEEP_LOOP=false
+                EXTRA_LOOP=false
                 continue
             fi
-            KEEP_FILE_NAME=$(basename "$SELECTED_ITEM")
-            KEEP_REL_PATH="${SELECTED_ITEM#$GAME_DIR/}"
-            KEEP_FILE_ABSOLUTE="$SELECTED_ITEM"
+            EXTRA_FILE_NAME=$(basename "$SELECTED_ITEM")
+            EXTRA_REL_PATH="${SELECTED_ITEM#$GAME_DIR/}"
+            EXTRA_FILE_ABSOLUTE="$SELECTED_ITEM"
 
             # Vérifier que c'est bien dans le dossier du jeu
             if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
-                # Chemin vers le dossier de saves externe
-                WINDOWS_HOME="$HOME/Windows/UserData"
-                SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-                SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-                FINAL_KEEP_FILE="$SAVES_DIR/$KEEP_REL_PATH"
+                # Chemin vers le dossier d'extra dans le cache
+                EXTRA_BASE="$HOME/.cache/wgp-extra"
+                FINAL_EXTRA_FILE="$EXTRA_BASE/$GAME_NAME/$EXTRA_REL_PATH"
 
                 # Créer les dossiers parents
-                mkdir -p "$(dirname "$FINAL_KEEP_FILE")"
+                mkdir -p "$(dirname "$FINAL_EXTRA_FILE")"
 
                 echo ""
-                echo "Fichier d'options sélectionné: $KEEP_REL_PATH"
-                echo "Destination: $FINAL_KEEP_FILE"
+                echo "Fichier d'extra sélectionné: $EXTRA_REL_PATH"
+                echo "Destination: $FINAL_EXTRA_FILE"
 
                 # Vérifier si le fichier existe déjà
-                if [ -f "$FINAL_KEEP_FILE" ]; then
+                if [ -f "$FINAL_EXTRA_FILE" ]; then
                     echo ""
-                    echo "Attention: le fichier d'options existe déjà."
-                    echo "Fichier: $FINAL_KEEP_FILE"
+                    echo "Attention: le fichier d'extra existe déjà."
+                    echo "Fichier: $FINAL_EXTRA_FILE"
 
-                    OVERWRITE_KEEP=1
+                    OVERWRITE_EXTRA=1
                     if command -v kdialog &> /dev/null; then
-                        kdialog --warningyesno "Le fichier d'options existe déjà:\\n\\n$FINAL_KEEP_FILE\\n\\nVoulez-vous l'écraser ?" --yes-label "Oui" --no-label "Non"
-                        OVERWRITE_KEEP=$?
+                        kdialog --warningyesno "Le fichier d'extra existe déjà:\\n\\n$FINAL_EXTRA_FILE\\n\\nVoulez-vous l'écraser ?" --yes-label "Oui" --no-label "Non"
+                        OVERWRITE_EXTRA=$?
                     else
-                        read -p "Voulez-vous l'écraser ? (o/N): " KEEP_CONFIRM
-                        [[ "$KEEP_CONFIRM" =~ ^[oOyY]$ ]] && OVERWRITE_KEEP=0 || OVERWRITE_KEEP=1
+                        read -p "Voulez-vous l'écraser ? (o/N): " EXTRA_CONFIRM
+                        [[ "$EXTRA_CONFIRM" =~ ^[oOyY]$ ]] && OVERWRITE_EXTRA=0 || OVERWRITE_EXTRA=1
                     fi
 
-                    if [ $OVERWRITE_KEEP -ne 0 ]; then
+                    if [ $OVERWRITE_EXTRA -ne 0 ]; then
                         echo "Annulation de cette option (fichier existant conservé)"
-                        KEEP_LOOP=false
+                        EXTRA_LOOP=false
                         continue
                     else
                         echo "Remplacement du fichier existant..."
-                        rm -f "$FINAL_KEEP_FILE"
+                        rm -f "$FINAL_EXTRA_FILE"
                     fi
                 fi
 
-                # Créer le dossier .keep dans le wgp avec la structure complète
-                KEEP_WGP_DIR="$GAME_DIR/.keep/$KEEP_REL_PATH"
-                mkdir -p "$(dirname "$KEEP_WGP_DIR")"
+                # Créer le dossier .extra dans le wgp avec la structure complète
+                EXTRA_WGP_DIR="$GAME_DIR/.extra/$EXTRA_REL_PATH"
+                mkdir -p "$(dirname "$EXTRA_WGP_DIR")"
 
-                # Copier le fichier vers le dossier .keep (sauvegarde pour restauration)
-                echo "Copie du fichier dans .keep..."
-                cp "$KEEP_FILE_ABSOLUTE" "$KEEP_WGP_DIR"
+                # Copier le fichier vers le dossier .extra (sauvegarde pour restauration)
+                echo "Copie du fichier dans .extra..."
+                cp "$EXTRA_FILE_ABSOLUTE" "$EXTRA_WGP_DIR"
 
                 # Déplacer le fichier vers UserData pour le WGP (création du symlink temporaire)
-                echo "Déplacement du fichier vers $FINAL_KEEP_FILE..."
-                mv "$KEEP_FILE_ABSOLUTE" "$FINAL_KEEP_FILE"
-                ln -s "$FINAL_KEEP_FILE" "$KEEP_FILE_ABSOLUTE"
+                echo "Déplacement du fichier vers $FINAL_EXTRA_FILE..."
+                mv "$EXTRA_FILE_ABSOLUTE" "$FINAL_EXTRA_FILE"
+                ln -s "$FINAL_EXTRA_FILE" "$EXTRA_FILE_ABSOLUTE"
 
-                echo "Fichier d'options déplacé et lié (temporaire)."
+                echo "Fichier d'extra déplacé et lié (temporaire)."
 
-                # Créer/Mettre à jour le fichier .keeppath (ajouter une ligne par fichier)
-                KEEPPATH_FILE="$GAME_DIR/.keeppath"
-                echo "$KEEP_REL_PATH" >> "$KEEPPATH_FILE"
-                echo "Fichier .keeppath mis à jour: $KEEPPATH_FILE"
+                # Créer/Mettre à jour le fichier .extrapath (ajouter une ligne par fichier)
+                EXTRAPATH_FILE="$GAME_DIR/.extrapath"
+                echo "$EXTRA_REL_PATH" >> "$EXTRAPATH_FILE"
+                echo "Fichier .extrapath mis à jour: $EXTRAPATH_FILE"
             else
                 echo "Erreur: le fichier doit être dans le dossier du jeu: $GAME_DIR"
             fi
         fi
     else
         echo "Aucun élément sélectionné."
-        KEEP_LOOP=false
+        EXTRA_LOOP=false
     fi
 done
 
@@ -731,8 +729,8 @@ if command -v kdialog &> /dev/null; then
             [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE"
             [ -f "$GAME_DIR/.savepath" ] && rm -f "$GAME_DIR/.savepath"
             [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save"
-            [ -f "$GAME_DIR/.keeppath" ] && rm -f "$GAME_DIR/.keeppath"
-            [ -d "$GAME_DIR/.keep" ] && rm -rf "$GAME_DIR/.keep"
+            [ -f "$GAME_DIR/.extrapath" ] && rm -f "$GAME_DIR/.extrapath"
+            [ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra"
             exit 0
         fi
         sleep 0.2
@@ -779,8 +777,8 @@ rm -f "$LAUNCH_FILE"
 [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE"
 [ -f "$GAME_DIR/.savepath" ] && rm -f "$GAME_DIR/.savepath"
 [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save"
-[ -f "$GAME_DIR/.keeppath" ] && rm -f "$GAME_DIR/.keeppath"
-[ -d "$GAME_DIR/.keep" ] && rm -rf "$GAME_DIR/.keep"
+[ -f "$GAME_DIR/.extrapath" ] && rm -f "$GAME_DIR/.extrapath"
+[ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra"
 
 echo ""
 echo "=== Paquet créé avec succès ==="
