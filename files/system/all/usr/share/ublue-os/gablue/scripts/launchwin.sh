@@ -138,15 +138,18 @@ if [[ "$fullpath" == *.wgp ]]; then
 
                 # Vérifier si c'est un dossier ou un fichier dans .save
                 if [ -d "$SAVE_WGP_ITEM" ]; then
-                    # C'est un dossier : copier depuis .save vers UserData
-                    echo "Copie des sauvegardes: $SAVE_REL_PATH"
-                    mkdir -p "$FINAL_SAVE_ITEM"
-                    cp -a "$SAVE_WGP_ITEM"/. "$FINAL_SAVE_ITEM/"
+                    # C'est un dossier : copier depuis .save uniquement si n'existe pas
+                    if [ ! -d "$FINAL_SAVE_ITEM" ]; then
+                        echo "Copie des sauvegardes: $SAVE_REL_PATH"
+                        cp -a "$SAVE_WGP_ITEM"/. "$FINAL_SAVE_ITEM/"
+                    fi
                 elif [ -f "$SAVE_WGP_ITEM" ]; then
-                    # C'est un fichier : copier depuis .save vers UserData
-                    echo "Copie des sauvegardes: $SAVE_REL_PATH"
-                    mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
-                    cp "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
+                    # C'est un fichier : copier depuis .save uniquement si n'existe pas
+                    if [ ! -f "$FINAL_SAVE_ITEM" ]; then
+                        echo "Copie des sauvegardes: $SAVE_REL_PATH"
+                        mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
+                        cp "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
+                    fi
                 fi
             fi
         done < "$SAVE_FILE"
