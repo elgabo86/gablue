@@ -1,793 +1,674 @@
 #!/bin/bash
 
-# Vérifier qu'un dossier est fourni en argument
-if [ $# -eq 0 ]; then
-    echo "Usage: $0 <dossier_du_jeu>"
-    exit 1
-fi
+################################################################################
+# makewgp.sh - Script de création de paquets WGP (Windows Game Packs)
+#
+# Ce script permet de créer des archives compressées (squashfs) contenant un jeu
+# Windows avec ses métadonnées pour une portabilité facilitée.
+################################################################################
 
-GAME_DIR="$(realpath "$1")"
+#======================================
+# Variables globales
+#======================================
+GAME_DIR=""
+GAME_NAME=""
+WGPACK_NAME=""
+COMPRESS_CMD=""
+SUFFIX=""
 
-# Vérifier que le dossier existe
-if [ ! -d "$GAME_DIR" ]; then
-    echo "Erreur: le dossier '$GAME_DIR' n'existe pas"
-    exit 1
-fi
-
-# Nom du paquet (basé sur le nom du dossier)
-GAME_NAME="$(basename "$GAME_DIR")"
-WGPACK_NAME="$(dirname "$GAME_DIR")/${GAME_NAME}.wgp"
-
-echo "=== Création du paquet pour: $GAME_NAME ==="
-echo "Dossier source: $GAME_DIR"
-
-# Nettoyer les dossiers temporaires d'une exécution précédente
-echo ""
-echo "Nettoyage des dossiers temporaires..."
-rm -rf "$GAME_DIR/.save" "$GAME_DIR/.extra"
-rm -f "$GAME_DIR/.savepath" "$GAME_DIR/.extrapath"
-echo ""
-
-# Demander le niveau de compression zstd
-DEFAULT_LEVEL=15
-if command -v kdialog &> /dev/null; then
-    INPUT=$(kdialog --inputbox "Niveau de compression zstd (1-19):\n1 = le plus rapide à lire\n19 = la plus petite taille\n0 = pas de compression" "$DEFAULT_LEVEL")
-else
-    echo "kdialog non disponible, utilisation du mode console"
-    echo "Niveau de compression zstd (1-19):"
-    echo "  1 = le plus rapide à lire"
-    echo "  19 = la plus petite taille"
-    echo "  0 = pas de compression"
-    read -p "Niveau [$DEFAULT_LEVEL]: " INPUT
-    INPUT=${INPUT:-$DEFAULT_LEVEL}
-fi
-
-case "$INPUT" in
-    "0"|"none"|"non")
-        COMPRESS_CMD=""
-        SUFFIX=""
-        ;;
-    [1-9]|1[0-9])
-        COMPRESS_CMD="-comp zstd -Xcompression-level $INPUT"
-        SUFFIX="_zstd$INPUT"
-        ;;
-    *)
-        echo "Choix invalide"
-        exit 1
-        ;;
-esac
-
-echo ""
-echo "=== Recherche des exécutables (.exe et .bat) ==="
-
-# Scanner le dossier pour trouver les .exe et .bat
-EXE_LIST=$(find "$GAME_DIR" -type f \( -iname "*.exe" -o -iname "*.bat" \) 2>/dev/null)
-
-if [ -z "$EXE_LIST" ]; then
-    echo "Erreur: aucun fichier .exe ou .bat trouvé dans $GAME_DIR"
-    exit 1
-fi
-
-# Préparer la liste pour kdialog ou sélection console
-COUNT=0
-EXE_ARRAY=()
-while IFS= read -r exe; do
-    REL_PATH="${exe#$GAME_DIR/}"
-    EXE_ARRAY+=("$exe")
-    EXE_ARRAY+=("$REL_PATH")
-    if [ "$COUNT" -eq 0 ]; then
-        EXE_ARRAY+=("on") # Premier sélectionné par défaut
-    else
-        EXE_ARRAY+=("off")
-    fi
-    COUNT=$((COUNT + 1))
-done <<< "$EXE_LIST"
-
-if command -v kdialog &> /dev/null; then
-    SELECTED=$(kdialog --radiolist "Sélectionnez l'exécutable principal:" "${EXE_ARRAY[@]}")
-else
-    echo "Exécutables trouvés:"
-    i=0
-    while IFS= read -r exe; do
-        echo "  $((i+1)). ${exe#$GAME_DIR/}"
-        i=$((i + 1))
-    done <<< "$EXE_LIST"
-    read -p "Entrez le numéro de l'exécutable: " SELECTED_NUM
-    SELECTED_NUM=$((SELECTED_NUM - 1))
-    SELECTED="${EXE_ARRAY[$((SELECTED_NUM * 3))]}"
-fi
-
-if [ ! -f "$SELECTED" ]; then
-    echo "Erreur: exécutable non valide"
-    exit 1
-fi
-
-# Chemin relatif de l'exécutable par rapport au dossier du jeu
-EXE_REL_PATH="${SELECTED#$GAME_DIR/}"
-
-echo ""
-echo "Exécutable sélectionné: $EXE_REL_PATH"
-
-# Créer le fichier .launch dans le dossier source
-LAUNCH_FILE="$GAME_DIR/.launch"
-echo "$EXE_REL_PATH" > "$LAUNCH_FILE"
-echo "Fichier .launch créé: $LAUNCH_FILE"
-
-# Demander si l'utilisateur veut ajouter des arguments de lancement
-BOTTLE_ARGS=""
-if command -v kdialog &> /dev/null; then
-    ADD_ARGS=$(kdialog --yesno "Voulez-vous ajouter des arguments de lancement ?\\n(ex: --dx12, --window, --no-borders, etc.)" --yes-label "Oui" --no-label "Non")
-    if [ $? -eq 0 ]; then
-        BOTTLE_ARGS=$(kdialog --inputbox "Entrez les arguments de lancement (sans le --dx12 précédent)")
-    fi
-else
-    read -p "Voulez-vous ajouter des arguments de lancement ? (o/N): " ADD_ARGS
-    if [[ "$ADD_ARGS" =~ ^[oOyY]$ ]]; then
-        read -p "Entrez les arguments de lancement (ex: dx12, window, etc.): " BOTTLE_ARGS
-    fi
-fi
-
-# Créer le fichier .args si des arguments ont été fournis
-if [ -n "$BOTTLE_ARGS" ]; then
-    ARGS_FILE="$GAME_DIR/.args"
-    echo "$BOTTLE_ARGS" > "$ARGS_FILE"
-    echo "Fichier .args créé: $ARGS_FILE (arguments: $BOTTLE_ARGS)"
-fi
-
-# Demander si l'utilisateur veut activer le fix manette
-FIX_ENABLED=false
-if command -v kdialog &> /dev/null; then
-    kdialog --yesno "Voulez-vous activer le fix manette pour ce jeu ?\\n\\nCela modifie une clé de registre Wine (DisableHidraw)\\npour résoudre des problèmes de compatibilité manette." --yes-label "Oui" --no-label "Non"
-    if [ $? -eq 0 ]; then
-        FIX_ENABLED=true
-    fi
-else
-    read -p "Activer le fix manette ? (o/N): " FIX_INPUT
-    if [[ "$FIX_INPUT" =~ ^[oOyY]$ ]]; then
-        FIX_ENABLED=true
-    fi
-fi
-
-# Créer le fichier .fix si activé
-if [ "$FIX_ENABLED" = true ]; then
-    FIX_FILE="$GAME_DIR/.fix"
-    touch "$FIX_FILE"
-    echo "Fichier .fix créé: $FIX_FILE"
-fi
-
-echo ""
-echo "=== Gestion des sauvegardes ==="
-
-# Créer le dossier .savepath dans le wgp avec la structure complète
-SAVE_WGP_DIR=""
+# Chemins des fichiers de configuration
+LAUNCH_FILE=""
+ARGS_FILE=""
+FIX_FILE=""
 SAVE_FILE=""
+EXTRAPATH_FILE=""
 
-# Boucle pour ajouter plusieurs sauvegardes
-SAVE_LOOP=true
-while [ "$SAVE_LOOP" = true ]; do
-    # Demander si le jeu utilise des saves dans le dossier du jeu
-    SAVE_ENABLED=false
+# Répertoires temporaires dans le jeu
+SAVE_WGP_DIR=""
+EXTRA_WGP_DIR=""
+
+#======================================
+# Fonctions d'affichage et utilitaires
+#======================================
+
+# Affiche un message d'erreur et quitte
+error_exit() {
+    echo "Erreur: $1" >&2
+    exit 1
+}
+
+# Ouvre un dialogue kdialog ou pose une question en console
+kdialog_or_input() {
+    local prompt="$1"
+    local default="$2"
+
     if command -v kdialog &> /dev/null; then
-        kdialog --yesno "Dossier/fichier de sauvegarde à gérer ?\\n\\nSauvegardes persistantes stockées dans UserData.\\nUne copie reste dans le paquet pour la portabilité." --yes-label "Oui" --no-label "Non"
-        if [ $? -eq 0 ]; then
-            SAVE_ENABLED=true
-        fi
+        kdialog --inputbox "$prompt" "$default"
     else
-        read -p "Y a-t-il un dossier ou fichier de sauvegarde à gérer ? (o/N): " SAVE_INPUT
-        if [[ "$SAVE_INPUT" =~ ^[oOyY]$ ]]; then
-            SAVE_ENABLED=true
+        echo "$prompt"
+        read -r
+        echo "${REPLY:-$default}"
+    fi
+}
+
+# Pose une question oui/non via kdialog ou console
+ask_yes_no() {
+    local prompt="$1"
+    local yes_label="${2:-Oui}"
+    local no_label="${3:-Non}"
+
+    if command -v kdialog &> /dev/null; then
+        kdialog --yesno "$prompt" --yes-label "$yes_label" --no-label "$no_label"
+    else
+        read -p "$prompt (o/N): " -r
+        [[ "$REPLY" =~ ^[oOyY]$ ]]
+    fi
+}
+
+# Sélectionne un élément dans une liste via kdialog ou console
+select_from_list() {
+    local title="$1"
+    shift
+    local items=("$@")
+
+    if command -v kdialog &> /dev/null; then
+        kdialog --radiolist "$title" "${items[@]}"
+    else
+        local i=0
+        echo "$title:"
+        while [ $i -lt ${#items[@]} ]; do
+            echo "  $((i/3+1)). ${items[$i+1]}"
+            i=$((i + 3))
+        done
+        read -p "Entrez le numéro: " -r
+        local idx=$((REPLY - 1))
+        echo "${items[$((idx * 3))]}"
+    fi
+}
+
+# Sélectionne un répertoire via kdialog ou console
+select_directory() {
+    local base_dir="$1"
+
+    if command -v kdialog &> /dev/null; then
+        kdialog --getexistingdirectory "$base_dir"
+    else
+        echo "Dossiers disponibles dans $base_dir:"
+        local dirs=()
+        while IFS= read -r dir; do
+            dirs+=("$dir")
+            echo "  ${#dirs[@]}. $(basename "$dir")"
+        done < <(find "$base_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+        read -p "Entrez le numéro (0 pour annuler): " -r
+        if [ "$REPLY" -gt 0 ] 2>/dev/null; then
+            echo "${dirs[$((REPLY-1))]}"
+        fi
+    fi
+}
+
+# Sélectionne un fichier via kdialog ou console
+select_file() {
+    local base_dir="$1"
+
+    if command -v kdialog &> /dev/null; then
+        kdialog --getopenfilename "$base_dir" "Tous les fichiers (*)"
+    else
+        read -p "Entrez le chemin relatif (depuis $base_dir): " -r
+        if [ -n "$REPLY" ]; then
+            echo "$base_dir/$REPLY"
+        fi
+    fi
+}
+
+#======================================
+# Fonctions de configuration
+#======================================
+
+# Configure le niveau de compression
+configure_compression() {
+    local DEFAULT_LEVEL=15
+
+    echo ""
+    echo "=== Configuration de la compression ==="
+
+    local INPUT
+    if command -v kdialog &> /dev/null; then
+        INPUT=$(kdialog --inputbox "Niveau de compression zstd (1-19):\n1 = le plus rapide à lire\n19 = la plus petite taille\n0 = pas de compression" "$DEFAULT_LEVEL")
+    else
+        echo "Niveau de compression zstd (1-19):"
+        echo "  1 = le plus rapide à lire"
+        echo "  19 = la plus petite taille"
+        echo "  0 = pas de compression"
+        read -r
+        INPUT="${REPLY:-$DEFAULT_LEVEL}"
+    fi
+
+    case "$INPUT" in
+        "0"|"none"|"non")
+            COMPRESS_CMD=""
+            SUFFIX=""
+            ;;
+        [1-9]|1[0-9])
+            COMPRESS_CMD="-comp zstd -Xcompression-level $INPUT"
+            SUFFIX="_zstd$INPUT"
+            ;;
+        *)
+            error_exit "Choix invalide"
+            ;;
+    esac
+}
+
+# Sélectionne l'exécutable principal
+select_executable() {
+    echo ""
+    echo "=== Sélection de l'exécutable ==="
+
+    local EXE_LIST
+    EXE_LIST=$(find "$GAME_DIR" -type f \( -iname "*.exe" -o -iname "*.bat" \) 2>/dev/null)
+
+    [ -z "$EXE_LIST" ] && error_exit "Aucun fichier .exe ou .bat trouvé dans $GAME_DIR"
+
+    local EXE_ARRAY=()
+    local COUNT=0
+    while IFS= read -r exe; do
+        local REL_PATH="${exe#$GAME_DIR/}"
+        EXE_ARRAY+=("$exe" "$REL_PATH")
+        [ $COUNT -eq 0 ] && EXE_ARRAY+=("on") || EXE_ARRAY+=("off")
+        COUNT=$((COUNT + 1))
+    done <<< "$EXE_LIST"
+
+    local SELECTED
+    SELECTED=$(select_from_list "Sélectionnez l'exécutable principal:" "${EXE_ARRAY[@]}")
+
+    [ ! -f "$SELECTED" ] && error_exit "Exécutable non valide"
+
+    echo ""
+    echo "Exécutable sélectionné: ${SELECTED#$GAME_DIR/}"
+
+    # Créer le fichier .launch
+    mkdir -p "$(dirname "$LAUNCH_FILE")"
+    echo "${SELECTED#$GAME_DIR/}" > "$LAUNCH_FILE"
+}
+
+# Configure les arguments de lancement
+configure_arguments() {
+    local BOTTLE_ARGS=""
+
+    if ask_yes_no "Voulez-vous ajouter des arguments de lancement ?\n(ex: --dx12, --window, --no-borders, etc.)"; then
+        if command -v kdialog &> /dev/null; then
+            BOTTLE_ARGS=$(kdialog --inputbox "Entrez les arguments de lancement")
+        else
+            read -p "Entrez les arguments: " -r
+            BOTTLE_ARGS="$REPLY"
         fi
     fi
 
-    if [ "$SAVE_ENABLED" = false ]; then
-        SAVE_LOOP=false
-        break
+    if [ -n "$BOTTLE_ARGS" ]; then
+        mkdir -p "$(dirname "$ARGS_FILE")"
+        echo "$BOTTLE_ARGS" > "$ARGS_FILE"
+        echo "Arguments: $BOTTLE_ARGS"
     fi
+}
 
-    # Demander le type (dossier ou fichier)
-    SAVE_TYPE=""
+# Configure le fix manette
+configure_fix() {
+    if ask_yes_no "Voulez-vous activer le fix manette pour ce jeu ?\n\nCela modifie une clé de registre Wine (DisableHidraw)\npour résoudre des problèmes de compatibilité manette."; then
+        mkdir -p "$(dirname "$FIX_FILE")"
+        touch "$FIX_FILE"
+        echo "Fix manette activé"
+    fi
+}
+
+#======================================
+# Fonctions de gestion des sauvegardes
+#======================================
+
+# Demande et configure un dossier/fichier de sauvegarde
+add_save_item() {
+    ask_yes_no "Dossier/fichier de sauvegarde à gérer ?\n\nSauvegardes persistantes stockées dans UserData.\nUne copie reste dans le paquet pour la portabilité." || return 1
+
+    # Type de sauvegarde
+    local SAVE_TYPE
     if command -v kdialog &> /dev/null; then
         SAVE_TYPE=$(kdialog --radiolist "Que voulez-vous conserver ?" "dir" "Dossier" "on" "file" "Fichier" "off")
     else
-        read -p "Type à conserver [d]ossier ou [f]ichier ? (D/f): " TYPE_INPUT
-        if [[ "$TYPE_INPUT" =~ ^[fF]$ ]]; then
-            SAVE_TYPE="file"
-        else
-            SAVE_TYPE="dir"
-        fi
+        read -p "Type [d]ossier ou [f]ichier ? (D/f): " -r
+        [[ "$REPLY" =~ ^[fF]$ ]] && SAVE_TYPE="file" || SAVE_TYPE="dir"
     fi
 
-    # Utiliser le sélecteur de fichiers KDE pour dossier ou fichier
-    if command -v kdialog &> /dev/null; then
-        if [ "$SAVE_TYPE" = "dir" ]; then
-            SELECTED_ITEM=$(kdialog --getexistingdirectory "$GAME_DIR")
-        else
-            SELECTED_ITEM=$(kdialog --getopenfilename "$GAME_DIR" "Tous les fichiers (*)")
-        fi
+    # Sélection de l'élément
+    local SELECTED_ITEM=""
+    if [ "$SAVE_TYPE" = "dir" ]; then
+        SELECTED_ITEM=$(select_directory "$GAME_DIR")
     else
-        if [ "$SAVE_TYPE" = "dir" ]; then
-            echo "Dossiers disponibles dans $GAME_DIR:"
-            DIR_LIST=$(find "$GAME_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
-            i=0
-            while IFS= read -r dir; do
-                echo "  $((i+1)). $(basename "$dir")"
-                i=$((i + 1))
-            done <<< "$DIR_LIST"
-            read -p "Entrez le numéro du dossier (0 pour annuler): " SELECTED_NUM
-            SELECTED_NUM=$((SELECTED_NUM - 1))
-            if [ $SELECTED_NUM -ge 0 ]; then
-                SELECTED_ITEM=$(echo "$DIR_LIST" | sed -n "${SELECTED_NUM}p")
-            else
-                SELECTED_ITEM=""
-            fi
-        else
-            echo "Entrez le chemin relatif du fichier de sauvegardes (depuis $GAME_DIR):"
-            read -r REL_INPUT
-            if [ -n "$REL_INPUT" ]; then
-                SELECTED_ITEM="$GAME_DIR/$REL_INPUT"
-            else
-                SELECTED_ITEM=""
-            fi
-        fi
+        SELECTED_ITEM=$(select_file "$GAME_DIR")
     fi
 
-    if [ -n "$SELECTED_ITEM" ]; then
-        if [ "$SAVE_TYPE" = "dir" ]; then
-            if [ ! -d "$SELECTED_ITEM" ]; then
-                echo "Erreur: le dossier n'existe pas"
-                SAVE_LOOP=false
-                continue
-            fi
-            SAVE_ITEM_NAME=$(basename "$SELECTED_ITEM")
-            SAVE_REL_PATH="${SELECTED_ITEM#$GAME_DIR/}"
-            SAVE_ITEM_ABSOLUTE="$SELECTED_ITEM"
+    [ -z "$SELECTED_ITEM" ] && return 1
 
-            # Vérifier que c'est bien dans le dossier du jeu
-            if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
-                echo ""
-                echo "Dossier de sauvegardes sélectionné: $SAVE_REL_PATH"
+    # Validation et traitement
+    local SAVE_REL_PATH="${SELECTED_ITEM#$GAME_DIR/}"
+    if [[ "$SELECTED_ITEM" != "$GAME_DIR/"* ]]; then
+        error_exit "L'élément doit être dans le dossier du jeu: $GAME_DIR"
+    fi
 
-                # Chemins externes pour les saves
-                WINDOWS_HOME="$HOME/Windows/UserData"
-                SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-                SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+    [ "$SAVE_TYPE" = "dir" ] && [ ! -d "$SELECTED_ITEM" ] && error_exit "Le dossier n'existe pas"
+    [ "$SAVE_TYPE" = "file" ] && [ ! -f "$SELECTED_ITEM" ] && error_exit "Le fichier n'existe pas"
 
-                # Créer le dossier .save dans le wgp avec la structure complète
-                SAVE_WGP_DIR="$GAME_DIR/.save/$SAVE_REL_PATH"
-                mkdir -p "$(dirname "$SAVE_WGP_DIR")"
+    process_save_item "$SAVE_TYPE" "$SELECTED_ITEM" "$SAVE_REL_PATH"
+}
 
-                # Copier le dossier vers .save (pour la portabilité du WGP uniquement)
-                echo "Copie du dossier vers .save pour portabilité..."
-                cp -a "$SAVE_ITEM_ABSOLUTE"/. "$SAVE_WGP_DIR/"
+# Traite un élément de sauvegarde (crée .save, .savepath, symlink)
+process_save_item() {
+    local SAVE_TYPE="$1"
+    local SAVE_ITEM_ABSOLUTE="$2"
+    local SAVE_REL_PATH="$3"
 
-                # Créer un symlink dans le jeu pointant vers UserData
-                echo "Création du symlink vers UserData..."
-                rm -rf "$SAVE_ITEM_ABSOLUTE"
-                ln -s "$SAVES_DIR/$SAVE_REL_PATH" "$SAVE_ITEM_ABSOLUTE"
+    echo ""
+    echo "Élément de sauvegarde: $SAVE_REL_PATH"
 
-                # Créer/Mettre à jour le fichier .savepath (ajouter une ligne par dossier)
-                SAVE_FILE="$GAME_DIR/.savepath"
-                echo "$SAVE_REL_PATH" >> "$SAVE_FILE"
-                echo "Fichier .savepath mis à jour: $SAVE_FILE"
-            else
-                echo "Erreur: le dossier doit être dans le dossier du jeu: $GAME_DIR"
-            fi
-        else
-            if [ ! -f "$SELECTED_ITEM" ]; then
-                echo "Erreur: le fichier n'existe pas"
-                SAVE_LOOP=false
-                continue
-            fi
-            SAVE_FILE_NAME=$(basename "$SELECTED_ITEM")
-            SAVE_REL_PATH="${SELECTED_ITEM#$GAME_DIR/}"
-            SAVE_FILE_ABSOLUTE="$SELECTED_ITEM"
+    # Chemins externes
+    local WINDOWS_HOME="$HOME/Windows/UserData"
+    local SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
+    local SAVES_DIR="$SAVES_BASE/$GAME_NAME"
 
-            # Vérifier que c'est bien dans le dossier du jeu
-            if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
-                echo ""
-                echo "Fichier de sauvegardes sélectionné: $SAVE_REL_PATH"
+    # Créer .save dans le WGP
+    local SAVE_WGP_ITEM="$GAME_DIR/.save/$SAVE_REL_PATH"
+    mkdir -p "$(dirname "$SAVE_WGP_ITEM")"
 
-                # Chemins externes pour les saves
-                WINDOWS_HOME="$HOME/Windows/UserData"
-                SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-                SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-
-                # Créer le dossier .save dans le wgp avec la structure complète
-                SAVE_WGP_DIR="$GAME_DIR/.save/$SAVE_REL_PATH"
-                mkdir -p "$(dirname "$SAVE_WGP_DIR")"
-
-                # Copier le fichier vers .save (pour la portabilité du WGP uniquement)
-                echo "Copie du fichier vers .save pour portabilité..."
-                cp "$SAVE_FILE_ABSOLUTE" "$SAVE_WGP_DIR"
-
-                # Créer un symlink dans le jeu pointant vers UserData
-                echo "Création du symlink vers UserData..."
-                rm -f "$SAVE_FILE_ABSOLUTE"
-                ln -s "$SAVES_DIR/$SAVE_REL_PATH" "$SAVE_FILE_ABSOLUTE"
-
-                # Créer/Mettre à jour le fichier .savepath (ajouter une ligne par fichier)
-                SAVE_FILE="$GAME_DIR/.savepath"
-                echo "$SAVE_REL_PATH" >> "$SAVE_FILE"
-                echo "Fichier .savepath mis à jour: $SAVE_FILE"
-            else
-                echo "Erreur: le fichier doit être dans le dossier du jeu: $GAME_DIR"
-            fi
-        fi
+    # Copier vers .save (portabilité)
+    echo "Copie vers .save pour portabilité..."
+    if [ "$SAVE_TYPE" = "dir" ]; then
+        cp -a "$SAVE_ITEM_ABSOLUTE"/. "$SAVE_WGP_ITEM"/
     else
-        echo "Aucun élément sélectionné."
-        SAVE_LOOP=false
+        cp "$SAVE_ITEM_ABSOLUTE" "$SAVE_WGP_ITEM"
     fi
-done
 
-echo ""
-echo "=== Gestion des fichiers d'extra ==="
-
-EXTRA_REL_PATH=""
-EXTRA_FILE_ABSOLUTE=""
-EXTRA_FILE_NAME=""
-
-# Créer le dossier .extra dans le wgp
-EXTRA_WGP_DIR=""
-EXTRAPATH_FILE=""
-
-# Boucle pour ajouter plusieurs fichiers d'extra
-EXTRA_LOOP=true
-while [ "$EXTRA_LOOP" = true ]; do
-    # Demander si le jeu a un fichier ou dossier d'extra à conserver
-    EXTRA_ENABLED=false
-    if command -v kdialog &> /dev/null; then
-        kdialog --yesno "Fichier/dossier d'extra à conserver ?\\n\\nLes extras seront stockés dans /tmp/wgp-extra\\n\\nCe sont des fichiers temporaires (config, cache...)\\nperdus après la fermeture du jeu.\\n\\nLe WGP utilisera un symlink vers /tmp." --yes-label "Oui" --no-label "Non"
-        if [ $? -eq 0 ]; then
-            EXTRA_ENABLED=true
-        fi
+    # Créer symlink vers UserData
+    echo "Création du symlink vers UserData..."
+    if [ "$SAVE_TYPE" = "dir" ]; then
+        rm -rf "$SAVE_ITEM_ABSOLUTE"
+        ln -s "$SAVES_DIR/$SAVE_REL_PATH" "$SAVE_ITEM_ABSOLUTE"
     else
-        read -p "Y a-t-il un fichier ou dossier d'extra à conserver ? (o/N): " EXTRA_INPUT
-        if [[ "$EXTRA_INPUT" =~ ^[oOyY]$ ]]; then
-            EXTRA_ENABLED=true
-        fi
+        rm -f "$SAVE_ITEM_ABSOLUTE"
+        ln -s "$SAVES_DIR/$SAVE_REL_PATH" "$SAVE_ITEM_ABSOLUTE"
     fi
 
-    if [ "$EXTRA_ENABLED" = false ]; then
-        EXTRA_LOOP=false
-        break
-    fi
+    # Mettre à jour .savepath
+    mkdir -p "$(dirname "$SAVE_FILE")"
+    echo "$SAVE_REL_PATH" >> "$SAVE_FILE"
+}
 
-    # Demander le type (fichier ou dossier)
-    EXTRA_TYPE=""
+# Configure tous les éléments de sauvegarde
+configure_saves() {
+    echo ""
+    echo "=== Gestion des sauvegardes ==="
+
+    while true; do
+        add_save_item || break
+    done
+}
+
+#======================================
+# Fonctions de gestion des extras
+#======================================
+
+# Demande et configure un fichier/dossier d'extra
+add_extra_item() {
+    ask_yes_no "Fichier/dossier d'extra à conserver ?\n\nLes extras seront stockés dans /tmp/wgp-extra\n\nCe sont des fichiers temporaires (config, cache...)\nperdus après la fermeture du jeu.\nLe WGP utilisera un symlink vers /tmp." || return 1
+
+    # Type d'extra
+    local EXTRA_TYPE
     if command -v kdialog &> /dev/null; then
         EXTRA_TYPE=$(kdialog --radiolist "Que voulez-vous conserver ?" "file" "Fichier" "on" "dir" "Dossier" "off")
     else
-        read -p "Type à conserver [f]ichier ou [d]ossier ? (f/D): " TYPE_INPUT
-        if [[ "$TYPE_INPUT" =~ ^[fF]$ ]]; then
-            EXTRA_TYPE="file"
-        else
-            EXTRA_TYPE="dir"
-        fi
+        read -p "Type [f]ichier ou [d]ossier ? (f/D): " -r
+        [[ "$REPLY" =~ ^[fF]$ ]] && EXTRA_TYPE="file" || EXTRA_TYPE="dir"
     fi
 
-    # Utiliser le sélecteur de fichiers KDE pour fichier ou dossier
+    # Sélection de l'élément
+    local SELECTED_ITEM=""
+    if [ "$EXTRA_TYPE" = "dir" ]; then
+        SELECTED_ITEM=$(select_directory "$GAME_DIR")
+    else
+        SELECTED_ITEM=$(select_file "$GAME_DIR")
+    fi
+
+    [ -z "$SELECTED_ITEM" ] && return 1
+
+    # Validation et traitement
+    local EXTRA_REL_PATH="${SELECTED_ITEM#$GAME_DIR/}"
+    if [[ "$SELECTED_ITEM" != "$GAME_DIR/"* ]]; then
+        error_exit "L'élément doit être dans le dossier du jeu: $GAME_DIR"
+    fi
+
+    [ "$EXTRA_TYPE" = "dir" ] && [ ! -d "$SELECTED_ITEM" ] && error_exit "Le dossier n'existe pas"
+    [ "$EXTRA_TYPE" = "file" ] && [ ! -f "$SELECTED_ITEM" ] && error_exit "Le fichier n'existe pas"
+
+    process_extra_item "$EXTRA_TYPE" "$SELECTED_ITEM" "$EXTRA_REL_PATH"
+}
+
+# Traite un élément d'extra (crée .extra, .extrapath, symlink)
+process_extra_item() {
+    local EXTRA_TYPE="$1"
+    local EXTRA_ITEM_ABSOLUTE="$2"
+    local EXTRA_REL_PATH="$3"
+
+    echo ""
+    echo "Élément d'extra: $EXTRA_REL_PATH"
+
+    # Chemin externe
+    local EXTRA_BASE="/tmp/wgp-extra"
+    local EXTRA_DIR="$EXTRA_BASE/$GAME_NAME"
+
+    # Créer .extra dans le WGP
+    local EXTRA_WGP_ITEM="$GAME_DIR/.extra/$EXTRA_REL_PATH"
+    mkdir -p "$(dirname "$EXTRA_WGP_ITEM")"
+
+    # Copier vers .extra (portabilité)
+    echo "Copie vers .extra pour portabilité..."
+    if [ "$EXTRA_TYPE" = "dir" ]; then
+        cp -a "$EXTRA_ITEM_ABSOLUTE"/. "$EXTRA_WGP_ITEM"/
+    else
+        cp "$EXTRA_ITEM_ABSOLUTE" "$EXTRA_WGP_ITEM"
+    fi
+
+    # Créer symlink vers /tmp
+    echo "Création du symlink vers /tmp/wgp-extra..."
+    if [ "$EXTRA_TYPE" = "dir" ]; then
+        rm -rf "$EXTRA_ITEM_ABSOLUTE"
+        ln -s "$EXTRA_DIR/$EXTRA_REL_PATH" "$EXTRA_ITEM_ABSOLUTE"
+    else
+        rm -f "$EXTRA_ITEM_ABSOLUTE"
+        ln -s "$EXTRA_DIR/$EXTRA_REL_PATH" "$EXTRA_ITEM_ABSOLUTE"
+    fi
+
+    # Mettre à jour .extrapath
+    mkdir -p "$(dirname "$EXTRAPATH_FILE")"
+    echo "$EXTRA_REL_PATH" >> "$EXTRAPATH_FILE"
+}
+
+# Configure tous les éléments d'extra
+configure_extras() {
+    echo ""
+    echo "=== Gestion des extras ==="
+
+    while true; do
+        add_extra_item || break
+    done
+}
+
+#======================================
+# Fonctions de restauration
+#======================================
+
+# Restaure un élément depuis .save ou .extra
+restore_item() {
+    local ITEM_TYPE="$1"   # "save" ou "extra"
+    local ITEM_REL_PATH="$2"
+    local ORIGIN_DIR="$3"  # ".save" ou ".extra"
+
+    local ORIGINAL_ITEM="$GAME_DIR/$ITEM_REL_PATH"
+    local WGP_ITEM="${GAME_DIR}/${ORIGIN_DIR}/${ITEM_REL_PATH}"
+
+    if [ ! -e "$WGP_ITEM" ]; then
+        return
+    fi
+
+    # Supprimer le symlink existant
+    rm -rf "$ORIGINAL_ITEM"
+
+    # Copier depuis le WGP
+    if [ -d "$WGP_ITEM" ]; then
+        cp -a "$WGP_ITEM"/. "$ORIGINAL_ITEM"/
+        echo "$ITEM_TYPE restauré: $ITEM_REL_PATH"
+    elif [ -f "$WGP_ITEM" ]; then
+        cp "$WGP_ITEM" "$ORIGINAL_ITEM"
+        echo "$ITEM_TYPE restauré: $ITEM_REL_PATH"
+    fi
+}
+
+# Restaure toutes les sauvegardes depuis UserData
+restore_all_saves() {
+    [ -f "$SAVE_FILE" ] || return 0
+
+    echo ""
+    echo "=== Restitution des sauvegardes ==="
+
+    local WINDOWS_HOME="$HOME/Windows/UserData"
+    local SAVES_DIR="$WINDOWS_HOME/$USER/LocalSavesWGP/$GAME_NAME"
+
+    while IFS= read -r SAVE_REL_PATH; do
+        [ -z "$SAVE_REL_PATH" ] && continue
+
+        local ORIGINAL_ITEM="$GAME_DIR/$SAVE_REL_PATH"
+        local SAVE_WGP_ITEM="$GAME_DIR/.save/$SAVE_REL_PATH"
+        local FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
+
+        # Supprimer le symlink
+        rm -rf "$ORIGINAL_ITEM"
+
+        # Copier depuis .save
+        if [ -d "$SAVE_WGP_ITEM" ]; then
+            cp -a "$SAVE_WGP_ITEM"/. "$ORIGINAL_ITEM"/
+            echo "Save restaurée: $SAVE_REL_PATH"
+        elif [ -f "$SAVE_WGP_ITEM" ]; then
+            cp "$SAVE_WGP_ITEM" "$ORIGINAL_ITEM"
+            echo "Save restaurée: $SAVE_REL_PATH"
+        fi
+    done < "$SAVE_FILE"
+}
+
+# Restaure tous les extras depuis .extra
+restore_all_extras() {
+    [ -f "$EXTRAPATH_FILE" ] || return 0
+
+    echo ""
+    echo "=== Restitution des extras ==="
+
+    while IFS= read -r EXTRA_REL_PATH; do
+        [ -z "$EXTRA_REL_PATH" ] && continue
+        restore_item "Extra" "$EXTRA_REL_PATH" ".extra"
+    done < "$EXTRAPATH_FILE"
+}
+
+#======================================
+# Fonctions de nettoyage
+#======================================
+
+# Nettoie tous les fichiers temporaires
+cleanup_temp_files() {
+    rm -f "$LAUNCH_FILE" 2>/dev/null
+    [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE" 2>/dev/null
+    [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE" 2>/dev/null
+    [ -f "$SAVE_FILE" ] && rm -f "$SAVE_FILE" 2>/dev/null
+    [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save" 2>/dev/null
+    [ -f "$EXTRAPATH_FILE" ] && rm -f "$EXTRAPATH_FILE" 2>/dev/null
+    [ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra" 2>/dev/null
+}
+
+# Restaure les fichiers originaux et nettoie les temporaires
+full_restore() {
+    restore_all_saves
+    restore_all_extras
+    cleanup_temp_files
+}
+
+#======================================
+# Fonctions de création du squashfs
+#======================================
+
+# Vérifie si le fichier existe déjà et demande confirmation
+check_existing_wgp() {
+    [ ! -f "$WGPACK_NAME" ] && return 0
+
+    if ask_yes_no "Le fichier $WGPACK_NAME existe déjà.\nVoulez-vous l'écraser ?"; then
+        echo "Suppression de l'ancien fichier: $WGPACK_NAME"
+        rm -f "$WGPACK_NAME"
+        return 0
+    fi
+
+    # Annulation: restaurer et quitter
+    full_restore
+    exit 0
+}
+
+# Crée le squashfs avec annulation possible
+create_squashfs() {
+    echo ""
+    echo "=== Création du squashfs ==="
+
     if command -v kdialog &> /dev/null; then
-        if [ "$EXTRA_TYPE" = "dir" ]; then
-            SELECTED_ITEM=$(kdialog --getexistingdirectory "$GAME_DIR")
-        else
-            SELECTED_ITEM=$(kdialog --getopenfilename "$GAME_DIR" "Tous les fichiers (*)")
-        fi
+        create_squashfs_with_dialog
     else
-        if [ "$EXTRA_TYPE" = "dir" ]; then
-            echo "Dossiers disponibles dans $GAME_DIR:"
-            DIR_LIST=$(find "$GAME_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
-            i=0
-            while IFS= read -r dir; do
-                echo "  $((i+1)). $(basename "$dir")"
-                i=$((i + 1))
-            done <<< "$DIR_LIST"
-            read -p "Entrez le numéro du dossier (0 pour annuler): " SELECTED_NUM
-            SELECTED_NUM=$((SELECTED_NUM - 1))
-            if [ $SELECTED_NUM -ge 0 ]; then
-                SELECTED_ITEM=$(echo "$DIR_LIST" | sed -n "${SELECTED_NUM}p")
-            else
-                SELECTED_ITEM=""
-            fi
-        else
-            echo "Entrez le chemin relatif du fichier d'extra (depuis $GAME_DIR):"
-            read -r REL_INPUT
-            if [ -n "$REL_INPUT" ]; then
-                SELECTED_ITEM="$GAME_DIR/$REL_INPUT"
-            else
-                SELECTED_ITEM=""
-            fi
-        fi
+        create_squashfs_console
     fi
 
-    if [ -n "$SELECTED_ITEM" ]; then
-        if [ "$EXTRA_TYPE" = "dir" ]; then
-            if [ ! -d "$SELECTED_ITEM" ]; then
-                echo "Erreur: le dossier n'existe pas"
-                EXTRA_LOOP=false
-                continue
-            fi
-            EXTRA_ITEM_NAME=$(basename "$SELECTED_ITEM")
-            EXTRA_REL_PATH="${SELECTED_ITEM#$GAME_DIR/}"
-            EXTRA_ITEM_ABSOLUTE="$SELECTED_ITEM"
+    return $?
+}
 
-            # Vérifier que c'est bien dans le dossier du jeu
-            if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
-                echo ""
-                echo "Dossier d'extra sélectionné: $EXTRA_REL_PATH"
-
-                # Chemin externe pour les extras
-                EXTRA_BASE="/tmp/wgp-extra"
-                EXTRA_DIR="$EXTRA_BASE/$GAME_NAME"
-
-                # Créer le dossier .extra dans le wgp avec la structure complète
-                EXTRA_WGP_DIR="$GAME_DIR/.extra/$EXTRA_REL_PATH"
-                mkdir -p "$(dirname "$EXTRA_WGP_DIR")"
-
-                # Copier le dossier vers .extra (pour la portabilité du WGP uniquement)
-                echo "Copie du dossier vers .extra pour portabilité..."
-                cp -a "$EXTRA_ITEM_ABSOLUTE"/. "$EXTRA_WGP_DIR/"
-
-                # Créer un symlink dans le jeu pointant vers /tmp/wgp-extra
-                echo "Création du symlink vers /tmp/wgp-extra..."
-                rm -rf "$EXTRA_ITEM_ABSOLUTE"
-                ln -s "$EXTRA_DIR/$EXTRA_REL_PATH" "$EXTRA_ITEM_ABSOLUTE"
-
-                # Créer/Mettre à jour le fichier .extrapath (ajouter une ligne par dossier)
-                EXTRAPATH_FILE="$GAME_DIR/.extrapath"
-                echo "$EXTRA_REL_PATH" >> "$EXTRAPATH_FILE"
-                echo "Fichier .extrapath mis à jour: $EXTRAPATH_FILE"
-            else
-                echo "Erreur: le dossier doit être dans le dossier du jeu: $GAME_DIR"
-            fi
-        else
-            if [ ! -f "$SELECTED_ITEM" ]; then
-                echo "Erreur: le fichier n'existe pas"
-                EXTRA_LOOP=false
-                continue
-            fi
-            EXTRA_FILE_NAME=$(basename "$SELECTED_ITEM")
-            EXTRA_REL_PATH="${SELECTED_ITEM#$GAME_DIR/}"
-            EXTRA_FILE_ABSOLUTE="$SELECTED_ITEM"
-
-            # Vérifier que c'est bien dans le dossier du jeu
-            if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
-                echo ""
-                echo "Fichier d'extra sélectionné: $EXTRA_REL_PATH"
-
-                # Chemin externe pour les extras
-                EXTRA_BASE="/tmp/wgp-extra"
-                EXTRA_DIR="$EXTRA_BASE/$GAME_NAME"
-
-                # Créer le dossier .extra dans le wgp avec la structure complète
-                EXTRA_WGP_DIR="$GAME_DIR/.extra/$EXTRA_REL_PATH"
-                mkdir -p "$(dirname "$EXTRA_WGP_DIR")"
-
-                # Copier le fichier vers .extra (pour la portabilité du WGP uniquement)
-                echo "Copie du fichier vers .extra pour portabilité..."
-                cp "$EXTRA_FILE_ABSOLUTE" "$EXTRA_WGP_DIR"
-
-                # Créer un symlink dans le jeu pointant vers /tmp/wgp-extra
-                echo "Création du symlink vers /tmp/wgp-extra..."
-                rm -f "$EXTRA_FILE_ABSOLUTE"
-                ln -s "$EXTRA_DIR/$EXTRA_REL_PATH" "$EXTRA_FILE_ABSOLUTE"
-
-                # Créer/Mettre à jour le fichier .extrapath (ajouter une ligne par fichier)
-                EXTRAPATH_FILE="$GAME_DIR/.extrapath"
-                echo "$EXTRA_REL_PATH" >> "$EXTRAPATH_FILE"
-                echo "Fichier .extrapath mis à jour: $EXTRAPATH_FILE"
-            else
-                echo "Erreur: le fichier doit être dans le dossier du jeu: $GAME_DIR"
-            fi
-        fi
-    else
-        echo "Aucun élément sélectionné."
-        EXTRA_LOOP=false
-    fi
-done
-
-echo ""
-echo "=== Création du squashfs ==="
-
-# Vérifier si le fichier .wgp existe déjà
-if [ -f "$WGPACK_NAME" ]; then
-    if command -v kdialog &> /dev/null; then
-        kdialog --warningyesno "Le fichier $WGPACK_NAME existe déjà.\n\nVoulez-vous l'écraser ?"
-        OVERWRITE=$?
-    else
-        echo "Attention: le fichier $WGPACK_NAME existe déjà."
-        read -p "Voulez-vous l'écraser ? (o/N): " CONFIRM
-        [[ "$CONFIRM" =~ ^[oOyY]$ ]] && OVERWRITE=0 || OVERWRITE=1
-    fi
-
-    if [ $OVERWRITE -ne 0 ]; then
-        echo "Opération annulée."
-        # Restituer les fichiers depuis .save vers l'emplacement original
-        if [ -f "$GAME_DIR/.savepath" ]; then
-            while IFS= read -r SAVE_REL_PATH; do
-                [ -n "$SAVE_REL_PATH" ] || continue
-                SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
-                SAVE_WGP_ITEM="$GAME_DIR/.save/$SAVE_REL_PATH"
-                # Supprimer le symlink, copier depuis .save
-                rm -rf "$SAVE_ORIGINAL" 2>/dev/null
-                if [ -d "$SAVE_WGP_ITEM" ]; then
-                    cp -a "$SAVE_WGP_ITEM"/. "$SAVE_ORIGINAL/" 2>/dev/null
-                elif [ -f "$SAVE_WGP_ITEM" ]; then
-                    cp "$SAVE_WGP_ITEM" "$SAVE_ORIGINAL" 2>/dev/null
-                fi
-            done < "$GAME_DIR/.savepath"
-        fi
-        if [ -f "$GAME_DIR/.extrapath" ]; then
-            while IFS= read -r EXTRA_REL_PATH; do
-                [ -n "$EXTRA_REL_PATH" ] || continue
-                EXTRA_ORIGINAL="$GAME_DIR/$EXTRA_REL_PATH"
-                EXTRA_WGP_ITEM="$GAME_DIR/.extra/$EXTRA_REL_PATH"
-                # Restaurer depuis .extra (les extra sont uniquement dans le WGP)
-                if [ -d "$EXTRA_WGP_ITEM" ]; then
-                    rm -rf "$EXTRA_ORIGINAL" 2>/dev/null
-                    cp -a "$EXTRA_WGP_ITEM"/. "$EXTRA_ORIGINAL/" 2>/dev/null
-                elif [ -f "$EXTRA_WGP_ITEM" ]; then
-                    rm -f "$EXTRA_ORIGINAL" 2>/dev/null
-                    cp "$EXTRA_WGP_ITEM" "$EXTRA_ORIGINAL" 2>/dev/null
-                fi
-            done < "$GAME_DIR/.extrapath"
-        fi
-        # Nettoyer les fichiers temporaires
-        rm -f "$LAUNCH_FILE" 2>/dev/null
-        [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE" 2>/dev/null
-        [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE" 2>/dev/null
-        [ -f "$GAME_DIR/.savepath" ] && rm -f "$GAME_DIR/.savepath" 2>/dev/null
-        [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save" 2>/dev/null
-        [ -f "$GAME_DIR/.extrapath" ] && rm -f "$GAME_DIR/.extrapath" 2>/dev/null
-        [ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra" 2>/dev/null
-        exit 0
-    fi
-
-    echo "Suppression de l'ancien fichier: $WGPACK_NAME"
-    rm -f "$WGPACK_NAME"
-fi
-
-if command -v kdialog &> /dev/null; then
-    # Fenêtre informative avec bouton Annuler personnalisé
+# Crée le squashfs avec interface graphique (annulation possible)
+create_squashfs_with_dialog() {
+    # Fenêtre informative
     kdialog --msgbox "Compression en cours...\nAppuyez sur Annuler pour arrêter" --ok-label "Annuler" >/dev/null &
-    KDIALOG_PID=$!
+    local KDIALOG_PID=$!
 
-    # Lancer mksquashfs (avec sortie pour voir la progression)
+    # Lancer mksquashfs en arrière-plan
     mksquashfs "$GAME_DIR" "$WGPACK_NAME" $COMPRESS_CMD -all-root &
-    MKSQUASH_PID=$!
+    local MKSQUASH_PID=$!
 
-    # Surveiller tant que mksquashfs tourne
+    # Surveiller jusqu'à ce que mksquashfs se termine
     while kill -0 $MKSQUASH_PID 2>/dev/null; do
-        # Si kdialog fermé = annulation
+        # Annulation si kdialog fermé
         if ! kill -0 $KDIALOG_PID 2>/dev/null; then
             kill -9 $MKSQUASH_PID 2>/dev/null
             pkill -9 mksquashfs 2>/dev/null
             rm -f "$WGPACK_NAME"
             echo ""
             echo "Compression annulée."
-
-            # Restituer les fichiers depuis .save et .extra avant nettoyage
-            if [ -f "$GAME_DIR/.savepath" ]; then
-                while IFS= read -r SAVE_REL_PATH; do
-                    [ -n "$SAVE_REL_PATH" ] || continue
-                    SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
-                    SAVE_WGP_ITEM="$GAME_DIR/.save/$SAVE_REL_PATH"
-                    # Supprimer le symlink et copier depuis .save
-                    rm -rf "$SAVE_ORIGINAL" 2>/dev/null
-                    if [ -d "$SAVE_WGP_ITEM" ]; then
-                        cp -a "$SAVE_WGP_ITEM"/. "$SAVE_ORIGINAL/" 2>/dev/null
-                    elif [ -f "$SAVE_WGP_ITEM" ]; then
-                        cp "$SAVE_WGP_ITEM" "$SAVE_ORIGINAL" 2>/dev/null
-                    fi
-                done < "$GAME_DIR/.savepath"
-            fi
-            if [ -f "$GAME_DIR/.extrapath" ]; then
-                while IFS= read -r EXTRA_REL_PATH; do
-                    [ -n "$EXTRA_REL_PATH" ] || continue
-                    EXTRA_ORIGINAL="$GAME_DIR/$EXTRA_REL_PATH"
-                    EXTRA_WGP_ITEM="$GAME_DIR/.extra/$EXTRA_REL_PATH"
-                    # Restaurer depuis .extra (les extra sont uniquement dans le WGP)
-                    if [ -d "$EXTRA_WGP_ITEM" ]; then
-                        rm -rf "$EXTRA_ORIGINAL" 2>/dev/null
-                        cp -a "$EXTRA_WGP_ITEM"/. "$EXTRA_ORIGINAL/" 2>/dev/null
-                    elif [ -f "$EXTRA_WGP_ITEM" ]; then
-                        rm -f "$EXTRA_ORIGINAL" 2>/dev/null
-                        cp "$EXTRA_WGP_ITEM" "$EXTRA_ORIGINAL" 2>/dev/null
-                    fi
-                done < "$GAME_DIR/.extrapath"
-            fi
-
-            # Nettoyer les fichiers temporaires
-            rm -f "$LAUNCH_FILE"
-            [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE"
-            [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE"
-            [ -f "$GAME_DIR/.savepath" ] && rm -f "$GAME_DIR/.savepath"
-            [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save"
-            [ -f "$GAME_DIR/.extrapath" ] && rm -f "$GAME_DIR/.extrapath"
-            [ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra"
+            full_restore
             exit 0
         fi
         sleep 0.2
     done
 
-    # Fermer kdialog si encore ouvert
+    # Fermer kdialog
     kill $KDIALOG_PID 2>/dev/null
 
     # Vérifier le code de retour
     wait $MKSQUASH_PID
-    EXIT_CODE=$?
+    local EXIT_CODE=$?
 
     if [ $EXIT_CODE -ne 0 ]; then
         echo "Erreur lors de la création du squashfs"
-        # Restituer les fichiers avant de quitter
-        if [ -f "$GAME_DIR/.savepath" ]; then
-            while IFS= read -r SAVE_REL_PATH; do
-                [ -n "$SAVE_REL_PATH" ] || continue
-                SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
-                SAVE_WGP_ITEM="$GAME_DIR/.save/$SAVE_REL_PATH"
-                # Supprimer le symlink et copier depuis .save
-                rm -rf "$SAVE_ORIGINAL" 2>/dev/null
-                if [ -d "$SAVE_WGP_ITEM" ]; then
-                    cp -a "$SAVE_WGP_ITEM"/. "$SAVE_ORIGINAL/" 2>/dev/null
-                elif [ -f "$SAVE_WGP_ITEM" ]; then
-                    cp "$SAVE_WGP_ITEM" "$SAVE_ORIGINAL" 2>/dev/null
-                fi
-            done < "$GAME_DIR/.savepath"
-        fi
-        if [ -f "$GAME_DIR/.extrapath" ]; then
-            while IFS= read -r EXTRA_REL_PATH; do
-                [ -n "$EXTRA_REL_PATH" ] || continue
-                EXTRA_ORIGINAL="$GAME_DIR/$EXTRA_REL_PATH"
-                EXTRA_WGP_ITEM="$GAME_DIR/.extra/$EXTRA_REL_PATH"
-                # Restaurer depuis .extra (les extra sont uniquement dans le WGP)
-                if [ -d "$EXTRA_WGP_ITEM" ]; then
-                    rm -rf "$EXTRA_ORIGINAL" 2>/dev/null
-                    cp -a "$EXTRA_WGP_ITEM"/. "$EXTRA_ORIGINAL/" 2>/dev/null
-                elif [ -f "$EXTRA_WGP_ITEM" ]; then
-                    rm -f "$EXTRA_ORIGINAL" 2>/dev/null
-                    cp "$EXTRA_WGP_ITEM" "$EXTRA_ORIGINAL" 2>/dev/null
-                fi
-            done < "$GAME_DIR/.extrapath"
-        fi
-        rm -f "$LAUNCH_FILE" 2>/dev/null
-        [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE" 2>/dev/null
-        [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE" 2>/dev/null
-        [ -f "$GAME_DIR/.savepath" ] && rm -f "$GAME_DIR/.savepath" 2>/dev/null
-        [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save" 2>/dev/null
-        [ -f "$GAME_DIR/.extrapath" ] && rm -f "$GAME_DIR/.extrapath" 2>/dev/null
-        [ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra" 2>/dev/null
+        full_restore
         exit 1
     fi
-else
-    # Mode console: simplement lancer mksquashfs
+}
+
+# Crée le squashfs en mode console
+create_squashfs_console() {
     echo "Création de $WGPACK_NAME en cours..."
     mksquashfs "$GAME_DIR" "$WGPACK_NAME" $COMPRESS_CMD -nopad
 
     if [ $? -ne 0 ]; then
         echo "Erreur lors de la création du squashfs"
-        # Restituer les fichiers avant de quitter
-        if [ -f "$GAME_DIR/.savepath" ]; then
-            while IFS= read -r SAVE_REL_PATH; do
-                [ -n "$SAVE_REL_PATH" ] || continue
-                SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
-                SAVE_WGP_ITEM="$GAME_DIR/.save/$SAVE_REL_PATH"
-                # Supprimer le symlink et copier depuis .save
-                rm -rf "$SAVE_ORIGINAL" 2>/dev/null
-                if [ -d "$SAVE_WGP_ITEM" ]; then
-                    cp -a "$SAVE_WGP_ITEM"/. "$SAVE_ORIGINAL/" 2>/dev/null
-                elif [ -f "$SAVE_WGP_ITEM" ]; then
-                    cp "$SAVE_WGP_ITEM" "$SAVE_ORIGINAL" 2>/dev/null
-                fi
-            done < "$GAME_DIR/.savepath"
-        fi
-        if [ -f "$GAME_DIR/.extrapath" ]; then
-            while IFS= read -r EXTRA_REL_PATH; do
-                [ -n "$EXTRA_REL_PATH" ] || continue
-                EXTRA_ORIGINAL="$GAME_DIR/$EXTRA_REL_PATH"
-                EXTRA_WGP_ITEM="$GAME_DIR/.extra/$EXTRA_REL_PATH"
-                # Restaurer depuis .extra (les extra sont uniquement dans le WGP)
-                if [ -d "$EXTRA_WGP_ITEM" ]; then
-                    rm -rf "$EXTRA_ORIGINAL" 2>/dev/null
-                    cp -a "$EXTRA_WGP_ITEM"/. "$EXTRA_ORIGINAL/" 2>/dev/null
-                elif [ -f "$EXTRA_WGP_ITEM" ]; then
-                    rm -f "$EXTRA_ORIGINAL" 2>/dev/null
-                    cp "$EXTRA_WGP_ITEM" "$EXTRA_ORIGINAL" 2>/dev/null
-                fi
-            done < "$GAME_DIR/.extrapath"
-        fi
-        rm -f "$LAUNCH_FILE" 2>/dev/null
-        [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE" 2>/dev/null
-        [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE" 2>/dev/null
-        [ -f "$GAME_DIR/.savepath" ] && rm -f "$GAME_DIR/.savepath" 2>/dev/null
-        [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save" 2>/dev/null
-        [ -f "$GAME_DIR/.extrapath" ] && rm -f "$GAME_DIR/.extrapath" 2>/dev/null
-        [ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra" 2>/dev/null
+        full_restore
         exit 1
     fi
-fi
+}
 
-# Calcul des tailles
-SIZE_BEFORE=$(du -s "$GAME_DIR" | cut -f1)
-SIZE_BEFORE_GB=$(echo "scale=2; $SIZE_BEFORE / 1024 / 1024" | bc)
-SIZE_AFTER=$(du -s "$WGPACK_NAME" | cut -f1)
-SIZE_AFTER_GB=$(echo "scale=2; $SIZE_AFTER / 1024 / 1024" | bc)
-COMPRESSION_RATIO=$(echo "scale=1; (1 - $SIZE_AFTER / $SIZE_BEFORE) * 100" | bc)
+#======================================
+# Fonctions d'affichage final
+#======================================
 
-# Restituer les fichiers originaux depuis UserData en supprimant les symlinks
-echo ""
-echo "=== Restitution des fichiers originaux ==="
+# Affiche le résumé de création du paquet
+show_summary() {
+    local EXE_REL_PATH=$(cat "$LAUNCH_FILE")
+    local BOTTLE_ARGS=""
+    [ -f "$ARGS_FILE" ] && BOTTLE_ARGS=$(cat "$ARGS_FILE")
 
-WINDOWS_HOME="$HOME/Windows/UserData"
-SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+    # Calcul des tailles
+    local SIZE_BEFORE=$(du -s "$GAME_DIR" | cut -f1)
+    local SIZE_BEFORE_GB=$(echo "scale=2; $SIZE_BEFORE / 1024 / 1024" | bc)
+    local SIZE_AFTER=$(du -s "$WGPACK_NAME" | cut -f1)
+    local SIZE_AFTER_GB=$(echo "scale=2; $SIZE_AFTER / 1024 / 1024" | bc)
+    local COMPRESSION_RATIO=$(echo "scale=1; (1 - $SIZE_AFTER / $SIZE_BEFORE) * 100" | bc)
 
-# Restitution des saves (depuis .save)
-if [ -f "$GAME_DIR/.savepath" ]; then
-    while IFS= read -r SAVE_REL_PATH; do
-        if [ -n "$SAVE_REL_PATH" ]; then
-            SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
-            SAVE_WGP_ITEM="$GAME_DIR/.save/$SAVE_REL_PATH"
+    echo ""
+    echo "=== Paquet créé avec succès ==="
+    echo "Fichier: $WGPACK_NAME"
+    echo "Taille avant: ${SIZE_BEFORE_GB} Go"
+    echo "Taille après: ${SIZE_AFTER_GB} Go"
+    echo "Gain: ${COMPRESSION_RATIO}%"
+    echo "Exécutable: $EXE_REL_PATH"
+    [ -n "$BOTTLE_ARGS" ] && echo "Arguments: $BOTTLE_ARGS"
 
-            # Supprimer le symlink
-            rm -rf "$SAVE_ORIGINAL"
+    # Fenêtre de succès KDE
+    if command -v kdialog &> /dev/null; then
+        local MSG="Paquet créé avec succès !\n\n"
+        MSG+="Fichier: $WGPACK_NAME\n"
+        MSG+="Taille avant: ${SIZE_BEFORE_GB} Go\n"
+        MSG+="Taille après: ${SIZE_AFTER_GB} Go\n"
+        MSG+="Gain: ${COMPRESSION_RATIO}%\n\n"
+        MSG+="Exécutable: $EXE_REL_PATH"
+        [ -n "$BOTTLE_ARGS" ] && MSG+="\nArguments: $BOTTLE_ARGS"
 
-            if [ -d "$SAVE_WGP_ITEM" ]; then
-                # Dossier : copier depuis .save
-                cp -a "$SAVE_WGP_ITEM"/. "$SAVE_ORIGINAL/"
-                echo "Save restaurée: $SAVE_REL_PATH"
-            elif [ -f "$SAVE_WGP_ITEM" ]; then
-                # Fichier : copier depuis .save
-                cp "$SAVE_WGP_ITEM" "$SAVE_ORIGINAL"
-                echo "Save restaurée: $SAVE_REL_PATH"
-            fi
-        fi
-    done < "$GAME_DIR/.savepath"
-fi
-
-# Restitution des extras
-if [ -f "$GAME_DIR/.extrapath" ]; then
-    while IFS= read -r EXTRA_REL_PATH; do
-        if [ -n "$EXTRA_REL_PATH" ]; then
-            EXTRA_ORIGINAL="$GAME_DIR/$EXTRA_REL_PATH"
-            EXTRA_WGP_ITEM="$GAME_DIR/.extra/$EXTRA_REL_PATH"
-
-            if [ -d "$EXTRA_WGP_ITEM" ]; then
-                # Dossier : déplacer le contenu vers l'emplacement original
-                rm -rf "$EXTRA_ORIGINAL"
-                cp -a "$EXTRA_WGP_ITEM"/. "$EXTRA_ORIGINAL/"
-                echo "Extra restauré: $EXTRA_REL_PATH"
-            elif [ -f "$EXTRA_WGP_ITEM" ]; then
-                # Fichier : déplacer vers l'emplacement original
-                rm -f "$EXTRA_ORIGINAL"
-                cp "$EXTRA_WGP_ITEM" "$EXTRA_ORIGINAL"
-                echo "Extra restauré: $EXTRA_REL_PATH"
-            fi
-        fi
-    done < "$GAME_DIR/.extrapath"
-fi
-
-# Supprimer les fichiers temporaires du dossier source
-rm -f "$LAUNCH_FILE"
-[ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE"
-[ -f "$FIX_FILE" ] && rm -f "$FIX_FILE"
-[ -f "$GAME_DIR/.savepath" ] && rm -f "$GAME_DIR/.savepath"
-[ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save"
-[ -f "$GAME_DIR/.extrapath" ] && rm -f "$GAME_DIR/.extrapath"
-[ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra"
-
-echo ""
-echo "=== Paquet créé avec succès ==="
-echo "Fichier: $WGPACK_NAME"
-echo "Taille avant: ${SIZE_BEFORE_GB} Go"
-echo "Taille après: ${SIZE_AFTER_GB} Go"
-echo "Gain: ${COMPRESSION_RATIO}%"
-echo "Exécutable: $EXE_REL_PATH"
-[ -n "$BOTTLE_ARGS" ] && echo "Arguments: $BOTTLE_ARGS"
-
-# Fenêtre de succès
-if command -v kdialog &> /dev/null; then
-    if [ -n "$BOTTLE_ARGS" ]; then
-        kdialog --title "Succès" --msgbox "Paquet créé avec succès !\n\nFichier: $WGPACK_NAME\n\nTaille avant: ${SIZE_BEFORE_GB} Go\nTaille après: ${SIZE_AFTER_GB} Go\nGain: ${COMPRESSION_RATIO}%\n\nExécutable: $EXE_REL_PATH\nArguments: $BOTTLE_ARGS"
-    else
-        kdialog --title "Succès" --msgbox "Paquet créé avec succès !\n\nFichier: $WGPACK_NAME\n\nTaille avant: ${SIZE_BEFORE_GB} Go\nTaille après: ${SIZE_AFTER_GB} Go\nGain: ${COMPRESSION_RATIO}%\n\nExécutable: $EXE_REL_PATH"
+        kdialog --title "Succès" --msgbox "$MSG"
     fi
-fi
+}
+
+#======================================
+# Fonction principale
+#======================================
+
+main() {
+    # Vérification des arguments
+    [ $# -eq 0 ] && error_exit "Usage: $0 <dossier_du_jeu>"
+
+    GAME_DIR="$(realpath "$1")"
+    [ ! -d "$GAME_DIR" ] && error_exit "Le dossier '$GAME_DIR' n'existe pas"
+
+    # Initialisation des variables
+    GAME_NAME="$(basename "$GAME_DIR")"
+    WGPACK_NAME="$(dirname "$GAME_DIR")/${GAME_NAME}.wgp"
+
+    # Chemins des fichiers de configuration
+    LAUNCH_FILE="$GAME_DIR/.launch"
+    ARGS_FILE="$GAME_DIR/.args"
+    FIX_FILE="$GAME_DIR/.fix"
+    SAVE_FILE="$GAME_DIR/.savepath"
+    EXTRAPATH_FILE="$GAME_DIR/.extrapath"
+
+    echo "=== Création du paquet pour: $GAME_NAME ==="
+    echo "Dossier source: $GAME_DIR"
+
+    # Nettoyage initial
+    echo ""
+    echo "Nettoyage des dossiers temporaires..."
+    rm -rf "$GAME_DIR/.save" "$GAME_DIR/.extra"
+    rm -f "$GAME_DIR/.savepath" "$GAME_DIR/.extrapath"
+
+    # Étapes de configuration
+    configure_compression
+    select_executable
+    configure_arguments
+    configure_fix
+    configure_saves
+    configure_extras
+
+    # Création du paquet
+    check_existing_wgp
+    create_squashfs
+
+    # Restauration finale des fichiers
+    restore_all_saves
+    restore_all_extras
+    cleanup_temp_files
+
+    # Affichage du résumé
+    show_summary
+}
+
+# Lancement du script
+main "$@"

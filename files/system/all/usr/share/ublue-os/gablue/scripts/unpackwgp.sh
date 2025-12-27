@@ -1,84 +1,106 @@
 #!/bin/bash
 
-# Vérifier qu'un fichier est fourni en argument
-if [ $# -eq 0 ]; then
-    echo "Usage: $0 <fichier_wgp>"
+################################################################################
+# unpackwgp.sh - Script d'extraction de paquets WGP
+#
+# Ce script permet d'extraire des archives WGP (.wgp) compressées en squashfs,
+# en restaurant les sauvegardes depuis UserData si elles existent.
+################################################################################
+
+#======================================
+# Variables globales
+#======================================
+WGPACK_FILE=""
+GAME_NAME=""
+OUTPUT_DIR=""
+TEMP_DIR=""
+
+#======================================
+# Fonctions d'affichage et utilitaires
+#======================================
+
+# Affiche un message d'erreur et quitte
+error_exit() {
+    echo "Erreur: $1" >&2
     exit 1
-fi
+}
 
-WGPACK_FILE="$(realpath "$1")"
+# Pose une question oui/non via kdialog ou console
+ask_yes_no() {
+    local prompt="$1"
+    local yes_label="${2:-Oui}"
+    local no_label="${3:-Non}"
 
-# Vérifier que le fichier existe
-if [ ! -f "$WGPACK_FILE" ]; then
-    echo "Erreur: le fichier '$WGPACK_FILE' n'existe pas"
-    exit 1
-fi
-
-# Nom du paquet (sans extension)
-GAME_NAME=$(basename "$WGPACK_FILE" .wgp)
-
-# Créer le dossier de sortie avec le même nom que le paquet
-OUTPUT_DIR="./$GAME_NAME"
-
-echo "=== Extraction du paquet: $GAME_NAME ==="
-echo "Fichier source: $WGPACK_FILE"
-echo "Dossier de sortie: $OUTPUT_DIR"
-echo ""
-
-# Demander confirmation avant de continuer
-if command -v kdialog &> /dev/null; then
-    kdialog --yesno "Voulez-vous extraire le contenu de:\n\n$(basename "$WGPACK_FILE")\n\ndans le dossier:\n$OUTPUT_DIR" --yes-label "Extraire" --no-label "Annuler"
-    if [ $? -ne 0 ]; then
-        echo "Extraction annulée"
-        exit 0
-    fi
-else
-    read -p "Extraire dans $OUTPUT_DIR ? (o/N): " CONFIRM
-    if [[ ! "$CONFIRM" =~ ^[oOyY]$ ]]; then
-        echo "Extraction annulée"
-        exit 0
-    fi
-fi
-
-# Vérifier si le dossier existe déjà
-if [ -d "$OUTPUT_DIR" ]; then
-    echo "Attention: le dossier '$OUTPUT_DIR' existe déjà"
     if command -v kdialog &> /dev/null; then
-        kdialog --warningyesno "Le dossier existe déjà.\nSon contenu sera écrasé.\n\nContinuer ?" --yes-label "Oui" --no-label "Non"
-        if [ $? -ne 0 ]; then
-            echo "Extraction annulée"
-            exit 0
-        fi
-        # Supprimer l'ancien dossier
+        kdialog --yesno "$prompt" --yes-label "$yes_label" --no-label "$no_label"
+    else
+        read -p "$prompt (o/N): " -r
+        [[ "$REPLY" =~ ^[oOyY]$ ]]
+    fi
+}
+
+#======================================
+# Fonctions de validation et confirmation
+#======================================
+
+# Vérifie les arguments et initialise les variables
+validate_arguments() {
+    [ $# -eq 0 ] && error_exit "Usage: $0 <fichier_wgp>"
+
+    WGPACK_FILE="$(realpath "$1")"
+
+    [ ! -f "$WGPACK_FILE" ] && error_exit "Le fichier '$WGPACK_FILE' n'existe pas"
+
+    GAME_NAME="$(basename "$WGPACK_FILE" .wgp)"
+    OUTPUT_DIR="./$GAME_NAME"
+    TEMP_DIR="$OUTPUT_DIR.tmp"
+
+    echo "=== Extraction du paquet: $GAME_NAME ==="
+    echo "Fichier source: $WGPACK_FILE"
+    echo "Dossier de sortie: $OUTPUT_DIR"
+}
+
+# Demande confirmation avant de commencer
+confirm_extraction() {
+    local prompt="Voulez-vous extraire le contenu de:\n\n$(basename "$WGPACK_FILE")\n\ndans le dossier:\n$OUTPUT_DIR"
+
+    if ! ask_yes_no "$prompt"; then
+        echo "Extraction annulée"
+        exit 0
+    fi
+}
+
+# Gère le cas où le dossier de sortie existe déjà
+handle_existing_output() {
+    [ -d "$OUTPUT_DIR" ] || return 0
+
+    echo "Attention: le dossier '$OUTPUT_DIR' existe déjà"
+
+    if ask_yes_no "Le dossier existe déjà.\nSon contenu sera écrasé.\n\nContinuer ?" "Oui" "Non"; then
         rm -rf "$OUTPUT_DIR"
     else
-        read -p "Supprimer et remplacer ? (o/N): " REPLACE
-        if [[ ! "$REPLACE" =~ ^[oOyY]$ ]]; then
-            echo "Extraction annulée"
-            exit 0
-        fi
-        rm -rf "$OUTPUT_DIR"
+        echo "Extraction annulée"
+        exit 0
     fi
-fi
+}
 
-# Créer le dossier temporaire pour l'extraction
-TEMP_DIR="$OUTPUT_DIR.tmp"
+#======================================
+# Fonctions d'extraction
+#======================================
 
-echo ""
-echo "=== Extraction en cours ==="
-
-if command -v kdialog &> /dev/null; then
+# Extrait le squashfs avec interface graphique
+extract_with_dialog() {
     # Fenêtre d'attente avec bouton Annuler
     kdialog --msgbox "Extraction en cours...\nAppuyez sur Annuler pour arrêter" --ok-label "Annuler" >/dev/null &
-    KDIALOG_PID=$!
+    local KDIALOG_PID=$!
 
-    # Lancer unsquashfs
+    # Lancer unsquashfs en arrière-plan
     unsquashfs -f -d "$TEMP_DIR" -no-xattrs "$WGPACK_FILE" &
-    UNSQUASH_PID=$!
+    local UNSQUASH_PID=$!
 
     # Surveiller tant que unsquashfs tourne
     while kill -0 $UNSQUASH_PID 2>/dev/null; do
-        # Si kdialog fermé = annulation
+        # Annulation si kdialog fermé
         if ! kill -0 $KDIALOG_PID 2>/dev/null; then
             kill -9 $UNSQUASH_PID 2>/dev/null
             pkill -9 unsquashfs 2>/dev/null
@@ -90,135 +112,206 @@ if command -v kdialog &> /dev/null; then
         sleep 0.2
     done
 
-    # Fermer kdialog si encore ouvert
+    # Fermer kdialog
     kill $KDIALOG_PID 2>/dev/null
 
     # Vérifier le code de retour
     wait $UNSQUASH_PID
-    EXIT_CODE=$?
+}
+
+# Extrait le squashfs en mode console
+extract_console() {
+    echo "Extraction de $WGPACK_FILE..."
+    unsquashfs -f -d "$TEMP_DIR" -no-xattrs "$WGPACK_FILE"
+}
+
+# Lance l'extraction
+extract_wgp() {
+    echo ""
+    echo "=== Extraction en cours ==="
+
+    local EXIT_CODE
+
+    if command -v kdialog &> /dev/null; then
+        extract_with_dialog
+        EXIT_CODE=$?
+    else
+        extract_console
+        EXIT_CODE=$?
+    fi
 
     if [ $EXIT_CODE -ne 0 ]; then
         echo "Erreur lors de l'extraction"
         rm -rf "$TEMP_DIR"
         exit 1
     fi
-else
-    # Mode console
-    echo "Extraction de $WGPACK_FILE..."
-    unsquashfs -f -d "$TEMP_DIR" -no-xattrs "$WGPACK_FILE"
 
-    if [ $? -ne 0 ]; then
-        echo "Erreur lors de l'extraction"
-        rm -rf "$TEMP_DIR"
-        exit 1
+    # Renommer le dossier temporaire en dossier final
+    mv "$TEMP_DIR" "$OUTPUT_DIR"
+}
+
+#======================================
+# Fonctions de gestion des sauvegardes
+#======================================
+
+# Restaure une sauvegarde (fichier ou dossier) depuis UserData
+restore_save_item() {
+    local SAVE_REL_PATH="$1"
+    local ITEM_NAME=$(basename "$SAVE_REL_PATH")
+
+    local OUTPUT_ITEM="$OUTPUT_DIR/$SAVE_REL_PATH"
+    local WINDOWS_HOME="$HOME/Windows/UserData"
+    local SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
+    local FINAL_ITEM="$SAVES_BASE/$GAME_NAME/$SAVE_REL_PATH"
+
+    if [ -f "$FINAL_ITEM" ]; then
+        echo ""
+        echo "Copie du fichier de sauvegardes ($ITEM_NAME) depuis $FINAL_ITEM..."
+        mkdir -p "$(dirname "$OUTPUT_ITEM")"
+        # Supprimer le symlink si présent
+        rm -f "$OUTPUT_ITEM" 2>/dev/null
+        cp "$FINAL_ITEM" "$OUTPUT_ITEM"
+        echo "Fichier de sauvegardes copié avec succès."
+    elif [ -d "$FINAL_ITEM" ]; then
+        echo ""
+        echo "Copie du dossier de sauvegardes ($ITEM_NAME) depuis $FINAL_ITEM..."
+        mkdir -p "$(dirname "$OUTPUT_ITEM")"
+        # Supprimer le symlink si présent avant la copie
+        rm -rf "$OUTPUT_ITEM" 2>/dev/null
+        cp -a "$FINAL_ITEM"/. "$OUTPUT_ITEM/"
+        echo "Dossier de sauvegardes copié avec succès."
+    else
+        echo ""
+        echo "Avertissement: l'élément de sauvegardes n'existe pas: $FINAL_ITEM"
     fi
-fi
+}
 
-# Renommer le dossier temporaire en dossier final
-mv "$TEMP_DIR" "$OUTPUT_DIR"
+# Parcourt .savepath et restaure toutes les sauvegardes depuis UserData
+restore_all_saves() {
+    local SAVE_FILE="$OUTPUT_DIR/.savepath"
+    [ -f "$SAVE_FILE" ] || return 0
 
-echo ""
-echo "=== Extraction terminée avec succès ==="
-echo "Dossier: $OUTPUT_DIR"
+    echo ""
+    echo "=== Restitution des sauvegardes depuis UserData ==="
 
-# Gestion des sauvegardes depuis le fichier .savepath
-SAVE_FILE="$OUTPUT_DIR/.savepath"
-if [ -f "$SAVE_FILE" ]; then
-    # Lire ligne par ligne (par dossier/fichier)
     while IFS= read -r SAVE_REL_PATH; do
-        if [ -n "$SAVE_REL_PATH" ]; then
-            SAVE_ITEM_NAME=$(basename "$SAVE_REL_PATH")
-            OUTPUT_SAVE_ITEM="$OUTPUT_DIR/$SAVE_REL_PATH"
-
-            # Chemin vers le dossier de saves externe avec la structure complète
-            WINDOWS_HOME="$HOME/Windows/UserData"
-            SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-            SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-
-            # Vérifier si c'est un fichier dans le dossier de sauvegardes
-            FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
-            if [ -f "$FINAL_SAVE_ITEM" ]; then
-                echo ""
-                echo "Copie du fichier de sauvegardes ($SAVE_ITEM_NAME) depuis $FINAL_SAVE_ITEM..."
-                mkdir -p "$(dirname "$OUTPUT_SAVE_ITEM")"
-                # Supprimer le symlink si présent
-                rm -f "$OUTPUT_SAVE_ITEM" 2>/dev/null
-                cp "$FINAL_SAVE_ITEM" "$OUTPUT_SAVE_ITEM"
-                echo "Fichier de sauvegardes copié avec succès."
-            # Sinon vérifier si c'est un dossier
-            elif [ -d "$FINAL_SAVE_ITEM" ]; then
-                echo ""
-                echo "Copie du dossier de sauvegardes ($SAVE_ITEM_NAME) depuis $FINAL_SAVE_ITEM..."
-                mkdir -p "$(dirname "$OUTPUT_SAVE_ITEM")"
-                # Supprimer le symlink si présent avant la copie
-                rm -rf "$OUTPUT_SAVE_ITEM" 2>/dev/null
-                cp -a "$FINAL_SAVE_ITEM"/. "$OUTPUT_SAVE_ITEM/"
-                echo "Dossier de sauvegardes copié avec succès."
-            else
-                echo ""
-                echo "Avertissement: l'élément de sauvegardes n'existe pas: $FINAL_SAVE_ITEM"
-            fi
-        fi
+        [ -z "$SAVE_REL_PATH" ] || restore_save_item "$SAVE_REL_PATH"
     done < "$SAVE_FILE"
-fi
+}
 
-# Gestion des fichiers et dossiers d'extra depuis le fichier .extrapath
-EXTRAPATH_FILE="$OUTPUT_DIR/.extrapath"
-EXTRA_WGP_DIR="$OUTPUT_DIR/.extra"
-if [ -f "$EXTRAPATH_FILE" ]; then
-    # Lire ligne par ligne (par fichier/dossier)
+#======================================
+# Fonctions de gestion des extras
+#======================================
+
+# Copie un extra (fichier ou dossier) depuis .extra vers l'emplacement final
+copy_extra_item() {
+    local EXTRA_REL_PATH="$1"
+    local ITEM_NAME=$(basename "$EXTRA_REL_PATH")
+
+    local OUTPUT_ITEM="$OUTPUT_DIR/$EXTRA_REL_PATH"
+    local WGP_ITEM="$OUTPUT_DIR/.extra/$EXTRA_REL_PATH"
+
+    if [ -f "$WGP_ITEM" ]; then
+        echo ""
+        echo "Copie du fichier d'extra ($ITEM_NAME)..."
+        mkdir -p "$(dirname "$OUTPUT_ITEM")"
+        # Supprimer le symlink si présent
+        rm -f "$OUTPUT_ITEM" 2>/dev/null
+        cp "$WGP_ITEM" "$OUTPUT_ITEM"
+        echo "Fichier d'extra copié avec succès."
+    elif [ -d "$WGP_ITEM" ]; then
+        echo ""
+        echo "Copie du dossier d'extra ($ITEM_NAME)..."
+        mkdir -p "$(dirname "$OUTPUT_ITEM")"
+        # Supprimer le symlink si présent avant la copie
+        rm -rf "$OUTPUT_ITEM" 2>/dev/null
+        cp -a "$WGP_ITEM"/. "$OUTPUT_ITEM/"
+        echo "Dossier d'extra copié avec succès."
+    else
+        echo ""
+        echo "Avertissement: l'élément d'extra n'existe pas dans le WGP: $WGP_ITEM"
+    fi
+}
+
+# Parcourt .extrapath et copie tous les extras
+copy_all_extras() {
+    local EXTRAPATH_FILE="$OUTPUT_DIR/.extrapath"
+    [ -f "$EXTRAPATH_FILE" ] || return 0
+
+    echo ""
+    echo "=== Copie des extras depuis .extra ==="
+
     while IFS= read -r EXTRA_REL_PATH; do
-        if [ -n "$EXTRA_REL_PATH" ]; then
-            EXTRA_ITEM_NAME=$(basename "$EXTRA_REL_PATH")
-            OUTPUT_EXTRA_ITEM="$OUTPUT_DIR/$EXTRA_REL_PATH"
-
-            # Les extras sont stockés dans .extra du WGP (pas dans /tmp)
-            EXTRA_WGP_ITEM="$EXTRA_WGP_DIR/$EXTRA_REL_PATH"
-
-            # Vérifier si c'est un fichier dans .extra
-            if [ -f "$EXTRA_WGP_ITEM" ]; then
-                echo ""
-                echo "Copie du fichier d'extra ($EXTRA_ITEM_NAME)..."
-                mkdir -p "$(dirname "$OUTPUT_EXTRA_ITEM")"
-                # Supprimer le symlink si présent
-                rm -f "$OUTPUT_EXTRA_ITEM" 2>/dev/null
-                cp "$EXTRA_WGP_ITEM" "$OUTPUT_EXTRA_ITEM"
-                echo "Fichier d'extra copié avec succès."
-            # Sinon vérifier si c'est un dossier
-            elif [ -d "$EXTRA_WGP_ITEM" ]; then
-                echo ""
-                echo "Copie du dossier d'extra ($EXTRA_ITEM_NAME)..."
-                mkdir -p "$(dirname "$OUTPUT_EXTRA_ITEM")"
-                # Supprimer le symlink si présent avant la copie
-                rm -rf "$OUTPUT_EXTRA_ITEM" 2>/dev/null
-                cp -a "$EXTRA_WGP_ITEM"/. "$OUTPUT_EXTRA_ITEM/"
-                echo "Dossier d'extra copié avec succès."
-            else
-                echo ""
-                echo "Avertissement: l'élément d'extra n'existe pas dans le WGP: $EXTRA_WGP_ITEM"
-            fi
-        fi
+        [ -z "$EXTRA_REL_PATH" ] || copy_extra_item "$EXTRA_REL_PATH"
     done < "$EXTRAPATH_FILE"
-fi
+}
 
-# Supprimer les fichiers temporaires
-rm -f "$OUTPUT_DIR/.launch"
-rm -f "$OUTPUT_DIR/.args"
-rm -f "$OUTPUT_DIR/.fix"
-rm -f "$OUTPUT_DIR/.savepath"
-rm -f "$OUTPUT_DIR/.extrapath"
-rm -rf "$OUTPUT_DIR/.extra"
-rm -rf "$OUTPUT_DIR/.save"
+#======================================
+# Fonctions de nettoyage
+#======================================
 
-# Afficher le nombre de fichiers extraits
-FILE_COUNT=$(find "$OUTPUT_DIR" -type f | wc -l)
-echo "Fichiers extraits: $FILE_COUNT"
+# Supprime les fichiers temporaires du WGP
+cleanup_wgp_files() {
+    rm -f "$OUTPUT_DIR/.launch"
+    rm -f "$OUTPUT_DIR/.args"
+    rm -f "$OUTPUT_DIR/.fix"
+    rm -f "$OUTPUT_DIR/.savepath"
+    rm -f "$OUTPUT_DIR/.extrapath"
+    rm -rf "$OUTPUT_DIR/.extra"
+    rm -rf "$OUTPUT_DIR/.save"
+}
 
-# Fenêtre de succès
-if command -v kdialog &> /dev/null; then
-    MSG="Paquet extrait avec succès !\n\n"
-    MSG+="Fichier: $(basename "$WGPACK_FILE")\n"
-    MSG+="Dossier: $OUTPUT_DIR\n"
-    MSG+="Fichiers: $FILE_COUNT"
-    kdialog --title "Succès" --msgbox "$MSG"
-fi
+#======================================
+# Fonctions d'affichage final
+#======================================
+
+# Affiche le résumé d'extraction
+show_summary() {
+    local FILE_COUNT=$(find "$OUTPUT_DIR" -type f | wc -l)
+
+    echo ""
+    echo "=== Extraction terminée avec succès ==="
+    echo "Dossier: $OUTPUT_DIR"
+    echo "Fichiers extraits: $FILE_COUNT"
+
+    # Fenêtre de succès KDE
+    if command -v kdialog &> /dev/null; then
+        local MSG="Paquet extrait avec succès !\n\n"
+        MSG+="Fichier: $(basename "$WGPACK_FILE")\n"
+        MSG+="Dossier: $OUTPUT_DIR\n"
+        MSG+="Fichiers: $FILE_COUNT"
+
+        kdialog --title "Succès" --msgbox "$MSG"
+    fi
+}
+
+#======================================
+# Fonction principale
+#======================================
+
+main() {
+    # Validation
+    validate_arguments "$@"
+
+    # Confirmations
+    confirm_extraction
+    handle_existing_output
+
+    # Extraction
+    extract_wgp
+
+    # Restauration des sauvegardes depuis UserData
+    restore_all_saves
+
+    # Copie des extras
+    copy_all_extras
+
+    # Nettoyage
+    cleanup_wgp_files
+
+    # Résumé
+    show_summary
+}
+
+# Lancement du script
+main "$@"
