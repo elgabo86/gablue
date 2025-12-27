@@ -18,71 +18,6 @@ fi
 GAME_NAME="$(basename "$GAME_DIR")"
 WGPACK_NAME="$(dirname "$GAME_DIR")/${GAME_NAME}.wgp"
 
-# Chemins pour la restauration
-WINDOWS_HOME="$HOME/Windows/UserData"
-SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-
-# Fonction de restauration des sauvegardes et extra
-restore_game_files() {
-    echo "Restauration des fichiers dans le dossier de jeu..."
-
-    # Restaurer les sauvegardes depuis UserData
-    if [ -f "$GAME_DIR/.savepath" ]; then
-        while IFS= read -r SAVE_REL_PATH; do
-            if [ -n "$SAVE_REL_PATH" ]; then
-                SAVE_ITEM="$GAME_DIR/$SAVE_REL_PATH"
-                FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
-
-                # Restaurer depuis UserData (supprime et recrée si nécessaire)
-                if [ -L "$SAVE_ITEM" ] || [ -e "$SAVE_ITEM" ]; then
-                    echo "Restauration des sauvegardes: $SAVE_REL_PATH"
-                    rm -rf "$SAVE_ITEM"
-                fi
-
-                if [ -d "$FINAL_SAVE_ITEM" ]; then
-                    mkdir -p "$(dirname "$SAVE_ITEM")"
-                    cp -a -r "$FINAL_SAVE_ITEM/." "$SAVE_ITEM"
-                elif [ -f "$FINAL_SAVE_ITEM" ]; then
-                    mkdir -p "$(dirname "$SAVE_ITEM")"
-                    cp -a "$FINAL_SAVE_ITEM" "$SAVE_ITEM"
-                fi
-            fi
-        done < "$GAME_DIR/.savepath"
-    fi
-
-    # Restaurer les extra depuis le dossier temporaire (mais ils n'existent plus après création)
-    if [ -f "$GAME_DIR/.extrapath" ]; then
-        EXTRA_BASE="/tmp/wgp-extra"
-        EXTRA_DIR="$EXTRA_BASE/$GAME_NAME"
-        while IFS= read -r EXTRA_REL_PATH; do
-            if [ -n "$EXTRA_REL_PATH" ]; then
-                EXTRA_ITEM="$GAME_DIR/$EXTRA_REL_PATH"
-                FINAL_EXTRA_ITEM="$EXTRA_DIR/$EXTRA_REL_PATH"
-
-                # Restaurer depuis le cache (supprime et recrée si nécessaire)
-                if [ -L "$EXTRA_ITEM" ] || [ -e "$EXTRA_ITEM" ]; then
-                    echo "Restauration des extra: $EXTRA_REL_PATH"
-                    rm -rf "$EXTRA_ITEM"
-                fi
-
-                if [ -d "$FINAL_EXTRA_ITEM" ]; then
-                    mkdir -p "$(dirname "$EXTRA_ITEM")"
-                    cp -a -r "$FINAL_EXTRA_ITEM/." "$EXTRA_ITEM"
-                elif [ -f "$FINAL_EXTRA_ITEM" ]; then
-                    mkdir -p "$(dirname "$EXTRA_ITEM")"
-                    cp -a "$FINAL_EXTRA_ITEM" "$EXTRA_ITEM"
-                fi
-            fi
-        done < "$GAME_DIR/.extrapath"
-    fi
-
-    echo "Restauration terminée."
-}
-
-# Cleanup en cas d'interruption (Ctrl+C)
-trap 'echo ""; echo "Interruption détectée, restauration en cours..."; restore_game_files; exit 1' INT
-
 echo "=== Création du paquet pour: $GAME_NAME ==="
 echo "Dossier source: $GAME_DIR"
 
@@ -233,7 +168,7 @@ while [ "$SAVE_LOOP" = true ]; do
     # Demander si le jeu utilise des saves dans le dossier du jeu
     SAVE_ENABLED=false
     if command -v kdialog &> /dev/null; then
-        kdialog --yesno "Y a-t-il un dossier ou fichier de sauvegarde à gérer ?\\n\\nIl sera déplacé dans le dossier utilisateur\\net remplacé par un lien symbolique dans le paquet.\\n\\nUne copie sera conservée dans le dossier .save\\npour permettre la restauration sur un autre ordi." --yes-label "Oui" --no-label "Non"
+        kdialog --yesno "Dossier/fichier de sauvegarde à gérer ?\\n\\nSauvegardes persistantes stockées dans UserData.\\nUne copie reste dans le paquet pour la portabilité." --yes-label "Oui" --no-label "Non"
         if [ $? -eq 0 ]; then
             SAVE_ENABLED=true
         fi
@@ -309,62 +244,30 @@ while [ "$SAVE_LOOP" = true ]; do
 
             # Vérifier que c'est bien dans le dossier du jeu
             if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
-                # Chemin vers le dossier de saves externe
-                WINDOWS_HOME="$HOME/Windows/UserData"
-                SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-                SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-                FINAL_SAVE_DIR="$SAVES_DIR/$SAVE_REL_PATH"
-
-                # Créer les dossiers parents
-                mkdir -p "$(dirname "$FINAL_SAVE_DIR")"
-
                 echo ""
                 echo "Dossier de sauvegardes sélectionné: $SAVE_REL_PATH"
-                echo "Destination: $FINAL_SAVE_DIR"
 
-                # Vérifier si des saves existent déjà
-                if [ -d "$FINAL_SAVE_DIR" ] && [ "$(ls -A "$FINAL_SAVE_DIR" 2>/dev/null)" ]; then
-                    echo ""
-                    echo "Attention: le dossier de sauvegardes existe déjà et contient des fichiers."
-                    echo "Dossier: $FINAL_SAVE_DIR"
-
-                    OVERWRITE_SAVES=1
-                    if command -v kdialog &> /dev/null; then
-                        kdialog --warningyesno "Le dossier de sauvegardes existe déjà:\\n\\n$FINAL_SAVE_DIR\\n\\nVoulez-vous l'écraser ?" --yes-label "Oui" --no-label "Non"
-                        OVERWRITE_SAVES=$?
-                    else
-                        read -p "Voulez-vous l'écraser ? (o/N): " SAVE_CONFIRM
-                        [[ "$SAVE_CONFIRM" =~ ^[oOyY]$ ]] && OVERWRITE_SAVES=0 || OVERWRITE_SAVES=1
-                    fi
-
-                    if [ $OVERWRITE_SAVES -ne 0 ]; then
-                        echo "Annulation de cette sauvegarde (sauvegardes existantes conservées)"
-                        SAVE_LOOP=false
-                        continue
-                    else
-                        echo "Remplacement des sauvegardes existantes..."
-                        rm -rf "$FINAL_SAVE_DIR"
-                    fi
-                fi
-
-                # Créer le dossier final si nécessaire (sans créer la destination de mv)
-                mkdir -p "$(dirname "$FINAL_SAVE_DIR")"
+                # Chemins externes pour les saves
+                WINDOWS_HOME="$HOME/Windows/UserData"
+                SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
+                SAVES_DIR="$SAVES_BASE/$GAME_NAME"
 
                 # Créer le dossier .save dans le wgp avec la structure complète
                 SAVE_WGP_DIR="$GAME_DIR/.save/$SAVE_REL_PATH"
                 mkdir -p "$(dirname "$SAVE_WGP_DIR")"
 
-                # Copier le contenu du dossier vers le dossier .save (sauvegarde pour restauration)
-                echo "Copie du contenu du dossier dans .save..."
-                mkdir -p "$SAVE_WGP_DIR"
-                cp -r "$SAVE_ITEM_ABSOLUTE/."* "$SAVE_WGP_DIR/" 2>/dev/null
+                # Copier le dossier vers .save (pour la portabilité du WGP)
+                echo "Copie du dossier vers .save pour portabilité..."
+                cp -a "$SAVE_ITEM_ABSOLUTE"/. "$SAVE_WGP_DIR/"
 
-                # Déplacer le dossier vers UserData pour le WGP (création du symlink temporaire)
-                echo "Déplacement du dossier vers $FINAL_SAVE_DIR..."
-                mv "$SAVE_ITEM_ABSOLUTE" "$FINAL_SAVE_DIR"
-                ln -s "$FINAL_SAVE_DIR" "$SAVE_ITEM_ABSOLUTE"
+                # Copier vers UserData (pour le stockage local)
+                mkdir -p "$SAVES_DIR/$SAVE_REL_PATH"
+                cp -a "$SAVE_ITEM_ABSOLUTE"/. "$SAVES_DIR/$SAVE_REL_PATH/"
 
-                echo "Dossier de sauvegardes déplacé et lié (temporaire)."
+                # Créer un symlink à l'emplacement original pointant vers UserData
+                echo "Création du symlink vers UserData..."
+                rm -rf "$SAVE_ITEM_ABSOLUTE"
+                ln -s "$SAVES_DIR/$SAVE_REL_PATH" "$SAVE_ITEM_ABSOLUTE"
 
                 # Créer/Mettre à jour le fichier .savepath (ajouter une ligne par dossier)
                 SAVE_FILE="$GAME_DIR/.savepath"
@@ -385,58 +288,30 @@ while [ "$SAVE_LOOP" = true ]; do
 
             # Vérifier que c'est bien dans le dossier du jeu
             if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
-                # Chemin vers le dossier de saves externe
-                WINDOWS_HOME="$HOME/Windows/UserData"
-                SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
-                SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-                FINAL_SAVE_FILE="$SAVES_DIR/$SAVE_REL_PATH"
-
-                # Créer les dossiers parents
-                mkdir -p "$(dirname "$FINAL_SAVE_FILE")"
-
                 echo ""
                 echo "Fichier de sauvegardes sélectionné: $SAVE_REL_PATH"
-                echo "Destination: $FINAL_SAVE_FILE"
 
-                # Vérifier si le fichier existe déjà
-                if [ -f "$FINAL_SAVE_FILE" ]; then
-                    echo ""
-                    echo "Attention: le fichier de sauvegardes existe déjà."
-                    echo "Fichier: $FINAL_SAVE_FILE"
-
-                    OVERWRITE_SAVE=1
-                    if command -v kdialog &> /dev/null; then
-                        kdialog --warningyesno "Le fichier de sauvegardes existe déjà:\\n\\n$FINAL_SAVE_FILE\\n\\nVoulez-vous l'écraser ?" --yes-label "Oui" --no-label "Non"
-                        OVERWRITE_SAVE=$?
-                    else
-                        read -p "Voulez-vous l'écraser ? (o/N): " SAVE_CONFIRM
-                        [[ "$SAVE_CONFIRM" =~ ^[oOyY]$ ]] && OVERWRITE_SAVE=0 || OVERWRITE_SAVE=1
-                    fi
-
-                    if [ $OVERWRITE_SAVE -ne 0 ]; then
-                        echo "Annulation de cette sauvegarde (fichier existant conservé)"
-                        SAVE_LOOP=false
-                        continue
-                    else
-                        echo "Remplacement du fichier existant..."
-                        rm -f "$FINAL_SAVE_FILE"
-                    fi
-                fi
+                # Chemins externes pour les saves
+                WINDOWS_HOME="$HOME/Windows/UserData"
+                SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
+                SAVES_DIR="$SAVES_BASE/$GAME_NAME"
 
                 # Créer le dossier .save dans le wgp avec la structure complète
                 SAVE_WGP_DIR="$GAME_DIR/.save/$SAVE_REL_PATH"
                 mkdir -p "$(dirname "$SAVE_WGP_DIR")"
 
-                # Copier le fichier vers le dossier .save (sauvegarde pour restauration)
-                echo "Copie du fichier dans .save..."
+                # Copier le fichier vers .save (pour la portabilité du WGP)
+                echo "Copie du fichier vers .save pour portabilité..."
                 cp "$SAVE_FILE_ABSOLUTE" "$SAVE_WGP_DIR"
 
-                # Déplacer le fichier vers UserData pour le WGP (création du symlink temporaire)
-                echo "Déplacement du fichier vers $FINAL_SAVE_FILE..."
-                mv "$SAVE_FILE_ABSOLUTE" "$FINAL_SAVE_FILE"
-                ln -s "$FINAL_SAVE_FILE" "$SAVE_FILE_ABSOLUTE"
+                # Copier vers UserData (pour le stockage local)
+                mkdir -p "$(dirname "$SAVES_DIR/$SAVE_REL_PATH")"
+                cp "$SAVE_FILE_ABSOLUTE" "$SAVES_DIR/$SAVE_REL_PATH"
 
-                echo "Fichier de sauvegardes déplacé et lié (temporaire)."
+                # Créer un symlink à l'emplacement original pointant vers UserData
+                echo "Création du symlink vers UserData..."
+                rm -f "$SAVE_FILE_ABSOLUTE"
+                ln -s "$SAVES_DIR/$SAVE_REL_PATH" "$SAVE_FILE_ABSOLUTE"
 
                 # Créer/Mettre à jour le fichier .savepath (ajouter une ligne par fichier)
                 SAVE_FILE="$GAME_DIR/.savepath"
@@ -469,7 +344,7 @@ while [ "$EXTRA_LOOP" = true ]; do
     # Demander si le jeu a un fichier ou dossier d'extra à conserver
     EXTRA_ENABLED=false
     if command -v kdialog &> /dev/null; then
-        kdialog --yesno "Fichier/dossier d'extra à conserver ?\\n\\nPermet au jeu d'écrire dedans (copie session uniquement,\\nperdue après fermeture)." --yes-label "Oui" --no-label "Non"
+        kdialog --yesno "Fichier/dossier d'extra à conserver ?\\n\\nLes extras seront stockés dans /tmp/wgp-extra\\n\\nCe sont des fichiers temporaires (config, cache...)\\nperdus après la fermeture du jeu.\\n\\nLe WGP utilisera un symlink vers /tmp." --yes-label "Oui" --no-label "Non"
         if [ $? -eq 0 ]; then
             EXTRA_ENABLED=true
         fi
@@ -545,57 +420,25 @@ while [ "$EXTRA_LOOP" = true ]; do
 
             # Vérifier que c'est bien dans le dossier du jeu
             if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
-                # Chemin vers le dossier d'extra dans tmp
-                EXTRA_BASE="/tmp/wgp-extra"
-                FINAL_EXTRA_DIR="$EXTRA_BASE/$GAME_NAME/$EXTRA_REL_PATH"
-
-                # Créer les dossiers parents
-                mkdir -p "$(dirname "$FINAL_EXTRA_DIR")"
-
                 echo ""
                 echo "Dossier d'extra sélectionné: $EXTRA_REL_PATH"
-                echo "Destination: $FINAL_EXTRA_DIR"
 
-                # Vérifier si le dossier existe déjà
-                if [ -d "$FINAL_EXTRA_DIR" ]; then
-                    echo ""
-                    echo "Attention: le dossier d'extra existe déjà."
-                    echo "Dossier: $FINAL_EXTRA_DIR"
-
-                    OVERWRITE_EXTRA=1
-                    if command -v kdialog &> /dev/null; then
-                        kdialog --warningyesno "Le dossier d'extra existe déjà:\\n\\n$FINAL_EXTRA_DIR\\n\\nVoulez-vous l'écraser ?" --yes-label "Oui" --no-label "Non"
-                        OVERWRITE_EXTRA=$?
-                    else
-                        read -p "Voulez-vous l'écraser ? (o/N): " EXTRA_CONFIRM
-                        [[ "$EXTRA_CONFIRM" =~ ^[oOyY]$ ]] && OVERWRITE_EXTRA=0 || OVERWRITE_EXTRA=1
-                    fi
-
-                    if [ $OVERWRITE_EXTRA -ne 0 ]; then
-                        echo "Annulation de cette option (dossier existant conservé)"
-                        EXTRA_LOOP=false
-                        continue
-                    else
-                        echo "Remplacement du dossier existant..."
-                        rm -rf "$FINAL_EXTRA_DIR"
-                    fi
-                fi
+                # Chemin externe pour les extras
+                EXTRA_BASE="/tmp/wgp-extra"
+                EXTRA_DIR="$EXTRA_BASE/$GAME_NAME"
 
                 # Créer le dossier .extra dans le wgp avec la structure complète
                 EXTRA_WGP_DIR="$GAME_DIR/.extra/$EXTRA_REL_PATH"
                 mkdir -p "$(dirname "$EXTRA_WGP_DIR")"
 
-                # Copier le contenu du dossier vers le dossier .extra (sauvegarde pour restauration)
-                echo "Copie du contenu du dossier dans .extra..."
-                mkdir -p "$EXTRA_WGP_DIR"
-                cp -r "$EXTRA_ITEM_ABSOLUTE/."* "$EXTRA_WGP_DIR/" 2>/dev/null
+                # Copier le dossier vers .extra (pour la portabilité du WGP)
+                echo "Copie du dossier vers .extra pour portabilité..."
+                cp -a "$EXTRA_ITEM_ABSOLUTE"/. "$EXTRA_WGP_DIR/"
 
-                # Déplacer le dossier vers /tmp pour le WGP (création du symlink temporaire)
-                echo "Déplacement du dossier vers $FINAL_EXTRA_DIR..."
-                mv "$EXTRA_ITEM_ABSOLUTE" "$FINAL_EXTRA_DIR"
-                ln -s "$FINAL_EXTRA_DIR" "$EXTRA_ITEM_ABSOLUTE"
-
-                echo "Dossier d'extra déplacé et lié (temporaire)."
+                # Créer un symlink à l'emplacement original pointant vers /tmp/wgp-extra
+                echo "Création du symlink vers /tmp/wgp-extra..."
+                rm -rf "$EXTRA_ITEM_ABSOLUTE"
+                ln -s "$EXTRA_DIR/$EXTRA_REL_PATH" "$EXTRA_ITEM_ABSOLUTE"
 
                 # Créer/Mettre à jour le fichier .extrapath (ajouter une ligne par dossier)
                 EXTRAPATH_FILE="$GAME_DIR/.extrapath"
@@ -616,56 +459,25 @@ while [ "$EXTRA_LOOP" = true ]; do
 
             # Vérifier que c'est bien dans le dossier du jeu
             if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
-                # Chemin vers le dossier d'extra dans tmp
-                EXTRA_BASE="/tmp/wgp-extra"
-                FINAL_EXTRA_FILE="$EXTRA_BASE/$GAME_NAME/$EXTRA_REL_PATH"
-
-                # Créer les dossiers parents
-                mkdir -p "$(dirname "$FINAL_EXTRA_FILE")"
-
                 echo ""
                 echo "Fichier d'extra sélectionné: $EXTRA_REL_PATH"
-                echo "Destination: $FINAL_EXTRA_FILE"
 
-                # Vérifier si le fichier existe déjà
-                if [ -f "$FINAL_EXTRA_FILE" ]; then
-                    echo ""
-                    echo "Attention: le fichier d'extra existe déjà."
-                    echo "Fichier: $FINAL_EXTRA_FILE"
-
-                    OVERWRITE_EXTRA=1
-                    if command -v kdialog &> /dev/null; then
-                        kdialog --warningyesno "Le fichier d'extra existe déjà:\\n\\n$FINAL_EXTRA_FILE\\n\\nVoulez-vous l'écraser ?" --yes-label "Oui" --no-label "Non"
-                        OVERWRITE_EXTRA=$?
-                    else
-                        read -p "Voulez-vous l'écraser ? (o/N): " EXTRA_CONFIRM
-                        [[ "$EXTRA_CONFIRM" =~ ^[oOyY]$ ]] && OVERWRITE_EXTRA=0 || OVERWRITE_EXTRA=1
-                    fi
-
-                    if [ $OVERWRITE_EXTRA -ne 0 ]; then
-                        echo "Annulation de cette option (fichier existant conservé)"
-                        EXTRA_LOOP=false
-                        continue
-                    else
-                        echo "Remplacement du fichier existant..."
-                        rm -f "$FINAL_EXTRA_FILE"
-                    fi
-                fi
+                # Chemin externe pour les extras
+                EXTRA_BASE="/tmp/wgp-extra"
+                EXTRA_DIR="$EXTRA_BASE/$GAME_NAME"
 
                 # Créer le dossier .extra dans le wgp avec la structure complète
                 EXTRA_WGP_DIR="$GAME_DIR/.extra/$EXTRA_REL_PATH"
                 mkdir -p "$(dirname "$EXTRA_WGP_DIR")"
 
-                # Copier le fichier vers le dossier .extra (sauvegarde pour restauration)
-                echo "Copie du fichier dans .extra..."
+                # Copier le fichier vers .extra (pour la portabilité du WGP)
+                echo "Copie du fichier vers .extra pour portabilité..."
                 cp "$EXTRA_FILE_ABSOLUTE" "$EXTRA_WGP_DIR"
 
-                # Déplacer le fichier vers UserData pour le WGP (création du symlink temporaire)
-                echo "Déplacement du fichier vers $FINAL_EXTRA_FILE..."
-                mv "$EXTRA_FILE_ABSOLUTE" "$FINAL_EXTRA_FILE"
-                ln -s "$FINAL_EXTRA_FILE" "$EXTRA_FILE_ABSOLUTE"
-
-                echo "Fichier d'extra déplacé et lié (temporaire)."
+                # Créer un symlink à l'emplacement original pointant vers /tmp/wgp-extra
+                echo "Création du symlink vers /tmp/wgp-extra..."
+                rm -f "$EXTRA_FILE_ABSOLUTE"
+                ln -s "$EXTRA_DIR/$EXTRA_REL_PATH" "$EXTRA_FILE_ABSOLUTE"
 
                 # Créer/Mettre à jour le fichier .extrapath (ajouter une ligne par fichier)
                 EXTRAPATH_FILE="$GAME_DIR/.extrapath"
@@ -697,6 +509,50 @@ if [ -f "$WGPACK_NAME" ]; then
 
     if [ $OVERWRITE -ne 0 ]; then
         echo "Opération annulée."
+        # Restituer les fichiers depuis UserData vers l'emplacement original
+        WINDOWS_HOME="$HOME/Windows/UserData"
+        SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
+        SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+
+        if [ -f "$GAME_DIR/.savepath" ]; then
+            while IFS= read -r SAVE_REL_PATH; do
+                [ -n "$SAVE_REL_PATH" ] || continue
+                SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
+                SAVE_EXTERNAL="$SAVES_DIR/$SAVE_REL_PATH"
+                # Supprimer le symlink, le fichier existe déjà dans UserData
+                rm -rf "$SAVE_ORIGINAL" 2>/dev/null
+                if [ -d "$SAVE_EXTERNAL" ]; then
+                    cp -a "$SAVE_EXTERNAL"/. "$SAVE_ORIGINAL/" 2>/dev/null
+                elif [ -f "$SAVE_EXTERNAL" ]; then
+                    cp "$SAVE_EXTERNAL" "$SAVE_ORIGINAL" 2>/dev/null
+                fi
+                # Supprimer la copie de UserData
+                rm -rf "$SAVE_EXTERNAL" 2>/dev/null
+            done < "$GAME_DIR/.savepath"
+        fi
+        if [ -f "$GAME_DIR/.extrapath" ]; then
+            while IFS= read -r EXTRA_REL_PATH; do
+                [ -n "$EXTRA_REL_PATH" ] || continue
+                EXTRA_ORIGINAL="$GAME_DIR/$EXTRA_REL_PATH"
+                EXTRA_WGP_ITEM="$GAME_DIR/.extra/$EXTRA_REL_PATH"
+                # Restaurer depuis .extra (les extra sont uniquement dans le WGP)
+                if [ -d "$EXTRA_WGP_ITEM" ]; then
+                    rm -rf "$EXTRA_ORIGINAL" 2>/dev/null
+                    cp -a "$EXTRA_WGP_ITEM"/. "$EXTRA_ORIGINAL/" 2>/dev/null
+                elif [ -f "$EXTRA_WGP_ITEM" ]; then
+                    rm -f "$EXTRA_ORIGINAL" 2>/dev/null
+                    cp "$EXTRA_WGP_ITEM" "$EXTRA_ORIGINAL" 2>/dev/null
+                fi
+            done < "$GAME_DIR/.extrapath"
+        fi
+        # Nettoyer les fichiers temporaires
+        rm -f "$LAUNCH_FILE" 2>/dev/null
+        [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE" 2>/dev/null
+        [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE" 2>/dev/null
+        [ -f "$GAME_DIR/.savepath" ] && rm -f "$GAME_DIR/.savepath" 2>/dev/null
+        [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save" 2>/dev/null
+        [ -f "$GAME_DIR/.extrapath" ] && rm -f "$GAME_DIR/.extrapath" 2>/dev/null
+        [ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra" 2>/dev/null
         exit 0
     fi
 
@@ -721,8 +577,45 @@ if command -v kdialog &> /dev/null; then
             pkill -9 mksquashfs 2>/dev/null
             rm -f "$WGPACK_NAME"
             echo ""
-            echo "Compression annulée, restauration en cours..."
-            restore_game_files
+            echo "Compression annulée."
+
+            # Restituer les fichiers depuis UserData/.extra avant nettoyage
+            WINDOWS_HOME="$HOME/Windows/UserData"
+            SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
+            SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+
+            if [ -f "$GAME_DIR/.savepath" ]; then
+                while IFS= read -r SAVE_REL_PATH; do
+                    [ -n "$SAVE_REL_PATH" ] || continue
+                    SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
+                    SAVE_EXTERNAL="$SAVES_DIR/$SAVE_REL_PATH"
+                    # Supprimer le symlink et copier depuis UserData
+                    rm -rf "$SAVE_ORIGINAL" 2>/dev/null
+                    if [ -d "$SAVE_EXTERNAL" ]; then
+                        cp -a "$SAVE_EXTERNAL"/. "$SAVE_ORIGINAL/" 2>/dev/null
+                    elif [ -f "$SAVE_EXTERNAL" ]; then
+                        cp "$SAVE_EXTERNAL" "$SAVE_ORIGINAL" 2>/dev/null
+                    fi
+                    # Supprimer la copie de UserData
+                    rm -rf "$SAVE_EXTERNAL" 2>/dev/null
+                done < "$GAME_DIR/.savepath"
+            fi
+            if [ -f "$GAME_DIR/.extrapath" ]; then
+                while IFS= read -r EXTRA_REL_PATH; do
+                    [ -n "$EXTRA_REL_PATH" ] || continue
+                    EXTRA_ORIGINAL="$GAME_DIR/$EXTRA_REL_PATH"
+                    EXTRA_WGP_ITEM="$GAME_DIR/.extra/$EXTRA_REL_PATH"
+                    # Restaurer depuis .extra (les extra sont uniquement dans le WGP)
+                    if [ -d "$EXTRA_WGP_ITEM" ]; then
+                        rm -rf "$EXTRA_ORIGINAL" 2>/dev/null
+                        cp -a "$EXTRA_WGP_ITEM"/. "$EXTRA_ORIGINAL/" 2>/dev/null
+                    elif [ -f "$EXTRA_WGP_ITEM" ]; then
+                        rm -f "$EXTRA_ORIGINAL" 2>/dev/null
+                        cp "$EXTRA_WGP_ITEM" "$EXTRA_ORIGINAL" 2>/dev/null
+                    fi
+                done < "$GAME_DIR/.extrapath"
+            fi
+
             # Nettoyer les fichiers temporaires
             rm -f "$LAUNCH_FILE"
             [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE"
@@ -745,6 +638,49 @@ if command -v kdialog &> /dev/null; then
 
     if [ $EXIT_CODE -ne 0 ]; then
         echo "Erreur lors de la création du squashfs"
+        # Restituer les fichiers avant de quitter
+        WINDOWS_HOME="$HOME/Windows/UserData"
+        SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
+        SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+
+        if [ -f "$GAME_DIR/.savepath" ]; then
+            while IFS= read -r SAVE_REL_PATH; do
+                [ -n "$SAVE_REL_PATH" ] || continue
+                SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
+                SAVE_EXTERNAL="$SAVES_DIR/$SAVE_REL_PATH"
+                # Supprimer le symlink et copier depuis UserData
+                rm -rf "$SAVE_ORIGINAL" 2>/dev/null
+                if [ -d "$SAVE_EXTERNAL" ]; then
+                    cp -a "$SAVE_EXTERNAL"/. "$SAVE_ORIGINAL/" 2>/dev/null
+                elif [ -f "$SAVE_EXTERNAL" ]; then
+                    cp "$SAVE_EXTERNAL" "$SAVE_ORIGINAL" 2>/dev/null
+                fi
+                # Supprimer la copie de UserData
+                rm -rf "$SAVE_EXTERNAL" 2>/dev/null
+            done < "$GAME_DIR/.savepath"
+        fi
+        if [ -f "$GAME_DIR/.extrapath" ]; then
+            while IFS= read -r EXTRA_REL_PATH; do
+                [ -n "$EXTRA_REL_PATH" ] || continue
+                EXTRA_ORIGINAL="$GAME_DIR/$EXTRA_REL_PATH"
+                EXTRA_WGP_ITEM="$GAME_DIR/.extra/$EXTRA_REL_PATH"
+                # Restaurer depuis .extra (les extra sont uniquement dans le WGP)
+                if [ -d "$EXTRA_WGP_ITEM" ]; then
+                    rm -rf "$EXTRA_ORIGINAL" 2>/dev/null
+                    cp -a "$EXTRA_WGP_ITEM"/. "$EXTRA_ORIGINAL/" 2>/dev/null
+                elif [ -f "$EXTRA_WGP_ITEM" ]; then
+                    rm -f "$EXTRA_ORIGINAL" 2>/dev/null
+                    cp "$EXTRA_WGP_ITEM" "$EXTRA_ORIGINAL" 2>/dev/null
+                fi
+            done < "$GAME_DIR/.extrapath"
+        fi
+        rm -f "$LAUNCH_FILE" 2>/dev/null
+        [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE" 2>/dev/null
+        [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE" 2>/dev/null
+        [ -f "$GAME_DIR/.savepath" ] && rm -f "$GAME_DIR/.savepath" 2>/dev/null
+        [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save" 2>/dev/null
+        [ -f "$GAME_DIR/.extrapath" ] && rm -f "$GAME_DIR/.extrapath" 2>/dev/null
+        [ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra" 2>/dev/null
         exit 1
     fi
 else
@@ -754,6 +690,49 @@ else
 
     if [ $? -ne 0 ]; then
         echo "Erreur lors de la création du squashfs"
+        # Restituer les fichiers avant de quitter
+        WINDOWS_HOME="$HOME/Windows/UserData"
+        SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
+        SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+
+        if [ -f "$GAME_DIR/.savepath" ]; then
+            while IFS= read -r SAVE_REL_PATH; do
+                [ -n "$SAVE_REL_PATH" ] || continue
+                SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
+                SAVE_EXTERNAL="$SAVES_DIR/$SAVE_REL_PATH"
+                # Supprimer le symlink et copier depuis UserData
+                rm -rf "$SAVE_ORIGINAL" 2>/dev/null
+                if [ -d "$SAVE_EXTERNAL" ]; then
+                    cp -a "$SAVE_EXTERNAL"/. "$SAVE_ORIGINAL/" 2>/dev/null
+                elif [ -f "$SAVE_EXTERNAL" ]; then
+                    cp "$SAVE_EXTERNAL" "$SAVE_ORIGINAL" 2>/dev/null
+                fi
+                # Supprimer la copie de UserData
+                rm -rf "$SAVE_EXTERNAL" 2>/dev/null
+            done < "$GAME_DIR/.savepath"
+        fi
+        if [ -f "$GAME_DIR/.extrapath" ]; then
+            while IFS= read -r EXTRA_REL_PATH; do
+                [ -n "$EXTRA_REL_PATH" ] || continue
+                EXTRA_ORIGINAL="$GAME_DIR/$EXTRA_REL_PATH"
+                EXTRA_WGP_ITEM="$GAME_DIR/.extra/$EXTRA_REL_PATH"
+                # Restaurer depuis .extra (les extra sont uniquement dans le WGP)
+                if [ -d "$EXTRA_WGP_ITEM" ]; then
+                    rm -rf "$EXTRA_ORIGINAL" 2>/dev/null
+                    cp -a "$EXTRA_WGP_ITEM"/. "$EXTRA_ORIGINAL/" 2>/dev/null
+                elif [ -f "$EXTRA_WGP_ITEM" ]; then
+                    rm -f "$EXTRA_ORIGINAL" 2>/dev/null
+                    cp "$EXTRA_WGP_ITEM" "$EXTRA_ORIGINAL" 2>/dev/null
+                fi
+            done < "$GAME_DIR/.extrapath"
+        fi
+        rm -f "$LAUNCH_FILE" 2>/dev/null
+        [ -f "$ARGS_FILE" ] && rm -f "$ARGS_FILE" 2>/dev/null
+        [ -f "$FIX_FILE" ] && rm -f "$FIX_FILE" 2>/dev/null
+        [ -f "$GAME_DIR/.savepath" ] && rm -f "$GAME_DIR/.savepath" 2>/dev/null
+        [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save" 2>/dev/null
+        [ -f "$GAME_DIR/.extrapath" ] && rm -f "$GAME_DIR/.extrapath" 2>/dev/null
+        [ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra" 2>/dev/null
         exit 1
     fi
 fi
@@ -765,11 +744,61 @@ SIZE_AFTER=$(du -s "$WGPACK_NAME" | cut -f1)
 SIZE_AFTER_GB=$(echo "scale=2; $SIZE_AFTER / 1024 / 1024" | bc)
 COMPRESSION_RATIO=$(echo "scale=1; (1 - $SIZE_AFTER / $SIZE_BEFORE) * 100" | bc)
 
+# Restituer les fichiers originaux depuis UserData en supprimant les symlinks
 echo ""
-echo "=== Restauration du dossier source ==="
+echo "=== Restitution des fichiers originaux ==="
 
-# Appeler la fonction de restauration
-restore_game_files
+WINDOWS_HOME="$HOME/Windows/UserData"
+SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
+SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+
+# Restitution des saves (depuis UserData)
+if [ -f "$GAME_DIR/.savepath" ]; then
+    while IFS= read -r SAVE_REL_PATH; do
+        if [ -n "$SAVE_REL_PATH" ]; then
+            SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
+            SAVE_EXTERNAL="$SAVES_DIR/$SAVE_REL_PATH"
+
+            # Supprimer le symlink
+            rm -rf "$SAVE_ORIGINAL"
+
+            if [ -d "$SAVE_EXTERNAL" ]; then
+                # Dossier : copier depuis UserData
+                cp -a "$SAVE_EXTERNAL"/. "$SAVE_ORIGINAL/"
+                echo "Save restaurée: $SAVE_REL_PATH"
+            elif [ -f "$SAVE_EXTERNAL" ]; then
+                # Fichier : copier depuis UserData
+                cp "$SAVE_EXTERNAL" "$SAVE_ORIGINAL"
+                echo "Save restaurée: $SAVE_REL_PATH"
+            fi
+
+            # Supprimer la copie de UserData (elle reste dans le WGP pour la portabilité)
+            rm -rf "$SAVE_EXTERNAL"
+        fi
+    done < "$GAME_DIR/.savepath"
+fi
+
+# Restitution des extras
+if [ -f "$GAME_DIR/.extrapath" ]; then
+    while IFS= read -r EXTRA_REL_PATH; do
+        if [ -n "$EXTRA_REL_PATH" ]; then
+            EXTRA_ORIGINAL="$GAME_DIR/$EXTRA_REL_PATH"
+            EXTRA_WGP_ITEM="$GAME_DIR/.extra/$EXTRA_REL_PATH"
+
+            if [ -d "$EXTRA_WGP_ITEM" ]; then
+                # Dossier : déplacer le contenu vers l'emplacement original
+                rm -rf "$EXTRA_ORIGINAL"
+                cp -a "$EXTRA_WGP_ITEM"/. "$EXTRA_ORIGINAL/"
+                echo "Extra restauré: $EXTRA_REL_PATH"
+            elif [ -f "$EXTRA_WGP_ITEM" ]; then
+                # Fichier : déplacer vers l'emplacement original
+                rm -f "$EXTRA_ORIGINAL"
+                cp "$EXTRA_WGP_ITEM" "$EXTRA_ORIGINAL"
+                echo "Extra restauré: $EXTRA_REL_PATH"
+            fi
+        fi
+    done < "$GAME_DIR/.extrapath"
+fi
 
 # Supprimer les fichiers temporaires du dossier source
 rm -f "$LAUNCH_FILE"
@@ -779,14 +808,6 @@ rm -f "$LAUNCH_FILE"
 [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save"
 [ -f "$GAME_DIR/.extrapath" ] && rm -f "$GAME_DIR/.extrapath"
 [ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra"
-
-# Nettoyer le dossier temporaire d'extra
-EXTRA_BASE="/tmp/wgp-extra"
-EXTRA_GAME_DIR="$EXTRA_BASE/$GAME_NAME"
-if [ -d "$EXTRA_GAME_DIR" ]; then
-    rm -rf "$EXTRA_GAME_DIR"
-    echo "Dossier temporaire d'extra nettoyé: $EXTRA_GAME_DIR"
-fi
 
 echo ""
 echo "=== Paquet créé avec succès ==="

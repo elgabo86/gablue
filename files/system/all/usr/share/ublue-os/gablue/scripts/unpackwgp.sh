@@ -132,7 +132,7 @@ if [ -f "$SAVE_FILE" ]; then
 
             # Chemin vers le dossier de saves externe avec la structure complète
             WINDOWS_HOME="$HOME/Windows/UserData"
-            SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+            SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
             SAVES_DIR="$SAVES_BASE/$GAME_NAME"
 
             # Vérifier si c'est un fichier dans le dossier de sauvegardes
@@ -141,14 +141,18 @@ if [ -f "$SAVE_FILE" ]; then
                 echo ""
                 echo "Copie du fichier de sauvegardes ($SAVE_ITEM_NAME) depuis $FINAL_SAVE_ITEM..."
                 mkdir -p "$(dirname "$OUTPUT_SAVE_ITEM")"
+                # Supprimer le symlink si présent
+                rm -f "$OUTPUT_SAVE_ITEM" 2>/dev/null
                 cp "$FINAL_SAVE_ITEM" "$OUTPUT_SAVE_ITEM"
                 echo "Fichier de sauvegardes copié avec succès."
             # Sinon vérifier si c'est un dossier
             elif [ -d "$FINAL_SAVE_ITEM" ]; then
                 echo ""
                 echo "Copie du dossier de sauvegardes ($SAVE_ITEM_NAME) depuis $FINAL_SAVE_ITEM..."
-                mkdir -p "$OUTPUT_SAVE_ITEM"
-                cp -r "$FINAL_SAVE_ITEM/"* "$OUTPUT_SAVE_ITEM/" 2>/dev/null
+                mkdir -p "$(dirname "$OUTPUT_SAVE_ITEM")"
+                # Supprimer le symlink si présent avant la copie
+                rm -rf "$OUTPUT_SAVE_ITEM" 2>/dev/null
+                cp -a "$FINAL_SAVE_ITEM"/. "$OUTPUT_SAVE_ITEM/"
                 echo "Dossier de sauvegardes copié avec succès."
             else
                 echo ""
@@ -176,14 +180,18 @@ if [ -f "$EXTRAPATH_FILE" ]; then
                 echo ""
                 echo "Copie du fichier d'extra ($EXTRA_ITEM_NAME)..."
                 mkdir -p "$(dirname "$OUTPUT_EXTRA_ITEM")"
+                # Supprimer le symlink si présent
+                rm -f "$OUTPUT_EXTRA_ITEM" 2>/dev/null
                 cp "$EXTRA_WGP_ITEM" "$OUTPUT_EXTRA_ITEM"
                 echo "Fichier d'extra copié avec succès."
             # Sinon vérifier si c'est un dossier
             elif [ -d "$EXTRA_WGP_ITEM" ]; then
                 echo ""
                 echo "Copie du dossier d'extra ($EXTRA_ITEM_NAME)..."
-                mkdir -p "$OUTPUT_EXTRA_ITEM"
-                cp -r "$EXTRA_WGP_ITEM/"* "$OUTPUT_EXTRA_ITEM/" 2>/dev/null
+                mkdir -p "$(dirname "$OUTPUT_EXTRA_ITEM")"
+                # Supprimer le symlink si présent avant la copie
+                rm -rf "$OUTPUT_EXTRA_ITEM" 2>/dev/null
+                cp -a "$EXTRA_WGP_ITEM"/. "$OUTPUT_EXTRA_ITEM/"
                 echo "Dossier d'extra copié avec succès."
             else
                 echo ""

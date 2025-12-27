@@ -127,7 +127,7 @@ if [[ "$fullpath" == *.wgp ]]; then
     SAVE_FILE="$MOUNT_DIR/.savepath"
     SAVE_WGP_DIR="$MOUNT_DIR/.save"
     WINDOWS_HOME="$HOME/Windows/UserData"
-    SAVES_BASE="$WINDOWS_HOME/$USER/AppData/Local/LocalSaves"
+    SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
     SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
     if [ -f "$SAVE_FILE" ]; then
         # Lire ligne par ligne (par dossier/fichier)
@@ -138,21 +138,15 @@ if [[ "$fullpath" == *.wgp ]]; then
 
                 # Vérifier si c'est un dossier ou un fichier dans .save
                 if [ -d "$SAVE_WGP_ITEM" ]; then
-                    # C'est un dossier
-                    # Copier vers UserData si n'existe pas
-                    if [ ! -d "$FINAL_SAVE_ITEM" ]; then
-                        echo "Restauration des sauvegardes: $SAVE_REL_PATH"
-                        mkdir -p "$FINAL_SAVE_ITEM"
-                        cp -r "$SAVE_WGP_ITEM/." "$FINAL_SAVE_ITEM/"
-                    fi
+                    # C'est un dossier : copier depuis .save vers UserData
+                    echo "Copie des sauvegardes: $SAVE_REL_PATH"
+                    mkdir -p "$FINAL_SAVE_ITEM"
+                    cp -a "$SAVE_WGP_ITEM"/. "$FINAL_SAVE_ITEM/"
                 elif [ -f "$SAVE_WGP_ITEM" ]; then
-                    # C'est un fichier
-                    # Copier vers UserData si n'existe pas
-                    if [ ! -f "$FINAL_SAVE_ITEM" ]; then
-                        echo "Restauration des sauvegardes: $SAVE_REL_PATH"
-                        mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
-                        cp "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
-                    fi
+                    # C'est un fichier : copier depuis .save vers UserData
+                    echo "Copie des sauvegardes: $SAVE_REL_PATH"
+                    mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
+                    cp "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
                 fi
             fi
         done < "$SAVE_FILE"
@@ -171,21 +165,15 @@ if [[ "$fullpath" == *.wgp ]]; then
 
                 # Vérifier si c'est un dossier ou un fichier dans .extra
                 if [ -d "$EXTRA_WGP_ITEM" ]; then
-                    # C'est un dossier
-                    # Copier vers cache si n'existe pas
-                    if [ ! -d "$FINAL_EXTRA_ITEM" ]; then
-                        echo "Restauration des extra: $EXTRA_REL_PATH"
-                        mkdir -p "$FINAL_EXTRA_ITEM"
-                        cp -r "$EXTRA_WGP_ITEM/." "$FINAL_EXTRA_ITEM/"
-                    fi
+                    # C'est un dossier : copier depuis .extra vers /tmp
+                    echo "Copie des extras: $EXTRA_REL_PATH"
+                    mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
+                    cp -a "$EXTRA_WGP_ITEM"/. "$FINAL_EXTRA_ITEM/"
                 elif [ -f "$EXTRA_WGP_ITEM" ]; then
-                    # C'est un fichier
-                    # Copier vers cache si n'existe pas
-                    if [ ! -f "$FINAL_EXTRA_ITEM" ]; then
-                        echo "Restauration des extra: $EXTRA_REL_PATH"
-                        mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
-                        cp "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
-                    fi
+                    # C'est un fichier : copier depuis .extra vers /tmp
+                    echo "Copie des extras: $EXTRA_REL_PATH"
+                    mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
+                    cp "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
                 fi
             fi
         done < "$EXTRAPATH_FILE"
