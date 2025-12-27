@@ -160,6 +160,7 @@ fi
 
 # Gestion des fichiers et dossiers d'extra depuis le fichier .extrapath
 EXTRAPATH_FILE="$OUTPUT_DIR/.extrapath"
+EXTRA_WGP_DIR="$OUTPUT_DIR/.extra"
 if [ -f "$EXTRAPATH_FILE" ]; then
     # Lire ligne par ligne (par fichier/dossier)
     while IFS= read -r EXTRA_REL_PATH; do
@@ -167,28 +168,26 @@ if [ -f "$EXTRAPATH_FILE" ]; then
             EXTRA_ITEM_NAME=$(basename "$EXTRA_REL_PATH")
             OUTPUT_EXTRA_ITEM="$OUTPUT_DIR/$EXTRA_REL_PATH"
 
-            # Chemin vers le dossier d'extra dans le cache
-            EXTRA_BASE="$HOME/.cache/wgp-extra"
-            EXTRA_DIR="$EXTRA_BASE/$GAME_NAME"
+            # Les extras sont stockés dans .extra du WGP (pas dans /tmp)
+            EXTRA_WGP_ITEM="$EXTRA_WGP_DIR/$EXTRA_REL_PATH"
 
-            # Vérifier si c'est un fichier dans le cache
-            FINAL_EXTRA_ITEM="$EXTRA_DIR/$EXTRA_REL_PATH"
-            if [ -f "$FINAL_EXTRA_ITEM" ]; then
+            # Vérifier si c'est un fichier dans .extra
+            if [ -f "$EXTRA_WGP_ITEM" ]; then
                 echo ""
-                echo "Copie du fichier d'extra ($EXTRA_ITEM_NAME) depuis $FINAL_EXTRA_ITEM..."
+                echo "Copie du fichier d'extra ($EXTRA_ITEM_NAME)..."
                 mkdir -p "$(dirname "$OUTPUT_EXTRA_ITEM")"
-                cp "$FINAL_EXTRA_ITEM" "$OUTPUT_EXTRA_ITEM"
+                cp "$EXTRA_WGP_ITEM" "$OUTPUT_EXTRA_ITEM"
                 echo "Fichier d'extra copié avec succès."
             # Sinon vérifier si c'est un dossier
-            elif [ -d "$FINAL_EXTRA_ITEM" ]; then
+            elif [ -d "$EXTRA_WGP_ITEM" ]; then
                 echo ""
-                echo "Copie du dossier d'extra ($EXTRA_ITEM_NAME) depuis $FINAL_EXTRA_ITEM..."
+                echo "Copie du dossier d'extra ($EXTRA_ITEM_NAME)..."
                 mkdir -p "$OUTPUT_EXTRA_ITEM"
-                cp -r "$FINAL_EXTRA_ITEM/"* "$OUTPUT_EXTRA_ITEM/" 2>/dev/null
+                cp -r "$EXTRA_WGP_ITEM/"* "$OUTPUT_EXTRA_ITEM/" 2>/dev/null
                 echo "Dossier d'extra copié avec succès."
             else
                 echo ""
-                echo "Avertissement: l'élément d'extra n'existe pas: $FINAL_EXTRA_ITEM"
+                echo "Avertissement: l'élément d'extra n'existe pas dans le WGP: $EXTRA_WGP_ITEM"
             fi
         fi
     done < "$EXTRAPATH_FILE"

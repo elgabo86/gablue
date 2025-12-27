@@ -51,9 +51,9 @@ restore_game_files() {
         done < "$GAME_DIR/.savepath"
     fi
 
-    # Restaurer les extra depuis le cache
+    # Restaurer les extra depuis le dossier temporaire (mais ils n'existent plus après création)
     if [ -f "$GAME_DIR/.extrapath" ]; then
-        EXTRA_BASE="$HOME/.cache/wgp-extra"
+        EXTRA_BASE="/tmp/wgp-extra"
         EXTRA_DIR="$EXTRA_BASE/$GAME_NAME"
         while IFS= read -r EXTRA_REL_PATH; do
             if [ -n "$EXTRA_REL_PATH" ]; then
@@ -469,7 +469,7 @@ while [ "$EXTRA_LOOP" = true ]; do
     # Demander si le jeu a un fichier ou dossier d'extra à conserver
     EXTRA_ENABLED=false
     if command -v kdialog &> /dev/null; then
-        kdialog --yesno "Y a-t-il un fichier ou dossier d'extra de configuration à conserver ?\\n\\nIl sera déplacé dans le dossier utilisateur\\net remplacé par un lien symbolique dans le paquet.\\n\\nUne copie sera conservée dans le dossier .extra\\npour permettre la restauration sur un autre ordi." --yes-label "Oui" --no-label "Non"
+        kdialog --yesno "Fichier/dossier d'extra à conserver ?\\n\\nPermet au jeu d'écrire dedans (copie session uniquement,\\nperdue après fermeture)." --yes-label "Oui" --no-label "Non"
         if [ $? -eq 0 ]; then
             EXTRA_ENABLED=true
         fi
@@ -545,8 +545,8 @@ while [ "$EXTRA_LOOP" = true ]; do
 
             # Vérifier que c'est bien dans le dossier du jeu
             if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
-                # Chemin vers le dossier d'extra dans le cache
-                EXTRA_BASE="$HOME/.cache/wgp-extra"
+                # Chemin vers le dossier d'extra dans tmp
+                EXTRA_BASE="/tmp/wgp-extra"
                 FINAL_EXTRA_DIR="$EXTRA_BASE/$GAME_NAME/$EXTRA_REL_PATH"
 
                 # Créer les dossiers parents
@@ -590,7 +590,7 @@ while [ "$EXTRA_LOOP" = true ]; do
                 mkdir -p "$EXTRA_WGP_DIR"
                 cp -r "$EXTRA_ITEM_ABSOLUTE/."* "$EXTRA_WGP_DIR/" 2>/dev/null
 
-                # Déplacer le dossier vers UserData pour le WGP (création du symlink temporaire)
+                # Déplacer le dossier vers /tmp pour le WGP (création du symlink temporaire)
                 echo "Déplacement du dossier vers $FINAL_EXTRA_DIR..."
                 mv "$EXTRA_ITEM_ABSOLUTE" "$FINAL_EXTRA_DIR"
                 ln -s "$FINAL_EXTRA_DIR" "$EXTRA_ITEM_ABSOLUTE"
@@ -616,8 +616,8 @@ while [ "$EXTRA_LOOP" = true ]; do
 
             # Vérifier que c'est bien dans le dossier du jeu
             if [[ "$SELECTED_ITEM" == "$GAME_DIR/"* ]]; then
-                # Chemin vers le dossier d'extra dans le cache
-                EXTRA_BASE="$HOME/.cache/wgp-extra"
+                # Chemin vers le dossier d'extra dans tmp
+                EXTRA_BASE="/tmp/wgp-extra"
                 FINAL_EXTRA_FILE="$EXTRA_BASE/$GAME_NAME/$EXTRA_REL_PATH"
 
                 # Créer les dossiers parents
@@ -779,6 +779,14 @@ rm -f "$LAUNCH_FILE"
 [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save"
 [ -f "$GAME_DIR/.extrapath" ] && rm -f "$GAME_DIR/.extrapath"
 [ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra"
+
+# Nettoyer le dossier temporaire d'extra
+EXTRA_BASE="/tmp/wgp-extra"
+EXTRA_GAME_DIR="$EXTRA_BASE/$GAME_NAME"
+if [ -d "$EXTRA_GAME_DIR" ]; then
+    rm -rf "$EXTRA_GAME_DIR"
+    echo "Dossier temporaire d'extra nettoyé: $EXTRA_GAME_DIR"
+fi
 
 echo ""
 echo "=== Paquet créé avec succès ==="

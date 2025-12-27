@@ -63,6 +63,13 @@ if [[ "$fullpath" == *.wgp ]]; then
     # Fonction de nettoyage
     cleanup() {
         echo "Démontage de $WGPACK_NAME..."
+        # Nettoyer le dossier temporaire d'extra
+        EXTRA_BASE="/tmp/wgp-extra"
+        EXTRA_GAME_DIR="$EXTRA_BASE/$WGPACK_NAME"
+        if [ -d "$EXTRA_GAME_DIR" ]; then
+            rm -rf "$EXTRA_GAME_DIR"
+            echo "Dossier temporaire d'extra nettoyé: $EXTRA_GAME_DIR"
+        fi
         # D'abord tenter un démontage normal
         if ! fusermount -u "$MOUNT_DIR" 2>/dev/null; then
             # Si échec, tuer le processus squashfuse correspondant
@@ -154,7 +161,7 @@ if [[ "$fullpath" == *.wgp ]]; then
     # Gestion des fichiers et dossiers d'extra depuis le fichier .extrapath
     EXTRAPATH_FILE="$MOUNT_DIR/.extrapath"
     EXTRA_WGP_DIR="$MOUNT_DIR/.extra"
-    EXTRA_DIR="$HOME/.cache/wgp-extra/$WGPACK_NAME"
+    EXTRA_DIR="/tmp/wgp-extra/$WGPACK_NAME"
     if [ -f "$EXTRAPATH_FILE" ]; then
         # Lire ligne par ligne (par fichier/dossier)
         while IFS= read -r EXTRA_REL_PATH; do
