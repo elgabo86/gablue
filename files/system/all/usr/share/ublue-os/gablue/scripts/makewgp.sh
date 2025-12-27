@@ -712,7 +712,7 @@ if command -v kdialog &> /dev/null; then
     KDIALOG_PID=$!
 
     # Lancer mksquashfs (avec sortie pour voir la progression)
-    mksquashfs "$GAME_DIR" "$WGPACK_NAME" $COMPRESS_CMD -nopad &
+    mksquashfs "$GAME_DIR" "$WGPACK_NAME" $COMPRESS_CMD -all-root &
     MKSQUASH_PID=$!
 
     # Surveiller tant que mksquashfs tourne
