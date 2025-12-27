@@ -138,14 +138,15 @@ if [[ "$fullpath" == *.wgp ]]; then
 
                 # Vérifier si c'est un dossier ou un fichier dans .save
                 if [ -d "$SAVE_WGP_ITEM" ]; then
-                    # C'est un dossier : copier depuis .save uniquement si n'existe pas
+                    # C'est un dossier : copier depuis .save uniquement si n'existe pas dans UserData
                     if [ ! -d "$FINAL_SAVE_ITEM" ]; then
                         echo "Copie des sauvegardes: $SAVE_REL_PATH"
+                        mkdir -p "$FINAL_SAVE_ITEM"
                         cp -a "$SAVE_WGP_ITEM"/. "$FINAL_SAVE_ITEM/"
                     fi
-                elif [ -f "$SAVE_WGP_ITEM" ]; then
-                    # C'est un fichier : copier depuis .save uniquement si n'existe pas
-                    if [ ! -f "$FINAL_SAVE_ITEM" ]; then
+                elif [ -e "$SAVE_WGP_ITEM" ]; then
+                    # C'est un fichier : copier depuis .save uniquement si n'existe pas dans UserData
+                    if [ ! -e "$FINAL_SAVE_ITEM" ]; then
                         echo "Copie des sauvegardes: $SAVE_REL_PATH"
                         mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
                         cp "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
@@ -168,14 +169,14 @@ if [[ "$fullpath" == *.wgp ]]; then
 
                 # Vérifier si c'est un dossier ou un fichier dans .extra
                 if [ -d "$EXTRA_WGP_ITEM" ]; then
-                    # C'est un dossier : copier depuis .extra vers /tmp
+                    # C'est un dossier : créer le dossier et copier depuis .extra vers /tmp
+                    mkdir -p "$FINAL_EXTRA_ITEM"
                     echo "Copie des extras: $EXTRA_REL_PATH"
-                    mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
                     cp -a "$EXTRA_WGP_ITEM"/. "$FINAL_EXTRA_ITEM/"
                 elif [ -f "$EXTRA_WGP_ITEM" ]; then
-                    # C'est un fichier : copier depuis .extra vers /tmp
-                    echo "Copie des extras: $EXTRA_REL_PATH"
+                    # C'est un fichier : créer le dossier parent et copier depuis .extra vers /tmp
                     mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
+                    echo "Copie des extras: $EXTRA_REL_PATH"
                     cp "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
                 fi
             fi

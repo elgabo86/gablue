@@ -256,15 +256,11 @@ while [ "$SAVE_LOOP" = true ]; do
                 SAVE_WGP_DIR="$GAME_DIR/.save/$SAVE_REL_PATH"
                 mkdir -p "$(dirname "$SAVE_WGP_DIR")"
 
-                # Copier le dossier vers .save (pour la portabilité du WGP)
+                # Copier le dossier vers .save (pour la portabilité du WGP uniquement)
                 echo "Copie du dossier vers .save pour portabilité..."
                 cp -a "$SAVE_ITEM_ABSOLUTE"/. "$SAVE_WGP_DIR/"
 
-                # Copier vers UserData (pour le stockage local)
-                mkdir -p "$SAVES_DIR/$SAVE_REL_PATH"
-                cp -a "$SAVE_ITEM_ABSOLUTE"/. "$SAVES_DIR/$SAVE_REL_PATH/"
-
-                # Créer un symlink à l'emplacement original pointant vers UserData
+                # Créer un symlink dans le jeu pointant vers UserData
                 echo "Création du symlink vers UserData..."
                 rm -rf "$SAVE_ITEM_ABSOLUTE"
                 ln -s "$SAVES_DIR/$SAVE_REL_PATH" "$SAVE_ITEM_ABSOLUTE"
@@ -300,15 +296,11 @@ while [ "$SAVE_LOOP" = true ]; do
                 SAVE_WGP_DIR="$GAME_DIR/.save/$SAVE_REL_PATH"
                 mkdir -p "$(dirname "$SAVE_WGP_DIR")"
 
-                # Copier le fichier vers .save (pour la portabilité du WGP)
+                # Copier le fichier vers .save (pour la portabilité du WGP uniquement)
                 echo "Copie du fichier vers .save pour portabilité..."
                 cp "$SAVE_FILE_ABSOLUTE" "$SAVE_WGP_DIR"
 
-                # Copier vers UserData (pour le stockage local)
-                mkdir -p "$(dirname "$SAVES_DIR/$SAVE_REL_PATH")"
-                cp "$SAVE_FILE_ABSOLUTE" "$SAVES_DIR/$SAVE_REL_PATH"
-
-                # Créer un symlink à l'emplacement original pointant vers UserData
+                # Créer un symlink dans le jeu pointant vers UserData
                 echo "Création du symlink vers UserData..."
                 rm -f "$SAVE_FILE_ABSOLUTE"
                 ln -s "$SAVES_DIR/$SAVE_REL_PATH" "$SAVE_FILE_ABSOLUTE"
@@ -431,11 +423,11 @@ while [ "$EXTRA_LOOP" = true ]; do
                 EXTRA_WGP_DIR="$GAME_DIR/.extra/$EXTRA_REL_PATH"
                 mkdir -p "$(dirname "$EXTRA_WGP_DIR")"
 
-                # Copier le dossier vers .extra (pour la portabilité du WGP)
+                # Copier le dossier vers .extra (pour la portabilité du WGP uniquement)
                 echo "Copie du dossier vers .extra pour portabilité..."
                 cp -a "$EXTRA_ITEM_ABSOLUTE"/. "$EXTRA_WGP_DIR/"
 
-                # Créer un symlink à l'emplacement original pointant vers /tmp/wgp-extra
+                # Créer un symlink dans le jeu pointant vers /tmp/wgp-extra
                 echo "Création du symlink vers /tmp/wgp-extra..."
                 rm -rf "$EXTRA_ITEM_ABSOLUTE"
                 ln -s "$EXTRA_DIR/$EXTRA_REL_PATH" "$EXTRA_ITEM_ABSOLUTE"
@@ -470,11 +462,11 @@ while [ "$EXTRA_LOOP" = true ]; do
                 EXTRA_WGP_DIR="$GAME_DIR/.extra/$EXTRA_REL_PATH"
                 mkdir -p "$(dirname "$EXTRA_WGP_DIR")"
 
-                # Copier le fichier vers .extra (pour la portabilité du WGP)
+                # Copier le fichier vers .extra (pour la portabilité du WGP uniquement)
                 echo "Copie du fichier vers .extra pour portabilité..."
                 cp "$EXTRA_FILE_ABSOLUTE" "$EXTRA_WGP_DIR"
 
-                # Créer un symlink à l'emplacement original pointant vers /tmp/wgp-extra
+                # Créer un symlink dans le jeu pointant vers /tmp/wgp-extra
                 echo "Création du symlink vers /tmp/wgp-extra..."
                 rm -f "$EXTRA_FILE_ABSOLUTE"
                 ln -s "$EXTRA_DIR/$EXTRA_REL_PATH" "$EXTRA_FILE_ABSOLUTE"
@@ -509,25 +501,19 @@ if [ -f "$WGPACK_NAME" ]; then
 
     if [ $OVERWRITE -ne 0 ]; then
         echo "Opération annulée."
-        # Restituer les fichiers depuis UserData vers l'emplacement original
-        WINDOWS_HOME="$HOME/Windows/UserData"
-        SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-        SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-
+        # Restituer les fichiers depuis .save vers l'emplacement original
         if [ -f "$GAME_DIR/.savepath" ]; then
             while IFS= read -r SAVE_REL_PATH; do
                 [ -n "$SAVE_REL_PATH" ] || continue
                 SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
-                SAVE_EXTERNAL="$SAVES_DIR/$SAVE_REL_PATH"
-                # Supprimer le symlink, le fichier existe déjà dans UserData
+                SAVE_WGP_ITEM="$GAME_DIR/.save/$SAVE_REL_PATH"
+                # Supprimer le symlink, copier depuis .save
                 rm -rf "$SAVE_ORIGINAL" 2>/dev/null
-                if [ -d "$SAVE_EXTERNAL" ]; then
-                    cp -a "$SAVE_EXTERNAL"/. "$SAVE_ORIGINAL/" 2>/dev/null
-                elif [ -f "$SAVE_EXTERNAL" ]; then
-                    cp "$SAVE_EXTERNAL" "$SAVE_ORIGINAL" 2>/dev/null
+                if [ -d "$SAVE_WGP_ITEM" ]; then
+                    cp -a "$SAVE_WGP_ITEM"/. "$SAVE_ORIGINAL/" 2>/dev/null
+                elif [ -f "$SAVE_WGP_ITEM" ]; then
+                    cp "$SAVE_WGP_ITEM" "$SAVE_ORIGINAL" 2>/dev/null
                 fi
-                # Supprimer la copie de UserData
-                rm -rf "$SAVE_EXTERNAL" 2>/dev/null
             done < "$GAME_DIR/.savepath"
         fi
         if [ -f "$GAME_DIR/.extrapath" ]; then
@@ -579,25 +565,19 @@ if command -v kdialog &> /dev/null; then
             echo ""
             echo "Compression annulée."
 
-            # Restituer les fichiers depuis UserData/.extra avant nettoyage
-            WINDOWS_HOME="$HOME/Windows/UserData"
-            SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-            SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-
+            # Restituer les fichiers depuis .save et .extra avant nettoyage
             if [ -f "$GAME_DIR/.savepath" ]; then
                 while IFS= read -r SAVE_REL_PATH; do
                     [ -n "$SAVE_REL_PATH" ] || continue
                     SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
-                    SAVE_EXTERNAL="$SAVES_DIR/$SAVE_REL_PATH"
-                    # Supprimer le symlink et copier depuis UserData
+                    SAVE_WGP_ITEM="$GAME_DIR/.save/$SAVE_REL_PATH"
+                    # Supprimer le symlink et copier depuis .save
                     rm -rf "$SAVE_ORIGINAL" 2>/dev/null
-                    if [ -d "$SAVE_EXTERNAL" ]; then
-                        cp -a "$SAVE_EXTERNAL"/. "$SAVE_ORIGINAL/" 2>/dev/null
-                    elif [ -f "$SAVE_EXTERNAL" ]; then
-                        cp "$SAVE_EXTERNAL" "$SAVE_ORIGINAL" 2>/dev/null
+                    if [ -d "$SAVE_WGP_ITEM" ]; then
+                        cp -a "$SAVE_WGP_ITEM"/. "$SAVE_ORIGINAL/" 2>/dev/null
+                    elif [ -f "$SAVE_WGP_ITEM" ]; then
+                        cp "$SAVE_WGP_ITEM" "$SAVE_ORIGINAL" 2>/dev/null
                     fi
-                    # Supprimer la copie de UserData
-                    rm -rf "$SAVE_EXTERNAL" 2>/dev/null
                 done < "$GAME_DIR/.savepath"
             fi
             if [ -f "$GAME_DIR/.extrapath" ]; then
@@ -639,24 +619,18 @@ if command -v kdialog &> /dev/null; then
     if [ $EXIT_CODE -ne 0 ]; then
         echo "Erreur lors de la création du squashfs"
         # Restituer les fichiers avant de quitter
-        WINDOWS_HOME="$HOME/Windows/UserData"
-        SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-        SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-
         if [ -f "$GAME_DIR/.savepath" ]; then
             while IFS= read -r SAVE_REL_PATH; do
                 [ -n "$SAVE_REL_PATH" ] || continue
                 SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
-                SAVE_EXTERNAL="$SAVES_DIR/$SAVE_REL_PATH"
-                # Supprimer le symlink et copier depuis UserData
+                SAVE_WGP_ITEM="$GAME_DIR/.save/$SAVE_REL_PATH"
+                # Supprimer le symlink et copier depuis .save
                 rm -rf "$SAVE_ORIGINAL" 2>/dev/null
-                if [ -d "$SAVE_EXTERNAL" ]; then
-                    cp -a "$SAVE_EXTERNAL"/. "$SAVE_ORIGINAL/" 2>/dev/null
-                elif [ -f "$SAVE_EXTERNAL" ]; then
-                    cp "$SAVE_EXTERNAL" "$SAVE_ORIGINAL" 2>/dev/null
+                if [ -d "$SAVE_WGP_ITEM" ]; then
+                    cp -a "$SAVE_WGP_ITEM"/. "$SAVE_ORIGINAL/" 2>/dev/null
+                elif [ -f "$SAVE_WGP_ITEM" ]; then
+                    cp "$SAVE_WGP_ITEM" "$SAVE_ORIGINAL" 2>/dev/null
                 fi
-                # Supprimer la copie de UserData
-                rm -rf "$SAVE_EXTERNAL" 2>/dev/null
             done < "$GAME_DIR/.savepath"
         fi
         if [ -f "$GAME_DIR/.extrapath" ]; then
@@ -691,24 +665,18 @@ else
     if [ $? -ne 0 ]; then
         echo "Erreur lors de la création du squashfs"
         # Restituer les fichiers avant de quitter
-        WINDOWS_HOME="$HOME/Windows/UserData"
-        SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-        SAVES_DIR="$SAVES_BASE/$GAME_NAME"
-
         if [ -f "$GAME_DIR/.savepath" ]; then
             while IFS= read -r SAVE_REL_PATH; do
                 [ -n "$SAVE_REL_PATH" ] || continue
                 SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
-                SAVE_EXTERNAL="$SAVES_DIR/$SAVE_REL_PATH"
-                # Supprimer le symlink et copier depuis UserData
+                SAVE_WGP_ITEM="$GAME_DIR/.save/$SAVE_REL_PATH"
+                # Supprimer le symlink et copier depuis .save
                 rm -rf "$SAVE_ORIGINAL" 2>/dev/null
-                if [ -d "$SAVE_EXTERNAL" ]; then
-                    cp -a "$SAVE_EXTERNAL"/. "$SAVE_ORIGINAL/" 2>/dev/null
-                elif [ -f "$SAVE_EXTERNAL" ]; then
-                    cp "$SAVE_EXTERNAL" "$SAVE_ORIGINAL" 2>/dev/null
+                if [ -d "$SAVE_WGP_ITEM" ]; then
+                    cp -a "$SAVE_WGP_ITEM"/. "$SAVE_ORIGINAL/" 2>/dev/null
+                elif [ -f "$SAVE_WGP_ITEM" ]; then
+                    cp "$SAVE_WGP_ITEM" "$SAVE_ORIGINAL" 2>/dev/null
                 fi
-                # Supprimer la copie de UserData
-                rm -rf "$SAVE_EXTERNAL" 2>/dev/null
             done < "$GAME_DIR/.savepath"
         fi
         if [ -f "$GAME_DIR/.extrapath" ]; then
@@ -752,28 +720,25 @@ WINDOWS_HOME="$HOME/Windows/UserData"
 SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
 SAVES_DIR="$SAVES_BASE/$GAME_NAME"
 
-# Restitution des saves (depuis UserData)
+# Restitution des saves (depuis .save)
 if [ -f "$GAME_DIR/.savepath" ]; then
     while IFS= read -r SAVE_REL_PATH; do
         if [ -n "$SAVE_REL_PATH" ]; then
             SAVE_ORIGINAL="$GAME_DIR/$SAVE_REL_PATH"
-            SAVE_EXTERNAL="$SAVES_DIR/$SAVE_REL_PATH"
+            SAVE_WGP_ITEM="$GAME_DIR/.save/$SAVE_REL_PATH"
 
             # Supprimer le symlink
             rm -rf "$SAVE_ORIGINAL"
 
-            if [ -d "$SAVE_EXTERNAL" ]; then
-                # Dossier : copier depuis UserData
-                cp -a "$SAVE_EXTERNAL"/. "$SAVE_ORIGINAL/"
+            if [ -d "$SAVE_WGP_ITEM" ]; then
+                # Dossier : copier depuis .save
+                cp -a "$SAVE_WGP_ITEM"/. "$SAVE_ORIGINAL/"
                 echo "Save restaurée: $SAVE_REL_PATH"
-            elif [ -f "$SAVE_EXTERNAL" ]; then
-                # Fichier : copier depuis UserData
-                cp "$SAVE_EXTERNAL" "$SAVE_ORIGINAL"
+            elif [ -f "$SAVE_WGP_ITEM" ]; then
+                # Fichier : copier depuis .save
+                cp "$SAVE_WGP_ITEM" "$SAVE_ORIGINAL"
                 echo "Save restaurée: $SAVE_REL_PATH"
             fi
-
-            # Supprimer la copie de UserData (elle reste dans le WGP pour la portabilité)
-            rm -rf "$SAVE_EXTERNAL"
         fi
     done < "$GAME_DIR/.savepath"
 fi
