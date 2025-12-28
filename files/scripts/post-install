@@ -44,7 +44,6 @@ chmod +x /usr/bin/xenia-install
 chmod +x /usr/bin/shadps4-install
 chmod +x /usr/bin/ryu-install
 chmod +x /usr/bin/scrap-win
-chmod +x /usr/bin/wgp-thumbnailer
 
 # Rendre exécutables les scripts d'administration Gablue
 chmod +x /usr/libexec/gablue-update
