@@ -39,6 +39,24 @@ ask_yes_no() {
     fi
 }
 
+# Demande à l'utilisateur de choisir entre deux sources (UserData ou .save)
+ask_save_source() {
+    local item_name="$1"
+
+    if command -v kdialog &> /dev/null; then
+        kdialog --radiolist "Choix de la source de sauvegarde pour $item_name\n\n" \
+            "userdata" "Sauvegarde actuelle (UserData)" "off" \
+            "save" "Sauvegarde initiale (WGP)" "on"
+    else
+        read -p "Choix pour $item_name : [U]serData ou [S]ave/WGP ? (S): " -r
+        if [[ "$REPLY" =~ ^[uU]$ ]]; then
+            echo "userdata"
+        else
+            echo "save"
+        fi
+    fi
+}
+
 #======================================
 # Fonctions de validation et confirmation
 #======================================
@@ -154,7 +172,7 @@ extract_wgp() {
 # Fonctions de gestion des sauvegardes
 #======================================
 
-# Restaure une sauvegarde (fichier ou dossier) depuis UserData
+# Restaure une sauvegarde (fichier ou dossier) depuis UserData ou .save/
 restore_save_item() {
     local SAVE_REL_PATH="$1"
     local ITEM_NAME=$(basename "$SAVE_REL_PATH")
@@ -162,37 +180,69 @@ restore_save_item() {
     local OUTPUT_ITEM="$OUTPUT_DIR/$SAVE_REL_PATH"
     local WINDOWS_HOME="$HOME/Windows/UserData"
     local SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-    local FINAL_ITEM="$SAVES_BASE/$GAME_NAME/$SAVE_REL_PATH"
+    local USERDATA_ITEM="$SAVES_BASE/$GAME_NAME/$SAVE_REL_PATH"
+    local WGP_SAVE_ITEM="$OUTPUT_DIR/.save/$SAVE_REL_PATH"
 
-    if [ -f "$FINAL_ITEM" ]; then
-        echo ""
-        echo "Copie du fichier de sauvegardes ($ITEM_NAME) depuis $FINAL_ITEM..."
-        mkdir -p "$(dirname "$OUTPUT_ITEM")"
-        # Supprimer le symlink si présent
-        rm -f "$OUTPUT_ITEM" 2>/dev/null
-        cp "$FINAL_ITEM" "$OUTPUT_ITEM"
-        echo "Fichier de sauvegardes copié avec succès."
-    elif [ -d "$FINAL_ITEM" ]; then
-        echo ""
-        echo "Copie du dossier de sauvegardes ($ITEM_NAME) depuis $FINAL_ITEM..."
-        mkdir -p "$(dirname "$OUTPUT_ITEM")"
-        # Supprimer le symlink si présent avant la copie
-        rm -rf "$OUTPUT_ITEM" 2>/dev/null
-        cp -a "$FINAL_ITEM"/. "$OUTPUT_ITEM/"
-        echo "Dossier de sauvegardes copié avec succès."
+    # Déterminer le type (fichier ou dossier) depuis .save/
+    local item_type=""
+    if [ -f "$WGP_SAVE_ITEM" ]; then
+        item_type="file"
+    elif [ -d "$WGP_SAVE_ITEM" ]; then
+        item_type="dir"
     else
         echo ""
-        echo "Avertissement: l'élément de sauvegardes n'existe pas: $FINAL_ITEM"
+        echo "Avertissement: l'élément n'existe pas dans .save/: $SAVE_REL_PATH"
+        return
+    fi
+
+    # Déterminer la source
+    local source_item=""
+    local source_name=""
+
+    if [ ! -e "$USERDATA_ITEM" ]; then
+        # Pas dans UserData : utiliser .save/
+        source_item="$WGP_SAVE_ITEM"
+        source_name="WGP"
+    else
+        # Les deux existent : demander à l'utilisateur
+        echo ""
+        echo "Sauvegarde disponible dans les deux sources : $SAVE_REL_PATH"
+        local choice
+        choice=$(ask_save_source "$SAVE_REL_PATH")
+
+        if [ "$choice" = "userdata" ]; then
+            source_item="$USERDATA_ITEM"
+            source_name="UserData"
+        else
+            source_item="$WGP_SAVE_ITEM"
+            source_name="WGP"
+        fi
+    fi
+
+    # Copier depuis la source choisie
+    echo ""
+    echo "Copie de $ITEM_NAME depuis $source_name..."
+
+    mkdir -p "$(dirname "$OUTPUT_ITEM")"
+
+    if [ "$item_type" = "file" ]; then
+        rm -f "$OUTPUT_ITEM" 2>/dev/null
+        cp "$source_item" "$OUTPUT_ITEM"
+        echo "Fichier de sauvegardes copié avec succès."
+    else
+        rm -rf "$OUTPUT_ITEM" 2>/dev/null
+        cp -a "$source_item"/. "$OUTPUT_ITEM/"
+        echo "Dossier de sauvegardes copié avec succès."
     fi
 }
 
-# Parcourt .savepath et restaure toutes les sauvegardes depuis UserData
+# Parcourt .savepath et restaure toutes les sauvegardes
 restore_all_saves() {
     local SAVE_FILE="$OUTPUT_DIR/.savepath"
     [ -f "$SAVE_FILE" ] || return 0
 
     echo ""
-    echo "=== Restitution des sauvegardes depuis UserData ==="
+    echo "=== Restitution des sauvegardes ==="
 
     while IFS= read -r SAVE_REL_PATH; do
         [ -z "$SAVE_REL_PATH" ] || restore_save_item "$SAVE_REL_PATH"
