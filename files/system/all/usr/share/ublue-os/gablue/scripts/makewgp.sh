@@ -654,9 +654,8 @@ create_squashfs_console() {
 
 # Affiche le résumé de création du paquet
 show_summary() {
-    local EXE_REL_PATH=$(cat "$LAUNCH_FILE")
-    local BOTTLE_ARGS=""
-    [ -f "$ARGS_FILE" ] && BOTTLE_ARGS=$(cat "$ARGS_FILE")
+    local EXE_REL_PATH="$1"
+    local BOTTLE_ARGS="$2"
 
     # Calcul des tailles
     local SIZE_BEFORE=$(du -s "$GAME_DIR" | cut -f1)
@@ -749,13 +748,18 @@ main() {
     check_existing_wgp
     create_squashfs
 
+    # Restaurer le chemin de l'exécutable et les arguments avant le nettoyage
+    local EXE_REL_PATH=$(cat "$LAUNCH_FILE")
+    local BOTTLE_ARGS=""
+    [ -f "$ARGS_FILE" ] && BOTTLE_ARGS=$(cat "$ARGS_FILE")
+
     # Restauration finale des fichiers
     restore_all_saves
     restore_all_extras
     cleanup_temp_files
 
     # Affichage du résumé
-    show_summary
+    show_summary "$EXE_REL_PATH" "$BOTTLE_ARGS"
 }
 
 # Lancement du script
