@@ -516,7 +516,7 @@ if [ "$need_rebuild" = true ]; then
     cp /usr/share/ublue-os/gablue/desktops/mime/wgp-mime.xml ~/.local/share/mime/packages/
     mkdir -p ~/.local/share/thumbnailers
     cp /usr/share/ublue-os/gablue/desktops/mime/thumbnailers/wgp.thumbnailer ~/.local/share/thumbnailers
-    sed -i '/^\[PreviewSettings\]/,/^$/ { /^Plugins=/d }' ~/.config/dolphinrc
+    # sed -i '/^\[PreviewSettings\]/,/^$/ { /^Plugins=/d }' ~/.config/dolphinrc
     mkdir -p ~/.local/bin
     cp /usr/share/ublue-os/gablue/bin/wgp-thumbnailer ~/.local/bin
     chmod +x ~/.local/bin/wgp-thumbnailer
