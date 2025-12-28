@@ -14,6 +14,7 @@ WGPACK_FILE=""
 GAME_NAME=""
 OUTPUT_DIR=""
 TEMP_DIR=""
+SAVE_SOURCE=""  # "userdata", "wgp" ou vide (non défini)
 
 #======================================
 # Fonctions d'affichage et utilitaires
@@ -39,20 +40,18 @@ ask_yes_no() {
     fi
 }
 
-# Demande à l'utilisateur de choisir entre deux sources (UserData ou .save)
+# Demande à l'utilisateur de choisir entre UserData et .save (choix global)
 ask_save_source() {
-    local item_name="$1"
-
     if command -v kdialog &> /dev/null; then
-        kdialog --radiolist "Choix de la source de sauvegarde pour $item_name\n\n" \
-            "userdata" "Sauvegarde actuelle (UserData)" "off" \
-            "save" "Sauvegarde initiale (WGP)" "on"
+        kdialog --radiolist "Choix de la source de sauvegardes\n\n" \
+            "wgp" "Sauvegarde initiale (WGP)" "on" \
+            "userdata" "Sauvegarde actuelle (UserData)" "off"
     else
-        read -p "Choix pour $item_name : [U]serData ou [S]ave/WGP ? (S): " -r
+        read -p "Choix : [W]GP ou [U]serData ? (W): " -r
         if [[ "$REPLY" =~ ^[uU]$ ]]; then
             echo "userdata"
         else
-            echo "save"
+            echo "wgp"
         fi
     fi
 }
@@ -203,20 +202,14 @@ restore_save_item() {
         # Pas dans UserData : utiliser .save/
         source_item="$WGP_SAVE_ITEM"
         source_name="WGP"
+    elif [ "$SAVE_SOURCE" = "userdata" ]; then
+        # Choix utilisateur : UserData
+        source_item="$USERDATA_ITEM"
+        source_name="UserData"
     else
-        # Les deux existent : demander à l'utilisateur
-        echo ""
-        echo "Sauvegarde disponible dans les deux sources : $SAVE_REL_PATH"
-        local choice
-        choice=$(ask_save_source "$SAVE_REL_PATH")
-
-        if [ "$choice" = "userdata" ]; then
-            source_item="$USERDATA_ITEM"
-            source_name="UserData"
-        else
-            source_item="$WGP_SAVE_ITEM"
-            source_name="WGP"
-        fi
+        # Choix utilisateur : WGP (ou défaut)
+        source_item="$WGP_SAVE_ITEM"
+        source_name="WGP"
     fi
 
     # Copier depuis la source choisie
@@ -243,6 +236,33 @@ restore_all_saves() {
 
     echo ""
     echo "=== Restitution des sauvegardes ==="
+
+    # Vérifier si UserData a des sauvegardes
+    local WINDOWS_HOME="$HOME/Windows/UserData"
+    local SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
+    local USERDATA_SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+    local has_userdata_saves=false
+
+    if [ -d "$USERDATA_SAVES_DIR" ]; then
+        # Vérifier si au moins un élément correspond
+        while IFS= read -r SAVE_REL_PATH; do
+            [ -z "$SAVE_REL_PATH" ] && continue
+            if [ -e "$USERDATA_SAVES_DIR/$SAVE_REL_PATH" ]; then
+                has_userdata_saves=true
+                break
+            fi
+        done < "$SAVE_FILE"
+    fi
+
+    # Demander le choix global seulement si UserData a des saves
+    if [ "$has_userdata_saves" = true ]; then
+        echo ""
+        echo "Des sauvegardes existent dans UserData."
+        SAVE_SOURCE=$(ask_save_source)
+        echo "Source choisie : $SAVE_SOURCE"
+    else
+        SAVE_SOURCE="wgp"
+    fi
 
     while IFS= read -r SAVE_REL_PATH; do
         [ -z "$SAVE_REL_PATH" ] || restore_save_item "$SAVE_REL_PATH"
