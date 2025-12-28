@@ -2,7 +2,8 @@
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-wgp">
     <comment>Fichier Windows Game Pack</comment>
-    <icon name="application-x-executable"/>
+    <sub-class-of type="application/x-squashfs-image"/>
     <glob pattern="*.wgp"/>
+    <icon name="org.gnome.Games"/>
   </mime-type>
 </mime-info>

@@ -1,0 +1,4 @@
+[Thumbnailer Entry]
+TryExec=wgp-thumbnailer
+Exec=wgp-thumbnailer %i %o
+MimeType=application/x-wgp;
