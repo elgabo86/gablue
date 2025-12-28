@@ -600,7 +600,7 @@ create_squashfs() {
 # Crée le squashfs avec interface graphique (annulation possible)
 create_squashfs_with_dialog() {
     # Fenêtre informative
-    kdialog --msgbox "Compression en cours...\nAppuyez sur Annuler pour arrêter" --ok-label "Annuler" >/dev/null &
+    kdialog --msgbox "Compression en cours pour: $GAME_NAME" --ok-label "Annuler" >/dev/null &
     local KDIALOG_PID=$!
 
     # Lancer mksquashfs en arrière-plan
