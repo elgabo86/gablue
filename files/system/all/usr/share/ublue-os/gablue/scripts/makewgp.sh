@@ -531,21 +531,30 @@ show_summary_before_build() {
         EXTRAS_LIST="Aucun"
     fi
 
-    local MSG="=== Résumé de la création du WGP ===\n\n"
-    MSG+="Jeu: $GAME_NAME\n"
-    MSG+="Dossier: $GAME_DIR\n"
-    MSG+="Fichier de sortie: $WGPACK_NAME\n\n"
-    MSG+="Exécutable: $EXE_REL_PATH\n"
-    MSG+="Arguments: ${BOTTLE_ARGS:-Aucun}\n"
-    MSG+="Fix manette: ${FIX_ENABLED:-Non}\n"
-    MSG+="Compression: $COMP_INFO\n"
-    MSG+="Sauvegardes: $SAVES_LIST\n"
-    MSG+="Extras: $EXTRAS_LIST\n\n"
-    MSG+="Voulez-vous continuer la création ?"
+    local MSG="=== Résumé de la création du WGP ===
 
-    echo ""
-    echo "$MSG" | tr '\n' ' '
-    echo ""
+Jeu: $GAME_NAME
+Dossier: $GAME_DIR
+Fichier de sortie: $WGPACK_NAME
+
+Exécutable: $EXE_REL_PATH
+Arguments: ${BOTTLE_ARGS:-Aucun}
+Fix manette: ${FIX_ENABLED:-Non}
+Compression: $COMP_INFO
+Sauvegardes: $SAVES_LIST
+Extras: $EXTRAS_LIST
+
+Voulez-vous continuer la création ?"
+
+    if command -v kdialog &> /dev/null; then
+        # kdialog gère les sauts de ligne dans son propre message
+        :
+    else
+        # Affichage console compact
+        echo ""
+        echo "$MSG" | tr '\n' ' '
+        echo ""
+    fi
 
     if ! ask_yes_no "$MSG"; then
         echo ""
