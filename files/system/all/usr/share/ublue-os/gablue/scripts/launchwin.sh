@@ -211,6 +211,18 @@ prepare_saves() {
 
     [ -f "$SAVE_FILE" ] || return 0
 
+    # Vérifier si le dossier existe et contient du contenu
+    if [ -d "$SAVES_DIR" ]; then
+        # Dossier existe vérifier s'il a du contenu
+        if [ -n "$(find "$SAVES_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
+            # Dossier a du contenu ne rien copier
+            return 0
+        fi
+    fi
+    # Dossier n'existe pas ou est vide copier tout depuis .save
+
+    echo "Copie des sauvegardes depuis .save..."
+
     while IFS= read -r SAVE_REL_PATH; do
         [ -z "$SAVE_REL_PATH" ] && continue
 
@@ -218,19 +230,11 @@ prepare_saves() {
         local FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
 
         if [ -d "$SAVE_WGP_ITEM" ]; then
-            # Dossier: copier depuis .save uniquement si n'existe pas dans UserData
-            if [ ! -d "$FINAL_SAVE_ITEM" ]; then
-                echo "Copie des sauvegardes: $SAVE_REL_PATH"
-                mkdir -p "$FINAL_SAVE_ITEM"
-                cp -a "$SAVE_WGP_ITEM"/. "$FINAL_SAVE_ITEM/"
-            fi
+            mkdir -p "$FINAL_SAVE_ITEM"
+            cp -a "$SAVE_WGP_ITEM"/. "$FINAL_SAVE_ITEM/"
         elif [ -e "$SAVE_WGP_ITEM" ]; then
-            # Fichier: copier depuis .save uniquement si n'existe pas dans UserData
-            if [ ! -e "$FINAL_SAVE_ITEM" ]; then
-                echo "Copie des sauvegardes: $SAVE_REL_PATH"
-                mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
-                cp "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
-            fi
+            mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
+            cp "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
         fi
     done < "$SAVE_FILE"
 }
