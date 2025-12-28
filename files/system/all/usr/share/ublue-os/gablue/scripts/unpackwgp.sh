@@ -15,7 +15,6 @@ GAME_NAME=""
 GAME_INTERNAL_NAME=""  # Nom du jeu depuis .gamename (identique à celui utilisé dans makewgp)
 OUTPUT_DIR=""
 TEMP_DIR=""
-SAVE_SOURCE=""  # "userdata", "wgp" ou vide (non défini)
 
 #======================================
 # Fonctions d'affichage et utilitaires
@@ -38,22 +37,6 @@ ask_yes_no() {
     else
         read -p "$prompt (o/N): " -r
         [[ "$REPLY" =~ ^[oOyY]$ ]]
-    fi
-}
-
-# Demande à l'utilisateur de choisir entre UserData et .save (choix global)
-ask_save_source() {
-    if command -v kdialog &> /dev/null; then
-        kdialog --radiolist "Choix de la source de sauvegardes\n\n" \
-            "wgp" "Sauvegarde initiale (WGP)" "on" \
-            "userdata" "Sauvegarde actuelle (UserData)" "off"
-    else
-        read -p "Choix : [W]GP ou [U]serData ? (W): " -r
-        if [[ "$REPLY" =~ ^[uU]$ ]]; then
-            echo "userdata"
-        else
-            echo "wgp"
-        fi
     fi
 }
 
@@ -181,15 +164,12 @@ extract_wgp() {
 # Fonctions de gestion des sauvegardes
 #======================================
 
-# Restaure une sauvegarde (fichier ou dossier) depuis UserData ou .save/
+# Restaure une sauvegarde (fichier ou dossier) depuis .save/
 restore_save_item() {
     local SAVE_REL_PATH="$1"
     local ITEM_NAME=$(basename "$SAVE_REL_PATH")
 
     local OUTPUT_ITEM="$OUTPUT_DIR/$SAVE_REL_PATH"
-    local WINDOWS_HOME="$HOME/Windows/UserData"
-    local SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-    local USERDATA_ITEM="$SAVES_BASE/$GAME_INTERNAL_NAME/$SAVE_REL_PATH"
     local WGP_SAVE_ITEM="$OUTPUT_DIR/.save/$SAVE_REL_PATH"
 
     # Déterminer le type (fichier ou dossier) depuis .save/
@@ -204,71 +184,30 @@ restore_save_item() {
         return
     fi
 
-    # Déterminer la source
-    local source_item=""
-    local source_name=""
-
-    if [ ! -e "$USERDATA_ITEM" ]; then
-        # Pas dans UserData : utiliser .save/
-        source_item="$WGP_SAVE_ITEM"
-        source_name="WGP"
-    elif [ "$SAVE_SOURCE" = "userdata" ]; then
-        # Choix utilisateur : UserData
-        source_item="$USERDATA_ITEM"
-        source_name="UserData"
-    else
-        # Choix utilisateur : WGP (ou défaut)
-        source_item="$WGP_SAVE_ITEM"
-        source_name="WGP"
-    fi
-
-    # Copier depuis la source choisie
+    # Toujours utiliser .save/ du WGP
     echo ""
-    echo "Copie de $ITEM_NAME depuis $source_name..."
+    echo "Copie de $ITEM_NAME depuis WGP..."
 
     mkdir -p "$(dirname "$OUTPUT_ITEM")"
 
     if [ "$item_type" = "file" ]; then
         rm -f "$OUTPUT_ITEM" 2>/dev/null
-        cp "$source_item" "$OUTPUT_ITEM"
+        cp "$WGP_SAVE_ITEM" "$OUTPUT_ITEM"
         echo "Fichier de sauvegardes copié avec succès."
     else
         rm -rf "$OUTPUT_ITEM" 2>/dev/null
-        cp -a "$source_item"/. "$OUTPUT_ITEM/"
+        cp -a "$WGP_SAVE_ITEM"/. "$OUTPUT_ITEM/"
         echo "Dossier de sauvegardes copié avec succès."
     fi
 }
 
-# Parcourt .savepath et restaure toutes les sauvegardes
+# Parcourt .savepath et restaure toutes les sauvegardes depuis WGP
 restore_all_saves() {
     local SAVE_FILE="$OUTPUT_DIR/.savepath"
     [ -f "$SAVE_FILE" ] || return 0
 
     echo ""
     echo "=== Restitution des sauvegardes ==="
-
-    # Vérifier si UserData a des sauvegardes contient du contenu
-    local WINDOWS_HOME="$HOME/Windows/UserData"
-    local SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-    local USERDATA_SAVES_DIR="$SAVES_BASE/$GAME_INTERNAL_NAME"
-    local has_userdata_saves=false
-
-    if [ -d "$USERDATA_SAVES_DIR" ]; then
-        # Vérifier si le dossier contient du contenu (fichiers ou dossiers)
-        if [ -n "$(find "$USERDATA_SAVES_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
-            has_userdata_saves=true
-        fi
-    fi
-
-    # Demander le choix global seulement si UserData a du contenu
-    if [ "$has_userdata_saves" = true ]; then
-        echo ""
-        echo "Des sauvegardes existent dans UserData."
-        SAVE_SOURCE=$(ask_save_source)
-        echo "Source choisie : $SAVE_SOURCE"
-    else
-        SAVE_SOURCE="wgp"
-    fi
 
     while IFS= read -r SAVE_REL_PATH; do
         [ -z "$SAVE_REL_PATH" ] || restore_save_item "$SAVE_REL_PATH"
@@ -377,7 +316,7 @@ main() {
     # Extraction
     extract_wgp
 
-    # Restauration des sauvegardes depuis UserData
+    # Restauration des sauvegardes depuis WGP
     restore_all_saves
 
     # Copie des extras

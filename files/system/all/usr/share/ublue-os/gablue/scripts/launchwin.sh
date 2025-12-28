@@ -90,15 +90,29 @@ restore_padfix_setting() {
 # Initialise les variables pour le mode WGP
 init_wgp_variables() {
     WGPACK_FILE="$(realpath "$fullpath")"
-    WGPACK_NAME="$(basename "$WGPACK_FILE" .wgp)"
+    GAME_INTERNAL_NAME=""
 
-    # Nettoyer les points et espaces terminaux (Wine n'aime pas)
-    WGPACK_NAME="${WGPACK_NAME%.}"
+    # Lire le fichier .gamename depuis le wgp pour avoir le nom du jeu pour le montage
+    local GAMENAME_CONTENT
+    GAMENAME_CONTENT=$(unsquashfs -cat "$WGPACK_FILE" ".gamename" 2>/dev/null)
+    if [ -n "$GAMENAME_CONTENT" ]; then
+        GAME_INTERNAL_NAME="$GAMENAME_CONTENT"
+        # Nettoyer les points et espaces terminaux (Wine n'aime pas)
+        GAME_INTERNAL_NAME="${GAME_INTERNAL_NAME%.}"
+    fi
+
+    # Fichier .gamename absent ou vide : utiliser le nom du fichier .wgp
+    if [ -z "$GAME_INTERNAL_NAME" ]; then
+        GAME_INTERNAL_NAME="$(basename "$WGPACK_FILE" .wgp)"
+        GAME_INTERNAL_NAME="${GAME_INTERNAL_NAME%.}"
+    fi
+
+    WGPACK_NAME="$GAME_INTERNAL_NAME"
 
     MOUNT_BASE="/tmp/wgpackmount"
     MOUNT_DIR="$MOUNT_BASE/$WGPACK_NAME"
     EXTRA_BASE="/tmp/wgp-extra"
-    EXTRA_DIR="$EXTRA_BASE/$WGPACK_NAME"  # Sera mis à jour après lecture de .gamename
+    EXTRA_DIR="$EXTRA_BASE/$WGPACK_NAME"
 }
 
 # Monte le squashfs du paquet WGP
@@ -165,17 +179,6 @@ cleanup_wgp() {
 
 # Lit les fichiers de configuration du WGP
 read_wgp_config() {
-    # Fichier .gamename (nom interne du jeu pour extras et saves)
-    local GAMENAME_FILE="$MOUNT_DIR/.gamename"
-    if [ -f "$GAMENAME_FILE" ]; then
-        GAME_INTERNAL_NAME=$(cat "$GAMENAME_FILE")
-        # Mettre à jour EXTRA_DIR avec le nom interne du jeu
-        EXTRA_DIR="$EXTRA_BASE/$GAME_INTERNAL_NAME"
-    else
-        # Fallback: utiliser le nom du fichier .wgp
-        GAME_INTERNAL_NAME="$WGPACK_NAME"
-    fi
-
     # Fichier .launch
     local LAUNCH_FILE="$MOUNT_DIR/.launch"
     if [ ! -f "$LAUNCH_FILE" ]; then
@@ -186,7 +189,8 @@ read_wgp_config() {
 
     FULL_EXE_PATH="$MOUNT_DIR/$(cat "$LAUNCH_FILE")"
 
-    if [ ! -f "$FULL_EXE_PATH" ]; then
+    # Vérifier existence (fichier ou symlink)
+    if [ ! -e "$FULL_EXE_PATH" ]; then
         echo "Erreur: exécutable introuvable: $(cat "$LAUNCH_FILE")" >&2
         cleanup_wgp
         exit 1
@@ -238,13 +242,100 @@ prepare_saves() {
         local FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
 
         if [ -d "$SAVE_WGP_ITEM" ]; then
-            mkdir -p "$FINAL_SAVE_ITEM"
-            cp -a "$SAVE_WGP_ITEM"/. "$FINAL_SAVE_ITEM/"
+            # Copier récursivement en traitant tous les symlinks
+            _copy_dir_with_symlinks "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
         elif [ -e "$SAVE_WGP_ITEM" ]; then
             mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
-            cp "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
+            if [ -L "$SAVE_WGP_ITEM" ]; then
+                _copy_symlink_as_abs "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
+            else
+                cp "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
+            fi
         fi
     done < "$SAVE_FILE"
+}
+
+# Copie un symlink en absolu si target dans /tmp/wgpackmount
+_copy_symlink_as_abs() {
+    local src_symlink="$1"
+    local dst_symlink="$2"
+
+    # Lire la cible du symlink
+    local target
+    target=$(readlink "$src_symlink")
+    [ -z "$target" ] && return 1
+
+    local abs_target
+
+    # Si c'est déjà un chemin absolu, l'utiliser tel quel
+    if [[ "$target" == /* ]]; then
+        abs_target="$target"
+    else
+        # Chemin relatif : résoudre depuis le dossier du symlink source
+        abs_target=$(realpath -m "$(dirname "$src_symlink")/$target" 2>/dev/null)
+        [ -z "$abs_target" ] && return 1
+    fi
+
+    # Supprimer /.save/ du chemin s'il est présent
+    if [[ "$abs_target" == */.save/* ]]; then
+        abs_target=$(echo "$abs_target" | sed 's|/.save/|/|g')
+    fi
+
+    # Vérifier que le chemin pointe vers le mount
+    if [[ "$abs_target" == /tmp/wgpackmount/* ]]; then
+        ln -s "$abs_target" "$dst_symlink"
+    else
+        # Hors du mount : copier le contenu du symlink
+        cp -a "$src_symlink" "$dst_symlink"
+    fi
+}
+
+# Copie récursive un dossier en convertissant les symlinks relatifs
+_copy_dir_with_symlinks() {
+    local src_dir="$1"
+    local dst_dir="$2"
+
+    mkdir -p "$dst_dir"
+
+    # Étape 1: copier les fichiers normaux et dossiers (pas les symlinks)
+    for item in "$src_dir"/*; do
+        [ -e "$item" ] || [ -L "$item" ] || continue  # ignorer si le glob ne matche rien
+        local name
+        name=$(basename "$item")
+
+        if [ -L "$item" ]; then
+            # Traiter les symlinks à l'étape 2
+            continue
+        elif [ -f "$item" ]; then
+            # Fichier normal
+            cp "$item" "$dst_dir/$name"
+        elif [ -d "$item" ]; then
+            # Dossier : copier récursivement les fichiers normaux
+            cp -r --no-preserve=links "$item" "$dst_dir/$name"
+        fi
+    done
+
+    # Étape 2: traiter les symlinks à tous les niveaux de la destination
+    # D'abord les symlinks au niveau courant
+    for item in "$src_dir"/*; do
+        [ -e "$item" ] || [ -L "$item" ] || continue
+        if [ -L "$item" ]; then
+            local name
+            name=$(basename "$item")
+            _copy_symlink_as_abs "$item" "$dst_dir/$name"
+        fi
+    done
+
+    # Ensuite les symlinks dans les sous-dossiers
+    for item in "$dst_dir"/*; do
+        [ -d "$item" ] || continue  # que les dossiers
+        local name
+        name=$(basename "$item")
+        local rel_src="$src_dir/$name"
+        if [ -d "$rel_src" ]; then
+            _copy_dir_with_symlinks "$rel_src" "$item"
+        fi
+    done
 }
 
 # Prépare les fichiers d'extra depuis .extra vers /tmp
@@ -299,9 +390,10 @@ run_wgp_mode() {
     # Nettoyage en cas d'interruption
     trap cleanup_wgp EXIT
 
-    read_wgp_config
+    # IMPORTANT: prepare_saves AVANT read_wgp_config (l'exécutable peut être un symlink vers UserData)
     prepare_saves
     prepare_extras
+    read_wgp_config
     launch_wgp_game
 
     # Nettoyage automatique (le trap EXIT le fera aussi)
