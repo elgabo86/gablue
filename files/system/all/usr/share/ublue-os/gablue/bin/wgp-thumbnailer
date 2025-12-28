@@ -8,29 +8,40 @@ SIZE="$3"     # %s (128 ou 256)
 TEMP_MOUNT=$(mktemp -d)
 TEMP_ICO=$(mktemp -d)
 
-# Nettoyage COMPLET quoi qu'il arrive (y compris en cas d'erreur ou exit prématuré)
+# Nettoyage complet en toute circonstance
 trap 'fusermount -u "$TEMP_MOUNT" 2>/dev/null; rm -rf "$TEMP_MOUNT" "$TEMP_ICO"' EXIT
 
 # Montage
 squashfuse "$INPUT" "$TEMP_MOUNT" || exit 1
 
 # Lecture .launch
-[ -f "$TEMP_MOUNT/.launch" ] || exit 1
+if [ ! -f "$TEMP_MOUNT/.launch" ]; then
+    exit 1  # → fallback MIME (org.gnome.Games)
+fi
+
 EXE_IN_WGP=$(cat "$TEMP_MOUNT/.launch" | tr -d '\r' | xargs)
 ICON_EXE_PATH="$TEMP_MOUNT/$EXE_IN_WGP"
+
+# Si le fichier indiqué n'existe pas → fallback
 [ -f "$ICON_EXE_PATH" ] || exit 1
 
-# Extraction
+# NOUVEAU : si c'est un .bat (ou .cmd, .ps1, etc.), on ne touche à rien → fallback
+case "${ICON_EXE_PATH,,}" in  # ,, = tout en minuscule
+    *.bat|*.cmd|*.ps1|*.vbs)
+        exit 1  # → Dolphin affiche org.gnome.Games
+        ;;
+esac
+
+# Sinon : c'est un .exe → extraction normale
 wrestool -x -t14 "$ICON_EXE_PATH" -o "$TEMP_ICO" 2>/dev/null
 if ls "$TEMP_ICO"/*.ico >/dev/null 2>&1; then
     icotool --extract --output="$TEMP_ICO" "$TEMP_ICO"/*.ico 2>/dev/null
 fi
 
-# Meilleur PNG
 BIGGEST_PNG=$(ls -S "$TEMP_ICO"/*.png 2>/dev/null | head -n1)
 
 if [ -n "$BIGGEST_PNG" ] && file "$BIGGEST_PNG" | grep -q "PNG image"; then
     magick "$BIGGEST_PNG" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT"
 else
-    magick -size "${SIZE}x${SIZE}" xc:none "$OUTPUT"
+    exit 1  # → fallback MIME si rien d'extrait
 fi
