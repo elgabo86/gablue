@@ -1,32 +1,38 @@
 #!/bin/bash
-INPUT="$1"
-OUTPUT="$2"
+INPUT="$1"    # %i = fichier .wgp
+OUTPUT="$2"   # %o = chemin PNG de sortie
+SIZE="$3"     # %s = taille demandée (128, 256)
+
+# Par défaut 256 si pas spécifié
+[ -z "$SIZE" ] && SIZE=256
 
 TEMP_MOUNT=$(mktemp -d)
 TEMP_ICO=$(mktemp -d)
-trap 'fusermount -u "$TEMP_MOUNT" 2>/dev/null; rmdir "$TEMP_MOUNT"; rm -rf "$TEMP_ICO"' EXIT
+trap 'fusermount -u "$TEMP_MOUNT" 2>/dev/null; rmdir "$TEMP_MOUNT" "$TEMP_ICO"' EXIT
 
+# Montage SquashFS
 squashfuse "$INPUT" "$TEMP_MOUNT" || exit 1
 
+# Lecture .launch → chemin .exe
 [ -f "$TEMP_MOUNT/.launch" ] || exit 1
 EXE_IN_WGP=$(cat "$TEMP_MOUNT/.launch" | tr -d '\r' | xargs)
 ICON_EXE_PATH="$TEMP_MOUNT/$EXE_IN_WGP"
 [ -f "$ICON_EXE_PATH" ] || exit 1
 
-# Extraction des groupes ICO
+# Extraction icônes (wrestool + icotool comme ton script raccourci)
 wrestool -x -t14 "$ICON_EXE_PATH" -o "$TEMP_ICO" 2>/dev/null
-
-# Conversion de tous les .ico en PNG
 if ls "$TEMP_ICO"/*.ico >/dev/null 2>&1; then
     icotool --extract --output="$TEMP_ICO" "$TEMP_ICO"/*.ico 2>/dev/null
 fi
 
-# Trouve le plus gros PNG valide, ou fallback
+# Meilleur PNG (plus gros)
 BIGGEST_PNG=$(ls -S "$TEMP_ICO"/*.png 2>/dev/null | head -n1)
 
 if [ -n "$BIGGEST_PNG" ] && file "$BIGGEST_PNG" | grep -q "PNG image"; then
-    magick "$BIGGEST_PNG" -resize 256x256! -background none -gravity center -extent 256x256 "$OUTPUT"
+    # Resize DYNAMIQUE à la taille demandée par Dolphin (128 ou 256)
+    # Le '!' force l'étirement pour remplir (comme les .exe)
+    magick "$BIGGEST_PNG" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT"
 else
-    # Fallback (utilise une icône générique qui étire bien si besoin)
-    magick -size 256x256 xc:none "$OUTPUT"
+    # Fallback : carré transparent de la bonne taille
+    magick -size "${SIZE}x${SIZE}" xc:none "$OUTPUT"
 fi
