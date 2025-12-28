@@ -709,6 +709,21 @@ main() {
     echo "Nettoyage des dossiers temporaires..."
     rm -rf "$GAME_DIR/.save" "$GAME_DIR/.extra"
     rm -f "$GAME_DIR/.savepath" "$GAME_DIR/.extrapath"
+    rm -f "$GAME_DIR/.gamename"
+
+    # Demander le nom du jeu avec kdialog (pré-rempli avec le nom du dossier)
+    if command -v kdialog &> /dev/null; then
+        local INPUT
+        INPUT=$(kdialog --inputbox "Nom du jeu (sera utilisé pour les sauvegardes et extras)" "$GAME_NAME")
+        if [ -n "$INPUT" ]; then
+            GAME_NAME="$INPUT"
+            # Mettre à jour le nom du fichier de sortie
+            WGPACK_NAME="$(dirname "$GAME_DIR")/${GAME_NAME}.wgp"
+        fi
+    fi
+
+    # Créer le fichier .gamename pour conserver le nom du jeu
+    echo "$GAME_NAME" > "$GAME_DIR/.gamename"
 
     # Étapes de configuration
     configure_compression
@@ -716,20 +731,6 @@ main() {
     configure_arguments
     configure_fix
     configure_saves
-
-    # Demander confirmation du nom du jeu seulement si des sauvegardes ont été ajoutées
-    if [ -f "$SAVE_FILE" ]; then
-        if command -v kdialog &> /dev/null; then
-            local INPUT
-            INPUT=$(kdialog --inputbox "Nom du jeu (sera utilisé pour les sauvegardes UserData)" "$GAME_NAME")
-            if [ -n "$INPUT" ]; then
-                GAME_NAME="$INPUT"
-            fi
-        fi
-        # Créer le fichier .gamename avec le nom confirmé
-        echo "$GAME_NAME" > "$GAME_DIR/.gamename"
-    fi
-
     configure_extras
 
     # Résumé et confirmation avant création

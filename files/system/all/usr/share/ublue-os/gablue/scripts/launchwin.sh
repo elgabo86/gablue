@@ -98,7 +98,7 @@ init_wgp_variables() {
     MOUNT_BASE="/tmp/wgpackmount"
     MOUNT_DIR="$MOUNT_BASE/$WGPACK_NAME"
     EXTRA_BASE="/tmp/wgp-extra"
-    EXTRA_DIR="$EXTRA_BASE/$WGPACK_NAME"
+    EXTRA_DIR="$EXTRA_BASE/$WGPACK_NAME"  # Sera mis à jour après lecture de .gamename
 }
 
 # Monte le squashfs du paquet WGP
@@ -157,11 +157,11 @@ cleanup_wgp() {
 
 # Lit les fichiers de configuration du WGP
 read_wgp_config() {
-    # Fichier .gamename (nom interne du jeu)
+    # Fichier .gamename (nom interne du jeu pour extras et saves)
     local GAMENAME_FILE="$MOUNT_DIR/.gamename"
     if [ -f "$GAMENAME_FILE" ]; then
         GAME_INTERNAL_NAME=$(cat "$GAMENAME_FILE")
-        # Mettre à jour EXTRA_DIR avec le nom interne
+        # Mettre à jour EXTRA_DIR avec le nom interne du jeu
         EXTRA_DIR="$EXTRA_BASE/$GAME_INTERNAL_NAME"
     else
         # Fallback: utiliser le nom du fichier .wgp
