@@ -247,24 +247,20 @@ restore_all_saves() {
     echo ""
     echo "=== Restitution des sauvegardes ==="
 
-    # Vérifier si UserData a des sauvegardes
+    # Vérifier si UserData a des sauvegardes contient du contenu
     local WINDOWS_HOME="$HOME/Windows/UserData"
     local SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
     local USERDATA_SAVES_DIR="$SAVES_BASE/$GAME_INTERNAL_NAME"
     local has_userdata_saves=false
 
     if [ -d "$USERDATA_SAVES_DIR" ]; then
-        # Vérifier si au moins un élément correspond
-        while IFS= read -r SAVE_REL_PATH; do
-            [ -z "$SAVE_REL_PATH" ] && continue
-            if [ -e "$USERDATA_SAVES_DIR/$SAVE_REL_PATH" ]; then
-                has_userdata_saves=true
-                break
-            fi
-        done < "$SAVE_FILE"
+        # Vérifier si le dossier contient du contenu (fichiers ou dossiers)
+        if [ -n "$(find "$USERDATA_SAVES_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
+            has_userdata_saves=true
+        fi
     fi
 
-    # Demander le choix global seulement si UserData a des saves
+    # Demander le choix global seulement si UserData a du contenu
     if [ "$has_userdata_saves" = true ]; then
         echo ""
         echo "Des sauvegardes existent dans UserData."
