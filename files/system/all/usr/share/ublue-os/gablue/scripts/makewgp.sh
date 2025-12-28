@@ -164,7 +164,7 @@ select_executable() {
     echo "=== Sélection de l'exécutable ==="
 
     local EXE_LIST
-    EXE_LIST=$(find "$GAME_DIR" -type f \( -iname "*.exe" -o -iname "*.bat" \) 2>/dev/null)
+    EXE_LIST=$(find "$GAME_DIR" \( -type f -o -type l \) \( -iname "*.exe" -o -iname "*.bat" \) 2>/dev/null)
 
     [ -z "$EXE_LIST" ] && error_exit "Aucun fichier .exe ou .bat trouvé dans $GAME_DIR"
 
