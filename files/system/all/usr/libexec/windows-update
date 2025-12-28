@@ -445,6 +445,12 @@ EOF
     cp /usr/share/ublue-os/gablue/desktops/servicemenus/EditWGP.desktop ~/.local/share/kio/servicemenus
     mkdir -p ~/.local/share/mime/packages/
     cp /usr/share/ublue-os/gablue/desktops/mime/wgp-mime.xml ~/.local/share/mime/packages/
+    mkdir -p ~/.local/share/thumbnailers
+    cp /usr/share/ublue-os/gablue/desktops/thumbnailers/wgp.thumbnailer ~/.local/share/thumbnailers
+    # sed -i '/^\[PreviewSettings\]/,/^$/ { /^Plugins=/d }' ~/.config/dolphinrc
+    mkdir -p ~/.local/bin
+    cp /usr/share/ublue-os/gablue/bin/wgp-thumbnailer ~/.local/bin
+    chmod +x ~/.local/bin/wgp-thumbnailer
     update-mime-database ~/.local/share/mime
     update-desktop-database ~/.local/share/applications
     xdg-mime default Windows.desktop application/x-ms-dos-executable
@@ -515,7 +521,7 @@ if [ "$need_rebuild" = true ]; then
     mkdir -p ~/.local/share/mime/packages/
     cp /usr/share/ublue-os/gablue/desktops/mime/wgp-mime.xml ~/.local/share/mime/packages/
     mkdir -p ~/.local/share/thumbnailers
-    cp /usr/share/ublue-os/gablue/desktops/mime/thumbnailers/wgp.thumbnailer ~/.local/share/thumbnailers
+    cp /usr/share/ublue-os/gablue/desktops/thumbnailers/wgp.thumbnailer ~/.local/share/thumbnailers
     # sed -i '/^\[PreviewSettings\]/,/^$/ { /^Plugins=/d }' ~/.config/dolphinrc
     mkdir -p ~/.local/bin
     cp /usr/share/ublue-os/gablue/bin/wgp-thumbnailer ~/.local/bin

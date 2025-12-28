@@ -148,11 +148,19 @@ cleanup_wgp() {
         fusermount -uz "$MOUNT_DIR" 2>/dev/null
     fi
 
-    # Nettoyer le dossier s'il existe et n'est plus monté
+    # Attendre un peu que le démontage se termine complètement
+    sleep 0.5
+
+    # Vérifier et forcer le démontage si encore monté
     if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
-        umount -f "$MOUNT_DIR" 2>/dev/null
+        umount -f "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null
+        sleep 0.3
     fi
-    rmdir "$MOUNT_DIR" 2>/dev/null
+
+    # Supprimer le dossier de montage (rm -rf car rmdir échoue si non vide)
+    if [ -d "$MOUNT_DIR" ]; then
+        rm -rf "$MOUNT_DIR"
+    fi
 }
 
 # Lit les fichiers de configuration du WGP
