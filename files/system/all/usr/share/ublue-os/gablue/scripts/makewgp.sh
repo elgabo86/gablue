@@ -485,6 +485,7 @@ cleanup_temp_files() {
     [ -d "$GAME_DIR/.save" ] && rm -rf "$GAME_DIR/.save" 2>/dev/null
     [ -f "$EXTRAPATH_FILE" ] && rm -f "$EXTRAPATH_FILE" 2>/dev/null
     [ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra" 2>/dev/null
+    [ -f "$GAME_DIR/.gamename" ] && rm -f "$GAME_DIR/.gamename" 2>/dev/null
 }
 
 # Restaure les fichiers originaux et nettoie les temporaires
@@ -715,6 +716,20 @@ main() {
     configure_arguments
     configure_fix
     configure_saves
+
+    # Demander confirmation du nom du jeu seulement si des sauvegardes ont été ajoutées
+    if [ -f "$SAVE_FILE" ]; then
+        if command -v kdialog &> /dev/null; then
+            local INPUT
+            INPUT=$(kdialog --inputbox "Nom du jeu (sera utilisé pour les sauvegardes UserData)" "$GAME_NAME")
+            if [ -n "$INPUT" ]; then
+                GAME_NAME="$INPUT"
+            fi
+        fi
+        # Créer le fichier .gamename avec le nom confirmé
+        echo "$GAME_NAME" > "$GAME_DIR/.gamename"
+    fi
+
     configure_extras
 
     # Résumé et confirmation avant création

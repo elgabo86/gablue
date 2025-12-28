@@ -18,6 +18,7 @@ fullpath=""
 
 # Variables WGP
 WGPACK_NAME=""
+GAME_INTERNAL_NAME=""
 MOUNT_DIR=""
 
 #======================================
@@ -156,6 +157,17 @@ cleanup_wgp() {
 
 # Lit les fichiers de configuration du WGP
 read_wgp_config() {
+    # Fichier .gamename (nom interne du jeu)
+    local GAMENAME_FILE="$MOUNT_DIR/.gamename"
+    if [ -f "$GAMENAME_FILE" ]; then
+        GAME_INTERNAL_NAME=$(cat "$GAMENAME_FILE")
+        # Mettre à jour EXTRA_DIR avec le nom interne
+        EXTRA_DIR="$EXTRA_BASE/$GAME_INTERNAL_NAME"
+    else
+        # Fallback: utiliser le nom du fichier .wgp
+        GAME_INTERNAL_NAME="$WGPACK_NAME"
+    fi
+
     # Fichier .launch
     local LAUNCH_FILE="$MOUNT_DIR/.launch"
     if [ ! -f "$LAUNCH_FILE" ]; then
@@ -195,7 +207,7 @@ prepare_saves() {
     local SAVE_WGP_DIR="$MOUNT_DIR/.save"
     local WINDOWS_HOME="$HOME/Windows/UserData"
     local SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-    local SAVES_DIR="$SAVES_BASE/$WGPACK_NAME"
+    local SAVES_DIR="$SAVES_BASE/$GAME_INTERNAL_NAME"
 
     [ -f "$SAVE_FILE" ] || return 0
 

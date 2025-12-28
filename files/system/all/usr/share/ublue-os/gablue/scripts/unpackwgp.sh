@@ -12,6 +12,7 @@
 #======================================
 WGPACK_FILE=""
 GAME_NAME=""
+GAME_INTERNAL_NAME=""  # Nom du jeu depuis .gamename (identique à celui utilisé dans makewgp)
 OUTPUT_DIR=""
 TEMP_DIR=""
 SAVE_SOURCE=""  # "userdata", "wgp" ou vide (non défini)
@@ -165,6 +166,15 @@ extract_wgp() {
 
     # Renommer le dossier temporaire en dossier final
     mv "$TEMP_DIR" "$OUTPUT_DIR"
+
+    # Lire le fichier .gamename pour obtenir le nom interne du jeu
+    local GAMENAME_FILE="$OUTPUT_DIR/.gamename"
+    if [ -f "$GAMENAME_FILE" ]; then
+        GAME_INTERNAL_NAME=$(cat "$GAMENAME_FILE")
+    else
+        # Fallback: utiliser le nom du dossier extrait
+        GAME_INTERNAL_NAME="$GAME_NAME"
+    fi
 }
 
 #======================================
@@ -179,7 +189,7 @@ restore_save_item() {
     local OUTPUT_ITEM="$OUTPUT_DIR/$SAVE_REL_PATH"
     local WINDOWS_HOME="$HOME/Windows/UserData"
     local SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-    local USERDATA_ITEM="$SAVES_BASE/$GAME_NAME/$SAVE_REL_PATH"
+    local USERDATA_ITEM="$SAVES_BASE/$GAME_INTERNAL_NAME/$SAVE_REL_PATH"
     local WGP_SAVE_ITEM="$OUTPUT_DIR/.save/$SAVE_REL_PATH"
 
     # Déterminer le type (fichier ou dossier) depuis .save/
@@ -240,7 +250,7 @@ restore_all_saves() {
     # Vérifier si UserData a des sauvegardes
     local WINDOWS_HOME="$HOME/Windows/UserData"
     local SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-    local USERDATA_SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+    local USERDATA_SAVES_DIR="$SAVES_BASE/$GAME_INTERNAL_NAME"
     local has_userdata_saves=false
 
     if [ -d "$USERDATA_SAVES_DIR" ]; then
@@ -327,6 +337,7 @@ cleanup_wgp_files() {
     rm -f "$OUTPUT_DIR/.fix"
     rm -f "$OUTPUT_DIR/.savepath"
     rm -f "$OUTPUT_DIR/.extrapath"
+    rm -f "$OUTPUT_DIR/.gamename"
     rm -rf "$OUTPUT_DIR/.extra"
     rm -rf "$OUTPUT_DIR/.save"
 }
