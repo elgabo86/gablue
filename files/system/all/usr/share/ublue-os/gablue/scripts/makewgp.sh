@@ -495,6 +495,66 @@ full_restore() {
 }
 
 #======================================
+# Fonctions d'affichage final
+#======================================
+
+# Affiche le résumé des choix avant création avec confirmation
+show_summary_before_build() {
+    local EXE_REL_PATH=$(cat "$LAUNCH_FILE")
+    local BOTTLE_ARGS=""
+    [ -f "$ARGS_FILE" ] && BOTTLE_ARGS=$(cat "$ARGS_FILE")
+    local FIX_ENABLED=""
+    [ -f "$FIX_FILE" ] && FIX_ENABLED="Oui"
+
+    # Compression
+    local COMP_INFO="sans compression"
+    if [ -n "$COMPRESS_CMD" ]; then
+        COMP_INFO="zstd $(echo "$COMPRESS_CMD" | grep -o '[0-9]\+' | head -1)"
+    fi
+
+    # Sauvegardes
+    local SAVES_LIST=""
+    if [ -f "$SAVE_FILE" ]; then
+        local SAVE_COUNT=$(wc -l < "$SAVE_FILE")
+        SAVES_LIST="$SAVE_COUNT sauvegarde(s)"
+    else
+        SAVES_LIST="Aucune"
+    fi
+
+    # Extras
+    local EXTRAS_LIST=""
+    if [ -f "$EXTRAPATH_FILE" ]; then
+        local EXTRA_COUNT=$(wc -l < "$EXTRAPATH_FILE")
+        EXTRAS_LIST="$EXTRA_COUNT extra(s)"
+    else
+        EXTRAS_LIST="Aucun"
+    fi
+
+    local MSG="=== Résumé de la création du WGP ===\n\n"
+    MSG+="Jeu: $GAME_NAME\n"
+    MSG+="Dossier: $GAME_DIR\n"
+    MSG+="Fichier de sortie: $WGPACK_NAME\n\n"
+    MSG+="Exécutable: $EXE_REL_PATH\n"
+    MSG+="Arguments: ${BOTTLE_ARGS:-Aucun}\n"
+    MSG+="Fix manette: ${FIX_ENABLED:-Non}\n"
+    MSG+="Compression: $COMP_INFO\n"
+    MSG+="Sauvegardes: $SAVES_LIST\n"
+    MSG+="Extras: $EXTRAS_LIST\n\n"
+    MSG+="Voulez-vous continuer la création ?"
+
+    echo ""
+    echo "$MSG" | tr '\n' ' '
+    echo ""
+
+    if ! ask_yes_no "$MSG"; then
+        echo ""
+        echo "Annulation demandée."
+        full_restore
+        exit 0
+    fi
+}
+
+#======================================
 # Fonctions de création du squashfs
 #======================================
 
@@ -656,6 +716,9 @@ main() {
     configure_fix
     configure_saves
     configure_extras
+
+    # Résumé et confirmation avant création
+    show_summary_before_build
 
     # Création du paquet
     check_existing_wgp
