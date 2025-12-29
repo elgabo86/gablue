@@ -319,42 +319,23 @@ configure_custom_icon() {
     echo ""
     echo "=== Gestion de l'icône ==="
 
-    # État actuel
-    if [ -f "$TEMP_DIR/.icon.png" ]; then
-        echo "Icône custom actuelle: .icon.png"
-    else
-        echo "Icône: Par défaut (extraite depuis l'exécutable)"
-    fi
-
-    ask_yes_no "Voulez-vous changer l'icône ?\n\nVous pouvez choisir:\n- Un fichier .exe pour extraire son icône\n- Un fichier .png\n- Un fichier .ico\n- Supprimer l'icône custom" "Changer" "Garder" || return 0
-
-    echo ""
-    echo "Actions disponibles:"
-    echo "  1. Extraire depuis un .exe"
-    echo "  2. Utiliser un fichier .png"
-    echo "  3. Utiliser un fichier .ico"
-    echo "  4. Supprimer l'icône custom"
-    read -p "Entrez le numéro (default: 1): " -r
-    case "$REPLY" in
-        ""|1) ICON_ACTION="exe" ;;
-        2) ICON_ACTION="png" ;;
-        3) ICON_ACTION="ico" ;;
-        4) ICON_ACTION="remove" ;;
-        *) error_exit "Choix invalide" ;;
-    esac
-
-    case "$ICON_ACTION" in
-        "remove")
-            rm -f "$TEMP_DIR/.icon.png"
-            echo "Icône custom supprimée"
-            return 0
-            ;;
-    esac
+    # Option de conserver l'icône de l'exe de base
+    ask_yes_no "Voulez-vous conserver l'icône de l'exe de base du jeu ?\n\nSi non, vous pourrez choisir une nouvelle icône (.exe, .png, .ico)" "Oui" "Non (choisir icône custom)" && {
+        rm -f "$TEMP_DIR/.icon.png"
+        echo "Icône de l'exe conservée"
+        return 0
+    }
 
     while true; do
-        read -p "Entrez le chemin relatif (depuis le dossier extraits): " -r
-        if [ -n "$REPLY" ]; then
-            icon_file="$TEMP_DIR/$REPLY"
+        # Sélectionner un fichier d'icône
+        local icon_file=""
+        if command -v kdialog &> /dev/null; then
+            icon_file=$(kdialog --getopenfilename "$TEMP_DIR" "*.exe *.png *.ico *.PNG *.ICO | Images Windows (.exe, .png, .ico)")
+        else
+            read -p "Entrez le chemin relatif (depuis le dossier extraits): " -r
+            if [ -n "$REPLY" ]; then
+                icon_file="$TEMP_DIR/$REPLY"
+            fi
         fi
 
         [ -z "$icon_file" ] && return 0
@@ -640,7 +621,14 @@ EOF
     if ! $CHANGES_NEEDED; then
         echo ""
         echo "Ce WGP est déjà compatible."
-        if ! ask_yes_no "Voulez-vous quand même repacker le WGP ?"; then
+
+        # Message plus détaillé avec kdialog
+        local CONFIRM_MSG="Ce WGP n'a pas besoin de fix.\n\n"
+        CONFIRM_MSG+="Vous pouvez quand même le repacker pour :\n"
+        CONFIRM_MSG+="- Modifier le niveau de compression\n"
+        CONFIRM_MSG+="- Changer l'icône custom"
+
+        if ! ask_yes_no "$CONFIRM_MSG" "Repacker" "Annuler"; then
             echo "Annulation demandée."
             cleanup
             exit 0
