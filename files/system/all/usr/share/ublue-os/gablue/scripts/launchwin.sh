@@ -374,24 +374,32 @@ prepare_extras() {
     done < "$EXTRAPATH_FILE"
 }
 
-# Crée le symlink /tmp/wgp-saves vers UserData
+# Crée le symlink /tmp/wgp-saves/$GAME_INTERNAL_NAME vers UserData
+# Un symlink par jeu permet de lancer plusieurs WGP en parallèle
 setup_saves_symlink() {
-    # Créer le dossier de sauvegardes réel s'il n'existe pas
-    mkdir -p "$SAVES_REAL"
+    local GAME_SAVES_DIR="$SAVES_REAL/$GAME_INTERNAL_NAME"
+    local GAME_SAVES_SYMLINK="$SAVES_SYMLINK/$GAME_INTERNAL_NAME"
 
-    # Supprimer l'ancien symlink s'il existe
-    if [ -L "$SAVES_SYMLINK" ]; then
-        rm -f "$SAVES_SYMLINK"
+    # Créer le dossier de sauvegardes réel pour ce jeu
+    mkdir -p "$GAME_SAVES_DIR"
+
+    # Créer le dossier /tmp/wgp-saves si nécessaire
+    mkdir -p "$SAVES_SYMLINK"
+
+    # Supprimer l'ancien symlink du jeu s'il existe
+    if [ -L "$GAME_SAVES_SYMLINK" ]; then
+        rm -f "$GAME_SAVES_SYMLINK"
     fi
 
-    # Créer le symlink
-    ln -s "$SAVES_REAL" "$SAVES_SYMLINK"
-    echo "Symlink créé: $SAVES_SYMLINK -> $SAVES_REAL"
+    # Créer le symlink pour ce jeu
+    ln -s "$GAME_SAVES_DIR" "$GAME_SAVES_SYMLINK"
+    echo "Symlink créé: $GAME_SAVES_SYMLINK -> $GAME_SAVES_DIR"
 }
 
-# Supprime le symlink /tmp/wgp-saves
+# Supprime le symlink /tmp/wgp-saves/$GAME_INTERNAL_NAME
 cleanup_saves_symlink() {
-    [ -L "$SAVES_SYMLINK" ] && rm -f "$SAVES_SYMLINK"
+    local GAME_SAVES_SYMLINK="$SAVES_SYMLINK/$GAME_INTERNAL_NAME"
+    [ -L "$GAME_SAVES_SYMLINK" ] && rm -f "$GAME_SAVES_SYMLINK"
 }
 
 # Lance le jeu WGP via Bottles
