@@ -273,6 +273,7 @@ cleanup_wgp_files() {
     rm -f "$OUTPUT_DIR/.savepath"
     rm -f "$OUTPUT_DIR/.extrapath"
     rm -f "$OUTPUT_DIR/.gamename"
+    rm -f "$OUTPUT_DIR/.icon.png"
     rm -rf "$OUTPUT_DIR/.extra"
     rm -rf "$OUTPUT_DIR/.save"
 }

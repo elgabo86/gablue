@@ -16,6 +16,6 @@ Icon=com.usebottles.bottles
 Exec=/usr/share/ublue-os/gablue/scripts/unpackwgp.sh %f
 
 [Desktop Action RepackWGP]
-Name=Check si besoin de repack ?
+Name=Repack WGP (Choix du mode)
 Icon=com.usebottles.bottles
 Exec=/usr/share/ublue-os/gablue/scripts/repackwgp.sh %f
