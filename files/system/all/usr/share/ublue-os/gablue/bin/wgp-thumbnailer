@@ -22,33 +22,16 @@ fi
 EXE_IN_WGP=$(cat "$TEMP_MOUNT/.launch" | tr -d '\r' | xargs)
 ICON_EXE_PATH="$TEMP_MOUNT/$EXE_IN_WGP"
 
-# Si le fichier indiqué est un symlink (vers l'extérieur), essayer de trouver le vrai exe dans .save/
+# Si le fichier indiqué est un symlink → suivre le lien pour trouver le vrai exe
 if [ -L "$ICON_EXE_PATH" ]; then
-    # Extraire le premier segment du chemin (ex: SLW de SLW/slw.exe)
-    FIRST_SEGMENT=$(echo "$EXE_IN_WGP" | cut -d'/' -f1)
+    TARGET=$(readlink "$ICON_EXE_PATH")
 
-    # Vérifier si ce segment est dans .savepath
-    if [ -f "$TEMP_MOUNT/.savepath" ]; then
-        while IFS= read -r SAVE_PATH; do
-            [ -z "$SAVE_PATH" ] && continue
-            if [ "$SAVE_PATH" = "$FIRST_SEGMENT" ]; then
-                # Chercher le meme chemin dans .save/
-                SAVE_EXE_LINK="$TEMP_MOUNT/.save/$EXE_IN_WGP"
-                if [ -L "$SAVE_EXE_LINK" ]; then
-                    TARGET=$(readlink "$SAVE_EXE_LINK")
-                    # Résoudre le relatif: ../Data/slw.exe -> Data/slw.exe
-                    if [[ "$TARGET" == ../* ]]; then
-                        # Le premier .. supprime le FIRST_SEGMENT du chemin
-                        REMAINING_PATH="${TARGET#../}"
-                        ICON_EXE_PATH="$TEMP_MOUNT/$REMAINING_PATH"
-                    else
-                        ICON_EXE_PATH="$TEMP_MOUNT/$TARGET"
-                    fi
-                fi
-                break
-            fi
-        done < "$TEMP_MOUNT/.savepath"
-    fi
+    # La cible contient le chemin complet
+    # Ex: /tmp/wgpackmount/Shadow Warrior Classic Redux/data/swcr.exe
+    # Extraire: data/swcr.exe
+    REL_PATH="${TARGET#/tmp/wgpackmount/*/}"
+
+    ICON_EXE_PATH="$TEMP_MOUNT/$REL_PATH"
 fi
 
 # Si le fichier indiqué n'existe pas → fallback
