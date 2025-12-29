@@ -15,6 +15,12 @@
 fix_mode=false
 args=""
 fullpath=""
+# Normaliser $HOME vers /var/home (chemin réel sur Silverblue/Kinoite)
+# $HOME peut être /home/gab ou /var/home/gab selon la configuration
+HOME_REAL="$(realpath "$HOME")"
+WINDOWS_HOME="$HOME_REAL/Windows/UserData"
+SAVES_SYMLINK="/tmp/wgp-saves"
+SAVES_REAL="$WINDOWS_HOME/$USER/LocalSavesWGP"
 
 # Variables WGP
 WGPACK_NAME=""
@@ -144,6 +150,9 @@ mount_wgp() {
 cleanup_wgp() {
     echo "Démontage de $WGPACK_NAME..."
 
+    # Nettoyer le symlink /tmp/wgp-saves
+    cleanup_saves_symlink
+
     # Nettoyer le dossier temporaire d'extra
     if [ -d "$EXTRA_DIR" ]; then
         rm -rf "$EXTRA_DIR"
@@ -217,9 +226,7 @@ read_wgp_config() {
 prepare_saves() {
     local SAVE_FILE="$MOUNT_DIR/.savepath"
     local SAVE_WGP_DIR="$MOUNT_DIR/.save"
-    local WINDOWS_HOME="$HOME/Windows/UserData"
-    local SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-    local SAVES_DIR="$SAVES_BASE/$GAME_INTERNAL_NAME"
+    local SAVES_DIR="$SAVES_REAL/$GAME_INTERNAL_NAME"
 
     [ -f "$SAVE_FILE" ] || return 0
 
@@ -367,6 +374,26 @@ prepare_extras() {
     done < "$EXTRAPATH_FILE"
 }
 
+# Crée le symlink /tmp/wgp-saves vers UserData
+setup_saves_symlink() {
+    # Créer le dossier de sauvegardes réel s'il n'existe pas
+    mkdir -p "$SAVES_REAL"
+
+    # Supprimer l'ancien symlink s'il existe
+    if [ -L "$SAVES_SYMLINK" ]; then
+        rm -f "$SAVES_SYMLINK"
+    fi
+
+    # Créer le symlink
+    ln -s "$SAVES_REAL" "$SAVES_SYMLINK"
+    echo "Symlink créé: $SAVES_SYMLINK -> $SAVES_REAL"
+}
+
+# Supprime le symlink /tmp/wgp-saves
+cleanup_saves_symlink() {
+    [ -L "$SAVES_SYMLINK" ] && rm -f "$SAVES_SYMLINK"
+}
+
 # Lance le jeu WGP via Bottles
 launch_wgp_game() {
     echo "Lancement de $WGPACK_NAME..."
@@ -380,6 +407,7 @@ launch_wgp_game() {
     fi
 
     restore_padfix_setting
+    cleanup_saves_symlink
 }
 
 # Fonction principale pour le mode WGP
@@ -389,6 +417,9 @@ run_wgp_mode() {
 
     # Nettoyage en cas d'interruption
     trap cleanup_wgp EXIT
+
+    # Créer le symlink /tmp/wgp-saves AVANT prepare_saves
+    setup_saves_symlink
 
     # IMPORTANT: prepare_saves AVANT read_wgp_config (l'exécutable peut être un symlink vers UserData)
     prepare_saves

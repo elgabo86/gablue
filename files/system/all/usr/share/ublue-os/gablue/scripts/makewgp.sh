@@ -267,10 +267,8 @@ process_save_item() {
     echo ""
     echo "Élément de sauvegarde: $SAVE_REL_PATH"
 
-    # Chemins externes
-    local WINDOWS_HOME="$HOME/Windows/UserData"
-    local SAVES_BASE="$WINDOWS_HOME/$USER/LocalSavesWGP"
-    local SAVES_DIR="$SAVES_BASE/$GAME_NAME"
+    # Chemin système indépendant de l'utilisateur
+    local SAVES_DIR="/tmp/wgp-saves/$GAME_NAME"
 
     # Créer .save dans le WGP
     local SAVE_WGP_ITEM="$GAME_DIR/.save/$SAVE_REL_PATH"
@@ -284,8 +282,8 @@ process_save_item() {
         cp "$SAVE_ITEM_ABSOLUTE" "$SAVE_WGP_ITEM"
     fi
 
-    # Créer symlink vers UserData
-    echo "Création du symlink vers UserData..."
+    # Créer symlink vers /tmp/wgp-saves (chemin système)
+    echo "Création du symlink vers /tmp/wgp-saves..."
     if [ "$SAVE_TYPE" = "dir" ]; then
         rm -rf "$SAVE_ITEM_ABSOLUTE"
         ln -s "$SAVES_DIR/$SAVE_REL_PATH" "$SAVE_ITEM_ABSOLUTE"
