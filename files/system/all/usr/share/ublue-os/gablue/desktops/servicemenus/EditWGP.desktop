@@ -2,7 +2,7 @@
 Type=Service
 X-KDE-ServiceTypes=KonqPopupMenu/Plugin
 MimeType=application/x-wgp;
-Actions=LaunchExe;ExtractWGP
+Actions=LaunchExe;ExtractWGP;RepackWGP
 X-KDE-Submenu=Windows
 
 [Desktop Action LaunchExe]
@@ -14,3 +14,8 @@ Exec=/usr/share/ublue-os/gablue/scripts/launchexewgp.sh %f
 Name=Extraire le WGP dans un dossier
 Icon=com.usebottles.bottles
 Exec=/usr/share/ublue-os/gablue/scripts/unpackwgp.sh %f
+
+[Desktop Action RepackWGP]
+Name=Check si besoin de repack ?
+Icon=com.usebottles.bottles
+Exec=/usr/share/ublue-os/gablue/scripts/repackwgp.sh %f

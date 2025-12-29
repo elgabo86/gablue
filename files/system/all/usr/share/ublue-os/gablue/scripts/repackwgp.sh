@@ -20,6 +20,8 @@ OUTPUT_FILE=""
 TEMP_DIR=""
 MOUNT_DIR=""
 CHANGES_NEEDED=false
+COMPRESS_CMD=""
+COMPRESS_LEVEL_DEFAULT="15"
 
 #======================================
 # Fonctions de nettoyage
@@ -44,10 +46,43 @@ error_exit() {
     exit 1
 }
 
+#======================================
+# Fonctions d'affichage et utilitaires
+#======================================
+
+# Pose une question oui/non via kdialog ou console
 ask_yes_no() {
     local prompt="$1"
-    read -p "$prompt (o/N): " -r
-    [[ "$REPLY" =~ ^[oOyY]$ ]]
+    local yes_label="${2:-Oui}"
+    local no_label="${3:-Non}"
+
+    if command -v kdialog &> /dev/null; then
+        kdialog --yesno "$prompt" --yes-label "$yes_label" --no-label "$no_label"
+    else
+        read -p "$prompt (o/N): " -r
+        [[ "$REPLY" =~ ^[oOyY]$ ]]
+    fi
+}
+
+# Sélectionne un élément dans une liste via kdialog ou console
+select_from_list() {
+    local title="$1"
+    shift
+    local items=("$@")
+
+    if command -v kdialog &> /dev/null; then
+        kdialog --radiolist "$title" "${items[@]}"
+    else
+        local i=0
+        echo "$title:"
+        while [ $i -lt ${#items[@]} ]; do
+            echo "  $((i/3+1)). ${items[$i+1]}"
+            i=$((i + 3))
+        done
+        read -p "Entrez le numéro: " -r
+        local idx=$((REPLY - 1))
+        echo "${items[$((idx * 3))]}"
+    fi
 }
 
 #======================================
@@ -68,6 +103,112 @@ validate_arguments() {
     else
         OUTPUT_FILE="${WGPACK_FILE%.wgp}_repacked.wgp"
     fi
+}
+
+#======================================
+# Fonctions de configuration
+#======================================
+
+# Configure le niveau de compression
+configure_compression() {
+    local DEFAULT_LEVEL="$COMPRESS_LEVEL_DEFAULT"
+
+    echo ""
+    echo "=== Configuration de la compression ==="
+
+    local INPUT
+    if command -v kdialog &> /dev/null; then
+        INPUT=$(kdialog --inputbox "Niveau de compression zstd (1-19):\n1 = le plus rapide à lire\n19 = la plus petite taille\n0 = pas de compression" "$DEFAULT_LEVEL")
+    else
+        echo "Niveau de compression zstd (1-19):"
+        echo "  1 = le plus rapide à lire"
+        echo "  19 = la plus petite taille"
+        echo "  0 = pas de compression"
+        read -r
+        INPUT="${REPLY:-$DEFAULT_LEVEL}"
+    fi
+
+    case "$INPUT" in
+        "0"|"none"|"non")
+            COMPRESS_CMD=""
+            ;;
+        [1-9]|1[0-9])
+            COMPRESS_CMD="-comp zstd -Xcompression-level $INPUT"
+            ;;
+        *)
+            error_exit "Choix invalide"
+            ;;
+    esac
+}
+
+# Sélectionne le dossier temporaire d'extraction
+select_temp_dir() {
+    echo ""
+    echo "=== Sélection du dossier temporaire ==="
+
+    local CACHE_DIR="$HOME/.cache/repackwgp"
+    local WGP_DIR="$(dirname "$WGPACK_FILE")"
+
+    # Calculer la taille du WGP en Mo
+    local WGP_SIZE_KB=$(du -s "$WGPACK_FILE" | cut -f1)
+    local WGP_SIZE_MB=$((WGP_SIZE_KB / 1024))
+
+    # Calculer la RAM libre disponible en Mo
+    local MEM_AVAILABLE_KB=$(grep MemAvailable /proc/meminfo | awk '{print $2}')
+    local MEM_AVAILABLE_MB=$((MEM_AVAILABLE_KB / 1024))
+
+    # Besoin estimé : taille du WGP x 1.6 (extraction décompressée) + 60% de marge
+    local REQUIRED_MB=$((WGP_SIZE_MB * 8 / 5))
+
+    # Proposer /tmp si la RAM est suffisante
+    if [ $MEM_AVAILABLE_MB -gt $REQUIRED_MB ]; then
+        if command -v kdialog &> /dev/null; then
+            if kdialog --yesno "Utiliser /tmp (RAM) pour l'extraction?\\n\\nTaille WGP: ${WGP_SIZE_MB} Mo\\nBesoin estimé: ${REQUIRED_MB} Mo\\nRAM libre: ${MEM_AVAILABLE_MB} Mo" --yes-label "Oui" --no-label "Choisir autre"; then
+                TEMP_DIR="/tmp/${GAME_NAME}_repack_$$"
+                echo "Dossier temporaire: $TEMP_DIR"
+                return
+            fi
+        else
+            read -p "Utiliser /tmp (RAM) pour l'extraction? (WGP: ${WGP_SIZE_MB} Mo, besoin: ${REQUIRED_MB} Mo, RAM dispo: ${MEM_AVAILABLE_MB} Mo) [O/n]: " -r
+            [[ ! "$REPLY" =~ ^[nN]$ ]] && {
+                TEMP_DIR="/tmp/${GAME_NAME}_repack_$$"
+                echo "Dossier temporaire: $TEMP_DIR"
+                return
+            }
+        fi
+    fi
+
+    # Sinon, proposer les autres options
+    local TEMP_OPTION
+    if command -v kdialog &> /dev/null; then
+        TEMP_OPTION=$(select_from_list "Où extraire le WGP?" \
+            "cache" "$CACHE_DIR (conseillé)" "on" \
+            "local" "$WGP_DIR (même dossier)" "off")
+    else
+        echo "Où extraire le WGP?"
+        echo "  1. $CACHE_DIR (conseillé)"
+        echo "  2. $WGP_DIR (même dossier)"
+        read -p "Entrez le numéro (default: 1): " -r
+        case "$REPLY" in
+            ""|1) TEMP_OPTION="cache" ;;
+            2) TEMP_OPTION="local" ;;
+        esac
+    fi
+
+    case "$TEMP_OPTION" in
+        "cache")
+            mkdir -p "$CACHE_DIR"
+            TEMP_DIR="$CACHE_DIR/${GAME_NAME}_repack_$$"
+            ;;
+        "local")
+            TEMP_DIR="$WGP_DIR/${GAME_NAME}_repack_$$"
+            ;;
+        *)
+            error_exit "Choix invalide"
+            ;;
+    esac
+
+    echo "Dossier temporaire: $TEMP_DIR"
 }
 
 #======================================
@@ -151,21 +292,70 @@ check_extras() {
 # Fonctions d'extraction et correction
 #======================================
 
+# Extrait le squashfs avec interface graphique
+extract_with_dialog() {
+    # Fenêtre d'attente avec bouton Annuler
+    kdialog --msgbox "Extraction en cours...\nAppuyez sur Annuler pour arrêter" --ok-label "Annuler" >/dev/null &
+    local KDIALOG_PID=$!
+
+    # Lancer unsquashfs en arrière-plan
+    unsquashfs -f -d "$TEMP_DIR" -no-xattrs "$WGPACK_FILE" &
+    local UNSQUASH_PID=$!
+
+    # Surveiller tant que unsquashfs tourne
+    while kill -0 $UNSQUASH_PID 2>/dev/null; do
+        # Annulation si kdialog fermé
+        if ! kill -0 $KDIALOG_PID 2>/dev/null; then
+            kill -9 $UNSQUASH_PID 2>/dev/null
+            pkill -9 unsquashfs 2>/dev/null
+            rm -rf "$TEMP_DIR"
+            echo ""
+            echo "Extraction annulée"
+            exit 0
+        fi
+        sleep 0.2
+    done
+
+    # Fermer kdialog
+    kill $KDIALOG_PID 2>/dev/null
+
+    # Vérifier le code de retour
+    wait $UNSQUASH_PID
+}
+
+# Extrait le squashfs en mode console
+extract_console() {
+    echo "Extraction de $WGPACK_FILE..."
+    unsquashfs -f -d "$TEMP_DIR" -no-xattrs "$WGPACK_FILE"
+}
+
 extract_and_fix() {
     # Démonter le mount
     fusermount -u "$MOUNT_DIR" 2>/dev/null || true
     rm -rf "$MOUNT_DIR"
     MOUNT_DIR=""
 
-    # Extraire
-    TEMP_DIR="/tmp/wgp_repack_$$"
+    # Sélectionner le dossier temporaire
+    select_temp_dir
     mkdir -p "$TEMP_DIR"
 
     echo ""
     echo "=== Extraction du WGP ==="
     echo "Dossier temporaire: $TEMP_DIR"
 
-    unsquashfs -f -d "$TEMP_DIR" -no-xattrs "$WGPACK_FILE"
+    local EXIT_CODE
+    if command -v kdialog &> /dev/null; then
+        extract_with_dialog
+        EXIT_CODE=$?
+    else
+        extract_console
+        EXIT_CODE=$?
+    fi
+
+    if [ $EXIT_CODE -ne 0 ]; then
+        echo "Erreur lors de l'extraction"
+        exit 1
+    fi
 
     # Corriger les symlinks
     echo ""
@@ -195,15 +385,72 @@ extract_and_fix() {
 # Fonctions de création du squashfs
 #======================================
 
+# Crée le squashfs avec interface graphique (annulation possible)
+create_squashfs_with_dialog() {
+    # Fenêtre informative
+    kdialog --msgbox "Recompression en cours pour: $GAME_NAME" --ok-label "Annuler" >/dev/null &
+    local KDIALOG_PID=$!
+
+    # Lancer mksquashfs en arrière-plan
+    mksquashfs "$TEMP_DIR" "$OUTPUT_FILE" $COMPRESS_CMD -nopad -all-root &
+    local MKSQUASH_PID=$!
+
+    # Surveiller jusqu'à ce que mksquashfs se termine
+    while kill -0 $MKSQUASH_PID 2>/dev/null; do
+        # Annulation si kdialog fermé
+        if ! kill -0 $KDIALOG_PID 2>/dev/null; then
+            kill -9 $MKSQUASH_PID 2>/dev/null
+            pkill -9 mksquashfs 2>/dev/null
+            rm -f "$OUTPUT_FILE"
+            echo ""
+            echo "Recompression annulée"
+            exit 0
+        fi
+        sleep 0.2
+    done
+
+    # Fermer kdialog
+    kill $KDIALOG_PID 2>/dev/null
+
+    # Vérifier le code de retour
+    wait $MKSQUASH_PID
+    local EXIT_CODE=$?
+
+    if [ $EXIT_CODE -ne 0 ]; then
+        echo "Erreur lors de la création du squashfs"
+        exit 1
+    fi
+}
+
+# Crée le squashfs en mode console
+create_squashfs_console() {
+    echo "Recompression de $WGPACK_FILE en cours..."
+    mksquashfs "$TEMP_DIR" "$OUTPUT_FILE" $COMPRESS_CMD -nopad -all-root
+
+    if [ $? -ne 0 ]; then
+        echo "Erreur lors de la création du squashfs"
+        exit 1
+    fi
+}
+
 repack_wgp() {
     echo ""
     echo "=== Création du WGP repackagé ==="
 
-    mksquashfs "$TEMP_DIR" "$OUTPUT_FILE" -nopad -all-root
+    local EXIT_CODE
+    if command -v kdialog &> /dev/null; then
+        create_squashfs_with_dialog
+        EXIT_CODE=$?
+    else
+        create_squashfs_console
+        EXIT_CODE=$?
+    fi
+
+    return $EXIT_CODE
 }
 
 #======================================
-# Affichage du résumé
+# Fonctions d'affichage final
 #======================================
 
 show_summary() {
@@ -220,6 +467,29 @@ show_summary() {
     fi
 }
 
+show_success() {
+    local SIZE_BEFORE=$(du -s "$WGPACK_FILE" | cut -f1)
+    local SIZE_BEFORE_MB=$(echo "scale=1; $SIZE_BEFORE / 1024" | bc)
+    local SIZE_AFTER=$(du -s "$OUTPUT_FILE" | cut -f1)
+    local SIZE_AFTER_MB=$(echo "scale=1; $SIZE_AFTER / 1024" | bc)
+
+    echo ""
+    echo "=== Succès ==="
+    echo "WGP repackagé: $OUTPUT_FILE"
+    echo "Taille avant: ${SIZE_BEFORE_MB} Mo"
+    echo "Taille après: ${SIZE_AFTER_MB} Mo"
+
+    # Fenêtre de succès KDE
+    if command -v kdialog &> /dev/null; then
+        local MSG="WGP repackagé avec succès!\n\n"
+        MSG+="Fichier: $OUTPUT_FILE\n"
+        MSG+="Taille avant: ${SIZE_BEFORE_MB} Mo\n"
+        MSG+="Taille après: ${SIZE_AFTER_MB} Mo"
+
+        kdialog --title "Succès" --msgbox "$MSG"
+    fi
+}
+
 #======================================
 # Fonction principale
 #======================================
@@ -232,6 +502,7 @@ main() {
 EOF
 
     validate_arguments "$@"
+
     mount_wgp
     check_symlinks
     check_extras
@@ -243,23 +514,23 @@ EOF
         echo ""
         echo "=== Aucun changement nécessaire ==="
         echo "Ce WGP est déjà compatible avec la nouvelle architecture."
-        #leanup() sera appelé par trap EXIT
+
+        # Fenêtre d'information KDE
+        if command -v kdialog &> /dev/null; then
+            kdialog --title "Rien à faire" --msgbox "Ce WGP est déjà compatible avec la nouvelle architecture."
+        fi
+
+        # cleanup() sera appelé par trap EXIT
         exit 0
     fi
 
-    # Demander confirmation avant d'extraire et repackager
-    if ask_yes_no "Continuer le repackaging?"; then
-        extract_and_fix
-        repack_wgp
+    # Configuration du niveau de compression (seulement si des changements sont nécessaires)
+    configure_compression
 
-        echo ""
-        echo "=== Succès ==="
-        echo "WGP repackagé: $OUTPUT_FILE"
-    else
-        echo ""
-        echo "Annulation."
-        exit 0
-    fi
+    # Continuer le repackaging sans confirmation
+    extract_and_fix
+    repack_wgp
+    show_success
 }
 
 # Lancement du script
