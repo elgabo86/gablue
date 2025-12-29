@@ -130,20 +130,24 @@ choose_repack_mode() {
     echo ""
     echo "=== Choix du mode de repackage ==="
 
-    local msg_text="Voulez-vous :\n\n"
-    if $CHANGES_NEEDED; then
-        msg_text+="1. Corriger uniquement les symlinks de sauvegarde (mode Fix)\n"
-        msg_text+="2. Rebuilder le WGP avec modification complète (mode Complet)"
-    else
-        msg_text+="Ce WGP est déjà compatible.\n\n"
-        msg_text+="1. Faire un simple repack (même compression)\n"
-        msg_text+="2. Rebuilder le WGP avec modification complète (mode Complet)"
+    # Si aucun fix n'est nécessaire, passer directement en mode complet
+    if ! $CHANGES_NEEDED; then
+        echo "Ce WGP est déjà compatible."
+        FULL_REBUILD=true
+        CHANGES_NEEDED=true
+        configure_compression
+        echo "Mode Complet : rebuilder avec modification"
+        return
     fi
+
+    local msg_text="Voulez-vous :\n\n"
+    msg_text+="1. Corriger uniquement les symlinks de sauvegarde (mode Fix)\n"
+    msg_text+="2. Rebuilder le WGP avec modification complète (mode Complet)"
 
     local MODE_OPTION
     if command -v kdialog &> /dev/null; then
         MODE_OPTION=$(kdialog --radiolist "Mode de repackage" \
-            "fix" "Corriger/Repack simple" "on" \
+            "fix" "Corriger les symlinks (garder tout le reste)" "on" \
             "full" "Rebuilder complet (éditer tout)" "off")
     else
         echo "$msg_text" | sed 's/\\n/\n/g'
@@ -157,24 +161,12 @@ choose_repack_mode() {
 
     case "$MODE_OPTION" in
         "fix")
-            if $CHANGES_NEEDED; then
-                echo "Mode Fix : correction des symlinks uniquement"
-                FULL_REBUILD=false
-            else
-                echo ""
-                echo "Aucune correction nécessaire."
-                if ! ask_yes_no "Voulez-vous quand même repacker le WGP ?"; then
-                    echo "Annulation demandée."
-                    cleanup
-                    exit 0
-                fi
-                FULL_REBUILD=false
-            fi
+            echo "Mode Fix : correction des symlinks uniquement"
+            FULL_REBUILD=false
             ;;
         "full")
             echo "Mode Complet : rebuilder avec modification"
             FULL_REBUILD=true
-            CHANGES_NEEDED=true
             ;;
         *)
             error_exit "Choix invalide"
@@ -913,6 +905,46 @@ Voulez-vous continuer ?"
 }
 
 #======================================
+# Fonctions d'édition du nom du jeu
+#======================================
+
+# Demande et modifie le nom du jeu (comme makewgp.sh)
+configure_game_name() {
+    echo ""
+    echo "=== Édition du nom du jeu ==="
+
+    # Afficher le nom actuel
+    echo "Nom actuel: $GAME_INTERNAL_NAME"
+
+    if command -v kdialog &> /dev/null; then
+        local INPUT
+        INPUT=$(kdialog --inputbox "Nom du jeu (sera utilisé pour les sauvegardes et extras)" "$GAME_INTERNAL_NAME")
+        if [ -n "$INPUT" ] && [ "$INPUT" != "$GAME_INTERNAL_NAME" ]; then
+            echo ""
+            echo "Nom modifié: $GAME_INTERNAL_NAME → $INPUT"
+            GAME_INTERNAL_NAME="$INPUT"
+            # Mettre à jour le nom du fichier de sortie
+            local OUTPUT_DIR_NAME
+            OUTPUT_DIR_NAME=$(dirname "$OUTPUT_FILE")
+            OUTPUT_FILE="$OUTPUT_DIR_NAME/${GAME_INTERNAL_NAME}.wgp"
+            echo "Fichier de sortie modifié: $OUTPUT_FILE"
+        fi
+    else
+        read -p "Entrez le nouveau nom du jeu (Entrée pour garder '$GAME_INTERNAL_NAME'): " -r
+        if [ -n "$REPLY" ] && [ "$REPLY" != "$GAME_INTERNAL_NAME" ]; then
+            echo ""
+            echo "Nom modifié: $GAME_INTERNAL_NAME → $REPLY"
+            GAME_INTERNAL_NAME="$REPLY"
+            # Mettre à jour le nom du fichier de sortie
+            local OUTPUT_DIR_NAME
+            OUTPUT_DIR_NAME=$(dirname "$OUTPUT_FILE")
+            OUTPUT_FILE="$OUTPUT_DIR_NAME/${GAME_INTERNAL_NAME}.wgp"
+            echo "Fichier de sortie modifié: $OUTPUT_FILE"
+        fi
+    fi
+}
+
+#======================================
 # Exécution de l'édition complète
 #======================================
 
@@ -951,6 +983,10 @@ run_full_edit_mode() {
     echo "=== Configuration du WGP ==="
     echo ""
 
+    # Édition du nom du jeu
+    configure_game_name
+    echo "$GAME_INTERNAL_NAME" > "$TEMP_DIR/.gamename"
+
     # Correction des symlinks existants si nécessaire
     if [ -f "$TEMP_DIR/.savepath" ]; then
         echo "=== Correction des symlinks de sauvegarde existants ==="
@@ -983,6 +1019,9 @@ run_full_edit_mode() {
         cleanup
         exit 0
     fi
+
+    # Re-vérifier si le fichier de sortie existe (au cas où le nom a changé)
+    check_existing_output
 }
 
 #======================================
@@ -1079,6 +1118,9 @@ extract_and_fix() {
             fi
         fi
     done < "$TEMP_DIR/.savepath"
+
+    # Proposer de modifier l'icône custom
+    configure_custom_icon
 }
 
 # Vérifie si le fichier de sortie existe déjà et demande confirmation
