@@ -397,6 +397,158 @@ configure_extras() {
 }
 
 #======================================
+# Fonctions de gestion de l'icône
+#======================================
+
+# Extrait la plus grande icône PNG depuis un .exe Windows
+extract_icon_from_exe() {
+    local exe_path="$1"
+    local output_dir="$2"
+
+    # Extraire les groupes icônes depuis l'exécutable
+    wrestool -x -t14 "$exe_path" -o "$output_dir" 2>/dev/null || return 1
+
+    # Trouver les fichiers .ico extraits
+    local ico_files
+    ico_files=$(find "$output_dir" -name "*.ico" 2>/dev/null)
+    [ -z "$ico_files" ] && return 1
+
+    # Convertir les .ico en .png
+    icotool --extract --output="$output_dir" $ico_files 2>/dev/null
+
+    # Retourner le plus grand PNG
+    local biggest_png=$(find "$output_dir" -name "*.png" -exec ls -S {} + 2>/dev/null | head -n1)
+
+    if [ -n "$biggest_png" ] && file "$biggest_png" | grep -q "PNG image"; then
+        echo "$biggest_png"
+        return 0
+    fi
+    return 1
+}
+
+# Convertit un fichier d'icône (.png, .ico, etc.) vers un PNG standardisé
+process_icon_to_standard() {
+    local input_file="$1"
+    local output_file="$2"
+
+    case "${input_file,,}" in
+        *.png)
+            # Copier le PNG
+            cp "$input_file" "$output_file"
+            return 0
+            ;;
+        *.ico)
+            # Convertir .ico en PNG
+            TEMP_ICO=$(mktemp -d)
+            icotool --extract --output="$TEMP_ICO" "$input_file" 2>/dev/null
+            BIGGEST_PNG=$(find "$TEMP_ICO" -name "*.png" -exec ls -S {} + 2>/dev/null | head -n1)
+            if [ -n "$BIGGEST_PNG" ]; then
+                cp "$BIGGEST_PNG" "$output_file"
+                rm -rf "$TEMP_ICO"
+                return 0
+            fi
+            rm -rf "$TEMP_ICO"
+            return 1
+            ;;
+        *)
+            # Format non supporté
+            return 1
+            ;;
+    esac
+}
+
+# Configure une icône custom pour le WGP
+configure_custom_icon() {
+    echo ""
+    echo "=== Gestion de l'icône ==="
+
+    ask_yes_no "Voulez-vous utiliser une icône custom pour ce WGP ?\n\nPar défaut, l'icône sera extraite depuis l'exécutable principal." || return 0
+
+    while true; do
+        # Sélectionner un fichier d'icône depuis le dossier du jeu
+        local icon_file=""
+        if command -v kdialog &> /dev/null; then
+            # kdialog avec filtre pour .exe, .png, .ico
+            icon_file=$(kdialog --getopenfilename "$GAME_DIR" "*.exe *.png *.ico *.PNG *.ICO | Images Windows (.exe, .png, .ico)")
+        else
+            icon_file=$(select_file "$GAME_DIR")
+        fi
+
+        [ -z "$icon_file" ] && return 0  # Annulé
+
+        local icon_name=$(basename "$icon_file")
+        local icon_ext="${icon_name##*.}"
+
+        # Traiter selon le type de fichier
+        case "${icon_name,,}" in
+            *.exe)
+                # Extraire l'icône depuis le .exe
+                echo ""
+                echo "Extraction de l'icône depuis: $icon_name"
+
+                TEMP_ICO=$(mktemp -d)
+                local extracted_png=$(extract_icon_from_exe "$icon_file" "$TEMP_ICO")
+
+                if [ -n "$extracted_png" ]; then
+                    # Copier l'icône extraite dans le WGP
+                    cp "$extracted_png" "$GAME_DIR/.icon.png"
+                    rm -rf "$TEMP_ICO"
+                    echo "Icône extraite avec succès: .icon.png"
+                    return 0
+                else
+                    rm -rf "$TEMP_ICO"
+                    if command -v kdialog &> /dev/null; then
+                        kdialog --error "Aucune icône valide trouvée dans $icon_name"
+                    else
+                        echo "Erreur: aucune icône trouvée dans l'exécutable"
+                    fi
+                fi
+                ;;
+            *.png)
+                # Copier directement le PNG
+                if process_icon_to_standard "$icon_file" "$GAME_DIR/.icon.png"; then
+                    echo "Icône PNG copiée avec succès: .icon.png"
+                    return 0
+                else
+                    if command -v kdialog &> /dev/null; then
+                        kdialog --error "Impossible de copier l'icône PNG"
+                    else
+                        echo "Erreur: impossible de copier l'icône PNG"
+                    fi
+                fi
+                ;;
+            *.ico)
+                # Convertir .ico en PNG
+                if process_icon_to_standard "$icon_file" "$GAME_DIR/.icon.png"; then
+                    echo "Icône ICO convertie avec succès: .icon.png"
+                    return 0
+                else
+                    if command -v kdialog &> /dev/null; then
+                        kdialog --error "Impossible de convertir l'icône ICO"
+                    else
+                        echo "Erreur: impossible de convertir l'icône ICO"
+                    fi
+                fi
+                ;;
+            *)
+                # Format non supporté
+                if command -v kdialog &> /dev/null; then
+                    kdialog --error "Format non supporté: $icon_name\n\nFormats supportés: .exe, .png, .ico"
+                else
+                    echo "Erreur: format non supporté ($icon_name)"
+                fi
+                ;;
+        esac
+
+        # Demander si l'utilisateur veut en choisir une autre
+        if ! ask_yes_no "Voulez-vous choisir une autre icône ?" "Choisir une autre" "Annuler"; then
+            echo "Annulation de la sélection d'icône."
+            return 0
+        fi
+    done
+}
+
+#======================================
 # Fonctions de restauration
 #======================================
 
@@ -484,6 +636,7 @@ cleanup_temp_files() {
     [ -f "$EXTRAPATH_FILE" ] && rm -f "$EXTRAPATH_FILE" 2>/dev/null
     [ -d "$GAME_DIR/.extra" ] && rm -rf "$GAME_DIR/.extra" 2>/dev/null
     [ -f "$GAME_DIR/.gamename" ] && rm -f "$GAME_DIR/.gamename" 2>/dev/null
+    [ -f "$GAME_DIR/.icon.png" ] && rm -f "$GAME_DIR/.icon.png" 2>/dev/null
 }
 
 # Restaure les fichiers originaux et nettoie les temporaires
@@ -529,6 +682,10 @@ show_summary_before_build() {
         EXTRAS_LIST="Aucun"
     fi
 
+    # Icône
+    local ICON_INFO="Par défaut (depuis .exe)"
+    [ -f "$GAME_DIR/.icon.png" ] && ICON_INFO="Custom (.icon.png)"
+
     local MSG="=== Résumé de la création du WGP ===
 
 Jeu: $GAME_NAME
@@ -541,6 +698,7 @@ Fix manette: ${FIX_ENABLED:-Non}
 Compression: $COMP_INFO
 Sauvegardes: $SAVES_LIST
 Extras: $EXTRAS_LIST
+Icône: $ICON_INFO
 
 Voulez-vous continuer la création ?"
 
@@ -738,6 +896,7 @@ main() {
     configure_fix
     configure_saves
     configure_extras
+    configure_custom_icon
 
     # Résumé et confirmation avant création
     show_summary_before_build

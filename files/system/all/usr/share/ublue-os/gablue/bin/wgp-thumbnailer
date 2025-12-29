@@ -14,6 +14,11 @@ trap 'fusermount -u "$TEMP_MOUNT" 2>/dev/null; rm -rf "$TEMP_MOUNT" "$TEMP_ICO"'
 # Montage
 squashfuse "$INPUT" "$TEMP_MOUNT" || exit 1
 
+# L'icône custom .icon.png a priorité sur l'extraction depuis .exe
+if [ -f "$TEMP_MOUNT/.icon.png" ]; then
+    magick "$TEMP_MOUNT/.icon.png" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && exit 0
+fi
+
 # Lecture .launch
 if [ ! -f "$TEMP_MOUNT/.launch" ]; then
     exit 1  # → fallback MIME (org.gnome.Games)
@@ -26,12 +31,19 @@ ICON_EXE_PATH="$TEMP_MOUNT/$EXE_IN_WGP"
 if [ -L "$ICON_EXE_PATH" ]; then
     TARGET=$(readlink "$ICON_EXE_PATH")
 
-    # La cible contient le chemin complet
+    # Cas 1: Le symlink pointe vers /tmp/wgpackmount/ (WGP original, création)
     # Ex: /tmp/wgpackmount/Shadow Warrior Classic Redux/data/swcr.exe
     # Extraire: data/swcr.exe
-    REL_PATH="${TARGET#/tmp/wgpackmount/*/}"
-
-    ICON_EXE_PATH="$TEMP_MOUNT/$REL_PATH"
+    if [[ "$TARGET" == /tmp/wgpackmount/* ]]; then
+        REL_PATH="${TARGET#/tmp/wgpackmount/*/}"
+        ICON_EXE_PATH="$TEMP_MOUNT/$REL_PATH"
+    # Cas 2: Le symlink pointe hors du WGP (chemin absolu après repack)
+    # Ex: /home00/gab/Windows/Games/.../Game.exe
+    # -> Le fichier n'existe pas dans le WGP monté, on ne peut pas extraire l'icône
+    elif [[ "$TARGET" == /* ]]; then
+        # Chemin absolu hors du WGP → pas d'icône possible
+        exit 1
+    fi
 fi
 
 # Si le fichier indiqué n'existe pas → fallback

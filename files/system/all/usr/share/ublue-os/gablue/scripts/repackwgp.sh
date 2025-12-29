@@ -288,6 +288,74 @@ check_extras() {
     echo "Ils ne sont pas concernés par ce repackaging."
 }
 
+# Extrait l'icône depuis un .exe symlinké pour créer .icon.png dans le WGP
+extract_icon_from_symlink_exe() {
+    # Vérifier si .icon.png existe déjà
+    [ -f "$TEMP_DIR/.icon.png" ] && return 0
+
+    # Lire le fichier .launch
+    if [ ! -f "$TEMP_DIR/.launch" ]; then
+        return 0
+    fi
+
+    local EXE_PATH
+    EXE_PATH=$(cat "$TEMP_DIR/.launch" | tr -d '\r' | xargs)
+
+    # Chemin complet de l'exécutable dans le WGP extrait
+    local WGP_EXE_PATH="$TEMP_DIR/$EXE_PATH"
+
+    # Si ce n'est pas un symlink, pas besoin d'extraire l'icône ici
+    [ ! -L "$WGP_EXE_PATH" ] && return 0
+
+    echo ""
+    echo "Détection d'un symlink .exe, tentative d'extraction d'icône..."
+
+    # Suivre le symlink pour trouver le vrai .exe
+    local SYMLINK_TARGET
+    SYMLINK_TARGET=$(readlink "$WGP_EXE_PATH")
+
+    # Si le symlink pointe vers un chemin absolu (hors du WGP)
+    if [[ "$SYMLINK_TARGET" == /* ]]; then
+        if [ ! -f "$SYMLINK_TARGET" ]; then
+            echo "Le .exe cible n'existe plus: $SYMLINK_TARGET"
+            echo "Impossible d'extraire l'icône."
+            return 1
+        fi
+
+        echo "Extraction de l'icône depuis: $SYMLINK_TARGET"
+
+        # Extraire l'icône depuis l'exécutable réel
+        TEMP_ICO=$(mktemp -d)
+        wrestool -x -t14 "$SYMLINK_TARGET" -o "$TEMP_ICO" 2>/dev/null
+
+        # Trouver les fichiers .ico extraits
+        local ico_files
+        ico_files=$(find "$TEMP_ICO" -name "*.ico" 2>/dev/null)
+
+        if [ -z "$ico_files" ]; then
+            rm -rf "$TEMP_ICO"
+            echo "Aucune icône trouvée dans l'exécutable."
+            return 1
+        fi
+
+        # Convertir les .ico en .png
+        icotool --extract --output="$TEMP_ICO" $ico_files 2>/dev/null
+
+        # Trouver le plus grand PNG
+        local biggest_png
+        biggest_png=$(find "$TEMP_ICO" -name "*.png" -exec ls -S {} + 2>/dev/null | head -n1)
+
+        if [ -n "$biggest_png" ] && file "$biggest_png" 2>/dev/null | grep -q "PNG image"; then
+            cp "$biggest_png" "$TEMP_DIR/.icon.png"
+            echo "Icône extraite et sauvegardée: .icon.png"
+        else
+            echo "Impossible d'extraire une icône valide."
+        fi
+
+        rm -rf "$TEMP_ICO"
+    fi
+}
+
 #======================================
 # Fonctions d'extraction et correction
 #======================================
@@ -356,6 +424,9 @@ extract_and_fix() {
         echo "Erreur lors de l'extraction"
         exit 1
     fi
+
+    # Extraire l'icône depuis le .exe symlinké si nécessaire
+    extract_icon_from_symlink_exe
 
     # Corriger les symlinks
     echo ""
