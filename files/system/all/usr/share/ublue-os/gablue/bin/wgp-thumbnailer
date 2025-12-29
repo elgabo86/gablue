@@ -27,24 +27,9 @@ fi
 EXE_IN_WGP=$(cat "$TEMP_MOUNT/.launch" | tr -d '\r' | xargs)
 ICON_EXE_PATH="$TEMP_MOUNT/$EXE_IN_WGP"
 
-# Si le fichier indiqué est un symlink → suivre le lien pour trouver le vrai exe
+# Si le fichier indiqué est un symlink → abandonne
 if [ -L "$ICON_EXE_PATH" ]; then
-    TARGET=$(readlink "$ICON_EXE_PATH")
-
-    # Cas 1: Le symlink pointe vers /tmp/wgpackmount/ (WGP original, création)
-    # Ex: /tmp/wgpackmount/Shadow Warrior Classic Redux/data/swcr.exe
-    # Extraire: data/swcr.exe
-    if [[ "$TARGET" == /tmp/wgpackmount/* ]]; then
-        REL_PATH="${TARGET#/tmp/wgpackmount/*/}"
-        ICON_EXE_PATH="$TEMP_MOUNT/$REL_PATH"
-    # Cas 2: Le symlink pointe hors du WGP (chemin absolu après repack)
-    # Ex: /home00/gab/Windows/Games/.../Game.exe
-    # -> Le fichier n'existe pas dans le WGP monté, on ne peut pas extraire l'icône
-    elif [[ "$TARGET" == /* ]]; then
-        # Chemin absolu hors du WGP → pas d'icône possible
-        exit 1
-    fi
-fi
+    exit 1
 
 # Si le fichier indiqué n'existe pas → fallback
 [ -f "$ICON_EXE_PATH" ] || exit 1

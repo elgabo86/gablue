@@ -320,11 +320,43 @@ configure_custom_icon() {
     echo "=== Gestion de l'icône ==="
 
     # Option de conserver l'icône de l'exe de base
-    ask_yes_no "Voulez-vous conserver l'icône de l'exe de base du jeu ?\n\nSi non, vous pourrez choisir une nouvelle icône (.exe, .png, .ico)" "Oui" "Non (choisir icône custom)" && {
-        rm -f "$TEMP_DIR/.icon.png"
-        echo "Icône de l'exe conservée"
+    if ask_yes_no "Voulez-vous conserver l'icône de l'exe de base du jeu ?\n\nSi non, vous pourrez choisir une nouvelle icône (.exe, .png, .ico)" "Oui" "Non (choisir icône custom)"; then
+        # Extraire l'icône depuis l'exécutable principal
+        local LAUNCH_EXE=""
+        [ -f "$TEMP_DIR/.launch" ] && LAUNCH_EXE=$(cat "$TEMP_DIR/.launch")
+
+        if [ -n "$LAUNCH_EXE" ]; then
+            local EXE_FULL_PATH="$TEMP_DIR/$LAUNCH_EXE"
+
+            # Vérifier si l'exécutable est un symlink -> ne rien faire
+            if [ -L "$EXE_FULL_PATH" ]; then
+                echo "L'exécutable est un symlink : $LAUNCH_EXE"
+                echo "Aucune icône ne sera extraite."
+                rm -f "$TEMP_DIR/.icon.png"
+                return 0
+            fi
+
+            # Extraire l'icône depuis l'exécutable
+            if [ -f "$EXE_FULL_PATH" ]; then
+                echo ""
+                echo "Extraction de l'icône depuis l'exécutable principal : $LAUNCH_EXE"
+
+                TEMP_ICO=$(mktemp -d)
+                local extracted_png=$(extract_icon_from_exe "$EXE_FULL_PATH" "$TEMP_ICO")
+
+                if [ -n "$extracted_png" ]; then
+                    cp "$extracted_png" "$TEMP_DIR/.icon.png"
+                    rm -rf "$TEMP_ICO"
+                    echo "Icône extraite avec succès : .icon.png"
+                else
+                    rm -rf "$TEMP_ICO"
+                    echo "Avertissement : aucune icône trouvée dans l'exécutable"
+                    rm -f "$TEMP_DIR/.icon.png"
+                fi
+            fi
+        fi
         return 0
-    }
+    fi
 
     while true; do
         # Sélectionner un fichier d'icône

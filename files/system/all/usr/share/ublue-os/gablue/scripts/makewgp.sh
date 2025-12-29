@@ -462,7 +462,42 @@ configure_custom_icon() {
     echo ""
     echo "=== Gestion de l'icône ==="
 
-    ask_yes_no "Voulez-vous utiliser une icône custom pour ce WGP ?\n\nPar défaut, l'icône sera extraite depuis l'exécutable principal." || return 0
+    # Si l'utilisateur ne veut pas d'icône custom, extraire depuis l'exécutable principal
+    if ! ask_yes_no "Voulez-vous utiliser une icône custom pour ce WGP ?\n\nPar défaut, l'icône sera extraite depuis l'exécutable principal."; then
+        # Extraire l'icône depuis l'exécutable principal
+        local LAUNCH_EXE=""
+        [ -f "$LAUNCH_FILE" ] && LAUNCH_EXE=$(cat "$LAUNCH_FILE")
+
+        if [ -n "$LAUNCH_EXE" ]; then
+            local EXE_FULL_PATH="$GAME_DIR/$LAUNCH_EXE"
+
+            # Vérifier si l'exécutable est un symlink -> ne rien faire
+            if [ -L "$EXE_FULL_PATH" ]; then
+                echo "L'exécutable est un symlink : $LAUNCH_EXE"
+                echo "Aucune icône ne sera extraite."
+                return 0
+            fi
+
+            # Extraire l'icône depuis l'exécutable
+            if [ -f "$EXE_FULL_PATH" ]; then
+                echo ""
+                echo "Extraction de l'icône depuis l'exécutable principal : $LAUNCH_EXE"
+
+                TEMP_ICO=$(mktemp -d)
+                local extracted_png=$(extract_icon_from_exe "$EXE_FULL_PATH" "$TEMP_ICO")
+
+                if [ -n "$extracted_png" ]; then
+                    cp "$extracted_png" "$GAME_DIR/.icon.png"
+                    rm -rf "$TEMP_ICO"
+                    echo "Icône extraite avec succès : .icon.png"
+                else
+                    rm -rf "$TEMP_ICO"
+                    echo "Avertissement : aucune icône trouvée dans l'exécutable"
+                fi
+            fi
+        fi
+        return 0
+    fi
 
     while true; do
         # Sélectionner un fichier d'icône depuis le dossier du jeu
