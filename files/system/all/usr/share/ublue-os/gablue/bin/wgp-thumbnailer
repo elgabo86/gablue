@@ -28,8 +28,7 @@ EXE_IN_WGP=$(cat "$TEMP_MOUNT/.launch" | tr -d '\r' | xargs)
 ICON_EXE_PATH="$TEMP_MOUNT/$EXE_IN_WGP"
 
 # Si le fichier indiqué est un symlink → abandonne
-if [ -L "$ICON_EXE_PATH" ]; then
-    exit 1
+[ -L "$ICON_EXE_PATH" ] && exit 1
 
 # Si le fichier indiqué n'existe pas → fallback
 [ -f "$ICON_EXE_PATH" ] || exit 1
