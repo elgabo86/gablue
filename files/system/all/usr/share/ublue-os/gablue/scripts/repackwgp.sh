@@ -605,6 +605,26 @@ repack_wgp() {
     return $EXIT_CODE
 }
 
+# Renomme les fichiers après un repack réussi
+swap_files_on_success() {
+    # Si OUTPUT_FILE est identique à WGPACK_FILE, rien à faire
+    [ "$OUTPUT_FILE" = "$WGPACK_FILE" ] && return 0
+
+    # Renommer l'ancien fichier en .old.wgp
+    local OLD_FILE="${WGPACK_FILE%.wgp}.old.wgp"
+    echo ""
+    echo "=== Renommage des fichiers ==="
+    echo "Ancien fichier → $OLD_FILE"
+    echo "Nouveau fichier → $WGPACK_FILE"
+    mv "$WGPACK_FILE" "$OLD_FILE"
+
+    # Renommer le nouveau fichier pour remplacer l'ancien
+    mv "$OUTPUT_FILE" "$WGPACK_FILE"
+
+    # Mettre à jour OUTPUT_FILE pour show_success
+    OUTPUT_FILE="$WGPACK_FILE"
+}
+
 #======================================
 # Fonctions d'affichage final
 #======================================
@@ -677,8 +697,11 @@ EOF
     extract_and_fix
 
     # Création du WGP repackagé
-    repack_wgp
-    show_success
+    if repack_wgp; then
+        # Renommer automatiquement les fichiers
+        swap_files_on_success
+        show_success
+    fi
 }
 
 # Lancement du script
