@@ -24,7 +24,7 @@ if [ ! -f "$TEMP_MOUNT/.launch" ]; then
     exit 1  # → fallback MIME (org.gnome.Games)
 fi
 
-EXE_IN_WGP=$(cat "$TEMP_MOUNT/.launch" | tr -d '\r' | xargs)
+EXE_IN_WGP=$(cat "$TEMP_MOUNT/.launch" | tr -d '\r')
 ICON_EXE_PATH="$TEMP_MOUNT/$EXE_IN_WGP"
 
 # Si le fichier indiqué est un symlink → abandonne
