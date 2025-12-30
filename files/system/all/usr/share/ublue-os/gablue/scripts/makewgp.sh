@@ -408,20 +408,55 @@ extract_icon_from_exe() {
     # Extraire les groupes icônes depuis l'exécutable
     wrestool -x -t14 "$exe_path" -o "$output_dir" 2>/dev/null || return 1
 
-    # Trouver les fichiers .ico extraits
-    local ico_files
-    ico_files=$(find "$output_dir" -name "*.ico" 2>/dev/null)
-    [ -z "$ico_files" ] && return 1
-
-    # Convertir les .ico en .png
-    icotool --extract --output="$output_dir" $ico_files 2>/dev/null
+    # Convertir les .ico en .png (même approche que wgp-thumbnailer)
+    if ls "$output_dir"/*.ico >/dev/null 2>&1; then
+        icotool --extract --output="$output_dir" "$output_dir"/*.ico 2>/dev/null
+    fi
 
     # Retourner le plus grand PNG
-    local biggest_png=$(find "$output_dir" -name "*.png" -exec ls -S {} + 2>/dev/null | head -n1)
+    local biggest_png=$(ls -S "$output_dir"/*.png 2>/dev/null | head -n1)
 
     if [ -n "$biggest_png" ] && file "$biggest_png" | grep -q "PNG image"; then
         echo "$biggest_png"
         return 0
+    fi
+    return 1
+}
+
+# Extrait l'icône depuis l'exécutable principal du jeu et crée .icon.png
+extract_default_icon() {
+    local LAUNCH_EXE=""
+    [ -f "$LAUNCH_FILE" ] && LAUNCH_EXE=$(cat "$LAUNCH_FILE")
+
+    if [ -n "$LAUNCH_EXE" ]; then
+        local EXE_FULL_PATH="$GAME_DIR/$LAUNCH_EXE"
+
+        # Vérifier si l'exécutable est un symlink
+        if [ -L "$EXE_FULL_PATH" ]; then
+            echo "L'exécutable est un symlink : $LAUNCH_EXE"
+            echo "Aucune icône ne sera extraite."
+            return 1
+        fi
+
+        # Extraire l'icône depuis l'exécutable
+        if [ -f "$EXE_FULL_PATH" ]; then
+            echo ""
+            echo "Extraction de l'icône depuis l'exécutable principal : $LAUNCH_EXE"
+
+            TEMP_ICO=$(mktemp -d)
+            local extracted_png=$(extract_icon_from_exe "$EXE_FULL_PATH" "$TEMP_ICO")
+
+            if [ -n "$extracted_png" ]; then
+                cp "$extracted_png" "$GAME_DIR/.icon.png"
+                rm -rf "$TEMP_ICO"
+                echo "Icône extraite avec succès : .icon.png"
+                return 0
+            else
+                rm -rf "$TEMP_ICO"
+                echo "Avertissement : aucune icône trouvée dans l'exécutable"
+                return 1
+            fi
+        fi
     fi
     return 1
 }
@@ -462,125 +497,94 @@ configure_custom_icon() {
     echo ""
     echo "=== Gestion de l'icône ==="
 
-    # Si l'utilisateur ne veut pas d'icône custom, extraire depuis l'exécutable principal
-    if ! ask_yes_no "Voulez-vous utiliser une icône custom pour ce WGP ?\n\nPar défaut, l'icône sera extraite depuis l'exécutable principal."; then
-        # Extraire l'icône depuis l'exécutable principal
-        local LAUNCH_EXE=""
-        [ -f "$LAUNCH_FILE" ] && LAUNCH_EXE=$(cat "$LAUNCH_FILE")
+    # Demande: icône de l'exécutable ou custom?
+    if ! ask_yes_no "Utiliser l'icône de l'exécutable principal du jeu ?\\n\\nSi non, vous pourrez choisir une autre icône (.exe, .png, .ico)" "Oui (exe du jeu)" "Non (choisir icône custom)"; then
+        # L'utilisateur veut choisir une icône custom
+        while true; do
+            # Sélectionner un fichier d'icône depuis le dossier du jeu
+            local icon_file=""
+            if command -v kdialog &> /dev/null; then
+                icon_file=$(kdialog --getopenfilename "$GAME_DIR" "*.exe *.png *.ico *.PNG *.ICO | Images Windows (.exe, .png, .ico)")
+            else
+                icon_file=$(select_file "$GAME_DIR")
+            fi
 
-        if [ -n "$LAUNCH_EXE" ]; then
-            local EXE_FULL_PATH="$GAME_DIR/$LAUNCH_EXE"
-
-            # Vérifier si l'exécutable est un symlink -> ne rien faire
-            if [ -L "$EXE_FULL_PATH" ]; then
-                echo "L'exécutable est un symlink : $LAUNCH_EXE"
-                echo "Aucune icône ne sera extraite."
+            # Si annulation → revenir à l'icône par défaut de l'exe
+            if [ -z "$icon_file" ]; then
+                echo "Annulation → utilisation de l'icône de l'exécutable principal"
+                extract_default_icon
                 return 0
             fi
 
-            # Extraire l'icône depuis l'exécutable
-            if [ -f "$EXE_FULL_PATH" ]; then
-                echo ""
-                echo "Extraction de l'icône depuis l'exécutable principal : $LAUNCH_EXE"
+            local icon_name=$(basename "$icon_file")
 
-                TEMP_ICO=$(mktemp -d)
-                local extracted_png=$(extract_icon_from_exe "$EXE_FULL_PATH" "$TEMP_ICO")
+            # Traiter selon le type de fichier
+            case "${icon_name,,}" in
+                *.exe)
+                    echo ""
+                    echo "Extraction de l'icône depuis: $icon_name"
 
-                if [ -n "$extracted_png" ]; then
-                    cp "$extracted_png" "$GAME_DIR/.icon.png"
-                    rm -rf "$TEMP_ICO"
-                    echo "Icône extraite avec succès : .icon.png"
-                else
-                    rm -rf "$TEMP_ICO"
-                    echo "Avertissement : aucune icône trouvée dans l'exécutable"
-                fi
+                    TEMP_ICO=$(mktemp -d)
+                    local extracted_png=$(extract_icon_from_exe "$icon_file" "$TEMP_ICO")
+
+                    if [ -n "$extracted_png" ]; then
+                        cp "$extracted_png" "$GAME_DIR/.icon.png"
+                        rm -rf "$TEMP_ICO"
+                        echo "Icône extraite avec succès: .icon.png"
+                        return 0
+                    else
+                        rm -rf "$TEMP_ICO"
+                        if command -v kdialog &> /dev/null; then
+                            kdialog --error "Aucune icône valide trouvée dans $icon_name"
+                        else
+                            echo "Erreur: aucune icône trouvée dans l'exécutable"
+                        fi
+                    fi
+                    ;;
+                *.png)
+                    if process_icon_to_standard "$icon_file" "$GAME_DIR/.icon.png"; then
+                        echo "Icône PNG copiée avec succès: .icon.png"
+                        return 0
+                    else
+                        if command -v kdialog &> /dev/null; then
+                            kdialog --error "Impossible de copier l'icône PNG"
+                        else
+                            echo "Erreur: impossible de copier l'icône PNG"
+                        fi
+                    fi
+                    ;;
+                *.ico)
+                    if process_icon_to_standard "$icon_file" "$GAME_DIR/.icon.png"; then
+                        echo "Icône ICO convertie avec succès: .icon.png"
+                        return 0
+                    else
+                        if command -v kdialog &> /dev/null; then
+                            kdialog --error "Impossible de convertir l'icône ICO"
+                        else
+                            echo "Erreur: impossible de convertir l'icône ICO"
+                        fi
+                    fi
+                    ;;
+                *)
+                    if command -v kdialog &> /dev/null; then
+                        kdialog --error "Format non supporté: $icon_name\\n\\nFormats supportés: .exe, .png, .ico"
+                    else
+                        echo "Erreur: format non supporté ($icon_name)"
+                    fi
+                    ;;
+            esac
+
+            # Demander si l'utilisateur veut en choisir une autre
+            if ! ask_yes_no "Voulez-vous choisir une autre icône ?" "Choisir une autre" "Annuler (exe du jeu)"; then
+                echo "Annulation → utilisation de l'icône de l'exécutable principal"
+                extract_default_icon
+                return 0
             fi
-        fi
-        return 0
+        done
+    else
+        # Icône par défaut: extraire depuis l'exécutable principal
+        extract_default_icon
     fi
-
-    while true; do
-        # Sélectionner un fichier d'icône depuis le dossier du jeu
-        local icon_file=""
-        if command -v kdialog &> /dev/null; then
-            # kdialog avec filtre pour .exe, .png, .ico
-            icon_file=$(kdialog --getopenfilename "$GAME_DIR" "*.exe *.png *.ico *.PNG *.ICO | Images Windows (.exe, .png, .ico)")
-        else
-            icon_file=$(select_file "$GAME_DIR")
-        fi
-
-        [ -z "$icon_file" ] && return 0  # Annulé
-
-        local icon_name=$(basename "$icon_file")
-        local icon_ext="${icon_name##*.}"
-
-        # Traiter selon le type de fichier
-        case "${icon_name,,}" in
-            *.exe)
-                # Extraire l'icône depuis le .exe
-                echo ""
-                echo "Extraction de l'icône depuis: $icon_name"
-
-                TEMP_ICO=$(mktemp -d)
-                local extracted_png=$(extract_icon_from_exe "$icon_file" "$TEMP_ICO")
-
-                if [ -n "$extracted_png" ]; then
-                    # Copier l'icône extraite dans le WGP
-                    cp "$extracted_png" "$GAME_DIR/.icon.png"
-                    rm -rf "$TEMP_ICO"
-                    echo "Icône extraite avec succès: .icon.png"
-                    return 0
-                else
-                    rm -rf "$TEMP_ICO"
-                    if command -v kdialog &> /dev/null; then
-                        kdialog --error "Aucune icône valide trouvée dans $icon_name"
-                    else
-                        echo "Erreur: aucune icône trouvée dans l'exécutable"
-                    fi
-                fi
-                ;;
-            *.png)
-                # Copier directement le PNG
-                if process_icon_to_standard "$icon_file" "$GAME_DIR/.icon.png"; then
-                    echo "Icône PNG copiée avec succès: .icon.png"
-                    return 0
-                else
-                    if command -v kdialog &> /dev/null; then
-                        kdialog --error "Impossible de copier l'icône PNG"
-                    else
-                        echo "Erreur: impossible de copier l'icône PNG"
-                    fi
-                fi
-                ;;
-            *.ico)
-                # Convertir .ico en PNG
-                if process_icon_to_standard "$icon_file" "$GAME_DIR/.icon.png"; then
-                    echo "Icône ICO convertie avec succès: .icon.png"
-                    return 0
-                else
-                    if command -v kdialog &> /dev/null; then
-                        kdialog --error "Impossible de convertir l'icône ICO"
-                    else
-                        echo "Erreur: impossible de convertir l'icône ICO"
-                    fi
-                fi
-                ;;
-            *)
-                # Format non supporté
-                if command -v kdialog &> /dev/null; then
-                    kdialog --error "Format non supporté: $icon_name\n\nFormats supportés: .exe, .png, .ico"
-                else
-                    echo "Erreur: format non supporté ($icon_name)"
-                fi
-                ;;
-        esac
-
-        # Demander si l'utilisateur veut en choisir une autre
-        if ! ask_yes_no "Voulez-vous choisir une autre icône ?" "Choisir une autre" "Annuler"; then
-            echo "Annulation de la sélection d'icône."
-            return 0
-        fi
-    done
 }
 
 #======================================
