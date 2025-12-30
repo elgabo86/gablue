@@ -62,6 +62,16 @@ ask_yes_no() {
     fi
 }
 
+# Affiche une erreur via kdialog ou console
+show_error() {
+    local msg="$1"
+
+    if command -v kdialog &> /dev/null; then
+        kdialog --error "$msg"
+    fi
+    echo "Erreur: $msg" >&2
+}
+
 #======================================
 # Fonctions de validation
 #======================================
@@ -155,23 +165,42 @@ select_temp_dir() {
         fi
     fi
 
-    # Sinon, proposer les autres options (console only)
-    echo "Où extraire le WGP?"
-    echo "  1. $CACHE_DIR (conseillé)"
-    echo "  2. $WGP_DIR (même dossier)"
-    read -p "Entrez le numéro (default: 1): " -r
-    case "$REPLY" in
-        ""|1)
-            mkdir -p "$CACHE_DIR"
-            TEMP_DIR="$CACHE_DIR/${GAME_NAME}_repack_$$"
-            ;;
-        2)
-            TEMP_DIR="$WGP_DIR/${GAME_NAME}_repack_$$"
-            ;;
-        *)
-            error_exit "Choix invalide"
-            ;;
-    esac
+    # Sinon, proposer les autres options via kdialog ou console
+    if command -v kdialog &> /dev/null; then
+        local CHOICE=$(kdialog --menu "Où extraire le WGP?" \
+            "cache" "$CACHE_DIR (conseillé)" \
+            "same" "$WGP_DIR (même dossier)")
+        case "$CHOICE" in
+            "cache")
+                mkdir -p "$CACHE_DIR"
+                TEMP_DIR="$CACHE_DIR/${GAME_NAME}_repack_$$"
+                ;;
+            "same")
+                TEMP_DIR="$WGP_DIR/${GAME_NAME}_repack_$$"
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    else
+        # Mode console
+        echo "Où extraire le WGP?"
+        echo "  1. $CACHE_DIR (conseillé)"
+        echo "  2. $WGP_DIR (même dossier)"
+        read -p "Entrez le numéro (default: 1): " -r
+        case "$REPLY" in
+            ""|1)
+                mkdir -p "$CACHE_DIR"
+                TEMP_DIR="$CACHE_DIR/${GAME_NAME}_repack_$$"
+                ;;
+            2)
+                TEMP_DIR="$WGP_DIR/${GAME_NAME}_repack_$$"
+                ;;
+            *)
+                error_exit "Choix invalide"
+                ;;
+        esac
+    fi
 
     echo "Dossier temporaire: $TEMP_DIR"
 }
@@ -509,7 +538,13 @@ extract_and_fix() {
     fi
 
     if [ $EXIT_CODE -ne 0 ]; then
-        echo "Erreur lors de l'extraction"
+        local MSG="Échec de l'extraction du WGP.\n\n"
+        if [[ "$TEMP_DIR" == /tmp/* ]]; then
+            MSG+="La RAM est probablement insuffisante.\nChoisissez un autre dossier d'extraction (.cache ou même dossier)."
+        else
+            MSG+="Vérifiez l'espace disque disponible dans $TEMP_DIR."
+        fi
+        show_error "$MSG"
         exit 1
     fi
 
