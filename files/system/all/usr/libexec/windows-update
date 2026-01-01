@@ -71,6 +71,313 @@ version_newer() {
     [ "$(printf '%s\n' "$v1" "$v2" | sort -V | tail -n1)" = "$v1" ]
 }
 
+# Fonction pour récupérer et installer WINE
+download_wine() {
+    local target_dir="$1"
+    local version="$2"
+    local choice="$3"
+
+    # Si la version demandée est déjà installée, pas de téléchargement
+    if [ -d "$target_dir/$version" ]; then
+        echo "Version $choice $version (dernière) déjà installée, téléchargement ignoré."
+        return
+    fi
+
+    if [ -d "$target_dir" ] && ls "$target_dir"/* >/dev/null 2>&1; then
+        current=$(ls -d "$target_dir"/* | grep -o '[a-z-]*-[0-9.r-]*' | head -n1)
+        if [ -n "$current" ] && [ "$current" != "$version" ]; then
+            echo "Mise à jour de $choice vers $version (sauvegarde de l'ancienne version $current)..."
+            mkdir -p "$temp_dir/wine"
+            if [ -d "$target_dir/$current" ]; then
+                mv "$target_dir/$current" "$temp_dir/wine/"
+            fi
+            _install_wine "$target_dir" "$version" "$choice"
+            need_rebuild=true
+        else
+            echo "Installation de $choice $version..."
+            _install_wine "$target_dir" "$version" "$choice"
+            need_rebuild=true
+        fi
+    else
+        echo "Installation initiale de $choice $version..."
+        _install_wine "$target_dir" "$version" "$choice"
+        need_rebuild=true
+    fi
+}
+
+_install_wine() {
+    local target_dir="$1"
+    local version="$2"
+    local choice="$3"
+
+    if [ "$choice" = "gwine" ] || [ "$choice" = "gwine-proton" ] || [ "$choice" = "gwine-proton-wow64" ]; then
+        curl -L -o "$target_dir/$version.tar.xz" "https://github.com/elgabo86/gwine/releases/download/$version/$version.tar.xz"
+        tar -xf "$target_dir/$version.tar.xz" -C "$target_dir/"
+        rm -f "$target_dir/$version.tar.xz"
+    else
+        # Pour Soda, extraire dans un dossier temporaire et renommer
+        temp_extract_dir="$temp_dir/wine_extract"
+        mkdir -p "$temp_extract_dir"
+        curl -L -o "$temp_extract_dir/$soda_version.tar.xz" "$soda_url"
+        tar -xf "$temp_extract_dir/$soda_version.tar.xz" -C "$temp_extract_dir/"
+        mv "$temp_extract_dir/$soda_version-x86_64" "$target_dir/$version"
+        rm -f "$temp_extract_dir/$soda_version.tar.xz"
+        rm -rf "$temp_extract_dir"
+    fi
+}
+
+# Fonction générique pour télécharger un composant
+download_component() {
+    local name="$1"
+    local version="$2"
+    local target_dir="$3"
+    local pattern="$4"
+    local url="$5"
+    local is_nvapi="$6"
+
+    if [ -d "$target_dir/$version" ]; then
+        echo "Version exacte de $name $version déjà présente, téléchargement ignoré."
+        return
+    fi
+
+    if [ -d "$target_dir" ] && ls "$target_dir"/* >/dev/null 2>&1; then
+        current=$(ls -d "$target_dir"/* 2>/dev/null | xargs -n1 basename 2>/dev/null | grep -E "$pattern" | head -n1)
+        echo "$name détecté: '$current' (attendu: '$version')"
+        if [ -n "$current" ] && [ -d "$target_dir/$current" ] && version_newer "$version" "$current"; then
+            echo "Mise à jour de $name vers $version, sauvegarde de l'ancienne version ($current)..."
+            _install_component "$name" "$version" "$target_dir" "$url" "$is_nvapi"
+            mkdir -p "$temp_dir/${name,,}"
+            mv "$target_dir/$current" "$temp_dir/${name,,}/"
+            need_rebuild=true
+        else
+            echo "Version de $name $version déjà présente ou plus récente, téléchargement ignoré."
+        fi
+    else
+        echo "Installation initiale de $name $version..."
+        _install_component "$name" "$version" "$target_dir" "$url" "$is_nvapi"
+        need_rebuild=true
+    fi
+}
+
+_install_component() {
+    local name="$1"
+    local version="$2"
+    local target_dir="$3"
+    local url="$4"
+    local is_nvapi="$5"
+
+    if [ "$is_nvapi" = "true" ]; then
+        # Extraction de la version à partir du nom (ex: dxvk-nvapi-v0.9.0 -> v0.9.0)
+        version_tag=$(echo "$version" | sed 's/dxvk-nvapi-//')
+        curl -L -o "$target_dir/$version.tar.gz" "$url"
+        # Extraire dans un répertoire temporaire pour vérifier la structure de l'archive
+        temp_extract_dir="$temp_dir/${name,,}_extract"
+        mkdir -p "$temp_extract_dir"
+        tar -xf "$target_dir/$version.tar.gz" -C "$temp_extract_dir/"
+        # Vérifier si l'archive contient déjà un sous-dossier avec le nom de la version
+        if [ -d "$temp_extract_dir/$version" ]; then
+            mv "$temp_extract_dir/$version" "$target_dir/"
+        else
+            mkdir -p "$target_dir/$version"
+            mv "$temp_extract_dir"/* "$target_dir/$version/"
+        fi
+        rm -f "$target_dir/$version.tar.gz"
+        rm -rf "$temp_extract_dir"
+    else
+        curl -L -o "$target_dir/$version.tar.gz" "$url"
+        tar -xf "$target_dir/$version.tar.gz" -C "$target_dir/"
+        rm -f "$target_dir/$version.tar.gz"
+    fi
+}
+
+# Fonction pour récupérer les programmes externes depuis bottle.yml
+restore_external_programs() {
+    local source_yml="$1"
+    local target_yml="$2"
+
+    if [ -f "$source_yml" ] && [ -f "$target_yml" ]; then
+        /usr/bin/python3 - <<EOF
+import yaml
+import os
+
+source_file = os.path.expanduser('$source_yml')
+target_file = os.path.expanduser('$target_yml')
+
+with open(source_file, 'r') as file:
+    source_data = yaml.safe_load(file)
+external_programs = source_data.get('External_Programs', {})
+
+with open(target_file, 'r') as file:
+    target_data = yaml.safe_load(file)
+target_data['External_Programs'] = external_programs
+
+with open(target_file, 'w') as file:
+    yaml.safe_dump(target_data, file, default_flow_style=False, allow_unicode=True)
+EOF
+    fi
+}
+
+# Fonction pour restaurer les données de l'ancienne configuration
+restore_config_data() {
+    qdbus $dbusRef Set "" "value" 70
+    qdbus $dbusRef setLabelText "Récupération des données de l'ancienne configuration..."
+    _restore_config_dirs
+    qdbus $dbusRef setLabelText "Récupération des programmes externes..."
+    restore_external_programs \
+        ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml \
+        ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml
+}
+
+# Fonction interne pour restaurer les répertoires sans modifier la progression
+_restore_config_dirs() {
+    for dir in cache grids icons; do
+        if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ]; then
+            rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/$dir
+            mv ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
+        fi
+    done
+}
+
+# Fonction pour restaurer les données dans le rebuild (sans modifier la progression)
+restore_config_data_in_rebuild() {
+    _restore_config_dirs
+    restore_external_programs \
+        ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml \
+        ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml
+}
+
+# Fonction pour configurer Bottles (création, liens symboliques)
+configure_bottles() {
+    qdbus $dbusRef Set "" "value" 60
+    qdbus $dbusRef setLabelText "Configuration de Bottles..."
+    flatpak run --command=bottles-cli com.usebottles.bottles new --bottle-name "def" --runner "$wineversion" --environment gaming
+    flatpak override com.usebottles.bottles --user --filesystem=~/Windows
+    flatpak override com.usebottles.bottles --user --filesystem=/tmp
+    mkdir -p ~/Windows/UserData ~/Windows/SteamData ~/Windows/Games ~/Windows/Applications ~/Windows/Tools ~/.local/share/applications
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users
+    ln -s ~/Windows/UserData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users
+
+    mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/
+
+    ln -s ~/Windows/SteamData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/Steam
+
+    ln -s ~/Windows/SteamData/Orbit ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/Orbit
+    mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/Orbit
+
+    ln -s ~/Windows/Applications/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c
+    ln -s ~/Windows/Games/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c
+    ln -f -s -T ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ ~/Windows/WinDrive
+}
+
+# Fonction pour ajouter les clés de registre
+add_registry_keys() {
+    qdbus $dbusRef Set "" "value" 70
+    qdbus $dbusRef setLabelText "Ajout des clés de registre..."
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "Enable SDL" -d 1 -t "REG_DWORD"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD"
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_CURRENT_USER\Software\Wine\Drivers" -v "Graphics" -d "X11" -t "REG_SZ"
+
+    # Désactiver coremessaging.dll (fix wine proton)
+    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_CURRENT_USER\Software\Wine\DllOverrides" -v "coremessaging" -d "" -t "REG_SZ"
+}
+
+# Fonction pour installer les runtimes
+install_runtimes() {
+    qdbus $dbusRef Set "" "value" 85
+    qdbus $dbusRef setLabelText "Installation des runtimes..."
+    flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/"$wineversion"/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q \
+        corefonts \
+        tahoma \
+        d3dcompiler_42 \
+        d3dcompiler_43 \
+        d3dcompiler_47 \
+        d3dx9 \
+        msls31 \
+        vb6run \
+        mfc42 \
+        physx \
+        vcrun2010 \
+        vcrun2012 \
+        vcrun2013 \
+        vcrun2022 \
+        dotnetdesktop6 \
+        dotnetdesktop7 \
+        dotnetdesktop8
+    flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/"$wineversion"/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q settings fontsmooth=rgb
+}
+
+# Fonction pour finaliser la configuration (Flatpak runtimes, MangoHud, etc.)
+finalize_runtimes_config() {
+    qdbus $dbusRef Set "" "value" 90
+    qdbus $dbusRef setLabelText "Finalisation des runtimes et configuration..."
+    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/25.08 -y --system
+    flatpak install runtime/com.obsproject.Studio.Plugin.OBSVkCapture/x86_64/stable -y --system
+    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.OBSVkCapture/x86_64/25.08 -y --system
+    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.gamescope/x86_64/25.08 -y --system
+    mkdir -p ~/.config/MangoHud
+    cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud
+    flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params mangohud:true
+    flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params gamemode:true
+    mkdir -p ~/Windows/UserData/Public/Documents/Steam
+
+    if [ -e "$dossieruser" ]; then
+        if [ ! -e "~/Windows/UserData/steamuser" ]; then
+            ln -s "./$user" "~/Windows/UserData/steamuser"
+        fi
+    else
+        if [ -e "~/Windows/UserData/steamuser" ]; then
+            ln -s "./steamuser" "$dossieruser"
+        fi
+    fi
+}
+
+# Fonction pour finaliser le rebuild
+finalize_rebuild() {
+    qdbus $dbusRef setLabelText "Création de la bouteille prête (bak/def.ready)..."
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready
+    cp -r ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready
+}
+
+# Fonction pour configurer les raccourcis et outils
+configure_shortcuts_tools() {
+    qdbus $dbusRef Set "" "value" 80
+    qdbus $dbusRef setLabelText "Configuration des raccourcis et outils..."
+    cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications
+    cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications
+    cp /usr/share/ublue-os/gablue/desktops/WindowsFix.desktop ~/.local/share/applications
+    cp /usr/share/ublue-os/gablue/desktops/WindowsTerminal.desktop ~/.local/share/applications
+    cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications
+    mkdir -p ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWinShortcut.desktop ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/LaunchWin.desktop ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/InstallWinReg.desktop ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWGP.desktop ~/.local/share/kio/servicemenus
+    cp /usr/share/ublue-os/gablue/desktops/servicemenus/EditWGP.desktop ~/.local/share/kio/servicemenus
+    mkdir -p ~/.local/share/mime/packages/
+    cp /usr/share/ublue-os/gablue/desktops/mime/wgp-mime.xml ~/.local/share/mime/packages/
+    mkdir -p ~/.local/share/thumbnailers
+    cp /usr/share/ublue-os/gablue/desktops/thumbnailers/wgp.thumbnailer ~/.local/share/thumbnailers
+    mkdir -p ~/.local/bin
+    cp /usr/share/ublue-os/gablue/bin/wgp-thumbnailer ~/.local/bin
+    chmod +x ~/.local/bin/wgp-thumbnailer
+    update-mime-database ~/.local/share/mime
+    update-desktop-database ~/.local/share/applications
+    xdg-mime default Windows.desktop application/x-ms-dos-executable
+    xdg-mime default Windows.desktop application/x-msi
+    xdg-mime default Windows.desktop application/x-ms-shortcut
+    xdg-mime default Windows.desktop application/x-wine-extension-msp
+    xdg-mime default Windows.desktop application/x-bat
+    xdg-mime default Windows.desktop application/x-wgp
+    mkdir -p ~/Windows/Tools
+    for file in ~/Windows/Tools/*; do
+        if [ -f "$file" ] && [ "$(basename "$file")" != "winetricks" ]; then
+            rm -f "$file"
+        fi
+    done
+    wget -O ~/Windows/Tools/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
+    chmod +x ~/Windows/Tools/winetricks
+}
+
 # Fonction pour gérer les erreurs, annulations ou Ctrl+C
 cleanup() {
     set +e
@@ -181,214 +488,29 @@ else
     need_rebuild=true
 fi
 
+# Proposer de forcer le rebuild si pas nécessaire
+if [ "$need_rebuild" = false ]; then
+    if kdialog --title "Rebuild" --yesno "Aucune mise à jour de composant détectée.\nVoulez-vous tout de même refaire le rebuild complet ?"; then
+        need_rebuild=true
+    fi
+fi
+
 # Vérification et téléchargement des composants avec sauvegarde des anciennes versions
 qdbus $dbusRef Set "" "value" 10
-qdbus $dbusRef setLabelText "Vérification et téléchargement de Wine..."
-if [ -d "$wine_dir/$wineversion" ] && [ "$need_rebuild" = false ]; then
-    echo "Version exacte de $runner_choice $wineversion déjà présente et aucun rebuild requis, téléchargement ignoré."
-else
-    if [ -d "$wine_dir" ] && ls "$wine_dir"/* >/dev/null 2>&1; then
-        current_wine=$(ls -d "$wine_dir"/* | grep -o '[a-z-]*-[0-9.r-]*' | head -n1)
-        if [ -n "$current_wine" ] && [ "$current_wine" != "$wineversion" ]; then
-            echo "Mise à jour ou réinstallation de $runner_choice vers $wineversion, sauvegarde de l'ancienne version ($current_wine) si présente..."
-            mkdir -p "$temp_dir/wine"
-            if [ -d "$wine_dir/$current_wine" ]; then
-                mv "$wine_dir/$current_wine" "$temp_dir/wine/"
-            fi
-            if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ] || [ "$runner_choice" = "gwine-proton-wow64" ]; then
-                curl -L -o "$wine_dir/$wineversion.tar.xz" "https://github.com/elgabo86/gwine/releases/download/$wineversion/$wineversion.tar.xz"
-                tar -xf "$wine_dir/$wineversion.tar.xz" -C "$wine_dir/"
-                rm -f "$wine_dir/$wineversion.tar.xz"
-            else
-                # Pour Soda, extraire dans un dossier temporaire et renommer
-                temp_extract_dir="$temp_dir/wine_extract"
-                mkdir -p "$temp_extract_dir"
-                curl -L -o "$temp_extract_dir/$soda_version.tar.xz" "$soda_url"
-                tar -xf "$temp_extract_dir/$soda_version.tar.xz" -C "$temp_extract_dir/"
-                mv "$temp_extract_dir/$soda_version-x86_64" "$wine_dir/$wineversion"
-                rm -f "$temp_extract_dir/$soda_version.tar.xz"
-                rm -rf "$temp_extract_dir"
-            fi
-            need_rebuild=true
-        else
-            echo "Installation de $runner_choice $wineversion (runner non détecté dans le répertoire)..."
-            if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ] || [ "$runner_choice" = "gwine-proton-wow64" ]; then
-                curl -L -o "$wine_dir/$wineversion.tar.xz" "https://github.com/elgabo86/gwine/releases/download/$wineversion/$wineversion.tar.xz"
-                tar -xf "$wine_dir/$wineversion.tar.xz" -C "$wine_dir/"
-                rm -f "$wine_dir/$wineversion.tar.xz"
-            else
-                # Pour Soda, extraire dans un dossier temporaire et renommer
-                temp_extract_dir="$temp_dir/wine_extract"
-                mkdir -p "$temp_extract_dir"
-                curl -L -o "$temp_extract_dir/$soda_version.tar.xz" "$soda_url"
-                tar -xf "$temp_extract_dir/$soda_version.tar.xz" -C "$temp_extract_dir/"
-                mv "$temp_extract_dir/$soda_version-x86_64" "$wine_dir/$wineversion"
-                rm -f "$temp_extract_dir/$soda_version.tar.xz"
-                rm -rf "$temp_extract_dir"
-            fi
-            need_rebuild=true
-        fi
-    else
-        echo "Installation initiale de $runner_choice $wineversion..."
-        if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ] || [ "$runner_choice" = "gwine-proton-wow64" ]; then
-            curl -L -o "$wine_dir/$wineversion.tar.xz" "https://github.com/elgabo86/gwine/releases/download/$wineversion/$wineversion.tar.xz"
-            tar -xf "$wine_dir/$wineversion.tar.xz" -C "$wine_dir/"
-            rm -f "$wine_dir/$wineversion.tar.xz"
-        else
-            # Pour Soda, extraire dans un dossier temporaire et renommer
-            temp_extract_dir="$temp_dir/wine_extract"
-            mkdir -p "$temp_extract_dir"
-            curl -L -o "$temp_extract_dir/$soda_version.tar.xz" "$soda_url"
-            tar -xf "$temp_extract_dir/$soda_version.tar.xz" -C "$temp_extract_dir/"
-            mv "$temp_extract_dir/$soda_version-x86_64" "$wine_dir/$wineversion"
-            rm -f "$temp_extract_dir/$soda_version.tar.xz"
-            rm -rf "$temp_extract_dir"
-        fi
-        need_rebuild=true
-    fi
-fi
+download_wine "$wine_dir" "$wineversion" "$runner_choice"
 
 qdbus $dbusRef Set "" "value" 20
-qdbus $dbusRef setLabelText "Vérification et téléchargement de DXVK..."
-if [ -d "$dxvk_dir/$dxvkversion" ]; then
-    echo "Version exacte de DXVK $dxvkversion déjà présente, téléchargement ignoré."
-else
-    if [ -d "$dxvk_dir" ] && ls "$dxvk_dir"/* >/dev/null 2>&1; then
-        current_dxvk=$(ls -d "$dxvk_dir"/* 2>/dev/null | xargs -n1 basename 2>/dev/null | grep -E '^dxvk-gplasync-v[0-9.-]+' | head -n1)
-        echo "DXVK détecté: '$current_dxvk' (attendu: '$dxvkversion')"
-        if [ -n "$current_dxvk" ] && [ -d "$dxvk_dir/$current_dxvk" ] && version_newer "$dxvkversion" "$current_dxvk"; then
-            echo "Mise à jour de DXVK vers $dxvkversion, sauvegarde de l'ancienne version ($current_dxvk)..."
-            mkdir -p "$temp_dir/dxvk"
-            mv "$dxvk_dir/$current_dxvk" "$temp_dir/dxvk/"
-            curl -L -o "$dxvk_dir/$dxvkversion.tar.gz" "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/$dxvkversion.tar.gz"
-            tar -xf "$dxvk_dir/$dxvkversion.tar.gz" -C "$dxvk_dir/"
-            rm -f "$dxvk_dir/$dxvkversion.tar.gz"
-            need_rebuild=true
-        else
-            echo "Version de DXVK $dxvkversion déjà présente ou plus récente, téléchargement ignoré."
-        fi
-    else
-        echo "Installation initiale de DXVK $dxvkversion..."
-        curl -L -o "$dxvk_dir/$dxvkversion.tar.gz" "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/$dxvkversion.tar.gz"
-        tar -xf "$dxvk_dir/$dxvkversion.tar.gz" -C "$dxvk_dir/"
-        rm -f "$dxvk_dir/$dxvkversion.tar.gz"
-        need_rebuild=true
-    fi
-fi
+download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^dxvk-gplasync-v[0-9.-]+" "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/$dxvkversion.tar.gz" "false"
 
 qdbus $dbusRef Set "" "value" 30
-qdbus $dbusRef setLabelText "Vérification et téléchargement de VKD3D..."
-if [ -d "$vkd3d_dir/$vkd3dversion" ]; then
-    echo "Version exacte de VKD3D $vkd3dversion déjà présente, téléchargement ignoré."
-else
-    if [ -d "$vkd3d_dir" ] && ls "$vkd3d_dir"/* >/dev/null 2>&1; then
-        current_vkd3d=$(ls -d "$vkd3d_dir"/* 2>/dev/null | xargs -n1 basename 2>/dev/null | grep -E '^vkd3d-proton-[0-9.-]+' | head -n1)
-        echo "VKD3D détecté: '$current_vkd3d' (attendu: '$vkd3dversion')"
-        if [ -n "$current_vkd3d" ] && [ -d "$vkd3d_dir/$current_vkd3d" ] && version_newer "$vkd3dversion" "$current_vkd3d"; then
-            echo "Mise à jour de VKD3D vers $vkd3dversion, sauvegarde de l'ancienne version ($current_vkd3d)..."
-            mkdir -p "$temp_dir/vkd3d"
-            mv "$vkd3d_dir/$current_vkd3d" "$temp_dir/vkd3d/"
-            curl -L -o "$vkd3d_dir/$vkd3dversion.tar.gz" "https://github.com/bottlesdevs/components/releases/download/$vkd3dversion/$vkd3dversion.tar.gz"
-            tar -xf "$vkd3d_dir/$vkd3dversion.tar.gz" -C "$vkd3d_dir/"
-            rm -f "$vkd3d_dir/$vkd3dversion.tar.gz"
-            need_rebuild=true
-        else
-            echo "Version de VKD3D $vkd3dversion déjà présente ou plus récente, téléchargement ignoré."
-        fi
-    else
-        echo "Installation initiale de VKD3D $vkd3dversion..."
-        curl -L -o "$vkd3d_dir/$vkd3dversion.tar.gz" "https://github.com/bottlesdevs/components/releases/download/$vkd3dversion/$vkd3dversion.tar.gz"
-        tar -xf "$vkd3d_dir/$vkd3dversion.tar.gz" -C "$vkd3d_dir/"
-        rm -f "$vkd3d_dir/$vkd3dversion.tar.gz"
-        need_rebuild=true
-    fi
-fi
+download_component "VKD3D" "$vkd3dversion" "$vkd3d_dir" "^vkd3d-proton-[0-9.-]+" "https://github.com/bottlesdevs/components/releases/download/$vkd3dversion/$vkd3dversion.tar.gz" "false"
 
 qdbus $dbusRef Set "" "value" 40
-qdbus $dbusRef setLabelText "Vérification et téléchargement de NVAPI..."
-if [ -d "$nvapi_dir/$nvapiversion" ]; then
-    echo "Version exacte de dxvk-nvapi $nvapiversion déjà présente, téléchargement ignoré."
-else
-    if [ -d "$nvapi_dir" ] && ls "$nvapi_dir"/* >/dev/null 2>&1; then
-        current_nvapi=$(ls -d "$nvapi_dir"/* 2>/dev/null | xargs -n1 basename 2>/dev/null | grep -E '^dxvk-nvapi-v[0-9.-]+' | head -n1)
-        echo "NVAPI détecté: '$current_nvapi' (attendu: '$nvapiversion')"
-        if [ -n "$current_nvapi" ] && [ -d "$nvapi_dir/$current_nvapi" ] && version_newer "$nvapiversion" "$current_nvapi"; then
-            echo "Mise à jour de dxvk-nvapi vers $nvapiversion, sauvegarde de l'ancienne version ($current_nvapi)..."
-            mkdir -p "$temp_dir/nvapi"
-            mv "$nvapi_dir/$current_nvapi" "$temp_dir/nvapi/"
-            # Extraction de la version à partir du nom (ex: dxvk-nvapi-v0.9.0 -> v0.9.0)
-            nvapi_version_tag=$(echo "$nvapiversion" | sed 's/dxvk-nvapi-//')
-            curl -L -o "$nvapi_dir/$nvapiversion.tar.gz" "https://github.com/jp7677/dxvk-nvapi/releases/download/$nvapi_version_tag/$nvapiversion.tar.gz"
-            # Extraire dans un répertoire temporaire pour vérifier la structure de l'archive
-            temp_extract_dir="$temp_dir/nvapi_extract"
-            mkdir -p "$temp_extract_dir"
-            tar -xf "$nvapi_dir/$nvapiversion.tar.gz" -C "$temp_extract_dir/"
-            # Vérifier si l'archive contient déjà un sous-dossier avec le nom de la version
-            if [ -d "$temp_extract_dir/$nvapiversion" ]; then
-                mv "$temp_extract_dir/$nvapiversion" "$nvapi_dir/"
-            else
-                # Si ce n'est pas le cas, créer le sous-dossier et déplacer le contenu
-                mkdir -p "$nvapi_dir/$nvapiversion"
-                # Déplacer le contenu vers le sous-dossier approprié
-                mv "$temp_extract_dir"/* "$nvapi_dir/$nvapiversion/"
-            fi
-            rm -f "$nvapi_dir/$nvapiversion.tar.gz"
-            rm -rf "$temp_extract_dir"
-            need_rebuild=true
-        else
-            echo "Version de dxvk-nvapi $nvapiversion déjà présente ou plus récente, téléchargement ignoré."
-        fi
-    else
-        echo "Installation initiale de dxvk-nvapi $nvapiversion..."
-        # Extraction de la version à partir du nom (ex: dxvk-nvapi-v0.9.0 -> v0.9.0)
-        nvapi_version_tag=$(echo "$nvapiversion" | sed 's/dxvk-nvapi-//')
-        curl -L -o "$nvapi_dir/$nvapiversion.tar.gz" "https://github.com/jp7677/dxvk-nvapi/releases/download/$nvapi_version_tag/$nvapiversion.tar.gz"
-        # Extraire dans un répertoire temporaire pour vérifier la structure de l'archive
-        temp_extract_dir="$temp_dir/nvapi_extract"
-        mkdir -p "$temp_extract_dir"
-        tar -xf "$nvapi_dir/$nvapiversion.tar.gz" -C "$temp_extract_dir/"
-        # Vérifier si l'archive contient déjà un sous-dossier avec le nom de la version
-        if [ -d "$temp_extract_dir/$nvapiversion" ]; then
-            mv "$temp_extract_dir/$nvapiversion" "$nvapi_dir/"
-        else
-            # Si ce n'est pas le cas, créer le sous-dossier et déplacer le contenu
-            mkdir -p "$nvapi_dir/$nvapiversion"
-            # Déplacer le contenu vers le sous-dossier approprié
-            mv "$temp_extract_dir"/* "$nvapi_dir/$nvapiversion/"
-        fi
-        rm -f "$nvapi_dir/$nvapiversion.tar.gz"
-        rm -rf "$temp_extract_dir"
-        need_rebuild=true
-    fi
-fi
+nvapi_version_tag=$(echo "$nvapiversion" | sed 's/dxvk-nvapi-//')
+download_component "dxvk-nvapi" "$nvapiversion" "$nvapi_dir" "^dxvk-nvapi-v[0-9.-]+" "https://github.com/jp7677/dxvk-nvapi/releases/download/$nvapi_version_tag/$nvapiversion.tar.gz" "true"
 
 qdbus $dbusRef Set "" "value" 50
-qdbus $dbusRef setLabelText "Vérification et téléchargement de LatencyFlex..."
-if [ -d "$latencyflex_dir/$latencyflexversion" ]; then
-    echo "Version exacte de LatencyFlex $latencyflexversion déjà présente, téléchargement ignoré."
-else
-    if [ -d "$latencyflex_dir" ] && ls "$latencyflex_dir"/* >/dev/null 2>&1; then
-        current_latencyflex=$(ls -d "$latencyflex_dir"/* 2>/dev/null | xargs -n1 basename 2>/dev/null | grep -E '^latencyflex-v[0-9.-]+[-a-z0-9]*' | head -n1)
-        echo "LatencyFlex détecté: '$current_latencyflex' (attendu: '$latencyflexversion')"
-        if [ -n "$current_latencyflex" ] && [ -d "$latencyflex_dir/$current_latencyflex" ] && version_newer "$latencyflexversion" "$current_latencyflex"; then
-            echo "Mise à jour de LatencyFlex vers $latencyflexversion, sauvegarde de l'ancienne version ($current_latencyflex)..."
-            mkdir -p "$temp_dir/latencyflex"
-            mv "$latencyflex_dir/$current_latencyflex" "$temp_dir/latencyflex/"
-            curl -L -o "$latencyflex_dir/$latencyflexversion.tar.gz" "https://github.com/bottlesdevs/components/releases/download/$latencyflexversion/$latencyflexversion.tar.gz"
-            tar -xf "$latencyflex_dir/$latencyflexversion.tar.gz" -C "$latencyflex_dir/"
-            rm -f "$latencyflex_dir/$latencyflexversion.tar.gz"
-            need_rebuild=true
-        else
-            echo "Version de LatencyFlex $latencyflexversion déjà présente ou plus récente, téléchargement ignoré."
-        fi
-    else
-        echo "Installation initiale de LatencyFlex $latencyflexversion..."
-        curl -L -o "$latencyflex_dir/$latencyflexversion.tar.gz" "https://github.com/bottlesdevs/components/releases/download/$latencyflexversion/$latencyflexversion.tar.gz"
-        tar -xf "$latencyflex_dir/$latencyflexversion.tar.gz" -C "$latencyflex_dir/"
-        rm -f "$latencyflex_dir/$latencyflexversion.tar.gz"
-        need_rebuild=true
-    fi
-fi
+download_component "LatencyFlex" "$latencyflexversion" "$latencyflex_dir" "^latencyflex-v[0-9.-]+[-a-z0-9]*" "https://github.com/bottlesdevs/components/releases/download/$latencyflexversion/$latencyflexversion.tar.gz" "false"
 
 if [ "$need_rebuild" = false ]; then
     qdbus $dbusRef Set "" "value" 60
@@ -396,80 +518,10 @@ if [ "$need_rebuild" = false ]; then
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
     cp -r ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
 
-    qdbus $dbusRef Set "" "value" 70
-    qdbus $dbusRef setLabelText "Récupération des données de l'ancienne configuration..."
-    for dir in cache grids icons; do
-        if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ]; then
-            rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/$dir
-            mv ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
-        fi
-    done
-
-    qdbus $dbusRef Set "" "value" 80
-    qdbus $dbusRef setLabelText "Récupération des programmes externes..."
-    if [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml ] && [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml ]; then
-        /usr/bin/python3 - <<EOF
-import yaml
-import os
-
-source_file = os.path.expanduser('~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml')
-target_file = os.path.expanduser('~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml')
-
-with open(source_file, 'r') as file:
-    source_data = yaml.safe_load(file)
-external_programs = source_data.get('External_Programs', {})
-
-with open(target_file, 'r') as file:
-    target_data = yaml.safe_load(file)
-target_data['External_Programs'] = external_programs
-
-with open(target_file, 'w') as file:
-    yaml.safe_dump(target_data, file, default_flow_style=False, allow_unicode=True)
-EOF
-    fi
+    restore_config_data
 
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
     rm -rf "$temp_dir"
-    qdbus $dbusRef Set "" "value" 80
-    qdbus $dbusRef setLabelText "Configuration des raccourcis et outils..."
-    cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications
-    cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications
-    cp /usr/share/ublue-os/gablue/desktops/WindowsFix.desktop ~/.local/share/applications
-    cp /usr/share/ublue-os/gablue/desktops/WindowsTerminal.desktop ~/.local/share/applications
-    cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications
-    mkdir -p ~/.local/share/kio/servicemenus
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWinShortcut.desktop ~/.local/share/kio/servicemenus
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/LaunchWin.desktop ~/.local/share/kio/servicemenus
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/InstallWinReg.desktop ~/.local/share/kio/servicemenus
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWGP.desktop ~/.local/share/kio/servicemenus
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/EditWGP.desktop ~/.local/share/kio/servicemenus
-    mkdir -p ~/.local/share/mime/packages/
-    cp /usr/share/ublue-os/gablue/desktops/mime/wgp-mime.xml ~/.local/share/mime/packages/
-    mkdir -p ~/.local/share/thumbnailers
-    cp /usr/share/ublue-os/gablue/desktops/thumbnailers/wgp.thumbnailer ~/.local/share/thumbnailers
-    # sed -i '/^\[PreviewSettings\]/,/^$/ { /^Plugins=/d }' ~/.config/dolphinrc
-    mkdir -p ~/.local/bin
-    cp /usr/share/ublue-os/gablue/bin/wgp-thumbnailer ~/.local/bin
-    chmod +x ~/.local/bin/wgp-thumbnailer
-    update-mime-database ~/.local/share/mime
-    update-desktop-database ~/.local/share/applications
-    xdg-mime default Windows.desktop application/x-ms-dos-executable
-    xdg-mime default Windows.desktop application/x-msi
-    xdg-mime default Windows.desktop application/x-ms-shortcut
-    xdg-mime default Windows.desktop application/x-wine-extension-msp
-    xdg-mime default Windows.desktop application/x-bat
-    xdg-mime default Windows.desktop application/x-wgp
-    mkdir -p ~/Windows/Tools
-    for file in ~/Windows/Tools/*; do
-        if [ -f "$file" ] && [ "$(basename "$file")" != "winetricks" ]; then
-            rm -f "$file"
-        fi
-    done
-    if [ ! -f ~/Windows/Tools/winetricks ]; then
-        wget -O ~/Windows/Tools/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
-        chmod +x ~/Windows/Tools/winetricks
-    fi
-
     qdbus $dbusRef Set "" "value" 100
     qdbus $dbusRef setLabelText "Finalisation..."
     qdbus $dbusRef close 2>/dev/null
@@ -483,144 +535,17 @@ EOF
 fi
 
 if [ "$need_rebuild" = true ]; then
-    qdbus $dbusRef Set "" "value" 60
-    qdbus $dbusRef setLabelText "Configuration de Bottles..."
-    flatpak run --command=bottles-cli com.usebottles.bottles new --bottle-name "def" --runner "$wineversion" --environment gaming
-    flatpak override com.usebottles.bottles --user --filesystem=~/Windows
-    flatpak override com.usebottles.bottles --user --filesystem=/tmp
-    mkdir -p ~/Windows/UserData ~/Windows/SteamData ~/Windows/Games ~/Windows/Applications ~/Windows/Tools ~/.local/share/applications
-    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users
-    ln -s ~/Windows/UserData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/users
-    ln -s ~/Windows/SteamData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/Steam
-    ln -s ~/Windows/Applications/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c
-    ln -s ~/Windows/Games/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c
-    ln -f -s -T ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ ~/Windows/WinDrive
-
-    qdbus $dbusRef Set "" "value" 70
-    qdbus $dbusRef setLabelText "Ajout des clés de registre..."
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "Enable SDL" -d 1 -t "REG_DWORD"
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD"
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_CURRENT_USER\Software\Wine\Drivers" -v "Graphics" -d "X11" -t "REG_SZ"
-
-    # Désactiver coremessaging.dll (fix wine proton)
-    flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_CURRENT_USER\Software\Wine\DllOverrides" -v "coremessaging" -d "" -t "REG_SZ"
-
-    qdbus $dbusRef Set "" "value" 80
-    qdbus $dbusRef setLabelText "Configuration des raccourcis et outils..."
-    cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications
-    cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications
-    cp /usr/share/ublue-os/gablue/desktops/WindowsFix.desktop ~/.local/share/applications
-    cp /usr/share/ublue-os/gablue/desktops/WindowsTerminal.desktop ~/.local/share/applications
-    cp /usr/share/ublue-os/gablue/desktops/KillWindows.desktop ~/.local/share/applications
-    mkdir -p ~/.local/share/kio/servicemenus
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWinShortcut.desktop ~/.local/share/kio/servicemenus
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/LaunchWin.desktop ~/.local/share/kio/servicemenus
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/InstallWinReg.desktop ~/.local/share/kio/servicemenus
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateWGP.desktop ~/.local/share/kio/servicemenus
-    cp /usr/share/ublue-os/gablue/desktops/servicemenus/EditWGP.desktop ~/.local/share/kio/servicemenus
-    mkdir -p ~/.local/share/mime/packages/
-    cp /usr/share/ublue-os/gablue/desktops/mime/wgp-mime.xml ~/.local/share/mime/packages/
-    mkdir -p ~/.local/share/thumbnailers
-    cp /usr/share/ublue-os/gablue/desktops/thumbnailers/wgp.thumbnailer ~/.local/share/thumbnailers
-    # sed -i '/^\[PreviewSettings\]/,/^$/ { /^Plugins=/d }' ~/.config/dolphinrc
-    mkdir -p ~/.local/bin
-    cp /usr/share/ublue-os/gablue/bin/wgp-thumbnailer ~/.local/bin
-    chmod +x ~/.local/bin/wgp-thumbnailer
-    update-mime-database ~/.local/share/mime
-    update-desktop-database ~/.local/share/applications
-    xdg-mime default Windows.desktop application/x-ms-dos-executable
-    xdg-mime default Windows.desktop application/x-msi
-    xdg-mime default Windows.desktop application/x-ms-shortcut
-    xdg-mime default Windows.desktop application/x-wine-extension-msp
-    xdg-mime default Windows.desktop application/x-bat
-    xdg-mime default Windows.desktop application/x-wgp
-    mkdir -p ~/Windows/Tools
-    for file in ~/Windows/Tools/*; do
-        if [ -f "$file" ] && [ "$(basename "$file")" != "winetricks" ]; then
-            rm -f "$file"
-        fi
-    done
-    wget -O ~/Windows/Tools/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
-    chmod +x ~/Windows/Tools/winetricks
-
-    qdbus $dbusRef Set "" "value" 85
-    qdbus $dbusRef setLabelText "Installation des runtimes..."
-    flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/"$wineversion"/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q \
-        corefonts \
-        tahoma \
-        d3dcompiler_42 \
-        d3dcompiler_43 \
-        d3dcompiler_47 \
-        d3dx9 \
-        msls31 \
-        vb6run \
-        mfc42 \
-        physx \
-        vcrun2010 \
-        vcrun2012 \
-        vcrun2013 \
-        vcrun2022 \
-        dotnetdesktop6 \
-        dotnetdesktop7 \
-        dotnetdesktop8
-    flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/"$wineversion"/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q settings fontsmooth=rgb
-
-    qdbus $dbusRef Set "" "value" 90
-    qdbus $dbusRef setLabelText "Finalisation des runtimes et configuration..."
-    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/25.08 -y --system
-    flatpak install runtime/com.obsproject.Studio.Plugin.OBSVkCapture/x86_64/stable -y --system
-    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.OBSVkCapture/x86_64/25.08 -y --system
-    flatpak install runtime/org.freedesktop.Platform.VulkanLayer.gamescope/x86_64/25.08 -y --system
-    mkdir -p ~/.config/MangoHud
-    cp /usr/share/ublue-os/gablue/MangoHud.conf ~/.config/MangoHud
-    flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params mangohud:true
-    flatpak run --command=bottles-cli com.usebottles.bottles edit -b def --params gamemode:true
-    mkdir -p ~/Windows/UserData/Public/Documents/Steam
-
-    if [ -e "$dossieruser" ]; then
-        if [ ! -e "~/Windows/UserData/steamuser" ]; then
-            ln -s "./$user" "~/Windows/UserData/steamuser"
-        fi
-    else
-        if [ -e "~/Windows/UserData/steamuser" ]; then
-            ln -s "./steamuser" "$dossieruser"
-        fi
-    fi
+    configure_bottles
+    add_registry_keys
+    configure_shortcuts_tools
+    install_runtimes
+    finalize_runtimes_config
 
     qdbus $dbusRef Set "" "value" 95
     qdbus $dbusRef setLabelText "Récupération des données de l'ancienne configuration..."
-    for dir in cache grids icons; do
-        if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ]; then
-            rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/$dir
-            mv ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
-        fi
-    done
+    restore_config_data_in_rebuild
 
-    qdbus $dbusRef setLabelText "Récupération des programmes externes..."
-    if [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml ] && [ -f ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml ]; then
-        /usr/bin/python3 - <<EOF
-import yaml
-import os
-
-source_file = os.path.expanduser('~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml')
-target_file = os.path.expanduser('~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml')
-
-with open(source_file, 'r') as file:
-    source_data = yaml.safe_load(file)
-external_programs = source_data.get('External_Programs', {})
-
-with open(target_file, 'r') as file:
-    target_data = yaml.safe_load(file)
-target_data['External_Programs'] = external_programs
-
-with open(target_file, 'w') as file:
-    yaml.safe_dump(target_data, file, default_flow_style=False, allow_unicode=True)
-EOF
-    fi
-
-    qdbus $dbusRef setLabelText "Création de la bouteille prête (bak/def.ready)..."
-    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready
-    cp -r ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready
+    finalize_rebuild
 fi
 
 rm -rf "$temp_dir"
