@@ -446,16 +446,32 @@ cleanup_saves_symlink() {
     [ -L "$GAME_SAVES_SYMLINK" ] && rm -f "$GAME_SAVES_SYMLINK"
 }
 
+# Construit et exécute la commande bottles avec ou sans mesa-git
+run_bottles() {
+    local exe="$1"
+    local cmd_args="$2"
+
+    # Vérifier si mesa-git est demandé
+    local MESA_CONFIG="$HOME_REAL/.config/.mesa-git"
+    if [ -f "$MESA_CONFIG" ]; then
+        echo "Utilisation de Mesa-Git (détecté: $MESA_CONFIG)"
+        FLATPAK_GL_DRIVERS=mesa-git /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args"
+    else
+        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args"
+    fi
+}
+
 # Lance le jeu WGP via Bottles
 launch_wgp_game() {
     echo "Lancement de $WGPACK_NAME..."
 
     apply_padfix_setting
 
+    # Lancer le jeu en arrière-plan
     if [ -n "$args" ]; then
-        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH" --args " $args" &
+        run_bottles "$FULL_EXE_PATH" " $args" &
     else
-        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH" &
+        run_bottles "$FULL_EXE_PATH" "" &
     fi
 
     # Petite pause pour laisser le bwrap se lancer
@@ -491,7 +507,7 @@ install_registry_files() {
         local reg_name
         reg_name=$(basename "$reg_file")
         echo "Installation du fichier de registre: $reg_name"
-        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$HOME_REAL/Windows/WinDrive/windows/regedit.exe" --args "/S \"$reg_file\""
+        run_bottles "$HOME_REAL/Windows/WinDrive/windows/regedit.exe" "/S \"$reg_file\""
     done
 }
 
@@ -582,9 +598,9 @@ run_classic_mode() {
     install_registry_files "$(dirname "$new_fullpath")"
 
     if [ -n "$args" ]; then
-        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$new_fullpath" --args " $args"
+        run_bottles "$new_fullpath" " $args"
     else
-        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$new_fullpath"
+        run_bottles "$new_fullpath" ""
     fi
 
     restore_padfix_setting
