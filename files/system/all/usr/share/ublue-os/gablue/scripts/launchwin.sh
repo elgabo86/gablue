@@ -127,7 +127,35 @@ mount_wgp() {
 
     # Vérifier si déjà monté
     if mountpoint -q "$MOUNT_DIR"; then
-        error_exit "$WGPACK_NAME est déjà monté"
+        local QUESTION="$WGPACK_NAME est déjà lancé.\n\nVoulez-vous arrêter l'instance en cours et relancer le jeu ?"
+        local RELAUNCH=false
+
+        if command -v kdialog &> /dev/null; then
+            kdialog --warningyesno "$QUESTION" --yes-label "Oui, relancer" --no-label "Non, annuler" && RELAUNCH=true
+        else
+            read -p "$QUESTION (o/N): " -r
+            [[ "$REPLY" =~ ^[oOyY]$ ]] && RELAUNCH=true
+        fi
+
+        if [ "$RELAUNCH" = true ]; then
+            echo "Arrêt de l'instance en cours..."
+            # Trouver et tuer les bwrap utilisant ce mount
+            local PIDs
+            PIDs=$(pgrep -f "bwrap.*$MOUNT_DIR" 2>/dev/null)
+            if [ -n "$PIDs" ]; then
+                for pid in $PIDs; do
+                    echo "Arrêt du processus $pid (bwrap)"
+                    kill -9 "$pid" 2>/dev/null
+                done
+                sleep 1
+            fi
+            # Vérifier si toujours monté et forcer le démontage
+            if mountpoint -q "$MOUNT_DIR"; then
+                fusermount -u "$MOUNT_DIR" 2>/dev/null || fusermount -uz "$MOUNT_DIR" 2>/dev/null
+            fi
+        else
+            error_exit "$WGPACK_NAME est déjà en cours d'exécution"
+        fi
     fi
 
     # Vérifier que squashfuse est disponible
@@ -148,6 +176,13 @@ mount_wgp() {
 
 # Nettoie en démontant le WGP et les extras
 cleanup_wgp() {
+    # Vérifier si le mount est encore utilisé par un nouveau bwrap (nouvelle instance)
+    if mountpoint -q "$MOUNT_DIR" && pgrep -f "bwrap.*$MOUNT_DIR" > /dev/null 2>&1; then
+        # Une nouvelle instance a pris la main, ne surtout pas démonter
+        echo "Une nouvelle instance de $WGPACK_NAME a pris la main, pas de démontage."
+        return 0
+    fi
+
     echo "Démontage de $WGPACK_NAME..."
 
     # Nettoyer le symlink /tmp/wgp-saves
@@ -180,9 +215,9 @@ cleanup_wgp() {
         sleep 0.3
     fi
 
-    # Supprimer le dossier de montage (rm -rf car rmdir échoue si non vide)
+    # Supprimer le dossier de montage (rmdir, pas rm -rf pour squashfs read-only)
     if [ -d "$MOUNT_DIR" ]; then
-        rm -rf "$MOUNT_DIR"
+        rmdir "$MOUNT_DIR" 2>/dev/null
     fi
 }
 
