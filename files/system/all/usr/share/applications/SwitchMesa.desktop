@@ -1,0 +1,16 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Categories=System
+Comment=
+Exec=/usr/share/ublue-os/gablue/scripts/switchmesa.sh
+GenericName=Changer de driver Mesa pour Bottles
+Icon=com.usebottles.bottles
+Name=Changer de driver Mesa pour Bottles
+NoDisplay=false
+Path=
+StartupNotify=false
+Terminal=false
+TerminalOptions=
+Type=Application
+X-KDE-SubstituteUID=false
+X-KDE-Username=
