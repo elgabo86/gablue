@@ -418,6 +418,29 @@ launch_wgp_game() {
     cleanup_saves_symlink
 }
 
+# Installe les fichiers .reg trouvés dans un dossier via regedit.exe
+install_registry_files() {
+    local reg_dir="$1"
+    local reg_files
+
+    # Chercher les fichiers .reg dans le dossier
+    reg_files=()
+    while IFS= read -r -d '' file; do
+        reg_files+=("$file")
+    done < <(find "$reg_dir" -maxdepth 1 -name '*.reg' -print0 2>/dev/null)
+
+    # Si aucun fichier .reg, rien à faire
+    [ ${#reg_files[@]} -eq 0 ] && return 0
+
+    # Installer chaque fichier .reg
+    for reg_file in "${reg_files[@]}"; do
+        local reg_name
+        reg_name=$(basename "$reg_file")
+        echo "Installation du fichier de registre: $reg_name"
+        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$HOME_REAL/Windows/WinDrive/windows/regedit.exe" --args "/S \"$reg_file\""
+    done
+}
+
 # Fonction principale pour le mode WGP
 run_wgp_mode() {
     init_wgp_variables
@@ -433,6 +456,8 @@ run_wgp_mode() {
     prepare_saves
     prepare_extras
     read_wgp_config
+    # Installer les fichiers .reg dans le dossier de l'exécutable
+    install_registry_files "$(dirname "$FULL_EXE_PATH")"
     launch_wgp_game
 
     # Nettoyage automatique (le trap EXIT le fera aussi)
@@ -498,6 +523,9 @@ run_classic_mode() {
     [ -n "$temp_base" ] && trap 'rm -rf "$temp_base"' EXIT
 
     apply_padfix_setting
+
+    # Installer les fichiers .reg dans le dossier de l'exécutable
+    install_registry_files "$(dirname "$new_fullpath")"
 
     if [ -n "$args" ]; then
         /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$new_fullpath" --args " $args"
