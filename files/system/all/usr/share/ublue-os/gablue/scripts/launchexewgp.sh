@@ -100,8 +100,16 @@ echo "Lancement de $EXE_REL_PATH..."
 # Lancer le jeu avec launchwin.sh en mode normal
 sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
 
-/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$EXE_FULL_PATH"
+# Lancer le jeu en arrière-plan
+/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$EXE_FULL_PATH" &
 
-# Nettoyage automatique (le trap EXIT le fera aussi)
-cleanup
+# Petite pause pour laisser le bwrap se lancer
+sleep 1
+
+# Attendre que le jeu se termine
+echo "En attente de la fermeture du jeu..."
+while pgrep -f "bwrap.*$EXE_FULL_PATH" > /dev/null 2>&1; do
+    sleep 1
+done
+
 exit 0
