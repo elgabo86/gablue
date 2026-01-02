@@ -127,34 +127,43 @@ mount_wgp() {
 
     # Vérifier si déjà monté
     if mountpoint -q "$MOUNT_DIR"; then
-        local QUESTION="$WGPACK_NAME est déjà lancé.\n\nVoulez-vous arrêter l'instance en cours et relancer le jeu ?"
-        local RELAUNCH=false
-
-        if command -v kdialog &> /dev/null; then
-            kdialog --warningyesno "$QUESTION" --yes-label "Oui, relancer" --no-label "Non, annuler" && RELAUNCH=true
+        # Vérifier si un bwrap est actif (montage en cours d'utilisation)
+        if ! pgrep -f "bwrap.*$MOUNT_DIR" > /dev/null 2>&1; then
+            # Pas de bwrap actif : montage orphelin, nettoyer automatiquement
+            echo "Montage orphelin détecté pour $WGPACK_NAME, nettoyage..."
+            fusermount -uz "$MOUNT_DIR" 2>/dev/null
+            # Continuer vers le montage normal après le nettoyage
         else
-            read -p "$QUESTION (o/N): " -r
-            [[ "$REPLY" =~ ^[oOyY]$ ]] && RELAUNCH=true
-        fi
+            # Le jeu tourne vraiment, demander à l'utilisateur
+            local QUESTION="$WGPACK_NAME est déjà lancé.\n\nVoulez-vous arrêter l'instance en cours et relancer le jeu ?"
+            local RELAUNCH=false
 
-        if [ "$RELAUNCH" = true ]; then
-            echo "Arrêt de l'instance en cours..."
-            # Trouver et tuer les bwrap utilisant ce mount
-            local PIDs
-            PIDs=$(pgrep -f "bwrap.*$MOUNT_DIR" 2>/dev/null)
-            if [ -n "$PIDs" ]; then
-                for pid in $PIDs; do
-                    echo "Arrêt du processus $pid (bwrap)"
-                    kill -9 "$pid" 2>/dev/null
-                done
-                sleep 1
+            if command -v kdialog &> /dev/null; then
+                kdialog --warningyesno "$QUESTION" --yes-label "Oui, relancer" --no-label "Non, annuler" && RELAUNCH=true
+            else
+                read -p "$QUESTION (o/N): " -r
+                [[ "$REPLY" =~ ^[oOyY]$ ]] && RELAUNCH=true
             fi
-            # Vérifier si toujours monté et forcer le démontage
-            if mountpoint -q "$MOUNT_DIR"; then
-                fusermount -u "$MOUNT_DIR" 2>/dev/null || fusermount -uz "$MOUNT_DIR" 2>/dev/null
+
+            if [ "$RELAUNCH" = true ]; then
+                echo "Arrêt de l'instance en cours..."
+                # Trouver et tuer les bwrap utilisant ce mount
+                local PIDs
+                PIDs=$(pgrep -f "bwrap.*$MOUNT_DIR" 2>/dev/null)
+                if [ -n "$PIDs" ]; then
+                    for pid in $PIDs; do
+                        echo "Arrêt du processus $pid (bwrap)"
+                        kill -9 "$pid" 2>/dev/null
+                    done
+                    sleep 1
+                fi
+                # Vérifier si toujours monté et forcer le démontage
+                if mountpoint -q "$MOUNT_DIR"; then
+                    fusermount -uz "$MOUNT_DIR" 2>/dev/null
+                fi
+            else
+                error_exit "$WGPACK_NAME est déjà en cours d'exécution"
             fi
-        else
-            error_exit "$WGPACK_NAME est déjà en cours d'exécution"
         fi
     fi
 
