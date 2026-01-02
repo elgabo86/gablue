@@ -409,10 +409,20 @@ launch_wgp_game() {
     apply_padfix_setting
 
     if [ -n "$args" ]; then
-        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH" --args " $args"
+        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH" --args " $args" &
     else
-        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH"
+        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH" &
     fi
+
+    # Petite pause pour laisser le bwrap se lancer
+    sleep 1
+
+    # Attendre que le jeu se termine (surveiller si un bwrap exécute CET exécutable via son chemin complet unique)
+    echo "En attente de la fermeture du jeu..."
+
+    while pgrep -f "bwrap.*$FULL_EXE_PATH" > /dev/null 2>&1; do
+        sleep 1
+    done
 
     restore_padfix_setting
     cleanup_saves_symlink
