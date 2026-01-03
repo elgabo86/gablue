@@ -418,9 +418,17 @@ prepare_extras() {
     done < "$EXTRAPATH_FILE"
 }
 
+# Vérifie si le WGP contient des fichiers de sauvegarde
+has_saves() {
+    [ -f "$MOUNT_DIR/.savepath" ]
+}
+
 # Crée le symlink /tmp/wgp-saves/$GAME_INTERNAL_NAME vers UserData
 # Un symlink par jeu permet de lancer plusieurs WGP en parallèle
 setup_saves_symlink() {
+    # Ne rien faire si le WGP n'a pas de saves
+    has_saves || return 0
+
     local GAME_SAVES_DIR="$SAVES_REAL/$GAME_INTERNAL_NAME"
     local GAME_SAVES_SYMLINK="$SAVES_SYMLINK/$GAME_INTERNAL_NAME"
 
