@@ -300,7 +300,7 @@ prepare_saves() {
             if [ -L "$SAVE_WGP_ITEM" ]; then
                 _copy_symlink_as_abs "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
             else
-                cp "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
+                cp -n "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
             fi
         fi
     done < "$SAVE_FILE"
@@ -337,7 +337,7 @@ _copy_symlink_as_abs() {
         ln -s "$abs_target" "$dst_symlink"
     else
         # Hors du mount : copier le contenu du symlink
-        cp -a "$src_symlink" "$dst_symlink"
+        cp -an "$src_symlink" "$dst_symlink"
     fi
 }
 
@@ -359,10 +359,10 @@ _copy_dir_with_symlinks() {
             continue
         elif [ -f "$item" ]; then
             # Fichier normal
-            cp "$item" "$dst_dir/$name"
+            cp -n "$item" "$dst_dir/$name"
         elif [ -d "$item" ]; then
             # Dossier : copier récursivement les fichiers normaux
-            cp -r --no-preserve=links "$item" "$dst_dir/$name"
+            cp -rn --no-preserve=links "$item" "$dst_dir/$name"
         fi
     done
 
