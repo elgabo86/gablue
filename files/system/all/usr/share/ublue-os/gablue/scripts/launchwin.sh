@@ -475,7 +475,40 @@ launch_wgp_game() {
 
     apply_padfix_setting
 
-    # Lancer le jeu en arrière-plan
+    # Vérifier si on est attaché à un terminal - problème avec certains jeux
+    if [ -t 0 ] || [ -t 1 ]; then
+        # Mode terminal : lancer avec redirection stdin et attendre directement
+        local MESA_CONFIG="$HOME_REAL/.config/.mesa-git"
+        local GL_DRIVERS=""
+        [ -f "$MESA_CONFIG" ] && GL_DRIVERS="FLATPAK_GL_DRIVERS=mesa-git"
+
+        echo "Appuyez sur Ctrl+C pour arrêter le jeu..."
+
+        if [ -n "$args" ]; then
+            $GL_DRIVERS \
+            /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding \
+                com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH" --args " $args" \
+                </dev/null
+        else
+            $GL_DRIVERS \
+            /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding \
+                com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH" --args "" \
+                </dev/null
+        fi
+
+        restore_padfix_setting
+        cleanup_saves_symlink
+
+        # Cleanup forcé du WGP (le jeu est terminé, on peut démonter)
+        echo "Démontage de $WGPACK_NAME..."
+        cleanup_saves_symlink
+        [ -d "$EXTRA_DIR" ] && rm -rf "$EXTRA_DIR"
+        fusermount -u "$MOUNT_DIR" 2>/dev/null || umount -f "$MOUNT_DIR" 2>/dev/null
+        rmdir "$MOUNT_DIR" 2>/dev/null
+        return
+    fi
+
+    # Mode normal : lancer en arrière-plan et surveiller bwrap
     if [ -n "$args" ]; then
         run_bottles "$FULL_EXE_PATH" " $args" &
     else
@@ -559,8 +592,10 @@ run_wgp_mode() {
     init_wgp_variables
     mount_wgp
 
-    # Nettoyage en cas d'interruption
-    trap cleanup_wgp EXIT
+    # Nettoyage en cas d'interruption (sauf mode TTY qui gère son propre cleanup)
+    if ! [ -t 0 ] && ! [ -t 1 ]; then
+        trap cleanup_wgp EXIT
+    fi
 
     # Créer le symlink /tmp/wgp-saves AVANT prepare_saves
     setup_saves_symlink
@@ -575,8 +610,10 @@ run_wgp_mode() {
     install_registry_files "$(dirname "$FULL_EXE_PATH")"
     launch_wgp_game
 
-    # Nettoyage automatique (le trap EXIT le fera aussi)
-    cleanup_wgp
+    # Nettoyage automatique (le trap EXIT le fera aussi, sauf en mode TTY)
+    if ! [ -t 0 ] && ! [ -t 1 ]; then
+        cleanup_wgp
+    fi
 }
 
 #======================================
