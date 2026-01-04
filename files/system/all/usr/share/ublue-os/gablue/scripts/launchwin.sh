@@ -644,6 +644,27 @@ run_classic_mode() {
     # Installer les fichiers .reg dans le dossier de l'exécutable
     install_registry_files "$(dirname "$new_fullpath")"
 
+    # Vérifier si on est attaché à un terminal - problème avec certains jeux
+    if [ -t 0 ] || [ -t 1 ]; then
+        # Mode terminal : lancer avec redirection stdin uniquement pour cacher le TTY au jeu
+        local MESA_CONFIG="$HOME_REAL/.config/.mesa-git"
+        local GL_DRIVERS=""
+        [ -f "$MESA_CONFIG" ] && GL_DRIVERS="FLATPAK_GL_DRIVERS=mesa-git"
+
+        if [ -n "$args" ]; then
+            $GL_DRIVERS \
+            exec /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding \
+                com.usebottles.bottles run --bottle def --executable "$new_fullpath" --args " $args" \
+                </dev/null
+        else
+            $GL_DRIVERS \
+            exec /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding \
+                com.usebottles.bottles run --bottle def --executable "$new_fullpath" --args "" \
+                </dev/null
+        fi
+    fi
+
+    # Mode normal
     if [ -n "$args" ]; then
         run_bottles "$new_fullpath" " $args"
     else
