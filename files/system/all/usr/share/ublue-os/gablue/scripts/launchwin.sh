@@ -554,9 +554,25 @@ setup_pds_symlink() {
     # Créer le dossier parent du symlink si nécessaire
     mkdir -p "$(dirname "$progdata_symlink")"
 
-    # Supprimer l'ancien symlink s'il existe
-    if [ -L "$progdata_symlink" ]; then
-        rm -f "$progdata_symlink"
+    # Vérifier s'il existe déjà quelque chose à cet emplacement
+    if [ -e "$progdata_symlink" ]; then
+        if [ -d "$progdata_symlink" ] && [ ! -L "$progdata_symlink" ]; then
+            # Un vrai dossier existe déjà : ne rien faire
+            echo "Dossier existant dans ProgramData: $progdata_symlink (pas de modification)"
+            return 0
+        elif [ -L "$progdata_symlink" ]; then
+            # Un symlink existe déjà : vérifier s'il pointe vers la bonne destination
+            local current_target
+            current_target=$(readlink "$progdata_symlink")
+            if [ "$current_target" = "$progdata_saves_dir" ]; then
+                echo "Symlink déjà existant et correct: $progdata_symlink -> $progdata_saves_dir"
+                return 0
+            else
+                # Symlink existant mais pointe ailleurs : le supprimer
+                echo "Symlink existant mais incorrect, remplacement..."
+                rm -f "$progdata_symlink"
+            fi
+        fi
     fi
 
     # Créer le symlink
