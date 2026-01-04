@@ -478,22 +478,19 @@ launch_wgp_game() {
     # Vérifier si on est attaché à un terminal - problème avec certains jeux
     if [ -t 0 ] || [ -t 1 ]; then
         # Mode terminal : lancer avec redirection stdin et attendre directement
-        local MESA_CONFIG="$HOME_REAL/.config/.mesa-git"
-        local GL_DRIVERS=""
-        [ -f "$MESA_CONFIG" ] && GL_DRIVERS="FLATPAK_GL_DRIVERS=mesa-git"
+        local flatpak_cmd
+        if [ -f "$HOME_REAL/.config/.mesa-git" ]; then
+            flatpak_cmd="FLATPAK_GL_DRIVERS=mesa-git /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable \"$FULL_EXE_PATH\""
+        else
+            flatpak_cmd="/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable \"$FULL_EXE_PATH\""
+        fi
 
         echo "Appuyez sur Ctrl+C pour arrêter le jeu..."
 
         if [ -n "$args" ]; then
-            $GL_DRIVERS \
-            /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding \
-                com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH" --args " $args" \
-                </dev/null
+            eval "$flatpak_cmd --args \" \$args\" </dev/null"
         else
-            $GL_DRIVERS \
-            /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding \
-                com.usebottles.bottles run --bottle def --executable "$FULL_EXE_PATH" --args "" \
-                </dev/null
+            eval "$flatpak_cmd --args \"\" </dev/null"
         fi
 
         restore_padfix_setting
@@ -700,20 +697,17 @@ run_classic_mode() {
     # Vérifier si on est attaché à un terminal - problème avec certains jeux
     if [ -t 0 ] || [ -t 1 ]; then
         # Mode terminal : lancer avec redirection stdin uniquement pour cacher le TTY au jeu
-        local MESA_CONFIG="$HOME_REAL/.config/.mesa-git"
-        local GL_DRIVERS=""
-        [ -f "$MESA_CONFIG" ] && GL_DRIVERS="FLATPAK_GL_DRIVERS=mesa-git"
+        local flatpak_cmd
+        if [ -f "$HOME_REAL/.config/.mesa-git" ]; then
+            flatpak_cmd="FLATPAK_GL_DRIVERS=mesa-git /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable \"$new_fullpath\""
+        else
+            flatpak_cmd="/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable \"$new_fullpath\""
+        fi
 
         if [ -n "$args" ]; then
-            $GL_DRIVERS \
-            exec /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding \
-                com.usebottles.bottles run --bottle def --executable "$new_fullpath" --args " $args" \
-                </dev/null
+            eval "$flatpak_cmd --args \" \$args\" </dev/null"
         else
-            $GL_DRIVERS \
-            exec /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding \
-                com.usebottles.bottles run --bottle def --executable "$new_fullpath" --args "" \
-                </dev/null
+            eval "$flatpak_cmd --args \"\" </dev/null"
         fi
     fi
 
