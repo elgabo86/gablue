@@ -261,9 +261,6 @@ configure_bottles() {
 
     ln -s ~/Windows/SteamData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/Steam
 
-    ln -s ~/Windows/SteamData/Orbit ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/Orbit
-    mkdir -p  ~/Windows/SteamData/Orbit
-
     ln -s ~/Windows/Applications/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c
     ln -s ~/Windows/Games/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c
     ln -f -s -T ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ ~/Windows/WinDrive
