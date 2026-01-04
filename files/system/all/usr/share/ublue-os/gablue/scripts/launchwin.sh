@@ -529,15 +529,15 @@ launch_wgp_game() {
     cleanup_saves_symlink
 }
 
-# Configure le symlink ProgramData via fichier .pgs
-setup_pgs_symlink() {
+# Configure le symlink ProgramData via fichier .pds
+setup_pds_symlink() {
     local exe_dir="$1"
-    local PGS_FILE="$exe_dir/.pgs"
+    local PDS_FILE="$exe_dir/.pds"
 
-    [ -f "$PGS_FILE" ] || return 0
+    [ -f "$PDS_FILE" ] || return 0
 
     local game_name
-    game_name=$(cat "$PGS_FILE" 2>/dev/null)
+    game_name=$(cat "$PDS_FILE" 2>/dev/null)
     [ -n "$game_name" ] || return 0
 
     echo "Configuration ProgramData pour: $game_name"
@@ -604,8 +604,8 @@ run_wgp_mode() {
     prepare_saves
     prepare_extras
     read_wgp_config
-    # Configurer le symlink ProgramData si fichier .pgs présent
-    setup_pgs_symlink "$(dirname "$FULL_EXE_PATH")"
+    # Configurer le symlink ProgramData si fichier .pds présent
+    setup_pds_symlink "$(dirname "$FULL_EXE_PATH")"
     # Installer les fichiers .reg dans le dossier de l'exécutable
     install_registry_files "$(dirname "$FULL_EXE_PATH")"
     launch_wgp_game
@@ -676,8 +676,8 @@ run_classic_mode() {
 
     apply_padfix_setting
 
-    # Configurer le symlink ProgramData si fichier .pgs présent
-    setup_pgs_symlink "$(dirname "$new_fullpath")"
+    # Configurer le symlink ProgramData si fichier .pds présent
+    setup_pds_symlink "$(dirname "$new_fullpath")"
     # Installer les fichiers .reg dans le dossier de l'exécutable
     install_registry_files "$(dirname "$new_fullpath")"
 
