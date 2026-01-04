@@ -496,6 +496,41 @@ launch_wgp_game() {
     cleanup_saves_symlink
 }
 
+# Configure le symlink ProgramData via fichier .pgs
+setup_pgs_symlink() {
+    local exe_dir="$1"
+    local PGS_FILE="$exe_dir/.pgs"
+
+    [ -f "$PGS_FILE" ] || return 0
+
+    local game_name
+    game_name=$(cat "$PGS_FILE" 2>/dev/null)
+    [ -n "$game_name" ] || return 0
+
+    echo "Configuration ProgramData pour: $game_name"
+
+    local progdata_saves_dir="$WINDOWS_HOME/$USER/ProgramDataSaves/$game_name"
+    local progdata_symlink="$HOME_REAL/Windows/WinDrive/ProgramData/$game_name"
+
+    # Créer le dossier de sauvegardes s'il n'existe pas
+    if [ ! -d "$progdata_saves_dir" ]; then
+        mkdir -p "$progdata_saves_dir"
+        echo "Dossier créé: $progdata_saves_dir"
+    fi
+
+    # Créer le dossier parent du symlink si nécessaire
+    mkdir -p "$(dirname "$progdata_symlink")"
+
+    # Supprimer l'ancien symlink s'il existe
+    if [ -L "$progdata_symlink" ]; then
+        rm -f "$progdata_symlink"
+    fi
+
+    # Créer le symlink
+    ln -s "$progdata_saves_dir" "$progdata_symlink"
+    echo "Symlink créé: $progdata_symlink -> $progdata_saves_dir"
+}
+
 # Installe les fichiers .reg trouvés dans un dossier via regedit.exe
 install_registry_files() {
     local reg_dir="$1"
@@ -534,6 +569,8 @@ run_wgp_mode() {
     prepare_saves
     prepare_extras
     read_wgp_config
+    # Configurer le symlink ProgramData si fichier .pgs présent
+    setup_pgs_symlink "$(dirname "$FULL_EXE_PATH")"
     # Installer les fichiers .reg dans le dossier de l'exécutable
     install_registry_files "$(dirname "$FULL_EXE_PATH")"
     launch_wgp_game
@@ -602,6 +639,8 @@ run_classic_mode() {
 
     apply_padfix_setting
 
+    # Configurer le symlink ProgramData si fichier .pgs présent
+    setup_pgs_symlink "$(dirname "$new_fullpath")"
     # Installer les fichiers .reg dans le dossier de l'exécutable
     install_registry_files "$(dirname "$new_fullpath")"
 
