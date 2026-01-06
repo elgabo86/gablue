@@ -709,6 +709,7 @@ run_classic_mode() {
         else
             eval "$flatpak_cmd --args \"\" </dev/null"
         fi
+        return
     fi
 
     # Mode normal
