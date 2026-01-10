@@ -1,0 +1,117 @@
+#!/bin/bash
+
+# Script pour scanner les fichiers .wgp sur tous les disques montés
+
+echo "=== Scan des fichiers .wgp sur tous les disques montés ==="
+echo ""
+
+# Fichiers temporaires
+tmp_all=$(mktemp /tmp/wgp_files_XXXXXX.txt)
+tmp_sizes=$(mktemp /tmp/wgp_sizes_XXXXXX.txt)
+tmp_for_dup=$(mktemp /tmp/wgp_dup_XXXXXX.txt)
+
+# Fonction pour formater la taille
+format_size() {
+    local bytes=$1
+    if [ $bytes -gt 1073741824 ]; then
+        printf "%.2f Go" $(echo "scale=2; $bytes / 1073741824" | bc)
+    elif [ $bytes -gt 1048576 ]; then
+        printf "%.2f Mo" $(echo "scale=2; $bytes / 1048576" | bc)
+    elif [ $bytes -gt 1024 ]; then
+        printf "%.2f Ko" $(echo "scale=2; $bytes / 1024" | bc)
+    else
+        printf "%d octets" $bytes
+    fi
+}
+
+# Récupérer tous les points de montage
+mount_points=$(mount | grep -E "^(/dev|/dev/mapper|/dev/sd|/dev/nvme|/dev/mmc)" | awk '{print $3}')
+
+echo "Points de montage scannés :"
+echo "$mount_points"
+echo ""
+
+# Tableau pour dédupliquer par inode+device
+declare -A seen_inodes
+
+total_count=0
+total_size=0
+
+while IFS= read -r mp; do
+    if [ -z "$mp" ]; then
+        continue
+    fi
+
+    echo "Scannage de : $mp"
+
+    # Trouver les fichiers .wgp
+    while IFS= read -r -d '' file; do
+        if [ -f "$file" ]; then
+            # Obtenir inode et device pour dédupliquer
+            dev_inode=$(stat -c '%d:%i' "$file" 2>/dev/null)
+
+            if [ ! -z "$dev_inode" ] && [ -z "${seen_inodes[$dev_inode]}" ]; then
+                seen_inodes[$dev_inode]=1
+                size=$(stat -c %s "$file")
+
+                echo "$file" >> "$tmp_all"
+                echo "$mp|$size" >> "$tmp_sizes"
+                echo "$file" >> "$tmp_for_dup"
+
+                total_count=$((total_count + 1))
+                total_size=$((total_size + size))
+            fi
+        fi
+    done < <(find "$mp" -type f -iname "*.wgp" -print0 2>/dev/null | sort -z)
+
+done <<< "$mount_points"
+
+echo ""
+echo "=== Résultats par disque ==="
+awk -F'|' '{sizes[$1]+=$2; count[$1]++}
+    END {
+        for (mp in sizes) {
+            bytes = sizes[mp];
+            if (count[mp] == 0) continue;
+            if (bytes > 1073741824) printf "%s : %d fichiers (%.2f Go)\n", mp, count[mp], bytes/1073741824;
+            else if (bytes > 1048576) printf "%s : %d fichiers (%.2f Mo)\n", mp, count[mp], bytes/1048576;
+            else if (bytes > 1024) printf "%s : %d fichiers (%.2f Ko)\n", mp, count[mp], bytes/1024;
+            else printf "%s : %d fichiers (%d octets)\n", mp, count[mp], bytes;
+        }
+    }' "$tmp_sizes" | sort
+
+formatted_total=$(format_size $total_size)
+echo ""
+echo "=== Total ==="
+echo "Nombre total de fichiers .wgp : $total_count"
+echo "Taille totale : $formatted_total"
+echo ""
+
+# Détection des doublons via awk
+echo "=== Doublons (même nom de fichier) ==="
+
+awk '{
+    fichier = $0
+    n = split(fichier, parts, "/")
+    fname = parts[n]
+    files_by_name[fname] = (files_by_name[fname] ? files_by_name[fname] "\n" fichier : fichier)
+}
+END {
+    dup_count = 0
+    for (fname in files_by_name) {
+        n = split(files_by_name[fname], arr, "\n")
+        if (n > 1) {
+            dup_count++
+            print ""
+            print fname " (" n " fois) :"
+            for (i = 1; i <= n; i++) {
+                print "  " arr[i]
+            }
+            dup_total += (n - 1)
+        }
+    }
+    if (dup_count == 0) print "Aucun doublon détecté (même nom)"
+    else print "\n=== Total : " dup_total " fichiers en doublon (" dup_count " noms) ==="
+}' "$tmp_for_dup"
+
+rm "$tmp_all" "$tmp_sizes" "$tmp_for_dup" 2>/dev/null
