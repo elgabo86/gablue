@@ -45,6 +45,7 @@ chmod +x /usr/bin/shadps4-install
 chmod +x /usr/bin/ryu-install
 chmod +x /usr/bin/scrap-win
 chmod +x /usr/bin/wgpcheck
+chmod +x /usr/bin/wgpadd
 
 # Rendre exécutables les scripts d'administration Gablue
 chmod +x /usr/libexec/gablue-update

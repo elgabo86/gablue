@@ -1,0 +1,135 @@
+#!/bin/bash
+
+# Dossier courant
+WORKING_DIR="$(pwd)"
+LAUNCH_SCRIPT="/usr/share/ublue-os/gablue/scripts/launchwin.sh"
+
+# Parcourir tous les fichiers .wgp du dossier courant
+for wgp_file in "$WORKING_DIR"/*.wgp; do
+    if [ ! -f "$wgp_file" ]; then
+        echo "Aucun fichier .wgp trouvé dans $WORKING_DIR"
+        exit 0
+    fi
+
+    onlyapp=$(basename "$wgp_file" .wgp)
+    fullpath=$(realpath "$wgp_file")
+    onlypath="$WORKING_DIR/.es-wgp"
+    script_sh="$onlypath/$onlyapp.sh"
+
+    # Créer le dossier .es-wgp si nécessaire
+    mkdir -p "$onlypath"
+
+    # Vérifier si le .fix existe dans le pack .wgp
+    MOUNT_BASE="/tmp/wgpack_check_$(date +%s)_$$"
+    MOUNT_DIR="$MOUNT_BASE/mount"
+    mkdir -p "$MOUNT_DIR"
+    HAS_FIX=false
+
+    if command -v squashfuse &> /dev/null; then
+        squashfuse -r "$fullpath" "$MOUNT_DIR" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            if [ -f "$MOUNT_DIR/.fix" ]; then
+                HAS_FIX=true
+            fi
+            fusermount -u "$MOUNT_DIR" 2>/dev/null
+        fi
+    fi
+    rm -rf "$MOUNT_BASE"
+
+    # Déterminer le mode
+    if [ "$HAS_FIX" = true ]; then
+        choice="fix"
+        echo "$onlyapp: mode fix (détecté via .fix)"
+    else
+        choice="normal"
+        echo "$onlyapp: mode normal"
+    fi
+
+    # Créer ou remplacer le script .sh
+    echo "#!/bin/bash" > "$script_sh"
+    if [ "$choice" = "fix" ]; then
+        echo "exec \"$LAUNCH_SCRIPT\" --fix \"$fullpath\"" >> "$script_sh"
+    else
+        echo "exec \"$LAUNCH_SCRIPT\" \"$fullpath\"" >> "$script_sh"
+    fi
+    chmod +x "$script_sh"
+    echo "Script créé : $script_sh"
+
+    # Trouver le dossier Roms/windows (insensible à la casse)
+    link_dir=""
+    for dir in "$HOME"/[Rr][Oo][Mm][Ss]/[Ww][Ii][Nn][Dd][Oo][Ww][Ss]; do
+        if [ -d "$dir" ]; then
+            link_dir="$dir"
+            break
+        fi
+    done
+
+    if [ -z "$link_dir" ]; then
+        link_dir="$HOME/Roms/windows"
+        mkdir -p "$link_dir"
+    fi
+
+    # Créer ou mettre à jour le lien symbolique
+    link_sh="$link_dir/$onlyapp.sh"
+    ln -sf "$script_sh" "$link_sh"
+    echo "Lien symbolique : $link_sh -> $script_sh"
+
+    # Trouver le dossier ES-DE (insensible à la casse)
+    cover_dir=""
+    for esde in "$HOME"/[Ee][Ss]-[Dd][Ee]/downloaded_media/windows/covers; do
+        if [ -d "$esde" ]; then
+            cover_dir="$esde"
+            break
+        fi
+    done
+
+    if [ -z "$cover_dir" ]; then
+        cover_dir="$HOME/ES-DE/downloaded_media/windows/covers"
+        mkdir -p "$cover_dir"
+    fi
+
+    # Vérifier si un cover existe déjà
+    cover_exists=false
+    for ext in .png .jpg .jpeg; do
+        if [ -f "$cover_dir/$onlyapp$ext" ]; then
+            cover_exists=true
+            echo "Cover existant : $cover_dir/$onlyapp$ext (pas de téléchargement)"
+            break
+        fi
+    done
+
+    # Télécharger le cover seulement s'il n'existe pas
+    if [ "$cover_exists" = false ]; then
+        encoded_name=$(echo "$onlyapp" | sed 's/ /%20/g')
+        search_url="https://steamgrid.usebottles.com/api/search/$encoded_name"
+        response=$(curl -s "$search_url")
+
+        if [ -z "$response" ]; then
+            echo "Erreur : impossible de contacter l'API pour $onlyapp"
+            echo "---"
+            continue
+        fi
+
+        image_url=$(echo "$response" | grep -o 'https://[^"]*\.\(jpg\|png\|jpeg\)' | head -n 1)
+        if [ -z "$image_url" ]; then
+            echo "Aucune image trouvée pour $onlyapp"
+            echo "---"
+            continue
+        fi
+
+        ext=$(echo "$image_url" | grep -o '\.\(jpg\|png\|jpeg\)$')
+        output_cover="$cover_dir/$onlyapp$ext"
+
+        curl -s "$image_url" -o "$output_cover"
+        if [ $? -eq 0 ]; then
+            echo "Cover téléchargé : $output_cover"
+        else
+            echo "Échec du téléchargement du cover pour $onlyapp"
+            rm -f "$output_cover"
+        fi
+    fi
+
+    echo "---"
+done
+
+echo "Terminé : tous les fichiers .wgp ont été traités"
