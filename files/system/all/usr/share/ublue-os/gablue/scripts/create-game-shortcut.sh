@@ -1,5 +1,9 @@
 #!/bin/bash
-# Version: 1.2
+# Version: 1.3
+
+# Script d'extraction d'icône Python (chemin relatif pour testing)
+SCRIPT_DIR="$(dirname "$0")"
+EXEICONEXTRACT="${SCRIPT_DIR}/../script/exeiconextract.py"
 
 # Vérifie qu'un fichier .exe ou .wgp est passé en argument
 if [ -z "$1" ] || [ ! -f "$1" ]; then
@@ -137,15 +141,8 @@ if [ "$FILETYPE" = "wgp" ]; then
                 ICON_EXE_PATH="$MOUNT_DIR/$EXE_IN_WGP"
 
                 if [ -f "$ICON_EXE_PATH" ]; then
-                    # Extraire l'icône avec icotool et prendre le PNG le plus gros
-                    TMP_ICO=$(mktemp -d)
-                    wrestool -x -t 14 "$ICON_EXE_PATH" -o "$TMP_ICO" 2>/dev/null
-                    icotool --extract --output="$TMP_ICO" "$TMP_ICO"/*.ico 2>/dev/null
-                    BIGGEST_PNG=$(ls -S "$TMP_ICO"/*.png 2>/dev/null | head -1)
-                    if [ -n "$BIGGEST_PNG" ]; then
-                        cp "$BIGGEST_PNG" "$ICON_PATH"
-                    fi
-                    rm -rf "$TMP_ICO"
+                    # Extraire l'icône avec exeiconextract.py
+                    python3 "$EXEICONEXTRACT" "$ICON_EXE_PATH" "$ICON_PATH" 2>/dev/null
                 fi
             fi
 
@@ -157,15 +154,8 @@ if [ "$FILETYPE" = "wgp" ]; then
     # Nettoyer le dossier de montage
     rm -rf "$MOUNT_BASE"
 else
-    # Pour les .exe : extraction avec icotool et prendre le PNG le plus gros
-    TMP_ICO=$(mktemp -d)
-    wrestool -x -t 14 "$EXE_PATH" -o "$TMP_ICO" 2>/dev/null
-    icotool --extract --output="$TMP_ICO" "$TMP_ICO"/*.ico 2>/dev/null
-    BIGGEST_PNG=$(ls -S "$TMP_ICO"/*.png 2>/dev/null | head -1)
-    if [ -n "$BIGGEST_PNG" ]; then
-        cp "$BIGGEST_PNG" "$ICON_PATH"
-    fi
-    rm -rf "$TMP_ICO"
+    # Pour les .exe : extraction avec exeiconextract.py
+    python3 "$EXEICONEXTRACT" "$EXE_PATH" "$ICON_PATH" 2>/dev/null
 fi
 
 # Fallback si pas d'icône extraite

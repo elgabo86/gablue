@@ -400,27 +400,21 @@ configure_extras() {
 # Fonctions de gestion de l'icône
 #======================================
 
-# Extrait la plus grande icône PNG depuis un .exe Windows
+# Script d'extraction d'icône Python (chemin relatif pour testing)
+SCRIPT_DIR="$(dirname "$0")"
+EXEICONEXTRACT="${SCRIPT_DIR}/../script/exeiconextract.py"
+
+# Extrait l'icône depuis un .exe en utilisant exeiconextract.py
 extract_icon_from_exe() {
     local exe_path="$1"
-    local output_dir="$2"
+    local output_png="$2"
 
-    # Extraire les groupes icônes depuis l'exécutable
-    wrestool -x -t14 "$exe_path" -o "$output_dir" 2>/dev/null || return 1
+    [ ! -f "$EXEICONEXTRACT" ] && {
+        echo "Erreur: exeiconextract.py non trouvé" >&2
+        return 1
+    }
 
-    # Convertir les .ico en .png (même approche que wgp-thumbnailer)
-    if ls "$output_dir"/*.ico >/dev/null 2>&1; then
-        icotool --extract --output="$output_dir" "$output_dir"/*.ico 2>/dev/null
-    fi
-
-    # Retourner le plus grand PNG
-    local biggest_png=$(ls -S "$output_dir"/*.png 2>/dev/null | head -n1)
-
-    if [ -n "$biggest_png" ] && file "$biggest_png" | grep -q "PNG image"; then
-        echo "$biggest_png"
-        return 0
-    fi
-    return 1
+    python3 "$EXEICONEXTRACT" "$exe_path" "$output_png" 2>/dev/null
 }
 
 # Extrait l'icône depuis l'exécutable principal du jeu et crée .icon.png
@@ -443,16 +437,10 @@ extract_default_icon() {
             echo ""
             echo "Extraction de l'icône depuis l'exécutable principal : $LAUNCH_EXE"
 
-            TEMP_ICO=$(mktemp -d)
-            local extracted_png=$(extract_icon_from_exe "$EXE_FULL_PATH" "$TEMP_ICO")
-
-            if [ -n "$extracted_png" ]; then
-                cp "$extracted_png" "$GAME_DIR/.icon.png"
-                rm -rf "$TEMP_ICO"
+            if extract_icon_from_exe "$EXE_FULL_PATH" "$GAME_DIR/.icon.png"; then
                 echo "Icône extraite avec succès : .icon.png"
                 return 0
             else
-                rm -rf "$TEMP_ICO"
                 echo "Avertissement : aucune icône trouvée dans l'exécutable"
                 return 1
             fi
@@ -524,16 +512,10 @@ configure_custom_icon() {
                     echo ""
                     echo "Extraction de l'icône depuis: $icon_name"
 
-                    TEMP_ICO=$(mktemp -d)
-                    local extracted_png=$(extract_icon_from_exe "$icon_file" "$TEMP_ICO")
-
-                    if [ -n "$extracted_png" ]; then
-                        cp "$extracted_png" "$GAME_DIR/.icon.png"
-                        rm -rf "$TEMP_ICO"
+                    if extract_icon_from_exe "$icon_file" "$GAME_DIR/.icon.png"; then
                         echo "Icône extraite avec succès: .icon.png"
                         return 0
                     else
-                        rm -rf "$TEMP_ICO"
                         if command -v kdialog &> /dev/null; then
                             kdialog --error "Aucune icône valide trouvée dans $icon_name"
                         else

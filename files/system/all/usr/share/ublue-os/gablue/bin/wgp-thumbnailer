@@ -5,6 +5,10 @@ SIZE="$3"     # %s (128 ou 256)
 
 [ -z "$SIZE" ] && SIZE=256
 
+# Script d'extraction d'icône Python (chemin relatif pour testing)
+SCRIPT_DIR="$(dirname "$0")"
+EXEICONEXTRACT="${SCRIPT_DIR}/../script/exeiconextract.py"
+
 MAX_INSTANCES=3
 PID_FILE="/tmp/wgp-thumbnailer-pids"
 MY_PID=$$
@@ -131,15 +135,25 @@ case "${ICON_EXE_PATH,,}" in  # ,, = tout en minuscule
 esac
 
 # Sinon : c'est un .exe → extraction normale
-wrestool -x -t14 "$ICON_EXE_PATH" -o "$TEMP_ICO" 2>/dev/null
-if ls "$TEMP_ICO"/*.ico >/dev/null 2>&1; then
-    icotool --extract --output="$TEMP_ICO" "$TEMP_ICO"/*.ico 2>/dev/null
-fi
+TEMP_PNG="$TEMP_ICO/extracted.png"
 
-BIGGEST_PNG=$(ls -S "$TEMP_ICO"/*.png 2>/dev/null | head -n1)
-
-if [ -n "$BIGGEST_PNG" ] && file "$BIGGEST_PNG" | grep -q "PNG image"; then
-    magick "$BIGGEST_PNG" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT"
+if [ -f "$EXEICONEXTRACT" ]; then
+    python3 "$EXEICONEXTRACT" "$ICON_EXE_PATH" "$TEMP_PNG" 2>/dev/null
+    if [ -f "$TEMP_PNG" ]; then
+        magick "$TEMP_PNG" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && exit 0
+    fi
 else
-    exit 1  # → fallback MIME si rien d'extrait
+    # Fallback wrestool/icotool si exeiconextract.py n'est pas disponible
+    wrestool -x -t14 "$ICON_EXE_PATH" -o "$TEMP_ICO" 2>/dev/null
+    if ls "$TEMP_ICO"/*.ico >/dev/null 2>&1; then
+        icotool --extract --output="$TEMP_ICO" "$TEMP_ICO"/*.ico 2>/dev/null
+    fi
+
+    BIGGEST_PNG=$(ls -S "$TEMP_ICO"/*.png 2>/dev/null | head -n1)
+
+    if [ -n "$BIGGEST_PNG" ] && file "$BIGGEST_PNG" | grep -q "PNG image"; then
+        magick "$BIGGEST_PNG" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && exit 0
+    fi
 fi
+
+exit 1  # → fallback MIME si rien d'extrait
