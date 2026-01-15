@@ -13,6 +13,7 @@
 # Variables globales
 #======================================
 fix_mode=false
+force_tty=false
 args=""
 fullpath=""
 # Normaliser $HOME vers /var/home (chemin réel sur Silverblue/Kinoite)
@@ -47,6 +48,10 @@ parse_arguments() {
         case "$1" in
             --fix)
                 fix_mode=true
+                shift
+                ;;
+            --force-tty)
+                force_tty=true
                 shift
                 ;;
             --args)
@@ -473,10 +478,13 @@ run_bottles() {
 launch_wgp_game() {
     echo "Lancement de $WGPACK_NAME..."
 
+    # Définir TERM qui est nécessaire pour certains jeux Unity
+    [ -z "$TERM" ] && export TERM=linux
+
     apply_padfix_setting
 
     # Vérifier si on est attaché à un terminal - problème avec certains jeux
-    if [ -t 0 ] || [ -t 1 ]; then
+    if [ "$force_tty" = true ] || [ -t 0 ] || [ -t 1 ]; then
         # Mode terminal : lancer avec redirection stdin et attendre directement
         local flatpak_cmd
         if [ -f "$HOME_REAL/.config/.mesa-git" ]; then
@@ -695,7 +703,7 @@ run_classic_mode() {
     install_registry_files "$(dirname "$new_fullpath")"
 
     # Vérifier si on est attaché à un terminal - problème avec certains jeux
-    if [ -t 0 ] || [ -t 1 ]; then
+    if [ "$force_tty" = true ] || [ -t 0 ] || [ -t 1 ]; then
         # Mode terminal : lancer avec redirection stdin uniquement pour cacher le TTY au jeu
         local flatpak_cmd
         if [ -f "$HOME_REAL/.config/.mesa-git" ]; then
