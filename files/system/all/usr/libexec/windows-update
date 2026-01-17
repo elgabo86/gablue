@@ -43,12 +43,13 @@ fi
 if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ] || [ "$runner_choice" = "gwine-proton-wow64" ]; then
     API_URL="https://api.github.com/repos/elgabo86/gwine/releases"
     # Use exact match for runner_choice to avoid overlap between gwine-proton and gwine-proton-wow64
+    # Sort by published_at to get the most recent release by date
     if [ "$runner_choice" = "gwine-proton" ]; then
-        wineversion=$(curl -s "$API_URL" | grep '"tag_name":' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/' | grep "^gwine-proton-[0-9]" | head -n1)
+        wineversion=$(curl -s "$API_URL" | jq -r '.[] | "\(.published_at) \(.tag_name)"' | grep " gwine-proton-[0-9]" | sort -r | head -n1 | cut -d' ' -f2)
     elif [ "$runner_choice" = "gwine-proton-wow64" ]; then
-        wineversion=$(curl -s "$API_URL" | grep '"tag_name":' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/' | grep "^gwine-proton-wow64-[0-9]" | head -n1)
+        wineversion=$(curl -s "$API_URL" | jq -r '.[] | "\(.published_at) \(.tag_name)"' | grep " gwine-proton-wow64-[0-9]" | sort -r | head -n1 | cut -d' ' -f2)
     else
-        wineversion=$(curl -s "$API_URL" | grep '"tag_name":' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/' | grep "^gwine-[0-9]" | head -n1)
+        wineversion=$(curl -s "$API_URL" | jq -r '.[] | "\(.published_at) \(.tag_name)"' | grep " gwine-[0-9]" | sort -r | head -n1 | cut -d' ' -f2)
     fi
     if [ -z "$wineversion" ]; then
         kdialog --msgbox "Aucune version trouvée pour $runner_choice."
