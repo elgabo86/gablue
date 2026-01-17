@@ -54,8 +54,15 @@ create_temp_path() {
         fi
     done
 
-    # Créer un lien symbolique pour le contenu du dossier parent final
-    ln -sf "$(realpath "$path")"/* "$new_path/"
+    # Créer des liens symboliques pour tout le contenu du dossier
+    local real_path
+    real_path="$(realpath "$path")"
+    for item in "$real_path"/* "$real_path"/.*; do 2>/dev/null
+        # Ignorer . et ..
+        [[ "$(basename "$item")" == "." ]] && continue
+        [[ "$(basename "$item")" == ".." ]] && continue
+        [ -e "$item" ] || [ -L "$item" ] && ln -sf "$item" "$new_path/"
+    done
 
     echo "$new_path"
 }

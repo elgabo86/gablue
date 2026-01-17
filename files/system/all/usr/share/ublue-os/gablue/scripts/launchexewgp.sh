@@ -43,6 +43,7 @@ EXTRA_DIR="$EXTRA_BASE/$WGPACK_NAME"
 install_registry_files() {
     local reg_dir="$1"
     local reg_files
+    local temp_reg
 
     # Chercher les fichiers .reg dans le dossier
     reg_files=()
@@ -53,21 +54,29 @@ install_registry_files() {
     # Si aucun fichier .reg, rien à faire
     [ ${#reg_files[@]} -eq 0 ] && return 0
 
-    # Vérifier si mesa-git est demandé
-    local MESA_CONFIG="$HOME_REAL/.config/.mesa-git"
-    local BOTTLES_CMD="/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def"
-    if [ -f "$MESA_CONFIG" ]; then
-        echo "Utilisation de Mesa-Git (détecté: $MESA_CONFIG)"
-        BOTTLES_CMD="FLATPAK_GL_DRIVERS=mesa-git $BOTTLES_CMD"
-    fi
+    # Fusionner tous les fichiers .reg en un seul pour éviter les conflits de verrouillage
+    temp_reg="$(mktemp)"
 
-    # Installer chaque fichier .reg
+    # Écrire l'en-tête Windows Registry
+    echo "Windows Registry Editor Version 5.00" > "$temp_reg"
+
+    # Concaténer tous les fichiers (en sautant leur en-tête)
     for reg_file in "${reg_files[@]}"; do
         local reg_name
         reg_name=$(basename "$reg_file")
-        echo "Installation du fichier de registre: $reg_name"
-        $BOTTLES_CMD --executable "$HOME_REAL/Windows/WinDrive/windows/regedit.exe" --args "/S \"$reg_file\""
+        echo "Ajout du fichier de registre: $reg_name"
+
+        # Copier en sautant l'en-tête (première ligne)
+        tail -n +2 "$reg_file" >> "$temp_reg"
+        echo "" >> "$temp_reg"  # Ligne vide entre les fichiers
     done
+
+    # Installer le fichier unique
+    echo "Installation du registre fusionné..."
+    run_bottles "$HOME_REAL/Windows/WinDrive/windows/regedit.exe" "/S \"$temp_reg\""
+
+    # Nettoyer le fichier temporaire
+    rm -f "$temp_reg"
 }
 
 # Construit et exécute la commande bottles avec ou sans mesa-git
@@ -266,7 +275,7 @@ mkdir -p "$MOUNT_BASE"
 # Vérifier si déjà monté
 if mountpoint -q "$MOUNT_DIR"; then
     # Vérifier si un bwrap est actif
-    if ! pgrep -f "bwrap.*$MOUNT_DIR" > /dev/null 2>&1; then
+    if ! pgrep -f "bwrap.*$(printf '%s' "$MOUNT_DIR" | sed 's/[[\.*^$()+?{|\\]/\\&/g')" > /dev/null 2>&1; then
         echo "Montage orphelin détecté pour $WGPACK_NAME, nettoyage..."
         fusermount -uz "$MOUNT_DIR" 2>/dev/null
     else
@@ -387,7 +396,7 @@ sleep 1
 
 # Attendre que le jeu se termine
 echo "En attente de la fermeture du jeu..."
-while pgrep -f "bwrap.*$EXE_FULL_PATH" > /dev/null 2>&1; do
+while pgrep -f "bwrap.*$(printf '%s' "$EXE_FULL_PATH" | sed 's/[[\.*^$()+?{|\\]/\\&/g')" > /dev/null 2>&1; do
     sleep 1
 done
 

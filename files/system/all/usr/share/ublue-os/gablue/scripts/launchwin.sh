@@ -38,6 +38,15 @@ error_exit() {
     exit 1
 }
 
+# Échappe une chaîne pour être utilisée dans args de flatpak (--args)
+escape_args() {
+    # Remplacer les guillemets doubles par \"
+    local escaped="$1"
+    escaped="${escaped//\\/\\\\}"   # Échapper les backslashes d'abord
+    escaped="${escaped//\"/\\\"}"    # Échapper les guillemets doubles
+    echo "$escaped"
+}
+
 #======================================
 # Fonctions d'analyse des paramètres
 #======================================
@@ -133,7 +142,7 @@ mount_wgp() {
     # Vérifier si déjà monté
     if mountpoint -q "$MOUNT_DIR"; then
         # Vérifier si un bwrap est actif (montage en cours d'utilisation)
-        if ! pgrep -f "bwrap.*$MOUNT_DIR" > /dev/null 2>&1; then
+        if ! pgrep -f "bwrap.*$(printf '%s' "$MOUNT_DIR" | sed 's/[[\.*^$()+?{|\\]/\\&/g')" > /dev/null 2>&1; then
             # Pas de bwrap actif : montage orphelin, nettoyer automatiquement
             echo "Montage orphelin détecté pour $WGPACK_NAME, nettoyage..."
             fusermount -uz "$MOUNT_DIR" 2>/dev/null
@@ -154,7 +163,7 @@ mount_wgp() {
                 echo "Arrêt de l'instance en cours..."
                 # Trouver et tuer les bwrap utilisant ce mount
                 local PIDs
-                PIDs=$(pgrep -f "bwrap.*$MOUNT_DIR" 2>/dev/null)
+                PIDs=$(pgrep -f "bwrap.*$(printf '%s' "$MOUNT_DIR" | sed 's/[[\.*^$()+?{|\\]/\\&/g')" 2>/dev/null)
                 if [ -n "$PIDs" ]; then
                     for pid in $PIDs; do
                         echo "Arrêt du processus $pid (bwrap)"
@@ -191,7 +200,7 @@ mount_wgp() {
 # Nettoie en démontant le WGP et les extras
 cleanup_wgp() {
     # Vérifier si le mount est encore utilisé par un nouveau bwrap (nouvelle instance)
-    if mountpoint -q "$MOUNT_DIR" && pgrep -f "bwrap.*$MOUNT_DIR" > /dev/null 2>&1; then
+    if mountpoint -q "$MOUNT_DIR" && pgrep -f "bwrap.*$(printf '%s' "$MOUNT_DIR" | sed 's/[[\.*^$()+?{|\\]/\\&/g')" > /dev/null 2>&1; then
         # Une nouvelle instance a pris la main, ne surtout pas démonter
         echo "Une nouvelle instance de $WGPACK_NAME a pris la main, pas de démontage."
         return 0
@@ -496,7 +505,9 @@ launch_wgp_game() {
         echo "Appuyez sur Ctrl+C pour arrêter le jeu..."
 
         if [ -n "$args" ]; then
-            eval "$flatpak_cmd --args \" \$args\" </dev/null"
+            local escaped_args
+            escaped_args="$(escape_args "$args")"
+            eval "$flatpak_cmd --args \" $escaped_args\" </dev/null"
         else
             eval "$flatpak_cmd --args \"\" </dev/null"
         fi
@@ -526,7 +537,7 @@ launch_wgp_game() {
     # Attendre que le jeu se termine (surveiller si un bwrap exécute CET exécutable via son chemin complet unique)
     echo "En attente de la fermeture du jeu..."
 
-    while pgrep -f "bwrap.*$FULL_EXE_PATH" > /dev/null 2>&1; do
+    while pgrep -f "bwrap.*$(printf '%s' "$FULL_EXE_PATH" | sed 's/[[\.*^$()+?{|\\]/\\&/g')" > /dev/null 2>&1; do
         sleep 1
     done
 
@@ -589,6 +600,7 @@ setup_pds_symlink() {
 install_registry_files() {
     local reg_dir="$1"
     local reg_files
+    local temp_reg
 
     # Chercher les fichiers .reg dans le dossier
     reg_files=()
@@ -599,13 +611,29 @@ install_registry_files() {
     # Si aucun fichier .reg, rien à faire
     [ ${#reg_files[@]} -eq 0 ] && return 0
 
-    # Installer chaque fichier .reg
+    # Fusionner tous les fichiers .reg en un seul pour éviter les conflits de verrouillage
+    temp_reg="$(mktemp)"
+
+    # Écrire l'en-tête Windows Registry
+    echo "Windows Registry Editor Version 5.00" > "$temp_reg"
+
+    # Concaténer tous les fichiers (en sautant leur en-tête)
     for reg_file in "${reg_files[@]}"; do
         local reg_name
         reg_name=$(basename "$reg_file")
-        echo "Installation du fichier de registre: $reg_name"
-        run_bottles "$HOME_REAL/Windows/WinDrive/windows/regedit.exe" "/S \"$reg_file\""
+        echo "Ajout du fichier de registre: $reg_name"
+
+        # Copier en sautant l'en-tête (première ligne)
+        tail -n +2 "$reg_file" >> "$temp_reg"
+        echo "" >> "$temp_reg"  # Ligne vide entre les fichiers
     done
+
+    # Installer le fichier unique
+    echo "Installation du registre fusionné..."
+    run_bottles "$HOME_REAL/Windows/WinDrive/windows/regedit.exe" "/S \"$temp_reg\""
+
+    # Nettoyer le fichier temporaire
+    rm -f "$temp_reg"
 }
 
 # Fonction principale pour le mode WGP
@@ -667,8 +695,15 @@ create_temp_path() {
         fi
     done
 
-    # Créer un lien symbolique pour le contenu du dossier parent final
-    ln -sf "$(realpath "$path")"/* "$new_path/"
+    # Créer des liens symboliques pour tout le contenu du dossier
+    local real_path
+    real_path="$(realpath "$path")"
+    for item in "$real_path"/* "$real_path"/.*; do 2>/dev/null
+        # Ignorer . et ..
+        [[ "$(basename "$item")" == "." ]] && continue
+        [[ "$(basename "$item")" == ".." ]] && continue
+        [ -e "$item" ] || [ -L "$item" ] && ln -sf "$item" "$new_path/"
+    done
 
     echo "$new_path"
 }
@@ -713,7 +748,9 @@ run_classic_mode() {
         fi
 
         if [ -n "$args" ]; then
-            eval "$flatpak_cmd --args \" \$args\" </dev/null"
+            local escaped_args
+            escaped_args="$(escape_args "$args")"
+            eval "$flatpak_cmd --args \" $escaped_args\" </dev/null"
         else
             eval "$flatpak_cmd --args \"\" </dev/null"
         fi
