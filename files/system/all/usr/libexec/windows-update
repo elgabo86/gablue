@@ -29,8 +29,8 @@ fi
 
 # Choix entre gwine, gwine-proton, gwine-proton-wow64 et soda avec kdialog
 runner_choice=$(kdialog --title "Choix de wine" --radiolist "Sélectionnez la version de wine à utiliser :" \
-    "gwine" "Gwine (dernière version)" on \
-    "gwine-proton" "Gwine-Proton (dernière version)" off \
+    "gwine-proton" "Gwine-Proton (dernière version)" on \
+    "gwine" "Gwine (dernière version)" off \
     "gwine-proton-wow64" "Gwine-Proton-WoW64 (dernière version)" off \
     "soda" "Soda (ancienne version)" off)
 
