@@ -302,7 +302,8 @@ install_runtimes() {
         dotnetdesktop6 \
         dotnetdesktop7 \
         dotnetdesktop8 \
-        openal
+        openal \
+        xact
     flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/"$wineversion"/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q settings fontsmooth=rgb
 }
 
