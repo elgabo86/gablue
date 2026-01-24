@@ -11,7 +11,6 @@ flatpak override --user --filesystem=/media
 flatpak override --user --filesystem=xdg-download
 flatpak override com.usebottles.bottles --user --filesystem=xdg-data/applications
 flatpak override com.usebottles.bottles --user --env=DXVK_ASYNC=1
-flatpak override com.usebottles.bottles --user --env=DXVK_GPLASYNCCACHE=1
 flatpak override com.usebottles.bottles --user --env=WINENTSYNC=1
 flatpak override com.usebottles.bottles --user --filesystem=~/Windows
 flatpak override com.usebottles.bottles --user --filesystem=/tmp
