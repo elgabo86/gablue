@@ -98,7 +98,7 @@ apply_padfix_setting() {
 restore_padfix_setting() {
     [ "$fix_mode" != true ] && return 0
 
-    sleep 2
+    sleep 0.5
     local SYSTEM_REG="$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg"
     sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' "$SYSTEM_REG"
 }
@@ -230,12 +230,12 @@ cleanup_wgp() {
     fi
 
     # Attendre un peu que le démontage se termine complètement
-    sleep 0.5
+    sleep 0.2
 
     # Vérifier et forcer le démontage si encore monté
     if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
         umount -f "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null
-        sleep 0.3
+        sleep 0.1
     fi
 
     # Supprimer le dossier de montage (rmdir, pas rm -rf pour squashfs read-only)
@@ -524,21 +524,27 @@ launch_wgp_game() {
         return
     fi
 
-    # Mode normal : lancer en arrière-plan et surveiller bwrap
+    # Mode normal : lancer en arrière-plan et surveiller
+    local FLATPAK_PID
     if [ -n "$args" ]; then
         run_bottles "$FULL_EXE_PATH" " $args" &
     else
         run_bottles "$FULL_EXE_PATH" "" &
     fi
+    FLATPAK_PID=$!
 
-    # Petite pause pour laisser le bwrap se lancer
-    sleep 1
-
-    # Attendre que le jeu se termine (surveiller si un bwrap exécute CET exécutable via son chemin complet unique)
     echo "En attente de la fermeture du jeu..."
 
-    while pgrep -f "bwrap.*$(printf '%s' "$FULL_EXE_PATH" | sed 's/[[\.*^$()+?{|\\]/\\&/g')" > /dev/null 2>&1; do
-        sleep 1
+    # Attendre le processus flatpak (bloquant, 0% CPU)
+    wait "$FLATPAK_PID" 2>/dev/null
+
+    # Vérification rapide de sécurité : attendre que bwrap se termine vraiment
+    local bwrap_pattern
+    bwrap_pattern=$(printf '%s' "$FULL_EXE_PATH" | sed 's/[[\.*^$()+?{|\\]/\\&/g')
+    local timeout=50  # 5 secondes max (50 * 0.1s)
+    while [ $timeout -gt 0 ] && pgrep -f "bwrap.*$bwrap_pattern" > /dev/null 2>&1; do
+        sleep 0.1
+        ((timeout--))
     done
 
     restore_padfix_setting

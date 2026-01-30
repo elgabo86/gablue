@@ -93,7 +93,7 @@ fi
 
 if [ "$fix_mode" = true ]; then
     # Réactiver DisableHidraw après le lancement en mode fix
-    sleep 2
+    sleep 0.5
     sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/system.reg
 fi
 

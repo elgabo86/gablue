@@ -322,11 +322,11 @@ cleanup() {
         fusermount -uz "$MOUNT_DIR" 2>/dev/null
     fi
 
-    sleep 0.5
+    sleep 0.2
 
     if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
         umount -f "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null
-        sleep 0.3
+        sleep 0.1
     fi
 
     if [ -d "$MOUNT_DIR" ]; then
@@ -390,14 +390,19 @@ apply_padfix_setting
 
 # Lancer le jeu en arrière-plan
 run_bottles "$EXE_FULL_PATH" "" &
+FLATPAK_PID=$!
 
-# Petite pause pour laisser le bwrap se lancer
-sleep 1
-
-# Attendre que le jeu se termine
+# Attendre que le jeu se termine (bloquant, 0% CPU)
 echo "En attente de la fermeture du jeu..."
-while pgrep -f "bwrap.*$(printf '%s' "$EXE_FULL_PATH" | sed 's/[[\.*^$()+?{|\\]/\\&/g')" > /dev/null 2>&1; do
-    sleep 1
+wait "$FLATPAK_PID" 2>/dev/null
+
+# Vérification rapide de sécurité : attendre que bwrap se termine vraiment
+local bwrap_pattern
+bwrap_pattern=$(printf '%s' "$EXE_FULL_PATH" | sed 's/[[\.*^$()+?{|\\]/\\&/g')
+local timeout=50  # 5 secondes max (50 * 0.1s)
+while [ $timeout -gt 0 ] && pgrep -f "bwrap.*$bwrap_pattern" > /dev/null 2>&1; do
+    sleep 0.1
+    ((timeout--))
 done
 
 restore_padfix_setting
