@@ -597,17 +597,35 @@ install_registry_files() {
     for reg_file in "${reg_files[@]}"; do
         local reg_name
         reg_name=$(basename "$reg_file")
+        
+        # Calculer le hash md5 du contenu (rapide)
+        local reg_hash
+        reg_hash=$(md5sum "$reg_file" | cut -d' ' -f1)
+        
+        # Nom du fichier dans temp: hash_nomdufichier.reg
+        # Cela permet d'avoir le même fichier de différents jeux sans collision
+        local dest_file="$temp_dir/${reg_hash}_${reg_name}"
+        
+        # Vérifier si le fichier existe déjà avec le même contenu
+        if [ -f "$dest_file" ]; then
+            # Vérifier que le hash correspond bien (sécurité)
+            local existing_hash
+            existing_hash=$(md5sum "$dest_file" | cut -d' ' -f1)
+            if [ "$reg_hash" = "$existing_hash" ]; then
+                echo "Fichier .reg déjà installé (ignoré): $reg_name"
+                continue
+            fi
+        fi
+        
         echo "Installation du fichier de registre: $reg_name"
 
-        # Copier le fichier dans C:\windows\temp\ avec un nom simple
-        local dest_file="$temp_dir/$(date +%s)_$reg_name"
+        # Copier le fichier dans C:\windows\temp\ avec le hash dans le nom
         cp "$reg_file" "$dest_file"
 
         # Exécuter avec chemin Windows simple (C:\windows\temp\...)
         run_bottles "$HOME_REAL/Windows/WinDrive/windows/regedit.exe" "/S C:\\\\windows\\\\temp\\\\$(basename "$dest_file")"
-
-        # Nettoyer
-        rm -f "$dest_file"
+        
+        # Le fichier est conservé dans temp pour les prochains lancements
     done
 }
 
