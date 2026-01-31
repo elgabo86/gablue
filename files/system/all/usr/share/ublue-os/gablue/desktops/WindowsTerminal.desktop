@@ -1,6 +1,6 @@
 [Desktop Entry]
 Comment=Exécutez des logiciels Windows
-Exec=/usr/share/ublue-os/gablue/scripts/launchwinterm.sh %f; exec bash
+Exec=/usr/share/ublue-os/gablue/scripts/launchwin.sh %f; exec bash
 Icon=com.usebottles.bottles
 Keywords[fr_CH]=wine;windows;
 Keywords=wine;windows;

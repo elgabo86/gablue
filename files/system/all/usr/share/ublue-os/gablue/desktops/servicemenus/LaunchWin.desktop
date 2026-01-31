@@ -14,4 +14,4 @@ Exec=/usr/share/ublue-os/gablue/scripts/launchwin.sh --fix %f
 [Desktop Action LaunchTerm]
 Name=Lancer dans le terminal
 Icon=com.usebottles.bottles
-Exec=konsole --hold -e bash -c '/usr/share/ublue-os/gablue/scripts/launchwinterm.sh "$@"; exec bash' bash %F
+Exec=konsole --hold -e bash -c '/usr/share/ublue-os/gablue/scripts/launchwin.sh "$@"; exec bash' bash %F

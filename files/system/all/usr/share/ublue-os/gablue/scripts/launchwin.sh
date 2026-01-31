@@ -13,7 +13,7 @@
 # Variables globales
 #======================================
 fix_mode=false
-force_tty=false
+exewgp_mode=false
 args=""
 fullpath=""
 # Normaliser $HOME vers /var/home (chemin réel sur Silverblue/Kinoite)
@@ -59,8 +59,8 @@ parse_arguments() {
                 fix_mode=true
                 shift
                 ;;
-            --force-tty)
-                force_tty=true
+            --exewgp)
+                exewgp_mode=true
                 shift
                 ;;
             --args)
@@ -483,53 +483,26 @@ run_bottles() {
     fi
 }
 
-# Lance le jeu WGP via Bottles
-launch_wgp_game() {
-    echo "Lancement de $WGPACK_NAME..."
+# Lance le jeu via Bottles avec surveillance bwrap
+# Usage: launch_bottles_game <chemin_exe> [args]
+launch_bottles_game() {
+    local exe_path="$1"
+    local game_args="${2:-}"
+    local display_name="${3:-$(basename "$exe_path")}"
+
+    echo "Lancement de $display_name..."
 
     # Définir TERM qui est nécessaire pour certains jeux Unity
     [ -z "$TERM" ] && export TERM=linux
 
     apply_padfix_setting
 
-    # Vérifier si on est attaché à un terminal - problème avec certains jeux
-    if [ "$force_tty" = true ] || [ -t 0 ] || [ -t 1 ]; then
-        # Mode terminal : lancer avec redirection stdin et attendre directement
-        local flatpak_cmd
-        if [ -f "$HOME_REAL/.config/.mesa-git" ]; then
-            flatpak_cmd="FLATPAK_GL_DRIVERS=mesa-git /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable \"$FULL_EXE_PATH\""
-        else
-            flatpak_cmd="/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable \"$FULL_EXE_PATH\""
-        fi
-
-        echo "Appuyez sur Ctrl+C pour arrêter le jeu..."
-
-        if [ -n "$args" ]; then
-            local escaped_args
-            escaped_args="$(escape_args "$args")"
-            eval "$flatpak_cmd --args \" $escaped_args\" </dev/null"
-        else
-            eval "$flatpak_cmd --args \"\" </dev/null"
-        fi
-
-        restore_padfix_setting
-        cleanup_saves_symlink
-
-        # Cleanup forcé du WGP (le jeu est terminé, on peut démonter)
-        echo "Démontage de $WGPACK_NAME..."
-        cleanup_saves_symlink
-        [ -d "$EXTRA_DIR" ] && rm -rf "$EXTRA_DIR"
-        fusermount -u "$MOUNT_DIR" 2>/dev/null || umount -f "$MOUNT_DIR" 2>/dev/null
-        rmdir "$MOUNT_DIR" 2>/dev/null
-        return
-    fi
-
-    # Mode normal : lancer en arrière-plan et surveiller
+    # Lancer en arrière-plan et surveiller
     local FLATPAK_PID
-    if [ -n "$args" ]; then
-        run_bottles "$FULL_EXE_PATH" " $args" &
+    if [ -n "$game_args" ]; then
+        run_bottles "$exe_path" " $game_args" &
     else
-        run_bottles "$FULL_EXE_PATH" "" &
+        run_bottles "$exe_path" "" &
     fi
     FLATPAK_PID=$!
 
@@ -540,7 +513,7 @@ launch_wgp_game() {
 
     # Vérification rapide de sécurité : attendre que bwrap se termine vraiment
     local bwrap_pattern
-    bwrap_pattern=$(printf '%s' "$FULL_EXE_PATH" | sed 's/[[\.*^$()+?{|\\]/\\&/g')
+    bwrap_pattern=$(printf '%s' "$exe_path" | sed 's/[[\.*^$()+?{|\\]/\\&/g')
     local timeout=50  # 5 secondes max (50 * 0.1s)
     while [ $timeout -gt 0 ] && pgrep -f "bwrap.*$bwrap_pattern" > /dev/null 2>&1; do
         sleep 0.1
@@ -548,7 +521,6 @@ launch_wgp_game() {
     done
 
     restore_padfix_setting
-    cleanup_saves_symlink
 }
 
 # Configure le symlink ProgramData via fichier .pds
@@ -639,15 +611,63 @@ install_registry_files() {
     done
 }
 
+# Affiche un menu interactif pour choisir un .exe dans le WGP (mode --exewgp)
+select_exe_from_wgp() {
+    echo "Recherche des exécutables dans le pack..."
+
+    # Lister les fichiers .exe dans le pack
+    local found=0
+    local exe_array=()
+
+    while IFS= read -r -d '' exe; do
+        exe_array+=("$exe")
+        found=$((found + 1))
+    done < <(find "$MOUNT_DIR" -type f -iname "*.exe" -print0 | head -z -n 20)
+
+    if [ $found -eq 0 ]; then
+        echo "Aucun fichier .exe trouvé dans le pack"
+        cleanup_wgp
+        exit 1
+    fi
+
+    # Construire le menu kdialog
+    local menu_args=("Choisissez un exécutable à lancer :")
+
+    for exe in "${exe_array[@]}"; do
+        local rel_path="${exe#$MOUNT_DIR/}"
+        menu_args+=("$rel_path" "$rel_path")
+    done
+
+    # Afficher le menu
+    local EXE_REL_PATH
+    EXE_REL_PATH=$(kdialog --menu "${menu_args[@]}")
+    local exit_status=$?
+
+    if [ $exit_status -ne 0 ] || [ -z "$EXE_REL_PATH" ]; then
+        echo "Annulé par l'utilisateur"
+        cleanup_wgp
+        exit 0
+    fi
+
+    # Chemin complet de l'exécutable
+    FULL_EXE_PATH="$MOUNT_DIR/$EXE_REL_PATH"
+
+    if [ ! -f "$FULL_EXE_PATH" ]; then
+        echo "Erreur: exécutable introuvable: $FULL_EXE_PATH"
+        cleanup_wgp
+        exit 1
+    fi
+
+    echo "Exécutable sélectionné: $EXE_REL_PATH"
+}
+
 # Fonction principale pour le mode WGP
 run_wgp_mode() {
     init_wgp_variables
     mount_wgp
 
-    # Nettoyage en cas d'interruption (sauf mode TTY qui gère son propre cleanup)
-    if ! [ -t 0 ] && ! [ -t 1 ]; then
-        trap cleanup_wgp EXIT
-    fi
+    # Nettoyage en cas d'interruption
+    trap cleanup_wgp EXIT
 
     # Créer le symlink /tmp/wgp-saves AVANT prepare_saves
     setup_saves_symlink
@@ -655,17 +675,24 @@ run_wgp_mode() {
     # IMPORTANT: prepare_saves AVANT read_wgp_config (l'exécutable peut être un symlink vers UserData)
     prepare_saves
     prepare_extras
-    read_wgp_config
+
+    # Mode --exewgp : choisir l'exécutable interactif, sinon lire depuis .launch
+    if [ "$exewgp_mode" = true ]; then
+        select_exe_from_wgp
+    else
+        read_wgp_config
+    fi
+
     # Configurer le symlink ProgramData si fichier .pds présent
     setup_pds_symlink "$(dirname "$FULL_EXE_PATH")"
     # Installer les fichiers .reg dans le dossier de l'exécutable
     install_registry_files "$(dirname "$FULL_EXE_PATH")"
-    launch_wgp_game
 
-    # Nettoyage automatique (le trap EXIT le fera aussi, sauf en mode TTY)
-    if ! [ -t 0 ] && ! [ -t 1 ]; then
-        cleanup_wgp
-    fi
+    # Lancer le jeu avec surveillance bwrap
+    launch_bottles_game "$FULL_EXE_PATH" "$args" "$WGPACK_NAME"
+
+    # Nettoyage du symlink saves (le trap fera le reste)
+    cleanup_saves_symlink
 }
 
 #======================================
@@ -701,17 +728,17 @@ create_temp_path() {
     # Créer des liens symboliques pour tout le contenu du dossier
     local real_path
     real_path="$(realpath "$path")"
-    for item in "$real_path"/* "$real_path"/.*; do 2>/dev/null
+    for item in "$real_path"/* "$real_path"/.*; do
         # Ignorer . et ..
         [[ "$(basename "$item")" == "." ]] && continue
         [[ "$(basename "$item")" == ".." ]] && continue
-        [ -e "$item" ] || [ -L "$item" ] && ln -sf "$item" "$new_path/"
+        [ -e "$item" ] || [ -L "$item" ] && ln -sf "$item" "$new_path/" 2>/dev/null
     done
 
     echo "$new_path"
 }
 
-# Lance le jeu en mode classique (.exe)
+# Lance le jeu en mode classique (.exe direct)
 run_classic_mode() {
     local dirpath
     local filename
@@ -733,41 +760,13 @@ run_classic_mode() {
     # Nettoyage du dossier temporaire en cas d'interruption
     [ -n "$temp_base" ] && trap 'rm -rf "$temp_base"' EXIT
 
-    apply_padfix_setting
-
     # Configurer le symlink ProgramData si fichier .pds présent
     setup_pds_symlink "$(dirname "$new_fullpath")"
     # Installer les fichiers .reg dans le dossier de l'exécutable
     install_registry_files "$(dirname "$new_fullpath")"
 
-    # Vérifier si on est attaché à un terminal - problème avec certains jeux
-    if [ "$force_tty" = true ] || [ -t 0 ] || [ -t 1 ]; then
-        # Mode terminal : lancer avec redirection stdin uniquement pour cacher le TTY au jeu
-        local flatpak_cmd
-        if [ -f "$HOME_REAL/.config/.mesa-git" ]; then
-            flatpak_cmd="FLATPAK_GL_DRIVERS=mesa-git /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable \"$new_fullpath\""
-        else
-            flatpak_cmd="/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable \"$new_fullpath\""
-        fi
-
-        if [ -n "$args" ]; then
-            local escaped_args
-            escaped_args="$(escape_args "$args")"
-            eval "$flatpak_cmd --args \" $escaped_args\" </dev/null"
-        else
-            eval "$flatpak_cmd --args \"\" </dev/null"
-        fi
-        return
-    fi
-
-    # Mode normal
-    if [ -n "$args" ]; then
-        run_bottles "$new_fullpath" " $args"
-    else
-        run_bottles "$new_fullpath" ""
-    fi
-
-    restore_padfix_setting
+    # Lancer le jeu avec surveillance bwrap
+    launch_bottles_game "$new_fullpath" "$args" "$filename"
 
     # Nettoyer le dossier temporaire si créé
     [ -n "$temp_base" ] && rm -rf "$temp_base"
