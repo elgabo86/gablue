@@ -43,7 +43,6 @@ EXTRA_DIR="$EXTRA_BASE/$WGPACK_NAME"
 install_registry_files() {
     local reg_dir="$1"
     local reg_files
-    local temp_reg
 
     # Chercher les fichiers .reg dans le dossier
     reg_files=()
@@ -54,29 +53,27 @@ install_registry_files() {
     # Si aucun fichier .reg, rien à faire
     [ ${#reg_files[@]} -eq 0 ] && return 0
 
-    # Fusionner tous les fichiers .reg en un seul pour éviter les conflits de verrouillage
-    temp_reg="$(mktemp)"
+    # Exécuter chaque fichier .reg individuellement
+    # Solution: copier dans C:\windows\temp\ pour éviter les problèmes de chemins avec espaces
+    local bottle_c="$HOME_REAL/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c"
+    local temp_dir="$bottle_c/windows/temp"
+    mkdir -p "$temp_dir"
 
-    # Écrire l'en-tête Windows Registry
-    echo "Windows Registry Editor Version 5.00" > "$temp_reg"
-
-    # Concaténer tous les fichiers (en sautant leur en-tête)
     for reg_file in "${reg_files[@]}"; do
         local reg_name
         reg_name=$(basename "$reg_file")
-        echo "Ajout du fichier de registre: $reg_name"
+        echo "Installation du fichier de registre: $reg_name"
 
-        # Copier en sautant l'en-tête (première ligne)
-        tail -n +2 "$reg_file" >> "$temp_reg"
-        echo "" >> "$temp_reg"  # Ligne vide entre les fichiers
+        # Copier le fichier dans C:\windows\temp\ avec un nom simple
+        local dest_file="$temp_dir/$(date +%s)_$reg_name"
+        cp "$reg_file" "$dest_file"
+
+        # Exécuter avec chemin Windows simple (C:\windows\temp\...)
+        run_bottles "$HOME_REAL/Windows/WinDrive/windows/regedit.exe" "/S C:\\\\windows\\\\temp\\\\$(basename "$dest_file")"
+
+        # Nettoyer
+        rm -f "$dest_file"
     done
-
-    # Installer le fichier unique
-    echo "Installation du registre fusionné..."
-    run_bottles "$HOME_REAL/Windows/WinDrive/windows/regedit.exe" "/S \"$temp_reg\""
-
-    # Nettoyer le fichier temporaire
-    rm -f "$temp_reg"
 }
 
 # Construit et exécute la commande bottles avec ou sans mesa-git

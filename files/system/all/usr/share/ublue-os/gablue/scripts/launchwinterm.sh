@@ -1,5 +1,59 @@
 #!/bin/bash
 
+# Variables globales
+# Normaliser $HOME vers /var/home (chemin réel sur Silverblue/Kinoite)
+HOME_REAL="$(realpath "$HOME")"
+
+# Fonction pour exécuter bottles
+run_bottles() {
+    local exe="$1"
+    local cmd_args="$2"
+
+    local MESA_CONFIG="$HOME_REAL/.config/.mesa-git"
+    if [ -f "$MESA_CONFIG" ]; then
+        FLATPAK_GL_DRIVERS=mesa-git /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args"
+    else
+        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args"
+    fi
+}
+
+# Installe les fichiers .reg trouvés dans un dossier via regedit.exe
+install_registry_files() {
+    local reg_dir="$1"
+    local reg_files
+
+    # Chercher les fichiers .reg dans le dossier
+    reg_files=()
+    while IFS= read -r -d '' file; do
+        reg_files+=("$file")
+    done < <(find "$reg_dir" -maxdepth 1 -name '*.reg' -print0 2>/dev/null)
+
+    # Si aucun fichier .reg, rien à faire
+    [ ${#reg_files[@]} -eq 0 ] && return 0
+
+    # Exécuter chaque fichier .reg individuellement
+    # Solution: copier dans C:\windows\temp\ pour éviter les problèmes de chemins avec espaces
+    local bottle_c="$HOME_REAL/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c"
+    local temp_dir="$bottle_c/windows/temp"
+    mkdir -p "$temp_dir"
+
+    for reg_file in "${reg_files[@]}"; do
+        local reg_name
+        reg_name=$(basename "$reg_file")
+        echo "Installation du fichier de registre: $reg_name"
+
+        # Copier le fichier dans C:\windows\temp\ avec un nom simple
+        local dest_file="$temp_dir/$(date +%s)_$reg_name"
+        cp "$reg_file" "$dest_file"
+
+        # Exécuter avec chemin Windows simple (C:\windows\temp\...)
+        run_bottles "$HOME_REAL/Windows/WinDrive/windows/regedit.exe" "/S C:\\\\windows\\\\temp\\\\$(basename "$dest_file")"
+
+        # Nettoyer
+        rm -f "$dest_file"
+    done
+}
+
 # Analyse des paramètres
 fix_mode=false
 fullpath=""
@@ -57,12 +111,12 @@ create_temp_path() {
     # Créer des liens symboliques pour tout le contenu du dossier
     local real_path
     real_path="$(realpath "$path")"
-    for item in "$real_path"/* "$real_path"/.*; do 2>/dev/null
+    for item in "$real_path"/* "$real_path"/.*; do
         # Ignorer . et ..
         [[ "$(basename "$item")" == "." ]] && continue
         [[ "$(basename "$item")" == ".." ]] && continue
         [ -e "$item" ] || [ -L "$item" ] && ln -sf "$item" "$new_path/"
-    done
+    done 2>/dev/null
 
     echo "$new_path"
 }
@@ -79,6 +133,9 @@ fi
 
 # Nettoyage du dossier temporaire en cas d'interruption
 [ -n "$temp_base" ] && trap 'rm -rf "$temp_base"' EXIT
+
+# Installer les fichiers .reg dans le dossier de l'exécutable
+install_registry_files "$dirpath"
 
 if [ "$fix_mode" = true ]; then
     # Mode fix: désactiver DisableHidraw

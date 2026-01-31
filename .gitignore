@@ -3,5 +3,6 @@ cosign.private
 CLAUDE.md
 CLAUDE-SESSION.md
 QWEN.md
+AGENTS.md
 /.claude
 job*.txt
