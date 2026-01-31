@@ -5,11 +5,299 @@ set -e
 
 user=$(whoami)
 dossieruser="~/Windows/UserData/$user"
-dxvkversion="dxvk-gplasync-v2.7.1-1"
-vkd3dversion="vkd3d-proton-3.0"
-nvapiversion="dxvk-nvapi-v0.9.0"
-latencyflexversion="latencyflex-v0.1.1-2-3bc9636"
+
+# =============================================================================
+# CONFIGURATION GÉNÉRALE
+# =============================================================================
+
+# Mode silencieux (non-interactif) - activé avec --auto
+AUTO_MODE=false
+
+# Fichier de log
+LOG_DIR="$HOME/.local/share"
+LOG_FILE="$LOG_DIR/windows-update.log"
+mkdir -p "$LOG_DIR"
+
+# Nombre de tentatives pour les requêtes réseau
+MAX_RETRIES=3
+
+# =============================================================================
+# FONCTIONS UTILITAIRES
+# =============================================================================
+
+# Fonction de logging avec timestamp
+# Écrit dans le fichier log ET sur stderr (pour debug), mais PAS sur stdout
+# pour éviter de polluer les variables lors des captures $(...)
+log() {
+    local level="$1"
+    local message="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local log_line="[$timestamp] [$level] $message"
+    # Écrire dans le fichier
+    echo "$log_line" >> "$LOG_FILE"
+    # Afficher sur stderr pour le debug terminal (pas stdout !)
+    echo "$log_line" >&2
+}
+
+# Fonction de retry avec délai exponentiel
+retry_with_backoff() {
+    local cmd="$1"
+    local max_retries="${2:-$MAX_RETRIES}"
+    local attempt=1
+    local delay=1
+
+    while [ $attempt -le $max_retries ]; do
+        log "INFO" "Tentative $attempt/$max_retries: $cmd"
+        if eval "$cmd" 2>/dev/null; then
+            log "INFO" "Succès à la tentative $attempt"
+            return 0
+        fi
+        
+        if [ $attempt -lt $max_retries ]; then
+            log "WARN" "Échec, nouvelle tentative dans ${delay}s..."
+            sleep $delay
+            delay=$((delay * 2))
+        fi
+        attempt=$((attempt + 1))
+    done
+    
+    log "ERROR" "Échec après $max_retries tentatives: $cmd"
+    return 1
+}
+
+# Fonction pour afficher les messages (console ou kdialog)
+show_message() {
+    local message="$1"
+    if [ "$AUTO_MODE" = false ]; then
+        kdialog --msgbox "$message" 2>/dev/null || echo "$message"
+    else
+        log "INFO" "$message"
+        echo "$message"
+    fi
+}
+
+# Fonction pour les dialogues interactifs (désactivée en mode auto)
+interactive_dialog() {
+    if [ "$AUTO_MODE" = true ]; then
+        log "INFO" "Mode auto: dialogue interactif ignoré"
+        return 1
+    fi
+    return 0
+}
+
+# Fonction pour la barre de progression (mode non-auto uniquement)
+update_progress() {
+    local value="$1"
+    local text="$2"
+    
+    if [ "$AUTO_MODE" = false ] && [ -n "$dbusRef" ]; then
+        qdbus $dbusRef Set "" "value" "$value" 2>/dev/null || true
+        qdbus $dbusRef setLabelText "$text" 2>/dev/null || true
+    fi
+    log "INFO" "Progress: $value% - $text"
+}
+
+# Fonction pour télécharger un fichier avec retry et barre de progression
+curl_with_retry() {
+    local url="$1"
+    local output="$2"
+    local description="$3"
+    local max_retries="${4:-$MAX_RETRIES}"
+    local attempt=1
+    local delay=1
+    
+    log "INFO" "Téléchargement de $description (vers $output)"
+    
+    while [ $attempt -le $max_retries ]; do
+        log "INFO" "Tentative $attempt/$max_retries: $url"
+        
+        if curl -L --max-time 300 --retry 2 --progress-bar "$url" -o "$output" 2>&1 | tee -a "$LOG_FILE"; then
+            if [ -f "$output" ] && [ -s "$output" ]; then
+                log "INFO" "Téléchargement réussi: $description"
+                return 0
+            fi
+        fi
+        
+        log "WARN" "Échec tentative $attempt"
+        rm -f "$output"
+        
+        if [ $attempt -lt $max_retries ]; then
+            log "INFO" "Nouvelle tentative dans ${delay}s..."
+            sleep $delay
+            delay=$((delay * 2))
+        fi
+        attempt=$((attempt + 1))
+    done
+    
+    log "ERROR" "Échec du téléchargement après $max_retries tentatives: $url"
+    return 1
+}
+# =============================================================================
+# VERSIONS DES COMPOSANTS
+# =============================================================================
+# Laisser vide pour récupérer automatiquement la dernière version
+# Ou définir manuellement une version spécifique (ex: dxvkversion="dxvk-gplasync-v2.7.1-1")
+dxvkversion=""
+vkd3dversion=""
+nvapiversion=""
+latencyflexversion=""
+
+# Version de Soda (wine alternatif)
 soda_version="soda-9.0-1"
+
+# =============================================================================
+# FONCTIONS DE RÉCUPÉRATION AUTOMATIQUE DES VERSIONS (AVEC RETRY)
+# =============================================================================
+
+# Récupère la dernière version de DXVK GPLAsync depuis GitLab
+get_latest_dxvk_version() {
+    local latest=""
+    local attempt=1
+    local delay=1
+    
+    while [ $attempt -le $MAX_RETRIES ]; do
+        log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération DXVK"
+        latest=$(curl -s --max-time 30 "https://gitlab.com/api/v4/projects/Ph42oN%2Fdxvk-gplasync/releases" | \
+            jq -r '.[0].tag_name' 2>/dev/null)
+        
+        if [ -n "$latest" ] && [ "$latest" != "null" ]; then
+            log "INFO" "DXVK dernière version trouvée: $latest"
+            # Retourner le nom complet du dossier (dxvk-gplasync-vX.Y.Z)
+            echo "dxvk-gplasync-$latest"
+            return 0
+        fi
+        
+        if [ $attempt -lt $MAX_RETRIES ]; then
+            log "WARN" "Échec, nouvelle tentative dans ${delay}s..."
+            sleep $delay
+            delay=$((delay * 2))
+        fi
+        attempt=$((attempt + 1))
+    done
+    
+    log "ERROR" "Impossible de récupérer la dernière version de DXVK après $MAX_RETRIES tentatives"
+    exit 1
+}
+
+# Récupère la dernière version de VKD3D-Proton depuis bottlesdevs/components
+get_latest_vkd3d_version() {
+    local latest=""
+    local attempt=1
+    local delay=1
+    
+    while [ $attempt -le $MAX_RETRIES ]; do
+        log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération VKD3D"
+        latest=$(curl -s --max-time 30 "https://api.github.com/repos/bottlesdevs/components/releases?per_page=100" | \
+            jq -r '[.[] | select(.tag_name | startswith("vkd3d-proton")) | .tag_name] | first' 2>/dev/null)
+        
+        if [ -n "$latest" ] && [ "$latest" != "null" ]; then
+            log "INFO" "VKD3D dernière version trouvée: $latest"
+            echo "$latest"
+            return 0
+        fi
+        
+        if [ $attempt -lt $MAX_RETRIES ]; then
+            log "WARN" "Échec, nouvelle tentative dans ${delay}s..."
+            sleep $delay
+            delay=$((delay * 2))
+        fi
+        attempt=$((attempt + 1))
+    done
+    
+    log "ERROR" "Impossible de récupérer la dernière version de VKD3D après $MAX_RETRIES tentatives"
+    exit 1
+}
+
+# Récupère la dernière version de DXVK-NVAPI depuis jp7677
+get_latest_nvapi_version() {
+    local latest=""
+    local attempt=1
+    local delay=1
+    
+    while [ $attempt -le $MAX_RETRIES ]; do
+        log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération NVAPI"
+        latest=$(curl -s --max-time 30 "https://api.github.com/repos/jp7677/dxvk-nvapi/releases/latest" | \
+            jq -r '.tag_name' 2>/dev/null)
+        
+        if [ -n "$latest" ] && [ "$latest" != "null" ]; then
+            log "INFO" "NVAPI dernière version trouvée: $latest"
+            # Formater avec le préfixe dxvk-nvapi-
+            echo "dxvk-nvapi-${latest}"
+            return 0
+        fi
+        
+        if [ $attempt -lt $MAX_RETRIES ]; then
+            log "WARN" "Échec, nouvelle tentative dans ${delay}s..."
+            sleep $delay
+            delay=$((delay * 2))
+        fi
+        attempt=$((attempt + 1))
+    done
+    
+    log "ERROR" "Impossible de récupérer la dernière version de NVAPI après $MAX_RETRIES tentatives"
+    exit 1
+}
+
+# Récupère la dernière version de LatencyFlex depuis bottlesdevs/components
+get_latest_latencyflex_version() {
+    local latest=""
+    local attempt=1
+    local delay=1
+    
+    while [ $attempt -le $MAX_RETRIES ]; do
+        log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération LatencyFlex"
+        latest=$(curl -s --max-time 30 "https://api.github.com/repos/bottlesdevs/components/releases?per_page=100" | \
+            jq -r '[.[] | select(.tag_name | startswith("latencyflex")) | .tag_name] | first' 2>/dev/null)
+        
+        if [ -n "$latest" ] && [ "$latest" != "null" ]; then
+            log "INFO" "LatencyFlex dernière version trouvée: $latest"
+            echo "$latest"
+            return 0
+        fi
+        
+        if [ $attempt -lt $MAX_RETRIES ]; then
+            log "WARN" "Échec, nouvelle tentative dans ${delay}s..."
+            sleep $delay
+            delay=$((delay * 2))
+        fi
+        attempt=$((attempt + 1))
+    done
+    
+    log "ERROR" "Impossible de récupérer la dernière version de LatencyFlex après $MAX_RETRIES tentatives"
+    exit 1
+}
+
+# =============================================================================
+# RÉCUPÉRATION DES VERSIONS (AUTO ou MANUEL)
+# =============================================================================
+
+if [ -z "$dxvkversion" ]; then
+    dxvkversion=$(get_latest_dxvk_version)
+    echo "DXVK: dernière version détectée -> $dxvkversion"
+else
+    echo "DXVK: version manuelle définie -> $dxvkversion"
+fi
+
+if [ -z "$vkd3dversion" ]; then
+    vkd3dversion=$(get_latest_vkd3d_version)
+    echo "VKD3D: dernière version détectée -> $vkd3dversion"
+else
+    echo "VKD3D: version manuelle définie -> $vkd3dversion"
+fi
+
+if [ -z "$nvapiversion" ]; then
+    nvapiversion=$(get_latest_nvapi_version)
+    echo "NVAPI: dernière version détectée -> $nvapiversion"
+else
+    echo "NVAPI: version manuelle définie -> $nvapiversion"
+fi
+
+if [ -z "$latencyflexversion" ]; then
+    latencyflexversion=$(get_latest_latencyflex_version)
+    echo "LatencyFlex: dernière version détectée -> $latencyflexversion"
+else
+    echo "LatencyFlex: version manuelle définie -> $latencyflexversion"
+fi
 soda_url="https://github.com/bottlesdevs/wine/releases/download/$soda_version/$soda_version-x86_64.tar.xz"
 
 # Dossier temporaire pour sauvegarder les anciennes versions
@@ -20,48 +308,112 @@ mkdir -p "$temp_dir"
 flag_file="/tmp/kdialog_monitor_flag_$$"
 touch "$flag_file"
 
-# Vérifier l'argument --rebuild
+# =============================================================================
+# GESTION DES ARGUMENTS
+# =============================================================================
+
 force_rebuild=false
-if [ "$1" = "--rebuild" ]; then
-    force_rebuild=true
-    echo "Mode forcé --rebuild activé"
+
+# Parser les arguments
+for arg in "$@"; do
+    case $arg in
+        --rebuild)
+            force_rebuild=true
+            log "INFO" "Mode forcé --rebuild activé"
+            ;;
+        --auto)
+            AUTO_MODE=true
+            log "INFO" "Mode automatique --auto activé (non-interactif)"
+            ;;
+    esac
+done
+
+# Initialiser le log
+echo "==============================================" >> "$LOG_FILE"
+log "INFO" "Démarrage de windows-update (PID: $$)"
+log "INFO" "Arguments: $*"
+log "INFO" "Mode auto: $AUTO_MODE, Force rebuild: $force_rebuild"
+
+# =============================================================================
+# CHOIX DU RUNNER (WINE)
+# =============================================================================
+
+if [ "$AUTO_MODE" = true ]; then
+    # Mode auto: utiliser gwine-proton par défaut
+    runner_choice="gwine-proton"
+    log "INFO" "Mode auto: runner par défaut sélectionné: $runner_choice"
+else
+    # Mode interactif: demander avec kdialog
+    runner_choice=$(kdialog --title "Choix de wine" --radiolist "Sélectionnez la version de wine à utiliser :" \
+        "gwine-proton" "Gwine-Proton (dernière version)" on \
+        "gwine" "Gwine (dernière version)" off \
+        "gwine-proton-wow64" "Gwine-Proton-WoW64 (dernière version)" off \
+        "soda" "Soda (ancienne version)" off)
+
+    if [ $? -ne 0 ] || [ -z "$runner_choice" ]; then
+        log "ERROR" "Aucun choix de runner effectué par l'utilisateur"
+        show_message "Aucun choix effectué, arrêt du script."
+        exit 1
+    fi
+    log "INFO" "Runner sélectionné par l'utilisateur: $runner_choice"
 fi
 
-# Choix entre gwine, gwine-proton, gwine-proton-wow64 et soda avec kdialog
-runner_choice=$(kdialog --title "Choix de wine" --radiolist "Sélectionnez la version de wine à utiliser :" \
-    "gwine-proton" "Gwine-Proton (dernière version)" on \
-    "gwine" "Gwine (dernière version)" off \
-    "gwine-proton-wow64" "Gwine-Proton-WoW64 (dernière version)" off \
-    "soda" "Soda (ancienne version)" off)
+# =============================================================================
+# RÉCUPÉRATION DE LA VERSION WINE
+# =============================================================================
 
-if [ $? -ne 0 ] || [ -z "$runner_choice" ]; then
-    kdialog --msgbox "Aucun choix effectué, arrêt du script."
-    exit 1
-fi
-
-# Récupérer la dernière version de gwine, gwine-proton ou gwine-proton-wow64 si sélectionné
 if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ] || [ "$runner_choice" = "gwine-proton-wow64" ]; then
     API_URL="https://api.github.com/repos/elgabo86/gwine/releases"
-    # Use exact match for runner_choice to avoid overlap between gwine-proton and gwine-proton-wow64
-    # Sort by published_at to get the most recent release by date
-    if [ "$runner_choice" = "gwine-proton" ]; then
-        wineversion=$(curl -s "$API_URL" | jq -r '.[] | "\(.published_at) \(.tag_name)"' | grep " gwine-proton-[0-9]" | sort -r | head -n1 | cut -d' ' -f2)
-    elif [ "$runner_choice" = "gwine-proton-wow64" ]; then
-        wineversion=$(curl -s "$API_URL" | jq -r '.[] | "\(.published_at) \(.tag_name)"' | grep " gwine-proton-wow64-[0-9]" | sort -r | head -n1 | cut -d' ' -f2)
-    else
-        wineversion=$(curl -s "$API_URL" | jq -r '.[] | "\(.published_at) \(.tag_name)"' | grep " gwine-[0-9]" | sort -r | head -n1 | cut -d' ' -f2)
-    fi
+    attempt=1
+    delay=1
+    
+    while [ $attempt -le $MAX_RETRIES ]; do
+        log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération version Wine"
+        
+        if [ "$runner_choice" = "gwine-proton" ]; then
+            wineversion=$(curl -s --max-time 30 "$API_URL" | jq -r '.[] | "\(.published_at) \(.tag_name)"' | grep " gwine-proton-[0-9]" | sort -r | head -n1 | cut -d' ' -f2)
+        elif [ "$runner_choice" = "gwine-proton-wow64" ]; then
+            wineversion=$(curl -s --max-time 30 "$API_URL" | jq -r '.[] | "\(.published_at) \(.tag_name)"' | grep " gwine-proton-wow64-[0-9]" | sort -r | head -n1 | cut -d' ' -f2)
+        else
+            wineversion=$(curl -s --max-time 30 "$API_URL" | jq -r '.[] | "\(.published_at) \(.tag_name)"' | grep " gwine-[0-9]" | sort -r | head -n1 | cut -d' ' -f2)
+        fi
+        
+        if [ -n "$wineversion" ]; then
+            log "INFO" "Version Wine trouvée: $wineversion"
+            break
+        fi
+        
+        if [ $attempt -lt $MAX_RETRIES ]; then
+            log "WARN" "Échec, nouvelle tentative dans ${delay}s..."
+            sleep $delay
+            delay=$((delay * 2))
+        fi
+        attempt=$((attempt + 1))
+    done
+    
     if [ -z "$wineversion" ]; then
-        kdialog --msgbox "Aucune version trouvée pour $runner_choice."
+        log "ERROR" "Aucune version trouvée pour $runner_choice après $MAX_RETRIES tentatives"
+        show_message "Aucune version trouvée pour $runner_choice."
         exit 1
     fi
 else
     wineversion="$soda_version"
+    log "INFO" "Version Soda utilisée: $wineversion"
 fi
 
-# Lancer la barre de progression avec kdialog et bouton Annuler
-dbusRef=$(kdialog --title "Installation/Mise à jour de Windows" --progressbar "Initialisation..." 100)
-qdbus $dbusRef showCancelButton true
+# =============================================================================
+# INITIALISATION DE L'INTERFACE (MODE NON-AUTO UNIQUEMENT)
+# =============================================================================
+
+dbusRef=""
+if [ "$AUTO_MODE" = false ]; then
+    # Lancer la barre de progression avec kdialog et bouton Annuler
+    dbusRef=$(kdialog --title "Installation/Mise à jour de Windows" --progressbar "Initialisation..." 100)
+    qdbus $dbusRef showCancelButton true 2>/dev/null || true
+    log "INFO" "Interface graphique kdialog initialisée"
+else
+    log "INFO" "Mode auto: interface graphique désactivée"
+fi
 
 # Fonction pour comparer les versions
 version_newer() {
@@ -112,14 +464,15 @@ _install_wine() {
     local choice="$3"
 
     if [ "$choice" = "gwine" ] || [ "$choice" = "gwine-proton" ] || [ "$choice" = "gwine-proton-wow64" ]; then
-        curl -L -o "$target_dir/$version.tar.xz" "https://github.com/elgabo86/gwine/releases/download/$version/$version.tar.xz"
+        curl_with_retry "https://github.com/elgabo86/gwine/releases/download/$version/$version.tar.xz" \
+            "$target_dir/$version.tar.xz" "Wine $version" || return 1
         tar -xf "$target_dir/$version.tar.xz" -C "$target_dir/"
         rm -f "$target_dir/$version.tar.xz"
     else
         # Pour Soda, extraire dans un dossier temporaire et renommer
         temp_extract_dir="$temp_dir/wine_extract"
         mkdir -p "$temp_extract_dir"
-        curl -L -o "$temp_extract_dir/$soda_version.tar.xz" "$soda_url"
+        curl_with_retry "$soda_url" "$temp_extract_dir/$soda_version.tar.xz" "Soda $soda_version" || return 1
         tar -xf "$temp_extract_dir/$soda_version.tar.xz" -C "$temp_extract_dir/"
         mv "$temp_extract_dir/$soda_version-x86_64" "$target_dir/$version"
         rm -f "$temp_extract_dir/$soda_version.tar.xz"
@@ -170,7 +523,7 @@ _install_component() {
     if [ "$is_nvapi" = "true" ]; then
         # Extraction de la version à partir du nom (ex: dxvk-nvapi-v0.9.0 -> v0.9.0)
         version_tag=$(echo "$version" | sed 's/dxvk-nvapi-//')
-        curl -L -o "$target_dir/$version.tar.gz" "$url"
+        curl_with_retry "$url" "$target_dir/$version.tar.gz" "$name $version" || return 1
         # Extraire dans un répertoire temporaire pour vérifier la structure de l'archive
         temp_extract_dir="$temp_dir/${name,,}_extract"
         mkdir -p "$temp_extract_dir"
@@ -185,7 +538,7 @@ _install_component() {
         rm -f "$target_dir/$version.tar.gz"
         rm -rf "$temp_extract_dir"
     else
-        curl -L -o "$target_dir/$version.tar.gz" "$url"
+        curl_with_retry "$url" "$target_dir/$version.tar.gz" "$name $version" || return 1
         tar -xf "$target_dir/$version.tar.gz" -C "$target_dir/"
         rm -f "$target_dir/$version.tar.gz"
     fi
@@ -220,10 +573,9 @@ EOF
 
 # Fonction pour restaurer les données de l'ancienne configuration
 restore_config_data() {
-    qdbus $dbusRef Set "" "value" 70
-    qdbus $dbusRef setLabelText "Récupération des données de l'ancienne configuration..."
+    update_progress 70 "Récupération des données de l'ancienne configuration..."
     _restore_config_dirs
-    qdbus $dbusRef setLabelText "Récupération des programmes externes..."
+    update_progress 75 "Récupération des programmes externes..."
     restore_external_programs \
         ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml \
         ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml
@@ -249,9 +601,15 @@ restore_config_data_in_rebuild() {
 
 # Fonction pour configurer Bottles (création, liens symboliques)
 configure_bottles() {
-    qdbus $dbusRef Set "" "value" 60
-    qdbus $dbusRef setLabelText "Configuration de Bottles..."
-    flatpak run --command=bottles-cli com.usebottles.bottles new --bottle-name "def" --runner "$wineversion" --environment gaming
+    update_progress 60 "Configuration de Bottles..."
+    flatpak run --command=bottles-cli com.usebottles.bottles new \
+        --bottle-name "def" \
+        --runner "$wineversion" \
+        --environment gaming \
+        --dxvk "$dxvkversion" \
+        --vkd3d "$vkd3dversion" \
+        --nvapi "$nvapiversion" \
+        --latencyflex "$latencyflexversion"
     flatpak override com.usebottles.bottles --user --filesystem=~/Windows
     flatpak override com.usebottles.bottles --user --filesystem=/tmp
     mkdir -p ~/Windows/UserData ~/Windows/SteamData ~/Windows/Games ~/Windows/Applications ~/Windows/Tools ~/.local/share/applications
@@ -269,8 +627,7 @@ configure_bottles() {
 
 # Fonction pour ajouter les clés de registre
 add_registry_keys() {
-    qdbus $dbusRef Set "" "value" 70
-    qdbus $dbusRef setLabelText "Ajout des clés de registre..."
+    update_progress 70 "Ajout des clés de registre..."
     flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "Enable SDL" -d 1 -t "REG_DWORD"
     flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD"
     flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_CURRENT_USER\Software\Wine\Drivers" -v "Graphics" -d "X11" -t "REG_SZ"
@@ -281,8 +638,7 @@ add_registry_keys() {
 
 # Fonction pour installer les runtimes
 install_runtimes() {
-    qdbus $dbusRef Set "" "value" 85
-    qdbus $dbusRef setLabelText "Installation des runtimes..."
+    update_progress 85 "Installation des runtimes..."
     flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/"$wineversion"/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q \
         corefonts \
         tahoma \
@@ -310,8 +666,7 @@ install_runtimes() {
 
 # Fonction pour finaliser la configuration (Flatpak runtimes, MangoHud, etc.)
 finalize_runtimes_config() {
-    qdbus $dbusRef Set "" "value" 90
-    qdbus $dbusRef setLabelText "Finalisation des runtimes et configuration..."
+    update_progress 90 "Finalisation des runtimes et configuration..."
     flatpak install runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/25.08 -y --system
     flatpak install runtime/com.obsproject.Studio.Plugin.OBSVkCapture/x86_64/stable -y --system
     flatpak install runtime/org.freedesktop.Platform.VulkanLayer.OBSVkCapture/x86_64/25.08 -y --system
@@ -335,15 +690,14 @@ finalize_runtimes_config() {
 
 # Fonction pour finaliser le rebuild
 finalize_rebuild() {
-    qdbus $dbusRef setLabelText "Création de la bouteille prête (bak/def.ready)..."
+    update_progress 95 "Création de la bouteille prête (bak/def.ready)..."
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready
     cp -r ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready
 }
 
 # Fonction pour configurer les raccourcis et outils
 configure_shortcuts_tools() {
-    qdbus $dbusRef Set "" "value" 80
-    qdbus $dbusRef setLabelText "Configuration des raccourcis et outils..."
+    update_progress 80 "Configuration des raccourcis et outils..."
     cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications
     cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications
     cp /usr/share/ublue-os/gablue/desktops/WindowsFix.desktop ~/.local/share/applications
@@ -383,7 +737,16 @@ configure_shortcuts_tools() {
 # Fonction pour gérer les erreurs, annulations ou Ctrl+C
 cleanup() {
     set +e
+    log "ERROR" "Cleanup déclenché - Restauration en cours"
     rm -f "$flag_file"
+    
+    # Tue les processus de téléchargement en arrière-plan
+    if [ -n "$PID_WINE" ]; then kill "$PID_WINE" 2>/dev/null || true; fi
+    if [ -n "$PID_DXVK" ]; then kill "$PID_DXVK" 2>/dev/null || true; fi
+    if [ -n "$PID_VKD3D" ]; then kill "$PID_VKD3D" 2>/dev/null || true; fi
+    if [ -n "$PID_NVAPI" ]; then kill "$PID_NVAPI" 2>/dev/null || true; fi
+    if [ -n "$PID_LATENCYFLEX" ]; then kill "$PID_LATENCYFLEX" 2>/dev/null || true; fi
+    
     if [ -n "$monitor_pid" ]; then
         kill "$monitor_pid" 2>/dev/null
         sleep 0.5
@@ -392,7 +755,9 @@ cleanup() {
         pgrep -f bottles | xargs -n1 kill -9 &
         sleep 1
     fi
-    qdbus $dbusRef setLabelText "Annulation ou erreur détectée, restauration de l'ancienne version..." 2>/dev/null
+    
+    update_progress 0 "Annulation ou erreur détectée, restauration de l'ancienne version..."
+    
     for component in wine dxvk vkd3d nvapi latencyflex; do
         if [ -d "$temp_dir/$component" ]; then
             target_dir=""
@@ -412,40 +777,46 @@ cleanup() {
     if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak ]; then
         mv ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
     fi
-    qdbus $dbusRef close 2>/dev/null
-    kdialog --msgbox "Opération annulée ou erreur survenue. L'ancienne bouteille est restaurée." 2>/dev/null
+    
+    if [ "$AUTO_MODE" = false ] && [ -n "$dbusRef" ]; then
+        qdbus $dbusRef close 2>/dev/null || true
+    fi
+    
+    log "INFO" "Restauration terminée"
+    show_message "Opération annulée ou erreur survenue. L'ancienne bouteille est restaurée."
     exit 1
 }
 
 # Capturer les erreurs et Ctrl+C
 trap 'cleanup' ERR INT
 
-# Surveiller le bouton Annuler en arrière-plan avec un fichier drapeau
-(
-    while [ -f "$flag_file" ]; do
-        if ! qdbus $dbusRef >/dev/null 2>&1; then
-            echo "Service DBus fermé, annulation détectée"
-            cleanup
-        fi
-        cancelled=$(qdbus $dbusRef wasCancelled 2>/dev/null)
-        if [ "$cancelled" = "true" ]; then
-            echo "Annuler détecté via wasCancelled"
-            cleanup
-        fi
-        sleep 1
-    done
-) & monitor_pid=$!
+# Surveiller le bouton Annuler en arrière-plan (mode non-auto uniquement)
+monitor_pid=""
+if [ "$AUTO_MODE" = false ] && [ -n "$dbusRef" ]; then
+    (
+        while [ -f "$flag_file" ]; do
+            if ! qdbus $dbusRef >/dev/null 2>&1; then
+                log "WARN" "Service DBus fermé, annulation détectée"
+                cleanup
+            fi
+            cancelled=$(qdbus $dbusRef wasCancelled 2>/dev/null)
+            if [ "$cancelled" = "true" ]; then
+                log "WARN" "Annuler détecté via wasCancelled"
+                cleanup
+            fi
+            sleep 1
+        done
+    ) & monitor_pid=$!
+fi
 
-qdbus $dbusRef Set "" "value" 0
-qdbus $dbusRef setLabelText "Arrêt des processus bottles..."
+update_progress 0 "Arrêt des processus bottles..."
 
 if pgrep -f bottles > /dev/null; then
     pgrep -f bottles | xargs -n1 kill -9 &
     sleep 2
 fi
 
-qdbus $dbusRef Set "" "value" 5
-qdbus $dbusRef setLabelText "Préparation des répertoires..."
+update_progress 5 "Préparation des répertoires..."
 mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/bak
 if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ]; then
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
@@ -490,33 +861,58 @@ else
     need_rebuild=true
 fi
 
-# Proposer de forcer le rebuild si pas nécessaire
-if [ "$need_rebuild" = false ]; then
+# =============================================================================
+# TÉLÉCHARGEMENTS PARALLÈLES DES COMPOSANTS
+# =============================================================================
+
+# Proposer de forcer le rebuild si pas nécessaire (mode interactif uniquement)
+if [ "$need_rebuild" = false ] && [ "$AUTO_MODE" = false ]; then
     if kdialog --title "Rebuild" --yesno "Aucune mise à jour de composant détectée.\nVoulez-vous tout de même refaire le rebuild complet ?"; then
         need_rebuild=true
+        log "INFO" "Rebuild forcé par l'utilisateur"
     fi
+elif [ "$need_rebuild" = false ] && [ "$AUTO_MODE" = true ]; then
+    log "INFO" "Mode auto: aucune mise à jour nécessaire, utilisation de def.ready"
 fi
 
-# Vérification et téléchargement des composants avec sauvegarde des anciennes versions
-qdbus $dbusRef Set "" "value" 10
-download_wine "$wine_dir" "$wineversion" "$runner_choice"
+# Lancer les téléchargements en parallèle
+log "INFO" "Démarrage des téléchargements parallèles..."
+update_progress 10 "Téléchargement des composants en parallèle..."
 
-qdbus $dbusRef Set "" "value" 20
-download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^dxvk-gplasync-v[0-9.-]+" "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/$dxvkversion.tar.gz" "false"
+# Télécharger Wine
+download_wine "$wine_dir" "$wineversion" "$runner_choice" &
+PID_WINE=$!
 
-qdbus $dbusRef Set "" "value" 30
-download_component "VKD3D" "$vkd3dversion" "$vkd3d_dir" "^vkd3d-proton-[0-9.-]+" "https://github.com/bottlesdevs/components/releases/download/$vkd3dversion/$vkd3dversion.tar.gz" "false"
+# Télécharger DXVK
+download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^dxvk-gplasync-v[0-9.-]+" "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/$dxvkversion.tar.gz" "false" &
+PID_DXVK=$!
 
-qdbus $dbusRef Set "" "value" 40
+# Télécharger VKD3D  
+download_component "VKD3D" "$vkd3dversion" "$vkd3d_dir" "^vkd3d-proton-[0-9.-]+" "https://github.com/bottlesdevs/components/releases/download/$vkd3dversion/$vkd3dversion.tar.gz" "false" &
+PID_VKD3D=$!
+
+# Télécharger NVAPI
 nvapi_version_tag=$(echo "$nvapiversion" | sed 's/dxvk-nvapi-//')
-download_component "dxvk-nvapi" "$nvapiversion" "$nvapi_dir" "^dxvk-nvapi-v[0-9.-]+" "https://github.com/jp7677/dxvk-nvapi/releases/download/$nvapi_version_tag/$nvapiversion.tar.gz" "true"
+download_component "dxvk-nvapi" "$nvapiversion" "$nvapi_dir" "^dxvk-nvapi-v[0-9.-]+" "https://github.com/jp7677/dxvk-nvapi/releases/download/$nvapi_version_tag/$nvapiversion.tar.gz" "true" &
+PID_NVAPI=$!
 
-qdbus $dbusRef Set "" "value" 50
-download_component "LatencyFlex" "$latencyflexversion" "$latencyflex_dir" "^latencyflex-v[0-9.-]+[-a-z0-9]*" "https://github.com/bottlesdevs/components/releases/download/$latencyflexversion/$latencyflexversion.tar.gz" "false"
+# Télécharger LatencyFlex
+download_component "LatencyFlex" "$latencyflexversion" "$latencyflex_dir" "^latencyflex-v[0-9.-]+[-a-z0-9]*" "https://github.com/bottlesdevs/components/releases/download/$latencyflexversion/$latencyflexversion.tar.gz" "false" &
+PID_LATENCYFLEX=$!
+
+# Attendre que tous les téléchargements se terminent
+log "INFO" "Attente des téléchargements parallèles..."
+wait $PID_WINE || { log "ERROR" "Échec du téléchargement Wine"; exit 1; }
+wait $PID_DXVK || { log "ERROR" "Échec du téléchargement DXVK"; exit 1; }
+wait $PID_VKD3D || { log "ERROR" "Échec du téléchargement VKD3D"; exit 1; }
+wait $PID_NVAPI || { log "ERROR" "Échec du téléchargement NVAPI"; exit 1; }
+wait $PID_LATENCYFLEX || { log "ERROR" "Échec du téléchargement LatencyFlex"; exit 1; }
+
+log "INFO" "Tous les téléchargements parallèles sont terminés"
+update_progress 50 "Téléchargements terminés"
 
 if [ "$need_rebuild" = false ]; then
-    qdbus $dbusRef Set "" "value" 60
-    qdbus $dbusRef setLabelText "Restauration de la bouteille prête depuis bak/def.ready..."
+    update_progress 60 "Restauration de la bouteille prête depuis bak/def.ready..."
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
     cp -r ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
 
@@ -524,15 +920,20 @@ if [ "$need_rebuild" = false ]; then
 
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
     rm -rf "$temp_dir"
-    qdbus $dbusRef Set "" "value" 100
-    qdbus $dbusRef setLabelText "Finalisation..."
-    qdbus $dbusRef close 2>/dev/null
+    update_progress 100 "Finalisation..."
+    
+    if [ "$AUTO_MODE" = false ] && [ -n "$dbusRef" ]; then
+        qdbus $dbusRef close 2>/dev/null || true
+    fi
+    
     rm -f "$flag_file"
     if [ -n "$monitor_pid" ]; then
         kill "$monitor_pid" 2>/dev/null
         sleep 0.5
     fi
-    kdialog --msgbox "L'installation/mise à jour de Windows est réussie." 2>/dev/null
+    
+    log "INFO" "Installation/mise à jour terminée avec succès (mode restauration)"
+    show_message "L'installation/mise à jour de Windows est réussie."
     exit 0
 fi
 
@@ -543,24 +944,30 @@ if [ "$need_rebuild" = true ]; then
     install_runtimes
     finalize_runtimes_config
 
-    qdbus $dbusRef Set "" "value" 95
-    qdbus $dbusRef setLabelText "Récupération des données de l'ancienne configuration..."
+    update_progress 95 "Récupération des données de l'ancienne configuration..."
     restore_config_data_in_rebuild
 
     finalize_rebuild
 fi
 
 rm -rf "$temp_dir"
-qdbus $dbusRef Set "" "value" 100
-qdbus $dbusRef setLabelText "Finalisation..."
-qdbus $dbusRef close 2>/dev/null
+update_progress 100 "Finalisation..."
+
+if [ "$AUTO_MODE" = false ] && [ -n "$dbusRef" ]; then
+    qdbus $dbusRef close 2>/dev/null || true
+fi
+
 rm -f "$flag_file"
 if [ -n "$monitor_pid" ]; then
     kill "$monitor_pid" 2>/dev/null
     sleep 0.5
 fi
+
 if [ -f ~/.var/app/com.usebottles.bottles/data/bottles/library.yml ]; then
+    log "INFO" "Tri de la bibliothèque Bottles"
     /usr/bin/bottles-sort-library
 fi
-kdialog --msgbox "L'installation/mise à jour de Windows est réussie." 2>/dev/null
+
+log "INFO" "Installation/mise à jour terminée avec succès (mode rebuild)"
+show_message "L'installation/mise à jour de Windows est réussie."
 rm -f "$flag_file"
