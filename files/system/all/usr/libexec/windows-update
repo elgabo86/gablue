@@ -13,6 +13,9 @@ dossieruser="~/Windows/UserData/$user"
 # Mode silencieux (non-interactif) - activé avec --auto
 AUTO_MODE=false
 
+# Type de DXVK (gplasync par défaut, ou standard avec --dxvk-no-async)
+DXVK_NO_ASYNC=false
+
 # Fichier de log
 LOG_DIR="$HOME/.local/share"
 LOG_FILE="$LOG_DIR/windows-update.log"
@@ -150,18 +153,18 @@ soda_version="soda-9.0-1"
 # =============================================================================
 
 # Récupère la dernière version de DXVK GPLAsync depuis GitLab
-get_latest_dxvk_version() {
+get_latest_dxvk_gplasync_version() {
     local latest=""
     local attempt=1
     local delay=1
     
     while [ $attempt -le $MAX_RETRIES ]; do
-        log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération DXVK"
+        log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération DXVK GPLAsync"
         latest=$(curl -s --max-time 30 "https://gitlab.com/api/v4/projects/Ph42oN%2Fdxvk-gplasync/releases" | \
             jq -r '.[0].tag_name' 2>/dev/null)
         
         if [ -n "$latest" ] && [ "$latest" != "null" ]; then
-            log "INFO" "DXVK dernière version trouvée: $latest"
+            log "INFO" "DXVK GPLAsync dernière version trouvée: $latest"
             # Retourner le nom complet du dossier (dxvk-gplasync-vX.Y.Z)
             echo "dxvk-gplasync-$latest"
             return 0
@@ -175,7 +178,37 @@ get_latest_dxvk_version() {
         attempt=$((attempt + 1))
     done
     
-    log "ERROR" "Impossible de récupérer la dernière version de DXVK après $MAX_RETRIES tentatives"
+    log "ERROR" "Impossible de récupérer la dernière version de DXVK GPLAsync après $MAX_RETRIES tentatives"
+    exit 1
+}
+
+# Récupère la dernière version de DXVK Standard (non-async) depuis bottlesdevs/components
+get_latest_dxvk_standard_version() {
+    local latest=""
+    local attempt=1
+    local delay=1
+    
+    while [ $attempt -le $MAX_RETRIES ]; do
+        log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération DXVK Standard"
+        # Rechercher les versions dxvk-X.Y.Z mais PAS dxvk-nvapi et PAS dxvk-gplasync
+        latest=$(curl -s --max-time 30 "https://api.github.com/repos/bottlesdevs/components/releases?per_page=100" | \
+            jq -r '[.[] | select(.tag_name | startswith("dxvk-") and (contains("nvapi") | not) and (contains("gplasync") | not)) | .tag_name] | first' 2>/dev/null)
+        
+        if [ -n "$latest" ] && [ "$latest" != "null" ]; then
+            log "INFO" "DXVK Standard dernière version trouvée: $latest"
+            echo "$latest"
+            return 0
+        fi
+        
+        if [ $attempt -lt $MAX_RETRIES ]; then
+            log "WARN" "Échec, nouvelle tentative dans ${delay}s..."
+            sleep $delay
+            delay=$((delay * 2))
+        fi
+        attempt=$((attempt + 1))
+    done
+    
+    log "ERROR" "Impossible de récupérer la dernière version de DXVK Standard après $MAX_RETRIES tentatives"
     exit 1
 }
 
@@ -271,12 +304,7 @@ get_latest_latencyflex_version() {
 # RÉCUPÉRATION DES VERSIONS (AUTO ou MANUEL)
 # =============================================================================
 
-if [ -z "$dxvkversion" ]; then
-    dxvkversion=$(get_latest_dxvk_version)
-    echo "DXVK: dernière version détectée -> $dxvkversion"
-else
-    echo "DXVK: version manuelle définie -> $dxvkversion"
-fi
+# Note: La version DXVK sera récupérée après le choix du type (GPLAsync ou Standard)
 
 if [ -z "$vkd3dversion" ]; then
     vkd3dversion=$(get_latest_vkd3d_version)
@@ -324,6 +352,10 @@ for arg in "$@"; do
         --auto)
             AUTO_MODE=true
             log "INFO" "Mode automatique --auto activé (non-interactif)"
+            ;;
+        --dxvk-no-async)
+            DXVK_NO_ASYNC=true
+            log "INFO" "Flag --dxvk-no-async activé: utilisation de DXVK Standard (non-async)"
             ;;
     esac
 done
@@ -875,6 +907,68 @@ elif [ "$need_rebuild" = false ] && [ "$AUTO_MODE" = true ]; then
     log "INFO" "Mode auto: aucune mise à jour nécessaire, utilisation de def.ready"
 fi
 
+# =============================================================================
+# CHOIX DU TYPE DE DXVK (GPLAsync ou Standard) - APRÈS CONFIRMATION REBUILD
+# =============================================================================
+
+if [ "$need_rebuild" = true ]; then
+    if [ "$AUTO_MODE" = true ]; then
+        # Mode auto: utiliser le flag ou GPLAsync par défaut
+        if [ "$DXVK_NO_ASYNC" = true ]; then
+            dxvk_type="standard"
+            log "INFO" "Mode auto: DXVK Standard sélectionné (via --dxvk-no-async)"
+        else
+            dxvk_type="gplasync"
+            log "INFO" "Mode auto: DXVK GPLAsync sélectionné par défaut (moins de sacades)"
+        fi
+    else
+        # Mode interactif: demander avec kdialog seulement si rebuild confirmé
+        dxvk_choice=$(kdialog --title "Choix de DXVK" --radiolist "Sélectionnez le type de DXVK à utiliser :\n\nDXVK GPLAsync: Recommandé, moins de sacades (shaders compilés en arrière-plan)\nDXVK Standard: Moins d'artefacts visuels, mais peut causer des sacades pendant la compilation des shaders" \
+            "gplasync" "DXVK GPLAsync (recommandé - moins de sacades)" on \
+            "standard" "DXVK Standard (moins d'artefacts visuels)" off)
+
+        if [ $? -ne 0 ] || [ -z "$dxvk_choice" ]; then
+            log "ERROR" "Aucun choix de DXVK effectué par l'utilisateur"
+            show_message "Aucun choix effectué, arrêt du script."
+            exit 1
+        fi
+        
+        dxvk_type="$dxvk_choice"
+        if [ "$dxvk_type" = "gplasync" ]; then
+            log "INFO" "DXVK GPLAsync sélectionné par l'utilisateur (moins de sacades)"
+        else
+            log "INFO" "DXVK Standard sélectionné par l'utilisateur (moins d'artefacts)"
+        fi
+    fi
+    
+    # =============================================================================
+    # RÉCUPÉRATION DE LA VERSION DXVK (APRÈS CHOIX DU TYPE)
+    # =============================================================================
+    
+    if [ -z "$dxvkversion" ]; then
+        if [ "$dxvk_type" = "standard" ]; then
+            dxvkversion=$(get_latest_dxvk_standard_version)
+            echo "DXVK Standard: dernière version détectée -> $dxvkversion"
+        else
+            dxvkversion=$(get_latest_dxvk_gplasync_version)
+            echo "DXVK GPLAsync: dernière version détectée -> $dxvkversion"
+        fi
+    else
+        if [ "$dxvk_type" = "standard" ]; then
+            echo "DXVK Standard: version manuelle définie -> $dxvkversion"
+        else
+            echo "DXVK GPLAsync: version manuelle définie -> $dxvkversion"
+        fi
+    fi
+else
+    # Pas de rebuild, on garde le DXVK actuel (valeurs par défaut pour compatibilité)
+    dxvk_type="gplasync"
+    if [ -z "$dxvkversion" ]; then
+        dxvkversion=$(get_latest_dxvk_gplasync_version)
+    fi
+    log "INFO" "Pas de rebuild nécessaire, utilisation du DXVK existant"
+fi
+
 # Lancer les téléchargements en parallèle
 log "INFO" "Démarrage des téléchargements parallèles..."
 update_progress 10 "Téléchargement des composants en parallèle..."
@@ -883,8 +977,12 @@ update_progress 10 "Téléchargement des composants en parallèle..."
 download_wine "$wine_dir" "$wineversion" "$runner_choice" &
 PID_WINE=$!
 
-# Télécharger DXVK
-download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^dxvk-gplasync-v[0-9.-]+" "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/$dxvkversion.tar.gz" "false" &
+# Télécharger DXVK (URL différente selon le type)
+if [ "$dxvk_type" = "standard" ]; then
+    download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^dxvk-[0-9a-z.-]+$" "https://github.com/bottlesdevs/components/releases/download/$dxvkversion/$dxvkversion.tar.gz" "false" &
+else
+    download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^dxvk-gplasync-v[0-9.-]+" "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/$dxvkversion.tar.gz" "false" &
+fi
 PID_DXVK=$!
 
 # Télécharger VKD3D  
@@ -932,6 +1030,11 @@ if [ "$need_rebuild" = false ]; then
         sleep 0.5
     fi
     
+    if [ "$dxvk_type" = "standard" ]; then
+        log "INFO" "DXVK Standard en place (moins d'artefacts visuels)"
+    else
+        log "INFO" "DXVK GPLAsync en place (moins de sacades)"
+    fi
     log "INFO" "Installation/mise à jour terminée avec succès (mode restauration)"
     show_message "L'installation/mise à jour de Windows est réussie."
     exit 0
@@ -968,6 +1071,11 @@ if [ -f ~/.var/app/com.usebottles.bottles/data/bottles/library.yml ]; then
     /usr/bin/bottles-sort-library
 fi
 
+if [ "$dxvk_type" = "standard" ]; then
+    log "INFO" "DXVK Standard installé (moins d'artefacts visuels)"
+else
+    log "INFO" "DXVK GPLAsync installé (moins de sacades)"
+fi
 log "INFO" "Installation/mise à jour terminée avec succès (mode rebuild)"
 show_message "L'installation/mise à jour de Windows est réussie."
 rm -f "$flag_file"
