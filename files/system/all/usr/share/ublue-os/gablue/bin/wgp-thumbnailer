@@ -5,7 +5,7 @@ SIZE="$3"     # %s (128 ou 256)
 
 [ -z "$SIZE" ] && SIZE=256
 
-EXEICONEXTRACT="/usr/share/ublue-os/gablue/script/exeiconextract.py"
+EXEICONEXTRACT="/usr/share/ublue-os/gablue/scripts/exeiconextract.py"
 
 MAX_INSTANCES=3
 PID_FILE="/tmp/wgp-thumbnailer-pids"

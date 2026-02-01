@@ -3,7 +3,7 @@
 
 # Script d'extraction d'icône Python (chemin relatif pour testing)
 SCRIPT_DIR="$(dirname "$0")"
-EXEICONEXTRACT="${SCRIPT_DIR}/../script/exeiconextract.py"
+EXEICONEXTRACT="${SCRIPT_DIR}/exeiconextract.py"
 
 # Vérifie qu'un fichier .exe ou .wgp est passé en argument
 if [ -z "$1" ] || [ ! -f "$1" ]; then

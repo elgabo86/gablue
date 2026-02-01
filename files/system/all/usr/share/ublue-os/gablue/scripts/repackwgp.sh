@@ -288,7 +288,7 @@ check_extras() {
 
 # Script d'extraction d'icône Python (chemin relatif pour testing)
 SCRIPT_DIR="$(dirname "$0")"
-EXEICONEXTRACT="${SCRIPT_DIR}/../script/exeiconextract.py"
+EXEICONEXTRACT="${SCRIPT_DIR}/exeiconextract.py"
 
 # Extrait l'icône depuis un .exe en utilisant exeiconextract.py
 extract_icon_from_exe() {
