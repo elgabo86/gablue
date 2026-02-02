@@ -239,7 +239,10 @@ class GablueUpdateGUI:
         # Queue pour la communication avec le subprocess
         self.log_queue = queue.Queue()
         self.process = None
-        
+
+        # Flag pour savoir si on a déjà vérifié les mises à jour
+        self.updates_checked = False
+
         # UI Elements
         self.setup_ui()
         
@@ -423,6 +426,10 @@ class GablueUpdateGUI:
             # Écran d'erreur
             elif self.state == "error":
                 self.error_button.handle_event(event)
+
+            # Écran "déjà à jour"
+            elif self.state == "no-updates":
+                self.later_button.handle_event(event)
                     
     def update(self):
         """Mettre à jour la logique de l'application"""
@@ -431,18 +438,28 @@ class GablueUpdateGUI:
         try:
             while True:
                 line = self.log_queue.get_nowait()
-                
+
                 if line == "__SUCCESS__":
-                    self.state = "finished"
-                    self.progress_bar.set_progress(100, "Mise à jour terminée avec succès !")
-                    self.log_viewer.add_line("Mise à jour terminée avec succès !", "SUCCESS")
+                    # Ne pas changer l'état si on est déjà dans un état final (no-updates, finished, error)
+                    if self.state not in ["no-updates", "finished", "error"]:
+                        self.state = "finished"
+                        self.progress_bar.set_progress(100, "Mise à jour terminée avec succès !")
+                        self.log_viewer.add_line("Mise à jour terminée avec succès !", "SUCCESS")
+                        # Remettre le texte original du bouton
+                        self.later_button.text = "Redémarrer plus tard"
+                elif line == "__NO_UPDATES__":
+                    self.state = "no-updates"
+                    self.progress_bar.set_progress(100, "Système déjà à jour")
+                    self.log_viewer.add_line("Système déjà à jour - Aucune mise à jour nécessaire", "SUCCESS")
+                    # Changer le texte du bouton pour "Fermer" car pas besoin de redémarrer
+                    self.later_button.text = "Fermer"
                 elif line.startswith("__ERROR__"):
                     self.state = "error"
                     error_msg = line.split(":", 1)[1] if ":" in line else "Erreur inconnue"
                     self.log_viewer.add_line(f"Erreur: {error_msg}", "ERROR")
                 else:
                     self.parse_log_line(line)
-                    
+
         except queue.Empty:
             pass
             
@@ -471,6 +488,8 @@ class GablueUpdateGUI:
             self.draw_finish_screen()
         elif self.state == "error":
             self.draw_error_screen()
+        elif self.state == "no-updates":
+            self.draw_no_updates_screen()
             
         pygame.display.flip()
         
@@ -546,32 +565,64 @@ class GablueUpdateGUI:
         
     def draw_error_screen(self):
         """Dessiner l'écran d'erreur avec logs visibles"""
-        
+
         # Icône d'erreur (croix rouge)
         center = (SCREEN_WIDTH // 2, 120)
         pygame.draw.circle(self.screen, COLORS['error'], center, 40)
         pygame.draw.circle(self.screen, COLORS['text'], center, 40, 2)
-        
+
         # Croix
-        pygame.draw.line(self.screen, COLORS['bg_dark'], 
+        pygame.draw.line(self.screen, COLORS['bg_dark'],
                         (center[0] - 15, center[1] - 15),
                         (center[0] + 15, center[1] + 15), 4)
         pygame.draw.line(self.screen, COLORS['bg_dark'],
                         (center[0] + 15, center[1] - 15),
                         (center[0] - 15, center[1] + 15), 4)
-        
+
         # Texte d'erreur
         error_text = FONT_LARGE.render("Mise à jour échouée", True, COLORS['error'])
         self.screen.blit(error_text, (SCREEN_WIDTH // 2 - error_text.get_width() // 2, 170))
-        
+
         # Logs (affichés pour voir ce qui s'est passé)
         self.log_viewer.rect.y = 210
         self.log_viewer.rect.height = 150
         self.log_viewer.draw(self.screen)
-        
+
         # Bouton fermer
         self.error_button.draw(self.screen)
-        
+
+    def draw_no_updates_screen(self):
+        """Dessiner l'écran quand le système est déjà à jour"""
+
+        # Icône de succès (cercle vert avec check)
+        center = (SCREEN_WIDTH // 2, 160)
+        pygame.draw.circle(self.screen, COLORS['success'], center, 50)
+        pygame.draw.circle(self.screen, COLORS['text'], center, 50, 3)
+
+        # Check mark
+        check_points = [
+            (center[0] - 20, center[1]),
+            (center[0] - 8, center[1] + 12),
+            (center[0] + 20, center[1] - 16),
+        ]
+        pygame.draw.lines(self.screen, COLORS['bg_dark'], False, check_points, 5)
+
+        # Texte principal
+        success_text = FONT_TITLE.render("Système déjà à jour !", True, COLORS['success'])
+        self.screen.blit(success_text, (SCREEN_WIDTH // 2 - success_text.get_width() // 2, 230))
+
+        # Description
+        desc_text = "Aucune mise à jour nécessaire. Gablue est à jour."
+        desc_surface = FONT_NORMAL.render(desc_text, True, COLORS['text_secondary'])
+        self.screen.blit(desc_surface, (SCREEN_WIDTH // 2 - desc_surface.get_width() // 2, 270))
+
+        # Version actuelle si disponible
+        version_text = FONT_SMALL.render("Votre système est à jour", True, COLORS['text_secondary'])
+        self.screen.blit(version_text, (SCREEN_WIDTH // 2 - version_text.get_width() // 2, 300))
+
+        # Bouton fermer
+        self.later_button.draw(self.screen)
+
     def run(self):
         """Boucle principale"""
         while self.running:
