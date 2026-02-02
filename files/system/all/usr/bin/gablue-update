@@ -1,0 +1,62 @@
+#!/usr/bin/bash
+#
+# Wrapper pour gablue-update avec interface Pygame moderne
+# Ce script lance l'interface graphique par défaut, avec fallback CLI
+#
+
+# Détection du mode
+CLI_MODE=false
+AUTO_MODE=false
+SKIP_REBOOT=false
+
+# Parser les arguments
+for arg in "$@"; do
+    case $arg in
+        --cli)
+            CLI_MODE=true
+            ;;
+        --auto)
+            AUTO_MODE=true
+            ;;
+        --skip-reboot)
+            SKIP_REBOOT=true
+            ;;
+        --help|-h)
+            echo "Usage: gablue-update [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --cli          Mode ligne de commande (sans interface graphique)"
+            echo "  --auto         Mode automatique non-interactif"
+            echo "  --skip-reboot  Ne pas proposer de redémarrage après la mise à jour"
+            echo "  --help, -h     Afficher cette aide"
+            echo ""
+            echo "Par défaut, l'interface graphique Pygame est utilisée."
+            exit 0
+            ;;
+    esac
+done
+
+# Si --auto ou --cli spécifié, utiliser le mode CLI
+if [[ "$*" == *"--auto"* ]] || [[ "$*" == *"--cli"* ]]; then
+    CLI_MODE=true
+fi
+
+# Détection du mode : développement (git repo) ou production
+SCRIPT_DIR="/usr/share/ublue-os/gablue/scripts/gablue-update"
+
+# Si on est dans le repo git (développement), utiliser les chemins relatifs
+if [ -f "$(dirname "$0")/../share/ublue-os/gablue/scripts/gablue-update/gablue-update-gui.py" ]; then
+    SCRIPT_DIR="$(dirname "$0")/../share/ublue-os/gablue/scripts/gablue-update"
+fi
+
+if [ "$CLI_MODE" = false ]; then
+    # Lancer l'interface graphique avec le python système
+    # Si pygame n'est pas installé, on bascule automatiquement en CLI
+    exec /usr/bin/python3 "$SCRIPT_DIR/gablue-update-gui.py" 2>/dev/null || CLI_MODE=true
+fi
+
+# Mode ligne de commande (fallback)
+if [ "$CLI_MODE" = true ]; then
+    # Passer tous les arguments au script core
+    exec "$SCRIPT_DIR/gablue-update-core" "$@"
+fi

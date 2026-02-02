@@ -658,7 +658,7 @@ udisks-uninstall:
 # Update gablue and flatpaks
 gablue-update:
     #!/usr/bin/bash
-    /usr/libexec/gablue-update
+    /usr/bin/gablue-update
 
 # Rebase Gablue to main non nvidia
 gablue-rebase-main:

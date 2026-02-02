@@ -44,7 +44,7 @@ chmod +x /usr/bin/ryu-install
 chmod +x /usr/bin/scrap-win
 
 # Rendre exécutables les scripts d'administration Gablue
-chmod +x /usr/libexec/gablue-update
+chmod +x /usr/bin/gablue-update
 chmod +x /usr/libexec/gablue-config
 chmod +x /usr/libexec/archgab-update
 chmod +x /usr/libexec/sync-gamepads

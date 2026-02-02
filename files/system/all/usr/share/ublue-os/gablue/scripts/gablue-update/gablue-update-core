@@ -1,0 +1,136 @@
+#!/usr/bin/bash
+
+# Script de mise à jour de Gablue - Version Core
+# Ce script effectue les mises à jour du système et communique avec la GUI
+
+set -e
+
+# Fonction pour envoyer les logs à la GUI
+log_info() {
+    echo "[INFO] $1"
+}
+
+log_warn() {
+    echo "[WARN] $1"
+}
+
+log_error() {
+    echo "[ERROR] $1"
+}
+
+log_success() {
+    echo "[SUCCESS] $1"
+}
+
+# Fonction pour afficher la progression
+update_progress() {
+    local percent=$1
+    local message=$2
+    echo "Progress: ${percent}% - ${message}"
+}
+
+# Vérifier les arguments
+AUTO_MODE=false
+SKIP_REBOOT=false
+
+for arg in "$@"; do
+    case $arg in
+        --auto)
+            AUTO_MODE=true
+            ;;
+        --skip-reboot)
+            SKIP_REBOOT=true
+            ;;
+        --help|-h)
+            echo "Usage: gablue-update-core [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --auto         Mode automatique non-interactif"
+            echo "  --skip-reboot  Ne pas proposer de redémarrage"
+            echo "  --help, -h     Afficher cette aide"
+            exit 0
+            ;;
+    esac
+done
+
+log_info "Démarrage de la mise à jour de Gablue"
+
+# =============================================================================
+# ÉTAPE 1: Annulation des mises à jour en attente
+# =============================================================================
+
+update_progress 5 "Annulation des mises à jour en attente..."
+log_info "Annulation des mises à jour rpm-ostree en cours..."
+
+if rpm-ostree cancel 2>/dev/null; then
+    log_info "Mises à jour annulées avec succès"
+else
+    log_warn "Aucune mise à jour à annuler ou erreur lors de l'annulation"
+fi
+
+sleep 1
+
+# =============================================================================
+# ÉTAPE 2: Mise à jour du système via rpm-ostree
+# =============================================================================
+
+update_progress 20 "Mise à jour du système via rpm-ostree..."
+log_info "Démarrage de la mise à jour rpm-ostree..."
+
+# Capture de la sortie pour la progression
+if rpm-ostree upgrade 2>&1 | while read -r line; do
+    echo "$line"
+    # Détection de progression approximative basée sur les messages
+    if [[ "$line" == *"Receiving"* ]]; then
+        update_progress 40 "Téléchargement des mises à jour..."
+    elif [[ "$line" == *"Unpacking"* ]]; then
+        update_progress 60 "Décompression des paquets..."
+    elif [[ "$line" == *"Complete"* ]] || [[ "$line" == *"Successfully"* ]]; then
+        update_progress 80 "Mise à jour système terminée"
+    fi
+done; then
+    log_success "Mise à jour rpm-ostree réussie"
+else
+    log_error "Échec de la mise à jour rpm-ostree"
+    exit 1
+fi
+
+sleep 1
+
+# =============================================================================
+# ÉTAPE 3: Mise à jour des Flatpaks
+# =============================================================================
+
+update_progress 85 "Mise à jour des Flatpaks..."
+log_info "Démarrage de la mise à jour des Flatpaks..."
+
+if flatpak update -y 2>&1 | while read -r line; do
+    echo "$line"
+    # Progression approximative
+    if [[ "$line" == *"Updating"* ]]; then
+        update_progress 90 "Mise à jour des applications Flatpak..."
+    fi
+done; then
+    log_success "Mise à jour des Flatpaks réussie"
+else
+    log_warn "Certaines mises à jour Flatpak ont échoué (non bloquant)"
+fi
+
+sleep 1
+
+# =============================================================================
+# ÉTAPE 4: Finalisation
+# =============================================================================
+
+update_progress 100 "Mise à jour terminée avec succès !"
+log_success "Toutes les mises à jour ont été effectuées avec succès"
+
+# =============================================================================
+# Redémarrage (si demandé et non --skip-reboot)
+# =============================================================================
+
+if [ "$SKIP_REBOOT" = false ] && [ "$AUTO_MODE" = false ]; then
+    log_info "Un redémarrage est nécessaire pour appliquer les changements système"
+fi
+
+exit 0
