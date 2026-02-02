@@ -13,6 +13,9 @@ dossieruser="~/Windows/UserData/$user"
 # Mode silencieux (non-interactif) - activé avec --auto
 AUTO_MODE=false
 
+# Mode GUI (utilisé par l'interface pygame)
+GUI_MODE=false
+
 # Type de DXVK (gplasync par défaut, ou standard avec --dxvk-no-async)
 DXVK_NO_ASYNC=false
 
@@ -20,6 +23,29 @@ DXVK_NO_ASYNC=false
 LOG_DIR="$HOME/.local/share"
 LOG_FILE="$LOG_DIR/windows-update.log"
 mkdir -p "$LOG_DIR"
+
+# =============================================================================
+# GESTION DES LOGS - Rotation au démarrage
+# =============================================================================
+
+# Fonction pour rotationner/effacer les logs
+rotate_logs() {
+    local max_size=5242880  # 5 Mo en octets
+    local max_lines=1000    # Nombre maximum de lignes à conserver
+    
+    if [ -f "$LOG_FILE" ]; then
+        local file_size=$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
+        
+        # Si le fichier est trop grand, ne garder que les dernières lignes
+        if [ "$file_size" -gt "$max_size" ]; then
+            echo "$(tail -n $max_lines "$LOG_FILE")" > "$LOG_FILE"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] Log rotationné (taille: $(($file_size / 1024))Ko)" >> "$LOG_FILE"
+        fi
+    fi
+}
+
+# Rotationner les logs existants
+rotate_logs
 
 # Nombre de tentatives pour les requêtes réseau
 MAX_RETRIES=3
@@ -29,8 +55,7 @@ MAX_RETRIES=3
 # =============================================================================
 
 # Fonction de logging avec timestamp
-# Écrit dans le fichier log ET sur stderr (pour debug), mais PAS sur stdout
-# pour éviter de polluer les variables lors des captures $(...)
+# Écrit dans le fichier log ET sur stdout pour l'interface GUI
 log() {
     local level="$1"
     local message="$2"
@@ -38,8 +63,8 @@ log() {
     local log_line="[$timestamp] [$level] $message"
     # Écrire dans le fichier
     echo "$log_line" >> "$LOG_FILE"
-    # Afficher sur stderr pour le debug terminal (pas stdout !)
-    echo "$log_line" >&2
+    # Afficher sur stdout pour l'interface GUI
+    echo "$log_line"
 }
 
 # Fonction de retry avec délai exponentiel
@@ -68,35 +93,20 @@ retry_with_backoff() {
     return 1
 }
 
-# Fonction pour afficher les messages (console ou kdialog)
+# Fonction pour afficher les messages
 show_message() {
     local message="$1"
-    if [ "$AUTO_MODE" = false ]; then
-        kdialog --msgbox "$message" 2>/dev/null || echo "$message"
-    else
-        log "INFO" "$message"
-        echo "$message"
-    fi
+    log "INFO" "$message"
+    echo "$message"
 }
 
-# Fonction pour les dialogues interactifs (désactivée en mode auto)
-interactive_dialog() {
-    if [ "$AUTO_MODE" = true ]; then
-        log "INFO" "Mode auto: dialogue interactif ignoré"
-        return 1
-    fi
-    return 0
-}
-
-# Fonction pour la barre de progression (mode non-auto uniquement)
+# Fonction pour la barre de progression
 update_progress() {
     local value="$1"
     local text="$2"
     
-    if [ "$AUTO_MODE" = false ] && [ -n "$dbusRef" ]; then
-        qdbus $dbusRef Set "" "value" "$value" 2>/dev/null || true
-        qdbus $dbusRef setLabelText "$text" 2>/dev/null || true
-    fi
+    # Toujours logger et afficher sur stdout pour l'interface GUI
+    echo "Progress: $value% - $text"
     log "INFO" "Progress: $value% - $text"
 }
 
@@ -333,7 +343,7 @@ temp_dir=~/.var/app/com.usebottles.bottles/data/bottles/temp_updates
 mkdir -p "$temp_dir"
 
 # Fichier drapeau pour contrôler la boucle de surveillance
-flag_file="/tmp/kdialog_monitor_flag_$$"
+flag_file="/tmp/windows_update_flag_$$"
 touch "$flag_file"
 
 # =============================================================================
@@ -353,12 +363,23 @@ for arg in "$@"; do
             AUTO_MODE=true
             log "INFO" "Mode automatique --auto activé (non-interactif)"
             ;;
+        --gui)
+            GUI_MODE=true
+            AUTO_MODE=true
+            log "INFO" "Mode GUI activé (non-interactif pour interface graphique)"
+            ;;
         --dxvk-no-async)
             DXVK_NO_ASYNC=true
             log "INFO" "Flag --dxvk-no-async activé: utilisation de DXVK Standard (non-async)"
             ;;
     esac
 done
+
+# Récupérer le choix du runner depuis la variable d'environnement (mode GUI)
+if [ "$GUI_MODE" = true ] && [ -n "$RUNNER_CHOICE" ]; then
+    runner_choice="$RUNNER_CHOICE"
+    log "INFO" "Runner récupéré depuis variable d'environnement: $runner_choice"
+fi
 
 # Initialiser le log
 echo "==============================================" >> "$LOG_FILE"
@@ -370,17 +391,38 @@ log "INFO" "Mode auto: $AUTO_MODE, Force rebuild: $force_rebuild"
 # CHOIX DU RUNNER (WINE)
 # =============================================================================
 
-if [ "$AUTO_MODE" = true ]; then
+if [ "$GUI_MODE" = true ] && [ -n "$runner_choice" ]; then
+    # Mode GUI: runner déjà défini depuis la variable d'environnement
+    log "INFO" "Mode GUI: runner déjà sélectionné: $runner_choice"
+elif [ "$AUTO_MODE" = true ]; then
     # Mode auto: utiliser gwine-proton par défaut
     runner_choice="gwine-proton"
     log "INFO" "Mode auto: runner par défaut sélectionné: $runner_choice"
 else
-    # Mode interactif: demander avec kdialog
-    runner_choice=$(kdialog --title "Choix de wine" --radiolist "Sélectionnez la version de wine à utiliser :" \
-        "gwine-proton" "Gwine-Proton (dernière version)" on \
-        "gwine" "Gwine (dernière version)" off \
-        "gwine-proton-wow64" "Gwine-Proton-WoW64 (dernière version)" off \
-        "soda" "Soda (ancienne version)" off)
+    # Mode interactif: utiliser zenity si disponible, sinon ligne de commande
+    if command -v zenity &> /dev/null; then
+        runner_choice=$(zenity --list --radiolist \
+            --title="Choix de Wine" \
+            --text="Sélectionnez la version de wine à utiliser :" \
+            --column="" --column="Code" --column="Description" \
+            TRUE "gwine-proton" "Gwine-Proton (dernière version)" \
+            FALSE "gwine" "Gwine (dernière version)" \
+            FALSE "gwine-proton-wow64" "Gwine-Proton-WoW64 (dernière version)" \
+            FALSE "soda" "Soda (ancienne version)")
+    else
+        echo "Sélectionnez la version de wine :"
+        echo "1) Gwine-Proton (dernière version) [recommandé]"
+        echo "2) Gwine (dernière version)"
+        echo "3) Gwine-Proton-WoW64 (dernière version)"
+        echo "4) Soda (ancienne version)"
+        read -p "Choix (1-4) [1]: " choice
+        case $choice in
+            2) runner_choice="gwine" ;;
+            3) runner_choice="gwine-proton-wow64" ;;
+            4) runner_choice="soda" ;;
+            *) runner_choice="gwine-proton" ;;
+        esac
+    fi
 
     if [ $? -ne 0 ] || [ -z "$runner_choice" ]; then
         log "ERROR" "Aucun choix de runner effectué par l'utilisateur"
@@ -434,17 +476,15 @@ else
 fi
 
 # =============================================================================
-# INITIALISATION DE L'INTERFACE (MODE NON-AUTO UNIQUEMENT)
+# INITIALISATION DE L'INTERFACE
 # =============================================================================
 
-dbusRef=""
-if [ "$AUTO_MODE" = false ]; then
-    # Lancer la barre de progression avec kdialog et bouton Annuler
-    dbusRef=$(kdialog --title "Installation/Mise à jour de Windows" --progressbar "Initialisation..." 100)
-    qdbus $dbusRef showCancelButton true 2>/dev/null || true
-    log "INFO" "Interface graphique kdialog initialisée"
-else
+if [ "$GUI_MODE" = true ]; then
+    log "INFO" "Mode GUI: progression affichée via l'interface Pygame"
+elif [ "$AUTO_MODE" = true ]; then
     log "INFO" "Mode auto: interface graphique désactivée"
+else
+    log "INFO" "Mode interactif: utilisation de zenity ou ligne de commande"
 fi
 
 # Fonction pour comparer les versions
@@ -779,10 +819,6 @@ cleanup() {
     if [ -n "$PID_NVAPI" ]; then kill "$PID_NVAPI" 2>/dev/null || true; fi
     if [ -n "$PID_LATENCYFLEX" ]; then kill "$PID_LATENCYFLEX" 2>/dev/null || true; fi
     
-    if [ -n "$monitor_pid" ]; then
-        kill "$monitor_pid" 2>/dev/null
-        sleep 0.5
-    fi
     if pgrep -f bottles > /dev/null; then
         pgrep -f bottles | xargs -n1 kill -9 &
         sleep 1
@@ -810,10 +846,6 @@ cleanup() {
         mv ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
     fi
     
-    if [ "$AUTO_MODE" = false ] && [ -n "$dbusRef" ]; then
-        qdbus $dbusRef close 2>/dev/null || true
-    fi
-    
     log "INFO" "Restauration terminée"
     show_message "Opération annulée ou erreur survenue. L'ancienne bouteille est restaurée."
     exit 1
@@ -821,25 +853,6 @@ cleanup() {
 
 # Capturer les erreurs et Ctrl+C
 trap 'cleanup' ERR INT
-
-# Surveiller le bouton Annuler en arrière-plan (mode non-auto uniquement)
-monitor_pid=""
-if [ "$AUTO_MODE" = false ] && [ -n "$dbusRef" ]; then
-    (
-        while [ -f "$flag_file" ]; do
-            if ! qdbus $dbusRef >/dev/null 2>&1; then
-                log "WARN" "Service DBus fermé, annulation détectée"
-                cleanup
-            fi
-            cancelled=$(qdbus $dbusRef wasCancelled 2>/dev/null)
-            if [ "$cancelled" = "true" ]; then
-                log "WARN" "Annuler détecté via wasCancelled"
-                cleanup
-            fi
-            sleep 1
-        done
-    ) & monitor_pid=$!
-fi
 
 update_progress 0 "Arrêt des processus bottles..."
 
@@ -898,10 +911,19 @@ fi
 # =============================================================================
 
 # Proposer de forcer le rebuild si pas nécessaire (mode interactif uniquement)
-if [ "$need_rebuild" = false ] && [ "$AUTO_MODE" = false ]; then
-    if kdialog --title "Rebuild" --yesno "Aucune mise à jour de composant détectée.\nVoulez-vous tout de même refaire le rebuild complet ?"; then
-        need_rebuild=true
-        log "INFO" "Rebuild forcé par l'utilisateur"
+if [ "$need_rebuild" = false ] && [ "$AUTO_MODE" = false ] && [ "$GUI_MODE" = false ]; then
+    if command -v zenity &> /dev/null; then
+        if zenity --question --title="Rebuild" --text="Aucune mise à jour de composant détectée.\nVoulez-vous tout de même refaire le rebuild complet ?"; then
+            need_rebuild=true
+            log "INFO" "Rebuild forcé par l'utilisateur"
+        fi
+    else
+        read -p "Aucune mise à jour détectée. Forcer le rebuild ? (o/N) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Oo]$ ]]; then
+            need_rebuild=true
+            log "INFO" "Rebuild forcé par l'utilisateur"
+        fi
     fi
 elif [ "$need_rebuild" = false ] && [ "$AUTO_MODE" = true ]; then
     log "INFO" "Mode auto: aucune mise à jour nécessaire, utilisation de def.ready"
@@ -912,20 +934,34 @@ fi
 # =============================================================================
 
 if [ "$need_rebuild" = true ]; then
-    if [ "$AUTO_MODE" = true ]; then
-        # Mode auto: utiliser le flag ou GPLAsync par défaut
+    if [ "$AUTO_MODE" = true ] || [ "$GUI_MODE" = true ]; then
+        # Mode auto/GUI: utiliser le flag ou GPLAsync par défaut
         if [ "$DXVK_NO_ASYNC" = true ]; then
             dxvk_type="standard"
-            log "INFO" "Mode auto: DXVK Standard sélectionné (via --dxvk-no-async)"
+            log "INFO" "Mode auto/GUI: DXVK Standard sélectionné (via --dxvk-no-async)"
         else
             dxvk_type="gplasync"
-            log "INFO" "Mode auto: DXVK GPLAsync sélectionné par défaut (moins de sacades)"
+            log "INFO" "Mode auto/GUI: DXVK GPLAsync sélectionné par défaut (moins de sacades)"
         fi
     else
-        # Mode interactif: demander avec kdialog seulement si rebuild confirmé
-        dxvk_choice=$(kdialog --title "Choix de DXVK" --radiolist "Sélectionnez le type de DXVK à utiliser :\n\nDXVK GPLAsync: Recommandé, moins de sacades (shaders compilés en arrière-plan)\nDXVK Standard: Moins d'artefacts visuels, mais peut causer des sacades pendant la compilation des shaders" \
-            "gplasync" "DXVK GPLAsync (recommandé - moins de sacades)" on \
-            "standard" "DXVK Standard (moins d'artefacts visuels)" off)
+        # Mode interactif: demander avec zenity ou ligne de commande
+        if command -v zenity &> /dev/null; then
+            dxvk_choice=$(zenity --list --radiolist \
+                --title="Choix de DXVK" \
+                --text="Sélectionnez le type de DXVK à utiliser :" \
+                --column="" --column="Code" --column="Description" \
+                TRUE "gplasync" "DXVK GPLAsync (recommandé - moins de sacades)" \
+                FALSE "standard" "DXVK Standard (moins d'artefacts visuels)")
+        else
+            echo "Sélectionnez le type de DXVK :"
+            echo "1) DXVK GPLAsync (recommandé - moins de sacades)"
+            echo "2) DXVK Standard (moins d'artefacts visuels)"
+            read -p "Choix (1-2) [1]: " choice
+            case $choice in
+                2) dxvk_choice="standard" ;;
+                *) dxvk_choice="gplasync" ;;
+            esac
+        fi
 
         if [ $? -ne 0 ] || [ -z "$dxvk_choice" ]; then
             log "ERROR" "Aucun choix de DXVK effectué par l'utilisateur"
@@ -1020,15 +1056,7 @@ if [ "$need_rebuild" = false ]; then
     rm -rf "$temp_dir"
     update_progress 100 "Finalisation..."
     
-    if [ "$AUTO_MODE" = false ] && [ -n "$dbusRef" ]; then
-        qdbus $dbusRef close 2>/dev/null || true
-    fi
-    
     rm -f "$flag_file"
-    if [ -n "$monitor_pid" ]; then
-        kill "$monitor_pid" 2>/dev/null
-        sleep 0.5
-    fi
     
     if [ "$dxvk_type" = "standard" ]; then
         log "INFO" "DXVK Standard en place (moins d'artefacts visuels)"
@@ -1056,15 +1084,7 @@ fi
 rm -rf "$temp_dir"
 update_progress 100 "Finalisation..."
 
-if [ "$AUTO_MODE" = false ] && [ -n "$dbusRef" ]; then
-    qdbus $dbusRef close 2>/dev/null || true
-fi
-
 rm -f "$flag_file"
-if [ -n "$monitor_pid" ]; then
-    kill "$monitor_pid" 2>/dev/null
-    sleep 0.5
-fi
 
 if [ -f ~/.var/app/com.usebottles.bottles/data/bottles/library.yml ]; then
     log "INFO" "Tri de la bibliothèque Bottles"
