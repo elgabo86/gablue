@@ -55,7 +55,7 @@ MAX_RETRIES=3
 # =============================================================================
 
 # Fonction de logging avec timestamp
-# Écrit dans le fichier log ET sur stdout pour l'interface GUI
+# Écrit dans le fichier log ET sur stderr pour l'interface GUI
 log() {
     local level="$1"
     local message="$2"
@@ -63,8 +63,8 @@ log() {
     local log_line="[$timestamp] [$level] $message"
     # Écrire dans le fichier
     echo "$log_line" >> "$LOG_FILE"
-    # Afficher sur stdout pour l'interface GUI
-    echo "$log_line"
+    # Afficher sur stderr (pas stdout pour ne pas polluer les captures de variables)
+    echo "$log_line" >&2
 }
 
 # Fonction de retry avec délai exponentiel
