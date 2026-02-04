@@ -10,14 +10,14 @@ CLI_MODE=false
 # Parser les arguments
 for arg in "$@"; do
     case $arg in
-        --cli)
+        --cli|--nogui)
             CLI_MODE=true
             ;;
         --help|-h)
             echo "Usage: windows-update [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --cli          Mode ligne de commande (sans interface graphique)"
+            echo "  --cli, --nogui Mode ligne de commande (sans interface graphique)"
             echo "  --rebuild      Forcer le rebuild complet"
             echo "  --dxvk-no-async Utiliser DXVK Standard au lieu de GPLAsync"
             echo "  --auto         Mode automatique non-interactif"

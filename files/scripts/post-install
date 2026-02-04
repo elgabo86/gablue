@@ -49,10 +49,9 @@ chmod +x /usr/bin/wgpadd
 
 # Rendre exécutables les scripts d'administration Gablue
 chmod +x /usr/bin/gablue-update
+chmod +x /usr/bin/sync-gamepads
 chmod +x /usr/libexec/gablue-config
 chmod +x /usr/libexec/archgab-update
-chmod +x /usr/libexec/sync-gamepads
-chmod +x /usr/libexec/sync-gamepads-1m
 chmod +x /usr/libexec/gablue-dx-groups
 
 # Rendre exécutable windows-update (désormais dans /usr/bin)

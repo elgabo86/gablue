@@ -1,0 +1,203 @@
+#!/bin/bash
+
+# Script core pour connecter les manettes via Bluetooth - Version pour GUI
+# Ce script outputte des logs structurés pour être parsés par l'interface graphique
+
+# Pas de set strict car on veut que le script continue même en cas d'erreur
+# Le scan doit tourner indéfiniment jusqu'à ce qu'on le tue
+
+# Fichier de verrouillage global et fichier temporaire
+LOCK_FILE="/tmp/sync-gamepad.lock"
+SCAN_LOG="/tmp/sync-gamepad-log-$$"
+
+# Vérification des dépendances
+check_dependency() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        echo "[ERROR] $1 n'est pas installé. Installez $2 avec : sudo rpm-ostree install $2"
+        exit 1
+    fi
+}
+check_dependency "bluetoothctl" "bluez"
+check_dependency "stdbuf" "coreutils"
+check_dependency "flock" "util-linux"
+check_dependency "timeout" "coreutils"
+
+echo "[INFO] Démarrage de la synchronisation des manettes..."
+
+# Vérifier si une ancienne instance est bloquée (vérifie le PID stocké)
+if [ -f "$LOCK_FILE" ]; then
+    OLD_PID=$(cat "$LOCK_FILE" 2>/dev/null)
+    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+        echo "[ERROR] Une autre instance du script (PID: $OLD_PID) est déjà en cours d'exécution."
+        exit 1
+    else
+        echo "[INFO] Ancienne instance détectée mais le processus est mort, nettoyage..."
+        rm -f "$LOCK_FILE"
+    fi
+fi
+
+# Tente d'obtenir un verrou exclusif
+exec 200>"$LOCK_FILE"
+if ! flock -n 200; then
+    echo "[ERROR] Impossible d'obtenir le verrou (flock échoué)."
+    exit 1
+fi
+
+# Stocke le PID actuel dans le fichier de verrouillage
+echo $$ > "$LOCK_FILE"
+
+# Fonction de nettoyage (invoquée via trap)
+# shellcheck disable=SC2329
+cleanup() {
+    echo "[INFO] Nettoyage..."
+    kill "$SCAN_PID" 2>/dev/null || true
+    bluetoothctl scan off >/dev/null 2>&1 || true
+    bluetoothctl discoverable off >/dev/null 2>&1 || true
+    rm -f "$SCAN_LOG"
+    # Fermer le descripteur de fichier pour libérer le verrou flock
+    exec 200>&- 2>/dev/null || true
+    # Supprimer le fichier de verrouillage
+    rm -f "$LOCK_FILE"
+    exit 0
+}
+trap cleanup EXIT INT TERM
+
+# Vérifie et active Bluetooth
+echo "[INFO] Vérification de Bluetooth..."
+if ! bluetoothctl show | grep -q "Powered: yes"; then
+    echo "[INFO] Activation de Bluetooth..."
+    bluetoothctl power off >/dev/null 2>&1 || true
+    sleep 0.5
+    bluetoothctl power on >/dev/null 2>&1 || true
+    sleep 0.5
+fi
+
+# Rend l'appareil découvrable
+echo "[INFO] Rendre l'appareil découvrable..."
+bluetoothctl discoverable on >/dev/null 2>&1 || true
+
+# Initialise les compteurs de manettes
+CONNECTED_CONTROLLERS=0
+DS4_COUNT=0
+DUALSENSE_COUNT=0
+WIIU_PRO_COUNT=0
+SWITCH_PRO_COUNT=0
+JOYCON_LEFT_COUNT=0
+JOYCON_RIGHT_COUNT=0
+PROCESSED_DEVICES=""
+
+# Lance le scan Bluetooth avec timeout de 1 heure
+echo "[INFO] Lancement du scan Bluetooth..."
+echo "[INFO] Mettez vos manettes en mode pairing :"
+echo "[INFO]   • DS4 : Share + PS"
+echo "[INFO]   • DualSense : PS + Create"
+echo "[INFO]   • Switch Pro : Sync"
+echo "[INFO]   • Joy-Con : Petits boutons sur les côtés"
+echo "[INFO] Appuyez sur 'Terminer' pour arrêter le scan"
+
+stdbuf -oL bluetoothctl --timeout 3600 scan on > "$SCAN_LOG" 2>&1 &
+SCAN_PID=$!
+sleep 2
+
+echo "[INFO] Scan démarré - En attente des manettes..."
+
+# Boucle principale pour détecter et connecter les manettes
+# Continue indéfiniment jusqu'à ce que le script soit tué (par le bouton Terminer)
+while true; do
+    # Vérifier si le scan est toujours en vie, sinon le relancer
+    if ! kill -0 "$SCAN_PID" 2>/dev/null; then
+        echo "[INFO] Relance du scan Bluetooth..."
+        stdbuf -oL bluetoothctl --timeout 3600 scan on > "$SCAN_LOG" 2>&1 &
+        SCAN_PID=$!
+    fi
+    
+    echo "Progress: 0% - Scan actif ($CONNECTED_CONTROLLERS manette(s) connectée(s))"
+    
+    # Extrait tous les appareils détectés dans le scan
+    devices=$(cat "$SCAN_LOG" 2>/dev/null | grep -oP '(?<=Device )([0-9A-Fa-f:]{17})' | sort -u)
+
+    if [ -n "$devices" ]; then
+        for device in $devices; do
+            # Ignore les appareils déjà connectés avec succès ou déjà traités
+            if echo "$PROCESSED_DEVICES" | grep -q "$device" || bluetoothctl info "$device" 2>/dev/null | grep -q "Connected: yes"; then
+                continue
+            fi
+
+            device_name=$(bluetoothctl info "$device" 2>/dev/null | grep "Name" | cut -d ' ' -f 2-)
+            if echo "$device_name" | grep -q "Wireless Controller\|DualSense Wireless Controller\|Nintendo RVL-CNT-01-TR\|Pro Controller\|Joy-Con \(L\)\|Joy-Con \(R\)"; then
+                echo "[INFO] Manette détectée : $device_name ($device)"
+
+                # Si pairée mais non connectée, supprimer et repairer immédiatement
+                if bluetoothctl info "$device" 2>/dev/null | grep -q "Paired: yes" && ! bluetoothctl info "$device" 2>/dev/null | grep -q "Connected: yes"; then
+                    echo "[WARN] Manette $device_name pairée mais non connectée, suppression et nouveau pairing..."
+                    bluetoothctl remove "$device" >/dev/null 2>&1 || true
+                    sleep 1
+                    echo "[INFO] Tentative de pairing avec $device_name..."
+                    bluetoothctl pair "$device" >/dev/null 2>&1 || true
+                    sleep 0.5
+                    if ! bluetoothctl info "$device" 2>/dev/null | grep -q "Paired: yes"; then
+                        echo "[WARN] Premier pairing échoué, nouvelle tentative pour $device_name..."
+                        bluetoothctl pair "$device" >/dev/null 2>&1 || true
+                        sleep 0.5
+                    fi
+                # Si non pairée, tenter un pairing initial
+                elif ! bluetoothctl info "$device" 2>/dev/null | grep -q "Paired: yes"; then
+                    echo "[INFO] Manette $device_name non pairée, tentative de pairing..."
+                    bluetoothctl pair "$device" >/dev/null 2>&1 || true
+                    sleep 0.5
+                fi
+
+                # Tentative de connexion si pairée
+                if bluetoothctl info "$device" 2>/dev/null | grep -q "Paired: yes"; then
+                    echo "[INFO] Tentative de connexion à $device_name..."
+                    bluetoothctl trust "$device" >/dev/null 2>&1 || true
+                    sleep 0.2
+                    timeout 5 bluetoothctl connect "$device" >/dev/null 2>&1 || true
+                    sleep 0.5
+                    if bluetoothctl info "$device" 2>/dev/null | grep -q "Connected: yes"; then
+                        echo "[SUCCESS] Connexion réussie à $device_name !"
+                        CONNECTED_CONTROLLERS=$((CONNECTED_CONTROLLERS + 1))
+
+                        # Mise à jour des compteurs par type
+                        case "$device_name" in
+                            *"DualSense Wireless Controller"*) 
+                                DUALSENSE_COUNT=$((DUALSENSE_COUNT + 1))
+                                echo "[INFO] Type: DualSense (PS5)"
+                                ;;
+                            *"Wireless Controller"*) 
+                                DS4_COUNT=$((DS4_COUNT + 1))
+                                echo "[INFO] Type: DS4 (PS4)"
+                                ;;
+                            *"Nintendo RVL-CNT-01-TR"*) 
+                                WIIU_PRO_COUNT=$((WIIU_PRO_COUNT + 1))
+                                echo "[INFO] Type: Wii U Pro Controller"
+                                ;;
+                            *"Pro Controller"*) 
+                                SWITCH_PRO_COUNT=$((SWITCH_PRO_COUNT + 1))
+                                echo "[INFO] Type: Switch Pro Controller"
+                                ;;
+                            *"Joy-Con (L)"*) 
+                                JOYCON_LEFT_COUNT=$((JOYCON_LEFT_COUNT + 1))
+                                echo "[INFO] Type: Joy-Con Gauche"
+                                ;;
+                            *"Joy-Con (R)"*) 
+                                JOYCON_RIGHT_COUNT=$((JOYCON_RIGHT_COUNT + 1))
+                                echo "[INFO] Type: Joy-Con Droite"
+                                ;;
+                        esac
+
+                        PROCESSED_DEVICES="$PROCESSED_DEVICES $device"
+                    else
+                        echo "[WARN] Échec de la connexion à $device_name, elle sera réévaluée ultérieurement."
+                    fi
+                else
+                    echo "[WARN] Échec du pairing pour $device_name, elle sera réévaluée ultérieurement."
+                fi
+
+                break  # Traiter une seule manette par cycle
+            fi
+        done
+    fi
+
+    sleep 0.5
+done

@@ -12,7 +12,7 @@ SKIP_REBOOT=false
 # Parser les arguments
 for arg in "$@"; do
     case $arg in
-        --cli)
+        --cli|--nogui)
             CLI_MODE=true
             ;;
         --auto)
@@ -25,7 +25,7 @@ for arg in "$@"; do
             echo "Usage: gablue-update [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --cli          Mode ligne de commande (sans interface graphique)"
+            echo "  --cli, --nogui Mode ligne de commande (sans interface graphique)"
             echo "  --auto         Mode automatique non-interactif"
             echo "  --skip-reboot  Ne pas proposer de redémarrage après la mise à jour"
             echo "  --help, -h     Afficher cette aide"

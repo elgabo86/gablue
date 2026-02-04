@@ -1,7 +1,7 @@
 [Desktop Entry]
 Categories=Game
 Comment=
-Exec=bash -c "/usr/libexec/sync-gamepads"
+Exec=bash -c "/usr/bin/sync-gamepads"
 GenericName=Gamepad Sync
 Icon=fern-wifi-cracker
 Name=Gamepad Sync
@@ -13,9 +13,3 @@ TerminalOptions=
 Type=Application
 X-KDE-SubstituteUID=false
 X-KDE-Username=
-Actions=Option1
-
-[Desktop Action Option1]
-Name=Scan auto (1min)
-Exec=bash -c "/usr/libexec/sync-gamepads-1m"
-Terminal=false
