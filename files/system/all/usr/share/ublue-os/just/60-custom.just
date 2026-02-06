@@ -419,7 +419,7 @@ toggle-i915-sleep-fix:
 toggle-iwd:
     #!/usr/bin/bash
     # Explain the purpose of the script
-    echo -e "This script manages enabling or disabling iwd as a replacement for wpa_supplicant for Wi-Fi networking."
+    echo -e "This script manages enabling or disabling iwd as a replacement for wpa_supplicant for Wi-Fi networking. Default is Disabled (wpa_supplicant)."
     echo -e "Enabling this can improve throughput, mesh networking, and reduce latency increases when scanning for networks"
     echo -e "Disabling this can improve corporate or eduroam network compatibility"
     echo -e ""
@@ -438,17 +438,21 @@ toggle-iwd:
       sudo mkdir -p "/etc/NetworkManager/conf.d/"
       sudo rm -f "/etc/NetworkManager/conf.d/iwd.conf"
       printf "[device]\nwifi.backend=iwd" | sudo tee /etc/NetworkManager/conf.d/iwd.conf > /dev/null
+      sudo systemctl mask wpa_supplicant.service
+      sudo systemctl unmask iwd.service
       remove_saved_networks
       echo -e "iwd enabled. Reboot required to apply changes."
     }
     disable_iwd() {
       sudo rm -f "/etc/NetworkManager/conf.d/iwd.conf"
+      sudo systemctl unmask wpa_supplicant.service
+      sudo systemctl mask iwd.service
       remove_saved_networks
       echo -e "iwd disabled. Reboot required to apply changes."
     }
     # Display current status
     current_status=$(get_current_status)
-    echo -e "\nCurrent i915.enable_dc status: $current_status\n"
+    echo -e "\nCurrent iwd status: $current_status\n"
     # Prompt user for action
     CHOICE=$(ugum choose "Enable iwd" "Disable iwd" "Exit without changes")
     case "$CHOICE" in
