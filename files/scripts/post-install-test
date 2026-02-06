@@ -62,9 +62,6 @@ chmod +x /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/*
 # CAPACITÉS SYSTÈME (CAPABILITIES)
 # =============================================================================
 
-# Donner les capacités réseau nécessaires à KDE System Guard
-setcap 'cap_net_raw+ep' /usr/libexec/ksysguard/ksgrd_network_helper
-
 # Donner les capacités d'ordonnancement temps réel à Gamescope
 setcap 'cap_sys_nice=eip' /usr/bin/gamescope
 
