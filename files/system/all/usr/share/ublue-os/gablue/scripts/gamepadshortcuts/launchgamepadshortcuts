@@ -1,5 +1,15 @@
 #!/usr/bin/bash
 
+# Vérifie si une instance est déjà en cours d'exécution
+LOCKFILE="/tmp/launchgamepadshortcuts.lock"
+
+# Utilise flock pour verrouiller - sort immédiatement si déjà verrouillé
+exec 200>"$LOCKFILE"
+if ! flock -n 200; then
+    echo "Une instance est déjà en cours d'exécution"
+    exit 1
+fi
+
 # Kill le process si existant
 pgrep -f gamepadshortcuts.py |xargs -n1 kill -9
 
