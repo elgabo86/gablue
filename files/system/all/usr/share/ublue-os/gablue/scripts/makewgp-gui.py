@@ -64,11 +64,17 @@ class CreateWGPThread(QThread):
             
             if result.returncode == 0:
                 self.progress.emit(100, "Terminé !")
+                # Restaurer les fichiers originaux et supprimer les dossiers .save/.extra
+                self.cleanup()
                 self.finished.emit(True, wgp_file)
             else:
+                # Restaurer les fichiers en cas d'échec de mksquashfs
+                self.cleanup()
                 self.finished.emit(False, f"Erreur lors de la création: {result.stderr}")
                 
         except Exception as e:
+            # Restaurer les fichiers et nettoyer en cas d'erreur
+            self.cleanup()
             self.finished.emit(False, f"Erreur: {str(e)}")
     
     def create_config_files(self):
@@ -89,40 +95,81 @@ class CreateWGPThread(QThread):
         if self.config['fix_controller']:
             open(os.path.join(self.game_dir, '.fix'), 'w').close()
         
-        # Créer les symlinks et copier vers .save/.extra
-        self._process_saves_and_extras()
-        
-        # .icon
+        # .icon - Copier AVANT de traiter les saves/extras car l'icône
+        # peut être dans un dossier qui sera déplacé
         if self.config['icon']:
             icon_dest = os.path.join(self.game_dir, '.icon.png')
             shutil.copy2(self.config['icon'], icon_dest)
+        
+        # Créer les symlinks et copier vers .save/.extra
+        self._process_saves_and_extras()
     
+    def _copy_dir_contents(self, source, target):
+        """Copie le contenu d'un répertoire source vers target (sans copier le répertoire lui-même)"""
+        os.makedirs(target, exist_ok=True)
+        for item in os.listdir(source):
+            s = os.path.join(source, item)
+            d = os.path.join(target, item)
+            if os.path.islink(s):
+                # Préserver les symlinks
+                if os.path.islink(d):
+                    os.remove(d)
+                elif os.path.exists(d):
+                    if os.path.isdir(d):
+                        shutil.rmtree(d)
+                    else:
+                        os.remove(d)
+                os.symlink(os.readlink(s), d)
+            elif os.path.isdir(s):
+                if os.path.exists(d):
+                    shutil.rmtree(d)
+                # Préserver les symlinks lors de la copie récursive
+                shutil.copytree(s, d, symlinks=True)
+            else:
+                shutil.copy2(s, d)
+
     def _process_saves_and_extras(self):
         """Crée les dossiers .save/.extra, copie les fichiers et crée les symlinks"""
+        print(f"DEBUG: _process_saves_and_extras called")
+        print(f"DEBUG: game_dir = {self.game_dir}")
+        print(f"DEBUG: saves = {self.config.get('saves', [])}")
+        print(f"DEBUG: extras = {self.config.get('extras', [])}")
+        
         # Traiter les sauvegardes
         if self.config['saves']:
             saves_dir = os.path.join(self.game_dir, '.save')
             os.makedirs(saves_dir, exist_ok=True)
-            
+            print(f"DEBUG: Created saves_dir = {saves_dir}")
+
             with open(os.path.join(self.game_dir, '.savepath'), 'w') as f:
                 for item_type, rel_path in self.config['saves']:
-                    prefix = "D:" if item_type == 'dir' else "F:"
-                    f.write(f"{prefix}{rel_path}\n")
-                    
+                    # Format compatible avec makewgp.sh (sans préfixe)
+                    f.write(f"{rel_path}\n")
+
                     # Créer le symlink
                     source = os.path.join(self.game_dir, rel_path)
                     target = os.path.join(saves_dir, rel_path)
                     
+                    print(f"DEBUG: Processing save: {rel_path} (type={item_type})")
+                    print(f"DEBUG: source = {source}, exists={os.path.exists(source)}")
+                    print(f"DEBUG: target = {target}")
+
                     if os.path.exists(source):
-                        # Copier vers .save
+                        # Copier vers .save (contenu uniquement pour les dossiers)
                         os.makedirs(os.path.dirname(target), exist_ok=True)
                         if item_type == 'dir':
-                            if os.path.exists(target):
-                                shutil.rmtree(target)
-                            shutil.copytree(source, target)
+                            print(f"DEBUG: Copying dir contents from {source} to {target}")
+                            self._copy_dir_contents(source, target)
                         else:
+                            print(f"DEBUG: Copying file from {source} to {target}")
                             shutil.copy2(source, target)
                         
+                        # Vérifier que la copie a fonctionné
+                        if os.path.exists(target):
+                            print(f"DEBUG: Copy successful, target exists")
+                        else:
+                            print(f"DEBUG: ERROR - Copy failed, target does not exist!")
+
                         # Créer le symlink
                         saves_base = f"/tmp/wgp-saves/{self.game_name}"
                         if os.path.islink(source):
@@ -133,33 +180,47 @@ class CreateWGPThread(QThread):
                             os.remove(source)
                         os.makedirs(os.path.dirname(source), exist_ok=True)
                         os.symlink(os.path.join(saves_base, rel_path), source)
-        
+                        print(f"DEBUG: Created symlink {source} -> {os.path.join(saves_base, rel_path)}")
+        else:
+            print(f"DEBUG: No saves to process")
+
         # Traiter les extras
         if self.config['extras']:
             extras_dir = os.path.join(self.game_dir, '.extra')
             os.makedirs(extras_dir, exist_ok=True)
-            
+            print(f"DEBUG: Created extras_dir = {extras_dir}")
+
             with open(os.path.join(self.game_dir, '.extrapath'), 'w') as f:
                 for item_type, rel_path in self.config['extras']:
-                    prefix = "D:" if item_type == 'dir' else "F:"
-                    f.write(f"{prefix}{rel_path}\n")
-                    
+                    # Format compatible avec makewgp.sh (sans préfixe)
+                    f.write(f"{rel_path}\n")
+
                     # Créer le symlink
                     source = os.path.join(self.game_dir, rel_path)
                     target = os.path.join(extras_dir, rel_path)
                     
+                    print(f"DEBUG: Processing extra: {rel_path} (type={item_type})")
+                    print(f"DEBUG: source = {source}, exists={os.path.exists(source)}")
+                    print(f"DEBUG: target = {target}")
+
                     if os.path.exists(source):
-                        # Copier vers .extra
+                        # Copier vers .extra (contenu uniquement pour les dossiers)
                         os.makedirs(os.path.dirname(target), exist_ok=True)
                         if item_type == 'dir':
-                            if os.path.exists(target):
-                                shutil.rmtree(target)
-                            shutil.copytree(source, target)
+                            print(f"DEBUG: Copying dir contents from {source} to {target}")
+                            self._copy_dir_contents(source, target)
                         else:
+                            print(f"DEBUG: Copying file from {source} to {target}")
                             shutil.copy2(source, target)
                         
-                        # Créer le symlink
-                        extras_base = f"/tmp/wgp-extra/{self.game_name}"
+                        # Vérifier que la copie a fonctionné
+                        if os.path.exists(target):
+                            print(f"DEBUG: Copy successful, target exists")
+                        else:
+                            print(f"DEBUG: ERROR - Copy failed, target does not exist!")
+
+                        # Créer le symlink vers .cache au lieu de /tmp
+                        extras_base = f"{self.game_dir}/.cache"
                         if os.path.islink(source):
                             os.remove(source)
                         elif os.path.isdir(source):
@@ -168,6 +229,9 @@ class CreateWGPThread(QThread):
                             os.remove(source)
                         os.makedirs(os.path.dirname(source), exist_ok=True)
                         os.symlink(os.path.join(extras_base, rel_path), source)
+                        print(f"DEBUG: Created symlink {source} -> {os.path.join(extras_base, rel_path)}")
+        else:
+            print(f"DEBUG: No extras to process")
     
     def create_squashfs(self, wgp_file):
         """Crée l'archive squashfs avec progression temps réel basée sur les fichiers traités"""
@@ -195,8 +259,8 @@ class CreateWGPThread(QThread):
             '-info'  # Affiche chaque fichier traité
         ]
         
-        # Exclure les fichiers temporaires
-        excludes = ['.save', '.extra', '*.tmp', '*.log']
+        # Exclure les fichiers temporaires (mais PAS .save et .extra qui contiennent les données)
+        excludes = ['*.tmp', '*.log']
         for exclude in excludes:
             cmd.extend(['-e', exclude])
         
@@ -248,50 +312,83 @@ class CreateWGPThread(QThread):
     def cleanup(self):
         """Nettoie les fichiers temporaires et restaure les fichiers originaux"""
         self.restore_files()
-        
-        # Supprimer seulement les dossiers de backup, garder les fichiers de config
-        # pour pouvoir reprendre la création plus tard
+        self.cleanup_dirs_only()
+    
+    def cleanup_dirs_only(self):
+        """Supprime uniquement les dossiers .save et .extra sans restaurer les fichiers"""
         for f in ['.save', '.extra']:
             path = os.path.join(self.game_dir, f)
             if os.path.exists(path):
                 shutil.rmtree(path)
     
     def restore_files(self):
-        """Restaure les fichiers originaux depuis .save et .extra"""
-        # Restaurer depuis .save
-        saves_backup_dir = os.path.join(self.game_dir, '.save')
-        if os.path.exists(saves_backup_dir):
-            for root, dirs, files in os.walk(saves_backup_dir):
-                for item in dirs + files:
-                    backup_path = os.path.join(root, item)
-                    rel_path = os.path.relpath(backup_path, saves_backup_dir)
-                    original_path = os.path.join(self.game_dir, rel_path)
-                    
-                    # Supprimer le symlink existant
-                    if os.path.islink(original_path):
-                        os.remove(original_path)
-                    elif os.path.exists(original_path):
-                        if os.path.isdir(original_path):
-                            shutil.rmtree(original_path)
-                        else:
-                            os.remove(original_path)
-                    
-                    # Restaurer depuis backup
-                    os.makedirs(os.path.dirname(original_path), exist_ok=True)
-                    if os.path.isdir(backup_path):
-                        shutil.copytree(backup_path, original_path)
-                    else:
-                        shutil.copy2(backup_path, original_path)
+        """Restaure les fichiers originaux depuis .save et .extra (compatible makewgp.sh)"""
+        print(f"DEBUG: restore_files called")
+        print(f"DEBUG: game_dir = {self.game_dir}")
         
-        # Restaurer depuis .extra
-        extras_backup_dir = os.path.join(self.game_dir, '.extra')
-        if os.path.exists(extras_backup_dir):
-            for root, dirs, files in os.walk(extras_backup_dir):
-                for item in dirs + files:
-                    backup_path = os.path.join(root, item)
-                    rel_path = os.path.relpath(backup_path, extras_backup_dir)
+        # Restaurer depuis .save en utilisant .savepath
+        savepath_file = os.path.join(self.game_dir, '.savepath')
+        saves_backup_dir = os.path.join(self.game_dir, '.save')
+        print(f"DEBUG: savepath_file = {savepath_file}, exists={os.path.exists(savepath_file)}")
+        print(f"DEBUG: saves_backup_dir = {saves_backup_dir}, exists={os.path.exists(saves_backup_dir)}")
+        
+        if os.path.exists(savepath_file) and os.path.exists(saves_backup_dir):
+            print(f"DEBUG: Restoring saves...")
+            with open(savepath_file, 'r') as f:
+                for line in f:
+                    rel_path = line.strip()
+                    if not rel_path:
+                        continue
+
+                    backup_path = os.path.join(saves_backup_dir, rel_path)
                     original_path = os.path.join(self.game_dir, rel_path)
                     
+                    print(f"DEBUG: Restoring save: {rel_path}")
+                    print(f"DEBUG: backup_path = {backup_path}, exists={os.path.exists(backup_path)}")
+                    print(f"DEBUG: original_path = {original_path}")
+
+                    if not os.path.exists(backup_path):
+                        print(f"DEBUG: WARNING - backup_path does not exist, skipping")
+                        continue
+
+                    # Supprimer le symlink existant
+                    if os.path.islink(original_path):
+                        print(f"DEBUG: Removing symlink {original_path}")
+                        os.remove(original_path)
+                    elif os.path.exists(original_path):
+                        print(f"DEBUG: Removing existing {original_path}")
+                        if os.path.isdir(original_path):
+                            shutil.rmtree(original_path)
+                        else:
+                            os.remove(original_path)
+
+                    # Restaurer depuis backup (contenu uniquement pour les dossiers)
+                    os.makedirs(os.path.dirname(original_path), exist_ok=True)
+                    if os.path.isdir(backup_path):
+                        print(f"DEBUG: Copying dir contents from {backup_path} to {original_path}")
+                        self._copy_dir_contents(backup_path, original_path)
+                    else:
+                        print(f"DEBUG: Copying file from {backup_path} to {original_path}")
+                        shutil.copy2(backup_path, original_path)
+                    
+                    print(f"DEBUG: Restore complete for {rel_path}")
+
+        # Restaurer depuis .extra en utilisant .extrapath
+        extrapath_file = os.path.join(self.game_dir, '.extrapath')
+        extras_backup_dir = os.path.join(self.game_dir, '.extra')
+        if os.path.exists(extrapath_file) and os.path.exists(extras_backup_dir):
+            with open(extrapath_file, 'r') as f:
+                for line in f:
+                    rel_path = line.strip()
+                    if not rel_path:
+                        continue
+
+                    backup_path = os.path.join(extras_backup_dir, rel_path)
+                    original_path = os.path.join(self.game_dir, rel_path)
+
+                    if not os.path.exists(backup_path):
+                        continue
+
                     # Supprimer le symlink existant
                     if os.path.islink(original_path):
                         os.remove(original_path)
@@ -300,11 +397,11 @@ class CreateWGPThread(QThread):
                             shutil.rmtree(original_path)
                         else:
                             os.remove(original_path)
-                    
-                    # Restaurer depuis backup
+
+                    # Restaurer depuis backup (contenu uniquement pour les dossiers)
                     os.makedirs(os.path.dirname(original_path), exist_ok=True)
                     if os.path.isdir(backup_path):
-                        shutil.copytree(backup_path, original_path)
+                        self._copy_dir_contents(backup_path, original_path)
                     else:
                         shutil.copy2(backup_path, original_path)
     
@@ -1191,8 +1288,8 @@ class WGPWindow(QMainWindow):
         self.progress_dialog.close()
         
         if success:
-            # Restaurer les fichiers originaux après création réussie
-            self.create_thread.restore_files()
+            # Les fichiers ont déjà été restaurés par le thread via cleanup()
+            # Pas besoin d'appeler restore_files() ici
             
             # Calculer les tailles et le ratio de compression
             wgp_file = message
