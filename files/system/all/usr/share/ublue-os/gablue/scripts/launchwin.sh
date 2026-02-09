@@ -133,7 +133,8 @@ init_wgp_variables() {
 
     MOUNT_BASE="/tmp/wgpackmount"
     MOUNT_DIR="$MOUNT_BASE/$WGPACK_NAME"
-    EXTRA_DIR="$EXTRA_REAL/$GAME_INTERNAL_NAME"
+    EXTRA_BASE="/tmp/wgp-extra"
+    EXTRA_DIR="$EXTRA_BASE/$WGPACK_NAME"
 }
 
 # Monte le squashfs du paquet WGP
@@ -339,9 +340,11 @@ _copy_symlink_as_abs() {
         [ -z "$abs_target" ] && return 1
     fi
 
-    # Supprimer /.save/ du chemin s'il est présent
+    # Supprimer /.save/ ou /.extra/ du chemin s'il est présent
     if [[ "$abs_target" == */.save/* ]]; then
         abs_target=$(echo "$abs_target" | sed 's|/.save/|/|g')
+    elif [[ "$abs_target" == */.extra/* ]]; then
+        abs_target=$(echo "$abs_target" | sed 's|/.extra/|/|g')
     fi
 
     # Vérifier que le chemin pointe vers le mount
@@ -391,7 +394,7 @@ _copy_dir_with_symlinks() {
 
     # Ensuite les symlinks dans les sous-dossiers
     for item in "$dst_dir"/*; do
-        [ -d "$item" ] || continue  # que les dossiers
+        [ -d "$item" ] && [ ! -L "$item" ] || continue  # que les vrais dossiers (pas les symlinks)
         local name
         name=$(basename "$item")
         local rel_src="$src_dir/$name"
@@ -405,39 +408,47 @@ _copy_dir_with_symlinks() {
 prepare_extras() {
     local EXTRAPATH_FILE="$MOUNT_DIR/.extrapath"
     local EXTRA_WGP_DIR="$MOUNT_DIR/.extra"
+    local EXTRA_CACHE_DIR="$EXTRA_REAL/$GAME_INTERNAL_NAME"
 
     [ -f "$EXTRAPATH_FILE" ] || return 0
 
-    # Vérifier si le dossier existe et contient du contenu
-    if [ -d "$EXTRA_DIR" ]; then
-        # Dossier existe vérifier s'il a du contenu
-        if [ -n "$(find "$EXTRA_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
-            # Dossier a du contenu ne rien copier
-            return 0
-        fi
+    # Supprimer l'ancien EXTRA_DIR s'il existe et n'est pas un symlink
+    if [ -d "$EXTRA_DIR" ] && [ ! -L "$EXTRA_DIR" ]; then
+        rm -rf "$EXTRA_DIR"
     fi
-    # Dossier n'existe pas ou est vide copier tout depuis .extra
+
+    # Vérifier si les données existent déjà dans le cache
+    if [ -d "$EXTRA_CACHE_DIR" ] && [ -n "$(find "$EXTRA_CACHE_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
+        mkdir -p "$EXTRA_BASE"
+        rm -f "$EXTRA_DIR"
+        ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
+        return 0
+    fi
 
     echo "Copie des extras depuis .extra..."
-
-    mkdir -p "$EXTRA_DIR"
 
     while IFS= read -r EXTRA_REL_PATH; do
         [ -z "$EXTRA_REL_PATH" ] && continue
 
         local EXTRA_WGP_ITEM="$EXTRA_WGP_DIR/$EXTRA_REL_PATH"
-        local FINAL_EXTRA_ITEM="$EXTRA_DIR/$EXTRA_REL_PATH"
+        local FINAL_EXTRA_ITEM="$EXTRA_CACHE_DIR/$EXTRA_REL_PATH"
 
         if [ -d "$EXTRA_WGP_ITEM" ]; then
-            # Dossier
-            mkdir -p "$FINAL_EXTRA_ITEM"
-            cp -a "$EXTRA_WGP_ITEM"/. "$FINAL_EXTRA_ITEM/"
-        elif [ -f "$EXTRA_WGP_ITEM" ]; then
-            # Fichier
+            # Copier récursivement en traitant tous les symlinks
+            _copy_dir_with_symlinks "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
+        elif [ -e "$EXTRA_WGP_ITEM" ]; then
             mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
-            cp "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
+            if [ -L "$EXTRA_WGP_ITEM" ]; then
+                _copy_symlink_as_abs "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
+            else
+                cp -n "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
+            fi
         fi
     done < "$EXTRAPATH_FILE"
+
+    mkdir -p "$EXTRA_BASE"
+    rm -f "$EXTRA_DIR"
+    ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
 }
 
 # Vérifie si le WGP contient des fichiers de sauvegarde

@@ -219,8 +219,8 @@ class CreateWGPThread(QThread):
                         else:
                             print(f"DEBUG: ERROR - Copy failed, target does not exist!")
 
-                        # Créer le symlink vers .cache au lieu de /tmp
-                        extras_base = f"{self.game_dir}/.cache"
+                        # Créer le symlink vers /tmp/wgp-extra (comme pour les saves)
+                        extras_base = f"/tmp/wgp-extra/{self.game_name}"
                         if os.path.islink(source):
                             os.remove(source)
                         elif os.path.isdir(source):
