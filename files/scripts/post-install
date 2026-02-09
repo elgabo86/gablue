@@ -60,6 +60,7 @@ chmod +x /usr/share/ublue-os/gablue/scripts/windows-update/*
 
 # Rendre exécutables les scripts supplémentaires Gablue
 chmod +x /usr/share/ublue-os/gablue/scripts/*.sh
+chmod +x /usr/share/ublue-os/gablue/scripts/*.py
 chmod +x /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/*
 
 # =============================================================================

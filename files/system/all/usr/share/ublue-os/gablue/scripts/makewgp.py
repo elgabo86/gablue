@@ -4,7 +4,7 @@
 WGP Creator - Création de paquets Windows Game Packs
 Interface graphique PySide6 (Qt) pour la création de paquets WGP
 
-Usage: makewgp-gui-qt.py <dossier_du_jeu>
+Usage: makewgp.py <dossier_du_jeu>
 """
 
 import sys
