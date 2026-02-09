@@ -2,301 +2,356 @@
 
 """
 Interface graphique moderne pour windows-update
-Utilise Pygame pour une expérience utilisateur stylée et gaming
+Utilise PySide6 pour une expérience utilisateur stylée et gaming
 """
 
-import os
-os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
-
-import pygame
 import sys
 import subprocess
-import threading
-import queue
-import os
 import re
 from pathlib import Path
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel, QProgressBar, QPlainTextEdit, QCheckBox,
+    QFrame, QScrollArea, QSizePolicy, QStackedWidget
+)
+from PySide6.QtCore import (
+    Qt, QThread, Signal, QTimer, QSize
+)
+from PySide6.QtGui import (
+    QFont, QFontDatabase, QColor, QPalette, QLinearGradient,
+    QBrush, QPainter, QFontMetrics
+)
 
-# Initialisation de Pygame
-pygame.init()
-pygame.font.init()
 
 # ============================================================================
 # CONSTANTES ET CONFIGURATION
 # ============================================================================
 
-SCREEN_WIDTH = 900
-SCREEN_HEIGHT = 650
-FPS = 60
+WINDOW_WIDTH = 900
+WINDOW_HEIGHT = 650
 
 # Couleurs - Thème sombre gaming
 COLORS = {
-    'bg_dark': (18, 18, 24),
-    'bg_card': (28, 28, 36),
-    'bg_hover': (38, 38, 48),
-    'primary': (0, 150, 255),
-    'primary_light': (100, 200, 255),
-    'success': (0, 200, 100),
-    'warning': (255, 180, 0),
-    'error': (255, 80, 80),
-    'text': (240, 240, 245),
-    'text_secondary': (160, 160, 170),
-    'border': (50, 50, 60),
-    'progress_bg': (40, 40, 50),
-    'log_bg': (22, 22, 28),
+    'bg_dark': '#121218',
+    'bg_card': '#1c1c24',
+    'bg_hover': '#262630',
+    'primary': '#0096ff',
+    'primary_light': '#64c8ff',
+    'success': '#00c864',
+    'warning': '#ffb400',
+    'error': '#ff5050',
+    'text': '#f0f0f5',
+    'text_secondary': '#a0a0aa',
+    'border': '#32323c',
+    'progress_bg': '#282832',
+    'log_bg': '#16161c',
 }
 
-# Fonts
-FONT_SIZE_SMALL = 16
-FONT_SIZE_NORMAL = 18
-FONT_SIZE_LARGE = 22
-FONT_SIZE_TITLE = 32
-
-try:
-    FONT_SMALL = pygame.font.SysFont("JetBrains Mono", FONT_SIZE_SMALL)
-    FONT_NORMAL = pygame.font.SysFont("JetBrains Mono", FONT_SIZE_NORMAL)
-    FONT_LARGE = pygame.font.SysFont("JetBrains Mono", FONT_SIZE_LARGE)
-    FONT_TITLE = pygame.font.SysFont("JetBrains Mono", FONT_SIZE_TITLE, bold=True)
-except:
-    FONT_SMALL = pygame.font.SysFont("monospace", FONT_SIZE_SMALL)
-    FONT_NORMAL = pygame.font.SysFont("monospace", FONT_SIZE_NORMAL)
-    FONT_LARGE = pygame.font.SysFont("monospace", FONT_SIZE_LARGE)
-    FONT_TITLE = pygame.font.SysFont("monospace", FONT_SIZE_TITLE, bold=True)
 
 # ============================================================================
-# CLASSES UTILITAIRES
+# THREAD DE TRAITEMENT
 # ============================================================================
 
-class Button:
-    """Bouton interactif moderne"""
+class InstallThread(QThread):
+    """Thread pour exécuter le script bash en arrière-plan"""
     
-    def __init__(self, x, y, width, height, text, callback=None, color_key='primary'):
-        self.rect = pygame.Rect(x, y, width, height)
-        self.text = text
-        self.callback = callback
-        self.color_key = color_key
-        self.hovered = False
-        self.clicked = False
-        self.enabled = True
+    log_signal = Signal(str)
+    finished_signal = Signal(bool, str)
+    
+    def __init__(self, runner_choice, dxvk_choice, force_rebuild=False):
+        super().__init__()
+        self.runner_choice = runner_choice
+        self.dxvk_choice = dxvk_choice
+        self.force_rebuild = force_rebuild
+        self.process = None
+        self._is_running = True
         
-    def draw(self, screen):
-        if not self.enabled:
-            color = COLORS['bg_card']
-        elif self.clicked:
-            color = COLORS[self.color_key]
-        elif self.hovered:
-            color = COLORS['bg_hover']
-        else:
-            color = COLORS['bg_card']
-            
-        # Fond avec bordure arrondie
-        pygame.draw.rect(screen, color, self.rect, border_radius=8)
-        pygame.draw.rect(screen, COLORS['border'], self.rect, width=1, border_radius=8)
+    def run(self):
+        """Exécuter le script bash"""
+        script_path = Path(__file__).parent / "windows-update-core"
         
-        # Texte
-        text_color = COLORS['text'] if self.enabled else COLORS['text_secondary']
-        if self.clicked:
-            text_color = COLORS['bg_dark']
-        text_surface = FONT_NORMAL.render(self.text, True, text_color)
-        text_rect = text_surface.get_rect(center=self.rect.center)
-        screen.blit(text_surface, text_rect)
+        if not script_path.exists():
+            self.finished_signal.emit(False, f"Script non trouvé: {script_path}")
+            return
         
-    def handle_event(self, event):
-        if not self.enabled:
-            return False
+        # Construire les arguments
+        args = [str(script_path), "--gui"]
+        
+        if self.force_rebuild:
+            args.append("--rebuild")
+            self.log_signal.emit("[WARN] Rebuild forcé activé")
+        
+        if self.dxvk_choice == "standard":
+            args.append("--dxvk-no-async")
+        
+        # Variable d'environnement pour le runner
+        env = dict(subprocess.os.environ)
+        if self.runner_choice:
+            env["RUNNER_CHOICE"] = str(self.runner_choice)
+        
+        self.log_signal.emit(f"[INFO] Démarrage du script: {' '.join(args)}")
+        
+        try:
+            self.process = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1,
+                env=env
+            )
             
-        if event.type == pygame.MOUSEMOTION:
-            self.hovered = self.rect.collidepoint(event.pos)
+            # Lire la sortie ligne par ligne
+            if self.process.stdout:
+                for line in self.process.stdout:
+                    if not self._is_running:
+                        break
+                    line = line.strip()
+                    if line:
+                        self.log_signal.emit(line)
             
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            if event.button == 1 and self.hovered:
-                self.clicked = True
-                return True
+            # Attendre la fin
+            return_code = self.process.wait()
+            
+            if return_code == 0:
+                self.finished_signal.emit(True, "Installation terminée avec succès")
+            else:
+                self.finished_signal.emit(False, f"Code de retour {return_code}")
                 
-        elif event.type == pygame.MOUSEBUTTONUP:
-            if event.button == 1 and self.clicked:
-                self.clicked = False
-                if self.hovered and self.callback:
-                    self.callback()
-                return True
-                
-        return False
+        except Exception as e:
+            self.finished_signal.emit(False, f"Exception - {str(e)}")
+    
+    def stop(self):
+        """Arrêter le thread"""
+        self._is_running = False
+        if self.process and self.process.poll() is None:
+            self.process.terminate()
 
-class Checkbox:
-    """Case à cocher moderne"""
-    
-    def __init__(self, x, y, width, height, text, checked=False):
-        self.rect = pygame.Rect(x, y, width, height)
-        self.text = text
-        self.checked = checked
-        self.hovered = False
-        self.box_size = 20
-        
-    def draw(self, screen):
-        # Zone de texte
-        text_surface = FONT_NORMAL.render(self.text, True, COLORS['text'])
-        screen.blit(text_surface, (self.rect.x + self.box_size + 10, self.rect.y + 2))
-        
-        # Case à cocher
-        box_rect = pygame.Rect(self.rect.x, self.rect.y, self.box_size, self.box_size)
-        
-        if self.checked:
-            pygame.draw.rect(screen, COLORS['primary'], box_rect, border_radius=4)
-            # Coche blanche
-            check_points = [
-                (box_rect.x + 4, box_rect.centery),
-                (box_rect.x + 8, box_rect.y + 14),
-                (box_rect.x + 16, box_rect.y + 5),
-            ]
-            pygame.draw.lines(screen, COLORS['text'], False, check_points, 2)
-        else:
-            pygame.draw.rect(screen, COLORS['bg_card'], box_rect, border_radius=4)
-            pygame.draw.rect(screen, COLORS['border'], box_rect, width=2, border_radius=4)
-            
-        if self.hovered and not self.checked:
-            pygame.draw.rect(screen, COLORS['primary'], box_rect, width=2, border_radius=4)
-            
-    def handle_event(self, event):
-        if event.type == pygame.MOUSEMOTION:
-            self.hovered = self.rect.collidepoint(event.pos)
-            
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            if event.button == 1 and self.hovered:
-                self.checked = not self.checked
-                return True
-                
-        return False
 
-class Card:
-    """Carte sélectionnable style moderne"""
+# ============================================================================
+# WIDGETS PERSONNALISÉS
+# ============================================================================
+
+class SelectionCard(QFrame):
+    """Carte de sélection moderne"""
     
-    def __init__(self, x, y, width, height, title, description, value, group=None):
-        self.rect = pygame.Rect(x, y, width, height)
+    def __init__(self, title, description, value, parent=None):
+        super().__init__(parent)
         self.title = title
         self.description = description
         self.value = value
-        self.group = group
-        self.selected = False
-        self.hovered = False
+        self._selected = False
+        self._hovered = False
         
-    def draw(self, screen):
-        # Couleur de fond selon l'état
-        if self.selected:
-            color = COLORS['primary']
-            border_color = COLORS['primary_light']
-        elif self.hovered:
-            color = COLORS['bg_hover']
-            border_color = COLORS['primary']
-        else:
-            color = COLORS['bg_card']
-            border_color = COLORS['border']
-            
-        pygame.draw.rect(screen, color, self.rect, border_radius=12)
-        pygame.draw.rect(screen, border_color, self.rect, width=2, border_radius=12)
+        self.setFixedSize(350, 60)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFrameStyle(QFrame.Shape.NoFrame)
+        
+        # Layout
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(15, 10, 15, 10)
+        layout.setSpacing(10)
         
         # Indicateur de sélection
-        if self.selected:
-            indicator_rect = pygame.Rect(self.rect.x + 15, self.rect.centery - 6, 12, 12)
-            pygame.draw.circle(screen, COLORS['text'], indicator_rect.center, 6)
-        else:
-            indicator_rect = pygame.Rect(self.rect.x + 15, self.rect.centery - 6, 12, 12)
-            pygame.draw.circle(screen, COLORS['border'], indicator_rect.center, 6, 2)
+        self.indicator = QLabel("●")
+        self.indicator.setFixedSize(20, 20)
+        self.indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.indicator)
         
-        # Titre
-        text_color = COLORS['bg_dark'] if self.selected else COLORS['text']
-        title_surface = FONT_LARGE.render(self.title, True, text_color)
-        screen.blit(title_surface, (self.rect.x + 40, self.rect.y + 15))
+        # Zone texte
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(4)
         
-        # Description
-        desc_color = COLORS['bg_dark'] if self.selected else COLORS['text_secondary']
-        desc_surface = FONT_SMALL.render(self.description, True, desc_color)
-        screen.blit(desc_surface, (self.rect.x + 40, self.rect.y + 40))
+        self.title_label = QLabel(title)
+        self.title_label.setFont(QFont("JetBrains Mono", 11, QFont.Weight.Bold))
+        text_layout.addWidget(self.title_label)
         
-    def handle_event(self, event):
-        if event.type == pygame.MOUSEMOTION:
-            self.hovered = self.rect.collidepoint(event.pos)
-            
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            if event.button == 1 and self.hovered:
-                self.selected = True
-                # Désélectionner les autres cartes du même groupe
-                if self.group:
-                    for card in self.group:
-                        if card != self:
-                            card.selected = False
-                return True
-                
-        return False
-
-class ProgressBar:
-    """Barre de progression animée"""
+        self.desc_label = QLabel(description)
+        self.desc_label.setFont(QFont("JetBrains Mono", 9))
+        text_layout.addWidget(self.desc_label)
+        
+        layout.addLayout(text_layout, 1)
+        
+        self.update_style()
+        
+    @property
+    def selected(self):
+        return self._selected
     
-    def __init__(self, x, y, width, height):
-        self.rect = pygame.Rect(x, y, width, height)
-        self.progress = 0
-        self.target_progress = 0
-        self.text = "Initialisation..."
+    @selected.setter
+    def selected(self, value):
+        self._selected = value
+        self.update_style()
         
-    def set_progress(self, value, text=""):
-        self.target_progress = max(0, min(100, value))
-        if text:
-            self.text = text
-            
-    def update(self):
-        # Animation fluide
-        diff = self.target_progress - self.progress
-        self.progress += diff * 0.1
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update_style()
+        super().enterEvent(event)
         
-    def draw(self, screen):
-        # Fond
-        pygame.draw.rect(screen, COLORS['progress_bg'], self.rect, border_radius=8)
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update_style()
+        super().leaveEvent(event)
         
-        # Barre de progression avec gradient
-        if self.progress > 0:
-            fill_width = int((self.progress / 100) * (self.rect.width - 4))
-            fill_rect = pygame.Rect(
-                self.rect.x + 2, 
-                self.rect.y + 2, 
-                fill_width, 
-                self.rect.height - 4
-            )
-            
-            # Gradient
-            for i in range(fill_width):
-                ratio = i / fill_width if fill_width > 0 else 0
-                r = int(COLORS['primary'][0] * (1 - ratio * 0.3))
-                g = int(COLORS['primary'][1] + ratio * 20)
-                b = int(COLORS['primary'][2])
-                pygame.draw.line(screen, (r, g, b), 
-                               (fill_rect.x + i, fill_rect.y),
-                               (fill_rect.x + i, fill_rect.y + fill_rect.height))
-            
-        # Bordure
-        pygame.draw.rect(screen, COLORS['border'], self.rect, width=1, border_radius=8)
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.selected = True
+            # Notifier le parent de sélection
+            if hasattr(self, 'selection_parent'):
+                self.selection_parent.card_selected(self)
+        super().mousePressEvent(event)
         
-        # Pourcentage
-        percent_text = f"{int(self.progress)}%"
-        percent_surface = FONT_LARGE.render(percent_text, True, COLORS['text'])
-        percent_rect = percent_surface.get_rect(midright=(self.rect.right - 15, self.rect.centery))
-        screen.blit(percent_surface, percent_rect)
-        
-        # Texte de statut
-        status_surface = FONT_NORMAL.render(self.text, True, COLORS['text_secondary'])
-        status_rect = status_surface.get_rect(midleft=(self.rect.x + 15, self.rect.centery))
-        screen.blit(status_surface, status_rect)
+    def update_style(self):
+        """Mettre à jour le style selon l'état"""
+        if self._selected:
+            self.setStyleSheet(f"""
+                SelectionCard {{
+                    background-color: {COLORS['primary']};
+                    border: 2px solid {COLORS['primary_light']};
+                    border-radius: 12px;
+                }}
+                QLabel {{
+                    color: {COLORS['bg_dark']};
+                    background: transparent;
+                }}
+            """)
+            self.indicator.setStyleSheet(f"color: {COLORS['text']};")
+        elif self._hovered:
+            self.setStyleSheet(f"""
+                SelectionCard {{
+                    background-color: {COLORS['bg_hover']};
+                    border: 2px solid {COLORS['primary']};
+                    border-radius: 12px;
+                }}
+                QLabel {{
+                    color: {COLORS['text']};
+                    background: transparent;
+                }}
+            """)
+            self.indicator.setStyleSheet(f"color: {COLORS['border']};")
+        else:
+            self.setStyleSheet(f"""
+                SelectionCard {{
+                    background-color: {COLORS['bg_card']};
+                    border: 2px solid {COLORS['border']};
+                    border-radius: 12px;
+                }}
+                QLabel {{
+                    color: {COLORS['text_secondary']};
+                    background: transparent;
+                }}
+            """)
+            self.indicator.setStyleSheet(f"color: {COLORS['border']};")
 
-class LogViewer:
+
+class ModernCheckbox(QCheckBox):
+    """Case à cocher moderne"""
+    
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self.setFont(QFont("JetBrains Mono", 10))
+        self.setStyleSheet(f"""
+            QCheckBox {{
+                color: {COLORS['text']};
+                spacing: 10px;
+            }}
+            QCheckBox::indicator {{
+                width: 20px;
+                height: 20px;
+                border: 2px solid {COLORS['border']};
+                border-radius: 4px;
+                background: {COLORS['bg_card']};
+            }}
+            QCheckBox::indicator:checked {{
+                background: {COLORS['primary']};
+                border: 2px solid {COLORS['primary']};
+            }}
+            QCheckBox::indicator:hover {{
+                border: 2px solid {COLORS['primary']};
+            }}
+        """)
+
+
+class ModernButton(QPushButton):
+    """Bouton moderne"""
+    
+    def __init__(self, text, color_key='primary', parent=None):
+        super().__init__(text, parent)
+        self.color_key = color_key
+        self.setFixedHeight(50)
+        self.setFont(QFont("JetBrains Mono", 11, QFont.Weight.Bold))
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_style()
+        
+    def update_style(self):
+        color = COLORS[self.color_key]
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['bg_card']};
+                color: {COLORS['text']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+                padding: 10px 20px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['bg_hover']};
+                border: 2px solid {color};
+            }}
+            QPushButton:pressed {{
+                background-color: {color};
+                color: {COLORS['bg_dark']};
+            }}
+            QPushButton:disabled {{
+                background-color: {COLORS['bg_card']};
+                color: {COLORS['text_secondary']};
+            }}
+        """)
+
+
+class StyledProgressBar(QProgressBar):
+    """Barre de progression stylisée"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(50)
+        self.setTextVisible(True)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setFont(QFont("JetBrains Mono", 12, QFont.Weight.Bold))
+        self.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {COLORS['progress_bg']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+                text-align: center;
+                color: {COLORS['text']};
+            }}
+            QProgressBar::chunk {{
+                background-color: {COLORS['primary']};
+                border-radius: 7px;
+            }}
+        """)
+
+
+class LogViewer(QPlainTextEdit):
     """Visionneur de logs en temps réel"""
     
-    def __init__(self, x, y, width, height):
-        self.rect = pygame.Rect(x, y, width, height)
-        self.lines = []
-        self.max_lines = 50
-        self.scroll_offset = 0
-        self.surface = pygame.Surface((width - 20, height - 20))
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setFont(QFont("JetBrains Mono", 10))
+        self.setStyleSheet(f"""
+            QPlainTextEdit {{
+                background-color: {COLORS['log_bg']};
+                color: {COLORS['text']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+                padding: 10px;
+            }}
+        """)
+        self.setMaximumBlockCount(100)
         
-    def add_line(self, text, level="INFO"):
-        timestamp = pygame.time.get_ticks() // 1000
+    def add_log(self, text, level="INFO"):
+        """Ajouter une ligne de log"""
         color = COLORS['text']
         if level == "ERROR":
             color = COLORS['error']
@@ -304,62 +359,60 @@ class LogViewer:
             color = COLORS['warning']
         elif level == "SUCCESS":
             color = COLORS['success']
-            
-        self.lines.append((text, color))
-        if len(self.lines) > self.max_lines:
-            self.lines.pop(0)
-            
-    def draw(self, screen):
-        # Fond
-        pygame.draw.rect(screen, COLORS['log_bg'], self.rect, border_radius=8)
-        pygame.draw.rect(screen, COLORS['border'], self.rect, width=1, border_radius=8)
+        
+        # Ajouter la ligne (QPlainTextEdit ne supporte pas le HTML)
+        self.appendPlainText(text)
+        # Scroll vers le bas
+        scrollbar = self.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
+
+# ============================================================================
+# ÉCRANS DE L'APPLICATION
+# ============================================================================
+
+class SelectionScreen(QWidget):
+    """Écran de sélection des options"""
+    
+    start_signal = Signal(str, str, bool)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(40, 20, 40, 20)
+        layout.setSpacing(15)
         
         # Titre
-        title_surface = FONT_NORMAL.render("Logs", True, COLORS['text_secondary'])
-        screen.blit(title_surface, (self.rect.x + 10, self.rect.y - 25))
+        title = QLabel("Windows Update")
+        title.setFont(QFont("JetBrains Mono", 24, QFont.Weight.Bold))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet(f"color: {COLORS['text']};")
+        layout.addWidget(title)
         
-        # Lignes de log
-        y_offset = 10
-        for text, color in self.lines[-20:]:  # Afficher les 20 dernières lignes
-            if y_offset < self.rect.height - 20:
-                # Tronquer si trop long
-                max_chars = (self.rect.width - 30) // 9
-                if len(text) > max_chars:
-                    text = text[:max_chars-3] + "..."
-                    
-                line_surface = FONT_SMALL.render(text, True, color)
-                screen.blit(line_surface, (self.rect.x + 10, self.rect.y + y_offset))
-                y_offset += 18
-
-# ============================================================================
-# CLASSE PRINCIPALE DE L'APPLICATION
-# ============================================================================
-
-class WindowsUpdateGUI:
-    """Application principale"""
-    
-    def __init__(self):
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("Windows Update - Gablue")
-        self.clock = pygame.time.Clock()
-        self.running = True
-        self.state = "selection"  # selection, downloading, finished, error
+        # Sous-titre
+        subtitle = QLabel("Configuration de l'environnement Windows pour Gablue")
+        subtitle.setFont(QFont("JetBrains Mono", 11))
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        layout.addWidget(subtitle)
         
-        # Queue pour la communication avec le subprocess
-        self.log_queue = queue.Queue()
-        self.process = None
+        # Espace
+        layout.addSpacing(15)
         
-        # Sélections
-        self.runner_choice = None
-        self.dxvk_choice = None
+        # Zone de sélection (2 colonnes)
+        selection_layout = QHBoxLayout()
+        selection_layout.setSpacing(20)
         
-        # UI Elements
-        self.setup_ui()
+        # Colonne Wine
+        wine_layout = QVBoxLayout()
+        wine_title = QLabel("Version de Wine")
+        wine_title.setFont(QFont("JetBrains Mono", 14, QFont.Weight.Bold))
+        wine_title.setStyleSheet(f"color: {COLORS['primary']};")
+        wine_layout.addWidget(wine_title)
         
-    def setup_ui(self):
-        """Initialiser les éléments d'interface"""
-        
-        # === ÉCRAN DE SÉLECTION ===
         self.runner_cards = []
         runners = [
             ("Gwine-Proton", "Version optimisée pour le gaming (recommandé)", "gwine-proton"),
@@ -368,14 +421,25 @@ class WindowsUpdateGUI:
             ("Soda", "Version stable legacy", "soda"),
         ]
         
-        y_pos = 140
         for title, desc, value in runners:
-            card = Card(50, y_pos, 400, 70, title, desc, value, self.runner_cards)
+            card = SelectionCard(title, desc, value)
+            card.selection_parent = self  # Pour la gestion de sélection
             self.runner_cards.append(card)
-            y_pos += 85
-            
+            wine_layout.addWidget(card)
+            wine_layout.addSpacing(8)
+        
         # Sélection par défaut
         self.runner_cards[0].selected = True
+        
+        wine_layout.addStretch()
+        selection_layout.addLayout(wine_layout, 1)
+        
+        # Colonne DXVK
+        dxvk_layout = QVBoxLayout()
+        dxvk_title = QLabel("Type de DXVK")
+        dxvk_title.setFont(QFont("JetBrains Mono", 14, QFont.Weight.Bold))
+        dxvk_title.setStyleSheet(f"color: {COLORS['primary']};")
+        dxvk_layout.addWidget(dxvk_title)
         
         self.dxvk_cards = []
         dxvk_options = [
@@ -383,156 +447,368 @@ class WindowsUpdateGUI:
             ("DXVK Standard", "Moins d'artefacts visuels", "standard"),
         ]
         
-        y_pos = 140
         for title, desc, value in dxvk_options:
-            card = Card(480, y_pos, 370, 70, title, desc, value, self.dxvk_cards)
+            card = SelectionCard(title, desc, value)
+            card.selection_parent = self
             self.dxvk_cards.append(card)
-            y_pos += 85
-            
+            dxvk_layout.addWidget(card)
+            dxvk_layout.addSpacing(8)
+        
         # Sélection par défaut
         self.dxvk_cards[0].selected = True
         
         # Checkbox rebuild forcé
-        self.force_rebuild_checkbox = Checkbox(
-            480, 325, 370, 30,
-            "Forcer le rebuild complet (même si à jour)",
-            checked=False
-        )
+        dxvk_layout.addSpacing(15)
+        self.force_rebuild_checkbox = ModernCheckbox("Forcer le rebuild complet")
+        dxvk_layout.addWidget(self.force_rebuild_checkbox)
+        
+        dxvk_layout.addStretch()
+        selection_layout.addLayout(dxvk_layout, 1)
+        
+        layout.addLayout(selection_layout)
+        
+        # Ligne de séparation
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet(f"background-color: {COLORS['border']};")
+        line.setFixedHeight(1)
+        layout.addWidget(line)
         
         # Bouton démarrer
-        self.start_button = Button(
-            SCREEN_WIDTH // 2 - 100, 520, 200, 50, 
-            "Démarrer l'installation", 
-            self.start_installation
-        )
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
         
-        # === ÉCRAN DE TÉLÉCHARGEMENT ===
-        self.progress_bar = ProgressBar(50, 80, SCREEN_WIDTH - 100, 50)
-        self.log_viewer = LogViewer(50, 160, SCREEN_WIDTH - 100, 400)
+        self.start_button = ModernButton("Démarrer l'installation", "primary")
+        self.start_button.setFixedSize(240, 45)
+        self.start_button.clicked.connect(self.start_installation)
+        button_layout.addWidget(self.start_button)
         
-        # Bouton annuler
-        self.cancel_button = Button(
-            SCREEN_WIDTH // 2 - 60, 580, 120, 40,
-            "Annuler",
-            self.cancel_installation,
-            color_key='error'
-        )
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
         
-        # === ÉCRAN DE FIN ===
-        self.finish_button = Button(
-            SCREEN_WIDTH // 2 - 80, 400, 160, 50,
-            "Terminer",
-            self.quit,
-            color_key='success'
-        )
+        # Info bulle
+        info = QLabel("ℹ️  Les paramètres recommandés sont présélectionnés")
+        info.setFont(QFont("JetBrains Mono", 9))
+        info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        layout.addWidget(info)
         
-        self.error_button = Button(
-            SCREEN_WIDTH // 2 - 80, 400, 160, 50,
-            "Fermer",
-            self.quit,
-            color_key='error'
-        )
-        
+    def card_selected(self, selected_card):
+        """Gérer la sélection d'une carte"""
+        # Désélectionner les autres cartes du même groupe
+        if selected_card in self.runner_cards:
+            for card in self.runner_cards:
+                if card != selected_card:
+                    card.selected = False
+        elif selected_card in self.dxvk_cards:
+            for card in self.dxvk_cards:
+                if card != selected_card:
+                    card.selected = False
+                    
     def start_installation(self):
         """Démarrer l'installation"""
-        # Récupérer les sélections
+        runner_choice = None
+        dxvk_choice = None
+        
         for card in self.runner_cards:
             if card.selected:
-                self.runner_choice = card.value
+                runner_choice = card.value
                 break
-                
+        
         for card in self.dxvk_cards:
             if card.selected:
-                self.dxvk_choice = card.value
+                dxvk_choice = card.value
                 break
-                
-        if not self.runner_choice or not self.dxvk_choice:
-            return
-            
-        self.state = "downloading"
-        self.log_viewer.add_line(f"Installation démarrée - Runner: {self.runner_choice}, DXVK: {self.dxvk_choice}", "INFO")
         
-        # Lancer le script bash en arrière-plan
-        self.start_bash_script()
+        if runner_choice and dxvk_choice:
+            self.start_signal.emit(
+                runner_choice,
+                dxvk_choice,
+                self.force_rebuild_checkbox.isChecked()
+            )
+
+
+class ProgressScreen(QWidget):
+    """Écran de progression de l'installation"""
+    
+    cancel_signal = Signal()
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.init_ui()
         
-    def start_bash_script(self):
-        """Lancer le script bash et capturer sa sortie"""
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(50, 50, 50, 30)
+        layout.setSpacing(20)
         
-        def run_script():
-            script_path = Path(__file__).parent / "windows-update-core"
+        # Barre de progression
+        self.progress_bar = StyledProgressBar()
+        layout.addWidget(self.progress_bar)
+        
+        # Logs
+        log_label = QLabel("Logs")
+        log_label.setFont(QFont("JetBrains Mono", 11))
+        log_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        layout.addWidget(log_label)
+        
+        self.log_viewer = LogViewer()
+        layout.addWidget(self.log_viewer, 1)
+        
+        # Bouton annuler
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        self.cancel_button = ModernButton("Annuler", "error")
+        self.cancel_button.setFixedSize(120, 40)
+        self.cancel_button.clicked.connect(self.cancel_installation)
+        button_layout.addWidget(self.cancel_button)
+        
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        
+    def set_progress(self, value, text=""):
+        """Mettre à jour la progression"""
+        self.progress_bar.setValue(int(value))
+        if text:
+            self.progress_bar.setFormat(f"{text} - %p%")
+        else:
+            self.progress_bar.setFormat("%p%")
             
-            # Vérifier que le script existe
-            if not script_path.exists():
-                self.log_queue.put(f"__ERROR__:Script non trouvé: {script_path}")
-                return
-            
-            # Construire les arguments
-            args = [str(script_path), "--gui"]
-            
-            # Ajouter rebuild forcé si checkbox cochée
-            if self.force_rebuild_checkbox.checked:
-                args.append("--rebuild")
-                self.log_viewer.add_line("Rebuild forcé activé", "WARN")
-            
-            if self.dxvk_choice == "standard":
-                args.append("--dxvk-no-async")
-                
-            # Variable d'environnement pour le runner
-            env = os.environ.copy()
-            if self.runner_choice:
-                env["RUNNER_CHOICE"] = str(self.runner_choice)
-            
-            # Log de démarrage
-            self.log_queue.put(f"[INFO] Démarrage du script: {' '.join(args)}")
-            
-            try:
-                self.process = subprocess.Popen(
-                    args,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    bufsize=1,
-                    env=env
-                )
-                
-                # Lire la sortie ligne par ligne
-                if self.process.stdout:
-                    for line in self.process.stdout:
-                        line = line.strip()
-                        if line:
-                            self.log_queue.put(line)
-                        
-                # Attendre la fin
-                return_code = self.process.wait()
-                
-                if return_code == 0:
-                    self.log_queue.put("__SUCCESS__")
-                else:
-                    self.log_queue.put(f"__ERROR__:Code de retour {return_code}")
-                    
-            except Exception as e:
-                self.log_queue.put(f"__ERROR__:Exception - {str(e)}")
-                
-        # Lancer dans un thread séparé
-        thread = threading.Thread(target=run_script, daemon=True)
-        thread.start()
+    def add_log(self, text, level="INFO"):
+        """Ajouter un log"""
+        self.log_viewer.add_log(text, level)
         
     def cancel_installation(self):
         """Annuler l'installation"""
-        if self.process and self.process.poll() is None:
-            self.process.terminate()
-            self.log_viewer.add_line("Installation annulée par l'utilisateur", "WARN")
-            self.state = "error"
-            
-    def quit(self):
-        """Quitter l'application"""
-        if self.process and self.process.poll() is None:
-            self.process.terminate()
-        self.running = False
+        self.cancel_signal.emit()
+
+
+class FinishScreen(QWidget):
+    """Écran de fin (succès ou erreur)"""
+    
+    close_signal = Signal()
+    
+    def __init__(self, success=True, parent=None):
+        super().__init__(parent)
+        self.success = success
+        self.init_ui()
         
-    def parse_log_line(self, line):
-        """Parser une ligne de log et mettre à jour l'interface"""
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(50, 50, 50, 50)
+        layout.setSpacing(20)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
+        # Icône (simulée avec un label stylisé)
+        icon_label = QLabel()
+        icon_label.setFixedSize(120, 120)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        if self.success:
+            icon_label.setText("✓")
+            icon_label.setStyleSheet(f"""
+                QLabel {{
+                    color: {COLORS['bg_dark']};
+                    background-color: {COLORS['success']};
+                    border: 3px solid {COLORS['text']};
+                    border-radius: 60px;
+                    font-size: 60px;
+                    font-weight: bold;
+                }}
+            """)
+        else:
+            icon_label.setText("✕")
+            icon_label.setStyleSheet(f"""
+                QLabel {{
+                    color: {COLORS['bg_dark']};
+                    background-color: {COLORS['error']};
+                    border: 3px solid {COLORS['text']};
+                    border-radius: 60px;
+                    font-size: 60px;
+                    font-weight: bold;
+                }}
+            """)
+        
+        layout.addWidget(icon_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        # Texte
+        if self.success:
+            text = QLabel("Installation réussie !")
+            text.setStyleSheet(f"color: {COLORS['success']};")
+        else:
+            text = QLabel("Installation échouée")
+            text.setStyleSheet(f"color: {COLORS['error']};")
+        
+        text.setFont(QFont("JetBrains Mono", 20, QFont.Weight.Bold))
+        text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(text)
+        
+        # Description
+        if self.success:
+            desc = QLabel("L'environnement Windows est prêt à être utilisé.")
+        else:
+            desc = QLabel("Consultez les logs pour plus de détails.")
+        
+        desc.setFont(QFont("JetBrains Mono", 11))
+        desc.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(desc)
+        
+        layout.addSpacing(40)
+        
+        # Bouton
+        if self.success:
+            button = ModernButton("Terminer", "success")
+        else:
+            button = ModernButton("Fermer", "error")
+        
+        button.setFixedSize(160, 50)
+        button.clicked.connect(self.close_signal.emit)
+        layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        layout.addStretch()
+
+
+class ErrorScreen(QWidget):
+    """Écran d'erreur avec logs visibles"""
+    
+    close_signal = Signal()
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(50, 30, 50, 30)
+        layout.setSpacing(15)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # Icône d'erreur
+        icon_label = QLabel("✕")
+        icon_label.setFixedSize(80, 80)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setStyleSheet(f"""
+            QLabel {{
+                color: {COLORS['bg_dark']};
+                background-color: {COLORS['error']};
+                border: 2px solid {COLORS['text']};
+                border-radius: 40px;
+                font-size: 40px;
+                font-weight: bold;
+            }}
+        """)
+        layout.addWidget(icon_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        # Texte d'erreur
+        error_text = QLabel("Installation échouée")
+        error_text.setFont(QFont("JetBrains Mono", 16, QFont.Weight.Bold))
+        error_text.setStyleSheet(f"color: {COLORS['error']};")
+        error_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(error_text)
+        
+        # Logs
+        log_label = QLabel("Logs de l'erreur:")
+        log_label.setFont(QFont("JetBrains Mono", 10))
+        log_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        layout.addWidget(log_label)
+        
+        self.log_viewer = LogViewer()
+        self.log_viewer.setFixedHeight(350)
+        layout.addWidget(self.log_viewer)
+        
+        # Bouton fermer
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        button = ModernButton("Fermer", "error")
+        button.setFixedSize(120, 40)
+        button.clicked.connect(self.close_signal.emit)
+        button_layout.addWidget(button)
+        
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        
+    def add_log(self, text, level="INFO"):
+        """Ajouter un log"""
+        self.log_viewer.add_log(text, level)
+
+
+# ============================================================================
+# FENÊTRE PRINCIPALE
+# ============================================================================
+
+class WindowsUpdateGUI(QMainWindow):
+    """Application principale"""
+    
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Windows Update - Gablue")
+        self.setFixedSize(WINDOW_WIDTH, WINDOW_HEIGHT)
+        
+        # Thread d'installation
+        self.install_thread = None
+        
+        # Widget central avec stack
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        
+        layout = QVBoxLayout(self.central_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.stack = QStackedWidget()
+        layout.addWidget(self.stack)
+        
+        # Écrans
+        self.selection_screen = SelectionScreen()
+        self.selection_screen.start_signal.connect(self.start_installation)
+        self.stack.addWidget(self.selection_screen)
+        
+        self.progress_screen = ProgressScreen()
+        self.progress_screen.cancel_signal.connect(self.cancel_installation)
+        self.stack.addWidget(self.progress_screen)
+        
+        self.finish_screen = None
+        self.error_screen = None
+        
+        # Thème sombre global
+        self.apply_dark_theme()
+        
+    def apply_dark_theme(self):
+        """Appliquer le thème sombre gaming"""
+        self.setStyleSheet(f"""
+            QMainWindow {{
+                background-color: {COLORS['bg_dark']};
+            }}
+            QWidget {{
+                background-color: {COLORS['bg_dark']};
+            }}
+        """)
+        
+    def start_installation(self, runner_choice, dxvk_choice, force_rebuild):
+        """Démarrer l'installation"""
+        self.runner_choice = runner_choice
+        self.dxvk_choice = dxvk_choice
+        
+        # Changer vers l'écran de progression
+        self.stack.setCurrentWidget(self.progress_screen)
+        self.progress_screen.add_log(
+            f"Installation démarrée - Runner: {runner_choice}, DXVK: {dxvk_choice}",
+            "INFO"
+        )
+        
+        if force_rebuild:
+            self.progress_screen.add_log("Rebuild forcé activé", "WARN")
+        
+        # Lancer le thread
+        self.install_thread = InstallThread(runner_choice, dxvk_choice, force_rebuild)
+        self.install_thread.log_signal.connect(self.handle_log)
+        self.install_thread.finished_signal.connect(self.installation_finished)
+        self.install_thread.start()
+        
+    def handle_log(self, line):
+        """Traiter une ligne de log"""
         # Détection des messages de progression
         progress_patterns = [
             (r'Progress:\s*(\d+)%', 'progress'),
@@ -545,222 +821,80 @@ class WindowsUpdateGUI:
             if match:
                 try:
                     progress = int(match.group(1))
-                    self.progress_bar.set_progress(progress, line)
-                    return
+                    self.progress_screen.set_progress(progress, line[:50])
+                    break
                 except:
                     pass
-                    
-        # Détection du niveau de log
-        level = "INFO"
-        if "[ERROR]" in line or "error" in line.lower():
-            level = "ERROR"
-        elif "[WARN]" in line or "warn" in line.lower():
-            level = "WARN"
-        elif "succès" in line.lower() or "réussie" in line.lower():
-            level = "SUCCESS"
+        else:
+            # Détection du niveau de log
+            level = "INFO"
+            if "[ERROR]" in line or "error" in line.lower():
+                level = "ERROR"
+            elif "[WARN]" in line or "warn" in line.lower():
+                level = "WARN"
+            elif "succès" in line.lower() or "réussie" in line.lower():
+                level = "SUCCESS"
             
-        # Ajouter à la vue des logs
-        self.log_viewer.add_line(line, level)
-        
-    def handle_events(self):
-        """Gérer les événements Pygame"""
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                self.quit()
-                return
-                
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    if self.state == "selection":
-                        self.quit()
-                    elif self.state in ["finished", "error"]:
-                        self.quit()
-                        
-            # Écran de sélection
-            if self.state == "selection":
-                for card in self.runner_cards:
-                    card.handle_event(event)
-                for card in self.dxvk_cards:
-                    card.handle_event(event)
-                self.force_rebuild_checkbox.handle_event(event)
-                self.start_button.handle_event(event)
-                
-            # Écran de téléchargement
-            elif self.state == "downloading":
-                self.cancel_button.handle_event(event)
-                
-            # Écran de fin
-            elif self.state in ["finished", "error"]:
-                if self.state == "finished":
-                    self.finish_button.handle_event(event)
-                else:
-                    self.error_button.handle_event(event)
-                    
-    def update(self):
-        """Mettre à jour la logique de l'application"""
-        
-        # Traiter les messages de la queue
-        try:
-            while True:
-                line = self.log_queue.get_nowait()
-                
-                if line == "__SUCCESS__":
-                    self.state = "finished"
-                    self.progress_bar.set_progress(100, "Installation terminée avec succès !")
-                elif line.startswith("__ERROR__"):
-                    self.state = "error"
-                    error_msg = line.split(":", 1)[1] if ":" in line else "Erreur inconnue"
-                    self.log_viewer.add_line(f"Erreur: {error_msg}", "ERROR")
-                else:
-                    self.parse_log_line(line)
-                    
-        except queue.Empty:
-            pass
+            self.progress_screen.add_log(line, level)
             
-        # Mettre à jour la barre de progression
-        if self.state == "downloading":
-            self.progress_bar.update()
+    def installation_finished(self, success, message):
+        """Installation terminée"""
+        if success:
+            self.progress_screen.set_progress(100, "Installation terminée avec succès !")
             
-    def draw(self):
-        """Dessiner l'interface"""
-        # Fond
-        self.screen.fill(COLORS['bg_dark'])
-        
-        # Titre principal
-        title = FONT_TITLE.render("Windows Update", True, COLORS['text'])
-        self.screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 30))
-        
-        # Sous-titre
-        subtitle = FONT_NORMAL.render("Configuration de l'environnement Windows pour Gablue", True, COLORS['text_secondary'])
-        self.screen.blit(subtitle, (SCREEN_WIDTH // 2 - subtitle.get_width() // 2, 65))
-        
-        if self.state == "selection":
-            self.draw_selection_screen()
-        elif self.state == "downloading":
-            self.draw_download_screen()
-        elif self.state == "finished":
-            self.draw_finish_screen()
-        elif self.state == "error":
-            self.draw_error_screen()
+            # Créer l'écran de fin
+            self.finish_screen = FinishScreen(success=True)
+            self.finish_screen.close_signal.connect(self.close)
+            self.stack.addWidget(self.finish_screen)
+            self.stack.setCurrentWidget(self.finish_screen)
+        else:
+            # Créer l'écran d'erreur avec logs
+            self.error_screen = ErrorScreen()
+            self.error_screen.close_signal.connect(self.close)
             
-        pygame.display.flip()
-        
-    def draw_selection_screen(self):
-        """Dessiner l'écran de sélection"""
-        
-        # Section Wine
-        wine_title = FONT_LARGE.render("Version de Wine", True, COLORS['primary'])
-        self.screen.blit(wine_title, (50, 110))
-        
-        for card in self.runner_cards:
-            card.draw(self.screen)
+            # Copier les logs
+            for i in range(self.progress_screen.log_viewer.document().blockCount()):
+                block = self.progress_screen.log_viewer.document().findBlockByNumber(i)
+                if block.text():
+                    self.error_screen.add_log(block.text())
             
-        # Section DXVK
-        dxvk_title = FONT_LARGE.render("Type de DXVK", True, COLORS['primary'])
-        self.screen.blit(dxvk_title, (480, 110))
-        
-        for card in self.dxvk_cards:
-            card.draw(self.screen)
-        
-        # Checkbox rebuild forcé
-        self.force_rebuild_checkbox.draw(self.screen)
-        
-        # Ligne de séparation
-        pygame.draw.line(self.screen, COLORS['border'], 
-                        (50, 500), (SCREEN_WIDTH - 50, 500), 1)
+            self.error_screen.add_log(f"Erreur: {message}", "ERROR")
+            self.stack.addWidget(self.error_screen)
+            self.stack.setCurrentWidget(self.error_screen)
             
-        # Bouton démarrer
-        self.start_button.draw(self.screen)
-        
-        # Info bulle
-        info_text = "ℹ️  Les paramètres recommandés sont présélectionnés"
-        info_surface = FONT_SMALL.render(info_text, True, COLORS['text_secondary'])
-        self.screen.blit(info_surface, (SCREEN_WIDTH // 2 - info_surface.get_width() // 2, 585))
-        
-    def draw_download_screen(self):
-        """Dessiner l'écran de téléchargement"""
-        
-        # Barre de progression
-        self.progress_bar.draw(self.screen)
-        
-        # Logs
-        self.log_viewer.draw(self.screen)
-        
-        # Bouton annuler
-        self.cancel_button.draw(self.screen)
-        
-    def draw_finish_screen(self):
-        """Dessiner l'écran de fin"""
-        
-        # Icône de succès (cercle vert avec check)
-        center = (SCREEN_WIDTH // 2, 250)
-        pygame.draw.circle(self.screen, COLORS['success'], center, 60)
-        pygame.draw.circle(self.screen, COLORS['text'], center, 60, 3)
-        
-        # Check mark
-        check_points = [
-            (center[0] - 25, center[1]),
-            (center[0] - 10, center[1] + 15),
-            (center[0] + 25, center[1] - 20),
-        ]
-        pygame.draw.lines(self.screen, COLORS['bg_dark'], False, check_points, 6)
-        
-        # Texte de succès
-        success_text = FONT_TITLE.render("Installation réussie !", True, COLORS['success'])
-        self.screen.blit(success_text, (SCREEN_WIDTH // 2 - success_text.get_width() // 2, 330))
-        
-        # Description
-        desc_text = "L'environnement Windows est prêt à être utilisé."
-        desc_surface = FONT_NORMAL.render(desc_text, True, COLORS['text_secondary'])
-        self.screen.blit(desc_surface, (SCREEN_WIDTH // 2 - desc_surface.get_width() // 2, 370))
-        
-        # Bouton terminer
-        self.finish_button.draw(self.screen)
-        
-    def draw_error_screen(self):
-        """Dessiner l'écran d'erreur avec logs visibles"""
-        
-        # Icône d'erreur (croix rouge) - position réduite
-        center = (SCREEN_WIDTH // 2, 120)
-        pygame.draw.circle(self.screen, COLORS['error'], center, 40)
-        pygame.draw.circle(self.screen, COLORS['text'], center, 40, 2)
-        
-        # Croix
-        pygame.draw.line(self.screen, COLORS['bg_dark'], 
-                        (center[0] - 15, center[1] - 15),
-                        (center[0] + 15, center[1] + 15), 4)
-        pygame.draw.line(self.screen, COLORS['bg_dark'],
-                        (center[0] + 15, center[1] - 15),
-                        (center[0] - 15, center[1] + 15), 4)
-        
-        # Texte d'erreur
-        error_text = FONT_LARGE.render("Installation échouée", True, COLORS['error'])
-        self.screen.blit(error_text, (SCREEN_WIDTH // 2 - error_text.get_width() // 2, 170))
-        
-        # Logs (affichés pour voir ce qui s'est passé)
-        self.log_viewer.rect.y = 210
-        self.log_viewer.rect.height = 350
-        self.log_viewer.draw(self.screen)
-        
-        # Bouton fermer - repositionné
-        self.error_button.rect.y = 580
-        self.error_button.draw(self.screen)
-        
-    def run(self):
-        """Boucle principale"""
-        while self.running:
-            self.handle_events()
-            self.update()
-            self.draw()
-            self.clock.tick(FPS)
+    def cancel_installation(self):
+        """Annuler l'installation"""
+        if self.install_thread and self.install_thread.isRunning():
+            self.install_thread.stop()
+            self.install_thread.wait()
             
-        pygame.quit()
-        sys.exit(0)
+        # Créer l'écran d'erreur
+        self.error_screen = ErrorScreen()
+        self.error_screen.close_signal.connect(self.close)
+        self.error_screen.add_log("Installation annulée par l'utilisateur", "WARN")
+        self.stack.addWidget(self.error_screen)
+        self.stack.setCurrentWidget(self.error_screen)
+        
+    def closeEvent(self, event):
+        """Gérer la fermeture de la fenêtre"""
+        if self.install_thread and self.install_thread.isRunning():
+            self.install_thread.stop()
+            self.install_thread.wait()
+        event.accept()
+
 
 # ============================================================================
 # POINT D'ENTRÉE
 # ============================================================================
 
 if __name__ == "__main__":
-    app = WindowsUpdateGUI()
-    app.run()
+    app = QApplication(sys.argv)
+    
+    # Configurer la police par défaut
+    font = QFont("JetBrains Mono", 10)
+    app.setFont(font)
+    
+    window = WindowsUpdateGUI()
+    window.show()
+    
+    sys.exit(app.exec())
