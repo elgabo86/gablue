@@ -22,6 +22,8 @@ HOME_REAL="$(realpath "$HOME")"
 WINDOWS_HOME="$HOME_REAL/Windows/UserData"
 SAVES_SYMLINK="/tmp/wgp-saves"
 SAVES_REAL="$WINDOWS_HOME/$USER/LocalSavesWGP"
+EXTRA_SYMLINK="/tmp/wgp-extra"
+EXTRA_REAL="$HOME/.cache/wgp-extra"
 
 # Variables WGP
 WGPACK_NAME=""
@@ -131,8 +133,7 @@ init_wgp_variables() {
 
     MOUNT_BASE="/tmp/wgpackmount"
     MOUNT_DIR="$MOUNT_BASE/$WGPACK_NAME"
-    EXTRA_BASE="/tmp/wgp-extra"
-    EXTRA_DIR="$EXTRA_BASE/$WGPACK_NAME"
+    EXTRA_DIR="$EXTRA_REAL/$GAME_INTERNAL_NAME"
 }
 
 # Monte le squashfs du paquet WGP
@@ -208,14 +209,9 @@ cleanup_wgp() {
 
     echo "Démontage de $WGPACK_NAME..."
 
-    # Nettoyer le symlink /tmp/wgp-saves
+    # Nettoyer les symlinks /tmp/wgp-saves et /tmp/wgp-extra
     cleanup_saves_symlink
-
-    # Nettoyer le dossier temporaire d'extra
-    if [ -d "$EXTRA_DIR" ]; then
-        rm -rf "$EXTRA_DIR"
-        echo "Dossier temporaire d'extra nettoyé: $EXTRA_DIR"
-    fi
+    cleanup_extras_symlink
 
     # Démontage du squashfs
     if ! fusermount -u "$MOUNT_DIR" 2>/dev/null; then
@@ -403,12 +399,24 @@ _copy_dir_with_symlinks() {
     done
 }
 
-# Prépare les fichiers d'extra depuis .extra vers /tmp
+# Prépare les fichiers d'extra depuis .extra vers ~/.cache/wgp
 prepare_extras() {
     local EXTRAPATH_FILE="$MOUNT_DIR/.extrapath"
     local EXTRA_WGP_DIR="$MOUNT_DIR/.extra"
 
     [ -f "$EXTRAPATH_FILE" ] || return 0
+
+    # Vérifier si le dossier existe et contient du contenu
+    if [ -d "$EXTRA_DIR" ]; then
+        # Dossier existe vérifier s'il a du contenu
+        if [ -n "$(find "$EXTRA_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
+            # Dossier a du contenu ne rien copier
+            return 0
+        fi
+    fi
+    # Dossier n'existe pas ou est vide copier tout depuis .extra
+
+    echo "Copie des extras depuis .extra..."
 
     mkdir -p "$EXTRA_DIR"
 
@@ -421,12 +429,10 @@ prepare_extras() {
         if [ -d "$EXTRA_WGP_ITEM" ]; then
             # Dossier
             mkdir -p "$FINAL_EXTRA_ITEM"
-            echo "Copie des extras: $EXTRA_REL_PATH"
             cp -a "$EXTRA_WGP_ITEM"/. "$FINAL_EXTRA_ITEM/"
         elif [ -f "$EXTRA_WGP_ITEM" ]; then
             # Fichier
             mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
-            echo "Copie des extras: $EXTRA_REL_PATH"
             cp "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
         fi
     done < "$EXTRAPATH_FILE"
@@ -466,6 +472,42 @@ setup_saves_symlink() {
 cleanup_saves_symlink() {
     local GAME_SAVES_SYMLINK="$SAVES_SYMLINK/$GAME_INTERNAL_NAME"
     [ -L "$GAME_SAVES_SYMLINK" ] && rm -f "$GAME_SAVES_SYMLINK"
+}
+
+# Vérifie si le WGP contient des fichiers d'extra
+has_extras() {
+    [ -f "$MOUNT_DIR/.extrapath" ]
+}
+
+# Crée le symlink /tmp/wgp-extra/$GAME_INTERNAL_NAME vers ~/.cache/wgp
+# Un symlink par jeu permet de lancer plusieurs WGP en parallèle
+setup_extras_symlink() {
+    # Ne rien faire si le WGP n'a pas d'extras
+    has_extras || return 0
+
+    local GAME_EXTRAS_DIR="$EXTRA_REAL/$GAME_INTERNAL_NAME"
+    local GAME_EXTRAS_SYMLINK="$EXTRA_SYMLINK/$GAME_INTERNAL_NAME"
+
+    # Créer le dossier d'extras réel pour ce jeu
+    mkdir -p "$GAME_EXTRAS_DIR"
+
+    # Créer le dossier /tmp/wgp-extra si nécessaire
+    mkdir -p "$EXTRA_SYMLINK"
+
+    # Supprimer l'ancien symlink du jeu s'il existe
+    if [ -L "$GAME_EXTRAS_SYMLINK" ]; then
+        rm -f "$GAME_EXTRAS_SYMLINK"
+    fi
+
+    # Créer le symlink pour ce jeu
+    ln -s "$GAME_EXTRAS_DIR" "$GAME_EXTRAS_SYMLINK"
+    echo "Symlink créé: $GAME_EXTRAS_SYMLINK -> $GAME_EXTRAS_DIR"
+}
+
+# Supprime le symlink /tmp/wgp-extra/$GAME_INTERNAL_NAME
+cleanup_extras_symlink() {
+    local GAME_EXTRAS_SYMLINK="$EXTRA_SYMLINK/$GAME_INTERNAL_NAME"
+    [ -L "$GAME_EXTRAS_SYMLINK" ] && rm -f "$GAME_EXTRAS_SYMLINK"
 }
 
 # Construit et exécute la commande bottles avec ou sans mesa-git
@@ -690,6 +732,9 @@ run_wgp_mode() {
     # Créer le symlink /tmp/wgp-saves AVANT prepare_saves
     setup_saves_symlink
 
+    # Créer le symlink /tmp/wgp-extra AVANT prepare_extras
+    setup_extras_symlink
+
     # IMPORTANT: prepare_saves AVANT read_wgp_config (l'exécutable peut être un symlink vers UserData)
     prepare_saves
     prepare_extras
@@ -709,8 +754,9 @@ run_wgp_mode() {
     # Lancer le jeu avec surveillance bwrap
     launch_bottles_game "$FULL_EXE_PATH" "$args" "$WGPACK_NAME"
 
-    # Nettoyage du symlink saves (le trap fera le reste)
+    # Nettoyage des symlinks saves et extras (le trap fera le reste)
     cleanup_saves_symlink
+    cleanup_extras_symlink
 }
 
 #======================================
