@@ -250,7 +250,9 @@ read_wgp_config() {
         exit 1
     fi
 
-    FULL_EXE_PATH="$MOUNT_DIR/$(cat "$LAUNCH_FILE")"
+    local launch_content
+    launch_content="$(cat "$LAUNCH_FILE" | tr -d '\n\r')"
+    FULL_EXE_PATH="$MOUNT_DIR/$launch_content"
 
     # Vérifier existence (fichier ou symlink)
     if [ ! -e "$FULL_EXE_PATH" ]; then
@@ -621,11 +623,15 @@ install_registry_files() {
     local reg_dir="$1"
     local reg_files
 
+    # Résoudre le chemin réel (suivre les symlinks) pour find
+    local real_reg_dir
+    real_reg_dir="$(realpath "$reg_dir" 2>/dev/null || echo "$reg_dir")"
+
     # Chercher les fichiers .reg dans le dossier
     reg_files=()
     while IFS= read -r -d '' file; do
         reg_files+=("$file")
-    done < <(find "$reg_dir" -maxdepth 1 -name '*.reg' -print0 2>/dev/null)
+    done < <(find "$real_reg_dir" -maxdepth 1 -name '*.reg' -print0 2>/dev/null)
 
     # Si aucun fichier .reg, rien à faire
     [ ${#reg_files[@]} -eq 0 ] && return 0
@@ -749,7 +755,18 @@ run_wgp_mode() {
     # Configurer le symlink ProgramData si fichier .pds présent
     setup_pds_symlink "$(dirname "$FULL_EXE_PATH")"
     # Installer les fichiers .reg dans le dossier de l'exécutable
-    install_registry_files "$(dirname "$FULL_EXE_PATH")"
+    # Gérer le cas où l'exe est un symlink : chercher dans les deux dossiers
+    local exe_dir="$(dirname "$FULL_EXE_PATH")"
+    install_registry_files "$exe_dir"
+    # Si c'est un symlink, chercher aussi dans le dossier cible
+    if [ -L "$FULL_EXE_PATH" ]; then
+        local real_exe_path
+        real_exe_path="$(realpath "$FULL_EXE_PATH")"
+        local real_exe_dir="$(dirname "$real_exe_path")"
+        if [ "$real_exe_dir" != "$exe_dir" ]; then
+            install_registry_files "$real_exe_dir"
+        fi
+    fi
 
     # Lancer le jeu avec surveillance bwrap
     launch_bottles_game "$FULL_EXE_PATH" "$args" "$WGPACK_NAME"
@@ -827,7 +844,18 @@ run_classic_mode() {
     # Configurer le symlink ProgramData si fichier .pds présent
     setup_pds_symlink "$(dirname "$new_fullpath")"
     # Installer les fichiers .reg dans le dossier de l'exécutable
-    install_registry_files "$(dirname "$new_fullpath")"
+    # Gérer le cas où l'exe est un symlink : chercher dans les deux dossiers
+    local exe_dir="$(dirname "$new_fullpath")"
+    install_registry_files "$exe_dir"
+    # Si c'est un symlink, chercher aussi dans le dossier cible
+    if [ -L "$new_fullpath" ]; then
+        local real_exe_path
+        real_exe_path="$(realpath "$new_fullpath")"
+        local real_exe_dir="$(dirname "$real_exe_path")"
+        if [ "$real_exe_dir" != "$exe_dir" ]; then
+            install_registry_files "$real_exe_dir"
+        fi
+    fi
 
     # Lancer le jeu avec surveillance bwrap
     launch_bottles_game "$new_fullpath" "$args" "$filename"
