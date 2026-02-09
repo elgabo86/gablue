@@ -654,11 +654,23 @@ restore_config_data() {
 }
 
 # Fonction interne pour restaurer les répertoires sans modifier la progression
+# Gère la fusion si le dossier destination existe déjà (cas du rebuild)
 _restore_config_dirs() {
+    local src_base=~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
+    local dst_base=~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
+
     for dir in cache grids icons; do
-        if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ]; then
-            rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/$dir
-            mv ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/$dir ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
+        if [ -d "$src_base/$dir" ]; then
+            if [ -d "$dst_base/$dir" ]; then
+                # La destination existe déjà : fusionner les contenus
+                log "INFO" "Fusion du dossier $dir..."
+                cp -r "$src_base/$dir/"* "$dst_base/$dir/" 2>/dev/null || true
+                # Supprimer la source après fusion réussie
+                rm -rf "$src_base/$dir"
+            else
+                # La destination n'existe pas : simple déplacement
+                mv "$src_base/$dir" "$dst_base/"
+            fi
         fi
     done
 }
@@ -811,21 +823,22 @@ cleanup() {
     set +e
     log "ERROR" "Cleanup déclenché - Restauration en cours"
     rm -f "$flag_file"
-    
+
     # Tue les processus de téléchargement en arrière-plan
     if [ -n "$PID_WINE" ]; then kill "$PID_WINE" 2>/dev/null || true; fi
     if [ -n "$PID_DXVK" ]; then kill "$PID_DXVK" 2>/dev/null || true; fi
     if [ -n "$PID_VKD3D" ]; then kill "$PID_VKD3D" 2>/dev/null || true; fi
     if [ -n "$PID_NVAPI" ]; then kill "$PID_NVAPI" 2>/dev/null || true; fi
     if [ -n "$PID_LATENCYFLEX" ]; then kill "$PID_LATENCYFLEX" 2>/dev/null || true; fi
-    
+
     if pgrep -f bottles > /dev/null; then
         pgrep -f bottles | xargs -n1 kill -9 &
         sleep 1
     fi
-    
+
     update_progress 0 "Annulation ou erreur détectée, restauration de l'ancienne version..."
-    
+
+    # Restaurer les composants téléchargés
     for component in wine dxvk vkd3d nvapi latencyflex; do
         if [ -d "$temp_dir/$component" ]; then
             target_dir=""
@@ -841,11 +854,23 @@ cleanup() {
         fi
     done
     rm -rf "$temp_dir"
-    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
-    if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak ]; then
-        mv ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
+
+    # Gestion de la restauration de la bouteille
+    local def_dir=~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
+    local bak_dir=~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
+
+    # Si def.bak existe, on doit restaurer
+    if [ -d "$bak_dir" ]; then
+        log "INFO" "Restauration depuis def.bak..."
+        
+        # Supprimer def s'il existe (même incomplet)
+        rm -rf "$def_dir"
+        
+        # Restaurer def depuis def.bak
+        mv "$bak_dir" "$def_dir"
+        log "INFO" "Restauration de def.bak vers def terminée"
     fi
-    
+
     log "INFO" "Restauration terminée"
     show_message "Opération annulée ou erreur survenue. L'ancienne bouteille est restaurée."
     exit 1
@@ -863,6 +888,7 @@ fi
 
 update_progress 5 "Préparation des répertoires..."
 mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/bak
+
 if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ]; then
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
     mv ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
@@ -1055,9 +1081,9 @@ if [ "$need_rebuild" = false ]; then
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
     rm -rf "$temp_dir"
     update_progress 100 "Finalisation..."
-    
+
     rm -f "$flag_file"
-    
+
     if [ "$dxvk_type" = "standard" ]; then
         log "INFO" "DXVK Standard en place (moins d'artefacts visuels)"
     else
@@ -1098,4 +1124,5 @@ else
 fi
 log "INFO" "Installation/mise à jour terminée avec succès (mode rebuild)"
 show_message "L'installation/mise à jour de Windows est réussie."
+
 rm -f "$flag_file"
