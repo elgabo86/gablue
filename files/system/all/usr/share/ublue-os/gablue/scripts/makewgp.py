@@ -99,7 +99,9 @@ class CreateWGPThread(QThread):
         # peut être dans un dossier qui sera déplacé
         if self.config['icon']:
             icon_dest = os.path.join(self.game_dir, '.icon.png')
-            shutil.copy2(self.config['icon'], icon_dest)
+            # Ne copier que si l'icône source est différente de la destination
+            if os.path.abspath(self.config['icon']) != os.path.abspath(icon_dest):
+                shutil.copy2(self.config['icon'], icon_dest)
         
         # Créer les symlinks et copier vers .save/.extra
         self._process_saves_and_extras()
@@ -754,19 +756,19 @@ class WGPWindow(QMainWindow):
         """Sélectionne l'icône correspondant à l'exécutable donné"""
         exe_name = os.path.splitext(os.path.basename(exe_path))[0]
         
-        # Chercher une icône d'exe correspondante
+        # Priorité 1: Sélectionner l'icône existante si présente
+        for idx, icon in enumerate(self.available_icons):
+            if icon['source'] == 'existing':
+                self.select_icon(idx)
+                return
+        
+        # Priorité 2: Chercher une icône d'exe correspondante
         for idx, icon in enumerate(self.available_icons):
             if icon['source'] == 'exe':
                 # Vérifier si c'est l'icône de cet exe
                 if exe_name[:12] in icon['name'] or exe_name[:15] in icon['name']:
                     self.select_icon(idx)
                     return
-        
-        # Si pas trouvé, sélectionner la première icône existante si présente
-        for idx, icon in enumerate(self.available_icons):
-            if icon['source'] == 'existing':
-                self.select_icon(idx)
-                return
         
         # Sinon, sélectionner la première icône disponible
         if self.available_icons:
