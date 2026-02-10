@@ -14,6 +14,7 @@ flatpak override com.usebottles.bottles --user --env=DXVK_ASYNC=1
 flatpak override com.usebottles.bottles --user --env=WINENTSYNC=1
 flatpak override com.usebottles.bottles --user --filesystem=~/Windows
 flatpak override com.usebottles.bottles --user --filesystem=/tmp
+flatpak override com.usebottles.bottles --user --filesystem=~/.cache/wgp-extra
 flatpak override org.mozilla.firefox --user --filesystem=/run/udev:ro
 flatpak override app.zen_browser.zen --user --filesystem=/run/udev:ro
 flatpak override com.valvesoftware.Steam  --user --env=MANGOHUD=1
