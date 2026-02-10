@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 """
 WGP Creator - Création de paquets Windows Game Packs
@@ -419,6 +419,7 @@ class WGPWindow(QMainWindow):
         self.exe_files = []
         self.icon_path = None
         self.create_thread = None
+        self.is_creating = False  # Flag pour éviter les créations multiples
         
         self.setWindowTitle("WGP Creator - Création de paquets Windows Game Packs")
         self.setMinimumSize(900, 500)
@@ -1223,6 +1224,11 @@ class WGPWindow(QMainWindow):
     
     def start_create_wgp(self):
         """Démarre la création du WGP"""
+        # Vérifier qu'aucune création n'est déjà en cours
+        if self.is_creating:
+            QMessageBox.information(self, "Création en cours", "Une création de WGP est déjà en cours. Veuillez attendre qu'elle se termine.")
+            return
+        
         # Récupérer le nom du jeu
         game_name = self.name_input.text().strip()
         if not game_name:
@@ -1266,10 +1272,21 @@ class WGPWindow(QMainWindow):
     
     def do_create_wgp(self, game_name, config):
         """Effectue la création avec progression"""
+        # Marquer qu'une création est en cours et désactiver le bouton
+        self.is_creating = True
+        self.create_btn.setEnabled(False)
+        self.create_btn.setText("Compression en cours...")
+        
         self.progress_dialog = QProgressDialog("Création du WGP...", "Annuler", 0, 100, self)
         self.progress_dialog.setWindowModality(Qt.WindowModal)
         self.progress_dialog.setMinimumDuration(0)
         self.progress_dialog.setValue(0)
+        
+        # Forcer l'affichage immédiat du dialog
+        self.progress_dialog.show()
+        self.progress_dialog.raise_()
+        self.progress_dialog.activateWindow()
+        QApplication.processEvents()
         
         # Créer et lancer le thread
         self.create_thread = CreateWGPThread(self.game_dir, game_name, config)
@@ -1287,6 +1304,11 @@ class WGPWindow(QMainWindow):
     
     def on_finished(self, success, message):
         """Appelé quand la création est terminée"""
+        # Réinitialiser l'état de création
+        self.is_creating = False
+        self.create_btn.setEnabled(True)
+        self.create_btn.setText("Créer le WGP")
+        
         self.progress_dialog.close()
         
         if success:
