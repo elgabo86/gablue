@@ -1078,6 +1078,9 @@ if [ "$need_rebuild" = false ]; then
 
     restore_config_data
 
+    update_progress 80 "Configuration des raccourcis et outils..."
+    configure_shortcuts_tools
+
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
     rm -rf "$temp_dir"
     update_progress 100 "Finalisation..."
