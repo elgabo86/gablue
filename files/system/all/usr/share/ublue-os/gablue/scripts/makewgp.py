@@ -236,19 +236,39 @@ class CreateWGPThread(QThread):
             print(f"DEBUG: No extras to process")
     
     def create_squashfs(self, wgp_file):
-        """Crée l'archive squashfs avec progression temps réel basée sur les fichiers traités"""
+        """Crée l'archive squashfs avec progression temps réel basée sur la taille des fichiers"""
         import subprocess
+        import re
         
         comp_level = self.config['compression']
         
-        # Compter le nombre total de fichiers dans le dossier source AVANT de lancer mksquashfs
-        total_files = 0
+        # Calculer la taille totale du dossier source AVANT de lancer mksquashfs
+        # IMPORTANT: Ne PAS exclure .save et .extra car ils contiennent les données !
+        total_size = 0
         for root, dirs, files in os.walk(self.game_dir):
-            dirs[:] = [d for d in dirs if d not in ['.save', '.extra', '__pycache__']]
-            total_files += len(files)
+            dirs[:] = [d for d in dirs if d not in ['__pycache__']]
+            for file in files:
+                filepath = os.path.join(root, file)
+                try:
+                    total_size += os.path.getsize(filepath)
+                except OSError:
+                    pass
         
-        if total_files == 0:
-            total_files = 1  # Éviter division par zéro
+        if total_size == 0:
+            total_size = 1  # Éviter division par zéro
+        
+        # Formater la taille totale pour l'affichage
+        def format_size(size_bytes):
+            if size_bytes < 1024:
+                return f"{size_bytes} B"
+            elif size_bytes < 1024 * 1024:
+                return f"{size_bytes / 1024:.1f} KB"
+            elif size_bytes < 1024 * 1024 * 1024:
+                return f"{size_bytes / (1024 * 1024):.1f} MB"
+            else:
+                return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
+        
+        total_size_str = format_size(total_size)
         
         cmd = [
             'mksquashfs',
@@ -258,7 +278,8 @@ class CreateWGPThread(QThread):
             '-Xcompression-level', str(comp_level),
             '-noappend',
             '-wildcards',
-            '-info'  # Affiche chaque fichier traité
+            '-percentage',  # Affiche uniquement le pourcentage
+            '-progress'     # Force l'affichage même sans TTY
         ]
         
         # Exclure les fichiers temporaires (mais PAS .save et .extra qui contiennent les données)
@@ -266,35 +287,64 @@ class CreateWGPThread(QThread):
         for exclude in excludes:
             cmd.extend(['-e', exclude])
         
-        # Lancer mksquashfs avec stderr redirigé pour capturer la progression
+        # Lancer mksquashfs sans capture de sortie (on ne peut pas parser la progression sans TTY)
         process = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            universal_newlines=True
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
         )
         
-        files_processed = 0
-        last_progress = 0
-        self.progress.emit(0, "Démarrage de la compression...")
+        # Fonction pour surveiller la taille du fichier WGP en parallèle
+        import threading
+        import time
         
-        # Parser la sortie en temps réel
+        progress_data = {
+            'wgp_size': 0,
+            'finished': False,
+            'lock': threading.Lock()
+        }
+        
+        def watch_wgp_size():
+            """Surveille la taille du fichier WGP et met à jour progress_data"""
+            last_size = 0
+            while not progress_data['finished']:
+                try:
+                    if os.path.exists(wgp_file):
+                        size = os.path.getsize(wgp_file)
+                        if size != last_size:
+                            with progress_data['lock']:
+                                progress_data['wgp_size'] = size
+                            last_size = size
+                except OSError:
+                    pass
+                time.sleep(0.5)
+        
+        # Démarrer le thread de surveillance
+        self.progress.emit(0, "Démarrage de la compression...")
+        watch_thread = threading.Thread(target=watch_wgp_size)
+        watch_thread.daemon = True
+        watch_thread.start()
+        
+        # Boucle principale : afficher juste les tailles
+        last_wgp_size = 0
+        
         while True:
-            line = process.stdout.readline()
-            if not line:
-                break
+            time.sleep(0.5)  # Mettre à jour toutes les 0.5s
             
-            # Rechercher les lignes "file " qui indiquent un fichier traité
-            if line.startswith('file '):
-                files_processed += 1
-                percentage = min(int((files_processed / total_files) * 100), 100)
-                if percentage > last_progress:
-                    last_progress = percentage
-                    self.progress.emit(percentage, f"Compression en cours... {percentage}% ({files_processed}/{total_files} fichiers)")
-            elif 'Creating' in line and 'filesystem' in line:
-                self.progress.emit(0, "Initialisation de la compression...")
+            with progress_data['lock']:
+                wgp_size = progress_data['wgp_size']
+            
+            # Mettre à jour seulement si la taille a changé
+            if wgp_size != last_wgp_size:
+                last_wgp_size = wgp_size
+                wgp_size_str = format_size(wgp_size)
+                self.progress.emit(0, f"{total_size_str} → {wgp_size_str}")
+            
+            # Vérifier si le processus est terminé
+            if process.poll() is not None:
+                with progress_data['lock']:
+                    progress_data['finished'] = True
+                break
             
             # Vérifier si annulation demandée
             if self.cancelled:
@@ -1277,12 +1327,34 @@ class WGPWindow(QMainWindow):
         self.create_btn.setEnabled(False)
         self.create_btn.setText("Compression en cours...")
         
-        self.progress_dialog = QProgressDialog("Création du WGP...", "Annuler", 0, 100, self)
-        self.progress_dialog.setWindowModality(Qt.WindowModal)
-        self.progress_dialog.setMinimumDuration(0)
-        self.progress_dialog.setValue(0)
+        # Créer une fenêtre de progression sans barre (juste texte + bouton annuler)
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
         
-        # Forcer l'affichage immédiat du dialog
+        self.progress_dialog = QDialog(self)
+        self.progress_dialog.setWindowTitle("Compression WGP")
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setMinimumWidth(400)
+        
+        layout = QVBoxLayout(self.progress_dialog)
+        
+        # Label pour le message
+        self.progress_label = QLabel("Initialisation...")
+        self.progress_label.setAlignment(Qt.AlignCenter)
+        font = self.progress_label.font()
+        font.setPointSize(11)
+        self.progress_label.setFont(font)
+        layout.addWidget(self.progress_label)
+        
+        # Bouton annuler
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        cancel_btn = QPushButton("Annuler")
+        cancel_btn.clicked.connect(self.cancel_compression)
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+        
+        # Forcer l'affichage immédiat
         self.progress_dialog.show()
         self.progress_dialog.raise_()
         self.progress_dialog.activateWindow()
@@ -1293,14 +1365,19 @@ class WGPWindow(QMainWindow):
         self.create_thread.progress.connect(self.on_progress)
         self.create_thread.finished.connect(self.on_finished)
         
-        self.progress_dialog.canceled.connect(self.create_thread.cancel)
+        # La connexion cancelled est gérée par le bouton annuler
         
         self.create_thread.start()
     
     def on_progress(self, value, message):
         """Met à jour la progression"""
-        self.progress_dialog.setValue(value)
-        self.progress_dialog.setLabelText(message)
+        if hasattr(self, 'progress_label'):
+            self.progress_label.setText(message)
+    
+    def cancel_compression(self):
+        """Annule la compression"""
+        if self.create_thread:
+            self.create_thread.cancel()
     
     def on_finished(self, success, message):
         """Appelé quand la création est terminée"""
@@ -1309,7 +1386,8 @@ class WGPWindow(QMainWindow):
         self.create_btn.setEnabled(True)
         self.create_btn.setText("Créer le WGP")
         
-        self.progress_dialog.close()
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.close()
         
         if success:
             # Les fichiers ont déjà été restaurés par le thread via cleanup()
