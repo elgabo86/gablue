@@ -8,6 +8,8 @@ mkdir -p ~/.local/bin
 
 cp /usr/share/ublue-os/gablue/bin/lgp-thumbnailer ~/.local/bin
 
+cp /usr/share/ublue-os/gablue/desktops/thumbnailers/lgp.thumbnailer ~/.local/share/thumbnailers/
+
 cp /usr/share/ublue-os/gablue/desktops/servicemenus/LaunchLin.desktop ~/.local/share/kio/servicemenus/
 cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateLGP.desktop ~/.local/share/kio/servicemenus/
 cp /usr/share/ublue-os/gablue/desktops/servicemenus/EditLGP.desktop ~/.local/share/kio/servicemenus/
