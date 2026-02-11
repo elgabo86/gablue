@@ -15,11 +15,12 @@
         <name>switch</name>
         <fullname>Nintendo Switch</fullname>
         <path>%ROMPATH%/switch</path>
-        <extension>.nca .NCA .nro .NRO .nso .NSO .nsp .NSP .xci .XCI</extension>
+        <extension>.nca .NCA .nro .NRO .nso .NSO .nsp .NSP .xci .XCI .lgp .LGP</extension>
+        <command label="Eden (appimage)">%EMULATOR_EDEN% -f -g %ROM%</command>
+        <command label="LGP Linux Game Pack">/usr/share/ublue-os/gablue/scripts/launchlin.sh %ROM%</command>
         <command label="Citron (archgab)">/usr/bin/distrobox-enter  -n archgab  --  citron -f -g %ROM%</command>
         <command label="Citron (archgab) (Mangohud)">/usr/bin/distrobox-enter  -n archgab  --  mangohud citron -f -g %ROM%</command>
         <command label="Citron (appimage)">%EMULATOR_CITRON% -f -g %ROM%</command>
-        <command label="Eden (appimage)">%EMULATOR_EDEN% -f -g %ROM%</command>
         <command label="Suyu (appimage)">%EMULATOR_SUYU% -f -g %ROM%</command>
         <command label="Suyu (archgab)">/usr/bin/distrobox-enter  -n archgab  --  suyu -f -g %ROM%</command>
         <command label="Suyu (archgab) (Mangohud)">/usr/bin/distrobox-enter  -n archgab  --  mangohud suyu -f -g %ROM%</command>
@@ -45,8 +46,9 @@
         <name>xbox360</name>
         <fullname>Microsoft Xbox 360</fullname>
         <path>%ROMPATH%/xbox360</path>
-        <extension>. .desktop .iso .ISO .sh .xex .XEX .zar .ZAR</extension>
+        <extension>. .desktop .iso .ISO .sh .xex .XEX .zar .ZAR .wgp .WGP</extension>
         <command label="Xenia (Bottles)">/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable '~/Windows/Applications/xenia/xenia_canary.exe' '%ROM%'</command>
+        <command label="WGP Windows Game Pack">/usr/share/ublue-os/gablue/scripts/launchwin.sh %ROM%</command>
         <platform>xbox360</platform>
         <theme>xbox360</theme>
     </system>
