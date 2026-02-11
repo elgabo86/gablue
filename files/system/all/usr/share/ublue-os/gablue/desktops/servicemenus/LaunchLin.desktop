@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Service
 X-KDE-ServiceTypes=KonqPopupMenu/Plugin
-MimeType=inode/directory;
+MimeType=application/x-lgp;
 Actions=LaunchLin
 X-KDE-Submenu=Linux
 
 [Desktop Action LaunchLin]
-Name=Lancer avec launchlin
+Name=Lancer le LGP
 Icon=applications-games
 Exec=/usr/share/ublue-os/gablue/scripts/launchlin.sh %f

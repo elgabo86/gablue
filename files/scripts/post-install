@@ -46,6 +46,7 @@ chmod +x /usr/bin/ryu-install
 chmod +x /usr/bin/scrap-win
 chmod +x /usr/bin/wgpcheck
 chmod +x /usr/bin/wgpadd
+chmod +x /usr/bin/lgp-install
 
 # Rendre exécutables les scripts d'administration Gablue
 chmod +x /usr/bin/gablue-update

@@ -1,0 +1,23 @@
+#!/bin/bash
+
+mkdir -p ~/.local/share/mime/packages/
+mkdir -p ~/.local/share/kio/servicemenus
+mkdir -p ~/.local/share/thumbnailers
+mkdir -p ~/.local/bin
+
+
+cp /usr/share/ublue-os/gablue/bin/lgp-thumbnailer ~/.local/bin
+
+cp /usr/share/ublue-os/gablue/desktops/servicemenus/LaunchLin.desktop ~/.local/share/kio/servicemenus/
+cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateLGP.desktop ~/.local/share/kio/servicemenus/
+cp /usr/share/ublue-os/gablue/desktops/servicemenus/EditLGP.desktop ~/.local/share/kio/servicemenus/
+
+cp /usr/share/ublue-os/gablue/desktops/mime/lgp-mime.xml ~/.local/share/mime/packages/
+
+cp /usr/share/ublue-os/gablue/desktops/Linux.desktop ~/.local/share/applications/
+cp /usr/share/ublue-os/gablue/desktops/LinuxTerminal.desktop ~/.local/share/applications/
+
+chmod +x ~/.local/bin/lgp-thumbnailer
+
+update-mime-database ~/.local/share/mime
+update-desktop-database ~/.local/share/applications

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=application/x-lgp;
+Actions=ExtractLGP
+X-KDE-Submenu=Linux
+
+[Desktop Action ExtractLGP]
+Name=Extraire le LGP dans un dossier
+Icon=application-x-executable
+Exec=/usr/share/ublue-os/gablue/scripts/unpacklgp.sh %f
