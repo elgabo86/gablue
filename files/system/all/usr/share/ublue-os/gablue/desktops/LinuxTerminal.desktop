@@ -1,0 +1,18 @@
+[Desktop Entry]
+Comment=Exécutez des applications Linux
+Exec=/usr/share/ublue-os/gablue/scripts/launchlin.sh %f; exec bash
+Icon=applications-games
+Keywords[fr_CH]=linux;game;jeu;native;
+Keywords=linux;game;jeu;native;
+MimeType=application/x-lgp;
+Name=Linux (mode terminal)
+NoDisplay=true
+Path=
+StartupWMClass=launchlin
+Terminal=true
+TerminalOptions=
+Type=Application
+X-GNOME-UsesNotifications=true
+X-KDE-SubstituteUID=false
+X-KDE-Username=
+X-KDE-StartupNotify=false

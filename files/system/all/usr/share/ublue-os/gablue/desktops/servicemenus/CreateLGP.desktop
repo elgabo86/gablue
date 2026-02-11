@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=inode/directory;
+Actions=CreateLGP
+X-KDE-Submenu=Linux
+
+[Desktop Action CreateLGP]
+Name=Créer un pack LGP
+Icon=applications-games
+Exec=/usr/share/ublue-os/gablue/scripts/makelgp.py %f

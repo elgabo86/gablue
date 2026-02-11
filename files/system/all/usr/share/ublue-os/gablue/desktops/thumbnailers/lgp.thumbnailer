@@ -1,0 +1,4 @@
+[Thumbnailer Entry]
+TryExec=lgp-thumbnailer
+Exec=lgp-thumbnailer %i %o
+MimeType=application/x-lgp;
