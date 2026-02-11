@@ -358,13 +358,14 @@ _copy_dir_with_symlinks() {
     done
 
     # Ensuite les symlinks dans les sous-dossiers
-    for item in "$dst_dir"/*; do
+    # IMPORTANT: itérer sur la SOURCE, pas sur la destination
+    for item in "$src_dir"/*; do
         [ -d "$item" ] && [ ! -L "$item" ] || continue  # que les vrais dossiers (pas les symlinks)
         local name
         name=$(basename "$item")
-        local rel_src="$src_dir/$name"
-        if [ -d "$rel_src" ]; then
-            _copy_dir_with_symlinks "$rel_src" "$item"
+        local rel_dst="$dst_dir/$name"
+        if [ -d "$rel_dst" ]; then
+            _copy_dir_with_symlinks "$item" "$rel_dst"
         fi
     done
 }
