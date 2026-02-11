@@ -136,6 +136,16 @@ mount_lgp() {
         fi
     fi
 
+    # Si le dossier existe mais n'est pas monté et n'est pas vide, le nettoyer
+    if [ -d "$MOUNT_DIR" ] && ! mountpoint -q "$MOUNT_DIR"; then
+        if [ -n "$(ls -A "$MOUNT_DIR" 2>/dev/null)" ]; then
+            echo "Dossier de montage existant et non vide détecté, nettoyage..."
+            rm -rf "$MOUNT_DIR"/* "$MOUNT_DIR"/.* 2>/dev/null || true
+        fi
+        # Supprimer le dossier vide
+        rmdir "$MOUNT_DIR" 2>/dev/null || rm -rf "$MOUNT_DIR" 2>/dev/null || true
+    fi
+
     # Vérifier que squashfuse est disponible
     if ! command -v squashfuse &> /dev/null; then
         error_exit "squashfuse n'est pas installé"
