@@ -31,10 +31,11 @@ class CreateWGPThread(QThread):
     progress = Signal(int, str)
     finished = Signal(bool, str)
     
-    def __init__(self, game_dir, game_name, config, parent=None):
+    def __init__(self, game_dir, output_filename, internal_game_name, config, parent=None):
         super().__init__(parent)
         self.game_dir = game_dir
-        self.game_name = game_name
+        self.output_filename = output_filename  # Nom du fichier de sortie
+        self.internal_game_name = internal_game_name  # Nom interne pour .gamename et chemins
         self.config = config
         self.cancelled = False
         
@@ -51,7 +52,7 @@ class CreateWGPThread(QThread):
             
             # Créer le squashfs avec progression temps réel
             self.progress.emit(30, "Préparation de l'archive WGP...")
-            wgp_file = os.path.join(os.path.dirname(self.game_dir), f"{self.game_name}.wgp")
+            wgp_file = os.path.join(os.path.dirname(self.game_dir), f"{self.output_filename}.wgp")
             
             result = self.create_squashfs(wgp_file)
             
@@ -79,9 +80,9 @@ class CreateWGPThread(QThread):
     
     def create_config_files(self):
         """Crée les fichiers de configuration (.gamename, .launch, .args, .fix, etc.)"""
-        # .gamename
+        # .gamename - utilise le nom interne pour les chemins
         with open(os.path.join(self.game_dir, '.gamename'), 'w') as f:
-            f.write(self.game_name)
+            f.write(self.internal_game_name)
         
         # .launch (contient le chemin relatif de l'exécutable)
         with open(os.path.join(self.game_dir, '.launch'), 'w') as f:
@@ -214,7 +215,7 @@ class CreateWGPThread(QThread):
                                 # C'est un symlink interne, on le remplace
                                 os.remove(source)
                                 os.makedirs(os.path.dirname(source), exist_ok=True)
-                                saves_base = f"/tmp/wgp-saves/{self.game_name}"
+                                saves_base = f"/tmp/wgp-saves/{self.internal_game_name}"
                                 os.symlink(os.path.join(saves_base, rel_path), source)
                                 print(f"DEBUG: Created symlink {source} -> {os.path.join(saves_base, rel_path)}")
                         else:
@@ -224,7 +225,7 @@ class CreateWGPThread(QThread):
                             else:
                                 os.remove(source)
                             os.makedirs(os.path.dirname(source), exist_ok=True)
-                            saves_base = f"/tmp/wgp-saves/{self.game_name}"
+                            saves_base = f"/tmp/wgp-saves/{self.internal_game_name}"
                             os.symlink(os.path.join(saves_base, rel_path), source)
                             print(f"DEBUG: Created symlink {source} -> {os.path.join(saves_base, rel_path)}")
         else:
@@ -276,7 +277,7 @@ class CreateWGPThread(QThread):
                                 # C'est un symlink interne, on le remplace
                                 os.remove(source)
                                 os.makedirs(os.path.dirname(source), exist_ok=True)
-                                extras_base = f"/tmp/wgp-extra/{self.game_name}"
+                                extras_base = f"/tmp/wgp-extra/{self.internal_game_name}"
                                 os.symlink(os.path.join(extras_base, rel_path), source)
                                 print(f"DEBUG: Created symlink {source} -> {os.path.join(extras_base, rel_path)}")
                         else:
@@ -286,7 +287,7 @@ class CreateWGPThread(QThread):
                             else:
                                 os.remove(source)
                             os.makedirs(os.path.dirname(source), exist_ok=True)
-                            extras_base = f"/tmp/wgp-extra/{self.game_name}"
+                            extras_base = f"/tmp/wgp-extra/{self.internal_game_name}"
                             os.symlink(os.path.join(extras_base, rel_path), source)
                             print(f"DEBUG: Created symlink {source} -> {os.path.join(extras_base, rel_path)}")
         else:
@@ -338,7 +339,7 @@ class CreateWGPThread(QThread):
                                 # C'est un symlink interne, on le remplace
                                 os.remove(source)
                                 os.makedirs(os.path.dirname(source), exist_ok=True)
-                                temps_base = f"/tmp/wgp-temp/{self.game_name}"
+                                temps_base = f"/tmp/wgp-temp/{self.internal_game_name}"
                                 os.symlink(os.path.join(temps_base, rel_path), source)
                                 print(f"DEBUG: Created symlink {source} -> {os.path.join(temps_base, rel_path)}")
                         else:
@@ -348,7 +349,7 @@ class CreateWGPThread(QThread):
                             else:
                                 os.remove(source)
                             os.makedirs(os.path.dirname(source), exist_ok=True)
-                            temps_base = f"/tmp/wgp-temp/{self.game_name}"
+                            temps_base = f"/tmp/wgp-temp/{self.internal_game_name}"
                             os.symlink(os.path.join(temps_base, rel_path), source)
                             print(f"DEBUG: Created symlink {source} -> {os.path.join(temps_base, rel_path)}")
         else:
@@ -652,15 +653,26 @@ class WGPWindow(QMainWindow):
         title_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(title_label)
         
-        # === SECTION HAUTE: Nom du paquet ===
+        # === SECTION HAUTE: Noms ===
+        # Nom du fichier (sortie)
         name_layout = QHBoxLayout()
-        name_label = QLabel("Nom du paquet:")
+        name_label = QLabel("Nom du fichier:")
         name_label.setFixedWidth(120)
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Nom du paquet WGP...")
+        self.name_input.setPlaceholderText("Nom du fichier WGP...")
         name_layout.addWidget(name_label)
         name_layout.addWidget(self.name_input)
         main_layout.addLayout(name_layout)
+        
+        # Nom interne du jeu (pour .gamename et chemins)
+        internal_name_layout = QHBoxLayout()
+        internal_name_label = QLabel("Nom du jeu:")
+        internal_name_label.setFixedWidth(120)
+        self.internal_name_input = QLineEdit()
+        self.internal_name_input.setPlaceholderText("Nom interne du jeu (pour les chemins)...")
+        internal_name_layout.addWidget(internal_name_label)
+        internal_name_layout.addWidget(self.internal_name_input)
+        main_layout.addLayout(internal_name_layout)
         
         # === SECTION MILIEU: Layout principal avec 2 colonnes ===
         middle_layout = QHBoxLayout()
@@ -880,18 +892,25 @@ class WGPWindow(QMainWindow):
         self.saves = []
         self.extras = []
         self.temps = []
+        self.internal_game_name = ""  # Nom interne pour .gamename et chemins
     
     def load_game_directory(self, game_dir):
         """Charge le dossier du jeu et les fichiers de configuration existants"""
         self.game_dir = os.path.abspath(game_dir)
-        self.game_name = os.path.basename(self.game_dir)
+        dir_name = os.path.basename(self.game_dir)
         
-        # Charger le nom du jeu depuis .gamename si existe
+        # Charger le nom interne du jeu depuis .gamename si existe
         gamename_file = os.path.join(self.game_dir, '.gamename')
         if os.path.exists(gamename_file):
             with open(gamename_file, 'r') as f:
-                self.game_name = f.read().strip()
-        self.name_input.setText(self.game_name)
+                self.internal_game_name = f.read().strip()
+        else:
+            self.internal_game_name = dir_name
+        
+        # Le nom du fichier par défaut est le nom du dossier
+        self.name_input.setText(dir_name)
+        # Le nom interne du jeu (modifiable)
+        self.internal_name_input.setText(self.internal_game_name)
         
         # Charger les arguments depuis .args si existe
         args_file = os.path.join(self.game_dir, '.args')
@@ -1417,31 +1436,37 @@ class WGPWindow(QMainWindow):
                         return
                 target_list.append(('dir', rel_path))
         
-        # Mettre à jour l'affichage
+        # Mettre à jour l'affichage et persister les changements
         if item_type == 'save':
             self.update_saves_list()
+            self._persist_saves()
         elif item_type == 'extra':
             self.update_extras_list()
+            self._persist_extras()
         else:
             self.update_temps_list()
+            self._persist_temps()
     
     def remove_item(self, item_type):
-        """Supprime un élément de la liste"""
+        """Supprime un élément de la liste et persiste les changements"""
         if item_type == 'save':
             current = self.saves_list.currentRow()
             if current >= 0:
                 del self.saves[current]
                 self.update_saves_list()
+                self._persist_saves()
         elif item_type == 'extra':
             current = self.extras_list.currentRow()
             if current >= 0:
                 del self.extras[current]
                 self.update_extras_list()
+                self._persist_extras()
         else:  # temp
             current = self.temps_list.currentRow()
             if current >= 0:
                 del self.temps[current]
                 self.update_temps_list()
+                self._persist_temps()
     
     def update_saves_list(self):
         """Met à jour la liste des sauvegardes"""
@@ -1464,102 +1489,91 @@ class WGPWindow(QMainWindow):
             prefix = "[Dossier] " if item_type == 'dir' else "[Fichier] "
             self.temps_list.addItem(prefix + path)
     
+    def _persist_saves(self):
+        """Sauvegarde la liste des saves dans .savepath"""
+        if self.saves:
+            with open(os.path.join(self.game_dir, '.savepath'), 'w') as f:
+                for item_type, rel_path in self.saves:
+                    prefix = 'D:' if item_type == 'dir' else 'F:'
+                    f.write(f"{prefix}{rel_path}\n")
+        else:
+            # Supprimer le fichier si la liste est vide
+            savepath_file = os.path.join(self.game_dir, '.savepath')
+            if os.path.exists(savepath_file):
+                os.remove(savepath_file)
+    
+    def _persist_extras(self):
+        """Sauvegarde la liste des extras dans .extrapath"""
+        if self.extras:
+            with open(os.path.join(self.game_dir, '.extrapath'), 'w') as f:
+                for item_type, rel_path in self.extras:
+                    prefix = 'D:' if item_type == 'dir' else 'F:'
+                    f.write(f"{prefix}{rel_path}\n")
+        else:
+            # Supprimer le fichier si la liste est vide
+            extrapath_file = os.path.join(self.game_dir, '.extrapath')
+            if os.path.exists(extrapath_file):
+                os.remove(extrapath_file)
+    
+    def _persist_temps(self):
+        """Sauvegarde la liste des temps dans .temppath"""
+        if self.temps:
+            with open(os.path.join(self.game_dir, '.temppath'), 'w') as f:
+                for item_type, rel_path in self.temps:
+                    prefix = 'D:' if item_type == 'dir' else 'F:'
+                    f.write(f"{prefix}{rel_path}\n")
+        else:
+            # Supprimer le fichier si la liste est vide
+            temppath_file = os.path.join(self.game_dir, '.temppath')
+            if os.path.exists(temppath_file):
+                os.remove(temppath_file)
+    
     def start_create_wgp(self):
         """Démarre la création du WGP"""
-        # Vérifier qu'aucune création n'est déjà en cours
         if self.is_creating:
-            QMessageBox.information(self, "Création en cours", "Une création de WGP est déjà en cours. Veuillez attendre qu'elle se termine.")
             return
         
-        # Récupérer le nom du jeu
-        game_name = self.name_input.text().strip()
-        if not game_name:
-            QMessageBox.warning(self, "Nom manquant", "Veuillez entrer un nom pour le paquet.")
+        # Vérifier qu'un exécutable est sélectionné
+        if not self.exe_list.currentItem():
+            QMessageBox.warning(self, "Attention", "Veuillez sélectionner un exécutable.")
             return
         
-        # Vérifier l'exécutable
-        if self.exe_list.currentRow() < 0:
-            QMessageBox.warning(self, "Exécutable manquant", "Veuillez sélectionner un exécutable principal.")
+        exe = self.exe_list.currentItem().text()
+        filename = self.name_input.text().strip()
+        
+        if not filename:
+            QMessageBox.warning(self, "Attention", "Veuillez entrer un nom de fichier.")
             return
         
-        # Configurer la création
+        # Mettre à jour le nom du fichier
+        output_filename = filename
+        
+        # Récupérer le nom interne du jeu depuis le champ
+        internal_game_name = self.internal_name_input.text().strip()
+        if not internal_game_name:
+            internal_game_name = filename
+        
+        # Créer la configuration
         config = {
-            'exe': self.exe_files[self.exe_list.currentRow()],
+            'exe': exe,
             'args': self.args_input.text(),
-            'compression': self.comp_combo.currentIndex() * 5,  # 0, 5, 10, 15, 19
+            'icon': self.icon_path,
             'fix_controller': self.fix_checkbox.isChecked(),
+            'compression': int(self.comp_combo.currentText().split('(')[1].rstrip(')')),
             'saves': self.saves,
             'extras': self.extras,
-            'temps': self.temps,
-            'icon': self.icon_path
+            'temps': self.temps
         }
         
-        wgp_file = os.path.join(os.path.dirname(self.game_dir), f"{game_name}.wgp")
-        
-        # Vérifier si le fichier existe
-        if os.path.exists(wgp_file):
-            reply = QMessageBox.question(
-                self, "Fichier existant",
-                f"{os.path.basename(wgp_file)} existe déjà. Voulez-vous l'écraser ?",
-                QMessageBox.Yes | QMessageBox.No
-            )
-            if reply == QMessageBox.No:
-                return
-        
-        # Lancer la création directement (pas de résumé)
-        self.do_create_wgp(game_name, config)
-    
-
-        
-
-    
-    def do_create_wgp(self, game_name, config):
-        """Effectue la création avec progression"""
-        # Marquer qu'une création est en cours et désactiver le bouton
+        # Désactiver le bouton créer
         self.is_creating = True
         self.create_btn.setEnabled(False)
-        self.create_btn.setText("Compression en cours...")
+        self.create_btn.setText("Création en cours...")
         
-        # Créer une fenêtre de progression sans barre (juste texte + bouton annuler)
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
-        
-        self.progress_dialog = QDialog(self)
-        self.progress_dialog.setWindowTitle("Compression WGP")
-        self.progress_dialog.setWindowModality(Qt.WindowModal)
-        self.progress_dialog.setMinimumWidth(400)
-        
-        layout = QVBoxLayout(self.progress_dialog)
-        
-        # Label pour le message
-        self.progress_label = QLabel("Initialisation...")
-        self.progress_label.setAlignment(Qt.AlignCenter)
-        font = self.progress_label.font()
-        font.setPointSize(11)
-        self.progress_label.setFont(font)
-        layout.addWidget(self.progress_label)
-        
-        # Bouton annuler
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        cancel_btn = QPushButton("Annuler")
-        cancel_btn.clicked.connect(self.cancel_compression)
-        btn_layout.addWidget(cancel_btn)
-        btn_layout.addStretch()
-        layout.addLayout(btn_layout)
-        
-        # Forcer l'affichage immédiat
-        self.progress_dialog.show()
-        self.progress_dialog.raise_()
-        self.progress_dialog.activateWindow()
-        QApplication.processEvents()
-        
-        # Créer et lancer le thread
-        self.create_thread = CreateWGPThread(self.game_dir, game_name, config)
-        self.create_thread.progress.connect(self.on_progress)
-        self.create_thread.finished.connect(self.on_finished)
-        
-        # La connexion cancelled est gérée par le bouton annuler
-        
+        # Créer et démarrer le thread avec le nom de fichier et le nom interne
+        self.create_thread = CreateWGPThread(self.game_dir, output_filename, internal_game_name, config, self)
+        self.create_thread.progress.connect(self.on_creation_progress)
+        self.create_thread.finished.connect(self.on_creation_finished)
         self.create_thread.start()
     
     def on_progress(self, value, message):

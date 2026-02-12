@@ -31,10 +31,11 @@ class CreateLGPThread(QThread):
     progress = Signal(int, str)
     finished = Signal(bool, str)
     
-    def __init__(self, game_dir, game_name, config, parent=None):
+    def __init__(self, game_dir, output_filename, internal_game_name, config, parent=None):
         super().__init__(parent)
         self.game_dir = game_dir
-        self.game_name = game_name
+        self.output_filename = output_filename  # Nom du fichier de sortie
+        self.internal_game_name = internal_game_name  # Nom interne pour .gamename et chemins
         self.config = config
         self.cancelled = False
         
@@ -51,7 +52,7 @@ class CreateLGPThread(QThread):
             
             # Créer le squashfs avec progression temps réel
             self.progress.emit(30, "Préparation de l'archive LGP...")
-            lgp_file = os.path.join(os.path.dirname(self.game_dir), f"{self.game_name}.lgp")
+            lgp_file = os.path.join(os.path.dirname(self.game_dir), f"{self.output_filename}.lgp")
             
             result = self.create_squashfs(lgp_file)
             
@@ -78,10 +79,10 @@ class CreateLGPThread(QThread):
             self.finished.emit(False, f"Erreur: {str(e)}")
     
     def create_config_files(self):
-        """Crée les fichiers de configuration (.gamename, .launch, .args, etc.)"""""
-        # .gamename
+        """Crée les fichiers de configuration (.gamename, .launch, .args, etc.)"""
+        # .gamename - utilise le nom interne pour les chemins
         with open(os.path.join(self.game_dir, '.gamename'), 'w') as f:
-            f.write(self.game_name)
+            f.write(self.internal_game_name)
         
         # .launch (contient le chemin relatif de l'exécutable)
         with open(os.path.join(self.game_dir, '.launch'), 'w') as f:
@@ -210,7 +211,7 @@ class CreateLGPThread(QThread):
                                 # C'est un symlink interne, on le remplace
                                 os.remove(source)
                                 os.makedirs(os.path.dirname(source), exist_ok=True)
-                                saves_base = f"/tmp/lgp-saves/{self.game_name}"
+                                saves_base = f"/tmp/lgp-saves/{self.internal_game_name}"
                                 os.symlink(os.path.join(saves_base, rel_path), source)
                                 print(f"DEBUG: Created symlink {source} -> {os.path.join(saves_base, rel_path)}")
                         else:
@@ -220,7 +221,7 @@ class CreateLGPThread(QThread):
                             else:
                                 os.remove(source)
                             os.makedirs(os.path.dirname(source), exist_ok=True)
-                            saves_base = f"/tmp/lgp-saves/{self.game_name}"
+                            saves_base = f"/tmp/lgp-saves/{self.internal_game_name}"
                             os.symlink(os.path.join(saves_base, rel_path), source)
                             print(f"DEBUG: Created symlink {source} -> {os.path.join(saves_base, rel_path)}")
         else:
@@ -272,7 +273,7 @@ class CreateLGPThread(QThread):
                                 # C'est un symlink interne, on le remplace
                                 os.remove(source)
                                 os.makedirs(os.path.dirname(source), exist_ok=True)
-                                extras_base = f"/tmp/lgp-extra/{self.game_name}"
+                                extras_base = f"/tmp/lgp-extra/{self.internal_game_name}"
                                 os.symlink(os.path.join(extras_base, rel_path), source)
                                 print(f"DEBUG: Created symlink {source} -> {os.path.join(extras_base, rel_path)}")
                         else:
@@ -282,7 +283,7 @@ class CreateLGPThread(QThread):
                             else:
                                 os.remove(source)
                             os.makedirs(os.path.dirname(source), exist_ok=True)
-                            extras_base = f"/tmp/lgp-extra/{self.game_name}"
+                            extras_base = f"/tmp/lgp-extra/{self.internal_game_name}"
                             os.symlink(os.path.join(extras_base, rel_path), source)
                             print(f"DEBUG: Created symlink {source} -> {os.path.join(extras_base, rel_path)}")
         else:
@@ -334,7 +335,7 @@ class CreateLGPThread(QThread):
                                 # C'est un symlink interne, on le remplace
                                 os.remove(source)
                                 os.makedirs(os.path.dirname(source), exist_ok=True)
-                                temps_base = f"/tmp/lgp-temp/{self.game_name}"
+                                temps_base = f"/tmp/lgp-temp/{self.internal_game_name}"
                                 os.symlink(os.path.join(temps_base, rel_path), source)
                                 print(f"DEBUG: Created symlink {source} -> {os.path.join(temps_base, rel_path)}")
                         else:
@@ -344,7 +345,7 @@ class CreateLGPThread(QThread):
                             else:
                                 os.remove(source)
                             os.makedirs(os.path.dirname(source), exist_ok=True)
-                            temps_base = f"/tmp/lgp-temp/{self.game_name}"
+                            temps_base = f"/tmp/lgp-temp/{self.internal_game_name}"
                             os.symlink(os.path.join(temps_base, rel_path), source)
                             print(f"DEBUG: Created symlink {source} -> {os.path.join(temps_base, rel_path)}")
         else:
@@ -648,15 +649,26 @@ class LGPWindow(QMainWindow):
         title_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(title_label)
         
-        # === SECTION HAUTE: Nom du paquet ===
+        # === SECTION HAUTE: Noms ===
+        # Nom du fichier (sortie)
         name_layout = QHBoxLayout()
-        name_label = QLabel("Nom du paquet:")
+        name_label = QLabel("Nom du fichier:")
         name_label.setFixedWidth(120)
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Nom du paquet LGP...")
+        self.name_input.setPlaceholderText("Nom du fichier LGP...")
         name_layout.addWidget(name_label)
         name_layout.addWidget(self.name_input)
         main_layout.addLayout(name_layout)
+        
+        # Nom interne du jeu (pour .gamename et chemins)
+        internal_name_layout = QHBoxLayout()
+        internal_name_label = QLabel("Nom du jeu:")
+        internal_name_label.setFixedWidth(120)
+        self.internal_name_input = QLineEdit()
+        self.internal_name_input.setPlaceholderText("Nom interne du jeu (pour les chemins)...")
+        internal_name_layout.addWidget(internal_name_label)
+        internal_name_layout.addWidget(self.internal_name_input)
+        main_layout.addLayout(internal_name_layout)
         
         # === SECTION MILIEU: Layout principal avec 2 colonnes ===
         middle_layout = QHBoxLayout()
@@ -873,18 +885,25 @@ class LGPWindow(QMainWindow):
         self.saves = []
         self.extras = []
         self.temps = []
+        self.internal_game_name = ""  # Nom interne pour .gamename et chemins
     
     def load_game_directory(self, game_dir):
         """Charge le dossier du jeu et les fichiers de configuration existants"""
         self.game_dir = os.path.abspath(game_dir)
-        self.game_name = os.path.basename(self.game_dir)
+        dir_name = os.path.basename(self.game_dir)
         
-        # Charger le nom du jeu depuis .gamename si existe
+        # Charger le nom interne du jeu depuis .gamename si existe
         gamename_file = os.path.join(self.game_dir, '.gamename')
         if os.path.exists(gamename_file):
             with open(gamename_file, 'r') as f:
-                self.game_name = f.read().strip()
-        self.name_input.setText(self.game_name)
+                self.internal_game_name = f.read().strip()
+        else:
+            self.internal_game_name = dir_name
+        
+        # Le nom du fichier par défaut est le nom du dossier
+        self.name_input.setText(dir_name)
+        # Le nom interne du jeu (modifiable)
+        self.internal_name_input.setText(self.internal_game_name)
         
         # Charger les arguments depuis .args si existe
         args_file = os.path.join(self.game_dir, '.args')
@@ -1332,16 +1351,19 @@ class LGPWindow(QMainWindow):
             target_name = "sauvegardes"
             other_lists = [('extra', self.extras, "extras"), ('temp', self.temps, "temporaires")]
             update_func = self.update_saves_list
+            persist_func = self._persist_saves
         elif item_type == 'extra':
             target_list = self.extras
             target_name = "extras"
             other_lists = [('save', self.saves, "sauvegardes"), ('temp', self.temps, "temporaires")]
             update_func = self.update_extras_list
+            persist_func = self._persist_extras
         else:  # temp
             target_list = self.temps
             target_name = "temporaires"
             other_lists = [('save', self.saves, "sauvegardes"), ('extra', self.extras, "extras")]
             update_func = self.update_temps_list
+            persist_func = self._persist_temps
         
         if item_subtype == 'file':
             file_path, _ = QFileDialog.getOpenFileName(self, "Sélectionner un fichier", self.game_dir)
@@ -1368,6 +1390,7 @@ class LGPWindow(QMainWindow):
                         return
                 target_list.append(('file', rel_path))
                 update_func()
+                persist_func()
         else:  # dir
             dir_path = QFileDialog.getExistingDirectory(self, "Sélectionner un dossier", self.game_dir)
             if dir_path:
@@ -1393,24 +1416,28 @@ class LGPWindow(QMainWindow):
                         return
                 target_list.append(('dir', rel_path))
                 update_func()
+                persist_func()
     
     def remove_item(self, item_type):
-        """Supprime un élément de la liste"""
+        """Supprime un élément de la liste et persiste les changements"""
         if item_type == 'save':
             current_row = self.saves_list.currentRow()
             if current_row >= 0:
                 self.saves.pop(current_row)
                 self.update_saves_list()
+                self._persist_saves()
         elif item_type == 'extra':
             current_row = self.extras_list.currentRow()
             if current_row >= 0:
                 self.extras.pop(current_row)
                 self.update_extras_list()
+                self._persist_extras()
         else:  # temp
             current_row = self.temps_list.currentRow()
             if current_row >= 0:
                 self.temps.pop(current_row)
                 self.update_temps_list()
+                self._persist_temps()
     
     def update_saves_list(self):
         """Met à jour l'affichage de la liste des sauvegardes"""
@@ -1433,6 +1460,45 @@ class LGPWindow(QMainWindow):
             prefix = "[D] " if item_type == 'dir' else "[F] "
             self.temps_list.addItem(f"{prefix}{path}")
     
+    def _persist_saves(self):
+        """Sauvegarde la liste des saves dans .savepath"""
+        if self.saves:
+            with open(os.path.join(self.game_dir, '.savepath'), 'w') as f:
+                for item_type, rel_path in self.saves:
+                    prefix = 'D:' if item_type == 'dir' else 'F:'
+                    f.write(f"{prefix}{rel_path}\n")
+        else:
+            # Supprimer le fichier si la liste est vide
+            savepath_file = os.path.join(self.game_dir, '.savepath')
+            if os.path.exists(savepath_file):
+                os.remove(savepath_file)
+    
+    def _persist_extras(self):
+        """Sauvegarde la liste des extras dans .extrapath"""
+        if self.extras:
+            with open(os.path.join(self.game_dir, '.extrapath'), 'w') as f:
+                for item_type, rel_path in self.extras:
+                    prefix = 'D:' if item_type == 'dir' else 'F:'
+                    f.write(f"{prefix}{rel_path}\n")
+        else:
+            # Supprimer le fichier si la liste est vide
+            extrapath_file = os.path.join(self.game_dir, '.extrapath')
+            if os.path.exists(extrapath_file):
+                os.remove(extrapath_file)
+    
+    def _persist_temps(self):
+        """Sauvegarde la liste des temps dans .temppath"""
+        if self.temps:
+            with open(os.path.join(self.game_dir, '.temppath'), 'w') as f:
+                for item_type, rel_path in self.temps:
+                    prefix = 'D:' if item_type == 'dir' else 'F:'
+                    f.write(f"{prefix}{rel_path}\n")
+        else:
+            # Supprimer le fichier si la liste est vide
+            temppath_file = os.path.join(self.game_dir, '.temppath')
+            if os.path.exists(temppath_file):
+                os.remove(temppath_file)
+    
     def start_create_lgp(self):
         """Démarre la création du LGP avec fenêtre de progression"""
         # Vérifier qu'on n'est pas déjà en train de créer un LGP
@@ -1440,10 +1506,10 @@ class LGPWindow(QMainWindow):
             QMessageBox.warning(self, "Création en cours", "Une création de LGP est déjà en cours. Veuillez attendre qu'elle se termine.")
             return
         
-        # Vérifier que le nom est valide
-        game_name = self.name_input.text().strip()
-        if not game_name:
-            QMessageBox.warning(self, "Nom manquant", "Veuillez entrer un nom pour le paquet.")
+        # Vérifier que le nom de fichier est valide
+        filename = self.name_input.text().strip()
+        if not filename:
+            QMessageBox.warning(self, "Nom manquant", "Veuillez entrer un nom pour le fichier.")
             return
         
         # Vérifier qu'un exécutable est sélectionné
@@ -1452,7 +1518,7 @@ class LGPWindow(QMainWindow):
             return
         
         # Vérifier si le fichier existe déjà
-        lgp_file = os.path.join(os.path.dirname(self.game_dir), f"{game_name}.lgp")
+        lgp_file = os.path.join(os.path.dirname(self.game_dir), f"{filename}.lgp")
         if os.path.exists(lgp_file):
             reply = QMessageBox.question(
                 self, "Fichier existant",
@@ -1507,6 +1573,11 @@ class LGPWindow(QMainWindow):
         else:
             comp_level = int(comp_text)
         
+        # Récupérer le nom interne du jeu depuis le champ
+        internal_game_name = self.internal_name_input.text().strip()
+        if not internal_game_name:
+            internal_game_name = filename
+        
         # Récupérer la configuration
         config = {
             'exe': self.exe_files[self.exe_list.currentRow()],
@@ -1518,8 +1589,8 @@ class LGPWindow(QMainWindow):
             'compression': comp_level
         }
         
-        # Créer et lancer le thread
-        self.create_thread = CreateLGPThread(self.game_dir, game_name, config)
+        # Créer et lancer le thread avec le nom de fichier et le nom interne
+        self.create_thread = CreateLGPThread(self.game_dir, filename, internal_game_name, config)
         self.create_thread.progress.connect(self.on_progress)
         self.create_thread.finished.connect(self.on_finished)
         self.create_thread.start()
