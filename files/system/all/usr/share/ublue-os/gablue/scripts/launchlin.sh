@@ -530,37 +530,22 @@ cleanup_extras_symlink() {
     [ -L "$GAME_EXTRAS_SYMLINK" ] && rm -f "$GAME_EXTRAS_SYMLINK"
 }
 
-# Crée le symlink /tmp/lgp-temp/$GAME_INTERNAL_NAME
+# Crée le dossier /tmp/lgp-temp/$GAME_INTERNAL_NAME pour les fichiers temporaires
+# Note: Pas besoin de symlink pour les temps car ils sont déjà dans /tmp
 setup_temp_symlink() {
     # Ne rien faire si le LGP n'a pas de temps
     has_temps || return 0
 
     local GAME_TEMP_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
-    local GAME_TEMP_SYMLINK="$TEMP_SYMLINK/$GAME_INTERNAL_NAME"
 
     # Créer le dossier temporaire pour ce jeu
     mkdir -p "$GAME_TEMP_DIR"
-
-    # Créer le dossier /tmp/lgp-temp si nécessaire
-    mkdir -p "$TEMP_SYMLINK"
-
-    # Supprimer l'ancien symlink du jeu s'il existe
-    if [ -L "$GAME_TEMP_SYMLINK" ]; then
-        rm -f "$GAME_TEMP_SYMLINK"
-    fi
-
-    # Créer le symlink pour ce jeu
-    ln -s "$GAME_TEMP_DIR" "$GAME_TEMP_SYMLINK"
-    echo "Symlink créé: $GAME_TEMP_SYMLINK -> $GAME_TEMP_DIR"
+    echo "Dossier temporaire créé: $GAME_TEMP_DIR"
 }
 
-# Supprime le symlink /tmp/lgp-temp/$GAME_INTERNAL_NAME et nettoie les fichiers
+# Nettoie les fichiers temporaires /tmp/lgp-temp/$GAME_INTERNAL_NAME
 cleanup_temp_symlink() {
-    local GAME_TEMP_SYMLINK="$TEMP_SYMLINK/$GAME_INTERNAL_NAME"
     local GAME_TEMP_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
-    
-    # Supprimer le symlink
-    [ -L "$GAME_TEMP_SYMLINK" ] && rm -f "$GAME_TEMP_SYMLINK"
     
     # Nettoyer les fichiers temporaires
     if [ -d "$GAME_TEMP_DIR" ]; then

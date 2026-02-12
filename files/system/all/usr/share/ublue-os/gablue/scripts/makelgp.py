@@ -165,6 +165,9 @@ class CreateLGPThread(QThread):
         print(f"DEBUG: saves = {self.config.get('saves', [])}")
         print(f"DEBUG: extras = {self.config.get('extras', [])}")
         
+        # Dictionnaire pour sauvegarder les symlinks originaux
+        symlinks_backup = {}
+        
         # Traiter les sauvegardes
         if self.config['saves']:
             saves_dir = os.path.join(self.game_dir, '.save')
@@ -185,6 +188,20 @@ class CreateLGPThread(QThread):
                     print(f"DEBUG: target = {target}")
 
                     if os.path.exists(source):
+                        # Sauvegarder les infos du symlink si c'en est un (avant de copier)
+                        if os.path.islink(source):
+                            original_target = os.readlink(source)
+                            # Convertir les cibles absolues en relatives pour que ça fonctionne dans l'image
+                            if os.path.isabs(original_target):
+                                # Calculer le chemin relatif par rapport au dossier du jeu
+                                relative_target = os.path.relpath(original_target, os.path.dirname(source))
+                                symlinks_backup[rel_path] = relative_target
+                                print(f"DEBUG: Backing up symlink {rel_path} -> {relative_target} (converted from absolute)")
+                            else:
+                                # Déjà relatif, on garde tel quel
+                                symlinks_backup[rel_path] = original_target
+                                print(f"DEBUG: Backing up symlink {rel_path} -> {original_target}")
+                        
                         # Copier vers .save (contenu uniquement pour les dossiers)
                         os.makedirs(os.path.dirname(target), exist_ok=True)
                         if item_type == 'dir':
@@ -247,6 +264,20 @@ class CreateLGPThread(QThread):
                     print(f"DEBUG: target = {target}")
 
                     if os.path.exists(source):
+                        # Sauvegarder les infos du symlink si c'en est un (avant de copier)
+                        if os.path.islink(source):
+                            original_target = os.readlink(source)
+                            # Convertir les cibles absolues en relatives pour que ça fonctionne dans l'image
+                            if os.path.isabs(original_target):
+                                # Calculer le chemin relatif par rapport au dossier du jeu
+                                relative_target = os.path.relpath(original_target, os.path.dirname(source))
+                                symlinks_backup[rel_path] = relative_target
+                                print(f"DEBUG: Backing up symlink {rel_path} -> {relative_target} (converted from absolute)")
+                            else:
+                                # Déjà relatif, on garde tel quel
+                                symlinks_backup[rel_path] = original_target
+                                print(f"DEBUG: Backing up symlink {rel_path} -> {original_target}")
+                        
                         # Copier vers .extra (contenu uniquement pour les dossiers)
                         os.makedirs(os.path.dirname(target), exist_ok=True)
                         if item_type == 'dir':
@@ -309,6 +340,20 @@ class CreateLGPThread(QThread):
                     print(f"DEBUG: target = {target}")
 
                     if os.path.exists(source):
+                        # Sauvegarder les infos du symlink si c'en est un (avant de copier)
+                        if os.path.islink(source):
+                            original_target = os.readlink(source)
+                            # Convertir les cibles absolues en relatives pour que ça fonctionne dans l'image
+                            if os.path.isabs(original_target):
+                                # Calculer le chemin relatif par rapport au dossier du jeu
+                                relative_target = os.path.relpath(original_target, os.path.dirname(source))
+                                symlinks_backup[rel_path] = relative_target
+                                print(f"DEBUG: Backing up symlink {rel_path} -> {relative_target} (converted from absolute)")
+                            else:
+                                # Déjà relatif, on garde tel quel
+                                symlinks_backup[rel_path] = original_target
+                                print(f"DEBUG: Backing up symlink {rel_path} -> {original_target}")
+                        
                         # Copier vers .temp (contenu uniquement pour les dossiers)
                         os.makedirs(os.path.dirname(target), exist_ok=True)
                         if item_type == 'dir':
@@ -350,6 +395,14 @@ class CreateLGPThread(QThread):
                             print(f"DEBUG: Created symlink {source} -> {os.path.join(temps_base, rel_path)}")
         else:
             print(f"DEBUG: No temps to process")
+        
+        # Sauvegarder les infos des symlinks dans un fichier pour pouvoir les restaurer
+        if symlinks_backup:
+            symlinks_file = os.path.join(self.game_dir, '.symlinks_backup')
+            with open(symlinks_file, 'w') as f:
+                for rel_path, target in symlinks_backup.items():
+                    f.write(f"{rel_path}|{target}\n")
+            print(f"DEBUG: Saved {len(symlinks_backup)} symlinks to {symlinks_file}")
     
     def create_squashfs(self, lgp_file):
         """Crée l'archive squashfs avec progression temps réel basée sur la taille des fichiers"""
@@ -490,9 +543,21 @@ class CreateLGPThread(QThread):
                 shutil.rmtree(path)
     
     def restore_files(self):
-        """Restaure les fichiers originaux depuis .save et .extra"""
+        """Restaure les fichiers originaux depuis .save et .extra, avec restauration des symlinks"""
         print(f"DEBUG: restore_files called")
         print(f"DEBUG: game_dir = {self.game_dir}")
+        
+        # Charger les infos des symlinks sauvegardés
+        symlinks_backup = {}
+        symlinks_file = os.path.join(self.game_dir, '.symlinks_backup')
+        if os.path.exists(symlinks_file):
+            with open(symlinks_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and '|' in line:
+                        rel_path, target = line.split('|', 1)
+                        symlinks_backup[rel_path] = target
+            print(f"DEBUG: Loaded {len(symlinks_backup)} symlinks from backup")
         
         # Restaurer depuis .save en utilisant .savepath
         savepath_file = os.path.join(self.game_dir, '.savepath')
@@ -512,8 +577,6 @@ class CreateLGPThread(QThread):
                     original_path = os.path.join(self.game_dir, rel_path)
                     
                     print(f"DEBUG: Restoring save: {rel_path}")
-                    print(f"DEBUG: backup_path = {backup_path}, exists={os.path.exists(backup_path)}")
-                    print(f"DEBUG: original_path = {original_path}")
 
                     if not os.path.exists(backup_path):
                         print(f"DEBUG: WARNING - backup_path does not exist, skipping")
@@ -530,14 +593,21 @@ class CreateLGPThread(QThread):
                         else:
                             os.remove(original_path)
 
-                    # Restaurer depuis backup (contenu uniquement pour les dossiers)
-                    os.makedirs(os.path.dirname(original_path), exist_ok=True)
-                    if os.path.isdir(backup_path):
-                        print(f"DEBUG: Copying dir contents from {backup_path} to {original_path}")
-                        self._copy_dir_contents(backup_path, original_path)
+                    # Si c'était un symlink original, le restaurer
+                    if rel_path in symlinks_backup:
+                        original_target = symlinks_backup[rel_path]
+                        os.makedirs(os.path.dirname(original_path), exist_ok=True)
+                        os.symlink(original_target, original_path)
+                        print(f"DEBUG: Restored symlink {original_path} -> {original_target}")
                     else:
-                        print(f"DEBUG: Copying file from {backup_path} to {original_path}")
-                        shutil.copy2(backup_path, original_path)
+                        # Sinon, restaurer depuis backup (contenu uniquement pour les dossiers)
+                        os.makedirs(os.path.dirname(original_path), exist_ok=True)
+                        if os.path.isdir(backup_path):
+                            print(f"DEBUG: Copying dir contents from {backup_path} to {original_path}")
+                            self._copy_dir_contents(backup_path, original_path)
+                        else:
+                            print(f"DEBUG: Copying file from {backup_path} to {original_path}")
+                            shutil.copy2(backup_path, original_path)
                     
                     print(f"DEBUG: Restore complete for {rel_path}")
 
@@ -566,12 +636,18 @@ class CreateLGPThread(QThread):
                         else:
                             os.remove(original_path)
 
-                    # Restaurer depuis backup (contenu uniquement pour les dossiers)
-                    os.makedirs(os.path.dirname(original_path), exist_ok=True)
-                    if os.path.isdir(backup_path):
-                        self._copy_dir_contents(backup_path, original_path)
+                    # Si c'était un symlink original, le restaurer
+                    if rel_path in symlinks_backup:
+                        original_target = symlinks_backup[rel_path]
+                        os.makedirs(os.path.dirname(original_path), exist_ok=True)
+                        os.symlink(original_target, original_path)
                     else:
-                        shutil.copy2(backup_path, original_path)
+                        # Sinon, restaurer depuis backup
+                        os.makedirs(os.path.dirname(original_path), exist_ok=True)
+                        if os.path.isdir(backup_path):
+                            self._copy_dir_contents(backup_path, original_path)
+                        else:
+                            shutil.copy2(backup_path, original_path)
 
         # Restaurer depuis .temp en utilisant .temppath
         temppath_file = os.path.join(self.game_dir, '.temppath')
@@ -598,12 +674,18 @@ class CreateLGPThread(QThread):
                         else:
                             os.remove(original_path)
 
-                    # Restaurer depuis backup (contenu uniquement pour les dossiers)
-                    os.makedirs(os.path.dirname(original_path), exist_ok=True)
-                    if os.path.isdir(backup_path):
-                        self._copy_dir_contents(backup_path, original_path)
+                    # Si c'était un symlink original, le restaurer
+                    if rel_path in symlinks_backup:
+                        original_target = symlinks_backup[rel_path]
+                        os.makedirs(os.path.dirname(original_path), exist_ok=True)
+                        os.symlink(original_target, original_path)
                     else:
-                        shutil.copy2(backup_path, original_path)
+                        # Sinon, restaurer depuis backup
+                        os.makedirs(os.path.dirname(original_path), exist_ok=True)
+                        if os.path.isdir(backup_path):
+                            self._copy_dir_contents(backup_path, original_path)
+                        else:
+                            shutil.copy2(backup_path, original_path)
     
     def cancel(self):
         self.cancelled = True
@@ -1368,6 +1450,40 @@ class LGPWindow(QMainWindow):
         if item_subtype == 'file':
             file_path, _ = QFileDialog.getOpenFileName(self, "Sélectionner un fichier", self.game_dir)
             if file_path:
+                # Vérifier si le fichier est hors du dossier du jeu
+                if not file_path.startswith(self.game_dir + os.sep) and file_path != self.game_dir:
+                    # Proposer de copier le fichier dans le jeu
+                    reply = QMessageBox.question(
+                        self, "Fichier externe",
+                        f"Le fichier sélectionné est hors du dossier du jeu.\n\n"
+                        f"Voulez-vous le copier dans le dossier du jeu ?\n\n"
+                        f"(Sinon, il ne sera pas inclus dans le paquet LGP)",
+                        QMessageBox.Yes | QMessageBox.No
+                    )
+                    if reply == QMessageBox.Yes:
+                        # Copier le fichier dans le dossier du jeu
+                        file_name = os.path.basename(file_path)
+                        dest_path = os.path.join(self.game_dir, file_name)
+                        
+                        # Si un fichier du même nom existe déjà, ajouter un suffixe
+                        counter = 1
+                        base_name, ext = os.path.splitext(file_name)
+                        while os.path.exists(dest_path):
+                            dest_path = os.path.join(self.game_dir, f"{base_name}_{counter}{ext}")
+                            counter += 1
+                        
+                        try:
+                            shutil.copy2(file_path, dest_path)
+                            file_path = dest_path
+                            QMessageBox.information(self, "Fichier copié", 
+                                f"Fichier copié dans:\n{dest_path}")
+                        except Exception as e:
+                            QMessageBox.warning(self, "Erreur", 
+                                f"Impossible de copier le fichier:\n{str(e)}")
+                            return
+                    else:
+                        return
+                
                 rel_path = os.path.relpath(file_path, self.game_dir)
                 # Vérifier si déjà présent dans la liste cible
                 if ('file', rel_path) in target_list:
@@ -1394,6 +1510,39 @@ class LGPWindow(QMainWindow):
         else:  # dir
             dir_path = QFileDialog.getExistingDirectory(self, "Sélectionner un dossier", self.game_dir)
             if dir_path:
+                # Vérifier si le dossier est hors du dossier du jeu
+                if not dir_path.startswith(self.game_dir + os.sep) and dir_path != self.game_dir:
+                    # Proposer de copier le dossier dans le jeu
+                    reply = QMessageBox.question(
+                        self, "Dossier externe",
+                        f"Le dossier sélectionné est hors du dossier du jeu.\n\n"
+                        f"Voulez-vous le copier dans le dossier du jeu ?\n\n"
+                        f"(Sinon, il ne sera pas inclus dans le paquet LGP)",
+                        QMessageBox.Yes | QMessageBox.No
+                    )
+                    if reply == QMessageBox.Yes:
+                        # Copier le dossier dans le dossier du jeu
+                        dir_name = os.path.basename(dir_path)
+                        dest_path = os.path.join(self.game_dir, dir_name)
+                        
+                        # Si un dossier du même nom existe déjà, ajouter un suffixe
+                        counter = 1
+                        while os.path.exists(dest_path):
+                            dest_path = os.path.join(self.game_dir, f"{dir_name}_{counter}")
+                            counter += 1
+                        
+                        try:
+                            shutil.copytree(dir_path, dest_path)
+                            dir_path = dest_path
+                            QMessageBox.information(self, "Dossier copié", 
+                                f"Dossier copié dans:\n{dest_path}")
+                        except Exception as e:
+                            QMessageBox.warning(self, "Erreur", 
+                                f"Impossible de copier le dossier:\n{str(e)}")
+                            return
+                    else:
+                        return
+                
                 rel_path = os.path.relpath(dir_path, self.game_dir)
                 # Vérifier si déjà présent dans la liste cible
                 if ('dir', rel_path) in target_list:
