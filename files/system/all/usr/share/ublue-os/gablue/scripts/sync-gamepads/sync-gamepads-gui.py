@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 
 """
 Interface graphique moderne pour sync-gamepads
@@ -651,19 +651,13 @@ class SyncGamepadsGUI(QMainWindow):
             self.scanning_screen.add_log(f"Erreur: {message}", "ERROR")
             
     def finish_scan(self):
-        """Terminer le scan et afficher l'écran de fin"""
+        """Terminer le scan et fermer l'application"""
         if self.scan_thread and self.scan_thread.isRunning():
             self.scan_thread.stop()
             self.scan_thread.wait()
         
-        # Créer et afficher l'écran de fin
-        self.finished_screen = FinishedScreen(
-            self.scanning_screen.controllers,
-            self.scanning_screen.total_connected
-        )
-        self.finished_screen.close_signal.connect(self.close)
-        self.stack.addWidget(self.finished_screen)
-        self.stack.setCurrentWidget(self.finished_screen)
+        # Fermer directement l'application
+        self.close()
         
     def closeEvent(self, event):
         """Gérer la fermeture de la fenêtre"""
