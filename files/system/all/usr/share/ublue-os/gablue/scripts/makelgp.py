@@ -200,16 +200,29 @@ class CreateLGPThread(QThread):
                             print(f"DEBUG: ERROR - Copy failed, target does not exist!")
 
                         # Créer le symlink
-                        saves_base = f"/tmp/lgp-saves/{self.game_name}"
+                        # Si le source est déjà un symlink vers l'extérieur, on le garde tel quel
                         if os.path.islink(source):
-                            os.remove(source)
-                        elif os.path.isdir(source):
-                            shutil.rmtree(source)
+                            link_target = os.readlink(source)
+                            if os.path.isabs(link_target) and not link_target.startswith(self.game_dir):
+                                # C'est un symlink externe, on le garde
+                                print(f"DEBUG: Preserving external symlink {source} -> {link_target}")
+                            else:
+                                # C'est un symlink interne, on le remplace
+                                os.remove(source)
+                                os.makedirs(os.path.dirname(source), exist_ok=True)
+                                saves_base = f"/tmp/lgp-saves/{self.game_name}"
+                                os.symlink(os.path.join(saves_base, rel_path), source)
+                                print(f"DEBUG: Created symlink {source} -> {os.path.join(saves_base, rel_path)}")
                         else:
-                            os.remove(source)
-                        os.makedirs(os.path.dirname(source), exist_ok=True)
-                        os.symlink(os.path.join(saves_base, rel_path), source)
-                        print(f"DEBUG: Created symlink {source} -> {os.path.join(saves_base, rel_path)}")
+                            # C'est un vrai fichier/dossier, on le remplace
+                            if os.path.isdir(source):
+                                shutil.rmtree(source)
+                            else:
+                                os.remove(source)
+                            os.makedirs(os.path.dirname(source), exist_ok=True)
+                            saves_base = f"/tmp/lgp-saves/{self.game_name}"
+                            os.symlink(os.path.join(saves_base, rel_path), source)
+                            print(f"DEBUG: Created symlink {source} -> {os.path.join(saves_base, rel_path)}")
         else:
             print(f"DEBUG: No saves to process")
 
@@ -248,17 +261,30 @@ class CreateLGPThread(QThread):
                         else:
                             print(f"DEBUG: ERROR - Copy failed, target does not exist!")
 
-                        # Créer le symlink vers /tmp/lgp-extra (comme pour les saves)
-                        extras_base = f"/tmp/lgp-extra/{self.game_name}"
+                        # Créer le symlink vers /tmp/lgp-extra
+                        # Si le source est déjà un symlink vers l'extérieur, on le garde tel quel
                         if os.path.islink(source):
-                            os.remove(source)
-                        elif os.path.isdir(source):
-                            shutil.rmtree(source)
+                            link_target = os.readlink(source)
+                            if os.path.isabs(link_target) and not link_target.startswith(self.game_dir):
+                                # C'est un symlink externe, on le garde
+                                print(f"DEBUG: Preserving external symlink {source} -> {link_target}")
+                            else:
+                                # C'est un symlink interne, on le remplace
+                                os.remove(source)
+                                os.makedirs(os.path.dirname(source), exist_ok=True)
+                                extras_base = f"/tmp/lgp-extra/{self.game_name}"
+                                os.symlink(os.path.join(extras_base, rel_path), source)
+                                print(f"DEBUG: Created symlink {source} -> {os.path.join(extras_base, rel_path)}")
                         else:
-                            os.remove(source)
-                        os.makedirs(os.path.dirname(source), exist_ok=True)
-                        os.symlink(os.path.join(extras_base, rel_path), source)
-                        print(f"DEBUG: Created symlink {source} -> {os.path.join(extras_base, rel_path)}")
+                            # C'est un vrai fichier/dossier, on le remplace
+                            if os.path.isdir(source):
+                                shutil.rmtree(source)
+                            else:
+                                os.remove(source)
+                            os.makedirs(os.path.dirname(source), exist_ok=True)
+                            extras_base = f"/tmp/lgp-extra/{self.game_name}"
+                            os.symlink(os.path.join(extras_base, rel_path), source)
+                            print(f"DEBUG: Created symlink {source} -> {os.path.join(extras_base, rel_path)}")
         else:
             print(f"DEBUG: No extras to process")
 
@@ -298,16 +324,29 @@ class CreateLGPThread(QThread):
                             print(f"DEBUG: ERROR - Copy failed, target does not exist!")
 
                         # Créer le symlink vers /tmp/lgp-temp
-                        temps_base = f"/tmp/lgp-temp/{self.game_name}"
+                        # Si le source est déjà un symlink vers l'extérieur, on le garde tel quel
                         if os.path.islink(source):
-                            os.remove(source)
-                        elif os.path.isdir(source):
-                            shutil.rmtree(source)
+                            link_target = os.readlink(source)
+                            if os.path.isabs(link_target) and not link_target.startswith(self.game_dir):
+                                # C'est un symlink externe, on le garde
+                                print(f"DEBUG: Preserving external symlink {source} -> {link_target}")
+                            else:
+                                # C'est un symlink interne, on le remplace
+                                os.remove(source)
+                                os.makedirs(os.path.dirname(source), exist_ok=True)
+                                temps_base = f"/tmp/lgp-temp/{self.game_name}"
+                                os.symlink(os.path.join(temps_base, rel_path), source)
+                                print(f"DEBUG: Created symlink {source} -> {os.path.join(temps_base, rel_path)}")
                         else:
-                            os.remove(source)
-                        os.makedirs(os.path.dirname(source), exist_ok=True)
-                        os.symlink(os.path.join(temps_base, rel_path), source)
-                        print(f"DEBUG: Created symlink {source} -> {os.path.join(temps_base, rel_path)}")
+                            # C'est un vrai fichier/dossier, on le remplace
+                            if os.path.isdir(source):
+                                shutil.rmtree(source)
+                            else:
+                                os.remove(source)
+                            os.makedirs(os.path.dirname(source), exist_ok=True)
+                            temps_base = f"/tmp/lgp-temp/{self.game_name}"
+                            os.symlink(os.path.join(temps_base, rel_path), source)
+                            print(f"DEBUG: Created symlink {source} -> {os.path.join(temps_base, rel_path)}")
         else:
             print(f"DEBUG: No temps to process")
     
