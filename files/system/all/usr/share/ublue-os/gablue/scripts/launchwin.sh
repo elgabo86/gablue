@@ -403,6 +403,112 @@ _copy_dir_with_symlinks() {
     done
 }
 
+# Copie récursive un dossier en réécrivant les symlinks externes pour pointer vers MOUNT_DIR
+# Usage: _copy_dir_rewrite_symlinks <src_dir> <dst_dir>
+_copy_dir_rewrite_symlinks() {
+    local src_dir="$1"
+    local dst_dir="$2"
+
+    mkdir -p "$dst_dir"
+
+    # Copier chaque élément individuellement
+    for item in "$src_dir"/*; do
+        [ -e "$item" ] || [ -L "$item" ] || continue  # ignorer si le glob ne matche rien
+        local name
+        name=$(basename "$item")
+        local dst_item="$dst_dir/$name"
+
+        if [ -L "$item" ]; then
+            # C'est un symlink : lire la cible et réécrire si externe
+            local target
+            target=$(readlink "$item")
+            local abs_target
+            
+            # Convertir en chemin absolu
+            if [[ "$target" == /* ]]; then
+                abs_target="$target"
+            else
+                abs_target=$(realpath -m "$(dirname "$item")/$target" 2>/dev/null)
+            fi
+            
+            # Vérifier si la cible est externe (hors de MOUNT_DIR)
+            if [[ -n "$abs_target" ]] && [[ "$abs_target" != "$MOUNT_DIR"* ]]; then
+                # Cible externe : réécrire pour pointer vers MOUNT_DIR
+                local game_name="$GAME_INTERNAL_NAME"
+                local rewritten_target="$MOUNT_DIR"
+                
+                if [[ "$abs_target" == */lgp/"$game_name"/* ]]; then
+                    local rel_path="${abs_target##*/lgp/$game_name/}"
+                    rewritten_target="$MOUNT_DIR/$rel_path"
+                elif [[ "$abs_target" == */"$game_name"/* ]]; then
+                    local rel_path="${abs_target##*/$game_name/}"
+                    rewritten_target="$MOUNT_DIR/$rel_path"
+                fi
+                
+                if [ -e "$rewritten_target" ]; then
+                    ln -s "$rewritten_target" "$dst_item"
+                    echo "Symlink réécrit: $dst_item -> $rewritten_target"
+                else
+                    local real_target
+                    real_target=$(realpath "$item" 2>/dev/null)
+                    if [ -f "$real_target" ]; then
+                        cp -n "$real_target" "$dst_item"
+                    fi
+                fi
+            else
+                ln -s "$target" "$dst_item"
+            fi
+        elif [ -f "$item" ]; then
+            cp -n "$item" "$dst_item"
+        elif [ -d "$item" ]; then
+            _copy_dir_rewrite_symlinks "$item" "$dst_item"
+        fi
+    done
+}
+
+# Copie un fichier symlink en réécrivant la cible si externe
+# Usage: _copy_symlink_rewrite <src_symlink> <dst_symlink>
+_copy_symlink_rewrite() {
+    local src_symlink="$1"
+    local dst_symlink="$2"
+    
+    local target
+    target=$(readlink "$src_symlink")
+    local abs_target
+    
+    if [[ "$target" == /* ]]; then
+        abs_target="$target"
+    else
+        abs_target=$(realpath -m "$(dirname "$src_symlink")/$target" 2>/dev/null)
+    fi
+    
+    if [[ -n "$abs_target" ]] && [[ "$abs_target" != "$MOUNT_DIR"* ]]; then
+        local game_name="$GAME_INTERNAL_NAME"
+        local rewritten_target="$MOUNT_DIR"
+        
+        if [[ "$abs_target" == */lgp/"$game_name"/* ]]; then
+            local rel_path="${abs_target##*/lgp/$game_name/}"
+            rewritten_target="$MOUNT_DIR/$rel_path"
+        elif [[ "$abs_target" == */"$game_name"/* ]]; then
+            local rel_path="${abs_target##*/$game_name/}"
+            rewritten_target="$MOUNT_DIR/$rel_path"
+        fi
+        
+        if [ -e "$rewritten_target" ]; then
+            ln -s "$rewritten_target" "$dst_symlink"
+            echo "Symlink réécrit: $dst_symlink -> $rewritten_target"
+        else
+            local real_target
+            real_target=$(realpath "$src_symlink" 2>/dev/null)
+            if [ -f "$real_target" ]; then
+                cp -n "$real_target" "$dst_symlink"
+            fi
+        fi
+    else
+        ln -s "$target" "$dst_symlink"
+    fi
+}
+
 # Prépare les fichiers d'extra depuis .extra vers ~/.cache/wgp
 prepare_extras() {
     local EXTRAPATH_FILE="$MOUNT_DIR/.extrapath"
@@ -475,12 +581,13 @@ prepare_temps() {
         local FINAL_TEMP_ITEM="$TEMP_GAME_DIR/$TEMP_REL_PATH"
 
         if [ -d "$TEMP_WGP_ITEM" ]; then
-            # Copier récursivement en traitant tous les symlinks
-            _copy_dir_with_symlinks "$TEMP_WGP_ITEM" "$FINAL_TEMP_ITEM" "$TEMP_WGP_DIR" "$TEMP_GAME_DIR"
+            # Copier récursivement en réécrivant les symlinks externes
+            _copy_dir_rewrite_symlinks "$TEMP_WGP_ITEM" "$FINAL_TEMP_ITEM"
         elif [ -e "$TEMP_WGP_ITEM" ]; then
             mkdir -p "$(dirname "$FINAL_TEMP_ITEM")"
             if [ -L "$TEMP_WGP_ITEM" ]; then
-                _copy_symlink_as_abs "$TEMP_WGP_ITEM" "$FINAL_TEMP_ITEM" "$TEMP_WGP_DIR" "$TEMP_GAME_DIR"
+                # C'est un symlink : réécrire si externe
+                _copy_symlink_rewrite "$TEMP_WGP_ITEM" "$FINAL_TEMP_ITEM"
             else
                 cp -n "$TEMP_WGP_ITEM" "$FINAL_TEMP_ITEM"
             fi
