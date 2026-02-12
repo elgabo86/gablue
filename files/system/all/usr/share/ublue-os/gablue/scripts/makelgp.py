@@ -109,7 +109,8 @@ class CreateLGPThread(QThread):
             s = os.path.join(source, item)
             d = os.path.join(target, item)
             if os.path.islink(s):
-                # Préserver les symlinks
+                # Convertir les symlinks relatifs en absolus
+                link_target = os.readlink(s)
                 if os.path.islink(d):
                     os.remove(d)
                 elif os.path.exists(d):
@@ -117,12 +118,42 @@ class CreateLGPThread(QThread):
                         shutil.rmtree(d)
                     else:
                         os.remove(d)
-                os.symlink(os.readlink(s), d)
+                # Si c'est un chemin relatif, le convertir en absolu
+                if not os.path.isabs(link_target):
+                    abs_target = os.path.normpath(os.path.join(os.path.dirname(s), link_target))
+                    link_target = abs_target
+                os.symlink(link_target, d)
             elif os.path.isdir(s):
                 if os.path.exists(d):
                     shutil.rmtree(d)
-                # Préserver les symlinks lors de la copie récursive
-                shutil.copytree(s, d, symlinks=True)
+                # Copier récursivement en convertissant les symlinks
+                self._copy_dir_recursive(s, d)
+            else:
+                shutil.copy2(s, d)
+
+    def _copy_dir_recursive(self, source, target):
+        """Copie récursivement un répertoire en convertissant les symlinks relatifs en absolus"""
+        os.makedirs(target, exist_ok=True)
+        for item in os.listdir(source):
+            s = os.path.join(source, item)
+            d = os.path.join(target, item)
+            if os.path.islink(s):
+                # Convertir les symlinks relatifs en absolus
+                link_target = os.readlink(s)
+                if os.path.islink(d):
+                    os.remove(d)
+                elif os.path.exists(d):
+                    if os.path.isdir(d):
+                        shutil.rmtree(d)
+                    else:
+                        os.remove(d)
+                # Si c'est un chemin relatif, le convertir en absolu
+                if not os.path.isabs(link_target):
+                    abs_target = os.path.normpath(os.path.join(os.path.dirname(s), link_target))
+                    link_target = abs_target
+                os.symlink(link_target, d)
+            elif os.path.isdir(s):
+                self._copy_dir_recursive(s, d)
             else:
                 shutil.copy2(s, d)
 

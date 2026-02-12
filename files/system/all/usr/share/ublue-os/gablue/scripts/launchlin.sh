@@ -21,6 +21,8 @@ SAVES_SYMLINK="/tmp/lgp-saves"
 SAVES_REAL="$HOME_REAL/.local/share/lgp-saves"
 EXTRA_SYMLINK="/tmp/lgp-extra"
 EXTRA_REAL="$HOME_REAL/.cache/lgp-extra"
+TEMP_SYMLINK="/tmp/lgp-temp"
+TEMP_REAL="/tmp/lgp-temp"
 
 # Variables LGP
 LGPACK_NAME=""
@@ -176,6 +178,7 @@ cleanup_lgp() {
     # Nettoyer les symlinks /tmp/lgp-saves et /tmp/lgp-extra
     cleanup_saves_symlink
     cleanup_extras_symlink
+    cleanup_temp_symlink
 
     # Démontage du squashfs
     if ! fusermount -u "$MOUNT_DIR" 2>/dev/null; then
@@ -308,17 +311,19 @@ _copy_symlink_as_abs() {
         abs_target=$(realpath -m "$(dirname "$src_symlink")/$target" 2>/dev/null)
     fi
 
-    # Supprimer /.save/ ou /.extra/ du chemin s'il est présent (car on copie vers le dossier de save réel)
+    # Supprimer /.save/ ou /.extra/ ou /.temp/ du chemin s'il est présent (car on copie vers le dossier de save réel)
     if [[ "$abs_target" == */.save/* ]]; then
         abs_target=$(echo "$abs_target" | sed 's|/.save/|/|g')
     elif [[ "$abs_target" == */.extra/* ]]; then
         abs_target=$(echo "$abs_target" | sed 's|/.extra/|/|g')
+    elif [[ "$abs_target" == */.temp/* ]]; then
+        abs_target=$(echo "$abs_target" | sed 's|/.temp/|/|g')
     fi
 
-    # Si la cible est dans le dossier source (.save ou .extra), la convertir vers la destination réelle
+    # Si la cible est dans le dossier source (.save/.extra/.temp), la convertir vers la destination réelle
     if [ -n "$src_base_dir" ] && [ -n "$dst_base_dir" ]; then
         if [[ "$abs_target" == "$src_base_dir"* ]]; then
-            # La cible est dans le dossier source (.save/.extra), la convertir vers la destination
+            # La cible est dans le dossier source, la convertir vers la destination
             local rel_path="${abs_target#$src_base_dir/}"
             abs_target="$dst_base_dir/$rel_path"
         fi
@@ -410,6 +415,44 @@ prepare_extras() {
     ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
 }
 
+# Prépare les fichiers temporaires depuis .temp vers /tmp/lgp-temp
+prepare_temps() {
+    local TEMPPATH_FILE="$MOUNT_DIR/.temppath"
+    local TEMP_LGP_DIR="$MOUNT_DIR/.temp"
+    local TEMP_GAME_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
+
+    [ -f "$TEMPPATH_FILE" ] || return 0
+
+    echo "Préparation des fichiers temporaires..."
+
+    # Nettoyer l'ancien dossier temporaire s'il existe
+    if [ -d "$TEMP_GAME_DIR" ]; then
+        rm -rf "$TEMP_GAME_DIR"
+    fi
+
+    # Créer le dossier temporaire pour ce jeu
+    mkdir -p "$TEMP_GAME_DIR"
+
+    while IFS= read -r TEMP_REL_PATH; do
+        [ -z "$TEMP_REL_PATH" ] && continue
+
+        local TEMP_LGP_ITEM="$TEMP_LGP_DIR/$TEMP_REL_PATH"
+        local FINAL_TEMP_ITEM="$TEMP_GAME_DIR/$TEMP_REL_PATH"
+
+        if [ -d "$TEMP_LGP_ITEM" ]; then
+            # Copier récursivement en traitant tous les symlinks
+            _copy_dir_with_symlinks "$TEMP_LGP_ITEM" "$FINAL_TEMP_ITEM" "$TEMP_LGP_DIR" "$TEMP_GAME_DIR"
+        elif [ -e "$TEMP_LGP_ITEM" ]; then
+            mkdir -p "$(dirname "$FINAL_TEMP_ITEM")"
+            if [ -L "$TEMP_LGP_ITEM" ]; then
+                _copy_symlink_as_abs "$TEMP_LGP_ITEM" "$FINAL_TEMP_ITEM" "$TEMP_LGP_DIR" "$TEMP_GAME_DIR"
+            else
+                cp -n "$TEMP_LGP_ITEM" "$FINAL_TEMP_ITEM"
+            fi
+        fi
+    done < "$TEMPPATH_FILE"
+}
+
 # Vérifie si le LGP contient des fichiers de sauvegarde
 has_saves() {
     [ -f "$MOUNT_DIR/.savepath" ]
@@ -451,6 +494,11 @@ has_extras() {
     [ -f "$MOUNT_DIR/.extrapath" ]
 }
 
+# Vérifie si le LGP contient des fichiers temporaires
+has_temps() {
+    [ -f "$MOUNT_DIR/.temppath" ]
+}
+
 # Crée le symlink /tmp/lgp-extra/$GAME_INTERNAL_NAME vers ~/.cache/lgp-extra
 # Un symlink par jeu permet de lancer plusieurs LGP en parallèle
 setup_extras_symlink() {
@@ -480,6 +528,45 @@ setup_extras_symlink() {
 cleanup_extras_symlink() {
     local GAME_EXTRAS_SYMLINK="$EXTRA_SYMLINK/$GAME_INTERNAL_NAME"
     [ -L "$GAME_EXTRAS_SYMLINK" ] && rm -f "$GAME_EXTRAS_SYMLINK"
+}
+
+# Crée le symlink /tmp/lgp-temp/$GAME_INTERNAL_NAME
+setup_temp_symlink() {
+    # Ne rien faire si le LGP n'a pas de temps
+    has_temps || return 0
+
+    local GAME_TEMP_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
+    local GAME_TEMP_SYMLINK="$TEMP_SYMLINK/$GAME_INTERNAL_NAME"
+
+    # Créer le dossier temporaire pour ce jeu
+    mkdir -p "$GAME_TEMP_DIR"
+
+    # Créer le dossier /tmp/lgp-temp si nécessaire
+    mkdir -p "$TEMP_SYMLINK"
+
+    # Supprimer l'ancien symlink du jeu s'il existe
+    if [ -L "$GAME_TEMP_SYMLINK" ]; then
+        rm -f "$GAME_TEMP_SYMLINK"
+    fi
+
+    # Créer le symlink pour ce jeu
+    ln -s "$GAME_TEMP_DIR" "$GAME_TEMP_SYMLINK"
+    echo "Symlink créé: $GAME_TEMP_SYMLINK -> $GAME_TEMP_DIR"
+}
+
+# Supprime le symlink /tmp/lgp-temp/$GAME_INTERNAL_NAME et nettoie les fichiers
+cleanup_temp_symlink() {
+    local GAME_TEMP_SYMLINK="$TEMP_SYMLINK/$GAME_INTERNAL_NAME"
+    local GAME_TEMP_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
+    
+    # Supprimer le symlink
+    [ -L "$GAME_TEMP_SYMLINK" ] && rm -f "$GAME_TEMP_SYMLINK"
+    
+    # Nettoyer les fichiers temporaires
+    if [ -d "$GAME_TEMP_DIR" ]; then
+        echo "Nettoyage des fichiers temporaires..."
+        rm -rf "$GAME_TEMP_DIR"
+    fi
 }
 
 # Exécute le script de pré-lancement s'il existe
@@ -579,9 +666,13 @@ run_lgp_mode() {
     # Créer le symlink /tmp/lgp-extra AVANT prepare_extras
     setup_extras_symlink
 
+    # Créer le symlink /tmp/lgp-temp AVANT prepare_temps
+    setup_temp_symlink
+
     # IMPORTANT: prepare_saves AVANT read_lgp_config (l'exécutable peut être un symlink vers UserData)
     prepare_saves
     prepare_extras
+    prepare_temps
 
     # Exécuter le script de pré-lancement AVANT read_lgp_config
     # car il peut créer des symlinks nécessaires pour l'exécutable
@@ -596,6 +687,7 @@ run_lgp_mode() {
     # Nettoyage des symlinks saves et extras (le trap fera le reste)
     cleanup_saves_symlink
     cleanup_extras_symlink
+    cleanup_temp_symlink
 }
 
 # Fonction principale pour le mode classique (exécutable direct)

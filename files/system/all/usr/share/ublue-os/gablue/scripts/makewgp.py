@@ -113,7 +113,8 @@ class CreateWGPThread(QThread):
             s = os.path.join(source, item)
             d = os.path.join(target, item)
             if os.path.islink(s):
-                # Préserver les symlinks
+                # Convertir les symlinks relatifs en absolus
+                link_target = os.readlink(s)
                 if os.path.islink(d):
                     os.remove(d)
                 elif os.path.exists(d):
@@ -121,12 +122,42 @@ class CreateWGPThread(QThread):
                         shutil.rmtree(d)
                     else:
                         os.remove(d)
-                os.symlink(os.readlink(s), d)
+                # Si c'est un chemin relatif, le convertir en absolu
+                if not os.path.isabs(link_target):
+                    abs_target = os.path.normpath(os.path.join(os.path.dirname(s), link_target))
+                    link_target = abs_target
+                os.symlink(link_target, d)
             elif os.path.isdir(s):
                 if os.path.exists(d):
                     shutil.rmtree(d)
-                # Préserver les symlinks lors de la copie récursive
-                shutil.copytree(s, d, symlinks=True)
+                # Copier récursivement en convertissant les symlinks
+                self._copy_dir_recursive(s, d)
+            else:
+                shutil.copy2(s, d)
+
+    def _copy_dir_recursive(self, source, target):
+        """Copie récursivement un répertoire en convertissant les symlinks relatifs en absolus"""
+        os.makedirs(target, exist_ok=True)
+        for item in os.listdir(source):
+            s = os.path.join(source, item)
+            d = os.path.join(target, item)
+            if os.path.islink(s):
+                # Convertir les symlinks relatifs en absolus
+                link_target = os.readlink(s)
+                if os.path.islink(d):
+                    os.remove(d)
+                elif os.path.exists(d):
+                    if os.path.isdir(d):
+                        shutil.rmtree(d)
+                    else:
+                        os.remove(d)
+                # Si c'est un chemin relatif, le convertir en absolu
+                if not os.path.isabs(link_target):
+                    abs_target = os.path.normpath(os.path.join(os.path.dirname(s), link_target))
+                    link_target = abs_target
+                os.symlink(link_target, d)
+            elif os.path.isdir(s):
+                self._copy_dir_recursive(s, d)
             else:
                 shutil.copy2(s, d)
 
@@ -234,6 +265,55 @@ class CreateWGPThread(QThread):
                         print(f"DEBUG: Created symlink {source} -> {os.path.join(extras_base, rel_path)}")
         else:
             print(f"DEBUG: No extras to process")
+
+        # Traiter les fichiers temporaires
+        if self.config.get('temps'):
+            temps_dir = os.path.join(self.game_dir, '.temp')
+            os.makedirs(temps_dir, exist_ok=True)
+            print(f"DEBUG: Created temps_dir = {temps_dir}")
+
+            with open(os.path.join(self.game_dir, '.temppath'), 'w') as f:
+                for item_type, rel_path in self.config['temps']:
+                    # Format compatible (sans préfixe)
+                    f.write(f"{rel_path}\n")
+
+                    # Créer le symlink
+                    source = os.path.join(self.game_dir, rel_path)
+                    target = os.path.join(temps_dir, rel_path)
+                    
+                    print(f"DEBUG: Processing temp: {rel_path} (type={item_type})")
+                    print(f"DEBUG: source = {source}, exists={os.path.exists(source)}")
+                    print(f"DEBUG: target = {target}")
+
+                    if os.path.exists(source):
+                        # Copier vers .temp (contenu uniquement pour les dossiers)
+                        os.makedirs(os.path.dirname(target), exist_ok=True)
+                        if item_type == 'dir':
+                            print(f"DEBUG: Copying dir contents from {source} to {target}")
+                            self._copy_dir_contents(source, target)
+                        else:
+                            print(f"DEBUG: Copying file from {source} to {target}")
+                            shutil.copy2(source, target)
+                        
+                        # Vérifier que la copie a fonctionné
+                        if os.path.exists(target):
+                            print(f"DEBUG: Copy successful, target exists")
+                        else:
+                            print(f"DEBUG: ERROR - Copy failed, target does not exist!")
+
+                        # Créer le symlink vers /tmp/wgp-temp (comme pour les extras)
+                        temps_base = f"/tmp/wgp-temp/{self.game_name}"
+                        if os.path.islink(source):
+                            os.remove(source)
+                        elif os.path.isdir(source):
+                            shutil.rmtree(source)
+                        else:
+                            os.remove(source)
+                        os.makedirs(os.path.dirname(source), exist_ok=True)
+                        os.symlink(os.path.join(temps_base, rel_path), source)
+                        print(f"DEBUG: Created symlink {source} -> {os.path.join(temps_base, rel_path)}")
+        else:
+            print(f"DEBUG: No temps to process")
     
     def create_squashfs(self, wgp_file):
         """Crée l'archive squashfs avec progression temps réel basée sur la taille des fichiers"""
@@ -367,8 +447,8 @@ class CreateWGPThread(QThread):
         self.cleanup_dirs_only()
     
     def cleanup_dirs_only(self):
-        """Supprime uniquement les dossiers .save et .extra sans restaurer les fichiers"""
-        for f in ['.save', '.extra']:
+        """Supprime uniquement les dossiers .save, .extra et .temp sans restaurer les fichiers"""
+        for f in ['.save', '.extra', '.temp']:
             path = os.path.join(self.game_dir, f)
             if os.path.exists(path):
                 shutil.rmtree(path)
@@ -436,6 +516,38 @@ class CreateWGPThread(QThread):
                         continue
 
                     backup_path = os.path.join(extras_backup_dir, rel_path)
+                    original_path = os.path.join(self.game_dir, rel_path)
+
+                    if not os.path.exists(backup_path):
+                        continue
+
+                    # Supprimer le symlink existant
+                    if os.path.islink(original_path):
+                        os.remove(original_path)
+                    elif os.path.exists(original_path):
+                        if os.path.isdir(original_path):
+                            shutil.rmtree(original_path)
+                        else:
+                            os.remove(original_path)
+
+                    # Restaurer depuis backup (contenu uniquement pour les dossiers)
+                    os.makedirs(os.path.dirname(original_path), exist_ok=True)
+                    if os.path.isdir(backup_path):
+                        self._copy_dir_contents(backup_path, original_path)
+                    else:
+                        shutil.copy2(backup_path, original_path)
+
+        # Restaurer depuis .temp en utilisant .temppath
+        temppath_file = os.path.join(self.game_dir, '.temppath')
+        temps_backup_dir = os.path.join(self.game_dir, '.temp')
+        if os.path.exists(temppath_file) and os.path.exists(temps_backup_dir):
+            with open(temppath_file, 'r') as f:
+                for line in f:
+                    rel_path = line.strip()
+                    if not rel_path:
+                        continue
+
+                    backup_path = os.path.join(temps_backup_dir, rel_path)
                     original_path = os.path.join(self.game_dir, rel_path)
 
                     if not os.path.exists(backup_path):
@@ -661,6 +773,35 @@ class WGPWindow(QMainWindow):
         extras_layout.addLayout(extras_btn_layout)
         right_layout.addWidget(extras_group)
         
+        # Fichiers temporaires
+        temps_group = QGroupBox("Fichiers temporaires (temps)")
+        temps_group.setToolTip("Stockées dans /tmp/wgp-temp (effacés à la fermeture)")
+        temps_layout = QVBoxLayout(temps_group)
+        temps_layout.setContentsMargins(8, 12, 8, 8)
+        
+        self.temps_list = QListWidget()
+        self.temps_list.setMinimumHeight(80)
+        temps_layout.addWidget(self.temps_list)
+        
+        temps_btn_layout = QHBoxLayout()
+        temps_btn_layout.setSpacing(5)
+        add_temp_file_btn = QPushButton("+ Fichier")
+        add_temp_file_btn.setMaximumWidth(80)
+        add_temp_file_btn.clicked.connect(lambda: self.add_item('temp', 'file'))
+        add_temp_dir_btn = QPushButton("+ Dossier")
+        add_temp_dir_btn.setMaximumWidth(80)
+        add_temp_dir_btn.clicked.connect(lambda: self.add_item('temp', 'dir'))
+        remove_temp_btn = QPushButton("- Suppr")
+        remove_temp_btn.setMaximumWidth(60)
+        remove_temp_btn.clicked.connect(lambda: self.remove_item('temp'))
+        
+        temps_btn_layout.addWidget(add_temp_file_btn)
+        temps_btn_layout.addWidget(add_temp_dir_btn)
+        temps_btn_layout.addWidget(remove_temp_btn)
+        temps_btn_layout.addStretch()
+        temps_layout.addLayout(temps_btn_layout)
+        right_layout.addWidget(temps_group)
+        
         # === BOUTONS PRINCIPAUX ===
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
@@ -699,6 +840,7 @@ class WGPWindow(QMainWindow):
         # Données
         self.saves = []
         self.extras = []
+        self.temps = []
     
     def load_game_directory(self, game_dir):
         """Charge le dossier du jeu et les fichiers de configuration existants"""
@@ -763,6 +905,27 @@ class WGPWindow(QMainWindow):
                             else:
                                 self.extras.append(('file', line))
             self.update_extras_list()
+        
+        # Charger les temps depuis .temppath si existe
+        temppath_file = os.path.join(self.game_dir, '.temppath')
+        if os.path.exists(temppath_file):
+            self.temps = []
+            with open(temppath_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        if line.startswith('D:'):
+                            self.temps.append(('dir', line[2:]))
+                        elif line.startswith('F:'):
+                            self.temps.append(('file', line[2:]))
+                        else:
+                            # Format ancien sans préfixe, deviner selon l'existence
+                            full_path = os.path.join(self.game_dir, line)
+                            if os.path.isdir(full_path):
+                                self.temps.append(('dir', line))
+                            else:
+                                self.temps.append(('file', line))
+            self.update_temps_list()
         
         # Charger toutes les icônes disponibles
         self.load_available_icons()
@@ -1152,98 +1315,76 @@ class WGPWindow(QMainWindow):
     
     def add_item(self, item_type, item_subtype):
         """Ajoute un fichier ou dossier à la liste"""
+        # Déterminer la liste cible et le nom pour les messages
         if item_type == 'save':
-            if item_subtype == 'file':
-                file_path, _ = QFileDialog.getOpenFileName(self, "Sélectionner un fichier", self.game_dir)
-                if file_path:
-                    rel_path = os.path.relpath(file_path, self.game_dir)
-                    # Vérifier si déjà présent dans saves
-                    if ('file', rel_path) in self.saves:
-                        QMessageBox.information(self, "Déjà présent", "Ce fichier est déjà dans la liste des sauvegardes.")
+            target_list = self.saves
+            target_name = "sauvegardes"
+            other_lists = [('extra', self.extras, "extras"), ('temp', self.temps, "temporaires")]
+        elif item_type == 'extra':
+            target_list = self.extras
+            target_name = "extras"
+            other_lists = [('save', self.saves, "sauvegardes"), ('temp', self.temps, "temporaires")]
+        else:  # temp
+            target_list = self.temps
+            target_name = "temporaires"
+            other_lists = [('save', self.saves, "sauvegardes"), ('extra', self.extras, "extras")]
+        
+        if item_subtype == 'file':
+            file_path, _ = QFileDialog.getOpenFileName(self, "Sélectionner un fichier", self.game_dir)
+            if file_path:
+                rel_path = os.path.relpath(file_path, self.game_dir)
+                # Vérifier si déjà présent dans la liste cible
+                if ('file', rel_path) in target_list:
+                    QMessageBox.information(self, "Déjà présent", f"Ce fichier est déjà dans la liste des {target_name}.")
+                    return
+                # Vérifier si présent dans les autres listes
+                for other_type, other_list, other_name in other_lists:
+                    if ('file', rel_path) in other_list:
+                        QMessageBox.information(self, "Déjà présent", f"Ce fichier est déjà dans la liste des {other_name}.")
                         return
-                    # Vérifier si présent dans extras
-                    if ('file', rel_path) in self.extras:
-                        QMessageBox.information(self, "Déjà présent", "Ce fichier est déjà dans la liste des extras.")
-                        return
-                    # Vérifier les conflits de chemins
-                    conflict, msg = self._is_path_conflict(rel_path, self.saves, "sauvegardes")
+                # Vérifier les conflits de chemins
+                conflict, msg = self._is_path_conflict(rel_path, target_list, target_name)
+                if conflict:
+                    QMessageBox.warning(self, "Conflit de chemin", msg)
+                    return
+                for other_type, other_list, other_name in other_lists:
+                    conflict, msg = self._is_path_conflict(rel_path, other_list, other_name)
                     if conflict:
                         QMessageBox.warning(self, "Conflit de chemin", msg)
                         return
-                    conflict, msg = self._is_path_conflict(rel_path, self.extras, "extras")
+                target_list.append(('file', rel_path))
+        else:  # dir
+            dir_path = QFileDialog.getExistingDirectory(self, "Sélectionner un dossier", self.game_dir)
+            if dir_path:
+                rel_path = os.path.relpath(dir_path, self.game_dir)
+                # Vérifier si déjà présent dans la liste cible
+                if ('dir', rel_path) in target_list:
+                    QMessageBox.information(self, "Déjà présent", f"Ce dossier est déjà dans la liste des {target_name}.")
+                    return
+                # Vérifier si présent dans les autres listes
+                for other_type, other_list, other_name in other_lists:
+                    if ('dir', rel_path) in other_list:
+                        QMessageBox.information(self, "Déjà présent", f"Ce dossier est déjà dans la liste des {other_name}.")
+                        return
+                # Vérifier les conflits de chemins
+                conflict, msg = self._is_path_conflict(rel_path, target_list, target_name)
+                if conflict:
+                    QMessageBox.warning(self, "Conflit de chemin", msg)
+                    return
+                for other_type, other_list, other_name in other_lists:
+                    conflict, msg = self._is_path_conflict(rel_path, other_list, other_name)
                     if conflict:
                         QMessageBox.warning(self, "Conflit de chemin", msg)
                         return
-                    self.saves.append(('file', rel_path))
-            else:
-                dir_path = QFileDialog.getExistingDirectory(self, "Sélectionner un dossier", self.game_dir)
-                if dir_path:
-                    rel_path = os.path.relpath(dir_path, self.game_dir)
-                    # Vérifier si déjà présent dans saves
-                    if ('dir', rel_path) in self.saves:
-                        QMessageBox.information(self, "Déjà présent", "Ce dossier est déjà dans la liste des sauvegardes.")
-                        return
-                    # Vérifier si présent dans extras
-                    if ('dir', rel_path) in self.extras:
-                        QMessageBox.information(self, "Déjà présent", "Ce dossier est déjà dans la liste des extras.")
-                        return
-                    # Vérifier les conflits de chemins
-                    conflict, msg = self._is_path_conflict(rel_path, self.saves, "sauvegardes")
-                    if conflict:
-                        QMessageBox.warning(self, "Conflit de chemin", msg)
-                        return
-                    conflict, msg = self._is_path_conflict(rel_path, self.extras, "extras")
-                    if conflict:
-                        QMessageBox.warning(self, "Conflit de chemin", msg)
-                        return
-                    self.saves.append(('dir', rel_path))
+                target_list.append(('dir', rel_path))
+        
+        # Mettre à jour l'affichage
+        if item_type == 'save':
             self.update_saves_list()
-        else:
-            if item_subtype == 'file':
-                file_path, _ = QFileDialog.getOpenFileName(self, "Sélectionner un fichier", self.game_dir)
-                if file_path:
-                    rel_path = os.path.relpath(file_path, self.game_dir)
-                    # Vérifier si déjà présent dans extras
-                    if ('file', rel_path) in self.extras:
-                        QMessageBox.information(self, "Déjà présent", "Ce fichier est déjà dans la liste des extras.")
-                        return
-                    # Vérifier si présent dans saves
-                    if ('file', rel_path) in self.saves:
-                        QMessageBox.information(self, "Déjà présent", "Ce fichier est déjà dans la liste des sauvegardes.")
-                        return
-                    # Vérifier les conflits de chemins
-                    conflict, msg = self._is_path_conflict(rel_path, self.extras, "extras")
-                    if conflict:
-                        QMessageBox.warning(self, "Conflit de chemin", msg)
-                        return
-                    conflict, msg = self._is_path_conflict(rel_path, self.saves, "sauvegardes")
-                    if conflict:
-                        QMessageBox.warning(self, "Conflit de chemin", msg)
-                        return
-                    self.extras.append(('file', rel_path))
-            else:
-                dir_path = QFileDialog.getExistingDirectory(self, "Sélectionner un dossier", self.game_dir)
-                if dir_path:
-                    rel_path = os.path.relpath(dir_path, self.game_dir)
-                    # Vérifier si déjà présent dans extras
-                    if ('dir', rel_path) in self.extras:
-                        QMessageBox.information(self, "Déjà présent", "Ce dossier est déjà dans la liste des extras.")
-                        return
-                    # Vérifier si présent dans saves
-                    if ('dir', rel_path) in self.saves:
-                        QMessageBox.information(self, "Déjà présent", "Ce dossier est déjà dans la liste des sauvegardes.")
-                        return
-                    # Vérifier les conflits de chemins
-                    conflict, msg = self._is_path_conflict(rel_path, self.extras, "extras")
-                    if conflict:
-                        QMessageBox.warning(self, "Conflit de chemin", msg)
-                        return
-                    conflict, msg = self._is_path_conflict(rel_path, self.saves, "sauvegardes")
-                    if conflict:
-                        QMessageBox.warning(self, "Conflit de chemin", msg)
-                        return
-                    self.extras.append(('dir', rel_path))
+        elif item_type == 'extra':
             self.update_extras_list()
+        else:
+            self.update_temps_list()
     
     def remove_item(self, item_type):
         """Supprime un élément de la liste"""
@@ -1252,11 +1393,16 @@ class WGPWindow(QMainWindow):
             if current >= 0:
                 del self.saves[current]
                 self.update_saves_list()
-        else:
+        elif item_type == 'extra':
             current = self.extras_list.currentRow()
             if current >= 0:
                 del self.extras[current]
                 self.update_extras_list()
+        else:  # temp
+            current = self.temps_list.currentRow()
+            if current >= 0:
+                del self.temps[current]
+                self.update_temps_list()
     
     def update_saves_list(self):
         """Met à jour la liste des sauvegardes"""
@@ -1271,6 +1417,13 @@ class WGPWindow(QMainWindow):
         for item_type, path in self.extras:
             prefix = "[Dossier] " if item_type == 'dir' else "[Fichier] "
             self.extras_list.addItem(prefix + path)
+
+    def update_temps_list(self):
+        """Met à jour la liste des fichiers temporaires"""
+        self.temps_list.clear()
+        for item_type, path in self.temps:
+            prefix = "[Dossier] " if item_type == 'dir' else "[Fichier] "
+            self.temps_list.addItem(prefix + path)
     
     def start_create_wgp(self):
         """Démarre la création du WGP"""
@@ -1298,6 +1451,7 @@ class WGPWindow(QMainWindow):
             'fix_controller': self.fix_checkbox.isChecked(),
             'saves': self.saves,
             'extras': self.extras,
+            'temps': self.temps,
             'icon': self.icon_path
         }
         

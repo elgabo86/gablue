@@ -24,6 +24,8 @@ SAVES_SYMLINK="/tmp/wgp-saves"
 SAVES_REAL="$WINDOWS_HOME/$USER/LocalSavesWGP"
 EXTRA_SYMLINK="/tmp/wgp-extra"
 EXTRA_REAL="$HOME/.cache/wgp-extra"
+TEMP_SYMLINK="/tmp/wgp-temp"
+TEMP_REAL="/tmp/wgp-temp"
 
 # Variables WGP
 WGPACK_NAME=""
@@ -213,6 +215,7 @@ cleanup_wgp() {
     # Nettoyer les symlinks /tmp/wgp-saves et /tmp/wgp-extra
     cleanup_saves_symlink
     cleanup_extras_symlink
+    cleanup_temp_symlink
 
     # Démontage du squashfs
     if ! fusermount -u "$MOUNT_DIR" 2>/dev/null; then
@@ -343,14 +346,16 @@ _copy_symlink_as_abs() {
         abs_target=$(realpath -m "$(dirname "$src_symlink")/$target" 2>/dev/null)
     fi
 
-    # Supprimer /.save/ ou /.extra/ du chemin s'il est présent (car on copie vers le dossier de save réel)
+    # Supprimer /.save/ ou /.extra/ ou /.temp/ du chemin s'il est présent (car on copie vers le dossier de save réel)
     if [[ "$abs_target" == */.save/* ]]; then
         abs_target=$(echo "$abs_target" | sed 's|/.save/|/|g')
     elif [[ "$abs_target" == */.extra/* ]]; then
         abs_target=$(echo "$abs_target" | sed 's|/.extra/|/|g')
+    elif [[ "$abs_target" == */.temp/* ]]; then
+        abs_target=$(echo "$abs_target" | sed 's|/.temp/|/|g')
     fi
 
-    # Si la cible est dans le dossier source (.save ou .extra), la convertir vers la destination réelle
+    # Si la cible est dans le dossier source (.save/.extra/.temp), la convertir vers la destination réelle
     if [ -n "$src_base_dir" ] && [ -n "$dst_base_dir" ]; then
         if [[ "$abs_target" == "$src_base_dir"* ]]; then
             # La cible est dans le dossier source (.save/.extra), la convertir vers la destination
@@ -445,6 +450,44 @@ prepare_extras() {
     ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
 }
 
+# Prépare les fichiers temporaires depuis .temp vers /tmp/wgp-temp
+prepare_temps() {
+    local TEMPPATH_FILE="$MOUNT_DIR/.temppath"
+    local TEMP_WGP_DIR="$MOUNT_DIR/.temp"
+    local TEMP_GAME_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
+
+    [ -f "$TEMPPATH_FILE" ] || return 0
+
+    echo "Préparation des fichiers temporaires..."
+
+    # Nettoyer l'ancien dossier temporaire s'il existe
+    if [ -d "$TEMP_GAME_DIR" ]; then
+        rm -rf "$TEMP_GAME_DIR"
+    fi
+
+    # Créer le dossier temporaire pour ce jeu
+    mkdir -p "$TEMP_GAME_DIR"
+
+    while IFS= read -r TEMP_REL_PATH; do
+        [ -z "$TEMP_REL_PATH" ] && continue
+
+        local TEMP_WGP_ITEM="$TEMP_WGP_DIR/$TEMP_REL_PATH"
+        local FINAL_TEMP_ITEM="$TEMP_GAME_DIR/$TEMP_REL_PATH"
+
+        if [ -d "$TEMP_WGP_ITEM" ]; then
+            # Copier récursivement en traitant tous les symlinks
+            _copy_dir_with_symlinks "$TEMP_WGP_ITEM" "$FINAL_TEMP_ITEM" "$TEMP_WGP_DIR" "$TEMP_GAME_DIR"
+        elif [ -e "$TEMP_WGP_ITEM" ]; then
+            mkdir -p "$(dirname "$FINAL_TEMP_ITEM")"
+            if [ -L "$TEMP_WGP_ITEM" ]; then
+                _copy_symlink_as_abs "$TEMP_WGP_ITEM" "$FINAL_TEMP_ITEM" "$TEMP_WGP_DIR" "$TEMP_GAME_DIR"
+            else
+                cp -n "$TEMP_WGP_ITEM" "$FINAL_TEMP_ITEM"
+            fi
+        fi
+    done < "$TEMPPATH_FILE"
+}
+
 # Vérifie si le WGP contient des fichiers de sauvegarde
 has_saves() {
     [ -f "$MOUNT_DIR/.savepath" ]
@@ -486,6 +529,11 @@ has_extras() {
     [ -f "$MOUNT_DIR/.extrapath" ]
 }
 
+# Vérifie si le WGP contient des fichiers temporaires
+has_temps() {
+    [ -f "$MOUNT_DIR/.temppath" ]
+}
+
 # Crée le symlink /tmp/wgp-extra/$GAME_INTERNAL_NAME vers ~/.cache/wgp
 # Un symlink par jeu permet de lancer plusieurs WGP en parallèle
 setup_extras_symlink() {
@@ -515,6 +563,45 @@ setup_extras_symlink() {
 cleanup_extras_symlink() {
     local GAME_EXTRAS_SYMLINK="$EXTRA_SYMLINK/$GAME_INTERNAL_NAME"
     [ -L "$GAME_EXTRAS_SYMLINK" ] && rm -f "$GAME_EXTRAS_SYMLINK"
+}
+
+# Crée le symlink /tmp/wgp-temp/$GAME_INTERNAL_NAME
+setup_temp_symlink() {
+    # Ne rien faire si le WGP n'a pas de temps
+    has_temps || return 0
+
+    local GAME_TEMP_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
+    local GAME_TEMP_SYMLINK="$TEMP_SYMLINK/$GAME_INTERNAL_NAME"
+
+    # Créer le dossier temporaire pour ce jeu
+    mkdir -p "$GAME_TEMP_DIR"
+
+    # Créer le dossier /tmp/wgp-temp si nécessaire
+    mkdir -p "$TEMP_SYMLINK"
+
+    # Supprimer l'ancien symlink du jeu s'il existe
+    if [ -L "$GAME_TEMP_SYMLINK" ]; then
+        rm -f "$GAME_TEMP_SYMLINK"
+    fi
+
+    # Créer le symlink pour ce jeu
+    ln -s "$GAME_TEMP_DIR" "$GAME_TEMP_SYMLINK"
+    echo "Symlink créé: $GAME_TEMP_SYMLINK -> $GAME_TEMP_DIR"
+}
+
+# Supprime le symlink /tmp/wgp-temp/$GAME_INTERNAL_NAME et nettoie les fichiers
+cleanup_temp_symlink() {
+    local GAME_TEMP_SYMLINK="$TEMP_SYMLINK/$GAME_INTERNAL_NAME"
+    local GAME_TEMP_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
+    
+    # Supprimer le symlink
+    [ -L "$GAME_TEMP_SYMLINK" ] && rm -f "$GAME_TEMP_SYMLINK"
+    
+    # Nettoyer les fichiers temporaires
+    if [ -d "$GAME_TEMP_DIR" ]; then
+        echo "Nettoyage des fichiers temporaires..."
+        rm -rf "$GAME_TEMP_DIR"
+    fi
 }
 
 # Construit et exécute la commande bottles avec ou sans mesa-git
@@ -746,9 +833,13 @@ run_wgp_mode() {
     # Créer le symlink /tmp/wgp-extra AVANT prepare_extras
     setup_extras_symlink
 
+    # Créer le symlink /tmp/wgp-temp AVANT prepare_temps
+    setup_temp_symlink
+
     # IMPORTANT: prepare_saves AVANT read_wgp_config (l'exécutable peut être un symlink vers UserData)
     prepare_saves
     prepare_extras
+    prepare_temps
 
     # Mode --exewgp : choisir l'exécutable interactif, sinon lire depuis .launch
     if [ "$exewgp_mode" = true ]; then
@@ -779,6 +870,7 @@ run_wgp_mode() {
     # Nettoyage des symlinks saves et extras (le trap fera le reste)
     cleanup_saves_symlink
     cleanup_extras_symlink
+    cleanup_temp_symlink
 }
 
 #======================================
