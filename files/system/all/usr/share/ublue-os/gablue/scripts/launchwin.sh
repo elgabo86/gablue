@@ -307,11 +307,11 @@ prepare_saves() {
 
         if [ -d "$SAVE_WGP_ITEM" ]; then
             # Copier récursivement en traitant tous les symlinks
-            _copy_dir_with_symlinks "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
+            _copy_dir_with_symlinks "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM" "$SAVE_WGP_DIR" "$SAVES_DIR"
         elif [ -e "$SAVE_WGP_ITEM" ]; then
             mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
             if [ -L "$SAVE_WGP_ITEM" ]; then
-                _copy_symlink_as_abs "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
+                _copy_symlink_as_abs "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM" "$SAVE_WGP_DIR" "$SAVES_DIR"
             else
                 cp -n "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
             fi
@@ -319,87 +319,81 @@ prepare_saves() {
     done < "$SAVE_FILE"
 }
 
-# Copie un symlink en absolu si target dans /tmp/wgpackmount
+# Copie un symlink en convertissant sa cible en chemin absolu
+# Tous les symlinks relatifs sont convertis en absolus
+# Si la cible pointe vers le mount temporaire, elle est convertie vers la destination réelle
+# Usage: _copy_symlink_as_abs <src_symlink> <dst_symlink> <src_base_dir> <dst_base_dir>
 _copy_symlink_as_abs() {
     local src_symlink="$1"
     local dst_symlink="$2"
+    local src_base_dir="${3:-}"
+    local dst_base_dir="${4:-}"
 
     # Lire la cible du symlink
     local target
     target=$(readlink "$src_symlink")
     [ -z "$target" ] && return 1
 
+    # Si c'est un chemin relatif, résoudre le chemin absolu
     local abs_target
-
-    # Si c'est déjà un chemin absolu, l'utiliser tel quel
     if [[ "$target" == /* ]]; then
         abs_target="$target"
     else
         # Chemin relatif : résoudre depuis le dossier du symlink source
         abs_target=$(realpath -m "$(dirname "$src_symlink")/$target" 2>/dev/null)
-        [ -z "$abs_target" ] && return 1
     fi
 
-    # Supprimer /.save/ ou /.extra/ du chemin s'il est présent
+    # Supprimer /.save/ ou /.extra/ du chemin s'il est présent (car on copie vers le dossier de save réel)
     if [[ "$abs_target" == */.save/* ]]; then
         abs_target=$(echo "$abs_target" | sed 's|/.save/|/|g')
     elif [[ "$abs_target" == */.extra/* ]]; then
         abs_target=$(echo "$abs_target" | sed 's|/.extra/|/|g')
     fi
 
-    # Vérifier que le chemin pointe vers le mount
-    if [[ "$abs_target" == /tmp/wgpackmount/* ]]; then
+    # Si la cible est dans le dossier source (.save ou .extra), la convertir vers la destination réelle
+    if [ -n "$src_base_dir" ] && [ -n "$dst_base_dir" ]; then
+        if [[ "$abs_target" == "$src_base_dir"* ]]; then
+            # La cible est dans le dossier source (.save/.extra), la convertir vers la destination
+            local rel_path="${abs_target#$src_base_dir/}"
+            abs_target="$dst_base_dir/$rel_path"
+        fi
+    fi
+
+    # Créer toujours un symlink avec une cible absolue
+    # Si abs_target est vide (erreur realpath), utiliser la cible originale
+    if [ -n "$abs_target" ]; then
         ln -s "$abs_target" "$dst_symlink"
     else
-        # Hors du mount : copier le contenu du symlink
-        cp -an "$src_symlink" "$dst_symlink"
+        ln -s "$target" "$dst_symlink"
     fi
 }
 
 # Copie récursive un dossier en convertissant les symlinks relatifs
+# Usage: _copy_dir_with_symlinks <src_dir> <dst_dir> <src_base_dir> <dst_base_dir>
 _copy_dir_with_symlinks() {
     local src_dir="$1"
     local dst_dir="$2"
+    local src_base_dir="${3:-}"
+    local dst_base_dir="${4:-}"
 
     mkdir -p "$dst_dir"
 
-    # Étape 1: copier les fichiers normaux et dossiers (pas les symlinks)
+    # Copier chaque élément individuellement
     for item in "$src_dir"/*; do
         [ -e "$item" ] || [ -L "$item" ] || continue  # ignorer si le glob ne matche rien
         local name
         name=$(basename "$item")
+        local dst_item="$dst_dir/$name"
 
         if [ -L "$item" ]; then
-            # Traiter les symlinks à l'étape 2
-            continue
+            # C'est un symlink : le traiter avec _copy_symlink_as_abs
+            _copy_symlink_as_abs "$item" "$dst_item" "$src_base_dir" "$dst_base_dir"
         elif [ -f "$item" ]; then
             # Fichier normal
-            cp -n "$item" "$dst_dir/$name"
+            cp -n "$item" "$dst_item"
         elif [ -d "$item" ]; then
-            # Dossier : copier récursivement les fichiers normaux
-            cp -rn --no-preserve=links "$item" "$dst_dir/$name"
-        fi
-    done
-
-    # Étape 2: traiter les symlinks à tous les niveaux de la destination
-    # D'abord les symlinks au niveau courant
-    for item in "$src_dir"/*; do
-        [ -e "$item" ] || [ -L "$item" ] || continue
-        if [ -L "$item" ]; then
-            local name
-            name=$(basename "$item")
-            _copy_symlink_as_abs "$item" "$dst_dir/$name"
-        fi
-    done
-
-    # Ensuite les symlinks dans les sous-dossiers
-    for item in "$dst_dir"/*; do
-        [ -d "$item" ] && [ ! -L "$item" ] || continue  # que les vrais dossiers (pas les symlinks)
-        local name
-        name=$(basename "$item")
-        local rel_src="$src_dir/$name"
-        if [ -d "$rel_src" ]; then
-            _copy_dir_with_symlinks "$rel_src" "$item"
+            # Dossier : traiter récursivement
+            _copy_dir_with_symlinks "$item" "$dst_item" "$src_base_dir" "$dst_base_dir"
         fi
     done
 }
@@ -435,11 +429,11 @@ prepare_extras() {
 
         if [ -d "$EXTRA_WGP_ITEM" ]; then
             # Copier récursivement en traitant tous les symlinks
-            _copy_dir_with_symlinks "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
+            _copy_dir_with_symlinks "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM" "$EXTRA_WGP_DIR" "$EXTRA_CACHE_DIR"
         elif [ -e "$EXTRA_WGP_ITEM" ]; then
             mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
             if [ -L "$EXTRA_WGP_ITEM" ]; then
-                _copy_symlink_as_abs "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
+                _copy_symlink_as_abs "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM" "$EXTRA_WGP_DIR" "$EXTRA_CACHE_DIR"
             else
                 cp -n "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
             fi
