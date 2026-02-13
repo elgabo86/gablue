@@ -103,14 +103,20 @@ class CreateLGPThread(QThread):
         # Créer les symlinks et copier vers .save/.extra
         self._process_saves_and_extras()
     
-    def _copy_dir_contents(self, source, target):
-        """Copie le contenu d'un répertoire source vers target (sans copier le répertoire lui-même)"""
+    def _copy_dir_contents(self, source, target, preserve_symlinks=True):
+        """Copie le contenu d'un répertoire source vers target (sans copier le répertoire lui-même)
+        
+        Args:
+            source: répertoire source
+            target: répertoire cible
+            preserve_symlinks: si True, garde les symlinks relatifs internes au jeu
+        """
         os.makedirs(target, exist_ok=True)
         for item in os.listdir(source):
             s = os.path.join(source, item)
             d = os.path.join(target, item)
             if os.path.islink(s):
-                # Convertir les symlinks relatifs en absolus
+                # Lire la cible du symlink
                 link_target = os.readlink(s)
                 if os.path.islink(d):
                     os.remove(d)
@@ -119,27 +125,55 @@ class CreateLGPThread(QThread):
                         shutil.rmtree(d)
                     else:
                         os.remove(d)
-                # Si c'est un chemin relatif, le convertir en absolu
-                if not os.path.isabs(link_target):
-                    abs_target = os.path.normpath(os.path.join(os.path.dirname(s), link_target))
-                    link_target = abs_target
+                
+                if preserve_symlinks:
+                    # Vérifier si la cible est dans le dossier du jeu (interne)
+                    if not os.path.isabs(link_target):
+                        # C'est un relatif, vérifier s'il pointe dans le jeu
+                        abs_target = os.path.normpath(os.path.join(os.path.dirname(s), link_target))
+                        if abs_target.startswith(self.game_dir):
+                            # Symlink interne au jeu, garder relatif
+                            pass
+                        else:
+                            # Symlink externe, convertir en absolu
+                            link_target = abs_target
+                    else:
+                        # C'est un absolu, vérifier s'il pointe dans le jeu
+                        abs_target = os.path.normpath(link_target)
+                        if not abs_target.startswith(self.game_dir):
+                            # Symlink externe, garder absolu
+                            pass
+                        else:
+                            # Symlink interne au jeu, convertir en relatif
+                            link_target = os.path.relpath(abs_target, os.path.dirname(s))
+                else:
+                    # Comportement original : convertir relatif en absolu
+                    if not os.path.isabs(link_target):
+                        link_target = os.path.normpath(os.path.join(os.path.dirname(s), link_target))
+                
                 os.symlink(link_target, d)
             elif os.path.isdir(s):
                 if os.path.exists(d):
                     shutil.rmtree(d)
-                # Copier récursivement en convertissant les symlinks
-                self._copy_dir_recursive(s, d)
+                # Copier récursivement en préservant les symlinks
+                self._copy_dir_recursive(s, d, preserve_symlinks)
             else:
                 shutil.copy2(s, d)
 
-    def _copy_dir_recursive(self, source, target):
-        """Copie récursivement un répertoire en convertissant les symlinks relatifs en absolus"""
+    def _copy_dir_recursive(self, source, target, preserve_symlinks=True):
+        """Copie récursivement un répertoire en préservant les symlinks relatifs internes
+        
+        Args:
+            source: répertoire source
+            target: répertoire cible
+            preserve_symlinks: si True, garde les symlinks relatifs internes au jeu
+        """
         os.makedirs(target, exist_ok=True)
         for item in os.listdir(source):
             s = os.path.join(source, item)
             d = os.path.join(target, item)
             if os.path.islink(s):
-                # Convertir les symlinks relatifs en absolus
+                # Lire la cible du symlink
                 link_target = os.readlink(s)
                 if os.path.islink(d):
                     os.remove(d)
@@ -148,13 +182,35 @@ class CreateLGPThread(QThread):
                         shutil.rmtree(d)
                     else:
                         os.remove(d)
-                # Si c'est un chemin relatif, le convertir en absolu
-                if not os.path.isabs(link_target):
-                    abs_target = os.path.normpath(os.path.join(os.path.dirname(s), link_target))
-                    link_target = abs_target
+                
+                if preserve_symlinks:
+                    # Vérifier si la cible est dans le dossier du jeu (interne)
+                    if not os.path.isabs(link_target):
+                        # C'est un relatif, vérifier s'il pointe dans le jeu
+                        abs_target = os.path.normpath(os.path.join(os.path.dirname(s), link_target))
+                        if abs_target.startswith(self.game_dir):
+                            # Symlink interne au jeu, garder relatif
+                            pass
+                        else:
+                            # Symlink externe, convertir en absolu
+                            link_target = abs_target
+                    else:
+                        # C'est un absolu, vérifier s'il pointe dans le jeu
+                        abs_target = os.path.normpath(link_target)
+                        if not abs_target.startswith(self.game_dir):
+                            # Symlink externe, garder absolu
+                            pass
+                        else:
+                            # Symlink interne au jeu, convertir en relatif
+                            link_target = os.path.relpath(abs_target, os.path.dirname(s))
+                else:
+                    # Comportement original : convertir relatif en absolu
+                    if not os.path.isabs(link_target):
+                        link_target = os.path.normpath(os.path.join(os.path.dirname(s), link_target))
+                
                 os.symlink(link_target, d)
             elif os.path.isdir(s):
-                self._copy_dir_recursive(s, d)
+                self._copy_dir_recursive(s, d, preserve_symlinks)
             else:
                 shutil.copy2(s, d)
 
