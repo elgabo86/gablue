@@ -215,6 +215,92 @@ restore_all_saves() {
 }
 
 #======================================
+# Fonctions de gestion des fichiers temporaires
+#======================================
+
+# Copie un fichier temporaire (fichier ou dossier) depuis .temp vers /tmp/lgp-temp/
+copy_temp_item() {
+    local TEMP_REL_PATH="$1"
+    local ITEM_NAME=$(basename "$TEMP_REL_PATH")
+
+    local LGP_TEMP_ITEM="$OUTPUT_DIR/.temp/$TEMP_REL_PATH"
+    local DEST_DIR="/tmp/lgp-temp/$GAME_INTERNAL_NAME"
+    local DEST_ITEM="$DEST_DIR/$TEMP_REL_PATH"
+
+    if [ -f "$LGP_TEMP_ITEM" ]; then
+        echo ""
+        echo "Copie du fichier temporaire ($ITEM_NAME) vers /tmp/lgp-temp..."
+        mkdir -p "$(dirname "$DEST_ITEM")"
+        rm -f "$DEST_ITEM" 2>/dev/null
+        cp "$LGP_TEMP_ITEM" "$DEST_ITEM"
+        echo "Fichier temporaire copié avec succès vers /tmp/lgp-temp."
+    elif [ -d "$LGP_TEMP_ITEM" ]; then
+        echo ""
+        echo "Copie du dossier temporaire ($ITEM_NAME) vers /tmp/lgp-temp..."
+        mkdir -p "$(dirname "$DEST_ITEM")"
+        rm -rf "$DEST_ITEM" 2>/dev/null
+        cp -a "$LGP_TEMP_ITEM"/ "$DEST_ITEM/"
+        echo "Dossier temporaire copié avec succès vers /tmp/lgp-temp."
+    else
+        echo ""
+        echo "Avertissement: l'élément temporaire n'existe pas dans le LGP: $LGP_TEMP_ITEM"
+    fi
+}
+
+# Parcourt .temppath et copie tous les fichiers temporaires vers /tmp/lgp-temp/
+copy_all_temps() {
+    local TEMPPATH_FILE="$OUTPUT_DIR/.temppath"
+    [ -f "$TEMPPATH_FILE" ] || return 0
+
+    echo ""
+    echo "=== Copie des fichiers temporaires vers /tmp/lgp-temp ==="
+
+    # Créer le dossier de destination
+    local DEST_BASE="/tmp/lgp-temp/$GAME_INTERNAL_NAME"
+    mkdir -p "$DEST_BASE"
+
+    while IFS= read -r TEMP_REL_PATH; do
+        [ -z "$TEMP_REL_PATH" ] || copy_temp_item "$TEMP_REL_PATH"
+    done < "$TEMPPATH_FILE"
+}
+
+#======================================
+# Fonctions de restauration des symlinks
+#======================================
+
+# Restaure les symlinks depuis le fichier .symlinks_backup
+restore_symlinks() {
+    local SYMLINKS_FILE="$OUTPUT_DIR/.symlinks_backup"
+    [ -f "$SYMLINKS_FILE" ] || return 0
+
+    echo ""
+    echo "=== Restauration des symlinks ==="
+
+    while IFS='|' read -r rel_path target; do
+        [ -z "$rel_path" ] && continue
+
+        local source_path="$OUTPUT_DIR/$rel_path"
+
+        # Ne pas restaurer si c'est un fichier de sauvegarde ou extra (géré ailleurs)
+        if [[ "$rel_path" == .save/* ]] || [[ "$rel_path" == .extra/* ]] || [[ "$rel_path" == .temp/* ]]; then
+            continue
+        fi
+
+        echo "Restauration du symlink: $rel_path -> $target"
+
+        # Créer le dossier parent si nécessaire
+        mkdir -p "$(dirname "$source_path")"
+
+        # Supprimer l'ancien fichier/dossier si présent
+        rm -rf "$source_path" 2>/dev/null
+
+        # Créer le symlink
+        ln -s "$target" "$source_path"
+        echo "Symlink restauré avec succès."
+    done < "$SYMLINKS_FILE"
+}
+
+#======================================
 # Fonctions de gestion des extras
 #======================================
 
@@ -269,6 +355,8 @@ copy_all_extras() {
 cleanup_lgp_files() {
     rm -rf "$OUTPUT_DIR/.extra"
     rm -rf "$OUTPUT_DIR/.save"
+    rm -rf "$OUTPUT_DIR/.temp"
+    rm -f "$OUTPUT_DIR/.symlinks_backup"
 }
 
 #======================================
@@ -310,8 +398,14 @@ main() {
     # Extraction
     extract_lgp
 
+    # Copie des fichiers temporaires vers /tmp/lgp-temp
+    copy_all_temps
+
     # Restauration des sauvegardes depuis LGP
     restore_all_saves
+
+    # Restauration des symlinks
+    restore_symlinks
 
     # Copie des extras
     copy_all_extras
