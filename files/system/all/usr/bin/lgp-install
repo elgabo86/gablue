@@ -24,3 +24,5 @@ chmod +x ~/.local/bin/lgp-thumbnailer
 
 update-mime-database ~/.local/share/mime
 update-desktop-database ~/.local/share/applications
+
+xdg-mime default Linux.desktop application/x-lgp
