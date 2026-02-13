@@ -12,6 +12,7 @@ cp /usr/share/ublue-os/gablue/desktops/thumbnailers/lgp.thumbnailer ~/.local/sha
 
 cp /usr/share/ublue-os/gablue/desktops/servicemenus/LaunchLin.desktop ~/.local/share/kio/servicemenus/
 cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateLGP.desktop ~/.local/share/kio/servicemenus/
+cp /usr/share/ublue-os/gablue/desktops/servicemenus/CreateLgpShortcut.desktop ~/.local/share/kio/servicemenus/
 cp /usr/share/ublue-os/gablue/desktops/servicemenus/EditLGP.desktop ~/.local/share/kio/servicemenus/
 
 cp /usr/share/ublue-os/gablue/desktops/mime/lgp-mime.xml ~/.local/share/mime/packages/
