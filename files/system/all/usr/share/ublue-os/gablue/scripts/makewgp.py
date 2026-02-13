@@ -1759,6 +1759,18 @@ class WGPWindow(QMainWindow):
         # Mettre à jour le nom du fichier
         output_filename = filename
         
+        # Vérifier si le fichier WGP existe déjà
+        wgp_file = os.path.join(os.path.dirname(self.game_dir), f"{output_filename}.wgp")
+        if os.path.exists(wgp_file):
+            reply = QMessageBox.question(
+                self, "Fichier existant",
+                f"Le fichier '{output_filename}.wgp' existe déjà.\n\nVoulez-vous l'écraser ?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                return
+        
         # Récupérer le nom interne du jeu depuis le champ
         internal_game_name = self.internal_name_input.text().strip()
         if not internal_game_name:
@@ -1780,6 +1792,39 @@ class WGPWindow(QMainWindow):
         self.is_creating = True
         self.create_btn.setEnabled(False)
         self.create_btn.setText("Création en cours...")
+        
+        # Créer une fenêtre de progression sans barre (juste texte + bouton annuler)
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QHBoxLayout
+        
+        self.progress_dialog = QDialog(self)
+        self.progress_dialog.setWindowTitle("Compression WGP")
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setMinimumWidth(400)
+        
+        layout = QVBoxLayout(self.progress_dialog)
+        
+        # Label pour le message
+        self.progress_label = QLabel("Initialisation...")
+        self.progress_label.setAlignment(Qt.AlignCenter)
+        font = self.progress_label.font()
+        font.setPointSize(11)
+        self.progress_label.setFont(font)
+        layout.addWidget(self.progress_label)
+        
+        # Bouton annuler
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        cancel_btn = QPushButton("Annuler")
+        cancel_btn.clicked.connect(self.cancel_compression)
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+        
+        # Forcer l'affichage immédiat
+        self.progress_dialog.show()
+        self.progress_dialog.raise_()
+        self.progress_dialog.activateWindow()
+        QApplication.processEvents()
         
         # Créer et démarrer le thread avec le nom de fichier et le nom interne
         self.create_thread = CreateWGPThread(self.game_dir, output_filename, internal_game_name, config, self)
