@@ -1,13 +1,13 @@
 #!/bin/bash
-# Version: 1.3
+# Version: 1.4
 
 # Script d'extraction d'icône Python (chemin relatif pour testing)
 SCRIPT_DIR="$(dirname "$0")"
 EXEICONEXTRACT="${SCRIPT_DIR}/exeiconextract.py"
 
-# Vérifie qu'un fichier .exe ou .wgp est passé en argument
+# Vérifie qu'un fichier .exe, .wgp ou .lgp est passé en argument
 if [ -z "$1" ] || [ ! -f "$1" ]; then
-    echo "Erreur : spécifie un fichier .exe ou .wgp en argument"
+    echo "Erreur : spécifie un fichier .exe, .wgp ou .lgp en argument"
     exit 1
 fi
 
@@ -17,6 +17,9 @@ EXE_PATH="$1"
 if [[ "$EXE_PATH" == *.wgp ]]; then
     EXE_NAME=$(basename "$EXE_PATH" .wgp)
     FILETYPE="wgp"
+elif [[ "$EXE_PATH" == *.lgp ]]; then
+    EXE_NAME=$(basename "$EXE_PATH" .lgp)
+    FILETYPE="lgp"
 else
     EXE_NAME=$(basename "$EXE_PATH" .exe)
     FILETYPE="exe"
@@ -54,7 +57,7 @@ if [ $? -ne 0 ]; then
     exit 0
 fi
 
-# Vérifier si le .fix existe dans le pack .wgp
+# Vérifier si le .fix existe dans le pack .wgp (pas pour les .lgp)
 HAS_FIX=false
 if [ "$FILETYPE" = "wgp" ]; then
     MOUNT_BASE="/tmp/wgpack_shortcut_check_$(date +%s)"
@@ -78,7 +81,8 @@ if [ "$FILETYPE" = "wgp" ]; then
     fi
 fi
 
-if [ "$LAUNCH_MODE" != "fix" ]; then
+# Pour les .lgp, pas de mode fix (seulement les .wgp l'ont)
+if [ "$FILETYPE" != "lgp" ] && [ "$LAUNCH_MODE" != "fix" ]; then
     # Demande à l'utilisateur le mode de lancement par défaut
     DEFAULT_NORMAL="on"
     DEFAULT_FIX="off"
@@ -96,28 +100,42 @@ if [ "$LAUNCH_MODE" != "fix" ]; then
     fi
 fi
 
+# Pour les .lgp, forcer le mode normal (pas de fix)
+if [ "$FILETYPE" = "lgp" ]; then
+    LAUNCH_MODE="normal"
+fi
+
 # Demande si l'utilisateur veut un raccourci sur le bureau
 CREATE_DESKTOP=$(kdialog --title "Raccourci sur le bureau" --yesno "Voulez-vous également ajouter un raccourci sur le bureau ?")
 CREATE_DESKTOP_STATUS=$?
 
 # Définit la commande d'exécution principale et l'action alternative
-if [ "$LAUNCH_MODE" = "normal" ]; then
-    EXEC_COMMAND="/usr/share/ublue-os/gablue/scripts/launchwin.sh \"$EXE_PATH\""
-    ALT_ACTION="LaunchFix"
-    ALT_NAME="Lancer avec fix gamepad"
-    ALT_EXEC="qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.activateLauncherMenu && /usr/share/ublue-os/gablue/scripts/launchwin.sh --fix \"$EXE_PATH\""
+if [ "$FILETYPE" = "lgp" ]; then
+    # Pour les .lgp : utiliser launchlin.sh (pas de mode fix)
+    EXEC_COMMAND="/usr/share/ublue-os/gablue/scripts/launchlin.sh \"$EXE_PATH\""
+    ALT_ACTION=""
+    ALT_NAME=""
+    ALT_EXEC=""
 else
-    EXEC_COMMAND="/usr/share/ublue-os/gablue/scripts/launchwin.sh --fix \"$EXE_PATH\""
-    ALT_ACTION="LaunchNormal"
-    ALT_NAME="Lancer normal"
-    ALT_EXEC="/usr/share/ublue-os/gablue/scripts/launchwin.sh \"$EXE_PATH\""
+    # Pour les .exe et .wgp : utiliser launchwin.sh avec mode fix possible
+    if [ "$LAUNCH_MODE" = "normal" ]; then
+        EXEC_COMMAND="/usr/share/ublue-os/gablue/scripts/launchwin.sh \"$EXE_PATH\""
+        ALT_ACTION="LaunchFix"
+        ALT_NAME="Lancer avec fix gamepad"
+        ALT_EXEC="qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.activateLauncherMenu && /usr/share/ublue-os/gablue/scripts/launchwin.sh --fix \"$EXE_PATH\""
+    else
+        EXEC_COMMAND="/usr/share/ublue-os/gablue/scripts/launchwin.sh --fix \"$EXE_PATH\""
+        ALT_ACTION="LaunchNormal"
+        ALT_NAME="Lancer normal"
+        ALT_EXEC="/usr/share/ublue-os/gablue/scripts/launchwin.sh \"$EXE_PATH\""
+    fi
 fi
 
 # Débogage : affiche la catégorie et le mode choisis
 echo "Catégorie sélectionnée : $CATEGORY"
 echo "Mode de lancement choisi : $LAUNCH_MODE"
 
-# Extrait l'icône (support .exe et .wgp)
+# Extrait l'icône (support .exe, .wgp et .lgp)
 if [ "$FILETYPE" = "wgp" ]; then
     # Pour les .wgp : monter temporairement et extraire l'icône depuis l'exécutable
     WGP_FILE="$(realpath "$EXE_PATH")"
@@ -153,6 +171,9 @@ if [ "$FILETYPE" = "wgp" ]; then
 
     # Nettoyer le dossier de montage
     rm -rf "$MOUNT_BASE"
+elif [ "$FILETYPE" = "lgp" ]; then
+    # Pour les .lgp : extraire directement le fichier .icon.png avec unsquashfs
+    unsquashfs -cat "$EXE_PATH" ".icon.png" > "$ICON_PATH" 2>/dev/null
 else
     # Pour les .exe : extraction avec exeiconextract.py
     python3 "$EXEICONEXTRACT" "$EXE_PATH" "$ICON_PATH" 2>/dev/null
@@ -164,7 +185,9 @@ if [ ! -f "$ICON_PATH" ]; then
 fi
 
 # Crée le fichier .desktop avec l'action alternative et la suppression
-cat > "$DESKTOP_FILE" << EOF
+if [ -n "$ALT_ACTION" ]; then
+    # Avec action alternative (pour .exe et .wgp)
+    cat > "$DESKTOP_FILE" << EOF
 [Desktop Entry]
 Name=$CUSTOM_NAME
 Exec=$EXEC_COMMAND
@@ -185,6 +208,25 @@ Name=Supprimer ce raccourci
 Exec=qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.activateLauncherMenu && rm -f "$DESKTOP_FILE" "$DESKTOP_SHORTCUT" && kbuildsycoca6 && update-desktop-database ~/.local/share/applications
 Icon=edit-delete
 EOF
+else
+    # Sans action alternative (pour .lgp)
+    cat > "$DESKTOP_FILE" << EOF
+[Desktop Entry]
+Name=$CUSTOM_NAME
+Exec=$EXEC_COMMAND
+Type=Application
+Icon=$ICON_PATH
+Terminal=false
+Categories=$CATEGORY;
+X-KDE-StartupNotify=false
+Actions=DeleteShortcut
+
+[Desktop Action DeleteShortcut]
+Name=Supprimer ce raccourci
+Exec=qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.activateLauncherMenu && rm -f "$DESKTOP_FILE" "$DESKTOP_SHORTCUT" && kbuildsycoca6 && update-desktop-database ~/.local/share/applications
+Icon=edit-delete
+EOF
+fi
 
 # Applique les permissions
 chmod +x "$DESKTOP_FILE"
@@ -201,4 +243,8 @@ update-desktop-database ~/.local/share/applications
 
 echo "Raccourci créé : $DESKTOP_FILE"
 echo "Il devrait apparaître dans la catégorie $CATEGORY du menu Plasma avec le nom : $CUSTOM_NAME"
-echo "Lancement par défaut : $(if [ "$LAUNCH_MODE" = "normal" ]; then echo "normal"; else echo "avec fix gamepad"; fi)"
+if [ "$FILETYPE" = "lgp" ]; then
+    echo "Lancement : normal (les paquets LGP ne supportent pas le fix gamepad)"
+else
+    echo "Lancement par défaut : $(if [ "$LAUNCH_MODE" = "normal" ]; then echo "normal"; else echo "avec fix gamepad"; fi)"
+fi

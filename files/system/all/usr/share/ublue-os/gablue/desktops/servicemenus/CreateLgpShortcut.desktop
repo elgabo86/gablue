@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=application/x-lgp;
+Actions=CreateGameShortcut
+X-KDE-Submenu=Linux
+
+[Desktop Action CreateGameShortcut]
+Name=Ajouter dans le menu Plasma
+Icon=org.kde.plasma.excalibur
+Exec=/usr/share/ublue-os/gablue/scripts/create-game-shortcut.sh %u
