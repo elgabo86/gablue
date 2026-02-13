@@ -841,7 +841,7 @@ class WGPWindow(QMainWindow):
         options_layout.addWidget(comp_label)
         
         self.comp_combo = QComboBox()
-        self.comp_combo.addItems(["Non (0)", "5", "10", "15", "19"])
+        self.comp_combo.addItems(["Non (0)", "Faible (5)", "Moyenne (10)", "Élevée (15)", "Max (19)"])
         self.comp_combo.setCurrentIndex(3)  # 15 par défaut
         self.comp_combo.setFixedWidth(90)
         options_layout.addWidget(self.comp_combo)
@@ -1727,8 +1727,8 @@ class WGPWindow(QMainWindow):
         
         # Créer et démarrer le thread avec le nom de fichier et le nom interne
         self.create_thread = CreateWGPThread(self.game_dir, output_filename, internal_game_name, config, self)
-        self.create_thread.progress.connect(self.on_creation_progress)
-        self.create_thread.finished.connect(self.on_creation_finished)
+        self.create_thread.progress.connect(self.on_progress)
+        self.create_thread.finished.connect(self.on_finished)
         self.create_thread.start()
     
     def on_progress(self, value, message):

@@ -828,7 +828,7 @@ class LGPWindow(QMainWindow):
         options_layout.addWidget(comp_label)
         
         self.comp_combo = QComboBox()
-        self.comp_combo.addItems(["Non (0)", "5", "10", "15", "19"])
+        self.comp_combo.addItems(["Non (0)", "Faible (5)", "Moyenne (10)", "Élevée (15)", "Max (19)"])
         self.comp_combo.setCurrentIndex(3)  # 15 par défaut
         self.comp_combo.setFixedWidth(90)
         options_layout.addWidget(self.comp_combo)
