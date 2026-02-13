@@ -1772,11 +1772,7 @@ class LGPWindow(QMainWindow):
         QApplication.processEvents()
         
         # Récupérer le niveau de compression
-        comp_text = self.comp_combo.currentText()
-        if comp_text == "Non (0)":
-            comp_level = 0
-        else:
-            comp_level = int(comp_text)
+        comp_level = int(self.comp_combo.currentText().split('(')[1].rstrip(')'))
         
         # Récupérer le nom interne du jeu depuis le champ
         internal_game_name = self.internal_name_input.text().strip()
