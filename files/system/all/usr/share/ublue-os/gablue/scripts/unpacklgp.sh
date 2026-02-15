@@ -218,46 +218,41 @@ restore_all_saves() {
 # Fonctions de gestion des fichiers temporaires
 #======================================
 
-# Copie un fichier temporaire (fichier ou dossier) depuis .temp vers /tmp/lgp-temp/
+# Copie un fichier temporaire (fichier ou dossier) depuis .temp vers son emplacement d'origine
 copy_temp_item() {
     local TEMP_REL_PATH="$1"
     local ITEM_NAME=$(basename "$TEMP_REL_PATH")
 
+    local OUTPUT_ITEM="$OUTPUT_DIR/$TEMP_REL_PATH"
     local LGP_TEMP_ITEM="$OUTPUT_DIR/.temp/$TEMP_REL_PATH"
-    local DEST_DIR="/tmp/lgp-temp/$GAME_INTERNAL_NAME"
-    local DEST_ITEM="$DEST_DIR/$TEMP_REL_PATH"
 
     if [ -f "$LGP_TEMP_ITEM" ]; then
         echo ""
-        echo "Copie du fichier temporaire ($ITEM_NAME) vers /tmp/lgp-temp..."
-        mkdir -p "$(dirname "$DEST_ITEM")"
-        rm -f "$DEST_ITEM" 2>/dev/null
-        cp "$LGP_TEMP_ITEM" "$DEST_ITEM"
-        echo "Fichier temporaire copié avec succès vers /tmp/lgp-temp."
+        echo "Copie du fichier temporaire ($ITEM_NAME)..."
+        mkdir -p "$(dirname "$OUTPUT_ITEM")"
+        rm -f "$OUTPUT_ITEM" 2>/dev/null
+        cp "$LGP_TEMP_ITEM" "$OUTPUT_ITEM"
+        echo "Fichier temporaire copié avec succès."
     elif [ -d "$LGP_TEMP_ITEM" ]; then
         echo ""
-        echo "Copie du dossier temporaire ($ITEM_NAME) vers /tmp/lgp-temp..."
-        mkdir -p "$(dirname "$DEST_ITEM")"
-        rm -rf "$DEST_ITEM" 2>/dev/null
-        cp -a "$LGP_TEMP_ITEM"/ "$DEST_ITEM/"
-        echo "Dossier temporaire copié avec succès vers /tmp/lgp-temp."
+        echo "Copie du dossier temporaire ($ITEM_NAME)..."
+        mkdir -p "$(dirname "$OUTPUT_ITEM")"
+        rm -rf "$OUTPUT_ITEM" 2>/dev/null
+        cp -a "$LGP_TEMP_ITEM"/ "$OUTPUT_ITEM/"
+        echo "Dossier temporaire copié avec succès."
     else
         echo ""
         echo "Avertissement: l'élément temporaire n'existe pas dans le LGP: $LGP_TEMP_ITEM"
     fi
 }
 
-# Parcourt .temppath et copie tous les fichiers temporaires vers /tmp/lgp-temp/
+# Parcourt .temppath et restaure tous les fichiers temporaires à leur emplacement d'origine
 copy_all_temps() {
     local TEMPPATH_FILE="$OUTPUT_DIR/.temppath"
     [ -f "$TEMPPATH_FILE" ] || return 0
 
     echo ""
-    echo "=== Copie des fichiers temporaires vers /tmp/lgp-temp ==="
-
-    # Créer le dossier de destination
-    local DEST_BASE="/tmp/lgp-temp/$GAME_INTERNAL_NAME"
-    mkdir -p "$DEST_BASE"
+    echo "=== Restauration des fichiers temporaires ==="
 
     while IFS= read -r TEMP_REL_PATH; do
         [ -z "$TEMP_REL_PATH" ] || copy_temp_item "$TEMP_REL_PATH"
@@ -398,7 +393,7 @@ main() {
     # Extraction
     extract_lgp
 
-    # Copie des fichiers temporaires vers /tmp/lgp-temp
+    # Restauration des fichiers temporaires
     copy_all_temps
 
     # Restauration des sauvegardes depuis LGP
