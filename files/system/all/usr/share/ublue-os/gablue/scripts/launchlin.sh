@@ -5,13 +5,13 @@
 #
 # Ce script permet de lancer des jeux/applications Linux via des paquets LGP
 # compressés, avec support :
-# - Des paquets LGP (.lgp) compressés en squashfs (montage kernel natif)
+# - Des paquets LGP (.lgp) compressés en squashfs via squashfuse
 # - Des exécutables directs (binaires ELF, AppImages, scripts .sh/.py)
 # - Script de pré-lancement .script.sh
-# - Overlayfs kernel natif pour les fichiers temporaires (performances optimales)
+# - Funionfs pour les fichiers temporaires (union filesystem en userspace)
 #
-# NOTE: Utilise mount -t squashfs et mount -t overlay kernel natif
-# au lieu de squashfuse + fuse-overlayfs pour de meilleures performances
+# NOTE: Utilise squashfuse (FUSE) pour le .lgp et funionfs pour .temp
+# Avantage : pas besoin de sudo, copy-on-write rapide pour les gros fichiers
 ################################################################################
 
 #======================================
@@ -107,7 +107,7 @@ mount_lgp() {
         if ! lsof +D "$MOUNT_DIR" > /dev/null 2>&1; then
             # Pas de processus actif : montage orphelin, nettoyer automatiquement
             echo "Montage orphelin détecté pour $LGPACK_NAME, nettoyage..."
-            sudo umount -f "$MOUNT_DIR" 2>/dev/null || sudo umount -f -l "$MOUNT_DIR" 2>/dev/null || true
+            fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -f "$MOUNT_DIR" 2>/dev/null || true
         else
             # Le jeu tourne vraiment, demander à l'utilisateur
             local QUESTION="$LGPACK_NAME est déjà lancé.\n\nVoulez-vous arrêter l'instance en cours et relancer le jeu ?"
@@ -134,7 +134,7 @@ mount_lgp() {
                 fi
                 # Vérifier si toujours monté et forcer le démontage
                 if mountpoint -q "$MOUNT_DIR"; then
-                    sudo umount -f "$MOUNT_DIR" 2>/dev/null || sudo umount -f -l "$MOUNT_DIR" 2>/dev/null || true
+                    fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -f "$MOUNT_DIR" 2>/dev/null || true
                 fi
             else
                 error_exit "$LGPACK_NAME est déjà en cours d'exécution"
@@ -152,23 +152,20 @@ mount_lgp() {
         rmdir "$MOUNT_DIR" 2>/dev/null || rm -rf "$MOUNT_DIR" 2>/dev/null || true
     fi
 
-    # Vérifier que mount est disponible
-    if ! command -v mount &> /dev/null; then
-        error_exit "mount n'est pas disponible"
+    # Vérifier que squashfuse est disponible
+    if ! command -v squashfuse &> /dev/null; then
+        error_exit "squashfuse n'est pas installé"
     fi
 
-    # Créer et monter le squashfs via le kernel (loopback)
+    # Créer et monter le squashfs via FUSE (pas besoin de sudo)
     mkdir -p "$MOUNT_DIR"
-    echo "Montage de $LGPACK_FILE sur $MOUNT_DIR (kernel squashfs)..."
-    
-    # Utiliser sudo pour monter le squashfs en tant que root
-    # L'option loop permet d'utiliser un fichier comme périphérique bloc
-    if ! sudo mount -t squashfs -o ro,nodev,nosuid "$LGPACK_FILE" "$MOUNT_DIR" 2>&1; then
-        rmdir "$MOUNT_DIR" 2>/dev/null || true
-        error_exit "Erreur lors du montage du squashfs kernel"
+    echo "Montage de $LGPACK_FILE sur $MOUNT_DIR (squashfuse)..."
+    squashfuse -r "$LGPACK_FILE" "$MOUNT_DIR"
+
+    if [ $? -ne 0 ]; then
+        rmdir "$MOUNT_DIR"
+        error_exit "Erreur lors du montage du squashfs"
     fi
-    
-    echo "Squashfs monté avec succès via le kernel"
 }
 
 # Nettoie en démontant le LGP et les extras
@@ -187,21 +184,25 @@ cleanup_lgp() {
     cleanup_extras_symlink
     cleanup_temp_symlink
 
-    # Démontage du squashfs kernel natif
+    # Démontage du squashfs (FUSE)
+    if ! fusermount -u "$MOUNT_DIR" 2>/dev/null; then
+        # Si échec, tuer le processus squashfuse
+        local FUSE_PID=$(fuser -m "$MOUNT_DIR" 2>/dev/null | head -n1)
+        if [ -n "$FUSE_PID" ]; then
+            kill -9 "$FUSE_PID" 2>/dev/null
+            sleep 0.5
+        fi
+        # Force unmount lazy si nécessaire
+        fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null
+    fi
+
+    # Attendre un peu que le démontage se termine complètement
+    sleep 0.2
+
+    # Vérifier et forcer le démontage si encore monté
     if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
-        # Utiliser sudo pour démonter (le mount kernel nécessite root)
-        if ! sudo umount "$MOUNT_DIR" 2>/dev/null; then
-            # Si échec, force unmount lazy
-            sudo umount -f -l "$MOUNT_DIR" 2>/dev/null || true
-        fi
-        
-        # Attendre un peu que le démontage se termine
-        sleep 0.2
-        
-        # Vérifier si encore monté
-        if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
-            sudo umount -f "$MOUNT_DIR" 2>/dev/null || sudo umount -f -l "$MOUNT_DIR" 2>/dev/null || true
-        fi
+        umount -f "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null
+        sleep 0.1
     fi
 
     # Supprimer le dossier de montage
@@ -578,7 +579,7 @@ prepare_temps() {
     # Vérifier que le point de montage n'est pas déjà utilisé
     if mountpoint -q "$TEMP_GAME_DIR" 2>/dev/null; then
         echo "Démontage de l'overlay existant..."
-        sudo umount "$TEMP_GAME_DIR" 2>/dev/null || true
+        fusermount -u "$TEMP_GAME_DIR" 2>/dev/null || umount -f "$TEMP_GAME_DIR" 2>/dev/null || true
     fi
 
     # S'assurer que le lowerdir est accessible
@@ -735,8 +736,8 @@ cleanup_temp_symlink() {
     if mountpoint -q "$GAME_TEMP_DIR" 2>/dev/null; then
         echo "Démontage de funionfs..."
         if ! fusermount -u "$GAME_TEMP_DIR" 2>/dev/null; then
-            # Si fusermount échoue, essayer umount
-            sudo umount "$GAME_TEMP_DIR" 2>/dev/null || sudo umount -f "$GAME_TEMP_DIR" 2>/dev/null || true
+            # Si fusermount échoue, essayer umount sans sudo (FUSE)
+            umount "$GAME_TEMP_DIR" 2>/dev/null || umount -f "$GAME_TEMP_DIR" 2>/dev/null || true
         fi
     fi
     
