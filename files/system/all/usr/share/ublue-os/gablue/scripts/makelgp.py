@@ -590,6 +590,18 @@ class CreateLGPThread(QThread):
         """Nettoie les fichiers temporaires et restaure les fichiers originaux"""
         self.restore_files()
         self.cleanup_dirs_only()
+        self.cleanup_temp_icons()
+    
+    def cleanup_temp_icons(self):
+        """Supprime les fichiers d'icônes temporaires extraits des AppImages"""
+        if hasattr(self, 'available_icons'):
+            for icon in self.available_icons:
+                if icon.get('source') == 'appimage':
+                    try:
+                        if os.path.exists(icon['path']):
+                            os.remove(icon['path'])
+                    except:
+                        pass
     
     def cleanup_dirs_only(self):
         """Supprime uniquement les dossiers .save, .extra et .temp sans restaurer les fichiers"""
