@@ -957,7 +957,7 @@ class LGPWindow(QMainWindow):
         
         # Fichiers temporaires
         temps_group = QGroupBox("Fichiers temporaires (temps)")
-        temps_group.setToolTip("Stockées dans /tmp/lgp-temp (effacés à la fermeture)")
+        temps_group.setToolTip("Montés en overlayfs dans /tmp/lgp-temp (lecture depuis le LGP, écriture dans /tmp, effacés à la fermeture)")
         temps_layout = QVBoxLayout(temps_group)
         temps_layout.setContentsMargins(8, 12, 8, 8)
         

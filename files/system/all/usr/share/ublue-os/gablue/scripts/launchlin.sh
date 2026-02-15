@@ -538,43 +538,96 @@ prepare_extras() {
     ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
 }
 
-# Prépare les fichiers temporaires depuis .temp vers /tmp/lgp-temp
+# Monte l'overlayfs pour les fichiers temporaires
+# lowerdir = .temp (lecture seule depuis le LGP)
+# upperdir = /tmp/lgp-temp-upper (couche d'écriture)
+# workdir = /tmp/lgp-temp-work (dossier de travail overlayfs)
 prepare_temps() {
     local TEMPPATH_FILE="$MOUNT_DIR/.temppath"
     local TEMP_LGP_DIR="$MOUNT_DIR/.temp"
     local TEMP_GAME_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
+    # Utiliser l'ID sans espaces stocké par setup_temp_symlink
+    local GAME_ID="${_GAME_TEMP_ID:-lgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')}"
+    local TEMP_UPPER="/tmp/lgp-temp-upper/$GAME_ID"
+    local TEMP_WORK="/tmp/lgp-temp-work/$GAME_ID"
 
     [ -f "$TEMPPATH_FILE" ] || return 0
 
-    echo "Préparation des fichiers temporaires..."
-
-    # Nettoyer l'ancien dossier temporaire s'il existe
-    if [ -d "$TEMP_GAME_DIR" ]; then
-        rm -rf "$TEMP_GAME_DIR"
+    # Vérifier que le dossier .temp existe dans le LGP
+    if [ ! -d "$TEMP_LGP_DIR" ]; then
+        echo "Dossier .temp non trouvé dans le LGP, skip overlay"
+        return 0
     fi
 
-    # Créer le dossier temporaire pour ce jeu
-    mkdir -p "$TEMP_GAME_DIR"
+    echo "Montage de l'overlayfs pour les fichiers temporaires..."
 
-    while IFS= read -r TEMP_REL_PATH; do
-        [ -z "$TEMP_REL_PATH" ] && continue
+    # Vérifier que les dossiers existent
+    if [ ! -d "$TEMP_GAME_DIR" ] || [ ! -d "$TEMP_UPPER" ] || [ ! -d "$TEMP_WORK" ]; then
+        error_exit "Dossiers overlay manquants pour les fichiers temporaires"
+    fi
 
-        local TEMP_LGP_ITEM="$TEMP_LGP_DIR/$TEMP_REL_PATH"
-        local FINAL_TEMP_ITEM="$TEMP_GAME_DIR/$TEMP_REL_PATH"
+    # Vérifier que le point de montage est vide (requis par overlayfs)
+    if [ -n "$(ls -A "$TEMP_GAME_DIR" 2>/dev/null)" ]; then
+        echo "Nettoyage du point de montage non vide..."
+        rm -rf "$TEMP_GAME_DIR"/* "$TEMP_GAME_DIR"/.* 2>/dev/null || true
+    fi
 
-        if [ -d "$TEMP_LGP_ITEM" ]; then
-            # Copier récursivement en réécrivant les symlinks externes
-            _copy_dir_rewrite_symlinks "$TEMP_LGP_ITEM" "$FINAL_TEMP_ITEM"
-        elif [ -e "$TEMP_LGP_ITEM" ]; then
-            mkdir -p "$(dirname "$FINAL_TEMP_ITEM")"
-            if [ -L "$TEMP_LGP_ITEM" ]; then
-                # C'est un symlink : réécrire si externe
-                _copy_symlink_rewrite "$TEMP_LGP_ITEM" "$FINAL_TEMP_ITEM"
-            else
-                cp -n "$TEMP_LGP_ITEM" "$FINAL_TEMP_ITEM"
-            fi
+    # Vérifier que le point de montage n'est pas déjà utilisé
+    if mountpoint -q "$TEMP_GAME_DIR" 2>/dev/null; then
+        echo "Démontage de l'overlay existant..."
+        sudo umount "$TEMP_GAME_DIR" 2>/dev/null || true
+    fi
+
+    # S'assurer que le lowerdir est accessible
+    if [ ! -r "$TEMP_LGP_DIR" ]; then
+        error_exit "Dossier .temp inaccessible en lecture"
+    fi
+
+    # Utiliser un répertoire de liens symboliques pour éviter les espaces dans les chemins
+    local OVERLAY_LINK_DIR="/tmp/.lgp-overlay-$GAME_ID"
+    rm -rf "$OVERLAY_LINK_DIR" 2>/dev/null || true
+    mkdir -p "$OVERLAY_LINK_DIR"
+    
+    # Créer des liens symboliques vers les répertoires réels
+    ln -s "$TEMP_LGP_DIR" "$OVERLAY_LINK_DIR/lower"
+    ln -s "$TEMP_UPPER" "$OVERLAY_LINK_DIR/upper"
+    ln -s "$TEMP_WORK" "$OVERLAY_LINK_DIR/work"
+    
+    # Stockage du répertoire de liens pour le nettoyage
+    export _OVERLAY_LINK_DIR="$OVERLAY_LINK_DIR"
+
+    # Utiliser readlink -f pour résoudre les liens symboliques
+    local REAL_LOWER REAL_UPPER REAL_WORK
+    REAL_LOWER=$(readlink -f "$OVERLAY_LINK_DIR/lower")
+    REAL_UPPER=$(readlink -f "$OVERLAY_LINK_DIR/upper")
+    REAL_WORK=$(readlink -f "$OVERLAY_LINK_DIR/work")
+    
+    # Utiliser fuse-overlayfs (supporte les FUSE comme lowerdir)
+    # fuse-overlayfs fonctionne sur tous les systèmes de fichiers
+    if command -v fuse-overlayfs &> /dev/null; then
+        fuse-overlayfs -o "lowerdir=${REAL_LOWER},upperdir=${REAL_UPPER},workdir=${REAL_WORK}" "${TEMP_GAME_DIR}" 2>&1
+        local mount_result=$?
+        
+        if [ $mount_result -eq 0 ]; then
+            rm -rf "$OVERLAY_LINK_DIR" 2>/dev/null || true
+            echo "Overlayfs monté avec succès: $TEMP_GAME_DIR"
+            return 0
         fi
-    done < "$TEMPPATH_FILE"
+    fi
+    
+    # Fallback vers mount overlay (pour les systèmes qui supportent le lowerdir FUSE)
+    sudo mount -t overlay overlay \
+        -o "lowerdir=${REAL_LOWER},upperdir=${REAL_UPPER},workdir=${REAL_WORK}" \
+        "${TEMP_GAME_DIR}" 2>&1
+    local mount_result=$?
+
+    if [ $mount_result -ne 0 ]; then
+        rm -rf "$OVERLAY_LINK_DIR" 2>/dev/null || true
+        error_exit "Échec du montage overlayfs pour les fichiers temporaires (fuse-overlayfs et mount overlay ont échoué)"
+    fi
+
+    rm -rf "$OVERLAY_LINK_DIR" 2>/dev/null || true
+    echo "Overlayfs monté avec succès: $TEMP_GAME_DIR"
 }
 
 # Vérifie si le LGP contient des fichiers de sauvegarde
@@ -654,27 +707,78 @@ cleanup_extras_symlink() {
     [ -L "$GAME_EXTRAS_SYMLINK" ] && rm -f "$GAME_EXTRAS_SYMLINK"
 }
 
-# Crée le dossier /tmp/lgp-temp/$GAME_INTERNAL_NAME pour les fichiers temporaires
-# Note: Pas besoin de symlink pour les temps car ils sont déjà dans /tmp
+# Prépare les dossiers pour le montage overlay des fichiers temporaires
+# Crée upperdir et workdir pour l'overlayfs
 setup_temp_symlink() {
     # Ne rien faire si le LGP n'a pas de temps
     has_temps || return 0
 
+    # Utiliser un ID unique sans espaces pour les chemins de travail
+    local GAME_ID="lgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')"
     local GAME_TEMP_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
+    local GAME_TEMP_UPPER="/tmp/lgp-temp-upper/$GAME_ID"
+    local GAME_TEMP_WORK="/tmp/lgp-temp-work/$GAME_ID"
+    
+    # Stocker les chemins réels pour le nettoyage
+    export _GAME_TEMP_ID="$GAME_ID"
 
-    # Créer le dossier temporaire pour ce jeu
+    # Nettoyer les anciens dossiers s'ils existent
+    if [ -d "$GAME_TEMP_UPPER" ]; then
+        rm -rf "$GAME_TEMP_UPPER"
+    fi
+    if [ -d "$GAME_TEMP_WORK" ]; then
+        rm -rf "$GAME_TEMP_WORK"
+    fi
+
+    # Créer les dossiers pour l'overlay avec permissions utilisateur
     mkdir -p "$GAME_TEMP_DIR"
-    echo "Dossier temporaire créé: $GAME_TEMP_DIR"
+    mkdir -p "$GAME_TEMP_UPPER"
+    mkdir -p "$GAME_TEMP_WORK"
+    
+    # Définir les permissions pour l'overlay (l'utilisateur doit pouvoir écrire)
+    chmod 777 "$GAME_TEMP_UPPER"
+    chmod 777 "$GAME_TEMP_WORK"
+    
+    echo "Dossiers overlay préparés pour: $GAME_TEMP_DIR"
+    echo "  upperdir: $GAME_TEMP_UPPER"
+    echo "  workdir: $GAME_TEMP_WORK"
 }
 
-# Nettoie les fichiers temporaires /tmp/lgp-temp/$GAME_INTERNAL_NAME
+# Démonte l'overlayfs et nettoie les dossiers temporaires
 cleanup_temp_symlink() {
     local GAME_TEMP_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
+    # Utiliser l'ID sans espaces stocké par setup_temp_symlink
+    local GAME_ID="${_GAME_TEMP_ID:-lgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')}"
+    local GAME_TEMP_UPPER="/tmp/lgp-temp-upper/$GAME_ID"
+    local GAME_TEMP_WORK="/tmp/lgp-temp-work/$GAME_ID"
+    local OVERLAY_LINK_DIR="${_OVERLAY_LINK_DIR:-/tmp/.lgp-overlay-$GAME_ID}"
     
-    # Nettoyer les fichiers temporaires
+    # Démonter l'overlay si monté
+    if mountpoint -q "$GAME_TEMP_DIR" 2>/dev/null; then
+        echo "Démontage de l'overlayfs..."
+        sudo umount "$GAME_TEMP_DIR" 2>/dev/null || umount -f "$GAME_TEMP_DIR" 2>/dev/null || true
+    fi
+    
+    # Nettoyer les dossiers temporaires
     if [ -d "$GAME_TEMP_DIR" ]; then
-        echo "Nettoyage des fichiers temporaires..."
+        echo "Suppression du point de montage..."
         rm -rf "$GAME_TEMP_DIR"
+    fi
+    
+    if [ -d "$GAME_TEMP_UPPER" ]; then
+        echo "Suppression du dossier upperdir..."
+        rm -rf "$GAME_TEMP_UPPER"
+    fi
+    
+    if [ -d "$GAME_TEMP_WORK" ]; then
+        echo "Suppression du dossier workdir..."
+        rm -rf "$GAME_TEMP_WORK"
+    fi
+    
+    # Nettoyer le répertoire de liens symboliques
+    if [ -d "$OVERLAY_LINK_DIR" ]; then
+        echo "Suppression du répertoire de liens..."
+        rm -rf "$OVERLAY_LINK_DIR"
     fi
 }
 
