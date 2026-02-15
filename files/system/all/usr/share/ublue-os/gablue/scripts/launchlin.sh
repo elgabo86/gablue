@@ -5,9 +5,13 @@
 #
 # Ce script permet de lancer des jeux/applications Linux via des paquets LGP
 # compressés, avec support :
-# - Des paquets LGP (.lgp) compressés en squashfs
+# - Des paquets LGP (.lgp) compressés en squashfs (montage kernel natif)
 # - Des exécutables directs (binaires ELF, AppImages, scripts .sh/.py)
 # - Script de pré-lancement .script.sh
+# - Overlayfs kernel natif pour les fichiers temporaires (performances optimales)
+#
+# NOTE: Utilise mount -t squashfs et mount -t overlay kernel natif
+# au lieu de squashfuse + fuse-overlayfs pour de meilleures performances
 ################################################################################
 
 #======================================
@@ -103,7 +107,7 @@ mount_lgp() {
         if ! lsof +D "$MOUNT_DIR" > /dev/null 2>&1; then
             # Pas de processus actif : montage orphelin, nettoyer automatiquement
             echo "Montage orphelin détecté pour $LGPACK_NAME, nettoyage..."
-            fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -f "$MOUNT_DIR" 2>/dev/null
+            sudo umount -f "$MOUNT_DIR" 2>/dev/null || sudo umount -f -l "$MOUNT_DIR" 2>/dev/null || true
         else
             # Le jeu tourne vraiment, demander à l'utilisateur
             local QUESTION="$LGPACK_NAME est déjà lancé.\n\nVoulez-vous arrêter l'instance en cours et relancer le jeu ?"
@@ -130,7 +134,7 @@ mount_lgp() {
                 fi
                 # Vérifier si toujours monté et forcer le démontage
                 if mountpoint -q "$MOUNT_DIR"; then
-                    fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -f "$MOUNT_DIR" 2>/dev/null
+                    sudo umount -f "$MOUNT_DIR" 2>/dev/null || sudo umount -f -l "$MOUNT_DIR" 2>/dev/null || true
                 fi
             else
                 error_exit "$LGPACK_NAME est déjà en cours d'exécution"
@@ -148,20 +152,23 @@ mount_lgp() {
         rmdir "$MOUNT_DIR" 2>/dev/null || rm -rf "$MOUNT_DIR" 2>/dev/null || true
     fi
 
-    # Vérifier que squashfuse est disponible
-    if ! command -v squashfuse &> /dev/null; then
-        error_exit "squashfuse n'est pas installé"
+    # Vérifier que mount est disponible
+    if ! command -v mount &> /dev/null; then
+        error_exit "mount n'est pas disponible"
     fi
 
-    # Créer et monter le squashfs
+    # Créer et monter le squashfs via le kernel (loopback)
     mkdir -p "$MOUNT_DIR"
-    echo "Montage de $LGPACK_FILE sur $MOUNT_DIR..."
-    squashfuse -r "$LGPACK_FILE" "$MOUNT_DIR"
-
-    if [ $? -ne 0 ]; then
-        rmdir "$MOUNT_DIR"
-        error_exit "Erreur lors du montage du squashfs"
+    echo "Montage de $LGPACK_FILE sur $MOUNT_DIR (kernel squashfs)..."
+    
+    # Utiliser sudo pour monter le squashfs en tant que root
+    # L'option loop permet d'utiliser un fichier comme périphérique bloc
+    if ! sudo mount -t squashfs -o ro,nodev,nosuid "$LGPACK_FILE" "$MOUNT_DIR" 2>&1; then
+        rmdir "$MOUNT_DIR" 2>/dev/null || true
+        error_exit "Erreur lors du montage du squashfs kernel"
     fi
+    
+    echo "Squashfs monté avec succès via le kernel"
 }
 
 # Nettoie en démontant le LGP et les extras
@@ -180,30 +187,26 @@ cleanup_lgp() {
     cleanup_extras_symlink
     cleanup_temp_symlink
 
-    # Démontage du squashfs
-    if ! fusermount -u "$MOUNT_DIR" 2>/dev/null; then
-        # Si échec, tuer le processus squashfuse
-        local FUSE_PID=$(fuser -m "$MOUNT_DIR" 2>/dev/null | head -n1)
-        if [ -n "$FUSE_PID" ]; then
-            kill -9 "$FUSE_PID" 2>/dev/null
-            sleep 0.5
-        fi
-        # Force unmount lazy si nécessaire
-        fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null
-    fi
-
-    # Attendre un peu que le démontage se termine complètement
-    sleep 0.2
-
-    # Vérifier et forcer le démontage si encore monté
+    # Démontage du squashfs kernel natif
     if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
-        umount -f "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null
-        sleep 0.1
+        # Utiliser sudo pour démonter (le mount kernel nécessite root)
+        if ! sudo umount "$MOUNT_DIR" 2>/dev/null; then
+            # Si échec, force unmount lazy
+            sudo umount -f -l "$MOUNT_DIR" 2>/dev/null || true
+        fi
+        
+        # Attendre un peu que le démontage se termine
+        sleep 0.2
+        
+        # Vérifier si encore monté
+        if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
+            sudo umount -f "$MOUNT_DIR" 2>/dev/null || sudo umount -f -l "$MOUNT_DIR" 2>/dev/null || true
+        fi
     fi
 
     # Supprimer le dossier de montage
     if [ -d "$MOUNT_DIR" ]; then
-        rmdir "$MOUNT_DIR" 2>/dev/null
+        rmdir "$MOUNT_DIR" 2>/dev/null || true
     fi
 }
 
@@ -583,51 +586,27 @@ prepare_temps() {
         error_exit "Dossier .temp inaccessible en lecture"
     fi
 
-    # Utiliser un répertoire de liens symboliques pour éviter les espaces dans les chemins
-    local OVERLAY_LINK_DIR="/tmp/.lgp-overlay-$GAME_ID"
-    rm -rf "$OVERLAY_LINK_DIR" 2>/dev/null || true
-    mkdir -p "$OVERLAY_LINK_DIR"
+    # Funionfs (unionfs-fuse) - union filesystem en userspace
+    # Fonctionne avec squashfs et ne fait pas de copy-up complet au open()
+    # Syntaxe: funionfs <upperdir> <mountpoint> -o dirs=<lowerdir>=ro
+    # upperdir = premier argument positionnel (rw par défaut)
+    # lowerdir = spécifié dans l'option dirs= avec =ro
+    echo "Montage funionfs (unionfs-fuse)..."
+    echo "  lowerdir: $TEMP_LGP_DIR"
+    echo "  upperdir: $TEMP_UPPER"
     
-    # Créer des liens symboliques vers les répertoires réels
-    ln -s "$TEMP_LGP_DIR" "$OVERLAY_LINK_DIR/lower"
-    ln -s "$TEMP_UPPER" "$OVERLAY_LINK_DIR/upper"
-    ln -s "$TEMP_WORK" "$OVERLAY_LINK_DIR/work"
-    
-    # Stockage du répertoire de liens pour le nettoyage
-    export _OVERLAY_LINK_DIR="$OVERLAY_LINK_DIR"
-
-    # Utiliser readlink -f pour résoudre les liens symboliques
-    local REAL_LOWER REAL_UPPER REAL_WORK
-    REAL_LOWER=$(readlink -f "$OVERLAY_LINK_DIR/lower")
-    REAL_UPPER=$(readlink -f "$OVERLAY_LINK_DIR/upper")
-    REAL_WORK=$(readlink -f "$OVERLAY_LINK_DIR/work")
-    
-    # Utiliser fuse-overlayfs (supporte les FUSE comme lowerdir)
-    # fuse-overlayfs fonctionne sur tous les systèmes de fichiers
-    if command -v fuse-overlayfs &> /dev/null; then
-        fuse-overlayfs -o "lowerdir=${REAL_LOWER},upperdir=${REAL_UPPER},workdir=${REAL_WORK}" "${TEMP_GAME_DIR}" 2>&1
-        local mount_result=$?
-        
-        if [ $mount_result -eq 0 ]; then
-            rm -rf "$OVERLAY_LINK_DIR" 2>/dev/null || true
-            echo "Overlayfs monté avec succès: $TEMP_GAME_DIR"
-            return 0
-        fi
+    # Vérifier que funionfs est disponible
+    if ! command -v funionfs &> /dev/null; then
+        error_exit "funionfs n'est pas installé (Installation: sudo dnf5 install funionfs)"
     fi
     
-    # Fallback vers mount overlay (pour les systèmes qui supportent le lowerdir FUSE)
-    sudo mount -t overlay overlay \
-        -o "lowerdir=${REAL_LOWER},upperdir=${REAL_UPPER},workdir=${REAL_WORK}" \
-        "${TEMP_GAME_DIR}" 2>&1
-    local mount_result=$?
-
-    if [ $mount_result -ne 0 ]; then
-        rm -rf "$OVERLAY_LINK_DIR" 2>/dev/null || true
-        error_exit "Échec du montage overlayfs pour les fichiers temporaires (fuse-overlayfs et mount overlay ont échoué)"
+    # Utiliser funionfs avec copy-on-write
+    # upperdir en premier argument (rw), lowerdir dans dirs= avec =ro
+    if ! funionfs "${TEMP_UPPER}" "${TEMP_GAME_DIR}" -o "dirs=${TEMP_LGP_DIR}=ro,delete=all" 2>&1; then
+        error_exit "Échec du montage funionfs pour les fichiers temporaires"
     fi
 
-    rm -rf "$OVERLAY_LINK_DIR" 2>/dev/null || true
-    echo "Overlayfs monté avec succès: $TEMP_GAME_DIR"
+    echo "Funionfs monté avec succès: $TEMP_GAME_DIR"
 }
 
 # Vérifie si le LGP contient des fichiers de sauvegarde
@@ -748,15 +727,17 @@ setup_temp_symlink() {
 cleanup_temp_symlink() {
     local GAME_TEMP_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
     # Utiliser l'ID sans espaces stocké par setup_temp_symlink
-    local GAME_ID="${_GAME_TEMP_ID:-lgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')}"
+    local GAME_ID="${_GAME_TEMP_ID:-lgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')}" 
     local GAME_TEMP_UPPER="/tmp/lgp-temp-upper/$GAME_ID"
     local GAME_TEMP_WORK="/tmp/lgp-temp-work/$GAME_ID"
-    local OVERLAY_LINK_DIR="${_OVERLAY_LINK_DIR:-/tmp/.lgp-overlay-$GAME_ID}"
     
-    # Démonter l'overlay si monté
+    # Démonter funionfs si monté
     if mountpoint -q "$GAME_TEMP_DIR" 2>/dev/null; then
-        echo "Démontage de l'overlayfs..."
-        sudo umount "$GAME_TEMP_DIR" 2>/dev/null || umount -f "$GAME_TEMP_DIR" 2>/dev/null || true
+        echo "Démontage de funionfs..."
+        if ! fusermount -u "$GAME_TEMP_DIR" 2>/dev/null; then
+            # Si fusermount échoue, essayer umount
+            sudo umount "$GAME_TEMP_DIR" 2>/dev/null || sudo umount -f "$GAME_TEMP_DIR" 2>/dev/null || true
+        fi
     fi
     
     # Nettoyer les dossiers temporaires
@@ -773,12 +754,6 @@ cleanup_temp_symlink() {
     if [ -d "$GAME_TEMP_WORK" ]; then
         echo "Suppression du dossier workdir..."
         rm -rf "$GAME_TEMP_WORK"
-    fi
-    
-    # Nettoyer le répertoire de liens symboliques
-    if [ -d "$OVERLAY_LINK_DIR" ]; then
-        echo "Suppression du répertoire de liens..."
-        rm -rf "$OVERLAY_LINK_DIR"
     fi
 }
 

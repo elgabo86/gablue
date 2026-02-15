@@ -52,6 +52,7 @@ dnf5 -y install \
     terminus-fonts-console \
     plocate \
     squashfuse \
+    funionfs \
     icoutils
 
 # Outils réseau et cloud
