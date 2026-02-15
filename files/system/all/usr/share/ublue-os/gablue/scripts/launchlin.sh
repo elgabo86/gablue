@@ -847,6 +847,12 @@ run_lgp_mode() {
 
     # Nettoyage en cas d'interruption
     trap cleanup_lgp EXIT
+    
+    # Nettoyer /tmp/edenln s'il existe (contient des vieux symlinks de .script.sh)
+    if [ -d "/tmp/edenln" ]; then
+        echo "Nettoyage de /tmp/edenln..."
+        rm -rf /tmp/edenln/* /tmp/edenln/.* 2>/dev/null || true
+    fi
 
     # Créer le symlink /tmp/lgp-saves AVANT prepare_saves
     setup_saves_symlink
