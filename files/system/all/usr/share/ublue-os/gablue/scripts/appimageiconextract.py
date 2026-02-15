@@ -45,6 +45,7 @@ def extract_appimage_icon(appimage_path, output_path):
                 except:
                     pass
         
+        extract_dir = None
         if not mounted:
             # Essayer avec --appimage-extract
             try:
@@ -208,6 +209,8 @@ def extract_appimage_icon(appimage_path, output_path):
             if mounted:
                 subprocess.run(['fusermount', '-u', temp_mount], capture_output=True)
             shutil.rmtree(temp_mount, ignore_errors=True)
+            if extract_dir:
+                shutil.rmtree(extract_dir, ignore_errors=True)
         except:
             pass
 

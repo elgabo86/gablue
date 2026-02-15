@@ -93,11 +93,13 @@ release_slot() {
 acquire_slot || exit 1
 
 TEMP_MOUNT=$(mktemp -d)
+TEMP_PNG=""
 
 # Nettoyage complet en toute circonstance
 cleanup() {
     fusermount -u "$TEMP_MOUNT" 2>/dev/null
     rm -rf "$TEMP_MOUNT"
+    [ -n "$TEMP_PNG" ] && rm -f "$TEMP_PNG"
     release_slot
 }
 trap cleanup EXIT
@@ -133,6 +135,7 @@ EXE_LOWER=$(echo "$EXE_NAME" | tr '[:upper:]' '[:lower:]')
 # Si c'est un AppImage, extraire l'icône avec appimageiconextract.py
 if [[ "$EXE_LOWER" == *.appimage ]]; then
     TEMP_PNG=$(mktemp)
+    trap cleanup EXIT
     python3 "$APPIMAGEICONEXTRACT" "$ICON_EXE_PATH" "$TEMP_PNG" 2>/dev/null
     if [ -f "$TEMP_PNG" ]; then
         magick "$TEMP_PNG" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && exit 0
