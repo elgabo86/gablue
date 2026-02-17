@@ -126,31 +126,7 @@ class CreateLGPThread(QThread):
                     else:
                         os.remove(d)
                 
-                if preserve_symlinks:
-                    # Vérifier si la cible est dans le dossier du jeu (interne)
-                    if not os.path.isabs(link_target):
-                        # C'est un relatif, vérifier s'il pointe dans le jeu
-                        abs_target = os.path.normpath(os.path.join(os.path.dirname(s), link_target))
-                        if abs_target.startswith(self.game_dir):
-                            # Symlink interne au jeu, garder relatif
-                            pass
-                        else:
-                            # Symlink externe, convertir en absolu
-                            link_target = abs_target
-                    else:
-                        # C'est un absolu, vérifier s'il pointe dans le jeu
-                        abs_target = os.path.normpath(link_target)
-                        if not abs_target.startswith(self.game_dir):
-                            # Symlink externe, garder absolu
-                            pass
-                        else:
-                            # Symlink interne au jeu, convertir en relatif
-                            link_target = os.path.relpath(abs_target, os.path.dirname(s))
-                else:
-                    # Comportement original : convertir relatif en absolu
-                    if not os.path.isabs(link_target):
-                        link_target = os.path.normpath(os.path.join(os.path.dirname(s), link_target))
-                
+                # Copier le symlink tel quel sans transformation
                 os.symlink(link_target, d)
             elif os.path.isdir(s):
                 if os.path.exists(d):
@@ -161,12 +137,12 @@ class CreateLGPThread(QThread):
                 shutil.copy2(s, d)
 
     def _copy_dir_recursive(self, source, target, preserve_symlinks=True):
-        """Copie récursivement un répertoire en préservant les symlinks relatifs internes
+        """Copie récursivement un répertoire en préservant les symlinks
         
         Args:
             source: répertoire source
             target: répertoire cible
-            preserve_symlinks: si True, garde les symlinks relatifs internes au jeu
+            preserve_symlinks: paramètre conservé pour compatibilité mais ignoré
         """
         os.makedirs(target, exist_ok=True)
         for item in os.listdir(source):
@@ -183,31 +159,7 @@ class CreateLGPThread(QThread):
                     else:
                         os.remove(d)
                 
-                if preserve_symlinks:
-                    # Vérifier si la cible est dans le dossier du jeu (interne)
-                    if not os.path.isabs(link_target):
-                        # C'est un relatif, vérifier s'il pointe dans le jeu
-                        abs_target = os.path.normpath(os.path.join(os.path.dirname(s), link_target))
-                        if abs_target.startswith(self.game_dir):
-                            # Symlink interne au jeu, garder relatif
-                            pass
-                        else:
-                            # Symlink externe, convertir en absolu
-                            link_target = abs_target
-                    else:
-                        # C'est un absolu, vérifier s'il pointe dans le jeu
-                        abs_target = os.path.normpath(link_target)
-                        if not abs_target.startswith(self.game_dir):
-                            # Symlink externe, garder absolu
-                            pass
-                        else:
-                            # Symlink interne au jeu, convertir en relatif
-                            link_target = os.path.relpath(abs_target, os.path.dirname(s))
-                else:
-                    # Comportement original : convertir relatif en absolu
-                    if not os.path.isabs(link_target):
-                        link_target = os.path.normpath(os.path.join(os.path.dirname(s), link_target))
-                
+                # Copier le symlink tel quel sans transformation
                 os.symlink(link_target, d)
             elif os.path.isdir(s):
                 self._copy_dir_recursive(s, d, preserve_symlinks)
@@ -247,16 +199,9 @@ class CreateLGPThread(QThread):
                         # Sauvegarder les infos du symlink si c'en est un (avant de copier)
                         if os.path.islink(source):
                             original_target = os.readlink(source)
-                            # Convertir les cibles absolues en relatives pour que ça fonctionne dans l'image
-                            if os.path.isabs(original_target):
-                                # Calculer le chemin relatif par rapport au dossier du jeu
-                                relative_target = os.path.relpath(original_target, os.path.dirname(source))
-                                symlinks_backup[rel_path] = relative_target
-                                print(f"DEBUG: Backing up symlink {rel_path} -> {relative_target} (converted from absolute)")
-                            else:
-                                # Déjà relatif, on garde tel quel
-                                symlinks_backup[rel_path] = original_target
-                                print(f"DEBUG: Backing up symlink {rel_path} -> {original_target}")
+                            # Garder la cible originale sans conversion
+                            symlinks_backup[rel_path] = original_target
+                            print(f"DEBUG: Backing up symlink {rel_path} -> {original_target}")
                         
                         # Copier vers .save (contenu uniquement pour les dossiers)
                         os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -323,16 +268,9 @@ class CreateLGPThread(QThread):
                         # Sauvegarder les infos du symlink si c'en est un (avant de copier)
                         if os.path.islink(source):
                             original_target = os.readlink(source)
-                            # Convertir les cibles absolues en relatives pour que ça fonctionne dans l'image
-                            if os.path.isabs(original_target):
-                                # Calculer le chemin relatif par rapport au dossier du jeu
-                                relative_target = os.path.relpath(original_target, os.path.dirname(source))
-                                symlinks_backup[rel_path] = relative_target
-                                print(f"DEBUG: Backing up symlink {rel_path} -> {relative_target} (converted from absolute)")
-                            else:
-                                # Déjà relatif, on garde tel quel
-                                symlinks_backup[rel_path] = original_target
-                                print(f"DEBUG: Backing up symlink {rel_path} -> {original_target}")
+                            # Garder la cible originale sans conversion
+                            symlinks_backup[rel_path] = original_target
+                            print(f"DEBUG: Backing up symlink {rel_path} -> {original_target}")
                         
                         # Copier vers .extra (contenu uniquement pour les dossiers)
                         os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -399,16 +337,9 @@ class CreateLGPThread(QThread):
                         # Sauvegarder les infos du symlink si c'en est un (avant de copier)
                         if os.path.islink(source):
                             original_target = os.readlink(source)
-                            # Convertir les cibles absolues en relatives pour que ça fonctionne dans l'image
-                            if os.path.isabs(original_target):
-                                # Calculer le chemin relatif par rapport au dossier du jeu
-                                relative_target = os.path.relpath(original_target, os.path.dirname(source))
-                                symlinks_backup[rel_path] = relative_target
-                                print(f"DEBUG: Backing up symlink {rel_path} -> {relative_target} (converted from absolute)")
-                            else:
-                                # Déjà relatif, on garde tel quel
-                                symlinks_backup[rel_path] = original_target
-                                print(f"DEBUG: Backing up symlink {rel_path} -> {original_target}")
+                            # Garder la cible originale sans conversion
+                            symlinks_backup[rel_path] = original_target
+                            print(f"DEBUG: Backing up symlink {rel_path} -> {original_target}")
                         
                         # Copier vers .temp (contenu uniquement pour les dossiers)
                         os.makedirs(os.path.dirname(target), exist_ok=True)
