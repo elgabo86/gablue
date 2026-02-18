@@ -122,6 +122,14 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     ln -s /bin/qdbus /bin/qdbus6
 fi
 
+# =============================================================================
+# CONFIGURATION PIPEWIRE (LATENCE AUDIO)
+# =============================================================================
+
+# Réduire le quantum de 1024 à 256 pour diviser par 4 la latence audio
+sed -i 's/#default.clock.quantum       = 1024/default.clock.quantum       = 256/' /usr/share/pipewire/pipewire.conf
+sed -i 's/default.clock.min-quantum = 1024/default.clock.min-quantum = 256/' /usr/share/pipewire/pipewire.conf
+
 #MAJ Seulement le samedi
 # 1. Flatpak : passer de quotidien à samedi (tes sed originaux – indispensables)
 sed -i 's/OnCalendar=\*-\*-\* 4:00:00/OnCalendar=Sat \*-\*-\* 04:00:00/' /usr/lib/systemd/system/flatpak-system-update.timer
