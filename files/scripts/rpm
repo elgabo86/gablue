@@ -224,7 +224,7 @@ fi
 # =============================================================================
 
 # Correction temporaire pour tesseract (nécessaire pour certaines fonctionnalités)
-dnf5 -y install tesseract
+dnf5 -y install tesseract-devel
 
 # =============================================================================
 # NETTOYAGE DES PAQUETS SUPERFLUS
