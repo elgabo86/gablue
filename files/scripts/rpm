@@ -206,6 +206,7 @@ dnf5 -y install \
     python3-tqdm \
     python3-beautifulsoup4 \
     python3-pyside6 \
+    python3-setuptools \
     python3-pip
 
 # =============================================================================
