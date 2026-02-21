@@ -52,6 +52,8 @@ jobs:
           version: ${{ matrix.iso.version }}
           variant: ${{ matrix.iso.variant }}
           iso_name: ${{ matrix.iso.name }}-${{ matrix.iso.tag }}-${{ matrix.iso.version }}.iso
+          secure_boot_key_url: '${{ github.server_url }}/${{ github.repository }}/raw/main/secure_boot.der'
+          enrollment_password: 'secureblue'
 
       - name: Generate Checksum
         id: checksum

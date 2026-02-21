@@ -695,3 +695,12 @@ create-iso-nvidia:
     #!/usr/bin/bash
     sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD):/build-container-installer/build --security-opt label=disable ghcr.io/jasonn3/build-container-installer:latest VERSION=42 IMAGE_REPO=ghcr.io/elgabo86 IMAGE_NAME=gablue-nvidia IMAGE_TAG=latest VARIANT=Kinoite ISO_NAME=build/gablue-nvidia.iso &&
     echo "The gablue iso is ready in your download folder"
+
+# Enroll Gablue Secure Boot key - Enter password "secureblue" if prompted
+enroll-secure-boot-key:
+    #!/usr/bin/bash
+    ENROLLMENT_PASSWORD="secureblue"
+    SECUREBOOT_KEY=/etc/pki/akmods/certs/gablue-secure-boot.der
+    sudo mokutil --timeout -1
+    echo -e "$ENROLLMENT_PASSWORD\n$ENROLLMENT_PASSWORD" | sudo mokutil --import "$SECUREBOOT_KEY"
+    echo 'At next reboot, the moktool UEFI menu UI will be displayed (*QWERTY* keyboard input and navigation).\nThen, select "Enroll MOK", and input "secureblue" as the password'
