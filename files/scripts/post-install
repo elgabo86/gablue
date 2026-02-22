@@ -50,7 +50,6 @@ chmod +x /usr/bin/lgp-install
 
 # Rendre exécutables les scripts d'administration Gablue
 chmod +x /usr/bin/gablue-update
-chmod +x /usr/bin/sync-gamepads
 chmod +x /usr/libexec/gablue-config
 chmod +x /usr/libexec/archgab-update
 chmod +x /usr/libexec/gablue-dx-groups
