@@ -7,6 +7,10 @@
 # - Des paquets WGP (.wgp) compressés
 # - Des exécutables directs (.exe)
 # - Du fix manette (optionnel)
+# - Funionfs pour les fichiers temporaires (union filesystem en userspace)
+#
+# NOTE: Utilise squashfuse (FUSE) pour le .wgp et funionfs pour .temp
+# Avantage : pas besoin de sudo, copy-on-write rapide pour les gros fichiers
 ################################################################################
 
 #======================================
@@ -556,43 +560,72 @@ prepare_extras() {
     ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
 }
 
-# Prépare les fichiers temporaires depuis .temp vers /tmp/wgp-temp
+# Monte l'overlayfs pour les fichiers temporaires
+# lowerdir = .temp (lecture seule depuis le WGP)
+# upperdir = /tmp/wgp-temp-upper (couche d'écriture)
+# workdir = /tmp/wgp-temp-work (dossier de travail overlayfs)
 prepare_temps() {
     local TEMPPATH_FILE="$MOUNT_DIR/.temppath"
     local TEMP_WGP_DIR="$MOUNT_DIR/.temp"
     local TEMP_GAME_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
+    # Utiliser l'ID sans espaces stocké par setup_temp_symlink
+    local GAME_ID="${_GAME_TEMP_ID:-wgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')}"
+    local TEMP_UPPER="/tmp/wgp-temp-upper/$GAME_ID"
+    local TEMP_WORK="/tmp/wgp-temp-work/$GAME_ID"
 
     [ -f "$TEMPPATH_FILE" ] || return 0
 
-    echo "Préparation des fichiers temporaires..."
-
-    # Nettoyer l'ancien dossier temporaire s'il existe
-    if [ -d "$TEMP_GAME_DIR" ]; then
-        rm -rf "$TEMP_GAME_DIR"
+    # Vérifier que le dossier .temp existe dans le WGP
+    if [ ! -d "$TEMP_WGP_DIR" ]; then
+        echo "Dossier .temp non trouvé dans le WGP, skip overlay"
+        return 0
     fi
 
-    # Créer le dossier temporaire pour ce jeu
-    mkdir -p "$TEMP_GAME_DIR"
+    echo "Montage de l'overlayfs pour les fichiers temporaires..."
 
-    while IFS= read -r TEMP_REL_PATH; do
-        [ -z "$TEMP_REL_PATH" ] && continue
+    # Vérifier que les dossiers existent
+    if [ ! -d "$TEMP_GAME_DIR" ] || [ ! -d "$TEMP_UPPER" ] || [ ! -d "$TEMP_WORK" ]; then
+        error_exit "Dossiers overlay manquants pour les fichiers temporaires"
+    fi
 
-        local TEMP_WGP_ITEM="$TEMP_WGP_DIR/$TEMP_REL_PATH"
-        local FINAL_TEMP_ITEM="$TEMP_GAME_DIR/$TEMP_REL_PATH"
+    # Vérifier que le point de montage est vide (requis par overlayfs)
+    if [ -n "$(ls -A "$TEMP_GAME_DIR" 2>/dev/null)" ]; then
+        echo "Nettoyage du point de montage non vide..."
+        rm -rf "$TEMP_GAME_DIR"/* "$TEMP_GAME_DIR"/.* 2>/dev/null || true
+    fi
 
-        if [ -d "$TEMP_WGP_ITEM" ]; then
-            # Copier récursivement en réécrivant les symlinks externes
-            _copy_dir_rewrite_symlinks "$TEMP_WGP_ITEM" "$FINAL_TEMP_ITEM"
-        elif [ -e "$TEMP_WGP_ITEM" ]; then
-            mkdir -p "$(dirname "$FINAL_TEMP_ITEM")"
-            if [ -L "$TEMP_WGP_ITEM" ]; then
-                # C'est un symlink : réécrire si externe
-                _copy_symlink_rewrite "$TEMP_WGP_ITEM" "$FINAL_TEMP_ITEM"
-            else
-                cp -n "$TEMP_WGP_ITEM" "$FINAL_TEMP_ITEM"
-            fi
-        fi
-    done < "$TEMPPATH_FILE"
+    # Vérifier que le point de montage n'est pas déjà utilisé
+    if mountpoint -q "$TEMP_GAME_DIR" 2>/dev/null; then
+        echo "Démontage de l'overlay existant..."
+        fusermount -u "$TEMP_GAME_DIR" 2>/dev/null || umount -f "$TEMP_GAME_DIR" 2>/dev/null || true
+    fi
+
+    # S'assurer que le lowerdir est accessible
+    if [ ! -r "$TEMP_WGP_DIR" ]; then
+        error_exit "Dossier .temp inaccessible en lecture"
+    fi
+
+    # Funionfs (unionfs-fuse) - union filesystem en userspace
+    # Fonctionne avec squashfs et ne fait pas de copy-up complet au open()
+    # Syntaxe: funionfs <upperdir> <mountpoint> -o dirs=<lowerdir>=ro
+    # upperdir = premier argument positionnel (rw par défaut)
+    # lowerdir = spécifié dans l'option dirs= avec =ro
+    echo "Montage funionfs (unionfs-fuse)..."
+    echo "  lowerdir: $TEMP_WGP_DIR"
+    echo "  upperdir: $TEMP_UPPER"
+    
+    # Vérifier que funionfs est disponible
+    if ! command -v funionfs &> /dev/null; then
+        error_exit "funionfs n'est pas installé (Installation: sudo dnf5 install funionfs)"
+    fi
+    
+    # Utiliser funionfs avec copy-on-write
+    # upperdir en premier argument (rw), lowerdir dans dirs= avec =ro
+    if ! funionfs "${TEMP_UPPER}" "${TEMP_GAME_DIR}" -o "dirs=${TEMP_WGP_DIR}=ro,delete=all" 2>&1; then
+        error_exit "Échec du montage funionfs pour les fichiers temporaires"
+    fi
+
+    echo "Funionfs monté avec succès: $TEMP_GAME_DIR"
 }
 
 # Vérifie si le WGP contient des fichiers de sauvegarde
@@ -672,27 +705,74 @@ cleanup_extras_symlink() {
     [ -L "$GAME_EXTRAS_SYMLINK" ] && rm -f "$GAME_EXTRAS_SYMLINK"
 }
 
-# Crée le dossier /tmp/wgp-temp/$GAME_INTERNAL_NAME pour les fichiers temporaires
-# Note: Pas besoin de symlink pour les temps car ils sont déjà dans /tmp
+# Prépare les dossiers pour le montage overlay des fichiers temporaires
+# Crée upperdir et workdir pour l'overlayfs
 setup_temp_symlink() {
     # Ne rien faire si le WGP n'a pas de temps
     has_temps || return 0
 
+    # Utiliser un ID unique sans espaces pour les chemins de travail
+    local GAME_ID="wgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')"
     local GAME_TEMP_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
+    local GAME_TEMP_UPPER="/tmp/wgp-temp-upper/$GAME_ID"
+    local GAME_TEMP_WORK="/tmp/wgp-temp-work/$GAME_ID"
+    
+    # Stocker les chemins réels pour le nettoyage
+    export _GAME_TEMP_ID="$GAME_ID"
 
-    # Créer le dossier temporaire pour ce jeu
+    # Nettoyer les anciens dossiers s'ils existent
+    if [ -d "$GAME_TEMP_UPPER" ]; then
+        rm -rf "$GAME_TEMP_UPPER"
+    fi
+    if [ -d "$GAME_TEMP_WORK" ]; then
+        rm -rf "$GAME_TEMP_WORK"
+    fi
+
+    # Créer les dossiers pour l'overlay avec permissions utilisateur
     mkdir -p "$GAME_TEMP_DIR"
-    echo "Dossier temporaire créé: $GAME_TEMP_DIR"
+    mkdir -p "$GAME_TEMP_UPPER"
+    mkdir -p "$GAME_TEMP_WORK"
+    
+    # Définir les permissions pour l'overlay (l'utilisateur doit pouvoir écrire)
+    chmod 777 "$GAME_TEMP_UPPER"
+    chmod 777 "$GAME_TEMP_WORK"
+    
+    echo "Dossiers overlay préparés pour: $GAME_TEMP_DIR"
+    echo "  upperdir: $GAME_TEMP_UPPER"
+    echo "  workdir: $GAME_TEMP_WORK"
 }
 
-# Nettoie les fichiers temporaires /tmp/wgp-temp/$GAME_INTERNAL_NAME
+# Démonte l'overlayfs et nettoie les dossiers temporaires
 cleanup_temp_symlink() {
     local GAME_TEMP_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
+    # Utiliser l'ID sans espaces stocké par setup_temp_symlink
+    local GAME_ID="${_GAME_TEMP_ID:-wgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')}" 
+    local GAME_TEMP_UPPER="/tmp/wgp-temp-upper/$GAME_ID"
+    local GAME_TEMP_WORK="/tmp/wgp-temp-work/$GAME_ID"
     
-    # Nettoyer les fichiers temporaires
+    # Démonter funionfs si monté
+    if mountpoint -q "$GAME_TEMP_DIR" 2>/dev/null; then
+        echo "Démontage de funionfs..."
+        if ! fusermount -u "$GAME_TEMP_DIR" 2>/dev/null; then
+            # Si fusermount échoue, essayer umount sans sudo (FUSE)
+            umount "$GAME_TEMP_DIR" 2>/dev/null || umount -f "$GAME_TEMP_DIR" 2>/dev/null || true
+        fi
+    fi
+    
+    # Nettoyer les dossiers temporaires
     if [ -d "$GAME_TEMP_DIR" ]; then
-        echo "Nettoyage des fichiers temporaires..."
+        echo "Suppression du point de montage..."
         rm -rf "$GAME_TEMP_DIR"
+    fi
+    
+    if [ -d "$GAME_TEMP_UPPER" ]; then
+        echo "Suppression du dossier upperdir..."
+        rm -rf "$GAME_TEMP_UPPER"
+    fi
+    
+    if [ -d "$GAME_TEMP_WORK" ]; then
+        echo "Suppression du dossier workdir..."
+        rm -rf "$GAME_TEMP_WORK"
     fi
 }
 
