@@ -758,6 +758,52 @@ cleanup_temp_symlink() {
     fi
 }
 
+# Charge les variables d'environnement depuis un fichier .env
+# Format supporté: VAR=val (une par ligne ou séparées par espaces)
+# Usage: load_env_file <chemin_fichier>
+load_env_file() {
+    local env_file="$1"
+    
+    [ -f "$env_file" ] || return 0
+    
+    local env_vars=""
+    local line
+    
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Ignorer les lignes vides et les commentaires
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        
+        # Supprimer les espaces/tabs autour
+        line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        
+        # Ignorer si pas une affectation valide
+        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+        
+        # Exporter la variable
+        export "$line"
+    done < "$env_file"
+}
+
+# Charge les fichiers .env (racine + dossier exe) et exporte les variables
+# Usage: load_env_files <mount_dir> <exe_dir>
+load_env_files() {
+    local mount_dir="$1"
+    local exe_dir="$2"
+    
+    local root_env="$mount_dir/.env"
+    local exe_env="$exe_dir/.env"
+    
+    # Charger .env de la racine
+    if [ -f "$root_env" ]; then
+        load_env_file "$root_env"
+    fi
+    
+    # Charger .env du dossier de l'exe (si différent de la racine)
+    if [ -f "$exe_env" ] && [ "$exe_dir" != "$mount_dir" ]; then
+        load_env_file "$exe_env"
+    fi
+}
+
 # Exécute le script de pré-lancement s'il existe
 execute_prelaunch_script() {
     local SCRIPT_FILE="$MOUNT_DIR/.script.sh"
@@ -876,6 +922,10 @@ run_lgp_mode() {
     # Lire la configuration
     read_lgp_config
 
+    # Charger les variables d'environnement des fichiers .env
+    local exe_dir="$(dirname "$REAL_EXE_PATH")"
+    load_env_files "$MOUNT_DIR" "$exe_dir"
+
     # Lancer le jeu (avec le répertoire de travail = dossier du LGP)
     launch_game "$REAL_EXE_PATH" "$args" "$LGPACK_NAME" "$MOUNT_DIR"
 
@@ -906,6 +956,13 @@ run_classic_mode() {
         echo "Exécution du script de pré-lancement..."
         chmod +x "$script_file" 2>/dev/null
         (cd "$dirpath" && "$script_file")
+    fi
+
+    # Charger les variables d'environnement du fichier .env
+    local dir_env="$dirpath/.env"
+    if [ -f "$dir_env" ]; then
+        echo "Chargement des variables d'environnement depuis $dir_env..."
+        load_env_file "$dir_env"
     fi
 
     # Lancer le jeu

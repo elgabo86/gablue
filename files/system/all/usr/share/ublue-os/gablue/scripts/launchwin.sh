@@ -700,23 +700,101 @@ cleanup_temp_symlink() {
 run_bottles() {
     local exe="$1"
     local cmd_args="$2"
+    local env_vars="${3:-}"
 
     # Vérifier si mesa-git est demandé
     local MESA_CONFIG="$HOME_REAL/.config/.mesa-git"
     if [ -f "$MESA_CONFIG" ]; then
         echo "Utilisation de Mesa-Git (détecté: $MESA_CONFIG)"
-        FLATPAK_GL_DRIVERS=mesa-git /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args"
+        if [ -n "$env_vars" ]; then
+            env FLATPAK_GL_DRIVERS=mesa-git $env_vars /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args"
+        else
+            FLATPAK_GL_DRIVERS=mesa-git /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args"
+        fi
     else
-        /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args"
+        if [ -n "$env_vars" ]; then
+            env $env_vars /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args"
+        else
+            /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args"
+        fi
     fi
 }
 
+# Charge les variables d'environnement depuis un fichier .env
+# Format supporté: VAR=val (une par ligne ou séparées par espaces)
+# Usage: load_env_file <chemin_fichier>
+# Retour: chaîne de variables à préfixer (VAR1=val1 VAR2=val2)
+load_env_file() {
+    local env_file="$1"
+    
+    [ -f "$env_file" ] || return 0
+    
+    local env_vars=""
+    local line
+    
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Ignorer les lignes vides et les commentaires
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        
+        # Supprimer les espaces/tabs autour
+        line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        
+        # Ignorer si pas une affectation valide
+        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+        
+        # Ajouter aux variables d'env
+        if [ -n "$env_vars" ]; then
+            env_vars="$env_vars $line"
+        else
+            env_vars="$line"
+        fi
+    done < "$env_file"
+    
+    echo "$env_vars"
+}
+
+# Charge les fichiers .env (racine + dossier exe) et retourne les variables combinées
+# Usage: load_env_files <mount_dir> <exe_dir>
+load_env_files() {
+    local mount_dir="$1"
+    local exe_dir="$2"
+    
+    local env_vars=""
+    local root_env="$mount_dir/.env"
+    local exe_env="$exe_dir/.env"
+    
+    # Charger .env de la racine
+    if [ -f "$root_env" ]; then
+        local root_vars
+        root_vars=$(load_env_file "$root_env")
+        if [ -n "$root_vars" ]; then
+            env_vars="$root_vars"
+        fi
+    fi
+    
+    # Charger .env du dossier de l'exe (si différent de la racine)
+    if [ -f "$exe_env" ] && [ "$exe_dir" != "$mount_dir" ]; then
+        local exe_vars
+        exe_vars=$(load_env_file "$exe_env")
+        if [ -n "$exe_vars" ]; then
+            if [ -n "$env_vars" ]; then
+                env_vars="$env_vars $exe_vars"
+            else
+                env_vars="$exe_vars"
+            fi
+        fi
+    fi
+    
+    echo "$env_vars"
+}
+
 # Lance le jeu via Bottles avec surveillance bwrap
-# Usage: launch_bottles_game <chemin_exe> [args]
+# Usage: launch_bottles_game <chemin_exe> [args] [env_vars]
 launch_bottles_game() {
     local exe_path="$1"
     local game_args="${2:-}"
     local display_name="${3:-$(basename "$exe_path")}"
+    local env_vars="${4:-}"
 
     echo "Lancement de $display_name..."
 
@@ -728,9 +806,9 @@ launch_bottles_game() {
     # Lancer en arrière-plan et surveiller
     local FLATPAK_PID
     if [ -n "$game_args" ]; then
-        run_bottles "$exe_path" " $game_args" &
+        run_bottles "$exe_path" " $game_args" "$env_vars" &
     else
-        run_bottles "$exe_path" "" &
+        run_bottles "$exe_path" "" "$env_vars" &
     fi
     FLATPAK_PID=$!
 
@@ -956,8 +1034,15 @@ run_wgp_mode() {
         fi
     fi
 
+    # Charger les variables d'environnement des fichiers .env
+    local env_vars
+    env_vars=$(load_env_files "$MOUNT_DIR" "$exe_dir")
+    if [ -n "$env_vars" ]; then
+        echo "Variables d'environnement chargées: $env_vars"
+    fi
+
     # Lancer le jeu avec surveillance bwrap
-    launch_bottles_game "$FULL_EXE_PATH" "$args" "$WGPACK_NAME"
+    launch_bottles_game "$FULL_EXE_PATH" "$args" "$WGPACK_NAME" "$env_vars"
 
     # Nettoyage des symlinks saves et extras (le trap fera le reste)
     cleanup_saves_symlink
@@ -1046,8 +1131,18 @@ run_classic_mode() {
         fi
     fi
 
+    # Charger les variables d'environnement des fichiers .env
+    local env_vars=""
+    local dir_env="$(dirname "$fullpath")/.env"
+    if [ -f "$dir_env" ]; then
+        env_vars=$(load_env_file "$dir_env")
+        if [ -n "$env_vars" ]; then
+            echo "Variables d'environnement chargées: $env_vars"
+        fi
+    fi
+
     # Lancer le jeu avec surveillance bwrap
-    launch_bottles_game "$new_fullpath" "$args" "$filename"
+    launch_bottles_game "$new_fullpath" "$args" "$filename" "$env_vars"
 
     # Nettoyer le dossier temporaire si créé
     [ -n "$temp_base" ] && rm -rf "$temp_base"
