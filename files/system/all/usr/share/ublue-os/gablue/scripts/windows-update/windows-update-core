@@ -643,6 +643,31 @@ EOF
     fi
 }
 
+# Fonction pour s'assurer que Limit_System_Environment est false dans bottle.yml
+ensure_limit_system_environment_false() {
+    local target_yml="$1"
+
+    if [ -f "$target_yml" ]; then
+        /usr/bin/python3 - <<EOF
+import yaml
+import os
+
+target_file = os.path.expanduser('$target_yml')
+
+with open(target_file, 'r') as file:
+    data = yaml.safe_load(file)
+
+# Définir Limit_System_Environment à false
+data['Limit_System_Environment'] = False
+
+with open(target_file, 'w') as file:
+    yaml.safe_dump(data, file, default_flow_style=False, allow_unicode=True)
+
+print("Limit_System_Environment défini à false dans bottle.yml")
+EOF
+    fi
+}
+
 # Fonction pour restaurer les données de l'ancienne configuration
 restore_config_data() {
     update_progress 70 "Récupération des données de l'ancienne configuration..."
@@ -650,6 +675,8 @@ restore_config_data() {
     update_progress 75 "Récupération des programmes externes..."
     restore_external_programs \
         ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml \
+        ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml
+    ensure_limit_system_environment_false \
         ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml
 }
 
@@ -680,6 +707,8 @@ restore_config_data_in_rebuild() {
     _restore_config_dirs
     restore_external_programs \
         ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml \
+        ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml
+    ensure_limit_system_environment_false \
         ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml
 }
 
