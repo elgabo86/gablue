@@ -1199,7 +1199,10 @@ class WGPWindow(QMainWindow):
                 'source': 'existing'
             })
         
-        # 2. Chercher les fichiers .ico
+        # 2. Extraire les icônes des .exe (prioritaire - avant les autres)
+        self.extract_icons_from_all_exes()
+        
+        # 3. Chercher les fichiers .ico
         for root, dirs, files in os.walk(self.game_dir):
             # Ignorer certains dossiers
             dirs[:] = [d for d in dirs if d not in ['.save', '.extra', '__pycache__', 
@@ -1214,7 +1217,7 @@ class WGPWindow(QMainWindow):
                         'source': 'ico'
                     })
         
-        # 3. Chercher les images qui semblent être des icônes (carrées et petite taille)
+        # 4. Chercher les images qui semblent être des icônes (carrées et petite taille)
         for root, dirs, files in os.walk(self.game_dir):
             # Ignorer certains dossiers de données
             dirs[:] = [d for d in dirs if d not in ['.save', '.extra', '__pycache__', 
@@ -1244,18 +1247,20 @@ class WGPWindow(QMainWindow):
                     except:
                         pass
         
-        # 4. Extraire les icônes de tous les .exe trouvés
-        self.extract_icons_from_all_exes()
-        
-        # Limiter à 30 icônes max pour ne pas surcharger l'interface
-        self.available_icons = self.available_icons[:30]
+        # Limiter à 50 icônes max pour ne pas surcharger l'interface
+        if len(self.available_icons) > 50:
+            self.available_icons = self.available_icons[:50]
         
         # Mettre à jour l'affichage
         self.update_icons_display()
     
     def extract_icons_from_all_exes(self):
-        """Extrait les icônes de tous les .exe du dossier"""
+        """Extrait les icônes de tous les .exe du dossier en utilisant exeiconextract.py"""
         import tempfile
+        
+        # Chemin relatif vers exeiconextract.py (même dossier que makewgp.py)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        exeiconextract_path = os.path.join(script_dir, 'exeiconextract.py')
         
         exe_files = []
         for root, dirs, files in os.walk(self.game_dir):
@@ -1267,37 +1272,21 @@ class WGPWindow(QMainWindow):
         # Limiter à 10 exe max pour éviter d'être trop long
         for exe_path in exe_files[:10]:
             try:
+                # Utiliser exeiconextract.py pour extraire l'icône
+                png_file = os.path.join(tempfile.gettempdir(), f'wgp_icon_{uuid.uuid4().hex}.png')
+                
                 result = subprocess.run(
-                    ['wrestool', '-x', '-t', '14', exe_path],
-                    capture_output=True, timeout=10
+                    ['/usr/bin/python3', exeiconextract_path, exe_path, png_file],
+                    capture_output=True, timeout=30
                 )
                 
-                if result.returncode == 0 and result.stdout:
-                    # Sauvegarder l'icône
-                    ico_file = os.path.join(tempfile.gettempdir(), f'wgp_icon_{uuid.uuid4().hex}.ico')
-                    with open(ico_file, 'wb') as f:
-                        f.write(result.stdout)
-                    
-                    # Convertir en PNG
-                    png_file = os.path.join(tempfile.gettempdir(), f'wgp_icon_{uuid.uuid4().hex}.png')
-                    subprocess.run(['icotool', '-x', '-o', png_file, ico_file], check=False)
-                    
-                    # Chercher le fichier PNG créé
-                    base_name = os.path.basename(png_file).replace('.png', '')
-                    temp_dir = tempfile.gettempdir()
-                    for f in os.listdir(temp_dir):
-                        if f.startswith(base_name) and f.endswith('.png'):
-                            full_path = os.path.join(temp_dir, f)
-                            exe_name = os.path.splitext(os.path.basename(exe_path))[0]
-                            self.available_icons.append({
-                                'path': full_path,
-                                'name': f"Exe: {exe_name[:12]}",
-                                'source': 'exe'
-                            })
-                            break
-                    
-                    # Nettoyer le fichier .ico
-                    os.remove(ico_file)
+                if result.returncode == 0 and os.path.exists(png_file):
+                    exe_name = os.path.splitext(os.path.basename(exe_path))[0]
+                    self.available_icons.append({
+                        'path': png_file,
+                        'name': f"Exe: {exe_name[:12]}",
+                        'source': 'exe'
+                    })
                     
             except Exception as e:
                 print(f"Erreur extraction icône de {exe_path}: {e}")
