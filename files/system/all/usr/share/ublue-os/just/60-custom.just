@@ -697,7 +697,7 @@ create-iso-nvidia:
     echo "The gablue iso is ready in your download folder"
 
 # Enroll Gablue Secure Boot key - Enter password "secureblue" if prompted
-enroll-secure-boot-key:
+enable-secureboot:
     #!/usr/bin/bash
     ENROLLMENT_PASSWORD="secureblue"
     SECUREBOOT_KEY=/etc/pki/akmods/certs/gablue-secure-boot.der
