@@ -207,11 +207,15 @@ mount_wgp() {
 
 # Nettoie en démontant le WGP et les extras
 cleanup_wgp() {
-    # Vérifier si le mount est encore utilisé par un nouveau bwrap (nouvelle instance)
-    if mountpoint -q "$MOUNT_DIR" && pgrep -f "bwrap.*$(printf '%s' "$MOUNT_DIR" | sed 's/[[\.*^$()+?{|\\]/\\&/g')" > /dev/null 2>&1; then
-        # Une nouvelle instance a pris la main, ne surtout pas démonter
-        echo "Une nouvelle instance de $WGPACK_NAME a pris la main, pas de démontage."
-        return 0
+    # Vérifier si le mount est encore utilisé par un bwrap
+    # On attend un peu pour laisser les processus résiduels mourir
+    if mountpoint -q "$MOUNT_DIR"; then
+        sleep 0.3
+        if pgrep -f "bwrap.*$(printf '%s' "$MOUNT_DIR" | sed 's/[[\.*^$()+?{|\\]/\\&/g')" > /dev/null 2>&1; then
+            # Encore un bwrap actif après le délai - c'est une vraie nouvelle instance
+            echo "Une nouvelle instance de $WGPACK_NAME a pris la main, pas de démontage."
+            return 0
+        fi
     fi
 
     echo "Démontage de $WGPACK_NAME..."
@@ -786,18 +790,18 @@ run_bottles() {
     local MESA_CONFIG="$HOME_REAL/.config/.mesa-git"
     if [ -f "$MESA_CONFIG" ]; then
         echo "Utilisation de Mesa-Git (détecté: $MESA_CONFIG)"
-        if [ -n "$env_vars" ]; then
-            env FLATPAK_GL_DRIVERS=mesa-git $env_vars /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args"
-        else
-            FLATPAK_GL_DRIVERS=mesa-git /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args"
-        fi
-    else
-        if [ -n "$env_vars" ]; then
-            env $env_vars /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args"
-        else
-            /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args"
-        fi
+        export FLATPAK_GL_DRIVERS=mesa-git
     fi
+    
+    # Ajouter les variables d'environnement si présentes
+    if [ -n "$env_vars" ]; then
+        eval "export $env_vars"
+    fi
+
+    # Lancer flatpak sans file-forwarding pour éviter les problèmes de stdin
+    # file-forwarding est utile pour passer des fichiers, pas nécessaire pour les jeux
+    # Pour les jeux Unity qui ont besoin de stdin, TERM=linux est déjà défini
+    /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args" </dev/null
 }
 
 # Charge les variables d'environnement depuis un fichier .env
@@ -868,7 +872,7 @@ load_env_files() {
     echo "$env_vars"
 }
 
-# Lance le jeu via Bottles avec surveillance bwrap
+# Lance le jeu via Bottles
 # Usage: launch_bottles_game <chemin_exe> [args] [env_vars]
 launch_bottles_game() {
     local exe_path="$1"
@@ -883,28 +887,15 @@ launch_bottles_game() {
 
     apply_padfix_setting
 
-    # Lancer en arrière-plan et surveiller
-    local FLATPAK_PID
+    # Lancer en foreground pour que le terminal soit correctement géré
     if [ -n "$game_args" ]; then
-        run_bottles "$exe_path" " $game_args" "$env_vars" &
+        run_bottles "$exe_path" " $game_args" "$env_vars"
     else
-        run_bottles "$exe_path" "" "$env_vars" &
+        run_bottles "$exe_path" "" "$env_vars"
     fi
-    FLATPAK_PID=$!
 
-    echo "En attente de la fermeture du jeu..."
-
-    # Attendre le processus flatpak (bloquant, 0% CPU)
-    wait "$FLATPAK_PID" 2>/dev/null
-
-    # Vérification rapide de sécurité : attendre que bwrap se termine vraiment
-    local bwrap_pattern
-    bwrap_pattern=$(printf '%s' "$exe_path" | sed 's/[[\.*^$()+?{|\\]/\\&/g')
-    local timeout=50  # 5 secondes max (50 * 0.1s)
-    while [ $timeout -gt 0 ] && pgrep -f "bwrap.*$bwrap_pattern" > /dev/null 2>&1; do
-        sleep 0.1
-        ((timeout--))
-    done
+    # Réinitialiser le terminal (flatpak peut laisser le terminal en mode raw)
+    stty sane 2>/dev/null
 
     restore_padfix_setting
 }
