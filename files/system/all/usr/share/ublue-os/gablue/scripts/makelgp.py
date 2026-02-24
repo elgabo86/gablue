@@ -1058,18 +1058,25 @@ class LGPWindow(QMainWindow):
             with open(temppath_file, 'r') as f:
                 for line in f:
                     line = line.strip()
-                    if line:
-                        if line.startswith('D:'):
-                            self.temps.append(('dir', line[2:]))
-                        elif line.startswith('F:'):
-                            self.temps.append(('file', line[2:]))
+                    if not line:
+                        continue
+                    # Détecter le mode "full overlay"
+                    if line == '*':
+                        self.temps = [('*', 'full_overlay')]
+                        self.full_temp_checkbox.setChecked(True)
+                        self.temps_list.setEnabled(False)
+                        break  # Un seul marqueur suffit
+                    elif line.startswith('D:'):
+                        self.temps.append(('dir', line[2:]))
+                    elif line.startswith('F:'):
+                        self.temps.append(('file', line[2:]))
+                    else:
+                        # Format ancien sans préfixe, deviner selon l'existence
+                        full_path = os.path.join(self.game_dir, line)
+                        if os.path.isdir(full_path):
+                            self.temps.append(('dir', line))
                         else:
-                            # Format ancien sans préfixe, deviner selon l'existence
-                            full_path = os.path.join(self.game_dir, line)
-                            if os.path.isdir(full_path):
-                                self.temps.append(('dir', line))
-                            else:
-                                self.temps.append(('file', line))
+                            self.temps.append(('file', line))
             self.update_temps_list()
         
         # Charger toutes les icônes disponibles
@@ -1627,7 +1634,8 @@ class LGPWindow(QMainWindow):
     
     def toggle_full_temp(self, state):
         """Active/désactive le mode 'tout le dossier en temp'"""
-        if state == Qt.Checked:
+        # state peut être int (2) ou Qt.CheckState.Checked selon PySide6 version
+        if state == Qt.CheckState.Checked or state == Qt.Checked or state == 2:
             # Marqueur spécial pour dire "tout le jeu en overlay"
             self.temps = [('*', 'full_overlay')]
             self.update_temps_list()
@@ -1636,6 +1644,9 @@ class LGPWindow(QMainWindow):
             self.temps = []
             self.update_temps_list()
             self.temps_list.setEnabled(True)
+        
+        # Persister immédiatement
+        self._persist_temps()
     
     def _persist_saves(self):
         """Sauvegarde la liste des saves dans .savepath"""
@@ -1666,9 +1677,10 @@ class LGPWindow(QMainWindow):
     def _persist_temps(self):
         """Sauvegarde la liste des temps dans .temppath"""
         if self.temps:
-            with open(os.path.join(self.game_dir, '.temppath'), 'w') as f:
+            temppath_file = os.path.join(self.game_dir, '.temppath')
+            with open(temppath_file, 'w') as f:
                 # Mode "tout le dossier en overlay"
-                if len(self.temps) == 1 and self.temps[0] == ('*', 'full_overlay'):
+                if len(self.temps) == 1 and self.temps[0][0] == '*':
                     f.write("*\n")
                 else:
                     # Mode normal : liste des fichiers/dossiers
