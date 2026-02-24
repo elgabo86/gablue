@@ -320,70 +320,81 @@ class CreateWGPThread(QThread):
 
         # Traiter les fichiers temporaires
         if self.config.get('temps'):
-            temps_dir = os.path.join(self.game_dir, '.temp')
-            os.makedirs(temps_dir, exist_ok=True)
-            print(f"DEBUG: Created temps_dir = {temps_dir}")
+            # Vérifier si c'est le mode "full overlay" (marqueur *)
+            is_full_overlay = (len(self.config['temps']) == 1 and 
+                              self.config['temps'][0] == ('*', 'full_overlay'))
+            
+            if is_full_overlay:
+                # Mode "tout le dossier en overlay" - ne rien copier, juste écrire le marqueur
+                print(f"DEBUG: Mode full overlay détecté - aucun fichier à copier dans .temp")
+                with open(os.path.join(self.game_dir, '.temppath'), 'w') as f:
+                    f.write("*\n")
+            else:
+                # Mode normal : traiter les fichiers temporaires individuels
+                temps_dir = os.path.join(self.game_dir, '.temp')
+                os.makedirs(temps_dir, exist_ok=True)
+                print(f"DEBUG: Created temps_dir = {temps_dir}")
 
-            with open(os.path.join(self.game_dir, '.temppath'), 'w') as f:
-                for item_type, rel_path in self.config['temps']:
-                    # Format compatible (sans préfixe)
-                    f.write(f"{rel_path}\n")
+                with open(os.path.join(self.game_dir, '.temppath'), 'w') as f:
+                    for item_type, rel_path in self.config['temps']:
+                        # Format compatible (sans préfixe)
+                        f.write(f"{rel_path}\n")
 
-                    # Créer le symlink
-                    source = os.path.join(self.game_dir, rel_path)
-                    target = os.path.join(temps_dir, rel_path)
-                    
-                    print(f"DEBUG: Processing temp: {rel_path} (type={item_type})")
-                    print(f"DEBUG: source = {source}, exists={os.path.exists(source)}")
-                    print(f"DEBUG: target = {target}")
-
-                    if os.path.exists(source):
-                        # Vérifier si c'est un symlink et sauvegarder sa cible
-                        if os.path.islink(source):
-                            original_target = os.readlink(source)
-                            # Garder la cible originale sans conversion
-                            symlinks_backup[rel_path] = original_target
-                            print(f"DEBUG: Backing up symlink {rel_path} -> {original_target}")
+                        # Créer le symlink
+                        source = os.path.join(self.game_dir, rel_path)
+                        target = os.path.join(temps_dir, rel_path)
                         
-                        # Copier vers .temp (contenu uniquement pour les dossiers)
-                        os.makedirs(os.path.dirname(target), exist_ok=True)
-                        if item_type == 'dir':
-                            print(f"DEBUG: Copying dir contents from {source} to {target}")
-                            self._copy_dir_contents(source, target)
-                        else:
-                            print(f"DEBUG: Copying file from {source} to {target}")
-                            shutil.copy2(source, target)
-                        
-                        # Vérifier que la copie a fonctionné
-                        if os.path.exists(target):
-                            print(f"DEBUG: Copy successful, target exists")
-                        else:
-                            print(f"DEBUG: ERROR - Copy failed, target does not exist!")
+                        print(f"DEBUG: Processing temp: {rel_path} (type={item_type})")
+                        print(f"DEBUG: source = {source}, exists={os.path.exists(source)}")
+                        print(f"DEBUG: target = {target}")
 
-                        # Créer le symlink vers /tmp/wgp-temp
-                        # Si le source est déjà un symlink vers l'extérieur, on le garde tel quel
-                        if os.path.islink(source):
-                            link_target = os.readlink(source)
-                            if os.path.isabs(link_target) and not link_target.startswith(self.game_dir):
-                                # C'est un symlink externe, on le garde
-                                print(f"DEBUG: Preserving external symlink {source} -> {link_target}")
+                        if os.path.exists(source):
+                            # Vérifier si c'est un symlink et sauvegarder sa cible
+                            if os.path.islink(source):
+                                original_target = os.readlink(source)
+                                # Garder la cible originale sans conversion
+                                symlinks_backup[rel_path] = original_target
+                                print(f"DEBUG: Backing up symlink {rel_path} -> {original_target}")
+                            
+                            # Copier vers .temp (contenu uniquement pour les dossiers)
+                            os.makedirs(os.path.dirname(target), exist_ok=True)
+                            if item_type == 'dir':
+                                print(f"DEBUG: Copying dir contents from {source} to {target}")
+                                self._copy_dir_contents(source, target)
                             else:
-                                # C'est un symlink interne, on le remplace
-                                os.remove(source)
+                                print(f"DEBUG: Copying file from {source} to {target}")
+                                shutil.copy2(source, target)
+                            
+                            # Vérifier que la copie a fonctionné
+                            if os.path.exists(target):
+                                print(f"DEBUG: Copy successful, target exists")
+                            else:
+                                print(f"DEBUG: ERROR - Copy failed, target does not exist!")
+
+                            # Créer le symlink vers /tmp/wgp-temp
+                            # Si le source est déjà un symlink vers l'extérieur, on le garde tel quel
+                            if os.path.islink(source):
+                                link_target = os.readlink(source)
+                                if os.path.isabs(link_target) and not link_target.startswith(self.game_dir):
+                                    # C'est un symlink externe, on le garde
+                                    print(f"DEBUG: Preserving external symlink {source} -> {link_target}")
+                                else:
+                                    # C'est un symlink interne, on le remplace
+                                    os.remove(source)
+                                    os.makedirs(os.path.dirname(source), exist_ok=True)
+                                    temps_base = f"/tmp/wgp-temp/{self.internal_game_name}"
+                                    os.symlink(os.path.join(temps_base, rel_path), source)
+                                    print(f"DEBUG: Created symlink {source} -> {os.path.join(temps_base, rel_path)}")
+                            else:
+                                # C'est un vrai fichier/dossier, on le remplace
+                                if os.path.isdir(source):
+                                    shutil.rmtree(source)
+                                else:
+                                    os.remove(source)
                                 os.makedirs(os.path.dirname(source), exist_ok=True)
                                 temps_base = f"/tmp/wgp-temp/{self.internal_game_name}"
                                 os.symlink(os.path.join(temps_base, rel_path), source)
                                 print(f"DEBUG: Created symlink {source} -> {os.path.join(temps_base, rel_path)}")
-                        else:
-                            # C'est un vrai fichier/dossier, on le remplace
-                            if os.path.isdir(source):
-                                shutil.rmtree(source)
-                            else:
-                                os.remove(source)
-                            os.makedirs(os.path.dirname(source), exist_ok=True)
-                            temps_base = f"/tmp/wgp-temp/{self.internal_game_name}"
-                            os.symlink(os.path.join(temps_base, rel_path), source)
-                            print(f"DEBUG: Created symlink {source} -> {os.path.join(temps_base, rel_path)}")
         else:
             print(f"DEBUG: No temps to process")
         
@@ -927,6 +938,12 @@ class WGPWindow(QMainWindow):
         temps_btn_layout.addStretch()
         temps_layout.addLayout(temps_btn_layout)
         right_layout.addWidget(temps_group)
+        
+        # Checkbox "Tout le dossier en temporaire"
+        self.full_temp_checkbox = QCheckBox("📁 Tout le dossier comme temporaire (overlay)")
+        self.full_temp_checkbox.setToolTip("Le jeu entier sera en overlay - modifications dans /tmp, nettoyage à la fermeture")
+        self.full_temp_checkbox.stateChanged.connect(self.toggle_full_temp)
+        right_layout.addWidget(self.full_temp_checkbox)
         
         # === BOUTONS PRINCIPAUX ===
         button_layout = QHBoxLayout()
@@ -1620,6 +1637,18 @@ class WGPWindow(QMainWindow):
             prefix = "[Dossier] " if item_type == 'dir' else "[Fichier] "
             self.temps_list.addItem(prefix + path)
     
+    def toggle_full_temp(self, state):
+        """Active/désactive le mode 'tout le dossier en temp'"""
+        if state == Qt.Checked:
+            # Marqueur spécial pour dire "tout le jeu en overlay"
+            self.temps = [('*', 'full_overlay')]
+            self.update_temps_list()
+            self.temps_list.setEnabled(False)
+        else:
+            self.temps = []
+            self.update_temps_list()
+            self.temps_list.setEnabled(True)
+    
     def _persist_saves(self):
         """Sauvegarde la liste des saves dans .savepath"""
         if self.saves:
@@ -1650,9 +1679,14 @@ class WGPWindow(QMainWindow):
         """Sauvegarde la liste des temps dans .temppath"""
         if self.temps:
             with open(os.path.join(self.game_dir, '.temppath'), 'w') as f:
-                for item_type, rel_path in self.temps:
-                    prefix = 'D:' if item_type == 'dir' else 'F:'
-                    f.write(f"{prefix}{rel_path}\n")
+                # Mode "tout le dossier en overlay"
+                if len(self.temps) == 1 and self.temps[0] == ('*', 'full_overlay'):
+                    f.write("*\n")
+                else:
+                    # Mode normal : liste des fichiers/dossiers
+                    for item_type, rel_path in self.temps:
+                        prefix = 'D:' if item_type == 'dir' else 'F:'
+                        f.write(f"{prefix}{rel_path}\n")
         else:
             # Supprimer le fichier si la liste est vide
             temppath_file = os.path.join(self.game_dir, '.temppath')

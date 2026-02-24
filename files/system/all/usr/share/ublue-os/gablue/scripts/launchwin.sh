@@ -564,7 +564,7 @@ prepare_extras() {
     ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
 }
 
-# Monte l'overlayfs pour les fichiers temporaires
+# Monte l'overlayfs pour les fichiers temporaires (mode normal - dossiers spécifiques)
 # lowerdir = .temp (lecture seule depuis le WGP)
 # upperdir = /tmp/wgp-temp-upper (couche d'écriture)
 # workdir = /tmp/wgp-temp-work (dossier de travail overlayfs)
@@ -579,6 +579,14 @@ prepare_temps() {
 
     [ -f "$TEMPPATH_FILE" ] || return 0
 
+    # Vérifier si c'est le mode "full overlay" (marqueur *)
+    if grep -q "^\*$" "$TEMPPATH_FILE" 2>/dev/null; then
+        echo "Mode overlay complet détecté (* dans .temppath)"
+        prepare_full_overlay
+        return 0
+    fi
+
+    # Mode normal : traiter les dossiers temporaires spécifiques
     # Vérifier que le dossier .temp existe dans le WGP
     if [ ! -d "$TEMP_WGP_DIR" ]; then
         echo "Dossier .temp non trouvé dans le WGP, skip overlay"
@@ -630,6 +638,56 @@ prepare_temps() {
     fi
 
     echo "Funionfs monté avec succès: $TEMP_GAME_DIR"
+}
+
+# Monte un overlay complet sur TOUT le jeu (mode "full overlay" avec * dans .temppath)
+# lowerdir = MOUNT_DIR (WGP entier en lecture seule)
+# upperdir = /tmp/wgp-full-overlay-upper (couche d'écriture)
+# workdir = /tmp/wgp-full-overlay-work (dossier de travail)
+# mountpoint = /tmp/wgp-full-overlay/{jeu} (point de montage final)
+prepare_full_overlay() {
+    local GAME_ID="wgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')"
+    local FULL_OVERLAY_BASE="/tmp/wgp-full-overlay"
+    local MOUNT_OVERLAY="$FULL_OVERLAY_BASE/$GAME_ID"
+    local TEMP_UPPER="$FULL_OVERLAY_BASE-upper/$GAME_ID"
+    local TEMP_WORK="$FULL_OVERLAY_BASE-work/$GAME_ID"
+    
+    # Nettoyer les anciens dossiers s'ils existent
+    if mountpoint -q "$MOUNT_OVERLAY" 2>/dev/null; then
+        echo "Démontage de l'overlay complet existant..."
+        fusermount -u "$MOUNT_OVERLAY" 2>/dev/null || umount -f "$MOUNT_OVERLAY" 2>/dev/null || true
+    fi
+    rm -rf "$MOUNT_OVERLAY" "$TEMP_UPPER" "$TEMP_WORK" 2>/dev/null || true
+    
+    # Créer les dossiers
+    mkdir -p "$MOUNT_OVERLAY" "$TEMP_UPPER" "$TEMP_WORK"
+    
+    echo "Montage de l'overlay complet sur tout le jeu..."
+    echo "  lowerdir: $MOUNT_DIR (WGP entier)"
+    echo "  upperdir: $TEMP_UPPER"
+    echo "  mountpoint: $MOUNT_OVERLAY"
+    
+    # Vérifier que funionfs est disponible
+    if ! command -v funionfs &> /dev/null; then
+        error_exit "funionfs n'est pas installé (Installation: sudo dnf5 install funionfs)"
+    fi
+    
+    # Monter funionfs sur TOUT le WGP
+    if ! funionfs "$TEMP_UPPER" "$MOUNT_OVERLAY" -o "dirs=$MOUNT_DIR=ro,delete=all" 2>&1; then
+        error_exit "Échec du montage funionfs pour l'overlay complet"
+    fi
+    
+    # Rediriger FULL_EXE_PATH vers le montage overlay
+    local REL_EXE="${FULL_EXE_PATH#$MOUNT_DIR/}"
+    FULL_EXE_PATH="$MOUNT_OVERLAY/$REL_EXE"
+    
+    # Stocker les chemins pour le nettoyage
+    export _FULL_OVERLAY_MOUNT="$MOUNT_OVERLAY"
+    export _FULL_OVERLAY_UPPER="$TEMP_UPPER"
+    export _FULL_OVERLAY_WORK="$TEMP_WORK"
+    
+    echo "Overlay complet monté avec succès: $MOUNT_OVERLAY"
+    echo "  Exécutable redirigé: $FULL_EXE_PATH"
 }
 
 # Vérifie si le WGP contient des fichiers de sauvegarde
@@ -714,6 +772,14 @@ cleanup_extras_symlink() {
 setup_temp_symlink() {
     # Ne rien faire si le WGP n'a pas de temps
     has_temps || return 0
+    
+    # Vérifier si c'est le mode "full overlay" - dans ce cas, on ne prépare rien ici
+    # prepare_full_overlay() gérera tout
+    local TEMPPATH_FILE="$MOUNT_DIR/.temppath"
+    if [ -f "$TEMPPATH_FILE" ] && grep -q "^\*$" "$TEMPPATH_FILE" 2>/dev/null; then
+        echo "Mode overlay complet détecté - skip setup_temp_symlink"
+        return 0
+    fi
 
     # Utiliser un ID unique sans espaces pour les chemins de travail
     local GAME_ID="wgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')"
@@ -754,6 +820,34 @@ cleanup_temp_symlink() {
     local GAME_TEMP_UPPER="/tmp/wgp-temp-upper/$GAME_ID"
     local GAME_TEMP_WORK="/tmp/wgp-temp-work/$GAME_ID"
     
+    # Nettoyage spécial pour l'overlay complet (full overlay)
+    if [ -n "$_FULL_OVERLAY_MOUNT" ]; then
+        echo "Nettoyage de l'overlay complet..."
+        if mountpoint -q "$_FULL_OVERLAY_MOUNT" 2>/dev/null; then
+            echo "Démontage de funionfs (overlay complet)..."
+            fusermount -u "$_FULL_OVERLAY_MOUNT" 2>/dev/null || umount -f "$_FULL_OVERLAY_MOUNT" 2>/dev/null || true
+        fi
+        
+        # Supprimer les dossiers de l'overlay complet
+        if [ -d "$_FULL_OVERLAY_MOUNT" ]; then
+            echo "Suppression du point de montage overlay..."
+            rm -rf "$_FULL_OVERLAY_MOUNT"
+        fi
+        if [ -d "$_FULL_OVERLAY_UPPER" ]; then
+            echo "Suppression du dossier upperdir (overlay complet)..."
+            rm -rf "$_FULL_OVERLAY_UPPER"
+        fi
+        if [ -d "$_FULL_OVERLAY_WORK" ]; then
+            echo "Suppression du dossier workdir (overlay complet)..."
+            rm -rf "$_FULL_OVERLAY_WORK"
+        fi
+        
+        # Réinitialiser les variables
+        unset _FULL_OVERLAY_MOUNT _FULL_OVERLAY_UPPER _FULL_OVERLAY_WORK
+        return 0
+    fi
+    
+    # Mode normal : nettoyer les dossiers temporaires spécifiques
     # Démonter funionfs si monté
     if mountpoint -q "$GAME_TEMP_DIR" 2>/dev/null; then
         echo "Démontage de funionfs..."
