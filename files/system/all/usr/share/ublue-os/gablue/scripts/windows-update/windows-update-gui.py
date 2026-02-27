@@ -83,6 +83,8 @@ class InstallThread(QThread):
         
         if self.dxvk_choice == "standard":
             args.append("--dxvk-no-async")
+        elif self.dxvk_choice == "digger1955":
+            args.append("--dxvk-digger1955")
         
         # Variable d'environnement pour le runner
         env = dict(subprocess.os.environ)
@@ -445,6 +447,7 @@ class SelectionScreen(QWidget):
         dxvk_options = [
             ("DXVK GPLAsync", "Recommandé - Moins de sacades, shaders en arrière-plan", "gplasync"),
             ("DXVK Standard", "Moins d'artefacts visuels", "standard"),
+            ("DXVK Digger1955", "Version optimisée GCC LTO - WinMacLinux SSE4.2", "digger1955"),
         ]
         
         for title, desc, value in dxvk_options:

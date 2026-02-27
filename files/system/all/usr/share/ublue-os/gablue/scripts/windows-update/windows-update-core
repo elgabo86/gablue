@@ -222,6 +222,35 @@ get_latest_dxvk_standard_version() {
     exit 1
 }
 
+# Récupère la dernière version de DXVK Digger1955 (GPLALL-GCC-WinMacLinux-SSE4.2-O3-LTO-GENERIC)
+get_latest_dxvk_digger1955_version() {
+    local latest=""
+    local attempt=1
+    local delay=1
+    
+    while [ $attempt -le $MAX_RETRIES ]; do
+        log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération DXVK Digger1955"
+        latest=$(curl -s --max-time 30 "https://api.github.com/repos/Digger1955/dxvk-gplasync-lowlatency/releases/latest" | \
+            jq -r '.tag_name' 2>/dev/null)
+        
+        if [ -n "$latest" ] && [ "$latest" != "null" ]; then
+            log "INFO" "DXVK Digger1955 dernière version trouvée: $latest"
+            echo "$latest"
+            return 0
+        fi
+        
+        if [ $attempt -lt $MAX_RETRIES ]; then
+            log "WARN" "Échec, nouvelle tentative dans ${delay}s..."
+            sleep $delay
+            delay=$((delay * 2))
+        fi
+        attempt=$((attempt + 1))
+    done
+    
+    log "ERROR" "Impossible de récupérer la dernière version de DXVK Digger1955 après $MAX_RETRIES tentatives"
+    exit 1
+}
+
 # Récupère la dernière version de VKD3D-Proton depuis bottlesdevs/components
 get_latest_vkd3d_version() {
     local latest=""
@@ -371,6 +400,10 @@ for arg in "$@"; do
         --dxvk-no-async)
             DXVK_NO_ASYNC=true
             log "INFO" "Flag --dxvk-no-async activé: utilisation de DXVK Standard (non-async)"
+            ;;
+        --dxvk-digger1955)
+            DXVK_DIGGER1955=true
+            log "INFO" "Flag --dxvk-digger1955 activé: utilisation de DXVK Digger1955 (GCC LTO)"
             ;;
     esac
 done
@@ -608,6 +641,21 @@ _install_component() {
             mv "$temp_extract_dir"/* "$target_dir/$version/"
         fi
         rm -f "$target_dir/$version.tar.gz"
+        rm -rf "$temp_extract_dir"
+    elif [[ "$url" == *.zip ]]; then
+        # Pour Digger1955 (fichier ZIP)
+        curl_with_retry "$url" "$target_dir/$version.zip" "$name $version" || return 1
+        temp_extract_dir="$temp_dir/${name,,}_extract"
+        mkdir -p "$temp_extract_dir"
+        unzip -q "$target_dir/$version.zip" -d "$temp_extract_dir/"
+        # Le dossier extrait contient généralement "x32" et "x64"
+        if [ -d "$temp_extract_dir/$version" ]; then
+            mv "$temp_extract_dir/$version" "$target_dir/"
+        else
+            mkdir -p "$target_dir/$version"
+            mv "$temp_extract_dir"/* "$target_dir/$version/"
+        fi
+        rm -f "$target_dir/$version.zip"
         rm -rf "$temp_extract_dir"
     else
         curl_with_retry "$url" "$target_dir/$version.tar.gz" "$name $version" || return 1
@@ -990,8 +1038,11 @@ fi
 
 if [ "$need_rebuild" = true ]; then
     if [ "$AUTO_MODE" = true ] || [ "$GUI_MODE" = true ]; then
-        # Mode auto/GUI: utiliser le flag ou GPLAsync par défaut
-        if [ "$DXVK_NO_ASYNC" = true ]; then
+        # Mode auto/GUI: utiliser les flags ou GPLAsync par défaut
+        if [ "${DXVK_DIGGER1955:-false}" = true ]; then
+            dxvk_type="digger1955"
+            log "INFO" "Mode auto/GUI: DXVK Digger1955 sélectionné (via --dxvk-digger1955)"
+        elif [ "$DXVK_NO_ASYNC" = true ]; then
             dxvk_type="standard"
             log "INFO" "Mode auto/GUI: DXVK Standard sélectionné (via --dxvk-no-async)"
         else
@@ -1006,14 +1057,17 @@ if [ "$need_rebuild" = true ]; then
                 --text="Sélectionnez le type de DXVK à utiliser :" \
                 --column="" --column="Code" --column="Description" \
                 TRUE "gplasync" "DXVK GPLAsync (recommandé - moins de sacades)" \
-                FALSE "standard" "DXVK Standard (moins d'artefacts visuels)")
+                FALSE "standard" "DXVK Standard (moins d'artefacts visuels)" \
+                FALSE "digger1955" "DXVK Digger1955 (optimisé GCC LTO - SSE4.2)")
         else
             echo "Sélectionnez le type de DXVK :"
             echo "1) DXVK GPLAsync (recommandé - moins de sacades)"
             echo "2) DXVK Standard (moins d'artefacts visuels)"
-            read -p "Choix (1-2) [1]: " choice
+            echo "3) DXVK Digger1955 (optimisé GCC LTO - SSE4.2)"
+            read -p "Choix (1-3) [1]: " choice
             case $choice in
                 2) dxvk_choice="standard" ;;
+                3) dxvk_choice="digger1955" ;;
                 *) dxvk_choice="gplasync" ;;
             esac
         fi
@@ -1027,6 +1081,8 @@ if [ "$need_rebuild" = true ]; then
         dxvk_type="$dxvk_choice"
         if [ "$dxvk_type" = "gplasync" ]; then
             log "INFO" "DXVK GPLAsync sélectionné par l'utilisateur (moins de sacades)"
+        elif [ "$dxvk_type" = "digger1955" ]; then
+            log "INFO" "DXVK Digger1955 sélectionné par l'utilisateur (optimisé GCC LTO)"
         else
             log "INFO" "DXVK Standard sélectionné par l'utilisateur (moins d'artefacts)"
         fi
@@ -1040,6 +1096,9 @@ if [ "$need_rebuild" = true ]; then
         if [ "$dxvk_type" = "standard" ]; then
             dxvkversion=$(get_latest_dxvk_standard_version)
             echo "DXVK Standard: dernière version détectée -> $dxvkversion"
+        elif [ "$dxvk_type" = "digger1955" ]; then
+            dxvkversion=$(get_latest_dxvk_digger1955_version)
+            echo "DXVK Digger1955: dernière version détectée -> $dxvkversion"
         else
             dxvkversion=$(get_latest_dxvk_gplasync_version)
             echo "DXVK GPLAsync: dernière version détectée -> $dxvkversion"
@@ -1047,6 +1106,8 @@ if [ "$need_rebuild" = true ]; then
     else
         if [ "$dxvk_type" = "standard" ]; then
             echo "DXVK Standard: version manuelle définie -> $dxvkversion"
+        elif [ "$dxvk_type" = "digger1955" ]; then
+            echo "DXVK Digger1955: version manuelle définie -> $dxvkversion"
         else
             echo "DXVK GPLAsync: version manuelle définie -> $dxvkversion"
         fi
@@ -1071,6 +1132,8 @@ PID_WINE=$!
 # Télécharger DXVK (URL différente selon le type)
 if [ "$dxvk_type" = "standard" ]; then
     download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^dxvk-[0-9a-z.-]+$" "https://github.com/bottlesdevs/components/releases/download/$dxvkversion/$dxvkversion.tar.gz" "false" &
+elif [ "$dxvk_type" = "digger1955" ]; then
+    download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^DXVK-GPLALL-[0-9.-]+$" "https://github.com/Digger1955/dxvk-gplasync-lowlatency/releases/download/$dxvkversion/DXVK-GPLALL-GCC-WinMacLinux-SSE4.2-O3-LTO-GENERIC.$dxvkversion.zip" "false" &
 else
     download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^dxvk-gplasync-v[0-9.-]+" "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/$dxvkversion.tar.gz" "false" &
 fi
@@ -1118,6 +1181,8 @@ if [ "$need_rebuild" = false ]; then
 
     if [ "$dxvk_type" = "standard" ]; then
         log "INFO" "DXVK Standard en place (moins d'artefacts visuels)"
+    elif [ "$dxvk_type" = "digger1955" ]; then
+        log "INFO" "DXVK Digger1955 en place (optimisé GCC LTO - SSE4.2)"
     else
         log "INFO" "DXVK GPLAsync en place (moins de sacades)"
     fi
@@ -1151,6 +1216,8 @@ fi
 
 if [ "$dxvk_type" = "standard" ]; then
     log "INFO" "DXVK Standard installé (moins d'artefacts visuels)"
+elif [ "$dxvk_type" = "digger1955" ]; then
+    log "INFO" "DXVK Digger1955 installé (optimisé GCC LTO - SSE4.2)"
 else
     log "INFO" "DXVK GPLAsync installé (moins de sacades)"
 fi
