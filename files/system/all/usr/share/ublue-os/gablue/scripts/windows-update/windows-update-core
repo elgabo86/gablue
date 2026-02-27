@@ -1133,7 +1133,8 @@ PID_WINE=$!
 if [ "$dxvk_type" = "standard" ]; then
     download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^dxvk-[0-9a-z.-]+$" "https://github.com/bottlesdevs/components/releases/download/$dxvkversion/$dxvkversion.tar.gz" "false" &
 elif [ "$dxvk_type" = "digger1955" ]; then
-    download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^DXVK-GPLALL-[0-9.-]+$" "https://github.com/Digger1955/dxvk-gplasync-lowlatency/releases/download/$dxvkversion/DXVK-GPLALL-GCC-WinMacLinux-SSE4.2-O3-LTO-GENERIC.$dxvkversion.zip" "false" &
+    dxvk_digger1955_version="${dxvkversion#DXVK-GPLALL-}"
+    download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^DXVK-GPLALL-[0-9.-]+$" "https://github.com/Digger1955/dxvk-gplasync-lowlatency/releases/download/$dxvkversion/DXVK-GPLALL-GCC-WinMacLinux-SSE4.2-O3-LTO-GENERIC.${dxvk_digger1955_version}.zip" "false" &
 else
     download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^dxvk-gplasync-v[0-9.-]+" "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/$dxvkversion.tar.gz" "false" &
 fi
