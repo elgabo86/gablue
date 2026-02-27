@@ -208,13 +208,74 @@ mount_wgp() {
 # Nettoie en démontant le WGP et les extras
 cleanup_wgp() {
     # Vérifier si le mount est encore utilisé par un bwrap
-    # On attend un peu pour laisser les processus résiduels mourir
     if mountpoint -q "$MOUNT_DIR"; then
         sleep 0.3
-        if pgrep -f "bwrap.*$(printf '%s' "$MOUNT_DIR" | sed 's/[[\.*^$()+?{|\\]/\\&/g')" > /dev/null 2>&1; then
-            # Encore un bwrap actif après le délai - c'est une vraie nouvelle instance
-            echo "Une nouvelle instance de $WGPACK_NAME a pris la main, pas de démontage."
-            return 0
+        
+        local mount_escape
+        mount_escape=$(printf '%s' "$MOUNT_DIR" | sed 's/[[\.*^$()+?{|\\]/\\&/g')
+        local bwrap_pids
+        bwrap_pids=$(pgrep -f "bwrap.*$mount_escape" 2>/dev/null || true)
+        
+        if [ -n "$bwrap_pids" ]; then
+            # Vérifier si c'est une NOUVELLE instance ou un processus résiduel
+            local lock_file="/tmp/wgp-lock-$WGPACK_NAME"
+            
+            if [ -f "$lock_file" ]; then
+                local lock_pid
+                lock_pid=$(cat "$lock_file" 2>/dev/null | cut -d: -f1)
+                
+                if [ -n "$lock_pid" ]; then
+                    # Vérifier si un des PIDs actifs est plus récent que notre lock
+                    local is_new_instance=false
+                    for pid in $bwrap_pids; do
+                        if [ "$pid" -gt "$lock_pid" ] 2>/dev/null; then
+                            is_new_instance=true
+                            break
+                        fi
+                    done
+                    
+                    if [ "$is_new_instance" = true ]; then
+                        echo "Une nouvelle instance de $WGPACK_NAME a pris la main, pas de démontage."
+                        return 0
+                    fi
+                fi
+            fi
+        fi
+        
+        # Vérifier avec fuser si des processus utilisent encore le mount
+        # Boucler jusqu'à ce que le mount soit libre ou nouvelle instance détectée
+        if command -v fuser &> /dev/null; then
+            while true; do
+                # Vérifier nouvelle instance en premier
+                local new_bwrap_pids
+                new_bwrap_pids=$(pgrep -f "bwrap.*$mount_escape" 2>/dev/null || true)
+                if [ -n "$new_bwrap_pids" ]; then
+                    local lock_file="/tmp/wgp-lock-$WGPACK_NAME"
+                    if [ -f "$lock_file" ]; then
+                        local lock_pid
+                        lock_pid=$(cat "$lock_file" 2>/dev/null | cut -d: -f1)
+                        local is_new=false
+                        for pid in $new_bwrap_pids; do
+                            if [ "$pid" -gt "$lock_pid" ] 2>/dev/null; then
+                                is_new=true
+                                break
+                            fi
+                        done
+                        if [ "$is_new" = true ]; then
+                            echo "Nouvelle instance détectée, abandon du démontage."
+                            return 0
+                        fi
+                    fi
+                fi
+                
+                # Vérifier si mount est libre
+                if ! fuser "$MOUNT_DIR"/* >/dev/null 2>&1; then
+                    break
+                fi
+                
+                echo "En attente que les processus libéreront le mount..."
+                sleep 2
+            done
         fi
     fi
 
@@ -895,7 +956,18 @@ run_bottles() {
     # Lancer flatpak sans file-forwarding pour éviter les problèmes de stdin
     # file-forwarding est utile pour passer des fichiers, pas nécessaire pour les jeux
     # Pour les jeux Unity qui ont besoin de stdin, TERM=linux est déjà défini
+    
     /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli com.usebottles.bottles run --bottle def --executable "$exe" --args "$cmd_args" </dev/null
+
+    # Attendre que les processus Wine lancés par cette session meurent
+    # Strategie: attendre que wineserver meurt
+    while true; do
+        if ! pgrep wineserver >/dev/null 2>&1; then
+            break
+        fi
+        echo "Attente de la fin des processus Wine..."
+        sleep 1
+    done
 }
 
 # Charge les variables d'environnement depuis un fichier .env
@@ -1206,6 +1278,14 @@ run_wgp_mode() {
         echo "Variables d'environnement chargées: $env_vars"
     fi
 
+    # Créer un fichier de lock pour détecter les nouvelles instances
+    # Format: PID:timestamp
+    local lock_file="/tmp/wgp-lock-$WGPACK_NAME"
+    echo "$$:$(date +%s)" > "$lock_file"
+    
+    # Conserver le trap cleanup et ajouter le nettoyage du lock
+    trap 'rm -f "$lock_file" 2>/dev/null; cleanup_wgp' EXIT
+
     # Lancer le jeu avec surveillance bwrap
     launch_bottles_game "$FULL_EXE_PATH" "$args" "$WGPACK_NAME" "$env_vars"
 
@@ -1305,6 +1385,13 @@ run_classic_mode() {
             echo "Variables d'environnement chargées: $env_vars"
         fi
     fi
+
+    # Créer un fichier de lock pour détecter les nouvelles instances
+    local lock_file="/tmp/wgp-lock-$filename"
+    echo "$$:$(date +%s)" > "$lock_file"
+    
+    # Nettoyage du lock en sortie (pas de cleanup_wgp car pas de mount en mode classic)
+    trap 'rm -f "$lock_file"' EXIT
 
     # Lancer le jeu avec surveillance bwrap
     launch_bottles_game "$new_fullpath" "$args" "$filename" "$env_vars"
