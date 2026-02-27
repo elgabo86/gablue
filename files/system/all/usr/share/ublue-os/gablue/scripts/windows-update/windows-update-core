@@ -19,6 +19,31 @@ GUI_MODE=false
 # Type de DXVK (gplasync par défaut, ou standard avec --dxvk-no-async)
 DXVK_NO_ASYNC=false
 
+# Force rebuild
+force_rebuild=false
+
+# Parser les arguments au début AVANT les appels API
+for arg in "$@"; do
+    case $arg in
+        --rebuild)
+            force_rebuild=true
+            ;;
+        --auto)
+            AUTO_MODE=true
+            ;;
+        --gui)
+            GUI_MODE=true
+            AUTO_MODE=true
+            ;;
+        --dxvk-no-async)
+            DXVK_NO_ASYNC=true
+            ;;
+        --dxvk-digger1955)
+            DXVK_DIGGER1955=true
+            ;;
+    esac
+done
+
 # Fichier de log
 LOG_DIR="$HOME/.local/share"
 LOG_FILE="$LOG_DIR/windows-update.log"
@@ -155,6 +180,8 @@ vkd3dversion=""
 nvapiversion=""
 latencyflexversion=""
 
+fallback_warning=""
+
 # Version de Soda (wine alternatif)
 soda_version="soda-9.0-1"
 
@@ -175,7 +202,6 @@ get_latest_dxvk_gplasync_version() {
         
         if [ -n "$latest" ] && [ "$latest" != "null" ]; then
             log "INFO" "DXVK GPLAsync dernière version trouvée: $latest"
-            # Retourner le nom complet du dossier (dxvk-gplasync-vX.Y.Z)
             echo "dxvk-gplasync-$latest"
             return 0
         fi
@@ -188,7 +214,15 @@ get_latest_dxvk_gplasync_version() {
         attempt=$((attempt + 1))
     done
     
-    log "ERROR" "Impossible de récupérer la dernière version de DXVK GPLAsync après $MAX_RETRIES tentatives"
+    local existing=$(ls -d ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-* 2>/dev/null | xargs -n1 basename 2>/dev/null | head -n1)
+    if [ -n "$existing" ]; then
+        log "WARN" "Impossible de récupérer DXVK GPLAsync depuis API, utilisation de la version existante: $existing"
+        fallback_warning="$fallback_warning - DXVK GPLAsync: $existing"
+        echo "$existing"
+        return 0
+    fi
+    
+    log "ERROR" "Impossible de récupérer la dernière version de DXVK GPLAsync et aucune version existante"
     exit 1
 }
 
@@ -200,7 +234,6 @@ get_latest_dxvk_standard_version() {
     
     while [ $attempt -le $MAX_RETRIES ]; do
         log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération DXVK Standard"
-        # Rechercher les versions dxvk-X.Y.Z mais PAS dxvk-nvapi et PAS dxvk-gplasync
         latest=$(curl -s --max-time 30 "https://api.github.com/repos/bottlesdevs/components/releases?per_page=100" | \
             jq -r '[.[] | select(.tag_name | startswith("dxvk-") and (contains("nvapi") | not) and (contains("gplasync") | not)) | .tag_name] | first' 2>/dev/null)
         
@@ -218,7 +251,15 @@ get_latest_dxvk_standard_version() {
         attempt=$((attempt + 1))
     done
     
-    log "ERROR" "Impossible de récupérer la dernière version de DXVK Standard après $MAX_RETRIES tentatives"
+    local existing=$(ls -d ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-* 2>/dev/null | xargs -n1 basename 2>/dev/null | grep -v gplasync | head -n1)
+    if [ -n "$existing" ]; then
+        log "WARN" "Impossible de récupérer DXVK Standard depuis API, utilisation de la version existante: $existing"
+        fallback_warning="$fallback_warning - DXVK Standard: $existing"
+        echo "$existing"
+        return 0
+    fi
+    
+    log "ERROR" "Impossible de récupérer la dernière version de DXVK Standard et aucune version existante"
     exit 1
 }
 
@@ -247,11 +288,18 @@ get_latest_dxvk_digger1955_version() {
         attempt=$((attempt + 1))
     done
     
-    log "ERROR" "Impossible de récupérer la dernière version de DXVK Digger1955 après $MAX_RETRIES tentatives"
+    local existing=$(ls -d ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/DXVK-GPLALL-* 2>/dev/null | xargs -n1 basename 2>/dev/null | head -n1)
+    if [ -n "$existing" ]; then
+        log "WARN" "Impossible de récupérer DXVK Digger1955 depuis API, utilisation de la version existante: $existing"
+        fallback_warning="$fallback_warning - DXVK Digger1955: $existing"
+        echo "$existing"
+        return 0
+    fi
+    
+    log "ERROR" "Impossible de récupérer la dernière version de DXVK Digger1955 et aucune version existante"
     exit 1
 }
 
-# Récupère la dernière version de VKD3D-Proton depuis bottlesdevs/components
 get_latest_vkd3d_version() {
     local latest=""
     local attempt=1
@@ -276,7 +324,15 @@ get_latest_vkd3d_version() {
         attempt=$((attempt + 1))
     done
     
-    log "ERROR" "Impossible de récupérer la dernière version de VKD3D après $MAX_RETRIES tentatives"
+    local existing=$(ls -d ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/* 2>/dev/null | xargs -n1 basename 2>/dev/null | head -n1)
+    if [ -n "$existing" ]; then
+        log "WARN" "Impossible de récupérer VKD3D depuis API, utilisation de la version existante: $existing"
+        fallback_warning="$fallback_warning - VKD3D: $existing"
+        echo "$existing"
+        return 0
+    fi
+    
+    log "ERROR" "Impossible de récupérer la dernière version de VKD3D et aucune version existante"
     exit 1
 }
 
@@ -306,7 +362,15 @@ get_latest_nvapi_version() {
         attempt=$((attempt + 1))
     done
     
-    log "ERROR" "Impossible de récupérer la dernière version de NVAPI après $MAX_RETRIES tentatives"
+    local existing=$(ls -d ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/* 2>/dev/null | xargs -n1 basename 2>/dev/null | head -n1)
+    if [ -n "$existing" ]; then
+        log "WARN" "Impossible de récupérer NVAPI depuis API, utilisation de la version existante: $existing"
+        fallback_warning="$fallback_warning - NVAPI: $existing"
+        echo "$existing"
+        return 0
+    fi
+    
+    log "ERROR" "Impossible de récupérer la dernière version de NVAPI et aucune version existante"
     exit 1
 }
 
@@ -335,7 +399,15 @@ get_latest_latencyflex_version() {
         attempt=$((attempt + 1))
     done
     
-    log "ERROR" "Impossible de récupérer la dernière version de LatencyFlex après $MAX_RETRIES tentatives"
+    local existing=$(ls -d ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/* 2>/dev/null | xargs -n1 basename 2>/dev/null | head -n1)
+    if [ -n "$existing" ]; then
+        log "WARN" "Impossible de récupérer LatencyFlex depuis API, utilisation de la version existante: $existing"
+        fallback_warning="$fallback_warning - LatencyFlex: $existing"
+        echo "$existing"
+        return 0
+    fi
+    
+    log "ERROR" "Impossible de récupérer la dernière version de LatencyFlex et aucune version existante"
     exit 1
 }
 
@@ -376,37 +448,22 @@ flag_file="/tmp/windows_update_flag_$$"
 touch "$flag_file"
 
 # =============================================================================
-# GESTION DES ARGUMENTS
+# GESTION DES ARGUMENTS (après initialisation du log)
 # =============================================================================
 
-force_rebuild=false
-
-# Parser les arguments
-for arg in "$@"; do
-    case $arg in
-        --rebuild)
-            force_rebuild=true
-            log "INFO" "Mode forcé --rebuild activé"
-            ;;
-        --auto)
-            AUTO_MODE=true
-            log "INFO" "Mode automatique --auto activé (non-interactif)"
-            ;;
-        --gui)
-            GUI_MODE=true
-            AUTO_MODE=true
-            log "INFO" "Mode GUI activé (non-interactif pour interface graphique)"
-            ;;
-        --dxvk-no-async)
-            DXVK_NO_ASYNC=true
-            log "INFO" "Flag --dxvk-no-async activé: utilisation de DXVK Standard (non-async)"
-            ;;
-        --dxvk-digger1955)
-            DXVK_DIGGER1955=true
-            log "INFO" "Flag --dxvk-digger1955 activé: utilisation de DXVK Digger1955 (GCC LTO)"
-            ;;
-    esac
-done
+# Messages de log pour les arguments (après initialisation du log)
+if [ "$force_rebuild" = true ]; then
+    log "INFO" "Mode forcé --rebuild activé"
+fi
+if [ "$GUI_MODE" = true ]; then
+    log "INFO" "Mode GUI activé (non-interactif pour interface graphique)"
+fi
+if [ "$DXVK_NO_ASYNC" = true ]; then
+    log "INFO" "Flag --dxvk-no-async activé: utilisation de DXVK Standard (non-async)"
+fi
+if [ "${DXVK_DIGGER1955:-false}" = true ]; then
+    log "INFO" "Flag --dxvk-digger1955 activé: utilisation de DXVK Digger1955 (GCC LTO)"
+fi
 
 # Récupérer le choix du runner depuis la variable d'environnement (mode GUI)
 if [ "$GUI_MODE" = true ] && [ -n "$RUNNER_CHOICE" ]; then
@@ -414,7 +471,7 @@ if [ "$GUI_MODE" = true ] && [ -n "$RUNNER_CHOICE" ]; then
     log "INFO" "Runner récupéré depuis variable d'environnement: $runner_choice"
 fi
 
-# Initialiser le log
+# Initialiser le log APRÈS le parsing des arguments
 echo "==============================================" >> "$LOG_FILE"
 log "INFO" "Démarrage de windows-update (PID: $$)"
 log "INFO" "Arguments: $*"
@@ -499,9 +556,19 @@ if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ] || [ 
     done
     
     if [ -z "$wineversion" ]; then
-        log "ERROR" "Aucune version trouvée pour $runner_choice après $MAX_RETRIES tentatives"
-        show_message "Aucune version trouvée pour $runner_choice."
-        exit 1
+        existing_wine=$(ls -td ~/.var/app/com.usebottles.bottles/data/bottles/runners/$runner_choice-* 2>/dev/null | head -n1 | xargs -n1 basename)
+        if [ -n "$existing_wine" ]; then
+            wineversion="$existing_wine"
+            wineversion_from_api=false
+            log "WARN" "Impossible de récupérer Wine depuis API, utilisation de la version existante: $wineversion"
+            fallback_warning="$fallback_warning - Wine: $wineversion"
+        else
+            log "ERROR" "Aucune version trouvée pour $runner_choice et aucune version existante"
+            show_message "Aucune version trouvée pour $runner_choice."
+            exit 1
+        fi
+    else
+        wineversion_from_api=true
     fi
 else
     wineversion="$soda_version"
@@ -718,9 +785,7 @@ EOF
 
 # Fonction pour restaurer les données de l'ancienne configuration
 restore_config_data() {
-    update_progress 70 "Récupération des données de l'ancienne configuration..."
     _restore_config_dirs
-    update_progress 75 "Récupération des programmes externes..."
     restore_external_programs \
         ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml \
         ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml
@@ -760,9 +825,50 @@ restore_config_data_in_rebuild() {
         ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml
 }
 
+# Fonction pour mettre à jour les composants d'une bottle existante via bottles-cli edit
+# Beaucoup plus rapide queRecréer整个bottle
+update_bottle_components() {
+    local update_flags=""
+    local updated="$1"
+    
+    update_progress 60 "Mise à jour des composants via bottles-cli edit..."
+    
+    if [[ "$updated" == *"wine"* ]] && [ -n "$wineversion" ]; then
+        log "INFO" "Mise à jour du runner: $wineversion"
+        update_flags="$update_flags --runner $wineversion"
+    fi
+    
+    if [[ "$updated" == *"dxvk"* ]] && [ -n "$dxvkversion" ]; then
+        log "INFO" "Mise à jour de DXVK: $dxvkversion"
+        update_flags="$update_flags --dxvk $dxvkversion"
+    fi
+    
+    if [[ "$updated" == *"vkd3d"* ]] && [ -n "$vkd3dversion" ]; then
+        log "INFO" "Mise à jour de VKD3D: $vkd3dversion"
+        update_flags="$update_flags --vkd3d $vkd3dversion"
+    fi
+    
+    if [[ "$updated" == *"nvapi"* ]] && [ -n "$nvapiversion" ]; then
+        log "INFO" "Mise à jour de NVAPI: $nvapiversion"
+        update_flags="$update_flags --nvapi $nvapiversion"
+    fi
+    
+    if [[ "$updated" == *"latencyflex"* ]] && [ -n "$latencyflexversion" ]; then
+        log "INFO" "Mise à jour de LatencyFlex: $latencyflexversion"
+        update_flags="$update_flags --latencyflex $latencyflexversion"
+    fi
+    
+    if [ -n "$update_flags" ]; then
+        flatpak run --command=bottles-cli com.usebottles.bottles edit -b def $update_flags
+        log "INFO" "Composants mis à jour avec bottles-cli edit"
+    else
+        log "WARN" "Aucun composant à mettre à jour"
+    fi
+}
+
 # Fonction pour configurer Bottles (création, liens symboliques)
 configure_bottles() {
-    update_progress 60 "Configuration de Bottles..."
+    update_progress 25 "Configuration de Bottles..."
     flatpak run --command=bottles-cli com.usebottles.bottles new \
         --bottle-name "def" \
         --runner "$wineversion" \
@@ -781,14 +887,19 @@ configure_bottles() {
 
     ln -s ~/Windows/SteamData/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ProgramData/Steam
 
-    ln -s ~/Windows/Applications/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c
-    ln -s ~/Windows/Games/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c
-    ln -f -s -T ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ ~/Windows/WinDrive
+    if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c ]; then
+        ln -s ~/Windows/Applications/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/Applications
+        ln -s ~/Windows/Games/ ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/Games
+        ln -f -s -T ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def/drive_c/ ~/Windows/WinDrive
+    else
+        log "WARN" "drive_c non trouvé, création des dossiers..."
+        mkdir -p ~/Windows/Applications ~/Windows/Games
+    fi
 }
 
 # Fonction pour ajouter les clés de registre
 add_registry_keys() {
-    update_progress 70 "Ajout des clés de registre..."
+    update_progress 35 "Ajout des clés de registre..."
     flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "Enable SDL" -d 1 -t "REG_DWORD"
     flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\winebus" -v "DisableHidraw" -d 1 -t "REG_DWORD"
     flatpak run --command=bottles-cli com.usebottles.bottles reg add -b def -k "HKEY_CURRENT_USER\Software\Wine\Drivers" -v "Graphics" -d "X11" -t "REG_SZ"
@@ -799,7 +910,7 @@ add_registry_keys() {
 
 # Fonction pour installer les runtimes
 install_runtimes() {
-    update_progress 85 "Installation des runtimes..."
+    update_progress 50 "Installation des runtimes..."
     flatpak run --env=WINEPREFIX=/var/data/bottles/bottles/def --env=WINE=/var/data/bottles/runners/"$wineversion"/bin/wine --command=/var/home/$user/Windows/Tools/winetricks com.usebottles.bottles -q \
         corefonts \
         tahoma \
@@ -858,7 +969,7 @@ finalize_rebuild() {
 
 # Fonction pour configurer les raccourcis et outils
 configure_shortcuts_tools() {
-    update_progress 80 "Configuration des raccourcis et outils..."
+    update_progress 40 "Configuration des raccourcis et outils..."
     cp /usr/share/ublue-os/gablue/desktops/com.usebottles.bottles.desktop ~/.local/share/applications
     cp /usr/share/ublue-os/gablue/desktops/Windows.desktop ~/.local/share/applications
     cp /usr/share/ublue-os/gablue/desktops/WindowsFix.desktop ~/.local/share/applications
@@ -963,7 +1074,7 @@ if pgrep -f bottles > /dev/null; then
     sleep 2
 fi
 
-update_progress 5 "Préparation des répertoires..."
+update_progress 2 "Préparation des répertoires..."
 mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/bak
 
 if [ -d ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def ]; then
@@ -981,20 +1092,30 @@ nvapi_dir=~/.var/app/com.usebottles.bottles/data/bottles/nvapi
 latencyflex_dir=~/.var/app/com.usebottles.bottles/data/bottles/latencyflex
 bottle_yml=~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml
 
+bottle_def_dir=~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
+
 # Vérification si def.ready existe et comparaison du runner actuel avec celui dans bottle.yml
 if [ "$force_rebuild" = true ]; then
     echo "Argument --rebuild détecté, rebuild forcé."
     need_rebuild=true
 elif [ ! -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready ]; then
-    echo "def.ready n'existe pas, rebuild requis."
+    if [ ! -d "$bottle_def_dir" ]; then
+        echo "Aucune bottle def trouvée, création complète requise."
+    else
+        echo "def.ready n'existe pas, rebuild requis."
+    fi
     need_rebuild=true
 elif [ -f "$bottle_yml" ]; then
     current_runner=$(grep "Runner:" "$bottle_yml" | awk '{print $2}' | tr -d '"')
     echo "Runner actuel dans bottle.yml : $current_runner"
-    echo "Runner choisi : $wineversion"
+    echo "Runner choisi : $wineversion (API: $wineversion_from_api)"
     if [ -n "$current_runner" ] && [ "$current_runner" != "$wineversion" ]; then
-        echo "Le runner actuel ($current_runner) diffère du choisi ($wineversion), rebuild requis."
-        need_rebuild=true
+        if [ "$wineversion_from_api" = true ]; then
+            echo "Le runner actuel ($current_runner) diffère du choisi ($wineversion), rebuild requis."
+            need_rebuild=true
+        else
+            echo "API échouée, on garde le runner actuel ($current_runner), pas de rebuild."
+        fi
     else
         echo "Le runner actuel ($current_runner) est identique au choisi ($wineversion), vérification de son existence..."
         if [ ! -d "$wine_dir/$wineversion" ]; then
@@ -1113,17 +1234,29 @@ if [ "$need_rebuild" = true ]; then
         fi
     fi
 else
-    # Pas de rebuild, on garde le DXVK actuel (valeurs par défaut pour compatibilité)
-    dxvk_type="gplasync"
-    if [ -z "$dxvkversion" ]; then
-        dxvkversion=$(get_latest_dxvk_gplasync_version)
+    if [ "${DXVK_DIGGER1955:-false}" = true ]; then
+        dxvk_type="digger1955"
+    elif [ "$DXVK_NO_ASYNC" = true ]; then
+        dxvk_type="standard"
+    elif [ -z "$dxvk_type" ]; then
+        dxvk_type="gplasync"
     fi
-    log "INFO" "Pas de rebuild nécessaire, utilisation du DXVK existant"
+    
+    if [ -z "$dxvkversion" ]; then
+        if [ "$dxvk_type" = "standard" ]; then
+            dxvkversion=$(get_latest_dxvk_standard_version)
+        elif [ "$dxvk_type" = "digger1955" ]; then
+            dxvkversion=$(get_latest_dxvk_digger1955_version)
+        else
+            dxvkversion=$(get_latest_dxvk_gplasync_version)
+        fi
+    fi
+    log "INFO" "Pas de rebuild nécessaire, utilisation du DXVK $dxvk_type ($dxvkversion)"
 fi
 
 # Lancer les téléchargements en parallèle
 log "INFO" "Démarrage des téléchargements parallèles..."
-update_progress 10 "Téléchargement des composants en parallèle..."
+update_progress 5 "Téléchargement des composants en parallèle..."
 
 # Télécharger Wine
 download_wine "$wine_dir" "$wineversion" "$runner_choice" &
@@ -1134,7 +1267,7 @@ if [ "$dxvk_type" = "standard" ]; then
     download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^dxvk-[0-9a-z.-]+$" "https://github.com/bottlesdevs/components/releases/download/$dxvkversion/$dxvkversion.tar.gz" "false" &
 elif [ "$dxvk_type" = "digger1955" ]; then
     dxvk_digger1955_version="${dxvkversion#DXVK-GPLALL-}"
-    download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^DXVK-GPLALL-[0-9.-]+$" "https://github.com/Digger1955/dxvk-gplasync-lowlatency/releases/download/$dxvkversion/DXVK-GPLALL-GCC-WinMacLinux-SSE4.2-O3-LTO-GENERIC.${dxvk_digger1955_version}.zip" "false" &
+    download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^DXVK-GPLALL-[A-Za-z0-9.-]+$" "https://github.com/Digger1955/dxvk-gplasync-lowlatency/releases/download/$dxvkversion/DXVK-GPLALL-GCC-WinMacLinux-SSE4.2-O3-LTO-GENERIC.${dxvk_digger1955_version}.zip" "false" &
 else
     download_component "DXVK" "$dxvkversion" "$dxvk_dir" "^dxvk-gplasync-v[0-9.-]+" "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/$dxvkversion.tar.gz" "false" &
 fi
@@ -1162,16 +1295,95 @@ wait $PID_NVAPI || { log "ERROR" "Échec du téléchargement NVAPI"; exit 1; }
 wait $PID_LATENCYFLEX || { log "ERROR" "Échec du téléchargement LatencyFlex"; exit 1; }
 
 log "INFO" "Tous les téléchargements parallèles sont terminés"
-update_progress 50 "Téléchargements terminés"
+update_progress 15 "Téléchargements terminés"
+
+component_updated=false
+updated_components=""
+
+bottle_yml_backup=~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml
+
+if [ -f "$bottle_yml_backup" ]; then
+    current_dxvk_in_bottle=$(/usr/bin/python3 -c "
+import yaml
+with open('$bottle_yml_backup') as f:
+    data = yaml.safe_load(f)
+    print(data.get('DXVK', '') or '')
+")
+    current_runner_in_bottle=$(/usr/bin/python3 -c "
+import yaml
+with open('$bottle_yml_backup') as f:
+    data = yaml.safe_load(f)
+    print(data.get('Runner', '') or '')
+")
+    
+    log "INFO" "DXVK actuel dans bottle: '$current_dxvk_in_bottle'"
+    log "INFO" "DXVK demandé: '$dxvkversion'"
+    log "INFO" "Runner actuel dans bottle: '$current_runner_in_bottle'"
+    log "INFO" "Runner demandé: '$wineversion'"
+    
+    dxvk_needs_update=false
+    runner_needs_update=false
+    
+    if [ "$current_dxvk_in_bottle" != "$dxvkversion" ]; then
+        dxvk_needs_update=true
+        log "INFO" "DXVK changé dans bottle: $current_dxvk_in_bottle -> $dxvkversion"
+    fi
+    
+    if [ "$current_runner_in_bottle" != "$wineversion" ]; then
+        runner_needs_update=true
+        log "INFO" "Runner changé dans bottle: $current_runner_in_bottle -> $wineversion"
+    fi
+    
+    if [ "$dxvk_needs_update" = true ]; then
+        component_updated=true
+        updated_components="$updated_components dxvk"
+    fi
+    
+    if [ "$runner_needs_update" = true ]; then
+        component_updated=true
+        updated_components="$updated_components wine"
+    fi
+fi
+
+if [ "$need_rebuild" = false ] && [ "$component_updated" = true ]; then
+    log "INFO" "Composant mis à jour, application via bottles-cli edit..."
+    update_progress 20 "Mise à jour des composants..."
+    
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
+    cp -r ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
+    
+    update_bottle_components "$updated_components"
+    update_progress 50 "Récupération des données..."
+    restore_config_data
+    update_progress 75 "Configuration des raccourcis et outils..."
+    configure_shortcuts_tools
+    
+    rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
+    rm -rf "$temp_dir"
+    update_progress 100 "Finalisation..."
+    
+    rm -f "$flag_file"
+    
+    if [ "$dxvk_type" = "standard" ]; then
+        log "INFO" "DXVK Standard mis à jour via bottles-cli edit"
+    elif [ "$dxvk_type" = "digger1955" ]; then
+        log "INFO" "DXVK Digger1955 mis à jour via bottles-cli edit"
+    else
+        log "INFO" "DXVK GPLAsync mis à jour via bottles-cli edit"
+    fi
+    log "INFO" "Mise à jour des composants terminée avec succès"
+    show_message "Mise à jour des composants terminée avec succès."
+    exit 0
+fi
 
 if [ "$need_rebuild" = false ]; then
-    update_progress 60 "Restauration de la bouteille prête depuis bak/def.ready..."
+    update_progress 15 "Restauration de la bouteille prête depuis bak/def.ready..."
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
     cp -r ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready ~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
 
     restore_config_data
 
-    update_progress 80 "Configuration des raccourcis et outils..."
+    update_progress 40 "Configuration des raccourcis et outils..."
     configure_shortcuts_tools
 
     rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
@@ -1187,22 +1399,42 @@ if [ "$need_rebuild" = false ]; then
     else
         log "INFO" "DXVK GPLAsync en place (moins de sacades)"
     fi
-    log "INFO" "Installation/mise à jour terminée avec succès (mode restauration)"
-    show_message "L'installation/mise à jour de Windows est réussie."
+    
+    if [ -n "$fallback_warning" ]; then
+        log "WARN" "Attention: certaines versions n'ont pas pu être mises à jour depuis les APIs:$fallback_warning"
+        show_message "Installation terminée. some versions couldn't be updated from APIs:$fallback_warning"
+    else
+        log "INFO" "Installation/mise à jour terminée avec succès (mode restauration)"
+        show_message "L'installation/mise à jour de Windows est réussie."
+    fi
     exit 0
 fi
 
 if [ "$need_rebuild" = true ]; then
-    configure_bottles
-    add_registry_keys
-    configure_shortcuts_tools
-    install_runtimes
-    finalize_runtimes_config
+    if [ "$force_rebuild" = true ] || [ ! -d "$bottle_def_dir" ]; then
+        log "INFO" "Rebuild forcé ou nouvelle bottle: création complète"
+        configure_bottles
+        add_registry_keys
+        configure_shortcuts_tools
+        install_runtimes
+        finalize_runtimes_config
 
-    update_progress 95 "Récupération des données de l'ancienne configuration..."
-    restore_config_data_in_rebuild
+        update_progress 95 "Récupération des données de l'ancienne configuration..."
+        restore_config_data_in_rebuild
 
-    finalize_rebuild
+        finalize_rebuild
+        
+        rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
+    else
+        log "INFO" "Mise à jour des composants via bottles-cli edit (plus rapide)"
+        update_bottle_components "dxvk wine vkd3d nvapi latencyflex"
+        add_registry_keys
+        configure_shortcuts_tools
+
+        finalize_rebuild
+        
+        rm -rf ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak
+    fi
 fi
 
 rm -rf "$temp_dir"
@@ -1222,7 +1454,13 @@ elif [ "$dxvk_type" = "digger1955" ]; then
 else
     log "INFO" "DXVK GPLAsync installé (moins de sacades)"
 fi
-log "INFO" "Installation/mise à jour terminée avec succès (mode rebuild)"
-show_message "L'installation/mise à jour de Windows est réussie."
+
+if [ -n "$fallback_warning" ]; then
+    log "WARN" "Attention: certaines versions n'ont pas pu être mises à jour depuis les API:$fallback_warning"
+    show_message "Installation terminée. some versions couldn't be updated from APIs:$fallback_warning"
+else
+    log "INFO" "Installation/mise à jour terminée avec succès (mode rebuild)"
+    show_message "L'installation/mise à jour de Windows est réussie."
+fi
 
 rm -f "$flag_file"

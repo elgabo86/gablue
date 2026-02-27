@@ -58,11 +58,11 @@ class InstallThread(QThread):
     log_signal = Signal(str)
     finished_signal = Signal(bool, str)
     
-    def __init__(self, runner_choice, dxvk_choice, force_rebuild=False):
+    def __init__(self, runner_choice, dxvk_choice, update_mode="fast"):
         super().__init__()
         self.runner_choice = runner_choice
         self.dxvk_choice = dxvk_choice
-        self.force_rebuild = force_rebuild
+        self.update_mode = update_mode
         self.process = None
         self._is_running = True
         
@@ -77,9 +77,11 @@ class InstallThread(QThread):
         # Construire les arguments
         args = [str(script_path), "--gui"]
         
-        if self.force_rebuild:
+        if self.update_mode == "full":
             args.append("--rebuild")
-            self.log_signal.emit("[WARN] Rebuild forcé activé")
+            self.log_signal.emit("[WARN] Mode rebuild complet activé")
+        else:
+            self.log_signal.emit("[INFO] Mode mise à jour rapide (bottles-cli edit)")
         
         if self.dxvk_choice == "standard":
             args.append("--dxvk-no-async")
@@ -316,7 +318,7 @@ class StyledProgressBar(QProgressBar):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(50)
-        self.setTextVisible(True)
+        self.setTextVisible(False)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setFont(QFont("JetBrains Mono", 12, QFont.Weight.Bold))
         self.setStyleSheet(f"""
@@ -380,7 +382,24 @@ class SelectionScreen(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.current_runner = None
+        self.current_dxvk = None
+        self.load_current_config()
         self.init_ui()
+    
+    def load_current_config(self):
+        """Charger la configuration actuelle de la bottle"""
+        bottle_yml = Path.home() / ".var/app/com.usebottles.bottles/data/bottles/bottles/def/bottle.yml"
+        if bottle_yml.exists():
+            try:
+                import yaml
+                with open(bottle_yml) as f:
+                    data = yaml.safe_load(f)
+                self.current_runner = data.get("Runner", "")
+                self.current_dxvk = data.get("DXVK", "")
+                print(f"Configuration actuelle - Runner: {self.current_runner}, DXVK: {self.current_dxvk}")
+            except Exception as e:
+                print(f"Erreur lecture bottle.yml: {e}")
         
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -430,8 +449,16 @@ class SelectionScreen(QWidget):
             wine_layout.addWidget(card)
             wine_layout.addSpacing(8)
         
-        # Sélection par défaut
-        self.runner_cards[0].selected = True
+        # Pré-sélectionner selon la config actuelle
+        if self.current_runner:
+            for card in self.runner_cards:
+                if self.current_runner.startswith(card.value):
+                    card.selected = True
+                    break
+            else:
+                self.runner_cards[0].selected = True
+        else:
+            self.runner_cards[0].selected = True
         
         wine_layout.addStretch()
         selection_layout.addLayout(wine_layout, 1)
@@ -457,13 +484,45 @@ class SelectionScreen(QWidget):
             dxvk_layout.addWidget(card)
             dxvk_layout.addSpacing(8)
         
-        # Sélection par défaut
-        self.dxvk_cards[0].selected = True
+        # Pré-sélectionner selon la config actuelle
+        if self.current_dxvk:
+            dxvk_type = "gplasync"
+            if "digger1955" in self.current_dxvk.lower() or "gplall" in self.current_dxvk.lower():
+                dxvk_type = "digger1955"
+            elif "standard" in self.current_dxvk.lower() or (self.current_dxvk.startswith("dxvk-") and "gplasync" not in self.current_dxvk.lower()):
+                dxvk_type = "standard"
+            
+            for card in self.dxvk_cards:
+                if card.value == dxvk_type:
+                    card.selected = True
+                    break
+            else:
+                self.dxvk_cards[0].selected = True
+        else:
+            self.dxvk_cards[0].selected = True
         
-        # Checkbox rebuild forcé
+        # Choix du mode de mise à jour
         dxvk_layout.addSpacing(15)
-        self.force_rebuild_checkbox = ModernCheckbox("Forcer le rebuild complet")
-        dxvk_layout.addWidget(self.force_rebuild_checkbox)
+        mode_title = QLabel("Mode de mise à jour")
+        mode_title.setFont(QFont("JetBrains Mono", 12, QFont.Weight.Bold))
+        mode_title.setStyleSheet(f"color: {COLORS['primary']};")
+        dxvk_layout.addWidget(mode_title)
+        
+        self.mode_cards = []
+        mode_options = [
+            ("Mise à jour rapide", "Utilise bottles-cli edit (conserve les données)", "fast"),
+            ("Rebuild complet", "Recrée la bottle (nettoyage complet)", "full"),
+        ]
+        
+        for title, desc, value in mode_options:
+            card = SelectionCard(title, desc, value)
+            card.selection_parent = self
+            self.mode_cards.append(card)
+            dxvk_layout.addWidget(card)
+            dxvk_layout.addSpacing(8)
+        
+        # Sélection par défaut: mise à jour rapide
+        self.mode_cards[0].selected = True
         
         dxvk_layout.addStretch()
         selection_layout.addLayout(dxvk_layout, 1)
@@ -507,11 +566,16 @@ class SelectionScreen(QWidget):
             for card in self.dxvk_cards:
                 if card != selected_card:
                     card.selected = False
+        elif selected_card in self.mode_cards:
+            for card in self.mode_cards:
+                if card != selected_card:
+                    card.selected = False
                     
     def start_installation(self):
         """Démarrer l'installation"""
         runner_choice = None
         dxvk_choice = None
+        update_mode = "fast"
         
         for card in self.runner_cards:
             if card.selected:
@@ -523,11 +587,16 @@ class SelectionScreen(QWidget):
                 dxvk_choice = card.value
                 break
         
+        for card in self.mode_cards:
+            if card.selected:
+                update_mode = card.value
+                break
+        
         if runner_choice and dxvk_choice:
             self.start_signal.emit(
                 runner_choice,
                 dxvk_choice,
-                self.force_rebuild_checkbox.isChecked()
+                update_mode
             )
 
 
@@ -789,23 +858,22 @@ class WindowsUpdateGUI(QMainWindow):
             }}
         """)
         
-    def start_installation(self, runner_choice, dxvk_choice, force_rebuild):
+    def start_installation(self, runner_choice, dxvk_choice, update_mode):
         """Démarrer l'installation"""
         self.runner_choice = runner_choice
         self.dxvk_choice = dxvk_choice
         
         # Changer vers l'écran de progression
         self.stack.setCurrentWidget(self.progress_screen)
+        mode_desc = "Mise à jour rapide (bottles-cli edit)" if update_mode == "fast" else "Rebuild complet"
         self.progress_screen.add_log(
             f"Installation démarrée - Runner: {runner_choice}, DXVK: {dxvk_choice}",
             "INFO"
         )
-        
-        if force_rebuild:
-            self.progress_screen.add_log("Rebuild forcé activé", "WARN")
+        self.progress_screen.add_log(f"Mode: {mode_desc}", "INFO")
         
         # Lancer le thread
-        self.install_thread = InstallThread(runner_choice, dxvk_choice, force_rebuild)
+        self.install_thread = InstallThread(runner_choice, dxvk_choice, update_mode)
         self.install_thread.log_signal.connect(self.handle_log)
         self.install_thread.finished_signal.connect(self.installation_finished)
         self.install_thread.start()
