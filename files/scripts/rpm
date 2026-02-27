@@ -53,7 +53,8 @@ dnf5 -y install \
     plocate \
     squashfuse \
     funionfs \
-    icoutils
+    icoutils \
+    unzip
 
 # Outils réseau et cloud
 dnf5 -y install \
@@ -234,7 +235,9 @@ fi
 # =============================================================================
 
 # Correction temporaire pour tesseract (nécessaire pour certaines fonctionnalités)
-dnf5 -y install tesseract-devel
+dnf5 -y install \
+    tesseract-devel \
+    tesseract-langpack-fra
 
 # =============================================================================
 # NETTOYAGE DES PAQUETS SUPERFLUS
