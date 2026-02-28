@@ -1020,8 +1020,18 @@ run_lgp_mode() {
     local exe_dir="$(dirname "$REAL_EXE_PATH")"
     load_env_files "$MOUNT_DIR" "$exe_dir"
 
-    # Lancer le jeu (avec le répertoire de travail = dossier du LGP)
-    launch_game "$REAL_EXE_PATH" "$args" "$LGPACK_NAME" "$MOUNT_DIR"
+    # Déterminer le répertoire de travail :
+    # Si l'exécutable était un symlink, utiliser le dossier du symlink (ex: conf/)
+    # Sinon utiliser le dossier de l'exécutable réel
+    local work_dir
+    if [ -L "$FULL_EXE_PATH" ]; then
+        work_dir="$(dirname "$FULL_EXE_PATH")"
+    else
+        work_dir="$exe_dir"
+    fi
+
+    # Lancer le jeu avec le bon répertoire de travail
+    launch_game "$REAL_EXE_PATH" "$args" "$LGPACK_NAME" "$work_dir"
 
     # Nettoyage des symlinks saves et extras (le trap fera le reste)
     cleanup_saves_symlink
