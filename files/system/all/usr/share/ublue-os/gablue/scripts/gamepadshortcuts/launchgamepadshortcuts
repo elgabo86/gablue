@@ -1,25 +1,22 @@
 #!/usr/bin/bash
 
-# Vérifie si une instance est déjà en cours d'exécution
+set -euo pipefail
+
 LOCKFILE="/tmp/launchgamepadshortcuts.lock"
 
-# Utilise flock pour verrouiller - sort immédiatement si déjà verrouillé
+# Prend le lock (bloquant avec timeout de 3s pour éviter blocage infini)
 exec 200>"$LOCKFILE"
-if ! flock -n 200; then
+if ! flock -w 3 200; then
     echo "Une instance est déjà en cours d'exécution"
     exit 1
 fi
 
-# Kill le process si existant
-pgrep -f gamepadshortcuts.py |xargs -n1 kill -9
-
-#Wait 2 seconds
-sleep 2
+# Maintenant qu'on a le lock, tuer proprement l'ancien processus
+pkill -f gamepadshortcuts.py || true
+sleep 1
 
 # Boucle pour relancer gamepadshortcuts.py si ça se termine
 while true; do
-    # Lance gamepadshortcuts
-    /usr/bin/python3 /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/gamepadshortcuts.py
-    # Attendre 1 seconde avant de relancer (optionnel)
+    /usr/bin/python3 /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/gamepadshortcuts.py || true
     sleep 1
 done
