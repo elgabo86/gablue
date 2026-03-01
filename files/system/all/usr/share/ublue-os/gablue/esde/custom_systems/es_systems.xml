@@ -61,4 +61,13 @@
         <platform>wiiu</platform>
         <theme>wiiu</theme>
     </system>
+    <system>
+        <name>desktop</name>
+        <fullname>Desktop Applications</fullname>
+        <path>%ROMPATH%/desktop</path>
+        <extension>.lgp .LGP</extension>
+        <command label="LGP Linux Game Pack">/usr/share/ublue-os/gablue/scripts/launchlin.sh %ROM%</command>
+        <platform>linux</platform>
+        <theme>desktop</theme>
+    </system>
 </systemList>
