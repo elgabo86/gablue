@@ -1,7 +1,7 @@
 [Desktop Entry]
 Categories=Utility;
 Comment=Installer EmulationStation Desktop Edition
-Exec=/usr/share/ublue-os/gablue/scripts/install-es.sh
+Exec=/usr/bin/esde-install
 GenericName=Installer EmulationStation Desktop Edition
 Icon=org.es_de.emulationstation-de
 MimeType=
