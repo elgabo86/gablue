@@ -22,6 +22,11 @@
 
   # Kill x2go
   pkill -9 x2goclient &
+
+  # Kill launchlin.sh et tous ses processus enfants (jeux LGP)
+  pgrep -f "launchlin\.sh" | while read pid; do
+      kill -9 "-$pid" 2>/dev/null
+  done &
 } > /dev/null 2>&1 &
 
 # Attendre que toutes les tâches en arrière-plan soient terminées (optionnel)
