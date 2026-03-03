@@ -16,11 +16,9 @@ dnf5 -y install --repo=terra-mesa \
     mesa-libgbm \
     mesa-vulkan-drivers
 
-# Ajouter les paquets i686 SEULEMENT pour les variants NVIDIA (compatibilité jeux)
-if [ "$VARIANT" == "nvidia" ] || [ "$VARIANT" == "nvidia-open" ]; then
-    dnf5 -y install --repo=terra-mesa \
-        mesa-dri-drivers.i686
-fi
+# Note: Les paquets i686 ne sont pas installés car les pilotes NVIDIA
+# propriétaires fournissent leurs propres librairies graphiques.
+# Les jeux Steam/32-bit utilisent Distrobox avec leur propre Mesa.
 
 # Verrouiller les versions Mesa pour éviter les downgrades
 dnf5 versionlock add \
