@@ -694,7 +694,7 @@ prepare_temps() {
     
     # Utiliser funionfs avec copy-on-write
     # upperdir en premier argument (rw), lowerdir dans dirs= avec =ro
-    if ! funionfs "${TEMP_UPPER}" "${TEMP_GAME_DIR}" -o "dirs=${TEMP_WGP_DIR}=ro,delete=all" 2>&1; then
+    if ! funionfs "${TEMP_UPPER}" "${TEMP_GAME_DIR}" -o "allow_other,dirs=${TEMP_WGP_DIR}=ro,delete=all" 2>&1; then
         error_exit "Échec du montage funionfs pour les fichiers temporaires"
     fi
 
@@ -734,7 +734,7 @@ prepare_full_overlay() {
     fi
     
     # Monter funionfs sur TOUT le WGP
-    if ! funionfs "$TEMP_UPPER" "$MOUNT_OVERLAY" -o "dirs=$MOUNT_DIR=ro,delete=all" 2>&1; then
+    if ! funionfs "$TEMP_UPPER" "$MOUNT_OVERLAY" -o "allow_other,dirs=$MOUNT_DIR=ro,delete=all" 2>&1; then
         error_exit "Échec du montage funionfs pour l'overlay complet"
     fi
     
