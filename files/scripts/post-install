@@ -88,8 +88,9 @@ chmod +x /usr/bin/lowfi
 curl -s https://storage.zxtune.ru/builds/public/r5100/linux/x86_64/zxtune_r5100_linux_x86_64.tar.gz | tar -xzf - -C / --exclude=./usr/bin/zxtune123 --exclude=./usr/bin/xtractor
 
 # Installation de mergerfs (union filesystem pour pools de stockage)
-# Récupération de la dernière version depuis GitHub et installation du RPM Fedora 43
-MERGERFS_VERSION=$(curl -s https://api.github.com/repos/trapexit/mergerfs/releases/latest | grep -oP '"tag_name": "\K[^"]+')
+# Récupération de la dernière version depuis les headers de redirection GitHub
+MERGERFS_VERSION=$(curl -sI https://github.com/trapexit/mergerfs/releases/latest | grep -i location | sed 's/.*tag\///' | tr -d '\r')
+echo "Installation de mergerfs version: ${MERGERFS_VERSION}"
 curl -sL "https://github.com/trapexit/mergerfs/releases/download/${MERGERFS_VERSION}/mergerfs-${MERGERFS_VERSION}-1.fc43.x86_64.rpm" -o /tmp/mergerfs.rpm
 dnf5 -y install /tmp/mergerfs.rpm
 rm -f /tmp/mergerfs.rpm

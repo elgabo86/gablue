@@ -189,7 +189,7 @@ soda_version="soda-9.0-1"
 # FONCTIONS DE RÉCUPÉRATION AUTOMATIQUE DES VERSIONS (AVEC RETRY)
 # =============================================================================
 
-# Récupère la dernière version de DXVK GPLAsync depuis GitLab
+# Récupère la dernière version de DXVK GPLAsync depuis GitLab (via permalink de redirection)
 get_latest_dxvk_gplasync_version() {
     local latest=""
     local attempt=1
@@ -197,8 +197,8 @@ get_latest_dxvk_gplasync_version() {
     
     while [ $attempt -le $MAX_RETRIES ]; do
         log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération DXVK GPLAsync"
-        latest=$(curl -s --max-time 30 "https://gitlab.com/api/v4/projects/Ph42oN%2Fdxvk-gplasync/releases" | \
-            jq -r '.[0].tag_name' 2>/dev/null)
+        latest=$(curl -sIL --max-time 30 "https://gitlab.com/Ph42oN/dxvk-gplasync/-/releases/permalink/latest" | \
+            grep -i location | sed 's/.*releases\///' | tr -d '\r')
         
         if [ -n "$latest" ] && [ "$latest" != "null" ]; then
             log "INFO" "DXVK GPLAsync dernière version trouvée: $latest"
@@ -216,7 +216,7 @@ get_latest_dxvk_gplasync_version() {
     
     local existing=$(ls -d ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-gplasync-* 2>/dev/null | xargs -n1 basename 2>/dev/null | head -n1)
     if [ -n "$existing" ]; then
-        log "WARN" "Impossible de récupérer DXVK GPLAsync depuis API, utilisation de la version existante: $existing"
+        log "WARN" "Impossible de récupérer DXVK GPLAsync depuis GitLab, utilisation de la version existante: $existing"
         fallback_warning="$fallback_warning - DXVK GPLAsync: $existing"
         echo "$existing"
         return 0
@@ -235,7 +235,7 @@ get_latest_dxvk_standard_version() {
     while [ $attempt -le $MAX_RETRIES ]; do
         log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération DXVK Standard"
         latest=$(curl -s --max-time 30 "https://api.github.com/repos/bottlesdevs/components/releases?per_page=100" | \
-            jq -r '[.[] | select(.tag_name | startswith("dxvk-") and (contains("nvapi") | not) and (contains("gplasync") | not)) | .tag_name] | first' 2>/dev/null)
+            jq -r '.[].tag_name' 2>/dev/null | grep "^dxvk-" | grep -v "nvapi" | grep -v "gplasync" | head -1)
         
         if [ -n "$latest" ] && [ "$latest" != "null" ]; then
             log "INFO" "DXVK Standard dernière version trouvée: $latest"
@@ -253,7 +253,7 @@ get_latest_dxvk_standard_version() {
     
     local existing=$(ls -d ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/dxvk-* 2>/dev/null | xargs -n1 basename 2>/dev/null | grep -v gplasync | head -n1)
     if [ -n "$existing" ]; then
-        log "WARN" "Impossible de récupérer DXVK Standard depuis API, utilisation de la version existante: $existing"
+        log "WARN" "Impossible de récupérer DXVK Standard depuis GitHub, utilisation de la version existante: $existing"
         fallback_warning="$fallback_warning - DXVK Standard: $existing"
         echo "$existing"
         return 0
@@ -263,7 +263,7 @@ get_latest_dxvk_standard_version() {
     exit 1
 }
 
-# Récupère la dernière version de DXVK Digger1955 (GPLALL-GCC-WinMacLinux-SSE4.2-O3-LTO-GENERIC)
+# Récupère la dernière version de DXVK Digger1955 (via redirection GitHub)
 get_latest_dxvk_digger1955_version() {
     local latest=""
     local attempt=1
@@ -271,8 +271,8 @@ get_latest_dxvk_digger1955_version() {
     
     while [ $attempt -le $MAX_RETRIES ]; do
         log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération DXVK Digger1955"
-        latest=$(curl -s --max-time 30 "https://api.github.com/repos/Digger1955/dxvk-gplasync-lowlatency/releases/latest" | \
-            jq -r '.tag_name' 2>/dev/null)
+        latest=$(curl -sI --max-time 30 "https://github.com/Digger1955/dxvk-gplasync-lowlatency/releases/latest" | \
+            grep -i location | sed 's/.*tag\///' | tr -d '\r')
         
         if [ -n "$latest" ] && [ "$latest" != "null" ]; then
             log "INFO" "DXVK Digger1955 dernière version trouvée: $latest"
@@ -290,7 +290,7 @@ get_latest_dxvk_digger1955_version() {
     
     local existing=$(ls -d ~/.var/app/com.usebottles.bottles/data/bottles/dxvk/DXVK-GPLALL-* 2>/dev/null | xargs -n1 basename 2>/dev/null | head -n1)
     if [ -n "$existing" ]; then
-        log "WARN" "Impossible de récupérer DXVK Digger1955 depuis API, utilisation de la version existante: $existing"
+        log "WARN" "Impossible de récupérer DXVK Digger1955 depuis GitHub, utilisation de la version existante: $existing"
         fallback_warning="$fallback_warning - DXVK Digger1955: $existing"
         echo "$existing"
         return 0
@@ -308,7 +308,7 @@ get_latest_vkd3d_version() {
     while [ $attempt -le $MAX_RETRIES ]; do
         log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération VKD3D"
         latest=$(curl -s --max-time 30 "https://api.github.com/repos/bottlesdevs/components/releases?per_page=100" | \
-            jq -r '[.[] | select(.tag_name | startswith("vkd3d-proton")) | .tag_name] | first' 2>/dev/null)
+            jq -r '.[].tag_name' 2>/dev/null | grep "^vkd3d-proton" | head -1)
         
         if [ -n "$latest" ] && [ "$latest" != "null" ]; then
             log "INFO" "VKD3D dernière version trouvée: $latest"
@@ -326,7 +326,7 @@ get_latest_vkd3d_version() {
     
     local existing=$(ls -d ~/.var/app/com.usebottles.bottles/data/bottles/vkd3d/* 2>/dev/null | xargs -n1 basename 2>/dev/null | head -n1)
     if [ -n "$existing" ]; then
-        log "WARN" "Impossible de récupérer VKD3D depuis API, utilisation de la version existante: $existing"
+        log "WARN" "Impossible de récupérer VKD3D depuis GitHub, utilisation de la version existante: $existing"
         fallback_warning="$fallback_warning - VKD3D: $existing"
         echo "$existing"
         return 0
@@ -336,7 +336,7 @@ get_latest_vkd3d_version() {
     exit 1
 }
 
-# Récupère la dernière version de DXVK-NVAPI depuis jp7677
+# Récupère la dernière version de DXVK-NVAPI depuis jp7677 (via redirection GitHub)
 get_latest_nvapi_version() {
     local latest=""
     local attempt=1
@@ -344,8 +344,8 @@ get_latest_nvapi_version() {
     
     while [ $attempt -le $MAX_RETRIES ]; do
         log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération NVAPI"
-        latest=$(curl -s --max-time 30 "https://api.github.com/repos/jp7677/dxvk-nvapi/releases/latest" | \
-            jq -r '.tag_name' 2>/dev/null)
+        latest=$(curl -sI --max-time 30 "https://github.com/jp7677/dxvk-nvapi/releases/latest" | \
+            grep -i location | sed 's/.*tag\///' | tr -d '\r')
         
         if [ -n "$latest" ] && [ "$latest" != "null" ]; then
             log "INFO" "NVAPI dernière version trouvée: $latest"
@@ -364,7 +364,7 @@ get_latest_nvapi_version() {
     
     local existing=$(ls -d ~/.var/app/com.usebottles.bottles/data/bottles/nvapi/* 2>/dev/null | xargs -n1 basename 2>/dev/null | head -n1)
     if [ -n "$existing" ]; then
-        log "WARN" "Impossible de récupérer NVAPI depuis API, utilisation de la version existante: $existing"
+        log "WARN" "Impossible de récupérer NVAPI depuis GitHub, utilisation de la version existante: $existing"
         fallback_warning="$fallback_warning - NVAPI: $existing"
         echo "$existing"
         return 0
@@ -383,7 +383,7 @@ get_latest_latencyflex_version() {
     while [ $attempt -le $MAX_RETRIES ]; do
         log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération LatencyFlex"
         latest=$(curl -s --max-time 30 "https://api.github.com/repos/bottlesdevs/components/releases?per_page=100" | \
-            jq -r '[.[] | select(.tag_name | startswith("latencyflex")) | .tag_name] | first' 2>/dev/null)
+            jq -r '.[].tag_name' 2>/dev/null | grep "^latencyflex" | head -1)
         
         if [ -n "$latest" ] && [ "$latest" != "null" ]; then
             log "INFO" "LatencyFlex dernière version trouvée: $latest"
@@ -401,7 +401,7 @@ get_latest_latencyflex_version() {
     
     local existing=$(ls -d ~/.var/app/com.usebottles.bottles/data/bottles/latencyflex/* 2>/dev/null | xargs -n1 basename 2>/dev/null | head -n1)
     if [ -n "$existing" ]; then
-        log "WARN" "Impossible de récupérer LatencyFlex depuis API, utilisation de la version existante: $existing"
+        log "WARN" "Impossible de récupérer LatencyFlex depuis GitHub, utilisation de la version existante: $existing"
         fallback_warning="$fallback_warning - LatencyFlex: $existing"
         echo "$existing"
         return 0
@@ -527,7 +527,8 @@ fi
 # =============================================================================
 
 if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ] || [ "$runner_choice" = "gwine-proton-wow64" ]; then
-    API_URL="https://api.github.com/repos/elgabo86/gwine/releases"
+    # Récupération des 10 dernières releases et filtrage local (plus fiable que /releases/latest)
+    API_URL="https://api.github.com/repos/elgabo86/gwine/releases?per_page=10"
     attempt=1
     delay=1
     
@@ -535,11 +536,11 @@ if [ "$runner_choice" = "gwine" ] || [ "$runner_choice" = "gwine-proton" ] || [ 
         log "INFO" "Tentative $attempt/$MAX_RETRIES: récupération version Wine"
         
         if [ "$runner_choice" = "gwine-proton" ]; then
-            wineversion=$(curl -s --max-time 30 "$API_URL" | jq -r '.[] | "\(.published_at) \(.tag_name)"' | grep " gwine-proton-[0-9]" | sort -r | head -n1 | cut -d' ' -f2)
+            wineversion=$(curl -s --max-time 30 "$API_URL" | jq -r '.[].tag_name' 2>/dev/null | grep "^gwine-proton-[0-9]" | head -1)
         elif [ "$runner_choice" = "gwine-proton-wow64" ]; then
-            wineversion=$(curl -s --max-time 30 "$API_URL" | jq -r '.[] | "\(.published_at) \(.tag_name)"' | grep " gwine-proton-wow64-[0-9]" | sort -r | head -n1 | cut -d' ' -f2)
+            wineversion=$(curl -s --max-time 30 "$API_URL" | jq -r '.[].tag_name' 2>/dev/null | grep "^gwine-proton-wow64-[0-9]" | head -1)
         else
-            wineversion=$(curl -s --max-time 30 "$API_URL" | jq -r '.[] | "\(.published_at) \(.tag_name)"' | grep " gwine-[0-9]" | sort -r | head -n1 | cut -d' ' -f2)
+            wineversion=$(curl -s --max-time 30 "$API_URL" | jq -r '.[].tag_name' 2>/dev/null | grep "^gwine-[0-9]" | head -1)
         fi
         
         if [ -n "$wineversion" ]; then
