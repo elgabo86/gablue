@@ -95,6 +95,14 @@ curl -sL "https://github.com/trapexit/mergerfs/releases/download/${MERGERFS_VERS
 dnf5 -y install /tmp/mergerfs.rpm
 rm -f /tmp/mergerfs.rpm
 
+# Installation d'umu-launcher (lanceur de jeux Windows avec Proton)
+# Récupération de la dernière version depuis GitHub
+UMU_VERSION=$(curl -s https://api.github.com/repos/Open-Wine-Components/umu-launcher/releases/latest | grep -oP '"tag_name": "\K[^"]+')
+echo "Installation d'umu-launcher version: ${UMU_VERSION}"
+curl -sL "https://github.com/Open-Wine-Components/umu-launcher/releases/download/${UMU_VERSION}/umu-launcher-${UMU_VERSION#v}.fc43.rpm" -o /tmp/umu-launcher.rpm
+dnf5 -y install /tmp/umu-launcher.rpm
+rm -f /tmp/umu-launcher.rpm
+
 # =============================================================================
 # BRANDING GABLUE
 # =============================================================================
