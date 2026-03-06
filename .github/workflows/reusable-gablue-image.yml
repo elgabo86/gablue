@@ -262,24 +262,21 @@ jobs:
       # Push et signature de l'image
       - name: Push To GHCR and Sign
         if: github.event_name != 'pull_request'
-        uses: Wandalen/wretry.action@v3.8.0
-        with:
-          attempt_limit: 3
-          attempt_delay: 15000
-          command: |
-            echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+        shell: bash
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # Push unique image id and sign
-            dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
+          # Push unique image id and sign
+          dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
+          sudo skopeo copy --dest-compress-format zstd:chunked ${{ steps.rechunk.outputs.ref }} docker://$dest_image
+          DIGEST=$(sudo skopeo inspect --format '{{.Digest}}' docker://$dest_image)
+          cosign sign -y --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false \
+            "${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@$DIGEST"
+
+          for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
+            dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:$tag"
             sudo skopeo copy --dest-compress-format zstd:chunked ${{ steps.rechunk.outputs.ref }} docker://$dest_image
-            DIGEST=$(sudo skopeo inspect --format '{{.Digest}}' docker://$dest_image)
-            cosign sign -y --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false \
-              "${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@$DIGEST"
-
-            for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
-              dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:$tag"
-              sudo skopeo copy --dest-compress-format zstd:chunked ${{ steps.rechunk.outputs.ref }} docker://$dest_image
-            done
+          done
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
