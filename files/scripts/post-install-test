@@ -14,33 +14,19 @@ chmod +x /usr/bin/system-flatpak-setup
 chmod +x /usr/bin/ventoy
 chmod +x /usr/bin/bottles-sort-library
 chmod +x /usr/bin/dlcover
-chmod +x /usr/bin/genimg
-chmod +x /usr/bin/a13
-chmod +x /usr/bin/a13-id
-chmod +x /usr/bin/a13-share
-chmod +x /usr/bin/a13-faketouch
 chmod +x /usr/bin/lol
-chmod +x /usr/bin/mydl
 chmod +x /usr/bin/ytdl
-chmod +x /usr/bin/chdman
-chmod +x /usr/bin/biosdl
 chmod +x /usr/bin/citron-install
 chmod +x /usr/bin/gskill
 chmod +x /usr/bin/limitw
-chmod +x /usr/bin/dltri
-chmod +x /usr/bin/dlroms
-chmod +x /usr/bin/setfr
 chmod +x /usr/bin/retroplayer
-chmod +x /usr/bin/raroms
 chmod +x /usr/bin/encode64
 chmod +x /usr/bin/decode64
 chmod +x /usr/bin/qwen-install
 chmod +x /usr/bin/clean-media
-chmod +x /usr/bin/vscodium-install
 chmod +x /usr/bin/azahar-install
 chmod +x /usr/bin/xenia-install
 chmod +x /usr/bin/shadps4-install
-chmod +x /usr/bin/ryu-install
 chmod +x /usr/bin/scrap-win
 
 # Rendre exécutables les scripts d'administration Gablue
