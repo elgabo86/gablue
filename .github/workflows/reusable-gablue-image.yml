@@ -172,22 +172,76 @@ jobs:
             $DX_MODE_ARG \
             --tag raw-img .
 
-      # Rechunk de l'image
+      # Rechunk de l'image avec rpm-ostree
       - name: Rechunk Image
         id: rechunk
-        uses: hhd-dev/rechunk@v1.2.4
-        with:
-          ref: "raw-img"
-          prev-ref: "${{ env.IMAGE_REGISTRY }}/${{ inputs.image_name }}:latest"
-          skip_compression: true
-          version: "${{ steps.generate-tags.outputs.alias_date }}"
-          rechunk: "ghcr.io/hhd-dev/rechunk:v1.2.1"
+        run: |
+          container=$(sudo buildah from raw-img)
+          sudo buildah config --label "-" $container
+          sudo buildah commit --identity-label=false --rm $container raw-img
+          sudo podman run --rm --privileged --volume /var/lib/containers:/var/lib/containers \
+              quay.io/centos-bootc/centos-bootc:stream10 \
+              rpm-ostree compose build-chunked-oci \
+              --bootc --max-layers 96 --format-version 2 \
+              --from localhost/raw-img --output containers-storage:localhost/chunked-img
+          sudo podman untag raw-img
+          echo "ref=containers-storage:localhost/chunked-img" >> "$GITHUB_OUTPUT"
+
+      # Appliquer les labels OCI
+      - name: Apply Labels
+        id: relabel
+        env:
+          IMAGE_LABELS: |
+            io.artifacthub.package.readme-url=https://raw.githubusercontent.com/${{ github.repository }}/main/README.md
+            org.opencontainers.image.description=${{ inputs.image_desc }}
+            org.opencontainers.image.title=${{ inputs.image_name }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.vendor=Universal Blue
+        run: |
+          version="${{ inputs.fedora_version }}.$(date +%Y%m%d)"
+
+          declare -A tags
+          while read -r t; do
+              tags["$t"]=1
+          done < <(skopeo list-tags "docker://${{ env.IMAGE_REGISTRY }}/${{ inputs.image_name }}" 2>/dev/null | jq -r '.Tags[]' || true)
+
+          if [[ -v tags[$version] ]]; then
+            build=1
+            while true; do
+              tag="$version.$build"
+              if [[ ! -v tags[$tag] ]]; then
+                version=$tag
+                break
+              fi
+              ((build++))
+            done
+          fi
+
+          img=${{ steps.rechunk.outputs.ref }}
+          container=$(sudo buildah from $img)
+          kver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" kernel-core)
+
+          sudo buildah config --label "org.opencontainers.image.version=$version" $container
+          sudo buildah config --label "org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" $container
+          sudo buildah config --label "ostree.bootable=true" $container
+          sudo buildah config --label "ostree.linux=$kver" $container
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            sudo buildah config --label "$line" "$container"
+          done <<< "$IMAGE_LABELS"
+
+          filter='{ "packages": [inputs | split(" ") | select(length==2) | { (.[0]): .[1] }] | sort_by(keys) | add }'
+          manifest=$(sudo podman run --rm "$img" rpm -qa --qf '%{NAME} %{VERSION}\n' | jq -Rnc "$filter")
+          sudo buildah config --label "dev.hhd.rechunk.info=$manifest" $container
+
+          sudo buildah commit --identity-label=false --rm $container $img
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       # Chargement et tag
       - name: Load in podman and tag
         run: |
           IMAGE=$(podman pull ${{ steps.rechunk.outputs.ref }})
-          sudo rm -rf ${{ steps.rechunk.outputs.output }}
           podman tag $IMAGE ${{ inputs.image_name }}:${{ steps.generate-tags.outputs.alias_tags }}
           podman tag $IMAGE ${{ inputs.image_name }}:${{ steps.generate-tags.outputs.alias_date }}
           podman tag $IMAGE ${{ inputs.image_name }}:latest
