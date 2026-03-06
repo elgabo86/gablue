@@ -104,6 +104,12 @@ jobs:
       - name: Maximize build space
         uses: ublue-os/remove-unwanted-software@v8
 
+      # Mount BTRFS for podman storage (performance + compression)
+      - name: Mount BTRFS for podman storage
+        uses: ublue-os/container-storage-action@main
+        with:
+          target-dir: /var/lib/containers
+
       # Métadonnées de l'image
       - name: Image Metadata
         uses: docker/metadata-action@v5
@@ -263,14 +269,14 @@ jobs:
 
             # Push unique image id and sign
             dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
-            sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image
+            sudo skopeo copy --dest-compress-format zstd:chunked ${{ steps.rechunk.outputs.ref }} docker://$dest_image
             DIGEST=$(sudo skopeo inspect --format '{{.Digest}}' docker://$dest_image)
             cosign sign -y --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false \
               "${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@$DIGEST"
 
             for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
               dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:$tag"
-              sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image
+              sudo skopeo copy --dest-compress-format zstd:chunked ${{ steps.rechunk.outputs.ref }} docker://$dest_image
             done
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
