@@ -104,32 +104,6 @@ jobs:
       - name: Maximize build space
         uses: ublue-os/remove-unwanted-software@v8
 
-      # Génération des tags
-      - name: Generate tags
-        id: generate-tags
-        shell: bash
-        run: |
-          TIMESTAMP="$(date +%Y%m%d)"
-          TIMESTAMPWT="$(date -d '+2 hours' +%Y%m%d-%Hh%M)"
-          COMMIT_TAGS=()
-          BUILD_TAGS=()
-          SHA_SHORT="${GITHUB_SHA::7}"
-          COMMIT_TAGS+=("pr-${{ github.event.number }}")
-          COMMIT_TAGS+=("${SHA_SHORT}")
-          for TAG in "${BUILD_TAGS[@]}"; do
-              BUILD_TAGS+=("${TAG}-${TIMESTAMP}")
-          done
-          BUILD_TAGS+=("${TIMESTAMP}")
-          BUILD_TAGS+=("${TIMESTAMPWT}")
-          BUILD_TAGS+=("latest")
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-              alias_tags=("${COMMIT_TAGS[@]}")
-          else
-              alias_tags=("${BUILD_TAGS[@]}")
-          fi
-          echo "alias_tags=${alias_tags[*]}" >> $GITHUB_OUTPUT
-          echo "alias_date=${TIMESTAMPWT}" >> $GITHUB_OUTPUT
-
       # Métadonnées de l'image
       - name: Image Metadata
         uses: docker/metadata-action@v5
@@ -238,14 +212,33 @@ jobs:
           sudo buildah commit --identity-label=false --rm $container $img
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      # Chargement et tag
-      - name: Load in podman and tag
+      # Génération des tags après relabel
+      - name: Generate tags
+        id: generate-tags
+        shell: bash
         run: |
-          IMAGE=$(podman pull ${{ steps.rechunk.outputs.ref }})
-          podman tag $IMAGE ${{ inputs.image_name }}:${{ steps.generate-tags.outputs.alias_tags }}
-          podman tag $IMAGE ${{ inputs.image_name }}:${{ steps.generate-tags.outputs.alias_date }}
-          podman tag $IMAGE ${{ inputs.image_name }}:latest
-          podman tag $IMAGE rechunked-img
+          VERSION_TAG="${{ steps.relabel.outputs.version }}"
+
+          TIMESTAMP="$(date +%Y%m%d)"
+          TIMESTAMPWT="$(date -d '+2 hours' +%Y%m%d-%Hh%M)"
+          COMMIT_TAGS=()
+          BUILD_TAGS=()
+          SHA_SHORT="${GITHUB_SHA::7}"
+          COMMIT_TAGS+=("pr-${{ github.event.number }}")
+          COMMIT_TAGS+=("${SHA_SHORT}")
+          for TAG in "${BUILD_TAGS[@]}"; do
+              BUILD_TAGS+=("${TAG}-${TIMESTAMP}")
+          done
+          BUILD_TAGS+=("${TIMESTAMP}")
+          BUILD_TAGS+=("${TIMESTAMPWT}")
+          BUILD_TAGS+=("latest")
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+              alias_tags=("${COMMIT_TAGS[@]}")
+          else
+              alias_tags=("${BUILD_TAGS[@]}")
+          fi
+          echo "alias_tags=${alias_tags[*]}" >> $GITHUB_OUTPUT
+          echo "alias_date=${TIMESTAMPWT}" >> $GITHUB_OUTPUT
 
       # Conversion registre en minuscules
       - name: Lowercase Registry
@@ -254,42 +247,30 @@ jobs:
         with:
           string: ${{ env.IMAGE_REGISTRY }}
 
-      # Connexion à GHCR
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Pousser l'image
-      - name: Push To GHCR
-        uses: Wandalen/wretry.action@v3.8.0
-        id: push
-        env:
-          REGISTRY_USER: ${{ github.actor }}
-          REGISTRY_PASSWORD: ${{ github.token }}
-        with:
-          action: redhat-actions/push-to-registry@v2
-          attempt_limit: 3
-          attempt_delay: 15000
-          with: |
-            image: ${{ inputs.image_name }}
-            tags: ${{ steps.generate-tags.outputs.alias_tags }}
-            registry: ${{ steps.registry_case.outputs.lowercase }}
-            username: ${{ env.REGISTRY_USER }}
-            password: ${{ env.REGISTRY_PASSWORD }}
-
       # Installation Cosign
       - uses: sigstore/cosign-installer@v4.0.0
         if: github.event_name != 'pull_request'
 
-      # Signature de l'image
-      - name: Sign container image
+      # Push et signature de l'image
+      - name: Push To GHCR and Sign
         if: github.event_name != 'pull_request'
-        run: |
-          cosign sign -y --key env://COSIGN_PRIVATE_KEY ${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@${TAGS}
+        uses: Wandalen/wretry.action@v3.8.0
+        with:
+          attempt_limit: 3
+          attempt_delay: 15000
+          command: |
+            echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # Push unique image id and sign
+            dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
+            sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image
+            DIGEST=$(sudo skopeo inspect --format '{{.Digest}}' docker://$dest_image)
+            cosign sign -y --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false \
+              "${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@$DIGEST"
+
+            for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
+              dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:$tag"
+              sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image
+            done
         env:
-          TAGS: ${{ steps.push.outputs.outputs && fromJSON(steps.push.outputs.outputs).digest }}
-          COSIGN_EXPERIMENTAL: false
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
