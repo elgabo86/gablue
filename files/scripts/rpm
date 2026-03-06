@@ -37,7 +37,6 @@ dnf5 -y install \
     powertop \
     android-tools \
     byobu \
-    cabextract \
     ripgrep \
     testdisk \
     gh \
@@ -53,12 +52,16 @@ dnf5 -y install \
     plocate \
     squashfuse \
     funionfs \
-    icoutils \
-    unzip
+    icoutils
 
-# Outils réseau et cloud
+# Outils réseau
 dnf5 -y install \
-    tailscale \
+    tailscale
+
+# Outils d'archivage et compression
+dnf5 -y install \
+    cabextract \
+    unzip \
     rar
 
 # Outils multimédia
@@ -102,7 +105,8 @@ dnf5 -y install \
     asciiquarium \
     figlet \
     toilet \
-    cmatrix
+    cmatrix \
+    cool-retro-term
 
 # =============================================================================
 # APPLICATIONS GRAPHIQUES
@@ -127,11 +131,9 @@ dnf5 -y install \
     cage \
     wlr-randr
 
-# Optimisation et sauvegarde
+# Optimisation système
 dnf5 -y install \
-    earlyoom \
-    rclone \
-    cool-retro-term
+    earlyoom
 
 # =============================================================================
 # EXTENSIONS KDE (UNIQUEMENT KINOITE)
