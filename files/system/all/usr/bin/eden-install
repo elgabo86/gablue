@@ -8,14 +8,35 @@
 
 set -e
 
-REPO_OWNER="eden-emulator"
-REPO_NAME="Releases"
 CACHE_DIR="$HOME/.cache/eden"
 APPIMAGES_DIR="$HOME/AppImages"
 mkdir -p "$CACHE_DIR"
 
-# Obtenir les infos de la release la plus récente via l'API GitHub
-RELEASES_JSON=$(curl -sL -H "Accept: application/json" "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest")
+# Demander à l'utilisateur quelle version installer
+echo "Quelle version d'Eden souhaitez-vous installer ?"
+echo "1) Stable"
+echo "2) Nightly"
+read -p "Choix [1-2] (défaut: 1) : " CHOIX
+
+if [ -z "$CHOIX" ]; then
+    CHOIX="1"
+fi
+
+if [ "$CHOIX" == "2" ]; then
+    REPO_OWNER="Eden-CI"
+    REPO_NAME="Nightly"
+    API_URL="https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest"
+    echo "Récupération de la version Nightly..."
+else
+    REPO_OWNER="eden-emu"
+    REPO_NAME="eden"
+    GIT_HOST="https://git.eden-emu.dev"
+    API_URL="$GIT_HOST/api/v1/repos/$REPO_OWNER/$REPO_NAME/releases/latest"
+    echo "Récupération de la version Stable..."
+fi
+
+# Obtenir les infos de la release la plus récente via l'API
+RELEASES_JSON=$(curl -sL -H "Accept: application/json" "$API_URL")
 
 # Extraire l'URL de téléchargement pour l'AppImage PGO spécifique (Linux amd64 clang-pgo)
 DOWNLOAD_URL=$(echo "$RELEASES_JSON" | jq -r '.assets[] | select(.name | contains("Linux") and contains("amd64") and contains("clang-pgo") and contains(".AppImage")) | .browser_download_url' | head -n1)
@@ -107,4 +128,8 @@ if command -v kbuildsycoca6 &> /dev/null; then
     kbuildsycoca6
 fi
 
-echo "Opération terminée pour Eden (version PGO optimisée)."
+if [ "$CHOIX" == "2" ]; then
+    echo "Opération terminée pour Eden Nightly (version PGO optimisée)."
+else
+    echo "Opération terminée pour Eden Stable (version PGO optimisée)."
+fi
