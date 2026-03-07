@@ -60,7 +60,9 @@ dnf5 -y install \
 
 # Bibliothèques pour le rendu Vulkan et OpenGL 32-bit
 dnf5 -y install \
-    vulkan-loader.i686
+    vulkan-loader.i686 \
+    mangohud.i686 \
+    vkBasalt.i686
 
 # =============================================================================
 # BIBLIOTHÈQUES X11 ET WAYLAND 32-BIT
