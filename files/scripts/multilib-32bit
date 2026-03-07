@@ -16,7 +16,7 @@ dnf5 -y install \
     libgcc.i686 \
     libstdc++.i686 \
     libffi.i686 \
-    zlib.i686 \
+    zlib-ng-compat.i686 \
     bzip2-libs.i686 \
     openssl-libs.i686 \
     sqlite-libs.i686 \
