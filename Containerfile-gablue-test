@@ -28,10 +28,10 @@ COPY files/system/${VARIANT} /
 ENV VARIANT=${VARIANT}
 ENV SOURCE_IMAGE=${SOURCE_IMAGE}
 
-# Configuration des dépôts Copr
+# Configuration des dépôts Copr (version test avec support 32-bit)
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    sh /ctx/copr && \
+    sh /ctx/copr-test && \
     sh /ctx/cleanup
 
 # Installation du kernel
@@ -47,17 +47,23 @@ RUN --mount=type=cache,dst=/var/cache \
     sh /ctx/mesa && \
     sh /ctx/cleanup
 
+# Installation du support 32-bit (i686) pour Wine/Proton
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    sh /ctx/multilib-32bit && \
+    sh /ctx/cleanup
+
 # Installation des paquets RPM supplémentaires
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    sh /ctx/rpm-test && \
+    sh /ctx/rpm && \
     sh /ctx/cleanup
 
 # Post-installation : configuration finale
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    sh /ctx/systemd-test && \
-    sh /ctx/post-install-test && \
+    sh /ctx/systemd && \
+    sh /ctx/post-install && \
     sh /ctx/initramfs && \
     sh /ctx/finalize && \
     rm -rf /ctx
