@@ -38,6 +38,10 @@ do
         dnf5 -y copr enable $copr
 done && unset -v copr
 
+# Configuration des priorités des dépôts COPR (comme Bazzite)
+# bazzite* en priorité 1 pour avoir les packages multilib 32-bit
+dnf5 -y config-manager setopt "*bazzite*".priority=1
+
 # =============================================================================
 # DÉPÔTS TIERS
 # =============================================================================
