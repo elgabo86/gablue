@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QFrame, QScrollArea, QSizePolicy, QStackedWidget
 )
 from PySide6.QtCore import (
-    Qt, QThread, Signal, QTimer, QSize
+    Qt, QThread, Signal, QTimer, QSize, QRect
 )
 from PySide6.QtGui import (
     QFont, QFontDatabase, QColor, QPalette, QLinearGradient,
@@ -312,30 +312,6 @@ class ModernButton(QPushButton):
         """)
 
 
-class StyledProgressBar(QProgressBar):
-    """Barre de progression stylisée"""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(50)
-        self.setTextVisible(False)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setFont(QFont("JetBrains Mono", 12, QFont.Weight.Bold))
-        self.setStyleSheet(f"""
-            QProgressBar {{
-                background-color: {COLORS['progress_bg']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 8px;
-                text-align: center;
-                color: {COLORS['text']};
-            }}
-            QProgressBar::chunk {{
-                background-color: {COLORS['primary']};
-                border-radius: 7px;
-            }}
-        """)
-
-
 class LogViewer(QPlainTextEdit):
     """Visionneur de logs en temps réel"""
     
@@ -600,6 +576,42 @@ class SelectionScreen(QWidget):
             )
 
 
+class LoadingBar(QFrame):
+    """Barre de chargement animée (barre bleue qui se déplace)"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(20)
+        self.setMinimumWidth(400)
+        self._position = -100  # Commence hors de l'écran à gauche
+        self._bar_width = 100
+        self._animation_timer = QTimer(self)
+        self._animation_timer.timeout.connect(self._update_animation)
+        self._animation_timer.start(20)
+        
+    def _update_animation(self):
+        """Mettre à jour la position de la barre"""
+        self._position += 5
+        if self._position > self.width():
+            self._position = -self._bar_width
+        self.update()
+        
+    def paintEvent(self, event):
+        """Dessiner la barre"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Fond gris
+        painter.fillRect(self.rect(), QColor(COLORS['progress_bg']))
+        
+        # Barre bleue animée
+        painter.fillRect(int(self._position), 0, self._bar_width, self.height(), QColor(COLORS['primary']))
+        
+    def stop_animation(self):
+        """Arrêter l'animation"""
+        self._animation_timer.stop()
+
+
 class ProgressScreen(QWidget):
     """Écran de progression de l'installation"""
     
@@ -614,9 +626,16 @@ class ProgressScreen(QWidget):
         layout.setContentsMargins(50, 50, 50, 30)
         layout.setSpacing(20)
         
-        # Barre de progression
-        self.progress_bar = StyledProgressBar()
-        layout.addWidget(self.progress_bar)
+        # Barre de chargement animée
+        self.loading_bar = LoadingBar()
+        layout.addWidget(self.loading_bar, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        # Texte d'état
+        self.status_label = QLabel("Initialisation...")
+        self.status_label.setFont(QFont("JetBrains Mono", 11))
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setStyleSheet(f"color: {COLORS['text']};")
+        layout.addWidget(self.status_label)
         
         # Logs
         log_label = QLabel("Logs")
@@ -639,13 +658,9 @@ class ProgressScreen(QWidget):
         button_layout.addStretch()
         layout.addLayout(button_layout)
         
-    def set_progress(self, value, text=""):
-        """Mettre à jour la progression"""
-        self.progress_bar.setValue(int(value))
-        if text:
-            self.progress_bar.setFormat(f"{text} - %p%")
-        else:
-            self.progress_bar.setFormat("%p%")
+    def set_status(self, text):
+        """Mettre à jour le texte d'état"""
+        self.status_label.setText(text)
             
     def add_log(self, text, level="INFO"):
         """Ajouter un log"""
@@ -654,6 +669,10 @@ class ProgressScreen(QWidget):
     def cancel_installation(self):
         """Annuler l'installation"""
         self.cancel_signal.emit()
+        
+    def stop_loading(self):
+        """Arrêter l'animation de chargement"""
+        self.loading_bar.stop_animation()
 
 
 class FinishScreen(QWidget):
@@ -880,38 +899,43 @@ class WindowsUpdateGUI(QMainWindow):
         
     def handle_log(self, line):
         """Traiter une ligne de log"""
-        # Détection des messages de progression
-        progress_patterns = [
-            (r'Progress:\s*(\d+)%', 'progress'),
-            (r'update_progress\s+(\d+)', 'progress'),
-            (r'(\d+)%', 'progress'),
+        # Détection des messages de progression pour le statut
+        status_patterns = [
+            r'Progress:\s*\d+%\s*-\s*(.+)',
+            r'update_progress\s+\d+\s+"([^"]+)"',
         ]
         
-        for pattern, ptype in progress_patterns:
+        for pattern in status_patterns:
             match = re.search(pattern, line, re.IGNORECASE)
             if match:
-                try:
-                    progress = int(match.group(1))
-                    self.progress_screen.set_progress(progress, line[:50])
-                    break
-                except:
-                    pass
+                status_text = match.group(1)
+                self.progress_screen.set_status(status_text)
+                break
         else:
-            # Détection du niveau de log
-            level = "INFO"
-            if "[ERROR]" in line or "error" in line.lower():
-                level = "ERROR"
-            elif "[WARN]" in line or "warn" in line.lower():
-                level = "WARN"
-            elif "succès" in line.lower() or "réussie" in line.lower():
-                level = "SUCCESS"
-            
-            self.progress_screen.add_log(line, level)
+            # Si c'est un message "Progress: X% - text", extraire le texte
+            if line.startswith("Progress:") and "%" in line:
+                parts = line.split(" - ", 1)
+                if len(parts) > 1:
+                    self.progress_screen.set_status(parts[1])
+        
+        # Détection du niveau de log
+        level = "INFO"
+        if "[ERROR]" in line or "error" in line.lower():
+            level = "ERROR"
+        elif "[WARN]" in line or "warn" in line.lower():
+            level = "WARN"
+        elif "succès" in line.lower() or "réussie" in line.lower():
+            level = "SUCCESS"
+        
+        self.progress_screen.add_log(line, level)
             
     def installation_finished(self, success, message):
         """Installation terminée"""
+        # Arrêter l'animation de chargement
+        self.progress_screen.stop_loading()
+        
         if success:
-            self.progress_screen.set_progress(100, "Installation terminée avec succès !")
+            self.progress_screen.set_status("Installation terminée avec succès !")
             
             # Créer l'écran de fin
             self.finish_screen = FinishScreen(success=True)

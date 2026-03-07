@@ -1094,7 +1094,8 @@ bottle_yml=~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml
 
 bottle_def_dir=~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
 
-# Vérification si def.ready existe et comparaison du runner actuel avec celui dans bottle.yml
+# Vérification si def.ready existe et comparaison des composants actuels
+# Note: Le changement de runner ne nécessite pas de rebuild, bottles-cli edit suffit
 if [ "$force_rebuild" = true ]; then
     echo "Argument --rebuild détecté, rebuild forcé."
     need_rebuild=true
@@ -1106,25 +1107,36 @@ elif [ ! -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready ]; then
     fi
     need_rebuild=true
 elif [ -f "$bottle_yml" ]; then
-    current_runner=$(grep "Runner:" "$bottle_yml" | awk '{print $2}' | tr -d '"')
-    echo "Runner actuel dans bottle.yml : $current_runner"
-    echo "Runner choisi : $wineversion (API: $wineversion_from_api)"
-    if [ -n "$current_runner" ] && [ "$current_runner" != "$wineversion" ]; then
-        if [ "$wineversion_from_api" = true ]; then
-            echo "Le runner actuel ($current_runner) diffère du choisi ($wineversion), rebuild requis."
-            need_rebuild=true
-        else
-            echo "API échouée, on garde le runner actuel ($current_runner), pas de rebuild."
-        fi
-    else
-        echo "Le runner actuel ($current_runner) est identique au choisi ($wineversion), vérification de son existence..."
-        if [ ! -d "$wine_dir/$wineversion" ]; then
-            echo "Le runner $wineversion n'est pas installé dans $wine_dir, téléchargement requis."
-            need_rebuild=true
-        else
-            echo "Le runner $wineversion est déjà installé, pas de rebuild nécessaire pour ce critère."
-        fi
+    # Vérifier uniquement les composants qui nécessitent un rebuild (dxvk, vkd3d, nvapi, latencyflex)
+    current_dxvk=$(grep "DXVK:" "$bottle_yml" | awk '{print $2}' | tr -d '"')
+    current_vkd3d=$(grep "VKD3D:" "$bottle_yml" | awk '{print $2}' | tr -d '"')
+    current_nvapi=$(grep "NVAPI:" "$bottle_yml" | awk '{print $2}' | tr -d '"')
+    current_latencyflex=$(grep "LatencyFlex:" "$bottle_yml" | awk '{print $2}' | tr -d '"')
+    
+    echo "Composants actuels : DXVK=$current_dxvk, VKD3D=$current_vkd3d, NVAPI=$current_nvapi, LatencyFlex=$current_latencyflex"
+    echo "Runner actuel : $current_runner (changement via bottles-cli edit, pas de rebuild)"
+    
+    # Vérifier si un composant critique a changé et nécessite un rebuild
+    rebuild_components=false
+    
+    if [ -n "$current_dxvk" ] && [ "$current_dxvk" != "$dxvkversion" ] && [ -n "$dxvkversion" ]; then
+        echo "DXVK différent ($current_dxvk -> $dxvkversion), mais utilisation de bottles-cli edit"
     fi
+    
+    if [ -n "$current_vkd3d" ] && [ "$current_vkd3d" != "$vkd3dversion" ] && [ -n "$vkd3dversion" ]; then
+        echo "VKD3D différent ($current_vkd3d -> $vkd3dversion), mais utilisation de bottles-cli edit"
+    fi
+    
+    if [ -n "$current_nvapi" ] && [ "$current_nvapi" != "$nvapiversion" ] && [ -n "$nvapiversion" ]; then
+        echo "NVAPI différent ($current_nvapi -> $nvapiversion), mais utilisation de bottles-cli edit"
+    fi
+    
+    if [ -n "$current_latencyflex" ] && [ "$current_latencyflex" != "$latencyflexversion" ] && [ -n "$latencyflexversion" ]; then
+        echo "LatencyFlex différent ($current_latencyflex -> $latencyflexversion), mais utilisation de bottles-cli edit"
+    fi
+    
+    # Pas de rebuild nécessaire si def.ready existe et bottle.yml est valide
+    echo "Aucun rebuild nécessaire, utilisation de bottles-cli edit pour les mises à jour"
 else
     echo "bottle.yml non trouvé dans bak/def.bak/, rebuild requis par précaution."
     need_rebuild=true
@@ -1315,23 +1327,66 @@ with open('$bottle_yml_backup') as f:
     data = yaml.safe_load(f)
     print(data.get('Runner', '') or '')
 ")
+    current_vkd3d_in_bottle=$(/usr/bin/python3 -c "
+import yaml
+with open('$bottle_yml_backup') as f:
+    data = yaml.safe_load(f)
+    print(data.get('VKD3D', '') or '')
+")
+    current_nvapi_in_bottle=$(/usr/bin/python3 -c "
+import yaml
+with open('$bottle_yml_backup') as f:
+    data = yaml.safe_load(f)
+    print(data.get('NVAPI', '') or '')
+")
+    current_latencyflex_in_bottle=$(/usr/bin/python3 -c "
+import yaml
+with open('$bottle_yml_backup') as f:
+    data = yaml.safe_load(f)
+    print(data.get('LatencyFlex', '') or '')
+")
     
-    log "INFO" "DXVK actuel dans bottle: '$current_dxvk_in_bottle'"
-    log "INFO" "DXVK demandé: '$dxvkversion'"
-    log "INFO" "Runner actuel dans bottle: '$current_runner_in_bottle'"
-    log "INFO" "Runner demandé: '$wineversion'"
+    log "INFO" "Composants actuels dans bottle:"
+    log "INFO" "  Runner: '$current_runner_in_bottle' -> '$wineversion'"
+    log "INFO" "  DXVK: '$current_dxvk_in_bottle' -> '$dxvkversion'"
+    log "INFO" "  VKD3D: '$current_vkd3d_in_bottle' -> '$vkd3dversion'"
+    log "INFO" "  NVAPI: '$current_nvapi_in_bottle' -> '$nvapiversion'"
+    log "INFO" "  LatencyFlex: '$current_latencyflex_in_bottle' -> '$latencyflexversion'"
     
-    dxvk_needs_update=false
     runner_needs_update=false
-    
-    if [ "$current_dxvk_in_bottle" != "$dxvkversion" ]; then
-        dxvk_needs_update=true
-        log "INFO" "DXVK changé dans bottle: $current_dxvk_in_bottle -> $dxvkversion"
-    fi
+    dxvk_needs_update=false
+    vkd3d_needs_update=false
+    nvapi_needs_update=false
+    latencyflex_needs_update=false
     
     if [ "$current_runner_in_bottle" != "$wineversion" ]; then
         runner_needs_update=true
-        log "INFO" "Runner changé dans bottle: $current_runner_in_bottle -> $wineversion"
+        log "INFO" "Runner changé: $current_runner_in_bottle -> $wineversion"
+    fi
+    
+    if [ "$current_dxvk_in_bottle" != "$dxvkversion" ]; then
+        dxvk_needs_update=true
+        log "INFO" "DXVK changé: $current_dxvk_in_bottle -> $dxvkversion"
+    fi
+    
+    if [ "$current_vkd3d_in_bottle" != "$vkd3dversion" ]; then
+        vkd3d_needs_update=true
+        log "INFO" "VKD3D changé: $current_vkd3d_in_bottle -> $vkd3dversion"
+    fi
+    
+    if [ "$current_nvapi_in_bottle" != "$nvapiversion" ]; then
+        nvapi_needs_update=true
+        log "INFO" "NVAPI changé: $current_nvapi_in_bottle -> $nvapiversion"
+    fi
+    
+    if [ "$current_latencyflex_in_bottle" != "$latencyflexversion" ]; then
+        latencyflex_needs_update=true
+        log "INFO" "LatencyFlex changé: $current_latencyflex_in_bottle -> $latencyflexversion"
+    fi
+    
+    if [ "$runner_needs_update" = true ]; then
+        component_updated=true
+        updated_components="$updated_components wine"
     fi
     
     if [ "$dxvk_needs_update" = true ]; then
@@ -1339,9 +1394,19 @@ with open('$bottle_yml_backup') as f:
         updated_components="$updated_components dxvk"
     fi
     
-    if [ "$runner_needs_update" = true ]; then
+    if [ "$vkd3d_needs_update" = true ]; then
         component_updated=true
-        updated_components="$updated_components wine"
+        updated_components="$updated_components vkd3d"
+    fi
+    
+    if [ "$nvapi_needs_update" = true ]; then
+        component_updated=true
+        updated_components="$updated_components nvapi"
+    fi
+    
+    if [ "$latencyflex_needs_update" = true ]; then
+        component_updated=true
+        updated_components="$updated_components latencyflex"
     fi
 fi
 
