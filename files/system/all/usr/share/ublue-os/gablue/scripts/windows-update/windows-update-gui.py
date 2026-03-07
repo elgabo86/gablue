@@ -354,7 +354,7 @@ class LogViewer(QPlainTextEdit):
 class SelectionScreen(QWidget):
     """Écran de sélection des options"""
     
-    start_signal = Signal(str, str, bool)
+    start_signal = Signal(str, str, str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
