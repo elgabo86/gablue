@@ -1094,8 +1094,7 @@ bottle_yml=~/.var/app/com.usebottles.bottles/data/bottles/bak/def.bak/bottle.yml
 
 bottle_def_dir=~/.var/app/com.usebottles.bottles/data/bottles/bottles/def
 
-# Vérification si def.ready existe et comparaison des composants actuels
-# Note: Le changement de runner ne nécessite pas de rebuild, bottles-cli edit suffit
+# Vérification si def.ready existe - détermine si rebuild nécessaire
 if [ "$force_rebuild" = true ]; then
     echo "Argument --rebuild détecté, rebuild forcé."
     need_rebuild=true
@@ -1106,40 +1105,8 @@ elif [ ! -d ~/.var/app/com.usebottles.bottles/data/bottles/bak/def.ready ]; then
         echo "def.ready n'existe pas, rebuild requis."
     fi
     need_rebuild=true
-elif [ -f "$bottle_yml" ]; then
-    # Vérifier uniquement les composants qui nécessitent un rebuild (dxvk, vkd3d, nvapi, latencyflex)
-    current_dxvk=$(grep "DXVK:" "$bottle_yml" | awk '{print $2}' | tr -d '"')
-    current_vkd3d=$(grep "VKD3D:" "$bottle_yml" | awk '{print $2}' | tr -d '"')
-    current_nvapi=$(grep "NVAPI:" "$bottle_yml" | awk '{print $2}' | tr -d '"')
-    current_latencyflex=$(grep "LatencyFlex:" "$bottle_yml" | awk '{print $2}' | tr -d '"')
-    
-    echo "Composants actuels : DXVK=$current_dxvk, VKD3D=$current_vkd3d, NVAPI=$current_nvapi, LatencyFlex=$current_latencyflex"
-    echo "Runner actuel : $current_runner (changement via bottles-cli edit, pas de rebuild)"
-    
-    # Vérifier si un composant critique a changé et nécessite un rebuild
-    rebuild_components=false
-    
-    if [ -n "$current_dxvk" ] && [ "$current_dxvk" != "$dxvkversion" ] && [ -n "$dxvkversion" ]; then
-        echo "DXVK différent ($current_dxvk -> $dxvkversion), mais utilisation de bottles-cli edit"
-    fi
-    
-    if [ -n "$current_vkd3d" ] && [ "$current_vkd3d" != "$vkd3dversion" ] && [ -n "$vkd3dversion" ]; then
-        echo "VKD3D différent ($current_vkd3d -> $vkd3dversion), mais utilisation de bottles-cli edit"
-    fi
-    
-    if [ -n "$current_nvapi" ] && [ "$current_nvapi" != "$nvapiversion" ] && [ -n "$nvapiversion" ]; then
-        echo "NVAPI différent ($current_nvapi -> $nvapiversion), mais utilisation de bottles-cli edit"
-    fi
-    
-    if [ -n "$current_latencyflex" ] && [ "$current_latencyflex" != "$latencyflexversion" ] && [ -n "$latencyflexversion" ]; then
-        echo "LatencyFlex différent ($current_latencyflex -> $latencyflexversion), mais utilisation de bottles-cli edit"
-    fi
-    
-    # Pas de rebuild nécessaire si def.ready existe et bottle.yml est valide
-    echo "Aucun rebuild nécessaire, utilisation de bottles-cli edit pour les mises à jour"
 else
-    echo "bottle.yml non trouvé dans bak/def.bak/, rebuild requis par précaution."
-    need_rebuild=true
+    echo "def.ready existe - pas de rebuild nécessaire, utilisation de bottles-cli edit"
 fi
 
 # =============================================================================
