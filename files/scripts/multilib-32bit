@@ -52,7 +52,8 @@ dnf5 versionlock add \
 # =============================================================================
 
 # FAudio pour le support audio des jeux 32-bit
-dnf5 -y install \
+# Installation sans weak deps pour éviter d'installer trop de paquets
+dnf5 -y --setopt=install_weak_deps=False install \
     libFAudio.i686
 
 # =============================================================================
@@ -60,7 +61,8 @@ dnf5 -y install \
 # =============================================================================
 
 # Bibliothèques pour le rendu Vulkan et OpenGL 32-bit
-dnf5 -y install \
+# Installation sans weak deps pour éviter les dépendances excessives
+dnf5 -y --setopt=install_weak_deps=False install \
     vulkan-loader.i686 \
     mangohud.i686 \
     vkBasalt.i686
@@ -113,7 +115,6 @@ dnf5 -y install \
 # =============================================================================
 
 dnf5 -y install \
-    libcurl.i686 \
     libxml2.i686 \
     expat.i686
 
