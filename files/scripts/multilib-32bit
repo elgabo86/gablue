@@ -2,34 +2,26 @@
 
 # Installation du support 32-bit (i686) pour Wine/Proton
 # Ce script installe les bibliothèques 32-bit nécessaires pour exécuter des applications Windows 32-bit
+# Inspiré de Bazzite - Installation minimale, les dépendances sont résolues automatiquement
 
 set -eoux pipefail
 
 # =============================================================================
-# BIBLIOTHÈQUES GLIBC ET SYSTÈME DE BASE 32-BIT
+# BIBLIOTHÈQUES SYSTÈME DE BASE 32-BIT
 # =============================================================================
 
-# Installation de glibc et des bibliothèques système de base en 32-bit
+# Glibc et libs système de base (requis pour tout binaire 32-bit)
 dnf5 -y install \
     glibc.i686 \
-    glibc-devel.i686 \
     libgcc.i686 \
-    libstdc++.i686 \
-    libffi.i686 \
-    zlib-ng-compat.i686 \
-    bzip2-libs.i686 \
-    openssl-libs.i686 \
-    sqlite-libs.i686 \
-    xz-libs.i686 \
-    libuuid.i686
+    libstdc++.i686
 
 # =============================================================================
 # BIBLIOTHÈQUES GRAPHIQUES MESA 32-BIT
 # =============================================================================
 
-# Installation des pilotes Mesa 32-bit
-# Ces paquets sont nécessaires pour le rendu graphique des applications 32-bit
-# Installation depuis tous les dépôts disponibles pour résoudre les dépendances
+# Mesa 32-bit pour le rendu graphique
+# Installation depuis tous les dépôts pour résoudre les dépendances
 dnf5 -y install \
     mesa-dri-drivers.i686 \
     mesa-libEGL.i686 \
@@ -52,94 +44,15 @@ dnf5 versionlock add \
 # =============================================================================
 
 # FAudio pour le support audio des jeux 32-bit
-# Installation sans weak deps pour éviter d'installer trop de paquets
 dnf5 -y --setopt=install_weak_deps=False install \
     libFAudio.i686
 
 # =============================================================================
-# BIBLIOTHÈQUES D'AFFICHAGE ET DE RENDU 32-BIT
+# BIBLIOTHÈQUES GAMING 32-BIT
 # =============================================================================
 
-# Bibliothèques pour le rendu Vulkan et OpenGL 32-bit
-# Installation sans weak deps pour éviter les dépendances excessives
+# Vulkan loader et outils d'overlay
 dnf5 -y --setopt=install_weak_deps=False install \
     vulkan-loader.i686 \
     mangohud.i686 \
     vkBasalt.i686
-
-# =============================================================================
-# BIBLIOTHÈQUES X11 ET WAYLAND 32-BIT
-# =============================================================================
-
-# Support pour X11 et Wayland en 32-bit
-dnf5 -y install \
-    libX11.i686 \
-    libXext.i686 \
-    libXcursor.i686 \
-    libXfixes.i686 \
-    libXi.i686 \
-    libXinerama.i686 \
-    libXrandr.i686 \
-    libXrender.i686 \
-    libXxf86vm.i686 \
-    libxcb.i686 \
-    libxshmfence.i686 \
-    libwayland-client.i686 \
-    libwayland-server.i686 \
-    libwayland-egl.i686 \
-    libwayland-cursor.i686
-
-# =============================================================================
-# BIBLIOTHÈQUES D'ENTRÉE ET PÉRIPHÉRIQUES 32-BIT
-# =============================================================================
-
-# Support pour les périphériques d'entrée
-dnf5 -y install \
-    libdrm.i686 \
-    libinput.i686 \
-    libevdev.i686
-
-# =============================================================================
-# BIBLIOTHÈQUES COMPRESSION ET DÉCODAGE 32-BIT
-# =============================================================================
-
-dnf5 -y install \
-    libpng.i686 \
-    libjpeg-turbo.i686 \
-    libtiff.i686 \
-    libwebp.i686 \
-    lcms2.i686
-
-# =============================================================================
-# BIBLIOTHÈQUES RÉSEAU ET PROTOCOLES 32-BIT
-# =============================================================================
-
-dnf5 -y install \
-    libxml2.i686 \
-    expat.i686
-
-# =============================================================================
-# BIBLIOTHÈQUES MULTIMÉDIA 32-BIT
-# =============================================================================
-
-dnf5 -y install \
-    alsa-lib.i686 \
-    pulseaudio-libs.i686
-
-# =============================================================================
-# BIBLIOTHÈQUES DIVERSES 32-BIT
-# =============================================================================
-
-dnf5 -y install \
-    dbus-libs.i686 \
-    systemd-libs.i686 \
-    elfutils-libelf.i686 \
-    libselinux.i686 \
-    libsepol.i686 \
-    pcre2.i686 \
-    ncurses-libs.i686 \
-    readline.i686 \
-    keyutils-libs.i686 \
-    krb5-libs.i686 \
-    libcom_err.i686 \
-    e2fsprogs-libs.i686
