@@ -227,22 +227,15 @@ jobs:
 
           TIMESTAMP="$(date +%Y%m%d)"
           TIMESTAMPWT="$(date -d '+2 hours' +%Y%m%d-%Hh%M)"
-          COMMIT_TAGS=()
-          BUILD_TAGS=()
           SHA_SHORT="${GITHUB_SHA::7}"
-          COMMIT_TAGS+=("pr-${{ github.event.number }}")
-          COMMIT_TAGS+=("${SHA_SHORT}")
-          for TAG in "${BUILD_TAGS[@]}"; do
-              BUILD_TAGS+=("${TAG}-${TIMESTAMP}")
-          done
-          BUILD_TAGS+=("${TIMESTAMP}")
-          BUILD_TAGS+=("${TIMESTAMPWT}")
-          BUILD_TAGS+=("latest")
+          
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-              alias_tags=("${COMMIT_TAGS[@]}")
+              alias_tags=("pr-${{ github.event.number }}" "${SHA_SHORT}")
           else
-              alias_tags=("${BUILD_TAGS[@]}")
+              alias_tags=("${VERSION_TAG}" "${TIMESTAMP}" "${TIMESTAMPWT}" "latest")
           fi
+          
+          echo "Generated alias tags: ${alias_tags[*]}"
           echo "alias_tags=${alias_tags[*]}" >> $GITHUB_OUTPUT
           echo "alias_date=${TIMESTAMPWT}" >> $GITHUB_OUTPUT
 
@@ -259,24 +252,34 @@ jobs:
           cosign-release: "v2.6.1"
         if: github.event_name != 'pull_request'
 
-      # Push et signature de l'image
+      # Push et signature de l'image avec retry
       - name: Push To GHCR and Sign
         if: github.event_name != 'pull_request'
-        shell: bash
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+        uses: Wandalen/wretry.action@e68c23e6309f2871ca8ae4763e7629b9c258e1ea # v3.8.0
+        with:
+          attempt_limit: 3
+          attempt_delay: 15000
+          command: |
+            log_sum() { echo "$1" >> $GITHUB_STEP_SUMMARY; }
+            log_sum '# Push to GHCR result'
+            log_sum '```'
+            echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-          # Push unique image id and sign
-          dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
-          sudo skopeo copy --dest-compress-format zstd:chunked ${{ steps.rechunk.outputs.ref }} docker://$dest_image
-          DIGEST=$(sudo skopeo inspect --format '{{.Digest}}' docker://$dest_image)
-          cosign sign -y --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false \
-            "${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@$DIGEST"
+            # Push unique image id and sign
+            dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
+            sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image
+            log_sum "$dest_image"
+            DIGEST=$(sudo skopeo inspect --format '{{.Digest}}' ${{ steps.rechunk.outputs.ref }})
+            cosign sign -y --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false \
+              "${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@$DIGEST"
 
-          for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
-            dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:$tag"
-            sudo skopeo copy --dest-compress-format zstd:chunked ${{ steps.rechunk.outputs.ref }} docker://$dest_image
-          done
+            # Push alias tags
+            for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
+              dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:$tag"
+              sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image
+              log_sum "$dest_image"
+            done
+            log_sum '```'
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
