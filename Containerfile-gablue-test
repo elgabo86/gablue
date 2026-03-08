@@ -47,12 +47,6 @@ RUN --mount=type=cache,dst=/var/cache \
     sh /ctx/mesa && \
     sh /ctx/cleanup
 
-# Installation des paquets RPM supplémentaires
-RUN --mount=type=cache,dst=/var/cache \
-    --mount=type=cache,dst=/var/log \
-    sh /ctx/rpm && \
-    sh /ctx/cleanup
-
 # Installation des paquets RPM supplémentaires (version test avec mangohud 32-bit)
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
