@@ -131,7 +131,8 @@ dnf5 -y install \
     mangohud.i686 \
     terra-gamescope \
     cage \
-    wlr-randr
+    wlr-randr \
+    gamemode
 
 # Optimisation système
 dnf5 -y install \
