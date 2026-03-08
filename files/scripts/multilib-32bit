@@ -47,12 +47,21 @@ dnf5 versionlock add \
 dnf5 -y --setopt=install_weak_deps=False install \
     libFAudio.i686
 
+# PulseAudio/PipeWire 32-bit (REQUIS pour l'audio Wine)
+dnf5 -y --setopt=install_weak_deps=False install \
+    pulseaudio-libs.i686 \
+    wine-pulseaudio.i686
+
+# ALSA 32-bit (optionnel, fallback)
+dnf5 -y --setopt=install_weak_deps=False install \
+    alsa-lib.i686 \
+    wine-alsa.i686
+
 # =============================================================================
 # BIBLIOTHÈQUES GAMING 32-BIT
 # =============================================================================
 
-# Vulkan loader et outils d'overlay
+# Vulkan loader et outils d'overlay (mangohud déjà installé par rpm-test)
 dnf5 -y --setopt=install_weak_deps=False install \
     vulkan-loader.i686 \
-    mangohud.i686 \
     vkBasalt.i686
