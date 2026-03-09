@@ -32,6 +32,7 @@ dnf5 -y install \
     ncdu \
     mc \
     lm_sensors \
+    iio-sensor-proxy \
     fastfetch \
     stress-ng \
     powertop \

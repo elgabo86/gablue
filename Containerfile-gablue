@@ -88,3 +88,6 @@ RUN --mount=type=cache,dst=/var/cache \
     sh /ctx/initramfs && \
     sh /ctx/finalize && \
     rm -rf /ctx
+
+# Valider l'image bootc
+RUN --mount=type=tmpfs,target=/run --network=none bootc container lint
