@@ -49,13 +49,7 @@ dnf5 -y --setopt=install_weak_deps=False install \
 
 # PulseAudio/PipeWire 32-bit (REQUIS pour l'audio Wine)
 dnf5 -y --setopt=install_weak_deps=False install \
-    pulseaudio-libs.i686 \
-    wine-pulseaudio.i686
-
-# ALSA 32-bit (optionnel, fallback)
-dnf5 -y --setopt=install_weak_deps=False install \
-    alsa-lib.i686 \
-    wine-alsa.i686
+    pulseaudio-libs.i686
 
 # =============================================================================
 # BIBLIOTHÈQUES GAMING 32-BIT
