@@ -47,16 +47,10 @@ RUN --mount=type=cache,dst=/var/cache \
     sh /ctx/mesa && \
     sh /ctx/cleanup
 
-# Installation des paquets RPM supplémentaires (version test avec mangohud 32-bit)
+# Installation des paquets RPM supplémentaires (version test avec mangohud 32-bit et support Wine)
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     sh /ctx/rpm-test && \
-    sh /ctx/cleanup
-
-# Installation du support 32-bit (i686) pour Wine/Proton
-RUN --mount=type=cache,dst=/var/cache \
-    --mount=type=cache,dst=/var/log \
-    sh /ctx/multilib-32bit && \
     sh /ctx/cleanup
 
 # Post-installation : configuration finale

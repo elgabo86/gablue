@@ -55,7 +55,6 @@ dnf5 -y --setopt=install_weak_deps=False install \
 # BIBLIOTHÈQUES GAMING 32-BIT
 # =============================================================================
 
-# Vulkan loader et outils d'overlay (mangohud déjà installé par rpm-test)
+# Vulkan loader pour les applications 32-bit (mangohud déjà installé par rpm-test)
 dnf5 -y --setopt=install_weak_deps=False install \
-    vulkan-loader.i686 \
-    vkBasalt.i686
+    vulkan-loader.i686
