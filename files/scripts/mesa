@@ -6,10 +6,10 @@ set -eoux pipefail
 # Le swap de mesa-filesystem tire automatiquement tous les autres packages Mesa depuis terra-mesa
 
 # Swap Mesa filesystem avec la version Terra
-dnf5 -y swap --repo=terra-mesa mesa-filesystem mesa-filesystem
+dnf5 -y swap --from-repo=terra-mesa --enable-repo=terra-mesa mesa-filesystem mesa-filesystem
 
 # Installer les paquets Mesa principaux sans conflit
-dnf5 -y install --repo=terra-mesa \
+dnf5 -y --enable-repo=terra-mesa install \
     mesa-dri-drivers \
     mesa-libEGL \
     mesa-libGL \

@@ -73,8 +73,8 @@ dnf5 -y config-manager setopt "*rpmfusion*".priority=5 "*rpmfusion*".exclude="me
 # terra-release-mesa active automatiquement le dépôt Mesa Terra
 dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release terra-release-extras terra-release-mesa
 
-# Activation explicite du dépôt Terra Mesa
-dnf5 -y config-manager setopt "terra-mesa".enabled=true
+# Désactivation explicite du dépôt Terra Mesa (activé uniquement quand nécessaire via --enable-repo)
+dnf5 -y config-manager setopt "terra-mesa".enabled=false
 
 # Configuration des exclusions Terra : priorité haute et exclusions spécifiques
 dnf5 -y config-manager setopt "*terra*".priority=3 "*terra*".exclude="nerd-fonts topgrade scx-scheds steam python3-protobuf"
