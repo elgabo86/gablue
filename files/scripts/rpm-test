@@ -265,13 +265,7 @@ fi
 # BIBLIOTHÈQUES 32-BIT POUR WINE/PROTON
 # =============================================================================
 
-# Glibc et libs système de base (requis pour tout binaire 32-bit)
-dnf5 -y install \
-    glibc.i686 \
-    libgcc.i686 \
-    libstdc++.i686
-
-# Gaming 32-bit depuis terra-mesa (installe automatiquement Mesa i686 via dépendances)
+# Gaming 32-bit depuis terra-mesa (tire automatiquement glibc, Mesa, Vulkan via dépendances)
 dnf5 -y --enable-repo=terra-mesa install \
     gamescope-libs.i686 \
     mangohud.i686
