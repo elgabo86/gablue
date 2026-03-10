@@ -136,7 +136,8 @@ dnf5 -y --enable-repo=terra-mesa install \
 dnf5 -y install \
     cage \
     wlr-randr \
-    gamemode
+    gamemode \
+    gamemode.i686
 
 # Optimisation système
 dnf5 -y install \
