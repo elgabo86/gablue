@@ -128,7 +128,9 @@ dnf5 -y install \
 # Gaming et performance (depuis terra-mesa)
 dnf5 -y --enable-repo=terra-mesa install \
     gamescope \
-    mangohud
+    gamescope-libs.i686 \
+    mangohud \
+    mangohud.i686
 
 # Autres outils gaming (Fedora)
 dnf5 -y install \
@@ -265,10 +267,7 @@ fi
 # BIBLIOTHÈQUES 32-BIT POUR WINE/PROTON
 # =============================================================================
 
-# Gaming 32-bit depuis terra-mesa (tire automatiquement glibc, Mesa, Vulkan via dépendances)
-dnf5 -y --enable-repo=terra-mesa install \
-    gamescope-libs.i686 \
-    mangohud.i686
+# Note: gamescope-libs.i686 et mangohud.i686 déjà installés depuis terra-mesa ci-dessus
 
 # FAudio pour le support audio des jeux 32-bit
 dnf5 -y --setopt=install_weak_deps=False install \
