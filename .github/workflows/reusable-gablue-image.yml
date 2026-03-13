@@ -96,6 +96,14 @@ jobs:
           fi
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_OUTPUT
 
+      # Générer un timestamp unique pour tout le workflow
+      - name: Generate timestamp
+        id: timestamp
+        run: |
+          BUILD_VERSION="$(date +'%Y%m%d-%Hh%M')"
+          echo "build_version=$BUILD_VERSION" >> $GITHUB_OUTPUT
+          echo "Generated build version: $BUILD_VERSION"
+
       # Checkout du dépôt
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -182,24 +190,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.vendor=Universal Blue
         run: |
-          version="${{ inputs.fedora_version }}.$(date +%Y%m%d)"
-
-          declare -A tags
-          while read -r t; do
-              tags["$t"]=1
-          done < <(skopeo list-tags "docker://${{ env.IMAGE_REGISTRY }}/${{ inputs.image_name }}" 2>/dev/null | jq -r '.Tags[]' || true)
-
-          if [[ -v tags[$version] ]]; then
-            build=1
-            while true; do
-              tag="$version.$build"
-              if [[ ! -v tags[$tag] ]]; then
-                version=$tag
-                break
-              fi
-              ((build++))
-            done
-          fi
+          version="${{ steps.timestamp.outputs.build_version }}"
 
           img=${{ steps.rechunk.outputs.ref }}
           container=$(sudo buildah from $img)
