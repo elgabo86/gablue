@@ -227,20 +227,16 @@ jobs:
         shell: bash
         run: |
           VERSION_TAG="${{ steps.relabel.outputs.version }}"
-
-          TIMESTAMP="$(date +%Y%m%d)"
-          TIMESTAMPWT="$(date -d '+2 hours' +%Y%m%d-%Hh%M)"
           SHA_SHORT="${GITHUB_SHA::7}"
-          
+
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
               alias_tags=("pr-${{ github.event.number }}" "${SHA_SHORT}")
           else
-              alias_tags=("${VERSION_TAG}" "${TIMESTAMP}" "${TIMESTAMPWT}" "latest")
+              alias_tags=("${VERSION_TAG}" "latest")
           fi
-          
+
           echo "Generated alias tags: ${alias_tags[*]}"
           echo "alias_tags=${alias_tags[*]}" >> $GITHUB_OUTPUT
-          echo "alias_date=${TIMESTAMPWT}" >> $GITHUB_OUTPUT
 
       # Conversion registre en minuscules
       - name: Lowercase Registry
