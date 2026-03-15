@@ -1,7 +1,8 @@
 #!/usr/bin/bash
 
-# Script d'installation des paquets RPM pour Gablue
+# Script d'installation des paquets RPM pour Gablue (version test avec support 32-bit)
 # Installe tous les paquets nécessaires : outils CLI, applications graphiques, polices, drivers et dépendances de développement
+# Version test avec installation des deux architectures pour mangohud
 
 set -eoux pipefail
 
@@ -32,7 +33,6 @@ dnf5 -y install \
     ncdu \
     mc \
     lm_sensors \
-    iio-sensor-proxy \
     fastfetch \
     stress-ng \
     powertop \
@@ -125,12 +125,19 @@ dnf5 -y install \
     skanpage \
     x2goclient
 
-# Gaming et performance
-dnf5 -y install \
+# Gaming et performance (depuis terra-mesa)
+dnf5 -y --enable-repo=terra-mesa install \
+    gamescope \
+    gamescope-libs.i686 \
     mangohud \
-    terra-gamescope \
+    mangohud.i686
+
+# Autres outils gaming (Fedora)
+dnf5 -y install \
     cage \
-    wlr-randr
+    wlr-randr \
+    gamemode \
+    gamemode.i686
 
 # Optimisation système
 dnf5 -y install \
@@ -256,3 +263,21 @@ dnf5 -y remove \
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     dnf5 -y remove plasma-discover-rpm-ostree
 fi
+
+# =============================================================================
+# BIBLIOTHÈQUES 32-BIT POUR WINE/PROTON
+# =============================================================================
+
+# Note: gamescope-libs.i686 et mangohud.i686 déjà installés depuis terra-mesa ci-dessus
+
+# FAudio pour le support audio des jeux 32-bit
+dnf5 -y --setopt=install_weak_deps=False install \
+    libFAudio.i686
+
+# PulseAudio/PipeWire 32-bit (REQUIS pour l'audio Wine)
+dnf5 -y --setopt=install_weak_deps=False install \
+    pulseaudio-libs.i686
+
+# Vulkan loader pour les applications 32-bit
+dnf5 -y --setopt=install_weak_deps=False install \
+    vulkan-loader.i686

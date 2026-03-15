@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 
-# Configuration des dépôts COPR pour uBlue/Fedora
-# Ce script configure tous les dépôts tiers nécessaires pour Gablue
+# Configuration des dépôts COPR pour uBlue/Fedora (version test avec support 32-bit)
+# Ce script configure tous les dépôts tiers nécessaires pour Gablue, incluant le support multilib
 
 set -eoux pipefail
 
@@ -24,9 +24,10 @@ dnf5 -y config-manager setopt "*fedora*".exclude="mesa-* kernel-core-* kernel-mo
 # DÉPÔTS COPR
 # =============================================================================
 
-# Activation des dépôts COPR nécessaires
+# Activation des dépôts COPR nécessaires (incluant bazzite-multilib pour le support 32-bit)
 for copr in \
         bazzite-org/bazzite \
+        bazzite-org/bazzite-multilib \
         ublue-os/staging \
         ublue-os/packages \
         che/nerd-fonts \
@@ -36,6 +37,10 @@ for copr in \
 do
         dnf5 -y copr enable $copr
 done && unset -v copr
+
+# Configuration des priorités des dépôts COPR (comme Bazzite)
+# bazzite* en priorité 1 pour avoir les packages multilib 32-bit
+dnf5 -y config-manager setopt "*bazzite*".priority=1
 
 # =============================================================================
 # DÉPÔTS TIERS
