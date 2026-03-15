@@ -3559,6 +3559,11 @@ read_wgp_config() {
     local launch_content
     launch_content="$(cat "$LAUNCH_FILE" | tr -d '\n\r')"
     FULL_EXE_PATH="$MOUNT_DIR/$launch_content"
+    
+    # Résoudre les symlinks pour obtenir le chemin réel
+    if [ -L "$FULL_EXE_PATH" ]; then
+        FULL_EXE_PATH="$(readlink -f "$FULL_EXE_PATH")"
+    fi
 
     if [ ! -e "$FULL_EXE_PATH" ]; then
         echo "Erreur: exécutable introuvable: $(cat "$LAUNCH_FILE")" >&2
@@ -3603,11 +3608,11 @@ prepare_saves() {
         local FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
 
         if [ -d "$SAVE_WGP_ITEM" ]; then
-            _copy_dir_rewrite_symlinks "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
+            _copy_dir_with_symlinks "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM" "$SAVE_WGP_DIR" "$SAVES_DIR"
         elif [ -e "$SAVE_WGP_ITEM" ]; then
             mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
             if [ -L "$SAVE_WGP_ITEM" ]; then
-                _copy_symlink_rewrite "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
+                _copy_symlink_as_abs "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM" "$SAVE_WGP_DIR" "$SAVES_DIR"
             else
                 cp -n "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
             fi
@@ -3768,11 +3773,11 @@ prepare_extras() {
         local FINAL_EXTRA_ITEM="$EXTRA_CACHE_DIR/$EXTRA_REL_PATH"
 
         if [ -d "$EXTRA_WGP_ITEM" ]; then
-            _copy_dir_rewrite_symlinks "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
+            _copy_dir_with_symlinks "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM" "$EXTRA_WGP_DIR" "$EXTRA_CACHE_DIR"
         elif [ -e "$EXTRA_WGP_ITEM" ]; then
             mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
             if [ -L "$EXTRA_WGP_ITEM" ]; then
-                _copy_symlink_rewrite "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
+                _copy_symlink_as_abs "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM" "$EXTRA_WGP_DIR" "$EXTRA_CACHE_DIR"
             else
                 cp -n "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
             fi
