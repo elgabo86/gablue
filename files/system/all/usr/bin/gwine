@@ -3267,6 +3267,11 @@ build_bwrap_args() {
         bwrap_args="$bwrap_args --bind \"$CACHE_DIR\" \"$CACHE_DIR\""
     fi
     
+    # Dossier des extras WGP (wgp-extra)
+    if [ -d "$EXTRA_REAL" ]; then
+        bwrap_args="$bwrap_args --bind \"$EXTRA_REAL\" \"$EXTRA_REAL\""
+    fi
+    
     # Gwine installation - nécessaire pour Wine
     if [ -d "$GWINE_DIR" ]; then
         bwrap_args="$bwrap_args --bind \"$GWINE_DIR\" \"$GWINE_DIR\""
@@ -3559,11 +3564,6 @@ read_wgp_config() {
     local launch_content
     launch_content="$(cat "$LAUNCH_FILE" | tr -d '\n\r')"
     FULL_EXE_PATH="$MOUNT_DIR/$launch_content"
-    
-    # Résoudre les symlinks pour obtenir le chemin réel
-    if [ -L "$FULL_EXE_PATH" ]; then
-        FULL_EXE_PATH="$(readlink -f "$FULL_EXE_PATH")"
-    fi
 
     if [ ! -e "$FULL_EXE_PATH" ]; then
         echo "Erreur: exécutable introuvable: $(cat "$LAUNCH_FILE")" >&2
