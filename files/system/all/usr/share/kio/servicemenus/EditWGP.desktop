@@ -7,10 +7,10 @@ X-KDE-Submenu=Windows
 
 [Desktop Action LaunchExe]
 Name=Lancer un autre .exe dans le WGP
-Icon=com.usebottles.bottles
-Exec=/usr/share/ublue-os/gablue/scripts/launchwin.sh --exewgp %f
+Icon=windows95
+Exec=gwine --exewgp %f
 
 [Desktop Action ExtractWGP]
 Name=Extraire le WGP dans un dossier
-Icon=com.usebottles.bottles
+Icon=windows95
 Exec=/usr/share/ublue-os/gablue/scripts/unpackwgp.sh %f

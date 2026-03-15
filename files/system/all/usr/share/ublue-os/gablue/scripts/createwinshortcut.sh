@@ -62,17 +62,14 @@ else
     fi
 fi
 
-# Déterminer le script de lancement à utiliser
-LAUNCH_SCRIPT="/usr/share/ublue-os/gablue/scripts/launchwin.sh"
-
-# Générer le script selon le choix
+# Générer le script selon le choix (gwine remplace launchwin.sh)
 output_sh="$onlypath/$onlyapp.sh"
 echo "#!/bin/bash" > "$output_sh"
 
 if [ "$choice" = "fix" ]; then
-    echo "exec \"$LAUNCH_SCRIPT\" --fix \"$fullpath\"" >> "$output_sh"
+    echo "exec /usr/bin/gwine --fix \"$fullpath\"" >> "$output_sh"
 else
-    echo "exec \"$LAUNCH_SCRIPT\" \"$fullpath\"" >> "$output_sh"
+    echo "exec /usr/bin/gwine \"$fullpath\"" >> "$output_sh"
 fi
 
 chmod +x "$output_sh"

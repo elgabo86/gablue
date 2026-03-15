@@ -7,5 +7,5 @@ X-KDE-Submenu=Windows
 
 [Desktop Action CreateWGP]
 Name=Créer un pack WGP
-Icon=com.usebottles.bottles
+Icon=windows95
 Exec=/usr/share/ublue-os/gablue/scripts/makewgp.py %f

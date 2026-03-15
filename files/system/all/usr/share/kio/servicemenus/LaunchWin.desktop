@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Service
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=application/x-ms-dos-executable;application/x-msi;application/x-ms-shortcut;application/x-wine-extension-msp;application/x-bat;application/x-wgp;
+Actions=LaunchFix;LaunchTerm
+X-KDE-Submenu=Windows
+X-KDE-StartupNotify=false
+
+[Desktop Action LaunchFix]
+Name=Lancer avec fix gamepad
+Icon=windows95
+Exec=gwine --fix %f
+
+[Desktop Action LaunchTerm]
+Name=Lancer dans le terminal
+Icon=windows95
+Exec=gwine %f; exec bash

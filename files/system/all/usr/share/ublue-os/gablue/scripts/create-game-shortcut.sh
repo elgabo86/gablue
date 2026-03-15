@@ -117,17 +117,17 @@ if [ "$FILETYPE" = "lgp" ]; then
     ALT_NAME=""
     ALT_EXEC=""
 else
-    # Pour les .exe et .wgp : utiliser launchwin.sh avec mode fix possible
+    # Pour les .exe et .wgp : utiliser gwine avec mode fix possible
     if [ "$LAUNCH_MODE" = "normal" ]; then
-        EXEC_COMMAND="/usr/share/ublue-os/gablue/scripts/launchwin.sh \"$EXE_PATH\""
+        EXEC_COMMAND="/usr/bin/gwine \"$EXE_PATH\""
         ALT_ACTION="LaunchFix"
         ALT_NAME="Lancer avec fix gamepad"
-        ALT_EXEC="qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.activateLauncherMenu && /usr/share/ublue-os/gablue/scripts/launchwin.sh --fix \"$EXE_PATH\""
+        ALT_EXEC="qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.activateLauncherMenu && /usr/bin/gwine --fix \"$EXE_PATH\""
     else
-        EXEC_COMMAND="/usr/share/ublue-os/gablue/scripts/launchwin.sh --fix \"$EXE_PATH\""
+        EXEC_COMMAND="/usr/bin/gwine --fix \"$EXE_PATH\""
         ALT_ACTION="LaunchNormal"
         ALT_NAME="Lancer normal"
-        ALT_EXEC="/usr/share/ublue-os/gablue/scripts/launchwin.sh \"$EXE_PATH\""
+        ALT_EXEC="/usr/bin/gwine \"$EXE_PATH\""
     fi
 fi
 

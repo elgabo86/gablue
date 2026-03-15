@@ -1,9 +1,9 @@
 [Desktop Entry]
 Categories=Utility;
 Comment=Kill Windows
-Exec=pgrep -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q "^bwrap$" && kill -9 {}'
+Exec=sh -c "pgrep -f -a -i '.*\.(exe|bat).*|.*(wine|proton).*' | grep -v gwine | awk '{print \$1}' | grep -v -E \"^(\$(pgrep -i '^(steam|steamwebhelper|steam-runtime-l)\$' | paste -sd '|' -))\$\" | xargs kill -9"
 GenericName=Windows killer
-Icon=com.usebottles.bottles
+Icon=windows95
 Keywords[fr_CH]=wine;windows;
 Keywords=wine;windows;
 MimeType=

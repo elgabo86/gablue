@@ -7,7 +7,7 @@ X-KDE-Submenu=Windows
 
 [Desktop Action CreateShortcut]
 Name=Créer un raccourci ici
-Icon=com.usebottles.bottles
+Icon=windows95
 Exec=/usr/share/ublue-os/gablue/scripts/createwinshortcut.sh %u
 
 [Desktop Action CreateGameShortcut]

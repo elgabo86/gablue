@@ -1,0 +1,15 @@
+[Desktop Entry]
+Categories=System
+Comment=
+Exec=/usr/bin/gwine --update --kdialog
+GenericName=Mettre à jour Windows
+Icon=windows95
+Name=Mettre à jour Windows
+NoDisplay=false
+Path=
+StartupNotify=true
+Terminal=false
+TerminalOptions=
+Type=Application
+X-KDE-SubstituteUID=false
+X-KDE-Username=

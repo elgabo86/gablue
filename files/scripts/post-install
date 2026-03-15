@@ -31,8 +31,10 @@ chmod +x /usr/bin/shadps4-install
 chmod +x /usr/bin/scrap-win
 chmod +x /usr/bin/wgpcheck
 chmod +x /usr/bin/wgpadd
-chmod +x /usr/bin/lgp-install
 chmod +x /usr/bin/esde-install
+chmod +x /usr/bin/gwine
+chmod +x /usr/bin/lgp-thumbnailer
+chmod +x /usr/bin/wgp-thumbnailer
 
 # Rendre exécutables les scripts d'administration Gablue
 chmod +x /usr/bin/gablue-update
@@ -175,6 +177,39 @@ test -f /etc/yum.repos.d/_copr_ublue-os-akmods.repo && sed -i 's@enabled=1@enabl
 test -f /etc/yum.repos.d/tailscale.repo && sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/tailscale.repo || true
 test -f /etc/yum.repos.d/docker-ce.repo && sed -i 's@enabled=1@enabled=0@g' /etc/yum.repos.d/docker-ce.repo || true
 dnf5 -y config-manager setopt "terra".enabled=false || true
+
+# =============================================================================
+# CONFIGURATION MIME PAR DÉFAUT
+# =============================================================================
+
+# Définir Windows.desktop comme application par défaut pour les exécutables Windows
+if [ -f /usr/share/applications/mimeapps.list ]; then
+    # S'assurer que la section [Default Applications] existe
+    if ! grep -q "^\[Default Applications\]$" /usr/share/applications/mimeapps.list; then
+        echo "[Default Applications]" >> /usr/share/applications/mimeapps.list
+    fi
+    
+    # Ajouter ou remplacer les associations MIME pour Windows.desktop
+    for mimetype in \
+        "application/x-ms-dos-executable" \
+        "application/x-msi" \
+        "application/x-ms-shortcut" \
+        "application/x-wine-extension-msp" \
+        "application/x-bat" \
+        "application/x-wgp"; do
+        # Supprimer l'ancienne association si elle existe (utiliser # comme délimiteur pour éviter les conflits avec /)
+        sed -i "\#^${mimetype}=#d" /usr/share/applications/mimeapps.list
+        # Ajouter la nouvelle association
+        sed -i "/^\[Default Applications\]/a ${mimetype}=Windows.desktop" /usr/share/applications/mimeapps.list
+    done
+
+    # Ajouter l'association pour les fichiers .lgp (Linux Game Project)
+    sed -i "\#^application/x-lgp=#d" /usr/share/applications/mimeapps.list
+    sed -i "/^\[Default Applications\]/a application/x-lgp=Linux.desktop" /usr/share/applications/mimeapps.list
+fi
+
+# Mettre à jour la base de données MIME pour les nouveaux types
+update-mime-database /usr/share/mime || true
 
 # =============================================================================
 # NETTOYAGE DES FICHIERS DE BUREAU

@@ -1,10 +1,10 @@
 [Desktop Entry]
 Categories=System
 Comment=
-Exec=/usr/bin/windows-update
-GenericName=Provoquer la mise à jour Windows
+Exec=/usr/bin/gwine --init --kdialog
+GenericName=Réinitialiser l'installation Windows
 Icon=windows95
-Name=Provoquer la mise à jour Windows
+Name=Réinitialiser l'installation Windows
 NoDisplay=false
 Path=
 StartupNotify=true

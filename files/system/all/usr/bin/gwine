@@ -1,0 +1,4014 @@
+#!/bin/bash
+
+################################################################################
+# gwine - Lanceur de jeux Windows avec Wine pur (gwine-proton)
+#
+# Script standalone pour lancer des jeux Windows via Wine.
+# Supporte les paquets WGP (.wgp) et les exécutables directs (.exe)
+#
+# Gwine: Wine TKG modifié avec Proton
+# https://github.com/elgabo86/gwine
+################################################################################
+
+# Variables globales
+GWINE_DIR="$HOME/.local/share/gwine"
+HOME_REAL="$(realpath "$HOME")"
+WINDOWS_HOME="$HOME_REAL/Windows/UserData"
+SAVES_SYMLINK="/tmp/wgp-saves"
+SAVES_REAL="$WINDOWS_HOME/$USER/LocalSovesWGP"
+EXTRA_SYMLINK="/tmp/wgp-extra"
+EXTRA_REAL="$HOME/.cache/wgp-extra"
+TEMP_SYMLINK="/tmp/wgp-temp"
+TEMP_REAL="/tmp/wgp-temp"
+
+CACHE_DIR="$HOME/.cache/gwine"
+COMPONENTS_DIR="$CACHE_DIR/components"
+SHADER_CACHE_DIR="$CACHE_DIR/shader-cache"
+DXVK_CACHE_DIR="$COMPONENTS_DIR/dxvk"
+VKD3D_CACHE_DIR="$COMPONENTS_DIR/vkd3d"
+
+WINE_DIR="$GWINE_DIR/wine"
+WINE_BIN="$WINE_DIR/bin/wine64"
+WINESERVER_BIN="$WINE_DIR/bin/wineserver"
+
+fix_mode=false
+exewgp_mode=false
+init_mode=false
+update_mode=false
+cmd_mode=false
+regedit_mode=false
+reg_mode=false
+reg_file=""
+winecfg_mode=false
+winetricks_mode=false
+nosandbox_mode=false
+uninstall_mode=false
+winetricks_args=""
+args=""
+fullpath=""
+
+GAME_INTERNAL_NAME=""
+MOUNT_DIR=""
+
+# Fonctions utilitaires
+
+error_exit() {
+    echo "Erreur: $1" >&2
+    exit 1
+}
+
+get_system_tool() {
+    local tool="$1"
+    local tool_path
+    tool_path=$(command -v "$tool" 2>/dev/null)
+    if [ -z "$tool_path" ]; then
+        error_exit "$tool n'est pas installé sur le système"
+    fi
+    echo "$tool_path"
+}
+
+ensure_winetricks() {
+    local WINETRICKS_LOCAL="$GWINE_DIR/bin/winetricks"
+    
+    if [ -x "$WINETRICKS_LOCAL" ]; then
+        echo "winetricks trouvé: $WINETRICKS_LOCAL"
+        return 0
+    fi
+    
+    echo "winetricks non trouvé, téléchargement..."
+    mkdir -p "$GWINE_DIR/bin"
+    
+    local WINETRICKS_URL="https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks"
+    
+    if wget -q --show-progress "$WINETRICKS_URL" -O "$WINETRICKS_LOCAL" 2>&1; then
+        chmod +x "$WINETRICKS_LOCAL"
+        echo "winetricks téléchargé avec succès: $WINETRICKS_LOCAL"
+        return 0
+    else
+        error_exit "Impossible de télécharger winetricks. Vérifiez votre connexion internet."
+    fi
+}
+
+get_winetricks_bin() {
+    local WINETRICKS_LOCAL="$GWINE_DIR/bin/winetricks"
+    
+    if [ -x "$WINETRICKS_LOCAL" ]; then
+        echo "$WINETRICKS_LOCAL"
+        return 0
+    fi
+    
+    error_exit "winetricks non trouvé"
+}
+# Fonctions de fix manette (DisableHidraw)
+apply_padfix_setting() {
+    local SYSTEM_REG="$WINEPREFIX/system.reg"
+    
+    if [ ! -f "$SYSTEM_REG" ]; then
+        echo "Warning: system.reg introuvable, skip du fix manette"
+        return 0
+    fi
+    
+    if ! grep -q '\[System\\\\CurrentControlSet\\\\Services\\\\WineBus\]' "$SYSTEM_REG" 2>/dev/null; then
+        echo '' >> "$SYSTEM_REG"
+        echo '[System\\CurrentControlSet\\Services\\WineBus]' >> "$SYSTEM_REG"
+    fi
+    
+    if [ "$fix_mode" = true ]; then
+        if grep -q '"DisableHidraw"' "$SYSTEM_REG" 2>/dev/null; then
+            sed -i 's/"DisableHidraw"=dword:00000001/"DisableHidraw"=dword:00000000/' "$SYSTEM_REG"
+            echo "Mode fix manette: DisableHidraw=0 (hidraw activé)"
+        else
+            echo '"DisableHidraw"=dword:00000000' >> "$SYSTEM_REG"
+            echo "Mode fix manette: DisableHidraw=0 (hidraw activé)"
+        fi
+    else
+        if grep -q '"DisableHidraw"' "$SYSTEM_REG" 2>/dev/null; then
+            sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' "$SYSTEM_REG"
+            echo "Mode normal: DisableHidraw=1 (hidraw désactivé par défaut)"
+        else
+            echo '"DisableHidraw"=dword:00000001' >> "$SYSTEM_REG"
+            echo "Mode normal: DisableHidraw=1 (hidraw désactivé par défaut)"
+        fi
+    fi
+}
+
+# Restaurer DisableHidraw après le lancement
+restore_padfix_setting() {
+    [ "$fix_mode" != true ] && return 0
+    
+    sleep 0.5
+    local SYSTEM_REG="$WINEPREFIX/system.reg"
+    
+    if [ -f "$SYSTEM_REG" ]; then
+        sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' "$SYSTEM_REG"
+        echo "Mode fix restauré: DisableHidraw=1"
+    fi
+}
+
+#======================================
+# Fonction d'initialisation du préfixe Wine
+#======================================
+
+WINETRICKS_COMPONENTS=(
+    corefonts
+    tahoma
+    d3dcompiler_42
+    d3dcompiler_43
+    d3dcompiler_47
+    d3dx9
+    msls31
+    vb6run
+    mfc42
+    physx
+    vcrun2010
+    vcrun2012
+    vcrun2013
+    vcrun2022
+    dotnetdesktop6
+    dotnetdesktop7
+    dotnetdesktop8
+    openal
+    xact
+    xact_x64
+)
+
+# Variable globale pour stocker le PID du processus winetricks en cours
+_WINETRICKS_CURRENT_PID=""
+
+# Variable globale pour stocker le chemin du backup du préfixe
+_WINETRICKS_BACKUP_PREFIX=""
+
+# Variable globale pour contrôler l'utilisation de kdialog
+# false = désactivé (sauf pour création auto du préfixe et WGP en cours)
+# true = activé explicitement avec --kdialog
+_USE_KDIALOG=false
+
+# Fonction de nettoyage appelée lors d'une interruption
+cleanup_winetricks_interrupt() {
+    local pid="$_WINETRICKS_CURRENT_PID"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null
+    fi
+    trap - INT
+    echo ""
+    echo "Installation interrompue par l'utilisateur"
+    
+    # Fermer le kdialog si ouvert
+    if [ -n "$_PROGRESS_DBUS_REF" ]; then
+        progress_close "$_PROGRESS_DBUS_REF" 2>/dev/null
+    fi
+    
+    # Restaurer l'ancien préfixe si un backup existe
+    if [ -n "$_WINETRICKS_BACKUP_PREFIX" ] && [ -d "$_WINETRICKS_BACKUP_PREFIX" ]; then
+        echo ""
+        echo "⚠️  Restauration de l'ancien préfixe..."
+        # Supprimer le préfixe incomplet et restaurer le backup
+        if [ -d "$WINEPREFIX" ]; then
+            rm -rf "$WINEPREFIX" 2>/dev/null || true
+        fi
+        # Utiliser mv -T pour éviter de déplacer dans un sous-dossier
+        mv -T "$_WINETRICKS_BACKUP_PREFIX" "$WINEPREFIX" 2>/dev/null || {
+            # Si mv -T échoue, essayer la méthode classique
+            rm -rf "$WINEPREFIX" 2>/dev/null || true
+            mv "$_WINETRICKS_BACKUP_PREFIX" "$WINEPREFIX" 2>/dev/null || {
+                echo "ERREUR: Impossible de restaurer le backup !"
+                echo "Backup disponible dans: $_WINETRICKS_BACKUP_PREFIX"
+                exit 1
+            }
+        }
+        echo "Ancien préfixe restauré: $WINEPREFIX"
+    fi
+    
+    exit 130
+}
+
+# Installe les composants winetricks depuis le cache local
+install_winetricks_components() {
+    echo "Installation des composants Windows avec winetricks..."
+    
+    # Vérifier/télécharger winetricks
+    ensure_winetricks
+    local WINETRICKS_BIN
+    WINETRICKS_BIN=$(get_winetricks_bin)
+    
+    # Exporter WINE pour que winetricks trouve wineserver
+    export WINE="$WINE_BIN"
+    
+    # Ajouter le répertoire bin de Wine au PATH pour que winetricks trouve wineserver
+    export PATH="$WINE_DIR/bin:$PATH"
+    
+    # Winetricks utilise ~/.cache/winetricks/ par défaut pour le cache
+    local failed_components=()
+    
+    # Trap SIGINT pour tuer les processus enfants
+    trap cleanup_winetricks_interrupt INT
+    
+    for component in "${WINETRICKS_COMPONENTS[@]}"; do
+        echo "  - Installation de $component..."
+        
+        # Lancer winetricks en arrière-plan pour permettre la capture de SIGINT
+        WINEPREFIX="$WINEPREFIX" "$WINETRICKS_BIN" -q "$component" >/dev/null 2>&1 &
+        _WINETRICKS_CURRENT_PID=$!
+        
+        # Attendre la fin du processus
+        if ! wait "$_WINETRICKS_CURRENT_PID"; then
+            # Vérifier si c'est une interruption (exit code 130 = SIGINT)
+            if [ $? -eq 130 ]; then
+                trap - INT
+                exit 1
+            fi
+            echo "    ⚠️  Échec de l'installation de $component"
+            failed_components+=("$component")
+        fi
+        _WINETRICKS_CURRENT_PID=""
+    done
+    
+    # Restaurer le trap par défaut
+    trap - INT
+    
+    if [ ${#failed_components[@]} -gt 0 ]; then
+        echo ""
+        echo "Erreur: ${#failed_components[@]} composant(s) ont échoué :"
+        printf '  - %s\n' "${failed_components[@]}"
+        return 1
+    fi
+    
+    echo "Installation des composants terminée avec succès"
+    return 0
+}
+
+# Installe DXVK et VKD3D-Proton dans le préfixe Wine depuis le cache local
+install_dxvk_vkd3d() {
+    # Préparer le cache au cas où
+    prepare_local_cache
+    
+    echo "Installation de DXVK et VKD3D-Proton depuis le cache..."
+    
+    # Obtenir les chemins system32 et syswow64
+    local win64_sys_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -u 'C:\\windows\\system32' 2>/dev/null | tr -d '\r')
+    local win32_sys_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -u 'C:\\windows\\syswow64' 2>/dev/null | tr -d '\r')
+    
+    if [ -z "$win64_sys_path" ] || [ -z "$win32_sys_path" ]; then
+        echo "Erreur: Impossible d'obtenir les chemins system32/syswow64"
+        return 1
+    fi
+    
+    local installation_failed=false
+    
+    # Installer DXVK
+    if [ -d "$DXVK_CACHE_DIR" ]; then
+        local dxvk_dir=$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-[0-9]*" | grep -v "gplasync" | grep -v "nvapi" | head -1)
+        if [ -n "$dxvk_dir" ]; then
+            echo "  - Installation de $(basename "$dxvk_dir")..."
+            
+            if [ -d "$dxvk_dir/x64" ]; then
+                for dll in d3d8 d3d9 d3d10core d3d11 dxgi; do
+                    if [ -f "$dxvk_dir/x64/${dll}.dll" ]; then
+                        if ! cp -f "$dxvk_dir/x64/${dll}.dll" "${win64_sys_path}/" 2>/dev/null; then
+                            echo "    ⚠️  Échec copie ${dll}.dll (x64)"
+                            installation_failed=true
+                        fi
+                    fi
+                done
+            fi
+            
+            if [ -d "$dxvk_dir/x32" ]; then
+                for dll in d3d8 d3d9 d3d10core d3d11 dxgi; do
+                    if [ -f "$dxvk_dir/x32/${dll}.dll" ]; then
+                        if ! cp -f "$dxvk_dir/x32/${dll}.dll" "${win32_sys_path}/" 2>/dev/null; then
+                            echo "    ⚠️  Échec copie ${dll}.dll (x32)"
+                            installation_failed=true
+                        fi
+                    fi
+                done
+            fi
+        fi
+    fi
+    
+    # Installer VKD3D-Proton
+    if [ -d "$VKD3D_CACHE_DIR" ]; then
+        local vkd3d_dir=$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" | head -1)
+        if [ -n "$vkd3d_dir" ]; then
+            echo "  - Installation de $(basename "$vkd3d_dir")..."
+            
+            if [ -d "$vkd3d_dir/x64" ]; then
+                for dll in d3d12 d3d12core; do
+                    if [ -f "$vkd3d_dir/x64/${dll}.dll" ]; then
+                        if ! cp -f "$vkd3d_dir/x64/${dll}.dll" "${win64_sys_path}/" 2>/dev/null; then
+                            echo "    ⚠️  Échec copie ${dll}.dll (x64)"
+                            installation_failed=true
+                        fi
+                    fi
+                done
+            fi
+            
+            if [ -d "$vkd3d_dir/x86" ]; then
+                for dll in d3d12 d3d12core; do
+                    if [ -f "$vkd3d_dir/x86/${dll}.dll" ]; then
+                        if ! cp -f "$vkd3d_dir/x86/${dll}.dll" "${win32_sys_path}/" 2>/dev/null; then
+                            echo "    ⚠️  Échec copie ${dll}.dll (x86)"
+                            installation_failed=true
+                        fi
+                    fi
+                done
+            fi
+        fi
+    fi
+    
+    # Créer les overrides DXVK/VKD3D avec wine reg add
+    echo "  - Création des overrides de DLL..."
+    for dll in d3d8 d3d9 d3d10core d3d11 dxgi d3d12 d3d12core; do
+        if ! WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "$dll" /d native,builtin /f >/dev/null 2>&1; then
+            echo "    ⚠️  Échec override $dll"
+            installation_failed=true
+        fi
+    done
+    echo "  - Overrides créés"
+    
+    if [ "$installation_failed" = true ]; then
+        echo "Erreur: L'installation de DXVK/VKD3D a rencontré des erreurs"
+        return 1
+    fi
+    
+    echo "DXVK et VKD3D-Proton installés avec succès"
+    return 0
+}
+
+# Télécharge automatiquement les composants manquants
+download_missing_components() {
+    echo "Téléchargement des composants manquants..."
+    
+    # Télécharger Wine Mono et Wine Gecko
+    if [ ! -d "$COMPONENTS_DIR/wine-cache" ] || [ -z "$(ls -A "$COMPONENTS_DIR/wine-cache" 2>/dev/null)" ]; then
+        echo "Téléchargement de Wine Mono et Wine Gecko..."
+        local MONO_URL="https://dl.winehq.org/wine/wine-mono/11.0.0/wine-mono-11.0.0-x86.msi"
+        local GECKO_URL="https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-x86_64.msi"
+        local GECKO32_URL="https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-x86.msi"
+        
+        mkdir -p "$COMPONENTS_DIR/wine-cache"
+        
+        wget -q --show-progress "$MONO_URL" -O "$COMPONENTS_DIR/wine-cache/wine-mono-11.0.0-x86.msi" 2>&1 || echo "Warning: Échec du téléchargement de Wine Mono"
+        wget -q --show-progress "$GECKO_URL" -O "$COMPONENTS_DIR/wine-cache/wine-gecko-2.47.4-x86_64.msi" 2>&1 || echo "Warning: Échec du téléchargement de Wine Gecko (x64)"
+        wget -q --show-progress "$GECKO32_URL" -O "$COMPONENTS_DIR/wine-cache/wine-gecko-2.47.4-x86.msi" 2>&1 || echo "Warning: Échec du téléchargement de Wine Gecko (x86)"
+    fi
+    
+    # Télécharger DXVK et VKD3D-Proton
+    mkdir -p "$DXVK_CACHE_DIR"
+    mkdir -p "$VKD3D_CACHE_DIR"
+    
+    # Vérifier si DXVK est présent
+    local has_dxvk=false
+    find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -qv "gplasync\|nvapi" && has_dxvk=true
+    
+    # Vérifier si VKD3D est présent
+    local has_vkd3d=false
+    find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | grep -q . && has_vkd3d=true
+    
+    # Télécharger DXVK si manquant
+    if [ "$has_dxvk" = false ]; then
+        echo "Téléchargement de DXVK..."
+        
+        # DXVK - téléchargement depuis bottlesdevs/components
+        local DXVK_TAG="dxvk-${DXVK_VERSION}"
+        local DXVK_URL="https://github.com/bottlesdevs/components/releases/download/${DXVK_TAG}/${DXVK_TAG}.tar.gz"
+        local DXVK_TEMP="$DXVK_CACHE_DIR/dxvk.tar.gz"
+        local DXVK_DIR="$DXVK_CACHE_DIR/dxvk-${DXVK_VERSION}"
+        
+        wget -q --show-progress "$DXVK_URL" -O "$DXVK_TEMP" 2>&1 || echo "Warning: Échec du téléchargement de DXVK"
+        if [ -f "$DXVK_TEMP" ]; then
+            mkdir -p "$DXVK_DIR"
+            local temp_extract="$DXVK_CACHE_DIR/.temp_dxvk"
+            rm -rf "$temp_extract"
+            mkdir -p "$temp_extract"
+            tar -xzf "$DXVK_TEMP" -C "$temp_extract" 2>/dev/null || true
+            local extracted_dir=$(find "$temp_extract" -mindepth 1 -maxdepth 1 -type d | head -1)
+            if [ -n "$extracted_dir" ]; then
+                cp -r "$extracted_dir"/* "$DXVK_DIR/" 2>/dev/null || true
+            fi
+            rm -rf "$temp_extract" "$DXVK_TEMP"
+        fi
+    fi
+    
+    # Télécharger VKD3D-Proton si manquant
+    if [ "$has_vkd3d" = false ]; then
+        echo "Téléchargement de VKD3D-Proton..."
+        
+        # VKD3D-Proton - supprimer l'ancienne version s'il y en a une
+        local old_vkd3d_dir
+        old_vkd3d_dir=$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" | head -1)
+        if [ -n "$old_vkd3d_dir" ]; then
+            echo "Suppression de l'ancienne version VKD3D-Proton: $(basename "$old_vkd3d_dir")"
+            rm -rf "$old_vkd3d_dir"
+        fi
+        
+        # VKD3D-Proton - téléchargement depuis bottlesdevs/components
+        local VKD3D_TAG="vkd3d-proton-${VKD3D_VERSION}"
+        local VKD3D_URL="https://github.com/bottlesdevs/components/releases/download/${VKD3D_TAG}/${VKD3D_TAG}.tar.gz"
+        local VKD3D_TEMP="$VKD3D_CACHE_DIR/vkd3d.tar.gz"
+        local VKD3D_DIR="$VKD3D_CACHE_DIR/vkd3d-proton-${VKD3D_VERSION}"
+        
+        wget -q --show-progress "$VKD3D_URL" -O "$VKD3D_TEMP" 2>&1 || echo "Warning: Échec du téléchargement de VKD3D-Proton"
+        if [ -f "$VKD3D_TEMP" ]; then
+            mkdir -p "$VKD3D_DIR"
+            local temp_extract="$VKD3D_CACHE_DIR/.temp_vkd3d"
+            rm -rf "$temp_extract"
+            mkdir -p "$temp_extract"
+            tar -xf "$VKD3D_TEMP" -C "$temp_extract" 2>/dev/null || true
+            local extracted_dir=$(find "$temp_extract" -mindepth 1 -maxdepth 1 -type d | head -1)
+            if [ -n "$extracted_dir" ]; then
+                cp -r "$extracted_dir"/* "$VKD3D_DIR/" 2>/dev/null || true
+            fi
+            rm -rf "$temp_extract" "$VKD3D_TEMP"
+        fi
+    fi
+}
+
+# Prépare le cache local avec les composants
+prepare_local_cache() {
+    # Créer les répertoires de cache
+    mkdir -p "$CACHE_DIR"
+    mkdir -p "$COMPONENTS_DIR"
+    mkdir -p "$SHADER_CACHE_DIR"
+    
+    # Vérifier si les composants sont présents
+    local missing_components=false
+    
+    # Vérifier Wine Mono/Gecko
+    if [ ! -d "$COMPONENTS_DIR/wine-cache" ] || [ -z "$(ls -A "$COMPONENTS_DIR/wine-cache" 2>/dev/null)" ]; then
+        missing_components=true
+    fi
+    
+    # Vérifier DXVK
+    if [ ! -d "$DXVK_CACHE_DIR" ] || [ -z "$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi")" ]; then
+        missing_components=true
+    fi
+    
+    # Vérifier VKD3D
+    if [ ! -d "$VKD3D_CACHE_DIR" ] || [ -z "$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null)" ]; then
+        missing_components=true
+    fi
+    
+    if [ "$missing_components" = true ]; then
+        echo ""
+        echo "Certains composants sont manquants dans ~/.cache/gwine/components/"
+        echo "Ils seront téléchargés automatiquement..."
+        echo ""
+        download_missing_components
+    fi
+}
+
+# Vérifie si une version est plus récente qu'une autre
+# Compare simplement les versions - retourne 0 si v1 > v2
+compare_versions() {
+    local v1="$1"  # version GitHub
+    local v2="$2"  # version locale
+    
+    # Si pas de version locale, v1 est plus récente
+    [ -z "$v2" ] && return 0
+    
+    # Si versions identiques, pas de mise à jour
+    [ "$v1" = "$v2" ] && return 1
+    
+    # Utiliser sort -V pour comparer
+    local newer
+    newer=$(printf '%s\n%s\n' "$v1" "$v2" | sort -V | tail -n1)
+    [ "$newer" = "$v1" ] && return 0
+    return 1
+}
+
+# Récupère la dernière version de gwine-proton depuis GitHub
+get_latest_gwine_version() {
+    local latest_url
+    latest_url=$(curl -s -L -o /dev/null -w '%{url_effective}' "https://github.com/elgabo86/gwine/releases/latest" 2>/dev/null)
+    echo "$latest_url" | grep -oE 'gwine-proton-[0-9]+\.[0-9]+\.[0-9]+\.[0-9]{8}' | head -1
+}
+
+# Installe gwine-proton depuis le cache (mode offline)
+# Retourne 0 si installé avec succès, 1 sinon
+install_gwine_proton_from_cache() {
+    local WINE_INSTALL_DIR="$GWINE_DIR/wine"
+    local archives_dir="$COMPONENTS_DIR/gwine-proton"
+    
+    # Vérifier si des archives existent dans le cache
+    if [ ! -d "$archives_dir" ] || [ -z "$(ls -A "$archives_dir" 2>/dev/null)" ]; then
+        return 1
+    fi
+    
+    # Trouver la dernière archive (par nom de fichier)
+    local latest_archive
+    latest_archive=$(ls -1 "$archives_dir"/gwine-proton-*.tar.xz 2>/dev/null | sort -V | tail -1)
+    
+    if [ -z "$latest_archive" ] || [ ! -f "$latest_archive" ]; then
+        return 1
+    fi
+    
+    local version_name
+    version_name=$(basename "$latest_archive" .tar.xz)
+    
+    echo "Installation de $version_name depuis le cache..."
+    
+    # Créer le répertoire temporaire pour l'extraction
+    local temp_dir="$CACHE_DIR/.temp_install"
+    rm -rf "$temp_dir"
+    mkdir -p "$temp_dir"
+    
+    # Extraire l'archive
+    local extract_dir="$temp_dir/extracted"
+    mkdir -p "$extract_dir"
+    
+    if ! tar -xf "$latest_archive" -C "$extract_dir" 2>/dev/null; then
+        echo "Échec de l'extraction de l'archive"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    # Trouver le dossier extrait
+    local extracted_wine_dir
+    extracted_wine_dir=$(find "$extract_dir" -maxdepth 1 -type d -name "*gwine*" | head -1)
+    if [ -z "$extracted_wine_dir" ]; then
+        extracted_wine_dir=$(find "$extract_dir" -maxdepth 1 -type d | head -1)
+    fi
+    if [ -z "$extracted_wine_dir" ]; then
+        extracted_wine_dir="$extract_dir"
+    fi
+    
+    # Installer
+    rm -rf "$WINE_INSTALL_DIR"
+    mkdir -p "$WINE_INSTALL_DIR"
+    cp -r "$extracted_wine_dir"/* "$WINE_INSTALL_DIR/"
+    
+    # Vérifier l'installation
+    if [ ! -f "$WINE_INSTALL_DIR/bin/wine64" ]; then
+        echo "Échec de l'installation"
+        rm -rf "$WINE_INSTALL_DIR"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    # Mettre à jour le fichier de version
+    echo "$version_name" > "$GWINE_DIR/.version"
+    
+    # Nettoyer
+    rm -rf "$temp_dir"
+    
+    # Mettre à jour les variables
+    WINE_DIR="$WINE_INSTALL_DIR"
+    WINE_BIN="$WINE_INSTALL_DIR/bin/wine64"
+    WINESERVER_BIN="$WINE_INSTALL_DIR/bin/wineserver"
+    
+    echo "✓ $version_name installé depuis le cache"
+    return 0
+}
+
+# Récupère la dernière version de DXVK depuis bottlesdevs/components (via l'API releases)
+get_latest_dxvk_version() {
+    # Récupérer tous les releases et filtrer pour dxvk (exclure nvapi, gplasync)
+    local tag
+    tag=$(curl -s "https://api.github.com/repos/bottlesdevs/components/releases?per_page=50" 2>/dev/null | grep '"tag_name"' | grep -oE 'dxvk-[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9]+-[0-9a-f]+)?' | grep -v "nvapi\|gplasync" | head -1 | sed 's/^dxvk-//')
+    echo "$tag"
+}
+
+# Récupère la dernière version de VKD3D-Proton depuis bottlesdevs/components (via l'API releases)
+get_latest_vkd3d_version() {
+    # Récupérer tous les releases et filtrer pour vkd3d-proton
+    local tag
+    tag=$(curl -s "https://api.github.com/repos/bottlesdevs/components/releases?per_page=50" 2>/dev/null | grep '"tag_name"' | grep -oE 'vkd3d-proton-[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 | sed 's/^vkd3d-proton-//')
+    echo "$tag"
+}
+
+# Télécharge et installe gwine-proton
+download_gwine_proton() {
+    local WINE_INSTALL_DIR="$GWINE_DIR/wine"
+    local current_version=""
+    local latest_version=""
+    local force_update="${1:-false}"
+    
+    # Vérifier si gwine est déjà installé
+    if [ -d "$WINE_INSTALL_DIR" ] && [ -f "$WINE_INSTALL_DIR/bin/wine64" ]; then
+        current_version=$(cat "$GWINE_DIR/.version" 2>/dev/null || echo "unknown")
+    fi
+    
+    echo "Vérification des mises à jour de gwine-proton..."
+    latest_version=$(get_latest_gwine_version)
+    
+    if [ -z "$latest_version" ]; then
+        echo "Impossible de récupérer la dernière version de gwine-proton (pas de connexion internet)"
+        echo "Tentative d'installation depuis le cache..."
+        if install_gwine_proton_from_cache; then
+            return 0
+        else
+            echo "Échec: aucune archive disponible dans le cache"
+            return 1
+        fi
+    fi
+    
+    echo "Version installée: ${current_version:-Aucune}"
+    echo "Dernière version disponible: $latest_version"
+    
+    # Vérifier si mise à jour nécessaire
+    if [ "$force_update" = "false" ] && [ "$current_version" = "$latest_version" ]; then
+        echo "Vous avez déjà la dernière version de gwine-proton."
+        return 0
+    fi
+    
+    if [ "$force_update" = "false" ] && [ -n "$current_version" ]; then
+        if ! compare_versions "$latest_version" "$current_version"; then
+            echo "Vous avez déjà la dernière version de gwine-proton."
+            return 0
+        fi
+    fi
+    
+    # Demander confirmation
+    echo ""
+    echo "Une nouvelle version de gwine-proton est disponible : $latest_version"
+    read -p "Voulez-vous télécharger et installer cette version ? [O/n]: " -r
+    if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
+        echo "Mise à jour annulée."
+        return 0
+    fi
+    
+    echo ""
+    echo "Téléchargement de $latest_version..."
+    
+    # Créer le répertoire pour les archives
+    local archives_dir="$COMPONENTS_DIR/gwine-proton"
+    mkdir -p "$archives_dir"
+    
+    # Créer le répertoire temporaire pour l'extraction
+    local temp_dir="$CACHE_DIR/.temp_download"
+    mkdir -p "$temp_dir"
+    
+    # Chemin de l'archive dans le cache
+    local archive_name="${latest_version}.tar.xz"
+    local archive_path="$archives_dir/$archive_name"
+    local download_url="https://github.com/elgabo86/gwine/releases/download/${latest_version}/${archive_name}"
+    
+    # Supprimer l'ancienne archive s'il y en a une (garder une seule version)
+    local old_archive
+    old_archive=$(find "$archives_dir" -maxdepth 1 -name "gwine-proton-*.tar.xz" 2>/dev/null | head -1)
+    if [ -n "$old_archive" ] && [ "$old_archive" != "$archive_path" ]; then
+        echo "Suppression de l'ancienne archive: $(basename "$old_archive")"
+        rm -f "$old_archive"
+    fi
+    
+    # Vérifier si l'archive existe déjà dans le cache
+    if [ -f "$archive_path" ]; then
+        echo "Archive trouvée dans le cache: $archive_path"
+    else
+        # Télécharger la nouvelle version
+        echo "Téléchargement depuis: $download_url"
+        if ! wget --show-progress -q "$download_url" -O "$archive_path" 2>&1; then
+            echo "Échec du téléchargement de gwine-proton"
+            rm -f "$archive_path"
+            rm -rf "$temp_dir"
+            return 1
+        fi
+        echo "Archive sauvegardée dans: $archive_path"
+    fi
+    
+    echo "Extraction..."
+    
+    # Extraire dans un répertoire temporaire
+    local extract_dir="$temp_dir/extracted"
+    rm -rf "$extract_dir"
+    mkdir -p "$extract_dir"
+    
+    if ! tar -xf "$archive_path" -C "$extract_dir" 2>/dev/null; then
+        echo "Échec de l'extraction"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    # Trouver le dossier extrait
+    local extracted_wine_dir=$(find "$extract_dir" -maxdepth 1 -type d -name "*gwine*" | head -1)
+    if [ -z "$extracted_wine_dir" ]; then
+        extracted_wine_dir=$(find "$extract_dir" -maxdepth 1 -type d | head -1)
+    fi
+    if [ -z "$extracted_wine_dir" ]; then
+        extracted_wine_dir="$extract_dir"
+    fi
+    
+    # Installer la nouvelle version
+    echo "Installation de la nouvelle version..."
+    rm -rf "$WINE_INSTALL_DIR"
+    mkdir -p "$WINE_INSTALL_DIR"
+    cp -r "$extracted_wine_dir"/* "$WINE_INSTALL_DIR/"
+    
+    # Vérifier l'installation
+    if [ ! -f "$WINE_INSTALL_DIR/bin/wine64" ]; then
+        echo "Échec de l'installation"
+        rm -rf "$WINE_INSTALL_DIR"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    # Mettre à jour le fichier de version
+    echo "$latest_version" > "$GWINE_DIR/.version"
+    
+    # Nettoyer le répertoire temporaire (mais garder l'archive)
+    rm -rf "$temp_dir"
+    
+    # Mettre à jour les variables
+    WINE_DIR="$WINE_INSTALL_DIR"
+    WINE_BIN="$WINE_INSTALL_DIR/bin/wine64"
+    WINESERVER_BIN="$WINE_INSTALL_DIR/bin/wineserver"
+    
+    echo "✓ gwine-proton $latest_version installé avec succès"
+    return 0
+}
+
+# Télécharge et installe DXVK/VKD3D-Proton mis à jour
+# Paramètre optionnel: --no-confirm pour skip la confirmation
+download_updated_dxvk_vkd3d() {
+    local current_dxvk=""
+    local current_vkd3d=""
+    local latest_dxvk=""
+    local latest_vkd3d=""
+    local no_confirm=false
+    
+    # Vérifier les arguments
+    if [ "$1" = "--no-confirm" ]; then
+        no_confirm=true
+    fi
+    
+    # Créer les dossiers s'ils n'existent pas
+    mkdir -p "$DXVK_CACHE_DIR"
+    mkdir -p "$VKD3D_CACHE_DIR"
+    
+    # Détecter les versions actuelles
+    # DXVK: extraire la version complète (ex: 2.7.1-12-9963ecd ou 2.7.1)
+    local dxvk_folder
+    dxvk_folder=$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | head -1)
+    [ -n "$dxvk_folder" ] && current_dxvk=$(basename "$dxvk_folder" | sed 's/^dxvk-//')
+    # VKD3D: extraire la version (ex: 3.0 ou 2.14.1)
+    local vkd3d_folder
+    vkd3d_folder=$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | head -1)
+    [ -n "$vkd3d_folder" ] && current_vkd3d=$(basename "$vkd3d_folder" | sed 's/^vkd3d-proton-//')
+    
+    echo ""
+    echo "Vérification des mises à jour de DXVK et VKD3D-Proton..."
+    
+    latest_dxvk=$(get_latest_dxvk_version)
+    latest_vkd3d=$(get_latest_vkd3d_version)
+    
+    if [ -z "$latest_dxvk" ] || [ -z "$latest_vkd3d" ]; then
+        echo "Impossible de récupérer les dernières versions"
+        return 1
+    fi
+    
+    echo "DXVK - Installé: ${current_dxvk:-Aucun}, Dernière: $latest_dxvk"
+    echo "VKD3D - Installé: ${current_vkd3d:-Aucun}, Dernière: $latest_vkd3d"
+    
+    # Vérifier si mise à jour nécessaire
+    if [ -n "$current_dxvk" ] && ! compare_versions "$latest_dxvk" "$current_dxvk"; then
+        latest_dxvk=""
+    fi
+    
+    if [ -n "$current_vkd3d" ] && ! compare_versions "$latest_vkd3d" "$current_vkd3d"; then
+        latest_vkd3d=""
+    fi
+    
+    if [ -z "$latest_dxvk" ] && [ -z "$latest_vkd3d" ]; then
+        echo "Vous avez déjà les dernières versions de DXVK et VKD3D-Proton."
+        return 0
+    fi
+    
+    # Demander confirmation (sauf si --no-confirm)
+    if [ "$no_confirm" = false ]; then
+        echo ""
+        if [ -n "$latest_dxvk" ] && [ -n "$latest_vkd3d" ]; then
+            echo "Nouvelles versions disponibles : DXVK $latest_dxvk, VKD3D-Proton $latest_vkd3d"
+        elif [ -n "$latest_dxvk" ]; then
+            echo "Nouvelle version disponible : DXVK $latest_dxvk"
+        else
+            echo "Nouvelle version disponible : VKD3D-Proton $latest_vkd3d"
+        fi
+        
+        read -p "Voulez-vous télécharger et installer ces mises à jour ? [O/n]: " -r
+        if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
+            echo "Mise à jour annulée."
+            return 0
+        fi
+    fi
+    
+    # Créer répertoire temporaire
+    local temp_dir="$CACHE_DIR/.temp_download"
+    mkdir -p "$temp_dir"
+    
+    local update_success=true
+    
+    # Télécharger DXVK
+    if [ -n "$latest_dxvk" ]; then
+        echo ""
+        echo "Téléchargement de DXVK $latest_dxvk..."
+        local dxvk_tag="dxvk-${latest_dxvk}"
+        local dxvk_url="https://github.com/bottlesdevs/components/releases/download/${dxvk_tag}/${dxvk_tag}.tar.gz"
+        local dxvk_temp="$temp_dir/dxvk.tar.gz"
+        
+        if wget -q --show-progress "$dxvk_url" -O "$dxvk_temp" 2>&1; then
+            # Sauvegarder l'ancien
+            local old_dxvk=$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" | head -1)
+            if [ -n "$old_dxvk" ]; then
+                mv "$old_dxvk" "$old_dxvk.backup"
+            fi
+            
+            # Extraire dans un dossier temporaire puis déplacer
+            local extract_temp="$temp_dir/.extract_dxvk"
+            rm -rf "$extract_temp"
+            mkdir -p "$extract_temp"
+            if tar -xzf "$dxvk_temp" -C "$extract_temp" 2>/dev/null; then
+                mkdir -p "$DXVK_CACHE_DIR/dxvk-${latest_dxvk}"
+                local extracted_dir=$(find "$extract_temp" -mindepth 1 -maxdepth 1 -type d | head -1)
+                if [ -n "$extracted_dir" ]; then
+                    cp -r "$extracted_dir"/* "$DXVK_CACHE_DIR/dxvk-${latest_dxvk}/" 2>/dev/null || true
+                fi
+                rm -rf "$extract_temp"
+                
+                if [ -n "$old_dxvk" ]; then
+                    rm -rf "$old_dxvk.backup"
+                fi
+                echo "✓ DXVK $latest_dxvk installé"
+            else
+                rm -rf "$extract_temp"
+                if [ -n "$old_dxvk" ]; then
+                    mv "$old_dxvk.backup" "$old_dxvk"
+                fi
+                echo "✗ Échec de l'installation de DXVK"
+                update_success=false
+            fi
+            rm -f "$dxvk_temp"
+        else
+            echo "✗ Échec du téléchargement de DXVK"
+            update_success=false
+        fi
+    fi
+    
+    # Télécharger VKD3D-Proton
+    if [ -n "$latest_vkd3d" ]; then
+        echo ""
+        echo "Téléchargement de VKD3D-Proton $latest_vkd3d..."
+        local vkd3d_tag="vkd3d-proton-${latest_vkd3d}"
+        local vkd3d_url="https://github.com/bottlesdevs/components/releases/download/${vkd3d_tag}/${vkd3d_tag}.tar.gz"
+        local vkd3d_temp="$temp_dir/vkd3d.tar.gz"
+        
+        if wget -q --show-progress "$vkd3d_url" -O "$vkd3d_temp" 2>&1; then
+            local old_vkd3d=$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" | head -1)
+            if [ -n "$old_vkd3d" ]; then
+                mv "$old_vkd3d" "$old_vkd3d.backup"
+            fi
+            
+            local extract_temp="$temp_dir/.extract_vkd3d"
+            rm -rf "$extract_temp"
+            mkdir -p "$extract_temp"
+            if tar -xf "$vkd3d_temp" -C "$extract_temp" 2>/dev/null; then
+                mkdir -p "$VKD3D_CACHE_DIR/vkd3d-proton-${latest_vkd3d}"
+                local extracted_dir=$(find "$extract_temp" -mindepth 1 -maxdepth 1 -type d | head -1)
+                if [ -n "$extracted_dir" ]; then
+                    cp -r "$extracted_dir"/* "$VKD3D_CACHE_DIR/vkd3d-proton-${latest_vkd3d}/" 2>/dev/null || true
+                fi
+                rm -rf "$extract_temp"
+                
+                if [ -n "$old_vkd3d" ]; then
+                    rm -rf "$old_vkd3d.backup"
+                fi
+                echo "✓ VKD3D-Proton $latest_vkd3d installé"
+            else
+                rm -rf "$extract_temp"
+                if [ -n "$old_vkd3d" ]; then
+                    mv "$old_vkd3d.backup" "$old_vkd3d"
+                fi
+                echo "✗ Échec de l'installation de VKD3D-Proton"
+                update_success=false
+            fi
+            rm -f "$vkd3d_temp"
+        else
+            echo "✗ Échec du téléchargement de VKD3D-Proton"
+            update_success=false
+        fi
+    fi
+    
+    rm -rf "$temp_dir"
+    
+    if [ "$update_success" = true ]; then
+        echo ""
+        echo "Mises à jour installées avec succès !"
+        if [ -d "$WINEPREFIX" ]; then
+            echo "Réinstallation des DLLs dans le préfixe Wine..."
+            install_dxvk_vkd3d
+        fi
+    fi
+    
+    return 0
+}
+
+# Met à jour automatiquement les composants (sans interaction)
+auto_update_components() {
+    local need_download=false
+    local has_network=false
+    
+    # Vérifier les composants locaux
+    local has_gwine=false
+    local has_dxvk=false
+    local has_vkd3d=false
+    
+    [ -d "$WINE_DIR" ] && [ -f "$WINE_DIR/bin/wine64" ] && has_gwine=true
+    [ -n "$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi")" ] && has_dxvk=true
+    [ -n "$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null)" ] && has_vkd3d=true
+    
+    # Vérifier la connexion réseau
+    if curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
+        has_network=true
+    fi
+    
+    # Si pas de composants locaux, il faut télécharger
+    if [ "$has_gwine" = false ] || [ "$has_dxvk" = false ] || [ "$has_vkd3d" = false ]; then
+        need_download=true
+        
+        if [ "$has_network" = false ]; then
+            error_exit "Composants manquants et pas de connexion réseau disponible"
+        fi
+    fi
+    
+    # Si composants présents et réseau disponible, vérifier les mises à jour silencieusement
+    if [ "$need_download" = false ] && [ "$has_network" = true ]; then
+        local latest_gwine=$(get_latest_gwine_version)
+        local current_gwine=$(cat "$GWINE_DIR/.version" 2>/dev/null || echo "")
+        local latest_dxvk=$(get_latest_dxvk_version)
+        local latest_vkd3d=$(get_latest_vkd3d_version)
+        
+        local current_dxvk=""
+        local dxvk_folder=$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | head -1)
+        [ -n "$dxvk_folder" ] && current_dxvk=$(basename "$dxvk_folder" | sed 's/^dxvk-//')
+        
+        local current_vkd3d=""
+        local vkd3d_folder=$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | head -1)
+        [ -n "$vkd3d_folder" ] && current_vkd3d=$(basename "$vkd3d_folder" | sed 's/^vkd3d-proton-//')
+        
+        # Vérifier si une mise à jour est disponible
+        if [ -n "$latest_gwine" ] && [ -n "$current_gwine" ]; then
+            if compare_versions "$latest_gwine" "$current_gwine"; then
+                need_download=true
+            fi
+        elif [ -z "$current_gwine" ]; then
+            need_download=true
+        fi
+        
+        if [ -n "$latest_dxvk" ]; then
+            if [ -z "$current_dxvk" ] || compare_versions "$latest_dxvk" "$current_dxvk"; then
+                need_download=true
+            fi
+        fi
+        
+        if [ -n "$latest_vkd3d" ]; then
+            if [ -z "$current_vkd3d" ] || compare_versions "$latest_vkd3d" "$current_vkd3d"; then
+                need_download=true
+            fi
+        fi
+    fi
+    
+    # Télécharger si nécessaire
+    if [ "$need_download" = true ]; then
+        echo "Téléchargement des composants..."
+        
+        if [ "$has_gwine" = false ]; then
+            echo "  - Installation de gwine-proton..."
+            download_gwine_proton "force" || error_exit "Échec du téléchargement de gwine-proton"
+        elif [ "$has_network" = true ]; then
+            download_gwine_proton
+        fi
+        
+        if [ "$has_dxvk" = false ] || [ "$has_vkd3d" = false ]; then
+            echo "  - Installation de DXVK/VKD3D..."
+            download_updated_dxvk_vkd3d --no-confirm || error_exit "Échec du téléchargement de DXVK/VKD3D"
+        elif [ "$has_network" = true ]; then
+            download_updated_dxvk_vkd3d --no-confirm
+        fi
+    else
+        echo "Composants à jour, utilisation des versions locales"
+    fi
+}
+
+# Vérifie et propose les mises à jour (mode interactif)
+check_for_updates() {
+    echo ""
+    echo "========================================"
+    echo "   Vérification des mises à jour"
+    echo "========================================"
+    echo ""
+    
+    # Vérifier d'abord si les composants sont présents localement
+    local has_gwine=false
+    local has_dxvk=false
+    local has_vkd3d=false
+    
+    [ -d "$WINE_DIR" ] && [ -f "$WINE_DIR/bin/wine64" ] && has_gwine=true
+    [ -n "$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi")" ] && has_dxvk=true
+    [ -n "$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null)" ] && has_vkd3d=true
+    
+    echo "Composants installés :"
+    echo "  gwine-proton: $([ "$has_gwine" = true ] && echo 'Oui' || echo 'Non')"
+    echo "  DXVK: $([ "$has_dxvk" = true ] && echo 'Oui' || echo 'Non')"
+    echo "  VKD3D-Proton: $([ "$has_vkd3d" = true ] && echo 'Oui' || echo 'Non')"
+    echo ""
+    
+    # Si tous les composants sont présents, demander si on veut vérifier les maj
+    if [ "$has_gwine" = true ] && [ "$has_dxvk" = true ] && [ "$has_vkd3d" = true ]; then
+        read -p "Tous les composants sont installés. Voulez-vous vérifier les mises à jour disponibles ? [O/n]: " -r
+        echo ""
+        
+        if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
+            echo "Vérification des mises à jour ignorée."
+            echo ""
+            return 0
+        fi
+    fi
+    
+    # Vérifier la connexion internet
+    if ! curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
+        echo "Pas de connexion internet - vérification des mises à jour ignorée"
+        return 0
+    fi
+    
+    local has_updates=false
+    local latest_gwine=$(get_latest_gwine_version)
+    local current_gwine=$(cat "$GWINE_DIR/.version" 2>/dev/null || echo "")
+    
+    echo "gwine-proton:"
+    echo "  Installé: ${current_gwine:-Aucune}"
+    echo "  Dernière: $latest_gwine"
+    
+    if [ -n "$latest_gwine" ] && [ -n "$current_gwine" ]; then
+        if compare_versions "$latest_gwine" "$current_gwine"; then
+            has_updates=true
+        fi
+    elif [ -z "$current_gwine" ]; then
+        has_updates=true
+    fi
+    
+    local latest_dxvk=$(get_latest_dxvk_version)
+    local current_dxvk=""
+    local dxvk_folder
+    dxvk_folder=$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | head -1)
+    [ -n "$dxvk_folder" ] && current_dxvk=$(basename "$dxvk_folder" | sed 's/^dxvk-//')
+    
+    local latest_vkd3d=$(get_latest_vkd3d_version)
+    local current_vkd3d=""
+    local vkd3d_folder
+    vkd3d_folder=$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | head -1)
+    [ -n "$vkd3d_folder" ] && current_vkd3d=$(basename "$vkd3d_folder" | sed 's/^vkd3d-proton-//')
+    
+    echo ""
+    echo "DXVK:"
+    echo "  Installé: ${current_dxvk:-Aucun}"
+    echo "  Dernière: $latest_dxvk"
+    
+    echo ""
+    echo "VKD3D-Proton:"
+    echo "  Installé: ${current_vkd3d:-Aucun}"
+    echo "  Dernière: $latest_vkd3d"
+    
+    if [ -n "$latest_dxvk" ]; then
+        if [ -z "$current_dxvk" ]; then
+            has_updates=true
+        elif compare_versions "$latest_dxvk" "$current_dxvk"; then
+            has_updates=true
+        fi
+    fi
+    
+    if [ -n "$latest_vkd3d" ]; then
+        if [ -z "$current_vkd3d" ]; then
+            has_updates=true
+        elif compare_versions "$latest_vkd3d" "$current_vkd3d"; then
+            has_updates=true
+        fi
+    fi
+    
+    if [ "$has_updates" = true ]; then
+        echo ""
+        echo "Des mises à jour sont disponibles !"
+        read -p "Voulez-vous vérifier et installer les mises à jour ? [O/n]: " -r
+        echo ""
+        
+        if [[ "$REPLY" =~ ^[OoYy]$ ]] || [ -z "$REPLY" ]; then
+            download_gwine_proton
+            download_updated_dxvk_vkd3d --no-confirm
+        else
+            echo "Mises à jour ignorées."
+        fi
+    else
+        echo ""
+        echo "Tous les composants sont à jour."
+    fi
+    
+    echo ""
+}
+
+# Installe Wine Mono et Wine Gecko depuis le cache local
+install_wine_mono_gecko() {
+    local WINE_CACHE="$COMPONENTS_DIR/wine-cache"
+    local _MONO_GECKO_PID=""
+    
+    # Trap pour intercepter Ctrl+C
+    trap '_mono_gecko_interrupt' INT
+    
+    # Fonction de cleanup pour l'interruption
+    _mono_gecko_interrupt() {
+        if [ -n "$_MONO_GECKO_PID" ] && kill -0 "$_MONO_GECKO_PID" 2>/dev/null; then
+            kill "$_MONO_GECKO_PID" 2>/dev/null
+            wait "$_MONO_GECKO_PID" 2>/dev/null
+        fi
+        trap - INT
+        echo ""
+        echo "Installation interrompue par l'utilisateur"
+        # Fermer le kdialog si ouvert
+        if [ -n "$_PROGRESS_DBUS_REF" ]; then
+            progress_close "$_PROGRESS_DBUS_REF" 2>/dev/null
+        fi
+        # Restaurer le backup si disponible
+        if [ -n "$_WINETRICKS_BACKUP_PREFIX" ] && [ -d "$_WINETRICKS_BACKUP_PREFIX" ]; then
+            echo "Restauration du préfixe..."
+            if [ -d "$WINEPREFIX" ]; then
+                rm -rf "$WINEPREFIX" 2>/dev/null || true
+            fi
+            if ! mv -T "$_WINETRICKS_BACKUP_PREFIX" "$WINEPREFIX" 2>/dev/null; then
+                rm -rf "$WINEPREFIX" 2>/dev/null || true
+                mv "$_WINETRICKS_BACKUP_PREFIX" "$WINEPREFIX"
+            fi
+            echo "Préfixe restauré."
+        fi
+        exit 130
+    }
+    
+    # Préparer le cache au cas où
+    prepare_local_cache
+    
+    # Installer manuellement Mono et Gecko AVANT wineboot
+    if [ -d "$WINE_CACHE" ]; then
+        echo "Installation de Wine Mono et Gecko..."
+        
+        # Installer Wine Mono (x86)
+        local mono_installed=false
+        for mono_msi in "$WINE_CACHE"/wine-mono-*.msi; do
+            if [ -f "$mono_msi" ]; then
+                local mono_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -w "$(realpath "$mono_msi")" 2>/dev/null | tr -d '\r')
+                if [ -n "$mono_path" ]; then
+                    echo "  - Installation de $(basename "$mono_msi")..."
+                    
+                    # Lancer en arrière-plan pour permettre la capture de SIGINT
+                    WINEPREFIX="$WINEPREFIX" DISPLAY= "$WINE_BIN" msiexec /i "$mono_path" /quiet >/dev/null 2>&1 &
+                    _MONO_GECKO_PID=$!
+                    
+                    if ! wait "$_MONO_GECKO_PID"; then
+                        trap - INT
+                        _MONO_GECKO_PID=""
+                        echo "    ⚠️  Échec installation $(basename "$mono_msi")"
+                        return 1
+                    fi
+                    _MONO_GECKO_PID=""
+                    mono_installed=true
+                fi
+            fi
+        done
+        
+        # Installer Wine Gecko (x86 et x64)
+        local gecko_installed=false
+        for gecko_msi in "$WINE_CACHE"/wine-gecko-*.msi; do
+            if [ -f "$gecko_msi" ]; then
+                local gecko_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -w "$(realpath "$gecko_msi")" 2>/dev/null | tr -d '\r')
+                if [ -n "$gecko_path" ]; then
+                    echo "  - Installation de $(basename "$gecko_msi")..."
+                    
+                    # Lancer en arrière-plan pour permettre la capture de SIGINT
+                    WINEPREFIX="$WINEPREFIX" DISPLAY= "$WINE_BIN" msiexec /i "$gecko_path" /quiet >/dev/null 2>&1 &
+                    _MONO_GECKO_PID=$!
+                    
+                    if ! wait "$_MONO_GECKO_PID"; then
+                        trap - INT
+                        _MONO_GECKO_PID=""
+                        echo "    ⚠️  Échec installation $(basename "$gecko_msi")"
+                        return 1
+                    fi
+                    _MONO_GECKO_PID=""
+                    gecko_installed=true
+                fi
+            fi
+        done
+        
+        trap - INT
+        
+        if [ "$mono_installed" = false ] || [ "$gecko_installed" = false ]; then
+            echo "Erreur: Mono ou Gecko n'ont pas pu être installés depuis le cache"
+            return 1
+        fi
+        
+        echo "Mono et Gecko installés"
+    else
+        echo "Erreur: Cache Mono/Gecko non trouvé"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Configure VK_ICD_FILENAMES pour le GPU
+setup_gpu_vulkan() {
+    local VK_ICD_64=""
+    local VK_ICD_32=""
+    
+    # Chercher AMD RADV (radeon)
+    if [ -f "/usr/share/vulkan/icd.d/radeon_icd.x86_64.json" ]; then
+        VK_ICD_64="/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
+        [ -f "/usr/share/vulkan/icd.d/radeon_icd.i686.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/radeon_icd.i686.json"
+    elif [ -f "/etc/vulkan/icd.d/radeon_icd.x86_64.json" ]; then
+        VK_ICD_64="/etc/vulkan/icd.d/radeon_icd.x86_64.json"
+        [ -f "/etc/vulkan/icd.d/radeon_icd.i686.json" ] && VK_ICD_32="/etc/vulkan/icd.d/radeon_icd.i686.json"
+    # Chercher Intel
+    elif [ -f "/usr/share/vulkan/icd.d/intel_icd.x86_64.json" ]; then
+        VK_ICD_64="/usr/share/vulkan/icd.d/intel_icd.x86_64.json"
+        [ -f "/usr/share/vulkan/icd.d/intel_icd.i686.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/intel_icd.i686.json"
+    elif [ -f "/etc/vulkan/icd.d/intel_icd.x86_64.json" ]; then
+        VK_ICD_64="/etc/vulkan/icd.d/intel_icd.x86_64.json"
+        [ -f "/etc/vulkan/icd.d/intel_icd.i686.json" ] && VK_ICD_32="/etc/vulkan/icd.d/intel_icd.i686.json"
+    # Chercher NVIDIA
+    elif [ -f "/usr/share/vulkan/icd.d/nvidia_icd.json" ]; then
+        VK_ICD_64="/usr/share/vulkan/icd.d/nvidia_icd.json"
+    elif [ -f "/etc/vulkan/icd.d/nvidia_icd.json" ]; then
+        VK_ICD_64="/etc/vulkan/icd.d/nvidia_icd.json"
+    fi
+    
+    if [ -n "$VK_ICD_64" ]; then
+        if [ -n "$VK_ICD_32" ]; then
+            export VK_ICD_FILENAMES="$VK_ICD_64:$VK_ICD_32"
+            echo "Driver Vulkan détecté: $VK_ICD_64 + $VK_ICD_32"
+        else
+            export VK_ICD_FILENAMES="$VK_ICD_64"
+            echo "Driver Vulkan détecté: $VK_ICD_64"
+        fi
+    fi
+}
+
+# Variable globale pour stocker la référence dbus du progress dialog
+_PROGRESS_DBUS_REF=""
+
+# Détecte la commande qdbus disponible
+_get_qdbus_cmd() {
+    if command -v qdbus6 &>/dev/null; then
+        echo "qdbus6"
+    elif command -v qdbus-qt5 &>/dev/null; then
+        echo "qdbus-qt5"
+    elif command -v qdbus &>/dev/null; then
+        echo "qdbus"
+    else
+        echo ""
+    fi
+}
+
+# Crée une barre de progression kdialog
+# Usage: progress_create "Titre" nombre_étapes [show_cancel] [force]
+# Paramètre show_cancel: "true" pour afficher le bouton Annuler (défaut: true)
+# Paramètre force: "true" pour forcer kdialog même sans --kdialog (défaut: false)
+# Retourne la référence dbus via stdout
+progress_create() {
+    local title="$1"
+    local steps="${2:-10}"
+    local show_cancel="${3:-true}"
+    local force="${4:-false}"
+    
+    # Ne pas créer de barre de progression si kdialog n'est pas explicitement activé
+    # sauf si force=true (pour création auto du préfixe)
+    if [ "$_USE_KDIALOG" != "true" ] && [ "$force" != "true" ]; then
+        return
+    fi
+    
+    local qdbus_cmd
+    qdbus_cmd=$(_get_qdbus_cmd)
+    
+    if command -v kdialog &>/dev/null && [ -n "$qdbus_cmd" ]; then
+        local dbusRef
+        dbusRef=$(kdialog --title "$title" --progressbar "Initialisation..." "$steps" 2>/dev/null)
+        # Nettoyer la référence (enlever les retours à la ligne et espaces)
+        dbusRef=$(printf '%s' "$dbusRef" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        if [ -n "$dbusRef" ]; then
+            # Stocker dans la variable globale pour pouvoir fermer lors d'interruption
+            _PROGRESS_DBUS_REF="$dbusRef"
+            # Split pour configurer le dialogue
+            local service path
+            read service path <<< "$(_split_dbus_ref "$dbusRef")"
+            # Activer/désactiver le bouton Annuler selon le paramètre
+            if [ "$show_cancel" = "true" ]; then
+                $qdbus_cmd "$service" "$path" showCancelButton true >/dev/null 2>&1 || true
+            fi
+            printf '%s' "$dbusRef"
+        fi
+    fi
+}
+
+# Met à jour la barre de progression
+# Usage: progress_update dbus_ref valeur "Message"
+progress_update() {
+    local dbusRef="$1"
+    local value="$2"
+    local message="$3"
+    
+    local qdbus_cmd
+    qdbus_cmd=$(_get_qdbus_cmd)
+    
+    if [ -n "$dbusRef" ] && [ -n "$qdbus_cmd" ]; then
+        local service path
+        read service path <<< "$(_split_dbus_ref "$dbusRef")"
+        $qdbus_cmd "$service" "$path" Set "" value "$value" >/dev/null 2>&1 || true
+        if [ -n "$message" ]; then
+            $qdbus_cmd "$service" "$path" setLabelText "$message" >/dev/null 2>&1 || true
+        fi
+    fi
+}
+
+# Ferme la barre de progression
+# Usage: progress_close dbus_ref
+progress_close() {
+    local dbusRef="$1"
+    
+    local qdbus_cmd
+    qdbus_cmd=$(_get_qdbus_cmd)
+    
+    if [ -n "$dbusRef" ] && [ -n "$qdbus_cmd" ]; then
+        local service path
+        read service path <<< "$(_split_dbus_ref "$dbusRef")"
+        $qdbus_cmd "$service" "$path" close >/dev/null 2>&1 || true
+    fi
+    # Réinitialiser la variable globale
+    _PROGRESS_DBUS_REF=""
+}
+
+# Split dbusRef into service and path
+_split_dbus_ref() {
+    local dbusRef="$1"
+    # Split on space: "org.kde.kdialog-xxx /ProgressDialog" -> service path
+    local service=$(echo "$dbusRef" | awk '{print $1}')
+    local path=$(echo "$dbusRef" | awk '{print $2}')
+    echo "$service $path"
+}
+
+# Vérifie si l'utilisateur a cliqué sur Annuler
+# Usage: progress_is_cancelled dbus_ref
+# Retourne 0 si annulé, 1 sinon
+# Note: quand kdialog est fermé (Annuler), le service DBus disparaît
+progress_is_cancelled() {
+    local dbusRef="$1"
+    
+    local qdbus_cmd
+    qdbus_cmd=$(_get_qdbus_cmd)
+    
+    if [ -n "$dbusRef" ] && [ -n "$qdbus_cmd" ]; then
+        # Split the reference
+        local service path
+        read service path <<< "$(_split_dbus_ref "$dbusRef")"
+        
+        # Vérifier wasCancelled - si le service n'existe pas, ça retourne vide
+        local cancelled
+        cancelled=$($qdbus_cmd "$service" "$path" wasCancelled 2>/dev/null)
+        if [ "$cancelled" = "true" ] || [ -z "$cancelled" ]; then
+            # true = bouton annuler cliqué
+            # vide = dialogue fermé = annulé
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Ferme la barre de progression
+# Usage: progress_close dbus_ref
+progress_close() {
+    local dbusRef="$1"
+    
+    local qdbus_cmd
+    qdbus_cmd=$(_get_qdbus_cmd)
+    
+    if [ -n "$dbusRef" ] && [ -n "$qdbus_cmd" ]; then
+        $qdbus_cmd $dbusRef close 2>/dev/null
+    fi
+}
+
+# Initialise uniquement le préfixe avec barre de progression
+init_prefix_only() {
+    echo "Initialisation du préfixe Wine..."
+    
+    export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+    export WINEARCH="win64"
+    
+    # Nombre total d'étapes pour la barre de progression
+    local TOTAL_STEPS=10
+    local CURRENT_STEP=0
+    local DBUS_REF=""
+    
+    # Créer la barre de progression si --kdialog est spécifié
+    if [ "$_USE_KDIALOG" = "true" ]; then
+        DBUS_REF=$(progress_create "Initialisation du préfixe Wine" "$TOTAL_STEPS")
+    fi
+    
+    # Vérifier si gwine-proton est installé
+    if [ ! -d "$WINE_DIR" ] || [ ! -f "$WINE_DIR/bin/wine64" ]; then
+        ((CURRENT_STEP++))
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation de gwine-proton..."
+        
+        # Essayer d'abord d'installer depuis le cache (mode offline)
+        if ! install_gwine_proton_from_cache; then
+            if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+                kdialog --passivepopup "Téléchargement de gwine-proton nécessaire..." 5
+            fi
+            download_gwine_proton "force"
+        fi
+    fi
+    
+    if [ ! -x "$WINE_BIN" ]; then
+        progress_close "$DBUS_REF"
+        error_exit "Wine introuvable: $WINE_BIN"
+    fi
+    
+    # Vérifier annulation
+    if progress_is_cancelled "$DBUS_REF"; then
+        progress_close "$DBUS_REF"
+        echo "Initialisation annulée par l'utilisateur"
+        # Afficher un message avec kdialog si --kdialog spécifié
+        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
+        fi
+        exit 0
+    fi
+    
+    # Mettre à jour automatiquement les composants sans interaction
+    auto_update_components
+    
+    # Sauvegarder l'ancien préfixe s'il existe
+    local BACKUP_PREFIX="$HOME_REAL/Windows/Prefix.backup.$(date +%Y%m%d_%H%M%S)"
+    if [ -d "$WINEPREFIX" ]; then
+        ((CURRENT_STEP++))
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Sauvegarde de l'ancien préfixe..."
+        mv "$WINEPREFIX" "$BACKUP_PREFIX"
+    fi
+    
+    # Stocker le chemin du backup dans la variable globale pour l'interruption
+    _WINETRICKS_BACKUP_PREFIX="$BACKUP_PREFIX"
+    
+    # Fonction pour restaurer l'ancien préfixe en cas d'erreur/annulation
+    restore_backup() {
+        if [ -d "$BACKUP_PREFIX" ]; then
+            echo ""
+            echo "⚠️  Restauration de l'ancien préfixe..."
+            if [ -d "$WINEPREFIX" ]; then
+                rm -rf "$WINEPREFIX" 2>/dev/null || true
+            fi
+            if ! mv -T "$BACKUP_PREFIX" "$WINEPREFIX" 2>/dev/null; then
+                rm -rf "$WINEPREFIX" 2>/dev/null || true
+                mv "$BACKUP_PREFIX" "$WINEPREFIX"
+            fi
+            echo "Ancien préfixe restauré: $WINEPREFIX"
+        fi
+    }
+    
+    # Créer le préfixe avec wineboot INIT
+    ((CURRENT_STEP++))
+    progress_update "$DBUS_REF" "$CURRENT_STEP" "Création du préfixe Wine..."
+    
+    if ! WINEPREFIX="$WINEPREFIX" "$WINE_BIN" wineboot --init >/dev/null 2>&1; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        error_exit "Échec de l'initialisation du préfixe (wineboot)"
+    fi
+    
+    # Vérifier annulation
+    if progress_is_cancelled "$DBUS_REF"; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        echo "Initialisation annulée par l'utilisateur"
+        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
+        fi
+        exit 0
+    fi
+    
+    # Installer Mono/Gecko APRES création du préfixe
+    ((CURRENT_STEP++))
+    progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation de Wine Mono et Gecko..."
+    
+    if ! install_wine_mono_gecko; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        error_exit "Échec de l'installation de Mono/Gecko"
+    fi
+    
+    # Vérifier annulation
+    if progress_is_cancelled "$DBUS_REF"; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        echo "Initialisation annulée par l'utilisateur"
+        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
+        fi
+        exit 0
+    fi
+    
+    # Installer les composants winetricks depuis le cache
+    ((CURRENT_STEP++))
+    progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation des composants Windows..."
+    
+    if ! install_winetricks_components; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        error_exit "Échec de l'installation des composants winetricks"
+    fi
+    
+    # Vérifier annulation
+    if progress_is_cancelled "$DBUS_REF"; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        echo "Initialisation annulée par l'utilisateur"
+        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
+        fi
+        exit 0
+    fi
+    
+    # Installer DXVK et VKD3D-Proton depuis le cache
+    ((CURRENT_STEP++))
+    progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation de DXVK et VKD3D..."
+    
+    if ! install_dxvk_vkd3d; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        error_exit "Échec de l'installation de DXVK/VKD3D"
+    fi
+    
+    # Vérifier annulation
+    if progress_is_cancelled "$DBUS_REF"; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        echo "Initialisation annulée par l'utilisateur"
+        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
+        fi
+        exit 0
+    fi
+    
+    # Copier la config MangoHud
+    ((CURRENT_STEP++))
+    progress_update "$DBUS_REF" "$CURRENT_STEP" "Configuration de MangoHud..."
+    
+    if ! copy_mangohud_config; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        error_exit "Échec de la copie de la config MangoHud"
+    fi
+    
+    # Vérifier annulation
+    if progress_is_cancelled "$DBUS_REF"; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        echo "Initialisation annulée par l'utilisateur"
+        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
+        fi
+        exit 0
+    fi
+    
+    # Configurer la structure des dossiers Windows
+    ((CURRENT_STEP++))
+    progress_update "$DBUS_REF" "$CURRENT_STEP" "Configuration des dossiers Windows..."
+    
+    if ! setup_windows_directories "$WINEPREFIX"; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        error_exit "Échec de la configuration des dossiers Windows"
+    fi
+    
+    # Vérifier annulation
+    if progress_is_cancelled "$DBUS_REF"; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        echo "Initialisation annulée par l'utilisateur"
+        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
+        fi
+        exit 0
+    fi
+    
+    # Créer les dossiers de cache pour shaders
+    ((CURRENT_STEP++))
+    progress_update "$DBUS_REF" "$CURRENT_STEP" "Configuration des caches..."
+    mkdir -p "$SHADER_CACHE_DIR/dxvk"
+    mkdir -p "$SHADER_CACHE_DIR/vkd3d"
+    mkdir -p "$SHADER_CACHE_DIR/nvidia"
+    mkdir -p "$SHADER_CACHE_DIR/mesa"
+    
+    # Vérifier annulation finale
+    if progress_is_cancelled "$DBUS_REF"; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        echo "Initialisation annulée par l'utilisateur"
+        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
+        fi
+        exit 0
+    fi
+    
+    # Finaliser la barre de progression
+    progress_update "$DBUS_REF" "$TOTAL_STEPS" "Finalisation..."
+    
+    # Succès - supprimer l'ancien préfixe sauvegardé
+    if [ -d "$BACKUP_PREFIX" ]; then
+        rm -rf "$BACKUP_PREFIX"
+    fi
+    
+    # Fermer la barre de progression
+    progress_close "$DBUS_REF"
+    
+    echo ""
+    echo "Préfixe Wine initialisé avec succès !"
+    echo ""
+    echo "Configuration effectuée :"
+    echo "  ✓ Préfixe Wine créé"
+    echo "  ✓ Wine Mono et Gecko installés"
+    echo "  ✓ Composants Windows (winetricks) installés"
+    echo "  ✓ DXVK et VKD3D-Proton configurés"
+    echo "  ✓ Configuration MangoHud copiée"
+    echo "  ✓ Dossiers Windows configurés"
+    echo "  ✓ Caches shaders initialisés"
+    echo ""
+    echo "Emplacement: $WINEPREFIX"
+}
+
+# Désinstalle Gwine du système
+uninstall_gwine() {
+    local SYMLINK="$HOME/.local/bin/gwine"
+    
+    echo ""
+    echo "========================================"
+    echo "   Désinstallation de Gwine"
+    echo "========================================"
+    echo ""
+    echo "Cela va supprimer :"
+    echo "  - $GWINE_DIR/"
+    echo "  - $SYMLINK"
+    echo ""
+    echo "⚠️  Vos données dans ~/Windows/ ne seront PAS supprimées."
+    echo ""
+    
+    read -p "Voulez-vous vraiment désinstaller Gwine ? [o/N]: " -r
+    echo ""
+    
+    if [[ "$REPLY" =~ ^[oOyY]$ ]]; then
+        echo "Suppression de l'installation..."
+        rm -rf "$GWINE_DIR"
+        rm -f "$SYMLINK"
+        echo ""
+        echo "========================================"
+        echo "   Gwine a été désinstallé"
+        echo "========================================"
+        echo ""
+        echo "Vos données utilisateur dans ~/Windows/ ont été préservées."
+        echo ""
+    else
+        echo "Désinstallation annulée."
+    fi
+    
+    exit 0
+}
+
+# Copie la configuration MangoHud
+copy_mangohud_config() {
+    local MANGOHUD_CONFIG_DIR="$HOME_REAL/.config/MangoHud"
+    local MANGOHUD_CONF_USER="$MANGOHUD_CONFIG_DIR/MangoHud.conf"
+    local MANGOHUD_CONF_SOURCE="/usr/share/ublue-os/gablue/MangoHud.conf"
+    
+    # Créer le dossier de config
+    if ! mkdir -p "$MANGOHUD_CONFIG_DIR"; then
+        echo "Erreur: Impossible de créer le dossier $MANGOHUD_CONFIG_DIR"
+        return 1
+    fi
+    
+    # Copier la config depuis ublue-os/gablue si elle existe
+    if [ -f "$MANGOHUD_CONF_SOURCE" ]; then
+        echo "Copie de la configuration MangoHud depuis $MANGOHUD_CONF_SOURCE..."
+        if cp -f "$MANGOHUD_CONF_SOURCE" "$MANGOHUD_CONF_USER"; then
+            echo "Configuration MangoHud copiée dans $MANGOHUD_CONF_USER"
+        else
+            echo "Erreur: Échec de la copie de la configuration MangoHud"
+            return 1
+        fi
+    else
+        # Créer un config MangoHud par défaut si inexistant
+        if [ ! -f "$MANGOHUD_CONF_USER" ]; then
+            cat > "$MANGOHUD_CONF_USER" << 'EOF'
+# MangoHud configuration
+fps_limit=0
+vsync=0
+gl_vsync=0
+legacy_layout=false
+gpu_stats
+cpu_stats
+ram
+vram
+fps
+frame_timing
+EOF
+            echo "Configuration MangoHud créée dans ~/.config/MangoHud/"
+        else
+            echo "Configuration MangoHud déjà existante"
+        fi
+    fi
+    
+    return 0
+}
+
+# Configure la structure des dossiers Windows avec liens symboliques
+setup_windows_directories() {
+    local target_prefix="${1:-$WINEPREFIX}"
+    
+    echo "Configuration de la structure des dossiers Windows..."
+    
+    # Créer les dossiers utilisateur dans ~/Windows/
+    for dir in UserData SteamData Games Applications; do
+        if [ ! -e "$HOME_REAL/Windows/$dir" ] && [ ! -L "$HOME_REAL/Windows/$dir" ]; then
+            if ! mkdir -p "$HOME_REAL/Windows/$dir"; then
+                echo "Erreur: Impossible de créer le dossier $HOME_REAL/Windows/$dir"
+                return 1
+            fi
+        fi
+    done
+    
+    # Créer les liens symboliques depuis le préfixe vers ~/Windows/
+    
+    # users -> ~/Windows/UserData
+    if [ -e "$target_prefix/drive_c/users" ] || [ -L "$target_prefix/drive_c/users" ]; then
+        rm -rf "$target_prefix/drive_c/users"
+    fi
+    if ! ln -sf "$HOME_REAL/Windows/UserData" "$target_prefix/drive_c/users"; then
+        echo "Erreur: Échec de création du lien symbolique users"
+        return 1
+    fi
+    
+    # ProgramData/Steam -> ~/Windows/SteamData
+    if ! mkdir -p "$target_prefix/drive_c/ProgramData/"; then
+        echo "Erreur: Impossible de créer ProgramData"
+        return 1
+    fi
+    if [ -e "$target_prefix/drive_c/ProgramData/Steam" ] || [ -L "$target_prefix/drive_c/ProgramData/Steam" ]; then
+        rm -rf "$target_prefix/drive_c/ProgramData/Steam"
+    fi
+    if ! ln -sf "$HOME_REAL/Windows/SteamData" "$target_prefix/drive_c/ProgramData/Steam"; then
+        echo "Erreur: Échec de création du lien symbolique Steam"
+        return 1
+    fi
+    
+    # drive_c/Applications -> ~/Windows/Applications
+    if [ -e "$target_prefix/drive_c/Applications" ] || [ -L "$target_prefix/drive_c/Applications" ]; then
+        rm -rf "$target_prefix/drive_c/Applications"
+    fi
+    if ! ln -sf "$HOME_REAL/Windows/Applications" "$target_prefix/drive_c/Applications"; then
+        echo "Erreur: Échec de création du lien symbolique Applications"
+        return 1
+    fi
+    
+    # drive_c/Games -> ~/Windows/Games
+    if [ -e "$target_prefix/drive_c/Games" ] || [ -L "$target_prefix/drive_c/Games" ]; then
+        rm -rf "$target_prefix/drive_c/Games"
+    fi
+    if ! ln -sf "$HOME_REAL/Windows/Games" "$target_prefix/drive_c/Games"; then
+        echo "Erreur: Échec de création du lien symbolique Games"
+        return 1
+    fi
+    
+    echo "Structure des dossiers configurée avec succès"
+    return 0
+}
+
+# Gère l'option --init
+init_wineprefix() {
+    local needs_init=false
+    
+    if [ "$init_mode" = true ]; then
+        echo "Mode --init: réinitialisation du préfixe demandée"
+        if [ -d "$WINEPREFIX" ]; then
+            echo "Suppression de l'ancien préfixe..."
+            rm -rf "$WINEPREFIX"
+        fi
+        needs_init=true
+    elif [ ! -d "$WINEPREFIX" ] || [ ! -f "$WINEPREFIX/system.reg" ]; then
+        echo "Préfixe Wine non trouvé, création automatique..."
+        needs_init=true
+    fi
+    
+    if [ "$needs_init" = true ]; then
+        # Préparer le cache avec les composants
+        prepare_local_cache
+        
+        # Créer le préfixe avec wineboot
+        WINEPREFIX="$WINEPREFIX" "$WINE_BIN" wineboot --init >/dev/null 2>&1
+        
+        # Installer Mono/Gecko APRES création du préfixe
+        install_wine_mono_gecko
+        
+        # Marquer qu'on doit installer les composants winetricks et DXVK
+        export _NEEDS_WINETRICKS_INIT=1
+    fi
+    
+    # Configurer la structure des dossiers Windows
+    if [ -d "$WINEPREFIX" ] && [ -f "$WINEPREFIX/system.reg" ]; then
+        setup_windows_directories "$WINEPREFIX"
+    fi
+}
+
+# Vérifie et crée le préfixe Wine si nécessaire (version simple)
+ensure_wineprefix() {
+    if [ ! -d "$WINEPREFIX" ] || [ ! -f "$WINEPREFIX/system.reg" ]; then
+        echo "Préfixe Wine non trouvé, création automatique..."
+        
+        # Créer la barre de progression (toujours pour création auto du préfixe)
+        local DBUS_REF=""
+        if command -v kdialog &>/dev/null && command -v qdbus &>/dev/null; then
+            DBUS_REF=$(progress_create "Création du préfixe Wine" 3 "true" "true")
+        fi
+        
+        # Étape 1: Préparation
+        progress_update "$DBUS_REF" 1 "Préparation..."
+        prepare_local_cache
+        
+        # Vérifier annulation
+        if progress_is_cancelled "$DBUS_REF"; then
+            progress_close "$DBUS_REF"
+            echo "Création du préfixe annulée"
+            exit 0
+        fi
+        
+        # Étape 2: Création du préfixe
+        progress_update "$DBUS_REF" 2 "Création du préfixe..."
+        WINEPREFIX="$WINEPREFIX" "$WINE_BIN" wineboot --init >/dev/null 2>&1
+        
+        # Vérifier annulation
+        if progress_is_cancelled "$DBUS_REF"; then
+            [ -d "$WINEPREFIX" ] && rm -rf "$WINEPREFIX" 2>/dev/null
+            progress_close "$DBUS_REF"
+            echo "Création du préfixe annulée"
+            exit 0
+        fi
+        
+        # Étape 3: Mono/Gecko
+        progress_update "$DBUS_REF" 3 "Installation de Mono et Gecko..."
+        install_wine_mono_gecko
+        
+        # Vérifier annulation
+        if progress_is_cancelled "$DBUS_REF"; then
+            [ -d "$WINEPREFIX" ] && rm -rf "$WINEPREFIX" 2>/dev/null
+            progress_close "$DBUS_REF"
+            echo "Création du préfixe annulée"
+            exit 0
+        fi
+        
+        progress_close "$DBUS_REF"
+    fi
+}
+
+# Lance regedit avec le préfixe Wine
+launch_regedit() {
+    echo "Lancement de regedit..."
+    
+    export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+    
+    if [ ! -x "$WINE_BIN" ]; then
+        error_exit "Wine introuvable: $WINE_BIN"
+    fi
+    
+    ensure_wineprefix
+    
+    echo "WINEPREFIX: $WINEPREFIX"
+    WINEPREFIX="$WINEPREFIX" "$WINE_BIN" regedit
+    exit $?
+}
+
+# Installe un fichier .reg dans le préfixe Wine
+install_reg_file() {
+    local reg_file_path="$1"
+    
+    if [ -z "$reg_file_path" ]; then
+        error_exit "Aucun fichier .reg spécifié"
+    fi
+    
+    if [ ! -f "$reg_file_path" ]; then
+        error_exit "Fichier .reg introuvable: $reg_file_path"
+    fi
+    
+    echo "Installation du fichier de registre: $reg_file_path"
+    
+    export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+    
+    if [ ! -x "$WINE_BIN" ]; then
+        error_exit "Wine introuvable: $WINE_BIN"
+    fi
+    
+    ensure_wineprefix_full
+    
+    # Convertir le chemin en chemin Windows
+    local win_path
+    win_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -w "$reg_file_path" 2>/dev/null | tr -d '\r')
+    
+    if [ -z "$win_path" ]; then
+        error_exit "Impossible de convertir le chemin du fichier .reg"
+    fi
+    
+    echo "Chemin Windows: $win_path"
+    echo "WINEPREFIX: $WINEPREFIX"
+    
+    # Installer le fichier .reg
+    if ! WINEPREFIX="$WINEPREFIX" "$WINE_BIN" regedit.exe /S "$win_path" 2>/dev/null; then
+        # Afficher un message d'erreur avec kdialog si --kdialog est spécifié
+        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+            kdialog --title "Erreur" --error "Échec de l'installation du fichier de registre:\n$reg_file_path"
+        fi
+        error_exit "Échec de l'installation du fichier de registre"
+    fi
+    
+    echo "Fichier de registre installé avec succès"
+    
+    # Afficher un kdialog de confirmation si --kdialog est spécifié
+    if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+        kdialog --title "Succès" --msgbox "Le fichier de registre a été installé avec succès:\n$reg_file_path"
+    fi
+    
+    exit 0
+}
+
+# Lance winecfg avec le préfixe Wine
+launch_winecfg() {
+    echo "Lancement de winecfg..."
+    
+    export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+    
+    if [ ! -x "$WINE_BIN" ]; then
+        error_exit "Wine introuvable: $WINE_BIN"
+    fi
+    
+    ensure_wineprefix
+    
+    echo "WINEPREFIX: $WINEPREFIX"
+    WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winecfg
+    exit $?
+}
+
+# Lance cmd.exe (terminal Wine) dans le dossier courant
+launch_wine_cmd() {
+    echo "Lancement du terminal Wine (cmd)..."
+    
+    export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+    
+    if [ ! -x "$WINE_BIN" ]; then
+        error_exit "Wine introuvable: $WINE_BIN"
+    fi
+    
+    ensure_wineprefix
+    
+    # Déterminer le dossier de travail
+    local work_dir
+    if [ -n "$fullpath" ]; then
+        if [ -d "$fullpath" ]; then
+            work_dir="$fullpath"
+        else
+            work_dir="$(dirname "$fullpath")"
+        fi
+    else
+        work_dir="$(pwd)"
+    fi
+    
+    echo "WINEPREFIX: $WINEPREFIX"
+    echo "Dossier: $work_dir"
+    
+    cd "$work_dir" || error_exit "Impossible d'accéder au dossier: $work_dir"
+    WINEPREFIX="$WINEPREFIX" "$WINE_BIN" cmd
+    exit $?
+}
+
+# Crée le préfixe Wine complet avec tous les composants
+ensure_wineprefix_full() {
+    if [ ! -d "$WINEPREFIX" ] || [ ! -f "$WINEPREFIX/system.reg" ]; then
+        echo "Préfixe Wine non trouvé, création automatique..."
+        
+        # Nombre d'étapes pour la barre de progression
+        local TOTAL_STEPS=5
+        local CURRENT_STEP=0
+        local DBUS_REF=""
+        
+        # Créer la barre de progression (toujours pour création auto du préfixe)
+        if command -v kdialog &>/dev/null && command -v qdbus &>/dev/null; then
+            DBUS_REF=$(progress_create "Création du préfixe Wine" "$TOTAL_STEPS" "true" "true")
+        fi
+        
+        # Vérifier annulation
+        if progress_is_cancelled "$DBUS_REF"; then
+            progress_close "$DBUS_REF"
+            echo "Création du préfixe annulée"
+            exit 0
+        fi
+        
+        # Étape 1: Préparation du cache
+        ((CURRENT_STEP++))
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Préparation des composants..."
+        prepare_local_cache
+        
+        # Vérifier annulation
+        if progress_is_cancelled "$DBUS_REF"; then
+            progress_close "$DBUS_REF"
+            echo "Création du préfixe annulée"
+            exit 0
+        fi
+        
+        # Étape 2: Création du préfixe
+        ((CURRENT_STEP++))
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Création du préfixe..."
+        WINEPREFIX="$WINEPREFIX" "$WINE_BIN" wineboot --init >/dev/null 2>&1
+        
+        # Vérifier annulation
+        if progress_is_cancelled "$DBUS_REF"; then
+            # Supprimer le préfixe partiel
+            [ -d "$WINEPREFIX" ] && rm -rf "$WINEPREFIX" 2>/dev/null
+            progress_close "$DBUS_REF"
+            echo "Création du préfixe annulée"
+            exit 0
+        fi
+        
+        # Étape 3: Mono/Gecko
+        ((CURRENT_STEP++))
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation de Mono et Gecko..."
+        install_wine_mono_gecko
+        
+        # Vérifier annulation
+        if progress_is_cancelled "$DBUS_REF"; then
+            [ -d "$WINEPREFIX" ] && rm -rf "$WINEPREFIX" 2>/dev/null
+            progress_close "$DBUS_REF"
+            echo "Création du préfixe annulée"
+            exit 0
+        fi
+        
+        # Étape 4: Composants winetricks
+        ((CURRENT_STEP++))
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation des composants Windows..."
+        install_winetricks_components
+        
+        # Vérifier annulation
+        if progress_is_cancelled "$DBUS_REF"; then
+            [ -d "$WINEPREFIX" ] && rm -rf "$WINEPREFIX" 2>/dev/null
+            progress_close "$DBUS_REF"
+            echo "Création du préfixe annulée"
+            exit 0
+        fi
+        
+        # Étape 5: DXVK/VKD3D
+        ((CURRENT_STEP++))
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation de DXVK/VKD3D..."
+        install_dxvk_vkd3d
+        
+        # Vérifier annulation
+        if progress_is_cancelled "$DBUS_REF"; then
+            [ -d "$WINEPREFIX" ] && rm -rf "$WINEPREFIX" 2>/dev/null
+            progress_close "$DBUS_REF"
+            echo "Création du préfixe annulée"
+            exit 0
+        fi
+        
+        # Fermer la barre de progression
+        progress_close "$DBUS_REF"
+        
+        echo "Préfixe créé avec succès"
+    fi
+}
+
+# Lance winetricks avec le préfixe Wine
+launch_winetricks() {
+    echo "Lancement de winetricks..."
+    
+    export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+    
+    ensure_winetricks
+    local WINETRICKS_BIN
+    WINETRICKS_BIN=$(get_winetricks_bin)
+    
+    if [ ! -x "$WINE_BIN" ]; then
+        error_exit "Wine introuvable: $WINE_BIN"
+    fi
+    
+    ensure_wineprefix_full
+    
+    export WINE="$WINE_BIN"
+    
+    local WINETRICKS_CACHE="$COMPONENTS_DIR/winetricks-cache"
+    if [ -d "$WINETRICKS_CACHE" ]; then
+        export W_CACHE="$WINETRICKS_CACHE"
+    fi
+    
+    echo "WINEPREFIX: $WINEPREFIX"
+    if [ -n "$winetricks_args" ]; then
+        echo "Commande: winetricks $winetricks_args"
+        WINEPREFIX="$WINEPREFIX" "$WINETRICKS_BIN" $winetricks_args
+    else
+        echo "Aucun argument spécifié, lancement de winetricks en mode interactif..."
+        WINEPREFIX="$WINEPREFIX" "$WINETRICKS_BIN"
+    fi
+    exit $?
+}
+
+# Met à jour les composants (DXVK, VKD3D-Proton, gwine-proton) avec barre de progression
+update_components() {
+    echo "Mise à jour des composants..."
+    echo ""
+    
+    # Vérifier la connexion réseau
+    if ! curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
+        error_exit "Pas de connexion internet - mise à jour impossible"
+    fi
+    
+    local has_updates=false
+    local needs_reinstall_dlls=false
+    local CURRENT_STEP=0
+    local DBUS_REF=""
+    
+    # Variables pour stocker les mises à jour effectuées
+    local updated_gwine=""
+    local updated_dxvk=""
+    local updated_vkd3d=""
+    local updated_dlls=false
+    
+    # Vérifier gwine-proton
+    local latest_gwine=$(get_latest_gwine_version)
+    local current_gwine=$(cat "$GWINE_DIR/.version" 2>/dev/null || echo "")
+    
+    echo "gwine-proton:"
+    echo "  Version actuelle: ${current_gwine:-Aucune}"
+    echo "  Dernière version: ${latest_gwine:-Inconnue}"
+    
+    if [ -n "$latest_gwine" ] && [ -n "$current_gwine" ]; then
+        if compare_versions "$latest_gwine" "$current_gwine"; then
+            has_updates=true
+            echo "  → Mise à jour disponible"
+        else
+            echo "  → Déjà à jour"
+        fi
+    elif [ -n "$latest_gwine" ]; then
+        has_updates=true
+        echo "  → Installation nécessaire"
+    fi
+    
+    # Vérifier DXVK/VKD3D
+    local latest_dxvk=$(get_latest_dxvk_version)
+    local latest_vkd3d=$(get_latest_vkd3d_version)
+    local current_dxvk=""
+    local current_vkd3d=""
+    
+    local dxvk_folder=$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | head -1)
+    [ -n "$dxvk_folder" ] && current_dxvk=$(basename "$dxvk_folder" | sed 's/^dxvk-//')
+    
+    local vkd3d_folder=$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | head -1)
+    [ -n "$vkd3d_folder" ] && current_vkd3d=$(basename "$vkd3d_folder" | sed 's/^vkd3d-proton-//')
+    
+    echo ""
+    echo "DXVK:"
+    echo "  Version actuelle: ${current_dxvk:-Aucune}"
+    echo "  Dernière version: ${latest_dxvk:-Inconnue}"
+    
+    if [ -n "$latest_dxvk" ]; then
+        if [ -z "$current_dxvk" ] || compare_versions "$latest_dxvk" "$current_dxvk"; then
+            has_updates=true
+            needs_reinstall_dlls=true
+            echo "  → Mise à jour disponible"
+        else
+            echo "  → Déjà à jour"
+        fi
+    fi
+    
+    echo ""
+    echo "VKD3D-Proton:"
+    echo "  Version actuelle: ${current_vkd3d:-Aucune}"
+    echo "  Dernière version: ${latest_vkd3d:-Inconnue}"
+    
+    if [ -n "$latest_vkd3d" ]; then
+        if [ -z "$current_vkd3d" ] || compare_versions "$latest_vkd3d" "$current_vkd3d"; then
+            has_updates=true
+            needs_reinstall_dlls=true
+            echo "  → Mise à jour disponible"
+        else
+            echo "  → Déjà à jour"
+        fi
+    fi
+    
+    if [ "$has_updates" = false ]; then
+        echo ""
+        echo "Tous les composants sont à jour."
+        # Afficher un message avec kdialog si --kdialog spécifié
+        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+            kdialog --title "Mise à jour" --msgbox "Tous les composants sont déjà à jour.\n\nAucune action nécessaire."
+        fi
+        exit 0
+    fi
+    
+    # Demander confirmation (avec kdialog si --kdialog spécifié)
+    local CONFIRM=false
+    if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+        if kdialog --title "Mise à jour des composants" --yesno "Des mises à jour sont disponibles.\n\nVoulez-vous les installer ?"; then
+            CONFIRM=true
+        fi
+    else
+        read -p "Installer les mises à jour disponibles ? [O/n]: " -r
+        echo ""
+        [[ "$REPLY" =~ ^[OoYy]$ ]] || [ -z "$REPLY" ] && CONFIRM=true
+    fi
+    
+    if [ "$CONFIRM" = false ]; then
+        echo "Mise à jour annulée."
+        exit 0
+    fi
+    
+    # Compter le nombre d'étapes
+    local TOTAL_STEPS=0
+    [ -n "$latest_gwine" ] && [ -z "$current_gwine" ] || compare_versions "$latest_gwine" "$current_gwine" 2>/dev/null && ((TOTAL_STEPS++))
+    ([ -n "$latest_dxvk" ] || [ -n "$latest_vkd3d" ]) && ((TOTAL_STEPS++))
+    [ "$needs_reinstall_dlls" = true ] && ((TOTAL_STEPS++))
+    
+    # Créer la barre de progression (sans bouton Annuler pour --update, uniquement avec --kdialog)
+    if [ "$_USE_KDIALOG" = "true" ] && [ $TOTAL_STEPS -gt 0 ] && command -v kdialog &>/dev/null && command -v qdbus &>/dev/null; then
+        DBUS_REF=$(progress_create "Mise à jour des composants" "$TOTAL_STEPS" "false")
+    fi
+    
+    # Effectuer les mises à jour
+    echo "Installation des mises à jour..."
+    
+    # Mettre à jour gwine-proton
+    if [ -n "$latest_gwine" ]; then
+        if [ -z "$current_gwine" ] || compare_versions "$latest_gwine" "$current_gwine"; then
+            ((CURRENT_STEP++))
+            progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de gwine-proton..."
+            
+            if progress_is_cancelled "$DBUS_REF"; then
+                progress_close "$DBUS_REF"
+                echo "Mise à jour annulée par l'utilisateur"
+                exit 0
+            fi
+            
+            if ! download_gwine_proton; then
+                progress_close "$DBUS_REF"
+                error_exit "Échec de la mise à jour de gwine-proton"
+            fi
+            
+            # Marquer comme mis à jour
+            updated_gwine="$latest_gwine"
+            
+            # Vérifier annulation après téléchargement
+            if progress_is_cancelled "$DBUS_REF"; then
+                progress_close "$DBUS_REF"
+                echo "Mise à jour annulée par l'utilisateur"
+                exit 0
+            fi
+        fi
+    fi
+    
+    # Mettre à jour DXVK/VKD3D
+    if [ -n "$latest_dxvk" ] || [ -n "$latest_vkd3d" ]; then
+        ((CURRENT_STEP++))
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de DXVK/VKD3D-Proton..."
+        
+        if progress_is_cancelled "$DBUS_REF"; then
+            progress_close "$DBUS_REF"
+            echo "Mise à jour annulée par l'utilisateur"
+            exit 0
+        fi
+        
+        if ! download_updated_dxvk_vkd3d --no-confirm; then
+            progress_close "$DBUS_REF"
+            error_exit "Échec de la mise à jour de DXVK/VKD3D"
+        fi
+        
+        # Marquer comme mis à jour
+        [ -n "$latest_dxvk" ] && updated_dxvk="$latest_dxvk"
+        [ -n "$latest_vkd3d" ] && updated_vkd3d="$latest_vkd3d"
+        
+        # Vérifier annulation après téléchargement
+        if progress_is_cancelled "$DBUS_REF"; then
+            progress_close "$DBUS_REF"
+            echo "Mise à jour annulée par l'utilisateur"
+            exit 0
+        fi
+    fi
+    
+    # Réinstaller les DLLs dans le préfixe si nécessaire
+    if [ "$needs_reinstall_dlls" = true ] && [ -d "$HOME_REAL/Windows/Prefix" ]; then
+        ((CURRENT_STEP++))
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Réinstallation des DLLs..."
+        
+        if progress_is_cancelled "$DBUS_REF"; then
+            progress_close "$DBUS_REF"
+            echo "Mise à jour annulée par l'utilisateur"
+            exit 0
+        fi
+        
+        export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+        if ! install_dxvk_vkd3d; then
+            progress_close "$DBUS_REF"
+            error_exit "Échec de la réinstallation des DLLs"
+        fi
+        
+        updated_dlls=true
+    fi
+    
+    # Finaliser
+    progress_update "$DBUS_REF" "$TOTAL_STEPS" "Finalisation..."
+    progress_close "$DBUS_REF"
+    
+    # Afficher le résumé des mises à jour
+    echo ""
+    echo "Mise à jour terminée avec succès !"
+    echo ""
+    echo "Résumé des mises à jour effectuées :"
+    if [ -n "$updated_gwine" ]; then
+        echo "  ✓ gwine-proton mis à jour vers $updated_gwine"
+    fi
+    if [ -n "$updated_dxvk" ]; then
+        echo "  ✓ DXVK mis à jour vers $updated_dxvk"
+    fi
+    if [ -n "$updated_vkd3d" ]; then
+        echo "  ✓ VKD3D-Proton mis à jour vers $updated_vkd3d"
+    fi
+    if [ "$updated_dlls" = true ]; then
+        echo "  ✓ DLLs réinstallés dans le préfixe Wine"
+    fi
+    echo ""
+}
+
+#======================================
+# Fonctions d'analyse des paramètres
+#======================================
+
+show_help() {
+    echo "Gwine - Lanceur de jeux Windows avec Wine"
+    echo ""
+    echo "Usage: gwine [OPTION] [CHEMIN]"
+    echo ""
+    echo "Options:"
+    echo "  --help            Afficher cette aide"
+    echo "  --init            Initialiser/réinitialiser le préfixe Wine"
+    echo "  --update          Mettre à jour les composants (DXVK, VKD3D, gwine-proton)"
+    echo "  --kdialog         Activer les dialogues graphiques kdialog pour --init et --update"
+    echo "  --uninstall       Désinstaller Gwine"
+    echo "  --fix             Activer le mode fix manette"
+    echo "  --exewgp          Mode interactif pour choisir l'exécutable dans un WGP"
+    echo "  --nosandbox       Désactiver le sandboxing"
+    echo "  --regedit         Lancer l'éditeur de registre"
+    echo "  --reg fichier.reg Installer un fichier de registre"
+    echo "  --winecfg         Lancer la configuration Wine"
+    echo "  --winetrick       Lancer winetricks"
+    echo "  --cmd             Ouvrir un terminal Wine"
+    echo "  --args            Arguments à passer au jeu"
+    echo ""
+    echo "Exemples:"
+    echo "  gwine ~/Jeux/monjeu.wgp"
+    echo "  gwine ~/Jeux/monjeu.exe"
+    echo "  gwine --init"
+    echo "  gwine --fix ~/Jeux/monjeu.wgp"
+    echo "  gwine --reg config.reg"
+}
+
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                show_help
+                exit 0
+                ;;
+            --fix)
+                fix_mode=true
+                shift
+                ;;
+            --exewgp)
+                exewgp_mode=true
+                shift
+                ;;
+            --init)
+                init_mode=true
+                shift
+                ;;
+            --update)
+                update_mode=true
+                shift
+                ;;
+            --kdialog)
+                _USE_KDIALOG=true
+                shift
+                ;;
+            --cmd)
+                cmd_mode=true
+                shift
+                ;;
+            --regedit)
+                regedit_mode=true
+                shift
+                ;;
+            --reg)
+                reg_mode=true
+                reg_file="$2"
+                shift 2
+                ;;
+            --winecfg)
+                winecfg_mode=true
+                shift
+                ;;
+            --winetricks|--winetrick)
+                winetricks_mode=true
+                shift
+                winetricks_args="$*"
+                shift $#
+                ;;
+            --nosandbox)
+                nosandbox_mode=true
+                shift
+                ;;
+            --uninstall)
+                uninstall_mode=true
+                shift
+                ;;
+            --args)
+                args="$2"
+                shift 2
+                ;;
+            --gameid)
+                shift 2
+                ;;
+            *)
+                fullpath="$1"
+                shift
+                ;;
+        esac
+    done
+
+    if [ "$init_mode" = true ] && [ -z "$fullpath" ]; then
+        init_prefix_only
+        exit 0
+    fi
+
+    if [ "$regedit_mode" = true ]; then
+        return 0
+    fi
+
+    if [ "$reg_mode" = true ]; then
+        return 0
+    fi
+
+    if [ "$winecfg_mode" = true ]; then
+        return 0
+    fi
+
+    if [ "$winetricks_mode" = true ]; then
+        return 0
+    fi
+
+    if [ "$cmd_mode" = true ]; then
+        return 0
+    fi
+
+    if [ "$uninstall_mode" = true ]; then
+        return 0
+    fi
+
+    if [ "$update_mode" = true ]; then
+        update_components
+        exit 0
+    fi
+
+    [ -z "$fullpath" ] && error_exit "Aucun fichier spécifié"
+}
+
+#======================================
+# Fonctions de sandboxing avec bubblewrap
+#======================================
+
+build_bwrap_args() {
+    local exe_dir="${1:-}"
+    local access_mode="${2:-rw}"  # "ro" ou "rw"
+    local bwrap_args=""
+    
+    bwrap_args="$bwrap_args --unshare-all"
+    bwrap_args="$bwrap_args --share-net"
+    
+    # Système de fichiers - lecture seule partout sauf exceptions
+    bwrap_args="$bwrap_args --ro-bind / /"
+    bwrap_args="$bwrap_args --proc /proc"
+    
+    # Cacher /home et /var (seront remplacés par les bindings autorisés)
+    bwrap_args="$bwrap_args --tmpfs /home"
+    bwrap_args="$bwrap_args --tmpfs /var"
+    
+    # Réseau - accès complet
+    bwrap_args="$bwrap_args --bind-try /etc/resolv.conf /etc/resolv.conf"
+    bwrap_args="$bwrap_args --bind-try /etc/hosts /etc/hosts"
+    bwrap_args="$bwrap_args --bind-try /etc/ssl /etc/ssl"
+    bwrap_args="$bwrap_args --bind-try /etc/ca-certificates /etc/ca-certificates"
+    bwrap_args="$bwrap_args --bind-try /etc/pki /etc/pki"
+    bwrap_args="$bwrap_args --bind-try /etc/localtime /etc/localtime"
+    bwrap_args="$bwrap_args --bind-try /etc/machine-id /etc/machine-id"
+    
+    if [ -d "/dev/shm" ]; then
+        bwrap_args="$bwrap_args --bind /dev/shm /dev/shm"
+    fi
+    
+    if [ -d "/dev/dri" ]; then
+        bwrap_args="$bwrap_args --dev-bind /dev/dri /dev/dri"
+    fi
+    
+    if [ -d "/dev/input" ]; then
+        bwrap_args="$bwrap_args --dev-bind /dev/input /dev/input"
+    fi
+    
+    if [ "$fix_mode" = true ]; then
+        for hidraw in /dev/hidraw*; do
+            if [ -e "$hidraw" ]; then
+                bwrap_args="$bwrap_args --dev-bind-try $hidraw $hidraw"
+            fi
+        done
+    fi
+    
+    for dev in null zero random urandom full tty; do
+        if [ -e "/dev/$dev" ]; then
+            bwrap_args="$bwrap_args --dev-bind-try /dev/$dev /dev/$dev"
+        fi
+    done
+    
+    if [ -e "/dev/ntsync" ]; then
+        bwrap_args="$bwrap_args --dev-bind /dev/ntsync /dev/ntsync"
+    fi
+    
+    if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR" ]; then
+        bwrap_args="$bwrap_args --bind \"$XDG_RUNTIME_DIR\" \"$XDG_RUNTIME_DIR\""
+    else
+        local user_id
+        user_id=$(id -u)
+        if [ -d "/run/user/$user_id" ]; then
+            bwrap_args="$bwrap_args --bind /run/user/$user_id /run/user/$user_id"
+        fi
+    fi
+    
+    if [ -d "/run/dbus" ]; then
+        bwrap_args="$bwrap_args --bind /run/dbus /run/dbus"
+    fi
+    
+    if [ -n "${MANGOHUD_BIN:-}" ] && [ -f "$MANGOHUD_BIN" ]; then
+        bwrap_args="$bwrap_args --ro-bind-try $MANGOHUD_BIN $MANGOHUD_BIN"
+    fi
+    
+    if [ -d "/usr/lib/mangohud" ]; then
+        bwrap_args="$bwrap_args --ro-bind-try /usr/lib/mangohud /usr/lib/mangohud"
+    fi
+    if [ -d "/usr/lib64/mangohud" ]; then
+        bwrap_args="$bwrap_args --ro-bind-try /usr/lib64/mangohud /usr/lib64/mangohud"
+    fi
+    if [ -d "/usr/share/mangohud" ]; then
+        bwrap_args="$bwrap_args --ro-bind-try /usr/share/mangohud /usr/share/mangohud"
+    fi
+    
+    # MangoHud config - utiliser HOME_REAL car HOME est dans tmpfs
+    local mangohud_config_dir="$HOME_REAL/.config/MangoHud"
+    if [ -d "$mangohud_config_dir" ]; then
+        bwrap_args="$bwrap_args --ro-bind-try "$mangohud_config_dir" "$mangohud_config_dir""
+    fi
+    
+    if [ -d "$HOME_REAL/Windows" ]; then
+        bwrap_args="$bwrap_args --bind \"$HOME_REAL/Windows\" \"$HOME_REAL/Windows\""
+    fi
+    
+    if [ -d "$HOME_REAL/Syncthing" ]; then
+        bwrap_args="$bwrap_args --bind \"$HOME_REAL/Syncthing\" \"$HOME_REAL/Syncthing\""
+    fi
+    
+    if [ -d "$CACHE_DIR" ]; then
+        bwrap_args="$bwrap_args --bind \"$CACHE_DIR\" \"$CACHE_DIR\""
+    fi
+    
+    # Gwine installation - nécessaire pour Wine
+    if [ -d "$GWINE_DIR" ]; then
+        bwrap_args="$bwrap_args --bind \"$GWINE_DIR\" \"$GWINE_DIR\""
+    fi
+    
+    bwrap_args="$bwrap_args --bind /tmp /tmp"
+    
+    if [ -d "/run/media" ]; then
+        bwrap_args="$bwrap_args --bind /run/media /run/media"
+    fi
+    
+    local download_dir
+    download_dir=$(xdg-user-dir DOWNLOAD 2>/dev/null)
+    if [ -z "$download_dir" ] || [ ! -d "$download_dir" ]; then
+        download_dir="$HOME_REAL/Téléchargements"
+        [ ! -d "$download_dir" ] && download_dir="$HOME_REAL/Downloads"
+    fi
+    
+    if [ -n "$download_dir" ] && [ -d "$download_dir" ]; then
+        bwrap_args="$bwrap_args --bind \"$download_dir\" \"$download_dir\""
+    fi
+    
+    # Dossier du jeu/exe - accès configurable
+    if [ -n "$exe_dir" ] && [ -d "$exe_dir" ]; then
+        if [ "$access_mode" = "ro" ]; then
+            bwrap_args="$bwrap_args --ro-bind \"$exe_dir\" \"$exe_dir\""
+        else
+            bwrap_args="$bwrap_args --bind \"$exe_dir\" \"$exe_dir\""
+        fi
+    fi
+    
+    bwrap_args="$bwrap_args --setenv HOME \"$HOME\""
+    bwrap_args="$bwrap_args --setenv WINEPREFIX \"$WINEPREFIX\""
+    bwrap_args="$bwrap_args --setenv WINEARCH \"$WINEARCH\""
+    bwrap_args="$bwrap_args --setenv WINE \"$WINE_BIN\""
+    bwrap_args="$bwrap_args --setenv PATH \"$PATH\""
+    
+    if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+        bwrap_args="$bwrap_args --setenv XDG_RUNTIME_DIR \"$XDG_RUNTIME_DIR\""
+    fi
+    
+    local PRELOAD_LIBS=""
+    
+    if [ -n "${MANGOHUD_BIN:-}" ]; then
+        local MANGOHUD_LIBS="/usr/lib/mangohud/libMangoHud_shim.so:/usr/lib64/mangohud/libMangoHud_shim.so"
+        PRELOAD_LIBS="$MANGOHUD_LIBS"
+    fi
+    
+    if [ -n "$PRELOAD_LIBS" ]; then
+        bwrap_args="$bwrap_args --setenv LD_PRELOAD \"$PRELOAD_LIBS\""
+    elif [ -n "${LD_PRELOAD:-}" ]; then
+        bwrap_args="$bwrap_args --setenv LD_PRELOAD \"$LD_PRELOAD\""
+    else
+        bwrap_args="$bwrap_args --setenv LD_PRELOAD \"\""
+    fi
+    
+    [ -n "${WINE_LARGE_ADDRESS_AWARE:-}" ] && bwrap_args="$bwrap_args --setenv WINE_LARGE_ADDRESS_AWARE \"$WINE_LARGE_ADDRESS_AWARE\""
+    [ -n "${STAGING_SHARED_MEMORY:-}" ] && bwrap_args="$bwrap_args --setenv STAGING_SHARED_MEMORY \"$STAGING_SHARED_MEMORY\""
+    [ -n "${WINEFSYNC:-}" ] && bwrap_args="$bwrap_args --setenv WINEFSYNC \"$WINEFSYNC\""
+    [ -n "${PULSE_LATENCY_MSEC:-}" ] && bwrap_args="$bwrap_args --setenv PULSE_LATENCY_MSEC \"$PULSE_LATENCY_MSEC\""
+    [ -n "${WINEDEBUG:-}" ] && bwrap_args="$bwrap_args --setenv WINEDEBUG \"$WINEDEBUG\""
+    [ -n "${WINEDLLOVERRIDES:-}" ] && bwrap_args="$bwrap_args --setenv WINEDLLOVERRIDES \"$WINEDLLOVERRIDES\""
+    [ -n "${LD_LIBRARY_PATH:-}" ] && bwrap_args="$bwrap_args --setenv LD_LIBRARY_PATH \"$LD_LIBRARY_PATH\""
+    [ -n "${VK_ICD_FILENAMES:-}" ] && bwrap_args="$bwrap_args --setenv VK_ICD_FILENAMES \"$VK_ICD_FILENAMES\""
+    [ -n "${DXVK_STATE_CACHE_PATH:-}" ] && bwrap_args="$bwrap_args --setenv DXVK_STATE_CACHE_PATH \"$DXVK_STATE_CACHE_PATH\""
+    [ -n "${VKD3D_SHADER_CACHE_PATH:-}" ] && bwrap_args="$bwrap_args --setenv VKD3D_SHADER_CACHE_PATH \"$VKD3D_SHADER_CACHE_PATH\""
+    [ -n "${__GL_SHADER_DISK_CACHE:-}" ] && bwrap_args="$bwrap_args --setenv __GL_SHADER_DISK_CACHE \"$__GL_SHADER_DISK_CACHE\""
+    [ -n "${__GL_SHADER_DISK_CACHE_SKIP_CLEANUP:-}" ] && bwrap_args="$bwrap_args --setenv __GL_SHADER_DISK_CACHE_SKIP_CLEANUP \"$__GL_SHADER_DISK_CACHE_SKIP_CLEANUP\""
+    [ -n "${__GL_SHADER_DISK_CACHE_PATH:-}" ] && bwrap_args="$bwrap_args --setenv __GL_SHADER_DISK_CACHE_PATH \"$__GL_SHADER_DISK_CACHE_PATH\""
+    [ -n "${MESA_SHADER_CACHE_DIR:-}" ] && bwrap_args="$bwrap_args --setenv MESA_SHADER_CACHE_DIR \"$MESA_SHADER_CACHE_DIR\""
+    [ -n "${MANGOHUD:-}" ] && bwrap_args="$bwrap_args --setenv MANGOHUD \"$MANGOHUD\""
+    [ -n "${MANGOHUD_DLSYM:-}" ] && bwrap_args="$bwrap_args --setenv MANGOHUD_DLSYM \"$MANGOHUD_DLSYM\""
+    [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && bwrap_args="$bwrap_args --setenv DBUS_SESSION_BUS_ADDRESS \"$DBUS_SESSION_BUS_ADDRESS\""
+    
+    if [ -n "${MANGOHUD_BIN:-}" ]; then
+        CMD="$MANGOHUD_BIN $CMD"
+    fi
+    
+    echo "$bwrap_args"
+}
+
+#======================================
+# Fonctions de gestion des WGP
+#======================================
+
+init_wgp_variables() {
+    WGPACK_FILE="$(realpath "$fullpath")"
+    GAME_INTERNAL_NAME=""
+
+    local GAMENAME_CONTENT
+    local UNSQUASHFS_BIN
+    UNSQUASHFS_BIN=$(get_system_tool unsquashfs)
+    GAMENAME_CONTENT=$("$UNSQUASHFS_BIN" -cat "$WGPACK_FILE" ".gamename" 2>/dev/null)
+    if [ -n "$GAMENAME_CONTENT" ]; then
+        GAME_INTERNAL_NAME="$GAMENAME_CONTENT"
+        GAME_INTERNAL_NAME="${GAME_INTERNAL_NAME%.}"
+    fi
+
+    if [ -z "$GAME_INTERNAL_NAME" ]; then
+        GAME_INTERNAL_NAME="$(basename "$WGPACK_FILE" .wgp)"
+        GAME_INTERNAL_NAME="${GAME_INTERNAL_NAME%.}"
+    fi
+
+    WGPACK_NAME="$GAME_INTERNAL_NAME"
+
+    MOUNT_BASE="/tmp/wgpackmount"
+    MOUNT_DIR="$MOUNT_BASE/$WGPACK_NAME"
+    EXTRA_BASE="/tmp/wgp-extra"
+    EXTRA_DIR="$EXTRA_BASE/$WGPACK_NAME"
+}
+
+mount_wgp() {
+    mkdir -p "$MOUNT_BASE"
+    
+    local LOCK_FILE="/tmp/wgp-lock-$WGPACK_NAME"
+    
+    if [ -f "$LOCK_FILE" ]; then
+        local LOCK_PID
+        LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null | cut -d: -f1)
+        if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
+            local RELAUNCH=false
+            local QUESTION="$WGPACK_NAME est déjà lancé.\n\nVoulez-vous arrêter l'instance en cours et relancer le jeu ?"
+            
+            if command -v kdialog &> /dev/null; then
+                kdialog --warningyesno "$QUESTION" --yes-label "Oui, relancer" --no-label "Non, annuler" && RELAUNCH=true
+            else
+                read -p "$QUESTION (o/N): " -r
+                [[ "$REPLY" =~ ^[oOyY]$ ]] && RELAUNCH=true
+            fi
+            
+            if [ "$RELAUNCH" = true ]; then
+                echo "Arrêt de l'instance en cours..."
+                # Créer un marqueur de relancement pour empêcher le démontage par l'ancienne instance
+                local RELAUNCH_MARKER="/tmp/wgp-relaunch-$WGPACK_NAME"
+                touch "$RELAUNCH_MARKER"
+                # Tuer le processus principal
+                kill -9 "$LOCK_PID" 2>/dev/null
+                # Tuer tous les processus enfants du groupe de processus
+                kill -9 -- -"$LOCK_PID" 2>/dev/null || true
+                # Tuer spécifiquement tous les processus bwrap associés à ce WGP
+                local mount_escape
+                mount_escape=$(printf '%s' "$MOUNT_DIR" | sed 's/[[\.*^$()+?{|\\]/\\&/g')
+                pkill -9 -f "bwrap.*$mount_escape" 2>/dev/null || true
+                # Tuer tous les processus wine associés à ce préfixe
+                pkill -9 -f "wine.*$WINEPREFIX" 2>/dev/null || true
+                # Attendre que tous les processus se terminent
+                sleep 1
+                # Nettoyer nous-mêmes les montages si nécessaire (l'ancien cleanup ne le fera pas à cause du marqueur)
+                if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
+                    fusermount -uz "$MOUNT_DIR" 2>/dev/null || true
+                fi
+                local OVERLAY_DIR="/tmp/wgp-full-overlay/wgp-$(echo "$WGPACK_NAME" | tr -cd '[:alnum:]-')"
+                if mountpoint -q "$OVERLAY_DIR" 2>/dev/null; then
+                    fusermount -uz "$OVERLAY_DIR" 2>/dev/null || true
+                fi
+                rm -f "$LOCK_FILE"
+                # Le marqueur sera supprimé après le montage réussi
+            else
+                error_exit "$WGPACK_NAME est déjà en cours d'exécution"
+            fi
+        else
+            rm -f "$LOCK_FILE"
+        fi
+    fi
+
+    if mountpoint -q "$MOUNT_DIR"; then
+        echo "Montage orphelin détecté pour $WGPACK_NAME, nettoyage..."
+        fusermount -uz "$MOUNT_DIR" 2>/dev/null
+    fi
+
+    local SQUASHFUSE_BIN
+    SQUASHFUSE_BIN=$(get_system_tool squashfuse)
+
+    mkdir -p "$MOUNT_DIR"
+    echo "Montage de $WGPACK_FILE sur $MOUNT_DIR..."
+    "$SQUASHFUSE_BIN" -r "$WGPACK_FILE" "$MOUNT_DIR"
+
+    if [ $? -ne 0 ]; then
+        rmdir "$MOUNT_DIR"
+        error_exit "Erreur lors du montage du squashfs"
+    fi
+    
+    echo "$$:$(date +%s)" > "$LOCK_FILE"
+    
+    # Supprimer le marqueur de relancement après montage réussi
+    rm -f "/tmp/wgp-relaunch-$WGPACK_NAME" 2>/dev/null || true
+}
+
+cleanup_wgp() {
+    # Vérifier si un relancement est en cours - si oui, ne pas démonter
+    local RELAUNCH_MARKER="/tmp/wgp-relaunch-$WGPACK_NAME"
+    if [ -f "$RELAUNCH_MARKER" ]; then
+        return 0
+    fi
+    
+    if mountpoint -q "$MOUNT_DIR"; then
+        sleep 0.3
+        
+        local mount_escape
+        mount_escape=$(printf '%s' "$MOUNT_DIR" | sed 's/[[\.*^$()+?{|\\]/\\&/g')
+        local bwrap_pids
+        bwrap_pids=$(pgrep -f "bwrap.*$mount_escape" 2>/dev/null || true)
+        
+        if [ -n "$bwrap_pids" ]; then
+            local lock_file="/tmp/wgp-lock-$WGPACK_NAME"
+            
+            if [ -f "$lock_file" ]; then
+                local lock_pid
+                lock_pid=$(cat "$lock_file" 2>/dev/null | cut -d: -f1)
+                
+                if [ -n "$lock_pid" ]; then
+                    local is_new_instance=false
+                    for pid in $bwrap_pids; do
+                        if [ "$pid" -gt "$lock_pid" ] 2>/dev/null; then
+                            is_new_instance=true
+                            break
+                        fi
+                    done
+                    
+                    if [ "$is_new_instance" = true ]; then
+                        echo "Une nouvelle instance de $WGPACK_NAME a pris la main, pas de démontage."
+                        return 0
+                    fi
+                fi
+            fi
+        fi
+        
+        if command -v fuser &> /dev/null; then
+            while true; do
+                local new_bwrap_pids
+                new_bwrap_pids=$(pgrep -f "bwrap.*$mount_escape" 2>/dev/null || true)
+                if [ -n "$new_bwrap_pids" ]; then
+                    local lock_file="/tmp/wgp-lock-$WGPACK_NAME"
+                    if [ -f "$lock_file" ]; then
+                        local lock_pid
+                        lock_pid=$(cat "$lock_file" 2>/dev/null | cut -d: -f1)
+                        local is_new=false
+                        for pid in $new_bwrap_pids; do
+                            if [ "$pid" -gt "$lock_pid" ] 2>/dev/null; then
+                                is_new=true
+                                break
+                            fi
+                        done
+                        if [ "$is_new" = true ]; then
+                            echo "Nouvelle instance détectée, abandon du démontage."
+                            return 0
+                        fi
+                    fi
+                fi
+                
+                if ! fuser "$MOUNT_DIR"/* >/dev/null 2>&1; then
+                    break
+                fi
+                
+                echo "En attente que les processus libèrent le mount..."
+                sleep 2
+            done
+        fi
+    fi
+
+    echo "Démontage de $WGPACK_NAME..."
+
+    cleanup_saves_symlink
+    cleanup_extras_symlink
+    cleanup_temp_symlink
+
+    fusermount -uz "$MOUNT_DIR" 2>/dev/null || true
+    sleep 0.3
+    
+    if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
+        umount -f "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null || true
+        sleep 0.2
+    fi
+    
+    if [ -d "$MOUNT_DIR" ]; then
+        rm -rf "$MOUNT_DIR" 2>/dev/null || true
+    fi
+    
+    rm -f "/tmp/wgp-lock-$WGPACK_NAME" 2>/dev/null || true
+}
+
+read_wgp_config() {
+    local LAUNCH_FILE="$MOUNT_DIR/.launch"
+    if [ ! -f "$LAUNCH_FILE" ]; then
+        echo "Erreur: fichier .launch introuvable dans le pack" >&2
+        cleanup_wgp
+        exit 1
+    fi
+
+    local launch_content
+    launch_content="$(cat "$LAUNCH_FILE" | tr -d '\n\r')"
+    FULL_EXE_PATH="$MOUNT_DIR/$launch_content"
+
+    if [ ! -e "$FULL_EXE_PATH" ]; then
+        echo "Erreur: exécutable introuvable: $(cat "$LAUNCH_FILE")" >&2
+        cleanup_wgp
+        exit 1
+    fi
+
+    local ARGS_FILE="$MOUNT_DIR/.args"
+    if [ -f "$ARGS_FILE" ]; then
+        local wgp_args
+        wgp_args=$(cat "$ARGS_FILE")
+        if [ -n "$wgp_args" ]; then
+            args="$wgp_args"
+        fi
+    fi
+
+    local FIX_FILE="$MOUNT_DIR/.fix"
+    if [ -f "$FIX_FILE" ]; then
+        fix_mode=true
+    fi
+}
+
+prepare_saves() {
+    local SAVE_FILE="$MOUNT_DIR/.savepath"
+    local SAVE_WGP_DIR="$MOUNT_DIR/.save"
+    local SAVES_DIR="$SAVES_REAL/$GAME_INTERNAL_NAME"
+
+    [ -f "$SAVE_FILE" ] || return 0
+
+    if [ -d "$SAVES_DIR" ]; then
+        if [ -n "$(find "$SAVES_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
+            return 0
+        fi
+    fi
+
+    echo "Copie des sauvegardes depuis .save..."
+
+    while IFS= read -r SAVE_REL_PATH; do
+        [ -z "$SAVE_REL_PATH" ] && continue
+
+        local SAVE_WGP_ITEM="$SAVE_WGP_DIR/$SAVE_REL_PATH"
+        local FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
+
+        if [ -d "$SAVE_WGP_ITEM" ]; then
+            _copy_dir_rewrite_symlinks "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
+        elif [ -e "$SAVE_WGP_ITEM" ]; then
+            mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
+            if [ -L "$SAVE_WGP_ITEM" ]; then
+                _copy_symlink_rewrite "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
+            else
+                cp -n "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
+            fi
+        fi
+    done < "$SAVE_FILE"
+}
+
+_copy_symlink_as_abs() {
+    local src_symlink="$1"
+    local dst_symlink="$2"
+    local src_base_dir="${3:-}"
+    local dst_base_dir="${4:-}"
+
+    local target
+    target=$(readlink "$src_symlink")
+    [ -z "$target" ] && return 1
+
+    local abs_target
+    if [[ "$target" == /* ]]; then
+        abs_target="$target"
+    else
+        abs_target=$(realpath -m "$(dirname "$src_symlink")/$target" 2>/dev/null)
+    fi
+
+    if [[ "$abs_target" == */.save/* ]]; then
+        abs_target=$(echo "$abs_target" | sed 's|/.save/|/|g')
+    elif [[ "$abs_target" == */.extra/* ]]; then
+        abs_target=$(echo "$abs_target" | sed 's|/.extra/|/|g')
+    elif [[ "$abs_target" == */.temp/* ]]; then
+        abs_target=$(echo "$abs_target" | sed 's|/.temp/|/|g')
+    fi
+
+    if [ -n "$src_base_dir" ] && [ -n "$dst_base_dir" ]; then
+        if [[ "$abs_target" == "$src_base_dir"* ]]; then
+            local rel_path="${abs_target#$src_base_dir/}"
+            abs_target="$dst_base_dir/$rel_path"
+        fi
+    fi
+
+    if [ -n "$abs_target" ]; then
+        ln -s "$abs_target" "$dst_symlink"
+    else
+        ln -s "$target" "$dst_symlink"
+    fi
+}
+
+_copy_dir_with_symlinks() {
+    local src_dir="$1"
+    local dst_dir="$2"
+    local src_base_dir="${3:-}"
+    local dst_base_dir="${4:-}"
+
+    mkdir -p "$dst_dir"
+
+    for item in "$src_dir"/*; do
+        [ -e "$item" ] || [ -L "$item" ] || continue
+        local name
+        name=$(basename "$item")
+        local dst_item="$dst_dir/$name"
+
+        if [ -L "$item" ]; then
+            _copy_symlink_as_abs "$item" "$dst_item" "$src_base_dir" "$dst_base_dir"
+        elif [ -f "$item" ]; then
+            cp -n "$item" "$dst_item"
+        elif [ -d "$item" ]; then
+            _copy_dir_with_symlinks "$item" "$dst_item" "$src_base_dir" "$dst_base_dir"
+        fi
+    done
+}
+
+_copy_dir_rewrite_symlinks() {
+    local src_dir="$1"
+    local dst_dir="$2"
+
+    mkdir -p "$dst_dir"
+
+    for item in "$src_dir"/*; do
+        [ -e "$item" ] || [ -L "$item" ] || continue
+        local name
+        name=$(basename "$item")
+        local dst_item="$dst_dir/$name"
+
+        if [ -L "$item" ]; then
+            _copy_symlink_rewrite "$item" "$dst_item"
+        elif [ -f "$item" ]; then
+            cp -n "$item" "$dst_item"
+        elif [ -d "$item" ]; then
+            _copy_dir_rewrite_symlinks "$item" "$dst_item"
+        fi
+    done
+}
+
+_copy_symlink_rewrite() {
+    local src_symlink="$1"
+    local dst_symlink="$2"
+
+    local target
+    target=$(readlink "$src_symlink")
+    local abs_target
+
+    if [[ "$target" == /* ]]; then
+        abs_target="$target"
+    else
+        abs_target=$(realpath -m "$(dirname "$src_symlink")/$target" 2>/dev/null)
+    fi
+
+    if [[ -n "$abs_target" ]] && [[ "$abs_target" != "$MOUNT_DIR"* ]]; then
+        local game_name="$GAME_INTERNAL_NAME"
+        local rewritten_target="$MOUNT_DIR"
+
+        if [[ "$abs_target" == */lgp/"$game_name"/* ]]; then
+            local rel_path="${abs_target##*/lgp/$game_name/}"
+            rewritten_target="$MOUNT_DIR/$rel_path"
+        elif [[ "$abs_target" == */"$game_name"/* ]]; then
+            local rel_path="${abs_target##*/$game_name/}"
+            rewritten_target="$MOUNT_DIR/$rel_path"
+        fi
+
+        if [ -e "$rewritten_target" ]; then
+            ln -s "$rewritten_target" "$dst_symlink"
+            echo "Symlink réécrit: $dst_symlink -> $rewritten_target"
+        else
+            local real_target
+            real_target=$(realpath "$src_symlink" 2>/dev/null)
+            if [ -f "$real_target" ]; then
+                cp -n "$real_target" "$dst_symlink"
+            fi
+        fi
+    else
+        ln -s "$target" "$dst_symlink"
+    fi
+}
+
+prepare_extras() {
+    local EXTRAPATH_FILE="$MOUNT_DIR/.extrapath"
+    local EXTRA_WGP_DIR="$MOUNT_DIR/.extra"
+    local EXTRA_CACHE_DIR="$EXTRA_REAL/$GAME_INTERNAL_NAME"
+
+    [ -f "$EXTRAPATH_FILE" ] || return 0
+
+    if [ -d "$EXTRA_DIR" ] && [ ! -L "$EXTRA_DIR" ]; then
+        rm -rf "$EXTRA_DIR"
+    fi
+
+    if [ -d "$EXTRA_CACHE_DIR" ] && [ -n "$(find "$EXTRA_CACHE_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
+        mkdir -p "$EXTRA_BASE"
+        rm -f "$EXTRA_DIR"
+        ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
+        return 0
+    fi
+
+    echo "Copie des extras depuis .extra..."
+
+    while IFS= read -r EXTRA_REL_PATH; do
+        [ -z "$EXTRA_REL_PATH" ] && continue
+
+        local EXTRA_WGP_ITEM="$EXTRA_WGP_DIR/$EXTRA_REL_PATH"
+        local FINAL_EXTRA_ITEM="$EXTRA_CACHE_DIR/$EXTRA_REL_PATH"
+
+        if [ -d "$EXTRA_WGP_ITEM" ]; then
+            _copy_dir_rewrite_symlinks "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
+        elif [ -e "$EXTRA_WGP_ITEM" ]; then
+            mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
+            if [ -L "$EXTRA_WGP_ITEM" ]; then
+                _copy_symlink_rewrite "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
+            else
+                cp -n "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
+            fi
+        fi
+    done < "$EXTRAPATH_FILE"
+
+    mkdir -p "$EXTRA_BASE"
+    rm -f "$EXTRA_DIR"
+    ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
+}
+
+prepare_temps() {
+    local TEMPPATH_FILE="$MOUNT_DIR/.temppath"
+    
+    [ -f "$TEMPPATH_FILE" ] || return 0
+    
+    if grep -q "^\*$" "$TEMPPATH_FILE" 2>/dev/null; then
+        echo "Mode overlay complet détecté (* dans .temppath)"
+        prepare_full_overlay
+        return 0
+    fi
+    
+    prepare_temp_folders
+}
+
+prepare_temp_folders() {
+    local TEMPPATH_FILE="$MOUNT_DIR/.temppath"
+    local TEMP_WGP_DIR="$MOUNT_DIR/.temp"
+    local TEMP_GAME_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
+    local GAME_ID="${_GAME_TEMP_ID:-wgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')}"
+    local TEMP_UPPER="/tmp/wgp-temp-upper/$GAME_ID"
+
+    if [ ! -d "$TEMP_WGP_DIR" ]; then
+        echo "Dossier .temp non trouvé dans le WGP, skip overlay"
+        return 0
+    fi
+
+    echo "Montage de l'overlay mergerfs pour les dossiers temporaires..."
+
+    if [ ! -d "$TEMP_GAME_DIR" ] || [ ! -d "$TEMP_UPPER" ]; then
+        error_exit "Dossiers overlay manquants pour les fichiers temporaires"
+    fi
+
+    if [ -n "$(ls -A "$TEMP_GAME_DIR" 2>/dev/null)" ]; then
+        echo "Nettoyage du point de montage non vide..."
+        rm -rf "$TEMP_GAME_DIR"/* "$TEMP_GAME_DIR"/.* 2>/dev/null || true
+    fi
+
+    if mountpoint -q "$TEMP_GAME_DIR" 2>/dev/null; then
+        echo "Démontage de l'overlay existant..."
+        fusermount -u "$TEMP_GAME_DIR" 2>/dev/null || umount -f "$TEMP_GAME_DIR" 2>/dev/null || true
+    fi
+
+    local MERGERFS_BIN
+    MERGERFS_BIN=$(get_system_tool mergerfs)
+
+    echo "  lowerdir: $TEMP_WGP_DIR"
+    echo "  upperdir: $TEMP_UPPER"
+    echo "  mountpoint: $TEMP_GAME_DIR"
+    
+    if ! "$MERGERFS_BIN" -o defaults,allow_other,use_ino,category.create=mfs \
+        "$TEMP_UPPER:$TEMP_WGP_DIR" "$TEMP_GAME_DIR" 2>&1; then
+        error_exit "Échec du montage mergerfs pour les fichiers temporaires"
+    fi
+
+    export _TEMP_FOLDERS_MOUNT="$TEMP_GAME_DIR"
+    export _TEMP_FOLDERS_UPPER="$TEMP_UPPER"
+
+    echo "Overlay mergerfs monté avec succès: $TEMP_GAME_DIR"
+}
+
+prepare_full_overlay() {
+    local GAME_ID="wgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')"
+    local FULL_OVERLAY_BASE="/tmp/wgp-full-overlay"
+    local MOUNT_OVERLAY="$FULL_OVERLAY_BASE/$GAME_ID"
+    local TEMP_UPPER="$FULL_OVERLAY_BASE-upper/$GAME_ID"
+    
+    if [ -d "$MOUNT_OVERLAY" ]; then
+        echo "Nettoyage de l'overlay précédent..."
+        fusermount -uz "$MOUNT_OVERLAY" 2>/dev/null || true
+        umount -f "$MOUNT_OVERLAY" 2>/dev/null || umount -f -l "$MOUNT_OVERLAY" 2>/dev/null || true
+        rm -rf "$MOUNT_OVERLAY" 2>/dev/null || true
+    fi
+    
+    rm -rf "$TEMP_UPPER" 2>/dev/null || true
+    
+    mkdir -p "$MOUNT_OVERLAY" "$TEMP_UPPER"
+    
+    echo "Montage de l'overlay complet avec mergerfs..."
+    echo "  lowerdir: $MOUNT_DIR (WGP entier - lecture seule)"
+    echo "  upperdir: $TEMP_UPPER (writable)"
+    echo "  mountpoint: $MOUNT_OVERLAY"
+    
+    local MERGERFS_BIN
+    MERGERFS_BIN=$(get_system_tool mergerfs)
+    
+    if ! "$MERGERFS_BIN" -o defaults,allow_other,use_ino,category.create=mfs \
+        "$TEMP_UPPER:$MOUNT_DIR" "$MOUNT_OVERLAY" 2>&1; then
+        error_exit "Échec du montage mergerfs pour l'overlay complet"
+    fi
+    
+    local REL_EXE="${FULL_EXE_PATH#$MOUNT_DIR/}"
+    FULL_EXE_PATH="$MOUNT_OVERLAY/$REL_EXE"
+    
+    export _FULL_OVERLAY_MOUNT="$MOUNT_OVERLAY"
+    export _FULL_OVERLAY_UPPER="$TEMP_UPPER"
+    
+    echo "Overlay complet monté avec succès: $MOUNT_OVERLAY"
+    echo "  Exécutable redirigé: $FULL_EXE_PATH"
+}
+
+has_saves() {
+    [ -f "$MOUNT_DIR/.savepath" ]
+}
+
+setup_saves_symlink() {
+    has_saves || return 0
+
+    local GAME_SAVES_DIR="$SAVES_REAL/$GAME_INTERNAL_NAME"
+    local GAME_SAVES_SYMLINK="$SAVES_SYMLINK/$GAME_INTERNAL_NAME"
+
+    mkdir -p "$GAME_SAVES_DIR"
+    mkdir -p "$SAVES_SYMLINK"
+
+    if [ -L "$GAME_SAVES_SYMLINK" ]; then
+        rm -f "$GAME_SAVES_SYMLINK"
+    fi
+
+    ln -s "$GAME_SAVES_DIR" "$GAME_SAVES_SYMLINK"
+    echo "Symlink créé: $GAME_SAVES_SYMLINK -> $GAME_SAVES_DIR"
+}
+
+cleanup_saves_symlink() {
+    local GAME_SAVES_SYMLINK="$SAVES_SYMLINK/$GAME_INTERNAL_NAME"
+    [ -L "$GAME_SAVES_SYMLINK" ] && rm -f "$GAME_SAVES_SYMLINK"
+    return 0
+}
+
+has_extras() {
+    [ -f "$MOUNT_DIR/.extrapath" ]
+}
+
+setup_extras_symlink() {
+    has_extras || return 0
+
+    local GAME_EXTRAS_DIR="$EXTRA_REAL/$GAME_INTERNAL_NAME"
+    local GAME_EXTRAS_SYMLINK="$EXTRA_SYMLINK/$GAME_INTERNAL_NAME"
+
+    mkdir -p "$GAME_EXTRAS_DIR"
+    mkdir -p "$EXTRA_SYMLINK"
+
+    if [ -L "$GAME_EXTRAS_SYMLINK" ]; then
+        rm -f "$GAME_EXTRAS_SYMLINK"
+    fi
+
+    ln -s "$GAME_EXTRAS_DIR" "$GAME_EXTRAS_SYMLINK"
+    echo "Symlink créé: $GAME_EXTRAS_SYMLINK -> $GAME_EXTRAS_DIR"
+}
+
+cleanup_extras_symlink() {
+    local GAME_EXTRAS_SYMLINK="$EXTRA_SYMLINK/$GAME_INTERNAL_NAME"
+    [ -L "$GAME_EXTRAS_SYMLINK" ] && rm -f "$GAME_EXTRAS_SYMLINK"
+    return 0
+}
+
+setup_temp_symlink() {
+    local TEMPPATH_FILE="$MOUNT_DIR/.temppath"
+    local GAME_ID="wgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')"
+    
+    export _GAME_TEMP_ID="$GAME_ID"
+
+    if [ ! -f "$TEMPPATH_FILE" ]; then
+        return 0
+    fi
+    
+    if grep -q "^\*$" "$TEMPPATH_FILE" 2>/dev/null; then
+        local FULL_OVERLAY_BASE="/tmp/wgp-full-overlay"
+        local MOUNT_OVERLAY="$FULL_OVERLAY_BASE/$GAME_ID"
+        local TEMP_UPPER="$FULL_OVERLAY_BASE-upper/$GAME_ID"
+        
+        if mountpoint -q "$MOUNT_OVERLAY" 2>/dev/null; then
+            echo "Démontage de l'overlay existant..."
+            fusermount -u "$MOUNT_OVERLAY" 2>/dev/null || umount -f "$MOUNT_OVERLAY" 2>/dev/null || true
+            sleep 0.5
+        fi
+        
+        if [ -d "$MOUNT_OVERLAY" ]; then
+            rmdir "$MOUNT_OVERLAY" 2>/dev/null || rm -rf "$MOUNT_OVERLAY" 2>/dev/null || true
+        fi
+        rm -rf "$TEMP_UPPER" 2>/dev/null || true
+        
+        mkdir -p "$MOUNT_OVERLAY"
+        mkdir -p "$TEMP_UPPER"
+        
+        chmod 777 "$TEMP_UPPER"
+        
+        echo "Dossiers overlay préparés pour mergerfs (mode full): $GAME_ID"
+    else
+        local TEMP_GAME_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
+        local TEMP_UPPER="/tmp/wgp-temp-upper/$GAME_ID"
+        
+        if mountpoint -q "$TEMP_GAME_DIR" 2>/dev/null; then
+            echo "Démontage de l'overlay temp existant..."
+            fusermount -u "$TEMP_GAME_DIR" 2>/dev/null || umount -f "$TEMP_GAME_DIR" 2>/dev/null || true
+            sleep 0.5
+        fi
+        
+        if [ -d "$TEMP_GAME_DIR" ]; then
+            rm -rf "$TEMP_GAME_DIR"
+        fi
+        if [ -d "$TEMP_UPPER" ]; then
+            rm -rf "$TEMP_UPPER"
+        fi
+        
+        mkdir -p "$TEMP_GAME_DIR"
+        mkdir -p "$TEMP_UPPER"
+        
+        chmod 777 "$TEMP_UPPER"
+        
+        echo "Dossiers overlay préparés pour mergerfs (mode temp folders): $GAME_ID"
+    fi
+}
+
+cleanup_temp_symlink() {
+    local GAME_ID=""
+    
+    if [ -n "${_FULL_OVERLAY_MOUNT:-}" ] || [ -n "${_FULL_OVERLAY_UPPER:-}" ]; then
+        local MOUNT_OVERLAY="${_FULL_OVERLAY_MOUNT:-}"
+        local TEMP_UPPER="${_FULL_OVERLAY_UPPER:-}"
+        
+        if [ -n "$GAME_INTERNAL_NAME" ] && [ -z "$GAME_ID" ]; then
+            GAME_ID="wgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')"
+        fi
+        
+        if [ -n "$MOUNT_OVERLAY" ]; then
+            echo "Nettoyage de l'overlay complet..."
+            fusermount -uz "$MOUNT_OVERLAY" 2>/dev/null || true
+            sleep 0.3
+            
+            if mountpoint -q "$MOUNT_OVERLAY" 2>/dev/null; then
+                umount -f "$MOUNT_OVERLAY" 2>/dev/null || umount -f -l "$MOUNT_OVERLAY" 2>/dev/null || true
+                sleep 0.2
+            fi
+            
+            if [ -d "$MOUNT_OVERLAY" ]; then
+                rm -rf "$MOUNT_OVERLAY" 2>/dev/null || true
+            fi
+            
+            if [ -n "$TEMP_UPPER" ] && [ -d "$TEMP_UPPER" ]; then
+                rm -rf "$TEMP_UPPER" 2>/dev/null || true
+            fi
+        fi
+        
+        unset _FULL_OVERLAY_MOUNT _FULL_OVERLAY_UPPER
+    fi
+    
+    if [ -n "${_TEMP_FOLDERS_MOUNT:-}" ] || [ -n "${_TEMP_FOLDERS_UPPER:-}" ]; then
+        local TEMP_MOUNT="${_TEMP_FOLDERS_MOUNT:-}"
+        local TEMP_UPPER="${_TEMP_FOLDERS_UPPER:-}"
+        
+        if [ -n "$GAME_INTERNAL_NAME" ] && [ -z "$GAME_ID" ]; then
+            GAME_ID="wgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')"
+        fi
+        
+        if [ -n "$TEMP_MOUNT" ]; then
+            echo "Nettoyage de l'overlay temp folders..."
+            fusermount -uz "$TEMP_MOUNT" 2>/dev/null || true
+            sleep 0.3
+            
+            if mountpoint -q "$TEMP_MOUNT" 2>/dev/null; then
+                umount -f "$TEMP_MOUNT" 2>/dev/null || umount -f -l "$TEMP_MOUNT" 2>/dev/null || true
+                sleep 0.2
+            fi
+            
+            if [ -d "$TEMP_MOUNT" ]; then
+                rm -rf "$TEMP_MOUNT" 2>/dev/null || true
+            fi
+            
+            if [ -n "$TEMP_UPPER" ] && [ -d "$TEMP_UPPER" ]; then
+                rm -rf "$TEMP_UPPER" 2>/dev/null || true
+            fi
+        fi
+        
+        unset _TEMP_FOLDERS_MOUNT _TEMP_FOLDERS_UPPER
+    fi
+    
+    if [ -n "$GAME_INTERNAL_NAME" ] && [ -z "$GAME_ID" ]; then
+        GAME_ID="wgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')"
+    fi
+    
+    if [ -n "$GAME_ID" ]; then
+        local default_full_mount="/tmp/wgp-full-overlay/$GAME_ID"
+        local default_full_upper="/tmp/wgp-full-overlay-upper/$GAME_ID"
+        
+        if mountpoint -q "$default_full_mount" 2>/dev/null; then
+            fusermount -uz "$default_full_mount" 2>/dev/null || true
+            rm -rf "$default_full_mount" 2>/dev/null || true
+            rm -rf "$default_full_upper" 2>/dev/null || true
+        fi
+        
+        local default_temp_mount="/tmp/wgp-temp/$GAME_ID"
+        local default_temp_upper="/tmp/wgp-temp-upper/$GAME_ID"
+        
+        if mountpoint -q "$default_temp_mount" 2>/dev/null; then
+            fusermount -uz "$default_temp_mount" 2>/dev/null || true
+            rm -rf "$default_temp_mount" 2>/dev/null || true
+            rm -rf "$default_temp_upper" 2>/dev/null || true
+        fi
+    fi
+}
+
+load_env_file() {
+    local env_file="$1"
+    
+    [ -f "$env_file" ] || return 0
+    
+    local env_vars=""
+    local line
+    
+    while IFS= read -r line || [ -n "$line" ]; do
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+        
+        if [ -n "$env_vars" ]; then
+            env_vars="$env_vars $line"
+        else
+            env_vars="$line"
+        fi
+    done < "$env_file"
+    
+    echo "$env_vars"
+}
+
+load_env_files() {
+    local mount_dir="$1"
+    local exe_dir="$2"
+    
+    local env_vars=""
+    local exe_env="$exe_dir/.env"
+    
+    if [ -f "$exe_env" ]; then
+        env_vars=$(load_env_file "$exe_env")
+    fi
+    
+    echo "$env_vars"
+}
+
+launch_wine_game() {
+    local exe_path="$1"
+    local game_args="${2:-}"
+    local display_name="${3:-$(basename "$exe_path")}"
+    local env_vars="${4:-}"
+    local wgp_mode="${5:-false}"  # true si lancement depuis WGP
+    local wgp_file_dir="${6:-}"   # dossier contenant le .wgp (pour mode WGP)
+    
+    echo "Lancement de $display_name avec Wine (gwine-proton)..."
+    
+    export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+    
+    mkdir -p "$WINEPREFIX"
+    
+    apply_padfix_setting
+    
+    if [ ! -x "$WINE_BIN" ]; then
+        error_exit "Wine introuvable: $WINE_BIN"
+    fi
+    
+    local user_winedlloverrides=""
+    if [ -n "$env_vars" ]; then
+        user_winedlloverides=$(echo "$env_vars" | grep -o 'WINEDLLOVERRIDES="[^"]*"' | sed 's/WINEDLLOVERRIDES="\(.*\)"/\1/' || true)
+    fi
+    
+    if [ -n "$env_vars" ]; then
+        echo "Variables d'environnement: $env_vars"
+        eval "export $env_vars"
+    fi
+    
+    if [ "${_NEEDS_WINETRICKS_INIT:-0}" = "1" ]; then
+        install_winetricks_components
+        install_dxvk_vkd3d
+        unset _NEEDS_WINETRICKS_INIT
+    fi
+    
+    setup_windows_directories "$WINEPREFIX"
+    
+    echo "Exécutable: $exe_path"
+    echo "Arguments: $game_args"
+    echo "WINEPREFIX: $WINEPREFIX"
+    
+    export WINE_LARGE_ADDRESS_AWARE=1
+    export STAGING_SHARED_MEMORY=1
+    export WINEFSYNC=1
+    export WINENTSYNC=1
+    export PULSE_LATENCY_MSEC=60
+    export WINEDEBUG=fixme-all
+    
+    if [ -n "$user_winedlloverides" ]; then
+        export WINEDLLOVERRIDES="${user_winedlloverides};winemenubuilder=''"
+    else
+        export WINEDLLOVERRIDES="winemenubuilder=''"
+    fi
+    
+    export WINEARCH="win64"
+    
+    setup_gpu_vulkan
+    
+    local WINE_LIBS="$WINE_DIR/lib:$WINE_DIR/lib32"
+    if [ -d "$WINE_DIR/lib/wine/x86_64-unix" ]; then
+        WINE_LIBS="$WINE_LIBS:$WINE_DIR/lib/wine/x86_64-unix"
+    fi
+    if [ -d "$WINE_DIR/lib32/wine/i386-unix" ]; then
+        WINE_LIBS="$WINE_LIBS:$WINE_DIR/lib32/wine/i386-unix"
+    fi
+    export LD_LIBRARY_PATH="$WINE_LIBS:$LD_LIBRARY_PATH"
+    
+    export DXVK_STATE_CACHE_PATH="$SHADER_CACHE_DIR/dxvk"
+    export VKD3D_SHADER_CACHE_PATH="$SHADER_CACHE_DIR/vkd3d"
+    export __GL_SHADER_DISK_CACHE=1
+    export __GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1
+    export __GL_SHADER_DISK_CACHE_PATH="$SHADER_CACHE_DIR/nvidia"
+    export MESA_SHADER_CACHE_DIR="$SHADER_CACHE_DIR/mesa"
+    
+    mkdir -p "$CACHE_DIR" "$COMPONENTS_DIR" "$SHADER_CACHE_DIR" "$DXVK_STATE_CACHE_PATH" "$VKD3D_SHADER_CACHE_PATH" "$__GL_SHADER_DISK_CACHE_PATH" "$MESA_SHADER_CACHE_DIR" 2>/dev/null || true
+    
+    if [ "${MANGOHUD:-1}" != "0" ]; then
+        export MANGOHUD_BIN=$(command -v mangohud 2>/dev/null)
+    else
+        export MANGOHUD_BIN=""
+    fi
+    local GAMEMODE_ACTIVE=false
+    
+    if [ "${DISABLE_GAMEMODE:-0}" != "1" ] && command -v gamemoded &>/dev/null; then
+        echo "Activation de GameMode avec gamemoded -r..."
+        gamemoded -r &>/dev/null &
+        sleep 0.1
+        GAMEMODE_ACTIVE=true
+        echo "GameMode activé"
+    fi
+    
+    local exe_dir="$(dirname "$exe_path")"
+    echo "Working directory: $exe_dir"
+    cd "$exe_dir" || error_exit "Impossible de changer le répertoire vers $exe_dir"
+    
+    local CMD="$WINE_BIN"
+    
+    if [ "$nosandbox_mode" != true ]; then
+        if command -v bwrap &>/dev/null; then
+            echo "Sandbox activé (bwrap)"
+            local bwrap_args
+            local bwrap_access_dir=""
+            local bwrap_access_mode="rw"
+            
+            # Déterminer le dossier et le mode d'accès
+            if [ "$wgp_mode" = "true" ] && [ -n "$wgp_file_dir" ]; then
+                # Mode WGP : accès RO au dossier contenant le .wgp
+                bwrap_access_dir="$wgp_file_dir"
+                bwrap_access_mode="ro"
+            else
+                # Mode EXE direct : accès RW au dossier contenant l'exe
+                bwrap_access_dir="$(dirname "$exe_path")"
+                bwrap_access_mode="rw"
+            fi
+            
+            bwrap_args=$(build_bwrap_args "$bwrap_access_dir" "$bwrap_access_mode")
+            CMD="bwrap $bwrap_args -- $CMD"
+        else
+            echo "Warning: bwrap (bubblewrap) non disponible, sandbox désactivé"
+            echo "         Installez bubblewrap pour activer le sandboxing"
+        fi
+    else
+        echo "Sandbox désactivé (--nosandbox)"
+    fi
+    
+    if [ -n "$MANGOHUD_BIN" ]; then
+        export MANGOHUD=1
+        export MANGOHUD_DLSYM=1
+        echo "MangoHud activé (système)"
+        
+        if [ "$nosandbox_mode" = true ]; then
+            CMD="$MANGOHUD_BIN $CMD"
+        fi
+    fi
+    
+    if [ -n "$game_args" ]; then
+        WINEPREFIX="$WINEPREFIX" eval "$CMD \"$exe_path\" $game_args"
+    else
+        WINEPREFIX="$WINEPREFIX" eval "$CMD \"$exe_path\""
+    fi
+    
+    local exit_code=$?
+    
+    restore_padfix_setting
+    
+    if [ "$GAMEMODE_ACTIVE" = true ]; then
+        echo "Désactivation de GameMode..."
+        gamemoded -r &>/dev/null &
+        sleep 0.1
+        echo "GameMode désactivé"
+    fi
+    
+    return 0
+}
+
+install_registry_files() {
+    local reg_dir="$1"
+    local reg_files
+
+    local real_reg_dir
+    real_reg_dir="$(realpath "$reg_dir" 2>/dev/null || echo "$reg_dir")"
+
+    reg_files=()
+    while IFS= read -r -d '' file; do
+        reg_files+=("$file")
+    done < <(find "$real_reg_dir" -maxdepth 1 -name '*.reg' -print0 2>/dev/null)
+
+    [ ${#reg_files[@]} -eq 0 ] && return 0
+
+    echo "Installation des fichiers de registre..."
+    
+    local bottle_c="$WINEPREFIX/drive_c"
+    local temp_dir="$bottle_c/windows/temp"
+    mkdir -p "$temp_dir"
+    
+    for reg_file in "${reg_files[@]}"; do
+        local reg_name
+        reg_name=$(basename "$reg_file")
+        
+        local reg_hash
+        reg_hash=$(md5sum "$reg_file" | cut -d' ' -f1)
+        
+        local dest_file="$temp_dir/${reg_hash}_${reg_name}"
+        
+        if [ -f "$dest_file" ]; then
+            local existing_hash
+            existing_hash=$(md5sum "$dest_file" | cut -d' ' -f1)
+            if [ "$reg_hash" = "$existing_hash" ]; then
+                echo "  - $reg_name (déjà installé)"
+                continue
+            fi
+        fi
+        
+        echo "  - $reg_name"
+        
+        cp "$reg_file" "$dest_file"
+        
+        local win_path="C:\\windows\\temp\\$(basename "$dest_file")"
+        
+        WINEPREFIX="$WINEPREFIX" "$WINE_BIN" regedit.exe /S "$win_path" 2>/dev/null || true
+    done
+}
+
+setup_pds_symlink() {
+    local exe_dir="$1"
+    local PDS_FILE="$exe_dir/.pds"
+
+    [ -f "$PDS_FILE" ] || return 0
+
+    local game_name
+    game_name=$(cat "$PDS_FILE" 2>/dev/null)
+    [ -n "$game_name" ] || return 0
+
+    echo "Configuration ProgramData pour: $game_name"
+
+    local progdata_saves_dir="$WINDOWS_HOME/$USER/ProgramDataSaves/$game_name"
+    local progdata_symlink="$HOME_REAL/Windows/WinDrive/ProgramData/$game_name"
+
+    if [ ! -d "$progdata_saves_dir" ]; then
+        mkdir -p "$progdata_saves_dir"
+        echo "Dossier créé: $progdata_saves_dir"
+    fi
+
+    mkdir -p "$(dirname "$progdata_symlink")"
+
+    if [ -e "$progdata_symlink" ]; then
+        if [ -d "$progdata_symlink" ] && [ ! -L "$progdata_symlink" ]; then
+            echo "Dossier existant dans ProgramData: $progdata_symlink (pas de modification)"
+            return 0
+        elif [ -L "$progdata_symlink" ]; then
+            local current_target
+            current_target=$(readlink "$progdata_symlink")
+            if [ "$current_target" = "$progdata_saves_dir" ]; then
+                echo "Symlink déjà existant et correct: $progdata_symlink -> $progdata_saves_dir"
+                return 0
+            else
+                echo "Symlink existant mais incorrect, remplacement..."
+                rm -f "$progdata_symlink"
+            fi
+        fi
+    fi
+
+    ln -s "$progdata_saves_dir" "$progdata_symlink"
+    echo "Symlink créé: $progdata_symlink -> $progdata_saves_dir"
+}
+
+select_exe_from_wgp() {
+    echo "Recherche des exécutables dans le pack..."
+
+    local found=0
+    local exe_array=()
+
+    while IFS= read -r -d '' exe; do
+        exe_array+=("$exe")
+        found=$((found + 1))
+    done < <(find "$MOUNT_DIR" -type f -iname "*.exe" -print0 | head -z -n 20)
+
+    if [ $found -eq 0 ]; then
+        echo "Aucun fichier .exe trouvé dans le pack"
+        cleanup_wgp
+        exit 1
+    fi
+
+    local menu_args=("Choisissez un exécutable à lancer :")
+
+    for exe in "${exe_array[@]}"; do
+        local rel_path="${exe#$MOUNT_DIR/}"
+        menu_args+=("$rel_path" "$rel_path")
+    done
+
+    local EXE_REL_PATH
+    if command -v kdialog &> /dev/null; then
+        EXE_REL_PATH=$(kdialog --menu "${menu_args[@]}")
+    else
+        echo ""
+        echo "Exécutables disponibles:"
+        for i in "${!exe_array[@]}"; do
+            local rel_path="${exe_array[$i]#$MOUNT_DIR/}"
+            echo "  $((i+1)). $rel_path"
+        done
+        echo ""
+        read -p "Entrez le numéro de l'exécutable: " choice
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#exe_array[@]} ]; then
+            EXE_REL_PATH="${exe_array[$((choice-1))]#$MOUNT_DIR/}"
+        fi
+    fi
+    
+    local exit_status=$?
+
+    if [ $exit_status -ne 0 ] || [ -z "$EXE_REL_PATH" ]; then
+        echo "Annulé par l'utilisateur"
+        cleanup_wgp
+        exit 0
+    fi
+
+    FULL_EXE_PATH="$MOUNT_DIR/$EXE_REL_PATH"
+
+    if [ ! -f "$FULL_EXE_PATH" ]; then
+        echo "Erreur: exécutable introuvable: $FULL_EXE_PATH"
+        cleanup_wgp
+        exit 1
+    fi
+
+    echo "Exécutable sélectionné: $EXE_REL_PATH"
+}
+
+run_wgp_mode() {
+    export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+    
+    init_wgp_variables
+    mount_wgp
+
+    trap cleanup_wgp EXIT
+
+    init_wineprefix
+
+    setup_saves_symlink
+    setup_extras_symlink
+    setup_temp_symlink
+
+    prepare_saves
+    prepare_extras
+    
+    if [ "$exewgp_mode" = true ]; then
+        select_exe_from_wgp
+    else
+        read_wgp_config
+    fi
+    
+    prepare_temps
+
+    local exe_dir="$(dirname "$FULL_EXE_PATH")"
+    setup_pds_symlink "$exe_dir"
+    
+    install_registry_files "$exe_dir"
+    if [ -L "$FULL_EXE_PATH" ]; then
+        local real_exe_path
+        real_exe_path="$(realpath "$FULL_EXE_PATH")"
+        local real_exe_dir="$(dirname "$real_exe_path")"
+        if [ "$real_exe_dir" != "$exe_dir" ]; then
+            install_registry_files "$real_exe_dir"
+        fi
+    fi
+    
+    local env_vars
+    env_vars=$(load_env_files "$MOUNT_DIR" "$exe_dir")
+
+    local lock_file="/tmp/wgp-lock-$WGPACK_NAME"
+    echo "$$:$(date +%s)" > "$lock_file"
+    
+    trap 'rm -f "$lock_file" 2>/dev/null; cleanup_wgp; gamemoded -r &>/dev/null &' EXIT
+
+    # Récupérer le dossier contenant le fichier .wgp
+    local wgp_dir="$(dirname "$WGPACK_FILE")"
+    
+    launch_wine_game "$FULL_EXE_PATH" "$args" "$WGPACK_NAME" "$env_vars" "true" "$wgp_dir"
+
+    cleanup_saves_symlink
+    cleanup_extras_symlink
+}
+
+transliterate() {
+    local input="$1"
+    echo "$input" | iconv -f UTF-8 -t ASCII//TRANSLIT | sed 's/[^a-zA-Z0-9_-]/_/g'
+}
+
+create_temp_path() {
+    local path="$1"
+    local temp_base="/tmp/game_launcher_$(date +%s)"
+    local new_path="$temp_base"
+    local current_path=""
+    local IFS='/'
+
+    read -ra segments <<< "$path"
+    for segment in "${segments[@]}"; do
+        if [ -n "$segment" ]; then
+            current_path="$current_path/$segment"
+            local clean_segment
+            clean_segment=$(transliterate "$segment")
+            new_path="$new_path/$clean_segment"
+            mkdir -p "$new_path"
+        fi
+    done
+
+    local real_path
+    real_path="$(realpath "$path")"
+    for item in "$real_path"/* "$real_path"/.*; do
+        [[ "$(basename "$item")" == "." ]] && continue
+        [[ "$(basename "$item")" == ".." ]] && continue
+        [ -e "$item" ] || [ -L "$item" ] && ln -sf "$item" "$new_path/" 2>/dev/null
+    done
+
+    echo "$new_path"
+}
+
+run_classic_mode() {
+    export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+    
+    local dirpath
+    local filename
+
+    dirpath=$(dirname "$fullpath")
+    filename=$(basename "$fullpath")
+
+    local new_fullpath="$fullpath"
+    local temp_base=""
+
+    if echo "$dirpath" | grep -P '[^\x00-\x7F]' > /dev/null; then
+        local new_dirpath
+        new_dirpath=$(create_temp_path "$dirpath")
+        new_fullpath="$new_dirpath/$filename"
+        temp_base=$(echo "$new_dirpath" | grep -o "/tmp/game_launcher_[0-9]*")
+    fi
+
+    [ -n "$temp_base" ] && trap 'rm -rf "$temp_base"' EXIT
+    
+    init_wineprefix
+
+    mkdir -p "$WINEPREFIX"
+    
+    local exe_dir="$(dirname "$new_fullpath")"
+    setup_pds_symlink "$exe_dir"
+    
+    install_registry_files "$exe_dir"
+    if [ -L "$new_fullpath" ]; then
+        local real_exe_path
+        real_exe_path="$(realpath "$new_fullpath")"
+        local real_exe_dir="$(dirname "$real_exe_path")"
+        if [ "$real_exe_dir" != "$exe_dir" ]; then
+            install_registry_files "$real_exe_dir"
+        fi
+    fi
+    
+    local env_vars=""
+    local dir_env="$(dirname "$fullpath")/.env"
+    if [ -f "$dir_env" ]; then
+        env_vars=$(load_env_file "$dir_env")
+    fi
+
+    local lock_file="/tmp/wgp-lock-$filename"
+    echo "$$:$(date +%s)" > "$lock_file"
+    trap 'rm -f "$lock_file"' EXIT
+
+    launch_wine_game "$new_fullpath" "$args" "$filename" "$env_vars" "false"
+}
+
+cleanup_stale_overlays() {
+    local OVERLAY_BASE="/tmp/wgp-full-overlay"
+    
+    if [ ! -d "$OVERLAY_BASE" ]; then
+        return 0
+    fi
+    
+    for mount_dir in "$OVERLAY_BASE"/wgp-*; do
+        [ -d "$mount_dir" ] || continue
+        
+        if ! ls "$mount_dir" >/dev/null 2>&1; then
+            echo "Nettoyage d'un montage orphelin: $mount_dir"
+            fusermount -uz "$mount_dir" 2>/dev/null || true
+            rm -rf "$mount_dir" 2>/dev/null || true
+        elif mountpoint -q "$mount_dir" 2>/dev/null; then
+            local game_name=$(basename "$mount_dir" | sed 's/^wgp-//')
+            if ! pgrep -f "mergerfs.*$mount_dir" >/dev/null 2>&1 && \
+               ! pgrep -f "wine.*$mount_dir" >/dev/null 2>&1; then
+                echo "Montage inactif détecté: $mount_dir"
+                fusermount -u "$mount_dir" 2>/dev/null || fusermount -uz "$mount_dir" 2>/dev/null || true
+                rm -rf "$mount_dir" 2>/dev/null || true
+            fi
+        fi
+    done
+    
+    local UPPER_BASE="/tmp/wgp-full-overlay-upper"
+    if [ -d "$UPPER_BASE" ]; then
+        for upper_dir in "$UPPER_BASE"/wgp-*; do
+            [ -d "$upper_dir" ] || continue
+            local game_name=$(basename "$upper_dir" | sed 's/^wgp-//')
+            local mount_point="$OVERLAY_BASE/wgp-$game_name"
+            if [ ! -d "$mount_point" ] || ! mountpoint -q "$mount_point" 2>/dev/null; then
+                rm -rf "$upper_dir" 2>/dev/null || true
+            fi
+        done
+    fi
+}
+
+main() {
+    cleanup_stale_overlays
+    
+    parse_arguments "$@"
+
+    if [ "$uninstall_mode" = true ]; then
+        uninstall_gwine
+    fi
+
+    if [ "$regedit_mode" = true ]; then
+        launch_regedit
+    fi
+
+    if [ "$reg_mode" = true ]; then
+        install_reg_file "$reg_file"
+    fi
+
+    if [ "$winecfg_mode" = true ]; then
+        launch_winecfg
+    fi
+
+    if [ "$winetricks_mode" = true ]; then
+        launch_winetricks
+    fi
+
+    if [ "$cmd_mode" = true ]; then
+        launch_wine_cmd
+    fi
+
+    if [ "$init_mode" = true ]; then
+        local SYMLINK="$HOME/.local/bin/gwine"
+        if [ ! -L "$SYMLINK" ]; then
+            mkdir -p "$HOME/.local/bin"
+            ln -sf "$(realpath "$0")" "$SYMLINK"
+            echo "Symlink créé: $SYMLINK"
+        fi
+    fi
+
+    if [[ "$fullpath" == *.wgp ]]; then
+        run_wgp_mode
+    else
+        run_classic_mode
+    fi
+}
+
+main "$@"
