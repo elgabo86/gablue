@@ -55,6 +55,15 @@ chmod +x /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/*
 setcap 'cap_sys_nice=eip' /usr/bin/gamescope
 
 # =============================================================================
+# MODULES SELINUX
+# =============================================================================
+
+# Installation du module SELinux pour les thumbnailers (permissions FUSE)
+if [ -f /usr/share/selinux/packages/thumb-fuse.pp ]; then
+    semodule --verbose --install /usr/share/selinux/packages/thumb-fuse.pp
+fi
+
+# =============================================================================
 # INSTALLATION DES BINAIRES EXTERNES
 # =============================================================================
 
