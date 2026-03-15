@@ -3257,18 +3257,17 @@ build_bwrap_args() {
     
     if [ -d "$HOME_REAL/Windows" ]; then
         bwrap_args="$bwrap_args --bind \"$HOME_REAL/Windows\" \"$HOME_REAL/Windows\""
-    fi
-    
-    if [ -d "$HOME_REAL/Syncthing" ]; then
-        bwrap_args="$bwrap_args --bind \"$HOME_REAL/Syncthing\" \"$HOME_REAL/Syncthing\""
-        # Si c'est un symlink, autoriser aussi la destination réelle
-        if [ -L "$HOME_REAL/Syncthing" ]; then
-            local real_syncthing
-            real_syncthing=$(readlink -f "$HOME_REAL/Syncthing")
-            if [ -n "$real_syncthing" ] && [ "$real_syncthing" != "$HOME_REAL/Syncthing" ]; then
-                bwrap_args="$bwrap_args --bind \"$real_syncthing\" \"$real_syncthing\""
+        # Si SteamData ou UserData sont des symlinks, autoriser aussi leurs destinations
+        for subdir in SteamData UserData; do
+            local subdir_path="$HOME_REAL/Windows/$subdir"
+            if [ -L "$subdir_path" ]; then
+                local real_path
+                real_path=$(readlink -f "$subdir_path")
+                if [ -n "$real_path" ] && [ "$real_path" != "$subdir_path" ]; then
+                    bwrap_args="$bwrap_args --bind \"$real_path\" \"$real_path\""
+                fi
             fi
-        fi
+        done
     fi
     
     if [ -d "$CACHE_DIR" ]; then
