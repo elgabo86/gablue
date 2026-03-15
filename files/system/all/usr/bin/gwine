@@ -44,6 +44,7 @@ reg_file=""
 winecfg_mode=false
 winetricks_mode=false
 nosandbox_mode=false
+isolated_prefix_mode=true  # Activé par défaut
 uninstall_mode=false
 winetricks_args=""
 args=""
@@ -1707,6 +1708,145 @@ install_wine_mono_gecko() {
 }
 
 # Configure VK_ICD_FILENAMES pour le GPU
+# =============================================================================
+# Fonctions pour le préfixe isolé avec overlayfs
+# =============================================================================
+
+# Variables globales pour l'overlay du préfixe
+_ISOLATED_PREFIX_MOUNT=""
+_ISOLATED_PREFIX_UPPER=""
+_ISOLATED_PREFIX_WORK=""
+_ISOLATED_PREFIX_REAL=""
+
+# Prépare l'overlay du préfixe Wine pour isolation
+setup_isolated_prefix() {
+    local real_prefix="$1"
+    
+    if [ "$isolated_prefix_mode" != "true" ]; then
+        echo "$real_prefix"
+        return 0
+    fi
+    
+    # Générer un ID unique pour cette instance
+    local instance_id="$(date +%s)_$$_$RANDOM"
+    local overlay_base="/tmp/gwine-prefix-overlay-$instance_id"
+    
+    _ISOLATED_PREFIX_MOUNT="$overlay_base/merged"
+    _ISOLATED_PREFIX_UPPER="$overlay_base/upper"
+    _ISOLATED_PREFIX_WORK="$overlay_base/work"
+    _ISOLATED_PREFIX_REAL="$real_prefix"
+    
+    echo "Configuration du préfixe isolé avec overlayfs..." >&2
+    echo "  Préfixe réel (RO): $real_prefix" >&2
+    echo "  Point de montage: $_ISOLATED_PREFIX_MOUNT" >&2
+    
+    # Créer les dossiers nécessaires
+    mkdir -p "$_ISOLATED_PREFIX_MOUNT"
+    mkdir -p "$_ISOLATED_PREFIX_UPPER"
+    mkdir -p "$_ISOLATED_PREFIX_WORK"
+    
+    # Vérifier que le préfixe réel existe
+    if [ ! -d "$real_prefix" ]; then
+        echo "Warning: Le préfixe réel n'existe pas: $real_prefix" >&2
+        echo "$real_prefix"
+        return 1
+    fi
+    
+    # Monter overlayfs avec fuse-overlayfs (userspace, pas besoin de root)
+    echo "Tentative de montage avec fuse-overlayfs..." >&2
+    if command -v fuse-overlayfs &>/dev/null; then
+        if ! fuse-overlayfs -o "lowerdir=$real_prefix,upperdir=$_ISOLATED_PREFIX_UPPER,workdir=$_ISOLATED_PREFIX_WORK" "$_ISOLATED_PREFIX_MOUNT" 2>&1; then
+            echo "Warning: Échec du montage fuse-overlayfs" >&2
+            cleanup_isolated_prefix_instance "$_ISOLATED_PREFIX_MOUNT" "$_ISOLATED_PREFIX_UPPER" "$_ISOLATED_PREFIX_WORK"
+            _ISOLATED_PREFIX_MOUNT=""
+            _ISOLATED_PREFIX_UPPER=""
+            _ISOLATED_PREFIX_WORK=""
+            echo "$real_prefix"
+            return 1
+        fi
+    else
+        echo "Warning: fuse-overlayfs non disponible, utilisation du préfixe direct" >&2
+        cleanup_isolated_prefix_instance "$_ISOLATED_PREFIX_MOUNT" "$_ISOLATED_PREFIX_UPPER" "$_ISOLATED_PREFIX_WORK"
+        _ISOLATED_PREFIX_MOUNT=""
+        _ISOLATED_PREFIX_UPPER=""
+        _ISOLATED_PREFIX_WORK=""
+        echo "$real_prefix"
+        return 1
+    fi
+    
+    echo "Overlay monté avec succès: $_ISOLATED_PREFIX_MOUNT" >&2
+    
+    # Créer des symlinks vers les vrais fichiers de registre pour accès simultané
+    # Les modifications au registre seront persistantes entre les instances
+    local reg_files=("system.reg" "user.reg" "userdef.reg")
+    for reg_file in "${reg_files[@]}"; do
+        local real_reg="$real_prefix/$reg_file"
+        local overlay_reg="$_ISOLATED_PREFIX_MOUNT/$reg_file"
+        
+        if [ -f "$real_reg" ]; then
+            # Supprimer le fichier de l'upperdir s'il existe (pour ne pas cacher le lower)
+            rm -f "$_ISOLATED_PREFIX_UPPER/$reg_file" 2>/dev/null || true
+            # Créer un symlink vers le vrai fichier de registre
+            rm -f "$overlay_reg" 2>/dev/null || true
+            ln -s "$real_reg" "$overlay_reg" 2>/dev/null || true
+            echo "  Registre partagé: $reg_file" >&2
+        fi
+    done
+    
+    echo "$_ISOLATED_PREFIX_MOUNT"
+    return 0
+}
+
+# Nettoie l'overlay du préfixe isolé (utilise les variables globales)
+cleanup_isolated_prefix() {
+    if [ -z "$_ISOLATED_PREFIX_MOUNT" ]; then
+        return 0
+    fi
+    
+    cleanup_isolated_prefix_instance "$_ISOLATED_PREFIX_MOUNT" "$_ISOLATED_PREFIX_UPPER" "$_ISOLATED_PREFIX_WORK"
+    
+    _ISOLATED_PREFIX_MOUNT=""
+    _ISOLATED_PREFIX_UPPER=""
+    _ISOLATED_PREFIX_WORK=""
+    _ISOLATED_PREFIX_REAL=""
+}
+
+# Nettoie une instance spécifique d'overlay (pour les traps)
+cleanup_isolated_prefix_instance() {
+    local mount_point="$1"
+    local upper_dir="$2"
+    local work_dir="$3"
+    
+    if [ -z "$mount_point" ]; then
+        return 0
+    fi
+    
+    echo "Nettoyage du préfixe isolé: $mount_point" >&2
+    
+    # Attendre que wineserver sauvegarde le registre avant de démonter
+    if mountpoint -q "$mount_point" 2>/dev/null; then
+        if command -v wineserver &>/dev/null; then
+            WINEPREFIX="$mount_point" wineserver -w 2>/dev/null || true
+        fi
+    fi
+    
+    # Démonter l'overlay (fuse-overlayfs utilise fusermount)
+    if mountpoint -q "$mount_point" 2>/dev/null; then
+        fusermount -u "$mount_point" 2>/dev/null || fusermount -uz "$mount_point" 2>/dev/null || true
+        sleep 0.2
+    fi
+    
+    # Supprimer les dossiers
+    local overlay_base="$(dirname "$mount_point")"
+    if [ -d "$overlay_base" ]; then
+        rm -rf "$overlay_base" 2>/dev/null || true
+    fi
+    
+    echo "Préfixe isolé nettoyé: $mount_point" >&2
+}
+
+# =============================================================================
+
 setup_gpu_vulkan() {
     local VK_ICD_64=""
     local VK_ICD_32=""
@@ -3037,7 +3177,8 @@ show_help() {
     echo "  --uninstall       Désinstaller Gwine"
     echo "  --fix             Activer le mode fix manette"
     echo "  --exewgp          Mode interactif pour choisir l'exécutable dans un WGP"
-    echo "  --nosandbox       Désactiver le sandboxing"
+    echo "  --nosandbox       Désactiver le sandboxing
+  --noprefixoverlay Désactiver l'overlay du préfixe (utilise le préfixe directement)"
     echo "  --regedit         Lancer l'éditeur de registre"
     echo "  --reg fichier.reg Installer un fichier de registre"
     echo "  --winecfg         Lancer la configuration Wine"
@@ -3105,6 +3246,10 @@ parse_arguments() {
                 ;;
             --nosandbox)
                 nosandbox_mode=true
+                shift
+                ;;
+            --noprefixoverlay)
+                isolated_prefix_mode=false
                 shift
                 ;;
             --uninstall)
@@ -3479,64 +3624,10 @@ cleanup_wgp() {
         
         local mount_escape
         mount_escape=$(printf '%s' "$MOUNT_DIR" | sed 's/[[\.*^$()+?{|\\]/\\&/g')
-        local bwrap_pids
-        bwrap_pids=$(pgrep -f "bwrap.*$mount_escape" 2>/dev/null || true)
         
-        if [ -n "$bwrap_pids" ]; then
-            local lock_file="/tmp/wgp-lock-$WGPACK_NAME"
-            
-            if [ -f "$lock_file" ]; then
-                local lock_pid
-                lock_pid=$(cat "$lock_file" 2>/dev/null | cut -d: -f1)
-                
-                if [ -n "$lock_pid" ]; then
-                    local is_new_instance=false
-                    for pid in $bwrap_pids; do
-                        if [ "$pid" -gt "$lock_pid" ] 2>/dev/null; then
-                            is_new_instance=true
-                            break
-                        fi
-                    done
-                    
-                    if [ "$is_new_instance" = true ]; then
-                        echo "Une nouvelle instance de $WGPACK_NAME a pris la main, pas de démontage."
-                        return 0
-                    fi
-                fi
-            fi
-        fi
-        
-        if command -v fuser &> /dev/null; then
-            while true; do
-                local new_bwrap_pids
-                new_bwrap_pids=$(pgrep -f "bwrap.*$mount_escape" 2>/dev/null || true)
-                if [ -n "$new_bwrap_pids" ]; then
-                    local lock_file="/tmp/wgp-lock-$WGPACK_NAME"
-                    if [ -f "$lock_file" ]; then
-                        local lock_pid
-                        lock_pid=$(cat "$lock_file" 2>/dev/null | cut -d: -f1)
-                        local is_new=false
-                        for pid in $new_bwrap_pids; do
-                            if [ "$pid" -gt "$lock_pid" ] 2>/dev/null; then
-                                is_new=true
-                                break
-                            fi
-                        done
-                        if [ "$is_new" = true ]; then
-                            echo "Nouvelle instance détectée, abandon du démontage."
-                            return 0
-                        fi
-                    fi
-                fi
-                
-                if ! fuser "$MOUNT_DIR"/* >/dev/null 2>&1; then
-                    break
-                fi
-                
-                echo "En attente que les processus libèrent le mount..."
-                sleep 2
-            done
-        fi
+        # Les processus devraient déjà être terminés à ce point
+        # (attente faite dans launch_wine_game)
+        sleep 0.5
     fi
 
     echo "Démontage de $WGPACK_NAME..."
@@ -3544,6 +3635,35 @@ cleanup_wgp() {
     cleanup_saves_symlink
     cleanup_extras_symlink
     cleanup_temp_symlink
+    
+    # Nettoyer l'overlay du préfixe isolé si présent
+    # Utiliser les variables globales si définies, sinon chercher dans /tmp
+    if [ -n "$_ISOLATED_PREFIX_MOUNT" ]; then
+        cleanup_isolated_prefix
+    else
+        # Chercher et nettoyer les overlays vraiment orphelins (pas utilisés par un autre jeu)
+        for overlay_dir in /tmp/gwine-prefix-overlay-*; do
+            [ -d "$overlay_dir" ] || continue
+            if mountpoint -q "$overlay_dir/merged" 2>/dev/null; then
+                # Vérifier si l'overlay est encore utilisé (des processus y accèdent)
+                local still_used=false
+                if command -v fuser &>/dev/null; then
+                    # Utiliser fuser pour voir si des processus ont ouvert des fichiers
+                    if fuser "$overlay_dir/merged" 2>/dev/null | grep -q '[0-9]'; then
+                        still_used=true
+                    fi
+                fi
+                
+                if [ "$still_used" = true ]; then
+                    echo "Overlay encore utilisé par un autre jeu: $overlay_dir"
+                else
+                    echo "Nettoyage d'un overlay orphelin: $overlay_dir"
+                    fusermount -u "$overlay_dir/merged" 2>/dev/null || fusermount -uz "$overlay_dir/merged" 2>/dev/null || true
+                    rm -rf "$overlay_dir" 2>/dev/null || true
+                fi
+            fi
+        done
+    fi
 
     fusermount -uz "$MOUNT_DIR" 2>/dev/null || true
     sleep 0.3
@@ -4143,7 +4263,16 @@ launch_wine_game() {
     
     echo "Lancement de $display_name avec Wine (gwine-proton)..."
     
-    export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+    local real_prefix="$HOME_REAL/Windows/Prefix"
+    local effective_prefix="$real_prefix"
+    
+    # Configurer le préfixe isolé si demandé
+    if [ "$isolated_prefix_mode" = "true" ]; then
+        effective_prefix=$(setup_isolated_prefix "$real_prefix")
+        # Le nettoyage est géré par cleanup_wgp() ou le trap EXIT existant
+    fi
+    
+    export WINEPREFIX="$effective_prefix"
     
     mkdir -p "$WINEPREFIX"
     
@@ -4269,13 +4398,45 @@ launch_wine_game() {
         fi
     fi
     
+    # Lancer le jeu (synchrone pour garantir le retour à la fin)
+    local exit_code=0
     if [ -n "$game_args" ]; then
-        WINEPREFIX="$WINEPREFIX" eval "$CMD \"$exe_path\" $game_args"
+        WINEPREFIX="$WINEPREFIX" eval "$CMD \"$exe_path\" $game_args" || exit_code=$?
     else
-        WINEPREFIX="$WINEPREFIX" eval "$CMD \"$exe_path\""
+        WINEPREFIX="$WINEPREFIX" eval "$CMD \"$exe_path\"" || exit_code=$?
     fi
     
-    local exit_code=$?
+    # Attendre que tous les processus wine/bwrap de ce jeu se terminent
+    echo "Attente de la fin du jeu..."
+    local game_basename=$(basename "$exe_path" | tr -cd '[:alnum:]')
+    local wait_count=0
+    local still_running=true
+    
+    while [ "$still_running" = true ] && [ $wait_count -lt 600 ]; do
+        # Compter les processus wine/bwrap associés à ce WINEPREFIX
+        local wine_procs=$(pgrep -f "wine.*$game_basename" 2>/dev/null | wc -l)
+        local bwrap_procs=$(pgrep -f "bwrap.*$exe_path" 2>/dev/null | wc -l)
+        
+        if [ "$wine_procs" = "0" ] && [ "$bwrap_procs" = "0" ]; then
+            still_running=false
+            echo "Jeu terminé"
+        else
+            wait_count=$((wait_count + 1))
+            if [ $((wait_count % 30)) -eq 0 ]; then
+                echo "Jeu toujours en cours (${wine_procs} wine, ${bwrap_procs} bwrap)..."
+            fi
+            sleep 1
+        fi
+    done
+    
+    if [ "$still_running" = true ]; then
+        echo "Timeout après 10 minutes, forçage..."
+    fi
+    
+    # Nettoyer l'overlay du préfixe isolé après la fin du jeu
+    if [ -n "$_ISOLATED_PREFIX_MOUNT" ]; then
+        cleanup_isolated_prefix
+    fi
     
     restore_padfix_setting
     
@@ -4286,7 +4447,7 @@ launch_wine_game() {
         echo "GameMode désactivé"
     fi
     
-    return 0
+    return $exit_code
 }
 
 install_registry_files() {
@@ -4446,8 +4607,6 @@ run_wgp_mode() {
     init_wgp_variables
     mount_wgp
 
-    trap cleanup_wgp EXIT
-
     init_wineprefix
 
     setup_saves_symlink
@@ -4484,12 +4643,15 @@ run_wgp_mode() {
     local lock_file="/tmp/wgp-lock-$WGPACK_NAME"
     echo "$$:$(date +%s)" > "$lock_file"
     
-    trap 'rm -f "$lock_file" 2>/dev/null; cleanup_wgp; gamemoded -r &>/dev/null &' EXIT
-
     # Récupérer le dossier contenant le fichier .wgp
     local wgp_dir="$(dirname "$WGPACK_FILE")"
     
     launch_wine_game "$FULL_EXE_PATH" "$args" "$WGPACK_NAME" "$env_vars" "true" "$wgp_dir"
+    
+    # Nettoyage après la fin du jeu
+    cleanup_wgp
+    rm -f "$lock_file" 2>/dev/null
+    gamemoded -r &>/dev/null &
 
     cleanup_saves_symlink
     cleanup_extras_symlink
@@ -4575,7 +4737,7 @@ run_classic_mode() {
 
     local lock_file="/tmp/wgp-lock-$filename"
     echo "$$:$(date +%s)" > "$lock_file"
-    trap 'rm -f "$lock_file"' EXIT
+    trap 'rm -f "$lock_file"; cleanup_isolated_prefix' EXIT
 
     launch_wine_game "$new_fullpath" "$args" "$filename" "$env_vars" "false"
 }
