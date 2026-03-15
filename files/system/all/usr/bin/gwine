@@ -3261,6 +3261,14 @@ build_bwrap_args() {
     
     if [ -d "$HOME_REAL/Syncthing" ]; then
         bwrap_args="$bwrap_args --bind \"$HOME_REAL/Syncthing\" \"$HOME_REAL/Syncthing\""
+        # Si c'est un symlink, autoriser aussi la destination réelle
+        if [ -L "$HOME_REAL/Syncthing" ]; then
+            local real_syncthing
+            real_syncthing=$(readlink -f "$HOME_REAL/Syncthing")
+            if [ -n "$real_syncthing" ] && [ "$real_syncthing" != "$HOME_REAL/Syncthing" ]; then
+                bwrap_args="$bwrap_args --bind \"$real_syncthing\" \"$real_syncthing\""
+            fi
+        fi
     fi
     
     if [ -d "$CACHE_DIR" ]; then
