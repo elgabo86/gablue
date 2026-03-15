@@ -26,6 +26,8 @@ COMPONENTS_DIR="$CACHE_DIR/components"
 SHADER_CACHE_DIR="$CACHE_DIR/shader-cache"
 DXVK_CACHE_DIR="$COMPONENTS_DIR/dxvk"
 VKD3D_CACHE_DIR="$COMPONENTS_DIR/vkd3d"
+DXVK_NVAPI_CACHE_DIR="$COMPONENTS_DIR/dxvk-nvapi"
+FAKENVAPI_CACHE_DIR="$COMPONENTS_DIR/fakenvapi"
 
 WINE_DIR="$GWINE_DIR/wine"
 WINE_BIN="$WINE_DIR/bin/wine64"
@@ -372,6 +374,266 @@ install_dxvk_vkd3d() {
     fi
     
     echo "DXVK et VKD3D-Proton installés avec succès"
+    
+    # Installer DXVK-NVAPI si carte NVIDIA présente, sinon FakeNVAPI
+    if is_nvidia_gpu; then
+        install_dxvk_nvapi
+    else
+        install_fakenvapi
+    fi
+    
+    return 0
+}
+
+# Détecte si le système utilise un GPU NVIDIA
+is_nvidia_gpu() {
+    # Vérifier la présence du pilote NVIDIA
+    if [ -f "/usr/share/vulkan/icd.d/nvidia_icd.json" ] || [ -f "/etc/vulkan/icd.d/nvidia_icd.json" ]; then
+        return 0
+    fi
+    # Vérifier si nvidia-smi est disponible et fonctionne
+    if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+# Installe DXVK-NVAPI dans le préfixe Wine depuis le cache local (uniquement pour NVIDIA)
+install_dxvk_nvapi() {
+    # Vérifier si c'est une carte NVIDIA
+    if ! is_nvidia_gpu; then
+        return 0
+    fi
+    
+    echo "Installation de DXVK-NVAPI depuis le cache..."
+    
+    # Obtenir les chemins system32 et syswow64
+    local win64_sys_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -u 'C:\\windows\\system32' 2>/dev/null | tr -d '\r')
+    local win32_sys_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -u 'C:\\windows\\syswow64' 2>/dev/null | tr -d '\r')
+    
+    if [ -z "$win64_sys_path" ] || [ -z "$win32_sys_path" ]; then
+        echo "Erreur: Impossible d'obtenir les chemins system32/syswow64"
+        return 1
+    fi
+    
+    local installation_failed=false
+    local nvapi_installed=false
+    
+    # Installer DXVK-NVAPI
+    if [ -d "$DXVK_NVAPI_CACHE_DIR" ]; then
+        local nvapi_dir=$(find "$DXVK_NVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-nvapi-*" | head -1)
+        if [ -n "$nvapi_dir" ]; then
+            echo "  - Installation de $(basename "$nvapi_dir")..."
+            
+            if [ -d "$nvapi_dir/x64" ]; then
+                for dll in nvapi64 nvapi; do
+                    if [ -f "$nvapi_dir/x64/${dll}.dll" ]; then
+                        if ! cp -f "$nvapi_dir/x64/${dll}.dll" "${win64_sys_path}/" 2>/dev/null; then
+                            echo "    ⚠️  Échec copie ${dll}.dll (x64)"
+                            installation_failed=true
+                        else
+                            nvapi_installed=true
+                        fi
+                    fi
+                done
+            fi
+            
+            if [ -d "$nvapi_dir/x32" ]; then
+                for dll in nvapi; do
+                    if [ -f "$nvapi_dir/x32/${dll}.dll" ]; then
+                        if ! cp -f "$nvapi_dir/x32/${dll}.dll" "${win32_sys_path}/" 2>/dev/null; then
+                            echo "    ⚠️  Échec copie ${dll}.dll (x32)"
+                            installation_failed=true
+                        else
+                            nvapi_installed=true
+                        fi
+                    fi
+                done
+            fi
+        fi
+    fi
+    
+    # Créer les overrides NVAPI avec wine reg add
+    if [ "$nvapi_installed" = true ]; then
+        echo "  - Création des overrides NVAPI..."
+        for dll in nvapi nvapi64; do
+            if ! WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "$dll" /d native,builtin /f >/dev/null 2>&1; then
+                echo "    ⚠️  Échec override $dll"
+                installation_failed=true
+            fi
+        done
+        echo "  - Overrides NVAPI créés"
+    fi
+    
+    if [ "$installation_failed" = true ]; then
+        echo "Erreur: L'installation de DXVK-NVAPI a rencontré des erreurs"
+        return 1
+    fi
+    
+    if [ "$nvapi_installed" = true ]; then
+        echo "DXVK-NVAPI installé avec succès"
+    else
+        echo "DXVK-NVAPI non trouvé dans le cache"
+    fi
+    
+    return 0
+}
+
+# Récupère la dernière version de FakeNVAPI depuis GitHub
+get_latest_fakenvapi_version() {
+    curl -s "https://api.github.com/repos/optiscaler/fakenvapi/releases/latest" | grep -oP '"tag_name":\s*"v\K[^"]+' | head -1
+}
+
+# Télécharge FakeNVAPI
+download_fakenvapi() {
+    local no_confirm=false
+    if [ "$1" == "--no-confirm" ]; then
+        no_confirm=true
+    fi
+    
+    echo "Vérification de FakeNVAPI..."
+    
+    local latest_version
+    latest_version=$(get_latest_fakenvapi_version)
+    
+    if [ -z "$latest_version" ]; then
+        echo "Impossible de déterminer la dernière version de FakeNVAPI"
+        return 1
+    fi
+    
+    echo "Dernière version de FakeNVAPI: v${latest_version}"
+    
+    # Vérifier si déjà présent
+    if [ -d "$FAKENVAPI_CACHE_DIR/fakenvapi-v${latest_version}" ]; then
+        echo "FakeNVAPI v${latest_version} déjà présent dans le cache"
+        return 0
+    fi
+    
+    if [ "$no_confirm" = false ]; then
+        read -p "Télécharger FakeNVAPI v${latest_version}? (O/n): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Oo]$ ]] && [ -n "$REPLY" ]; then
+            echo "Téléchargement annulé"
+            return 1
+        fi
+    fi
+    
+    echo "Téléchargement de FakeNVAPI v${latest_version}..."
+    
+    local download_url="https://github.com/optiscaler/fakenvapi/releases/download/v${latest_version}/fakenvapi-v${latest_version}.7z"
+    local temp_dir=$(mktemp -d)
+    local archive_path="$temp_dir/fakenvapi-v${latest_version}.7z"
+    
+    if wget -q --show-progress "$download_url" -O "$archive_path" 2>&1; then
+        echo "Extraction de FakeNVAPI..."
+        mkdir -p "$FAKENVAPI_CACHE_DIR/fakenvapi-v${latest_version}"
+        
+        if command -v 7z &>/dev/null; then
+            7z x "$archive_path" -o"$FAKENVAPI_CACHE_DIR/fakenvapi-v${latest_version}/" >/dev/null 2>&1
+        elif command -v 7za &>/dev/null; then
+            7za x "$archive_path" -o"$FAKENVAPI_CACHE_DIR/fakenvapi-v${latest_version}/" >/dev/null 2>&1
+        else
+            echo "Erreur: 7z n'est pas installé"
+            rm -rf "$temp_dir"
+            return 1
+        fi
+        
+        rm -rf "$temp_dir"
+        echo "FakeNVAPI v${latest_version} téléchargé avec succès"
+        return 0
+    else
+        echo "Erreur lors du téléchargement de FakeNVAPI"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+}
+
+# Installe FakeNVAPI dans le préfixe Wine (pour systèmes non-NVIDIA)
+install_fakenvapi() {
+    # Ne pas installer sur NVIDIA (dxvk-nvapi est préférable)
+    if is_nvidia_gpu; then
+        return 0
+    fi
+    
+    echo "Installation de FakeNVAPI depuis le cache..."
+    
+    # Obtenir les chemins system32 et syswow64
+    local win64_sys_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -u 'C:\\windows\\system32' 2>/dev/null | tr -d '\r')
+    local win32_sys_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -u 'C:\\windows\\syswow64' 2>/dev/null | tr -d '\r')
+    
+    if [ -z "$win64_sys_path" ] || [ -z "$win32_sys_path" ]; then
+        echo "Erreur: Impossible d'obtenir les chemins system32/syswow64"
+        return 1
+    fi
+    
+    local installation_failed=false
+    local fakenvapi_installed=false
+    
+    # Installer FakeNVAPI
+    if [ -d "$FAKENVAPI_CACHE_DIR" ]; then
+        local fakenvapi_dir=$(find "$FAKENVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "fakenvapi-*" | head -1)
+        if [ -n "$fakenvapi_dir" ]; then
+            echo "  - Installation de $(basename "$fakenvapi_dir")..."
+            
+            # Copier nvapi64.dll et fakenvapi.ini dans system32
+            if [ -f "$fakenvapi_dir/nvapi64.dll" ]; then
+                if ! cp -f "$fakenvapi_dir/nvapi64.dll" "${win64_sys_path}/" 2>/dev/null; then
+                    echo "    ⚠️  Échec copie nvapi64.dll (system32)"
+                    installation_failed=true
+                else
+                    fakenvapi_installed=true
+                fi
+            fi
+            
+            if [ -f "$fakenvapi_dir/fakenvapi.ini" ]; then
+                if ! cp -f "$fakenvapi_dir/fakenvapi.ini" "${win64_sys_path}/" 2>/dev/null; then
+                    echo "    ⚠️  Échec copie fakenvapi.ini (system32)"
+                    installation_failed=true
+                fi
+            fi
+            
+            # Copier nvapi64.dll et fakenvapi.ini dans syswow64 (renommé en nvapi.dll pour 32-bit)
+            if [ -f "$fakenvapi_dir/nvapi64.dll" ]; then
+                if ! cp -f "$fakenvapi_dir/nvapi64.dll" "${win32_sys_path}/nvapi.dll" 2>/dev/null; then
+                    echo "    ⚠️  Échec copie nvapi.dll (syswow64)"
+                    installation_failed=true
+                else
+                    fakenvapi_installed=true
+                fi
+            fi
+            
+            if [ -f "$fakenvapi_dir/fakenvapi.ini" ]; then
+                if ! cp -f "$fakenvapi_dir/fakenvapi.ini" "${win32_sys_path}/" 2>/dev/null; then
+                    echo "    ⚠️  Échec copie fakenvapi.ini (syswow64)"
+                    installation_failed=true
+                fi
+            fi
+        fi
+    fi
+    
+    # Créer les overrides NVAPI avec wine reg add
+    if [ "$fakenvapi_installed" = true ]; then
+        echo "  - Création des overrides FakeNVAPI..."
+        for dll in nvapi nvapi64; do
+            if ! WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "$dll" /d native,builtin /f >/dev/null 2>&1; then
+                echo "    ⚠️  Échec override $dll"
+                installation_failed=true
+            fi
+        done
+        echo "  - Overrides FakeNVAPI créés"
+    fi
+    
+    if [ "$installation_failed" = true ]; then
+        echo "Erreur: L'installation de FakeNVAPI a rencontré des erreurs"
+        return 1
+    fi
+    
+    if [ "$fakenvapi_installed" = true ]; then
+        echo "FakeNVAPI installé avec succès"
+    else
+        echo "FakeNVAPI non trouvé dans le cache"
+    fi
+    
     return 0
 }
 
@@ -617,6 +879,14 @@ get_latest_vkd3d_version() {
     echo "$tag"
 }
 
+# Récupère la dernière version de DXVK-NVAPI depuis bottlesdevs/components (via l'API releases)
+get_latest_dxvk_nvapi_version() {
+    # Récupérer tous les releases et filtrer pour dxvk-nvapi
+    local tag
+    tag=$(curl -s "https://api.github.com/repos/bottlesdevs/components/releases?per_page=50" 2>/dev/null | grep '"tag_name"' | grep -oE 'dxvk-nvapi-v[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 | sed 's/^dxvk-nvapi-v//')
+    echo "$tag"
+}
+
 # Télécharge et installe gwine-proton
 download_gwine_proton() {
     local WINE_INSTALL_DIR="$GWINE_DIR/wine"
@@ -800,6 +1070,28 @@ download_updated_dxvk_vkd3d() {
     echo "DXVK - Installé: ${current_dxvk:-Aucun}, Dernière: $latest_dxvk"
     echo "VKD3D - Installé: ${current_vkd3d:-Aucun}, Dernière: $latest_vkd3d"
     
+    # Vérifier DXVK-NVAPI si carte NVIDIA présente, sinon FakeNVAPI
+    local current_nvapi=""
+    local latest_nvapi=""
+    local needs_nvapi_update=false
+    local current_fakenvapi=""
+    local latest_fakenvapi=""
+    local needs_fakenvapi_update=false
+    
+    if is_nvidia_gpu; then
+        latest_nvapi=$(get_latest_dxvk_nvapi_version)
+        local nvapi_folder=$(find "$DXVK_NVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-nvapi-*" 2>/dev/null | head -1)
+        [ -n "$nvapi_folder" ] && current_nvapi=$(basename "$nvapi_folder" | sed 's/^dxvk-nvapi-v//; s/^dxvk-nvapi-//')
+        echo ""
+        echo "DXVK-NVAPI (NVIDIA) - Installé: ${current_nvapi:-Aucun}, Dernière: ${latest_nvapi:-Inconnue}"
+    else
+        latest_fakenvapi=$(get_latest_fakenvapi_version)
+        local fakenvapi_folder=$(find "$FAKENVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "fakenvapi-*" 2>/dev/null | head -1)
+        [ -n "$fakenvapi_folder" ] && current_fakenvapi=$(basename "$fakenvapi_folder" | sed 's/^fakenvapi-v//; s/^fakenvapi-//')
+        echo ""
+        echo "FakeNVAPI (non-NVIDIA) - Installé: ${current_fakenvapi:-Aucun}, Dernière: ${latest_fakenvapi:-Inconnue}"
+    fi
+    
     # Vérifier si mise à jour nécessaire
     if [ -n "$current_dxvk" ] && ! compare_versions "$latest_dxvk" "$current_dxvk"; then
         latest_dxvk=""
@@ -809,20 +1101,32 @@ download_updated_dxvk_vkd3d() {
         latest_vkd3d=""
     fi
     
-    if [ -z "$latest_dxvk" ] && [ -z "$latest_vkd3d" ]; then
-        echo "Vous avez déjà les dernières versions de DXVK et VKD3D-Proton."
+    if is_nvidia_gpu && [ -n "$latest_nvapi" ]; then
+        if [ -z "$current_nvapi" ] || compare_versions "$latest_nvapi" "$current_nvapi"; then
+            needs_nvapi_update=true
+        fi
+    elif ! is_nvidia_gpu && [ -n "$latest_fakenvapi" ]; then
+        if [ -z "$current_fakenvapi" ] || compare_versions "$latest_fakenvapi" "$current_fakenvapi"; then
+            needs_fakenvapi_update=true
+        fi
+    fi
+    
+    if [ -z "$latest_dxvk" ] && [ -z "$latest_vkd3d" ] && [ "$needs_nvapi_update" = false ] && [ "$needs_fakenvapi_update" = false ]; then
+        echo "Vous avez déjà les dernières versions des composants."
         return 0
     fi
     
     # Demander confirmation (sauf si --no-confirm)
     if [ "$no_confirm" = false ]; then
         echo ""
-        if [ -n "$latest_dxvk" ] && [ -n "$latest_vkd3d" ]; then
-            echo "Nouvelles versions disponibles : DXVK $latest_dxvk, VKD3D-Proton $latest_vkd3d"
-        elif [ -n "$latest_dxvk" ]; then
-            echo "Nouvelle version disponible : DXVK $latest_dxvk"
-        else
-            echo "Nouvelle version disponible : VKD3D-Proton $latest_vkd3d"
+        local updates_msg=""
+        [ -n "$latest_dxvk" ] && updates_msg="DXVK $latest_dxvk"
+        [ -n "$latest_vkd3d" ] && updates_msg="${updates_msg}${updates_msg:+, }VKD3D-Proton $latest_vkd3d"
+        [ "$needs_nvapi_update" = true ] && updates_msg="${updates_msg}${updates_msg:+, }DXVK-NVAPI $latest_nvapi"
+        [ "$needs_fakenvapi_update" = true ] && updates_msg="${updates_msg}${updates_msg:+, }FakeNVAPI $latest_fakenvapi"
+        
+        if [ -n "$updates_msg" ]; then
+            echo "Nouvelles versions disponibles : $updates_msg"
         fi
         
         read -p "Voulez-vous télécharger et installer ces mises à jour ? [O/n]: " -r
@@ -930,6 +1234,26 @@ download_updated_dxvk_vkd3d() {
     
     rm -rf "$temp_dir"
     
+    # Télécharger DXVK-NVAPI si nécessaire (uniquement pour NVIDIA)
+    if [ "$needs_nvapi_update" = true ]; then
+        echo ""
+        echo "Téléchargement de DXVK-NVAPI $latest_nvapi..."
+        if ! download_dxvk_nvapi --no-confirm; then
+            echo "✗ Échec du téléchargement de DXVK-NVAPI"
+            update_success=false
+        fi
+    fi
+    
+    # Télécharger FakeNVAPI si nécessaire (uniquement pour non-NVIDIA)
+    if [ "$needs_fakenvapi_update" = true ]; then
+        echo ""
+        echo "Téléchargement de FakeNVAPI $latest_fakenvapi..."
+        if ! download_fakenvapi --no-confirm; then
+            echo "✗ Échec du téléchargement de FakeNVAPI"
+            update_success=false
+        fi
+    fi
+    
     if [ "$update_success" = true ]; then
         echo ""
         echo "Mises à jour installées avec succès !"
@@ -940,6 +1264,106 @@ download_updated_dxvk_vkd3d() {
     fi
     
     return 0
+}
+
+# Télécharge et installe DXVK-NVAPI (uniquement pour NVIDIA)
+# Paramètre: version (optionnel) - si non spécifié, télécharge la dernière version
+download_dxvk_nvapi() {
+    local target_version="${1:-}"
+    local no_confirm=false
+    
+    # Si un deuxième argument est --no-confirm
+    if [ "$2" = "--no-confirm" ]; then
+        no_confirm=true
+    fi
+    
+    # Créer le dossier s'il n'existe pas
+    mkdir -p "$DXVK_NVAPI_CACHE_DIR"
+    
+    # Si aucune version spécifiée, récupérer la dernière
+    if [ -z "$target_version" ]; then
+        target_version=$(get_latest_dxvk_nvapi_version)
+    fi
+    
+    if [ -z "$target_version" ]; then
+        echo "Impossible de récupérer la version de DXVK-NVAPI"
+        return 1
+    fi
+    
+    # Vérifier si déjà installé
+    local current_nvapi=""
+    local nvapi_folder=$(find "$DXVK_NVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-nvapi-*" 2>/dev/null | head -1)
+    [ -n "$nvapi_folder" ] && current_nvapi=$(basename "$nvapi_folder" | sed 's/^dxvk-nvapi-v//; s/^dxvk-nvapi-//')
+    
+    if [ -n "$current_nvapi" ] && [ "$current_nvapi" = "$target_version" ]; then
+        echo "DXVK-NVAPI $target_version est déjà installé"
+        return 0
+    fi
+    
+    echo "DXVK-NVAPI - Installé: ${current_nvapi:-Aucun}, Cible: $target_version"
+    
+    # Demander confirmation (sauf si --no-confirm)
+    if [ "$no_confirm" = false ]; then
+        echo ""
+        echo "Nouvelle version disponible : DXVK-NVAPI $target_version"
+        read -p "Voulez-vous télécharger et installer DXVK-NVAPI ? [O/n]: " -r
+        if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
+            echo "Installation annulée."
+            return 0
+        fi
+    fi
+    
+    # Télécharger DXVK-NVAPI
+    echo ""
+    echo "Téléchargement de DXVK-NVAPI $target_version..."
+    local nvapi_tag="dxvk-nvapi-v${target_version}"
+    local nvapi_url="https://github.com/bottlesdevs/components/releases/download/${nvapi_tag}/${nvapi_tag}.tar.gz"
+    local temp_dir="$CACHE_DIR/.temp_nvapi"
+    local nvapi_temp="$temp_dir/dxvk-nvapi.tar.gz"
+    
+    rm -rf "$temp_dir"
+    mkdir -p "$temp_dir"
+    
+    if wget -q --show-progress "$nvapi_url" -O "$nvapi_temp" 2>&1; then
+        # Sauvegarder l'ancien
+        local old_nvapi=$(find "$DXVK_NVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-nvapi-*" | head -1)
+        if [ -n "$old_nvapi" ]; then
+            mv "$old_nvapi" "$old_nvapi.backup"
+        fi
+        
+        # Extraire dans un dossier temporaire puis déplacer
+        local extract_temp="$temp_dir/.extract_nvapi"
+        rm -rf "$extract_temp"
+        mkdir -p "$extract_temp"
+        if tar -xzf "$nvapi_temp" -C "$extract_temp" 2>/dev/null; then
+            mkdir -p "$DXVK_NVAPI_CACHE_DIR/dxvk-nvapi-${target_version}"
+            local extracted_dir=$(find "$extract_temp" -mindepth 1 -maxdepth 1 -type d | head -1)
+            if [ -n "$extracted_dir" ]; then
+                cp -r "$extracted_dir"/* "$DXVK_NVAPI_CACHE_DIR/dxvk-nvapi-${target_version}/" 2>/dev/null || true
+            fi
+            rm -rf "$extract_temp"
+            
+            if [ -n "$old_nvapi" ]; then
+                rm -rf "$old_nvapi.backup"
+            fi
+            echo "✓ DXVK-NVAPI $target_version installé"
+            rm -rf "$temp_dir"
+            return 0
+        else
+            rm -rf "$extract_temp"
+            if [ -n "$old_nvapi" ]; then
+                mv "$old_nvapi.backup" "$old_nvapi"
+            fi
+            echo "✗ Échec de l'extraction de DXVK-NVAPI"
+            rm -rf "$temp_dir"
+            return 1
+        fi
+        rm -f "$nvapi_temp"
+    else
+        echo "✗ Échec du téléchargement de DXVK-NVAPI"
+        rm -rf "$temp_dir"
+        return 1
+    fi
 }
 
 # Met à jour automatiquement les composants (sans interaction)
@@ -1023,6 +1447,37 @@ auto_update_components() {
             download_updated_dxvk_vkd3d --no-confirm || error_exit "Échec du téléchargement de DXVK/VKD3D"
         elif [ "$has_network" = true ]; then
             download_updated_dxvk_vkd3d --no-confirm
+        fi
+        
+        # Télécharger DXVK-NVAPI si carte NVIDIA présente, sinon FakeNVAPI
+        if is_nvidia_gpu; then
+            echo "  - Vérification de DXVK-NVAPI (NVIDIA)..."
+            local has_nvapi=false
+            [ -n "$(find "$DXVK_NVAPI_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-nvapi-*" 2>/dev/null | head -1)" ] && has_nvapi=true
+            
+            local latest_nvapi=$(get_latest_dxvk_nvapi_version)
+            local current_nvapi=""
+            local nvapi_folder=$(find "$DXVK_NVAPI_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-nvapi-*" 2>/dev/null | head -1)
+            [ -n "$nvapi_folder" ] && current_nvapi=$(basename "$nvapi_folder" | sed 's/^dxvk-nvapi-v//; s/^dxvk-nvapi-//')
+            
+            if [ "$has_nvapi" = false ] || { [ -n "$latest_nvapi" ] && { [ -z "$current_nvapi" ] || compare_versions "$latest_nvapi" "$current_nvapi"; }; }; then
+                echo "  - Installation de DXVK-NVAPI..."
+                download_dxvk_nvapi --no-confirm || echo "Warning: Échec du téléchargement de DXVK-NVAPI"
+            fi
+        else
+            echo "  - Vérification de FakeNVAPI (non-NVIDIA)..."
+            local has_fakenvapi=false
+            [ -n "$(find "$FAKENVAPI_CACHE_DIR" -maxdepth 1 -type d -name "fakenvapi-*" 2>/dev/null | head -1)" ] && has_fakenvapi=true
+            
+            local latest_fakenvapi=$(get_latest_fakenvapi_version)
+            local current_fakenvapi=""
+            local fakenvapi_folder=$(find "$FAKENVAPI_CACHE_DIR" -maxdepth 1 -type d -name "fakenvapi-*" 2>/dev/null | head -1)
+            [ -n "$fakenvapi_folder" ] && current_fakenvapi=$(basename "$fakenvapi_folder" | sed 's/^fakenvapi-v//; s/^fakenvapi-//')
+            
+            if [ "$has_fakenvapi" = false ] || { [ -n "$latest_fakenvapi" ] && { [ -z "$current_fakenvapi" ] || compare_versions "$latest_fakenvapi" "$current_fakenvapi"; }; }; then
+                echo "  - Installation de FakeNVAPI..."
+                download_fakenvapi --no-confirm || echo "Warning: Échec du téléchargement de FakeNVAPI"
+            fi
         fi
     else
         echo "Composants à jour, utilisation des versions locales"
@@ -1437,8 +1892,8 @@ init_prefix_only() {
     export WINEPREFIX="$HOME_REAL/Windows/Prefix"
     export WINEARCH="win64"
     
-    # Nombre total d'étapes pour la barre de progression
-    local TOTAL_STEPS=10
+    # Nombre total d'étapes pour la barre de progression (11 étapes avec NVAPI/FakeNVAPI)
+    local TOTAL_STEPS=11
     local CURRENT_STEP=0
     local DBUS_REF=""
     
@@ -1578,6 +2033,51 @@ init_prefix_only() {
         restore_backup
         progress_close "$DBUS_REF"
         error_exit "Échec de l'installation de DXVK/VKD3D"
+    fi
+    
+    # Vérifier annulation
+    if progress_is_cancelled "$DBUS_REF"; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        echo "Initialisation annulée par l'utilisateur"
+        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
+        fi
+        exit 0
+    fi
+    
+    # Installer DXVK-NVAPI (NVIDIA) ou FakeNVAPI (non-NVIDIA)
+    ((CURRENT_STEP++))
+    if is_nvidia_gpu; then
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation de DXVK-NVAPI (NVIDIA)..."
+        
+        # Télécharger si nécessaire
+        local latest_nvapi=$(get_latest_dxvk_nvapi_version)
+        local current_nvapi=""
+        local nvapi_folder=$(find "$DXVK_NVAPI_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-nvapi-*" 2>/dev/null | head -1)
+        [ -n "$nvapi_folder" ] && current_nvapi=$(basename "$nvapi_folder" | sed 's/^dxvk-nvapi-v//; s/^dxvk-nvapi-//')
+        
+        if [ -z "$current_nvapi" ] || { [ -n "$latest_nvapi" ] && compare_versions "$latest_nvapi" "$current_nvapi"; }; then
+            download_dxvk_nvapi --no-confirm 2>/dev/null || true
+        fi
+        
+        # Installer dans le préfixe
+        install_dxvk_nvapi 2>/dev/null || true
+    else
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation de FakeNVAPI (non-NVIDIA)..."
+        
+        # Télécharger si nécessaire
+        local latest_fakenvapi=$(get_latest_fakenvapi_version)
+        local current_fakenvapi=""
+        local fakenvapi_folder=$(find "$FAKENVAPI_CACHE_DIR" -maxdepth 1 -type d -name "fakenvapi-*" 2>/dev/null | head -1)
+        [ -n "$fakenvapi_folder" ] && current_fakenvapi=$(basename "$fakenvapi_folder" | sed 's/^fakenvapi-v//; s/^fakenvapi-//')
+        
+        if [ -z "$current_fakenvapi" ] || { [ -n "$latest_fakenvapi" ] && compare_versions "$latest_fakenvapi" "$current_fakenvapi"; }; then
+            download_fakenvapi --no-confirm 2>/dev/null || true
+        fi
+        
+        # Installer dans le préfixe
+        install_fakenvapi 2>/dev/null || true
     fi
     
     # Vérifier annulation
@@ -2032,8 +2532,11 @@ ensure_wineprefix_full() {
     if [ ! -d "$WINEPREFIX" ] || [ ! -f "$WINEPREFIX/system.reg" ]; then
         echo "Préfixe Wine non trouvé, création automatique..."
         
-        # Nombre d'étapes pour la barre de progression
+        # Nombre d'étapes pour la barre de progression (6 si NVIDIA)
         local TOTAL_STEPS=5
+        if is_nvidia_gpu; then
+            TOTAL_STEPS=6
+        fi
         local CURRENT_STEP=0
         local DBUS_REF=""
         
@@ -2112,6 +2615,33 @@ ensure_wineprefix_full() {
             progress_close "$DBUS_REF"
             echo "Création du préfixe annulée"
             exit 0
+        fi
+        
+        # Étape 6: DXVK-NVAPI (si NVIDIA)
+        if is_nvidia_gpu; then
+            ((CURRENT_STEP++))
+            progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation de DXVK-NVAPI (NVIDIA)..."
+            
+            # Télécharger si nécessaire
+            local latest_nvapi=$(get_latest_dxvk_nvapi_version)
+            local current_nvapi=""
+            local nvapi_folder=$(find "$DXVK_NVAPI_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-nvapi-*" 2>/dev/null | head -1)
+            [ -n "$nvapi_folder" ] && current_nvapi=$(basename "$nvapi_folder" | sed 's/^dxvk-nvapi-v//; s/^dxvk-nvapi-//')
+            
+            if [ -z "$current_nvapi" ] || { [ -n "$latest_nvapi" ] && compare_versions "$latest_nvapi" "$current_nvapi"; }; then
+                download_dxvk_nvapi --no-confirm 2>/dev/null || true
+            fi
+            
+            # Installer dans le préfixe
+            install_dxvk_nvapi 2>/dev/null || true
+            
+            # Vérifier annulation
+            if progress_is_cancelled "$DBUS_REF"; then
+                [ -d "$WINEPREFIX" ] && rm -rf "$WINEPREFIX" 2>/dev/null
+                progress_close "$DBUS_REF"
+                echo "Création du préfixe annulée"
+                exit 0
+            fi
         fi
         
         # Fermer la barre de progression
@@ -2238,6 +2768,56 @@ update_components() {
         fi
     fi
     
+    # Vérifier DXVK-NVAPI si carte NVIDIA présente, sinon FakeNVAPI
+    local needs_nvapi_update=false
+    local updated_nvapi=""
+    local needs_fakenvapi_update=false
+    local updated_fakenvapi=""
+    
+    if is_nvidia_gpu; then
+        local latest_nvapi=$(get_latest_dxvk_nvapi_version)
+        local current_nvapi=""
+        local nvapi_folder=$(find "$DXVK_NVAPI_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-nvapi-*" 2>/dev/null | head -1)
+        [ -n "$nvapi_folder" ] && current_nvapi=$(basename "$nvapi_folder" | sed 's/^dxvk-nvapi-v//; s/^dxvk-nvapi-//')
+        
+        echo ""
+        echo "DXVK-NVAPI (NVIDIA):"
+        echo "  Version actuelle: ${current_nvapi:-Aucune}"
+        echo "  Dernière version: ${latest_nvapi:-Inconnue}"
+        
+        if [ -n "$latest_nvapi" ]; then
+            if [ -z "$current_nvapi" ] || compare_versions "$latest_nvapi" "$current_nvapi"; then
+                has_updates=true
+                needs_nvapi_update=true
+                needs_reinstall_dlls=true
+                echo "  → Mise à jour disponible"
+            else
+                echo "  → Déjà à jour"
+            fi
+        fi
+    else
+        local latest_fakenvapi=$(get_latest_fakenvapi_version)
+        local current_fakenvapi=""
+        local fakenvapi_folder=$(find "$FAKENVAPI_CACHE_DIR" -maxdepth 1 -type d -name "fakenvapi-*" 2>/dev/null | head -1)
+        [ -n "$fakenvapi_folder" ] && current_fakenvapi=$(basename "$fakenvapi_folder" | sed 's/^fakenvapi-v//; s/^fakenvapi-//')
+        
+        echo ""
+        echo "FakeNVAPI (non-NVIDIA):"
+        echo "  Version actuelle: ${current_fakenvapi:-Aucune}"
+        echo "  Dernière version: ${latest_fakenvapi:-Inconnue}"
+        
+        if [ -n "$latest_fakenvapi" ]; then
+            if [ -z "$current_fakenvapi" ] || compare_versions "$latest_fakenvapi" "$current_fakenvapi"; then
+                has_updates=true
+                needs_fakenvapi_update=true
+                needs_reinstall_dlls=true
+                echo "  → Mise à jour disponible"
+            else
+                echo "  → Déjà à jour"
+            fi
+        fi
+    fi
+    
     if [ "$has_updates" = false ]; then
         echo ""
         echo "Tous les composants sont à jour."
@@ -2269,6 +2849,8 @@ update_components() {
     local TOTAL_STEPS=0
     [ -n "$latest_gwine" ] && [ -z "$current_gwine" ] || compare_versions "$latest_gwine" "$current_gwine" 2>/dev/null && ((TOTAL_STEPS++))
     ([ -n "$latest_dxvk" ] || [ -n "$latest_vkd3d" ]) && ((TOTAL_STEPS++))
+    [ "$needs_nvapi_update" = true ] && ((TOTAL_STEPS++))
+    [ "$needs_fakenvapi_update" = true ] && ((TOTAL_STEPS++))
     [ "$needs_reinstall_dlls" = true ] && ((TOTAL_STEPS++))
     
     # Créer la barre de progression (sans bouton Annuler pour --update, uniquement avec --kdialog)
@@ -2336,6 +2918,58 @@ update_components() {
         fi
     fi
     
+    # Mettre à jour DXVK-NVAPI si nécessaire (NVIDIA)
+    if [ "$needs_nvapi_update" = true ]; then
+        ((CURRENT_STEP++))
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de DXVK-NVAPI..."
+        
+        if progress_is_cancelled "$DBUS_REF"; then
+            progress_close "$DBUS_REF"
+            echo "Mise à jour annulée par l'utilisateur"
+            exit 0
+        fi
+        
+        if ! download_dxvk_nvapi --no-confirm; then
+            progress_close "$DBUS_REF"
+            echo "Warning: Échec de la mise à jour de DXVK-NVAPI"
+        else
+            updated_nvapi="$latest_nvapi"
+        fi
+        
+        # Vérifier annulation après téléchargement
+        if progress_is_cancelled "$DBUS_REF"; then
+            progress_close "$DBUS_REF"
+            echo "Mise à jour annulée par l'utilisateur"
+            exit 0
+        fi
+    fi
+    
+    # Mettre à jour FakeNVAPI si nécessaire (non-NVIDIA)
+    if [ "$needs_fakenvapi_update" = true ]; then
+        ((CURRENT_STEP++))
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de FakeNVAPI..."
+        
+        if progress_is_cancelled "$DBUS_REF"; then
+            progress_close "$DBUS_REF"
+            echo "Mise à jour annulée par l'utilisateur"
+            exit 0
+        fi
+        
+        if ! download_fakenvapi --no-confirm; then
+            progress_close "$DBUS_REF"
+            echo "Warning: Échec de la mise à jour de FakeNVAPI"
+        else
+            updated_fakenvapi="$latest_fakenvapi"
+        fi
+        
+        # Vérifier annulation après téléchargement
+        if progress_is_cancelled "$DBUS_REF"; then
+            progress_close "$DBUS_REF"
+            echo "Mise à jour annulée par l'utilisateur"
+            exit 0
+        fi
+    fi
+    
     # Réinstaller les DLLs dans le préfixe si nécessaire
     if [ "$needs_reinstall_dlls" = true ] && [ -d "$HOME_REAL/Windows/Prefix" ]; then
         ((CURRENT_STEP++))
@@ -2373,6 +3007,12 @@ update_components() {
     fi
     if [ -n "$updated_vkd3d" ]; then
         echo "  ✓ VKD3D-Proton mis à jour vers $updated_vkd3d"
+    fi
+    if [ -n "$updated_nvapi" ]; then
+        echo "  ✓ DXVK-NVAPI mis à jour vers $updated_nvapi"
+    fi
+    if [ -n "$updated_fakenvapi" ]; then
+        echo "  ✓ FakeNVAPI mis à jour vers $updated_fakenvapi"
     fi
     if [ "$updated_dlls" = true ]; then
         echo "  ✓ DLLs réinstallés dans le préfixe Wine"
