@@ -1906,26 +1906,99 @@ cleanup_isolated_prefix_instance() {
 setup_gpu_vulkan() {
     local VK_ICD_64=""
     local VK_ICD_32=""
+    local GPU_VENDOR=""
     
-    # Chercher AMD RADV (radeon)
-    if [ -f "/usr/share/vulkan/icd.d/radeon_icd.x86_64.json" ]; then
-        VK_ICD_64="/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
-        [ -f "/usr/share/vulkan/icd.d/radeon_icd.i686.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/radeon_icd.i686.json"
-    elif [ -f "/etc/vulkan/icd.d/radeon_icd.x86_64.json" ]; then
-        VK_ICD_64="/etc/vulkan/icd.d/radeon_icd.x86_64.json"
-        [ -f "/etc/vulkan/icd.d/radeon_icd.i686.json" ] && VK_ICD_32="/etc/vulkan/icd.d/radeon_icd.i686.json"
-    # Chercher Intel
-    elif [ -f "/usr/share/vulkan/icd.d/intel_icd.x86_64.json" ]; then
-        VK_ICD_64="/usr/share/vulkan/icd.d/intel_icd.x86_64.json"
-        [ -f "/usr/share/vulkan/icd.d/intel_icd.i686.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/intel_icd.i686.json"
-    elif [ -f "/etc/vulkan/icd.d/intel_icd.x86_64.json" ]; then
-        VK_ICD_64="/etc/vulkan/icd.d/intel_icd.x86_64.json"
-        [ -f "/etc/vulkan/icd.d/intel_icd.i686.json" ] && VK_ICD_32="/etc/vulkan/icd.d/intel_icd.i686.json"
-    # Chercher NVIDIA
-    elif [ -f "/usr/share/vulkan/icd.d/nvidia_icd.json" ]; then
-        VK_ICD_64="/usr/share/vulkan/icd.d/nvidia_icd.json"
-    elif [ -f "/etc/vulkan/icd.d/nvidia_icd.json" ]; then
-        VK_ICD_64="/etc/vulkan/icd.d/nvidia_icd.json"
+    # Détecter le GPU actif via lspci
+    if command -v lspci &>/dev/null; then
+        # Chercher le contrôleur VGA/3D/Display
+        local gpu_info
+        gpu_info=$(lspci | grep -E "VGA|3D|Display" | head -1)
+        
+        if echo "$gpu_info" | grep -qi "intel"; then
+            GPU_VENDOR="intel"
+        elif echo "$gpu_info" | grep -qi "amd\|ati"; then
+            GPU_VENDOR="amd"
+        elif echo "$gpu_info" | grep -qi "nvidia"; then
+            GPU_VENDOR="nvidia"
+        fi
+    fi
+    
+    # Si pas détecté via lspci, essayer via /sys/class/drm
+    if [ -z "$GPU_VENDOR" ] && [ -d "/sys/class/drm" ]; then
+        for card in /sys/class/drm/card*/device/vendor; do
+            if [ -f "$card" ]; then
+                local vendor
+                vendor=$(cat "$card" 2>/dev/null)
+                case "$vendor" in
+                    0x8086) GPU_VENDOR="intel" ;;
+                    0x10de) GPU_VENDOR="nvidia" ;;
+                    0x1002) GPU_VENDOR="amd" ;;
+                esac
+                [ -n "$GPU_VENDOR" ] && break
+            fi
+        done
+    fi
+    
+    # Sélectionner le driver selon le GPU détecté
+    case "$GPU_VENDOR" in
+        amd)
+            if [ -f "/usr/share/vulkan/icd.d/radeon_icd.x86_64.json" ]; then
+                VK_ICD_64="/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
+                [ -f "/usr/share/vulkan/icd.d/radeon_icd.i686.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/radeon_icd.i686.json"
+            elif [ -f "/etc/vulkan/icd.d/radeon_icd.x86_64.json" ]; then
+                VK_ICD_64="/etc/vulkan/icd.d/radeon_icd.x86_64.json"
+                [ -f "/etc/vulkan/icd.d/radeon_icd.i686.json" ] && VK_ICD_32="/etc/vulkan/icd.d/radeon_icd.i686.json"
+            fi
+            ;;
+        intel)
+            # Essayer d'abord le driver ANV standard
+            if [ -f "/usr/share/vulkan/icd.d/intel_icd.x86_64.json" ]; then
+                VK_ICD_64="/usr/share/vulkan/icd.d/intel_icd.x86_64.json"
+                [ -f "/usr/share/vulkan/icd.d/intel_icd.i686.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/intel_icd.i686.json"
+            elif [ -f "/etc/vulkan/icd.d/intel_icd.x86_64.json" ]; then
+                VK_ICD_64="/etc/vulkan/icd.d/intel_icd.x86_64.json"
+                [ -f "/etc/vulkan/icd.d/intel_icd.i686.json" ] && VK_ICD_32="/etc/vulkan/icd.d/intel_icd.i686.json"
+            # Sinon essayer le driver Haswell/Broadwell (intel_hasvk)
+            elif [ -f "/usr/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json" ]; then
+                VK_ICD_64="/usr/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json"
+                [ -f "/usr/share/vulkan/icd.d/intel_hasvk_icd.i686.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/intel_hasvk_icd.i686.json"
+            elif [ -f "/etc/vulkan/icd.d/intel_hasvk_icd.x86_64.json" ]; then
+                VK_ICD_64="/etc/vulkan/icd.d/intel_hasvk_icd.x86_64.json"
+                [ -f "/etc/vulkan/icd.d/intel_hasvk_icd.i686.json" ] && VK_ICD_32="/etc/vulkan/icd.d/intel_hasvk_icd.i686.json"
+            fi
+            ;;
+        nvidia)
+            if [ -f "/usr/share/vulkan/icd.d/nvidia_icd.json" ]; then
+                VK_ICD_64="/usr/share/vulkan/icd.d/nvidia_icd.json"
+            elif [ -f "/etc/vulkan/icd.d/nvidia_icd.json" ]; then
+                VK_ICD_64="/etc/vulkan/icd.d/nvidia_icd.json"
+            fi
+            ;;
+    esac
+    
+    # Fallback: si pas détecté, utiliser l'ancienne méthode
+    if [ -z "$VK_ICD_64" ]; then
+        echo "GPU non détecté, utilisation du driver par défaut..."
+        # Chercher AMD RADV (radeon)
+        if [ -f "/usr/share/vulkan/icd.d/radeon_icd.x86_64.json" ]; then
+            VK_ICD_64="/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
+            [ -f "/usr/share/vulkan/icd.d/radeon_icd.i686.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/radeon_icd.i686.json"
+        elif [ -f "/etc/vulkan/icd.d/radeon_icd.x86_64.json" ]; then
+            VK_ICD_64="/etc/vulkan/icd.d/radeon_icd.x86_64.json"
+            [ -f "/etc/vulkan/icd.d/radeon_icd.i686.json" ] && VK_ICD_32="/etc/vulkan/icd.d/radeon_icd.i686.json"
+        # Chercher Intel
+        elif [ -f "/usr/share/vulkan/icd.d/intel_icd.x86_64.json" ]; then
+            VK_ICD_64="/usr/share/vulkan/icd.d/intel_icd.x86_64.json"
+            [ -f "/usr/share/vulkan/icd.d/intel_icd.i686.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/intel_icd.i686.json"
+        elif [ -f "/etc/vulkan/icd.d/intel_icd.x86_64.json" ]; then
+            VK_ICD_64="/etc/vulkan/icd.d/intel_icd.x86_64.json"
+            [ -f "/etc/vulkan/icd.d/intel_icd.i686.json" ] && VK_ICD_32="/etc/vulkan/icd.d/intel_icd.i686.json"
+        # Chercher NVIDIA
+        elif [ -f "/usr/share/vulkan/icd.d/nvidia_icd.json" ]; then
+            VK_ICD_64="/usr/share/vulkan/icd.d/nvidia_icd.json"
+        elif [ -f "/etc/vulkan/icd.d/nvidia_icd.json" ]; then
+            VK_ICD_64="/etc/vulkan/icd.d/nvidia_icd.json"
+        fi
     fi
     
     if [ -n "$VK_ICD_64" ]; then
