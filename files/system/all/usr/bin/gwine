@@ -1763,7 +1763,6 @@ install_wine_mono_gecko() {
     return 0
 }
 
-# Configure VK_ICD_FILENAMES pour le GPU
 # =============================================================================
 # Fonctions pour le préfixe isolé avec overlayfs
 # =============================================================================
@@ -2188,17 +2187,38 @@ progress_is_cancelled() {
     return 1
 }
 
-# Ferme la barre de progression
-# Usage: progress_close dbus_ref
-progress_close() {
-    local dbusRef="$1"
+# Gère l'annulation par l'utilisateur avec fermeture de la barre de progression
+# Usage: handle_cancellation dbus_ref [--with-backup] [message_personnalisé]
+handle_cancellation() {
+    local dbus_ref="$1"
+    local with_backup=false
+    local custom_message="Initialisation annulée par l'utilisateur"
     
-    local qdbus_cmd
-    qdbus_cmd=$(_get_qdbus_cmd)
+    shift
+    # Vérifier les options
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --with-backup)
+                with_backup=true
+                ;;
+            *)
+                custom_message="$1"
+                ;;
+        esac
+        shift
+    done
     
-    if [ -n "$dbusRef" ] && [ -n "$qdbus_cmd" ]; then
-        $qdbus_cmd $dbusRef close 2>/dev/null
+    # Restaurer le backup si demandé
+    if [ "$with_backup" = "true" ]; then
+        restore_backup 2>/dev/null || true
     fi
+    
+    progress_close "$dbus_ref"
+    echo "$custom_message"
+    if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+        kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
+    fi
+    exit 0
 }
 
 # Initialise uniquement le préfixe avec barre de progression
@@ -2239,13 +2259,7 @@ init_prefix_only() {
     
     # Vérifier annulation
     if progress_is_cancelled "$DBUS_REF"; then
-        progress_close "$DBUS_REF"
-        echo "Initialisation annulée par l'utilisateur"
-        # Afficher un message avec kdialog si --kdialog spécifié
-        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
-        fi
-        exit 0
+        handle_cancellation "$DBUS_REF"
     fi
     
     # Mettre à jour automatiquement les composants sans interaction
@@ -2290,13 +2304,7 @@ init_prefix_only() {
     
     # Vérifier annulation
     if progress_is_cancelled "$DBUS_REF"; then
-        restore_backup
-        progress_close "$DBUS_REF"
-        echo "Initialisation annulée par l'utilisateur"
-        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
-        fi
-        exit 0
+        handle_cancellation "$DBUS_REF" --with-backup
     fi
     
     # Installer Mono/Gecko APRES création du préfixe
@@ -2311,13 +2319,7 @@ init_prefix_only() {
     
     # Vérifier annulation
     if progress_is_cancelled "$DBUS_REF"; then
-        restore_backup
-        progress_close "$DBUS_REF"
-        echo "Initialisation annulée par l'utilisateur"
-        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
-        fi
-        exit 0
+        handle_cancellation "$DBUS_REF" --with-backup
     fi
     
     # Installer les composants winetricks depuis le cache
@@ -2332,13 +2334,7 @@ init_prefix_only() {
     
     # Vérifier annulation
     if progress_is_cancelled "$DBUS_REF"; then
-        restore_backup
-        progress_close "$DBUS_REF"
-        echo "Initialisation annulée par l'utilisateur"
-        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
-        fi
-        exit 0
+        handle_cancellation "$DBUS_REF" --with-backup
     fi
     
     # Installer DXVK et VKD3D-Proton depuis le cache
@@ -2353,13 +2349,7 @@ init_prefix_only() {
     
     # Vérifier annulation
     if progress_is_cancelled "$DBUS_REF"; then
-        restore_backup
-        progress_close "$DBUS_REF"
-        echo "Initialisation annulée par l'utilisateur"
-        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
-        fi
-        exit 0
+        handle_cancellation "$DBUS_REF" --with-backup
     fi
     
     # Installer DXVK-NVAPI (NVIDIA) ou FakeNVAPI (non-NVIDIA)
@@ -2397,13 +2387,7 @@ init_prefix_only() {
     
     # Vérifier annulation
     if progress_is_cancelled "$DBUS_REF"; then
-        restore_backup
-        progress_close "$DBUS_REF"
-        echo "Initialisation annulée par l'utilisateur"
-        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
-        fi
-        exit 0
+        handle_cancellation "$DBUS_REF" --with-backup
     fi
     
     # Copier la config MangoHud
@@ -2418,13 +2402,7 @@ init_prefix_only() {
     
     # Vérifier annulation
     if progress_is_cancelled "$DBUS_REF"; then
-        restore_backup
-        progress_close "$DBUS_REF"
-        echo "Initialisation annulée par l'utilisateur"
-        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
-        fi
-        exit 0
+        handle_cancellation "$DBUS_REF" --with-backup
     fi
     
     # Configurer la structure des dossiers Windows
@@ -2439,13 +2417,7 @@ init_prefix_only() {
     
     # Vérifier annulation
     if progress_is_cancelled "$DBUS_REF"; then
-        restore_backup
-        progress_close "$DBUS_REF"
-        echo "Initialisation annulée par l'utilisateur"
-        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-            kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
-        fi
-        exit 0
+        handle_cancellation "$DBUS_REF" --with-backup
     fi
     
     # Créer les dossiers de cache pour shaders
@@ -2692,9 +2664,7 @@ ensure_wineprefix() {
         
         # Vérifier annulation
         if progress_is_cancelled "$DBUS_REF"; then
-            progress_close "$DBUS_REF"
-            echo "Création du préfixe annulée"
-            exit 0
+            handle_cancellation "$DBUS_REF"
         fi
         
         # Étape 2: Création du préfixe (sans demandes Mono/Gecko)
@@ -2703,10 +2673,7 @@ ensure_wineprefix() {
         
         # Vérifier annulation
         if progress_is_cancelled "$DBUS_REF"; then
-            [ -d "$WINEPREFIX" ] && rm -rf "$WINEPREFIX" 2>/dev/null
-            progress_close "$DBUS_REF"
-            echo "Création du préfixe annulée"
-            exit 0
+            handle_cancellation "$DBUS_REF"
         fi
         
         # Étape 3: Mono/Gecko
@@ -2715,10 +2682,7 @@ ensure_wineprefix() {
         
         # Vérifier annulation
         if progress_is_cancelled "$DBUS_REF"; then
-            [ -d "$WINEPREFIX" ] && rm -rf "$WINEPREFIX" 2>/dev/null
-            progress_close "$DBUS_REF"
-            echo "Création du préfixe annulée"
-            exit 0
+            handle_cancellation "$DBUS_REF"
         fi
         
         progress_close "$DBUS_REF"
@@ -2863,9 +2827,7 @@ ensure_wineprefix_full() {
         
         # Vérifier annulation
         if progress_is_cancelled "$DBUS_REF"; then
-            progress_close "$DBUS_REF"
-            echo "Création du préfixe annulée"
-            exit 0
+            handle_cancellation "$DBUS_REF"
         fi
         
         # Étape 1: Préparation du cache
@@ -2875,9 +2837,7 @@ ensure_wineprefix_full() {
         
         # Vérifier annulation
         if progress_is_cancelled "$DBUS_REF"; then
-            progress_close "$DBUS_REF"
-            echo "Création du préfixe annulée"
-            exit 0
+            handle_cancellation "$DBUS_REF"
         fi
         
         # Étape 2: Création du préfixe (sans demandes Mono/Gecko)
@@ -2887,11 +2847,7 @@ ensure_wineprefix_full() {
         
         # Vérifier annulation
         if progress_is_cancelled "$DBUS_REF"; then
-            # Supprimer le préfixe partiel
-            [ -d "$WINEPREFIX" ] && rm -rf "$WINEPREFIX" 2>/dev/null
-            progress_close "$DBUS_REF"
-            echo "Création du préfixe annulée"
-            exit 0
+            handle_cancellation "$DBUS_REF"
         fi
         
         # Étape 3: Mono/Gecko
@@ -2901,10 +2857,7 @@ ensure_wineprefix_full() {
         
         # Vérifier annulation
         if progress_is_cancelled "$DBUS_REF"; then
-            [ -d "$WINEPREFIX" ] && rm -rf "$WINEPREFIX" 2>/dev/null
-            progress_close "$DBUS_REF"
-            echo "Création du préfixe annulée"
-            exit 0
+            handle_cancellation "$DBUS_REF"
         fi
         
         # Étape 4: Composants winetricks
@@ -2914,10 +2867,7 @@ ensure_wineprefix_full() {
         
         # Vérifier annulation
         if progress_is_cancelled "$DBUS_REF"; then
-            [ -d "$WINEPREFIX" ] && rm -rf "$WINEPREFIX" 2>/dev/null
-            progress_close "$DBUS_REF"
-            echo "Création du préfixe annulée"
-            exit 0
+            handle_cancellation "$DBUS_REF"
         fi
         
         # Étape 5: DXVK/VKD3D
@@ -2927,10 +2877,7 @@ ensure_wineprefix_full() {
         
         # Vérifier annulation
         if progress_is_cancelled "$DBUS_REF"; then
-            [ -d "$WINEPREFIX" ] && rm -rf "$WINEPREFIX" 2>/dev/null
-            progress_close "$DBUS_REF"
-            echo "Création du préfixe annulée"
-            exit 0
+            handle_cancellation "$DBUS_REF"
         fi
         
         # Étape 6: DXVK-NVAPI (si NVIDIA)
@@ -2953,10 +2900,7 @@ ensure_wineprefix_full() {
             
             # Vérifier annulation
             if progress_is_cancelled "$DBUS_REF"; then
-                [ -d "$WINEPREFIX" ] && rm -rf "$WINEPREFIX" 2>/dev/null
-                progress_close "$DBUS_REF"
-                echo "Création du préfixe annulée"
-                exit 0
+                handle_cancellation "$DBUS_REF"
             fi
         fi
         
