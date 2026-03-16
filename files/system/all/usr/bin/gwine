@@ -2015,6 +2015,53 @@ setup_gpu_vulkan() {
 # Variable globale pour stocker la référence dbus du progress dialog
 _PROGRESS_DBUS_REF=""
 
+# Variable globale pour stocker le PID du processus gamemode
+_GWINE_GAMEMODE_PID=""
+
+# Vérifie si gamemode est actuellement actif
+is_gamemode_active() {
+    if command -v gamemoded &>/dev/null; then
+        local status
+        status=$(gamemoded -s 2>/dev/null)
+        if echo "$status" | grep -q "is active"; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Active gamemode et garde le processus en vie
+gamemode_start() {
+    if [ "${DISABLE_GAMEMODE:-0}" = "1" ]; then
+        return 0
+    fi
+    
+    if ! command -v gamemoded &>/dev/null; then
+        return 0
+    fi
+    
+    # Lancer gamemoded -r qui bloque et maintient gamemode actif
+    # Ce processus doit rester en vie pendant tout le jeu
+    gamemoded -r &>/dev/null &
+    _GWINE_GAMEMODE_PID=$!
+    sleep 0.1
+    
+    if is_gamemode_active; then
+        echo "GameMode activé (PID: $_GWINE_GAMEMODE_PID)"
+    fi
+}
+
+# Arrête gamemode en tuant le processus
+gamemode_stop() {
+    if [ -n "$_GWINE_GAMEMODE_PID" ] && kill -0 "$_GWINE_GAMEMODE_PID" 2>/dev/null; then
+        echo "Désactivation de GameMode..."
+        kill "$_GWINE_GAMEMODE_PID" 2>/dev/null
+        wait "$_GWINE_GAMEMODE_PID" 2>/dev/null
+        _GWINE_GAMEMODE_PID=""
+        echo "GameMode désactivé"
+    fi
+}
+
 # Détecte la commande qdbus disponible
 _get_qdbus_cmd() {
     if command -v qdbus6 &>/dev/null; then
@@ -4474,15 +4521,8 @@ launch_wine_game() {
     else
         export MANGOHUD_BIN=""
     fi
-    local GAMEMODE_ACTIVE=false
-    
-    if [ "${DISABLE_GAMEMODE:-0}" != "1" ] && command -v gamemoded &>/dev/null; then
-        echo "Activation de GameMode avec gamemoded -r..."
-        gamemoded -r &>/dev/null &
-        sleep 0.1
-        GAMEMODE_ACTIVE=true
-        echo "GameMode activé"
-    fi
+    # Activer gamemode (lance un processus qui maintient gamemode actif)
+    gamemode_start
     
     local exe_dir="$(dirname "$exe_path")"
     echo "Working directory: $exe_dir"
@@ -4570,12 +4610,8 @@ launch_wine_game() {
     
     restore_padfix_setting
     
-    if [ "$GAMEMODE_ACTIVE" = true ]; then
-        echo "Désactivation de GameMode..."
-        gamemoded -r &>/dev/null &
-        sleep 0.1
-        echo "GameMode désactivé"
-    fi
+    # Désactiver gamemode (en tuant le processus gamemoded -r)
+    gamemode_stop
     
     return $exit_code
 }
@@ -4781,7 +4817,6 @@ run_wgp_mode() {
     # Nettoyage après la fin du jeu
     cleanup_wgp
     rm -f "$lock_file" 2>/dev/null
-    gamemoded -r &>/dev/null &
 
     cleanup_saves_symlink
     cleanup_extras_symlink
