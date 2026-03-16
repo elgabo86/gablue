@@ -1,0 +1,15 @@
+module thumb-fuse 1.0;
+
+require {
+    type thumb_t;
+    type fuse_device_t;
+    type fusermount_exec_t;
+    class chr_file { open read write };
+    class file { execute execute_no_trans };
+}
+
+# Autoriser thumb_t a executer fusermount
+allow thumb_t fusermount_exec_t:file { execute execute_no_trans };
+
+# Autoriser thumb_t a acceder au device fuse
+allow thumb_t fuse_device_t:chr_file { open read write };
