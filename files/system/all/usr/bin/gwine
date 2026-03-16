@@ -3442,6 +3442,10 @@ parse_arguments() {
                 ;;
             *)
                 fullpath="$1"
+                # Convertir en chemin absolu si c'est un chemin relatif
+                if [ -n "$fullpath" ] && [[ "$fullpath" != /* ]]; then
+                    fullpath="$(pwd)/$fullpath"
+                fi
                 shift
                 ;;
         esac
