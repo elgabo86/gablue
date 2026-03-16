@@ -10,8 +10,12 @@ require {
     class chr_file { open read write };
     class file { execute execute_no_trans read open };
     class dir { mounton read open search };
-    class filesystem { mount getattr };
+    class filesystem { mount getattr unmount };
+    class capability { dac_override sys_admin };
 }
+
+# Autoriser thumb_t a utiliser les capacites necessaires pour fusermount
+allow thumb_t self:capability { dac_override sys_admin };
 
 # Autoriser thumb_t a executer fusermount
 allow thumb_t fusermount_exec_t:file { execute execute_no_trans };
@@ -26,6 +30,6 @@ allow thumb_t thumb_tmp_t:dir { mounton };
 allow thumb_t tmpfs_t:dir { mounton };
 
 # Autoriser thumb_t a acceder aux fichiers dans le filesystem fuse
-allow thumb_t fusefs_t:filesystem { mount getattr };
+allow thumb_t fusefs_t:filesystem { mount getattr unmount };
 allow thumb_t fusefs_t:dir { read open search };
 allow thumb_t fusefs_t:file { read open };
