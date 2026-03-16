@@ -3,6 +3,7 @@ module thumb-fuse 1.0;
 require {
     type thumb_t;
     type thumb_tmp_t;
+    type tmpfs_t;
     type fuse_device_t;
     type fusermount_exec_t;
     type fusefs_t;
@@ -20,6 +21,9 @@ allow thumb_t fuse_device_t:chr_file { open read write };
 
 # Autoriser thumb_t a monter sur les repertoires thumb_tmp_t
 allow thumb_t thumb_tmp_t:dir { mounton };
+
+# Autoriser thumb_t a monter sur tmpfs (repertoires temporaires)
+allow thumb_t tmpfs_t:dir { mounton };
 
 # Autoriser thumb_t a acceder aux fichiers dans le filesystem fuse
 allow thumb_t fusefs_t:filesystem { mount getattr };
