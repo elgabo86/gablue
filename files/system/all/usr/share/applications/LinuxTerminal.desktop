@@ -1,7 +1,7 @@
 [Desktop Entry]
 Comment=Exécutez des applications Linux
 Exec=/usr/share/ublue-os/gablue/scripts/launchlin.sh %f; exec bash
-Icon=applications-games
+Icon=tux
 Keywords[fr_CH]=linux;game;jeu;native;
 Keywords=linux;game;jeu;native;
 MimeType=application/x-lgp;
