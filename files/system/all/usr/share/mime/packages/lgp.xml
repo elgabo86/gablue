@@ -4,6 +4,6 @@
     <comment>Fichier Linux Game Pack</comment>
     <sub-class-of type="application/x-squashfs-image"/>
     <glob pattern="*.lgp"/>
-    <icon name="applications-games"/>
+    <icon name="tux"/>
   </mime-type>
 </mime-info>

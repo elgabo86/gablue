@@ -7,5 +7,5 @@ X-KDE-Submenu=Linux
 
 [Desktop Action CreateLGP]
 Name=Créer un pack LGP
-Icon=applications-games
+Icon=tux
 Exec=/usr/share/ublue-os/gablue/scripts/makelgp.py %f

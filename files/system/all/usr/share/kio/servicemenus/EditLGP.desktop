@@ -7,5 +7,5 @@ X-KDE-Submenu=Linux
 
 [Desktop Action ExtractLGP]
 Name=Extraire le LGP dans un dossier
-Icon=application-x-executable
+Icon=tux
 Exec=/usr/share/ublue-os/gablue/scripts/unpacklgp.sh %f

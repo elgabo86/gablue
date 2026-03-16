@@ -7,5 +7,5 @@ X-KDE-Submenu=Linux
 
 [Desktop Action LaunchLin]
 Name=Lancer le LGP
-Icon=applications-games
+Icon=tux
 Exec=/usr/share/ublue-os/gablue/scripts/launchlin.sh %f
