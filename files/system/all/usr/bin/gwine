@@ -241,9 +241,6 @@ install_winetricks_components() {
     # Ajouter le répertoire bin de Wine au PATH pour que winetricks trouve wineserver
     export PATH="$WINE_DIR/bin:$PATH"
     
-    # Winetricks utilise ~/.cache/winetricks/ par défaut pour le cache
-    local failed_components=()
-    
     # Trap SIGINT pour tuer les processus enfants
     trap cleanup_winetricks_interrupt INT
     
@@ -262,20 +259,17 @@ install_winetricks_components() {
                 exit 1
             fi
             echo "    ⚠️  Échec de l'installation de $component"
-            failed_components+=("$component")
+            _WINETRICKS_CURRENT_PID=""
+            trap - INT
+            echo ""
+            echo "Erreur: L'installation de $component a échoué. Arrêt du processus."
+            return 1
         fi
         _WINETRICKS_CURRENT_PID=""
     done
     
     # Restaurer le trap par défaut
     trap - INT
-    
-    if [ ${#failed_components[@]} -gt 0 ]; then
-        echo ""
-        echo "Erreur: ${#failed_components[@]} composant(s) ont échoué :"
-        printf '  - %s\n' "${failed_components[@]}"
-        return 1
-    fi
     
     echo "Installation des composants terminée avec succès"
     return 0
@@ -930,13 +924,18 @@ download_gwine_proton() {
         fi
     fi
     
-    # Demander confirmation
+    # En mode init, télécharger automatiquement sans confirmation
+    # Sinon, demander confirmation
     echo ""
     echo "Une nouvelle version de gwine-proton est disponible : $latest_version"
-    read -p "Voulez-vous télécharger et installer cette version ? [O/n]: " -r
-    if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
-        echo "Mise à jour annulée."
-        return 0
+    if [ "$init_mode" != "true" ]; then
+        read -p "Voulez-vous télécharger et installer cette version ? [O/n]: " -r
+        if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
+            echo "Mise à jour annulée."
+            return 0
+        fi
+    else
+        echo "Mode init : téléchargement automatique..."
     fi
     
     echo ""
@@ -973,6 +972,11 @@ download_gwine_proton() {
             echo "Échec du téléchargement de gwine-proton"
             rm -f "$archive_path"
             rm -rf "$temp_dir"
+            # Si une version existe déjà, continuer avec celle-ci
+            if [ -n "$current_version" ] && [ "$current_version" != "unknown" ]; then
+                echo "Utilisation de la version existante: $current_version"
+                return 0
+            fi
             return 1
         fi
         echo "Archive sauvegardée dans: $archive_path"
@@ -988,6 +992,11 @@ download_gwine_proton() {
     if ! tar -xf "$archive_path" -C "$extract_dir" 2>/dev/null; then
         echo "Échec de l'extraction"
         rm -rf "$temp_dir"
+        # Si une version existe déjà, continuer avec celle-ci
+        if [ -n "$current_version" ] && [ "$current_version" != "unknown" ]; then
+            echo "Utilisation de la version existante: $current_version"
+            return 0
+        fi
         return 1
     fi
     
@@ -1000,9 +1009,16 @@ download_gwine_proton() {
         extracted_wine_dir="$extract_dir"
     fi
     
+    # Sauvegarder l'ancienne version si elle existe
+    local old_version_backup=""
+    if [ -d "$WINE_INSTALL_DIR" ]; then
+        old_version_backup="$GWINE_DIR/.wine-backup"
+        rm -rf "$old_version_backup"
+        mv "$WINE_INSTALL_DIR" "$old_version_backup"
+    fi
+    
     # Installer la nouvelle version
     echo "Installation de la nouvelle version..."
-    rm -rf "$WINE_INSTALL_DIR"
     mkdir -p "$WINE_INSTALL_DIR"
     cp -r "$extracted_wine_dir"/* "$WINE_INSTALL_DIR/"
     
@@ -1010,8 +1026,20 @@ download_gwine_proton() {
     if [ ! -f "$WINE_INSTALL_DIR/bin/wine64" ]; then
         echo "Échec de l'installation"
         rm -rf "$WINE_INSTALL_DIR"
+        # Restaurer l'ancienne version si disponible
+        if [ -n "$old_version_backup" ] && [ -d "$old_version_backup" ]; then
+            echo "Restauration de l'ancienne version..."
+            mv "$old_version_backup" "$WINE_INSTALL_DIR"
+            echo "Ancienne version restaurée avec succès"
+            return 0
+        fi
         rm -rf "$temp_dir"
         return 1
+    fi
+    
+    # Supprimer la sauvegarde si l'installation a réussi
+    if [ -n "$old_version_backup" ] && [ -d "$old_version_backup" ]; then
+        rm -rf "$old_version_backup"
     fi
     
     # Mettre à jour le fichier de version
@@ -1151,13 +1179,13 @@ download_updated_dxvk_vkd3d() {
         local dxvk_url="https://github.com/bottlesdevs/components/releases/download/${dxvk_tag}/${dxvk_tag}.tar.gz"
         local dxvk_temp="$temp_dir/dxvk.tar.gz"
         
+        # Sauvegarder l'ancienne version avant de télécharger
+        local old_dxvk=$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" | head -1)
+        if [ -n "$old_dxvk" ]; then
+            mv "$old_dxvk" "$old_dxvk.backup"
+        fi
+        
         if wget -q --show-progress "$dxvk_url" -O "$dxvk_temp" 2>&1; then
-            # Sauvegarder l'ancien
-            local old_dxvk=$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" | head -1)
-            if [ -n "$old_dxvk" ]; then
-                mv "$old_dxvk" "$old_dxvk.backup"
-            fi
-            
             # Extraire dans un dossier temporaire puis déplacer
             local extract_temp="$temp_dir/.extract_dxvk"
             rm -rf "$extract_temp"
@@ -1176,15 +1204,24 @@ download_updated_dxvk_vkd3d() {
                 echo "✓ DXVK $latest_dxvk installé"
             else
                 rm -rf "$extract_temp"
+                # Restaurer l'ancienne version en cas d'échec
                 if [ -n "$old_dxvk" ]; then
                     mv "$old_dxvk.backup" "$old_dxvk"
+                    echo "✗ Échec de l'extraction de DXVK - Version précédente conservée"
+                else
+                    echo "✗ Échec de l'installation de DXVK"
                 fi
-                echo "✗ Échec de l'installation de DXVK"
                 update_success=false
             fi
             rm -f "$dxvk_temp"
         else
-            echo "✗ Échec du téléchargement de DXVK"
+            # Restaurer l'ancienne version en cas d'échec du téléchargement
+            if [ -n "$old_dxvk" ]; then
+                mv "$old_dxvk.backup" "$old_dxvk"
+                echo "✗ Échec du téléchargement de DXVK - Version précédente conservée"
+            else
+                echo "✗ Échec du téléchargement de DXVK"
+            fi
             update_success=false
         fi
     fi
@@ -1197,12 +1234,13 @@ download_updated_dxvk_vkd3d() {
         local vkd3d_url="https://github.com/bottlesdevs/components/releases/download/${vkd3d_tag}/${vkd3d_tag}.tar.gz"
         local vkd3d_temp="$temp_dir/vkd3d.tar.gz"
         
+        # Sauvegarder l'ancienne version avant de télécharger
+        local old_vkd3d=$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" | head -1)
+        if [ -n "$old_vkd3d" ]; then
+            mv "$old_vkd3d" "$old_vkd3d.backup"
+        fi
+        
         if wget -q --show-progress "$vkd3d_url" -O "$vkd3d_temp" 2>&1; then
-            local old_vkd3d=$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" | head -1)
-            if [ -n "$old_vkd3d" ]; then
-                mv "$old_vkd3d" "$old_vkd3d.backup"
-            fi
-            
             local extract_temp="$temp_dir/.extract_vkd3d"
             rm -rf "$extract_temp"
             mkdir -p "$extract_temp"
@@ -1220,15 +1258,24 @@ download_updated_dxvk_vkd3d() {
                 echo "✓ VKD3D-Proton $latest_vkd3d installé"
             else
                 rm -rf "$extract_temp"
+                # Restaurer l'ancienne version en cas d'échec
                 if [ -n "$old_vkd3d" ]; then
                     mv "$old_vkd3d.backup" "$old_vkd3d"
+                    echo "✗ Échec de l'extraction de VKD3D-Proton - Version précédente conservée"
+                else
+                    echo "✗ Échec de l'installation de VKD3D-Proton"
                 fi
-                echo "✗ Échec de l'installation de VKD3D-Proton"
                 update_success=false
             fi
             rm -f "$vkd3d_temp"
         else
-            echo "✗ Échec du téléchargement de VKD3D-Proton"
+            # Restaurer l'ancienne version en cas d'échec du téléchargement
+            if [ -n "$old_vkd3d" ]; then
+                mv "$old_vkd3d.backup" "$old_vkd3d"
+                echo "✗ Échec du téléchargement de VKD3D-Proton - Version précédente conservée"
+            else
+                echo "✗ Échec du téléchargement de VKD3D-Proton"
+            fi
             update_success=false
         fi
     fi
@@ -1325,13 +1372,13 @@ download_dxvk_nvapi() {
     rm -rf "$temp_dir"
     mkdir -p "$temp_dir"
     
+    # Sauvegarder l'ancienne version avant de télécharger
+    local old_nvapi=$(find "$DXVK_NVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-nvapi-*" | head -1)
+    if [ -n "$old_nvapi" ]; then
+        mv "$old_nvapi" "$old_nvapi.backup"
+    fi
+    
     if wget -q --show-progress "$nvapi_url" -O "$nvapi_temp" 2>&1; then
-        # Sauvegarder l'ancien
-        local old_nvapi=$(find "$DXVK_NVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-nvapi-*" | head -1)
-        if [ -n "$old_nvapi" ]; then
-            mv "$old_nvapi" "$old_nvapi.backup"
-        fi
-        
         # Extraire dans un dossier temporaire puis déplacer
         local extract_temp="$temp_dir/.extract_nvapi"
         rm -rf "$extract_temp"
@@ -1352,16 +1399,25 @@ download_dxvk_nvapi() {
             return 0
         else
             rm -rf "$extract_temp"
+            # Restaurer l'ancienne version en cas d'échec
             if [ -n "$old_nvapi" ]; then
                 mv "$old_nvapi.backup" "$old_nvapi"
+                echo "✗ Échec de l'extraction de DXVK-NVAPI - Version précédente conservée"
+            else
+                echo "✗ Échec de l'extraction de DXVK-NVAPI"
             fi
-            echo "✗ Échec de l'extraction de DXVK-NVAPI"
             rm -rf "$temp_dir"
             return 1
         fi
         rm -f "$nvapi_temp"
     else
-        echo "✗ Échec du téléchargement de DXVK-NVAPI"
+        # Restaurer l'ancienne version en cas d'échec du téléchargement
+        if [ -n "$old_nvapi" ]; then
+            mv "$old_nvapi.backup" "$old_nvapi"
+            echo "✗ Échec du téléchargement de DXVK-NVAPI - Version précédente conservée"
+        else
+            echo "✗ Échec du téléchargement de DXVK-NVAPI"
+        fi
         rm -rf "$temp_dir"
         return 1
     fi
@@ -2106,7 +2162,7 @@ init_prefix_only() {
     ((CURRENT_STEP++))
     progress_update "$DBUS_REF" "$CURRENT_STEP" "Création du préfixe Wine..."
     
-    if ! WINEPREFIX="$WINEPREFIX" "$WINE_BIN" wineboot --init >/dev/null 2>&1; then
+    if ! WINEDLLOVERRIDES="mscoree,mshtml=" WINEPREFIX="$WINEPREFIX" "$WINE_BIN" wineboot --init >/dev/null 2>&1; then
         restore_backup
         progress_close "$DBUS_REF"
         error_exit "Échec de l'initialisation du préfixe (wineboot)"
@@ -2483,10 +2539,11 @@ init_wineprefix() {
         # Préparer le cache avec les composants
         prepare_local_cache
         
-        # Créer le préfixe avec wineboot
-        WINEPREFIX="$WINEPREFIX" "$WINE_BIN" wineboot --init >/dev/null 2>&1
+        # Créer le préfixe avec wineboot en désactivant mscoree/mshtml pour éviter les demandes
+        echo "Création du préfixe Wine..."
+        WINEDLLOVERRIDES="mscoree,mshtml=" WINEPREFIX="$WINEPREFIX" "$WINE_BIN" wineboot --init >/dev/null 2>&1
         
-        # Installer Mono/Gecko APRES création du préfixe
+        # Installer Mono/Gecko APRES création du préfixe (sans la boîte de dialogue)
         install_wine_mono_gecko
         
         # Marquer qu'on doit installer les composants winetricks et DXVK
@@ -2521,9 +2578,9 @@ ensure_wineprefix() {
             exit 0
         fi
         
-        # Étape 2: Création du préfixe
+        # Étape 2: Création du préfixe (sans demandes Mono/Gecko)
         progress_update "$DBUS_REF" 2 "Création du préfixe..."
-        WINEPREFIX="$WINEPREFIX" "$WINE_BIN" wineboot --init >/dev/null 2>&1
+        WINEDLLOVERRIDES="mscoree,mshtml=" WINEPREFIX="$WINEPREFIX" "$WINE_BIN" wineboot --init >/dev/null 2>&1
         
         # Vérifier annulation
         if progress_is_cancelled "$DBUS_REF"; then
@@ -2704,10 +2761,10 @@ ensure_wineprefix_full() {
             exit 0
         fi
         
-        # Étape 2: Création du préfixe
+        # Étape 2: Création du préfixe (sans demandes Mono/Gecko)
         ((CURRENT_STEP++))
         progress_update "$DBUS_REF" "$CURRENT_STEP" "Création du préfixe..."
-        WINEPREFIX="$WINEPREFIX" "$WINE_BIN" wineboot --init >/dev/null 2>&1
+        WINEDLLOVERRIDES="mscoree,mshtml=" WINEPREFIX="$WINEPREFIX" "$WINE_BIN" wineboot --init >/dev/null 2>&1
         
         # Vérifier annulation
         if progress_is_cancelled "$DBUS_REF"; then
