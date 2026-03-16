@@ -102,334 +102,6 @@ get_winetricks_bin() {
     
     error_exit "winetricks non trouvé"
 }
-# =============================================================================
-# Fonctions utilitaires génériques pour le téléchargement
-# =============================================================================
-
-# Télécharge un fichier depuis une URL avec gestion d'erreur
-# Usage: download_file <url> <output_path> [description]
-# Retourne 0 si succès, 1 sinon
-download_file() {
-    local url="$1"
-    local output_path="$2"
-    local description="${3:-fichier}"
-    
-    if ! wget -q --show-progress "$url" -O "$output_path" 2>&1; then
-        echo "Erreur: Échec du téléchargement de $description"
-        return 1
-    fi
-    return 0
-}
-
-# Extrait une archive (tar.gz, tar.xz, ou 7z)
-# Usage: extract_archive <archive_path> <dest_dir> [archive_type]
-# Retourne 0 si succès, 1 sinon
-extract_archive() {
-    local archive_path="$1"
-    local dest_dir="$2"
-    local archive_type="${3:-auto}"
-    
-    # Détecter le type si auto
-    if [ "$archive_type" = "auto" ]; then
-        if [[ "$archive_path" == *.tar.gz ]] || [[ "$archive_path" == *.tgz ]]; then
-            archive_type="tar.gz"
-        elif [[ "$archive_path" == *.tar.xz ]]; then
-            archive_type="tar.xz"
-        elif [[ "$archive_path" == *.7z ]]; then
-            archive_type="7z"
-        fi
-    fi
-    
-    case "$archive_type" in
-        tar.gz|tgz)
-            mkdir -p "$dest_dir"
-            tar -xzf "$archive_path" -C "$dest_dir" 2>/dev/null || return 1
-            ;;
-        tar.xz)
-            mkdir -p "$dest_dir"
-            tar -xf "$archive_path" -C "$dest_dir" 2>/dev/null || return 1
-            ;;
-        7z)
-            mkdir -p "$dest_dir"
-            if command -v 7z &>/dev/null; then
-                7z x "$archive_path" -o"$dest_dir/" >/dev/null 2>&1 || return 1
-            elif command -v 7za &>/dev/null; then
-                7za x "$archive_path" -o"$dest_dir/" >/dev/null 2>&1 || return 1
-            else
-                echo "Erreur: 7z n'est pas installé"
-                return 1
-            fi
-            ;;
-        *)
-            echo "Erreur: Type d'archive inconnu: $archive_type"
-            return 1
-            ;;
-    esac
-    
-    return 0
-}
-
-# Gère le backup/restauration lors des mises à jour
-# Usage: backup_component <component_dir>
-# Retourne le chemin du backup ou vide
-backup_component() {
-    local component_dir="$1"
-    local backup_dir="${component_dir}.backup"
-    
-    if [ -d "$component_dir" ]; then
-        rm -rf "$backup_dir"
-        mv "$component_dir" "$backup_dir"
-        echo "$backup_dir"
-    fi
-}
-
-# Restaure un backup si l'installation échoue
-# Usage: restore_backup_component <backup_dir> <component_dir>
-restore_backup_component() {
-    local backup_dir="$1"
-    local component_dir="$2"
-    
-    if [ -d "$backup_dir" ]; then
-        rm -rf "$component_dir" 2>/dev/null
-        mv "$backup_dir" "$component_dir"
-    fi
-}
-
-# Nettoie un backup après installation réussie
-# Usage: cleanup_backup <backup_dir>
-cleanup_backup_component() {
-    local backup_dir="$1"
-    rm -rf "$backup_dir" 2>/dev/null || true
-}
-
-# Fonction générique pour télécharger et installer un composant GitHub
-# Usage: download_github_component <cache_dir> <component_name> <version> <url> <archive_type> [no_confirm]
-download_github_component() {
-    local cache_dir="$1"
-    local component_name="$2"
-    local version="$3"
-    local download_url="$4"
-    local archive_type="${5:-tar.gz}"
-    local no_confirm="${6:-false}"
-    local dest_dir="$cache_dir/${component_name}-${version}"
-    
-    # Vérifier si déjà présent
-    if [ -d "$dest_dir" ]; then
-        echo "$component_name $version déjà présent dans le cache"
-        return 0
-    fi
-    
-    # Demander confirmation
-    if [ "$no_confirm" = false ]; then
-        read -p "Télécharger $component_name $version? (O/n): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Oo]$ ]] && [ -n "$REPLY" ]; then
-            echo "Téléchargement annulé"
-            return 1
-        fi
-    fi
-    
-    echo "Téléchargement de $component_name $version..."
-    
-    local temp_dir=$(mktemp -d)
-    local archive_path="$temp_dir/${component_name}.${archive_type}"
-    
-    if ! download_file "$download_url" "$archive_path" "$component_name"; then
-        rm -rf "$temp_dir"
-        return 1
-    fi
-    
-    echo "Extraction de $component_name..."
-    
-    if ! extract_archive "$archive_path" "$dest_dir" "$archive_type"; then
-        rm -rf "$temp_dir" "$dest_dir" 2>/dev/null
-        echo "Erreur: Échec de l'extraction de $component_name"
-        return 1
-    fi
-    
-    rm -rf "$temp_dir"
-    echo "$component_name $version téléchargé avec succès"
-    return 0
-}
-
-# Fonction générique pour les mises à jour avec backup
-# Usage: update_component_with_backup <cache_dir> <pattern> <download_func>
-update_component_with_backup() {
-    local cache_dir="$1"
-    local pattern="$2"
-    local download_func="$3"
-    local current_dir=$(find_component_dir "$cache_dir" "$pattern")
-    local backup_dir=""
-    
-    # Créer le backup si existe
-    if [ -n "$current_dir" ]; then
-        backup_dir=$(backup_component "$current_dir")
-    fi
-    
-    # Télécharger la nouvelle version
-    if ! $download_func; then
-        # En cas d'échec, restaurer le backup
-        if [ -n "$backup_dir" ]; then
-            restore_backup_component "$backup_dir" "$current_dir"
-            echo "Version précédente conservée"
-        fi
-        return 1
-    fi
-    
-    # Nettoyer le backup si succès
-    cleanup_backup_component "$backup_dir"
-    return 0
-}
-
-# =============================================================================
-# Fonctions utilitaires génériques pour l'installation de composants
-# =============================================================================
-
-# Copie des DLLs depuis un dossier source vers les dossiers système Wine
-# Usage: copy_dll_files <source_dir> <dest_win64_dir> <dest_win32_dir> [dll_list]
-# Retourne 0 si succès, 1 si échec
-copy_dll_files() {
-    local source_dir="$1"
-    local dest_win64="$2"
-    local dest_win32="$3"
-    local dll_list="${4:-}"
-    local failed=false
-    
-    # Si aucune liste spécifique, copier tous les DLLs
-    if [ -z "$dll_list" ]; then
-        dll_list="*.dll"
-    fi
-    
-    # Copier les DLLs x64
-    if [ -d "$source_dir/x64" ]; then
-        for dll in $dll_list; do
-            local src_file="$source_dir/x64/$dll"
-            if [ -f "$src_file" ]; then
-                if ! cp -f "$src_file" "$dest_win64/" 2>/dev/null; then
-                    echo "    ⚠️  Échec copie $dll (x64)"
-                    failed=true
-                fi
-            fi
-        done
-    fi
-    
-    # Copier les DLLs x32/x86
-    local x86_dir=""
-    if [ -d "$source_dir/x32" ]; then
-        x86_dir="$source_dir/x32"
-    elif [ -d "$source_dir/x86" ]; then
-        x86_dir="$source_dir/x86"
-    fi
-    
-    if [ -n "$x86_dir" ]; then
-        for dll in $dll_list; do
-            local src_file="$x86_dir/$dll"
-            if [ -f "$src_file" ]; then
-                if ! cp -f "$src_file" "$dest_win32/" 2>/dev/null; then
-                    echo "    ⚠️  Échec copie $dll (x32)"
-                    failed=true
-                fi
-            fi
-        done
-    fi
-    
-    [ "$failed" = true ] && return 1
-    return 0
-}
-
-# Crée des overrides de DLL dans le registre Wine
-# Usage: create_dll_overrides <dll1> [dll2] [dll3] ...
-create_dll_overrides() {
-    local failed=false
-    
-    echo "  - Création des overrides de DLL..."
-    for dll in "$@"; do
-        if ! WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "$dll" /d native,builtin /f >/dev/null 2>&1; then
-            echo "    ⚠️  Échec override $dll"
-            failed=true
-        fi
-    done
-    echo "  - Overrides créés"
-    
-    [ "$failed" = true ] && return 1
-    return 0
-}
-
-# Trouve le premier dossier correspondant à un pattern dans un répertoire
-# Usage: find_component_dir <cache_dir> <pattern>
-# Retourne le chemin du dossier trouvé ou vide
-find_component_dir() {
-    local cache_dir="$1"
-    local pattern="$2"
-    
-    if [ ! -d "$cache_dir" ]; then
-        return 1
-    fi
-    
-    find "$cache_dir" -mindepth 1 -maxdepth 1 -type d -name "$pattern" | head -1
-}
-
-# Installe un composant DLL générique dans le préfixe Wine
-# Usage: install_dll_component <name> <cache_dir> <pattern> <dlls> [overrides]
-# Paramètres:
-#   name      : Nom du composant pour les messages (ex: "DXVK")
-#   cache_dir : Répertoire de cache où chercher
-#   pattern   : Pattern pour find (ex: "dxvk-[0-9]*")
-#   dlls      : Liste des DLLs à copier (ex: "d3d11.dll dxgi.dll")
-#   overrides : DLLs pour les overrides (optionnel, utilise dlls si non spécifié)
-# Retourne 0 si succès, 1 si erreur
-install_dll_component() {
-    local component_name="$1"
-    local cache_dir="$2"
-    local pattern="$3"
-    local dlls="$4"
-    local overrides="${5:-$dlls}"
-    local installed=false
-    local failed=false
-    
-    # Obtenir les chemins system32 et syswow64 si pas déjà définis
-    if [ -z "${win64_sys_path:-}" ] || [ -z "${win32_sys_path:-}" ]; then
-        win64_sys_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -u 'C:\\windows\\system32' 2>/dev/null | tr -d '\r')
-        win32_sys_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -u 'C:\\windows\\syswow64' 2>/dev/null | tr -d '\r')
-        
-        if [ -z "$win64_sys_path" ] || [ -z "$win32_sys_path" ]; then
-            echo "Erreur: Impossible d'obtenir les chemins system32/syswow64"
-            return 1
-        fi
-    fi
-    
-    # Trouver et installer le composant
-    local component_dir=$(find_component_dir "$cache_dir" "$pattern")
-    if [ -n "$component_dir" ]; then
-        echo "  - Installation de $(basename "$component_dir")..."
-        if copy_dll_files "$component_dir" "$win64_sys_path" "$win32_sys_path" "$dlls"; then
-            installed=true
-        else
-            failed=true
-        fi
-    fi
-    
-    # Créer les overrides
-    if [ "$installed" = true ]; then
-        if ! create_dll_overrides $overrides; then
-            failed=true
-        fi
-    fi
-    
-    if [ "$failed" = true ]; then
-        echo "Erreur: L'installation de $component_name a rencontré des erreurs"
-        return 1
-    fi
-    
-    if [ "$installed" = true ]; then
-        echo "$component_name installé avec succès"
-        return 0
-    else
-        echo "$component_name non trouvé dans le cache"
-        return 1
-    fi
-}
-
 # Fonctions de fix manette (DisableHidraw)
 apply_padfix_setting() {
     local SYSTEM_REG="$WINEPREFIX/system.reg"
@@ -610,7 +282,7 @@ install_dxvk_vkd3d() {
     
     echo "Installation de DXVK et VKD3D-Proton depuis le cache..."
     
-    # Obtenir les chemins system32 et syswow64 (utilisés par install_dll_component)
+    # Obtenir les chemins system32 et syswow64
     local win64_sys_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -u 'C:\\windows\\system32' 2>/dev/null | tr -d '\r')
     local win32_sys_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -u 'C:\\windows\\syswow64' 2>/dev/null | tr -d '\r')
     
@@ -620,22 +292,79 @@ install_dxvk_vkd3d() {
     fi
     
     local installation_failed=false
-    local dxvk_installed=false
-    local vkd3d_installed=false
     
     # Installer DXVK
-    if install_dll_component "DXVK" "$DXVK_CACHE_DIR" "dxvk-[0-9]*" "d3d8.dll d3d9.dll d3d10core.dll d3d11.dll dxgi.dll" "d3d8 d3d9 d3d10core d3d11 dxgi"; then
-        dxvk_installed=true
+    if [ -d "$DXVK_CACHE_DIR" ]; then
+        local dxvk_dir=$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-[0-9]*" | grep -v "gplasync" | grep -v "nvapi" | head -1)
+        if [ -n "$dxvk_dir" ]; then
+            echo "  - Installation de $(basename "$dxvk_dir")..."
+            
+            if [ -d "$dxvk_dir/x64" ]; then
+                for dll in d3d8 d3d9 d3d10core d3d11 dxgi; do
+                    if [ -f "$dxvk_dir/x64/${dll}.dll" ]; then
+                        if ! cp -f "$dxvk_dir/x64/${dll}.dll" "${win64_sys_path}/" 2>/dev/null; then
+                            echo "    ⚠️  Échec copie ${dll}.dll (x64)"
+                            installation_failed=true
+                        fi
+                    fi
+                done
+            fi
+            
+            if [ -d "$dxvk_dir/x32" ]; then
+                for dll in d3d8 d3d9 d3d10core d3d11 dxgi; do
+                    if [ -f "$dxvk_dir/x32/${dll}.dll" ]; then
+                        if ! cp -f "$dxvk_dir/x32/${dll}.dll" "${win32_sys_path}/" 2>/dev/null; then
+                            echo "    ⚠️  Échec copie ${dll}.dll (x32)"
+                            installation_failed=true
+                        fi
+                    fi
+                done
+            fi
+        fi
     fi
     
     # Installer VKD3D-Proton
-    if install_dll_component "VKD3D-Proton" "$VKD3D_CACHE_DIR" "vkd3d-proton-*" "d3d12.dll d3d12core.dll" "d3d12 d3d12core"; then
-        vkd3d_installed=true
+    if [ -d "$VKD3D_CACHE_DIR" ]; then
+        local vkd3d_dir=$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" | head -1)
+        if [ -n "$vkd3d_dir" ]; then
+            echo "  - Installation de $(basename "$vkd3d_dir")..."
+            
+            if [ -d "$vkd3d_dir/x64" ]; then
+                for dll in d3d12 d3d12core; do
+                    if [ -f "$vkd3d_dir/x64/${dll}.dll" ]; then
+                        if ! cp -f "$vkd3d_dir/x64/${dll}.dll" "${win64_sys_path}/" 2>/dev/null; then
+                            echo "    ⚠️  Échec copie ${dll}.dll (x64)"
+                            installation_failed=true
+                        fi
+                    fi
+                done
+            fi
+            
+            if [ -d "$vkd3d_dir/x86" ]; then
+                for dll in d3d12 d3d12core; do
+                    if [ -f "$vkd3d_dir/x86/${dll}.dll" ]; then
+                        if ! cp -f "$vkd3d_dir/x86/${dll}.dll" "${win32_sys_path}/" 2>/dev/null; then
+                            echo "    ⚠️  Échec copie ${dll}.dll (x86)"
+                            installation_failed=true
+                        fi
+                    fi
+                done
+            fi
+        fi
     fi
     
-    # Vérifier si au moins un composant a été installé
-    if [ "$dxvk_installed" = false ] && [ "$vkd3d_installed" = false ]; then
-        echo "Erreur: Ni DXVK ni VKD3D-Proton n'ont pu être installés"
+    # Créer les overrides DXVK/VKD3D avec wine reg add
+    echo "  - Création des overrides de DLL..."
+    for dll in d3d8 d3d9 d3d10core d3d11 dxgi d3d12 d3d12core; do
+        if ! WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "$dll" /d native,builtin /f >/dev/null 2>&1; then
+            echo "    ⚠️  Échec override $dll"
+            installation_failed=true
+        fi
+    done
+    echo "  - Overrides créés"
+    
+    if [ "$installation_failed" = true ]; then
+        echo "Erreur: L'installation de DXVK/VKD3D a rencontré des erreurs"
         return 1
     fi
     
@@ -673,7 +402,7 @@ install_dxvk_nvapi() {
     
     echo "Installation de DXVK-NVAPI depuis le cache..."
     
-    # Obtenir les chemins system32 et syswow64 (utilisés par install_dll_component)
+    # Obtenir les chemins system32 et syswow64
     local win64_sys_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -u 'C:\\windows\\system32' 2>/dev/null | tr -d '\r')
     local win32_sys_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -u 'C:\\windows\\syswow64' 2>/dev/null | tr -d '\r')
     
@@ -682,8 +411,65 @@ install_dxvk_nvapi() {
         return 1
     fi
     
-    # Installer via la fonction générique (ignore le code retour car message déjà affiché)
-    install_dll_component "DXVK-NVAPI" "$DXVK_NVAPI_CACHE_DIR" "dxvk-nvapi-*" "nvapi64.dll nvapi.dll" "nvapi nvapi64" || true
+    local installation_failed=false
+    local nvapi_installed=false
+    
+    # Installer DXVK-NVAPI
+    if [ -d "$DXVK_NVAPI_CACHE_DIR" ]; then
+        local nvapi_dir=$(find "$DXVK_NVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-nvapi-*" | head -1)
+        if [ -n "$nvapi_dir" ]; then
+            echo "  - Installation de $(basename "$nvapi_dir")..."
+            
+            if [ -d "$nvapi_dir/x64" ]; then
+                for dll in nvapi64 nvapi; do
+                    if [ -f "$nvapi_dir/x64/${dll}.dll" ]; then
+                        if ! cp -f "$nvapi_dir/x64/${dll}.dll" "${win64_sys_path}/" 2>/dev/null; then
+                            echo "    ⚠️  Échec copie ${dll}.dll (x64)"
+                            installation_failed=true
+                        else
+                            nvapi_installed=true
+                        fi
+                    fi
+                done
+            fi
+            
+            if [ -d "$nvapi_dir/x32" ]; then
+                for dll in nvapi; do
+                    if [ -f "$nvapi_dir/x32/${dll}.dll" ]; then
+                        if ! cp -f "$nvapi_dir/x32/${dll}.dll" "${win32_sys_path}/" 2>/dev/null; then
+                            echo "    ⚠️  Échec copie ${dll}.dll (x32)"
+                            installation_failed=true
+                        else
+                            nvapi_installed=true
+                        fi
+                    fi
+                done
+            fi
+        fi
+    fi
+    
+    # Créer les overrides NVAPI avec wine reg add
+    if [ "$nvapi_installed" = true ]; then
+        echo "  - Création des overrides NVAPI..."
+        for dll in nvapi nvapi64; do
+            if ! WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "$dll" /d native,builtin /f >/dev/null 2>&1; then
+                echo "    ⚠️  Échec override $dll"
+                installation_failed=true
+            fi
+        done
+        echo "  - Overrides NVAPI créés"
+    fi
+    
+    if [ "$installation_failed" = true ]; then
+        echo "Erreur: L'installation de DXVK-NVAPI a rencontré des erreurs"
+        return 1
+    fi
+    
+    if [ "$nvapi_installed" = true ]; then
+        echo "DXVK-NVAPI installé avec succès"
+    else
+        echo "DXVK-NVAPI non trouvé dans le cache"
+    fi
     
     return 0
 }
@@ -710,9 +496,51 @@ download_fakenvapi() {
         return 1
     fi
     
-    local download_url="https://github.com/optiscaler/fakenvapi/releases/download/v${latest_version}/fakenvapi-v${latest_version}.7z"
+    echo "Dernière version de FakeNVAPI: v${latest_version}"
     
-    download_github_component "$FAKENVAPI_CACHE_DIR" "fakenvapi" "$latest_version" "$download_url" "7z" "$no_confirm"
+    # Vérifier si déjà présent
+    if [ -d "$FAKENVAPI_CACHE_DIR/fakenvapi-v${latest_version}" ]; then
+        echo "FakeNVAPI v${latest_version} déjà présent dans le cache"
+        return 0
+    fi
+    
+    if [ "$no_confirm" = false ]; then
+        read -p "Télécharger FakeNVAPI v${latest_version}? (O/n): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Oo]$ ]] && [ -n "$REPLY" ]; then
+            echo "Téléchargement annulé"
+            return 1
+        fi
+    fi
+    
+    echo "Téléchargement de FakeNVAPI v${latest_version}..."
+    
+    local download_url="https://github.com/optiscaler/fakenvapi/releases/download/v${latest_version}/fakenvapi-v${latest_version}.7z"
+    local temp_dir=$(mktemp -d)
+    local archive_path="$temp_dir/fakenvapi-v${latest_version}.7z"
+    
+    if wget -q --show-progress "$download_url" -O "$archive_path" 2>&1; then
+        echo "Extraction de FakeNVAPI..."
+        mkdir -p "$FAKENVAPI_CACHE_DIR/fakenvapi-v${latest_version}"
+        
+        if command -v 7z &>/dev/null; then
+            7z x "$archive_path" -o"$FAKENVAPI_CACHE_DIR/fakenvapi-v${latest_version}/" >/dev/null 2>&1
+        elif command -v 7za &>/dev/null; then
+            7za x "$archive_path" -o"$FAKENVAPI_CACHE_DIR/fakenvapi-v${latest_version}/" >/dev/null 2>&1
+        else
+            echo "Erreur: 7z n'est pas installé"
+            rm -rf "$temp_dir"
+            return 1
+        fi
+        
+        rm -rf "$temp_dir"
+        echo "FakeNVAPI v${latest_version} téléchargé avec succès"
+        return 0
+    else
+        echo "Erreur lors du téléchargement de FakeNVAPI"
+        rm -rf "$temp_dir"
+        return 1
+    fi
 }
 
 # Installe FakeNVAPI dans le préfixe Wine (pour systèmes non-NVIDIA)
@@ -737,50 +565,57 @@ install_fakenvapi() {
     local fakenvapi_installed=false
     
     # Installer FakeNVAPI
-    local fakenvapi_dir=$(find_component_dir "$FAKENVAPI_CACHE_DIR" "fakenvapi-*")
-    if [ -n "$fakenvapi_dir" ]; then
-        echo "  - Installation de $(basename "$fakenvapi_dir")..."
-        
-        # Copier nvapi64.dll et fakenvapi.ini dans system32
-        if [ -f "$fakenvapi_dir/nvapi64.dll" ]; then
-            if cp -f "$fakenvapi_dir/nvapi64.dll" "${win64_sys_path}/" 2>/dev/null; then
-                fakenvapi_installed=true
-            else
-                echo "    ⚠️  Échec copie nvapi64.dll (system32)"
-                installation_failed=true
+    if [ -d "$FAKENVAPI_CACHE_DIR" ]; then
+        local fakenvapi_dir=$(find "$FAKENVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "fakenvapi-*" | head -1)
+        if [ -n "$fakenvapi_dir" ]; then
+            echo "  - Installation de $(basename "$fakenvapi_dir")..."
+            
+            # Copier nvapi64.dll et fakenvapi.ini dans system32
+            if [ -f "$fakenvapi_dir/nvapi64.dll" ]; then
+                if ! cp -f "$fakenvapi_dir/nvapi64.dll" "${win64_sys_path}/" 2>/dev/null; then
+                    echo "    ⚠️  Échec copie nvapi64.dll (system32)"
+                    installation_failed=true
+                else
+                    fakenvapi_installed=true
+                fi
+            fi
+            
+            if [ -f "$fakenvapi_dir/fakenvapi.ini" ]; then
+                if ! cp -f "$fakenvapi_dir/fakenvapi.ini" "${win64_sys_path}/" 2>/dev/null; then
+                    echo "    ⚠️  Échec copie fakenvapi.ini (system32)"
+                    installation_failed=true
+                fi
+            fi
+            
+            # Copier nvapi64.dll et fakenvapi.ini dans syswow64 (renommé en nvapi.dll pour 32-bit)
+            if [ -f "$fakenvapi_dir/nvapi64.dll" ]; then
+                if ! cp -f "$fakenvapi_dir/nvapi64.dll" "${win32_sys_path}/nvapi.dll" 2>/dev/null; then
+                    echo "    ⚠️  Échec copie nvapi.dll (syswow64)"
+                    installation_failed=true
+                else
+                    fakenvapi_installed=true
+                fi
+            fi
+            
+            if [ -f "$fakenvapi_dir/fakenvapi.ini" ]; then
+                if ! cp -f "$fakenvapi_dir/fakenvapi.ini" "${win32_sys_path}/" 2>/dev/null; then
+                    echo "    ⚠️  Échec copie fakenvapi.ini (syswow64)"
+                    installation_failed=true
+                fi
             fi
         fi
-        
-        if [ -f "$fakenvapi_dir/fakenvapi.ini" ]; then
-            if ! cp -f "$fakenvapi_dir/fakenvapi.ini" "${win64_sys_path}/" 2>/dev/null; then
-                echo "    ⚠️  Échec copie fakenvapi.ini (system32)"
+    fi
+    
+    # Créer les overrides NVAPI avec wine reg add
+    if [ "$fakenvapi_installed" = true ]; then
+        echo "  - Création des overrides FakeNVAPI..."
+        for dll in nvapi nvapi64; do
+            if ! WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "$dll" /d native,builtin /f >/dev/null 2>&1; then
+                echo "    ⚠️  Échec override $dll"
                 installation_failed=true
             fi
-        fi
-        
-        # Copier nvapi64.dll renommé en nvapi.dll pour syswow64
-        if [ -f "$fakenvapi_dir/nvapi64.dll" ]; then
-            if cp -f "$fakenvapi_dir/nvapi64.dll" "${win32_sys_path}/nvapi.dll" 2>/dev/null; then
-                fakenvapi_installed=true
-            else
-                echo "    ⚠️  Échec copie nvapi.dll (syswow64)"
-                installation_failed=true
-            fi
-        fi
-        
-        if [ -f "$fakenvapi_dir/fakenvapi.ini" ]; then
-            if ! cp -f "$fakenvapi_dir/fakenvapi.ini" "${win32_sys_path}/" 2>/dev/null; then
-                echo "    ⚠️  Échec copie fakenvapi.ini (syswow64)"
-                installation_failed=true
-            fi
-        fi
-        
-        # Créer les overrides NVAPI si installation réussie
-        if [ "$fakenvapi_installed" = true ]; then
-            if ! create_dll_overrides nvapi nvapi64; then
-                installation_failed=true
-            fi
-        fi
+        done
+        echo "  - Overrides FakeNVAPI créés"
     fi
     
     if [ "$installation_failed" = true ]; then
@@ -1047,48 +882,6 @@ get_latest_dxvk_nvapi_version() {
     echo "$tag"
 }
 
-# Installe gwine-proton depuis une archive extraite
-# Usage: install_gwine_from_extracted <extracted_dir> <install_dir>
-# Retourne 0 si succès, 1 sinon
-install_gwine_from_extracted() {
-    local extracted_dir="$1"
-    local install_dir="$2"
-    local backup_dir="$GWINE_DIR/.wine-backup"
-    
-    # Trouver le dossier Wine dans l'extraction
-    local wine_subdir=$(find "$extracted_dir" -maxdepth 1 -type d -name "*gwine*" | head -1)
-    if [ -z "$wine_subdir" ]; then
-        wine_subdir=$(find "$extracted_dir" -maxdepth 1 -type d | head -1)
-    fi
-    [ -z "$wine_subdir" ] && wine_subdir="$extracted_dir"
-    
-    # Sauvegarder l'ancienne version
-    local old_backup=""
-    if [ -d "$install_dir" ]; then
-        old_backup=$(backup_component "$install_dir")
-    fi
-    
-    # Installer
-    echo "Installation de la nouvelle version..."
-    mkdir -p "$install_dir"
-    cp -r "$wine_subdir"/* "$install_dir/"
-    
-    # Vérifier l'installation
-    if [ ! -f "$install_dir/bin/wine64" ]; then
-        echo "Échec de l'installation"
-        rm -rf "$install_dir"
-        if [ -n "$old_backup" ]; then
-            restore_backup_component "$old_backup" "$install_dir"
-            echo "Ancienne version restaurée avec succès"
-        fi
-        return 1
-    fi
-    
-    # Nettoyer le backup
-    cleanup_backup_component "$old_backup"
-    return 0
-}
-
 # Télécharge et installe gwine-proton
 download_gwine_proton() {
     local WINE_INSTALL_DIR="$GWINE_DIR/wine"
@@ -1105,7 +898,7 @@ download_gwine_proton() {
     latest_version=$(get_latest_gwine_version)
     
     if [ -z "$latest_version" ]; then
-        echo "Impossible de récupérer la dernière version (pas de connexion internet)"
+        echo "Impossible de récupérer la dernière version de gwine-proton (pas de connexion internet)"
         echo "Tentative d'installation depuis le cache..."
         if install_gwine_proton_from_cache; then
             return 0
@@ -1131,45 +924,53 @@ download_gwine_proton() {
         fi
     fi
     
-    # Demander confirmation
-    local no_confirm=false
-    if [ "$init_mode" = "true" ]; then
-        echo "Mode init : téléchargement automatique..."
-        no_confirm=true
-    else
-        echo ""
-        echo "Une nouvelle version de gwine-proton est disponible : $latest_version"
+    # En mode init, télécharger automatiquement sans confirmation
+    # Sinon, demander confirmation
+    echo ""
+    echo "Une nouvelle version de gwine-proton est disponible : $latest_version"
+    if [ "$init_mode" != "true" ]; then
         read -p "Voulez-vous télécharger et installer cette version ? [O/n]: " -r
         if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
             echo "Mise à jour annulée."
             return 0
         fi
+    else
+        echo "Mode init : téléchargement automatique..."
     fi
     
     echo ""
     echo "Téléchargement de $latest_version..."
     
+    # Créer le répertoire pour les archives
     local archives_dir="$COMPONENTS_DIR/gwine-proton"
-    local archive_name="${latest_version}.tar.xz"
-    local download_url="https://github.com/elgabo86/gwine/releases/download/${latest_version}/${archive_name}"
-    local temp_dir="$CACHE_DIR/.temp_gwine"
-    local archive_path="$archives_dir/$archive_name"
-    
     mkdir -p "$archives_dir"
-    rm -rf "$temp_dir"
+    
+    # Créer le répertoire temporaire pour l'extraction
+    local temp_dir="$CACHE_DIR/.temp_download"
     mkdir -p "$temp_dir"
     
-    # Supprimer l'ancienne archive
-    local old_archive=$(find "$archives_dir" -maxdepth 1 -name "gwine-proton-*.tar.xz" | head -1)
+    # Chemin de l'archive dans le cache
+    local archive_name="${latest_version}.tar.xz"
+    local archive_path="$archives_dir/$archive_name"
+    local download_url="https://github.com/elgabo86/gwine/releases/download/${latest_version}/${archive_name}"
+    
+    # Supprimer l'ancienne archive s'il y en a une (garder une seule version)
+    local old_archive
+    old_archive=$(find "$archives_dir" -maxdepth 1 -name "gwine-proton-*.tar.xz" 2>/dev/null | head -1)
     if [ -n "$old_archive" ] && [ "$old_archive" != "$archive_path" ]; then
         echo "Suppression de l'ancienne archive: $(basename "$old_archive")"
         rm -f "$old_archive"
     fi
     
-    # Télécharger si pas en cache
-    if [ ! -f "$archive_path" ]; then
+    # Vérifier si l'archive existe déjà dans le cache
+    if [ -f "$archive_path" ]; then
+        echo "Archive trouvée dans le cache: $archive_path"
+    else
+        # Télécharger la nouvelle version
         echo "Téléchargement depuis: $download_url"
-        if ! download_file "$download_url" "$archive_path" "gwine-proton"; then
+        if ! wget --show-progress -q "$download_url" -O "$archive_path" 2>&1; then
+            echo "Échec du téléchargement de gwine-proton"
+            rm -f "$archive_path"
             rm -rf "$temp_dir"
             # Si une version existe déjà, continuer avec celle-ci
             if [ -n "$current_version" ] && [ "$current_version" != "unknown" ]; then
@@ -1179,15 +980,19 @@ download_gwine_proton() {
             return 1
         fi
         echo "Archive sauvegardée dans: $archive_path"
-    else
-        echo "Archive trouvée dans le cache: $archive_path"
     fi
     
-    # Extraire
     echo "Extraction..."
+    
+    # Extraire dans un répertoire temporaire
     local extract_dir="$temp_dir/extracted"
-    if ! extract_archive "$archive_path" "$extract_dir" "tar.xz"; then
+    rm -rf "$extract_dir"
+    mkdir -p "$extract_dir"
+    
+    if ! tar -xf "$archive_path" -C "$extract_dir" 2>/dev/null; then
+        echo "Échec de l'extraction"
         rm -rf "$temp_dir"
+        # Si une version existe déjà, continuer avec celle-ci
         if [ -n "$current_version" ] && [ "$current_version" != "unknown" ]; then
             echo "Utilisation de la version existante: $current_version"
             return 0
@@ -1195,23 +1000,61 @@ download_gwine_proton() {
         return 1
     fi
     
-    # Installer
-    if install_gwine_from_extracted "$extract_dir" "$WINE_INSTALL_DIR"; then
-        # Mettre à jour le fichier de version
-        echo "$latest_version" > "$GWINE_DIR/.version"
-        
-        # Mettre à jour les variables globales
-        WINE_DIR="$WINE_INSTALL_DIR"
-        WINE_BIN="$WINE_INSTALL_DIR/bin/wine64"
-        WINESERVER_BIN="$WINE_INSTALL_DIR/bin/wineserver"
-        
-        rm -rf "$temp_dir"
-        echo "✓ gwine-proton $latest_version installé avec succès"
-        return 0
-    else
+    # Trouver le dossier extrait
+    local extracted_wine_dir=$(find "$extract_dir" -maxdepth 1 -type d -name "*gwine*" | head -1)
+    if [ -z "$extracted_wine_dir" ]; then
+        extracted_wine_dir=$(find "$extract_dir" -maxdepth 1 -type d | head -1)
+    fi
+    if [ -z "$extracted_wine_dir" ]; then
+        extracted_wine_dir="$extract_dir"
+    fi
+    
+    # Sauvegarder l'ancienne version si elle existe
+    local old_version_backup=""
+    if [ -d "$WINE_INSTALL_DIR" ]; then
+        old_version_backup="$GWINE_DIR/.wine-backup"
+        rm -rf "$old_version_backup"
+        mv "$WINE_INSTALL_DIR" "$old_version_backup"
+    fi
+    
+    # Installer la nouvelle version
+    echo "Installation de la nouvelle version..."
+    mkdir -p "$WINE_INSTALL_DIR"
+    cp -r "$extracted_wine_dir"/* "$WINE_INSTALL_DIR/"
+    
+    # Vérifier l'installation
+    if [ ! -f "$WINE_INSTALL_DIR/bin/wine64" ]; then
+        echo "Échec de l'installation"
+        rm -rf "$WINE_INSTALL_DIR"
+        # Restaurer l'ancienne version si disponible
+        if [ -n "$old_version_backup" ] && [ -d "$old_version_backup" ]; then
+            echo "Restauration de l'ancienne version..."
+            mv "$old_version_backup" "$WINE_INSTALL_DIR"
+            echo "Ancienne version restaurée avec succès"
+            return 0
+        fi
         rm -rf "$temp_dir"
         return 1
     fi
+    
+    # Supprimer la sauvegarde si l'installation a réussi
+    if [ -n "$old_version_backup" ] && [ -d "$old_version_backup" ]; then
+        rm -rf "$old_version_backup"
+    fi
+    
+    # Mettre à jour le fichier de version
+    echo "$latest_version" > "$GWINE_DIR/.version"
+    
+    # Nettoyer le répertoire temporaire (mais garder l'archive)
+    rm -rf "$temp_dir"
+    
+    # Mettre à jour les variables
+    WINE_DIR="$WINE_INSTALL_DIR"
+    WINE_BIN="$WINE_INSTALL_DIR/bin/wine64"
+    WINESERVER_BIN="$WINE_INSTALL_DIR/bin/wineserver"
+    
+    echo "✓ gwine-proton $latest_version installé avec succès"
+    return 0
 }
 
 # Télécharge et installe DXVK/VKD3D-Proton mis à jour
@@ -1497,7 +1340,7 @@ download_dxvk_nvapi() {
     
     # Vérifier si déjà installé
     local current_nvapi=""
-    local nvapi_folder=$(find_component_dir "$DXVK_NVAPI_CACHE_DIR" "dxvk-nvapi-*")
+    local nvapi_folder=$(find "$DXVK_NVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-nvapi-*" 2>/dev/null | head -1)
     [ -n "$nvapi_folder" ] && current_nvapi=$(basename "$nvapi_folder" | sed 's/^dxvk-nvapi-v//; s/^dxvk-nvapi-//')
     
     if [ -n "$current_nvapi" ] && [ "$current_nvapi" = "$target_version" ]; then
@@ -1507,19 +1350,75 @@ download_dxvk_nvapi() {
     
     echo "DXVK-NVAPI - Installé: ${current_nvapi:-Aucun}, Cible: $target_version"
     
+    # Demander confirmation (sauf si --no-confirm)
+    if [ "$no_confirm" = false ]; then
+        echo ""
+        echo "Nouvelle version disponible : DXVK-NVAPI $target_version"
+        read -p "Voulez-vous télécharger et installer DXVK-NVAPI ? [O/n]: " -r
+        if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
+            echo "Installation annulée."
+            return 0
+        fi
+    fi
+    
+    # Télécharger DXVK-NVAPI
+    echo ""
+    echo "Téléchargement de DXVK-NVAPI $target_version..."
     local nvapi_tag="dxvk-nvapi-v${target_version}"
     local nvapi_url="https://github.com/bottlesdevs/components/releases/download/${nvapi_tag}/${nvapi_tag}.tar.gz"
+    local temp_dir="$CACHE_DIR/.temp_nvapi"
+    local nvapi_temp="$temp_dir/dxvk-nvapi.tar.gz"
     
-    # Fonction interne pour le téléchargement
-    _do_download() {
-        download_github_component "$DXVK_NVAPI_CACHE_DIR" "dxvk-nvapi" "$target_version" "$nvapi_url" "tar.gz" "$no_confirm"
-    }
+    rm -rf "$temp_dir"
+    mkdir -p "$temp_dir"
     
-    if update_component_with_backup "$DXVK_NVAPI_CACHE_DIR" "dxvk-nvapi-*" _do_download; then
-        echo "✓ DXVK-NVAPI $target_version installé"
-        return 0
+    # Sauvegarder l'ancienne version avant de télécharger
+    local old_nvapi=$(find "$DXVK_NVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-nvapi-*" | head -1)
+    if [ -n "$old_nvapi" ]; then
+        mv "$old_nvapi" "$old_nvapi.backup"
+    fi
+    
+    if wget -q --show-progress "$nvapi_url" -O "$nvapi_temp" 2>&1; then
+        # Extraire dans un dossier temporaire puis déplacer
+        local extract_temp="$temp_dir/.extract_nvapi"
+        rm -rf "$extract_temp"
+        mkdir -p "$extract_temp"
+        if tar -xzf "$nvapi_temp" -C "$extract_temp" 2>/dev/null; then
+            mkdir -p "$DXVK_NVAPI_CACHE_DIR/dxvk-nvapi-${target_version}"
+            local extracted_dir=$(find "$extract_temp" -mindepth 1 -maxdepth 1 -type d | head -1)
+            if [ -n "$extracted_dir" ]; then
+                cp -r "$extracted_dir"/* "$DXVK_NVAPI_CACHE_DIR/dxvk-nvapi-${target_version}/" 2>/dev/null || true
+            fi
+            rm -rf "$extract_temp"
+            
+            if [ -n "$old_nvapi" ]; then
+                rm -rf "$old_nvapi.backup"
+            fi
+            echo "✓ DXVK-NVAPI $target_version installé"
+            rm -rf "$temp_dir"
+            return 0
+        else
+            rm -rf "$extract_temp"
+            # Restaurer l'ancienne version en cas d'échec
+            if [ -n "$old_nvapi" ]; then
+                mv "$old_nvapi.backup" "$old_nvapi"
+                echo "✗ Échec de l'extraction de DXVK-NVAPI - Version précédente conservée"
+            else
+                echo "✗ Échec de l'extraction de DXVK-NVAPI"
+            fi
+            rm -rf "$temp_dir"
+            return 1
+        fi
+        rm -f "$nvapi_temp"
     else
-        echo "✗ Échec de l'installation de DXVK-NVAPI"
+        # Restaurer l'ancienne version en cas d'échec du téléchargement
+        if [ -n "$old_nvapi" ]; then
+            mv "$old_nvapi.backup" "$old_nvapi"
+            echo "✗ Échec du téléchargement de DXVK-NVAPI - Version précédente conservée"
+        else
+            echo "✗ Échec du téléchargement de DXVK-NVAPI"
+        fi
+        rm -rf "$temp_dir"
         return 1
     fi
 }
@@ -4241,74 +4140,58 @@ prepare_full_overlay() {
     echo "  Exécutable redirigé: $FULL_EXE_PATH"
 }
 
-# =============================================================================
-# Fonctions utilitaires pour la gestion des symlinks
-# =============================================================================
-
-# Vérifie si un fichier de config existe
-# Usage: has_config_file <filename>
-has_config_file() {
-    [ -f "$MOUNT_DIR/$1" ]
+has_saves() {
+    [ -f "$MOUNT_DIR/.savepath" ]
 }
 
-# Crée un symlink pour un type de données (saves, extras, etc.)
-# Usage: setup_game_symlink <type> <real_dir> <symlink_dir>
-setup_game_symlink() {
-    local type_name="$1"
-    local real_dir="$2"
-    local symlink_dir="$3"
-    local game_dir="$real_dir/$GAME_INTERNAL_NAME"
-    local game_symlink="$symlink_dir/$GAME_INTERNAL_NAME"
+setup_saves_symlink() {
+    has_saves || return 0
 
-    mkdir -p "$game_dir"
-    mkdir -p "$symlink_dir"
+    local GAME_SAVES_DIR="$SAVES_REAL/$GAME_INTERNAL_NAME"
+    local GAME_SAVES_SYMLINK="$SAVES_SYMLINK/$GAME_INTERNAL_NAME"
 
-    if [ -L "$game_symlink" ]; then
-        rm -f "$game_symlink"
+    mkdir -p "$GAME_SAVES_DIR"
+    mkdir -p "$SAVES_SYMLINK"
+
+    if [ -L "$GAME_SAVES_SYMLINK" ]; then
+        rm -f "$GAME_SAVES_SYMLINK"
     fi
 
-    ln -s "$game_dir" "$game_symlink"
-    echo "Symlink créé: $game_symlink -> $game_dir"
+    ln -s "$GAME_SAVES_DIR" "$GAME_SAVES_SYMLINK"
+    echo "Symlink créé: $GAME_SAVES_SYMLINK -> $GAME_SAVES_DIR"
 }
 
-# Nettoie un symlink de jeu
-# Usage: cleanup_game_symlink <symlink_dir>
-cleanup_game_symlink() {
-    local game_symlink="$1/$GAME_INTERNAL_NAME"
-    [ -L "$game_symlink" ] && rm -f "$game_symlink"
+cleanup_saves_symlink() {
+    local GAME_SAVES_SYMLINK="$SAVES_SYMLINK/$GAME_INTERNAL_NAME"
+    [ -L "$GAME_SAVES_SYMLINK" ] && rm -f "$GAME_SAVES_SYMLINK"
     return 0
 }
 
-# Vérifie si le fichier .savepath existe
-has_saves() {
-    has_config_file ".savepath"
-}
-
-# Configure le symlink pour les saves
-setup_saves_symlink() {
-    has_saves || return 0
-    setup_game_symlink "saves" "$SAVES_REAL" "$SAVES_SYMLINK"
-}
-
-# Nettoie le symlink des saves
-cleanup_saves_symlink() {
-    cleanup_game_symlink "$SAVES_SYMLINK"
-}
-
-# Vérifie si le fichier .extrapath existe
 has_extras() {
-    has_config_file ".extrapath"
+    [ -f "$MOUNT_DIR/.extrapath" ]
 }
 
-# Configure le symlink pour les extras
 setup_extras_symlink() {
     has_extras || return 0
-    setup_game_symlink "extras" "$EXTRA_REAL" "$EXTRA_SYMLINK"
+
+    local GAME_EXTRAS_DIR="$EXTRA_REAL/$GAME_INTERNAL_NAME"
+    local GAME_EXTRAS_SYMLINK="$EXTRA_SYMLINK/$GAME_INTERNAL_NAME"
+
+    mkdir -p "$GAME_EXTRAS_DIR"
+    mkdir -p "$EXTRA_SYMLINK"
+
+    if [ -L "$GAME_EXTRAS_SYMLINK" ]; then
+        rm -f "$GAME_EXTRAS_SYMLINK"
+    fi
+
+    ln -s "$GAME_EXTRAS_DIR" "$GAME_EXTRAS_SYMLINK"
+    echo "Symlink créé: $GAME_EXTRAS_SYMLINK -> $GAME_EXTRAS_DIR"
 }
 
-# Nettoie le symlink des extras
 cleanup_extras_symlink() {
-    cleanup_game_symlink "$EXTRA_SYMLINK"
+    local GAME_EXTRAS_SYMLINK="$EXTRA_SYMLINK/$GAME_INTERNAL_NAME"
+    [ -L "$GAME_EXTRAS_SYMLINK" ] && rm -f "$GAME_EXTRAS_SYMLINK"
+    return 0
 }
 
 setup_temp_symlink() {
