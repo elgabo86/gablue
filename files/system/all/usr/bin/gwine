@@ -30,7 +30,7 @@ GWINE_DIR="$HOME/.local/share/gwine"
 HOME_REAL="$(realpath "$HOME")"
 WINDOWS_HOME="$HOME_REAL/Windows/UserData"
 SAVES_SYMLINK="/tmp/wgp-saves"
-SAVES_REAL="$WINDOWS_HOME/$USER/LocalSovesWGP"
+SAVES_REAL="$WINDOWS_HOME/$USER/LocalSavesWGP"
 EXTRA_SYMLINK="/tmp/wgp-extra"
 EXTRA_REAL="$HOME/.cache/wgp-extra"
 TEMP_SYMLINK="/tmp/wgp-temp"
@@ -4181,12 +4181,12 @@ build_bwrap_args() {
     fi
     
     if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR" ]; then
-        bwrap_args="$bwrap_args --bind \"$XDG_RUNTIME_DIR\" \"$XDG_RUNTIME_DIR\""
+        bwrap_args="$bwrap_args --bind-try \"$XDG_RUNTIME_DIR\" \"$XDG_RUNTIME_DIR\""
     else
         local user_id
         user_id=$(id -u)
         if [ -d "/run/user/$user_id" ]; then
-            bwrap_args="$bwrap_args --bind /run/user/$user_id /run/user/$user_id"
+            bwrap_args="$bwrap_args --bind-try /run/user/$user_id /run/user/$user_id"
         fi
     fi
     
@@ -4311,10 +4311,6 @@ build_bwrap_args() {
     [ -n "${MANGOHUD:-}" ] && bwrap_args="$bwrap_args --setenv MANGOHUD \"$MANGOHUD\""
     [ -n "${MANGOHUD_DLSYM:-}" ] && bwrap_args="$bwrap_args --setenv MANGOHUD_DLSYM \"$MANGOHUD_DLSYM\""
     [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && bwrap_args="$bwrap_args --setenv DBUS_SESSION_BUS_ADDRESS \"$DBUS_SESSION_BUS_ADDRESS\""
-    
-    if [ -n "${MANGOHUD_BIN:-}" ]; then
-        CMD="$MANGOHUD_BIN $CMD"
-    fi
     
     echo "$bwrap_args"
 }
@@ -4585,6 +4581,8 @@ prepare_extras() {
     local EXTRAPATH_FILE="$MOUNT_DIR/.extrapath"
     local EXTRA_WGP_DIR="$MOUNT_DIR/.extra"
     local EXTRA_CACHE_DIR="$EXTRA_REAL/$GAME_INTERNAL_NAME"
+    local EXTRA_BASE="/tmp/wgp-extra"
+    local EXTRA_DIR="$EXTRA_BASE/$GAME_INTERNAL_NAME"
 
     [ -f "$EXTRAPATH_FILE" ] || return 0
 
@@ -4619,6 +4617,8 @@ prepare_extras() {
         fi
     done < "$EXTRAPATH_FILE"
 
+    local EXTRA_BASE="/tmp/wgp-extra"
+    local EXTRA_DIR="$EXTRA_BASE/$GAME_INTERNAL_NAME"
     ensure_dir -s "$EXTRA_BASE"
     rm -f "$EXTRA_DIR"
     ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
@@ -5263,12 +5263,17 @@ launch_wine_game() {
     
     local user_winedlloverrides=""
     if [ -n "$env_vars" ]; then
-        user_winedlloverides=$(echo "$env_vars" | grep -o 'WINEDLLOVERRIDES="[^"]*"' | sed 's/WINEDLLOVERRIDES="\(.*\)"/\1/' || true)
+        user_winedlloverrides=$(echo "$env_vars" | grep -o 'WINEDLLOVERRIDES="[^"]*"' | sed 's/WINEDLLOVERRIDES="\(.*\)"/\1/' || true)
     fi
     
     if [ -n "$env_vars" ]; then
         echo "Variables d'environnement: $env_vars"
+        # Export des variables d'environnement
+        # Utiliser eval pour interpréter correctement les valeurs avec guillemets
         eval "export $env_vars"
+        
+        # Capturer WINEDLLOVERRIDES pour combinaison avec les overrides par défaut
+        user_winedlloverrides=$(echo "$env_vars" | grep -o 'WINEDLLOVERRIDES="[^"]*"' | sed 's/WINEDLLOVERRIDES="\(.*\)"/\1/' || true)
     fi
     
     if [ "${_NEEDS_WINETRICKS_INIT:-0}" = "1" ]; then
@@ -5290,8 +5295,8 @@ launch_wine_game() {
     export PULSE_LATENCY_MSEC=60
     export WINEDEBUG=fixme-all
     
-    if [ -n "$user_winedlloverides" ]; then
-        export WINEDLLOVERRIDES="${user_winedlloverides};winemenubuilder=''"
+    if [ -n "$user_winedlloverrides" ]; then
+        export WINEDLLOVERRIDES="${user_winedlloverrides};winemenubuilder=''"
     else
         export WINEDLLOVERRIDES="winemenubuilder=''"
     fi
@@ -5365,20 +5370,21 @@ launch_wine_game() {
         export MANGOHUD=1
         export MANGOHUD_DLSYM=1
         echo "MangoHud activé (système)"
-        
-        if [ "$nosandbox_mode" = true ]; then
-            CMD="$MANGOHUD_BIN $CMD"
-        fi
     fi
     
     # Lancer le jeu (synchrone pour garantir le retour à la fin)
     # Rediriger stdin pour éviter que le jeu ne bloque le terminal
     local exit_code=0
+    # Construire la commande complète
+    local full_cmd="$CMD"
     if [ -n "$game_args" ]; then
-        WINEPREFIX="$WINEPREFIX" eval "$CMD \"$exe_path\" $game_args" </dev/null || exit_code=$?
+        # Échapper les guillemets dans game_args pour l'eval
+        full_cmd="$full_cmd \"$exe_path\" $game_args"
     else
-        WINEPREFIX="$WINEPREFIX" eval "$CMD \"$exe_path\"" </dev/null || exit_code=$?
+        full_cmd="$full_cmd \"$exe_path\""
     fi
+    
+    WINEPREFIX="$WINEPREFIX" eval "$full_cmd" </dev/null || exit_code=$?
     
     # Attendre que tous les processus wine/bwrap de ce jeu se terminent
     echo "Attente de la fin du jeu..."
