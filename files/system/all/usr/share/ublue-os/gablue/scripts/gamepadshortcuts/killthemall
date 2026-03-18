@@ -24,9 +24,20 @@
   # Kill x2go
   pkill -9 x2goclient &
 
-  # Kill launchlin.sh et tous ses processus enfants (jeux LGP)
+  # Kill uniquement les processus enfants de launchlin.sh (pas le script lui-même)
+  # pour permettre le cleanup et démontage du LGP
   pgrep -f "launchlin\.sh" | while read pid; do
-      kill -9 "-$pid" 2>/dev/null
+      # Liste tous les processus enfants directs et indirects
+      local children
+      children=$(pgrep -P "$pid")
+      if [ -n "$children" ]; then
+          # Tuer récursivement tous les enfants
+          echo "$children" | while read child_pid; do
+              # Tuer le processus enfant et ses propres enfants
+              pkill -9 -P "$child_pid" 2>/dev/null
+              kill -9 "$child_pid" 2>/dev/null
+          done
+      fi
   done &
 } > /dev/null 2>&1 &
 
