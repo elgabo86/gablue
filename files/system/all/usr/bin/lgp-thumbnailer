@@ -7,6 +7,7 @@ SIZE="$3"     # %s (128 ou 256)
 
 APPIMAGEICONEXTRACT="/usr/share/ublue-os/gablue/scripts/appimageiconextract.py"
 
+LOCK_FILE="/tmp/lgp-thumbnailer.lock"
 MAX_INSTANCES=3
 PID_FILE="/tmp/lgp-thumbnailer-pids"
 MY_PID=$$
@@ -39,35 +40,42 @@ check_file_stable() {
 # Vérifie que le fichier est stable avant de continuer
 check_file_stable "$INPUT" || exit 1
 
-# Sémaphore: attendre qu'une place soit libre puis enregistrer notre PID
+# Sémaphore avec flock: attendre qu'une place soit libre puis enregistrer notre PID
 acquire_slot() {
     local elapsed=0
     local timeout=30  # max 30 secondes d'attente (après ça abandonne)
     local count pids_to_keep
 
     while [ $elapsed -lt $timeout ]; do
-        # Crée le fichier si n'existe pas
-        [ -f "$PID_FILE" ] || touch "$PID_FILE"
+        (
+            # Verrouillage atomique avec flock
+            flock -w 1 -x 200 || exit 1
 
-        # Nettoyage des PIDs morts
-        pids_to_keep=""
-        while IFS= read -r pid || [ -n "$pid" ]; do
-            [ -z "$pid" ] && continue
-            # Vérifie si le PID est toujours vivant
-            if kill -0 "$pid" 2>/dev/null; then
-                pids_to_keep="${pids_to_keep}${pid}"$'\n'
+            # Crée le fichier si n'existe pas
+            [ -f "$PID_FILE" ] || touch "$PID_FILE"
+
+            # Nettoyage des PIDs morts
+            pids_to_keep=""
+            while IFS= read -r pid || [ -n "$pid" ]; do
+                [ -z "$pid" ] && continue
+                # Vérifie si le PID est toujours vivant
+                if kill -0 "$pid" 2>/dev/null; then
+                    pids_to_keep="${pids_to_keep}${pid}"$'\n'
+                fi
+            done < "$PID_FILE"
+            echo "$pids_to_keep" > "$PID_FILE"
+
+            # Compte les instances actives
+            count=$(grep -c . "$PID_FILE" 2>/dev/null) || count=0
+
+            if [ $count -lt $MAX_INSTANCES ]; then
+                # Place libre: enregistre notre PID
+                echo "$MY_PID" >> "$PID_FILE"
+                exit 0
             fi
-        done < "$PID_FILE"
-        echo "$pids_to_keep" > "$PID_FILE"
 
-        # Compte les instances actives
-        count=$(grep -c . "$PID_FILE" 2>/dev/null) || count=0
-
-        if [ $count -lt $MAX_INSTANCES ]; then
-            # Place libre: enregistre notre PID
-            echo "$MY_PID" >> "$PID_FILE"
-            return 0
-        fi
+            exit 1
+        ) 200>"$LOCK_FILE" && return 0
 
         # Plus de place: attend un peu et réessaie
         sleep 0.2
@@ -80,13 +88,16 @@ acquire_slot() {
 
 # Libère notre slot du sémaphore
 release_slot() {
-    [ -f "$PID_FILE" ] || return 0
-    local temp_file
-    temp_file=$(mktemp)
-    grep -vFx "$MY_PID" "$PID_FILE" > "$temp_file" 2>/dev/null
-    mv "$temp_file" "$PID_FILE"
-    # Nettoie le fichier si vide
-    [ -s "$PID_FILE" ] || rm -f "$PID_FILE"
+    (
+        flock -w 1 -x 200 200>"$LOCK_FILE" || return 1
+        [ -f "$PID_FILE" ] || return 0
+        local temp_file
+        temp_file=$(mktemp)
+        grep -vFx "$MY_PID" "$PID_FILE" > "$temp_file" 2>/dev/null
+        mv "$temp_file" "$PID_FILE"
+        # Nettoie le fichier si vide
+        [ -s "$PID_FILE" ] || rm -f "$PID_FILE"
+    )
 }
 
 # Acquiert un slot ou quitte
@@ -104,8 +115,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Montage
-squashfuse "$INPUT" "$TEMP_MOUNT" || exit 1
+# Montage avec timeout (max 5 secondes)
+timeout 5 squashfuse "$INPUT" "$TEMP_MOUNT" || exit 1
 
 # L'icône custom .icon.png a priorité
 if [ -f "$TEMP_MOUNT/.icon.png" ]; then
@@ -136,7 +147,8 @@ EXE_LOWER=$(echo "$EXE_NAME" | tr '[:upper:]' '[:lower:]')
 if [[ "$EXE_LOWER" == *.appimage ]]; then
     TEMP_PNG=$(mktemp)
     trap cleanup EXIT
-    python3 "$APPIMAGEICONEXTRACT" "$ICON_EXE_PATH" "$TEMP_PNG" 2>/dev/null
+    # Extraction avec timeout (max 10 secondes)
+    timeout 10 python3 "$APPIMAGEICONEXTRACT" "$ICON_EXE_PATH" "$TEMP_PNG" 2>/dev/null
     if [ -f "$TEMP_PNG" ]; then
         magick "$TEMP_PNG" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && exit 0
     fi
