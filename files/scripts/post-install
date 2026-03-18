@@ -47,6 +47,9 @@ chmod +x /usr/share/ublue-os/gablue/scripts/*.sh
 chmod +x /usr/share/ublue-os/gablue/scripts/*.py
 chmod +x /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/*
 
+# Rendre exécutables les completions supplémentaires Gablue
+chmod +x /etc/bash_completion.d/gwine
+
 # =============================================================================
 # CAPACITÉS SYSTÈME (CAPABILITIES)
 # =============================================================================

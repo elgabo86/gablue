@@ -1,0 +1,39 @@
+#!/bin/bash
+# Autocomplétion Bash pour Gwine
+
+gwine_completions() {
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    # Options disponibles
+    opts="--help -h --fix --exewgp --init --offline --update --kdialog --cmd
+          --regedit --reg --winecfg --winetricks --winetrick --download-components
+          --cachepack --nosandbox --noprefixoverlay --uninstall --args --gameid"
+
+    # Si on complète une option
+    if [[ ${cur} == -* ]]; then
+        COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+        return 0
+    fi
+
+    # Si l'option précédente nécessite un fichier
+    case "${prev}" in
+        --reg)
+            COMPREPLY=( $(compgen -f -- ${cur}) )
+            return 0
+            ;;
+        --args)
+            # Pas d'autocomplétion pour les arguments
+            return 0
+            ;;
+    esac
+
+    # Autocomplétion des fichiers .wgp et .exe
+    local files
+    files=$(compgen -f -X '!*.@(wgp|exe)' -- ${cur} 2>/dev/null)
+    COMPREPLY=( ${files} $(compgen -f -- ${cur}) )
+}
+
+complete -F gwine_completions gwine
