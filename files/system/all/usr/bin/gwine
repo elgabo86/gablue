@@ -630,7 +630,7 @@ detect_gpu_vendor() {
     
     # Méthode 3: Détection via pilotes Vulkan installés
     if [ -z "$gpu_vendor" ]; then
-        if [ -f "/usr/share/vulkan/icd.d/nvidia_icd.json" ] || [ -f "/etc/vulkan/icd.d/nvidia_icd.json" ]; then
+        if [ -f "/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json" ] || [ -f "/etc/vulkan/icd.d/nvidia_icd.x86_64.json" ]; then
             gpu_vendor="nvidia"
         elif [ -f "/usr/share/vulkan/icd.d/radeon_icd.x86_64.json" ] || [ -f "/etc/vulkan/icd.d/radeon_icd.x86_64.json" ]; then
             gpu_vendor="amd"
@@ -700,10 +700,12 @@ setup_gpu_vulkan() {
             fi
             ;;
         nvidia)
-            if [ -f "/usr/share/vulkan/icd.d/nvidia_icd.json" ]; then
-                VK_ICD_64="/usr/share/vulkan/icd.d/nvidia_icd.json"
-            elif [ -f "/etc/vulkan/icd.d/nvidia_icd.json" ]; then
-                VK_ICD_64="/etc/vulkan/icd.d/nvidia_icd.json"
+            if [ -f "/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json" ]; then
+                VK_ICD_64="/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json"
+                [ -f "/usr/share/vulkan/icd.d/nvidia_icd.i386.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/nvidia_icd.i386.json"
+            elif [ -f "/etc/vulkan/icd.d/nvidia_icd.x86_64.json" ]; then
+                VK_ICD_64="/etc/vulkan/icd.d/nvidia_icd.x86_64.json"
+                [ -f "/etc/vulkan/icd.d/nvidia_icd.i386.json" ] && VK_ICD_32="/etc/vulkan/icd.d/nvidia_icd.i386.json"
             fi
             ;;
     esac
@@ -711,8 +713,15 @@ setup_gpu_vulkan() {
     # Fallback: si pas détecté, utiliser l'ancienne méthode
     if [ -z "$VK_ICD_64" ]; then
         echo "GPU non détecté, utilisation du driver par défaut..."
+        # Chercher NVIDIA (priorité si présent)
+        if [ -f "/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json" ]; then
+            VK_ICD_64="/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json"
+            [ -f "/usr/share/vulkan/icd.d/nvidia_icd.i386.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/nvidia_icd.i386.json"
+        elif [ -f "/etc/vulkan/icd.d/nvidia_icd.x86_64.json" ]; then
+            VK_ICD_64="/etc/vulkan/icd.d/nvidia_icd.x86_64.json"
+            [ -f "/etc/vulkan/icd.d/nvidia_icd.i386.json" ] && VK_ICD_32="/etc/vulkan/icd.d/nvidia_icd.i386.json"
         # Chercher AMD RADV (radeon)
-        if [ -f "/usr/share/vulkan/icd.d/radeon_icd.x86_64.json" ]; then
+        elif [ -f "/usr/share/vulkan/icd.d/radeon_icd.x86_64.json" ]; then
             VK_ICD_64="/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
             [ -f "/usr/share/vulkan/icd.d/radeon_icd.i686.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/radeon_icd.i686.json"
         elif [ -f "/etc/vulkan/icd.d/radeon_icd.x86_64.json" ]; then
@@ -725,11 +734,6 @@ setup_gpu_vulkan() {
         elif [ -f "/etc/vulkan/icd.d/intel_icd.x86_64.json" ]; then
             VK_ICD_64="/etc/vulkan/icd.d/intel_icd.x86_64.json"
             [ -f "/etc/vulkan/icd.d/intel_icd.i686.json" ] && VK_ICD_32="/etc/vulkan/icd.d/intel_icd.i686.json"
-        # Chercher NVIDIA
-        elif [ -f "/usr/share/vulkan/icd.d/nvidia_icd.json" ]; then
-            VK_ICD_64="/usr/share/vulkan/icd.d/nvidia_icd.json"
-        elif [ -f "/etc/vulkan/icd.d/nvidia_icd.json" ]; then
-            VK_ICD_64="/etc/vulkan/icd.d/nvidia_icd.json"
         fi
     fi
     
@@ -1281,8 +1285,9 @@ download_dxvk_nvapi() {
     local target_version="${1:-}"
     local no_confirm=false
     
-    if [ "$2" = "--no-confirm" ]; then
+    if [ "$1" = "--no-confirm" ]; then
         no_confirm=true
+        target_version=""
     fi
     
     ensure_dir "$DXVK_NVAPI_CACHE_DIR"
@@ -4157,6 +4162,17 @@ build_bwrap_args() {
     if [ -d "/dev/dri" ]; then
         bwrap_args="$bwrap_args --dev-bind /dev/dri /dev/dri"
     fi
+    
+    # Devices NVIDIA spécifiques (nécessaires pour Vulkan)
+    for nvidia_dev in /dev/nvidia*; do
+        if [ -e "$nvidia_dev" ]; then
+            if [ -d "$nvidia_dev" ]; then
+                bwrap_args="$bwrap_args --bind-try $nvidia_dev $nvidia_dev"
+            else
+                bwrap_args="$bwrap_args --dev-bind-try $nvidia_dev $nvidia_dev"
+            fi
+        fi
+    done
     
     if [ -d "/dev/input" ]; then
         bwrap_args="$bwrap_args --dev-bind /dev/input /dev/input"
