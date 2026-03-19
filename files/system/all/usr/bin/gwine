@@ -4780,7 +4780,7 @@ prepare_temp_folders() {
     echo "  upperdir: $TEMP_UPPER"
     echo "  mountpoint: $TEMP_GAME_DIR"
     
-    if ! "$MERGERFS_BIN" -o defaults,allow_other,use_ino,category.create=mfs \
+    if ! "$MERGERFS_BIN" -o defaults,use_ino,category.create=mfs \
         "$TEMP_UPPER:$TEMP_WGP_DIR" "$TEMP_GAME_DIR" 2>&1; then
         error_exit "Échec du montage mergerfs pour les fichiers temporaires"
     fi
@@ -4819,7 +4819,7 @@ prepare_full_overlay() {
     local MERGERFS_BIN
     MERGERFS_BIN=$(get_system_tool mergerfs)
     
-    if ! "$MERGERFS_BIN" -o defaults,allow_other,use_ino,category.create=mfs \
+    if ! "$MERGERFS_BIN" -o defaults,use_ino,category.create=mfs \
         "$TEMP_UPPER:$MOUNT_DIR" "$MOUNT_OVERLAY" 2>&1; then
         error_exit "Échec du montage mergerfs pour l'overlay complet"
     fi
