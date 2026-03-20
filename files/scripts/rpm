@@ -300,7 +300,7 @@ dnf5 -y --setopt=install_weak_deps=False install \
     gstreamer1-plugins-base.i686 \
     gstreamer1-plugins-good.i686 \
     gstreamer1-plugins-bad-free.i686 \
-    gstreamer1-libav.i686 \
+    gstreamer1-plugin-libav.i686 \
     gstreamer1-plugins-ugly-free.i686
 
 # OpenAL pour l'audio des jeux 32-bit
