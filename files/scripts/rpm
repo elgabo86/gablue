@@ -303,6 +303,10 @@ dnf5 -y --setopt=install_weak_deps=False install \
     gstreamer1-plugin-libav.i686 \
     gstreamer1-plugins-ugly-free.i686
 
+# PipeWire GStreamer 32-bit (bridge pour les apps utilisant GStreamer via PipeWire)
+dnf5 -y --setopt=install_weak_deps=False install \
+    pipewire-gstreamer.i686
+
 # OpenAL pour l'audio des jeux 32-bit
 dnf5 -y --setopt=install_weak_deps=False install \
     openal-soft.i686
