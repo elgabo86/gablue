@@ -605,9 +605,9 @@ detect_gpu_vendor() {
         
         if echo "$gpu_info" | grep -qi "nvidia"; then
             gpu_vendor="nvidia"
-        elif echo "$gpu_info" | grep -qi "amd\|ati"; then
+        elif echo "$gpu_info" | grep -qi "amd\|ati\b\|radeon"; then
             gpu_vendor="amd"
-        elif echo "$gpu_info" | grep -qi "intel"; then
+        elif echo "$gpu_info" | grep -qi "intel\|iris"; then
             gpu_vendor="intel"
         fi
     fi
@@ -1128,7 +1128,7 @@ install_dll_component() {
 _WINETRICKS_CURRENT_PID=""
 
 # Variable globale pour stocker le chemin du backup du préfixe
-_WINETRICKS_BACKUP_PREFIX=""
+PREFIX_BACKUP_PATH=""
 
 # Fonction de nettoyage appelée lors d'une interruption
 cleanup_winetricks_interrupt() {
@@ -3749,7 +3749,7 @@ README
 # Usage: backup_wineprefix [suffix]
 # Paramètres:
 #   suffix : Suffixe optionnel pour le nom du backup (défaut: timestamp)
-# Définit la variable globale _WINETRICKS_BACKUP_PREFIX avec le chemin du backup
+# Définit la variable globale PREFIX_BACKUP_PATH avec le chemin du backup
 # Retourne 0 si succès ou si pas de préfixe à sauvegarder, 1 si échec
 backup_wineprefix() {
     local suffix="${1:-$(date +%Y%m%d_%H%M%S)}"
@@ -3757,7 +3757,7 @@ backup_wineprefix() {
     
     if [ -d "$WINEPREFIX" ]; then
         if mv "$WINEPREFIX" "$backup_dir" 2>/dev/null; then
-            _WINETRICKS_BACKUP_PREFIX="$backup_dir"
+            export PREFIX_BACKUP_PATH="$backup_dir"
             return 0
         else
             echo "Erreur: Impossible de sauvegarder le préfixe"
@@ -3771,10 +3771,10 @@ backup_wineprefix() {
 # Restaure le préfixe Wine depuis le backup
 # Usage: restore_wineprefix [backup_path]
 # Paramètres:
-#   backup_path : Chemin du backup (défaut: utilise _WINETRICKS_BACKUP_PREFIX)
+#   backup_path : Chemin du backup (défaut: utilise PREFIX_BACKUP_PATH)
 # Retourne 0 si succès ou si pas de backup, 1 si échec
 restore_wineprefix() {
-    local backup_path="${1:-${_WINETRICKS_BACKUP_PREFIX:-}}"
+    local backup_path="${1:-${PREFIX_BACKUP_PATH:-}}"
     
     if [ -z "$backup_path" ] || [ ! -d "$backup_path" ]; then
         return 0
@@ -3931,6 +3931,43 @@ EOF
     return 0
 }
 
+# Configure le registre Wine pour rediriger TEMP/TMP vers ~/.cache/gwine/temp
+setup_wine_temp_registry() {
+    local target_prefix="${1:-$WINEPREFIX}"
+    local USER_REG="$target_prefix/user.reg"
+    
+    if [ ! -f "$USER_REG" ]; then
+        echo "Warning: user.reg introuvable, skip de la configuration TEMP/TMP"
+        return 0
+    fi
+    
+    local temp_win_path="Z:$(echo "$CACHE_DIR/temp" | sed 's|/|\\\\|g')"
+    # Échapper les backslashes pour sed (\\ -> \\\\\\\
+    local temp_win_path_escaped="$(echo "$temp_win_path" | sed 's|\\|\\\\|g')"
+    
+    # Vérifier si la section Environment existe
+    if ! grep -q '^\[Environment\]' "$USER_REG" 2>/dev/null; then
+        echo "" >> "$USER_REG"
+        echo "[Environment]" >> "$USER_REG"
+    fi
+    
+    # Mettre à jour ou ajouter TEMP
+    if grep -q '"TEMP"=' "$USER_REG" 2>/dev/null; then
+        sed -i "s|\"TEMP\"=.*|\"TEMP\"=\"$temp_win_path_escaped\"|" "$USER_REG"
+    else
+        echo "\"TEMP\"=\"$temp_win_path\"" >> "$USER_REG"
+    fi
+    
+    # Mettre à jour ou ajouter TMP
+    if grep -q '"TMP"=' "$USER_REG" 2>/dev/null; then
+        sed -i "s|\"TMP\"=.*|\"TMP\"=\"$temp_win_path_escaped\"|" "$USER_REG"
+    else
+        echo "\"TMP\"=\"$temp_win_path\"" >> "$USER_REG"
+    fi
+    
+    echo "Registre Wine configuré: TEMP/TMP -> $temp_win_path"
+}
+
 # Fonctions de fix manette (DisableHidraw)
 apply_padfix_setting() {
     local SYSTEM_REG="$WINEPREFIX/system.reg"
@@ -3974,6 +4011,32 @@ restore_padfix_setting() {
     if [ -f "$SYSTEM_REG" ]; then
         sed -i 's/"DisableHidraw"=dword:00000000/"DisableHidraw"=dword:00000001/' "$SYSTEM_REG"
         echo "Mode fix restauré: DisableHidraw=1"
+    fi
+}
+
+# Configure les clés de registre pour SDL Input (DInput/XInput mapping)
+# Usage: configure_sdl_input_registry
+configure_sdl_input_registry() {
+    local SYSTEM_REG="$WINEPREFIX/system.reg"
+    
+    if [ ! -f "$SYSTEM_REG" ]; then
+        echo "Warning: system.reg introuvable, skip de la configuration SDL"
+        return 0
+    fi
+    
+    # Utiliser wine reg add pour une modification propre (comme Bottles)
+    # EnableSDLInput - Active le backend SDL pour les manettes
+    if WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\Drivers' /v EnableSDLInput /t REG_DWORD /d 1 /f >/dev/null 2>&1; then
+        echo "Configuration SDL: EnableSDLInput=1"
+    else
+        echo "Warning: Échec de la configuration EnableSDLInput"
+    fi
+    
+    # EnableSDLInputMapping - Active le mapping SDL pour les manettes
+    if WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\Drivers' /v EnableSDLInputMapping /t REG_DWORD /d 1 /f >/dev/null 2>&1; then
+        echo "Configuration SDL: EnableSDLInputMapping=1"
+    else
+        echo "Warning: Échec de la configuration EnableSDLInputMapping"
     fi
 }
 
@@ -4327,6 +4390,14 @@ build_bwrap_args() {
     [ -n "${MANGOHUD:-}" ] && bwrap_args="$bwrap_args --setenv MANGOHUD \"$MANGOHUD\""
     [ -n "${MANGOHUD_DLSYM:-}" ] && bwrap_args="$bwrap_args --setenv MANGOHUD_DLSYM \"$MANGOHUD_DLSYM\""
     [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && bwrap_args="$bwrap_args --setenv DBUS_SESSION_BUS_ADDRESS \"$DBUS_SESSION_BUS_ADDRESS\""
+    
+    # Variables NVIDIA PRIME
+    [ -n "${DXVK_NVAPIHACK:-}" ] && bwrap_args="$bwrap_args --setenv DXVK_NVAPIHACK \"$DXVK_NVAPIHACK\""
+    [ -n "${DXVK_ENABLE_NVAPI:-}" ] && bwrap_args="$bwrap_args --setenv DXVK_ENABLE_NVAPI \"$DXVK_ENABLE_NVAPI\""
+    [ -n "${__NV_PRIME_RENDER_OFFLOAD:-}" ] && bwrap_args="$bwrap_args --setenv __NV_PRIME_RENDER_OFFLOAD \"$__NV_PRIME_RENDER_OFFLOAD\""
+    [ -n "${__VK_LAYER_NV_optimus:-}" ] && bwrap_args="$bwrap_args --setenv __VK_LAYER_NV_optimus \"$__VK_LAYER_NV_optimus\""
+    [ -n "${__GLX_VENDOR_LIBRARY_NAME:-}" ] && bwrap_args="$bwrap_args --setenv __GLX_VENDOR_LIBRARY_NAME \"$__GLX_VENDOR_LIBRARY_NAME\""
+    [ -n "${SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD:-}" ] && bwrap_args="$bwrap_args --setenv SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD \"$SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD\""
     
     echo "$bwrap_args"
 }
@@ -5266,7 +5337,8 @@ launch_wine_game() {
     # Configurer le préfixe isolé si demandé
     if [ "$isolated_prefix_mode" = "true" ]; then
         effective_prefix=$(setup_isolated_prefix "$real_prefix")
-        # Le nettoyage est géré par cleanup_wgp() ou le trap EXIT existant
+        # Stocker dans la variable globale pour le nettoyage
+        _ISOLATED_PREFIX_MOUNT="$effective_prefix"
     fi
     
     export WINEPREFIX="$effective_prefix"
@@ -5321,6 +5393,20 @@ launch_wine_game() {
     
     setup_gpu_vulkan
     
+    # Variables pour DXVK-NVAPI (comme Bottles)
+    if is_nvidia_gpu; then
+        export DXVK_NVAPIHACK=0
+        export DXVK_ENABLE_NVAPI=1
+        
+        # Variables PRIME NVIDIA (forcé GPU NVIDIA sur les systèmes Optimus)
+        export __NV_PRIME_RENDER_OFFLOAD=1
+        export __VK_LAYER_NV_optimus=NVIDIA_only
+        export __GLX_VENDOR_LIBRARY_NAME=nvidia
+        
+        # Autoriser Steam Virtual Gamepad pour la compatibilité manettes
+        export SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD=1
+    fi
+    
     local WINE_LIBS="$WINE_DIR/lib:$WINE_DIR/lib32"
     if [ -d "$WINE_DIR/lib/wine/x86_64-unix" ]; then
         WINE_LIBS="$WINE_LIBS:$WINE_DIR/lib/wine/x86_64-unix"
@@ -5331,6 +5417,7 @@ launch_wine_game() {
     export LD_LIBRARY_PATH="$WINE_LIBS:$LD_LIBRARY_PATH"
     
     export DXVK_STATE_CACHE_PATH="$SHADER_CACHE_DIR/dxvk"
+    export DXVK_SHADER_CACHE_PATH="$SHADER_CACHE_DIR/dxvk"
     export VKD3D_SHADER_CACHE_PATH="$SHADER_CACHE_DIR/vkd3d"
     export __GL_SHADER_DISK_CACHE=1
     export __GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1
@@ -5651,24 +5738,27 @@ init_prefix_only() {
         DBUS_REF=$(progress_create "Initialisation du préfixe Wine" "$TOTAL_STEPS")
     fi
     
-    # Vérifier si gwine-proton est installé
+    # ============================================================================
+    # PHASE 1 : Téléchargement de tous les composants nécessaires
+    # ============================================================================
+    echo ""
+    echo "Phase 1/2 : Vérification et téléchargement des composants..."
+    echo ""
+    
+    # Vérifier si gwine-proton est installé (le télécharger si nécessaire)
     if [ ! -d "$WINE_DIR" ] || [ ! -f "$WINE_DIR/bin/wine64" ]; then
         ((CURRENT_STEP++))
-        progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation de gwine-proton..."
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de gwine-proton..."
         
         if [ "$OFFLINE_MODE" = "true" ]; then
-            # En mode offline, on ne peut pas télécharger gwine-proton
             progress_close "$DBUS_REF"
             error_exit "Mode offline: gwine-proton n'est pas installé. Impossible de continuer."
         fi
         
-        # Essayer d'abord d'installer depuis le cache (mode offline)
-        if ! install_gwine_proton_from_cache; then
-            if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-                kdialog --passivepopup "Téléchargement de gwine-proton nécessaire..." 5
-            fi
-            download_gwine_proton "force"
+        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+            kdialog --passivepopup "Téléchargement de gwine-proton..." 5
         fi
+        download_gwine_proton "force"
     fi
     
     require_wine
@@ -5676,10 +5766,35 @@ init_prefix_only() {
     # Vérifier annulation
     check_progress_cancelled "$DBUS_REF"
     
-    # Mettre à jour automatiquement les composants sans interaction
+    # Télécharger/mettre à jour tous les composants avant toute installation
     if [ "$OFFLINE_MODE" != "true" ]; then
+        ((CURRENT_STEP++))
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement des composants (DXVK, VKD3D)..."
         auto_update_components
+        
+        # Vérifier annulation
+        check_progress_cancelled "$DBUS_REF"
+        
+        ((CURRENT_STEP++))
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement des composants Windows..."
+        if ! prepare_wincomponents_cache; then
+            progress_close "$DBUS_REF"
+            error_exit "Échec du téléchargement des composants Windows"
+        fi
     fi
+    
+    # Vérifier annulation
+    check_progress_cancelled "$DBUS_REF"
+    
+    echo ""
+    echo "✓ Tous les composants sont prêts"
+    echo ""
+    
+    # ============================================================================
+    # PHASE 2 : Installation dans le préfixe Wine
+    # ============================================================================
+    echo "Phase 2/2 : Installation dans le préfixe Wine..."
+    echo ""
     
     # Sauvegarder l'ancien préfixe s'il existe
     if [ -d "$WINEPREFIX" ]; then
@@ -5722,22 +5837,7 @@ init_prefix_only() {
     # Vérifier annulation
     check_progress_cancelled "$DBUS_REF"
     
-    # Préparer le cache des composants Windows
-    if [ "$OFFLINE_MODE" != "true" ]; then
-        ((CURRENT_STEP++))
-        progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement des composants Windows..."
-        
-        if ! prepare_wincomponents_cache; then
-            restore_backup
-            progress_close "$DBUS_REF"
-            error_exit "Échec de la préparation des composants Windows"
-        fi
-    fi
-    
-    # Vérifier annulation
-    check_progress_cancelled "$DBUS_REF"
-    
-    # Installer les composants Windows (nouveau système)
+    # Installer les composants Windows (déjà téléchargés en phase 1)
     ((CURRENT_STEP++))
     
     if ! install_winetricks_components; then
@@ -5825,6 +5925,12 @@ init_prefix_only() {
         error_exit "Échec de la configuration des dossiers Windows"
     fi
     
+    # Configurer le dossier temporaire Windows dans le registre
+    setup_wine_temp_registry "$WINEPREFIX"
+    
+    # Configurer SDL Input pour les manettes (DInput/XInput mapping)
+    configure_sdl_input_registry
+    
     # Vérifier annulation
     check_progress_cancelled "$DBUS_REF"
     
@@ -5848,8 +5954,8 @@ init_prefix_only() {
     progress_update "$DBUS_REF" "$TOTAL_STEPS" "Finalisation..."
     
     # Succès - supprimer l'ancien préfixe sauvegardé
-    if [ -d "$BACKUP_PREFIX" ]; then
-        rm -rf "$BACKUP_PREFIX"
+    if [ -n "$PREFIX_BACKUP_PATH" ] && [ -d "$PREFIX_BACKUP_PATH" ]; then
+        rm -rf "$PREFIX_BACKUP_PATH"
     fi
     
     # Fermer la barre de progression
@@ -5904,6 +6010,9 @@ init_wineprefix() {
     # Configurer la structure des dossiers Windows
     if [ -d "$WINEPREFIX" ] && [ -f "$WINEPREFIX/system.reg" ]; then
         setup_windows_directories "$WINEPREFIX"
+        
+        # Configurer le dossier temporaire Windows dans le registre
+        setup_wine_temp_registry "$WINEPREFIX"
     fi
 }
 
@@ -6918,6 +7027,11 @@ run_classic_mode() {
     trap 'rm -f "$lock_file"; cleanup_isolated_prefix' EXIT
 
     launch_wine_game "$new_fullpath" "$args" "$filename" "$env_vars" "false"
+    
+    # Nettoyage explicite de l'overlay après la fin du jeu
+    # (en complément du trap EXIT pour garantir le nettoyage)
+    cleanup_isolated_prefix
+    rm -f "$lock_file" 2>/dev/null
 }
 
 # =============================================================================
