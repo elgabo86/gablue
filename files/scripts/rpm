@@ -282,3 +282,27 @@ dnf5 -y --setopt=install_weak_deps=False install \
 # Vulkan loader pour les applications 32-bit
 dnf5 -y --setopt=install_weak_deps=False install \
     vulkan-loader.i686
+
+# ALSA 32-bit (REQUIS pour l'audio Wine natif)
+dnf5 -y --setopt=install_weak_deps=False install \
+    alsa-lib.i686
+
+# GStreamer et codecs 32-bit (REQUIS pour quartz/multimédia Wine)
+dnf5 -y --setopt=install_weak_deps=False install \
+    gstreamer1.i686 \
+    gstreamer1-plugins-base.i686 \
+    gstreamer1-plugins-good.i686 \
+    gstreamer1-plugins-bad-free.i686 \
+    gstreamer1-libav.i686 \
+    gstreamer1-plugins-ugly-free.i686
+
+# OpenAL pour l'audio des jeux 32-bit
+dnf5 -y --setopt=install_weak_deps=False install \
+    openal-soft.i686
+
+# Librairies audio complémentaires souvent requises
+dnf5 -y --setopt=install_weak_deps=False install \
+    libogg.i686 \
+    libvorbis.i686 \
+    flac-libs.i686 \
+    libsndfile.i686
