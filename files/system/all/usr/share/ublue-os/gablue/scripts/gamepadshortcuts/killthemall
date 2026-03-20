@@ -4,7 +4,15 @@
 {
   # Recherche et kill tous les processus Windows (xbox360 inclus)
   # Exclure gwine (le wrapper) pour permettre le nettoyage des montages WGP
-  pgrep -f -a -i '(.*\.(exe|bat).*|.*(wine|proton).*)' | grep -v 'gwine' | awk '{print $1}' | grep -v -E "^($(pgrep -i '^(steam|steamwebhelper|steam-runtime-l)$' | paste -sd '|' -))$" | xargs kill -9 &
+  pgrep -f -a -i '(.*\.(exe|bat).*|.*(wine|proton).*)' | grep -v 'gwine' | awk '{print $1}' | grep -v -E "^($(pgrep -i '^(steam|steamwebhelper|steam-runtime-l)$' | paste -sd '|' -))$" | xargs -r kill -9 &
+
+  # Tuer aussi les bwrap avec WINEPREFIX gwine (pour les jeux qui ont des launchers comme stdrt.exe)
+  # On vérifie l'environnement car WINEPREFIX n'est pas dans la ligne de commande
+  for pid in $(pgrep bwrap); do
+    if grep -q "WINEPREFIX=/tmp/gwine-prefix-overlay" /proc/$pid/environ 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null
+    fi
+  done &
 
   # Gestion des processus bottles (spécifique avec vérification bwrap)
   pgrep -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q "^bwrap$" && kill -9 {}' &
