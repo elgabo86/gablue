@@ -1,5 +1,6 @@
 [Desktop Entry]
 Type=Service
+Name=Create WGP Package
 X-KDE-ServiceTypes=KonqPopupMenu/Plugin
 MimeType=inode/directory;
 Actions=CreateWGP

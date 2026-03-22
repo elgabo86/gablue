@@ -1,5 +1,6 @@
 [Desktop Entry]
 Type=Service
+Name=Launch Windows Applications
 X-KDE-ServiceTypes=KonqPopupMenu/Plugin
 MimeType=application/x-ms-dos-executable;application/x-msi;application/x-ms-shortcut;application/x-wine-extension-msp;application/x-bat;application/x-wgp;
 Actions=LaunchFix;LaunchTerm
@@ -14,4 +15,4 @@ Exec=gwine --fix %f
 [Desktop Action LaunchTerm]
 Name=Lancer dans le terminal
 Icon=windows95
-Exec=gwine %f; exec bash
+Exec=/bin/sh -c "gwine '%f'; exec bash"

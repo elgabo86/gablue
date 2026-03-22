@@ -1,5 +1,6 @@
 [Desktop Entry]
 Type=Service
+Name=Create LGP Shortcut
 X-KDE-ServiceTypes=KonqPopupMenu/Plugin
 MimeType=application/x-lgp;
 Actions=CreateGameShortcut

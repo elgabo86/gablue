@@ -1,4 +1,5 @@
 [Desktop Entry]
+Name=Windows
 Comment=Exécutez des logiciels Windows
 Exec=/usr/bin/gwine %f
 Icon=windows95
@@ -6,9 +7,7 @@ Keywords[fr_CH]=wine;windows;
 Keywords=wine;windows;
 MimeType=application/x-ms-dos-executable;application/x-msi;application/x-ms-shortcut;application/x-wine-extension-msp;application/x-bat;application/x-wgp;
 NoDisplay=true
-Path=
 Terminal=false
-TerminalOptions=
 Type=Application
 X-GNOME-UsesNotifications=true
 X-KDE-SubstituteUID=false

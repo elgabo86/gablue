@@ -1,5 +1,6 @@
 [Desktop Entry]
 Type=Service
+Name=Launch Linux Applications
 X-KDE-ServiceTypes=KonqPopupMenu/Plugin
 MimeType=application/x-lgp;
 Actions=LaunchLin

@@ -1,5 +1,6 @@
 [Desktop Entry]
 Type=Service
+Name=Install Windows Registry
 X-KDE-ServiceTypes=KonqPopupMenu/Plugin
 MimeType=text/x-ms-regedit;
 Actions=InstallReg
