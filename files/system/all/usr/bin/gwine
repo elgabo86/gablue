@@ -4717,6 +4717,12 @@ build_bwrap_args() {
         echo "Sandbox: /tmp isolé (tmpfs)" >&2
     fi
     
+    # Toujours binder le répertoire des WGP s'il existe (pour les montages squashfuse)
+    if [ -n "$MOUNT_BASE" ] && [ -d "$MOUNT_BASE" ]; then
+        bwrap_args="$bwrap_args --bind \"$MOUNT_BASE\" \"$MOUNT_BASE\""
+        echo "Sandbox: WGP mounts bindés" >&2
+    fi
+    
     if [ -d "/run/media" ]; then
         bwrap_args="$bwrap_args --bind /run/media /run/media"
     fi
@@ -4834,8 +4840,9 @@ init_wgp_variables() {
 
     WGPACK_NAME="$GAME_INTERNAL_NAME"
 
-    # Utiliser un répertoire dans le cache pour le montage WGP (accessible dans le sandbox)
-    MOUNT_BASE="$CACHE_DIR/wgpackmount"
+    # Utiliser /tmp pour le montage WGP (évite les problèmes avec les montages stale)
+    # Ce répertoire sera explicitement bindé dans le sandbox
+    MOUNT_BASE="/tmp/wgpackmount"
     MOUNT_DIR="$MOUNT_BASE/$WGPACK_NAME"
     EXTRA_BASE="/tmp/wgp-extra"
     EXTRA_DIR="$EXTRA_BASE/$WGPACK_NAME"
@@ -5505,7 +5512,27 @@ mount_wgp() {
 
     if mountpoint -q "$MOUNT_DIR"; then
         echo "Montage orphelin détecté pour $WGPACK_NAME, nettoyage..."
-        unmount_fuse_overlay "$MOUNT_DIR" -f
+        # Tester si le montage est accessible (pas de "Transport endpoint not connected")
+        if ! ls "$MOUNT_DIR" >/dev/null 2>&1; then
+            echo "Montage stale détecté (endpoint déconnecté)..."
+            # Vérifier qu'aucun processus n'utilise ce point de montage
+            local HAS_ACCESS=false
+            if command -v fuser >/dev/null 2>&1 && fuser "$MOUNT_DIR" 2>/dev/null | grep -q .; then
+                HAS_ACCESS=true
+            elif command -v lsof >/dev/null 2>&1 && lsof +D "$MOUNT_DIR" 2>/dev/null | grep -q .; then
+                HAS_ACCESS=true
+            fi
+            if [ "$HAS_ACCESS" = "false" ]; then
+                echo "Aucun processus n'utilise le montage, forçage du démontage..."
+                # Forcer le démontage lazy pour les montages stale
+                fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null || true
+                sleep 0.5
+            else
+                echo "Des processus utilisent encore ce montage, attente..."
+                sleep 2
+            fi
+        fi
+        unmount_fuse_overlay "$MOUNT_DIR" -f -l
     fi
 
     local SQUASHFUSE_BIN
@@ -5516,8 +5543,31 @@ mount_wgp() {
     "$SQUASHFUSE_BIN" -r "$WGPACK_FILE" "$MOUNT_DIR"
 
     if [ $? -ne 0 ]; then
-        rmdir "$MOUNT_DIR"
-        error_exit "Erreur lors du montage du squashfs"
+        echo "Échec du montage, nettoyage du point de montage..."
+        # Forcer le démontage si c'est un montage stale
+        fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null || true
+        sleep 0.5
+        
+        # Tenter de supprimer le répertoire
+        if ! rmdir "$MOUNT_DIR" 2>/dev/null; then
+            echo "Impossible de supprimer le répertoire, tentative de renommage..."
+            local TEMP_DIR="${MOUNT_DIR}.old.$(date +%s)"
+            mv "$MOUNT_DIR" "$TEMP_DIR" 2>/dev/null || true
+            # Si même le mv échoue, on recrée un nouveau répertoire avec un suffixe
+            if [ -d "$MOUNT_DIR" ]; then
+                MOUNT_DIR="${MOUNT_DIR}.new.$(date +%s)"
+                echo "Utilisation d'un nouveau point de montage: $MOUNT_DIR"
+            fi
+        fi
+        
+        # Réessayer le montage une fois
+        ensure_dir -s "$MOUNT_DIR"
+        echo "Nouvelle tentative de montage sur $MOUNT_DIR..."
+        "$SQUASHFUSE_BIN" -r "$WGPACK_FILE" "$MOUNT_DIR"
+        
+        if [ $? -ne 0 ]; then
+            error_exit "Erreur lors du montage du squashfs"
+        fi
     fi
     
     echo "$$:$(date +%s)" > "$LOCK_FILE"
@@ -5557,7 +5607,13 @@ cleanup_wgp() {
     unmount_fuse_overlay "$MOUNT_DIR" -f
     
     if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
-        umount -f "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null || true
+        # Tester si c'est un montage stale
+        if ! ls "$MOUNT_DIR" >/dev/null 2>&1; then
+            echo "Nettoyage d'un montage stale..."
+            fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null || true
+        else
+            umount -f "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null || true
+        fi
         sleep 0.2
     fi
     
@@ -7129,6 +7185,7 @@ show_help() {
     echo "  --cmd             Ouvrir un terminal Wine"
     echo "  --use-ln-mounts   Utiliser des liens symboliques au lieu de bind mounts (fallback pour compatibilité)"
     echo "  --args            Arguments à passer au jeu"
+    echo "  --kill            Forcer l'arrêt de tous les processus Gwine en cours"
     echo ""
     echo "Exemples:"
     echo "  gwine ~/Jeux/monjeu.wgp"
@@ -7136,10 +7193,11 @@ show_help() {
     echo "  gwine --init"
     echo "  gwine --fix ~/Jeux/monjeu.wgp"
     echo "  gwine --reg config.reg"
+    echo "  gwine --kill"
 }
 
 # Options valides reconnues par gwine
-VALID_OPTIONS=("--help" "-h" "--fix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--uninstall" "--args" "--gameid" "--use-ln-mounts")
+VALID_OPTIONS=("--help" "-h" "--fix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--uninstall" "--args" "--gameid" "--use-ln-mounts" "--kill")
 
 # Vérifie si une option est valide
 is_valid_option() {
@@ -7226,6 +7284,13 @@ parse_arguments() {
             --uninstall)
                 uninstall_mode=true
                 shift
+                ;;
+            --kill)
+                echo "Arrêt forcé de tous les processus Gwine..."
+                pgrep -f -i "\\.exe|\\.bat" | grep -v $$ | xargs -r kill -9 2>/dev/null
+                rm -rf /tmp/gwine-locks-$USER/ 2>/dev/null
+                echo "Terminé"
+                exit 0
                 ;;
             --args)
                 args="$2"

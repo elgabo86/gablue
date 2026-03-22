@@ -1,7 +1,7 @@
 [Desktop Entry]
 Categories=Utility;
 Comment=Kill Windows
-Exec=sh -c "pgrep -f -a -i '.*\.(exe|bat).*|.*(wine|proton).*' | grep -v gwine | awk '{print \$1}' | grep -v -E \"^(\$(pgrep -i '^(steam|steamwebhelper|steam-runtime-l)\$' | paste -sd '|' -))\$\" | xargs kill -9"
+Exec=/usr/bin/gwine --kill
 GenericName=Windows killer
 Icon=windows95
 Keywords[fr_CH]=wine;windows;
