@@ -4,6 +4,6 @@
     <comment>Fichier Windows Game Pack</comment>
     <sub-class-of type="application/x-squashfs-image"/>
     <glob pattern="*.wgp"/>
-    <icon name="org.gnome.Games"/>
+    <icon name="windows95"/>
   </mime-type>
 </mime-info>
