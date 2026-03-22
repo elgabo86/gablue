@@ -63,7 +63,6 @@ winetricks_mode=false
 download_wincomponents_mode=false
 cachepack_mode=false
 nosandbox_mode=false
-isolated_prefix_mode=true
 uninstall_mode=false
 winetricks_args=""
 args=""
@@ -74,12 +73,6 @@ OFFLINE_MODE=false
 GAME_INTERNAL_NAME=""
 MOUNT_DIR=""
 
-# Variables pour les overlays
-_ISOLATED_PREFIX_MOUNT=""
-_ISOLATED_PREFIX_UPPER=""
-_ISOLATED_PREFIX_WORK=""
-_ISOLATED_PREFIX_REAL=""
-
 # Variable globale pour stocker la référence dbus du progress dialog
 _PROGRESS_DBUS_REF=""
 
@@ -88,6 +81,10 @@ _GWINE_GAMEMODE_PID=""
 
 # Variable globale pour contrôler l'utilisation de kdialog
 _USE_KDIALOG=false
+
+# Par défaut, utiliser des bind mounts (meilleure compatibilité)
+# Pour utiliser les liens symboliques classiques, utiliser --use-ln-mounts
+USE_BIND_MOUNTS=true
 
 # Fonctions utilitaires de base
 
@@ -3827,8 +3824,16 @@ require_wine() {
 }
 
 # Configure la structure des dossiers Windows avec liens symboliques
+# Si USE_BIND_MOUNTS est true, ne crée pas de symlinks (bind mounts gérés par sandbox)
 setup_windows_directories() {
     local target_prefix="${1:-$WINEPREFIX}"
+    
+    # En mode joiner, ne pas modifier la structure - le master a déjà configuré les bind mounts
+    # et ils sont valides dans le namespace partagé
+    if [ "${INSTANCE_MODE:-master}" = "joiner" ]; then
+        echo "Mode joiner: utilisation de la configuration existante du master"
+        return 0
+    fi
     
     echo "Configuration de la structure des dossiers Windows..."
     
@@ -3841,6 +3846,16 @@ setup_windows_directories() {
             fi
         fi
     done
+    
+    # Si on utilise les bind mounts (par défaut) ET le sandbox est activé, 
+    # on crée quand même les symlinks comme fallback
+    # Les bind mounts dans bwrap masqueront les symlinks, mais si on lance
+    # sans bwrap (2ème instance avec wineserver existant), les symlinks fonctionneront
+    if [ "${USE_BIND_MOUNTS:-true}" = "true" ] && [ "${nosandbox_mode:-false}" != "true" ]; then
+        # Toujours créer les symlinks, même avec bind mounts
+        # Les bind mounts sont prioritaires dans bwrap, les symlinks servent de fallback
+        echo "Création des symlinks (fallback pour instances multiples)..."
+    fi
     
     # Créer les liens symboliques depuis le préfixe vers ~/Windows/
     
@@ -4041,147 +4056,406 @@ configure_sdl_input_registry() {
 }
 
 # =============================================================================
-# Fonctions pour le préfixe isolé avec overlayfs
+# Module: wineserver-manager.sh
 # =============================================================================
 
-# Prépare l'overlay du préfixe Wine pour isolation
-# Usage: setup_isolated_prefix <real_prefix>
-setup_isolated_prefix() {
-    local real_prefix="$1"
+
+################################################################################
+# wineserver-manager.sh - Gestion du wineserver persistant entre instances
+# Support des namespaces partagés avec bwrap --userns et --pidns
+################################################################################
+
+# Répertoire pour les locks partagés
+GWINE_LOCK_DIR="/tmp/gwine-locks-$USER"
+WINEPREFIX_LOCK_FILE="$GWINE_LOCK_DIR/wineprefix-count"
+
+# Répertoire partagé pour le socket wineserver (visible par toutes les instances)
+WINE_SOCKET_DIR="$GWINE_LOCK_DIR/wine-socket"
+
+# Répertoire /tmp partagé pour le multi-instance
+SHARED_TMP_DIR="$GWINE_LOCK_DIR/tmp"
+
+# Fichiers pour le suivi de l'instance maître (master instance)
+MASTER_INSTANCE_FILE="$GWINE_LOCK_DIR/master-instance"
+MASTER_PID_FILE="$GWINE_LOCK_DIR/master-pid"
+MASTER_USERNS_FILE="$GWINE_LOCK_DIR/master-userns"
+MASTER_PIDNS_FILE="$GWINE_LOCK_DIR/master-pidns"
+
+# =============================================================================
+# Initialisation du système de locks
+# =============================================================================
+
+init_wineserver_manager() {
+    ensure_dir -s "$GWINE_LOCK_DIR"
+    # Sécuriser le répertoire parent (wineserver vérifie les permissions parents)
+    chmod 700 "$GWINE_LOCK_DIR"
+    # Créer le répertoire /tmp partagé pour le multi-instance
+    ensure_dir -s "$SHARED_TMP_DIR"
+    chmod 700 "$SHARED_TMP_DIR"
+    # Créer le sous-répertoire .wine-$UID pour le socket wineserver
+    local wine_socket_subdir="$SHARED_TMP_DIR/.wine-$UID"
+    ensure_dir -s "$wine_socket_subdir"
+    chmod 700 "$wine_socket_subdir"
+}
+
+# Retourne le chemin du répertoire /tmp partagé
+get_shared_tmp_dir() {
+    echo "$SHARED_TMP_DIR"
+}
+
+# Retourne le chemin du répertoire partagé pour le socket wineserver
+# Retourne le chemin du répertoire de socket wineserver (.wine-$UID)
+# Ce répertoire est dans SHARED_TMP_DIR pour le partage entre instances
+get_wine_socket_dir() {
+    echo "$SHARED_TMP_DIR/.wine-$UID"
+}
+
+# =============================================================================
+# Gestion de l'instance maître (pour namespaces partagés)
+# =============================================================================
+
+# Vérifie si une instance maître existe et est toujours active
+# On vérifie si wineserver tourne, pas seulement si le processus shell existe
+is_master_instance_alive() {
+    # Si wineserver tourne, il y a une instance active (peu importe quel PID l'a lancé)
+    if pgrep wineserver >/dev/null 2>&1; then
+        return 0  # true - wineserver actif
+    fi
     
-    if [ "$isolated_prefix_mode" != "true" ]; then
-        echo "$real_prefix"
+    # Pas de wineserver, nettoyer les fichiers orphelins s'ils existent
+    rm -f "$MASTER_INSTANCE_FILE" "$MASTER_PID_FILE" "$MASTER_USERNS_FILE" "$MASTER_PIDNS_FILE" 2>/dev/null
+    return 1  # false - pas d'instance active
+}
+
+# Enregistre cette instance comme maître
+register_master_instance() {
+    local prefix_path="${1:-$WINEPREFIX}"
+    
+    ensure_dir -s "$GWINE_LOCK_DIR"
+    
+    # Écrire les infos de l'instance maître
+    echo "$$" > "$MASTER_PID_FILE"
+    echo "$prefix_path" > "$MASTER_INSTANCE_FILE"
+    
+    # Capturer les namespaces si disponibles
+    # Utiliser le chemin direct, pas readlink (qui retourne la cible avec l'identifiant)
+    if [ -d "/proc/$$/ns" ]; then
+        echo "/proc/$$/ns/user" > "$MASTER_USERNS_FILE" 2>/dev/null || true
+        echo "/proc/$$/ns/pid" > "$MASTER_PIDNS_FILE" 2>/dev/null || true
+    fi
+    
+    echo "Instance maître enregistrée (PID: $$)"
+}
+
+# Récupère le PID de l'instance maître (recherche du wineserver actif)
+get_master_pid() {
+    # Retourner le PID du wineserver s'il existe
+    pgrep wineserver 2>/dev/null | head -1
+}
+
+# Récupère les chemins des namespaces de l'instance maître
+get_master_namespaces() {
+    local userns=""
+    local pidns=""
+    
+    if [ -f "$MASTER_USERNS_FILE" ]; then
+        userns=$(cat "$MASTER_USERNS_FILE" 2>/dev/null)
+    fi
+    
+    if [ -f "$MASTER_PIDNS_FILE" ]; then
+        pidns=$(cat "$MASTER_PIDNS_FILE" 2>/dev/null)
+    fi
+    
+    echo "$userns:$pidns"
+}
+
+# Promouvoit une instance jointe comme nouvelle maître (quand la maître meurt)
+promote_to_master() {
+    local prefix_path="${1:-$WINEPREFIX}"
+    
+    # Obtenir la liste des PIDs actifs
+    local pid_file="$GWINE_LOCK_DIR/prefix-$(echo "$prefix_path" | md5sum | cut -d' ' -f1)-pids"
+    
+    if [ -f "$pid_file" ]; then
+        while IFS= read -r pid; do
+            if [ -n "$pid" ] && [ "$pid" != "$$" ] && kill -0 "$pid" 2>/dev/null; then
+                # Promouvoir ce PID comme maître
+                echo "$pid" > "$MASTER_PID_FILE"
+                echo "$prefix_path" > "$MASTER_INSTANCE_FILE"
+                
+                # Mettre à jour les namespaces
+                if [ -d "/proc/$pid/ns" ]; then
+                    readlink -f "/proc/$pid/ns/user" > "$MASTER_USERNS_FILE" 2>/dev/null || true
+                    readlink -f "/proc/$pid/ns/pid" > "$MASTER_PIDNS_FILE" 2>/dev/null || true
+                fi
+                
+                echo "Nouvelle instance maître promue (PID: $pid)"
+                return 0
+            fi
+        done < "$pid_file"
+    fi
+    
+    return 1
+}
+
+# Détermine le mode de lancement pour cette instance
+# Retourne: "master" si c'est la première instance, "joiner" si on rejoint une existante
+get_instance_mode() {
+    local prefix_path="${1:-$WINEPREFIX}"
+    
+    # Nettoyer les locks orphelins d'abord
+    cleanup_stale_wineserver_locks
+    
+    if is_master_instance_alive; then
+        echo "joiner"
+    else
+        echo "master"
+    fi
+}
+
+# =============================================================================
+# Gestion du compteur d'instances
+# =============================================================================
+
+# Incrémente le compteur d'instances et retourne le nouveau compte
+register_wine_instance() {
+    local prefix_path="${1:-$WINEPREFIX}"
+    local prefix_hash
+    prefix_hash=$(echo "$prefix_path" | md5sum | cut -d' ' -f1)
+    local lock_file="$GWINE_LOCK_DIR/prefix-$prefix_hash-count"
+    local pid_file="$GWINE_LOCK_DIR/prefix-$prefix_hash-pids"
+    
+    ensure_dir -s "$GWINE_LOCK_DIR"
+    
+    # Utiliser un fichier de lock temporaire pour la synchronisation
+    local sync_lock="$GWINE_LOCK_DIR/.sync.lock"
+    
+    # Créer le fichier de lock de synchronisation
+    exec 200>"$sync_lock"
+    flock 200
+    
+    # Lire le compte actuel (0 par défaut)
+    local count=0
+    if [ -f "$lock_file" ]; then
+        count=$(cat "$lock_file" 2>/dev/null || echo "0")
+    fi
+    
+    # Incrémenter
+    count=$((count + 1))
+    echo "$count" > "$lock_file"
+    
+    # Ajouter le PID à la liste
+    echo "$$" >> "$pid_file"
+    
+    # Libérer le lock
+    flock -u 200
+    exec 200>&-
+    
+    echo "$count"
+}
+
+# Décrémente le compteur d'instances et retourne le nouveau compte
+unregister_wine_instance() {
+    local prefix_path="${1:-$WINEPREFIX}"
+    local prefix_hash
+    prefix_hash=$(echo "$prefix_path" | md5sum | cut -d' ' -f1)
+    local lock_file="$GWINE_LOCK_DIR/prefix-$prefix_hash-count"
+    local pid_file="$GWINE_LOCK_DIR/prefix-$prefix_hash-pids"
+    
+    if [ ! -f "$lock_file" ]; then
+        echo "0"
         return 0
     fi
     
-    # Générer un ID unique pour cette instance
-    local instance_id
-    instance_id="$(date +%s)_$$_$RANDOM"
-    local overlay_base="/tmp/gwine-prefix-overlay-$instance_id"
+    # Utiliser un fichier de lock temporaire pour la synchronisation
+    local sync_lock="$GWINE_LOCK_DIR/.sync.lock"
     
-    _ISOLATED_PREFIX_MOUNT="$overlay_base/merged"
-    _ISOLATED_PREFIX_UPPER="$overlay_base/upper"
-    _ISOLATED_PREFIX_WORK="$overlay_base/work"
-    _ISOLATED_PREFIX_REAL="$real_prefix"
+    exec 200>"$sync_lock"
+    flock 200
     
-    echo "Configuration du préfixe isolé avec overlayfs..." >&2
-    echo "  Préfixe réel (RO): $real_prefix" >&2
-    echo "  Point de montage: $_ISOLATED_PREFIX_MOUNT" >&2
+    # Lire le compte actuel
+    local count
+    count=$(cat "$lock_file" 2>/dev/null || echo "0")
     
-    # Créer les dossiers nécessaires
-    ensure_dirs -s "$_ISOLATED_PREFIX_MOUNT" "$_ISOLATED_PREFIX_UPPER" "$_ISOLATED_PREFIX_WORK"
-    
-    # Vérifier que le préfixe réel existe
-    if [ ! -d "$real_prefix" ]; then
-        echo "Warning: Le préfixe réel n'existe pas: $real_prefix" >&2
-        echo "$real_prefix"
-        return 1
+    # Décrémenter
+    count=$((count - 1))
+    if [ $count -lt 0 ]; then
+        count=0
     fi
     
-    # Monter overlayfs avec fuse-overlayfs (userspace, pas besoin de root)
-    echo "Tentative de montage avec fuse-overlayfs..." >&2
-    if command -v fuse-overlayfs &>/dev/null; then
-        if ! fuse-overlayfs -o "lowerdir=$real_prefix,upperdir=$_ISOLATED_PREFIX_UPPER,workdir=$_ISOLATED_PREFIX_WORK" "$_ISOLATED_PREFIX_MOUNT" 2>&1; then
-            echo "Warning: Échec du montage fuse-overlayfs" >&2
-            cleanup_isolated_prefix_instance "$_ISOLATED_PREFIX_MOUNT" "$_ISOLATED_PREFIX_UPPER" "$_ISOLATED_PREFIX_WORK"
-            _ISOLATED_PREFIX_MOUNT=""
-            _ISOLATED_PREFIX_UPPER=""
-            _ISOLATED_PREFIX_WORK=""
-            echo "$real_prefix"
-            return 1
+    echo "$count" > "$lock_file"
+    
+    # Retirer le PID de la liste
+    if [ -f "$pid_file" ]; then
+        sed -i "/^$$$/d" "$pid_file" 2>/dev/null || true
+        # Si le fichier est vide, le supprimer
+        if [ ! -s "$pid_file" ]; then
+            rm -f "$pid_file" 2>/dev/null || true
         fi
-    else
-        echo "Warning: fuse-overlayfs non disponible, utilisation du préfixe direct" >&2
-        cleanup_isolated_prefix_instance "$_ISOLATED_PREFIX_MOUNT" "$_ISOLATED_PREFIX_UPPER" "$_ISOLATED_PREFIX_WORK"
-        _ISOLATED_PREFIX_MOUNT=""
-        _ISOLATED_PREFIX_UPPER=""
-        _ISOLATED_PREFIX_WORK=""
-        echo "$real_prefix"
-        return 1
     fi
     
-    echo "Overlay monté avec succès: $_ISOLATED_PREFIX_MOUNT" >&2
+    # Libérer le lock
+    flock -u 200
+    exec 200>&-
     
-    # Gérer .update-timestamp : CRUCIAL pour éviter "La configuration est en cours de mise à jour"
-    # Wine détecte un "nouveau" préfixe quand le chemin change et écrit le timestamp actuel.
-    # Solution : mettre dans .update-timestamp le timestamp du nom du dossier overlay.
-    # Ex: /tmp/gwine-prefix-overlay-1773862805_30863_31580 -> mettre 1773862805 dans le fichier
-    local overlay_timestamp="$_ISOLATED_PREFIX_MOUNT/.update-timestamp"
-    local instance_timestamp
-    instance_timestamp=$(echo "$instance_id" | cut -d'_' -f1)
+    # Si le compte est 0, supprimer les fichiers
+    if [ $count -eq 0 ]; then
+        rm -f "$lock_file" 2>/dev/null || true
+        rm -f "$pid_file" 2>/dev/null || true
+    fi
     
-    # Créer le fichier avec le timestamp du nom du dossier
-    rm -f "$overlay_timestamp" 2>/dev/null || true
-    echo "$instance_timestamp" > "$overlay_timestamp" 2>/dev/null || true
-    # Mettre en read-only pour empêcher Wine de l'écraser
-    chmod 444 "$overlay_timestamp" 2>/dev/null || true
-    echo "  Timestamp configuré: .update-timestamp ($instance_timestamp) [read-only]" >&2
+    echo "$count"
+}
+
+# Vérifie si c'est la dernière instance
+is_last_wine_instance() {
+    local prefix_path="${1:-$WINEPREFIX}"
+    local prefix_hash
+    prefix_hash=$(echo "$prefix_path" | md5sum | cut -d' ' -f1)
+    local lock_file="$GWINE_LOCK_DIR/prefix-$prefix_hash-count"
     
-    # Créer des symlinks vers les vrais fichiers de registre pour accès simultané
-    # Les modifications au registre seront persistantes entre les instances
-    local reg_files=("system.reg" "user.reg" "userdef.reg")
-    for reg_file in "${reg_files[@]}"; do
-        local real_reg="$real_prefix/$reg_file"
-        local overlay_reg="$_ISOLATED_PREFIX_MOUNT/$reg_file"
+    if [ ! -f "$lock_file" ]; then
+        return 0  # true - dernier
+    fi
+    
+    local count
+    count=$(cat "$lock_file" 2>/dev/null || echo "0")
+    
+    if [ "$count" -eq 0 ]; then
+        return 0  # true - dernier (ou fichier inexistant)
+    else
+        return 1  # false - pas le dernier, il reste d'autres instances
+    fi
+}
+
+# =============================================================================
+# Gestion du wineserver
+# =============================================================================
+
+# Attend que wineserver termine tous les processus
+wait_for_wineserver() {
+    local prefix_path="${1:-$WINEPREFIX}"
+    
+    # Vérifier s'il reste des processus wine actifs avant d'attendre
+    local wine_procs
+    wine_procs=$(pgrep "^wine" 2>/dev/null | wc -l)
+    
+    if [ "$wine_procs" -eq 0 ]; then
+        echo "Aucun processus wine actif, wineserver se terminera automatiquement"
+        return 0
+    fi
+    
+    echo "Attente de wineserver pour: $prefix_path ($wine_procs processus wine actifs)"
+    
+    # Attendre que wineserver se termine (avec timeout de 30 secondes)
+    if command -v wineserver &>/dev/null; then
+        if timeout 30 sh -c "WINEPREFIX=\"$prefix_path\" wineserver -w" 2>/dev/null; then
+            echo "Wineserver terminé"
+        else
+            echo "Wineserver: timeout ou processus encore actifs"
+        fi
+    fi
+}
+
+# Vérifie si wineserver est actif pour ce préfixe
+is_wineserver_running() {
+    local prefix_path="${1:-$WINEPREFIX}"
+    
+    if pgrep -f "wineserver.*$prefix_path" >/dev/null 2>&1; then
+        return 0  # true - actif
+    fi
+    
+    # Vérifier aussi par socket
+    local socket="$prefix_path/.wine-server"
+    if [ -e "$socket" ]; then
+        # Vérifier si wineserver tourne
+        if pgrep wineserver >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    
+    return 1  # false - inactif
+}
+
+# Force l'arrêt de wineserver (à utiliser avec précaution)
+kill_wineserver() {
+    local prefix_path="${1:-$WINEPREFIX}"
+    
+    echo "Arrêt de wineserver pour: $prefix_path"
+    
+    if command -v wineserver &>/dev/null; then
+        WINEPREFIX="$prefix_path" wineserver -k 2>/dev/null || true
+    fi
+    
+    # Nettoyer les fichiers de lock
+    rm -f "$GWINE_LOCK_DIR"/* 2>/dev/null || true
+}
+
+# =============================================================================
+# Nettoyage des locks orphelins
+# =============================================================================
+
+cleanup_stale_wineserver_locks() {
+    [ ! -d "$GWINE_LOCK_DIR" ] && return 0
+    
+    for lock_file in "$GWINE_LOCK_DIR"/prefix-*-count; do
+        [ -f "$lock_file" ] || continue
         
-        if [ -f "$real_reg" ]; then
-            # Supprimer le fichier de l'upperdir s'il existe (pour ne pas cacher le lower)
-            rm -f "$_ISOLATED_PREFIX_UPPER/$reg_file" 2>/dev/null || true
-            # Créer un symlink vers le vrai fichier de registre
-            rm -f "$overlay_reg" 2>/dev/null || true
-            ln -s "$real_reg" "$overlay_reg" 2>/dev/null || true
-            echo "  Registre partagé: $reg_file" >&2
+        local prefix_hash
+        prefix_hash=$(basename "$lock_file" | sed 's/prefix-\(.*\)-count/\1/')
+        local pid_file="$GWINE_LOCK_DIR/prefix-$prefix_hash-pids"
+        
+        # Vérifier si des processus sont encore actifs
+        local has_active_process=false
+        
+        if [ -f "$pid_file" ]; then
+            while IFS= read -r pid; do
+                if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                    has_active_process=true
+                    break
+                fi
+            done < "$pid_file"
+        fi
+        
+        # Si aucun processus actif, supprimer les locks
+        if [ "$has_active_process" = false ]; then
+            rm -f "$lock_file" 2>/dev/null || true
+            rm -f "$pid_file" 2>/dev/null || true
+            echo "Nettoyage des locks orphelins pour: $prefix_hash"
         fi
     done
-    
-    echo "$_ISOLATED_PREFIX_MOUNT"
-    return 0
 }
 
-# Nettoie l'overlay du préfixe isolé (utilise les variables globales)
-cleanup_isolated_prefix() {
-    if [ -z "$_ISOLATED_PREFIX_MOUNT" ]; then
-        return 0
-    fi
-    
-    cleanup_isolated_prefix_instance "$_ISOLATED_PREFIX_MOUNT" "$_ISOLATED_PREFIX_UPPER" "$_ISOLATED_PREFIX_WORK"
-    
-    _ISOLATED_PREFIX_MOUNT=""
-    _ISOLATED_PREFIX_UPPER=""
-    _ISOLATED_PREFIX_WORK=""
-    _ISOLATED_PREFIX_REAL=""
+# =============================================================================
+# Wrapper pour le lancement avec gestion automatique
+# =============================================================================
+
+# À appeler au début du lancement d'une application
+wine_instance_start() {
+    local prefix_path="${1:-$WINEPREFIX}"
+    init_wineserver_manager
+    register_wine_instance "$prefix_path"
 }
 
-# Nettoie une instance spécifique d'overlay (pour les traps)
-cleanup_isolated_prefix_instance() {
-    local mount_point="$1"
-    local upper_dir="$2"
-    local work_dir="$3"
+# À appeler à la fin du lancement d'une application
+# Retourne 0 si c'était la dernière instance (wineserver attendu), 1 sinon
+wine_instance_end() {
+    local prefix_path="${1:-$WINEPREFIX}"
     
-    if [ -z "$mount_point" ]; then
+    # Désenregistrer d'abord
+    local count
+    count=$(unregister_wine_instance "$prefix_path")
+    
+    # Vérifier si c'était la dernière instance (compteur à 0)
+    if [ "$count" -eq 0 ]; then
+        # C'était la dernière instance, attendre wineserver
+        wait_for_wineserver "$prefix_path"
         return 0
+    else
+        # Il reste d'autres instances, wineserver reste actif
+        echo "Il reste $count instance(s) active(s), wineserver continue"
+        return 1
     fi
-    
-    echo "Nettoyage du préfixe isolé: $mount_point" >&2
-    
-    # Attendre que wineserver sauvegarde le registre avant de démonter
-    if mountpoint -q "$mount_point" 2>/dev/null; then
-        if command -v wineserver &>/dev/null; then
-            WINEPREFIX="$mount_point" wineserver -w 2>/dev/null || true
-        fi
-    fi
-    
-    # Démonter l'overlay (fuse-overlayfs utilise fusermount)
-    unmount_fuse_overlay "$mount_point"
-    
-    # Supprimer les dossiers
-    local overlay_base
-    overlay_base="$(dirname "$mount_point")"
-    if [ -d "$overlay_base" ]; then
-        rm -rf "$overlay_base" 2>/dev/null || true
-    fi
-    
-    echo "Préfixe isolé nettoyé: $mount_point" >&2
 }
 
 # =============================================================================
@@ -4198,8 +4472,37 @@ build_bwrap_args() {
     local access_mode="${2:-rw}"  # "ro" ou "rw"
     local bwrap_args=""
     
-    bwrap_args="$bwrap_args --unshare-all"
+    # Vérifier si wineserver tourne déjà pour ce préfixe
+    local wineserver_running=false
+    if [ -n "${WINEPREFIX:-}" ] && [ -d "$WINEPREFIX" ]; then
+        # Vérifier via wineserver -w (retourne immédiatement si pas de wineserver)
+        if command -v wineserver &>/dev/null; then
+            if timeout 0.5 sh -c "WINEPREFIX=\"$WINEPREFIX\" wineserver -w" 2>/dev/null; then
+                wineserver_running=true
+            fi
+        fi
+        # Vérifier aussi via pgrep
+        if [ "$wineserver_running" = false ]; then
+            if pgrep -f "wineserver.*$WINEPREFIX" >/dev/null 2>&1; then
+                wineserver_running=true
+            fi
+        fi
+    fi
+    
+    # Multi-instance: ne PAS isoler le namespace PID pour permettre la communication entre instances
+    # Tous les processus bwrap partagent le namespace PID du système, donc peuvent communiquer avec wineserver
+    # Cela fonctionne car bwrap crée un nouveau mount namespace mais garde le PID namespace de l'hôte
+    
+    # Activer tous les namespaces isolés sauf PID pour la sécurité
+    bwrap_args="$bwrap_args --unshare-uts"
+    bwrap_args="$bwrap_args --unshare-cgroup"
+    bwrap_args="$bwrap_args --unshare-ipc"
     bwrap_args="$bwrap_args --share-net"
+    
+    # Sécurité supplémentaire
+    bwrap_args="$bwrap_args --die-with-parent"  # Meurt si le parent meurt
+    bwrap_args="$bwrap_args --new-session"      # Nouvelle session terminal (isolation)
+    bwrap_args="$bwrap_args --cap-drop ALL"     # Drop toutes les capabilities
     
     # Système de fichiers - lecture seule partout sauf exceptions
     bwrap_args="$bwrap_args --ro-bind / /"
@@ -4218,10 +4521,15 @@ build_bwrap_args() {
     bwrap_args="$bwrap_args --bind-try /etc/localtime /etc/localtime"
     bwrap_args="$bwrap_args --bind-try /etc/machine-id /etc/machine-id"
     
-    if [ -d "/dev/shm" ]; then
+    # Accès à /dev - créer un nouveau devtmpfs puis binder les sous-répertoires spécifiques
+    bwrap_args="$bwrap_args --dev /dev"
+    
+    # Partager /dev/shm pour la mémoire partagée entre instances (crucial pour Wine RPC)
+    if [ "$INSTANCE_MODE" = "joiner" ]; then
         bwrap_args="$bwrap_args --bind /dev/shm /dev/shm"
     fi
     
+    # Binder les sous-répertoires de /dev qui ne sont pas dans devtmpfs
     if [ -d "/dev/dri" ]; then
         bwrap_args="$bwrap_args --dev-bind /dev/dri /dev/dri"
     fi
@@ -4249,15 +4557,59 @@ build_bwrap_args() {
         done
     fi
     
-    for dev in null zero random urandom full tty; do
-        if [ -e "/dev/$dev" ]; then
-            bwrap_args="$bwrap_args --dev-bind-try /dev/$dev /dev/$dev"
-        fi
-    done
-    
     if [ -e "/dev/ntsync" ]; then
         bwrap_args="$bwrap_args --dev-bind /dev/ntsync /dev/ntsync"
     fi
+    
+    # Webcams et périphériques vidéo (V4L2)
+    for video_dev in /dev/video*; do
+        if [ -e "$video_dev" ]; then
+            bwrap_args="$bwrap_args --dev-bind-try $video_dev $video_dev"
+        fi
+    done
+    
+    # Périphériques media (souvent nécessaires pour les webcams)
+    for media_dev in /dev/media*; do
+        if [ -e "$media_dev" ]; then
+            bwrap_args="$bwrap_args --dev-bind-try $media_dev $media_dev"
+        fi
+    done
+    
+    # Bus USB (dongles, clefs USB, manettes, etc.)
+    if [ -d "/dev/bus/usb" ]; then
+        bwrap_args="$bwrap_args --bind /dev/bus/usb /dev/bus/usb"
+    fi
+    
+    # Joysticks legacy (/dev/js*)
+    for js_dev in /dev/js*; do
+        if [ -e "$js_dev" ]; then
+            bwrap_args="$bwrap_args --dev-bind-try $js_dev $js_dev"
+        fi
+    done
+    
+    # Périphériques audio ALSA (fallback si PipeWire/Pulse ne suffit pas)
+    if [ -d "/dev/snd" ]; then
+        bwrap_args="$bwrap_args --bind /dev/snd /dev/snd"
+    fi
+    
+    # Séquenceur MIDI
+    if [ -e "/dev/snd/seq" ]; then
+        bwrap_args="$bwrap_args --dev-bind /dev/snd/seq /dev/snd/seq"
+    fi
+    
+    # CD/DVD
+    for cdrom in /dev/sr* /dev/cdrom /dev/dvd /dev/cdrw; do
+        if [ -e "$cdrom" ]; then
+            bwrap_args="$bwrap_args --dev-bind-try $cdrom $cdrom"
+        fi
+    done
+    
+    # Dongles USB et cartes à puce
+    for usb_serial in /dev/ttyUSB* /dev/ttyACM*; do
+        if [ -e "$usb_serial" ]; then
+            bwrap_args="$bwrap_args --dev-bind-try $usb_serial $usb_serial"
+        fi
+    done
     
     if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR" ]; then
         bwrap_args="$bwrap_args --bind-try \"$XDG_RUNTIME_DIR\" \"$XDG_RUNTIME_DIR\""
@@ -4308,6 +4660,30 @@ build_bwrap_args() {
         done
     fi
     
+    # Bind mounts pour les dossiers Windows (mode compatible vieilles apps 32-bit)
+    # Ces bind mounts remplacent les symlinks quand USE_BIND_MOUNTS est activé (par défaut)
+    # En mode joiner, on utilise des symlinks car les bind mounts sont dans le namespace du master
+    if [ "${USE_BIND_MOUNTS:-true}" = "true" ] && [ "${INSTANCE_MODE:-master}" != "joiner" ]; then
+        # S'assurer que les dossiers parents existent
+        mkdir -p "$WINEPREFIX/drive_c/ProgramData"
+        
+        # Supprimer les symlinks/dossiers existants pour pouvoir faire les bind mounts
+        for target in "$WINEPREFIX/drive_c/users" "$WINEPREFIX/drive_c/ProgramData/Steam" "$WINEPREFIX/drive_c/Applications" "$WINEPREFIX/drive_c/Games"; do
+            if [ -e "$target" ] || [ -L "$target" ]; then
+                rm -rf "$target"
+            fi
+        done
+        
+        # Créer les dossiers cibles vides (seront remplacés par les bind mounts)
+        mkdir -p "$WINEPREFIX/drive_c/users" "$WINEPREFIX/drive_c/ProgramData/Steam" "$WINEPREFIX/drive_c/Applications" "$WINEPREFIX/drive_c/Games"
+        
+        # Bind mounts pour remplacer les symlinks
+        bwrap_args="$bwrap_args --bind \"$HOME_REAL/Windows/UserData\" \"$WINEPREFIX/drive_c/users\""
+        bwrap_args="$bwrap_args --bind \"$HOME_REAL/Windows/SteamData\" \"$WINEPREFIX/drive_c/ProgramData/Steam\""
+        bwrap_args="$bwrap_args --bind \"$HOME_REAL/Windows/Applications\" \"$WINEPREFIX/drive_c/Applications\""
+        bwrap_args="$bwrap_args --bind \"$HOME_REAL/Windows/Games\" \"$WINEPREFIX/drive_c/Games\""
+    fi
+    
     if [ -d "$CACHE_DIR" ]; then
         bwrap_args="$bwrap_args --bind \"$CACHE_DIR\" \"$CACHE_DIR\""
     fi
@@ -4322,7 +4698,24 @@ build_bwrap_args() {
         bwrap_args="$bwrap_args --bind \"$GWINE_DIR\" \"$GWINE_DIR\""
     fi
     
-    bwrap_args="$bwrap_args --bind /tmp /tmp"
+    # Multi-instance: partager /tmp entre toutes les instances pour le socket wineserver
+    local shared_tmp_dir
+    if command -v get_shared_tmp_dir &>/dev/null; then
+        shared_tmp_dir=$(get_shared_tmp_dir)
+    fi
+    
+    if [ -n "$shared_tmp_dir" ] && [ -d "$shared_tmp_dir" ]; then
+        # Utiliser un répertoire /tmp partagé entre instances via bind mount
+        # Le répertoire .wine-$UID est déjà créé dans init_wineserver_manager()
+        bwrap_args="$bwrap_args --bind \"$shared_tmp_dir\" \"/tmp\""
+        echo "Sandbox: /tmp partagé entre instances" >&2
+        
+        # Vérifier le contenu du /tmp partagé
+    else
+        # Sinon, créer un tmpfs isolé
+        bwrap_args="$bwrap_args --tmpfs /tmp"
+        echo "Sandbox: /tmp isolé (tmpfs)" >&2
+    fi
     
     if [ -d "/run/media" ]; then
         bwrap_args="$bwrap_args --bind /run/media /run/media"
@@ -4354,9 +4747,7 @@ build_bwrap_args() {
     bwrap_args="$bwrap_args --setenv WINE \"$WINE_BIN\""
     bwrap_args="$bwrap_args --setenv PATH \"$PATH\""
     
-    if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
-        bwrap_args="$bwrap_args --setenv XDG_RUNTIME_DIR \"$XDG_RUNTIME_DIR\""
-    fi
+    # Variables d'affichage CRITIQUES pour le multi-instance
     
     local PRELOAD_LIBS=""
     
@@ -4373,6 +4764,9 @@ build_bwrap_args() {
         bwrap_args="$bwrap_args --setenv LD_PRELOAD \"\""
     fi
     
+    [ -n "${WINE_TMPDIR:-}" ] && bwrap_args="$bwrap_args --setenv WINE_TMPDIR \"$WINE_TMPDIR\""
+    [ -n "${TMP:-}" ] && bwrap_args="$bwrap_args --setenv TMP \"$TMP\""
+    [ -n "${TEMP:-}" ] && bwrap_args="$bwrap_args --setenv TEMP \"$TEMP\""
     [ -n "${WINE_LARGE_ADDRESS_AWARE:-}" ] && bwrap_args="$bwrap_args --setenv WINE_LARGE_ADDRESS_AWARE \"$WINE_LARGE_ADDRESS_AWARE\""
     [ -n "${STAGING_SHARED_MEMORY:-}" ] && bwrap_args="$bwrap_args --setenv STAGING_SHARED_MEMORY \"$STAGING_SHARED_MEMORY\""
     [ -n "${WINEFSYNC:-}" ] && bwrap_args="$bwrap_args --setenv WINEFSYNC \"$WINEFSYNC\""
@@ -4440,7 +4834,8 @@ init_wgp_variables() {
 
     WGPACK_NAME="$GAME_INTERNAL_NAME"
 
-    MOUNT_BASE="/tmp/wgpackmount"
+    # Utiliser un répertoire dans le cache pour le montage WGP (accessible dans le sandbox)
+    MOUNT_BASE="$CACHE_DIR/wgpackmount"
     MOUNT_DIR="$MOUNT_BASE/$WGPACK_NAME"
     EXTRA_BASE="/tmp/wgp-extra"
     EXTRA_DIR="$EXTRA_BASE/$WGPACK_NAME"
@@ -5159,35 +5554,6 @@ cleanup_wgp() {
     cleanup_extras_symlink
     cleanup_temp_symlink
     
-    # Nettoyer l'overlay du préfixe isolé si présent
-    # Utiliser les variables globales si définies, sinon chercher dans /tmp
-    if [ -n "$_ISOLATED_PREFIX_MOUNT" ]; then
-        cleanup_isolated_prefix
-    else
-        # Chercher et nettoyer les overlays vraiment orphelins (pas utilisés par un autre jeu)
-        for overlay_dir in /tmp/gwine-prefix-overlay-*; do
-            [ -d "$overlay_dir" ] || continue
-            if mountpoint -q "$overlay_dir/merged" 2>/dev/null; then
-                # Vérifier si l'overlay est encore utilisé (des processus y accèdent)
-                local still_used=false
-                if command -v fuser &>/dev/null; then
-                    # Utiliser fuser pour voir si des processus ont ouvert des fichiers
-                    if fuser "$overlay_dir/merged" 2>/dev/null | grep -q '[0-9]'; then
-                        still_used=true
-                    fi
-                fi
-                
-                if [ "$still_used" = true ]; then
-                    echo "Overlay encore utilisé par un autre jeu: $overlay_dir"
-                else
-                    echo "Nettoyage d'un overlay orphelin: $overlay_dir"
-                    unmount_fuse_overlay "$overlay_dir/merged"
-                    rm -rf "$overlay_dir" 2>/dev/null || true
-                fi
-            fi
-        done
-    fi
-
     unmount_fuse_overlay "$MOUNT_DIR" -f
     
     if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
@@ -5331,23 +5697,43 @@ launch_wine_game() {
     
     echo "Lancement de $display_name avec Wine (gwine-proton)..."
     
-    local real_prefix="$HOME_REAL/Windows/Prefix"
-    local effective_prefix="$real_prefix"
-    
-    # Configurer le préfixe isolé si demandé
-    if [ "$isolated_prefix_mode" = "true" ]; then
-        effective_prefix=$(setup_isolated_prefix "$real_prefix")
-        # Stocker dans la variable globale pour le nettoyage
-        _ISOLATED_PREFIX_MOUNT="$effective_prefix"
+    # Mode liens symboliques : afficher un message si activé explicitement
+    if [ "${USE_BIND_MOUNTS:-true}" = "false" ]; then
+        echo "Mode liens symboliques activé (fallback)"
     fi
     
-    export WINEPREFIX="$effective_prefix"
-    
+    export WINEPREFIX="$HOME_REAL/Windows/Prefix"
     mkdir -p "$WINEPREFIX"
     
     apply_padfix_setting
     
     require_wine
+    
+    # =============================================================================
+    # =============================================================================
+    # Détection du mode d'instance (master vs joiner) pour multi-instance
+    # =============================================================================
+    INSTANCE_MODE=$(get_instance_mode "$WINEPREFIX")
+    
+    if [ "$INSTANCE_MODE" = "joiner" ]; then
+        echo "Mode joiner détecté - Connexion à l'instance maître existante"
+    else
+        echo "Mode master - Création d'une nouvelle instance wineserver"
+    fi
+    
+    # Enregistrer cette instance pour la gestion du wineserver persistant
+    wine_instance_start "$WINEPREFIX"
+    echo "Instance enregistrée dans le pool de wineserver"
+    
+    # Configurer le socket wineserver partagé UNIQUEMENT en mode sandbox
+    # En mode nosandbox, chaque instance utilise son propre /tmp isolé
+    if [ "$nosandbox_mode" != true ]; then
+        if command -v get_wine_socket_dir &>/dev/null; then
+            local socket_dir=$(get_wine_socket_dir)
+            export WINE_TMPDIR="$socket_dir"
+            echo "Socket wineserver partagé: $WINE_TMPDIR"
+        fi
+    fi
     
     local user_winedlloverrides=""
     if [ -n "$env_vars" ]; then
@@ -5370,7 +5756,12 @@ launch_wine_game() {
         unset _NEEDS_WINETRICKS_INIT
     fi
     
-    setup_windows_directories "$WINEPREFIX"
+    # Ne pas reconfigurer les dossiers Windows en mode joiner (déjà fait par le master)
+    if [ "$INSTANCE_MODE" != "joiner" ]; then
+        setup_windows_directories "$WINEPREFIX"
+    else
+        echo "Mode joiner: utilisation de la configuration existante du master"
+    fi
     
     echo "Exécutable: $exe_path"
     echo "Arguments: $game_args"
@@ -5441,10 +5832,23 @@ launch_wine_game() {
     
     local CMD="$WINE_BIN"
     
+    # Vérifier si wineserver tourne déjà (autre instance active)
+    # Cette info est passée à build_bwrap_args pour décider des bind mounts
+    local wineserver_already_running=false
+    if [ -n "${WINEPREFIX:-}" ]; then
+        if pgrep wineserver >/dev/null 2>&1; then
+            wineserver_already_running=true
+        fi
+    fi
+    
+    # Variables pour bwrap (doivent être accessibles hors du bloc if)
+    local bwrap_args=""
+    
+    # Sandbox activé pour tous les modes (master ET joiner)
+    # Le namespace PID est partagé entre instances pour permettre la communication
     if [ "$nosandbox_mode" != true ]; then
         if command -v bwrap &>/dev/null; then
             echo "Sandbox activé (bwrap)"
-            local bwrap_args
             local bwrap_access_dir=""
             local bwrap_access_mode="rw"
             
@@ -5460,7 +5864,16 @@ launch_wine_game() {
             fi
             
             bwrap_args=$(build_bwrap_args "$bwrap_access_dir" "$bwrap_access_mode")
-            CMD="bwrap $bwrap_args -- $CMD"
+            
+            # IMPORTANT: Mettre à jour CMD avec bwrap
+            CMD="bwrap $bwrap_args -- $WINE_BIN"
+            
+            # Mode master : enregistrer cette instance comme maître
+            register_master_instance "$WINEPREFIX"
+            
+            if [ "$wineserver_already_running" = true ]; then
+                echo "Note: wineserver existant - utilisation des symlinks (pas de bind mounts)"
+            fi
         else
             echo "Warning: bwrap (bubblewrap) non disponible, sandbox désactivé"
             echo "         Installez bubblewrap pour activer le sandboxing"
@@ -5478,6 +5891,7 @@ launch_wine_game() {
     # Lancer le jeu (synchrone pour garantir le retour à la fin)
     # Rediriger stdin pour éviter que le jeu ne bloque le terminal
     local exit_code=0
+    
     # Construire la commande complète
     local full_cmd="$CMD"
     if [ -n "$game_args" ]; then
@@ -5487,6 +5901,10 @@ launch_wine_game() {
         full_cmd="$full_cmd \"$exe_path\""
     fi
     
+    # Exécution
+    # Pas besoin de rejoindre les namespaces car bwrap sans --unshare-pid partage
+    # automatiquement le namespace PID avec l'hôte. Tous les processus bwrap
+    # (master et joiners) voient les mêmes PIDs et peuvent communiquer avec wineserver.
     WINEPREFIX="$WINEPREFIX" eval "$full_cmd" </dev/null || exit_code=$?
     
     # Attendre que tous les processus wine/bwrap de ce jeu se terminent
@@ -5519,15 +5937,23 @@ launch_wine_game() {
         echo "Timeout après 10 minutes, forçage..."
     fi
     
-    # Nettoyer l'overlay du préfixe isolé après la fin du jeu
-    if [ -n "$_ISOLATED_PREFIX_MOUNT" ]; then
-        cleanup_isolated_prefix
-    fi
-    
     restore_padfix_setting
     
     # Désactiver gamemode (en tuant le processus gamemoded -r)
     gamemode_stop
+    
+    # Gérer la fin de l'instance
+    # Désenregistrer cette instance du pool
+    local count
+    count=$(unregister_wine_instance "$WINEPREFIX")
+    
+    if [ "$count" -eq 0 ]; then
+        # C'était la dernière instance, arrêter wineserver
+        wait_for_wineserver "$WINEPREFIX"
+        echo "Dernière instance terminée, wineserver arrêté"
+    else
+        echo "Instance terminée, il reste $count instance(s), wineserver continue"
+    fi
     
     return $exit_code
 }
@@ -5655,46 +6081,6 @@ create_temp_path() {
     done
 
     echo "$new_path"
-}
-
-cleanup_stale_overlays() {
-    local OVERLAY_BASE="/tmp/wgp-full-overlay"
-    
-    if [ ! -d "$OVERLAY_BASE" ]; then
-        return 0
-    fi
-    
-    for mount_dir in "$OVERLAY_BASE"/wgp-*; do
-        [ -d "$mount_dir" ] || continue
-        
-        if ! ls "$mount_dir" >/dev/null 2>&1; then
-            echo "Nettoyage d'un montage orphelin: $mount_dir"
-            unmount_fuse_overlay "$mount_dir" -f
-            rm -rf "$mount_dir" 2>/dev/null || true
-        elif mountpoint -q "$mount_dir" 2>/dev/null; then
-            local game_name
-            game_name=$(basename "$mount_dir" | sed 's/^wgp-//')
-            if ! pgrep -f "mergerfs.*$mount_dir" >/dev/null 2>&1 && \
-               ! pgrep -f "wine.*$mount_dir" >/dev/null 2>&1; then
-                echo "Montage inactif détecté: $mount_dir"
-                unmount_fuse_overlay "$mount_dir"
-                rm -rf "$mount_dir" 2>/dev/null || true
-            fi
-        fi
-    done
-    
-    local UPPER_BASE="/tmp/wgp-full-overlay-upper"
-    if [ -d "$UPPER_BASE" ]; then
-        for upper_dir in "$UPPER_BASE"/wgp-*; do
-            [ -d "$upper_dir" ] || continue
-            local game_name
-            game_name=$(basename "$upper_dir" | sed 's/^wgp-//')
-            local mount_point="$OVERLAY_BASE/wgp-$game_name"
-            if [ ! -d "$mount_point" ] || ! mountpoint -q "$mount_point" 2>/dev/null; then
-                rm -rf "$upper_dir" 2>/dev/null || true
-            fi
-        done
-    fi
 }
 
 # =============================================================================
@@ -6734,7 +7120,6 @@ show_help() {
     echo "  --fix             Activer le mode fix manette"
     echo "  --exewgp          Mode interactif pour choisir l'exécutable dans un WGP"
     echo "  --nosandbox       Désactiver le sandboxing"
-    echo "  --noprefixoverlay Désactiver l'overlay du préfixe (utilise le préfixe directement)"
     echo "  --regedit         Lancer l'éditeur de registre"
     echo "  --reg fichier.reg Installer un fichier de registre"
     echo "  --winecfg         Lancer la configuration Wine"
@@ -6742,6 +7127,7 @@ show_help() {
     echo "  --download-components  Télécharger tous les composants pour le mode offline"
     echo "  --cachepack       Créer un pack du cache pour installation offline"
     echo "  --cmd             Ouvrir un terminal Wine"
+    echo "  --use-ln-mounts   Utiliser des liens symboliques au lieu de bind mounts (fallback pour compatibilité)"
     echo "  --args            Arguments à passer au jeu"
     echo ""
     echo "Exemples:"
@@ -6753,7 +7139,7 @@ show_help() {
 }
 
 # Options valides reconnues par gwine
-VALID_OPTIONS=("--help" "-h" "--fix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--noprefixoverlay" "--uninstall" "--args" "--gameid")
+VALID_OPTIONS=("--help" "-h" "--fix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--uninstall" "--args" "--gameid" "--use-ln-mounts")
 
 # Vérifie si une option est valide
 is_valid_option() {
@@ -6801,6 +7187,11 @@ parse_arguments() {
                 cmd_mode=true
                 shift
                 ;;
+            --use-ln-mounts)
+                USE_BIND_MOUNTS=false
+                export USE_BIND_MOUNTS
+                shift
+                ;;
             --regedit)
                 regedit_mode=true
                 shift
@@ -6830,10 +7221,6 @@ parse_arguments() {
                 ;;
             --nosandbox)
                 nosandbox_mode=true
-                shift
-                ;;
-            --noprefixoverlay)
-                isolated_prefix_mode=false
                 shift
                 ;;
             --uninstall)
@@ -7024,13 +7411,10 @@ run_classic_mode() {
 
     local lock_file="/tmp/wgp-lock-$filename"
     echo "$$:$(date +%s)" > "$lock_file"
-    trap 'rm -f "$lock_file"; cleanup_isolated_prefix' EXIT
+    trap 'rm -f "$lock_file"' EXIT
 
     launch_wine_game "$new_fullpath" "$args" "$filename" "$env_vars" "false"
     
-    # Nettoyage explicite de l'overlay après la fin du jeu
-    # (en complément du trap EXIT pour garantir le nettoyage)
-    cleanup_isolated_prefix
     rm -f "$lock_file" 2>/dev/null
 }
 
@@ -7039,7 +7423,7 @@ run_classic_mode() {
 # =============================================================================
 
 main() {
-    cleanup_stale_overlays
+    cleanup_stale_wineserver_locks
     
     parse_arguments "$@"
 
