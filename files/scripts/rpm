@@ -56,10 +56,10 @@ dnf5 -y install \
     icoutils
 
 # Outils réseau
-dnf5 -y install \
+dnf5 -y --setopt=install_weak_deps=False install \
     tailscale \
     samba-winbind \
-    samba-winbind-clients.i686
+    libwbclient.i686
 
 # Outils d'archivage et compression
 dnf5 -y install \
