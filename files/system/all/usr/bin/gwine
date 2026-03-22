@@ -4508,9 +4508,10 @@ build_bwrap_args() {
     bwrap_args="$bwrap_args --ro-bind / /"
     bwrap_args="$bwrap_args --proc /proc"
     
-    # Cacher /home et /var (seront remplacés par les bindings autorisés)
+    # Cacher /home (sera remplacé par les bindings autorisés)
+    # Note: on ne cache pas /var car sur Silverblue/Kinoite, /home symlink vers /var/home
+    # et certains chemins (comme $SAVES_REAL) utilisent /var/home explicitement
     bwrap_args="$bwrap_args --tmpfs /home"
-    bwrap_args="$bwrap_args --tmpfs /var"
     
     # Réseau - accès complet
     bwrap_args="$bwrap_args --bind-try /etc/resolv.conf /etc/resolv.conf"
@@ -4645,6 +4646,12 @@ build_bwrap_args() {
         bwrap_args="$bwrap_args --ro-bind-try "$mangohud_config_dir" "$mangohud_config_dir""
     fi
     
+    # Dossier réel des saves (pointé par les symlinks) - AVANT le bind de Windows
+    # pour permettre la création des sous-répertoires
+    if [ -d "$SAVES_REAL" ]; then
+        bwrap_args="$bwrap_args --bind \"$SAVES_REAL\" \"$SAVES_REAL\""
+    fi
+    
     if [ -d "$HOME_REAL/Windows" ]; then
         bwrap_args="$bwrap_args --bind \"$HOME_REAL/Windows\" \"$HOME_REAL/Windows\""
         # Si SteamData ou UserData sont des symlinks, autoriser aussi leurs destinations
@@ -4721,6 +4728,11 @@ build_bwrap_args() {
     if [ -n "$MOUNT_BASE" ] && [ -d "$MOUNT_BASE" ]; then
         bwrap_args="$bwrap_args --bind \"$MOUNT_BASE\" \"$MOUNT_BASE\""
         echo "Sandbox: WGP mounts bindés" >&2
+    fi
+    
+    # Dossier des saves WGP (symlinks /tmp/wgp-saves) - APRÈS le bind de /tmp
+    if [ -d "$SAVES_SYMLINK" ]; then
+        bwrap_args="$bwrap_args --bind \"$SAVES_SYMLINK\" \"$SAVES_SYMLINK\""
     fi
     
     if [ -d "/run/media" ]; then
@@ -6075,7 +6087,7 @@ setup_pds_symlink() {
     echo "Configuration ProgramData pour: $game_name"
 
     local progdata_saves_dir="$WINDOWS_HOME/$USER/ProgramDataSaves/$game_name"
-    local progdata_symlink="$HOME_REAL/Windows/WinDrive/ProgramData/$game_name"
+    local progdata_symlink="$WINEPREFIX/drive_c/ProgramData/$game_name"
 
     if [ ! -d "$progdata_saves_dir" ]; then
         mkdir -p "$progdata_saves_dir"

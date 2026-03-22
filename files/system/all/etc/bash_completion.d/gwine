@@ -30,10 +30,11 @@ gwine_completions() {
             ;;
     esac
 
-    # Autocomplétion des fichiers .wgp et .exe
+    # Autocomplétion des fichiers .wgp et .exe avec gestion des espaces
+    local IFS=$'\n'
     local files
-    files=$(compgen -f -X '!*.@(wgp|exe)' -- ${cur} 2>/dev/null)
-    COMPREPLY=( ${files} $(compgen -f -- ${cur}) )
+    files=$(compgen -f -X '!*.@(wgp|exe)' -- "${cur}" 2>/dev/null)
+    COMPREPLY=( ${files} $(compgen -f -- "${cur}") )
 }
 
 complete -F gwine_completions gwine
