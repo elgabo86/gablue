@@ -4125,6 +4125,9 @@ init_wineserver_manager() {
         fi
     fi
     
+    # Créer le répertoire cible avant de créer le symlink
+    ensure_dir -s "$SHARED_TMP_DIR/wgp-extra"
+    
     if [ ! -e "/tmp/wgp-extra" ]; then
         ln -sf "$SHARED_TMP_DIR/wgp-extra" "/tmp/wgp-extra" 2>/dev/null || true
     fi
@@ -4135,6 +4138,9 @@ init_wineserver_manager() {
             rm -rf "/tmp/wgp-temp"
         fi
     fi
+    
+    # Créer le répertoire cible avant de créer le symlink
+    ensure_dir -s "$SHARED_TMP_DIR/wgp-temp"
     
     if [ ! -e "/tmp/wgp-temp" ]; then
         ln -sf "$SHARED_TMP_DIR/wgp-temp" "/tmp/wgp-temp" 2>/dev/null || true
@@ -4778,6 +4784,16 @@ build_bwrap_args() {
         bwrap_args="$bwrap_args --bind \"$SAVES_SYMLINK\" \"$SAVES_SYMLINK\""
     fi
     
+    # Dossier des extras WGP (partage entre instances)
+    if [ -d "$EXTRA_SYMLINK" ]; then
+        bwrap_args="$bwrap_args --bind \"$EXTRA_SYMLINK\" \"$EXTRA_SYMLINK\""
+    fi
+    
+    # Dossier des temp WGP (partage entre instances pour overlay)
+    if [ -d "$TEMP_SYMLINK" ]; then
+        bwrap_args="$bwrap_args --bind \"$TEMP_SYMLINK\" \"$TEMP_SYMLINK\""
+    fi
+    
     if [ -d "/run/media" ]; then
         bwrap_args="$bwrap_args --bind /run/media /run/media"
     fi
@@ -5130,12 +5146,20 @@ prepare_extras() {
 
     [ -f "$EXTRAPATH_FILE" ] || return 0
 
+    # S'assurer que le repertoire de base existe (gestion symlink casse)
+    if [ -L "$EXTRA_BASE" ] && [ ! -e "$EXTRA_BASE" ]; then
+        local real_extra
+        real_extra=$(readlink -f "$EXTRA_BASE" 2>/dev/null) || real_extra="$SHARED_TMP_DIR/wgp-extra"
+        ensure_dir -s "$real_extra"
+    else
+        ensure_dir -s "$EXTRA_BASE"
+    fi
+
     if [ -d "$EXTRA_DIR" ] && [ ! -L "$EXTRA_DIR" ]; then
         rm -rf "$EXTRA_DIR"
     fi
 
     if [ -d "$EXTRA_CACHE_DIR" ] && [ -n "$(find "$EXTRA_CACHE_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
-        ensure_dir -s "$EXTRA_BASE"
         rm -f "$EXTRA_DIR"
         ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
         return 0
@@ -5163,7 +5187,15 @@ prepare_extras() {
 
     local EXTRA_BASE="/tmp/wgp-extra"
     local EXTRA_DIR="$EXTRA_BASE/$GAME_INTERNAL_NAME"
-    ensure_dir -s "$EXTRA_BASE"
+    
+    # S'assurer que le repertoire de base existe (gestion symlink casse)
+    if [ -L "$EXTRA_BASE" ] && [ ! -e "$EXTRA_BASE" ]; then
+        local real_extra
+        real_extra=$(readlink -f "$EXTRA_BASE" 2>/dev/null) || real_extra="$SHARED_TMP_DIR/wgp-extra"
+        ensure_dir -s "$real_extra"
+    else
+        ensure_dir -s "$EXTRA_BASE"
+    fi
     rm -f "$EXTRA_DIR"
     ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
 }
@@ -5277,7 +5309,14 @@ prepare_temp_folders() {
     local TEMPPATH_FILE="$MOUNT_DIR/.temppath"
     local TEMP_WGP_DIR="$MOUNT_DIR/.temp"
     local TEMP_GAME_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
-    local GAME_ID="${_GAME_TEMP_ID:-wgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')}"
+    local GAME_ID
+    
+    if [ -n "${_GAME_TEMP_ID:-}" ]; then
+        GAME_ID="$_GAME_TEMP_ID"
+    else
+        GAME_ID="wgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')"
+    fi
+    
     local TEMP_UPPER="/tmp/wgp-temp-upper/$GAME_ID"
 
     if [ ! -d "$TEMP_WGP_DIR" ]; then
@@ -5293,7 +5332,9 @@ prepare_temp_folders() {
 
     if [ -n "$(ls -A "$TEMP_GAME_DIR" 2>/dev/null)" ]; then
         echo "Nettoyage du point de montage non vide..."
-        rm -rf "$TEMP_GAME_DIR"/* "$TEMP_GAME_DIR"/.* 2>/dev/null || true
+        rm -rf "$TEMP_GAME_DIR"/* 2>/dev/null || true
+        rm -rf "$TEMP_GAME_DIR"/[!.]* 2>/dev/null || true
+        rm -rf "$TEMP_GAME_DIR"/.[!.]* 2>/dev/null || true
     fi
 
     if mountpoint -q "$TEMP_GAME_DIR" 2>/dev/null; then
@@ -5454,6 +5495,17 @@ setup_temp_symlink() {
 
     if [ ! -f "$TEMPPATH_FILE" ]; then
         return 0
+    fi
+    
+    # S'assurer que le répertoire de base existe (nécessaire pour mergerfs)
+    # Utiliser le chemin reel derriere le symlink
+    if [ -L "$TEMP_REAL" ] && [ ! -e "$TEMP_REAL" ]; then
+        # Symlink casse, creer le repertoire cible
+        local real_temp
+        real_temp=$(readlink -f "$TEMP_REAL" 2>/dev/null) || real_temp="$SHARED_TMP_DIR/wgp-temp"
+        ensure_dir -s "$real_temp"
+    else
+        ensure_dir -s "$TEMP_REAL"
     fi
     
     if grep -q "^\*$" "$TEMPPATH_FILE" 2>/dev/null; then
