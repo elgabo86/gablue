@@ -29,11 +29,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GWINE_DIR="$HOME/.local/share/gwine"
 HOME_REAL="$(realpath "$HOME")"
 WINDOWS_HOME="$HOME_REAL/Windows/UserData"
-SAVES_SYMLINK="/tmp/wgp-saves"
+# Répertoire /tmp partagé pour le multi-instance (doit être défini avant les symlinks)
+GWINE_LOCK_DIR="/tmp/gwine-locks-$USER"
+SHARED_TMP_DIR="$GWINE_LOCK_DIR/tmp"
+
+# Chemins des symlinks dans le /tmp partagé (visibles par toutes les instances sandbox/non-sandbox)
+SAVES_SYMLINK="$SHARED_TMP_DIR/wgp-saves"
+EXTRA_SYMLINK="$SHARED_TMP_DIR/wgp-extra"
+TEMP_SYMLINK="$SHARED_TMP_DIR/wgp-temp"
+
 SAVES_REAL="$WINDOWS_HOME/$USER/LocalSavesWGP"
-EXTRA_SYMLINK="/tmp/wgp-extra"
 EXTRA_REAL="$HOME/.cache/wgp-extra"
-TEMP_SYMLINK="/tmp/wgp-temp"
 TEMP_REAL="/tmp/wgp-temp"
 
 CACHE_DIR="$HOME/.cache/gwine"
@@ -4072,8 +4078,7 @@ WINEPREFIX_LOCK_FILE="$GWINE_LOCK_DIR/wineprefix-count"
 # Répertoire partagé pour le socket wineserver (visible par toutes les instances)
 WINE_SOCKET_DIR="$GWINE_LOCK_DIR/wine-socket"
 
-# Répertoire /tmp partagé pour le multi-instance
-SHARED_TMP_DIR="$GWINE_LOCK_DIR/tmp"
+# Note: SHARED_TMP_DIR, SAVES_SYMLINK, EXTRA_SYMLINK, TEMP_SYMLINK sont définis dans core.sh
 
 # Fichiers pour le suivi de l'instance maître (master instance)
 MASTER_INSTANCE_FILE="$GWINE_LOCK_DIR/master-instance"
@@ -4096,6 +4101,44 @@ init_wineserver_manager() {
     local wine_socket_subdir="$SHARED_TMP_DIR/.wine-$UID"
     ensure_dir -s "$wine_socket_subdir"
     chmod 700 "$wine_socket_subdir"
+    
+    # Créer un symlink de compatibilité pour les anciens chemins (WGP codés en dur)
+    # Le contenu des WGP pointe vers /tmp/wgp-saves, donc on crée un symlink
+    # vers le nouveau répertoire partagé pour la compatibilité sandbox/non-sandbox
+    
+    # Si c'est un répertoire vide, le remplacer par un symlink
+    if [ -d "/tmp/wgp-saves" ] && [ ! -L "/tmp/wgp-saves" ]; then
+        # Vérifier si le répertoire est vide
+        if [ -z "$(ls -A /tmp/wgp-saves 2>/dev/null)" ]; then
+            rm -rf "/tmp/wgp-saves"
+        fi
+    fi
+    
+    if [ ! -e "/tmp/wgp-saves" ]; then
+        ln -sf "$SHARED_TMP_DIR/wgp-saves" "/tmp/wgp-saves" 2>/dev/null || true
+    fi
+    
+    # Même chose pour wgp-extra
+    if [ -d "/tmp/wgp-extra" ] && [ ! -L "/tmp/wgp-extra" ]; then
+        if [ -z "$(ls -A /tmp/wgp-extra 2>/dev/null)" ]; then
+            rm -rf "/tmp/wgp-extra"
+        fi
+    fi
+    
+    if [ ! -e "/tmp/wgp-extra" ]; then
+        ln -sf "$SHARED_TMP_DIR/wgp-extra" "/tmp/wgp-extra" 2>/dev/null || true
+    fi
+    
+    # Même chose pour wgp-temp
+    if [ -d "/tmp/wgp-temp" ] && [ ! -L "/tmp/wgp-temp" ]; then
+        if [ -z "$(ls -A /tmp/wgp-temp 2>/dev/null)" ]; then
+            rm -rf "/tmp/wgp-temp"
+        fi
+    fi
+    
+    if [ ! -e "/tmp/wgp-temp" ]; then
+        ln -sf "$SHARED_TMP_DIR/wgp-temp" "/tmp/wgp-temp" 2>/dev/null || true
+    fi
 }
 
 # Retourne le chemin du répertoire /tmp partagé
