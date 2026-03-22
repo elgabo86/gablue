@@ -10,7 +10,7 @@ gwine_completions() {
     # Options disponibles
     opts="--help -h --fix --exewgp --init --offline --update --kdialog --cmd
           --regedit --reg --winecfg --winetricks --winetrick --download-components
-          --cachepack --nosandbox --uninstall --args --gameid --use-ln-mounts --kill"
+          --cachepack --nosandbox --joytest --uninstall --args --gameid --use-ln-mounts --kill"
 
     # Si on complète une option
     if [[ ${cur} == -* ]]; then

@@ -69,7 +69,7 @@ winetricks_mode=false
 download_wincomponents_mode=false
 cachepack_mode=false
 nosandbox_mode=false
-uninstall_mode=false
+joytest_mode=false
 winetricks_args=""
 args=""
 fullpath=""
@@ -4779,6 +4779,12 @@ build_bwrap_args() {
         echo "Sandbox: WGP mounts bindés" >&2
     fi
     
+    # Binder le répertoire des locks gwine (contient les symlinks wgp-*)
+    # Cela garantit que les chemins /tmp/gwine-locks-$USER/tmp/wgp-* existent dans le sandbox
+    if [ -d "$GWINE_LOCK_DIR" ]; then
+        bwrap_args="$bwrap_args --bind \"$GWINE_LOCK_DIR\" \"$GWINE_LOCK_DIR\""
+    fi
+    
     # Dossier des saves WGP (symlinks /tmp/wgp-saves) - APRÈS le bind de /tmp
     if [ -d "$SAVES_SYMLINK" ]; then
         bwrap_args="$bwrap_args --bind \"$SAVES_SYMLINK\" \"$SAVES_SYMLINK\""
@@ -5106,8 +5112,15 @@ prepare_saves() {
 
     [ -f "$SAVE_FILE" ] || return 0
 
+    # S'assurer que le repertoire de sauvegarde existe
+    ensure_dir -s "$SAVES_DIR"
+
+    # S'assurer que le repertoire parent du symlink existe
+    ensure_dir -s "$SAVES_SYMLINK"
+
     if [ -d "$SAVES_DIR" ]; then
         if [ -n "$(find "$SAVES_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
+            # Les sauvegardes existent deja, pas besoin de copier
             return 0
         fi
     fi
@@ -5141,19 +5154,16 @@ prepare_extras() {
     local EXTRAPATH_FILE="$MOUNT_DIR/.extrapath"
     local EXTRA_WGP_DIR="$MOUNT_DIR/.extra"
     local EXTRA_CACHE_DIR="$EXTRA_REAL/$GAME_INTERNAL_NAME"
-    local EXTRA_BASE="/tmp/wgp-extra"
-    local EXTRA_DIR="$EXTRA_BASE/$GAME_INTERNAL_NAME"
 
     [ -f "$EXTRAPATH_FILE" ] || return 0
 
-    # S'assurer que le repertoire de base existe (gestion symlink casse)
-    if [ -L "$EXTRA_BASE" ] && [ ! -e "$EXTRA_BASE" ]; then
-        local real_extra
-        real_extra=$(readlink -f "$EXTRA_BASE" 2>/dev/null) || real_extra="$SHARED_TMP_DIR/wgp-extra"
-        ensure_dir -s "$real_extra"
-    else
-        ensure_dir -s "$EXTRA_BASE"
-    fi
+    # S'assurer que le repertoire de cache existe
+    ensure_dir -s "$EXTRA_CACHE_DIR"
+
+    # S'assurer que le repertoire parent du symlink existe
+    ensure_dir -s "$EXTRA_SYMLINK"
+
+    local EXTRA_DIR="$EXTRA_SYMLINK/$GAME_INTERNAL_NAME"
 
     if [ -d "$EXTRA_DIR" ] && [ ! -L "$EXTRA_DIR" ]; then
         rm -rf "$EXTRA_DIR"
@@ -5185,17 +5195,6 @@ prepare_extras() {
         fi
     done < "$EXTRAPATH_FILE"
 
-    local EXTRA_BASE="/tmp/wgp-extra"
-    local EXTRA_DIR="$EXTRA_BASE/$GAME_INTERNAL_NAME"
-    
-    # S'assurer que le repertoire de base existe (gestion symlink casse)
-    if [ -L "$EXTRA_BASE" ] && [ ! -e "$EXTRA_BASE" ]; then
-        local real_extra
-        real_extra=$(readlink -f "$EXTRA_BASE" 2>/dev/null) || real_extra="$SHARED_TMP_DIR/wgp-extra"
-        ensure_dir -s "$real_extra"
-    else
-        ensure_dir -s "$EXTRA_BASE"
-    fi
     rm -f "$EXTRA_DIR"
     ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
 }
@@ -5219,6 +5218,7 @@ setup_game_symlink() {
     local game_dir="$real_dir/$GAME_INTERNAL_NAME"
     local game_symlink="$symlink_dir/$GAME_INTERNAL_NAME"
 
+    # S'assurer que les repertoires existent
     ensure_dirs -s "$game_dir" "$symlink_dir"
 
     if [ -L "$game_symlink" ]; then
@@ -5324,11 +5324,10 @@ prepare_temp_folders() {
         return 0
     fi
 
-    echo "Montage de l'overlay mergerfs pour les dossiers temporaires..."
+    # S'assurer que les repertoires existent AVANT le montage (crucial pour sandbox)
+    ensure_dirs -s "$TEMP_GAME_DIR" "$TEMP_UPPER"
 
-    if [ ! -d "$TEMP_GAME_DIR" ] || [ ! -d "$TEMP_UPPER" ]; then
-        error_exit "Dossiers overlay manquants pour les fichiers temporaires"
-    fi
+    echo "Montage de l'overlay mergerfs pour les dossiers temporaires..."
 
     if [ -n "$(ls -A "$TEMP_GAME_DIR" 2>/dev/null)" ]; then
         echo "Nettoyage du point de montage non vide..."
@@ -5480,6 +5479,11 @@ cleanup_temp_symlink() {
             rm -rf "$default_temp_mount" 2>/dev/null || true
             rm -rf "$default_temp_upper" 2>/dev/null || true
         fi
+        
+        # Nettoyer les symlinks dans TEMP_SYMLINK
+        if [ -n "$GAME_INTERNAL_NAME" ]; then
+            rm -f "$TEMP_SYMLINK/$GAME_INTERNAL_NAME" 2>/dev/null || true
+        fi
     fi
 }
 
@@ -5528,6 +5532,13 @@ setup_temp_symlink() {
         
         chmod 777 "$TEMP_UPPER"
         
+        # Créer le symlink dans TEMP_SYMLINK pour le sandbox (comme saves et extras)
+        ensure_dir -s "$TEMP_SYMLINK"
+        local temp_symlink="$TEMP_SYMLINK/$GAME_INTERNAL_NAME"
+        rm -f "$temp_symlink"
+        ln -s "$MOUNT_OVERLAY" "$temp_symlink"
+        echo "Symlink temp créé: $temp_symlink -> $MOUNT_OVERLAY"
+        
         echo "Dossiers overlay préparés pour mergerfs (mode full): $GAME_ID"
     else
         local TEMP_GAME_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
@@ -5549,6 +5560,13 @@ setup_temp_symlink() {
         ensure_dirs -s "$TEMP_GAME_DIR" "$TEMP_UPPER"
         
         chmod 777 "$TEMP_UPPER"
+        
+        # Créer le symlink dans TEMP_SYMLINK pour le sandbox (comme saves et extras)
+        ensure_dir -s "$TEMP_SYMLINK"
+        local temp_symlink="$TEMP_SYMLINK/$GAME_INTERNAL_NAME"
+        rm -f "$temp_symlink"
+        ln -s "$TEMP_GAME_DIR" "$temp_symlink"
+        echo "Symlink temp créé: $temp_symlink -> $TEMP_GAME_DIR"
         
         echo "Dossiers overlay préparés pour mergerfs (mode temp folders): $GAME_ID"
     fi
@@ -7195,53 +7213,20 @@ launch_winetricks() {
     exit $?
 }
 
-# =============================================================================
-# Module: mode-uninstall.sh
-# =============================================================================
-
-
-################################################################################
-# mode-uninstall.sh - Mode --uninstall : Désinstallation de Gwine
-################################################################################
-
-# =============================================================================
-# Mode --uninstall : Désinstallation
-# =============================================================================
-
-uninstall_gwine() {
-    local SYMLINK="$HOME/.local/bin/gwine"
+# Lance le test de joypad (joy.cpl) avec le préfixe Wine
+launch_joypad_test() {
+    echo "Lancement du test de joypad..."
     
-    echo ""
-    echo "========================================"
-    echo "   Désinstallation de Gwine"
-    echo "========================================"
-    echo ""
-    echo "Cela va supprimer :"
-    echo "  - $GWINE_DIR/"
-    echo "  - $SYMLINK"
-    echo ""
-    echo "⚠️  Vos données dans ~/Windows/ ne seront PAS supprimées."
-    echo ""
+    export WINEPREFIX="$HOME_REAL/Windows/Prefix"
     
-    read -p "Voulez-vous vraiment désinstaller Gwine ? [o/N]: " -r
-    echo ""
+    require_wine
     
-    if [[ "$REPLY" =~ ^[oOyY]$ ]]; then
-        echo "Suppression de l'installation..."
-        rm -rf "$GWINE_DIR"
-        rm -f "$SYMLINK"
-        echo ""
-        echo "========================================"
-        echo "   Gwine a été désinstallé"
-        echo "========================================"
-        echo ""
-        echo "Vos données utilisateur dans ~/Windows/ ont été préservées."
-        echo ""
-    else
-        echo "Désinstallation annulée."
-    fi
+    ensure_wineprefix
     
-    exit 0
+    echo "WINEPREFIX: $WINEPREFIX"
+    echo "Utilitaire: joy.cpl (Panneau de configuration des manettes)"
+    WINEPREFIX="$WINEPREFIX" "$WINE_BIN" control joy.cpl
+    exit $?
 }
 
 # =============================================================================
@@ -7279,7 +7264,6 @@ show_help() {
     echo "  --offline         Mode offline pour --init (vérifie que les composants sont en cache)"
     echo "  --update          Mettre à jour les composants (DXVK, VKD3D, gwine-proton)"
     echo "  --kdialog         Activer les dialogues graphiques kdialog pour --init et --update"
-    echo "  --uninstall       Désinstaller Gwine"
     echo "  --fix             Activer le mode fix manette"
     echo "  --exewgp          Mode interactif pour choisir l'exécutable dans un WGP"
     echo "  --nosandbox       Désactiver le sandboxing"
@@ -7287,6 +7271,7 @@ show_help() {
     echo "  --reg fichier.reg Installer un fichier de registre"
     echo "  --winecfg         Lancer la configuration Wine"
     echo "  --winetricks      Lancer winetricks"
+    echo "  --joytest         Lancer le test de joypad (joy.cpl)"
     echo "  --download-components  Télécharger tous les composants pour le mode offline"
     echo "  --cachepack       Créer un pack du cache pour installation offline"
     echo "  --cmd             Ouvrir un terminal Wine"
@@ -7304,7 +7289,7 @@ show_help() {
 }
 
 # Options valides reconnues par gwine
-VALID_OPTIONS=("--help" "-h" "--fix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--uninstall" "--args" "--gameid" "--use-ln-mounts" "--kill")
+VALID_OPTIONS=("--help" "-h" "--fix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill")
 
 # Vérifie si une option est valide
 is_valid_option() {
@@ -7388,16 +7373,16 @@ parse_arguments() {
                 nosandbox_mode=true
                 shift
                 ;;
-            --uninstall)
-                uninstall_mode=true
-                shift
-                ;;
             --kill)
                 echo "Arrêt forcé de tous les processus Gwine..."
                 pgrep -f -i "\\.exe|\\.bat" | grep -v $$ | xargs -r kill -9 2>/dev/null
                 rm -rf /tmp/gwine-locks-$USER/ 2>/dev/null
                 echo "Terminé"
                 exit 0
+                ;;
+            --joytest)
+                joytest_mode=true
+                shift
                 ;;
             --args)
                 args="$2"
@@ -7450,7 +7435,7 @@ parse_arguments() {
         return 0
     fi
 
-    if [ "$uninstall_mode" = true ]; then
+    if [ "$joytest_mode" = true ]; then
         return 0
     fi
 
@@ -7532,6 +7517,7 @@ run_wgp_mode() {
 
     cleanup_saves_symlink
     cleanup_extras_symlink
+    cleanup_temp_symlink
 }
 
 run_classic_mode() {
@@ -7599,10 +7585,6 @@ main() {
     
     parse_arguments "$@"
 
-    if [ "$uninstall_mode" = true ]; then
-        uninstall_gwine
-    fi
-
     if [ "$regedit_mode" = true ]; then
         launch_regedit
     fi
@@ -7621,6 +7603,10 @@ main() {
 
     if [ "$cmd_mode" = true ]; then
         launch_wine_cmd
+    fi
+
+    if [ "$joytest_mode" = true ]; then
+        launch_joypad_test
     fi
 
     if [ "$init_mode" = true ]; then
