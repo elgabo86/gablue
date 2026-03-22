@@ -57,7 +57,9 @@ dnf5 -y install \
 
 # Outils réseau
 dnf5 -y install \
-    tailscale
+    tailscale \
+    samba-winbind \
+    samba-winbind-clients.i686
 
 # Outils d'archivage et compression
 dnf5 -y install \
