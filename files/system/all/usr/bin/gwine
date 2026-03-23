@@ -50,6 +50,9 @@ VKD3D_CACHE_DIR="$COMPONENTS_DIR/vkd3d"
 DXVK_NVAPI_CACHE_DIR="$COMPONENTS_DIR/dxvk-nvapi"
 FAKENVAPI_CACHE_DIR="$COMPONENTS_DIR/fakenvapi"
 
+# Les liens symboliques dans /tmp/ sont créés par init_wineserver_manager()
+# car ensure_dir() n'est pas encore défini à ce point
+
 WINE_DIR="$GWINE_DIR/wine"
 WINE_BIN="$WINE_DIR/bin/wine64"
 WINE32_BIN="$WINE_DIR/bin/wine"
@@ -313,6 +316,23 @@ find_component_dir() {
     
     find "$cache_dir" -mindepth 1 -maxdepth 1 -type d -name "$pattern" | head -1
 }
+
+# =============================================================================
+# Création des liens symboliques pour compatibilité WGP
+# Ces liens permettent aux WGP d'accéder aux répertoires via /tmp/
+# en mode sandbox et non-sandbox
+# =============================================================================
+
+# Créer les liens symboliques dans /tmp/
+# Les WGP utilisent les chemins /tmp/wgp-* et /tmp/wgpackmount/
+# Ces liens pointent vers le répertoire partagé
+ensure_dir -s "$SHARED_TMP_DIR"
+for subdir in wgpackmount wgp-extra wgp-saves wgp-temp; do
+    if [ ! -L "/tmp/$subdir" ] || [ ! -e "/tmp/$subdir" ]; then
+        rm -f "/tmp/$subdir" 2>/dev/null || true
+        ln -sf "$SHARED_TMP_DIR/$subdir" "/tmp/$subdir" 2>/dev/null || true
+    fi
+done
 
 # =============================================================================
 # Module: download.sh
@@ -3860,7 +3880,7 @@ setup_windows_directories() {
     if [ "${USE_BIND_MOUNTS:-true}" = "true" ] && [ "${nosandbox_mode:-false}" != "true" ]; then
         # Toujours créer les symlinks, même avec bind mounts
         # Les bind mounts sont prioritaires dans bwrap, les symlinks servent de fallback
-        echo "Création des symlinks (fallback pour instances multiples)..."
+        echo "Configuration des dossiers Windows..."
     fi
     
     # Créer les liens symboliques depuis le préfixe vers ~/Windows/
@@ -4181,6 +4201,12 @@ register_master_instance() {
     local prefix_path="${1:-$WINEPREFIX}"
     
     ensure_dir -s "$GWINE_LOCK_DIR"
+    
+    # Créer le répertoire de montage WGP (même vide) pour que wineserver le voie
+    # Cela permet aux WGP lancés ensuite d'être visibles par wineserver
+    if [ -n "$MOUNT_BASE" ]; then
+        mkdir -p "$MOUNT_BASE"
+    fi
     
     # Écrire les infos de l'instance maître
     echo "$$" > "$MASTER_PID_FILE"
@@ -4773,10 +4799,12 @@ build_bwrap_args() {
         echo "Sandbox: /tmp isolé (tmpfs)" >&2
     fi
     
-    # Toujours binder le répertoire des WGP s'il existe (pour les montages squashfuse)
-    if [ -n "$MOUNT_BASE" ] && [ -d "$MOUNT_BASE" ]; then
+    # Toujours créer et binder le répertoire des WGP dans le /tmp partagé
+    if [ -n "$MOUNT_BASE" ]; then
+        # Créer le répertoire s'il n'existe pas
+        mkdir -p "$MOUNT_BASE"
         bwrap_args="$bwrap_args --bind \"$MOUNT_BASE\" \"$MOUNT_BASE\""
-        echo "Sandbox: WGP mounts bindés" >&2
+        echo "Sandbox: WGP mounts bindés dans /tmp partagé" >&2
     fi
     
     # Binder le répertoire des locks gwine (contient les symlinks wgp-*)
@@ -4816,7 +4844,29 @@ build_bwrap_args() {
     fi
     
     # Dossier du jeu/exe - accès configurable
+    # Pour le premier EXE (master), on bind aussi le dossier parent pour permettre
+    # le lancement d'autres EXE du même dossier parent
     if [ -n "$exe_dir" ] && [ -d "$exe_dir" ]; then
+        # Détecter si c'est le premier EXE (pas d'autre instance active)
+        local exe_instance_file="$GWINE_LOCK_DIR/active-exe-instance"
+        local is_first_exe=false
+        if [ ! -f "$exe_instance_file" ] || [ "$(cat "$exe_instance_file" 2>/dev/null)" = "$(realpath "$exe_dir")" ]; then
+            is_first_exe=true
+        fi
+        
+        if [ "$is_first_exe" = true ] && [ "$access_mode" = "rw" ]; then
+            # Premier EXE : binder le dossier parent aussi (pour les futurs jeux du même dossier)
+            local parent_dir
+            parent_dir="$(dirname "$exe_dir")"
+            if [ -d "$parent_dir" ] && [ "$parent_dir" != "/" ]; then
+                if [[ ! "$bwrap_args" =~ \"$parent_dir\" ]]; then
+                    bwrap_args="$bwrap_args --bind \"$parent_dir\" \"$parent_dir\""
+                    echo "Sandbox: dossier parent bindé: $parent_dir" >&2
+                fi
+            fi
+        fi
+        
+        # Toujours binder le dossier du jeu
         if [ "$access_mode" = "ro" ]; then
             bwrap_args="$bwrap_args --ro-bind \"$exe_dir\" \"$exe_dir\""
         else
@@ -4917,10 +4967,11 @@ init_wgp_variables() {
 
     WGPACK_NAME="$GAME_INTERNAL_NAME"
 
-    # Utiliser /tmp pour le montage WGP (évite les problèmes avec les montages stale)
-    # Ce répertoire sera explicitement bindé dans le sandbox
-    MOUNT_BASE="/tmp/wgpackmount"
+    # Utiliser le répertoire /tmp partagé pour le montage WGP
+    # Ce répertoire est déjà bindé dans le sandbox via SHARED_TMP_DIR
+    MOUNT_BASE="$SHARED_TMP_DIR/wgpackmount"
     MOUNT_DIR="$MOUNT_BASE/$WGPACK_NAME"
+    # Garder les chemins /tmp/ traditionnels - ils seront visibles via le bind de /tmp
     EXTRA_BASE="/tmp/wgp-extra"
     EXTRA_DIR="$EXTRA_BASE/$WGPACK_NAME"
 }
@@ -5891,6 +5942,143 @@ launch_wine_game() {
     require_wine
     
     # =============================================================================
+    # VÉRIFICATION PRÉALABLE : Conflit d'instance EXE (doit être fait AVANT 
+    # la détection master/joiner car on peut tuer l'instance existante)
+    # =============================================================================
+    if [ "$wgp_mode" != "true" ] && [ "$nosandbox_mode" != true ]; then
+        # Calculer le dossier de ce EXE
+        local current_exe_dir
+        current_exe_dir="$(dirname "$exe_path")"
+        local real_current_exe_dir
+        real_current_exe_dir=$(realpath "$current_exe_dir")
+
+        # Vérifier si une autre instance EXE tourne déjà
+        local exe_instance_file="$GWINE_LOCK_DIR/active-exe-instance"
+
+        # Si fichier n'existe pas mais wineserver tourne, chercher un autre gwine
+        if [ ! -f "$exe_instance_file" ]; then
+            if pgrep wineserver >/dev/null 2>&1; then
+                # Wineserver tourne mais pas de fichier - chercher un autre gwine
+                local other_gwine
+                other_gwine=$(pgrep "^gwine$" | grep -v "^$$$" | head -1)
+                if [ -n "$other_gwine" ]; then
+                    # Trouver le dossier de cet autre gwine via /proc
+                    local other_cwd
+                    other_cwd=$(readlink -f "/proc/$other_gwine/cwd" 2>/dev/null || echo "")
+                    if [ -n "$other_cwd" ]; then
+                        echo "$other_gwine|$other_cwd" > "$exe_instance_file"
+                    fi
+                fi
+            fi
+        fi
+
+        if [ -f "$exe_instance_file" ]; then
+            local existing_entry
+            existing_entry=$(cat "$exe_instance_file" 2>/dev/null)
+
+            if [ -n "$existing_entry" ]; then
+                # Le fichier contient: PID|dossier
+                local existing_pid=""
+                local existing_exe_dir="$existing_entry"
+                if [[ "$existing_entry" == *"|"* ]]; then
+                    existing_pid=$(echo "$existing_entry" | cut -d'|' -f1)
+                    existing_exe_dir=$(echo "$existing_entry" | cut -d'|' -f2-)
+                fi
+
+                # Vérifier si le processus existe encore
+                local exe_still_running=false
+
+                if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
+                    exe_still_running=true
+                elif pgrep -f "bwrap.*$existing_exe_dir" >/dev/null 2>&1; then
+                    exe_still_running=true
+                fi
+
+                if [ "$exe_still_running" = false ]; then
+                    # Processus mort, nettoyer le fichier
+                    rm -f "$exe_instance_file"
+                else
+                    # Il y a déjà une instance EXE en cours
+                    # Obtenir le dossier de téléchargement
+                    local download_dir
+                    download_dir=$(xdg-user-dir DOWNLOAD 2>/dev/null)
+                    if [ -z "$download_dir" ] || [ ! -d "$download_dir" ]; then
+                        download_dir="$HOME_REAL/Téléchargements"
+                        [ ! -d "$download_dir" ] && download_dir="$HOME_REAL/Downloads"
+                    fi
+
+                    local real_download_dir
+                    real_download_dir=$(realpath "$download_dir")
+                    local real_existing_dir
+                    real_existing_dir=$(realpath "$existing_exe_dir")
+                    
+                    # Vérifier si le jeu est dans /run/media (toujours bindé dans bwrap)
+                    local in_run_media=false
+                    if [[ "$real_current_exe_dir" == "/run/media"* ]]; then
+                        in_run_media=true
+                    fi
+
+                    # Vérifier si le nouveau jeu est dans le dossier de téléchargement ou /run/media
+                    if [[ "$real_current_exe_dir" != "$real_download_dir"* ]] && [ "$in_run_media" = false ]; then
+                        # Le nouveau jeu n'est pas dans le dossier de téléchargement ni /run/media
+                        # Vérifier si l'instance existante est aussi hors des dossiers bindés
+                        local existing_in_run_media=false
+                        if [[ "$real_existing_dir" == "/run/media"* ]]; then
+                            existing_in_run_media=true
+                        fi
+                        
+                        if [[ "$real_existing_dir" != "$real_download_dir"* ]] && [ "$existing_in_run_media" = false ]; then
+                            # Il y a déjà une instance EXE hors du dossier de téléchargement
+                            # ET ce n'est pas le même dossier que le nôtre
+                            if [ "$real_current_exe_dir" != "$real_existing_dir" ]; then
+                                local should_stop=false
+                                local game_name
+                                game_name=$(basename "$existing_exe_dir")
+                                
+                                # Message indiquant que tous les programmes Windows seront arretes
+                                local kdialog_msg="Un programme Windows (.exe) est deja en cours.\n\nAttention : Les programmes Windows hors des dossiers autorises ne peuvent pas tourner simultanement. Si vous arretez ce programme, tous les autres programmes Windows en cours seront aussi fermes (ils partagent le meme wineserver).\n\nVoulez-vous arreter TOUS les programmes Windows et lancer celui-ci ?"
+
+                                if command -v kdialog &>/dev/null; then
+                                    if kdialog --title "Conflit d'instance" --yes-label "Oui, tout arreter" --no-label "Non, annuler" --warningyesno "$kdialog_msg"; then
+                                        should_stop=true
+                                    fi
+                                else
+                                    echo ""
+                                    echo "Un programme Windows (.exe) est en cours : $game_name"
+                                    echo "Attention: Les programmes Windows hors dossiers autorises ne peuvent pas tourner simultanement."
+                                    echo "Arreter ce programme fermera aussi les autres programmes Windows (wineserver partage)."
+                                    read -p "Voulez-vous arreter tous les programmes Windows et lancer celui-ci ? (o/N): " -r
+                                    [[ "$REPLY" =~ ^[oOyY]$ ]] && should_stop=true
+                                fi
+
+                                if [ "$should_stop" = true ]; then
+                                    # Arrêter TOUTES les instances (comme gwine --kill)
+                                    echo "Arrêt de toutes les instances en cours..."
+                                    
+                                    # EXACTEMENT comme --kill : tuer tous les .exe/.bat
+                                    pgrep -f -i "\\.exe|\\.bat" | grep -v "^$$$" | xargs -r kill -9 2>/dev/null || true
+                                    
+                                    # Attendre un peu
+                                    sleep 2
+                                    
+                                    # Nettoyer les locks
+                                    rm -f "$exe_instance_file"
+                                    rm -f "$GWINE_LOCK_DIR"/master-* 2>/dev/null || true
+                                    rm -f "$GWINE_LOCK_DIR"/*-count 2>/dev/null || true
+                                    rm -f "$GWINE_LOCK_DIR"/*-pids 2>/dev/null || true
+                                    
+                                    echo "Toutes les instances arrêtées"
+                                else
+                                    error_exit "Lancement annulé"
+                                fi
+                            fi
+                        fi
+                    fi
+                fi
+            fi
+        fi
+    fi
+    
     # =============================================================================
     # Détection du mode d'instance (master vs joiner) pour multi-instance
     # =============================================================================
@@ -5900,6 +6088,36 @@ launch_wine_game() {
         echo "Mode joiner détecté - Connexion à l'instance maître existante"
     else
         echo "Mode master - Création d'une nouvelle instance wineserver"
+    fi
+    
+    # Pour les EXE en mode sandbox : enregistrer cette instance
+    # Le fichier représente TOUJOURS le dossier du dernier jeu EXE lancé
+    if [ "$wgp_mode" != "true" ] && [ "$nosandbox_mode" != true ]; then
+        local current_exe_dir
+        current_exe_dir="$(dirname "$exe_path")"
+        local real_current_exe_dir
+        real_current_exe_dir=$(realpath "$current_exe_dir")
+
+        local exe_instance_file="$GWINE_LOCK_DIR/active-exe-instance"
+
+        # Mettre à jour le fichier avec notre dossier et PID
+        # En mode master: toujours mettre à jour
+        # En mode joiner: mettre à jour UNIQUEMENT si hors dossier bindé
+        # (sinon on écrase l'info du master et fausse la détection)
+        local should_update_file=false
+        
+        if [ "$INSTANCE_MODE" = "master" ]; then
+            should_update_file=true
+        else
+            # Mode joiner: ne JAMAIS mettre à jour le fichier
+            # Le fichier doit toujours refléter le dossier du MASTER
+            # Sinon on perd la trace du jeu qui bloque
+            should_update_file=false
+        fi
+        
+        if [ "$should_update_file" = true ]; then
+            echo "$$|$real_current_exe_dir" > "$exe_instance_file"
+        fi
     fi
     
     # Enregistrer cette instance pour la gestion du wineserver persistant
@@ -5937,8 +6155,10 @@ launch_wine_game() {
         unset _NEEDS_WINETRICKS_INIT
     fi
     
-    # Ne pas reconfigurer les dossiers Windows en mode joiner (déjà fait par le master)
-    if [ "$INSTANCE_MODE" != "joiner" ]; then
+    # Configurer les dossiers Windows
+    # En mode master: toujours configurer
+    # En mode joiner: configurer UNIQUEMENT pour les WGP (qui viennent d'être montés)
+    if [ "$INSTANCE_MODE" != "joiner" ] || [ "$wgp_mode" = "true" ]; then
         setup_windows_directories "$WINEPREFIX"
     else
         echo "Mode joiner: utilisation de la configuration existante du master"
@@ -6134,6 +6354,13 @@ launch_wine_game() {
         echo "Dernière instance terminée, wineserver arrêté"
     else
         echo "Instance terminée, il reste $count instance(s), wineserver continue"
+    fi
+    
+    # Nettoyer le fichier d'instance EXE uniquement si c'était le master ET la dernière instance
+    # Les joiners ne touchent pas au fichier car un autre jeu est encore actif
+    if [ "$wgp_mode" != "true" ] && [ "$count" -eq 0 ]; then
+        local exe_instance_file="$GWINE_LOCK_DIR/active-exe-instance"
+        rm -f "$exe_instance_file"
     fi
     
     return $exit_code
