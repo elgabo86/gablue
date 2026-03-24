@@ -4843,6 +4843,16 @@ build_bwrap_args() {
         bwrap_args="$bwrap_args --bind \"$download_dir\" \"$download_dir\""
     fi
     
+    # Répertoires personnalisés configurés via --dir
+    if command -v get_custom_bind_dirs_args &>/dev/null; then
+        local custom_bind_args
+        custom_bind_args="$(get_custom_bind_dirs_args)"
+        if [ -n "$custom_bind_args" ]; then
+            bwrap_args="$bwrap_args $custom_bind_args"
+            echo "Sandbox: répertoires personnalisés bindés" >&2
+        fi
+    fi
+    
     # Dossier du jeu/exe - accès configurable
     # Pour le premier EXE (master), on bind aussi le dossier parent pour permettre
     # le lancement d'autres EXE du même dossier parent
@@ -4882,9 +4892,11 @@ build_bwrap_args() {
     
     # Variables d'affichage CRITIQUES pour le multi-instance
     
+    # Gestion LD_PRELOAD pour MangoHud (nécessaire pour OpenGL)
+    # Désactivé si MANGOHUD=0 explicitement défini
     local PRELOAD_LIBS=""
     
-    if [ -n "${MANGOHUD_BIN:-}" ]; then
+    if [ "${MANGOHUD:-}" != "0" ] && [ -n "${MANGOHUD_BIN:-}" ]; then
         local MANGOHUD_LIBS="/usr/lib/mangohud/libMangoHud_shim.so:/usr/lib64/mangohud/libMangoHud_shim.so"
         PRELOAD_LIBS="$MANGOHUD_LIBS"
     fi
@@ -6168,18 +6180,44 @@ launch_wine_game() {
     echo "Arguments: $game_args"
     echo "WINEPREFIX: $WINEPREFIX"
     
-    export WINE_LARGE_ADDRESS_AWARE=1
-    export STAGING_SHARED_MEMORY=1
-    export WINEFSYNC=1
-    export WINENTSYNC=1
-    export PULSE_LATENCY_MSEC=60
-    export WINEDEBUG=fixme-all
+    # Variables Wine avec valeurs par défaut, écrasables par l'utilisateur
+    export WINE_LARGE_ADDRESS_AWARE="${WINE_LARGE_ADDRESS_AWARE:-1}"
+    export STAGING_SHARED_MEMORY="${STAGING_SHARED_MEMORY:-1}"
+    export WINEFSYNC="${WINEFSYNC:-1}"
+    export WINENTSYNC="${WINENTSYNC:-1}"
+    export PULSE_LATENCY_MSEC="${PULSE_LATENCY_MSEC:-60}"
+    export WINEDEBUG="${WINEDEBUG:-fixme-all}"
     
-    if [ -n "$user_winedlloverrides" ]; then
-        export WINEDLLOVERRIDES="${user_winedlloverrides};winemenubuilder=''"
-    else
-        export WINEDLLOVERRIDES="winemenubuilder=''"
+    # Construire WINEDLLOVERRIDES en combinant:
+    # 1. La variable système existante (si définie)
+    # 2. Les overrides du fichier .env (si présent)
+    # 3. Les overrides par défaut de gwine
+    local winedll_overrides=""
+    
+    # Ajouter la variable système si elle existe
+    if [ -n "${WINEDLLOVERRIDES:-}" ]; then
+        winedll_overrides="${WINEDLLOVERRIDES}"
     fi
+    
+    # Ajouter les overrides du fichier .env
+    if [ -n "$user_winedlloverrides" ]; then
+        if [ -n "$winedll_overrides" ]; then
+            winedll_overrides="${winedll_overrides};${user_winedlloverrides}"
+        else
+            winedll_overrides="${user_winedlloverrides}"
+        fi
+    fi
+    
+    # Ajouter les overrides par défaut de gwine
+    # winesni='' désactive StatusNotifierItem qui cause des erreurs D-Bus
+    local default_overrides="winemenubuilder='';winesni=''"
+    if [ -n "$winedll_overrides" ]; then
+        winedll_overrides="${winedll_overrides};${default_overrides}"
+    else
+        winedll_overrides="${default_overrides}"
+    fi
+    
+    export WINEDLLOVERRIDES="$winedll_overrides"
     
     export WINEARCH="win64"
     
@@ -6283,10 +6321,15 @@ launch_wine_game() {
         echo "Sandbox désactivé (--nosandbox)"
     fi
     
-    if [ -n "$MANGOHUD_BIN" ]; then
+    if [ -n "$MANGOHUD_BIN" ] && [ "${MANGOHUD:-}" != "0" ]; then
         export MANGOHUD=1
         export MANGOHUD_DLSYM=1
         echo "MangoHud activé (système)"
+    elif [ "${MANGOHUD:-}" = "0" ]; then
+        echo "MangoHud désactivé par MANGOHUD=0"
+        unset MANGOHUD
+        unset MANGOHUD_DLSYM
+        unset MANGOHUD_BIN
     fi
     
     # Lancer le jeu (synchrone pour garantir le retour à la fin)
@@ -7457,6 +7500,321 @@ launch_joypad_test() {
 }
 
 # =============================================================================
+# Module: dir-config.sh
+# =============================================================================
+
+
+################################################################################
+# dir-config.sh - Gestion des répertoires bind pour le sandbox bubblewrap
+#
+# Ce module permet d'ajouter, supprimer, lister et réinitialiser les
+# répertoires qui seront bindés dans le sandbox bubblewrap en plus des
+# répertoires par défaut.
+#
+# Les chemins sont stockés dans ~/.config/gwine/bind-dirs.conf
+################################################################################
+
+# Fichier de configuration pour les répertoires bind
+BIND_DIRS_CONFIG_FILE="${HOME}/.config/gwine/bind-dirs.conf"
+
+# =============================================================================
+# Fonctions utilitaires
+# =============================================================================
+
+# Normalise un chemin : convertit /var/home/ en /home/ et résout les ~
+normalize_path() {
+    local path="$1"
+    
+    # Expandre le ~ en $HOME
+    if [[ "$path" =~ ^~ ]]; then
+        path="${HOME}${path:1}"
+    fi
+    
+    # Convertir /var/home/ en /home/ pour la compatibilité
+    if [[ "$path" =~ ^/var/home/ ]]; then
+        path="/home${path:9}"
+    fi
+    
+    # Convertir en chemin absolu si relatif
+    if [[ "$path" != /* ]]; then
+        path="$(pwd)/$path"
+    fi
+    
+    # Résoudre les .. et . et les liens symboliques
+    path="$(realpath -m "$path" 2>/dev/null || echo "$path")"
+    
+    echo "$path"
+}
+
+# Vérifie si un chemin existe et est un répertoire
+validate_directory() {
+    local path="$1"
+    
+    if [ ! -e "$path" ]; then
+        echo "Erreur: Le chemin n'existe pas: $path" >&2
+        return 1
+    fi
+    
+    if [ ! -d "$path" ]; then
+        echo "Erreur: Le chemin n'est pas un répertoire: $path" >&2
+        return 1
+    fi
+    
+    return 0
+}
+
+# S'assure que le fichier de configuration existe
+ensure_config_file() {
+    local config_dir
+    config_dir="$(dirname "$BIND_DIRS_CONFIG_FILE")"
+    
+    if [ ! -d "$config_dir" ]; then
+        mkdir -p "$config_dir" 2>/dev/null || {
+            echo "Erreur: Impossible de créer le répertoire de configuration: $config_dir" >&2
+            return 1
+        }
+    fi
+    
+    if [ ! -f "$BIND_DIRS_CONFIG_FILE" ]; then
+        touch "$BIND_DIRS_CONFIG_FILE" 2>/dev/null || {
+            echo "Erreur: Impossible de créer le fichier de configuration: $BIND_DIRS_CONFIG_FILE" >&2
+            return 1
+        }
+    fi
+    
+    return 0
+}
+
+# =============================================================================
+# Commandes de gestion des répertoires
+# =============================================================================
+
+# Ajoute un répertoire à la liste
+dir_config_add() {
+    local raw_path="$1"
+    
+    if [ -z "$raw_path" ]; then
+        echo "Usage: gwine --dir add <chemin>" >&2
+        return 1
+    fi
+    
+    local normalized_path
+    normalized_path="$(normalize_path "$raw_path")"
+    
+    if ! validate_directory "$normalized_path"; then
+        return 1
+    fi
+    
+    ensure_config_file || return 1
+    
+    # Vérifier si le répertoire est déjà dans la liste
+    if grep -Fxq "$normalized_path" "$BIND_DIRS_CONFIG_FILE" 2>/dev/null; then
+        echo "Le répertoire est déjà dans la liste: $normalized_path"
+        return 0
+    fi
+    
+    # Vérifier les doublons potentiels (même répertoire via chemins différents)
+    local existing_path
+    existing_path="$(readlink -f "$normalized_path" 2>/dev/null)"
+    if [ -n "$existing_path" ]; then
+        while IFS= read -r line; do
+            if [ -n "$line" ]; then
+                local existing_normalized
+                existing_normalized="$(readlink -f "$line" 2>/dev/null)"
+                if [ "$existing_normalized" = "$existing_path" ]; then
+                    echo "Le répertoire est déjà dans la liste (via un autre chemin): $line"
+                    return 0
+                fi
+            fi
+        done < "$BIND_DIRS_CONFIG_FILE"
+    fi
+    
+    # Ajouter le répertoire
+    echo "$normalized_path" >> "$BIND_DIRS_CONFIG_FILE"
+    echo "Répertoire ajouté: $normalized_path"
+    
+    return 0
+}
+
+# Supprime un répertoire de la liste
+dir_config_del() {
+    local raw_path="$1"
+    
+    if [ -z "$raw_path" ]; then
+        echo "Usage: gwine --dir del <chemin>" >&2
+        return 1
+    fi
+    
+    local normalized_path
+    normalized_path="$(normalize_path "$raw_path")"
+    
+    if [ ! -f "$BIND_DIRS_CONFIG_FILE" ]; then
+        echo "Aucun répertoire configuré."
+        return 1
+    fi
+    
+    # Vérifier si le fichier est vide
+    if [ ! -s "$BIND_DIRS_CONFIG_FILE" ]; then
+        echo "Aucun répertoire configuré."
+        return 1
+    fi
+    
+    # Chercher le répertoire exact ou partiel
+    local found=false
+    local matched_path=""
+    
+    # D'abord essayer une correspondance exacte
+    if grep -Fxq "$normalized_path" "$BIND_DIRS_CONFIG_FILE" 2>/dev/null; then
+        found=true
+        matched_path="$normalized_path"
+    else
+        # Essayer de trouver par résolution de liens symboliques
+        local target_real
+        target_real="$(readlink -f "$normalized_path" 2>/dev/null)"
+        if [ -n "$target_real" ]; then
+            # Utiliser un file descriptor explicite
+            exec 3< "$BIND_DIRS_CONFIG_FILE" || {
+                echo "Erreur: Impossible de lire le fichier de configuration" >&2
+                return 1
+            }
+            while IFS= read -r line <&3; do
+                if [ -n "$line" ]; then
+                    local line_real
+                    line_real="$(readlink -f "$line" 2>/dev/null)"
+                    if [ "$line_real" = "$target_real" ]; then
+                        found=true
+                        matched_path="$line"
+                        break
+                    fi
+                fi
+            done
+            exec 3<&-
+        fi
+    fi
+    
+    if [ "$found" = false ]; then
+        echo "Répertoire non trouvé dans la liste: $normalized_path"
+        return 1
+    fi
+    
+    # Supprimer le répertoire
+    local temp_file
+    temp_file="$(mktemp)"
+    grep -Fxv "$matched_path" "$BIND_DIRS_CONFIG_FILE" > "$temp_file" || true
+    mv "$temp_file" "$BIND_DIRS_CONFIG_FILE"
+    
+    echo "Répertoire supprimé: $matched_path"
+    
+    return 0
+}
+
+# Liste tous les répertoires configurés
+dir_config_list() {
+    if [ ! -f "$BIND_DIRS_CONFIG_FILE" ] || [ ! -s "$BIND_DIRS_CONFIG_FILE" ]; then
+        echo "Aucun répertoire configuré."
+        echo "Utilisez 'gwine --dir add <chemin>' pour ajouter un répertoire."
+        return 0
+    fi
+    
+    echo "Répertoires bindés dans le sandbox :"
+    echo "====================================="
+    
+    local count=0
+    # Utiliser un file descriptor explicite pour éviter de lire stdin
+    exec 3< "$BIND_DIRS_CONFIG_FILE" || {
+        echo "Erreur: Impossible de lire le fichier de configuration" >&2
+        return 1
+    }
+    while IFS= read -r line <&3; do
+        if [ -n "$line" ]; then
+            ((count++))
+            if [ -d "$line" ]; then
+                echo "  [$count] $line"
+            else
+                echo "  [$count] $line (INEXISTANT)"
+            fi
+        fi
+    done
+    exec 3<&-
+    
+    echo "====================================="
+    echo "Total: $count répertoire(s)"
+    
+    return 0
+}
+
+# Réinitialise la liste (supprime tout) avec confirmation
+dir_config_reset() {
+    if [ ! -f "$BIND_DIRS_CONFIG_FILE" ] || [ ! -s "$BIND_DIRS_CONFIG_FILE" ]; then
+        echo "Aucun répertoire à supprimer."
+        return 0
+    fi
+    
+    # Afficher les répertoires qui seront supprimés
+    echo "Les répertoires suivants seront supprimés de la liste :"
+    echo "======================================================"
+    dir_config_list | grep "^  \["
+    echo ""
+    
+    # Demander confirmation
+    echo -n "Voulez-vous vraiment supprimer tous les répertoires ? [o/N] "
+    read -r response
+    
+    if [[ "$response" =~ ^[Oo]$ ]] || [[ "$response" =~ ^[Oo][Uu][Ii]$ ]]; then
+        rm -f "$BIND_DIRS_CONFIG_FILE"
+        touch "$BIND_DIRS_CONFIG_FILE"
+        echo "Tous les répertoires ont été supprimés."
+    else
+        echo "Opération annulée."
+    fi
+    
+    return 0
+}
+
+# =============================================================================
+# Fonction pour le sandbox
+# =============================================================================
+
+# Récupère les arguments bwrap pour les répertoires personnalisés
+get_custom_bind_dirs_args() {
+    if [ ! -f "$BIND_DIRS_CONFIG_FILE" ] || [ ! -s "$BIND_DIRS_CONFIG_FILE" ]; then
+        return 0
+    fi
+    
+    local bwrap_args=""
+    
+    # Utiliser un file descriptor explicite
+    exec 3< "$BIND_DIRS_CONFIG_FILE" 2>/dev/null || return 0
+    while IFS= read -r line <&3; do
+        if [ -n "$line" ] && [ -d "$line" ]; then
+            # Vérifier que le répertoire n'est pas déjà bindé par défaut
+            if [[ "$line" == "$HOME_REAL" ]] || [[ "$line" == "$HOME_REAL/"* ]] || \
+               [[ "$line" == "$SAVES_REAL" ]] || [[ "$line" == "$SAVES_REAL/"* ]] || \
+               [[ "$line" == "$EXTRA_REAL" ]] || [[ "$line" == "$EXTRA_REAL/"* ]] || \
+               [[ "$line" == "$CACHE_DIR" ]] || [[ "$line" == "$CACHE_DIR/"* ]] || \
+               [[ "$line" == "$GWINE_DIR" ]] || [[ "$line" == "$GWINE_DIR/"* ]]; then
+                continue
+            fi
+            
+            bwrap_args="$bwrap_args --bind \"$line\" \"$line\""
+        fi
+    done
+    exec 3<&-
+    
+    echo "$bwrap_args"
+}
+
+# Exporte les fonctions pour utilisation dans d'autres modules
+export -f normalize_path
+export -f validate_directory
+export -f ensure_config_file
+export -f dir_config_add
+export -f dir_config_del
+export -f dir_config_list
+export -f dir_config_reset
+export -f get_custom_bind_dirs_args
+
+# =============================================================================
 # Code principal
 # =============================================================================
 
@@ -7505,6 +7863,13 @@ show_help() {
     echo "  --use-ln-mounts   Utiliser des liens symboliques au lieu de bind mounts (fallback pour compatibilité)"
     echo "  --args            Arguments à passer au jeu"
     echo "  --kill            Forcer l'arrêt de tous les processus Gwine en cours"
+    echo "  --dir             Gérer les répertoires bindés dans le sandbox (add/del/list/reset)"
+    echo ""
+    echo "Options --dir:"
+    echo "  gwine --dir add <chemin>    Ajouter un répertoire aux bind mounts"
+    echo "  gwine --dir del <chemin>    Supprimer un répertoire des bind mounts"
+    echo "  gwine --dir list            Lister tous les répertoires bindés"
+    echo "  gwine --dir reset           Réinitialiser la liste (supprime tout)"
     echo ""
     echo "Exemples:"
     echo "  gwine ~/Jeux/monjeu.wgp"
@@ -7516,7 +7881,7 @@ show_help() {
 }
 
 # Options valides reconnues par gwine
-VALID_OPTIONS=("--help" "-h" "--fix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill")
+VALID_OPTIONS=("--help" "-h" "--fix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir")
 
 # Vérifie si une option est valide
 is_valid_option() {
@@ -7618,6 +7983,18 @@ parse_arguments() {
             --gameid)
                 shift 2
                 ;;
+            --dir)
+                dir_mode=true
+                if [ -n "${2:-}" ]; then
+                    dir_subcommand="$2"
+                    shift
+                fi
+                if [ -n "${2:-}" ]; then
+                    dir_path="$2"
+                    shift
+                fi
+                shift
+                ;;
             *)
                 # Vérifier si c'est une option invalide (commence par -- mais n'est pas reconnu)
                 if [[ "$1" == --* ]]; then
@@ -7679,6 +8056,40 @@ parse_arguments() {
     if [ "$cachepack_mode" = true ]; then
         create_cachepack
         exit $?
+    fi
+
+    if [ "$dir_mode" = true ]; then
+        case "$dir_subcommand" in
+            add)
+                if [ -z "$dir_path" ]; then
+                    echo "Usage: gwine --dir add <chemin>" >&2
+                    exit 1
+                fi
+                dir_config_add "$dir_path"
+                exit $?
+                ;;
+            del|delete|remove|rm)
+                if [ -z "$dir_path" ]; then
+                    echo "Usage: gwine --dir del <chemin>" >&2
+                    exit 1
+                fi
+                dir_config_del "$dir_path"
+                exit $?
+                ;;
+            list|ls)
+                dir_config_list
+                exit $?
+                ;;
+            reset|clear)
+                dir_config_reset
+                exit $?
+                ;;
+            *)
+                echo "Sous-commande --dir invalide: $dir_subcommand" >&2
+                echo "Utilisez: add, del, list, ou reset" >&2
+                exit 1
+                ;;
+        esac
     fi
 
     [ -z "$fullpath" ] && error_exit "Aucun fichier spécifié"
