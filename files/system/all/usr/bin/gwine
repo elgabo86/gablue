@@ -54,7 +54,7 @@ FAKENVAPI_CACHE_DIR="$COMPONENTS_DIR/fakenvapi"
 # car ensure_dir() n'est pas encore défini à ce point
 
 WINE_DIR="$GWINE_DIR/wine"
-WINE_BIN="$WINE_DIR/bin/wine64"
+WINE_BIN="$WINE_DIR/bin/wine"
 WINE32_BIN="$WINE_DIR/bin/wine"
 WINESERVER_BIN="$WINE_DIR/bin/wineserver"
 
@@ -2552,7 +2552,7 @@ install_gwine_proton_from_cache() {
     ensure_dir "$WINE_INSTALL_DIR" "Impossible de créer le répertoire d'installation Wine"
     cp -r "$extracted_wine_dir"/* "$WINE_INSTALL_DIR/"
     
-    if [ ! -f "$WINE_INSTALL_DIR/bin/wine64" ]; then
+    if [ ! -f "$WINE_INSTALL_DIR/bin/wine" ]; then
         echo "Échec de l'installation"
         rm -rf "$WINE_INSTALL_DIR"
         rm -rf "$temp_dir"
@@ -2564,7 +2564,7 @@ install_gwine_proton_from_cache() {
     rm -rf "$temp_dir"
     
     WINE_DIR="$WINE_INSTALL_DIR"
-    WINE_BIN="$WINE_INSTALL_DIR/bin/wine64"
+    WINE_BIN="$WINE_INSTALL_DIR/bin/wine"
     WINESERVER_BIN="$WINE_INSTALL_DIR/bin/wineserver"
     
     echo "✓ $version_name installé depuis le cache"
@@ -2593,7 +2593,7 @@ install_gwine_from_extracted() {
     ensure_dir "$install_dir" "Impossible de créer le répertoire d'installation"
     cp -r "$wine_subdir"/* "$install_dir/"
     
-    if [ ! -f "$install_dir/bin/wine64" ]; then
+    if [ ! -f "$install_dir/bin/wine" ]; then
         echo "Échec de l'installation"
         rm -rf "$install_dir"
         if [ -n "$old_backup" ]; then
@@ -2614,7 +2614,7 @@ download_gwine_proton() {
     local latest_version=""
     local force_update="${1:-false}"
     
-    if [ -d "$WINE_INSTALL_DIR" ] && [ -f "$WINE_INSTALL_DIR/bin/wine64" ]; then
+    if [ -d "$WINE_INSTALL_DIR" ] && [ -f "$WINE_INSTALL_DIR/bin/wine" ]; then
         current_version=$(cat "$GWINE_DIR/.version" 2>/dev/null || echo "unknown")
     fi
     
@@ -2711,7 +2711,7 @@ download_gwine_proton() {
         echo "$latest_version" > "$GWINE_DIR/.version"
         
         WINE_DIR="$WINE_INSTALL_DIR"
-        WINE_BIN="$WINE_INSTALL_DIR/bin/wine64"
+        WINE_BIN="$WINE_INSTALL_DIR/bin/wine"
         WINESERVER_BIN="$WINE_INSTALL_DIR/bin/wineserver"
         
         rm -rf "$temp_dir"
@@ -2904,7 +2904,7 @@ prepare_full_offline_cache() {
     
     # 1. Télécharger gwine-proton
     echo "1. Préparation de gwine-proton..."
-    if [ ! -d "$WINE_DIR" ] || [ ! -f "$WINE_DIR/bin/wine64" ]; then
+    if [ ! -d "$WINE_DIR" ] || [ ! -f "$WINE_DIR/bin/wine" ]; then
         local latest_version
         latest_version=$(get_latest_gwine_version)
         if [ -n "$latest_version" ]; then
@@ -3256,7 +3256,7 @@ auto_update_components() {
     local has_dxvk=false
     local has_vkd3d=false
     
-    [ -d "$WINE_DIR" ] && [ -f "$WINE_DIR/bin/wine64" ] && has_gwine=true
+    [ -d "$WINE_DIR" ] && [ -f "$WINE_DIR/bin/wine" ] && has_gwine=true
     [ -n "$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi")" ] && has_dxvk=true
     [ -n "$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null)" ] && has_vkd3d=true
     
@@ -6583,7 +6583,7 @@ init_prefix_only() {
     echo ""
     
     # Vérifier si gwine-proton est installé (le télécharger si nécessaire)
-    if [ ! -d "$WINE_DIR" ] || [ ! -f "$WINE_DIR/bin/wine64" ]; then
+    if [ ! -d "$WINE_DIR" ] || [ ! -f "$WINE_DIR/bin/wine" ]; then
         ((CURRENT_STEP++))
         progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de gwine-proton..."
         
