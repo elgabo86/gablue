@@ -3062,34 +3062,36 @@ prepare_full_offline_cache() {
     
     # 1. Télécharger gwine-proton
     echo "1. Préparation de gwine-proton..."
-    if [ ! -d "$WINE_DIR" ] || [ ! -f "$WINE_DIR/bin/wine" ]; then
-        local latest_version
-        latest_version=$(get_latest_gwine_version)
-        if [ -n "$latest_version" ]; then
-            local archive_name="${latest_version}.tar.xz"
-            local download_url="https://github.com/elgabo86/gwine/releases/download/${latest_version}/${archive_name}"
-            local archives_dir="$COMPONENTS_DIR/gwine-proton"
-            local archive_path="$archives_dir/$archive_name"
-            
-            ensure_dir "$archives_dir"
-            
-            if [ ! -f "$archive_path" ]; then
-                echo "   Téléchargement de $latest_version..."
-                if ! download_file "$download_url" "$archive_path" "gwine-proton"; then
-                    echo "   ⚠️ Échec du téléchargement de gwine-proton"
-                    failed=true
-                else
-                    echo "   ✓ gwine-proton téléchargé"
-                fi
+    local latest_version
+    latest_version=$(get_latest_gwine_version)
+    if [ -n "$latest_version" ]; then
+        local archive_name="${latest_version}.tar.xz"
+        local download_url="https://github.com/elgabo86/gwine/releases/download/${latest_version}/${archive_name}"
+        local archives_dir="$COMPONENTS_DIR/gwine-proton"
+        local archive_path="$archives_dir/$archive_name"
+        
+        ensure_dir "$archives_dir"
+        
+        # Vérifier si l'archive existe dans le cache
+        if [ ! -f "$archive_path" ]; then
+            echo "   Téléchargement de $latest_version..."
+            if ! download_file "$download_url" "$archive_path" "gwine-proton"; then
+                echo "   ⚠️ Échec du téléchargement de gwine-proton"
+                failed=true
             else
-                echo "   ✓ gwine-proton déjà en cache"
+                echo "   ✓ gwine-proton téléchargé dans le cache"
             fi
         else
-            echo "   ⚠️ Impossible de récupérer la version de gwine-proton"
-            failed=true
+            echo "   ✓ gwine-proton déjà en cache"
+        fi
+        
+        # Vérifier si gwine-proton est installé
+        if [ -d "$WINE_DIR" ] && [ -f "$WINE_DIR/bin/wine" ]; then
+            echo "   ✓ gwine-proton déjà installé"
         fi
     else
-        echo "   ✓ gwine-proton déjà installé"
+        echo "   ⚠️ Impossible de récupérer la version de gwine-proton"
+        failed=true
     fi
     echo ""
     
