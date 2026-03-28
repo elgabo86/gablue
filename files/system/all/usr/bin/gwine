@@ -4741,6 +4741,16 @@ build_bwrap_args() {
         bwrap_args="$bwrap_args --bind \"$TEMP_SYMLINK\" \"$TEMP_SYMLINK\""
     fi
     
+    # Dossier des temp reels WGP (nécessaire pour les symlinks vers les overlays)
+    if [ -d "$TEMP_REAL" ]; then
+        bwrap_args="$bwrap_args --bind \"$TEMP_REAL\" \"$TEMP_REAL\""
+    fi
+    
+    # Dossier des full overlays WGP (nécessaire pour le mode overlay complet)
+    if [ -d "/tmp/wgp-full-overlay" ]; then
+        bwrap_args="$bwrap_args --bind \"/tmp/wgp-full-overlay\" \"/tmp/wgp-full-overlay\""
+    fi
+    
     if [ -d "/run/media" ]; then
         bwrap_args="$bwrap_args --bind /run/media /run/media"
     fi
@@ -5260,7 +5270,7 @@ cleanup_extras_symlink() { manage_game_symlink cleanup extras; }
 
 
 ################################################################################
-# wgp-overlay.sh - Gestion des overlays mergerfs pour fichiers temporaires
+# wgp-overlay.sh - Gestion des overlays fuse-overlayfs pour fichiers temporaires
 ################################################################################
 
 # =============================================================================
@@ -5303,36 +5313,33 @@ prepare_temp_folders() {
     # S'assurer que les repertoires existent AVANT le montage (crucial pour sandbox)
     ensure_dirs -s "$TEMP_GAME_DIR" "$TEMP_UPPER"
 
-    echo "Montage de l'overlay mergerfs pour les dossiers temporaires..."
-
-    if [ -n "$(ls -A "$TEMP_GAME_DIR" 2>/dev/null)" ]; then
-        echo "Nettoyage du point de montage non vide..."
-        rm -rf "$TEMP_GAME_DIR"/* 2>/dev/null || true
-        rm -rf "$TEMP_GAME_DIR"/[!.]* 2>/dev/null || true
-        rm -rf "$TEMP_GAME_DIR"/.[!.]* 2>/dev/null || true
-    fi
+    echo "Montage de l'overlay fuse-overlayfs pour les dossiers temporaires..."
 
     if mountpoint -q "$TEMP_GAME_DIR" 2>/dev/null; then
         echo "Démontage de l'overlay existant..."
         unmount_fuse_overlay "$TEMP_GAME_DIR"
     fi
 
-    local MERGERFS_BIN
-    MERGERFS_BIN=$(get_system_tool mergerfs)
+    local FUSE_OVERLAYFS_BIN
+    FUSE_OVERLAYFS_BIN=$(get_system_tool fuse-overlayfs)
+    
+    local WORK_DIR="$TEMP_UPPER/.work"
+    ensure_dir -s "$WORK_DIR"
 
     echo "  lowerdir: $TEMP_WGP_DIR"
     echo "  upperdir: $TEMP_UPPER"
+    echo "  workdir: $WORK_DIR"
     echo "  mountpoint: $TEMP_GAME_DIR"
     
-    if ! "$MERGERFS_BIN" -o defaults,use_ino,category.create=mfs \
-        "$TEMP_UPPER:$TEMP_WGP_DIR" "$TEMP_GAME_DIR" 2>&1; then
-        error_exit "Échec du montage mergerfs pour les fichiers temporaires"
+    if ! "$FUSE_OVERLAYFS_BIN" -o lowerdir="$TEMP_WGP_DIR",upperdir="$TEMP_UPPER",workdir="$WORK_DIR" \
+        "$TEMP_GAME_DIR" 2>&1; then
+        error_exit "Échec du montage fuse-overlayfs pour les fichiers temporaires"
     fi
 
     export _TEMP_FOLDERS_MOUNT="$TEMP_GAME_DIR"
     export _TEMP_FOLDERS_UPPER="$TEMP_UPPER"
 
-    echo "Overlay mergerfs monté avec succès: $TEMP_GAME_DIR"
+    echo "Overlay fuse-overlayfs monté avec succès: $TEMP_GAME_DIR"
 }
 
 # =============================================================================
@@ -5355,21 +5362,25 @@ prepare_full_overlay() {
     
     ensure_dirs -s "$MOUNT_OVERLAY" "$TEMP_UPPER"
     
-    echo "Montage de l'overlay complet avec mergerfs..."
+    echo "Montage de l'overlay complet avec fuse-overlayfs..."
     echo "  lowerdir: $MOUNT_DIR (WGP entier - lecture seule)"
     echo "  upperdir: $TEMP_UPPER (writable)"
     echo "  mountpoint: $MOUNT_OVERLAY"
     
-    local MERGERFS_BIN
-    MERGERFS_BIN=$(get_system_tool mergerfs)
+    local FUSE_OVERLAYFS_BIN
+    FUSE_OVERLAYFS_BIN=$(get_system_tool fuse-overlayfs)
     
-    if ! "$MERGERFS_BIN" -o defaults,use_ino,category.create=mfs \
-        "$TEMP_UPPER:$MOUNT_DIR" "$MOUNT_OVERLAY" 2>&1; then
-        error_exit "Échec du montage mergerfs pour l'overlay complet"
+    local WORK_DIR="$TEMP_UPPER/.work"
+    ensure_dir -s "$WORK_DIR"
+    
+    if ! "$FUSE_OVERLAYFS_BIN" -o lowerdir="$MOUNT_DIR",upperdir="$TEMP_UPPER",workdir="$WORK_DIR" \
+        "$MOUNT_OVERLAY" 2>&1; then
+        error_exit "Échec du montage fuse-overlayfs pour l'overlay complet"
     fi
     
     local REL_EXE="${FULL_EXE_PATH#$MOUNT_DIR/}"
-    FULL_EXE_PATH="$MOUNT_OVERLAY/$REL_EXE"
+    # Utiliser le chemin via le symlink (bindé dans le sandbox) au lieu du chemin réel
+    FULL_EXE_PATH="$TEMP_SYMLINK/$GAME_INTERNAL_NAME/$REL_EXE"
     
     export _FULL_OVERLAY_MOUNT="$MOUNT_OVERLAY"
     export _FULL_OVERLAY_UPPER="$TEMP_UPPER"
@@ -5477,7 +5488,7 @@ setup_temp_symlink() {
         return 0
     fi
     
-    # S'assurer que le répertoire de base existe (nécessaire pour mergerfs)
+    # S'assurer que le répertoire de base existe (nécessaire pour fuse-overlayfs)
     # Utiliser le chemin reel derriere le symlink
     if [ -L "$TEMP_REAL" ] && [ ! -e "$TEMP_REAL" ]; then
         # Symlink casse, creer le repertoire cible
@@ -5515,7 +5526,7 @@ setup_temp_symlink() {
         ln -s "$MOUNT_OVERLAY" "$temp_symlink"
         echo "Symlink temp créé: $temp_symlink -> $MOUNT_OVERLAY"
         
-        echo "Dossiers overlay préparés pour mergerfs (mode full): $GAME_ID"
+        echo "Dossiers overlay préparés pour fuse-overlayfs (mode full): $GAME_ID"
     else
         local TEMP_GAME_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
         local TEMP_UPPER="/tmp/wgp-temp-upper/$GAME_ID"
@@ -5544,7 +5555,7 @@ setup_temp_symlink() {
         ln -s "$TEMP_GAME_DIR" "$temp_symlink"
         echo "Symlink temp créé: $temp_symlink -> $TEMP_GAME_DIR"
         
-        echo "Dossiers overlay préparés pour mergerfs (mode temp folders): $GAME_ID"
+        echo "Dossiers overlay préparés pour fuse-overlayfs (mode temp folders): $GAME_ID"
     fi
 }
 
