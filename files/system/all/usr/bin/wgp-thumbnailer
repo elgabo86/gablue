@@ -70,8 +70,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Montage avec timeout (max 5 secondes)
-timeout 5 squashfuse "$INPUT" "$TEMP_MOUNT" || exit 1
+# Montage avec timeout shell (5 secondes max, sans timeout pour SELinux)
+(
+    squashfuse "$INPUT" "$TEMP_MOUNT" &
+    SQUASH_PID=$!
+    (sleep 5 && kill $SQUASH_PID 2>/dev/null) &
+    KILLER_PID=$!
+    wait $SQUASH_PID
+    KILLER_STATUS=$?
+    kill $KILLER_PID 2>/dev/null
+    exit $KILLER_STATUS
+) || exit 1
 
 # L'icône custom .icon.png a priorité sur l'extraction depuis .exe
 if [ -f "$TEMP_MOUNT/.icon.png" ]; then
@@ -102,8 +111,17 @@ esac
 # Sinon : c'est un .exe → extraction avec exeiconextract.py
     TEMP_PNG="$TEMP_ICO/extracted.png"
 
-# Extraction avec timeout (max 5 secondes)
-timeout 5 python3 "$EXEICONEXTRACT" "$ICON_EXE_PATH" "$TEMP_PNG" 2>/dev/null
+# Extraction avec timeout shell (5 secondes max, sans timeout pour SELinux)
+(
+    python3 "$EXEICONEXTRACT" "$ICON_EXE_PATH" "$TEMP_PNG" 2>/dev/null &
+    EXTRACT_PID=$!
+    (sleep 5 && kill $EXTRACT_PID 2>/dev/null) &
+    KILLER_PID=$!
+    wait $EXTRACT_PID
+    EXTRACT_STATUS=$?
+    kill $KILLER_PID 2>/dev/null
+    exit $EXTRACT_STATUS
+)
 if [ -f "$TEMP_PNG" ]; then
     magick "$TEMP_PNG" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && exit 0
 fi
