@@ -57,22 +57,13 @@ TEMP_PNG=""
 
 # Nettoyage complet en toute circonstance
 cleanup() {
-    # Démontage forcé et kill des processus squashfuse restants
+    # Démontage forcé
     if mountpoint -q "$TEMP_MOUNT" 2>/dev/null; then
         fusermount -uz "$TEMP_MOUNT" 2>/dev/null || fusermount -u "$TEMP_MOUNT" 2>/dev/null || umount -f "$TEMP_MOUNT" 2>/dev/null
-        # Kill de tous les processus squashfuse qui pointent sur ce mount point
-        local mount_dev
-        mount_dev=$(stat -c %d "$TEMP_MOUNT" 2>/dev/null)
-        if [ -n "$mount_dev" ]; then
-            # Tuer tous les processus squashfuse qui ont ce mount point ouvert
-            for pid in $(lsof -t "$TEMP_MOUNT" 2>/dev/null); do
-                kill -TERM "$pid" 2>/dev/null || true
-            done
-        fi
     fi
-    # Tuer tout squashfuse qui pourrait utiliser ce répertoire
-    pgrep -f "squashfuse.*$TEMP_MOUNT" 2>/dev/null | while read -r spid; do
-        kill -TERM "$spid" 2>/dev/null || true
+    # Tuer tout squashfuse lié à ce mount point (sans lsof pour SELinux)
+    for pid in $(pgrep -f "squashfuse.*$TEMP_MOUNT" 2>/dev/null); do
+        kill -TERM "$pid" 2>/dev/null || true
     done
     rm -rf "$TEMP_MOUNT"
     [ -n "$TEMP_PNG" ] && rm -f "$TEMP_PNG"
