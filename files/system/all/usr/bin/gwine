@@ -423,16 +423,6 @@ download_github_component() {
         return 0
     fi
     
-    # Demander confirmation
-    if [ "$no_confirm" = false ]; then
-        read -p "Télécharger $component_name $version? (O/n): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Oo]$ ]] && [ -n "$REPLY" ]; then
-            echo "Téléchargement annulé"
-            return 1
-        fi
-    fi
-    
     echo "Téléchargement de $component_name $version..."
     
     local temp_dir
@@ -528,11 +518,11 @@ download_and_install_component() {
     rm -f "$archive_temp"
 }
 
-# Récupère la dernière version d'un composant depuis GitHub
+# Récupère la dernière version d'un composant depuis GitHub (sans API)
 # Usage: get_github_latest_version <repo> <pattern> <prefix_to_strip>
 # Paramètres:
 #   repo            : Repository GitHub (format: owner/repo)
-#   pattern         : Pattern regex pour extraire la version (ex: '"tag_name":\s*"v\K[^"]+')
+#   pattern         : Pattern regex pour extraire la version (ex: 'v[0-9]+\.[0-9]+\.[0-9]+')
 #   prefix_to_strip : Préfixe à supprimer de la version (optionnel, ex: "v")
 # Retourne la version ou chaîne vide si erreur
 get_github_latest_version() {
@@ -541,7 +531,7 @@ get_github_latest_version() {
     local prefix_to_strip="${3:-}"
     
     local version
-    version=$(curl -s "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null | grep -oP "$pattern" | head -1)
+    version=$(curl -s "https://github.com/$repo/releases" 2>/dev/null | grep -oE "$pattern" | head -1)
     
     if [ -n "$prefix_to_strip" ] && [[ "$version" == "$prefix_to_strip"* ]]; then
         version="${version#$prefix_to_strip}"
@@ -550,7 +540,7 @@ get_github_latest_version() {
     echo "$version"
 }
 
-# Récupère la dernière version depuis une liste de releases GitHub
+# Récupère la dernière version depuis une liste de releases GitHub (sans API)
 # Usage: get_github_release_version <repo> <pattern> <prefix_to_strip>
 get_github_release_version() {
     local repo="$1"
@@ -558,7 +548,7 @@ get_github_release_version() {
     local prefix_to_strip="${3:-}"
     
     local version
-    version=$(curl -s "https://api.github.com/repos/$repo/releases?per_page=50" 2>/dev/null | grep '"tag_name"' | grep -oE "$pattern" | head -1)
+    version=$(curl -s "https://github.com/$repo/tags" 2>/dev/null | grep -oE "$pattern" | head -1)
     
     if [ -n "$prefix_to_strip" ]; then
         version="${version#$prefix_to_strip}"
@@ -569,9 +559,7 @@ get_github_release_version() {
 
 # Récupère la dernière version de gwine-proton depuis GitHub
 get_latest_gwine_version() {
-    local latest_url
-    latest_url=$(curl -s -L -o /dev/null -w '%{url_effective}' "https://github.com/elgabo86/gwine/releases/latest" 2>/dev/null)
-    echo "$latest_url" | grep -oE 'gwine-proton-[0-9]+\.[0-9]+\.[0-9]+\.[0-9]{8}' | head -1
+    curl -s "https://github.com/elgabo86/gwine/tags" 2>/dev/null | grep -oE 'gwine-proton-[0-9]+\.[0-9]+\.[0-9]+\.[0-9]{8}' | head -1
 }
 
 # Récupère la dernière version d'un composant depuis bottlesdevs/components
@@ -604,7 +592,7 @@ get_latest_dxvk_nvapi_version() { get_component_version dxvk-nvapi; }
 
 # Récupère la dernière version de FakeNVAPI depuis GitHub
 get_latest_fakenvapi_version() {
-    get_github_latest_version "optiscaler/fakenvapi" '"tag_name":\s*"v\K[^"]+' ""
+    get_github_latest_version "optiscaler/fakenvapi" 'v[0-9]+\.[0-9]+\.[0-9]+' "v"
 }
 
 # =============================================================================
@@ -1061,7 +1049,7 @@ copy_dll_files() {
     return 0
 }
 
-# Crée des overrides de DLL dans le registre Wine
+# Crée des overrides de DLL dans le registre Wine (native,builtin comme winetricks et bottles)
 create_dll_overrides() {
     local failed=false
     
@@ -1079,9 +1067,16 @@ create_dll_overrides() {
 }
 
 # Récupère les chemins system32 et syswow64 du préfixe Wine
+# IMPORTANT: Utiliser wine64 pour winepath sur un préfixe 64-bit
 get_wine_system_paths() {
-    win64_sys_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -u 'C:\windows\system32' 2>/dev/null | tr -d '\r')
-    win32_sys_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -u 'C:\windows\syswow64' 2>/dev/null | tr -d '\r')
+    local wine_path_cmd="$WINE_BIN"
+    # Si wine64 existe, l'utiliser pour winepath (plus fiable sur 64-bit)
+    if [ -x "${WINE_BIN%/*}/wine64" ]; then
+        wine_path_cmd="${WINE_BIN%/*}/wine64"
+    fi
+    
+    win64_sys_path=$(WINEPREFIX="$WINEPREFIX" "$wine_path_cmd" winepath -u 'C:\windows\system32' 2>/dev/null | tr -d '\r')
+    win32_sys_path=$(WINEPREFIX="$WINEPREFIX" "$wine_path_cmd" winepath -u 'C:\windows\syswow64' 2>/dev/null | tr -d '\r')
     
     if [ -z "$win64_sys_path" ] || [ -z "$win32_sys_path" ] || \
        [[ "$win64_sys_path" == *"err:"* ]] || [[ "$win32_sys_path" == *"err:"* ]]; then
@@ -1546,14 +1541,20 @@ install_wine_mono_gecko() {
 }
 
 # =============================================================================
-# Module: wincomponent-defs.sh
+# Module: wincomponents.sh
 # =============================================================================
 
 
 ################################################################################
-# wincomponent-defs.sh - Définitions des composants Windows
-# URLs, checksums et liste des composants requis
+# wincomponents.sh - Gestion complète des composants Windows
+# Fusion de : wincomponent-defs.sh, wincomponent-utils.sh, wincomponent-vcrun.sh,
+#             wincomponent-dotnet.sh, wincomponent-dx.sh, wincomponent-fonts.sh,
+#             wincomponent-misc.sh, wincomponent-main.sh
 ################################################################################
+
+# =============================================================================
+# Définitions et variables
+# =============================================================================
 
 # Répertoire de cache pour les composants Windows
 WINCOMPONENTS_CACHE="${CACHE_DIR:-$HOME/.cache/gwine}/wincomponents"
@@ -1561,33 +1562,26 @@ WINCOMPONENTS_CACHE="${CACHE_DIR:-$HOME/.cache/gwine}/wincomponents"
 # S'assurer que le répertoire de cache existe
 ensure_dir -s "$WINCOMPONENTS_CACHE"
 
-# =============================================================================
 # Définition des composants avec leurs URLs et checksums
-# =============================================================================
-
 declare -A COMPONENT_URLS
 declare -A COMPONENT_SHA256
 
 # Visual C++ Redistributables
-# VCRUN 2010
 COMPONENT_URLS[vcrun2010_x86]="https://download.microsoft.com/download/5/B/C/5BC5DBB3-652D-4DCE-B14A-475AB85EEF6E/vcredist_x86.exe"
 COMPONENT_SHA256[vcrun2010_x86]="31d32fa39d52cac9a765a43660431f7a127eee784b54b2f5e2af3e2b763a1af8"
 COMPONENT_URLS[vcrun2010_x64]="https://download.microsoft.com/download/A/8/0/A80747C3-41BD-45DF-B505-E9710D2744E0/vcredist_x64.exe"
 COMPONENT_SHA256[vcrun2010_x64]="2fddbc3aaaab784c16bc673c3bae5f80929d5b372810dbc28649283566d33255"
 
-# VCRUN 2012
 COMPONENT_URLS[vcrun2012_x86]="https://download.microsoft.com/download/1/6/B/16B06F60-3B20-4FF2-B699-5E9B7962F9AE/VSU_4/vcredist_x86.exe"
 COMPONENT_SHA256[vcrun2012_x86]="b924ad8062eaf4e70437c8be50fa612162795ff0839479546ce907ffa8d6e386"
 COMPONENT_URLS[vcrun2012_x64]="https://download.microsoft.com/download/1/6/B/16B06F60-3B20-4FF2-B699-5E9B7962F9AE/VSU_4/vcredist_x64.exe"
 COMPONENT_SHA256[vcrun2012_x64]="681be3e5ba9fd3da02c09d7e565adfa078640ed66a0d58583efad2c1e3cc4064"
 
-# VCRUN 2013
 COMPONENT_URLS[vcrun2013_x86]="https://download.microsoft.com/download/0/5/6/056dcda9-d667-4e27-8001-8a0c6971d6b1/vcredist_x86.exe"
 COMPONENT_SHA256[vcrun2013_x86]="89f4e593ea5541d1c53f983923124f9fd061a1c0c967339109e375c661573c17"
 COMPONENT_URLS[vcrun2013_x64]="https://download.microsoft.com/download/0/5/6/056dcda9-d667-4e27-8001-8a0c6971d6b1/vcredist_x64.exe"
 COMPONENT_SHA256[vcrun2013_x64]="20e2645b7cd5873b1fa3462b99a665ac8d6e14aae83ded9d875fea35ffdd7d7e"
 
-# VCRUN 2022
 COMPONENT_URLS[vcrun2022_x86]="https://aka.ms/vs/17/release/vc_redist.x86.exe"
 COMPONENT_SHA256[vcrun2022_x86]="0c09f2611660441084ce0df425c51c11e147e6447963c3690f97e0b25c55ed64"
 COMPONENT_URLS[vcrun2022_x64]="https://aka.ms/vs/17/release/vc_redist.x64.exe"
@@ -1609,11 +1603,11 @@ COMPONENT_SHA256[dotnetdesktop8_x86]="340e30c8611af3800b74f0560f0b6f3feab82ee5cf
 COMPONENT_URLS[dotnetdesktop8_x64]="https://download.visualstudio.microsoft.com/download/pr/f1e7ffc8-c278-4339-b460-517420724524/f36bb75b2e86a52338c4d3a90f8dac9b/windowsdesktop-runtime-8.0.12-win-x64.exe"
 COMPONENT_SHA256[dotnetdesktop8_x64]="cb51b559f343cb56e23cad2e5af8c4d1701e221a0a2a4116193a2a9375568814"
 
-# DirectX End-User Runtimes (Juin 2010)
+# DirectX End-User Runtimes
 COMPONENT_URLS[directx_Jun2010]="https://files.holarse-linuxgaming.de/mirrors/microsoft/directx_Jun2010_redist.exe"
 COMPONENT_SHA256[directx_Jun2010]="8746ee1a84a083a90e37899d71d50d5c7c015e69688a466aa80447f011780c0d"
 
-# Core Fonts - Microsoft TrueType Core Fonts
+# Core Fonts
 COMPONENT_URLS[corefont_andale]="https://github.com/pushcx/corefonts/raw/master/andale32.exe"
 COMPONENT_SHA256[corefont_andale]="0524fe42951adc3a7eb870e32f0920313c71f170c859b5f770d82b4ee111e970"
 COMPONENT_URLS[corefont_arial]="https://github.com/pushcx/corefonts/raw/master/arial32.exe"
@@ -1671,56 +1665,29 @@ COMPONENT_SHA256[physx]="9b42b84e881769d681e09f62a1b51532616b2e6a2d5d99d0ccae6eb
 COMPONENT_URLS[xact]="https://files.holarse-linuxgaming.de/mirrors/microsoft/directx_Jun2010_redist.exe"
 COMPONENT_SHA256[xact]="8746ee1a84a083a90e37899d71d50d5c7c015e69688a466aa80447f011780c0d"
 
-# =============================================================================
 # Liste des composants requis
-# =============================================================================
-
 WINCOMPONENTS_REQUIRED=(
-    "vcrun2010_x86"
-    "vcrun2010_x64"
-    "vcrun2012_x86"
-    "vcrun2012_x64"
-    "vcrun2013_x86"
-    "vcrun2013_x64"
-    "vcrun2022_x86"
-    "vcrun2022_x64"
-    "dotnetdesktop6_x86"
-    "dotnetdesktop6_x64"
-    "dotnetdesktop7_x86"
-    "dotnetdesktop7_x64"
-    "dotnetdesktop8_x86"
-    "dotnetdesktop8_x64"
+    "vcrun2010_x86" "vcrun2010_x64"
+    "vcrun2012_x86" "vcrun2012_x64"
+    "vcrun2013_x86" "vcrun2013_x64"
+    "vcrun2022_x86" "vcrun2022_x64"
+    "dotnetdesktop6_x86" "dotnetdesktop6_x64"
+    "dotnetdesktop7_x86" "dotnetdesktop7_x64"
+    "dotnetdesktop8_x86" "dotnetdesktop8_x64"
     "directx_Jun2010"
-    "corefont_andale"
-    "corefont_arial"
-    "corefont_arialb"
-    "corefont_comic"
-    "corefont_courier"
-    "corefont_georgia"
-    "corefont_impact"
-    "corefont_times"
-    "corefont_trebuchet"
-    "corefont_verdana"
-    "corefont_webdings"
+    "corefont_andale" "corefont_arial" "corefont_arialb"
+    "corefont_comic" "corefont_courier" "corefont_georgia"
+    "corefont_impact" "corefont_times" "corefont_trebuchet"
+    "corefont_verdana" "corefont_webdings"
     "tahoma_cab"
-    "d3dcompiler_47_x86"
-    "d3dcompiler_47_x64"
-    "msls31"
-    "vb6run"
-    "vcrun6"
-    "openal"
-    "physx"
+    "d3dcompiler_47_x86" "d3dcompiler_47_x64"
+    "msls31" "vb6run" "vcrun6"
+    "openal" "physx"
 )
 
 # =============================================================================
-# Module: wincomponent-utils.sh
+# Fonctions utilitaires
 # =============================================================================
-
-
-################################################################################
-# wincomponent-utils.sh - Fonctions utilitaires pour les composants Windows
-# Téléchargement, vérification et gestion du cache
-################################################################################
 
 # Calcule le SHA256 d'un fichier
 calculate_sha256() {
@@ -1849,7 +1816,7 @@ download_all_wincomponents() {
     return 0
 }
 
-# Prépare le cache des composants (télécharge tout si nécessaire)
+# Prépare le cache des composants
 prepare_wincomponents_cache() {
     ensure_dir "$WINCOMPONENTS_CACHE"
     
@@ -1864,13 +1831,8 @@ prepare_wincomponents_cache() {
 }
 
 # =============================================================================
-# Module: wincomponent-vcrun.sh
+# Installation des composants
 # =============================================================================
-
-
-################################################################################
-# wincomponent-vcrun.sh - Installation des Visual C++ Redistributables
-################################################################################
 
 # Installe Visual C++ Redistributable
 install_vcrun() {
@@ -1907,26 +1869,27 @@ install_vcrun() {
         fi
     fi
     
-    # Créer les overrides pour les DLLs VC++
+    # Créer les overrides pour les DLLs VC++ (native,builtin comme winetricks)
     local vcrun_dlls=""
+    local vcrun_dlls_x64=""
     case "$version" in
-        2010)
-            vcrun_dlls="msvcp100 msvcr100 vcomp100 atl100"
-            ;;
-        2012)
-            vcrun_dlls="msvcp110 msvcr110 vcomp110 atl110"
-            ;;
-        2013)
-            vcrun_dlls="msvcp120 msvcr120 vcomp120 atl120"
-            ;;
-        2022)
-            vcrun_dlls="concrt140 msvcp140 msvcp140_1 msvcp140_2 msvcp140_atomic_wait msvcp140_codecvt_ids vcamp140 vccorlib140 vcomp140 vcruntime140"
-            ;;
+        2010) vcrun_dlls="msvcp100 msvcr100 vcomp100 atl100" ;;
+        2012) vcrun_dlls="msvcp110 msvcr110 vcomp110 atl110" ;;
+        2013) vcrun_dlls="msvcp120 msvcr120 vcomp120 atl120" ;;
+        2022) vcrun_dlls="concrt140 msvcp140 msvcp140_1 msvcp140_2 msvcp140_atomic_wait msvcp140_codecvt_ids vcamp140 vccorlib140 vcomp140 vcruntime140"
+              vcrun_dlls_x64="vcruntime140_1" ;;
     esac
     
     for dll in $vcrun_dlls; do
         WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "$dll" /d native,builtin /f >/dev/null 2>&1 || true
     done
+    
+    # Overrides spécifiques x64 pour vcrun2022
+    if [ "$WINEARCH" = "win64" ] && [ -n "$vcrun_dlls_x64" ]; then
+        for dll in $vcrun_dlls_x64; do
+            WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "$dll" /d native,builtin /f >/dev/null 2>&1 || true
+        done
+    fi
     
     return 0
 }
@@ -1974,15 +1937,6 @@ install_vcrun6() {
     return 0
 }
 
-# =============================================================================
-# Module: wincomponent-dotnet.sh
-# =============================================================================
-
-
-################################################################################
-# wincomponent-dotnet.sh - Installation des .NET Desktop Runtimes
-################################################################################
-
 # Installe .NET Desktop Runtime
 install_dotnet() {
     local version="$1"
@@ -2014,16 +1968,6 @@ install_dotnet() {
     
     return 0
 }
-
-# =============================================================================
-# Module: wincomponent-dx.sh
-# =============================================================================
-
-
-################################################################################
-# wincomponent-dx.sh - Installation des composants DirectX
-# D3DX9, XACT, D3DCompiler
-################################################################################
 
 # Installe les DLLs DirectX9 (d3dx9)
 install_d3dx9() {
@@ -2165,6 +2109,21 @@ install_xact_x64() {
         done
     fi
     
+    # Enregistrer les DLLs x64 avec regsvr64
+    if [ "$WINEARCH" = "win64" ] && [ -x "$WINE_BIN" ]; then
+        for dll in "$win64_sys"/xactengine*.dll; do
+            if [ -f "$dll" ]; then
+                WINEPREFIX="$WINEPREFIX" "$WINE_BIN" "C:\windows\system32\regsvr32.exe" /S "$(basename "$dll")" >/dev/null 2>&1 || true
+            fi
+        done
+        
+        for i in 0 1 2 3 4 5 6 7; do
+            if [ -f "$win64_sys/xaudio2_${i}.dll" ]; then
+                WINEPREFIX="$WINEPREFIX" "$WINE_BIN" "C:\windows\system32\regsvr32.exe" /S "xaudio2_${i}.dll" >/dev/null 2>&1 || true
+            fi
+        done
+    fi
+    
     rm -rf "$tmp_dir"
     echo "  ✓ $xact_count DLLs XACT x64 installées"
     return 0
@@ -2238,16 +2197,7 @@ install_d3dcompiler_47() {
     return 0
 }
 
-# =============================================================================
-# Module: wincomponent-fonts.sh
-# =============================================================================
-
-
-################################################################################
-# wincomponent-fonts.sh - Installation des polices Windows (Core Fonts)
-################################################################################
-
-# Fonction utilitaire pour extraire une police corefont
+# Extrait une police corefont
 extract_corefont() {
     local font_name="$1"
     local font_file="$2"
@@ -2319,19 +2269,30 @@ install_corefonts() {
     
     touch "$fonts_dir/corefonts.installed" 2>/dev/null || true
     
+    # Enregistrer les polices dans le registre Wine (comme winetricks)
+    if [ $fonts_installed -gt 0 ]; then
+        echo "  - Enregistrement des polices dans le registre..."
+        register_fonts_in_wine "$fonts_dir"
+    fi
+    
     echo "  ✓ $fonts_installed polices installées (${fonts_missing} manquantes)"
     return 0
 }
 
-# =============================================================================
-# Module: wincomponent-misc.sh
-# =============================================================================
-
-
-################################################################################
-# wincomponent-misc.sh - Installation des composants Windows divers
-# OpenAL, PhysX, MSLS31, VB6 Runtime
-################################################################################
+# Enregistre les polices dans le registre Wine
+register_fonts_in_wine() {
+    local fonts_dir="$1"
+    
+    for font_file in "$fonts_dir"/*.ttf; do
+        if [ -f "$font_file" ]; then
+            local font_name=$(basename "$font_file" .ttf)
+            # Convertir le nom de police pour le registre
+            local reg_name="$font_name (TrueType)"
+            # Ajouter au registre
+            WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Fonts' /v "$reg_name" /d "$(basename "$font_file")" /f >/dev/null 2>&1 || true
+        fi
+    done
+}
 
 # Installe OpenAL
 install_openal() {
@@ -2424,14 +2385,8 @@ install_vb6run() {
 }
 
 # =============================================================================
-# Module: wincomponent-main.sh
+# Fonction principale
 # =============================================================================
-
-
-################################################################################
-# wincomponent-main.sh - Fonction principale d'installation des composants Windows
-# Orchestration de l'installation complète
-################################################################################
 
 # Installe tous les composants Windows
 install_all_wincomponents() {
@@ -2492,20 +2447,24 @@ install_all_wincomponents() {
 }
 
 # =============================================================================
-# Module: cache-gwine.sh
+# Module: cache.sh
 # =============================================================================
 
 
 ################################################################################
-# cache-gwine.sh - Gestion du cache et installation de gwine-proton
+# cache.sh - Gestion complète du cache des composants
+# Fusion de : cache-main.sh, cache-gwine.sh, cache-dxvk.sh, cache-offline.sh, cachepack.sh
 ################################################################################
 
 # Versions des composants
 DXVK_VERSION="2.7.1"
 VKD3D_VERSION="3.0"
 
-# Installe gwine-proton depuis le cache (mode offline)
-# Retourne 0 si installé avec succès, 1 sinon
+# =============================================================================
+# Installation depuis le cache (mode offline)
+# =============================================================================
+
+# Installe gwine-proton depuis le cache
 install_gwine_proton_from_cache() {
     local WINE_INSTALL_DIR="$GWINE_DIR/wine"
     local archives_dir="$COMPONENTS_DIR/gwine-proton"
@@ -2560,7 +2519,6 @@ install_gwine_proton_from_cache() {
     fi
     
     echo "$version_name" > "$GWINE_DIR/.version"
-    
     rm -rf "$temp_dir"
     
     WINE_DIR="$WINE_INSTALL_DIR"
@@ -2607,12 +2565,17 @@ install_gwine_from_extracted() {
     return 0
 }
 
+# =============================================================================
+# Téléchargement des composants
+# =============================================================================
+
 # Télécharge et installe gwine-proton
 download_gwine_proton() {
     local WINE_INSTALL_DIR="$GWINE_DIR/wine"
     local current_version=""
     local latest_version=""
     local force_update="${1:-false}"
+    local auto_mode="${2:-false}"
     
     if [ -d "$WINE_INSTALL_DIR" ] && [ -f "$WINE_INSTALL_DIR/bin/wine" ]; then
         current_version=$(cat "$GWINE_DIR/.version" 2>/dev/null || echo "unknown")
@@ -2647,15 +2610,11 @@ download_gwine_proton() {
         fi
     fi
     
-    local no_confirm=false
-    if [ "$init_mode" = "true" ]; then
-        echo "Mode init : téléchargement automatique..."
-        no_confirm=true
-    else
+    if [ "$auto_mode" != "true" ] && [ "$init_mode" != "true" ]; then
         echo ""
         echo "Une nouvelle version de gwine-proton est disponible : $latest_version"
         read -p "Voulez-vous télécharger et installer cette version ? [O/n]: " -r
-        if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
+        if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]]; then
             echo "Mise à jour annulée."
             return 0
         fi
@@ -2722,15 +2681,6 @@ download_gwine_proton() {
         return 1
     fi
 }
-
-# =============================================================================
-# Module: cache-dxvk.sh
-# =============================================================================
-
-
-################################################################################
-# cache-dxvk.sh - Gestion des mises à jour DXVK, VKD3D et NVAPI
-################################################################################
 
 # Télécharge et installe DXVK/VKD3D-Proton mis à jour
 download_updated_dxvk_vkd3d() {
@@ -2814,25 +2764,6 @@ download_updated_dxvk_vkd3d() {
         return 0
     fi
     
-    if [ "$no_confirm" = false ]; then
-        echo ""
-        local updates_msg=""
-        [ -n "$latest_dxvk" ] && updates_msg="DXVK $latest_dxvk"
-        [ -n "$latest_vkd3d" ] && updates_msg="${updates_msg}${updates_msg:+, }VKD3D-Proton $latest_vkd3d"
-        [ "$needs_nvapi_update" = true ] && updates_msg="${updates_msg}${updates_msg:+, }DXVK-NVAPI $latest_nvapi"
-        [ "$needs_fakenvapi_update" = true ] && updates_msg="${updates_msg}${updates_msg:+, }FakeNVAPI $latest_fakenvapi"
-        
-        if [ -n "$updates_msg" ]; then
-            echo "Nouvelles versions disponibles : $updates_msg"
-        fi
-        
-        read -p "Voulez-vous télécharger et installer ces mises à jour ? [O/n]: " -r
-        if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
-            echo "Mise à jour annulée."
-            return 0
-        fi
-    fi
-    
     local temp_dir="$CACHE_DIR/.temp_download"
     ensure_dir -s "$temp_dir"
     
@@ -2877,7 +2808,8 @@ download_updated_dxvk_vkd3d() {
     if [ "$update_success" = true ]; then
         echo ""
         echo "Mises à jour installées avec succès !"
-        if [ -d "$WINEPREFIX" ]; then
+        # Réinstaller les DLLs seulement en mode update (pas en mode init)
+        if [ -d "$WINEPREFIX" ] && [ "${init_mode:-false}" != "true" ]; then
             echo "Réinstallation des DLLs dans le préfixe Wine..."
             install_dxvk_vkd3d
         fi
@@ -2887,13 +2819,239 @@ download_updated_dxvk_vkd3d() {
 }
 
 # =============================================================================
-# Module: cache-offline.sh
+# Préparation du cache
 # =============================================================================
 
+# Télécharge automatiquement les composants manquants
+download_missing_components() {
+    echo "Téléchargement des composants manquants..."
+    
+    # Télécharger Wine Mono et Wine Gecko
+    if [ ! -d "$COMPONENTS_DIR/wine-cache" ] || [ -z "$(ls -A "$COMPONENTS_DIR/wine-cache" 2>/dev/null)" ]; then
+        echo "Téléchargement de Wine Mono et Wine Gecko..."
+        local MONO_URL="https://dl.winehq.org/wine/wine-mono/11.0.0/wine-mono-11.0.0-x86.msi"
+        local GECKO_URL="https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-x86_64.msi"
+        local GECKO32_URL="https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-x86.msi"
+        
+        mkdir -p "$COMPONENTS_DIR/wine-cache"
+        
+        wget -q --show-progress "$MONO_URL" -O "$COMPONENTS_DIR/wine-cache/wine-mono-11.0.0-x86.msi" 2>&1 || echo "Warning: Échec du téléchargement de Wine Mono"
+        wget -q --show-progress "$GECKO_URL" -O "$COMPONENTS_DIR/wine-cache/wine-gecko-2.47.4-x86_64.msi" 2>&1 || echo "Warning: Échec du téléchargement de Wine Gecko (x64)"
+        wget -q --show-progress "$GECKO32_URL" -O "$COMPONENTS_DIR/wine-cache/wine-gecko-2.47.4-x86.msi" 2>&1 || echo "Warning: Échec du téléchargement de Wine Gecko (x86)"
+    fi
+    
+    # Télécharger DXVK et VKD3D-Proton
+    ensure_dirs "$DXVK_CACHE_DIR" "$VKD3D_CACHE_DIR"
+    
+    local has_dxvk=false
+    find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -qv "gplasync\|nvapi" && has_dxvk=true
+    
+    local has_vkd3d=false
+    find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | grep -q . && has_vkd3d=true
+    
+    if [ "$has_dxvk" = false ]; then
+        echo "Téléchargement de DXVK..."
+        
+        local DXVK_TAG="dxvk-${DXVK_VERSION}"
+        local DXVK_URL="https://github.com/bottlesdevs/components/releases/download/${DXVK_TAG}/${DXVK_TAG}.tar.gz"
+        local DXVK_TEMP="$DXVK_CACHE_DIR/dxvk.tar.gz"
+        local DXVK_DIR="$DXVK_CACHE_DIR/dxvk-${DXVK_VERSION}"
+        
+        wget -q --show-progress "$DXVK_URL" -O "$DXVK_TEMP" 2>&1 || echo "Warning: Échec du téléchargement de DXVK"
+        if [ -f "$DXVK_TEMP" ]; then
+            ensure_dir -s "$DXVK_DIR"
+            local temp_extract="$DXVK_CACHE_DIR/.temp_dxvk"
+            rm -rf "$temp_extract"
+            ensure_dir -s "$temp_extract"
+            tar -xzf "$DXVK_TEMP" -C "$temp_extract" 2>/dev/null || true
+            local extracted_dir
+            extracted_dir=$(find "$temp_extract" -mindepth 1 -maxdepth 1 -type d | head -1)
+            if [ -n "$extracted_dir" ]; then
+                cp -r "$extracted_dir"/* "$DXVK_DIR/" 2>/dev/null || true
+            fi
+            rm -rf "$temp_extract" "$DXVK_TEMP"
+        fi
+    fi
+    
+    if [ "$has_vkd3d" = false ]; then
+        echo "Téléchargement de VKD3D-Proton..."
+        
+        local old_vkd3d_dir
+        old_vkd3d_dir=$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" | head -1)
+        if [ -n "$old_vkd3d_dir" ]; then
+            echo "Suppression de l'ancienne version VKD3D-Proton: $(basename "$old_vkd3d_dir")"
+            rm -rf "$old_vkd3d_dir"
+        fi
+        
+        local VKD3D_TAG="vkd3d-proton-${VKD3D_VERSION}"
+        local VKD3D_URL="https://github.com/bottlesdevs/components/releases/download/${VKD3D_TAG}/${VKD3D_TAG}.tar.gz"
+        local VKD3D_TEMP="$VKD3D_CACHE_DIR/vkd3d.tar.gz"
+        local VKD3D_DIR="$VKD3D_CACHE_DIR/vkd3d-proton-${VKD3D_VERSION}"
+        
+        wget -q --show-progress "$VKD3D_URL" -O "$VKD3D_TEMP" 2>&1 || echo "Warning: Échec du téléchargement de VKD3D-Proton"
+        if [ -f "$VKD3D_TEMP" ]; then
+            ensure_dir -s "$VKD3D_DIR"
+            local temp_extract="$VKD3D_CACHE_DIR/.temp_vkd3d"
+            rm -rf "$temp_extract"
+            ensure_dir -s "$temp_extract"
+            tar -xf "$VKD3D_TEMP" -C "$temp_extract" 2>/dev/null || true
+            local extracted_dir
+            extracted_dir=$(find "$temp_extract" -mindepth 1 -maxdepth 1 -type d | head -1)
+            if [ -n "$extracted_dir" ]; then
+                cp -r "$extracted_dir"/* "$VKD3D_DIR/" 2>/dev/null || true
+            fi
+            rm -rf "$temp_extract" "$VKD3D_TEMP"
+        fi
+    fi
+}
 
-################################################################################
-# cache-offline.sh - Préparation du cache complet pour le mode offline
-################################################################################
+# Prépare le cache local avec les composants
+prepare_local_cache() {
+    ensure_dirs "$CACHE_DIR" "$COMPONENTS_DIR" "$SHADER_CACHE_DIR"
+    
+    local missing_components=false
+    
+    if [ ! -d "$COMPONENTS_DIR/wine-cache" ] || [ -z "$(ls -A "$COMPONENTS_DIR/wine-cache" 2>/dev/null)" ]; then
+        missing_components=true
+    fi
+    
+    if [ ! -d "$DXVK_CACHE_DIR" ] || [ -z "$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi")" ]; then
+        missing_components=true
+    fi
+    
+    if [ ! -d "$VKD3D_CACHE_DIR" ] || [ -z "$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null)" ]; then
+        missing_components=true
+    fi
+    
+    if [ "$missing_components" = true ]; then
+        echo ""
+        echo "Certains composants sont manquants dans ~/.cache/gwine/components/"
+        echo "Ils seront téléchargés automatiquement..."
+        echo ""
+        download_missing_components
+    fi
+}
+
+# Met à jour automatiquement les composants (sans interaction)
+auto_update_components() {
+    local need_download=false
+    local has_network=false
+    
+    local has_gwine=false
+    local has_dxvk=false
+    local has_vkd3d=false
+    
+    [ -d "$WINE_DIR" ] && [ -f "$WINE_DIR/bin/wine" ] && has_gwine=true
+    [ -n "$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi")" ] && has_dxvk=true
+    [ -n "$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null)" ] && has_vkd3d=true
+    
+    if curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
+        has_network=true
+    fi
+    
+    if [ "$has_gwine" = false ] || [ "$has_dxvk" = false ] || [ "$has_vkd3d" = false ]; then
+        need_download=true
+        
+        if [ "$has_network" = false ]; then
+            error_exit "Composants manquants et pas de connexion réseau disponible"
+        fi
+    fi
+    
+    if [ "$need_download" = false ] && [ "$has_network" = true ]; then
+        local latest_gwine
+        latest_gwine=$(get_latest_gwine_version)
+        local current_gwine
+        current_gwine=$(cat "$GWINE_DIR/.version" 2>/dev/null || echo "")
+        local latest_dxvk
+        latest_dxvk=$(get_latest_dxvk_version)
+        local latest_vkd3d
+        latest_vkd3d=$(get_latest_vkd3d_version)
+        
+        local current_dxvk=""
+        local dxvk_folder
+        dxvk_folder=$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | head -1)
+        [ -n "$dxvk_folder" ] && current_dxvk=$(basename "$dxvk_folder" | sed 's/^dxvk-//')
+        
+        local current_vkd3d=""
+        local vkd3d_folder
+        vkd3d_folder=$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | head -1)
+        [ -n "$vkd3d_folder" ] && current_vkd3d=$(basename "$vkd3d_folder" | sed 's/^vkd3d-proton-//')
+        
+        if [ -n "$latest_gwine" ] && [ -n "$current_gwine" ]; then
+            if compare_versions "$latest_gwine" "$current_gwine"; then
+                need_download=true
+            fi
+        elif [ -z "$current_gwine" ]; then
+            need_download=true
+        fi
+        
+        if [ -n "$latest_dxvk" ]; then
+            if [ -z "$current_dxvk" ] || compare_versions "$latest_dxvk" "$current_dxvk"; then
+                need_download=true
+            fi
+        fi
+        
+        if [ -n "$latest_vkd3d" ]; then
+            if [ -z "$current_vkd3d" ] || compare_versions "$latest_vkd3d" "$current_vkd3d"; then
+                need_download=true
+            fi
+        fi
+    fi
+    
+    if [ "$need_download" = true ]; then
+        echo "Téléchargement des composants..."
+        
+        if [ "$has_gwine" = false ]; then
+            echo "  - Installation de gwine-proton..."
+            download_gwine_proton "force" "true" || error_exit "Échec du téléchargement de gwine-proton"
+        elif [ "$has_network" = true ]; then
+            download_gwine_proton "false" "true"
+        fi
+        
+        if [ "$has_dxvk" = false ] || [ "$has_vkd3d" = false ]; then
+            echo "  - Installation de DXVK/VKD3D..."
+            download_updated_dxvk_vkd3d --no-confirm || error_exit "Échec du téléchargement de DXVK/VKD3D"
+        elif [ "$has_network" = true ]; then
+            download_updated_dxvk_vkd3d --no-confirm
+        fi
+        
+        if is_nvidia_gpu; then
+            echo "  - Vérification de DXVK-NVAPI (NVIDIA)..."
+            local has_nvapi=false
+            [ -n "$(find "$DXVK_NVAPI_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-nvapi-*" 2>/dev/null | head -1)" ] && has_nvapi=true
+            
+            local latest_nvapi
+            latest_nvapi=$(get_latest_dxvk_nvapi_version)
+            local current_nvapi=""
+            local nvapi_folder
+            nvapi_folder=$(find "$DXVK_NVAPI_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-nvapi-*" 2>/dev/null | head -1)
+            [ -n "$nvapi_folder" ] && current_nvapi=$(basename "$nvapi_folder" | sed 's/^dxvk-nvapi-v//; s/^dxvk-nvapi-//')
+            
+            if [ "$has_nvapi" = false ] || { [ -n "$latest_nvapi" ] && { [ -z "$current_nvapi" ] || compare_versions "$latest_nvapi" "$current_nvapi"; }; }; then
+                echo "  - Installation de DXVK-NVAPI..."
+                download_dxvk_nvapi --no-confirm || echo "Warning: Échec du téléchargement de DXVK-NVAPI"
+            fi
+        else
+            echo "  - Vérification de FakeNVAPI (non-NVIDIA)..."
+            local has_fakenvapi=false
+            [ -n "$(find "$FAKENVAPI_CACHE_DIR" -maxdepth 1 -type d -name "fakenvapi-*" 2>/dev/null | head -1)" ] && has_fakenvapi=true
+            
+            local latest_fakenvapi
+            latest_fakenvapi=$(get_latest_fakenvapi_version)
+            local current_fakenvapi=""
+            local fakenvapi_folder
+            fakenvapi_folder=$(find "$FAKENVAPI_CACHE_DIR" -maxdepth 1 -type d -name "fakenvapi-*" 2>/dev/null | head -1)
+            [ -n "$fakenvapi_folder" ] && current_fakenvapi=$(basename "$fakenvapi_folder" | sed 's/^fakenvapi-v//; s/^fakenvapi-//')
+            
+            if [ "$has_fakenvapi" = false ] || { [ -n "$latest_fakenvapi" ] && { [ -z "$current_fakenvapi" ] || compare_versions "$latest_fakenvapi" "$current_fakenvapi"; }; }; then
+                echo "  - Installation de FakeNVAPI..."
+                download_fakenvapi --no-confirm || echo "Warning: Échec du téléchargement de FakeNVAPI"
+            fi
+        fi
+    else
+        echo "Composants à jour, utilisation des versions locales"
+    fi
+}
 
 # Prépare le cache complet pour le mode offline (--download-components)
 prepare_full_offline_cache() {
@@ -3128,257 +3286,10 @@ prepare_full_offline_cache() {
 }
 
 # =============================================================================
-# Module: cache-main.sh
+# Création de packs cache
 # =============================================================================
-
-
-################################################################################
-# cache-main.sh - Fonctions principales de gestion du cache
-# Préparation locale, mises à jour automatiques, téléchargement des composants
-################################################################################
-
-# Télécharge automatiquement les composants manquants
-download_missing_components() {
-    echo "Téléchargement des composants manquants..."
-    
-    # Télécharger Wine Mono et Wine Gecko
-    if [ ! -d "$COMPONENTS_DIR/wine-cache" ] || [ -z "$(ls -A "$COMPONENTS_DIR/wine-cache" 2>/dev/null)" ]; then
-        echo "Téléchargement de Wine Mono et Wine Gecko..."
-        local MONO_URL="https://dl.winehq.org/wine/wine-mono/11.0.0/wine-mono-11.0.0-x86.msi"
-        local GECKO_URL="https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-x86_64.msi"
-        local GECKO32_URL="https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-x86.msi"
-        
-        mkdir -p "$COMPONENTS_DIR/wine-cache"
-        
-        wget -q --show-progress "$MONO_URL" -O "$COMPONENTS_DIR/wine-cache/wine-mono-11.0.0-x86.msi" 2>&1 || echo "Warning: Échec du téléchargement de Wine Mono"
-        wget -q --show-progress "$GECKO_URL" -O "$COMPONENTS_DIR/wine-cache/wine-gecko-2.47.4-x86_64.msi" 2>&1 || echo "Warning: Échec du téléchargement de Wine Gecko (x64)"
-        wget -q --show-progress "$GECKO32_URL" -O "$COMPONENTS_DIR/wine-cache/wine-gecko-2.47.4-x86.msi" 2>&1 || echo "Warning: Échec du téléchargement de Wine Gecko (x86)"
-    fi
-    
-    # Télécharger DXVK et VKD3D-Proton
-    ensure_dirs "$DXVK_CACHE_DIR" "$VKD3D_CACHE_DIR"
-    
-    local has_dxvk=false
-    find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -qv "gplasync\|nvapi" && has_dxvk=true
-    
-    local has_vkd3d=false
-    find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | grep -q . && has_vkd3d=true
-    
-    if [ "$has_dxvk" = false ]; then
-        echo "Téléchargement de DXVK..."
-        
-        local DXVK_TAG="dxvk-${DXVK_VERSION}"
-        local DXVK_URL="https://github.com/bottlesdevs/components/releases/download/${DXVK_TAG}/${DXVK_TAG}.tar.gz"
-        local DXVK_TEMP="$DXVK_CACHE_DIR/dxvk.tar.gz"
-        local DXVK_DIR="$DXVK_CACHE_DIR/dxvk-${DXVK_VERSION}"
-        
-        wget -q --show-progress "$DXVK_URL" -O "$DXVK_TEMP" 2>&1 || echo "Warning: Échec du téléchargement de DXVK"
-        if [ -f "$DXVK_TEMP" ]; then
-            ensure_dir -s "$DXVK_DIR"
-            local temp_extract="$DXVK_CACHE_DIR/.temp_dxvk"
-            rm -rf "$temp_extract"
-            ensure_dir -s "$temp_extract"
-            tar -xzf "$DXVK_TEMP" -C "$temp_extract" 2>/dev/null || true
-            local extracted_dir
-            extracted_dir=$(find "$temp_extract" -mindepth 1 -maxdepth 1 -type d | head -1)
-            if [ -n "$extracted_dir" ]; then
-                cp -r "$extracted_dir"/* "$DXVK_DIR/" 2>/dev/null || true
-            fi
-            rm -rf "$temp_extract" "$DXVK_TEMP"
-        fi
-    fi
-    
-    if [ "$has_vkd3d" = false ]; then
-        echo "Téléchargement de VKD3D-Proton..."
-        
-        local old_vkd3d_dir
-        old_vkd3d_dir=$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" | head -1)
-        if [ -n "$old_vkd3d_dir" ]; then
-            echo "Suppression de l'ancienne version VKD3D-Proton: $(basename "$old_vkd3d_dir")"
-            rm -rf "$old_vkd3d_dir"
-        fi
-        
-        local VKD3D_TAG="vkd3d-proton-${VKD3D_VERSION}"
-        local VKD3D_URL="https://github.com/bottlesdevs/components/releases/download/${VKD3D_TAG}/${VKD3D_TAG}.tar.gz"
-        local VKD3D_TEMP="$VKD3D_CACHE_DIR/vkd3d.tar.gz"
-        local VKD3D_DIR="$VKD3D_CACHE_DIR/vkd3d-proton-${VKD3D_VERSION}"
-        
-        wget -q --show-progress "$VKD3D_URL" -O "$VKD3D_TEMP" 2>&1 || echo "Warning: Échec du téléchargement de VKD3D-Proton"
-        if [ -f "$VKD3D_TEMP" ]; then
-            ensure_dir -s "$VKD3D_DIR"
-            local temp_extract="$VKD3D_CACHE_DIR/.temp_vkd3d"
-            rm -rf "$temp_extract"
-            ensure_dir -s "$temp_extract"
-            tar -xf "$VKD3D_TEMP" -C "$temp_extract" 2>/dev/null || true
-            local extracted_dir
-            extracted_dir=$(find "$temp_extract" -mindepth 1 -maxdepth 1 -type d | head -1)
-            if [ -n "$extracted_dir" ]; then
-                cp -r "$extracted_dir"/* "$VKD3D_DIR/" 2>/dev/null || true
-            fi
-            rm -rf "$temp_extract" "$VKD3D_TEMP"
-        fi
-    fi
-}
-
-# Prépare le cache local avec les composants
-prepare_local_cache() {
-    ensure_dirs "$CACHE_DIR" "$COMPONENTS_DIR" "$SHADER_CACHE_DIR"
-    
-    local missing_components=false
-    
-    if [ ! -d "$COMPONENTS_DIR/wine-cache" ] || [ -z "$(ls -A "$COMPONENTS_DIR/wine-cache" 2>/dev/null)" ]; then
-        missing_components=true
-    fi
-    
-    if [ ! -d "$DXVK_CACHE_DIR" ] || [ -z "$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi")" ]; then
-        missing_components=true
-    fi
-    
-    if [ ! -d "$VKD3D_CACHE_DIR" ] || [ -z "$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null)" ]; then
-        missing_components=true
-    fi
-    
-    if [ "$missing_components" = true ]; then
-        echo ""
-        echo "Certains composants sont manquants dans ~/.cache/gwine/components/"
-        echo "Ils seront téléchargés automatiquement..."
-        echo ""
-        download_missing_components
-    fi
-}
-
-# Met à jour automatiquement les composants (sans interaction)
-auto_update_components() {
-    local need_download=false
-    local has_network=false
-    
-    local has_gwine=false
-    local has_dxvk=false
-    local has_vkd3d=false
-    
-    [ -d "$WINE_DIR" ] && [ -f "$WINE_DIR/bin/wine" ] && has_gwine=true
-    [ -n "$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi")" ] && has_dxvk=true
-    [ -n "$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null)" ] && has_vkd3d=true
-    
-    if curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
-        has_network=true
-    fi
-    
-    if [ "$has_gwine" = false ] || [ "$has_dxvk" = false ] || [ "$has_vkd3d" = false ]; then
-        need_download=true
-        
-        if [ "$has_network" = false ]; then
-            error_exit "Composants manquants et pas de connexion réseau disponible"
-        fi
-    fi
-    
-    if [ "$need_download" = false ] && [ "$has_network" = true ]; then
-        local latest_gwine
-        latest_gwine=$(get_latest_gwine_version)
-        local current_gwine
-        current_gwine=$(cat "$GWINE_DIR/.version" 2>/dev/null || echo "")
-        local latest_dxvk
-        latest_dxvk=$(get_latest_dxvk_version)
-        local latest_vkd3d
-        latest_vkd3d=$(get_latest_vkd3d_version)
-        
-        local current_dxvk=""
-        local dxvk_folder
-        dxvk_folder=$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | head -1)
-        [ -n "$dxvk_folder" ] && current_dxvk=$(basename "$dxvk_folder" | sed 's/^dxvk-//')
-        
-        local current_vkd3d=""
-        local vkd3d_folder
-        vkd3d_folder=$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | head -1)
-        [ -n "$vkd3d_folder" ] && current_vkd3d=$(basename "$vkd3d_folder" | sed 's/^vkd3d-proton-//')
-        
-        if [ -n "$latest_gwine" ] && [ -n "$current_gwine" ]; then
-            if compare_versions "$latest_gwine" "$current_gwine"; then
-                need_download=true
-            fi
-        elif [ -z "$current_gwine" ]; then
-            need_download=true
-        fi
-        
-        if [ -n "$latest_dxvk" ]; then
-            if [ -z "$current_dxvk" ] || compare_versions "$latest_dxvk" "$current_dxvk"; then
-                need_download=true
-            fi
-        fi
-        
-        if [ -n "$latest_vkd3d" ]; then
-            if [ -z "$current_vkd3d" ] || compare_versions "$latest_vkd3d" "$current_vkd3d"; then
-                need_download=true
-            fi
-        fi
-    fi
-    
-    if [ "$need_download" = true ]; then
-        echo "Téléchargement des composants..."
-        
-        if [ "$has_gwine" = false ]; then
-            echo "  - Installation de gwine-proton..."
-            download_gwine_proton "force" || error_exit "Échec du téléchargement de gwine-proton"
-        elif [ "$has_network" = true ]; then
-            download_gwine_proton
-        fi
-        
-        if [ "$has_dxvk" = false ] || [ "$has_vkd3d" = false ]; then
-            echo "  - Installation de DXVK/VKD3D..."
-            download_updated_dxvk_vkd3d --no-confirm || error_exit "Échec du téléchargement de DXVK/VKD3D"
-        elif [ "$has_network" = true ]; then
-            download_updated_dxvk_vkd3d --no-confirm
-        fi
-        
-        if is_nvidia_gpu; then
-            echo "  - Vérification de DXVK-NVAPI (NVIDIA)..."
-            local has_nvapi=false
-            [ -n "$(find "$DXVK_NVAPI_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-nvapi-*" 2>/dev/null | head -1)" ] && has_nvapi=true
-            
-            local latest_nvapi
-            latest_nvapi=$(get_latest_dxvk_nvapi_version)
-            local current_nvapi=""
-            local nvapi_folder
-            nvapi_folder=$(find "$DXVK_NVAPI_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-nvapi-*" 2>/dev/null | head -1)
-            [ -n "$nvapi_folder" ] && current_nvapi=$(basename "$nvapi_folder" | sed 's/^dxvk-nvapi-v//; s/^dxvk-nvapi-//')
-            
-            if [ "$has_nvapi" = false ] || { [ -n "$latest_nvapi" ] && { [ -z "$current_nvapi" ] || compare_versions "$latest_nvapi" "$current_nvapi"; }; }; then
-                echo "  - Installation de DXVK-NVAPI..."
-                download_dxvk_nvapi --no-confirm || echo "Warning: Échec du téléchargement de DXVK-NVAPI"
-            fi
-        else
-            echo "  - Vérification de FakeNVAPI (non-NVIDIA)..."
-            local has_fakenvapi=false
-            [ -n "$(find "$FAKENVAPI_CACHE_DIR" -maxdepth 1 -type d -name "fakenvapi-*" 2>/dev/null | head -1)" ] && has_fakenvapi=true
-            
-            local latest_fakenvapi
-            latest_fakenvapi=$(get_latest_fakenvapi_version)
-            local current_fakenvapi=""
-            local fakenvapi_folder
-            fakenvapi_folder=$(find "$FAKENVAPI_CACHE_DIR" -maxdepth 1 -type d -name "fakenvapi-*" 2>/dev/null | head -1)
-            [ -n "$fakenvapi_folder" ] && current_fakenvapi=$(basename "$fakenvapi_folder" | sed 's/^fakenvapi-v//; s/^fakenvapi-//')
-            
-            if [ "$has_fakenvapi" = false ] || { [ -n "$latest_fakenvapi" ] && { [ -z "$current_fakenvapi" ] || compare_versions "$latest_fakenvapi" "$current_fakenvapi"; }; }; then
-                echo "  - Installation de FakeNVAPI..."
-                download_fakenvapi --no-confirm || echo "Warning: Échec du téléchargement de FakeNVAPI"
-            fi
-        fi
-    else
-        echo "Composants à jour, utilisation des versions locales"
-    fi
-}
-
-# =============================================================================
-# Module: cachepack.sh
-# =============================================================================
-
-
-################################################################################
-# cachepack.sh - Création d'un pack du cache pour installation offline
-################################################################################
 
 # Crée un pack du cache contenant tous les composants nécessaires pour le --init --offline
-# Crée un dossier 'gwine-cache-installer' avec l'archive et un script de déploiement
 create_cachepack() {
     local OUTPUT_DIR="$(pwd)/gwine-cache-installer"
     local CACHE_SOURCE="$HOME/.cache/gwine"
@@ -7181,7 +7092,7 @@ update_components() {
                 exit 0
             fi
             
-            if ! download_gwine_proton; then
+            if ! download_gwine_proton "false" "true"; then
                 progress_close "$DBUS_REF"
                 error_exit "Échec de la mise à jour de gwine-proton"
             fi
@@ -7885,13 +7796,19 @@ VALID_OPTIONS=("--help" "-h" "--fix" "--exewgp" "--init" "--offline" "--update" 
 
 # Vérifie si une option est valide
 is_valid_option() {
-    local opt="$1"
-    for valid_opt in "${VALID_OPTIONS[@]}"; do
-        if [ "$opt" = "$valid_opt" ]; then
+    local option="$1"
+    for valid in "${VALID_OPTIONS[@]}"; do
+        if [[ "$option" == "$valid" ]]; then
             return 0
         fi
     done
     return 1
+}
+
+# Affiche une erreur et quitte
+error_exit() {
+    echo "Erreur: $1" >&2
+    exit 1
 }
 
 parse_arguments() {
@@ -7910,7 +7827,7 @@ parse_arguments() {
                 shift
                 ;;
             --init)
-                init_mode=true
+                export init_mode=true
                 shift
                 ;;
             --offline)
@@ -7967,7 +7884,7 @@ parse_arguments() {
                 ;;
             --kill)
                 echo "Arrêt forcé de tous les processus Gwine..."
-                pgrep -f -i "\\.exe|\\.bat" | grep -v $$ | xargs -r kill -9 2>/dev/null
+                pgrep -f -i "\.exe|\.bat" | grep -v $$ | xargs -r kill -9 2>/dev/null
                 rm -rf /tmp/gwine-locks-$USER/ 2>/dev/null
                 echo "Terminé"
                 exit 0
@@ -8139,44 +8056,57 @@ run_wgp_mode() {
     
     local env_vars
     env_vars=$(load_env_files "$MOUNT_DIR" "$exe_dir")
-
-    local lock_file="/tmp/wgp-lock-$WGPACK_NAME"
-    echo "$$:$(date +%s)" > "$lock_file"
     
+    local filename
+    filename="$(basename "$FULL_EXE_PATH")"
+    local lock_file="/tmp/wgp-lock-$filename"
+    echo "$$:$(date +%s)" > "$lock_file"
+    trap 'rm -f "$lock_file"' EXIT
+
     # Récupérer le dossier contenant le fichier .wgp
     local wgp_dir
     wgp_dir="$(dirname "$WGPACK_FILE")"
     
-    launch_wine_game "$FULL_EXE_PATH" "$args" "$WGPACK_NAME" "$env_vars" "true" "$wgp_dir"
+    launch_wine_game "$FULL_EXE_PATH" "$args" "$filename" "$env_vars" "true" "$wgp_dir"
     
     # Nettoyage après la fin du jeu
     cleanup_wgp
     rm -f "$lock_file" 2>/dev/null
-
-    cleanup_saves_symlink
-    cleanup_extras_symlink
-    cleanup_temp_symlink
 }
 
 run_classic_mode() {
     export WINEPREFIX="$HOME_REAL/Windows/Prefix"
     
-    local dirpath
     local filename
-
-    dirpath=$(dirname "$fullpath")
-    filename=$(basename "$fullpath")
-
+    filename="$(basename "$fullpath")"
     local new_fullpath="$fullpath"
-    local temp_base=""
-
-    if echo "$dirpath" | grep -P '[^\x00-\x7F]' > /dev/null; then
-        local new_dirpath
-        new_dirpath=$(create_temp_path "$dirpath")
-        new_fullpath="$new_dirpath/$filename"
-        temp_base=$(echo "$new_dirpath" | grep -o "/tmp/game_launcher_[0-9]*")
+    
+    if [[ "$new_fullpath" != /* ]]; then
+        new_fullpath="$(pwd)/$new_fullpath"
     fi
-
+    
+    if [[ "$fullpath" == *.lnk ]]; then
+        local new_dirpath
+        new_dirpath=$(resolve_lnk "$fullpath")
+        if [ -z "$new_dirpath" ]; then
+            error_exit "Impossible de résoudre le raccourci .lnk"
+        fi
+        filename="$(basename "$new_dirpath")"
+        new_fullpath="$new_dirpath/$filename"
+    fi
+    
+    if [ ! -f "$new_fullpath" ]; then
+        error_exit "Fichier non trouvé: $new_fullpath"
+    fi
+    
+    local temp_base=""
+    if [[ "$fullpath" == *[^[:ascii:]]* ]]; then
+        local temp_dir
+        temp_dir=$(mktemp -d)
+        temp_base="$temp_dir"
+        ln -sf "$new_fullpath" "$temp_dir/$filename"
+        new_fullpath="$temp_dir/$filename"
+    fi
     [ -n "$temp_base" ] && trap 'rm -rf "$temp_base"' EXIT
     
     init_wineprefix
