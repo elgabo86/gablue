@@ -7,50 +7,34 @@ SIZE="$3"     # %s (128 ou 256)
 
 APPIMAGEICONEXTRACT="/usr/share/ublue-os/gablue/scripts/appimageiconextract.py"
 
-LOCK_FILE="/tmp/lgp-thumbnailer.lock"
-MAX_INSTANCES=2  # 2 instances en parallèle pour les gros dossiers
+# Fichier lock unique par PID pour éviter les race conditions
+LOCK_FILE="/tmp/lgp-thumbnailer.${MY_PID}.lock"
+MY_PID=$$
+
+# Rate limiting: attendre que le thumbnailer précédent (quel qu'il soit) ait fini
+# Cela évite de surcharger Dolphin avec trop de callbacks simultanés
+rate_limit() {
+    local max_wait=30
+    local waited=0
+    while [ -f /tmp/lgp-thumbnailer.active ] && [ $waited -lt $max_wait ]; do
+        sleep 0.05
+        waited=$((waited + 1))
+    done
+    # Marquer comme actif
+    touch /tmp/lgp-thumbnailer.active
+}
 
 # Vérification rapide: si fichier en cours d'écriture, on abandonne (Dolphin rappellera plus tard)
-# Une seule vérification de 0.1s - rapide mais suffisant pour détecter les copies
-size1=$(stat -c %s "$INPUT" 2>/dev/null) || exit 1
+size1=$(stat -c %s "$INPUT" 2>/dev/null) || { rm -f /tmp/lgp-thumbnailer.active 2>/dev/null; exit 1; }
 sleep 0.1
-size2=$(stat -c %s "$INPUT" 2>/dev/null) || exit 1
-[ "$size1" = "$size2" ] || exit 1  # Fichier en cours d'écriture, on sort
+size2=$(stat -c %s "$INPUT" 2>/dev/null) || { rm -f /tmp/lgp-thumbnailer.active 2>/dev/null; exit 1; }
+if [ "$size1" != "$size2" ]; then
+    rm -f /tmp/lgp-thumbnailer.active 2>/dev/null
+    exit 1  # Fichier en cours d'écriture, on sort
+fi
 
-# Sémaphore avec N instances concurrentes max (attente max 10s)
-acquire_slot() {
-    local timeout=100  # 10 secondes (100 × 0.1s)
-    local elapsed=0
-    local instance_num
-
-    while [ $elapsed -lt $timeout ]; do
-        # Essaie de trouver un slot libre parmi les N disponibles
-        for instance_num in $(seq 1 $MAX_INSTANCES); do
-            local inst_lock="${LOCK_FILE}.${instance_num}"
-            # Essaie d'acquérir ce slot
-            if (flock -n 200) 200>"$inst_lock" 2>/dev/null; then
-                # Slot pris, retourne le numéro via une variable globale
-                echo "$instance_num" > /tmp/lgp-thumbnailer-current-instance
-                return 0
-            fi
-        done
-        # Tous les slots occupés, on attend
-        sleep 0.1
-        elapsed=$((elapsed + 1))
-    done
-    return 1
-}
-
-# Libère le slot
-release_slot() {
-    local instance_num
-    instance_num=$(cat /tmp/lgp-thumbnailer-current-instance 2>/dev/null)
-    [ -n "$instance_num" ] && rm -f "${LOCK_FILE}.${instance_num}" 2>/dev/null
-    rm -f /tmp/lgp-thumbnailer-current-instance 2>/dev/null
-}
-
-# Acquiert un slot ou quitte
-acquire_slot || exit 1
+# Rate limiting pour éviter de surcharger Dolphin
+rate_limit
 
 TEMP_MOUNT=$(mktemp -d)
 TEMP_PNG=""
@@ -67,7 +51,9 @@ cleanup() {
     done
     rm -rf "$TEMP_MOUNT"
     [ -n "$TEMP_PNG" ] && rm -f "$TEMP_PNG"
-    release_slot
+    rm -f "$LOCK_FILE"
+    # Libérer le rate limiter
+    rm -f /tmp/lgp-thumbnailer.active
 }
 trap cleanup EXIT
 
