@@ -8,96 +8,45 @@ SIZE="$3"     # %s (128 ou 256)
 EXEICONEXTRACT="/usr/share/ublue-os/gablue/scripts/exeiconextract.py"
 
 LOCK_FILE="/tmp/wgp-thumbnailer.lock"
-MAX_INSTANCES=3
-PID_FILE="/tmp/wgp-thumbnailer-pids"
-MY_PID=$$
+MAX_INSTANCES=2  # 2 instances en parallèle pour les gros dossiers
 
-# Petit délai pour laisser la copie commencer (si fichier vient d'être créé)
-sleep 0.3
+# Vérification rapide: si fichier en cours d'écriture, on abandonne (Dolphin rappellera plus tard)
+# Une seule vérification de 0.1s - rapide mais suffisant pour détecter les copies
+size1=$(stat -c %s "$INPUT" 2>/dev/null) || exit 1
+sleep 0.1
+size2=$(stat -c %s "$INPUT" 2>/dev/null) || exit 1
+[ "$size1" = "$size2" ] || exit 1  # Fichier en cours d'écriture, on sort
 
-# Vérification de stabilité: le fichier doit avoir une taille stable
-check_file_stable() {
-    local file="$1"
-    local timeout=2  # secondes max à attendre
-    local elapsed=0
-    local size1 size2
-
-    size1=$(stat -c %s "$file" 2>/dev/null) || return 1
-
-    while [ $elapsed -lt $timeout ]; do
-        sleep 0.2
-        size2=$(stat -c %s "$file" 2>/dev/null) || return 1
-
-        # Si la taille a changé, le fichier est en cours d'écriture
-        [ "$size1" = "$size2" ] && return 0
-        size1=$size2
-        elapsed=$((elapsed + 1))
-    done
-
-    return 1
-}
-
-# Vérifie que le fichier est stable avant de continuer
-check_file_stable "$INPUT" || exit 1
-
-# Sémaphore avec flock: attendre qu'une place soit libre puis enregistrer notre PID
+# Sémaphore avec N instances concurrentes max (attente max 10s)
 acquire_slot() {
+    local timeout=100  # 10 secondes (100 × 0.1s)
     local elapsed=0
-    local timeout=30  # max 30 secondes d'attente (après ça abandonne)
-    local count pids_to_keep
+    local instance_num
 
     while [ $elapsed -lt $timeout ]; do
-        (
-            # Verrouillage atomique avec flock
-            flock -w 1 -x 200 || exit 1
-
-            # Crée le fichier si n'existe pas
-            [ -f "$PID_FILE" ] || touch "$PID_FILE"
-
-            # Nettoyage des PIDs morts
-            pids_to_keep=""
-            while IFS= read -r pid || [ -n "$pid" ]; do
-                [ -z "$pid" ] && continue
-                # Vérifie si le PID est toujours vivant
-                if kill -0 "$pid" 2>/dev/null; then
-                    pids_to_keep="${pids_to_keep}${pid}"$'\n'
-                fi
-            done < "$PID_FILE"
-            echo "$pids_to_keep" > "$PID_FILE"
-
-            # Compte les instances actives
-            count=$(grep -c . "$PID_FILE" 2>/dev/null) || count=0
-
-            if [ $count -lt $MAX_INSTANCES ]; then
-                # Place libre: enregistre notre PID
-                echo "$MY_PID" >> "$PID_FILE"
-                exit 0
+        # Essaie de trouver un slot libre parmi les N disponibles
+        for instance_num in $(seq 1 $MAX_INSTANCES); do
+            local inst_lock="${LOCK_FILE}.${instance_num}"
+            # Essaie d'acquérir ce slot
+            if (flock -n 200) 200>"$inst_lock" 2>/dev/null; then
+                # Slot pris, retourne le numéro via une variable globale
+                echo "$instance_num" > /tmp/wgp-thumbnailer-current-instance
+                return 0
             fi
-
-            exit 1
-        ) 200>"$LOCK_FILE" && return 0
-
-        # Plus de place: attend un peu et réessaie
-        sleep 0.2
+        done
+        # Tous les slots occupés, on attend
+        sleep 0.1
         elapsed=$((elapsed + 1))
     done
-
-    # Timeout atteint: abandonne
     return 1
 }
 
-# Libère notre slot du sémaphore
+# Libère le slot
 release_slot() {
-    (
-        flock -w 1 -x 200 200>"$LOCK_FILE" || return 1
-        [ -f "$PID_FILE" ] || return 0
-        local temp_file
-        temp_file=$(mktemp)
-        grep -vFx "$MY_PID" "$PID_FILE" > "$temp_file" 2>/dev/null
-        mv "$temp_file" "$PID_FILE"
-        # Nettoie le fichier si vide
-        [ -s "$PID_FILE" ] || rm -f "$PID_FILE"
-    )
+    local instance_num
+    instance_num=$(cat /tmp/wgp-thumbnailer-current-instance 2>/dev/null)
+    [ -n "$instance_num" ] && rm -f "${LOCK_FILE}.${instance_num}" 2>/dev/null
+    rm -f /tmp/wgp-thumbnailer-current-instance 2>/dev/null
 }
 
 # Acquiert un slot ou quitte
@@ -108,7 +57,23 @@ TEMP_ICO=$(mktemp -d)
 
 # Nettoyage complet en toute circonstance
 cleanup() {
-    fusermount -u "$TEMP_MOUNT" 2>/dev/null
+    # Démontage forcé et kill des processus squashfuse restants
+    if mountpoint -q "$TEMP_MOUNT" 2>/dev/null; then
+        fusermount -uz "$TEMP_MOUNT" 2>/dev/null || fusermount -u "$TEMP_MOUNT" 2>/dev/null || umount -f "$TEMP_MOUNT" 2>/dev/null
+        # Kill de tous les processus squashfuse qui pointent sur ce mount point
+        local mount_dev
+        mount_dev=$(stat -c %d "$TEMP_MOUNT" 2>/dev/null)
+        if [ -n "$mount_dev" ]; then
+            # Tuer tous les processus squashfuse qui ont ce mount point ouvert
+            for pid in $(lsof -t "$TEMP_MOUNT" 2>/dev/null); do
+                kill -TERM "$pid" 2>/dev/null || true
+            done
+        fi
+    fi
+    # Tuer tout squashfuse qui pourrait utiliser ce répertoire
+    pgrep -f "squashfuse.*$TEMP_MOUNT" 2>/dev/null | while read -r spid; do
+        kill -TERM "$spid" 2>/dev/null || true
+    done
     rm -rf "$TEMP_MOUNT" "$TEMP_ICO"
     release_slot
 }
@@ -144,10 +109,10 @@ case "${ICON_EXE_PATH,,}" in  # ,, = tout en minuscule
 esac
 
 # Sinon : c'est un .exe → extraction avec exeiconextract.py
-TEMP_PNG="$TEMP_ICO/extracted.png"
+    TEMP_PNG="$TEMP_ICO/extracted.png"
 
-# Extraction avec timeout (max 10 secondes)
-timeout 10 python3 "$EXEICONEXTRACT" "$ICON_EXE_PATH" "$TEMP_PNG" 2>/dev/null
+# Extraction avec timeout (max 5 secondes)
+timeout 5 python3 "$EXEICONEXTRACT" "$ICON_EXE_PATH" "$TEMP_PNG" 2>/dev/null
 if [ -f "$TEMP_PNG" ]; then
     magick "$TEMP_PNG" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && exit 0
 fi
