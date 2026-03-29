@@ -200,8 +200,8 @@ compare_versions() {
 # Démonte un overlay FUSE (fuse-overlayfs, mergerfs, etc.)
 # Usage: unmount_fuse_overlay <mount_point> [options]
 # Options:
-#   -f : Forcer le démontage (-uz au lieu de -u)
-#   -l : Lazy unmount après le force
+#   -f : Forcer le démontage (tue le processus fuse-overlayfs d'abord)
+#   -l : Lazy unmount après le force (legacy, -f fait déjà du lazy)
 # Retourne 0 si succès ou si déjà démonté, 1 si échec
 unmount_fuse_overlay() {
     local mount_point="$1"
@@ -227,16 +227,31 @@ unmount_fuse_overlay() {
     fi
     
     if [ "$force" = true ]; then
-        fusermount -uz "$mount_point" 2>/dev/null || true
+        # Mode forcé : tuer d'abord le processus fuse-overlayfs
+        # pour éviter le crash SIGSEGV quand on démonte pendant l'accès
+        local fuse_pid
+        fuse_pid=$(pgrep -f "fuse-overlayfs.*$mount_point" 2>/dev/null | head -1)
+        if [ -n "$fuse_pid" ]; then
+            kill -9 "$fuse_pid" 2>/dev/null || true
+            sleep 0.2
+        fi
+        # Puis démontage avec fusermount -uz (sûr maintenant que le process est mort)
+        fusermount -uz "$mount_point" 2>/dev/null || umount -l "$mount_point" 2>/dev/null || true
     else
-        fusermount -u "$mount_point" 2>/dev/null || fusermount -uz "$mount_point" 2>/dev/null || true
+        # Mode normal : essayer démontage gentil d'abord
+        if fusermount -u "$mount_point" 2>/dev/null; then
+            :  # Succès
+        else
+            # Échec, utiliser lazy unmount (plus sûr que -uz qui fait crasher)
+            umount -l "$mount_point" 2>/dev/null || true
+        fi
     fi
     
+    # Fallback legacy si toujours monté
     if [ "$lazy" = true ] && mountpoint -q "$mount_point" 2>/dev/null; then
         umount -f -l "$mount_point" 2>/dev/null || true
     fi
     
-    sleep 0.2
     return 0
 }
 
@@ -2456,10 +2471,6 @@ install_all_wincomponents() {
 # Fusion de : cache-main.sh, cache-gwine.sh, cache-dxvk.sh, cache-offline.sh, cachepack.sh
 ################################################################################
 
-# Versions des composants
-DXVK_VERSION="2.7.1"
-VKD3D_VERSION="3.0"
-
 # =============================================================================
 # Installation depuis le cache (mode offline)
 # =============================================================================
@@ -2852,24 +2863,30 @@ download_missing_components() {
     if [ "$has_dxvk" = false ]; then
         echo "Téléchargement de DXVK..."
         
-        local DXVK_TAG="dxvk-${DXVK_VERSION}"
-        local DXVK_URL="https://github.com/bottlesdevs/components/releases/download/${DXVK_TAG}/${DXVK_TAG}.tar.gz"
-        local DXVK_TEMP="$DXVK_CACHE_DIR/dxvk.tar.gz"
-        local DXVK_DIR="$DXVK_CACHE_DIR/dxvk-${DXVK_VERSION}"
-        
-        wget -q --show-progress "$DXVK_URL" -O "$DXVK_TEMP" 2>&1 || echo "Warning: Échec du téléchargement de DXVK"
-        if [ -f "$DXVK_TEMP" ]; then
-            ensure_dir -s "$DXVK_DIR"
-            local temp_extract="$DXVK_CACHE_DIR/.temp_dxvk"
-            rm -rf "$temp_extract"
-            ensure_dir -s "$temp_extract"
-            tar -xzf "$DXVK_TEMP" -C "$temp_extract" 2>/dev/null || true
-            local extracted_dir
-            extracted_dir=$(find "$temp_extract" -mindepth 1 -maxdepth 1 -type d | head -1)
-            if [ -n "$extracted_dir" ]; then
-                cp -r "$extracted_dir"/* "$DXVK_DIR/" 2>/dev/null || true
+        local DXVK_VERSION
+        DXVK_VERSION=$(get_latest_dxvk_version)
+        if [ -z "$DXVK_VERSION" ]; then
+            echo "Warning: Impossible de récupérer la dernière version de DXVK"
+        else
+            local DXVK_TAG="dxvk-${DXVK_VERSION}"
+            local DXVK_URL="https://github.com/bottlesdevs/components/releases/download/${DXVK_TAG}/${DXVK_TAG}.tar.gz"
+            local DXVK_TEMP="$DXVK_CACHE_DIR/dxvk.tar.gz"
+            local DXVK_DIR="$DXVK_CACHE_DIR/dxvk-${DXVK_VERSION}"
+            
+            wget -q --show-progress "$DXVK_URL" -O "$DXVK_TEMP" 2>&1 || echo "Warning: Échec du téléchargement de DXVK"
+            if [ -f "$DXVK_TEMP" ]; then
+                ensure_dir -s "$DXVK_DIR"
+                local temp_extract="$DXVK_CACHE_DIR/.temp_dxvk"
+                rm -rf "$temp_extract"
+                ensure_dir -s "$temp_extract"
+                tar -xzf "$DXVK_TEMP" -C "$temp_extract" 2>/dev/null || true
+                local extracted_dir
+                extracted_dir=$(find "$temp_extract" -mindepth 1 -maxdepth 1 -type d | head -1)
+                if [ -n "$extracted_dir" ]; then
+                    cp -r "$extracted_dir"/* "$DXVK_DIR/" 2>/dev/null || true
+                fi
+                rm -rf "$temp_extract" "$DXVK_TEMP"
             fi
-            rm -rf "$temp_extract" "$DXVK_TEMP"
         fi
     fi
     
@@ -2883,24 +2900,30 @@ download_missing_components() {
             rm -rf "$old_vkd3d_dir"
         fi
         
-        local VKD3D_TAG="vkd3d-proton-${VKD3D_VERSION}"
-        local VKD3D_URL="https://github.com/bottlesdevs/components/releases/download/${VKD3D_TAG}/${VKD3D_TAG}.tar.gz"
-        local VKD3D_TEMP="$VKD3D_CACHE_DIR/vkd3d.tar.gz"
-        local VKD3D_DIR="$VKD3D_CACHE_DIR/vkd3d-proton-${VKD3D_VERSION}"
-        
-        wget -q --show-progress "$VKD3D_URL" -O "$VKD3D_TEMP" 2>&1 || echo "Warning: Échec du téléchargement de VKD3D-Proton"
-        if [ -f "$VKD3D_TEMP" ]; then
-            ensure_dir -s "$VKD3D_DIR"
-            local temp_extract="$VKD3D_CACHE_DIR/.temp_vkd3d"
-            rm -rf "$temp_extract"
-            ensure_dir -s "$temp_extract"
-            tar -xf "$VKD3D_TEMP" -C "$temp_extract" 2>/dev/null || true
-            local extracted_dir
-            extracted_dir=$(find "$temp_extract" -mindepth 1 -maxdepth 1 -type d | head -1)
-            if [ -n "$extracted_dir" ]; then
-                cp -r "$extracted_dir"/* "$VKD3D_DIR/" 2>/dev/null || true
+        local VKD3D_VERSION
+        VKD3D_VERSION=$(get_latest_vkd3d_version)
+        if [ -z "$VKD3D_VERSION" ]; then
+            echo "Warning: Impossible de récupérer la dernière version de VKD3D-Proton"
+        else
+            local VKD3D_TAG="vkd3d-proton-${VKD3D_VERSION}"
+            local VKD3D_URL="https://github.com/bottlesdevs/components/releases/download/${VKD3D_TAG}/${VKD3D_TAG}.tar.gz"
+            local VKD3D_TEMP="$VKD3D_CACHE_DIR/vkd3d.tar.gz"
+            local VKD3D_DIR="$VKD3D_CACHE_DIR/vkd3d-proton-${VKD3D_VERSION}"
+            
+            wget -q --show-progress "$VKD3D_URL" -O "$VKD3D_TEMP" 2>&1 || echo "Warning: Échec du téléchargement de VKD3D-Proton"
+            if [ -f "$VKD3D_TEMP" ]; then
+                ensure_dir -s "$VKD3D_DIR"
+                local temp_extract="$VKD3D_CACHE_DIR/.temp_vkd3d"
+                rm -rf "$temp_extract"
+                ensure_dir -s "$temp_extract"
+                tar -xf "$VKD3D_TEMP" -C "$temp_extract" 2>/dev/null || true
+                local extracted_dir
+                extracted_dir=$(find "$temp_extract" -mindepth 1 -maxdepth 1 -type d | head -1)
+                if [ -n "$extracted_dir" ]; then
+                    cp -r "$extracted_dir"/* "$VKD3D_DIR/" 2>/dev/null || true
+                fi
+                rm -rf "$temp_extract" "$VKD3D_TEMP"
             fi
-            rm -rf "$temp_extract" "$VKD3D_TEMP"
         fi
     fi
 }
@@ -2924,6 +2947,11 @@ prepare_local_cache() {
     fi
     
     if [ "$missing_components" = true ]; then
+        # En mode offline, on ne peut pas télécharger
+        if [ "$OFFLINE_MODE" = "true" ]; then
+            error_exit "Mode offline: composants manquants dans le cache. Lancez 'gwine --download-components' avec une connexion internet pour préparer le cache."
+        fi
+        
         echo ""
         echo "Certains composants sont manquants dans ~/.cache/gwine/components/"
         echo "Ils seront téléchargés automatiquement..."
@@ -3152,31 +3180,38 @@ prepare_full_offline_cache() {
     find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -qv "gplasync\|nvapi" && has_dxvk=true
     
     if [ "$has_dxvk" = false ]; then
-        local DXVK_TAG="dxvk-${DXVK_VERSION}"
-        local DXVK_URL="https://github.com/bottlesdevs/components/releases/download/${DXVK_TAG}/${DXVK_TAG}.tar.gz"
-        local DXVK_TEMP="$DXVK_CACHE_DIR/dxvk.tar.gz"
-        local DXVK_DIR="$DXVK_CACHE_DIR/dxvk-${DXVK_VERSION}"
-        
-        echo "   Téléchargement de $DXVK_TAG..."
-        if ! wget -q --show-progress "$DXVK_URL" -O "$DXVK_TEMP" 2>&1; then
-            echo "   ⚠️ Échec du téléchargement de DXVK"
+        local DXVK_VERSION
+        DXVK_VERSION=$(get_latest_dxvk_version)
+        if [ -z "$DXVK_VERSION" ]; then
+            echo "   ⚠️ Impossible de récupérer la dernière version de DXVK"
             failed=true
         else
-            local temp_extract="$DXVK_CACHE_DIR/.temp_extract"
-            rm -rf "$temp_extract"
-            ensure_dir "$temp_extract"
-            if tar -xzf "$DXVK_TEMP" -C "$temp_extract" 2>/dev/null; then
-                local extracted_dir
-                extracted_dir=$(find "$temp_extract" -maxdepth 1 -type d -name "dxvk-*" | head -1)
-                if [ -d "$extracted_dir" ]; then
-                    mv "$extracted_dir" "$DXVK_DIR"
-                    echo "   ✓ DXVK téléchargé et extrait"
-                fi
-            else
-                echo "   ⚠️ Échec de l'extraction de DXVK"
+            local DXVK_TAG="dxvk-${DXVK_VERSION}"
+            local DXVK_URL="https://github.com/bottlesdevs/components/releases/download/${DXVK_TAG}/${DXVK_TAG}.tar.gz"
+            local DXVK_TEMP="$DXVK_CACHE_DIR/dxvk.tar.gz"
+            local DXVK_DIR="$DXVK_CACHE_DIR/dxvk-${DXVK_VERSION}"
+            
+            echo "   Téléchargement de $DXVK_TAG..."
+            if ! wget -q --show-progress "$DXVK_URL" -O "$DXVK_TEMP" 2>&1; then
+                echo "   ⚠️ Échec du téléchargement de DXVK"
                 failed=true
+            else
+                local temp_extract="$DXVK_CACHE_DIR/.temp_extract"
+                rm -rf "$temp_extract"
+                ensure_dir "$temp_extract"
+                if tar -xzf "$DXVK_TEMP" -C "$temp_extract" 2>/dev/null; then
+                    local extracted_dir
+                    extracted_dir=$(find "$temp_extract" -maxdepth 1 -type d -name "dxvk-*" | head -1)
+                    if [ -d "$extracted_dir" ]; then
+                        mv "$extracted_dir" "$DXVK_DIR"
+                        echo "   ✓ DXVK téléchargé et extrait"
+                    fi
+                else
+                    echo "   ⚠️ Échec de l'extraction de DXVK"
+                    failed=true
+                fi
+                rm -rf "$temp_extract" "$DXVK_TEMP"
             fi
-            rm -rf "$temp_extract" "$DXVK_TEMP"
         fi
     else
         echo "   ✓ DXVK déjà en cache"
@@ -3190,10 +3225,16 @@ prepare_full_offline_cache() {
     find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | grep -q . && has_vkd3d=true
     
     if [ "$has_vkd3d" = false ]; then
-        local VKD3D_TAG="vkd3d-proton-${VKD3D_VERSION}"
-        local VKD3D_URL="https://github.com/bottlesdevs/components/releases/download/${VKD3D_TAG}/${VKD3D_TAG}.tar.gz"
-        local VKD3D_TEMP="$VKD3D_CACHE_DIR/vkd3d.tar.gz"
-        local VKD3D_DIR="$VKD3D_CACHE_DIR/vkd3d-proton-${VKD3D_VERSION}"
+        local VKD3D_VERSION
+        VKD3D_VERSION=$(get_latest_vkd3d_version)
+        if [ -z "$VKD3D_VERSION" ]; then
+            echo "   ⚠️ Impossible de récupérer la dernière version de VKD3D-Proton"
+            failed=true
+        else
+            local VKD3D_TAG="vkd3d-proton-${VKD3D_VERSION}"
+            local VKD3D_URL="https://github.com/bottlesdevs/components/releases/download/${VKD3D_TAG}/${VKD3D_TAG}.tar.gz"
+            local VKD3D_TEMP="$VKD3D_CACHE_DIR/vkd3d.tar.gz"
+            local VKD3D_DIR="$VKD3D_CACHE_DIR/vkd3d-proton-${VKD3D_VERSION}"
         
         echo "   Téléchargement de $VKD3D_TAG..."
         if ! wget -q --show-progress "$VKD3D_URL" -O "$VKD3D_TEMP" 2>&1; then
@@ -3215,14 +3256,12 @@ prepare_full_offline_cache() {
                 failed=true
             fi
             rm -rf "$temp_extract" "$VKD3D_TEMP"
+            fi
         fi
     else
         echo "   ✓ VKD3D-Proton déjà en cache"
     fi
     echo ""
-    
-    # 5. Télécharger DXVK-NVAPI ou FakeNVAPI
-    echo "5. Préparation de NVAPI..."
     if is_nvidia_gpu; then
         ensure_dir "$DXVK_NVAPI_CACHE_DIR"
         local latest_nvapi
@@ -3266,8 +3305,8 @@ prepare_full_offline_cache() {
     fi
     echo ""
     
-    # 6. Télécharger les composants Windows
-    echo "6. Préparation des composants Windows..."
+    # 5. Télécharger les composants Windows
+    echo "5. Préparation des composants Windows..."
     if ! prepare_wincomponents_cache; then
         echo "   ⚠️ Échec du téléchargement des composants Windows"
         failed=true
@@ -4510,6 +4549,9 @@ build_bwrap_args() {
     bwrap_args="$bwrap_args --bind-try /etc/localtime /etc/localtime"
     bwrap_args="$bwrap_args --bind-try /etc/machine-id /etc/machine-id"
     
+    # Cache ldconfig (nécessaire pour la résolution des bibliothèques)
+    bwrap_args="$bwrap_args --ro-bind-try /etc/ld.so.cache /etc/ld.so.cache"
+    
     # Accès à /dev - créer un nouveau devtmpfs puis binder les sous-répertoires spécifiques
     bwrap_args="$bwrap_args --dev /dev"
     
@@ -4626,6 +4668,34 @@ build_bwrap_args() {
     fi
     if [ -d "/usr/share/mangohud" ]; then
         bwrap_args="$bwrap_args --ro-bind-try /usr/share/mangohud /usr/share/mangohud"
+    fi
+    
+    # Configurations NVIDIA/GLVND nécessaires pour OpenGL/EGL
+    # Ces configs permettent à libGLX/libEGL de trouver les drivers NVIDIA
+    if [ -d "/usr/share/glvnd/egl_vendor.d" ]; then
+        bwrap_args="$bwrap_args --ro-bind-try /usr/share/glvnd/egl_vendor.d /usr/share/glvnd/egl_vendor.d"
+    fi
+    if [ -d "/etc/glvnd/egl_vendor.d" ]; then
+        bwrap_args="$bwrap_args --ro-bind-try /etc/glvnd/egl_vendor.d /etc/glvnd/egl_vendor.d"
+    fi
+    if [ -d "/usr/share/egl/egl_external_platform.d" ]; then
+        bwrap_args="$bwrap_args --ro-bind-try /usr/share/egl/egl_external_platform.d /usr/share/egl/egl_external_platform.d"
+    fi
+    if [ -d "/etc/egl/egl_external_platform.d" ]; then
+        bwrap_args="$bwrap_args --ro-bind-try /etc/egl/egl_external_platform.d /etc/egl/egl_external_platform.d"
+    fi
+    
+    # Profils et données NVIDIA
+    if [ -d "/usr/share/nvidia" ]; then
+        bwrap_args="$bwrap_args --ro-bind-try /usr/share/nvidia /usr/share/nvidia"
+    fi
+    
+    # Configurations DRI (pour Mesa et fallback)
+    if [ -d "/usr/share/drirc.d" ]; then
+        bwrap_args="$bwrap_args --ro-bind-try /usr/share/drirc.d /usr/share/drirc.d"
+    fi
+    if [ -f "/etc/drirc" ]; then
+        bwrap_args="$bwrap_args --ro-bind-try /etc/drirc /etc/drirc"
     fi
     
     # MangoHud config - utiliser HOME_REAL car HOME est dans tmpfs
@@ -4817,16 +4887,13 @@ build_bwrap_args() {
     
     # Gestion LD_PRELOAD pour MangoHud (nécessaire pour OpenGL)
     # Désactivé si MANGOHUD=0 explicitement défini
+    # NOTE: On ne force plus MANGOHUD_DLSYM=1 par défaut car ça cause des
+    # problèmes de performance avec Wine 11+ sur les jeux 32-bit.
+    # MangoHud fonctionne maintenant via la commande 'mangohud' directement
+    # dans launcher.sh au lieu de LD_PRELOAD forcé.
     local PRELOAD_LIBS=""
     
-    if [ "${MANGOHUD:-}" != "0" ] && [ -n "${MANGOHUD_BIN:-}" ]; then
-        local MANGOHUD_LIBS="/usr/lib/mangohud/libMangoHud_shim.so:/usr/lib64/mangohud/libMangoHud_shim.so"
-        PRELOAD_LIBS="$MANGOHUD_LIBS"
-    fi
-    
-    if [ -n "$PRELOAD_LIBS" ]; then
-        bwrap_args="$bwrap_args --setenv LD_PRELOAD \"$PRELOAD_LIBS\""
-    elif [ -n "${LD_PRELOAD:-}" ]; then
+    if [ -n "${LD_PRELOAD:-}" ]; then
         bwrap_args="$bwrap_args --setenv LD_PRELOAD \"$LD_PRELOAD\""
     else
         bwrap_args="$bwrap_args --setenv LD_PRELOAD \"\""
@@ -5406,15 +5473,12 @@ cleanup_temp_symlink() {
         
         if [ -n "$MOUNT_OVERLAY" ]; then
             echo "Nettoyage de l'overlay complet..."
-            unmount_fuse_overlay "$MOUNT_OVERLAY" -f -l
+            # Lazy unmount rapide (-f seul suffit maintenant)
+            unmount_fuse_overlay "$MOUNT_OVERLAY" -f
             
-            if [ -d "$MOUNT_OVERLAY" ]; then
-                rm -rf "$MOUNT_OVERLAY" 2>/dev/null || true
-            fi
-            
-            if [ -n "$TEMP_UPPER" ] && [ -d "$TEMP_UPPER" ]; then
-                rm -rf "$TEMP_UPPER" 2>/dev/null || true
-            fi
+            # Nettoyer les répertoires après démontage (détaché immédiatement)
+            rm -rf "$MOUNT_OVERLAY" 2>/dev/null || true
+            rm -rf "$TEMP_UPPER" 2>/dev/null || true
         fi
         
         unset _FULL_OVERLAY_MOUNT _FULL_OVERLAY_UPPER
@@ -5430,15 +5494,12 @@ cleanup_temp_symlink() {
         
         if [ -n "$TEMP_MOUNT" ]; then
             echo "Nettoyage de l'overlay temp folders..."
-            unmount_fuse_overlay "$TEMP_MOUNT" -f -l
+            # Lazy unmount rapide
+            unmount_fuse_overlay "$TEMP_MOUNT" -f
             
-            if [ -d "$TEMP_MOUNT" ]; then
-                rm -rf "$TEMP_MOUNT" 2>/dev/null || true
-            fi
-            
-            if [ -n "$TEMP_UPPER" ] && [ -d "$TEMP_UPPER" ]; then
-                rm -rf "$TEMP_UPPER" 2>/dev/null || true
-            fi
+            # Nettoyer les répertoires après démontage
+            rm -rf "$TEMP_MOUNT" 2>/dev/null || true
+            rm -rf "$TEMP_UPPER" 2>/dev/null || true
         fi
         
         unset _TEMP_FOLDERS_MOUNT _TEMP_FOLDERS_UPPER
@@ -5636,9 +5697,8 @@ mount_wgp() {
             fi
             if [ "$HAS_ACCESS" = "false" ]; then
                 echo "Aucun processus n'utilise le montage, forçage du démontage..."
-                # Forcer le démontage lazy pour les montages stale
-                fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null || true
-                sleep 0.5
+                # Lazy unmount pour les montages stale (évite crash fuse-overlayfs)
+                umount -l "$MOUNT_DIR" 2>/dev/null || true
             else
                 echo "Des processus utilisent encore ce montage, attente..."
                 sleep 2
@@ -5656,9 +5716,8 @@ mount_wgp() {
 
     if [ $? -ne 0 ]; then
         echo "Échec du montage, nettoyage du point de montage..."
-        # Forcer le démontage si c'est un montage stale
-        fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null || true
-        sleep 0.5
+        # Lazy unmount si c'est un montage stale (évite crash fuse-overlayfs)
+        umount -l "$MOUNT_DIR" 2>/dev/null || true
         
         # Tenter de supprimer le répertoire
         if ! rmdir "$MOUNT_DIR" 2>/dev/null; then
@@ -5699,36 +5758,19 @@ cleanup_wgp() {
         return 0
     fi
     
-    if mountpoint -q "$MOUNT_DIR"; then
-        sleep 0.3
-        
-        local mount_escape
-        mount_escape=$(printf '%s' "$MOUNT_DIR" | sed 's/[[\.*^$()+?{|\\]/\\&/g')
-        
-        # Les processus devraient déjà être terminés à ce point
-        # (attente faite dans launch_wine_game)
-        sleep 0.5
-    fi
-
-    echo "Démontage de $WGPACK_NAME..."
-
+    # Nettoyer les overlays temporaires d'abord (ils utilisent le montage principal comme lowerdir)
     cleanup_saves_symlink
     cleanup_extras_symlink
     cleanup_temp_symlink
     
+    echo "Démontage de $WGPACK_NAME..."
+    
+    # Démontage rapide sans attendre (lazy unmount)
+    # Le lazy unmount détache immédiatement le point de montage
+    # sans bloquer sur les processus encore actifs
     unmount_fuse_overlay "$MOUNT_DIR" -f
     
-    if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
-        # Tester si c'est un montage stale
-        if ! ls "$MOUNT_DIR" >/dev/null 2>&1; then
-            echo "Nettoyage d'un montage stale..."
-            fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null || true
-        else
-            umount -f "$MOUNT_DIR" 2>/dev/null || umount -f -l "$MOUNT_DIR" 2>/dev/null || true
-        fi
-        sleep 0.2
-    fi
-    
+    # Nettoyer les répertoires (le montage est détaché, c'est sûr)
     if [ -d "$MOUNT_DIR" ]; then
         rm -rf "$MOUNT_DIR" 2>/dev/null || true
     fi
@@ -6228,8 +6270,17 @@ launch_wine_game() {
             
             bwrap_args=$(build_bwrap_args "$bwrap_access_dir" "$bwrap_access_mode")
             
+            # Configuration MangoHud pour Wine 11+
+            # MangoHud doit être À L'INTÉRIEUR du sandbox pour fonctionner correctement
+            local mango_prefix=""
+            if [ "${MANGOHUD:-}" != "0" ] && [ -n "${MANGOHUD_BIN:-}" ]; then
+                mango_prefix="$MANGOHUD_BIN "
+                echo "MangoHud sera activé à l'intérieur du sandbox"
+            fi
+            
             # IMPORTANT: Mettre à jour CMD avec bwrap
-            CMD="bwrap $bwrap_args -- $WINE_BIN"
+            # MangoHud (si activé) est à l'intérieur du sandbox: bwrap ... -- mangohud wine
+            CMD="bwrap $bwrap_args -- ${mango_prefix}$WINE_BIN"
             
             # Mode master : enregistrer cette instance comme maître
             register_master_instance "$WINEPREFIX"
@@ -6245,15 +6296,19 @@ launch_wine_game() {
         echo "Sandbox désactivé (--nosandbox)"
     fi
     
-    if [ -n "$MANGOHUD_BIN" ] && [ "${MANGOHUD:-}" != "0" ]; then
-        export MANGOHUD=1
-        export MANGOHUD_DLSYM=1
-        echo "MangoHud activé (système)"
-    elif [ "${MANGOHUD:-}" = "0" ]; then
-        echo "MangoHud désactivé par MANGOHUD=0"
-        unset MANGOHUD
-        unset MANGOHUD_DLSYM
-        unset MANGOHUD_BIN
+    # Configuration MangoHud pour mode nosandbox
+    # En mode nosandbox, mangohud est utilisé comme wrapper externe
+    if [ "$nosandbox_mode" = true ]; then
+        if [ "${MANGOHUD:-}" = "0" ]; then
+            echo "MangoHud désactivé par MANGOHUD=0"
+            unset MANGOHUD
+            unset MANGOHUD_DLSYM
+            unset MANGOHUD_BIN
+        elif [ -n "$MANGOHUD_BIN" ] && [ "${MANGOHUD:-1}" != "0" ]; then
+            export MANGOHUD=1
+            echo "MangoHud activé (mode nosandbox)"
+            CMD="$MANGOHUD_BIN $CMD"
+        fi
     fi
     
     # Lancer le jeu (synchrone pour garantir le retour à la fin)
@@ -8074,7 +8129,10 @@ run_wgp_mode() {
     filename="$(basename "$FULL_EXE_PATH")"
     local lock_file="/tmp/wgp-lock-$filename"
     echo "$$:$(date +%s)" > "$lock_file"
-    trap 'rm -f "$lock_file"' EXIT
+    
+    # Trap pour nettoyer les overlays même si le script est interrompu
+    # Le cleanup_wgp utilise lazy unmount qui est sûr même si des processus tournent encore
+    trap 'echo "Nettoyage des overlays..."; cleanup_wgp; rm -f "$lock_file" 2>/dev/null' EXIT INT TERM
 
     # Récupérer le dossier contenant le fichier .wgp
     local wgp_dir
@@ -8083,6 +8141,8 @@ run_wgp_mode() {
     launch_wine_game "$FULL_EXE_PATH" "$args" "$filename" "$env_vars" "true" "$wgp_dir"
     
     # Nettoyage après la fin du jeu
+    # Désactiver le trap pour éviter le double nettoyage (trap EXIT s'exécuterait aussi)
+    trap - EXIT INT TERM
     cleanup_wgp
     rm -f "$lock_file" 2>/dev/null
 }
