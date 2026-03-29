@@ -39,13 +39,36 @@ rate_limit
 TEMP_MOUNT=$(mktemp -d)
 TEMP_ICO=$(mktemp -d)
 
+# Fonction de sortie propre qui appelle cleanup puis exit
+cleanup_and_exit() {
+    local exit_code=$1
+    cleanup
+    exit $exit_code
+}
+
 # Nettoyage complet en toute circonstance
 cleanup() {
+    # Tuer le processus squashfuse explicitement si on l'a enregistré
+    SQUASHFUSE_PID_FILE="/tmp/wgp-thumbnailer-squashfuse.${MY_PID}.pid"
+    if [ -f "$SQUASHFUSE_PID_FILE" ]; then
+        local stored_pid
+        stored_pid=$(cat "$SQUASHFUSE_PID_FILE" 2>/dev/null)
+        if [ -n "$stored_pid" ]; then
+            kill -TERM "$stored_pid" 2>/dev/null || true
+            # Attendre que le processus soit vraiment mort
+            for i in 1 2 3; do
+                kill -0 "$stored_pid" 2>/dev/null || break
+                sleep 0.1
+            done
+            kill -KILL "$stored_pid" 2>/dev/null || true
+        fi
+        rm -f "$SQUASHFUSE_PID_FILE"
+    fi
     # Démontage forcé
     if mountpoint -q "$TEMP_MOUNT" 2>/dev/null; then
         fusermount -uz "$TEMP_MOUNT" 2>/dev/null || fusermount -u "$TEMP_MOUNT" 2>/dev/null || umount -f "$TEMP_MOUNT" 2>/dev/null
     fi
-    # Tuer tout squashfuse lié à ce mount point (sans lsof pour SELinux)
+    # Backup: tuer tout squashfuse lié à ce mount point
     for pid in $(pgrep -f "squashfuse.*$TEMP_MOUNT" 2>/dev/null); do
         kill -TERM "$pid" 2>/dev/null || true
     done
@@ -56,41 +79,58 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Montage avec timeout shell (5 secondes max, sans timeout pour SELinux)
+# Variable pour stocker le PID de squashfuse (fichier unique par instance)
+SQUASHFUSE_PID_FILE="/tmp/wgp-thumbnailer-squashfuse.${MY_PID}.pid"
+
+# Montage en arrière-plan avec timeout
+squashfuse "$INPUT" "$TEMP_MOUNT" &
+SQUASHFUSE_PID=$!
+echo $SQUASHFUSE_PID > "$SQUASHFUSE_PID_FILE"
+
+# Timeout killer en arrière-plan
 (
-    squashfuse "$INPUT" "$TEMP_MOUNT" &
-    SQUASH_PID=$!
-    (sleep 5 && kill $SQUASH_PID 2>/dev/null) &
-    KILLER_PID=$!
-    wait $SQUASH_PID
-    KILLER_STATUS=$?
-    kill $KILLER_PID 2>/dev/null
-    exit $KILLER_STATUS
-) || exit 1
+    sleep 5
+    kill $SQUASHFUSE_PID 2>/dev/null
+) &
+KILLER_PID=$!
+
+# Attendre le montage
+wait $SQUASHFUSE_PID
+MOUNT_STATUS=$?
+
+# Arrêter le killer
+kill $KILLER_PID 2>/dev/null
+wait $KILLER_PID 2>/dev/null
+
+# Vérifier si le montage a réussi
+if [ $MOUNT_STATUS -ne 0 ]; then
+    rm -f "$SQUASHFUSE_PID_FILE"
+    exit 1
+fi
 
 # L'icône custom .icon.png a priorité sur l'extraction depuis .exe
 if [ -f "$TEMP_MOUNT/.icon.png" ]; then
-    magick "$TEMP_MOUNT/.icon.png" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && exit 0
+    magick "$TEMP_MOUNT/.icon.png" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && cleanup_and_exit 0
 fi
 
 # Lecture .launch
 if [ ! -f "$TEMP_MOUNT/.launch" ]; then
-    exit 1  # → fallback MIME (org.gnome.Games)
+    cleanup_and_exit 1  # → fallback MIME (org.gnome.Games)
 fi
 
 EXE_IN_WGP=$(cat "$TEMP_MOUNT/.launch" | tr -d '\r')
 ICON_EXE_PATH="$TEMP_MOUNT/$EXE_IN_WGP"
 
 # Si le fichier indiqué est un symlink → abandonne
-[ -L "$ICON_EXE_PATH" ] && exit 1
+[ -L "$ICON_EXE_PATH" ] && cleanup_and_exit 1
 
 # Si le fichier indiqué n'existe pas → fallback
-[ -f "$ICON_EXE_PATH" ] || exit 1
+[ -f "$ICON_EXE_PATH" ] || cleanup_and_exit 1
 
 # NOUVEAU : si c'est un .bat (ou .cmd, .ps1, etc.), on ne touche à rien → fallback
 case "${ICON_EXE_PATH,,}" in  # ,, = tout en minuscule
     *.bat|*.cmd|*.ps1|*.vbs)
-        exit 1  # → Dolphin affiche org.gnome.Games
+        cleanup_and_exit 1  # → Dolphin affiche org.gnome.Games
         ;;
 esac
 
@@ -109,7 +149,7 @@ esac
     exit $EXTRACT_STATUS
 )
 if [ -f "$TEMP_PNG" ]; then
-    magick "$TEMP_PNG" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && exit 0
+    magick "$TEMP_PNG" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && cleanup_and_exit 0
 fi
 
-exit 1  # → fallback MIME si rien d'extrait
+cleanup_and_exit 1  # → fallback MIME si rien d'extrait
