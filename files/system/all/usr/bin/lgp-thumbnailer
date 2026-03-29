@@ -137,22 +137,19 @@ EXE_LOWER=$(echo "$EXE_NAME" | tr '[:upper:]' '[:lower:]')
 # Si c'est un AppImage, extraire l'icône avec appimageiconextract.py
 if [[ "$EXE_LOWER" == *.appimage ]]; then
     TEMP_PNG=$(mktemp)
-    trap cleanup EXIT
     # Extraction avec timeout shell (5 secondes max, sans timeout pour SELinux)
-    (
-        python3 "$APPIMAGEICONEXTRACT" "$ICON_EXE_PATH" "$TEMP_PNG" 2>/dev/null &
-        EXTRACT_PID=$!
-        (sleep 5 && kill $EXTRACT_PID 2>/dev/null) &
-        KILLER_PID=$!
-        wait $EXTRACT_PID
-        EXTRACT_STATUS=$?
-        kill $KILLER_PID 2>/dev/null
-        exit $EXTRACT_STATUS
-    )
+    python3 "$APPIMAGEICONEXTRACT" "$ICON_EXE_PATH" "$TEMP_PNG" 2>/dev/null &
+    EXTRACT_PID=$!
+    (sleep 5 && kill $EXTRACT_PID 2>/dev/null) &
+    KILLER_PID=$!
+    wait $EXTRACT_PID
+    EXTRACT_STATUS=$?
+    kill $KILLER_PID 2>/dev/null
+    wait $KILLER_PID 2>/dev/null
     if [ -f "$TEMP_PNG" ]; then
-        magick "$TEMP_PNG" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && exit 0
+        magick "$TEMP_PNG" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && cleanup_and_exit 0
     fi
 fi
 
 # Si c'est un script .sh, .py ou autre → fallback MIME
-exit 1  # → fallback MIME si rien d'extrait
+cleanup_and_exit 1  # → fallback MIME si rien d'extrait
