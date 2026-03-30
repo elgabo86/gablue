@@ -5,15 +5,15 @@ set -ouex pipefail
 echo "::group::Executing install-nvidia"
 trap 'echo "::group::"' EXIT
 
-if [[ "${SOURCE_IMAGE}" == "kinoite" ]]; then
- VARIANT_PKGS="supergfxctl-plasmoid supergfxctl"
-elif [[ "${SOURCE_IMAGE}" == "silverblue" ]]; then
- VARIANT_PKGS="gnome-shell-extension-supergfxctl-gex supergfxctl"
-else
- VARIANT_PKGS=""
-fi
+# Installer uniquement supergfxctl comme sur Bazzite
+VARIANT_PKGS="supergfxctl"
 
 dnf5 -y copr enable ublue-os/staging && \
+
+# Installer egl-wayland pour Wayland sur NVIDIA (paquets 32-bit et 64-bit)
+dnf5 -y install \
+    egl-wayland.x86_64 \
+    egl-wayland.i686 && \
 
 # Installer Mesa i686 depuis Terra pour les dépendances NVIDIA 32-bit
 # (Les paquets Mesa sont exclus des dépôts Fedora, donc on les prend depuis Terra)
@@ -43,9 +43,16 @@ dnf5 install -y \
     libva-nvidia-driver \
     ${VARIANT_PKGS}
 
+# Supprimer les ICD Vulkan Nouveau pour éviter les conflits avec NVIDIA
+rm -f /usr/share/vulkan/icd.d/nouveau_icd.*.json
+
+# Créer le symlink pour libnvidia-ml (requis par certains outils de monitoring)
+ln -sf libnvidia-ml.so.1 /usr/lib64/libnvidia-ml.so
+
 dnf5 -y copr disable ublue-os/staging && \
 
 systemctl enable ublue-nvctk-cdi.service
+systemctl disable supergfxd.service
 semodule --verbose --install /usr/share/selinux/packages/nvidia-container.pp
 
 # Universal Blue specific Initramfs fixes
