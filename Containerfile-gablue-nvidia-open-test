@@ -29,6 +29,7 @@ COPY files/system/nvidia-open /
 ENV SOURCE_IMAGE=${SOURCE_IMAGE}
 ENV KERNEL_FLAVOR=${KERNEL_FLAVOR}
 ENV KERNEL_VERSION=${KERNEL_VERSION}
+ENV VARIANT=nvidia-open
 ENV NVIDIA_TYPE=nvidia-open
 
 # Configuration des dépôts Copr
