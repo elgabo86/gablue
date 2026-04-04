@@ -1,0 +1,74 @@
+#!/usr/bin/bash
+
+# Installation des pilotes NVIDIA via akmods (version test)
+# Ce script installe les pilotes NVIDIA depuis les akmods ublue-os
+# Supporte NVIDIA Open (nvidia-open) et NVIDIA Closed (nvidia)
+
+set -eoux pipefail
+
+# =============================================================================
+# PRÉPARATION
+# =============================================================================
+
+# Détection du type de pilote NVIDIA (nvidia-open ou nvidia)
+NVIDIA_TYPE="${NVIDIA_TYPE:-nvidia-open}"
+
+echo "Installation des pilotes NVIDIA type: $NVIDIA_TYPE"
+
+# Activation du dépôt Terra Mesa temporairement pour egl-wayland
+dnf5 -y config-manager setopt "terra-mesa".enabled=1
+
+# Activation du dépôt staging pour les dépendances NVIDIA
+dnf5 -y copr enable ublue-os/staging
+
+# =============================================================================
+# INSTALLATION EGL-WAYLAND
+# =============================================================================
+
+# Installation des bibliothèques EGL Wayland (32 et 64 bits)
+dnf5 -y install \
+    egl-wayland.x86_64 \
+    egl-wayland.i686 \
+    egl-wayland2.x86_64 \
+    egl-wayland2.i686
+
+# =============================================================================
+# INSTALLATION PILOTES NVIDIA
+# =============================================================================
+
+# Détermination du chemin des akmods
+if [[ "$NVIDIA_TYPE" == "nvidia-open" ]]; then
+    AKMODS_PATH="/tmp/rpms/nvidia-open"
+    IMAGE_NAME="kinoite"
+else
+    AKMODS_PATH="/tmp/rpms/nvidia"
+    IMAGE_NAME="kinoite"
+fi
+
+# Installation via le script ublue-os
+if [[ -d "$AKMODS_PATH" ]]; then
+    AKMODNV_PATH="$AKMODS_PATH" MULTILIB=1 "$AKMODS_PATH/ublue-os/nvidia-install.sh"
+else
+    echo "Erreur : Les pilotes NVIDIA n'ont pas été trouvés dans $AKMODS_PATH"
+    exit 1
+fi
+
+# =============================================================================
+# CONFIGURATION POST-INSTALLATION
+# =============================================================================
+
+# Suppression du fichier ICD Nouveau (pour éviter les conflits)
+rm -f /usr/share/vulkan/icd.d/nouveau_icd.*.json || true
+
+# Création du lien symbolique pour libnvidia-ml
+ln -sf libnvidia-ml.so.1 /usr/lib64/libnvidia-ml.so
+
+# =============================================================================
+# DÉSACTIVATION DES DÉPÔTS
+# =============================================================================
+
+# Désactivation du dépôt Terra Mesa
+dnf5 -y config-manager setopt "terra-mesa".enabled=0
+
+# Désactivation du dépôt staging
+dnf5 -y copr disable ublue-os/staging

@@ -1,0 +1,80 @@
+# Arguments pour configurer l'image de base et ses variantes
+ARG SOURCE_IMAGE
+ARG SOURCE_SUFFIX
+ARG FEDORA_VERSION
+ARG KERNEL_VERSION
+ARG KERNEL_FLAVOR
+
+# Étape intermédiaire : récupération du kernel et des akmods depuis ublue-os
+FROM ghcr.io/ublue-os/akmods:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods
+FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-extra
+FROM ghcr.io/ublue-os/akmods-nvidia-open:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-nvidia-open
+
+# Image de base pour la construction finale
+FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${FEDORA_VERSION}
+
+# Redéfinition des arguments après le FROM
+ARG SOURCE_IMAGE
+ARG KERNEL_FLAVOR
+ARG KERNEL_VERSION
+
+# Copie des fichiers système dans l'image
+COPY files/scripts /ctx/
+
+COPY files/system/all /
+COPY files/system/${SOURCE_IMAGE} /
+COPY files/system/nvidia-open /
+
+# Définition des variables d'environnement pour les scripts
+ENV SOURCE_IMAGE=${SOURCE_IMAGE}
+ENV KERNEL_FLAVOR=${KERNEL_FLAVOR}
+ENV KERNEL_VERSION=${KERNEL_VERSION}
+ENV NVIDIA_TYPE=nvidia-open
+
+# Configuration des dépôts Copr
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    sh /ctx/copr && \
+    sh /ctx/cleanup
+
+# Installation du kernel ogc avec akmods
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/tmp/kernel-rpms \
+    --mount=type=bind,from=akmods,src=/rpms/common,dst=/tmp/rpms/common \
+    --mount=type=bind,from=akmods,src=/rpms/kmods,dst=/tmp/rpms/kmods \
+    --mount=type=bind,from=akmods-extra,src=/rpms/extra,dst=/tmp/rpms/extra \
+    --mount=type=bind,from=akmods-extra,src=/rpms/kmods,dst=/tmp/rpms/kmods-extra \
+    sh /ctx/kernel-test && \
+    sh /ctx/cleanup
+
+# Installation Mesa Terra
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    sh /ctx/mesa && \
+    sh /ctx/cleanup
+
+# Installation des pilotes NVIDIA Open via akmods
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=akmods-nvidia-open,src=/rpms,dst=/tmp/rpms/nvidia-open \
+    sh /ctx/nvidia-test && \
+    sh /ctx/cleanup
+
+# Installation des paquets RPM (version test sans libs 32-bit sauf Mesa)
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    sh /ctx/rpm-test && \
+    sh /ctx/cleanup
+
+# Post-installation : configuration finale
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    sh /ctx/systemd && \
+    sh /ctx/post-install && \
+    sh /ctx/initramfs && \
+    sh /ctx/finalize && \
+    rm -rf /ctx
+
+# Valider l'image bootc
+RUN --mount=type=tmpfs,target=/run --network=none bootc container lint

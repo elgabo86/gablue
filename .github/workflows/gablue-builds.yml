@@ -112,3 +112,24 @@ jobs:
       kernel_version: ""
       kernel_flavor: "ogc"
 
+  build-nvidia-open-test:
+    name: Build nvidia-open-test
+    if: |
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[test]') || contains(github.event.head_commit.message, '[nvidia]') || contains(github.event.head_commit.message, '[all]')))
+    uses: ./.github/workflows/reusable-gablue-image.yml
+    secrets: inherit
+    with:
+      image_name: "gablue-nvidia-open-test"
+      image_desc: "Gablue nvidia-open test image (kernel ogc unstable)"
+      image_variant: "nvidia-open"
+      source_image: "kinoite"
+      source_suffix: "-main"
+      fedora_version: "43"
+      kernel_type: "ogc"
+      kernel_version: ""
+      kernel_flavor: "ogc"
+      containerfile: "Containerfile-gablue-nvidia-open-test"
+
