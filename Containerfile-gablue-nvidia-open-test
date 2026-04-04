@@ -1,4 +1,5 @@
 # Arguments pour configurer l'image de base et ses variantes
+ARG VARIANT
 ARG SOURCE_IMAGE
 ARG SOURCE_SUFFIX
 ARG FEDORA_VERSION
@@ -14,6 +15,7 @@ FROM ghcr.io/ublue-os/akmods-nvidia-open:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KE
 FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${FEDORA_VERSION}
 
 # Redéfinition des arguments après le FROM
+ARG VARIANT
 ARG SOURCE_IMAGE
 ARG KERNEL_FLAVOR
 ARG KERNEL_VERSION
@@ -29,7 +31,7 @@ COPY files/system/nvidia-open /
 ENV SOURCE_IMAGE=${SOURCE_IMAGE}
 ENV KERNEL_FLAVOR=${KERNEL_FLAVOR}
 ENV KERNEL_VERSION=${KERNEL_VERSION}
-ENV VARIANT=nvidia-open
+ENV VARIANT=${VARIANT}
 ENV NVIDIA_TYPE=nvidia-open
 
 # Configuration des dépôts Copr
