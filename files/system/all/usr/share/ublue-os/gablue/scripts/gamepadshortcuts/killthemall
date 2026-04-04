@@ -5,6 +5,12 @@
   # Recherche et kill tous les processus Windows (xbox360 inclus)
   pgrep -f -i "\\.exe|\\.bat" | grep -v $$ | xargs -r kill -9 2>/dev/null; rm -rf /tmp/gwine-locks-$USER/ &
 
+  # Kill tous les processus wgp/wine sauf squashfuse (nettoyage complet jeu sans casser gwine)
+  pgrep -f "wgpackmount" | grep -v squashfuse | xargs -r kill -9 2>/dev/null &
+
+  # Kill processus Wine en mode non-wgp (chemin Z:)
+  pgrep -f "Z:" | xargs -r kill -9 2>/dev/null &
+
   # Gestion des processus bottles (spécifique avec vérification bwrap)
   pgrep -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q "^bwrap$" && kill -9 {}' &
 
