@@ -1,155 +1,34 @@
 #!/bin/bash
-INPUT="$1"    # %i
-OUTPUT="$2"   # %o
-SIZE="$3"     # %s (128 ou 256)
+# Thumbnailer simple pour .lgp - ne gère que les .icon.png
+# Pas d'extraction d'icônes AppImage (trop lent, cause timeouts Dolphin)
 
-[ -z "$SIZE" ] && SIZE=256
+INPUT="$1"
+OUTPUT="$2"
+SIZE="${3:-256}"
 
-APPIMAGEICONEXTRACT="/usr/share/ublue-os/gablue/scripts/appimageiconextract.py"
+# Vérifications basiques
+[ -f "$INPUT" ] || exit 1
+[ -z "$OUTPUT" ] && exit 1
 
-# Fichier lock unique par PID pour éviter les race conditions
-LOCK_FILE="/tmp/lgp-thumbnailer.${MY_PID}.lock"
-MY_PID=$$
-
-# Rate limiting: attendre que le thumbnailer précédent (quel qu'il soit) ait fini
-# Cela évite de surcharger Dolphin avec trop de callbacks simultanés
-rate_limit() {
-    local max_wait=30
-    local waited=0
-    while [ -f /tmp/lgp-thumbnailer.active ] && [ $waited -lt $max_wait ]; do
-        sleep 0.05
-        waited=$((waited + 1))
-    done
-    # Marquer comme actif
-    touch /tmp/lgp-thumbnailer.active
-}
-
-# Vérification rapide: si fichier en cours d'écriture, on abandonne (Dolphin rappellera plus tard)
-size1=$(stat -c %s "$INPUT" 2>/dev/null) || { rm -f /tmp/lgp-thumbnailer.active 2>/dev/null; exit 1; }
-sleep 0.1
-size2=$(stat -c %s "$INPUT" 2>/dev/null) || { rm -f /tmp/lgp-thumbnailer.active 2>/dev/null; exit 1; }
-if [ "$size1" != "$size2" ]; then
-    rm -f /tmp/lgp-thumbnailer.active 2>/dev/null
-    exit 1  # Fichier en cours d'écriture, on sort
-fi
-
-# Rate limiting pour éviter de surcharger Dolphin
-rate_limit
-
+# Créer un répertoire temporaire pour le montage
 TEMP_MOUNT=$(mktemp -d)
-TEMP_PNG=""
 
-# Fonction de sortie propre qui appelle cleanup puis exit
-cleanup_and_exit() {
-    local exit_code=$1
-    cleanup
-    exit $exit_code
-}
-
-# Nettoyage complet en toute circonstance
+# Cleanup function
 cleanup() {
-    # Tuer le processus squashfuse explicitement si on l'a enregistré
-    SQUASHFUSE_PID_FILE="/tmp/lgp-thumbnailer-squashfuse.${MY_PID}.pid"
-    if [ -f "$SQUASHFUSE_PID_FILE" ]; then
-        local stored_pid
-        stored_pid=$(cat "$SQUASHFUSE_PID_FILE" 2>/dev/null)
-        if [ -n "$stored_pid" ]; then
-            kill -TERM "$stored_pid" 2>/dev/null || true
-            # Attendre que le processus soit vraiment mort
-            for i in 1 2 3; do
-                kill -0 "$stored_pid" 2>/dev/null || break
-                sleep 0.1
-            done
-            kill -KILL "$stored_pid" 2>/dev/null || true
-        fi
-        rm -f "$SQUASHFUSE_PID_FILE"
-    fi
-    # Démontage forcé
     if mountpoint -q "$TEMP_MOUNT" 2>/dev/null; then
-        fusermount -uz "$TEMP_MOUNT" 2>/dev/null || fusermount -u "$TEMP_MOUNT" 2>/dev/null || umount -f "$TEMP_MOUNT" 2>/dev/null
+        fusermount -uz "$TEMP_MOUNT" 2>/dev/null || fusermount -u "$TEMP_MOUNT" 2>/dev/null || umount -f "$TEMP_MOUNT" 2>/dev/null || true
     fi
-    # Backup: tuer tout squashfuse lié à ce mount point
-    for pid in $(pgrep -f "squashfuse.*$TEMP_MOUNT" 2>/dev/null); do
-        kill -TERM "$pid" 2>/dev/null || true
-    done
     rm -rf "$TEMP_MOUNT"
-    [ -n "$TEMP_PNG" ] && rm -f "$TEMP_PNG"
-    rm -f "$LOCK_FILE"
-    # Libérer le rate limiter
-    rm -f /tmp/lgp-thumbnailer.active
 }
 trap cleanup EXIT
 
-# Variable pour stocker le PID de squashfuse (fichier unique par instance)
-SQUASHFUSE_PID_FILE="/tmp/lgp-thumbnailer-squashfuse.${MY_PID}.pid"
+# Monter le squashfs
+squashfuse "$INPUT" "$TEMP_MOUNT" || exit 1
 
-# Montage en arrière-plan avec timeout
-squashfuse "$INPUT" "$TEMP_MOUNT" &
-SQUASHFUSE_PID=$!
-echo $SQUASHFUSE_PID > "$SQUASHFUSE_PID_FILE"
-
-# Timeout killer en arrière-plan
-(
-    sleep 5
-    kill $SQUASHFUSE_PID 2>/dev/null
-) &
-KILLER_PID=$!
-
-# Attendre le montage
-wait $SQUASHFUSE_PID
-MOUNT_STATUS=$?
-
-# Arrêter le killer
-kill $KILLER_PID 2>/dev/null
-wait $KILLER_PID 2>/dev/null
-
-# Vérifier si le montage a réussi
-if [ $MOUNT_STATUS -ne 0 ]; then
-    rm -f "$SQUASHFUSE_PID_FILE"
-    cleanup_and_exit 1
-fi
-
-# L'icône custom .icon.png a priorité
+# Vérifier si .icon.png existe
 if [ -f "$TEMP_MOUNT/.icon.png" ]; then
-    magick "$TEMP_MOUNT/.icon.png" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && cleanup_and_exit 0
+    magick "$TEMP_MOUNT/.icon.png" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && exit 0
 fi
 
-# Lecture .launch
-if [ ! -f "$TEMP_MOUNT/.launch" ]; then
-    cleanup_and_exit 1  # → fallback MIME (applications-games)
-fi
-
-EXE_IN_LGP=$(cat "$TEMP_MOUNT/.launch" | tr -d '\r')
-ICON_EXE_PATH="$TEMP_MOUNT/$EXE_IN_LGP"
-
-# Si le fichier indiqué est un symlink → suivre le lien
-if [ -L "$ICON_EXE_PATH" ]; then
-    ICON_EXE_PATH=$(realpath "$ICON_EXE_PATH")
-fi
-
-# Si le fichier indiqué n'existe pas → fallback
-[ -f "$ICON_EXE_PATH" ] || cleanup_and_exit 1
-
-# Vérifier le type de fichier
-EXE_NAME=$(basename "$ICON_EXE_PATH")
-EXE_LOWER=$(echo "$EXE_NAME" | tr '[:upper:]' '[:lower:]')
-
-# Si c'est un AppImage, extraire l'icône avec appimageiconextract.py
-if [[ "$EXE_LOWER" == *.appimage ]]; then
-    TEMP_PNG=$(mktemp)
-    # Extraction avec timeout shell (1 seconde max - réduit pour éviter SIGKILL de Dolphin)
-    python3 "$APPIMAGEICONEXTRACT" "$ICON_EXE_PATH" "$TEMP_PNG" 2>/dev/null &
-    EXTRACT_PID=$!
-    (sleep 1 && kill $EXTRACT_PID 2>/dev/null) &
-    KILLER_PID=$!
-    wait $EXTRACT_PID
-    EXTRACT_STATUS=$?
-    kill $KILLER_PID 2>/dev/null
-    wait $KILLER_PID 2>/dev/null
-    if [ -f "$TEMP_PNG" ]; then
-        magick "$TEMP_PNG" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && cleanup_and_exit 0
-    fi
-fi
-
-# Si c'est un script .sh, .py ou autre → fallback MIME
-cleanup_and_exit 1  # → fallback MIME si rien d'extrait
+# Pas d'icône custom → fallback MIME
+exit 1
