@@ -10,7 +10,8 @@ gwine_completions() {
     # Options disponibles
     opts="--help -h --fix --exewgp --init --offline --update --kdialog --cmd
           --regedit --reg --winecfg --winetricks --winetrick --download-components
-          --cachepack --nosandbox --joytest --uninstall --args --gameid --use-ln-mounts --kill"
+          --cachepack --nosandbox --joytest --args --gameid --use-ln-mounts --kill --dir
+          --wayland --env"
 
     # Si on complète une option
     if [[ ${cur} == -* ]]; then
@@ -29,6 +30,25 @@ gwine_completions() {
             return 0
             ;;
     esac
+
+    # Gestion de --dir avec sous-commandes
+    local prev_prev="${COMP_WORDS[COMP_CWORD-2]}"
+    if [[ "${prev_prev}" == "--dir" ]]; then
+        case "${prev}" in
+            add|del)
+                # Autocomplétion des répertoires
+                COMPREPLY=( $(compgen -d -- ${cur}) )
+                return 0
+                ;;
+        esac
+    fi
+
+    # Si on vient de --dir sans sous-commande
+    if [[ "${prev}" == "--dir" ]]; then
+        local dir_subcmds="add del list reset"
+        COMPREPLY=( $(compgen -W "${dir_subcmds}" -- ${cur}) )
+        return 0
+    fi
 
     # Autocomplétion des fichiers .wgp et .exe avec gestion des espaces
     local IFS=$'\n'
