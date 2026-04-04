@@ -137,10 +137,10 @@ EXE_LOWER=$(echo "$EXE_NAME" | tr '[:upper:]' '[:lower:]')
 # Si c'est un AppImage, extraire l'icône avec appimageiconextract.py
 if [[ "$EXE_LOWER" == *.appimage ]]; then
     TEMP_PNG=$(mktemp)
-    # Extraction avec timeout shell (5 secondes max, sans timeout pour SELinux)
+    # Extraction avec timeout shell (1 seconde max - réduit pour éviter SIGKILL de Dolphin)
     python3 "$APPIMAGEICONEXTRACT" "$ICON_EXE_PATH" "$TEMP_PNG" 2>/dev/null &
     EXTRACT_PID=$!
-    (sleep 5 && kill $EXTRACT_PID 2>/dev/null) &
+    (sleep 1 && kill $EXTRACT_PID 2>/dev/null) &
     KILLER_PID=$!
     wait $EXTRACT_PID
     EXTRACT_STATUS=$?

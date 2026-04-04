@@ -137,10 +137,10 @@ esac
 # Sinon : c'est un .exe → extraction avec exeiconextract.py
 TEMP_PNG="$TEMP_ICO/extracted.png"
 
-# Extraction avec timeout shell (5 secondes max, sans timeout pour SELinux)
+# Extraction avec timeout shell (1 seconde max - réduit pour éviter SIGKILL de Dolphin)
 python3 "$EXEICONEXTRACT" "$ICON_EXE_PATH" "$TEMP_PNG" 2>/dev/null &
 EXTRACT_PID=$!
-(sleep 5 && kill $EXTRACT_PID 2>/dev/null) &
+(sleep 1 && kill $EXTRACT_PID 2>/dev/null) &
 KILLER_PID=$!
 wait $EXTRACT_PID
 EXTRACT_STATUS=$?
