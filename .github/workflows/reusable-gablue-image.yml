@@ -26,6 +26,10 @@ on:
       kernel_version:
         required: true
         type: string
+      kernel_flavor:
+        required: false
+        type: string
+        default: ""
 
 env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"
@@ -46,20 +50,31 @@ jobs:
         id: get_kernel_version
         if: inputs.kernel_version == ''
         run: |
-          # Construire l'URI du conteneur kernel
-          KERNEL_URI="ghcr.io/bazzite-org/kernel-bazzite:latest-f${{ inputs.fedora_version }}-x86_64"
+          # Pour l'image test, utiliser le kernel ogc depuis ublue-os/akmods
+          if [[ "${{ inputs.image_name }}" == "gablue-main-test" ]]; then
+            # Utiliser le kernel ogc de Bazzite unstable
+            KERNEL_VERSION="6.19.10-ogc1.1.fc${{ inputs.fedora_version }}.x86_64"
+            KERNEL_FLAVOR="ogc"
+            echo "Using ogc kernel for test image: $KERNEL_VERSION"
+          else
+            # Construire l'URI du conteneur kernel bazzite standard
+            KERNEL_URI="ghcr.io/bazzite-org/kernel-bazzite:latest-f${{ inputs.fedora_version }}-x86_64"
 
-          echo "Kernel URI: $KERNEL_URI"
+            echo "Kernel URI: $KERNEL_URI"
 
-          # Utiliser skopeo inspect pour récupérer les labels
-          KERNEL_INFO=$(skopeo inspect "docker://$KERNEL_URI")
-          if [[ -z "$KERNEL_INFO" ]]; then
-            echo "Erreur : Impossible de récupérer les informations du kernel depuis $KERNEL_URI"
-            exit 1
+            # Utiliser skopeo inspect pour récupérer les labels
+            KERNEL_INFO=$(skopeo inspect "docker://$KERNEL_URI")
+            if [[ -z "$KERNEL_INFO" ]]; then
+              echo "Erreur : Impossible de récupérer les informations du kernel depuis $KERNEL_URI"
+              exit 1
+            fi
+
+            # Extraire la version du kernel depuis les labels (ou utiliser "latest" comme fallback)
+            KERNEL_VERSION=$(echo "$KERNEL_INFO" | jq -r '.Labels["org.bazzite.kernel.version"] // "latest"')
+            KERNEL_FLAVOR="bazzite"
+
+            echo "LATEST_TAG=$KERNEL_URI" >> $GITHUB_OUTPUT
           fi
-
-          # Extraire la version du kernel depuis les labels (ou utiliser "latest" comme fallback)
-          KERNEL_VERSION=$(echo "$KERNEL_INFO" | jq -r '.Labels["org.bazzite.kernel.version"] // "latest"')
 
           # Extraire la version NVIDIA depuis les labels pour compatibilité exacte
           if [[ "${{ inputs.image_variant }}" == "nvidia-open" ]]; then
@@ -77,8 +92,8 @@ jobs:
             NVIDIA_VERSION="latest"
           fi
 
-          echo "LATEST_TAG=$KERNEL_URI" >> $GITHUB_OUTPUT
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_OUTPUT
+          echo "KERNEL_FLAVOR=$KERNEL_FLAVOR" >> $GITHUB_OUTPUT
           echo "NVIDIA_VERSION=$NVIDIA_VERSION" >> $GITHUB_OUTPUT
 
       # Étape pour définir la version du noyau
@@ -147,6 +162,12 @@ jobs:
             DX_MODE_ARG="--build-arg DX_MODE=true"
           fi
 
+          # Préparer les arguments de build
+          KERNEL_FLAVOR_ARG=""
+          if [[ -n "${{ steps.get_kernel_version.outputs.KERNEL_FLAVOR }}" ]]; then
+            KERNEL_FLAVOR_ARG="--build-arg KERNEL_FLAVOR=${{ steps.get_kernel_version.outputs.KERNEL_FLAVOR }}"
+          fi
+
           sudo buildah build \
             --file "$CONTAINERFILE" \
             --format "docker" \
@@ -157,28 +178,11 @@ jobs:
             --build-arg SOURCE_SUFFIX="${{ inputs.source_suffix }}" \
             --build-arg FEDORA_VERSION="${{ inputs.fedora_version }}" \
             --build-arg KERNEL_TYPE="${{ inputs.kernel_type }}" \
+            $KERNEL_FLAVOR_ARG \
             $DX_MODE_ARG \
             --tag raw-img .
 
-      # Rechunk de l'image avec rpm-ostree
-      - name: Rechunk Image
-        id: rechunk
-        run: |
-          container=$(sudo buildah from raw-img)
-          mnt=$(sudo buildah mount $container)
-          sudo bash -c "rm -rf $mnt/run/.* $mnt/run/* $mnt/tmp/.* $mnt/tmp/*"
-          sudo buildah umount $container
-          sudo buildah config --label "-" $container
-          sudo buildah commit --identity-label=false --rm $container raw-img
-          sudo podman run --rm --privileged --volume /var/lib/containers:/var/lib/containers \
-              quay.io/centos-bootc/centos-bootc:stream10 \
-              rpm-ostree compose build-chunked-oci \
-              --bootc --max-layers 96 --format-version 2 \
-              --from localhost/raw-img --output containers-storage:localhost/chunked-img
-          sudo podman untag raw-img
-          echo "ref=containers-storage:localhost/chunked-img" >> "$GITHUB_OUTPUT"
-
-      # Appliquer les labels OCI
+      # Appliquer les labels OCI avant le rechunk
       - name: Apply Labels
         id: relabel
         env:
@@ -192,25 +196,57 @@ jobs:
         run: |
           version="${{ steps.timestamp.outputs.build_version }}"
 
-          img=${{ steps.rechunk.outputs.ref }}
+          # Clean out labels from base image
+          img=raw-img
           container=$(sudo buildah from $img)
+          sudo buildah config --label "-" $container
+          sudo buildah commit --identity-label=false --rm $container $img
+
           kver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" kernel-core)
 
-          sudo buildah config --label "org.opencontainers.image.version=$version" $container
-          sudo buildah config --label "org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" $container
-          sudo buildah config --label "ostree.bootable=true" $container
-          sudo buildah config --label "ostree.linux=$kver" $container
+          # Préparer les labels
+          declare -a labels
+          labels+=("org.opencontainers.image.version=$version")
+          labels+=("org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')")
+          labels+=("ostree.bootable=true")
+          labels+=("ostree.linux=$kver")
           while IFS= read -r line; do
             [ -z "$line" ] && continue
-            sudo buildah config --label "$line" "$container"
+            labels+=("$line")
           done <<< "$IMAGE_LABELS"
 
+          # Générer le manifest
           filter='{ "packages": [inputs | split(" ") | select(length==2) | { (.[0]): .[1] }] | sort_by(keys) | add }'
           manifest=$(sudo podman run --rm "$img" rpm -qa --qf '%{NAME} %{VERSION}\n' | jq -Rnc "$filter")
-          sudo buildah config --label "dev.hhd.rechunk.info=$manifest" $container
+          labels+=("ostree.rechunk.info=$manifest")
+
+          # Appliquer les labels et annotations (comme Bazzite)
+          container=$(sudo buildah from $img)
+          for line in "${labels[@]}"; do
+            [ -z "$line" ] && continue
+            sudo buildah config --label "$line" --annotation "$line" "$container"
+          done
 
           sudo buildah commit --identity-label=false --rm $container $img
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Rechunk de l'image avec rpm-ostree (après application des labels)
+      - name: Rechunk Image
+        id: rechunk
+        run: |
+          container=$(sudo buildah from raw-img)
+          mnt=$(sudo buildah mount $container)
+          sudo bash -c "rm -rf $mnt/run/.* $mnt/run/* $mnt/tmp/.* $mnt/tmp/*"
+          sudo buildah umount $container
+          sudo buildah commit --identity-label=false --rm $container raw-img
+          # Utiliser l'image elle-même pour le rechunk (comme Bazzite)
+          sudo podman run --rm --privileged --volume /var/lib/containers:/var/lib/containers \
+              localhost/raw-img \
+              rpm-ostree compose build-chunked-oci \
+              --bootc --max-layers 96 --format-version 2 \
+              --from localhost/raw-img --output containers-storage:localhost/chunked-img
+          sudo podman untag raw-img
+          echo "ref=containers-storage:localhost/chunked-img" >> "$GITHUB_OUTPUT"
 
       # Génération des tags après relabel
       - name: Generate tags

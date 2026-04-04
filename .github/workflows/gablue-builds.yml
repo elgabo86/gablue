@@ -103,11 +103,12 @@ jobs:
     secrets: inherit
     with:
       image_name: "gablue-main-test"
-      image_desc: "Gablue main test image"
+      image_desc: "Gablue main test image (kernel ogc unstable)"
       image_variant: "main"
       source_image: "kinoite"
       source_suffix: "-main"
       fedora_version: "43"
-      kernel_type: "bazzite"
+      kernel_type: "ogc"
       kernel_version: ""
+      kernel_flavor: "ogc"
 
