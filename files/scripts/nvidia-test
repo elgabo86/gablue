@@ -36,18 +36,17 @@ dnf5 -y install \
 # INSTALLATION PILOTES NVIDIA
 # =============================================================================
 
-# Détermination du chemin des akmods
+# Détermination du chemin des akmods et export de IMAGE_NAME pour le script nvidia-install.sh
+export IMAGE_NAME="kinoite"
 if [[ "$NVIDIA_TYPE" == "nvidia-open" ]]; then
     AKMODS_PATH="/tmp/rpms/nvidia-open"
-    IMAGE_NAME="kinoite"
 else
     AKMODS_PATH="/tmp/rpms/nvidia"
-    IMAGE_NAME="kinoite"
 fi
 
 # Installation via le script ublue-os
 if [[ -d "$AKMODS_PATH" ]]; then
-    AKMODNV_PATH="$AKMODS_PATH" MULTILIB=1 "$AKMODS_PATH/ublue-os/nvidia-install.sh"
+    AKMODNV_PATH="$AKMODS_PATH" MULTILIB=1 IMAGE_NAME="$IMAGE_NAME" "$AKMODS_PATH/ublue-os/nvidia-install.sh"
 else
     echo "Erreur : Les pilotes NVIDIA n'ont pas été trouvés dans $AKMODS_PATH"
     exit 1
