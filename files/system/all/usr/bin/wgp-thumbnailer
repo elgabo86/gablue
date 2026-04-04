@@ -102,10 +102,9 @@ MOUNT_STATUS=$?
 kill $KILLER_PID 2>/dev/null
 wait $KILLER_PID 2>/dev/null
 
-# Vérifier si le montage a réussi
-if [ $MOUNT_STATUS -ne 0 ]; then
-    rm -f "$SQUASHFUSE_PID_FILE"
-    exit 1
+# Vérifier si le montage a réussi (vérification mountpoint plus fiable que $?)
+if ! mountpoint -q "$TEMP_MOUNT" 2>/dev/null; then
+    cleanup_and_exit 1
 fi
 
 # L'icône custom .icon.png a priorité sur l'extraction depuis .exe
