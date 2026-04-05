@@ -17,10 +17,10 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QLineEdit, QListWidget, QListWidgetItem,
     QComboBox, QCheckBox, QProgressDialog, QMessageBox, QFileDialog,
-    QGroupBox, QFrame, QScrollArea, QSizePolicy
+    QGroupBox, QFrame, QScrollArea, QSizePolicy, QStyle
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QPixmap, QIcon, QFont
@@ -712,13 +712,296 @@ class LGPWindow(QMainWindow):
         self.is_creating = False  # Flag pour éviter les créations multiples
         
         self.setWindowTitle("LGP Creator - Création de paquets Linux Game Packs")
-        self.setMinimumSize(900, 500)
-        self.resize(1100, 600)
+        self.setMinimumSize(1000, 650)
+        self.resize(1300, 750)
+        
+        # Appliquer le thème moderne
+        self.apply_stylesheet()
         
         self.setup_ui()
         
         if game_dir:
             self.load_game_directory(game_dir)
+    
+    def apply_stylesheet(self):
+        """Applique un thème moderne et cohérent à l'interface"""
+        self.setStyleSheet("""
+            /* === FOND ET FENÊTRE === */
+            QMainWindow {
+                background-color: #1A1A1F;
+            }
+            
+            QWidget {
+                background-color: #1A1A1F;
+                color: #E8E8EC;
+                font-family: 'Segoe UI', 'Noto Sans', sans-serif;
+                font-size: 13px;
+            }
+            
+            /* === TITRES === */
+            QLabel {
+                color: #E8E8EC;
+                background-color: transparent;
+            }
+            
+            /* === CHAMPS DE SAISIE === */
+            QLineEdit {
+                background-color: #25252C;
+                border: 2px solid #3A3A45;
+                border-radius: 8px;
+                padding: 8px 12px;
+                color: #E8E8EC;
+                selection-background-color: #588CFF;
+                selection-color: white;
+            }
+            
+            QLineEdit:focus {
+                border: 2px solid #588CFF;
+                background-color: #2D2D35;
+            }
+            
+            QLineEdit:hover {
+                border: 2px solid #4A4A58;
+            }
+            
+            QLineEdit:disabled {
+                background-color: #202025;
+                color: #6A6A75;
+                border: 2px solid #2A2A32;
+            }
+            
+            /* === BOUTONS === */
+            QPushButton {
+                background-color: #2D2D35;
+                border: 2px solid #3A3A45;
+                border-radius: 8px;
+                padding: 8px 16px;
+                color: #E8E8EC;
+                font-weight: 500;
+            }
+            
+            QPushButton:hover {
+                background-color: #3A3A45;
+                border: 2px solid #4A4A58;
+            }
+            
+            QPushButton:pressed {
+                background-color: #1E1E24;
+                border: 2px solid #588CFF;
+            }
+            
+            QPushButton:disabled {
+                background-color: #25252C;
+                color: #5A5A65;
+                border: 2px solid #2A2A32;
+            }
+            
+            /* Bouton principal (Créer) */
+            QPushButton#create_btn {
+                background-color: #588CFF;
+                border: 2px solid #588CFF;
+                color: white;
+                font-weight: bold;
+            }
+            
+            QPushButton#create_btn:hover {
+                background-color: #6CA0FF;
+                border: 2px solid #6CA0FF;
+            }
+            
+            QPushButton#create_btn:pressed {
+                background-color: #4A7AE8;
+                border: 2px solid #4A7AE8;
+            }
+            
+            /* === GROUPBOX === */
+            QGroupBox {
+                background-color: #25252C;
+                border: 2px solid #3A3A45;
+                border-radius: 12px;
+                margin-top: 12px;
+                padding-top: 16px;
+                font-weight: 600;
+                color: #B8B8C5;
+            }
+            
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 16px;
+                padding: 0 10px;
+                color: #588CFF;
+                background-color: #1A1A1F;
+                border-radius: 4px;
+            }
+            
+            /* === LISTES === */
+            QListWidget {
+                background-color: #25252C;
+                border: 2px solid #3A3A45;
+                border-radius: 8px;
+                padding: 4px;
+                color: #E8E8EC;
+                outline: none;
+            }
+            
+            QListWidget::item {
+                background-color: transparent;
+                border-radius: 3px;
+                padding: 1px 4px;
+                margin: 0px 2px;
+                min-height: 16px;
+            }
+            
+            QListWidget::item:selected {
+                background-color: #588CFF;
+                color: white;
+            }
+            
+            QListWidget::item:hover {
+                background-color: #3A3A45;
+            }
+            
+            QListWidget::item:selected:hover {
+                background-color: #6CA0FF;
+            }
+            
+            /* === COMBOBOX === */
+            QComboBox {
+                background-color: #25252C;
+                border: 2px solid #3A3A45;
+                border-radius: 8px;
+                padding: 6px 12px;
+                min-width: 80px;
+                color: #E8E8EC;
+            }
+            
+            QComboBox:hover {
+                border: 2px solid #4A4A58;
+            }
+            
+            QComboBox:focus {
+                border: 2px solid #588CFF;
+            }
+            
+            QComboBox::drop-down {
+                border: none;
+                width: 24px;
+            }
+            
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid #588CFF;
+                margin-right: 8px;
+            }
+            
+            QComboBox QAbstractItemView {
+                background-color: #25252C;
+                border: 2px solid #3A3A45;
+                border-radius: 8px;
+                selection-background-color: #588CFF;
+                selection-color: white;
+                padding: 4px;
+            }
+            
+            /* === CHECKBOX === */
+            QCheckBox {
+                spacing: 8px;
+                color: #E8E8EC;
+            }
+            
+            QCheckBox::indicator {
+                width: 20px;
+                height: 20px;
+                border-radius: 5px;
+                border: 2px solid #3A3A45;
+                background-color: #25252C;
+            }
+            
+            QCheckBox::indicator:hover {
+                border: 2px solid #4A4A58;
+            }
+            
+            QCheckBox::indicator:checked {
+                background-color: #588CFF;
+                border: 2px solid #588CFF;
+            }
+            
+            /* === SCROLLBAR === */
+            QScrollBar:vertical {
+                background-color: #1A1A1F;
+                width: 12px;
+                border-radius: 6px;
+            }
+            
+            QScrollBar::handle:vertical {
+                background-color: #3A3A45;
+                border-radius: 6px;
+                min-height: 30px;
+            }
+            
+            QScrollBar::handle:vertical:hover {
+                background-color: #4A4A58;
+            }
+            
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            
+            QScrollBar:horizontal {
+                background-color: #1A1A1F;
+                height: 12px;
+                border-radius: 6px;
+            }
+            
+            QScrollBar::handle:horizontal {
+                background-color: #3A3A45;
+                border-radius: 6px;
+                min-width: 30px;
+            }
+            
+            QScrollBar::handle:horizontal:hover {
+                background-color: #4A4A58;
+            }
+            
+            /* === DIALOGUES ET MESSAGES === */
+            QMessageBox {
+                background-color: #1A1A1F;
+            }
+            
+            QMessageBox QLabel {
+                color: #E8E8EC;
+            }
+            
+            /* === BARRE DE PROGRESSION === */
+            QProgressDialog {
+                background-color: #1A1A1F;
+            }
+            
+            QProgressBar {
+                border: 2px solid #3A3A45;
+                border-radius: 8px;
+                text-align: center;
+                color: #E8E8EC;
+                background-color: #25252C;
+            }
+            
+            QProgressBar::chunk {
+                background-color: #588CFF;
+                border-radius: 6px;
+            }
+            
+            /* === TOOLTIP === */
+            QToolTip {
+                background-color: #2D2D35;
+                color: #E8E8EC;
+                border: 1px solid #4A4A58;
+                border-radius: 6px;
+                padding: 6px 10px;
+            }
+        """)
     
     def setup_ui(self):
         """Configure l'interface utilisateur avec un layout dynamique"""
@@ -741,26 +1024,43 @@ class LGPWindow(QMainWindow):
         title_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(title_label)
         
-        # === SECTION HAUTE: Noms ===
-        # Nom du fichier (sortie)
-        name_layout = QHBoxLayout()
+        # === SECTION HAUTE: Informations générales ===
+        names_group = QGroupBox("Informations générales")
+        names_layout = QHBoxLayout(names_group)
+        names_layout.setSpacing(15)
+        names_layout.setContentsMargins(12, 16, 12, 12)
+
+        # Nom du fichier (sortie) - À GAUCHE
         name_label = QLabel("Nom du fichier:")
-        name_label.setFixedWidth(120)
+        name_label.setFixedWidth(100)
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("Nom du fichier LGP...")
-        name_layout.addWidget(name_label)
-        name_layout.addWidget(self.name_input)
-        main_layout.addLayout(name_layout)
-        
-        # Nom interne du jeu (pour .gamename et chemins)
-        internal_name_layout = QHBoxLayout()
-        internal_name_label = QLabel("Nom du jeu:")
-        internal_name_label.setFixedWidth(120)
+        names_layout.addWidget(name_label)
+        names_layout.addWidget(self.name_input)
+
+        names_layout.addSpacing(20)
+
+        # Nom du jeu (Dossier interne) - À DROITE
+        internal_name_layout = QVBoxLayout()
+        internal_name_layout.setSpacing(2)
+        internal_name_label = QLabel("Nom du jeu")
+        internal_name_label.setFixedWidth(110)
+        internal_name_sublabel = QLabel("(Dossier interne)")
+        internal_name_sublabel.setFixedWidth(110)
+        internal_name_sublabel.setStyleSheet("color: #888; font-size: 9px;")
+        internal_name_sublabel.setToolTip("Nom du dossier utilisé pour les chemins internes (sauvegardes, etc.)")
         self.internal_name_input = QLineEdit()
-        self.internal_name_input.setPlaceholderText("Nom interne du jeu (pour les chemins)...")
+        self.internal_name_input.setPlaceholderText("Nom du jeu...")
+        
         internal_name_layout.addWidget(internal_name_label)
-        internal_name_layout.addWidget(self.internal_name_input)
-        main_layout.addLayout(internal_name_layout)
+        internal_name_layout.addWidget(internal_name_sublabel)
+        
+        internal_name_widget = QWidget()
+        internal_name_widget.setLayout(internal_name_layout)
+        names_layout.addWidget(internal_name_widget)
+        names_layout.addWidget(self.internal_name_input)
+
+        main_layout.addWidget(names_group)
         
         # === SECTION MILIEU: Layout principal avec 2 colonnes ===
         middle_layout = QHBoxLayout()
@@ -785,10 +1085,12 @@ class LGPWindow(QMainWindow):
         
         # Icône du jeu (déplacée ici)
         icon_group = QGroupBox("Icône du jeu")
-        icon_layout = QVBoxLayout(icon_group)
+        icon_layout = QHBoxLayout(icon_group)
         icon_layout.setContentsMargins(8, 12, 8, 8)
+        icon_layout.setSpacing(10)
         
-        # Zone de défilement pour les icônes
+        # Partie gauche: Zone de défilement pour les icônes (1 rangée)
+        left_icon_layout = QVBoxLayout()
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -796,7 +1098,7 @@ class LGPWindow(QMainWindow):
         scroll_area.setFixedHeight(85)
         scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         
-        # Widget conteneur pour la grille d'icônes
+        # Widget conteneur pour la ligne d'icônes (1 rangée horizontale)
         self.icons_container = QWidget()
         self.icons_layout = QHBoxLayout(self.icons_container)
         self.icons_layout.setSpacing(6)
@@ -804,20 +1106,41 @@ class LGPWindow(QMainWindow):
         self.icons_layout.setContentsMargins(4, 4, 4, 4)
         
         scroll_area.setWidget(self.icons_container)
-        icon_layout.addWidget(scroll_area)
-        
-        # Label d'info + Bouton ajouter sur la même ligne
+        left_icon_layout.addWidget(scroll_area)
+
+        # Label d'info + Bouton ajouter
         icon_bottom_layout = QHBoxLayout()
         self.icon_info_label = QLabel("Cliquez sur une icône")
         self.icon_info_label.setStyleSheet("color: #B4B4BE; font-size: 10px;")
         icon_bottom_layout.addWidget(self.icon_info_label)
         icon_bottom_layout.addStretch()
-        add_icon_btn = QPushButton("+ Ajouter...")
-        add_icon_btn.setMaximumWidth(90)
+        add_icon_btn = QPushButton()
+        add_icon_btn.setFixedSize(36, 32)
+        add_icon_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
+        add_icon_btn.setToolTip("Ajouter une icône personnalisée")
         add_icon_btn.clicked.connect(self.select_custom_icon)
         icon_bottom_layout.addWidget(add_icon_btn)
-        icon_layout.addLayout(icon_bottom_layout)
+        left_icon_layout.addLayout(icon_bottom_layout)
         
+        icon_layout.addLayout(left_icon_layout)
+
+        # Partie droite: Aperçu de l'icône sélectionnée
+        preview_layout = QVBoxLayout()
+        self.icon_preview_label = QLabel()
+        self.icon_preview_label.setFixedSize(96, 96)
+        self.icon_preview_label.setAlignment(Qt.AlignCenter)
+        self.icon_preview_label.setStyleSheet("""
+            QLabel {
+                background-color: #2D2D33;
+                border: 2px solid #3C3C46;
+                border-radius: 8px;
+            }
+        """)
+        preview_layout.addWidget(self.icon_preview_label, alignment=Qt.AlignCenter)
+        preview_layout.addStretch()
+        
+        icon_layout.addLayout(preview_layout)
+
         left_layout.addWidget(icon_group)
         
         # Arguments
@@ -829,22 +1152,32 @@ class LGPWindow(QMainWindow):
         args_layout.addWidget(self.args_input)
         left_layout.addWidget(args_group)
         
-        # Compression sur une ligne
-        options_layout = QHBoxLayout()
-        options_layout.addSpacing(15)
+        # Options du paquet (Compression et Full Overlay)
+        options_group = QGroupBox("Options du paquet")
+        options_layout = QHBoxLayout(options_group)
+        options_layout.setContentsMargins(12, 16, 12, 12)
+        options_layout.setSpacing(15)
         
         comp_label = QLabel("Compression:")
-        comp_label.setFixedWidth(80)
+        comp_label.setFixedWidth(85)
         options_layout.addWidget(comp_label)
         
         self.comp_combo = QComboBox()
         self.comp_combo.addItems(["Non (0)", "Faible (5)", "Moyenne (10)", "Élevée (15)", "Max (19)"])
         self.comp_combo.setCurrentIndex(3)  # 15 par défaut
-        self.comp_combo.setFixedWidth(90)
+        self.comp_combo.setMinimumWidth(130)
         options_layout.addWidget(self.comp_combo)
+        
+        options_layout.addSpacing(20)
+        
+        self.full_temp_checkbox = QCheckBox("Mode full overlay")
+        self.full_temp_checkbox.setToolTip("Le jeu entier sera en overlay - modifications dans /tmp, nettoyage à la fermeture")
+        self.full_temp_checkbox.stateChanged.connect(self.toggle_full_temp)
+        options_layout.addWidget(self.full_temp_checkbox)
+        
         options_layout.addStretch()
         
-        left_layout.addLayout(options_layout)
+        left_layout.addWidget(options_group)
         
         # --- COLONNE DROITE: Sauvegardes et Extras ---
         right_layout = QVBoxLayout()
@@ -854,95 +1187,114 @@ class LGPWindow(QMainWindow):
         # Sauvegardes persistantes
         saves_group = QGroupBox("Sauvegardes persistantes")
         saves_group.setToolTip("Stockées dans ~/.local/share/lgp-saves (persistantes)")
-        saves_layout = QVBoxLayout(saves_group)
+        saves_layout = QHBoxLayout(saves_group)
         saves_layout.setContentsMargins(8, 12, 8, 8)
+        saves_layout.setSpacing(8)
         
         self.saves_list = QListWidget()
-        self.saves_list.setMinimumHeight(80)
-        saves_layout.addWidget(self.saves_list)
+        self.saves_list.setMinimumHeight(60)
+        saves_layout.addWidget(self.saves_list, stretch=1)
         
-        saves_btn_layout = QHBoxLayout()
-        saves_btn_layout.setSpacing(5)
-        add_save_file_btn = QPushButton("+ Fichier")
-        add_save_file_btn.setMaximumWidth(80)
-        add_save_file_btn.clicked.connect(lambda: self.add_item('save', 'file'))
-        add_save_dir_btn = QPushButton("+ Dossier")
-        add_save_dir_btn.setMaximumWidth(80)
-        add_save_dir_btn.clicked.connect(lambda: self.add_item('save', 'dir'))
-        remove_save_btn = QPushButton("- Suppr")
-        remove_save_btn.setMaximumWidth(60)
-        remove_save_btn.clicked.connect(lambda: self.remove_item('save'))
+        # Boutons verticaux à droite
+        saves_btn_layout = QVBoxLayout()
+        saves_btn_layout.setSpacing(6)
+        self.add_save_file_btn = QPushButton()
+        self.add_save_file_btn.setFixedSize(36, 32)
+        self.add_save_file_btn.setIcon(self.style().standardIcon(QStyle.SP_FileIcon))
+        self.add_save_file_btn.setToolTip("Ajouter un fichier")
+        self.add_save_file_btn.clicked.connect(lambda: self.add_item('save', 'file'))
+        self.add_save_dir_btn = QPushButton()
+        self.add_save_dir_btn.setFixedSize(36, 32)
+        self.add_save_dir_btn.setIcon(self.style().standardIcon(QStyle.SP_DirIcon))
+        self.add_save_dir_btn.setToolTip("Ajouter un dossier")
+        self.add_save_dir_btn.clicked.connect(lambda: self.add_item('save', 'dir'))
+        self.remove_save_btn = QPushButton()
+        self.remove_save_btn.setFixedSize(36, 32)
+        self.remove_save_btn.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
+        self.remove_save_btn.setToolTip("Supprimer la sélection")
+        self.remove_save_btn.clicked.connect(lambda: self.remove_item('save'))
         
-        saves_btn_layout.addWidget(add_save_file_btn)
-        saves_btn_layout.addWidget(add_save_dir_btn)
-        saves_btn_layout.addWidget(remove_save_btn)
+        saves_btn_layout.addWidget(self.add_save_file_btn)
+        saves_btn_layout.addWidget(self.add_save_dir_btn)
+        saves_btn_layout.addWidget(self.remove_save_btn)
         saves_btn_layout.addStretch()
         saves_layout.addLayout(saves_btn_layout)
         right_layout.addWidget(saves_group)
         
-        # Fichiers temporaires
+        # Fichiers temporaires (extras)
         extras_group = QGroupBox("Fichiers temporaires (extras)")
         extras_group.setToolTip("Stockées dans ~/.cache/lgp-extra (non persistants)")
-        extras_layout = QVBoxLayout(extras_group)
+        extras_layout = QHBoxLayout(extras_group)
         extras_layout.setContentsMargins(8, 12, 8, 8)
+        extras_layout.setSpacing(8)
         
         self.extras_list = QListWidget()
-        self.extras_list.setMinimumHeight(80)
-        extras_layout.addWidget(self.extras_list)
+        self.extras_list.setMinimumHeight(60)
+        extras_layout.addWidget(self.extras_list, stretch=1)
         
-        extras_btn_layout = QHBoxLayout()
-        extras_btn_layout.setSpacing(5)
-        add_extra_file_btn = QPushButton("+ Fichier")
-        add_extra_file_btn.setMaximumWidth(80)
-        add_extra_file_btn.clicked.connect(lambda: self.add_item('extra', 'file'))
-        add_extra_dir_btn = QPushButton("+ Dossier")
-        add_extra_dir_btn.setMaximumWidth(80)
-        add_extra_dir_btn.clicked.connect(lambda: self.add_item('extra', 'dir'))
-        remove_extra_btn = QPushButton("- Suppr")
-        remove_extra_btn.setMaximumWidth(60)
-        remove_extra_btn.clicked.connect(lambda: self.remove_item('extra'))
+        # Boutons verticaux à droite
+        extras_btn_layout = QVBoxLayout()
+        extras_btn_layout.setSpacing(6)
+        self.add_extra_file_btn = QPushButton()
+        self.add_extra_file_btn.setFixedSize(36, 32)
+        self.add_extra_file_btn.setIcon(self.style().standardIcon(QStyle.SP_FileIcon))
+        self.add_extra_file_btn.setToolTip("Ajouter un fichier")
+        self.add_extra_file_btn.clicked.connect(lambda: self.add_item('extra', 'file'))
+        self.add_extra_dir_btn = QPushButton()
+        self.add_extra_dir_btn.setFixedSize(36, 32)
+        self.add_extra_dir_btn.setIcon(self.style().standardIcon(QStyle.SP_DirIcon))
+        self.add_extra_dir_btn.setToolTip("Ajouter un dossier")
+        self.add_extra_dir_btn.clicked.connect(lambda: self.add_item('extra', 'dir'))
+        self.remove_extra_btn = QPushButton()
+        self.remove_extra_btn.setFixedSize(36, 32)
+        self.remove_extra_btn.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
+        self.remove_extra_btn.setToolTip("Supprimer la sélection")
+        self.remove_extra_btn.clicked.connect(lambda: self.remove_item('extra'))
         
-        extras_btn_layout.addWidget(add_extra_file_btn)
-        extras_btn_layout.addWidget(add_extra_dir_btn)
-        extras_btn_layout.addWidget(remove_extra_btn)
+        extras_btn_layout.addWidget(self.add_extra_file_btn)
+        extras_btn_layout.addWidget(self.add_extra_dir_btn)
+        extras_btn_layout.addWidget(self.remove_extra_btn)
         extras_btn_layout.addStretch()
         extras_layout.addLayout(extras_btn_layout)
         right_layout.addWidget(extras_group)
         
-        # Fichiers temporaires
+        # Fichiers temporaires (temps)
         temps_group = QGroupBox("Fichiers temporaires (temps)")
         temps_group.setToolTip("Montés en overlayfs dans /tmp/lgp-temp (lecture depuis le LGP, écriture dans /tmp, effacés à la fermeture)")
-        temps_layout = QVBoxLayout(temps_group)
+        temps_layout = QHBoxLayout(temps_group)
         temps_layout.setContentsMargins(8, 12, 8, 8)
+        temps_layout.setSpacing(8)
         
         self.temps_list = QListWidget()
-        self.temps_list.setMinimumHeight(80)
-        temps_layout.addWidget(self.temps_list)
+        self.temps_list.setMinimumHeight(60)
+        temps_layout.addWidget(self.temps_list, stretch=1)
         
-        temps_btn_layout = QHBoxLayout()
-        temps_btn_layout.setSpacing(5)
-        add_temp_file_btn = QPushButton("+ Fichier")
-        add_temp_file_btn.setMaximumWidth(80)
-        add_temp_file_btn.clicked.connect(lambda: self.add_item('temp', 'file'))
-        add_temp_dir_btn = QPushButton("+ Dossier")
-        add_temp_dir_btn.setMaximumWidth(80)
-        add_temp_dir_btn.clicked.connect(lambda: self.add_item('temp', 'dir'))
-        remove_temp_btn = QPushButton("- Suppr")
-        remove_temp_btn.setMaximumWidth(60)
-        remove_temp_btn.clicked.connect(lambda: self.remove_item('temp'))
+        # Boutons verticaux à droite
+        temps_btn_layout = QVBoxLayout()
+        temps_btn_layout.setSpacing(6)
+        self.add_temp_file_btn = QPushButton()
+        self.add_temp_file_btn.setFixedSize(36, 32)
+        self.add_temp_file_btn.setIcon(self.style().standardIcon(QStyle.SP_FileIcon))
+        self.add_temp_file_btn.setToolTip("Ajouter un fichier")
+        self.add_temp_file_btn.clicked.connect(lambda: self.add_item('temp', 'file'))
+        self.add_temp_dir_btn = QPushButton()
+        self.add_temp_dir_btn.setFixedSize(36, 32)
+        self.add_temp_dir_btn.setIcon(self.style().standardIcon(QStyle.SP_DirIcon))
+        self.add_temp_dir_btn.setToolTip("Ajouter un dossier")
+        self.add_temp_dir_btn.clicked.connect(lambda: self.add_item('temp', 'dir'))
+        self.remove_temp_btn = QPushButton()
+        self.remove_temp_btn.setFixedSize(36, 32)
+        self.remove_temp_btn.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
+        self.remove_temp_btn.setToolTip("Supprimer la sélection")
+        self.remove_temp_btn.clicked.connect(lambda: self.remove_item('temp'))
         
-        temps_btn_layout.addWidget(add_temp_file_btn)
-        temps_btn_layout.addWidget(add_temp_dir_btn)
-        temps_btn_layout.addWidget(remove_temp_btn)
+        temps_btn_layout.addWidget(self.add_temp_file_btn)
+        temps_btn_layout.addWidget(self.add_temp_dir_btn)
+        temps_btn_layout.addWidget(self.remove_temp_btn)
         temps_btn_layout.addStretch()
         temps_layout.addLayout(temps_btn_layout)
-        right_layout.addWidget(temps_group)
         
-        # Checkbox "Tout le dossier en temporaire"
-        self.full_temp_checkbox = QCheckBox("📁 Tout le dossier comme temporaire (overlay)")
-        self.full_temp_checkbox.setToolTip("Le jeu entier sera en overlay - modifications dans /tmp, nettoyage à la fermeture")
-        self.full_temp_checkbox.stateChanged.connect(self.toggle_full_temp)
-        right_layout.addWidget(self.full_temp_checkbox)
+        right_layout.addWidget(temps_group)
         
         # === BOUTONS PRINCIPAUX ===
         button_layout = QHBoxLayout()
@@ -952,24 +1304,9 @@ class LGPWindow(QMainWindow):
         button_layout.addStretch()
         
         self.create_btn = QPushButton("Créer le LGP")
+        self.create_btn.setObjectName("create_btn")
         self.create_btn.setMinimumWidth(140)
-        self.create_btn.setMinimumHeight(35)
-        self.create_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #588CFF;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                font-weight: bold;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #6CA0FF;
-            }
-            QPushButton:pressed {
-                background-color: #4A7AE8;
-            }
-        """)
+        self.create_btn.setMinimumHeight(40)
         self.create_btn.clicked.connect(self.start_create_lgp)
         button_layout.addWidget(self.create_btn)
         
@@ -984,7 +1321,8 @@ class LGPWindow(QMainWindow):
         self.extras = []
         self.temps = []
         self.internal_game_name = ""  # Nom interne pour .gamename et chemins
-    
+        self.temp_icons = []  # Liste des icônes temporaires à nettoyer
+
     def load_game_directory(self, game_dir):
         """Charge le dossier du jeu et les fichiers de configuration existants"""
         self.game_dir = os.path.abspath(game_dir)
@@ -1232,11 +1570,12 @@ class LGPWindow(QMainWindow):
                     'name': f"AppImage: {appimage_name[:12]}",
                     'source': 'appimage'
                 }
-                
+
                 self.available_icons.append(icon_entry)
+                self.temp_icons.append(temp_png)  # Marquer pour nettoyage
                 self.update_icons_display()
                 self.select_icon(len(self.available_icons) - 1)
-                
+
         except Exception as e:
             print(f"Erreur extraction icône AppImage: {e}")
     
@@ -1321,9 +1660,18 @@ class LGPWindow(QMainWindow):
             no_icon_label.setStyleSheet("color: #888; font-size: 10px;")
             no_icon_label.setAlignment(Qt.AlignCenter)
             self.icons_layout.addWidget(no_icon_label)
+            # Vider l'aperçu (sans texte)
+            self.icon_preview_label.clear()
+            self.icon_preview_label.setStyleSheet("""
+                QLabel {
+                    background-color: #2D2D33;
+                    border: 2px solid #3C3C46;
+                    border-radius: 8px;
+                }
+            """)
             return
-        
-        # Créer un widget pour chaque icône
+
+        # Créer un widget pour chaque icône (1 rangée horizontale)
         for idx, icon_info in enumerate(self.available_icons):
             icon_widget = self.create_icon_widget(icon_info, idx)
             self.icons_layout.addWidget(icon_widget)
@@ -1410,7 +1758,53 @@ class LGPWindow(QMainWindow):
         self.icon_path = self.available_icons[idx]['path']
         icon_name = self.available_icons[idx]['name']
         self.icon_info_label.setText(f"Sélectionnée: {icon_name}")
-    
+
+        # Mettre à jour l'aperçu grand format
+        self.icon_preview_label.setStyleSheet("""
+            QLabel {
+                background-color: #2D2D33;
+                border: 2px solid #588CFF;
+                border-radius: 8px;
+            }
+        """)
+        if os.path.exists(self.icon_path):
+            pixmap = QPixmap(self.icon_path)
+            if not pixmap.isNull():
+                scaled = pixmap.scaled(88, 88, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self.icon_preview_label.setPixmap(scaled)
+
+    def cleanup_temp_icons(self):
+        """Nettoie les icônes temporaires extraites dans /tmp"""
+        import tempfile
+        cleaned = 0
+        for icon_path in self.temp_icons:
+            try:
+                if os.path.exists(icon_path):
+                    os.remove(icon_path)
+                    cleaned += 1
+            except Exception:
+                pass
+
+        # Nettoyer aussi les anciens fichiers lgp_icon_ oubliés dans /tmp
+        temp_dir = tempfile.gettempdir()
+        try:
+            for f in os.listdir(temp_dir):
+                if f.startswith('lgp_icon_') and f.endswith('.png'):
+                    try:
+                        os.remove(os.path.join(temp_dir, f))
+                        cleaned += 1
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        self.temp_icons = []  # Vider la liste
+
+    def closeEvent(self, event):
+        """Appelé à la fermeture de la fenêtre"""
+        self.cleanup_temp_icons()
+        event.accept()
+
     def select_custom_icon(self):
         """Sélectionne une icône personnalisée externe"""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -1529,7 +1923,6 @@ class LGPWindow(QMainWindow):
                         return
                 target_list.append(('file', rel_path))
                 update_func()
-                persist_func()
         else:  # dir
             dir_path = QFileDialog.getExistingDirectory(self, "Sélectionner un dossier", self.game_dir)
             if dir_path:
@@ -1588,28 +1981,24 @@ class LGPWindow(QMainWindow):
                         return
                 target_list.append(('dir', rel_path))
                 update_func()
-                persist_func()
     
     def remove_item(self, item_type):
-        """Supprime un élément de la liste et persiste les changements"""
+        """Supprime un élément de la liste (ne pas persister - uniquement à la création du LGP)"""
         if item_type == 'save':
             current_row = self.saves_list.currentRow()
             if current_row >= 0:
                 self.saves.pop(current_row)
                 self.update_saves_list()
-                self._persist_saves()
         elif item_type == 'extra':
             current_row = self.extras_list.currentRow()
             if current_row >= 0:
                 self.extras.pop(current_row)
                 self.update_extras_list()
-                self._persist_extras()
         else:  # temp
             current_row = self.temps_list.currentRow()
             if current_row >= 0:
                 self.temps.pop(current_row)
                 self.update_temps_list()
-                self._persist_temps()
     
     def update_saves_list(self):
         """Met à jour l'affichage de la liste des sauvegardes"""
@@ -1640,13 +2029,20 @@ class LGPWindow(QMainWindow):
             self.temps = [('*', 'full_overlay')]
             self.update_temps_list()
             self.temps_list.setEnabled(False)
+            # Désactiver les boutons d'ajout/suppression en mode full overlay
+            self.add_temp_file_btn.setEnabled(False)
+            self.add_temp_dir_btn.setEnabled(False)
+            self.remove_temp_btn.setEnabled(False)
         else:
             self.temps = []
             self.update_temps_list()
             self.temps_list.setEnabled(True)
+            # Réactiver les boutons
+            self.add_temp_file_btn.setEnabled(True)
+            self.add_temp_dir_btn.setEnabled(True)
+            self.remove_temp_btn.setEnabled(True)
         
-        # Persister immédiatement
-        self._persist_temps()
+        # Ne pas persister - uniquement à la création du LGP
     
     def _persist_saves(self):
         """Sauvegarde la liste des saves dans .savepath"""
