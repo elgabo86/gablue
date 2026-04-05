@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script pour télécharger et installer/mettre à jour l'AppImage Eden (Linux PGO) avec GearLever
-# Source : GitHub eden-emulator/Releases releases
+# Source : Git Eden (git.eden-emu.dev) releases
 # PGO = Profile Guided Optimization (optimisations de performance)
 
 # Dépendances : curl, jq, flatpak (GearLever installé comme it.mijorus.gearlever), yes
@@ -12,34 +12,18 @@ CACHE_DIR="$HOME/.cache/eden"
 APPIMAGES_DIR="$HOME/AppImages"
 mkdir -p "$CACHE_DIR"
 
-# Demander à l'utilisateur quelle version installer
-echo "Quelle version d'Eden souhaitez-vous installer ?"
-echo "1) Stable"
-echo "2) Nightly"
-read -p "Choix [1-2] (défaut: 1) : " CHOIX
+REPO_OWNER="eden-emu"
+REPO_NAME="eden"
+GIT_HOST="https://git.eden-emu.dev"
+API_URL="$GIT_HOST/api/v1/repos/$REPO_OWNER/$REPO_NAME/releases/latest"
 
-if [ -z "$CHOIX" ]; then
-    CHOIX="1"
-fi
-
-if [ "$CHOIX" == "2" ]; then
-    REPO_OWNER="Eden-CI"
-    REPO_NAME="Nightly"
-    API_URL="https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest"
-    echo "Récupération de la version Nightly..."
-else
-    REPO_OWNER="eden-emu"
-    REPO_NAME="eden"
-    GIT_HOST="https://git.eden-emu.dev"
-    API_URL="$GIT_HOST/api/v1/repos/$REPO_OWNER/$REPO_NAME/releases/latest"
-    echo "Récupération de la version Stable..."
-fi
+echo "Récupération de la dernière version d'Eden..."
 
 # Obtenir les infos de la release la plus récente via l'API
 RELEASES_JSON=$(curl -sL -H "Accept: application/json" "$API_URL")
 
 # Extraire l'URL de téléchargement pour l'AppImage PGO spécifique (Linux amd64 clang-pgo)
-DOWNLOAD_URL=$(echo "$RELEASES_JSON" | jq -r '.assets[] | select(.name | contains("Linux") and contains("amd64") and contains("clang-pgo") and contains(".AppImage")) | .browser_download_url' | head -n1)
+DOWNLOAD_URL=$(echo "$RELEASES_JSON" | jq -r '.assets[] | select(.name | test("Linux.*amd64.*clang-pgo.*\\.AppImage$")) | .browser_download_url' | head -n1)
 
 if [ -z "$DOWNLOAD_URL" ]; then
     echo "Erreur : AppImage Eden PGO Linux amd64 non trouvé dans la release la plus récente."
@@ -128,8 +112,4 @@ if command -v kbuildsycoca6 &> /dev/null; then
     kbuildsycoca6
 fi
 
-if [ "$CHOIX" == "2" ]; then
-    echo "Opération terminée pour Eden Nightly (version PGO optimisée)."
-else
-    echo "Opération terminée pour Eden Stable (version PGO optimisée)."
-fi
+echo "Opération terminée. Eden (version PGO optimisée) est installé."
