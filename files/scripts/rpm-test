@@ -1,7 +1,8 @@
 #!/usr/bin/bash
 
-# Script d'installation des paquets RPM pour Gablue (version test sans libs 32-bit)
-# Version test avec Wine WOW64 (pas besoin de libs 32-bit sauf Mesa)
+# Script d'installation des paquets RPM pour Gablue (version test)
+# Installe tous les paquets nécessaires : outils CLI, applications graphiques, polices, drivers et dépendances de développement
+# Version test avec toutes les libs 32-bit pour compatibilité Wine/Proton
 
 set -eoux pipefail
 
@@ -10,6 +11,7 @@ set -eoux pipefail
 # =============================================================================
 
 # Verrouiller la version de plasma-desktop pour éviter les conflits de version
+# Cela empêche plasma-desktop d'être mis à niveau pendant l'installation de paquets
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     dnf5 versionlock add plasma-desktop
 fi
@@ -57,7 +59,8 @@ dnf5 -y install \
 dnf5 -y --setopt=install_weak_deps=False install \
     tailscale \
     samba-winbind \
-    samba-winbind-clients
+    samba-winbind-clients \
+    libwbclient.i686
 
 # Outils d'archivage et compression
 dnf5 -y install \
@@ -74,8 +77,11 @@ dnf5 -y install yt-dlp
 
 # Installation des outils de virtualisation uniquement en mode DX
 if [ "${DX_MODE:-false}" == "true" ]; then
+    # Docker et composants associés pour le développement conteneurisé
     dnf5 -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
+    # Libvirt et QEMU pour la virtualisation complète
+    # Installation complète pour machines virtuelles et développement
     dnf5 -y install \
         libvirt \
         libvirt-nss \
@@ -122,17 +128,19 @@ dnf5 -y install \
     skanpage \
     x2goclient
 
-# Gaming et performance (sans libs i686 sauf Mesa)
+# Gaming et performance (depuis terra-mesa)
 dnf5 -y --enable-repo=terra-mesa install \
     gamescope \
     gamescope-libs.i686 \
-    mangohud
+    mangohud \
+    mangohud.i686
 
 # Autres outils gaming (Fedora)
 dnf5 -y install \
     cage \
     wlr-randr \
-    gamemode
+    gamemode \
+    gamemode.i686
 
 # Optimisation système
 dnf5 -y install \
@@ -142,6 +150,7 @@ dnf5 -y install \
 # EXTENSIONS KDE (UNIQUEMENT KINOITE)
 # =============================================================================
 
+# Extensions et applications KDE
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     dnf5 -y install \
         okular \
@@ -160,6 +169,7 @@ fi
 # EXTENSIONS SHELL
 # =============================================================================
 
+# Extension rom-properties pour navigateur de fichiers (Dolphin)
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     dnf5 -y install rom-properties-kf6
 fi
@@ -168,6 +178,7 @@ fi
 # POLICES
 # =============================================================================
 
+# Polices de qualité pour développement et usage général
 dnf5 -y --setopt=install_weak_deps=False install \
     nerd-fonts \
     adobe-source-code-pro-fonts \
@@ -177,6 +188,7 @@ dnf5 -y --setopt=install_weak_deps=False install \
 # PILOTES ET SUPPORT MATÉRIEL
 # =============================================================================
 
+# Pilotes d'impression et support mobile
 dnf5 -y install \
     hplip \
     printer-driver-brlaser \
@@ -187,6 +199,7 @@ dnf5 -y install \
 # DÉPENDANCES DE DÉVELOPPEMENT
 # =============================================================================
 
+# Compilateurs et outils de développement
 dnf5 -y install \
     gcc \
     gcc-c++ \
@@ -209,6 +222,7 @@ dnf5 -y install \
 # MODULES PYTHON ET OUTILS ASSOCIÉS
 # =============================================================================
 
+# Modules Python pour gaming et développement
 dnf5 -y install \
     python3-pygame \
     python3-uinput \
@@ -222,6 +236,7 @@ dnf5 -y install \
 # PAQUETS SPÉCIFIQUES AUX VARIANTES
 # =============================================================================
 
+# Paquets supplémentaires pour la variante main
 if [ "$VARIANT" == "main" ]; then
     dnf5 -y install \
         radeontop \
@@ -232,6 +247,7 @@ fi
 # CORRECTIONS TEMPORAIRES
 # =============================================================================
 
+# Correction temporaire pour tesseract (nécessaire pour certaines fonctionnalités)
 dnf5 -y install \
     tesseract-devel \
     tesseract-langpack-fra
@@ -240,23 +256,67 @@ dnf5 -y install \
 # NETTOYAGE DES PAQUETS SUPERFLUS
 # =============================================================================
 
+# Suppression des paquets non désirés
 dnf5 -y remove \
     firefox \
     firefox-langpacks \
     htop
 
+# Suppression spécifique à Kinoite
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     dnf5 -y remove plasma-discover-rpm-ostree
 fi
 
 # =============================================================================
-# BIBLIOTHÈQUES 32-BIT MINIMALES (MESA UNIQUEMENT)
+# BIBLIOTHÈQUES 32-BIT POUR WINE/PROTON
 # =============================================================================
 
-# Mesa 32-bit uniquement (REQUIS pour Steam et jeux 32-bit natifs)
-# On garde Mesa 32-bit mais on élimine tout le reste (Wine WOW64 ne nécessite plus libs 32)
+# Note: gamescope-libs.i686 et mangohud.i686 déjà installés depuis terra-mesa ci-dessus
+
+# Mesa 32-bit depuis terra-mesa (REQUIS pour gstreamer et autres dépendances)
+# Installation explicite depuis terra-mesa car les dépôts Fedora sont exclus
 dnf5 -y --enable-repo=terra-mesa --setopt=install_weak_deps=False install \
     mesa-libEGL.i686 \
-    mesa-libGL.i686 \
-    mesa-vulkan-drivers.i686 \
-    vulkan-loader.i686
+    mesa-libGL.i686
+
+# FAudio pour le support audio des jeux 32-bit
+dnf5 -y --setopt=install_weak_deps=False install \
+    libFAudio \
+    libFAudio.i686
+
+# PulseAudio/PipeWire 32-bit (REQUIS pour l'audio Wine)
+dnf5 -y --setopt=install_weak_deps=False install \
+    pulseaudio-libs.i686
+
+# Vulkan loader et drivers pour les applications 32-bit
+dnf5 -y --enable-repo=terra-mesa --setopt=install_weak_deps=False install \
+    vulkan-loader.i686 \
+    mesa-vulkan-drivers.i686
+
+# ALSA 32-bit (REQUIS pour l'audio Wine natif)
+dnf5 -y --setopt=install_weak_deps=False install \
+    alsa-lib.i686
+
+# GStreamer et codecs 32-bit (REQUIS pour quartz/multimédia Wine)
+dnf5 -y --setopt=install_weak_deps=False install \
+    gstreamer1.i686 \
+    gstreamer1-plugins-base.i686 \
+    gstreamer1-plugins-good.i686 \
+    gstreamer1-plugins-bad-free.i686 \
+    gstreamer1-plugin-libav.i686 \
+    gstreamer1-plugins-ugly-free.i686
+
+# PipeWire GStreamer 32-bit (bridge pour les apps utilisant GStreamer via PipeWire)
+dnf5 -y --setopt=install_weak_deps=False install \
+    pipewire-gstreamer.i686
+
+# OpenAL pour l'audio des jeux 32-bit
+dnf5 -y --setopt=install_weak_deps=False install \
+    openal-soft.i686
+
+# Librairies audio complémentaires souvent requises
+dnf5 -y --setopt=install_weak_deps=False install \
+    libogg.i686 \
+    libvorbis.i686 \
+    flac-libs.i686 \
+    libsndfile.i686
