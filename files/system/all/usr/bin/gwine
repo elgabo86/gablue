@@ -1662,9 +1662,6 @@ COMPONENT_SHA256[openal]="d165bcb7628fd950d14847585468cc11943b2a1da92a59a839d397
 COMPONENT_URLS[physx]="https://us.download.nvidia.com/Windows/9.23.1019/PhysX_9.23.1019_SystemSoftware.exe"
 COMPONENT_SHA256[physx]="9b42b84e881769d681e09f62a1b51532616b2e6a2d5d99d0ccae6eb5fbbc208c"
 
-COMPONENT_URLS[xact]="https://files.holarse-linuxgaming.de/mirrors/microsoft/directx_Jun2010_redist.exe"
-COMPONENT_SHA256[xact]="8746ee1a84a083a90e37899d71d50d5c7c015e69688a466aa80447f011780c0d"
-
 WINCOMPONENTS_REQUIRED=(
     "vcrun2010_x86" "vcrun2010_x64"
     "vcrun2012_x86" "vcrun2012_x64"
@@ -2029,114 +2026,6 @@ install_d3dx9() {
     return 0
 }
 
-install_xact() {
-    echo "Installation de XACT Engine..."
-    
-    local win32_sys="$WINEPREFIX/drive_c/windows/syswow64"
-    local cache_file="$WINCOMPONENTS_CACHE/directx_Jun2010/directx_Jun2010_redist.exe"
-    
-    if [ ! -f "$cache_file" ]; then
-        echo "  ✗ Fichier DirectX non trouvé"
-        return 1
-    fi
-    
-    local tmp_dir=$(mktemp -d)
-    local xact_count=0
-    
-    if command -v cabextract &>/dev/null; then
-        cabextract -d "$tmp_dir" -L -F '*_xact_*x86*' "$cache_file" >/dev/null 2>&1 || true
-        cabextract -d "$tmp_dir" -L -F '*_x3daudio_*x86*' "$cache_file" >/dev/null 2>&1 || true
-        cabextract -d "$tmp_dir" -L -F '*_xaudio_*x86*' "$cache_file" >/dev/null 2>&1 || true
-        
-        for cab in "$tmp_dir"/*.cab; do
-            if [ -f "$cab" ]; then
-                cabextract -d "$win32_sys" -L -F 'xactengine*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
-                cabextract -d "$win32_sys" -L -F 'xaudio*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
-                cabextract -d "$win32_sys" -L -F 'x3daudio*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
-                cabextract -d "$win32_sys" -L -F 'xapofx*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
-            fi
-        done
-    fi
-    
-    local xact_overrides="xaudio2_0 xaudio2_1 xaudio2_2 xaudio2_3 xaudio2_4 xaudio2_5 xaudio2_6 xaudio2_7"
-    local x3daudio_overrides="x3daudio1_0 x3daudio1_1 x3daudio1_2 x3daudio1_3 x3daudio1_4 x3daudio1_5 x3daudio1_6 x3daudio1_7"
-    local xapofx_overrides="xapofx1_1 xapofx1_2 xapofx1_3 xapofx1_4 xapofx1_5"
-    local xactengine_overrides="xactengine2_0 xactengine2_1 xactengine2_2 xactengine2_3 xactengine2_4 xactengine2_5 xactengine2_6 xactengine2_7 xactengine2_8 xactengine2_9 xactengine2_10"
-    xactengine_overrides="$xactengine_overrides xactengine3_0 xactengine3_1 xactengine3_2 xactengine3_3 xactengine3_4 xactengine3_5 xactengine3_6 xactengine3_7"
-    
-    for dll in $xact_overrides $x3daudio_overrides $xapofx_overrides $xactengine_overrides; do
-        WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "$dll" /d native,builtin /f >/dev/null 2>&1 || true
-    done
-    
-    if [ -x "$WINE32_BIN" ]; then
-        for dll in "$win32_sys"/xactengine*.dll; do
-            if [ -f "$dll" ]; then
-                WINEPREFIX="$WINEPREFIX" "$WINE32_BIN" "C:\\windows\\system32\\regsvr32.exe" /S "$(basename "$dll")" >/dev/null 2>&1 || true
-            fi
-        done
-        
-        for i in 0 1 2 3 4 5 6 7; do
-            if [ -f "$win32_sys/xaudio2_${i}.dll" ]; then
-                WINEPREFIX="$WINEPREFIX" "$WINE32_BIN" "C:\\windows\\system32\\regsvr32.exe" /S "xaudio2_${i}.dll" >/dev/null 2>&1 || true
-            fi
-        done
-    fi
-    
-    rm -rf "$tmp_dir"
-    echo "  ✓ $xact_count DLLs XACT x86 installées"
-    return 0
-}
-
-install_xact_x64() {
-    echo "Installation de XACT Engine x64..."
-    
-    local win64_sys="$WINEPREFIX/drive_c/windows/system32"
-    ensure_dir -s "$win64_sys"
-    
-    local cache_file="$WINCOMPONENTS_CACHE/directx_Jun2010/directx_Jun2010_redist.exe"
-    
-    if [ ! -f "$cache_file" ]; then
-        echo "  ✗ Fichier DirectX non trouvé"
-        return 1
-    fi
-    
-    local tmp_dir=$(mktemp -d)
-    local xact_count=0
-    
-    if command -v cabextract &>/dev/null; then
-        cabextract -d "$tmp_dir" -L -F '*_xact_*x64*' "$cache_file" >/dev/null 2>&1 || true
-        cabextract -d "$tmp_dir" -L -F '*_x3daudio_*x64*' "$cache_file" >/dev/null 2>&1 || true
-        cabextract -d "$tmp_dir" -L -F '*_xaudio_*x64*' "$cache_file" >/dev/null 2>&1 || true
-        
-        for cab in "$tmp_dir"/*.cab; do
-            if [ -f "$cab" ]; then
-                cabextract -d "$win64_sys" -L -F 'xactengine*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
-                cabextract -d "$win64_sys" -L -F 'xaudio*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
-                cabextract -d "$win64_sys" -L -F 'x3daudio*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
-                cabextract -d "$win64_sys" -L -F 'xapofx*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
-            fi
-        done
-    fi
-    
-    if [ "$WINEARCH" = "win64" ] && [ -x "$WINE_BIN" ]; then
-        for dll in "$win64_sys"/xactengine*.dll; do
-            if [ -f "$dll" ]; then
-                WINEPREFIX="$WINEPREFIX" "$WINE_BIN" "C:\windows\system32\regsvr32.exe" /S "$(basename "$dll")" >/dev/null 2>&1 || true
-            fi
-        done
-        
-        for i in 0 1 2 3 4 5 6 7; do
-            if [ -f "$win64_sys/xaudio2_${i}.dll" ]; then
-                WINEPREFIX="$WINEPREFIX" "$WINE_BIN" "C:\windows\system32\regsvr32.exe" /S "xaudio2_${i}.dll" >/dev/null 2>&1 || true
-            fi
-        done
-    fi
-    
-    rm -rf "$tmp_dir"
-    echo "  ✓ $xact_count DLLs XACT x64 installées"
-    return 0
-}
-
 install_d3dcompiler() {
     local version="$1"
     echo "Installation de D3DCompiler_$version..."
@@ -2429,9 +2318,6 @@ install_all_wincomponents() {
     install_dotnet 8 both
     
     install_d3dx9
-    
-    install_xact
-    install_xact_x64
     
     install_d3dcompiler 42
     install_d3dcompiler 43
@@ -3887,43 +3773,28 @@ EOF
 
 # Configure le registre Wine pour rediriger TEMP/TMP vers un chemin Windows standard
 # Les vieux installateurs ne gèrent pas bien les chemins Z:\ (comme 3DMark2000)
-setup_wine_temp_registry() {
+setup_wine_temp_symlinks() {
     local target_prefix="${1:-$WINEPREFIX}"
-    local USER_REG="$target_prefix/user.reg"
-    
-    if [ ! -f "$USER_REG" ]; then
-        echo "Warning: user.reg introuvable, skip de la configuration TEMP/TMP"
-        return 0
-    fi
-    
     local username
     username=$(whoami)
-    local temp_win_path="C:\\users\\$username\\AppData\\Local\\Temp"
-    local temp_unix_path="$target_prefix/drive_c/users/$username/AppData/Local/Temp"
     
-    mkdir -p "$temp_unix_path"
+    mkdir -p "$CACHE_DIR/temp"
     
-    # Vérifier si la section Environment existe
-    if ! grep -q '^\[Environment\]' "$USER_REG" 2>/dev/null; then
-        echo "" >> "$USER_REG"
-        echo "[Environment]" >> "$USER_REG"
-    fi
+    local temp_paths=(
+        "$target_prefix/drive_c/users/$username/AppData/Local/Temp"
+        "$target_prefix/drive_c/users/$username/Temp"
+    )
     
-    # Mettre à jour ou ajouter TEMP
-    if grep -q '"TEMP"=' "$USER_REG" 2>/dev/null; then
-        sed -i 's|"TEMP"=.*|"TEMP"="'"$temp_win_path"'"|' "$USER_REG"
-    else
-        echo '"TEMP"="'"$temp_win_path"'"' >> "$USER_REG"
-    fi
-    
-    # Mettre à jour ou ajouter TMP
-    if grep -q '"TMP"=' "$USER_REG" 2>/dev/null; then
-        sed -i 's|"TMP"=.*|"TMP"="'"$temp_win_path"'"|' "$USER_REG"
-    else
-        echo '"TMP"="'"$temp_win_path"'"' >> "$USER_REG"
-    fi
-    
-    echo "Registre Wine configuré: TEMP/TMP -> $temp_win_path"
+    for temp_path in "${temp_paths[@]}"; do
+        if [ -d "$temp_path" ] && [ ! -L "$temp_path" ]; then
+            rm -rf "$temp_path"
+        fi
+        
+        if [ ! -L "$temp_path" ]; then
+            ln -sf "$CACHE_DIR/temp" "$temp_path"
+            echo "Symlink Temp créé: $temp_path -> $CACHE_DIR/temp"
+        fi
+    done
 }
 
 # Fonctions de fix manette (DisableHidraw)
@@ -4304,13 +4175,35 @@ wait_for_wineserver() {
         return 0
     fi
     
+    local system_procs=0
+    for pid in $(pgrep "^wine" 2>/dev/null); do
+        if [ -r "/proc/$pid/cmdline" ]; then
+            local proc_cmdline
+            proc_cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || echo "")
+            case "$proc_cmdline" in
+                *winedevice.exe*|*plugplay.exe*|*explorer.exe*|*services.exe*|*svchost.exe*|*rpcss.exe*)
+                    system_procs=$((system_procs + 1))
+                    ;;
+            esac
+        fi
+    done
+    
+    if [ "$system_procs" -eq "$wine_procs" ]; then
+        echo "Seuls des processus système Wine actifs, arrêt du wineserver"
+        if command -v wineserver &>/dev/null; then
+            WINEPREFIX="$prefix_path" wineserver -k 2>/dev/null || true
+        fi
+        return 0
+    fi
+    
     echo "Attente de wineserver pour: $prefix_path ($wine_procs processus wine actifs)"
     
     if command -v wineserver &>/dev/null; then
         if timeout 30 sh -c "WINEPREFIX=\"$prefix_path\" wineserver -w" 2>/dev/null; then
             echo "Wineserver terminé"
         else
-            echo "Wineserver: timeout ou processus encore actifs"
+            echo "Wineserver: timeout, arrêt forcé"
+            WINEPREFIX="$prefix_path" wineserver -k 2>/dev/null || true
         fi
     fi
 }
@@ -4412,171 +4305,172 @@ cleanup_stale_wineserver_locks() {
 # sandbox.sh - Sandboxing avec bubblewrap
 ################################################################################
 
+BWRAP_ARGS=()
+
+bwrap_add() {
+    BWRAP_ARGS+=("$@")
+}
+
+bwrap_reset() {
+    BWRAP_ARGS=()
+}
+
 build_bwrap_devices() {
-    local bwrap_args=""
-    
-    bwrap_args="$bwrap_args --dev /dev"
+    bwrap_add --dev /dev
     
     if [ "$INSTANCE_MODE" = "joiner" ]; then
-        bwrap_args="$bwrap_args --bind /dev/shm /dev/shm"
+        bwrap_add --bind /dev/shm /dev/shm
     fi
     
     if [ -d "/dev/dri" ]; then
-        bwrap_args="$bwrap_args --dev-bind /dev/dri /dev/dri"
+        bwrap_add --dev-bind /dev/dri /dev/dri
     fi
     
     for nvidia_dev in /dev/nvidia*; do
         if [ -e "$nvidia_dev" ]; then
             if [ -d "$nvidia_dev" ]; then
-                bwrap_args="$bwrap_args --bind-try $nvidia_dev $nvidia_dev"
+                bwrap_add --bind-try "$nvidia_dev" "$nvidia_dev"
             else
-                bwrap_args="$bwrap_args --dev-bind-try $nvidia_dev $nvidia_dev"
+                bwrap_add --dev-bind-try "$nvidia_dev" "$nvidia_dev"
             fi
         fi
     done
     
     if [ -d "/dev/input" ]; then
-        bwrap_args="$bwrap_args --dev-bind /dev/input /dev/input"
+        bwrap_add --dev-bind /dev/input /dev/input
     fi
     
     if [ "$fix_mode" = true ]; then
         for hidraw in /dev/hidraw*; do
             if [ -e "$hidraw" ]; then
-                bwrap_args="$bwrap_args --dev-bind-try $hidraw $hidraw"
+                bwrap_add --dev-bind-try "$hidraw" "$hidraw"
             fi
         done
     fi
     
     if [ -e "/dev/ntsync" ]; then
-        bwrap_args="$bwrap_args --dev-bind /dev/ntsync /dev/ntsync"
+        bwrap_add --dev-bind /dev/ntsync /dev/ntsync
     fi
     
     for video_dev in /dev/video*; do
         if [ -e "$video_dev" ]; then
-            bwrap_args="$bwrap_args --dev-bind-try $video_dev $video_dev"
+            bwrap_add --dev-bind-try "$video_dev" "$video_dev"
         fi
     done
     
     for media_dev in /dev/media*; do
         if [ -e "$media_dev" ]; then
-            bwrap_args="$bwrap_args --dev-bind-try $media_dev $media_dev"
+            bwrap_add --dev-bind-try "$media_dev" "$media_dev"
         fi
     done
     
     if [ -d "/dev/bus/usb" ]; then
-        bwrap_args="$bwrap_args --bind /dev/bus/usb /dev/bus/usb"
+        bwrap_add --bind /dev/bus/usb /dev/bus/usb
     fi
     
     for js_dev in /dev/js*; do
         if [ -e "$js_dev" ]; then
-            bwrap_args="$bwrap_args --dev-bind-try $js_dev $js_dev"
+            bwrap_add --dev-bind-try "$js_dev" "$js_dev"
         fi
     done
     
     if [ -d "/dev/snd" ]; then
-        bwrap_args="$bwrap_args --bind /dev/snd /dev/snd"
+        bwrap_add --bind /dev/snd /dev/snd
     fi
     
     if [ -e "/dev/snd/seq" ]; then
-        bwrap_args="$bwrap_args --dev-bind /dev/snd/seq /dev/snd/seq"
+        bwrap_add --dev-bind /dev/snd/seq /dev/snd/seq
     fi
     
     for cdrom in /dev/sr* /dev/cdrom /dev/dvd /dev/cdrw; do
         if [ -e "$cdrom" ]; then
-            bwrap_args="$bwrap_args --dev-bind-try $cdrom $cdrom"
+            bwrap_add --dev-bind-try "$cdrom" "$cdrom"
         fi
     done
     
     for usb_serial in /dev/ttyUSB* /dev/ttyACM*; do
         if [ -e "$usb_serial" ]; then
-            bwrap_args="$bwrap_args --dev-bind-try $usb_serial $usb_serial"
+            bwrap_add --dev-bind-try "$usb_serial" "$usb_serial"
         fi
     done
-    
-    echo "$bwrap_args"
 }
 
 build_bwrap_configs() {
-    local bwrap_args=""
-    
     if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR" ]; then
-        bwrap_args="$bwrap_args --bind-try \"$XDG_RUNTIME_DIR\" \"$XDG_RUNTIME_DIR\""
+        bwrap_add --bind-try "$XDG_RUNTIME_DIR" "$XDG_RUNTIME_DIR"
     else
         local user_id
         user_id=$(id -u)
         if [ -d "/run/user/$user_id" ]; then
-            bwrap_args="$bwrap_args --bind-try /run/user/$user_id /run/user/$user_id"
+            bwrap_add --bind-try /run/user/$user_id /run/user/$user_id
         fi
     fi
     
     if [ -d "/run/dbus" ]; then
-        bwrap_args="$bwrap_args --bind /run/dbus /run/dbus"
+        bwrap_add --bind /run/dbus /run/dbus
     fi
     
     if [ -n "${MANGOHUD_BIN:-}" ] && [ -f "$MANGOHUD_BIN" ]; then
-        bwrap_args="$bwrap_args --ro-bind-try $MANGOHUD_BIN $MANGOHUD_BIN"
+        bwrap_add --ro-bind-try "$MANGOHUD_BIN" "$MANGOHUD_BIN"
     fi
     
     if [ -d "/usr/lib/mangohud" ]; then
-        bwrap_args="$bwrap_args --ro-bind-try /usr/lib/mangohud /usr/lib/mangohud"
+        bwrap_add --ro-bind-try /usr/lib/mangohud /usr/lib/mangohud
     fi
     if [ -d "/usr/lib64/mangohud" ]; then
-        bwrap_args="$bwrap_args --ro-bind-try /usr/lib64/mangohud /usr/lib64/mangohud"
+        bwrap_add --ro-bind-try /usr/lib64/mangohud /usr/lib64/mangohud
     fi
     if [ -d "/usr/share/mangohud" ]; then
-        bwrap_args="$bwrap_args --ro-bind-try /usr/share/mangohud /usr/share/mangohud"
+        bwrap_add --ro-bind-try /usr/share/mangohud /usr/share/mangohud
     fi
     
     if [ -d "/usr/share/glvnd/egl_vendor.d" ]; then
-        bwrap_args="$bwrap_args --ro-bind-try /usr/share/glvnd/egl_vendor.d /usr/share/glvnd/egl_vendor.d"
+        bwrap_add --ro-bind-try /usr/share/glvnd/egl_vendor.d /usr/share/glvnd/egl_vendor.d
     fi
     if [ -d "/etc/glvnd/egl_vendor.d" ]; then
-        bwrap_args="$bwrap_args --ro-bind-try /etc/glvnd/egl_vendor.d /etc/glvnd/egl_vendor.d"
+        bwrap_add --ro-bind-try /etc/glvnd/egl_vendor.d /etc/glvnd/egl_vendor.d
     fi
     if [ -d "/usr/share/egl/egl_external_platform.d" ]; then
-        bwrap_args="$bwrap_args --ro-bind-try /usr/share/egl/egl_external_platform.d /usr/share/egl/egl_external_platform.d"
+        bwrap_add --ro-bind-try /usr/share/egl/egl_external_platform.d /usr/share/egl/egl_external_platform.d
     fi
     if [ -d "/etc/egl/egl_external_platform.d" ]; then
-        bwrap_args="$bwrap_args --ro-bind-try /etc/egl/egl_external_platform.d /etc/egl/egl_external_platform.d"
+        bwrap_add --ro-bind-try /etc/egl/egl_external_platform.d /etc/egl/egl_external_platform.d
     fi
     
     if [ -d "/usr/share/nvidia" ]; then
-        bwrap_args="$bwrap_args --ro-bind-try /usr/share/nvidia /usr/share/nvidia"
+        bwrap_add --ro-bind-try /usr/share/nvidia /usr/share/nvidia
     fi
     
     if [ -d "/usr/share/drirc.d" ]; then
-        bwrap_args="$bwrap_args --ro-bind-try /usr/share/drirc.d /usr/share/drirc.d"
+        bwrap_add --ro-bind-try /usr/share/drirc.d /usr/share/drirc.d
     fi
     if [ -f "/etc/drirc" ]; then
-        bwrap_args="$bwrap_args --ro-bind-try /etc/drirc /etc/drirc"
+        bwrap_add --ro-bind-try /etc/drirc /etc/drirc
     fi
     
     local mangohud_config_dir="$HOME_REAL/.config/MangoHud"
     if [ -d "$mangohud_config_dir" ]; then
-        bwrap_args="$bwrap_args --ro-bind-try \"$mangohud_config_dir\" \"$mangohud_config_dir\""
+        bwrap_add --ro-bind-try "$mangohud_config_dir" "$mangohud_config_dir"
     fi
-    
-    echo "$bwrap_args"
 }
 
 build_bwrap_directories() {
     local exe_dir="${1:-}"
     local access_mode="${2:-rw}"
-    local bwrap_args=""
     
     if [ -d "$SAVES_REAL" ]; then
-        bwrap_args="$bwrap_args --bind \"$SAVES_REAL\" \"$SAVES_REAL\""
+        bwrap_add --bind "$SAVES_REAL" "$SAVES_REAL"
     fi
     
     if [ -d "$HOME_REAL/Windows" ]; then
-        bwrap_args="$bwrap_args --bind \"$HOME_REAL/Windows\" \"$HOME_REAL/Windows\""
+        bwrap_add --bind "$HOME_REAL/Windows" "$HOME_REAL/Windows"
         for subdir in SteamData UserData; do
             local subdir_path="$HOME_REAL/Windows/$subdir"
             if [ -L "$subdir_path" ]; then
                 local real_path
                 real_path=$(readlink -f "$subdir_path")
                 if [ -n "$real_path" ] && [ "$real_path" != "$subdir_path" ]; then
-                    bwrap_args="$bwrap_args --bind \"$real_path\" \"$real_path\""
+                    bwrap_add --bind "$real_path" "$real_path"
                 fi
             fi
         done
@@ -4593,83 +4487,76 @@ build_bwrap_directories() {
         
         mkdir -p "$WINEPREFIX/drive_c/users" "$WINEPREFIX/drive_c/ProgramData/Steam" "$WINEPREFIX/drive_c/Applications" "$WINEPREFIX/drive_c/Games"
         
-        bwrap_args="$bwrap_args --bind \"$HOME_REAL/Windows/UserData\" \"$WINEPREFIX/drive_c/users\""
-        bwrap_args="$bwrap_args --bind \"$HOME_REAL/Windows/SteamData\" \"$WINEPREFIX/drive_c/ProgramData/Steam\""
-        bwrap_args="$bwrap_args --bind \"$HOME_REAL/Windows/Applications\" \"$WINEPREFIX/drive_c/Applications\""
-        bwrap_args="$bwrap_args --bind \"$HOME_REAL/Windows/Games\" \"$WINEPREFIX/drive_c/Games\""
+        bwrap_add --bind "$HOME_REAL/Windows/UserData" "$WINEPREFIX/drive_c/users"
+        bwrap_add --bind "$HOME_REAL/Windows/SteamData" "$WINEPREFIX/drive_c/ProgramData/Steam"
+        bwrap_add --bind "$HOME_REAL/Windows/Applications" "$WINEPREFIX/drive_c/Applications"
+        bwrap_add --bind "$HOME_REAL/Windows/Games" "$WINEPREFIX/drive_c/Games"
     fi
     
     if [ -d "$CACHE_DIR" ]; then
-        bwrap_args="$bwrap_args --bind \"$CACHE_DIR\" \"$CACHE_DIR\""
+        bwrap_add --bind "$CACHE_DIR" "$CACHE_DIR"
     fi
     
     if [ -d "$EXTRA_REAL" ]; then
-        bwrap_args="$bwrap_args --bind \"$EXTRA_REAL\" \"$EXTRA_REAL\""
+        bwrap_add --bind "$EXTRA_REAL" "$EXTRA_REAL"
     fi
     
     if [ -d "$GWINE_DIR" ]; then
-        bwrap_args="$bwrap_args --bind \"$GWINE_DIR\" \"$GWINE_DIR\""
+        bwrap_add --bind "$GWINE_DIR" "$GWINE_DIR"
     fi
-    
-    echo "$bwrap_args"
 }
 
 build_bwrap_tmp() {
-    local bwrap_args=""
-    
     local shared_tmp_dir
     if command -v get_shared_tmp_dir &>/dev/null; then
         shared_tmp_dir=$(get_shared_tmp_dir)
     fi
     
     if [ -n "$shared_tmp_dir" ] && [ -d "$shared_tmp_dir" ]; then
-        bwrap_args="$bwrap_args --bind \"$shared_tmp_dir\" \"/tmp\""
+        bwrap_add --bind "$shared_tmp_dir" /tmp
         echo "Sandbox: /tmp partagé entre instances" >&2
     else
-        bwrap_args="$bwrap_args --tmpfs /tmp"
+        bwrap_add --tmpfs /tmp
         echo "Sandbox: /tmp isolé (tmpfs)" >&2
     fi
     
     if [ -n "$MOUNT_BASE" ]; then
         mkdir -p "$MOUNT_BASE"
-        bwrap_args="$bwrap_args --bind \"$MOUNT_BASE\" \"$MOUNT_BASE\""
+        bwrap_add --bind "$MOUNT_BASE" "$MOUNT_BASE"
         echo "Sandbox: WGP mounts bindés dans /tmp partagé" >&2
     fi
     
     if [ -d "$GWINE_LOCK_DIR" ]; then
-        bwrap_args="$bwrap_args --bind \"$GWINE_LOCK_DIR\" \"$GWINE_LOCK_DIR\""
+        bwrap_add --bind "$GWINE_LOCK_DIR" "$GWINE_LOCK_DIR"
     fi
     
     if [ -d "$SAVES_SYMLINK" ]; then
-        bwrap_args="$bwrap_args --bind \"$SAVES_SYMLINK\" \"$SAVES_SYMLINK\""
+        bwrap_add --bind "$SAVES_SYMLINK" "$SAVES_SYMLINK"
     fi
     
     if [ -d "$EXTRA_SYMLINK" ]; then
-        bwrap_args="$bwrap_args --bind \"$EXTRA_SYMLINK\" \"$EXTRA_SYMLINK\""
+        bwrap_add --bind "$EXTRA_SYMLINK" "$EXTRA_SYMLINK"
     fi
     
     if [ -d "$TEMP_SYMLINK" ]; then
-        bwrap_args="$bwrap_args --bind \"$TEMP_SYMLINK\" \"$TEMP_SYMLINK\""
+        bwrap_add --bind "$TEMP_SYMLINK" "$TEMP_SYMLINK"
     fi
     
     if [ -d "$TEMP_REAL" ]; then
-        bwrap_args="$bwrap_args --bind \"$TEMP_REAL\" \"$TEMP_REAL\""
+        bwrap_add --bind "$TEMP_REAL" "$TEMP_REAL"
     fi
     
     if [ -d "/tmp/wgp-full-overlay" ]; then
-        bwrap_args="$bwrap_args --bind \"/tmp/wgp-full-overlay\" \"/tmp/wgp-full-overlay\""
+        bwrap_add --bind /tmp/wgp-full-overlay /tmp/wgp-full-overlay
     fi
-    
-    echo "$bwrap_args"
 }
 
 build_bwrap_user_dirs() {
     local exe_dir="${1:-}"
     local access_mode="${2:-rw}"
-    local bwrap_args=""
     
     if [ -d "/run/media" ]; then
-        bwrap_args="$bwrap_args --bind /run/media /run/media"
+        bwrap_add --bind /run/media /run/media
     fi
     
     local download_dir
@@ -4680,14 +4567,13 @@ build_bwrap_user_dirs() {
     fi
     
     if [ -n "$download_dir" ] && [ -d "$download_dir" ]; then
-        bwrap_args="$bwrap_args --bind \"$download_dir\" \"$download_dir\""
+        bwrap_add --bind "$download_dir" "$download_dir"
     fi
     
     if command -v get_custom_bind_dirs_args &>/dev/null; then
         local custom_bind_args
         custom_bind_args="$(get_custom_bind_dirs_args)"
         if [ -n "$custom_bind_args" ]; then
-            bwrap_args="$bwrap_args $custom_bind_args"
             echo "Sandbox: répertoires personnalisés bindés" >&2
         fi
     fi
@@ -4703,146 +4589,128 @@ build_bwrap_user_dirs() {
             local parent_dir
             parent_dir="$(dirname "$exe_dir")"
             if [ -d "$parent_dir" ] && [ "$parent_dir" != "/" ]; then
-                if [[ ! "$bwrap_args" =~ \"$parent_dir\" ]]; then
-                    bwrap_args="$bwrap_args --bind \"$parent_dir\" \"$parent_dir\""
+                local already_bound=false
+                for arg in "${BWRAP_ARGS[@]}"; do
+                    if [[ "$arg" == "$parent_dir" ]]; then
+                        already_bound=true
+                        break
+                    fi
+                done
+                if [ "$already_bound" = false ]; then
+                    bwrap_add --bind "$parent_dir" "$parent_dir"
                     echo "Sandbox: dossier parent bindé: $parent_dir" >&2
                 fi
             fi
         fi
         
         if [ "$access_mode" = "ro" ]; then
-            bwrap_args="$bwrap_args --ro-bind \"$exe_dir\" \"$exe_dir\""
+            bwrap_add --ro-bind "$exe_dir" "$exe_dir"
         else
-            bwrap_args="$bwrap_args --bind \"$exe_dir\" \"$exe_dir\""
+            bwrap_add --bind "$exe_dir" "$exe_dir"
         fi
     fi
-    
-    echo "$bwrap_args"
 }
 
 build_bwrap_env_vars() {
-    local bwrap_args=""
-    
-    bwrap_args="$bwrap_args --setenv HOME \"$HOME\""
-    bwrap_args="$bwrap_args --setenv WINEPREFIX \"$WINEPREFIX\""
-    bwrap_args="$bwrap_args --setenv WINEARCH \"$WINEARCH\""
-    bwrap_args="$bwrap_args --setenv WINE \"$WINE_BIN\""
-    bwrap_args="$bwrap_args --setenv PATH \"$PATH\""
+    bwrap_add --setenv HOME "$HOME"
+    bwrap_add --setenv WINEPREFIX "$WINEPREFIX"
+    bwrap_add --setenv WINEARCH "$WINEARCH"
+    bwrap_add --setenv WINE "$WINE_BIN"
+    bwrap_add --setenv PATH "$PATH"
     
     if [ -n "${LD_PRELOAD:-}" ]; then
-        bwrap_args="$bwrap_args --setenv LD_PRELOAD \"$LD_PRELOAD\""
+        bwrap_add --setenv LD_PRELOAD "$LD_PRELOAD"
     else
-        bwrap_args="$bwrap_args --setenv LD_PRELOAD \"\""
+        bwrap_add --setenv LD_PRELOAD ""
     fi
     
-    [ -n "${WINE_TMPDIR:-}" ] && bwrap_args="$bwrap_args --setenv WINE_TMPDIR \"$WINE_TMPDIR\""
-    [ -n "${TMP:-}" ] && bwrap_args="$bwrap_args --setenv TMP \"$TMP\""
-    [ -n "${TEMP:-}" ] && bwrap_args="$bwrap_args --setenv TEMP \"$TEMP\""
-    [ -n "${WINE_LARGE_ADDRESS_AWARE:-}" ] && bwrap_args="$bwrap_args --setenv WINE_LARGE_ADDRESS_AWARE \"$WINE_LARGE_ADDRESS_AWARE\""
-    [ -n "${STAGING_SHARED_MEMORY:-}" ] && bwrap_args="$bwrap_args --setenv STAGING_SHARED_MEMORY \"$STAGING_SHARED_MEMORY\""
-    [ -n "${WINEFSYNC:-}" ] && bwrap_args="$bwrap_args --setenv WINEFSYNC \"$WINEFSYNC\""
-    [ -n "${PULSE_LATENCY_MSEC:-}" ] && bwrap_args="$bwrap_args --setenv PULSE_LATENCY_MSEC \"$PULSE_LATENCY_MSEC\""
-    [ -n "${WINEDEBUG:-}" ] && bwrap_args="$bwrap_args --setenv WINEDEBUG \"$WINEDEBUG\""
-    [ -n "${WINEDLLOVERRIDES:-}" ] && bwrap_args="$bwrap_args --setenv WINEDLLOVERRIDES \"$WINEDLLOVERRIDES\""
-    [ -n "${LD_LIBRARY_PATH:-}" ] && bwrap_args="$bwrap_args --setenv LD_LIBRARY_PATH \"$LD_LIBRARY_PATH\""
-    [ -n "${VK_ICD_FILENAMES:-}" ] && bwrap_args="$bwrap_args --setenv VK_ICD_FILENAMES \"$VK_ICD_FILENAMES\""
-    [ -n "${DXVK_STATE_CACHE_PATH:-}" ] && bwrap_args="$bwrap_args --setenv DXVK_STATE_CACHE_PATH \"$DXVK_STATE_CACHE_PATH\""
-    [ -n "${VKD3D_SHADER_CACHE_PATH:-}" ] && bwrap_args="$bwrap_args --setenv VKD3D_SHADER_CACHE_PATH \"$VKD3D_SHADER_CACHE_PATH\""
-    [ -n "${__GL_SHADER_DISK_CACHE:-}" ] && bwrap_args="$bwrap_args --setenv __GL_SHADER_DISK_CACHE \"$__GL_SHADER_DISK_CACHE\""
-    [ -n "${__GL_SHADER_DISK_CACHE_SKIP_CLEANUP:-}" ] && bwrap_args="$bwrap_args --setenv __GL_SHADER_DISK_CACHE_SKIP_CLEANUP \"$__GL_SHADER_DISK_CACHE_SKIP_CLEANUP\""
-    [ -n "${__GL_SHADER_DISK_CACHE_PATH:-}" ] && bwrap_args="$bwrap_args --setenv __GL_SHADER_DISK_CACHE_PATH \"$__GL_SHADER_DISK_CACHE_PATH\""
-    [ -n "${MESA_SHADER_CACHE_DIR:-}" ] && bwrap_args="$bwrap_args --setenv MESA_SHADER_CACHE_DIR \"$MESA_SHADER_CACHE_DIR\""
-    [ -n "${MANGOHUD:-}" ] && bwrap_args="$bwrap_args --setenv MANGOHUD \"$MANGOHUD\""
-    [ -n "${MANGOHUD_DLSYM:-}" ] && bwrap_args="$bwrap_args --setenv MANGOHUD_DLSYM \"$MANGOHUD_DLSYM\""
-    [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && bwrap_args="$bwrap_args --setenv DBUS_SESSION_BUS_ADDRESS \"$DBUS_SESSION_BUS_ADDRESS\""
+    [ -n "${WINE_TMPDIR:-}" ] && bwrap_add --setenv WINE_TMPDIR "$WINE_TMPDIR"
+    [ -n "${TMP:-}" ] && bwrap_add --setenv TMP "$TMP"
+    [ -n "${TEMP:-}" ] && bwrap_add --setenv TEMP "$TEMP"
+    [ -n "${WINE_LARGE_ADDRESS_AWARE:-}" ] && bwrap_add --setenv WINE_LARGE_ADDRESS_AWARE "$WINE_LARGE_ADDRESS_AWARE"
+    [ -n "${STAGING_SHARED_MEMORY:-}" ] && bwrap_add --setenv STAGING_SHARED_MEMORY "$STAGING_SHARED_MEMORY"
+    [ -n "${WINEFSYNC:-}" ] && bwrap_add --setenv WINEFSYNC "$WINEFSYNC"
+    [ -n "${PULSE_LATENCY_MSEC:-}" ] && bwrap_add --setenv PULSE_LATENCY_MSEC "$PULSE_LATENCY_MSEC"
+    [ -n "${WINEDEBUG:-}" ] && bwrap_add --setenv WINEDEBUG "$WINEDEBUG"
+    [ -n "${WINEDLLOVERRIDES:-}" ] && bwrap_add --setenv WINEDLLOVERRIDES "$WINEDLLOVERRIDES"
+    [ -n "${LD_LIBRARY_PATH:-}" ] && bwrap_add --setenv LD_LIBRARY_PATH "$LD_LIBRARY_PATH"
+    [ -n "${VK_ICD_FILENAMES:-}" ] && bwrap_add --setenv VK_ICD_FILENAMES "$VK_ICD_FILENAMES"
+    [ -n "${DXVK_STATE_CACHE_PATH:-}" ] && bwrap_add --setenv DXVK_STATE_CACHE_PATH "$DXVK_STATE_CACHE_PATH"
+    [ -n "${VKD3D_SHADER_CACHE_PATH:-}" ] && bwrap_add --setenv VKD3D_SHADER_CACHE_PATH "$VKD3D_SHADER_CACHE_PATH"
+    [ -n "${__GL_SHADER_DISK_CACHE:-}" ] && bwrap_add --setenv __GL_SHADER_DISK_CACHE "$__GL_SHADER_DISK_CACHE"
+    [ -n "${__GL_SHADER_DISK_CACHE_SKIP_CLEANUP:-}" ] && bwrap_add --setenv __GL_SHADER_DISK_CACHE_SKIP_CLEANUP "$__GL_SHADER_DISK_CACHE_SKIP_CLEANUP"
+    [ -n "${__GL_SHADER_DISK_CACHE_PATH:-}" ] && bwrap_add --setenv __GL_SHADER_DISK_CACHE_PATH "$__GL_SHADER_DISK_CACHE_PATH"
+    [ -n "${MESA_SHADER_CACHE_DIR:-}" ] && bwrap_add --setenv MESA_SHADER_CACHE_DIR "$MESA_SHADER_CACHE_DIR"
+    [ -n "${MANGOHUD:-}" ] && bwrap_add --setenv MANGOHUD "$MANGOHUD"
+    [ -n "${MANGOHUD_DLSYM:-}" ] && bwrap_add --setenv MANGOHUD_DLSYM "$MANGOHUD_DLSYM"
+    [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && bwrap_add --setenv DBUS_SESSION_BUS_ADDRESS "$DBUS_SESSION_BUS_ADDRESS"
     
-    [ -n "${DXVK_NVAPIHACK:-}" ] && bwrap_args="$bwrap_args --setenv DXVK_NVAPIHACK \"$DXVK_NVAPIHACK\""
-    [ -n "${DXVK_ENABLE_NVAPI:-}" ] && bwrap_args="$bwrap_args --setenv DXVK_ENABLE_NVAPI \"$DXVK_ENABLE_NVAPI\""
-    [ -n "${__NV_PRIME_RENDER_OFFLOAD:-}" ] && bwrap_args="$bwrap_args --setenv __NV_PRIME_RENDER_OFFLOAD \"$__NV_PRIME_RENDER_OFFLOAD\""
-    [ -n "${__VK_LAYER_NV_optimus:-}" ] && bwrap_args="$bwrap_args --setenv __VK_LAYER_NV_optimus \"$__VK_LAYER_NV_optimus\""
-    [ -n "${__GLX_VENDOR_LIBRARY_NAME:-}" ] && bwrap_args="$bwrap_args --setenv __GLX_VENDOR_LIBRARY_NAME \"$__GLX_VENDOR_LIBRARY_NAME\""
-    [ -n "${SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD:-}" ] && bwrap_args="$bwrap_args --setenv SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD \"$SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD\""
+    [ -n "${DXVK_NVAPIHACK:-}" ] && bwrap_add --setenv DXVK_NVAPIHACK "$DXVK_NVAPIHACK"
+    [ -n "${DXVK_ENABLE_NVAPI:-}" ] && bwrap_add --setenv DXVK_ENABLE_NVAPI "$DXVK_ENABLE_NVAPI"
+    [ -n "${__NV_PRIME_RENDER_OFFLOAD:-}" ] && bwrap_add --setenv __NV_PRIME_RENDER_OFFLOAD "$__NV_PRIME_RENDER_OFFLOAD"
+    [ -n "${__VK_LAYER_NV_optimus:-}" ] && bwrap_add --setenv __VK_LAYER_NV_optimus "$__VK_LAYER_NV_optimus"
+    [ -n "${__GLX_VENDOR_LIBRARY_NAME:-}" ] && bwrap_add --setenv __GLX_VENDOR_LIBRARY_NAME "$__GLX_VENDOR_LIBRARY_NAME"
+    [ -n "${SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD:-}" ] && bwrap_add --setenv SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD "$SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD"
     
-    # Variables importantes système
-    [ -n "${USER:-}" ] && bwrap_args="$bwrap_args --setenv USER \"$USER\""
-    [ -n "${LOGNAME:-}" ] && bwrap_args="$bwrap_args --setenv LOGNAME \"$LOGNAME\""
-    [ -n "${SHELL:-}" ] && bwrap_args="$bwrap_args --setenv SHELL \"$SHELL\""
-    [ -n "${XDG_SESSION_TYPE:-}" ] && bwrap_args="$bwrap_args --setenv XDG_SESSION_TYPE \"$XDG_SESSION_TYPE\""
-    [ -n "${XDG_CURRENT_DESKTOP:-}" ] && bwrap_args="$bwrap_args --setenv XDG_CURRENT_DESKTOP \"$XDG_CURRENT_DESKTOP\""
-    [ -n "${WAYLAND_DISPLAY:-}" ] && bwrap_args="$bwrap_args --setenv WAYLAND_DISPLAY \"$WAYLAND_DISPLAY\""
-    [ -n "${DISPLAY:-}" ] && bwrap_args="$bwrap_args --setenv DISPLAY \"$DISPLAY\""
-    [ -n "${XDG_RUNTIME_DIR:-}" ] && bwrap_args="$bwrap_args --setenv XDG_RUNTIME_DIR \"$XDG_RUNTIME_DIR\""
-    [ -n "${XDG_SESSION_DESKTOP:-}" ] && bwrap_args="$bwrap_args --setenv XDG_SESSION_DESKTOP \"$XDG_SESSION_DESKTOP\""
-    [ -n "${XDG_CONFIG_DIRS:-}" ] && bwrap_args="$bwrap_args --setenv XDG_CONFIG_DIRS \"$XDG_CONFIG_DIRS\""
-    [ -n "${XDG_DATA_DIRS:-}" ] && bwrap_args="$bwrap_args --setenv XDG_DATA_DIRS \"$XDG_DATA_DIRS\""
+    [ -n "${USER:-}" ] && bwrap_add --setenv USER "$USER"
+    [ -n "${LOGNAME:-}" ] && bwrap_add --setenv LOGNAME "$LOGNAME"
+    [ -n "${SHELL:-}" ] && bwrap_add --setenv SHELL "$SHELL"
+    [ -n "${XDG_SESSION_TYPE:-}" ] && bwrap_add --setenv XDG_SESSION_TYPE "$XDG_SESSION_TYPE"
+    [ -n "${XDG_CURRENT_DESKTOP:-}" ] && bwrap_add --setenv XDG_CURRENT_DESKTOP "$XDG_CURRENT_DESKTOP"
+    [ -n "${WAYLAND_DISPLAY:-}" ] && bwrap_add --setenv WAYLAND_DISPLAY "$WAYLAND_DISPLAY"
+    [ -n "${DISPLAY:-}" ] && bwrap_add --setenv DISPLAY "$DISPLAY"
+    [ -n "${XDG_RUNTIME_DIR:-}" ] && bwrap_add --setenv XDG_RUNTIME_DIR "$XDG_RUNTIME_DIR"
+    [ -n "${XDG_SESSION_DESKTOP:-}" ] && bwrap_add --setenv XDG_SESSION_DESKTOP "$XDG_SESSION_DESKTOP"
+    [ -n "${XDG_CONFIG_DIRS:-}" ] && bwrap_add --setenv XDG_CONFIG_DIRS "$XDG_CONFIG_DIRS"
+    [ -n "${XDG_DATA_DIRS:-}" ] && bwrap_add --setenv XDG_DATA_DIRS "$XDG_DATA_DIRS"
     
-    # Transmettre les variables personnalisées passées via --env
     if [ -n "${GWINE_CUSTOM_VARS:-}" ]; then
         while IFS= read -r env_line; do
             if [ -n "$env_line" ]; then
                 local var_name="${env_line%%=*}"
                 local var_value="${env_line#*=}"
                 if [ -n "$var_name" ]; then
-                    # Échapper les guillemets doubles
-                    local escaped_value="${var_value//\"/\\\"}"
-                    bwrap_args="$bwrap_args --setenv \"$var_name\" \"$escaped_value\""
+                    bwrap_add --setenv "$var_name" "$var_value"
                 fi
             fi
         done <<< "$GWINE_CUSTOM_VARS"
     fi
-    
-    echo "$bwrap_args"
 }
 
 build_bwrap_args() {
     local exe_dir="${1:-}"
     local access_mode="${2:-rw}"
-    local bwrap_args=""
     
-    local wineserver_running=false
-    if [ -n "${WINEPREFIX:-}" ] && [ -d "$WINEPREFIX" ]; then
-        if command -v wineserver &>/dev/null; then
-            if timeout 0.5 sh -c "WINEPREFIX=\"$WINEPREFIX\" wineserver -w" 2>/dev/null; then
-                wineserver_running=true
-            fi
-        fi
-        if [ "$wineserver_running" = false ]; then
-            if pgrep -f "wineserver.*$WINEPREFIX" >/dev/null 2>&1; then
-                wineserver_running=true
-            fi
-        fi
-    fi
+    bwrap_reset
     
-    bwrap_args="$bwrap_args --unshare-uts"
-    bwrap_args="$bwrap_args --unshare-cgroup"
-    bwrap_args="$bwrap_args --unshare-ipc"
-    bwrap_args="$bwrap_args --share-net"
+    bwrap_add --unshare-uts
+    bwrap_add --unshare-cgroup
+    bwrap_add --unshare-ipc
+    bwrap_add --share-net
     
-    bwrap_args="$bwrap_args --die-with-parent"
-    bwrap_args="$bwrap_args --new-session"
-    bwrap_args="$bwrap_args --cap-drop ALL"
+    bwrap_add --die-with-parent
+    bwrap_add --new-session
+    bwrap_add --cap-drop ALL
     
-    bwrap_args="$bwrap_args --ro-bind / /"
-    bwrap_args="$bwrap_args --proc /proc"
-    bwrap_args="$bwrap_args --tmpfs /home"
+    bwrap_add --ro-bind / /
+    bwrap_add --proc /proc
+    bwrap_add --tmpfs /home
     
-    bwrap_args="$bwrap_args --bind-try /etc/resolv.conf /etc/resolv.conf"
-    bwrap_args="$bwrap_args --bind-try /etc/hosts /etc/hosts"
-    bwrap_args="$bwrap_args --bind-try /etc/ssl /etc/ssl"
-    bwrap_args="$bwrap_args --bind-try /etc/ca-certificates /etc/ca-certificates"
-    bwrap_args="$bwrap_args --bind-try /etc/pki /etc/pki"
-    bwrap_args="$bwrap_args --bind-try /etc/localtime /etc/localtime"
-    bwrap_args="$bwrap_args --bind-try /etc/machine-id /etc/machine-id"
-    bwrap_args="$bwrap_args --ro-bind-try /etc/ld.so.cache /etc/ld.so.cache"
+    bwrap_add --bind-try /etc/resolv.conf /etc/resolv.conf
+    bwrap_add --bind-try /etc/hosts /etc/hosts
+    bwrap_add --bind-try /etc/ssl /etc/ssl
+    bwrap_add --bind-try /etc/ca-certificates /etc/ca-certificates
+    bwrap_add --bind-try /etc/pki /etc/pki
+    bwrap_add --bind-try /etc/localtime /etc/localtime
+    bwrap_add --bind-try /etc/machine-id /etc/machine-id
+    bwrap_add --ro-bind-try /etc/ld.so.cache /etc/ld.so.cache
     
-    bwrap_args="$bwrap_args $(build_bwrap_devices)"
-    bwrap_args="$bwrap_args $(build_bwrap_configs)"
-    bwrap_args="$bwrap_args $(build_bwrap_directories "$exe_dir" "$access_mode")"
-    bwrap_args="$bwrap_args $(build_bwrap_tmp)"
-    bwrap_args="$bwrap_args $(build_bwrap_user_dirs "$exe_dir" "$access_mode")"
-    bwrap_args="$bwrap_args $(build_bwrap_env_vars)"
-    
-    echo "$bwrap_args"
+    build_bwrap_devices
+    build_bwrap_configs
+    build_bwrap_directories "$exe_dir" "$access_mode"
+    build_bwrap_tmp
+    build_bwrap_user_dirs "$exe_dir" "$access_mode"
+    build_bwrap_env_vars
 }
 
 # =============================================================================
@@ -6146,7 +6014,6 @@ setup_wine_environment() {
     export WINEFSYNC="${WINEFSYNC:-1}"
     export WINENTSYNC="${WINENTSYNC:-1}"
     export PULSE_LATENCY_MSEC="${PULSE_LATENCY_MSEC:-60}"
-    export WINEDEBUG="${WINEDEBUG:-fixme-all}"
     
     if [ "$wayland_mode" = true ]; then
         echo "Mode Wayland activé (désactivation de XWayland)"
@@ -6295,9 +6162,6 @@ launch_wine_game() {
     local exe_dir
     exe_dir="$(dirname "$exe_path")"
     echo "Working directory: $exe_dir"
-    cd "$exe_dir" || error_exit "Impossible de changer le répertoire vers $exe_dir"
-    
-    local CMD="$WINE_BIN"
     
     local wineserver_already_running=false
     if [ -n "${WINEPREFIX:-}" ]; then
@@ -6306,7 +6170,7 @@ launch_wine_game() {
         fi
     fi
     
-    local bwrap_args=""
+    local bwrap_exe_dir="$exe_dir"
     
     if [ "$nosandbox_mode" != true ]; then
         if command -v bwrap &>/dev/null; then
@@ -6322,15 +6186,9 @@ launch_wine_game() {
                 bwrap_access_mode="rw"
             fi
             
-            bwrap_args=$(build_bwrap_args "$bwrap_access_dir" "$bwrap_access_mode")
-            
-            local mango_prefix=""
-            if [ "${MANGOHUD:-}" != "0" ] && [ -n "${MANGOHUD_BIN:-}" ]; then
-                mango_prefix="$MANGOHUD_BIN "
-                echo "MangoHud sera activé à l'intérieur du sandbox"
+            if [[ "$exe_dir" == "$SHARED_TMP_DIR"* ]]; then
+                bwrap_exe_dir="/tmp${exe_dir#$SHARED_TMP_DIR}"
             fi
-            
-            CMD="bwrap $bwrap_args -- ${mango_prefix}$WINE_BIN"
             
             register_master_instance "$WINEPREFIX"
             
@@ -6339,28 +6197,13 @@ launch_wine_game() {
             fi
         else
             echo "Warning: bwrap (bubblewrap) non disponible, sandbox désactivé"
-            echo "         Installez bubblewrap pour activer le sandboxing"
+            cd "$exe_dir" || error_exit "Impossible de changer le répertoire vers $exe_dir"
         fi
     else
         echo "Sandbox désactivé (--nosandbox)"
+        cd "$exe_dir" || error_exit "Impossible de changer le répertoire vers $exe_dir"
     fi
     
-    if [ "$nosandbox_mode" = true ]; then
-        if [ "${MANGOHUD:-}" = "0" ]; then
-            echo "MangoHud désactivé par MANGOHUD=0"
-            unset MANGOHUD
-            unset MANGOHUD_DLSYM
-            unset MANGOHUD_BIN
-        elif [ -n "$MANGOHUD_BIN" ] && [ "${MANGOHUD:-1}" != "0" ]; then
-            export MANGOHUD=1
-            echo "MangoHud activé (mode nosandbox)"
-            CMD="$MANGOHUD_BIN $CMD"
-        fi
-    fi
-    
-    local exit_code=0
-    
-    # Exporter les variables personnalisées (--env) dans l'environnement
     if [ -n "${GWINE_CUSTOM_VARS:-}" ]; then
         while IFS= read -r env_line; do
             if [ -n "$env_line" ]; then
@@ -6374,42 +6217,123 @@ launch_wine_game() {
         done <<< "$GWINE_CUSTOM_VARS"
     fi
     
-    local full_cmd="$CMD"
-    if [ -n "$game_args" ]; then
-        full_cmd="$full_cmd \"$exe_path\" $game_args"
-    else
-        full_cmd="$full_cmd \"$exe_path\""
+    export WINEPREFIX
+    
+    local use_mangohud=false
+    if [ "${MANGOHUD:-}" != "0" ] && [ -n "${MANGOHUD_BIN:-}" ]; then
+        use_mangohud=true
+        echo "MangoHud activé"
+    elif [ "${MANGOHUD:-}" = "0" ]; then
+        echo "MangoHud désactivé par MANGOHUD=0"
+        unset MANGOHUD
+        unset MANGOHUD_DLSYM
+        unset MANGOHUD_BIN
     fi
     
-    WINEPREFIX="$WINEPREFIX" eval "$full_cmd" </dev/null || exit_code=$?
+    local bwrap_pid=""
+    local wine_pid=""
+    
+    if [ "$nosandbox_mode" = true ]; then
+        if [ "$use_mangohud" = true ]; then
+            export MANGOHUD=1
+            "$MANGOHUD_BIN" "$WINE_BIN" "$exe_path" $game_args </dev/null &
+            wine_pid=$!
+        else
+            "$WINE_BIN" "$exe_path" $game_args </dev/null &
+            wine_pid=$!
+        fi
+    else
+        build_bwrap_args "$bwrap_access_dir" "$bwrap_access_mode"
+        
+        bwrap_add --chdir "$bwrap_exe_dir"
+        bwrap_add --
+        
+        if [ "$use_mangohud" = true ]; then
+            bwrap_add "$MANGOHUD_BIN"
+        fi
+        bwrap_add "$WINE_BIN"
+        bwrap_add "$exe_path"
+        if [ -n "$game_args" ]; then
+            bwrap_add $game_args
+        fi
+        
+        bwrap "${BWRAP_ARGS[@]}" </dev/null &
+        bwrap_pid=$!
+        
+        sleep 0.5
+        for pid in $(pgrep -P "$bwrap_pid" 2>/dev/null); do
+            if [ -r "/proc/$pid/cmdline" ]; then
+                local proc_cmdline
+                proc_cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || echo "")
+                if [[ "$proc_cmdline" == *wine* ]] || [[ "$proc_cmdline" == *mangohud* ]]; then
+                    for child_pid in $(pgrep -P "$pid" 2>/dev/null); do
+                        if [ -r "/proc/$child_pid/cmdline" ]; then
+                            local child_cmdline
+                            child_cmdline=$(tr '\0' ' ' < "/proc/$child_pid/cmdline" 2>/dev/null || echo "")
+                            if [[ "$child_cmdline" == *.exe* ]]; then
+                                wine_pid="$child_pid"
+                                break 2
+                            fi
+                        fi
+                    done
+                fi
+            fi
+        done
+    fi
+    
+    if [ -z "$wine_pid" ]; then
+        local my_pid=$$
+        for pid in $(pgrep -f "$(basename "$exe_path")" 2>/dev/null); do
+            if [ "$pid" != "$my_pid" ] && [ -r "/proc/$pid/cmdline" ]; then
+                local pid_cmdline
+                pid_cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
+                if [[ "$pid_cmdline" == *wine* ]] || [[ "$pid_cmdline" == *bwrap* ]]; then
+                    wine_pid="$pid"
+                    break
+                fi
+            fi
+        done
+    fi
+    
+    echo "PID processus jeu: ${wine_pid:-inconnu}"
     
     echo "Attente de la fin du jeu..."
-    local game_basename
-    game_basename=$(basename "$exe_path" | tr -cd '[:alnum:]')
     local wait_count=0
     local still_running=true
     
     while [ "$still_running" = true ] && [ $wait_count -lt 600 ]; do
-        local wine_procs
-        wine_procs=$(pgrep -f "wine.*$game_basename" 2>/dev/null | wc -l)
-        local bwrap_procs
-        bwrap_procs=$(pgrep -f "bwrap.*$exe_path" 2>/dev/null | wc -l)
-        
-        if [ "$wine_procs" = "0" ] && [ "$bwrap_procs" = "0" ]; then
+        if [ -n "$wine_pid" ] && [ -d "/proc/$wine_pid" ]; then
+            local state
+            state=$(awk '{print $3}' "/proc/$wine_pid/stat" 2>/dev/null || echo "Z")
+            if [ "$state" = "Z" ]; then
+                still_running=false
+                echo "Jeu terminé (zombie)"
+            else
+                wait_count=$((wait_count + 1))
+                if [ $((wait_count % 30)) -eq 0 ]; then
+                    echo "Jeu toujours en cours..."
+                fi
+                sleep 1
+            fi
+        else
             still_running=false
             echo "Jeu terminé"
-        else
-            wait_count=$((wait_count + 1))
-            if [ $((wait_count % 30)) -eq 0 ]; then
-                echo "Jeu toujours en cours (${wine_procs} wine, ${bwrap_procs} bwrap)..."
-            fi
-            sleep 1
         fi
     done
     
     if [ "$still_running" = true ]; then
         echo "Timeout après 10 minutes, forçage..."
     fi
+    
+    if [ "$nosandbox_mode" != true ] && [ -n "$bwrap_pid" ]; then
+        if kill -0 "$bwrap_pid" 2>/dev/null; then
+            echo "Arrêt du sandbox..."
+            kill "$bwrap_pid" 2>/dev/null || true
+            wait "$bwrap_pid" 2>/dev/null || true
+        fi
+    fi
+    
+    local exit_code=0
     
     restore_padfix_setting
     
@@ -6425,7 +6349,7 @@ launch_wine_game() {
         echo "Instance terminée, il reste $count instance(s), wineserver continue"
     fi
     
-    if [ "$wgp_mode" != "true" ] && [ "$count" -eq 0 ]; then
+    if [ "$count" -eq 0 ]; then
         local exe_instance_file="$GWINE_LOCK_DIR/active-exe-instance"
         rm -f "$exe_instance_file"
         restore_windows_symlinks "$WINEPREFIX"
@@ -6593,7 +6517,7 @@ init_prefix_only() {
         error_exit "Échec de la configuration des dossiers Windows"
     fi
     
-    setup_wine_temp_registry "$WINEPREFIX"
+    setup_wine_temp_symlinks "$WINEPREFIX"
     
     configure_sdl_input_registry
     
@@ -6665,7 +6589,7 @@ init_wineprefix() {
     if [ -d "$WINEPREFIX" ] && [ -f "$WINEPREFIX/system.reg" ]; then
         setup_windows_directories "$WINEPREFIX"
         
-        setup_wine_temp_registry "$WINEPREFIX"
+        setup_wine_temp_symlinks "$WINEPREFIX"
     fi
 }
 
