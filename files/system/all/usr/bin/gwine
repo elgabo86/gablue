@@ -4683,9 +4683,6 @@ build_bwrap_args() {
     
     bwrap_reset
     
-    bwrap_add --unshare-uts
-    bwrap_add --unshare-cgroup
-    bwrap_add --unshare-ipc
     bwrap_add --share-net
     
     bwrap_add --die-with-parent
