@@ -3,7 +3,14 @@
 # Exécuter toutes les commandes en arrière-plan en regroupant les tâches indépendantes
 {
   # Recherche et kill tous les processus Windows (xbox360 inclus)
-  pgrep -f -i "\\.exe|\\.bat" | grep -v $$ | xargs -r kill -9 2>/dev/null; rm -rf /tmp/gwine-locks-$USER/ &
+  # Exclure gwine pour permettre le cleanup des locks
+  for pid in $(pgrep -f -i "\\.exe|\\.bat"); do
+    comm=$(ps -p $pid -o comm= 2>/dev/null)
+    if [[ "$comm" != "gwine" ]] && [[ "$comm" != "bash" ]] && [ "$pid" != "$$" ]; then
+      kill -9 $pid 2>/dev/null
+    fi
+  done
+  rm -rf /tmp/gwine-locks-$USER/ &
 
   # Kill tous les processus wgp/wine sauf squashfuse (nettoyage complet jeu sans casser gwine)
   pgrep -f "wgpackmount" | grep -v squashfuse | xargs -r kill -9 2>/dev/null &
