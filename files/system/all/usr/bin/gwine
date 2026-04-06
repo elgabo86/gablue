@@ -46,6 +46,7 @@ CACHE_DIR="$HOME/.cache/gwine"
 COMPONENTS_DIR="$CACHE_DIR/components"
 SHADER_CACHE_DIR="$CACHE_DIR/shader-cache"
 DXVK_CACHE_DIR="$COMPONENTS_DIR/dxvk"
+DXVK_ASYNC_CACHE_DIR="$COMPONENTS_DIR/dxvk-gplasync"
 VKD3D_CACHE_DIR="$COMPONENTS_DIR/vkd3d"
 DXVK_NVAPI_CACHE_DIR="$COMPONENTS_DIR/dxvk-nvapi"
 FAKENVAPI_CACHE_DIR="$COMPONENTS_DIR/fakenvapi"
@@ -348,6 +349,580 @@ for subdir in wgpackmount wgp-extra wgp-saves wgp-temp; do
         ln -sf "$SHARED_TMP_DIR/$subdir" "/tmp/$subdir" 2>/dev/null || true
     fi
 done
+
+# =============================================================================
+# Module: runner.sh
+# =============================================================================
+
+
+################################################################################
+# runner.sh - Gestion des runners Wine (gwine et gwine-proton)
+#
+# Ce module gère la sélection et le chargement des runners Wine.
+# Les runners disponibles sont:
+#   - wine: gwine standard (TKG modifié)
+#   - proton: gwine-proton (version Proton)
+#
+# Le runner sélectionné est stocké dans ~/.local/share/gwine/options
+# sous la forme: runner=wine ou runner=proton
+################################################################################
+
+# Fichier de configuration du runner
+RUNNER_CONFIG_FILE="$GWINE_DIR/options"
+
+# =============================================================================
+# Chemins des runners
+# =============================================================================
+
+# Runner wine (gwine standard)
+WINE_RUNNER_DIR="$GWINE_DIR/wine"
+WINE_RUNNER_BIN="$WINE_RUNNER_DIR/bin/wine"
+WINE_RUNNER_WINE32_BIN="$WINE_RUNNER_DIR/bin/wine"
+WINE_RUNNER_SERVER_BIN="$WINE_RUNNER_DIR/bin/wineserver"
+WINE_RUNNER_VERSION_FILE="$GWINE_DIR/.version"
+
+# Runner proton (gwine-proton)
+PROTON_RUNNER_DIR="$GWINE_DIR/wine-proton"
+PROTON_RUNNER_BIN="$PROTON_RUNNER_DIR/bin/wine"
+PROTON_RUNNER_WINE32_BIN="$PROTON_RUNNER_DIR/bin/wine"
+PROTON_RUNNER_SERVER_BIN="$PROTON_RUNNER_DIR/bin/wineserver"
+PROTON_RUNNER_VERSION_FILE="$GWINE_DIR/.version-proton"
+
+# =============================================================================
+# Variables de mode
+# =============================================================================
+
+wine_mode=false
+proton_mode=false
+
+# =============================================================================
+# Fonctions de gestion du runner
+# =============================================================================
+
+# Obtient le runner actuellement configuré
+# Retourne: "wine" ou "proton" (défaut: wine)
+get_current_runner() {
+    if [ -f "$RUNNER_CONFIG_FILE" ]; then
+        local runner
+        runner=$(grep "^runner=" "$RUNNER_CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
+        if [ "$runner" = "wine" ] || [ "$runner" = "proton" ]; then
+            echo "$runner"
+            return 0
+        fi
+    fi
+    # Défaut: wine
+    echo "wine"
+}
+
+# Définit le runner actif
+# Usage: set_runner <wine|proton>
+set_runner() {
+    local runner="$1"
+    
+    if [ "$runner" != "wine" ] && [ "$runner" != "proton" ]; then
+        echo "Erreur: Runner invalide '$runner'. Utilisez 'wine' ou 'proton'." >&2
+        return 1
+    fi
+    
+    # Créer le répertoire gwine si nécessaire
+    ensure_dir "$GWINE_DIR"
+    
+    # Sauvegarder le choix
+    echo "runner=$runner" > "$RUNNER_CONFIG_FILE"
+    
+    # Mettre à jour les variables globales
+    update_runner_paths "$runner"
+    
+    return 0
+}
+
+# Met à jour les chemins du runner actif
+# Usage: update_runner_paths <wine|proton>
+update_runner_paths() {
+    local runner="${1:-$(get_current_runner)}"
+    
+    if [ "$runner" = "proton" ]; then
+        WINE_DIR="$PROTON_RUNNER_DIR"
+        WINE_BIN="$PROTON_RUNNER_BIN"
+        WINE32_BIN="$PROTON_RUNNER_WINE32_BIN"
+        WINESERVER_BIN="$PROTON_RUNNER_SERVER_BIN"
+    else
+        # Défaut: wine
+        WINE_DIR="$WINE_RUNNER_DIR"
+        WINE_BIN="$WINE_RUNNER_BIN"
+        WINE32_BIN="$WINE_RUNNER_WINE32_BIN"
+        WINESERVER_BIN="$WINE_RUNNER_SERVER_BIN"
+    fi
+    
+    # Exporter pour les sous-processus
+    export WINE_DIR WINE_BIN WINE32_BIN WINESERVER_BIN
+}
+
+# Initialise le runner au démarrage
+# Cette fonction doit être appelée après le parsing des arguments
+# Usage: init_runner [--save]
+#   --save: sauvegarde le runner dans le fichier options (pour --init ou config seule)
+init_runner() {
+    local save_mode="${1:-}"
+    local current_runner
+    current_runner=$(get_current_runner)
+    
+    # Si --wine ou --proton sont spécifiés explicitement, les utiliser
+    if [ "$wine_mode" = true ]; then
+        if [ "$save_mode" = "--save" ]; then
+            set_runner "wine"  # Sauvegarde dans le fichier options
+        else
+            update_runner_paths "wine"  # Changement temporaire uniquement
+        fi
+    elif [ "$proton_mode" = true ]; then
+        if [ "$save_mode" = "--save" ]; then
+            set_runner "proton"  # Sauvegarde dans le fichier options
+        else
+            update_runner_paths "proton"  # Changement temporaire uniquement
+        fi
+    else
+        # Sinon utiliser le runner configuré
+        update_runner_paths "$current_runner"
+    fi
+}
+
+# Vérifie et télécharge le runner si nécessaire
+# Usage: ensure_runner_installed
+ensure_runner_installed() {
+    local runner
+    runner=$(get_current_runner)
+    
+    # Vérifier si le runner est installé
+    if [ -d "$WINE_DIR" ] && [ -f "$WINE_DIR/bin/wine" ]; then
+        return 0
+    fi
+    
+    # Runner manquant, tentative de téléchargement
+    echo "Runner $runner non installé. Téléchargement en cours..."
+    
+    # Vérifier la connexion réseau
+    if ! curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
+        error_exit "Runner $runner non installé et pas de connexion internet pour le télécharger"
+    fi
+    
+    if [ "$runner" = "proton" ]; then
+        if ! download_gwine_proton "force" "true"; then
+            error_exit "Échec du téléchargement de gwine-proton"
+        fi
+    else
+        if ! download_gwine "force" "true"; then
+            error_exit "Échec du téléchargement de gwine"
+        fi
+    fi
+    
+    # Mettre à jour les chemins après installation
+    update_runner_paths "$runner"
+    
+    echo "✓ Runner $runner installé avec succès"
+}
+
+# Vérifie si le runner actuel est installé
+is_runner_installed() {
+    local runner="${1:-$(get_current_runner)}"
+    
+    if [ "$runner" = "proton" ]; then
+        [ -d "$PROTON_RUNNER_DIR" ] && [ -f "$PROTON_RUNNER_BIN" ]
+    else
+        [ -d "$WINE_RUNNER_DIR" ] && [ -f "$WINE_RUNNER_BIN" ]
+    fi
+}
+
+# Obtient le répertoire d'installation du runner
+get_runner_dir() {
+    local runner="${1:-$(get_current_runner)}"
+    
+    if [ "$runner" = "proton" ]; then
+        echo "$PROTON_RUNNER_DIR"
+    else
+        echo "$WINE_RUNNER_DIR"
+    fi
+}
+
+# Obtient le binaire wine du runner
+get_runner_bin() {
+    local runner="${1:-$(get_current_runner)}"
+    
+    if [ "$runner" = "proton" ]; then
+        echo "$PROTON_RUNNER_BIN"
+    else
+        echo "$WINE_RUNNER_BIN"
+    fi
+}
+
+# Obtient le binaire wineserver du runner
+get_runner_server_bin() {
+    local runner="${1:-$(get_current_runner)}"
+    
+    if [ "$runner" = "proton" ]; then
+        echo "$PROTON_RUNNER_SERVER_BIN"
+    else
+        echo "$WINE_RUNNER_SERVER_BIN"
+    fi
+}
+
+# Obtient le fichier de version du runner
+get_runner_version_file() {
+    local runner="${1:-$(get_current_runner)}"
+    
+    if [ "$runner" = "proton" ]; then
+        echo "$PROTON_RUNNER_VERSION_FILE"
+    else
+        echo "$WINE_RUNNER_VERSION_FILE"
+    fi
+}
+
+# Obtient la version installée du runner
+get_runner_installed_version() {
+    local runner="${1:-$(get_current_runner)}"
+    local version_file
+    version_file=$(get_runner_version_file "$runner")
+    
+    if [ -f "$version_file" ]; then
+        cat "$version_file" 2>/dev/null
+    else
+        echo ""
+    fi
+}
+
+# Affiche le runner actuellement utilisé
+show_current_runner() {
+    local runner
+    runner=$(get_current_runner)
+    local version
+    version=$(get_runner_installed_version "$runner")
+    
+    echo "Runner actuel: $runner"
+    if [ -n "$version" ]; then
+        echo "Version: $version"
+    fi
+}
+
+# =============================================================================
+# Module: dxvk-mode.sh
+# =============================================================================
+
+
+################################################################################
+# dxvk-mode.sh - Gestion du mode DXVK (standard vs async)
+#
+# Ce module gère la sélection entre DXVK standard et DXVK-GPLAsync.
+# Les modes disponibles sont:
+#   - dxvk: DXVK standard (depuis bottlesdevs/components)
+#   - dxvk-async: DXVK-GPLAsync (depuis gitlab.com/Ph42oN/dxvk-gplasync)
+#
+# Le mode sélectionné est stocké dans ~/.local/share/gwine/options
+# sous la forme: dxvk_mode=dxvk ou dxvk_mode=dxvk-async
+#
+# Lorsque dxvk-async est utilisé, la variable d'environnement DXVK_ASYNC=1
+# est automatiquement définie.
+################################################################################
+
+# Fichier de configuration du mode DXVK (même fichier que pour le runner)
+DXVK_CONFIG_FILE="$GWINE_DIR/options"
+
+# =============================================================================
+# Chemins des caches DXVK
+# =============================================================================
+
+# Cache pour DXVK standard
+DXVK_STANDARD_CACHE_DIR="$COMPONENTS_DIR/dxvk"
+
+# Cache pour DXVK-GPLAsync
+DXVK_ASYNC_CACHE_DIR="$COMPONENTS_DIR/dxvk-gplasync"
+
+# =============================================================================
+# Variables de mode
+# =============================================================================
+
+dxvk_mode=false
+dxvk_async_mode=false
+
+# =============================================================================
+# Fonctions de gestion du mode DXVK
+# =============================================================================
+
+# Obtient le mode DXVK actuellement configuré
+# Retourne: "dxvk" ou "dxvk-async" (défaut: dxvk)
+get_current_dxvk_mode() {
+    if [ -f "$DXVK_CONFIG_FILE" ]; then
+        local mode
+        mode=$(grep "^dxvk_mode=" "$DXVK_CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
+        if [ "$mode" = "dxvk" ] || [ "$mode" = "dxvk-async" ]; then
+            echo "$mode"
+            return 0
+        fi
+    fi
+    # Défaut: dxvk
+    echo "dxvk"
+}
+
+# Définit le mode DXVK actif
+# Usage: set_dxvk_mode <dxvk|dxvk-async>
+set_dxvk_mode() {
+    local mode="$1"
+    
+    if [ "$mode" != "dxvk" ] && [ "$mode" != "dxvk-async" ]; then
+        echo "Erreur: Mode DXVK invalide '$mode'. Utilisez 'dxvk' ou 'dxvk-async'." >&2
+        return 1
+    fi
+    
+    # Créer le répertoire gwine si nécessaire
+    ensure_dir "$GWINE_DIR"
+    
+    # Lire le fichier existant
+    local config_content=""
+    if [ -f "$DXVK_CONFIG_FILE" ]; then
+        # Supprimer l'ancienne ligne dxvk_mode si elle existe
+        config_content=$(grep -v "^dxvk_mode=" "$DXVK_CONFIG_FILE" 2>/dev/null || true)
+    fi
+    
+    # Ajouter la nouvelle configuration
+    if [ -n "$config_content" ]; then
+        echo "$config_content" > "$DXVK_CONFIG_FILE"
+        echo "dxvk_mode=$mode" >> "$DXVK_CONFIG_FILE"
+    else
+        echo "dxvk_mode=$mode" > "$DXVK_CONFIG_FILE"
+    fi
+    
+    return 0
+}
+
+# Obtient le répertoire de cache DXVK actif selon le mode
+# Usage: get_dxvk_cache_dir [mode]
+get_dxvk_cache_dir() {
+    local mode="${1:-$(get_current_dxvk_mode)}"
+    
+    if [ "$mode" = "dxvk-async" ]; then
+        echo "$DXVK_ASYNC_CACHE_DIR"
+    else
+        echo "$DXVK_STANDARD_CACHE_DIR"
+    fi
+}
+
+# Vérifie si dxvk-async est utilisé (pour définir DXVK_ASYNC=1)
+# Usage: is_dxvk_async_mode
+is_dxvk_async_mode() {
+    local mode
+    mode=$(get_current_dxvk_mode)
+    [ "$mode" = "dxvk-async" ]
+}
+
+# Obtient la variable d'environnement DXVK_ASYNC si nécessaire
+# Usage: get_dxvk_async_env
+get_dxvk_async_env() {
+    if is_dxvk_async_mode; then
+        echo "1"
+    else
+        echo ""
+    fi
+}
+
+# Affiche le mode DXVK actuellement utilisé
+show_current_dxvk_mode() {
+    local mode
+    mode=$(get_current_dxvk_mode)
+    
+    echo "Mode DXVK: $mode"
+    if [ "$mode" = "dxvk-async" ]; then
+        echo "DXVK_ASYNC=1 sera défini automatiquement"
+    fi
+}
+
+# Vérifie si le DXVK du mode actuel est installé
+# Usage: is_dxvk_installed [mode]
+is_dxvk_installed() {
+    local mode="${1:-$(get_current_dxvk_mode)}"
+    local cache_dir
+    cache_dir=$(get_dxvk_cache_dir "$mode")
+    
+    # Vérifier si un dossier dxvk-* existe dans le cache
+    local dxvk_folder
+    dxvk_folder=$(find "$cache_dir" -mindepth 1 -maxdepth 1 -type d -name "dxvk*" 2>/dev/null | head -1)
+    
+    [ -n "$dxvk_folder" ] && [ -d "$dxvk_folder" ]
+}
+
+# =============================================================================
+# Fonctions de téléchargement pour dxvk-gplasync
+# =============================================================================
+
+# Récupère la dernière version de dxvk-gplasync depuis GitLab
+get_latest_dxvk_async_version() {
+    local version
+    # Utiliser l'API GitLab pour récupérer les releases
+    version=$(curl -s --max-time 10 "https://gitlab.com/api/v4/projects/Ph42oN%2Fdxvk-gplasync/releases" 2>/dev/null | grep -oP '"tag_name":\s*"\K[^"]+' | head -1)
+    
+    if [ -z "$version" ]; then
+        return 1
+    fi
+    
+    echo "$version"
+}
+
+# Télécharge et installe dxvk-gplasync
+download_dxvk_async() {
+    local force_update="${1:-false}"
+    local auto_mode="${2:-false}"
+    
+    local cache_dir="$DXVK_ASYNC_CACHE_DIR"
+    local current_version=""
+    local latest_version=""
+    
+    ensure_dir "$cache_dir"
+    
+    # Vérifier la version actuelle
+    local current_folder
+    current_folder=$(find "$cache_dir" -mindepth 1 -maxdepth 1 -type d -name "dxvk*gplasync*" 2>/dev/null | sort -V | tail -1)
+    if [ -n "$current_folder" ]; then
+        # Extraire la version du nom de dossier (dxvk-gplasync-v2.7.1-1 -> v2.7.1-1)
+        current_version=$(basename "$current_folder" | sed 's/^dxvk-gplasync-//')
+    fi
+    
+    echo "Vérification des mises à jour de DXVK-GPLAsync..."
+    latest_version=$(get_latest_dxvk_async_version)
+    
+    if [ -z "$latest_version" ]; then
+        echo "Impossible de récupérer la dernière version (pas de connexion internet)"
+        return 1
+    fi
+    
+    echo "Version installée: ${current_version:-Aucune}"
+    echo "Dernière version disponible: $latest_version"
+    
+    if [ "$force_update" = "false" ] && [ "$current_version" = "$latest_version" ]; then
+        echo "Vous avez déjà la dernière version de DXVK-GPLAsync."
+        return 0
+    fi
+    
+    if [ "$force_update" = "false" ] && [ -n "$current_version" ]; then
+        if ! compare_versions "$latest_version" "$current_version"; then
+            echo "Vous avez déjà la dernière version de DXVK-GPLAsync."
+            return 0
+        fi
+    fi
+    
+    if [ "$auto_mode" != "true" ] && [ "${init_mode:-false}" != "true" ]; then
+        echo ""
+        echo "Une nouvelle version de DXVK-GPLAsync est disponible : $latest_version"
+        read -p "Voulez-vous télécharger et installer cette version ? [O/n]: " -r
+        if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
+            echo "Mise à jour annulée."
+            return 0
+        fi
+    fi
+    
+    echo ""
+    echo "Téléchargement de DXVK-GPLAsync $latest_version..."
+    
+    # Construire l'URL de téléchargement depuis le dossier releases du repo
+    local download_url="https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/dxvk-gplasync-${latest_version}.tar.gz"
+    local temp_dir="$CACHE_DIR/.temp_dxvk_async"
+    local archive_path="$cache_dir/dxvk-gplasync-${latest_version}.tar.gz"
+    
+    rm -rf "$temp_dir"
+    ensure_dir -s "$temp_dir"
+    
+    # Supprimer les anciennes archives
+    find "$cache_dir" -maxdepth 1 -name "dxvk-gplasync-*.tar.gz" -delete 2>/dev/null || true
+    
+    echo "Téléchargement depuis: $download_url"
+    if ! curl -L --max-time 120 -o "$archive_path" "$download_url" 2>/dev/null; then
+        echo "✗ Échec du téléchargement"
+        rm -rf "$temp_dir"
+        rm -f "$archive_path"
+        return 1
+    fi
+    
+    # Vérifier que l'archive est valide
+    if [ ! -s "$archive_path" ]; then
+        echo "✗ Archive téléchargée vide ou invalide"
+        rm -rf "$temp_dir"
+        rm -f "$archive_path"
+        return 1
+    fi
+    
+    echo "Extraction..."
+    local extract_dir="$temp_dir/extracted"
+    ensure_dir -s "$extract_dir"
+    
+    if ! tar -xzf "$archive_path" -C "$extract_dir" 2>/dev/null; then
+        echo "✗ Échec de l'extraction"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    # Trouver le dossier extrait
+    local extracted_dxvk_dir
+    extracted_dxvk_dir=$(find "$extract_dir" -maxdepth 2 -type d -name "dxvk*" | head -1)
+    if [ -z "$extracted_dxvk_dir" ]; then
+        echo "✗ Dossier DXVK non trouvé dans l'archive"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    # Backup de l'ancienne version si elle existe
+    local old_backup=""
+    if [ -n "$current_folder" ] && [ -d "$current_folder" ]; then
+        old_backup=$(backup_component "$current_folder")
+    fi
+    
+    # Supprimer l'ancienne version
+    if [ -n "$current_folder" ] && [ -d "$current_folder" ]; then
+        rm -rf "$current_folder"
+    fi
+    
+    # Installer la nouvelle version
+    local install_dir="$cache_dir/dxvk-gplasync-${latest_version}"
+    mv "$extracted_dxvk_dir" "$install_dir"
+    
+    # Vérifier l'installation
+    if [ ! -d "$install_dir" ]; then
+        echo "✗ Échec de l'installation"
+        if [ -n "$old_backup" ]; then
+            restore_backup_component "$old_backup" "$current_folder"
+            echo "Ancienne version restaurée"
+        fi
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    cleanup_backup_component "$old_backup"
+    rm -rf "$temp_dir"
+    
+    echo "✓ DXVK-GPLAsync $latest_version installé avec succès"
+    return 0
+}
+
+# Vérifie et télécharge DXVK si nécessaire selon le mode actuel
+# Usage: ensure_dxvk_installed
+ensure_dxvk_installed() {
+    local mode
+    mode=$(get_current_dxvk_mode)
+    
+    if [ "$mode" = "dxvk-async" ]; then
+        # Vérifier si dxvk-async est installé
+        if ! is_dxvk_installed "dxvk-async"; then
+            echo "DXVK-GPLAsync non installé. Téléchargement en cours..."
+            
+            # Vérifier la connexion réseau
+            if ! curl -s --max-time 5 https://gitlab.com > /dev/null 2>&1; then
+                error_exit "DXVK-GPLAsync non installé et pas de connexion internet pour le télécharger"
+            fi
+            
+            if ! download_dxvk_async "force" "true"; then
+                error_exit "Échec du téléchargement de DXVK-GPLAsync"
+            fi
+            
+            echo "✓ DXVK-GPLAsync installé avec succès"
+        fi
+    fi
+    # Pour le mode standard, on ne télécharge pas automatiquement (géré par --update)
+}
 
 # =============================================================================
 # Module: download.sh
@@ -1167,7 +1742,17 @@ install_dll_component() {
 install_dxvk_vkd3d() {
     prepare_local_cache
     
-    echo "Installation de DXVK et VKD3D-Proton depuis le cache..."
+    # Déterminer quel DXVK utiliser selon le mode configuré
+    local dxvk_cache_dir
+    dxvk_cache_dir=$(get_dxvk_cache_dir)
+    local dxvk_mode
+    dxvk_mode=$(get_current_dxvk_mode)
+    
+    if [ "$dxvk_mode" = "dxvk-async" ]; then
+        echo "Installation de DXVK-GPLAsync et VKD3D-Proton depuis le cache..."
+    else
+        echo "Installation de DXVK et VKD3D-Proton depuis le cache..."
+    fi
     
     if ! get_wine_system_paths; then
         return 1
@@ -1177,9 +1762,15 @@ install_dxvk_vkd3d() {
     local dxvk_installed=false
     local vkd3d_installed=false
     
-    # Installer DXVK
-    if install_dll_component "DXVK" "$DXVK_CACHE_DIR" "dxvk-[0-9]*" "d3d8.dll d3d9.dll d3d10core.dll d3d11.dll dxgi.dll" "d3d8 d3d9 d3d10core d3d11 dxgi"; then
-        dxvk_installed=true
+    # Installer DXVK (standard ou async selon le mode)
+    if [ "$dxvk_mode" = "dxvk-async" ]; then
+        if install_dll_component "DXVK-GPLAsync" "$dxvk_cache_dir" "dxvk-gplasync-*" "d3d8.dll d3d9.dll d3d10core.dll d3d11.dll dxgi.dll" "d3d8 d3d9 d3d10core d3d11 dxgi"; then
+            dxvk_installed=true
+        fi
+    else
+        if install_dll_component "DXVK" "$dxvk_cache_dir" "dxvk-[0-9]*" "d3d8.dll d3d9.dll d3d10core.dll d3d11.dll dxgi.dll" "d3d8 d3d9 d3d10core d3d11 dxgi"; then
+            dxvk_installed=true
+        fi
     fi
     
     # Installer VKD3D-Proton
@@ -1192,7 +1783,11 @@ install_dxvk_vkd3d() {
         return 1
     fi
     
-    echo "DXVK et VKD3D-Proton installés avec succès"
+    if [ "$dxvk_mode" = "dxvk-async" ]; then
+        echo "DXVK-GPLAsync et VKD3D-Proton installés avec succès"
+    else
+        echo "DXVK et VKD3D-Proton installés avec succès"
+    fi
     
     # Installer DXVK-NVAPI si carte NVIDIA présente, sinon FakeNVAPI
     if is_nvidia_gpu; then
@@ -1419,8 +2014,9 @@ install_fakenvapi() {
     if [ -n "$fakenvapi_dir" ]; then
         echo "  - Installation de $(basename "$fakenvapi_dir")..."
         
-        if [ -f "$fakenvapi_dir/nvapi64.dll" ]; then
-            if cp -f "$fakenvapi_dir/nvapi64.dll" "${win64_sys_path}/" 2>/dev/null; then
+        # Le fichier s'appelle fakenvapi.dll mais doit être copié en nvapi64.dll pour fonctionner
+        if [ -f "$fakenvapi_dir/fakenvapi.dll" ]; then
+            if cp -f "$fakenvapi_dir/fakenvapi.dll" "${win64_sys_path}/nvapi64.dll" 2>/dev/null; then
                 fakenvapi_installed=true
             else
                 echo "    ⚠️  Échec copie nvapi64.dll (system32)"
@@ -1435,8 +2031,8 @@ install_fakenvapi() {
             fi
         fi
         
-        if [ -f "$fakenvapi_dir/nvapi64.dll" ]; then
-            if cp -f "$fakenvapi_dir/nvapi64.dll" "${win32_sys_path}/nvapi.dll" 2>/dev/null; then
+        if [ -f "$fakenvapi_dir/fakenvapi.dll" ]; then
+            if cp -f "$fakenvapi_dir/fakenvapi.dll" "${win32_sys_path}/nvapi.dll" 2>/dev/null; then
                 fakenvapi_installed=true
             else
                 echo "    ⚠️  Échec copie nvapi.dll (syswow64)"
@@ -2445,6 +3041,25 @@ install_gwine_from_extracted_internal() {
     return 0
 }
 
+# Récupère la dernière version de gwine depuis GitHub
+get_latest_gwine_version() {
+    local version
+    version=$(curl -s --max-time 10 https://api.github.com/repos/elgabo86/gwine/releases/latest 2>/dev/null | grep -oP '"tag_name":\s*"\K[^"]+' | head -1)
+    
+    if [ -z "$version" ]; then
+        return 1
+    fi
+    
+    # Filtrer pour ne garder que les versions gwine (pas gwine-proton)
+    # Les versions gwine standard ne contiennent pas "proton" dans le tag
+    if [[ "$version" == *proton* ]]; then
+        # Si la dernière release est proton, chercher la release précédente
+        version=$(curl -s --max-time 10 https://api.github.com/repos/elgabo86/gwine/releases 2>/dev/null | grep -oP '"tag_name":\s*"\K[^"]+' | grep -v proton | head -1)
+    fi
+    
+    echo "$version"
+}
+
 download_gwine() {
     local WINE_INSTALL_DIR="$GWINE_DIR/wine"
     local current_version=""
@@ -2462,7 +3077,7 @@ download_gwine() {
     if [ -z "$latest_version" ]; then
         echo "Impossible de récupérer la dernière version (pas de connexion internet)"
         echo "Tentative d'installation depuis le cache..."
-        if install_gwine_proton_from_cache; then
+        if install_gwine_from_cache; then
             return 0
         else
             echo "Échec: aucune archive disponible dans le cache"
@@ -2564,6 +3179,288 @@ install_gwine_proton_from_cache() {
 
 download_gwine_proton() {
     download_gwine "$@"
+}
+
+# =============================================================================
+# Module: gwine-proton-runner.sh
+# =============================================================================
+
+
+################################################################################
+# gwine-proton-runner.sh - Téléchargement et installation de gwine-proton
+#
+# Ce module gère le runner gwine-proton, une version basée sur Proton.
+# Le runner est installé dans ~/.local/share/gwine/wine-proton
+################################################################################
+
+# =============================================================================
+# Fonctions de récupération de version
+# =============================================================================
+
+# Récupère la dernière version de gwine-proton depuis GitHub
+get_latest_gwine_proton_version() {
+    local version
+    version=$(curl -s --max-time 10 https://api.github.com/repos/elgabo86/gwine/releases/latest 2>/dev/null | grep -oP '"tag_name":\s*"\K[^"]+' | head -1)
+    
+    if [ -z "$version" ]; then
+        return 1
+    fi
+    
+    # Si la dernière release n'est pas proton, chercher la dernière release proton
+    if [[ "$version" != *proton* ]]; then
+        version=$(curl -s --max-time 10 https://api.github.com/repos/elgabo86/gwine/releases 2>/dev/null | grep -oP '"tag_name":\s*"\K[^"]+' | grep proton | head -1)
+    fi
+    
+    echo "$version"
+}
+
+# =============================================================================
+# Installation depuis le cache
+# =============================================================================
+
+install_gwine_proton_from_cache() {
+    local WINE_INSTALL_DIR="$PROTON_RUNNER_DIR"
+    local archives_dir="$COMPONENTS_DIR/gwine-proton"
+    
+    if [ ! -d "$archives_dir" ] || [ -z "$(ls -A "$archives_dir" 2>/dev/null)" ]; then
+        return 1
+    fi
+    
+    local latest_archive
+    latest_archive=$(ls -1 "$archives_dir"/gwine-proton-*.tar.xz 2>/dev/null | sort -V | tail -1)
+    
+    if [ -z "$latest_archive" ] || [ ! -f "$latest_archive" ]; then
+        return 1
+    fi
+    
+    local version_name
+    version_name=$(basename "$latest_archive" .tar.xz)
+    
+    echo "Installation de $version_name depuis le cache..."
+    
+    local temp_dir="$CACHE_DIR/.temp_proton_install"
+    rm -rf "$temp_dir"
+    ensure_dir "$temp_dir" "Impossible de créer le répertoire temporaire"
+    
+    local extract_dir="$temp_dir/extracted"
+    ensure_dir -s "$extract_dir"
+    
+    if ! tar -xf "$latest_archive" -C "$extract_dir" 2>/dev/null; then
+        echo "Échec de l'extraction de l'archive"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    local extracted_wine_dir
+    extracted_wine_dir=$(find "$extract_dir" -maxdepth 1 -type d \( -name "*gwine*proton*" -o -name "*proton*" \) | head -1)
+    if [ -z "$extracted_wine_dir" ]; then
+        extracted_wine_dir=$(find "$extract_dir" -maxdepth 1 -type d -name "*gwine*" | head -1)
+    fi
+    if [ -z "$extracted_wine_dir" ]; then
+        extracted_wine_dir=$(find "$extract_dir" -maxdepth 1 -type d | head -1)
+    fi
+    if [ -z "$extracted_wine_dir" ]; then
+        extracted_wine_dir="$extract_dir"
+    fi
+    
+    rm -rf "$WINE_INSTALL_DIR"
+    ensure_dir "$WINE_INSTALL_DIR" "Impossible de créer le répertoire d'installation Wine"
+    cp -r "$extracted_wine_dir"/* "$WINE_INSTALL_DIR/"
+    
+    if [ ! -f "$WINE_INSTALL_DIR/bin/wine" ]; then
+        echo "Échec de l'installation"
+        rm -rf "$WINE_INSTALL_DIR"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    echo "$version_name" > "$PROTON_RUNNER_VERSION_FILE"
+    rm -rf "$temp_dir"
+    
+    echo "✓ $version_name installé depuis le cache"
+    return 0
+}
+
+# =============================================================================
+# Téléchargement
+# =============================================================================
+
+download_gwine_proton() {
+    local WINE_INSTALL_DIR="$PROTON_RUNNER_DIR"
+    local current_version=""
+    local latest_version=""
+    local force_update="${1:-false}"
+    local auto_mode="${2:-false}"
+    
+    if [ -d "$WINE_INSTALL_DIR" ] && [ -f "$WINE_INSTALL_DIR/bin/wine" ]; then
+        current_version=$(cat "$PROTON_RUNNER_VERSION_FILE" 2>/dev/null || echo "unknown")
+    fi
+    
+    echo "Vérification des mises à jour de gwine-proton..."
+    latest_version=$(get_latest_gwine_proton_version)
+    
+    if [ -z "$latest_version" ]; then
+        echo "Impossible de récupérer la dernière version (pas de connexion internet)"
+        echo "Tentative d'installation depuis le cache..."
+        if install_gwine_proton_from_cache; then
+            return 0
+        else
+            echo "Échec: aucune archive disponible dans le cache"
+            return 1
+        fi
+    fi
+    
+    echo "Version installée: ${current_version:-Aucune}"
+    echo "Dernière version disponible: $latest_version"
+    
+    if [ "$force_update" = "false" ] && [ "$current_version" = "$latest_version" ]; then
+        echo "Vous avez déjà la dernière version de gwine-proton."
+        return 0
+    fi
+    
+    if [ "$force_update" = "false" ] && [ -n "$current_version" ]; then
+        if ! compare_versions "$latest_version" "$current_version"; then
+            echo "Vous avez déjà la dernière version de gwine-proton."
+            return 0
+        fi
+    fi
+    
+    if [ "$auto_mode" != "true" ] && [ "$init_mode" != "true" ]; then
+        echo ""
+        echo "Une nouvelle version de gwine-proton est disponible : $latest_version"
+        read -p "Voulez-vous télécharger et installer cette version ? [O/n]: " -r
+        if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
+            echo "Mise à jour annulée."
+            return 0
+        fi
+    fi
+    
+    echo ""
+    echo "Téléchargement de $latest_version..."
+    
+    local archives_dir="$COMPONENTS_DIR/gwine-proton"
+    # L'archive s'appelle simplement ${latest_version}.tar.xz (ex: gwine-proton-10.0.xxx.tar.xz)
+    local archive_name="${latest_version}.tar.xz"
+    local download_url="https://github.com/elgabo86/gwine/releases/download/${latest_version}/${archive_name}"
+    local temp_dir="$CACHE_DIR/.temp_proton"
+    local archive_path="$archives_dir/$archive_name"
+    
+    ensure_dir -s "$archives_dir"
+    rm -rf "$temp_dir"
+    ensure_dir -s "$temp_dir"
+    
+    local old_archive
+    old_archive=$(find "$archives_dir" -maxdepth 1 -name "gwine-proton-*.tar.xz" | head -1)
+    if [ -n "$old_archive" ] && [ "$old_archive" != "$archive_path" ]; then
+        echo "Suppression de l'ancienne archive: $(basename "$old_archive")"
+        rm -f "$old_archive"
+    fi
+    
+    if [ ! -f "$archive_path" ]; then
+        echo "Téléchargement depuis: $download_url"
+        if ! download_file "$download_url" "$archive_path" "gwine-proton"; then
+            rm -rf "$temp_dir"
+            if [ -n "$current_version" ] && [ "$current_version" != "unknown" ]; then
+                echo "Utilisation de la version existante: $current_version"
+                return 0
+            fi
+            return 1
+        fi
+        echo "Archive sauvegardée dans: $archive_path"
+    else
+        echo "Archive trouvée dans le cache: $archive_path"
+    fi
+    
+    echo "Extraction..."
+    local extract_dir="$temp_dir/extracted"
+    if ! extract_archive "$archive_path" "$extract_dir" "tar.xz"; then
+        rm -rf "$temp_dir"
+        if [ -n "$current_version" ] && [ "$current_version" != "unknown" ]; then
+            echo "Utilisation de la version existante: $current_version"
+            return 0
+        fi
+        return 1
+    fi
+    
+    # Installation
+    local wine_subdir
+    wine_subdir=$(find "$extract_dir" -maxdepth 1 -type d \( -name "*gwine*proton*" -o -name "*proton*" \) | head -1)
+    if [ -z "$wine_subdir" ]; then
+        wine_subdir=$(find "$extract_dir" -maxdepth 1 -type d -name "*gwine*" | head -1)
+    fi
+    if [ -z "$wine_subdir" ]; then
+        wine_subdir=$(find "$extract_dir" -maxdepth 1 -type d | head -1)
+    fi
+    [ -z "$wine_subdir" ] && wine_subdir="$extract_dir"
+    
+    local old_backup=""
+    if [ -d "$WINE_INSTALL_DIR" ]; then
+        old_backup=$(backup_component "$WINE_INSTALL_DIR")
+    fi
+    
+    echo "Installation de la nouvelle version..."
+    ensure_dir "$WINE_INSTALL_DIR" "Impossible de créer le répertoire d'installation"
+    cp -r "$wine_subdir"/* "$WINE_INSTALL_DIR/"
+    
+    if [ ! -f "$WINE_INSTALL_DIR/bin/wine" ]; then
+        echo "Échec de l'installation"
+        rm -rf "$WINE_INSTALL_DIR"
+        if [ -n "$old_backup" ]; then
+            restore_backup_component "$old_backup" "$WINE_INSTALL_DIR"
+            echo "Ancienne version restaurée avec succès"
+        fi
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    cleanup_backup_component "$old_backup"
+    
+    echo "$latest_version" > "$PROTON_RUNNER_VERSION_FILE"
+    rm -rf "$temp_dir"
+    
+    echo "✓ gwine-proton $latest_version installé avec succès"
+    return 0
+}
+
+# =============================================================================
+# Installation depuis archive extraite (interne)
+# =============================================================================
+
+install_gwine_proton_from_extracted_internal() {
+    local extracted_dir="$1"
+    local install_dir="$2"
+    
+    local wine_subdir
+    wine_subdir=$(find "$extracted_dir" -maxdepth 1 -type d \( -name "*gwine*proton*" -o -name "*proton*" \) | head -1)
+    if [ -z "$wine_subdir" ]; then
+        wine_subdir=$(find "$extracted_dir" -maxdepth 1 -type d -name "*gwine*" | head -1)
+    fi
+    if [ -z "$wine_subdir" ]; then
+        wine_subdir=$(find "$extracted_dir" -maxdepth 1 -type d | head -1)
+    fi
+    [ -z "$wine_subdir" ] && wine_subdir="$extracted_dir"
+    
+    local old_backup=""
+    if [ -d "$install_dir" ]; then
+        old_backup=$(backup_component "$install_dir")
+    fi
+    
+    echo "Installation de la nouvelle version..."
+    ensure_dir "$install_dir" "Impossible de créer le répertoire d'installation"
+    cp -r "$wine_subdir"/* "$install_dir/"
+    
+    if [ ! -f "$install_dir/bin/wine" ]; then
+        echo "Échec de l'installation"
+        rm -rf "$install_dir"
+        if [ -n "$old_backup" ]; then
+            restore_backup_component "$old_backup" "$install_dir"
+            echo "Ancienne version restaurée avec succès"
+        fi
+        return 1
+    fi
+    
+    cleanup_backup_component "$old_backup"
+    return 0
 }
 
 # =============================================================================
@@ -2844,11 +3741,15 @@ auto_update_components() {
     local need_download=false
     local has_network=false
     
-    local has_gwine=false
+    local has_runner=false
     local has_dxvk=false
     local has_vkd3d=false
     
-    [ -d "$WINE_DIR" ] && [ -f "$WINE_DIR/bin/wine" ] && has_gwine=true
+    # Obtenir le runner actuel (wine ou proton)
+    local current_runner
+    current_runner=$(get_current_runner)
+    
+    [ -d "$WINE_DIR" ] && [ -f "$WINE_DIR/bin/wine" ] && has_runner=true
     [ -n "$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi")" ] && has_dxvk=true
     [ -n "$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null)" ] && has_vkd3d=true
     
@@ -2856,7 +3757,7 @@ auto_update_components() {
         has_network=true
     fi
     
-    if [ "$has_gwine" = false ] || [ "$has_dxvk" = false ] || [ "$has_vkd3d" = false ]; then
+    if [ "$has_runner" = false ] || [ "$has_dxvk" = false ] || [ "$has_vkd3d" = false ]; then
         need_download=true
         
         if [ "$has_network" = false ]; then
@@ -2865,10 +3766,17 @@ auto_update_components() {
     fi
     
     if [ "$need_download" = false ] && [ "$has_network" = true ]; then
-        local latest_gwine
-        latest_gwine=$(get_latest_gwine_version)
-        local current_gwine
-        current_gwine=$(cat "$GWINE_DIR/.version" 2>/dev/null || echo "")
+        local latest_runner
+        local current_runner_version
+        
+        if [ "$current_runner" = "proton" ]; then
+            latest_runner=$(get_latest_gwine_proton_version)
+            current_runner_version=$(cat "$PROTON_RUNNER_VERSION_FILE" 2>/dev/null || echo "")
+        else
+            latest_runner=$(get_latest_gwine_version)
+            current_runner_version=$(cat "$WINE_RUNNER_VERSION_FILE" 2>/dev/null || echo "")
+        fi
+        
         local latest_dxvk
         latest_dxvk=$(get_latest_dxvk_version)
         local latest_vkd3d
@@ -2884,11 +3792,11 @@ auto_update_components() {
         vkd3d_folder=$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | sort -V | tail -1)
         [ -n "$vkd3d_folder" ] && current_vkd3d=$(basename "$vkd3d_folder" | sed 's/^vkd3d-proton-//')
         
-        if [ -n "$latest_gwine" ] && [ -n "$current_gwine" ]; then
-            if compare_versions "$latest_gwine" "$current_gwine"; then
+        if [ -n "$latest_runner" ] && [ -n "$current_runner_version" ]; then
+            if compare_versions "$latest_runner" "$current_runner_version"; then
                 need_download=true
             fi
-        elif [ -z "$current_gwine" ]; then
+        elif [ -z "$current_runner_version" ]; then
             need_download=true
         fi
         
@@ -2936,11 +3844,20 @@ auto_update_components() {
     if [ "$need_download" = true ]; then
         echo "Téléchargement des composants..."
         
-        if [ "$has_gwine" = false ]; then
-            echo "  - Installation de gwine..."
-            download_gwine "force" "true" || error_exit "Échec du téléchargement de gwine"
+        if [ "$has_runner" = false ]; then
+            if [ "$current_runner" = "proton" ]; then
+                echo "  - Installation de gwine-proton..."
+                download_gwine_proton "force" "true" || error_exit "Échec du téléchargement de gwine-proton"
+            else
+                echo "  - Installation de gwine..."
+                download_gwine "force" "true" || error_exit "Échec du téléchargement de gwine"
+            fi
         elif [ "$has_network" = true ]; then
-            download_gwine "false" "true"
+            if [ "$current_runner" = "proton" ]; then
+                download_gwine_proton "false" "true"
+            else
+                download_gwine "false" "true"
+            fi
         fi
         
         if [ "$has_dxvk" = false ] || [ "$has_vkd3d" = false ]; then
@@ -2960,34 +3877,21 @@ prepare_full_offline_cache() {
     
     local failed=false
     
-    echo "1. Préparation de gwine..."
-    local latest_version
-    latest_version=$(get_latest_gwine_version)
-    if [ -n "$latest_version" ]; then
-        local archive_name="${latest_version}.tar.xz"
-        local download_url="https://github.com/elgabo86/gwine/releases/download/${latest_version}/${archive_name}"
-        local archives_dir="$COMPONENTS_DIR/gwine"
-        local archive_path="$archives_dir/$archive_name"
-        
-        ensure_dir "$archives_dir"
-        
-        if [ ! -f "$archive_path" ]; then
-            echo "   Téléchargement de $latest_version..."
-            if ! download_file "$download_url" "$archive_path" "gwine"; then
-                echo "   ⚠️ Échec du téléchargement de gwine"
-                failed=true
-            else
-                echo "   ✓ gwine téléchargé dans le cache"
-            fi
-        else
-            echo "   ✓ gwine déjà en cache"
-        fi
-        
-        if [ -d "$WINE_DIR" ] && [ -f "$WINE_DIR/bin/wine" ]; then
-            echo "   ✓ gwine déjà installé"
-        fi
-    else
-        echo "   ⚠️ Impossible de récupérer la version de gwine"
+    echo "1. Préparation des runners..."
+    echo ""
+    
+    # Télécharger/mettre à jour gwine (runner standard)
+    echo "   1a. Préparation de gwine..."
+    if ! download_gwine "false" "true"; then
+        echo "      ⚠️ Échec du téléchargement/mise à jour de gwine"
+        failed=true
+    fi
+    
+    # Télécharger/mettre à jour gwine-proton (runner proton)
+    echo ""
+    echo "   1b. Préparation de gwine-proton..."
+    if ! download_gwine_proton "false" "true"; then
+        echo "      ⚠️ Échec du téléchargement/mise à jour de gwine-proton"
         failed=true
     fi
     echo ""
@@ -3041,137 +3945,39 @@ prepare_full_offline_cache() {
     fi
     echo ""
     
-    echo "3. Préparation de DXVK..."
-    ensure_dir "$DXVK_CACHE_DIR"
-    local has_dxvk=false
-    find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -qv "gplasync\|nvapi" && has_dxvk=true
+    echo "3. Préparation de DXVK et VKD3D-Proton..."
+    echo "   3a. DXVK standard..."
+    if ! download_updated_dxvk_vkd3d --no-confirm; then
+        echo "   ⚠️ Échec du téléchargement de DXVK/VKD3D-Proton"
+        failed=true
+    fi
     
-    if [ "$has_dxvk" = false ]; then
-        local DXVK_VERSION
-        DXVK_VERSION=$(get_latest_dxvk_version)
-        if [ -z "$DXVK_VERSION" ]; then
-            echo "   ⚠️ Impossible de récupérer la dernière version de DXVK"
-            failed=true
-        else
-            local DXVK_TAG="dxvk-${DXVK_VERSION}"
-            local DXVK_URL="https://github.com/bottlesdevs/components/releases/download/${DXVK_TAG}/${DXVK_TAG}.tar.gz"
-            local DXVK_TEMP="$DXVK_CACHE_DIR/dxvk.tar.gz"
-            local DXVK_DIR="$DXVK_CACHE_DIR/dxvk-${DXVK_VERSION}"
-            
-            echo "   Téléchargement de $DXVK_TAG..."
-            if ! wget -q --show-progress "$DXVK_URL" -O "$DXVK_TEMP" 2>&1; then
-                echo "   ⚠️ Échec du téléchargement de DXVK"
-                failed=true
-            else
-                local temp_extract="$DXVK_CACHE_DIR/.temp_extract"
-                rm -rf "$temp_extract"
-                ensure_dir "$temp_extract"
-                if tar -xzf "$DXVK_TEMP" -C "$temp_extract" 2>/dev/null; then
-                    local extracted_dir
-                    extracted_dir=$(find "$temp_extract" -maxdepth 1 -type d -name "dxvk-*" | head -1)
-                    if [ -d "$extracted_dir" ]; then
-                        mv "$extracted_dir" "$DXVK_DIR"
-                        echo "   ✓ DXVK téléchargé et extrait"
-                    fi
-                else
-                    echo "   ⚠️ Échec de l'extraction de DXVK"
-                    failed=true
-                fi
-                rm -rf "$temp_extract" "$DXVK_TEMP"
-            fi
-        fi
-    else
-        echo "   ✓ DXVK déjà en cache"
+    echo "   3b. DXVK-GPLAsync..."
+    if ! download_dxvk_async "false" "true"; then
+        echo "   ⚠️ Échec du téléchargement de DXVK-GPLAsync"
+        failed=true
     fi
     echo ""
     
-    echo "4. Préparation de VKD3D-Proton..."
-    ensure_dir "$VKD3D_CACHE_DIR"
-    local has_vkd3d=false
-    find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | grep -q . && has_vkd3d=true
+    echo "4. Préparation des composants NVAPI (NVIDIA et non-NVIDIA)..."
+    # Télécharger à la fois DXVK-NVAPI et FakeNVAPI pour un cache complet
     
-    if [ "$has_vkd3d" = false ]; then
-        local VKD3D_VERSION
-        VKD3D_VERSION=$(get_latest_vkd3d_version)
-        if [ -z "$VKD3D_VERSION" ]; then
-            echo "   ⚠️ Impossible de récupérer la dernière version de VKD3D-Proton"
-            failed=true
-        else
-            local VKD3D_TAG="vkd3d-proton-${VKD3D_VERSION}"
-            local VKD3D_URL="https://github.com/bottlesdevs/components/releases/download/${VKD3D_TAG}/${VKD3D_TAG}.tar.gz"
-            local VKD3D_TEMP="$VKD3D_CACHE_DIR/vkd3d.tar.gz"
-            local VKD3D_DIR="$VKD3D_CACHE_DIR/vkd3d-proton-${VKD3D_VERSION}"
-        
-        echo "   Téléchargement de $VKD3D_TAG..."
-        if ! wget -q --show-progress "$VKD3D_URL" -O "$VKD3D_TEMP" 2>&1; then
-            echo "   ⚠️ Échec du téléchargement de VKD3D-Proton"
-            failed=true
-        else
-            local temp_extract="$VKD3D_CACHE_DIR/.temp_extract"
-            rm -rf "$temp_extract"
-            ensure_dir "$temp_extract"
-            if tar -xzf "$VKD3D_TEMP" -C "$temp_extract" 2>/dev/null; then
-                local extracted_dir
-                extracted_dir=$(find "$temp_extract" -maxdepth 1 -type d -name "vkd3d-proton-*" | head -1)
-                if [ -d "$extracted_dir" ]; then
-                    mv "$extracted_dir" "$VKD3D_DIR"
-                    echo "   ✓ VKD3D-Proton téléchargé et extrait"
-                fi
-            else
-                echo "   ⚠️ Échec de l'extraction de VKD3D-Proton"
-                failed=true
-            fi
-            rm -rf "$temp_extract" "$VKD3D_TEMP"
-            fi
-        fi
-    else
-        echo "   ✓ VKD3D-Proton déjà en cache"
+    # DXVK-NVAPI (pour NVIDIA)
+    echo "   Téléchargement/mise à jour de DXVK-NVAPI..."
+    if ! download_dxvk_nvapi --no-confirm 2>/dev/null; then
+        echo "   ⚠️ Échec du téléchargement de DXVK-NVAPI"
+        failed=true
     fi
-    echo ""
-    if is_nvidia_gpu; then
-        ensure_dir "$DXVK_NVAPI_CACHE_DIR"
-        local latest_nvapi
-        latest_nvapi=$(get_latest_dxvk_nvapi_version)
-        local current_nvapi=""
-        local nvapi_folder
-        nvapi_folder=$(find "$DXVK_NVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-nvapi-*" 2>/dev/null | sort -V | tail -1)
-        [ -n "$nvapi_folder" ] && current_nvapi=$(basename "$nvapi_folder" | sed 's/^dxvk-nvapi-v//; s/^dxvk-nvapi-//')
-        
-        if [ -z "$current_nvapi" ] || [ "$current_nvapi" != "$latest_nvapi" ]; then
-            echo "   Téléchargement de DXVK-NVAPI $latest_nvapi..."
-            if ! download_dxvk_nvapi --no-confirm 2>/dev/null; then
-                echo "   ⚠️ Échec du téléchargement de DXVK-NVAPI"
-                failed=true
-            else
-                echo "   ✓ DXVK-NVAPI téléchargé"
-            fi
-        else
-            echo "   ✓ DXVK-NVAPI déjà en cache (version $current_nvapi)"
-        fi
-    else
-        ensure_dir "$FAKENVAPI_CACHE_DIR"
-        local latest_fakenvapi
-        latest_fakenvapi=$(get_latest_fakenvapi_version)
-        local current_fakenvapi=""
-        local fakenvapi_folder
-        fakenvapi_folder=$(find "$FAKENVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "fakenvapi-*" 2>/dev/null | sort -V | tail -1)
-        [ -n "$fakenvapi_folder" ] && current_fakenvapi=$(basename "$fakenvapi_folder" | sed 's/^fakenvapi-v//; s/^fakenvapi-//')
-        
-        if [ -z "$current_fakenvapi" ] || [ "$current_fakenvapi" != "$latest_fakenvapi" ]; then
-            echo "   Téléchargement de FakeNVAPI $latest_fakenvapi..."
-            if ! download_fakenvapi --no-confirm 2>/dev/null; then
-                echo "   ⚠️ Échec du téléchargement de FakeNVAPI"
-                failed=true
-            else
-                echo "   ✓ FakeNVAPI téléchargé"
-            fi
-        else
-            echo "   ✓ FakeNVAPI déjà en cache (version $current_fakenvapi)"
-        fi
+    
+    # FakeNVAPI (pour non-NVIDIA)
+    echo "   Téléchargement/mise à jour de FakeNVAPI..."
+    if ! download_fakenvapi --no-confirm 2>/dev/null; then
+        echo "   ⚠️ Échec du téléchargement de FakeNVAPI"
+        failed=true
     fi
     echo ""
     
-    echo "5. Préparation des composants Windows..."
+    echo "6. Préparation des composants Windows..."
     if ! prepare_wincomponents_cache; then
         echo "   ⚠️ Échec du téléchargement des composants Windows"
         failed=true
@@ -3231,6 +4037,14 @@ create_cachepack() {
         missing_components=true
     fi
     
+    local GWINE_PROTON_ARCHIVE_DIR="$COMPONENTS_SOURCE/gwine-proton"
+    if [ -d "$GWINE_PROTON_ARCHIVE_DIR" ] && [ -n "$(ls -A "$GWINE_PROTON_ARCHIVE_DIR"/*.tar.xz 2>/dev/null)" ]; then
+        echo "  ✓ gwine-proton présent dans le cache"
+    else
+        echo "  ⚠️  gwine-proton n'est pas dans le cache"
+        missing_components=true
+    fi
+    
     if [ ! -d "$COMPONENTS_SOURCE" ]; then
         echo "  ✗ Composants non trouvés"
         missing_components=true
@@ -3246,7 +4060,18 @@ create_cachepack() {
         echo "  ⚠️  DXVK manquant"
         missing_components=true
     else
-        echo "  ✓ DXVK présent"
+        echo "  ✓ DXVK standard présent"
+    fi
+    
+    local has_dxvk_async=false
+    if [ -d "$DXVK_ASYNC_CACHE_DIR" ]; then
+        find "$DXVK_ASYNC_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk*" 2>/dev/null | grep -q . && has_dxvk_async=true
+    fi
+    if [ "$has_dxvk_async" = false ]; then
+        echo "  ⚠️  DXVK-GPLAsync manquant"
+        missing_components=true
+    else
+        echo "  ✓ DXVK-GPLAsync présent"
     fi
     
     local has_vkd3d=false
@@ -3423,19 +4248,10 @@ else
     exit 1
 fi
 
-
-
-# Déplacer gwine vers le bon emplacement
-if [ -d "$CACHE_DIR/gwine" ]; then
-    echo "  - Installation de gwine..."
-    mv "$CACHE_DIR/gwine"/* "$GWINE_DIR/"
-    rm -rf "$CACHE_DIR/gwine"
-    echo -e "${GREEN}  ✓ gwine installé${NC}"
-fi
-
 # Extraire et installer gwine depuis components/gwine/
 if [ -d "$CACHE_DIR/components/gwine" ]; then
-    echo "  - Extraction de gwine..."
+    echo "  - Installation de gwine..."
+    mkdir -p "$GWINE_DIR/wine"
     local archive_file
     archive_file=$(ls "$CACHE_DIR/components/gwine"/*.tar.xz 2>/dev/null | head -1)
     if [ -n "$archive_file" ]; then
@@ -3446,8 +4262,31 @@ if [ -d "$CACHE_DIR/components/gwine" ]; then
             extracted_dir=$(find "$temp_extract" -maxdepth 1 -type d -name "*gwine*" | head -1)
             [ -z "$extracted_dir" ] && extracted_dir=$(find "$temp_extract" -maxdepth 1 -type d | head -1)
             if [ -n "$extracted_dir" ]; then
-                cp -r "$extracted_dir"/* "$GWINE_DIR/"
+                cp -r "$extracted_dir"/* "$GWINE_DIR/wine/"
                 echo -e "${GREEN}  ✓ gwine installé${NC}"
+            fi
+        fi
+        rm -rf "$temp_extract"
+    fi
+fi
+
+# Extraire et installer gwine-proton depuis components/gwine-proton/
+if [ -d "$CACHE_DIR/components/gwine-proton" ]; then
+    echo "  - Installation de gwine-proton..."
+    mkdir -p "$GWINE_DIR/wine-proton"
+    local proton_archive_file
+    proton_archive_file=$(ls "$CACHE_DIR/components/gwine-proton"/*.tar.xz 2>/dev/null | head -1)
+    if [ -n "$proton_archive_file" ]; then
+        local temp_extract="/tmp/gwine-proton-extract-$$"
+        mkdir -p "$temp_extract"
+        if tar -xJf "$proton_archive_file" -C "$temp_extract"; then
+            local extracted_dir
+            extracted_dir=$(find "$temp_extract" -maxdepth 1 -type d \( -name "*gwine*proton*" -o -name "*proton*" \) | head -1)
+            [ -z "$extracted_dir" ] && extracted_dir=$(find "$temp_extract" -maxdepth 1 -type d -name "*gwine*" | head -1)
+            [ -z "$extracted_dir" ] && extracted_dir=$(find "$temp_extract" -maxdepth 1 -type d | head -1)
+            if [ -n "$extracted_dir" ]; then
+                cp -r "$extracted_dir"/* "$GWINE_DIR/wine-proton/"
+                echo -e "${GREEN}  ✓ gwine-proton installé${NC}"
             fi
         fi
         rm -rf "$temp_extract"
@@ -3501,7 +4340,7 @@ Ce dossier contient tous les composants nécessaires pour installer Gwine
 en mode offline.
 
 Contenu:
-  - gwine-cache.tar.xz    : Archive contenant le cache et gwine
+  - gwine-cache.tar.xz    : Archive contenant le cache, gwine et gwine-proton
   - install-cache.sh      : Script de déploiement automatique
   - README.txt            : Ce fichier
 
@@ -3515,13 +4354,14 @@ Instructions:
 
    Le script va:
    - Déployer le cache dans ~/.cache/gwine/
-   - Installer gwine dans ~/.local/share/gwine/
+   - Installer gwine (runner standard) dans ~/.local/share/gwine/wine/
+   - Installer gwine-proton dans ~/.local/share/gwine/wine-proton/
    - Proposer d'initialiser le préfixe Wine (avec kdialog si disponible)
 
 3. Alternative manuelle:
    - Extraire gwine-cache.tar.xz dans ~/.cache/gwine/
-   - Si un dossier gwine/ existe: copier vers ~/.local/share/gwine/
-   - Si un dossier gwine-archive/ existe: extraire l'archive .tar.xz
+   - Extraire les archives de components/gwine/ vers ~/.local/share/gwine/wine/
+   - Extraire les archives de components/gwine-proton/ vers ~/.local/share/gwine/wine-proton/
    - Lancer: gwine --init --offline
 
 Notes:
@@ -3530,7 +4370,11 @@ Notes:
   (wine, squashfuse, bubblewrap, fuse-overlayfs, etc.)
 - Le script détecte automatiquement si kdialog est disponible
 - Le préfixe Wine sera créé dans ~/Windows/Prefix/
-- Le pack peut contenir gwine soit installé soit sous forme d'archive
+- Deux runners sont inclus : gwine (standard) et gwine-proton
+- Par défaut, gwine est utilisé. Pour utiliser gwine-proton: gwine --init --proton
+- Deux versions DXVK sont incluses : standard et GPLAsync
+- Pour utiliser DXVK-GPLAsync: gwine --init --dxvk-async
+  (DXVK_ASYNC=1 sera automatiquement défini)
 
 Pour plus d'informations: https://github.com/elgabo86/gwine
 README
@@ -4647,6 +5491,15 @@ build_bwrap_env_vars() {
     
     [ -n "${DXVK_NVAPIHACK:-}" ] && bwrap_add --setenv DXVK_NVAPIHACK "$DXVK_NVAPIHACK"
     [ -n "${DXVK_ENABLE_NVAPI:-}" ] && bwrap_add --setenv DXVK_ENABLE_NVAPI "$DXVK_ENABLE_NVAPI"
+    
+    # DXVK_ASYNC pour le mode dxvk-async (doit être défini avant via l'environnement ou la fonction)
+    local dxvk_async_value
+    dxvk_async_value=$(get_dxvk_async_env)
+    if [ -n "$dxvk_async_value" ]; then
+        bwrap_add --setenv DXVK_ASYNC "$dxvk_async_value"
+    elif [ -n "${DXVK_ASYNC:-}" ]; then
+        bwrap_add --setenv DXVK_ASYNC "$DXVK_ASYNC"
+    fi
     [ -n "${__NV_PRIME_RENDER_OFFLOAD:-}" ] && bwrap_add --setenv __NV_PRIME_RENDER_OFFLOAD "$__NV_PRIME_RENDER_OFFLOAD"
     [ -n "${__VK_LAYER_NV_optimus:-}" ] && bwrap_add --setenv __VK_LAYER_NV_optimus "$__VK_LAYER_NV_optimus"
     [ -n "${__GLX_VENDOR_LIBRARY_NAME:-}" ] && bwrap_add --setenv __GLX_VENDOR_LIBRARY_NAME "$__GLX_VENDOR_LIBRARY_NAME"
@@ -6365,7 +7218,11 @@ launch_wine_game() {
 ################################################################################
 
 init_prefix_only() {
+    local current_runner
+    current_runner=$(get_current_runner)
+    
     echo "Initialisation du préfixe Wine..."
+    echo "Runner utilisé: $current_runner"
     
     if [ "$OFFLINE_MODE" = "true" ]; then
         echo "Mode offline activé"
@@ -6393,21 +7250,25 @@ init_prefix_only() {
     echo "Phase 1/2 : Vérification et téléchargement des composants..."
     echo ""
     
-    # Vérifier et télécharger/mettre à jour gwine si nécessaire
+    # Vérifier et télécharger/mettre à jour le runner actuel si nécessaire
     ((CURRENT_STEP++))
-    progress_update "$DBUS_REF" "$CURRENT_STEP" "Vérification de gwine..."
+    progress_update "$DBUS_REF" "$CURRENT_STEP" "Vérification du runner..."
     
     if [ "$OFFLINE_MODE" = "true" ] && ([ ! -d "$WINE_DIR" ] || [ ! -f "$WINE_DIR/bin/wine" ]); then
         progress_close "$DBUS_REF"
-        error_exit "Mode offline: gwine n'est pas installé. Impossible de continuer."
+        error_exit "Mode offline: le runner $current_runner n'est pas installé. Impossible de continuer."
     fi
     
     if [ "$OFFLINE_MODE" != "true" ]; then
         if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-            kdialog --passivepopup "Vérification des mises à jour de gwine..." 5
+            kdialog --passivepopup "Vérification des mises à jour du runner..." 5
         fi
-        # Toujours vérifier les mises à jour, même si gwine est déjà installé
-        download_gwine "force"
+        # Toujours vérifier les mises à jour, même si le runner est déjà installé
+        if [ "$current_runner" = "proton" ]; then
+            download_gwine_proton "force"
+        else
+            download_gwine "force"
+        fi
     fi
     
     require_wine
@@ -6542,14 +7403,24 @@ init_prefix_only() {
     
     progress_close "$DBUS_REF"
     
+    # Afficher le mode DXVK configuré
+    local current_dxvk_mode
+    current_dxvk_mode=$(get_current_dxvk_mode)
+    
     echo ""
     echo "Préfixe Wine initialisé avec succès !"
     echo ""
     echo "Configuration effectuée :"
     echo "  ✓ Préfixe Wine créé"
+    echo "  ✓ Runner: $current_runner"
+    if [ "$current_dxvk_mode" = "dxvk-async" ]; then
+        echo "  ✓ DXVK-GPLAsync et VKD3D-Proton configurés"
+        echo "  ✓ DXVK_ASYNC=1 sera défini automatiquement"
+    else
+        echo "  ✓ DXVK et VKD3D-Proton configurés"
+    fi
     echo "  ✓ Wine Mono et Gecko installés"
     echo "  ✓ Composants Windows (winetricks) installés"
-    echo "  ✓ DXVK et VKD3D-Proton configurés"
     echo "  ✓ Configuration MangoHud copiée"
     echo "  ✓ Dossiers Windows configurés"
     echo "  ✓ Caches shaders initialisés"
@@ -6722,67 +7593,130 @@ update_components() {
         error_exit "Pas de connexion internet - mise à jour impossible"
     fi
     
+    # Obtenir le runner actuel
+    local current_runner
+    current_runner=$(get_current_runner)
+    
+    echo "Runner actuel: $current_runner"
+    echo ""
+    
     local has_updates=false
     local needs_reinstall_dlls=false
     local CURRENT_STEP=0
     local DBUS_REF=""
     
     # Variables pour stocker les mises à jour effectuées
-    local updated_gwine=""
+    local updated_runner=""
     local updated_dxvk=""
     local updated_vkd3d=""
     local updated_dlls=false
     
-    # Vérifier gwine
-    local latest_gwine
-    latest_gwine=$(get_latest_gwine_version)
-    local current_gwine
-    current_gwine=$(cat "$GWINE_DIR/.version" 2>/dev/null || echo "")
+    # Vérifier le runner actuel (wine ou proton)
+    local latest_runner
+    local current_runner_version
     
-    echo "gwine:"
-    echo "  Version actuelle: ${current_gwine:-Aucune}"
-    echo "  Dernière version: ${latest_gwine:-Inconnue}"
-    
-    if [ -n "$latest_gwine" ] && [ -n "$current_gwine" ]; then
-        if compare_versions "$latest_gwine" "$current_gwine"; then
+    if [ "$current_runner" = "proton" ]; then
+        latest_runner=$(get_latest_gwine_proton_version)
+        current_runner_version=$(cat "$PROTON_RUNNER_VERSION_FILE" 2>/dev/null || echo "")
+        
+        echo "gwine-proton:"
+        echo "  Version actuelle: ${current_runner_version:-Aucune}"
+        echo "  Dernière version: ${latest_runner:-Inconnue}"
+        
+        if [ -n "$latest_runner" ] && [ -n "$current_runner_version" ]; then
+            if compare_versions "$latest_runner" "$current_runner_version"; then
+                has_updates=true
+                echo "  → Mise à jour disponible"
+            else
+                echo "  → Déjà à jour"
+            fi
+        elif [ -n "$latest_runner" ]; then
             has_updates=true
-            echo "  → Mise à jour disponible"
-        else
-            echo "  → Déjà à jour"
+            echo "  → Installation nécessaire"
         fi
-    elif [ -n "$latest_gwine" ]; then
-        has_updates=true
-        echo "  → Installation nécessaire"
+    else
+        # Runner wine par défaut
+        latest_runner=$(get_latest_gwine_version)
+        current_runner_version=$(cat "$WINE_RUNNER_VERSION_FILE" 2>/dev/null || echo "")
+        
+        echo "gwine:"
+        echo "  Version actuelle: ${current_runner_version:-Aucune}"
+        echo "  Dernière version: ${latest_runner:-Inconnue}"
+        
+        if [ -n "$latest_runner" ] && [ -n "$current_runner_version" ]; then
+            if compare_versions "$latest_runner" "$current_runner_version"; then
+                has_updates=true
+                echo "  → Mise à jour disponible"
+            else
+                echo "  → Déjà à jour"
+            fi
+        elif [ -n "$latest_runner" ]; then
+            has_updates=true
+            echo "  → Installation nécessaire"
+        fi
     fi
     
-    # Vérifier DXVK/VKD3D
-    local latest_dxvk
-    latest_dxvk=$(get_latest_dxvk_version)
+    # Vérifier DXVK/VKD3D (standard ou async selon le mode)
+    local current_dxvk_mode
+    current_dxvk_mode=$(get_current_dxvk_mode)
+    
+    local latest_dxvk=""
     local latest_vkd3d
     latest_vkd3d=$(get_latest_vkd3d_version)
     local current_dxvk=""
     local current_vkd3d=""
-    
-    local dxvk_folder
-    dxvk_folder=$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | sort -V | tail -1)
-    [ -n "$dxvk_folder" ] && current_dxvk=$(basename "$dxvk_folder" | sed 's/^dxvk-//')
+    local needs_dxvk_async_update=false
+    local latest_dxvk_async=""
+    local current_dxvk_async=""
     
     local vkd3d_folder
     vkd3d_folder=$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | sort -V | tail -1)
     [ -n "$vkd3d_folder" ] && current_vkd3d=$(basename "$vkd3d_folder" | sed 's/^vkd3d-proton-//')
     
-    echo ""
-    echo "DXVK:"
-    echo "  Version actuelle: ${current_dxvk:-Aucune}"
-    echo "  Dernière version: ${latest_dxvk:-Inconnue}"
-    
-    if [ -n "$latest_dxvk" ]; then
-        if [ -z "$current_dxvk" ] || compare_versions "$latest_dxvk" "$current_dxvk"; then
-            has_updates=true
-            needs_reinstall_dlls=true
-            echo "  → Mise à jour disponible"
-        else
-            echo "  → Déjà à jour"
+    if [ "$current_dxvk_mode" = "dxvk-async" ]; then
+        # Mode dxvk-async: vérifier dxvk-gplasync
+        local dxvk_async_folder
+        dxvk_async_folder=$(find "$DXVK_ASYNC_CACHE_DIR" -maxdepth 1 -type d -name "dxvk*gplasync*" 2>/dev/null | sort -V | tail -1)
+        [ -n "$dxvk_async_folder" ] && current_dxvk_async=$(basename "$dxvk_async_folder" | sed 's/^dxvk-gplasync-//')
+        
+        latest_dxvk_async=$(get_latest_dxvk_async_version)
+        
+        echo ""
+        echo "DXVK-GPLAsync:"
+        echo "  Version actuelle: ${current_dxvk_async:-Aucune}"
+        echo "  Dernière version: ${latest_dxvk_async:-Inconnue}"
+        
+        if [ -n "$latest_dxvk_async" ]; then
+            if [ -z "$current_dxvk_async" ] || compare_versions "$latest_dxvk_async" "$current_dxvk_async"; then
+                has_updates=true
+                needs_dxvk_async_update=true
+                needs_reinstall_dlls=true
+                echo "  → Mise à jour disponible"
+            else
+                echo "  → Déjà à jour"
+            fi
+        fi
+    else
+        # Mode standard: vérifier dxvk normal
+        latest_dxvk=$(get_latest_dxvk_version)
+        
+        local dxvk_folder
+        dxvk_folder=$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | sort -V | tail -1)
+        [ -n "$dxvk_folder" ] && current_dxvk=$(basename "$dxvk_folder" | sed 's/^dxvk-//')
+        
+        echo ""
+        echo "DXVK:"
+        echo "  Version actuelle: ${current_dxvk:-Aucune}"
+        echo "  Dernière version: ${latest_dxvk:-Inconnue}"
+        
+        if [ -n "$latest_dxvk" ]; then
+            if [ -z "$current_dxvk" ] || compare_versions "$latest_dxvk" "$current_dxvk"; then
+                has_updates=true
+                needs_reinstall_dlls=true
+                echo "  → Mise à jour disponible"
+            else
+                echo "  → Déjà à jour"
+            fi
         fi
     fi
     
@@ -6860,8 +7794,17 @@ update_components() {
         echo "Tous les composants sont déjà à jour !"
         echo ""
         echo "Versions installées :"
-        echo "  - gwine: ${current_gwine:-Inconnue}"
-        echo "  - DXVK: ${current_dxvk:-Inconnue}"
+        if [ "$current_runner" = "proton" ]; then
+            echo "  - gwine-proton: ${current_runner_version:-Inconnue}"
+        else
+            echo "  - gwine: ${current_runner_version:-Inconnue}"
+        fi
+        # Afficher le bon DXVK selon le mode
+        if [ "$current_dxvk_mode" = "dxvk-async" ]; then
+            echo "  - DXVK-GPLAsync: ${current_dxvk_async:-Inconnue}"
+        else
+            echo "  - DXVK: ${current_dxvk:-Inconnue}"
+        fi
         echo "  - VKD3D-Proton: ${current_vkd3d:-Inconnue}"
         if is_nvidia_gpu; then
             echo "  - DXVK-NVAPI: ${current_nvapi:-Inconnue}"
@@ -6876,6 +7819,7 @@ update_components() {
     local TOTAL_STEPS=0
     [ -n "$latest_gwine" ] && ((TOTAL_STEPS++))
     [ -n "$latest_dxvk" ] || [ -n "$latest_vkd3d" ] && ((TOTAL_STEPS++))
+    [ "$needs_dxvk_async_update" = true ] && ((TOTAL_STEPS++))
     [ "$needs_nvapi_update" = true ] && ((TOTAL_STEPS++))
     [ "$needs_fakenvapi_update" = true ] && ((TOTAL_STEPS++))
     [ "$needs_reinstall_dlls" = true ] && ((TOTAL_STEPS++))
@@ -6888,25 +7832,42 @@ update_components() {
     # Effectuer les mises à jour
     echo "Installation des mises à jour..."
     
-    # Mettre à jour gwine
-    if [ -n "$latest_gwine" ]; then
-        if [ -z "$current_gwine" ] || compare_versions "$latest_gwine" "$current_gwine"; then
+    # Mettre à jour le runner actuel (wine ou proton)
+    if [ -n "$latest_runner" ]; then
+        if [ -z "$current_runner_version" ] || compare_versions "$latest_runner" "$current_runner_version"; then
             ((CURRENT_STEP++))
-            progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de gwine..."
             
-            if progress_is_cancelled "$DBUS_REF"; then
-                progress_close "$DBUS_REF"
-                echo "Mise à jour annulée par l'utilisateur"
-                exit 0
+            if [ "$current_runner" = "proton" ]; then
+                progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de gwine-proton..."
+                
+                if progress_is_cancelled "$DBUS_REF"; then
+                    progress_close "$DBUS_REF"
+                    echo "Mise à jour annulée par l'utilisateur"
+                    exit 0
+                fi
+                
+                if ! download_gwine_proton "false" "true"; then
+                    progress_close "$DBUS_REF"
+                    error_exit "Échec de la mise à jour de gwine-proton"
+                fi
+                
+                updated_runner="gwine-proton $latest_runner"
+            else
+                progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de gwine..."
+                
+                if progress_is_cancelled "$DBUS_REF"; then
+                    progress_close "$DBUS_REF"
+                    echo "Mise à jour annulée par l'utilisateur"
+                    exit 0
+                fi
+                
+                if ! download_gwine "false" "true"; then
+                    progress_close "$DBUS_REF"
+                    error_exit "Échec de la mise à jour de gwine"
+                fi
+                
+                updated_runner="gwine $latest_runner"
             fi
-            
-            if ! download_gwine "false" "true"; then
-                progress_close "$DBUS_REF"
-                error_exit "Échec de la mise à jour de gwine"
-            fi
-            
-            # Marquer comme mis à jour
-            updated_gwine="$latest_gwine"
             
             # Vérifier annulation après téléchargement
             if progress_is_cancelled "$DBUS_REF"; then
@@ -6917,8 +7878,32 @@ update_components() {
         fi
     fi
     
-    # Mettre à jour DXVK/VKD3D
-    if [ -n "$latest_dxvk" ] || [ -n "$latest_vkd3d" ]; then
+    # Mettre à jour DXVK (standard ou async selon le mode) et VKD3D
+    if [ "$needs_dxvk_async_update" = true ]; then
+        # Mettre à jour DXVK-GPLAsync
+        ((CURRENT_STEP++))
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de DXVK-GPLAsync..."
+        
+        if progress_is_cancelled "$DBUS_REF"; then
+            progress_close "$DBUS_REF"
+            echo "Mise à jour annulée par l'utilisateur"
+            exit 0
+        fi
+        
+        if ! download_dxvk_async "false" "true"; then
+            progress_close "$DBUS_REF"
+            error_exit "Échec de la mise à jour de DXVK-GPLAsync"
+        fi
+        
+        updated_dxvk="DXVK-GPLAsync $latest_dxvk_async"
+        
+        # Vérifier annulation après téléchargement
+        if progress_is_cancelled "$DBUS_REF"; then
+            progress_close "$DBUS_REF"
+            echo "Mise à jour annulée par l'utilisateur"
+            exit 0
+        fi
+    elif [ -n "$latest_dxvk" ] || [ -n "$latest_vkd3d" ]; then
         ((CURRENT_STEP++))
         progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de DXVK/VKD3D-Proton..."
         
@@ -7026,8 +8011,8 @@ update_components() {
     echo "Mise à jour terminée avec succès !"
     echo ""
     echo "Résumé des mises à jour effectuées :"
-    if [ -n "$updated_gwine" ]; then
-        echo "  ✓ gwine mis à jour vers $updated_gwine"
+    if [ -n "$updated_runner" ]; then
+        echo "  ✓ $updated_runner mis à jour"
     fi
     if [ -n "$updated_dxvk" ]; then
         echo "  ✓ DXVK mis à jour vers $updated_dxvk"
@@ -7570,6 +8555,10 @@ show_help() {
     echo "  --kdialog         Activer les dialogues graphiques kdialog pour --init et --update"
     echo "  --fix             Activer le mode fix manette"
     echo "  --exewgp          Mode interactif pour choisir l'exécutable dans un WGP"
+    echo "  --wine            Configurer le runner Wine standard (gwine) comme défaut"
+    echo "  --proton          Configurer le runner Proton (gwine-proton) comme défaut"
+    echo "  --dxvk            Utiliser DXVK standard (défaut)"
+    echo "  --dxvk-async      Utiliser DXVK-GPLAsync (asynchrone avec DXVK_ASYNC=1)"
     echo "  --nosandbox       Désactiver le sandboxing"
     echo "  --regedit         Lancer l'éditeur de registre"
     echo "  --reg fichier.reg Installer un fichier de registre"
@@ -7596,13 +8585,20 @@ show_help() {
     echo "  gwine ~/Jeux/monjeu.wgp"
     echo "  gwine ~/Jeux/monjeu.exe"
     echo "  gwine --init"
+    echo "  gwine --init --wine         # Init avec runner Wine"
+    echo "  gwine --init --proton       # Init avec runner Proton"
+    echo "  gwine --init --dxvk-async   # Init avec DXVK-GPLAsync"
+    echo "  gwine --wine                # Configurer Wine comme runner par défaut"
+    echo "  gwine --proton              # Configurer Proton comme runner par défaut"
+    echo "  gwine --dxvk                # Utiliser DXVK standard"
+    echo "  gwine --dxvk-async          # Utiliser DXVK-GPLAsync (DXVK_ASYNC=1)"
     echo "  gwine --fix ~/Jeux/monjeu.wgp"
     echo "  gwine --reg config.reg"
     echo "  gwine --kill"
 }
 
 # Options valides reconnues par gwine
-VALID_OPTIONS=("--help" "-h" "--fix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--wayland" "--env")
+VALID_OPTIONS=("--help" "-h" "--fix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--wayland" "--env" "--wine" "--proton" "--dxvk" "--dxvk-async")
 
 # Vérifie si une option est valide
 is_valid_option() {
@@ -7659,6 +8655,22 @@ parse_arguments() {
             --use-ln-mounts)
                 USE_BIND_MOUNTS=false
                 export USE_BIND_MOUNTS
+                shift
+                ;;
+            --wine)
+                wine_mode=true
+                shift
+                ;;
+            --proton)
+                proton_mode=true
+                shift
+                ;;
+            --dxvk)
+                dxvk_mode=true
+                shift
+                ;;
+            --dxvk-async)
+                dxvk_async_mode=true
                 shift
                 ;;
             --wayland)
@@ -7840,7 +8852,6 @@ $2"
         esac
     fi
 
-    [ -z "$fullpath" ] && error_exit "Aucun fichier spécifié"
 }
 
 # =============================================================================
@@ -7988,6 +8999,98 @@ main() {
     cleanup_stale_wineserver_locks
     
     parse_arguments "$@"
+    
+    # Vérifier que --wine, --proton, --dxvk, --dxvk-async ne sont pas utilisés avec un fichier
+    if [ -n "$fullpath" ] && ([ "$wine_mode" = true ] || [ "$proton_mode" = true ] || [ "$dxvk_mode" = true ] || [ "$dxvk_async_mode" = true ]); then
+        error_exit "Les options --wine, --proton, --dxvk et --dxvk-async ne peuvent pas être utilisées lors du lancement d'un jeu. Utilisez-les uniquement avec --init ou seules pour configurer le défaut."
+    fi
+    
+    # Si mode "config only" (--wine, --proton, --dxvk ou --dxvk-async sans fichier ni autre option)
+    # alors sauvegarder la configuration comme défaut et télécharger si nécessaire
+    if [ -z "$fullpath" ] && [ "$init_mode" != true ] && [ "$regedit_mode" != true ] && [ "$reg_mode" != true ] && [ "$winecfg_mode" != true ] && [ "$winetricks_mode" != true ] && [ "$cmd_mode" != true ] && [ "$joytest_mode" != true ] && [ "$update_mode" != true ] && [ "$download_wincomponents_mode" != true ] && [ "$cachepack_mode" != true ] && [ "$dir_mode" != true ] && ([ "$wine_mode" = true ] || [ "$proton_mode" = true ] || [ "$dxvk_mode" = true ] || [ "$dxvk_async_mode" = true ]); then
+        # Sauvegarder le runner si spécifié
+        if [ "$wine_mode" = true ]; then
+            set_runner "wine"
+            echo "Runner configuré : wine (gwine standard)"
+            echo "Ce runner sera utilisé par défaut pour les prochains lancements."
+            echo ""
+            ensure_runner_installed
+        elif [ "$proton_mode" = true ]; then
+            set_runner "proton"
+            echo "Runner configuré : proton (gwine-proton)"
+            echo "Ce runner sera utilisé par défaut pour les prochains lancements."
+            echo ""
+            ensure_runner_installed
+        fi
+        
+        # Sauvegarder le mode DXVK si spécifié
+        if [ "$dxvk_mode" = true ]; then
+            set_dxvk_mode "dxvk"
+            echo "Mode DXVK configuré : dxvk (standard)"
+            echo "Ce mode sera utilisé par défaut pour les prochains lancements."
+            
+            # Si un préfixe existe, réinstaller les DLLs
+            if [ -d "$HOME_REAL/Windows/Prefix" ] && [ -f "$HOME_REAL/Windows/Prefix/system.reg" ]; then
+                echo ""
+                echo "Réinstallation de DXVK standard dans le préfixe existant..."
+                export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+                if install_dxvk_vkd3d; then
+                    echo "✓ DXVK standard réinstallé avec succès"
+                else
+                    echo "⚠️ Échec de la réinstallation de DXVK"
+                fi
+            fi
+        elif [ "$dxvk_async_mode" = true ]; then
+            set_dxvk_mode "dxvk-async"
+            echo "Mode DXVK configuré : dxvk-async (GPLAsync)"
+            echo "Ce mode sera utilisé par défaut pour les prochains lancements."
+            echo "La variable DXVK_ASYNC=1 sera définie automatiquement."
+            echo ""
+            ensure_dxvk_installed
+            
+            # Si un préfixe existe, réinstaller les DLLs
+            if [ -d "$HOME_REAL/Windows/Prefix" ] && [ -f "$HOME_REAL/Windows/Prefix/system.reg" ]; then
+                echo ""
+                echo "Réinstallation de DXVK-GPLAsync dans le préfixe existant..."
+                export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+                if install_dxvk_vkd3d; then
+                    echo "✓ DXVK-GPLAsync réinstallé avec succès"
+                else
+                    echo "⚠️ Échec de la réinstallation de DXVK-GPLAsync"
+                fi
+            fi
+        fi
+        
+        exit 0
+    fi
+    
+    # Initialiser le runner (wine ou proton) après le parsing des arguments
+    # Passer --save si c'est un --init avec --wine ou --proton
+    if [ "$init_mode" = true ] && ([ "$wine_mode" = true ] || [ "$proton_mode" = true ]); then
+        init_runner --save
+    else
+        init_runner
+    fi
+    
+    # Initialiser le mode DXVK (dxvk ou dxvk-async) si spécifié avec --init
+    if [ "$init_mode" = true ]; then
+        if [ "$dxvk_mode" = true ]; then
+            set_dxvk_mode "dxvk"
+            echo "Mode DXVK configuré : dxvk (standard)"
+        elif [ "$dxvk_async_mode" = true ]; then
+            set_dxvk_mode "dxvk-async"
+            echo "Mode DXVK configuré : dxvk-async (GPLAsync)"
+            echo "La variable DXVK_ASYNC=1 sera définie automatiquement."
+        fi
+    fi
+    
+    # Vérifier que le runner est installé (télécharger si nécessaire)
+    ensure_runner_installed
+    
+    # Vérifier que DXVK est installé si mode dxvk-async est sélectionné
+    if [ "$init_mode" = true ] && [ "$dxvk_async_mode" = true ]; then
+        ensure_dxvk_installed
+    fi
 
     if [ "$regedit_mode" = true ]; then
         launch_regedit
@@ -8020,6 +9123,12 @@ main() {
             ln -sf "$(realpath "$0")" "$SYMLINK"
             echo "Symlink créé: $SYMLINK"
         fi
+    fi
+    
+    # Si on arrive ici sans fullpath et sans init_mode, c'est une erreur
+    # (sauf si on a déjà géré le cas config-only plus haut)
+    if [ -z "$fullpath" ]; then
+        error_exit "Aucun fichier spécifié"
     fi
 
     if [[ "$fullpath" == *.wgp ]]; then
