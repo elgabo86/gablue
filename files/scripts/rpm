@@ -174,9 +174,6 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     dnf5 -y install rom-properties-kf6
 fi
 
-# Utilitaires rom-properties (CLI, indépendant de l'environnement)
-dnf5 -y install rom-properties-utils
-
 # =============================================================================
 # POLICES
 # =============================================================================
@@ -208,7 +205,6 @@ dnf5 -y install \
     gcc-c++ \
     libffi-devel \
     readline-devel \
-    zlib-devel \
     bzip2-devel \
     openssl-devel \
     sqlite-devel \
