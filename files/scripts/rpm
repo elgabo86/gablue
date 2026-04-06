@@ -208,7 +208,6 @@ dnf5 -y install \
     gcc-c++ \
     libffi-devel \
     readline-devel \
-    zlib-devel \
     bzip2-devel \
     openssl-devel \
     sqlite-devel \
