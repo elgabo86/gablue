@@ -400,7 +400,7 @@ proton_mode=false
 # =============================================================================
 
 # Obtient le runner actuellement configuré
-# Retourne: "wine" ou "proton" (défaut: wine)
+# Retourne: "wine" ou "proton" (défaut: proton)
 get_current_runner() {
     if [ -f "$RUNNER_CONFIG_FILE" ]; then
         local runner
@@ -410,8 +410,8 @@ get_current_runner() {
             return 0
         fi
     fi
-    # Défaut: wine
-    echo "wine"
+    # Défaut: proton
+    echo "proton"
 }
 
 # Définit le runner actif
@@ -645,6 +645,14 @@ dxvk_async_mode=false
 # =============================================================================
 # Fonctions de gestion du mode DXVK
 # =============================================================================
+
+# Initialise le mode DXVK au démarrage
+# Cette fonction charge la configuration et initialise les variables
+init_dxvk_mode() {
+    # Le mode DXVK est déjà initialisé via get_current_dxvk_mode quand nécessaire
+    # Cette fonction est un point d'entrée pour une initialisation future si besoin
+    :
+}
 
 # Obtient le mode DXVK actuellement configuré
 # Retourne: "dxvk" ou "dxvk-async" (défaut: dxvk)
@@ -2688,6 +2696,117 @@ install_d3dcompiler_47() {
     return 0
 }
 
+install_xact() {
+    echo "Installation de XACT Engine..."
+    
+    local win32_sys="$WINEPREFIX/drive_c/windows/syswow64"
+    
+    # XACT utilise le même fichier que DirectX_Jun2010
+    local cache_file="$WINCOMPONENTS_CACHE/directx_Jun2010/directx_Jun2010_redist.exe"
+    
+    if [ ! -f "$cache_file" ]; then
+        echo "  ✗ Fichier DirectX non trouvé"
+        return 1
+    fi
+    
+    local tmp_dir=$(mktemp -d)
+    local xact_count=0
+    
+    if command -v cabextract &>/dev/null; then
+        # Extraire les CABs contenant les DLLs XACT (comme winetricks)
+        cabextract -d "$tmp_dir" -L -F '*_xact_*x86*' "$cache_file" >/dev/null 2>&1 || true
+        cabextract -d "$tmp_dir" -L -F '*_x3daudio_*x86*' "$cache_file" >/dev/null 2>&1 || true
+        cabextract -d "$tmp_dir" -L -F '*_xaudio_*x86*' "$cache_file" >/dev/null 2>&1 || true
+        
+        # Extraire les DLLs des CABs
+        for cab in "$tmp_dir"/*.cab; do
+            if [ -f "$cab" ]; then
+                cabextract -d "$win32_sys" -L -F 'xactengine*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
+                cabextract -d "$win32_sys" -L -F 'xaudio*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
+                cabextract -d "$win32_sys" -L -F 'x3daudio*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
+                cabextract -d "$win32_sys" -L -F 'xapofx*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
+            fi
+        done
+    fi
+    
+    # Créer les overrides pour tous les DLLs XACT (comme winetricks)
+    local xact_overrides="xaudio2_0 xaudio2_1 xaudio2_2 xaudio2_3 xaudio2_4 xaudio2_5 xaudio2_6 xaudio2_7"
+    local x3daudio_overrides="x3daudio1_0 x3daudio1_1 x3daudio1_2 x3daudio1_3 x3daudio1_4 x3daudio1_5 x3daudio1_6 x3daudio1_7"
+    local xapofx_overrides="xapofx1_1 xapofx1_2 xapofx1_3 xapofx1_4 xapofx1_5"
+    local xactengine_overrides="xactengine2_0 xactengine2_1 xactengine2_2 xactengine2_3 xactengine2_4 xactengine2_5 xactengine2_6 xactengine2_7 xactengine2_8 xactengine2_9 xactengine2_10"
+    xactengine_overrides="$xactengine_overrides xactengine3_0 xactengine3_1 xactengine3_2 xactengine3_3 xactengine3_4 xactengine3_5 xactengine3_6 xactengine3_7"
+    
+    for dll in $xact_overrides $x3daudio_overrides $xapofx_overrides $xactengine_overrides; do
+        WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "$dll" /d native,builtin /f >/dev/null 2>&1 || true
+    done
+    
+    # Enregistrer les DLLs x86 avec regsvr32.exe /S (comme winetricks)
+    # Note: Pour x86, on utilise wine (32-bit), pas wine64
+    if [ -x "$WINE32_BIN" ]; then
+        for dll in "$win32_sys"/xactengine*.dll; do
+            if [ -f "$dll" ]; then
+                WINEPREFIX="$WINEPREFIX" "$WINE32_BIN" "C:\\windows\\syswow64\\regsvr32.exe" /S "$(basename "$dll")" >/dev/null 2>&1 || true
+            fi
+        done
+        
+        # xaudio2_0 à xaudio2_7 x86
+        for i in 0 1 2 3 4 5 6 7; do
+            if [ -f "$win32_sys/xaudio2_${i}.dll" ]; then
+                WINEPREFIX="$WINEPREFIX" "$WINE32_BIN" "C:\\windows\\syswow64\\regsvr32.exe" /S "xaudio2_${i}.dll" >/dev/null 2>&1 || true
+            fi
+        done
+    fi
+    
+    rm -rf "$tmp_dir"
+    echo "  ✓ $xact_count DLLs XACT x86 installées"
+    
+    return 0
+}
+
+install_xact_x64() {
+    echo "Installation de XACT Engine x64..."
+    
+    local win64_sys="$WINEPREFIX/drive_c/windows/system32"
+    ensure_dir -s "$win64_sys"
+    
+    local cache_file="$WINCOMPONENTS_CACHE/directx_Jun2010/directx_Jun2010_redist.exe"
+    
+    if [ ! -f "$cache_file" ]; then
+        echo "  ✗ Fichier DirectX non trouvé"
+        return 1
+    fi
+    
+    local tmp_dir=$(mktemp -d)
+    local xact_count=0
+    
+    if command -v cabextract &>/dev/null; then
+        cabextract -d "$tmp_dir" -L -F '*_xact_*x64*' "$cache_file" >/dev/null 2>&1 || true
+        cabextract -d "$tmp_dir" -L -F '*_x3daudio_*x64*' "$cache_file" >/dev/null 2>&1 || true
+        cabextract -d "$tmp_dir" -L -F '*_xaudio_*x64*' "$cache_file" >/dev/null 2>&1 || true
+        
+        for cab in "$tmp_dir"/*.cab; do
+            if [ -f "$cab" ]; then
+                cabextract -d "$win64_sys" -L -F 'xactengine*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
+                cabextract -d "$win64_sys" -L -F 'xaudio*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
+                cabextract -d "$win64_sys" -L -F 'x3daudio*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
+                cabextract -d "$win64_sys" -L -F 'xapofx*.dll' "$cab" >/dev/null 2>&1 && xact_count=$((xact_count + 1))
+            fi
+        done
+    fi
+    
+    rm -rf "$tmp_dir"
+    echo "  ✓ $xact_count DLLs XACT x64 installées"
+    
+    # NOTE: Les overrides sont déjà globaux depuis install_xact (x86)
+    # Winetricks ne met pas les overrides dans xact_x64
+    
+    # NOTE: Ne PAS enregistrer les DLLs x64 avec regsvr32
+    # Winetricks ne le fait pas car les DLLs x64 XACT sont cassées dans Wine (bug #41618)
+    # Les overrides native,builtin suffisent
+    
+    return 0
+}
+
 # =============================================================================
 # Module: fonts.sh
 # =============================================================================
@@ -2918,6 +3037,12 @@ install_all_wincomponents() {
     install_d3dcompiler 42
     install_d3dcompiler 43
     install_d3dcompiler_47
+    
+    install_xact
+    
+    if [ "$WINEARCH" = "win64" ]; then
+        install_xact_x64
+    fi
     
     install_msls31
     
@@ -7110,61 +7235,102 @@ launch_wine_game() {
         bwrap "${BWRAP_ARGS[@]}" </dev/null &
         bwrap_pid=$!
         
-        sleep 0.5
+        # Attendre que le jeu démarre
+        sleep 2
+        
+        # Chercher récursivement tous les processus descendants de bwrap
+        find_descendants() {
+            local parent=$1
+            local descendants=""
+            for child in $(pgrep -P "$parent" 2>/dev/null); do
+                descendants="$descendants $child"
+                descendants="$descendants $(find_descendants "$child")"
+            done
+            echo "$descendants"
+        }
+        
+        # Afficher l'arbre des processus pour debug
+        echo "Arbre des processus:"
         for pid in $(pgrep -P "$bwrap_pid" 2>/dev/null); do
-            if [ -r "/proc/$pid/cmdline" ]; then
-                local proc_cmdline
-                proc_cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || echo "")
-                if [[ "$proc_cmdline" == *wine* ]] || [[ "$proc_cmdline" == *mangohud* ]]; then
-                    for child_pid in $(pgrep -P "$pid" 2>/dev/null); do
-                        if [ -r "/proc/$child_pid/cmdline" ]; then
-                            local child_cmdline
-                            child_cmdline=$(tr '\0' ' ' < "/proc/$child_pid/cmdline" 2>/dev/null || echo "")
-                            if [[ "$child_cmdline" == *.exe* ]]; then
-                                wine_pid="$child_pid"
-                                break 2
-                            fi
+            echo "  bwrap child: $pid"
+            for child in $(pgrep -P "$pid" 2>/dev/null); do
+                if [ -r "/proc/$child/cmdline" ]; then
+                    local cmd
+                    cmd=$(tr '\0' ' ' < "/proc/$child/cmdline" 2>/dev/null | head -c 100)
+                    echo "    -> $child: $cmd"
+                fi
+            done
+        done
+        
+        # Essayer de trouver le processus exe
+        for pid in $(pgrep -P "$bwrap_pid" 2>/dev/null); do
+            for child in $(pgrep -P "$pid" 2>/dev/null); do
+                if [ -r "/proc/$child/cmdline" ]; then
+                    local cmdline
+                    cmdline=$(tr '\0' ' ' < "/proc/$child/cmdline" 2>/dev/null)
+                    if [[ "$cmdline" == *.exe* ]]; then
+                        wine_pid="$child"
+                        break 2
+                    fi
+                fi
+                # Chercher un niveau plus profond
+                for grandchild in $(pgrep -P "$child" 2>/dev/null); do
+                    if [ -r "/proc/$grandchild/cmdline" ]; then
+                        local gcmdline
+                        gcmdline=$(tr '\0' ' ' < "/proc/$grandchild/cmdline" 2>/dev/null)
+                        if [[ "$gcmdline" == *.exe* ]]; then
+                            wine_pid="$grandchild"
+                            break 3
                         fi
-                    done
-                fi
-            fi
+                    fi
+                done
+            done
         done
     fi
     
-    if [ -z "$wine_pid" ]; then
-        local my_pid=$$
-        for pid in $(pgrep -f "$(basename "$exe_path")" 2>/dev/null); do
-            if [ "$pid" != "$my_pid" ] && [ -r "/proc/$pid/cmdline" ]; then
-                local pid_cmdline
-                pid_cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
-                if [[ "$pid_cmdline" == *wine* ]] || [[ "$pid_cmdline" == *bwrap* ]]; then
-                    wine_pid="$pid"
-                    break
-                fi
-            fi
-        done
+    if [ -n "$wine_pid" ]; then
+        echo "PID processus jeu: $wine_pid"
+    else
+        echo "PID processus jeu: détection automatique (plusieurs processus .exe possibles)"
     fi
-    
-    echo "PID processus jeu: ${wine_pid:-inconnu}"
     
     echo "Attente de la fin du jeu..."
     local wait_count=0
     local still_running=true
+    local game_exe_name
+    game_exe_name=$(basename "$exe_path" .exe)
     
     while [ "$still_running" = true ] && [ $wait_count -lt 600 ]; do
-        if [ -n "$wine_pid" ] && [ -d "/proc/$wine_pid" ]; then
-            local state
-            state=$(awk '{print $3}' "/proc/$wine_pid/stat" 2>/dev/null || echo "Z")
-            if [ "$state" = "Z" ]; then
-                still_running=false
-                echo "Jeu terminé (zombie)"
-            else
-                wait_count=$((wait_count + 1))
-                if [ $((wait_count % 30)) -eq 0 ]; then
-                    echo "Jeu toujours en cours..."
+        local has_wine_process=false
+        local has_game_process=false
+        
+        # Chercher tous les processus avec ce WINEPREFIX
+        for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+            if [ -r "/proc/$pid/environ" ]; then
+                if grep -q "WINEPREFIX=$WINEPREFIX" "/proc/$pid/environ" 2>/dev/null; then
+                    if [ -r "/proc/$pid/cmdline" ]; then
+                        local cmdline
+                        cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
+                        # Ignorer les processus système wine
+                        if [[ "$cmdline" == *.exe* ]]; then
+                            has_wine_process=true
+                            if ! [[ "$cmdline" =~ (winedevice|plugplay|explorer|services|svchost|rpcss|wineboot|steam|msiexec|regsvr32|spoolsv)\.exe ]] && \
+                               ! [[ "$cmdline" =~ (conhost|wmplayer|taskkill|wineconsole|iexplore|msedge|chrome)\.exe ]] && \
+                               ! [[ "$cmdline" == *\.exe.* ]]; then
+                                has_game_process=true
+                            fi
+                        fi
+                    fi
                 fi
-                sleep 1
             fi
+        done
+        
+        if [ "$has_game_process" = true ]; then
+            wait_count=$((wait_count + 1))
+            if [ $((wait_count % 30)) -eq 0 ]; then
+                echo "Jeu toujours en cours..."
+            fi
+            sleep 1
         else
             still_running=false
             echo "Jeu terminé"
@@ -7175,10 +7341,13 @@ launch_wine_game() {
         echo "Timeout après 10 minutes, forçage..."
     fi
     
+    # Arrêter bwrap si encore actif
     if [ "$nosandbox_mode" != true ] && [ -n "$bwrap_pid" ]; then
         if kill -0 "$bwrap_pid" 2>/dev/null; then
             echo "Arrêt du sandbox..."
-            kill "$bwrap_pid" 2>/dev/null || true
+            kill -TERM "$bwrap_pid" 2>/dev/null || true
+            sleep 1
+            kill -KILL "$bwrap_pid" 2>/dev/null || true
             wait "$bwrap_pid" 2>/dev/null || true
         fi
     fi
@@ -8773,85 +8942,6 @@ $2"
                 ;;
         esac
     done
-
-    if [ "$init_mode" = true ] && [ -z "$fullpath" ]; then
-        init_prefix_only
-        exit 0
-    fi
-
-    if [ "$regedit_mode" = true ]; then
-        return 0
-    fi
-
-    if [ "$reg_mode" = true ]; then
-        return 0
-    fi
-
-    if [ "$winecfg_mode" = true ]; then
-        return 0
-    fi
-
-    if [ "$winetricks_mode" = true ]; then
-        return 0
-    fi
-
-    if [ "$cmd_mode" = true ]; then
-        return 0
-    fi
-
-    if [ "$joytest_mode" = true ]; then
-        return 0
-    fi
-
-    if [ "$update_mode" = true ]; then
-        update_components
-        exit 0
-    fi
-
-    if [ "$download_wincomponents_mode" = true ]; then
-        prepare_full_offline_cache
-        exit $?
-    fi
-
-    if [ "$cachepack_mode" = true ]; then
-        create_cachepack
-        exit $?
-    fi
-
-    if [ "$dir_mode" = true ]; then
-        case "$dir_subcommand" in
-            add)
-                if [ -z "$dir_path" ]; then
-                    echo "Usage: gwine --dir add <chemin>" >&2
-                    exit 1
-                fi
-                dir_config_add "$dir_path"
-                exit $?
-                ;;
-            del|delete|remove|rm)
-                if [ -z "$dir_path" ]; then
-                    echo "Usage: gwine --dir del <chemin>" >&2
-                    exit 1
-                fi
-                dir_config_del "$dir_path"
-                exit $?
-                ;;
-            list|ls)
-                dir_config_list
-                exit $?
-                ;;
-            reset|clear)
-                dir_config_reset
-                exit $?
-                ;;
-            *)
-                echo "Sous-commande --dir invalide: $dir_subcommand" >&2
-                echo "Utilisez: add, del, list, ou reset" >&2
-                exit 1
-                ;;
-        esac
-    fi
-
 }
 
 # =============================================================================
@@ -8996,13 +9086,38 @@ run_classic_mode() {
 # =============================================================================
 
 main() {
-    cleanup_stale_wineserver_locks
-    
+    # Parser les arguments en premier
     parse_arguments "$@"
     
-    # Vérifier que --wine, --proton, --dxvk, --dxvk-async ne sont pas utilisés avec un fichier
-    if [ -n "$fullpath" ] && ([ "$wine_mode" = true ] || [ "$proton_mode" = true ] || [ "$dxvk_mode" = true ] || [ "$dxvk_async_mode" = true ]); then
-        error_exit "Les options --wine, --proton, --dxvk et --dxvk-async ne peuvent pas être utilisées lors du lancement d'un jeu. Utilisez-les uniquement avec --init ou seules pour configurer le défaut."
+    # Initialiser le mode DXVK au début (avant toute opération)
+    # pour que les fonctions de composants utilisent le bon répertoire
+    init_dxvk_mode
+    
+    # Définir proton comme runner par défaut si aucun n'est configuré et qu'on fait un --init
+    if [ "$init_mode" = true ] && [ "$wine_mode" != true ] && [ "$proton_mode" != true ]; then
+        # Vérifier si un runner est déjà configuré
+        local current_runner
+        current_runner=$(get_current_runner)
+        # Si pas encore de configuration (fichier options inexistant), utiliser proton par défaut
+        if [ ! -f "$RUNNER_CONFIG_FILE" ]; then
+            proton_mode=true
+        fi
+    fi
+    
+    # Vérifier si une commande de configuration seule est demandée (--wine, --proton, --dxvk, --dxvk-async sans --init)
+    if [ "$wine_mode" = true ] && [ "$init_mode" != true ] && [ "$update_mode" != true ] && [ -z "$fullpath" ]; then
+        # Configuration seule du runner
+        set_runner "wine"
+        echo "Runner configuré : wine (gwine)"
+        echo "Ce runner sera utilisé par défaut pour les prochains lancements."
+        exit 0
+    fi
+    
+    if [ "$proton_mode" = true ] && [ "$init_mode" != true ] && [ "$update_mode" != true ] && [ -z "$fullpath" ]; then
+        set_runner "proton"
+        echo "Runner configuré : proton (gwine-proton)"
+        echo "Ce runner sera utilisé par défaut pour les prochains lancements."
+        exit 0
     fi
     
     # Si mode "config only" (--wine, --proton, --dxvk ou --dxvk-async sans fichier ni autre option)
@@ -9094,26 +9209,32 @@ main() {
 
     if [ "$regedit_mode" = true ]; then
         launch_regedit
+        exit 0
     fi
 
     if [ "$reg_mode" = true ]; then
         install_reg_file "$reg_file"
+        exit 0
     fi
 
     if [ "$winecfg_mode" = true ]; then
         launch_winecfg
+        exit 0
     fi
 
     if [ "$winetricks_mode" = true ]; then
         launch_winetricks
+        exit 0
     fi
 
     if [ "$cmd_mode" = true ]; then
         launch_wine_cmd
+        exit 0
     fi
 
     if [ "$joytest_mode" = true ]; then
         launch_joypad_test
+        exit 0
     fi
 
     if [ "$init_mode" = true ]; then
@@ -9123,6 +9244,57 @@ main() {
             ln -sf "$(realpath "$0")" "$SYMLINK"
             echo "Symlink créé: $SYMLINK"
         fi
+        init_prefix_only
+        exit 0
+    fi
+
+    if [ "$update_mode" = true ]; then
+        update_components
+        exit 0
+    fi
+
+    if [ "$download_wincomponents_mode" = true ]; then
+        prepare_full_offline_cache
+        exit $?
+    fi
+
+    if [ "$cachepack_mode" = true ]; then
+        create_cachepack
+        exit $?
+    fi
+
+    if [ "$dir_mode" = true ]; then
+        case "$dir_subcommand" in
+            add)
+                if [ -z "$dir_path" ]; then
+                    echo "Usage: gwine --dir add <chemin>" >&2
+                    exit 1
+                fi
+                dir_config_add "$dir_path"
+                exit $?
+                ;;
+            del|delete|remove|rm)
+                if [ -z "$dir_path" ]; then
+                    echo "Usage: gwine --dir del <chemin>" >&2
+                    exit 1
+                fi
+                dir_config_del "$dir_path"
+                exit $?
+                ;;
+            list|ls)
+                dir_config_list
+                exit $?
+                ;;
+            reset|clear)
+                dir_config_reset
+                exit $?
+                ;;
+            *)
+                echo "Sous-commande --dir invalide: $dir_subcommand" >&2
+                echo "Utilisez: add, del, list, ou reset" >&2
+                exit 1
+                ;;
+        esac
     fi
     
     # Si on arrive ici sans fullpath et sans init_mode, c'est une erreur
