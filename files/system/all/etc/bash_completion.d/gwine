@@ -11,7 +11,7 @@ gwine_completions() {
     opts="--help -h --fix --exewgp --init --offline --update --kdialog --cmd
           --regedit --reg --winecfg --winetricks --winetrick --download-components
           --cachepack --nosandbox --joytest --args --gameid --use-ln-mounts --kill --dir
-          --wayland --env --wine --proton --dxvk --dxvk-async"
+          --x11 --wayland --env --wine --proton --dxvk --dxvk-async"
 
     # Si on complète une option
     if [[ ${cur} == -* ]]; then

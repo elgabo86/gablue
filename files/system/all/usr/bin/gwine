@@ -933,6 +933,112 @@ ensure_dxvk_installed() {
 }
 
 # =============================================================================
+# Module: display-mode.sh
+# =============================================================================
+
+
+################################################################################
+# display-mode.sh - Gestion du mode d'affichage (Wayland vs X11)
+#
+# Ce module gère la sélection entre le mode Wayland natif et le mode X11/XWayland.
+# Les modes disponibles sont:
+#   - wayland: Wayland natif (désactive XWayland, unset DISPLAY)
+#   - x11: X11/XWayland (mode par défaut, utilise DISPLAY)
+#
+# Le mode sélectionné est stocké dans ~/.local/share/gwine/options
+# sous la forme: display_mode=wayland ou display_mode=x11
+################################################################################
+
+# Fichier de configuration du mode d'affichage (même fichier que pour runner/dxvk)
+DISPLAY_CONFIG_FILE="$GWINE_DIR/options"
+
+# =============================================================================
+# Variables de mode
+# =============================================================================
+
+display_mode=false
+x11_mode=false
+
+# =============================================================================
+# Fonctions de gestion du mode d'affichage
+# =============================================================================
+
+# Initialise le mode d'affichage au démarrage
+# Cette fonction charge la configuration et initialise les variables
+init_display_mode() {
+    # Le mode d'affichage est déjà initialisé via get_current_display_mode quand nécessaire
+    # Cette fonction est un point d'entrée pour une initialisation future si besoin
+    :
+}
+
+# Obtient le mode d'affichage actuellement configuré
+# Retourne: "wayland" ou "x11" (défaut: x11)
+get_current_display_mode() {
+    if [ -f "$DISPLAY_CONFIG_FILE" ]; then
+        local mode
+        mode=$(grep "^display_mode=" "$DISPLAY_CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
+        if [ "$mode" = "wayland" ] || [ "$mode" = "x11" ]; then
+            echo "$mode"
+            return 0
+        fi
+    fi
+    # Défaut: x11
+    echo "x11"
+}
+
+# Définit le mode d'affichage actif
+# Usage: set_display_mode <wayland|x11>
+set_display_mode() {
+    local mode="$1"
+    
+    if [ "$mode" != "wayland" ] && [ "$mode" != "x11" ]; then
+        echo "Erreur: Mode d'affichage invalide '$mode'. Utilisez 'wayland' ou 'x11'." >&2
+        return 1
+    fi
+    
+    # Créer le répertoire gwine si nécessaire
+    ensure_dir "$GWINE_DIR"
+    
+    # Lire le fichier existant
+    local config_content=""
+    if [ -f "$DISPLAY_CONFIG_FILE" ]; then
+        # Supprimer l'ancienne ligne display_mode si elle existe
+        config_content=$(grep -v "^display_mode=" "$DISPLAY_CONFIG_FILE" 2>/dev/null || true)
+    fi
+    
+    # Ajouter la nouvelle configuration
+    if [ -n "$config_content" ]; then
+        echo "$config_content" > "$DISPLAY_CONFIG_FILE"
+        echo "display_mode=$mode" >> "$DISPLAY_CONFIG_FILE"
+    else
+        echo "display_mode=$mode" > "$DISPLAY_CONFIG_FILE"
+    fi
+    
+    return 0
+}
+
+# Vérifie si le mode Wayland est utilisé
+# Usage: is_wayland_mode
+is_wayland_mode() {
+    local mode
+    mode=$(get_current_display_mode)
+    [ "$mode" = "wayland" ]
+}
+
+# Affiche le mode d'affichage actuellement utilisé
+show_current_display_mode() {
+    local mode
+    mode=$(get_current_display_mode)
+    
+    echo "Mode d'affichage: $mode"
+    if [ "$mode" = "wayland" ]; then
+        echo "Wayland natif (XWayland désactivé)"
+    else
+        echo "X11/XWayland (mode par défaut)"
+    fi
+}
+
+# =============================================================================
 # Module: download.sh
 # =============================================================================
 
@@ -1317,10 +1423,10 @@ setup_gpu_vulkan() {
         nvidia)
             if [ -f "/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json" ]; then
                 VK_ICD_64="/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json"
-                [ -f "/usr/share/vulkan/icd.d/nvidia_icd.i386.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/nvidia_icd.i386.json"
+                [ -f "/usr/share/vulkan/icd.d/nvidia_icd.i686.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/nvidia_icd.i686.json"
             elif [ -f "/etc/vulkan/icd.d/nvidia_icd.x86_64.json" ]; then
                 VK_ICD_64="/etc/vulkan/icd.d/nvidia_icd.x86_64.json"
-                [ -f "/etc/vulkan/icd.d/nvidia_icd.i386.json" ] && VK_ICD_32="/etc/vulkan/icd.d/nvidia_icd.i386.json"
+                [ -f "/etc/vulkan/icd.d/nvidia_icd.i686.json" ] && VK_ICD_32="/etc/vulkan/icd.d/nvidia_icd.i686.json"
             fi
             ;;
     esac
@@ -1331,10 +1437,10 @@ setup_gpu_vulkan() {
         # Chercher NVIDIA (priorité si présent)
         if [ -f "/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json" ]; then
             VK_ICD_64="/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json"
-            [ -f "/usr/share/vulkan/icd.d/nvidia_icd.i386.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/nvidia_icd.i386.json"
+            [ -f "/usr/share/vulkan/icd.d/nvidia_icd.i686.json" ] && VK_ICD_32="/usr/share/vulkan/icd.d/nvidia_icd.i686.json"
         elif [ -f "/etc/vulkan/icd.d/nvidia_icd.x86_64.json" ]; then
             VK_ICD_64="/etc/vulkan/icd.d/nvidia_icd.x86_64.json"
-            [ -f "/etc/vulkan/icd.d/nvidia_icd.i386.json" ] && VK_ICD_32="/etc/vulkan/icd.d/nvidia_icd.i386.json"
+            [ -f "/etc/vulkan/icd.d/nvidia_icd.i686.json" ] && VK_ICD_32="/etc/vulkan/icd.d/nvidia_icd.i686.json"
         # Chercher AMD RADV (radeon)
         elif [ -f "/usr/share/vulkan/icd.d/radeon_icd.x86_64.json" ]; then
             VK_ICD_64="/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
@@ -5605,6 +5711,7 @@ build_bwrap_env_vars() {
     [ -n "${LD_LIBRARY_PATH:-}" ] && bwrap_add --setenv LD_LIBRARY_PATH "$LD_LIBRARY_PATH"
     [ -n "${VK_ICD_FILENAMES:-}" ] && bwrap_add --setenv VK_ICD_FILENAMES "$VK_ICD_FILENAMES"
     [ -n "${DXVK_STATE_CACHE_PATH:-}" ] && bwrap_add --setenv DXVK_STATE_CACHE_PATH "$DXVK_STATE_CACHE_PATH"
+    [ -n "${DXVK_SHADER_CACHE_PATH:-}" ] && bwrap_add --setenv DXVK_SHADER_CACHE_PATH "$DXVK_SHADER_CACHE_PATH"
     [ -n "${VKD3D_SHADER_CACHE_PATH:-}" ] && bwrap_add --setenv VKD3D_SHADER_CACHE_PATH "$VKD3D_SHADER_CACHE_PATH"
     [ -n "${__GL_SHADER_DISK_CACHE:-}" ] && bwrap_add --setenv __GL_SHADER_DISK_CACHE "$__GL_SHADER_DISK_CACHE"
     [ -n "${__GL_SHADER_DISK_CACHE_SKIP_CLEANUP:-}" ] && bwrap_add --setenv __GL_SHADER_DISK_CACHE_SKIP_CLEANUP "$__GL_SHADER_DISK_CACHE_SKIP_CLEANUP"
@@ -6990,7 +7097,7 @@ setup_wine_environment() {
     export WINENTSYNC="${WINENTSYNC:-1}"
     export PULSE_LATENCY_MSEC="${PULSE_LATENCY_MSEC:-60}"
     
-    if [ "$wayland_mode" = true ]; then
+    if is_wayland_mode; then
         echo "Mode Wayland activé (désactivation de XWayland)"
         unset DISPLAY
     fi
@@ -7042,6 +7149,8 @@ setup_wine_environment() {
     fi
     export LD_LIBRARY_PATH="$WINE_LIBS:$LD_LIBRARY_PATH"
     
+    # Configuration du cache DXVK - utiliser le chemin standard avec symlink
+    # Le dossier AppData/Local/dxvk est un symlink vers ~/.cache/gwine/shader-cache/dxvk
     export DXVK_STATE_CACHE_PATH="$SHADER_CACHE_DIR/dxvk"
     export DXVK_SHADER_CACHE_PATH="$SHADER_CACHE_DIR/dxvk"
     export VKD3D_SHADER_CACHE_PATH="$SHADER_CACHE_DIR/vkd3d"
@@ -7050,7 +7159,8 @@ setup_wine_environment() {
     export __GL_SHADER_DISK_CACHE_PATH="$SHADER_CACHE_DIR/nvidia"
     export MESA_SHADER_CACHE_DIR="$SHADER_CACHE_DIR/mesa"
     
-    ensure_dirs -s "$CACHE_DIR" "$COMPONENTS_DIR" "$SHADER_CACHE_DIR" "$DXVK_STATE_CACHE_PATH" "$VKD3D_SHADER_CACHE_PATH" "$__GL_SHADER_DISK_CACHE_PATH" "$MESA_SHADER_CACHE_DIR"
+    ensure_dirs -s "$CACHE_DIR" "$COMPONENTS_DIR" "$SHADER_CACHE_DIR"
+    ensure_dirs -s "$DXVK_STATE_CACHE_PATH" "$VKD3D_SHADER_CACHE_PATH" "$__GL_SHADER_DISK_CACHE_PATH" "$MESA_SHADER_CACHE_DIR"
     
     if [ "${MANGOHUD:-1}" != "0" ]; then
         export MANGOHUD_BIN=$(command -v mangohud 2>/dev/null)
@@ -8738,7 +8848,8 @@ show_help() {
     echo "  --cachepack       Créer un pack du cache pour installation offline"
     echo "  --cmd             Ouvrir un terminal Wine"
     echo "  --use-ln-mounts   Utiliser des liens symboliques au lieu de bind mounts (fallback pour compatibilité)"
-    echo "  --wayland         Forcer Wine à utiliser Wayland (désactive XWayland)"
+    echo "  --x11             Utiliser X11/XWayland comme mode d'affichage (défaut)"
+    echo "  --wayland         Utiliser Wayland natif (désactive XWayland)"
     echo "  --env VAR=VAL     Passer une variable d'environnement au jeu (peut être utilisé plusieurs fois)"
     echo "  --args            Arguments à passer au jeu"
     echo "  --kill            Forcer l'arrêt de tous les processus Gwine en cours"
@@ -8761,13 +8872,15 @@ show_help() {
     echo "  gwine --proton              # Configurer Proton comme runner par défaut"
     echo "  gwine --dxvk                # Utiliser DXVK standard"
     echo "  gwine --dxvk-async          # Utiliser DXVK-GPLAsync (DXVK_ASYNC=1)"
+    echo "  gwine --x11                 # Utiliser X11/XWayland comme mode d'affichage"
+    echo "  gwine --wayland             # Utiliser Wayland natif comme mode d'affichage"
     echo "  gwine --fix ~/Jeux/monjeu.wgp"
     echo "  gwine --reg config.reg"
     echo "  gwine --kill"
 }
 
 # Options valides reconnues par gwine
-VALID_OPTIONS=("--help" "-h" "--fix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--wayland" "--env" "--wine" "--proton" "--dxvk" "--dxvk-async")
+VALID_OPTIONS=("--help" "-h" "--fix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--wine" "--proton" "--dxvk" "--dxvk-async")
 
 # Vérifie si une option est valide
 is_valid_option() {
@@ -8842,9 +8955,12 @@ parse_arguments() {
                 dxvk_async_mode=true
                 shift
                 ;;
+            --x11)
+                x11_mode=true
+                shift
+                ;;
             --wayland)
                 wayland_mode=true
-                export wayland_mode
                 shift
                 ;;
             --env)
@@ -9104,25 +9220,39 @@ main() {
         fi
     fi
     
-    # Vérifier si une commande de configuration seule est demandée (--wine, --proton, --dxvk, --dxvk-async sans --init)
+    # Quand on change de runner (--wine ou --proton), on force un --init pour éviter
+    # les conflits entre Wine et Proton dans le préfixe
     if [ "$wine_mode" = true ] && [ "$init_mode" != true ] && [ "$update_mode" != true ] && [ -z "$fullpath" ]; then
-        # Configuration seule du runner
-        set_runner "wine"
-        echo "Runner configuré : wine (gwine)"
-        echo "Ce runner sera utilisé par défaut pour les prochains lancements."
-        exit 0
+        local current_runner
+        current_runner=$(get_current_runner)
+        if [ "$current_runner" != "wine" ]; then
+            echo "Changement de runner vers Wine..."
+            echo "Une réinitialisation du préfixe est nécessaire lors du changement de runner."
+            set_runner "wine"
+            export init_mode=true
+        else
+            echo "Runner Wine déjà configuré."
+            set_runner "wine"
+        fi
     fi
     
     if [ "$proton_mode" = true ] && [ "$init_mode" != true ] && [ "$update_mode" != true ] && [ -z "$fullpath" ]; then
-        set_runner "proton"
-        echo "Runner configuré : proton (gwine-proton)"
-        echo "Ce runner sera utilisé par défaut pour les prochains lancements."
-        exit 0
+        local current_runner
+        current_runner=$(get_current_runner)
+        if [ "$current_runner" != "proton" ]; then
+            echo "Changement de runner vers Proton..."
+            echo "Une réinitialisation du préfixe est nécessaire lors du changement de runner."
+            set_runner "proton"
+            export init_mode=true
+        else
+            echo "Runner Proton déjà configuré."
+            set_runner "proton"
+        fi
     fi
     
-    # Si mode "config only" (--wine, --proton, --dxvk ou --dxvk-async sans fichier ni autre option)
+    # Si mode "config only" (--wine, --proton, --dxvk, --dxvk-async, --x11 ou --wayland sans fichier ni autre option)
     # alors sauvegarder la configuration comme défaut et télécharger si nécessaire
-    if [ -z "$fullpath" ] && [ "$init_mode" != true ] && [ "$regedit_mode" != true ] && [ "$reg_mode" != true ] && [ "$winecfg_mode" != true ] && [ "$winetricks_mode" != true ] && [ "$cmd_mode" != true ] && [ "$joytest_mode" != true ] && [ "$update_mode" != true ] && [ "$download_wincomponents_mode" != true ] && [ "$cachepack_mode" != true ] && [ "$dir_mode" != true ] && ([ "$wine_mode" = true ] || [ "$proton_mode" = true ] || [ "$dxvk_mode" = true ] || [ "$dxvk_async_mode" = true ]); then
+    if [ -z "$fullpath" ] && [ "$init_mode" != true ] && [ "$regedit_mode" != true ] && [ "$reg_mode" != true ] && [ "$winecfg_mode" != true ] && [ "$winetricks_mode" != true ] && [ "$cmd_mode" != true ] && [ "$joytest_mode" != true ] && [ "$update_mode" != true ] && [ "$download_wincomponents_mode" != true ] && [ "$cachepack_mode" != true ] && [ "$dir_mode" != true ] && ([ "$wine_mode" = true ] || [ "$proton_mode" = true ] || [ "$dxvk_mode" = true ] || [ "$dxvk_async_mode" = true ] || [ "$x11_mode" = true ] || [ "$wayland_mode" = true ]); then
         # Sauvegarder le runner si spécifié
         if [ "$wine_mode" = true ]; then
             set_runner "wine"
@@ -9176,6 +9306,18 @@ main() {
             fi
         fi
         
+        # Sauvegarder le mode d'affichage si spécifié
+        if [ "$x11_mode" = true ]; then
+            set_display_mode "x11"
+            echo "Mode d'affichage configuré : x11 (X11/XWayland)"
+            echo "Ce mode sera utilisé par défaut pour les prochains lancements."
+        elif [ "$wayland_mode" = true ]; then
+            set_display_mode "wayland"
+            echo "Mode d'affichage configuré : wayland (Wayland natif)"
+            echo "Ce mode sera utilisé par défaut pour les prochains lancements."
+            echo "La variable DISPLAY sera désactivée automatiquement."
+        fi
+        
         exit 0
     fi
     
@@ -9199,13 +9341,25 @@ main() {
         fi
     fi
     
-    # Vérifier que le runner est installé (télécharger si nécessaire)
-    ensure_runner_installed
+    # Initialiser le mode d'affichage (x11 ou wayland) si spécifié avec --init
+    if [ "$init_mode" = true ]; then
+        if [ "$x11_mode" = true ]; then
+            set_display_mode "x11"
+            echo "Mode d'affichage configuré : x11 (X11/XWayland)"
+        elif [ "$wayland_mode" = true ]; then
+            set_display_mode "wayland"
+            echo "Mode d'affichage configuré : wayland (Wayland natif)"
+            echo "La variable DISPLAY sera désactivée automatiquement."
+        fi
+    fi
     
     # Vérifier que DXVK est installé si mode dxvk-async est sélectionné
     if [ "$init_mode" = true ] && [ "$dxvk_async_mode" = true ]; then
         ensure_dxvk_installed
     fi
+    
+    # Pour les modes qui nécessitent Wine/Proton, s'assurer que le runner est installé
+    ensure_runner_installed
 
     if [ "$regedit_mode" = true ]; then
         launch_regedit
@@ -9297,10 +9451,25 @@ main() {
         esac
     fi
     
-    # Si on arrive ici sans fullpath et sans init_mode, c'est une erreur
-    # (sauf si on a déjà géré le cas config-only plus haut)
+    # Si on arrive ici sans fullpath et sans init_mode, afficher l'aide
     if [ -z "$fullpath" ]; then
-        error_exit "Aucun fichier spécifié"
+        show_help
+        exit 0
+    fi
+    
+    # Vérifier si le préfixe Wine existe avant de lancer un jeu
+    if [ ! -d "$HOME_REAL/Windows/Prefix" ] || [ ! -f "$HOME_REAL/Windows/Prefix/system.reg" ]; then
+        # Toujours essayer d'afficher une alerte graphique si possible
+        if command -v kdialog >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+            kdialog --error "Aucun préfixe Wine n'existe.\n\nVeuillez exécuter 'gwine --init' pour créer un préfixe." 2>/dev/null || {
+                echo "Erreur: Aucun préfixe Wine n'existe." >&2
+                echo "Veuillez exécuter 'gwine --init' pour créer un préfixe." >&2
+            }
+        else
+            echo "Erreur: Aucun préfixe Wine n'existe." >&2
+            echo "Veuillez exécuter 'gwine --init' pour créer un préfixe." >&2
+        fi
+        exit 1
     fi
 
     if [[ "$fullpath" == *.wgp ]]; then
