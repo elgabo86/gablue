@@ -1,0 +1,10 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=Switch to OpenGamepadUI
+Comment=Logout and start OpenGamepadUI session
+Exec=steamos-session-select opengamepadui
+Icon=input-gaming
+Terminal=false
+Type=Application
+Categories=Game;System;
+StartupNotify=false

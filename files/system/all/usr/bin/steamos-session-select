@@ -1,0 +1,43 @@
+#!/usr/bin/bash
+
+# Script de changement de session pour Gablue
+# Ce script permet de basculer entre les sessions KDE Plasma et OpenGamepadUI
+# Inspiré de Bazzite steamos-session-select
+
+set -e
+
+die() { echo >&2 "!! $*"; exit 1; }
+
+CONF_FILE="/etc/sddm.conf.d/gablue-session.conf"
+
+session="${1:-opengamepadui}"
+
+case "$session" in
+    desktop|plasma)
+        session_launcher="plasma.desktop"
+        ;;
+    gamescope|steam)
+        session_launcher="gamescope-session.desktop"
+        ;;
+    opengamepadui)
+        session_launcher="gamescope-session-opengamepadui.desktop"
+        ;;
+    *)
+        echo >&2 "Session non reconnue: $session"
+        echo "Sessions disponibles: desktop, plasma, gamescope, steam, opengamepadui"
+        exit 1
+        ;;
+esac
+
+if [[ $EUID != 0 ]]; then
+    exec pkexec "$(realpath "$0")" "$session"
+fi
+
+mkdir -p /etc/sddm.conf.d
+cat > "$CONF_FILE" << EOF
+[Autologin]
+Session=$session_launcher
+EOF
+
+echo "Session configurée: $session_launcher"
+systemctl restart sddm
