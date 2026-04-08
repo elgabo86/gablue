@@ -6019,11 +6019,82 @@ _copy_symlink_rewrite() {
 ################################################################################
 
 # =============================================================================
+# Nettoyage des overlays orphelins (appelé au début du montage)
+# =============================================================================
+
+cleanup_orphan_overlays() {
+    # Vérifie et démonte les overlays qui pourraient être restés montés
+    # C'est très rapide car mountpoint -q est instantané
+    
+    local mount_point
+    
+    # Nettoyer les overlays full (/tmp/wgp-full-overlay/*)
+    if [ -d "/tmp/wgp-full-overlay" ]; then
+        for mount_point in /tmp/wgp-full-overlay/*; do
+            [ -d "$mount_point" ] || continue
+            if mountpoint -q "$mount_point" 2>/dev/null; then
+                # Vérifier si un processus gwine utilise encore cet overlay
+                local game_id
+                game_id=$(basename "$mount_point")
+                local lock_file="/tmp/wgp-lock-${game_id#wgp-}"
+                local should_unmount=true
+                
+                if [ -f "$lock_file" ]; then
+                    local lock_pid
+                    lock_pid=$(cat "$lock_file" 2>/dev/null | cut -d: -f1)
+                    if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+                        should_unmount=false
+                    fi
+                fi
+                
+                if [ "$should_unmount" = true ]; then
+                    echo "Démontage de l'overlay orphelin: $mount_point"
+                    unmount_fuse_overlay "$mount_point" -f 2>/dev/null || true
+                    rm -rf "$mount_point" 2>/dev/null || true
+                    rm -rf "/tmp/wgp-full-overlay-upper/${game_id}" 2>/dev/null || true
+                fi
+            fi
+        done
+    fi
+    
+    # Nettoyer les overlays temp folders (/tmp/wgp-temp/*)
+    if [ -d "/tmp/wgp-temp" ]; then
+        for mount_point in /tmp/wgp-temp/*; do
+            [ -d "$mount_point" ] || continue
+            if mountpoint -q "$mount_point" 2>/dev/null; then
+                local game_id
+                game_id=$(basename "$mount_point")
+                local lock_file="/tmp/wgp-lock-${game_id#wgp-}"
+                local should_unmount=true
+                
+                if [ -f "$lock_file" ]; then
+                    local lock_pid
+                    lock_pid=$(cat "$lock_file" 2>/dev/null | cut -d: -f1)
+                    if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+                        should_unmount=false
+                    fi
+                fi
+                
+                if [ "$should_unmount" = true ]; then
+                    echo "Démontage de l'overlay temp orphelin: $mount_point"
+                    unmount_fuse_overlay "$mount_point" -f 2>/dev/null || true
+                    rm -rf "$mount_point" 2>/dev/null || true
+                    rm -rf "/tmp/wgp-temp-upper/${game_id}" 2>/dev/null || true
+                fi
+            fi
+        done
+    fi
+}
+
+# =============================================================================
 # Montage du pack WGP
 # =============================================================================
 
 mount_wgp() {
     ensure_dir -s "$MOUNT_BASE"
+    
+    # Nettoyer les overlays orphelins au cas où un précédent crash les aurait laissés
+    cleanup_orphan_overlays
     
     local LOCK_FILE="/tmp/wgp-lock-$WGPACK_NAME"
     
@@ -6219,8 +6290,8 @@ prepare_temp_folders() {
     echo "Montage de l'overlay fuse-overlayfs pour les dossiers temporaires..."
 
     if mountpoint -q "$TEMP_GAME_DIR" 2>/dev/null; then
-        echo "Démontage de l'overlay existant..."
-        unmount_fuse_overlay "$TEMP_GAME_DIR"
+        echo "Démontage de l'overlay existant (rapide)..."
+        unmount_fuse_overlay "$TEMP_GAME_DIR" -f
     fi
 
     local FUSE_OVERLAYFS_BIN
@@ -6402,9 +6473,8 @@ setup_temp_symlink() {
         local TEMP_UPPER="$FULL_OVERLAY_BASE-upper/$GAME_ID"
         
         if mountpoint -q "$MOUNT_OVERLAY" 2>/dev/null; then
-            echo "Démontage de l'overlay existant..."
-            unmount_fuse_overlay "$MOUNT_OVERLAY"
-            sleep 0.5
+            echo "Démontage de l'overlay existant (rapide)..."
+            unmount_fuse_overlay "$MOUNT_OVERLAY" -f
         fi
         
         if [ -d "$MOUNT_OVERLAY" ]; then
@@ -6429,9 +6499,8 @@ setup_temp_symlink() {
         local TEMP_UPPER="/tmp/wgp-temp-upper/$GAME_ID"
         
         if mountpoint -q "$TEMP_GAME_DIR" 2>/dev/null; then
-            echo "Démontage de l'overlay temp existant..."
-            unmount_fuse_overlay "$TEMP_GAME_DIR"
-            sleep 0.5
+            echo "Démontage de l'overlay temp existant (rapide)..."
+            unmount_fuse_overlay "$TEMP_GAME_DIR" -f
         fi
         
         if [ -d "$TEMP_GAME_DIR" ]; then
