@@ -1,0 +1,51 @@
+#!/usr/bin/bash
+
+# Activation des services systemd pour Gablue (version test)
+# Ce script active les services de base ET les services OpenGamepadUI (experimental)
+
+set -eoux pipefail
+
+# =============================================================================
+# SERVICES DE BASE
+# =============================================================================
+
+systemctl enable -f system-flatpak-setup.service
+systemctl enable -f earlyoom.service
+
+systemctl disable -f scx_loader.service
+systemctl disable -f tailscaled.service
+systemctl disable -f displaylink.service
+
+systemctl mask systemd-remount-fs.service
+
+# Services supplémentaires pour le mode DX
+if [ "${DX_MODE:-false}" == "true" ]; then
+    systemctl enable -f ublue-os-libvirt-workarounds.service
+    systemctl enable -f gablue-dx-groups.service
+fi
+
+if [ "$SOURCE_IMAGE" == "kinoite" ]; then
+    systemctl enable -f usr-share-sddm-themes.mount
+fi
+
+if [ "$VARIANT" == "main" ]; then
+    systemctl disable -f waydroid-container.service
+fi
+
+systemctl enable rpm-ostreed-automatic.timer
+systemctl enable flatpak-system-update.timer
+systemctl --global enable flatpak-user-update.timer
+
+# =============================================================================
+# SERVICES OPENGAMEPADUI (EXPERIMENTAL - TEST UNIQUEMENT)
+# =============================================================================
+
+# Gestionnaire d'input avancé pour manettes
+systemctl enable -f inputplumber.service
+
+# Gestionnaire de performance/TDP/batterie
+systemctl enable -f powerstation.service
+
+# Note: opengamepadui-session.service n'est PAS activé par défaut
+# L'utilisateur doit manuellement basculer vers la session gaming
+# via le menu de session ou une commande

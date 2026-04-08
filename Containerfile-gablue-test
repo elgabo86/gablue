@@ -91,10 +91,10 @@ RUN --mount=type=cache,dst=/var/cache \
     sh /ctx/rpm-test && \
     sh /ctx/cleanup
 
-# Post-installation : configuration finale
+# Post-installation : configuration finale (version test avec OpenGamepadUI)
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    sh /ctx/systemd && \
+    sh /ctx/systemd-test && \
     sh /ctx/post-install && \
     sh /ctx/initramfs && \
     sh /ctx/finalize && \
