@@ -351,6 +351,58 @@ for subdir in wgpackmount wgp-extra wgp-saves wgp-temp; do
 done
 
 # =============================================================================
+# Gestion des processus
+# =============================================================================
+
+# Tue un processus et tous ses descendants récursivement
+# Usage: kill_process_tree <pid> [signal]
+kill_process_tree() {
+    local pid=$1
+    local sig=${2:-TERM}
+    
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        return 0
+    fi
+    
+    # Trouver et tuer récursivement tous les enfants
+    for child in $(pgrep -P "$pid" 2>/dev/null); do
+        kill_process_tree "$child" "$sig"
+    done
+    
+    # Tuer le processus lui-même
+    kill "-$sig" "$pid" 2>/dev/null || true
+}
+
+# Tue les processus orphelins liés à un WGP spécifique
+# Usage: kill_wgp_orphans <wgp_file> <wineprefix>
+kill_wgp_orphans() {
+    local wgp_file="$1"
+    local wineprefix="$2"
+    
+    [ -z "$wgp_file" ] && return 0
+    
+    local wgp_name
+    wgp_name=$(basename "$wgp_file" .wgp 2>/dev/null || basename "$wgp_file")
+    
+    echo "Recherche processus orphelins pour: $wgp_name"
+    
+    for pid in $(pgrep -f "\.exe" 2>/dev/null); do
+        if [ -r "/proc/$pid/environ" ]; then
+            if grep -q "WINEPREFIX=$wineprefix" "/proc/$pid/environ" 2>/dev/null; then
+                local cmdline
+                cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
+                if [[ "$cmdline" == *"$wgp_name"* ]]; then
+                    if ! [[ "$cmdline" =~ (winedevice|plugplay|explorer|services|svchost|rpcss|wineboot|steam|msiexec|regsvr32|spoolsv|conhost|wmplayer|taskkill|wineconsole)\.exe ]]; then
+                        echo "  Tue PID $pid: $(echo "$cmdline" | cut -c1-80)"
+                        kill "$pid" 2>/dev/null || true
+                    fi
+                fi
+            fi
+        fi
+    done
+}
+
+# =============================================================================
 # Module: runner.sh
 # =============================================================================
 
@@ -7254,6 +7306,7 @@ launch_wine_game() {
     local env_vars="${4:-}"
     local wgp_mode="${5:-false}"
     local wgp_file_dir="${6:-}"
+    local wgp_file="${7:-}"
     
     echo "Lancement de $display_name avec gwine..."
     
@@ -7308,6 +7361,11 @@ launch_wine_game() {
     fi
     
     setup_wine_environment "$exe_path" "$env_vars"
+    
+    if [ -n "$wgp_file" ]; then
+        GWINE_WGP_FILE="$wgp_file"
+        export GWINE_WGP_FILE
+    fi
     
     echo "Arguments: $game_args"
     
@@ -7391,11 +7449,12 @@ launch_wine_game() {
         if [ "$use_mangohud" = true ]; then
             export MANGOHUD=1
             "$MANGOHUD_BIN" "$WINE_BIN" "$exe_path" $game_args </dev/null &
-            wine_pid=$!
         else
             "$WINE_BIN" "$exe_path" $game_args </dev/null &
-            wine_pid=$!
         fi
+        wine_pid=$!
+        GWINE_GAME_PID=$wine_pid
+        export GWINE_GAME_PID
     else
         build_bwrap_args "$bwrap_access_dir" "$bwrap_access_mode"
         
@@ -7413,6 +7472,8 @@ launch_wine_game() {
         
         bwrap "${BWRAP_ARGS[@]}" </dev/null &
         bwrap_pid=$!
+        GWINE_GAME_PID=$bwrap_pid
+        export GWINE_GAME_PID
         
         # Attendre que le jeu démarre
         sleep 2
@@ -9179,15 +9240,21 @@ run_wgp_mode() {
     local lock_file="/tmp/wgp-lock-$filename"
     echo "$$:$(date +%s)" > "$lock_file"
     
-    # Trap pour nettoyer les overlays même si le script est interrompu
-    # Le cleanup_wgp utilise lazy unmount qui est sûr même si des processus tournent encore
-    trap 'echo "Nettoyage des overlays..."; cleanup_wgp; rm -f "$lock_file" 2>/dev/null' EXIT INT TERM
+    # Exporter le chemin du WGP pour le trap (avant de définir le trap)
+    GWINE_WGP_FILE="$WGPACK_FILE"
+    export GWINE_WGP_FILE
+    
+    # Trap pour nettoyer à l'interruption (Ctrl-C)
+    # Tue l'arbre de processus du jeu + les processus orphelins liés à ce WGP
+    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 0.5; kill_process_tree "$GWINE_GAME_PID" KILL; kill_wgp_orphans "$GWINE_WGP_FILE" "$WINEPREFIX"; sleep 0.5; echo "Nettoyage des overlays..."; cleanup_wgp; rm -f "$lock_file" 2>/dev/null; exit 130' INT TERM
+    # Trap EXIT pour nettoyage normal (pas de kill car le jeu s'est terminé normalement)
+    trap 'cleanup_wgp; rm -f "$lock_file" 2>/dev/null' EXIT
 
     # Récupérer le dossier contenant le fichier .wgp
     local wgp_dir
     wgp_dir="$(dirname "$WGPACK_FILE")"
     
-    launch_wine_game "$FULL_EXE_PATH" "$args" "$filename" "$env_vars" "true" "$wgp_dir"
+    launch_wine_game "$FULL_EXE_PATH" "$args" "$filename" "$env_vars" "true" "$wgp_dir" "$WGPACK_FILE"
     
     # Nettoyage après la fin du jeu
     # Désactiver le trap pour éviter le double nettoyage (trap EXIT s'exécuterait aussi)
@@ -9259,10 +9326,12 @@ run_classic_mode() {
 
     local lock_file="/tmp/wgp-lock-$filename"
     echo "$$:$(date +%s)" > "$lock_file"
-    trap 'rm -f "$lock_file"' EXIT
+    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 1; kill_process_tree "$GWINE_GAME_PID" KILL; echo "Arrêt des processus orphelins..."; for pid in $(pgrep -f "\.exe"); do if [ -r "/proc/$pid/environ" ] && grep -q "WINEPREFIX=$WINEPREFIX" "/proc/$pid/environ" 2>/dev/null; then cmdline=$(tr "\0" " " < "/proc/$pid/cmdline" 2>/dev/null); if ! [[ "$cmdline" =~ (winedevice|plugplay|explorer|services|svchost|rpcss|wineboot|steam|msiexec|regsvr32|spoolsv|conhost|wmplayer|taskkill|wineconsole)\.exe ]]; then kill "$pid" 2>/dev/null; fi; fi; done; sleep 1; rm -f "$lock_file" 2>/dev/null; exit 130' INT TERM
+    trap 'rm -f "$lock_file" 2>/dev/null' EXIT
 
     launch_wine_game "$new_fullpath" "$args" "$filename" "$env_vars" "false"
     
+    trap - EXIT INT TERM
     rm -f "$lock_file" 2>/dev/null
 }
 
