@@ -77,8 +77,7 @@ dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/te
 dnf5 -y config-manager setopt "terra-mesa".enabled=false
 
 # Configuration des exclusions Terra : priorité haute et exclusions spécifiques
-# gamescope-session exclu car conflit avec gamescope-session-plus de Bazzite
-dnf5 -y config-manager setopt "*terra*".priority=3 "*terra*".exclude="nerd-fonts topgrade scx-scheds steam python3-protobuf gamescope-session"
+dnf5 -y config-manager setopt "*terra*".priority=3 "*terra*".exclude="nerd-fonts topgrade scx-scheds steam python3-protobuf"
 
 # =============================================================================
 # FINALISATION
