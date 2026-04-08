@@ -41,10 +41,10 @@ systemctl --global enable flatpak-user-update.timer
 # =============================================================================
 
 # Gestionnaire d'input avancé pour manettes
-systemctl enable -f inputplumber.service
+systemctl disable -f inputplumber.service
 
 # Gestionnaire de performance/TDP/batterie
-systemctl enable -f powerstation.service
+systemctl disable -f powerstation.service
 
 # Note: opengamepadui-session.service n'est PAS activé par défaut
 # L'utilisateur doit manuellement basculer vers la session gaming
