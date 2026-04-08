@@ -26,6 +26,7 @@ COPY files/scripts /ctx/
 COPY files/system/all /
 COPY files/system/${SOURCE_IMAGE} /
 COPY files/system/nvidia-open /
+COPY files/system/test /
 
 # Définition des variables d'environnement pour les scripts
 ENV SOURCE_IMAGE=${SOURCE_IMAGE}

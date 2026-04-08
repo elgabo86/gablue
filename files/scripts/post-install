@@ -38,7 +38,6 @@ chmod +x /usr/bin/wgp-thumbnailer
 
 # Rendre exécutables les scripts d'administration Gablue
 chmod +x /usr/bin/gablue-update
-chmod +x /usr/bin/steamos-session-select
 chmod +x /usr/libexec/gablue-config
 chmod +x /usr/libexec/archgab-update
 chmod +x /usr/libexec/gablue-dx-groups

@@ -16,6 +16,9 @@ sh /ctx/post-install
 # CONFIGURATIONS SPÉCIFIQUES À LA VERSION TEST
 # =============================================================================
 
+# Rendre exécutable le script de changement de session OpenGamepadUI
+chmod +x /usr/bin/steamos-session-select
+
 # Permissions pour le plugin OpenGamepadUI Gwine
 if [ -d /usr/share/opengamepadui/plugins/gwine-plugin ]; then
     chmod -R 755 /usr/share/opengamepadui/plugins/gwine-plugin
