@@ -34,13 +34,7 @@ ENV KERNEL_VERSION=${KERNEL_VERSION}
 ENV VARIANT=${VARIANT}
 ENV NVIDIA_TYPE=nvidia-open
 
-# Configuration des dépôts Copr
-RUN --mount=type=cache,dst=/var/cache \
-    --mount=type=cache,dst=/var/log \
-    sh /ctx/copr && \
-    sh /ctx/cleanup
-
-# Installation du kernel ogc avec akmods
+# Installation du kernel ogc avec akmods (avant les dépôts COPR pour éviter les conflits)
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/tmp/kernel-rpms \
@@ -49,6 +43,12 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=bind,from=akmods-extra,src=/rpms/extra,dst=/tmp/rpms/extra \
     --mount=type=bind,from=akmods-extra,src=/rpms/kmods,dst=/tmp/rpms/kmods-extra \
     sh /ctx/kernel-test && \
+    sh /ctx/cleanup
+
+# Configuration des dépôts Copr (version test avec exclusions supplémentaires)
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    sh /ctx/copr-test && \
     sh /ctx/cleanup
 
 # Installation Mesa Terra
@@ -70,11 +70,11 @@ RUN --mount=type=cache,dst=/var/cache \
     sh /ctx/rpm-test && \
     sh /ctx/cleanup
 
-# Post-installation : configuration finale
+# Post-installation : configuration finale (version test avec OpenGamepadUI)
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    sh /ctx/systemd && \
-    sh /ctx/post-install && \
+    sh /ctx/systemd-test && \
+    sh /ctx/post-install-test && \
     sh /ctx/initramfs && \
     sh /ctx/finalize && \
     rm -rf /ctx
