@@ -1,0 +1,31 @@
+#!/usr/bin/bash
+
+# Script post-installation pour Gablue (version test)
+# Étend post-install avec les configurations spécifiques à la version test
+
+set -eoux pipefail
+
+# =============================================================================
+# APPEL DU POST-INSTALL STANDARD
+# =============================================================================
+
+# Exécuter d'abord le post-install standard
+sh /ctx/post-install
+
+# =============================================================================
+# CONFIGURATIONS SPÉCIFIQUES À LA VERSION TEST
+# =============================================================================
+
+# Permissions pour le plugin OpenGamepadUI Gwine
+if [ -d /usr/share/opengamepadui/plugins/gwine-plugin ]; then
+    chmod -R 755 /usr/share/opengamepadui/plugins/gwine-plugin
+    echo "Permissions configurées pour le plugin Gwine"
+fi
+
+# S'assurer que les scripts GDScript sont lisibles
+if [ -d /usr/share/opengamepadui/plugins ]; then
+    find /usr/share/opengamepadui/plugins -name "*.gd" -exec chmod 644 {} \;
+    find /usr/share/opengamepadui/plugins -name "*.json" -exec chmod 644 {} \;
+fi
+
+echo "Post-installation test terminée avec succès"
