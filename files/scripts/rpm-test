@@ -159,9 +159,8 @@ dnf5 -y install \
     inputplumber
 
 # Règles udev pour manettes spécifiques (depuis Terra)
+# Note: 8bitdo-udev-rules et wooting-udev-rules retirés car en conflit avec ublue-os-udev-rules
 dnf5 -y install \
-    8bitdo-udev-rules \
-    wooting-udev-rules \
     udev-joystick-blacklist
 
 # =============================================================================
