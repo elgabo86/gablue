@@ -1,162 +1,215 @@
-import pygame
-import os
+#!/usr/bin/python3
+
+import evdev
+import select
 import subprocess
 import time
+import os
+from evdev import InputDevice, categorize, ecodes
 
-# Initialiser Pygame
-pygame.init()
-pygame.display.set_allow_screensaver(1)
-pygame.joystick.init()
-pygame.mixer.quit()
-pygame.font.quit()
-
-clock = pygame.time.Clock()
+# État global
 mouse_script_running = False
 menuvsr_script_running = False
 mouse_process = None
 menuvsr_process = None
 last_volume_time = 0
-volume_cooldown = 200
+volume_cooldown = 0.2
 last_hat_state = (0, 0)
-DEBUG = True  # Activé pour voir les messages
+DEBUG = True
 
-def get_button_indices(joystick):
-    controller_name = joystick.get_name().lower()
-    print(f"Controller detected: {controller_name}")
-    indices = {
-        "home": 5, "select": 4, "start": 6, "triangle": 3,
-        "square": 2, "circle": 1, "l3": 7, "r3": 8
-    }
-    if "xbox" in controller_name:
-        indices.update({"home": 10, "select": 6, "start": 7, "triangle": 3, "square": 2, "circle": 1, "l3": 8, "r3": 9})
-    elif "nintendo switch pro" in controller_name:
-        indices.update({"home": 5, "select": 4, "start": 6, "triangle": 3, "square": 2, "circle": 1, "l3": 7, "r3": 8})
-    return indices
+# Mapping boutons générique (peut varier selon le contrôleur)
+# Valeurs standard Linux evdev
+BTN_MAPPING = {
+    "home": ecodes.BTN_MODE,
+    "select": ecodes.BTN_SELECT,
+    "start": ecodes.BTN_START,
+    "triangle": ecodes.BTN_C,
+    "square": ecodes.BTN_X,
+    "circle": ecodes.BTN_B,
+    "cross": ecodes.BTN_A,
+    "l3": ecodes.BTN_THUMBL,
+    "r3": ecodes.BTN_THUMBR,
+    "l1": ecodes.BTN_TL,
+    "r1": ecodes.BTN_TR,
+}
 
-try:
-    joystick = None
-    button_indices = None
-    num_buttons = 0
-    num_hats = 0
+# Axes
+ABS_HAT0X = ecodes.ABS_HAT0X
+ABS_HAT0Y = ecodes.ABS_HAT0Y
+ABS_Y = ecodes.ABS_Y
 
-    def init_first_joystick():
-        global joystick, button_indices, num_buttons, num_hats
-        if pygame.joystick.get_count() > 0:
-            joystick = pygame.joystick.Joystick(0)
-            joystick.init()
-            num_buttons = joystick.get_numbuttons()
-            num_hats = joystick.get_numhats()
-            button_indices = get_button_indices(joystick)
-            pygame.display.set_allow_screensaver(0)
-            print(f"Manette connectée, boutons: {num_buttons}")
-        else:
-            joystick = None
-            button_indices = None
-            pygame.display.set_allow_screensaver(1)
-            print("Aucune manette détectée.")
+def find_gamepad():
+    """Trouve le premier gamepad connecté."""
+    devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
+    for device in devices:
+        capabilities = device.capabilities()
+        if ecodes.EV_KEY in capabilities:
+            keys = capabilities[ecodes.EV_KEY]
+            if ecodes.BTN_A in keys or ecodes.BTN_SELECT in keys:
+                if DEBUG:
+                    print(f"Manette trouvée: {device.name} ({device.path})")
+                return device
+    return None
 
-    # Initialiser la première manette au démarrage
-    init_first_joystick()
+def get_button_state(device, button_code):
+    """Retourne l'état actuel d'un bouton."""
+    return device.active_keys() if button_code in device.active_keys() else 0
 
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.JOYDEVICEADDED:
-                if not joystick:  # Si aucune manette n'est active
-                    init_first_joystick()
+def main():
+    global mouse_script_running, menuvsr_script_running
+    global mouse_process, menuvsr_process
+    global last_volume_time, last_hat_state
 
-            elif event.type == pygame.JOYDEVICEREMOVED:
-                if joystick:
-                    joystick.quit()
-                    joystick = None
-                    button_indices = None
-                    print("Manette déconnectée.")
-                    init_first_joystick()  # Tenter de réinitialiser avec une autre manette
+    gamepad = find_gamepad()
+    if not gamepad:
+        print("Aucune manette détectée au démarrage.")
 
-            elif event.type == pygame.JOYBUTTONDOWN and joystick and button_indices:
-                home = joystick.get_button(button_indices["home"]) if num_buttons > button_indices["home"] else 0
-                select = joystick.get_button(button_indices["select"]) if num_buttons > button_indices["select"] else 0
-                start = joystick.get_button(button_indices["start"]) if num_buttons > button_indices["start"] else 0
-                triangle = joystick.get_button(button_indices["triangle"]) if num_buttons > button_indices["triangle"] else 0
-                square = joystick.get_button(button_indices["square"]) if num_buttons > button_indices["square"] else 0
-                circle = joystick.get_button(button_indices["circle"]) if num_buttons > button_indices["circle"] else 0
-                l3 = joystick.get_button(button_indices["l3"]) if num_buttons > button_indices["l3"] else 0
-                r3 = joystick.get_button(button_indices["r3"]) if num_buttons > button_indices["r3"] else 0
+    # Boutons actuels maintenus
+    home_pressed = False
+    select_pressed = False
+    start_pressed = False
+    triangle_pressed = False
+    square_pressed = False
+    circle_pressed = False
+    l3_pressed = False
+    r3_pressed = False
 
-                if home:
-                    if select:
-                        print("KILL")
-                        os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/killthemall &")
-                    elif start:
-                        print("ES")
-                        os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/openes &")
-                    elif r3 and not mouse_script_running:
-                        print("MOUSE")
-                        mouse_process = subprocess.Popen(["python", "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/mouse.py"])
-                        mouse_script_running = True
-                    elif l3:
-                        print("MUTE")
-                        os.system("pactl set-sink-mute @DEFAULT_SINK@ toggle")
-                    elif triangle:
-                        print("LAUNCHYT")
-                        os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/launchyt &")
-                        pygame.time.wait(1000)
-                    elif circle and not menuvsr_script_running:
-                        print("MENUVR")
-                        menuvsr_process = subprocess.Popen(["python", "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/menuvsr.py"])
-                        menuvsr_script_running = True
-                        menuvsr_process.wait()
-                        menuvsr_script_running = False
-                        menuvsr_process = None
-                        print("menuvsr.py terminé.")
+    hat_x = 0
+    hat_y = 0
+    axis_1 = 0.0
 
-            elif event.type == pygame.JOYHATMOTION and joystick and button_indices:
-                home = joystick.get_button(button_indices["home"]) if num_buttons > button_indices["home"] else 0
-                hat_value = joystick.get_hat(0) if num_hats > 0 else (0, 0)
-                if home and hat_value != last_hat_state:
-                    if hat_value == (-1, 0):
-                        print("SCREEN")
-                        os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/takescreenshot &")
-                        pygame.time.wait(100)
-                    elif hat_value == (1, 0):
-                        print("RECORD")
-                        os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/startstoprecord &")
-                        pygame.time.wait(2000)
-                    elif hat_value == (0, 1):
-                        print("FPS")
-                        os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/changefps")
-                        pygame.time.wait(100)
-                    elif hat_value == (0, -1):
-                        print("MANGO")
-                        os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/showhidemango")
-                        pygame.time.wait(100)
-                last_hat_state = hat_value
+    try:
+        while True:
+            if not gamepad:
+                time.sleep(1)
+                gamepad = find_gamepad()
+                continue
 
-            elif event.type == pygame.JOYAXISMOTION and joystick and button_indices:
-                home = joystick.get_button(button_indices["home"]) if num_buttons > button_indices["home"] else 0
-                axis_1 = joystick.get_axis(1)
-                current_time = pygame.time.get_ticks()
-                if home and current_time - last_volume_time > volume_cooldown:
-                    if axis_1 < -0.5:
-                        print("VOLUME UP")
-                        os.system("pactl set-sink-volume @DEFAULT_SINK@ +10%")
-                        last_volume_time = current_time
-                    elif axis_1 > 0.5:
-                        print("VOLUME DOWN")
-                        os.system("pactl set-sink-volume @DEFAULT_SINK@ -10%")
-                        last_volume_time = current_time
+            try:
+                r, w, x = select.select([gamepad], [], [], 0.1)
+            except (OSError, IOError):
+                print("Manette déconnectée (erreur IO).")
+                gamepad = find_gamepad()
+                continue
 
-        if mouse_script_running and mouse_process and mouse_process.poll() is not None:
-            mouse_script_running = False
-            mouse_process = None
-            print("mouse.py terminé.")
+            if gamepad in r:
+                try:
+                    for event in gamepad.read():
+                        if event.type == ecodes.EV_KEY:
+                            # Événements boutons
+                            if event.code == BTN_MAPPING["home"]:
+                                home_pressed = event.value == 1
+                            elif event.code == BTN_MAPPING["select"]:
+                                select_pressed = event.value == 1
+                            elif event.code == BTN_MAPPING["start"]:
+                                start_pressed = event.value == 1
+                            elif event.code == BTN_MAPPING["triangle"]:
+                                triangle_pressed = event.value == 1
+                            elif event.code == BTN_MAPPING["square"]:
+                                square_pressed = event.value == 1
+                            elif event.code == BTN_MAPPING["circle"]:
+                                circle_pressed = event.value == 1
+                            elif event.code == BTN_MAPPING["l3"]:
+                                l3_pressed = event.value == 1
+                            elif event.code == BTN_MAPPING["r3"]:
+                                r3_pressed = event.value == 1
 
-        clock.tick(10)
+                            # Traitement des combinaisons au press
+                            if event.value == 1 and home_pressed:
+                                if select_pressed:
+                                    print("KILL")
+                                    os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/killthemall &")
+                                elif start_pressed:
+                                    print("ES")
+                                    os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/openes &")
+                                elif r3_pressed and not mouse_script_running:
+                                    print("MOUSE")
+                                    mouse_process = subprocess.Popen(
+                                        ["/usr/bin/python3", "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/mouse.py"]
+                                    )
+                                    mouse_script_running = True
+                                elif l3_pressed:
+                                    print("MUTE")
+                                    os.system("pactl set-sink-mute @DEFAULT_SINK@ toggle")
+                                elif triangle_pressed:
+                                    print("LAUNCHYT")
+                                    os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/launchyt &")
+                                    time.sleep(1)
+                                elif circle_pressed and not menuvsr_script_running:
+                                    print("MENUVR")
+                                    menuvsr_process = subprocess.Popen(
+                                        ["/usr/bin/python3", "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/menuvsr.py"]
+                                    )
+                                    menuvsr_script_running = True
 
-except KeyboardInterrupt:
-    print("Arrêt du script.")
-finally:
-    if mouse_process:
-        mouse_process.terminate()
-    if menuvsr_process:
-        menuvsr_process.terminate()
-    pygame.quit()
+                        elif event.type == ecodes.EV_ABS:
+                            # D-Pad (hat)
+                            if event.code == ABS_HAT0X:
+                                hat_x = event.value
+                            elif event.code == ABS_HAT0Y:
+                                hat_y = event.value
+                            # Stick gauche Y (axe 1)
+                            elif event.code == ABS_Y:
+                                axis_1 = event.value / 32767.0 if event.value != 0 else 0
+
+                            # Traitement hat
+                            hat_value = (hat_x, hat_y)
+                            if home_pressed and hat_value != last_hat_state:
+                                if hat_value == (-1, 0):
+                                    print("SCREEN")
+                                    os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/takescreenshot &")
+                                    time.sleep(0.1)
+                                elif hat_value == (1, 0):
+                                    print("RECORD")
+                                    os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/startstoprecord &")
+                                    time.sleep(2)
+                                elif hat_value == (0, 1):
+                                    print("FPS")
+                                    os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/changefps")
+                                    time.sleep(0.1)
+                                elif hat_value == (0, -1):
+                                    print("MANGO")
+                                    os.system("/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/showhidemango")
+                                    time.sleep(0.1)
+                                last_hat_state = hat_value
+
+                            # Traitement volume
+                            current_time = time.time()
+                            if home_pressed and current_time - last_volume_time > volume_cooldown:
+                                if axis_1 < -0.5:
+                                    print("VOLUME UP")
+                                    os.system("pactl set-sink-volume @DEFAULT_SINK@ +10%")
+                                    last_volume_time = current_time
+                                elif axis_1 > 0.5:
+                                    print("VOLUME DOWN")
+                                    os.system("pactl set-sink-volume @DEFAULT_SINK@ -10%")
+                                    last_volume_time = current_time
+
+                except (OSError, IOError, BlockingIOError):
+                    print("Erreur lecture manette, reconnexion...")
+                    gamepad = find_gamepad()
+                    continue
+
+            # Vérifier si les processus se sont terminés
+            if mouse_script_running and mouse_process and mouse_process.poll() is not None:
+                mouse_script_running = False
+                mouse_process = None
+                print("mouse.py terminé.")
+
+            if menuvsr_script_running and menuvsr_process and menuvsr_process.poll() is not None:
+                menuvsr_script_running = False
+                menuvsr_process = None
+                print("menuvsr.py terminé.")
+
+    except KeyboardInterrupt:
+        print("Arrêt du script.")
+    finally:
+        if mouse_process:
+            mouse_process.terminate()
+        if menuvsr_process:
+            menuvsr_process.terminate()
+        if gamepad:
+            gamepad.close()
+
+if __name__ == "__main__":
+    main()
