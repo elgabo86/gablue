@@ -147,23 +147,6 @@ dnf5 -y install \
     earlyoom
 
 # =============================================================================
-# OPENGAMEPADUI - INTERFACE GAMING (EXPERIMENTAL - TEST UNIQUEMENT)
-# =============================================================================
-
-# Interface gaming OpenGamepadUI avec session Gamescope
-# Paquets disponibles sur le dépôt Terra (FyraLabs)
-dnf5 -y install \
-    opengamepadui \
-    gamescope-session-opengamepadui \
-    powerstation \
-    inputplumber
-
-# Règles udev pour manettes spécifiques (depuis Terra)
-# Note: 8bitdo-udev-rules et wooting-udev-rules retirés car en conflit avec ublue-os-udev-rules
-dnf5 -y install \
-    udev-joystick-blacklist
-
-# =============================================================================
 # EXTENSIONS KDE (UNIQUEMENT KINOITE)
 # =============================================================================
 
@@ -339,3 +322,15 @@ dnf5 -y --setopt=install_weak_deps=False install \
     libvorbis.i686 \
     flac-libs.i686 \
     libsndfile.i686
+
+# =============================================================================
+# OPENGAMEPADUI - INTERFACE GAMING (EXPERIMENTAL - TEST UNIQUEMENT)
+# =============================================================================
+
+# Interface gaming OpenGamepadUI avec session Gamescope
+# Paquets disponibles sur le dépôt Terra (FyraLabs)
+dnf5 -y --setopt=install_weak_deps=False install \
+    opengamepadui \
+    gamescope-session-opengamepadui \
+    powerstation \
+    inputplumber
