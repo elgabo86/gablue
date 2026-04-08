@@ -1,8 +1,0 @@
-{
-    "name": "Gwine WGP Games",
-    "author": "Gablue",
-    "version": "1.0.0",
-    "description": "Intégration des jeux WGP (Wine Game Packages) lancés via gwine",
-    "entry_point": "plugin.gd",
-    "min_api_version": "0.44.0"
-}
