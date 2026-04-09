@@ -57,7 +57,7 @@ jobs:
           # Pour les images test, utiliser le kernel ogc depuis ublue-os/akmods
           if [[ "${{ inputs.image_name }}" == "gablue-main-test" ]] || [[ "${{ inputs.image_name }}" == "gablue-nvidia-open-test" ]]; then
             # Utiliser le kernel ogc de Bazzite unstable
-            KERNEL_VERSION="6.19.10-ogc1.1.fc${{ inputs.fedora_version }}.x86_64"
+            KERNEL_VERSION="6.19.11-ogc1.1.fc${{ inputs.fedora_version }}.x86_64"
             KERNEL_FLAVOR="ogc"
             echo "Using ogc kernel for test image: $KERNEL_VERSION"
           else

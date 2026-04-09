@@ -29,6 +29,7 @@ dnf5 -y install \
     duperemove \
     speedtest-cli \
     btop \
+    amdsmi \
     intel-undervolt \
     ncdu \
     mc \
