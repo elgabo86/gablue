@@ -148,9 +148,9 @@ def main():
                                 hat_x = event.value
                             elif event.code == ABS_HAT0Y:
                                 hat_y = event.value
-                            # Stick gauche Y (axe 1)
+                            # Stick gauche Y (axe 1) - plage 0-255, centre à 128
                             elif event.code == ABS_Y:
-                                axis_1 = event.value / 32767.0 if event.value != 0 else 0
+                                axis_1 = (event.value - 128) / 127.0
 
                             # Traitement hat
                             hat_value = (hat_x, hat_y)
@@ -173,22 +173,22 @@ def main():
                                     time.sleep(0.1)
                                 last_hat_state = hat_value
 
-                            # Traitement volume
-                            current_time = time.time()
-                            if home_pressed and current_time - last_volume_time > volume_cooldown:
-                                if axis_1 < -0.5:
-                                    print("VOLUME UP")
-                                    os.system("pactl set-sink-volume @DEFAULT_SINK@ +10%")
-                                    last_volume_time = current_time
-                                elif axis_1 > 0.5:
-                                    print("VOLUME DOWN")
-                                    os.system("pactl set-sink-volume @DEFAULT_SINK@ -10%")
-                                    last_volume_time = current_time
-
                 except (OSError, IOError, BlockingIOError):
                     print("Erreur lecture manette, reconnexion...")
                     gamepad = find_gamepad()
                     continue
+
+            # Traitement volume (en continu, pas seulement sur événement)
+            current_time = time.time()
+            if home_pressed and current_time - last_volume_time > volume_cooldown:
+                if axis_1 < -0.5:
+                    print("VOLUME UP")
+                    os.system("pactl set-sink-volume @DEFAULT_SINK@ +10%")
+                    last_volume_time = current_time
+                elif axis_1 > 0.5:
+                    print("VOLUME DOWN")
+                    os.system("pactl set-sink-volume @DEFAULT_SINK@ -10%")
+                    last_volume_time = current_time
 
             # Vérifier si les processus se sont terminés
             if mouse_script_running and mouse_process and mouse_process.poll() is not None:
