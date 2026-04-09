@@ -7540,7 +7540,7 @@ launch_wine_game() {
     local game_exe_name
     game_exe_name=$(basename "$exe_path" .exe)
     
-    while [ "$still_running" = true ] && [ $wait_count -lt 600 ]; do
+    while [ "$still_running" = true ]; do
         local has_wine_process=false
         local has_game_process=false
         
@@ -7576,10 +7576,6 @@ launch_wine_game() {
             echo "Jeu terminé"
         fi
     done
-    
-    if [ "$still_running" = true ]; then
-        echo "Timeout après 10 minutes, forçage..."
-    fi
     
     # Arrêter bwrap si encore actif
     if [ "$nosandbox_mode" != true ] && [ -n "$bwrap_pid" ]; then
