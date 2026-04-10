@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 #
-# Wrapper pour gablue-update avec interface Pygame moderne
+# Wrapper pour gablue-update avec interface PySide6 moderne
 # Ce script lance l'interface graphique par défaut, avec fallback CLI
 #
 
@@ -30,7 +30,7 @@ for arg in "$@"; do
             echo "  --skip-reboot  Ne pas proposer de redémarrage après la mise à jour"
             echo "  --help, -h     Afficher cette aide"
             echo ""
-            echo "Par défaut, l'interface graphique Pygame est utilisée."
+            echo "Par défaut, l'interface graphique PySide6 est utilisée."
             exit 0
             ;;
     esac

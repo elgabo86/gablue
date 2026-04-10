@@ -628,11 +628,21 @@ podman images test-build
 ### Scripts utilisateur (/usr/bin)
 
 Scripts personnalisés Gablue :
-- `gablue-update` : Mise à jour du système (interface Pygame)
+- `gablue-update` : Mise à jour du système (interface PySide6)
 - `sync-gamepads` : Synchronisation des manettes
 - `system-flatpak-setup` : Configuration Flatpak système
 - Scripts gaming : `a13`, `chdman`, `citron-install`, `eden-install`, etc.
 - Scripts utilitaires : `ytdl`, `dlcover`, `genimg`, `raroms`, etc.
+
+### Scripts gamepadshortcuts (/usr/share/ublue-os/gablue/scripts/gamepadshortcuts)
+
+Scripts de contrôle par manette :
+- `gamepadshortcuts.py` : Gestionnaire principal des raccourcis (evdev)
+- `menuvsr.py` : Menu VR pour actions système (PySide6 + evdev, glassmorphism)
+- `mouse.py` : Contrôle souris via manette
+- `decoblue` : Déconnexion Bluetooth
+- `launchyt` : Lancement YouTube
+- `openes` : Overture EmulationStation
 
 ### Configuration tuned (/usr/lib/tuned)
 
