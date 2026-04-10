@@ -51,7 +51,7 @@ fi
 
 if [ "$CLI_MODE" = false ]; then
     # Lancer l'interface graphique avec le python système
-    # Si pygame n'est pas installé, on bascule automatiquement en CLI
+    # Si PySide6 n'est pas disponible, on bascule automatiquement en CLI
     exec /usr/bin/python3 "$SCRIPT_DIR/gablue-update-gui.py" 2>/dev/null || CLI_MODE=true
 fi
 
