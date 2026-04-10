@@ -196,6 +196,9 @@ dnf5 -y --setopt=install_weak_deps=False install \
 # PILOTES ET SUPPORT MATÉRIEL
 # =============================================================================
 
+# Support HDMI-CEC pour contrôle TV via télécommande
+dnf5 -y install libcec
+
 # Pilotes d'impression et support mobile
 dnf5 -y install \
     hplip \
