@@ -145,7 +145,8 @@ dnf5 -y install \
     cage \
     wlr-randr \
     gamemode \
-    gamemode.i686
+    gamemode.i686 \
+    ScopeBuddy
 
 # Optimisation système
 dnf5 -y install \
