@@ -24,8 +24,9 @@ on:
         required: true
         type: string
       kernel_version:
-        required: true
+        required: false
         type: string
+        default: ""
       kernel_flavor:
         required: false
         type: string
@@ -56,10 +57,29 @@ jobs:
         run: |
           # Pour les images test, utiliser le kernel ogc depuis ublue-os/akmods
           if [[ "${{ inputs.image_name }}" == "gablue-main-test" ]] || [[ "${{ inputs.image_name }}" == "gablue-nvidia-open-test" ]]; then
-            # Utiliser le kernel ogc de Bazzite unstable
-            KERNEL_VERSION="6.19.11-ogc1.1.fc${{ inputs.fedora_version }}.x86_64"
             KERNEL_FLAVOR="ogc"
-            echo "Using ogc kernel for test image: $KERNEL_VERSION"
+            FEDORA_VERSION="${{ inputs.fedora_version }}"
+            
+            # Récupérer la liste des tags disponibles pour ublue-os/akmods
+            echo "Fetching available ogc kernel tags..."
+            TAGS_JSON=$(skopeo list-tags "docker://ghcr.io/ublue-os/akmods" 2>/dev/null || echo '{"Tags":[]}')
+            
+            # Filtrer les tags pour trouver le kernel ogc correspondant à la version Fedora
+            # Pattern: ogc-{FEDORA_VERSION}-{KERNEL_VERSION}
+            KERNEL_VERSION=$(echo "$TAGS_JSON" | jq -r --arg fv "$FEDORA_VERSION" '
+              .Tags[] 
+              | select(startswith("ogc-" + $fv + "-")) 
+              | sub("^ogc-" + $fv + "-"; "")
+            ' | sort -V | tail -1)
+            
+            if [[ -z "$KERNEL_VERSION" ]] || [[ "$KERNEL_VERSION" == "null" ]]; then
+              echo "Erreur : Impossible de trouver un kernel ogc pour Fedora $FEDORA_VERSION"
+              echo "Tags disponibles:"
+              echo "$TAGS_JSON" | jq -r '.Tags[]'
+              exit 1
+            fi
+            
+            echo "Using latest ogc kernel for test image: $KERNEL_VERSION"
           else
             # Construire l'URI du conteneur kernel bazzite standard
             KERNEL_URI="ghcr.io/bazzite-org/kernel-bazzite:latest-f${{ inputs.fedora_version }}-x86_64"
@@ -78,27 +98,30 @@ jobs:
             KERNEL_FLAVOR="bazzite"
 
             echo "LATEST_TAG=$KERNEL_URI" >> $GITHUB_OUTPUT
+            
+            # Extraire la version NVIDIA depuis les labels pour compatibilité exacte
+            if [[ "${{ inputs.image_variant }}" == "nvidia-open" ]]; then
+              NVIDIA_VERSION=$(echo "$KERNEL_INFO" | jq -r '.Labels["org.bazzite.kernel.nvidia"] // "latest"')
+            else
+              NVIDIA_VERSION=$(echo "$KERNEL_INFO" | jq -r '.Labels["org.bazzite.kernel.nvidia_lts"] // "latest"')
+            fi
+
+            # Fallback: si le label n'existe pas, on utilise "latest"
+            if [[ "$NVIDIA_VERSION" == "null" ]] || [[ -z "$NVIDIA_VERSION" ]]; then
+              NVIDIA_VERSION="latest"
+            fi
+            
+            echo "NVIDIA_VERSION=$NVIDIA_VERSION" >> $GITHUB_OUTPUT
           fi
 
-          # Extraire la version NVIDIA depuis les labels pour compatibilité exacte
-          if [[ "${{ inputs.image_variant }}" == "nvidia-open" ]]; then
-            NVIDIA_VERSION=$(echo "$KERNEL_INFO" | jq -r '.Labels["org.bazzite.kernel.nvidia"] // "latest"')
-          else
-            NVIDIA_VERSION=$(echo "$KERNEL_INFO" | jq -r '.Labels["org.bazzite.kernel.nvidia_lts"] // "latest"')
-          fi
-
-          # Fallback: si le label n'existe pas, on utilise "latest" et on extraira depuis le tag plus tard
+          # Fallback: si le label n'existe pas, on utilise "latest"
           if [[ "$KERNEL_VERSION" == "null" ]] || [[ -z "$KERNEL_VERSION" ]]; then
             KERNEL_VERSION="latest"
           fi
 
-          if [[ "$NVIDIA_VERSION" == "null" ]] || [[ -z "$NVIDIA_VERSION" ]]; then
-            NVIDIA_VERSION="latest"
-          fi
-
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_OUTPUT
           echo "KERNEL_FLAVOR=$KERNEL_FLAVOR" >> $GITHUB_OUTPUT
-          echo "NVIDIA_VERSION=$NVIDIA_VERSION" >> $GITHUB_OUTPUT
+          echo "NVIDIA_VERSION=${NVIDIA_VERSION:-latest}" >> $GITHUB_OUTPUT
 
       # Étape pour définir la version du noyau
       - name: Determine kernel version
@@ -136,6 +159,40 @@ jobs:
         uses: ublue-os/container-storage-action@main
         with:
           target-dir: /var/lib/containers
+
+      # Préparation du cache DNF pour accélérer les builds
+      - name: DNF Package Cache Prep
+        id: cache-prep
+        env:
+          IMAGE: ${{ inputs.image_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -eoux pipefail
+          
+          # Nom du cache basé sur l'image source (kinoite/silverblue)
+          if [[ "${{ inputs.source_image }}" =~ "kinoite" ]]; then
+            CACHE_NAME="kde"
+          else
+            CACHE_NAME="gnome"
+          fi
+
+          # Permettre l'écriture dans le cache uniquement pour les builds sur main
+          # (pas pour les PRs car le cache serait écrasé)
+          ALLOW_CACHE_WRITE="false"
+          if [[ "${{ github.event_name }}" != "pull_request" ]] && [[ "${{ github.ref_name }}" == "main" ]]; then
+            ALLOW_CACHE_WRITE="true"
+          fi
+
+          echo "cache_name=${CACHE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "allow_cache_write=${ALLOW_CACHE_WRITE}" >> "$GITHUB_OUTPUT"
+
+      # Restoration du cache DNF
+      - name: Restore DNF package cache
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: /var/tmp/buildah-cache-*
+          key: ${{ runner.os }}-buildah-${{ steps.cache-prep.outputs.cache_name }}
 
       # Métadonnées de l'image
       - name: Image Metadata
@@ -189,6 +246,20 @@ jobs:
             $KERNEL_FLAVOR_ARG \
             $DX_MODE_ARG \
             --tag raw-img .
+
+      # Hack pour corriger les permissions du cache (nécessaire pour actions/cache)
+      - name: Hack around permission issue caching
+        id: cache-perms
+        run: |
+          sudo chmod 777 --recursive /var/tmp/buildah-cache-0 2>/dev/null || true
+
+      # Sauvegarde du cache DNF (uniquement si autorisé)
+      - name: Save DNF package cache
+        if: steps.cache-prep.outputs.allow_cache_write == 'true'
+        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: /var/tmp/buildah-cache-*
+          key: ${{ runner.os }}-buildah-${{ steps.cache-prep.outputs.cache_name }}
 
       # Appliquer les labels OCI avant le rechunk
       - name: Apply Labels
