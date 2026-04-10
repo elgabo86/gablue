@@ -1,0 +1,12 @@
+module emulator-qemu 1.0;
+
+require {
+    type unconfined_t;
+    class process execheap;
+}
+
+#============= unconfined_t ==============
+# Permet à QEMU d'exécuter du code sur le heap
+# Nécessaire pour l'émulateur Android Studio (Flatpak)
+# Issue: https://github.com/flathub/com.google.AndroidStudio/issues/234
+allow unconfined_t self:process execheap;

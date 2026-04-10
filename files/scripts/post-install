@@ -61,9 +61,28 @@ setcap 'cap_sys_nice=eip' /usr/bin/gamescope
 # MODULES SELINUX
 # =============================================================================
 
-# Installation du module SELinux pour les thumbnailers (permissions FUSE)
-if [ -f /usr/share/selinux/packages/thumb-fuse.pp ]; then
-    semodule --verbose --install /usr/share/selinux/packages/thumb-fuse.pp
+# Compilation et installation des modules SELinux personnalisés
+# Les modules .te sont compilés en .pp pendant le build pour garantir la compatibilité
+SELINUX_PACKAGES_DIR="/usr/share/selinux/packages"
+
+if [ -d "$SELINUX_PACKAGES_DIR" ]; then
+    for te_file in "$SELINUX_PACKAGES_DIR"/*.te; do
+        if [ -f "$te_file" ]; then
+            module_name=$(basename "$te_file" .te)
+            mod_file="${SELINUX_PACKAGES_DIR}/${module_name}.mod"
+            pp_file="${SELINUX_PACKAGES_DIR}/${module_name}.pp"
+            
+            echo "Compilation du module SELinux: $module_name"
+            checkmodule -M -m -o "$mod_file" "$te_file"
+            semodule_package -o "$pp_file" -m "$mod_file"
+            
+            echo "Installation du module SELinux: $module_name"
+            semodule --verbose --install "$pp_file"
+            
+            # Nettoyage des fichiers temporaires de compilation
+            rm -f "$mod_file"
+        fi
+    done && unset -v te_file module_name mod_file pp_file
 fi
 
 # =============================================================================
