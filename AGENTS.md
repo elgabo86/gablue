@@ -454,7 +454,7 @@ Paquets supprimés :
 Configuration post-installation étendue :
 - Permissions des exécutables (chmod +x)
 - Capacités système (setcap pour ksysguard, gamescope)
-- Binaires externes (tgpt, lowfi, zxtune)
+- Binaires externes (zxtune)
 - Branding Gablue (os-release)
 - Configuration système (tuned, bluetooth, timers)
 - Désactivation des dépôts
