@@ -548,6 +548,8 @@ Nettoyage automatique (tous les dimanches) :
 
 ## Messages de commit et tags
 
+**Les messages de commit doivent être rédigés en anglais.**
+
 Les tags dans les messages de commit déclenchent les builds :
 
 | Tag | Images déclenchées |
@@ -560,9 +562,9 @@ Les tags dans les messages de commit déclenchent les builds :
 
 **Exemples** :
 ```bash
-git commit -m "[main] Mise à jour des paquets KDE"
-git commit -m "[nvidia] Mise à jour pilotes NVIDIA 550"
-git commit -m "[all] Mise à jour kernel Bazzite"
+git commit -m "[main] Update KDE packages"
+git commit -m "[nvidia] Update NVIDIA drivers to 550"
+git commit -m "[all] Update Bazzite kernel"
 ```
 
 ## Tests et validation
