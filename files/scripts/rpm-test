@@ -143,10 +143,10 @@ dnf5 -y --enable-repo=terra-mesa install \
 
 # Autres outils gaming (Fedora)
 dnf5 -y install \
-    cage \
-    wlr-randr \
     gamemode \
-    gamemode.i686 \
+    gamemode.i686
+
+dnf5 -y --setopt=install_weak_deps=False install \
     ScopeBuddy
 
 # Optimisation système
