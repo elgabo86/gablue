@@ -53,7 +53,8 @@ dnf5 -y install \
     plocate \
     squashfuse \
     funionfs \
-    icoutils
+    icoutils \
+    evtest
 
 # Outils SELinux pour compilation des modules personnalisés
 dnf5 -y install \
