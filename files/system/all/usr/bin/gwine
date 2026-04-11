@@ -4961,7 +4961,6 @@ apply_padfix_setting() {
 restore_padfix_setting() {
     [ "$fix_mode" != true ] && return 0
     
-    sleep 0.5
     local SYSTEM_REG="$WINEPREFIX/system.reg"
     
     if [ -f "$SYSTEM_REG" ]; then
@@ -5443,83 +5442,7 @@ bwrap_reset() {
 }
 
 build_bwrap_devices() {
-    bwrap_add --dev /dev
-    
-    if [ "$INSTANCE_MODE" = "joiner" ]; then
-        bwrap_add --bind /dev/shm /dev/shm
-    fi
-    
-    if [ -d "/dev/dri" ]; then
-        bwrap_add --dev-bind /dev/dri /dev/dri
-    fi
-    
-    for nvidia_dev in /dev/nvidia*; do
-        if [ -e "$nvidia_dev" ]; then
-            if [ -d "$nvidia_dev" ]; then
-                bwrap_add --bind-try "$nvidia_dev" "$nvidia_dev"
-            else
-                bwrap_add --dev-bind-try "$nvidia_dev" "$nvidia_dev"
-            fi
-        fi
-    done
-    
-    if [ -d "/dev/input" ]; then
-        bwrap_add --dev-bind /dev/input /dev/input
-    fi
-    
-    if [ "$fix_mode" = true ]; then
-        for hidraw in /dev/hidraw*; do
-            if [ -e "$hidraw" ]; then
-                bwrap_add --dev-bind-try "$hidraw" "$hidraw"
-            fi
-        done
-    fi
-    
-    if [ -e "/dev/ntsync" ]; then
-        bwrap_add --dev-bind /dev/ntsync /dev/ntsync
-    fi
-    
-    for video_dev in /dev/video*; do
-        if [ -e "$video_dev" ]; then
-            bwrap_add --dev-bind-try "$video_dev" "$video_dev"
-        fi
-    done
-    
-    for media_dev in /dev/media*; do
-        if [ -e "$media_dev" ]; then
-            bwrap_add --dev-bind-try "$media_dev" "$media_dev"
-        fi
-    done
-    
-    if [ -d "/dev/bus/usb" ]; then
-        bwrap_add --bind /dev/bus/usb /dev/bus/usb
-    fi
-    
-    for js_dev in /dev/js*; do
-        if [ -e "$js_dev" ]; then
-            bwrap_add --dev-bind-try "$js_dev" "$js_dev"
-        fi
-    done
-    
-    if [ -d "/dev/snd" ]; then
-        bwrap_add --bind /dev/snd /dev/snd
-    fi
-    
-    if [ -e "/dev/snd/seq" ]; then
-        bwrap_add --dev-bind /dev/snd/seq /dev/snd/seq
-    fi
-    
-    for cdrom in /dev/sr* /dev/cdrom /dev/dvd /dev/cdrw; do
-        if [ -e "$cdrom" ]; then
-            bwrap_add --dev-bind-try "$cdrom" "$cdrom"
-        fi
-    done
-    
-    for usb_serial in /dev/ttyUSB* /dev/ttyACM*; do
-        if [ -e "$usb_serial" ]; then
-            bwrap_add --dev-bind-try "$usb_serial" "$usb_serial"
-        fi
-    done
+    bwrap_add --dev-bind /dev /dev
 }
 
 build_bwrap_configs() {
@@ -6148,6 +6071,28 @@ mount_wgp() {
     # Nettoyer les overlays orphelins au cas où un précédent crash les aurait laissés
     cleanup_orphan_overlays
     
+    # Vérifier si le MOUNT_DIR existe et est stale (Transport endpoint is not connected)
+    if [ -d "$MOUNT_DIR" ]; then
+        if ! ls "$MOUNT_DIR" >/dev/null 2>&1; then
+            echo "Point de montage stale détecté: $MOUNT_DIR"
+            echo "Nettoyage forcé..."
+            # D'abord démonter (lazy), PUIS tuer les processus
+            fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -l "$MOUNT_DIR" 2>/dev/null || true
+            sleep 0.3
+            # Maintenant on peut tuer les processus FUSE
+            pkill -9 -f "squashfuse.*$(basename "$WGPACK_NAME")" 2>/dev/null || true
+            pkill -9 -f "squashfuse.*$MOUNT_DIR" 2>/dev/null || true
+            sleep 0.3
+            # Supprimer le répertoire
+            rmdir "$MOUNT_DIR" 2>/dev/null || rm -rf "$MOUNT_DIR" 2>/dev/null || true
+            # Vérifier que c'est bien nettoyé
+            if [ -d "$MOUNT_DIR" ]; then
+                echo "Erreur: impossible de nettoyer $MOUNT_DIR"
+                exit 1
+            fi
+        fi
+    fi
+    
     local LOCK_FILE="/tmp/wgp-lock-$WGPACK_NAME"
     
     if [ -f "$LOCK_FILE" ]; then
@@ -6227,20 +6172,19 @@ mount_wgp() {
     "$SQUASHFUSE_BIN" -r "$WGPACK_FILE" "$MOUNT_DIR"
 
     if [ $? -ne 0 ]; then
-        echo "Échec du montage, nettoyage du point de montage..."
-        # Lazy unmount si c'est un montage stale (évite crash fuse-overlayfs)
-        umount -l "$MOUNT_DIR" 2>/dev/null || true
+        echo "Échec du montage, nettoyage forcé du point de montage..."
+        # D'abord démonter (lazy), PUIS tuer les processus
+        fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -l "$MOUNT_DIR" 2>/dev/null || true
+        sleep 0.3
+        # Maintenant on peut tuer les processus FUSE
+        pkill -9 -f "squashfuse.*$(basename "$WGPACK_NAME")" 2>/dev/null || true
+        pkill -9 -f "squashfuse.*$MOUNT_DIR" 2>/dev/null || true
+        sleep 0.3
+        # Supprimer le répertoire
+        rmdir "$MOUNT_DIR" 2>/dev/null || rm -rf "$MOUNT_DIR" 2>/dev/null || true
         
-        # Tenter de supprimer le répertoire
-        if ! rmdir "$MOUNT_DIR" 2>/dev/null; then
-            echo "Impossible de supprimer le répertoire, tentative de renommage..."
-            local TEMP_DIR="${MOUNT_DIR}.old.$(date +%s)"
-            mv "$MOUNT_DIR" "$TEMP_DIR" 2>/dev/null || true
-            # Si même le mv échoue, on recrée un nouveau répertoire avec un suffixe
-            if [ -d "$MOUNT_DIR" ]; then
-                MOUNT_DIR="${MOUNT_DIR}.new.$(date +%s)"
-                echo "Utilisation d'un nouveau point de montage: $MOUNT_DIR"
-            fi
+        if [ -d "$MOUNT_DIR" ]; then
+            error_exit "Impossible de nettoyer le point de montage $MOUNT_DIR"
         fi
         
         # Réessayer le montage une fois
@@ -6277,14 +6221,24 @@ cleanup_wgp() {
     
     echo "Démontage de $WGPACK_NAME..."
     
-    # Démontage rapide sans attendre (lazy unmount)
-    # Le lazy unmount détache immédiatement le point de montage
-    # sans bloquer sur les processus encore actifs
-    unmount_fuse_overlay "$MOUNT_DIR" -f
+    # D'abord démonter (lazy), PUIS tuer les processus
+    fusermount -uz "$MOUNT_DIR" 2>/dev/null || umount -l "$MOUNT_DIR" 2>/dev/null || true
+    sleep 0.3
     
-    # Nettoyer les répertoires (le montage est détaché, c'est sûr)
+    # Vérifier si le montage est toujours présent
+    if [ -d "$MOUNT_DIR" ] && ! ls "$MOUNT_DIR" >/dev/null 2>&1; then
+        echo "Montage stale, nettoyage forcé..."
+        # Tuer les processus FUSE
+        pkill -9 -f "squashfuse.*$WGPACK_NAME" 2>/dev/null || true
+        pkill -9 -f "squashfuse.*$MOUNT_DIR" 2>/dev/null || true
+        sleep 0.3
+        # Forcer le démontage
+        umount -l "$MOUNT_DIR" 2>/dev/null || true
+    fi
+    
+    # Nettoyer les répertoires
     if [ -d "$MOUNT_DIR" ]; then
-        rm -rf "$MOUNT_DIR" 2>/dev/null || true
+        rmdir "$MOUNT_DIR" 2>/dev/null || rm -rf "$MOUNT_DIR" 2>/dev/null || true
     fi
     
     rm -f "/tmp/wgp-lock-$WGPACK_NAME" 2>/dev/null || true
@@ -8602,10 +8556,16 @@ launch_joypad_test() {
     
     ensure_wineprefix
     
+    apply_padfix_setting
+    
     echo "WINEPREFIX: $WINEPREFIX"
     echo "Utilitaire: joy.cpl (Panneau de configuration des manettes)"
     WINEPREFIX="$WINEPREFIX" "$WINE_BIN" control joy.cpl
-    exit $?
+    local exit_code=$?
+    
+    restore_padfix_setting
+    
+    exit $exit_code
 }
 
 # =============================================================================
@@ -9242,7 +9202,7 @@ run_wgp_mode() {
     
     # Trap pour nettoyer à l'interruption (Ctrl-C)
     # Tue l'arbre de processus du jeu + les processus orphelins liés à ce WGP
-    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 0.5; kill_process_tree "$GWINE_GAME_PID" KILL; kill_wgp_orphans "$GWINE_WGP_FILE" "$WINEPREFIX"; sleep 0.5; echo "Nettoyage des overlays..."; cleanup_wgp; rm -f "$lock_file" 2>/dev/null; exit 130' INT TERM
+    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 0.5; kill_process_tree "$GWINE_GAME_PID" KILL; kill_wgp_orphans "$GWINE_WGP_FILE" "$WINEPREFIX"; sleep 0.5; echo "Nettoyage des overlays..."; cleanup_wgp; restore_padfix_setting; rm -f "$lock_file" 2>/dev/null; exit 130' INT TERM
     # Trap EXIT pour nettoyage normal (pas de kill car le jeu s'est terminé normalement)
     trap 'cleanup_wgp; rm -f "$lock_file" 2>/dev/null' EXIT
 
@@ -9256,6 +9216,7 @@ run_wgp_mode() {
     # Désactiver le trap pour éviter le double nettoyage (trap EXIT s'exécuterait aussi)
     trap - EXIT INT TERM
     cleanup_wgp
+    restore_padfix_setting
     rm -f "$lock_file" 2>/dev/null
 }
 
@@ -9322,12 +9283,13 @@ run_classic_mode() {
 
     local lock_file="/tmp/wgp-lock-$filename"
     echo "$$:$(date +%s)" > "$lock_file"
-    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 1; kill_process_tree "$GWINE_GAME_PID" KILL; echo "Arrêt des processus orphelins..."; for pid in $(pgrep -f "\.exe"); do if [ -r "/proc/$pid/environ" ] && grep -q "WINEPREFIX=$WINEPREFIX" "/proc/$pid/environ" 2>/dev/null; then cmdline=$(tr "\0" " " < "/proc/$pid/cmdline" 2>/dev/null); if ! [[ "$cmdline" =~ (winedevice|plugplay|explorer|services|svchost|rpcss|wineboot|steam|msiexec|regsvr32|spoolsv|conhost|wmplayer|taskkill|wineconsole)\.exe ]]; then kill "$pid" 2>/dev/null; fi; fi; done; sleep 1; rm -f "$lock_file" 2>/dev/null; exit 130' INT TERM
-    trap 'rm -f "$lock_file" 2>/dev/null' EXIT
+    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 1; kill_process_tree "$GWINE_GAME_PID" KILL; echo "Arrêt des processus orphelins..."; for pid in $(pgrep -f "\.exe"); do if [ -r "/proc/$pid/environ" ] && grep -q "WINEPREFIX=$WINEPREFIX" "/proc/$pid/environ" 2>/dev/null; then cmdline=$(tr "\0" " " < "/proc/$pid/cmdline" 2>/dev/null); if ! [[ "$cmdline" =~ (winedevice|plugplay|explorer|services|svchost|rpcss|wineboot|steam|msiexec|regsvr32|spoolsv|conhost|wmplayer|taskkill|wineconsole)\.exe ]]; then kill "$pid" 2>/dev/null; fi; fi; done; restore_padfix_setting; sleep 1; rm -f "$lock_file" 2>/dev/null; exit 130' INT TERM
+    trap 'restore_padfix_setting; rm -f "$lock_file" 2>/dev/null' EXIT
 
     launch_wine_game "$new_fullpath" "$args" "$filename" "$env_vars" "false"
     
     trap - EXIT INT TERM
+    restore_padfix_setting
     rm -f "$lock_file" 2>/dev/null
 }
 
