@@ -1280,7 +1280,7 @@ download_and_install_component() {
     rm -f "$archive_temp"
 }
 
-# Récupère la dernière version d'un composant depuis GitHub (sans API)
+# Récupère la dernière version d'un composant depuis GitHub via flux Atom (sans API)
 # Usage: get_github_latest_version <repo> <pattern> <prefix_to_strip>
 # Paramètres:
 #   repo            : Repository GitHub (format: owner/repo)
@@ -1293,7 +1293,7 @@ get_github_latest_version() {
     local prefix_to_strip="${3:-}"
     
     local version
-    version=$(curl -s "https://github.com/$repo/releases" 2>/dev/null | grep -oE "$pattern" | head -1)
+    version=$(curl -s "https://github.com/$repo/releases.atom" 2>/dev/null | grep -oE "$pattern" | head -1)
     
     if [ -n "$prefix_to_strip" ] && [[ "$version" == "$prefix_to_strip"* ]]; then
         version="${version#$prefix_to_strip}"
@@ -1302,7 +1302,7 @@ get_github_latest_version() {
     echo "$version"
 }
 
-# Récupère la dernière version depuis une liste de releases GitHub (sans API)
+# Récupère la dernière version depuis une liste de releases GitHub via flux Atom (sans API)
 # Usage: get_github_release_version <repo> <pattern> <prefix_to_strip>
 get_github_release_version() {
     local repo="$1"
@@ -1310,7 +1310,7 @@ get_github_release_version() {
     local prefix_to_strip="${3:-}"
     
     local version
-    version=$(curl -s "https://github.com/$repo/tags" 2>/dev/null | grep -oE "$pattern" | head -1)
+    version=$(curl -s "https://github.com/$repo/releases.atom" 2>/dev/null | grep -oE "$pattern" | head -1)
     
     if [ -n "$prefix_to_strip" ]; then
         version="${version#$prefix_to_strip}"
@@ -1321,7 +1321,7 @@ get_github_release_version() {
 
 # Récupère la dernière version de gwine depuis GitHub
 get_latest_gwine_version() {
-    curl -s "https://github.com/elgabo86/gwine/tags" 2>/dev/null | grep -oE 'gwine-[0-9]+\.[0-9]+\.r[0-9]+\.g[0-9a-f]+' | head -1
+    curl -s "https://github.com/elgabo86/gwine/releases.atom" 2>/dev/null | grep -oE 'gwine-[0-9]+\.[0-9]+\.r[0-9]+\.g[0-9a-f]+' | head -1
 }
 
 # Récupère la dernière version d'un composant depuis bottlesdevs/components
@@ -1330,16 +1330,26 @@ get_latest_gwine_version() {
 get_component_version() {
     local component="$1"
     local repo="bottlesdevs/components"
+    local version
     
     case "$component" in
         dxvk)
-            get_github_release_version "$repo" "dxvk-[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9]+-[0-9a-f]+)?" "dxvk-" | grep -v "nvapi\|gplasync" | head -1
+            version=$(curl -s "https://github.com/$repo/releases.atom" 2>/dev/null | grep -oE "dxvk-[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9]+-[0-9a-f]+)?" | grep -v "nvapi\|gplasync" | head -1)
+            [ -n "$version" ] && version="${version#dxvk-}"
+            echo "$version"
             ;;
         vkd3d)
-            get_github_release_version "$repo" "vkd3d-proton-[0-9]+\.[0-9]+(\.[0-9]+)?" "vkd3d-proton-"
+            version=$(curl -s "https://github.com/$repo/releases.atom" 2>/dev/null | grep -oE "vkd3d-proton-[0-9]+\.[0-9]+(\.[0-9]+)?")
+            if [ -z "$version" ]; then
+                version=$(curl -s "https://github.com/$repo/tags?after=dxvk-2.7.1-6-fc848a4" 2>/dev/null | grep -oE "vkd3d-proton-[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1)
+            fi
+            [ -n "$version" ] && version="${version#vkd3d-proton-}"
+            echo "$version"
             ;;
         dxvk-nvapi)
-            get_github_release_version "$repo" "dxvk-nvapi-v[0-9]+\.[0-9]+(\.[0-9]+)?" "dxvk-nvapi-v"
+            version=$(curl -s "https://github.com/$repo/releases.atom" 2>/dev/null | grep -oE "dxvk-nvapi-v[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1)
+            [ -n "$version" ] && version="${version#dxvk-nvapi-v}"
+            echo "$version"
             ;;
         *)
             return 1
@@ -9488,12 +9498,6 @@ main() {
     fi
 
     if [ "$init_mode" = true ]; then
-        local SYMLINK="$HOME/.local/bin/gwine"
-        if [ ! -L "$SYMLINK" ]; then
-            mkdir -p "$HOME/.local/bin"
-            ln -sf "$(realpath "$0")" "$SYMLINK"
-            echo "Symlink créé: $SYMLINK"
-        fi
         init_prefix_only
         exit 0
     fi
