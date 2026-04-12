@@ -10,7 +10,6 @@
       kill -9 $pid 2>/dev/null
     fi
   done
-  rm -rf /tmp/gwine-locks-$USER/ &
 
   # Kill tous les processus wgp/wine sauf squashfuse (nettoyage complet jeu sans casser gwine)
   pgrep -f "wgpackmount" | grep -v squashfuse | xargs -r kill -9 2>/dev/null &
