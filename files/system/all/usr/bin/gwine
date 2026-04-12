@@ -548,10 +548,6 @@ apply_xbox_default() {
     if [ "$default_state" = "on" ] && [ "$xbox_mode" != true ]; then
         xbox_mode=true
         xbox_filter=$(get_xbox_default_filter)
-        if [ "$fix_mode" = true ]; then
-            echo "Note: --fix ignoré car mode xbox par défaut actif"
-            fix_mode=false
-        fi
     fi
 }
 
@@ -6028,13 +6024,26 @@ read_wgp_config() {
 
     local FIX_FILE="$MOUNT_DIR/.fix"
     if [ -f "$FIX_FILE" ]; then
-        if [ "$xbox_mode" = true ]; then
-            echo "Note: fichier .fix ignoré car mode --xbox actif"
-        elif [ "$nofix_mode" = true ]; then
+        if [ "$nofix_mode" = true ]; then
             echo "Note: fichier .fix ignoré car --nofix actif"
         else
             fix_mode=true
         fi
+    fi
+}
+
+read_wgp_xbox_config() {
+    local XBOX_FILE="$MOUNT_DIR/.xbox"
+    if [ -f "$XBOX_FILE" ] && [ "$xbox_mode" != true ]; then
+        local wgp_xbox_filter
+        wgp_xbox_filter=$(cat "$XBOX_FILE" | tr -d '\n\r')
+        xbox_mode=true
+        if [ "$wgp_xbox_filter" = "ds4" ] || [ "$wgp_xbox_filter" = "dualsense" ]; then
+            xbox_filter="$wgp_xbox_filter"
+        else
+            xbox_filter="all"
+        fi
+        echo "Mode xbox activé depuis le WGP (filtre: $xbox_filter)"
     fi
 }
 
@@ -9057,7 +9066,7 @@ show_help() {
     echo "  --update          Mettre à jour les composants (DXVK, VKD3D, gwine)"
     echo "  --kdialog         Activer les dialogues graphiques kdialog pour --init et --update"
     echo "  --fix             Activer le mode fix manette"
-    echo "  --xbox            Émulation manettes Sony en Xbox 360 via ds2xbox (incompatible avec --fix)"
+    echo "  --xbox            Émulation manettes Sony en Xbox 360 via ds2xbox"
     echo "  --xbox-ds4        Émulation DualShock 4 uniquement en Xbox 360"
     echo "  --xbox-dualsense  Émulation DualSense uniquement en Xbox 360"
     echo "  --xbox-on         Activer le mode xbox par défaut pour tous les lancements"
@@ -9332,6 +9341,8 @@ run_wgp_mode() {
     init_wgp_variables
     mount_wgp
 
+    read_wgp_xbox_config
+
     if [ "$xbox_mode" = true ]; then
         if ! start_ds2xbox; then
             cleanup_wgp
@@ -9512,10 +9523,7 @@ main() {
     
     apply_xbox_default
     
-    if [ "$xbox_mode" = true ] && [ "$fix_mode" = true ]; then
-        echo "Note: --fix ignoré car --xbox actif"
-        fix_mode=false
-    fi
+
     if [ "$nofix_mode" = true ] && [ "$fix_mode" = true ]; then
         echo "Note: --fix ignoré car --nofix actif"
         fix_mode=false
