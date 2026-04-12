@@ -72,20 +72,26 @@ def uninhibit_screensaver():
 
 def find_gamepad():
     """Trouve le premier gamepad connecté."""
-    devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
-    for device in devices:
-        capabilities = device.capabilities()
-        if ecodes.EV_KEY in capabilities:
-            keys = capabilities[ecodes.EV_KEY]
-            if ecodes.BTN_A in keys or ecodes.BTN_SELECT in keys:
-                if DEBUG:
-                    print(f"Manette trouvée: {device.name} ({device.path})")
-                return device
-    return None
-
-def get_button_state(device, button_code):
-    """Retourne l'état actuel d'un bouton."""
-    return device.active_keys() if button_code in device.active_keys() else 0
+    gamepad = None
+    for path in evdev.list_devices():
+        device = None
+        try:
+            device = evdev.InputDevice(path)
+            capabilities = device.capabilities()
+            if ecodes.EV_KEY in capabilities:
+                keys = capabilities[ecodes.EV_KEY]
+                if ecodes.BTN_A in keys or ecodes.BTN_SELECT in keys:
+                    if DEBUG:
+                        print(f"Manette trouvée: {device.name} ({device.path})")
+                    gamepad = device
+                    device = None
+                    break
+        except (OSError, IOError):
+            continue
+        finally:
+            if device is not None:
+                device.close()
+    return gamepad
 
 def main():
     global mouse_script_running, menuvsr_script_running

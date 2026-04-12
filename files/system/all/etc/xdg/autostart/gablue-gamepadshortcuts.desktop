@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Gablue Gamepad Shortcuts
+Comment=Lance les raccourcis manette Gablue au login
+NoDisplay=true
+Exec=/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/launchgamepadshortcuts
+Terminal=false
