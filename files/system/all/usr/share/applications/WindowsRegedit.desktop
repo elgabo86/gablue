@@ -1,0 +1,13 @@
+[Desktop Entry]
+Categories=System
+Comment=Éditeur de registre Windows via gwine
+Exec=/usr/bin/gwine --regedit
+GenericName=Registre Windows
+Icon=windows95
+Name=Registre Windows
+NoDisplay=false
+StartupNotify=true
+Terminal=false
+Type=Application
+X-KDE-SubstituteUID=false
+X-KDE-Username=

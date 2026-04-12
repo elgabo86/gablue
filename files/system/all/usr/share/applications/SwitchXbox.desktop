@@ -3,9 +3,9 @@
 Categories=System
 Comment=Activer/désactiver l'émulation manettes Sony en Xbox 360
 Exec=/usr/share/ublue-os/gablue/scripts/switchxbox.sh
-GenericName=Mode Xbox Gwine
+GenericName=Windows Xbox Switch
 Icon=windows95
-Name=Mode Xbox Gwine
+Name=Windows Xbox Switch
 NoDisplay=false
 Path=
 StartupNotify=false
