@@ -1,0 +1,15 @@
+[Desktop Entry]
+Comment=Exécutez des logiciels Windows
+Exec=/usr/bin/gwine --xbox %f
+Icon=windows95
+Keywords[fr_CH]=wine;windows;
+Keywords=wine;windows;
+MimeType=application/x-ms-dos-executable;application/x-msi;application/x-ms-shortcut;application/x-wine-extension-msp;application/x-bat;application/x-wgp;
+NoDisplay=true
+Terminal=false
+Type=Application
+X-GNOME-UsesNotifications=true
+X-KDE-SubstituteUID=false
+X-KDE-Username=
+X-KDE-StartupNotify=false
+Name=Windows (mode xbox gamepad)
