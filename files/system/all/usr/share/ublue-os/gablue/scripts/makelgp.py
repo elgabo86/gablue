@@ -31,9 +31,10 @@ class CreateLGPThread(QThread):
     progress = Signal(int, str)
     finished = Signal(bool, str)
     
-    def __init__(self, game_dir, output_filename, internal_game_name, config, parent=None):
+    def __init__(self, game_dir, output_dir, output_filename, internal_game_name, config, parent=None):
         super().__init__(parent)
         self.game_dir = game_dir
+        self.output_dir = output_dir  # Dossier de destination
         self.output_filename = output_filename  # Nom du fichier de sortie
         self.internal_game_name = internal_game_name  # Nom interne pour .gamename et chemins
         self.config = config
@@ -52,7 +53,7 @@ class CreateLGPThread(QThread):
             
             # Créer le squashfs avec progression temps réel
             self.progress.emit(30, "Préparation de l'archive LGP...")
-            lgp_file = os.path.join(os.path.dirname(self.game_dir), f"{self.output_filename}.lgp")
+            lgp_file = os.path.join(self.output_dir, f"{self.output_filename}.lgp")
             
             result = self.create_squashfs(lgp_file)
             
@@ -2107,8 +2108,16 @@ class LGPWindow(QMainWindow):
             QMessageBox.warning(self, "Exécutable manquant", "Veuillez sélectionner un exécutable.")
             return
         
+        # Choisir le dossier de destination
+        default_output_dir = os.path.dirname(self.game_dir)
+        output_dir = QFileDialog.getExistingDirectory(
+            self, "Choisir le dossier de destination", default_output_dir
+        )
+        if not output_dir:
+            return
+        
         # Vérifier si le fichier existe déjà
-        lgp_file = os.path.join(os.path.dirname(self.game_dir), f"{filename}.lgp")
+        lgp_file = os.path.join(output_dir, f"{filename}.lgp")
         if os.path.exists(lgp_file):
             reply = QMessageBox.question(
                 self, "Fichier existant",
@@ -2176,7 +2185,7 @@ class LGPWindow(QMainWindow):
         }
         
         # Créer et lancer le thread avec le nom de fichier et le nom interne
-        self.create_thread = CreateLGPThread(self.game_dir, filename, internal_game_name, config)
+        self.create_thread = CreateLGPThread(self.game_dir, output_dir, filename, internal_game_name, config)
         self.create_thread.progress.connect(self.on_progress)
         self.create_thread.finished.connect(self.on_finished)
         self.create_thread.start()
