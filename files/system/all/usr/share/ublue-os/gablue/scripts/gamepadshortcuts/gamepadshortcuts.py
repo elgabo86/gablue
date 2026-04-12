@@ -5,6 +5,7 @@ import select
 import subprocess
 import time
 import os
+import dbus
 from evdev import InputDevice, categorize, ecodes
 
 # État global
@@ -15,6 +16,7 @@ menuvsr_process = None
 last_volume_time = 0
 volume_cooldown = 0.2
 last_hat_state = (0, 0)
+screensaver_cookie = None
 DEBUG = True
 
 # Mapping boutons générique (peut varier selon le contrôleur)
@@ -37,6 +39,36 @@ BTN_MAPPING = {
 ABS_HAT0X = ecodes.ABS_HAT0X
 ABS_HAT0Y = ecodes.ABS_HAT0Y
 ABS_Y = ecodes.ABS_Y
+
+def inhibit_screensaver():
+    """Inhibe l'extinction d'écran et le verrouillage via DBus."""
+    global screensaver_cookie
+    try:
+        bus = dbus.SessionBus()
+        saver = bus.get_object('org.freedesktop.ScreenSaver', '/ScreenSaver')
+        saver_interface = dbus.Interface(saver, dbus_interface='org.freedesktop.ScreenSaver')
+        screensaver_cookie = saver_interface.Inhibit("gablue-gamepadshortcuts", "Manette connectée")
+        if DEBUG:
+            print(f"Inhibition écran activée (cookie: {screensaver_cookie})")
+    except Exception as e:
+        print(f"Erreur inhibition écran: {e}")
+        screensaver_cookie = None
+
+def uninhibit_screensaver():
+    """Rétablit l'extinction d'écran et le verrouillage via DBus."""
+    global screensaver_cookie
+    if screensaver_cookie is not None:
+        try:
+            bus = dbus.SessionBus()
+            saver = bus.get_object('org.freedesktop.ScreenSaver', '/ScreenSaver')
+            saver_interface = dbus.Interface(saver, dbus_interface='org.freedesktop.ScreenSaver')
+            saver_interface.UnInhibit(screensaver_cookie)
+            if DEBUG:
+                print("Inhibition écran désactivée")
+        except Exception as e:
+            print(f"Erreur désactivation inhibition écran: {e}")
+        finally:
+            screensaver_cookie = None
 
 def find_gamepad():
     """Trouve le premier gamepad connecté."""
@@ -61,7 +93,9 @@ def main():
     global last_volume_time, last_hat_state
 
     gamepad = find_gamepad()
-    if not gamepad:
+    if gamepad:
+        inhibit_screensaver()
+    else:
         print("Aucune manette détectée au démarrage.")
 
     # Boutons actuels maintenus
@@ -83,13 +117,18 @@ def main():
             if not gamepad:
                 time.sleep(1)
                 gamepad = find_gamepad()
+                if gamepad:
+                    inhibit_screensaver()
                 continue
 
             try:
                 r, w, x = select.select([gamepad], [], [], 0.1)
             except (OSError, IOError):
                 print("Manette déconnectée (erreur IO).")
+                uninhibit_screensaver()
                 gamepad = find_gamepad()
+                if gamepad:
+                    inhibit_screensaver()
                 continue
 
             if gamepad in r:
@@ -175,7 +214,10 @@ def main():
 
                 except (OSError, IOError, BlockingIOError):
                     print("Erreur lecture manette, reconnexion...")
+                    uninhibit_screensaver()
                     gamepad = find_gamepad()
+                    if gamepad:
+                        inhibit_screensaver()
                     continue
 
             # Traitement volume (en continu, pas seulement sur événement)
@@ -204,6 +246,7 @@ def main():
     except KeyboardInterrupt:
         print("Arrêt du script.")
     finally:
+        uninhibit_screensaver()
         if mouse_process:
             mouse_process.terminate()
         if menuvsr_process:
