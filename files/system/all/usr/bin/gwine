@@ -70,9 +70,10 @@ exewgp_mode=false
 init_mode=false
 update_mode=false
 cmd_mode=false
+cmd_command=""
 regedit_mode=false
 reg_mode=false
-reg_file=""
+reg_args=()
 winecfg_mode=false
 winetricks_mode=false
 download_wincomponents_mode=false
@@ -7882,7 +7883,11 @@ init_prefix_only() {
     fi
     
     restore_backup() {
-        restore_wineprefix
+        if [ -n "$PREFIX_BACKUP_PATH" ] && [ -d "$PREFIX_BACKUP_PATH" ]; then
+            restore_wineprefix
+        else
+            rm -rf "$WINEPREFIX" 2>/dev/null || true
+        fi
     }
     
     ((CURRENT_STEP++))
@@ -8577,52 +8582,136 @@ launch_regedit() {
     exit $?
 }
 
-# Installe un fichier .reg dans le préfixe Wine
-install_reg_file() {
-    local reg_file_path="$1"
-    
-    if [ -z "$reg_file_path" ]; then
-        error_exit "Aucun fichier .reg spécifié"
-    fi
-    
-    if [ ! -f "$reg_file_path" ]; then
-        error_exit "Fichier .reg introuvable: $reg_file_path"
-    fi
-    
-    echo "Installation du fichier de registre: $reg_file_path"
+manage_registry() {
+    local reg_subcmd="$1"
+    shift
     
     export WINEPREFIX="$HOME_REAL/Windows/Prefix"
-    
     require_wine
+    ensure_wineprefix
     
-    ensure_wineprefix_full
-    
-    # Convertir le chemin en chemin Windows
-    local win_path
-    win_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -w "$reg_file_path" 2>/dev/null | tr -d '\r')
-    
-    if [ -z "$win_path" ]; then
-        error_exit "Impossible de convertir le chemin du fichier .reg"
-    fi
-    
-    echo "Chemin Windows: $win_path"
-    echo "WINEPREFIX: $WINEPREFIX"
-    
-    # Installer le fichier .reg
-    if ! WINEPREFIX="$WINEPREFIX" "$WINE_BIN" regedit.exe /S "$win_path" 2>/dev/null; then
-        # Afficher un message d'erreur avec kdialog si --kdialog est spécifié
-        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-            kdialog --title "Erreur" --error "Échec de l'installation du fichier de registre:\n$reg_file_path"
-        fi
-        error_exit "Échec de l'installation du fichier de registre"
-    fi
-    
-    echo "Fichier de registre installé avec succès"
-    
-    # Afficher un kdialog de confirmation si --kdialog est spécifié
-    if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-        kdialog --title "Succès" --msgbox "Le fichier de registre a été installé avec succès:\n$reg_file_path"
-    fi
+    case "$reg_subcmd" in
+        add)
+            if [ $# -lt 3 ]; then
+                error_exit "Usage: gwine --reg add <clé> /v <valeur> /d <donnée> [/f]"
+            fi
+            local reg_key="$1"
+            shift
+            local reg_value=""
+            local reg_data=""
+            local reg_force=false
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    /v) reg_value="$2"; shift 2 ;;
+                    /ve) reg_value=""; shift ;;
+                    /d) reg_data="$2"; shift 2 ;;
+                    /f) reg_force=true; shift ;;
+                    *) shift ;;
+                esac
+            done
+            if [ -z "$reg_value" ] && [ "$reg_force" = false ]; then
+                error_exit "Spécifiez /v <valeur> ou /f pour une valeur par défaut"
+            fi
+            echo "Ajout: [$reg_key] $reg_value = $reg_data"
+            if WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add "$reg_key" /v "$reg_value" /d "$reg_data" /f >/dev/null 2>&1; then
+                echo "Valeur ajoutée avec succès"
+            else
+                error_exit "Échec de l'ajout de la valeur de registre"
+            fi
+            ;;
+        del)
+            if [ $# -lt 1 ]; then
+                error_exit "Usage: gwine --reg del <clé> [/v <valeur> | /va] [/f]"
+            fi
+            local reg_key="$1"
+            shift
+            local reg_value=""
+            local del_all=false
+            local reg_force=false
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    /v) reg_value="$2"; shift 2 ;;
+                    /ve) reg_value=""; shift ;;
+                    /va) del_all=true; shift ;;
+                    /f) reg_force=true; shift ;;
+                    *) shift ;;
+                esac
+            done
+            local reg_args=()
+            if [ -n "$reg_value" ]; then
+                reg_args+=(/v "$reg_value")
+            elif [ "$del_all" = true ]; then
+                reg_args+=(/va)
+            else
+                if [ "$reg_force" = false ]; then
+                    error_exit "Spécifiez /v <valeur>, /va, ou /f pour supprimer une clé entière"
+                fi
+            fi
+            if [ "$reg_force" = true ]; then
+                reg_args+=(/f)
+            fi
+            if [ "$del_all" = true ]; then
+                echo "Suppression de toutes les valeurs sous: $reg_key"
+            elif [ -n "$reg_value" ]; then
+                echo "Suppression: [$reg_key] $reg_value"
+            else
+                echo "Suppression de la clé: $reg_key"
+            fi
+            if WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg delete "$reg_key" "${reg_args[@]}" >/dev/null 2>&1; then
+                echo "Suppression réussie"
+            else
+                error_exit "Échec de la suppression de la valeur de registre"
+            fi
+            ;;
+        get)
+            if [ $# -lt 1 ]; then
+                error_exit "Usage: gwine --reg get <clé> [/v <valeur>]"
+            fi
+            local reg_key="$1"
+            shift
+            local reg_value=""
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    /v) reg_value="$2"; shift 2 ;;
+                    /ve) reg_value=""; shift ;;
+                    *) shift ;;
+                esac
+            done
+            if [ -n "$reg_value" ]; then
+                WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg query "$reg_key" /v "$reg_value" 2>/dev/null
+            else
+                WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg query "$reg_key" 2>/dev/null
+            fi
+            ;;
+        *)
+            local reg_file_path="$reg_subcmd"
+            if [ -z "$reg_file_path" ]; then
+                error_exit "Aucun fichier .reg ou sous-commande spécifié"
+            fi
+            if [ ! -f "$reg_file_path" ]; then
+                error_exit "Fichier .reg introuvable: $reg_file_path"
+            fi
+            echo "Installation du fichier de registre: $reg_file_path"
+            ensure_wineprefix_full
+            local win_path
+            win_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -w "$reg_file_path" 2>/dev/null | tr -d '\r')
+            if [ -z "$win_path" ]; then
+                error_exit "Impossible de convertir le chemin du fichier .reg"
+            fi
+            echo "Chemin Windows: $win_path"
+            echo "WINEPREFIX: $WINEPREFIX"
+            if ! WINEPREFIX="$WINEPREFIX" "$WINE_BIN" regedit.exe /S "$win_path" 2>/dev/null; then
+                if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+                    kdialog --title "Erreur" --error "Échec de l'installation du fichier de registre:\n$reg_file_path"
+                fi
+                error_exit "Échec de l'installation du fichier de registre"
+            fi
+            echo "Fichier de registre installé avec succès"
+            if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
+                kdialog --title "Succès" --msgbox "Le fichier de registre a été installé avec succès:\n$reg_file_path"
+            fi
+            ;;
+    esac
     
     exit 0
 }
@@ -8643,8 +8732,17 @@ launch_winecfg() {
 }
 
 # Lance cmd.exe (terminal Wine) dans le dossier courant
+# Usage: launch_wine_cmd [commande]
+# Sans argument: shell interactif (cmd)
+# Avec argument: exécute la commande et sort (cmd /C "commande")
 launch_wine_cmd() {
-    echo "Lancement du terminal Wine (cmd)..."
+    local cmd_command="${1:-}"
+    
+    if [ -n "$cmd_command" ]; then
+        echo "Exécution de la commande Wine: $cmd_command"
+    else
+        echo "Lancement du terminal Wine (cmd)..."
+    fi
     
     export WINEPREFIX="$HOME_REAL/Windows/Prefix"
     
@@ -8652,7 +8750,6 @@ launch_wine_cmd() {
     
     ensure_wineprefix
     
-    # Déterminer le dossier de travail
     local work_dir
     if [ -n "$fullpath" ]; then
         if [ -d "$fullpath" ]; then
@@ -8668,7 +8765,11 @@ launch_wine_cmd() {
     echo "Dossier: $work_dir"
     
     cd "$work_dir" || error_exit "Impossible d'accéder au dossier: $work_dir"
-    WINEPREFIX="$WINEPREFIX" "$WINE_BIN" cmd
+    if [ -n "$cmd_command" ]; then
+        WINEPREFIX="$WINEPREFIX" "$WINE_BIN" cmd /C "$cmd_command"
+    else
+        WINEPREFIX="$WINEPREFIX" "$WINE_BIN" cmd
+    fi
     exit $?
 }
 
@@ -9092,12 +9193,16 @@ show_help() {
     echo "  --nosandbox       Désactiver le sandboxing"
     echo "  --regedit         Lancer l'éditeur de registre"
     echo "  --reg fichier.reg Installer un fichier de registre"
+    echo "  --reg add         Ajouter une valeur de registre"
+    echo "  --reg del         Supprimer une valeur de registre"
+    echo "  --reg get         Consulter une clé/valeur de registre"
     echo "  --winecfg         Lancer la configuration Wine"
     echo "  --winetricks      Lancer winetricks"
     echo "  --joytest         Lancer le test de joypad (joy.cpl)"
     echo "  --download-components  Télécharger tous les composants pour le mode offline"
     echo "  --cachepack       Créer un pack du cache pour installation offline"
     echo "  --cmd             Ouvrir un terminal Wine"
+    echo "  --cmd \"<cmd>\"     Exécuter une commande dans Wine (cmd /C)"
     echo "  --use-ln-mounts   Utiliser des liens symboliques au lieu de bind mounts (fallback pour compatibilité)"
     echo "  --x11             Utiliser X11/XWayland comme mode d'affichage (défaut)"
     echo "  --wayland         Utiliser Wayland natif (désactive XWayland)"
@@ -9127,6 +9232,9 @@ show_help() {
     echo "  gwine --wayland             # Utiliser Wayland natif comme mode d'affichage"
     echo "  gwine --fix ~/Jeux/monjeu.wgp"
     echo "  gwine --reg config.reg"
+    echo "  gwine --reg add 'HKCU\Software\Wine\DllOverrides' /v ddraw /d native,builtin /f"
+    echo "  gwine --reg del 'HKCU\Software\Wine\DllOverrides' /v ddraw /f"
+    echo "  gwine --reg get 'HKCU\Software\Wine\DllOverrides' /v ddraw"
     echo "  gwine --kill"
 }
 
@@ -9214,7 +9322,12 @@ parse_arguments() {
                 ;;
             --cmd)
                 cmd_mode=true
-                shift
+                if [ -n "${2:-}" ] && [[ "$2" != --* ]]; then
+                    cmd_command="$2"
+                    shift 2
+                else
+                    shift
+                fi
                 ;;
             --use-ln-mounts)
                 USE_BIND_MOUNTS=false
@@ -9267,8 +9380,12 @@ $2"
                 ;;
             --reg)
                 reg_mode=true
-                reg_file="$2"
-                shift 2
+                reg_args=("$2")
+                shift
+                while [ $# -gt 0 ] && [[ "$1" != --* ]]; do
+                    reg_args+=("$1")
+                    shift
+                done
                 ;;
             --winecfg)
                 winecfg_mode=true
@@ -9507,6 +9624,28 @@ run_classic_mode() {
 }
 
 # =============================================================================
+# Vérification du préfixe avec proposition d'initialisation
+# =============================================================================
+
+check_prefix_or_offer_init() {
+    if [ -d "$HOME_REAL/Windows/Prefix" ] && [ -f "$HOME_REAL/Windows/Prefix/system.reg" ]; then
+        return 0
+    fi
+
+    if command -v kdialog >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+        if kdialog --yesno "Gwine n'a pas encore été initialisé.\n\nVoulez-vous lancer l'initialisation maintenant ?" 2>/dev/null; then
+            exec "$SCRIPT_DIR/gwine" --init --kdialog
+        else
+            exit 1
+        fi
+    else
+        echo "Erreur: Aucun préfixe Wine n'existe." >&2
+        echo "Veuillez exécuter 'gwine --init' pour créer un préfixe." >&2
+        exit 1
+    fi
+}
+
+# =============================================================================
 # Point d'entrée principal
 # =============================================================================
 
@@ -9656,6 +9795,18 @@ main() {
         exit 0
     fi
     
+    # Vérifier la présence du préfixe pour les commandes qui en ont besoin
+    # Placement avant init_runner/ensure_runner_installed pour que l'init via kdialog
+    # gère le téléchargement du runner avec progressbar
+    if [ "$init_mode" != true ] && [ "$download_wincomponents_mode" != true ] && \
+       [ "$cachepack_mode" != true ] && [ "$dir_mode" != true ]; then
+        if [ -n "$fullpath" ] || [ "$regedit_mode" = true ] || [ "$reg_mode" = true ] || \
+           [ "$winecfg_mode" = true ] || [ "$winetricks_mode" = true ] || \
+           [ "$cmd_mode" = true ] || [ "$joytest_mode" = true ] || [ "$update_mode" = true ]; then
+            check_prefix_or_offer_init
+        fi
+    fi
+    
     # Initialiser le runner (wine ou proton) après le parsing des arguments
     # Passer --save si c'est un --init avec --wine ou --proton
     if [ "$init_mode" = true ] && ([ "$wine_mode" = true ] || [ "$proton_mode" = true ]); then
@@ -9702,7 +9853,7 @@ main() {
     fi
 
     if [ "$reg_mode" = true ]; then
-        install_reg_file "$reg_file"
+        manage_registry "${reg_args[@]}"
         exit 0
     fi
 
@@ -9717,7 +9868,7 @@ main() {
     fi
 
     if [ "$cmd_mode" = true ]; then
-        launch_wine_cmd
+        launch_wine_cmd "$cmd_command"
         exit 0
     fi
 
@@ -9784,21 +9935,6 @@ main() {
     if [ -z "$fullpath" ]; then
         show_help
         exit 0
-    fi
-    
-    # Vérifier si le préfixe Wine existe avant de lancer un jeu
-    if [ ! -d "$HOME_REAL/Windows/Prefix" ] || [ ! -f "$HOME_REAL/Windows/Prefix/system.reg" ]; then
-        # Toujours essayer d'afficher une alerte graphique si possible
-        if command -v kdialog >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
-            kdialog --error "Aucun préfixe Wine n'existe.\n\nVeuillez exécuter 'gwine --init' pour créer un préfixe." 2>/dev/null || {
-                echo "Erreur: Aucun préfixe Wine n'existe." >&2
-                echo "Veuillez exécuter 'gwine --init' pour créer un préfixe." >&2
-            }
-        else
-            echo "Erreur: Aucun préfixe Wine n'existe." >&2
-            echo "Veuillez exécuter 'gwine --init' pour créer un préfixe." >&2
-        fi
-        exit 1
     fi
 
     if [[ "$fullpath" == *.wgp ]]; then

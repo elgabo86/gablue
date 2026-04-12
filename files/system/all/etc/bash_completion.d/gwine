@@ -25,6 +25,10 @@ gwine_completions() {
             COMPREPLY=( $(compgen -f -- ${cur}) )
             return 0
             ;;
+        --cmd)
+            COMPREPLY=( $(compgen -f -X '!*.@(bat|exe|cmd|msi)' -- ${cur}) )
+            return 0
+            ;;
         --args)
             # Pas d'autocomplétion pour les arguments
             return 0
