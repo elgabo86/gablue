@@ -59,55 +59,45 @@ fi
 
 # Vérifier si le .fix existe dans le pack .wgp (pas pour les .lgp)
 HAS_FIX=false
+XBOX_MODE="off"
 if [ "$FILETYPE" = "wgp" ]; then
-    MOUNT_BASE="/tmp/wgpack_shortcut_check_$(date +%s)"
-    MOUNT_DIR="$MOUNT_BASE/mount"
-    mkdir -p "$MOUNT_DIR"
-
-    if command -v squashfuse &> /dev/null; then
-        squashfuse -r "$EXE_PATH" "$MOUNT_DIR" 2>/dev/null
-        if [ $? -eq 0 ]; then
-            if [ -f "$MOUNT_DIR/.fix" ]; then
-                HAS_FIX=true
-            fi
-            fusermount -u "$MOUNT_DIR" 2>/dev/null
-        fi
-    fi
-    rm -rf "$MOUNT_BASE"
-
-    # Si .fix existe, utiliser le mode fix directement sans demander
-    if [ "$HAS_FIX" = true ]; then
-        LAUNCH_MODE="fix"
-    fi
-fi
-
-# Pour les .lgp, pas de mode fix (seulement les .wgp l'ont)
-if [ "$FILETYPE" != "lgp" ] && [ "$LAUNCH_MODE" != "fix" ]; then
-    # Demande à l'utilisateur le mode de lancement par défaut
-    DEFAULT_NORMAL="on"
-    DEFAULT_FIX="off"
-    if [ "$HAS_FIX" = true ]; then
-        DEFAULT_NORMAL="off"
-        DEFAULT_FIX="on"
-    fi
-
+    # Pour les .wgp, gwine lit .fix/.xbox automatiquement depuis le pack
+    LAUNCH_MODE="normal"
+elif [ "$FILETYPE" = "lgp" ]; then
+    # Pour les .lgp, pas de mode fix
+    LAUNCH_MODE="normal"
+else
+    # Pour les .exe, demander le mode fix
     LAUNCH_MODE=$(kdialog --title "Mode de lancement" --radiolist "Choisissez le lancement par défaut :" \
-        "normal" "Lancement normal" $DEFAULT_NORMAL \
-        "fix" "Lancement avec fix gamepad" $DEFAULT_FIX)
+        "normal" "Lancement normal" on \
+        "fix" "Lancement avec fix gamepad" off)
     if [ $? -ne 0 ]; then
         echo "Annulé par l'utilisateur"
         exit 0
     fi
-fi
 
-# Pour les .lgp, forcer le mode normal (pas de fix)
-if [ "$FILETYPE" = "lgp" ]; then
-    LAUNCH_MODE="normal"
+    # Demander le mode xbox
+    XBOX_MODE=$(kdialog --title "Mode Xbox" --menu "Émulation manettes Sony en Xbox 360 :" \
+        "off" "Désactivé" \
+        "all" "Tous (DS4+DualSense)" \
+        "ds4" "DualShock 4 uniquement" \
+        "dualsense" "DualSense uniquement")
+    if [ $? -ne 0 ] || [ -z "$XBOX_MODE" ]; then
+        XBOX_MODE="off"
+    fi
 fi
 
 # Demande si l'utilisateur veut un raccourci sur le bureau
 CREATE_DESKTOP=$(kdialog --title "Raccourci sur le bureau" --yesno "Voulez-vous également ajouter un raccourci sur le bureau ?")
 CREATE_DESKTOP_STATUS=$?
+
+# Construire les arguments gwine pour xbox
+XBOX_ARGS=""
+case "$XBOX_MODE" in
+    all)        XBOX_ARGS="--xbox" ;;
+    ds4)        XBOX_ARGS="--xbox-ds4" ;;
+    dualsense)  XBOX_ARGS="--xbox-dualsense" ;;
+esac
 
 # Définit la commande d'exécution principale et l'action alternative
 if [ "$FILETYPE" = "lgp" ]; then
@@ -116,18 +106,24 @@ if [ "$FILETYPE" = "lgp" ]; then
     ALT_ACTION=""
     ALT_NAME=""
     ALT_EXEC=""
+elif [ "$FILETYPE" = "wgp" ]; then
+    # Pour les .wgp : gwine lit .fix/.xbox automatiquement
+    EXEC_COMMAND="/usr/bin/gwine \"$EXE_PATH\""
+    ALT_ACTION=""
+    ALT_NAME=""
+    ALT_EXEC=""
 else
-    # Pour les .exe et .wgp : utiliser gwine avec mode fix possible
+    # Pour les .exe : gwine avec mode fix et xbox possible
     if [ "$LAUNCH_MODE" = "normal" ]; then
-        EXEC_COMMAND="/usr/bin/gwine \"$EXE_PATH\""
+        EXEC_COMMAND="/usr/bin/gwine $XBOX_ARGS \"$EXE_PATH\""
         ALT_ACTION="LaunchFix"
         ALT_NAME="Lancer avec fix gamepad"
-        ALT_EXEC="qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.activateLauncherMenu && /usr/bin/gwine --fix \"$EXE_PATH\""
+        ALT_EXEC="qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.activateLauncherMenu && /usr/bin/gwine --fix $XBOX_ARGS \"$EXE_PATH\""
     else
-        EXEC_COMMAND="/usr/bin/gwine --fix \"$EXE_PATH\""
+        EXEC_COMMAND="/usr/bin/gwine --fix $XBOX_ARGS \"$EXE_PATH\""
         ALT_ACTION="LaunchNormal"
         ALT_NAME="Lancer normal"
-        ALT_EXEC="/usr/bin/gwine \"$EXE_PATH\""
+        ALT_EXEC="/usr/bin/gwine $XBOX_ARGS \"$EXE_PATH\""
     fi
 fi
 
