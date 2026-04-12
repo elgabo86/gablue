@@ -95,6 +95,15 @@ class CreateWGPThread(QThread):
         # .fix (fichier vide si fix activé)
         if self.config['fix_controller']:
             open(os.path.join(self.game_dir, '.fix'), 'w').close()
+        elif os.path.exists(os.path.join(self.game_dir, '.fix')):
+            os.remove(os.path.join(self.game_dir, '.fix'))
+
+        # .xbox (contient le filtre xbox: all, ds4, dualsense)
+        if self.config.get('xbox_filter'):
+            with open(os.path.join(self.game_dir, '.xbox'), 'w') as f:
+                f.write(self.config['xbox_filter'])
+        elif os.path.exists(os.path.join(self.game_dir, '.xbox')):
+            os.remove(os.path.join(self.game_dir, '.xbox'))
 
         # .pds (chemin vers le fichier de données personnalisées)
         if self.config.get('pds'):
@@ -254,7 +263,14 @@ class CreateWGPThread(QThread):
                             os.symlink(os.path.join(saves_base, rel_path), source)
                             print(f"DEBUG: Created symlink {source} -> {os.path.join(saves_base, rel_path)}")
         else:
-            print(f"DEBUG: No saves to process")
+            # Aucune sauvegarde : nettoyer les fichiers existants
+            savepath_file = os.path.join(self.game_dir, '.savepath')
+            if os.path.exists(savepath_file):
+                os.remove(savepath_file)
+            saves_dir = os.path.join(self.game_dir, '.save')
+            if os.path.exists(saves_dir):
+                shutil.rmtree(saves_dir)
+            print(f"DEBUG: No saves to process - cleaned existing")
 
         # Traiter les extras
         if self.config['extras']:
@@ -323,7 +339,14 @@ class CreateWGPThread(QThread):
                             os.symlink(os.path.join(extras_base, rel_path), source)
                             print(f"DEBUG: Created symlink {source} -> {os.path.join(extras_base, rel_path)}")
         else:
-            print(f"DEBUG: No extras to process")
+            # Aucun extra : nettoyer les fichiers existants
+            extrapath_file = os.path.join(self.game_dir, '.extrapath')
+            if os.path.exists(extrapath_file):
+                os.remove(extrapath_file)
+            extras_dir = os.path.join(self.game_dir, '.extra')
+            if os.path.exists(extras_dir):
+                shutil.rmtree(extras_dir)
+            print(f"DEBUG: No extras to process - cleaned existing")
 
         # Traiter les fichiers temporaires
         if self.config.get('temps'):
@@ -403,7 +426,14 @@ class CreateWGPThread(QThread):
                                 os.symlink(os.path.join(temps_base, rel_path), source)
                                 print(f"DEBUG: Created symlink {source} -> {os.path.join(temps_base, rel_path)}")
         else:
-            print(f"DEBUG: No temps to process")
+            # Aucun fichier temporaire : nettoyer les fichiers existants
+            temppath_file = os.path.join(self.game_dir, '.temppath')
+            if os.path.exists(temppath_file):
+                os.remove(temppath_file)
+            temps_dir = os.path.join(self.game_dir, '.temp')
+            if os.path.exists(temps_dir):
+                shutil.rmtree(temps_dir)
+            print(f"DEBUG: No temps to process - cleaned existing")
         
         # Sauvegarder les symlinks dans un fichier .symlinks_backup
         if symlinks_backup:
@@ -1178,7 +1208,20 @@ class WGPWindow(QMainWindow):
         self.fix_checkbox = QCheckBox("Fix manette")
         options_layout.addWidget(self.fix_checkbox)
         
-        options_layout.addSpacing(20)
+        options_layout.addSpacing(10)
+        
+        xbox_label = QLabel("Xbox:")
+        xbox_label.setFixedWidth(40)
+        options_layout.addWidget(xbox_label)
+        
+        self.xbox_combo = QComboBox()
+        self.xbox_combo.addItems(["Désactivé", "DualShock 4", "DualSense", "Tous (DS4+DualSense)"])
+        self.xbox_combo.setCurrentIndex(0)
+        self.xbox_combo.setMinimumWidth(155)
+        self.xbox_combo.setToolTip("Émulation manettes Sony en Xbox 360 via ds2xbox")
+        options_layout.addWidget(self.xbox_combo)
+        
+        options_layout.addSpacing(10)
         
         comp_label = QLabel("Compression:")
         comp_label.setFixedWidth(85)
@@ -1373,6 +1416,22 @@ class WGPWindow(QMainWindow):
         # Charger le fix manette depuis .fix si existe
         fix_file = os.path.join(self.game_dir, '.fix')
         self.fix_checkbox.setChecked(os.path.exists(fix_file))
+        
+        # Charger le mode xbox depuis .xbox si existe
+        xbox_file = os.path.join(self.game_dir, '.xbox')
+        if os.path.exists(xbox_file):
+            with open(xbox_file, 'r') as f:
+                xbox_filter = f.read().strip()
+            if xbox_filter == 'ds4':
+                self.xbox_combo.setCurrentIndex(1)
+            elif xbox_filter == 'dualsense':
+                self.xbox_combo.setCurrentIndex(2)
+            elif xbox_filter == 'all':
+                self.xbox_combo.setCurrentIndex(3)
+            else:
+                self.xbox_combo.setCurrentIndex(0)
+        else:
+            self.xbox_combo.setCurrentIndex(0)
         
         # Charger les sauvegardes depuis .savepath si existe
         savepath_file = os.path.join(self.game_dir, '.savepath')
@@ -2170,11 +2229,21 @@ class WGPWindow(QMainWindow):
         
         # Créer la configuration
         pds_path = self.pds_input.text().strip()
+        xbox_filter = None
+        xbox_idx = self.xbox_combo.currentIndex()
+        if xbox_idx == 1:
+            xbox_filter = 'ds4'
+        elif xbox_idx == 2:
+            xbox_filter = 'dualsense'
+        elif xbox_idx == 3:
+            xbox_filter = 'all'
+
         config = {
             'exe': exe,
             'args': self.args_input.text(),
             'icon': self.icon_path,
             'fix_controller': self.fix_checkbox.isChecked(),
+            'xbox_filter': xbox_filter,
             'compression': int(self.comp_combo.currentText().split('(')[1].rstrip(')')),
             'saves': self.saves,
             'extras': self.extras,
