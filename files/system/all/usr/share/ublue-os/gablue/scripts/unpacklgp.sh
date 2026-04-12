@@ -53,22 +53,27 @@ validate_arguments() {
     [ ! -f "$LGPACK_FILE" ] && error_exit "Le fichier '$LGPACK_FILE' n'existe pas"
 
     GAME_NAME="$(basename "$LGPACK_FILE" .lgp)"
-    OUTPUT_DIR="./$GAME_NAME"
+
+    # Sélection du dossier de destination
+    local start_dir
+    start_dir="$(dirname "$LGPACK_FILE")"
+
+    if command -v kdialog &> /dev/null; then
+        OUTPUT_DIR=$(kdialog --title "Dossier de destination" --getexistingdirectory "$start_dir")
+        if [ $? -ne 0 ] || [ -z "$OUTPUT_DIR" ]; then
+            echo "Extraction annulée"
+            exit 0
+        fi
+        OUTPUT_DIR="$OUTPUT_DIR/$GAME_NAME"
+    else
+        OUTPUT_DIR="$start_dir/$GAME_NAME"
+    fi
+
     TEMP_DIR="$OUTPUT_DIR.tmp"
 
     echo "=== Extraction du paquet: $GAME_NAME ==="
     echo "Fichier source: $LGPACK_FILE"
     echo "Dossier de sortie: $OUTPUT_DIR"
-}
-
-# Demande confirmation avant de commencer
-confirm_extraction() {
-    local prompt="Voulez-vous extraire le contenu de:\n\n$(basename "$LGPACK_FILE")\n\ndans le dossier:\n$OUTPUT_DIR"
-
-    if ! ask_yes_no "$prompt"; then
-        echo "Extraction annulée"
-        exit 0
-    fi
 }
 
 # Gère le cas où le dossier de sortie existe déjà
@@ -383,11 +388,10 @@ show_summary() {
 #======================================
 
 main() {
-    # Validation
+    # Validation et sélection du dossier
     validate_arguments "$@"
 
-    # Confirmations
-    confirm_extraction
+    # Vérifier si le dossier existe déjà
     handle_existing_output
 
     # Extraction
