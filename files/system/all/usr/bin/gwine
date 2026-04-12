@@ -61,6 +61,12 @@ WINESERVER_BIN="$WINE_DIR/bin/wineserver"
 
 # Variables de mode
 fix_mode=false
+xbox_mode=false
+xbox_filter=""
+xbox_on_mode=false
+xbox_off_mode=false
+nofix_mode=false
+reset_mode=false
 exewgp_mode=false
 init_mode=false
 update_mode=false
@@ -400,6 +406,305 @@ kill_wgp_orphans() {
             fi
         fi
     done
+}
+
+reset_gwine_options() {
+    local options_file="$GWINE_DIR/options"
+    local bind_dirs_file="${HOME}/.config/gwine/bind-dirs.conf"
+    local changed=false
+
+    echo "Réinitialisation des options gwine..."
+
+    ensure_dir "$GWINE_DIR"
+
+    if [ -f "$options_file" ]; then
+        local old_runner old_dxvk old_display old_xbox old_xbox_filter
+        old_runner=$(grep "^runner=" "$options_file" 2>/dev/null | cut -d'=' -f2)
+        old_dxvk=$(grep "^dxvk_mode=" "$options_file" 2>/dev/null | cut -d'=' -f2)
+        old_display=$(grep "^display_mode=" "$options_file" 2>/dev/null | cut -d'=' -f2)
+        old_xbox=$(grep "^xbox_default=" "$options_file" 2>/dev/null | cut -d'=' -f2)
+        old_xbox_filter=$(grep "^xbox_filter=" "$options_file" 2>/dev/null | cut -d'=' -f2)
+
+        echo "  runner: ${old_runner:-non défini} -> proton"
+        echo "  dxvk_mode: ${old_dxvk:-non défini} -> dxvk"
+        echo "  display_mode: ${old_display:-x11} (inchangé)"
+        echo "  xbox_default: ${old_xbox:-non défini} -> off"
+        changed=true
+    else
+        echo "  Aucune option existante, création avec les valeurs par défaut"
+        changed=true
+    fi
+
+    cat > "$options_file" << 'EOF'
+runner=proton
+dxvk_mode=dxvk
+display_mode=x11
+xbox_default=off
+xbox_filter=all
+EOF
+
+    if [ -f "$bind_dirs_file" ] && [ -s "$bind_dirs_file" ]; then
+        echo "  bind-dirs: vidé"
+        : > "$bind_dirs_file"
+        changed=true
+    fi
+
+    if [ "$changed" = true ]; then
+        echo "Options réinitialisées aux valeurs par défaut."
+    else
+        echo "Les options étaient déjà aux valeurs par défaut."
+    fi
+}
+
+# =============================================================================
+# Module: xbox.sh
+# =============================================================================
+
+
+################################################################################
+# xbox.sh - Gestion de ds2xbox pour émulation manette Xbox 360
+################################################################################
+
+_DS2XBOX_PID=""
+_DS2XBOX_BIN=""
+
+XBOX_CONFIG_FILE="$GWINE_DIR/options"
+
+DS2XBOX_SONY_IDS_ALL="0x054c/0x0ce6,0x054c/0x0df2,0x054c/0x05c4,0x054c/0x09cc,0x054c/0x0ba0"
+DS2XBOX_SONY_IDS_DS4="0x054c/0x05c4,0x054c/0x09cc,0x054c/0x0ba0"
+DS2XBOX_SONY_IDS_DUALSENSE="0x054c/0x0ce6,0x054c/0x0df2"
+
+get_xbox_sdl_ignore_ids() {
+    case "${xbox_filter:-all}" in
+        ds4)        echo "$DS2XBOX_SONY_IDS_DS4" ;;
+        dualsense)  echo "$DS2XBOX_SONY_IDS_DUALSENSE" ;;
+        *)          echo "$DS2XBOX_SONY_IDS_ALL" ;;
+    esac
+}
+
+get_ds2xbox_args() {
+    case "${xbox_filter:-all}" in
+        ds4)        echo "--ds4" ;;
+        dualsense)  echo "--dualsense" ;;
+        *)          echo "" ;;
+    esac
+}
+
+get_xbox_default() {
+    if [ -f "$XBOX_CONFIG_FILE" ]; then
+        local val
+        val=$(grep "^xbox_default=" "$XBOX_CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
+        if [ "$val" = "on" ]; then
+            echo "on"
+            return 0
+        fi
+    fi
+    echo "off"
+}
+
+get_xbox_default_filter() {
+    if [ -f "$XBOX_CONFIG_FILE" ]; then
+        local val
+        val=$(grep "^xbox_filter=" "$XBOX_CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
+        if [ "$val" = "ds4" ] || [ "$val" = "dualsense" ]; then
+            echo "$val"
+            return 0
+        fi
+    fi
+    echo "all"
+}
+
+set_xbox_default() {
+    local state="$1"
+    local filter="${2:-all}"
+
+    if [ "$state" != "on" ] && [ "$state" != "off" ]; then
+        echo "Erreur: valeur xbox_default invalide '$state'. Utilisez 'on' ou 'off'." >&2
+        return 1
+    fi
+
+    ensure_dir "$GWINE_DIR"
+
+    local config_content=""
+    if [ -f "$XBOX_CONFIG_FILE" ]; then
+        config_content=$(grep -v "^xbox_default=" "$XBOX_CONFIG_FILE" 2>/dev/null | grep -v "^xbox_filter=" || true)
+    fi
+
+    if [ -n "$config_content" ]; then
+        echo "$config_content" > "$XBOX_CONFIG_FILE"
+        echo "xbox_default=$state" >> "$XBOX_CONFIG_FILE"
+        echo "xbox_filter=$filter" >> "$XBOX_CONFIG_FILE"
+    else
+        echo "xbox_default=$state" > "$XBOX_CONFIG_FILE"
+        echo "xbox_filter=$filter" >> "$XBOX_CONFIG_FILE"
+    fi
+
+    return 0
+}
+
+apply_xbox_default() {
+    local default_state
+    default_state=$(get_xbox_default)
+
+    if [ "$default_state" = "on" ] && [ "$xbox_mode" != true ]; then
+        xbox_mode=true
+        xbox_filter=$(get_xbox_default_filter)
+        if [ "$fix_mode" = true ]; then
+            echo "Note: --fix ignoré car mode xbox par défaut actif"
+            fix_mode=false
+        fi
+    fi
+}
+
+find_ds2xbox() {
+    if [ -x "/usr/bin/ds2xbox" ]; then
+        echo "/usr/bin/ds2xbox"
+        return 0
+    fi
+
+    if [ -x "$SCRIPT_DIR/ds2xbox" ]; then
+        echo "$SCRIPT_DIR/ds2xbox"
+        return 0
+    fi
+
+    return 1
+}
+
+start_ds2xbox() {
+    _DS2XBOX_BIN=$(find_ds2xbox)
+
+    if [ -z "$_DS2XBOX_BIN" ]; then
+        echo "Erreur: ds2xbox introuvable" >&2
+        return 1
+    fi
+
+    ensure_dir -s "$GWINE_LOCK_DIR"
+
+    local count_file="$GWINE_LOCK_DIR/xbox-instance-count"
+    local pids_file="$GWINE_LOCK_DIR/xbox-instance-pids"
+    local bin_pid_file="$GWINE_LOCK_DIR/xbox-ds2xbox-pid"
+    local sync_lock="$GWINE_LOCK_DIR/.xbox.lock"
+
+    exec 201>"$sync_lock"
+    flock 201
+
+    local count=0
+    if [ -f "$count_file" ]; then
+        count=$(cat "$count_file" 2>/dev/null || echo "0")
+    fi
+
+    local existing_pid=""
+    if [ -f "$bin_pid_file" ]; then
+        existing_pid=$(cat "$bin_pid_file" 2>/dev/null || echo "")
+    fi
+
+    if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
+        count=$((count + 1))
+        echo "$count" > "$count_file"
+        echo "$$" >> "$pids_file"
+        _DS2XBOX_PID="$existing_pid"
+        echo "ds2xbox déjà en cours (PID: $_DS2XBOX_PID), instance xbox #$count"
+    else
+        if [ "$count" -gt 0 ]; then
+            echo "ds2xbox (PID précédent mort), nettoyage et relance..."
+            echo "0" > "$count_file"
+            rm -f "$pids_file" 2>/dev/null
+            : > "$pids_file"
+            count=0
+        fi
+
+        local ds2xbox_args
+        ds2xbox_args=$(get_ds2xbox_args)
+        echo "Lancement de ds2xbox $ds2xbox_args..."
+        "$_DS2XBOX_BIN" $ds2xbox_args &
+        _DS2XBOX_PID=$!
+
+        if ! kill -0 "$_DS2XBOX_PID" 2>/dev/null; then
+            echo "Erreur: ds2xbox s'est arrêté immédiatement" >&2
+            flock -u 201
+            exec 201>&-
+            return 1
+        fi
+
+        echo "$_DS2XBOX_PID" > "$bin_pid_file"
+        count=1
+        echo "$count" > "$count_file"
+        : > "$pids_file"
+        echo "$$" >> "$pids_file"
+        echo "ds2xbox démarré (PID: $_DS2XBOX_PID)"
+    fi
+
+    flock -u 201
+    exec 201>&-
+
+    return 0
+}
+
+stop_ds2xbox() {
+    if [ -n "$_DS2XBOX_PID" ] && kill -0 "$_DS2XBOX_PID" 2>/dev/null; then
+        if [ ! -d "$GWINE_LOCK_DIR" ] || [ ! -f "$GWINE_LOCK_DIR/xbox-instance-count" ]; then
+            echo "Locks supprimés externement, arrêt direct de ds2xbox (PID: $_DS2XBOX_PID)..."
+            kill "$_DS2XBOX_PID" 2>/dev/null
+            wait "$_DS2XBOX_PID" 2>/dev/null
+            _DS2XBOX_PID=""
+            return 0
+        fi
+    else
+        _DS2XBOX_PID=""
+        return 0
+    fi
+
+    ensure_dir -s "$GWINE_LOCK_DIR"
+
+    local count_file="$GWINE_LOCK_DIR/xbox-instance-count"
+    local pids_file="$GWINE_LOCK_DIR/xbox-instance-pids"
+    local bin_pid_file="$GWINE_LOCK_DIR/xbox-ds2xbox-pid"
+    local sync_lock="$GWINE_LOCK_DIR/.xbox.lock"
+
+    if [ ! -f "$count_file" ]; then
+        return 0
+    fi
+
+    exec 201>"$sync_lock"
+    flock 201
+
+    local count
+    count=$(cat "$count_file" 2>/dev/null || echo "0")
+
+    count=$((count - 1))
+    if [ "$count" -lt 0 ]; then
+        count=0
+    fi
+
+    echo "$count" > "$count_file"
+
+    if [ -f "$pids_file" ]; then
+        sed -i "/^$$$/d" "$pids_file" 2>/dev/null || true
+        if [ ! -s "$pids_file" ]; then
+            rm -f "$pids_file" 2>/dev/null || true
+        fi
+    fi
+
+    local bin_pid=""
+    if [ -f "$bin_pid_file" ]; then
+        bin_pid=$(cat "$bin_pid_file" 2>/dev/null || echo "")
+    fi
+
+    if [ "$count" -eq 0 ]; then
+        if [ -n "$bin_pid" ] && kill -0 "$bin_pid" 2>/dev/null; then
+            echo "Arrêt de ds2xbox (PID: $bin_pid, dernière instance)..."
+            kill "$bin_pid" 2>/dev/null
+            wait "$bin_pid" 2>/dev/null
+        fi
+        rm -f "$count_file" "$pids_file" "$bin_pid_file" 2>/dev/null || true
+    else
+        echo "ds2xbox laissé actif (encore $count instance(s) xbox)"
+    fi
+
+    _DS2XBOX_PID=""
+
+    flock -u 201
+    exec 201>&-
 }
 
 # =============================================================================
@@ -5370,7 +5675,12 @@ kill_wineserver() {
         WINEPREFIX="$prefix_path" wineserver -k 2>/dev/null || true
     fi
     
-    rm -f "$GWINE_LOCK_DIR"/* 2>/dev/null || true
+    stop_ds2xbox
+    
+    rm -f "$GWINE_LOCK_DIR"/prefix-* 2>/dev/null || true
+    rm -f "$GWINE_LOCK_DIR"/master-* 2>/dev/null || true
+    rm -f "$GWINE_LOCK_DIR"/wineprefix-* 2>/dev/null || true
+    rm -f "$GWINE_LOCK_DIR"/active-exe-instance 2>/dev/null || true
 }
 
 wine_instance_start() {
@@ -5721,6 +6031,7 @@ build_bwrap_env_vars() {
     [ -n "${__VK_LAYER_NV_optimus:-}" ] && bwrap_add --setenv __VK_LAYER_NV_optimus "$__VK_LAYER_NV_optimus"
     [ -n "${__GLX_VENDOR_LIBRARY_NAME:-}" ] && bwrap_add --setenv __GLX_VENDOR_LIBRARY_NAME "$__GLX_VENDOR_LIBRARY_NAME"
     [ -n "${SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD:-}" ] && bwrap_add --setenv SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD "$SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD"
+    [ -n "${SDL_GAMECONTROLLER_IGNORE_DEVICES:-}" ] && bwrap_add --setenv SDL_GAMECONTROLLER_IGNORE_DEVICES "$SDL_GAMECONTROLLER_IGNORE_DEVICES"
     
     [ -n "${USER:-}" ] && bwrap_add --setenv USER "$USER"
     [ -n "${LOGNAME:-}" ] && bwrap_add --setenv LOGNAME "$LOGNAME"
@@ -5860,7 +6171,13 @@ read_wgp_config() {
 
     local FIX_FILE="$MOUNT_DIR/.fix"
     if [ -f "$FIX_FILE" ]; then
-        fix_mode=true
+        if [ "$xbox_mode" = true ]; then
+            echo "Note: fichier .fix ignoré car mode --xbox actif"
+        elif [ "$nofix_mode" = true ]; then
+            echo "Note: fichier .fix ignoré car --nofix actif"
+        else
+            fix_mode=true
+        fi
     fi
 }
 
@@ -7119,8 +7436,8 @@ check_exe_instance_conflict() {
                     
                     rm -f "$exe_instance_file"
                     rm -f "$GWINE_LOCK_DIR"/master-* 2>/dev/null || true
-                    rm -f "$GWINE_LOCK_DIR"/*-count 2>/dev/null || true
-                    rm -f "$GWINE_LOCK_DIR"/*-pids 2>/dev/null || true
+                    rm -f "$GWINE_LOCK_DIR"/prefix-*-count 2>/dev/null || true
+                    rm -f "$GWINE_LOCK_DIR"/prefix-*-pids 2>/dev/null || true
                     
                     echo "Toutes les instances arrêtées"
                 else
@@ -7229,6 +7546,10 @@ setup_wine_environment() {
         if [ "$current_runner" = "proton" ]; then
             export GST_PLUGIN_FEATURE_RANK="nvh264dec:0,nvh265dec:0"
         fi
+    fi
+    
+    if [ "$xbox_mode" = true ]; then
+        export SDL_GAMECONTROLLER_IGNORE_DEVICES="$(get_xbox_sdl_ignore_ids)"
     fi
     
     local WINE_LIBS="$WINE_DIR/lib:$WINE_DIR/lib32"
@@ -8935,6 +9256,13 @@ show_help() {
     echo "  --update          Mettre à jour les composants (DXVK, VKD3D, gwine)"
     echo "  --kdialog         Activer les dialogues graphiques kdialog pour --init et --update"
     echo "  --fix             Activer le mode fix manette"
+    echo "  --xbox            Émulation manettes Sony en Xbox 360 via ds2xbox (incompatible avec --fix)"
+    echo "  --xbox-ds4        Émulation DualShock 4 uniquement en Xbox 360"
+    echo "  --xbox-dualsense  Émulation DualSense uniquement en Xbox 360"
+    echo "  --xbox-on         Activer le mode xbox par défaut pour tous les lancements"
+    echo "  --xbox-off        Désactiver le mode xbox par défaut"
+    echo "  --reset           Réinitialiser toutes les options par défaut"
+    echo "  --nofix           Ignorer le fichier .fix d'un jeu"
     echo "  --exewgp          Mode interactif pour choisir l'exécutable dans un WGP"
     echo "  --wine            Configurer le runner Wine standard (gwine) comme défaut"
     echo "  --proton          Configurer le runner Proton (gwine-proton) comme défaut"
@@ -8982,7 +9310,7 @@ show_help() {
 }
 
 # Options valides reconnues par gwine
-VALID_OPTIONS=("--help" "-h" "--fix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--wine" "--proton" "--dxvk" "--dxvk-async")
+VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--wine" "--proton" "--dxvk" "--dxvk-async")
 
 # Vérifie si une option est valide
 is_valid_option() {
@@ -9010,6 +9338,37 @@ parse_arguments() {
                 ;;
             --fix)
                 fix_mode=true
+                shift
+                ;;
+            --xbox)
+                xbox_mode=true
+                xbox_filter="all"
+                shift
+                ;;
+            --xbox-ds4)
+                xbox_mode=true
+                xbox_filter="ds4"
+                shift
+                ;;
+            --xbox-dualsense)
+                xbox_mode=true
+                xbox_filter="dualsense"
+                shift
+                ;;
+            --xbox-on)
+                xbox_on_mode=true
+                shift
+                ;;
+            --xbox-off)
+                xbox_off_mode=true
+                shift
+                ;;
+            --reset)
+                reset_mode=true
+                shift
+                ;;
+            --nofix)
+                nofix_mode=true
                 shift
                 ;;
             --exewgp)
@@ -9115,7 +9474,7 @@ $2"
             --kill)
                 echo "Arrêt forcé de tous les processus Gwine..."
                 pgrep -f -i "\.exe|\.bat" | grep -v $$ | xargs -r kill -9 2>/dev/null
-                rm -rf /tmp/gwine-locks-$USER/ 2>/dev/null
+                kill_wineserver
                 echo "Terminé"
                 exit 0
                 ;;
@@ -9172,6 +9531,13 @@ run_wgp_mode() {
     init_wgp_variables
     mount_wgp
 
+    if [ "$xbox_mode" = true ]; then
+        if ! start_ds2xbox; then
+            cleanup_wgp
+            exit 1
+        fi
+    fi
+
     init_wineprefix
 
     setup_saves_symlink
@@ -9218,9 +9584,9 @@ run_wgp_mode() {
     
     # Trap pour nettoyer à l'interruption (Ctrl-C)
     # Tue l'arbre de processus du jeu + les processus orphelins liés à ce WGP
-    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 0.5; kill_process_tree "$GWINE_GAME_PID" KILL; kill_wgp_orphans "$GWINE_WGP_FILE" "$WINEPREFIX"; sleep 0.5; echo "Nettoyage des overlays..."; cleanup_wgp; restore_padfix_setting; rm -f "$lock_file" 2>/dev/null; exit 130' INT TERM
+    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 0.5; kill_process_tree "$GWINE_GAME_PID" KILL; kill_wgp_orphans "$GWINE_WGP_FILE" "$WINEPREFIX"; sleep 0.5; echo "Nettoyage des overlays..."; cleanup_wgp; stop_ds2xbox; restore_padfix_setting; rm -f "$lock_file" 2>/dev/null; exit 130' INT TERM
     # Trap EXIT pour nettoyage normal (pas de kill car le jeu s'est terminé normalement)
-    trap 'cleanup_wgp; rm -f "$lock_file" 2>/dev/null' EXIT
+    trap 'cleanup_wgp; stop_ds2xbox; rm -f "$lock_file" 2>/dev/null' EXIT
 
     # Récupérer le dossier contenant le fichier .wgp
     local wgp_dir
@@ -9232,12 +9598,19 @@ run_wgp_mode() {
     # Désactiver le trap pour éviter le double nettoyage (trap EXIT s'exécuterait aussi)
     trap - EXIT INT TERM
     cleanup_wgp
+    stop_ds2xbox
     restore_padfix_setting
     rm -f "$lock_file" 2>/dev/null
 }
 
 run_classic_mode() {
     export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+    
+    if [ "$xbox_mode" = true ]; then
+        if ! start_ds2xbox; then
+            exit 1
+        fi
+    fi
     
     local filename
     filename="$(basename "$fullpath")"
@@ -9299,12 +9672,13 @@ run_classic_mode() {
 
     local lock_file="/tmp/wgp-lock-$filename"
     echo "$$:$(date +%s)" > "$lock_file"
-    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 1; kill_process_tree "$GWINE_GAME_PID" KILL; echo "Arrêt des processus orphelins..."; for pid in $(pgrep -f "\.exe"); do if [ -r "/proc/$pid/environ" ] && grep -q "WINEPREFIX=$WINEPREFIX" "/proc/$pid/environ" 2>/dev/null; then cmdline=$(tr "\0" " " < "/proc/$pid/cmdline" 2>/dev/null); if ! [[ "$cmdline" =~ (winedevice|plugplay|explorer|services|svchost|rpcss|wineboot|steam|msiexec|regsvr32|spoolsv|conhost|wmplayer|taskkill|wineconsole)\.exe ]]; then kill "$pid" 2>/dev/null; fi; fi; done; restore_padfix_setting; sleep 1; rm -f "$lock_file" 2>/dev/null; exit 130' INT TERM
-    trap 'restore_padfix_setting; rm -f "$lock_file" 2>/dev/null' EXIT
+    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 1; kill_process_tree "$GWINE_GAME_PID" KILL; echo "Arrêt des processus orphelins..."; for pid in $(pgrep -f "\.exe"); do if [ -r "/proc/$pid/environ" ] && grep -q "WINEPREFIX=$WINEPREFIX" "/proc/$pid/environ" 2>/dev/null; then cmdline=$(tr "\0" " " < "/proc/$pid/cmdline" 2>/dev/null); if ! [[ "$cmdline" =~ (winedevice|plugplay|explorer|services|svchost|rpcss|wineboot|steam|msiexec|regsvr32|spoolsv|conhost|wmplayer|taskkill|wineconsole)\.exe ]]; then kill "$pid" 2>/dev/null; fi; fi; done; stop_ds2xbox; restore_padfix_setting; sleep 1; rm -f "$lock_file" 2>/dev/null; exit 130' INT TERM
+    trap 'stop_ds2xbox; restore_padfix_setting; rm -f "$lock_file" 2>/dev/null' EXIT
 
     launch_wine_game "$new_fullpath" "$args" "$filename" "$env_vars" "false"
     
     trap - EXIT INT TERM
+    stop_ds2xbox
     restore_padfix_setting
     rm -f "$lock_file" 2>/dev/null
 }
@@ -9316,6 +9690,35 @@ run_classic_mode() {
 main() {
     # Parser les arguments en premier
     parse_arguments "$@"
+    
+    if [ "$reset_mode" = true ]; then
+        reset_gwine_options
+        export init_mode=true
+    fi
+    
+    if [ "$xbox_on_mode" = true ] || [ "$xbox_off_mode" = true ]; then
+        if [ "$xbox_on_mode" = true ]; then
+            local filter="${xbox_filter:-all}"
+            set_xbox_default "on" "$filter"
+            echo "Mode xbox activé par défaut (filtre: $filter)"
+            echo "Tous les lancements gwine utiliseront ds2xbox automatiquement."
+        else
+            set_xbox_default "off"
+            echo "Mode xbox par défaut désactivé."
+        fi
+        exit 0
+    fi
+    
+    apply_xbox_default
+    
+    if [ "$xbox_mode" = true ] && [ "$fix_mode" = true ]; then
+        echo "Note: --fix ignoré car --xbox actif"
+        fix_mode=false
+    fi
+    if [ "$nofix_mode" = true ] && [ "$fix_mode" = true ]; then
+        echo "Note: --fix ignoré car --nofix actif"
+        fix_mode=false
+    fi
     
     # Initialiser le mode DXVK au début (avant toute opération)
     # pour que les fonctions de composants utilisent le bon répertoire
