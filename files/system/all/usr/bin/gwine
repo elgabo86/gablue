@@ -7305,6 +7305,17 @@ check_exe_instance_conflict() {
                     rm -f "$GWINE_LOCK_DIR"/prefix-*-count 2>/dev/null || true
                     rm -f "$GWINE_LOCK_DIR"/prefix-*-pids 2>/dev/null || true
                     
+                    if [ -f "$GWINE_LOCK_DIR/xbox-ds2xbox-pid" ]; then
+                        local ds2xbox_pid
+                        ds2xbox_pid=$(cat "$GWINE_LOCK_DIR/xbox-ds2xbox-pid" 2>/dev/null || echo "")
+                        if [ -n "$ds2xbox_pid" ] && kill -0 "$ds2xbox_pid" 2>/dev/null; then
+                            echo "0" > "$GWINE_LOCK_DIR/xbox-instance-count"
+                            : > "$GWINE_LOCK_DIR/xbox-instance-pids"
+                        else
+                            rm -f "$GWINE_LOCK_DIR/xbox-instance-count" "$GWINE_LOCK_DIR/xbox-instance-pids" "$GWINE_LOCK_DIR/xbox-ds2xbox-pid" 2>/dev/null || true
+                        fi
+                    fi
+                    
                     echo "Toutes les instances arrêtées"
                 else
                     error_exit "Lancement annulé"
