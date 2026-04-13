@@ -6,19 +6,12 @@ ARG FEDORA_VERSION
 ARG KERNEL_TYPE
 ARG KERNEL_VERSION
 ARG KERNEL_FLAVOR
-ARG NVIDIA_VERSION
 ARG DX_MODE
 
 # Étape intermédiaire : récupération du kernel et des akmods depuis ublue-os
 # Utilise le système d'akmods de Bazzite unstable (kernel ogc)
 FROM ghcr.io/ublue-os/akmods:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods
 FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-extra
-
-# Étape intermédiaire : récupération des pilotes NVIDIA depuis le conteneur OCI bazzite avec version spécifique
-FROM ghcr.io/bazzite-org/nvidia-drivers:${NVIDIA_VERSION}-f${FEDORA_VERSION}-x86_64 AS nvidia
-
-# Étape intermédiaire : récupérer les pilotes NVIDIA Open (même source, on filtre plus tard)
-FROM ghcr.io/bazzite-org/nvidia-drivers:${NVIDIA_VERSION}-f${FEDORA_VERSION}-x86_64 AS nvidia-open
 
 # Image de base pour la construction finale
 FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${FEDORA_VERSION}
@@ -69,24 +62,6 @@ RUN --mount=type=cache,dst=/var/cache \
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     sh /ctx/mesa && \
-    sh /ctx/cleanup
-
-    # Installation des pilotes NVIDIA (pour la variante nvidia uniquement)
-RUN --mount=type=cache,dst=/var/cache \
-    --mount=type=cache,dst=/var/log \
-    --mount=type=bind,from=nvidia,src=/,dst=/rpms/nvidia \
-    if [ "$VARIANT" = "nvidia" ]; then \
-        sh /ctx/nvidia; \
-    fi && \
-    sh /ctx/cleanup
-
-# Installation des pilotes NVIDIA Open (pour la variante nvidia-open uniquement)
-RUN --mount=type=cache,dst=/var/cache \
-    --mount=type=cache,dst=/var/log \
-    --mount=type=bind,from=nvidia-open,src=/,dst=/rpms/nvidia \
-    if [ "$VARIANT" = "nvidia-open" ]; then \
-        sh /ctx/nvidia; \
-    fi && \
     sh /ctx/cleanup
 
 # Installation des paquets RPM (version test sans libs 32-bit sauf Mesa)
