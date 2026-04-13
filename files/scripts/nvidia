@@ -47,9 +47,6 @@ dnf5 install -y \
     /rpms/nvidia/libnvidia-container1-1* \
     /rpms/nvidia/libnvidia-container-tools-1* \
     libva-nvidia-driver \
-    nvidia-driver-cuda \
-    nvidia-driver-cuda-libs.i686 \
-    libnvidia-ml.i686 \
     ${VARIANT_PKGS}
 
 # Supprimer les ICD Vulkan Nouveau pour éviter les conflits avec NVIDIA
