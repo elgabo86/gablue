@@ -11,10 +11,6 @@ if ! flock -w 3 200; then
     exit 1
 fi
 
-# Maintenant qu'on a le lock, tuer proprement l'ancien processus
-pkill -f gamepadshortcuts || true
-sleep 1
-
 # Boucle pour relancer gamepadshortcuts si ça se termine
 while true; do
     /usr/bin/gamepadshortcuts || true
