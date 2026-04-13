@@ -147,9 +147,6 @@ dnf5 -y install \
     gamemode \
     gamemode.i686
 
-dnf5 -y --setopt=install_weak_deps=False install \
-    ScopeBuddy
-
 # Optimisation système
 dnf5 -y install \
     earlyoom
