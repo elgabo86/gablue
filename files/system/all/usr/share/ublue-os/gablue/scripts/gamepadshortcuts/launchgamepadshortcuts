@@ -12,11 +12,11 @@ if ! flock -w 3 200; then
 fi
 
 # Maintenant qu'on a le lock, tuer proprement l'ancien processus
-pkill -f gamepadshortcuts.py || true
+pkill -f gamepadshortcuts || true
 sleep 1
 
-# Boucle pour relancer gamepadshortcuts.py si ça se termine
+# Boucle pour relancer gamepadshortcuts si ça se termine
 while true; do
-    /usr/bin/python3 /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/gamepadshortcuts.py || true
+    /usr/bin/gamepadshortcuts || true
     sleep 1
 done

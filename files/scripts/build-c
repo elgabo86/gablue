@@ -1,0 +1,22 @@
+#!/usr/bin/bash
+
+# Script de compilation des sources C du projet
+# Compile et installe les binaires C natifs pour remplacer les scripts Python gourmands en RAM
+
+set -eoux pipefail
+
+# =============================================================================
+# COMPILATION DES SOURCES C
+# =============================================================================
+
+# Compilation et installation de gamepadshortcuts
+# Remplace le script Python gamepadshortcuts.py (~28Mo RAM) par un binaire C natif (~500Ko RAM)
+if [ -d /src/gamepadshortcuts ]; then
+    make -C /src/gamepadshortcuts install DESTDIR=
+    rm -rf /src/gamepadshortcuts
+else
+    echo "ATTENTION: Sources C non trouvees dans /src/gamepadshortcuts"
+fi
+
+# Nettoyage du repertoire sources si vide
+rmdir /src 2>/dev/null || true

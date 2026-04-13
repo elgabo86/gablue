@@ -20,11 +20,19 @@ def find_controller():
     devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
     for dev in devices:
         print(f"Device: {dev.path} - {dev.name}")
-        if (("Sony" in dev.name or "DualSense" in dev.name or "DualShock" in dev.name or
-             "Nintendo" in dev.name or "Xbox" in dev.name or "Microsoft" in dev.name)
-            and "Touchpad" not in dev.name and "Motion Sensors" not in dev.name):
+        if "Touchpad" in dev.name or "Motion Sensors" in dev.name:
+            continue
+        if ("Sony" in dev.name or "DualSense" in dev.name or "DualShock" in dev.name or
+            "Nintendo" in dev.name or "Xbox" in dev.name or "Microsoft" in dev.name or
+            "Wireless Controller" in dev.name or "Gamepad" in dev.name):
             print(f"Trouvé : {dev.path} - {dev.name}")
             return dev.path
+        capabilities = dev.capabilities()
+        if evdev.ecodes.EV_KEY in capabilities:
+            keys = capabilities[evdev.ecodes.EV_KEY]
+            if evdev.ecodes.BTN_A in keys or evdev.ecodes.BTN_GAMEPAD in keys:
+                print(f"Trouvé (capacités) : {dev.path} - {dev.name}")
+                return dev.path
     print("Erreur : Aucune manette valide trouvée (Sony, Nintendo, Xbox).")
     sys.exit(1)
 

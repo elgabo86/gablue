@@ -30,6 +30,9 @@ ARG DX_MODE
 ARG KERNEL_FLAVOR
 ARG KERNEL_VERSION
 
+# Copie des sources C pour compilation
+COPY src/gamepadshortcuts /src/gamepadshortcuts
+
 # Copie des fichiers système dans l'image
 COPY files/scripts /ctx/
 
@@ -90,6 +93,12 @@ RUN --mount=type=cache,dst=/var/cache \
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     sh /ctx/rpm-test && \
+    sh /ctx/cleanup
+
+# Compilation des sources C
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    sh /ctx/build-c && \
     sh /ctx/cleanup
 
 # Post-installation : configuration finale (version test avec OpenGamepadUI)
