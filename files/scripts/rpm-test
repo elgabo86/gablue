@@ -50,7 +50,6 @@ dnf5 -y install \
     tldr \
     git \
     nmap \
-    terminus-fonts-console \
     plocate \
     squashfuse \
     funionfs \
@@ -186,11 +185,13 @@ dnf5 -y install rom-properties-utils
 # POLICES
 # =============================================================================
 
-# Polices de qualité pour développement et usage général
+# Polices de Bazzite (aligné sur le Containerfile upstream)
 dnf5 -y --setopt=install_weak_deps=False install \
     nerd-fonts \
-    adobe-source-code-pro-fonts \
-    google-droid-sans-mono-fonts
+    twitter-twemoji-fonts \
+    google-noto-sans-cjk-fonts \
+    lato-fonts \
+    fira-code-fonts
 
 # =============================================================================
 # PILOTES ET SUPPORT MATÉRIEL
