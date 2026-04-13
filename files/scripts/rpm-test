@@ -250,8 +250,7 @@ dnf5 -y install \
 # Paquets supplémentaires pour la variante main
 if [ "$VARIANT" == "main" ]; then
     dnf5 -y install \
-        radeontop \
-        waydroid
+        radeontop
 fi
 
 # =============================================================================

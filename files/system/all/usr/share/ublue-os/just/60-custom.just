@@ -574,14 +574,6 @@ distrobox-archgab:
     #!/usr/bin/bash
     /usr/libexec/archgab-update
 
-# Remove waydroid
-waydroid-remove:
-    #!/usr/bin/bash
-    sudo systemctl stop waydroid-container.service &&
-    bash -c 'sudo rm -rf /var/lib/waydroid /home/.waydroid ~/waydroid ~/.share/waydroid ~/.local/share/applications/*aydroid* ~/.local/share/waydroid' &&
-    update-desktop-database ~/.local/share/applications &&
-    echo "ALL DONE!!!"
-
 # Remove default bottle but keep user data
 windows-remove:
     #!/usr/bin/bash

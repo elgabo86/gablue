@@ -323,7 +323,7 @@ if [ "$VARIANT" == "nvidia" ]; then
 fi
 
 if [ "$VARIANT" == "main" ]; then
-    dnf5 -y install waydroid
+    dnf5 -y install radeontop
 fi
 ```
 
@@ -466,7 +466,7 @@ Configuration post-installation étendue :
 Activation/désactivation des services systemd :
 - **Activés** : system-flatpak-setup, earlyoom, rpm-ostreed-automatic, flatpak-update
 - **Désactivés** : scx_loader, tailscaled, displaylink
-- **Conditionnels** : libvirt (DX), waydroid (main)
+- **Conditionnels** : libvirt (DX)
 
 **systemd-test** ajoute :
 - Services OpenGamepadUI désactivés : inputplumber, powerstation
