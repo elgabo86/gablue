@@ -3404,10 +3404,17 @@ install_all_wincomponents() {
     install_d3dcompiler 43
     install_d3dcompiler_47
     
-    install_xact
-    
-    if [ "$WINEARCH" = "win64" ]; then
-        install_xact_x64
+    local current_runner
+    current_runner=$(get_current_runner)
+
+    if [ "$current_runner" = "proton" ]; then
+        install_xact
+
+        if [ "$WINEARCH" = "win64" ]; then
+            install_xact_x64
+        fi
+    else
+        echo "  Installation de XACT ignorée (runner wine, requis uniquement avec proton)"
     fi
     
     install_msls31
@@ -8599,11 +8606,13 @@ manage_registry() {
             shift
             local reg_value=""
             local reg_data=""
+            local reg_type=""
             local reg_force=false
             while [ $# -gt 0 ]; do
                 case "$1" in
                     /v) reg_value="$2"; shift 2 ;;
                     /ve) reg_value=""; shift ;;
+                    /t) reg_type="$2"; shift 2 ;;
                     /d) reg_data="$2"; shift 2 ;;
                     /f) reg_force=true; shift ;;
                     *) shift ;;
@@ -8612,8 +8621,13 @@ manage_registry() {
             if [ -z "$reg_value" ] && [ "$reg_force" = false ]; then
                 error_exit "Spécifiez /v <valeur> ou /f pour une valeur par défaut"
             fi
-            echo "Ajout: [$reg_key] $reg_value = $reg_data"
-            if WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add "$reg_key" /v "$reg_value" /d "$reg_data" /f >/dev/null 2>&1; then
+            local reg_cmd_args=("$reg_key" /v "$reg_value")
+            if [ -n "$reg_type" ]; then
+                reg_cmd_args+=(/t "$reg_type")
+            fi
+            reg_cmd_args+=(/d "$reg_data" /f)
+            echo "Ajout: [$reg_key] $reg_value = $reg_data${reg_type:+ ($reg_type)}"
+            if WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add "${reg_cmd_args[@]}" >/dev/null 2>&1; then
                 echo "Valeur ajoutée avec succès"
             else
                 error_exit "Échec de l'ajout de la valeur de registre"
@@ -9380,8 +9394,8 @@ $2"
                 ;;
             --reg)
                 reg_mode=true
-                reg_args=("$2")
                 shift
+                reg_args=()
                 while [ $# -gt 0 ] && [[ "$1" != --* ]]; do
                     reg_args+=("$1")
                     shift
