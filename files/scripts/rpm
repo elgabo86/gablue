@@ -145,10 +145,6 @@ dnf5 -y install \
     gamemode \
     gamemode.i686
 
-# Optimisation système
-dnf5 -y install \
-    earlyoom
-
 # =============================================================================
 # EXTENSIONS KDE (UNIQUEMENT KINOITE)
 # =============================================================================
