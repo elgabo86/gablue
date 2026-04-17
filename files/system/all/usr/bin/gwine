@@ -9593,8 +9593,10 @@ run_classic_mode() {
         local temp_dir
         temp_dir=$(mktemp -d)
         temp_base="$temp_dir"
-        ln -sf "$new_fullpath" "$temp_dir/$filename"
-        new_fullpath="$temp_dir/$filename"
+        local exe_dir
+        exe_dir="$(dirname "$new_fullpath")"
+        ln -sf "$exe_dir" "$temp_dir/gamedir"
+        new_fullpath="$temp_dir/gamedir/$filename"
     fi
     [ -n "$temp_base" ] && trap 'rm -rf "$temp_base"' EXIT
     
