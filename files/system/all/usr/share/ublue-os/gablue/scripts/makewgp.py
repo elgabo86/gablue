@@ -761,7 +761,7 @@ class WGPWindow(QMainWindow):
     
     def apply_stylesheet(self):
         """Applique un thème moderne et cohérent à l'interface"""
-        self.setStyleSheet("""
+        self._base_stylesheet = """
             /* === FOND ET FENÊTRE === */
             QMainWindow {
                 background-color: #1A1A1F;
@@ -770,8 +770,6 @@ class WGPWindow(QMainWindow):
             QWidget {
                 background-color: #1A1A1F;
                 color: #E8E8EC;
-                font-family: 'Segoe UI', 'Noto Sans', sans-serif;
-                font-size: 13px;
             }
             
             /* === TITRES === */
@@ -1037,7 +1035,8 @@ class WGPWindow(QMainWindow):
                 border-radius: 6px;
                 padding: 6px 10px;
             }
-        """)
+        """
+        self.setStyleSheet(self._base_stylesheet)
     
     def setup_ui(self):
         """Configure l'interface utilisateur avec un layout dynamique"""
@@ -1051,14 +1050,14 @@ class WGPWindow(QMainWindow):
         main_layout.setContentsMargins(15, 15, 15, 15)
         
         # Titre
-        title_label = QLabel("Création du paquet WGP")
+        self.title_label = QLabel("Création du paquet WGP")
         title_font = QFont()
         title_font.setPointSize(16)
         title_font.setBold(True)
-        title_label.setFont(title_font)
-        title_label.setStyleSheet("color: #588CFF;")
-        title_label.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(title_label)
+        self.title_label.setFont(title_font)
+        self.title_label.setStyleSheet("color: #588CFF;")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(self.title_label)
         
         # === SECTION HAUTE: Informations générales ===
         names_group = QGroupBox("Informations générales")
@@ -1068,11 +1067,11 @@ class WGPWindow(QMainWindow):
 
         # Nom du fichier (sortie) - À GAUCHE
         name_label = QLabel("Nom du fichier:")
-        name_label.setFixedWidth(100)
+        name_label.setMinimumWidth(80)
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("Nom du fichier WGP...")
         names_layout.addWidget(name_label)
-        names_layout.addWidget(self.name_input)
+        names_layout.addWidget(self.name_input, stretch=1)
 
         names_layout.addSpacing(20)
 
@@ -1080,21 +1079,21 @@ class WGPWindow(QMainWindow):
         internal_name_layout = QVBoxLayout()
         internal_name_layout.setSpacing(2)
         internal_name_label = QLabel("Nom du jeu")
-        internal_name_label.setFixedWidth(110)
-        internal_name_sublabel = QLabel("(Dossier interne)")
-        internal_name_sublabel.setFixedWidth(110)
-        internal_name_sublabel.setStyleSheet("color: #888; font-size: 9px;")
-        internal_name_sublabel.setToolTip("Nom du dossier utilisé pour les chemins internes (sauvegardes, etc.)")
+        internal_name_label.setMinimumWidth(80)
+        self.internal_name_sublabel = QLabel("(Dossier interne)")
+        self.internal_name_sublabel.setMinimumWidth(80)
+        self.internal_name_sublabel.setStyleSheet("color: #888; font-size: 9px;")
+        self.internal_name_sublabel.setToolTip("Nom du dossier utilisé pour les chemins internes (sauvegardes, etc.)")
         self.internal_name_input = QLineEdit()
         self.internal_name_input.setPlaceholderText("Nom du jeu...")
         
         internal_name_layout.addWidget(internal_name_label)
-        internal_name_layout.addWidget(internal_name_sublabel)
+        internal_name_layout.addWidget(self.internal_name_sublabel)
         
         internal_name_widget = QWidget()
         internal_name_widget.setLayout(internal_name_layout)
         names_layout.addWidget(internal_name_widget)
-        names_layout.addWidget(self.internal_name_input)
+        names_layout.addWidget(self.internal_name_input, stretch=1)
 
         main_layout.addWidget(names_group)
 
@@ -1108,62 +1107,46 @@ class WGPWindow(QMainWindow):
         left_layout.setSpacing(8)
         middle_layout.addLayout(left_layout, stretch=1)
         
-        # Exécutable principal (compact)
+        # Exécutable principal
         exe_group = QGroupBox("Exécutable principal")
         exe_layout = QVBoxLayout(exe_group)
         exe_layout.setContentsMargins(8, 12, 8, 8)
         self.exe_list = QListWidget()
-        self.exe_list.setMaximumHeight(80)
         self.exe_list.setMinimumHeight(50)
         self.exe_list.currentRowChanged.connect(self.on_exe_selected)
         exe_layout.addWidget(self.exe_list)
-        left_layout.addWidget(exe_group)
+        left_layout.addWidget(exe_group, stretch=2)
         
-        # Icône du jeu (déplacée ici)
+        # Icône du jeu
         icon_group = QGroupBox("Icône du jeu")
-        icon_layout = QHBoxLayout(icon_group)
+        icon_layout = QVBoxLayout(icon_group)
         icon_layout.setContentsMargins(8, 12, 8, 8)
-        icon_layout.setSpacing(10)
+        icon_layout.setSpacing(6)
         
-        # Partie gauche: Zone de défilement pour les icônes (1 rangée)
-        left_icon_layout = QVBoxLayout()
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll_area.setFixedHeight(85)
-        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        # Zone de défilement pour les icônes (grille dynamique, pleine largeur)
+        self.icon_scroll_area = QScrollArea()
+        self.icon_scroll_area.setWidgetResizable(True)
+        self.icon_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.icon_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.icon_scroll_area.setMinimumHeight(80)
+        self.icon_scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         
-        # Widget conteneur pour la ligne d'icônes (1 rangée horizontale)
+        # Widget conteneur pour la grille d'icônes
         self.icons_container = QWidget()
-        self.icons_layout = QHBoxLayout(self.icons_container)
+        self.icons_layout = QGridLayout(self.icons_container)
         self.icons_layout.setSpacing(6)
-        self.icons_layout.setAlignment(Qt.AlignLeft)
+        self.icons_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.icons_layout.setContentsMargins(4, 4, 4, 4)
         
-        scroll_area.setWidget(self.icons_container)
-        left_icon_layout.addWidget(scroll_area)
+        self.icon_scroll_area.setWidget(self.icons_container)
+        icon_layout.addWidget(self.icon_scroll_area, stretch=1)
 
-        # Label d'info + Bouton ajouter
+        # Barre du bas: aperçu + info + bouton ajouter
         icon_bottom_layout = QHBoxLayout()
-        self.icon_info_label = QLabel("Cliquez sur une icône")
-        self.icon_info_label.setStyleSheet("color: #B4B4BE; font-size: 10px;")
-        icon_bottom_layout.addWidget(self.icon_info_label)
-        icon_bottom_layout.addStretch()
-        add_icon_btn = QPushButton()
-        add_icon_btn.setFixedSize(36, 32)
-        add_icon_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
-        add_icon_btn.setToolTip("Ajouter une icône personnalisée")
-        add_icon_btn.clicked.connect(self.select_custom_icon)
-        icon_bottom_layout.addWidget(add_icon_btn)
-        left_icon_layout.addLayout(icon_bottom_layout)
+        icon_bottom_layout.setSpacing(10)
         
-        icon_layout.addLayout(left_icon_layout)
-
-        # Partie droite: Aperçu de l'icône sélectionnée
-        preview_layout = QVBoxLayout()
         self.icon_preview_label = QLabel()
-        self.icon_preview_label.setFixedSize(96, 96)
+        self.icon_preview_label.setFixedSize(64, 64)
         self.icon_preview_label.setAlignment(Qt.AlignCenter)
         self.icon_preview_label.setStyleSheet("""
             QLabel {
@@ -1172,12 +1155,24 @@ class WGPWindow(QMainWindow):
                 border-radius: 8px;
             }
         """)
-        preview_layout.addWidget(self.icon_preview_label, alignment=Qt.AlignCenter)
-        preview_layout.addStretch()
+        icon_bottom_layout.addWidget(self.icon_preview_label)
         
-        icon_layout.addLayout(preview_layout)
+        self.icon_info_label = QLabel("Cliquez sur une icône")
+        self.icon_info_label.setStyleSheet("color: #B4B4BE; font-size: 10px;")
+        self.icon_info_label.setAlignment(Qt.AlignVCenter)
+        icon_bottom_layout.addWidget(self.icon_info_label)
+        icon_bottom_layout.addStretch()
+        
+        add_icon_btn = QPushButton()
+        add_icon_btn.setFixedSize(36, 32)
+        add_icon_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
+        add_icon_btn.setToolTip("Ajouter une icône personnalisée")
+        add_icon_btn.clicked.connect(self.select_custom_icon)
+        icon_bottom_layout.addWidget(add_icon_btn)
+        
+        icon_layout.addLayout(icon_bottom_layout)
 
-        left_layout.addWidget(icon_group)
+        left_layout.addWidget(icon_group, stretch=3)
         
         # Arguments
         args_group = QGroupBox("Arguments")
@@ -1212,7 +1207,7 @@ class WGPWindow(QMainWindow):
         options_layout.addSpacing(10)
         
         xbox_label = QLabel("Xbox:")
-        xbox_label.setFixedWidth(40)
+        xbox_label.setMinimumWidth(30)
         options_layout.addWidget(xbox_label)
         
         self.xbox_combo = QComboBox()
@@ -1225,7 +1220,7 @@ class WGPWindow(QMainWindow):
         options_layout.addSpacing(10)
         
         comp_label = QLabel("Compression:")
-        comp_label.setFixedWidth(85)
+        comp_label.setMinimumWidth(75)
         options_layout.addWidget(comp_label)
         
         self.comp_combo = QComboBox()
@@ -1285,7 +1280,7 @@ class WGPWindow(QMainWindow):
         saves_btn_layout.addWidget(self.remove_save_btn)
         saves_btn_layout.addStretch()
         saves_layout.addLayout(saves_btn_layout)
-        right_layout.addWidget(saves_group)
+        right_layout.addWidget(saves_group, stretch=1)
         
         # Fichiers temporaires (extras)
         extras_group = QGroupBox("Fichiers temporaires (extras)")
@@ -1322,7 +1317,7 @@ class WGPWindow(QMainWindow):
         extras_btn_layout.addWidget(self.remove_extra_btn)
         extras_btn_layout.addStretch()
         extras_layout.addLayout(extras_btn_layout)
-        right_layout.addWidget(extras_group)
+        right_layout.addWidget(extras_group, stretch=1)
         
         # Fichiers temporaires (temps)
         temps_group = QGroupBox("Fichiers temporaires (temps)")
@@ -1360,7 +1355,7 @@ class WGPWindow(QMainWindow):
         temps_btn_layout.addStretch()
         temps_layout.addLayout(temps_btn_layout)
         
-        right_layout.addWidget(temps_group)
+        right_layout.addWidget(temps_group, stretch=1)
         
         # === BOUTONS PRINCIPAUX ===
         button_layout = QHBoxLayout()
@@ -1389,6 +1384,7 @@ class WGPWindow(QMainWindow):
         self.internal_game_name = ""  # Nom interne pour .gamename et chemins
         self.pds_path = ""  # Chemin vers le fichier .pds
         self.temp_icons = []  # Liste des icônes temporaires à nettoyer
+        self._current_icon_size = 64
     
     def load_game_directory(self, game_dir):
         """Charge le dossier du jeu et les fichiers de configuration existants"""
@@ -1761,7 +1757,7 @@ class WGPWindow(QMainWindow):
             no_icon_label = QLabel("Aucune icône trouvée\n(sélectionnez un .exe)")
             no_icon_label.setStyleSheet("color: #888; font-size: 10px;")
             no_icon_label.setAlignment(Qt.AlignCenter)
-            self.icons_layout.addWidget(no_icon_label)
+            self.icons_layout.addWidget(no_icon_label, 0, 0, 1, -1)
             # Vider l'aperçu (sans texte)
             self.icon_preview_label.clear()
             self.icon_preview_label.setStyleSheet("""
@@ -1773,22 +1769,48 @@ class WGPWindow(QMainWindow):
             """)
             return
         
-        # Créer un widget pour chaque icône (1 rangée horizontale)
+        # Placer les icônes en grille dynamique
+        self._current_icon_size = self._calc_icon_size()
+        spacing = 6
+        cols = max(1, self.icon_scroll_area.viewport().width() // (self._current_icon_size + spacing))
+        
         for idx, icon_info in enumerate(self.available_icons):
             icon_widget = self.create_icon_widget(icon_info, idx)
-            self.icons_layout.addWidget(icon_widget)
+            row = idx // cols
+            col = idx % cols
+            self.icons_layout.addWidget(icon_widget, row, col)
             self.icon_widgets.append(icon_widget)
         
         # Sélectionner la première icône par défaut (icône existante si présente)
         if self.available_icons:
             self.select_icon(0)
     
+    def _calc_icon_size(self):
+        """Calcule la taille des icônes en fonction de la largeur disponible"""
+        if not hasattr(self, 'icon_scroll_area'):
+            return 64
+        viewport_width = self.icon_scroll_area.viewport().width()
+        scale = getattr(self, '_last_scale', 1.0)
+        max_size = int(64 * scale)
+        min_size = max(28, int(40 * scale))
+        spacing = 6
+        margins = 8
+        for target_cols in range(8, 2, -1):
+            size = (viewport_width - margins - (target_cols - 1) * spacing) // target_cols
+            size = min(size, max_size)
+            if size >= min_size:
+                return size
+        return min_size
+    
     def create_icon_widget(self, icon_info, idx):
         """Crée un widget pour une icône cliquable"""
         from PySide6.QtWidgets import QFrame
         
+        size = self._current_icon_size
+        img_size = max(16, size - 24)
+        
         container = QFrame()
-        container.setFixedSize(64, 64)
+        container.setFixedSize(size, size)
         container.setStyleSheet("""
             QFrame {
                 border: 2px solid transparent;
@@ -1808,20 +1830,24 @@ class WGPWindow(QMainWindow):
         
         # Image
         icon_label = QLabel()
-        icon_label.setFixedSize(40, 40)
+        icon_label.setObjectName("icon_img")
+        icon_label.setFixedSize(img_size, img_size)
         icon_label.setAlignment(Qt.AlignCenter)
         
         pixmap = QPixmap(icon_info['path'])
         if not pixmap.isNull():
-            scaled = pixmap.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            scaled = pixmap.scaled(img_size, img_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             icon_label.setPixmap(scaled)
         
         layout.addWidget(icon_label, alignment=Qt.AlignCenter)
         
-        # Nom tronqué
+        # Nom tronqué (caché si trop petit)
         name_label = QLabel(icon_info['name'][:8])
-        name_label.setStyleSheet("font-size: 7px; color: #B4B4BE;")
+        name_label.setObjectName("icon_name")
+        font_size = max(5, min(7, size // 10))
+        name_label.setStyleSheet(f"font-size: {font_size}px; color: #B4B4BE;")
         name_label.setAlignment(Qt.AlignCenter)
+        name_label.setVisible(size >= 48)
         layout.addWidget(name_label)
         
         return container
@@ -1872,7 +1898,8 @@ class WGPWindow(QMainWindow):
         if os.path.exists(self.icon_path):
             pixmap = QPixmap(self.icon_path)
             if not pixmap.isNull():
-                scaled = pixmap.scaled(88, 88, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                px = self.icon_preview_label.width() - 8
+                scaled = pixmap.scaled(px, px, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 self.icon_preview_label.setPixmap(scaled)
 
     def select_custom_icon(self):
@@ -1923,6 +1950,108 @@ class WGPWindow(QMainWindow):
         """Appelé à la fermeture de la fenêtre"""
         self.cleanup_temp_icons()
         event.accept()
+    
+    def _update_ui_scale(self):
+        """Met à l'échelle l'interface quand la fenêtre est petite"""
+        ref_w = 1300
+        ratio = self.width() / ref_w
+        
+        # Paliers : on ne scale que vers le bas, jamais vers le haut
+        if ratio >= 1.0:
+            scale = 1.0
+        elif ratio >= 0.85:
+            scale = 0.9
+        elif ratio >= 0.7:
+            scale = 0.78
+        elif ratio >= 0.55:
+            scale = 0.65
+        else:
+            scale = 0.55
+        
+        if hasattr(self, '_last_scale') and self._last_scale == scale:
+            return
+        self._last_scale = scale
+        
+        # Font-size uniquement
+        fs = max(8, round(13 * scale))
+        
+        dynamic = f"""
+            QWidget {{ font-family: 'Segoe UI', 'Noto Sans', sans-serif; font-size: {fs}px; }}
+            QLabel {{ font-size: {fs}px; }}
+            QLineEdit {{ font-size: {fs}px; }}
+            QPushButton {{ font-size: {fs}px; }}
+            QComboBox {{ font-size: {fs}px; }}
+            QCheckBox {{ font-size: {fs}px; }}
+            QGroupBox {{ font-size: {fs}px; }}
+            QGroupBox::title {{ font-size: {fs}px; }}
+            QListWidget {{ font-size: {fs}px; }}
+            QProgressBar {{ font-size: {fs}px; }}
+        """
+        self.setStyleSheet(self._base_stylesheet + dynamic)
+        
+        # Titre
+        title_fs = max(9, round(16 * scale))
+        title_font = self.title_label.font()
+        title_font.setPointSize(title_fs)
+        title_font.setBold(True)
+        self.title_label.setFont(title_font)
+        
+        # Aperçu icône
+        preview_px = max(32, int(64 * scale))
+        self.icon_preview_label.setFixedSize(preview_px, preview_px)
+        
+        # Labels secondaires
+        self.icon_info_label.setStyleSheet(f"color: #B4B4BE; font-size: {max(7, round(10 * scale))}px;")
+        self.internal_name_sublabel.setStyleSheet(f"color: #888; font-size: {max(6, round(9 * scale))}px;")
+    
+    def reorganize_icon_grid(self):
+        """Réorganise la grille d'icônes quand la largeur change"""
+        if not hasattr(self, 'icon_widgets') or not self.icon_widgets:
+            return
+        
+        new_size = self._calc_icon_size()
+        self._current_icon_size = new_size
+        img_size = max(16, new_size - 24)
+        show_name = new_size >= 48
+        
+        # Mettre à jour la taille de chaque widget
+        for idx, container in enumerate(self.icon_widgets):
+            container.setFixedSize(new_size, new_size)
+            icon_label = container.findChild(QLabel, "icon_img")
+            name_label = container.findChild(QLabel, "icon_name")
+            if icon_label:
+                icon_label.setFixedSize(img_size, img_size)
+                if idx < len(self.available_icons):
+                    pixmap = QPixmap(self.available_icons[idx]['path'])
+                    if not pixmap.isNull():
+                        scaled = pixmap.scaled(img_size, img_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        icon_label.setPixmap(scaled)
+            if name_label:
+                name_label.setVisible(show_name)
+                font_size = max(5, min(7, new_size // 10))
+                name_label.setStyleSheet(f"font-size: {font_size}px; color: #B4B4BE;")
+        
+        # Recalculer les colonnes et repositionner
+        spacing = 6
+        cols = max(1, self.icon_scroll_area.viewport().width() // (new_size + spacing))
+        
+        widgets = []
+        while self.icons_layout.count():
+            item = self.icons_layout.takeAt(0)
+            if item.widget():
+                widgets.append(item.widget())
+        
+        for idx, widget in enumerate(widgets):
+            row = idx // cols
+            col = idx % cols
+            self.icons_layout.addWidget(widget, row, col)
+    
+    def resizeEvent(self, event):
+        """Appelé quand la fenêtre est redimensionnée"""
+        super().resizeEvent(event)
+        if hasattr(self, 'icon_scroll_area'):
+            self._update_ui_scale()
+            self.reorganize_icon_grid()
 
     def _is_path_conflict(self, new_path, existing_list, existing_list_name):
         """Vérifie si le nouveau chemin entre en conflit avec les chemins existants
