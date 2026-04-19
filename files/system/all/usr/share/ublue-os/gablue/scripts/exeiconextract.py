@@ -46,22 +46,26 @@ def extract_icon_from_exe(data: bytes) -> List[IconInfo]:
 
     # Build section lookup table
     section_table_offset = pe_offset + 24 + optional_header_size
-    sections: List[Tuple[int, int, int]] = []  # (VA, size, raw_offset)
+    sections: List[Tuple[int, int, int]] = []  # (VA, virtual_size, raw_offset)
 
     for i in range(num_sections):
         offset = section_table_offset + i * 40
         if offset + 40 > len(data):
             break
         virtual_address = struct.unpack('<I', data[offset+12:offset+16])[0]
+        virtual_size = struct.unpack('<I', data[offset+8:offset+12])[0]
         size_of_raw_data = struct.unpack('<I', data[offset+16:offset+20])[0]
         pointer_to_raw_data = struct.unpack('<I', data[offset+20:offset+24])[0]
-        sections.append((virtual_address, size_of_raw_data, pointer_to_raw_data))
+        sections.append((virtual_address, virtual_size, size_of_raw_data, pointer_to_raw_data))
 
     def rva_to_offset(rva: int) -> int:
         """Convert Relative Virtual Address to file offset"""
-        for va, size, raw in sections:
-            if va <= rva < va + size:
-                return rva - va + raw
+        for va, vsize, raw_size, raw in sections:
+            if va <= rva < va + vsize:
+                offset_in_section = rva - va
+                if offset_in_section < raw_size:
+                    return offset_in_section + raw
+                return -1
         return -1
 
     # Find resource directory
