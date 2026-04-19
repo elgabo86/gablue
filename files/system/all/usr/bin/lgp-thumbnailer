@@ -1,6 +1,7 @@
 #!/bin/bash
 # Thumbnailer simple pour .lgp - ne gère que les .icon.png
 # Pas d'extraction d'icônes AppImage (trop lent, cause timeouts Dolphin)
+# Utilise unsquashfs au lieu de squashfuse (FUSE trop lent, cause timeouts Dolphin)
 
 INPUT="$1"
 OUTPUT="$2"
@@ -10,24 +11,20 @@ SIZE="${3:-256}"
 [ -f "$INPUT" ] || exit 1
 [ -z "$OUTPUT" ] && exit 1
 
-# Créer un répertoire temporaire pour le montage
-TEMP_MOUNT=$(mktemp -d)
+# Répertoire temporaire pour extraction
+TEMP_DIR=$(mktemp -d)
 
-# Cleanup function
 cleanup() {
-    if mountpoint -q "$TEMP_MOUNT" 2>/dev/null; then
-        fusermount -uz "$TEMP_MOUNT" 2>/dev/null || fusermount -u "$TEMP_MOUNT" 2>/dev/null || umount -f "$TEMP_MOUNT" 2>/dev/null || true
-    fi
-    rm -rf "$TEMP_MOUNT"
+    rm -rf "$TEMP_DIR"
 }
 trap cleanup EXIT
 
-# Monter le squashfs
-squashfuse "$INPUT" "$TEMP_MOUNT" || exit 1
+# Extraire uniquement .icon.png sans montage FUSE (beaucoup plus rapide)
+unsquashfs -no-xattrs -f -d "$TEMP_DIR" -n -q "$INPUT" ".icon.png" 2>/dev/null || exit 1
 
-# Vérifier si .icon.png existe
-if [ -f "$TEMP_MOUNT/.icon.png" ]; then
-    magick "$TEMP_MOUNT/.icon.png" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && exit 0
+# Vérifier si l'extraction a réussi
+if [ -f "$TEMP_DIR/.icon.png" ]; then
+    magick "$TEMP_DIR/.icon.png" -resize "${SIZE}x${SIZE}!" -background none -gravity center -extent "${SIZE}x${SIZE}" "$OUTPUT" 2>/dev/null && exit 0
 fi
 
 # Pas d'icône custom → fallback MIME
