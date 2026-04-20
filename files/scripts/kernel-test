@@ -51,38 +51,31 @@ dnf5 versionlock add kernel kernel-devel kernel-devel-matched kernel-core kernel
 # SECTION 4 : INSTALLATION DES AKMODS (KMODS)
 # =============================================================================
 
-# Installation des kmods critiques individuellement (depuis /tmp/rpms/common et /tmp/rpms/kmods)
+# Installation des kmods critiques par groupe (depuis /tmp/rpms/common et /tmp/rpms/kmods)
+# Chaque kmod est installé avec tous ses RPMs associés pour résoudre les dépendances internes
 # Ces kmods sont obligatoires : l'échec de l'un d'eux fait échouer le build
-for rpm in /tmp/rpms/{common,kmods}/*v4l2loopback*.rpm \
-           /tmp/rpms/{common,kmods}/*xone*.rpm \
-           /tmp/rpms/{common,kmods}/*xpadneo*.rpm; do
-    dnf5 -y install "$rpm"
-done
+dnf5 -y install /tmp/rpms/{common,kmods}/*v4l2loopback*.rpm
+dnf5 -y install /tmp/rpms/{common,kmods}/*xone*.rpm
+dnf5 -y install /tmp/rpms/{common,kmods}/*xpadneo*.rpm
 
-# Installation des kmods critiques extras individuellement (depuis akmods-extra)
+# Installation des kmods critiques extras par groupe (depuis akmods-extra)
 # Ces kmods sont obligatoires : l'échec de l'un d'eux fait échouer le build
-for rpm in /tmp/rpms/{extra,kmods-extra}/*zenergy*.rpm \
-           /tmp/rpms/{extra,kmods-extra}/*gcadapter*.rpm \
-           /tmp/rpms/{extra,kmods-extra}/*evdi*.rpm; do
-    dnf5 -y install "$rpm"
-done
+dnf5 -y install /tmp/rpms/{extra,kmods-extra}/*zenergy*.rpm
+dnf5 -y install /tmp/rpms/{extra,kmods-extra}/*gcadapter*.rpm
+dnf5 -y install /tmp/rpms/{extra,kmods-extra}/*evdi*.rpm
 
-# Installation des kmods optionnels individuellement (depuis /tmp/rpms/common et /tmp/rpms/kmods)
-# Ces kmods sont optionnels : un échec n'empêche pas les autres de s'installer
-for rpm in /tmp/rpms/{common,kmods}/*framework-laptop*.rpm \
-           /tmp/rpms/{common,kmods}/*openrazer*.rpm; do
-    dnf5 -y install "$rpm" || echo "SKIPPED: ${rpm}"
-done
+# Installation des kmods optionnels par groupe (depuis /tmp/rpms/common et /tmp/rpms/kmods)
+# Un échec n'empêche pas les autres de s'installer
+dnf5 -y install /tmp/rpms/{common,kmods}/*framework-laptop*.rpm || echo "SKIPPED: framework-laptop"
+dnf5 -y install /tmp/rpms/{common,kmods}/*openrazer*.rpm || echo "SKIPPED: openrazer"
 
-# Installation des kmods optionnels extras individuellement (depuis akmods-extra)
-# Ces kmods sont optionnels : un échec n'empêche pas les autres de s'installer
-for rpm in /tmp/rpms/{extra,kmods-extra}/*new-lg4ff*.rpm \
-           /tmp/rpms/{extra,kmods-extra}/*t150-driver*.rpm \
-           /tmp/rpms/{extra,kmods-extra}/*hid-fanatecff*.rpm \
-           /tmp/rpms/{extra,kmods-extra}/*sc0710*.rpm \
-           /tmp/rpms/{extra,kmods-extra}/*system76*.rpm; do
-    dnf5 -y install "$rpm" || echo "SKIPPED: ${rpm}"
-done
+# Installation des kmods optionnels extras par groupe (depuis akmods-extra)
+# Un échec n'empêche pas les autres de s'installer
+dnf5 -y install /tmp/rpms/{extra,kmods-extra}/*new-lg4ff*.rpm || echo "SKIPPED: new-lg4ff"
+dnf5 -y install /tmp/rpms/{extra,kmods-extra}/*t150-driver*.rpm || echo "SKIPPED: t150-driver"
+dnf5 -y install /tmp/rpms/{extra,kmods-extra}/*hid-fanatecff*.rpm || echo "SKIPPED: hid-fanatecff"
+dnf5 -y install /tmp/rpms/{extra,kmods-extra}/*sc0710*.rpm || echo "SKIPPED: sc0710"
+dnf5 -y install /tmp/rpms/{extra,kmods-extra}/*system76*.rpm || echo "SKIPPED: system76"
 
 # =============================================================================
 # SECTION 5 : RESTAURATION DES SCRIPTS D'INSTALLATION DU KERNEL
