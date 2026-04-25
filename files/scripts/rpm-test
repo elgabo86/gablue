@@ -278,13 +278,8 @@ fi
 # BIBLIOTHÈQUES 32-BIT POUR WINE/PROTON
 # =============================================================================
 
+# Note: Mesa i686 déjà installé depuis le script mesa-test
 # Note: gamescope-libs.i686 et mangohud.i686 déjà installés depuis terra-mesa ci-dessus
-
-# Mesa 32-bit depuis terra-mesa (REQUIS pour gstreamer et autres dépendances)
-# Installation explicite depuis terra-mesa car les dépôts Fedora sont exclus
-dnf5 -y --enable-repo=terra-mesa --setopt=install_weak_deps=False install \
-    mesa-libEGL.i686 \
-    mesa-libGL.i686
 
 # FAudio pour le support audio des jeux 32-bit
 dnf5 -y --setopt=install_weak_deps=False install \
@@ -297,21 +292,34 @@ dnf5 -y --setopt=install_weak_deps=False install \
 
 # Vulkan loader et drivers pour les applications 32-bit
 dnf5 -y --enable-repo=terra-mesa --setopt=install_weak_deps=False install \
-    vulkan-loader.i686 \
-    mesa-vulkan-drivers.i686
+    vulkan-loader.i686
 
 # ALSA 32-bit (REQUIS pour l'audio Wine natif)
 dnf5 -y --setopt=install_weak_deps=False install \
     alsa-lib.i686
 
 # GStreamer et codecs 32-bit (REQUIS pour quartz/multimédia Wine)
+# Les paquets x86_64 de base sont en 1.28.1, les i686 en 1.28.2 : upgrader d'abord
+dnf5 -y upgrade \
+    gstreamer1 \
+    gstreamer1-plugins-base \
+    gstreamer1-plugins-good
+
+# Installer les i686 maintenant que les versions sont alignées
 dnf5 -y --setopt=install_weak_deps=False install \
     gstreamer1.i686 \
     gstreamer1-plugins-base.i686 \
-    gstreamer1-plugins-good.i686 \
-    gstreamer1-plugins-bad-free.i686 \
-    gstreamer1-plugin-libav.i686 \
-    gstreamer1-plugins-ugly-free.i686
+    gstreamer1-plugins-good.i686
+
+# Plugins bad/ugly depuis fedora-multimedia (Negatorio17 obsoletes les versions -free)
+# libav et bad i686 ont des deps cassées (libmpeghdec.so.3, libplacebo.so.351 absents en i686)
+# On installe ce qui est disponible, le reste sera skip
+dnf5 -y --setopt=install_weak_deps=False --enable-repo=fedora-multimedia install \
+    gstreamer1-plugins-ugly.i686 \
+    gstreamer1-plugins-bad.i686 || true
+
+# gstreamer1-plugin-libav.i686 : deps i686 cassées, skip
+echo "WARNING: gstreamer1-plugin-libav.i686 et gstreamer1-plugins-bad.i686 peuvent être indisponibles en i686 sur fc44"
 
 # PipeWire GStreamer 32-bit (bridge pour les apps utilisant GStreamer via PipeWire)
 dnf5 -y --setopt=install_weak_deps=False install \

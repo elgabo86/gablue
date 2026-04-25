@@ -23,8 +23,8 @@ Le projet construit 6 variantes distinctes :
 | `gablue-nvidia` | Pilotes NVIDIA closed-source | Bazzite (stable) | `[nvidia]`, `[all]` |
 | `gablue-nvidia-open` | Pilotes NVIDIA open-source | Bazzite (stable) | `[nvidia]`, `[all]` |
 | `gablue-main-dx` | Mode développement (DX) avec virtualisation | Bazzite (stable) | `[dx]`, `[all]` |
-| `gablue-main-test` | Image de test avec OpenGamepadUI | OGC (unstable) | `[test]`, `[all]` |
-| `gablue-nvidia-open-test` | Test NVIDIA Open avec OpenGamepadUI | OGC (unstable) | `[test]`, `[nvidia]`, `[all]` |
+| `gablue-main-test` | Image de test avec OpenGamepadUI (fc44) | OGC (unstable) | `[test]`, `[all]` |
+| `gablue-nvidia-open-test` | Test NVIDIA Open avec OpenGamepadUI (fc44) | OGC (unstable) | `[test]`, `[nvidia]`, `[all]` |
 
 ### Différences entre variantes
 
@@ -39,12 +39,14 @@ Le projet construit 6 variantes distinctes :
 - Groupes utilisateurs supplémentaires configurés
 
 **Stable vs Test** :
+- **Fedora** : Stable utilise Fedora 43, Test utilise Fedora 44
 - **Kernel** : Stable utilise Bazzite (stable), Test utilise OGC (unstable)
 - **OpenGamepadUI** : Interface gaming expérimentale style Steam Deck (test uniquement)
-- **Scripts spécifiques** : `kernel-test`, `nvidia-test`, `copr-test`, `rpm-test`, `post-install-test`, `systemd-test`
+- **Scripts spécifiques** : `kernel-test`, `nvidia-test`, `copr-test`, `rpm-test`, `post-install-test`, `systemd-test`, `mesa-test`
 - **Containerfiles** : `Containerfile-gablue-test` (main-test), `Containerfile-gablue-nvidia-open-test` (nvidia-open-test)
 - **Paquets additionnels** : `opengamepadui`, `gamescope-session-opengamepadui`, `powerstation`, `inputplumber`, `amdsmi`
 - **Akmods complets** : v4l2loopback, xone, xpadneo, openrazer, zenergy, evdi, etc.
+- **Multilib fc44** : Problèmes de packaging i686 dans Terra et Negativo17 (workarounds dans `mesa-test` et `rpm-test`)
 
 ## Structure du projet
 
@@ -64,7 +66,8 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── initramfs                      # Génération initramfs
 │   │   ├── kernel                        # Installation kernel Bazzite (stable)
 │   │   ├── kernel-test                    # Installation kernel OGC (test)
-│   │   ├── mesa                           # Installation Mesa Terra
+│   │   ├── mesa                           # Installation Mesa Terra (stable)
+│   │   ├── mesa-test                      # Installation Mesa Terra (test, multilib fc44)
 │   │   ├── nvidia                         # Installation pilotes NVIDIA (stable)
 │   │   ├── nvidia-test                    # Installation pilotes NVIDIA (test)
 │   │   ├── post-install                   # Post-installation principale
@@ -153,7 +156,7 @@ sudo buildah build \
   --build-arg VARIANT="main" \
   --build-arg SOURCE_IMAGE="kinoite" \
   --build-arg SOURCE_SUFFIX="-main" \
-  --build-arg FEDORA_VERSION="43" \
+  --build-arg FEDORA_VERSION="44" \
   --build-arg KERNEL_TYPE="ogc" \
   --build-arg KERNEL_FLAVOR="ogc" \
   --build-arg KERNEL_VERSION="6.19.11-ogc1.1.fc43.x86_64" \
@@ -166,7 +169,7 @@ sudo buildah build \
   --build-arg VARIANT="nvidia-open" \
   --build-arg SOURCE_IMAGE="kinoite" \
   --build-arg SOURCE_SUFFIX="-main" \
-  --build-arg FEDORA_VERSION="43" \
+  --build-arg FEDORA_VERSION="44" \
   --build-arg KERNEL_TYPE="ogc" \
   --build-arg KERNEL_FLAVOR="ogc" \
   --build-arg KERNEL_VERSION="6.19.11-ogc1.1.fc43.x86_64" \
@@ -386,12 +389,19 @@ Exclusions importantes :
 - Akmods inclus : v4l2loopback, xone, xpadneo, openrazer, zenergy, evdi, gcadapter, new-lg4ff, etc.
 - Versionlock pour verrouiller les versions
 
-### 3. mesa - Installation Mesa Terra
+### 3. mesa / mesa-test - Installation Mesa Terra
 
-Swap Mesa vers la version Terra optimisée :
+**mesa (stable)** : Swap Mesa vers la version Terra optimisée
 - Swap de `mesa-filesystem` vers terra-mesa
 - Installation des pilotes Mesa principaux
 - Paquets i686 pour variantes NVIDIA (compatibilité jeux)
+- Versionlock des paquets Mesa
+
+**mesa-test (test)** : Version multilib pour fc44 avec workarounds
+- Même installation que mesa pour x86_64
+- Installation i686 complète (dri-drivers, libEGL, libGL, libgbm)
+- **Workaround fc44** : `mesa-vulkan-drivers.i686` installé via `rpm -i --nodeps --force` car Terra fc44 a un conflit de fichier `LICENSE.dependencies` entre i686 et x86_64
+- Dépendances i686 pré-installées avant le workaround : `libdisplay-info.i686`, `systemd-libs.i686`, `vulkan-loader.i686`
 - Versionlock des paquets Mesa
 
 ### 4. nvidia / nvidia-test - Installation pilotes NVIDIA
@@ -417,9 +427,9 @@ Swap Mesa vers la version Terra optimisée :
 - RPMFusion : free et nonfree
 - Terra (FyraLabs) : terra-release, terra-release-extras, terra-release-mesa
 
-**copr-test (test)** : Configuration avec exclusions supplémentaires
+**copr-test (test)** : Configuration avec exclusions spécifiques
 - Mêmes dépôts que stable
-- Exclusion supplémentaire : `gamescope-session` (conflit avec OpenGamepadUI)
+- `gamescope-session` n'est PAS exclu de Terra (requis par `gamescope-session-opengamepadui`)
 
 Exclusions importantes :
 - Mesa et kernel des dépôts Fedora (fournis par Terra)
@@ -441,6 +451,9 @@ Installation extensive de paquets organisée par catégories :
 **rpm-test** ajoute :
 - `amdsmi` (monitoring AMD)
 - `opengamepadui`, `gamescope-session-opengamepadui`, `powerstation`, `inputplumber` (OpenGamepadUI)
+- GStreamer i686 : upgrade x86_64 d'abord pour aligner les versions, puis i686
+- Plugins bad/ugly i686 depuis fedora-multimedia avec `|| true` (deps i686 cassées dans Negativo17 fc44)
+- Mesa i686 installé depuis `mesa-test` (pas depuis rpm-test)
 
 **rpm** inclut en plus :
 - Outils SELinux : `checkpolicy`, `selinux-policy-devel`
@@ -705,6 +718,12 @@ Commandes ujust disponibles :
 
 **Problème** : Conflits de paquets  
 **Solution** : Vérifier les exclusions dans le script copr
+
+**Problème** : Conflit de fichier i686/x86_64 (fc44 multilib)  
+**Solution** : Utiliser `rpm -i --nodeps --force` après avoir installé les deps, ou `|| true` si les deps i686 sont absentes
+
+**Problème** : Version mismatch x86_64/i686 (fc44)  
+**Solution** : Upgrader les paquets x86_64 avant d'installer les i686
 
 ### Problèmes d'images
 

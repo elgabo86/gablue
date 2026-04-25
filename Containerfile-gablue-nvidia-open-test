@@ -58,7 +58,7 @@ RUN --mount=type=cache,dst=/var/cache \
 # Installation Mesa Terra
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    sh /ctx/mesa && \
+    sh /ctx/mesa-test && \
     sh /ctx/cleanup
 
 # Installation des pilotes NVIDIA Open via akmods
