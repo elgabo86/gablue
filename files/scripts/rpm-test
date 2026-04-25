@@ -281,13 +281,69 @@ fi
 # Note: Mesa i686 déjà installé depuis le script mesa-test
 # Note: gamescope-libs.i686 et mangohud.i686 déjà installés depuis terra-mesa ci-dessus
 
+# -----------------------------------------------------------------------------
+# Rendu de polices (REQUIS pour l'affichage texte dans Wine 32-bit)
+# fontconfig et freetype tirent harfbuzz, pango, cairo, glib2, pixman, etc.
+# -----------------------------------------------------------------------------
+
+dnf5 -y --setopt=install_weak_deps=False install \
+    fontconfig.i686 \
+    freetype.i686
+
+# -----------------------------------------------------------------------------
+# X11 libs (REQUIS pour le rendu fenêtré Wine 32-bit)
+# Sans ces libs : écrans noirs, crashs, fenêtres invisibles
+# -----------------------------------------------------------------------------
+
+dnf5 -y --setopt=install_weak_deps=False install \
+    libXcomposite.i686 \
+    libXcursor.i686 \
+    libXdamage.i686 \
+    libXfixes.i686 \
+    libXi.i686 \
+    libXinerama.i686 \
+    libXrandr.i686 \
+    libXrender.i686 \
+    libXtst.i686 \
+    libXv.i686
+
+# -----------------------------------------------------------------------------
+# Wayland et OpenGL (REQUIS pour le rendu Wayland Wine 32-bit)
+# -----------------------------------------------------------------------------
+
+dnf5 -y --setopt=install_weak_deps=False install \
+    libepoxy.i686 \
+    libdecor.i686 \
+    libwayland-cursor.i686 \
+    libwayland-egl.i686
+
+# -----------------------------------------------------------------------------
+# Core Wine 32-bit (réseau, SSL, débogage, impression)
+# -----------------------------------------------------------------------------
+
+dnf5 -y --setopt=install_weak_deps=False install \
+    gnutls.i686 \
+    libunwind.i686 \
+    cups-libs.i686 \
+    openldap.i686
+
+# -----------------------------------------------------------------------------
+# Audio 32-bit (REQUIS pour le son dans les jeux Wine/Proton)
+# -----------------------------------------------------------------------------
+
 # PulseAudio 32-bit (REQUIS pour l'audio Wine)
 dnf5 -y --setopt=install_weak_deps=False install \
     pulseaudio-libs.i686
 
-# Vulkan loader pour les applications 32-bit
-dnf5 -y --enable-repo=terra-mesa --setopt=install_weak_deps=False install \
-    vulkan-loader.i686
+# PipeWire 32-bit (REQUIS pour l'audio PipeWire)
+dnf5 -y --setopt=install_weak_deps=False install \
+    pipewire-libs.i686 \
+    pipewire-gstreamer.i686
+
+# FAudio pour XAudio2 dans Wine (REQUIS pour les jeux Xbox Audio)
+dnf5 -y --setopt=install_weak_deps=False install \
+    libFAudio \
+    libFAudio.i686
 
 # ALSA 32-bit (REQUIS pour l'audio Wine natif)
 dnf5 -y --setopt=install_weak_deps=False install \
@@ -296,6 +352,54 @@ dnf5 -y --setopt=install_weak_deps=False install \
 # OpenAL pour l'audio des jeux 32-bit
 dnf5 -y --setopt=install_weak_deps=False install \
     openal-soft.i686
+
+# Librairies audio complémentaires (REQUISES par de nombreux jeux)
+dnf5 -y --setopt=install_weak_deps=False install \
+    libogg.i686 \
+    libvorbis.i686 \
+    flac-libs.i686 \
+    libsndfile.i686
+
+# -----------------------------------------------------------------------------
+# Vulkan 32-bit
+# -----------------------------------------------------------------------------
+
+# Vulkan loader pour les applications 32-bit
+dnf5 -y --enable-repo=terra-mesa --setopt=install_weak_deps=False install \
+    vulkan-loader.i686
+
+# -----------------------------------------------------------------------------
+# Vidéo 32-bit (accélération matérielle pour décodage dans Wine)
+# -----------------------------------------------------------------------------
+
+dnf5 -y --setopt=install_weak_deps=False install \
+    libva.i686 \
+    libvdpau.i686
+
+# -----------------------------------------------------------------------------
+# GStreamer 32-bit (REQUIS pour quartz/multimédia Wine - cutscenes, vidéos)
+# Sur fc44 : les versions x86_64 peuvent être plus anciennes que i686,
+# il faut upgrader d'abord les x86_64 pour aligner les versions
+# -----------------------------------------------------------------------------
+
+dnf5 -y upgrade \
+    gstreamer1 \
+    gstreamer1-plugins-base \
+    gstreamer1-plugins-good
+
+# Installer les i686 maintenant que les versions sont alignées
+dnf5 -y --setopt=install_weak_deps=False install \
+    gstreamer1.i686 \
+    gstreamer1-plugins-base.i686 \
+    gstreamer1-plugins-good.i686
+
+# Plugins bad/ugly depuis fedora-multimedia (Negatorio17 obsoletes les versions -free)
+# libav et bad i686 ont des deps cassées en i686 sur fc44
+# On installe ce qui est disponible, le reste sera skip
+dnf5 -y --setopt=install_weak_deps=False --enable-repo=fedora-multimedia install \
+    gstreamer1-plugins-ugly-free.i686 \
+    gstreamer1-plugins-bad-free.i686 \
+    gstreamer1-plugin-libav.i686 || true
 
 # =============================================================================
 # OPENGAMEPADUI - INTERFACE GAMING (EXPERIMENTAL - TEST UNIQUEMENT)
