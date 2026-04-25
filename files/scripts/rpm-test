@@ -336,6 +336,12 @@ dnf5 -y --setopt=install_weak_deps=False install \
     pulseaudio-libs.i686
 
 # PipeWire 32-bit (REQUIS pour l'audio PipeWire)
+# pipewire-libs.i686 vient de Fedora updates (les dépôts bazzite sont exclus)
+# Sur fc44 : la version x86_64 de l'image de base (1.6.2) est en retard sur updates (1.6.4)
+# Il faut upgrader x86_64 d'abord pour aligner les versions et éviter les conflits de fichiers
+dnf5 -y upgrade \
+    pipewire-libs
+
 dnf5 -y --setopt=install_weak_deps=False install \
     pipewire-libs.i686 \
     pipewire-gstreamer.i686

@@ -39,8 +39,10 @@ do
 done && unset -v copr
 
 # Configuration des priorités des dépôts COPR (comme Bazzite)
-# bazzite* en priorité 1 pour avoir les packages multilib 32-bit
-dnf5 -y config-manager setopt "*bazzite*".priority=1
+# bazzite* en priorité 1 pour les paquets spécifiques (kernel, akmods, etc.)
+# Exclusion de pipewire/bluez/xwayland : on utilise les versions Fedora pour aligner i686/x86_64
+# Le dépôt bazzite-multilib a des versions i686 en retard sur Fedora fc44, causant des conflits
+dnf5 -y config-manager setopt "*bazzite*".priority=1 "*bazzite*".exclude="pipewire-* bluez-* xorg-x11-server-Xwayland wireplumber-*"
 
 # =============================================================================
 # DÉPÔTS TIERS
