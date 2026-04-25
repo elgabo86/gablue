@@ -103,7 +103,7 @@ jobs:
       image_variant: "main"
       source_image: "kinoite"
       source_suffix: "-main"
-      fedora_version: "43"
+      fedora_version: "44"
       kernel_type: "ogc"
 
   build-nvidia-open-test:
@@ -121,7 +121,7 @@ jobs:
       image_variant: "nvidia-open"
       source_image: "kinoite"
       source_suffix: "-main"
-      fedora_version: "43"
+      fedora_version: "44"
       kernel_type: "ogc"
       containerfile: "Containerfile-gablue-nvidia-open-test"
 
