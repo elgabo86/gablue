@@ -405,38 +405,17 @@ dnf5 -y --setopt=install_weak_deps=False install \
 dnf5 -y --setopt=install_weak_deps=False --enable-repo=fedora-multimedia install \
     gstreamer1-plugins-ugly-free.i686
 
-# Plugins bad-free x86_64 : le paquet non-free de Negatorio17 obsoletes bad-free,
-# dnf5 install provoquerait la suppression de bad/ugly. Download + rpm -Uvh --nodeps
-dnf5 -y --setopt=install_weak_deps=False install \
-    libnice \
-    soundtouch \
-    libdvdnav \
-    faad2-libs \
-    libsrtp
-mkdir -p /tmp/bad-free-x86_64
-dnf5 -y --enable-repo=fedora-multimedia download --destdir=/tmp/bad-free-x86_64 --arch=x86_64 \
-    gstreamer1-plugins-bad-free-libs \
-    gstreamer1-plugins-bad-free
-rpm -Uvh --nodeps --replacepkgs /tmp/bad-free-x86_64/gstreamer1-plugins-bad-free-libs-*.rpm /tmp/bad-free-x86_64/gstreamer1-plugins-bad-free-*.rpm
-rm -rf /tmp/bad-free-x86_64
+# Plugins bad (non-free) x86_64 depuis Negatorio17 : fournit les codecs propriétaires
+# (faad, dts, etc.) requis par Wine 64-bit
+dnf5 -y --setopt=install_weak_deps=False --enable-repo=fedora-multimedia install \
+    gstreamer1-plugins-bad \
+    gstreamer1-plugins-bad-free-libs
 
-# Plugins bad-free i686 : même obsolete cross-arch, même workaround
-# 1) Installer les dépendances i686 via dnf5
-dnf5 -y --setopt=install_weak_deps=False install \
-    libnice.i686 \
-    soundtouch.i686 \
-    libcurl-minimal.i686 \
-    libdvdnav.i686 \
-    faad2-libs.i686 \
-    libsrtp.i686
-
-# 2) Download + rpm -i --nodeps pour bypasser l'obsolete cross-arch
-mkdir -p /tmp/bad-free-i686
-dnf5 -y --enable-repo=fedora-multimedia download --destdir=/tmp/bad-free-i686 --arch=i686 \
-    gstreamer1-plugins-bad-free-libs.i686 \
-    gstreamer1-plugins-bad-free.i686
-rpm -i --replacepkgs --nodeps /tmp/bad-free-i686/gstreamer1-plugins-bad-free-libs-*.rpm /tmp/bad-free-i686/gstreamer1-plugins-bad-free-*.rpm
-rm -rf /tmp/bad-free-i686
+# Plugins bad (non-free) i686 depuis Negatorio17 : codecs propriétaires
+# requis par Wine 32-bit
+dnf5 -y --setopt=install_weak_deps=False --enable-repo=fedora-multimedia install \
+    gstreamer1-plugins-bad.i686 \
+    gstreamer1-plugins-bad-free-libs.i686
 
 # gstreamer1-plugin-libav.i686 : cassé sur fc44 car Negatorio17 remplace
 # libavfilter-free par sa version propriétaire en x86_64 sans fournir les i686
