@@ -388,7 +388,7 @@ dnf5 -y --setopt=install_weak_deps=False install \
 # il faut upgrader d'abord les x86_64 pour aligner les versions
 # -----------------------------------------------------------------------------
 
-dnf5 -y upgrade \
+dnf5 -y --setopt=install_weak_deps=False install \
     gstreamer1 \
     gstreamer1-plugins-base \
     gstreamer1-plugins-good \
