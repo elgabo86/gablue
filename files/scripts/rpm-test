@@ -383,58 +383,37 @@ dnf5 -y --setopt=install_weak_deps=False install \
     libvdpau.i686
 
 # -----------------------------------------------------------------------------
-# GStreamer 32-bit (REQUIS pour quartz/multimédia Wine - cutscenes, vidéos)
-# Sur fc44 : les versions x86_64 peuvent être plus anciennes que i686,
-# il faut upgrader d'abord les x86_64 pour aligner les versions
+# GStreamer x86_64 uniquement (Wine bundle son propre GStreamer/FFmpeg)
+# Les plugins i686 ne sont PAS installés : Proton/Wine utilisent leur
+# propre copie de GStreamer et FFmpeg, pas les libs système
 # -----------------------------------------------------------------------------
 
+# 1) Upgrade x86_64 pour aligner les versions
 dnf5 -y upgrade \
     gstreamer1 \
     gstreamer1-plugins-base \
     gstreamer1-plugins-good \
+    gstreamer1-plugins-bad-free \
+    gstreamer1-plugins-bad-free-libs \
     gstreamer1-plugins-ugly-free \
     gstreamer1-plugin-libav
 
-# Installer les i686 maintenant que les versions sont alignées
-dnf5 -y --setopt=install_weak_deps=False install \
-    gstreamer1.i686 \
-    gstreamer1-plugins-base.i686 \
-    gstreamer1-plugins-good.i686
+# 2) Codecs non-free x86_64 (RPMFusion)
+# ugly : AC-3, MPEG-2, DVD, RealMedia, x264
+# ffmpeg-libs : codecs avcodec/avformat complets
+# Note : bad-freeworld.x86_64 inutile car bad (Negatorio17) le couvre déjà
+dnf5 -y --setopt=install_weak_deps=False --enablerepo=rpmfusion-free-updates install \
+    gstreamer1-plugins-ugly \
+    ffmpeg-libs
 
-# Plugins ugly-free i686 (pas obsoleté par Negatorio17)
-dnf5 -y --setopt=install_weak_deps=False --enable-repo=fedora-multimedia install \
-    gstreamer1-plugins-ugly-free.i686
-
-# Plugins bad (non-free) x86_64 depuis Negatorio17 : fournit les codecs propriétaires
-# (faad, dts, etc.) requis par Wine 64-bit
-dnf5 -y --setopt=install_weak_deps=False --enable-repo=fedora-multimedia install \
-    gstreamer1-plugins-bad \
-    gstreamer1-plugins-bad-free-libs
-
-# Plugins bad-free i686 : bad.i686 (Negatorio17) est cassé (libmpeghdec.so.3 i686
-# absent) et bad-free-libs.i686 est bloqué par obsolete cross-arch de bad x86_64.
-# Workaround : download + rpm -i --replacepkgs --nodeps
-# 1) Installer les dépendances i686 via dnf5
-dnf5 -y --setopt=install_weak_deps=False install \
-    libnice.i686 \
-    soundtouch.i686 \
-    libcurl-minimal.i686 \
-    libdvdnav.i686 \
-    faad2-libs.i686 \
-    libsrtp.i686
-
-# 2) Download + rpm -i --replacepkgs --nodeps
-mkdir -p /tmp/bad-free-i686
-dnf5 -y --enable-repo=fedora-multimedia download --destdir=/tmp/bad-free-i686 --arch=i686 \
-    gstreamer1-plugins-bad-free-libs.i686 \
-    gstreamer1-plugins-bad-free.i686
-rpm -i --replacepkgs --nodeps /tmp/bad-free-i686/gstreamer1-plugins-bad-free-libs-*.rpm /tmp/bad-free-i686/gstreamer1-plugins-bad-free-*.rpm
-rm -rf /tmp/bad-free-i686
-
-# gstreamer1-plugin-libav.i686 : cassé sur fc44 car Negatorio17 remplace
-# libavfilter-free par sa version propriétaire en x86_64 sans fournir les i686
-dnf5 -y install --setopt=install_weak_deps=False --enable-repo=fedora-multimedia --allowerasing \
-    gstreamer1-plugin-libav.i686
+# 3) bad (Negatorio17) x86_64 : codecs propriétaires supplémentaires
+# (dtsdec, mpeghdec, svtjpegxs, vmaf, voaacenc, voamrwbenc, mpeg2enc, etc.)
+# rpm -i --replacepkgs --nodeps : coexiste avec bad-free.x86_64
+mkdir -p /tmp/neg17
+dnf5 -y --enable-repo=fedora-multimedia download --destdir=/tmp/neg17 --arch=x86_64 \
+    gstreamer1-plugins-bad
+rpm -i --replacepkgs --nodeps /tmp/neg17/gstreamer1-plugins-bad-*.x86_64.rpm
+rm -rf /tmp/neg17
 
 # =============================================================================
 # OPENGAMEPADUI - INTERFACE GAMING (EXPERIMENTAL - TEST UNIQUEMENT)
