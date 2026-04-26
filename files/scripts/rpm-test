@@ -391,7 +391,11 @@ dnf5 -y --setopt=install_weak_deps=False install \
 dnf5 -y upgrade \
     gstreamer1 \
     gstreamer1-plugins-base \
-    gstreamer1-plugins-good
+    gstreamer1-plugins-good \
+    gstreamer1-plugins-bad-free \
+    gstreamer1-plugins-bad-free-libs \
+    gstreamer1-plugins-ugly-free \
+    gstreamer1-plugin-libav
 
 # Installer les i686 maintenant que les versions sont alignées
 dnf5 -y --setopt=install_weak_deps=False install \
@@ -399,13 +403,32 @@ dnf5 -y --setopt=install_weak_deps=False install \
     gstreamer1-plugins-base.i686 \
     gstreamer1-plugins-good.i686
 
-# Plugins bad/ugly depuis fedora-multimedia (Negatorio17 obsoletes les versions -free)
-# libav et bad i686 ont des deps cassées en i686 sur fc44
-# On installe ce qui est disponible, le reste sera skip
+# Plugins ugly-free i686 (pas obsoleté par Negatorio17)
 dnf5 -y --setopt=install_weak_deps=False --enable-repo=fedora-multimedia install \
-    gstreamer1-plugins-ugly-free.i686 \
-    gstreamer1-plugins-bad-free.i686 \
-    gstreamer1-plugin-libav.i686 || true
+    gstreamer1-plugins-ugly-free.i686
+
+# Plugins bad-free i686 : le paquet x86_64 non-free de Negatorio17 obsoletes bad-free
+# cross-arch, dnf5 refuse de résoudre même avec --setopt=obsoletes=False
+# 1) Installer les dépendances i686 via dnf5
+dnf5 -y --setopt=install_weak_deps=False install \
+    libnice.i686 \
+    soundtouch.i686 \
+    libcurl-minimal.i686 \
+    libdvdnav.i686 \
+    faad2-libs.i686 \
+    libsrtp.i686
+
+# 2) Download + rpm -i --nodeps pour bypasser l'obsolete cross-arch
+dnf5 -y --enable-repo=fedora-multimedia download --destdir=/tmp \
+    gstreamer1-plugins-bad-free-libs.i686 \
+    gstreamer1-plugins-bad-free.i686
+rpm -i --nodeps /tmp/gstreamer1-plugins-bad-free-libs-*.i686.rpm /tmp/gstreamer1-plugins-bad-free-*.i686.rpm
+rm -f /tmp/gstreamer1-plugins-bad-free-*.i686.rpm
+
+# gstreamer1-plugin-libav.i686 : cassé sur fc44 car Negatorio17 remplace
+# libavfilter-free par sa version propriétaire en x86_64 sans fournir les i686
+dnf5 -y install --setopt=install_weak_deps=False --enable-repo=fedora-multimedia --allowerasing \
+    gstreamer1-plugin-libav.i686
 
 # =============================================================================
 # OPENGAMEPADUI - INTERFACE GAMING (EXPERIMENTAL - TEST UNIQUEMENT)
