@@ -46,7 +46,7 @@ Le projet construit 6 variantes distinctes :
 - **Containerfiles** : `Containerfile-gablue-test` (main-test), `Containerfile-gablue-nvidia-open-test` (nvidia-open-test)
 - **Paquets additionnels** : `opengamepadui`, `gamescope-session-opengamepadui`, `powerstation`, `inputplumber`, `amdsmi`
 - **Akmods complets** : v4l2loopback, xone, xpadneo, openrazer, zenergy, evdi, etc.
-- **Multilib fc44** : Problèmes de packaging i686 dans Terra et Negativo17 (workarounds dans `mesa-test` et `rpm-test`)
+- **Multilib fc44** : Conflits i686/x86_64 (workarounds dans `mesa-test` et `rpm-test`). Exclusion pipewire/bluez/xwayland des dépôts bazzite. GStreamer bad-free.i686 via `rpm -i --nodeps` (obsolete cross-arch Negativo17).
 
 ## Structure du projet
 
@@ -451,9 +451,10 @@ Installation extensive de paquets organisée par catégories :
 **rpm-test** ajoute :
 - `amdsmi` (monitoring AMD)
 - `opengamepadui`, `gamescope-session-opengamepadui`, `powerstation`, `inputplumber` (OpenGamepadUI)
-- GStreamer i686 : upgrade x86_64 d'abord pour aligner les versions, puis i686
-- Plugins bad/ugly i686 depuis fedora-multimedia avec `|| true` (deps i686 cassées dans Negativo17 fc44)
-- Mesa i686 installé depuis `mesa-test` (pas depuis rpm-test)
+- Libs i686 Wine/Proton complètes : fontconfig, freetype, X11, Wayland, gnutls, cups, audio (pulseaudio, pipewire, FAudio, alsa, openal), vulkan, va/vdpau
+- GStreamer i686 : upgrade x86_64 d'abord pour aligner les versions, puis i686 (base, good, ugly-free, bad-free via rpm -i --nodeps)
+- Mesa i686 installé depuis `mesa-test` (vulkan-drivers via `rpm -i --excludepath`)
+- Pipewire/bluez/xwayland exclus des dépôts bazzite (versions Fedora alignées i686/x86_64)
 
 **rpm** inclut en plus :
 - Outils SELinux : `checkpolicy`, `selinux-policy-devel`
