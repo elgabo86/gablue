@@ -406,18 +406,19 @@ dnf5 -y --setopt=install_weak_deps=False --enable-repo=fedora-multimedia install
     gstreamer1-plugins-ugly-free.i686
 
 # Plugins bad-free x86_64 : le paquet non-free de Negatorio17 obsoletes bad-free,
-# dnf5 install provoquerait la suppression de bad/ugly. Download + rpm -i --nodeps
+# dnf5 install provoquerait la suppression de bad/ugly. Download + rpm -Uvh --nodeps
 dnf5 -y --setopt=install_weak_deps=False install \
     libnice \
     soundtouch \
     libdvdnav \
     faad2-libs \
     libsrtp
-dnf5 -y --enable-repo=fedora-multimedia download --destdir=/tmp \
+mkdir -p /tmp/bad-free-x86_64
+dnf5 -y --enable-repo=fedora-multimedia download --destdir=/tmp/bad-free-x86_64 --arch=x86_64 \
     gstreamer1-plugins-bad-free-libs \
     gstreamer1-plugins-bad-free
-rpm -i --nodeps /tmp/gstreamer1-plugins-bad-free-libs-*.x86_64.rpm /tmp/gstreamer1-plugins-bad-free-*.x86_64.rpm
-rm -f /tmp/gstreamer1-plugins-bad-free-*.x86_64.rpm
+rpm -Uvh --nodeps --replacepkgs /tmp/bad-free-x86_64/gstreamer1-plugins-bad-free-libs-*.rpm /tmp/bad-free-x86_64/gstreamer1-plugins-bad-free-*.rpm
+rm -rf /tmp/bad-free-x86_64
 
 # Plugins bad-free i686 : même obsolete cross-arch, même workaround
 # 1) Installer les dépendances i686 via dnf5
@@ -430,11 +431,12 @@ dnf5 -y --setopt=install_weak_deps=False install \
     libsrtp.i686
 
 # 2) Download + rpm -i --nodeps pour bypasser l'obsolete cross-arch
-dnf5 -y --enable-repo=fedora-multimedia download --destdir=/tmp \
+mkdir -p /tmp/bad-free-i686
+dnf5 -y --enable-repo=fedora-multimedia download --destdir=/tmp/bad-free-i686 --arch=i686 \
     gstreamer1-plugins-bad-free-libs.i686 \
     gstreamer1-plugins-bad-free.i686
-rpm -i --nodeps /tmp/gstreamer1-plugins-bad-free-libs-*.i686.rpm /tmp/gstreamer1-plugins-bad-free-*.i686.rpm
-rm -f /tmp/gstreamer1-plugins-bad-free-*.i686.rpm
+rpm -i --replacepkgs --nodeps /tmp/bad-free-i686/gstreamer1-plugins-bad-free-libs-*.rpm /tmp/bad-free-i686/gstreamer1-plugins-bad-free-*.rpm
+rm -rf /tmp/bad-free-i686
 
 # gstreamer1-plugin-libav.i686 : cassé sur fc44 car Negatorio17 remplace
 # libavfilter-free par sa version propriétaire en x86_64 sans fournir les i686
