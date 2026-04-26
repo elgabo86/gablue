@@ -388,12 +388,10 @@ dnf5 -y --setopt=install_weak_deps=False install \
 # il faut upgrader d'abord les x86_64 pour aligner les versions
 # -----------------------------------------------------------------------------
 
-dnf5 -y --setopt=install_weak_deps=False install \
+dnf5 -y upgrade \
     gstreamer1 \
     gstreamer1-plugins-base \
     gstreamer1-plugins-good \
-    gstreamer1-plugins-bad-free \
-    gstreamer1-plugins-bad-free-libs \
     gstreamer1-plugins-ugly-free \
     gstreamer1-plugin-libav
 
@@ -407,8 +405,21 @@ dnf5 -y --setopt=install_weak_deps=False install \
 dnf5 -y --setopt=install_weak_deps=False --enable-repo=fedora-multimedia install \
     gstreamer1-plugins-ugly-free.i686
 
-# Plugins bad-free i686 : le paquet x86_64 non-free de Negatorio17 obsoletes bad-free
-# cross-arch, dnf5 refuse de résoudre même avec --setopt=obsoletes=False
+# Plugins bad-free x86_64 : le paquet non-free de Negatorio17 obsoletes bad-free,
+# dnf5 install provoquerait la suppression de bad/ugly. Download + rpm -i --nodeps
+dnf5 -y --setopt=install_weak_deps=False install \
+    libnice \
+    soundtouch \
+    libdvdnav \
+    faad2-libs \
+    libsrtp
+dnf5 -y --enable-repo=fedora-multimedia download --destdir=/tmp \
+    gstreamer1-plugins-bad-free-libs \
+    gstreamer1-plugins-bad-free
+rpm -i --nodeps /tmp/gstreamer1-plugins-bad-free-libs-*.x86_64.rpm /tmp/gstreamer1-plugins-bad-free-*.x86_64.rpm
+rm -f /tmp/gstreamer1-plugins-bad-free-*.x86_64.rpm
+
+# Plugins bad-free i686 : même obsolete cross-arch, même workaround
 # 1) Installer les dépendances i686 via dnf5
 dnf5 -y --setopt=install_weak_deps=False install \
     libnice.i686 \
