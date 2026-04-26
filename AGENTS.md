@@ -46,7 +46,7 @@ Le projet construit 6 variantes distinctes :
 - **Containerfiles** : `Containerfile-gablue-test` (main-test), `Containerfile-gablue-nvidia-open-test` (nvidia-open-test)
 - **Paquets additionnels** : `opengamepadui`, `gamescope-session-opengamepadui`, `powerstation`, `inputplumber`, `amdsmi`
 - **Akmods complets** : v4l2loopback, xone, xpadneo, openrazer, zenergy, evdi, etc.
-- **Multilib fc44** : Conflits i686/x86_64 (workarounds dans `mesa-test` et `rpm-test`). Exclusion pipewire/bluez/xwayland des dépôts bazzite. GStreamer bad-free.i686 via `rpm -i --nodeps` (obsolete cross-arch Negativo17).
+- **Multilib fc44** : Conflits i686/x86_64 (workarounds dans `mesa-test` et `rpm-test`). Exclusion pipewire/bluez/xwayland des dépôts bazzite. Mesa vulkan-drivers.i686 via `rpm -i --excludepath` (conflit LICENSE Terra). GStreamer bad-free.i686 via `rpm -i --nodeps` (obsolete cross-arch Negativo17).
 
 ## Structure du projet
 

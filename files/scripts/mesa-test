@@ -27,6 +27,13 @@ dnf5 -y --enable-repo=terra-mesa install \
     mesa-libGL.i686 \
     mesa-libgbm.i686
 
+# Dépendances i686 de mesa-vulkan-drivers (nécessaires avant l'install via rpm --nodeps)
+# Sans ces libs au runtime, libvulkan_radeon.so ne charge pas et Vulkan 32-bit échoue
+dnf5 -y --setopt=install_weak_deps=False install \
+    libdisplay-info.i686 \
+    systemd-libs.i686 \
+    vulkan-loader.i686
+
 # mesa-vulkan-drivers.i686 : bug de packaging Terra fc44
 # Le fichier LICENSE.dependencies est identique entre i686 et x86_64
 # mais Terra ne le marque pas dans %_netsharedpath, donc RPM le signale en conflit
