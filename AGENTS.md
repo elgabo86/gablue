@@ -633,7 +633,7 @@ podman images test-build
 ### Configurations système (/etc)
 
 - **distrobox/distrobox.conf** : Configuration Distrobox
-- **dracut.conf.d/snd-usb-audio.conf** : Inclusion du module snd-usb-audio dans l'initramfs (disponibilité audio immédiate au login, évite le délai WirePlumber/polkit sur les machines avec audio USB)
+- **dracut.conf.d/snd-usb-audio.conf** : Inclusion du driver kernel `snd_usb_audio` dans l'initramfs via `add_drivers` (disponibilité audio immédiate au login, évite le délai WirePlumber/polkit sur les machines avec audio USB)
 - **firewalld/zones/nm-shared.xml** : Zone firewall partagée
 - **profile.d/customperso.sh** : Alias et personnalisations shell
 - **security/limits.d/memlock.conf** : Limites mémoire
