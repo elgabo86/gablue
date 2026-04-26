@@ -79,6 +79,7 @@ Le projet construit 6 variantes distinctes :
 │   └── system/                            # Fichiers système à copier
 │       ├── all/                           # Fichiers communs à toutes les variantes
 │       │   ├── etc/                       # Configurations système (/etc)
+│       │   │   └── dracut.conf.d/         # Configuration dracut (modules initramfs)
 │       │   └── usr/                       # Fichiers utilisateur (/usr)
 │       ├── kinoite/                       # Fichiers spécifiques Kinoite
 │       ├── main/                          # Fichiers spécifiques variante main
@@ -492,6 +493,7 @@ Génération de l'initramfs avec dracut :
 - Détection de la version kernel installée
 - Génération avec options ostree et fido2
 - Permissions sécurisées (0600)
+- **Module snd-usb-audio** inclus via `dracut.conf.d/snd-usb-audio.conf` : charge le module audio USB dans l'initramfs pour que PipeWire/WirePlumber détecte tous les devices audio au login KDE sans délai. Sans ça, le module arrive tard via udev (hotplug), ce qui provoque un délai de 10-15s avant l'activation du son jack et l'authentification polkit/pkexec
 
 ### 9. cleanup / finalize
 
@@ -631,6 +633,7 @@ podman images test-build
 ### Configurations système (/etc)
 
 - **distrobox/distrobox.conf** : Configuration Distrobox
+- **dracut.conf.d/snd-usb-audio.conf** : Inclusion du module snd-usb-audio dans l'initramfs (disponibilité audio immédiate au login, évite le délai WirePlumber/polkit sur les machines avec audio USB)
 - **firewalld/zones/nm-shared.xml** : Zone firewall partagée
 - **profile.d/customperso.sh** : Alias et personnalisations shell
 - **security/limits.d/memlock.conf** : Limites mémoire
