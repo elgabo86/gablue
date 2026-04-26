@@ -5912,7 +5912,9 @@ build_bwrap_env_vars() {
     [ -n "${__GLX_VENDOR_LIBRARY_NAME:-}" ] && bwrap_add --setenv __GLX_VENDOR_LIBRARY_NAME "$__GLX_VENDOR_LIBRARY_NAME"
     [ -n "${SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD:-}" ] && bwrap_add --setenv SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD "$SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD"
     [ -n "${SDL_GAMECONTROLLER_IGNORE_DEVICES:-}" ] && bwrap_add --setenv SDL_GAMECONTROLLER_IGNORE_DEVICES "$SDL_GAMECONTROLLER_IGNORE_DEVICES"
-    
+    [ -n "${GST_PLUGIN_SYSTEM_PATH_1_0:-}" ] && bwrap_add --setenv GST_PLUGIN_SYSTEM_PATH_1_0 "$GST_PLUGIN_SYSTEM_PATH_1_0"
+    [ -n "${GST_PLUGIN_FEATURE_RANK:-}" ] && bwrap_add --setenv GST_PLUGIN_FEATURE_RANK "$GST_PLUGIN_FEATURE_RANK"
+
     [ -n "${USER:-}" ] && bwrap_add --setenv USER "$USER"
     [ -n "${LOGNAME:-}" ] && bwrap_add --setenv LOGNAME "$LOGNAME"
     [ -n "${SHELL:-}" ] && bwrap_add --setenv SHELL "$SHELL"
@@ -7451,6 +7453,8 @@ setup_wine_environment() {
             export GST_PLUGIN_FEATURE_RANK="nvh264dec:0,nvh265dec:0"
         fi
     fi
+    
+    export GST_PLUGIN_SYSTEM_PATH_1_0="$WINE_DIR/lib64/gstreamer-1.0:$WINE_DIR/lib32/gstreamer-1.0:/usr/lib64/gstreamer-1.0:/usr/lib/gstreamer-1.0${GST_PLUGIN_SYSTEM_PATH_1_0:+:$GST_PLUGIN_SYSTEM_PATH_1_0}"
     
     if [ "$xbox_mode" = true ]; then
         export SDL_GAMECONTROLLER_IGNORE_DEVICES="$(get_xbox_sdl_ignore_ids)"
