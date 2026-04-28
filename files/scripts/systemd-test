@@ -17,6 +17,9 @@ systemctl disable -f displaylink.service
 
 systemctl mask systemd-remount-fs.service
 
+# PipeWire/WirePlumber gère les volumes, alsa-restore bloque le boot en attendant les cartes USB
+systemctl mask alsa-restore.service
+
 # Services supplémentaires pour le mode DX
 if [ "${DX_MODE:-false}" == "true" ]; then
     systemctl enable -f ublue-os-libvirt-workarounds.service
