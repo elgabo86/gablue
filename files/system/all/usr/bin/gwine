@@ -5197,8 +5197,14 @@ install_icu68_dlls() {
     current_runner=$(get_current_runner)
     [ "$current_runner" != "proton" ] && return 0
 
-    local icu_src_64="$WINE_DIR/lib64/wine/x86_64-windows"
-    local icu_src_32="$WINE_DIR/lib64/wine/i386-windows"
+    local icu_src_64=""
+    local icu_src_32=""
+    for d in "$WINE_DIR/lib/wine/x86_64-windows" "$WINE_DIR/lib64/wine/x86_64-windows"; do
+        [ -d "$d" ] && { icu_src_64="$d"; break; }
+    done
+    for d in "$WINE_DIR/lib/wine/i386-windows" "$WINE_DIR/lib/i386-windows" "$WINE_DIR/lib64/wine/i386-windows"; do
+        [ -d "$d" ] && { icu_src_32="$d"; break; }
+    done
     local prefix_sys32="$WINEPREFIX/drive_c/windows/system32"
     local prefix_syswow64="$WINEPREFIX/drive_c/windows/syswow64"
 
