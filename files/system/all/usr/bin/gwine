@@ -7477,9 +7477,15 @@ setup_wine_environment() {
         export SDL_GAMECONTROLLER_IGNORE_DEVICES="$(get_xbox_sdl_ignore_ids)"
     fi
     
-    local WINE_LIBS="$WINE_DIR/lib:$WINE_DIR/lib32"
+    local WINE_LIBS="$WINE_DIR/lib:$WINE_DIR/lib32:$WINE_DIR/lib64"
     if [ -d "$WINE_DIR/lib/wine/x86_64-unix" ]; then
         WINE_LIBS="$WINE_LIBS:$WINE_DIR/lib/wine/x86_64-unix"
+    fi
+    if [ -d "$WINE_DIR/lib64/wine/x86_64-unix" ]; then
+        WINE_LIBS="$WINE_LIBS:$WINE_DIR/lib64/wine/x86_64-unix"
+    fi
+    if [ -d "$WINE_DIR/lib/wine/i386-unix" ]; then
+        WINE_LIBS="$WINE_LIBS:$WINE_DIR/lib/wine/i386-unix"
     fi
     if [ -d "$WINE_DIR/lib32/wine/i386-unix" ]; then
         WINE_LIBS="$WINE_LIBS:$WINE_DIR/lib32/wine/i386-unix"
@@ -7489,6 +7495,9 @@ setup_wine_environment() {
     fi
     if [ -d "$WINE_DIR/lib32/gst-libs" ]; then
         WINE_LIBS="$WINE_LIBS:$WINE_DIR/lib32/gst-libs"
+    fi
+    if [ -d "$WINE_DIR/lib/gst-libs" ]; then
+        WINE_LIBS="$WINE_LIBS:$WINE_DIR/lib/gst-libs"
     fi
     if [ -d "$WINE_DIR/libexec/gstreamer-1.0" ]; then
         WINE_LIBS="$WINE_LIBS:$WINE_DIR/libexec/gstreamer-1.0"
