@@ -382,21 +382,6 @@ dnf5 -y --setopt=install_weak_deps=False install \
     libva.i686 \
     libvdpau.i686
 
-# -----------------------------------------------------------------------------
-# GStreamer x86_64 (gestion des codecs système)
-# Les plugins full (bad, ugly, ffmpeg) ne sont PAS installés :
-# Proton/Wine utilisent leur propre copie de GStreamer et FFmpeg
-# -----------------------------------------------------------------------------
-
-# bad (Negatorio17) x86_64 : codecs propriétaires supplémentaires
-# (dtsdec, mpeghdec, svtjpegxs, vmaf, voaacenc, voamrwbenc, mpeg2enc, etc.)
-# rpm -i --replacepkgs --nodeps : coexiste avec bad-free.x86_64
-mkdir -p /tmp/neg17
-dnf5 -y --enable-repo=fedora-multimedia download --destdir=/tmp/neg17 --arch=x86_64 \
-    gstreamer1-plugins-bad
-rpm -i --replacepkgs --nodeps /tmp/neg17/gstreamer1-plugins-bad-*.x86_64.rpm
-rm -rf /tmp/neg17
-
 # =============================================================================
 # OPENGAMEPADUI - INTERFACE GAMING (EXPERIMENTAL - TEST UNIQUEMENT)
 # =============================================================================
