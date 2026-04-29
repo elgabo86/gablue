@@ -383,30 +383,12 @@ dnf5 -y --setopt=install_weak_deps=False install \
     libvdpau.i686
 
 # -----------------------------------------------------------------------------
-# GStreamer x86_64 uniquement (Wine bundle son propre GStreamer/FFmpeg)
-# Les plugins i686 ne sont PAS installés : Proton/Wine utilisent leur
-# propre copie de GStreamer et FFmpeg, pas les libs système
+# GStreamer x86_64 (gestion des codecs système)
+# Les plugins full (bad, ugly, ffmpeg) ne sont PAS installés :
+# Proton/Wine utilisent leur propre copie de GStreamer et FFmpeg
 # -----------------------------------------------------------------------------
 
-# 1) Upgrade x86_64 pour aligner les versions
-dnf5 -y upgrade \
-    gstreamer1 \
-    gstreamer1-plugins-base \
-    gstreamer1-plugins-good \
-    gstreamer1-plugins-bad-free \
-    gstreamer1-plugins-bad-free-libs \
-    gstreamer1-plugins-ugly-free \
-    gstreamer1-plugin-libav
-
-# 2) Codecs non-free x86_64 (RPMFusion)
-# ugly : AC-3, MPEG-2, DVD, RealMedia, x264
-# ffmpeg-libs : codecs avcodec/avformat complets
-# Note : bad-freeworld.x86_64 inutile car bad (Negatorio17) le couvre déjà
-dnf5 -y --setopt=install_weak_deps=False --enablerepo=rpmfusion-free-updates install \
-    gstreamer1-plugins-ugly \
-    ffmpeg-libs
-
-# 3) bad (Negatorio17) x86_64 : codecs propriétaires supplémentaires
+# bad (Negatorio17) x86_64 : codecs propriétaires supplémentaires
 # (dtsdec, mpeghdec, svtjpegxs, vmaf, voaacenc, voamrwbenc, mpeg2enc, etc.)
 # rpm -i --replacepkgs --nodeps : coexiste avec bad-free.x86_64
 mkdir -p /tmp/neg17
