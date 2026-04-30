@@ -415,9 +415,8 @@ Exclusions importantes :
 **mesa (stable)** : Swap Mesa vers la version Terra optimisée
 - Swap de `mesa-filesystem` vers terra-mesa
 - Installation x86_64 : dri-drivers, libEGL, libGL, libgbm, vulkan-drivers
-- Installation i686 : dri-drivers, libEGL, libGL, libgbm
-- **Workaround fc44** : `mesa-vulkan-drivers.i686` installé via `rpm -i --nodeps --excludepath` car Terra fc44 a un conflit de fichier `LICENSE.dependencies` entre i686 et x86_64
-- Dépendances i686 pré-installées avant le workaround : `libdisplay-info.i686`, `systemd-libs.i686`, `vulkan-loader.i686`
+- Installation i686 : dri-drivers, libEGL, libGL, libgbm, vulkan-drivers
+- Terra fc44 : les fichiers `LICENSE.dependencies` sont nommés par arch (`.i386` / `.x86_64`), pas de conflit
 - Versionlock des paquets Mesa
 
 **mesa-test (test)** : Identique au stable
@@ -734,7 +733,7 @@ Commandes ujust disponibles :
 **Solution** : Vérifier les exclusions dans le script copr (pipewire/bluez/xwayland exclus de bazzite)
 
 **Problème** : Conflit de fichier i686/x86_64 (fc44 multilib)
-**Solution** : Utiliser `rpm -i --nodeps --excludepath` (workaround Terra fc44 pour mesa-vulkan-drivers.i686)
+**Solution** : Terra fc44 nomme les fichiers LICENSE par arch (`.i386` / `.x86_64`), plus de conflit. Si conflit avec d'autres paquets, utiliser `rpm -i --nodeps --excludepath`
 
 **Problème** : Version mismatch x86_64/i686 (fc44)
 **Solution** : Upgrader les paquets x86_64 avant d'installer les i686 (ex: pipewire-libs)
