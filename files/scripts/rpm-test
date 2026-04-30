@@ -374,6 +374,11 @@ dnf5 -y --setopt=install_weak_deps=False install \
 dnf5 -y --enable-repo=terra-mesa --setopt=install_weak_deps=False install \
     vulkan-loader.i686
 
+# OBS vkcapture hook libs (capture Vulkan/OpenGL sans installer OBS)
+dnf5 -y --setopt=install_weak_deps=False install \
+    obs-studio-plugin-vkcapture-hook-libs.x86_64 \
+    obs-studio-plugin-vkcapture-hook-libs.i686
+
 # -----------------------------------------------------------------------------
 # Vidéo 32-bit (accélération matérielle pour décodage dans Wine)
 # -----------------------------------------------------------------------------

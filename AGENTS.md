@@ -456,6 +456,7 @@ Paquets supprimés :
 
 **rpm-test** ajoute :
 - `opengamepadui`, `gamescope-session-opengamepadui`, `powerstation`, `inputplumber` (OpenGamepadUI)
+- `obs-studio-plugin-vkcapture-hook-libs` (x86_64 + i686) : capture Vulkan/OpenGL sans installer OBS
 
 ### 6. post-install / post-install-test
 
