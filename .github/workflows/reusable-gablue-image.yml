@@ -27,7 +27,7 @@ on:
         required: false
         type: string
         default: ""
-      kernel_flavor:
+      nvidia_flavor:
         required: false
         type: string
         default: ""
@@ -50,78 +50,42 @@ jobs:
       id-token: write
 
     steps:
-      # Étape pour récupérer la version du kernel via skopeo inspect
+      # Étape pour récupérer la version du kernel via skopeo list-tags
       - name: Get latest kernel version
         id: get_kernel_version
         if: inputs.kernel_version == ''
         run: |
-          # Pour les images test, utiliser le kernel ogc depuis ublue-os/akmods
-          if [[ "${{ inputs.image_name }}" == "gablue-main-test" ]] || [[ "${{ inputs.image_name }}" == "gablue-nvidia-open-test" ]]; then
-            KERNEL_FLAVOR="ogc"
-            FEDORA_VERSION="${{ inputs.fedora_version }}"
-            
-            # Récupérer la liste des tags disponibles pour ublue-os/akmods
-            echo "Fetching available ogc kernel tags..."
-            TAGS_JSON=$(skopeo list-tags "docker://ghcr.io/ublue-os/akmods" 2>/dev/null || echo '{"Tags":[]}')
-            
-            # Filtrer les tags pour trouver le kernel ogc correspondant à la version Fedora
-            # Pattern: ogc-{FEDORA_VERSION}-{KERNEL_VERSION}
-            KERNEL_VERSION=$(echo "$TAGS_JSON" | jq -r --arg fv "$FEDORA_VERSION" '
-              .Tags[] 
-              | select(startswith("ogc-" + $fv + "-")) 
-              | sub("^ogc-" + $fv + "-"; "")
-            ' | sort -V | tail -1)
-            
-            if [[ -z "$KERNEL_VERSION" ]] || [[ "$KERNEL_VERSION" == "null" ]]; then
-              echo "Erreur : Impossible de trouver un kernel ogc pour Fedora $FEDORA_VERSION"
-              echo "Tags disponibles:"
-              echo "$TAGS_JSON" | jq -r '.Tags[]'
-              exit 1
-            fi
-            
-            echo "Using latest ogc kernel for test image: $KERNEL_VERSION"
-          else
-            # Construire l'URI du conteneur kernel bazzite standard
-            KERNEL_URI="ghcr.io/bazzite-org/kernel-bazzite:latest-f${{ inputs.fedora_version }}-x86_64"
-
-            echo "Kernel URI: $KERNEL_URI"
-
-            # Utiliser skopeo inspect pour récupérer les labels
-            KERNEL_INFO=$(skopeo inspect "docker://$KERNEL_URI")
-            if [[ -z "$KERNEL_INFO" ]]; then
-              echo "Erreur : Impossible de récupérer les informations du kernel depuis $KERNEL_URI"
-              exit 1
-            fi
-
-            # Extraire la version du kernel depuis les labels (ou utiliser "latest" comme fallback)
-            KERNEL_VERSION=$(echo "$KERNEL_INFO" | jq -r '.Labels["org.bazzite.kernel.version"] // "latest"')
-            KERNEL_FLAVOR="bazzite"
-
-            echo "LATEST_TAG=$KERNEL_URI" >> $GITHUB_OUTPUT
-            
-            # Extraire la version NVIDIA depuis les labels pour compatibilité exacte
-            if [[ "${{ inputs.image_variant }}" == "nvidia-open" ]]; then
-              NVIDIA_VERSION=$(echo "$KERNEL_INFO" | jq -r '.Labels["org.bazzite.kernel.nvidia"] // "latest"')
-            else
-              NVIDIA_VERSION=$(echo "$KERNEL_INFO" | jq -r '.Labels["org.bazzite.kernel.nvidia_lts"] // "latest"')
-            fi
-
-            # Fallback: si le label n'existe pas, on utilise "latest"
-            if [[ "$NVIDIA_VERSION" == "null" ]] || [[ -z "$NVIDIA_VERSION" ]]; then
-              NVIDIA_VERSION="latest"
-            fi
-            
-            echo "NVIDIA_VERSION=$NVIDIA_VERSION" >> $GITHUB_OUTPUT
+          KERNEL_FLAVOR="${{ inputs.kernel_type }}"
+          FEDORA_VERSION="${{ inputs.fedora_version }}"
+          
+          # Récupérer la liste des tags disponibles pour ublue-os/akmods
+          echo "Fetching available ${KERNEL_FLAVOR} kernel tags..."
+          TAGS_JSON=$(skopeo list-tags "docker://ghcr.io/ublue-os/akmods" 2>/dev/null || echo '{"Tags":[]}')
+          
+          # Filtrer les tags pour trouver le kernel correspondant à la version Fedora
+          # Pattern: {KERNEL_FLAVOR}-{FEDORA_VERSION}-{KERNEL_VERSION}
+          KERNEL_VERSION=$(echo "$TAGS_JSON" | jq -r --arg kf "$KERNEL_FLAVOR" --arg fv "$FEDORA_VERSION" '
+            .Tags[] 
+            | select(startswith($kf + "-" + $fv + "-")) 
+            | sub($kf + "-" + $fv + "-"; "")
+          ' | sort -V | tail -1)
+          
+          if [[ -z "$KERNEL_VERSION" ]] || [[ "$KERNEL_VERSION" == "null" ]]; then
+            echo "Erreur : Impossible de trouver un kernel ${KERNEL_FLAVOR} pour Fedora $FEDORA_VERSION"
+            echo "Tags disponibles:"
+            echo "$TAGS_JSON" | jq -r '.Tags[]'
+            exit 1
           fi
+          
+          echo "Using latest ${KERNEL_FLAVOR} kernel: $KERNEL_VERSION"
 
-          # Fallback: si le label n'existe pas, on utilise "latest"
+          # Fallback: si le tag n'existe pas, on utilise "latest"
           if [[ "$KERNEL_VERSION" == "null" ]] || [[ -z "$KERNEL_VERSION" ]]; then
             KERNEL_VERSION="latest"
           fi
 
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_OUTPUT
           echo "KERNEL_FLAVOR=$KERNEL_FLAVOR" >> $GITHUB_OUTPUT
-          echo "NVIDIA_VERSION=${NVIDIA_VERSION:-latest}" >> $GITHUB_OUTPUT
 
       # Étape pour définir la version du noyau
       - name: Determine kernel version
@@ -210,7 +174,7 @@ jobs:
         id: build_image
         shell: bash
         run: |
-          # Choisir le bon Containerfile selon la variante ou l'input explicite
+          # Choisir le bon Containerfile selon l'input explicite ou le nom de l'image
           if [[ -n "${{ inputs.containerfile }}" ]]; then
             CONTAINERFILE="${{ inputs.containerfile }}"
           elif [[ "${{ inputs.image_name }}" == "gablue-main-test" ]]; then
@@ -227,23 +191,22 @@ jobs:
             DX_MODE_ARG="--build-arg DX_MODE=true"
           fi
 
-          # Préparer les arguments de build
-          KERNEL_FLAVOR_ARG=""
-          if [[ -n "${{ steps.get_kernel_version.outputs.KERNEL_FLAVOR }}" ]]; then
-            KERNEL_FLAVOR_ARG="--build-arg KERNEL_FLAVOR=${{ steps.get_kernel_version.outputs.KERNEL_FLAVOR }}"
+          # Préparer NVIDIA_FLAVOR arg si fourni
+          NVIDIA_FLAVOR_ARG=""
+          if [[ -n "${{ inputs.nvidia_flavor }}" ]]; then
+            NVIDIA_FLAVOR_ARG="--build-arg NVIDIA_FLAVOR=${{ inputs.nvidia_flavor }}"
           fi
 
           sudo buildah build \
             --file "$CONTAINERFILE" \
             --format "docker" \
             --build-arg KERNEL_VERSION="${{ steps.determine_kernel_version.outputs.KERNEL_VERSION }}" \
-            --build-arg NVIDIA_VERSION="${{ steps.get_kernel_version.outputs.NVIDIA_VERSION }}" \
             --build-arg VARIANT="${{ inputs.image_variant }}" \
             --build-arg SOURCE_IMAGE="${{ inputs.source_image }}" \
             --build-arg SOURCE_SUFFIX="${{ inputs.source_suffix }}" \
             --build-arg FEDORA_VERSION="${{ inputs.fedora_version }}" \
-            --build-arg KERNEL_TYPE="${{ inputs.kernel_type }}" \
-            $KERNEL_FLAVOR_ARG \
+            --build-arg KERNEL_FLAVOR="${{ inputs.kernel_type }}" \
+            $NVIDIA_FLAVOR_ARG \
             $DX_MODE_ARG \
             --tag raw-img .
 

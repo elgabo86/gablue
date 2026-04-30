@@ -6,10 +6,10 @@ Gablue est une distribution immuable personnalisée basée sur **Fedora Kinoite*
 
 ### Caractéristiques principales
 
-- **Base** : Fedora Kinoite 43 (KDE Plasma)
-- **Kernel** : Bazzite kernel (optimisé pour le gaming)
-- **Mesa** : Terra Mesa (version plus récente pour meilleures performances)
-- **NVIDIA** : Support des pilotes NVIDIA closed et open-source
+- **Base** : Fedora Kinoite 44 (KDE Plasma)
+- **Kernel** : OGC kernel depuis ublue-os/akmods (optimisé pour le gaming)
+- **Mesa** : Terra Mesa (version plus récente pour meilleures performances, multilib fc44)
+- **NVIDIA** : Support des pilotes NVIDIA closed et open-source via akmods
 - **Virtualisation** : Mode DX avec Docker, Libvirt, QEMU
 - **Gaming** : Optimisations poussées (Gamescope, MangoHud, schedulers)
 
@@ -17,21 +17,22 @@ Gablue est une distribution immuable personnalisée basée sur **Fedora Kinoite*
 
 Le projet construit 6 variantes distinctes :
 
-| Variante | Description | Kernel | Trigger tag |
-|----------|-------------|--------|-------------|
-| `gablue-main` | Image standard sans NVIDIA | Bazzite (stable) | `[main]`, `[all]` |
-| `gablue-nvidia` | Pilotes NVIDIA closed-source | Bazzite (stable) | `[nvidia]`, `[all]` |
-| `gablue-nvidia-open` | Pilotes NVIDIA open-source | Bazzite (stable) | `[nvidia]`, `[all]` |
-| `gablue-main-dx` | Mode développement (DX) avec virtualisation | Bazzite (stable) | `[dx]`, `[all]` |
-| `gablue-main-test` | Image de test avec OpenGamepadUI (fc44) | OGC (unstable) | `[test]`, `[all]` |
-| `gablue-nvidia-open-test` | Test NVIDIA Open avec OpenGamepadUI (fc44) | OGC (unstable) | `[test]`, `[nvidia]`, `[all]` |
+| Variante | Description | Kernel | NVIDIA | Trigger tag |
+|----------|-------------|--------|--------|-------------|
+| `gablue-main` | Image standard sans NVIDIA | OGC | - | `[main]`, `[all]` |
+| `gablue-nvidia` | Pilotes NVIDIA closed-source | OGC | nvidia-lts | `[nvidia]`, `[all]` |
+| `gablue-nvidia-open` | Pilotes NVIDIA open-source | OGC | nvidia-open | `[nvidia]`, `[all]` |
+| `gablue-main-dx` | Mode développement (DX) avec virtualisation | OGC | - | `[dx]`, `[all]` |
+| `gablue-main-test` | Image de test avec OpenGamepadUI (fc44) | OGC | - | `[test]`, `[all]` |
+| `gablue-nvidia-open-test` | Test NVIDIA Open avec OpenGamepadUI (fc44) | OGC | nvidia-open | `[test]`, `[nvidia]`, `[all]` |
 
 ### Différences entre variantes
 
 **Main vs NVIDIA** :
-- NVIDIA installe les pilotes depuis `ghcr.io/bazzite-org/nvidia-drivers`
-- Kernel spécifique avec modules NVIDIA (`kernel-nvidia` ou `kernel-nvidia-closed-lts`)
-- Paquets additionnels : `supergfxctl`, `supergfxctl-plasmoid` (Kinoite) ou `gnome-shell-extension-supergfxctl-gex` (Silverblue)
+- NVIDIA installe les pilotes depuis `ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}`
+- `NVIDIA_FLAVOR=nvidia-lts` pour les pilotes closed, `NVIDIA_FLAVOR=nvidia-open` pour les open
+- Installation via `nvidia-install.sh` de ublue-os (gère driver, kmod, container-toolkit, supergfxctl, SELinux, dracut)
+- Paquets additionnels gérés par nvidia-install.sh : `supergfxctl`, `supergfxctl-plasmoid` (Kinoite)
 
 **Main vs DX** :
 - DX inclut Docker CE, Libvirt, QEMU, virt-manager
@@ -39,52 +40,50 @@ Le projet construit 6 variantes distinctes :
 - Groupes utilisateurs supplémentaires configurés
 
 **Stable vs Test** :
-- **Fedora** : Stable utilise Fedora 43, Test utilise Fedora 44
-- **Kernel** : Stable utilise Bazzite (stable), Test utilise OGC (unstable)
+- **Containerfile** : Stable utilise `Containerfile-gablue` (unique pour toutes les variantes stables), Test utilise `Containerfile-gablue-test` et `Containerfile-gablue-nvidia-open-test`
+- **Scripts** : Stable utilise les scripts sans suffixe (`kernel`, `copr`, `mesa`, etc.), Test utilise les scripts `-test`
 - **OpenGamepadUI** : Interface gaming expérimentale style Steam Deck (test uniquement)
-- **Scripts spécifiques** : `kernel-test`, `nvidia-test`, `copr-test`, `rpm-test`, `post-install-test`, `systemd-test`, `mesa-test`
-- **Containerfiles** : `Containerfile-gablue-test` (main-test), `Containerfile-gablue-nvidia-open-test` (nvidia-open-test)
-- **Paquets additionnels** : `opengamepadui`, `gamescope-session-opengamepadui`, `powerstation`, `inputplumber`, `amdsmi`
-- **Akmods complets** : v4l2loopback, xone, xpadneo, openrazer, zenergy, evdi, etc.
-- **Multilib fc44** : Conflits i686/x86_64 (workarounds dans `mesa-test` et `rpm-test`). Exclusion pipewire/bluez/xwayland des dépôts bazzite. Mesa vulkan-drivers.i686 via `rpm -i --excludepath` (conflit LICENSE Terra). GStreamer bad-free.i686 via `rpm -i --nodeps` (obsolete cross-arch Negativo17).
+- **Paquets OGUI** : `opengamepadui`, `gamescope-session-opengamepadui`, `powerstation`, `inputplumber` (test uniquement)
+- **Fichiers système test** : `files/system/test/` copié uniquement dans les Containerfiles test (steamos-session-select, switch-to-opengamepadui.desktop)
 
 ## Structure du projet
 
 ```
 .
-├── Containerfile-gablue                   # Containerfile principal
+├── Containerfile-gablue                   # Containerfile principal (toutes variantes stables)
 ├── Containerfile-gablue-test              # Containerfile pour main-test
 ├── Containerfile-gablue-nvidia-open-test  # Containerfile pour nvidia-open-test
 ├── cosign.pub                             # Clé publique pour signature
 ├── files/
 │   ├── scripts/                           # Scripts d'installation bash
 │   │   ├── brew                           # Installation Homebrew
+│   │   ├── build-c                       # Compilation sources C
 │   │   ├── cleanup                        # Nettoyage intermédiaire
-│   │   ├── copr                           # Configuration dépôts COPR (stable)
-│   │   ├── copr-test                      # Configuration dépôts COPR (test)
+│   │   ├── copr                           # Configuration dépôts COPR
+│   │   ├── copr-test                      # Configuration dépôts COPR (test, identique + OGUI)
 │   │   ├── finalize                       # Finalisation de l'image
 │   │   ├── initramfs                      # Génération initramfs
-│   │   ├── kernel                        # Installation kernel Bazzite (stable)
-│   │   ├── kernel-test                    # Installation kernel OGC (test)
-│   │   ├── mesa                           # Installation Mesa Terra (stable)
-│   │   ├── mesa-test                      # Installation Mesa Terra (test, multilib fc44)
-│   │   ├── nvidia                         # Installation pilotes NVIDIA (stable)
-│   │   ├── nvidia-test                    # Installation pilotes NVIDIA (test)
+│   │   ├── kernel                        # Installation kernel OGC + akmods
+│   │   ├── kernel-test                    # Installation kernel OGC (test, identique)
+│   │   ├── mesa                           # Installation Mesa Terra (multilib fc44)
+│   │   ├── mesa-test                      # Installation Mesa Terra (test, identique)
+│   │   ├── nvidia                         # Installation pilotes NVIDIA via akmods
+│   │   ├── nvidia-test                    # Installation pilotes NVIDIA (test, via akmods + OGUI)
 │   │   ├── post-install                   # Post-installation principale
-│   │   ├── post-install-test              # Post-installation test
-│   │   ├── rpm                            # Paquets RPM (stable)
-│   │   ├── rpm-test                       # Paquets RPM (test)
+│   │   ├── post-install-test              # Post-installation test (post-install + OGUI)
+│   │   ├── rpm                            # Paquets RPM (avec libs 32-bit Wine/Proton)
+│   │   ├── rpm-test                       # Paquets RPM (test, identique + OGUI)
 │   │   ├── systemd                        # Activation services systemd
-│   │   └── systemd-test                   # Activation services (test)
+│   │   └── systemd-test                   # Activation services (test, identique + OGUI)
 │   └── system/                            # Fichiers système à copier
 │       ├── all/                           # Fichiers communs à toutes les variantes
 │       │   ├── etc/                       # Configurations système (/etc)
 │       │   └── usr/                       # Fichiers utilisateur (/usr)
 │       ├── kinoite/                       # Fichiers spécifiques Kinoite
 │       ├── main/                          # Fichiers spécifiques variante main
-│       ├── nvidia/                        # Fichiers spécifiques NVIDIA
-│       ├── nvidia-open/                   # Fichiers spécifiques NVIDIA Open
-│       └── test/                          # Fichiers spécifiques images test
+│       ├── nvidia/                        # Fichiers spécifiques NVIDIA (nvidia-container.pp, modprobe, CDI service)
+│       ├── nvidia-open/                   # Fichiers spécifiques NVIDIA Open (nvidia-container.pp, modprobe, CDI service)
+│       └── test/                          # Fichiers spécifiques images test (OGUI uniquement)
 ├── .github/
 │   ├── workflows/                         # Workflows GitHub Actions
 │   │   ├── gablue-builds.yml              # Workflow principal de build
@@ -107,21 +106,22 @@ sudo buildah build \
   --build-arg VARIANT="main" \
   --build-arg SOURCE_IMAGE="kinoite" \
   --build-arg SOURCE_SUFFIX="-main" \
-  --build-arg FEDORA_VERSION="43" \
-  --build-arg KERNEL_TYPE="bazzite" \
-  --build-arg NVIDIA_VERSION="latest" \
+  --build-arg FEDORA_VERSION="44" \
+  --build-arg KERNEL_FLAVOR="ogc" \
+  --build-arg KERNEL_VERSION="<version>" \
   --tag gablue-main .
 
-# Build de l'image NVIDIA
+# Build de l'image NVIDIA (closed)
 sudo buildah build \
   --file Containerfile-gablue \
   --format "docker" \
   --build-arg VARIANT="nvidia" \
   --build-arg SOURCE_IMAGE="kinoite" \
   --build-arg SOURCE_SUFFIX="-main" \
-  --build-arg FEDORA_VERSION="43" \
-  --build-arg KERNEL_TYPE="bazzite" \
-  --build-arg NVIDIA_VERSION="latest" \
+  --build-arg FEDORA_VERSION="44" \
+  --build-arg KERNEL_FLAVOR="ogc" \
+  --build-arg KERNEL_VERSION="<version>" \
+  --build-arg NVIDIA_FLAVOR="nvidia-lts" \
   --tag gablue-nvidia .
 
 # Build de l'image NVIDIA Open
@@ -131,9 +131,10 @@ sudo buildah build \
   --build-arg VARIANT="nvidia-open" \
   --build-arg SOURCE_IMAGE="kinoite" \
   --build-arg SOURCE_SUFFIX="-main" \
-  --build-arg FEDORA_VERSION="43" \
-  --build-arg KERNEL_TYPE="bazzite" \
-  --build-arg NVIDIA_VERSION="latest" \
+  --build-arg FEDORA_VERSION="44" \
+  --build-arg KERNEL_FLAVOR="ogc" \
+  --build-arg KERNEL_VERSION="<version>" \
+  --build-arg NVIDIA_FLAVOR="nvidia-open" \
   --tag gablue-nvidia-open .
 
 # Build de l'image DX (développement)
@@ -143,9 +144,9 @@ sudo buildah build \
   --build-arg VARIANT="main" \
   --build-arg SOURCE_IMAGE="kinoite" \
   --build-arg SOURCE_SUFFIX="-main" \
-  --build-arg FEDORA_VERSION="43" \
-  --build-arg KERNEL_TYPE="bazzite" \
-  --build-arg NVIDIA_VERSION="latest" \
+  --build-arg FEDORA_VERSION="44" \
+  --build-arg KERNEL_FLAVOR="ogc" \
+  --build-arg KERNEL_VERSION="<version>" \
   --build-arg DX_MODE="true" \
   --tag gablue-main-dx .
 
@@ -157,9 +158,8 @@ sudo buildah build \
   --build-arg SOURCE_IMAGE="kinoite" \
   --build-arg SOURCE_SUFFIX="-main" \
   --build-arg FEDORA_VERSION="44" \
-  --build-arg KERNEL_TYPE="ogc" \
   --build-arg KERNEL_FLAVOR="ogc" \
-  --build-arg KERNEL_VERSION="6.19.11-ogc1.1.fc43.x86_64" \
+  --build-arg KERNEL_VERSION="<version>" \
   --tag gablue-main-test .
 
 # Build de l'image nvidia-open-test
@@ -170,9 +170,8 @@ sudo buildah build \
   --build-arg SOURCE_IMAGE="kinoite" \
   --build-arg SOURCE_SUFFIX="-main" \
   --build-arg FEDORA_VERSION="44" \
-  --build-arg KERNEL_TYPE="ogc" \
   --build-arg KERNEL_FLAVOR="ogc" \
-  --build-arg KERNEL_VERSION="6.19.11-ogc1.1.fc43.x86_64" \
+  --build-arg KERNEL_VERSION="<version>" \
   --tag gablue-nvidia-open-test .
 ```
 
@@ -248,15 +247,21 @@ set -eoux pipefail
 - Ordre optimal pour le cache Docker (du moins changeant au plus changeant)
 - Multi-stage pour les dépendances externes
 
-**Pattern standard** :
+**Pattern standard (stable)** :
 ```dockerfile
 # Arguments de build
 ARG VARIANT
 ARG SOURCE_IMAGE
 ARG FEDORA_VERSION
+ARG KERNEL_FLAVOR
+ARG KERNEL_VERSION
+ARG NVIDIA_FLAVOR="nvidia-open"
+ARG DX_MODE
 
-# Étape intermédiaire : récupération du kernel
-FROM ghcr.io/bazzite-org/kernel-bazzite:latest-f${FEDORA_VERSION}-x86_64 AS kernel
+# Étapes intermédiaires : akmods
+FROM ghcr.io/ublue-os/akmods:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods
+FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-extra
+FROM ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-nvidia
 
 # Image de base
 FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${FEDORA_VERSION}
@@ -264,6 +269,9 @@ FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${FEDORA_VERSION}
 # Redéfinition des arguments après FROM
 ARG VARIANT
 ARG SOURCE_IMAGE
+ARG DX_MODE
+ARG KERNEL_FLAVOR
+ARG KERNEL_VERSION
 
 # Copie des fichiers
 COPY files/scripts /ctx/
@@ -274,12 +282,28 @@ COPY files/system/${VARIANT} /
 # Variables d'environnement
 ENV VARIANT=${VARIANT}
 ENV SOURCE_IMAGE=${SOURCE_IMAGE}
+ENV DX_MODE=${DX_MODE}
+ENV KERNEL_FLAVOR=${KERNEL_FLAVOR}
+ENV KERNEL_VERSION=${KERNEL_VERSION}
 
-# Installation avec cache
+# Installation du kernel avec akmods
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    --mount=type=bind,from=kernel,src=/,dst=/rpms/kernel \
-    sh /ctx/script && \
+    --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/tmp/kernel-rpms \
+    --mount=type=bind,from=akmods,src=/rpms/common,dst=/tmp/rpms/common \
+    --mount=type=bind,from=akmods,src=/rpms/kmods,dst=/tmp/rpms/kmods \
+    --mount=type=bind,from=akmods-extra,src=/rpms/extra,dst=/tmp/rpms/extra \
+    --mount=type=bind,from=akmods-extra,src=/rpms/kmods,dst=/tmp/rpms/kmods-extra \
+    sh /ctx/kernel && \
+    sh /ctx/cleanup
+
+# Installation NVIDIA (conditionnel)
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=akmods-nvidia,src=/rpms,dst=/tmp/rpms/nvidia \
+    if [ "$VARIANT" = "nvidia" ] || [ "$VARIANT" = "nvidia-open" ]; then \
+        sh /ctx/nvidia; \
+    fi && \
     sh /ctx/cleanup
 ```
 
@@ -365,80 +389,57 @@ done && unset -v copr
 ### 1. copr - Configuration des dépôts
 
 Configure tous les dépôts tiers nécessaires :
-- **COPR** : bazzite-org/bazzite, ublue-os/staging, ublue-os/packages, che/nerd-fonts, hikariknight/looking-glass-kvmfr, lizardbyte/beta
+- **COPR** : bazzite-org/bazzite, bazzite-org/bazzite-multilib, ublue-os/staging, ublue-os/packages, che/nerd-fonts, hikariknight/looking-glass-kvmfr, lizardbyte/beta, bazzite-org/rom-properties
 - **Tiers** : Tailscale, Negativo17
-- **RPMFusion** : free et nonfree
 - **Terra (FyraLabs)** : terra-release, terra-release-extras, terra-release-mesa
 
 Exclusions importantes :
 - Mesa et kernel des dépôts Fedora (fournis par Terra)
-- Priorité Terra = 3 (haute), RPMFusion = 5 (basse)
+- Exclusions bazzite : pipewire-*, bluez-*, xorg-x11-server-Xwayland, wireplumber-* (alignement i686/x86_64 fc44)
+- Priorité Terra = 3 (haute)
 
-### 2. kernel / kernel-test - Installation du kernel
+### 2. kernel - Installation du kernel OGC + akmods
 
-**kernel (stable)** : Installation du kernel Bazzite
-- Récupération depuis l'étape intermédiaire `kernel`
-- Installation des paquets kernel standards
-- Ajout des paquets NVIDIA si variante NVIDIA
+**kernel (stable)** : Installation du kernel OGC et des akmods depuis ublue-os
+- Récupération depuis `ghcr.io/ublue-os/akmods` et `ghcr.io/ublue-os/akmods-extra`
+- Installation du kernel depuis `/tmp/kernel-rpms/`
+- Akmods critiques : v4l2loopback, xone, xpadneo (commun), zenergy, gcadapter, evdi (extra)
+- Akmods optionnels : framework-laptop, openrazer (commun), new-lg4ff, t150-driver, hid-fanatecff, sc0710, system76 (extra)
 - Versionlock pour verrouiller les versions
 - Installation de scx-scheds depuis COPR bieszczaders/kernel-cachyos-addons
 
-**kernel-test (test)** : Installation du kernel OGC (Open Game Kernel)
-- Récupération depuis `ghcr.io/ublue-os/akmods:ogc-*`
-- Installation du kernel instable avec akmods complets
-- Akmods inclus : v4l2loopback, xone, xpadneo, openrazer, zenergy, evdi, gcadapter, new-lg4ff, etc.
-- Versionlock pour verrouiller les versions
+**kernel-test (test)** : Identique au stable
 
-### 3. mesa / mesa-test - Installation Mesa Terra
+### 3. mesa - Installation Mesa Terra (multilib fc44)
 
 **mesa (stable)** : Swap Mesa vers la version Terra optimisée
 - Swap de `mesa-filesystem` vers terra-mesa
-- Installation des pilotes Mesa principaux
-- Paquets i686 pour variantes NVIDIA (compatibilité jeux)
-- Versionlock des paquets Mesa
-
-**mesa-test (test)** : Version multilib pour fc44 avec workarounds
-- Même installation que mesa pour x86_64
-- Installation i686 complète (dri-drivers, libEGL, libGL, libgbm)
-- **Workaround fc44** : `mesa-vulkan-drivers.i686` installé via `rpm -i --nodeps --force` car Terra fc44 a un conflit de fichier `LICENSE.dependencies` entre i686 et x86_64
+- Installation x86_64 : dri-drivers, libEGL, libGL, libgbm, vulkan-drivers
+- Installation i686 : dri-drivers, libEGL, libGL, libgbm
+- **Workaround fc44** : `mesa-vulkan-drivers.i686` installé via `rpm -i --nodeps --excludepath` car Terra fc44 a un conflit de fichier `LICENSE.dependencies` entre i686 et x86_64
 - Dépendances i686 pré-installées avant le workaround : `libdisplay-info.i686`, `systemd-libs.i686`, `vulkan-loader.i686`
 - Versionlock des paquets Mesa
 
-### 4. nvidia / nvidia-test - Installation pilotes NVIDIA
+**mesa-test (test)** : Identique au stable
 
-**nvidia (stable)** : Installation depuis l'étape intermédiaire `nvidia` ou `nvidia-open`
-- Librairies NVIDIA (libnvidia-*)
-- Pilotes et utilitaires (nvidia-driver, nvidia-settings)
-- Container toolkit pour Docker
-- Configuration SELinux pour les conteneurs NVIDIA
-- Modification dracut pour forcer le chargement des pilotes
+### 4. nvidia - Installation pilotes NVIDIA via akmods
 
-**nvidia-test (test)** : Installation depuis les akmods ublue-os
-- Librairies EGL Wayland (32 et 64 bits)
-- Installation via script ublue-os depuis `/tmp/rpms/nvidia-open` ou `/tmp/rpms/nvidia`
-- Support multilib activé (MULTILIB=1)
-- Configuration post-installation : liens symboliques, suppression ICD Nouveau
+**nvidia (stable)** : Installation via `nvidia-install.sh` de ublue-os
+- Suppression de `nvidia-gpu-firmware` (conflit avec pilotes propriétaires)
+- Activation terra-mesa pour egl-wayland + Mesa i686
+- Installation EGL Wayland (32 et 64 bits)
+- Appel de `nvidia-install.sh` avec `AKMODNV_PATH="/tmp/rpms/nvidia"`, `MULTILIB=1`, `IMAGE_NAME="$SOURCE_IMAGE"`
+- nvidia-install.sh gère : driver, kmod, container-toolkit, supergfxctl, SELinux, dracut force_drivers, staging COPR
+- Configuration post-installation : suppression ICD Nouveau, symlink libnvidia-ml, disable supergfxd
+- **VK_hdr_layer** pour pilotes closed uniquement (pas nvidia-open) : extraction manuelle du RPM
+- Désactivation terra-mesa après installation
 
-### 5. copr / copr-test - Configuration des dépôts
+**nvidia-test (test)** : Version simplifiée sans VK_hdr_layer ni nvidia-gpu-firmware removal, NVIDIA_TYPE dynamique
 
-**copr (stable)** : Configuration des dépôts COPR
-- COPR : bazzite-org/bazzite, bazzite-org/bazzite-multilib, ublue-os/staging, ublue-os/packages, che/nerd-fonts, hikariknight/looking-glass-kvmfr, lizardbyte/beta
-- Tiers : Tailscale, Negativo17
-- RPMFusion : free et nonfree
-- Terra (FyraLabs) : terra-release, terra-release-extras, terra-release-mesa
-
-**copr-test (test)** : Configuration avec exclusions spécifiques
-- Mêmes dépôts que stable
-- `gamescope-session` n'est PAS exclu de Terra (requis par `gamescope-session-opengamepadui`)
-
-Exclusions importantes :
-- Mesa et kernel des dépôts Fedora (fournis par Terra)
-- Priorité Terra = 3 (haute), RPMFusion = 5 (basse)
-
-### 6. rpm / rpm-test - Paquets RPM
+### 5. rpm - Paquets RPM
 
 Installation extensive de paquets organisée par catégories :
-- **CLI** : fswatch, btop, fastfetch, git, atuin, tldr, etc.
+- **CLI** : fswatch, btop, fastfetch, git, atuin, tldr, amdsmi, etc.
 - **Réseau** : tailscale, rar
 - **Multimédia** : yt-dlp
 - **Virtualisation (DX uniquement)** : docker-ce, libvirt, qemu, virt-manager
@@ -447,49 +448,49 @@ Installation extensive de paquets organisée par catégories :
 - **KDE** : okular, gwenview, kcalc, yakuake (Kinoite uniquement)
 - **Polices** : nerd-fonts
 - **Développement** : gcc, python3-pip
-
-**rpm-test** ajoute :
-- `amdsmi` (monitoring AMD)
-- `opengamepadui`, `gamescope-session-opengamepadui`, `powerstation`, `inputplumber` (OpenGamepadUI)
-- Libs i686 Wine/Proton complètes : fontconfig, freetype, X11, Wayland, gnutls, cups, audio (pulseaudio, pipewire, FAudio, alsa, openal), vulkan, va/vdpau
-- GStreamer i686 : upgrade x86_64 d'abord pour aligner les versions, puis i686 (base, good, ugly-free, bad-free via rpm -i --nodeps)
-- Mesa i686 installé depuis `mesa-test` (vulkan-drivers via `rpm -i --excludepath`)
-- Pipewire/bluez/xwayland exclus des dépôts bazzite (versions Fedora alignées i686/x86_64)
-
-**rpm** inclut en plus :
-- Outils SELinux : `checkpolicy`, `selinux-policy-devel`
+- **SELinux** : checkpolicy, selinux-policy-devel
+- **Libs 32-bit Wine/Proton complètes** : fontconfig, freetype, X11 (composite, cursor, damage, fix, i, inerama, randr, render, tst, v), Wayland (epoxy, decor, cursor, egl), core (gnutls, unwind, cups, openldap), audio (pulseaudio, pipewire upgrade + libs, FAudio, alsa, openal, ogg, vorbis, flac, sndfile), vulkan-loader (terra-mesa), vidéo (libva, libvdpau)
 
 Paquets supprimés :
 - firefox, firefox-langpacks, htop
 - plasma-discover-rpm-ostree (Kinoite)
 
-### 7. post-install / post-install-test
+**rpm-test** ajoute :
+- `opengamepadui`, `gamescope-session-opengamepadui`, `powerstation`, `inputplumber` (OpenGamepadUI)
+
+### 6. post-install / post-install-test
 
 Configuration post-installation étendue :
 - Permissions des exécutables (chmod +x)
-- Capacités système (setcap pour ksysguard, gamescope)
-- Binaires externes (zxtune)
+- Capacités système (setcap pour gamescope)
+- Compilation modules SELinux personnalisés (.te -> .pp)
+- Binaires externes (zxtune, mergerfs)
 - Branding Gablue (os-release)
-- Configuration système (tuned, bluetooth, timers)
+- Configuration système (tuned, bluetooth, pipewire, timers)
 - Désactivation des dépôts
 - Nettoyage des fichiers .desktop
 - Configuration DX (iptables, NetworkManager)
+- MIME par défaut (Windows.desktop, Linux.desktop)
 
-### 8. systemd / systemd-test
+**post-install-test** ajoute :
+- Permissions pour scripts OpenGamepadUI (steamos-session-select, gwine-plugin)
+
+### 7. systemd / systemd-test
 
 Activation/désactivation des services systemd :
-- **Activés** : system-flatpak-setup, earlyoom, rpm-ostreed-automatic, flatpak-update
+- **Activés** : system-flatpak-setup, rpm-ostreed-automatic, flatpak-update, cec-poweroff-tv, cec-active-source
 - **Désactivés** : scx_loader, tailscaled, displaylink
-- **Conditionnels** : libvirt (DX)
+- **Masqués** : systemd-remount-fs
+- **Conditionnels** : libvirt (DX), usr-share-sddm-themes.mount (Kinoite)
 
 **systemd-test** ajoute :
 - Services OpenGamepadUI désactivés : inputplumber, powerstation
 - Note: opengamepadui-session.service n'est PAS activé par défaut
 
-### 9. initramfs
+### 8. initramfs
 
 Génération de l'initramfs avec dracut :
-- Détection de la version kernel installée
+- Détection de la version kernel installée via dnf5 repoquery
 - Génération avec options ostree et fido2
 - Permissions sécurisées (0600)
 
@@ -511,24 +512,34 @@ Workflow principal déclenché par :
 - Workflow_dispatch (manuel)
 
 **Jobs** :
-- `build-main` : Build gablue-main
-- `build-nvidia` : Build gablue-nvidia
-- `build-nvidia-open` : Build gablue-nvidia-open
-- `build-dx` : Build gablue-main-dx
-- `build-test` : Build gablue-main-test
+- `build-main` : Build gablue-main (Containerfile-gablue, nvidia_flavor non défini)
+- `build-nvidia` : Build gablue-nvidia (Containerfile-gablue, nvidia_flavor=nvidia-lts)
+- `build-nvidia-open` : Build gablue-nvidia-open (Containerfile-gablue, nvidia_flavor=nvidia-open)
+- `build-dx` : Build gablue-main-dx (Containerfile-gablue, nvidia_flavor non défini, DX_MODE=true)
+- `build-test` : Build gablue-main-test (Containerfile-gablue-test)
+- `build-nvidia-open-test` : Build gablue-nvidia-open-test (Containerfile-gablue-nvidia-open-test)
 
 ### reusable-gablue-image.yml
 
 Workflow réutilisable pour le build d'une image :
 
+**Inputs** :
+- `image_name`, `image_desc`, `image_variant` : Identification de l'image
+- `source_image`, `source_suffix` : Image de base uBlue
+- `fedora_version` : Version Fedora (44 pour toutes)
+- `kernel_type` : Type de kernel (`ogc`), utilisé comme KERNEL_FLAVOR dans le build
+- `kernel_version` : Version spécifique (optionnel, auto-détecté si vide)
+- `nvidia_flavor` : Flavor NVIDIA (`nvidia-lts` ou `nvidia-open`, optionnel pour variantes non-NVIDIA)
+- `containerfile` : Containerfile explicite (optionnel, défaut Containerfile-gablue)
+
 **Étapes** :
-1. Récupération de la version kernel via `skopeo inspect` (stable) ou `skopeo list-tags` (test)
+1. Récupération de la version kernel via `skopeo list-tags` (tous les builds utilisent ogc)
 2. Checkout du dépôt
 3. Maximisation de l'espace de build
 4. Mount BTRFS pour podman storage
 5. **Cache DNF** : Restoration du cache des paquets (basé sur kde/gnome)
 6. Génération des tags (timestamp, SHA, latest)
-7. Build de l'image avec buildah
+7. Build de l'image avec buildah (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni)
 8. **Sauvegarde du cache DNF** (uniquement sur branche main)
 9. Application des labels OCI
 10. Rechunk avec rpm-ostree
@@ -536,8 +547,7 @@ Workflow réutilisable pour le build d'une image :
 12. Signature avec Cosign
 
 **Détection dynamique du kernel** :
-- **Stable** : Version extraite via `skopeo inspect ghcr.io/bazzite-org/kernel-bazzite:latest-*`
-- **Test** : Dernier tag OGC via `skopeo list-tags ghcr.io/ublue-os/akmods` → filtre `ogc-{FEDORA_VERSION}-*`
+- **Tous les builds** : Dernier tag OGC via `skopeo list-tags ghcr.io/ublue-os/akmods` → filtre `{KERNEL_FLAVOR}-{FEDORA_VERSION}-*`
 - **Manuel** : Spécifier `kernel_version` dans le workflow pour forcer une version
 
 **Cache DNF** :
@@ -578,7 +588,7 @@ Les tags dans les messages de commit déclenchent les builds :
 ```bash
 git commit -m "[main] Update KDE packages"
 git commit -m "[nvidia] Update NVIDIA drivers to 550"
-git commit -m "[all] Update Bazzite kernel"
+git commit -m "[all] Migrate to fc44 and OGC kernel"
 ```
 
 ## Tests et validation
@@ -606,7 +616,9 @@ sudo buildah build \
   --build-arg VARIANT="main" \
   --build-arg SOURCE_IMAGE="kinoite" \
   --build-arg SOURCE_SUFFIX="-main" \
-  --build-arg FEDORA_VERSION="43" \
+  --build-arg FEDORA_VERSION="44" \
+  --build-arg KERNEL_FLAVOR="ogc" \
+  --build-arg KERNEL_VERSION="<version>" \
   --tag test-build .
 
 # Test interactif
@@ -696,7 +708,8 @@ Commandes ujust disponibles :
 
 ### SELinux
 
-- Module NVIDIA container installé dans le script nvidia
+- Modules personnalisés compilés depuis `.te` dans post-install
+- Module NVIDIA container installé par nvidia-install.sh (`nvidia-container.pp` dans `files/system/${VARIANT}/`)
 - Configuration pour les conteneurs avec accès GPU
 
 ## Langue et internationalisation
@@ -705,33 +718,33 @@ Commandes ujust disponibles :
 - **Commentaires de code** : Français
 - **Messages utilisateur** : Français (alias, scripts, etc.)
 - **Variables** : Anglais ou français cohérent
-- **Commits** : Français ou anglais (avec tags obligatoires)
+- **Commits** : Anglais (avec tags obligatoires)
 
 ## Dépannage courant
 
 ### Erreurs de build
 
-**Problème** : Cache corrompu  
+**Problème** : Cache corrompu
 **Solution** : `sudo buildah rm -a && sudo podman system prune -a`
 
-**Problème** : Kernel non trouvé  
-**Solution** : Vérifier que l'étape intermédiaire kernel est bien montée
+**Problème** : Kernel non trouvé
+**Solution** : Vérifier que les étapes intermédiaires akmods sont bien montées et que la version kernel existe dans les tags
 
-**Problème** : Conflits de paquets  
-**Solution** : Vérifier les exclusions dans le script copr
+**Problème** : Conflits de paquets
+**Solution** : Vérifier les exclusions dans le script copr (pipewire/bluez/xwayland exclus de bazzite)
 
-**Problème** : Conflit de fichier i686/x86_64 (fc44 multilib)  
-**Solution** : Utiliser `rpm -i --nodeps --force` après avoir installé les deps, ou `|| true` si les deps i686 sont absentes
+**Problème** : Conflit de fichier i686/x86_64 (fc44 multilib)
+**Solution** : Utiliser `rpm -i --nodeps --excludepath` (workaround Terra fc44 pour mesa-vulkan-drivers.i686)
 
-**Problème** : Version mismatch x86_64/i686 (fc44)  
-**Solution** : Upgrader les paquets x86_64 avant d'installer les i686
+**Problème** : Version mismatch x86_64/i686 (fc44)
+**Solution** : Upgrader les paquets x86_64 avant d'installer les i686 (ex: pipewire-libs)
 
 ### Problèmes d'images
 
-**Problème** : Image trop grande  
+**Problème** : Image trop grande
 **Solution** : Vérifier le nettoyage dans cleanup/finalize
 
-**Problème** : Services non démarrés  
+**Problème** : Services non démarrés
 **Solution** : Vérifier le script systemd et les conditions
 
 ## Ressources et liens

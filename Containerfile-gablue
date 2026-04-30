@@ -3,19 +3,18 @@ ARG VARIANT
 ARG SOURCE_IMAGE
 ARG SOURCE_SUFFIX
 ARG FEDORA_VERSION
-ARG KERNEL_TYPE
+ARG KERNEL_FLAVOR
 ARG KERNEL_VERSION
-ARG NVIDIA_VERSION
+ARG NVIDIA_FLAVOR="nvidia-open"
 ARG DX_MODE
 
-# Étape intermédiaire : récupération du kernel depuis le conteneur OCI bazzite
-FROM ghcr.io/bazzite-org/kernel-bazzite:latest-f${FEDORA_VERSION}-x86_64 AS kernel
+# Étape intermédiaire : récupération du kernel et des akmods depuis ublue-os
+FROM ghcr.io/ublue-os/akmods:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods
+FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-extra
 
-# Étape intermédiaire : récupération des pilotes NVIDIA depuis le conteneur OCI bazzite avec version spécifique
-FROM ghcr.io/bazzite-org/nvidia-drivers:${NVIDIA_VERSION}-f${FEDORA_VERSION}-x86_64 AS nvidia
-
-# Étape intermédiaire : récupérer les pilotes NVIDIA Open (même source, on filtre plus tard)
-FROM ghcr.io/bazzite-org/nvidia-drivers:${NVIDIA_VERSION}-f${FEDORA_VERSION}-x86_64 AS nvidia-open
+# Étape intermédiaire : récupération des pilotes NVIDIA (nvidia-lts ou nvidia-open)
+# Monté conditionnellement selon la variante, toujours tiré pour résoudre les mounts
+FROM ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-nvidia
 
 # Image de base pour la construction finale
 FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${FEDORA_VERSION}
@@ -24,6 +23,8 @@ FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${FEDORA_VERSION}
 ARG VARIANT
 ARG SOURCE_IMAGE
 ARG DX_MODE
+ARG KERNEL_FLAVOR
+ARG KERNEL_VERSION
 
 # Copie des sources C pour compilation
 COPY src/gamepadshortcuts /src/gamepadshortcuts
@@ -39,11 +40,17 @@ COPY files/system/${VARIANT} /
 ENV VARIANT=${VARIANT}
 ENV SOURCE_IMAGE=${SOURCE_IMAGE}
 ENV DX_MODE=${DX_MODE}
+ENV KERNEL_FLAVOR=${KERNEL_FLAVOR}
+ENV KERNEL_VERSION=${KERNEL_VERSION}
 
-# Installation du kernel (avant les dépôts COPR pour éviter les conflits)
+# Installation du kernel ogc avec akmods (avant les dépôts COPR pour éviter les conflits)
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    --mount=type=bind,from=kernel,src=/,dst=/rpms/kernel \
+    --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/tmp/kernel-rpms \
+    --mount=type=bind,from=akmods,src=/rpms/common,dst=/tmp/rpms/common \
+    --mount=type=bind,from=akmods,src=/rpms/kmods,dst=/tmp/rpms/kmods \
+    --mount=type=bind,from=akmods-extra,src=/rpms/extra,dst=/tmp/rpms/extra \
+    --mount=type=bind,from=akmods-extra,src=/rpms/kmods,dst=/tmp/rpms/kmods-extra \
     sh /ctx/kernel && \
     sh /ctx/cleanup
 
@@ -59,25 +66,16 @@ RUN --mount=type=cache,dst=/var/cache \
     sh /ctx/mesa && \
     sh /ctx/cleanup
 
-    # Installation des pilotes NVIDIA (pour la variante nvidia uniquement)
+# Installation des pilotes NVIDIA (uniquement pour les variantes nvidia et nvidia-open)
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    --mount=type=bind,from=nvidia,src=/,dst=/rpms/nvidia \
-    if [ "$VARIANT" = "nvidia" ]; then \
+    --mount=type=bind,from=akmods-nvidia,src=/rpms,dst=/tmp/rpms/nvidia \
+    if [ "$VARIANT" = "nvidia" ] || [ "$VARIANT" = "nvidia-open" ]; then \
         sh /ctx/nvidia; \
     fi && \
     sh /ctx/cleanup
 
-# Installation des pilotes NVIDIA Open (pour la variante nvidia-open uniquement)
-RUN --mount=type=cache,dst=/var/cache \
-    --mount=type=cache,dst=/var/log \
-    --mount=type=bind,from=nvidia-open,src=/,dst=/rpms/nvidia \
-    if [ "$VARIANT" = "nvidia-open" ]; then \
-        sh /ctx/nvidia; \
-    fi && \
-    sh /ctx/cleanup
-
-# Installation des paquets RPM supplémentaires
+# Installation des paquets RPM
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     sh /ctx/rpm && \

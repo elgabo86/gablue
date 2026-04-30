@@ -31,8 +31,8 @@ jobs:
       image_variant: "main"
       source_image: "kinoite"
       source_suffix: "-main"
-      fedora_version: "43"
-      kernel_type: "bazzite"
+      fedora_version: "44"
+      kernel_type: "ogc"
 
   build-nvidia:
     name: Build nvidia
@@ -49,8 +49,9 @@ jobs:
       image_variant: "nvidia"
       source_image: "kinoite"
       source_suffix: "-main"
-      fedora_version: "43"
-      kernel_type: "bazzite"
+      fedora_version: "44"
+      kernel_type: "ogc"
+      nvidia_flavor: "nvidia-lts"
 
   build-nvidia-open:
     name: Build nvidia-open
@@ -67,8 +68,9 @@ jobs:
       image_variant: "nvidia-open"
       source_image: "kinoite"
       source_suffix: "-main"
-      fedora_version: "43"
-      kernel_type: "bazzite"
+      fedora_version: "44"
+      kernel_type: "ogc"
+      nvidia_flavor: "nvidia-open"
 
   build-dx:
     name: Build DX
@@ -85,8 +87,8 @@ jobs:
       image_variant: "main"
       source_image: "kinoite"
       source_suffix: "-main"
-      fedora_version: "43"
-      kernel_type: "bazzite"
+      fedora_version: "44"
+      kernel_type: "ogc"
 
   build-test:
     name: Build test
@@ -123,5 +125,5 @@ jobs:
       source_suffix: "-main"
       fedora_version: "44"
       kernel_type: "ogc"
+      nvidia_flavor: "nvidia-open"
       containerfile: "Containerfile-gablue-nvidia-open-test"
-

@@ -1,7 +1,12 @@
 #!/usr/bin/bash
 
+# Activation des services systemd pour Gablue
+
 set -eoux pipefail
 
+# =============================================================================
+# SERVICES DE BASE
+# =============================================================================
 
 systemctl enable -f system-flatpak-setup.service
 

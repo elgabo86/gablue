@@ -1,101 +1,111 @@
 #!/usr/bin/bash
 
-set -ouex pipefail
+# Installation des pilotes NVIDIA via akmods
+# Ce script installe les pilotes NVIDIA depuis les akmods ublue-os
+# Supporte NVIDIA Open (nvidia-open) et NVIDIA Closed (nvidia)
+# Le script nvidia-install.sh de ublue-os gère : driver, kmod, container-toolkit,
+# supergfxctl, SELinux, dracut force_drivers, staging
 
-echo "::group::Executing install-nvidia"
-trap 'echo "::group::"' EXIT
+set -eoux pipefail
+
+# =============================================================================
+# PRÉPARATION
+# =============================================================================
 
 # Supprimer le firmware NVIDIA de Fedora qui entre en conflit avec les pilotes propriétaires
 dnf5 -y remove nvidia-gpu-firmware
 
-# Installer uniquement supergfxctl comme sur Bazzite
-VARIANT_PKGS="supergfxctl"
+# Activation du dépôt Terra Mesa temporairement pour egl-wayland et Mesa i686
+dnf5 -y config-manager setopt "terra-mesa".enabled=1
 
-dnf5 -y copr enable ublue-os/staging && \
+# =============================================================================
+# INSTALLATION EGL-WAYLAND
+# =============================================================================
 
-# Installer d'abord Mesa i686 depuis Terra (nécessaire pour egl-wayland.i686)
-# Les paquets Mesa sont exclus des dépôts Fedora, donc on les prend depuis Terra
-dnf5 -y --enable-repo=terra-mesa install \
-    mesa-dri-drivers.i686 \
-    mesa-libEGL.i686 \
-    mesa-libGL.i686 \
-    mesa-libgbm.i686 \
-    mesa-vulkan-drivers.i686 && \
-
-# Installer egl-wayland pour Wayland sur NVIDIA (paquets 32-bit et 64-bit)
-# Doit être fait APRÈS Mesa i686 car egl-wayland.i686 dépend de mesa-libEGL.i686
+# Installation des bibliothèques EGL Wayland (32 et 64 bits)
 dnf5 -y install \
     egl-wayland.x86_64 \
     egl-wayland.i686 \
     egl-wayland2.x86_64 \
     egl-wayland2.i686
 
-dnf5 install -y \
-    /rpms/nvidia/libnvidia-cfg-* \
-    /rpms/nvidia/libnvidia-fbc-* \
-    /rpms/nvidia/libnvidia-gpucomp-* \
-    /rpms/nvidia/libnvidia-ml-* \
-    /rpms/nvidia/nvidia-libXNVCtrl-5* \
-    /rpms/nvidia/nvidia-settings-5* \
-    /rpms/nvidia/nvidia-driver-* \
-    /rpms/nvidia/nvidia-kmod-common-* \
-    /rpms/nvidia/nvidia-modprobe-5* \
-    /rpms/nvidia/nvidia-persistenced-5* \
-    /rpms/nvidia/xorg-x11* \
-    /rpms/nvidia/nvidia-container-toolkit-1* \
-    /rpms/nvidia/nvidia-container-toolkit-base-1* \
-    /rpms/nvidia/libnvidia-container1-1* \
-    /rpms/nvidia/libnvidia-container-tools-1* \
-    libva-nvidia-driver \
-    ${VARIANT_PKGS}
+# =============================================================================
+# INSTALLATION PILOTES NVIDIA
+# =============================================================================
 
-# Supprimer les ICD Vulkan Nouveau pour éviter les conflits avec NVIDIA
-rm -f /usr/share/vulkan/icd.d/nouveau_icd.*.json
+# Détermination de IMAGE_NAME pour le script nvidia-install.sh
+export IMAGE_NAME="kinoite"
+if [[ "$SOURCE_IMAGE" == "silverblue" ]]; then
+    export IMAGE_NAME="silverblue"
+fi
 
-# Créer le symlink pour libnvidia-ml (requis par certains outils de monitoring)
+AKMODS_PATH="/tmp/rpms/nvidia"
+
+# Installation via le script ublue-os
+# AKMODNV_PATH : chemin des RPMs NVIDIA
+# MULTILIB=1 : activation des libs 32-bit
+# IMAGE_NAME : détection KDE/GNOME pour supergfxctl/plasmoid
+if [[ -d "$AKMODS_PATH" ]]; then
+    AKMODNV_PATH="$AKMODS_PATH" MULTILIB=1 IMAGE_NAME="$IMAGE_NAME" "$AKMODS_PATH/ublue-os/nvidia-install.sh"
+else
+    echo "Erreur : Les pilotes NVIDIA n'ont pas été trouvés dans $AKMODS_PATH"
+    exit 1
+fi
+
+# =============================================================================
+# CONFIGURATION POST-INSTALLATION
+# =============================================================================
+
+# Suppression du fichier ICD Nouveau (pour éviter les conflits)
+rm -f /usr/share/vulkan/icd.d/nouveau_icd.*.json || true
+
+# Création du lien symbolique pour libnvidia-ml
 ln -sf libnvidia-ml.so.1 /usr/lib64/libnvidia-ml.so
 
-dnf5 -y copr disable ublue-os/staging && \
-
-systemctl enable ublue-nvctk-cdi.service
+# Désactivation de supergfxd (comme sur Bazzite NVIDIA)
 systemctl disable supergfxd.service
-semodule --verbose --install /usr/share/selinux/packages/nvidia-container.pp
 
-# Universal Blue specific Initramfs fixes
-# Only apply modeset and HDR layer on legacy (closed) nvidia drivers
-# nvidia-open (595+) has automatic modeset, deck and dx variants don't need this
-if [[ "${VARIANT}" != "nvidia-open" ]]; then
-  cp /etc/modprobe.d/nvidia-modeset.conf /usr/lib/modprobe.d/nvidia-modeset.conf
+# =============================================================================
+# VK_HDR_LAYER (PILOTES CLOSED UNIQUEMENT)
+# =============================================================================
 
-  # Awful hack of an install method to restore VK_hdr_layer in a way that won't randomly break for the foreseeable future.
-  PKG="VK_hdr_layer"
-  TMPDIR="$(mktemp -d)"
+# VK_hdr_layer uniquement pour les pilotes NVIDIA closed (pas nvidia-open)
+# nvidia-open (595+) a un modeset automatique et ne nécessite pas ce hack
+if [[ "$VARIANT" != "nvidia-open" ]]; then
+    cp /etc/modprobe.d/nvidia-modeset.conf /usr/lib/modprobe.d/nvidia-modeset.conf
 
-  dnf5 download "${PKG}" --destdir "$TMPDIR"
+    # Hack d'installation pour restaurer VK_hdr_layer
+    PKG="VK_hdr_layer"
+    TMPDIR="$(mktemp -d)"
 
-  RPM_FILE=$(ls "$TMPDIR"/*.rpm)
-  mkdir "$TMPDIR/$PKG"
-  cd "$TMPDIR/$PKG"
+    dnf5 download "${PKG}" --destdir "$TMPDIR"
 
-  # Extract RPM
-  rpm2cpio "$RPM_FILE" | cpio -idmv
+    RPM_FILE=$(ls "$TMPDIR"/*.rpm)
+    mkdir "$TMPDIR/$PKG"
+    cd "$TMPDIR/$PKG"
 
-  # Libraries
-  mkdir -p /usr/lib64/${PKG}
-  cp -v usr/lib64/${PKG}/* /usr/lib64/${PKG}/
+    # Extraction du RPM
+    rpm2cpio "$RPM_FILE" | cpio -idmv
 
-  # Vulkan implicit layer
-  mkdir -p /usr/share/vulkan/implicit_layer.d
-  cp -v usr/share/vulkan/implicit_layer.d/VkLayer_hdr_wsi.*.json \
-    /usr/share/vulkan/implicit_layer.d/
+    # Librairies
+    mkdir -p /usr/lib64/${PKG}
+    cp -v usr/lib64/${PKG}/* /usr/lib64/${PKG}/
 
-  # License & Docs
-  mkdir -p /usr/share/licenses/${PKG}
-  cp -v usr/share/licenses/${PKG}/* /usr/share/licenses/${PKG}/
-  mkdir -p /usr/share/doc/${PKG}
-  cp -v usr/share/doc/${PKG}/* /usr/share/doc/${PKG}/
+    # Vulkan implicit layer
+    mkdir -p /usr/share/vulkan/implicit_layer.d
+    cp -v usr/share/vulkan/implicit_layer.d/VkLayer_hdr_wsi.*.json \
+        /usr/share/vulkan/implicit_layer.d/
+
+    # Licence et documentation
+    mkdir -p /usr/share/licenses/${PKG}
+    cp -v usr/share/licenses/${PKG}/* /usr/share/licenses/${PKG}/
+    mkdir -p /usr/share/doc/${PKG}
+    cp -v usr/share/doc/${PKG}/* /usr/share/doc/${PKG}/
 fi
-# we must force driver load to fix black screen on boot for nvidia desktops
-sed -i 's@omit_drivers@force_drivers@g' /usr/lib/dracut/dracut.conf.d/99-nvidia.conf
-# as we need forced load, also must pre-load intel/amd iGPU else chromium web browsers fail to use hardware acceleration
-sed -i 's@ nvidia @ i915 amdgpu nvidia @g' /usr/lib/dracut/dracut.conf.d/99-nvidia.conf
+
+# =============================================================================
+# DÉSACTIVATION DES DÉPÔTS
+# =============================================================================
+
+# Désactivation du dépôt Terra Mesa
+dnf5 -y config-manager setopt "terra-mesa".enabled=0

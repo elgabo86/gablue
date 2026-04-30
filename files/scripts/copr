@@ -17,7 +17,7 @@ mkdir -p /var/roothome
 # =============================================================================
 
 # Exclusion des paquets Mesa et kernel des dépôts Fedora officiels
-# Ces paquets seront fournis par des dépôts tiers (Terra, RPMFusion)
+# Ces paquets seront fournis par des dépôts tiers (Terra)
 dnf5 -y config-manager setopt "*fedora*".exclude="mesa-* kernel-core-* kernel-modules-* kernel-uki-virt-*"
 
 # =============================================================================
@@ -39,8 +39,10 @@ do
 done && unset -v copr
 
 # Configuration des priorités des dépôts COPR (comme Bazzite)
-# bazzite* en priorité 1 pour avoir les packages multilib 32-bit
-dnf5 -y config-manager setopt "*bazzite*".priority=1
+# bazzite* en priorité 1 pour les paquets spécifiques (kernel, akmods, etc.)
+# Exclusion de pipewire/bluez/xwayland : on utilise les versions Fedora pour aligner i686/x86_64
+# Le dépôt bazzite-multilib a des versions i686 en retard sur Fedora fc44, causant des conflits
+dnf5 -y config-manager setopt "*bazzite*".priority=1 "*bazzite*".exclude="pipewire-* bluez-* xorg-x11-server-Xwayland wireplumber-*"
 
 # =============================================================================
 # DÉPÔTS TIERS
@@ -51,19 +53,6 @@ dnf5 -y config-manager addrepo --overwrite --from-repofile=https://pkgs.tailscal
 
 # Ajout du dépôt Negativo17 (RAR et autres logiciels)
 dnf5 -y config-manager addrepo --from-repofile=https://negativo17.org/repos/fedora-rar.repo
-
-# =============================================================================
-# RPMFUSION
-# =============================================================================
-
-# Installation des dépôts RPMFusion (logiciels libres et non-libres)
-dnf5 -y install \
-        https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
-        https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
-
-# Configuration de RPMFusion : priorité basse et exclusion Mesa
-# Mesa sera fourni par Terra pour avoir une version plus récente
-dnf5 -y config-manager setopt "*rpmfusion*".priority=5 "*rpmfusion*".exclude="mesa-*"
 
 # =============================================================================
 # TERRA (FyraLabs)
