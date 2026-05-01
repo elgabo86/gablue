@@ -36,7 +36,6 @@ ENV SOURCE_IMAGE=${SOURCE_IMAGE}
 ENV KERNEL_FLAVOR=${KERNEL_FLAVOR}
 ENV KERNEL_VERSION=${KERNEL_VERSION}
 ENV VARIANT=${VARIANT}
-ENV NVIDIA_TYPE=nvidia-open
 
 # Installation du kernel ogc avec akmods (avant les dépôts COPR pour éviter les conflits)
 RUN --mount=type=cache,dst=/var/cache \
@@ -64,7 +63,7 @@ RUN --mount=type=cache,dst=/var/cache \
 # Installation des pilotes NVIDIA Open via akmods
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    --mount=type=bind,from=akmods-nvidia-open,src=/rpms,dst=/tmp/rpms/nvidia-open \
+    --mount=type=bind,from=akmods-nvidia-open,src=/rpms,dst=/tmp/rpms/nvidia \
     sh /ctx/nvidia-test && \
     sh /ctx/cleanup
 

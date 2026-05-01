@@ -72,7 +72,9 @@ systemctl disable supergfxd.service
 # VK_hdr_layer uniquement pour les pilotes NVIDIA closed (pas nvidia-open)
 # nvidia-open (595+) a un modeset automatique et ne nécessite pas ce hack
 if [[ "$VARIANT" != "nvidia-open" ]]; then
-    cp /etc/modprobe.d/nvidia-modeset.conf /usr/lib/modprobe.d/nvidia-modeset.conf
+    if [ -f /etc/modprobe.d/nvidia-modeset.conf ]; then
+        cp /etc/modprobe.d/nvidia-modeset.conf /usr/lib/modprobe.d/nvidia-modeset.conf
+    fi
 
     # Hack d'installation pour restaurer VK_hdr_layer
     PKG="VK_hdr_layer"

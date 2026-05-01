@@ -68,7 +68,7 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── mesa                           # Installation Mesa Terra (multilib fc44)
 │   │   ├── mesa-test                      # Installation Mesa Terra (test, identique)
 │   │   ├── nvidia                         # Installation pilotes NVIDIA via akmods
-│   │   ├── nvidia-test                    # Installation pilotes NVIDIA (test, via akmods + OGUI)
+│   │   ├── nvidia-test                    # Installation pilotes NVIDIA (test, wrapper vers nvidia)
 │   │   ├── post-install                   # Post-installation principale
 │   │   ├── post-install-test              # Post-installation test (post-install + OGUI)
 │   │   ├── rpm                            # Paquets RPM (avec libs 32-bit Wine/Proton)
@@ -431,9 +431,10 @@ Exclusions importantes :
 - nvidia-install.sh gère : driver, kmod, container-toolkit, supergfxctl, SELinux, dracut force_drivers, staging COPR
 - Configuration post-installation : suppression ICD Nouveau, symlink libnvidia-ml, disable supergfxd
 - **VK_hdr_layer** pour pilotes closed uniquement (pas nvidia-open) : extraction manuelle du RPM
+- **nvidia-modeset.conf** : copie de `/etc/modprobe.d/` vers `/usr/lib/modprobe.d/` (workaround Dracut, avec vérification `[ -f ]`) pour pilotes closed, les pilotes open n'ont pas ce fichier
 - Désactivation terra-mesa après installation
 
-**nvidia-test (test)** : Version simplifiée sans VK_hdr_layer ni nvidia-gpu-firmware removal, NVIDIA_TYPE dynamique
+**nvidia-test (test)** : Wrapper appelant `sh /ctx/nvidia` (même pattern que `post-install-test` → `post-install`)
 
 ### 5. rpm - Paquets RPM
 
