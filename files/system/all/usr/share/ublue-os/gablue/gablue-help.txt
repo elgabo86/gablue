@@ -104,8 +104,6 @@
 
 ## Outils Dev :
 
-- ujust pyenv-setup                     # Installe un système de gestion de version de Python
-- ujust pyenv-update                    # Met à jour pyenv
 - ujust pyenv-remove                    # Désintalle pyenv
 
 - ujust atuin-setup                     # Installation d'atuin, un système d'historique avancé du terminal

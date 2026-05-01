@@ -687,7 +687,7 @@ Commandes ujust disponibles :
 - **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`
 - **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`
 - **Virtualisation** : `docker-enable/disable`, `dx-group`
-- **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-setup`
+- **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`
 - **Rebase** : `gablue-rebase-*` pour changer de variante
 
 ## Sécurité

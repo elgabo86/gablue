@@ -483,19 +483,6 @@ atuin-setup:
     echo "Atuin is ready!" ||
     echo "Error..."
 
-# Install pyenv
-pyenv-setup:
-    #!/usr/bin/bash
-    git clone https://github.com/pyenv/pyenv.git ~/.pyenv &&
-    cd ~/.pyenv && src/configure && make -C src &&
-    echo "ALL DONE!!!"
-
-# Update pyenv
-pyenv-update:
-    #!/usr/bin/bash
-    git -C ~/.pyenv pull &&
-    echo "ALL DONE!!!"
-
 # Remove pyenv
 pyenv-remove:
     #!/usr/bin/bash

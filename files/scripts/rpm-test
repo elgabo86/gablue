@@ -223,7 +223,8 @@ dnf5 -y install \
     sqlite \
     libuuid-devel \
     gdbm-libs \
-    libnsl2
+    libnsl2 \
+    uv
 
 # =============================================================================
 # MODULES PYTHON ET OUTILS ASSOCIÉS
