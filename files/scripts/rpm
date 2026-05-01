@@ -268,7 +268,9 @@ dnf5 -y install \
 dnf5 -y remove \
     firefox \
     firefox-langpacks \
-    htop
+    htop \
+    plasma-welcome \
+    plasma-welcome-fedora
 
 # Suppression spécifique à Kinoite
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
