@@ -5888,6 +5888,7 @@ build_bwrap_env_vars() {
     [ -n "${STAGING_SHARED_MEMORY:-}" ] && bwrap_add --setenv STAGING_SHARED_MEMORY "$STAGING_SHARED_MEMORY"
     [ -n "${WINEFSYNC:-}" ] && bwrap_add --setenv WINEFSYNC "$WINEFSYNC"
     [ -n "${PULSE_LATENCY_MSEC:-}" ] && bwrap_add --setenv PULSE_LATENCY_MSEC "$PULSE_LATENCY_MSEC"
+    [ -n "${LC_ALL:-}" ] && bwrap_add --setenv LC_ALL "$LC_ALL"
     [ -n "${WINEDEBUG:-}" ] && bwrap_add --setenv WINEDEBUG "$WINEDEBUG"
     [ -n "${WINEDLLOVERRIDES:-}" ] && bwrap_add --setenv WINEDLLOVERRIDES "$WINEDLLOVERRIDES"
     [ -n "${LD_LIBRARY_PATH:-}" ] && bwrap_add --setenv LD_LIBRARY_PATH "$LD_LIBRARY_PATH"
@@ -7418,6 +7419,7 @@ setup_wine_environment() {
     export WINEFSYNC="${WINEFSYNC:-1}"
     export WINENTSYNC="${WINENTSYNC:-1}"
     export PULSE_LATENCY_MSEC="${PULSE_LATENCY_MSEC:-60}"
+    export LC_ALL="${LC_ALL:-fr_FR}"
     
     if is_wayland_mode; then
         echo "Mode Wayland activé (désactivation de XWayland)"
