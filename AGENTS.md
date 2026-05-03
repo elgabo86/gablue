@@ -648,6 +648,7 @@ podman images test-build
 - **profile.d/customperso.sh** : Alias et personnalisations shell
 - **security/limits.d/memlock.conf** : Limites mémoire
 - **skel/.config/gtk-4.0/** : Configuration GTK par défaut
+- **modules-load.d/snd-usb-audio.conf** : Charge `snd-usb-audio` au démarrage (évite le délai audio de 10-18s post-login, le module se charge en lazy-load sans ça)
 - **sudoers.d/nopasswd** : Configuration sudo sans mot de passe
 - **systemd/** : Timeouts et configuration systemd
 - **yum.repos.d/docker-ce.repo** : Dépôt Docker
