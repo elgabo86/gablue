@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-LOCKFILE="/tmp/launchgamepadshortcuts.lock"
+LOCKFILE="/tmp/launchgamepadshortcuts-${USER}.lock"
 
 # Prend le lock (bloquant avec timeout de 3s pour éviter blocage infini)
 exec 200>"$LOCKFILE"
