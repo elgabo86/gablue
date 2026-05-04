@@ -4,7 +4,7 @@
 {
   # Recherche et kill tous les processus Windows (xbox360 inclus)
   # Exclure gwine pour permettre le cleanup des locks
-  for pid in $(pgrep -f -i "\\.exe|\\.bat"); do
+  for pid in $(pgrep -u "$USER" -f -i "\\.exe|\\.bat"); do
     comm=$(ps -p $pid -o comm= 2>/dev/null)
     if [[ "$comm" != "gwine" ]] && [[ "$comm" != "bash" ]] && [ "$pid" != "$$" ]; then
       kill -9 $pid 2>/dev/null
@@ -12,32 +12,32 @@
   done
 
   # Kill tous les processus wgp/wine sauf squashfuse (nettoyage complet jeu sans casser gwine)
-  pgrep -f "wgpackmount" | grep -v squashfuse | xargs -r kill -9 2>/dev/null &
+  pgrep -u "$USER" -f "wgpackmount" | grep -v squashfuse | xargs -r kill -9 2>/dev/null &
 
   # Kill processus Wine en mode non-wgp (chemin Z:)
-  pgrep -f "Z:" | xargs -r kill -9 2>/dev/null &
+  pgrep -u "$USER" -f "Z:" | xargs -r kill -9 2>/dev/null &
 
   # Gestion des processus bottles (spécifique avec vérification bwrap)
-  pgrep -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q "^bwrap$" && kill -9 {}' &
+  pgrep -u "$USER" -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q "^bwrap$" && kill -9 {}' &
 
    # Kill des émulateurs (tous en parallèle)
   for emu in azahar suyu eden sudachi dolphin-emu yuzu retroarch xemu rpcs3 duckstation pcsx2 lime3ds ryujinx Cemu flycast shadps4 PokeMMO PPSSPP; do
-    pgrep -f "$emu" | xargs -n1 kill -9 &
+    pgrep -u "$USER" -f "$emu" | xargs -n1 kill -9 &
   done
 
   # Commande spécifique pour eden et citron avec fusermount
-  (pgrep -f mount_eden | xargs -n1 kill -9 && fusermount -uz /tmp/.mount_eden*) &
-  (pgrep -f citron | xargs -n1 kill -9 && fusermount -uz /tmp/.mount_citro*) &
+  (pgrep -u "$USER" -f mount_eden | xargs -r -n1 kill -9 && fusermount -uz /tmp/.mount_eden*) &
+  (pgrep -u "$USER" -f citron | xargs -r -n1 kill -9 && fusermount -uz /tmp/.mount_citro*) &
 
   # Kill des processus sober
-  pkill -9 sober &
+  pkill -u "$USER" -9 sober &
 
   # Kill x2go
-  pkill -9 x2goclient &
+  pkill -u "$USER" -9 x2goclient &
 
   # Kill uniquement les processus enfants de launchlin.sh (pas le script lui-même)
   # pour permettre le cleanup et démontage du LGP
-  pgrep -f "launchlin\.sh" | while read pid; do
+  pgrep -u "$USER" -f "launchlin\.sh" | while read pid; do
       # Liste tous les processus enfants directs et indirects
       local children
       children=$(pgrep -P "$pid")
