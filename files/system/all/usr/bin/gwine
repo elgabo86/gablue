@@ -2311,21 +2311,22 @@ install_wine_mono_gecko() {
             if [ -f "$mono_msi" ]; then
                 local mono_path
                 mono_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -w "$(realpath "$mono_msi")" 2>/dev/null | tr -d '\r')
-                if [ -n "$mono_path" ]; then
-                    echo "  - Installation de $(basename "$mono_msi")..."
-                    
-                    WINEPREFIX="$WINEPREFIX" DISPLAY= "$WINE_BIN" msiexec /i "$mono_path" /quiet >/dev/null 2>&1 &
-                    _MONO_GECKO_PID=$!
-                    
-                    if ! wait "$_MONO_GECKO_PID"; then
-                        trap - INT
-                        _MONO_GECKO_PID=""
-                        echo "    ⚠️  Échec installation $(basename "$mono_msi")"
-                        return 1
-                    fi
-                    _MONO_GECKO_PID=""
-                    mono_installed=true
+                if [ -z "$mono_path" ]; then
+                    mono_path="Z:$(realpath "$mono_msi" | sed 's|/|\\|g')"
                 fi
+                echo "  - Installation de $(basename "$mono_msi")..."
+                
+                WINEPREFIX="$WINEPREFIX" DISPLAY= "$WINE_BIN" msiexec /i "$mono_path" /quiet >/dev/null 2>&1 &
+                _MONO_GECKO_PID=$!
+                
+                if ! wait "$_MONO_GECKO_PID"; then
+                    trap - INT
+                    _MONO_GECKO_PID=""
+                    echo "    ⚠️  Échec installation $(basename "$mono_msi")"
+                    return 1
+                fi
+                _MONO_GECKO_PID=""
+                mono_installed=true
             fi
         done
         
@@ -2334,21 +2335,22 @@ install_wine_mono_gecko() {
             if [ -f "$gecko_msi" ]; then
                 local gecko_path
                 gecko_path=$(WINEPREFIX="$WINEPREFIX" "$WINE_BIN" winepath -w "$(realpath "$gecko_msi")" 2>/dev/null | tr -d '\r')
-                if [ -n "$gecko_path" ]; then
-                    echo "  - Installation de $(basename "$gecko_msi")..."
-                    
-                    WINEPREFIX="$WINEPREFIX" DISPLAY= "$WINE_BIN" msiexec /i "$gecko_path" /quiet >/dev/null 2>&1 &
-                    _MONO_GECKO_PID=$!
-                    
-                    if ! wait "$_MONO_GECKO_PID"; then
-                        trap - INT
-                        _MONO_GECKO_PID=""
-                        echo "    ⚠️  Échec installation $(basename "$gecko_msi")"
-                        return 1
-                    fi
-                    _MONO_GECKO_PID=""
-                    gecko_installed=true
+                if [ -z "$gecko_path" ]; then
+                    gecko_path="Z:$(realpath "$gecko_msi" | sed 's|/|\\|g')"
                 fi
+                echo "  - Installation de $(basename "$gecko_msi")..."
+                
+                WINEPREFIX="$WINEPREFIX" DISPLAY= "$WINE_BIN" msiexec /i "$gecko_path" /quiet >/dev/null 2>&1 &
+                _MONO_GECKO_PID=$!
+                
+                if ! wait "$_MONO_GECKO_PID"; then
+                    trap - INT
+                    _MONO_GECKO_PID=""
+                    echo "    ⚠️  Échec installation $(basename "$gecko_msi")"
+                    return 1
+                fi
+                _MONO_GECKO_PID=""
+                gecko_installed=true
             fi
         done
         
@@ -4932,8 +4934,26 @@ restore_wineprefix() {
 
 # Initialise un préfixe Wine avec wineboot --init
 # Désactive mscoree et mshtml pour éviter les fenêtres de dialogue Mono/Gecko
+# Crée le symlink drive_c/users -> ~/Windows/UserData AVANT wineboot pour que
+# la structure steamuser (Desktop, Documents, Saved Games...) soit créée directement
+# dans ~/Windows/UserData au lieu d'être perdue lors du remplacement ultérieur
 wineboot_init_prefix() {
-    WINEDLLOVERRIDES="mscoree,mshtml=" WINEPREFIX="$WINEPREFIX" "$WINE_BIN" wineboot --init >/dev/null 2>&1
+    mkdir -p "$WINEPREFIX"
+    
+    # Créer le symlink users -> ~/Windows/UserData avant wineboot
+    # pour que wineboot peuple UserData directement
+    local users_link="$WINEPREFIX/drive_c/users"
+    local users_target="$HOME_REAL/Windows/UserData"
+    mkdir -p "$users_target" "$WINEPREFIX/drive_c"
+    if [ ! -L "$users_link" ] || [ "$(readlink "$users_link")" != "$users_target" ]; then
+        rm -rf "$users_link" 2>/dev/null || true
+        ln -sf "$users_target" "$users_link"
+    fi
+    
+    if ! WINEDLLOVERRIDES="mscoree,mshtml=" WINEPREFIX="$WINEPREFIX" "$WINE_BIN" wineboot --init >/dev/null 2>&1; then
+        echo "Erreur: échec de wineboot --init pour $WINEPREFIX"
+        return 1
+    fi
     WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "mscoree" /d native,builtin /f >/dev/null 2>&1 || true
     WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "winemenubuilder.exe" /d "" /f >/dev/null 2>&1 || true
     install_icu68_dlls
@@ -4990,12 +5010,16 @@ setup_windows_directories() {
     # Créer les liens symboliques depuis le préfixe vers ~/Windows/
     
     # users -> ~/Windows/UserData
-    if [ -e "$target_prefix/drive_c/users" ] || [ -L "$target_prefix/drive_c/users" ]; then
-        rm -rf "$target_prefix/drive_c/users"
-    fi
-    if ! ln -sf "$HOME_REAL/Windows/UserData" "$target_prefix/drive_c/users"; then
-        echo "Erreur: Échec de création du lien symbolique users"
-        return 1
+    local users_link="$target_prefix/drive_c/users"
+    local users_target="$HOME_REAL/Windows/UserData"
+    if [ -L "$users_link" ] && [ "$(readlink "$users_link")" = "$users_target" ]; then
+        : # déjà correct, ne rien faire
+    else
+        rm -rf "$users_link" 2>/dev/null || true
+        if ! ln -sf "$users_target" "$users_link"; then
+            echo "Erreur: Échec de création du lien symbolique users"
+            return 1
+        fi
     fi
     
     # ProgramData/Steam -> ~/Windows/SteamData
@@ -8123,9 +8147,14 @@ init_wineprefix() {
         prepare_local_cache
         
         echo "Création du préfixe Wine..."
-        wineboot_init_prefix
+        if ! wineboot_init_prefix; then
+            echo "Erreur: échec de l'initialisation du préfixe Wine"
+            return 1
+        fi
         
-        install_wine_mono_gecko
+        if ! install_wine_mono_gecko; then
+            echo "Erreur: échec de l'installation de Mono/Gecko"
+        fi
         
         export _NEEDS_WINETRICKS_INIT=1
     fi
@@ -8161,12 +8190,18 @@ ensure_wineprefix() {
         check_progress_cancelled "$DBUS_REF"
         
         progress_update "$DBUS_REF" 2 "Création du préfixe..."
-        wineboot_init_prefix
+        if ! wineboot_init_prefix; then
+            progress_close "$DBUS_REF"
+            echo "Erreur: échec de l'initialisation du préfixe Wine" >&2
+            return 1
+        fi
         
         check_progress_cancelled "$DBUS_REF"
         
         progress_update "$DBUS_REF" 3 "Installation de Mono et Gecko..."
-        install_wine_mono_gecko
+        if ! install_wine_mono_gecko; then
+            echo "Attention: échec de l'installation de Mono/Gecko" >&2
+        fi
         
         check_progress_cancelled "$DBUS_REF"
         
@@ -8199,13 +8234,19 @@ ensure_wineprefix_full() {
         
         ((CURRENT_STEP++))
         progress_update "$DBUS_REF" "$CURRENT_STEP" "Création du préfixe..."
-        wineboot_init_prefix
+        if ! wineboot_init_prefix; then
+            progress_close "$DBUS_REF"
+            echo "Erreur: échec de l'initialisation du préfixe Wine" >&2
+            return 1
+        fi
         
         check_progress_cancelled "$DBUS_REF"
         
         ((CURRENT_STEP++))
         progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation de Mono et Gecko..."
-        install_wine_mono_gecko
+        if ! install_wine_mono_gecko; then
+            echo "Attention: échec de l'installation de Mono/Gecko" >&2
+        fi
         
         check_progress_cancelled "$DBUS_REF"
         
