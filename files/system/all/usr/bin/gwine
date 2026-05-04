@@ -5261,43 +5261,23 @@ init_wineserver_manager() {
     ensure_dir -s "$GWINE_LOCK_DIR"
     chmod 700 "$GWINE_LOCK_DIR"
     ensure_dir -s "$SHARED_TMP_DIR"
-    chmod 700 "$SHARED_TMP_DIR"
+    chmod 711 "$SHARED_TMP_DIR"
     local wine_socket_subdir="$SHARED_TMP_DIR/.wine-$UID"
     ensure_dir -s "$wine_socket_subdir"
     chmod 700 "$wine_socket_subdir"
-    
-    if [ -d "/tmp/wgp-saves" ] && [ ! -L "/tmp/wgp-saves" ]; then
-        if [ -z "$(ls -A /tmp/wgp-saves 2>/dev/null)" ]; then
-            rm -rf "/tmp/wgp-saves"
-        fi
-    fi
-    
-    if [ ! -e "/tmp/wgp-saves" ]; then
-        ln -sf "$SHARED_TMP_DIR/wgp-saves" "/tmp/wgp-saves" 2>/dev/null || true
-    fi
-    
-    if [ -d "/tmp/wgp-extra" ] && [ ! -L "/tmp/wgp-extra" ]; then
-        if [ -z "$(ls -A /tmp/wgp-extra 2>/dev/null)" ]; then
-            rm -rf "/tmp/wgp-extra"
-        fi
-    fi
-    
-    ensure_dir -s "$SHARED_TMP_DIR/wgp-extra"
-    
-    if [ ! -e "/tmp/wgp-extra" ]; then
-        ln -sf "$SHARED_TMP_DIR/wgp-extra" "/tmp/wgp-extra" 2>/dev/null || true
-    fi
-    
-    if [ -d "/tmp/wgp-temp" ] && [ ! -L "/tmp/wgp-temp" ]; then
-        if [ -z "$(ls -A /tmp/wgp-temp 2>/dev/null)" ]; then
-            rm -rf "/tmp/wgp-temp"
-        fi
-    fi
-    
-    ensure_dir -s "$SHARED_TMP_DIR/wgp-temp"
-    
-    if [ ! -e "/tmp/wgp-temp" ]; then
-        ln -sf "$SHARED_TMP_DIR/wgp-temp" "/tmp/wgp-temp" 2>/dev/null || true
+
+    # Les symlinks globaux /tmp/wgp-* ne sont nécessaires qu'en mode --nosandbox.
+    # En mode sandbox (défaut), /tmp est bind-monté depuis $SHARED_TMP_DIR,
+    # donc les chemins sont déjà par utilisateur.
+    if [ "${nosandbox_mode:-false}" = true ]; then
+        for shared in saves extra temp; do
+            local global_link="/tmp/wgp-$shared"
+            local user_dir="$SHARED_TMP_DIR/wgp-$shared"
+            ensure_dir -s "$user_dir"
+            chmod 777 "$user_dir"
+            rm -rf "$global_link" 2>/dev/null || true
+            ln -sf "$user_dir" "$global_link" 2>/dev/null || true
+        done
     fi
 }
 
@@ -6272,7 +6252,9 @@ cleanup_orphan_overlays() {
                 # Vérifier si un processus gwine utilise encore cet overlay
                 local game_id
                 game_id=$(basename "$mount_point")
-                local lock_file="/tmp/wgp-lock-${game_id#wgp-}"
+                local lock_file="$GWINE_LOCK_DIR/wgp-lock-${game_id#wgp-}"
+                # Rétrocompatibilité: vérifier aussi l'ancien chemin
+                [ ! -f "$lock_file" ] && lock_file="/tmp/wgp-lock-${game_id#wgp-}"
                 local should_unmount=true
                 
                 if [ -f "$lock_file" ]; then
@@ -6300,7 +6282,9 @@ cleanup_orphan_overlays() {
             if mountpoint -q "$mount_point" 2>/dev/null; then
                 local game_id
                 game_id=$(basename "$mount_point")
-                local lock_file="/tmp/wgp-lock-${game_id#wgp-}"
+                local lock_file="$GWINE_LOCK_DIR/wgp-lock-${game_id#wgp-}"
+                # Rétrocompatibilité: vérifier aussi l'ancien chemin
+                [ ! -f "$lock_file" ] && lock_file="/tmp/wgp-lock-${game_id#wgp-}"
                 local should_unmount=true
                 
                 if [ -f "$lock_file" ]; then
@@ -6354,7 +6338,7 @@ mount_wgp() {
         fi
     fi
     
-    local LOCK_FILE="/tmp/wgp-lock-$WGPACK_NAME"
+    local LOCK_FILE="$GWINE_LOCK_DIR/wgp-lock-$WGPACK_NAME"
     
     if [ -f "$LOCK_FILE" ]; then
         local LOCK_PID
@@ -6373,7 +6357,7 @@ mount_wgp() {
             if [ "$RELAUNCH" = true ]; then
                 echo "Arrêt de l'instance en cours..."
                 # Créer un marqueur de relancement pour empêcher le démontage par l'ancienne instance
-                local RELAUNCH_MARKER="/tmp/wgp-relaunch-$WGPACK_NAME"
+                local RELAUNCH_MARKER="$GWINE_LOCK_DIR/wgp-relaunch-$WGPACK_NAME"
                 touch "$RELAUNCH_MARKER"
                 # Tuer le processus principal
                 kill -9 "$LOCK_PID" 2>/dev/null
@@ -6461,7 +6445,7 @@ mount_wgp() {
     echo "$$:$(date +%s)" > "$LOCK_FILE"
     
     # Supprimer le marqueur de relancement après montage réussi
-    rm -f "/tmp/wgp-relaunch-$WGPACK_NAME" 2>/dev/null || true
+    rm -f "$GWINE_LOCK_DIR/wgp-relaunch-$WGPACK_NAME" 2>/dev/null || true
 }
 
 # =============================================================================
@@ -6470,7 +6454,7 @@ mount_wgp() {
 
 cleanup_wgp() {
     # Vérifier si un relancement est en cours - si oui, ne pas démonter
-    local RELAUNCH_MARKER="/tmp/wgp-relaunch-$WGPACK_NAME"
+    local RELAUNCH_MARKER="$GWINE_LOCK_DIR/wgp-relaunch-$WGPACK_NAME"
     if [ -f "$RELAUNCH_MARKER" ]; then
         return 0
     fi
@@ -6502,7 +6486,7 @@ cleanup_wgp() {
         rmdir "$MOUNT_DIR" 2>/dev/null || rm -rf "$MOUNT_DIR" 2>/dev/null || true
     fi
     
-    rm -f "/tmp/wgp-lock-$WGPACK_NAME" 2>/dev/null || true
+    rm -f "$GWINE_LOCK_DIR/wgp-lock-$WGPACK_NAME" 2>/dev/null || true
 }
 
 # =============================================================================
@@ -6553,6 +6537,7 @@ prepare_temp_folders() {
 
     # S'assurer que les repertoires existent AVANT le montage (crucial pour sandbox)
     ensure_dirs -s "$TEMP_GAME_DIR" "$TEMP_UPPER"
+    chmod 777 "/tmp/wgp-temp-upper" 2>/dev/null || true
 
     echo "Montage de l'overlay fuse-overlayfs pour les dossiers temporaires..."
 
@@ -6602,6 +6587,7 @@ prepare_full_overlay() {
     rm -rf "$TEMP_UPPER" 2>/dev/null || true
     
     ensure_dirs -s "$MOUNT_OVERLAY" "$TEMP_UPPER"
+    chmod 777 "/tmp/wgp-full-overlay" "/tmp/wgp-full-overlay-upper" 2>/dev/null || true
     
     echo "Montage de l'overlay complet avec fuse-overlayfs..."
     echo "  lowerdir: $MOUNT_DIR (WGP entier - lecture seule)"
@@ -6750,7 +6736,7 @@ setup_temp_symlink() {
         rm -rf "$TEMP_UPPER" 2>/dev/null || true
         
         ensure_dirs -s "$MOUNT_OVERLAY" "$TEMP_UPPER"
-        
+        chmod 777 "/tmp/wgp-full-overlay" "/tmp/wgp-full-overlay-upper" 2>/dev/null || true
         chmod 777 "$TEMP_UPPER"
         
         # Créer le symlink dans TEMP_SYMLINK pour le sandbox (comme saves et extras)
@@ -6778,8 +6764,7 @@ setup_temp_symlink() {
         fi
         
         ensure_dirs -s "$TEMP_GAME_DIR" "$TEMP_UPPER"
-        
-        chmod 777 "$TEMP_UPPER"
+        chmod 777 "/tmp/wgp-temp-upper" "$TEMP_UPPER" 2>/dev/null || true
         
         # Créer le symlink dans TEMP_SYMLINK pour le sandbox (comme saves et extras)
         ensure_dir -s "$TEMP_SYMLINK"
@@ -9557,7 +9542,7 @@ $2"
                 ;;
             --kill)
                 echo "Arrêt forcé de tous les processus Gwine..."
-                pgrep -f -i "\.exe|\.bat" | grep -v $$ | xargs -r kill -9 2>/dev/null
+                pgrep -u "$USER" -f -i "\.exe|\.bat" | grep -v $$ | xargs -r kill -9 2>/dev/null
                 kill_wineserver
                 echo "Terminé"
                 exit 0
