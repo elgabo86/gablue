@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <time.h>
 #include <sys/ioctl.h>
+#include <sys/inotify.h>
 #include <sys/poll.h>
 #include <sys/wait.h>
 #include <sys/types.h>
@@ -44,6 +45,16 @@ static pid_t mouse_pid = -1;
 static bool menuvsr_running = false;
 static pid_t menuvsr_pid = -1;
 static struct timespec last_volume_time = {0, 0};
+
+/* =========================================================================
+ * SUIVI DU VT ACTIF (inotify sur /sys/class/tty/tty0/active)
+ * Permet a deux sessions Wayland simultanees de ne pas entrer en conflit
+ * ========================================================================= */
+static int my_vt = -1;
+static bool vt_active = true;
+static int inotify_vt_fd = -1;
+static int inotify_vt_wd = -1;
+static int tty0_fd = -1;
 
 static void signal_handler(int sig)
 {
@@ -313,47 +324,182 @@ static void process_event(struct input_event *ev)
     }
 }
 
+/* =========================================================================
+ * FONCTIONS DE SUIVI DU VT
+ * ========================================================================= */
+
+/* Lit le numero du VT actif depuis /sys/class/tty/tty0/active
+   Retourne le numero (ex: 7 pour tty7), ou -1 en cas d'erreur */
+static int read_active_vt(void)
+{
+    char buf[16];
+    ssize_t n = pread(tty0_fd, buf, sizeof(buf) - 1, 0);
+    if (n < 3)
+        return -1;
+    buf[n] = '\0';
+    if (strncmp(buf, "tty", 3) != 0)
+        return -1;
+    return atoi(buf + 3);
+}
+
+/* Reinitialise les etats des boutons pour eviter les actions residuelles
+   apres un switch VT */
+static void reset_button_states(void)
+{
+    home_pressed = false;
+    select_pressed = false;
+    start_pressed = false;
+    triangle_pressed = false;
+    square_pressed = false;
+    circle_pressed = false;
+    l3_pressed = false;
+    r3_pressed = false;
+    hat_x = 0;
+    hat_y = 0;
+    last_hat_x = 0;
+    last_hat_y = 0;
+    axis_y = 0.0;
+}
+
+/* Verifie si notre VT est actif, met a jour vt_active et gere
+   l'inhibition ecran en consequence */
+static void check_vt_activity(void)
+{
+    if (my_vt < 0 || tty0_fd < 0)
+        return;
+
+    int active = read_active_vt();
+    if (active < 0)
+        return;
+
+    bool was_active = vt_active;
+    vt_active = (my_vt == active);
+
+    if (!was_active && vt_active) {
+        fprintf(stderr, "[INFO] VT %d devient actif, reprise du traitement\n", my_vt);
+        inhibit_screensaver();
+    } else if (was_active && !vt_active) {
+        fprintf(stderr, "[INFO] VT %d devient inactif, pause du traitement\n", my_vt);
+        uninhibit_screensaver();
+        reset_button_states();
+    }
+}
+
+/* Initialise le suivi inotify du VT.
+   Retourne 0 si OK, -1 si XDG_VTNR absent (pas de filtrage) */
+static int setup_vt_tracking(void)
+{
+    char *vt_str = getenv("XDG_VTNR");
+    if (!vt_str) {
+        fprintf(stderr, "[INFO] XDG_VTNR non defini, fonctionnement sans filtrage VT\n");
+        return -1;
+    }
+
+    my_vt = atoi(vt_str);
+    fprintf(stderr, "[INFO] Session demarree sur VT %d\n", my_vt);
+
+    tty0_fd = open("/sys/class/tty/tty0/active", O_RDONLY | O_CLOEXEC);
+    if (tty0_fd < 0) {
+        perror("open /sys/class/tty/tty0/active");
+        my_vt = -1;
+        return -1;
+    }
+
+    inotify_vt_fd = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
+    if (inotify_vt_fd < 0) {
+        perror("inotify_init1");
+        close(tty0_fd);
+        tty0_fd = -1;
+        my_vt = -1;
+        return -1;
+    }
+
+    inotify_vt_wd = inotify_add_watch(inotify_vt_fd,
+                                       "/sys/class/tty/tty0/active",
+                                       IN_MODIFY);
+    if (inotify_vt_wd < 0) {
+        perror("inotify_add_watch");
+        close(inotify_vt_fd);
+        close(tty0_fd);
+        inotify_vt_fd = -1;
+        tty0_fd = -1;
+        my_vt = -1;
+        return -1;
+    }
+
+    /* Verification de l'etat initial */
+    check_vt_activity();
+
+    return 0;
+}
+
+/* Nettoie les ressources inotify */
+static void cleanup_vt_tracking(void)
+{
+    if (inotify_vt_wd >= 0) {
+        inotify_rm_watch(inotify_vt_fd, inotify_vt_wd);
+        inotify_vt_wd = -1;
+    }
+    if (inotify_vt_fd >= 0) {
+        close(inotify_vt_fd);
+        inotify_vt_fd = -1;
+    }
+    if (tty0_fd >= 0) {
+        close(tty0_fd);
+        tty0_fd = -1;
+    }
+}
+
+/* =========================================================================
+ * PROGRAMME PRINCIPAL
+ * ========================================================================= */
+
 int main(void)
 {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
+    setup_vt_tracking();
+
     int gamepad_fd = find_gamepad();
     if (gamepad_fd >= 0) {
-        inhibit_screensaver();
+        if (vt_active)
+            inhibit_screensaver();
     } else {
         fprintf(stderr, "[INFO] Aucune manette detectee au demarrage.\n");
     }
 
-    struct pollfd pfd;
+    struct pollfd pfds[2];
     struct input_event ev;
 
     while (running) {
+        /* --- Reconnexion manette si perdue --- */
         if (gamepad_fd < 0) {
             sleep(1);
             gamepad_fd = find_gamepad();
             if (gamepad_fd >= 0) {
-                inhibit_screensaver();
-                home_pressed = false;
-                select_pressed = false;
-                start_pressed = false;
-                triangle_pressed = false;
-                square_pressed = false;
-                circle_pressed = false;
-                l3_pressed = false;
-                r3_pressed = false;
-                hat_x = 0; hat_y = 0;
-                last_hat_x = 0; last_hat_y = 0;
-                axis_y = 0.0;
+                if (vt_active)
+                    inhibit_screensaver();
+                reset_button_states();
             }
             continue;
         }
 
-        pfd.fd = gamepad_fd;
-        pfd.events = POLLIN;
-        pfd.revents = 0;
+        /* --- Construction du set poll: gamepad + inotify VT --- */
+        int nfds = 0;
+        pfds[nfds].fd = gamepad_fd;
+        pfds[nfds].events = POLLIN;
+        pfds[nfds].revents = 0;
+        nfds++;
 
-        int ret = poll(&pfd, 1, 100);
+        if (inotify_vt_fd >= 0) {
+            pfds[nfds].fd = inotify_vt_fd;
+            pfds[nfds].events = POLLIN;
+            pfds[nfds].revents = 0;
+            nfds++;
+        }
+
+        int ret = poll(pfds, nfds, 500);
         if (ret < 0) {
             if (errno == EINTR)
                 continue;
@@ -361,12 +507,32 @@ int main(void)
             uninhibit_screensaver();
             close(gamepad_fd);
             gamepad_fd = find_gamepad();
-            if (gamepad_fd >= 0)
+            if (gamepad_fd >= 0 && vt_active)
                 inhibit_screensaver();
             continue;
         }
 
-        if (ret > 0 && (pfd.revents & POLLIN)) {
+        /* --- Evenement inotify: switch VT --- */
+        if (inotify_vt_fd >= 0 && nfds >= 2
+            && (pfds[1].revents & POLLIN)) {
+            char ino_buf[4096];
+            while (read(inotify_vt_fd, ino_buf, sizeof(ino_buf)) > 0) {}
+            check_vt_activity();
+        }
+
+        /* --- Deconnexion manette --- */
+        if (pfds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            fprintf(stderr, "[WARN] Manette deconnectee.\n");
+            uninhibit_screensaver();
+            close(gamepad_fd);
+            gamepad_fd = find_gamepad();
+            if (gamepad_fd >= 0 && vt_active)
+                inhibit_screensaver();
+            continue;
+        }
+
+        /* --- Lecture evenements manette --- */
+        if (ret > 0 && (pfds[0].revents & POLLIN)) {
             while (true) {
                 ssize_t bytes = read(gamepad_fd, &ev, sizeof(ev));
                 if (bytes < 0) {
@@ -376,28 +542,23 @@ int main(void)
                     uninhibit_screensaver();
                     close(gamepad_fd);
                     gamepad_fd = find_gamepad();
-                    if (gamepad_fd >= 0)
+                    if (gamepad_fd >= 0 && vt_active)
                         inhibit_screensaver();
                     break;
                 }
                 if (bytes == sizeof(ev)) {
-                    process_event(&ev);
+                    if (vt_active)
+                        process_event(&ev);
                 }
             }
         }
 
-        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-            fprintf(stderr, "[WARN] Manette deconnectee.\n");
-            uninhibit_screensaver();
-            close(gamepad_fd);
-            gamepad_fd = find_gamepad();
-            if (gamepad_fd >= 0)
-                inhibit_screensaver();
-            continue;
-        }
+        /* Volume : uniquement quand le VT est actif */
+        if (vt_active)
+            handle_volume();
 
-        handle_volume();
-
+        /* Surveillance des processus enfants (toujours actif pour
+           nettoyer les pid) */
         check_child(&mouse_pid, &mouse_running, "mouse.py");
         check_child(&menuvsr_pid, &menuvsr_running, "menuvsr.py");
     }
@@ -412,6 +573,8 @@ int main(void)
 
     if (gamepad_fd >= 0)
         close(gamepad_fd);
+
+    cleanup_vt_tracking();
 
     return 0;
 }

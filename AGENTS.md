@@ -54,6 +54,10 @@ Le projet construit 6 variantes distinctes :
 ├── Containerfile-gablue-test              # Containerfile pour main-test
 ├── Containerfile-gablue-nvidia-open-test  # Containerfile pour nvidia-open-test
 ├── cosign.pub                             # Clé publique pour signature
+├── src/
+│   └── gamepadshortcuts/                  # Sources C du gestionnaire de raccourcis manette
+│       ├── gamepadshortcuts.c             # Programme principal (inotify VT, evdev)
+│       └── Makefile                       # Compilation
 ├── files/
 │   ├── scripts/                           # Scripts d'installation bash
 │   │   ├── brew                           # Installation Homebrew
@@ -663,15 +667,28 @@ Scripts personnalisés Gablue :
 - Scripts gaming : `a13`, `chdman`, `citron-install`, `eden-install`, etc.
 - Scripts utilitaires : `ytdl`, `dlcover`, `genimg`, `raroms`, etc.
 
+### Binaire gamepadshortcuts (/usr/bin)
+
+Gestionnaire principal des raccourcis manette en C natif (~500 Ko RAM) :
+- `gamepadshortcuts` : Binaire C remplaçant l'ancien script Python (~28 Mo RAM)
+- Détection automatique de manette via `/dev/input/event*` (evdev, ioctl)
+- Support multi-session Wayland : suivi du VT actif via inotify sur `/sys/class/tty/tty0/active`
+  - Une instance par session (autostart KDE)
+  - Filtrage des événements quand le VT n'est pas actif (pas de conflit entre sessions)
+  - Reprise automatique au retour sur le VT
+
 ### Scripts gamepadshortcuts (/usr/share/ublue-os/gablue/scripts/gamepadshortcuts)
 
-Scripts de contrôle par manette :
-- `gamepadshortcuts.py` : Gestionnaire principal des raccourcis (evdev)
+Scripts lancés par le binaire gamepadshortcuts :
+- `launchgamepadshortcuts` : Lanceur avec lockfile par user
 - `menuvsr.py` : Menu VR pour actions système (PySide6 + evdev, glassmorphism)
 - `mouse.py` : Contrôle souris via manette
 - `decoblue` : Déconnexion Bluetooth
 - `launchyt` : Lancement YouTube
 - `openes` : Overture EmulationStation
+- `killthemall` : Tue tous les émulateurs de la session courante
+- `takescreenshot`, `startstoprecord` : Capture d'écran / enregistrement
+- `changefps`, `showhidemango` : Contrôle FPS / overlay MangoHud
 
 ### Configuration tuned (/usr/lib/tuned)
 
