@@ -18,13 +18,21 @@ RESET_THRESHOLD = 10  # Seuil pour arrêter le mouvement
 START_SOUND_CMD = ["ffplay", "-nodisp", "-autoexit", "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/clic.wav"]
 EXIT_SOUND_CMD = ["ffplay", "-nodisp", "-autoexit", "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/noclic.wav"]
 
+SKIP_KEYWORDS = ["Touchpad", "Motion Sensors", "Headset", "Accelerometer", "Gyroscope"]
+
 def find_controller():
     devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
     for dev in devices:
         print(f"Device: {dev.path} - {dev.name}")
-        if ("Sony" in dev.name or "DualSense" in dev.name or "DualShock" in dev.name or "Wireless Controller" in dev.name) and "Touchpad" not in dev.name and "Motion Sensors" not in dev.name:
-            print(f"Trouvé : {dev.path} - {dev.name}")
-            return dev.path
+        if any(kw in dev.name for kw in SKIP_KEYWORDS):
+            continue
+        if ("Sony" in dev.name or "DualSense" in dev.name or "DualShock" in dev.name or "Wireless Controller" in dev.name):
+            capabilities = dev.capabilities()
+            if evdev.ecodes.EV_ABS in capabilities:
+                abs_codes = {code for code, info in capabilities[evdev.ecodes.EV_ABS]}
+                if evdev.ecodes.ABS_RX in abs_codes and evdev.ecodes.ABS_RY in abs_codes:
+                    print(f"Trouvé : {dev.path} - {dev.name}")
+                    return dev.path
     print("Erreur : Aucune manette Sony valide trouvée.")
     sys.exit(1)
 
@@ -135,133 +143,137 @@ def main():
     last_dpad_right = 0
 
     while True:
-        current_time = time.time()
-        dt = current_time - last_time
+        try:
+            current_time = time.time()
+            dt = current_time - last_time
 
-        # Joystick droit (souris)
-        rx_value = controller.absinfo(evdev.ecodes.ABS_RX).value - 128
-        ry_value = controller.absinfo(evdev.ecodes.ABS_RY).value - 128
-        mouse_x, mouse_y = calculate_movement(rx_value, ry_value, last_mouse_x, last_mouse_y, dt, is_mouse=True)
+            # Joystick droit (souris)
+            rx_value = controller.absinfo(evdev.ecodes.ABS_RX).value - 128
+            ry_value = controller.absinfo(evdev.ecodes.ABS_RY).value - 128
+            mouse_x, mouse_y = calculate_movement(rx_value, ry_value, last_mouse_x, last_mouse_y, dt, is_mouse=True)
 
-        if mouse_x != 0:
-            virtual_device.emit((evdev.ecodes.EV_REL, evdev.ecodes.REL_X), mouse_x)
+            if mouse_x != 0:
+                virtual_device.emit((evdev.ecodes.EV_REL, evdev.ecodes.REL_X), mouse_x)
+                virtual_device.syn()
+            if mouse_y != 0:
+                virtual_device.emit((evdev.ecodes.EV_REL, evdev.ecodes.REL_Y), mouse_y)
+                virtual_device.syn()
+
+            last_mouse_x = mouse_x
+            last_mouse_y = mouse_y
+
+            # Joystick gauche (WASD)
+            lx_value = controller.absinfo(evdev.ecodes.ABS_X).value - 128
+            ly_value = controller.absinfo(evdev.ecodes.ABS_Y).value - 128
+            move_x, move_y = calculate_movement(lx_value, ly_value, 0, 0, dt, is_mouse=False)
+
+            w_state = 1 if move_y < -DEAD_ZONE else 0
+            s_state = 1 if move_y > DEAD_ZONE else 0
+            a_state = 1 if move_x < -DEAD_ZONE else 0
+            d_state = 1 if move_x > DEAD_ZONE else 0
+
+            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_W), w_state)
+            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_S), s_state)
+            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_A), a_state)
+            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_D), d_state)
             virtual_device.syn()
-        if mouse_y != 0:
-            virtual_device.emit((evdev.ecodes.EV_REL, evdev.ecodes.REL_Y), mouse_y)
-            virtual_device.syn()
 
-        last_mouse_x = mouse_x
-        last_mouse_y = mouse_y
+            # D-pad (flèches)
+            dpad_up_state = controller.absinfo(evdev.ecodes.ABS_HAT0Y).value == -1
+            dpad_down_state = controller.absinfo(evdev.ecodes.ABS_HAT0Y).value == 1
+            dpad_left_state = controller.absinfo(evdev.ecodes.ABS_HAT0X).value == -1
+            dpad_right_state = controller.absinfo(evdev.ecodes.ABS_HAT0X).value == 1
 
-        # Joystick gauche (WASD)
-        lx_value = controller.absinfo(evdev.ecodes.ABS_X).value - 128
-        ly_value = controller.absinfo(evdev.ecodes.ABS_Y).value - 128
-        move_x, move_y = calculate_movement(lx_value, ly_value, 0, 0, dt, is_mouse=False)
+            if dpad_up_state != last_dpad_up:
+                virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_UP), 1 if dpad_up_state else 0)
+                virtual_device.syn()
+                last_dpad_up = dpad_up_state
+            if dpad_down_state != last_dpad_down:
+                virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_DOWN), 1 if dpad_down_state else 0)
+                virtual_device.syn()
+                last_dpad_down = dpad_down_state
+            if dpad_left_state != last_dpad_left:
+                virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFT), 1 if dpad_left_state else 0)
+                virtual_device.syn()
+                last_dpad_left = dpad_left_state
+            if dpad_right_state != last_dpad_right:
+                virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_RIGHT), 1 if dpad_right_state else 0)
+                virtual_device.syn()
+                last_dpad_right = dpad_right_state
 
-        w_state = 1 if move_y < -DEAD_ZONE else 0
-        s_state = 1 if move_y > DEAD_ZONE else 0
-        a_state = 1 if move_x < -DEAD_ZONE else 0
-        d_state = 1 if move_x > DEAD_ZONE else 0
+            # Boutons
+            l2_state = controller.active_keys().count(evdev.ecodes.BTN_TL2)     # L2
+            r2_state = controller.active_keys().count(evdev.ecodes.BTN_TR2)     # R2
+            r3_state = controller.active_keys().count(evdev.ecodes.BTN_THUMBR)  # R3 (clic milieu)
+            cross_state = controller.active_keys().count(evdev.ecodes.BTN_SOUTH)   # Croix
+            circle_state = controller.active_keys().count(evdev.ecodes.BTN_EAST)    # Rond
+            triangle_state = controller.active_keys().count(evdev.ecodes.BTN_NORTH) # Triangle
+            square_state = controller.active_keys().count(evdev.ecodes.BTN_WEST)    # Carré
+            l3_state = controller.active_keys().count(evdev.ecodes.BTN_THUMBL)      # L3
+            ps_state = controller.active_keys().count(evdev.ecodes.BTN_MODE)        # PS
 
-        virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_W), w_state)
-        virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_S), s_state)
-        virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_A), a_state)
-        virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_D), d_state)
-        virtual_device.syn()
+            # L2 -> Clic droit
+            if l2_state != last_l2:
+                virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.BTN_RIGHT), l2_state)
+                virtual_device.syn()
+                last_l2 = l2_state
 
-        # D-pad (flèches)
-        dpad_up_state = controller.absinfo(evdev.ecodes.ABS_HAT0Y).value == -1
-        dpad_down_state = controller.absinfo(evdev.ecodes.ABS_HAT0Y).value == 1
-        dpad_left_state = controller.absinfo(evdev.ecodes.ABS_HAT0X).value == -1
-        dpad_right_state = controller.absinfo(evdev.ecodes.ABS_HAT0X).value == 1
+            # R2 -> Clic gauche
+            if r2_state != last_r2:
+                virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.BTN_LEFT), r2_state)
+                virtual_device.syn()
+                last_r2 = r2_state
 
-        if dpad_up_state != last_dpad_up:
-            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_UP), 1 if dpad_up_state else 0)
-            virtual_device.syn()
-            last_dpad_up = dpad_up_state
-        if dpad_down_state != last_dpad_down:
-            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_DOWN), 1 if dpad_down_state else 0)
-            virtual_device.syn()
-            last_dpad_down = dpad_down_state
-        if dpad_left_state != last_dpad_left:
-            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFT), 1 if dpad_left_state else 0)
-            virtual_device.syn()
-            last_dpad_left = dpad_left_state
-        if dpad_right_state != last_dpad_right:
-            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_RIGHT), 1 if dpad_right_state else 0)
-            virtual_device.syn()
-            last_dpad_right = dpad_right_state
+            # R3 -> Clic milieu
+            if r3_state != last_r3:
+                virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.BTN_MIDDLE), r3_state)
+                virtual_device.syn()
+                last_r3 = r3_state
 
-        # Boutons
-        l2_state = controller.active_keys().count(evdev.ecodes.BTN_TL2)     # L2
-        r2_state = controller.active_keys().count(evdev.ecodes.BTN_TR2)     # R2
-        r3_state = controller.active_keys().count(evdev.ecodes.BTN_THUMBR)  # R3 (clic milieu)
-        cross_state = controller.active_keys().count(evdev.ecodes.BTN_SOUTH)   # Croix
-        circle_state = controller.active_keys().count(evdev.ecodes.BTN_EAST)    # Rond
-        triangle_state = controller.active_keys().count(evdev.ecodes.BTN_NORTH) # Triangle
-        square_state = controller.active_keys().count(evdev.ecodes.BTN_WEST)    # Carré
-        l3_state = controller.active_keys().count(evdev.ecodes.BTN_THUMBL)      # L3
-        ps_state = controller.active_keys().count(evdev.ecodes.BTN_MODE)        # PS
+            # Croix -> Enter
+            if cross_state != last_cross:
+                virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_ENTER), 1 if cross_state else 0)
+                virtual_device.syn()
+                last_cross = cross_state
 
-        # L2 -> Clic droit
-        if l2_state != last_l2:
-            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.BTN_RIGHT), l2_state)
-            virtual_device.syn()
-            last_l2 = l2_state
+            # Rond -> F
+            if circle_state != last_circle:
+                virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_F), 1 if circle_state else 0)
+                virtual_device.syn()
+                last_circle = circle_state
 
-        # R2 -> Clic gauche
-        if r2_state != last_r2:
-            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.BTN_LEFT), r2_state)
-            virtual_device.syn()
-            last_r2 = r2_state
+            # Triangle -> E
+            if triangle_state != last_triangle:
+                virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_E), 1 if triangle_state else 0)
+                virtual_device.syn()
+                last_triangle = triangle_state
 
-        # R3 -> Clic milieu
-        if r3_state != last_r3:
-            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.BTN_MIDDLE), r3_state)
-            virtual_device.syn()
-            last_r3 = r3_state
+            # Carré -> Backspace
+            if square_state != last_square:
+                virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_BACKSPACE), 1 if square_state else 0)
+                virtual_device.syn()
+                last_square = square_state
 
-        # Croix -> Enter
-        if cross_state != last_cross:
-            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_ENTER), 1 if cross_state else 0)
-            virtual_device.syn()
-            last_cross = cross_state
+            # L3 -> Shift (toggle)
+            if l3_state != last_l3 and l3_state == 1:
+                l3_press_count += 1
+                shift_state = 1 if l3_press_count % 2 == 1 else 0
+                virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFTSHIFT), shift_state)
+                virtual_device.syn()
+                last_l3 = l3_state
 
-        # Rond -> F
-        if circle_state != last_circle:
-            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_F), 1 if circle_state else 0)
-            virtual_device.syn()
-            last_circle = circle_state
+            # Sortie avec PS + L3
+            if ps_state == 1 and l3_state == 1:
+                print("Bouton PS et L3 pressés : arrêt.")
+                play_sound(EXIT_SOUND_CMD)
+                time.sleep(0.7)
+                sys.exit(0)
 
-        # Triangle -> E
-        if triangle_state != last_triangle:
-            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_E), 1 if triangle_state else 0)
-            virtual_device.syn()
-            last_triangle = triangle_state
-
-        # Carré -> Backspace
-        if square_state != last_square:
-            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_BACKSPACE), 1 if square_state else 0)
-            virtual_device.syn()
-            last_square = square_state
-
-        # L3 -> Shift (toggle)
-        if l3_state != last_l3 and l3_state == 1:
-            l3_press_count += 1
-            shift_state = 1 if l3_press_count % 2 == 1 else 0
-            virtual_device.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFTSHIFT), shift_state)
-            virtual_device.syn()
-            last_l3 = l3_state
-
-        # Sortie avec PS + L3
-        if ps_state == 1 and l3_state == 1:
-            print("Bouton PS et L3 pressés : arrêt.")
-            play_sound(EXIT_SOUND_CMD)
-            time.sleep(0.7)
-            sys.exit(0)
-
-        last_time = current_time
-        time.sleep(UPDATE_DELAY)
+            last_time = current_time
+            time.sleep(UPDATE_DELAY)
+        except OSError:
+            print("Erreur : Manette déconnectée.")
+            sys.exit(1)
 
 if __name__ == "__main__":
     try:

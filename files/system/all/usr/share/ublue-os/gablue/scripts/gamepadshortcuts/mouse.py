@@ -16,17 +16,24 @@ UPDATE_RATE = 120
 START_SOUND_CMD = ["ffplay", "-nodisp", "-autoexit", "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/clic.wav"]
 EXIT_SOUND_CMD = ["ffplay", "-nodisp", "-autoexit", "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/noclic.wav"]
 
+SKIP_KEYWORDS = ["Touchpad", "Motion Sensors", "Headset", "Accelerometer", "Gyroscope"]
+
 def find_controller():
     devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
     for dev in devices:
         print(f"Device: {dev.path} - {dev.name}")
-        if "Touchpad" in dev.name or "Motion Sensors" in dev.name:
+        if any(kw in dev.name for kw in SKIP_KEYWORDS):
             continue
         if ("Sony" in dev.name or "DualSense" in dev.name or "DualShock" in dev.name or
             "Nintendo" in dev.name or "Xbox" in dev.name or "Microsoft" in dev.name or
             "Wireless Controller" in dev.name or "Gamepad" in dev.name):
-            print(f"Trouvé : {dev.path} - {dev.name}")
-            return dev.path
+            capabilities = dev.capabilities()
+            if evdev.ecodes.EV_ABS in capabilities:
+                abs_codes = {code for code, info in capabilities[evdev.ecodes.EV_ABS]}
+                if evdev.ecodes.ABS_RX in abs_codes and evdev.ecodes.ABS_RY in abs_codes:
+                    print(f"Trouvé : {dev.path} - {dev.name}")
+                    return dev.path
+            continue
         capabilities = dev.capabilities()
         if evdev.ecodes.EV_KEY in capabilities:
             keys = capabilities[evdev.ecodes.EV_KEY]
@@ -176,157 +183,161 @@ def main():
     update_interval = 1.0 / UPDATE_RATE
 
     while True:
-        loop_start = time.time()
-        
-        current_time = time.time()
-        dt = current_time - last_time
-        last_time = current_time
-        
-        if dt > 0.1:
-            dt = 0.1
+        try:
+            loop_start = time.time()
+            
+            current_time = time.time()
+            dt = current_time - last_time
+            last_time = current_time
+            
+            if dt > 0.1:
+                dt = 0.1
 
-        raw_x = controller.absinfo(evdev.ecodes.ABS_RX).value
-        raw_y = controller.absinfo(evdev.ecodes.ABS_RY).value
+            raw_x = controller.absinfo(evdev.ecodes.ABS_RX).value
+            raw_y = controller.absinfo(evdev.ecodes.ABS_RY).value
 
-        norm_x = normalize_axis(raw_x, abs_info_rx.min, abs_info_rx.max)
-        norm_y = normalize_axis(raw_y, abs_info_ry.min, abs_info_ry.max)
+            norm_x = normalize_axis(raw_x, abs_info_rx.min, abs_info_rx.max)
+            norm_y = normalize_axis(raw_y, abs_info_ry.min, abs_info_ry.max)
 
-        raw_magnitude = (norm_x ** 2 + norm_y ** 2) ** 0.5
-        
-        if raw_magnitude < DEAD_ZONE:
-            magnitude = 0
-        else:
-            if raw_magnitude > 0.001:
-                dir_x = norm_x / raw_magnitude
-                dir_y = norm_y / raw_magnitude
+            raw_magnitude = (norm_x ** 2 + norm_y ** 2) ** 0.5
+            
+            if raw_magnitude < DEAD_ZONE:
+                magnitude = 0
             else:
-                dir_x = 0
-                dir_y = 0
-            magnitude = (raw_magnitude - DEAD_ZONE) / (1.0 - DEAD_ZONE)
-        
-        if magnitude > 0.001:
-            curve_magnitude = apply_easing_quadratic_curve(magnitude)
+                if raw_magnitude > 0.001:
+                    dir_x = norm_x / raw_magnitude
+                    dir_y = norm_y / raw_magnitude
+                else:
+                    dir_x = 0
+                    dir_y = 0
+                magnitude = (raw_magnitude - DEAD_ZONE) / (1.0 - DEAD_ZONE)
             
-            speed = BASE_SENSITIVITY + (MAX_SENSITIVITY - BASE_SENSITIVITY) * curve_magnitude
-            
-            move_x = dir_x * speed * dt * 60
-            move_y = dir_y * speed * dt * 60
-            
-            accumulator.add_movement(move_x, move_y)
-            
-            int_x, int_y = accumulator.get_int_movement()
-            
-            if int_x != 0 or int_y != 0:
-                if int_x != 0:
-                    mouse.emit((evdev.ecodes.EV_REL, evdev.ecodes.REL_X), int_x)
-                if int_y != 0:
-                    mouse.emit((evdev.ecodes.EV_REL, evdev.ecodes.REL_Y), int_y)
+            if magnitude > 0.001:
+                curve_magnitude = apply_easing_quadratic_curve(magnitude)
+                
+                speed = BASE_SENSITIVITY + (MAX_SENSITIVITY - BASE_SENSITIVITY) * curve_magnitude
+                
+                move_x = dir_x * speed * dt * 60
+                move_y = dir_y * speed * dt * 60
+                
+                accumulator.add_movement(move_x, move_y)
+                
+                int_x, int_y = accumulator.get_int_movement()
+                
+                if int_x != 0 or int_y != 0:
+                    if int_x != 0:
+                        mouse.emit((evdev.ecodes.EV_REL, evdev.ecodes.REL_X), int_x)
+                    if int_y != 0:
+                        mouse.emit((evdev.ecodes.EV_REL, evdev.ecodes.REL_Y), int_y)
+                    mouse.syn()
+
+            left_state = controller.active_keys().count(button_mappings["tr"])
+            right_state = controller.active_keys().count(button_mappings["tl"])
+            mode_state = controller.active_keys().count(button_mappings["mode"])
+            r3_state = controller.active_keys().count(button_mappings["thumbr"])
+            l3_state = controller.active_keys().count(button_mappings["thumbl"])
+            l2_state = controller.active_keys().count(button_mappings["tl2"])
+            r2_state = controller.active_keys().count(button_mappings["tr2"])
+            start_state = controller.active_keys().count(button_mappings["start"])
+            select_state = controller.active_keys().count(button_mappings["select"])
+            cross_state = controller.active_keys().count(button_mappings["south"])
+            circle_state = controller.active_keys().count(button_mappings["east"])
+            triangle_state = controller.active_keys().count(button_mappings["north"])
+            square_state = controller.active_keys().count(button_mappings["west"])
+
+            dpad_up_state = controller.absinfo(evdev.ecodes.ABS_HAT0Y).value == -1
+            dpad_down_state = controller.absinfo(evdev.ecodes.ABS_HAT0Y).value == 1
+            dpad_left_state = controller.absinfo(evdev.ecodes.ABS_HAT0X).value == -1
+            dpad_right_state = controller.absinfo(evdev.ecodes.ABS_HAT0X).value == 1
+
+            if left_state != last_left:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.BTN_LEFT), left_state)
                 mouse.syn()
+                last_left = left_state
 
-        left_state = controller.active_keys().count(button_mappings["tr"])
-        right_state = controller.active_keys().count(button_mappings["tl"])
-        mode_state = controller.active_keys().count(button_mappings["mode"])
-        r3_state = controller.active_keys().count(button_mappings["thumbr"])
-        l3_state = controller.active_keys().count(button_mappings["thumbl"])
-        l2_state = controller.active_keys().count(button_mappings["tl2"])
-        r2_state = controller.active_keys().count(button_mappings["tr2"])
-        start_state = controller.active_keys().count(button_mappings["start"])
-        select_state = controller.active_keys().count(button_mappings["select"])
-        cross_state = controller.active_keys().count(button_mappings["south"])
-        circle_state = controller.active_keys().count(button_mappings["east"])
-        triangle_state = controller.active_keys().count(button_mappings["north"])
-        square_state = controller.active_keys().count(button_mappings["west"])
+            if right_state != last_right:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.BTN_RIGHT), right_state)
+                mouse.syn()
+                last_right = right_state
 
-        dpad_up_state = controller.absinfo(evdev.ecodes.ABS_HAT0Y).value == -1
-        dpad_down_state = controller.absinfo(evdev.ecodes.ABS_HAT0Y).value == 1
-        dpad_left_state = controller.absinfo(evdev.ecodes.ABS_HAT0X).value == -1
-        dpad_right_state = controller.absinfo(evdev.ecodes.ABS_HAT0X).value == 1
+            if dpad_up_state != last_dpad_up:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_UP), 1 if dpad_up_state else 0)
+                mouse.syn()
+                last_dpad_up = dpad_up_state
 
-        if left_state != last_left:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.BTN_LEFT), left_state)
-            mouse.syn()
-            last_left = left_state
+            if dpad_down_state != last_dpad_down:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_DOWN), 1 if dpad_down_state else 0)
+                mouse.syn()
+                last_dpad_down = dpad_down_state
 
-        if right_state != last_right:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.BTN_RIGHT), right_state)
-            mouse.syn()
-            last_right = right_state
+            if dpad_left_state != last_dpad_left:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFT), 1 if dpad_left_state else 0)
+                mouse.syn()
+                last_dpad_left = dpad_left_state
 
-        if dpad_up_state != last_dpad_up:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_UP), 1 if dpad_up_state else 0)
-            mouse.syn()
-            last_dpad_up = dpad_up_state
+            if dpad_right_state != last_dpad_right:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_RIGHT), 1 if dpad_right_state else 0)
+                mouse.syn()
+                last_dpad_right = dpad_right_state
 
-        if dpad_down_state != last_dpad_down:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_DOWN), 1 if dpad_down_state else 0)
-            mouse.syn()
-            last_dpad_down = dpad_down_state
+            if l3_state != last_l3:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_ESC), 1 if l3_state else 0)
+                mouse.syn()
+                last_l3 = l3_state
 
-        if dpad_left_state != last_dpad_left:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFT), 1 if dpad_left_state else 0)
-            mouse.syn()
-            last_dpad_left = dpad_left_state
+            if l2_state != last_l2:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFTALT), 1 if l2_state else 0)
+                mouse.syn()
+                last_l2 = l2_state
 
-        if dpad_right_state != last_dpad_right:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_RIGHT), 1 if dpad_right_state else 0)
-            mouse.syn()
-            last_dpad_right = dpad_right_state
+            if r2_state != last_r2:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFTSHIFT), 1 if r2_state else 0)
+                mouse.syn()
+                last_r2 = r2_state
 
-        if l3_state != last_l3:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_ESC), 1 if l3_state else 0)
-            mouse.syn()
-            last_l3 = l3_state
+            if start_state != last_start:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_ENTER), 1 if start_state else 0)
+                mouse.syn()
+                last_start = start_state
 
-        if l2_state != last_l2:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFTALT), 1 if l2_state else 0)
-            mouse.syn()
-            last_l2 = l2_state
+            if select_state != last_select:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_F11), 1 if select_state else 0)
+                mouse.syn()
+                last_select = select_state
 
-        if r2_state != last_r2:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFTSHIFT), 1 if r2_state else 0)
-            mouse.syn()
-            last_r2 = r2_state
+            if square_state != last_square:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_BACKSPACE), 1 if square_state else 0)
+                mouse.syn()
+                last_square = square_state
 
-        if start_state != last_start:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_ENTER), 1 if start_state else 0)
-            mouse.syn()
-            last_start = start_state
+            if cross_state != last_cross:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_SPACE), 1 if cross_state else 0)
+                mouse.syn()
+                last_cross = cross_state
 
-        if select_state != last_select:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_F11), 1 if select_state else 0)
-            mouse.syn()
-            last_select = select_state
+            if circle_state != last_circle:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_TAB), 1 if circle_state else 0)
+                mouse.syn()
+                last_circle = circle_state
 
-        if square_state != last_square:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_BACKSPACE), 1 if square_state else 0)
-            mouse.syn()
-            last_square = square_state
+            if triangle_state != last_triangle:
+                mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_F4), 1 if triangle_state else 0)
+                mouse.syn()
+                last_triangle = triangle_state
 
-        if cross_state != last_cross:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_SPACE), 1 if cross_state else 0)
-            mouse.syn()
-            last_cross = cross_state
+            if mode_state == 1 and r3_state == 1:
+                print("Bouton Home/Guide et R3 pressés : arrêt.")
+                play_sound(EXIT_SOUND_CMD)
+                print("Son de sortie lancé en arrière-plan.")
+                time.sleep(0.7)
+                sys.exit(0)
 
-        if circle_state != last_circle:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_TAB), 1 if circle_state else 0)
-            mouse.syn()
-            last_circle = circle_state
-
-        if triangle_state != last_triangle:
-            mouse.emit((evdev.ecodes.EV_KEY, evdev.ecodes.KEY_F4), 1 if triangle_state else 0)
-            mouse.syn()
-            last_triangle = triangle_state
-
-        if mode_state == 1 and r3_state == 1:
-            print("Bouton Home/Guide et R3 pressés : arrêt.")
-            play_sound(EXIT_SOUND_CMD)
-            print("Son de sortie lancé en arrière-plan.")
-            time.sleep(0.7)
-            sys.exit(0)
-
-        elapsed = time.time() - loop_start
-        if elapsed < update_interval:
-            time.sleep(update_interval - elapsed)
+            elapsed = time.time() - loop_start
+            if elapsed < update_interval:
+                time.sleep(update_interval - elapsed)
+        except OSError:
+            print("Erreur : Manette déconnectée.")
+            sys.exit(1)
 
 if __name__ == "__main__":
     try:
