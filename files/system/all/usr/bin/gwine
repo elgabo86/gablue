@@ -1641,7 +1641,7 @@ get_component_version() {
             echo "$version"
             ;;
         vkd3d)
-            version=$(curl -s "https://github.com/$repo/releases.atom" 2>/dev/null | grep -oE "vkd3d-proton-[0-9]+\.[0-9]+(\.[0-9]+)?")
+            version=$(curl -s "https://github.com/$repo/releases.atom" 2>/dev/null | grep -oE "vkd3d-proton-[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1)
             if [ -z "$version" ]; then
                 version=$(curl -s "https://github.com/$repo/tags?after=dxvk-2.7.1-6-fc848a4" 2>/dev/null | grep -oE "vkd3d-proton-[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1)
             fi
@@ -4096,17 +4096,26 @@ download_updated_dxvk_vkd3d() {
 download_missing_components() {
     echo "Téléchargement des composants manquants..."
     
-    if [ ! -d "$COMPONENTS_DIR/wine-cache" ] || [ -z "$(ls -A "$COMPONENTS_DIR/wine-cache" 2>/dev/null)" ]; then
+    local MONO_VER="11.1.0"
+    local GECKO_VER="2.47.4"
+    local WINE_CACHE_DIR="$COMPONENTS_DIR/wine-cache"
+    local MONO_FILE="$WINE_CACHE_DIR/wine-mono-${MONO_VER}-x86.msi"
+    local GECKO64_FILE="$WINE_CACHE_DIR/wine-gecko-${GECKO_VER}-x86_64.msi"
+    local GECKO32_FILE="$WINE_CACHE_DIR/wine-gecko-${GECKO_VER}-x86.msi"
+    
+    if [ ! -f "$MONO_FILE" ] || [ ! -f "$GECKO64_FILE" ] || [ ! -f "$GECKO32_FILE" ]; then
         echo "Téléchargement de Wine Mono et Wine Gecko..."
-        local MONO_URL="https://dl.winehq.org/wine/wine-mono/11.1.0/wine-mono-11.1.0-x86.msi"
-        local GECKO_URL="https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-x86_64.msi"
-        local GECKO32_URL="https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-x86.msi"
+        local MONO_URL="https://dl.winehq.org/wine/wine-mono/${MONO_VER}/wine-mono-${MONO_VER}-x86.msi"
+        local GECKO_URL="https://dl.winehq.org/wine/wine-gecko/${GECKO_VER}/wine-gecko-${GECKO_VER}-x86_64.msi"
+        local GECKO32_URL="https://dl.winehq.org/wine/wine-gecko/${GECKO_VER}/wine-gecko-${GECKO_VER}-x86.msi"
         
-        mkdir -p "$COMPONENTS_DIR/wine-cache"
+        mkdir -p "$WINE_CACHE_DIR"
         
-        wget -q --show-progress "$MONO_URL" -O "$COMPONENTS_DIR/wine-cache/wine-mono-11.1.0-x86.msi" 2>&1 || echo "Warning: Échec du téléchargement de Wine Mono"
-        wget -q --show-progress "$GECKO_URL" -O "$COMPONENTS_DIR/wine-cache/wine-gecko-2.47.4-x86_64.msi" 2>&1 || echo "Warning: Échec du téléchargement de Wine Gecko (x64)"
-        wget -q --show-progress "$GECKO32_URL" -O "$COMPONENTS_DIR/wine-cache/wine-gecko-2.47.4-x86.msi" 2>&1 || echo "Warning: Échec du téléchargement de Wine Gecko (x86)"
+        rm -f "$WINE_CACHE_DIR"/wine-mono-*.msi "$WINE_CACHE_DIR"/wine-gecko-*.msi
+        
+        wget -q --show-progress "$MONO_URL" -O "$MONO_FILE" 2>&1 || echo "Warning: Échec du téléchargement de Wine Mono"
+        wget -q --show-progress "$GECKO_URL" -O "$GECKO64_FILE" 2>&1 || echo "Warning: Échec du téléchargement de Wine Gecko (x64)"
+        wget -q --show-progress "$GECKO32_URL" -O "$GECKO32_FILE" 2>&1 || echo "Warning: Échec du téléchargement de Wine Gecko (x86)"
     fi
     
     ensure_dirs "$DXVK_CACHE_DIR" "$VKD3D_CACHE_DIR"
@@ -4190,7 +4199,11 @@ prepare_local_cache() {
     
     local missing_components=false
     
-    if [ ! -d "$COMPONENTS_DIR/wine-cache" ] || [ -z "$(ls -A "$COMPONENTS_DIR/wine-cache" 2>/dev/null)" ]; then
+    local MONO_VER="11.1.0"
+    local GECKO_VER="2.47.4"
+    if [ ! -f "$COMPONENTS_DIR/wine-cache/wine-mono-${MONO_VER}-x86.msi" ] || \
+       [ ! -f "$COMPONENTS_DIR/wine-cache/wine-gecko-${GECKO_VER}-x86_64.msi" ] || \
+       [ ! -f "$COMPONENTS_DIR/wine-cache/wine-gecko-${GECKO_VER}-x86.msi" ]; then
         missing_components=true
     fi
     
@@ -4365,13 +4378,27 @@ prepare_full_offline_cache() {
     local WINE_CACHE="$COMPONENTS_DIR/wine-cache"
     ensure_dir "$WINE_CACHE"
     
-    local MONO_URL="https://dl.winehq.org/wine/wine-mono/11.1.0/wine-mono-11.1.0-x86.msi"
-    local GECKO_URL="https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-x86_64.msi"
-    local GECKO32_URL="https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-x86.msi"
+    local MONO_VER="11.1.0"
+    local GECKO_VER="2.47.4"
+    local MONO_URL="https://dl.winehq.org/wine/wine-mono/${MONO_VER}/wine-mono-${MONO_VER}-x86.msi"
+    local GECKO_URL="https://dl.winehq.org/wine/wine-gecko/${GECKO_VER}/wine-gecko-${GECKO_VER}-x86_64.msi"
+    local GECKO32_URL="https://dl.winehq.org/wine/wine-gecko/${GECKO_VER}/wine-gecko-${GECKO_VER}-x86.msi"
     
-    local mono_file="$WINE_CACHE/wine-mono-11.1.0-x86.msi"
-    local gecko64_file="$WINE_CACHE/wine-gecko-2.47.4-x86_64.msi"
-    local gecko32_file="$WINE_CACHE/wine-gecko-2.47.4-x86.msi"
+    local mono_file="$WINE_CACHE/wine-mono-${MONO_VER}-x86.msi"
+    local gecko64_file="$WINE_CACHE/wine-gecko-${GECKO_VER}-x86_64.msi"
+    local gecko32_file="$WINE_CACHE/wine-gecko-${GECKO_VER}-x86.msi"
+    
+    # Supprimer les anciennes versions pour éviter l'accumulation
+    shopt -s nullglob
+    for old in "$WINE_CACHE"/wine-mono-*.msi; do
+        [ "$(basename "$old")" != "wine-mono-${MONO_VER}-x86.msi" ] && rm -f "$old"
+    done
+    for old in "$WINE_CACHE"/wine-gecko-*.msi; do
+        [ "$(basename "$old")" != "wine-gecko-${GECKO_VER}-x86_64.msi" ] && \
+        [ "$(basename "$old")" != "wine-gecko-${GECKO_VER}-x86.msi" ] && \
+        rm -f "$old"
+    done
+    shopt -u nullglob
     
     if [ ! -f "$mono_file" ]; then
         echo "   Téléchargement de Wine Mono..."
