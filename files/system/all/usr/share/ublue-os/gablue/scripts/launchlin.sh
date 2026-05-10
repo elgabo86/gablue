@@ -8,9 +8,9 @@
 # - Des paquets LGP (.lgp) compressés en squashfs via squashfuse
 # - Des exécutables directs (binaires ELF, AppImages, scripts .sh/.py)
 # - Script de pré-lancement .script.sh
-# - Funionfs pour les fichiers temporaires (union filesystem en userspace)
+# - Kernel overlayfs natif via unshare pour les fichiers temporaires (user namespaces, pas de sudo)
 #
-# NOTE: Utilise squashfuse (FUSE) pour le .lgp et funionfs pour .temp
+# NOTE: Utilise squashfuse (FUSE) pour le .lgp et kernel overlayfs pour .temp
 # Avantage : pas besoin de sudo, copy-on-write rapide pour les gros fichiers
 ################################################################################
 
@@ -42,6 +42,110 @@ error_exit() {
     echo "Erreur: $1" >&2
     exit 1
 }
+
+# =============================================================================
+# Gestion des overlays — kernel overlayfs natif via unshare (user namespaces)
+# =============================================================================
+# Les overlays sont montés dans le même unshare que le jeu (montage différé).
+
+# Variable globale : liste des overlays kernel à monter (une ligne par overlay)
+# Format: lowerdir|upperdir|workdir|mountpoint
+_LGP_KERNEL_OVERLAY_MOUNTS=""
+_LGP_USING_KERNEL_OVERLAY=false
+
+# Vérifie que le kernel overlayfs via user namespaces est disponible
+_lgp_require_kernel_overlay() {
+    if ! unshare -U -m --map-root-user true 2>/dev/null; then
+        error_exit "Kernel overlayfs indisponible : user namespaces non supportés"
+    fi
+    if [ ! -f /proc/filesystems ] || ! grep -qw overlay /proc/filesystems 2>/dev/null; then
+        error_exit "Kernel overlayfs indisponible : module overlay non chargé"
+    fi
+}
+
+# Génère un identifiant court pour un mountpoint
+_lgp_kernel_overlay_id() {
+    local mp="$1"
+    echo "$mp" | md5sum 2>/dev/null | cut -c1-8 || echo "$mp" | cksum 2>/dev/null | cut -d' ' -f1
+}
+
+# Enregistre un overlay kernel (montage différé dans le unshare du jeu)
+_lgp_register_kernel_overlay() {
+    local lower="$1"
+    local upper="$2"
+    local work="$3"
+    local mountpoint="$4"
+    
+    _LGP_KERNEL_OVERLAY_MOUNTS+="${lower}|${upper}|${work}|${mountpoint}"$'\n'
+    _LGP_USING_KERNEL_OVERLAY=true
+    
+    local pid_file="/tmp/lgp-ko-$( _lgp_kernel_overlay_id "$mountpoint" ).pid"
+    echo "deferred" > "$pid_file"
+    
+    echo "Overlay kernel enregistré (montage différé): $mountpoint"
+}
+
+# Génère les commandes bash pour monter tous les overlays kernel enregistrés
+_lgp_kernel_overlay_mount_script() {
+    local script=""
+    while IFS='|' read -r lower upper work mountpoint; do
+        [ -z "$lower" ] && continue
+        script+="mkdir -p \"$(dirname "$mountpoint")\" 2>/dev/null; "
+        script+="mount -t overlay overlay -o lowerdir=\"$lower\",upperdir=\"$upper\",workdir=\"$work\" \"$mountpoint\" 2>/dev/null || true; "
+    done <<< "$_LGP_KERNEL_OVERLAY_MOUNTS"
+    echo "$script"
+}
+
+# Nettoie les marqueurs kernel overlay après usage
+_lgp_cleanup_kernel_overlay_markers() {
+    while IFS='|' read -r lower upper work mountpoint; do
+        [ -z "$mountpoint" ] && continue
+        rm -f "/tmp/lgp-ko-$( _lgp_kernel_overlay_id "$mountpoint" ).pid"
+    done <<< "$_LGP_KERNEL_OVERLAY_MOUNTS"
+    _LGP_KERNEL_OVERLAY_MOUNTS=""
+    _LGP_USING_KERNEL_OVERLAY=false
+}
+
+# Monte un overlay (kernel overlayfs différé)
+mount_overlay() {
+    _lgp_require_kernel_overlay
+    _lgp_register_kernel_overlay "$@"
+}
+
+# Démonte un overlay kernel
+unmount_overlay() {
+    local mount_point="$1"
+    
+    [ -z "$mount_point" ] && return 0
+    
+    local pid_file="/tmp/lgp-ko-$( _lgp_kernel_overlay_id "$mount_point" ).pid"
+    if [ -f "$pid_file" ]; then
+        rm -f "$pid_file"
+        return 0
+    fi
+    
+    if mountpoint -q "$mount_point" 2>/dev/null; then
+        umount -l "$mount_point" 2>/dev/null || true
+    fi
+}
+
+# Nettoie les overlays kernel orphelins au démarrage
+_lgp_cleanup_kernel_overlay_pidfiles() {
+    for pid_file in /tmp/lgp-ko-*.pid; do
+        [ -f "$pid_file" ] || continue
+        local marker
+        marker=$(cat "$pid_file" 2>/dev/null)
+        if [ "$marker" = "deferred" ]; then
+            rm -f "$pid_file"
+        elif [ -n "$marker" ] && kill -0 "$marker" 2>/dev/null; then
+            kill "$marker" 2>/dev/null || true
+            rm -f "$pid_file"
+        else
+            rm -f "$pid_file"
+        fi
+    done
+}
+_lgp_cleanup_kernel_overlay_pidfiles
 
 #======================================
 # Fonctions d'analyse des paramètres
@@ -542,87 +646,47 @@ prepare_extras() {
     ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
 }
 
-# Monte l'overlayfs pour les fichiers temporaires (mode normal - dossiers spécifiques)
-# lowerdir = .temp (lecture seule depuis le LGP)
-# upperdir = /tmp/lgp-temp-upper (couche d'écriture)
-# workdir = /tmp/lgp-temp-work (dossier de travail overlayfs)
+# Monte l'overlay kernel pour les fichiers temporaires (mode normal - dossiers spécifiques)
 prepare_temps() {
     local TEMPPATH_FILE="$MOUNT_DIR/.temppath"
     local TEMP_LGP_DIR="$MOUNT_DIR/.temp"
     local TEMP_GAME_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
-    # Utiliser l'ID sans espaces stocké par setup_temp_symlink
     local GAME_ID="${_GAME_TEMP_ID:-lgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')}"
     local TEMP_UPPER="/tmp/lgp-temp-upper/$GAME_ID"
-    local TEMP_WORK="/tmp/lgp-temp-work/$GAME_ID"
 
     [ -f "$TEMPPATH_FILE" ] || return 0
 
-    # Vérifier si c'est le mode "full overlay" (marqueur *)
     if grep -q "^\*$" "$TEMPPATH_FILE" 2>/dev/null; then
         echo "Mode overlay complet détecté (* dans .temppath)"
         prepare_full_overlay
         return 0
     fi
 
-    # Mode normal : traiter les dossiers temporaires spécifiques
-    # Vérifier que le dossier .temp existe dans le LGP
     if [ ! -d "$TEMP_LGP_DIR" ]; then
         echo "Dossier .temp non trouvé dans le LGP, skip overlay"
         return 0
     fi
 
-    echo "Montage de l'overlayfs pour les fichiers temporaires..."
+    echo "Montage de l'overlay kernel pour les fichiers temporaires..."
 
-    # Vérifier que les dossiers existent
-    if [ ! -d "$TEMP_GAME_DIR" ] || [ ! -d "$TEMP_UPPER" ] || [ ! -d "$TEMP_WORK" ]; then
-        error_exit "Dossiers overlay manquants pour les fichiers temporaires"
-    fi
-
-    # Vérifier que le point de montage est vide (requis par overlayfs)
-    if [ -n "$(ls -A "$TEMP_GAME_DIR" 2>/dev/null)" ]; then
-        echo "Nettoyage du point de montage non vide..."
-        rm -rf "$TEMP_GAME_DIR"/* "$TEMP_GAME_DIR"/.* 2>/dev/null || true
-    fi
-
-    # Vérifier que le point de montage n'est pas déjà utilisé
     if mountpoint -q "$TEMP_GAME_DIR" 2>/dev/null; then
         echo "Démontage de l'overlay existant..."
-        fusermount -u "$TEMP_GAME_DIR" 2>/dev/null || umount -f "$TEMP_GAME_DIR" 2>/dev/null || true
+        unmount_overlay "$TEMP_GAME_DIR"
     fi
 
-    # S'assurer que le lowerdir est accessible
-    if [ ! -r "$TEMP_LGP_DIR" ]; then
-        error_exit "Dossier .temp inaccessible en lecture"
-    fi
+    local WORK_DIR="/tmp/lgp-temp-work/$GAME_ID"
 
-    # Funionfs (unionfs-fuse) - union filesystem en userspace
-    # Fonctionne avec squashfs et ne fait pas de copy-up complet au open()
-    # Syntaxe: funionfs <upperdir> <mountpoint> -o dirs=<lowerdir>=ro
-    # upperdir = premier argument positionnel (rw par défaut)
-    # lowerdir = spécifié dans l'option dirs= avec =ro
-    echo "Montage funionfs (unionfs-fuse)..."
     echo "  lowerdir: $TEMP_LGP_DIR"
     echo "  upperdir: $TEMP_UPPER"
-    
-    # Vérifier que funionfs est disponible
-    if ! command -v funionfs &> /dev/null; then
-        error_exit "funionfs n'est pas installé (Installation: sudo dnf5 install funionfs)"
-    fi
-    
-    # Utiliser funionfs avec copy-on-write
-    # upperdir en premier argument (rw), lowerdir dans dirs= avec =ro
-    if ! funionfs "${TEMP_UPPER}" "${TEMP_GAME_DIR}" -o "dirs=${TEMP_LGP_DIR}=ro,delete=all" 2>&1; then
-        error_exit "Échec du montage funionfs pour les fichiers temporaires"
-    fi
+    echo "  workdir: $WORK_DIR"
+    echo "  mountpoint: $TEMP_GAME_DIR"
 
-    echo "Funionfs monté avec succès: $TEMP_GAME_DIR"
+    mount_overlay "$TEMP_LGP_DIR" "$TEMP_UPPER" "$WORK_DIR" "$TEMP_GAME_DIR"
+
+    echo "Overlay kernel enregistré avec succès: $TEMP_GAME_DIR"
 }
 
-# Monte un overlay complet sur TOUT le jeu (mode "full overlay" avec * dans .temppath)
-# lowerdir = MOUNT_DIR (LGP entier en lecture seule)
-# upperdir = /tmp/lgp-full-overlay-upper (couche d'écriture)
-# workdir = /tmp/lgp-full-overlay-work (dossier de travail)
-# mountpoint = /tmp/lgp-full-overlay/{jeu} (point de montage final)
+# Monte un overlay kernel complet sur TOUT le jeu (mode "full overlay" avec * dans .temppath)
 prepare_full_overlay() {
     local GAME_ID="lgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')"
     local FULL_OVERLAY_BASE="/tmp/lgp-full-overlay"
@@ -630,41 +694,30 @@ prepare_full_overlay() {
     local TEMP_UPPER="$FULL_OVERLAY_BASE-upper/$GAME_ID"
     local TEMP_WORK="$FULL_OVERLAY_BASE-work/$GAME_ID"
     
-    # Nettoyer les anciens dossiers s'ils existent
     if mountpoint -q "$MOUNT_OVERLAY" 2>/dev/null; then
         echo "Démontage de l'overlay complet existant..."
-        fusermount -u "$MOUNT_OVERLAY" 2>/dev/null || umount -f "$MOUNT_OVERLAY" 2>/dev/null || true
+        unmount_overlay "$MOUNT_OVERLAY"
     fi
     rm -rf "$MOUNT_OVERLAY" "$TEMP_UPPER" "$TEMP_WORK" 2>/dev/null || true
     
-    # Créer les dossiers
     mkdir -p "$MOUNT_OVERLAY" "$TEMP_UPPER" "$TEMP_WORK"
     
-    echo "Montage de l'overlay complet sur tout le jeu..."
+    echo "Montage de l'overlay kernel complet sur tout le jeu..."
     echo "  lowerdir: $MOUNT_DIR (LGP entier)"
     echo "  upperdir: $TEMP_UPPER"
+    echo "  workdir: $TEMP_WORK"
     echo "  mountpoint: $MOUNT_OVERLAY"
     
-    # Vérifier que funionfs est disponible
-    if ! command -v funionfs &> /dev/null; then
-        error_exit "funionfs n'est pas installé (Installation: sudo dnf5 install funionfs)"
-    fi
+    mount_overlay "$MOUNT_DIR" "$TEMP_UPPER" "$TEMP_WORK" "$MOUNT_OVERLAY"
     
-    # Monter funionfs sur TOUT le LGP
-    if ! funionfs "$TEMP_UPPER" "$MOUNT_OVERLAY" -o "dirs=$MOUNT_DIR=ro,delete=all" 2>&1; then
-        error_exit "Échec du montage funionfs pour l'overlay complet"
-    fi
-    
-    # Rediriger FULL_EXE_PATH vers le montage overlay
     local REL_EXE="${FULL_EXE_PATH#$MOUNT_DIR/}"
     FULL_EXE_PATH="$MOUNT_OVERLAY/$REL_EXE"
     
-    # Stocker les chemins pour le nettoyage
     export _FULL_OVERLAY_MOUNT="$MOUNT_OVERLAY"
     export _FULL_OVERLAY_UPPER="$TEMP_UPPER"
     export _FULL_OVERLAY_WORK="$TEMP_WORK"
     
-    echo "Overlay complet monté avec succès: $MOUNT_OVERLAY"
+    echo "Overlay kernel complet enregistré: $MOUNT_OVERLAY"
     echo "  Exécutable redirigé: $FULL_EXE_PATH"
 }
 
@@ -790,66 +843,30 @@ setup_temp_symlink() {
     echo "  workdir: $GAME_TEMP_WORK"
 }
 
-# Démonte l'overlayfs et nettoie les dossiers temporaires
+# Démonte l'overlay kernel et nettoie les dossiers temporaires
 cleanup_temp_symlink() {
     local GAME_TEMP_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
-    # Utiliser l'ID sans espaces stocké par setup_temp_symlink
     local GAME_ID="${_GAME_TEMP_ID:-lgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')}" 
     local GAME_TEMP_UPPER="/tmp/lgp-temp-upper/$GAME_ID"
     local GAME_TEMP_WORK="/tmp/lgp-temp-work/$GAME_ID"
     
-    # Nettoyage spécial pour l'overlay complet (full overlay)
     if [ -n "$_FULL_OVERLAY_MOUNT" ]; then
         echo "Nettoyage de l'overlay complet..."
-        if mountpoint -q "$_FULL_OVERLAY_MOUNT" 2>/dev/null; then
-            echo "Démontage de funionfs (overlay complet)..."
-            fusermount -u "$_FULL_OVERLAY_MOUNT" 2>/dev/null || umount -f "$_FULL_OVERLAY_MOUNT" 2>/dev/null || true
-        fi
+        unmount_overlay "$_FULL_OVERLAY_MOUNT"
         
-        # Supprimer les dossiers de l'overlay complet
-        if [ -d "$_FULL_OVERLAY_MOUNT" ]; then
-            echo "Suppression du point de montage overlay..."
-            rm -rf "$_FULL_OVERLAY_MOUNT"
-        fi
-        if [ -d "$_FULL_OVERLAY_UPPER" ]; then
-            echo "Suppression du dossier upperdir (overlay complet)..."
-            rm -rf "$_FULL_OVERLAY_UPPER"
-        fi
-        if [ -d "$_FULL_OVERLAY_WORK" ]; then
-            echo "Suppression du dossier workdir (overlay complet)..."
-            rm -rf "$_FULL_OVERLAY_WORK"
-        fi
+        rm -rf "$_FULL_OVERLAY_MOUNT" 2>/dev/null || true
+        rm -rf "$_FULL_OVERLAY_UPPER" 2>/dev/null || true
+        rm -rf "$_FULL_OVERLAY_WORK" 2>/dev/null || true
         
-        # Réinitialiser les variables
         unset _FULL_OVERLAY_MOUNT _FULL_OVERLAY_UPPER _FULL_OVERLAY_WORK
         return 0
     fi
     
-    # Mode normal : nettoyer les dossiers temporaires spécifiques
-    # Démonter funionfs si monté
-    if mountpoint -q "$GAME_TEMP_DIR" 2>/dev/null; then
-        echo "Démontage de funionfs..."
-        if ! fusermount -u "$GAME_TEMP_DIR" 2>/dev/null; then
-            # Si fusermount échoue, essayer umount sans sudo (FUSE)
-            umount "$GAME_TEMP_DIR" 2>/dev/null || umount -f "$GAME_TEMP_DIR" 2>/dev/null || true
-        fi
-    fi
+    unmount_overlay "$GAME_TEMP_DIR"
     
-    # Nettoyer les dossiers temporaires
-    if [ -d "$GAME_TEMP_DIR" ]; then
-        echo "Suppression du point de montage..."
-        rm -rf "$GAME_TEMP_DIR"
-    fi
-    
-    if [ -d "$GAME_TEMP_UPPER" ]; then
-        echo "Suppression du dossier upperdir..."
-        rm -rf "$GAME_TEMP_UPPER"
-    fi
-    
-    if [ -d "$GAME_TEMP_WORK" ]; then
-        echo "Suppression du dossier workdir..."
-        rm -rf "$GAME_TEMP_WORK"
-    fi
+    rm -rf "$GAME_TEMP_DIR" 2>/dev/null || true
+    rm -rf "$GAME_TEMP_UPPER" 2>/dev/null || true
+    rm -rf "$GAME_TEMP_WORK" 2>/dev/null || true
 }
 
 # Charge les variables d'environnement depuis un fichier .env
@@ -915,7 +932,7 @@ execute_prelaunch_script() {
     fi
 }
 
-# Lance le jeu de manière native
+# Lance le jeu de manière native (avec kernel overlay si actif)
 launch_game() {
     local exe_path="$1"
     local game_args="${2:-}"
@@ -924,31 +941,21 @@ launch_game() {
 
     echo "Lancement de $display_name..."
     
-    # Déterminer comment exécuter le fichier selon son type
     local exe_dir
     exe_dir="$(dirname "$exe_path")"
     local exe_name
     exe_name="$(basename "$exe_path")"
-    
-    # Utiliser le répertoire de travail spécifié, sinon celui de l'exécutable
     local cd_dir="${work_dir:-$exe_dir}"
     
-    # Construire la commande
     local cmd=""
     
-    # Vérifier le type de fichier
     if [[ "$exe_name" == *.sh ]]; then
-        # Script shell
         cmd="cd \"$cd_dir\" && \"$exe_path\""
     elif [[ "$exe_name" == *.py ]]; then
-        # Script Python
         cmd="cd \"$cd_dir\" && /usr/bin/python3 \"$exe_path\""
     elif [[ "$exe_name" == *.AppImage ]] || [[ "$exe_name" == *.appimage ]]; then
-        # AppImage
         cmd="cd \"$cd_dir\" && \"$exe_path\""
     else
-        # Binaire ELF ou autre
-        # Vérifier si c'est un binaire ELF
         local is_elf=false
         if [ -f "$exe_path" ]; then
             local magic
@@ -961,21 +968,24 @@ launch_game() {
         if [ "$is_elf" = true ]; then
             cmd="cd \"$cd_dir\" && \"$exe_path\""
         else
-            # Essayer de l'exécuter directement
             cmd="\"$exe_path\""
         fi
     fi
     
-    # Ajouter les arguments
-    if [ -n "$game_args" ]; then
-        cmd="$cmd $game_args"
+    [ -n "$game_args" ] && cmd="$cmd $game_args"
+    
+    if [ "${_LGP_USING_KERNEL_OVERLAY:-false}" = "true" ]; then
+        local kernel_cmd
+        kernel_cmd="$(_lgp_kernel_overlay_mount_script)"
+        kernel_cmd+="$cmd"
+        echo "Lancement avec kernel overlayfs (unshare)..."
+        unshare -U -m --map-root-user bash -c "$kernel_cmd"
+        local game_exit=$?
+    else
+        echo "Commande: $cmd"
+        eval "$cmd"
+        local game_exit=$?
     fi
-    
-    echo "Commande: $cmd"
-    
-    # Exécuter
-    eval "$cmd"
-    local game_exit=$?
     
     echo "Jeu terminé avec le code: $game_exit"
     return $game_exit
@@ -1037,6 +1047,7 @@ run_lgp_mode() {
     cleanup_saves_symlink
     cleanup_extras_symlink
     cleanup_temp_symlink
+    _lgp_cleanup_kernel_overlay_markers 2>/dev/null || true
 }
 
 # Fonction principale pour le mode classique (exécutable direct)
