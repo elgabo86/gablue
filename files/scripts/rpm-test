@@ -52,7 +52,6 @@ dnf5 -y install \
     nmap \
     plocate \
     squashfuse \
-    funionfs \
     icoutils \
     evtest
 

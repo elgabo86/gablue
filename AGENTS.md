@@ -469,7 +469,7 @@ Configuration post-installation étendue :
 - Permissions des exécutables (chmod +x)
 - Capacités système (setcap pour gamescope)
 - Compilation modules SELinux personnalisés (.te -> .pp)
-- Binaires externes (zxtune, mergerfs)
+- Binaires externes (zxtune)
 - Branding Gablue (os-release)
 - Configuration système (tuned, bluetooth, pipewire, timers)
 - Désactivation des dépôts
