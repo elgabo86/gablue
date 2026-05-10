@@ -1,11 +1,12 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -O2 -std=c11
+CFLAGS = -Wall -Wextra -O2 -std=c11 $(shell pkg-config --cflags dbus-1 2>/dev/null)
+LDFLAGS = $(shell pkg-config --libs dbus-1 2>/dev/null)
 TARGET = gamepadshortcuts
 
 all: $(TARGET)
 
 $(TARGET): gamepadshortcuts.c
-	$(CC) $(CFLAGS) -o $(TARGET) gamepadshortcuts.c
+	$(CC) $(CFLAGS) -o $(TARGET) gamepadshortcuts.c $(LDFLAGS)
 
 install: $(TARGET)
 	install -d $(DESTDIR)/usr/bin

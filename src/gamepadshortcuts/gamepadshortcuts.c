@@ -16,6 +16,7 @@
 #include <sys/poll.h>
 #include <sys/wait.h>
 #include <sys/types.h>
+#include <dbus/dbus.h>
 #include <linux/input.h>
 
 #define SCRIPTS_DIR "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts"
@@ -23,7 +24,11 @@
 #define MAX_KEY_BITS (KEY_MAX + 1)
 
 static volatile bool running = true;
-static pid_t inhibit_pid = -1;
+
+/* Remplace systemd-inhibit (6.2 Mo) par D-Bus via libdbus (+200 Ko PSS) */
+static DBusConnection *dbus_conn = NULL;
+static dbus_uint32_t inhibit_cookie = 0;
+static bool inhibited = false;
 
 static bool home_pressed = false;
 static bool select_pressed = false;
@@ -62,36 +67,92 @@ static void signal_handler(int sig)
     running = false;
 }
 
+/* =================================================================
+ * Inhibition ecran via org.freedesktop.ScreenSaver (libdbus-1)
+ * Alternative legere a systemd-inhibit (6.2 Mo)
+ * Surcout reel: ~200 Ko PSS (libs deja en RAM via KDE/systemd)
+ * ================================================================= */
+
 static void inhibit_screensaver(void)
 {
-    if (inhibit_pid > 0)
+    if (inhibited)
         return;
 
-    pid_t pid = fork();
-    if (pid < 0) {
-        perror("fork inhibit");
+    if (!dbus_conn) {
+        DBusError err;
+        dbus_error_init(&err);
+        dbus_conn = dbus_bus_get(DBUS_BUS_SESSION, &err);
+        if (dbus_error_is_set(&err)) {
+            fprintf(stderr, "[WARN] Connexion DBus echouee: %s\n", err.message);
+            dbus_error_free(&err);
+            dbus_conn = NULL;
+            return;
+        }
+    }
+
+    DBusMessage *msg = dbus_message_new_method_call(
+        "org.freedesktop.ScreenSaver", "/ScreenSaver",
+        "org.freedesktop.ScreenSaver", "Inhibit");
+    if (!msg)
+        return;
+
+    const char *app = "gablue-gamepadshortcuts";
+    const char *reason = "Manette connectee";
+    dbus_message_append_args(msg,
+        DBUS_TYPE_STRING, &app,
+        DBUS_TYPE_STRING, &reason,
+        DBUS_TYPE_INVALID);
+
+    DBusError err;
+    dbus_error_init(&err);
+    DBusMessage *reply = dbus_connection_send_with_reply_and_block(
+        dbus_conn, msg, 2000, &err);
+    dbus_message_unref(msg);
+
+    if (dbus_error_is_set(&err) || !reply) {
+        fprintf(stderr, "[INFO] Inhibition ecran indisponible: %s\n",
+                err.message ? err.message : "pas de reponse");
+        if (dbus_error_is_set(&err))
+            dbus_error_free(&err);
+        if (reply)
+            dbus_message_unref(reply);
         return;
     }
-    if (pid == 0) {
-        execlp("systemd-inhibit", "systemd-inhibit",
-               "--what=idle",
-               "--who=gablue-gamepadshortcuts",
-               "--why=Manette connectee",
-               "sleep", "infinity", (char *)NULL);
-        _exit(1);
+
+    if (dbus_message_get_args(reply, &err,
+        DBUS_TYPE_UINT32, &inhibit_cookie, DBUS_TYPE_INVALID)) {
+        inhibited = true;
+        fprintf(stderr, "[INFO] Inhibition ecran activee (cookie: %u)\n",
+                inhibit_cookie);
+    } else {
+        fprintf(stderr, "[WARN] Cookie d'inhibition non recu: %s\n",
+                err.message);
+        dbus_error_free(&err);
     }
-    inhibit_pid = pid;
-    fprintf(stderr, "[INFO] Inhibition ecran activee (pid: %d)\n", inhibit_pid);
+    dbus_message_unref(reply);
 }
 
 static void uninhibit_screensaver(void)
 {
-    if (inhibit_pid > 0) {
-        kill(inhibit_pid, SIGTERM);
-        waitpid(inhibit_pid, NULL, 0);
-        fprintf(stderr, "[INFO] Inhibition ecran desactivee\n");
-        inhibit_pid = -1;
-    }
+    inhibited = false;
+
+    if (!dbus_conn || inhibit_cookie == 0)
+        return;
+
+    DBusMessage *msg = dbus_message_new_method_call(
+        "org.freedesktop.ScreenSaver", "/ScreenSaver",
+        "org.freedesktop.ScreenSaver", "UnInhibit");
+    if (!msg)
+        return;
+
+    dbus_message_append_args(msg,
+        DBUS_TYPE_UINT32, &inhibit_cookie, DBUS_TYPE_INVALID);
+
+    dbus_connection_send_with_reply_and_block(dbus_conn, msg, 2000, NULL);
+    dbus_message_unref(msg);
+
+    inhibit_cookie = 0;
+    fprintf(stderr, "[INFO] Inhibition ecran desactivee\n");
 }
 
 static int find_gamepad(void)
@@ -575,6 +636,11 @@ int main(void)
         close(gamepad_fd);
 
     cleanup_vt_tracking();
+
+    if (dbus_conn) {
+        dbus_connection_unref(dbus_conn);
+        dbus_conn = NULL;
+    }
 
     return 0;
 }
