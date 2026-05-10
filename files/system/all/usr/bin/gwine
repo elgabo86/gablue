@@ -205,18 +205,97 @@ compare_versions() {
     return 1
 }
 
-# Démonte un overlay FUSE (fuse-overlayfs, mergerfs, etc.)
-# Usage: unmount_fuse_overlay <mount_point> [options]
-# Options:
-#   -f : Forcer le démontage (tue le processus fuse-overlayfs d'abord)
-#   -l : Lazy unmount après le force (legacy, -f fait déjà du lazy)
-# Retourne 0 si succès ou si déjà démonté, 1 si échec
-unmount_fuse_overlay() {
+# =============================================================================
+# Gestion des overlays — kernel overlayfs natif via unshare (user namespaces)
+# =============================================================================
+# Usage:
+#   mount_overlay <lowerdir> <upperdir> <workdir> <mountpoint>
+#   unmount_overlay <mount_point> [-f] [-l]
+#
+# Les overlays sont montés dans le même unshare que bwrap (montage différé).
+# Les paramètres sont stockés dans _GWINE_KERNEL_OVERLAY_MOUNTS et le montage
+# effectif est fait par _gwine_kernel_overlay_mount_script() au moment du lancement.
+
+# Variable globale : liste des overlays kernel à monter (une ligne par overlay)
+# Format: lowerdir|upperdir|workdir|mountpoint
+_GWINE_KERNEL_OVERLAY_MOUNTS=""
+
+# Variable globale : indique si on utilise le kernel overlay (positionné par mount_overlay)
+_GWINE_USING_KERNEL_OVERLAY=false
+
+# Vérifie que le kernel overlayfs via user namespaces est disponible, sinon erreur
+_require_kernel_overlay() {
+    if ! unshare -U -m --map-root-user true 2>/dev/null; then
+        error_exit "Kernel overlayfs indisponible : user namespaces non supportés"
+    fi
+    if [ ! -f /proc/filesystems ] || ! grep -qw overlay /proc/filesystems 2>/dev/null; then
+        error_exit "Kernel overlayfs indisponible : module overlay non chargé"
+    fi
+}
+
+# Génère un identifiant court pour un mountpoint (pour le fichier de suivi)
+_kernel_overlay_id() {
+    local mp="$1"
+    echo "$mp" | md5sum 2>/dev/null | cut -c1-8 || echo "$mp" | cksum 2>/dev/null | cut -d' ' -f1
+}
+
+# Enregistre un overlay kernel (montage différé dans le unshare de bwrap)
+# Usage: _register_kernel_overlay <lowerdir> <upperdir> <workdir> <mountpoint>
+_register_kernel_overlay() {
+    local lower="$1"
+    local upper="$2"
+    local work="$3"
+    local mountpoint="$4"
+    
+    # Enregistrer les paramètres
+    _GWINE_KERNEL_OVERLAY_MOUNTS+="${lower}|${upper}|${work}|${mountpoint}"$'\n'
+    _GWINE_USING_KERNEL_OVERLAY=true
+    
+    # Marqueur pour le suivi
+    local pid_file="/tmp/gwine-ko-$( _kernel_overlay_id "$mountpoint" ).pid"
+    echo "deferred" > "$pid_file"
+    
+    echo "Overlay kernel enregistré (montage différé): $mountpoint"
+    return 0
+}
+
+# Génère les commandes bash pour monter tous les overlays kernel enregistrés
+# Usage: _gwine_kernel_overlay_mount_script
+# Retourne un script bash à exécuter dans le unshare
+_gwine_kernel_overlay_mount_script() {
+    local script=""
+    while IFS='|' read -r lower upper work mountpoint; do
+        [ -z "$lower" ] && continue
+        script+="mkdir -p \"$(dirname "$mountpoint")\" 2>/dev/null; "
+        script+="mount -t overlay overlay -o lowerdir=\"$lower\",upperdir=\"$upper\",workdir=\"$work\" \"$mountpoint\" 2>/dev/null || true; "
+    done <<< "$_GWINE_KERNEL_OVERLAY_MOUNTS"
+    echo "$script"
+}
+
+# Nettoie les marqueurs kernel overlay après usage
+_cleanup_kernel_overlay_markers() {
+    while IFS='|' read -r lower upper work mountpoint; do
+        [ -z "$mountpoint" ] && continue
+        rm -f "/tmp/gwine-ko-$( _kernel_overlay_id "$mountpoint" ).pid"
+    done <<< "$_GWINE_KERNEL_OVERLAY_MOUNTS"
+    _GWINE_KERNEL_OVERLAY_MOUNTS=""
+    _GWINE_USING_KERNEL_OVERLAY=false
+}
+
+# Monte un overlay (kernel overlayfs différé)
+# Usage: mount_overlay <lowerdir> <upperdir> <workdir> <mountpoint>
+mount_overlay() {
+    _require_kernel_overlay
+    _register_kernel_overlay "$@"
+}
+
+# Démonte un overlay kernel
+# Usage: unmount_overlay <mount_point> [-f] [-l]
+unmount_overlay() {
     local mount_point="$1"
     local force=false
     local lazy=false
     
-    # Parser les options
     shift
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -230,38 +309,44 @@ unmount_fuse_overlay() {
         return 0
     fi
     
-    if ! mountpoint -q "$mount_point" 2>/dev/null; then
+    local pid_file="/tmp/gwine-ko-$( _kernel_overlay_id "$mount_point" ).pid"
+    if [ -f "$pid_file" ]; then
+        rm -f "$pid_file"
         return 0
     fi
     
-    if [ "$force" = true ]; then
-        # Mode forcé : tuer d'abord le processus fuse-overlayfs
-        # pour éviter le crash SIGSEGV quand on démonte pendant l'accès
-        local fuse_pid
-        fuse_pid=$(pgrep -f "fuse-overlayfs.*$mount_point" 2>/dev/null | head -1)
-        if [ -n "$fuse_pid" ]; then
-            kill -9 "$fuse_pid" 2>/dev/null || true
-            sleep 0.2
-        fi
-        # Puis démontage avec fusermount -uz (sûr maintenant que le process est mort)
-        fusermount -uz "$mount_point" 2>/dev/null || umount -l "$mount_point" 2>/dev/null || true
-    else
-        # Mode normal : essayer démontage gentil d'abord
-        if fusermount -u "$mount_point" 2>/dev/null; then
-            :  # Succès
-        else
-            # Échec, utiliser lazy unmount (plus sûr que -uz qui fait crasher)
-            umount -l "$mount_point" 2>/dev/null || true
-        fi
-    fi
-    
-    # Fallback legacy si toujours monté
-    if [ "$lazy" = true ] && mountpoint -q "$mount_point" 2>/dev/null; then
-        umount -f -l "$mount_point" 2>/dev/null || true
+    # Fallback: si le mount existe encore (stale), le démonter
+    if mountpoint -q "$mount_point" 2>/dev/null; then
+        umount -l "$mount_point" 2>/dev/null || true
     fi
     
     return 0
 }
+
+# Compatibilité — ancien nom, redirige vers unmount_overlay
+unmount_fuse_overlay() {
+    unmount_overlay "$@"
+}
+
+# Nettoie tous les overlays kernel orphelins (appelé au démarrage)
+cleanup_kernel_overlay_pidfiles() {
+    for pid_file in /tmp/gwine-ko-*.pid; do
+        [ -f "$pid_file" ] || continue
+        local marker
+        marker=$(cat "$pid_file" 2>/dev/null)
+        if [ "$marker" = "deferred" ]; then
+            rm -f "$pid_file"
+        elif [ -n "$marker" ] && kill -0 "$marker" 2>/dev/null; then
+            kill "$marker" 2>/dev/null || true
+            rm -f "$pid_file"
+        else
+            rm -f "$pid_file"
+        fi
+    done
+}
+
+# Appeler le nettoyage des overlays kernel orphelins au chargement
+cleanup_kernel_overlay_pidfiles
 
 # Gère le backup/restauration lors des mises à jour
 # Usage: backup_component <component_dir>
@@ -4854,7 +4939,7 @@ Instructions:
 Notes:
 ======
 - Assurez-vous que les dépendances système sont installées
-  (wine, squashfuse, bubblewrap, fuse-overlayfs, etc.)
+  (wine, squashfuse, bubblewrap, etc.)
 - Le script détecte automatiquement si kdialog est disponible
 - Le préfixe Wine sera créé dans ~/Windows/Prefix/
 - Deux runners sont inclus : gwine (standard) et gwine-proton
@@ -5837,6 +5922,10 @@ build_bwrap_tmp() {
     if [ -d "/tmp/wgp-full-overlay" ]; then
         bwrap_add --bind /tmp/wgp-full-overlay /tmp/wgp-full-overlay
     fi
+    
+    if [ -d "/tmp/wgp-full-overlay-work" ]; then
+        bwrap_add --bind /tmp/wgp-full-overlay-work /tmp/wgp-full-overlay-work
+    fi
 }
 
 build_bwrap_user_dirs() {
@@ -6300,9 +6389,10 @@ cleanup_orphan_overlays() {
                 
                 if [ "$should_unmount" = true ]; then
                     echo "Démontage de l'overlay orphelin: $mount_point"
-                    unmount_fuse_overlay "$mount_point" -f 2>/dev/null || true
+                    unmount_overlay "$mount_point" -f 2>/dev/null || true
                     rm -rf "$mount_point" 2>/dev/null || true
                     rm -rf "/tmp/wgp-full-overlay-upper/${game_id}" 2>/dev/null || true
+                    rm -rf "/tmp/wgp-full-overlay-work/${game_id}" 2>/dev/null || true
                 fi
             fi
         done
@@ -6330,9 +6420,10 @@ cleanup_orphan_overlays() {
                 
                 if [ "$should_unmount" = true ]; then
                     echo "Démontage de l'overlay temp orphelin: $mount_point"
-                    unmount_fuse_overlay "$mount_point" -f 2>/dev/null || true
+                    unmount_overlay "$mount_point" -f 2>/dev/null || true
                     rm -rf "$mount_point" 2>/dev/null || true
                     rm -rf "/tmp/wgp-temp-upper/${game_id}" 2>/dev/null || true
+                    rm -rf "/tmp/wgp-temp-work/${game_id}" 2>/dev/null || true
                 fi
             fi
         done
@@ -6405,9 +6496,9 @@ mount_wgp() {
                 # Attendre que tous les processus se terminent
                 sleep 1
                 # Nettoyer nous-mêmes les montages si nécessaire (l'ancien cleanup ne le fera pas à cause du marqueur)
-                unmount_fuse_overlay "$MOUNT_DIR" -f
+                unmount_overlay "$MOUNT_DIR" -f
                 local OVERLAY_DIR="/tmp/wgp-full-overlay/wgp-$(echo "$WGPACK_NAME" | tr -cd '[:alnum:]-')"
-                unmount_fuse_overlay "$OVERLAY_DIR" -f
+                unmount_overlay "$OVERLAY_DIR" -f
                 rm -f "$LOCK_FILE"
                 # Le marqueur sera supprimé après le montage réussi
             else
@@ -6432,14 +6523,14 @@ mount_wgp() {
             fi
             if [ "$HAS_ACCESS" = "false" ]; then
                 echo "Aucun processus n'utilise le montage, forçage du démontage..."
-                # Lazy unmount pour les montages stale (évite crash fuse-overlayfs)
+                # Lazy unmount pour les montages stale
                 umount -l "$MOUNT_DIR" 2>/dev/null || true
             else
                 echo "Des processus utilisent encore ce montage, attente..."
                 sleep 2
             fi
         fi
-        unmount_fuse_overlay "$MOUNT_DIR" -f -l
+        unmount_overlay "$MOUNT_DIR" -f -l
     fi
 
     local SQUASHFUSE_BIN
@@ -6528,7 +6619,7 @@ cleanup_wgp() {
 
 
 ################################################################################
-# wgp-overlay.sh - Gestion des overlays fuse-overlayfs pour fichiers temporaires
+# wgp-overlay.sh - Gestion des overlays kernel overlayfs pour fichiers temporaires
 ################################################################################
 
 # =============================================================================
@@ -6572,17 +6663,14 @@ prepare_temp_folders() {
     ensure_dirs -s "$TEMP_GAME_DIR" "$TEMP_UPPER"
     chmod 777 "/tmp/wgp-temp-upper" 2>/dev/null || true
 
-    echo "Montage de l'overlay fuse-overlayfs pour les dossiers temporaires..."
+    echo "Montage de l'overlay pour les dossiers temporaires..."
 
     if mountpoint -q "$TEMP_GAME_DIR" 2>/dev/null; then
         echo "Démontage de l'overlay existant (rapide)..."
-        unmount_fuse_overlay "$TEMP_GAME_DIR" -f
+        unmount_overlay "$TEMP_GAME_DIR" -f
     fi
 
-    local FUSE_OVERLAYFS_BIN
-    FUSE_OVERLAYFS_BIN=$(get_system_tool fuse-overlayfs)
-    
-    local WORK_DIR="$TEMP_UPPER/.work"
+    local WORK_DIR="/tmp/wgp-temp-work/$GAME_ID"
     ensure_dir -s "$WORK_DIR"
 
     echo "  lowerdir: $TEMP_WGP_DIR"
@@ -6590,15 +6678,12 @@ prepare_temp_folders() {
     echo "  workdir: $WORK_DIR"
     echo "  mountpoint: $TEMP_GAME_DIR"
     
-    if ! "$FUSE_OVERLAYFS_BIN" -o lowerdir="$TEMP_WGP_DIR",upperdir="$TEMP_UPPER",workdir="$WORK_DIR" \
-        "$TEMP_GAME_DIR" 2>&1; then
-        error_exit "Échec du montage fuse-overlayfs pour les fichiers temporaires"
-    fi
+    mount_overlay "$TEMP_WGP_DIR" "$TEMP_UPPER" "$WORK_DIR" "$TEMP_GAME_DIR"
 
     export _TEMP_FOLDERS_MOUNT="$TEMP_GAME_DIR"
     export _TEMP_FOLDERS_UPPER="$TEMP_UPPER"
 
-    echo "Overlay fuse-overlayfs monté avec succès: $TEMP_GAME_DIR"
+    echo "Overlay monté avec succès: $TEMP_GAME_DIR"
 }
 
 # =============================================================================
@@ -6613,7 +6698,7 @@ prepare_full_overlay() {
     
     if [ -d "$MOUNT_OVERLAY" ]; then
         echo "Nettoyage de l'overlay précédent..."
-        unmount_fuse_overlay "$MOUNT_OVERLAY" -f -l
+        unmount_overlay "$MOUNT_OVERLAY" -f -l
         rm -rf "$MOUNT_OVERLAY" 2>/dev/null || true
     fi
     
@@ -6622,21 +6707,15 @@ prepare_full_overlay() {
     ensure_dirs -s "$MOUNT_OVERLAY" "$TEMP_UPPER"
     chmod 777 "/tmp/wgp-full-overlay" "/tmp/wgp-full-overlay-upper" 2>/dev/null || true
     
-    echo "Montage de l'overlay complet avec fuse-overlayfs..."
+    echo "Montage de l'overlay complet..."
     echo "  lowerdir: $MOUNT_DIR (WGP entier - lecture seule)"
     echo "  upperdir: $TEMP_UPPER (writable)"
     echo "  mountpoint: $MOUNT_OVERLAY"
     
-    local FUSE_OVERLAYFS_BIN
-    FUSE_OVERLAYFS_BIN=$(get_system_tool fuse-overlayfs)
-    
-    local WORK_DIR="$TEMP_UPPER/.work"
+    local WORK_DIR="/tmp/wgp-full-overlay-work/$GAME_ID"
     ensure_dir -s "$WORK_DIR"
     
-    if ! "$FUSE_OVERLAYFS_BIN" -o lowerdir="$MOUNT_DIR",upperdir="$TEMP_UPPER",workdir="$WORK_DIR" \
-        "$MOUNT_OVERLAY" 2>&1; then
-        error_exit "Échec du montage fuse-overlayfs pour l'overlay complet"
-    fi
+    mount_overlay "$MOUNT_DIR" "$TEMP_UPPER" "$WORK_DIR" "$MOUNT_OVERLAY"
     
     local REL_EXE="${FULL_EXE_PATH#$MOUNT_DIR/}"
     # Utiliser le chemin via le symlink (bindé dans le sandbox) au lieu du chemin réel
@@ -6667,11 +6746,12 @@ cleanup_temp_symlink() {
         if [ -n "$MOUNT_OVERLAY" ]; then
             echo "Nettoyage de l'overlay complet..."
             # Lazy unmount rapide (-f seul suffit maintenant)
-            unmount_fuse_overlay "$MOUNT_OVERLAY" -f
+            unmount_overlay "$MOUNT_OVERLAY" -f
             
             # Nettoyer les répertoires après démontage (détaché immédiatement)
             rm -rf "$MOUNT_OVERLAY" 2>/dev/null || true
             rm -rf "$TEMP_UPPER" 2>/dev/null || true
+            rm -rf "/tmp/wgp-full-overlay-work/${GAME_ID}" 2>/dev/null || true
         fi
         
         unset _FULL_OVERLAY_MOUNT _FULL_OVERLAY_UPPER
@@ -6688,11 +6768,12 @@ cleanup_temp_symlink() {
         if [ -n "$TEMP_MOUNT" ]; then
             echo "Nettoyage de l'overlay temp folders..."
             # Lazy unmount rapide
-            unmount_fuse_overlay "$TEMP_MOUNT" -f
+            unmount_overlay "$TEMP_MOUNT" -f
             
             # Nettoyer les répertoires après démontage
             rm -rf "$TEMP_MOUNT" 2>/dev/null || true
             rm -rf "$TEMP_UPPER" 2>/dev/null || true
+            rm -rf "/tmp/wgp-temp-work/${GAME_ID}" 2>/dev/null || true
         fi
         
         unset _TEMP_FOLDERS_MOUNT _TEMP_FOLDERS_UPPER
@@ -6707,18 +6788,20 @@ cleanup_temp_symlink() {
         local default_full_upper="/tmp/wgp-full-overlay-upper/$GAME_ID"
         
         if mountpoint -q "$default_full_mount" 2>/dev/null; then
-            unmount_fuse_overlay "$default_full_mount" -f
+            unmount_overlay "$default_full_mount" -f
             rm -rf "$default_full_mount" 2>/dev/null || true
             rm -rf "$default_full_upper" 2>/dev/null || true
+            rm -rf "/tmp/wgp-full-overlay-work/${GAME_ID}" 2>/dev/null || true
         fi
         
         local default_temp_mount="/tmp/wgp-temp/$GAME_ID"
         local default_temp_upper="/tmp/wgp-temp-upper/$GAME_ID"
         
         if mountpoint -q "$default_temp_mount" 2>/dev/null; then
-            unmount_fuse_overlay "$default_temp_mount" -f
+            unmount_overlay "$default_temp_mount" -f
             rm -rf "$default_temp_mount" 2>/dev/null || true
             rm -rf "$default_temp_upper" 2>/dev/null || true
+            rm -rf "/tmp/wgp-temp-work/${GAME_ID}" 2>/dev/null || true
         fi
         
         # Nettoyer les symlinks dans TEMP_SYMLINK
@@ -6742,7 +6825,7 @@ setup_temp_symlink() {
         return 0
     fi
     
-    # S'assurer que le répertoire de base existe (nécessaire pour fuse-overlayfs)
+    # S'assurer que le répertoire de base existe (nécessaire pour l'overlay)
     # Utiliser le chemin reel derriere le symlink
     if [ -L "$TEMP_REAL" ] && [ ! -e "$TEMP_REAL" ]; then
         # Symlink casse, creer le repertoire cible
@@ -6757,20 +6840,22 @@ setup_temp_symlink() {
         local FULL_OVERLAY_BASE="/tmp/wgp-full-overlay"
         local MOUNT_OVERLAY="$FULL_OVERLAY_BASE/$GAME_ID"
         local TEMP_UPPER="$FULL_OVERLAY_BASE-upper/$GAME_ID"
+        local TEMP_WORK="/tmp/wgp-full-overlay-work/$GAME_ID"
         
         if mountpoint -q "$MOUNT_OVERLAY" 2>/dev/null; then
             echo "Démontage de l'overlay existant (rapide)..."
-            unmount_fuse_overlay "$MOUNT_OVERLAY" -f
+            unmount_overlay "$MOUNT_OVERLAY" -f
         fi
         
         if [ -d "$MOUNT_OVERLAY" ]; then
             rmdir "$MOUNT_OVERLAY" 2>/dev/null || rm -rf "$MOUNT_OVERLAY" 2>/dev/null || true
         fi
         rm -rf "$TEMP_UPPER" 2>/dev/null || true
+        rm -rf "$TEMP_WORK" 2>/dev/null || true
         
-        ensure_dirs -s "$MOUNT_OVERLAY" "$TEMP_UPPER"
-        chmod 777 "/tmp/wgp-full-overlay" "/tmp/wgp-full-overlay-upper" 2>/dev/null || true
-        chmod 777 "$TEMP_UPPER"
+        ensure_dirs -s "$MOUNT_OVERLAY" "$TEMP_UPPER" "$TEMP_WORK"
+        chmod 777 "/tmp/wgp-full-overlay" "/tmp/wgp-full-overlay-upper" "/tmp/wgp-full-overlay-work" 2>/dev/null || true
+        chmod 777 "$TEMP_UPPER" "$TEMP_WORK"
         
         # Créer le symlink dans TEMP_SYMLINK pour le sandbox (comme saves et extras)
         ensure_dir -s "$TEMP_SYMLINK"
@@ -6779,14 +6864,15 @@ setup_temp_symlink() {
         ln -s "$MOUNT_OVERLAY" "$temp_symlink"
         echo "Symlink temp créé: $temp_symlink -> $MOUNT_OVERLAY"
         
-        echo "Dossiers overlay préparés pour fuse-overlayfs (mode full): $GAME_ID"
+        echo "Dossiers overlay préparés (mode full): $GAME_ID"
     else
         local TEMP_GAME_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
         local TEMP_UPPER="/tmp/wgp-temp-upper/$GAME_ID"
+        local TEMP_WORK="/tmp/wgp-temp-work/$GAME_ID"
         
         if mountpoint -q "$TEMP_GAME_DIR" 2>/dev/null; then
             echo "Démontage de l'overlay temp existant (rapide)..."
-            unmount_fuse_overlay "$TEMP_GAME_DIR" -f
+            unmount_overlay "$TEMP_GAME_DIR" -f
         fi
         
         if [ -d "$TEMP_GAME_DIR" ]; then
@@ -6795,9 +6881,12 @@ setup_temp_symlink() {
         if [ -d "$TEMP_UPPER" ]; then
             rm -rf "$TEMP_UPPER"
         fi
+        if [ -d "$TEMP_WORK" ]; then
+            rm -rf "$TEMP_WORK"
+        fi
         
-        ensure_dirs -s "$TEMP_GAME_DIR" "$TEMP_UPPER"
-        chmod 777 "/tmp/wgp-temp-upper" "$TEMP_UPPER" 2>/dev/null || true
+        ensure_dirs -s "$TEMP_GAME_DIR" "$TEMP_UPPER" "$TEMP_WORK"
+        chmod 777 "/tmp/wgp-temp-upper" "/tmp/wgp-temp-work" "$TEMP_UPPER" "$TEMP_WORK" 2>/dev/null || true
         
         # Créer le symlink dans TEMP_SYMLINK pour le sandbox (comme saves et extras)
         ensure_dir -s "$TEMP_SYMLINK"
@@ -6806,7 +6895,7 @@ setup_temp_symlink() {
         ln -s "$TEMP_GAME_DIR" "$temp_symlink"
         echo "Symlink temp créé: $temp_symlink -> $TEMP_GAME_DIR"
         
-        echo "Dossiers overlay préparés pour fuse-overlayfs (mode temp folders): $GAME_ID"
+        echo "Dossiers overlay préparés (mode temp folders): $GAME_ID"
     fi
 }
 
@@ -7756,15 +7845,33 @@ launch_wine_game() {
     local wine_pid=""
     
     if [ "$nosandbox_mode" = true ]; then
-        if [ "$use_mangohud" = true ]; then
+        if [ "${_GWINE_USING_KERNEL_OVERLAY:-false}" = "true" ]; then
+            # Kernel overlay sans sandbox : wrapper wine dans unshare
+            local kernel_cmd
+            kernel_cmd="$(_gwine_kernel_overlay_mount_script)"
+            if [ "$use_mangohud" = true ]; then
+                export MANGOHUD=1
+                kernel_cmd+="exec env MANGOHUD=1 \"$MANGOHUD_BIN\" \"$WINE_BIN\" \"$exe_path\" $game_args"
+            else
+                kernel_cmd+="exec \"$WINE_BIN\" \"$exe_path\" $game_args"
+            fi
+            echo "Lancement avec kernel overlayfs (unshare, sans sandbox)..."
+            unshare -U -m --map-root-user bash -c "$kernel_cmd" </dev/null &
+            wine_pid=$!
+            GWINE_GAME_PID=$wine_pid
+            export GWINE_GAME_PID
+        elif [ "$use_mangohud" = true ]; then
             export MANGOHUD=1
             "$MANGOHUD_BIN" "$WINE_BIN" "$exe_path" $game_args </dev/null &
+            wine_pid=$!
+            GWINE_GAME_PID=$wine_pid
+            export GWINE_GAME_PID
         else
             "$WINE_BIN" "$exe_path" $game_args </dev/null &
+            wine_pid=$!
+            GWINE_GAME_PID=$wine_pid
+            export GWINE_GAME_PID
         fi
-        wine_pid=$!
-        GWINE_GAME_PID=$wine_pid
-        export GWINE_GAME_PID
     else
         build_bwrap_args "$bwrap_access_dir" "$bwrap_access_mode"
         
@@ -7780,10 +7887,26 @@ launch_wine_game() {
             bwrap_add $game_args
         fi
         
-        bwrap "${BWRAP_ARGS[@]}" </dev/null &
-        bwrap_pid=$!
-        GWINE_GAME_PID=$bwrap_pid
-        export GWINE_GAME_PID
+        if [ "${_GWINE_USING_KERNEL_OVERLAY:-false}" = "true" ]; then
+            # En mode kernel, les overlays sont montés dans le même unshare que bwrap
+            local kernel_cmd
+            kernel_cmd="$(_gwine_kernel_overlay_mount_script)"
+            kernel_cmd+="exec bwrap"
+            local arg
+            for arg in "${BWRAP_ARGS[@]}"; do
+                kernel_cmd+=" $(printf '%q' "$arg")"
+            done
+            echo "Lancement avec kernel overlayfs (unshare + bwrap)..."
+            unshare -U -m --map-root-user bash -c "$kernel_cmd" </dev/null &
+            bwrap_pid=$!
+            GWINE_GAME_PID=$bwrap_pid
+            export GWINE_GAME_PID
+        else
+            bwrap "${BWRAP_ARGS[@]}" </dev/null &
+            bwrap_pid=$!
+            GWINE_GAME_PID=$bwrap_pid
+            export GWINE_GAME_PID
+        fi
         
         # Attendre que le jeu démarre
         sleep 2
@@ -7919,6 +8042,8 @@ launch_wine_game() {
         rm -f "$exe_instance_file"
         restore_windows_symlinks "$WINEPREFIX"
     fi
+    
+    _cleanup_kernel_overlay_markers 2>/dev/null || true
     
     return $exit_code
 }
