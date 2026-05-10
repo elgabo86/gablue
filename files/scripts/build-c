@@ -9,14 +9,21 @@ set -eoux pipefail
 # COMPILATION DES SOURCES C
 # =============================================================================
 
+# Dépendances de compilation
+dnf5 -y install dbus-devel
+
 # Compilation et installation de gamepadshortcuts
 # Remplace le script Python gamepadshortcuts.py (~28Mo RAM) par un binaire C natif (~500Ko RAM)
+# Utilise libdbus-1 pour l'inhibition ecran (~200Ko PSS vs 6.2Mo systemd-inhibit)
 if [ -d /src/gamepadshortcuts ]; then
     make -C /src/gamepadshortcuts install DESTDIR=
     rm -rf /src/gamepadshortcuts
 else
     echo "ATTENTION: Sources C non trouvees dans /src/gamepadshortcuts"
 fi
+
+# Nettoyage du paquet -devel (inutile dans l'image finale, seul libdbus-1.so est requis)
+dnf5 -y remove dbus-devel || true
 
 # Nettoyage du repertoire sources si vide
 rmdir /src 2>/dev/null || true
