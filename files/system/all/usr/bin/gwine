@@ -5858,10 +5858,15 @@ build_bwrap_user_dirs() {
         bwrap_add --bind "$download_dir" "$download_dir"
     fi
     
-    if command -v get_custom_bind_dirs_args &>/dev/null; then
-        local custom_bind_args
-        custom_bind_args="$(get_custom_bind_dirs_args)"
-        if [ -n "$custom_bind_args" ]; then
+    if command -v get_custom_bind_dirs_paths &>/dev/null; then
+        local custom_paths
+        custom_paths="$(get_custom_bind_dirs_paths)"
+        if [ -n "$custom_paths" ]; then
+            while IFS= read -r dir_path; do
+                if [ -n "$dir_path" ] && [ -d "$dir_path" ]; then
+                    bwrap_add --bind "$dir_path" "$dir_path"
+                fi
+            done <<< "$custom_paths"
             echo "Sandbox: répertoires personnalisés bindés" >&2
         fi
     fi
@@ -9263,33 +9268,29 @@ dir_config_reset() {
 # Fonction pour le sandbox
 # =============================================================================
 
-# Récupère les arguments bwrap pour les répertoires personnalisés
-get_custom_bind_dirs_args() {
+# Récupère les chemins des répertoires personnalisés (un par ligne)
+get_custom_bind_dirs_paths() {
     if [ ! -f "$BIND_DIRS_CONFIG_FILE" ] || [ ! -s "$BIND_DIRS_CONFIG_FILE" ]; then
         return 0
     fi
-    
-    local bwrap_args=""
     
     # Utiliser un file descriptor explicite
     exec 3< "$BIND_DIRS_CONFIG_FILE" 2>/dev/null || return 0
     while IFS= read -r line <&3; do
         if [ -n "$line" ] && [ -d "$line" ]; then
             # Vérifier que le répertoire n'est pas déjà bindé par défaut
-            if [[ "$line" == "$HOME_REAL" ]] || [[ "$line" == "$HOME_REAL/"* ]] || \
-               [[ "$line" == "$SAVES_REAL" ]] || [[ "$line" == "$SAVES_REAL/"* ]] || \
+            if [[ "$line" == "$SAVES_REAL" ]] || [[ "$line" == "$SAVES_REAL/"* ]] || \
                [[ "$line" == "$EXTRA_REAL" ]] || [[ "$line" == "$EXTRA_REAL/"* ]] || \
                [[ "$line" == "$CACHE_DIR" ]] || [[ "$line" == "$CACHE_DIR/"* ]] || \
-               [[ "$line" == "$GWINE_DIR" ]] || [[ "$line" == "$GWINE_DIR/"* ]]; then
+               [[ "$line" == "$GWINE_DIR" ]] || [[ "$line" == "$GWINE_DIR/"* ]] || \
+               [[ "$line" == "$HOME_REAL/Windows" ]] || [[ "$line" == "$HOME_REAL/Windows/"* ]]; then
                 continue
             fi
             
-            bwrap_args="$bwrap_args --bind \"$line\" \"$line\""
+            echo "$line"
         fi
     done
     exec 3<&-
-    
-    echo "$bwrap_args"
 }
 
 # Exporte les fonctions pour utilisation dans d'autres modules
@@ -9300,7 +9301,7 @@ export -f dir_config_add
 export -f dir_config_del
 export -f dir_config_list
 export -f dir_config_reset
-export -f get_custom_bind_dirs_args
+export -f get_custom_bind_dirs_paths
 
 # =============================================================================
 # Code principal
