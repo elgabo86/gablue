@@ -21,12 +21,12 @@ args=""
 fullpath=""
 # Normaliser $HOME vers /var/home (chemin réel sur Silverblue/Kinoite)
 HOME_REAL="$(realpath "$HOME")"
-SAVES_SYMLINK="/tmp/lgp-saves"
+SAVES_SYMLINK="/tmp/lgp-saves-$UID"
 SAVES_REAL="$HOME_REAL/.local/share/lgp-saves"
-EXTRA_SYMLINK="/tmp/lgp-extra"
+EXTRA_SYMLINK="/tmp/lgp-extra-$UID"
 EXTRA_REAL="$HOME_REAL/.cache/lgp-extra"
-TEMP_SYMLINK="/tmp/lgp-temp"
-TEMP_REAL="/tmp/lgp-temp"
+TEMP_SYMLINK="/tmp/lgp-temp-$UID"
+TEMP_REAL="/tmp/lgp-temp-$UID"
 
 # Variables LGP
 LGPACK_NAME=""
@@ -79,7 +79,7 @@ _lgp_register_kernel_overlay() {
     _LGP_KERNEL_OVERLAY_MOUNTS+="${lower}|${upper}|${work}|${mountpoint}"$'\n'
     _LGP_USING_KERNEL_OVERLAY=true
     
-    local pid_file="/tmp/lgp-ko-$( _lgp_kernel_overlay_id "$mountpoint" ).pid"
+    local pid_file="/tmp/lgp-ko-$UID-$( _lgp_kernel_overlay_id "$mountpoint" ).pid"
     echo "deferred" > "$pid_file"
     
     echo "Overlay kernel enregistré (montage différé): $mountpoint"
@@ -88,6 +88,12 @@ _lgp_register_kernel_overlay() {
 # Génère les commandes bash pour monter tous les overlays kernel enregistrés
 _lgp_kernel_overlay_mount_script() {
     local script=""
+    script+="mkdir -p /tmp/lgp-saves /tmp/lgp-extra /tmp/lgp-temp /tmp/lgpackmount /tmp/edenln 2>/dev/null; "
+    script+="mount --bind /tmp/lgp-saves-$UID /tmp/lgp-saves 2>/dev/null || true; "
+    script+="mount --bind /tmp/lgp-extra-$UID /tmp/lgp-extra 2>/dev/null || true; "
+    script+="mount --bind /tmp/lgp-temp-$UID /tmp/lgp-temp 2>/dev/null || true; "
+    script+="mount --bind /tmp/lgpackmount-$UID /tmp/lgpackmount 2>/dev/null || true; "
+    script+="mount --bind /tmp/edenln-$UID /tmp/edenln 2>/dev/null || true; "
     while IFS='|' read -r lower upper work mountpoint; do
         [ -z "$lower" ] && continue
         script+="mkdir -p \"$(dirname "$mountpoint")\" 2>/dev/null; "
@@ -100,7 +106,7 @@ _lgp_kernel_overlay_mount_script() {
 _lgp_cleanup_kernel_overlay_markers() {
     while IFS='|' read -r lower upper work mountpoint; do
         [ -z "$mountpoint" ] && continue
-        rm -f "/tmp/lgp-ko-$( _lgp_kernel_overlay_id "$mountpoint" ).pid"
+        rm -f "/tmp/lgp-ko-$UID-$( _lgp_kernel_overlay_id "$mountpoint" ).pid"
     done <<< "$_LGP_KERNEL_OVERLAY_MOUNTS"
     _LGP_KERNEL_OVERLAY_MOUNTS=""
     _LGP_USING_KERNEL_OVERLAY=false
@@ -118,7 +124,7 @@ unmount_overlay() {
     
     [ -z "$mount_point" ] && return 0
     
-    local pid_file="/tmp/lgp-ko-$( _lgp_kernel_overlay_id "$mount_point" ).pid"
+    local pid_file="/tmp/lgp-ko-$UID-$( _lgp_kernel_overlay_id "$mount_point" ).pid"
     if [ -f "$pid_file" ]; then
         rm -f "$pid_file"
         return 0
@@ -131,7 +137,7 @@ unmount_overlay() {
 
 # Nettoie les overlays kernel orphelins au démarrage
 _lgp_cleanup_kernel_overlay_pidfiles() {
-    for pid_file in /tmp/lgp-ko-*.pid; do
+    for pid_file in /tmp/lgp-ko-$UID-*.pid; do
         [ -f "$pid_file" ] || continue
         local marker
         marker=$(cat "$pid_file" 2>/dev/null)
@@ -195,9 +201,9 @@ init_lgp_variables() {
 
     LGPACK_NAME="$GAME_INTERNAL_NAME"
 
-    MOUNT_BASE="/tmp/lgpackmount"
+    MOUNT_BASE="/tmp/lgpackmount-$UID"
     MOUNT_DIR="$MOUNT_BASE/$LGPACK_NAME"
-    EXTRA_BASE="/tmp/lgp-extra"
+    EXTRA_BASE="/tmp/lgp-extra-$UID"
     EXTRA_DIR="$EXTRA_BASE/$LGPACK_NAME"
 }
 
@@ -652,7 +658,7 @@ prepare_temps() {
     local TEMP_LGP_DIR="$MOUNT_DIR/.temp"
     local TEMP_GAME_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
     local GAME_ID="${_GAME_TEMP_ID:-lgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')}"
-    local TEMP_UPPER="/tmp/lgp-temp-upper/$GAME_ID"
+    local TEMP_UPPER="/tmp/lgp-temp-upper-$UID/$GAME_ID"
 
     [ -f "$TEMPPATH_FILE" ] || return 0
 
@@ -674,7 +680,7 @@ prepare_temps() {
         unmount_overlay "$TEMP_GAME_DIR"
     fi
 
-    local WORK_DIR="/tmp/lgp-temp-work/$GAME_ID"
+    local WORK_DIR="/tmp/lgp-temp-work-$UID/$GAME_ID"
 
     echo "  lowerdir: $TEMP_LGP_DIR"
     echo "  upperdir: $TEMP_UPPER"
@@ -689,7 +695,7 @@ prepare_temps() {
 # Monte un overlay kernel complet sur TOUT le jeu (mode "full overlay" avec * dans .temppath)
 prepare_full_overlay() {
     local GAME_ID="lgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')"
-    local FULL_OVERLAY_BASE="/tmp/lgp-full-overlay"
+    local FULL_OVERLAY_BASE="/tmp/lgp-full-overlay-$UID"
     local MOUNT_OVERLAY="$FULL_OVERLAY_BASE/$GAME_ID"
     local TEMP_UPPER="$FULL_OVERLAY_BASE-upper/$GAME_ID"
     local TEMP_WORK="$FULL_OVERLAY_BASE-work/$GAME_ID"
@@ -815,8 +821,8 @@ setup_temp_symlink() {
     # Utiliser un ID unique sans espaces pour les chemins de travail
     local GAME_ID="lgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')"
     local GAME_TEMP_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
-    local GAME_TEMP_UPPER="/tmp/lgp-temp-upper/$GAME_ID"
-    local GAME_TEMP_WORK="/tmp/lgp-temp-work/$GAME_ID"
+    local GAME_TEMP_UPPER="/tmp/lgp-temp-upper-$UID/$GAME_ID"
+    local GAME_TEMP_WORK="/tmp/lgp-temp-work-$UID/$GAME_ID"
     
     # Stocker les chemins réels pour le nettoyage
     export _GAME_TEMP_ID="$GAME_ID"
@@ -847,8 +853,8 @@ setup_temp_symlink() {
 cleanup_temp_symlink() {
     local GAME_TEMP_DIR="$TEMP_REAL/$GAME_INTERNAL_NAME"
     local GAME_ID="${_GAME_TEMP_ID:-lgp-$(echo "$GAME_INTERNAL_NAME" | tr -cd '[:alnum:]-')}" 
-    local GAME_TEMP_UPPER="/tmp/lgp-temp-upper/$GAME_ID"
-    local GAME_TEMP_WORK="/tmp/lgp-temp-work/$GAME_ID"
+    local GAME_TEMP_UPPER="/tmp/lgp-temp-upper-$UID/$GAME_ID"
+    local GAME_TEMP_WORK="/tmp/lgp-temp-work-$UID/$GAME_ID"
     
     if [ -n "$_FULL_OVERLAY_MOUNT" ]; then
         echo "Nettoyage de l'overlay complet..."
@@ -974,11 +980,11 @@ launch_game() {
     
     [ -n "$game_args" ] && cmd="$cmd $game_args"
     
-    if [ "${_LGP_USING_KERNEL_OVERLAY:-false}" = "true" ]; then
+    if [ "${_LGP_MODE:-false}" = "true" ]; then
         local kernel_cmd
         kernel_cmd="$(_lgp_kernel_overlay_mount_script)"
         kernel_cmd+="$cmd"
-        echo "Lancement avec kernel overlayfs (unshare)..."
+        echo "Lancement avec namespace isolé (unshare)..."
         unshare -U -m --map-root-user bash -c "$kernel_cmd"
         local game_exit=$?
     else
@@ -993,16 +999,17 @@ launch_game() {
 
 # Fonction principale pour le mode LGP
 run_lgp_mode() {
+    _LGP_MODE=true
     init_lgp_variables
     mount_lgp
 
     # Nettoyage en cas d'interruption
     trap cleanup_lgp EXIT
     
-    # Nettoyer /tmp/edenln s'il existe (contient des vieux symlinks de .script.sh)
-    if [ -d "/tmp/edenln" ]; then
-        echo "Nettoyage de /tmp/edenln..."
-        rm -rf /tmp/edenln/* /tmp/edenln/.* 2>/dev/null || true
+    # Nettoyer /tmp/edenln-$UID s'il existe (contient des vieux symlinks de edenln.sh)
+    if [ -d "/tmp/edenln-$UID" ]; then
+        echo "Nettoyage de /tmp/edenln-$UID..."
+        rm -rf /tmp/edenln-$UID/* /tmp/edenln-$UID/.* 2>/dev/null || true
     fi
 
     # Créer le symlink /tmp/lgp-saves AVANT prepare_saves
