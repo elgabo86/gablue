@@ -1,51 +1,107 @@
 #!/usr/bin/bash
 
-# Définition du dossier d'enregistrement + renommage de la vidéo par date
-video="$HOME/Vidéos/Captures/$(date +"Video_%Y-%m-%d_%H-%M-%S.mp4")"
+set -eoux pipefail
 
-# Chemin du fichier de configuration
+LOCKFILE="/tmp/gablue-record-start.lock"
+PIDFILE="/tmp/gablue-record.pid"
+COOLDOWN_FILE="/tmp/gablue-record-cooldown"
+COOLDOWN_SEC=1.5
+
+# =============================================================================
+# COOLDOWN apres arret
+# =============================================================================
+
+if [ -f "$COOLDOWN_FILE" ]; then
+    echo "Cooldown actif, ignore."
+    exit 0
+fi
+
+# =============================================================================
+# ARRET : juste le signal, pas d'attente. Le script start gere la suite.
+# =============================================================================
+
+if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    # Refuser le stop si l'enregistrement a moins de 2s (risque crash init encodeur)
+    START_TIME=$(cat /tmp/gablue-record-start-time 2>/dev/null || echo 0)
+    NOW=$(date +%s)
+    if [ $((NOW - START_TIME)) -lt 2 ]; then
+        echo "Enregistrement trop recent, attendez 2s avant d'arreter."
+        exit 0
+    fi
+    echo "Arret de l'enregistrement..."
+    killall -SIGINT -q gpu-screen-recorder 2>/dev/null || true
+    exit 0
+fi
+
+[ -f "$PIDFILE" ] && rm -f "$PIDFILE" /tmp/gablue-record-start-time
+
+# =============================================================================
+# DEMARRAGE : lock bref pour l'ecriture du PIDFILE
+# =============================================================================
+
+exec 200>"$LOCKFILE"
+if ! flock -n 200; then
+    echo "Un enregistrement est deja en cours, ignore."
+    exit 0
+fi
+
+if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    flock -u 200
+    echo "Enregistrement deja en cours."
+    exit 0
+fi
+
+# =============================================================================
+# PREPARATION
+# =============================================================================
+
+video="$HOME/Vidéos/Captures/$(date +"Video_%Y-%m-%d_%H-%M-%S.mp4")"
+mkdir -p "$(dirname "$video")"
+
 CONFIG_FILE="$HOME/.var/app/com.dec05eba.gpu_screen_recorder/config/gpu-screen-recorder/config"
 
-# Lecture du FPS depuis le fichier de config, fallback à 60 si non trouvé
 if [ -f "$CONFIG_FILE" ]; then
     FPS=$(grep '^main.fps' "$CONFIG_FILE" | awk '{print $2}')
-    if [ -z "$FPS" ]; then
-        FPS=60
-    fi
+    [ -z "$FPS" ] && FPS=60
 else
     FPS=60
 fi
 
-# Commandes à exécuter selon le cas
 COMMANDE_INTEL="flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -f $FPS -a default_output -q medium -o '$video'"
 COMMANDE_AUTRE="flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -f $FPS -a default_output -o '$video'"
 
-# Arrête et sauve l'enregistrement si il y en a en cours
-killall -SIGINT -q gpu-screen-recorder && exit 0
+# =============================================================================
+# LANCEMENT
+# =============================================================================
 
-# Contrôler que gpu-screen-recorder est bien fermé
-pgrep -f gpu-screen-recorder | xargs -n1 kill -9
-
-# Lancement d'un nouvel enregistrement
 ffplay -nodisp -autoexit /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/beep.wav
-# Vérifie si un GPU Intel intégré est détecté via lspci
+
+echo "$$" > "$PIDFILE"
+date +%s > /tmp/gablue-record-start-time
+flock -u 200
+
 if lspci | grep -i "VGA" | grep -i "Intel" > /dev/null; then
-    # Vérifie si glxinfo est disponible et si le GPU Intel est actif
     if command -v glxinfo > /dev/null && glxinfo | grep -i "renderer" | grep -i "Intel" > /dev/null; then
-        echo "GPU Intel intégré actif détecté."
-        # Exécute la commande pour GPU Intel actif
-        eval "$COMMANDE_INTEL"
+        echo "GPU Intel integre actif detecte."
+        eval "$COMMANDE_INTEL" || true
     else
-        echo "GPU Intel détecté mais non actif (ou glxinfo non installé)."
-        # Exécute la commande alternative
-        eval "$COMMANDE_AUTRE"
+        echo "GPU Intel detecte mais non actif (ou glxinfo non installe)."
+        eval "$COMMANDE_AUTRE" || true
     fi
 else
-    echo "Aucun GPU Intel intégré détecté."
-    # Exécute la commande alternative
-    eval "$COMMANDE_AUTRE"
+    echo "Aucun GPU Intel integre detecte."
+    eval "$COMMANDE_AUTRE" || true
 fi
 
-# Annoncer l'arrêt de l'enregistrement à l'utilisateur
+# =============================================================================
+# NETTOYAGE : l'enregistrement est termine (naturel ou kill)
+# =============================================================================
+
+# Cooldown EN PREMIER pour eviter toute fenetre sans protection
+touch "$COOLDOWN_FILE"
+(sleep "$COOLDOWN_SEC" && rm -f "$COOLDOWN_FILE") &
+
+rm -f "$PIDFILE" /tmp/gablue-record-start-time
+
 ffplay -nodisp -autoexit /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/stop.wav
-notify-send -t 2000 -u low "Enregistrement sauvé dans $video"
+notify-send -t 2000 -u low "Enregistrement sauve dans $video"

@@ -21,6 +21,7 @@
 
 #define SCRIPTS_DIR "/usr/share/ublue-os/gablue/scripts/gamepadshortcuts"
 #define VOLUME_COOLDOWN_NS 200000000L
+#define HAT_COOLDOWN_NS    300000000L
 #define MAX_KEY_BITS (KEY_MAX + 1)
 
 static volatile bool running = true;
@@ -44,12 +45,14 @@ static int hat_y = 0;
 static int last_hat_x = 0;
 static int last_hat_y = 0;
 static double axis_y = 0.0;
+static double last_axis_y = 0.0;
 
 static bool mouse_running = false;
 static pid_t mouse_pid = -1;
 static bool menuvsr_running = false;
 static pid_t menuvsr_pid = -1;
 static struct timespec last_volume_time = {0, 0};
+static struct timespec last_hat_time = {0, 0};
 
 /* =========================================================================
  * SUIVI DU VT ACTIF (inotify sur /sys/class/tty/tty0/active)
@@ -299,32 +302,46 @@ static void handle_hat(void)
     if (!home_pressed)
         return;
 
-    if (hat_x != last_hat_x || hat_y != last_hat_y) {
-        if (hat_x == -1 && hat_y == 0) {
-            fprintf(stderr, "[ACTION] SCREEN\n");
-            launch_script(SCRIPTS_DIR "/takescreenshot", true);
-            usleep(100000);
-        } else if (hat_x == 1 && hat_y == 0) {
-            fprintf(stderr, "[ACTION] RECORD\n");
-            launch_script(SCRIPTS_DIR "/startstoprecord", true);
-            usleep(2000000);
-        } else if (hat_x == 0 && hat_y == 1) {
-            fprintf(stderr, "[ACTION] FPS\n");
-            launch_script(SCRIPTS_DIR "/changefps", false);
-            usleep(100000);
-        } else if (hat_x == 0 && hat_y == -1) {
-            fprintf(stderr, "[ACTION] MANGO\n");
-            launch_script(SCRIPTS_DIR "/showhidemango", false);
-            usleep(100000);
-        }
-        last_hat_x = hat_x;
-        last_hat_y = hat_y;
+    if (hat_x == last_hat_x && hat_y == last_hat_y)
+        return;
+
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    long elapsed_ns = (now.tv_sec - last_hat_time.tv_sec) * 1000000000L
+                    + (now.tv_nsec - last_hat_time.tv_nsec);
+
+    if (elapsed_ns < HAT_COOLDOWN_NS)
+        goto update_hat;
+
+    if (hat_x == -1 && hat_y == 0) {
+        fprintf(stderr, "[ACTION] SCREEN\n");
+        launch_script(SCRIPTS_DIR "/takescreenshot", true);
+    } else if (hat_x == 1 && hat_y == 0) {
+        fprintf(stderr, "[ACTION] RECORD\n");
+        launch_script(SCRIPTS_DIR "/startstoprecord", true);
+    } else if (hat_x == 0 && hat_y == 1) {
+        fprintf(stderr, "[ACTION] FPS\n");
+        launch_script(SCRIPTS_DIR "/changefps", false);
+    } else if (hat_x == 0 && hat_y == -1) {
+        fprintf(stderr, "[ACTION] MANGO\n");
+        launch_script(SCRIPTS_DIR "/showhidemango", false);
     }
+
+    last_hat_time = now;
+
+update_hat:
+    last_hat_x = hat_x;
+    last_hat_y = hat_y;
 }
 
 static void handle_volume(void)
 {
     if (!home_pressed)
+        return;
+
+    double diff_y = axis_y - last_axis_y;
+    if (diff_y > -0.1 && diff_y < 0.1)
         return;
 
     struct timespec now;
@@ -340,10 +357,12 @@ static void handle_volume(void)
         fprintf(stderr, "[ACTION] VOLUME UP\n");
         launch_shell_cmd("pactl set-sink-volume @DEFAULT_SINK@ +10%");
         last_volume_time = now;
+        last_axis_y = axis_y;
     } else if (axis_y > 0.5) {
         fprintf(stderr, "[ACTION] VOLUME DOWN\n");
         launch_shell_cmd("pactl set-sink-volume @DEFAULT_SINK@ -10%");
         last_volume_time = now;
+        last_axis_y = axis_y;
     }
 }
 
@@ -351,7 +370,14 @@ static void process_event(struct input_event *ev)
 {
     if (ev->type == EV_KEY) {
         switch (ev->code) {
-        case BTN_MODE:   home_pressed = ev->value == 1; break;
+        case BTN_MODE:
+            if (ev->value == 1) {
+                home_pressed = true;
+                last_axis_y = axis_y;
+            } else {
+                home_pressed = false;
+            }
+            break;
         case BTN_SELECT: select_pressed = ev->value == 1; break;
         case BTN_START:  start_pressed = ev->value == 1; break;
         case BTN_C:      triangle_pressed = ev->value == 1; break;
@@ -420,6 +446,8 @@ static void reset_button_states(void)
     last_hat_x = 0;
     last_hat_y = 0;
     axis_y = 0.0;
+    last_axis_y = 0.0;
+    last_hat_time = (struct timespec){0, 0};
 }
 
 /* Verifie si notre VT est actif, met a jour vt_active et gere
