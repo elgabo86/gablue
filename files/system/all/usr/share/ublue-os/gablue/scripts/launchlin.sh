@@ -117,18 +117,6 @@ _lgp_cleanup_kernel_overlay_markers() {
     _LGP_USING_KERNEL_OVERLAY=false
 }
 
-# Traduit un chemin hardcodé de .lgp vers sa version UID-spécifique
-# Ex: /tmp/lgpackmount/Game/data -> /tmp/lgpackmount-$UID/Game/data
-_lgp_translate_path() {
-    local path="$1"
-    path="${path/\/tmp\/lgp-saves\//\/tmp\/lgp-saves-$UID/}"
-    path="${path/\/tmp\/lgp-extra\//\/tmp\/lgp-extra-$UID/}"
-    path="${path/\/tmp\/lgp-temp\//\/tmp\/lgp-temp-$UID/}"
-    path="${path/\/tmp\/lgpackmount\//\/tmp\/lgpackmount-$UID/}"
-    path="${path/\/tmp\/edenln\//\/tmp\/edenln-$UID/}"
-    echo "$path"
-}
-
 # Monte un overlay (kernel overlayfs différé)
 mount_overlay() {
     _lgp_require_kernel_overlay
@@ -462,9 +450,6 @@ _copy_symlink_as_abs() {
             abs_target="$dst_base_dir/$rel_path"
         fi
     fi
-
-    # Traduire les préfixes hardcodés des .lgp vers leur version $UID
-    abs_target=$(_lgp_translate_path "$abs_target")
 
     # Créer toujours un symlink avec une cible absolue
     # Si abs_target est vide (erreur realpath), utiliser la cible originale
@@ -1051,7 +1036,7 @@ run_lgp_mode() {
         cleanup_saves_symlink cleanup_extras_symlink cleanup_temp_symlink \
         prepare_saves prepare_extras prepare_temps prepare_full_overlay \
         _copy_dir_with_symlinks _copy_symlink_as_abs _copy_dir_contents \
-        _copy_dir_recursive _lgp_translate_path \
+        _copy_dir_recursive \
         execute_prelaunch_script read_lgp_config load_env_files load_env_file \
         has_saves has_extras has_temps \
         error_exit cleanup_lgp launch_game \
