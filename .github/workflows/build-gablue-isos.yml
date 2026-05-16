@@ -65,19 +65,16 @@ jobs:
           echo "Checksum generated: $CHECKSUM_FILE"
           echo "checksum_file=$CHECKSUM_FILE" >> $GITHUB_OUTPUT
 
-      - name: Upload ISO to VikingFile
+      - name: Upload ISO to BuzzHeavier
         id: upload
         run: |
           ISO_PATH="${{ matrix.iso.name }}-${{ matrix.iso.tag }}-${{ matrix.iso.version }}.iso"
           ISO_NAME="${{ matrix.iso.name }}"
           echo "Uploading $ISO_NAME from $ISO_PATH..."
-          # Get the correct upload server
-          SERVER_RESPONSE=$(curl -s https://vikingfile.com/api/get-server)
-          UPLOAD_SERVER=$(echo "$SERVER_RESPONSE" | jq -r '.server')
-          # Upload file
-          RESPONSE=$(curl -F "file=@$ISO_PATH" -F "user=" "$UPLOAD_SERVER")
-          LINK=$(echo "$RESPONSE" | jq -r '.url // empty')
-          if [ -n "$LINK" ] && [ "$LINK" != "null" ]; then
+          RESPONSE=$(curl -s -T "$ISO_PATH" "https://w.buzzheavier.com/$ISO_PATH")
+          ID=$(echo "$RESPONSE" | jq -r '.data.id')
+          LINK="https://buzzheavier.com/$ID"
+          if [ -n "$ID" ] && [ "$ID" != "null" ]; then
             echo "Download link for $ISO_NAME: $LINK"
             echo "download_link_$ISO_NAME=$LINK" >> $GITHUB_OUTPUT
           else
