@@ -112,6 +112,41 @@ _lgp_cleanup_kernel_overlay_markers() {
     _LGP_USING_KERNEL_OVERLAY=false
 }
 
+# Crée les liens de compatibilité sur l'hôte pour résoudre les symlinks hardcodés
+# des .lgp avant l'entrée dans le namespace unshare (read_lgp_config, .script.sh, etc.)
+_lgp_create_compat_links() {
+    local game_name="$1"
+    for base in lgp-saves lgp-extra lgp-temp edenln lgpackmount; do
+        local old_path="/tmp/$base/$game_name"
+        local new_path="/tmp/$base-$UID/$game_name"
+        if [ -e "$new_path" ] || [ -L "$new_path" ]; then
+            mkdir -m 1777 -p "/tmp/$base" 2>/dev/null
+            ln -sfn "$new_path" "$old_path" 2>/dev/null || true
+        fi
+    done
+}
+
+# Supprime les liens de compatibilité hôte après résolution
+_lgp_remove_compat_links() {
+    local game_name="$1"
+    for base in lgp-saves lgp-extra lgp-temp edenln lgpackmount; do
+        local link="/tmp/$base/$game_name"
+        [ -L "$link" ] && rm -f "$link" 2>/dev/null || true
+    done
+}
+
+# Traduit un chemin hardcodé de .lgp vers sa version UID-spécifique
+# Ex: /tmp/lgpackmount/Game/data -> /tmp/lgpackmount-$UID/Game/data
+_lgp_translate_path() {
+    local path="$1"
+    path="${path/\/tmp\/lgp-saves\//\/tmp\/lgp-saves-$UID/}"
+    path="${path/\/tmp\/lgp-extra\//\/tmp\/lgp-extra-$UID/}"
+    path="${path/\/tmp\/lgp-temp\//\/tmp\/lgp-temp-$UID/}"
+    path="${path/\/tmp\/lgpackmount\//\/tmp\/lgpackmount-$UID/}"
+    path="${path/\/tmp\/edenln\//\/tmp\/edenln-$UID/}"
+    echo "$path"
+}
+
 # Monte un overlay (kernel overlayfs différé)
 mount_overlay() {
     _lgp_require_kernel_overlay
@@ -293,6 +328,7 @@ cleanup_lgp() {
     cleanup_saves_symlink
     cleanup_extras_symlink
     cleanup_temp_symlink
+    _lgp_remove_compat_links "$LGPACK_NAME"
 
     # Démontage du squashfs (FUSE)
     if ! fusermount -u "$MOUNT_DIR" 2>/dev/null; then
@@ -442,6 +478,9 @@ _copy_symlink_as_abs() {
             abs_target="$dst_base_dir/$rel_path"
         fi
     fi
+
+    # Traduire les préfixes hardcodés des .lgp vers leur version $UID
+    abs_target=$(_lgp_translate_path "$abs_target")
 
     # Créer toujours un symlink avec une cible absolue
     # Si abs_target est vide (erreur realpath), utiliser la cible originale
@@ -1021,6 +1060,9 @@ run_lgp_mode() {
     # Créer le symlink /tmp/lgp-temp AVANT prepare_temps
     setup_temp_symlink
 
+    # Créer les liens de compatibilité hôte (résolution des symlinks hardcodés des .lgp)
+    _lgp_create_compat_links "$LGPACK_NAME"
+
     # IMPORTANT: prepare_saves AVANT read_lgp_config (l'exécutable peut être un symlink vers UserData)
     prepare_saves
     prepare_extras
@@ -1054,6 +1096,7 @@ run_lgp_mode() {
     cleanup_saves_symlink
     cleanup_extras_symlink
     cleanup_temp_symlink
+    _lgp_remove_compat_links "$LGPACK_NAME"
     _lgp_cleanup_kernel_overlay_markers 2>/dev/null || true
 }
 
