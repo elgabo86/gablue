@@ -85,15 +85,20 @@ _lgp_register_kernel_overlay() {
     echo "Overlay kernel enregistré (montage différé): $mountpoint"
 }
 
-# Génère les commandes bash pour monter tous les overlays kernel enregistrés
+# Configure les bind mounts dans le namespace courant pour traduire
+# les chemins /tmp/lgp-* hardcodés des .lgp vers leur version $UID
+_lgp_setup_bind_mounts() {
+    for base in lgp-saves lgp-extra lgp-temp lgpackmount edenln \
+                lgp-temp-upper lgp-temp-work \
+                lgp-full-overlay lgp-full-overlay-upper lgp-full-overlay-work; do
+        mkdir -p "/tmp/$base" 2>/dev/null
+        mount --bind "/tmp/$base-$UID" "/tmp/$base" 2>/dev/null || true
+    done
+}
+
+# Génère les commandes bash pour monter les overlays kernel enregistrés
 _lgp_kernel_overlay_mount_script() {
     local script=""
-    script+="mkdir -p /tmp/lgp-saves /tmp/lgp-extra /tmp/lgp-temp /tmp/lgpackmount /tmp/edenln 2>/dev/null; "
-    script+="mount --bind /tmp/lgp-saves-$UID /tmp/lgp-saves 2>/dev/null || true; "
-    script+="mount --bind /tmp/lgp-extra-$UID /tmp/lgp-extra 2>/dev/null || true; "
-    script+="mount --bind /tmp/lgp-temp-$UID /tmp/lgp-temp 2>/dev/null || true; "
-    script+="mount --bind /tmp/lgpackmount-$UID /tmp/lgpackmount 2>/dev/null || true; "
-    script+="mount --bind /tmp/edenln-$UID /tmp/edenln 2>/dev/null || true; "
     while IFS='|' read -r lower upper work mountpoint; do
         [ -z "$lower" ] && continue
         script+="mkdir -p \"$(dirname "$mountpoint")\" 2>/dev/null; "
@@ -110,29 +115,6 @@ _lgp_cleanup_kernel_overlay_markers() {
     done <<< "$_LGP_KERNEL_OVERLAY_MOUNTS"
     _LGP_KERNEL_OVERLAY_MOUNTS=""
     _LGP_USING_KERNEL_OVERLAY=false
-}
-
-# Crée les liens de compatibilité sur l'hôte pour résoudre les symlinks hardcodés
-# des .lgp avant l'entrée dans le namespace unshare (read_lgp_config, .script.sh, etc.)
-_lgp_create_compat_links() {
-    local game_name="$1"
-    for base in lgp-saves lgp-extra lgp-temp edenln lgpackmount; do
-        local old_path="/tmp/$base/$game_name"
-        local new_path="/tmp/$base-$UID/$game_name"
-        if [ -e "$new_path" ] || [ -L "$new_path" ]; then
-            mkdir -m 1777 -p "/tmp/$base" 2>/dev/null
-            ln -sfn "$new_path" "$old_path" 2>/dev/null || true
-        fi
-    done
-}
-
-# Supprime les liens de compatibilité hôte après résolution
-_lgp_remove_compat_links() {
-    local game_name="$1"
-    for base in lgp-saves lgp-extra lgp-temp edenln lgpackmount; do
-        local link="/tmp/$base/$game_name"
-        [ -L "$link" ] && rm -f "$link" 2>/dev/null || true
-    done
 }
 
 # Traduit un chemin hardcodé de .lgp vers sa version UID-spécifique
@@ -328,7 +310,6 @@ cleanup_lgp() {
     cleanup_saves_symlink
     cleanup_extras_symlink
     cleanup_temp_symlink
-    _lgp_remove_compat_links "$LGPACK_NAME"
 
     # Démontage du squashfs (FUSE)
     if ! fusermount -u "$MOUNT_DIR" 2>/dev/null; then
@@ -371,19 +352,22 @@ read_lgp_config() {
     launch_content="$(cat "$LAUNCH_FILE" | tr -d '\n\r')"
     FULL_EXE_PATH="$MOUNT_DIR/$launch_content"
 
-    # Vérifier existence (fichier ou symlink - même cassé car .script.sh peut le réparer)
-    if [ ! -e "$FULL_EXE_PATH" ] && [ ! -L "$FULL_EXE_PATH" ]; then
-        echo "Erreur: exécutable introuvable: $(cat "$LAUNCH_FILE")" >&2
-        cleanup_lgp
-        exit 1
-    fi
-
-    # Si c'est un symlink, résoudre le chemin réel
+    # Résoudre le chemin (les bind mounts du namespace rendent realpath fonctionnel)
     if [ -L "$FULL_EXE_PATH" ]; then
-        REAL_EXE_PATH="$(realpath "$FULL_EXE_PATH")"
+        REAL_EXE_PATH="$(realpath "$FULL_EXE_PATH" 2>/dev/null)"
         echo "Symlink détecté: $FULL_EXE_PATH -> $REAL_EXE_PATH"
     else
-        REAL_EXE_PATH="$FULL_EXE_PATH"
+        REAL_EXE_PATH="$(realpath "$FULL_EXE_PATH" 2>/dev/null)"
+        if [ -z "$REAL_EXE_PATH" ]; then
+            REAL_EXE_PATH="$FULL_EXE_PATH"
+        fi
+    fi
+
+    # Vérifier existence
+    if [ ! -e "$REAL_EXE_PATH" ]; then
+        echo "Erreur: exécutable introuvable: $launch_content" >&2
+        cleanup_lgp
+        exit 1
     fi
 
     # Fichier .args (surcharge les arguments en ligne de commande)
@@ -1023,8 +1007,8 @@ launch_game() {
         local kernel_cmd
         kernel_cmd="$(_lgp_kernel_overlay_mount_script)"
         kernel_cmd+="$cmd"
-        echo "Lancement avec namespace isolé (unshare)..."
-        unshare -U -m --map-root-user bash -c "$kernel_cmd"
+        echo "Lancement dans le namespace isolé..."
+        bash -c "$kernel_cmd"
         local game_exit=$?
     else
         echo "Commande: $cmd"
@@ -1051,53 +1035,70 @@ run_lgp_mode() {
         rm -rf /tmp/edenln-$UID/* /tmp/edenln-$UID/.* 2>/dev/null || true
     fi
 
-    # Créer le symlink /tmp/lgp-saves AVANT prepare_saves
-    setup_saves_symlink
+    # Créer les dossiers de base UID-spécifiques sur l'hôte
+    for base in lgp-saves lgp-extra lgp-temp lgpackmount edenln \
+                lgp-temp-upper lgp-temp-work \
+                lgp-full-overlay lgp-full-overlay-upper lgp-full-overlay-work; do
+        mkdir -p "/tmp/$base-$UID" 2>/dev/null
+    done
 
-    # Créer le symlink /tmp/lgp-extra AVANT prepare_extras
-    setup_extras_symlink
+    # Exporter les fonctions nécessaires dans le namespace
+    export -f _lgp_setup_bind_mounts _lgp_kernel_overlay_mount_script \
+        _lgp_cleanup_kernel_overlay_markers _lgp_register_kernel_overlay \
+        _lgp_kernel_overlay_id _lgp_require_kernel_overlay mount_overlay unmount_overlay \
+        _lgp_cleanup_kernel_overlay_pidfiles \
+        setup_saves_symlink setup_extras_symlink setup_temp_symlink \
+        cleanup_saves_symlink cleanup_extras_symlink cleanup_temp_symlink \
+        prepare_saves prepare_extras prepare_temps prepare_full_overlay \
+        _copy_dir_with_symlinks _copy_symlink_as_abs _copy_dir_contents \
+        _copy_dir_recursive _lgp_translate_path \
+        execute_prelaunch_script read_lgp_config load_env_files load_env_file \
+        has_saves has_extras has_temps \
+        error_exit cleanup_lgp launch_game \
+        2>/dev/null
 
-    # Créer le symlink /tmp/lgp-temp AVANT prepare_temps
-    setup_temp_symlink
+    # Exporter les variables globales utilisées par les fonctions
+    export _LGP_MODE MOUNT_DIR MOUNT_BASE LGPACK_NAME GAME_INTERNAL_NAME \
+           SAVES_SYMLINK SAVES_REAL EXTRA_SYMLINK EXTRA_REAL TEMP_SYMLINK TEMP_REAL \
+           args FULL_EXE_PATH REAL_EXE_PATH HOME_REAL \
+           _LGP_KERNEL_OVERLAY_MOUNTS _LGP_USING_KERNEL_OVERLAY \
+           _GAME_TEMP_ID _FULL_OVERLAY_MOUNT _FULL_OVERLAY_UPPER _FULL_OVERLAY_WORK \
+           UID
 
-    # Créer les liens de compatibilité hôte (résolution des symlinks hardcodés des .lgp)
-    _lgp_create_compat_links "$LGPACK_NAME"
+    # Exécuter tout le setup et le jeu dans un namespace de montage privé
+    # Les bind mounts traduisent /tmp/lgp-* → /tmp/lgp-*-$UID de façon isolée
+    unshare -U -m --map-root-user bash <<'LGP_NAMESPACE_EOF'
+        _lgp_setup_bind_mounts
 
-    # IMPORTANT: prepare_saves AVANT read_lgp_config (l'exécutable peut être un symlink vers UserData)
-    prepare_saves
-    prepare_extras
-    prepare_temps
+        setup_saves_symlink
+        setup_extras_symlink
+        setup_temp_symlink
+        prepare_saves
+        prepare_extras
+        prepare_temps
+        execute_prelaunch_script
+        read_lgp_config
 
-    # Exécuter le script de pré-lancement AVANT read_lgp_config
-    # car il peut créer des symlinks nécessaires pour l'exécutable
-    execute_prelaunch_script
+        exe_dir="$(dirname "$REAL_EXE_PATH")"
+        load_env_files "$MOUNT_DIR" "$exe_dir"
 
-    # Lire la configuration
-    read_lgp_config
+        if [ "$FULL_EXE_PATH" != "$REAL_EXE_PATH" ]; then
+            work_dir="$(dirname "$FULL_EXE_PATH")"
+        else
+            work_dir="$exe_dir"
+        fi
 
-    # Charger les variables d'environnement des fichiers .env
-    local exe_dir="$(dirname "$REAL_EXE_PATH")"
-    load_env_files "$MOUNT_DIR" "$exe_dir"
+        launch_game "$REAL_EXE_PATH" "$args" "$LGPACK_NAME" "$work_dir"
 
-    # Déterminer le répertoire de travail :
-    # Si l'exécutable était un symlink, utiliser le dossier du symlink (ex: conf/)
-    # Sinon utiliser le dossier de l'exécutable réel
-    local work_dir
-    if [ -L "$FULL_EXE_PATH" ]; then
-        work_dir="$(dirname "$FULL_EXE_PATH")"
-    else
-        work_dir="$exe_dir"
-    fi
+        cleanup_saves_symlink
+        cleanup_extras_symlink
+        cleanup_temp_symlink
+        _lgp_cleanup_kernel_overlay_markers 2>/dev/null || true
+LGP_NAMESPACE_EOF
+    local game_exit=$?
 
-    # Lancer le jeu avec le bon répertoire de travail
-    launch_game "$REAL_EXE_PATH" "$args" "$LGPACK_NAME" "$work_dir"
-
-    # Nettoyage des symlinks saves et extras (le trap fera le reste)
-    cleanup_saves_symlink
-    cleanup_extras_symlink
-    cleanup_temp_symlink
-    _lgp_remove_compat_links "$LGPACK_NAME"
-    _lgp_cleanup_kernel_overlay_markers 2>/dev/null || true
+    echo "Jeu terminé avec le code: $game_exit"
+    return $game_exit
 }
 
 # Fonction principale pour le mode classique (exécutable direct)
