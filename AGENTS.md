@@ -67,6 +67,7 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── copr-test                      # Configuration dépôts COPR (test, identique + OGUI)
 │   │   ├── finalize                       # Finalisation de l'image
 │   │   ├── initramfs                      # Génération initramfs
+│   │   ├── install-kmods                 # Helper installation kmods (vérification existence RPMs)
 │   │   ├── kernel                        # Installation kernel OGC + akmods
 │   │   ├── kernel-test                    # Installation kernel OGC (test, identique)
 │   │   ├── mesa                           # Installation Mesa Terra (multilib fc44)
@@ -407,8 +408,9 @@ Exclusions importantes :
 **kernel (stable)** : Installation du kernel OGC et des akmods depuis ublue-os
 - Récupération depuis `ghcr.io/ublue-os/akmods` et `ghcr.io/ublue-os/akmods-extra`
 - Installation du kernel depuis `/tmp/kernel-rpms/`
-- Akmods critiques : v4l2loopback, xone, xpadneo (commun), zenergy, gcadapter, evdi (extra)
-- Akmods optionnels : framework-laptop, openrazer (commun), new-lg4ff, t150-driver, hid-fanatecff, sc0710, system76 (extra)
+- Utilisation du helper `/ctx/install-kmods` qui vérifie l'existence de chaque RPM avant installation (évite les échecs si un module n'est plus présent dans l'image akmods)
+- Kmods communs (via install-kmods) : framework-laptop, openrazer, v4l2loopback, xone, xpadneo
+- Kmods extras (via install-kmods) : zenergy, gcadapter, evdi, new-lg4ff, t150-driver, hid-fanatecff, sc0710, system76
 - Versionlock pour verrouiller les versions
 - Installation de scx-scheds depuis COPR bieszczaders/kernel-cachyos-addons
 

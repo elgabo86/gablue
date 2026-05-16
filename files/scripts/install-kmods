@@ -1,0 +1,20 @@
+#!/usr/bin/bash
+
+# Helper pour l'installation des kmods
+# Vérifie l'existence des RPMs avant de les passer à dnf5
+# Évite les erreurs quand un module n'est plus présent dans l'image akmods
+
+set -eoux pipefail
+
+INSTALL_RPMS=()
+for pattern in "$@"; do
+    for rpm in $pattern; do
+        [[ -f "$rpm" ]] && INSTALL_RPMS+=("$rpm") || echo "SKIPPED: $rpm"
+    done
+done
+
+if [[ ${#INSTALL_RPMS[@]} -gt 0 ]]; then
+    dnf5 -y install "${INSTALL_RPMS[@]}"
+else
+    echo "WARNING: No kmod RPMs found"
+fi
