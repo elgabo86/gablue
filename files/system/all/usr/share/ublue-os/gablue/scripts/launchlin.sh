@@ -92,7 +92,11 @@ _lgp_setup_bind_mounts() {
                 lgp-temp-upper lgp-temp-work \
                 lgp-full-overlay lgp-full-overlay-upper lgp-full-overlay-work; do
         mkdir -p "/tmp/$base" 2>/dev/null
-        mount --bind "/tmp/$base-$UID" "/tmp/$base" 2>/dev/null || true
+        if mount --rbind "/tmp/$base-$UID" "/tmp/$base" 2>/dev/null; then
+            : # mount ok
+        else
+            echo "Attention: bind mount échoué pour /tmp/$base" >&2
+        fi
     done
 }
 
@@ -441,6 +445,13 @@ _copy_symlink_as_abs() {
     elif [[ "$abs_target" == */.temp/* ]]; then
         abs_target=$(echo "$abs_target" | sed 's|/.temp/|/|g')
     fi
+
+    # Retirer le suffixe $UID pour des chemins portables dans le cache
+    for prefix in lgp-saves lgp-extra lgp-temp lgpackmount edenln \
+                  lgp-temp-upper lgp-temp-work \
+                  lgp-full-overlay lgp-full-overlay-upper lgp-full-overlay-work; do
+        abs_target="${abs_target/\/tmp\/$prefix-$UID\//\/tmp\/$prefix/}"
+    done
 
     # Si la cible est dans le dossier source (.save/.extra/.temp), la convertir vers la destination réelle
     if [ -n "$src_base_dir" ] && [ -n "$dst_base_dir" ]; then
@@ -1035,8 +1046,8 @@ run_lgp_mode() {
         setup_saves_symlink setup_extras_symlink setup_temp_symlink \
         cleanup_saves_symlink cleanup_extras_symlink cleanup_temp_symlink \
         prepare_saves prepare_extras prepare_temps prepare_full_overlay \
-        _copy_dir_with_symlinks _copy_symlink_as_abs _copy_dir_contents \
-        _copy_dir_recursive \
+        _copy_dir_with_symlinks _copy_symlink_as_abs \
+        _copy_dir_contents _copy_dir_recursive \
         execute_prelaunch_script read_lgp_config load_env_files load_env_file \
         has_saves has_extras has_temps \
         error_exit cleanup_lgp launch_game \
