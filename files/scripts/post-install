@@ -93,7 +93,7 @@ fi
 
 # Installation de ZXTune (lecteur de musique tracker/chiptune)
 # Exclusion des binaires non nécessaires
-curl -s https://storage.zxtune.ru/builds/public/r5100/linux/x86_64/zxtune_r5101_linux_x86_64.tar.gz | tar -xzf - -C / --exclude=./usr/bin/zxtune123 --exclude=./usr/bin/xtractor
+curl -s https://storage.zxtune.ru/builds/public/r5100/linux/x86_64/zxtune_r5100_linux_x86_64.tar.gz | tar -xzf - -C / --exclude=./usr/bin/zxtune123 --exclude=./usr/bin/xtractor
 
 # =============================================================================
 # BRANDING GABLUE
