@@ -35,6 +35,10 @@ systemctl --global enable flatpak-user-update.timer
 systemctl enable cec-poweroff-tv.service
 systemctl enable cec-active-source.timer
 
+# Mémoire : activation du service dmemcg-booster pour optimiser la gestion mémoire
+systemctl enable dmemcg-booster-system.service
+systemctl --global enable dmemcg-booster-user.service
+
 # =============================================================================
 # SERVICES OPENGAMEPADUI (EXPERIMENTAL - TEST UNIQUEMENT)
 # =============================================================================
