@@ -144,7 +144,8 @@ dnf5 -y --enable-repo=terra-mesa install \
 dnf5 -y install \
     gamemode \
     gamemode.i686 \
-    dmemcg-booster
+    dmemcg-booster \
+    uresourced
 
 # =============================================================================
 # EXTENSIONS KDE (UNIQUEMENT KINOITE)
