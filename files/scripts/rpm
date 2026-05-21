@@ -145,7 +145,7 @@ dnf5 -y install \
     gamemode \
     gamemode.i686 \
     dmemcg-booster \
-    uresourced
+    plasma-foreground-booster-dmemcg
 
 # =============================================================================
 # EXTENSIONS KDE (UNIQUEMENT KINOITE)

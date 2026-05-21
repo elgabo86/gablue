@@ -30,9 +30,6 @@ systemctl --global enable flatpak-user-update.timer
 systemctl enable cec-poweroff-tv.service
 systemctl enable cec-active-source.timer
 
-# Mémoire et CPU : activation des services dmemcg-booster et uresourced
+# Mémoire et CPU : activation des services dmemcg-booster
 systemctl enable dmemcg-booster-system.service
 systemctl --global enable dmemcg-booster-user.service
-systemctl enable uresourced.service
-systemctl --global enable uresourced.service
-sed -i -e 's/^ActiveCPUWeight=.*/ActiveCPUWeight=10000/' /etc/uresourced.conf
