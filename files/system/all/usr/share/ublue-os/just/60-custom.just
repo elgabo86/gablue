@@ -578,6 +578,18 @@ windows-remove:
     update-desktop-database ~/.local/share/applications &&
     echo "ALL DONE!!!"
 
+# Enable TPM CRB polling mode (fix slow boot on AMD fTPM)
+tpm-polling-enable:
+    #!/usr/bin/bash
+    rpm-ostree kargs --append-if-missing=tpm_crb.interrupts=0
+    echo "TPM CRB polling mode enabled. Reboot required."
+
+# Disable TPM CRB polling mode
+tpm-polling-disable:
+    #!/usr/bin/bash
+    rpm-ostree kargs --delete-if-present=tpm_crb.interrupts=0
+    echo "TPM CRB polling mode disabled. Reboot required."
+
 # Enable special scheduler for gaming (experimental)
 scx-enable:
     sudo systemctl enable scx.service --now
