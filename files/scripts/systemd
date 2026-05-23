@@ -13,6 +13,13 @@ systemctl enable -f system-flatpak-setup.service
 systemctl disable -f scx_loader.service
 systemctl disable -f tailscaled.service
 systemctl disable -f displaylink.service
+mkdir -p /etc/systemd/system/NetworkManager-wait-online.service.d
+cat > /etc/systemd/system/NetworkManager-wait-online.service.d/override.conf << 'EOF'
+[Service]
+Type=oneshot
+ExecStart=
+ExecStart=/bin/true
+EOF
 
 systemctl mask systemd-remount-fs.service
 

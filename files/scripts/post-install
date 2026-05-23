@@ -269,13 +269,4 @@ if [ "${DX_MODE:-false}" == "true" ]; then
 iptable_nat
 EOF
 
-    # Optimisation du démarrage avec Docker activé
-    # Évite les ralentissements au démarrage quand Docker est activé
-    mkdir -p /etc/systemd/system/NetworkManager-wait-online.service.d
-    cat > /etc/systemd/system/NetworkManager-wait-online.service.d/override.conf << 'EOF'
-[Service]
-Type=oneshot
-ExecStart=
-ExecStart=/bin/true
-EOF
 fi
