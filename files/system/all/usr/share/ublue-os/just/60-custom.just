@@ -687,6 +687,20 @@ create-iso-nvidia:
     sudo podman run --rm --rmi --privileged --volume $(xdg-user-dir DOWNLOAD):/build-container-installer/build --security-opt label=disable ghcr.io/jasonn3/build-container-installer:latest VERSION=42 IMAGE_REPO=ghcr.io/elgabo86 IMAGE_NAME=gablue-nvidia IMAGE_TAG=latest VARIANT=Kinoite ISO_NAME=build/gablue-nvidia.iso &&
     echo "The gablue iso is ready in your download folder"
 
+# Enable vulkan-low-latency-layer globally (Anti-Lag 2 / Reflex 2 on any GPU)
+low-latency-enable:
+    #!/usr/bin/bash
+    sudo tee /etc/profile.d/vulkan-low-latency.sh > /dev/null << 'EOF'
+export LOW_LATENCY_LAYER=1
+EOF
+    echo "Vulkan low-latency layer enabled globally. Reboot or relog for changes to take effect."
+
+# Disable vulkan-low-latency-layer globally
+low-latency-disable:
+    #!/usr/bin/bash
+    sudo rm -f /etc/profile.d/vulkan-low-latency.sh
+    echo "Vulkan low-latency layer disabled globally. Reboot or relog for changes to take effect."
+
 # Enroll Gablue Secure Boot key - Enter password "secureblue" if prompted
 secureboot:
     #!/usr/bin/bash
