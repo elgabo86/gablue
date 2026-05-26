@@ -6013,6 +6013,7 @@ build_bwrap_env_vars() {
     [ -n "${STAGING_SHARED_MEMORY:-}" ] && bwrap_add --setenv STAGING_SHARED_MEMORY "$STAGING_SHARED_MEMORY"
     [ -n "${WINEFSYNC:-}" ] && bwrap_add --setenv WINEFSYNC "$WINEFSYNC"
     [ -n "${PULSE_LATENCY_MSEC:-}" ] && bwrap_add --setenv PULSE_LATENCY_MSEC "$PULSE_LATENCY_MSEC"
+    [ -n "${LOW_LATENCY_LAYER:-}" ] && bwrap_add --setenv LOW_LATENCY_LAYER "$LOW_LATENCY_LAYER"
     [ -n "${LC_ALL:-}" ] && bwrap_add --setenv LC_ALL "$LC_ALL"
     [ -n "${WINE_MONO_HIDETYPES:-}" ] && bwrap_add --setenv WINE_MONO_HIDETYPES "$WINE_MONO_HIDETYPES"
     [ -n "${WINEDEBUG:-}" ] && bwrap_add --setenv WINEDEBUG "$WINEDEBUG"
