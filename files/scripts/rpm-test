@@ -148,6 +148,9 @@ dnf5 -y install \
 dnf5 -y install --skip-unavailable \
     plasma-foreground-booster-dmemcg
 
+# Couche Vulkan basse latence (Anti-Lag 2 / Reflex 2, hardware-agnostic)
+dnf5 -y install vulkan-low-latency-layer
+
 # =============================================================================
 # EXTENSIONS KDE (UNIQUEMENT KINOITE)
 # =============================================================================
