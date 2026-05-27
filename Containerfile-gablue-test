@@ -24,6 +24,7 @@ ARG KERNEL_VERSION
 
 # Copie des sources C pour compilation
 COPY src/gamepadshortcuts /src/gamepadshortcuts
+COPY src/ds2xbox /src/ds2xbox
 
 # Copie des fichiers système dans l'image
 COPY files/scripts /ctx/
