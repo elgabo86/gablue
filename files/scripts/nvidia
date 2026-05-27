@@ -62,6 +62,10 @@ else
     exit 1
 fi
 
+# Réactivation de terra après l'installation NVIDIA (désactivé avant pour éviter
+# le conflit terra-obsolete vs supergfxctl)
+dnf5 -y config-manager setopt "terra".enabled=1
+
 # =============================================================================
 # CONFIGURATION POST-INSTALLATION
 # =============================================================================
