@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -O2 -std=c11 -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE
+CFLAGS = -Wall -Wextra -O2 -std=c11 -D_GNU_SOURCE
 LDFLAGS = -lpthread
 TARGET = ds2xbox
 
