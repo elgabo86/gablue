@@ -22,6 +22,15 @@ else
     echo "ATTENTION: Sources C non trouvees dans /src/gamepadshortcuts"
 fi
 
+# Compilation et installation de ds2xbox
+# Emulateur de manette Xbox 360 pour manettes Sony (DualSense, DualShock 4)
+if [ -d /src/ds2xbox ]; then
+    make -C /src/ds2xbox install DESTDIR=
+    rm -rf /src/ds2xbox
+else
+    echo "ATTENTION: Sources C non trouvees dans /src/ds2xbox"
+fi
+
 # Nettoyage du paquet -devel (inutile dans l'image finale, seul libdbus-1.so est requis)
 dnf5 -y remove dbus-devel || true
 
