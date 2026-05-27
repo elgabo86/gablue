@@ -18,6 +18,11 @@ dnf5 -y remove nvidia-gpu-firmware
 # Activation du dépôt Terra Mesa temporairement pour egl-wayland et Mesa i686
 dnf5 -y config-manager setopt "terra-mesa".enabled=1
 
+# Activation explicite du staging (nécessaire pour supergfxctl)
+# Alignement avec Bazzite : enable staging avant nvidia-install.sh
+# car le sed interne du script utilise l'ancien format de nom dnf4
+dnf5 -y copr enable ublue-os/staging
+
 # =============================================================================
 # INSTALLATION EGL-WAYLAND
 # =============================================================================
