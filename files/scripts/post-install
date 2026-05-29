@@ -37,6 +37,7 @@ chmod +x /usr/bin/lgp-thumbnailer
 chmod +x /usr/bin/wgp-thumbnailer
 chmod +x /usr/bin/ds2xbox
 chmod +x /usr/bin/gamepadshortcuts
+chmod +x /usr/bin/tv
 
 # Rendre exécutables les scripts d'administration Gablue
 chmod +x /usr/bin/gablue-update
