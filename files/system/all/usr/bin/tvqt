@@ -5,12 +5,14 @@ import os
 import sys
 import json
 import subprocess
-from PySide6.QtCore import Qt, QSize, QPoint, QRect
-from PySide6.QtGui import QIcon
+import shiboken6
+from PySide6.QtCore import Qt, QSize, QPoint, QRect, QUrl
+from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QScrollArea,
-    QVBoxLayout, QHBoxLayout, QPushButton,
-    QLabel, QFrame, QGridLayout, QCheckBox, QLayout, QSizePolicy,
+    QVBoxLayout, QHBoxLayout, QPushButton, QToolButton,
+    QLabel, QFrame, QCheckBox, QLayout, QSizePolicy,
 )
 
 BASE = "https://viamotionhsi.netplus.ch/live/eds"
@@ -18,6 +20,8 @@ SUFFIX = "/browser-HLS8"
 
 CONFIG_DIR = os.path.expanduser("~/.cache/gablue-tv")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "settings.json")
+LOGO_DIR = os.path.join(CONFIG_DIR, "logos")
+LOGO_BASE = "https://picserve.netplus.ch/channels"
 
 CHANNELS = [
     ("rts1hd",        "RTS Un",            "🇨🇭 Suisse"),
@@ -92,6 +96,7 @@ CHANNELS = [
     ("monacotv",      "TVMonaco",          "🇫🇷 France"),
     ("euronews",      "Euronews",          "🇫🇷 France"),
     ("mezzo",         "Mezzo",             "🇫🇷 France"),
+    ("maxtv",         "DieuTV",            "🇫🇷 France"),
     ("zdfhd",         "ZDF",               "🇩🇪 Allemagne"),
     ("zdfinfohd",     "ZDFinfo",           "🇩🇪 Allemagne"),
     ("zdfneohd",      "ZDFneo",            "🇩🇪 Allemagne"),
@@ -124,6 +129,13 @@ CHANNELS = [
     ("servustvhd",    "ServusTV",          "🇩🇪 Allemagne"),
     ("anixe",         "Anixe",             "🇩🇪 Allemagne"),
     ("bralpha",       "ARD alpha",         "🇩🇪 Allemagne"),
+    ("daserstehd",    "Das Erste",         "🇩🇪 Allemagne"),
+    ("kabeleins",     "Kabel 1",           "🇩🇪 Allemagne"),
+    ("mdr",           "MDR",               "🇩🇪 Allemagne"),
+    ("pro7",          "ProSieben",         "🇩🇪 Allemagne"),
+    ("sat1gold",      "SAT.1 Gold",        "🇩🇪 Allemagne"),
+    ("sateins",       "SAT.1",             "🇩🇪 Allemagne"),
+    ("sixx",          "Sixx",              "🇩🇪 Allemagne"),
     ("orf1",          "ORF 1",             "🇦🇹 Autriche"),
     ("orf2",          "ORF 2",             "🇦🇹 Autriche"),
     ("atv",           "ATV2",              "🇦🇹 Autriche"),
@@ -180,6 +192,8 @@ CHANNELS = [
     ("rtssat",        "PTC CBET",          "🌍 Europe Est"),
     ("rtcg",          "MNE",               "🌍 Europe Est"),
     ("trtturk",       "TRT Turk",          "🌍 Europe Est"),
+    ("rtk1",          "RTK1 SAT",          "🌍 Europe Est"),
+    ("tvrinternational","TVR International","🌍 Europe Est"),
     ("alarabiya",     "Al Arabiya",        "🌍 Monde arabe"),
     ("almaghribia",   "Al Maghribia",      "🌍 Monde arabe"),
     ("almasriyah",    "Al Masriyah",       "🌍 Monde arabe"),
@@ -273,8 +287,12 @@ class TVLauncher(QMainWindow):
         super().__init__()
         self.setWindowTitle("Gablue TV")
         self.setWindowIcon(QIcon.fromTheme("video-display"))
-        self.resize(620, 720)
+        self.resize(900, 650)
         self._settings = self._load_settings()
+        os.makedirs(LOGO_DIR, exist_ok=True)
+        self._net = QNetworkAccessManager(self)
+        self._net.finished.connect(self._on_logo_downloaded)
+        self._logo_buttons = {}
         self._setup_ui()
 
     def _load_settings(self):
@@ -378,14 +396,44 @@ class TVLauncher(QMainWindow):
                 self._flow.addWidget(header)
                 last_country = country
 
-            btn = QPushButton(label)
-            btn.setFixedHeight(34)
-            btn.setMinimumWidth(120)
+            btn = QToolButton()
+            btn.setText(label)
+            btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            btn.setIconSize(QSize(56, 56))
+            btn.setFixedSize(120, 76)
             btn.setCursor(Qt.PointingHandCursor)
-            btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             url = f"{BASE}/{ch_id}{SUFFIX}/{ch_id}.m3u8"
             btn.clicked.connect(lambda checked, u=url: self._play(u))
             self._flow.addWidget(btn)
+            self._load_logo(ch_id, btn)
+
+    def _load_logo(self, ch_id, btn):
+        cache_path = os.path.join(LOGO_DIR, f"{ch_id}.png")
+        if os.path.exists(cache_path):
+            btn.setIcon(QIcon(cache_path))
+            return
+        self._logo_buttons[ch_id] = btn
+        url = f"{LOGO_BASE}/{ch_id}.png"
+        self._net.get(QNetworkRequest(QUrl(url)))
+
+    def _on_logo_downloaded(self, reply):
+        url_path = reply.url().path()
+        ch_id = os.path.splitext(os.path.basename(url_path))[0]
+        err = reply.error()
+        if err != QNetworkReply.NetworkError.NoError:
+            print(f"[LOGO] Erreur {ch_id}: {reply.errorString()}", file=sys.stderr)
+            return
+        cache_path = os.path.join(LOGO_DIR, f"{ch_id}.png")
+        data = reply.readAll().data()
+        print(f"[LOGO] OK {ch_id}: {len(data)} bytes", file=sys.stderr)
+        with open(cache_path, "wb") as f:
+            f.write(data)
+        btn = self._logo_buttons.pop(ch_id, None)
+        if btn and not shiboken6.isValid(btn):
+            btn = None
+        if btn:
+            btn.setIcon(QIcon(cache_path))
 
     def _play(self, url):
         cmd = ["mpv", "--no-terminal", "--profile=fast"]
@@ -407,10 +455,12 @@ def main():
     app.setStyle("Fusion")
     app.setStyleSheet("""
         QMainWindow { background-color: #1a1a2e; }
-        QPushButton { background-color: #16213e; color: #e0e0e0; border: 1px solid #0f3460;
-                      border-radius: 4px; padding: 4px 10px; font-size: 13px; text-align: left; }
-        QPushButton:hover { background-color: #0f3460; border-color: #e6b800; }
-        QPushButton:pressed { background-color: #0a2350; }
+        QPushButton, QToolButton { background-color: #16213e; color: #e0e0e0; border: 1px solid #0f3460;
+                      border-radius: 6px; font-size: 13px; }
+        QPushButton { padding: 4px 10px; }
+        QToolButton { padding: 6px 2px 1px 2px; font-size: 11px; }
+        QPushButton:hover, QToolButton:hover { background-color: #0f3460; border-color: #e6b800; }
+        QPushButton:pressed, QToolButton:pressed { background-color: #0a2350; }
         QPushButton:checked { background-color: #0f3460; border-color: #e6b800; color: #e6b800; }
         QCheckBox { color: #ddd; font-size: 12px; font-weight: bold; }
         QCheckBox::indicator { width: 16px; height: 16px; }
