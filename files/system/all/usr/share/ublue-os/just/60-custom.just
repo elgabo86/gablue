@@ -691,8 +691,8 @@ create-iso-nvidia:
 low-latency-enable:
     #!/usr/bin/bash
     sudo tee /etc/profile.d/vulkan-low-latency.sh > /dev/null << 'EOF'
-export LOW_LATENCY_LAYER=1
-EOF
+    export LOW_LATENCY_LAYER=1
+    EOF
     echo "Vulkan low-latency layer enabled globally. Reboot or relog for changes to take effect."
 
 # Disable vulkan-low-latency-layer globally
