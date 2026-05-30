@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Gablue TV
+Comment=Lanceur IPTV pour les chaînes NetPlus
+Exec=tvqt
+Icon=video-display
+Categories=AudioVideo;TV;
+Terminal=false
+StartupNotify=false
