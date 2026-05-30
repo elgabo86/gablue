@@ -74,7 +74,9 @@ dnf5 -y install \
     rar
 
 # Outils multimédia
-dnf5 -y install yt-dlp
+dnf5 -y install \
+    yt-dlp \
+    mpv
 
 # =============================================================================
 # VIRTUALISATION ET CONTENEURS (MODE DX)
