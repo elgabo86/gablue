@@ -314,7 +314,8 @@ def main(stdscr):
             curses.endwin()
             print(f"▶️  {label} — connexion...")
             # mpv — démarrage HLS rapide (évite le pré-buffering fMP4 multi-programme)
-            cmd = ["mpv", "--fs", "--no-terminal", "--profile=fast", url]
+            cmd = ["mpv", "--fs", "--no-terminal", "--profile=fast",
+                   "--alang=fr,eng,ita,deu,spa,jpn,und", "--slang=fr,eng", url]
             subprocess.run(cmd)
             return
         elif 32 <= key <= 126:

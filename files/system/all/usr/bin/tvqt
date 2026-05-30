@@ -436,7 +436,8 @@ class TVLauncher(QMainWindow):
             btn.setIcon(QIcon(cache_path))
 
     def _play(self, url):
-        cmd = ["mpv", "--no-terminal", "--profile=fast"]
+        cmd = ["mpv", "--no-terminal", "--profile=fast",
+               "--alang=fr,eng,ita,deu,spa,jpn,und", "--slang=fr,eng"]
         if self.cb_fs.isChecked():
             cmd.append("--fs")
         cmd.append(url)
