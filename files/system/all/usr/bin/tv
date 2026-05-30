@@ -1,11 +1,15 @@
 #!/usr/bin/python3
-"""NetPlus IPTV picker — arrow keys, real-time filter, ffplay fullscreen."""
+"""NetPlus IPTV picker — arrow keys, real-time filter, mpv fullscreen."""
 
+import os
 import curses
 import subprocess
 
 BASE = "https://viamotionhsi.netplus.ch/live/eds"
 SUFFIX = "/browser-HLS8"
+MPV_BIN = "/usr/bin/mpv"
+if not os.path.exists(MPV_BIN):
+    MPV_BIN = "/home/linuxbrew/.linuxbrew/bin/mpv"
 
 CHANNELS = [
     # (id, label, country)
@@ -314,7 +318,7 @@ def main(stdscr):
             curses.endwin()
             print(f"▶️  {label} — connexion...")
             # mpv — démarrage HLS rapide (évite le pré-buffering fMP4 multi-programme)
-            cmd = ["mpv", "--fs", "--no-terminal", "--profile=fast",
+            cmd = [MPV_BIN, "--fs", "--no-terminal", "--profile=fast",
                    "--alang=fr,eng,ita,deu,spa,jpn,und", "--slang=fr,eng", url]
             subprocess.run(cmd)
             return

@@ -23,6 +23,10 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "settings.json")
 LOGO_DIR = os.path.join(CONFIG_DIR, "logos")
 LOGO_BASE = "https://picserve.netplus.ch/channels"
 
+MPV_BIN = "/usr/bin/mpv"
+if not os.path.exists(MPV_BIN):
+    MPV_BIN = "/home/linuxbrew/.linuxbrew/bin/mpv"
+
 CHANNELS = [
     ("rts1hd",        "RTS Un",            "🇨🇭 Suisse"),
     ("rts2hd",        "RTS Deux",          "🇨🇭 Suisse"),
@@ -353,8 +357,6 @@ class TVLauncher(QMainWindow):
             country_layout.addWidget(btn)
             self._country_btns[country] = btn
 
-        root.addLayout(country_bar)
-
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -436,7 +438,7 @@ class TVLauncher(QMainWindow):
             btn.setIcon(QIcon(cache_path))
 
     def _play(self, url):
-        cmd = ["mpv", "--no-terminal", "--profile=fast",
+        cmd = [MPV_BIN, "--no-terminal", "--profile=fast",
                "--alang=fr,eng,ita,deu,spa,jpn,und", "--slang=fr,eng"]
         if self.cb_fs.isChecked():
             cmd.append("--fs")
