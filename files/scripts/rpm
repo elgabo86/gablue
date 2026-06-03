@@ -262,6 +262,11 @@ fi
 # CORRECTIONS TEMPORAIRES
 # =============================================================================
 
+# Correction temporaire pour SELinux composefs/overlay (jeux 32-bit, JIT, etc.)
+# Workaround de ublue-os pour les denials execmem sur composefs/overlay
+# TODO: a supprimer quand le fix kernel/composefs sera disponible
+dnf5 -y install ublue-os-selinux-workarounds
+
 # Correction temporaire pour tesseract (nécessaire pour certaines fonctionnalités)
 dnf5 -y install \
     tesseract-devel \
