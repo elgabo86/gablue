@@ -482,6 +482,13 @@ Configuration post-installation étendue :
 **post-install-test** ajoute :
 - Permissions pour scripts OpenGamepadUI (steamos-session-select, gwine-plugin)
 
+**Correction composefs** (dans post-install, toutes variantes) :
+- Compile un LD_PRELOAD minimal (`gablue-composefs-fix.so`, ~2.6 Ko) qui intercepte `statfs`/`statfs64`
+- Corrige l'affichage de l'espace libre dans Dolphin sur les systèmes composefs (Fedora Kinoite 42+)
+- L'overlay composefs en `/` rapporte 0 blocs libres, le hook redirige `/`, `/home` et `/home/*` vers `/var/home` (btrfs)
+- Injection via `sed` dans le `.desktop` Dolphin (`Exec=env LD_PRELOAD=...`)
+- Sources dans `files/system/all/usr/src/composefs-fix/`
+
 ### 7. systemd / systemd-test
 
 Activation/désactivation des services systemd :
