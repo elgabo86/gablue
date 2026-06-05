@@ -84,7 +84,24 @@ if [ -d "$SELINUX_PACKAGES_DIR" ]; then
             
             # Nettoyage des fichiers temporaires de compilation
             rm -f "$mod_file"
-        fi
+fi
+
+# =============================================================================
+# CORRECTION COMPOSEFS - ESPACE DISQUE DOLPHIN
+# =============================================================================
+
+# Compile un LD_PRELOAD qui intercepte statfs/statfs64 pour corriger
+# l'affichage de l'espace libre sur les systemes composefs.
+# L'overlay composefs en / rapporte 0 blocs libres ; le hook redirige
+# les appels vers /var/home (btrfs) pour /, /home et /home/*.
+# Injection via le .desktop Dolphin (teste et fonctionnel, les workers
+# KIO heritent de l'environnement du processus parent).
+if [ -d /usr/src/composefs-fix ]; then
+    make -C /usr/src/composefs-fix install
+    sed -i 's|^Exec=dolphin %u|Exec=env LD_PRELOAD=/usr/lib64/gablue-composefs-fix.so dolphin %u|' \
+        /usr/share/applications/org.kde.dolphin.desktop
+    rm -rf /usr/src/composefs-fix
+fi
     done && unset -v te_file module_name mod_file pp_file
 fi
 
