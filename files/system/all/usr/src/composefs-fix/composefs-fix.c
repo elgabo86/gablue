@@ -19,29 +19,46 @@ struct statfs {
     long f_spare[4];
 };
 
+#define OVERLAYFS_SUPER_MAGIC 0x794C7630
+
 static int (*real_statfs)(const char *, struct statfs *) = NULL;
 
 __attribute__((constructor))
-static void init(void) {
+static void init(void)
+{
     real_statfs = (int (*)(const char *, struct statfs *))dlsym(RTLD_NEXT, "statfs");
 }
 
-static int redirect(const char *path, struct statfs *buf, int ret) {
-    if (ret != 0 || !buf || buf->f_type != 0x794C7630 || buf->f_bavail > 0)
+static int redirect(const char *path, struct statfs *buf, int ret)
+{
+    if (ret != 0 || !path || !buf)
         return ret;
-    const char *t = NULL;
-    char a[4096];
-    if (strcmp(path, "/") == 0 || strcmp(path, "/home") == 0) t = "/var/home";
-    else if (strncmp(path, "/home/", 6) == 0) { snprintf(a, sizeof(a), "/var/home/%s", path+6); t = a; }
-    return t ? real_statfs(t, buf) : ret;
+    if (buf->f_type != OVERLAYFS_SUPER_MAGIC || buf->f_bavail > 0)
+        return ret;
+
+    const char *target = NULL;
+    char alt[4096];
+
+    if (strcmp(path, "/") == 0 || strcmp(path, "/home") == 0) {
+        target = "/var/home";
+    } else if (strncmp(path, "/home/", 6) == 0) {
+        snprintf(alt, sizeof(alt), "/var/home/%s", path + 6);
+        target = alt;
+    }
+
+    return target ? real_statfs(target, buf) : ret;
 }
 
-int statfs(const char *path, struct statfs *buf) {
-    if (!real_statfs) init();
-    return redirect(path, buf, real_statfs ? real_statfs(path, buf) : -1);
+int statfs(const char *path, struct statfs *buf)
+{
+    if (!real_statfs)
+        init();
+    return redirect(path, buf, real_statfs(path, buf));
 }
 
-int statfs64(const char *path, struct statfs *buf) {
-    if (!real_statfs) init();
-    return redirect(path, buf, real_statfs ? real_statfs(path, buf) : -1);
+int statfs64(const char *path, struct statfs *buf)
+{
+    if (!real_statfs)
+        init();
+    return redirect(path, buf, real_statfs(path, buf));
 }
