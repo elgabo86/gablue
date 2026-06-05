@@ -52,6 +52,7 @@ dnf5 -y install \
     nmap \
     plocate \
     squashfuse \
+    fuse-libs \
     icoutils \
     evtest
 
