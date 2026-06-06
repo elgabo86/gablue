@@ -224,6 +224,7 @@ if [ -f /usr/share/applications/mimeapps.list ]; then
     # Ajouter ou remplacer les associations MIME pour Windows.desktop
     for mimetype in \
         "application/x-ms-dos-executable" \
+        "application/vnd.microsoft.portable-executable" \
         "application/x-msi" \
         "application/x-ms-shortcut" \
         "application/x-wine-extension-msp" \
