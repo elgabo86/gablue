@@ -470,6 +470,25 @@ toggle-iwd:
         ;;
     esac
 
+# Enable proprietary Broadcom wl driver for legacy WiFi chips (BCM4360 on old MacBooks)
+# Blacklists open-source drivers (b43, bcma, brcmfmac) so wl can take over
+configure-broadcom-wl:
+    #!/usr/bin/bash
+    printf '%s\n' \
+        'install wl /sbin/modprobe --ignore-install wl' \
+        'blacklist b43' \
+        'blacklist bcma' \
+        'blacklist brcmfmac' \
+        | sudo tee /etc/modprobe.d/wl-enable.conf > /dev/null
+    echo "Driver Broadcom wl activé. Redémarrage requis."
+    echo "Pour revenir en arrière : ujust revert-broadcom-wl"
+
+# Disable proprietary Broadcom wl driver, restore open-source defaults
+revert-broadcom-wl:
+    #!/usr/bin/bash
+    sudo rm -f /etc/modprobe.d/wl-enable.conf
+    echo "Driver Broadcom wl désactivé (drivers open-source par défaut). Redémarrage requis."
+
 # Install ble and atuin, for history bash sync and more
 atuin-setup:
     #!/usr/bin/bash
