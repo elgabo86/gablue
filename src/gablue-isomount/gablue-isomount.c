@@ -10,6 +10,7 @@
  *   - Si le device est occupe, attend sa liberation avant demontage
  */
 
+#define _GNU_SOURCE
 #include <dbus/dbus.h>
 #include <errno.h>
 #include <fcntl.h>
