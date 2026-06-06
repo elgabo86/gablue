@@ -299,6 +299,9 @@ fi
 # correct du panneau Devices de Dolphin
 for mime in application/x-cd-image application/x-iso9660-image \
             application/x-raw-disk-image application/vnd.efi.iso \
-            application/vnd.efi.img; do
+            application/vnd.efi.img application/x-apple-diskimage \
+            application/x-compressed-iso application/x-raw-cd-image \
+            application/x-raw-floppy-disk-image \
+            application/x-raw-disk-image-xz-compressed; do
     xdg-mime default gablue-open-iso.desktop "$mime" || true
 done && unset -v mime

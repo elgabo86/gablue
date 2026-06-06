@@ -2,7 +2,7 @@
 Type=Application
 Name=Monter l'image disque
 Exec=/usr/bin/gablue-isomount %f
-MimeType=application/x-cd-image;application/x-iso9660-image;application/x-raw-disk-image;application/vnd.efi.iso;application/vnd.efi.img;
+MimeType=application/x-cd-image;application/x-iso9660-image;application/x-raw-disk-image;application/vnd.efi.iso;application/vnd.efi.img;application/x-apple-diskimage;application/x-compressed-iso;application/x-raw-cd-image;application/x-raw-floppy-disk-image;application/x-raw-disk-image-xz-compressed;
 NoDisplay=true
 X-KDE-StartupNotify=false
 Icon=media-optical
