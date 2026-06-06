@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+Name=Monter
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=application/x-cd-image;application/x-iso9660-image;application/x-raw-disk-image;application/vnd.efi.iso;application/vnd.efi.img;
+Actions=MountISO
+
+[Desktop Action MountISO]
+Name=Monter
+Icon=media-optical
+Exec=/usr/bin/gablue-isomount %f

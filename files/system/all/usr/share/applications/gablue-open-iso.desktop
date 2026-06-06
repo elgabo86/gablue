@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Monter l'image disque
+Exec=/usr/bin/gablue-isomount %f
+MimeType=application/x-cd-image;application/x-iso9660-image;application/x-raw-disk-image;application/vnd.efi.iso;application/vnd.efi.img;
+NoDisplay=true
+X-KDE-StartupNotify=false
+Icon=media-optical

@@ -31,6 +31,16 @@ else
     echo "ATTENTION: Sources C non trouvees dans /src/ds2xbox"
 fi
 
+# Compilation et installation de gablue-isomount
+# Remplace le plugin dolphin-plugins mountisoaction (defectueux, bug KDE #471487)
+# Monte les images disque via UDisks2 et assure le rafraichissement du panneau Devices
+if [ -d /src/gablue-isomount ]; then
+    make -C /src/gablue-isomount install DESTDIR=
+    rm -rf /src/gablue-isomount
+else
+    echo "ATTENTION: Sources C non trouvees dans /src/gablue-isomount"
+fi
+
 # Nettoyage du paquet -devel (inutile dans l'image finale, seul libdbus-1.so est requis)
 dnf5 -y remove dbus-devel || true
 

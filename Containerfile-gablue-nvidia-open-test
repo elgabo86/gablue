@@ -23,6 +23,7 @@ ARG KERNEL_VERSION
 # Copie des sources C pour compilation
 COPY src/gamepadshortcuts /src/gamepadshortcuts
 COPY src/ds2xbox /src/ds2xbox
+COPY src/gablue-isomount /src/gablue-isomount
 
 # Copie des fichiers système dans l'image
 COPY files/scripts /ctx/
@@ -31,6 +32,10 @@ COPY files/system/all /
 COPY files/system/${SOURCE_IMAGE} /
 COPY files/system/nvidia-open /
 COPY files/system/test /
+
+# Supprimer le plugin natif dolphin-plugins mountisoaction (bug KDE #471487)
+# Remplace par gablue-isomount (compilation dans build-c)
+RUN rm -f /usr/lib64/qt6/plugins/kf6/kfileitemaction/mountisoaction.so
 
 # Définition des variables d'environnement pour les scripts
 ENV SOURCE_IMAGE=${SOURCE_IMAGE}
