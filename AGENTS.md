@@ -55,8 +55,11 @@ Le projet construit 6 variantes distinctes :
 ├── Containerfile-gablue-nvidia-open-test  # Containerfile pour nvidia-open-test
 ├── cosign.pub                             # Clé publique pour signature
 ├── src/
-│   └── gamepadshortcuts/                  # Sources C du gestionnaire de raccourcis manette
-│       ├── gamepadshortcuts.c             # Programme principal (inotify VT, evdev)
+│   ├── gamepadshortcuts/                  # Sources C du gestionnaire de raccourcis manette
+│   │   ├── gamepadshortcuts.c             # Programme principal (inotify VT, evdev)
+│   │   └── Makefile                       # Compilation
+│   └── gablue-isomount/                    # Sources C du monteur d'images disque
+│       ├── gablue-isomount.c              # Programme principal (UDisks2 DBus, Dolphin)
 │       └── Makefile                       # Compilation
 ├── files/
 │   ├── scripts/                           # Scripts d'installation bash
@@ -683,6 +686,19 @@ Gestionnaire principal des raccourcis manette en C natif (~500 Ko RAM) :
   - Une instance par session (autostart KDE)
   - Filtrage des événements quand le VT n'est pas actif (pas de conflit entre sessions)
   - Reprise automatique au retour sur le VT
+
+### Binaire gablue-isomount (/usr/bin)
+
+Monteur d'images disque en C natif (~2.7 Mo RAM) :
+- `gablue-isomount` : Remplace le plugin dolphin-plugins mountisoaction (bug KDE #471487)
+- Monte les fichiers ISO/IMG/EFI via l'API UDisks2 DBus (LoopSetup + Filesystem.Mount)
+- Ouvre une nouvelle fenêtre Dolphin sur le point de montage (panneau Devices à jour)
+- Démontage automatique quand toutes les instances Dolphin sont fermées
+- Si le device est occupé (autre programme), attend sa libération avant démontage
+- Si l'image est déjà montée, ouvre juste une nouvelle fenêtre sans remonter
+- Service menu KDE : clic droit → "Monter" (remplace l'action native)
+- Double-clic : défini comme application par défaut pour les types MIME ISO/IMG/EFI
+- Log dans `/tmp/gablue-isomount.log`
 
 ### Scripts gamepadshortcuts (/usr/share/ublue-os/gablue/scripts/gamepadshortcuts)
 
