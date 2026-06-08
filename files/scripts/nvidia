@@ -34,6 +34,15 @@ dnf5 -y install \
     egl-wayland2.x86_64 \
     egl-wayland2.i686
 
+# Remplacement de kwin par la version patchée de bazzite-multilib
+# Correction pour compatibilité avec le dernier driver NVIDIA
+declare -A toswap=( \
+    ["copr:copr.fedorainfracloud.org:ublue-os:bazzite-multilib"]="kwin" \
+) && \
+for repo in "${!toswap[@]}"; do \
+    for package in ${toswap[$repo]}; do dnf5 -y swap --from-repo=$repo $package $package; done; \
+done && unset -v toswap repo package
+
 # =============================================================================
 # INSTALLATION PILOTES NVIDIA
 # =============================================================================
