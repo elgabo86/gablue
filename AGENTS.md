@@ -492,6 +492,14 @@ Configuration post-installation étendue :
 - Injection via `sed` dans le `.desktop` Dolphin (`Exec=env LD_PRELOAD=...`)
 - Sources dans `files/system/all/usr/src/composefs-fix/`
 
+**Correction plasmalogin settle udev** (TEMPORAIRE, toutes variantes) :
+- **Problème** : plasmalogin.service exécute `udevadm settle --timeout=10` avant de démarrer le greeter, ce qui provoque un écran noir de 10s sur certaines cartes mères (queue udev jamais vide)
+- **Fix** : drop-in `plasmalogin.service.d/90-gablue-settle.conf` remplace le settle aveugle par `/usr/libexec/gablue-wait-devices`
+- **Script** : attend que `/dev/dri/card*` et `/dev/input/event*` existent, puis 1s de délai fixe pour les docks/HID lents (timeout global 5s)
+- **Impact** : passe de ~10.2s à ~1.1s sur les systèmes affectés (fixe upstream KDE `a8c752fe` trop conservateur)
+- **À SUPPRIMER** quand Fedora/KDE réduit le timeout du settle natif ou adopte une approche plus ciblée
+- Fichiers : `files/system/all/usr/libexec/gablue-wait-devices`, `files/system/all/usr/lib/systemd/system/plasmalogin.service.d/90-gablue-settle.conf`
+
 ### 7. systemd / systemd-test
 
 Activation/désactivation des services systemd :

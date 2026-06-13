@@ -1,0 +1,18 @@
+#!/usr/bin/bash
+# Attend que le GPU et les périphériques d'entrée soient prêts
+# puis laisse un court délai pour les docks/HID lents
+# 
+# TEMPORAIRE : a supprimer quand Fedora/KDE corrige le plasmalogin
+# pour ne plus utiliser un settle udev aveugle de 10 secondes.
+# Voir invent.kde.org/plasma/plasma-login-manager/-/commit/a8c752fe
+set -e
+TIMEOUT=5
+
+for ((i=0; i<TIMEOUT*10; i++)); do
+    if compgen -G "/dev/dri/card*" > /dev/null && compgen -G "/dev/input/event*" > /dev/null; then
+        sleep 1
+        exit 0
+    fi
+    sleep 0.1
+done
+exit 0
