@@ -55,20 +55,27 @@ fi
 # PREPARATION
 # =============================================================================
 
+# Resolution max de sortie (downscale si l'ecran est plus grand). Override possible :
+# RECORD_RES=2560x1440 /path/vers/startstoprecord
+RECORD_RES="${RECORD_RES:-1920x1080}"
+
 video="$HOME/Vidéos/Captures/$(date +"Video_%Y-%m-%d_%H-%M-%S.mp4")"
 mkdir -p "$(dirname "$video")"
 
-CONFIG_FILE="$HOME/.var/app/com.dec05eba.gpu_screen_recorder/config/gpu-screen-recorder/config"
+# FPS lu depuis MangoHud.conf (fps_limit=N ou format dual N,M). Fallback 60 si absent / 0 (uncapped).
+MANGOHUD_CONF="$HOME/.config/MangoHud/MangoHud.conf"
 
-if [ -f "$CONFIG_FILE" ]; then
-    FPS=$(grep '^main.fps' "$CONFIG_FILE" | awk '{print $2}')
-    [ -z "$FPS" ] && FPS=60
+if [ -f "$MANGOHUD_CONF" ]; then
+    FPS=$(grep -E '^[[:space:]]*fps_limit[[:space:]]*=' "$MANGOHUD_CONF" | head -1 | awk -F'=' '{print $2}' | awk -F',' '{print $1}' | tr -d '[:space:]')
+    if [ -z "$FPS" ] || [ "$FPS" -eq 0 ] 2>/dev/null; then
+        FPS=60
+    fi
 else
     FPS=60
 fi
 
-COMMANDE_INTEL="flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -f $FPS -a default_output -q medium -o '$video'"
-COMMANDE_AUTRE="flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -f $FPS -a default_output -o '$video'"
+COMMANDE_INTEL="flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -s $RECORD_RES -f $FPS -a default_output -q medium -o '$video'"
+COMMANDE_AUTRE="flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -cursor no -w screen -s $RECORD_RES -f $FPS -a default_output -o '$video'"
 
 # =============================================================================
 # LANCEMENT
