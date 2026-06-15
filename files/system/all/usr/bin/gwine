@@ -2718,6 +2718,15 @@ COMPONENT_SHA256[openal]="d165bcb7628fd950d14847585468cc11943b2a1da92a59a839d397
 COMPONENT_URLS[physx]="https://us.download.nvidia.com/Windows/9.23.1019/PhysX_9.23.1019_SystemSoftware.exe"
 COMPONENT_SHA256[physx]="9b42b84e881769d681e09f62a1b51532616b2e6a2d5d99d0ccae6eb5fbbc208c"
 
+COMPONENT_URLS[wsh57]="https://download.microsoft.com/download/4/4/d/44de8a9e-630d-4c10-9f17-b9b34d3f6417/scripten.exe"
+COMPONENT_SHA256[wsh57]="63c781b9e50bfd55f10700eb70b5c571a9bedfd8d35af29f6a22a77550df5e7b"
+
+COMPONENT_URLS[wmp9]="https://web.archive.org/web/20180404022333if_/download.microsoft.com/download/1/b/c/1bc0b1a3-c839-4b36-8f3c-19847ba09299/MPSetup.exe"
+COMPONENT_SHA256[wmp9]="678c102847c18a92abf13c3fae404c3473a0770c871a046b45efe623c9938fc0"
+
+COMPONENT_URLS[wm9codecs]="https://am.net/lib/tools/Microsoft/MPlayer/WM9Codecs9x.exe"
+COMPONENT_SHA256[wm9codecs]="f25adf6529745a772c4fdd955505e7fcdc598b8a031bb0ce7e5856da5e5fcc95"
+
 WINCOMPONENTS_REQUIRED=(
     "vcrun2010_x86" "vcrun2010_x64"
     "vcrun2012_x86" "vcrun2012_x64"
@@ -2735,6 +2744,7 @@ WINCOMPONENTS_REQUIRED=(
     "d3dcompiler_47_x86" "d3dcompiler_47_x64"
     "msls31" "vb6run" "vcrun6"
     "openal" "physx"
+    "wsh57" "wmp9" "wm9codecs"
 )
 
 # =============================================================================
@@ -3514,6 +3524,8 @@ install_all_wincomponents() {
     install_openal
     
     install_physx
+    
+    install_wmp9
     
     echo "✓ Installation des composants Windows terminée"
     return 0
