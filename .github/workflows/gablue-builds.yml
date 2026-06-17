@@ -4,7 +4,7 @@ on:
     branches:
       - main
   schedule:
-    - cron: "00 06 * * *"
+    - cron: "00 02 * * *"
   push:
     branches:
       - main
