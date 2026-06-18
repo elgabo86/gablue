@@ -9,17 +9,6 @@ echo "::group::Executing install-kernel-test"
 trap 'echo "::endgroup::"' EXIT
 
 # =============================================================================
-# SECTION 0 : PRÉPARATION DE L'IMAGE DE BASE FEDORA
-# =============================================================================
-
-# L'image Fedora Kinoite officielle n'inclut pas dnf5 (utilise rpm-ostree)
-# Il faut l'installer avant de pouvoir gérer les paquets
-mkdir -p /var/roothome
-if ! rpm -q dnf5 >/dev/null 2>&1; then
-    rpm-ostree install dnf5 dnf5-plugins
-fi
-
-# =============================================================================
 # SECTION 1 : PRÉPARATION
 # =============================================================================
 

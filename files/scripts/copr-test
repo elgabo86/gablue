@@ -12,6 +12,11 @@ set -eoux pipefail
 # Création du répertoire pour éviter les erreurs GPG avec dnf5
 mkdir -p /var/roothome
 
+# L'image Fedora Kinoite officielle n'inclut pas dnf5 (utilise rpm-ostree)
+if ! rpm -q dnf5 >/dev/null 2>&1; then
+    rpm-ostree install dnf5 dnf5-plugins
+fi
+
 # =============================================================================
 # CONFIGURATION DES EXCLUSIONS FEDORA
 # =============================================================================

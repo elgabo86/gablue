@@ -45,7 +45,13 @@ ENV DX_MODE=${DX_MODE}
 ENV KERNEL_FLAVOR=${KERNEL_FLAVOR}
 ENV KERNEL_VERSION=${KERNEL_VERSION}
 
-# Installation du kernel ogc avec akmods (avant les dépôts COPR pour éviter les conflits)
+# Configuration des dépôts Copr (avant le kernel pour fournir les dépendances des kmods)
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    sh /ctx/copr-test && \
+    sh /ctx/cleanup
+
+# Installation du kernel ogc avec akmods
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/tmp/kernel-rpms \
@@ -54,12 +60,6 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=bind,from=akmods-extra,src=/rpms/extra,dst=/tmp/rpms/extra \
     --mount=type=bind,from=akmods-extra,src=/rpms/kmods,dst=/tmp/rpms/kmods-extra \
     sh /ctx/kernel-test && \
-    sh /ctx/cleanup
-
-# Configuration des dépôts Copr (version test avec exclusions supplémentaires)
-RUN --mount=type=cache,dst=/var/cache \
-    --mount=type=cache,dst=/var/log \
-    sh /ctx/copr-test && \
     sh /ctx/cleanup
 
 # Installation Mesa Terra
