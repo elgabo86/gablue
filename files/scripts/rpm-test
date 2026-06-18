@@ -17,6 +17,54 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
 fi
 
 # =============================================================================
+# PAQUETS UBLUE-OS (précédemment hérités de l'image intermédiaire kinoite-main)
+# =============================================================================
+
+# Fix packaging OpenCL (conflit OpenCL-ICD-Loader vs ocl-icd, bugzilla #2375547)
+dnf5 -y swap --repo='fedora' OpenCL-ICD-Loader ocl-icd
+
+# Infrastructure uBlue nécessaire au fonctionnement de ujust et des services
+dnf5 -y --setopt=install_weak_deps=False install \
+    just \
+    ublue-os-just \
+    ublue-os-signing \
+    ublue-os-udev-rules \
+    ublue-os-update-services \
+    ublue-os-luks \
+    distrobox \
+    fedora-repos-archive
+
+# Paquets multimédia, utilitaires et matériel (précédemment hérités de kinoite-main)
+dnf5 -y --setopt=install_weak_deps=False install \
+    ffmpeg \
+    fdk-aac \
+    libfdk-aac \
+    fzf \
+    tmux \
+    vim \
+    nvtop \
+    nvme-cli \
+    lshw \
+    net-tools \
+    libcamera \
+    libcamera-gstreamer \
+    libcamera-ipa \
+    libcamera-tools \
+    pipewire-libs-extra \
+    pipewire-plugin-libcamera \
+    heif-pixbuf-loader \
+    wl-clipboard \
+    flatpak-spawn \
+    openrgb-udev-rules \
+    alsa-firmware \
+    intel-vaapi-driver \
+    squashfs-tools \
+    smartmontools \
+    grub2-tools-extra \
+    ksshaskpass \
+    kate
+
+# =============================================================================
 # OUTILS EN LIGNE DE COMMANDE (CLI)
 # =============================================================================
 

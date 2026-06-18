@@ -1,7 +1,6 @@
 # Arguments pour configurer l'image de base et ses variantes, tous fournis par le workflow
 ARG VARIANT
 ARG SOURCE_IMAGE
-ARG SOURCE_SUFFIX
 ARG FEDORA_VERSION
 ARG KERNEL_VERSION
 ARG KERNEL_FLAVOR
@@ -13,7 +12,7 @@ FROM ghcr.io/ublue-os/akmods:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION
 FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-extra
 
 # Image de base pour la construction finale
-FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${FEDORA_VERSION}
+FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}
 
 # Redéfinition des arguments après le FROM pour les rendre disponibles
 ARG VARIANT

@@ -15,8 +15,9 @@ on:
         required: true
         type: string
       source_suffix:
-        required: true
+        required: false
         type: string
+        default: ""
       fedora_version:
         required: true
         type: string
@@ -197,16 +198,22 @@ jobs:
             NVIDIA_FLAVOR_ARG="--build-arg NVIDIA_FLAVOR=${{ inputs.nvidia_flavor }}"
           fi
 
+          # Préparer SOURCE_SUFFIX arg si fourni (absent pour les images basées sur Fedora officiel)
+          SOURCE_SUFFIX_ARG=""
+          if [[ -n "${{ inputs.source_suffix }}" ]]; then
+            SOURCE_SUFFIX_ARG="--build-arg SOURCE_SUFFIX=${{ inputs.source_suffix }}"
+          fi
+
           sudo buildah build \
             --file "$CONTAINERFILE" \
             --format "docker" \
             --build-arg KERNEL_VERSION="${{ steps.determine_kernel_version.outputs.KERNEL_VERSION }}" \
             --build-arg VARIANT="${{ inputs.image_variant }}" \
             --build-arg SOURCE_IMAGE="${{ inputs.source_image }}" \
-            --build-arg SOURCE_SUFFIX="${{ inputs.source_suffix }}" \
             --build-arg FEDORA_VERSION="${{ inputs.fedora_version }}" \
             --build-arg KERNEL_FLAVOR="${{ inputs.kernel_type }}" \
             $NVIDIA_FLAVOR_ARG \
+            $SOURCE_SUFFIX_ARG \
             $DX_MODE_ARG \
             --tag raw-img .
 

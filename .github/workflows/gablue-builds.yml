@@ -104,7 +104,6 @@ jobs:
       image_desc: "Gablue main test image (kernel ogc unstable)"
       image_variant: "main"
       source_image: "kinoite"
-      source_suffix: "-main"
       fedora_version: "44"
       kernel_type: "ogc"
 
@@ -122,7 +121,6 @@ jobs:
       image_desc: "Gablue nvidia-open test image (kernel ogc unstable)"
       image_variant: "nvidia-open"
       source_image: "kinoite"
-      source_suffix: "-main"
       fedora_version: "44"
       kernel_type: "ogc"
       nvidia_flavor: "nvidia-open"
