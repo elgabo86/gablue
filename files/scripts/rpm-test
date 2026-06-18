@@ -24,21 +24,23 @@ fi
 dnf5 -y swap --repo='fedora' OpenCL-ICD-Loader ocl-icd
 
 # Infrastructure uBlue nécessaire au fonctionnement de ujust et des services
-dnf5 -y --setopt=install_weak_deps=False install \
+dnf5 -y install \
     just \
     ublue-os-just \
     ublue-os-signing \
     ublue-os-udev-rules \
     ublue-os-update-services \
     ublue-os-luks \
+    ublue-os-akmods-addons \
     distrobox \
     fedora-repos-archive
 
 # Paquets multimédia, utilitaires et matériel (précédemment hérités de kinoite-main)
-dnf5 -y --setopt=install_weak_deps=False install \
+dnf5 -y install \
     ffmpeg \
     fdk-aac \
     libfdk-aac \
+    fuse \
     fzf \
     tmux \
     vim \
@@ -218,7 +220,8 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
         langpacks-fr \
         kdenetwork-filesharing \
         kde-runtime-docs \
-        kdeplasma-addons
+        kdeplasma-addons \
+        plasma-oxygen
 fi
 
 # =============================================================================
@@ -329,7 +332,23 @@ dnf5 -y install \
 dnf5 -y remove \
     firefox \
     firefox-langpacks \
-    htop
+    htop \
+    fedora-flathub-remote \
+    fedora-third-party \
+    fedora-workstation-repositories \
+    plasma-welcome-fedora
+
+# Ajout de Flathub manuellement (comme ublue-os/main)
+mkdir -p /etc/flatpak/remotes.d/
+curl --retry 3 -Lo /etc/flatpak/remotes.d/flathub.flatpakrepo https://dl.flathub.org/repo/flathub.flatpakrepo
+mv -f /usr/lib/systemd/system/flatpak-add-flathub-repos.service /usr/lib/systemd/system/flatpak-add-fedora-repos.service
+
+# Installation de cosign depuis GitHub releases (nécessaire pour ublue-os-signing)
+API_JSON=$(mktemp)
+curl --fail --retry 3 -sL https://api.github.com/repos/sigstore/cosign/releases/latest -o "${API_JSON}"
+RPM_URL=$(jq -r '.assets[] | select(.name|test("x86_64")) | select(.name|test("rpm$")) | .browser_download_url' "${API_JSON}" | head -1)
+dnf5 -y install "${RPM_URL}"
+rm -f "${API_JSON}"
 
 # Suppression spécifique à Kinoite
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
