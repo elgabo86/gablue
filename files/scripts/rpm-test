@@ -37,6 +37,7 @@ dnf5 -y install \
 # Paquets multimédia, utilitaires et matériel (précédemment hérités de kinoite-main)
 dnf5 -y install \
     ffmpeg \
+    ffmpeg-libs \
     fdk-aac \
     libfdk-aac \
     fuse \
@@ -59,6 +60,7 @@ dnf5 -y install \
     openrgb-udev-rules \
     alsa-firmware \
     intel-vaapi-driver \
+    libva-utils \
     squashfs-tools \
     smartmontools \
     grub2-tools-extra \
@@ -103,7 +105,10 @@ dnf5 -y install \
     squashfuse \
     fuse-libs \
     icoutils \
-    evtest
+    evtest \
+    symlinks \
+    tcpdump \
+    traceroute
 
 # Outils SELinux pour compilation des modules personnalisés
 dnf5 -y install \
@@ -259,7 +264,10 @@ dnf5 -y install \
     hplip \
     printer-driver-brlaser \
     ifuse \
-    libimobiledevice
+    libimobiledevice \
+    libimobiledevice-utils \
+    libratbag-ratbagd \
+    oversteer-udev
 
 # =============================================================================
 # DÉPENDANCES DE DÉVELOPPEMENT
