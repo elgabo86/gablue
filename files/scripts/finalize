@@ -43,5 +43,3 @@ rm -rf \
     /etc/subgid-
 
 ostree container commit
-
-rm -rf /usr/etc
