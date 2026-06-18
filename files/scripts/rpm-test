@@ -31,7 +31,6 @@ dnf5 -y install \
     ublue-os-udev-rules \
     ublue-os-update-services \
     ublue-os-luks \
-    ublue-os-akmods-addons \
     distrobox \
     fedora-repos-archive
 
