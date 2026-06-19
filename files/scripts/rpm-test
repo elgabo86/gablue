@@ -351,12 +351,6 @@ dnf5 -y remove \
 mkdir -p /etc/flatpak/remotes.d/
 curl --retry 3 -Lo /etc/flatpak/remotes.d/flathub.flatpakrepo https://dl.flathub.org/repo/flathub.flatpakrepo
 
-# Installation de cosign depuis GitHub releases (nécessaire pour ublue-os-signing)
-API_JSON=$(mktemp)
-curl --fail --retry 3 -sL https://api.github.com/repos/sigstore/cosign/releases/latest -o "${API_JSON}"
-RPM_URL=$(jq -r '.assets[] | select(.name|test("x86_64")) | select(.name|test("rpm$")) | .browser_download_url' "${API_JSON}" | head -1)
-dnf5 -y install "${RPM_URL}"
-rm -f "${API_JSON}"
 
 # Suppression spécifique à Kinoite
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
