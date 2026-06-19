@@ -9,7 +9,7 @@ ARG DX_MODE
 
 # Étape intermédiaire : scripts de build (bind-mountés dans chaque RUN, jamais dans l'image finale)
 FROM scratch AS ctx
-COPY files/scripts /
+COPY --chmod=755 files/scripts /
 
 # Étape intermédiaire : récupération du kernel et des akmods depuis ublue-os
 FROM ghcr.io/ublue-os/akmods:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods
