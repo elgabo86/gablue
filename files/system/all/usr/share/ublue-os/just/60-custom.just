@@ -720,6 +720,50 @@ low-latency-disable:
     sudo rm -f /etc/profile.d/vulkan-low-latency.sh
     echo "Vulkan low-latency layer disabled globally. Reboot or relog for changes to take effect."
 
+# Enable btrfs snapshots on /var/home with snapper
+snapshots-enable:
+    #!/usr/bin/bash
+    if sudo snapper get-config &>/dev/null; then
+        echo "Snapper est déjà configuré."
+        echo "Utilisez btrfs-assistant pour gérer les paramètres."
+        exit 0
+    fi
+    echo "Configuration de snapper pour /var/home..."
+    sudo snapper create-config /var/home
+    sudo snapper set-config "TIMELINE_MIN_AGE=1800"
+    sudo snapper set-config "TIMELINE_LIMIT_HOURLY=0"
+    sudo snapper set-config "TIMELINE_LIMIT_DAILY=7"
+    sudo snapper set-config "TIMELINE_LIMIT_WEEKLY=4"
+    sudo snapper set-config "TIMELINE_LIMIT_MONTHLY=2"
+    sudo snapper set-config "TIMELINE_LIMIT_QUARTERLY=0"
+    sudo snapper set-config "TIMELINE_LIMIT_YEARLY=0"
+    sudo snapper set-config "SPACE_LIMIT=0.5"
+    sudo snapper set-config "FREE_LIMIT=0.2"
+    sudo systemctl enable --now snapper-timeline.timer
+    sudo systemctl enable --now snapper-cleanup.timer
+    echo ""
+    echo "Snapshots BTRFS activés !"
+    echo "  - Rétention : 7 quotidiens, 4 hebdomadaires, 2 mensuels"
+    echo "  - Limite espace : 50% max, 20% libre minimum"
+    echo "  - Snapshots automatiques activés (timeline)"
+    echo "  - Nettoyage automatique activé (cleanup)"
+    echo ""
+    echo "Utilisez btrfs-assistant pour gérer visuellement vos snapshots."
+
+# Disable btrfs snapshots (snapper)
+snapshots-disable:
+    #!/usr/bin/bash
+    if ! sudo snapper get-config &>/dev/null; then
+        echo "Snapper n'est pas configuré."
+        exit 0
+    fi
+    echo "Désactivation de snapper..."
+    sudo systemctl disable --now snapper-timeline.timer
+    sudo systemctl disable --now snapper-cleanup.timer
+    sudo snapper delete-config
+    echo ""
+    echo "Snapshots BTRFS désactivés et configuration supprimée."
+
 # Enroll Gablue Secure Boot key - Enter password "secureblue" if prompted
 secureboot:
     #!/usr/bin/bash

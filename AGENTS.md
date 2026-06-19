@@ -468,6 +468,7 @@ Installation extensive de paquets organisée par catégories :
 - **Virtualisation (DX uniquement)** : docker-ce, libvirt, qemu, virt-manager
 - **Terminal fun** : asciiquarium, cmatrix
 - **Gaming** : sunshine, mangohud, gamescope
+- **BTRFS** : snapper, btrfs-assistant (snapshots et maintenance, non activés par défaut)
 - **KDE** : okular, gwenview, kcalc, yakuake (Kinoite uniquement)
 - **Polices** : nerd-fonts
 - **Développement** : gcc, python3-pip
@@ -765,7 +766,7 @@ Commandes ujust disponibles :
 - **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`
 - **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`
 - **Virtualisation** : `docker-enable/disable`, `dx-group`
-- **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`
+- **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`
 - **Rebase** : `gablue-rebase-*` pour changer de variante
 
 ## Sécurité

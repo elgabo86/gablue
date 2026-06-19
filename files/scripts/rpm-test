@@ -188,7 +188,9 @@ dnf5 -y install \
 dnf5 -y install \
     gnome-disk-utility \
     skanpage \
-    x2goclient
+    x2goclient \
+    snapper \
+    btrfs-assistant
 
 # Gaming et performance (depuis terra-mesa)
 dnf5 -y --enable-repo=terra-mesa install \
