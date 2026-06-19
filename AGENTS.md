@@ -260,6 +260,10 @@ ARG KERNEL_VERSION
 ARG NVIDIA_FLAVOR="nvidia-open"
 ARG DX_MODE
 
+# Étape intermédiaire : scripts de build (bind-mountés, jamais dans l'image finale)
+FROM scratch AS ctx
+COPY files/scripts /
+
 # Étapes intermédiaires : akmods
 FROM ghcr.io/ublue-os/akmods:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods
 FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-extra
@@ -275,8 +279,7 @@ ARG DX_MODE
 ARG KERNEL_FLAVOR
 ARG KERNEL_VERSION
 
-# Copie des fichiers
-COPY files/scripts /ctx/
+# Copie des fichiers système (PAS les scripts, ils sont bind-mountés)
 COPY files/system/all /
 COPY files/system/${SOURCE_IMAGE} /
 COPY files/system/${VARIANT} /
@@ -291,36 +294,45 @@ ENV KERNEL_VERSION=${KERNEL_VERSION}
 # Configuration des dépôts (avant kernel pour les dépendances des kmods)
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    sh /ctx/copr && \
-    sh /ctx/cleanup
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/copr && \
+    /ctx/cleanup
 
 # Installation du kernel avec akmods
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/tmp/kernel-rpms \
     --mount=type=bind,from=akmods,src=/rpms/common,dst=/tmp/rpms/common \
     --mount=type=bind,from=akmods,src=/rpms/kmods,dst=/tmp/rpms/kmods \
     --mount=type=bind,from=akmods,src=/rpms/ublue-os,dst=/tmp/rpms/ublue-os \
     --mount=type=bind,from=akmods-extra,src=/rpms/extra,dst=/tmp/rpms/extra \
     --mount=type=bind,from=akmods-extra,src=/rpms/kmods,dst=/tmp/rpms/kmods-extra \
-    sh /ctx/kernel && \
-    sh /ctx/cleanup
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/kernel && \
+    /ctx/cleanup
 
 # Installation NVIDIA (conditionnel)
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=akmods-nvidia,src=/rpms,dst=/tmp/rpms/nvidia \
+    --mount=type=tmpfs,dst=/tmp \
     if [ "$VARIANT" = "nvidia" ] || [ "$VARIANT" = "nvidia-open" ]; then \
-        sh /ctx/nvidia; \
+        /ctx/nvidia; \
     fi && \
-    sh /ctx/cleanup
+    /ctx/cleanup
 ```
 
 **Bonnes pratiques RUN** :
-- Utiliser `--mount=type=cache` pour `/var/cache` et `/var/log`
-- Utiliser `--mount=type=bind,from=stage` pour accéder aux étapes intermédiaires
+- Utiliser `--mount=type=cache` pour `/var/cache` et `/var/log` (cache DNF persistant entre builds)
+- Utiliser `--mount=type=bind,from=ctx,source=/,target=/ctx` pour accéder aux scripts sans les inclure dans l'image
+- Utiliser `--mount=type=bind,from=stage` pour accéder aux étapes intermédiaires (akmods)
+- Utiliser `--mount=type=tmpfs,dst=/tmp` pour éviter que les fichiers temporaires ne touchent le layer
 - Chaîner les commandes avec `&&` pour réduire les layers
-- Terminer par `sh /ctx/cleanup` pour nettoyer
+- Terminer par `/ctx/cleanup` pour nettoyer
+- Appeler les scripts directement (`/ctx/script`) sans `sh`
 
 ### Justfile (60-custom.just)
 
@@ -398,6 +410,7 @@ done && unset -v copr
 ### 1. copr - Configuration des dépôts
 
 Configure tous les dépôts tiers nécessaires :
+- **keepcache=1** : Activé au début pour que le cache DNF persiste entre builds (désactivé dans finalize)
 - **COPR** : bazzite-org/bazzite, bazzite-org/bazzite-multilib, ublue-os/staging, ublue-os/packages, che/nerd-fonts, hikariknight/looking-glass-kvmfr, lizardbyte/beta, bazzite-org/rom-properties
 - **Tiers** : Tailscale, Negativo17
 - **Terra (FyraLabs)** : terra-release, terra-release-extras, terra-release-mesa
@@ -522,10 +535,17 @@ Génération de l'initramfs avec dracut :
 
 ### 9. cleanup / finalize
 
-Nettoyage des fichiers temporaires et commit OSTree :
-- `dnf5 clean all`
-- Suppression des fichiers temporaires
-- `ostree container commit`
+**cleanup** (appelé après chaque étape RUN) :
+- Suppression de `/tmp/*`, `/var/log/dnf5.log`, `/boot/*`
+- PAS de `dnf5 clean all` (le cache mount `/var/cache` n'entre pas dans l'image, le nettoyer détruirait le cache DNF persistant)
+- PAS de `ostree container commit` (inutile avec bootc/rechunk)
+
+**finalize** (appelé une seule fois à la fin) :
+- `dnf5 config-manager setopt keepcache=0` (désactive le keepcache activé dans copr)
+- Nettoyage de `/var/*` sauf le répertoire cache
+- Migration des utilisateurs/groupes vers `/usr/lib/passwd` et `/usr/lib/group`
+- Nettoyage des fichiers de verrou et de `/usr/etc`
+- PAS de `ostree container commit` (le rechunk dans le workflow s'en occupe)
 
 ## Workflows GitHub Actions
 
@@ -534,8 +554,12 @@ Nettoyage des fichiers temporaires et commit OSTree :
 Workflow principal déclenché par :
 - Push sur main (avec tags spécifiques)
 - Pull requests
-- Schedule quotidien (06:00 UTC)
+- Schedule quotidien (02:00 UTC)
 - Workflow_dispatch (manuel)
+
+**Optimisations** :
+- `paths-ignore` : les modifications de fichiers `.md` et `.txt` ne déclenchent pas de build
+- `concurrency` : annule les builds en cours si un nouveau push arrive sur la même branche
 
 **Jobs** :
 - `build-main` : Build gablue-main (Containerfile-gablue, nvidia_flavor non défini)
@@ -578,8 +602,11 @@ Workflow réutilisable pour le build d'une image :
 
 **Cache DNF** :
 - Restauration avant le build pour accélérer l'installation des paquets
+- `restore-keys` avec préfixe pour trouver le cache le plus récent (fallback)
+- Clé de save inclut `run_id` pour créer une nouvelle entrée à chaque build
 - Sauvegarde après le build (uniquement sur `main`, pas sur les PRs)
 - Cache séparé par environnement : `Linux-buildah-kde` ou `Linux-buildah-gnome`
+- Fonctionne grâce à `keepcache=1` dans copr (désactivé par `keepcache=0` dans finalize)
 
 ### build-gablue-isos.yml
 

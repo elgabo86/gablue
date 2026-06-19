@@ -7,6 +7,10 @@ ARG KERNEL_FLAVOR
 ARG NVIDIA_FLAVOR="nvidia-open"
 ARG DX_MODE
 
+# Étape intermédiaire : scripts de build (bind-mountés dans chaque RUN, jamais dans l'image finale)
+FROM scratch AS ctx
+COPY files/scripts /
+
 # Étape intermédiaire : récupération du kernel et des akmods depuis ublue-os
 FROM ghcr.io/ublue-os/akmods:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods
 FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-extra
@@ -31,8 +35,6 @@ COPY src/ds2xbox /src/ds2xbox
 COPY src/gablue-isomount /src/gablue-isomount
 
 # Copie des fichiers système dans l'image
-COPY files/scripts /ctx/
-
 COPY files/system/all /
 COPY files/system/${SOURCE_IMAGE} /
 COPY files/system/${VARIANT} /
@@ -51,56 +53,69 @@ ENV KERNEL_VERSION=${KERNEL_VERSION}
 # Configuration des dépôts Copr (avant le kernel pour fournir les dépendances des kmods)
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    sh /ctx/copr && \
-    sh /ctx/cleanup
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/copr && \
+    /ctx/cleanup
 
 # Installation du kernel ogc avec akmods
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/tmp/kernel-rpms \
     --mount=type=bind,from=akmods,src=/rpms/common,dst=/tmp/rpms/common \
     --mount=type=bind,from=akmods,src=/rpms/kmods,dst=/tmp/rpms/kmods \
     --mount=type=bind,from=akmods,src=/rpms/ublue-os,dst=/tmp/rpms/ublue-os \
     --mount=type=bind,from=akmods-extra,src=/rpms/extra,dst=/tmp/rpms/extra \
     --mount=type=bind,from=akmods-extra,src=/rpms/kmods,dst=/tmp/rpms/kmods-extra \
-    sh /ctx/kernel && \
-    sh /ctx/cleanup
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/kernel && \
+    /ctx/cleanup
 
 # Installation Mesa Terra
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    sh /ctx/mesa && \
-    sh /ctx/cleanup
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/mesa && \
+    /ctx/cleanup
 
 # Installation des pilotes NVIDIA (uniquement pour les variantes nvidia et nvidia-open)
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=akmods-nvidia,src=/rpms,dst=/tmp/rpms/nvidia \
+    --mount=type=tmpfs,dst=/tmp \
     if [ "$VARIANT" = "nvidia" ] || [ "$VARIANT" = "nvidia-open" ]; then \
-        sh /ctx/nvidia; \
+        /ctx/nvidia; \
     fi && \
-    sh /ctx/cleanup
+    /ctx/cleanup
 
 # Installation des paquets RPM
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    sh /ctx/rpm && \
-    sh /ctx/cleanup
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/rpm && \
+    /ctx/cleanup
 
 # Compilation des sources C
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    sh /ctx/build-c && \
-    sh /ctx/cleanup
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/build-c && \
+    /ctx/cleanup
 
 # Post-installation : configuration finale
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    sh /ctx/systemd && \
-    sh /ctx/post-install && \
-    sh /ctx/initramfs && \
-    sh /ctx/finalize && \
-    rm -rf /ctx
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/systemd && \
+    /ctx/post-install && \
+    /ctx/initramfs && \
+    /ctx/finalize
 
 # Valider l'image bootc
 RUN --mount=type=tmpfs,target=/run --network=none bootc container lint

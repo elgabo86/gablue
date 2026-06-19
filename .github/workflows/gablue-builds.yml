@@ -3,12 +3,22 @@ on:
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - "**.md"
+      - "**.txt"
   schedule:
     - cron: "00 02 * * *"
   push:
     branches:
       - main
+    paths-ignore:
+      - "**.md"
+      - "**.txt"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

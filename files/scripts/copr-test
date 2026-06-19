@@ -12,6 +12,9 @@ set -eoux pipefail
 # Création du répertoire pour éviter les erreurs GPG avec dnf5
 mkdir -p /var/roothome
 
+# Activation du cache DNF pour accélérer les builds suivants (désactivé dans finalize)
+dnf5 config-manager setopt keepcache=1
+
 # =============================================================================
 # CONFIGURATION DES EXCLUSIONS FEDORA
 # =============================================================================
