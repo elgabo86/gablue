@@ -1,0 +1,2 @@
+SUBSYSTEM=="cec", TAG+="uaccess"
+SUBSYSTEM=="misc", KERNEL=="uinput", TAG+="uaccess"
