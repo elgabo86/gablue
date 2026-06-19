@@ -148,15 +148,19 @@ if [ "$FILETYPE" = "wgp" ]; then
         squashfuse -r "$WGP_FILE" "$MOUNT_DIR" 2>/dev/null
 
         if [ $? -eq 0 ]; then
-            # Lire le fichier .launch pour connaître l'exécutable
-            LAUNCH_FILE="$MOUNT_DIR/.launch"
-            if [ -f "$LAUNCH_FILE" ]; then
-                EXE_IN_WGP=$(cat "$LAUNCH_FILE")
-                ICON_EXE_PATH="$MOUNT_DIR/$EXE_IN_WGP"
+            # Priorité au .icon.png fourni dans le pack
+            if [ -f "$MOUNT_DIR/.icon.png" ]; then
+                cp "$MOUNT_DIR/.icon.png" "$ICON_PATH"
+            else
+                # Fallback : extraire l'icône depuis l'exécutable
+                LAUNCH_FILE="$MOUNT_DIR/.launch"
+                if [ -f "$LAUNCH_FILE" ]; then
+                    EXE_IN_WGP=$(cat "$LAUNCH_FILE")
+                    ICON_EXE_PATH="$MOUNT_DIR/$EXE_IN_WGP"
 
-                if [ -f "$ICON_EXE_PATH" ]; then
-                    # Extraire l'icône avec exeiconextract.py
-                    python3 "$EXEICONEXTRACT" "$ICON_EXE_PATH" "$ICON_PATH" 2>/dev/null
+                    if [ -f "$ICON_EXE_PATH" ]; then
+                        python3 "$EXEICONEXTRACT" "$ICON_EXE_PATH" "$ICON_PATH" 2>/dev/null
+                    fi
                 fi
             fi
 
