@@ -17,6 +17,57 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
 fi
 
 # =============================================================================
+# PAQUETS UBLUE-OS (précédemment hérités de l'image intermédiaire kinoite-main)
+# =============================================================================
+
+# Fix packaging OpenCL (conflit OpenCL-ICD-Loader vs ocl-icd, bugzilla #2375547)
+dnf5 -y swap --repo='fedora' OpenCL-ICD-Loader ocl-icd
+
+# Infrastructure uBlue nécessaire au fonctionnement de ujust et des services
+dnf5 -y install \
+    just \
+    ublue-os-just \
+    ublue-os-signing \
+    ublue-os-udev-rules \
+    ublue-os-update-services \
+    ublue-os-luks \
+    distrobox \
+    fedora-repos-archive
+
+# Paquets multimédia, utilitaires et matériel (précédemment hérités de kinoite-main)
+dnf5 -y install \
+    ffmpeg \
+    ffmpeg-libs \
+    fdk-aac \
+    libfdk-aac \
+    fuse \
+    fzf \
+    tmux \
+    vim \
+    nvtop \
+    nvme-cli \
+    lshw \
+    net-tools \
+    libcamera \
+    libcamera-gstreamer \
+    libcamera-ipa \
+    libcamera-tools \
+    pipewire-libs-extra \
+    pipewire-plugin-libcamera \
+    heif-pixbuf-loader \
+    wl-clipboard \
+    flatpak-spawn \
+    openrgb-udev-rules \
+    alsa-firmware \
+    intel-vaapi-driver \
+    libva-utils \
+    squashfs-tools \
+    smartmontools \
+    grub2-tools-extra \
+    ksshaskpass \
+    kate
+
+# =============================================================================
 # OUTILS EN LIGNE DE COMMANDE (CLI)
 # =============================================================================
 
@@ -54,7 +105,10 @@ dnf5 -y install \
     squashfuse \
     fuse-libs \
     icoutils \
-    evtest
+    evtest \
+    symlinks \
+    tcpdump \
+    traceroute
 
 # Outils SELinux pour compilation des modules personnalisés
 dnf5 -y install \
@@ -170,7 +224,10 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
         langpacks-fr \
         kdenetwork-filesharing \
         kde-runtime-docs \
-        kdeplasma-addons
+        kdeplasma-addons \
+        plasma-oxygen \
+        plasma-bigscreen \
+        plasma-union
 fi
 
 # =============================================================================
@@ -209,7 +266,10 @@ dnf5 -y install \
     hplip \
     printer-driver-brlaser \
     ifuse \
-    libimobiledevice
+    libimobiledevice \
+    libimobiledevice-utils \
+    libratbag-ratbagd \
+    oversteer-udev
 
 # =============================================================================
 # DÉPENDANCES DE DÉVELOPPEMENT
@@ -282,8 +342,14 @@ dnf5 -y remove \
     firefox \
     firefox-langpacks \
     htop \
-    plasma-welcome \
+    fedora-flathub-remote \
+    fedora-third-party \
+    fedora-workstation-repositories \
     plasma-welcome-fedora
+
+# Ajout de Flathub manuellement (comme ublue-os/main)
+mkdir -p /etc/flatpak/remotes.d/
+curl --retry 3 -Lo /etc/flatpak/remotes.d/flathub.flatpakrepo https://dl.flathub.org/repo/flathub.flatpakrepo
 
 # Suppression spécifique à Kinoite
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
@@ -389,6 +455,11 @@ dnf5 -y --setopt=install_weak_deps=False install \
 # Vulkan loader pour les applications 32-bit
 dnf5 -y --enable-repo=terra-mesa --setopt=install_weak_deps=False install \
     vulkan-loader.i686
+
+# OBS vkcapture hook libs (capture Vulkan/OpenGL sans installer OBS)
+dnf5 -y --setopt=install_weak_deps=False install \
+    obs-studio-plugin-vkcapture-hook-libs.x86_64 \
+    obs-studio-plugin-vkcapture-hook-libs.i686
 
 # -----------------------------------------------------------------------------
 # Vidéo 32-bit (accélération matérielle pour décodage dans Wine)

@@ -94,10 +94,5 @@ RUN --mount=type=cache,dst=/var/cache \
     sh /ctx/finalize && \
     rm -rf /ctx
 
-# Nettoyage /usr/etc créé par les paquets ublue-os-* (refusé par bootc lint)
-RUN test -f /usr/etc/containers/policy.json && \
-    mv /usr/etc/containers/policy.json /etc/containers/policy.json || true && \
-    rm -rf /usr/etc
-
 # Valider l'image bootc
 RUN --mount=type=tmpfs,target=/run --network=none bootc container lint

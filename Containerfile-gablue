@@ -1,10 +1,9 @@
 # Arguments pour configurer l'image de base et ses variantes, tous fournis par le workflow
 ARG VARIANT
 ARG SOURCE_IMAGE
-ARG SOURCE_SUFFIX
 ARG FEDORA_VERSION
-ARG KERNEL_FLAVOR
 ARG KERNEL_VERSION
+ARG KERNEL_FLAVOR
 ARG NVIDIA_FLAVOR="nvidia-open"
 ARG DX_MODE
 
@@ -17,7 +16,7 @@ FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_V
 FROM ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-nvidia
 
 # Image de base pour la construction finale
-FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${FEDORA_VERSION}
+FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}
 
 # Redéfinition des arguments après le FROM pour les rendre disponibles
 ARG VARIANT
@@ -49,21 +48,22 @@ ENV DX_MODE=${DX_MODE}
 ENV KERNEL_FLAVOR=${KERNEL_FLAVOR}
 ENV KERNEL_VERSION=${KERNEL_VERSION}
 
-# Installation du kernel ogc avec akmods (avant les dépôts COPR pour éviter les conflits)
+# Configuration des dépôts Copr (avant le kernel pour fournir les dépendances des kmods)
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    sh /ctx/copr && \
+    sh /ctx/cleanup
+
+# Installation du kernel ogc avec akmods
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/tmp/kernel-rpms \
     --mount=type=bind,from=akmods,src=/rpms/common,dst=/tmp/rpms/common \
     --mount=type=bind,from=akmods,src=/rpms/kmods,dst=/tmp/rpms/kmods \
+    --mount=type=bind,from=akmods,src=/rpms/ublue-os,dst=/tmp/rpms/ublue-os \
     --mount=type=bind,from=akmods-extra,src=/rpms/extra,dst=/tmp/rpms/extra \
     --mount=type=bind,from=akmods-extra,src=/rpms/kmods,dst=/tmp/rpms/kmods-extra \
     sh /ctx/kernel && \
-    sh /ctx/cleanup
-
-# Configuration des dépôts Copr
-RUN --mount=type=cache,dst=/var/cache \
-    --mount=type=cache,dst=/var/log \
-    sh /ctx/copr && \
     sh /ctx/cleanup
 
 # Installation Mesa Terra

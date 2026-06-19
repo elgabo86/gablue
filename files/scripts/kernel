@@ -91,4 +91,6 @@ dnf5 -y install \
     scx-tools && \
 dnf5 -y copr disable bieszczaders/kernel-cachyos-addons
 
+dnf5 -y install /tmp/rpms/ublue-os/ublue-os-akmods-addons*.rpm
+
 echo "Kernel ogc ${KERNEL_VERSION} installé avec succès avec les akmods"

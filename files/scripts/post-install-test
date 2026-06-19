@@ -12,11 +12,4 @@ set -eoux pipefail
 # Exécuter d'abord le post-install standard
 sh /ctx/post-install
 
-# =============================================================================
-# CONFIGURATIONS SPÉCIFIQUES À LA VERSION TEST
-# =============================================================================
-
-# Suppression des fichiers .desktop inutiles
-rm -f /usr/share/applications/org.kde.plasma.bigscreen.uvcviewer.desktop
-
 echo "Post-installation test terminée avec succès"

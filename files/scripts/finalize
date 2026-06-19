@@ -42,4 +42,9 @@ rm -rf \
     /etc/subuid- \
     /etc/subgid-
 
+# Nettoyage /usr/etc créé par les paquets ublue-os-* (refusé par bootc lint)
+test -f /usr/etc/containers/policy.json && \
+    mv /usr/etc/containers/policy.json /etc/containers/policy.json || true
+rm -rf /usr/etc
+
 ostree container commit

@@ -30,7 +30,6 @@ jobs:
       image_desc: "Gablue main image"
       image_variant: "main"
       source_image: "kinoite"
-      source_suffix: "-main"
       fedora_version: "44"
       kernel_type: "ogc"
 
@@ -48,7 +47,6 @@ jobs:
       image_desc: "Gablue nvidia image"
       image_variant: "nvidia"
       source_image: "kinoite"
-      source_suffix: "-main"
       fedora_version: "44"
       kernel_type: "ogc"
       nvidia_flavor: "nvidia-lts"
@@ -67,7 +65,6 @@ jobs:
       image_desc: "Gablue nvidia-open image"
       image_variant: "nvidia-open"
       source_image: "kinoite"
-      source_suffix: "-main"
       fedora_version: "44"
       kernel_type: "ogc"
       nvidia_flavor: "nvidia-open"
@@ -86,7 +83,6 @@ jobs:
       image_desc: "Gablue main-dx image (développement avec virtualisation)"
       image_variant: "main"
       source_image: "kinoite"
-      source_suffix: "-main"
       fedora_version: "44"
       kernel_type: "ogc"
 

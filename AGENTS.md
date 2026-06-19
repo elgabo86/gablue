@@ -113,7 +113,6 @@ sudo buildah build \
   --format "docker" \
   --build-arg VARIANT="main" \
   --build-arg SOURCE_IMAGE="kinoite" \
-  --build-arg SOURCE_SUFFIX="-main" \
   --build-arg FEDORA_VERSION="44" \
   --build-arg KERNEL_FLAVOR="ogc" \
   --build-arg KERNEL_VERSION="<version>" \
@@ -125,7 +124,6 @@ sudo buildah build \
   --format "docker" \
   --build-arg VARIANT="nvidia" \
   --build-arg SOURCE_IMAGE="kinoite" \
-  --build-arg SOURCE_SUFFIX="-main" \
   --build-arg FEDORA_VERSION="44" \
   --build-arg KERNEL_FLAVOR="ogc" \
   --build-arg KERNEL_VERSION="<version>" \
@@ -138,7 +136,6 @@ sudo buildah build \
   --format "docker" \
   --build-arg VARIANT="nvidia-open" \
   --build-arg SOURCE_IMAGE="kinoite" \
-  --build-arg SOURCE_SUFFIX="-main" \
   --build-arg FEDORA_VERSION="44" \
   --build-arg KERNEL_FLAVOR="ogc" \
   --build-arg KERNEL_VERSION="<version>" \
@@ -151,7 +148,6 @@ sudo buildah build \
   --format "docker" \
   --build-arg VARIANT="main" \
   --build-arg SOURCE_IMAGE="kinoite" \
-  --build-arg SOURCE_SUFFIX="-main" \
   --build-arg FEDORA_VERSION="44" \
   --build-arg KERNEL_FLAVOR="ogc" \
   --build-arg KERNEL_VERSION="<version>" \
@@ -164,7 +160,6 @@ sudo buildah build \
   --format "docker" \
   --build-arg VARIANT="main" \
   --build-arg SOURCE_IMAGE="kinoite" \
-  --build-arg SOURCE_SUFFIX="-main" \
   --build-arg FEDORA_VERSION="44" \
   --build-arg KERNEL_FLAVOR="ogc" \
   --build-arg KERNEL_VERSION="<version>" \
@@ -176,7 +171,6 @@ sudo buildah build \
   --format "docker" \
   --build-arg VARIANT="nvidia-open" \
   --build-arg SOURCE_IMAGE="kinoite" \
-  --build-arg SOURCE_SUFFIX="-main" \
   --build-arg FEDORA_VERSION="44" \
   --build-arg KERNEL_FLAVOR="ogc" \
   --build-arg KERNEL_VERSION="<version>" \
@@ -272,7 +266,7 @@ FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_V
 FROM ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-nvidia
 
 # Image de base
-FROM ghcr.io/ublue-os/${SOURCE_IMAGE}${SOURCE_SUFFIX}:${FEDORA_VERSION}
+FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}
 
 # Redéfinition des arguments après FROM
 ARG VARIANT
@@ -294,12 +288,19 @@ ENV DX_MODE=${DX_MODE}
 ENV KERNEL_FLAVOR=${KERNEL_FLAVOR}
 ENV KERNEL_VERSION=${KERNEL_VERSION}
 
+# Configuration des dépôts (avant kernel pour les dépendances des kmods)
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    sh /ctx/copr && \
+    sh /ctx/cleanup
+
 # Installation du kernel avec akmods
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/tmp/kernel-rpms \
     --mount=type=bind,from=akmods,src=/rpms/common,dst=/tmp/rpms/common \
     --mount=type=bind,from=akmods,src=/rpms/kmods,dst=/tmp/rpms/kmods \
+    --mount=type=bind,from=akmods,src=/rpms/ublue-os,dst=/tmp/rpms/ublue-os \
     --mount=type=bind,from=akmods-extra,src=/rpms/extra,dst=/tmp/rpms/extra \
     --mount=type=bind,from=akmods-extra,src=/rpms/kmods,dst=/tmp/rpms/kmods-extra \
     sh /ctx/kernel && \
@@ -550,7 +551,7 @@ Workflow réutilisable pour le build d'une image :
 
 **Inputs** :
 - `image_name`, `image_desc`, `image_variant` : Identification de l'image
-- `source_image`, `source_suffix` : Image de base uBlue
+- `source_image` : Image de base Fedora (kinoite)
 - `fedora_version` : Version Fedora (44 pour toutes)
 - `kernel_type` : Type de kernel (`ogc`), utilisé comme KERNEL_FLAVOR dans le build
 - `kernel_version` : Version spécifique (optionnel, auto-détecté si vide)
@@ -640,7 +641,6 @@ sudo buildah build \
   --file Containerfile-gablue \
   --build-arg VARIANT="main" \
   --build-arg SOURCE_IMAGE="kinoite" \
-  --build-arg SOURCE_SUFFIX="-main" \
   --build-arg FEDORA_VERSION="44" \
   --build-arg KERNEL_FLAVOR="ogc" \
   --build-arg KERNEL_VERSION="<version>" \
