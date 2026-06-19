@@ -225,7 +225,9 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
         kdenetwork-filesharing \
         kde-runtime-docs \
         kdeplasma-addons \
-        plasma-oxygen
+        plasma-oxygen \
+        plasma-bigscreen \
+        plasma-union
 fi
 
 # =============================================================================
