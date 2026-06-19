@@ -16,19 +16,7 @@ sh /ctx/post-install
 # CONFIGURATIONS SPÉCIFIQUES À LA VERSION TEST
 # =============================================================================
 
-# Rendre exécutable le script de changement de session OpenGamepadUI
-chmod +x /usr/bin/steamos-session-select
-
-# Permissions pour le plugin OpenGamepadUI Gwine
-if [ -d /usr/share/opengamepadui/plugins/gwine-plugin ]; then
-    chmod -R 755 /usr/share/opengamepadui/plugins/gwine-plugin
-    echo "Permissions configurées pour le plugin Gwine"
-fi
-
-# S'assurer que les scripts GDScript sont lisibles
-if [ -d /usr/share/opengamepadui/plugins ]; then
-    find /usr/share/opengamepadui/plugins -name "*.gd" -exec chmod 644 {} \;
-    find /usr/share/opengamepadui/plugins -name "*.json" -exec chmod 644 {} \;
-fi
+# Suppression des fichiers .desktop inutiles
+rm -f /usr/share/applications/org.kde.plasma.bigscreen.uvcviewer.desktop
 
 echo "Post-installation test terminée avec succès"

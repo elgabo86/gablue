@@ -42,16 +42,4 @@ systemctl enable cec-active-source.timer
 systemctl enable dmemcg-booster-system.service
 systemctl --global enable dmemcg-booster-user.service
 
-# =============================================================================
-# SERVICES OPENGAMEPADUI (EXPERIMENTAL - TEST UNIQUEMENT)
-# =============================================================================
 
-# Gestionnaire d'input avancé pour manettes
-systemctl disable -f inputplumber.service
-
-# Gestionnaire de performance/TDP/batterie
-systemctl disable -f powerstation.service
-
-# Note: opengamepadui-session.service n'est PAS activé par défaut
-# L'utilisateur doit manuellement basculer vers la session gaming
-# via le menu de session ou une commande

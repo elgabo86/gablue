@@ -470,14 +470,3 @@ dnf5 -y --setopt=install_weak_deps=False install \
     libva.i686 \
     libvdpau.i686
 
-# =============================================================================
-# OPENGAMEPADUI - INTERFACE GAMING (EXPERIMENTAL - TEST UNIQUEMENT)
-# =============================================================================
-
-# Interface gaming OpenGamepadUI avec session Gamescope
-# Paquets disponibles sur le dépôt Terra (FyraLabs)
-dnf5 -y --setopt=install_weak_deps=False install \
-    opengamepadui \
-    gamescope-session-opengamepadui \
-    powerstation \
-    inputplumber
