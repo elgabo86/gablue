@@ -8,6 +8,8 @@
  *   - Sinon -> monte via LoopSetup, ouvre Dolphin, surveille la fin de session
  *   - Demontage automatique quand toutes les fenetres Dolphin sont fermees
  *   - Si le device est occupe, attend sa liberation avant demontage
+ *   - ISO9660 : no-part-scan pour eviter les fausses partitions (PTTYPE=mac)
+ *   - Images disque (MBR/GPT) : part-scan + mount sur la partition enfant
  */
 
 #define _GNU_SOURCE
@@ -21,13 +23,25 @@
 #include <sys/wait.h>
 
 #define TIMEOUT_MS 30000
+#define MOUNT_RETRIES 15
+#define MOUNT_RETRY_DELAY_US 200000
 
 static void die(const char *msg) {
     fprintf(stderr, "%s\n", msg);
     exit(1);
 }
 
-static char *udisks_loop_setup(DBusConnection *sys, const char *iso_path) {
+static int is_iso9660(const char *path) {
+    int fd = open(path, O_RDONLY);
+    if (fd == -1) return 0;
+    char buf[5];
+    if (lseek(fd, 32769, SEEK_SET) == -1) { close(fd); return 0; }
+    if (read(fd, buf, 5) != 5) { close(fd); return 0; }
+    close(fd);
+    return memcmp(buf, "CD001", 5) == 0;
+}
+
+static char *udisks_loop_setup(DBusConnection *sys, const char *iso_path, int no_part_scan) {
     int fd = open(iso_path, O_RDONLY);
     if (fd == -1) {
         fprintf(stderr, "Erreur ouverture %s: %s\n", iso_path, strerror(errno));
@@ -49,8 +63,20 @@ static char *udisks_loop_setup(DBusConnection *sys, const char *iso_path) {
         die("Erreur: le bus systeme ne supporte pas le passage de fd");
     }
 
-    DBusMessageIter dict;
+    DBusMessageIter dict, entry, variant;
     dbus_message_iter_open_container(&args, DBUS_TYPE_ARRAY, "{sv}", &dict);
+
+    if (no_part_scan) {
+        dbus_message_iter_open_container(&dict, DBUS_TYPE_DICT_ENTRY, NULL, &entry);
+        const char *key = "no-part-scan";
+        dbus_message_iter_append_basic(&entry, DBUS_TYPE_STRING, &key);
+        dbus_message_iter_open_container(&entry, DBUS_TYPE_VARIANT, "b", &variant);
+        dbus_bool_t val = TRUE;
+        dbus_message_iter_append_basic(&variant, DBUS_TYPE_BOOLEAN, &val);
+        dbus_message_iter_close_container(&entry, &variant);
+        dbus_message_iter_close_container(&dict, &entry);
+    }
+
     dbus_message_iter_close_container(&args, &dict);
 
     DBusError error;
@@ -73,45 +99,56 @@ static char *udisks_loop_setup(DBusConnection *sys, const char *iso_path) {
     char *result = strdup(obj_path);
     dbus_message_unref(reply);
 
-    printf("Loop device cree: %s\n", result);
+    printf("Loop device cree: %s (no-part-scan=%d)\n", result, no_part_scan);
     return result;
 }
 
 static char *udisks_mount(DBusConnection *sys, const char *obj_path) {
-    DBusMessage *msg = dbus_message_new_method_call(
-        "org.freedesktop.UDisks2",
-        obj_path,
-        "org.freedesktop.UDisks2.Filesystem",
-        "Mount");
+    for (int attempt = 0; attempt < MOUNT_RETRIES; attempt++) {
+        DBusMessage *msg = dbus_message_new_method_call(
+            "org.freedesktop.UDisks2",
+            obj_path,
+            "org.freedesktop.UDisks2.Filesystem",
+            "Mount");
 
-    DBusMessageIter args;
-    dbus_message_iter_init_append(msg, &args);
+        DBusMessageIter args;
+        dbus_message_iter_init_append(msg, &args);
 
-    DBusMessageIter dict;
-    dbus_message_iter_open_container(&args, DBUS_TYPE_ARRAY, "{sv}", &dict);
-    dbus_message_iter_close_container(&args, &dict);
+        DBusMessageIter dict;
+        dbus_message_iter_open_container(&args, DBUS_TYPE_ARRAY, "{sv}", &dict);
+        dbus_message_iter_close_container(&args, &dict);
 
-    DBusError error;
-    dbus_error_init(&error);
-    DBusMessage *reply = dbus_connection_send_with_reply_and_block(
-        sys, msg, TIMEOUT_MS, &error);
-    dbus_message_unref(msg);
+        DBusError error;
+        dbus_error_init(&error);
+        DBusMessage *reply = dbus_connection_send_with_reply_and_block(
+            sys, msg, TIMEOUT_MS, &error);
+        dbus_message_unref(msg);
 
-    if (dbus_error_is_set(&error)) {
-        fprintf(stderr, "Mount echoue: %s\n", error.message);
-        dbus_error_free(&error);
+        if (reply) {
+            DBusMessageIter reply_args;
+            dbus_message_iter_init(reply, &reply_args);
+            char *mount_point = NULL;
+            dbus_message_iter_get_basic(&reply_args, &mount_point);
+            char *result = strdup(mount_point);
+            dbus_message_unref(reply);
+            printf("Monte sur: %s\n", result);
+            return result;
+        }
+
+        if (dbus_error_is_set(&error)) {
+            if (strstr(error.message, "No such interface") && attempt < MOUNT_RETRIES - 1) {
+                dbus_error_free(&error);
+                usleep(MOUNT_RETRY_DELAY_US);
+                continue;
+            }
+            fprintf(stderr, "Mount echoue sur %s: %s\n", obj_path, error.message);
+            dbus_error_free(&error);
+            return NULL;
+        }
         return NULL;
     }
-
-    DBusMessageIter reply_args;
-    dbus_message_iter_init(reply, &reply_args);
-    char *mount_point = NULL;
-    dbus_message_iter_get_basic(&reply_args, &mount_point);
-    char *result = strdup(mount_point);
-    dbus_message_unref(reply);
-
-    printf("Monte sur: %s\n", result);
-    return result;
+    fprintf(stderr, "Mount echoue: interface Filesystem non disponible apres 3s sur %s\n", obj_path);
+    return NULL;
 }
 
 static void open_dolphin_window(const char *mount_point) {
@@ -237,8 +274,18 @@ static char *find_existing_mount(const char *iso_path) {
     if (!fgets(mount, sizeof(mount), f)) { pclose(f); return NULL; }
     pclose(f);
     mount[strcspn(mount, "\n")] = 0;
-    if (mount[0] == '\0') return NULL;
 
+    if (mount[0] == '\0') {
+        snprintf(cmd, sizeof(cmd),
+            "findmnt -n -o TARGET --source '%sp1' 2>/dev/null", loop);
+        f = popen(cmd, "r");
+        if (!f) return NULL;
+        if (!fgets(mount, sizeof(mount), f)) { pclose(f); return NULL; }
+        pclose(f);
+        mount[strcspn(mount, "\n")] = 0;
+    }
+
+    if (mount[0] == '\0') return NULL;
     return strdup(mount);
 }
 
@@ -253,8 +300,12 @@ int main(int argc, char **argv) {
     FILE *log = fopen("/tmp/gablue-isomount.log", "a");
     if (log) {
         fprintf(log, "\n=== %s ===\n", iso_path);
+        fflush(log);
         dup2(fileno(log), STDOUT_FILENO);
         dup2(fileno(log), STDERR_FILENO);
+        setvbuf(stdout, NULL, _IONBF, 0);
+        setvbuf(stderr, NULL, _IONBF, 0);
+        fclose(log);
     }
 
     char *existing = find_existing_mount(iso_path);
@@ -275,16 +326,37 @@ int main(int argc, char **argv) {
         die("Erreur connexion bus session");
     }
 
-    char *obj_path = udisks_loop_setup(sys, iso_path);
-    if (!obj_path) {
+    int iso = is_iso9660(iso_path);
+    printf("Type detecte: %s\n", iso ? "ISO9660" : "image disque");
+
+    char *loop_path = udisks_loop_setup(sys, iso_path, iso);
+    if (!loop_path) {
         dbus_connection_unref(session);
         dbus_connection_unref(sys);
         return 1;
     }
 
-    char *mount_point = udisks_mount(sys, obj_path);
+    char *mount_path = loop_path;
+    char part_path[512];
+    char *mount_point = NULL;
+
+    if (iso) {
+        mount_point = udisks_mount(sys, loop_path);
+    } else {
+        snprintf(part_path, sizeof(part_path), "%sp1", loop_path);
+        printf("Tentative mount partition %s\n", part_path);
+        mount_point = udisks_mount(sys, part_path);
+        if (mount_point) {
+            mount_path = part_path;
+        } else {
+            printf("Partition non trouvee, tentative sur device parent\n");
+            mount_point = udisks_mount(sys, loop_path);
+        }
+    }
+
     if (!mount_point) {
-        free(obj_path);
+        udisks_loop_delete(sys, loop_path);
+        free(loop_path);
         dbus_connection_unref(session);
         dbus_connection_unref(sys);
         return 1;
@@ -299,16 +371,16 @@ int main(int argc, char **argv) {
         if (n == 0) {
             sleep(1);
             if (count_dolphin_instances(session) == 0) {
-                if (try_unmount(sys, obj_path) == 0)
+                if (try_unmount(sys, mount_path) == 0)
                     break;
             }
         }
     }
 
-    udisks_loop_delete(sys, obj_path);
+    udisks_loop_delete(sys, loop_path);
 
     free(mount_point);
-    free(obj_path);
+    free(loop_path);
     dbus_connection_unref(session);
     dbus_connection_unref(sys);
 
