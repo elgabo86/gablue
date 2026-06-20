@@ -42,6 +42,32 @@ swap_to_bigscreen() {
     kwriteconfig6 --file "$HOME/.config/kwinrc" --group org.kde.kdecoration2 --key NoPlugin --type bool false
     qdbus org.kde.KWin /KWin org.kde.KWin.reconfigure 2>/dev/null || true
 
+    # Mettre tous les écrans en miroir sur le principal (bigscreen ne gère pas le multi-écran)
+    log "swap_to_bigscreen: mirroring all displays on primary"
+    /usr/bin/python3 -c "
+import subprocess, json
+raw = subprocess.run(['kscreen-doctor', '--json'], capture_output=True).stdout
+d = json.loads(raw)
+outs = [o for o in d['outputs'] if o.get('connected') and o.get('enabled')]
+outs.sort(key=lambda o: o.get('priority', 99))
+if len(outs) > 1:
+    primary = outs[0]['name']
+    # Sauvegarder les noms pour restauration
+    with open('$CACHE_DIR/kscreen-mirrored.txt', 'w') as f:
+        for o in outs[1:]:
+            f.write(o['name'] + '\\n')
+    # Appliquer le mirroring
+    cmds = [f'output.{primary}.enable']
+    for o in outs[1:]:
+        cmds.append(f'output.{o[\"name\"]}.enable')
+        cmds.append(f'output.{o[\"name\"]}.mirror.{primary}')
+    print(' '.join(cmds))
+" > "$CACHE_DIR/kscreen-bigscreen-cmds.txt" 2>/dev/null
+    if [ -s "$CACHE_DIR/kscreen-bigscreen-cmds.txt" ]; then
+        log "swap_to_bigscreen: kscreen-doctor $(cat "$CACHE_DIR/kscreen-bigscreen-cmds.txt")"
+        kscreen-doctor $(cat "$CACHE_DIR/kscreen-bigscreen-cmds.txt") 2>/dev/null || true
+    fi
+
     log "swap_to_bigscreen: launching inputhandler via kioclient exec"
     kioclient exec /usr/share/applications/org.kde.plasma.bigscreen.inputhandler.desktop &
     log "swap_to_bigscreen: kioclient launched (pid $!)"
@@ -90,6 +116,14 @@ swap_to_default() {
     # Recharger KWin APRÈS avoir restauré l'env (XDG_CONFIG_DIRS normal)
     log "swap_to_default: reloading KWin config for normal Plasma settings"
     qdbus org.kde.KWin /KWin org.kde.KWin.reconfigure 2>/dev/null || true
+
+    # Annuler le mirroring APRÈS avoir restauré l'env (DBus fonctionnel)
+    if [ -f "$CACHE_DIR/kscreen-mirrored.txt" ]; then
+        log "swap_to_default: removing mirroring, restoring extended layout"
+        while read -r output_name; do
+            [ -n "$output_name" ] && kscreen-doctor "output.$output_name.mirror.none" 2>/dev/null || true
+        done < "$CACHE_DIR/kscreen-mirrored.txt"
+    fi
 
     log "swap_to_default: replacing plasmashell"
     plasmashell --replace &
