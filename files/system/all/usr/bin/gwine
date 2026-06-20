@@ -4668,7 +4668,7 @@ download_updated_dxvk_vkd3d() {
 download_missing_components() {
     echo "Téléchargement des composants manquants..."
     
-    local MONO_VER="11.1.0"
+    local MONO_VER="11.2.0"
     local GECKO_VER="2.47.4"
     local WINE_CACHE_DIR="$COMPONENTS_DIR/wine-cache"
     local MONO_FILE="$WINE_CACHE_DIR/wine-mono-${MONO_VER}-x86.msi"
@@ -4771,7 +4771,7 @@ prepare_local_cache() {
     
     local missing_components=false
     
-    local MONO_VER="11.1.0"
+    local MONO_VER="11.2.0"
     local GECKO_VER="2.47.4"
     if [ ! -f "$COMPONENTS_DIR/wine-cache/wine-mono-${MONO_VER}-x86.msi" ] || \
        [ ! -f "$COMPONENTS_DIR/wine-cache/wine-gecko-${GECKO_VER}-x86_64.msi" ] || \
@@ -4950,7 +4950,7 @@ prepare_full_offline_cache() {
     local WINE_CACHE="$COMPONENTS_DIR/wine-cache"
     ensure_dir "$WINE_CACHE"
     
-    local MONO_VER="11.1.0"
+    local MONO_VER="11.2.0"
     local GECKO_VER="2.47.4"
     local MONO_URL="https://dl.winehq.org/wine/wine-mono/${MONO_VER}/wine-mono-${MONO_VER}-x86.msi"
     local GECKO_URL="https://dl.winehq.org/wine/wine-gecko/${GECKO_VER}/wine-gecko-${GECKO_VER}-x86_64.msi"
@@ -6501,7 +6501,6 @@ build_bwrap_env_vars() {
     [ -n "${WINEFSYNC:-}" ] && bwrap_add --setenv WINEFSYNC "$WINEFSYNC"
     [ -n "${LOW_LATENCY_LAYER:-}" ] && bwrap_add --setenv LOW_LATENCY_LAYER "$LOW_LATENCY_LAYER"
     [ -n "${LC_ALL:-}" ] && bwrap_add --setenv LC_ALL "$LC_ALL"
-    [ -n "${WINE_MONO_HIDETYPES:-}" ] && bwrap_add --setenv WINE_MONO_HIDETYPES "$WINE_MONO_HIDETYPES"
     [ -n "${WINEDEBUG:-}" ] && bwrap_add --setenv WINEDEBUG "$WINEDEBUG"
     [ -n "${WINEDLLOVERRIDES:-}" ] && bwrap_add --setenv WINEDLLOVERRIDES "$WINEDLLOVERRIDES"
     [ -n "${LD_LIBRARY_PATH:-}" ] && bwrap_add --setenv LD_LIBRARY_PATH "$LD_LIBRARY_PATH"
@@ -8037,7 +8036,6 @@ setup_wine_environment() {
     export WINEFSYNC="${WINEFSYNC:-1}"
     export WINENTSYNC="${WINENTSYNC:-1}"
     export LC_ALL="${LC_ALL:-fr_FR}"
-    export WINE_MONO_HIDETYPES="${WINE_MONO_HIDETYPES:-0}"
 
     if is_wayland_mode; then
         echo "Mode Wayland activé (désactivation de XWayland)"
