@@ -39,6 +39,7 @@ chmod +x /usr/bin/ds2xbox
 chmod +x /usr/bin/gamepadshortcuts
 chmod +x /usr/bin/tv
 chmod +x /usr/bin/tvqt
+chmod +x /usr/bin/gablue-bigscreen-swap-session
 
 chmod +x /usr/bin/gablue-isomount
 chmod +x /usr/bin/gablue-update
@@ -261,6 +262,9 @@ rm -f /usr/share/applications/nvtop.desktop
 rm -f /usr/share/applications/firewall-config.desktop
 rm -f /usr/share/applications/org.kde.kjournaldbrowser.desktop
 sed -i '/^\[Desktop Entry\]/a NoDisplay=true' /usr/share/applications/org.kde.foreground-booster.desktop
+
+# Remplacer le swap-session bigscreen par le wrapper Gablue (lance inputhandler avec permissions Wayland)
+sed -i 's|^Exec=.*|Exec=gablue-bigscreen-swap-session|' /usr/share/applications/plasma-bigscreen-swap-session.desktop
 
 # Supprimer Waydroid uniquement sur la variante main
 if [ "$VARIANT" == "main" ]; then

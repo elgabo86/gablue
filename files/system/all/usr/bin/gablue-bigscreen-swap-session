@@ -1,0 +1,40 @@
+#!/usr/bin/sh
+
+if [ -z "$XDG_CURRENT_DESKTOP" ] || [ "$XDG_CURRENT_DESKTOP" != "KDE" ]; then
+    echo "This script can only be run on KDE Plasma."
+    exit 1
+fi
+
+CACHE_DIR="$HOME/.cache/plasma-bigscreen"
+SAVED_ENV="$CACHE_DIR/saved-env"
+
+mkdir -pv "$CACHE_DIR"
+
+swap_to_bigscreen() {
+    export -p > "$SAVED_ENV"
+
+    . plasma-bigscreen-common-env
+
+    export PLASMA_BIGSCREEN_LAUNCH_REASON=swap
+
+    kstart --application org.kde.plasma.bigscreen.inputhandler &
+
+    plasmashell --replace &
+}
+
+swap_to_default() {
+    pkill -f plasma-bigscreen-inputhandler
+
+    . "$SAVED_ENV"
+    rm "$SAVED_ENV"
+
+    unset PLASMA_BIGSCREEN_LAUNCH_REASON
+
+    plasmashell --replace &
+}
+
+if [ "$PLASMA_BIGSCREEN_LAUNCH_REASON" = "swap" ]; then
+    swap_to_default
+else
+    swap_to_bigscreen
+fi
