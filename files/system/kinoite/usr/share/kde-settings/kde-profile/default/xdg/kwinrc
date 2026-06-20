@@ -11,5 +11,6 @@ WobblynessLevel=0
 
 [Plugins]
 blurEnabled=true
+gamecontrollerEnabled=false
 wobblywindowsEnabled=true
 
