@@ -19,12 +19,28 @@ mkdir -pv "$CACHE_DIR"
 log "Script started"
 
 swap_to_bigscreen() {
-    log "swap_to_bigscreen: saving env"
+    log "swap_to_bigscreen: saving env and KWin settings"
     export -p > "$SAVED_ENV"
+
+    # Sauvegarder les settings KWin actuels pour les restaurer au retour
+    local val
+    val=$(kreadconfig6 --file "$HOME/.config/kwinrc" --group Windows --key BorderlessMaximizedWindows 2>/dev/null)
+    echo "${val:-__DELETE__}" > "$CACHE_DIR/kwin-BorderlessMaximizedWindows"
+    val=$(kreadconfig6 --file "$HOME/.config/kwinrc" --group Windows --key Placement 2>/dev/null)
+    echo "${val:-__DELETE__}" > "$CACHE_DIR/kwin-Placement"
+    val=$(kreadconfig6 --file "$HOME/.config/kwinrc" --group org.kde.kdecoration2 --key NoPlugin 2>/dev/null)
+    echo "${val:-__DELETE__}" > "$CACHE_DIR/kwin-NoPlugin"
 
     . plasma-bigscreen-common-env
 
     export PLASMA_BIGSCREEN_LAUNCH_REASON=swap
+
+    # Appliquer les settings KWin bigscreen (fenêtres maximisées sans décorations)
+    log "swap_to_bigscreen: applying bigscreen KWin settings"
+    kwriteconfig6 --file "$HOME/.config/kwinrc" --group Windows --key BorderlessMaximizedWindows --type bool true
+    kwriteconfig6 --file "$HOME/.config/kwinrc" --group Windows --key Placement Maximizing
+    kwriteconfig6 --file "$HOME/.config/kwinrc" --group org.kde.kdecoration2 --key NoPlugin --type bool false
+    qdbus org.kde.KWin /KWin org.kde.KWin.reconfigure 2>/dev/null || true
 
     log "swap_to_bigscreen: launching inputhandler via kioclient exec"
     kioclient exec /usr/share/applications/org.kde.plasma.bigscreen.inputhandler.desktop &
@@ -38,7 +54,6 @@ swap_to_default() {
     log "swap_to_default: killing inputhandler"
     pgrep -f "/usr/bin/plasma-bigscreen-inputhandler" >> "$LOG" 2>&1
 
-    # SIGTERM pour que l'inputhandler ferme proprement sa session portal
     pkill -f "/usr/bin/plasma-bigscreen-inputhandler" >> "$LOG" 2>&1
     sleep 1
     pkill -9 -f "/usr/bin/plasma-bigscreen-inputhandler" >> "$LOG" 2>&1
@@ -46,8 +61,22 @@ swap_to_default() {
     sleep 0.5
     pgrep -f "/usr/bin/plasma-bigscreen-inputhandler" >> "$LOG" 2>&1 || log "swap_to_default: process killed (good)"
 
+    # Restaurer les settings KWin originaux
+    log "swap_to_default: restoring original KWin settings"
+    for setting in BorderlessMaximizedWindows:Windows:"--type bool" Placement:Windows:"" NoPlugin:org.kde.kdecoration2:"--type bool"; do
+        key="${setting%%:*}"
+        rest="${setting#*:}"
+        group="${rest%%:*}"
+        extra="${rest#*:}"
+        saved=$(cat "$CACHE_DIR/kwin-$key" 2>/dev/null)
+        if [ "$saved" = "__DELETE__" ]; then
+            kwriteconfig6 --file "$HOME/.config/kwinrc" --group "$group" --key "$key" --delete 2>/dev/null || true
+        elif [ -n "$saved" ]; then
+            kwriteconfig6 --file "$HOME/.config/kwinrc" --group "$group" --key "$key" $extra "$saved" 2>/dev/null || true
+        fi
+    done
+
     # Bigscreen tue xwaylandvideobridge quand il prend le focus (HACK dans HomeScreen.qml)
-    # On le relance pour que Plasma normal fonctionne correctement
     log "swap_to_default: restarting xwaylandvideobridge (was killed by bigscreen)"
     systemctl --user restart plasma-xwaylandvideobridge.service >> "$LOG" 2>&1 || true
 
@@ -57,6 +86,10 @@ swap_to_default() {
     fi
 
     unset PLASMA_BIGSCREEN_LAUNCH_REASON
+
+    # Recharger KWin APRÈS avoir restauré l'env (XDG_CONFIG_DIRS normal)
+    log "swap_to_default: reloading KWin config for normal Plasma settings"
+    qdbus org.kde.KWin /KWin org.kde.KWin.reconfigure 2>/dev/null || true
 
     log "swap_to_default: replacing plasmashell"
     plasmashell --replace &
