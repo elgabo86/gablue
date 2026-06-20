@@ -1,5 +1,11 @@
 #!/usr/bin/sh
 
+LOG="$HOME/.cache/plasma-bigscreen/swap-session.log"
+
+log() {
+    echo "$(date '+%F %T') - $*" >> "$LOG"
+}
+
 if [ -z "$XDG_CURRENT_DESKTOP" ] || [ "$XDG_CURRENT_DESKTOP" != "KDE" ]; then
     echo "This script can only be run on KDE Plasma."
     exit 1
@@ -10,31 +16,58 @@ SAVED_ENV="$CACHE_DIR/saved-env"
 
 mkdir -pv "$CACHE_DIR"
 
+log "Script started"
+
 swap_to_bigscreen() {
+    log "swap_to_bigscreen: saving env"
     export -p > "$SAVED_ENV"
 
     . plasma-bigscreen-common-env
 
     export PLASMA_BIGSCREEN_LAUNCH_REASON=swap
 
-    kstart --application org.kde.plasma.bigscreen.inputhandler &
+    log "swap_to_bigscreen: launching inputhandler via kioclient exec"
+    kioclient exec /usr/share/applications/org.kde.plasma.bigscreen.inputhandler.desktop &
+    log "swap_to_bigscreen: kioclient launched (pid $!)"
 
+    log "swap_to_bigscreen: replacing plasmashell"
     plasmashell --replace &
 }
 
 swap_to_default() {
-    pkill -f plasma-bigscreen-inputhandler
+    log "swap_to_default: killing inputhandler"
+    pgrep -f "/usr/bin/plasma-bigscreen-inputhandler" >> "$LOG" 2>&1
 
-    . "$SAVED_ENV"
-    rm "$SAVED_ENV"
+    # SIGTERM pour que l'inputhandler ferme proprement sa session portal
+    pkill -f "/usr/bin/plasma-bigscreen-inputhandler" >> "$LOG" 2>&1
+    sleep 1
+    pkill -9 -f "/usr/bin/plasma-bigscreen-inputhandler" >> "$LOG" 2>&1
+    log "swap_to_default: kill done, exit code: $?"
+    sleep 0.5
+    pgrep -f "/usr/bin/plasma-bigscreen-inputhandler" >> "$LOG" 2>&1 || log "swap_to_default: process killed (good)"
+
+    # Bigscreen tue xwaylandvideobridge quand il prend le focus (HACK dans HomeScreen.qml)
+    # On le relance pour que Plasma normal fonctionne correctement
+    log "swap_to_default: restarting xwaylandvideobridge (was killed by bigscreen)"
+    systemctl --user restart plasma-xwaylandvideobridge.service >> "$LOG" 2>&1 || true
+
+    if [ -f "$SAVED_ENV" ]; then
+        . "$SAVED_ENV"
+        rm "$SAVED_ENV"
+    fi
 
     unset PLASMA_BIGSCREEN_LAUNCH_REASON
 
+    log "swap_to_default: replacing plasmashell"
     plasmashell --replace &
 }
 
-if [ "$PLASMA_BIGSCREEN_LAUNCH_REASON" = "swap" ]; then
+if pgrep -f "/usr/bin/plasma-bigscreen-inputhandler" > /dev/null 2>&1; then
+    log "Detected inputhandler running, swapping to default"
     swap_to_default
 else
+    log "No inputhandler running, swapping to bigscreen"
     swap_to_bigscreen
 fi
+
+log "Script finished"
