@@ -68,6 +68,13 @@ if len(outs) > 1:
         kscreen-doctor $(cat "$CACHE_DIR/kscreen-bigscreen-cmds.txt") 2>/dev/null || true
     fi
 
+    # Maximiser toutes les fenêtres existantes et enlever leurs décorations
+    log "swap_to_bigscreen: maximizing all windows"
+    qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "/usr/share/gablue/kwin-maximize-all.js" "gablue-maximize" 2>/dev/null || true
+    qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.start 2>/dev/null || true
+    sleep 1
+    qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "gablue-maximize" 2>/dev/null || true
+
     log "swap_to_bigscreen: launching inputhandler via kioclient exec"
     kioclient exec /usr/share/applications/org.kde.plasma.bigscreen.inputhandler.desktop &
     log "swap_to_bigscreen: kioclient launched (pid $!)"
@@ -124,6 +131,13 @@ swap_to_default() {
             [ -n "$output_name" ] && kscreen-doctor "output.$output_name.mirror.none" 2>/dev/null || true
         done < "$CACHE_DIR/kscreen-mirrored.txt"
     fi
+
+    # Restaurer les décorations des fenêtres (annuler noBorder du mode bigscreen)
+    log "swap_to_default: restoring window decorations"
+    qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "/usr/share/gablue/kwin-restore-windows.js" "gablue-restore" 2>/dev/null || true
+    qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.start 2>/dev/null || true
+    sleep 0.5
+    qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "gablue-restore" 2>/dev/null || true
 
     log "swap_to_default: replacing plasmashell"
     plasmashell --replace &
