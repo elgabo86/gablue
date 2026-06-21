@@ -6,5 +6,6 @@ for (var i = 0; i < windows.length; i++) {
         var area = workspace.clientArea(KWin.MaximizeArea, win.output, workspace.currentDesktop);
         win.frameGeometry = area;
         win.noBorder = true;
+        win.minimized = true;
     }
 }
