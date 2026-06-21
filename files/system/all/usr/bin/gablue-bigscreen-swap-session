@@ -19,6 +19,8 @@ mkdir -pv "$CACHE_DIR"
 log "Script started"
 
 swap_to_bigscreen() {
+    ln -sf /etc/xdg/applications-blacklistrc "$HOME/.config/applications-blacklistrc" 2>/dev/null || true
+
     log "swap_to_bigscreen: saving env and KWin settings"
     export -p > "$SAVED_ENV"
 
