@@ -1,4 +1,8 @@
 #!/usr/bin/python3
+"""
+Gablue TV — Interface de télévision optimisée pour manette de jeu.
+Navigation complète au D-pad, lecture via mpv, téléchargement des logos.
+"""
 
 import os
 import sys
@@ -11,14 +15,18 @@ import evdev
 import select
 import shiboken6
 from evdev import ecodes
-from PySide6.QtCore import Qt, QSize, QUrl, QTimer
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtCore import Qt, QSize, QUrl, QTimer, QRect
+from PySide6.QtGui import QIcon, QFont, QColor, QPainter, QPen, QBrush, QPaintEvent
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QScrollArea,
     QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton,
-    QToolButton, QLabel, QFrame, QSizePolicy,
+    QLabel, QFrame, QSizePolicy, QSpacerItem, QGraphicsDropShadowEffect,
 )
+
+# =============================================================================
+# CONSTANTES RÉSEAU ET STOCKAGE
+# =============================================================================
 
 BASE = "https://viamotionhsi.netplus.ch/live/eds"
 SUFFIX = "/browser-HLS8"
@@ -37,6 +45,10 @@ BTN_CROSS = ecodes.BTN_A
 BTN_CIRCLE = ecodes.BTN_B
 BTN_L1 = ecodes.BTN_TL
 BTN_R1 = ecodes.BTN_TR
+
+# =============================================================================
+# LISTE DES CHAÎNES
+# =============================================================================
 
 CHANNELS = [
     ("rts1hd",        "RTS Un",            "🇨🇭 Suisse"),
@@ -223,32 +235,198 @@ for _, _, c in CHANNELS:
         COUNTRIES_ORDER.append(c)
 del _seen
 
-COLS_DEFAULT = 7
-BTN_W = 120
-BTN_H = 76
+# =============================================================================
+# DIMENSIONS ET CONSTANTES D'INTERFACE
+# =============================================================================
+
+CARD_W = 168
+CARD_H = 152
+LOGO_ICON_SIZE = QSize(84, 84)
 COOLDOWN_MS = 180
+GRID_SPACING = 14
+GRID_MARGIN = 20
+CARD_RADIUS = 16
+
+# =============================================================================
+# FEUILLE DE STYLE GLOBALE
+# =============================================================================
+
+APP_STYLESHEET = """
+/* --- Fenêtre --- */
+QMainWindow {
+    background-color: #080818;
+}
+
+/* --- Zone de défilement --- */
+QScrollArea {
+    background-color: transparent;
+    border: none;
+}
+QScrollBar:vertical {
+    background: #101028;
+    width: 8px;
+    border-radius: 4px;
+    margin: 2px;
+}
+QScrollBar::handle:vertical {
+    background: #2a2a50;
+    border-radius: 4px;
+    min-height: 40px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #3a3a60;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+QScrollBar:horizontal {
+    background: #101028;
+    height: 8px;
+    border-radius: 4px;
+    margin: 2px;
+}
+QScrollBar::handle:horizontal {
+    background: #2a2a50;
+    border-radius: 4px;
+    min-width: 40px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: #3a3a60;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+
+/* --- Cartes de chaînes --- */
+QPushButton#channelCard {
+    background-color: #111130;
+    border: 2px solid #1c1c40;
+    border-radius: 16px;
+    color: #c8c8e0;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 10px 4px 8px 4px;
+    text-align: center bottom;
+    icon-size: 84px;
+}
+QPushButton#channelCard:hover {
+    background-color: #181840;
+    border-color: #b39000;
+}
+QPushButton#channelCard[active="true"] {
+    background-color: #181d45;
+    border: 3px solid #e6b800;
+    color: #ffffff;
+    font-weight: 700;
+}
+
+/* --- Pastilles de pays --- */
+QPushButton#countryPill {
+    background-color: #151530;
+    border: 1px solid #282848;
+    border-radius: 20px;
+    color: #9090b0;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 16px;
+    min-height: 32px;
+    max-height: 36px;
+}
+QPushButton#countryPill:hover {
+    background-color: #1e1e40;
+    color: #c0c0e0;
+    border-color: #404068;
+}
+QPushButton#countryPill[active="true"] {
+    background-color: #e6b800;
+    border-color: #e6b800;
+    color: #0a0a16;
+    font-weight: 700;
+}
+
+/* --- Barre d'en-tête --- */
+QFrame#topBar {
+    background-color: #0c0c20;
+    border-bottom: 1px solid #1c1c38;
+}
+QLabel#titleLabel {
+    color: #e6b800;
+    font-size: 21px;
+    font-weight: 800;
+    letter-spacing: 2px;
+}
+QLabel#countLabel {
+    color: #585880;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+/* --- Barre OSD manette --- */
+QFrame#osdBar {
+    background-color: #0c0c1e;
+    border-top: 1px solid #1c1c38;
+}
+QLabel#osdLabel {
+    color: #4a4a70;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+/* --- Overlay de chargement --- */
+QWidget#loadingOverlay {
+    background-color: rgba(4, 4, 16, 0.94);
+}
+QLabel#loadingTitle {
+    color: #e6b800;
+    font-size: 26px;
+    font-weight: 800;
+    background: transparent;
+}
+QLabel#loadingSubtitle {
+    color: #7878a0;
+    font-size: 15px;
+    background: transparent;
+}
+"""
 
 
-class TVLauncher(QMainWindow):
+# =============================================================================
+# FENÊTRE PRINCIPALE
+# =============================================================================
+
+class TVWindow(QMainWindow):
+    """Interface TV Gablue avec navigation manette complète."""
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Gablue TV")
         self.setWindowIcon(QIcon.fromTheme("video-display"))
-        self.resize(900, 650)
+        self.resize(1120, 720)
+        self.setMinimumSize(540, 400)
 
+        # --- Paramètres persistants ---
         self._settings = self._load_settings()
         os.makedirs(LOGO_DIR, exist_ok=True)
+
+        # --- Réseau (logos) ---
         self._net = QNetworkAccessManager(self)
         self._net.finished.connect(self._on_logo_downloaded)
         self._logo_buttons = {}
+        self._fallback_icon = QIcon.fromTheme("video-display")
 
+        # --- Navigation ---
         self._cursor = 0
-        self._cols = COLS_DEFAULT
+        self._cols = 5
         self._filtered = []
         self._buttons = []
         self._country_idx = 0
-        self._mpv_proc = None
+        self._country_pills = []
 
+        # --- MPV ---
+        self._mpv_proc = None
+        self._loading_dots = 0
+
+        # --- Manette ---
         self._gamepad = None
         self._last_input = 0
         self._last_hat_x = 0
@@ -257,14 +435,40 @@ class TVLauncher(QMainWindow):
         self._last_circle = False
         self._last_l1 = False
         self._last_r1 = False
+        self._had_gamepad = False
 
+        # --- État courant du stick/hat (persiste entre les polls) ---
+        self._hat_x = 0
+        self._hat_y = 0
+        self._axis_x = 0.0
+        self._axis_y = 0.0
+
+        # --- Accélération navigation (maintien direction) ---
+        self._hold_dir = None          # None, 'up', 'down', 'left', 'right'
+        self._hold_start = 0.0         # timestamp ms début du maintien
+        self._last_repeat = 0.0        # timestamp ms dernière répétition auto
+
+        # --- Construction de l'interface ---
         self._setup_ui()
+        self._build_country_pills()
         self._filter_channels()
         self._find_gamepad()
 
+        # --- Timers ---
         self._pad_timer = QTimer(self)
         self._pad_timer.timeout.connect(self._poll_gamepad)
         self._pad_timer.start(16)
+
+        self._idle_timer = QTimer(self)
+        self._idle_timer.timeout.connect(self._check_mpv_idle)
+        self._idle_timer.start(600)
+
+        self._load_anim = QTimer(self)
+        self._load_anim.timeout.connect(self._animate_loading)
+
+    # =========================================================================
+    # PERSISTANCE
+    # =========================================================================
 
     def _load_settings(self):
         try:
@@ -279,106 +483,299 @@ class TVLauncher(QMainWindow):
         with open(CONFIG_FILE, "w") as f:
             json.dump(self._settings, f)
 
+    # =========================================================================
+    # CONSTRUCTION DE L'INTERFACE
+    # =========================================================================
+
     def _setup_ui(self):
+        """Construit toute l'arborescence de widgets."""
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(6)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        top_bar = QHBoxLayout()
-        self._country_label = QLabel()
-        self._country_label.setStyleSheet(
-            "color: #e6b800; font-size: 14px; font-weight: bold; padding: 4px 8px;"
-        )
-        self._help_label = QLabel("L1/R1: pays | D-pad: naviguer | A: lancer | B: fermer")
-        self._help_label.setStyleSheet("color: #888; font-size: 11px; padding: 4px;")
-        top_bar.addWidget(self._country_label, 1)
-        top_bar.addWidget(self._help_label)
-        root.addLayout(top_bar)
+        # --- Barre supérieure ---
+        top_bar = QFrame()
+        top_bar.setObjectName("topBar")
+        top_bar.setFixedHeight(54)
+        top_layout = QHBoxLayout(top_bar)
+        top_layout.setContentsMargins(18, 0, 18, 0)
+        top_layout.setSpacing(14)
 
+        title = QLabel("GABLUE  TV")
+        title.setObjectName("titleLabel")
+        top_layout.addWidget(title)
+
+        # Conteneur scrollable des pastilles
+        self._pills_scroll = QScrollArea()
+        self._pills_scroll.setFixedHeight(40)
+        self._pills_scroll.setWidgetResizable(True)
+        self._pills_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._pills_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._pills_scroll.setFrameShape(QFrame.NoFrame)
+        self._pills_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        pills_widget = QWidget()
+        self._pills_layout = QHBoxLayout(pills_widget)
+        self._pills_layout.setContentsMargins(0, 0, 0, 0)
+        self._pills_layout.setSpacing(8)
+        self._pills_layout.addStretch()
+        self._pills_scroll.setWidget(pills_widget)
+        top_layout.addWidget(self._pills_scroll, 1)
+
+        self._count_label = QLabel()
+        self._count_label.setObjectName("countLabel")
+        top_layout.addWidget(self._count_label)
+
+        root.addWidget(top_bar)
+
+        # --- Zone de contenu (grille) ---
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        self._grid_container = QWidget()
+        self._grid = QGridLayout(self._grid_container)
+        self._grid.setSpacing(GRID_SPACING)
+        self._grid.setContentsMargins(GRID_MARGIN, GRID_MARGIN, GRID_MARGIN, GRID_MARGIN)
+        self._grid.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        self._scroll.setWidget(self._grid_container)
         root.addWidget(self._scroll, 1)
 
-        self._container = QWidget()
-        self._grid = QGridLayout(self._container)
-        self._grid.setSpacing(4)
-        self._grid.setContentsMargins(0, 0, 0, 0)
-        self._scroll.setWidget(self._container)
-
-        self._loading_overlay = QLabel(central)
-        self._loading_overlay.setAlignment(Qt.AlignCenter)
-        self._loading_overlay.setStyleSheet(
-            "background-color: rgba(10, 15, 30, 0.95); color: #e6b800; "
-            "font-size: 22px; font-weight: bold;"
+        # --- Barre OSD manette ---
+        self._osd_bar = QFrame()
+        self._osd_bar.setObjectName("osdBar")
+        self._osd_bar.setFixedHeight(30)
+        self._osd_bar.hide()
+        osd_layout = QHBoxLayout(self._osd_bar)
+        osd_layout.setContentsMargins(22, 0, 22, 0)
+        self._osd_label = QLabel(
+            "[A] Lancer/Pause    [B] Retour/Fermer    [L1/R1] Pays    "
+            "[D-Pad] Naviguer    [Haut/Bas] Vol.    [Gauche/Droite] Seek"
         )
+        self._osd_label.setObjectName("osdLabel")
+        osd_layout.addWidget(self._osd_label)
+        root.addWidget(self._osd_bar)
+
+        # --- Overlay de chargement ---
+        self._loading_overlay = QWidget(central)
+        self._loading_overlay.setObjectName("loadingOverlay")
         self._loading_overlay.hide()
+        load_layout = QVBoxLayout(self._loading_overlay)
+        load_layout.setAlignment(Qt.AlignCenter)
+        load_layout.setSpacing(8)
+
+        self._loading_title = QLabel()
+        self._loading_title.setObjectName("loadingTitle")
+        self._loading_title.setAlignment(Qt.AlignCenter)
+        load_layout.addWidget(self._loading_title)
+
+        self._loading_subtitle = QLabel("Connexion au flux...")
+        self._loading_subtitle.setObjectName("loadingSubtitle")
+        self._loading_subtitle.setAlignment(Qt.AlignCenter)
+        load_layout.addWidget(self._loading_subtitle)
+
+    def _build_country_pills(self):
+        """Crée les pastilles de filtrage par pays."""
+        # Nettoie tout sauf le stretch final
+        while self._pills_layout.count() > 1:
+            item = self._pills_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        self._country_pills = []
+
+        # Pastille "Toutes"
+        pill_all = QPushButton("Toutes")
+        pill_all.setObjectName("countryPill")
+        pill_all.setCursor(Qt.PointingHandCursor)
+        pill_all.setFocusPolicy(Qt.NoFocus)
+        pill_all.clicked.connect(lambda: self._select_country(0))
+        self._pills_layout.insertWidget(0, pill_all)
+        self._country_pills.append(pill_all)
+
+        for i, country in enumerate(COUNTRIES_ORDER):
+            pill = QPushButton(country)
+            pill.setObjectName("countryPill")
+            pill.setCursor(Qt.PointingHandCursor)
+            pill.setFocusPolicy(Qt.NoFocus)
+            idx = i + 1
+            pill.clicked.connect(lambda checked, n=idx: self._select_country(n))
+            self._pills_layout.insertWidget(self._pills_layout.count() - 1, pill)
+            self._country_pills.append(pill)
+
+    def _select_country(self, idx):
+        """Change le filtre pays."""
+        self._country_idx = idx
+        self._filter_channels()
+
+    def _refresh_pills(self):
+        """Met à jour le style actif/inactif des pastilles."""
+        target_pill = (
+            self._country_pills[self._country_idx]
+            if self._country_idx < len(self._country_pills)
+            else None
+        )
+        for i, pill in enumerate(self._country_pills):
+            active = (i == self._country_idx)
+            pill.setProperty("active", active)
+            pill.style().unpolish(pill)
+            pill.style().polish(pill)
+        # Scroll horizontal pour rendre visible la pastille active
+        # (l'utilisateur peut aussi scroller manuellement avec la souris)
+        if target_pill:
+            self._pills_scroll.ensureWidgetVisible(target_pill, 8, 4)
+
+    # =========================================================================
+    # GRILLE DE CHAÎNES
+    # =========================================================================
 
     def _filter_channels(self):
-        country = COUNTRIES_ORDER[self._country_idx - 1] if self._country_idx > 0 else None
-        if country:
-            self._filtered = [(i, ch) for i, ch in enumerate(CHANNELS) if ch[2] == country]
-        else:
+        """Applique le filtre pays et reconstruit la grille."""
+        if self._country_idx == 0:
             self._filtered = list(enumerate(CHANNELS))
+        else:
+            country = COUNTRIES_ORDER[self._country_idx - 1]
+            self._filtered = [
+                (i, ch) for i, ch in enumerate(CHANNELS) if ch[2] == country
+            ]
 
-        label = "Tous" if not country else country
-        self._country_label.setText(f"{label} ({len(self._filtered)} chaînes)")
+        self._count_label.setText(f"{len(self._filtered)} chaînes")
         self._cursor = 0
         self._rebuild_grid()
+        self._refresh_pills()
 
     def _rebuild_grid(self):
+        """Reconstruit la grille de cartes."""
+        # Nettoyage
         while self._grid.count():
             item = self._grid.takeAt(0)
             if item.widget():
                 item.widget().setParent(None)
 
         self._buttons = []
-        w = self._scroll.viewport().width() or 880
-        self._cols = max(1, w // (BTN_W + 8))
 
-        for idx, (_, (ch_id, label, _)) in enumerate(self._filtered):
-            btn = QToolButton()
-            btn.setText(label)
-            btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-            btn.setIconSize(QSize(56, 56))
-            btn.setFixedSize(BTN_W, BTN_H)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            btn.setFocusPolicy(Qt.NoFocus)
+        # Calcul du nombre de colonnes
+        vw = self._scroll.viewport().width()
+        if vw < 100:
+            vw = self.width() - 24
+        self._cols = max(1, (vw - GRID_MARGIN * 2 + GRID_SPACING) // (CARD_W + GRID_SPACING))
+
+        for idx, (_, (ch_id, label, country)) in enumerate(self._filtered):
+            card = self._make_card(ch_id, label, country)
             url = f"{BASE}/{ch_id}{SUFFIX}/{ch_id}.m3u8"
-            btn.clicked.connect(lambda checked, u=url, l=label: self._play(u, l))
+            card.clicked.connect(lambda checked, u=url, l=label: self._play(u, l))
             row = idx // self._cols
             col = idx % self._cols
-            self._grid.addWidget(btn, row, col)
-            self._buttons.append(btn)
-            self._load_logo(ch_id, btn)
+            self._grid.addWidget(card, row, col, Qt.AlignCenter)
+            self._buttons.append(card)
+            self._load_logo(ch_id, card)
 
-        self._update_highlight()
+        # Espaceur en bas
+        if self._buttons:
+            last_row = (len(self._buttons) - 1) // self._cols
+            self._grid.setRowStretch(last_row + 1, 1)
 
-    def _update_highlight(self):
+        self._update_card_focus()
+
+    def _make_card(self, ch_id, label, country):
+        """Crée une carte de chaîne stylée."""
+        card = QPushButton()
+        card.setObjectName("channelCard")
+        card.setFixedSize(CARD_W, CARD_H)
+        card.setCursor(Qt.PointingHandCursor)
+        card.setFocusPolicy(Qt.NoFocus)
+        card.setIconSize(LOGO_ICON_SIZE)
+        card.setIcon(self._fallback_icon)
+        # Texte sur deux lignes si nécessaire
+        card.setText(label)
+        card.setToolTip(f"{label}\n{country}")
+        return card
+
+    def _update_card_focus(self):
+        """Met à jour visuellement la carte active."""
         for i, btn in enumerate(self._buttons):
-            if i == self._cursor:
-                btn.setStyleSheet(
-                    "QToolButton { background-color: #0f3460; border: 2px solid #e6b800; "
-                    "border-radius: 6px; color: #e6b800; font-size: 11px; padding: 6px 2px 1px 2px; }"
-                )
-            else:
-                btn.setStyleSheet(
-                    "QToolButton { background-color: #16213e; border: 1px solid #0f3460; "
-                    "border-radius: 6px; color: #e0e0e0; font-size: 11px; padding: 6px 2px 1px 2px; }"
-                    "QToolButton:hover { background-color: #0f3460; border-color: #e6b800; }"
-                )
+            active = (i == self._cursor)
+            btn.setProperty("active", active)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
 
     def _ensure_visible(self):
-        if not self._buttons:
+        """Scrolle pour rendre visible la carte active."""
+        if not self._buttons or self._cursor >= len(self._buttons):
             return
         btn = self._buttons[self._cursor]
-        self._scroll.ensureWidgetVisible(btn, 50, 50)
+        self._scroll.ensureWidgetVisible(btn, 80, 80)
+
+    def _scroll_to_top(self):
+        """Remonte tout en haut de la grille."""
+        sb = self._scroll.verticalScrollBar()
+        if sb:
+            sb.setValue(0)
+
+    # =========================================================================
+    # ACCÉLÉRATION NAVIGATION
+    # =========================================================================
+
+    def _accel_delay(self, hold_ms):
+        """Délai entre répétitions selon la durée de maintien (ms).
+
+        La navigation accélère progressivement quand on maintient une direction :
+        - 0-300ms   : 180ms (délai initial avant 1ère répétition)
+        - 300-600ms : 120ms
+        - 600ms-1s  : 70ms
+        - 1-2s      : 40ms
+        - >2s       : 25ms (très rapide)
+        """
+        if hold_ms < 300:
+            return COOLDOWN_MS
+        elif hold_ms < 600:
+            return 120
+        elif hold_ms < 1000:
+            return 70
+        elif hold_ms < 2000:
+            return 40
+        else:
+            return 25
+
+    def _try_move_cursor(self, direction):
+        """Tente de déplacer le curseur dans la direction donnée.
+
+        Retourne True si le curseur a été déplacé avec succès.
+        """
+        moved = False
+        if direction == "up":
+            new = self._cursor - self._cols
+            if new >= 0:
+                self._cursor = new
+                moved = True
+        elif direction == "down":
+            new = self._cursor + self._cols
+            if new < len(self._buttons):
+                self._cursor = new
+                moved = True
+        elif direction == "left":
+            if self._cursor % self._cols > 0:
+                self._cursor -= 1
+                moved = True
+        elif direction == "right":
+            if (self._cursor % self._cols < self._cols - 1
+                    and self._cursor + 1 < len(self._buttons)):
+                self._cursor += 1
+                moved = True
+        if moved:
+            self._update_card_focus()
+            self._ensure_visible()
+        return moved
+
+    # =========================================================================
+    # LOGOS
+    # =========================================================================
 
     def _load_logo(self, ch_id, btn):
+        """Charge un logo (cache ou réseau)."""
         cache_path = os.path.join(LOGO_DIR, f"{ch_id}.png")
         if os.path.exists(cache_path):
             btn.setIcon(QIcon(cache_path))
@@ -388,34 +785,52 @@ class TVLauncher(QMainWindow):
         self._net.get(QNetworkRequest(QUrl(url)))
 
     def _on_logo_downloaded(self, reply):
+        """Callback de téléchargement d'un logo."""
         url_path = reply.url().path()
         ch_id = os.path.splitext(os.path.basename(url_path))[0]
         if reply.error() != QNetworkReply.NetworkError.NoError:
             return
         cache_path = os.path.join(LOGO_DIR, f"{ch_id}.png")
         data = reply.readAll().data()
-        with open(cache_path, "wb") as f:
-            f.write(data)
+        try:
+            with open(cache_path, "wb") as f:
+                f.write(data)
+        except OSError:
+            return
         btn = self._logo_buttons.pop(ch_id, None)
         if btn and shiboken6.isValid(btn):
             btn.setIcon(QIcon(cache_path))
 
+    # =========================================================================
+    # LECTURE MPV
+    # =========================================================================
+
     def _play(self, url, label=""):
+        """Lance la lecture d'une chaîne."""
         self._kill_mpv()
-        self._loading_overlay.setText(f"{label}\nChargement...")
+        self._loading_title.setText(label)
+        self._loading_subtitle.setText("Connexion au flux...")
+        self._loading_dots = 0
         self._loading_overlay.setGeometry(self.centralWidget().rect())
         self._loading_overlay.raise_()
         self._loading_overlay.show()
+        self._load_anim.start(450)
+
         try:
             os.unlink(MPV_SOCKET)
         except FileNotFoundError:
             pass
-        cmd = [MPV_BIN, "--no-terminal", "--profile=fast", "--fs",
-               f"--input-ipc-server={MPV_SOCKET}",
-               "--alang=fr,eng,ita,deu,spa,jpn,und", "--slang=fr,eng", url]
+
+        cmd = [
+            MPV_BIN, "--no-terminal", "--profile=fast", "--fs",
+            f"--input-ipc-server={MPV_SOCKET}",
+            "--alang=fr,eng,ita,deu,spa,jpn,und", "--slang=fr,eng",
+            url,
+        ]
         self._mpv_proc = subprocess.Popen(cmd, start_new_session=True)
 
     def _mpv_cmd(self, *args):
+        """Envoie une commande au socket IPC mpv."""
         try:
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             s.settimeout(0.5)
@@ -426,120 +841,195 @@ class TVLauncher(QMainWindow):
             pass
 
     def _kill_mpv(self):
+        """Tue le processus mpv."""
         if self._mpv_proc and self._mpv_proc.poll() is None:
-            os.killpg(os.getpgid(self._mpv_proc.pid), signal.SIGTERM)
-            self._mpv_proc = None
+            try:
+                os.killpg(os.getpgid(self._mpv_proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                pass
+        self._mpv_proc = None
         self._loading_overlay.hide()
+        self._load_anim.stop()
         try:
             os.unlink(MPV_SOCKET)
         except FileNotFoundError:
             pass
 
     def _mpv_running(self):
+        """Retourne True si mpv est vivant."""
         if self._mpv_proc is not None and self._mpv_proc.poll() is None:
             return True
         if self._mpv_proc is not None:
             self._mpv_proc = None
             self._loading_overlay.hide()
+            self._load_anim.stop()
         return False
 
+    def _check_mpv_idle(self):
+        """Cache l'overlay quand mpv est prêt."""
+        if not self._loading_overlay.isVisible() or self._mpv_proc is None:
+            return
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(0.2)
+            s.connect(MPV_SOCKET)
+            s.sendall(
+                json.dumps({"command": ["get_property", "core-idle"]}).encode() + b"\n"
+            )
+            resp = s.recv(512).decode()
+            s.close()
+            data = json.loads(resp)
+            if data.get("data") is False:
+                self._loading_overlay.hide()
+                self._load_anim.stop()
+        except (OSError, ConnectionRefusedError, json.JSONDecodeError, ValueError):
+            pass
+
+    def _animate_loading(self):
+        """Animation simple de chargement (points qui défilent)."""
+        self._loading_dots = (self._loading_dots + 1) % 4
+        dots = "." * self._loading_dots
+        self._loading_subtitle.setText(f"Connexion au flux{dots}   ")
+
+    # =========================================================================
+    # MANETTE DE JEU
+    # =========================================================================
+
     def _find_gamepad(self):
-        devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
+        """Détecte une manette connectée."""
+        try:
+            devices = [evdev.InputDevice(p) for p in evdev.list_devices()]
+        except (FileNotFoundError, PermissionError, OSError):
+            self._gamepad = None
+            self._update_osd()
+            return
         for device in devices:
-            capabilities = device.capabilities()
-            if ecodes.EV_KEY in capabilities:
-                keys = capabilities[ecodes.EV_KEY]
+            try:
+                caps = device.capabilities()
+            except (OSError, IOError):
+                continue
+            if ecodes.EV_KEY in caps:
+                keys = caps[ecodes.EV_KEY]
                 if ecodes.BTN_A in keys or ecodes.BTN_SELECT in keys:
                     self._gamepad = device
+                    self._update_osd()
                     return
         self._gamepad = None
+        self._update_osd()
+
+    def _update_osd(self):
+        """Affiche/masque la barre d'aide manette."""
+        connected = self._gamepad is not None
+        if connected != self._had_gamepad:
+            self._had_gamepad = connected
+            self._osd_bar.setVisible(connected)
 
     def _poll_gamepad(self):
+        """Boucle principale de lecture manette (appelée toutes les ~16ms).
+
+        L'accélération fonctionne même sans nouveaux événements : l'état
+        du stick/hat est mémorisé entre les appels.
+        """
         self._mpv_running()
-        if self._loading_overlay.isVisible() and self._mpv_proc is not None:
-            try:
-                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                s.settimeout(0.3)
-                s.connect(MPV_SOCKET)
-                s.sendall(json.dumps({"command": ["get_property", "core-idle"]}).encode() + b"\n")
-                resp = s.recv(512).decode()
-                s.close()
-                data = json.loads(resp)
-                if data.get("data") is False:
-                    self._loading_overlay.hide()
-            except (OSError, ConnectionRefusedError, json.JSONDecodeError, ValueError):
-                pass
+
         if not self._gamepad:
             self._find_gamepad()
             return
 
+        now = time.time() * 1000
+
+        # Lecture des événements si disponibles
         try:
             r, _, _ = select.select([self._gamepad], [], [], 0)
         except (OSError, IOError):
             self._gamepad = None
+            self._update_osd()
             return
 
-        if self._gamepad not in r:
-            return
+        cross_pressed = False
+        circle_pressed = False
+        l1_pressed = False
+        r1_pressed = False
 
-        now = time.time() * 1000
-
-        try:
-            hat_x = 0
-            hat_y = 0
-            axis_x = 0.0
-            axis_y = 0.0
-            cross_pressed = False
-            circle_pressed = False
-            l1_pressed = False
-            r1_pressed = False
-
-            for event in self._gamepad.read():
-                if event.type == ecodes.EV_ABS:
-                    if event.code == ecodes.ABS_HAT0X:
-                        hat_x = event.value
-                    elif event.code == ecodes.ABS_HAT0Y:
-                        hat_y = event.value
-                    elif event.code == ecodes.ABS_X:
-                        axis_x = (event.value - 128) / 127.0
-                    elif event.code == ecodes.ABS_Y:
-                        axis_y = (event.value - 128) / 127.0
-                elif event.type == ecodes.EV_KEY:
-                    if event.code == BTN_CROSS and event.value == 1:
-                        cross_pressed = True
-                    elif event.code == BTN_CIRCLE and event.value == 1:
-                        circle_pressed = True
-                    elif event.code == BTN_L1 and event.value == 1:
-                        l1_pressed = True
-                    elif event.code == BTN_R1 and event.value == 1:
-                        r1_pressed = True
-
-            up = hat_y == -1 or axis_y < -0.5
-            down = hat_y == 1 or axis_y > 0.5
-            left = hat_x == -1 or axis_x < -0.5
-            right = hat_x == 1 or axis_x > 0.5
-
-            if now - self._last_input < COOLDOWN_MS:
-                self._last_hat_x = hat_x
-                self._last_hat_y = hat_y
-                self._last_cross = cross_pressed
-                self._last_circle = circle_pressed
-                self._last_l1 = l1_pressed
-                self._last_r1 = r1_pressed
+        if self._gamepad in r:
+            try:
+                for ev in self._gamepad.read():
+                    if ev.type == ecodes.EV_ABS:
+                        if ev.code == ecodes.ABS_HAT0X:
+                            self._hat_x = ev.value
+                        elif ev.code == ecodes.ABS_HAT0Y:
+                            self._hat_y = ev.value
+                        elif ev.code == ecodes.ABS_X:
+                            self._axis_x = (ev.value - 128) / 127.0
+                        elif ev.code == ecodes.ABS_Y:
+                            self._axis_y = (ev.value - 128) / 127.0
+                    elif ev.type == ecodes.EV_KEY:
+                        if ev.code == BTN_CROSS and ev.value == 1:
+                            cross_pressed = True
+                        elif ev.code == BTN_CIRCLE and ev.value == 1:
+                            circle_pressed = True
+                        elif ev.code == BTN_L1 and ev.value == 1:
+                            l1_pressed = True
+                        elif ev.code == BTN_R1 and ev.value == 1:
+                            r1_pressed = True
+            except (OSError, IOError, BlockingIOError):
+                self._gamepad = None
+                self._update_osd()
                 return
 
-            moved = False
+        # Utilise les valeurs persistantes (pas de return quand pas d'événements,
+        # ce qui permet à l'accélération de continuer pendant le maintien)
+        hat_x = self._hat_x
+        hat_y = self._hat_y
+        axis_x = self._axis_x
+        axis_y = self._axis_y
 
+        up = hat_y == -1 or axis_y < -0.5
+        down = hat_y == 1 or axis_y > 0.5
+        left = hat_x == -1 or axis_x < -0.5
+        right = hat_x == 1 or axis_x > 0.5
+
+        # === Direction actuelle ===
+        new_dir = None
+        if up:
+            new_dir = "up"
+        elif down:
+            new_dir = "down"
+        elif left:
+            new_dir = "left"
+        elif right:
+            new_dir = "right"
+
+        playing = self._mpv_running()
+
+        # --- Mode grille : accélération progressive au maintien ---
+        if not playing:
+            if new_dir is None:
+                self._hold_dir = None
+            elif new_dir == self._hold_dir:
+                hold_ms = now - self._hold_start
+                if now - self._last_repeat >= self._accel_delay(hold_ms):
+                    self._last_repeat = now
+                    self._try_move_cursor(new_dir)
+            else:
+                self._hold_dir = new_dir
+                self._hold_start = now
+                self._last_repeat = now
+                self._try_move_cursor(new_dir)
+
+        # --- Boutons (tir unique, pas d'accélération) ---
+        if now - self._last_input >= COOLDOWN_MS:
             if cross_pressed and not self._last_cross:
                 self._last_input = now
-                if self._mpv_running():
+                if playing:
                     self._mpv_cmd("cycle", "pause")
-                elif self._buttons:
+                elif self._buttons and self._cursor < len(self._buttons):
                     self._buttons[self._cursor].click()
+                self._hold_dir = None
 
             elif circle_pressed and not self._last_circle:
                 self._last_input = now
-                if self._mpv_running():
+                if playing:
                     self._kill_mpv()
                 else:
                     self.close()
@@ -547,129 +1037,186 @@ class TVLauncher(QMainWindow):
 
             elif l1_pressed and not self._last_l1:
                 self._last_input = now
-                self._country_idx = (self._country_idx - 1) % (len(COUNTRIES_ORDER) + 1)
-                self._filter_channels()
+                if playing:
+                    self._mpv_cmd("playlist-prev")
+                else:
+                    self._country_idx = (self._country_idx - 1) % (len(COUNTRIES_ORDER) + 1)
+                    self._select_country(self._country_idx)
+                    self._scroll_to_top()
+                self._hold_dir = None
 
             elif r1_pressed and not self._last_r1:
                 self._last_input = now
-                self._country_idx = (self._country_idx + 1) % (len(COUNTRIES_ORDER) + 1)
-                self._filter_channels()
+                if playing:
+                    self._mpv_cmd("playlist-next")
+                else:
+                    self._country_idx = (self._country_idx + 1) % (len(COUNTRIES_ORDER) + 1)
+                    self._select_country(self._country_idx)
+                    self._scroll_to_top()
+                self._hold_dir = None
 
-            elif up and self._last_hat_y != -1:
-                new = self._cursor - self._cols
-                if new >= 0:
-                    self._cursor = new
-                    moved = True
-
-            elif down and self._last_hat_y != 1:
-                new = self._cursor + self._cols
-                if new < len(self._buttons):
-                    self._cursor = new
-                    moved = True
-
-            elif left and self._last_hat_x != -1:
-                if self._mpv_running():
+            # --- Mode lecture : directions sans accélération ---
+            elif playing and new_dir is not None:
+                if new_dir == "up" and self._last_hat_y != -1:
+                    self._last_input = now
+                    self._mpv_cmd("add", "volume", "5")
+                elif new_dir == "down" and self._last_hat_y != 1:
+                    self._last_input = now
+                    self._mpv_cmd("add", "volume", "-5")
+                elif new_dir == "left" and self._last_hat_x != -1:
+                    self._last_input = now
                     self._mpv_cmd("seek", "-10")
-                elif self._cursor % self._cols > 0:
-                    self._cursor -= 1
-                    moved = True
-
-            elif right and self._last_hat_x != 1:
-                if self._mpv_running():
+                elif new_dir == "right" and self._last_hat_x != 1:
+                    self._last_input = now
                     self._mpv_cmd("seek", "10")
-                elif self._cursor % self._cols < self._cols - 1 and self._cursor + 1 < len(self._buttons):
-                    self._cursor += 1
-                    moved = True
 
-            if moved:
-                self._last_input = now
-                self._update_highlight()
-                self._ensure_visible()
+        self._last_hat_x = hat_x
+        self._last_hat_y = hat_y
+        self._last_cross = cross_pressed
+        self._last_circle = circle_pressed
+        self._last_l1 = l1_pressed
+        self._last_r1 = r1_pressed
 
-            self._last_hat_x = hat_x
-            self._last_hat_y = hat_y
-            self._last_cross = cross_pressed
-            self._last_circle = circle_pressed
-            self._last_l1 = l1_pressed
-            self._last_r1 = r1_pressed
-
-        except (OSError, IOError, BlockingIOError):
-            self._gamepad = None
+    # =========================================================================
+    # CLAVIER
+    # =========================================================================
 
     def keyPressEvent(self, event):
+        """Raccourcis clavier."""
         key = event.key()
+        playing = self._mpv_running()
+
         if key == Qt.Key_Escape:
-            if self._mpv_running():
+            if playing:
                 self._kill_mpv()
             else:
                 self.close()
+
         elif key == Qt.Key_Return or key == Qt.Key_Enter:
-            if self._mpv_running():
+            if playing:
                 self._mpv_cmd("cycle", "pause")
-            elif self._buttons:
+            elif self._buttons and self._cursor < len(self._buttons):
                 self._buttons[self._cursor].click()
+
+        elif key == Qt.Key_Space:
+            if playing:
+                self._mpv_cmd("cycle", "pause")
+            elif self._buttons and self._cursor < len(self._buttons):
+                self._buttons[self._cursor].click()
+
+        elif key == Qt.Key_Backspace:
+            if playing:
+                self._kill_mpv()
+
         elif key == Qt.Key_Up:
-            new = self._cursor - self._cols
-            if new >= 0:
-                self._cursor = new
-                self._update_highlight()
-                self._ensure_visible()
+            if playing:
+                self._mpv_cmd("add", "volume", "5")
+            else:
+                new = self._cursor - self._cols
+                if new >= 0:
+                    self._cursor = new
+                    self._update_card_focus()
+                    self._ensure_visible()
+
         elif key == Qt.Key_Down:
-            new = self._cursor + self._cols
-            if new < len(self._buttons):
-                self._cursor = new
-                self._update_highlight()
-                self._ensure_visible()
+            if playing:
+                self._mpv_cmd("add", "volume", "-5")
+            else:
+                new = self._cursor + self._cols
+                if new < len(self._buttons):
+                    self._cursor = new
+                    self._update_card_focus()
+                    self._ensure_visible()
+
         elif key == Qt.Key_Left:
-            if self._mpv_running():
+            if playing:
                 self._mpv_cmd("seek", "-10")
             elif self._cursor % self._cols > 0:
                 self._cursor -= 1
-                self._update_highlight()
+                self._update_card_focus()
                 self._ensure_visible()
+
         elif key == Qt.Key_Right:
-            if self._mpv_running():
+            if playing:
                 self._mpv_cmd("seek", "10")
-            elif self._cursor % self._cols < self._cols - 1 and self._cursor + 1 < len(self._buttons):
+            elif (self._cursor % self._cols < self._cols - 1
+                  and self._cursor + 1 < len(self._buttons)):
                 self._cursor += 1
-                self._update_highlight()
+                self._update_card_focus()
                 self._ensure_visible()
+
         elif key == Qt.Key_PageUp:
             self._country_idx = (self._country_idx - 1) % (len(COUNTRIES_ORDER) + 1)
-            self._filter_channels()
+            self._select_country(self._country_idx)
+
         elif key == Qt.Key_PageDown:
             self._country_idx = (self._country_idx + 1) % (len(COUNTRIES_ORDER) + 1)
-            self._filter_channels()
+            self._select_country(self._country_idx)
+
+        elif key == Qt.Key_Home:
+            self._cursor = 0
+            self._update_card_focus()
+            self._ensure_visible()
+
+        elif key == Qt.Key_End:
+            self._cursor = max(0, len(self._buttons) - 1)
+            self._update_card_focus()
+            self._ensure_visible()
+
         else:
             super().keyPressEvent(event)
 
+    # =========================================================================
+    # REDIMENSIONNEMENT
+    # =========================================================================
+
     def resizeEvent(self, event):
+        """Adapte la grille au redimensionnement."""
         super().resizeEvent(event)
         if self._loading_overlay.isVisible():
             self._loading_overlay.setGeometry(self.centralWidget().rect())
-        new_cols = max(1, self._scroll.viewport().width() // (BTN_W + 8))
-        if new_cols != self._cols and self._buttons:
-            self._cols = new_cols
-            self._rebuild_grid()
+        vw = self._scroll.viewport().width()
+        if vw > 100:
+            new_cols = max(1, (vw - GRID_MARGIN * 2 + GRID_SPACING) // (CARD_W + GRID_SPACING))
+            if new_cols != self._cols and self._buttons:
+                self._cols = new_cols
+                self._rebuild_grid()
+
+    # =========================================================================
+    # FERMETURE
+    # =========================================================================
 
     def closeEvent(self, event):
+        """Nettoie les ressources."""
         self._kill_mpv()
         self._pad_timer.stop()
+        self._idle_timer.stop()
+        self._load_anim.stop()
         if self._gamepad:
-            self._gamepad.close()
+            try:
+                self._gamepad.close()
+            except (OSError, IOError):
+                pass
         super().closeEvent(event)
 
+
+# =============================================================================
+# POINT D'ENTRÉE
+# =============================================================================
 
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Gablue TV")
+    app.setOrganizationName("gablue")
     app.setStyle("Fusion")
-    app.setStyleSheet("""
-        QMainWindow { background-color: #1a1a2e; }
-        QScrollArea { background-color: transparent; border: none; }
-        QLabel { background: transparent; }
-    """)
-    win = TVLauncher()
+
+    # Police légèrement agrandie pour usage TV
+    font = QFont("Noto Sans", 11)
+    font.setStyleStrategy(QFont.PreferAntialias)
+    app.setFont(font)
+    app.setStyleSheet(APP_STYLESHEET)
+
+    win = TVWindow()
     win.show()
     sys.exit(app.exec())
 
