@@ -40,6 +40,7 @@ chmod +x /usr/bin/gamepadshortcuts
 chmod +x /usr/bin/tv
 chmod +x /usr/bin/tvqt
 chmod +x /usr/bin/gablue-bigscreen-swap-session
+chmod +x /usr/bin/wallpaper-import
 
 chmod +x /usr/bin/gablue-isomount
 chmod +x /usr/bin/gablue-update

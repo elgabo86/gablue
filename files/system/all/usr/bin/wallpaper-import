@@ -1,0 +1,65 @@
+#!/usr/bin/bash
+
+set -euo pipefail
+
+DEST="$HOME/.local/share/wallpapers"
+PREFIX="generated-"
+
+usage() {
+    echo "Usage: wallpaper-import <dossier_images> [--clean]"
+    echo ""
+    echo "Importe un dossier d'images comme wallpapers KDE (paquets avec symlinks)."
+    echo "Les paquets sont prefixes par '$PREFIX' dans $DEST"
+    echo ""
+    echo "Options:"
+    echo "  --clean    Supprime tous les wallpapers generes avant d'importer"
+    exit 1
+}
+
+clean() {
+    rm -rf "$DEST"/${PREFIX}*
+    echo "Wallpapers generes supprimes."
+}
+
+[ $# -lt 1 ] && usage
+
+if [ "$1" = "--clean" ]; then
+    clean
+    [ $# -lt 2 ] && exit 0
+    shift
+fi
+
+SRC="$1"
+
+if [ ! -d "$SRC" ]; then
+    echo "Erreur: '$SRC' n'est pas un dossier valide."
+    exit 1
+fi
+
+if [ "$1" = "--clean" ]; then
+    clean
+    exit 0
+fi
+
+mkdir -p "$DEST"
+count=0
+
+for img in "$SRC"/*.jpg "$SRC"/*.jpeg "$SRC"/*.png "$SRC"/*.webp "$SRC"/*.bmp; do
+    [ -f "$img" ] || continue
+    name=$(basename "$img" | sed 's/\.[^.]*$//')
+    ext="${img##*.}"
+    pkg="$DEST/${PREFIX}${name}"
+    mkdir -p "$pkg/contents/images"
+    cat > "$pkg/metadata.json" << EOF
+{
+    "KPlugin": {
+        "Id": "${PREFIX}${name}",
+        "Name": "$name"
+    }
+}
+EOF
+    ln -sf "$(realpath "$img")" "$pkg/contents/images/1920x1080.$ext"
+    count=$((count + 1))
+done
+
+echo "$count wallpapers importes depuis '$SRC'"
