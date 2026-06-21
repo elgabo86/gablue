@@ -1,18 +1,23 @@
 #!/usr/bin/python3
-"""Lanceur IPTV Qt6 — liste des chaînes, lance mpv en plein écran."""
 
 import os
 import sys
 import json
+import signal
+import socket
 import subprocess
+import time
+import evdev
+import select
 import shiboken6
-from PySide6.QtCore import Qt, QSize, QPoint, QRect, QUrl
+from evdev import ecodes
+from PySide6.QtCore import Qt, QSize, QUrl, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QScrollArea,
-    QVBoxLayout, QHBoxLayout, QPushButton, QToolButton,
-    QLabel, QFrame, QCheckBox, QLayout, QSizePolicy,
+    QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton,
+    QToolButton, QLabel, QFrame, QSizePolicy,
 )
 
 BASE = "https://viamotionhsi.netplus.ch/live/eds"
@@ -26,6 +31,12 @@ LOGO_BASE = "https://picserve.netplus.ch/channels"
 MPV_BIN = "/usr/bin/mpv"
 if not os.path.exists(MPV_BIN):
     MPV_BIN = "/home/linuxbrew/.linuxbrew/bin/mpv"
+MPV_SOCKET = "/tmp/tvqt-mpv-socket"
+
+BTN_CROSS = ecodes.BTN_A
+BTN_CIRCLE = ecodes.BTN_B
+BTN_L1 = ecodes.BTN_TL
+BTN_R1 = ecodes.BTN_TR
 
 CHANNELS = [
     ("rts1hd",        "RTS Un",            "🇨🇭 Suisse"),
@@ -204,86 +215,18 @@ CHANNELS = [
     ("cctv4",         "CCTV4",             "🇨🇳 Chine"),
 ]
 
+COUNTRIES_ORDER = []
+_seen = set()
+for _, _, c in CHANNELS:
+    if c not in _seen:
+        _seen.add(c)
+        COUNTRIES_ORDER.append(c)
+del _seen
 
-class FlowLayout(QLayout):
-    """Layout qui arrange les widgets en lignes, retour à la ligne automatique."""
-
-    def __init__(self, parent=None, margin=0, spacing=4):
-        super().__init__(parent)
-        self._items = []
-        self._hspacing = spacing
-        self._vspacing = spacing
-        self.setContentsMargins(margin, margin, margin, margin)
-
-    def addItem(self, item):
-        self._items.append(item)
-
-    def count(self):
-        return len(self._items)
-
-    def itemAt(self, index):
-        if 0 <= index < len(self._items):
-            return self._items[index]
-        return None
-
-    def takeAt(self, index):
-        if 0 <= index < len(self._items):
-            return self._items.pop(index)
-        return None
-
-    def expandingDirections(self):
-        return Qt.Orientations(0)
-
-    def hasHeightForWidth(self):
-        return True
-
-    def heightForWidth(self, width):
-        return self._do_layout(QRect(0, 0, width, 0), True)
-
-    def setGeometry(self, rect):
-        super().setGeometry(rect)
-        self._do_layout(rect, False)
-
-    def sizeHint(self):
-        return QSize(200, self.heightForWidth(200))
-
-    def minimumSize(self):
-        return QSize(0, self.heightForWidth(0))
-
-    def _do_layout(self, rect, test_only):
-        m = self.contentsMargins()
-        available = rect.width() - m.left() - m.right()
-        x = m.left()
-        y = m.top()
-        line_height = 0
-
-        for item in self._items:
-            w = item.widget()
-            if w and w.property("_full_width"):
-                if x > m.left():
-                    y += line_height + self._vspacing
-                    x = m.left()
-                    line_height = 0
-                if not test_only:
-                    w.setGeometry(QRect(m.left(), y, available, w.sizeHint().height()))
-                y += w.sizeHint().height() + self._vspacing
-                x = m.left()
-                line_height = 0
-                continue
-
-            size = item.sizeHint()
-            if x + size.width() > m.left() + available and x > m.left():
-                x = m.left()
-                y += line_height + self._vspacing
-                line_height = 0
-
-            if not test_only:
-                item.setGeometry(QRect(x, y, size.width(), size.height()))
-
-            x += size.width() + self._hspacing
-            line_height = max(line_height, size.height())
-
-        return y + line_height - rect.y() + self._vspacing
+COLS_DEFAULT = 7
+BTN_W = 120
+BTN_H = 76
+COOLDOWN_MS = 180
 
 
 class TVLauncher(QMainWindow):
@@ -292,12 +235,36 @@ class TVLauncher(QMainWindow):
         self.setWindowTitle("Gablue TV")
         self.setWindowIcon(QIcon.fromTheme("video-display"))
         self.resize(900, 650)
+
         self._settings = self._load_settings()
         os.makedirs(LOGO_DIR, exist_ok=True)
         self._net = QNetworkAccessManager(self)
         self._net.finished.connect(self._on_logo_downloaded)
         self._logo_buttons = {}
+
+        self._cursor = 0
+        self._cols = COLS_DEFAULT
+        self._filtered = []
+        self._buttons = []
+        self._country_idx = 0
+        self._mpv_proc = None
+
+        self._gamepad = None
+        self._last_input = 0
+        self._last_hat_x = 0
+        self._last_hat_y = 0
+        self._last_cross = False
+        self._last_circle = False
+        self._last_l1 = False
+        self._last_r1 = False
+
         self._setup_ui()
+        self._filter_channels()
+        self._find_gamepad()
+
+        self._pad_timer = QTimer(self)
+        self._pad_timer.timeout.connect(self._poll_gamepad)
+        self._pad_timer.start(16)
 
     def _load_settings(self):
         try:
@@ -305,7 +272,7 @@ class TVLauncher(QMainWindow):
             with open(CONFIG_FILE) as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
-            return {"fullscreen": False}
+            return {}
 
     def _save_settings(self):
         os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -319,96 +286,97 @@ class TVLauncher(QMainWindow):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
-        self._country_btns = {}
-        country_container = QWidget()
-        country_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        country_layout = FlowLayout(country_container, margin=0, spacing=3)
+        top_bar = QHBoxLayout()
+        self._country_label = QLabel()
+        self._country_label.setStyleSheet(
+            "color: #e6b800; font-size: 14px; font-weight: bold; padding: 4px 8px;"
+        )
+        self._help_label = QLabel("L1/R1: pays | D-pad: naviguer | A: lancer | B: fermer")
+        self._help_label.setStyleSheet("color: #888; font-size: 11px; padding: 4px;")
+        top_bar.addWidget(self._country_label, 1)
+        top_bar.addWidget(self._help_label)
+        root.addLayout(top_bar)
 
-        self.cb_fs = QCheckBox("Lancement plein écran")
-        self.cb_fs.setChecked(self._settings.get("fullscreen", False))
-        self.cb_fs.setStyleSheet("color: #ccc; font-size: 12px; font-weight: bold;")
-        self.cb_fs.toggled.connect(lambda v: self._settings.update({"fullscreen": v}) or self._save_settings())
-
-        country_bar = QHBoxLayout()
-        country_bar.addWidget(country_container, 1)
-        country_bar.addWidget(self.cb_fs)
-        root.addLayout(country_bar)
-
-        all_btn = QPushButton("Tous")
-        all_btn.setCheckable(True)
-        all_btn.setChecked(True)
-        all_btn.setFixedHeight(24)
-        all_btn.clicked.connect(lambda: self._set_country(None))
-        country_layout.addWidget(all_btn)
-        self._country_btns[None] = all_btn
-
-        seen = set()
-        for _, _, country in CHANNELS:
-            if country in seen:
-                continue
-            seen.add(country)
-            flag = country.split()[0]
-            btn = QPushButton(flag)
-            btn.setCheckable(True)
-            btn.setFixedHeight(24)
-            btn.setMaximumWidth(60)
-            btn.setToolTip(country)
-            btn.clicked.connect(lambda checked, c=country: self._set_country(c))
-            country_layout.addWidget(btn)
-            self._country_btns[country] = btn
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        root.addWidget(scroll, 1)
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        root.addWidget(self._scroll, 1)
 
         self._container = QWidget()
-        self._flow = FlowLayout(self._container, margin=0, spacing=4)
-        scroll.setWidget(self._container)
+        self._grid = QGridLayout(self._container)
+        self._grid.setSpacing(4)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._scroll.setWidget(self._container)
 
-        self._selected_country = None
-        self._build()
+        self._loading_overlay = QLabel(central)
+        self._loading_overlay.setAlignment(Qt.AlignCenter)
+        self._loading_overlay.setStyleSheet(
+            "background-color: rgba(10, 15, 30, 0.95); color: #e6b800; "
+            "font-size: 22px; font-weight: bold;"
+        )
+        self._loading_overlay.hide()
 
-    def _set_country(self, country):
-        self._selected_country = country
-        for c, btn in self._country_btns.items():
-            btn.setChecked(c == country)
-        self._build()
+    def _filter_channels(self):
+        country = COUNTRIES_ORDER[self._country_idx - 1] if self._country_idx > 0 else None
+        if country:
+            self._filtered = [(i, ch) for i, ch in enumerate(CHANNELS) if ch[2] == country]
+        else:
+            self._filtered = list(enumerate(CHANNELS))
 
-    def _build(self):
-        while self._flow.count():
-            item = self._flow.takeAt(0)
+        label = "Tous" if not country else country
+        self._country_label.setText(f"{label} ({len(self._filtered)} chaînes)")
+        self._cursor = 0
+        self._rebuild_grid()
+
+    def _rebuild_grid(self):
+        while self._grid.count():
+            item = self._grid.takeAt(0)
             if item.widget():
                 item.widget().setParent(None)
 
-        last_country = None
+        self._buttons = []
+        w = self._scroll.viewport().width() or 880
+        self._cols = max(1, w // (BTN_W + 8))
 
-        for ch_id, label, country in CHANNELS:
-            if self._selected_country and country != self._selected_country:
-                continue
-
-            if country != last_country:
-                header = QLabel(country)
-                header.setProperty("_full_width", True)
-                header.setStyleSheet("""
-                    color: #e6b800; font-size: 13px; font-weight: bold;
-                    padding: 8px 4px 2px 4px; border-bottom: 1px solid #0f3460;
-                """)
-                header.setFixedHeight(28)
-                self._flow.addWidget(header)
-                last_country = country
-
+        for idx, (_, (ch_id, label, _)) in enumerate(self._filtered):
             btn = QToolButton()
             btn.setText(label)
             btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
             btn.setIconSize(QSize(56, 56))
-            btn.setFixedSize(120, 76)
+            btn.setFixedSize(BTN_W, BTN_H)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            btn.setFocusPolicy(Qt.NoFocus)
             url = f"{BASE}/{ch_id}{SUFFIX}/{ch_id}.m3u8"
-            btn.clicked.connect(lambda checked, u=url: self._play(u))
-            self._flow.addWidget(btn)
+            btn.clicked.connect(lambda checked, u=url, l=label: self._play(u, l))
+            row = idx // self._cols
+            col = idx % self._cols
+            self._grid.addWidget(btn, row, col)
+            self._buttons.append(btn)
             self._load_logo(ch_id, btn)
+
+        self._update_highlight()
+
+    def _update_highlight(self):
+        for i, btn in enumerate(self._buttons):
+            if i == self._cursor:
+                btn.setStyleSheet(
+                    "QToolButton { background-color: #0f3460; border: 2px solid #e6b800; "
+                    "border-radius: 6px; color: #e6b800; font-size: 11px; padding: 6px 2px 1px 2px; }"
+                )
+            else:
+                btn.setStyleSheet(
+                    "QToolButton { background-color: #16213e; border: 1px solid #0f3460; "
+                    "border-radius: 6px; color: #e0e0e0; font-size: 11px; padding: 6px 2px 1px 2px; }"
+                    "QToolButton:hover { background-color: #0f3460; border-color: #e6b800; }"
+                )
+
+    def _ensure_visible(self):
+        if not self._buttons:
+            return
+        btn = self._buttons[self._cursor]
+        self._scroll.ensureWidgetVisible(btn, 50, 50)
 
     def _load_logo(self, ch_id, btn):
         cache_path = os.path.join(LOGO_DIR, f"{ch_id}.png")
@@ -422,34 +390,274 @@ class TVLauncher(QMainWindow):
     def _on_logo_downloaded(self, reply):
         url_path = reply.url().path()
         ch_id = os.path.splitext(os.path.basename(url_path))[0]
-        err = reply.error()
-        if err != QNetworkReply.NetworkError.NoError:
-            print(f"[LOGO] Erreur {ch_id}: {reply.errorString()}", file=sys.stderr)
+        if reply.error() != QNetworkReply.NetworkError.NoError:
             return
         cache_path = os.path.join(LOGO_DIR, f"{ch_id}.png")
         data = reply.readAll().data()
-        print(f"[LOGO] OK {ch_id}: {len(data)} bytes", file=sys.stderr)
         with open(cache_path, "wb") as f:
             f.write(data)
         btn = self._logo_buttons.pop(ch_id, None)
-        if btn and not shiboken6.isValid(btn):
-            btn = None
-        if btn:
+        if btn and shiboken6.isValid(btn):
             btn.setIcon(QIcon(cache_path))
 
-    def _play(self, url):
-        cmd = [MPV_BIN, "--no-terminal", "--profile=fast",
-               "--alang=fr,eng,ita,deu,spa,jpn,und", "--slang=fr,eng"]
-        if self.cb_fs.isChecked():
-            cmd.append("--fs")
-        cmd.append(url)
-        subprocess.Popen(cmd, start_new_session=True)
+    def _play(self, url, label=""):
+        self._kill_mpv()
+        self._loading_overlay.setText(f"{label}\nChargement...")
+        self._loading_overlay.setGeometry(self.centralWidget().rect())
+        self._loading_overlay.raise_()
+        self._loading_overlay.show()
+        try:
+            os.unlink(MPV_SOCKET)
+        except FileNotFoundError:
+            pass
+        cmd = [MPV_BIN, "--no-terminal", "--profile=fast", "--fs",
+               f"--input-ipc-server={MPV_SOCKET}",
+               "--alang=fr,eng,ita,deu,spa,jpn,und", "--slang=fr,eng", url]
+        self._mpv_proc = subprocess.Popen(cmd, start_new_session=True)
+
+    def _mpv_cmd(self, *args):
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect(MPV_SOCKET)
+            s.sendall(json.dumps({"command": list(args)}).encode() + b"\n")
+            s.close()
+        except (OSError, ConnectionRefusedError):
+            pass
+
+    def _kill_mpv(self):
+        if self._mpv_proc and self._mpv_proc.poll() is None:
+            os.killpg(os.getpgid(self._mpv_proc.pid), signal.SIGTERM)
+            self._mpv_proc = None
+        self._loading_overlay.hide()
+        try:
+            os.unlink(MPV_SOCKET)
+        except FileNotFoundError:
+            pass
+
+    def _mpv_running(self):
+        if self._mpv_proc is not None and self._mpv_proc.poll() is None:
+            return True
+        if self._mpv_proc is not None:
+            self._mpv_proc = None
+            self._loading_overlay.hide()
+        return False
+
+    def _find_gamepad(self):
+        devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
+        for device in devices:
+            capabilities = device.capabilities()
+            if ecodes.EV_KEY in capabilities:
+                keys = capabilities[ecodes.EV_KEY]
+                if ecodes.BTN_A in keys or ecodes.BTN_SELECT in keys:
+                    self._gamepad = device
+                    return
+        self._gamepad = None
+
+    def _poll_gamepad(self):
+        self._mpv_running()
+        if self._loading_overlay.isVisible() and self._mpv_proc is not None:
+            try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.settimeout(0.3)
+                s.connect(MPV_SOCKET)
+                s.sendall(json.dumps({"command": ["get_property", "core-idle"]}).encode() + b"\n")
+                resp = s.recv(512).decode()
+                s.close()
+                data = json.loads(resp)
+                if data.get("data") is False:
+                    self._loading_overlay.hide()
+            except (OSError, ConnectionRefusedError, json.JSONDecodeError, ValueError):
+                pass
+        if not self._gamepad:
+            self._find_gamepad()
+            return
+
+        try:
+            r, _, _ = select.select([self._gamepad], [], [], 0)
+        except (OSError, IOError):
+            self._gamepad = None
+            return
+
+        if self._gamepad not in r:
+            return
+
+        now = time.time() * 1000
+
+        try:
+            hat_x = 0
+            hat_y = 0
+            axis_x = 0.0
+            axis_y = 0.0
+            cross_pressed = False
+            circle_pressed = False
+            l1_pressed = False
+            r1_pressed = False
+
+            for event in self._gamepad.read():
+                if event.type == ecodes.EV_ABS:
+                    if event.code == ecodes.ABS_HAT0X:
+                        hat_x = event.value
+                    elif event.code == ecodes.ABS_HAT0Y:
+                        hat_y = event.value
+                    elif event.code == ecodes.ABS_X:
+                        axis_x = (event.value - 128) / 127.0
+                    elif event.code == ecodes.ABS_Y:
+                        axis_y = (event.value - 128) / 127.0
+                elif event.type == ecodes.EV_KEY:
+                    if event.code == BTN_CROSS and event.value == 1:
+                        cross_pressed = True
+                    elif event.code == BTN_CIRCLE and event.value == 1:
+                        circle_pressed = True
+                    elif event.code == BTN_L1 and event.value == 1:
+                        l1_pressed = True
+                    elif event.code == BTN_R1 and event.value == 1:
+                        r1_pressed = True
+
+            up = hat_y == -1 or axis_y < -0.5
+            down = hat_y == 1 or axis_y > 0.5
+            left = hat_x == -1 or axis_x < -0.5
+            right = hat_x == 1 or axis_x > 0.5
+
+            if now - self._last_input < COOLDOWN_MS:
+                self._last_hat_x = hat_x
+                self._last_hat_y = hat_y
+                self._last_cross = cross_pressed
+                self._last_circle = circle_pressed
+                self._last_l1 = l1_pressed
+                self._last_r1 = r1_pressed
+                return
+
+            moved = False
+
+            if cross_pressed and not self._last_cross:
+                self._last_input = now
+                if self._mpv_running():
+                    self._mpv_cmd("cycle", "pause")
+                elif self._buttons:
+                    self._buttons[self._cursor].click()
+
+            elif circle_pressed and not self._last_circle:
+                self._last_input = now
+                if self._mpv_running():
+                    self._kill_mpv()
+                else:
+                    self.close()
+                return
+
+            elif l1_pressed and not self._last_l1:
+                self._last_input = now
+                self._country_idx = (self._country_idx - 1) % (len(COUNTRIES_ORDER) + 1)
+                self._filter_channels()
+
+            elif r1_pressed and not self._last_r1:
+                self._last_input = now
+                self._country_idx = (self._country_idx + 1) % (len(COUNTRIES_ORDER) + 1)
+                self._filter_channels()
+
+            elif up and self._last_hat_y != -1:
+                new = self._cursor - self._cols
+                if new >= 0:
+                    self._cursor = new
+                    moved = True
+
+            elif down and self._last_hat_y != 1:
+                new = self._cursor + self._cols
+                if new < len(self._buttons):
+                    self._cursor = new
+                    moved = True
+
+            elif left and self._last_hat_x != -1:
+                if self._mpv_running():
+                    self._mpv_cmd("seek", "-10")
+                elif self._cursor % self._cols > 0:
+                    self._cursor -= 1
+                    moved = True
+
+            elif right and self._last_hat_x != 1:
+                if self._mpv_running():
+                    self._mpv_cmd("seek", "10")
+                elif self._cursor % self._cols < self._cols - 1 and self._cursor + 1 < len(self._buttons):
+                    self._cursor += 1
+                    moved = True
+
+            if moved:
+                self._last_input = now
+                self._update_highlight()
+                self._ensure_visible()
+
+            self._last_hat_x = hat_x
+            self._last_hat_y = hat_y
+            self._last_cross = cross_pressed
+            self._last_circle = circle_pressed
+            self._last_l1 = l1_pressed
+            self._last_r1 = r1_pressed
+
+        except (OSError, IOError, BlockingIOError):
+            self._gamepad = None
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self.close()
+        key = event.key()
+        if key == Qt.Key_Escape:
+            if self._mpv_running():
+                self._kill_mpv()
+            else:
+                self.close()
+        elif key == Qt.Key_Return or key == Qt.Key_Enter:
+            if self._mpv_running():
+                self._mpv_cmd("cycle", "pause")
+            elif self._buttons:
+                self._buttons[self._cursor].click()
+        elif key == Qt.Key_Up:
+            new = self._cursor - self._cols
+            if new >= 0:
+                self._cursor = new
+                self._update_highlight()
+                self._ensure_visible()
+        elif key == Qt.Key_Down:
+            new = self._cursor + self._cols
+            if new < len(self._buttons):
+                self._cursor = new
+                self._update_highlight()
+                self._ensure_visible()
+        elif key == Qt.Key_Left:
+            if self._mpv_running():
+                self._mpv_cmd("seek", "-10")
+            elif self._cursor % self._cols > 0:
+                self._cursor -= 1
+                self._update_highlight()
+                self._ensure_visible()
+        elif key == Qt.Key_Right:
+            if self._mpv_running():
+                self._mpv_cmd("seek", "10")
+            elif self._cursor % self._cols < self._cols - 1 and self._cursor + 1 < len(self._buttons):
+                self._cursor += 1
+                self._update_highlight()
+                self._ensure_visible()
+        elif key == Qt.Key_PageUp:
+            self._country_idx = (self._country_idx - 1) % (len(COUNTRIES_ORDER) + 1)
+            self._filter_channels()
+        elif key == Qt.Key_PageDown:
+            self._country_idx = (self._country_idx + 1) % (len(COUNTRIES_ORDER) + 1)
+            self._filter_channels()
         else:
             super().keyPressEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._loading_overlay.isVisible():
+            self._loading_overlay.setGeometry(self.centralWidget().rect())
+        new_cols = max(1, self._scroll.viewport().width() // (BTN_W + 8))
+        if new_cols != self._cols and self._buttons:
+            self._cols = new_cols
+            self._rebuild_grid()
+
+    def closeEvent(self, event):
+        self._kill_mpv()
+        self._pad_timer.stop()
+        if self._gamepad:
+            self._gamepad.close()
+        super().closeEvent(event)
 
 
 def main():
@@ -458,19 +666,11 @@ def main():
     app.setStyle("Fusion")
     app.setStyleSheet("""
         QMainWindow { background-color: #1a1a2e; }
-        QPushButton, QToolButton { background-color: #16213e; color: #e0e0e0; border: 1px solid #0f3460;
-                      border-radius: 6px; font-size: 13px; }
-        QPushButton { padding: 4px 10px; }
-        QToolButton { padding: 6px 2px 1px 2px; font-size: 11px; }
-        QPushButton:hover, QToolButton:hover { background-color: #0f3460; border-color: #e6b800; }
-        QPushButton:pressed, QToolButton:pressed { background-color: #0a2350; }
-        QPushButton:checked { background-color: #0f3460; border-color: #e6b800; color: #e6b800; }
-        QCheckBox { color: #ddd; font-size: 12px; font-weight: bold; }
-        QCheckBox::indicator { width: 16px; height: 16px; }
         QScrollArea { background-color: transparent; border: none; }
+        QLabel { background: transparent; }
     """)
-    player = TVLauncher()
-    player.show()
+    win = TVLauncher()
+    win.show()
     sys.exit(app.exec())
 
 
