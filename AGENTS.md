@@ -515,6 +515,28 @@ Configuration post-installation étendue :
 - **À SUPPRIMER** quand Fedora/KDE réduit le timeout du settle natif ou adopte une approche plus ciblée
 - Fichiers : `files/system/all/usr/libexec/gablue-wait-devices`, `files/system/all/usr/lib/systemd/system/plasmalogin.service.d/90-gablue-settle.conf`
 
+**Wrapper swap-session Plasma Bigscreen** (toutes variantes) :
+- Remplace `/usr/bin/plasma-bigscreen-swap-session` par `gablue-bigscreen-swap-session` (script C++ bigscreen appelle ce binaire directement via QProcess)
+- **Aller (swap_to_bigscreen)** :
+  - Sauvegarde l'environnement et les settings KWin (`BorderlessMaximizedWindows`, `Placement`, `NoPlugin`)
+  - Source `plasma-bigscreen-common-env` pour charger les variables bigscreen
+  - Écrit les settings KWin bigscreen dans `~/.config/kwinrc` (fenêtres maximisées, sans décorations, pas de plugin déco)
+  - Détecte les écrans connectés et met tous les secondaires en miroir sur le principal via `kscreen-doctor output.X.mirror.Y` (bigscreen ne gère pas le multi-écran)
+  - Lance l'inputhandler via `kioclient exec` (mécanisme KDE natif pour les permissions Wayland `X-KDE-Wayland-Interfaces`)
+  - Remplace plasmashell (`plasmashell --replace`)
+  - Après 2s (bigscreen chargé) : maximise toutes les fenêtres existantes et retire leurs décorations via un script KWin 6 (`workspace.stackingOrder`, `frameGeometry = MaximizeFullArea`, `noBorder = true`)
+- **Retour (swap_to_default)** :
+  - Tue l'inputhandler (SIGTERM puis SIGKILL)
+  - Restaure les settings KWin originaux (supprime les clés si elles n'existaient pas avant)
+  - Relance `plasma-xwaylandvideobridge.service` (tué par bigscreen dans `HomeScreen.qml` — hack qui cassait X11 au retour)
+  - Restaure l'environnement sauvegardé (dont `XDG_CONFIG_DIRS`)
+  - Reconfigure KWin (`qdbus reconfigure`) pour reprendre la config Plasma normale
+  - Annule le mirroring écrans (`output.X.mirror.none`)
+  - Remplace plasmashell
+  - Après 2s : restaure les décorations et dé-maximise les fenêtres via un script KWin 6 (`noBorder = false`, `frameGeometry` à 80% centré)
+- Détection automatique du mode : basée sur `pgrep -f plasma-bigscreen-inputhandler` (plus fiable que la variable d'env `PLASMA_BIGSCREEN_LAUNCH_REASON` qui n'est pas héritée via KLauncher)
+- Fichiers : `files/system/all/usr/bin/gablue-bigscreen-swap-session`, `files/system/all/usr/share/gablue/kwin-maximize-all.js`, `files/system/all/usr/share/gablue/kwin-restore-windows.js`
+
 ### 7. systemd / systemd-test
 
 Activation/désactivation des services systemd :

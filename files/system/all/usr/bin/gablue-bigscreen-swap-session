@@ -40,7 +40,8 @@ swap_to_bigscreen() {
     kwriteconfig6 --file "$HOME/.config/kwinrc" --group Windows --key BorderlessMaximizedWindows --type bool true
     kwriteconfig6 --file "$HOME/.config/kwinrc" --group Windows --key Placement Maximizing
     kwriteconfig6 --file "$HOME/.config/kwinrc" --group org.kde.kdecoration2 --key NoPlugin --type bool false
-    qdbus org.kde.KWin /KWin org.kde.KWin.reconfigure 2>/dev/null || true
+    # Pas de reconfigure ici : les settings prendront effet après plasmashell --replace
+    # et le KWin script gère les fenêtres existantes
 
     # Mettre tous les écrans en miroir sur le principal (bigscreen ne gère pas le multi-écran)
     log "swap_to_bigscreen: mirroring all displays on primary"
@@ -70,17 +71,50 @@ if len(outs) > 1:
 
     # Maximiser toutes les fenêtres existantes et enlever leurs décorations
     log "swap_to_bigscreen: maximizing all windows"
-    qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "/usr/share/gablue/kwin-maximize-all.js" "gablue-maximize" 2>/dev/null || true
-    qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.start 2>/dev/null || true
-    sleep 1
-    qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "gablue-maximize" 2>/dev/null || true
-
+    cat > "$CACHE_DIR/kwin-maximize-all.js" << 'JSEOF'
+var windows = workspace.stackingOrder;
+for (var i = 0; i < windows.length; i++) {
+    var win = windows[i];
+    if (win.normalWindow || win.dialog) {
+        win.minimized = false;
+        var area = workspace.clientArea(KWin.MaximizeFullArea, win.output, workspace.currentDesktop);
+        win.frameGeometry = area;
+        win.noBorder = true;
+    }
+}
+JSEOF
+    cat > "$CACHE_DIR/kwin-restore-windows.js" << 'JSEOF'
+var windows = workspace.stackingOrder;
+for (var i = 0; i < windows.length; i++) {
+    var win = windows[i];
+    if (win.normalWindow || win.dialog) {
+        win.minimized = false;
+        win.noBorder = false;
+        var area = workspace.clientArea(KWin.MaximizeArea, win.output, workspace.currentDesktop);
+        var w = Math.round(area.width * 0.8);
+        var h = Math.round(area.height * 0.8);
+        var x = area.x + Math.round((area.width - w) / 2);
+        var y = area.y + Math.round((area.height - h) / 2);
+        win.frameGeometry = { x: x, y: y, width: w, height: h };
+    }
+}
+JSEOF
     log "swap_to_bigscreen: launching inputhandler via kioclient exec"
     kioclient exec /usr/share/applications/org.kde.plasma.bigscreen.inputhandler.desktop &
     log "swap_to_bigscreen: kioclient launched (pid $!)"
 
     log "swap_to_bigscreen: replacing plasmashell"
     plasmashell --replace &
+
+    # Maximiser les fenêtres APRÈS que bigscreen soit chargé (panels Plasma retirés)
+    (
+        sleep 2
+        log "swap_to_bigscreen: maximizing all windows (after bigscreen loaded)"
+        qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$CACHE_DIR/kwin-maximize-all.js" "gablue-maximize" 2>/dev/null || true
+        qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.start 2>/dev/null || true
+        sleep 0.5
+        qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "gablue-maximize" 2>/dev/null || true
+    ) &
 }
 
 swap_to_default() {
@@ -132,15 +166,19 @@ swap_to_default() {
         done < "$CACHE_DIR/kscreen-mirrored.txt"
     fi
 
-    # Restaurer les décorations des fenêtres (annuler noBorder du mode bigscreen)
-    log "swap_to_default: restoring window decorations"
-    qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "/usr/share/gablue/kwin-restore-windows.js" "gablue-restore" 2>/dev/null || true
-    qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.start 2>/dev/null || true
-    sleep 0.5
-    qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "gablue-restore" 2>/dev/null || true
-
     log "swap_to_default: replacing plasmashell"
     plasmashell --replace &
+
+    # Restaurer les fenêtres APRÈS le remplacement de plasmashell
+    # (plasmashell --replace peut perturber l'état des fenêtres si fait avant)
+    (
+        sleep 2
+        log "swap_to_default: restoring window decorations (after plasmashell)"
+        qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$CACHE_DIR/kwin-restore-windows.js" "gablue-restore" 2>/dev/null || true
+        qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.start 2>/dev/null || true
+        sleep 0.5
+        qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "gablue-restore" 2>/dev/null || true
+    ) &
 }
 
 if pgrep -f "/usr/bin/plasma-bigscreen-inputhandler" > /dev/null 2>&1; then
