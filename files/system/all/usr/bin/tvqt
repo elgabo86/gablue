@@ -16,7 +16,7 @@ import select
 import shiboken6
 from evdev import ecodes
 from PySide6.QtCore import Qt, QSize, QUrl, QTimer, QRect
-from PySide6.QtGui import QIcon, QFont, QColor, QPainter, QPen, QBrush, QPaintEvent
+from PySide6.QtGui import QIcon, QFont, QPixmap, QColor, QPainter, QPen, QBrush, QPaintEvent
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QScrollArea,
@@ -298,26 +298,18 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
 }
 
 /* --- Cartes de chaînes --- */
-QPushButton#channelCard {
+QFrame#channelCard {
     background-color: #111130;
     border: 2px solid #1c1c40;
     border-radius: 16px;
-    color: #c8c8e0;
-    font-size: 12px;
-    font-weight: 600;
-    padding: 10px 4px 8px 4px;
-    text-align: center bottom;
-    icon-size: 84px;
 }
-QPushButton#channelCard:hover {
+QFrame#channelCard:hover {
     background-color: #181840;
     border-color: #b39000;
 }
-QPushButton#channelCard[active="true"] {
+QFrame#channelCard[active="true"] {
     background-color: #181d45;
     border: 3px solid #e6b800;
-    color: #ffffff;
-    font-weight: 700;
 }
 
 /* --- Pastilles de pays --- */
@@ -325,12 +317,12 @@ QPushButton#countryPill {
     background-color: #151530;
     border: 1px solid #282848;
     border-radius: 20px;
-    color: #9090b0;
+    color: #d0d0e0;
     font-size: 12px;
     font-weight: 500;
-    padding: 6px 16px;
-    min-height: 32px;
-    max-height: 36px;
+    padding: 4px 16px;
+    min-height: 28px;
+    max-height: 32px;
 }
 QPushButton#countryPill:hover {
     background-color: #1e1e40;
@@ -356,7 +348,7 @@ QLabel#titleLabel {
     letter-spacing: 2px;
 }
 QLabel#countLabel {
-    color: #585880;
+    color: #8888a0;
     font-size: 13px;
     font-weight: 500;
 }
@@ -367,7 +359,7 @@ QFrame#osdBar {
     border-top: 1px solid #1c1c38;
 }
 QLabel#osdLabel {
-    color: #4a4a70;
+    color: #8888a0;
     font-size: 11px;
     font-weight: 500;
 }
@@ -509,7 +501,7 @@ class TVWindow(QMainWindow):
 
         # Conteneur scrollable des pastilles
         self._pills_scroll = QScrollArea()
-        self._pills_scroll.setFixedHeight(40)
+        self._pills_scroll.setFixedHeight(44)
         self._pills_scroll.setWidgetResizable(True)
         self._pills_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._pills_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -665,8 +657,6 @@ class TVWindow(QMainWindow):
 
         for idx, (_, (ch_id, label, country)) in enumerate(self._filtered):
             card = self._make_card(ch_id, label, country)
-            url = f"{BASE}/{ch_id}{SUFFIX}/{ch_id}.m3u8"
-            card.clicked.connect(lambda checked, u=url, l=label: self._play(u, l))
             row = idx // self._cols
             col = idx % self._cols
             self._grid.addWidget(card, row, col, Qt.AlignCenter)
@@ -681,17 +671,36 @@ class TVWindow(QMainWindow):
         self._update_card_focus()
 
     def _make_card(self, ch_id, label, country):
-        """Crée une carte de chaîne stylée."""
-        card = QPushButton()
+        """Carte chaîne avec icône centrée verticalement et horizontalement."""
+        card = QFrame()
         card.setObjectName("channelCard")
         card.setFixedSize(CARD_W, CARD_H)
         card.setCursor(Qt.PointingHandCursor)
-        card.setFocusPolicy(Qt.NoFocus)
-        card.setIconSize(LOGO_ICON_SIZE)
-        card.setIcon(self._fallback_icon)
-        # Texte sur deux lignes si nécessaire
-        card.setText(label)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(4, 8, 4, 4)
+        layout.setSpacing(2)
+        layout.setAlignment(Qt.AlignCenter)
+
+        icon_lbl = QLabel()
+        icon_lbl.setFixedSize(84, 84)
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        icon_lbl.setPixmap(self._fallback_icon.pixmap(LOGO_ICON_SIZE))
+        layout.addWidget(icon_lbl, 0, Qt.AlignCenter)
+
+        text_lbl = QLabel(label)
+        text_lbl.setAlignment(Qt.AlignCenter)
+        text_lbl.setWordWrap(True)
+        text_lbl.setStyleSheet("color: #c8c8e0; font-size: 12px; font-weight: 600; background: transparent;")
+        layout.addWidget(text_lbl, 0, Qt.AlignCenter)
+
         card.setToolTip(f"{label}\n{country}")
+
+        def on_click(event=None):
+            url = f"{BASE}/{ch_id}{SUFFIX}/{ch_id}.m3u8"
+            self._play(url, label)
+
+        card.mousePressEvent = lambda e: on_click() if e.button() == Qt.LeftButton else None
         return card
 
     def _update_card_focus(self):
@@ -774,15 +783,23 @@ class TVWindow(QMainWindow):
     # LOGOS
     # =========================================================================
 
-    def _load_logo(self, ch_id, btn):
+    def _load_logo(self, ch_id, card):
         """Charge un logo (cache ou réseau)."""
         cache_path = os.path.join(LOGO_DIR, f"{ch_id}.png")
         if os.path.exists(cache_path):
-            btn.setIcon(QIcon(cache_path))
+            self._set_card_icon(card, QPixmap(cache_path))
             return
-        self._logo_buttons[ch_id] = btn
+        self._logo_buttons[ch_id] = card
         url = f"{LOGO_BASE}/{ch_id}.png"
         self._net.get(QNetworkRequest(QUrl(url)))
+
+    def _set_card_icon(self, card, pixmap):
+        """Trouve le QLabel icône dans la carte et met le pixmap."""
+        layout = card.layout()
+        if layout and layout.count() > 0:
+            icon_lbl = layout.itemAt(0).widget()
+            if isinstance(icon_lbl, QLabel):
+                icon_lbl.setPixmap(pixmap.scaled(84, 84, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def _on_logo_downloaded(self, reply):
         """Callback de téléchargement d'un logo."""
@@ -797,9 +814,9 @@ class TVWindow(QMainWindow):
                 f.write(data)
         except OSError:
             return
-        btn = self._logo_buttons.pop(ch_id, None)
-        if btn and shiboken6.isValid(btn):
-            btn.setIcon(QIcon(cache_path))
+        card = self._logo_buttons.pop(ch_id, None)
+        if card and shiboken6.isValid(card):
+            self._set_card_icon(card, QPixmap(cache_path))
 
     # =========================================================================
     # LECTURE MPV
@@ -1023,8 +1040,9 @@ class TVWindow(QMainWindow):
                 self._last_input = now
                 if playing:
                     self._mpv_cmd("cycle", "pause")
-                elif self._buttons and self._cursor < len(self._buttons):
-                    self._buttons[self._cursor].click()
+                elif self._buttons and self._cursor < len(self._filtered):
+                    _, (ch_id, label, _) = self._filtered[self._cursor]
+                    self._play(f"{BASE}/{ch_id}{SUFFIX}/{ch_id}.m3u8", label)
                 self._hold_dir = None
 
             elif circle_pressed and not self._last_circle:
