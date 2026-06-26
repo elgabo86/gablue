@@ -834,7 +834,7 @@ configure-beesd ACTION="":
         # https://github.com/Zygo/bees/blob/master/docs/options.md#load-management-options
         sudo sed -i "s/^UUID=.*/UUID=${UUID}/" "/etc/bees/${UUID}.conf"
         sudo sed -i "s/# DB_SIZE=.*/DB_SIZE=${db_size}/" "/etc/bees/${UUID}.conf"
-        sudo sed -i "s/# OPTIONS=.*/OPTIONS=\"--strip-paths --no-timestamps --thread-factor 0.125 --thread-min 1 --throttle-factor 100\"/" "/etc/bees/${UUID}.conf"
+        sudo sed -i "s/# OPTIONS=.*/OPTIONS=\"--strip-paths --no-timestamps --thread-factor 0.125 --thread-min 1 --loadavg-target 4\"/" "/etc/bees/${UUID}.conf"
         echo "Created /etc/bees/${UUID}.conf with DB_SIZE=${db_size} bytes"
         # Only start the service if enough memory is free
         # Per service as hash table size may differ in each configuration
