@@ -960,5 +960,5 @@ btrfs-compress-defrag:
     MOUNTPOINT=$(echo "$CHOICE" | awk '{print $1}')
     echo "Compression des données existantes sur $MOUNTPOINT avec zstd..."
     echo "Cela peut prendre plusieurs heures selon la taille du disque."
-    sudo btrfs filesystem defrag -czstd -r "$MOUNTPOINT"
+    sudo btrfs -v filesystem defrag -czstd -r "$MOUNTPOINT"
     echo "Défragmentation et compression terminées sur $MOUNTPOINT."
