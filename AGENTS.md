@@ -772,9 +772,14 @@ Interface de télévision Gablue en Python (PySide6 + mpv) :
 - **Problème** : evdev lit les événements manette même quand tvqt n'est pas au premier plan, provoquant des interférences avec les jeux
 - **Solution** : suivi de l'état d'activation via `changeEvent(QEvent.ActivationChange)` — méthode Qt6 fiable sous Wayland car les événements viennent directement du compositor KWin
 - **Comportement** :
-  - Fenêtre tvqt active → manette fonctionne (navigation chaînes)
-  - mpv en cours de lecture → manette toujours active (volume, seek, pause) même si mpv a le focus
+  - Fenêtre tvqt active → manette fonctionne (navigation chaînes ET lecture vidéo intégrée)
   - Autre application au premier plan (jeu, etc.) → manette **ignorée**
+
+**Lecteur vidéo intégré** (ajout 2025) :
+- mpv est embarqué dans la fenêtre tvqt via `libmpv` + `QOpenGLWidget` (API `mpv_render_context` OpenGL)
+- Plus de fenêtre mpv externe ni de sous-processus : le rendu vidéo est natif dans le widget Qt6, compatible Wayland
+- La manette fonctionne uniquement quand tvqt a le focus Wayland (navigation + contrôle lecture)
+- Bascule grille/vidéo transparente : [A] lance/stop, [B] retour grille, D-pad = volume/seek
 
 ### Scripts gamepadshortcuts (/usr/share/ublue-os/gablue/scripts/gamepadshortcuts)
 

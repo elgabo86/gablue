@@ -4,24 +4,25 @@ Gablue TV — Interface de télévision optimisée pour manette de jeu.
 Navigation complète au D-pad, lecture via mpv, téléchargement des logos.
 """
 
+import ctypes
+import glob
 import os
 import sys
 import json
-import signal
-import socket
-import subprocess
 import time
 import evdev
 import select
 import shiboken6
+from ctypes import c_void_p, c_char_p, c_int, c_double, CFUNCTYPE, Structure
 from evdev import ecodes
 from PySide6.QtCore import Qt, QSize, QUrl, QTimer, QRect, QEvent
-from PySide6.QtGui import QIcon, QFont, QPixmap, QColor, QPainter, QPen, QBrush, QPaintEvent, QGuiApplication
+from PySide6.QtGui import QIcon, QFont, QPixmap, QOpenGLContext, QPainter, QPaintEvent
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QScrollArea,
+    QApplication, QMainWindow, QWidget, QScrollArea, QStackedWidget,
     QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton,
-    QLabel, QFrame, QSizePolicy, QSpacerItem, QGraphicsDropShadowEffect,
+    QLabel, QFrame, QSizePolicy, QSpacerItem,
 )
 
 # =============================================================================
@@ -36,10 +37,18 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "settings.json")
 LOGO_DIR = os.path.join(CONFIG_DIR, "logos")
 LOGO_BASE = "https://picserve.netplus.ch/channels"
 
-MPV_BIN = "/usr/bin/mpv"
-if not os.path.exists(MPV_BIN):
-    MPV_BIN = "/home/linuxbrew/.linuxbrew/bin/mpv"
-MPV_SOCKET = "/tmp/tvqt-mpv-socket"
+# --- Chargement libmpv ---
+_LIBMPV_PATH = ""
+for _candidate in ("/usr/lib64/libmpv.so.2", "/usr/lib64/libmpv.so.1",
+                     "/usr/lib64/libmpv.so", "/usr/local/lib/libmpv.so",
+                     "/usr/lib/x86_64-linux-gnu/libmpv.so.2"):
+    if os.path.exists(_candidate):
+        _LIBMPV_PATH = _candidate
+        break
+if not _LIBMPV_PATH:
+    _found = glob.glob("/usr/lib*/libmpv.so*")
+    _LIBMPV_PATH = _found[0] if _found else "libmpv.so.2"
+
 
 BTN_CROSS = ecodes.BTN_A
 BTN_CIRCLE = ecodes.BTN_B
@@ -383,6 +392,168 @@ QLabel#loadingSubtitle {
 
 
 # =============================================================================
+# WIDGET MPV EMBARQUÉ (libmpv + OpenGL)
+# =============================================================================
+
+# Constantes mpv_render_param_type
+_MPV_RENDER_PARAM_API_TYPE = 1
+_MPV_RENDER_PARAM_OPENGL_INIT_PARAMS = 2
+_MPV_RENDER_PARAM_OPENGL_FBO = 3
+_MPV_RENDER_PARAM_FLIP_Y = 4
+_MPV_RENDER_PARAM_INVALID = 0
+
+
+class _MpvOpenGLInitParams(Structure):
+    _fields_ = [("get_proc_address", c_void_p), ("get_proc_address_ctx", c_void_p)]
+
+
+class _MpvOpenGLFBO(Structure):
+    _fields_ = [("fbo", c_int), ("w", c_int), ("h", c_int), ("internal_format", c_int)]
+
+
+class _MpvRenderParam(Structure):
+    _fields_ = [("type", c_int), ("data", c_void_p)]
+
+
+_GetProcAddrFn = CFUNCTYPE(c_void_p, c_void_p, c_char_p)
+_UpdateCallbackFn = CFUNCTYPE(None, c_void_p)
+
+
+class MpvWidget(QOpenGLWidget):
+    """Widget vidéo embarquant mpv via libmpv et OpenGL (compatible Wayland)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setUpdateBehavior(QOpenGLWidget.UpdateBehavior.PartialUpdate)
+
+        self._lib = ctypes.CDLL(_LIBMPV_PATH)
+        self._setup_libmpv_api()
+
+        self._handle = self._lib_mpv_create()
+        if not self._handle:
+            raise RuntimeError("libmpv: mpv_create() failed")
+
+        self._lib_mpv_set_option_string(b"vo", b"libmpv")
+        self._lib_mpv_set_option_string(b"profile", b"fast")
+        self._lib_mpv_set_option_string(b"alang", b"fr,eng,ita,deu,spa,jpn,und")
+        self._lib_mpv_set_option_string(b"slang", b"fr,eng")
+        self._lib_mpv_set_option_string(b"keep-open", b"yes")
+
+        if self._lib_mpv_initialize() < 0:
+            raise RuntimeError("libmpv: mpv_initialize() failed")
+
+        self._gl_ctx = None
+        self._get_proc_addr_cb = _GetProcAddrFn(self._get_proc_address)
+        self._update_cb = _UpdateCallbackFn(self._on_mpv_update)
+        self._playing = False
+
+    def _setup_libmpv_api(self):
+        L = self._lib
+        self._lib_mpv_create = L.mpv_create
+        self._lib_mpv_create.restype = c_void_p
+        self._lib_mpv_initialize = L.mpv_initialize
+        self._lib_mpv_initialize.argtypes = [c_void_p]
+        self._lib_mpv_initialize.restype = c_int
+        self._lib_mpv_set_option_string = L.mpv_set_option_string
+        self._lib_mpv_set_option_string.argtypes = [c_void_p, c_char_p, c_char_p]
+        self._lib_mpv_set_option_string.restype = c_int
+        self._lib_mpv_command_string = L.mpv_command_string
+        self._lib_mpv_command_string.argtypes = [c_void_p, c_char_p]
+        self._lib_mpv_command_string.restype = c_int
+        self._lib_mpv_terminate_destroy = L.mpv_terminate_destroy
+        self._lib_mpv_terminate_destroy.argtypes = [c_void_p]
+        self._lib_mpv_render_context_create = L.mpv_render_context_create
+        self._lib_mpv_render_context_create.argtypes = [c_void_p, c_void_p, c_void_p]
+        self._lib_mpv_render_context_create.restype = c_int
+        self._lib_mpv_render_context_set_update_callback = L.mpv_render_context_set_update_callback
+        self._lib_mpv_render_context_set_update_callback.argtypes = [c_void_p, _UpdateCallbackFn, c_void_p]
+        self._lib_mpv_render_context_render = L.mpv_render_context_render
+        self._lib_mpv_render_context_render.argtypes = [c_void_p, c_void_p]
+        self._lib_mpv_render_context_render.restype = c_int
+        self._lib_mpv_render_context_free = L.mpv_render_context_free
+        self._lib_mpv_render_context_free.argtypes = [c_void_p]
+
+    @staticmethod
+    def _get_proc_address(_ctx, name):
+        glctx = QOpenGLContext.currentContext()
+        if not glctx:
+            return c_void_p(0)
+        addr = glctx.getProcAddress(name)
+        return c_void_p(addr) if addr else c_void_p(0)
+
+    def initializeGL(self):
+        init_params = _MpvOpenGLInitParams(
+            ctypes.cast(self._get_proc_addr_cb, c_void_p),
+            c_void_p(0),
+        )
+
+        params = (_MpvRenderParam * 4)()
+        params[0] = _MpvRenderParam(
+            _MPV_RENDER_PARAM_API_TYPE,
+            ctypes.cast(ctypes.c_char_p(b"opengl"), c_void_p),
+        )
+        params[1] = _MpvRenderParam(
+            _MPV_RENDER_PARAM_OPENGL_INIT_PARAMS,
+            ctypes.cast(ctypes.byref(init_params), c_void_p),
+        )
+        params[2] = _MpvRenderParam(_MPV_RENDER_PARAM_INVALID, c_void_p(0))
+
+        gl_ctx = c_void_p()
+        if self._lib_mpv_render_context_create(
+            ctypes.byref(gl_ctx), self._handle, params
+        ) < 0:
+            raise RuntimeError("libmpv: render_context_create() failed")
+        self._gl_ctx = gl_ctx
+        self._lib_mpv_render_context_set_update_callback(
+            self._gl_ctx, self._update_cb, c_void_p(0)
+        )
+
+    def paintGL(self):
+        if not self._gl_ctx:
+            return
+        rect = self.rect()
+        fbo_data = _MpvOpenGLFBO(
+            self.defaultFramebufferObject(), rect.width(), rect.height(), 0
+        )
+        flip_y = c_int(1)
+
+        params = (_MpvRenderParam * 3)()
+        params[0] = _MpvRenderParam(
+            _MPV_RENDER_PARAM_OPENGL_FBO, ctypes.cast(ctypes.byref(fbo_data), c_void_p)
+        )
+        params[1] = _MpvRenderParam(
+            _MPV_RENDER_PARAM_FLIP_Y, ctypes.cast(ctypes.byref(flip_y), c_void_p)
+        )
+        params[2] = _MpvRenderParam(_MPV_RENDER_PARAM_INVALID, c_void_p(0))
+
+        self._lib_mpv_render_context_render(self._gl_ctx, params)
+
+    def _on_mpv_update(self, _ctx):
+        self.update()
+
+    def play(self, url):
+        self._lib_mpv_command_string(f"loadfile {url}".encode())
+        self._playing = True
+
+    def command(self, *args):
+        cmd = " ".join(str(a) for a in args).encode()
+        self._lib_mpv_command_string(cmd)
+
+    def stop(self):
+        if self._gl_ctx:
+            self._lib_mpv_render_context_free(self._gl_ctx)
+            self._gl_ctx = None
+        if self._handle:
+            self._lib_mpv_terminate_destroy(self._handle)
+            self._handle = None
+        self._playing = False
+
+    def closeEvent(self, event):
+        self.stop()
+        super().closeEvent(event)
+
+
+# =============================================================================
 # FENÊTRE PRINCIPALE
 # =============================================================================
 
@@ -414,9 +585,8 @@ class TVWindow(QMainWindow):
         self._country_idx = 0
         self._country_pills = []
 
-        # --- MPV ---
-        self._mpv_proc = None
-        self._loading_dots = 0
+        # --- MPV embarqué ---
+        # (MpvWidget créé dans _setup_ui)
 
         # --- Manette ---
         self._gamepad = None
@@ -450,10 +620,6 @@ class TVWindow(QMainWindow):
         self._pad_timer = QTimer(self)
         self._pad_timer.timeout.connect(self._poll_gamepad)
         self._pad_timer.start(16)
-
-        self._idle_timer = QTimer(self)
-        self._idle_timer.timeout.connect(self._check_mpv_idle)
-        self._idle_timer.start(600)
 
         self._load_anim = QTimer(self)
         self._load_anim.timeout.connect(self._animate_loading)
@@ -522,6 +688,10 @@ class TVWindow(QMainWindow):
 
         root.addWidget(top_bar)
 
+        # --- Stack : alterne entre grille et vidéo intégrée ---
+        self._stack = QStackedWidget()
+        self._stack.setStyleSheet("background-color: #080818;")
+
         # --- Zone de contenu (grille) ---
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
@@ -534,7 +704,14 @@ class TVWindow(QMainWindow):
         self._grid.setContentsMargins(GRID_MARGIN, GRID_MARGIN, GRID_MARGIN, GRID_MARGIN)
         self._grid.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
         self._scroll.setWidget(self._grid_container)
-        root.addWidget(self._scroll, 1)
+
+        self._stack.addWidget(self._scroll)  # index 0 : grille
+
+        # --- Widget vidéo intégré (mpv via libmpv + OpenGL) ---
+        self._video_widget = MpvWidget()
+        self._stack.addWidget(self._video_widget)  # index 1 : vidéo
+
+        root.addWidget(self._stack, 1)
 
         # --- Barre OSD manette ---
         self._osd_bar = QFrame()
@@ -544,7 +721,7 @@ class TVWindow(QMainWindow):
         osd_layout = QHBoxLayout(self._osd_bar)
         osd_layout.setContentsMargins(22, 0, 22, 0)
         self._osd_label = QLabel(
-            "[A] Lancer/Pause    [B] Retour/Fermer    [L1/R1] Pays    "
+            "[A] Lancer/Pause    [B] Retour    [L1/R1] Pays    "
             "[D-Pad] Naviguer    [Haut/Bas] Vol.    [Gauche/Droite] Seek"
         )
         self._osd_label.setObjectName("osdLabel")
@@ -822,12 +999,14 @@ class TVWindow(QMainWindow):
             self._set_card_icon(card, QPixmap(cache_path))
 
     # =========================================================================
-    # LECTURE MPV
+    # LECTURE MPV (libmpv embarqué)
     # =========================================================================
 
     def _play(self, url, label=""):
-        """Lance la lecture d'une chaîne."""
-        self._kill_mpv()
+        """Lance la lecture dans le widget vidéo intégré."""
+        self._video_widget.command("stop")
+        self._stack.setCurrentIndex(1)
+
         self._loading_title.setText(label)
         self._loading_subtitle.setText("Connexion au flux...")
         self._loading_dots = 0
@@ -836,74 +1015,25 @@ class TVWindow(QMainWindow):
         self._loading_overlay.show()
         self._load_anim.start(450)
 
-        try:
-            os.unlink(MPV_SOCKET)
-        except FileNotFoundError:
-            pass
+        self._video_widget.play(url)
+        QTimer.singleShot(1500, self._hide_loading)
 
-        cmd = [
-            MPV_BIN, "--no-terminal", "--profile=fast", "--fs",
-            f"--input-ipc-server={MPV_SOCKET}",
-            "--alang=fr,eng,ita,deu,spa,jpn,und", "--slang=fr,eng",
-            url,
-        ]
-        self._mpv_proc = subprocess.Popen(cmd, start_new_session=True)
-
-    def _mpv_cmd(self, *args):
-        """Envoie une commande au socket IPC mpv."""
-        try:
-            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            s.connect(MPV_SOCKET)
-            s.sendall(json.dumps({"command": list(args)}).encode() + b"\n")
-            s.close()
-        except (OSError, ConnectionRefusedError):
-            pass
-
-    def _kill_mpv(self):
-        """Tue le processus mpv."""
-        if self._mpv_proc and self._mpv_proc.poll() is None:
-            try:
-                os.killpg(os.getpgid(self._mpv_proc.pid), signal.SIGTERM)
-            except (ProcessLookupError, OSError):
-                pass
-        self._mpv_proc = None
+    def _hide_loading(self):
         self._loading_overlay.hide()
         self._load_anim.stop()
-        try:
-            os.unlink(MPV_SOCKET)
-        except FileNotFoundError:
-            pass
 
-    def _mpv_running(self):
-        """Retourne True si mpv est vivant."""
-        if self._mpv_proc is not None and self._mpv_proc.poll() is None:
-            return True
-        if self._mpv_proc is not None:
-            self._mpv_proc = None
-            self._loading_overlay.hide()
-            self._load_anim.stop()
-        return False
+    def _mpv_cmd(self, *args):
+        self._video_widget.command(*args)
 
-    def _check_mpv_idle(self):
-        """Cache l'overlay quand mpv est prêt."""
-        if not self._loading_overlay.isVisible() or self._mpv_proc is None:
-            return
-        try:
-            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            s.settimeout(0.2)
-            s.connect(MPV_SOCKET)
-            s.sendall(
-                json.dumps({"command": ["get_property", "core-idle"]}).encode() + b"\n"
-            )
-            resp = s.recv(512).decode()
-            s.close()
-            data = json.loads(resp)
-            if data.get("data") is False:
-                self._loading_overlay.hide()
-                self._load_anim.stop()
-        except (OSError, ConnectionRefusedError, json.JSONDecodeError, ValueError):
-            pass
+    def _kill_mpv(self):
+        """Arrête la lecture et revient à la grille."""
+        self._video_widget.command("stop")
+        self._stack.setCurrentIndex(0)
+        self._hide_loading()
+
+    # =========================================================================
+    # OVERLAY DE CHARGEMENT
+    # =========================================================================
 
     def _animate_loading(self):
         """Animation simple de chargement (points qui défilent)."""
@@ -950,13 +1080,10 @@ class TVWindow(QMainWindow):
         L'accélération fonctionne même sans nouveaux événements : l'état
         du stick/hat est mémorisé entre les appels.
 
-        La manette est ignorée quand tvqt n'est pas la fenêtre active,
-        SAUF pendant la lecture (mpv fullscreen) pour permettre le contrôle
-        du volume, seek et pause sans devoir refocaliser tvqt.
+        La manette est ignorée quand tvqt n'est pas la fenêtre active
+        (focus Wayland géré par changeEvent / ActivationChange).
         """
-        playing = self._mpv_running()
-
-        if not playing and not self._window_active:
+        if not self._window_active:
             return
 
         if not self._gamepad:
@@ -964,6 +1091,7 @@ class TVWindow(QMainWindow):
             return
 
         now = time.time() * 1000
+        watching = self._stack.currentIndex() == 1
 
         # Lecture des événements si disponibles
         try:
@@ -1028,7 +1156,7 @@ class TVWindow(QMainWindow):
             new_dir = "right"
 
         # --- Mode grille : accélération progressive au maintien ---
-        if not playing:
+        if not watching:
             if new_dir is None:
                 self._hold_dir = None
             elif new_dir == self._hold_dir:
@@ -1046,7 +1174,7 @@ class TVWindow(QMainWindow):
         if now - self._last_input >= COOLDOWN_MS:
             if cross_pressed and not self._last_cross:
                 self._last_input = now
-                if playing:
+                if watching:
                     self._mpv_cmd("cycle", "pause")
                 elif self._buttons and self._cursor < len(self._filtered):
                     _, (ch_id, label, _) = self._filtered[self._cursor]
@@ -1055,7 +1183,7 @@ class TVWindow(QMainWindow):
 
             elif circle_pressed and not self._last_circle:
                 self._last_input = now
-                if playing:
+                if watching:
                     self._kill_mpv()
                 else:
                     self.close()
@@ -1063,9 +1191,7 @@ class TVWindow(QMainWindow):
 
             elif l1_pressed and not self._last_l1:
                 self._last_input = now
-                if playing:
-                    self._mpv_cmd("playlist-prev")
-                else:
+                if not watching:
                     self._country_idx = (self._country_idx - 1) % (len(COUNTRIES_ORDER) + 1)
                     self._select_country(self._country_idx)
                     self._scroll_to_top()
@@ -1073,16 +1199,14 @@ class TVWindow(QMainWindow):
 
             elif r1_pressed and not self._last_r1:
                 self._last_input = now
-                if playing:
-                    self._mpv_cmd("playlist-next")
-                else:
+                if not watching:
                     self._country_idx = (self._country_idx + 1) % (len(COUNTRIES_ORDER) + 1)
                     self._select_country(self._country_idx)
                     self._scroll_to_top()
                 self._hold_dir = None
 
             # --- Mode lecture : directions sans accélération ---
-            elif playing and new_dir is not None:
+            elif watching and new_dir is not None:
                 if new_dir == "up" and self._last_hat_y != -1:
                     self._last_input = now
                     self._mpv_cmd("add", "volume", "5")
@@ -1120,32 +1244,32 @@ class TVWindow(QMainWindow):
     def keyPressEvent(self, event):
         """Raccourcis clavier."""
         key = event.key()
-        playing = self._mpv_running()
+        watching = self._stack.currentIndex() == 1
 
         if key == Qt.Key_Escape:
-            if playing:
+            if watching:
                 self._kill_mpv()
             else:
                 self.close()
 
         elif key == Qt.Key_Return or key == Qt.Key_Enter:
-            if playing:
+            if watching:
                 self._mpv_cmd("cycle", "pause")
             elif self._buttons and self._cursor < len(self._buttons):
                 self._buttons[self._cursor].click()
 
         elif key == Qt.Key_Space:
-            if playing:
+            if watching:
                 self._mpv_cmd("cycle", "pause")
             elif self._buttons and self._cursor < len(self._buttons):
                 self._buttons[self._cursor].click()
 
         elif key == Qt.Key_Backspace:
-            if playing:
+            if watching:
                 self._kill_mpv()
 
         elif key == Qt.Key_Up:
-            if playing:
+            if watching:
                 self._mpv_cmd("add", "volume", "5")
             else:
                 new = self._cursor - self._cols
@@ -1155,7 +1279,7 @@ class TVWindow(QMainWindow):
                     self._ensure_visible()
 
         elif key == Qt.Key_Down:
-            if playing:
+            if watching:
                 self._mpv_cmd("add", "volume", "-5")
             else:
                 new = self._cursor + self._cols
@@ -1165,7 +1289,7 @@ class TVWindow(QMainWindow):
                     self._ensure_visible()
 
         elif key == Qt.Key_Left:
-            if playing:
+            if watching:
                 self._mpv_cmd("seek", "-10")
             elif self._cursor % self._cols > 0:
                 self._cursor -= 1
@@ -1173,7 +1297,7 @@ class TVWindow(QMainWindow):
                 self._ensure_visible()
 
         elif key == Qt.Key_Right:
-            if playing:
+            if watching:
                 self._mpv_cmd("seek", "10")
             elif (self._cursor % self._cols < self._cols - 1
                   and self._cursor + 1 < len(self._buttons)):
@@ -1226,7 +1350,6 @@ class TVWindow(QMainWindow):
         """Nettoie les ressources."""
         self._kill_mpv()
         self._pad_timer.stop()
-        self._idle_timer.stop()
         self._load_anim.stop()
         if self._gamepad:
             try:

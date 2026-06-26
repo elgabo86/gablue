@@ -132,7 +132,8 @@ dnf5 -y install \
 # Outils multimédia
 dnf5 -y install \
     yt-dlp \
-    mpv
+    mpv \
+    mpv-libs
 
 # =============================================================================
 # VIRTUALISATION ET CONTENEURS (MODE DX)
