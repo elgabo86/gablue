@@ -852,22 +852,34 @@ btrfs-compress ACTION="":
     #!/usr/bin/bash
     source /usr/lib/ujust/ujust.sh
 
-    mapfile -t raw_btrfs_output < <(sudo lsblk --fs --list --noheadings --output "NAME,UUID,FSTYPE,MOUNTPOINT" --filter 'FSTYPE == "btrfs"')
-    if [[ ${#raw_btrfs_output[@]} -eq 0 ]]; then
+    # Utiliser findmnt pour lister tous les points de montage BTRFS,
+    # dédupliquer par UUID en gardant le mountpoint le plus long (le plus spécifique)
+    declare -A seen_uuids
+    declare -A fs_best_mount
+    while read -r target uuid; do
+        [[ -z "$target" ]] && continue
+        [[ "$target" == /run/bees/* ]] && continue
+        [[ "$target" == /sysroot* ]] && continue
+        [[ "$target" == /etc ]] && continue
+        if [[ -z "${seen_uuids[$uuid]:-}" ]] || [[ ${#target} -gt ${#fs_best_mount[$uuid]} ]]; then
+            seen_uuids[$uuid]=1
+            fs_best_mount[$uuid]="$target"
+        fi
+    done < <(sudo findmnt -t btrfs -o TARGET,UUID -n -l)
+
+    if [[ ${#fs_best_mount[@]} -eq 0 ]]; then
         echo "Aucun filesystem BTRFS trouvé."
         exit 1
     fi
 
+    declare -A fs_compression
     menu_options=()
-    declare -A fs_info_map
-    for line in "${raw_btrfs_output[@]}"; do
-        read -r name uuid _ mountpoint <<< "$line"
-        if [[ -n "$mountpoint" ]] && [[ "$mountpoint" != "[SWAP]" ]]; then
-            compression=$(sudo btrfs property get "$mountpoint" compression 2>/dev/null | awk '{print $NF}')
-            [[ -z "$compression" ]] && compression="none"
-            menu_options+=("$mountpoint ($uuid) [compression=$compression]")
-            fs_info_map["$mountpoint"]="$uuid|$compression"
-        fi
+    for uuid in "${!fs_best_mount[@]}"; do
+        mountpoint="${fs_best_mount[$uuid]}"
+        compression=$(sudo btrfs property get "$mountpoint" compression 2>/dev/null | awk '{print $NF}')
+        [[ -z "$compression" ]] && compression="none"
+        fs_compression["$mountpoint"]="$compression"
+        menu_options+=("$mountpoint ($uuid) [compression=$compression]")
     done
 
     if [[ ${#menu_options[@]} -eq 0 ]]; then
@@ -881,7 +893,7 @@ btrfs-compress ACTION="":
     [[ "$CHOICE" == "Annuler" ]] || [[ -z "$CHOICE" ]] && exit 0
 
     MOUNTPOINT=$(echo "$CHOICE" | awk '{print $1}')
-    CURRENT_COMPRESSION="${fs_info_map[$MOUNTPOINT]#*|}"
+    CURRENT_COMPRESSION="${fs_compression[$MOUNTPOINT]}"
 
     if [[ "$CURRENT_COMPRESSION" == "zstd" ]]; then
         ACTION=$(ugum choose "Désactiver la compression" "Annuler")
@@ -910,18 +922,29 @@ btrfs-compress-defrag:
     #!/usr/bin/bash
     source /usr/lib/ujust/ujust.sh
 
-    mapfile -t raw_btrfs_output < <(sudo lsblk --fs --list --noheadings --output "NAME,UUID,FSTYPE,MOUNTPOINT" --filter 'FSTYPE == "btrfs"')
-    if [[ ${#raw_btrfs_output[@]} -eq 0 ]]; then
+    # Utiliser findmnt, dédupliquer par UUID, exclure /run/bees
+    declare -A seen_uuids
+    declare -A fs_best_mount
+    while read -r target uuid; do
+        [[ -z "$target" ]] && continue
+        [[ "$target" == /run/bees/* ]] && continue
+        [[ "$target" == /sysroot* ]] && continue
+        [[ "$target" == /etc ]] && continue
+        if [[ -z "${seen_uuids[$uuid]:-}" ]] || [[ ${#target} -gt ${#fs_best_mount[$uuid]} ]]; then
+            seen_uuids[$uuid]=1
+            fs_best_mount[$uuid]="$target"
+        fi
+    done < <(sudo findmnt -t btrfs -o TARGET,UUID -n -l)
+
+    if [[ ${#fs_best_mount[@]} -eq 0 ]]; then
         echo "Aucun filesystem BTRFS trouvé."
         exit 1
     fi
 
     menu_options=()
-    for line in "${raw_btrfs_output[@]}"; do
-        read -r name uuid _ mountpoint <<< "$line"
-        if [[ -n "$mountpoint" ]] && [[ "$mountpoint" != "[SWAP]" ]]; then
-            menu_options+=("$mountpoint ($uuid)")
-        fi
+    for uuid in "${!fs_best_mount[@]}"; do
+        mountpoint="${fs_best_mount[$uuid]}"
+        menu_options+=("$mountpoint ($uuid)")
     done
 
     if [[ ${#menu_options[@]} -eq 0 ]]; then
