@@ -464,6 +464,8 @@ class MpvWidget(QOpenGLWidget):
         self._lib_mpv_command_string = L.mpv_command_string
         self._lib_mpv_command_string.argtypes = [c_void_p, c_char_p]
         self._lib_mpv_command_string.restype = c_int
+        self._lib_mpv_get_property = L.mpv_get_property
+        self._lib_mpv_get_property.restype = c_int
         self._lib_mpv_terminate_destroy = L.mpv_terminate_destroy
         self._lib_mpv_terminate_destroy.argtypes = [c_void_p]
         self._lib_mpv_render_context_create = L.mpv_render_context_create
@@ -541,6 +543,17 @@ class MpvWidget(QOpenGLWidget):
     def play(self, url):
         self._lib_mpv_command_string(self._handle, f"loadfile {url}".encode())
         self._playing = True
+
+    def is_rendering(self):
+        """Retourne True si la vidéo est effectivement en train de jouer."""
+        if not self._playing:
+            return False
+        val = ctypes.c_double()
+        fmt = c_int(5)  # MPV_FORMAT_DOUBLE
+        ret = self._lib_mpv_get_property(
+            self._handle, b"time-pos", fmt, ctypes.byref(val)
+        )
+        return ret >= 0
 
     def command(self, *args):
         cmd = " ".join(str(a) for a in args).encode()
@@ -1085,10 +1098,12 @@ class TVWindow(QMainWindow):
     # =========================================================================
 
     def _animate_loading(self):
-        """Animation simple de chargement (points qui défilent)."""
+        """Animation de chargement + détection du démarrage vidéo."""
         self._loading_dots = (self._loading_dots + 1) % 4
         dots = "." * self._loading_dots
         self._loading_subtitle.setText(f"Connexion au flux{dots}   ")
+        if self._video_widget.is_rendering():
+            self._hide_loading()
 
     # =========================================================================
     # MANETTE DE JEU
