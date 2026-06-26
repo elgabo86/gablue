@@ -15,8 +15,8 @@ import evdev
 import select
 import shiboken6
 from evdev import ecodes
-from PySide6.QtCore import Qt, QSize, QUrl, QTimer, QRect
-from PySide6.QtGui import QIcon, QFont, QPixmap, QColor, QPainter, QPen, QBrush, QPaintEvent
+from PySide6.QtCore import Qt, QSize, QUrl, QTimer, QRect, QEvent
+from PySide6.QtGui import QIcon, QFont, QPixmap, QColor, QPainter, QPen, QBrush, QPaintEvent, QGuiApplication
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QScrollArea,
@@ -551,6 +551,9 @@ class TVWindow(QMainWindow):
         osd_layout.addWidget(self._osd_label)
         root.addWidget(self._osd_bar)
 
+        # --- Focus Wayland ---
+        self._window_active = True  # suivi fiable via changeEvent
+
         # --- Overlay de chargement ---
         self._loading_overlay = QWidget(central)
         self._loading_overlay.setObjectName("loadingOverlay")
@@ -946,8 +949,15 @@ class TVWindow(QMainWindow):
 
         L'accélération fonctionne même sans nouveaux événements : l'état
         du stick/hat est mémorisé entre les appels.
+
+        La manette est ignorée quand tvqt n'est pas la fenêtre active,
+        SAUF pendant la lecture (mpv fullscreen) pour permettre le contrôle
+        du volume, seek et pause sans devoir refocaliser tvqt.
         """
-        self._mpv_running()
+        playing = self._mpv_running()
+
+        if not playing and not self._window_active:
+            return
 
         if not self._gamepad:
             self._find_gamepad()
@@ -1016,8 +1026,6 @@ class TVWindow(QMainWindow):
             new_dir = "left"
         elif right:
             new_dir = "right"
-
-        playing = self._mpv_running()
 
         # --- Mode grille : accélération progressive au maintien ---
         if not playing:
@@ -1094,6 +1102,16 @@ class TVWindow(QMainWindow):
         self._last_circle = circle_pressed
         self._last_l1 = l1_pressed
         self._last_r1 = r1_pressed
+
+    # =========================================================================
+    # FOCUS WAYLAND
+    # =========================================================================
+
+    def changeEvent(self, event):
+        """Suit l'état d'activation de la fenêtre (fiable sous Wayland)."""
+        if event.type() == QEvent.ActivationChange:
+            self._window_active = self.isActiveWindow()
+        super().changeEvent(event)
 
     # =========================================================================
     # CLAVIER

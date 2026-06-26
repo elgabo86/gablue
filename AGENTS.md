@@ -734,6 +734,7 @@ Scripts personnalisés Gablue :
 - `system-flatpak-setup` : Configuration Flatpak système
 - Scripts gaming : `a13`, `chdman`, `citron-install`, `eden-install`, etc.
 - Scripts utilitaires : `ytdl`, `dlcover`, `genimg`, `raroms`, etc.
+- `tvqt` : Interface TV Gablue (PySide6 + mpv, navigation manette, ~170 chaînes)
 
 ### Binaire gamepadshortcuts (/usr/bin)
 
@@ -757,6 +758,23 @@ Monteur d'images disque en C natif (~2.7 Mo RAM) :
 - Service menu KDE : clic droit → "Monter" (remplace l'action native)
 - Double-clic : défini comme application par défaut pour les types MIME ISO/IMG/EFI
 - Log dans `/tmp/gablue-isomount.log`
+
+### Interface tvqt (/usr/bin)
+
+Interface de télévision Gablue en Python (PySide6 + mpv) :
+- `tvqt` : Interface TV optimisée manette de jeu (~170 chaînes, navigation D-pad)
+- Lecture des flux HLS via mpv avec contrôle IPC (socket Unix)
+- Téléchargement et cache des logos des chaînes
+- Filtrage par pays avec pastilles (Suisse, France, Allemagne, Italie, etc.)
+- Accélération progressive de la navigation au maintien du D-pad
+
+**Gestion du focus Wayland** (ajout 2025) :
+- **Problème** : evdev lit les événements manette même quand tvqt n'est pas au premier plan, provoquant des interférences avec les jeux
+- **Solution** : suivi de l'état d'activation via `changeEvent(QEvent.ActivationChange)` — méthode Qt6 fiable sous Wayland car les événements viennent directement du compositor KWin
+- **Comportement** :
+  - Fenêtre tvqt active → manette fonctionne (navigation chaînes)
+  - mpv en cours de lecture → manette toujours active (volume, seek, pause) même si mpv a le focus
+  - Autre application au premier plan (jeu, etc.) → manette **ignorée**
 
 ### Scripts gamepadshortcuts (/usr/share/ublue-os/gablue/scripts/gamepadshortcuts)
 
