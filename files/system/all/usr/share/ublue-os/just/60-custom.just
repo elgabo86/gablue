@@ -78,7 +78,6 @@ displaylink-disable:
     echo "Error..."
 
 # Configure grub bootmenu visibility. pass action 'help' for more info.
-[group("system")]
 configure-grub ACTION="":
     #!/usr/bin/bash
     source /usr/libexec/bazzite-boot-remount
@@ -200,7 +199,7 @@ amd-corectrl-set-kargs:
     rpm-ostree kargs --append-if-missing=$(printf 'amdgpu.ppfeaturemask=0x%x\n' "$(($(cat /sys/module/amdgpu/parameters/ppfeaturemask) | 0x4000))")
     echo "ALL DONE!!!"
 
-# Remove cpu security,systemctl enable scx-lavd.service boost performance
+# Désactiver les mitigations CPU pour gagner en performance
 mitigations-off:
     #!/usr/bin/bash
     rpm-ostree kargs --append-if-missing=mitigations=off
@@ -545,35 +544,9 @@ brew-reset:
     echo "ALL DONE!!!"
     echo "Restart computer to reuse brew"
 
-# Install LMStudio
-lmstudio-install:
-    #!/usr/bin/bash
-    echo "Installing LMStudio via Homebrew..."
-    brew tap ublue-os/tap
-    brew install ublue-os/tap/lm-studio-linux --cask
-    echo "LMStudio has been installed!"
 
-# Uninstall LMStudio
-lmstudio-uninstall:
-    #!/usr/bin/bash
-    echo "Removing LMStudio via Homebrew..."
-    brew uninstall ublue-os/tap/lm-studio-linux --cask
-    echo "LMStudio has been uninstalled!"
 
-# Install Jetbrain Toolbox
-jetbrain-install:
-    #!/usr/bin/bash
-    echo "Installing Jetbrain Toolbox via Homebrew..."
-    brew tap ublue-os/tap
-    brew install ublue-os/tap/jetbrains-toolbox-linux --cask
-    echo "Jetbrain Toolbox has been installed!"
 
-# Uninstall Jetbrain Toolbox
-jetbrain-uninstall:
-    #!/usr/bin/bash
-    echo "Removing Jetbrain Toolbox via Homebrew..."
-    brew uninstall ublue-os/tap/jetbrains-toolbox-linux --cask
-    echo "Jetbrain Toolbox has been uninstalled!"
 
 # Install/Reinstall custom Archlinux
 distrobox-archgab:
@@ -632,11 +605,6 @@ foreground-booster-disable:
     systemctl --user stop plasma-foreground-booster.service 2>/dev/null
     echo "Foreground booster disabled."
 
-# Fix screen desactivation on kde plasma (until plasma 6.2)
-fix-screen:
-    #!/usr/bin/bash
-    rm -f ~/.config/kwinoutputconfig.json &&
-    killall -9 kwin_wayland
 
 # Update gablue and flatpaks
 gablue-update:
@@ -743,7 +711,6 @@ secureboot:
     echo 'At next reboot, the moktool UEFI menu UI will be displayed (*QWERTY* keyboard input and navigation).\nThen, select "Enroll MOK", and input "secureblue" as the password'
 
 # Configure beesd for BTRFS deduplication (pas active par defaut)
-[group("system")]
 configure-beesd ACTION="":
     #!/usr/bin/bash
     source /usr/lib/ujust/ujust.sh
