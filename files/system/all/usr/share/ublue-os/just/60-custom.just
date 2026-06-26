@@ -847,8 +847,8 @@ configure-beesd ACTION="":
         sudo systemctl enable --now "beesd@${UUID}.timer"
     done
 
-# Activer la compression BTRFS zstd sur un filesystem
-btrfs-compress-enable:
+# Activer/désactiver la compression BTRFS zstd sur un filesystem
+btrfs-compress ACTION="":
     #!/usr/bin/bash
     source /usr/lib/ujust/ujust.sh
 
@@ -859,14 +859,14 @@ btrfs-compress-enable:
     fi
 
     menu_options=()
-    declare -A fs_mountpoint_map
+    declare -A fs_info_map
     for line in "${raw_btrfs_output[@]}"; do
         read -r name uuid _ mountpoint <<< "$line"
         if [[ -n "$mountpoint" ]] && [[ "$mountpoint" != "[SWAP]" ]]; then
             compression=$(sudo btrfs property get "$mountpoint" compression 2>/dev/null | awk '{print $NF}')
             [[ -z "$compression" ]] && compression="none"
             menu_options+=("$mountpoint ($uuid) [compression=$compression]")
-            fs_mountpoint_map["$mountpoint"]="$name $uuid"
+            fs_info_map["$mountpoint"]="$uuid|$compression"
         fi
     done
 
@@ -876,50 +876,34 @@ btrfs-compress-enable:
     fi
 
     menu_options+=("Annuler")
-    echo "Choisir le filesystem BTRFS à compresser :"
+    echo "Choisir le filesystem BTRFS :"
     CHOICE=$(ugum choose "${menu_options[@]}")
     [[ "$CHOICE" == "Annuler" ]] || [[ -z "$CHOICE" ]] && exit 0
 
     MOUNTPOINT=$(echo "$CHOICE" | awk '{print $1}')
-    echo "Activation de la compression zstd sur $MOUNTPOINT..."
-    sudo btrfs property set "$MOUNTPOINT" compression zstd
-    echo "Compression zstd activée sur $MOUNTPOINT."
+    CURRENT_COMPRESSION="${fs_info_map[$MOUNTPOINT]#*|}"
 
-# Désactiver la compression BTRFS sur un filesystem
-btrfs-compress-disable:
-    #!/usr/bin/bash
-    source /usr/lib/ujust/ujust.sh
-
-    mapfile -t raw_btrfs_output < <(sudo lsblk --fs --list --noheadings --output "NAME,UUID,FSTYPE,MOUNTPOINT" --filter 'FSTYPE == "btrfs"')
-    if [[ ${#raw_btrfs_output[@]} -eq 0 ]]; then
-        echo "Aucun filesystem BTRFS trouvé."
-        exit 1
+    if [[ "$CURRENT_COMPRESSION" == "zstd" ]]; then
+        ACTION=$(ugum choose "Désactiver la compression" "Annuler")
+    else
+        ACTION=$(ugum choose "Activer la compression zstd" "Annuler")
     fi
 
-    menu_options=()
-    for line in "${raw_btrfs_output[@]}"; do
-        read -r name uuid _ mountpoint <<< "$line"
-        if [[ -n "$mountpoint" ]] && [[ "$mountpoint" != "[SWAP]" ]]; then
-            compression=$(sudo btrfs property get "$mountpoint" compression 2>/dev/null | awk '{print $NF}')
-            [[ -z "$compression" ]] && compression="none"
-            menu_options+=("$mountpoint ($uuid) [compression=$compression]")
-        fi
-    done
-
-    if [[ ${#menu_options[@]} -eq 0 ]]; then
-        echo "Aucun filesystem BTRFS monté trouvé."
-        exit 1
-    fi
-
-    menu_options+=("Annuler")
-    echo "Choisir le filesystem BTRFS dont désactiver la compression :"
-    CHOICE=$(ugum choose "${menu_options[@]}")
-    [[ "$CHOICE" == "Annuler" ]] || [[ -z "$CHOICE" ]] && exit 0
-
-    MOUNTPOINT=$(echo "$CHOICE" | awk '{print $1}')
-    echo "Désactivation de la compression sur $MOUNTPOINT..."
-    sudo btrfs property set "$MOUNTPOINT" compression ""
-    echo "Compression désactivée sur $MOUNTPOINT."
+    case "$ACTION" in
+        "Activer la compression zstd")
+            echo "Activation de la compression zstd sur $MOUNTPOINT..."
+            sudo btrfs property set "$MOUNTPOINT" compression zstd
+            echo "Compression zstd activée sur $MOUNTPOINT."
+            ;;
+        "Désactiver la compression")
+            echo "Désactivation de la compression sur $MOUNTPOINT..."
+            sudo btrfs property set "$MOUNTPOINT" compression ""
+            echo "Compression désactivée sur $MOUNTPOINT."
+            ;;
+        *)
+            exit 0
+            ;;
+    esac
 
 # Compresser les données existantes sur un filesystem BTRFS (defrag + zstd)
 btrfs-compress-defrag:
