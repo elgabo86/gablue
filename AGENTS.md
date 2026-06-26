@@ -761,9 +761,9 @@ Monteur d'images disque en C natif (~2.7 Mo RAM) :
 
 ### Interface tvqt (/usr/bin)
 
-Interface de télévision Gablue en Python (PySide6 + mpv) :
+Interface de télévision Gablue en Python (PySide6 + libmpv) :
 - `tvqt` : Interface TV optimisée manette de jeu (~170 chaînes, navigation D-pad)
-- Lecture des flux HLS via mpv avec contrôle IPC (socket Unix)
+- Lecture des flux HLS via `libmpv` embarqué + `QOpenGLWidget` (API `mpv_render_context` OpenGL)
 - Téléchargement et cache des logos des chaînes
 - Filtrage par pays avec pastilles (Suisse, France, Allemagne, Italie, etc.)
 - Accélération progressive de la navigation au maintien du D-pad
@@ -775,11 +775,14 @@ Interface de télévision Gablue en Python (PySide6 + mpv) :
   - Fenêtre tvqt active → manette fonctionne (navigation chaînes ET lecture vidéo intégrée)
   - Autre application au premier plan (jeu, etc.) → manette **ignorée**
 
-**Lecteur vidéo intégré** (ajout 2025) :
+**Lecteur vidéo intégré** (ajout 2025, refonte 2026) :
 - mpv est embarqué dans la fenêtre tvqt via `libmpv` + `QOpenGLWidget` (API `mpv_render_context` OpenGL)
+- **Python 3.14** : `c_void_p` retourne désormais un `int` Python → wrapper explicite `c_void_p(handle)` requis après `mpv_create()`, sinon ctypes passe le handle en 32-bit (segfault dans `render_context_create`)
 - Plus de fenêtre mpv externe ni de sous-processus : le rendu vidéo est natif dans le widget Qt6, compatible Wayland
 - La manette fonctionne uniquement quand tvqt a le focus Wayland (navigation + contrôle lecture)
 - Bascule grille/vidéo transparente : [A] lance/stop, [B] retour grille, D-pad = volume/seek
+- **Fullscreen** : automatique au lancement d'une chaîne, double-clic gauche = toggle, clic droit = retour grille
+- **GUI masquée** en mode vidéo : barre supérieure et OSD cachés, seul le flux vidéo est visible
 
 ### Scripts gamepadshortcuts (/usr/share/ublue-os/gablue/scripts/gamepadshortcuts)
 
