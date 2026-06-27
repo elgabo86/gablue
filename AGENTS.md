@@ -475,6 +475,12 @@ Installation extensive de paquets organisée par catégories :
 - **SELinux** : checkpolicy, selinux-policy-devel
 - **Libs 32-bit Wine/Proton complètes** : fontconfig, freetype, X11 (composite, cursor, damage, fix, i, inerama, randr, render, tst, v), Wayland (epoxy, decor, cursor, egl), core (gnutls, unwind, cups, openldap), audio (pulseaudio, pipewire upgrade + libs, FAudio, alsa, openal, ogg, vorbis, flac, sndfile), vulkan-loader (terra-mesa), vidéo (libva, libvdpau)
 
+**Upgrade initial restreint** (toutes variantes) :
+- `dnf5 -y upgrade --refresh --repo=fedora --repo=updates` **avant** toute installation
+- L'image Kinoite de base peut avoir jusqu'à 48h de retard sur les mises à jour Fedora
+- Restreint aux dépôts officiels uniquement : les exclusions `mesa-*` et `kernel-*` du copr protègent Mesa et kernel, NVIDIA vient des RPMs akmods externes
+- Exécuté avant le versionlock de plasma-desktop pour que ce dernier soit déjà à jour avant d'être verrouillé
+
 Paquets supprimés :
 - firefox, firefox-langpacks, htop
 - plasma-discover-rpm-ostree (Kinoite)

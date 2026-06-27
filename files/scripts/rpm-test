@@ -10,6 +10,11 @@ set -eoux pipefail
 # PRÉPARATION ET VERROUILLAGES
 # =============================================================================
 
+# Mise à jour des paquets de base (Fedora uniquement) avant toute installation
+# L'image Kinoite de base peut avoir jusqu'à 48h de retard sur les mises à jour
+# Restreint aux dépôts officiels pour ne pas toucher Mesa, kernel ou NVIDIA
+dnf5 -y upgrade --refresh --repo=fedora --repo=updates
+
 # Verrouiller la version de plasma-desktop pour éviter les conflits de version
 # Cela empêche plasma-desktop d'être mis à niveau pendant l'installation de paquets
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
