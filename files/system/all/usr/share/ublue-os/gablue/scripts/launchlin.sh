@@ -85,18 +85,17 @@ _lgp_register_kernel_overlay() {
     echo "Overlay kernel enregistré (montage différé): $mountpoint"
 }
 
-# Configure les bind mounts dans le namespace courant pour traduire
+# Configure les symlinks dans le namespace courant pour traduire
 # les chemins /tmp/lgp-* hardcodés des .lgp vers leur version $UID
+# Utilise des symlinks plutôt que des bind mounts car mount --rbind
+# échoue dans les namespaces utilisateur (unshare -U)
 _lgp_setup_bind_mounts() {
     for base in lgp-saves lgp-extra lgp-temp lgpackmount edenln \
                 lgp-temp-upper lgp-temp-work \
                 lgp-full-overlay lgp-full-overlay-upper lgp-full-overlay-work; do
-        mkdir -p "/tmp/$base" 2>/dev/null
-        if mount --rbind "/tmp/$base-$UID" "/tmp/$base" 2>/dev/null; then
-            : # mount ok
-        else
-            echo "Attention: bind mount échoué pour /tmp/$base" >&2
-        fi
+        umount "/tmp/$base" 2>/dev/null || true
+        rm -rf "/tmp/$base" 2>/dev/null || true
+        ln -sfn "/tmp/$base-$UID" "/tmp/$base"
     done
 }
 
@@ -344,7 +343,7 @@ read_lgp_config() {
     launch_content="$(cat "$LAUNCH_FILE" | tr -d '\n\r')"
     FULL_EXE_PATH="$MOUNT_DIR/$launch_content"
 
-    # Résoudre le chemin (les bind mounts du namespace rendent realpath fonctionnel)
+    # Résoudre le chemin (les symlinks du namespace rendent realpath fonctionnel)
     if [ -L "$FULL_EXE_PATH" ]; then
         REAL_EXE_PATH="$(realpath "$FULL_EXE_PATH" 2>/dev/null)"
         echo "Symlink détecté: $FULL_EXE_PATH -> $REAL_EXE_PATH"
@@ -1062,7 +1061,7 @@ run_lgp_mode() {
            UID
 
     # Exécuter tout le setup et le jeu dans un namespace de montage privé
-    # Les bind mounts traduisent /tmp/lgp-* → /tmp/lgp-*-$UID de façon isolée
+    # Les symlinks traduisent /tmp/lgp-* → /tmp/lgp-*-$UID
     unshare -U -m --map-root-user bash <<'LGP_NAMESPACE_EOF'
         _lgp_setup_bind_mounts
 
