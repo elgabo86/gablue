@@ -1347,7 +1347,7 @@ show_current_runner() {
 #
 # Ce module gère la sélection entre DXVK standard et DXVK-GPLAsync.
 # Les modes disponibles sont:
-#   - dxvk: DXVK standard (depuis bottlesdevs/components)
+#   - dxvk: DXVK standard (depuis doitsujin/dxvk)
 #   - dxvk-async: DXVK-GPLAsync (depuis gitlab.com/Ph42oN/dxvk-gplasync)
 #
 # Le mode sélectionné est stocké dans ~/.local/share/gwine/options
@@ -2006,30 +2006,76 @@ get_latest_gwine_version() {
     curl -s "https://github.com/elgabo86/gwine/releases.atom" 2>/dev/null | grep -oE 'gwine-[0-9]+\.[0-9]+\.r[0-9]+\.g[0-9a-f]+' | head -1
 }
 
-# Récupère la dernière version d'un composant depuis bottlesdevs/components
+# Récupère la dernière version d'un composant depuis GitHub
 # Usage: get_component_version <type>
-#   type: dxvk, vkd3d, ou dxvk-nvapi
+#   type: dxvk (officiel + bottles), vkd3d (officiel + bottles), dxvk-nvapi (bottles)
+# Pour dxvk et vkd3d, compare l'officiel et bottlesdevs/components et prend la plus
+# haute version (en cas d'égalité, préfère l'officiel).
+# Stocke la source choisie dans les globales _DXVK_SOURCE / _VKD3D_SOURCE ("official" ou "bottles")
 get_component_version() {
     local component="$1"
-    local repo="bottlesdevs/components"
     local version
+    local official_version bottles_version
     
     case "$component" in
         dxvk)
-            version=$(curl -s "https://github.com/$repo/releases.atom" 2>/dev/null | grep -oE "dxvk-[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9]+-[0-9a-f]+)?" | grep -v "nvapi\|gplasync" | head -1)
-            [ -n "$version" ] && version="${version#dxvk-}"
+            # Source officielle
+            official_version=$(curl -s "https://github.com/doitsujin/dxvk/releases.atom" 2>/dev/null | grep -oE "v[0-9]+\.[0-9]+(\.[0-9]+)?" | grep -v "nvapi\|gplasync" | head -1)
+            [ -n "$official_version" ] && official_version="${official_version#v}"
+            
+            # Source bottlesdevs
+            bottles_version=$(curl -s "https://github.com/bottlesdevs/components/releases.atom" 2>/dev/null | grep -oE "dxvk-[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9]+-[0-9a-f]+)?" | grep -v "nvapi\|gplasync" | head -1)
+            [ -n "$bottles_version" ] && bottles_version="${bottles_version#dxvk-}"
+            
+            # Comparer et choisir la meilleure
+            if [ -z "$official_version" ] && [ -z "$bottles_version" ]; then
+                _DXVK_SOURCE=""
+                return 1
+            elif [ -z "$official_version" ]; then
+                version="$bottles_version"
+                _DXVK_SOURCE="bottles"
+            elif [ -z "$bottles_version" ]; then
+                version="$official_version"
+                _DXVK_SOURCE="official"
+            elif compare_versions "$bottles_version" "$official_version"; then
+                version="$bottles_version"
+                _DXVK_SOURCE="bottles"
+            else
+                version="$official_version"
+                _DXVK_SOURCE="official"
+            fi
             echo "$version"
             ;;
         vkd3d)
-            version=$(curl -s "https://github.com/$repo/releases.atom" 2>/dev/null | grep -oE "vkd3d-proton-[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1)
-            if [ -z "$version" ]; then
-                version=$(curl -s "https://github.com/$repo/tags?after=dxvk-2.7.1-6-fc848a4" 2>/dev/null | grep -oE "vkd3d-proton-[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1)
+            # Source officielle
+            official_version=$(curl -s "https://github.com/HansKristian-Work/vkd3d-proton/releases.atom" 2>/dev/null | grep -oE "v[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1)
+            [ -n "$official_version" ] && official_version="${official_version#v}"
+            
+            # Source bottlesdevs
+            bottles_version=$(curl -s "https://github.com/bottlesdevs/components/releases.atom" 2>/dev/null | grep -oE "vkd3d-proton-[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1)
+            [ -n "$bottles_version" ] && bottles_version="${bottles_version#vkd3d-proton-}"
+            
+            # Comparer et choisir la meilleure
+            if [ -z "$official_version" ] && [ -z "$bottles_version" ]; then
+                _VKD3D_SOURCE=""
+                return 1
+            elif [ -z "$official_version" ]; then
+                version="$bottles_version"
+                _VKD3D_SOURCE="bottles"
+            elif [ -z "$bottles_version" ]; then
+                version="$official_version"
+                _VKD3D_SOURCE="official"
+            elif compare_versions "$bottles_version" "$official_version"; then
+                version="$bottles_version"
+                _VKD3D_SOURCE="bottles"
+            else
+                version="$official_version"
+                _VKD3D_SOURCE="official"
             fi
-            [ -n "$version" ] && version="${version#vkd3d-proton-}"
             echo "$version"
             ;;
         dxvk-nvapi)
-            version=$(curl -s "https://github.com/$repo/releases.atom" 2>/dev/null | grep -oE "dxvk-nvapi-v[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1)
+            version=$(curl -s "https://github.com/bottlesdevs/components/releases.atom" 2>/dev/null | grep -oE "dxvk-nvapi-v[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1)
             [ -n "$version" ] && version="${version#dxvk-nvapi-v}"
             echo "$version"
             ;;
@@ -4618,16 +4664,28 @@ download_updated_dxvk_vkd3d() {
     local update_success=true
     
     if [ -n "$latest_dxvk" ]; then
-        local dxvk_tag="dxvk-${latest_dxvk}"
-        local dxvk_url="https://github.com/bottlesdevs/components/releases/download/${dxvk_tag}/${dxvk_tag}.tar.gz"
+        local dxvk_url
+        if [ "${_DXVK_SOURCE:-official}" = "bottles" ]; then
+            local dxvk_tag="dxvk-${latest_dxvk}"
+            dxvk_url="https://github.com/bottlesdevs/components/releases/download/${dxvk_tag}/${dxvk_tag}.tar.gz"
+        else
+            local dxvk_tag="v${latest_dxvk}"
+            dxvk_url="https://github.com/doitsujin/dxvk/releases/download/${dxvk_tag}/dxvk-${latest_dxvk}.tar.gz"
+        fi
         if ! download_and_install_component "dxvk" "$latest_dxvk" "$DXVK_CACHE_DIR" "dxvk-*" "$dxvk_url" "$temp_dir"; then
             update_success=false
         fi
     fi
     
     if [ -n "$latest_vkd3d" ]; then
-        local vkd3d_tag="vkd3d-proton-${latest_vkd3d}"
-        local vkd3d_url="https://github.com/bottlesdevs/components/releases/download/${vkd3d_tag}/${vkd3d_tag}.tar.gz"
+        local vkd3d_url
+        if [ "${_VKD3D_SOURCE:-official}" = "bottles" ]; then
+            local vkd3d_tag="vkd3d-proton-${latest_vkd3d}"
+            vkd3d_url="https://github.com/bottlesdevs/components/releases/download/${vkd3d_tag}/${vkd3d_tag}.tar.gz"
+        else
+            local vkd3d_tag="v${latest_vkd3d}"
+            vkd3d_url="https://github.com/HansKristian-Work/vkd3d-proton/releases/download/${vkd3d_tag}/vkd3d-proton-${latest_vkd3d}.tar.gz"
+        fi
         if ! download_and_install_component "vkd3d-proton" "$latest_vkd3d" "$VKD3D_CACHE_DIR" "vkd3d-proton-*" "$vkd3d_url" "$temp_dir"; then
             update_success=false
         fi
@@ -4706,8 +4764,14 @@ download_missing_components() {
         if [ -z "$DXVK_VERSION" ]; then
             echo "Warning: Impossible de récupérer la dernière version de DXVK"
         else
-            local DXVK_TAG="dxvk-${DXVK_VERSION}"
-            local DXVK_URL="https://github.com/bottlesdevs/components/releases/download/${DXVK_TAG}/${DXVK_TAG}.tar.gz"
+            local DXVK_TAG DXVK_URL
+            if [ "${_DXVK_SOURCE:-official}" = "bottles" ]; then
+                DXVK_TAG="dxvk-${DXVK_VERSION}"
+                DXVK_URL="https://github.com/bottlesdevs/components/releases/download/${DXVK_TAG}/${DXVK_TAG}.tar.gz"
+            else
+                DXVK_TAG="v${DXVK_VERSION}"
+                DXVK_URL="https://github.com/doitsujin/dxvk/releases/download/${DXVK_TAG}/dxvk-${DXVK_VERSION}.tar.gz"
+            fi
             local DXVK_TEMP="$DXVK_CACHE_DIR/dxvk.tar.gz"
             local DXVK_DIR="$DXVK_CACHE_DIR/dxvk-${DXVK_VERSION}"
             
@@ -4743,8 +4807,14 @@ download_missing_components() {
         if [ -z "$VKD3D_VERSION" ]; then
             echo "Warning: Impossible de récupérer la dernière version de VKD3D-Proton"
         else
-            local VKD3D_TAG="vkd3d-proton-${VKD3D_VERSION}"
-            local VKD3D_URL="https://github.com/bottlesdevs/components/releases/download/${VKD3D_TAG}/${VKD3D_TAG}.tar.gz"
+            local VKD3D_TAG VKD3D_URL
+            if [ "${_VKD3D_SOURCE:-official}" = "bottles" ]; then
+                VKD3D_TAG="vkd3d-proton-${VKD3D_VERSION}"
+                VKD3D_URL="https://github.com/bottlesdevs/components/releases/download/${VKD3D_TAG}/${VKD3D_TAG}.tar.gz"
+            else
+                VKD3D_TAG="v${VKD3D_VERSION}"
+                VKD3D_URL="https://github.com/HansKristian-Work/vkd3d-proton/releases/download/${VKD3D_TAG}/vkd3d-proton-${VKD3D_VERSION}.tar.gz"
+            fi
             local VKD3D_TEMP="$VKD3D_CACHE_DIR/vkd3d.tar.gz"
             local VKD3D_DIR="$VKD3D_CACHE_DIR/vkd3d-proton-${VKD3D_VERSION}"
             
