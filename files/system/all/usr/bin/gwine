@@ -10388,7 +10388,10 @@ main() {
     fi
     
     # Pour les modes qui nécessitent Wine/Proton, s'assurer que le runner est installé
-    ensure_runner_installed
+    # Sauf pour --init: init_prefix_only() le fait avec une barre de progression kdialog
+    if [ "$init_mode" != true ]; then
+        ensure_runner_installed
+    fi
 
     if [ "$regedit_mode" = true ]; then
         launch_regedit
