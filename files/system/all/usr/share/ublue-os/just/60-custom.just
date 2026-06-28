@@ -1041,7 +1041,89 @@ boot-select:
         exit 1
     fi
 
-# Compresser les données existantes sur un filesystem BTRFS (defrag + zstd)
+# Changer l'ordre de boot EFI de façon permanente
+boot-order:
+    #!/usr/bin/bash
+    source /usr/lib/ujust/ujust.sh
+
+    if ! command -v efibootmgr &>/dev/null; then
+        echo "efibootmgr non installé."
+        exit 1
+    fi
+
+    if [[ ! -d /sys/firmware/efi ]]; then
+        echo "Système non démarré en mode UEFI."
+        exit 1
+    fi
+
+    # Parser les entrées EFI (même logique que boot-select)
+    mapfile -t boot_lines < <(efibootmgr 2>/dev/null | grep '^Boot[0-9]')
+    if [[ ${#boot_lines[@]} -eq 0 ]]; then
+        echo "Aucune entrée de boot EFI trouvée."
+        exit 1
+    fi
+
+    declare -A boot_labels
+    declare -A boot_nums
+    all_options=()
+    while IFS=$'\t' read -r first_part rest; do
+        boot_num=$(echo "$first_part" | grep -oP '^Boot\K[0-9A-F]{4}')
+        boot_label=$(echo "$first_part" | sed 's/^Boot[0-9A-F]\{4\}\* //')
+        [[ -z "$boot_num" || -z "$boot_label" ]] && continue
+        part_uuid=$(echo "$rest" | grep -oP 'HD\([^,]+,[^,]+,\K[^,]+' || true)
+        disk_name=""
+        if [[ -n "$part_uuid" ]]; then
+            part_dev=$(findfs PARTUUID="$part_uuid" 2>/dev/null || true)
+            [[ -n "$part_dev" ]] && disk_name=$(lsblk -no PKNAME "$part_dev" 2>/dev/null || true)
+        fi
+        if [[ -n "$disk_name" ]]; then
+            entry="$boot_label ($disk_name)"
+        else
+            entry="$boot_label"
+        fi
+        all_options+=("$entry")
+        boot_labels["$entry"]="$boot_num"
+        boot_nums["$entry"]="$boot_num"
+    done < <(printf '%s\n' "${boot_lines[@]}")
+
+    # Afficher l'ordre actuel
+    current_order=$(efibootmgr 2>/dev/null | grep '^BootOrder:' | sed 's/^BootOrder: //')
+    echo "Ordre actuel : $current_order"
+    echo ""
+
+    # Sélectionner le nouvel ordre un par un
+    declare -a new_order=()
+    remaining=( "${all_options[@]}" )
+    for i in $(seq 1 ${#all_options[@]}); do
+        [[ $i -gt 1 ]] && remaining+=("Terminé")
+        echo "Entrée n°$i :"
+        CHOICE=$(ugum choose "${remaining[@]}")
+        [[ "$CHOICE" == "Terminé" ]] || [[ -z "$CHOICE" ]] && break
+        new_order+=("${boot_nums[$CHOICE]}")
+        # Retirer l'entrée choisie des options restantes
+        declare -a new_remaining=()
+        for opt in "${remaining[@]}"; do
+            [[ "$opt" == "Terminé" ]] && continue
+            [[ "$opt" != "$CHOICE" ]] && new_remaining+=("$opt")
+        done
+        remaining=( "${new_remaining[@]}" )
+    done
+
+    if [[ ${#new_order[@]} -eq 0 ]]; then
+        echo "Aucun changement effectué."
+        exit 0
+    fi
+
+    NEW_ORDER=$(printf '%s,' "${new_order[@]}")
+    NEW_ORDER="${NEW_ORDER%,}"
+
+    echo "Nouvel ordre de boot : $NEW_ORDER"
+    if sudo efibootmgr --bootorder "$NEW_ORDER"; then
+        echo "Ordre de boot modifié avec succès."
+    else
+        echo "Erreur lors du changement d'ordre de boot."
+        exit 1
+    fi
 btrfs-compress-defrag:
     #!/usr/bin/bash
     source /usr/lib/ujust/ujust.sh
