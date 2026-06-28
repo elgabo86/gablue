@@ -765,14 +765,18 @@ configure-beesd ACTION="":
             echo "No BTRFS filesystems found."
             exit 0
         fi
-        # Check for existing configurations
+        # Check for existing configurations and timer status
         unset configured_uuids
         declare -A configured_uuids
         if [[ -d "/etc/bees" ]]; then
             for config in /etc/bees/*.conf; do
-                if [[ -f "$config" ]]; then
+                if [[ -f "$config" ]] && [[ "$config" != *"/beesd.conf.sample" ]]; then
                     filename=$(basename "$config" .conf)
-                    configured_uuids["$filename"]=1
+                    if systemctl is-enabled "beesd@${filename}.timer" >/dev/null 2>&1; then
+                        configured_uuids["$filename"]="enabled"
+                    else
+                        configured_uuids["$filename"]="disabled"
+                    fi
                 fi
             done
         fi
@@ -785,8 +789,10 @@ configure-beesd ACTION="":
             # Convert bytes to human readable for display
             size_human=$(numfmt --to=iec-i --suffix=B "$size_bytes")
             filesystem_size_map["$uuid"]="$size_bytes"
-            if [[ -n "${configured_uuids[$uuid]}" ]]; then
-                menu_options+=("$name $uuid $size_human (Configured)")
+            if [[ "${configured_uuids[$uuid]:-}" == "disabled" ]]; then
+                menu_options+=("$name $uuid $size_human (Configuré - Timer désactivé)")
+            elif [[ "${configured_uuids[$uuid]:-}" == "enabled" ]]; then
+                menu_options+=("$name $uuid $size_human (Configuré)")
             else
                 menu_options+=("$name $uuid $size_human")
             fi
@@ -800,17 +806,27 @@ configure-beesd ACTION="":
         UUID=$(echo "$CHOICE" | awk '{print $2}')
         SIZE_BYTES="${filesystem_size_map[$UUID]}"
         if [[ -f "/etc/bees/${UUID}.conf" ]]; then
-            echo "Configuration already exists for UUID: ${UUID}"
-            ACTION=$(ugum choose "Remove configuration" "Reinstall/Overwrite" "Back")
+            echo "Configuration déjà présente pour UUID : ${UUID}"
+            if [[ "${configured_uuids[$UUID]}" == "disabled" ]]; then
+                ACTION=$(ugum choose "Activer le timer" "Supprimer la configuration" "Reinstaller/Écraser" "Retour")
+            else
+                ACTION=$(ugum choose "Supprimer la configuration" "Reinstaller/Écraser" "Retour")
+            fi
         else
-            ACTION=$(ugum choose "Create configuration" "Back")
+            ACTION=$(ugum choose "Créer la configuration" "Retour")
         fi
         case "$ACTION" in
-            "Remove configuration")
+            "Activer le timer")
+                echo "Activation du timer beesd@${UUID}.timer..."
+                sudo systemctl enable --now "beesd@${UUID}.timer"
+                echo "Timer activé."
+                continue
+                ;;
+            "Supprimer la configuration")
                 remove_beesd_config "$UUID"
                 continue
                 ;;
-            "Back")
+            "Retour")
                 continue
                 ;;
             "")
