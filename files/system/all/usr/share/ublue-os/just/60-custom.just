@@ -975,6 +975,72 @@ btrfs-compress ACTION="":
             ;;
     esac
 
+# Sélectionner un disque sur lequel booter (efibootmgr --bootnext)
+boot-select:
+    #!/usr/bin/bash
+    source /usr/lib/ujust/ujust.sh
+
+    if ! command -v efibootmgr &>/dev/null; then
+        echo "efibootmgr non installé."
+        exit 1
+    fi
+
+    if [[ ! -d /sys/firmware/efi ]]; then
+        echo "Système non démarré en mode UEFI."
+        exit 1
+    fi
+
+    # Parser les entrées EFI : BootXXXX* Label\TDescription
+    mapfile -t boot_lines < <(efibootmgr 2>/dev/null | grep '^Boot[0-9]')
+    if [[ ${#boot_lines[@]} -eq 0 ]]; then
+        echo "Aucune entrée de boot EFI trouvée."
+        exit 1
+    fi
+
+    # Construction du menu : extraire le numéro, le label et le nom du disque
+    menu_options=()
+    declare -A boot_nums
+    while IFS=$'\t' read -r first_part rest; do
+        boot_num=$(echo "$first_part" | grep -oP '^Boot\K[0-9A-F]{4}')
+        boot_label=$(echo "$first_part" | sed 's/^Boot[0-9A-F]\{4\}\* //')
+        [[ -z "$boot_num" || -z "$boot_label" ]] && continue
+        # Résoudre PARTUUID → nom du disque (ex: nvme0n1, sdd)
+        part_uuid=$(echo "$rest" | grep -oP 'HD\([^,]+,[^,]+,\K[^,]+' || true)
+        disk_name=""
+        if [[ -n "$part_uuid" ]]; then
+            part_dev=$(findfs PARTUUID="$part_uuid" 2>/dev/null || true)
+            if [[ -n "$part_dev" ]]; then
+                disk_name=$(lsblk -no PKNAME "$part_dev" 2>/dev/null || true)
+            fi
+        fi
+        if [[ -n "$disk_name" ]]; then
+            menu_options+=("$boot_label ($disk_name)")
+        else
+            menu_options+=("$boot_label")
+        fi
+        boot_nums["${menu_options[-1]}"]="$boot_num"
+    done < <(printf '%s\n' "${boot_lines[@]}")
+
+    if [[ ${#menu_options[@]} -eq 0 ]]; then
+        echo "Impossible de parser les entrées EFI."
+        exit 1
+    fi
+
+    menu_options+=("Annuler")
+    echo "Choisir le disque sur lequel booter (bootnext, une seule fois) :"
+    CHOICE=$(ugum choose "${menu_options[@]}")
+    [[ "$CHOICE" == "Annuler" ]] || [[ -z "$CHOICE" ]] && exit 0
+
+    BOOT_NUM="${boot_nums[$CHOICE]}"
+    echo "Configuration du bootnext sur $CHOICE..."
+
+    if sudo efibootmgr --bootnext "$BOOT_NUM"; then
+        ugum confirm "Redémarrer maintenant ?" && systemctl reboot
+    else
+        echo "Erreur lors de la configuration du bootnext."
+        exit 1
+    fi
+
 # Compresser les données existantes sur un filesystem BTRFS (defrag + zstd)
 btrfs-compress-defrag:
     #!/usr/bin/bash
