@@ -960,5 +960,20 @@ btrfs-compress-defrag:
     MOUNTPOINT=$(echo "$CHOICE" | awk '{print $1}')
     echo "Compression des données existantes sur $MOUNTPOINT avec zstd..."
     echo "Cela peut prendre plusieurs heures selon la taille du disque."
-    sudo btrfs -v filesystem defrag -czstd -r "$MOUNTPOINT"
+
+    # Détection des subvolumes (hors .beeshome qui est metadata BEES)
+    mapfile -t subvols < <(sudo btrfs subvolume list "$MOUNTPOINT" 2>/dev/null | awk '{print $NF}' | grep -v '^\.beeshome$' || true)
+
+    if [[ ${#subvols[@]} -gt 0 ]]; then
+        echo "Subvolumes détectés : ${subvols[*]}"
+        for subvol in "${subvols[@]}"; do
+            SUBPATH="${MOUNTPOINT%/}/${subvol#/}"
+            [[ -d "$SUBPATH" ]] || continue
+            echo "→ Compression de $SUBPATH..."
+            sudo btrfs -v filesystem defrag -czstd -r "$SUBPATH"
+        done
+    else
+        sudo btrfs -v filesystem defrag -czstd -r "$MOUNTPOINT"
+    fi
+
     echo "Défragmentation et compression terminées sur $MOUNTPOINT."

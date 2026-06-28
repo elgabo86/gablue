@@ -350,6 +350,15 @@ command-name:
 - Description sur une ligne avant la commande
 - Indentation avec 4 espaces
 
+**Gestion des subvolumes BTRFS** :
+- Les commandes de défragmentation/compression BTRFS doivent lister les subvolumes via `sudo btrfs subvolume list` et itérer dessus, car `btrfs filesystem defrag -r` ne traverse pas les limites de subvolumes
+- Exclure `.beeshome` (metadata BEES) des subvolumes à défragmenter
+- Utiliser `mapfile -t` pour lire les subvolumes dans un tableau
+
+**Complétion bash** :
+- `files/system/all/usr/share/bash-completion/completions/ujust` : surcharge la complétion buggy du paquet `ublue-os-just` (qui n'enregistrait jamais la complétion pour `ujust`)
+- Génère dynamiquement la liste des recettes via `ujust --summary`
+
 ## Gestion des erreurs
 
 ### Commandes critiques vs optionnelles
@@ -820,7 +829,7 @@ Commandes ujust disponibles :
 - **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`
 - **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`
 - **Virtualisation** : `docker-enable/disable`, `dx-group`
-- **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`
+- **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`
 - **Rebase** : `gablue-rebase-*` pour changer de variante
 
 ## Sécurité
