@@ -852,34 +852,38 @@ btrfs-compress ACTION="":
     #!/usr/bin/bash
     source /usr/lib/ujust/ujust.sh
 
-    # Utiliser findmnt pour lister tous les points de montage BTRFS,
-    # dédupliquer par UUID en gardant le mountpoint le plus long (le plus spécifique)
-    declare -A seen_uuids
-    declare -A fs_best_mount
-    while read -r target uuid; do
+    # Récolter les filesystems BTRFS avec leur label/UUID pour un affichage lisible
+    declare -A fs_label
+    declare -A fs_mount
+    declare -A fs_seen
+    while read -r target uuid label; do
         [[ -z "$target" ]] && continue
         [[ "$target" == /run/bees/* ]] && continue
         [[ "$target" == /sysroot* ]] && continue
         [[ "$target" == /etc ]] && continue
-        if [[ -z "${seen_uuids[$uuid]:-}" ]] || [[ ${#target} -gt ${#fs_best_mount[$uuid]} ]]; then
-            seen_uuids[$uuid]=1
-            fs_best_mount[$uuid]="$target"
+        if [[ -z "${fs_seen[$uuid]:-}" ]] || [[ ${#target} -gt ${#fs_mount[$uuid]} ]]; then
+            fs_seen[$uuid]=1
+            fs_mount[$uuid]="$target"
+            [[ -n "$label" ]] && fs_label[$uuid]="$label"
         fi
-    done < <(sudo findmnt -t btrfs -o TARGET,UUID -n -l)
+    done < <(sudo findmnt -t btrfs -o TARGET,UUID,LABEL -n -l)
 
-    if [[ ${#fs_best_mount[@]} -eq 0 ]]; then
+    if [[ ${#fs_mount[@]} -eq 0 ]]; then
         echo "Aucun filesystem BTRFS trouvé."
         exit 1
     fi
 
-    declare -A fs_compression
     menu_options=()
-    for uuid in "${!fs_best_mount[@]}"; do
-        mountpoint="${fs_best_mount[$uuid]}"
-        compression=$(sudo btrfs property get "$mountpoint" compression 2>/dev/null | awk '{print $NF}')
-        [[ -z "$compression" ]] && compression="none"
-        fs_compression["$mountpoint"]="$compression"
-        menu_options+=("$mountpoint ($uuid) [compression=$compression]")
+    declare -A menu_uuid
+    for uuid in "${!fs_mount[@]}"; do
+        label="${fs_label[$uuid]:-}"
+        mountpoint="${fs_mount[$uuid]}"
+        if [[ -n "$label" ]]; then
+            menu_options+=("$label ($mountpoint)")
+        else
+            menu_options+=("$mountpoint")
+        fi
+        menu_uuid["$uuid"]="$mountpoint"
     done
 
     if [[ ${#menu_options[@]} -eq 0 ]]; then
@@ -892,8 +896,60 @@ btrfs-compress ACTION="":
     CHOICE=$(ugum choose "${menu_options[@]}")
     [[ "$CHOICE" == "Annuler" ]] || [[ -z "$CHOICE" ]] && exit 0
 
-    MOUNTPOINT=$(echo "$CHOICE" | awk '{print $1}')
-    CURRENT_COMPRESSION="${fs_compression[$MOUNTPOINT]}"
+    # Retrouver l'UUID à partir du choix
+    SELECTED_UUID=""
+    for uuid in "${!menu_uuid[@]}"; do
+        mp="${menu_uuid[$uuid]}"
+        if [[ "$CHOICE" == *"($mp)"* ]] || [[ "$CHOICE" == "$mp" ]]; then
+            SELECTED_UUID="$uuid"
+            break
+        fi
+    done
+    [[ -z "$SELECTED_UUID" ]] && exit 1
+
+    # Lister tous les mountpoints BTRFS de cet UUID (sauf exclusions)
+    mapfile -t all_mounts < <(sudo findmnt -t btrfs -o TARGET,UUID -n -l | \
+        while read -r tgt uid; do
+            [[ "$uid" == "$SELECTED_UUID" ]] || continue
+            [[ "$tgt" == /run/bees/* || "$tgt" == /sysroot* || "$tgt" == /etc ]] && continue
+            echo "$tgt"
+        done | grep -v -E '(beeshome|/root[0-9]|\.snapshots)' || true)
+
+    # Si un seul mount (ex: T5), utiliser btrfs subvolume list pour trouver les sous-volumes
+    if [[ ${#all_mounts[@]} -le 1 ]]; then
+        BASE_MOUNT="${all_mounts[0]:-}"
+        [[ -z "$BASE_MOUNT" ]] && exit 1
+
+        mapfile -t subvol_paths < <(sudo btrfs subvolume list "$BASE_MOUNT" 2>/dev/null | \
+            awk '{print $NF}' | grep -v -E '^\.beeshome$|^root|\.snapshots$' || true)
+
+        if [[ ${#subvol_paths[@]} -gt 0 ]]; then
+            declare -a all_paths=()
+            for sv in "${subvol_paths[@]}"; do
+                all_paths+=("${BASE_MOUNT%/}/${sv#/}")
+            done
+            all_mounts=( "${all_paths[@]}" )
+        fi
+    fi
+
+    if [[ ${#all_mounts[@]} -le 1 ]]; then
+        TARGETS=( "${all_mounts[@]}" )
+    else
+        sub_options=("${all_mounts[@]}" "Tous" "Annuler")
+        echo "Points de montage détectés, sur lesquels appliquer la compression ?"
+        SUB_CHOICE=$(ugum choose "${sub_options[@]}")
+        [[ "$SUB_CHOICE" == "Annuler" ]] || [[ -z "$SUB_CHOICE" ]] && exit 0
+
+        if [[ "$SUB_CHOICE" == "Tous" ]]; then
+            TARGETS=( "${all_mounts[@]}" )
+        else
+            TARGETS=( "$SUB_CHOICE" )
+        fi
+    fi
+
+    # Détecter l'état actuel sur le premier mountpoint
+    CURRENT_COMPRESSION=$(sudo btrfs property get "${TARGETS[0]}" compression 2>/dev/null | cut -d= -f2)
+    [[ -z "$CURRENT_COMPRESSION" ]] && CURRENT_COMPRESSION="none"
 
     if [[ "$CURRENT_COMPRESSION" == "zstd" ]]; then
         ACTION=$(ugum choose "Désactiver la compression" "Annuler")
@@ -903,14 +959,16 @@ btrfs-compress ACTION="":
 
     case "$ACTION" in
         "Activer la compression zstd")
-            echo "Activation de la compression zstd sur $MOUNTPOINT..."
-            sudo btrfs property set "$MOUNTPOINT" compression zstd
-            echo "Compression zstd activée sur $MOUNTPOINT."
+            for target in "${TARGETS[@]}"; do
+                echo "→ Activation zstd sur $target..."
+                sudo btrfs property set "$target" compression zstd
+            done
             ;;
         "Désactiver la compression")
-            echo "Désactivation de la compression sur $MOUNTPOINT..."
-            sudo btrfs property set "$MOUNTPOINT" compression ""
-            echo "Compression désactivée sur $MOUNTPOINT."
+            for target in "${TARGETS[@]}"; do
+                echo "→ Désactivation compression sur $target..."
+                sudo btrfs property set "$target" compression ""
+            done
             ;;
         *)
             exit 0
@@ -922,29 +980,37 @@ btrfs-compress-defrag:
     #!/usr/bin/bash
     source /usr/lib/ujust/ujust.sh
 
-    # Utiliser findmnt, dédupliquer par UUID, exclure /run/bees
-    declare -A seen_uuids
-    declare -A fs_best_mount
-    while read -r target uuid; do
+    # Récolter les filesystems BTRFS avec leur label pour un affichage lisible
+    declare -A fs_label
+    declare -A fs_mount
+    declare -A fs_seen
+    while read -r target uuid label; do
         [[ -z "$target" ]] && continue
         [[ "$target" == /run/bees/* ]] && continue
         [[ "$target" == /sysroot* ]] && continue
         [[ "$target" == /etc ]] && continue
-        if [[ -z "${seen_uuids[$uuid]:-}" ]] || [[ ${#target} -gt ${#fs_best_mount[$uuid]} ]]; then
-            seen_uuids[$uuid]=1
-            fs_best_mount[$uuid]="$target"
+        if [[ -z "${fs_seen[$uuid]:-}" ]] || [[ ${#target} -gt ${#fs_mount[$uuid]} ]]; then
+            fs_seen[$uuid]=1
+            fs_mount[$uuid]="$target"
+            [[ -n "$label" ]] && fs_label[$uuid]="$label"
         fi
-    done < <(sudo findmnt -t btrfs -o TARGET,UUID -n -l)
+    done < <(sudo findmnt -t btrfs -o TARGET,UUID,LABEL -n -l)
 
-    if [[ ${#fs_best_mount[@]} -eq 0 ]]; then
+    if [[ ${#fs_mount[@]} -eq 0 ]]; then
         echo "Aucun filesystem BTRFS trouvé."
         exit 1
     fi
 
     menu_options=()
-    for uuid in "${!fs_best_mount[@]}"; do
-        mountpoint="${fs_best_mount[$uuid]}"
-        menu_options+=("$mountpoint ($uuid)")
+    declare -A menu_uuid
+    for uuid in "${!fs_mount[@]}"; do
+        label="${fs_label[$uuid]:-}"
+        if [[ -n "$label" ]]; then
+            menu_options+=("$label (${fs_mount[$uuid]})")
+        else
+            menu_options+=("${fs_mount[$uuid]}")
+        fi
+        menu_uuid["$uuid"]="${fs_mount[$uuid]}"
     done
 
     if [[ ${#menu_options[@]} -eq 0 ]]; then
@@ -953,27 +1019,65 @@ btrfs-compress-defrag:
     fi
 
     menu_options+=("Annuler")
-    echo "Choisir le filesystem BTRFS à compresser (peut prendre du temps) :"
+    echo "Choisir le filesystem BTRFS à compresser :"
     CHOICE=$(ugum choose "${menu_options[@]}")
     [[ "$CHOICE" == "Annuler" ]] || [[ -z "$CHOICE" ]] && exit 0
 
-    MOUNTPOINT=$(echo "$CHOICE" | awk '{print $1}')
-    echo "Compression des données existantes sur $MOUNTPOINT avec zstd..."
-    echo "Cela peut prendre plusieurs heures selon la taille du disque."
+    # Retrouver l'UUID à partir du choix
+    SELECTED_UUID=""
+    for uuid in "${!menu_uuid[@]}"; do
+        mp="${menu_uuid[$uuid]}"
+        if [[ "$CHOICE" == *"($mp)"* ]] || [[ "$CHOICE" == "$mp" ]]; then
+            SELECTED_UUID="$uuid"
+            break
+        fi
+    done
+    [[ -z "$SELECTED_UUID" ]] && exit 1
 
-    # Détection des subvolumes (hors .beeshome qui est metadata BEES)
-    mapfile -t subvols < <(sudo btrfs subvolume list "$MOUNTPOINT" 2>/dev/null | awk '{print $NF}' | grep -v '^\.beeshome$' || true)
+    # Lister tous les mountpoints BTRFS de cet UUID (sauf exclusions)
+    mapfile -t all_mounts < <(sudo findmnt -t btrfs -o TARGET,UUID -n -l | \
+        while read -r tgt uid; do
+            [[ "$uid" == "$SELECTED_UUID" ]] || continue
+            [[ "$tgt" == /run/bees/* || "$tgt" == /sysroot* || "$tgt" == /etc ]] && continue
+            echo "$tgt"
+        done | grep -v -E '(beeshome|/root[0-9]|\.snapshots)' | grep -v '^/var$' || true)
 
-    if [[ ${#subvols[@]} -gt 0 ]]; then
-        echo "Subvolumes détectés : ${subvols[*]}"
-        for subvol in "${subvols[@]}"; do
-            SUBPATH="${MOUNTPOINT%/}/${subvol#/}"
-            [[ -d "$SUBPATH" ]] || continue
-            echo "→ Compression de $SUBPATH..."
-            sudo btrfs -v filesystem defrag -czstd -r "$SUBPATH"
-        done
-    else
-        sudo btrfs -v filesystem defrag -czstd -r "$MOUNTPOINT"
+    # Si un seul mount (ex: T5), utiliser btrfs subvolume list pour trouver les sous-volumes
+    if [[ ${#all_mounts[@]} -le 1 ]]; then
+        BASE_MOUNT="${all_mounts[0]:-}"
+        [[ -z "$BASE_MOUNT" ]] && exit 1
+
+        mapfile -t subvol_paths < <(sudo btrfs subvolume list "$BASE_MOUNT" 2>/dev/null | \
+            awk '{print $NF}' | grep -v -E '^\.beeshome$|^root|\.snapshots$' | grep -v '^var[0-9]*$' || true)
+
+        if [[ ${#subvol_paths[@]} -gt 0 ]]; then
+            declare -a all_paths=()
+            for sv in "${subvol_paths[@]}"; do
+                all_paths+=("${BASE_MOUNT%/}/${sv#/}")
+            done
+            all_mounts=( "${all_paths[@]}" )
+        fi
     fi
 
-    echo "Défragmentation et compression terminées sur $MOUNTPOINT."
+    if [[ ${#all_mounts[@]} -le 1 ]]; then
+        TARGETS=( "${all_mounts[@]}" )
+    else
+        sub_options=("${all_mounts[@]}" "Tous" "Annuler")
+        echo "Points de montage détectés, lesquels compresser ?"
+        echo "Cela peut prendre plusieurs heures selon la taille des données."
+        SUB_CHOICE=$(ugum choose "${sub_options[@]}")
+        [[ "$SUB_CHOICE" == "Annuler" ]] || [[ -z "$SUB_CHOICE" ]] && exit 0
+
+        if [[ "$SUB_CHOICE" == "Tous" ]]; then
+            TARGETS=( "${all_mounts[@]}" )
+        else
+            TARGETS=( "$SUB_CHOICE" )
+        fi
+    fi
+
+    for target in "${TARGETS[@]}"; do
+        echo "→ Compression de $target..."
+        sudo btrfs -v filesystem defrag -czstd -r "$target"
+    done
+
+    echo "Défragmentation et compression terminées."

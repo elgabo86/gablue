@@ -351,8 +351,12 @@ command-name:
 - Indentation avec 4 espaces
 
 **Gestion des subvolumes BTRFS** :
-- Les commandes de défragmentation/compression BTRFS doivent lister les subvolumes via `sudo btrfs subvolume list` et itérer dessus, car `btrfs filesystem defrag -r` ne traverse pas les limites de subvolumes
-- Exclure `.beeshome` (metadata BEES) des subvolumes à défragmenter
+- `btrfs filesystem defrag -r` ne traverse pas les limites de subvolumes — utiliser `findmnt -t btrfs` filtré par UUID pour lister les points de montage individuels de chaque subvolume
+- En fallback (disques externes où les subvolumes ne sont pas montés séparément), utiliser `sudo btrfs subvolume list` et reconstruire les chemins
+- Exclusions communes aux deux commandes : `.beeshome` (metadata BEES), `root*` (ostree système, reflinks), `*.snapshots` (snapper, reflinks)
+- `btrfs-compress-defrag` exclut en plus `/var` et `var*` (risque reflinks Docker/Podman) — `btrfs-compress` (property set, safe) ne les exclut pas
+- Affichage des filesystems par label (`findmnt -o TARGET,UUID,LABEL`) quand disponible
+- Parsing de la propriété compression via `cut -d= -f2` (car `btrfs property get` renvoie `compression=valeur`)
 - Utiliser `mapfile -t` pour lire les subvolumes dans un tableau
 
 **Complétion bash** :
