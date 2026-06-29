@@ -119,11 +119,66 @@ class CreateWGPThread(QThread):
             icon_dest = os.path.join(self.game_dir, '.icon.png')
             # Ne copier que si l'icône source est différente de la destination
             if os.path.abspath(self.config['icon']) != os.path.abspath(icon_dest):
-                shutil.copy2(self.config['icon'], icon_dest)
+                # Convertir en vrai PNG si le format n'est pas déjà PNG
+                if self.config['icon'].lower().endswith(('.ico', '.jpg', '.jpeg', '.bmp', '.svg', '.webp')):
+                    if self.config['icon'].lower().endswith('.ico'):
+                        # ICO multi-résolution : sélectionner la plus grande frame
+                        self._ico_to_png(self.config['icon'], icon_dest)
+                    elif self.config['icon'].lower().endswith('.svg'):
+                        subprocess.run(
+                            ['magick', '-background', 'none', '-density', '300',
+                             '-resize', '1024x1024>', self.config['icon'], icon_dest],
+                            capture_output=True
+                        )
+                    else:
+                        # JPG, BMP, WebP : convertir sans upscaler
+                        subprocess.run(
+                            ['magick', self.config['icon'], '-background', 'none',
+                             '-resize', '1024x1024>', icon_dest],
+                            capture_output=True
+                        )
+                else:
+                    shutil.copy2(self.config['icon'], icon_dest)
         
         # Créer les symlinks et copier vers .save/.extra
         self._process_saves_and_extras()
     
+    def _ico_to_png(self, ico_path, png_dest):
+        """Convertit un .ico multi-résolution en PNG en sélectionnant la plus grande frame"""
+        import re
+        
+        # Identifier les frames et leurs tailles
+        result = subprocess.run(
+            ['magick', 'identify', ico_path],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            return False
+        
+        best_index = 0
+        best_area = 0
+        for line in result.stdout.strip().split('\n'):
+            # Format: "path[0] ICO 32x32 ..." ou "path[5] PNG 256x256 ..."
+            match = re.search(r'\[(\d+)\]\s+\w+\s+(\d+)x(\d+)', line)
+            if match:
+                idx = int(match.group(1))
+                w = int(match.group(2))
+                h = int(match.group(3))
+                area = w * h
+                # Préférer les frames PNG (meilleure qualité) si surface égale
+                is_png = ' PNG ' in line
+                if area > best_area or (area == best_area and is_png):
+                    best_area = area
+                    best_index = idx
+        
+        # Convertir la meilleure frame en PNG sans upscaler
+        subprocess.run(
+            ['magick', f'{ico_path}[{best_index}]', '-background', 'none',
+             '-resize', '1024x1024>', png_dest],
+            capture_output=True
+        )
+        return os.path.exists(png_dest)
+
     def _copy_dir_contents(self, source, target, preserve_symlinks=True):
         """Copie le contenu d'un répertoire source vers target (sans copier le répertoire lui-même)
         
