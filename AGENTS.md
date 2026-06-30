@@ -907,9 +907,11 @@ Commandes ujust disponibles :
 
 ## Mise à jour de ce document
 
+**RÈGLE** : Ce document DOIT être mis à jour avant chaque commit qui modifie la structure, les Containerfiles, les scripts ou les workflows. Ne jamais committer sans avoir vérifié que l'AGENTS.md reflète l'état exact du projet.
+
 Ce document doit être mis à jour lors des changements suivants :
 - Ajout d'une nouvelle variante d'image
-- Modification de la structure des scripts
+- Modification de la structure des scripts ou fichiers système
 - Changement des dépôts ou sources
 - Ajout de nouvelles conventions
 - Modification des workflows
