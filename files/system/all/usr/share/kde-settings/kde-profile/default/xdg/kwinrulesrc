@@ -1,0 +1,214 @@
+[steam-flathub-fix]
+Description=steam-flathub-fix
+desktopfile=com.valvesoftware.Steam
+desktopfilerule=3
+wmclass=steamwebhelper SDL Application
+wmclasscomplete=true
+wmclassmatch=1
+
+[chrome-dev]
+Description=chrome-dev
+desktopfile=com.google.ChromeDev
+desktopfilerule=3
+wmclass=google-chrome-unstable
+wmclassmatch=1
+vrrpolicy=1
+vrrpolicyrule=2
+
+[chrome-fix]
+Description=chrome-fix
+desktopfile=com.google.Chrome
+desktopfilerule=3
+wmclass=google-chrome
+wmclassmatch=1
+vrrpolicy=1
+vrrpolicyrule=2
+
+[chromium-vrr]
+Description=Désactiver VRR pour Chromium
+desktopfile=org.chromium.Chromium
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[ungoogled-chromium-vrr]
+Description=Désactiver VRR pour Ungoogled Chromium
+desktopfile=io.github.ungoogled_software.ungoogled_chromium
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[firefox-vrr]
+Description=Désactiver VRR pour Firefox
+desktopfile=org.mozilla.firefox
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[librewolf-vrr]
+Description=Désactiver VRR pour LibreWolf
+desktopfile=io.gitlab.librewolf-community
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[zen-vrr]
+Description=Désactiver VRR pour Zen Browser
+desktopfile=app.zen_browser.zen
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[falkon-vrr]
+Description=Désactiver VRR pour Falkon
+desktopfile=org.kde.falkon
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[mpv-vrr]
+Description=Désactiver VRR pour mpv
+desktopfile=mpv
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[vlc-vrr]
+Description=Désactiver VRR pour VLC
+desktopfile=org.videolan.VLC
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[haruna-vrr]
+Description=Désactiver VRR pour Haruna
+desktopfile=org.kde.haruna
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[freetube-vrr]
+Description=Désactiver VRR pour FreeTube
+desktopfile=io.freetubeapp.FreeTube
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[noutube-vrr]
+Description=Désactiver VRR pour Noutube
+desktopfile=jp.nonbili.noutube
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[vacuumtube-vrr]
+Description=Désactiver VRR pour VacuumTube
+desktopfile=rocks.shy.VacuumTube
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[konsole-vrr]
+Description=Désactiver VRR pour Konsole
+desktopfile=org.kde.konsole
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[kate-vrr]
+Description=Désactiver VRR pour Kate
+desktopfile=org.kde.kate
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[kwrite-vrr]
+Description=Désactiver VRR pour KWrite
+desktopfile=org.kde.kwrite
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[okular-vrr]
+Description=Désactiver VRR pour Okular
+desktopfile=org.kde.okular
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[gwenview-vrr]
+Description=Désactiver VRR pour Gwenview
+desktopfile=org.kde.gwenview
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[spectacle-vrr]
+Description=Désactiver VRR pour Spectacle
+desktopfile=org.kde.spectacle
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[skanpage-vrr]
+Description=Désactiver VRR pour Skanpage
+desktopfile=org.kde.skanpage
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[kdenlive-vrr]
+Description=Désactiver VRR pour Kdenlive
+desktopfile=org.kde.kdenlive
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[libreoffice-vrr]
+Description=Désactiver VRR pour LibreOffice
+desktopfile=org.libreoffice.LibreOffice
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[telegram-vrr]
+Description=Désactiver VRR pour Telegram
+desktopfile=org.telegram.desktop
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[cool-retro-term-vrr]
+Description=Désactiver VRR pour Cool-Retro-Term
+desktopfile=cool-retro-term
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[gablue-tv-vrr]
+Description=Désactiver VRR pour Gablue TV
+desktopfile=gablue-tv
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[jellyfin-vrr]
+Description=Désactiver VRR pour Jellyfin Desktop
+desktopfile=org.jellyfin.JellyfinDesktop
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[konversation-vrr]
+Description=Désactiver VRR pour Konversation
+desktopfile=org.kde.konversation
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2
+
+[rustdesk-vrr]
+Description=Désactiver VRR pour RustDesk
+desktopfile=com.rustdesk.RustDesk
+desktopfilerule=3
+vrrpolicy=1
+vrrpolicyrule=2

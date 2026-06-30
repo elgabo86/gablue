@@ -36,7 +36,6 @@ COPY src/gablue-isomount /src/gablue-isomount
 
 # Copie des fichiers système dans l'image
 COPY files/system/all /
-COPY files/system/${SOURCE_IMAGE} /
 COPY files/system/${VARIANT} /
 
 # Supprimer le plugin natif dolphin-plugins mountisoaction (bug KDE #471487)
