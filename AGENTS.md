@@ -44,7 +44,7 @@ Le projet construit 6 variantes distinctes :
 - **Scripts** : Stable utilise les scripts sans suffixe (`kernel`, `copr`, `mesa`, etc.), Test utilise les scripts `-test`
 - **OpenGamepadUI** : Interface gaming expérimentale style Steam Deck (test uniquement)
 - **Paquets OGUI** : `opengamepadui`, `gamescope-session-opengamepadui`, `powerstation`, `inputplumber` (test uniquement)
-- **Fichiers système test** : `files/system/test/` copié uniquement dans les Containerfiles test (steamos-session-select, switch-to-opengamepadui.desktop)
+- **Fichiers système test** : les scripts `-test` ajoutent leurs spécificités directement (sans dossier `files/system/test/` dédié)
 
 ## Structure du projet
 
@@ -55,6 +55,9 @@ Le projet construit 6 variantes distinctes :
 ├── Containerfile-gablue-nvidia-open-test  # Containerfile pour nvidia-open-test
 ├── cosign.pub                             # Clé publique pour signature
 ├── src/
+│   ├── ds2xbox/                           # Sources C du convertisseur DualSense → Xbox
+│   │   ├── ds2xbox.c                      # Programme principal (evdev, uinput)
+│   │   └── Makefile                       # Compilation
 │   ├── gamepadshortcuts/                  # Sources C du gestionnaire de raccourcis manette
 │   │   ├── gamepadshortcuts.c             # Programme principal (inotify VT, evdev)
 │   │   └── Makefile                       # Compilation
@@ -67,31 +70,28 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── build-c                       # Compilation sources C
 │   │   ├── cleanup                        # Nettoyage intermédiaire
 │   │   ├── copr                           # Configuration dépôts COPR
-│   │   ├── copr-test                      # Configuration dépôts COPR (test, identique + OGUI)
+│   │   ├── copr-test                      # Configuration dépôts COPR (test)
 │   │   ├── finalize                       # Finalisation de l'image
 │   │   ├── initramfs                      # Génération initramfs
 │   │   ├── install-kmods                 # Helper installation kmods (vérification existence RPMs)
 │   │   ├── kernel                        # Installation kernel OGC + akmods
-│   │   ├── kernel-test                    # Installation kernel OGC (test, identique)
+│   │   ├── kernel-test                    # Installation kernel OGC (test)
 │   │   ├── mesa                           # Installation Mesa Terra (multilib fc44)
-│   │   ├── mesa-test                      # Installation Mesa Terra (test, identique)
+│   │   ├── mesa-test                      # Installation Mesa Terra (test)
 │   │   ├── nvidia                         # Installation pilotes NVIDIA via akmods
-│   │   ├── nvidia-test                    # Installation pilotes NVIDIA (test, wrapper vers nvidia)
+│   │   ├── nvidia-test                    # Installation pilotes NVIDIA (test, wrapper)
 │   │   ├── post-install                   # Post-installation principale
-│   │   ├── post-install-test              # Post-installation test (post-install + OGUI)
+│   │   ├── post-install-test              # Post-installation test (wrapper)
 │   │   ├── rpm                            # Paquets RPM (avec libs 32-bit Wine/Proton)
-│   │   ├── rpm-test                       # Paquets RPM (test, identique + OGUI)
+│   │   ├── rpm-test                       # Paquets RPM (test)
 │   │   ├── systemd                        # Activation services systemd
-│   │   └── systemd-test                   # Activation services (test, identique + OGUI)
+│   │   └── systemd-test                   # Activation services (test)
 │   └── system/                            # Fichiers système à copier
 │       ├── all/                           # Fichiers communs à toutes les variantes
-│       │   ├── etc/                       # Configurations système (/etc)
-│       │   └── usr/                       # Fichiers utilisateur (/usr)
-│       ├── kinoite/                       # Fichiers spécifiques Kinoite
-│       ├── main/                          # Fichiers spécifiques variante main
-│       ├── nvidia/                        # Fichiers spécifiques NVIDIA (nvidia-container.pp, modprobe, CDI service)
-│       ├── nvidia-open/                   # Fichiers spécifiques NVIDIA Open (nvidia-container.pp, modprobe, CDI service)
-│       └── test/                          # Fichiers spécifiques images test (OGUI uniquement)
+│       │   ├── etc/xdg/                   # Configs XDG système (kwinrulesrc VRR, autostart, blacklist)
+│       │   └── usr/                       # Binaires, scripts, configurations, services
+│       ├── main/                          # Réservé variante main (actuellement vide)
+│       └── nvidia-common/                 # Fichiers communs nvidia + nvidia-open (modprobe, SELinux, CDI, distrobox)
 ├── .github/
 │   ├── workflows/                         # Workflows GitHub Actions
 │   │   ├── gablue-builds.yml              # Workflow principal de build
@@ -269,6 +269,10 @@ FROM ghcr.io/ublue-os/akmods:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION
 FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-extra
 FROM ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-nvidia
 
+# Étape intermédiaire : fichiers NVIDIA communs (bind-mountés dans le RUN nvidia)
+FROM scratch AS nvidia-common-files
+COPY files/system/nvidia-common /
+
 # Image de base
 FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}
 
@@ -279,10 +283,8 @@ ARG DX_MODE
 ARG KERNEL_FLAVOR
 ARG KERNEL_VERSION
 
-# Copie des fichiers système (PAS les scripts, ils sont bind-mountés)
+# Copie des fichiers système communs (les scripts sont bind-mountés, pas copiés)
 COPY files/system/all /
-COPY files/system/${SOURCE_IMAGE} /
-COPY files/system/${VARIANT} /
 
 # Variables d'environnement
 ENV VARIANT=${VARIANT}
@@ -318,8 +320,10 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=akmods-nvidia,src=/rpms,dst=/tmp/rpms/nvidia \
+    --mount=type=bind,from=nvidia-common-files,src=/,dst=/tmp/nvidia-files \
     --mount=type=tmpfs,dst=/tmp \
     if [ "$VARIANT" = "nvidia" ] || [ "$VARIANT" = "nvidia-open" ]; then \
+        cp -r /tmp/nvidia-files/* / && \
         /ctx/nvidia; \
     fi && \
     /ctx/cleanup
@@ -498,9 +502,8 @@ Paquets supprimés :
 - firefox, firefox-langpacks, htop
 - plasma-discover-rpm-ostree (Kinoite)
 
-**rpm-test** ajoute :
-- `opengamepadui`, `gamescope-session-opengamepadui`, `powerstation`, `inputplumber` (OpenGamepadUI)
-- `obs-studio-plugin-vkcapture-hook-libs` (x86_64 + i686) : capture Vulkan/OpenGL sans installer OBS
+**rpm-test** :
+- Wrapper (identique à rpm, prévu pour ajouter des paquets spécifiques au test)
 
 ### 6. post-install / post-install-test
 
@@ -517,7 +520,7 @@ Configuration post-installation étendue :
 - MIME par défaut (Windows.desktop, Linux.desktop)
 
 **post-install-test** ajoute :
-- Permissions pour scripts OpenGamepadUI (steamos-session-select, gwine-plugin)
+- Permissions pour scripts OpenGamepadUI (steamos-session-select, gwine-plugin) — wrapper appelant d'abord `post-install`
 
 **Correction composefs** (dans post-install, toutes variantes) :
 - Compile un LD_PRELOAD minimal (`gablue-composefs-fix.so`, ~2.6 Ko) qui intercepte `statfs`/`statfs64`
@@ -749,10 +752,11 @@ podman images test-build
 
 Scripts personnalisés Gablue :
 - `gablue-update` : Mise à jour du système (interface PySide6)
-- `sync-gamepads` : Synchronisation des manettes
+- `gablue-bigscreen-swap-session` : Wrapper swap-session Plasma Bigscreen
 - `system-flatpak-setup` : Configuration Flatpak système
-- Scripts gaming : `a13`, `chdman`, `citron-install`, `eden-install`, etc.
-- Scripts utilitaires : `ytdl`, `dlcover`, `genimg`, `raroms`, etc.
+- Scripts gaming : `azahar-install`, `citron-install`, `eden-install`, `esde-install`, `qwen-install`, `shadps4-install`, `xenia-install`
+- Scripts utilitaires : `ytdl`, `dlcover`, `tv`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`, `retroplayer`
+- Gestion Wine/Proton : `gwine`, `bottles-sort-library`, `scrap-win`
 - `tvqt` : Interface TV Gablue (PySide6 + mpv, navigation manette, ~170 chaînes)
 
 ### Binaire gamepadshortcuts (/usr/bin)
@@ -855,7 +859,7 @@ Commandes ujust disponibles :
 ### SELinux
 
 - Modules personnalisés compilés depuis `.te` dans post-install
-- Module NVIDIA container installé par nvidia-install.sh (`nvidia-container.pp` dans `files/system/${VARIANT}/`)
+- Module NVIDIA container installé par nvidia-install.sh (`nvidia-container.pp` dans `files/system/nvidia-common/`)
 - Configuration pour les conteneurs avec accès GPU
 
 ## Langue et internationalisation
