@@ -1,13 +1,11 @@
 [Desktop Entry]
-Comment=Run Linux applications
-Comment[fr]=Exécutez des applications Linux
+Comment=Exécutez des applications Linux
 Exec=/usr/share/ublue-os/gablue/scripts/launchlin.sh %f; exec bash
 Icon=tux
 Keywords[fr_CH]=linux;game;jeu;native;
 Keywords=linux;game;jeu;native;
 MimeType=application/x-lgp;
-Name=Linux (Terminal Mode)
-Name[fr]=Linux (Mode Terminal)
+Name=Linux (Mode Terminal)
 NoDisplay=true
 Path=
 StartupWMClass=launchlin

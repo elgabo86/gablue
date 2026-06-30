@@ -2,11 +2,9 @@
 Categories=System
 Comment=
 Exec=/usr/bin/gwine --init --kdialog
-GenericName=Reset Windows installation
-GenericName[fr]=Réinitialiser l'installation Windows
+GenericName=Réinitialiser l'installation Windows
 Icon=windows95
-Name=Reset Windows installation
-Name[fr]=Réinitialiser l'installation Windows
+Name=Réinitialiser l'installation Windows
 NoDisplay=false
 StartupNotify=true
 Terminal=false

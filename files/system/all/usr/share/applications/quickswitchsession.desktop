@@ -2,8 +2,7 @@
 [Desktop Entry]
 Type=Application
 Name=QuickSwitchSession
-Comment=Switch between graphical sessions or open login screen
-Comment[fr]=Passe d'une session graphique à l'autre ou ouvre l'écran de login
+Comment=Passe d'une session graphique à l'autre ou ouvre l'écran de login
 Icon=system-switch-user
 Exec=/usr/share/ublue-os/gablue/scripts/quickswitchsession.sh
 Terminal=false

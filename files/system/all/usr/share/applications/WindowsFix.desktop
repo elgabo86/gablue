@@ -1,6 +1,5 @@
 [Desktop Entry]
-Comment=Run Windows software
-Comment[fr]=Exécutez des logiciels Windows
+Comment=Exécutez des logiciels Windows
 Exec=/usr/bin/gwine --fix %f
 Icon=windows95
 Keywords[fr_CH]=wine;windows;
@@ -13,5 +12,4 @@ X-GNOME-UsesNotifications=true
 X-KDE-SubstituteUID=false
 X-KDE-Username=
 X-KDE-StartupNotify=false
-Name=Windows (with Gamepad Fix)
-Name[fr]=Windows (avec Fix Gamepad)
+Name=Windows (avec Fix Gamepad)
