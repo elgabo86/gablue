@@ -1,6 +1,8 @@
 [Desktop Entry]
 Name=Windows
-Comment=Exécutez des logiciels Windows
+Name[fr]=Windows
+Comment=Run Windows software
+Comment[fr]=Exécutez des logiciels Windows
 Exec=/usr/bin/gwine %f
 Icon=windows95
 Keywords[fr_CH]=wine;windows;

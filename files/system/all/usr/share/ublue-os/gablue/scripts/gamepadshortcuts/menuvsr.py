@@ -10,10 +10,14 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QFont, QColor
 from evdev import ecodes
 
-# Options du menu
-OPTIONS = ["Déconnecter Bluetooth", "Mettre en veille", "Éteindre", "Redémarrer"]
+# Internationalisation
+sys.path.insert(0, "/usr/share/ublue-os/gablue")
+from i18n import _
 
-# Mapping boutons
+# Menu options
+OPTIONS = [_("Disconnect Bluetooth"), _("Suspend"), _("Shut down"), _("Reboot")]
+
+# Button mapping
 BTN_CROSS = ecodes.BTN_A
 BTN_CIRCLE = ecodes.BTN_B
 
@@ -88,13 +92,13 @@ class MenuVR(QWidget):
                 keys = capabilities[ecodes.EV_KEY]
                 if ecodes.BTN_A in keys or ecodes.BTN_SELECT in keys:
                     self.gamepad = device
-                    print(f"Manette trouvée: {device.name} ({device.path})")
+                    print(f"Gamepad found: {device.name} ({device.path})")
                     return
-        print("Aucune manette détectée")
+        print("No gamepad detected")
     
     def update_display(self):
         if self.confirm_mode:
-            self.label.setText(f"Confirmer {self.confirm_action} ?\n\n<span style='color: rgba(50, 200, 255, 200);'>✓ Croix: Oui</span>   <span style='color: rgba(255, 100, 100, 200);'>✗ Rond: Non</span>")
+            self.label.setText(f"{_('Confirm')} {self.confirm_action}?\n\n<span style='color: rgba(50, 200, 255, 200);'>✓ Cross: {_('Yes')}</span>   <span style='color: rgba(255, 100, 100, 200);'>✗ Circle: {_('No')}</span>")
         else:
             lines = []
             for i, option in enumerate(OPTIONS):
@@ -107,7 +111,7 @@ class MenuVR(QWidget):
     def check_inactivity(self):
         current_time = time.time() * 1000
         if current_time - self.last_input_time > self.inactivity_timeout:
-            print("Inactivité détectée, fermeture du menu")
+            print("Inactivity detected, closing menu")
             self.close_app()
     
     def close_app(self):
@@ -142,7 +146,7 @@ class MenuVR(QWidget):
         try:
             r, w, x = select.select([self.gamepad], [], [], 0)
         except (OSError, IOError):
-            print("Manette déconnectée")
+            print("Gamepad disconnected")
             self.gamepad = None
             return
         
@@ -180,12 +184,12 @@ class MenuVR(QWidget):
             
             if self.confirm_mode:
                 if cross_pressed and not self.last_cross:
-                    print(f"Confirmation de l'action: {self.confirm_action}")
-                    action = "poweroff" if self.confirm_action == "Éteindre" else "reboot"
+                    print(f"Action confirmed: {self.confirm_action}")
+                    action = "poweroff" if self.confirm_action == _("Shut down") else "reboot"
                     self.hide_and_execute(action)
                     return
                 elif circle_pressed and not self.last_circle:
-                    print("Annulation de la confirmation")
+                    print("Confirmation cancelled")
                     self.confirm_mode = False
                     self.confirm_action = None
                     self.update_display()
@@ -195,15 +199,15 @@ class MenuVR(QWidget):
                     self.selected_option = (self.selected_option - 1) % len(OPTIONS)
                     self.update_display()
                     self.last_input_time = current_time
-                    print(f"Option sélectionnée: {OPTIONS[self.selected_option]}")
+                    print(f"Option selected: {OPTIONS[self.selected_option]}")
                 elif down and not self.last_down:
                     self.selected_option = (self.selected_option + 1) % len(OPTIONS)
                     self.update_display()
                     self.last_input_time = current_time
-                    print(f"Option sélectionnée: {OPTIONS[self.selected_option]}")
+                    print(f"Option selected: {OPTIONS[self.selected_option]}")
                 
                 if cross_pressed and not self.last_cross:
-                    print(f"Action choisie: {OPTIONS[self.selected_option]}")
+                    print(f"Action chosen: {OPTIONS[self.selected_option]}")
                     self.last_input_time = current_time
                     
                     if self.selected_option == 0:
@@ -214,15 +218,15 @@ class MenuVR(QWidget):
                         return
                     elif self.selected_option == 2:
                         self.confirm_mode = True
-                        self.confirm_action = "Éteindre"
+                        self.confirm_action = _("Shut down")
                         self.update_display()
                     elif self.selected_option == 3:
                         self.confirm_mode = True
-                        self.confirm_action = "Redémarrer"
+                        self.confirm_action = _("Reboot")
                         self.update_display()
                 
                 if circle_pressed and not self.last_circle:
-                    print("Annulation")
+                    print("Cancelled")
                     self.close_app()
                     return
             
@@ -232,7 +236,7 @@ class MenuVR(QWidget):
             self.last_circle = circle_pressed
             
         except (OSError, IOError, BlockingIOError):
-            print("Erreur lecture manette")
+            print("Gamepad read error")
             self.gamepad = None
 
 def main():

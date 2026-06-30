@@ -1,7 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=Gablue TV
-Comment=Lanceur IPTV
+Name[fr]=Gablue TV
+Comment=IPTV Launcher
+Comment[fr]=Lanceur IPTV
 Exec=tvqt
 Icon=video-display
 Categories=AudioVideo;TV;

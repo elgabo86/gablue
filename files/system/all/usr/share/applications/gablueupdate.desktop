@@ -1,9 +1,11 @@
 [Desktop Entry]
 Comment=
 Exec=/usr/bin/gablue-update
-GenericName=Provoquer la mise à jour Gablue
+GenericName=Trigger Gablue update
+GenericName[fr]=Provoquer la mise à jour Gablue
 Icon=dcc_nav_update
-Name=Provoquer la mise à jour Gablue
+Name=Trigger Gablue update
+Name[fr]=Provoquer la mise à jour Gablue
 NoDisplay=false
 Path=
 StartupNotify=true

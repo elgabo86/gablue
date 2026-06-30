@@ -1,10 +1,13 @@
 [Desktop Entry]
 Categories=System
-Comment=Éditeur de registre Windows via gwine
+Comment=Windows registry editor via gwine
+Comment[fr]=Éditeur de registre Windows via gwine
 Exec=/usr/bin/gwine --regedit
-GenericName=Registre Windows
+GenericName=Windows Registry
+GenericName[fr]=Registre Windows
 Icon=windows95
-Name=Registre Windows
+Name=Windows Registry
+Name[fr]=Registre Windows
 NoDisplay=false
 StartupNotify=true
 Terminal=false

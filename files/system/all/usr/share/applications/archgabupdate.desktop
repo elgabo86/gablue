@@ -2,9 +2,11 @@
 Categories=System
 Comment=
 Exec=/usr/libexec/archgab-update
-GenericName=Provoquer la mise à jour Archgab
+GenericName=Trigger Archgab update
+GenericName[fr]=Provoquer la mise à jour Archgab
 Icon=org.kde.archUpdate
-Name=Provoquer la mise à jour Archgab
+Name=Trigger Archgab update
+Name[fr]=Provoquer la mise à jour Archgab
 NoDisplay=false
 Path=
 StartupNotify=true

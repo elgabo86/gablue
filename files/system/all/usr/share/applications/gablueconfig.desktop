@@ -2,9 +2,11 @@
 Categories=System
 Comment=
 Exec=/usr/libexec/gablue-config
-GenericName=Configuration avancée de Gablue
+GenericName=Advanced Gablue configuration
+GenericName[fr]=Configuration avancée de Gablue
 Icon=configurator
-Name=Configuration avancée de Gablue
+Name=Advanced Gablue configuration
+Name[fr]=Configuration avancée de Gablue
 NoDisplay=false
 Path=
 StartupNotify=true

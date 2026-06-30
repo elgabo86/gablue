@@ -2,9 +2,11 @@
 Categories=System
 Comment=
 Exec=/usr/bin/gwine --update --kdialog
-GenericName=Mettre à jour Windows
+GenericName=Update Windows
+GenericName[fr]=Mettre à jour Windows
 Icon=windows95
-Name=Mettre à jour Windows
+Name=Update Windows
+Name[fr]=Mettre à jour Windows
 NoDisplay=false
 StartupNotify=true
 Terminal=false

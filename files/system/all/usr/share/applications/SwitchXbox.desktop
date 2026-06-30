@@ -1,7 +1,8 @@
 #!/usr/bin/env xdg-open
 [Desktop Entry]
 Categories=System
-Comment=Activer/désactiver l'émulation manettes Sony en Xbox 360
+Comment=Toggle Sony controller Xbox 360 emulation
+Comment[fr]=Activer/désactiver l'émulation manettes Sony en Xbox 360
 Exec=/usr/share/ublue-os/gablue/scripts/switchxbox.sh
 GenericName=Windows Xbox Switch
 Icon=windows95

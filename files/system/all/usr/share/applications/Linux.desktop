@@ -1,5 +1,6 @@
 [Desktop Entry]
-Comment=Exécutez des applications Linux
+Comment=Run Linux applications
+Comment[fr]=Exécutez des applications Linux
 Exec=/usr/share/ublue-os/gablue/scripts/launchlin.sh %f
 Icon=tux
 Keywords[fr_CH]=linux;game;jeu;native;
