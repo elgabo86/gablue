@@ -756,7 +756,7 @@ Scripts personnalisés Gablue :
 - `system-flatpak-setup` : Configuration Flatpak système
 - Scripts gaming : `azahar-install`, `citron-install`, `eden-install`, `esde-install`, `qwen-install`, `shadps4-install`, `xenia-install`
 - Scripts utilitaires : `ytdl`, `dlcover`, `tv`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`, `retroplayer`
-- Gestion Wine/Proton : `gwine`, `bottles-sort-library`, `scrap-win`
+- Gestion Wine/Proton : `gwine`, `scrap-win`
 - `tvqt` : Interface TV Gablue (PySide6 + mpv, navigation manette, ~170 chaînes)
 
 ### Binaire gamepadshortcuts (/usr/bin)
