@@ -19,6 +19,10 @@ FROM ghcr.io/ublue-os/akmods-extra:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_V
 # Monté conditionnellement selon la variante, toujours tiré pour résoudre les mounts
 FROM ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION} AS akmods-nvidia
 
+# Étape intermédiaire : fichiers spécifiques NVIDIA (communs aux variantes nvidia et nvidia-open)
+FROM scratch AS nvidia-common-files
+COPY files/system/nvidia-common /
+
 # Image de base pour la construction finale
 FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}
 
@@ -36,7 +40,6 @@ COPY src/gablue-isomount /src/gablue-isomount
 
 # Copie des fichiers système dans l'image
 COPY files/system/all /
-COPY files/system/${VARIANT} /
 
 # Supprimer le plugin natif dolphin-plugins mountisoaction (bug KDE #471487)
 # Remplace par gablue-isomount (compilation dans build-c)
@@ -80,12 +83,15 @@ RUN --mount=type=cache,dst=/var/cache \
     /ctx/cleanup
 
 # Installation des pilotes NVIDIA (uniquement pour les variantes nvidia et nvidia-open)
+# Monte aussi les fichiers nvidia-common (modprobe, SELinux, CDI, distrobox)
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=akmods-nvidia,src=/rpms,dst=/tmp/rpms/nvidia \
+    --mount=type=bind,from=nvidia-common-files,src=/,dst=/tmp/nvidia-files \
     --mount=type=tmpfs,dst=/tmp \
     if [ "$VARIANT" = "nvidia" ] || [ "$VARIANT" = "nvidia-open" ]; then \
+        cp -r /tmp/nvidia-files/* / && \
         /ctx/nvidia; \
     fi && \
     /ctx/cleanup

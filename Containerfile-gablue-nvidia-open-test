@@ -30,8 +30,7 @@ COPY src/gablue-isomount /src/gablue-isomount
 
 # Copie des fichiers système dans l'image
 COPY files/system/all /
-COPY files/system/nvidia-open /
-COPY files/system/test /
+COPY files/system/nvidia-common /
 
 # Supprimer le plugin natif dolphin-plugins mountisoaction (bug KDE #471487)
 # Remplace par gablue-isomount (compilation dans build-c)
