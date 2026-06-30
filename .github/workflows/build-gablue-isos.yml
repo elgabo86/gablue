@@ -131,7 +131,7 @@ jobs:
           tag_name: "latest-iso"
           release_name: "Latest ISO Release"
           body: |
-            Téléchargez les ISOs ici :
+            Download ISOs:
             - **gablue-main**: ${{ needs.build-and-upload-isos.outputs.gablue_main_link }}
             - **gablue-main-dx**: ${{ needs.build-and-upload-isos.outputs.gablue_main_dx_link }}
             - **gablue-nvidia**: ${{ needs.build-and-upload-isos.outputs.gablue_nvidia_link }}
