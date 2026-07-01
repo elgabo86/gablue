@@ -10,7 +10,7 @@ SRC_DIR="/src/gwine-launcher"
 
 if [ ! -d "$SRC_DIR" ]; then
     echo "ATTENTION: Sources gwine-launcher non trouvees dans $SRC_DIR"
-    exit 0
+    exit 1
 fi
 
 # =============================================================================
