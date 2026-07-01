@@ -119,43 +119,6 @@ jobs:
         with:
           target-dir: /var/lib/containers
 
-      # Préparation du cache DNF pour accélérer les builds
-      - name: DNF Package Cache Prep
-        id: cache-prep
-        env:
-          IMAGE: ${{ inputs.image_name }}
-          EVENT_NAME: ${{ github.event_name }}
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          set -eoux pipefail
-          
-          # Nom du cache basé sur l'image source (kinoite/silverblue)
-          if [[ "${{ inputs.source_image }}" =~ "kinoite" ]]; then
-            CACHE_NAME="kde"
-          else
-            CACHE_NAME="gnome"
-          fi
-
-          # Permettre l'écriture dans le cache uniquement pour les builds sur main
-          # (pas pour les PRs car le cache serait écrasé)
-          ALLOW_CACHE_WRITE="false"
-          if [[ "${{ github.event_name }}" != "pull_request" ]] && [[ "${{ github.ref_name }}" == "main" ]]; then
-            ALLOW_CACHE_WRITE="true"
-          fi
-
-          echo "cache_name=${CACHE_NAME}" >> "$GITHUB_OUTPUT"
-          echo "allow_cache_write=${ALLOW_CACHE_WRITE}" >> "$GITHUB_OUTPUT"
-
-      # Restoration du cache DNF
-      - name: Restore DNF package cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: /var/tmp/buildah-cache-*
-          key: ${{ runner.os }}-buildah-${{ steps.cache-prep.outputs.cache_name }}-${{ github.run_id }}
-          restore-keys: |
-            ${{ runner.os }}-buildah-${{ steps.cache-prep.outputs.cache_name }}-
-            ${{ runner.os }}-buildah-${{ steps.cache-prep.outputs.cache_name }}
-
       # Construction de l'image
       - name: Build Image
         id: build_image
@@ -202,20 +165,6 @@ jobs:
             $SOURCE_SUFFIX_ARG \
             $DX_MODE_ARG \
             --tag raw-img .
-
-      # Hack pour corriger les permissions du cache (nécessaire pour actions/cache)
-      - name: Hack around permission issue caching
-        id: cache-perms
-        run: |
-          sudo chmod 777 --recursive /var/tmp/buildah-cache-* 2>/dev/null || true
-
-      # Sauvegarde du cache DNF (uniquement si autorisé)
-      - name: Save DNF package cache
-        if: steps.cache-prep.outputs.allow_cache_write == 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: /var/tmp/buildah-cache-*
-          key: ${{ runner.os }}-buildah-${{ steps.cache-prep.outputs.cache_name }}-${{ github.run_id }}
 
       # Appliquer les labels OCI avant le rechunk
       - name: Apply Labels

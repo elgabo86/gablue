@@ -632,25 +632,15 @@ Workflow réutilisable pour le build d'une image :
 2. Checkout du dépôt
 3. Maximisation de l'espace de build
 4. Mount BTRFS pour podman storage (action pinnée par SHA)
-5. **Cache DNF** : Restoration du cache des paquets (basé sur kde/gnome)
-6. Build de l'image avec buildah (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni)
-7. **Sauvegarde du cache DNF** (uniquement sur branche main)
-8. Application des labels OCI (définis directement dans le step, sans docker/metadata-action)
-9. Rechunk avec rpm-ostree
-10. Tag et push vers GHCR
-11. Signature avec Cosign
+5. Build de l'image avec buildah (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni)
+6. Application des labels OCI (définis directement dans le step, sans docker/metadata-action)
+7. Rechunk avec rpm-ostree
+8. Tag et push vers GHCR
+9. Signature avec Cosign
 
 **Détection dynamique du kernel** :
 - **Tous les builds** : Dernier tag OGC via `skopeo list-tags ghcr.io/ublue-os/akmods` → filtre `{KERNEL_FLAVOR}-{FEDORA_VERSION}-*`
 - **Manuel** : Spécifier `kernel_version` dans le workflow pour forcer une version
-
-**Cache DNF** :
-- Restauration avant le build pour accélérer l'installation des paquets
-- `restore-keys` avec préfixe pour trouver le cache le plus récent (fallback)
-- Clé de save inclut `run_id` pour créer une nouvelle entrée à chaque build
-- Sauvegarde après le build (uniquement sur `main`, pas sur les PRs)
-- Cache séparé par environnement : `Linux-buildah-kde` ou `Linux-buildah-gnome`
-- Fonctionne grâce à `keepcache=1` dans copr (désactivé par `keepcache=0` dans finalize)
 
 ### build-gablue-isos.yml
 
