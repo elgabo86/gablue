@@ -3,3 +3,4 @@ cosign.private
 /temp
 todo.md
 *.pyc
+src/gwine-launcher/gwine-standalone.sh

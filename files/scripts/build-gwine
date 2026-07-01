@@ -1,0 +1,54 @@
+#!/usr/bin/bash
+
+# Assemblage du script gwine standalone depuis les sources modulaires
+# Ce script assemble tous les modules lib/ en un fichier unique deployable
+# via le script d'assemblage integre (src/gwine-launcher/build.sh)
+
+set -eoux pipefail
+
+SRC_DIR="/src/gwine-launcher"
+
+if [ ! -d "$SRC_DIR" ]; then
+    echo "ATTENTION: Sources gwine-launcher non trouvees dans $SRC_DIR"
+    exit 0
+fi
+
+# =============================================================================
+# ASSEMBLAGE DU SCRIPT STANDALONE
+# =============================================================================
+
+bash "$SRC_DIR/build.sh"
+
+if [ ! -f "$SRC_DIR/gwine-standalone.sh" ]; then
+    echo "ERREUR: Assemblage gwine echoue, gwine-standalone.sh introuvable"
+    exit 1
+fi
+
+# =============================================================================
+# INSTALLATION
+# =============================================================================
+
+# Script standalone -> /usr/bin/gwine
+cp "$SRC_DIR/gwine-standalone.sh" /usr/bin/gwine
+chmod +x /usr/bin/gwine
+
+# Completion bash
+if [ -f "$SRC_DIR/completions/gwine.bash" ]; then
+    mkdir -p /etc/bash_completion.d
+    cp "$SRC_DIR/completions/gwine.bash" /etc/bash_completion.d/gwine
+    chmod 644 /etc/bash_completion.d/gwine
+fi
+
+# Completion zsh
+if [ -f "$SRC_DIR/completions/_gwine.zsh" ]; then
+    mkdir -p /usr/share/zsh/site-functions
+    cp "$SRC_DIR/completions/_gwine.zsh" /usr/share/zsh/site-functions/_gwine
+    chmod 644 /usr/share/zsh/site-functions/_gwine
+fi
+
+# =============================================================================
+# NETTOYAGE
+# =============================================================================
+
+rm -rf "$SRC_DIR"
+rmdir /src 2>/dev/null || true

@@ -1,0 +1,278 @@
+#!/bin/bash
+
+################################################################################
+# gwine-proton-runner.sh - Téléchargement et installation de gwine-proton
+#
+# Ce module gère le runner gwine-proton, une version basée sur Proton.
+# Le runner est installé dans ~/.local/share/gwine/wine-proton
+################################################################################
+
+# =============================================================================
+# Fonctions de récupération de version
+# =============================================================================
+
+# Récupère la dernière version de gwine-proton depuis GitHub
+get_latest_gwine_proton_version() {
+    local version
+    version=$(curl -s --max-time 10 https://api.github.com/repos/elgabo86/gwine/releases/latest 2>/dev/null | grep -oP '"tag_name":\s*"\K[^"]+' | head -1)
+    
+    if [ -z "$version" ]; then
+        return 1
+    fi
+    
+    # Si la dernière release n'est pas proton, chercher la dernière release proton
+    if [[ "$version" != *proton* ]]; then
+        version=$(curl -s --max-time 10 https://api.github.com/repos/elgabo86/gwine/releases 2>/dev/null | grep -oP '"tag_name":\s*"\K[^"]+' | grep proton | head -1)
+    fi
+    
+    echo "$version"
+}
+
+# =============================================================================
+# Installation depuis le cache
+# =============================================================================
+
+install_gwine_proton_from_cache() {
+    local WINE_INSTALL_DIR="$PROTON_RUNNER_DIR"
+    local archives_dir="$COMPONENTS_DIR/gwine-proton"
+    
+    if [ ! -d "$archives_dir" ] || [ -z "$(ls -A "$archives_dir" 2>/dev/null)" ]; then
+        return 1
+    fi
+    
+    local latest_archive
+    latest_archive=$(ls -1 "$archives_dir"/gwine-proton-*.tar.xz 2>/dev/null | sort -V | tail -1)
+    
+    if [ -z "$latest_archive" ] || [ ! -f "$latest_archive" ]; then
+        return 1
+    fi
+    
+    local version_name
+    version_name=$(basename "$latest_archive" .tar.xz)
+    
+    echo "Installation de $version_name depuis le cache..."
+    
+    local temp_dir="$CACHE_DIR/.temp_proton_install"
+    rm -rf "$temp_dir"
+    ensure_dir "$temp_dir" "Impossible de créer le répertoire temporaire"
+    
+    local extract_dir="$temp_dir/extracted"
+    ensure_dir -s "$extract_dir"
+    
+    if ! tar -xf "$latest_archive" -C "$extract_dir" 2>/dev/null; then
+        echo "Échec de l'extraction de l'archive"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    local extracted_wine_dir
+    extracted_wine_dir=$(find "$extract_dir" -maxdepth 1 -type d \( -name "*gwine*proton*" -o -name "*proton*" \) | head -1)
+    if [ -z "$extracted_wine_dir" ]; then
+        extracted_wine_dir=$(find "$extract_dir" -maxdepth 1 -type d -name "*gwine*" | head -1)
+    fi
+    if [ -z "$extracted_wine_dir" ]; then
+        extracted_wine_dir=$(find "$extract_dir" -maxdepth 1 -type d | head -1)
+    fi
+    if [ -z "$extracted_wine_dir" ]; then
+        extracted_wine_dir="$extract_dir"
+    fi
+    
+    rm -rf "$WINE_INSTALL_DIR"
+    ensure_dir "$WINE_INSTALL_DIR" "Impossible de créer le répertoire d'installation Wine"
+    cp -r "$extracted_wine_dir"/* "$WINE_INSTALL_DIR/"
+    
+    if [ ! -f "$WINE_INSTALL_DIR/bin/wine" ]; then
+        echo "Échec de l'installation"
+        rm -rf "$WINE_INSTALL_DIR"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    echo "$version_name" > "$PROTON_RUNNER_VERSION_FILE"
+    rm -rf "$temp_dir"
+    
+    echo "✓ $version_name installé depuis le cache"
+    return 0
+}
+
+# =============================================================================
+# Téléchargement
+# =============================================================================
+
+download_gwine_proton() {
+    local WINE_INSTALL_DIR="$PROTON_RUNNER_DIR"
+    local current_version=""
+    local latest_version=""
+    local force_update="${1:-false}"
+    local auto_mode="${2:-false}"
+    
+    if [ -d "$WINE_INSTALL_DIR" ] && [ -f "$WINE_INSTALL_DIR/bin/wine" ]; then
+        current_version=$(cat "$PROTON_RUNNER_VERSION_FILE" 2>/dev/null || echo "unknown")
+    fi
+    
+    echo "Vérification des mises à jour de gwine-proton..."
+    latest_version=$(get_latest_gwine_proton_version)
+    
+    if [ -z "$latest_version" ]; then
+        echo "Impossible de récupérer la dernière version (pas de connexion internet)"
+        echo "Tentative d'installation depuis le cache..."
+        if install_gwine_proton_from_cache; then
+            return 0
+        else
+            echo "Échec: aucune archive disponible dans le cache"
+            return 1
+        fi
+    fi
+    
+    echo "Version installée: ${current_version:-Aucune}"
+    echo "Dernière version disponible: $latest_version"
+    
+    if [ "$force_update" = "false" ] && [ "$current_version" = "$latest_version" ]; then
+        echo "Vous avez déjà la dernière version de gwine-proton."
+        return 0
+    fi
+    
+    if [ "$force_update" = "false" ] && [ -n "$current_version" ]; then
+        if ! compare_versions "$latest_version" "$current_version"; then
+            echo "Vous avez déjà la dernière version de gwine-proton."
+            return 0
+        fi
+    fi
+    
+    if [ "$auto_mode" != "true" ] && [ "$init_mode" != "true" ]; then
+        echo ""
+        echo "Une nouvelle version de gwine-proton est disponible : $latest_version"
+        read -p "Voulez-vous télécharger et installer cette version ? [O/n]: " -r
+        if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
+            echo "Mise à jour annulée."
+            return 0
+        fi
+    fi
+    
+    echo ""
+    echo "Téléchargement de $latest_version..."
+    
+    local archives_dir="$COMPONENTS_DIR/gwine-proton"
+    # L'archive s'appelle simplement ${latest_version}.tar.xz (ex: gwine-proton-10.0.xxx.tar.xz)
+    local archive_name="${latest_version}.tar.xz"
+    local download_url="https://github.com/elgabo86/gwine/releases/download/${latest_version}/${archive_name}"
+    local temp_dir="$CACHE_DIR/.temp_proton"
+    local archive_path="$archives_dir/$archive_name"
+    
+    ensure_dir -s "$archives_dir"
+    rm -rf "$temp_dir"
+    ensure_dir -s "$temp_dir"
+    
+    local old_archive
+    old_archive=$(find "$archives_dir" -maxdepth 1 -name "gwine-proton-*.tar.xz" | head -1)
+    if [ -n "$old_archive" ] && [ "$old_archive" != "$archive_path" ]; then
+        echo "Suppression de l'ancienne archive: $(basename "$old_archive")"
+        rm -f "$old_archive"
+    fi
+    
+    if [ ! -f "$archive_path" ]; then
+        echo "Téléchargement depuis: $download_url"
+        if ! download_file "$download_url" "$archive_path" "gwine-proton"; then
+            rm -rf "$temp_dir"
+            if [ -n "$current_version" ] && [ "$current_version" != "unknown" ]; then
+                echo "Utilisation de la version existante: $current_version"
+                return 0
+            fi
+            return 1
+        fi
+        echo "Archive sauvegardée dans: $archive_path"
+    else
+        echo "Archive trouvée dans le cache: $archive_path"
+    fi
+    
+    echo "Extraction..."
+    local extract_dir="$temp_dir/extracted"
+    if ! extract_archive "$archive_path" "$extract_dir" "tar.xz"; then
+        rm -rf "$temp_dir"
+        if [ -n "$current_version" ] && [ "$current_version" != "unknown" ]; then
+            echo "Utilisation de la version existante: $current_version"
+            return 0
+        fi
+        return 1
+    fi
+    
+    # Installation
+    local wine_subdir
+    wine_subdir=$(find "$extract_dir" -maxdepth 1 -type d \( -name "*gwine*proton*" -o -name "*proton*" \) | head -1)
+    if [ -z "$wine_subdir" ]; then
+        wine_subdir=$(find "$extract_dir" -maxdepth 1 -type d -name "*gwine*" | head -1)
+    fi
+    if [ -z "$wine_subdir" ]; then
+        wine_subdir=$(find "$extract_dir" -maxdepth 1 -type d | head -1)
+    fi
+    [ -z "$wine_subdir" ] && wine_subdir="$extract_dir"
+    
+    local old_backup=""
+    if [ -d "$WINE_INSTALL_DIR" ]; then
+        old_backup=$(backup_component "$WINE_INSTALL_DIR")
+    fi
+    
+    echo "Installation de la nouvelle version..."
+    ensure_dir "$WINE_INSTALL_DIR" "Impossible de créer le répertoire d'installation"
+    cp -r "$wine_subdir"/* "$WINE_INSTALL_DIR/"
+    
+    if [ ! -f "$WINE_INSTALL_DIR/bin/wine" ]; then
+        echo "Échec de l'installation"
+        rm -rf "$WINE_INSTALL_DIR"
+        if [ -n "$old_backup" ]; then
+            restore_backup_component "$old_backup" "$WINE_INSTALL_DIR"
+            echo "Ancienne version restaurée avec succès"
+        fi
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    cleanup_backup_component "$old_backup"
+    
+    echo "$latest_version" > "$PROTON_RUNNER_VERSION_FILE"
+    rm -rf "$temp_dir"
+    
+    echo "✓ gwine-proton $latest_version installé avec succès"
+    return 0
+}
+
+# =============================================================================
+# Installation depuis archive extraite (interne)
+# =============================================================================
+
+install_gwine_proton_from_extracted_internal() {
+    local extracted_dir="$1"
+    local install_dir="$2"
+    
+    local wine_subdir
+    wine_subdir=$(find "$extracted_dir" -maxdepth 1 -type d \( -name "*gwine*proton*" -o -name "*proton*" \) | head -1)
+    if [ -z "$wine_subdir" ]; then
+        wine_subdir=$(find "$extracted_dir" -maxdepth 1 -type d -name "*gwine*" | head -1)
+    fi
+    if [ -z "$wine_subdir" ]; then
+        wine_subdir=$(find "$extracted_dir" -maxdepth 1 -type d | head -1)
+    fi
+    [ -z "$wine_subdir" ] && wine_subdir="$extracted_dir"
+    
+    local old_backup=""
+    if [ -d "$install_dir" ]; then
+        old_backup=$(backup_component "$install_dir")
+    fi
+    
+    echo "Installation de la nouvelle version..."
+    ensure_dir "$install_dir" "Impossible de créer le répertoire d'installation"
+    cp -r "$wine_subdir"/* "$install_dir/"
+    
+    if [ ! -f "$install_dir/bin/wine" ]; then
+        echo "Échec de l'installation"
+        rm -rf "$install_dir"
+        if [ -n "$old_backup" ]; then
+            restore_backup_component "$old_backup" "$install_dir"
+            echo "Ancienne version restaurée avec succès"
+        fi
+        return 1
+    fi
+    
+    cleanup_backup_component "$old_backup"
+    return 0
+}

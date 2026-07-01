@@ -25,10 +25,11 @@ ARG DX_MODE
 ARG KERNEL_FLAVOR
 ARG KERNEL_VERSION
 
-# Copie des sources C pour compilation
+# Copie des sources pour compilation et assemblage
 COPY src/gamepadshortcuts /src/gamepadshortcuts
 COPY src/ds2xbox /src/ds2xbox
 COPY src/gablue-isomount /src/gablue-isomount
+COPY src/gwine-launcher /src/gwine-launcher
 
 # Copie des fichiers système dans l'image
 COPY files/system/all /
@@ -89,6 +90,14 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=tmpfs,dst=/tmp \
     /ctx/build-c && \
+    /ctx/cleanup
+
+# Assemblage du script gwine standalone
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/build-gwine && \
     /ctx/cleanup
 
 # Post-installation : configuration finale (version test avec OpenGamepadUI)

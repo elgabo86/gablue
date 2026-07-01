@@ -64,10 +64,16 @@ Le projet construit 6 variantes distinctes :
 │   └── gablue-isomount/                    # Sources C du monteur d'images disque
 │       ├── gablue-isomount.c              # Programme principal (UDisks2 DBus, Dolphin)
 │       └── Makefile                       # Compilation
+│   └── gwine-launcher/                     # Sources du lanceur gwine (Bash modulaire)
+│       ├── gwine                           # Script point d'entrée
+│       ├── build.sh                        # Assemblage du fichier standalone
+│       ├── completions/                    # Completions bash et zsh
+│       └── lib/                            # Bibliothèques modulaires (~60 fichiers)
 ├── files/
 │   ├── scripts/                           # Scripts d'installation bash
 │   │   ├── brew                           # Installation Homebrew
 │   │   ├── build-c                       # Compilation sources C
+│   │   ├── build-gwine                    # Assemblage script gwine standalone
 │   │   ├── cleanup                        # Nettoyage intermédiaire
 │   │   ├── copr                           # Configuration dépôts COPR
 │   │   ├── copr-test                      # Configuration dépôts COPR (test)
@@ -505,6 +511,22 @@ Paquets supprimés :
 **rpm-test** :
 - Wrapper (identique à rpm, prévu pour ajouter des paquets spécifiques au test)
 
+### 5b. build-c / build-gwine - Compilation des sources
+
+**build-c** (appelé après rpm) :
+- Compile les binaires C depuis `/src/gamepadshortcuts`, `/src/ds2xbox`, `/src/gablue-isomount`
+- Installation via `make -C <dir> install DESTDIR=`
+- Nettoie les sources après compilation (`rm -rf /src/<dir>`)
+- Désinstalle `dbus-devel` après compilation (inutile dans l'image finale)
+
+**build-gwine** (appelé après build-c) :
+- Assemble le script gwine standalone depuis `/src/gwine-launcher/`
+- Exécute `build.sh` qui concatène les ~60 fichiers modulaires `lib/` en un script unique
+- Embarque les shims overlayfs (`composefs_statfs_shim.so` 32/64 bits) en base64 pour extraction au runtime
+- Installe `/usr/bin/gwine` et les completions bash/zsh
+- Nettoie les sources après assemblage
+- Voir `src/gwine-launcher/AGENTS.md` pour l'architecture interne du lanceur
+
 ### 6. post-install / post-install-test
 
 Configuration post-installation étendue :
@@ -748,7 +770,7 @@ Scripts personnalisés Gablue :
 - `system-flatpak-setup` : Configuration Flatpak système
 - Scripts gaming : `azahar-install`, `citron-install`, `eden-install`, `esde-install`, `qwen-install`, `shadps4-install`, `xenia-install`
 - Scripts utilitaires : `ytdl`, `dlcover`, `tv`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`, `retroplayer`
-- Gestion Wine/Proton : `gwine`, `scrap-win`
+- Gestion Wine/Proton : `gwine` (assemblé depuis `src/gwine-launcher/`), `scrap-win`
 - `tvqt` : Interface TV Gablue (PySide6 + mpv, navigation manette, ~170 chaînes)
 
 ### Binaire gamepadshortcuts (/usr/bin)

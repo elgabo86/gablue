@@ -1,0 +1,531 @@
+#!/bin/bash
+
+################################################################################
+# gwine - Lanceur de jeux Windows avec Wine pur (gwine)
+#
+# Script standalone pour lancer des jeux Windows via Wine.
+# Supporte les paquets WGP (.wgp) et les exécutables directs (.exe)
+#
+# Gwine: Wine TKG modifié avec Proton
+# https://github.com/elgabo86/gwine
+################################################################################
+
+# Déterminer le répertoire du script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Sourcer tous les modules
+source "$SCRIPT_DIR/lib/core.sh"
+source "$SCRIPT_DIR/lib/parse-args.sh"
+source "$SCRIPT_DIR/lib/xbox.sh"
+source "$SCRIPT_DIR/lib/runner.sh"
+source "$SCRIPT_DIR/lib/dxvk-mode.sh"
+source "$SCRIPT_DIR/lib/display-mode.sh"
+source "$SCRIPT_DIR/lib/download.sh"
+source "$SCRIPT_DIR/lib/gpu.sh"
+source "$SCRIPT_DIR/lib/ui.sh"
+source "$SCRIPT_DIR/lib/component.sh"
+source "$SCRIPT_DIR/lib/wincomponents.sh"
+source "$SCRIPT_DIR/lib/cache/gwine-proton.sh"
+source "$SCRIPT_DIR/lib/cache/gwine-proton-runner.sh"
+source "$SCRIPT_DIR/lib/cache/dxvk-vkd3d.sh"
+source "$SCRIPT_DIR/lib/cache/offline.sh"
+source "$SCRIPT_DIR/lib/cache/cachepack.sh"
+source "$SCRIPT_DIR/lib/wineprefix.sh"
+source "$SCRIPT_DIR/lib/wineserver-manager.sh"
+source "$SCRIPT_DIR/lib/sandbox.sh"
+source "$SCRIPT_DIR/lib/wgp.sh"
+source "$SCRIPT_DIR/lib/launcher.sh"
+source "$SCRIPT_DIR/lib/mode-init.sh"
+source "$SCRIPT_DIR/lib/mode-update.sh"
+source "$SCRIPT_DIR/lib/mode-tools.sh"
+source "$SCRIPT_DIR/lib/dir-config.sh"
+
+# =============================================================================
+# Modes de lancement
+# =============================================================================
+
+run_wgp_mode() {
+    export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+    
+    init_wgp_variables
+    mount_wgp
+
+    read_wgp_xbox_config
+
+    if [ "$xbox_mode" = true ]; then
+        if ! start_ds2xbox; then
+            cleanup_wgp
+            exit 1
+        fi
+    fi
+
+    init_wineprefix
+
+    setup_saves_symlink
+    setup_extras_symlink
+    setup_temp_symlink
+
+    prepare_saves
+    prepare_extras
+    
+    if [ "$exewgp_mode" = true ]; then
+        select_exe_from_wgp
+    else
+        read_wgp_config
+    fi
+    
+    prepare_temps
+
+    local exe_dir
+    exe_dir="$(dirname "$FULL_EXE_PATH")"
+    setup_pds_symlink "$exe_dir"
+    
+    install_registry_files "$exe_dir"
+    if [ -L "$FULL_EXE_PATH" ]; then
+        local real_exe_path
+        real_exe_path="$(realpath "$FULL_EXE_PATH")"
+        local real_exe_dir
+        real_exe_dir="$(dirname "$real_exe_path")"
+        if [ "$real_exe_dir" != "$exe_dir" ]; then
+            install_registry_files "$real_exe_dir"
+        fi
+    fi
+    
+    local env_vars
+    env_vars=$(load_env_files "$MOUNT_DIR" "$exe_dir")
+    
+    local filename
+    filename="$(basename "$FULL_EXE_PATH")"
+    local lock_file="/tmp/wgp-lock-$filename"
+    echo "$$:$(date +%s)" > "$lock_file"
+    
+    # Exporter le chemin du WGP pour le trap (avant de définir le trap)
+    GWINE_WGP_FILE="$WGPACK_FILE"
+    export GWINE_WGP_FILE
+    
+    # Trap pour nettoyer à l'interruption (Ctrl-C)
+    # Tue l'arbre de processus du jeu + les processus orphelins liés à ce WGP
+    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 0.5; kill_process_tree "$GWINE_GAME_PID" KILL; kill_wgp_orphans "$GWINE_WGP_FILE" "$WINEPREFIX"; sleep 0.5; echo "Nettoyage des overlays..."; cleanup_wgp; stop_ds2xbox; restore_padfix_setting; rm -f "$lock_file" 2>/dev/null; exit 130' INT TERM
+    # Trap EXIT pour nettoyage normal (pas de kill car le jeu s'est terminé normalement)
+    trap 'cleanup_wgp; stop_ds2xbox; rm -f "$lock_file" 2>/dev/null' EXIT
+
+    # Récupérer le dossier contenant le fichier .wgp
+    local wgp_dir
+    wgp_dir="$(dirname "$WGPACK_FILE")"
+    
+    launch_wine_game "$FULL_EXE_PATH" "$args" "$filename" "$env_vars" "true" "$wgp_dir" "$WGPACK_FILE"
+    
+    # Nettoyage après la fin du jeu
+    # Désactiver le trap pour éviter le double nettoyage (trap EXIT s'exécuterait aussi)
+    trap - EXIT INT TERM
+    cleanup_wgp
+    stop_ds2xbox
+    restore_padfix_setting
+    rm -f "$lock_file" 2>/dev/null
+}
+
+run_classic_mode() {
+    export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+    
+    if [ "$xbox_mode" = true ]; then
+        if ! start_ds2xbox; then
+            exit 1
+        fi
+    fi
+    
+    local filename
+    filename="$(basename "$fullpath")"
+    local new_fullpath="$fullpath"
+    
+    if [[ "$new_fullpath" != /* ]]; then
+        new_fullpath="$(pwd)/$new_fullpath"
+    fi
+    
+    if [[ "$fullpath" == *.lnk ]]; then
+        local new_dirpath
+        new_dirpath=$(resolve_lnk "$fullpath")
+        if [ -z "$new_dirpath" ]; then
+            error_exit "Impossible de résoudre le raccourci .lnk"
+        fi
+        filename="$(basename "$new_dirpath")"
+        new_fullpath="$new_dirpath/$filename"
+    fi
+    
+    if [ ! -f "$new_fullpath" ]; then
+        error_exit "Fichier non trouvé: $new_fullpath"
+    fi
+    
+    local temp_base=""
+    if [[ "$fullpath" == *[^[:ascii:]]* ]]; then
+        local temp_dir
+        temp_dir=$(mktemp -d)
+        temp_base="$temp_dir"
+        ln -sf "$new_fullpath" "$temp_dir/$filename"
+        new_fullpath="$temp_dir/$filename"
+    fi
+    [ -n "$temp_base" ] && trap 'rm -rf "$temp_base"' EXIT
+    
+    init_wineprefix
+
+    mkdir -p "$WINEPREFIX"
+    
+    local exe_dir
+    exe_dir="$(dirname "$new_fullpath")"
+    setup_pds_symlink "$exe_dir"
+    
+    install_registry_files "$exe_dir"
+    if [ -L "$new_fullpath" ]; then
+        local real_exe_path
+        real_exe_path="$(realpath "$new_fullpath")"
+        local real_exe_dir
+        real_exe_dir="$(dirname "$real_exe_path")"
+        if [ "$real_exe_dir" != "$exe_dir" ]; then
+            install_registry_files "$real_exe_dir"
+        fi
+    fi
+    
+    local env_vars=""
+    local dir_env
+    dir_env="$(dirname "$fullpath")/.env"
+    if [ -f "$dir_env" ]; then
+        env_vars=$(load_env_file "$dir_env")
+    fi
+
+    local lock_file="/tmp/wgp-lock-$filename"
+    echo "$$:$(date +%s)" > "$lock_file"
+    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 1; kill_process_tree "$GWINE_GAME_PID" KILL; echo "Arrêt des processus orphelins..."; for pid in $(pgrep -f "\.exe"); do if [ -r "/proc/$pid/environ" ] && grep -q "WINEPREFIX=$WINEPREFIX" "/proc/$pid/environ" 2>/dev/null; then cmdline=$(tr "\0" " " < "/proc/$pid/cmdline" 2>/dev/null); if ! [[ "$cmdline" =~ (winedevice|plugplay|explorer|services|svchost|rpcss|wineboot|steam|msiexec|regsvr32|spoolsv|conhost|wmplayer|taskkill|wineconsole)\.exe ]]; then kill "$pid" 2>/dev/null; fi; fi; done; stop_ds2xbox; restore_padfix_setting; sleep 1; rm -f "$lock_file" 2>/dev/null; exit 130' INT TERM
+    trap 'stop_ds2xbox; restore_padfix_setting; rm -f "$lock_file" 2>/dev/null' EXIT
+
+    launch_wine_game "$new_fullpath" "$args" "$filename" "$env_vars" "false"
+    
+    trap - EXIT INT TERM
+    stop_ds2xbox
+    restore_padfix_setting
+    rm -f "$lock_file" 2>/dev/null
+}
+
+# =============================================================================
+# Vérification du préfixe avec proposition d'initialisation
+# =============================================================================
+
+check_prefix_or_offer_init() {
+    if [ -d "$HOME_REAL/Windows/Prefix" ] && [ -f "$HOME_REAL/Windows/Prefix/system.reg" ]; then
+        return 0
+    fi
+
+    if command -v kdialog >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+        if kdialog --yesno "Gwine n'a pas encore été initialisé.\n\nVoulez-vous lancer l'initialisation maintenant ?" 2>/dev/null; then
+            exec "$SCRIPT_DIR/gwine" --init --kdialog
+        else
+            exit 1
+        fi
+    else
+        echo "Erreur: Aucun préfixe Wine n'existe." >&2
+        echo "Veuillez exécuter 'gwine --init' pour créer un préfixe." >&2
+        exit 1
+    fi
+}
+
+# =============================================================================
+# Point d'entrée principal
+# =============================================================================
+
+main() {
+    # Parser les arguments en premier
+    parse_arguments "$@"
+    
+    if [ "$reset_mode" = true ]; then
+        reset_gwine_options
+        export init_mode=true
+    fi
+    
+    if [ "$xbox_on_mode" = true ] || [ "$xbox_off_mode" = true ]; then
+        if [ "$xbox_on_mode" = true ]; then
+            local filter="${xbox_filter:-all}"
+            set_xbox_default "on" "$filter"
+            echo "Mode xbox activé par défaut (filtre: $filter)"
+            echo "Tous les lancements gwine utiliseront ds2xbox automatiquement."
+        else
+            set_xbox_default "off"
+            echo "Mode xbox par défaut désactivé."
+        fi
+        exit 0
+    fi
+    
+    apply_xbox_default
+    
+
+    if [ "$nofix_mode" = true ] && [ "$fix_mode" = true ]; then
+        echo "Note: --fix ignoré car --nofix actif"
+        fix_mode=false
+    fi
+    
+    # Initialiser le mode DXVK au début (avant toute opération)
+    # pour que les fonctions de composants utilisent le bon répertoire
+    init_dxvk_mode
+    
+    # Définir proton comme runner par défaut si aucun n'est configuré et qu'on fait un --init
+    if [ "$init_mode" = true ] && [ "$wine_mode" != true ] && [ "$proton_mode" != true ]; then
+        # Vérifier si un runner est déjà configuré
+        local current_runner
+        current_runner=$(get_current_runner)
+        # Si pas encore de configuration (fichier options inexistant), utiliser proton par défaut
+        if [ ! -f "$RUNNER_CONFIG_FILE" ]; then
+            proton_mode=true
+        fi
+    fi
+    
+    # Quand on change de runner (--wine ou --proton), on force un --init pour éviter
+    # les conflits entre Wine et Proton dans le préfixe
+    if [ "$wine_mode" = true ] && [ "$init_mode" != true ] && [ "$update_mode" != true ] && [ -z "$fullpath" ]; then
+        local current_runner
+        current_runner=$(get_current_runner)
+        if [ "$current_runner" != "wine" ]; then
+            echo "Changement de runner vers Wine..."
+            echo "Une réinitialisation du préfixe est nécessaire lors du changement de runner."
+            set_runner "wine"
+            export init_mode=true
+        else
+            echo "Runner Wine déjà configuré."
+            set_runner "wine"
+        fi
+    fi
+    
+    if [ "$proton_mode" = true ] && [ "$init_mode" != true ] && [ "$update_mode" != true ] && [ -z "$fullpath" ]; then
+        local current_runner
+        current_runner=$(get_current_runner)
+        if [ "$current_runner" != "proton" ]; then
+            echo "Changement de runner vers Proton..."
+            echo "Une réinitialisation du préfixe est nécessaire lors du changement de runner."
+            set_runner "proton"
+            export init_mode=true
+        else
+            echo "Runner Proton déjà configuré."
+            set_runner "proton"
+        fi
+    fi
+    
+    # Si mode "config only" (--wine, --proton, --dxvk, --dxvk-async, --x11 ou --wayland sans fichier ni autre option)
+    # alors sauvegarder la configuration comme défaut et télécharger si nécessaire
+    if [ -z "$fullpath" ] && [ "$init_mode" != true ] && [ "$regedit_mode" != true ] && [ "$reg_mode" != true ] && [ "$winecfg_mode" != true ] && [ "$winetricks_mode" != true ] && [ "$cmd_mode" != true ] && [ "$joytest_mode" != true ] && [ "$update_mode" != true ] && [ "$download_wincomponents_mode" != true ] && [ "$cachepack_mode" != true ] && [ "$dir_mode" != true ] && ([ "$wine_mode" = true ] || [ "$proton_mode" = true ] || [ "$dxvk_mode" = true ] || [ "$dxvk_async_mode" = true ] || [ "$x11_mode" = true ] || [ "$wayland_mode" = true ]); then
+        # Sauvegarder le runner si spécifié
+        if [ "$wine_mode" = true ]; then
+            set_runner "wine"
+            echo "Runner configuré : wine (gwine standard)"
+            echo "Ce runner sera utilisé par défaut pour les prochains lancements."
+            echo ""
+            ensure_runner_installed
+        elif [ "$proton_mode" = true ]; then
+            set_runner "proton"
+            echo "Runner configuré : proton (gwine-proton)"
+            echo "Ce runner sera utilisé par défaut pour les prochains lancements."
+            echo ""
+            ensure_runner_installed
+        fi
+        
+        # Sauvegarder le mode DXVK si spécifié
+        if [ "$dxvk_mode" = true ]; then
+            set_dxvk_mode "dxvk"
+            echo "Mode DXVK configuré : dxvk (standard)"
+            echo "Ce mode sera utilisé par défaut pour les prochains lancements."
+            
+            # Si un préfixe existe, réinstaller les DLLs
+            if [ -d "$HOME_REAL/Windows/Prefix" ] && [ -f "$HOME_REAL/Windows/Prefix/system.reg" ]; then
+                echo ""
+                echo "Réinstallation de DXVK standard dans le préfixe existant..."
+                export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+                if install_dxvk_vkd3d; then
+                    echo "✓ DXVK standard réinstallé avec succès"
+                else
+                    echo "⚠️ Échec de la réinstallation de DXVK"
+                fi
+            fi
+        elif [ "$dxvk_async_mode" = true ]; then
+            set_dxvk_mode "dxvk-async"
+            echo "Mode DXVK configuré : dxvk-async (GPLAsync)"
+            echo "Ce mode sera utilisé par défaut pour les prochains lancements."
+            echo "La variable DXVK_ASYNC=1 sera définie automatiquement."
+            echo ""
+            ensure_dxvk_installed
+            
+            # Si un préfixe existe, réinstaller les DLLs
+            if [ -d "$HOME_REAL/Windows/Prefix" ] && [ -f "$HOME_REAL/Windows/Prefix/system.reg" ]; then
+                echo ""
+                echo "Réinstallation de DXVK-GPLAsync dans le préfixe existant..."
+                export WINEPREFIX="$HOME_REAL/Windows/Prefix"
+                if install_dxvk_vkd3d; then
+                    echo "✓ DXVK-GPLAsync réinstallé avec succès"
+                else
+                    echo "⚠️ Échec de la réinstallation de DXVK-GPLAsync"
+                fi
+            fi
+        fi
+        
+        # Sauvegarder le mode d'affichage si spécifié
+        if [ "$x11_mode" = true ]; then
+            set_display_mode "x11"
+            echo "Mode d'affichage configuré : x11 (X11/XWayland)"
+            echo "Ce mode sera utilisé par défaut pour les prochains lancements."
+        elif [ "$wayland_mode" = true ]; then
+            set_display_mode "wayland"
+            echo "Mode d'affichage configuré : wayland (Wayland natif)"
+            echo "Ce mode sera utilisé par défaut pour les prochains lancements."
+            echo "La variable DISPLAY sera désactivée automatiquement."
+        fi
+        
+        exit 0
+    fi
+    
+    # Vérifier la présence du préfixe pour les commandes qui en ont besoin
+    # Placement avant init_runner/ensure_runner_installed pour que l'init via kdialog
+    # gère le téléchargement du runner avec progressbar
+    if [ "$init_mode" != true ] && [ "$download_wincomponents_mode" != true ] && \
+       [ "$cachepack_mode" != true ] && [ "$dir_mode" != true ]; then
+        if [ -n "$fullpath" ] || [ "$regedit_mode" = true ] || [ "$reg_mode" = true ] || \
+           [ "$winecfg_mode" = true ] || [ "$winetricks_mode" = true ] || \
+           [ "$cmd_mode" = true ] || [ "$joytest_mode" = true ] || [ "$update_mode" = true ]; then
+            check_prefix_or_offer_init
+        fi
+    fi
+    
+    # Initialiser le runner (wine ou proton) après le parsing des arguments
+    # Passer --save si c'est un --init avec --wine ou --proton
+    if [ "$init_mode" = true ] && ([ "$wine_mode" = true ] || [ "$proton_mode" = true ]); then
+        init_runner --save
+    else
+        init_runner
+    fi
+    
+    # Initialiser le mode DXVK (dxvk ou dxvk-async) si spécifié avec --init
+    if [ "$init_mode" = true ]; then
+        if [ "$dxvk_mode" = true ]; then
+            set_dxvk_mode "dxvk"
+            echo "Mode DXVK configuré : dxvk (standard)"
+        elif [ "$dxvk_async_mode" = true ]; then
+            set_dxvk_mode "dxvk-async"
+            echo "Mode DXVK configuré : dxvk-async (GPLAsync)"
+            echo "La variable DXVK_ASYNC=1 sera définie automatiquement."
+        fi
+    fi
+    
+    # Initialiser le mode d'affichage (x11 ou wayland) si spécifié avec --init
+    if [ "$init_mode" = true ]; then
+        if [ "$x11_mode" = true ]; then
+            set_display_mode "x11"
+            echo "Mode d'affichage configuré : x11 (X11/XWayland)"
+        elif [ "$wayland_mode" = true ]; then
+            set_display_mode "wayland"
+            echo "Mode d'affichage configuré : wayland (Wayland natif)"
+            echo "La variable DISPLAY sera désactivée automatiquement."
+        fi
+    fi
+    
+    # Vérifier que DXVK est installé si mode dxvk-async est sélectionné
+    if [ "$init_mode" = true ] && [ "$dxvk_async_mode" = true ]; then
+        ensure_dxvk_installed
+    fi
+    
+    # Pour les modes qui nécessitent Wine/Proton, s'assurer que le runner est installé
+    # Sauf pour --init: init_prefix_only() le fait avec une barre de progression kdialog
+    if [ "$init_mode" != true ]; then
+        ensure_runner_installed
+    fi
+
+    if [ "$regedit_mode" = true ]; then
+        launch_regedit
+        exit 0
+    fi
+
+    if [ "$reg_mode" = true ]; then
+        manage_registry "${reg_args[@]}"
+        exit 0
+    fi
+
+    if [ "$winecfg_mode" = true ]; then
+        launch_winecfg
+        exit 0
+    fi
+
+    if [ "$winetricks_mode" = true ]; then
+        launch_winetricks
+        exit 0
+    fi
+
+    if [ "$cmd_mode" = true ]; then
+        launch_wine_cmd "$cmd_command"
+        exit 0
+    fi
+
+    if [ "$joytest_mode" = true ]; then
+        launch_joypad_test
+        exit 0
+    fi
+
+    if [ "$init_mode" = true ]; then
+        init_prefix_only
+        exit 0
+    fi
+
+    if [ "$update_mode" = true ]; then
+        update_components
+        exit 0
+    fi
+
+    if [ "$download_wincomponents_mode" = true ]; then
+        prepare_full_offline_cache
+        exit $?
+    fi
+
+    if [ "$cachepack_mode" = true ]; then
+        create_cachepack
+        exit $?
+    fi
+
+    if [ "$dir_mode" = true ]; then
+        case "$dir_subcommand" in
+            add)
+                if [ -z "$dir_path" ]; then
+                    echo "Usage: gwine --dir add <chemin>" >&2
+                    exit 1
+                fi
+                dir_config_add "$dir_path"
+                exit $?
+                ;;
+            del|delete|remove|rm)
+                if [ -z "$dir_path" ]; then
+                    echo "Usage: gwine --dir del <chemin>" >&2
+                    exit 1
+                fi
+                dir_config_del "$dir_path"
+                exit $?
+                ;;
+            list|ls)
+                dir_config_list
+                exit $?
+                ;;
+            reset|clear)
+                dir_config_reset
+                exit $?
+                ;;
+            *)
+                echo "Sous-commande --dir invalide: $dir_subcommand" >&2
+                echo "Utilisez: add, del, list, ou reset" >&2
+                exit 1
+                ;;
+        esac
+    fi
+    
+    # Si on arrive ici sans fullpath et sans init_mode, afficher l'aide
+    if [ -z "$fullpath" ]; then
+        show_help
+        exit 0
+    fi
+
+    if [[ "$fullpath" == *.wgp ]]; then
+        run_wgp_mode
+    else
+        run_classic_mode
+    fi
+}
+
+main "$@"

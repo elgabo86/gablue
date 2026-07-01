@@ -31,7 +31,6 @@ chmod +x /usr/bin/scrap-win
 chmod +x /usr/bin/wgpcheck
 chmod +x /usr/bin/wgpadd
 chmod +x /usr/bin/esde-install
-chmod +x /usr/bin/gwine
 chmod +x /usr/bin/lgp-thumbnailer
 chmod +x /usr/bin/wgp-thumbnailer
 chmod +x /usr/bin/ds2xbox
@@ -51,9 +50,6 @@ chmod +x /usr/libexec/gablue-dx-groups
 chmod +x /usr/share/ublue-os/gablue/scripts/*.sh
 chmod +x /usr/share/ublue-os/gablue/scripts/*.py
 chmod +x /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/*
-
-# Rendre exécutables les completions supplémentaires Gablue
-chmod +x /etc/bash_completion.d/gwine
 
 # =============================================================================
 # CAPACITÉS SYSTÈME (CAPABILITIES)
