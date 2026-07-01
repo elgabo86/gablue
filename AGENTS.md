@@ -631,15 +631,14 @@ Workflow réutilisable pour le build d'une image :
 1. Récupération de la version kernel via `skopeo list-tags` (tous les builds utilisent ogc)
 2. Checkout du dépôt
 3. Maximisation de l'espace de build
-4. Mount BTRFS pour podman storage
+4. Mount BTRFS pour podman storage (action pinnée par SHA)
 5. **Cache DNF** : Restoration du cache des paquets (basé sur kde/gnome)
-6. Génération des tags (timestamp, SHA, latest)
-7. Build de l'image avec buildah (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni)
-8. **Sauvegarde du cache DNF** (uniquement sur branche main)
-9. Application des labels OCI
-10. Rechunk avec rpm-ostree
-11. Tag et push vers GHCR
-12. Signature avec Cosign
+6. Build de l'image avec buildah (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni)
+7. **Sauvegarde du cache DNF** (uniquement sur branche main)
+8. Application des labels OCI (définis directement dans le step, sans docker/metadata-action)
+9. Rechunk avec rpm-ostree
+10. Tag et push vers GHCR
+11. Signature avec Cosign
 
 **Détection dynamique du kernel** :
 - **Tous les builds** : Dernier tag OGC via `skopeo list-tags ghcr.io/ublue-os/akmods` → filtre `{KERNEL_FLAVOR}-{FEDORA_VERSION}-*`
@@ -656,10 +655,12 @@ Workflow réutilisable pour le build d'une image :
 ### build-gablue-isos.yml
 
 Build des ISOs d'installation (tous les 5 jours) :
-- Matrix de build pour chaque variante
-- Upload vers VikingFile
-- Création de release GitHub avec liens de téléchargement
-- Génération des checksums SHA256
+- Matrix de build pour chaque variante (gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open)
+- Upload vers BuzzHeavier (fichier `.iso` + checksum `.sha256`)
+- Chaque job matrix publie son lien en artifact (`-link`, `-checksum`)
+- Job `create-release` collecte tous les artifacts et génère une release via `softprops/action-gh-release`
+- `timeout-minutes: 120` sur le build, `10` sur la release
+- Les outputs ne passent plus par la matrix (buggué) mais par le download/merge des artifacts
 
 ### clean-gablue-images.yml
 
@@ -667,6 +668,7 @@ Nettoyage automatique (tous les dimanches) :
 - Suppression des images > 90 jours
 - Conservation des 7 dernières images taggées
 - Conservation des 7 dernières images non-taggées
+- Packages nettoyés : gablue-main, gablue-nvidia, gablue-nvidia-open, gablue-main-dx, gablue-main-test, gablue-nvidia-open-test
 
 ## Messages de commit et tags
 

@@ -12,6 +12,7 @@ jobs:
   build-and-upload-isos:
     name: build-gablue-isos
     runs-on: ubuntu-24.04
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -57,13 +58,11 @@ jobs:
           additional_templates: "/github/workspace/files/lorax/disable-user-spoke.tmpl"
 
       - name: Generate Checksum
-        id: checksum
         run: |
           ISO_PATH="${{ matrix.iso.name }}-${{ matrix.iso.tag }}-${{ matrix.iso.version }}.iso"
           CHECKSUM_FILE="${{ matrix.iso.name }}-${{ matrix.iso.tag }}-${{ matrix.iso.version }}.iso.sha256"
           sha256sum "$ISO_PATH" > "$CHECKSUM_FILE"
           echo "Checksum generated: $CHECKSUM_FILE"
-          echo "checksum_file=$CHECKSUM_FILE" >> $GITHUB_OUTPUT
 
       - name: Upload ISO to BuzzHeavier
         id: upload
@@ -76,35 +75,51 @@ jobs:
           LINK="https://buzzheavier.com/$ID"
           if [ -n "$ID" ] && [ "$ID" != "null" ]; then
             echo "Download link for $ISO_NAME: $LINK"
-            echo "download_link_$ISO_NAME=$LINK" >> $GITHUB_OUTPUT
+            echo "$LINK" > "${ISO_NAME}-link.txt"
           else
             echo "Échec de l'upload : $RESPONSE"
             exit 1
           fi
 
-      - name: Upload Checksum as Artifact
+      - name: Upload Link Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.iso.name }}-link
+          path: ${{ matrix.iso.name }}-link.txt
+
+      - name: Upload Checksum Artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.iso.name }}-checksum
-          path: ${{ steps.checksum.outputs.checksum_file }}
-
-    outputs:
-      gablue_main_link: ${{ steps.upload.outputs.download_link_gablue-main }}
-      gablue_main_dx_link: ${{ steps.upload.outputs.download_link_gablue-main-dx }}
-      gablue_nvidia_link: ${{ steps.upload.outputs.download_link_gablue-nvidia }}
-      gablue_nvidia_open_link: ${{ steps.upload.outputs.download_link_gablue-nvidia-open }}
+          path: ${{ matrix.iso.name }}-${{ matrix.iso.tag }}-${{ matrix.iso.version }}.iso.sha256
 
   create-release:
     needs: build-and-upload-isos
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
+      - name: Download Link Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "*-link"
+          path: links
 
       - name: Download Checksum Artifacts
         uses: actions/download-artifact@v8
         with:
+          pattern: "*-checksum"
           path: checksums
+
+      - name: Build release body
+        run: |
+          {
+            echo "Download ISOs:"
+            for link_file in links/*/*.txt; do
+              ISO_NAME=$(basename "$(dirname "$link_file")" | sed 's/-link$//')
+              LINK=$(cat "$link_file")
+              echo "- **${ISO_NAME}**: ${LINK}"
+            done
+          } > body.md
 
       - name: Delete previous release
         env:
@@ -123,58 +138,11 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@2bb465e97f322d3cb2a965294d483e0d26a67aa9 # v3.0.1
         with:
           tag_name: "latest-iso"
-          release_name: "Latest ISO Release"
-          body: |
-            Download ISOs:
-            - **gablue-main**: ${{ needs.build-and-upload-isos.outputs.gablue_main_link }}
-            - **gablue-main-dx**: ${{ needs.build-and-upload-isos.outputs.gablue_main_dx_link }}
-            - **gablue-nvidia**: ${{ needs.build-and-upload-isos.outputs.gablue_nvidia_link }}
-            - **gablue-nvidia-open**: ${{ needs.build-and-upload-isos.outputs.gablue_nvidia_open_link }}
+          name: "Latest ISO Release"
+          body_path: body.md
+          files: checksums/*/*.sha256
           draft: false
           prerelease: false
-
-      - name: Upload Checksum Files to Release (gablue-main)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: checksums/gablue-main-checksum/gablue-main-latest-44.iso.sha256
-          asset_name: gablue-main-latest-44.iso.sha256
-          asset_content_type: text/plain
-
-      - name: Upload Checksum Files to Release (gablue-main-dx)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: checksums/gablue-main-dx-checksum/gablue-main-dx-latest-44.iso.sha256
-          asset_name: gablue-main-dx-latest-44.iso.sha256
-          asset_content_type: text/plain
-
-      - name: Upload Checksum Files to Release (gablue-nvidia)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: checksums/gablue-nvidia-checksum/gablue-nvidia-latest-44.iso.sha256
-          asset_name: gablue-nvidia-latest-44.iso.sha256
-          asset_content_type: text/plain
-
-      - name: Upload Checksum Files to Release (gablue-nvidia-open)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: checksums/gablue-nvidia-open-checksum/gablue-nvidia-open-latest-44.iso.sha256
-          asset_name: gablue-nvidia-open-latest-44.iso.sha256
-          asset_content_type: text/plain
