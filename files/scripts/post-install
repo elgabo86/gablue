@@ -19,7 +19,6 @@ chmod +x /usr/bin/citron-install
 chmod +x /usr/bin/eden-install
 chmod +x /usr/bin/gskill
 chmod +x /usr/bin/limitw
-chmod +x /usr/bin/retroplayer
 chmod +x /usr/bin/encode64
 chmod +x /usr/bin/decode64
 chmod +x /usr/bin/qwen-install
@@ -106,6 +105,11 @@ fi
 # =============================================================================
 # INSTALLATION DES BINAIRES EXTERNES
 # =============================================================================
+
+# Installation de RetroPlayer (TUI lecteur de musiques rétro)
+# Téléchargement du binaire depuis la dernière release GitHub
+curl -fsSL https://github.com/elgabo86/retroplayer/releases/latest/download/retroplayer -o /usr/bin/retroplayer
+chmod +x /usr/bin/retroplayer
 
 # Installation de ZXTune (lecteur de musique tracker/chiptune)
 # Exclusion des binaires non nécessaires

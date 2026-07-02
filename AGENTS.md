@@ -533,7 +533,7 @@ Configuration post-installation étendue :
 - Permissions des exécutables (chmod +x)
 - Capacités système (setcap pour gamescope)
 - Compilation modules SELinux personnalisés (.te -> .pp)
-- Binaires externes (zxtune)
+- Binaires externes (retroplayer, zxtune)
 - Branding Gablue (os-release)
 - Configuration système (tuned, bluetooth, pipewire, timers)
 - Désactivation des dépôts
@@ -769,7 +769,8 @@ Scripts personnalisés Gablue :
 - `gablue-bigscreen-swap-session` : Wrapper swap-session Plasma Bigscreen
 - `system-flatpak-setup` : Configuration Flatpak système
 - Scripts gaming : `azahar-install`, `citron-install`, `eden-install`, `esde-install`, `qwen-install`, `shadps4-install`, `xenia-install`
-- Scripts utilitaires : `ytdl`, `dlcover`, `tv`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`, `retroplayer`
+- Scripts utilitaires : `ytdl`, `dlcover`, `tv`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`
+- `retroplayer` : TUI Go pour explorer et écouter des musiques rétro (téléchargé depuis GitHub Releases pendant le build, dépôt séparé)
 - Gestion Wine/Proton : `gwine` (assemblé depuis `src/gwine-launcher/`), `scrap-win`
 - `tvqt` : Interface TV Gablue (PySide6 + mpv, navigation manette, ~170 chaînes)
 
@@ -918,6 +919,7 @@ Commandes ujust disponibles :
 - **Fedora Kinoite** : https://fedoraproject.org/kinoite/
 - **Terra** : https://github.com/terrapkg
 - **Documentation uBlue** : https://docs.universal-blue.org/
+- **RetroPlayer** : https://github.com/elgabo86/retroplayer
 
 ## Mise à jour de ce document
 
