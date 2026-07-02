@@ -1,0 +1,75 @@
+#!/usr/bin/sh
+
+# Script d'initialisation de session native Plasma Bigscreen
+# Ce script est exécuté via autostart uniquement en session bigscreen native
+# (pas lors du swap depuis Plasma, qui est géré par gablue-bigscreen-swap-session)
+
+LOG="$HOME/.cache/plasma-bigscreen/session-init.log"
+mkdir -p "$HOME/.cache/plasma-bigscreen" "$HOME/.config"
+
+log() {
+    echo "$(date '+%F %T') - $*" >> "$LOG"
+}
+
+# =============================================================================
+# DÉTECTION DE LA SESSION BIGSCREEN NATIVE
+# =============================================================================
+# En session bigscreen native, plasma-bigscreen-common-env est sourcé par le
+# script de démarrage de la session AVANT l'exécution de l'autostart.
+# En session Plasma normale (même si un swap aura lieu plus tard), ces
+# variables ne sont PAS encore définies à ce stade.
+# PLASMA_PLATFORM est donc un indicateur fiable de session native à l'autostart.
+
+if [ "${PLASMA_PLATFORM:-}" != "mediacenter" ]; then
+    exit 0
+fi
+
+log "Session native Bigscreen détectée (PLASMA_PLATFORM=$PLASMA_PLATFORM)"
+
+# =============================================================================
+# 1. BLACKLIST DES APPLICATIONS
+# =============================================================================
+
+log "Création du symlink applications-blacklistrc"
+ln -sf /etc/xdg/applications-blacklistrc "$HOME/.config/applications-blacklistrc"
+
+# =============================================================================
+# 2. MIRRORING DES ÉCRANS
+# =============================================================================
+
+# Attendre que KWin soit prêt (kscreen-doctor a besoin de KWin)
+log "Attente de l'initialisation de KWin..."
+for i in $(seq 1 20); do
+    if kscreen-doctor --json > /dev/null 2>&1; then
+        log "KWin prêt après environ $(( i / 2 ))s"
+        break
+    fi
+    sleep 0.5
+done
+
+# Mettre tous les écrans secondaires en miroir sur le principal
+# Bigscreen ne gère pas le multi-écran, le mirroring évite les problèmes
+log "Mirroring des écrans secondaires sur le principal"
+/usr/bin/python3 -c "
+import subprocess, json, sys
+try:
+    raw = subprocess.run(['kscreen-doctor', '--json'], capture_output=True, timeout=10).stdout
+    d = json.loads(raw)
+    outs = [o for o in d['outputs'] if o.get('connected') and o.get('enabled')]
+    outs.sort(key=lambda o: o.get('priority', 99))
+    if len(outs) > 1:
+        primary = outs[0]['name']
+        cmds = [f'output.{primary}.enable']
+        for o in outs[1:]:
+            cmds.append(f'output.{o[\"name\"]}.enable')
+            cmds.append(f'output.{o[\"name\"]}.mirror.{primary}')
+        subprocess.run(['kscreen-doctor'] + cmds, timeout=10)
+        print(f'Écrans mirrorés: {[o[\"name\"] for o in outs[1:]]} -> {primary}')
+    else:
+        print('Un seul écran détecté, pas de mirroring nécessaire')
+except Exception as e:
+    print(f'Erreur mirroring: {e}', file=sys.stderr)
+    sys.exit(1)
+" >> "$LOG" 2>&1
+
+log "Initialisation session bigscreen terminée"

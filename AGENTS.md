@@ -581,6 +581,17 @@ Configuration post-installation étendue :
 - Détection automatique du mode : basée sur `pgrep -f plasma-bigscreen-inputhandler` (plus fiable que la variable d'env `PLASMA_BIGSCREEN_LAUNCH_REASON` qui n'est pas héritée via KLauncher)
 - Fichiers : `files/system/all/usr/bin/gablue-bigscreen-swap-session`, `files/system/all/usr/share/gablue/kwin-maximize-all.js`, `files/system/all/usr/share/gablue/kwin-restore-windows.js`
 
+**Initialisation session native Bigscreen** (toutes variantes) :
+- Autostart KDE (`/etc/xdg/autostart/gablue-bigscreen-session.desktop`) qui exécute `gablue-bigscreen-session-init` au login
+- Le script détecte la session bigscreen native via `loginctl show-session $XDG_SESSION_ID -p DesktopName` (filtre `bigscreen`)
+- En session Plasma normale (swap depuis Plasma), le script s'arrête immédiatement sans rien faire
+- Actions spécifiques à la session native :
+  - Création du symlink blacklist (`~/.config/applications-blacklistrc` -> `/etc/xdg/applications-blacklistrc`) pour cacher les entrées inutiles dans le menu bigscreen
+  - Attente de l'initialisation KWin (boucle `kscreen-doctor --json`, max 10s)
+  - Mirroring de tous les écrans secondaires sur le principal via `kscreen-doctor output.X.mirror.Y` (bigscreen ne gère pas le multi-écran)
+- Note : les actions spécifiques au swap (minimiser/restaurer les fenêtres, sauvegarder/restaurer KWin, gérer l'inputhandler) restent uniquement dans `gablue-bigscreen-swap-session`
+- Fichiers : `files/system/all/usr/libexec/gablue-bigscreen-session-init`, `files/system/all/etc/xdg/autostart/gablue-bigscreen-session.desktop`
+
 ### 7. systemd / systemd-test
 
 Activation/désactivation des services systemd :
@@ -767,6 +778,7 @@ podman images test-build
 Scripts personnalisés Gablue :
 - `gablue-update` : Mise à jour du système (interface PySide6)
 - `gablue-bigscreen-swap-session` : Wrapper swap-session Plasma Bigscreen
+- `gablue-bigscreen-session-init` : Initialisation session native Bigscreen (autostart, blacklist + mirroring)
 - `system-flatpak-setup` : Configuration Flatpak système
 - Scripts gaming : `azahar-install`, `citron-install`, `eden-install`, `esde-install`, `qwen-install`, `shadps4-install`, `xenia-install`
 - Scripts utilitaires : `ytdl`, `dlcover`, `tv`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`

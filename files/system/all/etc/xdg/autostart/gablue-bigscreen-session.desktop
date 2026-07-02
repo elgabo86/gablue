@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Gablue Bigscreen Session Init
+Comment=Initialise la session native Plasma Bigscreen (blacklist + mirroring écrans)
+NoDisplay=true
+Exec=/usr/libexec/gablue-bigscreen-session-init
+Terminal=false
+OnlyShowIn=KDE;
