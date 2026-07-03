@@ -486,7 +486,7 @@ Exclusions importantes :
 
 Installation extensive de paquets organisée par catégories :
 - **CLI** : fswatch, btop, fastfetch, git, atuin, tldr, amdsmi, etc.
-- **Réseau** : tailscale, rar
+- **Réseau** : tailscale, iwd, rar
 - **Multimédia** : yt-dlp
 - **Virtualisation (DX uniquement)** : docker-ce, libvirt, qemu, virt-manager
 - **Terminal fun** : asciiquarium, cmatrix
@@ -597,7 +597,7 @@ Configuration post-installation étendue :
 Activation/désactivation des services systemd :
 - **Activés** : system-flatpak-setup, rpm-ostreed-automatic, flatpak-update, cec-poweroff-tv, cec-active-source
 - **Désactivés** : scx_loader, tailscaled, displaylink
-- **Masqués** : systemd-remount-fs
+- **Masqués** : systemd-remount-fs, iwd
 - **Conditionnels** : libvirt (DX), usr-share-sddm-themes.mount (Kinoite)
 
 **systemd-test** ajoute :
