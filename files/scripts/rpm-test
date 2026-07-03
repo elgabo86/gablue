@@ -161,7 +161,6 @@ if [ "${DX_MODE:-false}" == "true" ]; then
         qemu-img \
         qemu-kvm-core \
         qemu-system-ppc-core \
-        qemu-system-ppc64-core \
         qemu-system-m68k-core \
         qemu-system-arm-core \
         qemu-system-aarch64-core \
