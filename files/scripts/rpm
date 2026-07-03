@@ -152,27 +152,24 @@ if [ "${DX_MODE:-false}" == "true" ]; then
 
     # Libvirt et QEMU pour la virtualisation complète
     # Installation complète pour machines virtuelles et développement
-    dnf5 -y install \
+    dnf5 -y --setopt=install_weak_deps=False install \
         libvirt \
         libvirt-nss \
         edk2-ovmf \
-        qemu-char-spice \
-        qemu-device-display-virtio-gpu \
-        qemu-device-display-virtio-vga \
-        qemu-device-usb-redirect \
         qemu-img \
-        qemu-system-x86-core \
-        qemu-system-ppc \
-        qemu-system-ppc64 \
-        qemu-system-m68k \
-        qemu \
+        qemu-kvm-core \
+        qemu-system-ppc-core \
+        qemu-system-ppc64-core \
+        qemu-system-m68k-core \
+        qemu-system-arm-core \
+        qemu-system-aarch64-core \
         virt-manager \
         guestfs-tools \
         ublue-os-libvirt-workarounds
 
     # ROCm pour GPU compute (AMD uniquement, pas de sens sur NVIDIA)
     if [ "$VARIANT" == "main" ]; then
-        dnf5 -y install rocm-hip rocm-opencl rocm-clinfo rocm-smi
+        dnf5 -y --setopt=install_weak_deps=False install rocm-hip rocm-opencl rocm-clinfo
     fi
 fi
 

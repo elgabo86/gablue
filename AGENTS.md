@@ -489,7 +489,7 @@ Installation extensive de paquets organisée par catégories :
 - **CLI** : fswatch, btop, fastfetch, git, atuin, tldr, amdsmi, etc.
 - **Réseau** : tailscale, iwd, rar
 - **Multimédia** : yt-dlp
-- **Virtualisation (DX uniquement)** : docker-ce, libvirt, qemu, virt-manager, guestfs-tools, qemu-system-ppc/ppc64/m68k (émulation Mac rétro)
+- **Virtualisation (DX uniquement)** : docker-ce, libvirt, virt-manager, guestfs-tools, qemu-kvm-core, qemu-system-ppc/ppc64/m68k/arm/aarch64-core (émulation rétro)
 - **Terminal fun** : asciiquarium, cmatrix
 - **Gaming** : sunshine, mangohud, gamescope
 - **BTRFS** : snapper, btrfs-assistant (snapshots et maintenance, non activés par défaut)
