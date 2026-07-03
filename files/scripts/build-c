@@ -50,7 +50,8 @@ if [ -d /usr/src/composefs-fix ]; then
 fi
 
 # Nettoyage des dependances de compilation (inutiles dans l'image finale)
-dnf5 -y remove gcc dbus-devel || true
+# --no-autoremove evite la suppression cascade (ex: ubblue-brew qui depend de gcc)
+dnf5 -y remove --no-autoremove gcc dbus-devel || true
 
 # Nettoyage du repertoire sources si vide
 rmdir /src 2>/dev/null || true
