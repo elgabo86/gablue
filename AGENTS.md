@@ -685,6 +685,50 @@ Build des ISOs d'installation (tous les 5 jours) :
 - `timeout-minutes: 120` sur le build, `10` sur la release
 - Les outputs ne passent plus par la matrix (buggué) mais par le download/merge des artifacts
 
+### build-gablue-live-isos.yml
+
+Build des **ISOs live** avec environnement de bureau Plasma complet (tous les 7 jours) :
+- Permet d'essayer Gablue avant installation (LiveCD complet, pas juste Anaconda)
+- Utilise **Titanoboa** (`Zeglius/titanoboa@revamp-pr`), un installateur bootc qui génère un squashfs live
+- 4 variantes : gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open
+- **Processus en 2 étapes** :
+  1. Build d'une image container payload via `installer/Containerfile` (basée sur l'image Gablue, flatpaks pré-cachés, swap kernel OGC→vanilla pour Secure Boot)
+  2. Génération de l'ISO via Titanoboa (extraction rootfs, squashfs, initramfs dracut-live, structure EFI)
+- Signature Cosign + attestation de provenance sur chaque ISO
+- Upload vers BuzzHeavier, release GitHub `latest-live-iso`
+- `timeout-minutes: 180` (le live est plus long à construire)
+
+#### Dossier `installer/`
+
+```
+installer/
+├── Containerfile                    # Build payload (FROM image Gablue, bind-mount build.sh)
+├── build.sh                         # Assemblage : flatpaks, swap kernel, dracut-live, livesys, Anaconda
+├── iso.yaml                         # Config GRUB (label GABLUE_LIVE, timeout 3s)
+├── flatpaks                         # Firefox, VLC, Audacious (pré-cachés pour install offline)
+├── titanoboa_hook_preinitramfs.sh   # Swap kernel OGC → vanilla Fedora (Secure Boot)
+├── titanoboa_hook_postrootfs.sh     # Anaconda + kickstart bootc + live tweaks
+├── lorax_templates/                 # Templates Anaconda (disable-user-spoke, set-default-user)
+└── system_files/shared/             # Config Anaconda, autostart, post-scripts kickstart
+```
+
+#### Fonctionnement du live
+
+1. **Swap kernel** : Le kernel OGC (non signé) est remplacé par le kernel vanilla Fedora (signé) pour Secure Boot
+2. **Flatpaks** : Firefox, VLC, Audacious pré-installés dans le live et copiés sur le système cible
+3. **Session live** : Bureau Plasma complet via `livesys-scripts`, lancement automatique d'Anaconda
+4. **Installation** : Kickstart Anaconda avec `ostreecontainer` (bootc), BTRFS par défaut, compression zstd:1
+5. **Secure Boot** : Enrollment automatique de la clé MOK Gablue avec mot de passe `gablue`
+6. **Post-install** : `bootc switch --mutate-in-place` pour activer la signature
+7. **Services désactivés dans le live** : flatpak-update, cec-poweroff, dmemcg-booster, tailscaled, brew, greenboot...
+8. **NVIDIA live** : Fix `GSK_RENDERER=gl`, réinstallation mesa-vulkan-drivers+nvidia-gpu-firmware (kernel vanilla = pas de drivers proprio, on utilise nouveau)
+
+#### Cohabitation avec les ISOs standards
+
+Les deux workflows coexistent sans conflit :
+- `build-gablue-isos.yml` : ISOs standards (tag `latest-iso`) — Anaconda direct, pas de live
+- `build-gablue-live-isos.yml` : ISOs live (tag `latest-live-iso`) — bureau Plasma complet
+
 ### clean-gablue-images.yml
 
 Nettoyage automatique (tous les dimanches) :

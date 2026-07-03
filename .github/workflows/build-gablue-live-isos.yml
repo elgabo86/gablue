@@ -1,0 +1,201 @@
+name: build-gablue-live-isos
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  packages: write
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 */7 * *"  # Tous les 7 jours à 06:00 UTC
+
+env:
+  REPO_OWNER: ${{ github.repository_owner }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}-iso
+  cancel-in-progress: true
+
+jobs:
+  build-live-iso:
+    name: Build Live ISO
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        image_name:
+          - gablue-main
+          - gablue-main-dx
+          - gablue-nvidia
+          - gablue-nvidia-open
+
+    steps:
+      - name: Afficher l'espace disque initial
+        run: sudo df -h
+
+      - name: Vérifier si /mnt est monté
+        id: check_mnt
+        run: |
+          if sudo mountpoint /mnt; then
+            echo "mnt_is_there=1" >> $GITHUB_OUTPUT
+          else
+            echo "mnt_is_there=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Libérer l'espace disque (Ubuntu)
+        if: ${{ steps.check_mnt.outputs.mnt_is_there == '1' }}
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
+
+      - name: Mount BTRFS loopback pour stockage container
+        if: ${{ steps.check_mnt.outputs.mnt_is_there == '1' }}
+        run: |
+          sudo truncate -s 70G /mnt/podman-storage.img
+          sudo mkfs.btrfs -f /mnt/podman-storage.img
+          sudo podman system reset --force
+          sudo systemctl stop podman.service
+          sudo mount -o compress-force=zstd:2 /mnt/podman-storage.img /var/lib/containers/storage
+          sudo systemctl start podman.service
+
+      - name: Checkout du dépôt
+        uses: actions/checkout@v7
+
+      - name: Obtenir le nom en minuscules du propriétaire
+        id: repo_owner_case
+        run: echo "lowercase=${REPO_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Déterminer le tag de l'image
+        id: generate-tag
+        shell: bash
+        run: |
+          TAG="latest"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Build de l'image container payload
+        run: |
+          BASE_IMAGE="ghcr.io/${{ steps.repo_owner_case.outputs.lowercase }}/${{ matrix.image_name }}:${{ steps.generate-tag.outputs.tag }}"
+          INSTALL_IMAGE_PAYLOAD="ghcr.io/${{ steps.repo_owner_case.outputs.lowercase }}/${{ matrix.image_name }}:${{ steps.generate-tag.outputs.tag }}"
+          sudo podman build \
+            --cap-add sys_admin \
+            --security-opt label=disable \
+            --build-arg BASE_IMAGE="$BASE_IMAGE" \
+            --build-arg INSTALL_IMAGE_PAYLOAD="$INSTALL_IMAGE_PAYLOAD" \
+            -t localhost/payload:latest installer/
+
+      - name: Générer l'ISO Live avec Titanoboa
+        uses: Zeglius/titanoboa@revamp-pr
+        id: build
+        with:
+          image-ref: localhost/payload:latest
+          iso-dest: ${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso
+
+      - name: Préparer le répertoire d'upload
+        id: upload-directory
+        shell: bash
+        run: |
+          ISO_UPLOAD_DIR=${{ github.workspace }}/upload
+          ISO_PATH=${{ steps.build.outputs.iso-dest }}
+          ISO_NAME=$(basename ${ISO_PATH})
+          mkdir -p ${ISO_UPLOAD_DIR}
+          mv ${ISO_PATH} ${ISO_UPLOAD_DIR}
+          (cd ${ISO_UPLOAD_DIR} && sha256sum ${ISO_NAME} | tee ${ISO_NAME}-CHECKSUM)
+          echo "iso-upload-dir=${ISO_UPLOAD_DIR}" >> $GITHUB_OUTPUT
+
+      - name: Signature Cosign de l'ISO
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: "v2.6.1"
+      - run: |
+          cosign sign-blob \
+            --yes \
+            --bundle "${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso-cosign.bundle" \
+            "${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso"
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+
+      - name: Attestation de provenance du build
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso
+
+      - name: Upload de l'ISO vers BuzzHeavier
+        id: upload
+        shell: bash
+        run: |
+          ISO_PATH="${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso"
+          ISO_NAME="${{ matrix.image_name }}"
+          RESPONSE=$(curl -s -T "$ISO_PATH" "https://w.buzzheavier.com/$(basename "$ISO_PATH")")
+          ID=$(echo "$RESPONSE" | jq -r '.data.id')
+          LINK="https://buzzheavier.com/$ID"
+          echo "$LINK" > "${ISO_NAME}-live-link.txt"
+
+      - name: Upload artifact lien
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.image_name }}-live-link
+          path: ${{ matrix.image_name }}-live-link.txt
+
+      - name: Upload artifact checksum
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.image_name }}-live-checksum
+          path: ${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso-CHECKSUM
+
+  create-release:
+    needs: build-live-iso
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Télécharger les artifacts liens
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "*-live-link"
+          path: links
+
+      - name: Télécharger les artifacts checksums
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "*-live-checksum"
+          path: checksums
+
+      - name: Construire le corps de la release
+        run: |
+          {
+            echo "## Gablue Live ISO"
+            echo ""
+            echo "ISOs live avec environnement de bureau Plasma complet."
+            echo "Essayez Gablue avant de l'installer !"
+            echo ""
+            echo "### Téléchargements"
+            for link_file in links/*/*.txt; do
+              ISO_NAME=$(basename "$(dirname "$link_file")" | sed 's/-live-link$//')
+              LINK=$(cat "$link_file")
+              echo "- **${ISO_NAME}** : ${LINK}"
+            done
+            echo ""
+            echo "> **Note** : Vérifiez le checksum SHA256 avant d'installer."
+          } > body.md
+
+      - name: Supprimer l'ancienne release live
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELEASE_ID=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/latest-live-iso" | jq -r '.id')
+          if [ "$RELEASE_ID" != "null" ]; then
+            curl -s -X DELETE -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID"
+          fi
+
+      - name: Créer la GitHub Release
+        uses: softprops/action-gh-release@v3.0.1
+        with:
+          tag_name: "latest-live-iso"
+          name: "Latest Live ISO Release"
+          body_path: body.md
+          files: checksums/*/*-CHECKSUM
+          draft: false
+          prerelease: false

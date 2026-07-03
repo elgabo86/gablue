@@ -1,0 +1,10 @@
+label: "GABLUE_LIVE"
+grub2:
+  timeout: 3
+  entries:
+    - name: "Démarrer l'installateur Gablue"
+      linux: "/images/pxeboot/vmlinuz quiet rhgb root=live:CDLABEL=GABLUE_LIVE enforcing=0 rd.live.image"
+      initrd: "/images/pxeboot/initrd.img"
+    - name: "Démarrer l'installateur Gablue (mode graphique de base)"
+      linux: "/images/pxeboot/vmlinuz quiet rhgb root=live:CDLABEL=GABLUE_LIVE enforcing=0 rd.live.image nomodeset"
+      initrd: "/images/pxeboot/initrd.img"

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Bienvenue dans Gablue Live
+Exec=/usr/bin/on_gui_login.sh
+OnlyShowIn=KDE;
+X-KDE-autostart-phase=1
+NoDisplay=true
