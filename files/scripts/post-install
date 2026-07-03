@@ -90,13 +90,14 @@ fi
 
 # Injection du LD_PRELOAD dans le .desktop Dolphin
 # Le hook gablue-composefs-fix.so est compile dans build-c (necessite gcc)
-if [ -f /usr/lib64/gablue-composefs-fix.so ]; then
-    sed -i 's|^Exec=dolphin %u|Exec=env LD_PRELOAD=/usr/lib64/gablue-composefs-fix.so dolphin %u|' \
-        /usr/share/applications/org.kde.dolphin.desktop
-    echo "Composefs fix active dans Dolphin"
-else
-    echo "ATTENTION: gablue-composefs-fix.so absent, correction composefs non appliquee"
+SO_PATH="/usr/lib64/gablue-composefs-fix.so"
+if [ ! -f "$SO_PATH" ]; then
+    echo "ERREUR FATALE : $SO_PATH absent, build corrompu" >&2
+    exit 1
 fi
+sed -i 's|^Exec=dolphin %u|Exec=env LD_PRELOAD=/usr/lib64/gablue-composefs-fix.so dolphin %u|' \
+    /usr/share/applications/org.kde.dolphin.desktop
+echo "Composefs fix active dans Dolphin"
     done && unset -v te_file module_name mod_file pp_file
 fi
 

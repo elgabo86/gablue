@@ -49,6 +49,11 @@ dnf5 -y remove gcc dbus-devel || true
 if [ -d /usr/src/composefs-fix ]; then
     make -C /usr/src/composefs-fix install
     rm -rf /usr/src/composefs-fix
+    # Verrou : echec du build si la .so est absente
+    if [ ! -f /usr/lib64/gablue-composefs-fix.so ]; then
+        echo "ERREUR FATALE : echec de compilation de gablue-composefs-fix.so" >&2
+        exit 1
+    fi
 fi
 
 # Nettoyage du repertoire sources si vide
