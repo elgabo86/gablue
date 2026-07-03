@@ -30,6 +30,7 @@ jobs:
           - gablue-main-dx
           - gablue-nvidia
           - gablue-nvidia-open
+          - gablue-nvidia-open-dx
 
     steps:
       - name: Afficher l'espace disque initial

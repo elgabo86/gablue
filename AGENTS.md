@@ -681,7 +681,7 @@ Workflow réutilisable pour le build d'une image :
 ### build-gablue-isos.yml
 
 Build des ISOs d'installation (tous les 5 jours) :
-- Matrix de build pour chaque variante (gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open)
+- Matrix de build pour chaque variante (gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-dx)
 - Upload vers BuzzHeavier (fichier `.iso` + checksum `.sha256`)
 - Chaque job matrix publie son lien en artifact (`-link`, `-checksum`)
 - Job `create-release` collecte tous les artifacts et génère une release via `softprops/action-gh-release`
@@ -693,7 +693,7 @@ Build des ISOs d'installation (tous les 5 jours) :
 Build des **ISOs live** avec environnement de bureau Plasma complet (tous les 7 jours) :
 - Permet d'essayer Gablue avant installation (LiveCD complet, pas juste Anaconda)
 - Utilise **Titanoboa** (`Zeglius/titanoboa@revamp-pr`), un installateur bootc qui génère un squashfs live
-- 4 variantes : gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open
+- 5 variantes : gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-dx
 - **Processus en 2 étapes** :
   1. Build d'une image container payload via `installer/Containerfile` (basée sur l'image Gablue, flatpaks pré-cachés, swap kernel OGC→vanilla pour Secure Boot)
   2. Génération de l'ISO via Titanoboa (extraction rootfs, squashfs, initramfs dracut-live, structure EFI)
