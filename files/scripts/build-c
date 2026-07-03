@@ -44,5 +44,12 @@ fi
 # Nettoyage des dependances de compilation (inutiles dans l'image finale)
 dnf5 -y remove gcc dbus-devel || true
 
+# Compilation du hook composefs-fix (correction espace libre Dolphin)
+# Necessite gcc, donc compile ici avant de le supprimer
+if [ -d /usr/src/composefs-fix ]; then
+    make -C /usr/src/composefs-fix install
+    rm -rf /usr/src/composefs-fix
+fi
+
 # Nettoyage du repertoire sources si vide
 rmdir /src 2>/dev/null || true

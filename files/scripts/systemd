@@ -24,12 +24,10 @@ EOF
 systemctl mask systemd-remount-fs.service
 systemctl mask iwd.service
 
-# Groupes utilisateur (libvirt pour tous, docker/incus en DX)
-systemctl enable -f gablue-dx-groups.service
-
 # Services supplémentaires pour le mode DX
 if [ "${DX_MODE:-false}" == "true" ]; then
     systemctl enable -f ublue-os-libvirt-workarounds.service
+    systemctl enable -f gablue-dx-groups.service
     systemctl enable -f incus-workaround.service
 fi
 
