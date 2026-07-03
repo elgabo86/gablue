@@ -183,8 +183,7 @@ dnf5 -y install \
     asciiquarium \
     figlet \
     toilet \
-    cmatrix \
-    cool-retro-term
+    cmatrix
 
 # =============================================================================
 # APPLICATIONS GRAPHIQUES
@@ -237,7 +236,6 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
         papirus-icon-theme-dark \
         langpacks-fr \
         kdenetwork-filesharing \
-        kde-runtime-docs \
         kdeplasma-addons \
         plasma-oxygen \
         plasma-bigscreen \
@@ -289,21 +287,11 @@ dnf5 -y install \
 # DÉPENDANCES DE DÉVELOPPEMENT
 # =============================================================================
 
-# Compilateurs et outils de développement
+# Outils de développement (runtime uniquement, compilo via build-c puis supprimé)
 dnf5 -y install \
-    gcc \
-    gcc-c++ \
-    libffi-devel \
-    readline-devel \
-    bzip2-devel \
-    openssl-devel \
-    sqlite-devel \
-    xz-devel \
-    tk-devel \
     patch \
     bzip2 \
     sqlite \
-    libuuid-devel \
     gdbm-libs \
     libnsl2 \
     uv
@@ -342,10 +330,8 @@ fi
 # TODO: a supprimer quand le fix kernel/composefs sera disponible
 dnf5 -y install ublue-os-selinux-workarounds
 
-# Correction temporaire pour tesseract (nécessaire pour certaines fonctionnalités)
-dnf5 -y install \
-    tesseract-devel \
-    tesseract-langpack-fra
+# Pack langue français pour OCR (skanpage)
+dnf5 -y install tesseract-langpack-fra
 
 # =============================================================================
 # NETTOYAGE DES PAQUETS SUPERFLUS

@@ -9,8 +9,8 @@ set -eoux pipefail
 # COMPILATION DES SOURCES C
 # =============================================================================
 
-# Dépendances de compilation
-dnf5 -y install dbus-devel
+# Dépendances de compilation (supprimées après build)
+dnf5 -y install gcc dbus-devel
 
 # Compilation et installation de gamepadshortcuts
 # Remplace le script Python gamepadshortcuts.py (~28Mo RAM) par un binaire C natif (~500Ko RAM)
@@ -41,8 +41,8 @@ else
     echo "ATTENTION: Sources C non trouvees dans /src/gablue-isomount"
 fi
 
-# Nettoyage du paquet -devel (inutile dans l'image finale, seul libdbus-1.so est requis)
-dnf5 -y remove dbus-devel || true
+# Nettoyage des dependances de compilation (inutiles dans l'image finale)
+dnf5 -y remove gcc dbus-devel || true
 
 # Nettoyage du repertoire sources si vide
 rmdir /src 2>/dev/null || true

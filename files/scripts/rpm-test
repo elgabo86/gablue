@@ -152,21 +152,25 @@ if [ "${DX_MODE:-false}" == "true" ]; then
 
     # Libvirt et QEMU pour la virtualisation complète
     # Installation complète pour machines virtuelles et développement
-    dnf5 -y install \
+    dnf5 -y --setopt=install_weak_deps=False install \
         libvirt \
         libvirt-nss \
         edk2-ovmf \
-        qemu-char-spice \
-        qemu-device-display-virtio-gpu \
-        qemu-device-display-virtio-vga \
-        qemu-device-usb-redirect \
         qemu-img \
-        qemu-system-x86-core \
-        qemu-user-binfmt \
-        qemu-user-static \
-        qemu \
+        qemu-kvm-core \
+        qemu-system-ppc-core \
+        qemu-system-ppc64-core \
+        qemu-system-m68k-core \
+        qemu-system-arm-core \
+        qemu-system-aarch64-core \
         virt-manager \
+        guestfs-tools \
         ublue-os-libvirt-workarounds
+
+    # ROCm pour GPU compute (AMD uniquement, pas de sens sur NVIDIA)
+    if [ "$VARIANT" == "main" ]; then
+        dnf5 -y --setopt=install_weak_deps=False install rocm-hip rocm-opencl rocm-clinfo
+    fi
 fi
 
 # =============================================================================
@@ -179,8 +183,7 @@ dnf5 -y install \
     asciiquarium \
     figlet \
     toilet \
-    cmatrix \
-    cool-retro-term
+    cmatrix
 
 # =============================================================================
 # APPLICATIONS GRAPHIQUES
@@ -233,7 +236,6 @@ if [ "$SOURCE_IMAGE" == "kinoite" ]; then
         papirus-icon-theme-dark \
         langpacks-fr \
         kdenetwork-filesharing \
-        kde-runtime-docs \
         kdeplasma-addons \
         plasma-oxygen \
         plasma-bigscreen \
@@ -285,21 +287,11 @@ dnf5 -y install \
 # DÉPENDANCES DE DÉVELOPPEMENT
 # =============================================================================
 
-# Compilateurs et outils de développement
+# Outils de développement (runtime uniquement, compilo via build-c puis supprimé)
 dnf5 -y install \
-    gcc \
-    gcc-c++ \
-    libffi-devel \
-    readline-devel \
-    bzip2-devel \
-    openssl-devel \
-    sqlite-devel \
-    xz-devel \
-    tk-devel \
     patch \
     bzip2 \
     sqlite \
-    libuuid-devel \
     gdbm-libs \
     libnsl2 \
     uv
@@ -338,10 +330,8 @@ fi
 # TODO: a supprimer quand le fix kernel/composefs sera disponible
 dnf5 -y install ublue-os-selinux-workarounds
 
-# Correction temporaire pour tesseract (nécessaire pour certaines fonctionnalités)
-dnf5 -y install \
-    tesseract-devel \
-    tesseract-langpack-fra
+# Pack langue français pour OCR (skanpage)
+dnf5 -y install tesseract-langpack-fra
 
 # =============================================================================
 # NETTOYAGE DES PAQUETS SUPERFLUS
