@@ -712,7 +712,7 @@ installer/
 ├── titanoboa_hook_preinitramfs.sh   # Swap kernel OGC → vanilla Fedora (Secure Boot)
 ├── titanoboa_hook_postrootfs.sh     # Anaconda + kickstart bootc + live tweaks
 ├── lorax_templates/                 # Templates Anaconda (disable-user-spoke, set-default-user)
-└── system_files/shared/             # Config Anaconda, autostart, post-scripts kickstart
+└── system_files/shared/             # Config Anaconda, autostart, post-scripts, localisation live (fr_CH)
 ```
 
 #### Fonctionnement du live
@@ -725,6 +725,7 @@ installer/
 6. **Post-install** : `bootc switch --mutate-in-place` pour activer la signature
 7. **Services désactivés dans le live** : flatpak-update, cec-poweroff, dmemcg-booster, tailscaled, brew, greenboot...
 8. **NVIDIA live** : Fix `GSK_RENDERER=gl`, réinstallation mesa-vulkan-drivers+nvidia-gpu-firmware (kernel vanilla = pas de drivers proprio, on utilise nouveau)
+9. **Localisation live** : La session live est configurée en français suisse (`fr_CH.UTF-8`) avec clavier QWERTZ suisse romand (`ch(fr)`). Les fichiers sont dans `system_files/shared/etc/` : `locale.conf` (LANG + LANGUAGE), `vconsole.conf` (KEYMAP=ch-fr), `X11/xorg.conf.d/00-keyboard.conf` (layout XKB). Ces fichiers ne sont copiés que dans le payload live (n'affectent pas l'image installée). Les langpacks (`langpacks-fr`, `glibc-all-langpacks`) proviennent de l'image Gablue de base.
 
 #### Cohabitation avec les ISOs standards
 
