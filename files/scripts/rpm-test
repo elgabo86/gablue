@@ -285,10 +285,10 @@ dnf5 -y install \
     oversteer-udev
 
 # =============================================================================
-# DÉPENDANCES DE DÉVELOPPEMENT
+# OUTILS RUNTIME
 # =============================================================================
 
-# Outils de développement (runtime uniquement, compilo via build-c puis supprimé)
+# Outils système légers (pas de compilateur, installable via brew si besoin)
 dnf5 -y install \
     patch \
     bzip2 \
@@ -298,19 +298,15 @@ dnf5 -y install \
     uv
 
 # =============================================================================
-# MODULES PYTHON ET OUTILS ASSOCIÉS
+# MODULES PYTHON (SCRIPTS ET APPLICATIONS GABLUE)
 # =============================================================================
 
-# Modules Python pour gaming et développement
+# Modules requis par les scripts et applications Gablue
+# (evdev/uinput = manette, pyside6 = interfaces graphiques tvqt/gablue-update/menus)
 dnf5 -y install \
     python3-evdev \
     python3-uinput \
-    python3-tqdm \
-    python3-beautifulsoup4 \
-    python3-pyside6 \
-    python3-dbus \
-    python3-setuptools \
-    python3-pip
+    python3-pyside6
 
 # =============================================================================
 # PAQUETS SPÉCIFIQUES AUX VARIANTES

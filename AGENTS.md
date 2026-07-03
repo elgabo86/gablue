@@ -495,7 +495,8 @@ Installation extensive de paquets organisée par catégories :
 - **BTRFS** : snapper, btrfs-assistant (snapshots et maintenance, non activés par défaut)
 - **KDE** : okular, gwenview, kcalc, yakuake (Kinoite uniquement)
 - **Polices** : nerd-fonts
-- **Développement** : gcc, python3-pip
+- **Runtime** : patch, bzip2, sqlite, uv
+- **Python (scripts Gablue)** : python3-evdev, python3-uinput, python3-pyside6
 - **SELinux** : checkpolicy, selinux-policy-devel
 - **Libs 32-bit Wine/Proton complètes** : fontconfig, freetype, X11 (composite, cursor, damage, fix, i, inerama, randr, render, tst, v), Wayland (epoxy, decor, cursor, egl), core (gnutls, unwind, cups, openldap), audio (pulseaudio, pipewire upgrade + libs, FAudio, alsa, openal, ogg, vorbis, flac, sndfile), vulkan-loader (terra-mesa), vidéo (libva, libvdpau)
 
