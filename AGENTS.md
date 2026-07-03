@@ -22,9 +22,10 @@ Le projet construit 6 variantes distinctes :
 | `gablue-main` | Image standard sans NVIDIA | OGC | - | `[main]`, `[all]` |
 | `gablue-nvidia` | Pilotes NVIDIA closed-source | OGC | nvidia-lts | `[nvidia]`, `[all]` |
 | `gablue-nvidia-open` | Pilotes NVIDIA open-source | OGC | nvidia-open | `[nvidia]`, `[all]` |
-| `gablue-main-dx` | Mode développement (DX) avec virtualisation | OGC | - | `[dx]`, `[all]` |
+| `gablue-main-dx` | Mode développement (DX) avec virtualisation + ROCm | OGC | - | `[dx]`, `[all]` |
 | `gablue-main-test` | Image de test avec OpenGamepadUI (fc44) | OGC | - | `[test]`, `[all]` |
 | `gablue-nvidia-open-test` | Test NVIDIA Open avec OpenGamepadUI (fc44) | OGC | nvidia-open | `[test]`, `[nvidia]`, `[all]` |
+| `gablue-nvidia-open-dx` | Mode DX NVIDIA Open (virtualisation + GPU NVIDIA) | OGC | nvidia-open | `[dx]`, `[nvidia]`, `[all]` |
 
 ### Différences entre variantes
 
@@ -488,7 +489,7 @@ Installation extensive de paquets organisée par catégories :
 - **CLI** : fswatch, btop, fastfetch, git, atuin, tldr, amdsmi, etc.
 - **Réseau** : tailscale, iwd, rar
 - **Multimédia** : yt-dlp
-- **Virtualisation (DX uniquement)** : docker-ce, libvirt, qemu, virt-manager
+- **Virtualisation (DX uniquement)** : docker-ce, libvirt, qemu, virt-manager, guestfs-tools, qemu-system-ppc/ppc64/m68k (émulation Mac rétro)
 - **Terminal fun** : asciiquarium, cmatrix
 - **Gaming** : sunshine, mangohud, gamescope
 - **BTRFS** : snapper, btrfs-assistant (snapshots et maintenance, non activés par défaut)
@@ -598,7 +599,7 @@ Activation/désactivation des services systemd :
 - **Activés** : system-flatpak-setup, rpm-ostreed-automatic, flatpak-update, cec-poweroff-tv, cec-active-source
 - **Désactivés** : scx_loader, tailscaled, displaylink
 - **Masqués** : systemd-remount-fs, iwd
-- **Conditionnels** : libvirt (DX), usr-share-sddm-themes.mount (Kinoite)
+- **Conditionnels (DX)** : ublue-os-libvirt-workarounds, gablue-dx-groups, incus-workaround
 
 **systemd-test** ajoute :
 - Services OpenGamepadUI désactivés : inputplumber, powerstation
@@ -644,6 +645,7 @@ Workflow principal déclenché par :
 - `build-nvidia` : Build gablue-nvidia (Containerfile-gablue, nvidia_flavor=nvidia-lts)
 - `build-nvidia-open` : Build gablue-nvidia-open (Containerfile-gablue, nvidia_flavor=nvidia-open)
 - `build-dx` : Build gablue-main-dx (Containerfile-gablue, nvidia_flavor non défini, DX_MODE=true)
+- `build-nvidia-open-dx` : Build gablue-nvidia-open-dx (Containerfile-gablue, nvidia_flavor=nvidia-open, DX_MODE=true)
 - `build-test` : Build gablue-main-test (Containerfile-gablue-test)
 - `build-nvidia-open-test` : Build gablue-nvidia-open-test (Containerfile-gablue-nvidia-open-test)
 
@@ -907,7 +909,7 @@ Commandes ujust disponibles :
 - **Réseau** : `tailscale-up`, `ssh-on/off`, `toggle-wol`
 - **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`
 - **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`
-- **Virtualisation** : `docker-enable/disable`, `dx-group`
+- **Virtualisation** : `docker-enable/disable`, `dx-group`, `setup-kvmfr`
 - **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`
 - **Rebase** : `gablue-rebase-*` pour changer de variante
 

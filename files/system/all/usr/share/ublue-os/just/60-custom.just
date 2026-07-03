@@ -544,10 +544,6 @@ brew-reset:
     echo "ALL DONE!!!"
     echo "Restart computer to reuse brew"
 
-
-
-
-
 # Install/Reinstall custom Archlinux
 distrobox-archgab:
     #!/usr/bin/bash
@@ -605,7 +601,6 @@ foreground-booster-disable:
     systemctl --user stop plasma-foreground-booster.service 2>/dev/null
     echo "Foreground booster disabled."
 
-
 # Update gablue and flatpaks
 gablue-update:
     #!/usr/bin/bash
@@ -622,6 +617,10 @@ gablue-rebase-nvidia:
 # Rebase Gablue to nvidia-open variant
 gablue-rebase-nvidia-open:
     rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia-open:latest
+
+# Rebase Gablue to nvidia-open dx
+gablue-rebase-nvidia-open-dx:
+    rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia-open-dx:latest
 
 # Rebase Gablue to main dx
 gablue-rebase-main-dx:
@@ -862,6 +861,38 @@ configure-beesd ACTION="":
         sudo systemctl daemon-reload
         sudo systemctl enable --now "beesd@${UUID}.timer"
     done
+
+# Setup kvmfr module for Looking Glass (GPU passthrough, 2 GPUs requis)
+setup-kvmfr:
+    #!/usr/bin/bash
+    source /usr/lib/ujust/ujust.sh
+    echo "Ce module (Looking Glass/kvmfr) est expérimental !"
+    echo "Nécessite 2 GPUs (ou iGPU + dGPU)."
+    echo ""
+    # Modprobe config (128 Mo par défaut, suffisant jusqu'à 4K SDR)
+    if [ ! -f /etc/modprobe.d/kvmfr.conf ]; then
+        echo 'options kvmfr static_size=128' | sudo tee /etc/modprobe.d/kvmfr.conf > /dev/null
+        echo "Configuration modprobe créée (/etc/modprobe.d/kvmfr.conf)"
+    else
+        echo "Configuration modprobe existante, inchangée."
+    fi
+    # Udev rule
+    if [ ! -f /etc/udev/rules.d/99-kvmfr.rules ]; then
+        echo 'KERNEL=="kvmfr0", OWNER="root", GROUP="kvm", MODE="0660"' | sudo tee /etc/udev/rules.d/99-kvmfr.rules > /dev/null
+        sudo udevadm control --reload-rules
+        echo "Règle udev créée."
+    fi
+    # SELinux context
+    sudo semanage fcontext -a -t svirt_image_t /dev/kvmfr0 2>/dev/null || true
+    sudo restorecon /dev/kvmfr0 2>/dev/null || true
+    # Charger le module (sans reboot)
+    if ! lsmod | grep -q kvmfr; then
+        sudo modprobe kvmfr 2>/dev/null && echo "Module kvmfr chargé." || echo "Erreur chargement module (image non-DX ?)"
+    else
+        echo "Module kvmfr déjà chargé."
+    fi
+    echo ""
+    echo "Configuration terminée. Consulte la doc Looking Glass pour la suite."
 
 # Activer/désactiver la compression BTRFS zstd sur un filesystem
 btrfs-compress ACTION="":

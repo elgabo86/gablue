@@ -135,9 +135,9 @@ jobs:
             CONTAINERFILE="Containerfile-gablue"
           fi
 
-          # Définir DX_MODE pour la variante main-dx
+          # Définir DX_MODE pour les variantes DX
           DX_MODE_ARG=""
-          if [[ "${{ inputs.image_name }}" == "gablue-main-dx" ]]; then
+          if [[ "${{ inputs.image_name }}" == "gablue-main-dx" || "${{ inputs.image_name }}" == "gablue-nvidia-open-dx" ]]; then
             DX_MODE_ARG="--build-arg DX_MODE=true"
           fi
 

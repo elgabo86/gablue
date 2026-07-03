@@ -28,6 +28,7 @@ systemctl mask iwd.service
 if [ "${DX_MODE:-false}" == "true" ]; then
     systemctl enable -f ublue-os-libvirt-workarounds.service
     systemctl enable -f gablue-dx-groups.service
+    systemctl enable -f incus-workaround.service
 fi
 
 systemctl enable rpm-ostreed-automatic.timer

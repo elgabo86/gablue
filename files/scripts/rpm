@@ -162,11 +162,18 @@ if [ "${DX_MODE:-false}" == "true" ]; then
         qemu-device-usb-redirect \
         qemu-img \
         qemu-system-x86-core \
-        qemu-user-binfmt \
-        qemu-user-static \
+        qemu-system-ppc \
+        qemu-system-ppc64 \
+        qemu-system-m68k \
         qemu \
         virt-manager \
+        guestfs-tools \
         ublue-os-libvirt-workarounds
+
+    # ROCm pour GPU compute (AMD uniquement, pas de sens sur NVIDIA)
+    if [ "$VARIANT" == "main" ]; then
+        dnf5 -y install rocm-hip rocm-opencl rocm-clinfo rocm-smi
+    fi
 fi
 
 # =============================================================================
