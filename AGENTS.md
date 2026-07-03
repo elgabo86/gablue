@@ -10,7 +10,7 @@ Gablue est une distribution immuable personnalisée basée sur **Fedora Kinoite*
 - **Kernel** : OGC kernel depuis ublue-os/akmods (optimisé pour le gaming)
 - **Mesa** : Terra Mesa (version plus récente pour meilleures performances, multilib fc44)
 - **NVIDIA** : Support des pilotes NVIDIA closed et open-source via akmods
-- **Virtualisation** : Mode DX avec Docker, Libvirt, QEMU
+- **Virtualisation** : Libvirt + QEMU/KVM sur toutes les variantes, Docker + ROCm en mode DX
 - **Gaming** : Optimisations poussées (Gamescope, MangoHud, schedulers)
 
 ## Variantes d'images
@@ -36,7 +36,7 @@ Le projet construit 6 variantes distinctes :
 - Paquets additionnels gérés par nvidia-install.sh : `supergfxctl`, `supergfxctl-plasmoid` (Kinoite)
 
 **Main vs DX** :
-- DX inclut Docker CE, Libvirt, QEMU, virt-manager
+- DX inclut Docker CE, émulation rétro QEMU (ppc/m68k/arm/aarch64), ROCm (main), guestfs-tools
 - Activation automatique des services Docker et libvirt
 - Groupes utilisateurs supplémentaires configurés
 
@@ -489,7 +489,9 @@ Installation extensive de paquets organisée par catégories :
 - **CLI** : fswatch, btop, fastfetch, git, atuin, tldr, amdsmi, jq, zoxide, etc.
 - **Réseau** : tailscale, iwd, rar
 - **Multimédia** : yt-dlp
-- **Virtualisation (DX uniquement)** : docker-ce, libvirt, virt-manager, guestfs-tools, qemu-kvm-core, qemu-system-ppc/m68k/arm/aarch64-core (émulation rétro)
+- **Virtualisation** : libvirt, qemu-kvm-core, edk2-ovmf, virt-manager (~100 Mo, toutes variantes)
+- **Virtualisation DX** : docker-ce, containerd.io, guestfs-tools, émulation rétro (ppc/m68k/arm/aarch64)
+- **ROCm (DX main)** : rocm-hip, rocm-opencl, rocm-clinfo (GPU compute AMD)
 - **Terminal fun** : asciiquarium, cmatrix
 - **Gaming** : sunshine, mangohud, gamescope
 - **BTRFS** : snapper, btrfs-assistant (snapshots et maintenance, non activés par défaut)
@@ -597,10 +599,10 @@ Configuration post-installation étendue :
 ### 7. systemd / systemd-test
 
 Activation/désactivation des services systemd :
-- **Activés** : system-flatpak-setup, rpm-ostreed-automatic, flatpak-update, cec-poweroff-tv, cec-active-source
+- **Activés (toutes variantes)** : system-flatpak-setup, gablue-dx-groups, rpm-ostreed-automatic, flatpak-update, cec-poweroff-tv, cec-active-source, dmemcg-booster
 - **Désactivés** : scx_loader, tailscaled, displaylink
 - **Masqués** : systemd-remount-fs, iwd
-- **Conditionnels (DX)** : ublue-os-libvirt-workarounds, gablue-dx-groups, incus-workaround
+- **Conditionnels (DX)** : ublue-os-libvirt-workarounds, incus-workaround
 
 **systemd-test** ajoute :
 - Services OpenGamepadUI désactivés : inputplumber, powerstation

@@ -144,27 +144,32 @@ dnf5 -y install \
     mpv-libs
 
 # =============================================================================
-# VIRTUALISATION ET CONTENEURS (MODE DX)
+# VIRTUALISATION (toutes les variantes)
 # =============================================================================
 
-# Installation des outils de virtualisation uniquement en mode DX
+# Libvirt + QEMU/KVM pour virtualisation x86_64 (léger, ~100 Mo)
+dnf5 -y --setopt=install_weak_deps=False install \
+    libvirt \
+    libvirt-nss \
+    edk2-ovmf \
+    qemu-img \
+    qemu-kvm-core \
+    virt-manager
+
+# =============================================================================
+# VIRTUALISATION AVANCÉE (MODE DX UNIQUEMENT)
+# =============================================================================
+
 if [ "${DX_MODE:-false}" == "true" ]; then
     # Docker et composants associés pour le développement conteneurisé
     dnf5 -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-    # Libvirt et QEMU pour la virtualisation complète
-    # Installation complète pour machines virtuelles et développement
+    # Émulation rétro et outils avancés
     dnf5 -y --setopt=install_weak_deps=False install \
-        libvirt \
-        libvirt-nss \
-        edk2-ovmf \
-        qemu-img \
-        qemu-kvm-core \
         qemu-system-ppc-core \
         qemu-system-m68k-core \
         qemu-system-arm-core \
         qemu-system-aarch64-core \
-        virt-manager \
         guestfs-tools \
         ublue-os-libvirt-workarounds
 
