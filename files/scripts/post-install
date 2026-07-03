@@ -177,6 +177,30 @@ sed -i '/OnUnitInactiveSec=/d' /usr/lib/systemd/system/rpm-ostreed-automatic.tim
 sed -i '/\[Timer\]/a OnBootSec=\nOnUnitInactiveSec=\nOnCalendar=Sat *-*-* 04:00:00\nRandomizedDelaySec=10m\nPersistent=true' /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
 
 # =============================================================================
+# CORRECTION COMPLÉTION UJUST
+# =============================================================================
+
+# Le RPM ublue-os-just génère une complétion qui enregistre pour 'just'
+# au lieu de 'ujust' (just --completions ne tient pas compte du nom de commande).
+# On écrase le fichier avec notre version custom basée sur ujust --summary.
+cat > /usr/share/bash-completion/completions/ujust << 'UJUSTEOF'
+# Completion bash pour ujust
+# Génère dynamiquement la liste des recettes du justfile ublue
+
+_ujust() {
+    local cur
+    cur="${COMP_WORDS[COMP_CWORD]}"
+
+    if [[ $COMP_CWORD -eq 1 ]]; then
+        local recipes
+        recipes=$(ujust --summary 2>/dev/null)
+        COMPREPLY=( $(compgen -W "${recipes}" -- "${cur}") )
+    fi
+}
+complete -F _ujust ujust
+UJUSTEOF
+
+# =============================================================================
 # NETTOYAGE DES CONFIGURATIONS
 # =============================================================================
 
