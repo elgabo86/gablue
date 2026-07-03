@@ -126,3 +126,63 @@ download_updated_dxvk_vkd3d() {
     
     return 0
 }
+
+# Télécharge VKD3D-Proton uniquement (utilisé quand le mode DXVK async est actif)
+download_vkd3d() {
+    local force_update="${1:-false}"
+    local current_vkd3d=""
+    local latest_vkd3d=""
+
+    ensure_dir "$VKD3D_CACHE_DIR"
+
+    local vkd3d_folder
+    vkd3d_folder=$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | sort -V | tail -1)
+    [ -n "$vkd3d_folder" ] && current_vkd3d=$(basename "$vkd3d_folder" | sed 's/^vkd3d-proton-//')
+
+    echo "Vérification des mises à jour de VKD3D-Proton..."
+
+    latest_vkd3d=$(get_latest_vkd3d_version)
+
+    if [ -z "$latest_vkd3d" ]; then
+        echo "Impossible de récupérer la dernière version de VKD3D-Proton"
+        return 1
+    fi
+
+    echo "VKD3D - Installé: ${current_vkd3d:-Aucun}, Dernière: $latest_vkd3d"
+
+    if [ "$force_update" != "true" ] && [ "$current_vkd3d" = "$latest_vkd3d" ]; then
+        echo "Vous avez déjà la dernière version de VKD3D-Proton."
+        return 0
+    fi
+
+    if [ "$force_update" != "true" ] && [ -n "$current_vkd3d" ]; then
+        if ! compare_versions "$latest_vkd3d" "$current_vkd3d"; then
+            echo "Vous avez déjà la dernière version de VKD3D-Proton."
+            return 0
+        fi
+    fi
+
+    echo ""
+    echo "Téléchargement de VKD3D-Proton $latest_vkd3d..."
+
+    local vkd3d_url
+    if [ "${_VKD3D_SOURCE:-official}" = "bottles" ]; then
+        local vkd3d_tag="vkd3d-proton-${latest_vkd3d}"
+        vkd3d_url="https://github.com/bottlesdevs/components/releases/download/${vkd3d_tag}/${vkd3d_tag}.tar.gz"
+    else
+        local vkd3d_tag="v${latest_vkd3d}"
+        vkd3d_url="https://github.com/HansKristian-Work/vkd3d-proton/releases/download/${vkd3d_tag}/vkd3d-proton-${latest_vkd3d}.tar.gz"
+    fi
+
+    local temp_dir="$CACHE_DIR/.temp_download"
+    ensure_dir -s "$temp_dir"
+
+    if ! download_and_install_component "vkd3d-proton" "$latest_vkd3d" "$VKD3D_CACHE_DIR" "vkd3d-proton-*" "$vkd3d_url" "$temp_dir"; then
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    rm -rf "$temp_dir"
+    echo "✓ VKD3D-Proton $latest_vkd3d installé"
+    return 0
+}

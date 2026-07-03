@@ -30,7 +30,7 @@ src/gwine-launcher/
 │   ├── cache/               # Modules de gestion du cache
 │   │   ├── gwine-proton.sh      # Téléchargement/installation gwine
 │   │   ├── gwine-proton-runner.sh  # Runner Proton
-│   │   ├── dxvk-vkd3d.sh        # DXVK, VKD3D, NVAPI
+│   │   ├── dxvk-vkd3d.sh        # DXVK, VKD3D, NVAPI + download_vkd3d()
 │   │   ├── offline.sh           # Mode offline, préparation cache
 │   │   └── cachepack.sh         # Création de packs cache offline
 │   ├── component.sh         # Redirection vers modules components/
@@ -232,7 +232,7 @@ lib/dir-config.sh
 - **cache/*** : Gestion du cache
   - gwine-proton.sh : Téléchargement et installation de gwine
   - gwine-proton-runner.sh : Runner Proton
-  - dxvk-vkd3d.sh : Mise à jour DXVK, VKD3D, NVAPI
+  - dxvk-vkd3d.sh : Mise à jour DXVK, VKD3D, NVAPI + download_vkd3d() pour téléchargement VKD3D seul (utilisé quand le mode DXVK async gère DXVK séparément)
   - offline.sh : Préparation cache, mode offline, téléchargement Mono/Gecko avec vérification de version
   - cachepack.sh : Création de packs cache pour déploiement offline
 - **component.sh** : Fichier de redirection vers components/*
@@ -363,7 +363,8 @@ podman run --rm -v "$(pwd)/lib:/src:z" docker.io/library/fedora:43 bash -c \
 - DXVK : double source (officiel `doitsujin/dxvk` + `bottlesdevs/components`), prend la version la plus haute (priorité officiel en cas d'égalité)
 - VKD3D-Proton : double source (officiel `HansKristian-Work/vkd3d-proton` + `bottlesdevs/components`), même règle
 - DXVK-NVAPI : source unique (`bottlesdevs/components`, NVIDIA uniquement)
-- DXVK-GPLAsync : source unique (`gitlab.com/Ph42oN/dxvk-gplasync`)
+- DXVK-GPLAsync : source unique (`gitlab.com/Ph42oN/dxvk-gplasync`, API GitLab v4), version extraite depuis le tag GitLab (format `vX.Y.Z-N`)
+- `auto_update_components()` détecte le mode DXVK configuré (`dxvk` ou `dxvk-async`) et adapte la vérification/téléchargement en conséquence (async → `download_dxvk_async` + `download_vkd3d`, standard → `download_updated_dxvk_vkd3d`)
 - La source choisie est stockée dans les globales `_DXVK_SOURCE` / `_VKD3D_SOURCE` ("official" ou "bottles")
 - Téléchargement automatique depuis GitHub
 - Système de vérification SHA256

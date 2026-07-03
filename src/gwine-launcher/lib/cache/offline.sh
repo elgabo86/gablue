@@ -163,8 +163,16 @@ auto_update_components() {
     local current_runner
     current_runner=$(get_current_runner)
     
+    # Obtenir le mode DXVK actuel (standard ou async)
+    local dxvk_mode
+    dxvk_mode=$(get_current_dxvk_mode)
+    
     [ -d "$WINE_DIR" ] && [ -f "$WINE_DIR/bin/wine" ] && has_runner=true
-    [ -n "$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi")" ] && has_dxvk=true
+    if [ "$dxvk_mode" = "dxvk-async" ]; then
+        [ -n "$(find "$DXVK_ASYNC_CACHE_DIR" -maxdepth 1 -type d -name "dxvk*gplasync*" 2>/dev/null)" ] && has_dxvk=true
+    else
+        [ -n "$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi")" ] && has_dxvk=true
+    fi
     [ -n "$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null)" ] && has_vkd3d=true
     
     if curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
@@ -191,15 +199,24 @@ auto_update_components() {
             current_runner_version=$(cat "$WINE_RUNNER_VERSION_FILE" 2>/dev/null || echo "")
         fi
         
-        local latest_dxvk
-        latest_dxvk=$(get_latest_dxvk_version)
+        if [ "$dxvk_mode" = "dxvk-async" ]; then
+            local latest_dxvk
+            latest_dxvk=$(get_latest_dxvk_async_version)
+            local current_dxvk=""
+            local dxvk_folder
+            dxvk_folder=$(find "$DXVK_ASYNC_CACHE_DIR" -maxdepth 1 -type d -name "dxvk*gplasync*" 2>/dev/null | sort -V | tail -1)
+            [ -n "$dxvk_folder" ] && current_dxvk=$(basename "$dxvk_folder" | sed 's/^dxvk-gplasync-//')
+        else
+            local latest_dxvk
+            latest_dxvk=$(get_latest_dxvk_version)
+            local current_dxvk=""
+            local dxvk_folder
+            dxvk_folder=$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | sort -V | tail -1)
+            [ -n "$dxvk_folder" ] && current_dxvk=$(basename "$dxvk_folder" | sed 's/^dxvk-//')
+        fi
+        
         local latest_vkd3d
         latest_vkd3d=$(get_latest_vkd3d_version)
-        
-        local current_dxvk=""
-        local dxvk_folder
-        dxvk_folder=$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | sort -V | tail -1)
-        [ -n "$dxvk_folder" ] && current_dxvk=$(basename "$dxvk_folder" | sed 's/^dxvk-//')
         
         local current_vkd3d=""
         local vkd3d_folder
@@ -215,8 +232,14 @@ auto_update_components() {
         fi
         
         if [ -n "$latest_dxvk" ]; then
-            if [ -z "$current_dxvk" ] || compare_versions "$latest_dxvk" "$current_dxvk"; then
-                need_download=true
+            if [ "$dxvk_mode" = "dxvk-async" ]; then
+                if [ -z "$current_dxvk" ] || [ "$current_dxvk" != "$latest_dxvk" ]; then
+                    need_download=true
+                fi
+            else
+                if [ -z "$current_dxvk" ] || compare_versions "$latest_dxvk" "$current_dxvk"; then
+                    need_download=true
+                fi
             fi
         fi
         
@@ -261,11 +284,22 @@ auto_update_components() {
             fi
         fi
         
-        if [ "$has_dxvk" = false ] || [ "$has_vkd3d" = false ]; then
-            echo "  - Installation de DXVK/VKD3D..."
-            download_updated_dxvk_vkd3d --no-confirm || error_exit "Échec du téléchargement de DXVK/VKD3D"
-        elif [ "$has_network" = true ]; then
-            download_updated_dxvk_vkd3d --no-confirm
+        if [ "$dxvk_mode" = "dxvk-async" ]; then
+            if [ "$has_dxvk" = false ] || [ "$has_vkd3d" = false ]; then
+                echo "  - Installation de DXVK-GPLAsync/VKD3D..."
+                download_dxvk_async "force" "true" || error_exit "Échec du téléchargement de DXVK-GPLAsync"
+                download_vkd3d "force" || error_exit "Échec du téléchargement de VKD3D"
+            elif [ "$has_network" = true ]; then
+                download_dxvk_async "false" "true"
+                download_vkd3d "false"
+            fi
+        else
+            if [ "$has_dxvk" = false ] || [ "$has_vkd3d" = false ]; then
+                echo "  - Installation de DXVK/VKD3D..."
+                download_updated_dxvk_vkd3d --no-confirm || error_exit "Échec du téléchargement de DXVK/VKD3D"
+            elif [ "$has_network" = true ]; then
+                download_updated_dxvk_vkd3d --no-confirm
+            fi
         fi
     else
         echo "Composants à jour, utilisation des versions locales"
