@@ -2,6 +2,7 @@
 
 # Script de compilation des sources C du projet
 # Compile et installe les binaires C natifs pour remplacer les scripts Python gourmands en RAM
+# ECHEC DU BUILD si une source est absente ou si un binaire manque apres compilation
 
 set -eoux pipefail
 
@@ -12,34 +13,30 @@ set -eoux pipefail
 # Dépendances de compilation (supprimées après build)
 dnf5 -y install gcc dbus-devel
 
-# Compilation et installation de gamepadshortcuts
-# Remplace le script Python gamepadshortcuts.py (~28Mo RAM) par un binaire C natif (~500Ko RAM)
-# Utilise libdbus-1 pour l'inhibition ecran (~200Ko PSS vs 6.2Mo systemd-inhibit)
-if [ -d /src/gamepadshortcuts ]; then
-    make -C /src/gamepadshortcuts install DESTDIR=
-    rm -rf /src/gamepadshortcuts
-else
-    echo "ATTENTION: Sources C non trouvees dans /src/gamepadshortcuts"
-fi
+# Fonction de build securisee : compile et verifie le binaire final
+build_and_verify() {
+    local src_dir="$1"
+    local binary="$2"
+    local name="$3"
 
-# Compilation et installation de ds2xbox
-# Emulateur de manette Xbox 360 pour manettes Sony (DualSense, DualShock 4)
-if [ -d /src/ds2xbox ]; then
-    make -C /src/ds2xbox install DESTDIR=
-    rm -rf /src/ds2xbox
-else
-    echo "ATTENTION: Sources C non trouvees dans /src/ds2xbox"
-fi
+    if [ ! -d "$src_dir" ]; then
+        echo "ERREUR FATALE : sources C '$name' absentes dans $src_dir" >&2
+        exit 1
+    fi
 
-# Compilation et installation de gablue-isomount
-# Remplace le plugin dolphin-plugins mountisoaction (defectueux, bug KDE #471487)
-# Monte les images disque via UDisks2 et assure le rafraichissement du panneau Devices
-if [ -d /src/gablue-isomount ]; then
-    make -C /src/gablue-isomount install DESTDIR=
-    rm -rf /src/gablue-isomount
-else
-    echo "ATTENTION: Sources C non trouvees dans /src/gablue-isomount"
-fi
+    make -C "$src_dir" install DESTDIR=
+    rm -rf "$src_dir"
+
+    if [ ! -f "/usr/bin/$binary" ]; then
+        echo "ERREUR FATALE : binaire '$binary' absent apres compilation de $name" >&2
+        exit 1
+    fi
+    echo "OK : $binary compile et installe"
+}
+
+build_and_verify "/src/gamepadshortcuts" "gamepadshortcuts" "gamepadshortcuts"
+build_and_verify "/src/ds2xbox" "ds2xbox" "ds2xbox"
+build_and_verify "/src/gablue-isomount" "gablue-isomount" "gablue-isomount"
 
 # Nettoyage des dependances de compilation (inutiles dans l'image finale)
 dnf5 -y remove gcc dbus-devel || true
@@ -49,7 +46,6 @@ dnf5 -y remove gcc dbus-devel || true
 if [ -d /usr/src/composefs-fix ]; then
     make -C /usr/src/composefs-fix install
     rm -rf /usr/src/composefs-fix
-    # Verrou : echec du build si la .so est absente
     if [ ! -f /usr/lib64/gablue-composefs-fix.so ]; then
         echo "ERREUR FATALE : echec de compilation de gablue-composefs-fix.so" >&2
         exit 1
