@@ -38,11 +38,8 @@ build_and_verify "/src/gamepadshortcuts" "gamepadshortcuts" "gamepadshortcuts"
 build_and_verify "/src/ds2xbox" "ds2xbox" "ds2xbox"
 build_and_verify "/src/gablue-isomount" "gablue-isomount" "gablue-isomount"
 
-# Nettoyage des dependances de compilation (inutiles dans l'image finale)
-dnf5 -y remove gcc dbus-devel || true
-
 # Compilation du hook composefs-fix (correction espace libre Dolphin)
-# Necessite gcc, donc compile ici avant de le supprimer
+# Necessite gcc, compile AVANT de supprimer le compilateur
 if [ -d /usr/src/composefs-fix ]; then
     make -C /usr/src/composefs-fix install
     rm -rf /usr/src/composefs-fix
@@ -51,6 +48,9 @@ if [ -d /usr/src/composefs-fix ]; then
         exit 1
     fi
 fi
+
+# Nettoyage des dependances de compilation (inutiles dans l'image finale)
+dnf5 -y remove gcc dbus-devel || true
 
 # Nettoyage du repertoire sources si vide
 rmdir /src 2>/dev/null || true
