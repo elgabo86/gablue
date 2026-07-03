@@ -486,7 +486,7 @@ Exclusions importantes :
 ### 5. rpm - Paquets RPM
 
 Installation extensive de paquets organisée par catégories :
-- **CLI** : fswatch, btop, fastfetch, git, atuin, tldr, amdsmi, etc.
+- **CLI** : fswatch, btop, fastfetch, git, atuin, tldr, amdsmi, jq, zoxide, etc.
 - **Réseau** : tailscale, iwd, rar
 - **Multimédia** : yt-dlp
 - **Virtualisation (DX uniquement)** : docker-ce, libvirt, virt-manager, guestfs-tools, qemu-kvm-core, qemu-system-ppc/ppc64/m68k/arm/aarch64-core (émulation rétro)

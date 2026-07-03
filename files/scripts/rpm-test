@@ -101,6 +101,8 @@ dnf5 -y install \
     gh \
     ryzenadj \
     yq \
+    jq \
+    zoxide \
     trash-cli \
     inotify-tools \
     atuin \
