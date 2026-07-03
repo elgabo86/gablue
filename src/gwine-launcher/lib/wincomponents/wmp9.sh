@@ -130,7 +130,6 @@ install_wmp9() {
     if [ "$WINEARCH" = "win64" ]; then
         sed -i 's/IsWow64Process/IsNow64Process/' setup_wm.exe 2>/dev/null || true
         WINEPREFIX="$WINEPREFIX" "$WINE_BIN" setup_wm.exe /Quiet 2>/dev/null || true
-        echo "  ⚠ wm9codecs non supporté en préfixe 64-bit"
     else
         WINEPREFIX="$WINEPREFIX" "$WINE_BIN" setup_wm.exe /Quiet 2>/dev/null || true
         _wmp9_install_codecs

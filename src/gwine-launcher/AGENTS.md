@@ -251,7 +251,7 @@ lib/dir-config.sh
   - directx.sh : DirectX, XACT Engine, D3DCompiler
   - fonts.sh : Core Fonts et Tahoma
   - misc.sh : OpenAL, PhysX, MSLS31, VB6 Runtime
-  - wmp9.sh : Windows Media Player 9 + wsh57 (Windows Script Host 5.7)
+  - wmp9.sh : Windows Media Player 9 + wsh57. setup_wm.exe installe les codecs de base (wmvcore, wmp, l3codeca.acm) en 32 et 64-bit. Le pack supplémentaire wm9codecs (WM9Codecs9x.exe) est ignoré silencieusement en 64-bit car superflu.
   - main.sh : Fonction principale install_all_wincomponents
 - **wineprefix.sh** : Création/gestion du préfixe Wine, copie ICU 68 DLLs (gwine-proton uniquement)
 - **wineserver-manager.sh** : Fichier de redirection vers wineserver/*
