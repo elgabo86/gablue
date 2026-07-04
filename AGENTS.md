@@ -719,7 +719,7 @@ installer/
 
 1. **Swap kernel** : Le kernel OGC (non signé) est remplacé par le kernel vanilla Fedora (signé) pour Secure Boot
 2. **Flatpaks** : Firefox, VLC, Audacious pré-installés dans le live et copiés sur le système cible
-3. **Session live** : Bureau Plasma complet via `livesys-scripts`, lancement automatique d'Anaconda
+3. **Session live** : Bureau Plasma complet via `livesys-scripts`, l'installateur Anaconda n'est pas lancé automatiquement (l'utilisateur le lance via `liveinst` si besoin)
 4. **Installation** : Kickstart Anaconda avec `ostreecontainer` (bootc), BTRFS par défaut, compression zstd:1
 5. **Secure Boot** : Enrollment automatique de la clé MOK Gablue avec mot de passe `gablue`
 6. **Post-install** : `bootc switch --mutate-in-place` pour activer la signature
