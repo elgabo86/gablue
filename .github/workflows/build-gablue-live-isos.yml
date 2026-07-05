@@ -36,28 +36,31 @@ jobs:
       - name: Afficher l'espace disque initial
         run: sudo df -h
 
-      - name: Vérifier si /mnt est monté
-        id: check_mnt
-        run: |
-          if sudo mountpoint /mnt; then
-            echo "mnt_is_there=1" >> $GITHUB_OUTPUT
-          else
-            echo "mnt_is_there=0" >> $GITHUB_OUTPUT
-          fi
-
       - name: Libérer l'espace disque (Ubuntu)
-        if: ${{ steps.check_mnt.outputs.mnt_is_there == '1' }}
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
 
-      - name: Mount BTRFS loopback pour stockage container
-        if: ${{ steps.check_mnt.outputs.mnt_is_there == '1' }}
+      - name: Monter stockage BTRFS compressé pour podman
+        # /mnt est parfois un disque séparé (~84G), sinon on utilise / (145G).
+        # Le loopback BTRFS + zstd compresse les layers podman ; sans ça le
+        # payload DX (base + image embarquée + flatpaks + commit) dépasse le
+        # disque du runner. Était auparavant skippé quand /mnt n'était pas un
+        # mountpoint (runners récents), causant des "no space left on device".
         run: |
-          sudo truncate -s 70G /mnt/podman-storage.img
-          sudo mkfs.btrfs -f /mnt/podman-storage.img
+          if sudo mountpoint /mnt 2>/dev/null; then
+            LOOP_FILE=/mnt/podman-storage.img
+            LOOP_SIZE=70G
+          else
+            LOOP_FILE=/podman-storage.img
+            LOOP_SIZE=80G
+          fi
+          echo "Loopback BTRFS : $LOOP_FILE ($LOOP_SIZE)"
+          sudo truncate -s "$LOOP_SIZE" "$LOOP_FILE"
+          sudo mkfs.btrfs -f "$LOOP_FILE"
           sudo podman system reset --force
-          sudo systemctl stop podman.service
-          sudo mount -o compress-force=zstd:2 /mnt/podman-storage.img /var/lib/containers/storage
-          sudo systemctl start podman.service
+          sudo systemctl stop podman.service || true
+          sudo mkdir -p /var/lib/containers/storage
+          sudo mount -o compress-force=zstd:2 "$LOOP_FILE" /var/lib/containers/storage
+          sudo systemctl start podman.service || true
 
       - name: Checkout du dépôt
         uses: actions/checkout@v7
@@ -74,15 +77,30 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
       - name: Build de l'image container payload
+        shell: bash
         run: |
           BASE_IMAGE="ghcr.io/${{ steps.repo_owner_case.outputs.lowercase }}/${{ matrix.image_name }}:${{ steps.generate-tag.outputs.tag }}"
           INSTALL_IMAGE_PAYLOAD="ghcr.io/${{ steps.repo_owner_case.outputs.lowercase }}/${{ matrix.image_name }}:${{ steps.generate-tag.outputs.tag }}"
-          sudo podman build \
-            --cap-add sys_admin \
-            --security-opt label=disable \
-            --build-arg BASE_IMAGE="$BASE_IMAGE" \
-            --build-arg INSTALL_IMAGE_PAYLOAD="$INSTALL_IMAGE_PAYLOAD" \
-            -t localhost/payload:latest installer/
+          for attempt in 1 2 3; do
+            echo "::group::Tentative de build payload $attempt/3"
+            if sudo podman build \
+              --cap-add sys_admin \
+              --security-opt label=disable \
+              --build-arg BASE_IMAGE="$BASE_IMAGE" \
+              --build-arg INSTALL_IMAGE_PAYLOAD="$INSTALL_IMAGE_PAYLOAD" \
+              -t localhost/payload:latest installer/; then
+              echo "::endgroup::"
+              echo "Build payload réussi à la tentative $attempt"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "Échec build payload tentative $attempt — nettoyage avant retry..."
+            sudo podman system prune -f --volumes || true
+            sudo podman rmi localhost/payload:latest 2>/dev/null || true
+            sudo df -h /
+          done
+          echo "::error::Échec du build payload après 3 tentatives"
+          exit 1
 
       - name: Générer l'ISO Live avec Titanoboa
         uses: Zeglius/titanoboa@revamp-pr

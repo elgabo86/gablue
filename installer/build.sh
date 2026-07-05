@@ -40,6 +40,8 @@ mount -o remount,rw /proc/sys
 echo "Installation des Flatpaks dans l'image live..."
 curl --retry 3 -Lo /etc/flatpak/remotes.d/flathub.flatpakrepo https://dl.flathub.org/repo/flathub.flatpakrepo
 xargs -r flatpak install -y --noninteractive < /src/flatpaks
+# Nettoyer le cache de téléchargement flatpak pour libérer de l'espace disque
+rm -rf /root/.cache /var/tmp/*
 
 # =============================================================================
 # PULL DE L'IMAGE À INSTALLER DANS LE STOCKAGE LOCAL
@@ -52,6 +54,8 @@ if mountpoint -q /usr/lib/containers/storage || mountpoint -q /var/lib/container
 else
     podman pull "$INSTALL_IMAGE_PAYLOAD"
 fi
+# Nettoyer le cache de téléchargement podman avant la suite du build
+rm -rf /var/tmp/* /root/.cache
 
 # =============================================================================
 # FICHIERS SYSTÈME GABLUE
