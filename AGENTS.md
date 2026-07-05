@@ -659,12 +659,12 @@ Workflow réutilisable pour le build d'une image :
 - `source_image` : Image de base Fedora (kinoite)
 - `fedora_version` : Version Fedora (44 pour toutes)
 - `kernel_type` : Type de kernel (`ogc`), utilisé comme KERNEL_FLAVOR dans le build
-- `kernel_version` : Version spécifique (optionnel, auto-détecté si vide)
+- `kernel_version` : Version du kernel (défaut hardcodé dans `reusable-gablue-image.yml`, surcharge possible par job)
 - `nvidia_flavor` : Flavor NVIDIA (`nvidia-lts` ou `nvidia-open`, optionnel pour variantes non-NVIDIA)
 - `containerfile` : Containerfile explicite (optionnel, défaut Containerfile-gablue)
 
 **Étapes** :
-1. Récupération de la version kernel via `skopeo list-tags` (tous les builds utilisent ogc)
+1. Récupération automatique de la version kernel via `skopeo list-tags` uniquement si `kernel_version` est vide
 2. Checkout du dépôt
 3. Maximisation de l'espace de build
 4. Mount BTRFS pour podman storage (action pinnée par SHA)
@@ -674,9 +674,10 @@ Workflow réutilisable pour le build d'une image :
 8. Tag et push vers GHCR
 9. Signature avec Cosign
 
-**Détection dynamique du kernel** :
-- **Tous les builds** : Dernier tag OGC via `skopeo list-tags ghcr.io/ublue-os/akmods` → filtre `{KERNEL_FLAVOR}-{FEDORA_VERSION}-*`
-- **Manuel** : Spécifier `kernel_version` dans le workflow pour forcer une version
+**Version du kernel** :
+- **Par défaut** : Hardcodée dans `reusable-gablue-image.yml` (input `kernel_version`). Version choisie manuellement, actuellement `7.0.9-ogc3.2.fc44.x86_64` (rollback ublue-os/bazzite@478073e, bug amdgpu à debug)
+- **Auto-détection** : Si `kernel_version` est vide, dernier tag OGC via `skopeo list-tags ghcr.io/ublue-os/akmods` → filtre `{KERNEL_FLAVOR}-{FEDORA_VERSION}-*`
+- **Manuel** : Spécifier `kernel_version` dans un job pour surcharge ponctuelle
 
 ### build-gablue-isos.yml
 

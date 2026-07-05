@@ -27,7 +27,8 @@ on:
       kernel_version:
         required: false
         type: string
-        default: ""
+        # Version du kernel choisie manuellement (rollback ublue-os/bazzite@478073e, bug amdgpu)
+        default: "7.0.9-ogc3.2.fc44.x86_64"
       nvidia_flavor:
         required: false
         type: string
