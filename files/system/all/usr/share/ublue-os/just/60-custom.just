@@ -1276,3 +1276,35 @@ btrfs-compress-defrag:
     done
 
     echo "Défragmentation et compression terminées."
+
+# Réinitialiser le cache capabilities de libvirt (corrige "video model 'virtio' unsupported" dans virt-manager)
+libvirt-reset-cache:
+    #!/usr/bin/bash
+    # Ce cache est généré par libvirt au premier démarrage du daemon. S'il est créé
+    # avant l'installation des modules QEMU display (virtio-gpu, qxl...), virt-manager
+    # refuse les modèles virtio/qxl avec l'erreur "domain configuration does not
+    # support video model 'virtio'".
+    # Cache system (qemu:///system)
+    if [ -d /var/cache/libvirt/qemu/capabilities ]; then
+        sudo rm -rf /var/cache/libvirt/qemu/capabilities
+        echo "Cache system effacé."
+    fi
+    # Cache user (qemu:///session)
+    USER_CACHE="${HOME}/.cache/libvirt/qemu/cache/capabilities"
+    if [ -d "$USER_CACHE" ]; then
+        rm -rf "$USER_CACHE"
+        echo "Cache user effacé."
+    fi
+    # Redémarrer le daemon system pour régénérer le cache
+    if systemctl is-active --quiet virtqemud 2>/dev/null; then
+        sudo systemctl restart virtqemud
+        echo "Daemon virtqemud redémarré."
+    elif systemctl is-active --quiet libvirtd 2>/dev/null; then
+        sudo systemctl restart libvirtd
+        echo "Daemon libvirtd redémarré."
+    fi
+    # Forcer la régénération du cache user
+    virsh -c qemu:///session domcapabilities --virttype kvm --arch x86_64 --machine q35 >/dev/null 2>&1 || true
+    echo ""
+    echo "Cache capabilities libvirt réinitialisé."
+    echo "Relance virt-manager : virtio et qxl sont maintenant disponibles."
