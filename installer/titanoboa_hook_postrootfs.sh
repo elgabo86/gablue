@@ -194,6 +194,10 @@ rm -vf /etc/skel/.config/autostart/steam*.desktop
 # Supprimer les applis lourdes inutiles dans le live
 dnf -yq remove steam lutris waydroid || :
 
+# Désactiver l'écran de bienvenue Plasma dans le live
+# Le module KDED kded_plasma_welcome.so le lance automatiquement au boot
+dnf -yq remove plasma-welcome || :
+
 # Ne pas vérifier l'image vérifiée
 rm -vf /etc/profile.d/verify_motd.sh
 
