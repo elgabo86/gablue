@@ -143,6 +143,12 @@ dnf5 -y install \
     mpv \
     mpv-libs
 
+# Agent invité QEMU pour virtualisation
+# Léger (~300 Ko), inoffensif sur bare metal (service sans canal QEMU),
+# utile en VM : IP dans virt-manager, graceful shutdown, snapshots consistants.
+# Installé sur toutes les variantes pour que les ISOs live fonctionnent dans libvirt.
+dnf5 -y install qemu-guest-agent
+
 # =============================================================================
 # VIRTUALISATION ET CONTENEURS (MODE DX)
 # =============================================================================
