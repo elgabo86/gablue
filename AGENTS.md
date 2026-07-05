@@ -585,13 +585,14 @@ Configuration post-installation étendue :
 - Fichiers : `files/system/all/usr/bin/gablue-bigscreen-swap-session`, `files/system/all/usr/share/gablue/kwin-maximize-all.js`, `files/system/all/usr/share/gablue/kwin-restore-windows.js`
 
 **Initialisation session native Bigscreen** (toutes variantes) :
-- Autostart KDE (`/etc/xdg/autostart/gablue-bigscreen-session.desktop`) qui exécute `gablue-bigscreen-session-init` au login
-- Le script détecte la session bigscreen native via `loginctl show-session $XDG_SESSION_ID -p DesktopName` (filtre `bigscreen`)
-- En session Plasma normale (swap depuis Plasma), le script s'arrête immédiatement sans rien faire
-- Actions spécifiques à la session native :
+- Autostart KDE (`/etc/xdg/autostart/gablue-bigscreen-session.desktop`) qui exécute `gablue-bigscreen-session-init` au login (s'exécute dans toutes les sessions Plasma)
+- Détection de la session bigscreen native via `PLASMA_PLATFORM=mediacenter` (variable sourcée par `plasma-bigscreen-common-env` au démarrage de la session native, avant l'autostart)
+- **En session Plasma normale** (non bigscreen) : si un fichier `~/.cache/plasma-bigscreen/kscreen-mirrored.txt` existe (mirroring résiduel d'une session bigscreen précédente), annule le mirroring de chaque output listé via `kscreen-doctor output.X.mirror.none` puis supprime le fichier. Attend l'initialisation de KWin avant d'agir
+- **En session bigscreen native** :
   - Création du symlink blacklist (`~/.config/applications-blacklistrc` -> `/etc/xdg/applications-blacklistrc`) pour cacher les entrées inutiles dans le menu bigscreen
   - Attente de l'initialisation KWin (boucle `kscreen-doctor --json`, max 10s)
   - Mirroring de tous les écrans secondaires sur le principal via `kscreen-doctor output.X.mirror.Y` (bigscreen ne gère pas le multi-écran)
+  - Sauvegarde des noms des outputs mirrorés dans `kscreen-mirrored.txt` (fichier partagé avec `gablue-bigscreen-swap-session`) pour permettre la restauration au prochain login Plasma
 - Note : les actions spécifiques au swap (minimiser/restaurer les fenêtres, sauvegarder/restaurer KWin, gérer l'inputhandler) restent uniquement dans `gablue-bigscreen-swap-session`
 - Fichiers : `files/system/all/usr/libexec/gablue-bigscreen-session-init`, `files/system/all/etc/xdg/autostart/gablue-bigscreen-session.desktop`
 

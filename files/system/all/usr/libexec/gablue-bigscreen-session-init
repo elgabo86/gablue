@@ -1,42 +1,66 @@
 #!/usr/bin/sh
 
-# Script d'initialisation de session native Plasma Bigscreen
-# Ce script est exécuté via autostart uniquement en session bigscreen native
-# (pas lors du swap depuis Plasma, qui est géré par gablue-bigscreen-swap-session)
+# Script d'initialisation de session Plasma Bigscreen
+# - En session bigscreen native : mirroring des écrans secondaires sur le principal
+#   (bigscreen ne gère pas le multi-écran) + sauvegarde des outputs mirrorés
+# - En session Plasma normale : restaure la config étendue si un mirroring
+#   résiduel d'une session bigscreen précédente (native ou swap interrompu) est
+#   détecté
+#
+# Ce script est exécuté via autostart KDE dans toutes les sessions Plasma.
+# En session native, plasma-bigscreen-common-env est sourcé par le script de
+# démarrage de la session AVANT l'autostart, donc PLASMA_PLATFORM est défini.
+# En session Plasma normale (même si un swap aura lieu plus tard), cette
+# variable n'est PAS encore définie à ce stade.
 
 LOG="$HOME/.cache/plasma-bigscreen/session-init.log"
-mkdir -p "$HOME/.cache/plasma-bigscreen" "$HOME/.config"
+CACHE_DIR="$HOME/.cache/plasma-bigscreen"
+MIRRORED_FILE="$CACHE_DIR/kscreen-mirrored.txt"
+
+mkdir -p "$CACHE_DIR" "$HOME/.config"
 
 log() {
     echo "$(date '+%F %T') - $*" >> "$LOG"
 }
 
 # =============================================================================
-# DÉTECTION DE LA SESSION BIGSCREEN NATIVE
+# SESSION PLASMA NORMALE : RESTAURER LE MIRRORING RÉSIDUEL
 # =============================================================================
-# En session bigscreen native, plasma-bigscreen-common-env est sourcé par le
-# script de démarrage de la session AVANT l'exécution de l'autostart.
-# En session Plasma normale (même si un swap aura lieu plus tard), ces
-# variables ne sont PAS encore définies à ce stade.
-# PLASMA_PLATFORM est donc un indicateur fiable de session native à l'autostart.
+# Si une session bigscreen (native ou swap) a été fermée sans restaurer les
+# écrans, un fichier listant les outputs mirrorés est présent. On annule le
+# mirroring pour revenir à la configuration étendue.
 
 if [ "${PLASMA_PLATFORM:-}" != "mediacenter" ]; then
+    if [ -f "$MIRRORED_FILE" ]; then
+        log "Session Plasma détectée, restauration du mirroring résiduel"
+        # Attendre que KWin soit prêt (kscreen-doctor a besoin de KWin)
+        for i in $(seq 1 20); do
+            if kscreen-doctor --json > /dev/null 2>&1; then
+                log "KWin prêt après environ $(( i / 2 ))s"
+                break
+            fi
+            sleep 0.5
+        done
+        while read -r output_name; do
+            [ -n "$output_name" ] && kscreen-doctor "output.$output_name.mirror.none" 2>/dev/null || true
+        done < "$MIRRORED_FILE"
+        rm -f "$MIRRORED_FILE"
+        log "Mirroring résiduel restauré"
+    fi
     exit 0
 fi
 
+# =============================================================================
+# SESSION BIGSCREEN NATIVE : MIRRORING DES ÉCRANS
+# =============================================================================
+
 log "Session native Bigscreen détectée (PLASMA_PLATFORM=$PLASMA_PLATFORM)"
 
-# =============================================================================
 # 1. BLACKLIST DES APPLICATIONS
-# =============================================================================
-
 log "Création du symlink applications-blacklistrc"
 ln -sf /etc/xdg/applications-blacklistrc "$HOME/.config/applications-blacklistrc"
 
-# =============================================================================
 # 2. MIRRORING DES ÉCRANS
-# =============================================================================
-
 # Attendre que KWin soit prêt (kscreen-doctor a besoin de KWin)
 log "Attente de l'initialisation de KWin..."
 for i in $(seq 1 20); do
@@ -49,6 +73,9 @@ done
 
 # Mettre tous les écrans secondaires en miroir sur le principal
 # Bigscreen ne gère pas le multi-écran, le mirroring évite les problèmes
+# Sauvegarder les noms des outputs mirrorés pour restauration au prochain
+# login Plasma (fichier partagé avec gablue-bigscreen-swap-session)
+rm -f "$MIRRORED_FILE"
 log "Mirroring des écrans secondaires sur le principal"
 /usr/bin/python3 -c "
 import subprocess, json, sys
@@ -64,6 +91,10 @@ try:
             cmds.append(f'output.{o[\"name\"]}.enable')
             cmds.append(f'output.{o[\"name\"]}.mirror.{primary}')
         subprocess.run(['kscreen-doctor'] + cmds, timeout=10)
+        # Sauvegarder les noms des outputs mirrorés pour restauration
+        with open('$MIRRORED_FILE', 'w') as f:
+            for o in outs[1:]:
+                f.write(o['name'] + '\\n')
         print(f'Écrans mirrorés: {[o[\"name\"] for o in outs[1:]]} -> {primary}')
     else:
         print('Un seul écran détecté, pas de mirroring nécessaire')

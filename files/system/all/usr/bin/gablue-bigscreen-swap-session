@@ -167,6 +167,7 @@ swap_to_default() {
         while read -r output_name; do
             [ -n "$output_name" ] && kscreen-doctor "output.$output_name.mirror.none" 2>/dev/null || true
         done < "$CACHE_DIR/kscreen-mirrored.txt"
+        rm -f "$CACHE_DIR/kscreen-mirrored.txt"
     fi
 
     log "swap_to_default: replacing plasmashell"
