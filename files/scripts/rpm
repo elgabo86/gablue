@@ -206,7 +206,26 @@ if [ "${DX_MODE:-false}" == "true" ]; then
 
     # ROCm pour GPU compute (AMD uniquement, pas de sens sur NVIDIA)
     if [ "$VARIANT" == "main" ]; then
-        dnf5 -y --setopt=install_weak_deps=False install rocm-hip rocm-opencl rocm-clinfo
+        dnf5 -y --setopt=install_weak_deps=False install rocm-hip rocm-opencl rocm-clinfo rocm-smi
+
+        # Suppression du compilateur ROCm (inutile au runtime)
+        # rocm-llvm-static pèse 1.9 Go à lui seul
+        rpm -e --nodeps \
+            rocm-llvm-static \
+            rocm-llvm-devel \
+            rocm-clang-devel \
+            rocm-libc++-devel \
+            rocm-clang-runtime-devel \
+            rocm-lld
+
+        # Empêcher leur réinstallation future
+        dnf5 versionlock exclude \
+            rocm-llvm-static \
+            rocm-llvm-devel \
+            rocm-clang-devel \
+            rocm-libc++-devel \
+            rocm-clang-runtime-devel \
+            rocm-lld
     fi
 fi
 
