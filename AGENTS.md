@@ -103,7 +103,6 @@ Le projet construit 6 variantes distinctes :
 │   ├── workflows/                         # Workflows GitHub Actions
 │   │   ├── gablue-builds.yml              # Workflow principal de build
 │   │   ├── reusable-gablue-image.yml      # Workflow réutilisable
-│   │   ├── build-gablue-isos.yml          # Build des ISOs d'installation
 │   │   └── clean-gablue-images.yml        # Nettoyage anciennes images
 │   └── dependabot.yml                     # Configuration Dependabot
 └── README.md
@@ -681,16 +680,6 @@ Workflow réutilisable pour le build d'une image :
 - **Auto-détection** : Si `kernel_version` est vide, dernier tag OGC via `skopeo list-tags ghcr.io/ublue-os/akmods` → filtre `{KERNEL_FLAVOR}-{FEDORA_VERSION}-*`
 - **Manuel** : Spécifier `kernel_version` dans un job pour surcharge ponctuelle
 
-### build-gablue-isos.yml
-
-Build des ISOs d'installation (tous les 5 jours) :
-- Matrix de build pour chaque variante (gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-dx)
-- Upload vers BuzzHeavier (fichier `.iso` + checksum `.sha256`)
-- Chaque job matrix publie son lien en artifact (`-link`, `-checksum`)
-- Job `create-release` collecte tous les artifacts et génère une release via `softprops/action-gh-release`
-- `timeout-minutes: 120` sur le build, `10` sur la release
-- Les outputs ne passent plus par la matrix (buggué) mais par le download/merge des artifacts
-
 ### build-gablue-live-isos.yml
 
 Build des **ISOs live** avec environnement de bureau Plasma complet (tous les 7 jours) :
@@ -732,12 +721,6 @@ installer/
 10. **NVIDIA live** : Fix `GSK_RENDERER=gl`, réinstallation mesa-vulkan-drivers+nvidia-gpu-firmware (kernel vanilla = pas de drivers proprio, on utilise nouveau)
 11. **Localisation live** : La session live est configurée en français suisse (`fr_CH.UTF-8`) avec clavier QWERTZ suisse romand (`ch(fr)`). Les fichiers sont dans `system_files/shared/etc/` : `locale.conf` (LANG + LANGUAGE), `vconsole.conf` (KEYMAP=ch-fr), `X11/xorg.conf.d/00-keyboard.conf` (layout XKB). Ces fichiers ne sont copiés que dans le payload live (n'affectent pas l'image installée). Les langpacks (`langpacks-fr`, `glibc-all-langpacks`) proviennent de l'image Gablue de base.
 12. **GRUB** : Les noms d'entrées ne doivent pas contenir d'apostrophes (Titanoboa génère `menuentry '...'` sans échapper les apostrophes internes, ce qui casse le parsing GRUB et ne montre qu'une seule entrée)
-
-#### Cohabitation avec les ISOs standards
-
-Les deux workflows coexistent sans conflit :
-- `build-gablue-isos.yml` : ISOs standards (tag `latest-iso`) — Anaconda direct, pas de live
-- `build-gablue-live-isos.yml` : ISOs live (tag `latest-live-iso`) — bureau Plasma complet
 
 ### clean-gablue-images.yml
 
