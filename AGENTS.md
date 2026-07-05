@@ -489,7 +489,7 @@ Installation extensive de paquets organisée par catégories :
 - **CLI** : fswatch, btop, fastfetch, git, atuin, tldr, amdsmi, jq, zoxide, etc.
 - **Réseau** : tailscale, iwd, rar
 - **Multimédia** : yt-dlp
-- **Virtualisation (DX uniquement)** : docker-ce, libvirt, virt-manager, guestfs-tools, qemu-kvm-core, qemu-system-ppc/m68k/arm/aarch64-core (émulation rétro)
+- **Virtualisation (DX uniquement)** : docker-ce, libvirt, virt-manager, virt-viewer, virt-install, swtpm, guestfs-tools, qemu-kvm-core, qemu-system-ppc/m68k/arm/aarch64-core (émulation rétro), spice-server, et modules QEMU modulaires explicites (display spice/qxl/virtio-gpu/virtio-vga/ramfb/bochs, audio spice/pipewire/pa/alsa, usb host/redirect/smartcard/xhci, net virtio/e1000/rtl8139, scsi-virtio, virtio-blk/balloon/rng/9p/mem/pmem/crypto/iommu/input, pci-bridge/pcie-root-port/vfio, char-spice, ui spice/gtk/opengl/egl/dbus) — requis car `--setopt=install_weak_deps=False` empêche l'auto-install des modules en dépendances faibles
 - **Terminal fun** : asciiquarium, cmatrix
 - **Gaming** : sunshine, mangohud, gamescope
 - **BTRFS** : snapper, btrfs-assistant (snapshots et maintenance, non activés par défaut)

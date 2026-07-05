@@ -152,6 +152,8 @@ if [ "${DX_MODE:-false}" == "true" ]; then
     dnf5 -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
     # Libvirt, QEMU et virtualisation pour développement
+    # --setopt=install_weak_deps=False : les modules QEMU (display, audio, usb, net,
+    # virtio) ne sont pas tirés automatiquement, il faut les lister explicitement
     dnf5 -y --setopt=install_weak_deps=False install \
         libvirt \
         libvirt-nss \
@@ -159,7 +161,56 @@ if [ "${DX_MODE:-false}" == "true" ]; then
         qemu-img \
         qemu-kvm-core \
         spice-server \
-        virt-manager
+        virt-manager \
+        virt-viewer \
+        virt-install \
+        swtpm \
+        swtpm-tools \
+        qemu-device-display-spice \
+        qemu-device-display-qxl \
+        qemu-device-display-virtio-gpu \
+        qemu-device-display-virtio-gpu-gl \
+        qemu-device-display-virtio-vga \
+        qemu-device-display-virtio-vga-gl \
+        qemu-device-display-ramfb \
+        qemu-device-display-bochs \
+        qemu-audio-spice \
+        qemu-audio-pipewire \
+        qemu-audio-pa \
+        qemu-audio-alsa \
+        qemu-device-intel-hda \
+        qemu-device-ac97 \
+        qemu-device-usb-host \
+        qemu-device-usb-redirect \
+        qemu-device-usb-smartcard \
+        qemu-device-qemu-xhci \
+        qemu-device-net-virtio \
+        qemu-device-net-e1000 \
+        qemu-device-net-rtl8139 \
+        qemu-device-scsi-virtio \
+        qemu-device-virtio-blk \
+        qemu-device-virtio-balloon \
+        qemu-device-virtio-rng \
+        qemu-device-virtio-9p \
+        qemu-device-virtio-mem \
+        qemu-device-virtio-pmem \
+        qemu-device-virtio-crypto \
+        qemu-device-virtio-iommu \
+        qemu-device-virtio-input \
+        qemu-device-pci-bridge \
+        qemu-device-pcie-root-port \
+        qemu-device-pci-bridge-seat \
+        qemu-device-vfio-pci \
+        qemu-device-vfio-user \
+        qemu-device-char-spice \
+        qemu-device-char-spiceport \
+        qemu-ui-spice-core \
+        qemu-ui-spice-app \
+        qemu-ui-opengl \
+        qemu-ui-egl-headless \
+        qemu-ui-gtk \
+        qemu-ui-dbus \
+        qemu-char-spice
 
     # Émulation rétro et outils avancés
     dnf5 -y --setopt=install_weak_deps=False install \
