@@ -120,52 +120,58 @@ jobs:
         with:
           target-dir: /var/lib/containers
 
-      # Construction de l'image
+      # Construction de l'image (avec retry pour les erreurs réseau transitoires)
       - name: Build Image
         id: build_image
-        shell: bash
-        run: |
-          # Choisir le bon Containerfile selon l'input explicite ou le nom de l'image
-          if [[ -n "${{ inputs.containerfile }}" ]]; then
-            CONTAINERFILE="${{ inputs.containerfile }}"
-          elif [[ "${{ inputs.image_name }}" == "gablue-main-test" ]]; then
-            CONTAINERFILE="Containerfile-gablue-test"
-          elif [[ "${{ inputs.image_name }}" == "gablue-nvidia-open-test" ]]; then
-            CONTAINERFILE="Containerfile-gablue-nvidia-open-test"
-          else
-            CONTAINERFILE="Containerfile-gablue"
-          fi
+        uses: Wandalen/wretry.action@e68c23e6309f2871ca8ae4763e7629b9c258e1ea # v3.8.0
+        with:
+          attempt_limit: 5
+          attempt_delay: 20000
+          command: |
+            # Nettoyage d'un éventuel build partiel d'une tentative précédente
+            sudo buildah rmi raw-img 2>/dev/null || true
 
-          # Définir DX_MODE pour les variantes DX
-          DX_MODE_ARG=""
-          if [[ "${{ inputs.image_name }}" == "gablue-main-dx" || "${{ inputs.image_name }}" == "gablue-nvidia-open-dx" ]]; then
-            DX_MODE_ARG="--build-arg DX_MODE=true"
-          fi
+            # Choisir le bon Containerfile selon l'input explicite ou le nom de l'image
+            if [[ -n "${{ inputs.containerfile }}" ]]; then
+              CONTAINERFILE="${{ inputs.containerfile }}"
+            elif [[ "${{ inputs.image_name }}" == "gablue-main-test" ]]; then
+              CONTAINERFILE="Containerfile-gablue-test"
+            elif [[ "${{ inputs.image_name }}" == "gablue-nvidia-open-test" ]]; then
+              CONTAINERFILE="Containerfile-gablue-nvidia-open-test"
+            else
+              CONTAINERFILE="Containerfile-gablue"
+            fi
 
-          # Préparer NVIDIA_FLAVOR arg si fourni
-          NVIDIA_FLAVOR_ARG=""
-          if [[ -n "${{ inputs.nvidia_flavor }}" ]]; then
-            NVIDIA_FLAVOR_ARG="--build-arg NVIDIA_FLAVOR=${{ inputs.nvidia_flavor }}"
-          fi
+            # Définir DX_MODE pour les variantes DX
+            DX_MODE_ARG=""
+            if [[ "${{ inputs.image_name }}" == "gablue-main-dx" || "${{ inputs.image_name }}" == "gablue-nvidia-open-dx" ]]; then
+              DX_MODE_ARG="--build-arg DX_MODE=true"
+            fi
 
-          # Préparer SOURCE_SUFFIX arg si fourni (absent pour les images basées sur Fedora officiel)
-          SOURCE_SUFFIX_ARG=""
-          if [[ -n "${{ inputs.source_suffix }}" ]]; then
-            SOURCE_SUFFIX_ARG="--build-arg SOURCE_SUFFIX=${{ inputs.source_suffix }}"
-          fi
+            # Préparer NVIDIA_FLAVOR arg si fourni
+            NVIDIA_FLAVOR_ARG=""
+            if [[ -n "${{ inputs.nvidia_flavor }}" ]]; then
+              NVIDIA_FLAVOR_ARG="--build-arg NVIDIA_FLAVOR=${{ inputs.nvidia_flavor }}"
+            fi
 
-          sudo buildah build \
-            --file "$CONTAINERFILE" \
-            --format "docker" \
-            --build-arg KERNEL_VERSION="${{ steps.determine_kernel_version.outputs.KERNEL_VERSION }}" \
-            --build-arg VARIANT="${{ inputs.image_variant }}" \
-            --build-arg SOURCE_IMAGE="${{ inputs.source_image }}" \
-            --build-arg FEDORA_VERSION="${{ inputs.fedora_version }}" \
-            --build-arg KERNEL_FLAVOR="${{ inputs.kernel_type }}" \
-            $NVIDIA_FLAVOR_ARG \
-            $SOURCE_SUFFIX_ARG \
-            $DX_MODE_ARG \
-            --tag raw-img .
+            # Préparer SOURCE_SUFFIX arg si fourni (absent pour les images basées sur Fedora officiel)
+            SOURCE_SUFFIX_ARG=""
+            if [[ -n "${{ inputs.source_suffix }}" ]]; then
+              SOURCE_SUFFIX_ARG="--build-arg SOURCE_SUFFIX=${{ inputs.source_suffix }}"
+            fi
+
+            sudo buildah build \
+              --file "$CONTAINERFILE" \
+              --format "docker" \
+              --build-arg KERNEL_VERSION="${{ steps.determine_kernel_version.outputs.KERNEL_VERSION }}" \
+              --build-arg VARIANT="${{ inputs.image_variant }}" \
+              --build-arg SOURCE_IMAGE="${{ inputs.source_image }}" \
+              --build-arg FEDORA_VERSION="${{ inputs.fedora_version }}" \
+              --build-arg KERNEL_FLAVOR="${{ inputs.kernel_type }}" \
+              $NVIDIA_FLAVOR_ARG \
+              $SOURCE_SUFFIX_ARG \
+              $DX_MODE_ARG \
+              --tag raw-img .
 
       # Appliquer les labels OCI avant le rechunk
       - name: Apply Labels
