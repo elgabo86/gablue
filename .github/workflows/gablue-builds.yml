@@ -17,10 +17,6 @@ on:
       - ".github/**"
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
   packages: write
@@ -29,6 +25,9 @@ permissions:
 jobs:
   build-main:
     name: Build main
+    concurrency:
+      group: build-gablue-images-main-${{ github.ref }}
+      cancel-in-progress: true
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
@@ -46,6 +45,9 @@ jobs:
 
   build-nvidia:
     name: Build nvidia
+    concurrency:
+      group: build-gablue-images-nvidia-${{ github.ref }}
+      cancel-in-progress: true
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
@@ -64,6 +66,9 @@ jobs:
 
   build-nvidia-open:
     name: Build nvidia-open
+    concurrency:
+      group: build-gablue-images-nvidia-open-${{ github.ref }}
+      cancel-in-progress: true
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
@@ -82,6 +87,9 @@ jobs:
 
   build-dx:
     name: Build DX
+    concurrency:
+      group: build-gablue-images-dx-${{ github.ref }}
+      cancel-in-progress: true
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
@@ -99,6 +107,9 @@ jobs:
 
   build-nvidia-open-dx:
     name: Build nvidia-open DX
+    concurrency:
+      group: build-gablue-images-nvidia-open-dx-${{ github.ref }}
+      cancel-in-progress: true
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
