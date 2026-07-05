@@ -682,7 +682,7 @@ Workflow réutilisable pour le build d'une image :
 
 ### build-gablue-live-isos.yml
 
-Build des **ISOs live** avec environnement de bureau Plasma complet (tous les 7 jours) :
+Build des **ISOs live** avec environnement de bureau Plasma complet (tous les 5 jours) :
 - Permet d'essayer Gablue avant installation (LiveCD complet, pas juste Anaconda)
 - Utilise **Titanoboa** (`Zeglius/titanoboa@revamp-pr`), un installateur bootc qui génère un squashfs live
 - 5 variantes : gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-dx
