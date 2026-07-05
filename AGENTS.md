@@ -738,7 +738,8 @@ Les tags dans les messages de commit déclenchent les builds :
 
 | Tag | Images déclenchées |
 |-----|-------------------|
-| `[all]` | Toutes les images |
+| `[iso]` | gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-dx (ISOs live) |
+| `[all]` | Toutes les images + live ISO |
 | `[main]` | gablue-main |
 | `[nvidia]` | gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-test |
 | `[dx]` | gablue-main-dx |
@@ -748,6 +749,7 @@ Les tags dans les messages de commit déclenchent les builds :
 ```bash
 git commit -m "[main] Update KDE packages"
 git commit -m "[nvidia] Update NVIDIA drivers to 550"
+git commit -m "[iso] Trigger live ISO build"
 git commit -m "[all] Migrate to fc44 and OGC kernel"
 ```
 

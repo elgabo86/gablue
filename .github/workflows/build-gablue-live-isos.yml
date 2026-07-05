@@ -9,6 +9,9 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "0 6 */5 * *"  # Tous les 5 jours à 06:00 UTC
+  push:
+    branches:
+      - main
 
 env:
   REPO_OWNER: ${{ github.repository_owner }}
@@ -22,6 +25,10 @@ jobs:
     name: Build Live ISO
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    if: |
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[iso]') || contains(github.event.head_commit.message, '[all]')))
     strategy:
       fail-fast: false
       matrix:
