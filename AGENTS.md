@@ -716,7 +716,6 @@ installer/
 ├── titanoboa_hook_postrootfs.sh     # Anaconda + kickstart bootc + live tweaks (suppression plasma-welcome)
 ├── lorax_templates/                 # Templates Anaconda (disable-user-spoke, set-default-user)
 └── system_files/shared/             # Config Anaconda, autostart, post-scripts, localisation live (fr_CH)
-    └── etc/skel/.config/user-dirs.dirs  # Force XDG_DESKTOP_DIR=Bureau (live only)
 ```
 
 #### Fonctionnement du live
@@ -725,7 +724,7 @@ installer/
 2. **Flatpaks** : Firefox, VLC, Audacious pré-installés dans le live et copiés sur le système cible
 3. **Session live** : Bureau Plasma complet via `livesys-scripts`, l'installateur Anaconda n'est pas lancé automatiquement (l'utilisateur le lance via `liveinst` si besoin)
 4. **Écran de bienvenue** : `plasma-welcome` est retiré du live (hook postrootfs) pour éviter le lancement automatique au boot
-5. **Dossier Bureau** : `livesys-scripts` crée un dossier `Desktop` (anglais) avec `liveinst.desktop` avant `xdg-user-dirs-update`, l'empêchant d'être renommé en `Bureau`. Fix : `user-dirs.dirs` pré-configuré dans le skel (`XDG_DESKTOP_DIR="$HOME/Bureau"`) + `on_gui_login.sh` déplace `liveinst.desktop` de `Desktop` vers `Bureau` au login
+5. **Dossier Bureau** : `livesys-scripts` crée un dossier `Desktop` (anglais) avec `liveinst.desktop` avant `xdg-user-dirs-update`, l'empêchant d'être renommé. Le dossier reste en anglais (`Desktop`).
 6. **Installation** : Kickstart Anaconda avec `ostreecontainer` (bootc), BTRFS par défaut, compression zstd:1
 7. **Secure Boot** : Enrollment automatique de la clé MOK Gablue avec mot de passe `gablue`
 8. **Post-install** : `bootc switch --mutate-in-place` pour activer la signature
