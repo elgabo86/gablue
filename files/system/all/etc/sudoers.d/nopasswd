@@ -2,3 +2,4 @@
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/cpupower
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/efibootmgr --bootnext *
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/efibootmgr --bootorder *
+%wheel ALL=(ALL) NOPASSWD: /usr/bin/bootc upgrade, /usr/bin/bootc upgrade *
