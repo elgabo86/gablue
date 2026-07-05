@@ -195,6 +195,7 @@ if [ "${DX_MODE:-false}" == "true" ]; then
         qemu-system-arm-core \
         qemu-system-aarch64-core \
         guestfs-tools \
+        python3-libguestfs \
         ublue-os-libvirt-workarounds
 
     # ROCm pour GPU compute (AMD uniquement, pas de sens sur NVIDIA)
