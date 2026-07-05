@@ -178,22 +178,22 @@ jobs:
           pattern: "*-live-checksum"
           path: checksums
 
-      - name: Construire le corps de la release
+      - name: Build release body
         run: |
           {
             echo "## Gablue Live ISO"
             echo ""
-            echo "ISOs live avec environnement de bureau Plasma complet."
-            echo "Essayez Gablue avant de l'installer !"
+            echo "Live ISOs with full Plasma desktop environment."
+            echo "Try Gablue before installing!"
             echo ""
-            echo "### Téléchargements"
+            echo "### Downloads"
             for link_file in links/*/*.txt; do
               ISO_NAME=$(basename "$(dirname "$link_file")" | sed 's/-live-link$//')
               LINK=$(cat "$link_file")
-              echo "- **${ISO_NAME}** : ${LINK}"
+              echo "- **${ISO_NAME}**: ${LINK}"
             done
             echo ""
-            echo "> **Note** : Vérifiez le checksum SHA256 avant d'installer."
+            echo "> **Note**: Verify the SHA256 checksum before installing."
           } > body.md
 
       - name: Supprimer l'ancienne release live
