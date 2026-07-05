@@ -708,12 +708,13 @@ Build des **ISOs live** avec environnement de bureau Plasma complet (tous les 7 
 installer/
 ├── Containerfile                    # Build payload (FROM image Gablue, bind-mount build.sh)
 ├── build.sh                         # Assemblage : flatpaks, swap kernel, dracut-live, livesys, Anaconda
-├── iso.yaml                         # Config GRUB (label GABLUE_LIVE, timeout 3s)
+├── iso.yaml                         # Config GRUB (label GABLUE_LIVE, timeout 3s, entrées sans apostrophes pour éviter un bug Titanoboa)
 ├── flatpaks                         # Firefox, VLC, Audacious (pré-cachés pour install offline)
 ├── titanoboa_hook_preinitramfs.sh   # Swap kernel OGC → vanilla Fedora (Secure Boot)
-├── titanoboa_hook_postrootfs.sh     # Anaconda + kickstart bootc + live tweaks
+├── titanoboa_hook_postrootfs.sh     # Anaconda + kickstart bootc + live tweaks (suppression plasma-welcome)
 ├── lorax_templates/                 # Templates Anaconda (disable-user-spoke, set-default-user)
 └── system_files/shared/             # Config Anaconda, autostart, post-scripts, localisation live (fr_CH)
+    └── etc/skel/.config/user-dirs.dirs  # Force XDG_DESKTOP_DIR=Bureau (live only)
 ```
 
 #### Fonctionnement du live
@@ -721,12 +722,15 @@ installer/
 1. **Swap kernel** : Le kernel OGC (non signé) est remplacé par le kernel vanilla Fedora (signé) pour Secure Boot
 2. **Flatpaks** : Firefox, VLC, Audacious pré-installés dans le live et copiés sur le système cible
 3. **Session live** : Bureau Plasma complet via `livesys-scripts`, l'installateur Anaconda n'est pas lancé automatiquement (l'utilisateur le lance via `liveinst` si besoin)
-4. **Installation** : Kickstart Anaconda avec `ostreecontainer` (bootc), BTRFS par défaut, compression zstd:1
-5. **Secure Boot** : Enrollment automatique de la clé MOK Gablue avec mot de passe `gablue`
-6. **Post-install** : `bootc switch --mutate-in-place` pour activer la signature
-7. **Services désactivés dans le live** : flatpak-update, cec-poweroff, dmemcg-booster, tailscaled, brew, greenboot...
-8. **NVIDIA live** : Fix `GSK_RENDERER=gl`, réinstallation mesa-vulkan-drivers+nvidia-gpu-firmware (kernel vanilla = pas de drivers proprio, on utilise nouveau)
-9. **Localisation live** : La session live est configurée en français suisse (`fr_CH.UTF-8`) avec clavier QWERTZ suisse romand (`ch(fr)`). Les fichiers sont dans `system_files/shared/etc/` : `locale.conf` (LANG + LANGUAGE), `vconsole.conf` (KEYMAP=ch-fr), `X11/xorg.conf.d/00-keyboard.conf` (layout XKB). Ces fichiers ne sont copiés que dans le payload live (n'affectent pas l'image installée). Les langpacks (`langpacks-fr`, `glibc-all-langpacks`) proviennent de l'image Gablue de base.
+4. **Écran de bienvenue** : `plasma-welcome` est retiré du live (hook postrootfs) pour éviter le lancement automatique au boot
+5. **Dossier Bureau** : `livesys-scripts` crée un dossier `Desktop` (anglais) avec `liveinst.desktop` avant `xdg-user-dirs-update`, l'empêchant d'être renommé en `Bureau`. Fix : `user-dirs.dirs` pré-configuré dans le skel (`XDG_DESKTOP_DIR="$HOME/Bureau"`) + `on_gui_login.sh` déplace `liveinst.desktop` de `Desktop` vers `Bureau` au login
+6. **Installation** : Kickstart Anaconda avec `ostreecontainer` (bootc), BTRFS par défaut, compression zstd:1
+7. **Secure Boot** : Enrollment automatique de la clé MOK Gablue avec mot de passe `gablue`
+8. **Post-install** : `bootc switch --mutate-in-place` pour activer la signature
+9. **Services désactivés dans le live** : flatpak-update, cec-poweroff, dmemcg-booster, tailscaled, brew, greenboot...
+10. **NVIDIA live** : Fix `GSK_RENDERER=gl`, réinstallation mesa-vulkan-drivers+nvidia-gpu-firmware (kernel vanilla = pas de drivers proprio, on utilise nouveau)
+11. **Localisation live** : La session live est configurée en français suisse (`fr_CH.UTF-8`) avec clavier QWERTZ suisse romand (`ch(fr)`). Les fichiers sont dans `system_files/shared/etc/` : `locale.conf` (LANG + LANGUAGE), `vconsole.conf` (KEYMAP=ch-fr), `X11/xorg.conf.d/00-keyboard.conf` (layout XKB). Ces fichiers ne sont copiés que dans le payload live (n'affectent pas l'image installée). Les langpacks (`langpacks-fr`, `glibc-all-langpacks`) proviennent de l'image Gablue de base.
+12. **GRUB** : Les noms d'entrées ne doivent pas contenir d'apostrophes (Titanoboa génère `menuentry '...'` sans échapper les apostrophes internes, ce qui casse le parsing GRUB et ne montre qu'une seule entrée)
 
 #### Cohabitation avec les ISOs standards
 
@@ -912,7 +916,7 @@ Commandes ujust disponibles :
 - **Réseau** : `tailscale-up`, `ssh-on/off`, `toggle-wol`
 - **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`
 - **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`
-- **Virtualisation** : `docker-enable/disable`, `dx-group`, `setup-kvmfr`
+- **Virtualisation** : `docker-enable/disable`, `dx-group`, `setup-kvmfr`, `libvirt-reset-cache` (efface le cache capabilities libvirt, corrige l'erreur "video model 'virtio' unsupported" dans virt-manager)
 - **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`
 - **Rebase** : `gablue-rebase-*` pour changer de variante
 
