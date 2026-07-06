@@ -235,3 +235,27 @@ wmclasscomplete=true
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
+
+[virt-manager-vrr]
+Description=Désactiver VRR pour virt-manager
+wmclass=\svirt-manager
+wmclasscomplete=true
+wmclassmatch=1
+adaptivesync=false
+adaptivesyncrule=2
+
+[virt-viewer-vrr]
+Description=Désactiver VRR pour virt-viewer
+wmclass=\svirt-viewer
+wmclasscomplete=true
+wmclassmatch=1
+adaptivesync=false
+adaptivesyncrule=2
+
+[qemu-vrr]
+Description=Désactiver VRR pour QEMU
+wmclass=\sqemu-system-
+wmclasscomplete=false
+wmclassmatch=3
+adaptivesync=false
+adaptivesyncrule=2
