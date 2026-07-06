@@ -145,7 +145,7 @@ jobs:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
 
       - name: Attestation de provenance du build
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: ${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso
 
