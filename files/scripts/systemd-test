@@ -9,8 +9,6 @@ set -eoux pipefail
 # SERVICES DE BASE
 # =============================================================================
 
-systemctl enable -f system-flatpak-setup.service
-
 systemctl disable -f scx_loader.service
 systemctl disable -f tailscaled.service
 systemctl disable -f displaylink.service

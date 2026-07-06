@@ -598,7 +598,7 @@ Configuration post-installation étendue :
 ### 7. systemd / systemd-test
 
 Activation/désactivation des services systemd :
-- **Activés (toutes variantes)** : system-flatpak-setup, rpm-ostreed-automatic, flatpak-update, cec-poweroff-tv, cec-active-source, dmemcg-booster
+- **Activés (toutes variantes)** : rpm-ostreed-automatic, flatpak-update, cec-poweroff-tv, cec-active-source, dmemcg-booster
 - **Désactivés** : scx_loader, tailscaled, displaylink
 - **Masqués** : systemd-remount-fs, iwd
 - **Conditionnels (DX)** : ublue-os-libvirt-workarounds, gablue-dx-groups, incus-workaround
@@ -693,34 +693,57 @@ Build des **ISOs live** avec environnement de bureau Plasma complet (tous les 5 
 - Upload vers BuzzHeavier, release GitHub `latest-live-iso`
 - `timeout-minutes: 180` (le live est plus long à construire)
 
+#### Build local d'ISO (`local-build/`)
+
+Script de build local pour tester les modifications d'installateur sans CI :
+
+```bash
+# Build de l'ISO main
+./local-build/build-iso.sh main
+
+# Build + test dans QEMU
+./local-build/build-iso.sh main --run
+
+# Pull forcé de l'image de base avant build
+./local-build/build-iso.sh main --pull
+```
+
+Variantes disponibles : `main`, `main-dx`, `nvidia`, `nvidia-open`, `nvidia-open-dx`.
+L'ISO est générée dans `local-build/output/`. Le script utilise `sudo podman` (nécessaire pour `--cap-add sys_admin`, `:Z` SELinux et `--mount type=image`).
+
 #### Dossier `installer/`
 
 ```
 installer/
 ├── Containerfile                    # Build payload (FROM image Gablue, bind-mount build.sh)
-├── build.sh                         # Assemblage : flatpaks, swap kernel, dracut-live, livesys, Anaconda
+├── build.sh                         # Assemblage : flatpaks, détection runtime NVIDIA, swap kernel, dracut-live, livesys, Anaconda
 ├── iso.yaml                         # Config GRUB (label GABLUE_LIVE, timeout 3s, entrées sans apostrophes pour éviter un bug Titanoboa)
-├── flatpaks                         # Firefox, VLC, Audacious (pré-cachés pour install offline)
+├── flatpaks                         # Liste des flatpaks à pré-cacher dans l'ISO (format : ref flatpak, ex: app/org.mozilla.firefox/x86_64/stable)
 ├── titanoboa_hook_preinitramfs.sh   # Swap kernel OGC → vanilla Fedora (Secure Boot)
 ├── titanoboa_hook_postrootfs.sh     # Anaconda + kickstart bootc + live tweaks (suppression plasma-welcome)
-├── lorax_templates/                 # Templates Anaconda (disable-user-spoke, set-default-user)
 └── system_files/shared/             # Config Anaconda, autostart, post-scripts, localisation live (fr_CH)
 ```
 
 #### Fonctionnement du live
 
 1. **Swap kernel** : Le kernel OGC (non signé) est remplacé par le kernel vanilla Fedora (signé) pour Secure Boot
-2. **Flatpaks** : Firefox, VLC, Audacious pré-installés dans le live et copiés sur le système cible
-3. **Session live** : Bureau Plasma complet via `livesys-scripts`, l'installateur Anaconda n'est pas lancé automatiquement (l'utilisateur le lance via `liveinst` si besoin)
-4. **Écran de bienvenue** : `plasma-welcome` est retiré du live (hook postrootfs) pour éviter le lancement automatique au boot
-5. **Dossier Bureau** : `livesys-scripts` crée un dossier `Desktop` (anglais) avec `liveinst.desktop` avant `xdg-user-dirs-update`, l'empêchant d'être renommé. Le dossier reste en anglais (`Desktop`).
-6. **Installation** : Kickstart Anaconda avec `ostreecontainer` (bootc), BTRFS par défaut, compression zstd:1
-7. **Secure Boot** : Enrollment automatique de la clé MOK Gablue avec mot de passe `gablue`
-8. **Post-install** : `bootc switch --mutate-in-place` pour activer la signature
-9. **Services désactivés dans le live** : flatpak-update, cec-poweroff, dmemcg-booster, tailscaled, brew, greenboot...
-10. **NVIDIA live** : Fix `GSK_RENDERER=gl`, réinstallation mesa-vulkan-drivers+nvidia-gpu-firmware (kernel vanilla = pas de drivers proprio, on utilise nouveau)
-11. **Localisation live** : La session live est configurée en français suisse (`fr_CH.UTF-8`) avec clavier QWERTZ suisse romand (`ch(fr)`). Les fichiers sont dans `system_files/shared/etc/` : `locale.conf` (LANG + LANGUAGE), `vconsole.conf` (KEYMAP=ch-fr), `X11/xorg.conf.d/00-keyboard.conf` (layout XKB). Ces fichiers ne sont copiés que dans le payload live (n'affectent pas l'image installée). Les langpacks (`langpacks-fr`, `glibc-all-langpacks`) proviennent de l'image Gablue de base.
-12. **GRUB** : Les noms d'entrées ne doivent pas contenir d'apostrophes (Titanoboa génère `menuentry '...'` sans échapper les apostrophes internes, ce qui casse le parsing GRUB et ne montre qu'une seule entrée)
+2. **Flatpaks** : 
+   - La liste dans `installer/flatpaks` définit quels flatpaks sont **pré-téléchargés** dans l'ISO
+   - Pour les variantes NVIDIA, les runtimes `org.freedesktop.Platform.GL[32].nvidia-XXX` sont automatiquement ajoutés (version détectée depuis `rpm -q nvidia-driver`)
+   - Pendant l'installation (`%post` Anaconda), une checklist `yad` permet à l'utilisateur de choisir lesquels installer
+   - Seuls les flatpaks cochés sont copiés du live vers le système cible (offline, sans passer par Flathub)
+   - Le dépôt Flathub est ajouté sur le système cible pour les mises à jour futures
+3. **Création de compte utilisateur** : Aucun compte pré-rempli — le spoke utilisateur Anaconda est visible et l'utilisateur choisit librement son nom/mot de passe. KDE Plasma gère la création au premier démarrage si le spoke est skippé.
+4. **Session live** : Bureau Plasma complet via `livesys-scripts`, l'installateur Anaconda n'est pas lancé automatiquement (l'utilisateur le lance via `liveinst` si besoin)
+5. **Écran de bienvenue** : `plasma-welcome` est retiré du live (hook postrootfs) pour éviter le lancement automatique au boot
+6. **Dossier Bureau** : `livesys-scripts` crée un dossier `Desktop` (anglais) avec `liveinst.desktop` avant `xdg-user-dirs-update`, l'empêchant d'être renommé. Le dossier reste en anglais (`Desktop`).
+7. **Installation** : Kickstart Anaconda avec `ostreecontainer` (bootc), BTRFS par défaut, compression zstd:1
+8. **Secure Boot** : Enrollment automatique de la clé MOK Gablue avec mot de passe `gablue`
+9. **Post-install** : `bootc switch --mutate-in-place` pour activer la signature
+10. **Services désactivés dans le live** : flatpak-update, cec-poweroff, dmemcg-booster, tailscaled, brew, greenboot...
+11. **NVIDIA live** : Fix `GSK_RENDERER=gl`, réinstallation mesa-vulkan-drivers+nvidia-gpu-firmware (kernel vanilla = pas de drivers proprio, on utilise nouveau)
+12. **Localisation live** : La session live est configurée en français suisse (`fr_CH.UTF-8`) avec clavier QWERTZ suisse romand (`ch(fr)`). Les fichiers sont dans `system_files/shared/etc/` : `locale.conf` (LANG + LANGUAGE), `vconsole.conf` (KEYMAP=ch-fr), `X11/xorg.conf.d/00-keyboard.conf` (layout XKB). Ces fichiers ne sont copiés que dans le payload live (n'affectent pas l'image installée). Les langpacks (`langpacks-fr`, `glibc-all-langpacks`) proviennent de l'image Gablue de base.
+13. **GRUB** : Les noms d'entrées ne doivent pas contenir d'apostrophes (Titanoboa génère `menuentry '...'` sans échapper les apostrophes internes, ce qui casse le parsing GRUB et ne montre qu'une seule entrée)
 
 ### clean-gablue-images.yml
 
@@ -818,7 +841,6 @@ Scripts personnalisés Gablue :
 - `gablue-update` : Mise à jour du système (interface PySide6)
 - `gablue-bigscreen-swap-session` : Wrapper swap-session Plasma Bigscreen
 - `gablue-bigscreen-session-init` : Initialisation session native Bigscreen (autostart, blacklist + mirroring)
-- `system-flatpak-setup` : Configuration Flatpak système
 - Scripts gaming : `azahar-install`, `citron-install`, `eden-install`, `esde-install`, `qwen-install`, `shadps4-install`, `xenia-install`
 - Scripts utilitaires : `ytdl`, `dlcover`, `tv`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`
 - `retroplayer` : TUI Go pour explorer et écouter des musiques rétro (téléchargé depuis GitHub Releases pendant le build, dépôt séparé)

@@ -10,7 +10,6 @@ set -eoux pipefail
 # =============================================================================
 
 # Rendre exécutables les scripts système Gablue
-chmod +x /usr/bin/system-flatpak-setup
 chmod +x /usr/bin/ventoy
 chmod +x /usr/bin/dlcover
 chmod +x /usr/bin/lol

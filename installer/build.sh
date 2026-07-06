@@ -64,9 +64,20 @@ rm -rf /var/tmp/* /root/.cache
 echo "Copie des fichiers système partagés..."
 cp -a /src/system_files/shared/. /
 
-# Copier la liste des flatpaks disponibles pour le sélecteur post-install
+# Copier les listes de flatpaks pour le post-install
 mkdir -p /usr/share/gablue
-cp /src/flatpaks /usr/share/gablue/flatpaks-available
+cp /src/flatpaks /usr/share/gablue/flatpaks-required
+cp /src/flatpaks-optional /usr/share/gablue/flatpaks-optional
+
+# Ajouter les runtimes NVIDIA flatpak pour les variantes NVIDIA (64 et 32 bits)
+if [[ "${BASE_IMAGE:-}" == *nvidia* ]]; then
+    NVIDIA_VER=$(rpm -q nvidia-driver --qf '%{VERSION}' 2>/dev/null || true)
+    if [ -n "$NVIDIA_VER" ]; then
+        echo "runtime/org.freedesktop.Platform.GL.nvidia-${NVIDIA_VER//./-}/x86_64/1.4" >> /usr/share/gablue/flatpaks-required
+        echo "runtime/org.freedesktop.Platform.GL32.nvidia-${NVIDIA_VER//./-}/x86_64/1.4" >> /usr/share/gablue/flatpaks-required
+        echo "Runtimes NVIDIA $NVIDIA_VER (64+32 bits) ajoutés à la liste flatpak"
+    fi
+fi
 
 # =============================================================================
 # HOOK PRE-INITRAMFS : SWAP KERNEL OGC → VANILLA FEDORA
