@@ -39,7 +39,7 @@ mount -o remount,rw /proc/sys
 
 echo "Installation des Flatpaks dans l'image live..."
 curl --retry 3 -Lo /etc/flatpak/remotes.d/flathub.flatpakrepo https://dl.flathub.org/repo/flathub.flatpakrepo
-xargs -r flatpak install -y --noninteractive < /src/flatpaks
+xargs -r flatpak install -y --noninteractive < <(cat /src/flatpaks /src/flatpaks-optional)
 # Nettoyer le cache de téléchargement flatpak pour libérer de l'espace disque
 rm -rf /root/.cache /var/tmp/*
 

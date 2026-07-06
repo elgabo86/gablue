@@ -1,98 +1,73 @@
 %post --nochroot --erroronfail --log=/tmp/anaconda_custom_logs/install-flatpaks.log
-# Installation des flatpaks depuis le live ISO (offline)
-# 1. Obligatoires : installés automatiquement
-# 2. Optionnels  : checklist yad, installés si cochés
-# Utilise create-usb + sideload-repo pour une install fiable sans réseau
+# Installation des flatpaks depuis le live ISO
+# Copie brute de /var/lib/flatpak vers le déploiement ostree (même méthode que Bazzite)
+# Puis checklist yad pour désinstaller les optionnels non désirés
 set -euo pipefail
 
-SYSROOT_FLATPAK="/mnt/sysroot/var/lib/flatpak"
-SIDELOAD_DIR="/run/gablue-sideload"
-FLATPAK_REQUIRED="/usr/share/gablue/flatpaks-required"
 FLATPAK_OPTIONAL="/usr/share/gablue/flatpaks-optional"
 SELECTION_FILE="/tmp/gablue-selected-flatpaks"
 
-mkdir -p "$SIDELOAD_DIR" "$SYSROOT_FLATPAK"
+# =============================================================================
+# COPIER TOUT /var/lib/flatpak VERS LE DÉPLOIEMENT OSTREE
+# =============================================================================
 
-# Ajouter le dépôt Flathub sur le système cible
+deployment="$(ostree rev-parse --repo=/mnt/sysimage/ostree/repo ostree/0/1/0)"
+target="/mnt/sysimage/ostree/deploy/default/deploy/${deployment}.0/var/lib/"
+mkdir -p "$target"
+rsync -aAXUHKP --open-noatime /var/lib/flatpak "$target"
+sync "$target"
+
+# =============================================================================
+# CONFIGURER FLATHUB SUR LE SYSTÈME CIBLE
+# =============================================================================
+
 flatpak remote-add --if-not-exists --system \
-    --ostree-dir="$SYSROOT_FLATPAK" \
     flathub https://dl.flathub.org/repo/flathub.flatpakrepo || :
 
-# Fonction : extraire l'ID flatpak d'une full ref
-flatpak_id() { local r="$1"; r="${r#*/}"; echo "${r%%/*}"; }
-
 # =============================================================================
-# EXPORTER TOUS LES FLATPAKS PRÉ-INSTALLÉS DU LIVE VERS UN REPO SIDELOAD
+# RESTAURER LES LABELS SELINUX
 # =============================================================================
 
-echo "Export des flatpaks vers le repo sideload..."
-
-if [ -f "$FLATPAK_REQUIRED" ]; then
-    while IFS= read -r ref; do
-        [ -z "$ref" ] && continue
-        id=$(flatpak_id "$ref")
-        echo "  -> $id"
-        flatpak create-usb --system --allow-partial "$SIDELOAD_DIR" "$id" || echo "Export échoué: $id"
-    done < "$FLATPAK_REQUIRED"
-fi
-
-if [ -f "$FLATPAK_OPTIONAL" ]; then
-    while IFS= read -r ref; do
-        [ -z "$ref" ] && continue
-        id=$(flatpak_id "$ref")
-        echo "  -> $id"
-        flatpak create-usb --system --allow-partial "$SIDELOAD_DIR" "$id" || echo "Export échoué: $id"
-    done < "$FLATPAK_OPTIONAL"
-fi
+chcon -R -t var_lib_t /var/lib/flatpak || :
 
 # =============================================================================
-# FLATPAKS OBLIGATOIRES
-# =============================================================================
-
-if [ -f "$FLATPAK_REQUIRED" ]; then
-    echo "Installation des flatpaks obligatoires..."
-    while IFS= read -r ref; do
-        [ -z "$ref" ] && continue
-        id=$(flatpak_id "$ref")
-        echo "  -> $id"
-        flatpak install --system --sideload-repo="$SIDELOAD_DIR" --noninteractive \
-            --ostree-dir="$SYSROOT_FLATPAK" "$id" || echo "Échec: $id"
-    done < "$FLATPAK_REQUIRED"
-fi
-
-# =============================================================================
-# FLATPAKS OPTIONNELS (CHECKLIST YAD)
+# FLATPAKS OPTIONNELS : CHECKLIST YAD (DÉSINSTALLATION)
 # =============================================================================
 
 if [ ! -f "$FLATPAK_OPTIONAL" ]; then
     exit 0
 fi
 
+# Extraire l'ID flatpak d'une full ref
+flatpak_id() { local r="$1"; r="${r#*/}"; echo "${r%%/*}"; }
+
 YAD_ARGS=(--list --checklist
     --width=700 --height=400
     --title="Sélection des Flatpaks"
-    --text="Choisissez les flatpaks supplémentaires à installer :"
-    --column="Installer" --column="Ref" --column="Application"
+    --text="Choisissez les flatpaks supplémentaires à conserver.\nLes autres seront désinstallés :"
+    --column="Garder" --column="Ref" --column="Application"
     --print-column=2 --hide-column=2)
 
 while IFS= read -r ref; do
     [ -z "$ref" ] && continue
     name=$(flatpak info --system --show-name "$ref" 2>/dev/null || echo "$ref")
-    YAD_ARGS+=(FALSE "$ref" "$name")
+    YAD_ARGS+=(TRUE "$ref" "$name")
 done < "$FLATPAK_OPTIONAL"
 
-SELECTED=$(run0 --user=liveuser yad "${YAD_ARGS[@]}" 2>/dev/null) || {
-    echo "Aucun flatpak optionnel sélectionné"
+TO_KEEP=$(run0 --user=liveuser yad "${YAD_ARGS[@]}" 2>/dev/null) || {
+    echo "Dialogue annulé, conservation de tous les flatpaks optionnels"
     exit 0
 }
 
-echo "$SELECTED" > "$SELECTION_FILE"
+echo "$TO_KEEP" > "$SELECTION_FILE"
 
+# Désinstaller les optionnels non cochés
 while IFS= read -r ref; do
     [ -z "$ref" ] && continue
     id=$(flatpak_id "$ref")
-    echo "Installation de $id..."
-    flatpak install --system --sideload-repo="$SIDELOAD_DIR" --noninteractive \
-        --ostree-dir="$SYSROOT_FLATPAK" "$id" || echo "Échec: $id"
-done < "$SELECTION_FILE"
+    if ! echo "$TO_KEEP" | grep -qF "$ref"; then
+        echo "Désinstallation de $id..."
+        flatpak uninstall --system --noninteractive "$id" || echo "Échec désinstallation: $id"
+    fi
+done < "$FLATPAK_OPTIONAL"
 %end

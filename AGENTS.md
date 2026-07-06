@@ -718,7 +718,8 @@ installer/
 ├── Containerfile                    # Build payload (FROM image Gablue, bind-mount build.sh)
 ├── build.sh                         # Assemblage : flatpaks, détection runtime NVIDIA, swap kernel, dracut-live, livesys, Anaconda
 ├── iso.yaml                         # Config GRUB (label GABLUE_LIVE, timeout 3s, entrées sans apostrophes pour éviter un bug Titanoboa)
-├── flatpaks                         # Liste des flatpaks à pré-cacher dans l'ISO (format : ref flatpak, ex: app/org.mozilla.firefox/x86_64/stable)
+├── flatpaks                         # Liste des flatpaks obligatoires (format : ref flatpak)
+├── flatpaks-optional                # Liste des flatpaks optionnels (checklist yad)
 ├── titanoboa_hook_preinitramfs.sh   # Swap kernel OGC → vanilla Fedora (Secure Boot)
 ├── titanoboa_hook_postrootfs.sh     # Anaconda + kickstart bootc + live tweaks (suppression plasma-welcome)
 └── system_files/shared/             # Config Anaconda, autostart, post-scripts, localisation live (fr_CH)
@@ -728,11 +729,13 @@ installer/
 
 1. **Swap kernel** : Le kernel OGC (non signé) est remplacé par le kernel vanilla Fedora (signé) pour Secure Boot
 2. **Flatpaks** : 
-   - La liste dans `installer/flatpaks` définit quels flatpaks sont **pré-téléchargés** dans l'ISO
-   - Pour les variantes NVIDIA, les runtimes `org.freedesktop.Platform.GL[32].nvidia-XXX` sont automatiquement ajoutés (version détectée depuis `rpm -q nvidia-driver`)
-   - Pendant l'installation (`%post` Anaconda), une checklist `yad` permet à l'utilisateur de choisir lesquels installer
-   - Seuls les flatpaks cochés sont copiés du live vers le système cible (offline, sans passer par Flathub)
+   - Les listes `installer/flatpaks` et `installer/flatpaks-optional` définissent quels flatpaks sont **pré-téléchargés** dans l'ISO (tous installés dans le live pendant le build)
+   - Pour les variantes NVIDIA, les runtimes `org.freedesktop.Platform.GL[32].nvidia-XXX` sont automatiquement ajoutés aux obligatoires (version détectée depuis `rpm -q nvidia-driver`)
+   - Pendant l'installation (`%post` Anaconda), copie brute de `/var/lib/flatpak` vers le déploiement ostree (méthode Bazzite : `rsync -aAXUHKP --open-noatime`)
+   - Une checklist `yad` permet de **décocher** les optionnels qu'on ne veut PAS conserver (cochés par défaut)
+   - Les flatpaks décochés sont désinstallés du système cible (`flatpak uninstall --system`)
    - Le dépôt Flathub est ajouté sur le système cible pour les mises à jour futures
+   - Les labels SELinux sont restaurés (`chcon -R -t var_lib_t`)
 3. **Création de compte utilisateur** : Aucun compte pré-rempli — le spoke utilisateur Anaconda est visible et l'utilisateur choisit librement son nom/mot de passe. KDE Plasma gère la création au premier démarrage si le spoke est skippé.
 4. **Session live** : Bureau Plasma complet via `livesys-scripts`, l'installateur Anaconda n'est pas lancé automatiquement (l'utilisateur le lance via `liveinst` si besoin)
 5. **Écran de bienvenue** : `plasma-welcome` est retiré du live (hook postrootfs) pour éviter le lancement automatique au boot
