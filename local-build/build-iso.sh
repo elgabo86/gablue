@@ -19,7 +19,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 OUTPUT_DIR="$SCRIPT_DIR/output"
 REPO_OWNER="elgabo86"
-TITANOBOA_IMAGE="ghcr.io/ublue-os/titanoboa:latest"
+TITANOBOA_REPO="https://github.com/ublue-os/titanoboa.git"
+TITANOBOA_IMAGE="localhost/titanoboa:latest"
 
 # =============================================================================
 # ARGUMENTS
@@ -72,6 +73,19 @@ sudo podman build \
     --build-arg BASE_IMAGE="$BASE_IMAGE" \
     --build-arg INSTALL_IMAGE_PAYLOAD="$BASE_IMAGE" \
     -t "$PAYLOAD_IMAGE" installer/
+
+# =============================================================================
+# BUILD TITANOBOA (si pas déjà fait)
+# =============================================================================
+
+if ! sudo podman images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${TITANOBOA_IMAGE}$" 2>/dev/null; then
+    echo ">>> Build de Titanoboa..."
+    TITANOBOA_DIR="$(mktemp -d)"
+    git clone --depth 1 "$TITANOBOA_REPO" "$TITANOBOA_DIR"
+    sudo podman build -t "$TITANOBOA_IMAGE" "$TITANOBOA_DIR"
+    rm -rf "$TITANOBOA_DIR"
+    echo ""
+fi
 
 # =============================================================================
 # GÉNÉRATION DE L'ISO
