@@ -64,6 +64,10 @@ rm -rf /var/tmp/* /root/.cache
 echo "Copie des fichiers système partagés..."
 cp -a /src/system_files/shared/. /
 
+# Copier la liste des flatpaks disponibles pour le sélecteur post-install
+mkdir -p /usr/share/gablue
+cp /src/flatpaks /usr/share/gablue/flatpaks-available
+
 # =============================================================================
 # HOOK PRE-INITRAMFS : SWAP KERNEL OGC → VANILLA FEDORA
 # =============================================================================
@@ -85,8 +89,8 @@ DRACUT_NO_XATTR=1 dracut -v --force --zstd --reproducible --no-hostonly \
 # LIVESYS-SCRIPTS (SESSION LIVE KDE)
 # =============================================================================
 
-echo "Installation de livesys-scripts..."
-dnf install -y livesys-scripts
+echo "Installation de livesys-scripts et yad..."
+dnf install -y livesys-scripts yad
 sed -i "s/^livesys_session=.*/livesys_session=kde/" /etc/sysconfig/livesys
 systemctl enable livesys.service livesys-late.service
 
