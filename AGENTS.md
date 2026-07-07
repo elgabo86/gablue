@@ -767,7 +767,7 @@ Les tags dans les messages de commit déclenchent les builds :
 | Tag | Images déclenchées |
 |-----|-------------------|
 | `[iso]` | gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-dx (ISOs live) |
-| `[all]` | Toutes les images + live ISO |
+| `[all]` | Toutes les images |
 | `[main]` | gablue-main |
 | `[nvidia]` | gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-test |
 | `[dx]` | gablue-main-dx |

@@ -32,7 +32,7 @@ jobs:
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[iso]') || contains(github.event.head_commit.message, '[all]')))
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[iso]'))
     strategy:
       fail-fast: false
       matrix:
