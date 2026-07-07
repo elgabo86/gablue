@@ -131,7 +131,8 @@ swap_to_default() {
     sleep 0.5
     pgrep -f "/usr/bin/plasma-bigscreen-inputhandler" >> "$LOG" 2>&1 || log "swap_to_default: process killed (good)"
 
-    # Restaurer les settings KWin originaux
+    # Restaurer les settings KWin originaux (écriture explicite des valeurs
+    # par défaut, car --delete suivi de reconfigure ne suffit pas toujours)
     log "swap_to_default: restoring original KWin settings"
     for setting in BorderlessMaximizedWindows:Windows:"--type bool" Placement:Windows:"" NoPlugin:org.kde.kdecoration2:"--type bool"; do
         key="${setting%%:*}"
@@ -157,10 +158,6 @@ swap_to_default() {
 
     unset PLASMA_BIGSCREEN_LAUNCH_REASON
 
-    # Recharger KWin APRÈS avoir restauré l'env (XDG_CONFIG_DIRS normal)
-    log "swap_to_default: reloading KWin config for normal Plasma settings"
-    qdbus org.kde.KWin /KWin org.kde.KWin.reconfigure 2>/dev/null || true
-
     # Annuler le mirroring APRÈS avoir restauré l'env (DBus fonctionnel)
     if [ -f "$CACHE_DIR/kscreen-mirrored.txt" ]; then
         log "swap_to_default: removing mirroring, restoring extended layout"
@@ -172,6 +169,14 @@ swap_to_default() {
 
     log "swap_to_default: replacing plasmashell"
     plasmashell --replace &
+
+    # Recharger KWin APRÈS plasmashell --replace (sinon plasmashell
+    # peut réécrire les settings bigscreen encore en mémoire dans kwinrc)
+    (
+        sleep 2
+        log "swap_to_default: reloading KWin config for normal Plasma settings"
+        qdbus org.kde.KWin /KWin org.kde.KWin.reconfigure 2>/dev/null || true
+    ) &
 
     # Restaurer les fenêtres APRÈS le remplacement de plasmashell
     # (plasmashell --replace peut perturber l'état des fenêtres si fait avant)
