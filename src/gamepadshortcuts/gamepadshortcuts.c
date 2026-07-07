@@ -380,10 +380,10 @@ static void process_event(struct input_event *ev)
             break;
         case BTN_SELECT: select_pressed = ev->value == 1; break;
         case BTN_START:  start_pressed = ev->value == 1; break;
-        case BTN_C:      triangle_pressed = ev->value == 1; break;
-        case BTN_X:      square_pressed = ev->value == 1; break;
-        case BTN_B:      circle_pressed = ev->value == 1; break;
-        case BTN_A:      break;
+        case BTN_NORTH:  triangle_pressed = ev->value == 1; break;
+        case BTN_WEST:   square_pressed = ev->value == 1; break;
+        case BTN_EAST:   circle_pressed = ev->value == 1; break;
+        case BTN_SOUTH:  break;
         case BTN_THUMBL: l3_pressed = ev->value == 1; break;
         case BTN_THUMBR: r3_pressed = ev->value == 1; break;
         default: break;
