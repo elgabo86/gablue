@@ -157,7 +157,7 @@ sed -i 's/#default.clock.quantum       = 1024/default.clock.quantum       = 256/
 sed -i 's/default.clock.min-quantum = 1024/default.clock.min-quantum = 256/' /usr/share/pipewire/pipewire.conf
 
 #MAJ Seulement le samedi
-# 1. Flatpak : passer de quotidien à samedi (tes sed originaux – indispensables)
+# 1. Flatpak : passer de quotidien à samedi
 sed -i 's/OnCalendar=\*-\*-\* 4:00:00/OnCalendar=Sat \*-\*-\* 04:00:00/' /usr/lib/systemd/system/flatpak-system-update.timer
 sed -i 's/OnCalendar=\*-\*-\* 4:00:00/OnCalendar=Sat \*-\*-\* 04:00:00/' /usr/lib/systemd/user/flatpak-user-update.timer
 
@@ -165,13 +165,14 @@ sed -i 's/OnCalendar=\*-\*-\* 4:00:00/OnCalendar=Sat \*-\*-\* 04:00:00/' /usr/li
 sed -i '/OnBootSec=/d' /usr/lib/systemd/system/flatpak-system-update.timer
 sed -i '/OnBootSec=/d' /usr/lib/systemd/user/flatpak-user-update.timer
 
-# 3. rpm-ostree : d'abord ton sed (remplace le quotidien par samedi)
+# 3. rpm-ostree : override timer → samedi 04:00 + delai aléatoire 10 min
 sed -i 's/OnCalendar=\*-\*-\* 4:00:00/OnCalendar=Sat \*-\*-\* 04:00:00/' /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
-
-# Puis nettoyage complet + réassurance du samedi (neutralise boot/quotidien monotome)
 sed -i '/OnBootSec=/d'        /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
 sed -i '/OnUnitInactiveSec=/d' /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
-sed -i '/\[Timer\]/a OnBootSec=\nOnUnitInactiveSec=\nOnCalendar=Sat *-*-* 04:00:00\nRandomizedDelaySec=10m\nPersistent=true' /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
+echo 'RandomizedDelaySec=10m' >> /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
+
+# 4. Activer les mises à jour automatiques rpm-ostree (stage)
+cp /usr/share/ublue-os/update-services/etc/rpm-ostreed.conf /etc/rpm-ostreed.conf
 
 # =============================================================================
 # CORRECTION COMPLÉTION UJUST

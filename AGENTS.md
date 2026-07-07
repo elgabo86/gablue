@@ -542,6 +542,7 @@ Configuration post-installation étendue :
 - Nettoyage des fichiers .desktop
 - Configuration DX (iptables, NetworkManager)
 - MIME par défaut (Windows.desktop, Linux.desktop)
+- **Mises à jour automatiques** : active `AutomaticUpdatePolicy=stage` dans `/etc/rpm-ostreed.conf` (copie depuis `/usr/share/ublue-os/update-services/etc/rpm-ostreed.conf` fourni par le RPM `ublue-os-update-services`) et reprogramme les timers flatpak + rpm-ostree le samedi à 04:00 avec `RandomizedDelaySec=10m`
 
 **post-install-test** ajoute :
 - Permissions pour scripts OpenGamepadUI (steamos-session-select, gwine-plugin) — wrapper appelant d'abord `post-install`
