@@ -174,6 +174,9 @@ echo 'RandomizedDelaySec=10m' >> /usr/lib/systemd/system/rpm-ostreed-automatic.t
 # 4. Activer les mises à jour automatiques rpm-ostree (stage)
 cp /usr/share/ublue-os/update-services/etc/rpm-ostreed.conf /etc/rpm-ostreed.conf
 
+# 5. Ajouter linuxbrew au secure_path de sudo
+sed -Ei 's|secure_path = (.*)|secure_path = \1:/home/linuxbrew/.linuxbrew/bin|' /etc/sudoers
+
 # =============================================================================
 # CORRECTION COMPLÉTION UJUST
 # =============================================================================
