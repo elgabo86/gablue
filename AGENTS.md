@@ -508,6 +508,7 @@ Installation extensive de paquets organisée par catégories :
 
 Paquets supprimés :
 - firefox, firefox-langpacks, htop
+- plasma-welcome-fedora, plasma-welcome, plasma-setup
 - plasma-discover-rpm-ostree (Kinoite)
 
 **rpm-test** :
