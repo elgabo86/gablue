@@ -312,19 +312,12 @@ prepare_full_offline_cache() {
     
     local failed=false
     
-    echo "1. Préparation des runners..."
+    echo "1. Préparation du runner par défaut (gwine-proton)..."
     echo ""
     
-    # Télécharger/mettre à jour gwine (runner standard)
-    echo "   1a. Préparation de gwine..."
-    if ! download_gwine "false" "true"; then
-        echo "      ⚠️ Échec du téléchargement/mise à jour de gwine"
-        failed=true
-    fi
-    
-    # Télécharger/mettre à jour gwine-proton (runner proton)
-    echo ""
-    echo "   1b. Préparation de gwine-proton..."
+    # Seul gwine-proton est pré-caché (runner par défaut). Le runner wine
+    # standard n'est pas inclus : il sera téléchargé à la demande si l'utilisateur
+    # bascule dessus avec une connexion (voir ensure_runner_installed).
     if ! download_gwine_proton "false" "true"; then
         echo "      ⚠️ Échec du téléchargement/mise à jour de gwine-proton"
         failed=true
@@ -408,16 +401,16 @@ prepare_full_offline_cache() {
     fi
     echo ""
     
-    echo "4. Préparation de DXVK-NVAPI (NVIDIA uniquement)..."
+    echo "4. Préparation de DXVK-NVAPI..."
     
-    if is_nvidia_gpu; then
-        echo "   Téléchargement/mise à jour de DXVK-NVAPI..."
-        if ! download_dxvk_nvapi --no-confirm 2>/dev/null; then
-            echo "   ⚠️ Échec du téléchargement de DXVK-NVAPI"
-            failed=true
-        fi
-    else
-        echo "   GPU non-NVIDIA, DXVK-NVAPI ignoré"
+    # Toujours télécharger DXVK-NVAPI pour un cache portable (pack offline / ISO)
+    # déployable sur une machine NVIDIA, indépendamment du GPU de la machine
+    # qui construit le cache. L'installation dans le préfixe reste conditionnée
+    # au GPU (voir install_dxvk_nvapi).
+    echo "   Téléchargement/mise à jour de DXVK-NVAPI..."
+    if ! download_dxvk_nvapi --no-confirm 2>/dev/null; then
+        echo "   ⚠️ Échec du téléchargement de DXVK-NVAPI"
+        failed=true
     fi
     echo ""
     

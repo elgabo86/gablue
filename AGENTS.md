@@ -636,7 +636,7 @@ Génération de l'initramfs avec dracut :
 ### gablue-builds.yml
 
 Workflow principal déclenché par :
-- Push sur main (avec tags spécifiques)
+- Push sur main (avec tags spécifiques : `[main]`, `[nvidia]`, `[dx]`, `[all]`, `[all-iso]`)
 - Pull requests
 - Schedule quotidien (02:00 UTC)
 - Workflow_dispatch (manuel)
@@ -644,6 +644,8 @@ Workflow principal déclenché par :
 **Optimisations** :
 - `paths-ignore` : les modifications de fichiers `.md` et `.txt` ne déclenchent pas de build
 - `concurrency` : annule les builds en cours si un nouveau push arrive sur la même branche
+
+**Chaînage ISO (`[all-iso]`)** : le tag `[all-iso]` déclenche les 5 variantes d'images (comme `[all]`). À la fin du workflow, le workflow ISO se déclenche automatiquement via `workflow_run` (voir `build-gablue-live-isos.yml`). Les sous-chaînes ne collisionnent pas : `contains('[all-iso]', '[all]')` et `contains('[all-iso]', '[iso]')` sont tous deux **faux**, donc `[all-iso]` ne déclenche pas l'ISO immédiatement au push.
 
 **Jobs** :
 - `build-main` : Build gablue-main (Containerfile-gablue, nvidia_flavor non défini)
@@ -687,6 +689,7 @@ Workflow réutilisable pour le build d'une image :
 
 Build des **ISOs live** avec environnement de bureau Plasma complet (tous les 5 jours) :
 - Permet d'essayer Gablue avant installation (LiveCD complet, pas juste Anaconda)
+- **Déclencheurs** : schedule (5 jours), `workflow_dispatch`, push avec `[iso]`, et **`workflow_run`** à la fin du workflow d'images. Le chaînage `workflow_run` ne construit l'ISO que si l'exécution amont a été déclenchée par un **push** (`workflow_run.event == 'push'`), a **réussi** (`conclusion == 'success'`) et que le message de commit contient **`[all-iso]`** — garantit que les images `:latest` sont publiées avant de builder les ISOs. Le checkout utilise `workflow_run.head_sha` pour rester sur le commit d'origine.
 - Utilise **Titanoboa** (`Zeglius/titanoboa@revamp-pr`), un installateur bootc qui génère un squashfs live
 - 5 variantes : gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-dx
 - **Processus en 2 étapes** :
@@ -719,12 +722,13 @@ L'ISO est générée dans `local-build/output/`. Le script utilise `sudo podman`
 ```
 installer/
 ├── Containerfile                    # Build payload (FROM image Gablue, bind-mount build.sh)
-├── build.sh                         # Assemblage : flatpaks, détection runtime NVIDIA, swap kernel, dracut-live, livesys, Anaconda
+├── build.sh                         # Assemblage : flatpaks, détection runtime NVIDIA, swap kernel, dracut-live, livesys, Anaconda, pack cache gwine → /extra
 ├── iso.yaml                         # Config GRUB (label GABLUE_LIVE, timeout 3s, entrées sans apostrophes pour éviter un bug Titanoboa)
 ├── flatpaks                         # Liste des flatpaks obligatoires (format : ref flatpak)
 ├── flatpaks-optional                # Liste des flatpaks optionnels (checklist yad)
 ├── titanoboa_hook_preinitramfs.sh   # Swap kernel OGC → vanilla Fedora (Secure Boot)
 ├── titanoboa_hook_postrootfs.sh     # Anaconda + kickstart bootc + live tweaks (suppression plasma-welcome)
+├── extra/                           # Contenu local arbitraire copié dans /extra du live (gitignore sauf .gitkeep)
 └── system_files/shared/             # Config Anaconda, autostart, post-scripts, localisation live (fr_CH)
 ```
 
@@ -750,6 +754,9 @@ installer/
 11. **NVIDIA live** : Fix `GSK_RENDERER=gl`, réinstallation mesa-vulkan-drivers+nvidia-gpu-firmware (kernel vanilla = pas de drivers proprio, on utilise nouveau)
 12. **Localisation live** : La session live est configurée en français suisse (`fr_CH.UTF-8`) avec clavier QWERTZ suisse romand (`ch(fr)`). Les fichiers sont dans `system_files/shared/etc/` : `locale.conf` (LANG + LANGUAGE), `vconsole.conf` (KEYMAP=ch-fr), `X11/xorg.conf.d/00-keyboard.conf` (layout XKB). Ces fichiers ne sont copiés que dans le payload live (n'affectent pas l'image installée). Les langpacks (`langpacks-fr`, `glibc-all-langpacks`) proviennent de l'image Gablue de base.
 13. **GRUB** : Les noms d'entrées ne doivent pas contenir d'apostrophes (Titanoboa génère `menuentry '...'` sans échapper les apostrophes internes, ce qui casse le parsing GRUB et ne montre qu'une seule entrée)
+14. **Dossier `/extra` (live uniquement)** : `build.sh` peuple `/extra` du rootfs live, jamais installé sur l'OS (l'installation redéploie l'image container propre via `ostreecontainer` + `bootc switch`). Contenu :
+    - **Pack cache gwine** : `build.sh` lance `gwine --download-components` puis `gwine --cachepack` et copie le dossier `gwine-cache-installer/` (gwine-cache.tar.xz + install-cache.sh + README) dans `/extra`. Utilise le `gwine` de l'image de base → l'image Gablue doit être reconstruite **avant** l'ISO pour embarquer le comportement à jour (gwine-proton uniquement + DXVK-NVAPI toujours inclus). Échec réseau non bloquant (avertissement). Le cache brut est supprimé du payload (doublon avec l'archive)
+    - **Contenu local** : le dossier `installer/extra/` (bind-monté sur `/src/extra`, gitignore sauf `.gitkeep`) est copié dans `/extra` pour les builds locaux — permet d'embarquer des fichiers/dossiers arbitraires. Absent/vide en CI → section ignorée
 
 ### clean-gablue-images.yml
 
@@ -769,6 +776,7 @@ Les tags dans les messages de commit déclenchent les builds :
 |-----|-------------------|
 | `[iso]` | gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-dx (ISOs live) |
 | `[all]` | Toutes les images |
+| `[all-iso]` | Toutes les images **puis** les ISOs live automatiquement (chaînage via `workflow_run` une fois les images publiées) |
 | `[main]` | gablue-main |
 | `[nvidia]` | gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-test |
 | `[dx]` | gablue-main-dx |

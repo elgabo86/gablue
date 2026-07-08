@@ -32,7 +32,7 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
-      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[main]') || contains(github.event.head_commit.message, '[all]')))
+      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[main]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
     uses: ./.github/workflows/reusable-gablue-image.yml
     secrets: inherit
     with:
@@ -52,7 +52,7 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
-      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[nvidia]') || contains(github.event.head_commit.message, '[all]')))
+      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[nvidia]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
     uses: ./.github/workflows/reusable-gablue-image.yml
     secrets: inherit
     with:
@@ -73,7 +73,7 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
-      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[nvidia]') || contains(github.event.head_commit.message, '[all]')))
+      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[nvidia]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
     uses: ./.github/workflows/reusable-gablue-image.yml
     secrets: inherit
     with:
@@ -94,7 +94,7 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
-      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[dx]') || contains(github.event.head_commit.message, '[all]')))
+      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[dx]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
     uses: ./.github/workflows/reusable-gablue-image.yml
     secrets: inherit
     with:
@@ -114,7 +114,7 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
-      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[dx]') || contains(github.event.head_commit.message, '[nvidia]') || contains(github.event.head_commit.message, '[all]')))
+      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[dx]') || contains(github.event.head_commit.message, '[nvidia]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
     uses: ./.github/workflows/reusable-gablue-image.yml
     secrets: inherit
     with:

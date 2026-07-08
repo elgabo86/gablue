@@ -233,8 +233,8 @@ lib/dir-config.sh
   - gwine-proton.sh : Téléchargement et installation de gwine
   - gwine-proton-runner.sh : Runner Proton
   - dxvk-vkd3d.sh : Mise à jour DXVK, VKD3D, NVAPI + download_vkd3d() pour téléchargement VKD3D seul (utilisé quand le mode DXVK async gère DXVK séparément)
-  - offline.sh : Préparation cache, mode offline, téléchargement Mono/Gecko avec vérification de version
-  - cachepack.sh : Création de packs cache pour déploiement offline
+  - offline.sh : Préparation cache, mode offline, téléchargement Mono/Gecko avec vérification de version. `prepare_full_offline_cache()` (appelée par `--download-components`) ne pré-cache que le runner par défaut gwine-proton et télécharge **toujours** DXVK-NVAPI (cache portable, indépendant du GPU de la machine qui construit le pack)
+  - cachepack.sh : Création de packs cache pour déploiement offline. Empaquette gwine-proton uniquement (le runner wine standard est exclu du pack via `rm -rf` après copie), vérifie DXVK standard + GPLAsync + VKD3D + DXVK-NVAPI + Mono/Gecko + wincomponents. Le `install-cache.sh` généré déploie uniquement gwine-proton
 - **component.sh** : Fichier de redirection vers components/*
 - **components/*** : Gestion des composants individuels
   - utils.sh : Utilitaires (copy_dll_files, create_dll_overrides, get_wine_system_paths)
@@ -362,7 +362,7 @@ podman run --rm -v "$(pwd)/lib:/src:z" docker.io/library/fedora:43 bash -c \
 ### Gestion des composants
 - DXVK : double source (officiel `doitsujin/dxvk` + `bottlesdevs/components`), prend la version la plus haute (priorité officiel en cas d'égalité)
 - VKD3D-Proton : double source (officiel `HansKristian-Work/vkd3d-proton` + `bottlesdevs/components`), même règle
-- DXVK-NVAPI : source unique (`bottlesdevs/components`, NVIDIA uniquement)
+- DXVK-NVAPI : source unique (`bottlesdevs/components`, NVIDIA uniquement). **Installé** dans le préfixe seulement sur GPU NVIDIA (`install_dxvk_nvapi` garde son `is_nvidia_gpu`), mais **toujours téléchargé/empaqueté** dans le cache offline pour rester portable
 - DXVK-GPLAsync : source unique (`gitlab.com/Ph42oN/dxvk-gplasync`, API GitLab v4), version extraite depuis le tag GitLab (format `vX.Y.Z-N`)
 - `auto_update_components()` détecte le mode DXVK configuré (`dxvk` ou `dxvk-async`) et adapte la vérification/téléchargement en conséquence (async → `download_dxvk_async` + `download_vkd3d`, standard → `download_updated_dxvk_vkd3d`)
 - La source choisie est stockée dans les globales `_DXVK_SOURCE` / `_VKD3D_SOURCE` ("official" ou "bottles")
@@ -385,7 +385,7 @@ podman run --rm -v "$(pwd)/lib:/src:z" docker.io/library/fedora:43 bash -c \
 - **Caractères non-ASCII** : Conversion en chemins temporaires pour Wine
 - **Verrous de processus** : Évite les conflits sur les packs WGP
 - **Relancement** : Support du relancement d'un jeu déjà en cours d'exécution
-- **Mono/Gecko** : Les versions sont hardcodées dans le code (MONO_VER, GECKO_VER dans offline.sh). Le cache vérifie la présence des fichiers exacts (pas juste « dossier non vide »). Les anciennes versions sont supprimées avant téléchargement. En cas de mise à jour des versions hardcodées, penser à mettre à jour les 3 endroits : download_missing_components(), prepare_local_cache(), prepare_full_offline_cache().
+- **Mono/Gecko** : Les versions sont hardcodées dans le code (MONO_VER, GECKO_VER dans offline.sh). Le cache vérifie la présence des fichiers exacts (pas juste « dossier non vide »). Les anciennes versions sont supprimées avant téléchargement. En cas de mise à jour des versions hardcodées, penser à mettre à jour les 4 endroits : download_missing_components(), prepare_local_cache(), prepare_full_offline_cache() (offline.sh) **et la vérification dans create_cachepack() (cachepack.sh)** — un oubli sur ce dernier fait échouer `--cachepack` avec « Wine Mono/Gecko manquants ».
 - **DXVK/VKD3D sources** : get_component_version compare officiel et bottlesdevs, stocke le choix dans `_DXVK_SOURCE` / `_VKD3D_SOURCE`. Les fonctions de téléchargement (dxvk-vkd3d.sh, offline.sh) lisent ces globales pour construire l'URL.
 
 ## Notes pour les agents

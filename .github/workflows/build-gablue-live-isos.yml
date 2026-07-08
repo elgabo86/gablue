@@ -16,6 +16,13 @@ on:
       - "**.md"
       - "**.txt"
       - ".github/**"
+  # Chaînage automatique : déclenché à la fin du workflow d'images quand un push
+  # contenait le tag [all-iso] (voir condition du job build-live-iso). Garantit
+  # que les images :latest sont publiées AVANT de construire les ISOs.
+  workflow_run:
+    workflows: ["build-gablue-images"]
+    types:
+      - completed
 
 env:
   REPO_OWNER: ${{ github.repository_owner }}
@@ -32,7 +39,11 @@ jobs:
     if: |
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && contains(github.event.head_commit.message, '[iso]'))
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[iso]')) ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       contains(github.event.workflow_run.head_commit.message, '[all-iso]'))
     strategy:
       fail-fast: false
       matrix:
@@ -75,6 +86,8 @@ jobs:
 
       - name: Checkout du dépôt
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Obtenir le nom en minuscules du propriétaire
         id: repo_owner_case

@@ -28,14 +28,6 @@ create_cachepack() {
     echo "Vérification des composants..."
     local missing_components=false
     
-    local GWINE_ARCHIVE_DIR="$COMPONENTS_SOURCE/gwine"
-    if [ -d "$GWINE_ARCHIVE_DIR" ] && [ -n "$(ls -A "$GWINE_ARCHIVE_DIR"/*.tar.xz 2>/dev/null)" ]; then
-        echo "  ✓ gwine présent dans le cache"
-    else
-        echo "  ⚠️  gwine n'est pas dans le cache"
-        missing_components=true
-    fi
-    
     local GWINE_PROTON_ARCHIVE_DIR="$COMPONENTS_SOURCE/gwine-proton"
     if [ -d "$GWINE_PROTON_ARCHIVE_DIR" ] && [ -n "$(ls -A "$GWINE_PROTON_ARCHIVE_DIR"/*.tar.xz 2>/dev/null)" ]; then
         echo "  ✓ gwine-proton présent dans le cache"
@@ -84,8 +76,19 @@ create_cachepack() {
         echo "  ✓ VKD3D-Proton présent"
     fi
     
+    local has_nvapi=false
+    if [ -d "$DXVK_NVAPI_CACHE_DIR" ]; then
+        find "$DXVK_NVAPI_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-nvapi-*" 2>/dev/null | grep -q . && has_nvapi=true
+    fi
+    if [ "$has_nvapi" = false ]; then
+        echo "  ⚠️  DXVK-NVAPI manquant"
+        missing_components=true
+    else
+        echo "  ✓ DXVK-NVAPI présent"
+    fi
+    
     local wine_cache="$COMPONENTS_SOURCE/wine-cache"
-    if [ ! -f "$wine_cache/wine-mono-11.1.0-x86.msi" ] || \
+    if [ ! -f "$wine_cache/wine-mono-11.2.0-x86.msi" ] || \
        [ ! -f "$wine_cache/wine-gecko-2.47.4-x86_64.msi" ] || \
        [ ! -f "$wine_cache/wine-gecko-2.47.4-x86.msi" ]; then
         echo "  ⚠️  Wine Mono/Gecko manquants"
@@ -131,6 +134,10 @@ create_cachepack() {
     
     echo "  - Copie des composants..."
     cp -r "$COMPONENTS_SOURCE" "$TEMP_CACHE/"
+    
+    # Ne conserver que le runner par défaut (gwine-proton) : exclure le runner
+    # wine standard du pack pour l'alléger.
+    rm -rf "$TEMP_CACHE/components/gwine"
     
     local WINCOMPONENTS_SOURCE="$CACHE_SOURCE/wincomponents"
     if [ -d "$WINCOMPONENTS_SOURCE" ]; then
@@ -251,13 +258,11 @@ fi
 if [ -d "$CACHE_DIR/components/gwine" ]; then
     echo "  - Installation de gwine..."
     mkdir -p "$GWINE_DIR/wine"
-    local archive_file
     archive_file=$(ls "$CACHE_DIR/components/gwine"/*.tar.xz 2>/dev/null | head -1)
     if [ -n "$archive_file" ]; then
-        local temp_extract="/tmp/gwine-extract-$$"
+        temp_extract="/tmp/gwine-extract-$$"
         mkdir -p "$temp_extract"
         if tar -xJf "$archive_file" -C "$temp_extract"; then
-            local extracted_dir
             extracted_dir=$(find "$temp_extract" -maxdepth 1 -type d -name "*gwine*" | head -1)
             [ -z "$extracted_dir" ] && extracted_dir=$(find "$temp_extract" -maxdepth 1 -type d | head -1)
             if [ -n "$extracted_dir" ]; then
@@ -273,13 +278,11 @@ fi
 if [ -d "$CACHE_DIR/components/gwine-proton" ]; then
     echo "  - Installation de gwine-proton..."
     mkdir -p "$GWINE_DIR/wine-proton"
-    local proton_archive_file
     proton_archive_file=$(ls "$CACHE_DIR/components/gwine-proton"/*.tar.xz 2>/dev/null | head -1)
     if [ -n "$proton_archive_file" ]; then
-        local temp_extract="/tmp/gwine-proton-extract-$$"
+        temp_extract="/tmp/gwine-proton-extract-$$"
         mkdir -p "$temp_extract"
         if tar -xJf "$proton_archive_file" -C "$temp_extract"; then
-            local extracted_dir
             extracted_dir=$(find "$temp_extract" -maxdepth 1 -type d \( -name "*gwine*proton*" -o -name "*proton*" \) | head -1)
             [ -z "$extracted_dir" ] && extracted_dir=$(find "$temp_extract" -maxdepth 1 -type d -name "*gwine*" | head -1)
             [ -z "$extracted_dir" ] && extracted_dir=$(find "$temp_extract" -maxdepth 1 -type d | head -1)
@@ -339,7 +342,7 @@ Ce dossier contient tous les composants nécessaires pour installer Gwine
 en mode offline.
 
 Contenu:
-  - gwine-cache.tar.xz    : Archive contenant le cache, gwine et gwine-proton
+  - gwine-cache.tar.xz    : Archive contenant le cache et gwine-proton
   - install-cache.sh      : Script de déploiement automatique
   - README.txt            : Ce fichier
 
@@ -353,13 +356,11 @@ Instructions:
 
    Le script va:
    - Déployer le cache dans ~/.cache/gwine/
-   - Installer gwine (runner standard) dans ~/.local/share/gwine/wine/
    - Installer gwine-proton dans ~/.local/share/gwine/wine-proton/
    - Proposer d'initialiser le préfixe Wine (avec kdialog si disponible)
 
 3. Alternative manuelle:
    - Extraire gwine-cache.tar.xz dans ~/.cache/gwine/
-   - Extraire les archives de components/gwine/ vers ~/.local/share/gwine/wine/
    - Extraire les archives de components/gwine-proton/ vers ~/.local/share/gwine/wine-proton/
    - Lancer: gwine --init --offline
 
@@ -369,8 +370,8 @@ Notes:
   (wine, squashfuse, bubblewrap, etc.)
 - Le script détecte automatiquement si kdialog est disponible
 - Le préfixe Wine sera créé dans ~/Windows/Prefix/
-- Deux runners sont inclus : gwine (standard) et gwine-proton
-- Par défaut, gwine est utilisé. Pour utiliser gwine-proton: gwine --init --proton
+- Seul le runner par défaut gwine-proton est inclus
+- Pour utiliser le runner wine standard: gwine --init --wine (téléchargement requis)
 - Deux versions DXVK sont incluses : standard et GPLAsync
 - Pour utiliser DXVK-GPLAsync: gwine --init --dxvk-async
   (DXVK_ASYNC=1 sera automatiquement défini)

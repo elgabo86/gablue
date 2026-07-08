@@ -121,6 +121,47 @@ if [ -d /src/system_files/overrides ]; then
 fi
 
 # =============================================================================
+# PACK CACHE GWINE (OFFLINE) → /extra
+# =============================================================================
+
+# Génère un pack cache gwine complet (runners gwine/gwine-proton, DXVK,
+# DXVK-GPLAsync, VKD3D-Proton, DXVK-NVAPI, Wine Mono/Gecko, composants Windows)
+# et le place dans /extra sous forme de dossier installer déployable offline.
+# /extra n'existe que dans le rootfs live : l'installation sur disque redéploie
+# l'image container propre (ostreecontainer + bootc switch), donc /extra ne se
+# retrouve jamais sur l'OS installé.
+echo "Génération du pack cache gwine pour /extra..."
+if command -v gwine > /dev/null 2>&1; then
+    gwine_pack_tmp="$(mktemp -d)"
+    if gwine --download-components && ( cd "$gwine_pack_tmp" && gwine --cachepack ); then
+        mkdir -p /extra
+        cp -a "$gwine_pack_tmp/gwine-cache-installer" /extra/
+        echo "Pack cache gwine déployé dans /extra/gwine-cache-installer"
+    else
+        echo "AVERTISSEMENT : échec de la génération du pack cache gwine, /extra ignoré"
+    fi
+    # Le cache brut fait doublon avec l'archive du pack : on le supprime du payload
+    rm -rf "$gwine_pack_tmp" "$HOME/.cache/gwine"
+else
+    echo "AVERTISSEMENT : gwine introuvable, pack cache /extra ignoré"
+fi
+
+# =============================================================================
+# CONTENU EXTRA PERSONNALISÉ (BUILD LOCAL) → /extra
+# =============================================================================
+
+# Copie le contenu du dossier installer/extra/ (bind-monté sur /src/extra) dans
+# /extra du live. Permet d'embarquer des fichiers/dossiers arbitraires pour les
+# builds locaux. Le dossier est gitignore : absent ou vide en CI → section
+# ignorée. /extra n'existe que dans le live, jamais sur l'OS installé.
+if [ -d /src/extra ] && [ -n "$(ls -A /src/extra 2>/dev/null | grep -v '^.gitkeep$')" ]; then
+    echo "Copie du contenu extra personnalisé dans /extra..."
+    mkdir -p /extra
+    cp -a /src/extra/. /extra/
+    rm -f /extra/.gitkeep
+fi
+
+# =============================================================================
 # CONFIGURATION EFI POUR L'ISO
 # =============================================================================
 

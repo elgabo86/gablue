@@ -7,3 +7,7 @@ src/gwine-launcher/gwine-standalone.sh
 src/ds2xbox/ds2xbox
 src/gamepadshortcuts/gamepadshortcuts
 src/gablue-isomount/gablue-isomount
+
+# Contenu extra local pour les builds ISO (copié dans /extra du live, non versionné)
+/installer/extra/*
+!/installer/extra/.gitkeep
