@@ -88,18 +88,28 @@ download_missing_components() {
         if [ -z "$VKD3D_VERSION" ]; then
             echo "Warning: Impossible de récupérer la dernière version de VKD3D-Proton"
         else
-            local VKD3D_TAG VKD3D_URL
+            local VKD3D_TAG VKD3D_URL VKD3D_FALLBACK_URL
             if [ "${_VKD3D_SOURCE:-official}" = "bottles" ]; then
                 VKD3D_TAG="vkd3d-proton-${VKD3D_VERSION}"
                 VKD3D_URL="https://github.com/bottlesdevs/components/releases/download/${VKD3D_TAG}/${VKD3D_TAG}.tar.gz"
+                VKD3D_FALLBACK_URL=""
             else
                 VKD3D_TAG="v${VKD3D_VERSION}"
-                VKD3D_URL="https://github.com/HansKristian-Work/vkd3d-proton/releases/download/${VKD3D_TAG}/vkd3d-proton-${VKD3D_VERSION}.tar.gz"
+                # v3.0.1+ utilise .tar.zst, versions antérieures .tar.gz
+                VKD3D_URL="https://github.com/HansKristian-Work/vkd3d-proton/releases/download/${VKD3D_TAG}/vkd3d-proton-${VKD3D_VERSION}.tar.zst"
+                VKD3D_FALLBACK_URL="https://github.com/HansKristian-Work/vkd3d-proton/releases/download/${VKD3D_TAG}/vkd3d-proton-${VKD3D_VERSION}.tar.gz"
             fi
-            local VKD3D_TEMP="$VKD3D_CACHE_DIR/vkd3d.tar.gz"
+            local VKD3D_TEMP="$VKD3D_CACHE_DIR/vkd3d.tar"
             local VKD3D_DIR="$VKD3D_CACHE_DIR/vkd3d-proton-${VKD3D_VERSION}"
             
-            wget -q --show-progress "$VKD3D_URL" -O "$VKD3D_TEMP" 2>&1 || echo "Warning: Échec du téléchargement de VKD3D-Proton"
+            if ! wget -q --show-progress "$VKD3D_URL" -O "$VKD3D_TEMP" 2>&1; then
+                if [ -n "$VKD3D_FALLBACK_URL" ]; then
+                    echo "Format .tar.zst indisponible, tentative .tar.gz..."
+                    wget -q --show-progress "$VKD3D_FALLBACK_URL" -O "$VKD3D_TEMP" 2>&1 || echo "Warning: Échec du téléchargement de VKD3D-Proton"
+                else
+                    echo "Warning: Échec du téléchargement de VKD3D-Proton"
+                fi
+            fi
             if [ -f "$VKD3D_TEMP" ]; then
                 ensure_dir -s "$VKD3D_DIR"
                 local temp_extract="$VKD3D_CACHE_DIR/.temp_vkd3d"

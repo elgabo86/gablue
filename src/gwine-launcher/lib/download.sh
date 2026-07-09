@@ -156,7 +156,7 @@ download_and_install_component() {
     rm -rf "$extract_temp"
     ensure_dir -s "$extract_temp"
     
-    if tar -xzf "$archive_temp" -C "$extract_temp" 2>/dev/null; then
+    if tar -xf "$archive_temp" -C "$extract_temp" 2>/dev/null; then
         ensure_dir -s "$cache_dir/${name}-${version}"
         local extracted_dir
         extracted_dir=$(find "$extract_temp" -mindepth 1 -maxdepth 1 -type d | head -1)

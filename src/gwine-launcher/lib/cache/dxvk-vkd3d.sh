@@ -91,16 +91,24 @@ download_updated_dxvk_vkd3d() {
     fi
     
     if [ -n "$latest_vkd3d" ]; then
-        local vkd3d_url
+        local vkd3d_url vkd3d_fallback_url
         if [ "${_VKD3D_SOURCE:-official}" = "bottles" ]; then
             local vkd3d_tag="vkd3d-proton-${latest_vkd3d}"
             vkd3d_url="https://github.com/bottlesdevs/components/releases/download/${vkd3d_tag}/${vkd3d_tag}.tar.gz"
+            vkd3d_fallback_url=""
         else
             local vkd3d_tag="v${latest_vkd3d}"
-            vkd3d_url="https://github.com/HansKristian-Work/vkd3d-proton/releases/download/${vkd3d_tag}/vkd3d-proton-${latest_vkd3d}.tar.gz"
+            # v3.0.1+ utilise .tar.zst, versions antérieures .tar.gz
+            vkd3d_url="https://github.com/HansKristian-Work/vkd3d-proton/releases/download/${vkd3d_tag}/vkd3d-proton-${latest_vkd3d}.tar.zst"
+            vkd3d_fallback_url="https://github.com/HansKristian-Work/vkd3d-proton/releases/download/${vkd3d_tag}/vkd3d-proton-${latest_vkd3d}.tar.gz"
         fi
         if ! download_and_install_component "vkd3d-proton" "$latest_vkd3d" "$VKD3D_CACHE_DIR" "vkd3d-proton-*" "$vkd3d_url" "$temp_dir"; then
-            update_success=false
+            if [ -n "$vkd3d_fallback_url" ]; then
+                echo "Format .tar.zst indisponible, tentative .tar.gz..."
+                download_and_install_component "vkd3d-proton" "$latest_vkd3d" "$VKD3D_CACHE_DIR" "vkd3d-proton-*" "$vkd3d_fallback_url" "$temp_dir" || update_success=false
+            else
+                update_success=false
+            fi
         fi
     fi
     
@@ -165,21 +173,32 @@ download_vkd3d() {
     echo ""
     echo "Téléchargement de VKD3D-Proton $latest_vkd3d..."
 
-    local vkd3d_url
+    local vkd3d_url vkd3d_fallback_url
     if [ "${_VKD3D_SOURCE:-official}" = "bottles" ]; then
         local vkd3d_tag="vkd3d-proton-${latest_vkd3d}"
         vkd3d_url="https://github.com/bottlesdevs/components/releases/download/${vkd3d_tag}/${vkd3d_tag}.tar.gz"
+        vkd3d_fallback_url=""
     else
         local vkd3d_tag="v${latest_vkd3d}"
-        vkd3d_url="https://github.com/HansKristian-Work/vkd3d-proton/releases/download/${vkd3d_tag}/vkd3d-proton-${latest_vkd3d}.tar.gz"
+        # v3.0.1+ utilise .tar.zst, versions antérieures .tar.gz
+        vkd3d_url="https://github.com/HansKristian-Work/vkd3d-proton/releases/download/${vkd3d_tag}/vkd3d-proton-${latest_vkd3d}.tar.zst"
+        vkd3d_fallback_url="https://github.com/HansKristian-Work/vkd3d-proton/releases/download/${vkd3d_tag}/vkd3d-proton-${latest_vkd3d}.tar.gz"
     fi
 
     local temp_dir="$CACHE_DIR/.temp_download"
     ensure_dir -s "$temp_dir"
 
     if ! download_and_install_component "vkd3d-proton" "$latest_vkd3d" "$VKD3D_CACHE_DIR" "vkd3d-proton-*" "$vkd3d_url" "$temp_dir"; then
-        rm -rf "$temp_dir"
-        return 1
+        if [ -n "$vkd3d_fallback_url" ]; then
+            echo "Format .tar.zst indisponible, tentative .tar.gz..."
+            if ! download_and_install_component "vkd3d-proton" "$latest_vkd3d" "$VKD3D_CACHE_DIR" "vkd3d-proton-*" "$vkd3d_fallback_url" "$temp_dir"; then
+                rm -rf "$temp_dir"
+                return 1
+            fi
+        else
+            rm -rf "$temp_dir"
+            return 1
+        fi
     fi
 
     rm -rf "$temp_dir"

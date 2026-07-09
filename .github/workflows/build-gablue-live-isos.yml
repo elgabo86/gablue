@@ -59,30 +59,16 @@ jobs:
         run: sudo df -h
 
       - name: Libérer l'espace disque (Ubuntu)
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
+        uses: ublue-os/remove-unwanted-software@v8
 
       - name: Monter stockage BTRFS compressé pour podman
-        # /mnt est parfois un disque séparé (~84G), sinon on utilise / (145G).
-        # Le loopback BTRFS + zstd compresse les layers podman ; sans ça le
-        # payload DX (base + image embarquée + flatpaks + commit) dépasse le
-        # disque du runner. Était auparavant skippé quand /mnt n'était pas un
-        # mountpoint (runners récents), causant des "no space left on device".
-        run: |
-          if sudo mountpoint /mnt 2>/dev/null; then
-            LOOP_FILE=/mnt/podman-storage.img
-            LOOP_SIZE=70G
-          else
-            LOOP_FILE=/podman-storage.img
-            LOOP_SIZE=80G
-          fi
-          echo "Loopback BTRFS : $LOOP_FILE ($LOOP_SIZE)"
-          sudo truncate -s "$LOOP_SIZE" "$LOOP_FILE"
-          sudo mkfs.btrfs -f "$LOOP_FILE"
-          sudo podman system reset --force
-          sudo systemctl stop podman.service || true
-          sudo mkdir -p /var/lib/containers/storage
-          sudo mount -o compress-force=zstd:2 "$LOOP_FILE" /var/lib/containers/storage
-          sudo systemctl start podman.service || true
+        # 100% de /mnt (au lieu de 80%) : les variants DX + NVIDIA sont les
+        # plus grosses (image de base + flatpaks + commit payload) et dépassent
+        # parfois le disque même avec 80%.
+        uses: ublue-os/container-storage-action@dc1f4c8f17b672069e921f001132f7cf98a423a6 # main
+        with:
+          target-dir: /var/lib/containers
+          loopback-free: "1.0"
 
       - name: Checkout du dépôt
         uses: actions/checkout@v7
