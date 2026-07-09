@@ -9,13 +9,14 @@ Images and the system are continuously updated, following the latest Fedora rele
 ## Features
 
 - **KDE Plasma** on Wayland — modern, smooth desktop
-- **OGC kernel** (Open Gaming Collective) — CachyOS-based, optimized for gaming (from ublue-os/akmods)
+- **OGC kernel** (Open Gaming Collective) — optimized for gaming (from ublue-os/akmods)
 - **Terra Mesa** — up-to-date graphics stack with 32-bit multilib
 - **NVIDIA support** — closed and open-source drivers via akmods
 - **Gaming optimizations** — MangoHud, VRR-aware KWin rules
 - **Gwine** — Wine prefix manager with Windows desktop integration and .wgp (Wine Game Package) squashfs bundles (gwine-proton is a Wine variant using Proton sources)
-- **Game packages** — .wgp (Wine) and .lgp (Linux) self-contained squashfs game bundles with desktop integration
+- **Game packages** — .wgp (Wine) and .lgp (Linux) self-contained squashfs game bundles: package a full compressed PC game into a single file you can create yourself, then run it directly with a double-click, no installation required
 - **Gamepad shortcuts** — native C daemon for system actions via controller
+- **Plasma Bigscreen** (BETA) — couch/TV interface, switchable from the desktop session
 - **32-bit ready** — full 32-bit library stack preinstalled
 - **Flatpak** and **brew** ready out of the box
 - Optional **DX mode** with Docker, Libvirt, QEMU
@@ -43,8 +44,8 @@ Images and the system are continuously updated, following the latest Fedora rele
 | `gablue-main` | Standard image | AMD / Intel GPUs |
 | `gablue-main-dx` | Development mode with virtualization | AMD / Intel GPUs |
 | `gablue-nvidia-open` | NVIDIA open-source drivers | NVIDIA (RTX 20xx and newer) |
-| `gablue-nvidia` | NVIDIA closed drivers | NVIDIA (GTX 9xx/10xx) |
 | `gablue-nvidia-open-dx` | DX mode with NVIDIA open drivers | NVIDIA (RTX 20xx and newer) |
+| `gablue-nvidia` | NVIDIA closed drivers | NVIDIA (GTX 9xx/10xx) |
 
 NVIDIA open drivers are required for RTX 50xx (Blackwell). Closed drivers only for older GPUs.
 
