@@ -110,6 +110,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # Timestamp de début pour calculer la durée
+      - name: Début du chrono
+        run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
+
       # Optimisation de l'espace
       - name: Maximize build space
         uses: ublue-os/remove-unwanted-software@v8
@@ -268,6 +272,94 @@ jobs:
           name: versions-${{ inputs.image_name }}
           path: ${{ inputs.image_name }}.json
           retention-days: 7
+
+      # Métriques de build (espace disque, taille image, etc.)
+      - name: Collecter les métriques du build
+        id: metrics
+        run: |
+          IMG_NAME="${{ inputs.image_name }}"
+          BUILD_TIME=$(( $(date +%s) - BUILD_START ))
+          TIMESTAMP="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          # Espace disque
+          ROOT_FREE=$(df -h / | awk 'NR==2{print $4}')
+          ROOT_USED=$(df -h / | awk 'NR==2{print $3}')
+          ROOT_SIZE=$(df -h / | awk 'NR==2{print $2}')
+          ROOT_PCT=$(df -h / | awk 'NR==2{print $5}')
+          MNT_FREE=$(df -h /mnt 2>/dev/null | awk 'NR==2{print $4}' || echo "N/A")
+          PODMAN_FREE=$(df -h /var/lib/containers 2>/dev/null | awk 'NR==2{print $4}' || echo "N/A")
+
+          # Taille de l'image
+          IMG_SIZE=$(sudo podman images raw-img --format '{{.Size}}' 2>/dev/null || echo "N/A")
+
+          # Nombre de paquets RPM
+          PKG_COUNT=$(sudo podman run --rm raw-img rpm -qa 2>/dev/null | wc -l || echo "N/A")
+
+          # Versions
+          KERNEL_VER=$(sudo podman run --rm raw-img rpm -q --qf '%{VERSION}-%{RELEASE}' kernel-core 2>/dev/null || echo "N/A")
+          MESA_VER=$(sudo podman run --rm raw-img rpm -q --qf '%{VERSION}' mesa-dri-drivers 2>/dev/null || echo "N/A")
+
+          # JSON
+          METRICS_FILE="${IMG_NAME}-metrics.json"
+          jq -n \
+            --arg image "$IMG_NAME" \
+            --arg timestamp "$TIMESTAMP" \
+            --arg build_time "$BUILD_TIME" \
+            --arg root_free "$ROOT_FREE" \
+            --arg root_used "$ROOT_USED" \
+            --arg root_size "$ROOT_SIZE" \
+            --arg root_pct "$ROOT_PCT" \
+            --arg mnt_free "$MNT_FREE" \
+            --arg podman_free "$PODMAN_FREE" \
+            --arg img_size "$IMG_SIZE" \
+            --arg pkg_count "$PKG_COUNT" \
+            --arg kernel "$KERNEL_VER" \
+            --arg mesa "$MESA_VER" \
+            '{
+              image: $image,
+              timestamp: $timestamp,
+              build_time_s: $build_time,
+              disk: {
+                root: { size: $root_size, used: $root_used, free: $root_free, pct: $root_pct },
+                mnt: { free: $mnt_free },
+                podman_storage: { free: $podman_free }
+              },
+              image_size: $img_size,
+              package_count: $pkg_count,
+              kernel: $kernel,
+              mesa: $mesa
+            }' > "$METRICS_FILE"
+
+          # Step summary
+          {
+            echo "## 📊 Métriques de build — ${IMG_NAME}"
+            echo ""
+            echo "| Métrique | Valeur |"
+            echo "|----------|--------|"
+            echo "| Timestamp | ${TIMESTAMP} |"
+            echo "| Durée build | ${BUILD_TIME}s |"
+            echo "| Taille image | ${IMG_SIZE} |"
+            echo "| Paquets RPM | ${PKG_COUNT} |"
+            echo "| Kernel | ${KERNEL_VER} |"
+            echo "| Mesa | ${MESA_VER} |"
+            echo ""
+            echo "### Espace disque"
+            echo ""
+            echo "| Point de montage | Taille | Utilisé | Libre | % |"
+            echo "|------------------|--------|---------|-------|---|"
+            echo "| / | ${ROOT_SIZE} | ${ROOT_USED} | ${ROOT_FREE} | ${ROOT_PCT} |"
+            echo "| /mnt | - | - | ${MNT_FREE} | - |"
+            echo "| /var/lib/containers | - | - | ${PODMAN_FREE} | - |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          cat "$METRICS_FILE"
+
+      - name: Upload métriques
+        uses: actions/upload-artifact@v5
+        with:
+          name: metrics-${{ inputs.image_name }}
+          path: ${{ inputs.image_name }}-metrics.json
+          retention-days: 90
 
       # Rechunk de l'image avec rpm-ostree (après application des labels)
       - name: Rechunk Image

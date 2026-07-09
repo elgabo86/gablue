@@ -70,6 +70,9 @@ jobs:
           target-dir: /var/lib/containers
           loopback-free: "1.0"
 
+      - name: Début du chrono
+        run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Checkout du dépôt
         uses: actions/checkout@v7
         with:
@@ -147,6 +150,82 @@ jobs:
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: ${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso
+
+      - name: Collecter les métriques du build ISO
+        id: metrics
+        shell: bash
+        run: |
+          IMG_NAME="${{ matrix.image_name }}"
+          BUILD_TIME=$(( $(date +%s) - BUILD_START ))
+          TIMESTAMP="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          ISO_PATH="${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso"
+
+          # Taille ISO
+          ISO_SIZE=$(du -h "$ISO_PATH" 2>/dev/null | awk '{print $1}' || echo "N/A")
+          ISO_SIZE_B=$(stat -c%s "$ISO_PATH" 2>/dev/null || echo "0")
+
+          # Espace disque
+          ROOT_FREE=$(df -h / | awk 'NR==2{print $4}')
+          ROOT_USED=$(df -h / | awk 'NR==2{print $3}')
+          ROOT_SIZE=$(df -h / | awk 'NR==2{print $2}')
+          ROOT_PCT=$(df -h / | awk 'NR==2{print $5}')
+          MNT_FREE=$(df -h /mnt 2>/dev/null | awk 'NR==2{print $4}' || echo "N/A")
+          PODMAN_FREE=$(df -h /var/lib/containers 2>/dev/null | awk 'NR==2{print $4}' || echo "N/A")
+
+          # JSON
+          METRICS_FILE="${IMG_NAME}-iso-metrics.json"
+          jq -n \
+            --arg image "$IMG_NAME" \
+            --arg timestamp "$TIMESTAMP" \
+            --arg build_time "$BUILD_TIME" \
+            --arg iso_size "$ISO_SIZE" \
+            --arg iso_size_bytes "$ISO_SIZE_B" \
+            --arg root_free "$ROOT_FREE" \
+            --arg root_used "$ROOT_USED" \
+            --arg root_size "$ROOT_SIZE" \
+            --arg root_pct "$ROOT_PCT" \
+            --arg mnt_free "$MNT_FREE" \
+            --arg podman_free "$PODMAN_FREE" \
+            '{
+              image: $image,
+              type: "iso",
+              timestamp: $timestamp,
+              build_time_s: $build_time,
+              iso: { size: $iso_size, size_bytes: $iso_size_bytes },
+              disk: {
+                root: { size: $root_size, used: $root_used, free: $root_free, pct: $root_pct },
+                mnt: { free: $mnt_free },
+                podman_storage: { free: $podman_free }
+              }
+            }' > "$METRICS_FILE"
+
+          # Step summary
+          {
+            echo "## 📊 Métriques ISO — ${IMG_NAME}"
+            echo ""
+            echo "| Métrique | Valeur |"
+            echo "|----------|--------|"
+            echo "| Timestamp | ${TIMESTAMP} |"
+            echo "| Durée build | ${BUILD_TIME}s |"
+            echo "| Taille ISO | ${ISO_SIZE} |"
+            echo ""
+            echo "### Espace disque"
+            echo ""
+            echo "| Point de montage | Taille | Utilisé | Libre | % |"
+            echo "|------------------|--------|---------|-------|---|"
+            echo "| / | ${ROOT_SIZE} | ${ROOT_USED} | ${ROOT_FREE} | ${ROOT_PCT} |"
+            echo "| /mnt | - | - | ${MNT_FREE} | - |"
+            echo "| /var/lib/containers | - | - | ${PODMAN_FREE} | - |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          cat "$METRICS_FILE"
+
+      - name: Upload métriques ISO
+        uses: actions/upload-artifact@v7
+        with:
+          name: metrics-${{ matrix.image_name }}-iso
+          path: ${{ matrix.image_name }}-iso-metrics.json
+          retention-days: 90
 
       - name: Upload de l'ISO vers BuzzHeavier
         id: upload
