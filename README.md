@@ -1,4 +1,4 @@
-# Gablue [![build](https://github.com/elgabo86/gablue/actions/workflows/gablue-builds.yml/badge.svg)](https://github.com/elgabo86/gablue/actions/workflows/gablue-builds.yml)
+# Gablue
 
 Gablue is a custom immutable desktop distribution based on **Fedora Kinoite** (KDE Plasma), built with the [Universal Blue](https://universal-blue.org/) toolkit. Optimized for gaming, multimedia, and everyday use.
 
@@ -13,7 +13,8 @@ Images and the system are continuously updated, following the latest Fedora rele
 - **Terra Mesa** — up-to-date graphics stack with 32-bit multilib
 - **NVIDIA support** — closed and open-source drivers via akmods
 - **Gaming optimizations** — MangoHud, VRR-aware KWin rules
-- **Gwine** — Wine prefix manager with Windows desktop integration (gwine-proton is a Wine variant using Proton sources)
+- **Gwine** — Wine prefix manager with Windows desktop integration and .wgp (Wine Game Package) squashfs bundles (gwine-proton is a Wine variant using Proton sources)
+- **Game packages** — .wgp (Wine) and .lgp (Linux) self-contained squashfs game bundles with desktop integration
 - **Gamepad shortcuts** — native C daemon for system actions via controller
 - **32-bit ready** — full 32-bit library stack preinstalled
 - **Flatpak** and **brew** ready out of the box
@@ -43,6 +44,7 @@ Images and the system are continuously updated, following the latest Fedora rele
 | `gablue-nvidia-open` | NVIDIA open-source drivers | Yes (open) |
 | `gablue-nvidia` | NVIDIA closed drivers | Yes (lts) |
 | `gablue-main-dx` | Development mode with virtualization | No |
+| `gablue-nvidia-open-dx` | DX mode with NVIDIA open drivers | Yes (open) |
 
 ### Which NVIDIA image to choose?
 
