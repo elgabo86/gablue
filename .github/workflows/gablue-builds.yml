@@ -185,27 +185,28 @@ jobs:
           build_date=$(date -u +'%Y-%m-%d')
           
           # Construire la section markdown avec balises
-          /usr/bin/python3 -c "
+           /usr/bin/python3 -c "
           import re, os
-          
+
           fedora = os.environ['fedora']
           kernel = os.environ['kernel']
           mesa = os.environ['mesa']
           plasma = os.environ['plasma']
           nvidia_closed = os.environ['nvidia_closed']
           nvidia_open = os.environ['nvidia_open']
-          
-           build_date = os.environ['build_date']
-          
-          table = f'''| Composant | Version |
-          |---|---|
-          | Last build | {build_date} |
-          | Fedora | {fedora} |
-          | Kernel (OGC) | {kernel} |
-          | Mesa (Terra) | {mesa} |
-          | KDE Plasma | {plasma} |
-          | NVIDIA (closed) | {nvidia_closed} |
-          | NVIDIA (open) | {nvidia_open} |'''
+          build_date = os.environ['build_date']
+
+          table = (
+              '| Composant | Version |\n'
+              '|---' + '|---' + '|\n'
+              f'| Last build | {build_date} |\n'
+              f'| Fedora | {fedora} |\n'
+              f'| Kernel (OGC) | {kernel} |\n'
+              f'| Mesa (Terra) | {mesa} |\n'
+              f'| KDE Plasma | {plasma} |\n'
+              f'| NVIDIA (closed) | {nvidia_closed} |\n'
+              f'| NVIDIA (open) | {nvidia_open} |'
+          )
           
           new_section = f'<!-- VERSIONS_START -->\n\n{table}\n\n<!-- VERSIONS_END -->'
           
