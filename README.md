@@ -38,18 +38,15 @@ Images and the system are continuously updated, following the latest Fedora rele
 
 ## Variants
 
-| Image | Description | NVIDIA |
-|-------|-------------|--------|
-| `gablue-main` | Standard image | No |
-| `gablue-nvidia-open` | NVIDIA open-source drivers | Yes (open) |
-| `gablue-nvidia` | NVIDIA closed drivers | Yes (lts) |
-| `gablue-main-dx` | Development mode with virtualization | No |
-| `gablue-nvidia-open-dx` | DX mode with NVIDIA open drivers | Yes (open) |
+| Image | Description | Recommended for |
+|---|---|---|
+| `gablue-main` | Standard image | AMD / Intel GPUs |
+| `gablue-main-dx` | Development mode with virtualization | AMD / Intel GPUs |
+| `gablue-nvidia-open` | NVIDIA open-source drivers | NVIDIA (RTX 20xx and newer) |
+| `gablue-nvidia` | NVIDIA closed drivers | NVIDIA (GTX 9xx/10xx) |
+| `gablue-nvidia-open-dx` | DX mode with NVIDIA open drivers | NVIDIA (RTX 20xx and newer) |
 
-### Which NVIDIA image to choose?
-
-- **`gablue-nvidia-open`** — required for RTX 50xx (Blackwell) and newer. Also recommended for RTX 20xx/30xx/40xx (Turing/Ampere/Ada Lovelace).
-- **`gablue-nvidia`** (closed drivers) — only for older GPUs: GTX 7xx/9xx (Maxwell), GTX 10xx (Pascal), Titan V (Volta). Still works on newer architectures but open is preferred.
+NVIDIA open drivers are required for RTX 50xx (Blackwell). Closed drivers only for older GPUs.
 
 ## Installation
 
