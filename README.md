@@ -19,21 +19,21 @@ Images and the system are continuously updated, following the latest Fedora rele
 - **Plasma Bigscreen** (BETA) — couch/TV interface, switchable from the desktop session
 - **32-bit ready** — full 32-bit library stack preinstalled
 - **Flatpak** and **brew** ready out of the box
-- Optional **DX mode** with Docker, Libvirt, QEMU
+- Optional **DX mode** with Docker, Libvirt, QEMU, and ROCm for AMD
 
 ## Current Versions
 
 <!-- VERSIONS_START -->
 
-| Composant | Version |
+| Component | Version |
 |---|---|
 | Last build | 2026-07-09 |
 | Fedora | 44 |
 | Kernel (OGC) | 7.1.3-ogc3.2.fc44 |
 | Mesa (Terra) | 26.1.326.1.3 |
 | KDE Plasma | 6.7.2 |
-| NVIDIA (closed) | 580.173.02 |
 | NVIDIA (open) | 610.43.02 |
+| NVIDIA (closed) | 580.173.02 |
 
 <!-- VERSIONS_END -->
 
@@ -42,12 +42,10 @@ Images and the system are continuously updated, following the latest Fedora rele
 | Image | Description | Recommended for |
 |---|---|---|
 | `gablue-main` | Standard image | AMD / Intel GPUs |
-| `gablue-main-dx` | Development mode with virtualization | AMD / Intel GPUs |
+| `gablue-main-dx` | DX mode with ROCm | AMD / Intel GPUs |
 | `gablue-nvidia-open` | NVIDIA open-source drivers | NVIDIA (RTX 20xx and newer) |
 | `gablue-nvidia-open-dx` | DX mode with NVIDIA open drivers | NVIDIA (RTX 20xx and newer) |
 | `gablue-nvidia` | NVIDIA closed drivers | NVIDIA (GTX 9xx/10xx) |
-
-NVIDIA open drivers are required for RTX 50xx (Blackwell). Closed drivers only for older GPUs.
 
 ## Installation
 

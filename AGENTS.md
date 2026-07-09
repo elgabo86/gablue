@@ -673,7 +673,7 @@ Workflow réutilisable pour le build d'une image :
 1. Récupération automatique de la version kernel via `skopeo list-tags` uniquement si `kernel_version` est vide
 2. Checkout du dépôt
 3. Maximisation de l'espace de build
-4. Mount BTRFS pour podman storage (action pinnée par SHA)
+4. Mount BTRFS pour podman storage (action pinnée par SHA, `loopback-free: "1.0"` pour utiliser 100% de `/mnt` au lieu de 80% — évite l'échec `no space left on device` au rechunk sur la variante DX, la plus grosse : le rechunk fait cohabiter `raw-img` + `chunked-img`)
 5. Build de l'image avec buildah (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni) — **retry** via `Wandalen/wretry.action` (5 tentatives, 20s de délai) pour absorber les erreurs réseau transitoires de quay.io/ghcr.io (EOF, déconnexion CDN) ; nettoyage `buildah rmi raw-img` au début de chaque tentative (les blobs déjà téléchargés restent en cache et ne sont pas retéléchargés)
 6. Application des labels OCI (définis directement dans le step, sans docker/metadata-action)
 7. Rechunk avec rpm-ostree

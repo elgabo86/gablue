@@ -197,15 +197,15 @@ jobs:
           build_date = os.environ['build_date']
 
           table = (
-              '| Composant | Version |\n'
+              '| Component | Version |\n'
               '|---' + '|---' + '|\n'
               f'| Last build | {build_date} |\n'
               f'| Fedora | {fedora} |\n'
               f'| Kernel (OGC) | {kernel} |\n'
               f'| Mesa (Terra) | {mesa} |\n'
               f'| KDE Plasma | {plasma} |\n'
-              f'| NVIDIA (closed) | {nvidia_closed} |\n'
-              f'| NVIDIA (open) | {nvidia_open} |'
+              f'| NVIDIA (open) | {nvidia_open} |\n'
+              f'| NVIDIA (closed) | {nvidia_closed} |'
           )
           
           new_section = f'<!-- VERSIONS_START -->\n\n{table}\n\n<!-- VERSIONS_END -->'
