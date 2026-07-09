@@ -221,6 +221,50 @@ jobs:
           sudo buildah commit --identity-label=false --rm $container $img
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      # Extraction des versions pour mise à jour du README
+      - name: Extract package versions
+        id: extract_versions
+        run: |
+          img="raw-img"
+          
+          # Extraire les versions des paquets principaux
+          kernel_ver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}-%{RELEASE}" kernel-core 2>/dev/null || echo "N/A")
+          mesa_ver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}" mesa-dri-drivers 2>/dev/null || echo "N/A")
+          plasma_ver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}" plasma-desktop 2>/dev/null || echo "N/A")
+          nvidia_ver="N/A"
+          if sudo podman run --rm "$img" rpm -q nvidia-driver &>/dev/null; then
+            nvidia_ver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}" nvidia-driver 2>/dev/null || echo "N/A")
+          fi
+          fedora_ver="${{ inputs.fedora_version }}"
+          
+          # Générer le JSON des versions (nom de fichier unique par image)
+          VER_FILE="${{ inputs.image_name }}.json"
+          jq -n \
+            --arg image "${{ inputs.image_name }}" \
+            --arg fedora "$fedora_ver" \
+            --arg kernel "$kernel_ver" \
+            --arg mesa "$mesa_ver" \
+            --arg plasma "$plasma_ver" \
+            --arg nvidia "$nvidia_ver" \
+            '{
+              image: $image,
+              fedora: $fedora,
+              kernel: $kernel,
+              mesa: $mesa,
+              plasma: $plasma,
+              nvidia: $nvidia
+            }' > "$VER_FILE"
+          
+          echo "Versions extraites pour ${{ inputs.image_name }} :"
+          cat "$VER_FILE"
+          
+      - name: Upload versions artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: versions-${{ inputs.image_name }}
+          path: ${{ inputs.image_name }}.json
+          retention-days: 7
+
       # Rechunk de l'image avec rpm-ostree (après application des labels)
       - name: Rechunk Image
         id: rechunk

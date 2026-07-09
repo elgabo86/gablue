@@ -140,6 +140,121 @@ jobs:
       fedora_version: "44"
       kernel_type: "ogc"
 
+  update-readme:
+    name: Update README versions
+    runs-on: ubuntu-24.04
+    needs: [build-main, build-nvidia, build-nvidia-open, build-dx, build-nvidia-open-dx]
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download version artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: versions-*
+          merge-multiple: true
+          path: versions-data
+
+      - name: Update README with versions
+        id: update_readme
+        run: |
+          # Lire les versions depuis les artifacts (fichiers nommés par image)
+          main_json=$(cat versions-data/gablue-main.json)
+          
+          # Extraire les versions communes
+          fedora=$(echo "$main_json" | jq -r '.fedora')
+          kernel=$(echo "$main_json" | jq -r '.kernel')
+          mesa=$(echo "$main_json" | jq -r '.mesa')
+          plasma=$(echo "$main_json" | jq -r '.plasma')
+          export fedora kernel mesa plasma build_date nvidia_closed nvidia_open
+          
+          # Extraire les versions NVIDIA spécifiques
+          nvidia_closed="N/A"
+          nvidia_open="N/A"
+          if [ -f versions-data/gablue-nvidia.json ]; then
+            nvidia_closed=$(jq -r '.nvidia' versions-data/gablue-nvidia.json)
+          fi
+          if [ -f versions-data/gablue-nvidia-open.json ]; then
+            nvidia_open=$(jq -r '.nvidia' versions-data/gablue-nvidia-open.json)
+          fi
+          
+          # Date du build (UTC)
+          build_date=$(date -u +'%Y-%m-%d')
+          
+          # Construire la section markdown avec balises
+          /usr/bin/python3 -c "
+          import re, os
+          
+          fedora = os.environ['fedora']
+          kernel = os.environ['kernel']
+          mesa = os.environ['mesa']
+          plasma = os.environ['plasma']
+          nvidia_closed = os.environ['nvidia_closed']
+          nvidia_open = os.environ['nvidia_open']
+          
+           build_date = os.environ['build_date']
+          
+          table = f'''| Composant | Version |
+          |---|---|
+          | Last build | {build_date} |
+          | Fedora | {fedora} |
+          | Kernel (OGC) | {kernel} |
+          | Mesa (Terra) | {mesa} |
+          | KDE Plasma | {plasma} |
+          | NVIDIA (closed) | {nvidia_closed} |
+          | NVIDIA (open) | {nvidia_open} |'''
+          
+          new_section = f'<!-- VERSIONS_START -->\n\n{table}\n\n<!-- VERSIONS_END -->'
+          
+          with open('README.md', 'r') as f:
+              content = f.read()
+          
+          if '<!-- VERSIONS_START -->' not in content:
+              # Ajouter la section avant la section Installation
+              content = content.replace('## Installation', new_section + '\n\n## Installation')
+          else:
+              # Remplacer la section existante
+              content = re.sub(
+                  r'<!-- VERSIONS_START -->.*?<!-- VERSIONS_END -->',
+                  new_section,
+                  content,
+                  flags=re.DOTALL
+              )
+          
+          with open('README.md', 'w') as f:
+              f.write(content)
+          
+          print('README mis à jour avec les versions.')
+          print(f'  Fedora: {fedora}')
+          print(f'  Kernel: {kernel}')
+          print(f'  Mesa: {mesa}')
+          print(f'  Plasma: {plasma}')
+          print(f'  NVIDIA closed: {nvidia_closed}')
+          print(f'  NVIDIA open: {nvidia_open}')
+          "
+          
+          # Vérifier si des changements ont eu lieu
+          if git diff --quiet README.md; then
+            echo "Aucun changement de version détecté."
+            echo "skip_commit=true" >> $GITHUB_OUTPUT
+          else
+            echo "Changements de version détectés :"
+            git diff README.md
+            echo "skip_commit=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit and push updated README
+        if: steps.update_readme.outputs.skip_commit != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "[skip ci] docs: update versions table in README"
+          git push
+
   build-nvidia-open-test:
     name: Build nvidia-open-test
     # Désactivé temporairement

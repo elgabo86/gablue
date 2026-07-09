@@ -19,6 +19,22 @@ Images and the system are continuously updated, following the latest Fedora rele
 - **Flatpak** and **brew** ready out of the box
 - Optional **DX mode** with Docker, Libvirt, QEMU
 
+## Current Versions
+
+<!-- VERSIONS_START -->
+
+| Composant | Version |
+|---|---|
+| Last build | N/A |
+| Fedora | 44 |
+| Kernel (OGC) | N/A |
+| Mesa (Terra) | N/A |
+| KDE Plasma | N/A |
+| NVIDIA (closed) | N/A |
+| NVIDIA (open) | N/A |
+
+<!-- VERSIONS_END -->
+
 ## Variants
 
 | Image | Description | NVIDIA |
