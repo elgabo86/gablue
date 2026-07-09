@@ -119,6 +119,10 @@ jobs:
         uses: ublue-os/container-storage-action@dc1f4c8f17b672069e921f001132f7cf98a423a6 # main
         with:
           target-dir: /var/lib/containers
+          # 100% de l'espace /mnt (au lieu de 80%) : +13 Go pour absorber le
+          # pic d'espace du rechunk (raw-img + chunked-img cohabitent), qui
+          # faisait échouer par intermittence la variante DX (la plus grosse)
+          loopback-free: "1.0"
 
       # Construction de l'image (avec retry pour les erreurs réseau transitoires)
       - name: Build Image
