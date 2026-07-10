@@ -462,7 +462,6 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: nick-fields/retry@v4
         with:
-          timeout_minutes: 30
           max_attempts: 3
           retry_wait_seconds: 15
           retry_on: error
