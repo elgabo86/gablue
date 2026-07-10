@@ -6,7 +6,7 @@ alias goarch="distrobox enter archgab"
 
 
 
-alias miniserve="podman kill miniserve; sleep 2; podman run -v ./:/share:Z --network host --name miniserve --rm --rmi -it docker.io/svenstaro/miniserve /share -r"
+alias miniserve="podman kill miniserve 2>/dev/null; sleep 1; podman run -v ./:/share:Z -p 8080:8080 --name miniserve --rm --rmi docker.io/svenstaro/miniserve /share -r --header 'Cache-Control: no-store'"
 
 ffsend() { podman run --rm --rmi -it -v "$(pwd):/data:Z" docker.io/timvisee/ffsend:latest upload -y "$@"; }
 ffsendp() { podman run --rm --rmi -it -v "$(pwd):/data:Z" docker.io/timvisee/ffsend:latest upload --password -y "$@"; }
