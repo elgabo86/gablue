@@ -437,6 +437,7 @@ class MpvWidget(QOpenGLWidget):
 
         self._lib_mpv_set_option_string(self._handle, b"vo", b"libmpv")
         self._lib_mpv_set_option_string(self._handle, b"gpu-api", b"opengl")
+        self._lib_mpv_set_option_string(self._handle, b"hwdec", b"auto-safe")
         self._lib_mpv_set_option_string(self._handle, b"profile", b"fast")
         self._lib_mpv_set_option_string(self._handle, b"alang", b"fr,eng,ita,deu,spa,jpn,und")
         self._lib_mpv_set_option_string(self._handle, b"slang", b"fr,eng")
@@ -635,6 +636,7 @@ class TVWindow(QMainWindow):
 
         # --- Manette ---
         self._gamepad = None
+        self._last_scan = 0.0
         self._last_input = 0
         self._last_hat_x = 0
         self._last_hat_y = 0
@@ -1152,7 +1154,10 @@ class TVWindow(QMainWindow):
             return
 
         if not self._gamepad:
-            self._find_gamepad()
+            now_ms = time.time() * 1000
+            if now_ms - self._last_scan >= 2000:
+                self._last_scan = now_ms
+                self._find_gamepad()
             return
 
         now = time.time() * 1000
