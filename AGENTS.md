@@ -688,7 +688,7 @@ Workflow réutilisable pour le build d'une image :
 8. Rechunk avec rpm-ostree
 9. Ajout de la taille **compressée** aux métriques (step "Add compressed image size to metrics") : somme des tailles des couches du manifest de `chunked-img` via `skopeo inspect --raw | jq`, ajoutée au JSON (`compressed_size` lisible + `compressed_size_bytes`) et au step summary — reflète la taille réellement poussée sur GHCR
 10. Upload des métriques (artifact)
-11. Tag et push vers GHCR — retry via `nick-fields/retry@v4` (3 tentatives, 15s, `retry_on: error`), **sans timeout** pour éviter que `skopeo copy` ne timeout sur les grosses images (>30 min de push). Pas d'écriture dans le step summary
+11. Tag et push vers GHCR — retry via `nick-fields/retry@v4` (3 tentatives, 15s, `retry_on: error`, `timeout_minutes: 120`). Pas d'écriture dans le step summary
 12. Signature avec Cosign
 
 **Version du kernel** :
