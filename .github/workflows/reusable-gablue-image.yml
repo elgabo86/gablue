@@ -389,7 +389,7 @@ jobs:
               raw-img \
               rpm-ostree compose build-chunked-oci \
               --bootc --max-layers 127 --format-version 2 \
-              --from raw-img --output containers-storage:localhost/chunked-img
+              --from localhost/raw-img --output containers-storage:localhost/chunked-img
           sudo podman untag raw-img
           echo "ref=containers-storage:localhost/chunked-img" >> "$GITHUB_OUTPUT"
 
