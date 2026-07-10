@@ -136,9 +136,8 @@ jobs:
         uses: nick-fields/retry@v4
         with:
           timeout_minutes: 60
-          max_attempts: 5
+          max_attempts: 3
           retry_wait_seconds: 20
-          retry_on_exit_code: "1"
           command: |
             # Nettoyage d'un éventuel build partiel
             sudo buildah rmi raw-img 2>/dev/null || true
