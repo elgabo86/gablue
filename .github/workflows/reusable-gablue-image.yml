@@ -45,6 +45,7 @@ jobs:
   build:
     name: ${{ inputs.image_name }}-${{ inputs.fedora_version }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 120
 
     permissions:
       contents: read
