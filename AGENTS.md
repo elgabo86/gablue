@@ -518,7 +518,7 @@ Paquets supprimés :
 
 **pypi** (appelé après rpm) :
 - Installe `terminaltexteffects` depuis PyPI via `uv` (pas d'équivalent RPM Fedora)
-- **Conflit site-packages** : un RPM peut créer un fichier ou symlink à `/usr/local/lib/python3.14/site-packages/` au lieu d'un répertoire (ex: transition majeure Python), ce qui bloque `uv pip install` (`File exists, os error 17`). Le script nettoie ce faux chemin uniquement s'il n'est pas un répertoire, puis crée le dossier avec `mkdir -p` avant d'installer
+- **Conflit site-packages** : un RPM peut créer un fichier ou symlink à n'importe quel niveau du chemin `/usr/local/lib/python3.14/site-packages/` au lieu d'un répertoire (ex: transition majeure Python), ce qui bloque `uv pip install` (`File exists, os error 17`). Le script remonte la hiérarchie et supprime tout ce qui n'est pas un répertoire, puis crée l'arborescence avec `mkdir -p` avant d'installer
 
 ### 5b. build-c / build-gwine - Compilation des sources
 
@@ -682,7 +682,7 @@ Workflow réutilisable pour le build d'une image :
 2. Checkout du dépôt
 3. Maximisation de l'espace de build
 4. Mount BTRFS pour podman storage (action pinnée par SHA, `loopback-free: "1.0"` pour utiliser 100% de `/mnt` au lieu de 80% — évite l'échec `no space left on device` au rechunk sur la variante DX, la plus grosse : le rechunk fait cohabiter `raw-img` + `chunked-img`)
-5. Build de l'image avec buildah (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni) — **retry** via `nick-fields/retry@v4` (5 tentatives, 20s de délai) pour absorber les erreurs réseau transitoires de quay.io/ghcr.io (EOF, déconnexion CDN) ; nettoyage `buildah rmi raw-img` au début de chaque tentative (les blobs déjà téléchargés restent en cache et ne sont pas retéléchargés)
+5. Build de l'image avec buildah (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni) — **retry** via boucle shell (5 tentatives, 20s de délai) uniquement sur les erreurs réseau transitoires de quay.io/ghcr.io (EOF, TLS handshake timeout, connection refused/reset, DNS, etc.) ; les erreurs de build (échec d'un script RUN) échouent **immédiatement** sans retry. Nettoyage `buildah rmi raw-img` au début de chaque tentative réseau (les blobs déjà téléchargés restent en cache et ne sont pas retéléchargés)
 6. Application des labels OCI (définis directement dans le step, sans docker/metadata-action)
 7. Collecte des métriques (step "Collect build metrics") : durée de build, espace disque, taille image décompressée (`raw-img`), nombre de RPMs, kernel, mesa → JSON `metrics-<image>` (artifact, rétention 90 j) + step summary (en anglais). Les libellés affichés sont en anglais, seuls les commentaires YAML restent en français
 8. Rechunk avec rpm-ostree

@@ -10,12 +10,20 @@ set -eoux pipefail
 # =============================================================================
 
 # Correction conflit : un RPM peut avoir créé un fichier ou symlink à la place
-# du répertoire (ex: transition Python 3.14), ce qui bloque uv pip install.
-# On nettoie uniquement si ce n'est pas un répertoire, puis on crée le dossier.
-if [ -f /usr/local/lib/python3.14/site-packages ] || [ -L /usr/local/lib/python3.14/site-packages ]; then
-    rm -f /usr/local/lib/python3.14/site-packages
-fi
-mkdir -p /usr/local/lib/python3.14/site-packages
+# d'un répertoire dans le chemin (ex: transition majeure Python), ce qui bloque
+# uv pip install (File exists). On remonte la hiérarchie et nettoie tout ce qui
+# n'est pas un répertoire, puis on crée le dossier.
+TARGET="/usr/local/lib/python3.14/site-packages"
+CURRENT=""
+IFS="/" read -ra PARTS <<< "$TARGET"
+for PART in "${PARTS[@]}"; do
+    [ -z "$PART" ] && continue
+    CURRENT="${CURRENT}/${PART}"
+    if [ ! -d "$CURRENT" ]; then
+        rm -f "$CURRENT"
+    fi
+done
+mkdir -p "$TARGET"
 
 uv pip install --system --break-system-packages \
     terminaltexteffects
