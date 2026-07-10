@@ -1438,6 +1438,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Gablue TV")
+    app.setDesktopFileName("gablue-tv")
     app.setOrganizationName("gablue")
     app.setStyle("Fusion")
 
