@@ -254,7 +254,16 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add README.md
           git commit -m "[skip ci] docs: update versions table in README"
-          git push
+          # Réessayer le push en cas de commit concurrent sur main (rebase puis push)
+          for i in 1 2 3 4 5; do
+            if git push; then
+              echo "Push réussi."
+              break
+            fi
+            echo "Push rejeté (tentative $i), rebase sur origin/main..."
+            git pull --rebase --autostash origin main
+            sleep 5
+          done
 
   build-nvidia-open-test:
     name: Build nvidia-open-test
