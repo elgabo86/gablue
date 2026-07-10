@@ -51,12 +51,12 @@ YAD_ARGS=(--list --checklist
 while IFS= read -r ref; do
     [ -z "$ref" ] && continue
     name=$(flatpak info --system --show-name "$ref" 2>/dev/null || echo "$ref")
-    YAD_ARGS+=(TRUE "$ref" "$name")
+    YAD_ARGS+=(FALSE "$ref" "$name")
 done < "$FLATPAK_OPTIONAL"
 
 TO_KEEP=$(run0 --user=liveuser yad "${YAD_ARGS[@]}" 2>/dev/null) || {
-    echo "Dialogue annulé, conservation de tous les flatpaks optionnels"
-    exit 0
+    echo "Dialogue annulé, désinstallation de tous les flatpaks optionnels..."
+    TO_KEEP=""
 }
 
 echo "$TO_KEEP" > "$SELECTION_FILE"
