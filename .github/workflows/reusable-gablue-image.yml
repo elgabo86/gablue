@@ -45,7 +45,6 @@ jobs:
   build:
     name: ${{ inputs.image_name }}-${{ inputs.fedora_version }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
 
     permissions:
       contents: read
@@ -129,45 +128,48 @@ jobs:
           # faisait échouer par intermittence la variante DX (la plus grosse)
           loopback-free: "1.0"
 
-      # Construction de l'image (avec retry uniquement pour les erreurs réseau transitoires)
+      # Construction de l'image (retry uniquement sur erreurs réseau transitoires)
+      # timeout_minutes est géré par nick-fields/retry en interne (seul mécanisme
+      # de timeout fiable dans les workflows réutilisables)
       - name: Build Image
         id: build_image
-        timeout-minutes: 60
-        shell: bash
-        run: |
-          # Choisir le bon Containerfile
-          if [[ -n "${{ inputs.containerfile }}" ]]; then
-            CONTAINERFILE="${{ inputs.containerfile }}"
-          elif [[ "${{ inputs.image_name }}" == "gablue-main-test" ]]; then
-            CONTAINERFILE="Containerfile-gablue-test"
-          elif [[ "${{ inputs.image_name }}" == "gablue-nvidia-open-test" ]]; then
-            CONTAINERFILE="Containerfile-gablue-nvidia-open-test"
-          else
-            CONTAINERFILE="Containerfile-gablue"
-          fi
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 60
+          max_attempts: 5
+          retry_wait_seconds: 20
+          retry_on_exit_code: "1"
+          command: |
+            # Nettoyage d'un éventuel build partiel
+            sudo buildah rmi raw-img 2>/dev/null || true
 
-          # Définir DX_MODE pour les variantes DX
-          DX_MODE_ARG=""
-          if [[ "${{ inputs.image_name }}" == "gablue-main-dx" || "${{ inputs.image_name }}" == "gablue-nvidia-open-dx" ]]; then
-            DX_MODE_ARG="--build-arg DX_MODE=true"
-          fi
+            # Choisir le bon Containerfile
+            if [[ -n "${{ inputs.containerfile }}" ]]; then
+              CONTAINERFILE="${{ inputs.containerfile }}"
+            elif [[ "${{ inputs.image_name }}" == "gablue-main-test" ]]; then
+              CONTAINERFILE="Containerfile-gablue-test"
+            elif [[ "${{ inputs.image_name }}" == "gablue-nvidia-open-test" ]]; then
+              CONTAINERFILE="Containerfile-gablue-nvidia-open-test"
+            else
+              CONTAINERFILE="Containerfile-gablue"
+            fi
 
-          # Préparer NVIDIA_FLAVOR arg
-          NVIDIA_FLAVOR_ARG=""
-          if [[ -n "${{ inputs.nvidia_flavor }}" ]]; then
-            NVIDIA_FLAVOR_ARG="--build-arg NVIDIA_FLAVOR=${{ inputs.nvidia_flavor }}"
-          fi
+            DX_MODE_ARG=""
+            if [[ "${{ inputs.image_name }}" == "gablue-main-dx" || "${{ inputs.image_name }}" == "gablue-nvidia-open-dx" ]]; then
+              DX_MODE_ARG="--build-arg DX_MODE=true"
+            fi
 
-          # Préparer SOURCE_SUFFIX arg
-          SOURCE_SUFFIX_ARG=""
-          if [[ -n "${{ inputs.source_suffix }}" ]]; then
-            SOURCE_SUFFIX_ARG="--build-arg SOURCE_SUFFIX=${{ inputs.source_suffix }}"
-          fi
+            NVIDIA_FLAVOR_ARG=""
+            if [[ -n "${{ inputs.nvidia_flavor }}" ]]; then
+              NVIDIA_FLAVOR_ARG="--build-arg NVIDIA_FLAVOR=${{ inputs.nvidia_flavor }}"
+            fi
 
-          # Boucle de retry : uniquement sur erreurs réseau (EOF, timeout, TLS, DNS, etc.)
-          # Les erreurs de build (échec d'un script RUN) échouent immédiatement.
-          for attempt in 1 2 3 4 5; do
-            echo "::group::Tentative de build $attempt/5"
+            SOURCE_SUFFIX_ARG=""
+            if [[ -n "${{ inputs.source_suffix }}" ]]; then
+              SOURCE_SUFFIX_ARG="--build-arg SOURCE_SUFFIX=${{ inputs.source_suffix }}"
+            fi
+
+            # Lancement du build avec capture de la sortie
             BUILD_LOG=$(mktemp)
             set +e
             sudo buildah build \
@@ -184,26 +186,22 @@ jobs:
               --tag raw-img . 2>&1 | tee "$BUILD_LOG"
             EXIT_CODE=$?
             set -e
-            echo "::endgroup::"
 
             if [ "$EXIT_CODE" -eq 0 ]; then
-              echo "Build réussi à la tentative $attempt"
               rm -f "$BUILD_LOG"
-              break
+              exit 0
             fi
 
-            # Détermine si l'erreur est réseau ou build
-            if grep -qiE '(TLS handshake timeout|i/o timeout|connection refused|connection reset|no route to host|could not resolve|EOF|Temporary failure in name resolution|request canceled while waiting for connection|dial tcp|net/http: request canceled|unexpected EOF|read: connection reset by peer)' "$BUILD_LOG"; then
-              echo "Erreur réseau détectée, retry dans 20s..."
-              sudo buildah rmi raw-img 2>/dev/null || true
+            # Détection erreur réseau vs build
+            if grep -qiE '(TLS handshake timeout|i/o timeout|connection refused|connection reset|no route to host|could not resolve|Temporary failure in name resolution|request canceled while waiting for connection|dial tcp|net/http: request canceled|unexpected EOF|read: connection reset by peer|curl error.*Timeout)' "$BUILD_LOG"; then
+              echo "::warning::Erreur réseau détectée, retry dans 20s..."
               rm -f "$BUILD_LOG"
-              sleep 20
-            else
-              echo "::error::Erreur de build (non réseau), abandon."
-              rm -f "$BUILD_LOG"
-              exit "$EXIT_CODE"
+              exit 1
             fi
-          done
+
+            echo "::error::Erreur de build (non réseau), abandon."
+            rm -f "$BUILD_LOG"
+            exit 2
 
       # Appliquer les labels OCI avant le rechunk
       - name: Apply Labels
