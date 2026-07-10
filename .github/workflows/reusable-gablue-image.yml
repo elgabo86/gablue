@@ -274,7 +274,7 @@ jobs:
           retention-days: 7
 
       # Métriques de build (espace disque, taille image, etc.)
-      - name: Collecter les métriques du build
+      - name: Collect build metrics
         id: metrics
         run: |
           IMG_NAME="${{ inputs.image_name }}"
@@ -332,21 +332,21 @@ jobs:
 
           # Step summary
           {
-            echo "## 📊 Métriques de build — ${IMG_NAME}"
+            echo "## 📊 Build metrics — ${IMG_NAME}"
             echo ""
-            echo "| Métrique | Valeur |"
-            echo "|----------|--------|"
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
             echo "| Timestamp | ${TIMESTAMP} |"
-            echo "| Durée build | ${BUILD_TIME}s |"
-            echo "| Taille image | ${IMG_SIZE} |"
-            echo "| Paquets RPM | ${PKG_COUNT} |"
+            echo "| Build time | ${BUILD_TIME}s |"
+            echo "| Image size | ${IMG_SIZE} |"
+            echo "| RPM packages | ${PKG_COUNT} |"
             echo "| Kernel | ${KERNEL_VER} |"
             echo "| Mesa | ${MESA_VER} |"
             echo ""
-            echo "### Espace disque"
+            echo "### Disk space"
             echo ""
-            echo "| Point de montage | Taille | Utilisé | Libre | % |"
-            echo "|------------------|--------|---------|-------|---|"
+            echo "| Mount point | Size | Used | Free | % |"
+            echo "|-------------|------|------|------|---|"
             echo "| / | ${ROOT_SIZE} | ${ROOT_USED} | ${ROOT_FREE} | ${ROOT_PCT} |"
             echo "| /mnt | - | - | ${MNT_FREE} | - |"
             echo "| /var/lib/containers | - | - | ${PODMAN_FREE} | - |"
@@ -354,7 +354,7 @@ jobs:
 
           cat "$METRICS_FILE"
 
-      - name: Upload métriques
+      - name: Upload metrics
         uses: actions/upload-artifact@v5
         with:
           name: metrics-${{ inputs.image_name }}

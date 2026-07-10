@@ -151,7 +151,7 @@ jobs:
         with:
           subject-path: ${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso
 
-      - name: Collecter les métriques du build ISO
+      - name: Collect ISO build metrics
         id: metrics
         shell: bash
         run: |
@@ -201,18 +201,18 @@ jobs:
 
           # Step summary
           {
-            echo "## 📊 Métriques ISO — ${IMG_NAME}"
+            echo "## 📊 ISO metrics — ${IMG_NAME}"
             echo ""
-            echo "| Métrique | Valeur |"
-            echo "|----------|--------|"
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
             echo "| Timestamp | ${TIMESTAMP} |"
-            echo "| Durée build | ${BUILD_TIME}s |"
-            echo "| Taille ISO | ${ISO_SIZE} |"
+            echo "| Build time | ${BUILD_TIME}s |"
+            echo "| ISO size | ${ISO_SIZE} |"
             echo ""
-            echo "### Espace disque"
+            echo "### Disk space"
             echo ""
-            echo "| Point de montage | Taille | Utilisé | Libre | % |"
-            echo "|------------------|--------|---------|-------|---|"
+            echo "| Mount point | Size | Used | Free | % |"
+            echo "|-------------|------|------|------|---|"
             echo "| / | ${ROOT_SIZE} | ${ROOT_USED} | ${ROOT_FREE} | ${ROOT_PCT} |"
             echo "| /mnt | - | - | ${MNT_FREE} | - |"
             echo "| /var/lib/containers | - | - | ${PODMAN_FREE} | - |"
@@ -220,7 +220,7 @@ jobs:
 
           cat "$METRICS_FILE"
 
-      - name: Upload métriques ISO
+      - name: Upload ISO metrics
         uses: actions/upload-artifact@v7
         with:
           name: metrics-${{ matrix.image_name }}-iso
