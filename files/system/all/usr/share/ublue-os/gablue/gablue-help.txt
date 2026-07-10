@@ -73,9 +73,15 @@
 
 ## Outils media:
 
-- dlv-mp3 $lienyoutube            # Permet de télécharger et convertir en mp3 une vidéo youtube (Destination dossier de Téléchargement)
-- dlv-mp4 $lienyoutube            # Permet de télécharger et convertir en mp4 une vidéo youtube (Destination dossier de Téléchargement)
-- dlv-mkv $lienyoutube            # Permet de télécharger et convertir en mkv une vidéo youtube (Destination dossier de Téléchargement)
+- dlv --mp3 [url]                 # Télécharge une vidéo en MP3 (meilleure qualité audio)
+- dlv --mp4 [url]                 # Télécharge une vidéo en MP4 (h264, max 1080p)
+- dlv --mkv [url]                 # Télécharge une vidéo en MKV (VP9/AV1, meilleure qualité)
+- dlv --mkv-1080 [url]            # Télécharge une vidéo en MKV limitée à 1080p
+- dlv --mp3 --playlist [url]      # Télécharge une playlist entière en MP3
+- dlv --mp4 --playlist [url]      # Télécharge une playlist entière en MP4
+- dlv --mkv --playlist [url]      # Télécharge une playlist entière en MKV
+
+
 
 - miniserve                       # Lance un mini serveur de fichier dans le dossier courant
 

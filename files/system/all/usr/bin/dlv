@@ -1,0 +1,111 @@
+#!/usr/bin/bash
+
+# Téléchargeur de vidéos/audio YouTube avec support playlist
+# Utilisation :
+#   dlv --mp3|--mp4|--mkv|--mkv-1080 [--playlist] [url]
+# Sans URL, demande l'URL interactivement (évite les problèmes de & dans l'URL)
+
+set -euo pipefail
+
+usage() {
+    echo "Utilisation : dlv --mp3|--mp4|--mkv|--mkv-1080 [--playlist] [url]"
+    echo ""
+    echo "Formats :"
+    echo "  --mp3       Audio MP3 (meilleure qualité audio)"
+    echo "  --mp4       Vidéo MP4 (h264, max 1080p, compatible partout)"
+    echo "  --mkv       Vidéo MKV (VP9/AV1, meilleure qualité, toute résolution)"
+    echo "  --mkv-1080  Vidéo MKV limitée à 1080p"
+    echo ""
+    echo "Options :"
+    echo "  --playlist  Télécharger une playlist entière (tri chronologique, reprise automatique)"
+    exit 1
+}
+
+# Aucun argument → usage
+if [ $# -eq 0 ]; then
+    usage
+fi
+
+format=""
+playlist="false"
+limit_1080=""
+
+# Parsing des options
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --mp3) format="mp3"; shift ;;
+        --mp4) format="mp4"; shift ;;
+        --mkv) format="mkv"; shift ;;
+        --mkv-1080) format="mkv"; limit_1080="true"; shift ;;
+        --1080) limit_1080="true"; shift ;;
+        --playlist) playlist="true"; shift ;;
+        -h|--help) usage ;;
+        --*) echo "Option inconnue : $1"; usage ;;
+        *) break ;;
+    esac
+done
+
+[ -z "$format" ] && { echo "Erreur : format requis (--mp3, --mp4, --mkv, --mkv-1080)"; usage; }
+
+# URL : argument restant ou prompt interactif
+if [ $# -eq 0 ]; then
+    read -r -p "URL : " URL
+else
+    URL="$1"
+fi
+
+DOWNLOAD_DIR="$(xdg-user-dir DOWNLOAD)"
+
+# Options communes
+COMMON_OPTS=(--embed-thumbnail --embed-metadata --paths "$DOWNLOAD_DIR")
+
+# Options playlist
+if [ "$playlist" = "true" ]; then
+    ARCHIVE_FILE="$DOWNLOAD_DIR/.dlv-archive-$format.txt"
+    COMMON_OPTS+=(--download-archive "$ARCHIVE_FILE" --playlist-reverse)
+    # Préfixe numéroté pour playlist, sans pour vidéo unique
+    OUTPUT_TPL="%(playlist_index)03d - %(title)s.%(ext)s"
+else
+    OUTPUT_TPL="%(title)s.%(ext)s"
+fi
+
+case "$format" in
+    mp3)
+        yt-dlp -x \
+            --format bestaudio \
+            --audio-format mp3 \
+            --audio-quality 0 \
+            "${COMMON_OPTS[@]}" \
+            -o "$OUTPUT_TPL" \
+            "$URL"
+        ;;
+    mp4)
+        yt-dlp \
+            --format "bv[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b" \
+            --remux-video mp4 \
+            --embed-subs \
+            --sub-langs all \
+            "${COMMON_OPTS[@]}" \
+            -o "$OUTPUT_TPL" \
+            "$URL"
+        ;;
+    mkv)
+        if [ "$limit_1080" = "true" ]; then
+            yt-dlp -S "res:1080" \
+                --remux-video mkv \
+                --embed-subs \
+                --sub-langs all \
+                "${COMMON_OPTS[@]}" \
+                -o "$OUTPUT_TPL" \
+                "$URL"
+        else
+            yt-dlp \
+                --remux-video mkv \
+                --embed-subs \
+                --sub-langs all \
+                "${COMMON_OPTS[@]}" \
+                -o "$OUTPUT_TPL" \
+                "$URL"
+        fi
+        ;;
+esac

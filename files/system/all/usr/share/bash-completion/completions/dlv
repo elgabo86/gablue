@@ -1,0 +1,49 @@
+# Completion bash pour dlv
+# Options de format, playlist et URL
+
+_dlv() {
+    local cur prev
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    local formats="--mp3 --mp4 --mkv --mkv-1080"
+    local options="--playlist --help"
+
+    # Premier niveau : format, playlist ou help
+    if [[ $COMP_CWORD -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "$formats $options" -- "$cur") )
+        return
+    fi
+
+    # Si --1080 est déjà présent, pas de suggestion
+    # Sinon, suggérer --playlist ou help selon le contexte
+    case "$prev" in
+        --mp3|--mp4|--mkv|--mkv-1080)
+            COMPREPLY=( $(compgen -W "--playlist" -- "$cur") )
+            ;;
+        --playlist)
+            COMPREPLY=()
+            ;;
+        *)
+            # Compléter les options manquantes
+            local used=""
+            for word in "${COMP_WORDS[@]:1}"; do
+                used="$used|$word"
+            done
+            local remaining=""
+            
+            if [[ ! "$used" =~ --mp3|--mp4|--mkv|--mkv-1080 ]]; then
+                remaining+=" $formats"
+            fi
+            if [[ ! "$used" =~ --playlist ]]; then
+                remaining+=" --playlist"
+            fi
+            
+            if [ -n "$remaining" ]; then
+                COMPREPLY=( $(compgen -W "$remaining" -- "$cur") )
+            fi
+            ;;
+    esac
+}
+
+complete -F _dlv dlv

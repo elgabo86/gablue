@@ -13,7 +13,7 @@ set -eoux pipefail
 chmod +x /usr/bin/ventoy
 chmod +x /usr/bin/dlcover
 chmod +x /usr/bin/lol
-chmod +x /usr/bin/ytdl
+chmod +x /usr/bin/dlv
 chmod +x /usr/bin/citron-install
 chmod +x /usr/bin/eden-install
 chmod +x /usr/bin/gskill

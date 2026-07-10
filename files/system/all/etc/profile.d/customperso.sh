@@ -4,9 +4,7 @@ alias gablue-help="cat /usr/share/ublue-os/gablue/gablue-help.txt"
 
 alias goarch="distrobox enter archgab"
 
-dlv-mp3() { yt-dlp -x --format bestaudio --audio-format mp3 --audio-quality 0 --embed-thumbnail --embed-metadata --paths "$(xdg-user-dir DOWNLOAD)" -o '%(title)s.%(ext)s' "$@"; }
-dlv-mp4() { yt-dlp --recode-video mp4 --paths "$(xdg-user-dir DOWNLOAD)" -o '%(title)s.%(ext)s' --embed-subs --sub-langs all --embed-thumbnail "$@"; }
-dlv-mkv() { yt-dlp --recode-video mkv --paths "$(xdg-user-dir DOWNLOAD)" -o '%(title)s.%(ext)s' --embed-subs --sub-langs all --embed-thumbnail "$@"; }
+
 
 alias miniserve="podman kill miniserve; sleep 2; podman run -v ./:/share:Z --network host --name miniserve --rm --rmi -it docker.io/svenstaro/miniserve /share -r"
 
