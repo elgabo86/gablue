@@ -642,8 +642,9 @@ Workflow principal déclenché par :
 - Workflow_dispatch (manuel)
 
 **Optimisations** :
-- `paths-ignore` : les modifications de fichiers `.md` et `.txt` ne déclenchent pas de build
+- `paths-ignore` : les modifications de fichiers `.md` et `.txt` ne déclenchent pas de build (les changements dans `.github/**` déclenchent bien la build s'ils portent le bon tag, car les jobs sont filtrés par tag de commit)
 - `concurrency` : annule les builds en cours si un nouveau push arrive sur la même branche
+- **Attention** : un commit avec `[all]` (ou tout autre tag de build) annule la build en cours (concurrency `cancel-in-progress`). Pour committer un changement de workflow sans relancer/annuler une build, utiliser `[skip ci]` (reconnu nativement par GitHub Actions, aucun run déclenché)
 
 **Chaînage ISO (`[all-iso]`)** : le tag `[all-iso]` déclenche les 5 variantes d'images (comme `[all]`). À la fin du workflow, le workflow ISO se déclenche automatiquement via `workflow_run` (voir `build-gablue-live-isos.yml`). Les sous-chaînes ne collisionnent pas : `contains('[all-iso]', '[all]')` et `contains('[all-iso]', '[iso]')` sont tous deux **faux**, donc `[all-iso]` ne déclenche pas l'ISO immédiatement au push.
 
@@ -655,6 +656,7 @@ Workflow principal déclenché par :
 - `build-nvidia-open-dx` : Build gablue-nvidia-open-dx (Containerfile-gablue, nvidia_flavor=nvidia-open, DX_MODE=true)
 - `build-test` : Build gablue-main-test (Containerfile-gablue-test)
 - `build-nvidia-open-test` : Build gablue-nvidia-open-test (Containerfile-gablue-nvidia-open-test)
+- `update-readme` : Met à jour le tableau de versions du README depuis les artifacts `versions-*` (needs sur les 5 builds d'images, ignoré sur `pull_request`). Commit `[skip ci]` avec push résilient : boucle jusqu'à 5 tentatives avec `git pull --rebase --autostash origin main` entre chaque essai pour absorber les commits concurrents (ex. un push arrivé pendant les ~50 min de build)
 
 ### reusable-gablue-image.yml
 
@@ -676,9 +678,12 @@ Workflow réutilisable pour le build d'une image :
 4. Mount BTRFS pour podman storage (action pinnée par SHA, `loopback-free: "1.0"` pour utiliser 100% de `/mnt` au lieu de 80% — évite l'échec `no space left on device` au rechunk sur la variante DX, la plus grosse : le rechunk fait cohabiter `raw-img` + `chunked-img`)
 5. Build de l'image avec buildah (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni) — **retry** via `Wandalen/wretry.action` (5 tentatives, 20s de délai) pour absorber les erreurs réseau transitoires de quay.io/ghcr.io (EOF, déconnexion CDN) ; nettoyage `buildah rmi raw-img` au début de chaque tentative (les blobs déjà téléchargés restent en cache et ne sont pas retéléchargés)
 6. Application des labels OCI (définis directement dans le step, sans docker/metadata-action)
-7. Rechunk avec rpm-ostree
-8. Tag et push vers GHCR — retry via `Wandalen/wretry.action` (3 tentatives, 15s)
-9. Signature avec Cosign
+7. Collecte des métriques (step "Collect build metrics") : durée de build, espace disque, taille image décompressée (`raw-img`), nombre de RPMs, kernel, mesa → JSON `metrics-<image>` (artifact, rétention 90 j) + step summary (en anglais). Les libellés affichés sont en anglais, seuls les commentaires YAML restent en français
+8. Rechunk avec rpm-ostree
+9. Ajout de la taille **compressée** aux métriques (step "Add compressed image size to metrics") : somme des tailles des couches du manifest de `chunked-img` via `skopeo inspect --raw | jq`, ajoutée au JSON (`compressed_size` lisible + `compressed_size_bytes`) et au step summary — reflète la taille réellement poussée sur GHCR
+10. Upload des métriques (artifact)
+11. Tag et push vers GHCR — retry via `Wandalen/wretry.action` (3 tentatives, 15s), pas d'écriture dans le step summary
+12. Signature avec Cosign
 
 **Version du kernel** :
 - **Par défaut** : Hardcodée dans `reusable-gablue-image.yml` (input `kernel_version`). Version choisie manuellement, actuellement `7.1.3-ogc3.4.fc44.x86_64` (ublue-os/bazzite@982d035)
