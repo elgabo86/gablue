@@ -727,7 +727,7 @@ L'ISO est générée dans `local-build/output/`. Le script utilise `sudo podman`
 ```
 installer/
 ├── Containerfile                    # Build payload (FROM image Gablue, bind-mount build.sh)
-├── build.sh                         # Assemblage : flatpaks (requis + optionnels + runtimes), détection runtime NVIDIA, MangoHud/OBS VkCapture (version freedesktop dynamique), Proton-GE, swap kernel, dracut-live, livesys, Anaconda, pack cache gwine → /extra
+├── build.sh                         # Assemblage : flatpaks (requis + optionnels + runtimes MangoHud/OBS VkCapture via flatpak remote-ls), Proton-GE, swap kernel, dracut-live, livesys, Anaconda, pack cache gwine → /extra
 ├── iso.yaml                         # Config GRUB (label GABLUE_LIVE, timeout 3s, entrées sans apostrophes pour éviter un bug Titanoboa)
 ├── flatpaks                         # Liste des flatpaks obligatoires (format : ref flatpak)
 ├── flatpaks-optional                # Liste des flatpaks optionnels (checklist yad)
@@ -742,7 +742,7 @@ installer/
 1. **Swap kernel** : Le kernel OGC (non signé) est remplacé par le kernel vanilla Fedora (signé) pour Secure Boot
 2. **Flatpaks** : 
    - Les listes `installer/flatpaks` (8 apps requises) et `installer/flatpaks-optional` (25 apps optionnelles) définissent quels flatpaks sont **pré-téléchargés** dans l'ISO
-   - **MangoHud** (`org.freedesktop.Platform.VulkanLayer.MangoHud`) : runtime obligatoire, version freedesktop détectée dynamiquement (`flatpak remote-info flathub org.freedesktop.Platform`). Installé dans le live et ajouté à la liste requise post-install
+   - **MangoHud** (`org.freedesktop.Platform.VulkanLayer.MangoHud`) : runtime obligatoire, version freedesktop détectée dynamiquement (`flatpak remote-ls flathub --runtime | awk -F'\t'` pour extraire la dernière branche). Installé dans le live et ajouté à la liste requise post-install
    - **OBS VkCapture** (`org.freedesktop.Platform.VulkanLayer.OBSVkCapture`) : installé dans le live (même version freedesktop que MangoHud), **ne suit pas OBS Studio** — si OBS est décoché dans la checklist, OBS VkCapture est aussi désinstallé
    - **Proton-GE** (`com.valvesoftware.Steam.CompatibilityTool.Proton-GE`) : installé dans le live (branche `stable`), **suit Steam** — si Steam est décoché, Proton-GE est désinstallé
    - Pour les variantes NVIDIA, les runtimes `org.freedesktop.Platform.GL[32].nvidia-XXX` sont automatiquement ajoutés aux obligatoires (version détectée depuis `rpm -q nvidia-driver`)
@@ -752,10 +752,8 @@ installer/
    - Annulation du dialogue → désinstallation de tous les optionnels et leurs dépendances
    - Le dépôt Flathub est ajouté sur le système cible pour les mises à jour futures
    - Les labels SELinux sont restaurés (`chcon -R -t var_lib_t`)
-   - Le dépôt Flathub est ajouté sur le système cible pour les mises à jour futures
-   - Les labels SELinux sont restaurés (`chcon -R -t var_lib_t`)
 3. **Création de compte utilisateur** : Aucun compte pré-rempli — le spoke utilisateur Anaconda est visible et l'utilisateur choisit librement son nom/mot de passe. KDE Plasma gère la création au premier démarrage si le spoke est skippé.
-4. **Session live** : Bureau Plasma complet via `livesys-scripts`, l'installateur Anaconda n'est pas lancé automatiquement (l'utilisateur le lance via `liveinst` si besoin)
+4. **Session live** : Bureau Plasma complet via `livesys-scripts`, l'installateur Anaconda n'est pas lancé automatiquement (l'utilisateur le lance via `liveinst` si besoin). Les flatpaks pré-cachés sont visibles dans le menu Plasma (XDG_DATA_DIRS configuré dans `/etc/environment.d/99-gablue-flatpak-live.conf`).
 5. **Écran de bienvenue** : `plasma-welcome` est retiré du live (hook postrootfs) pour éviter le lancement automatique au boot
 6. **Dossier Bureau** : `livesys-scripts` crée un dossier `Desktop` (anglais) avec `liveinst.desktop` avant `xdg-user-dirs-update`, l'empêchant d'être renommé. Le dossier reste en anglais (`Desktop`).
 7. **Installation** : Kickstart Anaconda avec `ostreecontainer` (bootc), BTRFS par défaut, compression zstd:1
