@@ -39,6 +39,18 @@ mount -o remount,rw /proc/sys
 
 echo "Installation des Flatpaks dans l'image live..."
 curl --retry 3 -Lo /etc/flatpak/remotes.d/flathub.flatpakrepo https://dl.flathub.org/repo/flathub.flatpakrepo
+
+# MangoHud flatpak (couche Vulkan, requis pour l'overlay dans les jeux flatpak)
+# Détection dynamique du runtime freedesktop pour éviter de hardcoder la version
+FREEDESKTOP_VER=$(flatpak remote-info flathub org.freedesktop.Platform 2>/dev/null | awk '/Version:/ {print $2}' | sort -V | tail -1)
+MANGOHUD_VER="${FREEDESKTOP_VER:-25.08}"
+flatpak install -y --noninteractive "org.freedesktop.Platform.VulkanLayer.MangoHud//${MANGOHUD_VER}"
+echo "MangoHud flatpak (runtime ${MANGOHUD_VER}) installé"
+
+# OBS VkCapture (couche Vulkan pour capture OBS, optionnel)
+flatpak install -y --noninteractive "org.freedesktop.Platform.VulkanLayer.OBSVkCapture//${MANGOHUD_VER}"
+echo "OBS VkCapture flatpak (runtime ${MANGOHUD_VER}) installé"
+
 xargs -r flatpak install -y --noninteractive < <(cat /src/flatpaks /src/flatpaks-optional)
 # Nettoyer le cache de téléchargement flatpak pour libérer de l'espace disque
 rm -rf /root/.cache /var/tmp/*
@@ -78,6 +90,14 @@ if [[ "${BASE_IMAGE:-}" == *nvidia* ]]; then
         echo "Runtimes NVIDIA $NVIDIA_VER (64+32 bits) ajoutés à la liste flatpak"
     fi
 fi
+
+# Ajouter MangoHud flatpak à la liste requise (déjà installé dans le live)
+echo "runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/${MANGOHUD_VER}" >> /usr/share/gablue/flatpaks-required
+echo "MangoHud flatpak (${MANGOHUD_VER}) ajouté à la liste requise"
+
+# Ajouter OBS VkCapture à la liste optionnelle (déjà installé dans le live)
+echo "runtime/org.freedesktop.Platform.VulkanLayer.OBSVkCapture/x86_64/${MANGOHUD_VER}" >> /usr/share/gablue/flatpaks-optional
+echo "OBS VkCapture flatpak (${MANGOHUD_VER}) ajouté à la liste optionnelle"
 
 # =============================================================================
 # HOOK PRE-INITRAMFS : SWAP KERNEL OGC → VANILLA FEDORA
