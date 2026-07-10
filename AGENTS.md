@@ -514,9 +514,15 @@ Paquets supprimés :
 **rpm-test** :
 - Wrapper (identique à rpm, prévu pour ajouter des paquets spécifiques au test)
 
+### 5a. pypi - Packages Python sans équivalent RPM
+
+**pypi** (appelé après rpm) :
+- Installe `terminaltexteffects` depuis PyPI via `uv` (pas d'équivalent RPM Fedora)
+- **Conflit site-packages** : un RPM peut créer un fichier ou symlink à `/usr/local/lib/python3.14/site-packages/` au lieu d'un répertoire (ex: transition majeure Python), ce qui bloque `uv pip install` (`File exists, os error 17`). Le script nettoie ce faux chemin uniquement s'il n'est pas un répertoire, puis crée le dossier avec `mkdir -p` avant d'installer
+
 ### 5b. build-c / build-gwine - Compilation des sources
 
-**build-c** (appelé après rpm) :
+**build-c** (appelé après pypi) :
 - Compile les binaires C depuis `/src/gamepadshortcuts`, `/src/ds2xbox`, `/src/gablue-isomount`
 - Installation via `make -C <dir> install DESTDIR=`
 - Nettoie les sources après compilation (`rm -rf /src/<dir>`)
@@ -695,6 +701,7 @@ Workflow réutilisable pour le build d'une image :
 Build des **ISOs live** avec environnement de bureau Plasma complet (tous les 5 jours) :
 - Permet d'essayer Gablue avant installation (LiveCD complet, pas juste Anaconda)
 - **Déclencheurs** : schedule (5 jours), `workflow_dispatch`, push avec `[iso]`, et **`workflow_run`** à la fin du workflow d'images. Le chaînage `workflow_run` ne construit l'ISO que si l'exécution amont a été déclenchée par un **push** (`workflow_run.event == 'push'`), a **réussi** (`conclusion == 'success'`) et que le message de commit contient **`[all-iso]`** — garantit que les images `:latest` sont publiées avant de builder les ISOs. Le checkout utilise `workflow_run.head_sha` pour rester sur le commit d'origine.
+- **Concurrency ISO** : le groupe `build-gablue-live-isos-${{ github.run_id }}-iso` utilise `github.run_id` (et non `github.ref`) pour garantir que chaque run ISO est unique. Sans cela, un `workflow_run` déclenché par un échec de build d'images annulerait un `workflow_dispatch` ISO en cours (même groupe `main-iso`, `cancel-in-progress: true`), alors que ses jobs sont de toute façon `skipped` (conclusion != success).
 - Utilise **Titanoboa** (`Zeglius/titanoboa@revamp-pr`), un installateur bootc qui génère un squashfs live
 - 5 variantes : gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-dx
 - **Processus en 2 étapes** :

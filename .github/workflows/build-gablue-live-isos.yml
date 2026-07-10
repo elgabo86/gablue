@@ -28,7 +28,7 @@ env:
   REPO_OWNER: ${{ github.repository_owner }}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}-iso
+  group: ${{ github.workflow }}-${{ github.run_id }}-iso
   cancel-in-progress: true
 
 jobs:
