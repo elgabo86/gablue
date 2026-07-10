@@ -1,0 +1,13 @@
+#!/usr/bin/bash
+
+# Installation de packages Python depuis PyPI (sans équivalent RPM Fedora)
+# Utilise uv (installé via RPM) pour installer dans le Python système
+
+set -eoux pipefail
+
+# =============================================================================
+# PACKAGES PYTHON PYPI
+# =============================================================================
+
+uv pip install --system --break-system-packages \
+    terminaltexteffects
