@@ -676,13 +676,13 @@ Workflow réutilisable pour le build d'une image :
 2. Checkout du dépôt
 3. Maximisation de l'espace de build
 4. Mount BTRFS pour podman storage (action pinnée par SHA, `loopback-free: "1.0"` pour utiliser 100% de `/mnt` au lieu de 80% — évite l'échec `no space left on device` au rechunk sur la variante DX, la plus grosse : le rechunk fait cohabiter `raw-img` + `chunked-img`)
-5. Build de l'image avec buildah (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni) — **retry** via `Wandalen/wretry.action` (5 tentatives, 20s de délai) pour absorber les erreurs réseau transitoires de quay.io/ghcr.io (EOF, déconnexion CDN) ; nettoyage `buildah rmi raw-img` au début de chaque tentative (les blobs déjà téléchargés restent en cache et ne sont pas retéléchargés)
+5. Build de l'image avec buildah (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni) — **retry** via `nick-fields/retry@v4` (5 tentatives, 20s de délai) pour absorber les erreurs réseau transitoires de quay.io/ghcr.io (EOF, déconnexion CDN) ; nettoyage `buildah rmi raw-img` au début de chaque tentative (les blobs déjà téléchargés restent en cache et ne sont pas retéléchargés)
 6. Application des labels OCI (définis directement dans le step, sans docker/metadata-action)
 7. Collecte des métriques (step "Collect build metrics") : durée de build, espace disque, taille image décompressée (`raw-img`), nombre de RPMs, kernel, mesa → JSON `metrics-<image>` (artifact, rétention 90 j) + step summary (en anglais). Les libellés affichés sont en anglais, seuls les commentaires YAML restent en français
 8. Rechunk avec rpm-ostree
 9. Ajout de la taille **compressée** aux métriques (step "Add compressed image size to metrics") : somme des tailles des couches du manifest de `chunked-img` via `skopeo inspect --raw | jq`, ajoutée au JSON (`compressed_size` lisible + `compressed_size_bytes`) et au step summary — reflète la taille réellement poussée sur GHCR
 10. Upload des métriques (artifact)
-11. Tag et push vers GHCR — retry via `Wandalen/wretry.action` (3 tentatives, 15s), pas d'écriture dans le step summary
+11. Tag et push vers GHCR — retry via `nick-fields/retry@v4` (3 tentatives, 15s), pas d'écriture dans le step summary
 12. Signature avec Cosign
 
 **Version du kernel** :
