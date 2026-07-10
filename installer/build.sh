@@ -41,15 +41,15 @@ echo "Installation des Flatpaks dans l'image live..."
 curl --retry 3 -Lo /etc/flatpak/remotes.d/flathub.flatpakrepo https://dl.flathub.org/repo/flathub.flatpakrepo
 
 # MangoHud flatpak (couche Vulkan, requis pour l'overlay dans les jeux flatpak)
-# Détection dynamique du runtime freedesktop pour éviter de hardcoder la version
-FREEDESKTOP_VER=$(flatpak remote-info flathub org.freedesktop.Platform 2>/dev/null | awk '/Version:/ {print $2}' | sort -V | tail -1)
-MANGOHUD_VER="${FREEDESKTOP_VER:-25.08}"
-flatpak install -y --noninteractive "org.freedesktop.Platform.VulkanLayer.MangoHud//${MANGOHUD_VER}"
-echo "MangoHud flatpak (runtime ${MANGOHUD_VER}) installé"
+# Détection dynamique de la dernière branche freedesktop Platform disponible
+FREEDESKTOP_BRANCH=$(flatpak remote-ls flathub --runtime 2>/dev/null | awk -F'\t' '$2 == "org.freedesktop.Platform" && $4 ~ /^[0-9]+\.[0-9]+$/ {print $4}' | sort -V | tail -1)
+FREEDESKTOP_BRANCH="${FREEDESKTOP_BRANCH:-25.08}"
+flatpak install -y --noninteractive "org.freedesktop.Platform.VulkanLayer.MangoHud//${FREEDESKTOP_BRANCH}"
+echo "MangoHud flatpak (${FREEDESKTOP_BRANCH}) installé"
 
 # OBS VkCapture (couche Vulkan pour capture OBS, optionnel)
-flatpak install -y --noninteractive "org.freedesktop.Platform.VulkanLayer.OBSVkCapture//${MANGOHUD_VER}"
-echo "OBS VkCapture flatpak (runtime ${MANGOHUD_VER}) installé"
+flatpak install -y --noninteractive "org.freedesktop.Platform.VulkanLayer.OBSVkCapture//${FREEDESKTOP_BRANCH}"
+echo "OBS VkCapture flatpak (${FREEDESKTOP_BRANCH}) installé"
 
 # Proton-GE (compatibilité Steam, lié à Steam)
 flatpak install -y --noninteractive com.valvesoftware.Steam.CompatibilityTool.Proton-GE
@@ -95,9 +95,9 @@ if [[ "${BASE_IMAGE:-}" == *nvidia* ]]; then
     fi
 fi
 
-# Ajouter MangoHud flatpak à la liste requise (déjà installé dans le live)
-echo "runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/${MANGOHUD_VER}" >> /usr/share/gablue/flatpaks-required
-echo "MangoHud flatpak (${MANGOHUD_VER}) ajouté à la liste requise"
+# Ajouter MangoHud à la liste requise
+echo "runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/${FREEDESKTOP_BRANCH}" >> /usr/share/gablue/flatpaks-required
+echo "MangoHud flatpak (${FREEDESKTOP_BRANCH}) ajouté à la liste requise"
 
 # =============================================================================
 # HOOK PRE-INITRAMFS : SWAP KERNEL OGC → VANILLA FEDORA
