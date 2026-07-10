@@ -140,7 +140,7 @@ jobs:
           retry_wait_seconds: 20
           command: |
             # Nettoyage d'un éventuel build partiel
-            sudo buildah rmi raw-img 2>/dev/null || true
+            sudo buildah rmi localhost/raw-img 2>/dev/null || true
 
             # Choisir le bon Containerfile
             if [[ -n "${{ inputs.containerfile }}" ]]; then
@@ -217,7 +217,7 @@ jobs:
           version="${{ steps.timestamp.outputs.build_version }}"
 
           # Clean out labels from base image
-          img=raw-img
+          img=localhost/raw-img
           container=$(sudo buildah from $img)
           sudo buildah config --label "-" $container
           sudo buildah commit --identity-label=false --rm $container $img
@@ -254,7 +254,7 @@ jobs:
       - name: Extract package versions
         id: extract_versions
         run: |
-          img="raw-img"
+          img="localhost/raw-img"
           
           # Extraire les versions des paquets principaux
           kernel_ver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}-%{RELEASE}" kernel-core 2>/dev/null || echo "N/A")
@@ -311,14 +311,14 @@ jobs:
           PODMAN_FREE=$(df -h /var/lib/containers 2>/dev/null | awk 'NR==2{print $4}' || echo "N/A")
 
           # Taille de l'image
-          IMG_SIZE=$(sudo podman images raw-img --format '{{.Size}}' 2>/dev/null || echo "N/A")
+          IMG_SIZE=$(sudo podman images localhost/raw-img --format '{{.Size}}' 2>/dev/null || echo "N/A")
 
           # Nombre de paquets RPM
-          PKG_COUNT=$(sudo podman run --rm raw-img rpm -qa 2>/dev/null | wc -l || echo "N/A")
+          PKG_COUNT=$(sudo podman run --rm localhost/raw-img rpm -qa 2>/dev/null | wc -l || echo "N/A")
 
           # Versions
-          KERNEL_VER=$(sudo podman run --rm raw-img rpm -q --qf '%{VERSION}-%{RELEASE}' kernel-core 2>/dev/null || echo "N/A")
-          MESA_VER=$(sudo podman run --rm raw-img rpm -q --qf '%{VERSION}' mesa-dri-drivers 2>/dev/null || echo "N/A")
+          KERNEL_VER=$(sudo podman run --rm localhost/raw-img rpm -q --qf '%{VERSION}-%{RELEASE}' kernel-core 2>/dev/null || echo "N/A")
+          MESA_VER=$(sudo podman run --rm localhost/raw-img rpm -q --qf '%{VERSION}' mesa-dri-drivers 2>/dev/null || echo "N/A")
 
           # JSON
           METRICS_FILE="${IMG_NAME}-metrics.json"
@@ -379,18 +379,18 @@ jobs:
       - name: Rechunk Image
         id: rechunk
         run: |
-          container=$(sudo buildah from raw-img)
+          container=$(sudo buildah from localhost/raw-img)
           mnt=$(sudo buildah mount $container)
           sudo bash -c "rm -rf $mnt/run/.[!.]* $mnt/run/* $mnt/tmp/.[!.]* $mnt/tmp/*"
           sudo buildah umount $container
-          sudo buildah commit --identity-label=false --rm $container raw-img
+          sudo buildah commit --identity-label=false --rm $container localhost/raw-img
           # Utiliser l'image elle-même pour le rechunk (comme Bazzite)
           sudo podman run --rm --privileged --volume /var/lib/containers:/var/lib/containers \
               localhost/raw-img \
               rpm-ostree compose build-chunked-oci \
               --bootc --max-layers 127 --format-version 2 \
               --from localhost/raw-img --output containers-storage:localhost/chunked-img
-          sudo podman untag raw-img
+          sudo podman untag localhost/raw-img
           echo "ref=containers-storage:localhost/chunked-img" >> "$GITHUB_OUTPUT"
 
       # Taille compressée de l'image finale (somme des couches poussées sur GHCR)
