@@ -70,4 +70,20 @@ while IFS= read -r ref; do
         flatpak uninstall --system --noninteractive "$id" || echo "Échec désinstallation: $id"
     fi
 done < "$FLATPAK_OPTIONAL"
+
+# =============================================================================
+# FLATPAKS CONDITIONNELS (non affichés dans la checklist)
+# =============================================================================
+
+# Proton-GE : installé uniquement si Steam est conservé
+if ! echo "$TO_KEEP" | grep -q "com.valvesoftware.Steam"; then
+    echo "Steam non conservé, désinstallation de Proton-GE..."
+    flatpak uninstall --system --noninteractive com.valvesoftware.Steam.CompatibilityTool.Proton-GE || :
+fi
+
+# OBS VkCapture : installé uniquement si OBS Studio est conservé
+if ! echo "$TO_KEEP" | grep -q "com.obsproject.Studio"; then
+    echo "OBS non conservé, désinstallation d'OBS VkCapture..."
+    flatpak uninstall --system --noninteractive org.freedesktop.Platform.VulkanLayer.OBSVkCapture || :
+fi
 %end

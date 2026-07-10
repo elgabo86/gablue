@@ -51,6 +51,10 @@ echo "MangoHud flatpak (runtime ${MANGOHUD_VER}) installé"
 flatpak install -y --noninteractive "org.freedesktop.Platform.VulkanLayer.OBSVkCapture//${MANGOHUD_VER}"
 echo "OBS VkCapture flatpak (runtime ${MANGOHUD_VER}) installé"
 
+# Proton-GE (compatibilité Steam, lié à Steam)
+flatpak install -y --noninteractive com.valvesoftware.Steam.CompatibilityTool.Proton-GE
+echo "Proton-GE flatpak installé"
+
 xargs -r flatpak install -y --noninteractive < <(cat /src/flatpaks /src/flatpaks-optional)
 # Nettoyer le cache de téléchargement flatpak pour libérer de l'espace disque
 rm -rf /root/.cache /var/tmp/*
@@ -94,10 +98,6 @@ fi
 # Ajouter MangoHud flatpak à la liste requise (déjà installé dans le live)
 echo "runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/${MANGOHUD_VER}" >> /usr/share/gablue/flatpaks-required
 echo "MangoHud flatpak (${MANGOHUD_VER}) ajouté à la liste requise"
-
-# Ajouter OBS VkCapture à la liste optionnelle (déjà installé dans le live)
-echo "runtime/org.freedesktop.Platform.VulkanLayer.OBSVkCapture/x86_64/${MANGOHUD_VER}" >> /usr/share/gablue/flatpaks-optional
-echo "OBS VkCapture flatpak (${MANGOHUD_VER}) ajouté à la liste optionnelle"
 
 # =============================================================================
 # HOOK PRE-INITRAMFS : SWAP KERNEL OGC → VANILLA FEDORA
