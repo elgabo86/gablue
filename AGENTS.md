@@ -727,7 +727,7 @@ L'ISO est générée dans `local-build/output/`. Le script utilise `sudo podman`
 ```
 installer/
 ├── Containerfile                    # Build payload (FROM image Gablue, bind-mount build.sh)
-├── build.sh                         # Assemblage : flatpaks, détection runtime NVIDIA, swap kernel, dracut-live, livesys, Anaconda, pack cache gwine → /extra
+├── build.sh                         # Assemblage : flatpaks (requis + optionnels + runtimes), détection runtime NVIDIA, MangoHud/OBS VkCapture (version freedesktop dynamique), Proton-GE, swap kernel, dracut-live, livesys, Anaconda, pack cache gwine → /extra
 ├── iso.yaml                         # Config GRUB (label GABLUE_LIVE, timeout 3s, entrées sans apostrophes pour éviter un bug Titanoboa)
 ├── flatpaks                         # Liste des flatpaks obligatoires (format : ref flatpak)
 ├── flatpaks-optional                # Liste des flatpaks optionnels (checklist yad)
@@ -741,11 +741,17 @@ installer/
 
 1. **Swap kernel** : Le kernel OGC (non signé) est remplacé par le kernel vanilla Fedora (signé) pour Secure Boot
 2. **Flatpaks** : 
-   - Les listes `installer/flatpaks` et `installer/flatpaks-optional` définissent quels flatpaks sont **pré-téléchargés** dans l'ISO (tous installés dans le live pendant le build)
+   - Les listes `installer/flatpaks` (8 apps requises) et `installer/flatpaks-optional` (25 apps optionnelles) définissent quels flatpaks sont **pré-téléchargés** dans l'ISO
+   - **MangoHud** (`org.freedesktop.Platform.VulkanLayer.MangoHud`) : runtime obligatoire, version freedesktop détectée dynamiquement (`flatpak remote-info flathub org.freedesktop.Platform`). Installé dans le live et ajouté à la liste requise post-install
+   - **OBS VkCapture** (`org.freedesktop.Platform.VulkanLayer.OBSVkCapture`) : installé dans le live (même version freedesktop que MangoHud), **ne suit pas OBS Studio** — si OBS est décoché dans la checklist, OBS VkCapture est aussi désinstallé
+   - **Proton-GE** (`com.valvesoftware.Steam.CompatibilityTool.Proton-GE`) : installé dans le live (branche `stable`), **suit Steam** — si Steam est décoché, Proton-GE est désinstallé
    - Pour les variantes NVIDIA, les runtimes `org.freedesktop.Platform.GL[32].nvidia-XXX` sont automatiquement ajoutés aux obligatoires (version détectée depuis `rpm -q nvidia-driver`)
    - Pendant l'installation (`%post` Anaconda), copie brute de `/var/lib/flatpak` vers le déploiement ostree (méthode Bazzite : `rsync -aAXUHKP --open-noatime`)
-   - Une checklist `yad` permet de **décocher** les optionnels qu'on ne veut PAS conserver (cochés par défaut)
-   - Les flatpaks décochés sont désinstallés du système cible (`flatpak uninstall --system`)
+   - Une checklist `yad` en **opt-in** (tout décoché par défaut) permet de **cocher** les optionnels à conserver
+   - Les flatpaks non cochés sont désinstallés du système cible (`flatpak uninstall --system`), ainsi que leurs dépendances conditionnelles (Proton-GE, OBS VkCapture)
+   - Annulation du dialogue → désinstallation de tous les optionnels et leurs dépendances
+   - Le dépôt Flathub est ajouté sur le système cible pour les mises à jour futures
+   - Les labels SELinux sont restaurés (`chcon -R -t var_lib_t`)
    - Le dépôt Flathub est ajouté sur le système cible pour les mises à jour futures
    - Les labels SELinux sont restaurés (`chcon -R -t var_lib_t`)
 3. **Création de compte utilisateur** : Aucun compte pré-rempli — le spoke utilisateur Anaconda est visible et l'utilisateur choisit librement son nom/mot de passe. KDE Plasma gère la création au premier démarrage si le spoke est skippé.
@@ -862,6 +868,7 @@ Scripts personnalisés Gablue :
 - `gablue-bigscreen-session-init` : Initialisation session native Bigscreen (autostart, blacklist + mirroring)
 - Scripts gaming : `azahar-install`, `citron-install`, `eden-install`, `esde-install`, `qwen-install`, `shadps4-install`, `xenia-install`
 - Scripts utilitaires : `dlv`, `dlcover`, `tv`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`
+- `dlv` : Téléchargeur YouTube unifié (bash) avec support playlist (`--mp3`, `--mp4`, `--mkv`, `--mkv-1080`, `--playlist`). Remplace les anciens alias `dlv-mp*` et le script `ytdl`. Completion bash dans `/usr/share/bash-completion/completions/dlv`.
 - `retroplayer` : TUI Go pour explorer et écouter des musiques rétro (téléchargé depuis GitHub Releases pendant le build, dépôt séparé)
 - Gestion Wine/Proton : `gwine` (assemblé depuis `src/gwine-launcher/`), `scrap-win`
 - `tvqt` : Interface TV Gablue (PySide6 + mpv, navigation manette, ~170 chaînes)
