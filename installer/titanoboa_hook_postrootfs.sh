@@ -23,7 +23,7 @@ dnf -qy versionlock clear
 # INSTALLATION D'ANACONDA LIVE
 # =============================================================================
 
-dnf install -qy --enable-repo=fedora-cisco-openh264 --allowerasing firefox anaconda-live libblockdev-{btrfs,lvm,dm}
+dnf install -qy --enable-repo=fedora-cisco-openh264 --allowerasing anaconda-live libblockdev-{btrfs,lvm,dm}
 
 mkdir -p /var/lib/rpm-state
 
@@ -165,6 +165,18 @@ echo "Désactivation des services non nécessaires dans le live..."
         fi
     done
 )
+
+# =============================================================================
+# FLATPAKS VISIBLES DANS LA SESSION LIVE
+# =============================================================================
+
+# Rend les flatpaks pré-cachés visibles dans le menu Plasma du live
+# system-flatpak-setup.service est désactivé (inutile dans un live readonly),
+# on configure manuellement XDG_DATA_DIRS pour exposer les .desktop flatpak
+mkdir -p /etc/environment.d
+cat > /etc/environment.d/99-gablue-flatpak-live.conf << 'EOF'
+XDG_DATA_DIRS=/var/lib/flatpak/exports/share:/usr/local/share:/usr/share
+EOF
 
 # =============================================================================
 # TWEAKS NVIDIA (LIVE)
