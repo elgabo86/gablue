@@ -354,13 +354,6 @@ jobs:
 
           cat "$METRICS_FILE"
 
-      - name: Upload metrics
-        uses: actions/upload-artifact@v5
-        with:
-          name: metrics-${{ inputs.image_name }}
-          path: ${{ inputs.image_name }}-metrics.json
-          retention-days: 90
-
       # Rechunk de l'image avec rpm-ostree (après application des labels)
       - name: Rechunk Image
         id: rechunk
@@ -378,6 +371,40 @@ jobs:
               --from localhost/raw-img --output containers-storage:localhost/chunked-img
           sudo podman untag raw-img
           echo "ref=containers-storage:localhost/chunked-img" >> "$GITHUB_OUTPUT"
+
+      # Taille compressée de l'image finale (somme des couches poussées sur GHCR)
+      - name: Add compressed image size to metrics
+        run: |
+          IMG_NAME="${{ inputs.image_name }}"
+          METRICS_FILE="${IMG_NAME}-metrics.json"
+
+          # Somme des tailles des couches du manifest de l'image rechunkée
+          COMPRESSED_BYTES=$(sudo skopeo inspect --raw containers-storage:localhost/chunked-img | jq '[.layers[].size] | add')
+          COMPRESSED_SIZE=$(numfmt --to=iec --suffix=B "$COMPRESSED_BYTES")
+
+          # Ajout au JSON des métriques
+          jq --arg cs "$COMPRESSED_SIZE" --argjson cb "$COMPRESSED_BYTES" \
+            '. + {compressed_size: $cs, compressed_size_bytes: $cb}' \
+            "$METRICS_FILE" > "${METRICS_FILE}.tmp" && mv "${METRICS_FILE}.tmp" "$METRICS_FILE"
+
+          # Step summary
+          {
+            echo ""
+            echo "### Compressed image (pushed to GHCR)"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Compressed image size | ${COMPRESSED_SIZE} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          cat "$METRICS_FILE"
+
+      - name: Upload metrics
+        uses: actions/upload-artifact@v5
+        with:
+          name: metrics-${{ inputs.image_name }}
+          path: ${{ inputs.image_name }}-metrics.json
+          retention-days: 90
 
       # Génération des tags après relabel
       - name: Generate tags
@@ -417,16 +444,12 @@ jobs:
           attempt_limit: 3
           attempt_delay: 15000
           command: |
-            log_sum() { echo "$1" >> $GITHUB_STEP_SUMMARY; }
-            log_sum '# Push to GHCR result'
-            log_sum '```'
             echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
             # Push unique image id and sign
             dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
             sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image
-            log_sum "$dest_image"
             DIGEST=$(sudo skopeo inspect --format '{{.Digest}}' ${{ steps.rechunk.outputs.ref }})
             cosign sign -y --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false \
               "${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@$DIGEST"
@@ -435,8 +458,6 @@ jobs:
             for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
               dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:$tag"
               sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image
-              log_sum "$dest_image"
             done
-            log_sum '```'
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
