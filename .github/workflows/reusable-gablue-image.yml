@@ -169,8 +169,11 @@ jobs:
             fi
 
             # Lancement du build avec capture de la sortie
+            # pipefail obligatoire : sans lui, $? capture le code de tee (0)
+            # au lieu de buildah, masquant tout échec de build (nick-fields/retry
+            # n'hérite pas du pipefail de GitHub Actions)
             BUILD_LOG=$(mktemp)
-            set +e
+            set +e -o pipefail
             sudo buildah build \
               --file "$CONTAINERFILE" \
               --format "docker" \
@@ -393,7 +396,7 @@ jobs:
           sudo podman untag raw-img
           echo "ref=containers-storage:localhost/chunked-img" >> "$GITHUB_OUTPUT"
 
-      # Upload des métriques (taille compressée ajoutée après le push vers GHCR)
+      # Upload des métriques de build
       - name: Upload metrics
         uses: actions/upload-artifact@v7
         with:
