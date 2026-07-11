@@ -15,7 +15,7 @@ import select
 import shiboken6
 from ctypes import c_void_p, c_char_p, c_int, CFUNCTYPE, Structure
 from evdev import ecodes
-from PySide6.QtCore import Qt, QSize, QUrl, QTimer, QEvent
+from PySide6.QtCore import Qt, QSize, QUrl, QTimer, QEvent, Signal
 from PySide6.QtGui import QIcon, QFont, QPixmap, QOpenGLContext, QPainter, QSurfaceFormat
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -421,9 +421,16 @@ _UpdateCallbackFn = CFUNCTYPE(None, c_void_p)
 class MpvWidget(QOpenGLWidget):
     """Widget vidéo embarquant mpv via libmpv et OpenGL."""
 
+    # Signal émis depuis le thread mpv, reçu dans le thread GUI (QueuedConnection).
+    # mpv appelle le callback de mise à jour depuis un thread interne : on ne
+    # doit JAMAIS toucher à Qt directement depuis ce thread (deadlock/freeze,
+    # visible surtout sous QEMU/virgl où le rendu GL est plus lent).
+    _mpv_updated = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setUpdateBehavior(QOpenGLWidget.UpdateBehavior.PartialUpdate)
+        self._mpv_updated.connect(self.update, Qt.QueuedConnection)
 
         locale.setlocale(locale.LC_NUMERIC, "C")
         self._lib = ctypes.CDLL(_LIBMPV_PATH)
@@ -539,7 +546,7 @@ class MpvWidget(QOpenGLWidget):
         self._lib_mpv_render_context_render(self._gl_ctx, params)
 
     def _on_mpv_update(self, _ctx):
-        self.update()
+        self._mpv_updated.emit()
 
     def play(self, url):
         self._lib_mpv_command_string(self._handle, f"loadfile {url}".encode())
