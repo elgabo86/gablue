@@ -10,7 +10,7 @@ app/com.rustdesk.RustDesk/x86_64/stable
 app/org.localsend.localsend_app/x86_64/stable
 app/com.github.zocker_160.SyncThingy/x86_64/stable
 app/org.telegram.desktop/x86_64/stable
-app/org.mozilla.Thunderbird/x86_64/stable
+app/org.mozilla.thunderbird_esr/x86_64/stable
 app/app.zen_browser.zen/x86_64/stable
 app/org.DolphinEmu.dolphin-emu/x86_64/stable
 app/no.mifi.losslesscut/x86_64/stable
