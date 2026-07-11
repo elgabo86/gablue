@@ -757,12 +757,15 @@ installer/
    - **OBS VkCapture** (`org.freedesktop.Platform.VulkanLayer.OBSVkCapture`) : installé dans le live (même version freedesktop que MangoHud), **ne suit pas OBS Studio** — si OBS est décoché dans la checklist, OBS VkCapture est aussi désinstallé
    - **Proton-GE** (`com.valvesoftware.Steam.CompatibilityTool.Proton-GE`) : installé dans le live (branche `stable`), **suit Steam** — si Steam est décoché, Proton-GE est désinstallé
    - Pour les variantes NVIDIA, les runtimes `org.freedesktop.Platform.GL[32].nvidia-XXX` sont automatiquement ajoutés aux obligatoires (version détectée depuis `rpm -q nvidia-driver`)
-   - Pendant l'installation (`%post` Anaconda), copie brute de `/var/lib/flatpak` vers le déploiement ostree (méthode Bazzite : `rsync -aAXUHKP --open-noatime`)
-   - Une checklist `yad` en **opt-in** (tout décoché par défaut) permet de **cocher** les optionnels à conserver
-   - Les flatpaks non cochés sont désinstallés du système cible (`flatpak uninstall --system`), ainsi que leurs dépendances conditionnelles (Proton-GE, OBS VkCapture)
-   - Annulation du dialogue → désinstallation de tous les optionnels et leurs dépendances
-   - Le dépôt Flathub est ajouté sur le système cible pour les mises à jour futures
-   - Les labels SELinux sont restaurés (`chcon -R -t var_lib_t`)
+   - Pendant l'installation (`%post --nochroot` Anaconda), le script `install-flatpaks.ks` :
+     1. **Démonte le bind mount read-only** (`umount /var/lib/flatpak`) — en effet, `build.sh` active `var-lib-flatpak.mount` qui monte `/var/lib/flatpak` en RO dans le live, ce qui empêcherait `flatpak uninstall --system` d'écrire (erreur D-Bus « Message recipient disconnected from message bus without replying » car le helper système crashe sur un fs RO)
+     2. **Déclenche l'activation D-Bus** du helper flatpak système (`system-flatpak-setup.service` est désactivé dans le live, mais le helper est activable via D-Bus : `flatpak --system repair --dry-run`)
+     3. **Affiche la checklist yad** en opt-in (tout décoché par défaut) pour choisir les optionnels à conserver
+     4. **Désinstalle du live** les flatpaks non cochés ainsi que leurs dépendances conditionnelles (Proton-GE si Steam non coché, OBS VkCapture si OBS non coché)
+     5. **Copie `/var/lib/flatpak` (nettoyé) vers le déploiement ostree** via `rsync -aAXUHKP --open-noatime` (le rsync est fait APRÈS les désinstallations pour copier l'arbre déjà nettoyé)
+     - Le dépôt Flathub est déjà présent dans `/etc/flatpak/remotes.d/` (ajouté par `build.sh`), pas besoin de `flatpak remote-add` lors de l'install
+     - Annulation du dialogue → désinstallation de tous les optionnels et leurs dépendances
+     - Les labels SELinux sont restaurés sur le live après les opérations (`chcon -R -t var_lib_t`)
 3. **Création de compte utilisateur** : Aucun compte pré-rempli — le spoke utilisateur Anaconda est visible et l'utilisateur choisit librement son nom/mot de passe. KDE Plasma gère la création au premier démarrage si le spoke est skippé.
 4. **Session live** : Bureau Plasma complet via `livesys-scripts`, l'installateur Anaconda n'est pas lancé automatiquement (l'utilisateur le lance via `liveinst` si besoin). Les flatpaks pré-cachés sont visibles dans le menu Plasma (XDG_DATA_DIRS configuré dans `/etc/environment.d/99-gablue-flatpak-live.conf`).
 5. **Écran de bienvenue** : `plasma-welcome` est retiré du live (hook postrootfs) pour éviter le lancement automatique au boot
