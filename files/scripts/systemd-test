@@ -21,7 +21,6 @@ ExecStart=/bin/true
 EOF
 
 systemctl mask systemd-remount-fs.service
-systemctl mask iwd.service
 
 # Services supplémentaires pour le mode DX
 if [ "${DX_MODE:-false}" == "true" ]; then
