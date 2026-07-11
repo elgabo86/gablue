@@ -1,0 +1,72 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-action.json
+
+name: "Mount BTRFS storage (loopback)"
+description: >
+  Monte le storage podman/containers sur un loopback BTRFS compressé.
+  Remplace ublue-os/container-storage-action, qui sautait silencieusement le
+  montage quand /mnt n'est pas un point de montage : les runners ubuntu-24.04
+  récents ne fournissent plus de disque temporaire sur /mnt, ce qui laissait le
+  storage sur "/" sans compression et provoquait "no space left on device" sur
+  les gros builds (payload ISO, rechunk DX). On crée donc le loopback compressé
+  directement sur le disque racine, seul disque disponible.
+
+inputs:
+  target-dir:
+    description: "Répertoire du storage à placer sur le loopback BTRFS"
+    required: false
+    default: "/var/lib/containers"
+  loopback-free:
+    description: "Fraction de l'espace libre du disque allouée au loopback (0.0 - 1.0)"
+    required: false
+    default: "0.9"
+  mount-opts:
+    description: "Options de montage BTRFS, séparées par des virgules"
+    required: false
+    default: "compress-force=zstd:2"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Créer et monter le loopback BTRFS compressé
+      shell: bash
+      env:
+        TARGET_DIR: ${{ inputs.target-dir }}
+        LOOPBACK_FREE: ${{ inputs.loopback-free }}
+        MOUNT_OPTS: ${{ inputs.mount-opts }}
+      run: |
+        set -euo pipefail
+
+        # Emplacement du fichier loopback (sur "/", seul disque des runners récents).
+        # Nom dérivé du répertoire cible pour éviter toute collision.
+        LOOPBACK_DIR="/var/tmp/btrfs_loopbacks"
+        LOOPBACK_FILE="${LOOPBACK_DIR}/$(systemd-escape -p "$TARGET_DIR").img"
+
+        # Outils BTRFS
+        sudo apt-get update -qq
+        sudo apt-get install -y btrfs-progs
+
+        # Le contenu initial de TARGET_DIR est repris dans le nouveau FS via "mkfs -r"
+        sudo mkdir -p "$TARGET_DIR" "$LOOPBACK_DIR"
+
+        # Dimensionner et créer le fichier loopback sur "/" (fichier sparse :
+        # l'occupation physique réelle dépend du contenu compressé)
+        FINAL_SIZE=$(findmnt --target "$LOOPBACK_DIR" --bytes --df --json \
+          | jq -r --arg f "$LOOPBACK_FREE" '.filesystems[0].avail * ($f | tonumber) | round')
+        echo "Taille du loopback : $FINAL_SIZE octets"
+        sudo truncate -s "$FINAL_SIZE" "$LOOPBACK_FILE"
+
+        # Formater en BTRFS en injectant le contenu existant du storage (-r)
+        sudo mkfs.btrfs -f -r "$TARGET_DIR" "$LOOPBACK_FILE"
+
+        # Monter le loopback sur le storage avec compression
+        sudo systemd-mount "$LOOPBACK_FILE" "$TARGET_DIR" --options="$MOUNT_OPTS"
+
+        # Fail-fast : sans loopback BTRFS le build/rechunk sature le disque,
+        # inutile de laisser tourner le build pendant ~30 min pour rien
+        if ! findmnt -t btrfs "$TARGET_DIR" >/dev/null; then
+          echo "::error::Échec du montage BTRFS sur $TARGET_DIR"
+          exit 1
+        fi
+        echo "Storage monté sur loopback BTRFS compressé :"
+        findmnt "$TARGET_DIR"
+        df -h "$TARGET_DIR"

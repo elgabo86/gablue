@@ -100,9 +100,13 @@ Le projet construit 6 variantes distinctes :
 │       ├── main/                          # Réservé variante main (actuellement vide)
 │       └── nvidia-common/                 # Fichiers communs nvidia + nvidia-open (modprobe, SELinux, CDI, distrobox)
 ├── .github/
+│   ├── actions/                           # Composite actions locales
+│   │   └── mount-btrfs-storage/           # Montage loopback BTRFS compressé sur "/"
+│   │       └── action.yml
 │   ├── workflows/                         # Workflows GitHub Actions
 │   │   ├── gablue-builds.yml              # Workflow principal de build
 │   │   ├── reusable-gablue-image.yml      # Workflow réutilisable
+│   │   ├── build-gablue-live-isos.yml     # Build des ISOs live (Titanoboa)
 │   │   └── clean-gablue-images.yml        # Nettoyage anciennes images
 │   └── dependabot.yml                     # Configuration Dependabot
 └── README.md
@@ -681,7 +685,7 @@ Workflow réutilisable pour le build d'une image :
 1. Récupération automatique de la version kernel via `skopeo list-tags` uniquement si `kernel_version` est vide
 2. Checkout du dépôt
 3. Maximisation de l'espace de build
-4. Mount BTRFS pour podman storage (action pinnée par SHA, `loopback-free: "1.0"` pour utiliser 100% de `/mnt` au lieu de 80% — évite l'échec `no space left on device` au rechunk sur la variante DX, la plus grosse : le rechunk fait cohabiter `raw-img` + `chunked-img`)
+4. Mount BTRFS pour podman storage via la composite action locale `./.github/actions/mount-btrfs-storage` (voir section dédiée) — le storage `/var/lib/containers` est placé sur un loopback BTRFS compressé zstd sur `/`, ce qui absorbe le pic d'espace du rechunk sur la variante DX (`raw-img` + `chunked-img` cohabitent)
 5. Build de l'image avec buildah (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni) — **retry** via `nick-fields/retry@v4` avec `retry_on: error` et `timeout_minutes: 60` : le script shell détecte les erreurs réseau (EOF, TLS handshake timeout, connection refused/reset, DNS, Curl timeout, etc.) et sort avec le code 1 (retry), les erreurs de build (échec d'un script RUN) sortent avec le code 2 (échec immédiat). **`retry_on_exit_code` NE DOIT PAS être utilisé** car il désactive le retry sur timeout (bug connu [nick-fields/retry#145](https://github.com/nick-fields/retry/issues/145)). Nettoyage `buildah rmi raw-img` au début de chaque tentative. **`set +e -o pipefail` obligatoire** : `nick-fields/retry@v4` n'hérite pas du `pipefail` de GitHub Actions ; sans lui, `$?` capture le code de `tee` (0) au lieu de `buildah` à travers le pipe `| tee`, masquant tout échec de build (l'étape suivante tente alors `buildah from raw-img` sur une image inexistante → podman essaie de la pull depuis les registres → 404/denied)
 6. Application des labels OCI (définis directement dans le step, sans docker/metadata-action)
 7. Vérification SecureBoot (step "SecureBoot check") : vérifie la présence du certificat Gablue (`/etc/pki/akmods/certs/gablue-secure-boot.der`) et que les kmods du kernel sont bien signés via `modinfo | grep sig_id`. Échec → l'image ne bootera pas en SecureBoot. Le certificat est enrollable côté client via `ujust secureboot`
@@ -705,7 +709,7 @@ Build des **ISOs live** avec environnement de bureau Plasma complet (tous les 5 
 - Utilise **Titanoboa** (`Zeglius/titanoboa@revamp-pr`), un installateur bootc qui génère un squashfs live
 - 5 variantes : gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-dx
 - **Processus en 2 étapes** :
-  1. Build d'une image container payload via `installer/Containerfile` (basée sur l'image Gablue, flatpaks pré-cachés, swap kernel OGC→vanilla pour Secure Boot)
+  1. Build d'une image container payload via `installer/Containerfile` (basée sur l'image Gablue, flatpaks pré-cachés, swap kernel OGC→vanilla pour Secure Boot). Le storage podman est sur un loopback BTRFS compressé via la composite action `./.github/actions/mount-btrfs-storage` (indispensable : le payload embarque tous les flatpaks pré-téléchargés). La boucle de build (`for attempt in 1 2 3`) **ne retente pas** si le log contient `no space left on device` (erreur non récupérable : chaque tentative reconstruit une image identique) et sort immédiatement.
   2. Génération de l'ISO via Titanoboa (extraction rootfs, squashfs, initramfs dracut-live, structure EFI)
 - Signature Cosign + attestation de provenance sur chaque ISO
 - Upload vers BuzzHeavier, release GitHub `latest-live-iso`
@@ -781,6 +785,28 @@ Nettoyage automatique (tous les dimanches) :
 - Conservation des 7 dernières images taggées
 - Conservation des 7 dernières images non-taggées
 - Packages nettoyés : gablue-main, gablue-nvidia, gablue-nvidia-open, gablue-main-dx, gablue-main-test, gablue-nvidia-open-test
+
+### Composite action `mount-btrfs-storage`
+
+**Fichier** : `.github/actions/mount-btrfs-storage/action.yml`
+
+Action composite locale qui remplace `ublue-os/container-storage-action`. Elle crée un loopback BTRFS compressé (zstd:2) sur "/" et y monte le storage podman.
+
+**Pourquoi** : les runners `ubuntu-24.04` ne montent plus de disque temporaire sur `/mnt`. L'action amont détectait l'absence de `/mnt` et sautait **silencieusement** le montage (simple `notice`, pas d'erreur), laissant le storage sur ext4 sans compression. Sur les builds à gros payload (ISO avec flatpaks, rechunk DX), cela causait `no space left on device` au commit/export de l'image.
+
+**Inputs** :
+
+| Input | Défaut | Description |
+|-------|--------|-------------|
+| `target-dir` | `/var/lib/containers` | Répertoire à placer sur le loopback BTRFS |
+| `loopback-free` | `0.9` | Fraction de l'espace libre de "/" allouée au loopback (fichier sparse, occupation physique dépend du contenu compressé) |
+| `mount-opts` | `compress-force=zstd:2` | Options de montage BTRFS |
+
+**Contrainte** : action locale `uses: ./.github/actions/mount-btrfs-storage` — le dépôt doit être **checkout** avant l'appel.
+
+**Utilisation dans les workflows** :
+- `reusable-gablue-image.yml` : checkout → mount → build → rechunk → push
+- `build-gablue-live-isos.yml` : libérer espace → checkout → mount → build payload → Titanoboa
 
 ## Messages de commit et tags
 

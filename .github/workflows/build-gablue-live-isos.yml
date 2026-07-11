@@ -61,65 +61,20 @@ jobs:
       - name: Libérer l'espace disque (Ubuntu)
         uses: ublue-os/remove-unwanted-software@v8
 
-      - name: Monter stockage BTRFS compressé pour podman
-        # Montage manuel d'un loopback BTRFS compressé sur "/" (au lieu de
-        # ublue-os/container-storage-action). Les runners ubuntu-24.04 récents ne
-        # montent plus de disque temporaire sur /mnt : l'action détectait l'absence
-        # de /mnt et sautait SILENCIEUSEMENT le montage, laissant le storage podman
-        # sur "/" sans compression → "no space left on device" au commit du payload
-        # (image Gablue + tous les flatpaks pré-téléchargés). On recrée donc nous-mêmes
-        # le loopback compressé sur le disque racine, seul disque disponible.
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Répertoire du storage podman à placer sur le loopback BTRFS compressé
-          TARGET_DIR="/var/lib/containers"
-          # Emplacement du fichier loopback (sur "/", seul disque du runner)
-          LOOPBACK_DIR="/var/tmp/btrfs_loopbacks"
-          LOOPBACK_FILE="${LOOPBACK_DIR}/containers.img"
-          # Compression forcée zstd : indispensable pour que l'image payload tienne
-          MOUNT_OPTS="compress-force=zstd:2"
-          # Fraction de l'espace libre de "/" allouée au loopback (fichier sparse,
-          # l'occupation physique réelle dépend du contenu compressé)
-          LOOPBACK_FREE="0.9"
-
-          # Outils BTRFS
-          sudo apt-get update -qq
-          sudo apt-get install -y btrfs-progs
-
-          # Le contenu initial de TARGET_DIR est repris dans le nouveau FS via "mkfs -r"
-          sudo mkdir -p "$TARGET_DIR" "$LOOPBACK_DIR"
-
-          # Dimensionner et créer le fichier loopback sur "/"
-          FINAL_SIZE=$(findmnt --target "$LOOPBACK_DIR" --bytes --df --json \
-            | jq -r --arg f "$LOOPBACK_FREE" '.filesystems[0].avail * ($f | tonumber) | round')
-          echo "Taille du loopback : $FINAL_SIZE octets"
-          sudo truncate -s "$FINAL_SIZE" "$LOOPBACK_FILE"
-
-          # Formater en BTRFS en injectant le contenu existant du storage (-r)
-          sudo mkfs.btrfs -f -r "$TARGET_DIR" "$LOOPBACK_FILE"
-
-          # Monter le loopback sur le storage podman avec compression
-          sudo systemd-mount "$LOOPBACK_FILE" "$TARGET_DIR" --options="$MOUNT_OPTS"
-
-          # Fail-fast : sans loopback BTRFS le commit du payload est voué à l'échec,
-          # inutile de laisser tourner le build ~30 min pour rien
-          if ! findmnt -t btrfs "$TARGET_DIR" >/dev/null; then
-            echo "::error::Échec du montage BTRFS sur $TARGET_DIR — arrêt immédiat"
-            exit 1
-          fi
-          echo "Storage podman monté sur loopback BTRFS compressé :"
-          findmnt "$TARGET_DIR"
-          df -h "$TARGET_DIR"
-
-      - name: Start timer
-        run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
-
+      # Checkout avant le montage BTRFS : la composite action locale
+      # ./.github/actions/mount-btrfs-storage exige que le dépôt soit présent.
       - name: Checkout du dépôt
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Monter stockage BTRFS compressé pour podman
+        uses: ./.github/actions/mount-btrfs-storage
+        with:
+          target-dir: /var/lib/containers
+
+      - name: Start timer
+        run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: Obtenir le nom en minuscules du propriétaire
         id: repo_owner_case

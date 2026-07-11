@@ -120,13 +120,9 @@ jobs:
 
       # Mount BTRFS for podman storage (performance + compression)
       - name: Mount BTRFS for podman storage
-        uses: ublue-os/container-storage-action@dc1f4c8f17b672069e921f001132f7cf98a423a6 # main
+        uses: ./.github/actions/mount-btrfs-storage
         with:
           target-dir: /var/lib/containers
-          # 100% de l'espace /mnt (au lieu de 80%) : +13 Go pour absorber le
-          # pic d'espace du rechunk (raw-img + chunked-img cohabitent), qui
-          # faisait échouer par intermittence la variante DX (la plus grosse)
-          loopback-free: "1.0"
 
       # Construction de l'image (retry uniquement sur erreurs réseau transitoires)
       # timeout_minutes est géré par nick-fields/retry en interne (seul mécanisme
