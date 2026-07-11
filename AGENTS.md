@@ -682,14 +682,14 @@ Workflow réutilisable pour le build d'une image :
 2. Checkout du dépôt
 3. Maximisation de l'espace de build
 4. Mount BTRFS pour podman storage (action pinnée par SHA, `loopback-free: "1.0"` pour utiliser 100% de `/mnt` au lieu de 80% — évite l'échec `no space left on device` au rechunk sur la variante DX, la plus grosse : le rechunk fait cohabiter `raw-img` + `chunked-img`)
-5. Build de l'image avec buildah (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni) — **retry** via `nick-fields/retry@v4` avec `retry_on: error` et `timeout_minutes: 60` : le script shell détecte les erreurs réseau (EOF, TLS handshake timeout, connection refused/reset, DNS, Curl timeout, etc.) et sort avec le code 1 (retry), les erreurs de build (échec d'un script RUN) sortent avec le code 2 (échec immédiat). **`retry_on_exit_code` NE DOIT PAS être utilisé** car il désactive le retry sur timeout (bug connu [nick-fields/retry#145](https://github.com/nick-fields/retry/issues/145)). Nettoyage `buildah rmi raw-img` au début de chaque tentative
+5. Build de l'image avec buildah (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni) — **retry** via `nick-fields/retry@v4` avec `retry_on: error` et `timeout_minutes: 60` : le script shell détecte les erreurs réseau (EOF, TLS handshake timeout, connection refused/reset, DNS, Curl timeout, etc.) et sort avec le code 1 (retry), les erreurs de build (échec d'un script RUN) sortent avec le code 2 (échec immédiat). **`retry_on_exit_code` NE DOIT PAS être utilisé** car il désactive le retry sur timeout (bug connu [nick-fields/retry#145](https://github.com/nick-fields/retry/issues/145)). Nettoyage `buildah rmi raw-img` au début de chaque tentative. **`set +e -o pipefail` obligatoire** : `nick-fields/retry@v4` n'hérite pas du `pipefail` de GitHub Actions ; sans lui, `$?` capture le code de `tee` (0) au lieu de `buildah` à travers le pipe `| tee`, masquant tout échec de build (l'étape suivante tente alors `buildah from raw-img` sur une image inexistante → podman essaie de la pull depuis les registres → 404/denied)
 6. Application des labels OCI (définis directement dans le step, sans docker/metadata-action)
 7. Collecte des métriques (step "Collect build metrics") : durée de build, espace disque, taille image décompressée (`raw-img`), nombre de RPMs, kernel, mesa → JSON `metrics-<image>` (artifact, rétention 90 j) + step summary (en anglais). Les libellés affichés sont en anglais, seuls les commentaires YAML restent en français
 8. Rechunk avec rpm-ostree
 9. Upload des métriques (artifact) — la taille compressée n'est plus mesurée avant le push (le `skopeo inspect containers-storage:` se bloque sur les runners récents)
 10. Upload des métriques (artifact)
 11. Tag et push vers GHCR — retry via `nick-fields/retry@v4` (3 tentatives, 15s, `retry_on: error`, `timeout_minutes: 120`). Pas d'écriture dans le step summary
-12. Signature avec Cosign
+12. Signature avec Cosign — le digest est capturé pendant le push via `skopeo copy --digestfile` (pattern Bluefin/Aurora), évite le `skopeo inspect` sur `containers-storage:` qui se bloque sur les runners récents
 
 **Version du kernel** :
 - **Par défaut** : Hardcodée dans `reusable-gablue-image.yml` (input `kernel_version`). Version choisie manuellement, actuellement `7.1.3-ogc3.4.fc44.x86_64` (ublue-os/bazzite@982d035)
