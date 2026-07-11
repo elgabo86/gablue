@@ -308,11 +308,25 @@ jobs:
             || { echo "::error::Gablue SecureBoot certificate missing"; exit 1; }
           echo "Certificate OK"
 
-          sudo podman run --rm raw-img sh -c \
-            "modinfo /lib/modules/$kver/kernel/fs/overlayfs/overlay.ko.xz" 2>/dev/null \
-            | grep -q "sig_id" \
-            || { echo "::error::Kernel module not signed for $kver"; exit 1; }
-          echo "Kernel modules signed OK"
+          check_signed() {
+            sudo podman run --rm raw-img sh -c \
+              "modinfo /lib/modules/$kver/$1" 2>/dev/null | grep -q "sig_id" || {
+              echo "::error::$1 not signed for $kver"
+              exit 1
+            }
+          }
+
+          check_signed "kernel/fs/overlayfs/overlay.ko.xz"
+
+          if [ "${{ inputs.image_variant }}" = "nvidia" ] || [ "${{ inputs.image_variant }}" = "nvidia-open" ]; then
+            check_signed "extra/nvidia/nvidia.ko.xz" || {
+              # open modules can have different path
+              check_signed "extra/nvidia.ko.xz"
+            }
+            echo "NVIDIA kmods signed OK"
+          fi
+
+          echo "SecureBoot check passed"
 
       # Métriques de build (espace disque, taille image, etc.)
       - name: Collect build metrics
