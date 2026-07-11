@@ -206,8 +206,8 @@ adaptivesyncrule=2
 
 [gablue-tv-vrr]
 Description=Désactiver VRR pour Gablue TV
-wmclass=\sgablue-tv
-wmclasscomplete=true
+wmclass=gablue-tv
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
