@@ -1084,14 +1084,22 @@ boot-order:
     echo ""
 
     # Sélectionner le nouvel ordre un par un
+    echo "Sélectionnez les entrées dans l'ordre de priorité souhaité."
+    echo "Choisissez « Terminé » pour placer automatiquement les entrées restantes à la fin."
+    echo ""
     declare -a new_order=()
+    declare -a chosen_labels=()
     remaining=( "${all_options[@]}" )
     for i in $(seq 1 ${#all_options[@]}); do
         [[ $i -gt 1 ]] && remaining+=("Terminé")
         echo "Entrée n°$i :"
         CHOICE=$(ugum choose "${remaining[@]}")
-        [[ "$CHOICE" == "Terminé" ]] || [[ -z "$CHOICE" ]] && break
+        if [[ "$CHOICE" == "Terminé" ]] || [[ -z "$CHOICE" ]]; then
+            break
+        fi
+        echo "  → $CHOICE"
         new_order+=("${boot_nums[$CHOICE]}")
+        chosen_labels+=("$CHOICE")
         # Retirer l'entrée choisie des options restantes
         declare -a new_remaining=()
         for opt in "${remaining[@]}"; do
@@ -1106,15 +1114,30 @@ boot-order:
         exit 0
     fi
 
+    # Ajouter les entrées non sélectionnées à la fin (préserve toutes les entrées)
+    for opt in "${remaining[@]}"; do
+        [[ "$opt" == "Terminé" ]] && continue
+        new_order+=("${boot_nums[$opt]}")
+        chosen_labels+=("$opt (non modifié)")
+    done
+
     NEW_ORDER=$(printf '%s,' "${new_order[@]}")
     NEW_ORDER="${NEW_ORDER%,}"
 
+    echo ""
     echo "Nouvel ordre de boot : $NEW_ORDER"
-    if sudo efibootmgr --bootorder "$NEW_ORDER"; then
-        echo "Ordre de boot modifié avec succès."
+    printf '  %s\n' "${chosen_labels[@]}"
+    echo ""
+    if ugum confirm "Appliquer ce nouvel ordre de boot ?"; then
+        if sudo efibootmgr --bootorder "$NEW_ORDER"; then
+            echo "Ordre de boot modifié avec succès."
+        else
+            echo "Erreur lors du changement d'ordre de boot."
+            exit 1
+        fi
     else
-        echo "Erreur lors du changement d'ordre de boot."
-        exit 1
+        echo "Aucun changement effectué."
+        exit 0
     fi
 btrfs-compress-defrag:
     #!/usr/bin/bash
