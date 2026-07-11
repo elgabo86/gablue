@@ -70,7 +70,7 @@ jobs:
           target-dir: /var/lib/containers
           loopback-free: "1.0"
 
-      - name: Début du chrono
+      - name: Start timer
         run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: Checkout du dépôt
