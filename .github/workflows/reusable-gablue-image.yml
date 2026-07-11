@@ -448,9 +448,13 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
             # Push unique image id and sign
+            # --digestfile capture le digest pendant le push (pattern Bluefin/Aurora),
+            # évite le skopeo inspect sur containers-storage: qui se bloque
             dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
-            sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image
-            DIGEST=$(sudo skopeo inspect --format '{{.Digest}}' ${{ steps.rechunk.outputs.ref }})
+            DIGEST_FILE="$PWD/.push-digest"
+            sudo skopeo copy --digestfile "$DIGEST_FILE" \
+              ${{ steps.rechunk.outputs.ref }} docker://$dest_image
+            DIGEST=$(cat "$DIGEST_FILE")
             cosign sign -y --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false \
               "${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@$DIGEST"
 
