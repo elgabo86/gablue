@@ -349,6 +349,7 @@ jobs:
                 podman_storage: { free: $podman_free }
               },
               image_size: $img_size,
+              compressed_size: "N/A",
               package_count: $pkg_count,
               kernel: $kernel,
               mesa: $mesa
@@ -377,14 +378,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           cat "$METRICS_FILE"
-
-      # Upload des métriques de build
-      - name: Upload metrics
-        uses: actions/upload-artifact@v7
-        with:
-          name: metrics-${{ inputs.image_name }}
-          path: ${{ inputs.image_name }}-metrics.json
-          retention-days: 90
 
       # Rechunk de l'image avec rpm-ostree (après application des labels)
       - name: Rechunk Image
@@ -461,3 +454,38 @@ jobs:
             done
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+
+      # Taille compressée depuis le registre distant (l'image est déjà sur GHCR)
+      - name: Update compressed size
+        if: github.event_name != 'pull_request'
+        run: |
+          METRICS_FILE="${{ inputs.image_name }}-metrics.json"
+          dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
+
+          COMPRESSED_BYTES=$(sudo skopeo inspect --format '{{.Size}}' docker://$dest_image 2>/dev/null || echo "0")
+          if [ "$COMPRESSED_BYTES" -gt 0 ] 2>/dev/null; then
+            COMPRESSED_SIZE=$(numfmt --to=iec --suffix=B "$COMPRESSED_BYTES")
+          else
+            COMPRESSED_SIZE="N/A"
+          fi
+
+          echo "Compressed image size: ${COMPRESSED_SIZE}"
+
+          jq --arg cs "$COMPRESSED_SIZE" '.compressed_size = $cs' "$METRICS_FILE" > tmp.json && mv tmp.json "$METRICS_FILE"
+
+          {
+            echo ""
+            echo "### Push metrics"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Compressed size | ${COMPRESSED_SIZE} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Upload des métriques de build
+      - name: Upload metrics
+        uses: actions/upload-artifact@v7
+        with:
+          name: metrics-${{ inputs.image_name }}
+          path: ${{ inputs.image_name }}-metrics.json
+          retention-days: 90
