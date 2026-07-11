@@ -257,7 +257,7 @@ jobs:
           
           # Extraire les versions des paquets principaux
           kernel_ver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}-%{RELEASE}" kernel-core 2>/dev/null || echo "N/A")
-          mesa_ver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}" mesa-dri-drivers 2>/dev/null || echo "N/A")
+          mesa_ver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}" mesa-dri-drivers.x86_64 2>/dev/null || echo "N/A")
           plasma_ver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}" plasma-desktop 2>/dev/null || echo "N/A")
           nvidia_ver="N/A"
           if sudo podman run --rm "$img" rpm -q nvidia-driver &>/dev/null; then
@@ -355,7 +355,7 @@ jobs:
 
           # Versions
           KERNEL_VER=$(sudo podman run --rm raw-img rpm -q --qf '%{VERSION}-%{RELEASE}' kernel-core 2>/dev/null || echo "N/A")
-          MESA_VER=$(sudo podman run --rm raw-img rpm -q --qf '%{VERSION}' mesa-dri-drivers 2>/dev/null || echo "N/A")
+          MESA_VER=$(sudo podman run --rm raw-img rpm -q --qf '%{VERSION}' mesa-dri-drivers.x86_64 2>/dev/null || echo "N/A")
 
           # JSON
           METRICS_FILE="${IMG_NAME}-metrics.json"
