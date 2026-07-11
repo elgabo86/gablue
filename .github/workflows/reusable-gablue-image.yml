@@ -111,7 +111,7 @@ jobs:
         uses: actions/checkout@v7
 
       # Timestamp de début pour calculer la durée
-      - name: Début du chrono
+      - name: Start timer
         run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
 
       # Optimisation de l'espace
@@ -336,6 +336,7 @@ jobs:
             --arg mnt_free "$MNT_FREE" \
             --arg podman_free "$PODMAN_FREE" \
             --arg img_size "$IMG_SIZE" \
+            --arg compressed_size "N/A" \
             --arg pkg_count "$PKG_COUNT" \
             --arg kernel "$KERNEL_VER" \
             --arg mesa "$MESA_VER" \
@@ -349,6 +350,7 @@ jobs:
                 podman_storage: { free: $podman_free }
               },
               image_size: $img_size,
+              compressed_size: $compressed_size,
               package_count: $pkg_count,
               kernel: $kernel,
               mesa: $mesa
@@ -396,14 +398,6 @@ jobs:
           sudo podman untag raw-img
           echo "ref=containers-storage:localhost/chunked-img" >> "$GITHUB_OUTPUT"
 
-      # Upload des métriques de build
-      - name: Upload metrics
-        uses: actions/upload-artifact@v7
-        with:
-          name: metrics-${{ inputs.image_name }}
-          path: ${{ inputs.image_name }}-metrics.json
-          retention-days: 90
-
       # Génération des tags après relabel
       - name: Generate tags
         id: generate-tags
@@ -439,7 +433,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: nick-fields/retry@v4
         with:
-          timeout_minutes: 120
+          timeout_minutes: 30
           max_attempts: 3
           retry_wait_seconds: 15
           retry_on: error
@@ -448,12 +442,13 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
             # Push unique image id and sign
-            # --digestfile capture le digest pendant le push (pattern Bluefin/Aurora),
-            # évite le skopeo inspect sur containers-storage: qui se bloque
+            # Utilise podman push --digestfile (pattern Bluefin) au lieu de skopeo copy
+            # --digestfile depuis containers-storage: skopeo se bloque sur les runners
+            # récents lors de la lecture du storage pour calculer le digest
             dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
-            DIGEST_FILE="$PWD/.push-digest"
-            sudo skopeo copy --digestfile "$DIGEST_FILE" \
-              ${{ steps.rechunk.outputs.ref }} docker://$dest_image
+            DIGEST_FILE="/tmp/digestfile"
+            sudo podman push --digestfile="$DIGEST_FILE" \
+              localhost/chunked-img "$dest_image"
             DIGEST=$(cat "$DIGEST_FILE")
             cosign sign -y --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false \
               "${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@$DIGEST"
@@ -461,7 +456,42 @@ jobs:
             # Push alias tags
             for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
               dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:$tag"
-              sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image
+              sudo podman push localhost/chunked-img "$dest_image"
             done
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+
+      # Mise à jour de la taille compressée après le push
+      - name: Update compressed size
+        if: github.event_name != 'pull_request'
+        run: |
+          METRICS_FILE="${{ inputs.image_name }}-metrics.json"
+          dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
+
+          COMPRESSED_BYTES=$(timeout 60 sudo skopeo inspect --format '{{.Size}}' docker://$dest_image 2>/dev/null || echo "0")
+          if [ "$COMPRESSED_BYTES" -gt 0 ] 2>/dev/null; then
+            COMPRESSED_SIZE=$(numfmt --to=iec --suffix=B "$COMPRESSED_BYTES")
+          else
+            COMPRESSED_SIZE="N/A"
+          fi
+
+          echo "Compressed image size: ${COMPRESSED_SIZE}"
+
+          jq --arg cs "$COMPRESSED_SIZE" '.compressed_size = $cs' "$METRICS_FILE" > tmp.json && mv tmp.json "$METRICS_FILE"
+
+          {
+            echo ""
+            echo "### Push metrics"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Compressed size | ${COMPRESSED_SIZE} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Upload des métriques de build
+      - name: Upload metrics
+        uses: actions/upload-artifact@v7
+        with:
+          name: metrics-${{ inputs.image_name }}
+          path: ${{ inputs.image_name }}-metrics.json
+          retention-days: 90
