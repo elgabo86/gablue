@@ -355,7 +355,9 @@ jobs:
               mesa: $mesa
             }' > "$METRICS_FILE"
 
-          # Step summary
+          # Step summary (différé — sera écrit après le push pour inclure
+          # la taille compressée réelle)
+          METRICS_SUMMARY="/tmp/${IMG_NAME}-summary.md"
           {
             echo "## 📊 Build metrics — ${IMG_NAME}"
             echo ""
@@ -376,7 +378,7 @@ jobs:
             echo "| / | ${ROOT_SIZE} | ${ROOT_USED} | ${ROOT_FREE} | ${ROOT_PCT} |"
             echo "| /mnt | - | - | ${MNT_FREE} | - |"
             echo "| /var/lib/containers | - | - | ${PODMAN_FREE} | - |"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } > "$METRICS_SUMMARY"
 
           cat "$METRICS_FILE"
 
@@ -486,7 +488,16 @@ jobs:
           echo "Compressed image size: ${COMPRESSED_SIZE}"
 
           jq --arg cs "$COMPRESSED_SIZE" '.compressed_size = $cs' "$METRICS_FILE" > tmp.json && mv tmp.json "$METRICS_FILE"
-          echo "Compressed size: ${COMPRESSED_SIZE}" >> "$GITHUB_STEP_SUMMARY"
+
+          # Écrire le step summary complet avec la taille compressée réelle
+          METRICS_SUMMARY="/tmp/${{ inputs.image_name }}-summary.md"
+          sed "s/| Compressed size | N/A |/| Compressed size | ${COMPRESSED_SIZE} |/" "$METRICS_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+
+      # Fallback PRs : pas de push donc taille compressée reste N/A
+      - name: Write metrics summary (PR)
+        if: github.event_name == 'pull_request'
+        run: |
+          cat "/tmp/${{ inputs.image_name }}-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       # Upload des métriques de build
       - name: Upload metrics
