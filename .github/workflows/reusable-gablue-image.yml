@@ -334,6 +334,7 @@ jobs:
         run: |
           IMG_NAME="${{ inputs.image_name }}"
           BUILD_TIME=$(( $(date +%s) - BUILD_START ))
+          BUILD_TIME_FMT="$((BUILD_TIME / 60))m $((BUILD_TIME % 60))s"
           TIMESTAMP="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
           # Espace disque
@@ -341,8 +342,6 @@ jobs:
           ROOT_USED=$(df -h / | awk 'NR==2{print $3}')
           ROOT_SIZE=$(df -h / | awk 'NR==2{print $2}')
           ROOT_PCT=$(df -h / | awk 'NR==2{print $5}')
-          MNT_FREE=$(df -h /mnt 2>/dev/null | awk 'NR==2{print $4}' || echo "N/A")
-          PODMAN_FREE=$(df -h /var/lib/containers 2>/dev/null | awk 'NR==2{print $4}' || echo "N/A")
 
           # Taille de l'image
           IMG_SIZE=$(sudo podman images raw-img --format '{{.Size}}' 2>/dev/null || echo "N/A")
@@ -364,8 +363,6 @@ jobs:
             --arg root_used "$ROOT_USED" \
             --arg root_size "$ROOT_SIZE" \
             --arg root_pct "$ROOT_PCT" \
-            --arg mnt_free "$MNT_FREE" \
-            --arg podman_free "$PODMAN_FREE" \
             --arg img_size "$IMG_SIZE" \
             --arg pkg_count "$PKG_COUNT" \
             --arg kernel "$KERNEL_VER" \
@@ -375,9 +372,7 @@ jobs:
               timestamp: $timestamp,
               build_time_s: $build_time,
               disk: {
-                root: { size: $root_size, used: $root_used, free: $root_free, pct: $root_pct },
-                mnt: { free: $mnt_free },
-                podman_storage: { free: $podman_free }
+                root: { size: $root_size, used: $root_used, free: $root_free, pct: $root_pct }
               },
               image_size: $img_size,
               compressed_size: "N/A",
@@ -395,7 +390,7 @@ jobs:
             echo "| Metric | Value |"
             echo "|--------|-------|"
             echo "| Timestamp | ${TIMESTAMP} |"
-            echo "| Build time | ${BUILD_TIME}s |"
+            echo "| Build time | ${BUILD_TIME_FMT} |"
             echo "| Image size | ${IMG_SIZE} |"
             echo "| Compressed size | N/A |"
             echo "| RPM packages | ${PKG_COUNT} |"
@@ -407,8 +402,6 @@ jobs:
             echo "| Mount point | Size | Used | Free | % |"
             echo "|-------------|------|------|------|---|"
             echo "| / | ${ROOT_SIZE} | ${ROOT_USED} | ${ROOT_FREE} | ${ROOT_PCT} |"
-            echo "| /mnt | - | - | ${MNT_FREE} | - |"
-            echo "| /var/lib/containers | - | - | ${PODMAN_FREE} | - |"
           } > "$METRICS_SUMMARY"
 
           cat "$METRICS_FILE"
