@@ -308,7 +308,12 @@ jobs:
           # de l'image et gère automatiquement le chemin et la compression
           # (in-tree = .ko non compressé, akmods = .ko.xz)
           check_signed() {
-            sudo podman run --rm raw-img modinfo -k "$kver" "$1" 2>/dev/null | grep -q "sig_id" || {
+            # Capture la sortie avant grep : grep -q ferme le pipe au premier
+            # match et envoie SIGPIPE à modinfo (exit 141), ce qui ferait
+            # échouer le pipeline sous pipefail pour les modules à sortie longue
+            local info
+            info=$(sudo podman run --rm raw-img modinfo -k "$kver" "$1" 2>/dev/null)
+            echo "$info" | grep -q "sig_id" || {
               echo "::error::$1 not signed for $kver"
               exit 1
             }
@@ -513,8 +518,9 @@ jobs:
           jq --arg cs "$COMPRESSED_SIZE" '.compressed_size = $cs' "$METRICS_FILE" > tmp.json && mv tmp.json "$METRICS_FILE"
 
           # Écrire le step summary complet avec la taille compressée réelle
+          # Délimiteur # : le motif "N/A" contient un / qui casserait s/.../.../
           METRICS_SUMMARY="/tmp/${{ inputs.image_name }}-summary.md"
-          sed "s/| Compressed size | N/A |/| Compressed size | ${COMPRESSED_SIZE} |/" "$METRICS_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          sed "s#| Compressed size | N/A |#| Compressed size | ${COMPRESSED_SIZE} |#" "$METRICS_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
 
       # Fallback PRs : pas de push donc taille compressée reste N/A
       - name: Write metrics summary (PR)
