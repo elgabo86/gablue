@@ -297,28 +297,31 @@ jobs:
       - name: SecureBoot check
         shell: bash
         run: |
-          kver=$(sudo podman run --rm raw-img rpm -q --qf '%{VERSION}-%{RELEASE}' kernel-core)
+          kver=$(sudo podman run --rm raw-img rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)
           echo "Kernel: $kver"
 
           sudo podman run --rm raw-img test -f /etc/pki/akmods/certs/gablue-secure-boot.der \
             || { echo "::error::Gablue SecureBoot certificate missing"; exit 1; }
           echo "Certificate OK"
 
+          # Vérifie qu'un module (par nom) est signé. modinfo -k cible le kernel
+          # de l'image et gère automatiquement le chemin et la compression
+          # (in-tree = .ko non compressé, akmods = .ko.xz)
           check_signed() {
-            sudo podman run --rm raw-img sh -c \
-              "modinfo /lib/modules/$kver/$1" 2>/dev/null | grep -q "sig_id" || {
+            sudo podman run --rm raw-img modinfo -k "$kver" "$1" 2>/dev/null | grep -q "sig_id" || {
               echo "::error::$1 not signed for $kver"
               exit 1
             }
           }
 
-          check_signed "kernel/fs/overlayfs/overlay.ko.xz"
+          # Module in-tree (signé par la clé kernel auto-générée intégrée)
+          check_signed "overlay"
+
+          # Akmod out-of-tree (signé avec la clé Gablue/ublue, requis en SecureBoot)
+          check_signed "v4l2loopback"
 
           if [ "${{ inputs.image_variant }}" = "nvidia" ] || [ "${{ inputs.image_variant }}" = "nvidia-open" ]; then
-            check_signed "extra/nvidia/nvidia.ko.xz" || {
-              # open modules can have different path
-              check_signed "extra/nvidia.ko.xz"
-            }
+            check_signed "nvidia"
             echo "NVIDIA kmods signed OK"
           fi
 
