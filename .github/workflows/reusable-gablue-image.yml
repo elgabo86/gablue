@@ -427,31 +427,44 @@ jobs:
           cosign-release: "v2.6.1"
         if: github.event_name != 'pull_request'
 
-      # Push et signature de l'image avec retry
-      # wretry.action utilise composite/bash natif (stdio inherit) — pas de
-      # problème de pipe saturé contrairement à nick-fields/retry (Node.js spawn)
+      # Push et signature de l'image avec retry bash natif
+      # Pas d'action externe : un simple run: avec retry loop évite les problèmes
+      # de pipe Node.js (nick-fields/retry) et la dépréciation (wretry.action)
       - name: Push To GHCR and Sign
         if: github.event_name != 'pull_request'
-        uses: Wandalen/wretry.action@e68c23e6309f2871ca8ae4763e7629b9c258e1ea # v3.8.0
-        with:
-          attempt_limit: 3
-          attempt_delay: 15000
-          command: |
-            echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+        shell: bash
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # Push unique image id and sign
+          for attempt in 1 2 3; do
+            echo "::group::Push attempt $attempt"
+
             dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
-            sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image
-            DIGEST=$(sudo skopeo inspect --format '{{.Digest}}' ${{ steps.rechunk.outputs.ref }})
-            cosign sign -y --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false \
-              "${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@$DIGEST"
+            if sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image; then
+              # Push réussi, récupérer le digest et signer
+              DIGEST=$(sudo skopeo inspect --format '{{.Digest}}' ${{ steps.rechunk.outputs.ref }})
+              cosign sign -y --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false \
+                "${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@$DIGEST"
 
-            # Push alias tags
-            for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
-              dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:$tag"
-              sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image
-            done
+              # Push alias tags
+              for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
+                dest_alias="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:$tag"
+                sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_alias
+              done
+              echo "::endgroup::"
+              exit 0
+            fi
+
+            echo "::endgroup::"
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::Push attempt $attempt failed, retrying in 15s..."
+              sleep 15
+            fi
+          done
+
+          echo "::error::All push attempts failed"
+          exit 1
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
 
