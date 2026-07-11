@@ -364,6 +364,7 @@ jobs:
             echo "| Timestamp | ${TIMESTAMP} |"
             echo "| Build time | ${BUILD_TIME}s |"
             echo "| Image size | ${IMG_SIZE} |"
+            echo "| Compressed size | N/A |"
             echo "| RPM packages | ${PKG_COUNT} |"
             echo "| Kernel | ${KERNEL_VER} |"
             echo "| Mesa | ${MESA_VER} |"
@@ -475,9 +476,9 @@ jobs:
           METRICS_FILE="${{ inputs.image_name }}-metrics.json"
           dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
 
-          COMPRESSED_BYTES=$(sudo skopeo inspect --format '{{.Size}}' docker://$dest_image 2>/dev/null || echo "0")
+          COMPRESSED_BYTES=$(sudo skopeo inspect --raw docker://$dest_image 2>/dev/null | jq '([.layers[]?.size] | add) + (.config?.size // 0)' 2>/dev/null || echo "0")
           if [ "$COMPRESSED_BYTES" -gt 0 ] 2>/dev/null; then
-            COMPRESSED_SIZE=$(numfmt --to=iec --suffix=B "$COMPRESSED_BYTES")
+            COMPRESSED_SIZE=$(numfmt --to=iec --suffix=B "$COMPRESSED_BYTES" | sed 's/B/ B/')
           else
             COMPRESSED_SIZE="N/A"
           fi
@@ -485,15 +486,7 @@ jobs:
           echo "Compressed image size: ${COMPRESSED_SIZE}"
 
           jq --arg cs "$COMPRESSED_SIZE" '.compressed_size = $cs' "$METRICS_FILE" > tmp.json && mv tmp.json "$METRICS_FILE"
-
-          {
-            echo ""
-            echo "### Push metrics"
-            echo ""
-            echo "| Metric | Value |"
-            echo "|--------|-------|"
-            echo "| Compressed size | ${COMPRESSED_SIZE} |"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Compressed size: ${COMPRESSED_SIZE}" >> "$GITHUB_STEP_SUMMARY"
 
       # Upload des métriques de build
       - name: Upload metrics
