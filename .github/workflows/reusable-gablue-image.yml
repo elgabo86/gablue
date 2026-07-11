@@ -297,6 +297,23 @@ jobs:
           path: ${{ inputs.image_name }}.json
           retention-days: 7
 
+      # Vérification SecureBoot : les kmods doivent être signés avec la clé Gablue
+      - name: SecureBoot check
+        shell: bash
+        run: |
+          kver=$(sudo podman run --rm raw-img rpm -q --qf '%{VERSION}-%{RELEASE}' kernel-core)
+          echo "Kernel: $kver"
+
+          sudo podman run --rm raw-img test -f /etc/pki/akmods/certs/gablue-secure-boot.der \
+            || { echo "::error::Gablue SecureBoot certificate missing"; exit 1; }
+          echo "Certificate OK"
+
+          sudo podman run --rm raw-img sh -c \
+            "modinfo /lib/modules/$kver/kernel/fs/overlayfs/overlay.ko.xz" 2>/dev/null \
+            | grep -q "sig_id" \
+            || { echo "::error::Kernel module not signed for $kver"; exit 1; }
+          echo "Kernel modules signed OK"
+
       # Métriques de build (espace disque, taille image, etc.)
       - name: Collect build metrics
         id: metrics
