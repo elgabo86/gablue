@@ -478,7 +478,7 @@ jobs:
 
           COMPRESSED_BYTES=$(sudo skopeo inspect --raw docker://$dest_image 2>/dev/null | jq '([.layers[]?.size] | add) + (.config?.size // 0)' 2>/dev/null || echo "0")
           if [ "$COMPRESSED_BYTES" -gt 0 ] 2>/dev/null; then
-            COMPRESSED_SIZE=$(numfmt --to=iec --suffix=B "$COMPRESSED_BYTES" | sed 's/B/ B/')
+            COMPRESSED_SIZE=$(numfmt --to=iec "$COMPRESSED_BYTES" | sed 's/G/ GB/; s/M/ MB/; s/K/ KB/')
           else
             COMPRESSED_SIZE="N/A"
           fi
