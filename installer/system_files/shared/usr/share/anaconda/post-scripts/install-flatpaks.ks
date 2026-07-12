@@ -26,6 +26,7 @@ TO_KEEP=""
 if [ -f "$FLATPAK_OPTIONAL" ]; then
     YAD_ARGS=(--list --checklist
         --width=700 --height=400
+        --on-top --center --skip-taskbar
         --title="Sélection des Flatpaks"
         --text="Choisissez les flatpaks supplémentaires à conserver.\nLes autres seront désinstallés :"
         --column="Garder" --column="Ref" --column="Application"
