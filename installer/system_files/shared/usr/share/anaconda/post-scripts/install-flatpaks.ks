@@ -1,8 +1,12 @@
 %post --nochroot --erroronfail --log=/tmp/anaconda_custom_logs/install-flatpaks.log
 # Installation des flatpaks depuis le live ISO
-# 1. Checklist yad pour choisir les optionnels à conserver
+# 1. Lecture de la sélection faite en %pre-install (gablue-questions.ks)
 # 2. Copie de /var/lib/flatpak (live) vers le déploiement ostree via rsync
 # 3. Désinstallation des optionnels non désirés DIRECTEMENT dans la cible
+#
+# Le choix des optionnels à conserver est fait plus tôt (yad en
+# %pre-install) et écrit dans SELECTION_FILE. Ici on ne fait que lire ce
+# fichier (fichier absent => aucun optionnel conservé).
 #
 # Pourquoi désinstaller dans la cible et non dans le live :
 # - Le live monte /var/lib/flatpak en overlayfs : flatpak uninstall échoue
@@ -19,31 +23,14 @@ TARGET_INSTALLATION="gtarget"
 flatpak_id() { local r="$1"; r="${r#*/}"; echo "${r%%/*}"; }
 
 # =============================================================================
-# FLATPAKS OPTIONNELS : CHECKLIST YAD (SÉLECTION)
+# LECTURE DE LA SÉLECTION (faite en %pre-install)
 # =============================================================================
 
+# TO_KEEP = liste des refs à conserver (une par ligne). Fichier absent
+# (pre-install non exécuté / annulé) => aucun optionnel conservé.
 TO_KEEP=""
-if [ -f "$FLATPAK_OPTIONAL" ]; then
-    YAD_ARGS=(--list --checklist
-        --width=700 --height=400
-        --on-top --center --skip-taskbar
-        --title="Sélection des Flatpaks"
-        --text="Choisissez les flatpaks supplémentaires à conserver.\nLes autres seront désinstallés :"
-        --column="Garder" --column="Ref" --column="Application"
-        --print-column=2 --hide-column=2)
-
-    while IFS= read -r ref; do
-        [ -z "$ref" ] && continue
-        name=$(flatpak info --system --show-name "$ref" 2>/dev/null || echo "$ref")
-        YAD_ARGS+=(FALSE "$ref" "$name")
-    done < "$FLATPAK_OPTIONAL"
-
-    TO_KEEP=$(run0 --user=liveuser yad "${YAD_ARGS[@]}" 2>/dev/null) || {
-        echo "Dialogue annulé, désinstallation de tous les flatpaks optionnels..."
-        TO_KEEP=""
-    }
-
-    echo "$TO_KEEP" > "$SELECTION_FILE"
+if [ -f "$SELECTION_FILE" ]; then
+    TO_KEEP="$(cat "$SELECTION_FILE")"
 fi
 
 # =============================================================================

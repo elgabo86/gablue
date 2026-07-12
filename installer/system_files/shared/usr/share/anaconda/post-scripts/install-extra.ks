@@ -78,8 +78,19 @@ export created_home created_user
 
 gwine_extra="/extra/gwine-cache-installer"
 gwine_target="/mnt/sysimage${created_home}/.cache/gwine"
+GWINE_CHOICE_FILE="/tmp/gablue-install-gwine-cache"
 
-if [ -d "$gwine_extra" ] && [ -f "$gwine_extra/gwine-cache.tar.xz" ]; then
+# Choix fait en %pre-install (gablue-questions.ks). Défaut = installer
+# (fichier absent => "yes") car le cache accélère la première utilisation ;
+# il reste téléchargeable en ligne plus tard via gwine.
+gwine_choice="yes"
+if [ -f "$GWINE_CHOICE_FILE" ]; then
+    gwine_choice="$(cat "$GWINE_CHOICE_FILE")"
+fi
+
+if [ "$gwine_choice" != "yes" ]; then
+    echo "Cache gwine non installé (choix utilisateur)."
+elif [ -d "$gwine_extra" ] && [ -f "$gwine_extra/gwine-cache.tar.xz" ]; then
     echo "Déploiement du cache gwine vers ${created_home}/.cache/gwine..."
 
     mkdir -p "$gwine_target"

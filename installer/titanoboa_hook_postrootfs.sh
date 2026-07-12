@@ -79,6 +79,13 @@ fi
 e2label "\$xboot_dev" "gablue_xboot"
 %end
 
+# Questions interactives Gablue (compression, flatpaks, cache gwine)
+# Posées en %pre-install (après formatage, avant déploiement) pour ne plus
+# interrompre l'installation ensuite. Les choix sont écrits dans /tmp et lus
+# par les %post correspondants. La compression BTRFS est appliquée
+# directement ici (héritée par le déploiement, /var et les flatpaks).
+%include /usr/share/anaconda/pre-scripts/gablue-questions.ks
+
 # Afficher les logs d'installation en cas d'erreur
 %onerror
 run0 --user=liveuser yad --timeout=0 --text-info --no-buttons \
