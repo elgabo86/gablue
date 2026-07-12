@@ -12,12 +12,12 @@ Images and the system are continuously updated, following the latest Fedora rele
 - **OGC kernel** (Open Gaming Collective) — optimized for gaming (from ublue-os/akmods)
 - **Terra Mesa** — up-to-date graphics stack with 32-bit multilib
 - **NVIDIA support** — closed and open-source drivers via akmods
-- **Gaming optimizations** — MangoHud, VRR-aware KWin rules
-- **Gwine** — seamless Wine runner: launch .exe and .wgp files directly with no prefix management, thanks to a single shared prefix (gwine-proton is a Wine variant using Proton sources)
+- **Gwine** — seamless Wine runner: launch .exe and .wgp files directly with no prefix management, thanks to a single shared prefix (gwine-proton is a Wine variant using Proton sources). Bundles ds2xbox to emulate an Xbox controller for Wine games (like Steam)
 - **Game packages** — .wgp (Windows Game Pack) and .lgp (Linux Game Pack) self-contained squashfs game bundles: package a full compressed PC game into a single file you can create yourself, then run it directly with no installation required
 - **Gamepad shortcuts** — native C daemon for system actions via controller
 - **Plasma Bigscreen** (BETA) — couch/TV interface, switchable from the desktop session
 - **Flatpak** and **brew** ready out of the box
+- **Automatic weekly updates** — system and flatpaks staged in the background
 - Optional **DX mode** with Docker, Libvirt, QEMU, and ROCm for AMD
 
 ## Current Versions
@@ -48,7 +48,7 @@ Images and the system are continuously updated, following the latest Fedora rele
 
 ## Installation
 
-Download the latest ISO from [GitHub Releases](https://github.com/elgabo86/gablue/releases) for a fresh install. Checksums available.
+Download the latest live ISO from [GitHub Releases](https://github.com/elgabo86/gablue/releases) to try and install Gablue. Checksums available.
 
 ## Verification
 
