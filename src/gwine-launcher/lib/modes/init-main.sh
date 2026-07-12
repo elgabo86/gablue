@@ -42,8 +42,21 @@ init_prefix_only() {
     progress_update "$DBUS_REF" "$CURRENT_STEP" "Vérification du runner..."
     
     if [ "$OFFLINE_MODE" = "true" ] && ([ ! -d "$WINE_DIR" ] || [ ! -f "$WINE_DIR/bin/wine" ]); then
-        progress_close "$DBUS_REF"
-        error_exit "Mode offline: le runner $current_runner n'est pas installé. Impossible de continuer."
+        # Runner absent mais mode offline : tenter l'installation depuis le cache
+        # (le pack cache déployé ne contient que ~/.cache/gwine, pas le runner extrait)
+        echo "Runner $current_runner absent, installation depuis le cache offline..."
+        if [ "$current_runner" = "proton" ]; then
+            install_gwine_proton_from_cache || {
+                progress_close "$DBUS_REF"
+                error_exit "Mode offline: le runner $current_runner n'est pas installé et aucune archive n'est disponible dans le cache."
+            }
+        else
+            install_gwine_from_cache || {
+                progress_close "$DBUS_REF"
+                error_exit "Mode offline: le runner $current_runner n'est pas installé et aucune archive n'est disponible dans le cache."
+            }
+        fi
+        update_runner_paths "$current_runner"
     fi
     
     if [ "$OFFLINE_MODE" != "true" ]; then

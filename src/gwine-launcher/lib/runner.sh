@@ -147,7 +147,22 @@ ensure_runner_installed() {
     
     # Vérifier la connexion réseau
     if ! curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
-        error_exit "Runner $runner non installé et pas de connexion internet pour le télécharger"
+        # Pas de réseau : tentative d'installation du runner depuis le cache offline
+        # (permet de déployer uniquement ~/.cache/gwine et d'installer le runner
+        # extrait à la volée en cas de rupture d'internet)
+        echo "Pas de connexion internet, tentative d'installation du runner depuis le cache..."
+        if [ "$runner" = "proton" ]; then
+            if install_gwine_proton_from_cache; then
+                update_runner_paths "$runner"
+                return 0
+            fi
+        else
+            if install_gwine_from_cache; then
+                update_runner_paths "$runner"
+                return 0
+            fi
+        fi
+        error_exit "Runner $runner non installé, pas de connexion internet et aucune archive disponible dans le cache"
     fi
     
     if [ "$runner" = "proton" ]; then

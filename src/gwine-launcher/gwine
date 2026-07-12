@@ -213,6 +213,18 @@ check_prefix_or_offer_init() {
         return 0
     fi
 
+    # Préfixe absent : si le cache local est complet, lancer un init offline
+    # silencieusement (sans téléchargement réseau). Sinon, proposer l'init
+    # online comme avant.
+    if gablue_offline_cache_ready 2>/dev/null; then
+        echo "Cache offline détecté, initialisation sans connexion..."
+        if command -v kdialog >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+            exec "$SCRIPT_DIR/gwine" --init --offline --kdialog
+        else
+            exec "$SCRIPT_DIR/gwine" --init --offline
+        fi
+    fi
+
     if command -v kdialog >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
         if kdialog --yesno "Gwine n'a pas encore été initialisé.\n\nVoulez-vous lancer l'initialisation maintenant ?" 2>/dev/null; then
             exec "$SCRIPT_DIR/gwine" --init --kdialog

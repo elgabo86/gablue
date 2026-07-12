@@ -442,3 +442,43 @@ prepare_full_offline_cache() {
         return 0
     fi
 }
+
+# =============================================================================
+# Détection automatique du mode offline (first-run sans connexion)
+# =============================================================================
+
+# Vérifie si le cache local contient le minimum requis pour un --init --offline
+# complet : runner archive + mono/gecko + wincomponents.
+# Retourne 0 si le cache est prêt pour l'offline, 1 sinon.
+gablue_offline_cache_ready() {
+    # Runner proton (archive .tar.xz dans le cache)
+    if [ ! -d "$COMPONENTS_DIR/gwine-proton" ] || \
+       [ -z "$(ls -A "$COMPONENTS_DIR/gwine-proton"/gwine-proton-*.tar.xz 2>/dev/null)" ]; then
+        return 1
+    fi
+
+    # Wine Mono et Gecko (archives .msi)
+    local WINE_CACHE="$COMPONENTS_DIR/wine-cache"
+    local mono_count gecko64_count gecko32_count
+    mono_count=$(find "$WINE_CACHE" -maxdepth 1 -name "wine-mono-*-x86.msi" 2>/dev/null | wc -l)
+    gecko64_count=$(find "$WINE_CACHE" -maxdepth 1 -name "wine-gecko-*-x86_64.msi" 2>/dev/null | wc -l)
+    gecko32_count=$(find "$WINE_CACHE" -maxdepth 1 -name "wine-gecko-*-x86.msi" 2>/dev/null | wc -l)
+    if [ "$mono_count" -eq 0 ] || [ "$gecko64_count" -eq 0 ] || [ "$gecko32_count" -eq 0 ]; then
+        return 1
+    fi
+
+    # Composants Windows (wincomponents)
+    if [ ! -d "$CACHE_DIR/wincomponents" ]; then
+        return 1
+    fi
+    if command -v check_wincomponents_cache &>/dev/null; then
+        if ! check_wincomponents_cache 2>/dev/null; then
+            return 1
+        fi
+    else
+        # Fonction absente = pas de vérification fine, on accepte
+        :
+    fi
+
+    return 0
+}

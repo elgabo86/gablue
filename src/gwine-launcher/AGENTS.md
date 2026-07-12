@@ -371,6 +371,13 @@ podman run --rm -v "$(pwd)/lib:/src:z" docker.io/library/fedora:43 bash -c \
 - Gestion des versions avec backup automatique
 - Support offline avec cache local
 - Mode `--cachepack` pour créer des packs déployables sur machines sans internet
+- **Installation du runner depuis le cache en mode offline** : le runner extrait vit dans `~/.local/share/gwine/wine-proton` (proton) ou `~/.local/share/gwine/wine` (wine), tandis que le cache `~/.cache/gwine/components/gwine-proton` ne contient que l'archive. Pour permettre de ne déployer QUE `~/.cache/gwine` (ex. déploiement offline pendant l'install Anaconda), deux points d'entrée installent le runner extrait à la volée depuis le cache si absent :
+  - `init_prefix_only()` (modes/init-main.sh) : en mode `--init --offline`, si `$WINE_DIR/bin/wine` est absent, appelle `install_gwine_proton_from_cache` / `install_gwine_from_cache` selon le runner courant puis `update_runner_paths` (au lieu de l'ancien `error_exit` immédiat). Échec uniquement si aucune archive n'est dans le cache
+  - `ensure_runner_installed()` (runner.sh) : au lancement d'un jeu sans réseau, tente la même installation depuis le cache avant d'échouer (préserve le comportement online : si réseau dispo, télécharge la dernière version)
+- **Détection automatique du mode offline (first-run)** : quand le préfixe n'existe pas et qu'un jeu est lancé pour la première fois, `check_prefix_or_offer_init()` (gwine) détecte automatiquement si le cache local est complet via `gablue_offline_cache_ready()` (offline.sh). Si le cache contient le runner proton (archive), Wine Mono/Gecko, et les wincomponents, l'init se fait en mode `--init --offline` avec barre de progression kdialog, **sans jamais solliciter le réseau**. Si le cache est incomplet, le comportement actuel est conservé (proposition d'init online). `gablue_offline_cache_ready()` vérifie :
+  - Archive du runner proton présente (`components/gwine-proton/gwine-proton-*.tar.xz`)
+  - Wine Mono/Gecko présents (`components/wine-cache/wine-mono-*.msi`, `wine-gecko-*.msi`)
+  - Composants Windows présents (`wincomponents/`, validés par `check_wincomponents_cache`)
 
 ### Build standalone
 - `build.sh` assemble tous les modules en un fichier `gwine-standalone.sh`
