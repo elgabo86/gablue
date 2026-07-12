@@ -87,6 +87,10 @@ run0 --user=liveuser yad --timeout=0 --text-info --no-buttons \
     < /tmp/anaconda.log
 %end
 
+# Langue et clavier par défaut (préremplis dans l'UI, modifiables par l'utilisateur)
+lang fr_CH.UTF-8
+keyboard --vckeymap=ch-fr --xlayouts='ch (fr)'
+
 ostreecontainer --url=$imageref:$imagetag --transport=containers-storage --no-signature-verification
 %include /usr/share/anaconda/post-scripts/install-configure-upgrade.ks
 %include /usr/share/anaconda/post-scripts/disable-fedora-flatpak.ks
