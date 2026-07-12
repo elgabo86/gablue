@@ -1,205 +1,205 @@
 [steam-flathub-fix]
 Description=steam-flathub-fix
-wmclass=\ssteamwebhelper SDL Application
-wmclasscomplete=true
+wmclass=steamwebhelper SDL Application
+wmclasscomplete=false
 wmclassmatch=1
 
 [chrome-dev]
 Description=chrome-dev
-wmclass=\scom.google.ChromeDev
-wmclasscomplete=true
+wmclass=com.google.ChromeDev
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [chrome-fix]
 Description=chrome-fix
-wmclass=\scom.google.Chrome
-wmclasscomplete=true
+wmclass=com.google.Chrome
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [chromium-vrr]
 Description=Désactiver VRR pour Chromium
-wmclass=\sorg.chromium.Chromium
-wmclasscomplete=true
+wmclass=org.chromium.Chromium
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [ungoogled-chromium-vrr]
 Description=Désactiver VRR pour Ungoogled Chromium
-wmclass=\sio.github.ungoogled_software.ungoogled_chromium
-wmclasscomplete=true
+wmclass=io.github.ungoogled_software.ungoogled_chromium
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [firefox-vrr]
 Description=Désactiver VRR pour Firefox
-wmclass=\sorg.mozilla.firefox
-wmclasscomplete=true
+wmclass=org.mozilla.firefox
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [librewolf-vrr]
 Description=Désactiver VRR pour LibreWolf
-wmclass=\sio.gitlab.librewolf-community
-wmclasscomplete=true
+wmclass=io.gitlab.librewolf-community
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [zen-vrr]
 Description=Désactiver VRR pour Zen Browser
-wmclass=\sapp.zen_browser.zen
-wmclasscomplete=true
+wmclass=app.zen_browser.zen
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [falkon-vrr]
 Description=Désactiver VRR pour Falkon
-wmclass=\sorg.kde.falkon
-wmclasscomplete=true
+wmclass=org.kde.falkon
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [mpv-vrr]
 Description=Désactiver VRR pour mpv
-wmclass=\smpv
-wmclasscomplete=true
+wmclass=mpv
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [vlc-vrr]
 Description=Désactiver VRR pour VLC
-wmclass=\sorg.videolan.VLC
-wmclasscomplete=true
+wmclass=org.videolan.VLC
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [haruna-vrr]
 Description=Désactiver VRR pour Haruna
-wmclass=\sorg.kde.haruna
-wmclasscomplete=true
+wmclass=org.kde.haruna
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [freetube-vrr]
 Description=Désactiver VRR pour FreeTube
-wmclass=\sio.freetubeapp.FreeTube
-wmclasscomplete=true
+wmclass=io.freetubeapp.FreeTube
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [noutube-vrr]
 Description=Désactiver VRR pour Noutube
-wmclass=\sjp.nonbili.noutube
-wmclasscomplete=true
+wmclass=jp.nonbili.noutube
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [vacuumtube-vrr]
 Description=Désactiver VRR pour VacuumTube
-wmclass=\svacuumtube
-wmclasscomplete=true
+wmclass=vacuumtube
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [konsole-vrr]
 Description=Désactiver VRR pour Konsole
-wmclass=\sorg.kde.konsole
-wmclasscomplete=true
+wmclass=org.kde.konsole
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [kate-vrr]
 Description=Désactiver VRR pour Kate
-wmclass=\sorg.kde.kate
-wmclasscomplete=true
+wmclass=org.kde.kate
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [kwrite-vrr]
 Description=Désactiver VRR pour KWrite
-wmclass=\sorg.kde.kwrite
-wmclasscomplete=true
+wmclass=org.kde.kwrite
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [okular-vrr]
 Description=Désactiver VRR pour Okular
-wmclass=\sorg.kde.okular
-wmclasscomplete=true
+wmclass=org.kde.okular
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [gwenview-vrr]
 Description=Désactiver VRR pour Gwenview
-wmclass=\sorg.kde.gwenview
-wmclasscomplete=true
+wmclass=org.kde.gwenview
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [spectacle-vrr]
 Description=Désactiver VRR pour Spectacle
-wmclass=\sorg.kde.spectacle
-wmclasscomplete=true
+wmclass=org.kde.spectacle
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [skanpage-vrr]
 Description=Désactiver VRR pour Skanpage
-wmclass=\sorg.kde.skanpage
-wmclasscomplete=true
+wmclass=org.kde.skanpage
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [kdenlive-vrr]
 Description=Désactiver VRR pour Kdenlive
-wmclass=\sorg.kde.kdenlive
-wmclasscomplete=true
+wmclass=org.kde.kdenlive
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [libreoffice-vrr]
 Description=Désactiver VRR pour LibreOffice
-wmclass=\sorg.libreoffice.LibreOffice
-wmclasscomplete=true
+wmclass=org.libreoffice.LibreOffice
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [telegram-vrr]
 Description=Désactiver VRR pour Telegram
-wmclass=\sorg.telegram.desktop
-wmclasscomplete=true
+wmclass=org.telegram.desktop
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [cool-retro-term-vrr]
 Description=Désactiver VRR pour Cool-Retro-Term
-wmclass=\scool-retro-term
-wmclasscomplete=true
+wmclass=cool-retro-term
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
@@ -214,47 +214,47 @@ adaptivesyncrule=2
 
 [jellyfin-vrr]
 Description=Désactiver VRR pour Jellyfin Desktop
-wmclass=\sorg.jellyfin.JellyfinDesktop
-wmclasscomplete=true
+wmclass=org.jellyfin.JellyfinDesktop
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [konversation-vrr]
 Description=Désactiver VRR pour Konversation
-wmclass=\sorg.kde.konversation
-wmclasscomplete=true
+wmclass=org.kde.konversation
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [rustdesk-vrr]
 Description=Désactiver VRR pour RustDesk
-wmclass=\scom.rustdesk.RustDesk
-wmclasscomplete=true
+wmclass=com.rustdesk.RustDesk
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [virt-manager-vrr]
 Description=Désactiver VRR pour virt-manager
-wmclass=\svirt-manager
-wmclasscomplete=true
+wmclass=virt-manager
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [virt-viewer-vrr]
 Description=Désactiver VRR pour virt-viewer
-wmclass=\svirt-viewer
-wmclasscomplete=true
+wmclass=virt-viewer
+wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
 [qemu-vrr]
 Description=Désactiver VRR pour QEMU
-wmclass=\sqemu-system-
+wmclass=qemu-system-
 wmclasscomplete=false
 wmclassmatch=3
 adaptivesync=false

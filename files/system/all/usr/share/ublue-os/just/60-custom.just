@@ -1276,3 +1276,32 @@ libvirt-reset-cache:
     echo ""
     echo "Cache capabilities libvirt réinitialisé."
     echo "Relance virt-manager : virtio et qxl sont maintenant disponibles."
+
+# Réparer les règles KWin VRR (si VRR reste actif après une mise à jour)
+vrr-fix:
+    #!/usr/bin/bash
+    SYSTEM_RULES="/etc/xdg/kwinrulesrc"
+    USER_RULES="${HOME}/.config/kwinrulesrc"
+    if [ ! -f "$SYSTEM_RULES" ]; then
+        echo "Fichier système introuvable : $SYSTEM_RULES"
+        exit 1
+    fi
+    SYSTEM_GROUPS=$(grep -oP '^\[\K[^]]+' "$SYSTEM_RULES" | grep -v '^General$' | sort -u)
+    CURRENT_RULES=$(kreadconfig6 --file kwinrulesrc --group General --key rules 2>/dev/null || echo "")
+    ALL_GROUPS="$SYSTEM_GROUPS"
+    if [ -n "$CURRENT_RULES" ]; then
+        IFS=',' read -ra USER_GROUPS <<< "$CURRENT_RULES"
+        for g in "${USER_GROUPS[@]}"; do
+            g=$(echo "$g" | xargs)
+            if [ -n "$g" ] && ! echo "$ALL_GROUPS" | grep -qxF "$g"; then
+                ALL_GROUPS="$ALL_GROUPS"$'\n'"$g"
+            fi
+        done
+    fi
+    MERGED=$(echo "$ALL_GROUPS" | paste -sd,)
+    if [ "$MERGED" != "$CURRENT_RULES" ]; then
+        kwriteconfig6 --file kwinrulesrc --group General --key rules "$MERGED"
+        echo "Règles VRR appliquées. Redémarre la session pour prise d'effet."
+    else
+        echo "Règles VRR déjà à jour."
+    fi
