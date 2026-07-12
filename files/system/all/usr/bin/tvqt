@@ -98,6 +98,7 @@ BTN_CROSS = ecodes.BTN_A
 BTN_CIRCLE = ecodes.BTN_B
 BTN_L1 = ecodes.BTN_TL
 BTN_R1 = ecodes.BTN_TR
+BTN_SELECT = ecodes.BTN_SELECT
 
 # =============================================================================
 # LISTE DES CHAÎNES
@@ -693,6 +694,7 @@ class TVWindow(QMainWindow):
         self._last_circle = False
         self._last_l1 = False
         self._last_r1 = False
+        self._last_select = False
         self._had_gamepad = False
 
         # --- État courant du stick/hat (persiste entre les polls) ---
@@ -818,7 +820,7 @@ class TVWindow(QMainWindow):
         osd_layout = QHBoxLayout(self._osd_bar)
         osd_layout.setContentsMargins(22, 0, 22, 0)
         self._osd_label = QLabel(
-            "[A] Lancer/Pause    [B] Retour    [L1/R1] Pays    "
+            "[A] Lancer/Pause    [B] Retour    [Select] Plein écran    [L1/R1] Pays    "
             "[D-Pad] Naviguer    [Haut/Bas] Vol.    [Gauche/Droite] Seek"
         )
         self._osd_label.setObjectName("osdLabel")
@@ -1100,7 +1102,7 @@ class TVWindow(QMainWindow):
     # =========================================================================
 
     def _play(self, url, label=""):
-        """Lance la lecture en plein écran."""
+        """Lance la lecture (conserve la taille de fenêtre actuelle)."""
         self._video_widget.command("stop")
         self._stack.setCurrentIndex(1)
         self._top_bar.hide()
@@ -1116,7 +1118,6 @@ class TVWindow(QMainWindow):
 
         self._video_widget.play(url)
         self._loading_timer.start(3000)
-        self.showFullScreen()
 
     def _hide_loading(self):
         self._loading_overlay.hide()
@@ -1132,8 +1133,13 @@ class TVWindow(QMainWindow):
         self._stack.setCurrentIndex(0)
         self._top_bar.show()
         self._hide_loading()
+
+    def _toggle_fullscreen(self):
+        """Bascule plein écran / fenêtré (à tout moment)."""
         if self.isFullScreen():
             self.showNormal()
+        else:
+            self.showFullScreen()
 
     def _volume_up(self):
         self._video_widget.command("add", "volume", "5")
@@ -1224,7 +1230,7 @@ class TVWindow(QMainWindow):
         circle_pressed = False
         l1_pressed = False
         r1_pressed = False
-
+        select_pressed = False
         if self._gamepad in r:
             try:
                 for ev in self._gamepad.read():
@@ -1246,6 +1252,8 @@ class TVWindow(QMainWindow):
                             l1_pressed = True
                         elif ev.code == BTN_R1 and ev.value == 1:
                             r1_pressed = True
+                        elif ev.code == BTN_SELECT and ev.value == 1:
+                            select_pressed = True
             except (OSError, IOError, BlockingIOError):
                 self._gamepad = None
                 self._update_osd()
@@ -1291,7 +1299,11 @@ class TVWindow(QMainWindow):
 
         # --- Boutons (tir unique, pas d'accélération) ---
         if now - self._last_input >= COOLDOWN_MS:
-            if cross_pressed and not self._last_cross:
+            if select_pressed and not self._last_select:
+                self._last_input = now
+                self._toggle_fullscreen()
+
+            elif cross_pressed and not self._last_cross:
                 self._last_input = now
                 if watching:
                     self._pause_toggle()
@@ -1345,6 +1357,7 @@ class TVWindow(QMainWindow):
         self._last_circle = circle_pressed
         self._last_l1 = l1_pressed
         self._last_r1 = r1_pressed
+        self._last_select = select_pressed
 
     # =========================================================================
     # FOCUS WAYLAND
@@ -1370,6 +1383,9 @@ class TVWindow(QMainWindow):
                 self._stop_video()
             else:
                 self.close()
+
+        elif key == Qt.Key_F11:
+            self._toggle_fullscreen()
 
         elif key == Qt.Key_Return or key == Qt.Key_Enter:
             if watching:
