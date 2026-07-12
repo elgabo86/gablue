@@ -1,32 +1,28 @@
 %post --nochroot --erroronfail --log=/tmp/anaconda_custom_logs/install-flatpaks.log
 # Installation des flatpaks depuis le live ISO
-# Copie brute de /var/lib/flatpak vers le déploiement ostree (même méthode que Bazzite)
-# Puis checklist yad pour désinstaller les optionnels non désirés
+# 1. Checklist yad pour choisir les optionnels à conserver
+# 2. Copie de /var/lib/flatpak (live) vers le déploiement ostree via rsync
+# 3. Désinstallation des optionnels non désirés DIRECTEMENT dans la cible
+#
+# Pourquoi désinstaller dans la cible et non dans le live :
+# - Le live monte /var/lib/flatpak en overlayfs : flatpak uninstall échoue
+#   en EXDEV ("Invalid cross-device link") car les hardlinks entre
+#   repo/objects et les checkouts ne traversent pas les couches overlay.
+# - La cible ostree est sur btrfs (RW, monolithique) : uninstall fonctionne.
 set -euo pipefail
 
 FLATPAK_OPTIONAL="/usr/share/gablue/flatpaks-optional"
 SELECTION_FILE="/tmp/gablue-selected-flatpaks"
+TARGET_INSTALLATION="gtarget"
 
-# =============================================================================
-# PRÉPARATION : RENDRE /var/lib/flatpak ACCESSIBLE EN ÉCRITURE
-# =============================================================================
-
-# Le live monte /var/lib/flatpak en read-only via bind mount.
-# On doit le démonter pour que flatpak uninstall puisse écrire.
-# Note: le remote Flathub est déjà configuré dans /etc/flatpak/remotes.d/
-# par build.sh, donc pas besoin de flatpak remote-add ici.
-umount /var/lib/flatpak 2>/dev/null || :
-
-# S'assurer que le helper système flatpak est accessible via D-Bus
-flatpak --system repair --dry-run 2>/dev/null || :
-
-# =============================================================================
-# FLATPAKS OPTIONNELS : CHECKLIST YAD (DÉSINSTALLATION)
-# =============================================================================
-
-# Extraire l'ID flatpak d'une full ref
+# Extraire l'ID flatpak d'une full ref (app/ID/arch/branch -> ID)
 flatpak_id() { local r="$1"; r="${r#*/}"; echo "${r%%/*}"; }
 
+# =============================================================================
+# FLATPAKS OPTIONNELS : CHECKLIST YAD (SÉLECTION)
+# =============================================================================
+
+TO_KEEP=""
 if [ -f "$FLATPAK_OPTIONAL" ]; then
     YAD_ARGS=(--list --checklist
         --width=700 --height=400
@@ -47,14 +43,58 @@ if [ -f "$FLATPAK_OPTIONAL" ]; then
     }
 
     echo "$TO_KEEP" > "$SELECTION_FILE"
+fi
 
-    # Désinstaller les optionnels non cochés du live (AVANT rsync vers la cible)
+# =============================================================================
+# COPIER TOUT /var/lib/flatpak VERS LE DÉPLOIEMENT OSTREE
+# =============================================================================
+
+# --filter="-x security.selinux" : ne pas synchroniser le xattr SELinux.
+# Les fichiers du live sont étiquetés unlabeled_t et SELinux enforcing
+# refuse le lremovexattr/lsetxattr sur la cible (Permission denied -> rsync
+# code 23 -> échec du %post -> crash Anaconda "Message recipient
+# disconnected"). Les autres xattrs (user.ostree*) restent copiés.
+deployment="$(ostree rev-parse --repo=/mnt/sysimage/ostree/repo ostree/0/1/0)"
+target="/mnt/sysimage/ostree/deploy/default/deploy/${deployment}.0/var/lib/"
+mkdir -p "$target"
+rsync -aAXUHKP --open-noatime --filter="-x security.selinux" /var/lib/flatpak "$target"
+sync "$target"
+
+# =============================================================================
+# DÉSINSTALLER LES OPTIONNELS NON DÉSIRÉS DANS LA CIBLE
+# =============================================================================
+
+flatpak_target="${target}flatpak"
+
+# Enregistrer une installation flatpak pointant sur la cible ostree.
+# flatpak, lancé en root avec --installation=<nom>, opère directement sur
+# le dépôt (pas besoin du helper D-Bus système), et la cible étant sur
+# btrfs il n'y a pas d'erreur EXDEV.
+mkdir -p /etc/flatpak/installations.d
+cat > "/etc/flatpak/installations.d/${TARGET_INSTALLATION}.conf" << EOF
+[Installation "${TARGET_INSTALLATION}"]
+Path=${flatpak_target}
+EOF
+
+# Désinstaller toutes les refs (toutes branches) correspondant à un ID donné.
+uninstall_target_id() {
+    local id="$1"
+    flatpak --installation="$TARGET_INSTALLATION" list --columns=ref 2>/dev/null \
+        | awk -F/ -v id="$id" '$1 == id' \
+        | while IFS= read -r fullref; do
+            [ -z "$fullref" ] && continue
+            echo "Désinstallation de $fullref..."
+            flatpak --installation="$TARGET_INSTALLATION" uninstall --noninteractive "$fullref" \
+                || echo "Échec désinstallation: $fullref"
+        done
+}
+
+if [ -f "$FLATPAK_OPTIONAL" ]; then
+    # Optionnels non cochés
     while IFS= read -r ref; do
         [ -z "$ref" ] && continue
-        id=$(flatpak_id "$ref")
         if ! echo "$TO_KEEP" | grep -qF "$ref"; then
-            echo "Désinstallation de $id..."
-            flatpak uninstall --system --noninteractive "$id" || echo "Échec désinstallation: $id"
+            uninstall_target_id "$(flatpak_id "$ref")"
         fi
     done < "$FLATPAK_OPTIONAL"
 
@@ -62,32 +102,22 @@ if [ -f "$FLATPAK_OPTIONAL" ]; then
     # FLATPAKS CONDITIONNELS (non affichés dans la checklist)
     # =========================================================================
 
-    # Proton-GE : installé uniquement si Steam est conservé
+    # Proton-GE : conservé uniquement si Steam l'est
     if ! echo "$TO_KEEP" | grep -q "com.valvesoftware.Steam"; then
         echo "Steam non conservé, désinstallation de Proton-GE..."
-        flatpak uninstall --system --noninteractive com.valvesoftware.Steam.CompatibilityTool.Proton-GE || :
+        uninstall_target_id "com.valvesoftware.Steam.CompatibilityTool.Proton-GE"
     fi
 
-    # OBS VkCapture : installé uniquement si OBS Studio est conservé
+    # OBS VkCapture : conservé uniquement si OBS Studio l'est
     if ! echo "$TO_KEEP" | grep -q "com.obsproject.Studio"; then
         echo "OBS non conservé, désinstallation d'OBS VkCapture..."
-        flatpak uninstall --system --noninteractive org.freedesktop.Platform.VulkanLayer.OBSVkCapture || :
+        uninstall_target_id "org.freedesktop.Platform.VulkanLayer.OBSVkCapture"
     fi
+
+    # Nettoyer les runtimes devenus orphelins par les désinstallations
+    echo "Nettoyage des runtimes inutilisés..."
+    flatpak --installation="$TARGET_INSTALLATION" uninstall --unused --noninteractive || :
 fi
 
-# =============================================================================
-# COPIER TOUT /var/lib/flatpak VERS LE DÉPLOIEMENT OSTREE
-# =============================================================================
-
-deployment="$(ostree rev-parse --repo=/mnt/sysimage/ostree/repo ostree/0/1/0)"
-target="/mnt/sysimage/ostree/deploy/default/deploy/${deployment}.0/var/lib/"
-mkdir -p "$target"
-rsync -aAXUHKP --open-noatime /var/lib/flatpak "$target"
-sync "$target"
-
-# =============================================================================
-# RESTAURER LES LABELS SELINUX SUR LE LIVE
-# =============================================================================
-
-chcon -R -t var_lib_t /var/lib/flatpak || :
+sync "$flatpak_target"
 %end
