@@ -397,8 +397,7 @@ dnf5 -y remove \
     fedora-third-party \
     fedora-workstation-repositories \
     plasma-welcome-fedora \
-    plasma-welcome \
-    plasma-setup
+    plasma-welcome
 
 # Ajout de Flathub manuellement (comme ublue-os/main)
 mkdir -p /etc/flatpak/remotes.d/

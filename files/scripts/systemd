@@ -21,6 +21,10 @@ EOF
 
 systemctl mask systemd-remount-fs.service
 
+# Empecher la réactivation du remote Fedora Flatpak (ajoute au premier boot
+# ce que le kickstart Anaconda a supprime pendant l'install)
+systemctl mask flatpak-add-fedora-repos.service
+
 # Services supplémentaires pour le mode DX
 if [ "${DX_MODE:-false}" == "true" ]; then
     systemctl enable -f ublue-os-libvirt-workarounds.service

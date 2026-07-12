@@ -512,7 +512,7 @@ Installation extensive de paquets organisée par catégories :
 
 Paquets supprimés :
 - firefox, firefox-langpacks, htop
-- plasma-welcome-fedora, plasma-welcome, plasma-setup
+- plasma-welcome-fedora, plasma-welcome
 - plasma-discover-rpm-ostree (Kinoite)
 
 **rpm-test** :
@@ -614,7 +614,7 @@ Configuration post-installation étendue :
 Activation/désactivation des services systemd :
 - **Activés (toutes variantes)** : rpm-ostreed-automatic, flatpak-update, cec-poweroff-tv, cec-active-source, dmemcg-booster
 - **Désactivés** : scx_loader, tailscaled, displaylink
-- **Masqués** : systemd-remount-fs
+- **Masqués** : systemd-remount-fs, flatpak-add-fedora-repos (empêche la réactivation du remote Fedora Flatpak au premier boot ; ce service natif du paquet `flatpak` réajoute `fedora`/`fedora-testing` tant que `/var/lib/flatpak/.fedora-initialized` n'existe pas, annulant le `disable-fedora-flatpak.ks` du kickstart. On garde uniquement Flathub, fourni par `/etc/flatpak/remotes.d/flathub.flatpakrepo`)
 - **Conditionnels (DX)** : ublue-os-libvirt-workarounds, gablue-dx-groups, incus-workaround
 
 **systemd-test** ajoute :
