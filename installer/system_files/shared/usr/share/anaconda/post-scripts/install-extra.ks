@@ -87,7 +87,12 @@ if [ -d "$gwine_extra" ] && [ -f "$gwine_extra/gwine-cache.tar.xz" ]; then
     echo "  - Extraction de l'archive cache (gwine-cache.tar.xz)..."
     tar -xJf "$gwine_extra/gwine-cache.tar.xz" -C "$gwine_target"
 
-    gablue_fixup_perms "${created_home}/.cache/gwine" "$created_user"
+    # chown/restorecon sur .cache (et non seulement .cache/gwine) : le
+    # mkdir -p ci-dessus crée .cache en root:root 0700 s'il n'existe pas
+    # (le %post tourne en root), rendant tout ~/.cache inaccessible à
+    # l'utilisateur (KDE, navigateurs, etc. cassent). On rétablit donc
+    # récursivement le propriétaire et le contexte SELinux depuis .cache.
+    gablue_fixup_perms "${created_home}/.cache" "$created_user"
 
     # Le runner proton n'est PAS extrait ici : gwine l'installera automatiquement
     # depuis le cache quand l'utilisateur lancera `gwine --init --offline`
