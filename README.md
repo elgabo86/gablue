@@ -17,7 +17,6 @@ Images and the system are continuously updated, following the latest Fedora rele
 - **Game packages** — .wgp (Windows Game Pack) and .lgp (Linux Game Pack) self-contained squashfs game bundles: package a full compressed PC game into a single file you can create yourself, then run it directly with no installation required
 - **Gamepad shortcuts** — native C daemon for system actions via controller
 - **Plasma Bigscreen** (BETA) — couch/TV interface, switchable from the desktop session
-- **32-bit ready** — full 32-bit library stack preinstalled
 - **Flatpak** and **brew** ready out of the box
 - Optional **DX mode** with Docker, Libvirt, QEMU, and ROCm for AMD
 
