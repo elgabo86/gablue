@@ -91,6 +91,7 @@ ostreecontainer --url=$imageref:$imagetag --transport=containers-storage --no-si
 %include /usr/share/anaconda/post-scripts/install-configure-upgrade.ks
 %include /usr/share/anaconda/post-scripts/disable-fedora-flatpak.ks
 %include /usr/share/anaconda/post-scripts/install-flatpaks.ks
+%include /usr/share/anaconda/post-scripts/install-extra.ks
 %include /usr/share/anaconda/post-scripts/secureboot-enroll-key.ks
 KSEOF
 

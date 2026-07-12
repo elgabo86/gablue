@@ -538,6 +538,7 @@ Paquets supprimés :
 - Embarque les shims overlayfs (`composefs_statfs_shim.so` 32/64 bits) en base64 pour extraction au runtime
 - Installe `/usr/bin/gwine` et les completions bash/zsh
 - Nettoie les sources après assemblage
+- **IMPORTANT** : toute modification des fichiers `lib/` (ex. `lib/modes/init-main.sh`, `lib/runner.sh`) nécessite un rebuild de l'image pour être effective. Le gwine assemblé est celui utilisé par `build.sh` pour générer le pack cache de l'ISO → l'image doit être reconstruite **avant** l'ISO
 - Voir `src/gwine-launcher/AGENTS.md` pour l'architecture interne du lanceur
 
 ### 6. post-install / post-install-test
@@ -777,9 +778,14 @@ installer/
 11. **NVIDIA live** : Fix `GSK_RENDERER=gl`, réinstallation mesa-vulkan-drivers+nvidia-gpu-firmware (kernel vanilla = pas de drivers proprio, on utilise nouveau)
 12. **Localisation live** : La session live est configurée en français suisse (`fr_CH.UTF-8`) avec clavier QWERTZ suisse romand (`ch(fr)`). Les fichiers sont dans `system_files/shared/etc/` : `locale.conf` (LANG + LANGUAGE), `vconsole.conf` (KEYMAP=ch-fr), `X11/xorg.conf.d/00-keyboard.conf` (layout XKB). Ces fichiers ne sont copiés que dans le payload live (n'affectent pas l'image installée). Les langpacks (`langpacks-fr`, `glibc-all-langpacks`) proviennent de l'image Gablue de base.
 13. **GRUB** : Les noms d'entrées ne doivent pas contenir d'apostrophes (Titanoboa génère `menuentry '...'` sans échapper les apostrophes internes, ce qui casse le parsing GRUB et ne montre qu'une seule entrée)
-14. **Dossier `/extra` (live uniquement)** : `build.sh` peuple `/extra` du rootfs live, jamais installé sur l'OS (l'installation redéploie l'image container propre via `ostreecontainer` + `bootc switch`). Contenu :
-    - **Pack cache gwine** : `build.sh` lance `gwine --download-components` puis `gwine --cachepack` et copie le dossier `gwine-cache-installer/` (gwine-cache.tar.xz + install-cache.sh + README) dans `/extra`. Utilise le `gwine` de l'image de base → l'image Gablue doit être reconstruite **avant** l'ISO pour embarquer le comportement à jour (gwine-proton uniquement + DXVK-NVAPI toujours inclus). Échec réseau non bloquant (avertissement). Le cache brut est supprimé du payload (doublon avec l'archive)
-    - **Contenu local** : le dossier `installer/extra/` (bind-monté sur `/src/extra`, gitignore sauf `.gitkeep`) est copié dans `/extra` pour les builds locaux — permet d'embarquer des fichiers/dossiers arbitraires. Absent/vide en CI → section ignorée
+ 14. **Dossier `/extra` (live uniquement → déployé à l'install)** : `build.sh` peuple `/extra` du rootfs live. **Le contenu est déployé sur le système installé** par le post-script `install-extra.ks` (voir ci-dessous), et n'est JAMAIS présent dans l'image container (l'installation redéploie l'image propre via `ostreecontainer` + `bootc switch`). Contenu :
+     - **Pack cache gwine** : `build.sh` lance `gwine --download-components` puis `gwine --cachepack` et copie le dossier `gwine-cache-installer/` (gwine-cache.tar.xz + install-cache.sh + README) dans `/extra`. Utilise le `gwine` de l'image de base → l'image Gablue doit être reconstruite **avant** l'ISO pour embarquer le comportement à jour (dont le fallback cache offline, cf. `src/gwine-launcher/AGENTS.md`). Échec réseau non bloquant (avertissement). Le cache brut est supprimé du payload (doublon avec l'archive)
+     - **Contenu local** : le dossier `installer/extra/` (bind-monté sur `/src/extra`, gitignore sauf `.gitkeep`) est copié dans `/extra` pour les builds locaux — permet d'embarquer des fichiers/dossiers arbitraires. Absent/vide en CI → section ignorée
+ 15. **Post-script `install-extra.ks`** (`%post --nochroot`) : déployé dans le kickstart juste après `install-flatpaks.ks`. Lit `/extra` dans le live et déploie chaque item à sa destination dans le système installé :
+     - **Utilisateur** : détection dynamique du premier UID ≥ 1000 créé par Anaconda, résolution du home via `/mnt/sysimage/etc/passwd`
+     - **Cache gwine** : extrait `gwine-cache.tar.xz` dans `~/.cache/gwine`, applique `chown` + `restorecon` (SELinux). Le runner proton **n'est pas extrait** (gwine l'installe lui-même à la volée depuis le cache en mode offline — modification apportée dans `src/gwine-launcher/` pour éviter de dupliquer l'espace disque)
+     - **Extensible** : chaque nouvel item (ex. cores RetroArch) s'ajoute comme une section dans le script, avec ses propres `chown`/`restorecon`
+     - **Fallback** : si aucun utilisateur n'est trouvé (spoke sauté, création au premier boot), le script loggue et skip sans échec. `/etc/skel` est laissé en option (commenté) pour les futurs utilisateurs
 
 ### clean-gablue-images.yml
 
