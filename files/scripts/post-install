@@ -144,8 +144,11 @@ sed -i 's/balanced=balanced-battery$/balanced=balanced-battery-gablue\npower-sav
 sed -i 's/#UserspaceHID.*/UserspaceHID=true/' /etc/bluetooth/input.conf
 
 # Corriger les erreurs de bus QT6 sur Kinoite
-if [ "$SOURCE_IMAGE" == "kinoite" ]; then
-    ln -s /bin/qdbus /bin/qdbus6
+# Qt6 fournit le binaire sous le nom qdbus-qt6 (plus de /bin/qdbus) : on crée
+# les alias qdbus6 et qdbus attendus par certaines applications (dont kdialog)
+if [ "$SOURCE_IMAGE" == "kinoite" ] && [ -e /usr/bin/qdbus-qt6 ]; then
+    ln -sf /usr/bin/qdbus-qt6 /usr/bin/qdbus6
+    ln -sf /usr/bin/qdbus-qt6 /usr/bin/qdbus
 fi
 
 # =============================================================================

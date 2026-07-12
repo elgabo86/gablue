@@ -98,7 +98,7 @@ src/gwine-launcher/
 - bubblewrap (sandboxing)
 - wget, curl (téléchargements)
 - tar, 7z (extraction)
-- kdialog, qdbus (interface graphique optionnelle)
+- kdialog, qdbus (interface graphique optionnelle). La commande qdbus est détectée dynamiquement par `_get_qdbus_cmd()` (ui.sh) qui teste `qdbus6`, `qdbus-qt6` (Plasma 6 / Kinoite fc44), `qdbus-qt5` puis `qdbus`. Sans qdbus, les barres de progression kdialog sont silencieusement désactivées (l'init/update fonctionne quand même, sans feedback visuel)
 - gamemoded (GameMode pour performances)
 
 ### Support GPU
@@ -226,7 +226,7 @@ lib/dir-config.sh
 - **runner.sh** : Gestion des runners Wine/Proton
 - **dxvk-mode.sh** : Configuration DXVK standard vs GPLAsync
 - **display-mode.sh** : Gestion du mode d'affichage (Wayland natif vs X11/XWayland)
-- **ui.sh** : Barres de progression kdialog, GameMode
+- **ui.sh** : Barres de progression kdialog, GameMode. `_get_qdbus_cmd()` détecte la commande qdbus disponible (`qdbus6`, `qdbus-qt6`, `qdbus-qt5`, `qdbus`) ; toutes les fonctions `progress_*` et les gardes kdialog (init-ensure.sh, mode-update.sh) l'utilisent au lieu de tester `qdbus` en dur
 - **gpu.sh** : Détection automatique du GPU et configuration Vulkan
 - **download.sh** : Téléchargement GitHub, extraction d'archives, récupération versions composants (get_component_version avec double source officiel+bottles pour DXVK/VKD3D)
 - **cache/*** : Gestion du cache

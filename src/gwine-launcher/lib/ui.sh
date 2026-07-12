@@ -5,9 +5,12 @@
 ################################################################################
 
 # Détecte la commande qdbus disponible
+# Plasma 6 (Kinoite fc44) fournit qdbus-qt6 ; les anciens systèmes qdbus6/qdbus-qt5/qdbus
 _get_qdbus_cmd() {
     if command -v qdbus6 &>/dev/null; then
         echo "qdbus6"
+    elif command -v qdbus-qt6 &>/dev/null; then
+        echo "qdbus-qt6"
     elif command -v qdbus-qt5 &>/dev/null; then
         echo "qdbus-qt5"
     elif command -v qdbus &>/dev/null; then

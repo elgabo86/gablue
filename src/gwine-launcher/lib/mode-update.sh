@@ -222,7 +222,7 @@ update_components() {
     [ "$needs_reinstall_dlls" = true ] && ((TOTAL_STEPS++))
     
     # Créer la barre de progression (sans bouton Annuler pour --update, uniquement avec --kdialog)
-    if [ "$_USE_KDIALOG" = "true" ] && [ $TOTAL_STEPS -gt 0 ] && command -v kdialog &>/dev/null && command -v qdbus &>/dev/null; then
+    if [ "$_USE_KDIALOG" = "true" ] && [ $TOTAL_STEPS -gt 0 ] && command -v kdialog &>/dev/null && [ -n "$(_get_qdbus_cmd)" ]; then
         DBUS_REF=$(progress_create "Mise à jour des composants" "$TOTAL_STEPS" "false")
     fi
     

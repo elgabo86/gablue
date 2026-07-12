@@ -9,7 +9,7 @@ ensure_wineprefix() {
         echo "Préfixe Wine non trouvé, création automatique..."
         
         local DBUS_REF=""
-        if command -v kdialog &>/dev/null && command -v qdbus &>/dev/null; then
+        if command -v kdialog &>/dev/null && [ -n "$(_get_qdbus_cmd)" ]; then
             DBUS_REF=$(progress_create "Création du préfixe Wine" 3 "true" "true")
         fi
         
@@ -49,7 +49,7 @@ ensure_wineprefix_full() {
         local CURRENT_STEP=0
         local DBUS_REF=""
         
-        if command -v kdialog &>/dev/null && command -v qdbus &>/dev/null; then
+        if command -v kdialog &>/dev/null && [ -n "$(_get_qdbus_cmd)" ]; then
             DBUS_REF=$(progress_create "Création du préfixe Wine" "$TOTAL_STEPS" "true" "true")
         fi
         
