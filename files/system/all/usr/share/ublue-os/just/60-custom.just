@@ -551,29 +551,13 @@ gablue-update:
     #!/usr/bin/bash
     /usr/bin/gablue-update
 
-# Rebase Gablue to main non nvidia
-gablue-rebase-main:
-    rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-main:latest
-
-# Rebase Gablue to nvidia variant
-gablue-rebase-nvidia:
-    rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia:latest
-
-# Rebase Gablue to nvidia-open variant
-gablue-rebase-nvidia-open:
-    rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia-open:latest
-
-# Rebase Gablue to nvidia-open dx
-gablue-rebase-nvidia-open-dx:
-    rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia-open-dx:latest
-
-# Rebase Gablue to main dx
-gablue-rebase-main-dx:
-    rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-main-dx:latest
-
-# Rebase Gablue to main test
-gablue-rebase-main-test:
-    rpm-ostree rebase ostree-image-signed:docker://ghcr.io/elgabo86/gablue-main-test:latest
+# Rebase Gablue to another variant
+gablue-rebase:
+    #!/usr/bin/bash
+    set -euo pipefail
+    variant=$(ugum choose main main-dx nvidia nvidia-open nvidia-open-dx)
+    [ -z "$variant" ] && exit 0
+    rpm-ostree rebase "ostree-image-signed:docker://ghcr.io/elgabo86/gablue-${variant}:latest"
 
 # Create gablue install iso
 create-iso-main:
