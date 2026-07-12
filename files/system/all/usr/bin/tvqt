@@ -74,6 +74,17 @@ def _is_virtual_machine():
 
 _IS_VM = _is_virtual_machine()
 
+# En VM, virgl (virtio-gpu) fuit des descripteurs de fences en rendu GL
+# soutenu : au bout de ~15s la limite de fds est atteinte, l'ioctl EXECBUFFER
+# renvoie EMFILE et le driver casse tout le contexte GL ("got error from
+# kernel - expect bad rendering 24"), figeant vidéo + UI (l'audio, décodé sur
+# un autre thread, continue). On bascule sur le rendu logiciel (llvmpipe) qui
+# n'utilise pas virgl. Doit être défini avant toute création de contexte GL.
+if _IS_VM:
+    os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
+    os.environ["GALLIUM_DRIVER"] = "llvmpipe"
+
+
 
 # Constantes mpv_render_param_type
 _MPV_RENDER_PARAM_API_TYPE = 1
