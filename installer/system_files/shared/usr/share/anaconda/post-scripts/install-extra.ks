@@ -11,29 +11,43 @@
 set -euo pipefail
 
 # =============================================================================
+# RÉSOLUTION DU DÉPLOIEMENT OSTREE
+# =============================================================================
+
+# En système ostree, /mnt/sysimage/etc et /mnt/sysimage/usr ne sont pas
+# peuplés directement : le système réel vit dans le déploiement ostree.
+# /mnt/sysimage n'est donc PAS chrootable. On résout le chemin du déploiement
+# pour lire son /etc/passwd et chrooter dedans (restorecon, chown).
+deployment="$(ostree rev-parse --repo=/mnt/sysimage/ostree/repo ostree/0/1/0)"
+DEPLOY_ROOT="/mnt/sysimage/ostree/deploy/default/deploy/${deployment}.0"
+DEPLOY_PASSWD="${DEPLOY_ROOT}/etc/passwd"
+
+# =============================================================================
 # UTILITAIRES
 # =============================================================================
 
-# Résout le home d'un utilisateur depuis le passwd du système installé.
+# Résout le home d'un utilisateur depuis le passwd du déploiement.
 # Usage: gablue_homeuser <username>
 gablue_homeuser() {
     local user="$1"
-    awk -F: -v u="$user" '$1 == u {print $6}' /mnt/sysimage/etc/passwd
+    awk -F: -v u="$user" '$1 == u {print $6}' "$DEPLOY_PASSWD"
 }
 
 # Trouve le premier utilisateur non-système (UID >= 1000) créé par Anaconda.
 # Usage: gablue_first_created_user
 gablue_first_created_user() {
-    awk -F: '$1 != "root" && $3 >= 1000 && $3 < 65534 {print $1; exit}' /mnt/sysimage/etc/passwd
+    awk -F: '$1 != "root" && $3 >= 1000 && $3 < 65534 {print $1; exit}' "$DEPLOY_PASSWD"
 }
 
 # Applique chown et restorecon sur un répertoire de la cible.
+# Le chroot se fait dans le déploiement ostree (chrootable), pas dans
+# /mnt/sysimage. Le home (/home -> var/home) y est accessible.
 # Usage: gablue_fixup_perms <dir> <user>
 gablue_fixup_perms() {
     local dir="$1"
     local user="$2"
-    chroot /mnt/sysimage chown -R "${user}:" "$dir"
-    chroot /mnt/sysimage restorecon -R "$dir" 2>/dev/null || :
+    chroot "$DEPLOY_ROOT" chown -R "${user}:" "$dir"
+    chroot "$DEPLOY_ROOT" restorecon -R "$dir" 2>/dev/null || :
 }
 
 # =============================================================================
@@ -43,7 +57,7 @@ gablue_fixup_perms() {
 created_user="$(gablue_first_created_user)"
 
 if [ -z "$created_user" ]; then
-    echo "Aucun utilisateur non-système trouvé dans /mnt/sysimage/etc/passwd"
+    echo "Aucun utilisateur non-système trouvé dans ${DEPLOY_PASSWD}"
     echo "Le déploiement ~/.cache/gwine est ignoré (utilisateur créé au premier boot, /etc/skel à prévoir)"
     touch /tmp/anaconda_custom_logs/install-extra-skipped
     exit 0
