@@ -47,6 +47,34 @@ for _candidate in ("/usr/lib64/libmpv.so.2", "/usr/lib64/libmpv.so.1",
 if not _LIBMPV_PATH:
     raise RuntimeError("libmpv.so introuvable")
 
+
+def _is_virtual_machine():
+    """Détecte une VM (QEMU/KVM/virgl, etc.).
+
+    En VM, le décodage matériel (VDPAU/virgl) échoue et fige le pipeline
+    virtio-gpu ("got error from kernel - expect bad rendering"). On force
+    alors le décodage logiciel.
+    """
+    try:
+        with open("/sys/class/dmi/id/product_name") as f:
+            product = f.read().strip().lower()
+        if any(v in product for v in ("kvm", "qemu", "virtual", "vmware", "bochs")):
+            return True
+    except OSError:
+        pass
+    try:
+        with open("/sys/class/dmi/id/sys_vendor") as f:
+            vendor = f.read().strip().lower()
+        if any(v in vendor for v in ("qemu", "red hat", "innotek", "vmware", "microsoft corporation")):
+            return True
+    except OSError:
+        pass
+    return False
+
+
+_IS_VM = _is_virtual_machine()
+
+
 # Constantes mpv_render_param_type
 _MPV_RENDER_PARAM_API_TYPE = 1
 _MPV_RENDER_PARAM_OPENGL_INIT_PARAMS = 2
@@ -444,7 +472,10 @@ class MpvWidget(QOpenGLWidget):
 
         self._lib_mpv_set_option_string(self._handle, b"vo", b"libmpv")
         self._lib_mpv_set_option_string(self._handle, b"gpu-api", b"opengl")
-        self._lib_mpv_set_option_string(self._handle, b"hwdec", b"auto-safe")
+        # En VM : décodage logiciel (VDPAU/virgl échoue et fige virtio-gpu)
+        self._lib_mpv_set_option_string(
+            self._handle, b"hwdec", b"no" if _IS_VM else b"auto-safe"
+        )
         self._lib_mpv_set_option_string(self._handle, b"profile", b"fast")
         self._lib_mpv_set_option_string(self._handle, b"alang", b"fr,eng,ita,deu,spa,jpn,und")
         self._lib_mpv_set_option_string(self._handle, b"slang", b"fr,eng")
