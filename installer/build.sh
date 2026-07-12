@@ -151,20 +151,28 @@ fi
 # l'image container propre (ostreecontainer + bootc switch), donc /extra ne se
 # retrouve jamais sur l'OS installé.
 echo "Génération du pack cache gwine pour /extra..."
-if command -v gwine > /dev/null 2>&1; then
-    gwine_pack_tmp="$(mktemp -d)"
-    if gwine --download-components && ( cd "$gwine_pack_tmp" && gwine --cachepack ); then
-        mkdir -p /extra
-        cp -a "$gwine_pack_tmp/gwine-cache-installer" /extra/
-        echo "Pack cache gwine déployé dans /extra/gwine-cache-installer"
-    else
-        echo "AVERTISSEMENT : échec de la génération du pack cache gwine, /extra ignoré"
-    fi
-    # Le cache brut fait doublon avec l'archive du pack : on le supprime du payload
-    rm -rf "$gwine_pack_tmp" "$HOME/.cache/gwine"
-else
-    echo "AVERTISSEMENT : gwine introuvable, pack cache /extra ignoré"
+if ! command -v gwine > /dev/null 2>&1; then
+    echo "ERREUR : gwine introuvable, impossible de générer le pack cache" >&2
+    exit 1
 fi
+gwine_pack_tmp="$(mktemp -d)"
+if ! gwine --download-components; then
+    echo "ERREUR : échec du téléchargement des composants gwine" >&2
+    exit 1
+fi
+if ! ( cd "$gwine_pack_tmp" && gwine --cachepack ); then
+    echo "ERREUR : échec de la création du pack cache gwine" >&2
+    exit 1
+fi
+if [ ! -f "$gwine_pack_tmp/gwine-cache-installer/gwine-cache.tar.xz" ]; then
+    echo "ERREUR : pack cache gwine incomplet (archive absente)" >&2
+    exit 1
+fi
+mkdir -p /extra
+cp -a "$gwine_pack_tmp/gwine-cache-installer" /extra/
+echo "Pack cache gwine déployé dans /extra/gwine-cache-installer"
+# Le cache brut fait doublon avec l'archive du pack : on le supprime du payload
+rm -rf "$gwine_pack_tmp" "$HOME/.cache/gwine"
 
 # =============================================================================
 # CONTENU EXTRA PERSONNALISÉ (BUILD LOCAL) → /extra

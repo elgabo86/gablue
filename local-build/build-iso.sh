@@ -70,6 +70,7 @@ cd "$PROJECT_DIR"
 sudo podman build \
     --cap-add sys_admin \
     --security-opt label=disable \
+    --network=host \
     --build-arg BASE_IMAGE="$BASE_IMAGE" \
     --build-arg INSTALL_IMAGE_PAYLOAD="$BASE_IMAGE" \
     -t "$PAYLOAD_IMAGE" installer/
