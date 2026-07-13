@@ -93,23 +93,18 @@ if [ "$gwine_choice" != "yes" ]; then
 elif [ -d "$gwine_extra" ] && [ -f "$gwine_extra/gwine-cache.tar.xz" ]; then
     echo "Déploiement du cache gwine vers ${created_home}/.cache/gwine..."
 
+    # chattr +C (nodatacow) AVANT extraction pour éviter le CoW btrfs
     mkdir -p "$gwine_target"
+    chattr +C "$gwine_target" 2>/dev/null || true
 
     echo "  - Extraction de l'archive cache (gwine-cache.tar.xz)..."
     tar -xJf "$gwine_extra/gwine-cache.tar.xz" -C "$gwine_target"
 
-    # chown/restorecon sur .cache (et non seulement .cache/gwine) : le
-    # mkdir -p ci-dessus crée .cache en root:root 0700 s'il n'existe pas
-    # (le %post tourne en root), rendant tout ~/.cache inaccessible à
-    # l'utilisateur (KDE, navigateurs, etc. cassent). On rétablit donc
-    # récursivement le propriétaire et le contexte SELinux depuis .cache.
-    gablue_fixup_perms "${created_home}/.cache" "$created_user"
-
-    # Le runner proton n'est PAS extrait ici : gwine l'installera automatiquement
-    # depuis le cache quand l'utilisateur lancera `gwine --init --offline`
-    # (grâce aux modifications de fallback cache dans init-main.sh et runner.sh).
-    # Cela évite de dupliquer l'espace disque tant que l'utilisateur n'a pas
-    # explicitement initié le préfixe.
+    # chown récursif (.cache peut être créé root:root par mkdir -p)
+    chroot "$DEPLOY_ROOT" chown -R "${created_user}:" "${created_home}/.cache"
+    # restorecon uniquement sur .cache (pas récursif) : les fichiers
+    # gwine en nodatacow n'ont pas besoin de labelling SELinux
+    chroot "$DEPLOY_ROOT" restorecon "${created_home}/.cache" 2>/dev/null || :
 
     echo "  ✓ Cache gwine déployé"
 else
