@@ -226,10 +226,10 @@ dnf -yq remove plasma-welcome || :
 rm -vf /etc/profile.d/verify_motd.sh
 
 # =============================================================================
-# INSTALLATION GPARTED
+# INSTALLATION GPARTED + XVFB
 # =============================================================================
 
-dnf -yq install gparted
+dnf -yq install gparted xorg-x11-server-Xvfb
 
 # =============================================================================
 # NETTOYAGE

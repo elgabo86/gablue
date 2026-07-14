@@ -5,13 +5,15 @@
 # Variantes : main, main-dx, nvidia, nvidia-open, nvidia-open-dx (défaut: main)
 #
 # Options :
-#   --run     Lancer la VM QEMU après le build
-#   --pull    Forcer le pull de l'image de base avant le build
+#   --run            Lancer la VM QEMU après le build
+#   --pull           Forcer le pull de l'image de base avant le build
+#   --skip-flatpaks  Ignorer l'installation des flatpaks (build de test rapide)
 #
 # Exemples :
-#   ./build-iso.sh main              # Build uniquement
-#   ./build-iso.sh main-dx --run     # Build + test dans QEMU
-#   ./build-iso.sh nvidia --pull     # Pull forcé + build
+#   ./build-iso.sh main                    # Build complet
+#   ./build-iso.sh main-dx --run           # Build + test dans QEMU
+#   ./build-iso.sh nvidia --pull           # Pull forcé + build
+#   ./build-iso.sh main --skip-flatpaks    # Build rapide sans flatpaks
 
 set -eoux pipefail
 
@@ -31,11 +33,13 @@ shift 2>/dev/null || true
 
 RUN_VM=false
 FORCE_PULL=false
+SKIP_FLATPAKS=false
 
 for arg in "$@"; do
     case "$arg" in
         --run) RUN_VM=true ;;
         --pull) FORCE_PULL=true ;;
+        --skip-flatpaks) SKIP_FLATPAKS=true ;;
         *) echo "Option inconnue: $arg"; exit 1 ;;
     esac
 done
@@ -50,6 +54,9 @@ echo " Build ISO Gablue - Variante : $VARIANT"
 echo " Image base : $BASE_IMAGE"
 echo "=============================================="
 echo ""
+
+# Rafraîchir le timestamp sudo une seule fois pour toute la session
+sudo -v
 
 # =============================================================================
 # PULL IMAGE DE BASE
@@ -73,6 +80,7 @@ sudo podman build \
     --network=host \
     --build-arg BASE_IMAGE="$BASE_IMAGE" \
     --build-arg INSTALL_IMAGE_PAYLOAD="$BASE_IMAGE" \
+    --build-arg SKIP_FLATPAKS="${SKIP_FLATPAKS:-}" \
     -t "$PAYLOAD_IMAGE" installer/
 
 # =============================================================================
@@ -96,16 +104,21 @@ echo ""
 echo ">>> Génération de l'ISO via Titanoboa..."
 mkdir -p "$OUTPUT_DIR"
 
+# Re-rafraîchir sudo (le build du payload a pu prendre > 5 min)
+sudo -v
+
 sudo podman run --rm \
     --security-opt label=disable \
     -v "$OUTPUT_DIR:/output:Z" \
     -v /var/lib/containers/storage:/usr/lib/containers/storage:ro,Z \
+    -v "$PROJECT_DIR/installer/titanoboa_build_iso.sh:/app/bin/build_iso.sh:ro,Z" \
     --mount type=image,source="$PAYLOAD_IMAGE",dst=/rootfs \
     "$TITANOBOA_IMAGE"
 
 # Titanoboa nomme l'ISO selon le label dans iso.yaml → GABLUE_LIVE.iso
 if [ -f "$OUTPUT_DIR/GABLUE_LIVE.iso" ]; then
     mv "$OUTPUT_DIR/GABLUE_LIVE.iso" "$OUTPUT_DIR/$ISO_NAME"
+    sudo chown "$(id -u):$(id -g)" "$OUTPUT_DIR/$ISO_NAME"
     echo ""
     echo "=============================================="
     echo " ISO créée : $OUTPUT_DIR/$ISO_NAME"
@@ -146,3 +159,6 @@ else
     echo ""
     echo "Pour tester dans QEMU : $0 $VARIANT --run"
 fi
+
+# Révoquer le timestamp sudo
+sudo -k

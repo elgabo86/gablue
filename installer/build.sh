@@ -37,6 +37,11 @@ mount -o remount,rw /proc/sys
 # FLATPAKS - PRÉ-CACHE POUR INSTALLATION OFFLINE
 # =============================================================================
 
+if [ "${SKIP_FLATPAKS:-}" = "true" ]; then
+    echo "SKIP_FLATPAKS=true : flatpaks ignorés (build de test)"
+    FREEDESKTOP_BRANCH="skipped"
+else
+
 echo "Installation des Flatpaks dans l'image live..."
 curl --retry 3 -Lo /etc/flatpak/remotes.d/flathub.flatpakrepo https://dl.flathub.org/repo/flathub.flatpakrepo
 
@@ -58,6 +63,8 @@ echo "Proton-GE flatpak installé"
 xargs -r flatpak install -y --noninteractive < <(cat /src/flatpaks /src/flatpaks-optional)
 # Nettoyer le cache de téléchargement flatpak pour libérer de l'espace disque
 rm -rf /root/.cache /var/tmp/*
+
+fi  # SKIP_FLATPAKS
 
 # =============================================================================
 # PULL DE L'IMAGE À INSTALLER DANS LE STOCKAGE LOCAL
@@ -95,9 +102,11 @@ if [[ "${BASE_IMAGE:-}" == *nvidia* ]]; then
     fi
 fi
 
-# Ajouter MangoHud à la liste requise
+# Ajouter MangoHud à la liste requise (sauf en mode skip)
+if [ "${SKIP_FLATPAKS:-}" != "true" ]; then
 echo "runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/${FREEDESKTOP_BRANCH}" >> /usr/share/gablue/flatpaks-required
 echo "MangoHud flatpak (${FREEDESKTOP_BRANCH}) ajouté à la liste requise"
+fi
 
 # =============================================================================
 # HOOK PRE-INITRAMFS : SWAP KERNEL OGC → VANILLA FEDORA
@@ -171,8 +180,38 @@ fi
 mkdir -p /extra
 cp -a "$gwine_pack_tmp/gwine-cache-installer" /extra/
 echo "Pack cache gwine déployé dans /extra/gwine-cache-installer"
-# Le cache brut fait doublon avec l'archive du pack : on le supprime du payload
-rm -rf "$gwine_pack_tmp" "$HOME/.cache/gwine"
+# Nettoyer le pack temporaire, garder le cache brut pour l'init ci-dessous
+rm -rf "$gwine_pack_tmp"
+
+# =============================================================================
+# PRÉFIXE WINE + RUNNER DANS LE LIVE
+# =============================================================================
+
+mkdir -p /var/home/liveuser/{.cache/gwine,.local/share} \
+         /usr/share/gablue/{wine-home,wine-runner}
+
+# Symlinks : ~/Windows → /usr/share/gablue/wine-home, runner idem
+ln -sf /usr/share/gablue/wine-home /var/home/liveuser/Windows
+ln -sf /usr/share/gablue/wine-runner /var/home/liveuser/.local/share/gwine
+
+# Extraire le cache de l'archive pour l'init (sera supprimé après)
+tar -xf /extra/gwine-cache-installer/gwine-cache.tar.xz -C /var/home/liveuser/.cache/gwine/
+cp -a /root/.local/share/gwine/* /usr/share/gablue/wine-runner/
+
+# Init du préfixe (Xvfb pour PhysX/OpenAL, cache dans ~/.cache/gwine)
+xvfb-run -a env HOME=/home/liveuser gwine --init --offline
+
+# L'init est finie : supprimer le cache (doublon, déjà dans /extra)
+rm -rf /var/home/liveuser/.cache/gwine
+
+# Permissions : sans -all-root Titanoboa, UID 1000 = liveuser au boot
+chown -R 1000:1000 /usr/share/gablue/wine-home \
+                    /usr/share/gablue/wine-runner
+
+# Nettoyer les résidus du build
+rm -rf /root/.cache/gwine /root/.local/share/gwine 2>/dev/null || true
+
+echo "Préfixe Wine prêt"
 
 # =============================================================================
 # CONTENU EXTRA PERSONNALISÉ (BUILD LOCAL) → /extra
