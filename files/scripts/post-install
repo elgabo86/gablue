@@ -177,7 +177,15 @@ echo 'RandomizedDelaySec=10m' >> /usr/lib/systemd/system/rpm-ostreed-automatic.t
 # 4. Activer les mises à jour automatiques rpm-ostree (stage)
 cp /usr/share/ublue-os/update-services/etc/rpm-ostreed.conf /etc/rpm-ostreed.conf
 
-# 5. Ajouter linuxbrew au secure_path de sudo
+# 5. Brew : passer de périodique à samedi 04:00 + délai aléatoire 10 min
+sed -i 's/OnBootSec=10min/OnCalendar=Sat *-*-* 04:00:00/' /usr/lib/systemd/system/brew-update.timer
+sed -i '/OnUnitInactiveSec=/d' /usr/lib/systemd/system/brew-update.timer
+echo 'RandomizedDelaySec=10m' >> /usr/lib/systemd/system/brew-update.timer
+sed -i 's/OnBootSec=30min/OnCalendar=Sat *-*-* 04:00:00/' /usr/lib/systemd/system/brew-upgrade.timer
+sed -i '/OnUnitInactiveSec=/d' /usr/lib/systemd/system/brew-upgrade.timer
+echo 'RandomizedDelaySec=10m' >> /usr/lib/systemd/system/brew-upgrade.timer
+
+# 6. Ajouter linuxbrew au secure_path de sudo
 sed -Ei 's|secure_path = (.*)|secure_path = \1:/home/linuxbrew/.linuxbrew/bin|' /etc/sudoers
 
 # =============================================================================
