@@ -305,7 +305,7 @@ jobs:
           fi
 
       - name: Créer la GitHub Release
-        uses: softprops/action-gh-release@v3.0.1
+        uses: softprops/action-gh-release@v3.0.2
         with:
           tag_name: "latest-live-iso"
           name: "Latest Live ISO Release"
