@@ -710,7 +710,7 @@ Build des **ISOs live** avec environnement de bureau Plasma complet (tous les 5 
 - Utilise **Titanoboa**, un installateur bootc qui génère un squashfs live. Le binaire `build_iso.sh` est celui de l'image Titanoboa (`quay.io/fedora/fedora:latest`) patché via `installer/titanoboa_build_iso.sh` (bind-mounté, sans `-all-root` pour préserver l'UID 1000 du préfixe Wine)
 - 5 variantes : gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-dx
 - **Processus en 2 étapes** :
-  1. Build d'une image container payload via `installer/Containerfile` (basée sur l'image Gablue, flatpaks pré-cachés, swap kernel OGC→vanilla pour Secure Boot). Le stockage podman utilise l'ext4 natif du runner (~116G libres après cleanup) — le BTRFS loopback a été retiré car il corrompt systématiquement au commit du payload (read-only fs, database disk image malformed). La boucle de build (`for attempt in 1 2 3`) **ne retente pas** si le log contient `no space left on device` (erreur non récupérable : chaque tentative reconstruit une image identique) et sort immédiatement.
+  1. Build d'une image container payload via `installer/Containerfile` (basée sur l'image Gablue, flatpaks pré-cachés, swap kernel OGC→vanilla pour Secure Boot). Le stockage podman est sur le loopback BTRFS compressé (composite action `mount-btrfs-storage`) **avec `image_copy_tmp_dir` redirigé dans le loopback** via un drop-in `/etc/containers/containers.conf.d/` : par défaut podman copie le layer diff du commit (~30G non compressés) dans `/var/tmp` **sur le disque hôte**, ce qui saturait l'hôte, affamait le fichier loopback sparse et forçait BTRFS en read-only (les « corruptions » historiques du loopback — read-only fs, disk I/O error — n'étaient que ce mécanisme, pas une corruption intrinsèque). Chemin explicite `/var/lib/containers/image-copy-tmp` plutôt que la valeur spéciale `"storage"` (résolution buggy, podman#28211). La boucle de build (`for attempt in 1 2 3`) **ne retente pas** si le log contient `no space left on device`, `read-only file system` ou `disk I/O error` (erreurs non récupérables : chaque tentative reconstruit une image identique, et un loopback passé read-only est mort) et sort immédiatement.
   2. Génération de l'ISO via `podman run` direct (remplace l'action `Zeglius/titanoboa`) : le script patché est bind-mounté sur `/src/build_iso.sh`, le payload `localhost/payload:latest` est monté via `--mount type=image`, le répertoire de sortie ISO est bind-mounté en `/output`
 - Signature Cosign + attestation de provenance sur chaque ISO
 - Upload vers BuzzHeavier, release GitHub `latest-live-iso`
@@ -825,7 +825,7 @@ Action composite locale qui remplace `ublue-os/container-storage-action`. Elle c
 
 **Utilisation dans les workflows** :
 - `reusable-gablue-image.yml` : checkout → mount → build → rechunk → push
-- `build-gablue-live-isos.yml` : libérer espace → checkout → build payload → podman run Titanoboa (avec script patché)
+- `build-gablue-live-isos.yml` : libérer espace → checkout → mount → drop-in `image_copy_tmp_dir` → build payload → podman run Titanoboa (avec script patché)
 
 ## Messages de commit et tags
 

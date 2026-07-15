@@ -68,14 +68,30 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
-      # Le BTRFS loopback corrompt régulièrement en CI (read-only fs, database
-      # disk image malformed). Le payload ISO étant une fine couche au-dessus
-      # d'une image pré-construite, le stockage ext4 natif du runner (~116G
-      # libres après cleanup) est largement suffisant.
-      # - name: Monter stockage BTRFS compressé pour podman
-      #   uses: ./.github/actions/mount-btrfs-storage
-      #   with:
-      #     target-dir: /var/lib/containers
+      # Le loopback BTRFS compressé absorbe le payload ISO (image de base +
+      # flatpaks + préfixe Wine, ~60G+ logiques). Sans lui, le disque ext4 du
+      # runner (~118G) sature au commit.
+      - name: Monter stockage BTRFS compressé pour podman
+        uses: ./.github/actions/mount-btrfs-storage
+        with:
+          target-dir: /var/lib/containers
+
+      # CRITIQUE : par défaut podman copie le layer diff du commit dans
+      # /var/tmp (image_copy_tmp_dir), SUR LE DISQUE HÔTE, hors du loopback.
+      # Cette copie (~30G non compressés) saturait le disque hôte, ce qui
+      # affamait le fichier loopback sparse → erreurs I/O → BTRFS forcé en
+      # read-only (les "corruptions" observées n'étaient que ça). On redirige
+      # le tmp de copie vers le loopback compressé via un drop-in
+      # containers.conf.d (chemin explicite plutôt que la valeur spéciale
+      # "storage", à la résolution buggy — podman#28211).
+      - name: Rediriger le tmp de copie d'images vers le loopback BTRFS
+        run: |
+          sudo mkdir -p /var/lib/containers/image-copy-tmp /etc/containers/containers.conf.d
+          sudo tee /etc/containers/containers.conf.d/99-gablue-image-copy-tmp.conf <<'EOF'
+          [engine]
+          image_copy_tmp_dir = "/var/lib/containers/image-copy-tmp"
+          EOF
+          sudo podman info | grep -i imageCopyTmpDir
 
       - name: Start timer
         run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -111,10 +127,11 @@ jobs:
             fi
             echo "::endgroup::"
             # Saturation disque = erreur non récupérable : chaque tentative reconstruit
-            # une image identique → même échec au commit. On s'arrête sans retry pour
-            # ne pas gaspiller ~30 min par tentative.
-            if grep -q "no space left on device" "$build_log"; then
-              echo "::error::Espace disque insuffisant lors du commit du payload — arrêt sans retry"
+            # une image identique → même échec au commit. Idem si le loopback BTRFS est
+            # passé read-only (disque hôte saturé → I/O errors) : le storage est mort.
+            # On s'arrête sans retry pour ne pas gaspiller ~30 min par tentative.
+            if grep -qE "no space left on device|read-only file system|disk I/O error" "$build_log"; then
+              echo "::error::Espace disque insuffisant ou storage read-only lors du build payload — arrêt sans retry"
               exit 1
             fi
             echo "Échec build payload tentative $attempt — nettoyage avant retry..."
