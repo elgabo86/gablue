@@ -165,10 +165,20 @@ if ! command -v gwine > /dev/null 2>&1; then
     exit 1
 fi
 gwine_pack_tmp="$(mktemp -d)"
-if ! gwine --download-components; then
-    echo "ERREUR : échec du téléchargement des composants gwine" >&2
-    exit 1
-fi
+# Retry local : évite de recommencer tout le build (flatpaks, kernel swap...)
+# sur un échec réseau transitoire du téléchargement d'un composant
+for gwine_attempt in 1 2 3; do
+    echo "Téléchargement composants gwine — tentative $gwine_attempt/3"
+    if gwine --download-components; then
+        break
+    fi
+    if [ "$gwine_attempt" -eq 3 ]; then
+        echo "ERREUR : échec du téléchargement des composants gwine après 3 tentatives" >&2
+        exit 1
+    fi
+    echo "Échec tentative $gwine_attempt — nouvelle tentative dans 10s..."
+    sleep 10
+done
 if ! ( cd "$gwine_pack_tmp" && gwine --cachepack ); then
     echo "ERREUR : échec de la création du pack cache gwine" >&2
     exit 1
