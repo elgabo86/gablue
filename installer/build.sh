@@ -209,15 +209,28 @@ tar -xf /extra/gwine-cache-installer/gwine-cache.tar.xz -C /var/home/liveuser/.c
 cp -a /root/.local/share/gwine/* /usr/share/gablue/wine-runner/
 
 # Init du préfixe (Xvfb pour PhysX/OpenAL, cache dans ~/.cache/gwine)
-# Sur les images NVIDIA, Xvfb segfault/SIGABRT car libnvidia-egl-gbm.so.1
-# tente d'initialiser le GPU absent dans le conteneur de build. On force
-# le software rendering Mesa via les 3 vendor selections GLX + EGL + OpenGL.
+# Sur les images NVIDIA, Xvfb crashe car le serveur X charge son propre
+# module GLX via libglxserver_nvidia.so, et libnvidia-egl-gbm.so.1 tente
+# d'initialiser le GPU absent. Les variables GLVND (__GLX_VENDOR_LIBRARY_NAME,
+# __EGL_VENDOR_LIBRARY_FILENAMES) n'affectent que le client GL, pas le serveur X.
+# On déplace temporairement les .so NVIDIA pour que Xvfb utilise le fallback Mesa.
+for nv_lib in \
+    /usr/lib64/xorg/modules/extensions/libglxserver_nvidia.so \
+    /usr/lib64/libnvidia-egl-gbm.so.1; do
+    [ -f "$nv_lib" ] && mv "$nv_lib" "${nv_lib}.gablue-bak"
+done
 xvfb-run -a -s "-screen 0 1024x768x24 -ac -nolisten tcp -noreset" \
     env __GLX_VENDOR_LIBRARY_NAME=mesa \
         __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
         LIBGL_ALWAYS_SOFTWARE=1 \
         HOME=/home/liveuser \
         gwine --init --offline
+# Restaurer les libs NVIDIA
+for nv_lib in \
+    /usr/lib64/xorg/modules/extensions/libglxserver_nvidia.so \
+    /usr/lib64/libnvidia-egl-gbm.so.1; do
+    [ -f "${nv_lib}.gablue-bak" ] && mv "${nv_lib}.gablue-bak" "$nv_lib"
+done
 
 # L'init est finie : supprimer le cache (doublon, déjà dans /extra)
 rm -rf /var/home/liveuser/.cache/gwine
