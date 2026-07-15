@@ -178,10 +178,12 @@ if [ "${DX_MODE:-false}" == "true" ]; then
         qemu-device-display-virtio-gpu-gl \
         qemu-device-display-virtio-vga \
         qemu-device-display-virtio-vga-gl \
+        qemu-device-display-virtio-gpu-rutabaga \
         qemu-audio-spice \
         qemu-audio-pipewire \
         qemu-audio-pa \
         qemu-audio-alsa \
+        qemu-audio-sdl \
         qemu-device-usb-host \
         qemu-device-usb-redirect \
         qemu-device-usb-smartcard \
@@ -191,7 +193,11 @@ if [ "${DX_MODE:-false}" == "true" ]; then
         qemu-ui-egl-headless \
         qemu-ui-gtk \
         qemu-ui-dbus \
-        qemu-char-spice
+        qemu-ui-sdl \
+        qemu-char-spice \
+        qemu-block-curl \
+        qemu-block-ssh \
+        qemu-tools
 
     # Émulation rétro et outils avancés
     dnf5 -y --setopt=install_weak_deps=False install \
