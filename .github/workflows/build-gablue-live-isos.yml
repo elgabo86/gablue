@@ -121,12 +121,28 @@ jobs:
           echo "::error::Échec du build payload après 3 tentatives"
           exit 1
 
-      - name: Générer l'ISO Live avec Titanoboa
-        uses: Zeglius/titanoboa@revamp-pr
+      - name: Générer l'ISO Live
         id: build
-        with:
-          image-ref: localhost/payload:latest
-          iso-dest: ${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso
+        shell: bash
+        run: |
+          ISO_OUTPUT_DIR="${{ github.workspace }}/iso-output"
+          mkdir -p "$ISO_OUTPUT_DIR"
+
+          # Podman run avec notre build_iso.sh patché (sans -all-root)
+          # pour préserver les UID 1000 du préfixe Wine dans le squashfs
+          ISO_LABEL="GABLUE_LIVE"
+          sudo podman run --rm \
+            --cap-add sys_admin --security-opt label=disable \
+            -v "${{ github.workspace }}/installer/titanoboa_build_iso.sh:/src/build_iso.sh:ro" \
+            --mount type=image,source=localhost/payload:latest,dst=/rootfs \
+            -v "$ISO_OUTPUT_DIR:/output" \
+            quay.io/fedora/fedora:latest /src/build_iso.sh
+
+          # L'ISO est nommée selon le label iso.yaml → GABLUE_LIVE.iso
+          ISO_DEST="${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso"
+          mv "$ISO_OUTPUT_DIR/${ISO_LABEL}.iso" "$ISO_DEST"
+          sudo chown "$(id -u):$(id -g)" "$ISO_DEST"
+          echo "iso-dest=$ISO_DEST" >> $GITHUB_OUTPUT
 
       - name: Préparer le répertoire d'upload
         id: upload-directory

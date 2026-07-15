@@ -199,7 +199,10 @@ tar -xf /extra/gwine-cache-installer/gwine-cache.tar.xz -C /var/home/liveuser/.c
 cp -a /root/.local/share/gwine/* /usr/share/gablue/wine-runner/
 
 # Init du préfixe (Xvfb pour PhysX/OpenAL, cache dans ~/.cache/gwine)
-xvfb-run -a env HOME=/home/liveuser gwine --init --offline
+# LIBGL_ALWAYS_SOFTWARE=1 : évite que les drivers NVIDIA tentent d'init
+# un GPU absent dans le conteneur de build (crash Xvfb sur CI)
+xvfb-run -a -s "-screen 0 1024x768x24 -ac -nolisten tcp -noreset" \
+    env LIBGL_ALWAYS_SOFTWARE=1 HOME=/home/liveuser gwine --init --offline
 
 # L'init est finie : supprimer le cache (doublon, déjà dans /extra)
 rm -rf /var/home/liveuser/.cache/gwine
