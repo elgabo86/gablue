@@ -199,17 +199,24 @@ tar -xf /extra/gwine-cache-installer/gwine-cache.tar.xz -C /var/home/liveuser/.c
 cp -a /root/.local/share/gwine/* /usr/share/gablue/wine-runner/
 
 # Init du préfixe (Xvfb pour PhysX/OpenAL, cache dans ~/.cache/gwine)
-# LIBGL_ALWAYS_SOFTWARE=1 : évite que les drivers NVIDIA tentent d'init
-# un GPU absent dans le conteneur de build (crash Xvfb sur CI)
+# Sur les images NVIDIA, Xvfb segfault/SIGABRT car libnvidia-egl-gbm.so.1
+# tente d'initialiser le GPU absent dans le conteneur de build. On force
+# le software rendering Mesa via les 3 vendor selections GLX + EGL + OpenGL.
 xvfb-run -a -s "-screen 0 1024x768x24 -ac -nolisten tcp -noreset" \
-    env LIBGL_ALWAYS_SOFTWARE=1 HOME=/home/liveuser gwine --init --offline
+    env __GLX_VENDOR_LIBRARY_NAME=mesa \
+        __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
+        LIBGL_ALWAYS_SOFTWARE=1 \
+        HOME=/home/liveuser \
+        gwine --init --offline
 
 # L'init est finie : supprimer le cache (doublon, déjà dans /extra)
 rm -rf /var/home/liveuser/.cache/gwine
 
 # Permissions : sans -all-root Titanoboa, UID 1000 = liveuser au boot
-chown -R 1000:1000 /usr/share/gablue/wine-home \
-                    /usr/share/gablue/wine-runner
+# find au lieu de chown -R : résiste aux fichiers temporaires Wine (.tmp)
+# supprimés entre la lecture du dossier et l'appel à chown()
+find /usr/share/gablue/wine-home /usr/share/gablue/wine-runner \
+     -exec chown 1000:1000 {} + 2>/dev/null || true
 
 # Nettoyer les résidus du build
 rm -rf /root/.cache/gwine /root/.local/share/gwine 2>/dev/null || true
