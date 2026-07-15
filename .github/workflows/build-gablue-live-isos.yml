@@ -68,10 +68,14 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
-      - name: Monter stockage BTRFS compressé pour podman
-        uses: ./.github/actions/mount-btrfs-storage
-        with:
-          target-dir: /var/lib/containers
+      # Le BTRFS loopback corrompt régulièrement en CI (read-only fs, database
+      # disk image malformed). Le payload ISO étant une fine couche au-dessus
+      # d'une image pré-construite, le stockage ext4 natif du runner (~116G
+      # libres après cleanup) est largement suffisant.
+      # - name: Monter stockage BTRFS compressé pour podman
+      #   uses: ./.github/actions/mount-btrfs-storage
+      #   with:
+      #     target-dir: /var/lib/containers
 
       - name: Start timer
         run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
