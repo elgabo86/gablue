@@ -341,6 +341,7 @@ build_bwrap_args() {
     bwrap_add --die-with-parent
     bwrap_add --new-session
     bwrap_add --cap-drop ALL
+    bwrap_add --cap-add CAP_SYS_PTRACE
     
     bwrap_add --ro-bind / /
     bwrap_add --proc /proc
