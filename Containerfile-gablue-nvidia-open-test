@@ -65,6 +65,15 @@ RUN --mount=type=cache,dst=/var/cache \
     /ctx/kernel-test && \
     /ctx/cleanup
 
+# Compilation du module cpuid_fault_emulation (émulation CPUID faulting pour AMD AM4/Steam Deck)
+RUN --mount=type=secret,id=gablue-kmod-key \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/cpuid-fault && \
+    /ctx/cleanup
+
 # Installation Mesa Terra
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \

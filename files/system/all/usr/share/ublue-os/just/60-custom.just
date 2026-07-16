@@ -223,6 +223,23 @@ cpuid-fix-off:
     rpm-ostree kargs --delete-if-present=clearcpuid=514
     echo "ALL DONE!!!"
 
+# Activer l'émulation CPUID fault (AMD AM4/Steam Deck uniquement)
+cpuid-emu-on:
+    #!/usr/bin/bash
+    if lsmod | grep -q kvm_amd; then
+        echo "KVM détecté, déchargement de kvm_amd et kvm..."
+        sudo modprobe -r kvm_amd kvm
+    fi
+    sudo modprobe cpuid_fault_emulation
+    echo "Module cpuid_fault_emulation chargé"
+
+# Désactiver l'émulation CPUID fault et restaurer KVM
+cpuid-emu-off:
+    #!/usr/bin/bash
+    sudo modprobe -r cpuid_fault_emulation
+    sudo modprobe kvm_amd
+    echo "KVM restauré"
+
 # Remove grub double entry
 fix-grub-double-entry:
     #!/usr/bin/bash
@@ -629,13 +646,15 @@ snapshots-disable:
     echo ""
     echo "Snapshots BTRFS désactivés et configuration supprimée."
 
-# Enroll Gablue Secure Boot key - Enter password "secureblue" if prompted
+# Enroll Gablue Secure Boot keys - Enter password "secureblue" if prompted
 secureboot:
     #!/usr/bin/bash
     ENROLLMENT_PASSWORD="secureblue"
     SECUREBOOT_KEY=/etc/pki/akmods/certs/gablue-secure-boot.der
+    CPUID_FAULT_KEY=/etc/pki/akmods/certs/gablue-kmod.der
     sudo mokutil --timeout -1
     echo -e "$ENROLLMENT_PASSWORD\n$ENROLLMENT_PASSWORD" | sudo mokutil --import "$SECUREBOOT_KEY"
+    echo -e "$ENROLLMENT_PASSWORD\n$ENROLLMENT_PASSWORD" | sudo mokutil --import "$CPUID_FAULT_KEY"
     echo 'At next reboot, the moktool UEFI menu UI will be displayed (*QWERTY* keyboard input and navigation).\nThen, select "Enroll MOK", and input "secureblue" as the password'
 
 # Configure beesd for BTRFS deduplication (pas active par defaut)

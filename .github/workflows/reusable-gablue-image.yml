@@ -124,6 +124,17 @@ jobs:
         with:
           target-dir: /var/lib/containers
 
+      # Préparer la clé de signature Secure Boot pour le module cpuid_fault
+      - name: Prepare SB signing key
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.GABLUE_KMOD_KEY }}" ]; then
+            echo "${{ secrets.GABLUE_KMOD_KEY }}" > /tmp/gablue-kmod-key
+            echo "Secure Boot signing key prepared"
+          else
+            echo "No Secure Boot key available, module will be unsigned"
+          fi
+
       # Construction de l'image (retry uniquement sur erreurs réseau transitoires)
       # timeout_minutes est géré par nick-fields/retry en interne (seul mécanisme
       # de timeout fiable dans les workflows réutilisables)
@@ -164,6 +175,11 @@ jobs:
               SOURCE_SUFFIX_ARG="--build-arg SOURCE_SUFFIX=${{ inputs.source_suffix }}"
             fi
 
+            SB_KEY_ARG=""
+            if [ -f /tmp/gablue-kmod-key ]; then
+              SB_KEY_ARG="--secret=id=gablue-kmod-key,src=/tmp/gablue-kmod-key"
+            fi
+
             # Lancement du build avec capture de la sortie
             # pipefail obligatoire : sans lui, $? capture le code de tee (0)
             # au lieu de buildah, masquant tout échec de build (nick-fields/retry
@@ -181,6 +197,7 @@ jobs:
               $NVIDIA_FLAVOR_ARG \
               $SOURCE_SUFFIX_ARG \
               $DX_MODE_ARG \
+              $SB_KEY_ARG \
               --tag raw-img . 2>&1 | tee "$BUILD_LOG"
             EXIT_CODE=$?
             set -e
