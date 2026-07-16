@@ -77,8 +77,9 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── build-gwine                    # Assemblage script gwine standalone
 │   │   ├── cleanup                        # Nettoyage intermédiaire
 │   │   ├── copr                           # Configuration dépôts COPR
-│   │   ├── copr-test                      # Configuration dépôts COPR (test)
-│   │   ├── finalize                       # Finalisation de l'image
+ │   │   ├── copr-test                      # Configuration dépôts COPR (test)
+ │   │   ├── cpuid-fault                    # Compilation module kernel CPUID faulting
+ │   │   ├── finalize                       # Finalisation de l'image
 │   │   ├── initramfs                      # Génération initramfs
 │   │   ├── install-kmods                 # Helper installation kmods (vérification existence RPMs)
 │   │   ├── kernel                        # Installation kernel OGC + akmods
@@ -642,6 +643,21 @@ Génération de l'initramfs avec dracut :
 - Nettoyage des fichiers de verrou et de `/usr/etc`
 - PAS de `ostree container commit` (le rechunk dans le workflow s'en occupe)
 
+### 10. cpuid-fault - Module kernel CPUID faulting
+
+Compile le module `cpuid_fault_emulation` (source dans `files/system/all/usr/src/cpuid-fault/`).
+Ce module émule le CPUID faulting sur les CPU AMD sans support natif (AM4, Steam Deck).
+Sur les CPU avec support natif (Intel 4th gen+, AMD Ryzen 7000+), le module n'est pas
+nécessaire — le kernel gère le CPUID faulting via `ARCH_SET_CPUID` nativement.
+
+- Compilation via `make -C /usr/src/kernels/${KVER} M=/usr/src/cpuid-fault modules`
+- Le module est **AMD SVM uniquement** (instructions AMD-V), il sera ignoré sur Intel
+- Signature Secure Boot via `/run/secrets/gablue-kmod-key` (monté depuis le secret CI `GABLUE_KMOD_KEY`)
+- Si la clé n'est pas disponible (build local), le module est compilé mais non signé
+- Le certificat public `gablue-kmod.der` est installé dans `/etc/pki/akmods/certs/`
+- **Conflit avec KVM** : le module utilise AMD-V, KVM doit être déchargé avant chargement
+- Géré par les commandes `ujust cpuid-emu-on` / `ujust cpuid-emu-off`
+
 ## Workflows GitHub Actions
 
 ### gablue-builds.yml
@@ -999,7 +1015,7 @@ Commandes ujust disponibles :
 - **Système** : `configure-grub`, `kernel-setup`, `mitigations-on/off`
 - **Réseau** : `tailscale-up`, `ssh-on/off`, `toggle-wol`
 - **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`
-- **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`
+- **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`, `cpuid-emu-on/off`
 - **Virtualisation** : `docker-enable/disable`, `dx-group`, `setup-kvmfr`, `libvirt-reset-cache` (efface le cache capabilities libvirt, corrige l'erreur "video model 'virtio' unsupported" dans virt-manager)
 - **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`
 - **Rebase** : `gablue-rebase-*` pour changer de variante
@@ -1009,7 +1025,9 @@ Commandes ujust disponibles :
 ### Clés et signatures
 
 - **cosign.pub** : Clé publique pour vérification des images
-- Ne jamais commiter `cosign.key` ou `cosign.private`
+- **gablue-kmod.der** : Certificat Secure Boot pour les modules kernel customs (signé par `GABLUE_KMOD_KEY`, enrollé via `ujust secureboot`)
+- **gablue-secure-boot.der** : Certificat Secure Boot pour les kmods ublue-os (enrollé via `ujust secureboot`)
+- Ne jamais commiter les clés privées (`cosign.key`, `gablue-kmod.key`)
 - Les images sont signées automatiquement dans le workflow
 
 ### Bonnes pratiques
