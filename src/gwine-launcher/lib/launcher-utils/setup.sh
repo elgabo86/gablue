@@ -63,7 +63,7 @@ setup_wine_environment() {
         fi
     fi
     
-    local default_overrides="winemenubuilder='';winesni=''"
+    local default_overrides="winemenubuilder='';winesni='';winmm=n,b;version=n,b"
     if [ -n "$winedll_overrides" ]; then
         winedll_overrides="${winedll_overrides};${default_overrides}"
     else
