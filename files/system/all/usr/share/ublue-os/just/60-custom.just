@@ -1347,10 +1347,11 @@ gwine-migrate:
     mkdir -p "$(dirname "$NEW_RUNNER")"
     mv "$OLD_RUNNER" "$NEW_RUNNER"
 
-    # 4. Migrer le fichier de version
+    # 4. Migrer le fichier de version (normaliser gwine-proton-* -> gwine-*,
+    # sinon sort -V considère l'ancien nom comme plus récent et bloque --update)
     if [ -f "$OLD_VERSION" ]; then
         echo "→ Migration du fichier de version..."
-        cat "$OLD_VERSION" > "$NEW_VERSION"
+        sed 's/^gwine-proton-/gwine-/' "$OLD_VERSION" > "$NEW_VERSION"
         rm -f "$OLD_VERSION"
     fi
 
@@ -1371,6 +1372,13 @@ gwine-migrate:
             mkdir -p "$(dirname "$NEW_CACHE")"
             mv "$OLD_CACHE" "$NEW_CACHE"
         fi
+        # Normaliser les noms d'archives (gwine-proton-*.tar.xz -> gwine-*.tar.xz)
+        for archive in "$NEW_CACHE"/gwine-proton-*.tar.xz; do
+            [ -f "$archive" ] || continue
+            new_name="$NEW_CACHE/gwine-${archive##*/gwine-proton-}"
+            echo "→ Renommage de l'archive : $(basename "$archive") → $(basename "$new_name")..."
+            mv -n "$archive" "$new_name"
+        done
     fi
 
     # 7. Nettoyer l'ancien fichier options (supprimer la ligne runner=)
