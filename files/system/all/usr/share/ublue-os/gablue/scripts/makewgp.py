@@ -1183,7 +1183,7 @@ class WGPWindow(QMainWindow):
         self.icon_scroll_area.setWidgetResizable(True)
         self.icon_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.icon_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.icon_scroll_area.setMinimumHeight(80)
+        self.icon_scroll_area.setMinimumHeight(140)
         self.icon_scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         
         # Widget conteneur pour la grille d'icônes
