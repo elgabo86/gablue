@@ -3,8 +3,8 @@ grub2:
   timeout: 3
   entries:
     - name: "Gablue Live"
-      linux: "/images/pxeboot/vmlinuz quiet rhgb root=live:CDLABEL=GABLUE_LIVE enforcing=0 rd.live.image"
+      linux: "/images/pxeboot/vmlinuz quiet rhgb root=live:CDLABEL=GABLUE_LIVE enforcing=0 rd.live.image clearcpuid=514 mitigations=off"
       initrd: "/images/pxeboot/initrd.img"
     - name: "Gablue Live (basic graphics)"
-      linux: "/images/pxeboot/vmlinuz quiet rhgb root=live:CDLABEL=GABLUE_LIVE enforcing=0 rd.live.image nomodeset"
+      linux: "/images/pxeboot/vmlinuz quiet rhgb root=live:CDLABEL=GABLUE_LIVE enforcing=0 rd.live.image nomodeset clearcpuid=514 mitigations=off"
       initrd: "/images/pxeboot/initrd.img"
