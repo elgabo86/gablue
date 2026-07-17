@@ -19,7 +19,7 @@ set -eoux pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-OUTPUT_DIR="$SCRIPT_DIR/output"
+OUTPUT_DIR="$(xdg-user-dir DOWNLOAD 2>/dev/null || echo "$HOME/Downloads")"
 REPO_OWNER="elgabo86"
 TITANOBOA_REPO="https://github.com/ublue-os/titanoboa.git"
 TITANOBOA_IMAGE="localhost/titanoboa:latest"
