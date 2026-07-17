@@ -371,6 +371,7 @@ podman run --rm -v "$(pwd)/lib:/src:z" docker.io/library/fedora:43 bash -c \
   - Archive du runner présente (`components/gwine/gwine-*.tar.xz`)
   - Wine Mono/Gecko présents (`components/wine-cache/wine-mono-*.msi`, `wine-gecko-*.msi`)
   - Composants Windows présents (`wincomponents/`, validés par `check_wincomponents_cache`)
+- **Lancement automatique après init** : `check_prefix_or_offer_init()` lance l'init comme sous-processus (pas de `exec`) et retourne après succès, permettant au programme appelant (.exe/.wgp) d'être lancé automatiquement. Des notifications `kdialog --passivepopup` informent l'utilisateur du début et de la fin de l'init. En cas d'échec, un `kdialog --error` est affiché.
 
 ### Build standalone
 - `build.sh` assemble tous les modules en un fichier `gwine-standalone.sh`
