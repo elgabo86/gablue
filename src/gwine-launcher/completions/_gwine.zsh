@@ -37,8 +37,6 @@ gwine_commands() {
         '--gameid:ID du jeu'
         '--kill:Forcer l\'arrêt de tous les processus Gwine en cours'
         '--dir:Gérer les répertoires bindés dans le sandbox'
-        '--wine:Configurer Wine comme runner par défaut'
-        '--proton:Configurer Proton comme runner par défaut'
         '--dxvk:Utiliser DXVK standard'
         '--dxvk-async:Utiliser DXVK-GPLAsync'
     )
@@ -97,8 +95,6 @@ _arguments -C \
     '--gameid[ID du jeu]:id:' \
     '--kill[Forcer l\'arrêt de tous les processus Gwine en cours]' \
     '--dir[Gérer les répertoires bindés]:subcommand:gwine_dir_commands' \
-    '--wine[Configurer Wine comme runner par défaut]' \
-    '--proton[Configurer Proton comme runner par défaut]' \
     '--dxvk[Utiliser DXVK standard]' \
     '--dxvk-async[Utiliser DXVK-GPLAsync]' \
     '*:fichier:gwine_files'

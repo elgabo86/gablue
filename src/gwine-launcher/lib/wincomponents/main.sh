@@ -32,17 +32,10 @@ install_all_wincomponents() {
     install_d3dcompiler 43
     install_d3dcompiler_47
     
-    local current_runner
-    current_runner=$(get_current_runner)
+    install_xact
 
-    if [ "$current_runner" = "proton" ]; then
-        install_xact
-
-        if [ "$WINEARCH" = "win64" ]; then
-            install_xact_x64
-        fi
-    else
-        echo "  Installation de XACT ignorée (runner wine, requis uniquement avec proton)"
+    if [ "$WINEARCH" = "win64" ]; then
+        install_xact_x64
     fi
     
     install_msls31

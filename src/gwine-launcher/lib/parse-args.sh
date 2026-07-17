@@ -24,8 +24,6 @@ show_help() {
     echo "  --reset           Réinitialiser toutes les options par défaut"
     echo "  --nofix           Ignorer le fichier .fix d'un jeu"
     echo "  --exewgp          Mode interactif pour choisir l'exécutable dans un WGP"
-    echo "  --wine            Configurer le runner Wine standard (gwine) comme défaut"
-    echo "  --proton          Configurer le runner Proton (gwine-proton) comme défaut"
     echo "  --dxvk            Utiliser DXVK standard (défaut)"
     echo "  --dxvk-async      Utiliser DXVK-GPLAsync (asynchrone avec DXVK_ASYNC=1)"
     echo "  --nosandbox       Désactiver le sandboxing"
@@ -59,11 +57,7 @@ show_help() {
     echo "  gwine ~/Jeux/monjeu.wgp"
     echo "  gwine ~/Jeux/monjeu.exe"
     echo "  gwine --init"
-    echo "  gwine --init --wine         # Init avec runner Wine"
-    echo "  gwine --init --proton       # Init avec runner Proton"
     echo "  gwine --init --dxvk-async   # Init avec DXVK-GPLAsync"
-    echo "  gwine --wine                # Configurer Wine comme runner par défaut"
-    echo "  gwine --proton              # Configurer Proton comme runner par défaut"
     echo "  gwine --dxvk                # Utiliser DXVK standard"
     echo "  gwine --dxvk-async          # Utiliser DXVK-GPLAsync (DXVK_ASYNC=1)"
     echo "  gwine --x11                 # Utiliser X11/XWayland comme mode d'affichage"
@@ -77,7 +71,7 @@ show_help() {
 }
 
 # Options valides reconnues par gwine
-VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--wine" "--proton" "--dxvk" "--dxvk-async")
+VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--dxvk" "--dxvk-async")
 
 # Vérifie si une option est valide
 is_valid_option() {
@@ -164,14 +158,6 @@ parse_arguments() {
             --use-ln-mounts)
                 USE_BIND_MOUNTS=false
                 export USE_BIND_MOUNTS
-                shift
-                ;;
-            --wine)
-                wine_mode=true
-                shift
-                ;;
-            --proton)
-                proton_mode=true
                 shift
                 ;;
             --dxvk)

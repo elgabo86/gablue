@@ -25,8 +25,7 @@ source "$SCRIPT_DIR/lib/gpu.sh"
 source "$SCRIPT_DIR/lib/ui.sh"
 source "$SCRIPT_DIR/lib/component.sh"
 source "$SCRIPT_DIR/lib/wincomponents.sh"
-source "$SCRIPT_DIR/lib/cache/gwine-proton.sh"
-source "$SCRIPT_DIR/lib/cache/gwine-proton-runner.sh"
+source "$SCRIPT_DIR/lib/cache/gwine-runner.sh"
 source "$SCRIPT_DIR/lib/cache/dxvk-vkd3d.sh"
 source "$SCRIPT_DIR/lib/cache/offline.sh"
 source "$SCRIPT_DIR/lib/cache/cachepack.sh"
@@ -245,6 +244,9 @@ check_prefix_or_offer_init() {
 main() {
     # Parser les arguments en premier
     parse_arguments "$@"
+
+    # Vérifier si une migration est nécessaire (ancien runner wine-proton -> runner)
+    check_runner_migration
     
     if [ "$reset_mode" = true ]; then
         reset_gwine_options
@@ -275,66 +277,11 @@ main() {
     # Initialiser le mode DXVK au début (avant toute opération)
     # pour que les fonctions de composants utilisent le bon répertoire
     init_dxvk_mode
-    
-    # Définir proton comme runner par défaut si aucun n'est configuré et qu'on fait un --init
-    if [ "$init_mode" = true ] && [ "$wine_mode" != true ] && [ "$proton_mode" != true ]; then
-        # Vérifier si un runner est déjà configuré
-        local current_runner
-        current_runner=$(get_current_runner)
-        # Si pas encore de configuration (fichier options inexistant), utiliser proton par défaut
-        if [ ! -f "$RUNNER_CONFIG_FILE" ]; then
-            proton_mode=true
-        fi
-    fi
-    
-    # Quand on change de runner (--wine ou --proton), on force un --init pour éviter
-    # les conflits entre Wine et Proton dans le préfixe
-    if [ "$wine_mode" = true ] && [ "$init_mode" != true ] && [ "$update_mode" != true ] && [ -z "$fullpath" ]; then
-        local current_runner
-        current_runner=$(get_current_runner)
-        if [ "$current_runner" != "wine" ]; then
-            echo "Changement de runner vers Wine..."
-            echo "Une réinitialisation du préfixe est nécessaire lors du changement de runner."
-            set_runner "wine"
-            export init_mode=true
-        else
-            echo "Runner Wine déjà configuré."
-            set_runner "wine"
-        fi
-    fi
-    
-    if [ "$proton_mode" = true ] && [ "$init_mode" != true ] && [ "$update_mode" != true ] && [ -z "$fullpath" ]; then
-        local current_runner
-        current_runner=$(get_current_runner)
-        if [ "$current_runner" != "proton" ]; then
-            echo "Changement de runner vers Proton..."
-            echo "Une réinitialisation du préfixe est nécessaire lors du changement de runner."
-            set_runner "proton"
-            export init_mode=true
-        else
-            echo "Runner Proton déjà configuré."
-            set_runner "proton"
-        fi
-    fi
-    
-    # Si mode "config only" (--wine, --proton, --dxvk, --dxvk-async, --x11 ou --wayland sans fichier ni autre option)
-    # alors sauvegarder la configuration comme défaut et télécharger si nécessaire
-    if [ -z "$fullpath" ] && [ "$init_mode" != true ] && [ "$regedit_mode" != true ] && [ "$reg_mode" != true ] && [ "$winecfg_mode" != true ] && [ "$winetricks_mode" != true ] && [ "$cmd_mode" != true ] && [ "$joytest_mode" != true ] && [ "$update_mode" != true ] && [ "$download_wincomponents_mode" != true ] && [ "$cachepack_mode" != true ] && [ "$dir_mode" != true ] && ([ "$wine_mode" = true ] || [ "$proton_mode" = true ] || [ "$dxvk_mode" = true ] || [ "$dxvk_async_mode" = true ] || [ "$x11_mode" = true ] || [ "$wayland_mode" = true ]); then
-        # Sauvegarder le runner si spécifié
-        if [ "$wine_mode" = true ]; then
-            set_runner "wine"
-            echo "Runner configuré : wine (gwine standard)"
-            echo "Ce runner sera utilisé par défaut pour les prochains lancements."
-            echo ""
-            ensure_runner_installed
-        elif [ "$proton_mode" = true ]; then
-            set_runner "proton"
-            echo "Runner configuré : proton (gwine-proton)"
-            echo "Ce runner sera utilisé par défaut pour les prochains lancements."
-            echo ""
-            ensure_runner_installed
-        fi
-        
+
+    # Si mode "config only" (--dxvk, --dxvk-async, --x11 ou --wayland sans fichier ni autre option)
+    # alors sauvegarder la configuration comme défaut
+    if [ -z "$fullpath" ] && [ "$init_mode" != true ] && [ "$regedit_mode" != true ] && [ "$reg_mode" != true ] && [ "$winecfg_mode" != true ] && [ "$winetricks_mode" != true ] && [ "$cmd_mode" != true ] && [ "$joytest_mode" != true ] && [ "$update_mode" != true ] && [ "$download_wincomponents_mode" != true ] && [ "$cachepack_mode" != true ] && [ "$dir_mode" != true ] && ([ "$dxvk_mode" = true ] || [ "$dxvk_async_mode" = true ] || [ "$x11_mode" = true ] || [ "$wayland_mode" = true ]); then
+
         # Sauvegarder le mode DXVK si spécifié
         if [ "$dxvk_mode" = true ]; then
             set_dxvk_mode "dxvk"
@@ -389,8 +336,6 @@ main() {
     fi
     
     # Vérifier la présence du préfixe pour les commandes qui en ont besoin
-    # Placement avant init_runner/ensure_runner_installed pour que l'init via kdialog
-    # gère le téléchargement du runner avec progressbar
     if [ "$init_mode" != true ] && [ "$download_wincomponents_mode" != true ] && \
        [ "$cachepack_mode" != true ] && [ "$dir_mode" != true ]; then
         if [ -n "$fullpath" ] || [ "$regedit_mode" = true ] || [ "$reg_mode" = true ] || \
@@ -400,13 +345,8 @@ main() {
         fi
     fi
     
-    # Initialiser le runner (wine ou proton) après le parsing des arguments
-    # Passer --save si c'est un --init avec --wine ou --proton
-    if [ "$init_mode" = true ] && ([ "$wine_mode" = true ] || [ "$proton_mode" = true ]); then
-        init_runner --save
-    else
-        init_runner
-    fi
+    # Initialiser les chemins du runner
+    init_runner_paths
     
     # Initialiser le mode DXVK (dxvk ou dxvk-async) si spécifié avec --init
     if [ "$init_mode" = true ]; then

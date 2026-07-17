@@ -85,12 +85,7 @@ setup_wine_environment() {
         export __GLX_VENDOR_LIBRARY_NAME=nvidia
         
         export SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD=1
-        
-        local current_runner
-        current_runner=$(get_current_runner)
-        if [ "$current_runner" = "proton" ]; then
-            export GST_PLUGIN_FEATURE_RANK="nvh264dec:0,nvh265dec:0"
-        fi
+        export GST_PLUGIN_FEATURE_RANK="nvh264dec:0,nvh265dec:0"
     fi
     
     export GST_PLUGIN_SYSTEM_PATH_1_0="$WINE_DIR/lib64/gstreamer-1.0:$WINE_DIR/lib32/gstreamer-1.0"

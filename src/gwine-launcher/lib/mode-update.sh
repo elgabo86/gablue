@@ -17,13 +17,6 @@ update_components() {
         error_exit "Pas de connexion internet - mise à jour impossible"
     fi
     
-    # Obtenir le runner actuel
-    local current_runner
-    current_runner=$(get_current_runner)
-    
-    echo "Runner actuel: $current_runner"
-    echo ""
-    
     local has_updates=false
     local needs_reinstall_dlls=false
     local CURRENT_STEP=0
@@ -35,49 +28,27 @@ update_components() {
     local updated_vkd3d=""
     local updated_dlls=false
     
-    # Vérifier le runner actuel (wine ou proton)
+    # Vérifier le runner gwine
     local latest_runner
     local current_runner_version
     
-    if [ "$current_runner" = "proton" ]; then
-        latest_runner=$(get_latest_gwine_proton_version)
-        current_runner_version=$(cat "$PROTON_RUNNER_VERSION_FILE" 2>/dev/null || echo "")
-        
-        echo "gwine-proton:"
-        echo "  Version actuelle: ${current_runner_version:-Aucune}"
-        echo "  Dernière version: ${latest_runner:-Inconnue}"
-        
-        if [ -n "$latest_runner" ] && [ -n "$current_runner_version" ]; then
-            if compare_versions "$latest_runner" "$current_runner_version"; then
-                has_updates=true
-                echo "  → Mise à jour disponible"
-            else
-                echo "  → Déjà à jour"
-            fi
-        elif [ -n "$latest_runner" ]; then
+    latest_runner=$(get_latest_gwine_version)
+    current_runner_version=$(cat "$GWINE_DIR/.version" 2>/dev/null || echo "")
+    
+    echo "gwine:"
+    echo "  Version actuelle: ${current_runner_version:-Aucune}"
+    echo "  Dernière version: ${latest_runner:-Inconnue}"
+    
+    if [ -n "$latest_runner" ] && [ -n "$current_runner_version" ]; then
+        if compare_versions "$latest_runner" "$current_runner_version"; then
             has_updates=true
-            echo "  → Installation nécessaire"
+            echo "  → Mise à jour disponible"
+        else
+            echo "  → Déjà à jour"
         fi
-    else
-        # Runner wine par défaut
-        latest_runner=$(get_latest_gwine_version)
-        current_runner_version=$(cat "$WINE_RUNNER_VERSION_FILE" 2>/dev/null || echo "")
-        
-        echo "gwine:"
-        echo "  Version actuelle: ${current_runner_version:-Aucune}"
-        echo "  Dernière version: ${latest_runner:-Inconnue}"
-        
-        if [ -n "$latest_runner" ] && [ -n "$current_runner_version" ]; then
-            if compare_versions "$latest_runner" "$current_runner_version"; then
-                has_updates=true
-                echo "  → Mise à jour disponible"
-            else
-                echo "  → Déjà à jour"
-            fi
-        elif [ -n "$latest_runner" ]; then
-            has_updates=true
-            echo "  → Installation nécessaire"
-        fi
+    elif [ -n "$latest_runner" ]; then
+        has_updates=true
+        echo "  → Installation nécessaire"
     fi
     
     # Vérifier DXVK/VKD3D (standard ou async selon le mode)
@@ -194,11 +165,7 @@ update_components() {
         echo "Tous les composants sont déjà à jour !"
         echo ""
         echo "Versions installées :"
-        if [ "$current_runner" = "proton" ]; then
-            echo "  - gwine-proton: ${current_runner_version:-Inconnue}"
-        else
-            echo "  - gwine: ${current_runner_version:-Inconnue}"
-        fi
+        echo "  - gwine: ${current_runner_version:-Inconnue}"
         # Afficher le bon DXVK selon le mode
         if [ "$current_dxvk_mode" = "dxvk-async" ]; then
             echo "  - DXVK-GPLAsync: ${current_dxvk_async:-Inconnue}"
@@ -229,42 +196,25 @@ update_components() {
     # Effectuer les mises à jour
     echo "Installation des mises à jour..."
     
-    # Mettre à jour le runner actuel (wine ou proton)
+    # Mettre à jour le runner gwine
     if [ -n "$latest_runner" ]; then
         if [ -z "$current_runner_version" ] || compare_versions "$latest_runner" "$current_runner_version"; then
             ((CURRENT_STEP++))
             
-            if [ "$current_runner" = "proton" ]; then
-                progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de gwine-proton..."
-                
-                if progress_is_cancelled "$DBUS_REF"; then
-                    progress_close "$DBUS_REF"
-                    echo "Mise à jour annulée par l'utilisateur"
-                    exit 0
-                fi
-                
-                if ! download_gwine_proton "false" "true"; then
-                    progress_close "$DBUS_REF"
-                    error_exit "Échec de la mise à jour de gwine-proton"
-                fi
-                
-                updated_runner="gwine-proton $latest_runner"
-            else
-                progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de gwine..."
-                
-                if progress_is_cancelled "$DBUS_REF"; then
-                    progress_close "$DBUS_REF"
-                    echo "Mise à jour annulée par l'utilisateur"
-                    exit 0
-                fi
-                
-                if ! download_gwine "false" "true"; then
-                    progress_close "$DBUS_REF"
-                    error_exit "Échec de la mise à jour de gwine"
-                fi
-                
-                updated_runner="gwine $latest_runner"
+            progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de gwine..."
+            
+            if progress_is_cancelled "$DBUS_REF"; then
+                progress_close "$DBUS_REF"
+                echo "Mise à jour annulée par l'utilisateur"
+                exit 0
             fi
+            
+            if ! download_gwine "false" "true"; then
+                progress_close "$DBUS_REF"
+                error_exit "Échec de la mise à jour de gwine"
+            fi
+            
+            updated_runner="gwine $latest_runner"
             
             # Vérifier annulation après téléchargement
             if progress_is_cancelled "$DBUS_REF"; then

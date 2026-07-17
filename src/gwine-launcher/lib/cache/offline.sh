@@ -169,10 +169,6 @@ auto_update_components() {
     local has_dxvk=false
     local has_vkd3d=false
     
-    # Obtenir le runner actuel (wine ou proton)
-    local current_runner
-    current_runner=$(get_current_runner)
-    
     # Obtenir le mode DXVK actuel (standard ou async)
     local dxvk_mode
     dxvk_mode=$(get_current_dxvk_mode)
@@ -201,13 +197,8 @@ auto_update_components() {
         local latest_runner
         local current_runner_version
         
-        if [ "$current_runner" = "proton" ]; then
-            latest_runner=$(get_latest_gwine_proton_version)
-            current_runner_version=$(cat "$PROTON_RUNNER_VERSION_FILE" 2>/dev/null || echo "")
-        else
-            latest_runner=$(get_latest_gwine_version)
-            current_runner_version=$(cat "$WINE_RUNNER_VERSION_FILE" 2>/dev/null || echo "")
-        fi
+        latest_runner=$(get_latest_gwine_version)
+        current_runner_version=$(cat "$GWINE_DIR/.version" 2>/dev/null || echo "")
         
         if [ "$dxvk_mode" = "dxvk-async" ]; then
             local latest_dxvk
@@ -239,6 +230,7 @@ auto_update_components() {
             fi
         elif [ -z "$current_runner_version" ]; then
             need_download=true
+        fi
         fi
         
         if [ -n "$latest_dxvk" ]; then
@@ -279,19 +271,10 @@ auto_update_components() {
         echo "Téléchargement des composants..."
         
         if [ "$has_runner" = false ]; then
-            if [ "$current_runner" = "proton" ]; then
-                echo "  - Installation de gwine-proton..."
-                download_gwine_proton "force" "true" || error_exit "Échec du téléchargement de gwine-proton"
-            else
                 echo "  - Installation de gwine..."
                 download_gwine "force" "true" || error_exit "Échec du téléchargement de gwine"
-            fi
         elif [ "$has_network" = true ]; then
-            if [ "$current_runner" = "proton" ]; then
-                download_gwine_proton "false" "true"
-            else
                 download_gwine "false" "true"
-            fi
         fi
         
         if [ "$dxvk_mode" = "dxvk-async" ]; then
@@ -322,14 +305,12 @@ prepare_full_offline_cache() {
     
     local failed=false
     
-    echo "1. Préparation du runner par défaut (gwine-proton)..."
+    echo "1. Préparation du runner gwine..."
     echo ""
     
-    # Seul gwine-proton est pré-caché (runner par défaut). Le runner wine
-    # standard n'est pas inclus : il sera téléchargé à la demande si l'utilisateur
-    # bascule dessus avec une connexion (voir ensure_runner_installed).
-    if ! download_gwine_proton "false" "true"; then
-        echo "      ⚠️ Échec du téléchargement/mise à jour de gwine-proton"
+    # Seul le runner gwine est pré-caché.
+    if ! download_gwine "false" "true"; then
+        echo "      ⚠️ Échec du téléchargement/mise à jour de gwine"
         failed=true
     fi
     echo ""
@@ -451,9 +432,9 @@ prepare_full_offline_cache() {
 # complet : runner archive + mono/gecko + wincomponents.
 # Retourne 0 si le cache est prêt pour l'offline, 1 sinon.
 gablue_offline_cache_ready() {
-    # Runner proton (archive .tar.xz dans le cache)
-    if [ ! -d "$COMPONENTS_DIR/gwine-proton" ] || \
-       [ -z "$(ls -A "$COMPONENTS_DIR/gwine-proton"/gwine-proton-*.tar.xz 2>/dev/null)" ]; then
+    # Runner gwine (archive .tar.xz dans le cache)
+    if [ ! -d "$COMPONENTS_DIR/gwine" ] || \
+       [ -z "$(ls -A "$COMPONENTS_DIR/gwine"/gwine-*.tar.xz 2>/dev/null)" ]; then
         return 1
     fi
 

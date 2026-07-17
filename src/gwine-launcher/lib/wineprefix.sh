@@ -354,10 +354,6 @@ restore_windows_symlinks() {
 }
 
 install_icu68_dlls() {
-    local current_runner
-    current_runner=$(get_current_runner)
-    [ "$current_runner" != "proton" ] && return 0
-
     local icu_src_64=""
     local icu_src_32=""
     for d in "$WINE_DIR/lib/wine/x86_64-windows" "$WINE_DIR/lib64/wine/x86_64-windows"; do

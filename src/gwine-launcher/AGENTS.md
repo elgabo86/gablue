@@ -2,7 +2,7 @@
 
 ## Description du projet
 
-**Gwine** est un lanceur de jeux Windows pour Linux utilisant Wine pur (gwine). C'est un outil Bash permettant de lancer des jeux Windows via Wine avec support des paquets WGP (format personnalisé) et des exécutables directs (.exe).
+**Gwine** est un lanceur de jeux Windows pour Linux utilisant son runner Wine intégré (basé sur l'arbre Valve Proton). C'est un outil Bash permettant de lancer des jeux Windows via Wine avec support des paquets WGP (format personnalisé) et des exécutables directs (.exe).
 
 ## Type de projet
 
@@ -28,8 +28,7 @@ src/gwine-launcher/
 │   ├── gpu.sh               # Détection GPU et configuration Vulkan
 │   ├── download.sh          # Téléchargement et gestion GitHub
 │   ├── cache/               # Modules de gestion du cache
-│   │   ├── gwine-proton.sh      # Téléchargement/installation gwine
-│   │   ├── gwine-proton-runner.sh  # Runner Proton
+│   │   ├── gwine-runner.sh       # Téléchargement/installation runner gwine
 │   │   ├── dxvk-vkd3d.sh        # DXVK, VKD3D, NVAPI + download_vkd3d()
 │   │   ├── offline.sh           # Mode offline, préparation cache
 │   │   └── cachepack.sh         # Création de packs cache offline
@@ -119,18 +118,14 @@ src/gwine-launcher/
 ./gwine --init                  # Initialisation standard
 ./gwine --init --offline        # Mode offline
 ./gwine --init --kdialog        # Avec interface graphique
-./gwine --init --wine           # Init avec runner Wine
-./gwine --init --proton         # Init avec runner Proton
 ./gwine --init --dxvk-async     # Init avec DXVK-GPLAsync
 ./gwine --update                # Mettre à jour les composants
 ./gwine --download-components   # Télécharger tous les composants
 ./gwine --cachepack             # Créer un pack cache pour offline
 ```
 
-### Configuration runner/DXVK
+### Mode DXVK
 ```bash
-./gwine --wine                  # Configurer Wine comme runner par défaut
-./gwine --proton                # Configurer Proton comme runner par défaut
 ./gwine --dxvk                  # Utiliser DXVK standard
 ./gwine --dxvk-async            # Utiliser DXVK-GPLAsync
 ```
@@ -202,8 +197,7 @@ lib/gpu.sh
 lib/ui.sh
 lib/component.sh          # -> charge components/*
 lib/wincomponents.sh      # -> charge wincomponents/*
-lib/cache/gwine-proton.sh
-lib/cache/gwine-proton-runner.sh
+lib/cache/gwine-runner.sh
 lib/cache/dxvk-vkd3d.sh
 lib/cache/offline.sh
 lib/cache/cachepack.sh
@@ -230,11 +224,10 @@ lib/dir-config.sh
 - **gpu.sh** : Détection automatique du GPU et configuration Vulkan
 - **download.sh** : Téléchargement GitHub, extraction d'archives, récupération versions composants (get_component_version avec double source officiel+bottles pour DXVK/VKD3D)
 - **cache/*** : Gestion du cache
-  - gwine-proton.sh : Téléchargement et installation de gwine
-  - gwine-proton-runner.sh : Runner Proton
+  - gwine-runner.sh : Téléchargement, installation et mise à jour du runner gwine
   - dxvk-vkd3d.sh : Mise à jour DXVK, VKD3D, NVAPI + download_vkd3d() pour téléchargement VKD3D seul (utilisé quand le mode DXVK async gère DXVK séparément)
-  - offline.sh : Préparation cache, mode offline, téléchargement Mono/Gecko avec vérification de version. `prepare_full_offline_cache()` (appelée par `--download-components`) ne pré-cache que le runner par défaut gwine-proton et télécharge **toujours** DXVK-NVAPI (cache portable, indépendant du GPU de la machine qui construit le pack)
-  - cachepack.sh : Création de packs cache pour déploiement offline. Empaquette gwine-proton uniquement (le runner wine standard est exclu du pack via `rm -rf` après copie), vérifie DXVK standard + GPLAsync + VKD3D + DXVK-NVAPI + Mono/Gecko + wincomponents. Le `install-cache.sh` généré déploie uniquement gwine-proton
+  - offline.sh : Préparation cache, mode offline, téléchargement Mono/Gecko avec vérification de version. `prepare_full_offline_cache()` (appelée par `--download-components`) pré-cache le runner gwine et télécharge **toujours** DXVK-NVAPI (cache portable, indépendant du GPU de la machine qui construit le pack)
+  - cachepack.sh : Création de packs cache pour déploiement offline. Empaquette le runner gwine, vérifie DXVK standard + GPLAsync + VKD3D + DXVK-NVAPI + Mono/Gecko + wincomponents. Le `install-cache.sh` généré déploie uniquement gwine
 - **component.sh** : Fichier de redirection vers components/*
 - **components/*** : Gestion des composants individuels
   - utils.sh : Utilitaires (copy_dll_files, create_dll_overrides, get_wine_system_paths)
@@ -253,7 +246,7 @@ lib/dir-config.sh
   - misc.sh : OpenAL, PhysX, MSLS31, VB6 Runtime
   - wmp9.sh : Windows Media Player 9 + wsh57. setup_wm.exe installe les codecs de base (wmvcore, wmp, l3codeca.acm) en 32 et 64-bit. Le pack supplémentaire wm9codecs (WM9Codecs9x.exe) est ignoré silencieusement en 64-bit car superflu.
   - main.sh : Fonction principale install_all_wincomponents
-- **wineprefix.sh** : Création/gestion du préfixe Wine, copie ICU 68 DLLs (gwine-proton uniquement)
+- **wineprefix.sh** : Création/gestion du préfixe Wine, copie ICU 68 DLLs (gwine uniquement)
 - **wineserver-manager.sh** : Fichier de redirection vers wineserver/*
 - **wineserver/*** : Gestion du wineserver persistant
   - init.sh : Initialisation système de locks
@@ -371,11 +364,11 @@ podman run --rm -v "$(pwd)/lib:/src:z" docker.io/library/fedora:43 bash -c \
 - Gestion des versions avec backup automatique
 - Support offline avec cache local
 - Mode `--cachepack` pour créer des packs déployables sur machines sans internet
-- **Installation du runner depuis le cache en mode offline** : le runner extrait vit dans `~/.local/share/gwine/wine-proton` (proton) ou `~/.local/share/gwine/wine` (wine), tandis que le cache `~/.cache/gwine/components/gwine-proton` ne contient que l'archive. Pour permettre de ne déployer QUE `~/.cache/gwine` (ex. déploiement offline pendant l'install Anaconda), deux points d'entrée installent le runner extrait à la volée depuis le cache si absent :
-  - `init_prefix_only()` (modes/init-main.sh) : en mode `--init --offline`, si `$WINE_DIR/bin/wine` est absent, appelle `install_gwine_proton_from_cache` / `install_gwine_from_cache` selon le runner courant puis `update_runner_paths` (au lieu de l'ancien `error_exit` immédiat). Échec uniquement si aucune archive n'est dans le cache
+- **Installation du runner depuis le cache en mode offline** : le runner extrait vit dans `~/.local/share/gwine/runner`, tandis que le cache `~/.cache/gwine/components/gwine` ne contient que l'archive. Pour permettre de ne déployer QUE `~/.cache/gwine` (ex. déploiement offline pendant l'install Anaconda), deux points d'entrée installent le runner extrait à la volée depuis le cache si absent :
+  - `init_prefix_only()` (modes/init-main.sh) : en mode `--init --offline`, si `$WINE_DIR/bin/wine` est absent, appelle `install_gwine_from_cache` puis `update_runner_paths` (au lieu de l'ancien `error_exit` immédiat). Échec uniquement si aucune archive n'est dans le cache
   - `ensure_runner_installed()` (runner.sh) : au lancement d'un jeu sans réseau, tente la même installation depuis le cache avant d'échouer (préserve le comportement online : si réseau dispo, télécharge la dernière version)
-- **Détection automatique du mode offline (first-run)** : quand le préfixe n'existe pas et qu'un jeu est lancé pour la première fois, `check_prefix_or_offer_init()` (gwine) détecte automatiquement si le cache local est complet via `gablue_offline_cache_ready()` (offline.sh). Si le cache contient le runner proton (archive), Wine Mono/Gecko, et les wincomponents, l'init se fait en mode `--init --offline` avec barre de progression kdialog, **sans jamais solliciter le réseau**. Si le cache est incomplet, le comportement actuel est conservé (proposition d'init online). `gablue_offline_cache_ready()` vérifie :
-  - Archive du runner proton présente (`components/gwine-proton/gwine-proton-*.tar.xz`)
+- **Détection automatique du mode offline (first-run)** : quand le préfixe n'existe pas et qu'un jeu est lancé pour la première fois, `check_prefix_or_offer_init()` (gwine) détecte automatiquement si le cache local est complet via `gablue_offline_cache_ready()` (offline.sh). Si le cache contient le runner (archive), Wine Mono/Gecko, et les wincomponents, l'init se fait en mode `--init --offline` avec barre de progression kdialog, **sans jamais solliciter le réseau**. Si le cache est incomplet, le comportement actuel est conservé (proposition d'init online). `gablue_offline_cache_ready()` vérifie :
+  - Archive du runner présente (`components/gwine/gwine-*.tar.xz`)
   - Wine Mono/Gecko présents (`components/wine-cache/wine-mono-*.msi`, `wine-gecko-*.msi`)
   - Composants Windows présents (`wincomponents/`, validés par `check_wincomponents_cache`)
 

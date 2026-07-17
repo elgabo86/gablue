@@ -1308,3 +1308,81 @@ vrr-fix:
     else
         echo "Règles VRR déjà à jour."
     fi
+
+# Migrer le runner gwine de l'ancien emplacement (~/.local/share/gwine/wine-proton)
+# vers le nouveau (~/.local/share/gwine/runner)
+gwine-migrate:
+    #!/usr/bin/bash
+    set -euo pipefail
+    GWINE_DIR="${HOME}/.local/share/gwine"
+    OLD_RUNNER="$GWINE_DIR/wine-proton"
+    NEW_RUNNER="$GWINE_DIR/runner"
+    OLD_VERSION="$GWINE_DIR/.version-proton"
+    NEW_VERSION="$GWINE_DIR/.version"
+    OLD_WINE="$GWINE_DIR/wine"
+    CACHE_DIR="${HOME}/.cache/gwine/components"
+    OLD_CACHE="$CACHE_DIR/gwine-proton"
+    NEW_CACHE="$CACHE_DIR/gwine"
+
+    echo "=== Migration du runner gwine ==="
+
+    # 1. Vérifier que l'ancien runner existe
+    if [ ! -d "$OLD_RUNNER" ] || [ ! -f "$OLD_RUNNER/bin/wine" ]; then
+        echo "Aucun ancien runner trouvé dans $OLD_RUNNER"
+        echo "Rien à migrer."
+        exit 0
+    fi
+
+    # 2. Vérifier que le nouveau n'existe pas déjà
+    if [ -d "$NEW_RUNNER" ] && [ -f "$NEW_RUNNER/bin/wine" ]; then
+        echo "Le nouveau runner existe déjà : $NEW_RUNNER"
+        echo "Migration déjà effectuée."
+        exit 0
+    fi
+
+    echo "Ancien runner détecté : $OLD_RUNNER"
+
+    # 3. Déplacer le runner vers le nouvel emplacement
+    echo "→ Déplacement de $OLD_RUNNER vers $NEW_RUNNER..."
+    mkdir -p "$(dirname "$NEW_RUNNER")"
+    mv "$OLD_RUNNER" "$NEW_RUNNER"
+
+    # 4. Migrer le fichier de version
+    if [ -f "$OLD_VERSION" ]; then
+        echo "→ Migration du fichier de version..."
+        cat "$OLD_VERSION" > "$NEW_VERSION"
+        rm -f "$OLD_VERSION"
+    fi
+
+    # 5. Supprimer l'ancien runner TKG (wine standard) s'il existe
+    if [ -d "$OLD_WINE" ]; then
+        echo "→ Suppression de l'ancien runner TKG : $OLD_WINE..."
+        rm -rf "$OLD_WINE"
+    fi
+
+    # 6. Migrer le cache (components/gwine-proton -> components/gwine)
+    if [ -d "$OLD_CACHE" ]; then
+        echo "→ Migration du cache : $OLD_CACHE → $NEW_CACHE..."
+        if [ -d "$NEW_CACHE" ] && [ -n "$(ls -A "$NEW_CACHE" 2>/dev/null)" ]; then
+            # Si les deux existent, copier les archives manquantes
+            cp -n "$OLD_CACHE"/* "$NEW_CACHE/" 2>/dev/null || true
+            rm -rf "$OLD_CACHE"
+        else
+            mkdir -p "$(dirname "$NEW_CACHE")"
+            mv "$OLD_CACHE" "$NEW_CACHE"
+        fi
+    fi
+
+    # 7. Nettoyer l'ancien fichier options (supprimer la ligne runner=)
+    OPTIONS_FILE="$GWINE_DIR/options"
+    if [ -f "$OPTIONS_FILE" ]; then
+        echo "→ Nettoyage de la configuration runner..."
+        sed -i '/^runner=/d' "$OPTIONS_FILE"
+    fi
+
+    echo ""
+    echo "✓ Migration terminée !"
+    echo "  Runner : $NEW_RUNNER"
+    if [ -f "$NEW_VERSION" ]; then
+        echo "  Version : $(cat "$NEW_VERSION")"
+    fi

@@ -5,11 +5,9 @@
 ################################################################################
 
 init_prefix_only() {
-    local current_runner
-    current_runner=$(get_current_runner)
     
     echo "Initialisation du préfixe Wine..."
-    echo "Runner utilisé: $current_runner"
+    echo "Runner utilisé: gwine"
     
     if [ "$OFFLINE_MODE" = "true" ]; then
         echo "Mode offline activé"
@@ -44,19 +42,11 @@ init_prefix_only() {
     if [ "$OFFLINE_MODE" = "true" ] && ([ ! -d "$WINE_DIR" ] || [ ! -f "$WINE_DIR/bin/wine" ]); then
         # Runner absent mais mode offline : tenter l'installation depuis le cache
         # (le pack cache déployé ne contient que ~/.cache/gwine, pas le runner extrait)
-        echo "Runner $current_runner absent, installation depuis le cache offline..."
-        if [ "$current_runner" = "proton" ]; then
-            install_gwine_proton_from_cache || {
-                progress_close "$DBUS_REF"
-                error_exit "Mode offline: le runner $current_runner n'est pas installé et aucune archive n'est disponible dans le cache."
-            }
-        else
-            install_gwine_from_cache || {
-                progress_close "$DBUS_REF"
-                error_exit "Mode offline: le runner $current_runner n'est pas installé et aucune archive n'est disponible dans le cache."
-            }
-        fi
-        update_runner_paths "$current_runner"
+        echo "Runner gwine absent, installation depuis le cache offline..."
+        install_gwine_from_cache || {
+            progress_close "$DBUS_REF"
+            error_exit "Mode offline: le runner gwine n'est pas installé et aucune archive n'est disponible dans le cache."
+        }
     fi
     
     if [ "$OFFLINE_MODE" != "true" ]; then
@@ -64,11 +54,7 @@ init_prefix_only() {
             kdialog --passivepopup "Vérification des mises à jour du runner..." 5
         fi
         # Toujours vérifier les mises à jour, même si le runner est déjà installé
-        if [ "$current_runner" = "proton" ]; then
-            download_gwine_proton "force"
-        else
-            download_gwine "force"
-        fi
+        download_gwine "force"
     fi
     
     require_wine
@@ -216,7 +202,7 @@ init_prefix_only() {
     echo ""
     echo "Configuration effectuée :"
     echo "  ✓ Préfixe Wine créé"
-    echo "  ✓ Runner: $current_runner"
+    echo "  ✓ Runner: gwine"
     if [ "$current_dxvk_mode" = "dxvk-async" ]; then
         echo "  ✓ DXVK-GPLAsync et VKD3D-Proton configurés"
         echo "  ✓ DXVK_ASYNC=1 sera défini automatiquement"
