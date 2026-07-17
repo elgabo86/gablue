@@ -1740,7 +1740,7 @@ class WGPWindow(QMainWindow):
                             height = pixmap.height()
                             # Doit être carré (ratio 1:1) et taille typique d'icône
                             is_square = abs(width - height) <= 2  # Tolérance de 2 pixels
-                            is_icon_size = width in [16, 24, 32, 48, 64, 96, 128, 192, 256, 512]
+                            is_icon_size = 16 <= width <= 512  # Entre 16 et 512 px
                             
                             if is_square and is_icon_size:
                                 self.available_icons.append({
