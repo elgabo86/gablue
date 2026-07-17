@@ -340,7 +340,9 @@ _run_ffmpeg() {
             kill -9 "$ffmpeg_pid" 2>/dev/null || true
             wait "$ffmpeg_pid" 2>/dev/null || true
             [ -f "$output_file" ] && rm -f "$output_file"
-            _progress_close
+if [ "$TOTAL_STEPS" -gt 1 ]; then
+    _progress_close
+fi
             echo "Conversion annulée."
             exit 0
         fi
@@ -386,7 +388,14 @@ _build_ffmpeg_cmd() {
 # Barre de progression
 # =============================================================================
 
-_progress_create "Conversion de médias" "$TOTAL_STEPS"
+if [ "$TOTAL_STEPS" -le 1 ]; then
+    # Un seul fichier : notification simple, pas de barre de progression
+    if [ "$HAS_GUI" = true ]; then
+        kdialog --passivepopup "Conversion en cours..." 3 2>/dev/null || true
+    fi
+else
+    _progress_create "Conversion de médias" "$TOTAL_STEPS"
+fi
 
 # =============================================================================
 # Boucle de conversion
@@ -440,7 +449,9 @@ for INPUT_FILE in "$@"; do
             fi
 
             CURRENT_STEP=$((CURRENT_STEP + 1))
-            _progress_update "$CURRENT_STEP" "$(basename "$INPUT_FILE") → $suffix.$OUTPUT_FORMAT"
+            if [ "$TOTAL_STEPS" -gt 1 ]; then
+                _progress_update "$CURRENT_STEP" "$(basename "$INPUT_FILE") → $suffix.$OUTPUT_FORMAT"
+            fi
 
             # Construire les arguments via _build_ffmpeg_cmd puis les lire dans un tableau
             mapfile -t ffmpeg_args < <(_build_ffmpeg_cmd "$INPUT_FILE" "$output_file" "$OUTPUT_FORMAT" "$QUALITY")
@@ -492,7 +503,9 @@ for INPUT_FILE in "$@"; do
     fi
 
     CURRENT_STEP=$((CURRENT_STEP + 1))
-    _progress_update "$CURRENT_STEP" "$(basename "$INPUT_FILE") → $(basename "$output_file")"
+    if [ "$TOTAL_STEPS" -gt 1 ]; then
+        _progress_update "$CURRENT_STEP" "$(basename "$INPUT_FILE") → $(basename "$output_file")"
+    fi
 
     mapfile -t ffmpeg_args < <(_build_ffmpeg_cmd "$INPUT_FILE" "$output_file" "$OUTPUT_FORMAT" "$QUALITY")
 
