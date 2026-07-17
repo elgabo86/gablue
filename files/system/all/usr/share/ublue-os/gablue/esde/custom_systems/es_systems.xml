@@ -48,7 +48,7 @@
         <path>%ROMPATH%/xbox360</path>
         <extension>. .desktop .iso .ISO .sh .xex .XEX .zar .ZAR .wgp .WGP</extension>
         <command label="Xenia (Bottles)">/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=bottles-cli --file-forwarding com.usebottles.bottles run --bottle def --executable '~/Windows/Applications/xenia/xenia_canary.exe' '%ROM%'</command>
-        <command label="WGP Windows Game Pack">/usr/share/ublue-os/gablue/scripts/launchwin.sh %ROM%</command>
+        <command label="WGP Windows Game Pack">/usr/bin/gwine %ROM%</command>
         <platform>xbox360</platform>
         <theme>xbox360</theme>
     </system>

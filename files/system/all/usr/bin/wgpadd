@@ -2,7 +2,7 @@
 
 # Dossier courant
 WORKING_DIR="$(pwd)"
-LAUNCH_SCRIPT="/usr/share/ublue-os/gablue/scripts/launchwin.sh"
+LAUNCH_SCRIPT="/usr/bin/gwine"
 
 # Parcourir tous les fichiers .wgp du dossier courant
 for wgp_file in "$WORKING_DIR"/*.wgp; do
