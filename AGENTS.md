@@ -933,6 +933,12 @@ podman images test-build
 - **systemd/** : Timeouts et configuration systemd
 - **yum.repos.d/docker-ce.repo** : Dépôt Docker
 
+### Exécution des binaires Windows (binfmt_misc)
+
+- **usr/lib/binfmt.d/gablue-windows.conf** : règle binfmt_misc (magic `MZ` → interpréteur `/usr/bin/gwine`), chargée au boot par `systemd-binfmt.service` (statique, activé par la présence du fichier)
+- Permet `./jeu.exe` en terminal et rend fonctionnel le bouton « Exécuter » de Dolphin/KIO pour les `.exe` ayant le bit `+x` (copies depuis NTFS/exFAT, archives) : le kernel invoque gwine avec le chemin du `.exe`
+- Complément du patch runner `no_exe_executable_bit.mypatch` (dépôt `elgabo86/gwine`) : le wineserver gwine ne pose plus `+x` sur les `.exe`/`.com` créés par les installateurs Windows. Sans `+x`, KIO ouvre nativement les `.exe` avec le handler par défaut (Windows.desktop → gwine), avec icônes et menu « Ouvrir avec » intacts — KIO ne traite un `.exe` comme binaire natif que s'il a le bit exécutable (comportement hardcodé, sans option de config)
+
 ### Scripts utilisateur (/usr/bin)
 
 Scripts personnalisés Gablue :
