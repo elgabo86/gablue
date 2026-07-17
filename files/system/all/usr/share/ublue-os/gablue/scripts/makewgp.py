@@ -804,7 +804,7 @@ class WGPWindow(QMainWindow):
         
         self.setWindowTitle("WGP Creator - Création de paquets Windows Game Packs")
         self.setMinimumSize(1000, 650)
-        self.resize(1300, 750)
+        self.resize(1300, 820)
         
         # Appliquer le thème moderne
         self.apply_stylesheet()
@@ -1150,6 +1150,19 @@ class WGPWindow(QMainWindow):
         names_layout.addWidget(internal_name_widget)
         names_layout.addWidget(self.internal_name_input, stretch=1)
 
+        # Aperçu de l'icône sélectionnée
+        self.icon_preview_label = QLabel()
+        self.icon_preview_label.setFixedSize(64, 64)
+        self.icon_preview_label.setAlignment(Qt.AlignCenter)
+        self.icon_preview_label.setStyleSheet("""
+            QLabel {
+                background-color: #2D2D33;
+                border: 2px solid #3C3C46;
+                border-radius: 8px;
+            }
+        """)
+        names_layout.addWidget(self.icon_preview_label)
+
         main_layout.addWidget(names_group)
 
         # === SECTION MILIEU: Layout principal avec 2 colonnes ===
@@ -1167,10 +1180,10 @@ class WGPWindow(QMainWindow):
         exe_layout = QVBoxLayout(exe_group)
         exe_layout.setContentsMargins(8, 12, 8, 8)
         self.exe_list = QListWidget()
-        self.exe_list.setMinimumHeight(50)
+        self.exe_list.setMinimumHeight(80)
         self.exe_list.currentRowChanged.connect(self.on_exe_selected)
         exe_layout.addWidget(self.exe_list)
-        left_layout.addWidget(exe_group, stretch=2)
+        left_layout.addWidget(exe_group, stretch=4)
         
         # Icône du jeu
         icon_group = QGroupBox("Icône du jeu")
@@ -1183,7 +1196,7 @@ class WGPWindow(QMainWindow):
         self.icon_scroll_area.setWidgetResizable(True)
         self.icon_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.icon_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.icon_scroll_area.setMinimumHeight(140)
+        self.icon_scroll_area.setMinimumHeight(200)
         self.icon_scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         
         # Widget conteneur pour la grille d'icônes
@@ -1196,26 +1209,10 @@ class WGPWindow(QMainWindow):
         self.icon_scroll_area.setWidget(self.icons_container)
         icon_layout.addWidget(self.icon_scroll_area, stretch=1)
 
-        # Barre du bas: aperçu + info + bouton ajouter
+        # Barre du bas: bouton ajouter
         icon_bottom_layout = QHBoxLayout()
         icon_bottom_layout.setSpacing(10)
         
-        self.icon_preview_label = QLabel()
-        self.icon_preview_label.setFixedSize(64, 64)
-        self.icon_preview_label.setAlignment(Qt.AlignCenter)
-        self.icon_preview_label.setStyleSheet("""
-            QLabel {
-                background-color: #2D2D33;
-                border: 2px solid #3C3C46;
-                border-radius: 8px;
-            }
-        """)
-        icon_bottom_layout.addWidget(self.icon_preview_label)
-        
-        self.icon_info_label = QLabel("Cliquez sur une icône")
-        self.icon_info_label.setStyleSheet("color: #B4B4BE; font-size: 10px;")
-        self.icon_info_label.setAlignment(Qt.AlignVCenter)
-        icon_bottom_layout.addWidget(self.icon_info_label)
         icon_bottom_layout.addStretch()
         
         add_icon_btn = QPushButton()
@@ -1939,8 +1936,6 @@ class WGPWindow(QMainWindow):
 
         # Mettre à jour le chemin de l'icône sélectionnée
         self.icon_path = self.available_icons[idx]['path']
-        icon_name = self.available_icons[idx]['name']
-        self.icon_info_label.setText(f"Sélectionnée: {icon_name}")
 
         # Mettre à jour l'aperçu grand format
         self.icon_preview_label.setStyleSheet("""
@@ -2056,7 +2051,6 @@ class WGPWindow(QMainWindow):
         self.icon_preview_label.setFixedSize(preview_px, preview_px)
         
         # Labels secondaires
-        self.icon_info_label.setStyleSheet(f"color: #B4B4BE; font-size: {max(7, round(10 * scale))}px;")
         self.internal_name_sublabel.setStyleSheet(f"color: #888; font-size: {max(6, round(9 * scale))}px;")
     
     def reorganize_icon_grid(self):
