@@ -105,6 +105,7 @@ dnf5 -y install \
     zoxide \
     trash-cli \
     inotify-tools \
+    kernel-tools \
     atuin \
     tldr \
     git \
