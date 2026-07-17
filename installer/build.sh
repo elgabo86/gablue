@@ -153,7 +153,7 @@ fi
 # PACK CACHE GWINE (OFFLINE) → /extra
 # =============================================================================
 
-# Génère un pack cache gwine complet (runner gwine-proton, DXVK,
+# Génère un pack cache gwine complet (runner gwine, DXVK,
 # DXVK-GPLAsync, VKD3D-Proton, DXVK-NVAPI, Wine Mono/Gecko, composants Windows)
 # et le place dans /extra sous forme de dossier installer déployable offline.
 # /extra n'existe que dans le rootfs live : l'installation sur disque redéploie
