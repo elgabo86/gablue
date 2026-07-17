@@ -17,6 +17,7 @@ from ctypes import c_void_p, c_char_p, c_int, CFUNCTYPE, Structure
 from evdev import ecodes
 from PySide6.QtCore import Qt, QSize, QUrl, QTimer, QEvent, Signal
 from PySide6.QtGui import QIcon, QFont, QPixmap, QOpenGLContext, QPainter, QSurfaceFormat
+from PySide6.QtDBus import QDBusMessage, QDBusConnection
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
@@ -709,6 +710,9 @@ class TVWindow(QMainWindow):
         self._hold_start = 0.0         # timestamp ms début du maintien
         self._last_repeat = 0.0        # timestamp ms dernière répétition auto
 
+        # --- Inhibition veille écran (portail freedesktop, D-Bus) ---
+        self._inhibit_handle = None
+
         # --- Construction de l'interface ---
         self._setup_ui()
         self._build_country_pills()
@@ -1120,6 +1124,9 @@ class TVWindow(QMainWindow):
         self._video_widget.play(url)
         self._loading_timer.start(3000)
 
+        # Empêche l'extinction d'écran pendant la lecture (portail freedesktop)
+        self._inhibit_screensaver()
+
     def _hide_loading(self):
         self._loading_overlay.hide()
         self._load_anim.stop()
@@ -1127,6 +1134,10 @@ class TVWindow(QMainWindow):
 
     def _pause_toggle(self):
         self._video_widget.command("cycle", "pause")
+        if self._inhibit_handle:
+            self._uninhibit_screensaver()
+        else:
+            self._inhibit_screensaver()
 
     def _stop_video(self):
         """Arrête la lecture et revient à la grille."""
@@ -1134,6 +1145,36 @@ class TVWindow(QMainWindow):
         self._stack.setCurrentIndex(0)
         self._top_bar.show()
         self._hide_loading()
+        self._uninhibit_screensaver()
+
+    def _inhibit_screensaver(self):
+        """Empêche l'extinction d'écran via org.freedesktop.PowerManagement."""
+        if self._inhibit_handle is not None:
+            return
+        msg = QDBusMessage.createMethodCall(
+            "org.freedesktop.PowerManagement",
+            "/org/freedesktop/PowerManagement/Inhibit",
+            "org.freedesktop.PowerManagement.Inhibit",
+            "Inhibit",
+        )
+        msg.setArguments(["Gablue TV", "Lecture en cours"])
+        reply = QDBusConnection.sessionBus().call(msg)
+        if reply.type() == QDBusMessage.ReplyMessage and reply.arguments():
+            self._inhibit_handle = reply.arguments()[0]
+
+    def _uninhibit_screensaver(self):
+        """Lève l'inhibition d'écran."""
+        if self._inhibit_handle is None:
+            return
+        msg = QDBusMessage.createMethodCall(
+            "org.freedesktop.PowerManagement",
+            "/org/freedesktop/PowerManagement/Inhibit",
+            "org.freedesktop.PowerManagement.Inhibit",
+            "UnInhibit",
+        )
+        msg.setArguments([self._inhibit_handle])
+        QDBusConnection.sessionBus().call(msg)
+        self._inhibit_handle = None
 
     def _toggle_fullscreen(self):
         """Bascule plein écran / fenêtré (à tout moment)."""
