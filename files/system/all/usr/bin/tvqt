@@ -492,6 +492,7 @@ class MpvWidget(QOpenGLWidget):
         self._lib_mpv_set_option_string(self._handle, b"alang", b"fr,eng,ita,deu,spa,jpn,und")
         self._lib_mpv_set_option_string(self._handle, b"slang", b"fr,eng")
         self._lib_mpv_set_option_string(self._handle, b"keep-open", b"yes")
+        self._lib_mpv_set_option_string(self._handle, b"stop-screensaver", b"yes")
 
         if self._lib_mpv_initialize(self._handle) < 0:
             raise RuntimeError("libmpv: mpv_initialize() failed")
