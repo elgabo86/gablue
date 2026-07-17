@@ -154,15 +154,31 @@ run_classic_mode() {
         error_exit "Fichier non trouvé: $new_fullpath"
     fi
     
-    local temp_base=""
+    gwine_temp_base=""
     if [[ "$fullpath" == *[^[:ascii:]]* ]]; then
-        local temp_dir
-        temp_dir=$(mktemp -d)
-        temp_base="$temp_dir"
-        ln -sf "$new_fullpath" "$temp_dir/$filename"
-        new_fullpath="$temp_dir/$filename"
+        gwine_temp_base=$(mktemp -d)
+        ln -sf "$new_fullpath" "$gwine_temp_base/$filename"
+        new_fullpath="$gwine_temp_base/$filename"
     fi
-    [ -n "$temp_base" ] && trap 'rm -rf "$temp_base"' EXIT
+
+    # Contournement des composants de chemin invalides sous Windows.
+    # Windows interdit les noms de dossiers finissant par un point ou un espace ;
+    # Wine émule cette règle lors de la conversion des chemins et ne retrouve
+    # plus l'exécutable (ex: ISO montée avec un label finissant par un point).
+    # On redirige alors le lancement via un symlink temporaire vers le dossier
+    # de l'exécutable : le chemin vu par Wine ne contient plus de composant invalide.
+    local norm_path norm_dir
+    norm_path="$(realpath -s "$new_fullpath" 2>/dev/null || echo "$new_fullpath")"
+    norm_dir="$(dirname "$norm_path")"
+    if [[ "$norm_dir/" == *"./"* ]] || [[ "$norm_dir/" == *" /"* ]]; then
+        if [ -z "$gwine_temp_base" ]; then
+            gwine_temp_base=$(mktemp -d)
+        fi
+        ln -sfn "$norm_dir" "$gwine_temp_base/gamedir"
+        new_fullpath="$gwine_temp_base/gamedir/$(basename "$norm_path")"
+        echo "Chemin incompatible Windows détecté (dossier finissant par '.' ou espace)"
+        echo "Redirection via symlink: $new_fullpath"
+    fi
     
     init_wineprefix
 
@@ -192,8 +208,8 @@ run_classic_mode() {
 
     local lock_file="/tmp/wgp-lock-$filename"
     echo "$$:$(date +%s)" > "$lock_file"
-    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 1; kill_process_tree "$GWINE_GAME_PID" KILL; echo "Arrêt des processus orphelins..."; for pid in $(pgrep -f "\.exe"); do if [ -r "/proc/$pid/environ" ] && grep -q "WINEPREFIX=$WINEPREFIX" "/proc/$pid/environ" 2>/dev/null; then cmdline=$(tr "\0" " " < "/proc/$pid/cmdline" 2>/dev/null); if ! [[ "$cmdline" =~ (winedevice|plugplay|explorer|services|svchost|rpcss|wineboot|steam|msiexec|regsvr32|spoolsv|conhost|wmplayer|taskkill|wineconsole)\.exe ]]; then kill "$pid" 2>/dev/null; fi; fi; done; stop_ds2xbox; restore_padfix_setting; sleep 1; rm -f "$lock_file" 2>/dev/null; exit 130' INT TERM
-    trap 'stop_ds2xbox; restore_padfix_setting; rm -f "$lock_file" 2>/dev/null' EXIT
+    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 1; kill_process_tree "$GWINE_GAME_PID" KILL; echo "Arrêt des processus orphelins..."; for pid in $(pgrep -f "\.exe"); do if [ -r "/proc/$pid/environ" ] && grep -q "WINEPREFIX=$WINEPREFIX" "/proc/$pid/environ" 2>/dev/null; then cmdline=$(tr "\0" " " < "/proc/$pid/cmdline" 2>/dev/null); if ! [[ "$cmdline" =~ (winedevice|plugplay|explorer|services|svchost|rpcss|wineboot|steam|msiexec|regsvr32|spoolsv|conhost|wmplayer|taskkill|wineconsole)\.exe ]]; then kill "$pid" 2>/dev/null; fi; fi; done; stop_ds2xbox; restore_padfix_setting; sleep 1; rm -f "$lock_file" 2>/dev/null; [ -n "$gwine_temp_base" ] && rm -rf "$gwine_temp_base" 2>/dev/null; exit 130' INT TERM
+    trap 'stop_ds2xbox; restore_padfix_setting; rm -f "$lock_file" 2>/dev/null; [ -n "$gwine_temp_base" ] && rm -rf "$gwine_temp_base" 2>/dev/null' EXIT
 
     launch_wine_game "$new_fullpath" "$args" "$filename" "$env_vars" "false"
     
@@ -201,6 +217,10 @@ run_classic_mode() {
     stop_ds2xbox
     restore_padfix_setting
     rm -f "$lock_file" 2>/dev/null
+    if [ -n "$gwine_temp_base" ]; then
+        rm -rf "$gwine_temp_base"
+        gwine_temp_base=""
+    fi
 }
 
 # =============================================================================
