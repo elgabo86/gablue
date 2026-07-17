@@ -231,7 +231,6 @@ auto_update_components() {
         elif [ -z "$current_runner_version" ]; then
             need_download=true
         fi
-        fi
         
         if [ -n "$latest_dxvk" ]; then
             if [ "$dxvk_mode" = "dxvk-async" ]; then

@@ -245,9 +245,6 @@ main() {
     # Parser les arguments en premier
     parse_arguments "$@"
 
-    # Vérifier si une migration est nécessaire (ancien runner wine-proton -> runner)
-    check_runner_migration
-    
     if [ "$reset_mode" = true ]; then
         reset_gwine_options
         export init_mode=true
