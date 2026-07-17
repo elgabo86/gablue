@@ -38,6 +38,8 @@ COPY src/gamepadshortcuts /src/gamepadshortcuts
 COPY src/ds2xbox /src/ds2xbox
 COPY src/gablue-isomount /src/gablue-isomount
 COPY src/gwine-launcher /src/gwine-launcher
+COPY src/composefs-fix /src/composefs-fix
+COPY src/cpuid-fault /src/cpuid-fault
 
 # Copie des fichiers système dans l'image
 COPY files/system/all /

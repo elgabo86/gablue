@@ -56,15 +56,22 @@ Le projet construit 6 variantes distinctes :
 ├── Containerfile-gablue-nvidia-open-test  # Containerfile pour nvidia-open-test
 ├── cosign.pub                             # Clé publique pour signature
 ├── src/
+│   ├── composefs-fix/                      # Correction espace libre Dolphin sur composefs
+│   │   ├── composefs-fix.c                 # Hook LD_PRELOAD (intercepte statfs/statfs64)
+│   │   └── Makefile                        # Compilation (.so)
+│   ├── cpuid-fault/                         # Module kernel CPUID faulting (AMD)
+│   │   ├── inc/                            # En-têtes (vmcb_layout.h, host_state.h)
+│   │   ├── src/                            # Sources assembleur + C
+│   │   └── Makefile                        # Compilation kernel (Kbuild)
 │   ├── ds2xbox/                           # Sources C du convertisseur DualSense → Xbox
 │   │   ├── ds2xbox.c                      # Programme principal (evdev, uinput)
 │   │   └── Makefile                       # Compilation
 │   ├── gamepadshortcuts/                  # Sources C du gestionnaire de raccourcis manette
 │   │   ├── gamepadshortcuts.c             # Programme principal (inotify VT, evdev)
 │   │   └── Makefile                       # Compilation
-│   └── gablue-isomount/                    # Sources C du monteur d'images disque
-│       ├── gablue-isomount.c              # Programme principal (UDisks2 DBus, Dolphin)
-│       └── Makefile                       # Compilation
+│   ├── gablue-isomount/                    # Sources C du monteur d'images disque
+│   │   ├── gablue-isomount.c              # Programme principal (UDisks2 DBus, Dolphin)
+│   │   └── Makefile                       # Compilation
 │   └── gwine-launcher/                     # Sources du lanceur gwine (Bash modulaire)
 │       ├── gwine                           # Script point d'entrée
 │       ├── build.sh                        # Assemblage du fichier standalone
@@ -566,7 +573,7 @@ Configuration post-installation étendue :
 - Corrige l'affichage de l'espace libre dans Dolphin sur les systèmes composefs (Fedora Kinoite 42+)
 - L'overlay composefs en `/` rapporte 0 blocs libres, le hook redirige `/`, `/home` et `/home/*` vers `/var/home` (btrfs)
 - Injection via `sed` dans le `.desktop` Dolphin (`Exec=env LD_PRELOAD=...`)
-- Sources dans `files/system/all/usr/src/composefs-fix/`
+- Sources dans `src/composefs-fix/`
 
 **Correction plasmalogin settle udev** (TEMPORAIRE, toutes variantes) :
 - **Problème** : plasmalogin.service exécute `udevadm settle --timeout=10` avant de démarrer le greeter, ce qui provoque un écran noir de 10s sur certaines cartes mères (queue udev jamais vide)
@@ -645,12 +652,12 @@ Génération de l'initramfs avec dracut :
 
 ### 10. cpuid-fault - Module kernel CPUID faulting
 
-Compile le module `cpuid_fault_emulation` (source dans `files/system/all/usr/src/cpuid-fault/`).
+Compile le module `cpuid_fault_emulation` (source dans `src/cpuid-fault/`).
 Ce module émule le CPUID faulting sur les CPU AMD sans support natif (AM4, Steam Deck).
 Sur les CPU avec support natif (Intel 4th gen+, AMD Ryzen 7000+), le module n'est pas
 nécessaire — le kernel gère le CPUID faulting via `ARCH_SET_CPUID` nativement.
 
-- Compilation via `make -C /usr/src/kernels/${KVER} M=/usr/src/cpuid-fault modules`
+- Compilation via `make -C /usr/src/kernels/${KVER} M=/src/cpuid-fault modules`
 - Le module est **AMD SVM uniquement** (instructions AMD-V), il sera ignoré sur Intel
 - Signature Secure Boot via `/run/secrets/gablue-kmod-key` (monté depuis le secret CI `GABLUE_KMOD_KEY`)
 - Si la clé n'est pas disponible (build local), le module est compilé mais non signé

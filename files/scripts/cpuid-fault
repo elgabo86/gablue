@@ -18,14 +18,14 @@ echo "Kernel version: ${KVER}"
 # SECTION 2 : COMPILATION DU MODULE
 # =============================================================================
 
-make -C "/usr/src/kernels/${KVER}" M=/usr/src/cpuid-fault modules
+make -C "/usr/src/kernels/${KVER}" M=/src/cpuid-fault modules
 
 # =============================================================================
 # SECTION 3 : INSTALLATION
 # =============================================================================
 
 mkdir -p "/lib/modules/${KVER}/extra"
-cp /usr/src/cpuid-fault/cpuid_fault_emulation.ko "/lib/modules/${KVER}/extra/"
+cp /src/cpuid-fault/cpuid_fault_emulation.ko "/lib/modules/${KVER}/extra/"
 
 # =============================================================================
 # SECTION 4 : SIGNATURE SECURE BOOT
@@ -51,8 +51,8 @@ fi
 depmod "${KVER}"
 
 # Nettoyage des artefacts de compilation
-rm -f /usr/src/cpuid-fault/*.o /usr/src/cpuid-fault/src/*.o \
-      /usr/src/cpuid-fault/*.mod* /usr/src/cpuid-fault/Module.symvers \
-      /usr/src/cpuid-fault/modules.order
+rm -f /src/cpuid-fault/*.o /src/cpuid-fault/src/*.o \
+      /src/cpuid-fault/*.mod* /src/cpuid-fault/Module.symvers \
+      /src/cpuid-fault/modules.order
 
 echo "Module cpuid_fault_emulation compilé et installé avec succès"

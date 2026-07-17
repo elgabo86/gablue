@@ -40,9 +40,9 @@ build_and_verify "/src/gablue-isomount" "gablue-isomount" "gablue-isomount"
 
 # Compilation du hook composefs-fix (correction espace libre Dolphin)
 # Necessite gcc, compile AVANT de supprimer le compilateur
-if [ -d /usr/src/composefs-fix ]; then
-    make -C /usr/src/composefs-fix install
-    rm -rf /usr/src/composefs-fix
+if [ -d /src/composefs-fix ]; then
+    make -C /src/composefs-fix install
+    rm -rf /src/composefs-fix
     if [ ! -f /usr/lib64/gablue-composefs-fix.so ]; then
         echo "ERREUR FATALE : echec de compilation de gablue-composefs-fix.so" >&2
         exit 1
