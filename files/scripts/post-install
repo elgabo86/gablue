@@ -57,6 +57,9 @@ chmod +x /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/*
 # Donner les capacités d'ordonnancement temps réel à Gamescope
 setcap 'cap_sys_nice=eip' /usr/bin/gamescope
 
+# Donner la capacité réseau à kdeconnectd (nécessaire pour les contrôles à distance)
+setcap 'cap_net_admin+ep' /usr/bin/kdeconnectd
+
 # =============================================================================
 # MODULES SELINUX
 # =============================================================================
