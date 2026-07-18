@@ -16,7 +16,7 @@ import shiboken6
 from ctypes import c_void_p, c_char_p, c_int, CFUNCTYPE, Structure
 from evdev import ecodes
 from PySide6.QtCore import Qt, QSize, QUrl, QTimer, QEvent, Signal
-from PySide6.QtGui import QIcon, QFont, QPixmap, QOpenGLContext, QPainter, QSurfaceFormat
+from PySide6.QtGui import QIcon, QFont, QPixmap, QOpenGLContext, QPainter, QSurfaceFormat, QCursor
 from PySide6.QtDBus import QDBusMessage, QDBusConnection
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -622,12 +622,15 @@ class MpvWidget(QOpenGLWidget):
         self._playing = False
 
     def mouseDoubleClickEvent(self, event):
-        """Double-clic gauche : bascule plein écran."""
+        """Double-clic gauche : bascule plein écran sur l'écran contenant le curseur."""
         if event.button() == Qt.LeftButton:
             win = self.window()
             if win.isFullScreen():
                 win.showNormal()
             else:
+                screen = QApplication.screenAt(QCursor.pos())
+                if screen:
+                    win.setGeometry(screen.geometry())
                 win.showFullScreen()
 
     def mouseReleaseEvent(self, event):
@@ -1177,10 +1180,13 @@ class TVWindow(QMainWindow):
         self._inhibit_handle = None
 
     def _toggle_fullscreen(self):
-        """Bascule plein écran / fenêtré (à tout moment)."""
+        """Bascule plein écran / fenêtré (à tout moment), forcé sur l'écran du curseur."""
         if self.isFullScreen():
             self.showNormal()
         else:
+            screen = QApplication.screenAt(QCursor.pos())
+            if screen:
+                self.setGeometry(screen.geometry())
             self.showFullScreen()
 
     def _volume_up(self):
