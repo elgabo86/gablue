@@ -276,11 +276,11 @@ cp -av /usr/lib/efi/*/*/EFI /boot/efi/
 cp -v /boot/efi/EFI/fedora/grubx64.efi /boot/efi/EFI/BOOT/fbx64.efi
 
 # =============================================================================
-# FUSEAU HORAIRE UTC
+# FUSEAU HORAIRE EUROPE/ZURICH
 # =============================================================================
 
 rm -f /etc/localtime
-systemd-firstboot --timezone UTC
+systemd-firstboot --timezone Europe/Zurich
 
 # =============================================================================
 # /var/tmp SUR TMPFS PLUS LARGE
