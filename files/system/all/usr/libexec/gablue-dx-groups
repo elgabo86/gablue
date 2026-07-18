@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # SCRIPT VERSION
-GROUP_SETUP_VER=2
+GROUP_SETUP_VER=3
 GROUP_SETUP_VER_FILE="/etc/ublue/dx-groups"
 GROUP_SETUP_VER_RAN=$(cat "$GROUP_SETUP_VER_FILE")
 
@@ -28,6 +28,7 @@ append_group docker
 append_group incus-admin
 append_group libvirt
 append_group dialout
+append_group disk
 
 wheelarray=($(getent group wheel | cut -d ":" -f 4 | tr ',' '\n'))
 for user in $wheelarray; do
@@ -35,6 +36,7 @@ for user in $wheelarray; do
   usermod -aG incus-admin $user
   usermod -aG libvirt $user
   usermod -aG dialout $user
+  usermod -aG disk $user
 done
 
 # Prevent future executions
