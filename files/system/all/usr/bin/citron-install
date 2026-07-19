@@ -75,7 +75,7 @@ else
     echo "Aucune ancienne version trouvée, installation directe..."
 fi
 
-yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH"
+yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH" 2>/dev/null || true
 
 # Corriger le .desktop créé par GearLever pour enlever le versionning
 DESKTOP_DIR="$HOME/.local/share/applications"

@@ -32,7 +32,7 @@ if [ -z "$DOWNLOAD_DIR" ] || [ ! -d "$DOWNLOAD_DIR" ]; then
 fi
 
 # Définir le dossier où Gearlever stocke les AppImages
-APPIMAGES_DIR="/var/home/gab/AppImages"  # Adapté à ton chemin
+APPIMAGES_DIR="$HOME/AppImages"
 APPIMAGE_FILE="$APPIMAGES_DIR/esde.appimage"
 
 # Vérifier si ES-DE est déjà installé via Gearlever dans ~/AppImages
@@ -40,7 +40,7 @@ if [ -f "$APPIMAGE_FILE" ] && flatpak run it.mijorus.gearlever --list-installed 
     kdialog --title "Installation ES-DE" --yesno "ES-DE semble déjà installé via Gearlever !\n\nFichier trouvé :\n- $APPIMAGE_FILE\n\nVoulez-vous réinstaller ES-DE ?"
     if [ $? -eq 0 ]; then
         echo "Suppression de l'installation existante..."
-        echo y | flatpak run it.mijorus.gearlever --remove "$APPIMAGE_FILE"
+        echo y | flatpak run it.mijorus.gearlever --remove "$APPIMAGE_FILE" 2>/dev/null || true
         update-desktop-database "$HOME/.local/share/applications"
         if [ $? -ne 0 ]; then
             kdialog --title "Installation ES-DE" --error "Erreur lors de la suppression de l'ancienne installation."
@@ -109,13 +109,14 @@ qdbus $DBUS_REF Set "" value 0 >/dev/null  # Pas de progression réelle
 
 # Installer avec Gearlever
 echo "Intégration de ES-DE avec Gearlever..."
-echo y | flatpak run it.mijorus.gearlever --integrate "$FILENAME"
+echo y | flatpak run it.mijorus.gearlever --integrate "$FILENAME" 2>/dev/null
+INTEGRATE_EXIT=$?
 
 # Fermer la boîte de dialogue
 qdbus $DBUS_REF close >/dev/null
 
 # Vérifier si l'installation a réussi
-if [ $? -eq 0 ]; then
+if [ $INTEGRATE_EXIT -eq 0 ]; then
     DESKTOP_FILE="$HOME/.local/share/applications/esde.desktop"
     if [ -f "$DESKTOP_FILE" ]; then
         if grep -q "Name=ES-DE (.*)" "$DESKTOP_FILE"; then

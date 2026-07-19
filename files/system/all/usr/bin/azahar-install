@@ -49,7 +49,7 @@ fi
 echo "AppImage trouvé : $(basename "$APPIMAGE_FILE")"
 
 # Vérifier si une version est déjà installée et la supprimer
-INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -name "azahar.AppImage" | head -n1 || true)
+INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -maxdepth 1 -iname "azahar.appimage" | head -n1 || true)
 
 if [ -n "$INSTALLED_APPIMAGE" ]; then
     echo "Suppression de la version installée existante."
@@ -58,7 +58,7 @@ fi
 
 # Installer avec GearLever sans confirmation (comme dans le script original)
 echo "Installation/Mise à jour avec GearLever..."
-yes | flatpak run it.mijorus.gearlever --integrate "$APPIMAGE_FILE"
+yes | flatpak run it.mijorus.gearlever --integrate "$APPIMAGE_FILE" 2>/dev/null || true
 
 # Corriger le .desktop pour enlever le (hash) et mettre la première lettre en majuscule
 DESKTOP_DIR="$HOME/.local/share/applications"

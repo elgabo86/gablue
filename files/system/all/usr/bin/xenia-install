@@ -2,74 +2,96 @@
 
 # Script pour télécharger et installer/mettre à jour Xenia Edge (Linux version) avec GearLever
 
-# Dépendances : curl, jq, flatpak (GearLever installé comme it.mijorus.gearlever), yes
-
 set -e
 
 REPO="has207/xenia-edge"
 CACHE_DIR="$HOME/.cache/xenia"
 APPIMAGES_DIR="$HOME/AppImages"
-mkdir -p "$CACHE_DIR"
+DESKTOP_DIR="$HOME/.local/share/applications"
+mkdir -p "$CACHE_DIR" "$APPIMAGES_DIR"
 
-# Vérifier et supprimer TOUTES les versions installées de Xenia Edge
-echo "Recherche et suppression des versions existantes de Xenia Edge..."
-for appimage in $(find "$APPIMAGES_DIR" -name "xenia*.AppImage" | grep -i edge || true); do
-    echo "Suppression de: $appimage"
-    yes | flatpak run it.mijorus.gearlever --remove "$appimage" 2>/dev/null || true
-done
+# ---------------------------------------------------------------------------
+# 1. Nettoyage : supprimer toutes les anciennes versions sauf le .desktop actif
+# ---------------------------------------------------------------------------
+echo "Nettoyage des anciennes versions..."
 
-# Nettoyer également les entrées desktop potentiellement multiples
-for desktop_file in $(find "$HOME/.local/share/applications" -name "xenia_edge*.desktop" 2>/dev/null || true); do
-    echo "Suppression du fichier desktop: $desktop_file"
-    rm -f "$desktop_file"
-done
+# Supprimer les vieux AppImages de GearLever et du disque
+if [ -d "$APPIMAGES_DIR" ]; then
+    find "$APPIMAGES_DIR" -maxdepth 1 \( -iname "xenia*.AppImage" -o -iname "xenia*.appimage" \) -print0 2>/dev/null | \
+    while IFS= read -r -d '' appimage; do
+        echo "  Suppression: $appimage"
+        yes | flatpak run it.mijorus.gearlever --remove "$appimage" 2>/dev/null || true
+        rm -f "$appimage"
+    done
+fi
 
-# Obtenir les infos de la dernière release via GitHub API
+# Supprimer les vieilles icônes numérotées (GearLever les accumule)
+if [ -d "$APPIMAGES_DIR/.icons" ]; then
+    find "$APPIMAGES_DIR/.icons" -maxdepth 1 -name "xenia_edge.appimage_*" -print0 2>/dev/null | \
+    while IFS= read -r -d '' icon; do
+        rm -f "$icon"
+    done
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Téléchargement
+# ---------------------------------------------------------------------------
 RELEASE_JSON=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest")
 
-# Extraire l'URL de téléchargement pour l'AppImage
 ASSET_NAME_PATTERN="xenia_edge_linux.AppImage"
-DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r --arg pattern "$ASSET_NAME_PATTERN" '.assets[] | select(.name | contains($pattern)) | .browser_download_url')
+DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r --arg pattern "$ASSET_NAME_PATTERN" \
+    '.assets[] | select(.name | contains($pattern)) | .browser_download_url')
 
 if [ -z "$DOWNLOAD_URL" ]; then
     echo "Erreur : AppImage non trouvé dans la dernière release."
     exit 1
 fi
 
-# Extraire le nom du fichier
 ASSET_NAME=$(basename "$DOWNLOAD_URL")
-
-# Chemin du fichier à télécharger
 NEW_APPIMAGE_PATH="$CACHE_DIR/$ASSET_NAME"
 
-# Télécharger l'AppImage
 echo "Téléchargement de $ASSET_NAME..."
 curl -L -o "$NEW_APPIMAGE_PATH" "$DOWNLOAD_URL"
-
-# Rendre l'AppImage exécutable
 chmod +x "$NEW_APPIMAGE_PATH"
 
-# Installer avec GearLever sans confirmation
-echo "Installation/Mise à jour avec GearLever..."
-yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH"
+# ---------------------------------------------------------------------------
+# 3. Intégration GearLever (gère icônes + .desktop, peut crasher sur le %f)
+# ---------------------------------------------------------------------------
+echo "Intégration avec GearLever..."
+# Le bug configparser (%f) crashe à la fin, mais le .desktop et les icônes
+# sont déjà créés à ce stade.
+yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH" 2>/dev/null || true
 
-# Corriger le .desktop pour enlever le (hash) et mettre la première lettre en majuscule
-DESKTOP_DIR="$HOME/.local/share/applications"
-DESKTOP_FILE=$(find "$DESKTOP_DIR" -name "xenia_edge*.desktop" -type f | head -n1)
+# ---------------------------------------------------------------------------
+# 4. Corriger le .desktop
+# ---------------------------------------------------------------------------
+DESKTOP_FILE=$(find "$DESKTOP_DIR" -name "xenia_edge*.desktop" -type f 2>/dev/null | head -n1)
 if [ -n "$DESKTOP_FILE" ]; then
     sed -i 's/^Name=Xenia Edge (.*)$/Name=Xenia Edge/' "$DESKTOP_FILE"
     sed -i 's/^Name=xenia_edge (.*)$/Name=Xenia Edge/' "$DESKTOP_FILE"
     sed -i 's/^Name=xenia_edge$/Name=Xenia Edge/' "$DESKTOP_FILE"
-    sed -i '/^X-AppImage-Version=/d' "$DESKTOP_FILE"  # Optionnel: enlever la ligne version
+    sed -i '/^X-AppImage-Version=/d' "$DESKTOP_FILE"
+else
+    echo "Attention : GearLever n'a pas créé de .desktop, installation manuelle..."
+    DEST_APPIMAGE="$APPIMAGES_DIR/xenia_edge.appimage"
+    cp "$NEW_APPIMAGE_PATH" "$DEST_APPIMAGE"
+    chmod +x "$DEST_APPIMAGE"
+    cat > "$DESKTOP_DIR/xenia_edge.desktop" << DESKTOPEOF
+[Desktop Entry]
+Name=Xenia Edge
+Type=Application
+Exec=$DEST_APPIMAGE
+Icon=xenia_edge
+Categories=Game;Emulator;
+DESKTOPEOF
 fi
 
-# Nettoyer le cache
-if [ -f "$NEW_APPIMAGE_PATH" ]; then
-    rm "$NEW_APPIMAGE_PATH"
-fi
+# ---------------------------------------------------------------------------
+# 5. Nettoyage
+# ---------------------------------------------------------------------------
+rm -f "$NEW_APPIMAGE_PATH"
 rmdir --ignore-fail-on-non-empty "$CACHE_DIR"
 
-# Rafraîchir les fichiers .desktop
 kbuildsycoca6
 
 echo "Opération terminée."
