@@ -945,7 +945,7 @@ Scripts personnalisés Gablue :
 - `gablue-update` : Mise à jour du système (interface PySide6)
 - `gablue-bigscreen-swap-session` : Wrapper swap-session Plasma Bigscreen
 - `gablue-bigscreen-session-init` : Initialisation session native Bigscreen (autostart, blacklist + mirroring)
-- Scripts gaming : `azahar-install`, `citron-install`, `eden-install`, `esde-install`, `qwen-install`, `shadps4-install`, `xenia-install`
+- Scripts gaming : `azahar-install`, `citron-install`, `eden-install`, `esde-install`, `hermes-install`, `qwen-install`, `shadps4-install`, `xenia-install`
 - Scripts utilitaires : `dlv`, `dlcover`, `tv`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`
 - `dlv` : Téléchargeur YouTube unifié (bash) avec support playlist (`--mp3`, `--mp4`, `--mkv`, `--mkv-1080`, `--playlist`). Remplace les anciens alias `dlv-mp*` et le script `ytdl`. Completion bash dans `/usr/share/bash-completion/completions/dlv`.
 - `retroplayer` : TUI Go pour explorer et écouter des musiques rétro (téléchargé depuis GitHub Releases pendant le build, dépôt séparé)

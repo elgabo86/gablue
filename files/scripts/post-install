@@ -29,6 +29,7 @@ chmod +x /usr/bin/scrap-win
 chmod +x /usr/bin/wgpcheck
 chmod +x /usr/bin/wgpadd
 chmod +x /usr/bin/esde-install
+chmod +x /usr/bin/hermes-install
 chmod +x /usr/bin/lgp-thumbnailer
 chmod +x /usr/bin/wgp-thumbnailer
 chmod +x /usr/bin/ds2xbox

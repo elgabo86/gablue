@@ -34,7 +34,6 @@ alias tp="trash-put"
 alias changefps="/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/changefps"
 
 alias opencode-install="curl -fsSL https://opencode.ai/install | bash"
-alias hermes-install="curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"
 
 # Ignore duplicate
 HISTCONTROL=ignoredups
