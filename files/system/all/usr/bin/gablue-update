@@ -1,62 +1,72 @@
 #!/usr/bin/bash
-#
-# Wrapper pour gablue-update avec interface PySide6 moderne
-# Ce script lance l'interface graphique par défaut, avec fallback CLI
-#
 
-# Détection du mode
+# Wrapper pour gablue-update
+# Interface graphique par défaut, mode CLI avec --cli ou --nogui
+
+set -euo pipefail
+
 CLI_MODE=false
 AUTO_MODE=false
-SKIP_REBOOT=false
 
-# Parser les arguments
 for arg in "$@"; do
     case $arg in
-        --cli|--nogui)
-            CLI_MODE=true
-            ;;
-        --auto)
-            AUTO_MODE=true
-            ;;
-        --skip-reboot)
-            SKIP_REBOOT=true
-            ;;
+        --cli|--nogui) CLI_MODE=true ;;
+        --auto)        CLI_MODE=true; AUTO_MODE=true ;;
         --help|-h)
             echo "Usage: gablue-update [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --cli, --nogui Mode ligne de commande (sans interface graphique)"
-            echo "  --auto         Mode automatique non-interactif"
-            echo "  --skip-reboot  Ne pas proposer de redémarrage après la mise à jour"
-            echo "  --help, -h     Afficher cette aide"
+            echo "  --cli, --nogui  Mode ligne de commande"
+            echo "  --auto          Mode automatique non-interactif"
+            echo "  --help, -h      Afficher cette aide"
             echo ""
-            echo "Par défaut, l'interface graphique PySide6 est utilisée."
+            echo "Par défaut, l'interface graphique est utilisée."
             exit 0
             ;;
     esac
 done
 
-# Si --auto ou --cli spécifié, utiliser le mode CLI
-if [[ "$*" == *"--auto"* ]] || [[ "$*" == *"--cli"* ]]; then
-    CLI_MODE=true
+# Mode GUI — seulement si un display graphique est disponible
+if [ "$CLI_MODE" = false ] && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+    SCRIPT_DIR="/usr/share/ublue-os/gablue/scripts"
+
+    # Support dev (repo git)
+    if [ -f "$(dirname "$0")/../share/ublue-os/gablue/scripts/gablue-update-gui.py" ]; then
+        SCRIPT_DIR="$(dirname "$0")/../share/ublue-os/gablue/scripts"
+    fi
+
+    exec /usr/bin/python3 "$SCRIPT_DIR/gablue-update-gui.py"
 fi
 
-# Détection du mode : développement (git repo) ou production
-SCRIPT_DIR="/usr/share/ublue-os/gablue/scripts/gablue-update"
+# Mode CLI
+echo "=== Mise à jour de Gablue ==="
+echo ""
 
-# Si on est dans le repo git (développement), utiliser les chemins relatifs
-if [ -f "$(dirname "$0")/../share/ublue-os/gablue/scripts/gablue-update/gablue-update-gui.py" ]; then
-    SCRIPT_DIR="$(dirname "$0")/../share/ublue-os/gablue/scripts/gablue-update"
+# Système
+echo "[1/2] Mise à jour du système (bootc)…"
+if ! sudo /usr/bin/bootc upgrade; then
+    echo "Erreur lors de la mise à jour système."
+    exit 1
 fi
 
-if [ "$CLI_MODE" = false ]; then
-    # Lancer l'interface graphique avec le python système
-    # Si PySide6 n'est pas disponible, on bascule automatiquement en CLI
-    exec /usr/bin/python3 "$SCRIPT_DIR/gablue-update-gui.py" 2>/dev/null || CLI_MODE=true
+echo ""
+
+# Flatpak
+echo "[2/2] Mise à jour des applications Flatpak…"
+flatpak update --user -y 2>/dev/null || true
+
+echo ""
+echo "Terminé."
+
+# Vérifier si un redémarrage est nécessaire
+if [ "$AUTO_MODE" = true ]; then
+    exit 0
 fi
 
-# Mode ligne de commande (fallback)
-if [ "$CLI_MODE" = true ]; then
-    # Passer tous les arguments au script core
-    exec "$SCRIPT_DIR/gablue-update-core" "$@"
+if sudo /usr/bin/bootc status 2>/dev/null | grep -q "staged"; then
+    echo ""
+    read -r -p "Un redémarrage est nécessaire. Redémarrer maintenant ? [o/N] " rep
+    if [[ "$rep" =~ ^[oOyY] ]]; then
+        systemctl reboot
+    fi
 fi

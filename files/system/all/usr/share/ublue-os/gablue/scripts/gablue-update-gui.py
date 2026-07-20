@@ -1,0 +1,675 @@
+#!/usr/bin/python3
+
+"""
+Gablue Update — Interface graphique de mise à jour système
+Utilise bootc pour le système et flatpak pour les applications
+"""
+
+import sys
+import re
+import os
+import pty
+import select
+import subprocess
+import signal
+
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel, QProgressBar, QPlainTextEdit, QStackedWidget,
+)
+
+# =============================================================================
+# Thème sombre moderne
+# =============================================================================
+
+T = {
+    "bg": "#0d0d12", "card": "#18181f", "hover": "#22222c",
+    "accent": "#4da6ff", "accent2": "#7cc4ff", "success": "#32d47e",
+    "warning": "#ffb340", "error": "#ff4d5a", "text": "#e8e8f0",
+    "secondary": "#8a8a98", "border": "#2a2a36",
+    "log_bg": "#101016", "progress": "#20202a",
+}
+
+STYLE = f"""
+QMainWindow, QWidget {{ background-color: {T['bg']}; color: {T['text']}; }}
+QProgressBar {{
+    background-color: {T['progress']}; border: 1px solid {T['border']};
+    border-radius: 6px; height: 28px; text-align: center;
+    color: {T['text']}; font-size: 12px;
+}}
+QProgressBar::chunk {{ background-color: {T['accent']}; border-radius: 5px; }}
+QPlainTextEdit {{
+    background-color: {T['log_bg']}; color: {T['secondary']};
+    border: 1px solid {T['border']}; border-radius: 6px;
+    padding: 10px; font-family: monospace; font-size: 12px;
+}}
+QPushButton {{
+    background-color: {T['card']}; color: {T['text']};
+    border: 1px solid {T['border']}; border-radius: 10px;
+    padding: 14px 32px; font-size: 14px; font-weight: bold;
+}}
+QPushButton:hover {{ background-color: {T['hover']}; border-color: {T['accent']}; }}
+QPushButton:pressed {{ background-color: {T['accent']}; color: {T['bg']}; }}
+QPushButton:disabled {{ color: {T['secondary']}; }}
+QLabel {{ background: transparent; color: {T['text']}; }}
+"""
+
+# Regex pour nettoyer les séquences d'échappement ANSI/term
+ANSI_RE = re.compile(
+    r'\x1b\[[0-9;]*[a-zA-Z]'         # CSI sequences
+    r'|\x1b\][0-9;]*[^\x07]*\x07'    # OSC sequences
+    r'|\x1b\][0-9;]*\x1b\\'          # OSC sequences (ST terminator)
+    r'|\x1b\][0-9;]*$'               # Incomplete OSC at end
+    r'|\r'                            # carriage return
+)
+
+# Patterns pour extraire la progression
+PROGRESS_RE = re.compile(r'(\d+\.?\d*\s*\S+)\s*/\s*(\d+\.?\d*\s*\S+)')
+SPEED_RE = re.compile(r'(\d+\.?\d*\s*\S+/s)')
+LAYER_COUNT_RE = re.compile(r'(\d+)/(\d+)')
+
+def parse_size(s: str) -> float:
+    """Convertit une chaîne de taille en bytes"""
+    s = s.strip().replace('\xa0', ' ').replace(',', '.')
+    m = re.match(r'([\d.]+)\s*(B|KiB|MiB|GiB|TiB|kB|KB|MB|GB|TB)?', s)
+    if not m:
+        return 0
+    val = float(m.group(1))
+    unit = (m.group(2) or 'B').lower()
+    mult = {'b': 1, 'kib': 1024, 'mib': 1024**2, 'gib': 1024**3, 'tib': 1024**4,
+            'kb': 1000, 'mb': 1000**2, 'gb': 1000**3, 'tb': 1000**4}
+    return val * mult.get(unit, 1)
+
+
+# =============================================================================
+# Travailleur PTY
+# =============================================================================
+
+class PtyWorker(QThread):
+    """Exécute une commande dans un pseudo-terminal pour capturer les barres de progression"""
+    line_out = Signal(str)     # Lignes complètes → log
+    progress = Signal(int, str)  # Pourcentage, texte info
+
+    def __init__(self, cmd: list[str], parent=None):
+        super().__init__(parent)
+        self.cmd = cmd
+        self._running = False
+        self._proc = None
+        self._master_fd = None
+
+    def run(self):
+        self._running = True
+        try:
+            master_fd, slave_fd = pty.openpty()
+            self._master_fd = master_fd
+            self._proc = subprocess.Popen(
+                self.cmd,
+                stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+                close_fds=True,
+                preexec_fn=os.setsid,
+            )
+            os.close(slave_fd)
+
+            buf = b""
+            # Lignes déjà émises au log (évite les doublons avec \r)
+            last_progress = ""
+            last_log_line = ""
+
+            while self._running:
+                r, _, _ = select.select([master_fd], [], [], 0.15)
+                if r:
+                    try:
+                        data = os.read(master_fd, 8192)
+                        if not data:
+                            break
+                        buf += data
+
+                        # Traiter les lignes complètes (\n)
+                        while b"\n" in buf:
+                            line, buf = buf.split(b"\n", 1)
+                            # Au sein d'une ligne, les segments \r sont des mises à jour
+                            if b"\r" in line:
+                                parts = line.split(b"\r")
+                                for part in parts:
+                                    cl = self._clean(part)
+                                    if cl and cl != last_progress:
+                                        last_progress = cl
+                                        pct, info = self._parse_progress(cl)
+                                        if pct >= 0:
+                                            self.progress.emit(pct, info)
+                                # Le dernier segment est le contenu final
+                                final = self._clean(parts[-1])
+                                if final and final != last_log_line:
+                                    last_log_line = final
+                                    # N'ajouter au log que si ce n'est pas une ligne de progression
+                                    if not self._is_progress_line(final):
+                                        self.line_out.emit(final)
+                            else:
+                                cl = self._clean(line)
+                                if cl:
+                                    if not self._is_progress_line(cl):
+                                        self.line_out.emit(cl)
+                                    else:
+                                        pct, info = self._parse_progress(cl)
+                                        if pct >= 0:
+                                            self.progress.emit(pct, info)
+
+                    except OSError:
+                        break
+
+                if self._proc.poll() is not None:
+                    # Lire les données restantes
+                    try:
+                        while True:
+                            r2, _, _ = select.select([master_fd], [], [], 0.1)
+                            if not r2:
+                                break
+                            data = os.read(master_fd, 8192)
+                            if not data:
+                                break
+                            buf += data
+                    except OSError:
+                        pass
+                    break
+
+            # Traiter le buffer restant
+            if buf:
+                for part in buf.split(b"\r"):
+                    cl = self._clean(part)
+                    if cl and not self._is_progress_line(cl):
+                        self.line_out.emit(cl)
+
+        except Exception as e:
+            self.line_out.emit(f"Erreur PTY: {e}")
+        finally:
+            if self._master_fd is not None:
+                try:
+                    os.close(self._master_fd)
+                except OSError:
+                    pass
+            self._running = False
+
+    def stop(self):
+        """Arrêter le processus"""
+        self._running = False
+        if self._proc and self._proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(self._proc.pid), signal.SIGTERM)
+                self._proc.wait(timeout=4)
+            except (ProcessLookupError, subprocess.TimeoutExpired):
+                try:
+                    os.killpg(os.getpgid(self._proc.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    @staticmethod
+    def _clean(data: bytes) -> str:
+        text = data.decode("utf-8", errors="replace")
+        # Supprimer les séquences ANSI
+        text = ANSI_RE.sub('', text)
+        # Supprimer les préfixes script/tmux
+        text = re.sub(r'^Script (démarré|terminé).*', '', text)
+        # Nettoyer les espaces multiples
+        text = re.sub(r'[ \t]+', ' ', text).strip()
+        return text
+
+    @staticmethod
+    def _is_progress_line(text: str) -> bool:
+        """Vérifie si une ligne ressemble à une barre de progression"""
+        return bool(re.search(r'(Fetching|Downloading|Extracting|Writing|⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏)', text))
+
+    @staticmethod
+    def _parse_progress(text: str) -> tuple[int, str]:
+        """Extrait le pourcentage et l'info d'une ligne de progression.
+        Retourne (-1, "") si pas de progression détectée."""
+        # Pattern: "14.41 MiB/15.80 MiB" → calcule le %
+        m = PROGRESS_RE.search(text)
+        if m:
+            current = parse_size(m.group(1))
+            total = parse_size(m.group(2))
+            if total > 0:
+                return min(int(current / total * 100), 100), f"{m.group(1)} / {m.group(2)}"
+
+        # Pattern: "1/3" → compte de couches
+        m = LAYER_COUNT_RE.search(text)
+        if m:
+            current = int(m.group(1))
+            total = int(m.group(2))
+            if total > 0:
+                return int(current / total * 100), f"Élément {current}/{total}"
+
+        # Speed only
+        m = SPEED_RE.search(text)
+        if m:
+            return -1, m.group(1)
+
+        return -1, ""
+
+
+# =============================================================================
+# Écrans
+# =============================================================================
+
+class WelcomeScreen(QWidget):
+    cancel = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(60, 60, 60, 40)
+        lay.setSpacing(18)
+        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        t = QLabel("Gablue Update")
+        t.setStyleSheet(f"font-size: 28px; font-weight: bold; color: {T['text']};")
+        t.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(t)
+
+        self.status = QLabel("Vérification des mises à jour…")
+        self.status.setStyleSheet(f"font-size: 14px; color: {T['secondary']};")
+        self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.status)
+
+        lay.addSpacing(20)
+
+        self.spinner = QProgressBar()
+        self.spinner.setRange(0, 0)
+        self.spinner.setFixedWidth(300)
+        c = QHBoxLayout(); c.addStretch(); c.addWidget(self.spinner); c.addStretch()
+        lay.addLayout(c)
+
+        lay.addSpacing(16)
+
+        self.detail = QLabel("")
+        self.detail.setWordWrap(True)
+        self.detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.detail.setStyleSheet(f"font-size: 12px; color: {T['secondary']};")
+        lay.addWidget(self.detail)
+
+        lay.addSpacing(20)
+
+        b = QHBoxLayout(); b.addStretch()
+        btn = QPushButton("Annuler")
+        btn.setFixedWidth(120); btn.clicked.connect(self.cancel.emit)
+        b.addWidget(btn); b.addStretch(); lay.addLayout(b)
+
+        lay.addStretch()
+
+    def set_message(self, msg: str):
+        self.status.setText(msg)
+
+    def set_detail(self, detail: str):
+        self.detail.setText(detail)
+
+
+class UpdateAvailableScreen(QWidget):
+    start = Signal()
+    close_app = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(60, 60, 60, 40)
+        lay.setSpacing(16)
+        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.title = QLabel("Mise à jour disponible")
+        self.title.setStyleSheet(f"font-size: 24px; font-weight: bold; color: {T['accent']};")
+        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.title)
+
+        self.detail = QLabel("")
+        self.detail.setWordWrap(True)
+        self.detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.detail.setStyleSheet(f"font-size: 13px; color: {T['secondary']};")
+        lay.addWidget(self.detail)
+
+        lay.addSpacing(30)
+
+        b1 = QHBoxLayout(); b1.addStretch()
+        btn = QPushButton("Mettre à jour maintenant")
+        btn.setFixedWidth(260); btn.clicked.connect(self.start.emit)
+        b1.addWidget(btn); b1.addStretch(); lay.addLayout(b1)
+
+        lay.addSpacing(8)
+
+        b2 = QHBoxLayout(); b2.addStretch()
+        btn2 = QPushButton("Plus tard")
+        btn2.setFixedWidth(140); btn2.clicked.connect(self.close_app.emit)
+        b2.addWidget(btn2); b2.addStretch(); lay.addLayout(b2)
+
+        lay.addStretch()
+
+    def set_info(self, text: str):
+        self.detail.setText(text)
+
+
+class ProgressScreen(QWidget):
+    cancel = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(40, 40, 40, 30)
+        lay.setSpacing(14)
+
+        self.phase = QLabel("Préparation…")
+        self.phase.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {T['text']};")
+        lay.addWidget(self.phase)
+
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 0)
+        lay.addWidget(self.bar)
+
+        self.sub = QLabel("")
+        self.sub.setStyleSheet(f"font-size: 12px; color: {T['secondary']};")
+        lay.addWidget(self.sub)
+
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumBlockCount(300)
+        lay.addWidget(self.log, 1)
+
+        b = QHBoxLayout(); b.addStretch()
+        self.btn_cancel = QPushButton("Annuler")
+        self.btn_cancel.setFixedWidth(120)
+        self.btn_cancel.clicked.connect(self.cancel.emit)
+        b.addWidget(self.btn_cancel); b.addStretch(); lay.addLayout(b)
+
+    def indeterminate(self):
+        self.bar.setRange(0, 0)
+
+    def set_value(self, pct: int):
+        self.bar.setRange(0, 100)
+        self.bar.setValue(pct)
+
+    def append_log(self, text: str):
+        self.log.appendPlainText(text)
+        sb = self.log.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+
+class ResultScreen(QWidget):
+    reboot = Signal()
+    close_app = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(60, 60, 60, 40)
+        lay.setSpacing(16)
+        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.icon = QLabel(""); self.icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.icon)
+
+        self.title = QLabel(""); self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.title)
+
+        self.desc = QLabel("")
+        self.desc.setWordWrap(True); self.desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.desc.setStyleSheet(f"font-size: 13px; color: {T['secondary']};")
+        lay.addWidget(self.desc)
+
+        lay.addSpacing(20)
+
+        self.btn1 = QPushButton("")
+        self.btn1.setFixedWidth(240); self.btn1.clicked.connect(self._on1)
+        lay.addWidget(self.btn1, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.btn2 = QPushButton("")
+        self.btn2.setFixedWidth(180); self.btn2.clicked.connect(self._on2)
+        lay.addWidget(self.btn2, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self._mode = None
+        lay.addStretch()
+
+    def _show(self, icon_text, icon_color, title, desc, btn1, btn2, mode):
+        self.icon.setText(icon_text)
+        self.icon.setStyleSheet(f"font-size: 48px; color: {icon_color};")
+        self.title.setText(title)
+        self.title.setStyleSheet(f"font-size: 22px; font-weight: bold; color: {icon_color};")
+        self.desc.setText(desc)
+        self.btn1.setText(btn1); self.btn1.setVisible(bool(btn1))
+        self.btn2.setText(btn2); self.btn2.setVisible(bool(btn2))
+        self._mode = mode
+
+    def show_success(self):
+        self._show("✓", T['success'], "Mise à jour réussie",
+                   "Les mises à jour seront appliquées au prochain redémarrage.",
+                   "Redémarrer maintenant", "Redémarrer plus tard", "success")
+
+    def show_up_to_date(self):
+        self._show("✓", T['accent'], "Système à jour",
+                   "Gablue est déjà à jour. Aucune mise à jour disponible.",
+                   "Fermer", "", "uptodate")
+
+    def show_cancelled(self):
+        self._show("◉", T['warning'], "Mise à jour annulée",
+                   "L'opération a été interrompue. Aucune modification n'a été appliquée.",
+                   "Fermer", "", "cancelled")
+
+    def show_error(self, msg=""):
+        self._show("✕", T['error'], "Mise à jour échouée",
+                   msg or "Une erreur est survenue lors de la mise à jour.",
+                   "Fermer", "", "error")
+
+    def _on1(self):
+        if self._mode == "success":
+            self.reboot.emit()
+        else:
+            self.close_app.emit()
+
+    def _on2(self):
+        self.close_app.emit()
+
+
+# =============================================================================
+# Fenêtre principale
+# =============================================================================
+
+class GablueUpdate(QMainWindow):
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Gablue Update")
+        self.setMinimumSize(660, 520)
+        self.resize(720, 560)
+        self.setStyleSheet(STYLE)
+
+        self.stack = QStackedWidget()
+        self.setCentralWidget(self.stack)
+
+        self.welcome = WelcomeScreen()
+        self.available = UpdateAvailableScreen()
+        self.progress = ProgressScreen()
+        self.result = ResultScreen()
+
+        for w in (self.welcome, self.available, self.progress, self.result):
+            self.stack.addWidget(w)
+
+        self.welcome.cancel.connect(self.close)
+        self.available.start.connect(self._start_update)
+        self.available.close_app.connect(self.close)
+        self.progress.cancel.connect(self._cancel)
+        self.result.reboot.connect(self._reboot)
+        self.result.close_app.connect(self.close)
+
+        self._check_lines = []
+        self._log_lines = []
+        self._worker = None
+        self._cancelled = False
+        self._bootc_updated = False
+
+        QTimer.singleShot(300, self._check)
+
+    # -------------------------------------------------------------------------
+    # Étape 0 : Vérification (bootc upgrade --check)
+    # -------------------------------------------------------------------------
+
+    def _check(self):
+        self.stack.setCurrentWidget(self.welcome)
+        self._check_lines = []
+        self._cancelled = False
+        self._worker = PtyWorker(["/usr/bin/sudo", "/usr/bin/bootc", "upgrade", "--check"], self)
+        self._worker.line_out.connect(self._check_lines.append)
+        self._worker.line_out.connect(lambda l: self.welcome.set_detail(l))
+        self._worker.finished.connect(self._on_check_done)
+        self._worker.start()
+
+    def _on_check_done(self):
+        if self._cancelled:
+            return
+        full = " ".join(self._check_lines).lower()
+        has = "update available" in full or "available" in full
+        layers = bool(re.search(r'layers (needed|new)', full))
+        nope = "no update" in full or "up to date" in full or "up-to-date" in full
+
+        if (has or layers) and not nope:
+            full_text = " ".join(self._check_lines)
+            size = re.search(r'(\d+\.?\d*\s*\S[BKMGTP])', full_text)
+            lc = re.search(r'(\d+)\s+layers?\s+(?:needed|new)', full_text)
+            ver = re.search(r'Version:\s*(\S+)', full_text)
+            parts = []
+            if ver: parts.append(f"Version : {ver.group(1)}")
+            if lc: parts.append(f"{lc.group(1)} éléments à télécharger")
+            if size: parts.append(f"Taille : {size.group(1)}")
+            self.available.set_info("\n".join(parts) if parts else
+                                     "Une nouvelle version de Gablue est disponible.")
+            self.stack.setCurrentWidget(self.available)
+        else:
+            self.result.show_up_to_date()
+            self.stack.setCurrentWidget(self.result)
+
+    # -------------------------------------------------------------------------
+    # Étape 1 : Téléchargement bootc
+    # -------------------------------------------------------------------------
+
+    def _start_update(self):
+        self.stack.setCurrentWidget(self.progress)
+        self._log_lines = []
+        self._bootc_updated = False
+        self._cancelled = False
+
+        self.progress.log.clear()
+        self.progress.indeterminate()
+        self.progress.phase.setText("Téléchargement de la mise à jour système…")
+        self.progress.sub.setText("Connexion au registre…")
+
+        self._worker = PtyWorker(["/usr/bin/sudo", "/usr/bin/bootc", "upgrade"], self)
+        self._worker.line_out.connect(self._on_bootc_log)
+        self._worker.progress.connect(self._on_bootc_progress)
+        self._worker.finished.connect(self._on_bootc_done)
+        self._worker.start()
+
+    def _on_bootc_log(self, line: str):
+        self.progress.append_log(line)
+        self._log_lines.append(line)
+
+        if re.search(r'layers already present.*layers needed', line):
+            self.progress.phase.setText("Téléchargement en cours…")
+            m = re.search(r'layers needed:\s*(\d+)\s*\((.+)\)', line)
+            if m:
+                self.progress.sub.setText(f"{m.group(1)} éléments ({m.group(2)})")
+
+        elif re.search(r'Fetched layers', line):
+            self.progress.phase.setText("Finalisation…")
+            self.progress.set_value(80)
+            self.progress.sub.setText("Préparation du déploiement…")
+
+        elif re.search(r'Queued for next boot', line):
+            self._bootc_updated = True
+            self.progress.set_value(95)
+            self.progress.sub.setText("Prêt pour le prochain démarrage")
+
+    def _on_bootc_progress(self, pct: int, info: str):
+        """Mise à jour de la barre de progression depuis le PTY"""
+        if pct >= 0:
+            self.progress.set_value(pct)
+            self.progress.phase.setText("Téléchargement en cours…")
+            self.progress.sub.setText(info)
+
+    def _on_bootc_done(self):
+        if self._cancelled:
+            return
+
+        # Vérifier si bootc a réussi (via le contenu du log)
+        full_log = "\n".join(self._log_lines)
+        if "Queued for next boot" in full_log:
+            self._bootc_updated = True
+
+        if self._bootc_updated or "Fetched layers" in full_log:
+            self.progress.set_value(100)
+            self.progress.phase.setText("Mise à jour système terminée")
+            self.progress.sub.setText("")
+            self._start_flatpak()
+        elif "No update" in full_log or "up to date" in full_log or "up-to-date" in full_log:
+            self._bootc_updated = False
+            self._start_flatpak()
+        else:
+            # Erreur probable
+            self.progress.phase.setText("Erreur système")
+            self.result.show_error(full_log[-600:])
+            self.stack.setCurrentWidget(self.result)
+
+    # -------------------------------------------------------------------------
+    # Étape 2 : Flatpak
+    # -------------------------------------------------------------------------
+
+    def _start_flatpak(self):
+        self.progress.indeterminate()
+        self.progress.phase.setText("Mise à jour des applications Flatpak…")
+        self.progress.sub.setText("")
+
+        self._worker = PtyWorker(["/usr/bin/flatpak", "update", "--user", "-y"], self)
+        self._worker.line_out.connect(self.progress.append_log)
+        self._worker.finished.connect(self._on_flatpak_done)
+        self._worker.start()
+
+    def _on_flatpak_done(self):
+        if self._cancelled:
+            return
+        if self._bootc_updated:
+            self.result.show_success()
+        else:
+            self.result.show_up_to_date()
+        self.stack.setCurrentWidget(self.result)
+
+    # -------------------------------------------------------------------------
+    # Actions
+    # -------------------------------------------------------------------------
+
+    def _cancel(self):
+        self._cancelled = True
+        if self._worker and self._worker.isRunning():
+            self._worker.stop()
+            self._worker.wait(5000)
+        self.result.show_cancelled()
+        self.stack.setCurrentWidget(self.result)
+
+    def _reboot(self):
+        subprocess.Popen(["/usr/bin/systemctl", "reboot"])
+        self.close()
+
+    def closeEvent(self, event):
+        if self._worker and self._worker.isRunning():
+            self._worker.stop()
+            self._worker.wait(3000)
+        event.accept()
+
+
+# =============================================================================
+# Point d'entrée
+# =============================================================================
+
+def main():
+    app = QApplication(sys.argv)
+    app.setApplicationName("Gablue Update")
+    window = GablueUpdate()
+    window.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
