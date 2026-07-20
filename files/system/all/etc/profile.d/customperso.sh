@@ -11,7 +11,7 @@ alias miniserve="podman kill miniserve 2>/dev/null; sleep 1; podman run -v ./:/s
 ffsend() { podman run --rm --rmi -it -v "$(pwd):/data:Z" docker.io/timvisee/ffsend:latest upload -y "$@"; }
 ffsendp() { podman run --rm --rmi -it -v "$(pwd):/data:Z" docker.io/timvisee/ffsend:latest upload --password -y "$@"; }
 
-alias neofetch="fastfetch --logo /usr/share/ublue-os/gablue/logoascii.ans -c /usr/share/ublue-os/gablue/fastfetch.jsonc"
+alias neofetch="fastfetch --logo /usr/share/ublue-os/gablue/logoascii.ans -c /usr/share/ublue-os/gablue/fastfetch.jsonc | tte --random-effect"
 
 alias open="xdg-open &>/dev/null"
 
