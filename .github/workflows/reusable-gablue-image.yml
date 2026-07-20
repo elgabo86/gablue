@@ -160,7 +160,7 @@ jobs:
               CONTAINERFILE="Containerfile-gablue"
             fi
 
-            IMAGE_DATE=$(git log -1 --format=%cd --date=format:%Y%m%d.%H)
+            IMAGE_DATE=$(date -u +%Y%m%d.%H)
 
             DX_MODE_ARG=""
             if [[ "${{ inputs.image_name }}" == "gablue-main-dx" || "${{ inputs.image_name }}" == "gablue-nvidia-open-dx" ]]; then
