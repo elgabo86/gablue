@@ -5,6 +5,7 @@ ARG FEDORA_VERSION
 ARG KERNEL_VERSION
 ARG KERNEL_FLAVOR
 ARG DX_MODE
+ARG IMAGE_DATE
 
 # Étape intermédiaire : scripts de build (bind-mountés dans chaque RUN, jamais dans l'image finale)
 FROM scratch AS ctx
@@ -24,6 +25,7 @@ ARG SOURCE_IMAGE
 ARG DX_MODE
 ARG KERNEL_FLAVOR
 ARG KERNEL_VERSION
+ARG IMAGE_DATE
 
 # Copie des sources pour compilation et assemblage
 COPY src/gamepadshortcuts /src/gamepadshortcuts
@@ -47,6 +49,7 @@ ENV SOURCE_IMAGE=${SOURCE_IMAGE}
 ENV DX_MODE=${DX_MODE}
 ENV KERNEL_FLAVOR=${KERNEL_FLAVOR}
 ENV KERNEL_VERSION=${KERNEL_VERSION}
+ENV IMAGE_DATE=${IMAGE_DATE}
 
 # Configuration des dépôts Copr (avant le kernel pour fournir les dépendances des kmods)
 RUN --mount=type=cache,dst=/var/cache \

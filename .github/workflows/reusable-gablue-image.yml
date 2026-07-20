@@ -160,6 +160,8 @@ jobs:
               CONTAINERFILE="Containerfile-gablue"
             fi
 
+            IMAGE_DATE=$(git log -1 --format=%cd --date=format:%Y%m%d.%H)
+
             DX_MODE_ARG=""
             if [[ "${{ inputs.image_name }}" == "gablue-main-dx" || "${{ inputs.image_name }}" == "gablue-nvidia-open-dx" ]]; then
               DX_MODE_ARG="--build-arg DX_MODE=true"
@@ -194,6 +196,7 @@ jobs:
               --build-arg SOURCE_IMAGE="${{ inputs.source_image }}" \
               --build-arg FEDORA_VERSION="${{ inputs.fedora_version }}" \
               --build-arg KERNEL_FLAVOR="${{ inputs.kernel_type }}" \
+              --build-arg IMAGE_DATE="$IMAGE_DATE" \
               $NVIDIA_FLAVOR_ARG \
               $SOURCE_SUFFIX_ARG \
               $DX_MODE_ARG \

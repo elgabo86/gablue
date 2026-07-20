@@ -122,7 +122,7 @@ curl -s https://storage.zxtune.ru/builds/public/r5100/linux/x86_64/zxtune_r5100_
 # =============================================================================
 
 # Configuration de l'identité du système
-IMAGE_DATE=$(date +%Y%m%d.%H)
+IMAGE_DATE="${IMAGE_DATE:-$(date +%Y%m%d.%H)}"
 MAJOR_RELEASE_VERSION=$(grep -oP '[0-9]*' /etc/fedora-release)
 sed -i "s,^PRETTY_NAME=.*,PRETTY_NAME=\"Gablue ${MAJOR_RELEASE_VERSION}.${IMAGE_DATE}\"," /usr/lib/os-release
 
