@@ -72,13 +72,13 @@ yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH" 2>/dev/n
 
 # Corriger le .desktop créé par GearLever pour enlever le versionning
 DESKTOP_DIR="$HOME/.local/share/applications"
-DESKTOP_FILE=$(find "$DESKTOP_DIR" -iname "*hermes*desktop*.desktop" | head -n1)
+DESKTOP_FILE=$(find "$DESKTOP_DIR" -maxdepth 1 -iname "*hermes*.desktop" | head -n1)
 NEW_DESKTOP_FILE="$DESKTOP_DIR/hermes-desktop.desktop"
 
 if [ -f "$DESKTOP_FILE" ]; then
-    sed -i 's/^Name=Hermes Desktop (.*)$/Name=Hermes Desktop/' "$DESKTOP_FILE"
-    sed -i 's/^Name=hermes-desktop (.*)$/Name=Hermes Desktop/' "$DESKTOP_FILE"
-    sed -i 's/^Name=hermes desktop (.*)$/Name=Hermes Desktop/' "$DESKTOP_FILE"
+    # Supprimer la version entre parenthèses dans Name=/Name[xx]=
+    sed -i 's/^Name\(\[[^]]*\]\)\?=\(Hermes\|hermes\)\( Desktop\|\) (.*)$/Name\1=Hermes/' "$DESKTOP_FILE"
+    sed -i 's/^Name\(\[[^]]*\]\)\?=hermes-desktop (.*)$/Name\1=Hermes/' "$DESKTOP_FILE"
 
     mv "$DESKTOP_FILE" "$NEW_DESKTOP_FILE"
 fi
