@@ -942,7 +942,7 @@ podman images test-build
 ### Scripts utilisateur (/usr/bin)
 
 Scripts personnalisés Gablue :
-- `gablue-update` : Mise à jour du système via bootc (GUI PySide6 avec PTY pour progression temps réel, fallback CLI automatique si pas d'affichage graphique. Voir `scripts/gablue-update-gui.py`)
+- `gablue-update` : Mise à jour du système via bootc (script Python autonome dans `/usr/bin`, GUI PySide6 avec PTY pour progression temps réel, fallback CLI automatique si pas d'affichage graphique)
 - `gablue-bigscreen-swap-session` : Wrapper swap-session Plasma Bigscreen
 - `gablue-bigscreen-session-init` : Initialisation session native Bigscreen (autostart, blacklist + mirroring)
 - Scripts gaming : `azahar-install`, `citron-install`, `eden-install`, `esde-install`, `hermes-install`, `qwen-install`, `shadps4-install`, `xenia-install`
