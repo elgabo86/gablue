@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Installateur APK
+Comment=Installer des APK sur un téléphone Android par glisser-déposer
+Exec=gablue-apk-installer
+Icon=phone
+Categories=Development;Utility;
+Terminal=false
+StartupNotify=false

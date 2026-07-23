@@ -942,6 +942,7 @@ podman images test-build
 ### Scripts utilisateur (/usr/bin)
 
 Scripts personnalisés Gablue :
+- `gablue-apk-installer` : Installateur d'APK Android par glisser-déposer (GUI PySide6, compatible Wayland). Supporte les fichiers .apk, .apkm, .xapk, .apks. Détection automatique des appareils USB et WiFi (adb over TCP). Appairage sans fil Android 11+ par code QR manuel. Installation avec remplacement/downgrade automatiques (`-r -d`). Bundles extraits automatiquement via `adb install-multiple`. Fichier `.desktop` dans `/usr/share/applications/gablue-apk-installer.desktop`.
 - `gablue-update` : Mise à jour du système via bootc (script Python autonome dans `/usr/bin`, GUI PySide6 avec PTY pour progression temps réel, fallback CLI automatique si pas d'affichage graphique)
 - `gablue-bigscreen-swap-session` : Wrapper swap-session Plasma Bigscreen
 - `gablue-bigscreen-session-init` : Initialisation session native Bigscreen (autostart, blacklist + mirroring)

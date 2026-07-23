@@ -1,0 +1,921 @@
+#!/usr/bin/python3
+"""Installateur d'APK Android par glisser-déposer pour Gablue.
+Prend en charge les fichiers .apk, .apkm, .xapk et .apks.
+Supporte la connexion USB et WiFi (ADB over TCP)."""
+
+import os
+import sys
+import re
+import tempfile
+import zipfile
+import shutil
+import subprocess
+import glob as globmod
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QThread
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QKeySequence, QShortcut
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QComboBox, QPushButton, QLabel, QListWidget, QListWidgetItem,
+    QProgressBar, QMessageBox, QFileDialog, QAbstractItemView,
+    QDialog, QFormLayout, QLineEdit, QDialogButtonBox
+)
+
+# =============================================================================
+# CONSTANTES
+# =============================================================================
+
+APK_EXTENSIONS = {'.apk', '.apkm', '.xapk', '.apks'}
+BUNDLE_EXTENSIONS = {'.apkm', '.xapk', '.apks'}
+ADB_DEFAULT_PORT = 5555
+
+# =============================================================================
+# SCANNER DE PÉRIPHÉRIQUES ADB
+# =============================================================================
+
+class DeviceScanner(QThread):
+    """Scanne les appareils connectés via ADB dans un thread séparé."""
+
+    devices_found = Signal(list)  # [(serial, state, model, product, is_network), ...]
+
+    def run(self):
+        try:
+            result = subprocess.run(
+                ['adb', 'devices', '-l'],
+                capture_output=True, text=True, timeout=10
+            )
+            output = result.stdout
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            self.devices_found.emit([])
+            return
+
+        devices = []
+        for line in output.strip().split('\n')[1:]:
+            line = line.strip()
+            if not line:
+                continue
+
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+
+            serial = parts[0]
+            state = parts[1]
+            is_network = ':' in serial  # IP:port → réseau
+
+            props = {}
+            for part in parts[2:]:
+                if ':' in part:
+                    key, value = part.split(':', 1)
+                    props[key] = value
+
+            model = props.get('model', serial)
+            product = props.get('product', '')
+            devices.append((serial, state, model, product, is_network))
+
+        self.devices_found.emit(devices)
+
+
+# =============================================================================
+# THREAD DE CONNEXION RÉSEAU (USB → WiFi)
+# =============================================================================
+
+class NetworkConnectThread(QThread):
+    """Active le mode TCP/IP sur le téléphone et s'y connecte en WiFi."""
+
+    finished = Signal(bool, str)  # succès, message
+
+    def __init__(self, serial=None, is_already_network=False,
+                 pair_addr=None, pair_code=None, connect_addr=None):
+        super().__init__()
+        self.serial = serial
+        self.is_already_network = is_already_network
+        self.pair_addr = pair_addr
+        self.pair_code = pair_code
+        self.connect_addr = connect_addr
+
+    def run(self):
+        try:
+            if self.pair_addr and self.pair_code and self.connect_addr:
+                # Mode appairage sans fil (Android 11+, pas d'USB)
+                self._run_adb(None, ['pair', self.pair_addr, self.pair_code])
+                self._run_adb(None, ['connect', self.connect_addr])
+                self.finished.emit(True,
+                    f"Appairé et connecté : {self.connect_addr}\n"
+                    f"L'appareil apparaîtra dans la liste."
+                )
+                return
+
+            ip = None
+
+            if self.is_already_network:
+                ip = self.serial
+            else:
+                self._run_adb(self.serial, ['tcpip', str(ADB_DEFAULT_PORT)])
+                ip = self._get_device_ip(self.serial)
+
+            if not ip:
+                self.finished.emit(False,
+                    "Impossible de détecter l'adresse IP du téléphone.\n"
+                    "Vérifiez que le WiFi est activé sur le téléphone."
+                )
+                return
+
+            self._run_adb(None, ['connect', ip])
+            self.finished.emit(True,
+                f"Connecté en WiFi : {ip}\n"
+                f"Vous pouvez débrancher le câble USB."
+            )
+
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+    def _get_device_ip(self, serial):
+        """Récupère l'adresse IP WiFi du téléphone."""
+        # Méthode 1 : ip addr show wlan0
+        try:
+            result = subprocess.run(
+                ['adb', '-s', serial, 'shell', 'ip', '-4', 'addr', 'show', 'wlan0'],
+                capture_output=True, text=True, timeout=10
+            )
+            match = re.search(r'inet\s+(\d+\.\d+\.\d+\.\d+)', result.stdout)
+            if match:
+                ip = match.group(1)
+                return f"{ip}:{ADB_DEFAULT_PORT}"
+        except Exception:
+            pass
+
+        # Méthode 2 : ip route (fallback)
+        try:
+            result = subprocess.run(
+                ['adb', '-s', serial, 'shell', 'ip', 'route'],
+                capture_output=True, text=True, timeout=10
+            )
+            for line in result.stdout.split('\n'):
+                if 'wlan0' in line:
+                    match = re.search(r'src\s+(\d+\.\d+\.\d+\.\d+)', line)
+                    if match:
+                        ip = match.group(1)
+                        return f"{ip}:{ADB_DEFAULT_PORT}"
+        except Exception:
+            pass
+
+        # Méthode 3 : getprop (dernier recours)
+        try:
+            result = subprocess.run(
+                ['adb', '-s', serial, 'shell', 'getprop', 'dhcp.wlan0.ipaddress'],
+                capture_output=True, text=True, timeout=10
+            )
+            ip = result.stdout.strip()
+            if ip and re.match(r'\d+\.\d+\.\d+\.\d+', ip):
+                return f"{ip}:{ADB_DEFAULT_PORT}"
+        except Exception:
+            pass
+
+        return None
+
+    def _run_adb(self, serial, args, timeout=15):
+        """Exécute une commande adb."""
+        cmd = ['adb']
+        if serial:
+            cmd += ['-s', serial]
+        cmd += args
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+        if result.returncode != 0:
+            error = result.stderr.strip() or result.stdout.strip() or "Erreur inconnue."
+            raise RuntimeError(error)
+
+        return result.stdout.strip()
+
+
+# =============================================================================
+# THREAD D'INSTALLATION
+# =============================================================================
+
+class InstallThread(QThread):
+    """Installe les APK sur l'appareil sélectionné dans un thread séparé."""
+
+    progress_update = Signal(str)
+    install_finished = Signal(bool, str)
+    file_progress = Signal(int, int)
+
+    def __init__(self, serial, files):
+        super().__init__()
+        self.serial = serial
+        self.files = files
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        total = len(self.files)
+
+        for idx, filepath in enumerate(self.files):
+            if self._cancelled:
+                self.install_finished.emit(False, "Installation annulée.")
+                return
+
+            filename = os.path.basename(filepath)
+            ext = Path(filepath).suffix.lower()
+
+            if not os.path.isfile(filepath):
+                self.install_finished.emit(False, f"Fichier introuvable : {filename}")
+                return
+
+            self.file_progress.emit(idx, total)
+
+            try:
+                if ext in BUNDLE_EXTENSIONS:
+                    self._install_bundle(filepath)
+                else:
+                    self._install_single(filepath)
+            except Exception as e:
+                self.install_finished.emit(False, str(e))
+                return
+
+        self.file_progress.emit(total, total)
+        self.install_finished.emit(True, f"{total} fichier(s) installé(s) avec succès.")
+
+    def _run_adb(self, args, timeout=120):
+        """Exécute une commande adb et retourne stdout."""
+        full_args = ['adb', '-s', self.serial] + args
+        try:
+            result = subprocess.run(
+                full_args, capture_output=True, text=True, timeout=timeout
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("La commande adb a expiré (délai dépassé).")
+        except FileNotFoundError:
+            raise RuntimeError("adb n'est pas installé ou introuvable sur le système.")
+
+        if result.returncode != 0:
+            error_msg = result.stderr.strip() or result.stdout.strip() or "Erreur inconnue."
+            raise RuntimeError(error_msg)
+
+        return result.stdout.strip()
+
+    def _install_single(self, filepath):
+        """Installe un APK simple avec remplacement et downgrade automatiques."""
+        filename = os.path.basename(filepath)
+        self.progress_update.emit(f"Installation de {filename}...")
+        output = self._run_adb(['install', '-r', '-d', filepath])
+        self.progress_update.emit(f"{filename} : {output}")
+
+    def _install_bundle(self, filepath):
+        """Extrait un bundle et installe les APK via install-multiple."""
+        filename = os.path.basename(filepath)
+        self.progress_update.emit(f"Extraction de {filename}...")
+
+        temp_dir = tempfile.mkdtemp(prefix='gablue-apk-')
+        try:
+            with zipfile.ZipFile(filepath, 'r') as zf:
+                zf.extractall(temp_dir)
+
+            apk_files = sorted(globmod.glob(
+                os.path.join(temp_dir, '**', '*.apk'), recursive=True
+            ))
+
+            if not apk_files:
+                raise RuntimeError(f"Aucun APK trouvé dans le bundle {filename}.")
+
+            self.progress_update.emit(
+                f"Installation de {len(apk_files)} APK depuis {filename}..."
+            )
+
+            install_args = ['install-multiple', '-r', '-d'] + apk_files
+            output = self._run_adb(install_args)
+            self.progress_update.emit(f"{filename} : {output}")
+
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+# =============================================================================
+# FENÊTRE PRINCIPALE
+# =============================================================================
+
+# =============================================================================
+# DIALOGUE D'APPAIRAGE SANS FIL
+# =============================================================================
+
+class PairDialog(QDialog):
+    """Dialogue pour le débogage sans fil (Android 11+, sans USB)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Débogage sans fil")
+        self.setMinimumWidth(420)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        info = QLabel(
+            "Sur le téléphone, activez le débogage sans fil :\n"
+            "Options développeur → Débogage sans fil\n\n"
+            "1. Recopiez l'adresse d'appairage et le code\n"
+            "2. Après appairage, recopiez l'adresse de connexion"
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        self.pair_edit = QLineEdit()
+        self.pair_edit.setPlaceholderText("192.168.1.42:38783")
+        form.addRow("Adresse d'appairage :", self.pair_edit)
+
+        self.code_edit = QLineEdit()
+        self.code_edit.setPlaceholderText("123456")
+        form.addRow("Code d'appairage :", self.code_edit)
+
+        self.connect_edit = QLineEdit()
+        self.connect_edit.setPlaceholderText("192.168.1.42:43667")
+        form.addRow("Adresse de connexion :", self.connect_edit)
+
+        layout.addLayout(form)
+
+        note = QLabel(
+            "L'adresse de connexion s'affiche sur le téléphone "
+            "après l'appairage."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("font-size: 11px; color: #888;")
+        layout.addWidget(note)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def get_values(self):
+        """Retourne (pair_addr, code, connect_addr) ou (None, None, None)."""
+        if self.result() == QDialog.Accepted:
+            pair = self.pair_edit.text().strip()
+            code = self.code_edit.text().strip()
+            conn = self.connect_edit.text().strip()
+            if pair and code and conn:
+                return pair, code, conn
+        return None, None, None
+
+
+class ApkInstallerWindow(QMainWindow):
+    """Fenêtre principale de l'installateur APK Gablue."""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Installateur APK Gablue")
+        self.setMinimumSize(560, 540)
+        self.resize(600, 620)
+        self.setAcceptDrops(True)
+
+        self._install_thread = None
+        self._scanner = None
+        self._net_thread = None
+
+        self._setup_ui()
+        self._scan_devices()
+
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.timeout.connect(self._scan_devices)
+        self._refresh_timer.start(5000)
+
+        QShortcut(QKeySequence.Delete, self, activated=self._remove_selected)
+
+    # =========================================================================
+    # INTERFACE UTILISATEUR
+    # =========================================================================
+
+    def _setup_ui(self):
+        """Construit l'interface graphique."""
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setSpacing(10)
+        layout.setContentsMargins(18, 18, 18, 18)
+
+        # --- Ligne appareil ---
+        device_row = QHBoxLayout()
+        device_row.setSpacing(8)
+
+        device_label = QLabel("Appareil :")
+        device_label.setFixedWidth(70)
+        device_row.addWidget(device_label)
+
+        self.device_combo = QComboBox()
+        self.device_combo.setMinimumHeight(32)
+        self.device_combo.currentIndexChanged.connect(self._update_wifi_button)
+        device_row.addWidget(self.device_combo, 1)
+
+        self.wifi_btn = QPushButton("WiFi")
+        self.wifi_btn.setFixedHeight(32)
+        self.wifi_btn.setToolTip(
+            "Activer la connexion WiFi (adb over TCP).\n"
+            "Le téléphone doit être connecté en USB la première fois."
+        )
+        self.wifi_btn.clicked.connect(self._toggle_wifi)
+        device_row.addWidget(self.wifi_btn)
+
+        self.refresh_btn = QPushButton("↻")
+        self.refresh_btn.setFixedSize(36, 36)
+        self.refresh_btn.setToolTip("Rafraîchir la liste des appareils")
+        self.refresh_btn.clicked.connect(self._scan_devices)
+        device_row.addWidget(self.refresh_btn)
+
+        layout.addLayout(device_row)
+
+        # --- Zone de drop ---
+        self.drop_zone = QLabel(
+            "Glissez vos APK ici\nou utilisez le bouton + pour parcourir"
+        )
+        self.drop_zone.setAlignment(Qt.AlignCenter)
+        self.drop_zone.setMinimumHeight(90)
+        self.drop_zone.setStyleSheet("""
+            QLabel {
+                border: 2px dashed #666;
+                border-radius: 8px;
+                padding: 16px;
+                font-size: 13px;
+                color: #888;
+                background: transparent;
+            }
+        """)
+        layout.addWidget(self.drop_zone)
+
+        # --- Liste des fichiers ---
+        self.file_list = QListWidget()
+        self.file_list.setAlternatingRowColors(True)
+        self.file_list.setMinimumHeight(130)
+        self.file_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.file_list.setDragDropMode(QAbstractItemView.NoDragDrop)
+        layout.addWidget(self.file_list, 1)
+
+        self.file_list.model().rowsInserted.connect(self._update_placeholder)
+        self.file_list.model().rowsRemoved.connect(self._update_placeholder)
+        self.file_list.model().modelReset.connect(self._update_placeholder)
+
+        # --- Boutons fichiers ---
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        self.add_btn = QPushButton("+ Ajouter")
+        self.add_btn.clicked.connect(self._browse_files)
+        btn_row.addWidget(self.add_btn)
+
+        self.remove_btn = QPushButton("Retirer")
+        self.remove_btn.clicked.connect(self._remove_selected)
+        btn_row.addWidget(self.remove_btn)
+
+        self.clear_btn = QPushButton("Tout retirer")
+        self.clear_btn.clicked.connect(self._clear_files)
+        btn_row.addWidget(self.clear_btn)
+
+        btn_row.addStretch()
+        self.file_count_label = QLabel("0 fichier(s)")
+        btn_row.addWidget(self.file_count_label)
+        layout.addLayout(btn_row)
+
+        # --- Progression ---
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setMinimumHeight(20)
+        layout.addWidget(self.progress_bar)
+
+        # --- Status ---
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setWordWrap(True)
+        self.status_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        layout.addWidget(self.status_label)
+
+        # --- Installer ---
+        self.install_btn = QPushButton("Installer")
+        self.install_btn.setMinimumHeight(42)
+        self.install_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 15px;
+                font-weight: bold;
+                background-color: #2a7d2a;
+                color: white;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #359535;
+            }
+            QPushButton:pressed {
+                background-color: #1f5f1f;
+            }
+            QPushButton:disabled {
+                background-color: #3a3a3a;
+                color: #777;
+            }
+        """)
+        self.install_btn.clicked.connect(self._start_install)
+        layout.addWidget(self.install_btn)
+
+        self._update_placeholder()
+        self._update_install_button()
+
+    def _update_placeholder(self):
+        has_items = self.file_list.count() > 0
+        self.drop_zone.setVisible(not has_items)
+
+    # =========================================================================
+    # GESTION DES APPAREILS
+    # =========================================================================
+
+    def _scan_devices(self):
+        """Lance le scan ADB en arrière-plan."""
+        if self._scanner is not None and self._scanner.isRunning():
+            return
+
+        self.refresh_btn.setEnabled(False)
+        self.refresh_btn.setText("…")
+
+        self._scanner = DeviceScanner()
+        self._scanner.devices_found.connect(self._on_devices_found)
+        self._scanner.finished.connect(lambda: self.refresh_btn.setText("↻"))
+        self._scanner.finished.connect(lambda: self.refresh_btn.setEnabled(True))
+        self._scanner.start()
+
+    @Slot(list)
+    def _on_devices_found(self, devices):
+        """Met à jour la liste déroulante des appareils."""
+        current_serial = self.device_combo.currentData()
+        self.device_combo.clear()
+
+        has_authorized = False
+        has_unauthorized = False
+
+        for serial, state, model, product, is_network in devices:
+            icon = "🌐" if is_network else "📱"
+
+            if state == 'unauthorized':
+                label = f"⛔ {icon} {model} — débogage non autorisé"
+            elif state == 'offline':
+                label = f"⚡ {icon} {model} — hors ligne"
+            else:
+                label = f"{icon} {model}"
+                has_authorized = True
+
+            if state in ('unauthorized', 'offline'):
+                has_unauthorized = True
+
+            self.device_combo.addItem(label, serial)
+
+        if current_serial:
+            for i in range(self.device_combo.count()):
+                if self.device_combo.itemData(i) == current_serial:
+                    self.device_combo.setCurrentIndex(i)
+                    break
+
+        self._update_wifi_button()
+        self._update_install_button()
+
+        if not devices:
+            self.status_label.setText(
+                "Aucun appareil détecté.\n"
+                "Branchez un téléphone Android avec le débogage USB activé\n"
+                "(Options développeur → Débogage USB)."
+            )
+            self.status_label.setStyleSheet("font-size: 12px; color: #e07070;")
+        elif has_unauthorized and not has_authorized:
+            self.status_label.setText(
+                "Appareil(s) détecté(s) mais débogage USB non autorisé.\n"
+                "Déverrouillez le téléphone et acceptez la demande."
+            )
+            self.status_label.setStyleSheet("font-size: 12px; color: #e0a040;")
+        else:
+            online = sum(1 for _, s, _, _, _ in devices if s == 'device')
+            self.status_label.setText(
+                f"{len(devices)} appareil(s) détecté(s) — {online} en ligne."
+            )
+            self.status_label.setStyleSheet("font-size: 12px; color: #70a070;")
+
+    # =========================================================================
+    # CONNEXION WiFi
+    # =========================================================================
+
+    def _update_wifi_button(self):
+        """Met à jour l'état du bouton WiFi selon l'appareil sélectionné."""
+        serial = self.device_combo.currentData()
+
+        if serial and ':' in serial:
+            # Appareil réseau sélectionné → mode reconnexion
+            self.wifi_btn.setText("WiFi ✓")
+            self.wifi_btn.setToolTip(
+                "Appareil déjà connecté en WiFi.\n"
+                "Cliquez pour reconnecter si la connexion est perdue."
+            )
+            self.wifi_btn.setEnabled(True)
+        elif serial:
+            # Appareil USB sélectionné → mode activation WiFi
+            self.wifi_btn.setText("WiFi")
+            self.wifi_btn.setToolTip(
+                "Activer le débogage WiFi sur ce téléphone.\n"
+                "Le téléphone doit être connecté en USB et déverrouillé."
+            )
+            self.wifi_btn.setEnabled(True)
+        else:
+            # Aucun appareil → proposer le débogage sans fil
+            self.wifi_btn.setText("WiFi")
+            self.wifi_btn.setToolTip(
+                "Se connecter en WiFi.\n"
+                "USB : sélectionnez un appareil branché.\n"
+                "Sans fil : entrez l'IP et le code du téléphone."
+            )
+            self.wifi_btn.setEnabled(True)
+
+    def _toggle_wifi(self):
+        """Active la connexion WiFi pour l'appareil sélectionné
+        ou ouvre le dialogue d'appairage sans fil si aucun appareil USB."""
+        serial = self.device_combo.currentData()
+
+        if serial:
+            # Mode USB → WiFi
+            is_network = ':' in serial
+
+            self.wifi_btn.setEnabled(False)
+            self.wifi_btn.setText("…")
+            self.status_label.setText("Configuration de la connexion WiFi...")
+            self.status_label.setStyleSheet("font-size: 12px; color: #e0a040;")
+
+            self._net_thread = NetworkConnectThread(
+                serial, is_already_network=is_network
+            )
+            self._net_thread.finished.connect(self._on_wifi_finished)
+            self._net_thread.start()
+        else:
+            # Mode débogage sans fil (pas d'USB)
+            dialog = PairDialog(self)
+            if dialog.exec() != QDialog.Accepted:
+                return
+
+            addr, code, connect_addr = dialog.get_values()
+            if not addr or not code or not connect_addr:
+                return
+
+            self.wifi_btn.setEnabled(False)
+            self.wifi_btn.setText("…")
+            self.status_label.setText("Appairage en cours...")
+            self.status_label.setStyleSheet("font-size: 12px; color: #e0a040;")
+
+            self._net_thread = NetworkConnectThread(
+                pair_addr=addr, pair_code=code, connect_addr=connect_addr
+            )
+            self._net_thread.finished.connect(self._on_wifi_finished)
+            self._net_thread.start()
+
+    @Slot(bool, str)
+    def _on_wifi_finished(self, success, message):
+        """Résultat de la connexion WiFi."""
+        if success:
+            self.status_label.setText(message)
+            self.status_label.setStyleSheet("font-size: 12px; color: #70a070;")
+            QMessageBox.information(self, "Connexion WiFi", message)
+        else:
+            self.status_label.setText(message)
+            self.status_label.setStyleSheet("font-size: 12px; color: #e07070;")
+            QMessageBox.warning(self, "Erreur WiFi", message)
+
+        self._scan_devices()
+        self._update_wifi_button()
+
+    # =========================================================================
+    # GESTION DES FICHIERS (DRAG & DROP)
+    # =========================================================================
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """Accepte le drop si au moins un fichier est un APK valide."""
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.isLocalFile():
+                    ext = Path(url.toLocalFile()).suffix.lower()
+                    if ext in APK_EXTENSIONS:
+                        event.acceptProposedAction()
+                        return
+        event.ignore()
+
+    def dropEvent(self, event: QDropEvent):
+        """Ajoute les fichiers APK déposés à la liste."""
+        for url in event.mimeData().urls():
+            filepath = url.toLocalFile()
+            if os.path.isfile(filepath):
+                ext = Path(filepath).suffix.lower()
+                if ext in APK_EXTENSIONS:
+                    self._add_file(filepath)
+        event.acceptProposedAction()
+
+    def _browse_files(self):
+        """Ouvre un dialogue de sélection de fichiers APK."""
+        filters = (
+            "APK et bundles (*.apk *.apkm *.xapk *.apks);;"
+            "Tous les fichiers (*)"
+        )
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Sélectionner des APK à installer", "", filters
+        )
+        for f in files:
+            self._add_file(f)
+
+    def _add_file(self, filepath):
+        """Ajoute un fichier à la liste (sans doublon)."""
+        for i in range(self.file_list.count()):
+            if self.file_list.item(i).data(Qt.UserRole) == filepath:
+                return
+
+        filename = os.path.basename(filepath)
+        try:
+            size_mb = os.path.getsize(filepath) / (1024 * 1024)
+        except OSError:
+            size_mb = 0
+
+        ext = Path(filepath).suffix.lower()
+        if ext in BUNDLE_EXTENSIONS:
+            display = f"📦 {filename}  ({size_mb:.1f} Mo)"
+        else:
+            display = f"📱 {filename}  ({size_mb:.1f} Mo)"
+
+        item = QListWidgetItem(display)
+        item.setData(Qt.UserRole, filepath)
+        item.setToolTip(filepath)
+        self.file_list.addItem(item)
+        self._update_file_count()
+
+    def _remove_selected(self):
+        """Retire les fichiers sélectionnés de la liste."""
+        for item in self.file_list.selectedItems():
+            row = self.file_list.row(item)
+            self.file_list.takeItem(row)
+        self._update_file_count()
+
+    def _clear_files(self):
+        """Vide la liste des fichiers."""
+        self.file_list.clear()
+        self._update_file_count()
+
+    def _update_file_count(self):
+        """Met à jour le compteur de fichiers et le bouton installer."""
+        count = self.file_list.count()
+        self.file_count_label.setText(f"{count} fichier(s)")
+        self._update_placeholder()
+        self._update_install_button()
+
+    def _update_install_button(self):
+        """Active/désactive le bouton d'installation selon le contexte."""
+        has_files = self.file_list.count() > 0
+        has_device = self.device_combo.count() > 0
+        self.install_btn.setEnabled(has_device and has_files)
+
+        if has_files:
+            count = self.file_list.count()
+            self.install_btn.setText(
+                f"Installer ({count} APK)" if count > 1 else "Installer"
+            )
+        else:
+            self.install_btn.setText("Installer")
+
+    # =========================================================================
+    # INSTALLATION
+    # =========================================================================
+
+    def _start_install(self):
+        """Vérifie l'état et lance l'installation après confirmation."""
+        serial = self.device_combo.currentData()
+        if not serial:
+            QMessageBox.warning(
+                self, "Aucun appareil",
+                "Aucun appareil sélectionné. Branchez un téléphone Android."
+            )
+            return
+
+        for i in range(self.device_combo.count()):
+            if self.device_combo.itemData(i) == serial:
+                label = self.device_combo.itemText(i)
+                if 'non autorisé' in label:
+                    QMessageBox.warning(
+                        self, "Débogage USB non autorisé",
+                        "Le débogage USB n'est pas autorisé sur cet appareil.\n\n"
+                        "1. Déverrouillez le téléphone\n"
+                        "2. Acceptez la demande d'autorisation de débogage USB\n"
+                        "3. Cliquez sur ↻ pour rafraîchir"
+                    )
+                    return
+                if 'hors ligne' in label:
+                    QMessageBox.warning(
+                        self, "Appareil hors ligne",
+                        "L'appareil ne répond pas.\n\n"
+                        "Vérifiez que :\n"
+                        "• Le câble USB est bien branché\n"
+                        "• Le débogage USB est activé (options développeur)\n"
+                        "• Le téléphone est déverrouillé\n"
+                        "• Si WiFi : le téléphone est sur le même réseau"
+                    )
+                    return
+                break
+
+        if self.file_list.count() == 0:
+            QMessageBox.warning(
+                self, "Aucun fichier",
+                "Ajoutez des fichiers APK à installer."
+            )
+            return
+
+        device_name = self.device_combo.currentText()
+        files_list = '\n'.join(
+            f"  {self.file_list.item(i).text()}"
+            for i in range(self.file_list.count())
+        )
+
+        confirm = QMessageBox.question(
+            self, "Confirmer l'installation",
+            f"Appareil cible : {device_name}\n\n"
+            f"Fichiers à installer :\n{files_list}\n\n"
+            f"Continuer ?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+
+        if confirm != QMessageBox.Yes:
+            return
+
+        files = [
+            self.file_list.item(i).data(Qt.UserRole)
+            for i in range(self.file_list.count())
+        ]
+
+        self._set_ui_enabled(False)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+        self.status_label.setText("Installation en cours...")
+        self.status_label.setStyleSheet("font-size: 12px; color: #e0a040;")
+
+        self._install_thread = InstallThread(serial, files)
+        self._install_thread.progress_update.connect(self._on_progress)
+        self._install_thread.file_progress.connect(self._on_file_progress)
+        self._install_thread.install_finished.connect(self._on_install_finished)
+        self._install_thread.start()
+
+    @Slot(str)
+    def _on_progress(self, message):
+        self.status_label.setText(message)
+
+    @Slot(int, int)
+    def _on_file_progress(self, current, total):
+        if total > 0:
+            self.progress_bar.setValue(int((current / total) * 100))
+
+    @Slot(bool, str)
+    def _on_install_finished(self, success, message):
+        self._set_ui_enabled(True)
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setValue(0)
+
+        if success:
+            self.status_label.setText(message)
+            self.status_label.setStyleSheet("font-size: 12px; color: #70a070;")
+            self._clear_files()
+            QMessageBox.information(self, "Installation terminée", message)
+        else:
+            self.status_label.setText(message)
+            self.status_label.setStyleSheet("font-size: 12px; color: #e07070;")
+            QMessageBox.critical(self, "Erreur d'installation", message)
+
+    def _set_ui_enabled(self, enabled):
+        """Active/désactive l'interface pendant l'installation."""
+        self.device_combo.setEnabled(enabled)
+        self.refresh_btn.setEnabled(enabled)
+        self.wifi_btn.setEnabled(enabled)
+        self.add_btn.setEnabled(enabled)
+        self.remove_btn.setEnabled(enabled)
+        self.clear_btn.setEnabled(enabled)
+        self.file_list.setEnabled(enabled)
+        self.install_btn.setEnabled(enabled and self.file_list.count() > 0)
+        self.setAcceptDrops(enabled)
+
+    def closeEvent(self, event):
+        """Annule l'installation en cours si la fenêtre est fermée."""
+        if self._install_thread and self._install_thread.isRunning():
+            self._install_thread.cancel()
+            self._install_thread.wait(3000)
+        event.accept()
+
+
+# =============================================================================
+# POINT D'ENTRÉE
+# =============================================================================
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    app.setApplicationName("Installateur APK Gablue")
+
+    window = ApkInstallerWindow()
+    window.show()
+
+    sys.exit(app.exec())

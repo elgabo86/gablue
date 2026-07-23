@@ -41,6 +41,7 @@ chmod +x /usr/bin/wallpaper-import
 
 chmod +x /usr/bin/gablue-isomount
 chmod +x /usr/bin/gablue-update
+chmod +x /usr/bin/gablue-apk-installer
 chmod +x /usr/libexec/gablue-config
 chmod +x /usr/libexec/archgab-update
 chmod +x /usr/libexec/gablue-bigscreen-session-init
