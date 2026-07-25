@@ -246,7 +246,7 @@ lib/dir-config.sh
   - misc.sh : OpenAL, PhysX, MSLS31, VB6 Runtime
   - wmp9.sh : Windows Media Player 9 + wsh57. setup_wm.exe installe les codecs de base (wmvcore, wmp, l3codeca.acm) en 32 et 64-bit. Le pack supplémentaire wm9codecs (WM9Codecs9x.exe) est ignoré silencieusement en 64-bit car superflu.
   - main.sh : Fonction principale install_all_wincomponents
-- **wineprefix.sh** : Création/gestion du préfixe Wine, copie ICU 68 DLLs (gwine uniquement)
+- **wineprefix.sh** : Création/gestion du préfixe Wine, copie ICU 68 DLLs (gwine uniquement). `wineboot_init_prefix()` appelle `setup_wine_temp_symlinks()` **avant** de rendre la main : les symlink `Temp` doivent être valides avant toute installation `msiexec` (Mono/Gecko), sinon `advpack:create_tmp_ini_file Can't get temp ini file path`. `setup_wine_temp_symlinks()` répare aussi les symlinks cassés (target inexistant après nettoyage du cache `~/.cache/gwine`) qui persistent via `~/Windows/UserData` sync entre machines (Syncthing)
 - **wineserver-manager.sh** : Fichier de redirection vers wineserver/*
 - **wineserver/*** : Gestion du wineserver persistant
   - init.sh : Initialisation système de locks

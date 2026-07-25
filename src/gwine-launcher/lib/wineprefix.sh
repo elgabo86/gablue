@@ -93,6 +93,11 @@ wineboot_init_prefix() {
     fi
     WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "mscoree" /d native,builtin /f >/dev/null 2>&1 || true
     WINEPREFIX="$WINEPREFIX" "$WINE_BIN" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "winemenubuilder.exe" /d "" /f >/dev/null 2>&1 || true
+    # Réparer les symlinks Temp AVANT toute installation (msiexec/advpack écrit dans %TEMP%).
+    # Le dossier users est un symlink vers ~/Windows/UserData (souvent sync via Syncthing),
+    # un symlink Temp cassé (target ~/.cache/gwine/temp supprimé) survivrait à wineboot et
+    # ferait échouer install_wine_mono_gecko avec "Can't get temp ini file path".
+    setup_wine_temp_symlinks "$WINEPREFIX"
     install_icu68_dlls
 }
 
@@ -252,12 +257,18 @@ setup_wine_temp_symlinks() {
     )
     
     for temp_path in "${temp_paths[@]}"; do
+        # Dossier réel (pas un symlink) → remplacer par symlink
         if [ -d "$temp_path" ] && [ ! -L "$temp_path" ]; then
             rm -rf "$temp_path"
+        # Symlink cassé (target inexistant, ex. cache ~/.cache/gwine nettoyé mais
+        # le symlink Temp persiste dans ~/Windows/UserData sync via Syncthing) → supprimer
+        elif [ -L "$temp_path" ] && [ ! -d "$temp_path" ]; then
+            rm -f "$temp_path"
         fi
         
+        # Créer le symlink si absent
         if [ ! -L "$temp_path" ]; then
-            ln -sf "$CACHE_DIR/temp" "$temp_path"
+            ln -sfn "$CACHE_DIR/temp" "$temp_path"
             echo "Symlink Temp créé: $temp_path -> $CACHE_DIR/temp"
         fi
     done
