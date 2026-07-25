@@ -1248,6 +1248,162 @@ btrfs-compress-defrag:
 
     echo "Défragmentation et compression terminées."
 
+# Configurer la limite thermique des SSD NVMe (throttle automatique HCTM)
+ssd-thermal-limit:
+    #!/usr/bin/bash
+    source /usr/lib/ujust/ujust.sh
+
+    # Vérifier que nvme-cli est installé
+    if ! command -v nvme &>/dev/null; then
+        echo "${red}nvme-cli n'est pas installé.${normal}"
+        exit 1
+    fi
+
+    # Lister les contrôleurs NVMe (pas les namespaces /dev/nvmeXnY)
+    mapfile -t nvme_devs < <(ls /dev/nvme[0-9] 2>/dev/null)
+    if [[ ${#nvme_devs[@]} -eq 0 ]]; then
+        echo "${red}Aucun SSD NVMe détecté.${normal}"
+        exit 1
+    fi
+
+    # Sélection du device si plusieurs
+    if [[ ${#nvme_devs[@]} -eq 1 ]]; then
+        NVME_DEV="${nvme_devs[0]}"
+    else
+        menu_options=()
+        declare -A dev_map
+        for dev in "${nvme_devs[@]}"; do
+            model=$(sudo nvme id-ctrl "$dev" 2>/dev/null | awk '/^mn/ {$1=""; print}' | sed 's/^ *//')
+            [[ -z "$model" ]] && model="Modèle inconnu"
+            label="$dev - $model"
+            menu_options+=("$label")
+            dev_map["$label"]="$dev"
+        done
+        menu_options+=("Annuler")
+        echo "Sélectionner le SSD NVMe :"
+        CHOICE=$(ugum choose "${menu_options[@]}")
+        [[ "$CHOICE" == "Annuler" || -z "$CHOICE" ]] && exit 0
+        NVME_DEV="${dev_map[$CHOICE]}"
+    fi
+
+    # Vérifier le support HCTM (bit hctma dans id-ctrl)
+    HCTMA=$(sudo nvme id-ctrl "$NVME_DEV" 2>/dev/null | awk '/^hctma/ {print $3}')
+    if [[ "$HCTMA" != "0x1" ]]; then
+        echo "${red}Ce SSD ne supporte pas le Host Controlled Thermal Management (HCTM).${normal}"
+        exit 1
+    fi
+
+    # Récupérer le modèle pour l'affichage
+    MODEL=$(sudo nvme id-ctrl "$NVME_DEV" 2>/dev/null | awk '/^mn/ {$1=""; print}' | sed 's/^ *//')
+    [[ -z "$MODEL" ]] && MODEL="Modèle inconnu"
+    echo "${bold}SSD : $NVME_DEV - $MODEL${normal}"
+    echo ""
+
+    # Fonction : afficher l'état actuel et la température
+    show_status() {
+        echo "=== État actuel ==="
+        CURRENT=$(sudo nvme get-feature "$NVME_DEV" -f 0x10 --verbose 2>/dev/null)
+        CURRENT_VAL=$(echo "$CURRENT" | grep "Current value" | awk '{print $NF}')
+        if [[ "$CURRENT_VAL" == "0x00000000" ]]; then
+            echo "  HCTM : ${yellow}désactivé${normal} (contrôle firmware par défaut)"
+        else
+            TMT1_K=$(echo "$CURRENT" | grep "TMT1" | grep -oP '\d+ K' | awk '{print $1}')
+            TMT2_K=$(echo "$CURRENT" | grep "TMT2" | grep -oP '\d+ K' | awk '{print $1}')
+            TMT1_C=$(( TMT1_K - 273 ))
+            TMT2_C=$(( TMT2_K - 273 ))
+            echo "  HCTM : ${green}activé${normal}"
+            echo "  TMT1 (throttle doux)    : $TMT1_C °C ($TMT1_K K)"
+            echo "  TMT2 (throttle agressif): $TMT2_C °C ($TMT2_K K)"
+        fi
+        echo ""
+        echo "Températures actuelles :"
+        sudo nvme smart-log "$NVME_DEV" 2>/dev/null | grep -E "^temperature|^Temperature Sensor" | sed 's/^/  /'
+    }
+
+    # Afficher l'état actuel
+    show_status
+    echo ""
+
+    # Menu principal
+    ACTION=$(ugum choose \
+        "Activer 70/75 °C (recommandé)" \
+        "Activer 65/70 °C (conservatif)" \
+        "Activer 75/80 °C (permissif)" \
+        "Activer avec températures custom" \
+        "Désactiver (contrôle firmware)" \
+        "Annuler")
+    [[ -z "$ACTION" || "$ACTION" == "Annuler" ]] && exit 0
+
+    case "$ACTION" in
+        "Activer 70/75 °C (recommandé)")
+            T1_C=70; T2_C=75 ;;
+        "Activer 65/70 °C (conservatif)")
+            T1_C=65; T2_C=70 ;;
+        "Activer 75/80 °C (permissif)")
+            T1_C=75; T2_C=80 ;;
+        "Activer avec températures custom")
+            read -r -p "TMT1 (throttle doux) en °C [40-85] : " T1_C
+            read -r -p "TMT2 (throttle agressif) en °C [45-90] : " T2_C
+            if [[ ! "$T1_C" =~ ^[0-9]+$ ]] || [[ ! "$T2_C" =~ ^[0-9]+$ ]]; then
+                echo "${red}Températures invalides.${normal}"
+                exit 1
+            fi
+            if (( T1_C < 40 || T1_C > 85 )); then
+                echo "${red}TMT1 doit être entre 40 et 85 °C.${normal}"
+                exit 1
+            fi
+            if (( T2_C < 45 || T2_C > 90 )); then
+                echo "${red}TMT2 doit être entre 45 et 90 °C.${normal}"
+                exit 1
+            fi
+            if (( T1_C >= T2_C )); then
+                echo "${red}TMT1 doit être inférieur à TMT2.${normal}"
+                exit 1
+            fi
+            ;;
+        "Désactiver (contrôle firmware)")
+            if ugum confirm "Désactiver le HCTM ? Les seuils firmware par défaut reprendront le contrôle."; then
+                if sudo nvme set-feature "$NVME_DEV" -f 0x10 -V 0 -s 2>&1; then
+                    echo ""
+                    echo "${green}✓ HCTM désactivé.${normal}"
+                else
+                    echo "${red}✗ Erreur lors de la désactivation.${normal}"
+                    exit 1
+                fi
+            fi
+            exit 0
+            ;;
+        *)
+            exit 0
+            ;;
+    esac
+
+    # Conversion °C → K et encodage NVMe
+    T1_K=$(( T1_C + 273 ))
+    T2_K=$(( T2_C + 273 ))
+    VALUE=$(printf '0x%04x%04x' "$T1_K" "$T2_K")
+
+    echo ""
+    echo "${bold}Configuration à appliquer :${normal}"
+    echo "  TMT1 : $T1_C °C ($T1_K K) — throttle doux"
+    echo "  TMT2 : $T2_C °C ($T2_K K) — throttle agressif"
+    echo "  Valeur NVMe : $VALUE"
+    echo "  Persistant : oui (survit au reboot)"
+    echo ""
+
+    if ugum confirm "Appliquer cette configuration ?"; then
+        if sudo nvme set-feature "$NVME_DEV" -f 0x10 -V "$VALUE" -s 2>&1; then
+            echo ""
+            echo "${green}✓ HCTM configuré avec succès.${normal}"
+            echo "  Le SSD throttlera ses écritures à partir de $T1_C °C."
+            echo ""
+            show_status
+        else
+            echo "${red}✗ Erreur lors de la configuration.${normal}"
+            exit 1
+        fi
+    fi
+
 # Réinitialiser le cache capabilities de libvirt (corrige "video model 'virtio' unsupported" dans virt-manager)
 libvirt-reset-cache:
     #!/usr/bin/bash

@@ -1031,7 +1031,7 @@ Commandes ujust disponibles :
 - **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`
 - **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`, `cpuid-emu-on/off`
 - **Virtualisation** : `docker-enable/disable`, `dx-group`, `setup-kvmfr`, `libvirt-reset-cache` (efface le cache capabilities libvirt, corrige l'erreur "video model 'virtio' unsupported" dans virt-manager)
-- **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`
+- **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`, `ssd-thermal-limit` (limite thermique NVMe via HCTM, interactif, persistant)
 - **Rebase** : `gablue-rebase-*` pour changer de variante
 
 ## Sécurité
