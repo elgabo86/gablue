@@ -68,7 +68,21 @@ struct controller {
     struct timespec last_keepalive;
 };
 
-static volatile bool running = true;
+static bool running = true;
+
+/* Lookup table sticks DS4 0-255 → Xbox -32768…32767 */
+static short stick_lut[256];
+
+static void init_stick_lut(void) {
+    int v;
+    for (v = 0; v <= 255; v++) {
+        int offset = v - 128;
+        if (offset > 0)
+            stick_lut[v] = (short)((offset * 32767 + 63) / 127);
+        else
+            stick_lut[v] = (short)(offset * 256);
+    }
+}
 
 static bool matches_filter(uint16_t pid) {
     if (filter == FILTER_ALL) return true;
@@ -538,11 +552,8 @@ static int find_controllers(struct controller *controllers, int max) {
     return count;
 }
 
-static int convert_stick_value(int value) {
-    int converted = (value - 128) * 256;
-    if (converted > 32767) converted = 32767;
-    if (converted < -32768) converted = -32768;
-    return converted;
+static inline short convert_stick_value(int value) {
+    return stick_lut[value & 0xFF];
 }
 
 static void map_ps_to_xbox(struct input_event *ev) {
@@ -817,6 +828,8 @@ int main(int argc, char *argv[]) {
 
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+
+    init_stick_lut();
 
     printf("=== ds2xbox - Sony Controller to Xbox Emulator ===\n");
     if (filter == FILTER_DUALSENSE)
