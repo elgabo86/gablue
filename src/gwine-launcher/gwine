@@ -51,14 +51,14 @@ run_wgp_mode() {
 
     read_wgp_xbox_config
 
+    init_wineprefix
+
     if [ "$xbox_mode" = true ]; then
         if ! start_ds2xbox; then
             cleanup_wgp
             exit 1
         fi
     fi
-
-    init_wineprefix
 
     setup_saves_symlink
     setup_extras_symlink
@@ -126,12 +126,6 @@ run_wgp_mode() {
 run_classic_mode() {
     export WINEPREFIX="$HOME_REAL/Windows/Prefix"
     
-    if [ "$xbox_mode" = true ]; then
-        if ! start_ds2xbox; then
-            exit 1
-        fi
-    fi
-    
     local filename
     filename="$(basename "$fullpath")"
     local new_fullpath="$fullpath"
@@ -181,6 +175,12 @@ run_classic_mode() {
     fi
     
     init_wineprefix
+
+    if [ "$xbox_mode" = true ]; then
+        if ! start_ds2xbox; then
+            exit 1
+        fi
+    fi
 
     mkdir -p "$WINEPREFIX"
     
