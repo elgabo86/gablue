@@ -148,29 +148,26 @@ run_classic_mode() {
         error_exit "Fichier non trouvé: $new_fullpath"
     fi
     
-    gwine_temp_base=""
-    if [[ "$fullpath" == *[^[:ascii:]]* ]]; then
-        gwine_temp_base=$(mktemp -d)
-        ln -sf "$new_fullpath" "$gwine_temp_base/$filename"
-        new_fullpath="$gwine_temp_base/$filename"
-    fi
-
-    # Contournement des composants de chemin invalides sous Windows.
-    # Windows interdit les noms de dossiers finissant par un point ou un espace ;
-    # Wine émule cette règle lors de la conversion des chemins et ne retrouve
-    # plus l'exécutable (ex: ISO montée avec un label finissant par un point).
-    # On redirige alors le lancement via un symlink temporaire vers le dossier
-    # de l'exécutable : le chemin vu par Wine ne contient plus de composant invalide.
+    # Contournement des chemins problématiques pour Wine via un symlink
+    # temporaire pointant vers le DOSSIER de l'exécutable (pas l'exécutable
+    # seul). Corrige aussi les composants de chemin invalides Windows
+    # (dossier finissant par '.' ou espace).
     local norm_path norm_dir
     norm_path="$(realpath -s "$new_fullpath" 2>/dev/null || echo "$new_fullpath")"
     norm_dir="$(dirname "$norm_path")"
+    local need_temp=false
+    if [[ "$fullpath" == *[^[:ascii:]]* ]]; then
+        need_temp=true
+        echo "Caractères non-ASCII détectés dans le chemin"
+    fi
     if [[ "$norm_dir/" == *"./"* ]] || [[ "$norm_dir/" == *" /"* ]]; then
-        if [ -z "$gwine_temp_base" ]; then
-            gwine_temp_base=$(mktemp -d)
-        fi
+        need_temp=true
+        echo "Chemin incompatible Windows détecté (dossier finissant par '.' ou espace)"
+    fi
+    if [ "$need_temp" = true ]; then
+        gwine_temp_base=$(mktemp -d)
         ln -sfn "$norm_dir" "$gwine_temp_base/gamedir"
         new_fullpath="$gwine_temp_base/gamedir/$(basename "$norm_path")"
-        echo "Chemin incompatible Windows détecté (dossier finissant par '.' ou espace)"
         echo "Redirection via symlink: $new_fullpath"
     fi
     
