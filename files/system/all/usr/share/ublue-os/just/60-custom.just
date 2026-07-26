@@ -1253,6 +1253,12 @@ ssd-thermal-limit:
     #!/usr/bin/bash
     source /usr/lib/ujust/ujust.sh
 
+    # Striper les séquences ANSI (fuites de fzf/ble.sh) et espaces de fin des retours de ugum
+    strip_ansi() {
+        local ESC=$'\x1b'
+        sed -E "s/${ESC}\\[[0-9;]*[a-zA-Z]//g; s/[[:space:]]+$//"
+    }
+
     # Vérifier que nvme-cli est installé
     if ! command -v nvme &>/dev/null; then
         echo "${red}nvme-cli n'est pas installé.${normal}"
@@ -1266,37 +1272,51 @@ ssd-thermal-limit:
         exit 1
     fi
 
+    # Récupérer les infos de chaque device en une seule fois (JSON = pas de fuite de texte)
+    declare -A dev_model dev_hctma dev_mntmt
+    for dev in "${nvme_devs[@]}"; do
+        JSON=$(sudo nvme id-ctrl "$dev" -o json 2>/dev/null)
+        dev_model["$dev"]=$(echo "$JSON" | jq -r '.mn // "Modèle inconnu"' | sed 's/[[:space:]]*$//')
+        dev_hctma["$dev"]=$(echo "$JSON" | jq -r '.hctma // 0')
+        dev_mntmt["$dev"]=$(echo "$JSON" | jq -r '.mntmt // 0')
+    done
+
     # Sélection du device si plusieurs
     if [[ ${#nvme_devs[@]} -eq 1 ]]; then
         NVME_DEV="${nvme_devs[0]}"
     else
         menu_options=()
-        declare -A dev_map
         for dev in "${nvme_devs[@]}"; do
-            model=$(sudo nvme id-ctrl "$dev" 2>/dev/null | awk '/^mn/ {$1=""; print}' | sed 's/^ *//')
-            [[ -z "$model" ]] && model="Modèle inconnu"
-            label="$dev - $model"
-            menu_options+=("$label")
-            dev_map["$label"]="$dev"
+            menu_options+=("$dev - ${dev_model[$dev]}")
         done
         menu_options+=("Annuler")
         echo "Sélectionner le SSD NVMe :"
-        CHOICE=$(ugum choose "${menu_options[@]}")
+        CHOICE=$(ugum choose "${menu_options[@]}" | strip_ansi)
         [[ "$CHOICE" == "Annuler" || -z "$CHOICE" ]] && exit 0
-        NVME_DEV="${dev_map[$CHOICE]}"
+        # Extraire le device /dev/nvmeN du début de la chaîne (robuste vs bruit ANSI/espaces)
+        NVME_DEV=$(echo "$CHOICE" | grep -oP '^/dev/nvme[0-9]+')
+        if [[ -z "$NVME_DEV" ]] || [[ ! -e "$NVME_DEV" ]]; then
+            echo "${red}Sélection invalide : $CHOICE${normal}"
+            exit 1
+        fi
     fi
 
     # Vérifier le support HCTM (bit hctma dans id-ctrl)
-    HCTMA=$(sudo nvme id-ctrl "$NVME_DEV" 2>/dev/null | awk '/^hctma/ {print $3}')
-    if [[ "$HCTMA" != "0x1" ]]; then
+    HCTMA="${dev_hctma[$NVME_DEV]}"
+    if [[ "$HCTMA" != "1" ]]; then
         echo "${red}Ce SSD ne supporte pas le Host Controlled Thermal Management (HCTM).${normal}"
         exit 1
     fi
 
-    # Récupérer le modèle pour l'affichage
-    MODEL=$(sudo nvme id-ctrl "$NVME_DEV" 2>/dev/null | awk '/^mn/ {$1=""; print}' | sed 's/^ *//')
-    [[ -z "$MODEL" ]] && MODEL="Modèle inconnu"
+    # Récupérer le modèle et mntmt depuis les valeurs cachées
+    MODEL="${dev_model[$NVME_DEV]}"
+    MNTMT_K="${dev_mntmt[$NVME_DEV]}"
+    MNTMT_K=${MNTMT_K:-0}
+    MNTMT_C=$(( MNTMT_K - 273 ))
     echo "${bold}SSD : $NVME_DEV - $MODEL${normal}"
+    if (( MNTMT_C > 0 )); then
+        echo "  Température minimum TMT1 (mntmt) : ${MNTMT_C} °C ($MNTMT_K K)"
+    fi
     echo ""
 
     # Fonction : afficher l'état actuel et la température
@@ -1304,16 +1324,20 @@ ssd-thermal-limit:
         echo "=== État actuel ==="
         CURRENT=$(sudo nvme get-feature "$NVME_DEV" -f 0x10 --verbose 2>/dev/null)
         CURRENT_VAL=$(echo "$CURRENT" | grep "Current value" | awk '{print $NF}')
-        if [[ "$CURRENT_VAL" == "0x00000000" ]]; then
+        if [[ "$CURRENT_VAL" == "0x00000000" ]] || [[ -z "$CURRENT_VAL" ]]; then
             echo "  HCTM : ${yellow}désactivé${normal} (contrôle firmware par défaut)"
         else
             TMT1_K=$(echo "$CURRENT" | grep "TMT1" | grep -oP '\d+ K' | awk '{print $1}')
             TMT2_K=$(echo "$CURRENT" | grep "TMT2" | grep -oP '\d+ K' | awk '{print $1}')
-            TMT1_C=$(( TMT1_K - 273 ))
-            TMT2_C=$(( TMT2_K - 273 ))
-            echo "  HCTM : ${green}activé${normal}"
-            echo "  TMT1 (throttle doux)    : $TMT1_C °C ($TMT1_K K)"
-            echo "  TMT2 (throttle agressif): $TMT2_C °C ($TMT2_K K)"
+            if [[ -z "$TMT1_K" ]] || [[ "$TMT1_K" == "0" ]]; then
+                echo "  HCTM : ${yellow}activé mais non configuré${normal} (TMT1/TMT2 à 0 K)"
+            else
+                TMT1_C=$(( TMT1_K - 273 ))
+                TMT2_C=$(( TMT2_K - 273 ))
+                echo "  HCTM : ${green}activé${normal}"
+                echo "  TMT1 (throttle doux)    : $TMT1_C °C ($TMT1_K K)"
+                echo "  TMT2 (throttle agressif): $TMT2_C °C ($TMT2_K K)"
+            fi
         fi
         echo ""
         echo "Températures actuelles :"
@@ -1324,14 +1348,33 @@ ssd-thermal-limit:
     show_status
     echo ""
 
+    # Construire la liste des presets : ne proposer que ceux où TMT1 >= mntmt
+    PRESETS=()
+    if (( MNTMT_C <= 65 )); then
+        PRESETS+=("Activer 65/70 °C (conservatif)")
+    fi
+    if (( MNTMT_C <= 70 )); then
+        PRESETS+=("Activer 70/75 °C (recommandé)")
+    fi
+    if (( MNTMT_C <= 75 )); then
+        PRESETS+=("Activer 75/80 °C (permissif)")
+    fi
+    # Preset dynamique pour les SSD avec mntmt élevé (au-dessus des presets standards)
+    # TMT1 = mntmt (minimum absolu), TMT2 = mntmt+5 (clampé à 90 max)
+    DYN_PRESET=""
+    if (( MNTMT_C > 75 )) && (( MNTMT_C <= 85 )); then
+        DYN_T1=$MNTMT_C
+        DYN_T2=$(( MNTMT_C + 5 ))
+        (( DYN_T2 > 90 )) && DYN_T2=90
+        DYN_PRESET="Activer ${DYN_T1}/${DYN_T2} °C (minimum supporté)"
+        PRESETS+=("$DYN_PRESET")
+    fi
+    PRESETS+=("Activer avec températures custom")
+    PRESETS+=("Désactiver (contrôle firmware)")
+    PRESETS+=("Annuler")
+
     # Menu principal
-    ACTION=$(ugum choose \
-        "Activer 70/75 °C (recommandé)" \
-        "Activer 65/70 °C (conservatif)" \
-        "Activer 75/80 °C (permissif)" \
-        "Activer avec températures custom" \
-        "Désactiver (contrôle firmware)" \
-        "Annuler")
+    ACTION=$(ugum choose "${PRESETS[@]}" | strip_ansi)
     [[ -z "$ACTION" || "$ACTION" == "Annuler" ]] && exit 0
 
     case "$ACTION" in
@@ -1341,15 +1384,18 @@ ssd-thermal-limit:
             T1_C=65; T2_C=70 ;;
         "Activer 75/80 °C (permissif)")
             T1_C=75; T2_C=80 ;;
+        *" (minimum supporté)")
+            T1_C=$DYN_T1; T2_C=$DYN_T2 ;;
         "Activer avec températures custom")
-            read -r -p "TMT1 (throttle doux) en °C [40-85] : " T1_C
+            MIN_T1=$(( MNTMT_C > 40 ? MNTMT_C : 40 ))
+            read -r -p "TMT1 (throttle doux) en °C [$MIN_T1-85] : " T1_C
             read -r -p "TMT2 (throttle agressif) en °C [45-90] : " T2_C
             if [[ ! "$T1_C" =~ ^[0-9]+$ ]] || [[ ! "$T2_C" =~ ^[0-9]+$ ]]; then
                 echo "${red}Températures invalides.${normal}"
                 exit 1
             fi
-            if (( T1_C < 40 || T1_C > 85 )); then
-                echo "${red}TMT1 doit être entre 40 et 85 °C.${normal}"
+            if (( T1_C < MIN_T1 || T1_C > 85 )); then
+                echo "${red}TMT1 doit être entre $MIN_T1 et 85 °C.${normal}"
                 exit 1
             fi
             if (( T2_C < 45 || T2_C > 90 )); then
