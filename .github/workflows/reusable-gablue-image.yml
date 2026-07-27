@@ -525,7 +525,12 @@ jobs:
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
+          # Les deux logins sont nécessaires :
+          # - podman login : pour skopeo copy (push de l'image)
+          # - docker login : pour cosign (lit ~/.docker/config.json pour l'auth)
+          #   NE PAS RETIRER le docker login (cf. run 30272548675)
           echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
           for attempt in 1 2 3; do
             echo "::group::Push attempt $attempt"
