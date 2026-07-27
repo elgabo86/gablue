@@ -40,12 +40,14 @@ Le projet construit 6 variantes distinctes :
 - Activation automatique des services Docker et libvirt
 - Groupes utilisateurs supplémentaires configurés
 
-**Stable vs Test** (les variantes test sont actuellement **désactivées**) :
-- **Containerfile** : Stable utilise `Containerfile-gablue` (unique pour toutes les variantes stables), Test utilise `Containerfile-gablue-test` et `Containerfile-gablue-nvidia-open-test`
-- **Scripts** : Stable utilise les scripts sans suffixe (`kernel`, `copr`, `mesa`, etc.), Test utilise les scripts `-test`
-- **OpenGamepadUI** : Interface gaming expérimentale style Steam Deck (test uniquement)
-- **Paquets OGUI** : `opengamepadui`, `gamescope-session-opengamepadui`, `powerstation`, `inputplumber` (test uniquement)
-- **Fichiers système test** : les scripts `-test` ajoutent leurs spécificités directement (sans dossier `files/system/test/` dédié)
+**Images de test (branche `test`)** :
+- Les anciennes variantes `-test` (gablue-main-test, gablue-nvidia-open-test) avec OpenGamepadUI sont **obsolètes** — les Containerfiles et scripts `-test` restent dans le dépôt pour référence mais ne sont plus buildés
+- La nouvelle approche utilise une **branche `test`** : pousser des modifs sur `refs/heads/test` déclenche le build de `gablue-main-test` et `gablue-nvidia-open-test` (packages GHCR séparés, tag `latest`) — les modifs sont testées sur les packages `-test` sans toucher aux packages stables
+- Le schedule quotidien ne build que `main` → `latest` n'est jamais pollué par les modifs de test
+- `update-readme` est exclu sur la branche `test` (pour ne pas écraser le README avec des versions de test)
+- Seules 2 variantes sont buildées sur `test` : `gablue-main-test` et `gablue-nvidia-open-test` (les autres jobs restreignent leur condition à `github.ref == 'refs/heads/main'`)
+- Côté client : `rpm-ostree rebase ostree-unverified-registry:ghcr.io/elgabo86/gablue-main-test:latest` pour tester, puis `gablue-main:latest` pour revenir
+- Quand les modifs sont validées, merger `test` dans `main` (le schedule propage sur `latest`)
 
 ## Structure du projet
 
@@ -687,8 +689,8 @@ Workflow principal déclenché par :
 - `build-nvidia` : Build gablue-nvidia (Containerfile-gablue, nvidia_flavor=nvidia-lts)
 - `build-nvidia-open` : Build gablue-nvidia-open (Containerfile-gablue, nvidia_flavor=nvidia-open)
 - `build-dx` : Build gablue-main-dx (Containerfile-gablue, nvidia_flavor non défini, DX_MODE=true)
-- `build-nvidia-open-dx` : Build gablue-nvidia-open-dx (Containerfile-gablue, nvidia_flavor=nvidia-open, DX_MODE=true)
-- `update-readme` : Met à jour le tableau de versions du README depuis les artifacts `versions-*` (needs sur les 5 builds d'images, ignoré sur `pull_request`). Téléchargement via `gh run download` wrappé dans `nick-fields/retry@v4` (6 tentatives, 15s) — tolérance au 404 transitoire de l'API artifacts. Commit `[skip ci]` avec push résilient : boucle jusqu'à 5 tentatives avec `git pull --rebase --autostash origin main` entre chaque essai pour absorber les commits concurrents (ex. un push arrivé pendant les ~50 min de build). Échec du 5e push → `exit 1` (le step échoue au lieu de passer silencieusement en succès)
+- `build-nvidia-open-dx` : Build gablue-nvidia-open-dx (Containerfile-gablue, nvidia_flavor=nvidia-open, DX_MODE=true) — restreint à `main` (pas de build sur branche `test`)
+- `update-readme` : Met à jour le tableau de versions du README depuis les artifacts `versions-*` (needs sur les 5 builds d'images, ignoré sur `pull_request` et sur la branche `test`). Téléchargement via `gh run download` wrappé dans `nick-fields/retry@v4` (6 tentatives, 15s) — tolérance au 404 transitoire de l'API artifacts. Commit `[skip ci]` avec push résilient : boucle jusqu'à 5 tentatives avec `git pull --rebase --autostash origin main` entre chaque essai pour absorber les commits concurrents (ex. un push arrivé pendant les ~50 min de build). Échec du 5e push → `exit 1` (le step échoue au lieu de passer silencieusement en succès)
 
 ### reusable-gablue-image.yml
 
@@ -825,7 +827,7 @@ Nettoyage automatique (tous les dimanches) :
 - Suppression des images > 90 jours
 - Conservation des 7 dernières images taggées
 - Conservation des 7 dernières images non-taggées
-- Packages nettoyés : gablue-main, gablue-nvidia, gablue-nvidia-open, gablue-main-dx, gablue-nvidia-open-dx
+- Packages nettoyés : gablue-main, gablue-nvidia, gablue-nvidia-open, gablue-main-dx, gablue-nvidia-open-dx, gablue-main-test, gablue-nvidia-open-test
 
 ### Composite action `mount-btrfs-storage`
 
@@ -863,14 +865,22 @@ Les tags dans les messages de commit déclenchent les builds :
 | `[main]` | gablue-main |
 | `[nvidia]` | gablue-nvidia, gablue-nvidia-open |
 | `[dx]` | gablue-main-dx |
-| ~~`[test]`~~ | ~~gablue-main-test, gablue-nvidia-open-test~~ (désactivé) |
+| ~~`[test]`~~ | ~~gablue-main-test, gablue-nvidia-open-test~~ (désactivé — utiliser la branche `test`, voir ci-dessous) |
+
+**Branche `test`** : un push sur `refs/heads/test` déclenche `build-main` et `build-nvidia-open` qui construisent les packages séparés `gablue-main-test` et `gablue-nvidia-open-test` (tag `latest`). Aucun tag de commit nécessaire — n'importe quel push sur la branche `test` déclenche le build. Le schedule ne build que `main` → `latest` n'est jamais pollué.
 
 **Exemples** :
 ```bash
+# Branche main (avec tags de commit)
 git commit -m "[main] Update KDE packages"
 git commit -m "[nvidia] Update NVIDIA drivers to 550"
 git commit -m "[iso] Trigger live ISO build"
 git commit -m "[all] Migrate to fc44 and OGC kernel"
+
+# Branche test (pas de tag nécessaire)
+git checkout test
+git commit -m "test: experimental feature"
+git push origin test
 ```
 
 ## Tests et validation

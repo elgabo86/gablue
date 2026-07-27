@@ -11,6 +11,7 @@ on:
   push:
     branches:
       - main
+      - test
     paths-ignore:
       - "**.md"
       - "**.txt"
@@ -31,12 +32,13 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
-      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[main]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
+      (github.event_name == 'push' && github.ref == 'refs/heads/test') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && (contains(github.event.head_commit.message, '[main]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
     uses: ./.github/workflows/reusable-gablue-image.yml
     secrets: inherit
     with:
-      image_name: "gablue-main"
-      image_desc: "Gablue main image"
+      image_name: ${{ github.ref == 'refs/heads/test' && 'gablue-main-test' || 'gablue-main' }}
+      image_desc: ${{ github.ref == 'refs/heads/test' && 'Gablue main test image' || 'Gablue main image' }}
       image_variant: "main"
       source_image: "kinoite"
       fedora_version: "44"
@@ -51,7 +53,7 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
-      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[nvidia]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && (contains(github.event.head_commit.message, '[nvidia]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
     uses: ./.github/workflows/reusable-gablue-image.yml
     secrets: inherit
     with:
@@ -72,12 +74,13 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
-      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[nvidia]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
+      (github.event_name == 'push' && github.ref == 'refs/heads/test') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && (contains(github.event.head_commit.message, '[nvidia]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
     uses: ./.github/workflows/reusable-gablue-image.yml
     secrets: inherit
     with:
-      image_name: "gablue-nvidia-open"
-      image_desc: "Gablue nvidia-open image"
+      image_name: ${{ github.ref == 'refs/heads/test' && 'gablue-nvidia-open-test' || 'gablue-nvidia-open' }}
+      image_desc: ${{ github.ref == 'refs/heads/test' && 'Gablue nvidia-open test image' || 'Gablue nvidia-open image' }}
       image_variant: "nvidia-open"
       source_image: "kinoite"
       fedora_version: "44"
@@ -93,7 +96,7 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
-      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[dx]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && (contains(github.event.head_commit.message, '[dx]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
     uses: ./.github/workflows/reusable-gablue-image.yml
     secrets: inherit
     with:
@@ -113,7 +116,7 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
-      (github.event_name == 'push' && (contains(github.event.head_commit.message, '[dx]') || contains(github.event.head_commit.message, '[nvidia]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && (contains(github.event.head_commit.message, '[dx]') || contains(github.event.head_commit.message, '[nvidia]') || contains(github.event.head_commit.message, '[all]') || contains(github.event.head_commit.message, '[all-iso]')))
     uses: ./.github/workflows/reusable-gablue-image.yml
     secrets: inherit
     with:
@@ -129,7 +132,7 @@ jobs:
     name: Update README versions
     runs-on: ubuntu-24.04
     needs: [build-main, build-nvidia, build-nvidia-open, build-dx, build-nvidia-open-dx]
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
       actions: read

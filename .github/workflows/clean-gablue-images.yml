@@ -17,7 +17,7 @@ jobs:
         uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          packages: gablue-main,gablue-nvidia,gablue-nvidia-open,gablue-main-dx,gablue-nvidia-open-dx
+          packages: gablue-main,gablue-nvidia,gablue-nvidia-open,gablue-main-dx,gablue-nvidia-open-dx,gablue-main-test,gablue-nvidia-open-test
           older-than: 90 days
           delete-orphaned-images: true
           keep-n-tagged: 7
