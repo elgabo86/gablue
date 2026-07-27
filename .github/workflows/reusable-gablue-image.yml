@@ -167,10 +167,6 @@ jobs:
             # Choisir le bon Containerfile
             if [[ -n "${{ inputs.containerfile }}" ]]; then
               CONTAINERFILE="${{ inputs.containerfile }}"
-            elif [[ "${{ inputs.image_name }}" == "gablue-main-test" ]]; then
-              CONTAINERFILE="Containerfile-gablue-test"
-            elif [[ "${{ inputs.image_name }}" == "gablue-nvidia-open-test" ]]; then
-              CONTAINERFILE="Containerfile-gablue-nvidia-open-test"
             else
               CONTAINERFILE="Containerfile-gablue"
             fi

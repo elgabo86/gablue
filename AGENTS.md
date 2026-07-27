@@ -53,9 +53,7 @@ Le projet construit 6 variantes distinctes :
 
 ```
 .
-├── Containerfile-gablue                   # Containerfile principal (toutes variantes stables)
-├── Containerfile-gablue-test              # Containerfile pour main-test
-├── Containerfile-gablue-nvidia-open-test  # Containerfile pour nvidia-open-test
+├── Containerfile-gablue                   # Containerfile principal (toutes variantes, stable et test)
 ├── cosign.pub                             # Clé publique pour signature
 ├── src/
 │   ├── composefs-fix/                      # Correction espace libre Dolphin sur composefs
@@ -86,23 +84,16 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── build-gwine                    # Assemblage script gwine standalone
 │   │   ├── cleanup                        # Nettoyage intermédiaire
 │   │   ├── copr                           # Configuration dépôts COPR
- │   │   ├── copr-test                      # Configuration dépôts COPR (test)
- │   │   ├── cpuid-fault                    # Compilation module kernel CPUID faulting
- │   │   ├── finalize                       # Finalisation de l'image
+│   │   ├── cpuid-fault                    # Compilation module kernel CPUID faulting
+│   │   ├── finalize                       # Finalisation de l'image
 │   │   ├── initramfs                      # Génération initramfs
 │   │   ├── install-kmods                 # Helper installation kmods (vérification existence RPMs)
 │   │   ├── kernel                        # Installation kernel OGC + akmods
-│   │   ├── kernel-test                    # Installation kernel OGC (test)
 │   │   ├── mesa                           # Installation Mesa Terra (multilib fc44)
-│   │   ├── mesa-test                      # Installation Mesa Terra (test)
 │   │   ├── nvidia                         # Installation pilotes NVIDIA via akmods
-│   │   ├── nvidia-test                    # Installation pilotes NVIDIA (test, wrapper)
 │   │   ├── post-install                   # Post-installation principale
-│   │   ├── post-install-test              # Post-installation test (wrapper)
 │   │   ├── rpm                            # Paquets RPM (avec libs 32-bit Wine/Proton)
-│   │   ├── rpm-test                       # Paquets RPM (test)
-│   │   ├── systemd                        # Activation services systemd
-│   │   └── systemd-test                   # Activation services (test)
+│   │   └── systemd                        # Activation services systemd
 │   └── system/                            # Fichiers système à copier
 │       ├── all/                           # Fichiers communs à toutes les variantes
 │       │   ├── etc/xdg/                   # Configs XDG système (kwinrulesrc VRR, autostart, blacklist)
@@ -173,28 +164,6 @@ sudo buildah build \
   --build-arg KERNEL_VERSION="<version>" \
   --build-arg DX_MODE="true" \
   --tag gablue-main-dx .
-
-# Build de l'image test (main-test)
-sudo buildah build \
-  --file Containerfile-gablue-test \
-  --format "docker" \
-  --build-arg VARIANT="main" \
-  --build-arg SOURCE_IMAGE="kinoite" \
-  --build-arg FEDORA_VERSION="44" \
-  --build-arg KERNEL_FLAVOR="ogc" \
-  --build-arg KERNEL_VERSION="<version>" \
-  --tag gablue-main-test .
-
-# Build de l'image nvidia-open-test
-sudo buildah build \
-  --file Containerfile-gablue-nvidia-open-test \
-  --format "docker" \
-  --build-arg VARIANT="nvidia-open" \
-  --build-arg SOURCE_IMAGE="kinoite" \
-  --build-arg FEDORA_VERSION="44" \
-  --build-arg KERNEL_FLAVOR="ogc" \
-  --build-arg KERNEL_VERSION="<version>" \
-  --tag gablue-nvidia-open-test .
 ```
 
 ### Vérification de l'image construite
@@ -468,8 +437,6 @@ Exclusions importantes :
 - Versionlock pour verrouiller les versions
 - Installation de scx-scheds depuis COPR bieszczaders/kernel-cachyos-addons
 
-**kernel-test (test)** : Identique au stable
-
 ### 3. mesa - Installation Mesa Terra (multilib fc44)
 
 **mesa (stable)** : Swap Mesa vers la version Terra optimisée
@@ -478,8 +445,6 @@ Exclusions importantes :
 - Installation i686 : dri-drivers, libEGL, libGL, libgbm, vulkan-drivers
 - Terra fc44 : les fichiers `LICENSE.dependencies` sont nommés par arch (`.i386` / `.x86_64`), pas de conflit
 - Versionlock des paquets Mesa
-
-**mesa-test (test)** : Identique au stable
 
 ### 4. nvidia - Installation pilotes NVIDIA via akmods
 
@@ -493,8 +458,6 @@ Exclusions importantes :
 - **VK_hdr_layer** pour pilotes closed uniquement (pas nvidia-open) : extraction manuelle du RPM
 - **nvidia-modeset.conf** : copie de `/etc/modprobe.d/` vers `/usr/lib/modprobe.d/` (workaround Dracut, avec vérification `[ -f ]`) pour pilotes closed, les pilotes open n'ont pas ce fichier
 - Désactivation terra-mesa après installation
-
-**nvidia-test (test)** : Wrapper appelant `sh /ctx/nvidia` (même pattern que `post-install-test` → `post-install`)
 
 ### 5. rpm - Paquets RPM
 
@@ -525,9 +488,6 @@ Paquets supprimés :
 - plasma-welcome-fedora, plasma-welcome
 - plasma-discover-rpm-ostree (Kinoite)
 
-**rpm-test** :
-- Wrapper (identique à rpm, prévu pour ajouter des paquets spécifiques au test)
-
 ### 5a. pypi - Packages Python sans équivalent RPM
 
 **pypi** (appelé après rpm) :
@@ -551,7 +511,7 @@ Paquets supprimés :
 - **IMPORTANT** : toute modification des fichiers `lib/` (ex. `lib/modes/init-main.sh`, `lib/runner.sh`) nécessite un rebuild de l'image pour être effective. Le gwine assemblé est celui utilisé par `build.sh` pour générer le pack cache de l'ISO → l'image doit être reconstruite **avant** l'ISO
 - Voir `src/gwine-launcher/AGENTS.md` pour l'architecture interne du lanceur
 
-### 6. post-install / post-install-test
+### 6. post-install
 
 Configuration post-installation étendue :
 - Permissions des exécutables (chmod +x)
@@ -566,9 +526,6 @@ Configuration post-installation étendue :
 - MIME par défaut (Windows.desktop, Linux.desktop)
 - **Mises à jour automatiques** : active `AutomaticUpdatePolicy=stage` dans `/etc/rpm-ostreed.conf` (copie depuis `/usr/share/ublue-os/update-services/etc/rpm-ostreed.conf` fourni par le RPM `ublue-os-update-services`) et reprogramme les timers flatpak + rpm-ostree le samedi à 04:00 avec `RandomizedDelaySec=10m`
 - **Linuxbrew** : ajoute `/home/linuxbrew/.linuxbrew/bin` au `secure_path` de sudo
-
-**post-install-test** ajoute :
-- Permissions pour scripts OpenGamepadUI (steamos-session-select, gwine-plugin) — wrapper appelant d'abord `post-install`
 
 **Correction composefs** (dans post-install, toutes variantes) :
 - Compile un LD_PRELOAD minimal (`gablue-composefs-fix.so`, ~2.6 Ko) qui intercepte `statfs`/`statfs64`
@@ -619,17 +576,13 @@ Configuration post-installation étendue :
 - Note : les actions spécifiques au swap (minimiser/restaurer les fenêtres, sauvegarder/restaurer KWin, gérer l'inputhandler) restent uniquement dans `gablue-bigscreen-swap-session`
 - Fichiers : `files/system/all/usr/libexec/gablue-bigscreen-session-init`, `files/system/all/etc/xdg/autostart/gablue-bigscreen-session.desktop`
 
-### 7. systemd / systemd-test
+### 7. systemd
 
 Activation/désactivation des services systemd :
 - **Activés (toutes variantes)** : rpm-ostreed-automatic, flatpak-update, cec-poweroff-tv, cec-active-source, dmemcg-booster
 - **Désactivés** : scx_loader, tailscaled, displaylink
 - **Masqués** : systemd-remount-fs, flatpak-add-fedora-repos (empêche la réactivation du remote Fedora Flatpak au premier boot ; ce service natif du paquet `flatpak` réajoute `fedora`/`fedora-testing` tant que `/var/lib/flatpak/.fedora-initialized` n'existe pas, annulant le `disable-fedora-flatpak.ks` du kickstart. On garde uniquement Flathub, fourni par `/etc/flatpak/remotes.d/flathub.flatpakrepo`)
 - **Conditionnels (DX)** : ublue-os-libvirt-workarounds, gablue-dx-groups, incus-workaround
-
-**systemd-test** ajoute :
-- Services OpenGamepadUI désactivés : inputplumber, powerstation
-- Note: opengamepadui-session.service n'est PAS activé par défaut
 
 ### 8. initramfs
 
