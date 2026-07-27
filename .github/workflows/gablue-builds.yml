@@ -125,20 +125,6 @@ jobs:
       kernel_type: "ogc"
       nvidia_flavor: "nvidia-open"
 
-  build-test:
-    name: Build test
-    # Désactivé temporairement
-    if: false
-    uses: ./.github/workflows/reusable-gablue-image.yml
-    secrets: inherit
-    with:
-      image_name: "gablue-main-test"
-      image_desc: "Gablue main test image (kernel ogc unstable)"
-      image_variant: "main"
-      source_image: "kinoite"
-      fedora_version: "44"
-      kernel_type: "ogc"
-
   update-readme:
     name: Update README versions
     runs-on: ubuntu-24.04
@@ -146,16 +132,29 @@ jobs:
     if: github.event_name != 'pull_request'
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # Téléchargement via gh CLI avec retry : cohérence avec le workflow ISO
+      # (tolérance au 404 transitoire de l'API artifacts). gh run download
+      # crée un sous-dossier par artifact, on aplatit pour reproduire
+      # merge-multiple: true.
       - name: Download version artifacts
-        uses: actions/download-artifact@v8
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
         with:
-          pattern: versions-*
-          merge-multiple: true
-          path: versions-data
+          timeout_minutes: 5
+          max_attempts: 6
+          retry_wait_seconds: 15
+          command: |
+            mkdir -p versions-data
+            gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" \
+              -n 'versions-*' -D versions-data
+            find versions-data -mindepth 2 -name '*.json' -exec mv {} versions-data/ \;
+            find versions-data -mindepth 1 -type d -delete
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Update README with versions
         id: update_readme
@@ -257,25 +256,11 @@ jobs:
           for i in 1 2 3 4 5; do
             if git push; then
               echo "Push réussi."
-              break
+              exit 0
             fi
             echo "Push rejeté (tentative $i), rebase sur origin/main..."
             git pull --rebase --autostash origin main
             sleep 5
           done
-
-  build-nvidia-open-test:
-    name: Build nvidia-open-test
-    # Désactivé temporairement
-    if: false
-    uses: ./.github/workflows/reusable-gablue-image.yml
-    secrets: inherit
-    with:
-      image_name: "gablue-nvidia-open-test"
-      image_desc: "Gablue nvidia-open test image (kernel ogc unstable)"
-      image_variant: "nvidia-open"
-      source_image: "kinoite"
-      fedora_version: "44"
-      kernel_type: "ogc"
-      nvidia_flavor: "nvidia-open"
-      containerfile: "Containerfile-gablue-nvidia-open-test"
+          echo "::error::Échec du push du README après 5 tentatives"
+          exit 1

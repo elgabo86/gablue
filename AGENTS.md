@@ -23,9 +23,9 @@ Le projet construit 6 variantes distinctes :
 | `gablue-nvidia` | Pilotes NVIDIA closed-source | OGC | nvidia-lts | `[nvidia]`, `[all]` |
 | `gablue-nvidia-open` | Pilotes NVIDIA open-source | OGC | nvidia-open | `[nvidia]`, `[all]` |
 | `gablue-main-dx` | Mode développement (DX) avec virtualisation + ROCm | OGC | - | `[dx]`, `[all]` |
-| `gablue-main-test` | Image de test avec OpenGamepadUI (fc44) | OGC | - | `[test]`, `[all]` |
-| `gablue-nvidia-open-test` | Test NVIDIA Open avec OpenGamepadUI (fc44) | OGC | nvidia-open | `[test]`, `[nvidia]`, `[all]` |
 | `gablue-nvidia-open-dx` | Mode DX NVIDIA Open (virtualisation + GPU NVIDIA) | OGC | nvidia-open | `[dx]`, `[nvidia]`, `[all]` |
+| ~~`gablue-main-test`~~ | Image de test avec OpenGamepadUI (fc44) — **désactivé** | OGC | - | `[test]`, `[all]` |
+| ~~`gablue-nvidia-open-test`~~ | Test NVIDIA Open avec OpenGamepadUI (fc44) — **désactivé** | OGC | nvidia-open | `[test]`, `[nvidia]`, `[all]` |
 
 ### Différences entre variantes
 
@@ -40,7 +40,7 @@ Le projet construit 6 variantes distinctes :
 - Activation automatique des services Docker et libvirt
 - Groupes utilisateurs supplémentaires configurés
 
-**Stable vs Test** :
+**Stable vs Test** (les variantes test sont actuellement **désactivées**) :
 - **Containerfile** : Stable utilise `Containerfile-gablue` (unique pour toutes les variantes stables), Test utilise `Containerfile-gablue-test` et `Containerfile-gablue-nvidia-open-test`
 - **Scripts** : Stable utilise les scripts sans suffixe (`kernel`, `copr`, `mesa`, etc.), Test utilise les scripts `-test`
 - **OpenGamepadUI** : Interface gaming expérimentale style Steam Deck (test uniquement)
@@ -688,9 +688,7 @@ Workflow principal déclenché par :
 - `build-nvidia-open` : Build gablue-nvidia-open (Containerfile-gablue, nvidia_flavor=nvidia-open)
 - `build-dx` : Build gablue-main-dx (Containerfile-gablue, nvidia_flavor non défini, DX_MODE=true)
 - `build-nvidia-open-dx` : Build gablue-nvidia-open-dx (Containerfile-gablue, nvidia_flavor=nvidia-open, DX_MODE=true)
-- `build-test` : Build gablue-main-test (Containerfile-gablue-test)
-- `build-nvidia-open-test` : Build gablue-nvidia-open-test (Containerfile-gablue-nvidia-open-test)
-- `update-readme` : Met à jour le tableau de versions du README depuis les artifacts `versions-*` (needs sur les 5 builds d'images, ignoré sur `pull_request`). Commit `[skip ci]` avec push résilient : boucle jusqu'à 5 tentatives avec `git pull --rebase --autostash origin main` entre chaque essai pour absorber les commits concurrents (ex. un push arrivé pendant les ~50 min de build)
+- `update-readme` : Met à jour le tableau de versions du README depuis les artifacts `versions-*` (needs sur les 5 builds d'images, ignoré sur `pull_request`). Téléchargement via `gh run download` wrappé dans `nick-fields/retry@v4` (6 tentatives, 15s) — tolérance au 404 transitoire de l'API artifacts. Commit `[skip ci]` avec push résilient : boucle jusqu'à 5 tentatives avec `git pull --rebase --autostash origin main` entre chaque essai pour absorber les commits concurrents (ex. un push arrivé pendant les ~50 min de build). Échec du 5e push → `exit 1` (le step échoue au lieu de passer silencieusement en succès)
 
 ### reusable-gablue-image.yml
 
@@ -706,7 +704,7 @@ Workflow réutilisable pour le build d'une image :
 - `containerfile` : Containerfile explicite (optionnel, défaut Containerfile-gablue)
 
 **Étapes** :
-1. Récupération automatique de la version kernel via `skopeo list-tags` uniquement si `kernel_version` est vide
+1. Récupération automatique de la version kernel via `skopeo list-tags` uniquement si `kernel_version` est vide — **retry** (3 tentatives, 10s) sur timeout réseau `ghcr.io`
 2. Checkout du dépôt
 3. Maximisation de l'espace de build
 4. Mount BTRFS pour podman storage via la composite action locale `./.github/actions/mount-btrfs-storage` (voir section dédiée) — le storage `/var/lib/containers` est placé sur un loopback BTRFS compressé zstd sur `/`, ce qui absorbe le pic d'espace du rechunk sur la variante DX (`raw-img` + `chunked-img` cohabitent)
@@ -714,7 +712,7 @@ Workflow réutilisable pour le build d'une image :
 6. Application des labels OCI (définis directement dans le step, sans docker/metadata-action)
 7. Vérification SecureBoot (step "SecureBoot check") : vérifie la présence du certificat Gablue (`/etc/pki/akmods/certs/gablue-secure-boot.der`) et que les kmods du kernel sont bien signés via `modinfo | grep sig_id`. Échec → l'image ne bootera pas en SecureBoot. Le certificat est enrollable côté client via `ujust secureboot`
 8. Collecte des métriques (step "Collect build metrics") : durée de build, espace disque, taille image décompressée (`raw-img`), nombre de RPMs, kernel, mesa, taille compressée (initialement "N/A" car le push n'a pas encore eu lieu) → JSON `metrics-<image>` (artifact, rétention 90 j) + step summary (en anglais). Les libellés affichés sont en anglais, seuls les commentaires YAML restent en français
-9. Rechunk avec rpm-ostree
+9. Rechunk avec rpm-ostree — **retry** (3 tentatives, 15s) : abandon immédiat sur erreurs I/O (`no space left`, `read-only`, `disk I/O error` = loopback BTRFS mort, non récupérable), retry sur les autres erreurs transitoires
 10. Tag et push vers GHCR — **retry bash natif** (pas d'action externe) : une simple boucle `for attempt in 1 2 3` avec `sleep 15` entre tentatives. Le push utilise `skopeo copy` depuis `containers-storage:` et `skopeo inspect containers-storage:` pour le digest. **Pourquoi pas nick-fields/retry@v4 ni wretry.action** : `nick-fields/retry@v4` utilise Node.js `spawn()` qui pipe stdout/stderr — avec une image chunkée (100+ layers), les 100+ lignes "Copying blob" sur stderr saturent le pipe Node.js, l'événement `exit` n'arrive jamais et le process reste bloqué indéfiniment. `wretry.action` (composite, bash natif) fonctionnait mais est déprécié (Node.js 20). Une boucle bash native dans un `run:` standard hérite du stdio du runner (pas de pipe) → pas de hang
 11. Signature avec Cosign
 12. Métriques post-push (step "Update compressed size") : inspecte le registre distant GHCR via `skopeo inspect --raw docker://$dest_image | jq` en sommant les tailles des layers et du config blob pour obtenir la taille compressée réelle, met à jour le JSON metrics et le step summary. Upload des métriques après cette étape (le fichier JSON final contient la taille compressée)
@@ -734,10 +732,11 @@ Build des **ISOs live** avec environnement de bureau Plasma complet (tous les 5 
 - 5 variantes : gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-dx
 - **Processus en 2 étapes** :
   1. Build d'une image container payload via `installer/Containerfile` (basée sur l'image Gablue, flatpaks pré-cachés, swap kernel OGC→vanilla pour Secure Boot). Le stockage podman est sur le loopback BTRFS compressé (composite action `mount-btrfs-storage`) **avec `image_copy_tmp_dir` redirigé dans le loopback** via un drop-in `/etc/containers/containers.conf.d/` : par défaut podman copie le layer diff du commit (~30G non compressés) dans `/var/tmp` **sur le disque hôte**, ce qui saturait l'hôte, affamait le fichier loopback sparse et forçait BTRFS en read-only (les « corruptions » historiques du loopback — read-only fs, disk I/O error — n'étaient que ce mécanisme, pas une corruption intrinsèque). Chemin explicite `/var/lib/containers/image-copy-tmp` plutôt que la valeur spéciale `"storage"` (résolution buggy, podman#28211). La boucle de build (`for attempt in 1 2 3`) **ne retente pas** si le log contient `no space left on device`, `read-only file system` ou `disk I/O error` (erreurs non récupérables : chaque tentative reconstruit une image identique, et un loopback passé read-only est mort) et sort immédiatement.
-  2. Génération de l'ISO via `podman run` direct (remplace l'action `Zeglius/titanoboa`) : le script patché est bind-mounté sur `/src/build_iso.sh`, le payload `localhost/payload:latest` est monté via `--mount type=image`, le répertoire de sortie ISO est bind-mounté en `/output`
+  2. Génération de l'ISO via `podman run` direct (remplace l'action `Zeglius/titanoboa`) : le script patché est bind-mounté sur `/src/build_iso.sh`, le payload `localhost/payload:latest` est monté via `--mount type=image`, le répertoire de sortie ISO est bind-mounté en `/output`. L'image Titanoboa (`quay.io/fedora/fedora:latest`) est **pré-pullée avec retry** (5 tentatives, 15s) avant le `podman run` pour tolérer les timeouts réseau transitoires de `quay.io` (cf. run 30193960415 attempt 1)
 - Signature Cosign + attestation de provenance sur chaque ISO
 - Upload vers BuzzHeavier, release GitHub `latest-live-iso`
 - `timeout-minutes: 180` (le live est plus long à construire)
+- **Job `create-release`** : télécharge les artifacts liens/checksums via `gh run download` wrappé dans `nick-fields/retry@v4` (6 tentatives, 15s) plutôt qu'`actions/download-artifact` — l'API artifacts GitHub peut renvoyer un 404 "workflow run not found" transitoire juste après la fin des jobs ISO (race condition de propagation interne, cf. run 30193960415 attempt 2). Le workflow déclare `actions: read` pour ce faire. La structure de dossiers (un sous-dossier par artifact) est identique à `actions/download-artifact` avec `merge-multiple: false`
 
 #### Build local d'ISO (`local-build/`)
 
@@ -826,7 +825,7 @@ Nettoyage automatique (tous les dimanches) :
 - Suppression des images > 90 jours
 - Conservation des 7 dernières images taggées
 - Conservation des 7 dernières images non-taggées
-- Packages nettoyés : gablue-main, gablue-nvidia, gablue-nvidia-open, gablue-main-dx, gablue-main-test, gablue-nvidia-open-test
+- Packages nettoyés : gablue-main, gablue-nvidia, gablue-nvidia-open, gablue-main-dx, gablue-nvidia-open-dx
 
 ### Composite action `mount-btrfs-storage`
 
@@ -862,9 +861,9 @@ Les tags dans les messages de commit déclenchent les builds :
 | `[all]` | Toutes les images |
 | `[all-iso]` | Toutes les images **puis** les ISOs live automatiquement (chaînage via `workflow_run` une fois les images publiées) |
 | `[main]` | gablue-main |
-| `[nvidia]` | gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-test |
+| `[nvidia]` | gablue-nvidia, gablue-nvidia-open |
 | `[dx]` | gablue-main-dx |
-| `[test]` | gablue-main-test, gablue-nvidia-open-test |
+| ~~`[test]`~~ | ~~gablue-main-test, gablue-nvidia-open-test~~ (désactivé) |
 
 **Exemples** :
 ```bash
@@ -1051,6 +1050,7 @@ Commandes ujust disponibles :
 - Limiter les permissions des fichiers exécutables
 - Désactiver les dépôts après installation
 - Utiliser `|| true` pour les commandes optionnelles
+- **Actions GitHub épinglées par SHA** : toutes les actions tierces sont pinnées par SHA (avec commentaire `# vX.Y.Z`) pour la sécurité supply-chain, mises à jour par Dependabot (daily)
 
 ### SELinux
 

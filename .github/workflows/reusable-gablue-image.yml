@@ -61,8 +61,23 @@ jobs:
           FEDORA_VERSION="${{ inputs.fedora_version }}"
           
           # Récupérer la liste des tags disponibles pour ublue-os/akmods
+          # Retry : ghcr.io peut subir des timeouts réseau transitoires
           echo "Fetching available ${KERNEL_FLAVOR} kernel tags..."
-          TAGS_JSON=$(skopeo list-tags "docker://ghcr.io/ublue-os/akmods" 2>/dev/null || echo '{"Tags":[]}')
+          TAGS_JSON=""
+          for attempt in 1 2 3; do
+            TAGS_JSON=$(skopeo list-tags "docker://ghcr.io/ublue-os/akmods" 2>&1)
+            if echo "$TAGS_JSON" | jq -e '.Tags' >/dev/null 2>&1; then
+              echo "skopeo list-tags réussi à la tentative $attempt"
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::Impossible de lister les tags akmods après 3 tentatives"
+              echo "$TAGS_JSON"
+              exit 1
+            fi
+            echo "skopeo list-tags tentative $attempt échoué, retry dans 10s..."
+            sleep 10
+          done
           
           # Filtrer les tags pour trouver le kernel correspondant à la version Fedora
           # Pattern: {KERNEL_FLAVOR}-{FEDORA_VERSION}-{KERNEL_VERSION}
@@ -108,7 +123,7 @@ jobs:
 
       # Checkout du dépôt
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Timestamp de début pour calculer la durée
       - name: Start timer
@@ -116,7 +131,7 @@ jobs:
 
       # Optimisation de l'espace
       - name: Maximize build space
-        uses: ublue-os/remove-unwanted-software@v8
+        uses: ublue-os/remove-unwanted-software@5a8b0374222a6fffddb1be9516b5fece9483bed0 # v8
 
       # Mount BTRFS for podman storage (performance + compression)
       - name: Mount BTRFS for podman storage
@@ -140,7 +155,7 @@ jobs:
       # de timeout fiable dans les workflows réutilisables)
       - name: Build Image
         id: build_image
-        uses: nick-fields/retry@v4
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
         with:
           timeout_minutes: 60
           max_attempts: 3
@@ -307,7 +322,7 @@ jobs:
           cat "$VER_FILE"
           
       - name: Upload versions artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: versions-${{ inputs.image_name }}
           path: ${{ inputs.image_name }}.json
@@ -431,6 +446,9 @@ jobs:
           cat "$METRICS_FILE"
 
       # Rechunk de l'image avec rpm-ostree (après application des labels)
+      # Retry : le loopback BTRFS peut subir des erreurs transitoires. On
+      # abandonne immédiatement sur les erreurs I/O (loopback mort — non
+      # récupérable, cf. AGENTS.md).
       - name: Rechunk Image
         id: rechunk
         run: |
@@ -439,12 +457,38 @@ jobs:
           sudo bash -c "rm -rf $mnt/run/.[!.]* $mnt/run/* $mnt/tmp/.[!.]* $mnt/tmp/*"
           sudo buildah umount $container
           sudo buildah commit --identity-label=false --rm $container raw-img
-          # Utiliser l'image elle-même pour le rechunk (comme Bazzite)
-          sudo podman run --rm --privileged --volume /var/lib/containers:/var/lib/containers \
-              raw-img \
-              rpm-ostree compose build-chunked-oci \
-              --bootc --max-layers 127 --format-version 2 \
-              --from localhost/raw-img --output containers-storage:localhost/chunked-img
+
+          rechunk_log=$(mktemp)
+          for attempt in 1 2 3; do
+            echo "::group::Rechunk attempt $attempt"
+            set +e -o pipefail
+            sudo podman run --rm --privileged --volume /var/lib/containers:/var/lib/containers \
+                raw-img \
+                rpm-ostree compose build-chunked-oci \
+                --bootc --max-layers 127 --format-version 2 \
+                --from localhost/raw-img --output containers-storage:localhost/chunked-img 2>&1 | tee "$rechunk_log"
+            rc=$?
+            set -e
+            echo "::endgroup::"
+            if [ "$rc" -eq 0 ]; then
+              rm -f "$rechunk_log"
+              break
+            fi
+            if grep -qE "no space left on device|read-only file system|disk I/O error|Input/output error" "$rechunk_log"; then
+              echo "::error::Erreur I/O non récupérable lors du rechunk — arrêt"
+              rm -f "$rechunk_log"
+              exit 1
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::Échec du rechunk après 3 tentatives"
+              rm -f "$rechunk_log"
+              exit 1
+            fi
+            echo "::warning::Rechunk tentative $attempt échoué, retry dans 15s..."
+            sudo podman rmi localhost/chunked-img 2>/dev/null || true
+            sleep 15
+          done
+
           sudo podman untag raw-img
           echo "ref=containers-storage:localhost/chunked-img" >> "$GITHUB_OUTPUT"
 
@@ -468,7 +512,7 @@ jobs:
       # Conversion registre en minuscules
       - name: Lowercase Registry
         id: registry_case
-        uses: ASzc/change-string-case-action@v8
+        uses: ASzc/change-string-case-action@ecd1412d078f2e06e9eedcbaa6fcd988151c3f82 # v8
         with:
           string: ${{ env.IMAGE_REGISTRY }}
 
@@ -486,7 +530,6 @@ jobs:
         shell: bash
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
           for attempt in 1 2 3; do
             echo "::group::Push attempt $attempt"
@@ -550,7 +593,7 @@ jobs:
 
       # Upload des métriques de build
       - name: Upload metrics
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: metrics-${{ inputs.image_name }}
           path: ${{ inputs.image_name }}-metrics.json
