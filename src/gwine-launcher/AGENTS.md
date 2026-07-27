@@ -316,7 +316,7 @@ lib/dir-config.sh
 - `VK_ICD_FILENAMES` (sélection du driver Vulkan)
 - `DISABLE_GAMEMODE=1` pour désactiver GameMode
 - `WINE_LARGE_ADDRESS_AWARE=1` activé par défaut
-- `LC_ALL=fr_FR` par défaut (surchargeable via `--env` ou variable d'environnement)
+- `LC_ALL=fr_FR.UTF-8` par défaut (surchargeable via `--env` ou variable d'environnement)
 - `DXVK_ASYNC=1` en mode dxvk-async
 - `SDL_GAMECONTROLLER_IGNORE_DEVICES` en mode xbox (IDs Sony masqués, voir xbox.sh)
 - `GWINE_NO_STATFS_SHIM=1` pour désactiver le shim overlayfs statfs

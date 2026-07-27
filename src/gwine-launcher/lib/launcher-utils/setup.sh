@@ -42,7 +42,7 @@ setup_wine_environment() {
     export STAGING_SHARED_MEMORY="${STAGING_SHARED_MEMORY:-1}"
     export WINEFSYNC="${WINEFSYNC:-1}"
     export WINENTSYNC="${WINENTSYNC:-1}"
-    export LC_ALL="${LC_ALL:-fr_FR}"
+    export LC_ALL="${LC_ALL:-fr_FR.UTF-8}"
 
     if is_wayland_mode; then
         echo "Mode Wayland activé (désactivation de XWayland)"
