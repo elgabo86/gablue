@@ -332,7 +332,7 @@ jobs:
           command: |
             mkdir -p links
             gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" \
-              -n '*-live-link' -D links
+              -p '*-live-link' -D links
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -345,7 +345,7 @@ jobs:
           command: |
             mkdir -p checksums
             gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" \
-              -n '*-live-checksum' -D checksums
+              -p '*-live-checksum' -D checksums
         env:
           GH_TOKEN: ${{ github.token }}
 
