@@ -157,7 +157,7 @@ jobs:
         id: build_image
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
         with:
-          timeout_minutes: 60
+          timeout_minutes: 90
           max_attempts: 3
           retry_wait_seconds: 20
           command: |
