@@ -27,8 +27,8 @@ on:
       kernel_version:
         required: false
         type: string
-        # Version du kernel choisie manuellement (ublue-os/bazzite@982d035)
-        default: "7.1.5-ogc2.1.fc44.x86_64"
+        # Version du kernel choisie manuellement (ublue-os/bazzite@59210e8)
+        default: "7.1.5-ogc5.1.fc44.x86_64"
       nvidia_flavor:
         required: false
         type: string
