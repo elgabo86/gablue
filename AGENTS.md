@@ -544,6 +544,8 @@ Configuration post-installation étendue :
 
 **Wrapper swap-session Plasma Bigscreen** (toutes variantes) :
 - Remplace `/usr/bin/plasma-bigscreen-swap-session` par `gablue-bigscreen-swap-session` (script C++ bigscreen appelle ce binaire directement via QProcess)
+- **Fallbacks d'environnement** : le script est lancé depuis bigscreen via QProcess détaché avec un env minimal (pas de DBus/Wayland/locale) — il exporte des fallbacks (`XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, `WAYLAND_DISPLAY`, `QT_QPA_PLATFORM=wayland`, `LANG`) avant tout. Sans `QT_QPA_PLATFORM=wayland`, kscreen-doctor tombe sur xcb et crash (coredump + notification DrKonqi). Au retour, l'env sauvegardé (`saved-env`) est sourcé EN PREMIER dans `swap_to_default` (avant systemctl/kscreen-doctor)
+- **Anti double-invocation** : bigscreen peut émettre le signal de swap deux fois (~2s d'écart) — sans protection, le 2e appel repartait immédiatement en bigscreen et écrasait la restauration (fenêtres re-maximisées sans déco, kwinrc re-pollué). Verrou `flock` (fd 9) + cooldown 6s (fichier `last-swap`). Tous les processus backgroundés ferment le fd 9 (`9>&-`) pour ne pas conserver le verrou (`plasmashell --replace` tourne indéfiniment)
 - **Aller (swap_to_bigscreen)** :
   - Sauvegarde l'environnement et les settings KWin (`BorderlessMaximizedWindows`, `Placement`, `NoPlugin`)
   - Source `plasma-bigscreen-common-env` pour charger les variables bigscreen
@@ -560,7 +562,7 @@ Configuration post-installation étendue :
   - Reconfigure KWin (`qdbus reconfigure`) pour reprendre la config Plasma normale
   - Annule le mirroring écrans (`output.X.mirror.none`)
   - Remplace plasmashell
-  - Après 2s : restaure les décorations et dé-maximise les fenêtres via un script KWin 6 (`noBorder = false`, `frameGeometry` à 80% centré)
+  - Après 2s : restaure les décorations et dé-maximise les fenêtres via un script KWin 6 (`noBorder = false`, `setMaximize(false, false)` obligatoire car `frameGeometry` est ignoré sur une fenêtre maximisée, puis `frameGeometry` à 80% centré)
 - Détection automatique du mode : basée sur `pgrep -f plasma-bigscreen-inputhandler` (plus fiable que la variable d'env `PLASMA_BIGSCREEN_LAUNCH_REASON` qui n'est pas héritée via KLauncher)
 - Fichiers : `files/system/all/usr/bin/gablue-bigscreen-swap-session`, `files/system/all/usr/share/gablue/kwin-maximize-all.js`, `files/system/all/usr/share/gablue/kwin-restore-windows.js`
 

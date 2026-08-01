@@ -18,6 +18,29 @@ mkdir -pv "$CACHE_DIR"
 
 log "Script started"
 
+# Le script peut être lancé depuis bigscreen avec un environnement minimal
+# (QProcess détaché) : fournir les variables de session essentielles pour que
+# systemctl --user, kscreen-doctor et les outils Qt fonctionnent. Sans
+# QT_QPA_PLATFORM=wayland, kscreen-doctor tombe sur xcb et CRASH (coredump).
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
+export LANG="${LANG:-C.UTF-8}"
+
+# Anti double-invocation : bigscreen peut émettre le signal de swap deux fois
+# (~2s d'écart), le 2e appel repartait immédiatement en bigscreen et écrasait
+# la restauration. Verrou pour sérialiser + cooldown pour ignorer le doublon.
+# Note : tous les processus backgroundés doivent fermer le fd 9 (9>&-) pour
+# ne pas conserver le verrou (plasmashell --replace tourne indéfiniment).
+LAST_SWAP="$CACHE_DIR/last-swap"
+exec 9>"$CACHE_DIR/swap-session.lock"
+flock 9
+if [ -f "$LAST_SWAP" ] && [ $(( $(date +%s) - $(cat "$LAST_SWAP") )) -lt 6 ]; then
+    log "Invocation ignorée (swap effectué il y a moins de 6s)"
+    exit 0
+fi
+
 swap_to_bigscreen() {
     ln -sf /etc/xdg/applications-blacklistrc "$HOME/.config/applications-blacklistrc" 2>/dev/null || true
 
@@ -93,6 +116,8 @@ for (var i = 0; i < windows.length; i++) {
     if (win.normalWindow || win.dialog) {
         win.minimized = false;
         win.noBorder = false;
+        // Demaximiser d'abord : frameGeometry est ignore sur une fenetre maximisee
+        win.setMaximize(false, false);
         var area = workspace.clientArea(KWin.MaximizeArea, win.output, workspace.currentDesktop);
         var w = Math.round(area.width * 0.8);
         var h = Math.round(area.height * 0.8);
@@ -103,11 +128,11 @@ for (var i = 0; i < windows.length; i++) {
 }
 JSEOF
     log "swap_to_bigscreen: launching inputhandler via kioclient exec"
-    kioclient exec /usr/share/applications/org.kde.plasma.bigscreen.inputhandler.desktop &
+    kioclient exec /usr/share/applications/org.kde.plasma.bigscreen.inputhandler.desktop 9>&- &
     log "swap_to_bigscreen: kioclient launched (pid $!)"
 
     log "swap_to_bigscreen: replacing plasmashell"
-    plasmashell --replace &
+    plasmashell --replace 9>&- &
 
     # Maximiser les fenêtres APRÈS que bigscreen soit chargé (panels Plasma retirés)
     (
@@ -117,10 +142,21 @@ JSEOF
         qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.start 2>/dev/null || true
         sleep 0.5
         qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "gablue-maximize" 2>/dev/null || true
-    ) &
+    ) 9>&- &
+
+    # Marquer l'horodatage du swap pour l'anti double-invocation
+    date +%s > "$LAST_SWAP"
 }
 
 swap_to_default() {
+    # Restaurer l'environnement de session EN PREMIER : lancé depuis bigscreen
+    # avec un env minimal, systemctl --user et kscreen-doctor ont besoin des
+    # vraies valeurs DBus/Wayland sauvegardées lors du swap vers bigscreen
+    if [ -f "$SAVED_ENV" ]; then
+        . "$SAVED_ENV"
+        rm "$SAVED_ENV"
+    fi
+
     log "swap_to_default: killing inputhandler"
     pgrep -f "/usr/bin/plasma-bigscreen-inputhandler" >> "$LOG" 2>&1
 
@@ -151,11 +187,6 @@ swap_to_default() {
     log "swap_to_default: restarting xwaylandvideobridge (was killed by bigscreen)"
     systemctl --user restart plasma-xwaylandvideobridge.service >> "$LOG" 2>&1 || true
 
-    if [ -f "$SAVED_ENV" ]; then
-        . "$SAVED_ENV"
-        rm "$SAVED_ENV"
-    fi
-
     unset PLASMA_BIGSCREEN_LAUNCH_REASON
 
     # Annuler le mirroring APRÈS avoir restauré l'env (DBus fonctionnel)
@@ -168,7 +199,7 @@ swap_to_default() {
     fi
 
     log "swap_to_default: replacing plasmashell"
-    plasmashell --replace &
+    plasmashell --replace 9>&- &
 
     # Recharger KWin APRÈS plasmashell --replace (sinon plasmashell
     # peut réécrire les settings bigscreen encore en mémoire dans kwinrc)
@@ -176,7 +207,7 @@ swap_to_default() {
         sleep 2
         log "swap_to_default: reloading KWin config for normal Plasma settings"
         qdbus org.kde.KWin /KWin org.kde.KWin.reconfigure 2>/dev/null || true
-    ) &
+    ) 9>&- &
 
     # Restaurer les fenêtres APRÈS le remplacement de plasmashell
     # (plasmashell --replace peut perturber l'état des fenêtres si fait avant)
@@ -187,7 +218,10 @@ swap_to_default() {
         qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.start 2>/dev/null || true
         sleep 0.5
         qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "gablue-restore" 2>/dev/null || true
-    ) &
+    ) 9>&- &
+
+    # Marquer l'horodatage du swap pour l'anti double-invocation
+    date +%s > "$LAST_SWAP"
 }
 
 if pgrep -f "/usr/bin/plasma-bigscreen-inputhandler" > /dev/null 2>&1; then

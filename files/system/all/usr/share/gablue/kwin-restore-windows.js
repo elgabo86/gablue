@@ -4,7 +4,8 @@ for (var i = 0; i < windows.length; i++) {
     var win = windows[i];
     if (win.normalWindow || win.dialog) {
         win.noBorder = false;
-        // Tenter de dé-maximiser en réduisant la géométrie
+        // Dé-maximiser d'abord : frameGeometry est ignoré sur une fenêtre maximisée
+        win.setMaximize(false, false);
         var area = workspace.clientArea(KWin.MaximizeArea, win.output, workspace.currentDesktop);
         // Réduire à 80% de la zone maximale, centré
         var w = Math.round(area.width * 0.8);
