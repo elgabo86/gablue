@@ -99,7 +99,7 @@ Le projet construit 6 variantes distinctes :
 │       │   ├── etc/xdg/                   # Configs XDG système (kwinrulesrc VRR, autostart, blacklist)
 │       │   └── usr/                       # Binaires, scripts, configurations, services
 │       ├── main/                          # Réservé variante main (actuellement vide)
-│       └── nvidia-common/                 # Fichiers communs nvidia + nvidia-open (modprobe, SELinux, CDI, distrobox)
+│       └── nvidia-common/                 # Fichiers communs nvidia + nvidia-open (modprobe, udev PM, SELinux, CDI, distrobox)
 ├── .github/
 │   ├── actions/                           # Composite actions locales
 │   │   └── mount-btrfs-storage/           # Montage loopback BTRFS compressé sur "/"
@@ -456,6 +456,8 @@ Exclusions importantes :
 - Appel de `nvidia-install.sh` avec `AKMODNV_PATH="/tmp/rpms/nvidia"`, `MULTILIB=1`, `IMAGE_NAME="$SOURCE_IMAGE"`
 - nvidia-install.sh gère : driver, kmod, container-toolkit, supergfxctl, SELinux, dracut force_drivers, staging COPR
 - Configuration post-installation : suppression ICD Nouveau, symlink libnvidia-ml, disable supergfxd
+- Activation explicite des services de gestion d'alimentation NVIDIA (aligné Bazzite, le preset RPM Fusion `70-nvidia.preset` ne s'applique pas de façon fiable en build container) : `nvidia-suspend`, `nvidia-resume`, `nvidia-hibernate`, `nvidia-suspend-then-hibernate`, `nvidia-powerd`
+- Gestion d'alimentation (aligné Bazzite, doc officielle NVIDIA powermanagement) : `nvidia-power.conf` dans `/usr/lib/modprobe.d/` (`NVreg_EnableS0ixPowerManagement=1` + `NVreg_DynamicPowerManagement=0x02` pour S0ix/RTD3) et `80-nvidia-pm.rules` dans `/usr/lib/udev/rules.d/` (runtime PM auto au bind, suppression devices USB xHCI/UCSI NVIDIA qui empêchent la veille) — surtout utile sur laptop, inoffensif sur desktop
 - **VK_hdr_layer** pour pilotes closed uniquement (pas nvidia-open) : extraction manuelle du RPM
 - **nvidia-modeset.conf** : copie de `/etc/modprobe.d/` vers `/usr/lib/modprobe.d/` (workaround Dracut, avec vérification `[ -f ]`) pour pilotes closed, les pilotes open n'ont pas ce fichier
 - Désactivation terra-mesa après installation

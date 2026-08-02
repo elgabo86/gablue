@@ -1,0 +1,19 @@
+# Règles udev de gestion d'alimentation NVIDIA (aligné sur Bazzite)
+# Référence : documentation officielle NVIDIA (powermanagement)
+
+# Supprimer les contrôleurs USB xHCI NVIDIA, si présents
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x0c0330", ATTR{remove}="1"
+
+# Supprimer les devices USB Type-C UCSI NVIDIA, si présents
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x0c8000", ATTR{remove}="1"
+
+# Supprimer les devices Audio NVIDIA, si présents
+#ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x040300", ATTR{remove}="1"
+
+# Activer le runtime PM pour les contrôleurs VGA/3D NVIDIA au bind du pilote
+ACTION=="add|bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="auto"
+ACTION=="add|bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="auto"
+
+# Désactiver le runtime PM pour les contrôleurs VGA/3D NVIDIA au unbind du pilote
+ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="on"

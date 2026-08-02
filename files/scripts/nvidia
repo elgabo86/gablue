@@ -79,6 +79,15 @@ ln -sf libnvidia-ml.so.1 /usr/lib64/libnvidia-ml.so
 # Désactivation de supergfxd (comme sur Bazzite NVIDIA)
 systemctl disable supergfxd.service
 
+# Activation explicite des services de gestion d'alimentation NVIDIA
+# (aligné sur Bazzite : le preset RPM Fusion 70-nvidia.preset ne s'applique
+# pas de façon fiable en build container)
+systemctl enable nvidia-suspend.service
+systemctl enable nvidia-resume.service
+systemctl enable nvidia-hibernate.service
+systemctl enable nvidia-suspend-then-hibernate.service
+systemctl enable nvidia-powerd.service
+
 # =============================================================================
 # VK_HDR_LAYER (PILOTES CLOSED UNIQUEMENT)
 # =============================================================================
