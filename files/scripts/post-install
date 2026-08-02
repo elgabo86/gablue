@@ -234,7 +234,7 @@ fi
 
 # Désactiver les dépôts COPR après installation
 for copr in \
-        bazzite-org/bazzite \
+        ublue-os/bazzite \
         ublue-os/staging \
         ublue-os/packages \
         che/nerd-fonts \

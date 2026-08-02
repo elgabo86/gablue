@@ -417,7 +417,8 @@ done && unset -v copr
 
 Configure tous les dépôts tiers nécessaires :
 - **keepcache=1** : Activé au début pour que le cache DNF persiste entre builds (désactivé dans finalize)
-- **COPR** : bazzite-org/bazzite, bazzite-org/bazzite-multilib, ublue-os/staging, ublue-os/packages, che/nerd-fonts, hikariknight/looking-glass-kvmfr, lizardbyte/beta, bazzite-org/rom-properties
+- **COPR** : ublue-os/bazzite, ublue-os/bazzite-multilib, ublue-os/staging, ublue-os/packages, che/nerd-fonts, hikariknight/looking-glass-kvmfr, lizardbyte/beta, bazzite-org/rom-properties
+  - Migration bazzite-org → ublue-os (août 2026) : le COPR `bazzite-org/bazzite` n'est plus maintenu (dernier build mai 2026), Bazzite utilise `ublue-os/bazzite` qui fournit notamment **bees 0.11** (requis pour `--throttle-factor` dans `configure-beesd`). `bazzite-org/rom-properties` est conservé car `ublue-os/rom-properties` n'a aucun build
 - **Tiers** : Tailscale, Negativo17
 - **Terra (FyraLabs)** : terra-release, terra-release-extras, terra-release-mesa
 
