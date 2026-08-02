@@ -1,18 +1,43 @@
-#!/bin/bash
+#!/usr/bin/bash
 
-# Vérifie les arguments
+# limitw - Réglage des limites TDP des CPU/APU AMD Ryzen via ryzenadj
+# Les réglages ne survivent pas au reboot/suspend, d'où l'option --save
+# qui crée une entrée autostart pour les réappliquer à l'ouverture de session.
+
+set -euo pipefail
+
+RYZENADJ="/usr/bin/ryzenadj"
+AUTOSTART_DIR="$HOME/.config/autostart"
+DESKTOP_FILE="$AUTOSTART_DIR/limit-tdp.desktop"
+
 usage() {
     echo "Usage: $0 <watts> [--temp <temp>] [--save]"
+    echo "   or: $0 --info"
     echo "   or: $0 --reset"
+    echo ""
     echo "ex. : $0 35 pour 35W"
+    echo "--info        : Affiche les limites TDP actuelles."
     echo "--temp <temp> : Définit la température maximale en °C (entre 50 et 105)."
-    echo "--save : Crée ou met à jour un fichier .desktop dans ~/.config/autostart pour exécution automatique à l'ouverture de session."
-    echo "--reset : Supprime le fichier .desktop pour enlever l'exécution automatique."
+    echo "--save        : Crée ou met à jour un fichier .desktop dans ~/.config/autostart pour exécution automatique à l'ouverture de session."
+    echo "--reset       : Supprime le fichier .desktop pour enlever l'exécution automatique."
     exit 1
+}
+
+# Vérifie que ryzenadj est présent et que le CPU est un AMD Ryzen
+check_deps() {
+    if [[ ! -x "$RYZENADJ" ]]; then
+        echo "Erreur : ryzenadj n'est pas installé." >&2
+        exit 1
+    fi
+    if ! grep -qi "authenticamd" /proc/cpuinfo; then
+        echo "Erreur : CPU non AMD détecté, ryzenadj ne fonctionne que sur Ryzen." >&2
+        exit 1
+    fi
 }
 
 SAVE=0
 RESET=0
+INFO=0
 WATTS=""
 TEMP=""
 
@@ -26,16 +51,20 @@ while [[ $# -gt 0 ]]; do
             RESET=1
             shift
             ;;
+        --info)
+            INFO=1
+            shift
+            ;;
         --temp)
             if [[ $# -lt 2 ]]; then
-                echo "Erreur : --temp nécessite une valeur."
+                echo "Erreur : --temp nécessite une valeur." >&2
                 usage
             fi
             TEMP=$2
             shift 2
             ;;
         -*)
-            echo "Option inconnue : $1"
+            echo "Option inconnue : $1" >&2
             usage
             ;;
         *)
@@ -48,14 +77,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [ $RESET -eq 1 ]; then
-    if [[ -n "$WATTS" ]] || [[ -n "$TEMP" ]] || [ $SAVE -eq 1 ]; then
-        echo "Erreur : --reset ne peut pas être combiné avec d'autres options ou arguments."
+if [[ $INFO -eq 1 ]]; then
+    if [[ -n "$WATTS" ]] || [[ -n "$TEMP" ]] || [[ $SAVE -eq 1 ]] || [[ $RESET -eq 1 ]]; then
+        echo "Erreur : --info ne peut pas être combiné avec d'autres options." >&2
         usage
     fi
-    AUTOSTART_DIR="$HOME/.config/autostart"
-    DESKTOP_FILE="$AUTOSTART_DIR/limit-tdp.desktop"
-    if [ -f "$DESKTOP_FILE" ]; then
+    check_deps
+    # Sur certaines familles de CPU (ex. Dragon Range), --info échoue en fin
+    # d'affichage car la table de monitoring n'est pas supportée : on ignore
+    # le code de retour, l'information affichée reste utile.
+    sudo "$RYZENADJ" --info || true
+    exit 0
+fi
+
+if [[ $RESET -eq 1 ]]; then
+    if [[ -n "$WATTS" ]] || [[ -n "$TEMP" ]] || [[ $SAVE -eq 1 ]]; then
+        echo "Erreur : --reset ne peut pas être combiné avec d'autres options ou arguments." >&2
+        usage
+    fi
+    if [[ -f "$DESKTOP_FILE" ]]; then
         rm "$DESKTOP_FILE"
         echo "Succès : Entrée autostart supprimée."
     else
@@ -69,26 +109,28 @@ if [[ -z "$WATTS" ]]; then
 fi
 
 # Vérifie si watts est un nombre entier positif
-if ! [[ $WATTS =~ ^[0-9]+$ ]] || [ $WATTS -lt 5 ] || [ $WATTS -gt 120 ]; then
-    echo "Erreur : <watts> doit être un nombre entier entre 5 et 120."
+if ! [[ $WATTS =~ ^[0-9]+$ ]] || [[ $WATTS -lt 5 ]] || [[ $WATTS -gt 120 ]]; then
+    echo "Erreur : <watts> doit être un nombre entier entre 5 et 120." >&2
     exit 1
 fi
 
 # Vérifie si temp est fourni et valide
 if [[ -n "$TEMP" ]]; then
-    if ! [[ $TEMP =~ ^[0-9]+$ ]] || [ $TEMP -lt 50 ] || [ $TEMP -gt 105 ]; then
-        echo "Erreur : --temp doit être un nombre entier entre 50 et 105."
+    if ! [[ $TEMP =~ ^[0-9]+$ ]] || [[ $TEMP -lt 50 ]] || [[ $TEMP -gt 105 ]]; then
+        echo "Erreur : --temp doit être un nombre entier entre 50 et 105." >&2
         exit 1
     fi
 fi
 
+check_deps
+
 # Convertit en milliwatts
 MW=$((WATTS * 1000))
 
-# Construit la commande ryzenadj
-RYZENADJ_CMD="sudo ryzenadj --stapm-limit=$MW --fast-limit=$MW --slow-limit=$MW"
+# Construit la commande ryzenadj (tableau, sans eval)
+cmd=(sudo "$RYZENADJ" --stapm-limit="$MW" --fast-limit="$MW" --slow-limit="$MW")
 if [[ -n "$TEMP" ]]; then
-    RYZENADJ_CMD="$RYZENADJ_CMD -f $TEMP"
+    cmd+=(-f "$TEMP")
 fi
 
 # Exécute la commande
@@ -96,24 +138,21 @@ echo "Réglage des limites TDP à ${WATTS}W (${MW} mW)..."
 if [[ -n "$TEMP" ]]; then
     echo "Réglage de la température maximale à ${TEMP}°C..."
 fi
-eval "$RYZENADJ_CMD"
 
-if [ $? -eq 0 ]; then
-    echo "Succès : TDP limité à ${WATTS}W."
-    if [[ -n "$TEMP" ]]; then
-        echo "Succès : Température maximale définie à ${TEMP}°C."
-    fi
-else
-    echo "Erreur : Échec de l'exécution de ryzenadj. Vérifiez si l'outil est installé et si vous avez les droits sudo."
+if ! "${cmd[@]}"; then
+    echo "Erreur : Échec de l'exécution de ryzenadj." >&2
     exit 1
 fi
 
+echo "Succès : TDP limité à ${WATTS}W."
+if [[ -n "$TEMP" ]]; then
+    echo "Succès : Température maximale définie à ${TEMP}°C."
+fi
+
 # Si --save est spécifié, crée ou met à jour le fichier .desktop
-if [ $SAVE -eq 1 ]; then
+if [[ $SAVE -eq 1 ]]; then
     SCRIPT_PATH=$(readlink -f "$0")
-    AUTOSTART_DIR="$HOME/.config/autostart"
     mkdir -p "$AUTOSTART_DIR"
-    DESKTOP_FILE="$AUTOSTART_DIR/limit-tdp.desktop"
 
     EXEC_LINE="$SCRIPT_PATH $WATTS"
     COMMENT="Set TDP limit to $WATTS W"
@@ -122,7 +161,7 @@ if [ $SAVE -eq 1 ]; then
         COMMENT="$COMMENT and max temp to $TEMP C"
     fi
 
-    cat << EOF > "$DESKTOP_FILE"
+    if cat << EOF > "$DESKTOP_FILE"
 [Desktop Entry]
 Type=Application
 Exec=$EXEC_LINE
@@ -130,10 +169,10 @@ Name=Limit TDP
 Comment=$COMMENT
 Terminal=false
 EOF
-
-    if [ $? -eq 0 ]; then
+    then
         echo "Succès : Entrée autostart créée ou mise à jour pour ${WATTS}W${TEMP:+ et temp ${TEMP}°C}."
     else
-        echo "Erreur : Échec de la création de l'entrée autostart."
+        echo "Erreur : Échec de la création de l'entrée autostart." >&2
+        exit 1
     fi
 fi

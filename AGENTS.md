@@ -915,6 +915,7 @@ Scripts personnalisés Gablue :
 - `gablue-bigscreen-session-init` : Initialisation session native Bigscreen (autostart, blacklist + mirroring)
 - Scripts gaming : `azahar-install`, `citron-install`, `eden-install`, `esde-install`, `hermes-install`, `qwen-install`, `shadps4-install`, `xenia-install`
 - Scripts utilitaires : `dlv`, `dlcover`, `tv`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`
+- `limitw` : Réglage des limites TDP des CPU/APU AMD Ryzen via ryzenadj (bash, règle sudoers nopasswd). `--temp` pour la temp max, `--save`/`--reset` pour la persistance via autostart, `--info` pour afficher les valeurs actuelles (non lisible sur certains CPU desktop comme Raphael/Dragon Range, ryzenadj n'a pas de chemin de code PM table pour ces familles).
 - `dlv` : Téléchargeur YouTube unifié (bash) avec support playlist (`--mp3`, `--mp4`, `--mkv`, `--mkv-1080`, `--playlist`). Remplace les anciens alias `dlv-mp*` et le script `ytdl`. Completion bash dans `/usr/share/bash-completion/completions/dlv`.
 - `retroplayer` : TUI Go pour explorer et écouter des musiques rétro (téléchargé depuis GitHub Releases pendant le build, dépôt séparé)
 - Gestion Wine/Proton : `gwine` (assemblé depuis `src/gwine-launcher/`), `scrap-win`
