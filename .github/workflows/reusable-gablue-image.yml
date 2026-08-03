@@ -88,9 +88,19 @@ jobs:
             ')
           fi
 
+          # Bazzite peut pinner une version dont les images akmods ne sont pas
+          # encore publiées (leur CI akmods build en avance) : vérifier que le
+          # tag existe, sinon fallback sur le dernier tag disponible
           if [ -n "$KERNEL_VERSION" ]; then
-            echo "Using ${KERNEL_FLAVOR} kernel from Bazzite testing: $KERNEL_VERSION"
-          else
+            if skopeo inspect "docker://ghcr.io/ublue-os/akmods:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION}" >/dev/null 2>&1; then
+              echo "Using ${KERNEL_FLAVOR} kernel from Bazzite testing: $KERNEL_VERSION"
+            else
+              echo "::warning::Bazzite pinne $KERNEL_VERSION mais l'image akmods correspondante n'est pas encore publiée"
+              KERNEL_VERSION=""
+            fi
+          fi
+
+          if [ -z "$KERNEL_VERSION" ]; then
             # Fallback : dernier tag disponible dans ublue-os/akmods
             echo "::warning::Version kernel introuvable chez Bazzite, fallback sur le dernier tag akmods"
             TAGS_JSON=""
@@ -111,10 +121,13 @@ jobs:
 
             # Filtrer les tags pour trouver le kernel correspondant à la version Fedora
             # Pattern: {KERNEL_FLAVOR}-{FEDORA_VERSION}-{KERNEL_VERSION}
+            # Exclure les alias non versionnés (ex. ogc-44-x86_64) : la version
+            # doit commencer par un chiffre
             KERNEL_VERSION=$(echo "$TAGS_JSON" | jq -r --arg kf "$KERNEL_FLAVOR" --arg fv "$FEDORA_VERSION" '
               .Tags[]
               | select(startswith($kf + "-" + $fv + "-"))
               | sub($kf + "-" + $fv + "-"; "")
+              | select(test("^[0-9]"))
             ' | sort -V | tail -1)
 
             if [[ -z "$KERNEL_VERSION" ]] || [[ "$KERNEL_VERSION" == "null" ]]; then

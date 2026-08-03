@@ -679,7 +679,8 @@ Workflow réutilisable pour le build d'une image :
 
 **Version du kernel** :
 - **Par défaut** : suit automatiquement la version kernel pinnée par **Bazzite testing** — parsée depuis `.github/workflows/build.yml` de `ublue-os/bazzite` (entrée matrice correspondant à `kernel_flavor`/`fedora_version`, retry curl 3×10s). Plus besoin de commit pour changer de kernel
-- **Fallback** : si la récupération/parsing Bazzite échoue, dernier tag OGC via `skopeo list-tags ghcr.io/ublue-os/akmods` → filtre `{KERNEL_FLAVOR}-{FEDORA_VERSION}-*` (avec warning dans les logs)
+- **Vérification d'existence** : Bazzite peut pinner une version dont les images akmods ne sont pas encore publiées (leur CI build en avance) — le tag est validé via `skopeo inspect`, sinon fallback
+- **Fallback** : si la récupération/parsing Bazzite échoue ou le tag n'existe pas, dernier tag OGC via `skopeo list-tags ghcr.io/ublue-os/akmods` → filtre `{KERNEL_FLAVOR}-{FEDORA_VERSION}-*` en excluant les alias non versionnés (ex. `ogc-44-x86_64`) via `test("^[0-9]")` (avec warning dans les logs)
 - **Manuel** : spécifier `kernel_version` dans un job pour surcharge ponctuelle (le step de détection est alors skippé)
 
 ### build-gablue-live-isos.yml
