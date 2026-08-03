@@ -27,8 +27,8 @@ on:
       kernel_version:
         required: false
         type: string
-        # Version du kernel choisie manuellement (ublue-os/bazzite@59210e8)
-        default: "7.1.5-ogc5.1.fc44.x86_64"
+        # Vide = suit automatiquement la version kernel pinnée par Bazzite (branche testing)
+        default: ""
       nvidia_flavor:
         required: false
         type: string
@@ -52,49 +52,80 @@ jobs:
       id-token: write
 
     steps:
-      # Étape pour récupérer la version du kernel via skopeo list-tags
-      - name: Get latest kernel version
+      # Étape pour récupérer la version du kernel
+      # Source de vérité : la version pinnée par Bazzite (branche testing) dans
+      # la matrice de son workflow build.yml. Fallback sur le dernier tag akmods
+      # via skopeo si la récupération ou le parsing échoue.
+      - name: Get kernel version
         id: get_kernel_version
         if: inputs.kernel_version == ''
         run: |
           KERNEL_FLAVOR="${{ inputs.kernel_type }}"
           FEDORA_VERSION="${{ inputs.fedora_version }}"
-          
-          # Récupérer la liste des tags disponibles pour ublue-os/akmods
-          # Retry : ghcr.io peut subir des timeouts réseau transitoires
-          echo "Fetching available ${KERNEL_FLAVOR} kernel tags..."
-          TAGS_JSON=""
+
+          # Récupérer le build.yml de Bazzite testing (retry : timeouts réseau possibles)
+          BAZZITE_URL="https://raw.githubusercontent.com/ublue-os/bazzite/testing/.github/workflows/build.yml"
+          BUILD_YML=""
           for attempt in 1 2 3; do
-            TAGS_JSON=$(skopeo list-tags "docker://ghcr.io/ublue-os/akmods" 2>&1)
-            if echo "$TAGS_JSON" | jq -e '.Tags' >/dev/null 2>&1; then
-              echo "skopeo list-tags réussi à la tentative $attempt"
+            if BUILD_YML=$(curl -fsSL "$BAZZITE_URL"); then
+              echo "Récupération du build.yml Bazzite réussie à la tentative $attempt"
               break
             fi
             if [ "$attempt" -eq 3 ]; then
-              echo "::error::Impossible de lister les tags akmods après 3 tentatives"
-              echo "$TAGS_JSON"
-              exit 1
+              echo "::warning::Impossible de récupérer le build.yml Bazzite après 3 tentatives"
             fi
-            echo "skopeo list-tags tentative $attempt échoué, retry dans 10s..."
+            echo "curl tentative $attempt échouée, retry dans 10s..."
             sleep 10
           done
-          
-          # Filtrer les tags pour trouver le kernel correspondant à la version Fedora
-          # Pattern: {KERNEL_FLAVOR}-{FEDORA_VERSION}-{KERNEL_VERSION}
-          KERNEL_VERSION=$(echo "$TAGS_JSON" | jq -r --arg kf "$KERNEL_FLAVOR" --arg fv "$FEDORA_VERSION" '
-            .Tags[] 
-            | select(startswith($kf + "-" + $fv + "-")) 
-            | sub($kf + "-" + $fv + "-"; "")
-          ' | sort -V | tail -1)
-          
-          if [[ -z "$KERNEL_VERSION" ]] || [[ "$KERNEL_VERSION" == "null" ]]; then
-            echo "Erreur : Impossible de trouver un kernel ${KERNEL_FLAVOR} pour Fedora $FEDORA_VERSION"
-            echo "Tags disponibles:"
-            echo "$TAGS_JSON" | jq -r '.Tags[]'
-            exit 1
+
+          # Parser l'entrée de la matrice correspondant à notre flavor/version Fedora
+          KERNEL_VERSION=""
+          if [ -n "$BUILD_YML" ]; then
+            KERNEL_VERSION=$(echo "$BUILD_YML" | awk -v fv="$FEDORA_VERSION" -v kf="$KERNEL_FLAVOR" '
+              /^[[:space:]]*- fedora_version:/ { cur_fv=$3 }
+              /^[[:space:]]*kernel_flavor:/ { cur_kf=$2 }
+              /^[[:space:]]*kernel_version:/ { if (cur_fv == fv && cur_kf == kf) { print $2; exit } }
+            ')
           fi
-          
-          echo "Using latest ${KERNEL_FLAVOR} kernel: $KERNEL_VERSION"
+
+          if [ -n "$KERNEL_VERSION" ]; then
+            echo "Using ${KERNEL_FLAVOR} kernel from Bazzite testing: $KERNEL_VERSION"
+          else
+            # Fallback : dernier tag disponible dans ublue-os/akmods
+            echo "::warning::Version kernel introuvable chez Bazzite, fallback sur le dernier tag akmods"
+            TAGS_JSON=""
+            for attempt in 1 2 3; do
+              TAGS_JSON=$(skopeo list-tags "docker://ghcr.io/ublue-os/akmods" 2>&1)
+              if echo "$TAGS_JSON" | jq -e '.Tags' >/dev/null 2>&1; then
+                echo "skopeo list-tags réussi à la tentative $attempt"
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "::error::Impossible de lister les tags akmods après 3 tentatives"
+                echo "$TAGS_JSON"
+                exit 1
+              fi
+              echo "skopeo list-tags tentative $attempt échoué, retry dans 10s..."
+              sleep 10
+            done
+
+            # Filtrer les tags pour trouver le kernel correspondant à la version Fedora
+            # Pattern: {KERNEL_FLAVOR}-{FEDORA_VERSION}-{KERNEL_VERSION}
+            KERNEL_VERSION=$(echo "$TAGS_JSON" | jq -r --arg kf "$KERNEL_FLAVOR" --arg fv "$FEDORA_VERSION" '
+              .Tags[]
+              | select(startswith($kf + "-" + $fv + "-"))
+              | sub($kf + "-" + $fv + "-"; "")
+            ' | sort -V | tail -1)
+
+            if [[ -z "$KERNEL_VERSION" ]] || [[ "$KERNEL_VERSION" == "null" ]]; then
+              echo "::error::Impossible de trouver un kernel ${KERNEL_FLAVOR} pour Fedora $FEDORA_VERSION"
+              echo "Tags disponibles:"
+              echo "$TAGS_JSON" | jq -r '.Tags[]'
+              exit 1
+            fi
+
+            echo "Using latest ${KERNEL_FLAVOR} kernel from akmods tags: $KERNEL_VERSION"
+          fi
 
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_OUTPUT
           echo "KERNEL_FLAVOR=$KERNEL_FLAVOR" >> $GITHUB_OUTPUT

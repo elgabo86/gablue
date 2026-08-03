@@ -456,7 +456,7 @@ Exclusions importantes :
 - Appel de `nvidia-install.sh` avec `AKMODNV_PATH="/tmp/rpms/nvidia"`, `MULTILIB=1`, `IMAGE_NAME="$SOURCE_IMAGE"`
 - nvidia-install.sh gère : driver, kmod, container-toolkit, supergfxctl, SELinux, dracut force_drivers, staging COPR
 - Configuration post-installation : suppression ICD Nouveau, symlink libnvidia-ml, disable supergfxd
-- Activation explicite des services de gestion d'alimentation NVIDIA (aligné Bazzite, le preset RPM Fusion `70-nvidia.preset` ne s'applique pas de façon fiable en build container) : `nvidia-suspend`, `nvidia-resume`, `nvidia-hibernate`, `nvidia-suspend-then-hibernate`, `nvidia-powerd`
+- Activation explicite des services de gestion d'alimentation NVIDIA (aligné Bazzite, le preset RPM Fusion `70-nvidia.preset` ne s'applique pas de façon fiable en build container) : `nvidia-suspend`, `nvidia-resume`, `nvidia-hibernate`, `nvidia-suspend-then-hibernate`, `nvidia-powerd` — boucle avec test d'existence du fichier unit, certains services sont absents du packaging nvidia-open (ex. `nvidia-suspend`) et ne doivent pas faire échouer le build
 - Gestion d'alimentation (aligné Bazzite, doc officielle NVIDIA powermanagement) : `nvidia-power.conf` dans `/usr/lib/modprobe.d/` (`NVreg_EnableS0ixPowerManagement=1` + `NVreg_DynamicPowerManagement=0x02` pour S0ix/RTD3) et `80-nvidia-pm.rules` dans `/usr/lib/udev/rules.d/` (runtime PM auto au bind, suppression devices USB xHCI/UCSI NVIDIA qui empêchent la veille) — surtout utile sur laptop, inoffensif sur desktop
 - **VK_hdr_layer** pour pilotes closed uniquement (pas nvidia-open) : extraction manuelle du RPM
 - **nvidia-modeset.conf** : copie de `/etc/modprobe.d/` vers `/usr/lib/modprobe.d/` (workaround Dracut, avec vérification `[ -f ]`) pour pilotes closed, les pilotes open n'ont pas ce fichier
@@ -678,9 +678,9 @@ Workflow réutilisable pour le build d'une image :
 12. Métriques post-push (step "Update compressed size") : inspecte le registre distant GHCR via `skopeo inspect --raw docker://$dest_image | jq` en sommant les tailles des layers et du config blob pour obtenir la taille compressée réelle, met à jour le JSON metrics et le step summary. Upload des métriques après cette étape (le fichier JSON final contient la taille compressée)
 
 **Version du kernel** :
-- **Par défaut** : Hardcodée dans `reusable-gablue-image.yml` (input `kernel_version`). Version choisie manuellement, actuellement `7.1.3-ogc3.4.fc44.x86_64` (ublue-os/bazzite@982d035)
-- **Auto-détection** : Si `kernel_version` est vide, dernier tag OGC via `skopeo list-tags ghcr.io/ublue-os/akmods` → filtre `{KERNEL_FLAVOR}-{FEDORA_VERSION}-*`
-- **Manuel** : Spécifier `kernel_version` dans un job pour surcharge ponctuelle
+- **Par défaut** : suit automatiquement la version kernel pinnée par **Bazzite testing** — parsée depuis `.github/workflows/build.yml` de `ublue-os/bazzite` (entrée matrice correspondant à `kernel_flavor`/`fedora_version`, retry curl 3×10s). Plus besoin de commit pour changer de kernel
+- **Fallback** : si la récupération/parsing Bazzite échoue, dernier tag OGC via `skopeo list-tags ghcr.io/ublue-os/akmods` → filtre `{KERNEL_FLAVOR}-{FEDORA_VERSION}-*` (avec warning dans les logs)
+- **Manuel** : spécifier `kernel_version` dans un job pour surcharge ponctuelle (le step de détection est alors skippé)
 
 ### build-gablue-live-isos.yml
 
