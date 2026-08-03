@@ -191,7 +191,7 @@ jobs:
 
           fedora = os.environ['fedora']
           kernel = os.environ['kernel']
-          # Reformater "7.1.5-ogc2.1.fc44" -> "7.1.5 (rev 2.1)"
+          # Reformater 7.1.5-ogc2.1.fc44 -> 7.1.5 (rev 2.1)
           m = re.match(r'^(\d+\.\d+\.\d+)-ogc([\d.]+)\.fc\d+.*$', kernel)
           if m:
               kernel = f'{m.group(1)} (rev {m.group(2)})'
