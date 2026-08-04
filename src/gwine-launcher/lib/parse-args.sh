@@ -44,6 +44,12 @@ show_help() {
     echo "  --wayland         Utiliser Wayland natif (désactive XWayland)"
     echo "  --env VAR=VAL     Passer une variable d'environnement au jeu (peut être utilisé plusieurs fois)"
     echo "  --args            Arguments à passer au jeu"
+    echo "  --gamescope        Lancer le jeu dans gamescope avec mangoapp (désactive MangoHud injecté)"
+    echo "  --gamescope-args  Arguments gamescope personnalisés (ex: \"-w 1920 -h 1080 -W 2560 -H 1440\")"
+    echo "  --720             Gamescope en 1280x720 interne (raccourci)"
+    echo "  --900             Gamescope en 1600x900 interne (raccourci)"
+    echo "  --1080            Gamescope en 1920x1080 interne (raccourci)"
+    echo "  --no-gamescope    Désactiver gamescope par défaut"
     echo "  --kill            Forcer l'arrêt de tous les processus Gwine en cours"
     echo "  --dir             Gérer les répertoires bindés dans le sandbox (add/del/list/reset)"
     echo ""
@@ -63,6 +69,11 @@ show_help() {
     echo "  gwine --x11                 # Utiliser X11/XWayland comme mode d'affichage"
     echo "  gwine --wayland             # Utiliser Wayland natif comme mode d'affichage"
     echo "  gwine --fix ~/Jeux/monjeu.wgp"
+    echo "  gwine --gamescope ~/Jeux/monjeu.wgp"
+    echo "  gwine --gamescope-args \"-w 1920 -h 1080\" ~/Jeux/monjeu.wgp"
+    echo "  gwine --720 ~/Jeux/monjeu.wgp       # Gamescope 1280x720"
+    echo "  gwine --1080                        # Définir 1080p par défaut pour les futurs lancements"
+    echo "  gwine --no-gamescope                # Désactiver gamescope par défaut"
     echo "  gwine --reg config.reg"
     echo "  gwine --reg add 'HKCU\Software\Wine\DllOverrides' /v ddraw /d native,builtin /f"
     echo "  gwine --reg del 'HKCU\Software\Wine\DllOverrides' /v ddraw /f"
@@ -71,7 +82,7 @@ show_help() {
 }
 
 # Options valides reconnues par gwine
-VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--dxvk" "--dxvk-async")
+VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--dxvk" "--dxvk-async" "--gamescope" "--gamescope-args" "--720" "--900" "--1080" "--no-gamescope")
 
 # Vérifie si une option est valide
 is_valid_option() {
@@ -85,6 +96,9 @@ is_valid_option() {
 }
 
 parse_arguments() {
+    gamescope_mode=false
+    gamescope_args=""
+    gamescope_off_mode=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --help|-h)
@@ -225,6 +239,34 @@ $2"
                 ;;
             --nosandbox)
                 nosandbox_mode=true
+                shift
+                ;;
+            --gamescope)
+                gamescope_mode=true
+                shift
+                ;;
+            --gamescope-args)
+                gamescope_mode=true
+                gamescope_args="$2"
+                shift 2
+                ;;
+            --720)
+                gamescope_mode=true
+                gamescope_args="-w 1280 -h 720 -f --mangoapp"
+                shift
+                ;;
+            --900)
+                gamescope_mode=true
+                gamescope_args="-w 1600 -h 900 -f --mangoapp"
+                shift
+                ;;
+            --1080)
+                gamescope_mode=true
+                gamescope_args="-w 1920 -h 1080 -f --mangoapp"
+                shift
+                ;;
+            --no-gamescope)
+                gamescope_off_mode=true
                 shift
                 ;;
             --kill)

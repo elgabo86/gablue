@@ -11,7 +11,7 @@ gwine_completions() {
     opts="--help -h --fix --xbox --xbox-ds4 --xbox-dualsense --xbox-on --xbox-off --reset --nofix --exewgp --init --offline --update --kdialog --cmd
           --regedit --reg --winecfg --winetricks --winetrick --download-components
           --cachepack --nosandbox --joytest --args --gameid --use-ln-mounts --kill --dir
-          --x11 --wayland --env --dxvk --dxvk-async"
+          --x11 --wayland --env --dxvk --dxvk-async --gamescope --gamescope-args --720 --900 --1080 --no-gamescope"
 
     # Si on complète une option
     if [[ ${cur} == -* ]]; then
@@ -31,6 +31,10 @@ gwine_completions() {
             ;;
         --args)
             # Pas d'autocomplétion pour les arguments
+            return 0
+            ;;
+        --gamescope-args)
+            # Pas d'autocomplétion pour les arguments gamescope
             return 0
             ;;
     esac

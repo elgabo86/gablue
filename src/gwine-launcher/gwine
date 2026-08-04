@@ -104,7 +104,7 @@ run_wgp_mode() {
     
     # Trap pour nettoyer à l'interruption (Ctrl-C)
     # Tue l'arbre de processus du jeu + les processus orphelins liés à ce WGP
-    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 0.5; kill_process_tree "$GWINE_GAME_PID" KILL; kill_wgp_orphans "$GWINE_WGP_FILE" "$WINEPREFIX"; sleep 0.5; echo "Nettoyage des overlays..."; cleanup_wgp; stop_ds2xbox; restore_padfix_setting; rm -f "$lock_file" 2>/dev/null; exit 130' INT TERM
+    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; if [ -n "${GWINE_GAMESCOPE_PIDS:-}" ]; then pkill -KILL -x mangoapp 2>/dev/null; sleep 0.1; for _gsp in $GWINE_GAMESCOPE_PIDS; do kill -TERM "$_gsp" 2>/dev/null; done; sleep 0.5; for _gsp in $GWINE_GAMESCOPE_PIDS; do kill -KILL "$_gsp" 2>/dev/null; done; { kill_process_tree "$GWINE_GAME_PID" TERM; sleep 0.5; kill_process_tree "$GWINE_GAME_PID" KILL; kill_wgp_orphans "$GWINE_WGP_FILE" "$WINEPREFIX"; cleanup_wgp; stop_ds2xbox; restore_padfix_setting; rm -f "$lock_file" 2>/dev/null; } >/dev/null 2>&1; else kill_process_tree "$GWINE_GAME_PID" TERM; sleep 0.5; kill_process_tree "$GWINE_GAME_PID" KILL; kill_wgp_orphans "$GWINE_WGP_FILE" "$WINEPREFIX"; echo "Nettoyage des overlays..."; cleanup_wgp; stop_ds2xbox; restore_padfix_setting; rm -f "$lock_file" 2>/dev/null; fi; exit 130' INT TERM
     # Trap EXIT pour nettoyage normal (pas de kill car le jeu s'est terminé normalement)
     trap 'cleanup_wgp; stop_ds2xbox; rm -f "$lock_file" 2>/dev/null' EXIT
 
@@ -205,7 +205,7 @@ run_classic_mode() {
 
     local lock_file="/tmp/wgp-lock-$filename"
     echo "$$:$(date +%s)" > "$lock_file"
-    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; kill_process_tree "$GWINE_GAME_PID" TERM; sleep 1; kill_process_tree "$GWINE_GAME_PID" KILL; echo "Arrêt des processus orphelins..."; for pid in $(pgrep -f "\.exe"); do if [ -r "/proc/$pid/environ" ] && grep -q "WINEPREFIX=$WINEPREFIX" "/proc/$pid/environ" 2>/dev/null; then cmdline=$(tr "\0" " " < "/proc/$pid/cmdline" 2>/dev/null); if ! [[ "$cmdline" =~ (winedevice|plugplay|explorer|services|svchost|rpcss|wineboot|steam|msiexec|regsvr32|spoolsv|conhost|wmplayer|taskkill|wineconsole)\.exe ]]; then kill "$pid" 2>/dev/null; fi; fi; done; stop_ds2xbox; restore_padfix_setting; sleep 1; rm -f "$lock_file" 2>/dev/null; [ -n "$gwine_temp_base" ] && rm -rf "$gwine_temp_base" 2>/dev/null; exit 130' INT TERM
+    trap 'trap - EXIT INT TERM; echo "Arrêt du processus $GWINE_GAME_PID et ses enfants..."; if [ -n "${GWINE_GAMESCOPE_PIDS:-}" ]; then pkill -KILL -x mangoapp 2>/dev/null; sleep 0.1; for _gsp in $GWINE_GAMESCOPE_PIDS; do kill -TERM "$_gsp" 2>/dev/null; done; sleep 0.5; for _gsp in $GWINE_GAMESCOPE_PIDS; do kill -KILL "$_gsp" 2>/dev/null; done; { kill_process_tree "$GWINE_GAME_PID" TERM; sleep 1; kill_process_tree "$GWINE_GAME_PID" KILL; for pid in $(pgrep -f "\.exe"); do if [ -r "/proc/$pid/environ" ] && grep -q "WINEPREFIX=$WINEPREFIX" "/proc/$pid/environ" 2>/dev/null; then cmdline=$(tr "\0" " " < "/proc/$pid/cmdline" 2>/dev/null); if ! [[ "$cmdline" =~ (winedevice|plugplay|explorer|services|svchost|rpcss|wineboot|steam|msiexec|regsvr32|spoolsv|conhost|wmplayer|taskkill|wineconsole)\.exe ]]; then kill "$pid" 2>/dev/null; fi; fi; done; stop_ds2xbox; restore_padfix_setting; rm -f "$lock_file" 2>/dev/null; [ -n "$gwine_temp_base" ] && rm -rf "$gwine_temp_base" 2>/dev/null; } >/dev/null 2>&1; else kill_process_tree "$GWINE_GAME_PID" TERM; sleep 1; kill_process_tree "$GWINE_GAME_PID" KILL; echo "Arrêt des processus orphelins..."; for pid in $(pgrep -f "\.exe"); do if [ -r "/proc/$pid/environ" ] && grep -q "WINEPREFIX=$WINEPREFIX" "/proc/$pid/environ" 2>/dev/null; then cmdline=$(tr "\0" " " < "/proc/$pid/cmdline" 2>/dev/null); if ! [[ "$cmdline" =~ (winedevice|plugplay|explorer|services|svchost|rpcss|wineboot|steam|msiexec|regsvr32|spoolsv|conhost|wmplayer|taskkill|wineconsole)\.exe ]]; then kill "$pid" 2>/dev/null; fi; fi; done; stop_ds2xbox; restore_padfix_setting; rm -f "$lock_file" 2>/dev/null; [ -n "$gwine_temp_base" ] && rm -rf "$gwine_temp_base" 2>/dev/null; fi; exit 130' INT TERM
     trap 'stop_ds2xbox; restore_padfix_setting; rm -f "$lock_file" 2>/dev/null; [ -n "$gwine_temp_base" ] && rm -rf "$gwine_temp_base" 2>/dev/null' EXIT
 
     launch_wine_game "$new_fullpath" "$args" "$filename" "$env_vars" "false"
@@ -279,6 +279,20 @@ main() {
     # Parser les arguments en premier
     parse_arguments "$@"
 
+    # Mode --gamescope : re-exécuter gwine sous gamescope comme parent
+    # (la détection gamescope dans l'arbre parent + kill mangoapp/gamescope gère la fermeture)
+    if [ "${gamescope_mode:-false}" = "true" ] && [ -z "${GWINE_GAMESCOPE_WRAPPER:-}" ]; then
+        if ! command -v gamescope &>/dev/null; then
+            echo "Erreur: gamescope n'est pas installé" >&2
+            exit 1
+        fi
+        export GWINE_GAMESCOPE_WRAPPER=1
+        export MANGOHUD=0
+        local _gs_args="${gamescope_args:--w 1280 -h 720 -f --mangoapp}"
+        echo "Lancement sous gamescope: $_gs_args"
+        exec gamescope $_gs_args -- "$0" "$@"
+    fi
+
     if [ "$reset_mode" = true ]; then
         reset_gwine_options
         export init_mode=true
@@ -297,7 +311,26 @@ main() {
         exit 0
     fi
     
+    # Gestion gamescope par défaut : si --720/--900/--1080/--gamescope sans fichier,
+    # sauvegarder comme défaut pour les futurs lancements
+    if [ "$gamescope_mode" = true ] && [ -z "$fullpath" ] && [ "$init_mode" != true ]; then
+        set_gamescope_default "$gamescope_args"
+        echo "Gamescope par défaut configuré: $gamescope_args"
+        echo "Tous les futurs lancements gwine utiliseront gamescope automatiquement."
+        exit 0
+    fi
+    
+    # --no-gamescope : désactiver le défaut
+    if [ "$gamescope_off_mode" = true ]; then
+        unset_gamescope_default
+        echo "Gamescope par défaut désactivé."
+        if [ -z "$fullpath" ]; then
+            exit 0
+        fi
+    fi
+    
     apply_xbox_default
+    apply_gamescope_default
     
 
     if [ "$nofix_mode" = true ] && [ "$fix_mode" = true ]; then

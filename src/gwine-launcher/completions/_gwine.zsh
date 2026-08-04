@@ -39,6 +39,12 @@ gwine_commands() {
         '--dir:Gérer les répertoires bindés dans le sandbox'
         '--dxvk:Utiliser DXVK standard'
         '--dxvk-async:Utiliser DXVK-GPLAsync'
+        '--gamescope:Lancer le jeu dans gamescope avec mangoapp'
+        '--gamescope-args:Arguments gamescope personnalisés'
+        '--720:Gamescope en 1280x720 interne (raccourci)'
+        '--900:Gamescope en 1600x900 interne (raccourci)'
+        '--1080:Gamescope en 1920x1080 interne (raccourci)'
+        '--no-gamescope:Désactiver gamescope par défaut'
     )
     _describe -t commands 'gwine commands' commands "$@"
 }
@@ -97,4 +103,10 @@ _arguments -C \
     '--dir[Gérer les répertoires bindés]:subcommand:gwine_dir_commands' \
     '--dxvk[Utiliser DXVK standard]' \
     '--dxvk-async[Utiliser DXVK-GPLAsync]' \
+    '--gamescope[Lancer le jeu dans gamescope avec mangoapp]' \
+    '--gamescope-args[Arguments gamescope personnalisés]:args:' \
+    '--720[Gamescope en 1280x720 interne]' \
+    '--900[Gamescope en 1600x900 interne]' \
+    '--1080[Gamescope en 1920x1080 interne]' \
+    '--no-gamescope[Désactiver gamescope par défaut]' \
     '*:fichier:gwine_files'

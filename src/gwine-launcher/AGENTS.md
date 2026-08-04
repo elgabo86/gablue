@@ -164,6 +164,18 @@ src/gwine-launcher/
 ./gwine --env VAR=VAL ~/jeu     # Passer une variable d'environnement
 ./gwine --dir add <chemin>      # Ajouter un répertoire aux bind mounts
 ./gwine --dir list              # Lister les répertoires bindés
+./gwine --gamescope ~/jeu.wgp   # Lancer dans gamescope avec mangoapp (désactive MangoHud injecté)
+./gwine --720 ~/jeu.wgp        # Gamescope 1280x720 interne (raccourci)
+./gwine --900 ~/jeu.wgp        # Gamescope 1600x900 interne (raccourci)
+./gwine --1080 ~/jeu.wgp       # Gamescope 1920x1080 interne (raccourci)
+./gwine --gamescope-args "-w 1920 -h 1080 -f --mangoapp" ~/jeu.wgp  # Args gamescope personnalisés
+```
+
+### Configuration gamescope par défaut
+```bash
+./gwine --720                   # Définir 720p par défaut pour les futurs lancements
+./gwine --1080                  # Définir 1080p par défaut
+./gwine --no-gamescope          # Désactiver gamescope par défaut
 ```
 
 ### Configuration xbox par défaut
@@ -178,11 +190,13 @@ src/gwine-launcher/
 ### Flux d'exécution principal
 1. `main()` dans `gwine` - point d'entrée
 2. `parse_arguments()` - Analyse des arguments CLI
-3. `run_wgp_mode()` ou `run_classic_mode()` selon le type de fichier
-4. Montage du pack WGP (si applicable)
-5. Initialisation du préfixe Wine
-6. Configuration GPU (Vulkan)
-7. Lancement avec sandboxing bubblewrap
+3. Si `--gamescope`/`--720`/`--900`/`--1080` : re-exécution de gwine sous gamescope comme parent (`exec gamescope ... -- gwine "$@"`)
+4. `run_wgp_mode()` ou `run_classic_mode()` selon le type de fichier
+5. Montage du pack WGP (si applicable)
+6. Initialisation du préfixe Wine
+7. Configuration GPU (Vulkan)
+8. Détection gamescope dans l'arbre parent (`GWINE_GAMESCOPE_PIDS`) pour kill mangoapp+gamescope à la fermeture
+9. Lancement avec sandboxing bubblewrap
 
 ### Ordre de chargement des modules (gwine)
 ```bash
@@ -216,7 +230,7 @@ lib/dir-config.sh
 
 - **core.sh** : Variables globales, fonctions utilitaires
 - **parse-args.sh** : Analyse des arguments CLI, validation, aide (show_help)
-- **xbox.sh** : Gestion ds2xbox (émulation Xbox 360, compteur références, config par défaut)
+- **xbox.sh** : Gestion ds2xbox (émulation Xbox 360, compteur références, config par défaut) + gamescope par défaut (set/get/apply_gamescope_default)
 - **runner.sh** : Gestion des runners Wine/Proton
 - **dxvk-mode.sh** : Configuration DXVK standard vs GPLAsync
 - **display-mode.sh** : Gestion du mode d'affichage (Wayland natif vs X11/XWayland)
@@ -269,7 +283,7 @@ lib/dir-config.sh
   - paths.sh : Utilitaires de chemins (transliterate, create_temp_path)
   - conflict.sh : Vérification conflits d'instance
   - setup.sh : Configuration environnement Wine
-- **launcher-main.sh** : Lancement effectif des jeux avec Wine (launch_wine_game)
+- **launcher-main.sh** : Lancement effectif des jeux avec Wine (launch_wine_game), détection gamescope dans l'arbre parent, kill mangoapp+gamescope à la fermeture
 - **sandbox.sh** : Configuration bubblewrap pour le sandboxing
 - **mode-init.sh** : Fichier de redirection vers modes/*
 - **modes/*** : Modules d'initialisation du préfixe
@@ -296,6 +310,15 @@ lib/dir-config.sh
 - Gestion des erreurs avec `set -e` et vérifications explicites
 
 ## Points techniques importants
+
+### Support gamescope
+- `--gamescope`/`--720`/`--900`/`--1080` : gwine se re-exécute sous gamescope comme parent (`exec gamescope ... -- "$0" "$@"`) avec `MANGOHUD=0` (mangoapp gère l'overlay)
+- `--gamescope-args` : args gamescope personnalisés (défaut : `-w 1280 -h 720 -f --mangoapp`, sans `-W`/`-H` pour laisser gamescope détecter la résolution de sortie)
+- Détection gamescope : `launch_wine_game()` remonte l'arbre des processus (`/proc/PID/comm`) pour trouver `gamescope-wl` et `gamescopereaper`, stocke leurs PIDs dans `GWINE_GAMESCOPE_PIDS`
+- Fermeture : à la fin du jeu, kill mangoapp (SIGKILL, évite le segfault DrKonqi) puis gamescope (SIGTERM → SIGKILL fallback)
+- Traps INT/TERM : en mode gamescope, le kill mangoapp+gamescope se fait en premier, le reste du cleanup en silence (`>/dev/null 2>&1`)
+- Défaut gamescope : `set_gamescope_default`/`apply_gamescope_default` dans `xbox.sh` (même fichier `~/.local/share/gwine/options` que xbox), `--no-gamescope` désactive le défaut
+- Bugs gamescope connis : #777 (ne se ferme pas à la fin du jeu), #1482 (gamescopereaper ne tue pas winedevice), MangoHud #1284 (mangoapp reste après fermeture), #1585 (segfault mangoapp)
 
 ### Système d'overlay
 - Utilisation du kernel overlayfs natif via `unshare` (user namespaces) pour les overlays WGP (.temp)

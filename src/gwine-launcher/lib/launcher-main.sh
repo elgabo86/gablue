@@ -74,6 +74,23 @@ launch_wine_game() {
     
     echo "Arguments: $game_args"
     
+    # Détecter si gwine tourne dans gamescope (remonter l'arbre des processus)
+    GWINE_GAMESCOPE_PIDS=""
+    local _check_pid=$$
+    while [ "$_check_pid" != "1" ] && [ -n "$_check_pid" ]; do
+        local _pcomm
+        _pcomm=$(cat "/proc/$_check_pid/comm" 2>/dev/null)
+        if [[ "$_pcomm" == gamescope* ]] || [[ "$_pcomm" == "gamescopereaper" ]]; then
+            GWINE_GAMESCOPE_PIDS="$GWINE_GAMESCOPE_PIDS $_check_pid"
+        fi
+        _check_pid=$(awk '/^PPid:/ {print $2}' "/proc/$_check_pid/status" 2>/dev/null)
+    done
+    GWINE_GAMESCOPE_PIDS=$(echo "$GWINE_GAMESCOPE_PIDS" | tr -s ' ' | sed 's/^ //;s/ $//')
+    export GWINE_GAMESCOPE_PIDS
+    if [ -n "$GWINE_GAMESCOPE_PIDS" ]; then
+        echo "Gamescope détecté (PIDs: $GWINE_GAMESCOPE_PIDS)"
+    fi
+    
     gamemode_start
     
     local exe_dir
@@ -168,7 +185,7 @@ launch_wine_game() {
             export GWINE_GAME_PID
         elif [ "$use_mangohud" = true ]; then
             export MANGOHUD=1
-            "$MANGOHUD_BIN" "$WINE_BIN" "$exe_path" $game_args </dev/null &
+            env MANGOHUD=1 "$MANGOHUD_BIN" "$WINE_BIN" "$exe_path" $game_args </dev/null &
             wine_pid=$!
             GWINE_GAME_PID=$wine_pid
             export GWINE_GAME_PID
@@ -315,6 +332,24 @@ launch_wine_game() {
             echo "Jeu terminé"
         fi
     done
+    
+    # Fermer gamescope si détecté (gamescope ne se ferme pas automatiquement à la fin du jeu)
+    if [ -n "$GWINE_GAMESCOPE_PIDS" ]; then
+        # Tuer mangoapp en premier (SIGKILL) pour éviter un segfault à la fermeture de gamescope
+        pkill -KILL -x mangoapp 2>/dev/null || true
+        sleep 0.1
+        echo "Fermeture de gamescope (PIDs: $GWINE_GAMESCOPE_PIDS)..."
+        local _gs_pid
+        for _gs_pid in $GWINE_GAMESCOPE_PIDS; do
+            kill -TERM "$_gs_pid" 2>/dev/null || true
+        done
+        sleep 0.5
+        for _gs_pid in $GWINE_GAMESCOPE_PIDS; do
+            if kill -0 "$_gs_pid" 2>/dev/null; then
+                kill -KILL "$_gs_pid" 2>/dev/null || true
+            fi
+        done
+    fi
     
     # Arrêter bwrap si encore actif
     if [ "$nosandbox_mode" != true ] && [ -n "$bwrap_pid" ]; then

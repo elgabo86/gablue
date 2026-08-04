@@ -91,6 +91,55 @@ apply_xbox_default() {
     fi
 }
 
+# =============================================================================
+# Gamescope par défaut
+# =============================================================================
+
+get_gamescope_default() {
+    if [ -f "$XBOX_CONFIG_FILE" ]; then
+        local val
+        val=$(grep "^gamescope_default=" "$XBOX_CONFIG_FILE" 2>/dev/null | cut -d'=' -f2-)
+        [ -n "$val" ] && echo "$val"
+    fi
+}
+
+set_gamescope_default() {
+    local args="$1"
+    ensure_dir "$GWINE_DIR"
+    local config_content=""
+    if [ -f "$XBOX_CONFIG_FILE" ]; then
+        config_content=$(grep -v "^gamescope_default=" "$XBOX_CONFIG_FILE" 2>/dev/null || true)
+    fi
+    if [ -n "$config_content" ]; then
+        echo "$config_content" > "$XBOX_CONFIG_FILE"
+        echo "gamescope_default=$args" >> "$XBOX_CONFIG_FILE"
+    else
+        echo "gamescope_default=$args" > "$XBOX_CONFIG_FILE"
+    fi
+}
+
+unset_gamescope_default() {
+    ensure_dir "$GWINE_DIR"
+    if [ -f "$XBOX_CONFIG_FILE" ]; then
+        grep -v "^gamescope_default=" "$XBOX_CONFIG_FILE" 2>/dev/null > "$XBOX_CONFIG_FILE.tmp" || true
+        mv "$XBOX_CONFIG_FILE.tmp" "$XBOX_CONFIG_FILE" 2>/dev/null || true
+    fi
+}
+
+apply_gamescope_default() {
+    if [ "$gamescope_off_mode" = true ]; then
+        return 0
+    fi
+    if [ "$gamescope_mode" != true ]; then
+        local default_args
+        default_args=$(get_gamescope_default)
+        if [ -n "$default_args" ]; then
+            gamescope_mode=true
+            gamescope_args="$default_args"
+        fi
+    fi
+}
+
 find_ds2xbox() {
     if [ -x "/usr/bin/ds2xbox" ]; then
         echo "/usr/bin/ds2xbox"
