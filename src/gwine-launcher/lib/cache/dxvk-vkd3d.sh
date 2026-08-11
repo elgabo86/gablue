@@ -28,8 +28,11 @@ download_updated_dxvk_vkd3d() {
     echo ""
     echo "Vérification des mises à jour de DXVK et VKD3D-Proton..."
     
-    latest_dxvk=$(get_latest_dxvk_version)
-    latest_vkd3d=$(get_latest_vkd3d_version)
+    # get_latest_*_version affiche "version source" (appel en sous-shell :
+    # la source ne peut pas être propagée par variable globale)
+    _DXVK_SOURCE="" _VKD3D_SOURCE=""
+    read -r latest_dxvk _DXVK_SOURCE < <(get_latest_dxvk_version) || true
+    read -r latest_vkd3d _VKD3D_SOURCE < <(get_latest_vkd3d_version) || true
     
     if [ -z "$latest_dxvk" ] || [ -z "$latest_vkd3d" ]; then
         echo "Impossible de récupérer les dernières versions"
@@ -149,7 +152,8 @@ download_vkd3d() {
 
     echo "Vérification des mises à jour de VKD3D-Proton..."
 
-    latest_vkd3d=$(get_latest_vkd3d_version)
+    _VKD3D_SOURCE=""
+    read -r latest_vkd3d _VKD3D_SOURCE < <(get_latest_vkd3d_version) || true
 
     if [ -z "$latest_vkd3d" ]; then
         echo "Impossible de récupérer la dernière version de VKD3D-Proton"

@@ -41,7 +41,8 @@ download_missing_components() {
         echo "Téléchargement de DXVK..."
         
         local DXVK_VERSION
-        DXVK_VERSION=$(get_latest_dxvk_version)
+        _DXVK_SOURCE=""
+        read -r DXVK_VERSION _DXVK_SOURCE < <(get_latest_dxvk_version) || true
         if [ -z "$DXVK_VERSION" ]; then
             echo "Warning: Impossible de récupérer la dernière version de DXVK"
         else
@@ -84,7 +85,8 @@ download_missing_components() {
         fi
         
         local VKD3D_VERSION
-        VKD3D_VERSION=$(get_latest_vkd3d_version)
+        _VKD3D_SOURCE=""
+        read -r VKD3D_VERSION _VKD3D_SOURCE < <(get_latest_vkd3d_version) || true
         if [ -z "$VKD3D_VERSION" ]; then
             echo "Warning: Impossible de récupérer la dernière version de VKD3D-Proton"
         else
@@ -209,7 +211,8 @@ auto_update_components() {
             [ -n "$dxvk_folder" ] && current_dxvk=$(basename "$dxvk_folder" | sed 's/^dxvk-gplasync-//')
         else
             local latest_dxvk
-            latest_dxvk=$(get_latest_dxvk_version)
+            # Format de sortie : "version source" (source ignorée ici)
+            read -r latest_dxvk _ < <(get_latest_dxvk_version) || true
             local current_dxvk=""
             local dxvk_folder
             dxvk_folder=$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | sort -V | tail -1)
@@ -217,7 +220,8 @@ auto_update_components() {
         fi
         
         local latest_vkd3d
-        latest_vkd3d=$(get_latest_vkd3d_version)
+        # Format de sortie : "version source" (source ignorée ici)
+        read -r latest_vkd3d _ < <(get_latest_vkd3d_version) || true
         
         local current_vkd3d=""
         local vkd3d_folder

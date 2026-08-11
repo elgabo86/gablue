@@ -234,7 +234,9 @@ get_latest_gwine_version() {
 #   type: dxvk (officiel + bottles), vkd3d (officiel + bottles), dxvk-nvapi (bottles)
 # Pour dxvk et vkd3d, compare l'officiel et bottlesdevs/components et prend la plus
 # haute version (en cas d'égalité, préfère l'officiel).
-# Stocke la source choisie dans les globales _DXVK_SOURCE / _VKD3D_SOURCE ("official" ou "bottles")
+# Affiche "version source" (ex: "3.0.2-1-abc1234 bottles") car la fonction est toujours
+# appelée en sous-shell (substitution de commande) : une globale serait perdue.
+# L'appelant doit parser avec : read -r version _DXVK_SOURCE < <(get_latest_dxvk_version)
 get_component_version() {
     local component="$1"
     local version
@@ -252,7 +254,6 @@ get_component_version() {
             
             # Comparer et choisir la meilleure
             if [ -z "$official_version" ] && [ -z "$bottles_version" ]; then
-                _DXVK_SOURCE=""
                 return 1
             elif [ -z "$official_version" ]; then
                 version="$bottles_version"
@@ -267,7 +268,7 @@ get_component_version() {
                 version="$official_version"
                 _DXVK_SOURCE="official"
             fi
-            echo "$version"
+            echo "$version $_DXVK_SOURCE"
             ;;
         vkd3d)
             # Source officielle
@@ -280,7 +281,6 @@ get_component_version() {
             
             # Comparer et choisir la meilleure
             if [ -z "$official_version" ] && [ -z "$bottles_version" ]; then
-                _VKD3D_SOURCE=""
                 return 1
             elif [ -z "$official_version" ]; then
                 version="$bottles_version"
@@ -295,7 +295,7 @@ get_component_version() {
                 version="$official_version"
                 _VKD3D_SOURCE="official"
             fi
-            echo "$version"
+            echo "$version $_VKD3D_SOURCE"
             ;;
         dxvk-nvapi)
             version=$(curl -s "https://github.com/bottlesdevs/components/releases.atom" 2>/dev/null | grep -oE "dxvk-nvapi-v[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1)

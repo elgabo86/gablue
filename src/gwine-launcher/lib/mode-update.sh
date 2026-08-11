@@ -57,7 +57,8 @@ update_components() {
     
     local latest_dxvk=""
     local latest_vkd3d
-    latest_vkd3d=$(get_latest_vkd3d_version)
+    # Format de sortie : "version source" (source ignorée ici)
+    read -r latest_vkd3d _ < <(get_latest_vkd3d_version) || true
     local current_dxvk=""
     local current_vkd3d=""
     local needs_dxvk_async_update=false
@@ -93,7 +94,8 @@ update_components() {
         fi
     else
         # Mode standard: vérifier dxvk normal
-        latest_dxvk=$(get_latest_dxvk_version)
+        # Format de sortie : "version source" (source ignorée ici)
+        read -r latest_dxvk _ < <(get_latest_dxvk_version) || true
         
         local dxvk_folder
         dxvk_folder=$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | sort -V | tail -1)

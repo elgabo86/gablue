@@ -47,8 +47,9 @@ COMPONENT_SHA256[dotnetdesktop8_x86]="340e30c8611af3800b74f0560f0b6f3feab82ee5cf
 COMPONENT_URLS[dotnetdesktop8_x64]="https://download.visualstudio.microsoft.com/download/pr/f1e7ffc8-c278-4339-b460-517420724524/f36bb75b2e86a52338c4d3a90f8dac9b/windowsdesktop-runtime-8.0.12-win-x64.exe"
 COMPONENT_SHA256[dotnetdesktop8_x64]="cb51b559f343cb56e23cad2e5af8c4d1701e221a0a2a4116193a2a9375568814"
 
-COMPONENT_URLS[directx_Jun2010]="https://files.holarse-linuxgaming.de/mirrors/microsoft/directx_Jun2010_redist.exe"
-COMPONENT_SHA256[directx_Jun2010]="8746ee1a84a083a90e37899d71d50d5c7c015e69688a466aa80447f011780c0d"
+# URL officielle Microsoft (comme winetricks ; le miroir holarse renvoie 403)
+COMPONENT_URLS[directx_Jun2010]="https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe"
+COMPONENT_SHA256[directx_Jun2010]="053f76dcbb28802e23341b6a787e3b0791c0fa5c8d4d011b1044172dbf89c73b"
 
 COMPONENT_URLS[corefont_andale]="https://github.com/pushcx/corefonts/raw/master/andale32.exe"
 COMPONENT_SHA256[corefont_andale]="0524fe42951adc3a7eb870e32f0920313c71f170c859b5f770d82b4ee111e970"
