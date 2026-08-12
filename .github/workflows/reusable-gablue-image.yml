@@ -201,7 +201,9 @@ jobs:
         id: build_image
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
         with:
-          timeout_minutes: 90
+          # DX installe beaucoup plus de RPMs (qemu, libvirt, docker...) via des
+          # miroirs parfois lents -> 120 min, sinon 90 min
+          timeout_minutes: ${{ (inputs.image_name == 'gablue-main-dx' || inputs.image_name == 'gablue-nvidia-open-dx') && 120 || 90 }}
           max_attempts: 3
           retry_wait_seconds: 20
           command: |
