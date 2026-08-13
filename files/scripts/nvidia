@@ -66,6 +66,12 @@ fi
 # le conflit terra-obsolete vs supergfxctl)
 dnf5 -y config-manager setopt "terra".enabled=1
 
+# Retrait de nvidia_peermem de la conf dracut (aligné Bazzite e494e55, fix #4569)
+# nvidia-install.sh bascule omit_drivers -> force_drivers ce qui force le charge-
+# ment de nvidia_peermem (module datacenter NVLink/InfiniBand inutile sur desktop,
+# échoue avec "Invalid argument") : dracut-pre-udev perd ~26s à chaque boot
+sed -i 's/ nvidia_peermem\b//' /usr/lib/dracut/dracut.conf.d/99-nvidia.conf
+
 # =============================================================================
 # CONFIGURATION POST-INSTALLATION
 # =============================================================================
