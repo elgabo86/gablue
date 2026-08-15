@@ -62,6 +62,7 @@ jobs:
         run: |
           KERNEL_FLAVOR="${{ inputs.kernel_type }}"
           FEDORA_VERSION="${{ inputs.fedora_version }}"
+          NVIDIA_FLAVOR="${{ inputs.nvidia_flavor }}"
 
           # Récupérer le build.yml de Bazzite testing (retry : timeouts réseau possibles)
           BAZZITE_URL="https://raw.githubusercontent.com/ublue-os/bazzite/testing/.github/workflows/build.yml"
@@ -92,48 +93,82 @@ jobs:
           # encore publiées (leur CI akmods build en avance) : vérifier que le
           # tag existe, sinon fallback sur le dernier tag disponible
           if [ -n "$KERNEL_VERSION" ]; then
-            if skopeo inspect "docker://ghcr.io/ublue-os/akmods:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION}" >/dev/null 2>&1; then
-              echo "Using ${KERNEL_FLAVOR} kernel from Bazzite testing: $KERNEL_VERSION"
-            else
+            if ! skopeo inspect "docker://ghcr.io/ublue-os/akmods:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION}" >/dev/null 2>&1; then
               echo "::warning::Bazzite pinne $KERNEL_VERSION mais l'image akmods correspondante n'est pas encore publiée"
               KERNEL_VERSION=""
+            elif [ -n "$NVIDIA_FLAVOR" ] && ! skopeo inspect "docker://ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION}" >/dev/null 2>&1; then
+              echo "::warning::Bazzite pinne $KERNEL_VERSION mais akmods-${NVIDIA_FLAVOR} n'est pas encore buildé pour ce kernel"
+              KERNEL_VERSION=""
+            else
+              echo "Using ${KERNEL_FLAVOR} kernel from Bazzite testing: $KERNEL_VERSION"
             fi
           fi
 
           if [ -z "$KERNEL_VERSION" ]; then
             # Fallback : dernier tag disponible dans ublue-os/akmods
+            # (et ublue-os/akmods-${NVIDIA_FLAVOR} pour les variantes NVIDIA :
+            # le kernel choisi doit exister dans les DEUX repos)
             echo "::warning::Version kernel introuvable chez Bazzite, fallback sur le dernier tag akmods"
-            TAGS_JSON=""
-            for attempt in 1 2 3; do
-              TAGS_JSON=$(skopeo list-tags "docker://ghcr.io/ublue-os/akmods" 2>&1)
-              if echo "$TAGS_JSON" | jq -e '.Tags' >/dev/null 2>&1; then
-                echo "skopeo list-tags réussi à la tentative $attempt"
-                break
-              fi
-              if [ "$attempt" -eq 3 ]; then
-                echo "::error::Impossible de lister les tags akmods après 3 tentatives"
-                echo "$TAGS_JSON"
+
+            # Liste les tags d'un repo avec retry (timeouts réseau possibles)
+            list_tags() {
+              local repo="$1" out="" attempt
+              for attempt in 1 2 3; do
+                out=$(skopeo list-tags "docker://${repo}" 2>&1)
+                if echo "$out" | jq -e '.Tags' >/dev/null 2>&1; then
+                  echo "skopeo list-tags ${repo} réussi à la tentative $attempt" >&2
+                  echo "$out"
+                  return 0
+                fi
+                if [ "$attempt" -eq 3 ]; then
+                  echo "::error::Impossible de lister les tags de ${repo} après 3 tentatives" >&2
+                  echo "$out" >&2
+                  return 1
+                fi
+                echo "skopeo list-tags ${repo} tentative $attempt échouée, retry dans 10s..." >&2
+                sleep 10
+              done
+            }
+
+            # Extrait les versions kernel des tags {FLAVOR}-{FEDORA}-{VERSION}
+            # Exclut les alias (ogc-44-x86_64) : la version doit commencer par
+            # un chiffre. Normalise en retirant le suffixe .x86_64 des alias
+            # arch (ex. 7.2.0-ogc3.rc7.1.fc44.x86_64) pour que les deux formes
+            # comptent comme une seule version dans l'intersection.
+            extract_versions() {
+              jq -r --arg kf "$KERNEL_FLAVOR" --arg fv "$FEDORA_VERSION" '
+                [.Tags[]
+                  | select(startswith($kf + "-" + $fv + "-"))
+                  | sub($kf + "-" + $fv + "-"; "")
+                  | sub("\\.x86_64$"; "")
+                  | select(test("^[0-9]"))] | unique | .[]'
+            }
+
+            if ! TAGS_JSON=$(list_tags "ghcr.io/ublue-os/akmods"); then
+              exit 1
+            fi
+            COMMON_VERSIONS=$(echo "$TAGS_JSON" | extract_versions | sort)
+
+            if [ -n "$NVIDIA_FLAVOR" ]; then
+              if ! NVIDIA_TAGS_JSON=$(list_tags "ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}"); then
                 exit 1
               fi
-              echo "skopeo list-tags tentative $attempt échoué, retry dans 10s..."
-              sleep 10
-            done
-
-            # Filtrer les tags pour trouver le kernel correspondant à la version Fedora
-            # Pattern: {KERNEL_FLAVOR}-{FEDORA_VERSION}-{KERNEL_VERSION}
-            # Exclure les alias non versionnés (ex. ogc-44-x86_64) : la version
-            # doit commencer par un chiffre
-            KERNEL_VERSION=$(echo "$TAGS_JSON" | jq -r --arg kf "$KERNEL_FLAVOR" --arg fv "$FEDORA_VERSION" '
-              .Tags[]
-              | select(startswith($kf + "-" + $fv + "-"))
-              | sub($kf + "-" + $fv + "-"; "")
-              | select(test("^[0-9]"))
-            ' | sort -V | tail -1)
+              # Intersection : seules les versions présentes dans les deux repos
+              CANDIDATES=$(comm -12 <(echo "$COMMON_VERSIONS") \
+                <(echo "$NVIDIA_TAGS_JSON" | extract_versions | sort))
+            else
+              CANDIDATES="$COMMON_VERSIONS"
+            fi
+            KERNEL_VERSION=$(echo "$CANDIDATES" | sort -V | tail -1)
 
             if [[ -z "$KERNEL_VERSION" ]] || [[ "$KERNEL_VERSION" == "null" ]]; then
               echo "::error::Impossible de trouver un kernel ${KERNEL_FLAVOR} pour Fedora $FEDORA_VERSION"
               echo "Tags disponibles:"
               echo "$TAGS_JSON" | jq -r '.Tags[]'
+              if [ -n "$NVIDIA_FLAVOR" ]; then
+                echo "Tags akmods-${NVIDIA_FLAVOR} disponibles:"
+                echo "$NVIDIA_TAGS_JSON" | jq -r '.Tags[]'
+              fi
               exit 1
             fi
 

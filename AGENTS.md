@@ -681,9 +681,9 @@ Workflow réutilisable pour le build d'une image :
 **Version du kernel** :
 - **Par défaut** : suit automatiquement la version kernel pinnée par **Bazzite testing** — parsée depuis `.github/workflows/build.yml` de `ublue-os/bazzite` (entrée matrice correspondant à `kernel_flavor`/`fedora_version`, retry curl 3×10s). Plus besoin de commit pour changer de kernel
 - **Vérification d'existence** : Bazzite peut pinner une version dont les images akmods ne sont pas encore publiées (leur CI build en avance) — le tag est validé via `skopeo inspect`, sinon fallback
-- **Fallback** : si la récupération/parsing Bazzite échoue ou le tag n'existe pas, dernier tag OGC via `skopeo list-tags ghcr.io/ublue-os/akmods` → filtre `{KERNEL_FLAVOR}-{FEDORA_VERSION}-*` en excluant les alias non versionnés (ex. `ogc-44-x86_64`) via `test("^[0-9]")` (avec warning dans les logs)
+- **Variantes NVIDIA** : si `nvidia_flavor` est défini, le pin Bazzite est aussi validé sur `ghcr.io/ublue-os/akmods-{NVIDIA_FLAVOR}` (ex. ublue peut arrêter de builder `akmods-nvidia-lts` contre un kernel RC, cf. bazzite `a5897ab` août 2026) — sinon fallback
+- **Fallback** : si la récupération/parsing Bazzite échoue ou un tag manque, dernière version commune via `skopeo list-tags` (retry 3×10s par repo) : tags `ghcr.io/ublue-os/akmods` et, pour NVIDIA, intersection avec les tags `akmods-{NVIDIA_FLAVOR}` (les deux repos doivent avoir le tag) → filtre `{KERNEL_FLAVOR}-{FEDORA_VERSION}-*` en excluant les alias non versionnés (`ogc-44-x86_64`) via `test("^[0-9]")` et en normalisant le suffixe `.x86_64` des alias arch (les deux formes comptent comme une seule version dans l'intersection), tri `sort -V` (avec warning dans les logs)
 - **Manuel** : spécifier `kernel_version` dans un job pour surcharge ponctuelle (le step de détection est alors skippé)
-- **Attention variante nvidia** : la détection automatique valide le tag sur le repo `akmods` commun uniquement, pas sur `akmods-nvidia-lts`. Si ublue arrête de builder `akmods-nvidia-lts` contre le kernel courant (ex. drop temporaire LTS vs kernel RC, cf. bazzite `a5897ab` août 2026), la variante nvidia échoue en `manifest unknown` alors que main/nvidia-open passent → pinner `kernel_version` sur le job `build-nvidia` en attendant que le tag réapparaisse
 
 ### build-gablue-live-isos.yml
 
