@@ -60,7 +60,7 @@ jobs:
         run: sudo df -h
 
       - name: Libérer l'espace disque (Ubuntu)
-        uses: ublue-os/remove-unwanted-software@695eb75b19501bd73b6c01b2bc5aafd63cba2653 # v10
+        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6 # v10
 
       # Checkout avant le montage BTRFS : la composite action locale
       # ./.github/actions/mount-btrfs-storage exige que le dépôt soit présent.
