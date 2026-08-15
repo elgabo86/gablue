@@ -607,7 +607,7 @@ Génération de l'initramfs avec dracut :
 **finalize** (appelé une seule fois à la fin) :
 - `dnf5 config-manager setopt keepcache=0` (désactive le keepcache activé dans copr)
 - Nettoyage de `/var/*` sauf le répertoire cache
-- Migration des utilisateurs/groupes vers `/usr/lib/passwd` et `/usr/lib/group`
+- Migration des utilisateurs/groupes vers `/usr/lib/passwd` et `/usr/lib/group` via `relocate_accounts` (aligné Bazzite `5b1a399`) : nettoie aussi les entrées correspondantes dans `/etc/shadow` et `/etc/gshadow`, et fait échouer le build si une entrée n'a pas persisté dans `/usr/lib/`
 - Nettoyage des fichiers de verrou et de `/usr/etc`
 - PAS de `ostree container commit` (le rechunk dans le workflow s'en occupe)
 
@@ -673,7 +673,7 @@ Workflow réutilisable pour le build d'une image :
 6. Application des labels OCI (définis directement dans le step, sans docker/metadata-action)
 7. Vérification SecureBoot (step "SecureBoot check") : vérifie la présence du certificat Gablue (`/etc/pki/akmods/certs/gablue-secure-boot.der`) et que les kmods du kernel sont bien signés via `modinfo | grep sig_id`. Échec → l'image ne bootera pas en SecureBoot. Le certificat est enrollable côté client via `ujust secureboot`
 8. Collecte des métriques (step "Collect build metrics") : durée de build, espace disque, taille image décompressée (`raw-img`), nombre de RPMs, kernel, mesa, taille compressée (initialement "N/A" car le push n'a pas encore eu lieu) → JSON `metrics-<image>` (artifact, rétention 90 j) + step summary (en anglais). Les libellés affichés sont en anglais, seuls les commentaires YAML restent en français
-9. Rechunk avec rpm-ostree — **retry** (3 tentatives, 15s) : abandon immédiat sur erreurs I/O (`no space left`, `read-only`, `disk I/O error` = loopback BTRFS mort, non récupérable), retry sur les autres erreurs transitoires
+9. Rechunk avec rpm-ostree — **retry** (3 tentatives, 15s) : abandon immédiat sur erreurs I/O (`no space left`, `read-only`, `disk I/O error` = loopback BTRFS mort, non récupérable) et sur rpmdb corrompue (`database disk image is malformed` = corruption dans l'image, présente à chaque tentative donc retry inutile), retry sur les autres erreurs transitoires
 10. Tag et push vers GHCR — **retry bash natif** (pas d'action externe) : une simple boucle `for attempt in 1 2 3` avec `sleep 15` entre tentatives. Le push utilise `skopeo copy` depuis `containers-storage:` et `skopeo inspect containers-storage:` pour le digest. **Deux logins sont nécessaires** : `podman login` pour `skopeo copy` (push image) et `docker login` pour `cosign` (qui lit `~/.docker/config.json` pour l'auth registre — **ne pas retirer**, cf. run 30272548675). **Pourquoi pas nick-fields/retry@v4 ni wretry.action** : `nick-fields/retry@v4` utilise Node.js `spawn()` qui pipe stdout/stderr — avec une image chunkée (100+ layers), les 100+ lignes "Copying blob" sur stderr saturent le pipe Node.js, l'événement `exit` n'arrive jamais et le process reste bloqué indéfiniment. `wretry.action` (composite, bash natif) fonctionnait mais est déprécié (Node.js 20). Une boucle bash native dans un `run:` standard hérite du stdio du runner (pas de pipe) → pas de hang
 11. Signature avec Cosign
 12. Métriques post-push (step "Update compressed size") : inspecte le registre distant GHCR via `skopeo inspect --raw docker://$dest_image | jq` en sommant les tailles des layers et du config blob pour obtenir la taille compressée réelle, met à jour le JSON metrics et le step summary. Upload des métriques après cette étape (le fichier JSON final contient la taille compressée)
@@ -683,6 +683,7 @@ Workflow réutilisable pour le build d'une image :
 - **Vérification d'existence** : Bazzite peut pinner une version dont les images akmods ne sont pas encore publiées (leur CI build en avance) — le tag est validé via `skopeo inspect`, sinon fallback
 - **Fallback** : si la récupération/parsing Bazzite échoue ou le tag n'existe pas, dernier tag OGC via `skopeo list-tags ghcr.io/ublue-os/akmods` → filtre `{KERNEL_FLAVOR}-{FEDORA_VERSION}-*` en excluant les alias non versionnés (ex. `ogc-44-x86_64`) via `test("^[0-9]")` (avec warning dans les logs)
 - **Manuel** : spécifier `kernel_version` dans un job pour surcharge ponctuelle (le step de détection est alors skippé)
+- **Attention variante nvidia** : la détection automatique valide le tag sur le repo `akmods` commun uniquement, pas sur `akmods-nvidia-lts`. Si ublue arrête de builder `akmods-nvidia-lts` contre le kernel courant (ex. drop temporaire LTS vs kernel RC, cf. bazzite `a5897ab` août 2026), la variante nvidia échoue en `manifest unknown` alors que main/nvidia-open passent → pinner `kernel_version` sur le job `build-nvidia` en attendant que le tag réapparaisse
 
 ### build-gablue-live-isos.yml
 
@@ -794,6 +795,8 @@ Nettoyage automatique (tous les dimanches) :
 **Fichier** : `.github/actions/mount-btrfs-storage/action.yml`
 
 Action composite locale qui remplace `ublue-os/container-storage-action`. Elle crée un loopback BTRFS compressé (zstd:2) sur "/" et y monte le storage podman.
+
+**Runners `ubuntu-26.04`** : les builds utilisent `ubuntu-26.04` depuis août 2026 (aligné sur Bazzite commit `dc41cfb`) — migration motivée par des corruptions rpmdb (`database disk image is malformed`) récurrentes sur les runners `ubuntu-24.04` depuis le 13/08/2026. Si le problème persiste, la cause est ailleurs (rpm-6.0/dnf5 dans l'image de base).
 
 **Pourquoi** : les runners `ubuntu-24.04` ne montent plus de disque temporaire sur `/mnt`. L'action amont détectait l'absence de `/mnt` et sautait **silencieusement** le montage (simple `notice`, pas d'erreur), laissant le storage sur ext4 sans compression. Sur les builds à gros payload (ISO avec flatpaks, rechunk DX), cela causait `no space left on device` au commit/export de l'image.
 

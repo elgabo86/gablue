@@ -44,7 +44,7 @@ env:
 jobs:
   build:
     name: ${{ inputs.image_name }}-${{ inputs.fedora_version }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
 
     permissions:
       contents: read
@@ -518,6 +518,13 @@ jobs:
             fi
             if grep -qE "no space left on device|read-only file system|disk I/O error|Input/output error" "$rechunk_log"; then
               echo "::error::Erreur I/O non récupérable lors du rechunk — arrêt"
+              rm -f "$rechunk_log"
+              exit 1
+            fi
+            # Rpmdb corrompue DANS l'image (sqlite malformed) : non récupérable,
+            # la corruption est présente à chaque tentative → abandon immédiat
+            if grep -qE "database disk image is malformed" "$rechunk_log"; then
+              echo "::error::Rpmdb de l'image corrompue (malformed) lors du rechunk — arrêt"
               rm -f "$rechunk_log"
               exit 1
             fi
