@@ -252,7 +252,7 @@ lib/dir-config.sh
 - **wincomponents.sh** : Fichier de redirection vers wincomponents/*
 - **wincomponents/*** : Installation des composants Windows (remplace winetricks)
   - defs.sh : URLs, checksums, liste des composants requis
-  - utils.sh : Téléchargement et vérification du cache
+  - utils.sh : Téléchargement et vérification du cache. `COMPONENT_URLS` accepte **plusieurs URLs séparées par des espaces** : la première est la source principale, les suivantes sont des miroirs de secours essayés dans l'ordre (`download_component` boucle sur la liste, `--timeout=60 --tries=2` par URL). Le nom de fichier du cache vient toujours de la première URL. Les composants dépendant de web.archive.org (souvent en panne 503) ont un miroir **arquivo.pt** (`/noFrame/replay/<timestamp>/<url>`, checksum SHA256 identique) : msls31, vb6run, wmp9
   - vcrun.sh : Visual C++ Redistributables (2010-2022, VCRUN6)
   - dotnet.sh : .NET Desktop Runtime (6, 7, 8)
   - directx.sh : DirectX, XACT Engine, D3DCompiler

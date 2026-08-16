@@ -79,10 +79,12 @@ COMPONENT_SHA256[d3dcompiler_47_x86]="2ad0d4987fc4624566b190e747c9d95038443956ed
 COMPONENT_URLS[d3dcompiler_47_x64]="https://raw.githubusercontent.com/mozilla/fxc2/master/dll/d3dcompiler_47.dll"
 COMPONENT_SHA256[d3dcompiler_47_x64]="4432bbd1a390874f3f0a503d45cc48d346abc3a8c0213c289f4b615bf0ee84f3"
 
-COMPONENT_URLS[msls31]="https://web.archive.org/web/20160710055851if_/http://download.microsoft.com/download/WindowsInstaller/Install/2.0/NT45/EN-US/InstMsiW.exe"
+# web.archive.org est souvent en panne (503), miroir arquivo.pt en secours
+COMPONENT_URLS[msls31]="https://web.archive.org/web/20160710055851if_/http://download.microsoft.com/download/WindowsInstaller/Install/2.0/NT45/EN-US/InstMsiW.exe https://arquivo.pt/noFrame/replay/20080222202239/http://download.microsoft.com/download/WindowsInstaller/Install/2.0/NT45/EN-US/InstMsiW.exe"
 COMPONENT_SHA256[msls31]="4c3516c0b5c2b76b88209b22e3bf1cb82d8e2de7116125e97e128952372eed6b"
 
-COMPONENT_URLS[vb6run]="https://web.archive.org/web/20070204154430/https://download.microsoft.com/download/5/a/d/5ad868a0-8ecd-4bb0-a882-fe53eb7ef348/VB6.0-KB290887-X86.exe"
+# web.archive.org est souvent en panne (503), miroir arquivo.pt en secours
+COMPONENT_URLS[vb6run]="https://web.archive.org/web/20070204154430/https://download.microsoft.com/download/5/a/d/5ad868a0-8ecd-4bb0-a882-fe53eb7ef348/VB6.0-KB290887-X86.exe https://arquivo.pt/noFrame/replay/20201202202947/https://download.microsoft.com/download/5/a/d/5ad868a0-8ecd-4bb0-a882-fe53eb7ef348/VB6.0-KB290887-X86.exe"
 COMPONENT_SHA256[vb6run]="467b5a10c369865f2021d379fc0933cb382146b702bbca4bcb703fc86f4322bb"
 
 COMPONENT_URLS[vcrun6]="https://download.microsoft.com/download/vc60pro/Update/2/W9XNT4/EN-US/VC6RedistSetup_deu.exe"
@@ -100,7 +102,8 @@ COMPONENT_SHA256[physx]="9b42b84e881769d681e09f62a1b51532616b2e6a2d5d99d0ccae6eb
 COMPONENT_URLS[wsh57]="https://download.microsoft.com/download/4/4/d/44de8a9e-630d-4c10-9f17-b9b34d3f6417/scripten.exe"
 COMPONENT_SHA256[wsh57]="63c781b9e50bfd55f10700eb70b5c571a9bedfd8d35af29f6a22a77550df5e7b"
 
-COMPONENT_URLS[wmp9]="https://web.archive.org/web/20180404022333if_/download.microsoft.com/download/1/b/c/1bc0b1a3-c839-4b36-8f3c-19847ba09299/MPSetup.exe"
+# web.archive.org est souvent en panne (503), miroir arquivo.pt en secours
+COMPONENT_URLS[wmp9]="https://web.archive.org/web/20180404022333if_/download.microsoft.com/download/1/b/c/1bc0b1a3-c839-4b36-8f3c-19847ba09299/MPSetup.exe https://arquivo.pt/noFrame/replay/20110121223334/http://download.microsoft.com/download/1/b/c/1bc0b1a3-c839-4b36-8f3c-19847ba09299/MPSetup.exe"
 COMPONENT_SHA256[wmp9]="678c102847c18a92abf13c3fae404c3473a0770c871a046b45efe623c9938fc0"
 
 COMPONENT_URLS[wm9codecs]="https://am.net/lib/tools/Microsoft/MPlayer/WM9Codecs9x.exe"

@@ -39,28 +39,44 @@ verify_component_file() {
 
 download_component() {
     local name="$1"
-    local url="${COMPONENT_URLS[$name]}"
+    local urls="${COMPONENT_URLS[$name]}"
     local sha256="${COMPONENT_SHA256[$name]}"
-    
-    if [ -z "$url" ]; then
+
+    if [ -z "$urls" ]; then
         echo "Erreur: URL non définie pour le composant $name"
         return 1
     fi
-    
-    local filename=$(basename "$url")
+
+    # Liste d'URLs séparées par des espaces : la première est la source
+    # principale, les suivantes sont des miroirs de secours (fallback)
+    # shellcheck disable=SC2206
+    local url_list=($urls)
+    local filename=$(basename "${url_list[0]}")
     local cache_file="$WINCOMPONENTS_CACHE/$name/$filename"
-    
+
     ensure_dir "$WINCOMPONENTS_CACHE/$name"
-    
+
     if verify_component_file "$cache_file" "$sha256"; then
         echo "Composant $name déjà en cache"
         return 0
     fi
-    
+
     echo "  - Téléchargement de $name..."
-    if ! wget -q "$url" -O "$cache_file" 2>/dev/null; then
-        echo "    ✗ Échec du téléchargement"
+    local url downloaded=false is_fallback=false
+    for url in "${url_list[@]}"; do
+        if [ "$is_fallback" = true ]; then
+            echo "    → Essai du miroir de secours..."
+        fi
+        if wget -q --timeout=60 --tries=2 "$url" -O "$cache_file" 2>/dev/null; then
+            downloaded=true
+            break
+        fi
         rm -f "$cache_file"
+        is_fallback=true
+    done
+
+    if [ "$downloaded" != true ]; then
+        echo "    ✗ Échec du téléchargement"
         return 1
     fi
     
@@ -78,12 +94,15 @@ check_wincomponents_cache() {
     local missing=()
     
     for component in "${WINCOMPONENTS_REQUIRED[@]}"; do
-        local url="${COMPONENT_URLS[$component]}"
-        if [ -z "$url" ]; then
+        local urls="${COMPONENT_URLS[$component]}"
+        if [ -z "$urls" ]; then
             continue
         fi
-        
-        local filename=$(basename "$url")
+
+        # Nom de fichier issu de la première URL (source principale)
+        # shellcheck disable=SC2206
+        local url_list=($urls)
+        local filename=$(basename "${url_list[0]}")
         local cache_file="$WINCOMPONENTS_CACHE/$component/$filename"
         local sha256="${COMPONENT_SHA256[$component]}"
         
