@@ -434,7 +434,7 @@ Exclusions importantes :
 - Installation du kernel depuis `/tmp/kernel-rpms/`
 - Utilisation du helper `/ctx/install-kmods` qui vérifie l'existence de chaque RPM avant installation (évite les échecs si un module n'est plus présent dans l'image akmods)
 - Kmods communs (via install-kmods) : framework-laptop, openrazer, v4l2loopback, xone, xpadneo
-- Kmods extras (via install-kmods) : zenergy, gcadapter, evdi, new-lg4ff, t150-driver, hid-fanatecff, sc0710, system76
+- Kmods extras (via install-kmods) : zenergy, gcadapter, evdi, new-lg4ff, t150-driver, hid-fanatecff, sc0710, nct6687d, system76
 - Versionlock pour verrouiller les versions
 - Installation de scx-scheds depuis COPR bieszczaders/kernel-cachyos-addons
 
