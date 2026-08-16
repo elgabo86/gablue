@@ -3,7 +3,6 @@ Type=Service
 Name=Install Windows Registry
 MimeType=text/x-ms-regedit;
 Actions=InstallReg
-X-KDE-Submenu=Windows
 
 [Desktop Action InstallReg]
 Name=Installer dans le registre

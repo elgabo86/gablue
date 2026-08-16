@@ -3,7 +3,6 @@ Type=Service
 Name=Edit WGP Package
 MimeType=application/x-wgp;
 Actions=LaunchExe;ExtractWGP
-X-KDE-Submenu=Windows
 
 [Desktop Action LaunchExe]
 Name=Lancer un autre .exe dans le WGP

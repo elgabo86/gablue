@@ -3,7 +3,6 @@ Type=Service
 Name=Create LGP Shortcut
 MimeType=application/x-lgp;
 Actions=CreateGameShortcut
-X-KDE-Submenu=Linux
 
 [Desktop Action CreateGameShortcut]
 Name=Ajouter dans le menu Plasma

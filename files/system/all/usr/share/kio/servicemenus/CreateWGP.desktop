@@ -3,7 +3,6 @@ Type=Service
 Name=Create WGP Package
 MimeType=inode/directory;
 Actions=CreateWGP
-X-KDE-Submenu=Windows
 
 [Desktop Action CreateWGP]
 Name=Créer un pack WGP

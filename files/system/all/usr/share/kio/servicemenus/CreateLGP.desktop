@@ -3,7 +3,6 @@ Type=Service
 Name=Create LGP Package
 MimeType=inode/directory;
 Actions=CreateLGP
-X-KDE-Submenu=Linux
 
 [Desktop Action CreateLGP]
 Name=Créer un pack LGP
