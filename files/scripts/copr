@@ -69,7 +69,9 @@ dnf5 -y install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/te
 dnf5 -y config-manager setopt "terra-mesa".enabled=false
 
 # Configuration des exclusions Terra : priorité haute et exclusions spécifiques
-dnf5 -y config-manager setopt "*terra*".priority=3 "*terra*".exclude="nerd-fonts topgrade scx-scheds steam python3-protobuf"
+# terra-glfw exclu : terra-glfw conflicts avec glfw fedora (cross-arch i686/x86_64),
+# ce qui casse l'installation de mangohud.i686 si terra-glfw est installé avant
+dnf5 -y config-manager setopt "*terra*".priority=3 "*terra*".exclude="nerd-fonts topgrade scx-scheds steam python3-protobuf terra-glfw terra-glfw-devel"
 
 # =============================================================================
 # FINALISATION
