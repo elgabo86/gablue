@@ -216,11 +216,13 @@ jobs:
       - name: Maximize build space
         uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6 # v10
 
-      # Mount BTRFS for podman storage (performance + compression)
-      - name: Mount BTRFS for podman storage
-        uses: ./.github/actions/mount-btrfs-storage
-        with:
-          target-dir: /var/lib/containers
+      # Pas de loopback BTRFS : le rechunk rootless (oci-archive + rmi raw-img
+      # avant le pull) n'a jamais deux images complètes en storage, le pic
+      # (~25-30G) tient largement dans les ~110G libres du runner — cf. décision
+      # dans AGENTS.md. Le loopback reste utilisé par le workflow ISO (payload
+      # ~30G). Si le disque sature un jour sur une variante DX, réintroduire
+      # ./.github/actions/mount-btrfs-storage avec target-dir pointé sur le
+      # storage rootless (~/.local/share/containers).
 
       # Préparer la clé de signature Secure Boot pour le module cpuid_fault
       - name: Prepare SB signing key
@@ -247,7 +249,7 @@ jobs:
           retry_wait_seconds: 20
           command: |
             # Nettoyage d'un éventuel build partiel
-            sudo buildah rmi raw-img 2>/dev/null || true
+            buildah rmi raw-img 2>/dev/null || true
 
             # Choisir le bon Containerfile
             if [[ -n "${{ inputs.containerfile }}" ]]; then
@@ -284,7 +286,7 @@ jobs:
             # n'hérite pas du pipefail de GitHub Actions)
             BUILD_LOG=$(mktemp)
             set +e -o pipefail
-            sudo buildah build \
+            buildah build \
               --file "$CONTAINERFILE" \
               --format "docker" \
               --build-arg KERNEL_VERSION="${{ steps.determine_kernel_version.outputs.KERNEL_VERSION }}" \
@@ -317,8 +319,11 @@ jobs:
             rm -f "$BUILD_LOG"
             exit 2
 
-      # Appliquer les labels OCI avant le rechunk
-      - name: Apply Labels
+      # Préparer les labels OCI dans ${RUNNER_TEMP}/labels.txt (appliqués au
+      # rechunk final via --label — Bazzite 625bebb : le rechunk rootless
+      # génère un manifeste neuf, des labels posés sur raw-img avant le rechunk
+      # seraient perdus)
+      - name: Prepare labels
         id: relabel
         env:
           IMAGE_LABELS: |
@@ -330,14 +335,9 @@ jobs:
             org.opencontainers.image.vendor=Universal Blue
         run: |
           version="${{ steps.timestamp.outputs.build_version }}"
-
-          # Clean out labels from base image
           img=raw-img
-          container=$(sudo buildah from $img)
-          sudo buildah config --label "-" $container
-          sudo buildah commit --identity-label=false --rm $container $img
 
-          kver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" kernel-core)
+          kver=$(podman run --rm "$img" rpm -q --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" kernel-core)
 
           # Préparer les labels
           declare -a labels
@@ -350,19 +350,20 @@ jobs:
             labels+=("$line")
           done <<< "$IMAGE_LABELS"
 
-          # Générer le manifest
+          # Générer le manifest des paquets
           filter='{ "packages": [inputs | split(" ") | select(length==2) | { (.[0]): .[1] }] | sort_by(keys) | add }'
-          manifest=$(sudo podman run --rm "$img" rpm -qa --qf '%{NAME} %{VERSION}\n' | jq -Rnc "$filter")
+          manifest=$(podman run --rm "$img" rpm -qa --qf '%{NAME} %{VERSION}\n' | jq -Rnc "$filter")
           labels+=("ostree.rechunk.info=$manifest")
 
-          # Appliquer les labels et annotations (comme Bazzite)
-          container=$(sudo buildah from $img)
+          : > "${RUNNER_TEMP}/labels.txt"
           for line in "${labels[@]}"; do
             [ -z "$line" ] && continue
-            sudo buildah config --label "$line" --annotation "$line" "$container"
+            printf '%s\n' "$line" >> "${RUNNER_TEMP}/labels.txt"
           done
 
-          sudo buildah commit --identity-label=false --rm $container $img
+          echo "Labels for the final image:"
+          cat "${RUNNER_TEMP}/labels.txt"
+
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       # Extraction des versions pour mise à jour du README
@@ -370,14 +371,14 @@ jobs:
         id: extract_versions
         run: |
           img="raw-img"
-          
+
           # Extraire les versions des paquets principaux
-          kernel_ver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}-%{RELEASE}" kernel-core 2>/dev/null || echo "N/A")
-          mesa_ver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}" mesa-dri-drivers.x86_64 2>/dev/null || echo "N/A")
-          plasma_ver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}" plasma-desktop 2>/dev/null || echo "N/A")
+          kernel_ver=$(podman run --rm "$img" rpm -q --qf "%{VERSION}-%{RELEASE}" kernel-core 2>/dev/null || echo "N/A")
+          mesa_ver=$(podman run --rm "$img" rpm -q --qf "%{VERSION}" mesa-dri-drivers.x86_64 2>/dev/null || echo "N/A")
+          plasma_ver=$(podman run --rm "$img" rpm -q --qf "%{VERSION}" plasma-desktop 2>/dev/null || echo "N/A")
           nvidia_ver="N/A"
-          if sudo podman run --rm "$img" rpm -q nvidia-driver &>/dev/null; then
-            nvidia_ver=$(sudo podman run --rm "$img" rpm -q --qf "%{VERSION}" nvidia-driver 2>/dev/null || echo "N/A")
+          if podman run --rm "$img" rpm -q nvidia-driver &>/dev/null; then
+            nvidia_ver=$(podman run --rm "$img" rpm -q --qf "%{VERSION}" nvidia-driver 2>/dev/null || echo "N/A")
           fi
           fedora_ver="${{ inputs.fedora_version }}"
           
@@ -413,10 +414,10 @@ jobs:
       - name: SecureBoot check
         shell: bash
         run: |
-          kver=$(sudo podman run --rm raw-img rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)
+          kver=$(podman run --rm raw-img rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)
           echo "Kernel: $kver"
 
-          sudo podman run --rm raw-img test -f /etc/pki/akmods/certs/gablue-secure-boot.der \
+          podman run --rm raw-img test -f /etc/pki/akmods/certs/gablue-secure-boot.der \
             || { echo "::error::Gablue SecureBoot certificate missing"; exit 1; }
           echo "Certificate OK"
 
@@ -428,7 +429,7 @@ jobs:
             # match et envoie SIGPIPE à modinfo (exit 141), ce qui ferait
             # échouer le pipeline sous pipefail pour les modules à sortie longue
             local info
-            info=$(sudo podman run --rm raw-img modinfo -k "$kver" "$1" 2>/dev/null)
+            info=$(podman run --rm raw-img modinfo -k "$kver" "$1" 2>/dev/null)
             echo "$info" | grep -q "sig_id" || {
               echo "::error::$1 not signed for $kver"
               exit 1
@@ -464,14 +465,14 @@ jobs:
           ROOT_PCT=$(df -h / | awk 'NR==2{print $5}')
 
           # Taille de l'image
-          IMG_SIZE=$(sudo podman images raw-img --format '{{.Size}}' 2>/dev/null || echo "N/A")
+          IMG_SIZE=$(podman images raw-img --format '{{.Size}}' 2>/dev/null || echo "N/A")
 
           # Nombre de paquets RPM
-          PKG_COUNT=$(sudo podman run --rm raw-img rpm -qa 2>/dev/null | wc -l || echo "N/A")
+          PKG_COUNT=$(podman run --rm raw-img rpm -qa 2>/dev/null | wc -l || echo "N/A")
 
           # Versions
-          KERNEL_VER=$(sudo podman run --rm raw-img rpm -q --qf '%{VERSION}-%{RELEASE}' kernel-core 2>/dev/null || echo "N/A")
-          MESA_VER=$(sudo podman run --rm raw-img rpm -q --qf '%{VERSION}' mesa-dri-drivers.x86_64 2>/dev/null || echo "N/A")
+          KERNEL_VER=$(podman run --rm raw-img rpm -q --qf '%{VERSION}-%{RELEASE}' kernel-core 2>/dev/null || echo "N/A")
+          MESA_VER=$(podman run --rm raw-img rpm -q --qf '%{VERSION}' mesa-dri-drivers.x86_64 2>/dev/null || echo "N/A")
 
           # JSON
           METRICS_FILE="${IMG_NAME}-metrics.json"
@@ -526,28 +527,54 @@ jobs:
 
           cat "$METRICS_FILE"
 
-      # Rechunk de l'image avec rpm-ostree (après application des labels)
-      # Retry : le loopback BTRFS peut subir des erreurs transitoires. On
-      # abandonne immédiatement sur les erreurs I/O (loopback mort — non
-      # récupérable, cf. AGENTS.md).
+      # Rechunk rootless avec rpm-ostree (flux Bazzite 033a18f : l'image est
+      # montée via --mount=type=image et la sortie est une oci-archive écrite
+      # dans RUNNER_TEMP — raw-img est supprimée avant le pull, jamais deux
+      # images complètes en storage, d'où l'absence de loopback BTRFS).
+      # Les labels sont passés via --label (Bazzite 625bebb : le manifeste de
+      # sortie est reconstruit de zéro, sinon ils seraient perdus).
+      # Retry : abandon immédiat sur erreurs I/O ou rpmdb corrompue (non
+      # récupérables), retry sur les erreurs transitoires.
       - name: Rechunk Image
         id: rechunk
         run: |
-          container=$(sudo buildah from raw-img)
-          mnt=$(sudo buildah mount $container)
-          sudo bash -c "rm -rf $mnt/run/.[!.]* $mnt/run/* $mnt/tmp/.[!.]* $mnt/tmp/*"
-          sudo buildah umount $container
-          sudo buildah commit --identity-label=false --rm $container raw-img
+          # Nettoyage de /run et /tmp dans l'image (buildah mount nécessite
+          # buildah unshare en rootless pour monter le rootfs)
+          buildah unshare bash -euo pipefail -c '
+            container=$(buildah from raw-img)
+            mnt=$(buildah mount "$container")
+            rm -rf "$mnt"/run/.* "$mnt"/run/* "$mnt"/tmp/.* "$mnt"/tmp/* || true
+            buildah umount "$container"
+            buildah commit --identity-label=false --rm "$container" raw-img
+          '
+
+          RECHUNK_DIR="$(mktemp -d "${RUNNER_TEMP}/rechunk-XXXXXX")"
+          trap 'rm -rf "${RECHUNK_DIR}"' EXIT
+
+          # Labels préparés dans l'étape "Prepare labels" (cf. Bazzite 625bebb)
+          label_args=()
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then
+              label_args+=(--label "$line")
+            fi
+          done < "${RUNNER_TEMP}/labels.txt"
 
           rechunk_log=$(mktemp)
           for attempt in 1 2 3; do
             echo "::group::Rechunk attempt $attempt"
+            rm -f "${RECHUNK_DIR}/chunked.oci"
             set +e -o pipefail
-            sudo podman run --rm --privileged --volume /var/lib/containers:/var/lib/containers \
-                raw-img \
-                rpm-ostree compose build-chunked-oci \
+            podman run --rm \
+                --pull=never \
+                --privileged \
+                --mount=type=image,src=localhost/raw-img,target=/rpm-ostree \
+                --volume "${RECHUNK_DIR}:/run/out:Z" \
+                --entrypoint /usr/bin/rpm-ostree \
+                localhost/raw-img \
+                compose build-chunked-oci \
                 --bootc --max-layers 127 --format-version 2 \
-                --from localhost/raw-img --output containers-storage:localhost/chunked-img 2>&1 | tee "$rechunk_log"
+                "${label_args[@]}" \
+                --rootfs /rpm-ostree --output oci-archive:/run/out/chunked.oci 2>&1 | tee "$rechunk_log"
             rc=$?
             set -e
             echo "::endgroup::"
@@ -573,11 +600,17 @@ jobs:
               exit 1
             fi
             echo "::warning::Rechunk tentative $attempt échoué, retry dans 15s..."
-            sudo podman rmi localhost/chunked-img 2>/dev/null || true
             sleep 15
           done
 
-          sudo podman untag raw-img
+          # raw-img n'est plus utile : suppression avant le pull (jamais deux
+          # images complètes en storage — raison pour laquelle le loopback
+          # BTRFS n'est plus nécessaire)
+          podman rmi -f localhost/raw-img
+
+          chunked=$(podman pull oci-archive:"${RECHUNK_DIR}/chunked.oci")
+          podman tag "${chunked}" localhost/chunked-img
+
           echo "ref=containers-storage:localhost/chunked-img" >> "$GITHUB_OUTPUT"
 
       # Génération des tags après relabel
@@ -621,23 +654,23 @@ jobs:
           # - podman login : pour skopeo copy (push de l'image)
           # - docker login : pour cosign (lit ~/.docker/config.json pour l'auth)
           #   NE PAS RETIRER le docker login (cf. run 30272548675)
-          echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
           for attempt in 1 2 3; do
             echo "::group::Push attempt $attempt"
 
             dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
-            if sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image; then
+            if skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image; then
               # Push réussi, récupérer le digest et signer
-              DIGEST=$(sudo skopeo inspect --format '{{.Digest}}' ${{ steps.rechunk.outputs.ref }})
+              DIGEST=$(skopeo inspect --format '{{.Digest}}' ${{ steps.rechunk.outputs.ref }})
               cosign sign -y --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false \
                 "${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@$DIGEST"
 
               # Push alias tags
               for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
                 dest_alias="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:$tag"
-                sudo skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_alias
+                skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_alias
               done
               echo "::endgroup::"
               exit 0
@@ -662,7 +695,7 @@ jobs:
           METRICS_FILE="${{ inputs.image_name }}-metrics.json"
           dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
 
-          COMPRESSED_BYTES=$(sudo skopeo inspect --raw docker://$dest_image 2>/dev/null | jq '([.layers[]?.size] | add) + (.config?.size // 0)' 2>/dev/null || echo "0")
+          COMPRESSED_BYTES=$(skopeo inspect --raw docker://$dest_image 2>/dev/null | jq '([.layers[]?.size] | add) + (.config?.size // 0)' 2>/dev/null || echo "0")
           if [ "$COMPRESSED_BYTES" -gt 0 ] 2>/dev/null; then
             COMPRESSED_SIZE=$(numfmt --to=iec "$COMPRESSED_BYTES" | sed 's/G/ GB/; s/M/ MB/; s/K/ KB/')
           else
