@@ -26,7 +26,7 @@ Images and the system are continuously updated, following the latest Fedora rele
 
 | Component | Version |
 |---|---|
-| Last build | 2026-08-16 |
+| Last build | 2026-08-17 |
 | Fedora | 44 |
 | Kernel (OGC) | 7.1.5 (rev 5.1) |
 | Mesa (Terra) | 26.1.6 |
