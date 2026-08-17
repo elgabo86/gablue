@@ -20,7 +20,7 @@ Le projet construit 6 variantes distinctes :
 | Variante | Description | Kernel | NVIDIA | Trigger tag |
 |----------|-------------|--------|--------|-------------|
 | `gablue-main` | Image standard sans NVIDIA | OGC | - | `[main]`, `[all]` |
-| `gablue-nvidia` | Pilotes NVIDIA closed-source | OGC | nvidia-lts | `[nvidia]`, `[all]` |
+| `gablue-nvidia` | Pilotes NVIDIA closed-source | OGC LTS | nvidia-lts | `[nvidia]`, `[all]` |
 | `gablue-nvidia-open` | Pilotes NVIDIA open-source | OGC | nvidia-open | `[nvidia]`, `[all]` |
 | `gablue-main-dx` | Mode développement (DX) avec virtualisation + ROCm | OGC | - | `[dx]`, `[all]` |
 | `gablue-nvidia-open-dx` | Mode DX NVIDIA Open (virtualisation + GPU NVIDIA) | OGC | nvidia-open | `[dx]`, `[nvidia]`, `[all]` |
@@ -645,7 +645,7 @@ Workflow principal déclenché par :
 
 **Jobs** :
 - `build-main` : Build gablue-main (Containerfile-gablue, nvidia_flavor non défini)
-- `build-nvidia` : Build gablue-nvidia (Containerfile-gablue, nvidia_flavor=nvidia-lts)
+- `build-nvidia` : Build gablue-nvidia (Containerfile-gablue, kernel_type=ogc-lts, nvidia_flavor=nvidia-lts)
 - `build-nvidia-open` : Build gablue-nvidia-open (Containerfile-gablue, nvidia_flavor=nvidia-open)
 - `build-dx` : Build gablue-main-dx (Containerfile-gablue, nvidia_flavor non défini, DX_MODE=true)
 - `build-nvidia-open-dx` : Build gablue-nvidia-open-dx (Containerfile-gablue, nvidia_flavor=nvidia-open, DX_MODE=true) — restreint à `main` (pas de build sur branche `test`)
@@ -1001,7 +1001,7 @@ Profils optimisés Gablue :
 Commandes ujust disponibles :
 - **Système** : `configure-grub`, `kernel-setup`, `mitigations-on/off`
 - **Réseau** : `tailscale-up`, `ssh-on/off`, `toggle-wol`
-- **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`
+- **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`, `configure-amd-vrr` (karg `amdgpu.dcfeaturemask=0x402` — fonctionnalités FreeSync supplémentaires, backport Bazzite `f92d411`)
 - **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`, `cpuid-emu-on/off`
 - **Virtualisation** : `docker-enable/disable`, `dx-group`, `setup-kvmfr`, `libvirt-reset-cache` (efface le cache capabilities libvirt, corrige l'erreur "video model 'virtio' unsupported" dans virt-manager)
 - **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`, `ssd-thermal-limit` (limite thermique NVMe via HCTM, interactif, persistant)

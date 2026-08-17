@@ -62,7 +62,10 @@ jobs:
       image_variant: "nvidia"
       source_image: "kinoite"
       fedora_version: "44"
-      kernel_type: "ogc"
+      # Kernel OGC LTS : Bazzite paire le driver NVIDIA LTS closed avec le
+      # kernel ogc-lts (commit 3eb7b09) — akmods-nvidia-lts ne publie plus
+      # que des tags ogc-lts-*
+      kernel_type: "ogc-lts"
       nvidia_flavor: "nvidia-lts"
 
   build-nvidia-open:
