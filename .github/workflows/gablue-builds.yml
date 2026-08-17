@@ -159,6 +159,15 @@ jobs:
               -p 'versions-*' -D versions-data
             find versions-data -mindepth 2 -name '*.json' -exec mv {} versions-data/ \;
             find versions-data -mindepth 1 -type d -delete
+            # Vérification : gh run download peut retourner 0 malgré un échec
+            # partiel (ex. HTTP 503 sur un artifact, run 32050114931) — les 5
+            # JSON doivent être présents, sinon exit 1 pour déclencher le retry
+            for img in gablue-main gablue-nvidia gablue-nvidia-open gablue-main-dx gablue-nvidia-open-dx; do
+              if [ ! -f "versions-data/${img}.json" ]; then
+                echo "::error::versions-data/${img}.json manquant après téléchargement (échec partiel)"
+                exit 1
+              fi
+            done
         env:
           GH_TOKEN: ${{ github.token }}
 
