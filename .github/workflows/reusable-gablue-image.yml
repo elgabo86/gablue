@@ -651,26 +651,38 @@ jobs:
         shell: bash
         run: |
           # Les deux logins sont nécessaires :
-          # - podman login : pour skopeo copy (push de l'image)
+          # - podman login : pour podman push (push de l'image)
           # - docker login : pour cosign (lit ~/.docker/config.json pour l'auth)
           #   NE PAS RETIRER le docker login (cf. run 30272548675)
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
+          # podman push plutôt que skopeo copy (flux Bazzite 033a18f) : en
+          # rootless, le transport containers-storage: de skopeo exige un
+          # user namespace — bloqué par la restriction AppArmor d'Ubuntu 24.04+
+          # ("Error during unshare(...): Operation not permitted", run test
+          # 32068215822). Podman a un profil AppArmor dédié, skopeo non.
+          RECHUNK_REF="${{ steps.rechunk.outputs.ref }}"
+          LOCAL_REF="${RECHUNK_REF#containers-storage:}"
+
           for attempt in 1 2 3; do
             echo "::group::Push attempt $attempt"
 
             dest_image="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:${{ steps.relabel.outputs.version }}"
-            if skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_image; then
+            if podman push --digestfile=/tmp/digestfile "$LOCAL_REF" "docker://$dest_image"; then
               # Push réussi, récupérer le digest et signer
-              DIGEST=$(skopeo inspect --format '{{.Digest}}' ${{ steps.rechunk.outputs.ref }})
+              DIGEST="$(< /tmp/digestfile)"
+              if [ -z "$DIGEST" ]; then
+                echo "::error::push reported success but wrote no digest"
+                exit 1
+              fi
               cosign sign -y --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false \
                 "${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@$DIGEST"
 
               # Push alias tags
               for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
                 dest_alias="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:$tag"
-                skopeo copy ${{ steps.rechunk.outputs.ref }} docker://$dest_alias
+                podman push "$LOCAL_REF" "docker://$dest_alias"
               done
               echo "::endgroup::"
               exit 0
