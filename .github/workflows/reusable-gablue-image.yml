@@ -53,13 +53,17 @@ jobs:
 
     steps:
       # Étape pour récupérer la version du kernel
-      # Source de vérité : le kernel RÉELLEMENT publié sur l'image stable Bazzite
-      # (label OCI ostree.linux). Le build.yml de la branche main pinne souvent
-      # un kernel RC en cours de préparation, trop frais pour stable. Pour le
-      # driver NVIDIA LTS closed, la source est bazzite-nvidia:stable : Bazzite
-      # paire nvidia-lts avec le kernel ogc-lts (commit 3eb7b09, akmods-nvidia-lts
-      # ne publie plus que des tags ogc-lts-*). Fallback sur le dernier tag
-      # akmods via skopeo si la récupération ou le parsing échoue.
+      # Cascade de sources :
+      # 1. Le kernel pinné dans le build.yml de la branche main de Bazzite
+      #    (le plus récent : préparé en avance, ex. 7.2.0 alors que le stable
+      #    publié est encore en 7.1.5) — validé contre les tags akmods
+      # 2. Le kernel réellement publié sur l'image stable Bazzite (label OCI
+      #    ostree.linux) — filet de sécurité si le pin main n'a pas encore
+      #    ses akmods
+      # 3. Dernier tag akmods disponible via skopeo list-tags
+      # Pour le driver NVIDIA LTS closed (ogc-lts), la source stable est
+      # bazzite-nvidia:stable : Bazzite paire nvidia-lts avec ogc-lts
+      # (commit 3eb7b09, akmods-nvidia-lts ne publie plus que des tags ogc-lts-*).
       - name: Get kernel version
         id: get_kernel_version
         if: inputs.kernel_version == ''
@@ -76,35 +80,80 @@ jobs:
             BAZZITE_IMAGE="ghcr.io/ublue-os/bazzite:stable"
           fi
 
-          # Lire le label ostree.linux de l'image stable publiée (retry : timeouts réseau possibles)
-          # Format : 7.1.5-ogc5.1.fc44.x86_64 -> tag akmods sans le suffixe arch
+          # Vérifie que les tags akmods existent pour un kernel donné
+          # (akmods commun + akmods NVIDIA le cas échéant)
+          check_akmods() {
+            local kv="$1"
+            if ! skopeo inspect "docker://ghcr.io/ublue-os/akmods:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${kv}" >/dev/null 2>&1; then
+              return 1
+            fi
+            if [ -n "$NVIDIA_FLAVOR" ] && ! skopeo inspect "docker://ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${kv}" >/dev/null 2>&1; then
+              return 1
+            fi
+          }
+
           KERNEL_VERSION=""
+
+          # 1. Kernel pinné dans le build.yml de la branche main de Bazzite
+          #    Pour chaque entrée matrix : fedora_version + kernel_flavor puis
+          #    kernel_version. On extrait le kernel_version du premier bloc
+          #    dont le kernel_flavor (ogc ou ogc-lts) correspond exactement.
           for attempt in 1 2 3; do
-            OSTREE_LINUX=$(skopeo inspect "docker://${BAZZITE_IMAGE}" 2>/dev/null | jq -r '.Labels["ostree.linux"] // empty')
-            if [ -n "$OSTREE_LINUX" ]; then
-              echo "Lecture du kernel de l'image ${BAZZITE_IMAGE} réussie à la tentative $attempt : $OSTREE_LINUX"
-              KERNEL_VERSION="${OSTREE_LINUX%.x86_64}"
-              break
+            BUILD_YML=$(curl -fsSL "https://raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml" 2>/dev/null || true)
+            if [ -n "$BUILD_YML" ]; then
+              PINNED=$(echo "$BUILD_YML" | awk -v kf="$KERNEL_FLAVOR" -v fv="$FEDORA_VERSION" '
+                /^[[:space:]]*-[[:space:]]/ { bf=""; bk="" }
+                /fedora_version:/ { v=$0; sub(/.*fedora_version:[[:space:]]*/, "", v); bf=v }
+                /kernel_flavor:/  { v=$0; sub(/.*kernel_flavor:[[:space:]]*/,  "", v); bk=v }
+                /kernel_version:/ {
+                  v=$0; sub(/.*kernel_version:[[:space:]]*/, "", v)
+                  if (bk == kf && (bf == "" || bf == fv)) { print v; exit }
+                }')
+              if [ -n "$PINNED" ]; then
+                echo "Kernel pinné dans bazzite main pour ${KERNEL_FLAVOR}/fc${FEDORA_VERSION} : $PINNED"
+                if check_akmods "$PINNED"; then
+                  KERNEL_VERSION="$PINNED"
+                  echo "Using ${KERNEL_FLAVOR} kernel pinned in Bazzite main: $KERNEL_VERSION"
+                else
+                  echo "::warning::Le kernel $PINNED pinné dans bazzite main n'a pas encore de tags akmods — fallback sur le stable publié"
+                fi
+                break
+              fi
             fi
             if [ "$attempt" -eq 3 ]; then
-              echo "::warning::Impossible de lire le kernel de ${BAZZITE_IMAGE} après 3 tentatives"
+              echo "::warning::Impossible de lire le pin kernel de bazzite main après 3 tentatives"
             fi
-            echo "skopeo inspect tentative $attempt échouée, retry dans 10s..."
+            echo "Lecture build.yml bazzite tentative $attempt échouée, retry dans 10s..."
             sleep 10
           done
 
-          # Vérifier que les tags akmods correspondant au kernel stable publié
-          # existent (akmods commun + akmods NVIDIA le cas échéant), sinon
-          # fallback sur le dernier tag disponible
-          if [ -n "$KERNEL_VERSION" ]; then
-            if ! skopeo inspect "docker://ghcr.io/ublue-os/akmods:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION}" >/dev/null 2>&1; then
-              echo "::warning::Bazzite stable utilise $KERNEL_VERSION mais l'image akmods correspondante n'existe pas"
-              KERNEL_VERSION=""
-            elif [ -n "$NVIDIA_FLAVOR" ] && ! skopeo inspect "docker://ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}:${KERNEL_FLAVOR}-${FEDORA_VERSION}-${KERNEL_VERSION}" >/dev/null 2>&1; then
-              echo "::warning::Bazzite stable utilise $KERNEL_VERSION mais akmods-${NVIDIA_FLAVOR} n'est pas buildé pour ce kernel"
-              KERNEL_VERSION=""
-            else
-              echo "Using ${KERNEL_FLAVOR} kernel from Bazzite stable: $KERNEL_VERSION"
+          # 2. Kernel réellement publié sur l'image stable Bazzite
+          #    (label ostree.linux, format : 7.1.5-ogc5.1.fc44.x86_64 -> tag
+          #    akmods sans le suffixe arch)
+          if [ -z "$KERNEL_VERSION" ]; then
+            for attempt in 1 2 3; do
+              OSTREE_LINUX=$(skopeo inspect "docker://${BAZZITE_IMAGE}" 2>/dev/null | jq -r '.Labels["ostree.linux"] // empty')
+              if [ -n "$OSTREE_LINUX" ]; then
+                echo "Lecture du kernel de l'image ${BAZZITE_IMAGE} réussie à la tentative $attempt : $OSTREE_LINUX"
+                KERNEL_VERSION="${OSTREE_LINUX%.x86_64}"
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "::warning::Impossible de lire le kernel de ${BAZZITE_IMAGE} après 3 tentatives"
+              fi
+              echo "skopeo inspect tentative $attempt échouée, retry dans 10s..."
+              sleep 10
+            done
+
+            # Vérifier que les tags akmods correspondant au kernel stable
+            # publié existent, sinon fallback sur le dernier tag disponible
+            if [ -n "$KERNEL_VERSION" ]; then
+              if check_akmods "$KERNEL_VERSION"; then
+                echo "Using ${KERNEL_FLAVOR} kernel from Bazzite stable: $KERNEL_VERSION"
+              else
+                echo "::warning::Bazzite stable utilise $KERNEL_VERSION mais les tags akmods correspondants n'existent pas"
+                KERNEL_VERSION=""
+              fi
             fi
           fi
 
