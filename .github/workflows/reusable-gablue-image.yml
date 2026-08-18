@@ -662,6 +662,8 @@ jobs:
           # user namespace — bloqué par la restriction AppArmor d'Ubuntu 24.04+
           # ("Error during unshare(...): Operation not permitted", run test
           # 32068215822). Podman a un profil AppArmor dédié, skopeo non.
+          # Skopeo reste utilisable en docker://→docker:// (remote→remote,
+          # pas d'unshare) : c'est le cas pour les alias tags plus bas.
           RECHUNK_REF="${{ steps.rechunk.outputs.ref }}"
           LOCAL_REF="${RECHUNK_REF#containers-storage:}"
 
@@ -679,10 +681,17 @@ jobs:
               cosign sign -y --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false \
                 "${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@$DIGEST"
 
-              # Push alias tags
+              # Push alias tags : skopeo copy docker://→docker:// depuis le
+              # digest poussé (aligné Bazzite b97f073). Chaque alias pointe
+              # sur le manifeste exact signé par cosign ci-dessus, sans
+              # re-upload des blobs. Transport remote→remote : pas d'unshare,
+              # donc non affecté par le blocage AppArmor (seul le transport
+              # containers-storage: de skopeo l'est en rootless).
               for tag in ${{ steps.generate-tags.outputs.alias_tags }}; do
                 dest_alias="${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}:$tag"
-                podman push "$LOCAL_REF" "docker://$dest_alias"
+                skopeo copy \
+                  "docker://${{ steps.registry_case.outputs.lowercase }}/${{ inputs.image_name }}@${DIGEST}" \
+                  "docker://$dest_alias"
               done
               echo "::endgroup::"
               exit 0
