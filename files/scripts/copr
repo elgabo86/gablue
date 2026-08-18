@@ -21,7 +21,10 @@ dnf5 config-manager setopt keepcache=1
 
 # Exclusion des paquets Mesa et kernel des dépôts Fedora officiels
 # Ces paquets seront fournis par des dépôts tiers (Terra)
-dnf5 -y config-manager setopt "*fedora*".exclude="mesa-* kernel-core-* kernel-modules-* kernel-uki-virt-*"
+# noopenh264 : stub vide de Fedora qui Obsoletes le vrai codec Cisco openh264
+# (aligné Bazzite 5161562) — exclu pour qu'il ne remplace jamais openh264
+dnf5 -y config-manager setopt "*fedora*".exclude="mesa-* kernel-core-* kernel-modules-* kernel-uki-virt-* noopenh264"
+dnf5 -y config-manager setopt "updates*".exclude="noopenh264"
 
 # =============================================================================
 # DÉPÔTS COPR

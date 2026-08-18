@@ -72,6 +72,13 @@ dnf5 -y install \
     ksshaskpass \
     kate
 
+# Vrai codec H.264 Cisco en x86_64 + i686 depuis negativo17 (fedora-multimedia)
+# --allowerasing : vire le stub noopenh264 si présent (exclu des repos fedora/updates
+# dans copr, aligné Bazzite 5161562)
+dnf5 -y install --enable-repo="*fedora-multimedia*" --allowerasing \
+    openh264.x86_64 \
+    openh264.i686
+
 # =============================================================================
 # OUTILS EN LIGNE DE COMMANDE (CLI)
 # =============================================================================
