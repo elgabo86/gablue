@@ -22,7 +22,7 @@ inputs:
   mount-opts:
     description: "Options de montage BTRFS, séparées par des virgules"
     required: false
-    default: "compress-force=zstd:2"
+    default: "compress-force=zstd:2,discard=async,noatime"
 
 runs:
   using: "composite"
@@ -56,10 +56,15 @@ runs:
         sudo truncate -s "$FINAL_SIZE" "$LOOPBACK_FILE"
 
         # Formater en BTRFS en injectant le contenu existant du storage (-r)
-        sudo mkfs.btrfs -f -r "$TARGET_DIR" "$LOOPBACK_FILE"
+        # -m single -d single : dispositif unique, pas besoin de métadonnées
+        # dupliquées (économise ~1-2G de réservation interne) (Bazzite 7ecb26a1)
+        sudo mkfs.btrfs -f -m single -d single -r "$TARGET_DIR" "$LOOPBACK_FILE"
 
-        # Monter le loopback sur le storage avec compression
-        sudo systemd-mount "$LOOPBACK_FILE" "$TARGET_DIR" --options="$MOUNT_OPTS"
+        # Losetup explicite avec direct-io : évite le double cache (page cache
+        # hôte + loop) et réduit la pression IO lors des gros commits
+        # (Bazzite 7ecb26a1 ; remplace systemd-mount qui n'expose pas cette option)
+        LOOP=$(sudo losetup --find --show --direct-io=on "$LOOPBACK_FILE")
+        sudo mount -o "$MOUNT_OPTS" "$LOOP" "$TARGET_DIR"
 
         # Fail-fast : sans loopback BTRFS le build/rechunk sature le disque,
         # inutile de laisser tourner le build pendant ~30 min pour rien
