@@ -199,8 +199,8 @@ amd-corectrl-set-kargs:
     rpm-ostree kargs --append-if-missing=$(printf 'amdgpu.ppfeaturemask=0x%x\n' "$(($(cat /sys/module/amdgpu/parameters/ppfeaturemask) | 0x4000))")
     echo "ALL DONE!!!"
 
-# Configure AMD VRR (default: disabled, enables additional FreeSync display features on AMD GPUs)
-configure-amd-vrr ACTION="":
+# Configure AMD HDMI 2.1 (default: disabled, enables additional HDMI 2.1 features on AMD GPUs)
+configure-amd-hdmi21 ACTION="":
     #!/usr/bin/bash
     source /usr/lib/ujust/ujust.sh
     OPTION={{ ACTION }}
@@ -212,29 +212,29 @@ configure-amd-vrr ACTION="":
       fi
     }
     get_current_status() {
-      AMD_VRR_STATE="$(rpm-ostree kargs)"
-      if [[ "$AMD_VRR_STATE" =~ amdgpu\.dcfeaturemask=0x402 ]]; then
+      AMD_HDMI21_STATE="$(rpm-ostree kargs)"
+      if [[ "$AMD_HDMI21_STATE" =~ amdgpu\.dcfeaturemask=0x402 ]]; then
         echo "${green}${bold}Enabled${normal}"
       else
         echo "${yellow}${bold}Disabled${normal}"
       fi
     }
     if [ "$OPTION" == "help" ]; then
-      echo "Usage: ujust configure-amd-vrr <option>"
+      echo "Usage: ujust configure-amd-hdmi21 <option>"
       echo "  <option>: Specify the quick option to skip the prompt"
       echo "  Use 'status' to print the current status"
-      echo "  Use 'enable' to select Enable AMD VRR"
-      echo "  Use 'disable' to select Disable AMD VRR"
+      echo "  Use 'enable' to select Enable AMD HDMI 2.1"
+      echo "  Use 'disable' to select Disable AMD HDMI 2.1"
       exit 0
     elif [ "$OPTION" == "status" ]; then
       get_status_token
       exit 0
     elif [ "$OPTION" == "" ]; then
-      echo "${bold}AMD VRR configuration${normal}"
+      echo "${bold}AMD HDMI 2.1 configuration${normal}"
       echo "Enabling this sets amdgpu.dcfeaturemask=0x402, which unlocks additional FreeSync"
       echo "functionality on AMD GPUs, however it may cause flickering or instability on some displays"
-      echo "AMD VRR is $(get_current_status)"
-      OPTION=$(Choose "Enable AMD VRR" "Disable AMD VRR")
+      echo "AMD HDMI 2.1 is $(get_current_status)"
+      OPTION=$(Choose "Enable AMD HDMI 2.1" "Disable AMD HDMI 2.1")
     fi
     if [[ "${OPTION,,}" =~ ^enable ]]; then
       rpm-ostree kargs --append-if-missing=amdgpu.dcfeaturemask=0x402

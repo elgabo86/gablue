@@ -1006,7 +1006,7 @@ Profils optimisés Gablue :
 Commandes ujust disponibles :
 - **Système** : `configure-grub`, `kernel-setup`, `mitigations-on/off`
 - **Réseau** : `tailscale-up`, `ssh-on/off`, `toggle-wol`
-- **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`, `configure-amd-vrr` (karg `amdgpu.dcfeaturemask=0x402` — fonctionnalités FreeSync supplémentaires, backport Bazzite `f92d411`)
+- **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`, `configure-amd-hdmi21` (karg `amdgpu.dcfeaturemask=0x402` — fonctionnalités HDMI 2.1 supplémentaires ; backport Bazzite `f92d411`, renommé de `configure-amd-vrr` par Bazzite `150cf40e`)
 - **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`, `cpuid-emu-on/off`
 - **Virtualisation** : `docker-enable/disable`, `dx-group`, `setup-kvmfr`, `libvirt-reset-cache` (efface le cache capabilities libvirt, corrige l'erreur "video model 'virtio' unsupported" dans virt-manager)
 - **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`, `ssd-thermal-limit` (limite thermique NVMe via HCTM, interactif, persistant)
