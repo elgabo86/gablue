@@ -25,6 +25,9 @@ systemctl mask systemd-remount-fs.service
 # ce que le kickstart Anaconda a supprime pendant l'install)
 systemctl mask flatpak-add-fedora-repos.service
 
+# Optimisation réseau automatique via eBPF (aligné Bazzite c9494204)
+systemctl enable bpftune.service
+
 # Services supplémentaires pour le mode DX
 if [ "${DX_MODE:-false}" == "true" ]; then
     systemctl enable -f ublue-os-libvirt-workarounds.service

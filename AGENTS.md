@@ -468,7 +468,7 @@ Exclusions importantes :
 ### 5. rpm - Paquets RPM
 
 Installation extensive de paquets organisée par catégories :
-- **CLI** : fswatch, btop, fastfetch, git, atuin, tldr, amdsmi, jq, zoxide, etc.
+- **CLI** : fswatch, btop, fastfetch, git, atuin, tldr, amdsmi, jq, zoxide, bpftune, etc.
 - **Réseau** : tailscale, rar
 - **Multimédia** : yt-dlp, openh264.x86_64 + openh264.i686 (vrai codec Cisco H.264 depuis negativo17 `fedora-multimedia`, installé explicitement avec `--allowerasing` — aligné Bazzite `5161562`, voir exclusion `noopenh264` dans copr)
 - **Virtualisation (toutes variantes)** : `qemu-guest-agent` (agent invité QEMU) — léger (~300 Ko), inoffensif sur bare metal (service lié au device virtio-serial `org.qemu.guest_agent.0`, ne démarre pas si absent), utile en VM (IP dans virt-manager, graceful shutdown, snapshots consistants). Installé sur toutes les variantes pour que les ISOs live fonctionnent dans libvirt. Activé par preset Fedora (`enable qemu-guest-agent.service`)
@@ -588,7 +588,7 @@ Configuration post-installation étendue :
 ### 7. systemd
 
 Activation/désactivation des services systemd :
-- **Activés (toutes variantes)** : rpm-ostreed-automatic, flatpak-update, cec-poweroff-tv, cec-active-source, dmemcg-booster
+- **Activés (toutes variantes)** : rpm-ostreed-automatic, flatpak-update, cec-poweroff-tv, cec-active-source, dmemcg-booster, bpftune (optimisation réseau eBPF, aligné Bazzite `c9494204`)
 - **Désactivés** : scx_loader, tailscaled, displaylink
 - **Masqués** : systemd-remount-fs, flatpak-add-fedora-repos (empêche la réactivation du remote Fedora Flatpak au premier boot ; ce service natif du paquet `flatpak` réajoute `fedora`/`fedora-testing` tant que `/var/lib/flatpak/.fedora-initialized` n'existe pas, annulant le `disable-fedora-flatpak.ks` du kickstart. On garde uniquement Flathub, fourni par `/etc/flatpak/remotes.d/flathub.flatpakrepo`)
 - **Conditionnels (DX)** : ublue-os-libvirt-workarounds, gablue-dx-groups, incus-workaround

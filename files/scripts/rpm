@@ -70,7 +70,8 @@ dnf5 -y install \
     smartmontools \
     grub2-tools-extra \
     ksshaskpass \
-    kate
+    kate \
+    bpftune
 
 # Vrai codec H.264 Cisco en x86_64 + i686 depuis negativo17 (fedora-multimedia)
 # --allowerasing : vire le stub noopenh264 si présent (exclu des repos fedora/updates
