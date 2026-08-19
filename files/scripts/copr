@@ -50,6 +50,17 @@ done && unset -v copr
 # Le dépôt bazzite-multilib a des versions i686 en retard sur Fedora fc44, causant des conflits
 dnf5 -y config-manager setopt "*bazzite*".priority=1 "*bazzite*".exclude="pipewire-* bluez-* xorg-x11-server-Xwayland wireplumber-*"
 
+# Swap d'ostree vers la version patchée de ublue-os/staging (fix flatpak)
+# (aligné Bazzite b771fae6)
+declare -A toswap=(
+    ["copr:copr.fedorainfracloud.org:ublue-os:staging"]="ostree"
+)
+for repo in "${!toswap[@]}"; do
+    for package in ${toswap[$repo]}; do
+        dnf5 -y swap --from-repo="$repo" "$package" "$package"
+    done
+done && unset -v toswap repo package
+
 # =============================================================================
 # DÉPÔTS TIERS
 # =============================================================================

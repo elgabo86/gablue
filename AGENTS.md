@@ -423,6 +423,7 @@ Configure tous les dépôts tiers nécessaires :
 - **Terra (FyraLabs)** : terra-release, terra-release-extras, terra-release-mesa — exclusion `terra-glfw*` ajoutée (août 2026) : terra-glfw a `Conflicts: glfw` cross-arch et casse l'install de `mangohud.i686` (glfw doit rester sur la version fedora, comme Bazzite)
 
 Exclusions importantes :
+- **Swap ostree** (aligné Bazzite `b771fae6`) : `dnf5 swap --from-repo=copr:copr.fedorainfracloud.org:ublue-os:staging ostree ostree` — ostree patché par ublue pour corriger un problème flatpak
 - Mesa et kernel des dépôts Fedora (fournis par Terra)
 - `noopenh264` exclu de `*fedora*` et `updates*` (aligné Bazzite `5161562`) : stub vide de Fedora qui `Obsoletes` le vrai codec Cisco openh264 — l'exclusion l'empêche de le remplacer lors des installs/upgrades
 - Exclusions bazzite : pipewire-*, bluez-*, xorg-x11-server-Xwayland, wireplumber-* (alignement i686/x86_64 fc44)
