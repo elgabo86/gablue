@@ -531,7 +531,7 @@ Configuration post-installation étendue :
 - MIME par défaut (Windows.desktop, Linux.desktop)
 - **Mises à jour automatiques** : active `AutomaticUpdatePolicy=stage` dans `/etc/rpm-ostreed.conf` (copie depuis `/usr/share/ublue-os/update-services/etc/rpm-ostreed.conf` fourni par le RPM `ublue-os-update-services`) et reprogramme les timers flatpak + rpm-ostree le samedi à 04:00 avec `RandomizedDelaySec=10m`
 - **Linuxbrew** : ajoute `/home/linuxbrew/.linuxbrew/bin` au `secure_path` de sudo
-- **Correction fstrim** (aligné Bazzite `6a10aa2`, fedora-silverblue/issue-tracker#689) : `sed` dans `/usr/lib/systemd/system/fstrim.service` remplace `--listed-in /etc/fstab:/proc/self/mountinfo` par `--listed-in /proc/self/mountinfo` — avec composefs, `/etc/fstab` ne reflète pas les montages réels, fstrim ne trimmait pas correctement
+- **Correction fstrim** (aligné Bazzite `8a76282f` qui remplace le sed `6a10aa2`, fedora-silverblue/issue-tracker#689) : drop-in `files/system/all/usr/lib/systemd/system/fstrim.service.d/workaround-no-root-trim.conf` qui remplace `ExecStart` par `/usr/bin/fstrim --listed-in /proc/self/mountinfo` — avec composefs, `/etc/fstab` ne reflète pas les montages réels, fstrim ne trimmait pas correctement. **Divergence volontaire** : le drop-in inclut `ExecStart=` vide avant la nouvelle ligne (fstrim.service est `Type=oneshot`, sans reset le drop-in *ajouterait* une seconde exécution au lieu de remplacer l'originale — omission dans le drop-in Bazzite)
 
 **Correction composefs** (dans post-install, toutes variantes) :
 - Compile un LD_PRELOAD minimal (`gablue-composefs-fix.so`, ~2.6 Ko) qui intercepte `statfs`/`statfs64`

@@ -147,10 +147,9 @@ sed -i 's/balanced=balanced-battery$/balanced=balanced-battery-gablue\npower-sav
 # Activer le support HID userspace pour Bluetooth
 sed -i 's/#UserspaceHID.*/UserspaceHID=true/' /etc/bluetooth/input.conf
 
-# Corriger fstrim.service : avec composefs, /etc/fstab ne reflète pas les montages
-# réels → utiliser uniquement /proc/self/mountinfo
-# (aligné Bazzite 6a10aa2, fédora-silverblue/issue-tracker#689)
-sed -i 's#/usr/bin/fstrim --listed-in /etc/fstab:/proc/self/mountinfo#/usr/bin/fstrim --listed-in /proc/self/mountinfo#' /usr/lib/systemd/system/fstrim.service
+# fstrim.service est corrigé via un drop-in (plus de sed sur l'unit upstream) :
+# files/system/all/usr/lib/systemd/system/fstrim.service.d/workaround-no-root-trim.conf
+# (aligné Bazzite 8a76282f qui remplace l'ancien sed 6a10aa2)
 
 # Corriger les erreurs de bus QT6 sur Kinoite
 # Qt6 fournit le binaire sous le nom qdbus-qt6 (plus de /bin/qdbus) : on crée
