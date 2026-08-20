@@ -54,6 +54,29 @@ static pid_t menuvsr_pid = -1;
 static struct timespec last_volume_time = {0, 0};
 static struct timespec last_hat_time = {0, 0};
 
+/* Plage reelle de ABS_Y de la manette connectee, relue a chaque connexion.
+   DualSense USB/BT: 0-255. "Xbox 360 Controller" virtuel (ds2xbox): -32768..32767.
+   Sans cette normalisation, la valeur de repos du device virtuel (0) etait
+   interpretee comme -1.008 -> volume monte en boucle quand Home est presse. */
+static int abs_y_minimum = 0;
+static int abs_y_maximum = 255;
+
+/* Normalise une valeur ABS_Y brute vers [-1.0, 1.0] selon la plage reelle
+   du peripherique courant (0.0 au repos quel que soit le device) */
+static double normalize_axis_y(int value)
+{
+    if (abs_y_maximum <= abs_y_minimum)
+        return 0.0;
+
+    double norm = 2.0 * (value - abs_y_minimum)
+                  / (abs_y_maximum - abs_y_minimum) - 1.0;
+    if (norm < -1.0)
+        norm = -1.0;
+    if (norm > 1.0)
+        norm = 1.0;
+    return norm;
+}
+
 /* =========================================================================
  * SUIVI DU VT ACTIF (inotify sur /sys/class/tty/tty0/active)
  * Permet a deux sessions Wayland simultanees de ne pas entrer en conflit
@@ -158,50 +181,100 @@ static void uninhibit_screensaver(void)
     fprintf(stderr, "[INFO] Inhibition ecran desactivee\n");
 }
 
-static int find_gamepad(void)
+#define VID_SONY 0x054c
+
+/* Teste un candidat /dev/input/event* : retourne le fd ouvert si le device
+   convient, -1 sinon.
+   sony_only : ne retenir que les manettes Sony physiques (passe prioritaire,
+   pour ne pas attraper la manette virtuelle "Xbox 360" de ds2xbox) */
+static int test_gamepad_candidate(const char *path, bool sony_only)
 {
-    DIR *dir = opendir("/dev/input");
-    if (!dir) {
-        perror("opendir /dev/input");
+    int fd = open(path, O_RDONLY | O_NONBLOCK);
+    if (fd < 0)
+        return -1;
+
+    unsigned long key_bits[MAX_KEY_BITS / (8 * sizeof(unsigned long))] = {0};
+    if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(key_bits)), key_bits) < 0) {
+        close(fd);
         return -1;
     }
 
-    struct dirent *ent;
-    char path[512];
+    bool has_btn_a = key_bits[BTN_A / (8 * sizeof(unsigned long))]
+        & (1UL << (BTN_A % (8 * sizeof(unsigned long))));
+    bool has_btn_select = key_bits[BTN_SELECT / (8 * sizeof(unsigned long))]
+        & (1UL << (BTN_SELECT % (8 * sizeof(unsigned long))));
 
-    while ((ent = readdir(dir)) != NULL) {
-        if (strncmp(ent->d_name, "event", 5) != 0)
-            continue;
-
-        snprintf(path, sizeof(path), "/dev/input/%s", ent->d_name);
-
-        int fd = open(path, O_RDWR | O_NONBLOCK);
-        if (fd < 0)
-            continue;
-
-        unsigned long key_bits[MAX_KEY_BITS / (8 * sizeof(unsigned long))] = {0};
-        if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(key_bits)), key_bits) < 0) {
-            close(fd);
-            continue;
-        }
-
-        bool has_btn_a = key_bits[BTN_A / (8 * sizeof(unsigned long))]
-            & (1UL << (BTN_A % (8 * sizeof(unsigned long))));
-        bool has_btn_select = key_bits[BTN_SELECT / (8 * sizeof(unsigned long))]
-            & (1UL << (BTN_SELECT % (8 * sizeof(unsigned long))));
-
-        if (has_btn_a || has_btn_select) {
-            char name[256] = {0};
-            ioctl(fd, EVIOCGNAME(sizeof(name)), name);
-            fprintf(stderr, "[INFO] Manette trouvee: %s (%s)\n", name, path);
-            closedir(dir);
-            return fd;
-        }
-
+    if (!has_btn_a && !has_btn_select) {
         close(fd);
+        return -1;
     }
 
-    closedir(dir);
+    char name[256] = {0};
+    ioctl(fd, EVIOCGNAME(sizeof(name)), name);
+
+    if (sony_only) {
+        struct input_id id;
+        if (ioctl(fd, EVIOCGID, &id) < 0 || id.vendor != VID_SONY) {
+            close(fd);
+            return -1;
+        }
+
+        /* Exclusion des peripheriques auxiliaires exposes par hid-playstation */
+        if (strstr(name, "Touchpad") || strstr(name, "Motion")
+            || strstr(name, "Headset") || strstr(name, "Jack")) {
+            close(fd);
+            return -1;
+        }
+    }
+
+    /* Lecture de la plage reelle de ABS_Y pour la normalisation
+       (evite les valeurs faussees sur les devices virtuels ex. ds2xbox) */
+    struct input_absinfo absinfo;
+    if (ioctl(fd, EVIOCGABS(ABS_Y), &absinfo) == 0) {
+        abs_y_minimum = absinfo.minimum;
+        abs_y_maximum = absinfo.maximum;
+    } else {
+        abs_y_minimum = 0;
+        abs_y_maximum = 255;
+    }
+
+    fprintf(stderr, "[INFO] Manette trouvee: %s (%s, ABS_Y %d..%d)\n",
+            name, path, abs_y_minimum, abs_y_maximum);
+    return fd;
+}
+
+static int find_gamepad(void)
+{
+    /* Passe 1 : manette Sony physique (prioritaire, evite la virtuelle ds2xbox)
+       Passe 2 : n'importe quel gamepad (Xbox, 8bitdo, etc.) */
+    for (int pass = 0; pass < 2; pass++) {
+        bool sony_only = (pass == 0);
+
+        DIR *dir = opendir("/dev/input");
+        if (!dir) {
+            perror("opendir /dev/input");
+            return -1;
+        }
+
+        struct dirent *ent;
+        char path[512];
+
+        while ((ent = readdir(dir)) != NULL) {
+            if (strncmp(ent->d_name, "event", 5) != 0)
+                continue;
+
+            snprintf(path, sizeof(path), "/dev/input/%s", ent->d_name);
+
+            int fd = test_gamepad_candidate(path, sony_only);
+            if (fd >= 0) {
+                closedir(dir);
+                return fd;
+            }
+        }
+
+        closedir(dir);
+    }
+
     return -1;
 }
 
@@ -403,7 +476,7 @@ static void process_event(struct input_event *ev)
             handle_hat();
             break;
         case ABS_Y:
-            axis_y = (ev->value - 128) / 127.0;
+            axis_y = normalize_axis_y(ev->value);
             break;
         default:
             break;
@@ -448,6 +521,7 @@ static void reset_button_states(void)
     axis_y = 0.0;
     last_axis_y = 0.0;
     last_hat_time = (struct timespec){0, 0};
+    last_volume_time = (struct timespec){0, 0};
 }
 
 /* Verifie si notre VT est actif, met a jour vt_active et gere
@@ -595,6 +669,7 @@ int main(void)
             fprintf(stderr, "[WARN] Erreur poll, deconnexion manette.\n");
             uninhibit_screensaver();
             close(gamepad_fd);
+            reset_button_states();
             gamepad_fd = find_gamepad();
             if (gamepad_fd >= 0 && vt_active)
                 inhibit_screensaver();
@@ -614,6 +689,7 @@ int main(void)
             fprintf(stderr, "[WARN] Manette deconnectee.\n");
             uninhibit_screensaver();
             close(gamepad_fd);
+            reset_button_states();
             gamepad_fd = find_gamepad();
             if (gamepad_fd >= 0 && vt_active)
                 inhibit_screensaver();
@@ -630,6 +706,7 @@ int main(void)
                     fprintf(stderr, "[WARN] Erreur lecture manette, reconnexion...\n");
                     uninhibit_screensaver();
                     close(gamepad_fd);
+                    reset_button_states();
                     gamepad_fd = find_gamepad();
                     if (gamepad_fd >= 0 && vt_active)
                         inhibit_screensaver();
