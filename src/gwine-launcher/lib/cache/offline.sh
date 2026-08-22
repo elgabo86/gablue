@@ -129,37 +129,117 @@ download_missing_components() {
     fi
 }
 
-prepare_local_cache() {
-    ensure_dirs "$CACHE_DIR" "$COMPONENTS_DIR" "$SHADER_CACHE_DIR"
-    
-    local missing_components=false
-    
+# Indique si le cache local est incomplet (mono/gecko, dxvk ou vkd3d manquant)
+local_cache_incomplete() {
     local MONO_VER="11.2.0"
     local GECKO_VER="2.47.4"
     if [ ! -f "$COMPONENTS_DIR/wine-cache/wine-mono-${MONO_VER}-x86.msi" ] || \
        [ ! -f "$COMPONENTS_DIR/wine-cache/wine-gecko-${GECKO_VER}-x86_64.msi" ] || \
        [ ! -f "$COMPONENTS_DIR/wine-cache/wine-gecko-${GECKO_VER}-x86.msi" ]; then
-        missing_components=true
+        return 0
     fi
-    
+
     if [ ! -d "$DXVK_CACHE_DIR" ] || [ -z "$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi")" ]; then
-        missing_components=true
+        return 0
     fi
-    
+
     if [ ! -d "$VKD3D_CACHE_DIR" ] || [ -z "$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null)" ]; then
-        missing_components=true
+        return 0
     fi
-    
-    if [ "$missing_components" = true ]; then
+
+    return 1
+}
+
+# Indique si le cache gwine est essentiellement vide (vrai premier lancement) :
+# ni runner, ni mono/gecko, ni wincomponents. Dans ce cas, télécharger le pack
+# cache complet est pertinent plutôt que tout récupérer composant par composant.
+gwine_cache_essentially_empty() {
+    if [ -n "$(ls -A "$COMPONENTS_DIR/gwine"/gwine-*.tar.xz 2>/dev/null)" ]; then
+        return 1
+    fi
+    if [ -n "$(ls "$COMPONENTS_DIR/wine-cache"/wine-*.msi 2>/dev/null)" ]; then
+        return 1
+    fi
+    if [ -d "$CACHE_DIR/wincomponents" ]; then
+        return 1
+    fi
+    return 0
+}
+
+# Télécharge le pack cache pré-construit (repo gwine-cache, release hebdomadaire)
+# au lieu de télécharger chaque composant individuellement. L'archive contient
+# l'arborescence complète de $CACHE_DIR (components/ + wincomponents/).
+# Retourne 0 si le pack a été déployé, 1 sinon (l'appelant bascule alors
+# sur le téléchargement unitaire, comportement historique).
+download_cache_bundle() {
+    local bundle_base="${GWINE_CACHE_BUNDLE_URL:-https://github.com/elgabo86/gwine-cache/releases/download/latest}"
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    local archive="$temp_dir/gwine-cache.tar.xz"
+
+    echo "Téléchargement du pack cache gwine pré-construit..."
+
+    if ! wget -q --show-progress "$bundle_base/gwine-cache.tar.xz" -O "$archive" 2>&1; then
+        echo "  ⚠️ Pack cache indisponible, téléchargement unitaire..."
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    # Vérification d'intégrité : le checksum est publié à côté de l'archive,
+    # une archive non vérifiable est refusée
+    if ! wget -q "$bundle_base/gwine-cache.tar.xz.sha256" -O "$temp_dir/gwine-cache.tar.xz.sha256" 2>/dev/null; then
+        echo "  ⚠️ Checksum introuvable, téléchargement unitaire..."
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    echo "  Vérification du checksum..."
+    if ! (cd "$temp_dir" && sha256sum -c gwine-cache.tar.xz.sha256 >/dev/null 2>&1); then
+        echo "  ⚠️ Checksum invalide, téléchargement unitaire..."
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    # Extraction dans un dossier temporaire puis copie (évite un cache
+    # corrompu si l'archive est tronquée ou l'extraction interrompue)
+    echo "  Extraction du pack cache..."
+    local extract_dir="$temp_dir/extract"
+    mkdir -p "$extract_dir"
+    if ! tar -xJf "$archive" -C "$extract_dir"; then
+        echo "  ⚠️ Archive invalide, téléchargement unitaire..."
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    ensure_dir "$CACHE_DIR"
+    cp -a "$extract_dir/." "$CACHE_DIR/"
+    rm -rf "$temp_dir"
+    echo "  ✓ Pack cache déployé"
+    return 0
+}
+
+prepare_local_cache() {
+    ensure_dirs "$CACHE_DIR" "$COMPONENTS_DIR" "$SHADER_CACHE_DIR"
+
+    if local_cache_incomplete; then
         if [ "$OFFLINE_MODE" = "true" ]; then
             error_exit "Mode offline: composants manquants dans le cache. Lancez 'gwine --download-components' avec une connexion internet pour préparer le cache."
         fi
-        
-        echo ""
-        echo "Certains composants sont manquants dans ~/.cache/gwine/components/"
-        echo "Ils seront téléchargés automatiquement..."
-        echo ""
-        download_missing_components
+
+        # Vrai premier lancement (cache vide) : tenter le pack cache
+        # pré-construit (un seul download CDN) avant l'unitaire
+        if gwine_cache_essentially_empty && download_cache_bundle; then
+            if local_cache_incomplete; then
+                # Bundle plus ancien que les versions attendues : compléter
+                # par le téléchargement unitaire des éléments manquants
+                download_missing_components
+            fi
+        else
+            echo ""
+            echo "Certains composants sont manquants dans ~/.cache/gwine/components/"
+            echo "Ils seront téléchargés automatiquement..."
+            echo ""
+            download_missing_components
+        fi
     fi
 }
 
@@ -305,9 +385,16 @@ auto_update_components() {
 prepare_full_offline_cache() {
     echo "Préparation du cache complet pour le mode offline..."
     echo ""
-    
+
+    # Tenter d'abord le pack cache pré-construit (repo gwine-cache, release
+    # hebdomadaire) : un seul download remplace la majorité du téléchargement
+    # unitaire. Les étapes suivantes ne retéléchargent que les composants
+    # plus récents que le pack (ou absents si le pack est indisponible).
+    download_cache_bundle || true
+    echo ""
+
     local failed=false
-    
+
     echo "1. Préparation du runner gwine..."
     echo ""
     

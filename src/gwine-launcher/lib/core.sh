@@ -30,6 +30,12 @@ DXVK_ASYNC_CACHE_DIR="$COMPONENTS_DIR/dxvk-gplasync"
 VKD3D_CACHE_DIR="$COMPONENTS_DIR/vkd3d"
 DXVK_NVAPI_CACHE_DIR="$COMPONENTS_DIR/dxvk-nvapi"
 
+# URL du pack cache pré-construit (repo elgabo86/gwine-cache, publié chaque
+# semaine). Permet de remplacer le téléchargement composant par composant
+# par un seul download CDN au premier lancement et via --download-components.
+# Surchargeable via la variable d'environnement (miroir, serveur local de test).
+GWINE_CACHE_BUNDLE_URL="${GWINE_CACHE_BUNDLE_URL:-https://github.com/elgabo86/gwine-cache/releases/download/latest}"
+
 # Les liens symboliques dans /tmp/ sont créés par init_wineserver_manager()
 # car ensure_dir() n'est pas encore défini à ce point
 
