@@ -378,7 +378,7 @@ podman run --rm -v "$(pwd)/lib:/src:z" docker.io/library/fedora:43 bash -c \
 ### Gestion des composants
 - DXVK : double source (officiel `doitsujin/dxvk` + `bottlesdevs/components`), prend la version la plus haute (priorité officiel en cas d'égalité)
 - VKD3D-Proton : double source (officiel `HansKristian-Work/vkd3d-proton` + `bottlesdevs/components`), même règle
-- DXVK-NVAPI : source unique (`bottlesdevs/components`, NVIDIA uniquement). **Installé** dans le préfixe seulement sur GPU NVIDIA (`install_dxvk_nvapi` garde son `is_nvidia_gpu`), mais **toujours téléchargé/empaqueté** dans le cache offline pour rester portable
+- DXVK-NVAPI : source unique officielle (`jp7677/dxvk-nvapi`, NVIDIA uniquement). L'ancien miroir `bottlesdevs/components` a été abandonné (août 2026) : son flux atom ne liste que les ~10 dernières releases, dxvk-nvapi y disparaît périodiquement (→ échec build ISO), et l'API GitHub paginable est rate-limitée (inutilisable en CI parallèle). L'atom `jp7677` ne contient que des releases nvapi → fiable ; les assets portent le même nom/layout x32-x64. **Installé** dans le préfixe seulement sur GPU NVIDIA (`install_dxvk_nvapi` garde son `is_nvidia_gpu`), mais **toujours téléchargé/empaqueté** dans le cache offline pour rester portable
 - DXVK-GPLAsync : source unique (`gitlab.com/Ph42oN/dxvk-gplasync`, API GitLab v4), version extraite depuis le tag GitLab (format `vX.Y.Z-N`)
 - `auto_update_components()` détecte le mode DXVK configuré (`dxvk` ou `dxvk-async`) et adapte la vérification/téléchargement en conséquence (async → `download_dxvk_async` + `download_vkd3d`, standard → `download_updated_dxvk_vkd3d`)
 - La source choisie est stockée dans les globales `_DXVK_SOURCE` / `_VKD3D_SOURCE` ("official" ou "bottles")

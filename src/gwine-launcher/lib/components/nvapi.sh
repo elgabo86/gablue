@@ -54,8 +54,10 @@ download_dxvk_nvapi() {
     
     echo "DXVK-NVAPI - Installé: ${current_nvapi:-Aucun}, Cible: $target_version"
     
+    # Source officielle jp7677/dxvk-nvapi (l'asset porte le même nom que sur
+    # l'ancien miroir bottlesdevs/components, layout x32/x64 identique)
     local nvapi_tag="dxvk-nvapi-v${target_version}"
-    local nvapi_url="https://github.com/bottlesdevs/components/releases/download/${nvapi_tag}/${nvapi_tag}.tar.gz"
+    local nvapi_url="https://github.com/jp7677/dxvk-nvapi/releases/download/v${target_version}/${nvapi_tag}.tar.gz"
     
     _do_download() {
         download_github_component "$DXVK_NVAPI_CACHE_DIR" "dxvk-nvapi" "$target_version" "$nvapi_url" "tar.gz" "$no_confirm"

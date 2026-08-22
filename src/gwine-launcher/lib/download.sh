@@ -231,7 +231,7 @@ get_latest_gwine_version() {
 
 # Récupère la dernière version d'un composant depuis GitHub
 # Usage: get_component_version <type>
-#   type: dxvk (officiel + bottles), vkd3d (officiel + bottles), dxvk-nvapi (bottles)
+#   type: dxvk (officiel + bottles), vkd3d (officiel + bottles), dxvk-nvapi (officiel)
 # Pour dxvk et vkd3d, compare l'officiel et bottlesdevs/components et prend la plus
 # haute version (en cas d'égalité, préfère l'officiel).
 # Affiche "version source" (ex: "3.0.2-1-abc1234 bottles") car la fonction est toujours
@@ -298,9 +298,14 @@ get_component_version() {
             echo "$version $_VKD3D_SOURCE"
             ;;
         dxvk-nvapi)
-            version=$(curl -s "https://github.com/bottlesdevs/components/releases.atom" 2>/dev/null | grep -oE "dxvk-nvapi-v[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1)
-            [ -n "$version" ] && version="${version#dxvk-nvapi-v}"
-            echo "$version"
+            # Source officielle unique (jp7677/dxvk-nvapi) : le flux atom de
+            # bottlesdevs/components (ancien miroir) ne contient que les ~10
+            # dernières releases, dxvk-nvapi y disparaît périodiquement ; l'API
+            # GitHub (paginable) est rate-limitée et inutilisable en CI parallèle.
+            # Le flux atom jp7677 ne contient que des releases nvapi → fiable.
+            version=$(curl -s "https://github.com/jp7677/dxvk-nvapi/releases.atom" 2>/dev/null | grep -oE "v[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1)
+            [ -n "$version" ] && version="${version#v}"
+            [ -n "$version" ] && echo "$version"
             ;;
         *)
             return 1
