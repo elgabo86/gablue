@@ -153,45 +153,59 @@ fi
 # PACK CACHE GWINE (OFFLINE) → /extra
 # =============================================================================
 
-# Génère un pack cache gwine complet (runner gwine, DXVK,
-# DXVK-GPLAsync, VKD3D-Proton, DXVK-NVAPI, Wine Mono/Gecko, composants Windows)
-# et le place dans /extra sous forme de dossier installer déployable offline.
+# Télécharge le pack cache gwine pré-construit (repo elgabo86/gwine-cache,
+# publié et validé chaque semaine via gwine --cachepack) directement dans
+# /extra. Plus de téléchargement composant par composant ni de re-génération
+# de l'archive : le pack publié EST le dossier installer (tar.xz validé par
+# le cachepack en amont + install-cache.sh + README.txt).
 # /extra n'existe que dans le rootfs live : l'installation sur disque redéploie
 # l'image container propre (ostreecontainer + bootc switch), donc /extra ne se
 # retrouve jamais sur l'OS installé.
-echo "Génération du pack cache gwine pour /extra..."
+echo "Téléchargement du pack cache gwine pré-construit..."
 if ! command -v gwine > /dev/null 2>&1; then
-    echo "ERREUR : gwine introuvable, impossible de générer le pack cache" >&2
+    echo "ERREUR : gwine introuvable, impossible d'initialiser le préfixe Wine" >&2
     exit 1
 fi
+GWINE_CACHE_BUNDLE_URL="${GWINE_CACHE_BUNDLE_URL:-https://github.com/elgabo86/gwine-cache/releases/download/latest}"
 gwine_pack_tmp="$(mktemp -d)"
+
 # Retry local : évite de recommencer tout le build (flatpaks, kernel swap...)
-# sur un échec réseau transitoire du téléchargement d'un composant
+# sur un échec réseau transitoire
 for gwine_attempt in 1 2 3; do
-    echo "Téléchargement composants gwine — tentative $gwine_attempt/3"
-    if gwine --download-components; then
+    echo "Téléchargement du pack cache gwine — tentative $gwine_attempt/3"
+    gwine_dl_ok=true
+    for gwine_asset in gwine-cache.tar.xz gwine-cache.tar.xz.sha256 install-cache.sh README.txt; do
+        if ! curl -fsSL --retry 3 --retry-delay 5 "$GWINE_CACHE_BUNDLE_URL/$gwine_asset" -o "$gwine_pack_tmp/$gwine_asset"; then
+            gwine_dl_ok=false
+            break
+        fi
+    done
+    if [ "$gwine_dl_ok" = "true" ] && ( cd "$gwine_pack_tmp" && sha256sum -c gwine-cache.tar.xz.sha256 > /dev/null ); then
         break
     fi
     if [ "$gwine_attempt" -eq 3 ]; then
-        echo "ERREUR : échec du téléchargement des composants gwine après 3 tentatives" >&2
+        echo "ERREUR : échec du téléchargement du pack cache gwine après 3 tentatives" >&2
         exit 1
     fi
     echo "Échec tentative $gwine_attempt — nouvelle tentative dans 10s..."
     sleep 10
 done
-if ! ( cd "$gwine_pack_tmp" && gwine --cachepack ); then
-    echo "ERREUR : échec de la création du pack cache gwine" >&2
+
+# Fail-fast : jamais d'ISO avec un pack anormalement petit (< 100 Mo)
+gwine_pack_size=$(stat -c%s "$gwine_pack_tmp/gwine-cache.tar.xz")
+if [ "$gwine_pack_size" -lt 100000000 ]; then
+    echo "ERREUR : pack cache gwine anormalement petit ($gwine_pack_size octets)" >&2
     exit 1
 fi
-if [ ! -f "$gwine_pack_tmp/gwine-cache-installer/gwine-cache.tar.xz" ]; then
-    echo "ERREUR : pack cache gwine incomplet (archive absente)" >&2
-    exit 1
-fi
-mkdir -p /extra
-cp -a "$gwine_pack_tmp/gwine-cache-installer" /extra/
-echo "Pack cache gwine déployé dans /extra/gwine-cache-installer"
-# Nettoyer le pack temporaire, garder le cache brut pour l'init ci-dessous
+
+mkdir -p /extra/gwine-cache-installer
+mv "$gwine_pack_tmp/gwine-cache.tar.xz" \
+   "$gwine_pack_tmp/install-cache.sh" \
+   "$gwine_pack_tmp/README.txt" \
+   /extra/gwine-cache-installer/
+chmod +x /extra/gwine-cache-installer/install-cache.sh
 rm -rf "$gwine_pack_tmp"
+echo "Pack cache gwine déployé dans /extra/gwine-cache-installer"
 
 # =============================================================================
 # PRÉFIXE WINE + RUNNER DANS LE LIVE
@@ -206,7 +220,9 @@ ln -sf /usr/share/gablue/wine-runner /var/home/liveuser/.local/share/gwine
 
 # Extraire le cache de l'archive pour l'init (sera supprimé après)
 tar -xf /extra/gwine-cache-installer/gwine-cache.tar.xz -C /var/home/liveuser/.cache/gwine/
-cp -a /root/.local/share/gwine/* /usr/share/gablue/wine-runner/
+# Le runner est installé dans /usr/share/gablue/wine-runner par l'--init
+# --offline ci-dessous (install_gwine_from_cache, via le symlink
+# /var/home/liveuser/.local/share/gwine)
 
 # Init du préfixe (Xvfb pour PhysX/OpenAL, cache dans ~/.cache/gwine)
 # Sur les images NVIDIA, Xvfb crashe car le serveur X charge son propre
@@ -240,9 +256,6 @@ rm -rf /var/home/liveuser/.cache/gwine
 # supprimés entre la lecture du dossier et l'appel à chown()
 find /usr/share/gablue/wine-home /usr/share/gablue/wine-runner \
      -exec chown 1000:1000 {} + 2>/dev/null || true
-
-# Nettoyer les résidus du build
-rm -rf /root/.cache/gwine /root/.local/share/gwine 2>/dev/null || true
 
 echo "Préfixe Wine prêt"
 
