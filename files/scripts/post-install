@@ -243,8 +243,7 @@ for copr in \
         ublue-os/packages \
         che/nerd-fonts \
         hikariknight/looking-glass-kvmfr \
-        lizardbyte/beta \
-        bazzite-org/rom-properties;
+        lizardbyte/beta;
 do
         dnf5 -y copr disable $copr
 done && unset -v copr

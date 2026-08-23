@@ -318,6 +318,8 @@ fi
 # =============================================================================
 
 # Extension rom-properties pour navigateur de fichiers (Dolphin)
+# Depuis Terra (priorité 3, comme Bazzite) — le COPR bazzite-org/rom-properties
+# n'est plus utilisé (Terra est son remplacement)
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
     dnf5 -y install rom-properties-kf6
 fi
