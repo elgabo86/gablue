@@ -494,6 +494,33 @@ static void init_controller_fields(struct controller *ctrl, int fd, uint16_t vid
     ctrl->ff_mutex_initialized = true;
 }
 
+static void close_controller(struct controller *ctrl) {
+    ctrl->ff_running = false;
+    if (ctrl->ff_thread_started) {
+        pthread_join(ctrl->ff_thread, NULL);
+        ctrl->ff_thread_started = false;
+    }
+    if (ctrl->sony_ff_uploaded) {
+        if (ctrl->fd_src >= 0)
+            ioctl(ctrl->fd_src, EVIOCRMFF, ctrl->sony_ff_id);
+        ctrl->sony_ff_uploaded = false;
+    }
+    if (ctrl->fd_dst >= 0) {
+        ioctl(ctrl->fd_dst, UI_DEV_DESTROY);
+        close(ctrl->fd_dst);
+        ctrl->fd_dst = -1;
+    }
+    if (ctrl->fd_src >= 0) {
+        close(ctrl->fd_src);
+        ctrl->fd_src = -1;
+    }
+    if (ctrl->ff_mutex_initialized) {
+        pthread_mutex_destroy(&ctrl->ff_mutex);
+        ctrl->ff_mutex_initialized = false;
+    }
+    ctrl->dev_path[0] = '\0';
+}
+
 static int find_controllers(struct controller *controllers, int max) {
     DIR *dir;
     struct dirent *ent;
@@ -613,27 +640,7 @@ static void handle_event(struct controller *ctrl) {
     }
 
     if (bytes == 0 || (bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
-        ctrl->ff_running = false;
-        if (ctrl->ff_thread_started) {
-            pthread_join(ctrl->ff_thread, NULL);
-            ctrl->ff_thread_started = false;
-        }
-        if (ctrl->sony_ff_uploaded) {
-            ioctl(ctrl->fd_src, EVIOCRMFF, ctrl->sony_ff_id);
-            ctrl->sony_ff_uploaded = false;
-        }
-        if (ctrl->fd_dst >= 0) {
-            ioctl(ctrl->fd_dst, UI_DEV_DESTROY);
-            close(ctrl->fd_dst);
-            ctrl->fd_dst = -1;
-        }
-        if (ctrl->fd_src >= 0) {
-            close(ctrl->fd_src);
-            ctrl->fd_src = -1;
-        }
-        pthread_mutex_destroy(&ctrl->ff_mutex);
-        ctrl->ff_mutex_initialized = false;
-        ctrl->dev_path[0] = '\0';
+        close_controller(ctrl);
         printf("[HOTPLUG] Disconnected: %s\n", ctrl->name);
     }
 }
@@ -680,6 +687,25 @@ static bool is_controller_connected(struct controller *controllers, int count, c
             return true;
     }
     return false;
+}
+
+static void prune_disconnected_controllers(struct controller *controllers, int count) {
+    for (int i = 0; i < count; i++) {
+        struct controller *ctrl = &controllers[i];
+        struct input_id id;
+
+        if (ctrl->fd_src < 0)
+            continue;
+
+        /* Un node event peut être réutilisé très vite (déco BT -> branchement USB).
+         * Si le fd est mort (ou son chemin a disparu), on libère le slot immédiatement
+         * pour permettre la création d'une nouvelle manette Xbox sur le même chemin. */
+        if (access(ctrl->dev_path, F_OK) != 0 ||
+            ioctl(ctrl->fd_src, EVIOCGID, &id) < 0) {
+            close_controller(ctrl);
+            printf("[HOTPLUG] Disconnected: %s\n", ctrl->name);
+        }
+    }
 }
 
 static int scan_for_new_controllers(struct controller *controllers, int *count, int epoll_fd) {
@@ -859,7 +885,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    int ino_wd = inotify_add_watch(ino_fd, "/dev/input", IN_CREATE);
+    int ino_wd = inotify_add_watch(ino_fd, "/dev/input",
+                                   IN_CREATE | IN_DELETE | IN_ATTRIB |
+                                   IN_MOVED_FROM | IN_MOVED_TO);
     if (ino_wd < 0) {
         perror("inotify_add_watch");
         close(ino_fd);
@@ -923,9 +951,18 @@ int main(int argc, char *argv[]) {
             break;
         }
 
+        if (nfds == 0) {
+            /* Filet de sécurité : si une création USB a été ratée pendant la course
+             * udev/inotify, on retente périodiquement sans dépendre d'un 2e événement. */
+            prune_disconnected_controllers(controllers, count);
+            scan_for_new_controllers(controllers, &count, epoll_fd);
+            continue;
+        }
+
         for (int i = 0; i < nfds; i++) {
             if (events[i].data.u32 == INOTIFY_EVENT_ID) {
                 while (read(ino_fd, ino_buf, sizeof(ino_buf)) > 0) {}
+                prune_disconnected_controllers(controllers, count);
                 scan_for_new_controllers(controllers, &count, epoll_fd);
             } else {
                 int idx = events[i].data.u32;
