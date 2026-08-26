@@ -1639,3 +1639,36 @@ gwine-migrate:
     if [ -f "$NEW_VERSION" ]; then
         echo "  Version : $(cat "$NEW_VERSION")"
     fi
+
+# Détails : utile en cas d'écran noir ou "hors portée" au login, quand KWin
+# force un mode (résolution/fréquence) sauvegardé que l'écran ne supporte plus.
+# Les fichiers sont mis de côté avec horodatage, KWin redétectera les écrans.
+# Réinitialiser la configuration d'affichage KWin sauvegardée (session + greeter)
+kwin-display-reset:
+    #!/usr/bin/bash
+    TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+    USER_CONFIG="${HOME}/.config/kwinoutputconfig.json"
+    GREETER_CONFIG="/var/lib/plasmalogin/.config/kwinoutputconfig.json"
+    MOVED=0
+
+    # Configuration de la session utilisateur
+    if [ -f "$USER_CONFIG" ]; then
+        mv "$USER_CONFIG" "${USER_CONFIG}.bak-${TIMESTAMP}"
+        echo "→ Config session mise de côté : ${USER_CONFIG}.bak-${TIMESTAMP}"
+        MOVED=1
+    fi
+
+    # Configuration du greeter (écran de connexion), nécessite les droits root
+    if sudo test -f "$GREETER_CONFIG"; then
+        sudo mv "$GREETER_CONFIG" "${GREETER_CONFIG}.bak-${TIMESTAMP}"
+        echo "→ Config greeter mise de côté : ${GREETER_CONFIG}.bak-${TIMESTAMP}"
+        MOVED=1
+    fi
+
+    if [ "$MOVED" -eq 0 ]; then
+        echo "Aucune configuration d'affichage sauvegardée trouvée, rien à faire."
+    else
+        echo ""
+        echo "✓ Configuration d'affichage réinitialisée."
+        echo "  Redémarre le PC : KWin redétectera les écrans au prochain démarrage."
+    fi

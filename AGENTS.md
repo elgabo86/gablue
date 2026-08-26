@@ -1010,6 +1010,7 @@ Commandes ujust disponibles :
 - **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`, `cpuid-emu-on/off`
 - **Virtualisation** : `docker-enable/disable`, `dx-group`, `setup-kvmfr`, `libvirt-reset-cache` (efface le cache capabilities libvirt, corrige l'erreur "video model 'virtio' unsupported" dans virt-manager)
 - **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`, `ssd-thermal-limit` (limite thermique NVMe via HCTM, interactif, persistant)
+- **Affichage** : `kwin-display-reset` (met de côté avec horodatage `~/.config/kwinoutputconfig.json` et `/var/lib/plasmalogin/.config/kwinoutputconfig.json` — dépannage écran noir / « hors portée » au login quand KWin force un mode sauvegardé non supporté), `vrr-fix`
 - **Rebase** : `gablue-rebase-*` pour changer de variante
 
 ## Sécurité
