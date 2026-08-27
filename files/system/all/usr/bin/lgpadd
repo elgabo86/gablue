@@ -1,0 +1,136 @@
+#!/bin/bash
+
+# Ajoute des packs LGP dans ES-DE (EmulationStation Desktop Edition)
+#
+# Usage :
+#   lgpadd [--desktop|--switch] [fichier1.lgp fichier2.lgp ...]
+#
+# - Sans fichier en argument : traite tous les .lgp du dossier courant
+# - Avec des fichiers .lgp en argument : ne traite que ceux-ci
+#
+# Options :
+#   --desktop  (défaut) : lien dans ~/Roms/desktop (section "Desktop Applications")
+#   --switch            : lien dans ~/Roms/switch (section "Nintendo Switch")
+#
+# Les systèmes ES-DE "switch" et "desktop" supportent nativement l'extension
+# .lgp (lancement via launchlin.sh), pas besoin de lanceur .sh : on crée un
+# lien symbolique direct du .lgp et on télécharge le cover dans
+# ~/ES-DE/downloaded_media/<section>/covers (s'il n'existe pas déjà).
+
+SECTION="desktop"
+FILES=()
+
+# Analyse des arguments : options + fichiers .lgp
+for arg in "$@"; do
+    case "$arg" in
+        --desktop)  SECTION="desktop" ;;
+        --switch)   SECTION="switch" ;;
+        *.lgp)      FILES+=("$arg") ;;
+        *)          echo "Argument ignoré : $arg" ;;
+    esac
+done
+
+# Sans fichier en argument, scanner le dossier courant
+if [ ${#FILES[@]} -eq 0 ]; then
+    shopt -s nullglob
+    for f in "$(pwd)"/*.lgp; do
+        FILES+=("$f")
+    done
+    shopt -u nullglob
+
+    if [ ${#FILES[@]} -eq 0 ]; then
+        echo "Aucun fichier .lgp trouvé dans $(pwd)"
+        exit 0
+    fi
+fi
+
+for lgp_file in "${FILES[@]}"; do
+    if [ ! -f "$lgp_file" ]; then
+        echo "Fichier introuvable : $lgp_file"
+        echo "---"
+        continue
+    fi
+
+    onlyapp=$(basename "$lgp_file" .lgp)
+    fullpath=$(realpath "$lgp_file")
+
+    # Trouver le dossier Roms/<section> (insensible à la casse)
+    link_dir=""
+    for dir in "$HOME"/[Rr][Oo][Mm][Ss]/*/; do
+        [ -d "$dir" ] || continue
+        base_dirname=$(basename "$dir")
+        if [ "${base_dirname,,}" = "$SECTION" ]; then
+            link_dir="$dir"
+            break
+        fi
+    done
+
+    if [ -z "$link_dir" ]; then
+        link_dir="$HOME/Roms/$SECTION"
+        mkdir -p "$link_dir"
+    fi
+
+    # Créer ou mettre à jour le lien symbolique direct vers le .lgp
+    link_game="$link_dir/$onlyapp.lgp"
+    ln -sf "$fullpath" "$link_game"
+    echo "Lien symbolique : $link_game -> $fullpath"
+
+    # Trouver le dossier ES-DE (insensible à la casse)
+    cover_dir=""
+    for esde in "$HOME"/[Ee][Ss]-[Dd][Ee]/downloaded_media/"$SECTION"/covers; do
+        if [ -d "$esde" ]; then
+            cover_dir="$esde"
+            break
+        fi
+    done
+
+    if [ -z "$cover_dir" ]; then
+        cover_dir="$HOME/ES-DE/downloaded_media/$SECTION/covers"
+        mkdir -p "$cover_dir"
+    fi
+
+    # Vérifier si un cover existe déjà
+    cover_exists=false
+    for ext in .png .jpg .jpeg; do
+        if [ -f "$cover_dir/$onlyapp$ext" ]; then
+            cover_exists=true
+            echo "Cover existant : $cover_dir/$onlyapp$ext (pas de téléchargement)"
+            break
+        fi
+    done
+
+    # Télécharger le cover seulement s'il n'existe pas
+    if [ "$cover_exists" = false ]; then
+        encoded_name=$(echo "$onlyapp" | sed 's/ /%20/g')
+        search_url="https://steamgrid.usebottles.com/api/search/$encoded_name"
+        response=$(curl -s "$search_url")
+
+        if [ -z "$response" ]; then
+            echo "Erreur : impossible de contacter l'API pour $onlyapp"
+            echo "---"
+            continue
+        fi
+
+        image_url=$(echo "$response" | grep -o 'https://[^"]*\.\(jpg\|png\|jpeg\)' | head -n 1)
+        if [ -z "$image_url" ]; then
+            echo "Aucune image trouvée pour $onlyapp"
+            echo "---"
+            continue
+        fi
+
+        ext=$(echo "$image_url" | grep -o '\.\(jpg\|png\|jpeg\)$')
+        output_cover="$cover_dir/$onlyapp$ext"
+
+        curl -s "$image_url" -o "$output_cover"
+        if [ $? -eq 0 ]; then
+            echo "Cover téléchargé : $output_cover"
+        else
+            echo "Échec du téléchargement du cover pour $onlyapp"
+            rm -f "$output_cover"
+        fi
+    fi
+
+    echo "---"
+done
+
+echo "Terminé : tous les fichiers .lgp ont été traités (section : $SECTION)"

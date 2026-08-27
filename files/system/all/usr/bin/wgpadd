@@ -1,82 +1,138 @@
 #!/bin/bash
 
-# Dossier courant
-WORKING_DIR="$(pwd)"
-LAUNCH_SCRIPT="/usr/bin/gwine"
+# Ajoute des packs WGP dans ES-DE (EmulationStation Desktop Edition)
+#
+# Usage :
+#   wgpadd [--windows|--xbox360] [fichier1.wgp fichier2.wgp ...]
+#
+# - Sans fichier en argument : traite tous les .wgp du dossier courant
+# - Avec des fichiers .wgp en argument : ne traite que ceux-ci
+#
+# Options :
+#   --windows  (défaut) : lanceur .sh dans .es-wgp + lien dans ~/Roms/windows
+#                         (le système "windows" natif d'ES-DE ne connaît pas .wgp)
+#   --xbox360           : lien direct du .wgp dans ~/Roms/xbox360
+#                         (le système xbox360 supporte nativement l'extension .wgp
+#                          via la commande "WGP Windows Game Pack", pas de .sh)
+#
+# Télécharge le cover dans ~/ES-DE/downloaded_media/<section>/covers
+# (s'il n'existe pas déjà).
 
-# Parcourir tous les fichiers .wgp du dossier courant
-for wgp_file in "$WORKING_DIR"/*.wgp; do
-    if [ ! -f "$wgp_file" ]; then
-        echo "Aucun fichier .wgp trouvé dans $WORKING_DIR"
+LAUNCH_SCRIPT="/usr/bin/gwine"
+SECTION="windows"
+FILES=()
+
+# Analyse des arguments : options + fichiers .wgp
+for arg in "$@"; do
+    case "$arg" in
+        --windows)  SECTION="windows" ;;
+        --xbox360)  SECTION="xbox360" ;;
+        *.wgp)      FILES+=("$arg") ;;
+        *)          echo "Argument ignoré : $arg" ;;
+    esac
+done
+
+# Sans fichier en argument, scanner le dossier courant
+if [ ${#FILES[@]} -eq 0 ]; then
+    shopt -s nullglob
+    for f in "$(pwd)"/*.wgp; do
+        FILES+=("$f")
+    done
+    shopt -u nullglob
+
+    if [ ${#FILES[@]} -eq 0 ]; then
+        echo "Aucun fichier .wgp trouvé dans $(pwd)"
         exit 0
+    fi
+fi
+
+for wgp_file in "${FILES[@]}"; do
+    if [ ! -f "$wgp_file" ]; then
+        echo "Fichier introuvable : $wgp_file"
+        echo "---"
+        continue
     fi
 
     onlyapp=$(basename "$wgp_file" .wgp)
     fullpath=$(realpath "$wgp_file")
-    onlypath="$WORKING_DIR/.es-wgp"
-    script_sh="$onlypath/$onlyapp.sh"
 
-    # Créer le dossier .es-wgp si nécessaire
-    mkdir -p "$onlypath"
+    if [ "$SECTION" = "windows" ]; then
+        # Section windows : création du lanceur .sh (le système natif ES-DE
+        # ne connaît pas l'extension .wgp)
+        script_dir="$(dirname "$fullpath")/.es-wgp"
+        script_sh="$script_dir/$onlyapp.sh"
 
-    # Vérifier si le .fix existe dans le pack .wgp
-    MOUNT_BASE="/tmp/wgpack_check_$(date +%s)_$$"
-    MOUNT_DIR="$MOUNT_BASE/mount"
-    mkdir -p "$MOUNT_DIR"
-    HAS_FIX=false
+        # Créer le dossier .es-wgp si nécessaire
+        mkdir -p "$script_dir"
 
-    if command -v squashfuse &> /dev/null; then
-        squashfuse -r "$fullpath" "$MOUNT_DIR" 2>/dev/null
-        if [ $? -eq 0 ]; then
-            if [ -f "$MOUNT_DIR/.fix" ]; then
-                HAS_FIX=true
+        # Vérifier si le .fix existe dans le pack .wgp
+        MOUNT_BASE="/tmp/wgpack_check_$(date +%s)_$$"
+        MOUNT_DIR="$MOUNT_BASE/mount"
+        mkdir -p "$MOUNT_DIR"
+        HAS_FIX=false
+
+        if command -v squashfuse &> /dev/null; then
+            squashfuse -r "$fullpath" "$MOUNT_DIR" 2>/dev/null
+            if [ $? -eq 0 ]; then
+                if [ -f "$MOUNT_DIR/.fix" ]; then
+                    HAS_FIX=true
+                fi
+                fusermount -u "$MOUNT_DIR" 2>/dev/null
             fi
-            fusermount -u "$MOUNT_DIR" 2>/dev/null
         fi
-    fi
-    rm -rf "$MOUNT_BASE"
+        rm -rf "$MOUNT_BASE"
 
-    # Déterminer le mode
-    if [ "$HAS_FIX" = true ]; then
-        choice="fix"
-        echo "$onlyapp: mode fix (détecté via .fix)"
-    else
-        choice="normal"
-        echo "$onlyapp: mode normal"
+        # Déterminer le mode
+        if [ "$HAS_FIX" = true ]; then
+            choice="fix"
+            echo "$onlyapp: mode fix (détecté via .fix)"
+        else
+            choice="normal"
+            echo "$onlyapp: mode normal"
+        fi
+
+        # Créer ou remplacer le script .sh
+        echo "#!/bin/bash" > "$script_sh"
+        if [ "$choice" = "fix" ]; then
+            echo "exec \"$LAUNCH_SCRIPT\" --fix \"$fullpath\"" >> "$script_sh"
+        else
+            echo "exec \"$LAUNCH_SCRIPT\" \"$fullpath\"" >> "$script_sh"
+        fi
+        chmod +x "$script_sh"
+        echo "Script créé : $script_sh"
     fi
 
-    # Créer ou remplacer le script .sh
-    echo "#!/bin/bash" > "$script_sh"
-    if [ "$choice" = "fix" ]; then
-        echo "exec \"$LAUNCH_SCRIPT\" --fix \"$fullpath\"" >> "$script_sh"
-    else
-        echo "exec \"$LAUNCH_SCRIPT\" \"$fullpath\"" >> "$script_sh"
-    fi
-    chmod +x "$script_sh"
-    echo "Script créé : $script_sh"
-
-    # Trouver le dossier Roms/windows (insensible à la casse)
+    # Trouver le dossier Roms/<section> (insensible à la casse)
     link_dir=""
-    for dir in "$HOME"/[Rr][Oo][Mm][Ss]/[Ww][Ii][Nn][Dd][Oo][Ww][Ss]; do
-        if [ -d "$dir" ]; then
+    for dir in "$HOME"/[Rr][Oo][Mm][Ss]/*/; do
+        [ -d "$dir" ] || continue
+        base_dirname=$(basename "$dir")
+        if [ "${base_dirname,,}" = "$SECTION" ]; then
             link_dir="$dir"
             break
         fi
     done
 
     if [ -z "$link_dir" ]; then
-        link_dir="$HOME/Roms/windows"
+        link_dir="$HOME/Roms/$SECTION"
         mkdir -p "$link_dir"
     fi
 
     # Créer ou mettre à jour le lien symbolique
-    link_sh="$link_dir/$onlyapp.sh"
-    ln -sf "$script_sh" "$link_sh"
-    echo "Lien symbolique : $link_sh -> $script_sh"
+    if [ "$SECTION" = "windows" ]; then
+        link_game="$link_dir/$onlyapp.sh"
+        ln -sf "$script_sh" "$link_game"
+        echo "Lien symbolique : $link_game -> $script_sh"
+    else
+        # Section xbox360 : lien direct vers le .wgp (extension native, gwine %ROM%)
+        link_game="$link_dir/$onlyapp.wgp"
+        ln -sf "$fullpath" "$link_game"
+        echo "Lien symbolique : $link_game -> $fullpath"
+    fi
 
     # Trouver le dossier ES-DE (insensible à la casse)
     cover_dir=""
-    for esde in "$HOME"/[Ee][Ss]-[Dd][Ee]/downloaded_media/windows/covers; do
+    for esde in "$HOME"/[Ee][Ss]-[Dd][Ee]/downloaded_media/"$SECTION"/covers; do
         if [ -d "$esde" ]; then
             cover_dir="$esde"
             break
@@ -84,7 +140,7 @@ for wgp_file in "$WORKING_DIR"/*.wgp; do
     done
 
     if [ -z "$cover_dir" ]; then
-        cover_dir="$HOME/ES-DE/downloaded_media/windows/covers"
+        cover_dir="$HOME/ES-DE/downloaded_media/$SECTION/covers"
         mkdir -p "$cover_dir"
     fi
 
@@ -132,4 +188,4 @@ for wgp_file in "$WORKING_DIR"/*.wgp; do
     echo "---"
 done
 
-echo "Terminé : tous les fichiers .wgp ont été traités"
+echo "Terminé : tous les fichiers .wgp ont été traités (section : $SECTION)"
