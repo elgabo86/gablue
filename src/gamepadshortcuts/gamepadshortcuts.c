@@ -16,6 +16,8 @@
 #include <sys/poll.h>
 #include <sys/wait.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <pthread.h>
 #include <dbus/dbus.h>
 #include <linux/input.h>
 
@@ -614,6 +616,1007 @@ static void cleanup_vt_tracking(void)
 }
 
 /* =========================================================================
+ * AUTO-PAIRING BLUETOOTH DES MANETTES
+ *
+ * Regle de fonctionnement :
+ *   - Aucune manette BT connectee  -> mode pairing : decouverte active,
+ *     pairable + discoverable, appairage automatique des manettes vues.
+ *   - >= 1 manette BT connectee    -> decouverte et discoverable coupes
+ *     (zero impact radio/latence pendant le jeu). Pairable reste actif :
+ *     il ne fait qu'ecouter passivement (page scan) et est indispensable
+ *     pour que les AUTRES manettes deja appairees puissent se reconnecter.
+ *
+ * Securite : l'agent D-Bus n'accepte un pairing que si le peripherique est
+ * reconnu comme manette (classe Bluetooth gamepad/joystick ou nom connu).
+ * On n'appelle PAS RequestDefaultAgent : les pairings manuels (KDE etc.)
+ * gardent leur propre agent avec confirmation utilisateur.
+ *
+ * Multi-session : un verrou flock (/tmp/gablue-bt-autopair.lock) garantit
+ * qu'une seule instance de gamepadshortcuts pilote le Bluetooth.
+ * Le BT est eteint par l'utilisateur (Powered=false) -> on ne touche a rien.
+ * ========================================================================= */
+
+#define BT_LOCK_PATH       "/tmp/gablue-bt-autopair.lock"
+#define BT_AGENT_PATH      "/org/gablue/btautopair"
+#define BT_BLUEZ           "org.bluez"
+#define BT_DEV_IFACE       "org.bluez.Device1"
+#define BT_ADP_IFACE       "org.bluez.Adapter1"
+#define BT_AGENT_IFACE     "org.bluez.Agent1"
+#define BT_AGENT_MGR       "org.bluez.AgentManager1"
+#define BT_OM_IFACE        "org.freedesktop.DBus.ObjectManager"
+#define BT_PROPS_IFACE     "org.freedesktop.DBus.Properties"
+#define BT_MAX_DEVICES     32
+#define BT_MAX_ADAPTERS    4
+#define BT_PAIR_MAX_FAILS  3
+#define BT_PAIR_RETRY_S    20
+#define BT_WATCHDOG_S      15
+
+typedef struct {
+    char path[192];
+    char name[128];
+    char alias[128];
+    unsigned int cod;
+    bool has_cod;
+    bool paired;
+    bool connected;
+    bool trusted;
+    time_t last_try;   /* dernier essai de pairing (anti-boucle) */
+    int fails;         /* echecs consecutifs (abandon apres BT_PAIR_MAX_FAILS) */
+} btdev_t;
+
+typedef struct {
+    char path[64];
+    bool powered;
+    bool pairable;
+    bool discoverable;
+    bool discovering;
+    bool started_here; /* decouverte lancee par nous (pour StopDiscovery) */
+} btadapt_t;
+
+static pthread_mutex_t g_bt_lock = PTHREAD_MUTEX_INITIALIZER;
+static btdev_t g_bt_devices[BT_MAX_DEVICES];
+static int g_bt_ndevices;
+static btadapt_t g_bt_adapters[BT_MAX_ADAPTERS];
+static int g_bt_nadapters;
+static volatile bool *g_bt_run;
+static volatile bool g_bt_bluez_up;     /* bluetoothd present sur le bus */
+static volatile bool g_bt_agent_ready;  /* agent enregistre aupres de bluez */
+static volatile bool g_bt_dirty;        /* un signal demande un re-calcul */
+static bool g_bt_pairing_mode = false; /* premier refresh force la transition */
+static int g_bt_lock_fd = -1;
+static pthread_t g_bt_manager_thread;
+
+/* Motifs de noms Bluetooth identifies comme manettes (minuscules,
+   comparaison par sous-chaine). Liste volontairement large. */
+static const char *const bt_name_patterns[] = {
+    "controller",      /* Wireless Controller (DS4/DS5), Pro Controller,
+                          Xbox Wireless Controller, clones 8BitDo... */
+    "dualsense",       /* DualSense / DualSense Edge */
+    "dualshock",
+    "xbox",
+    "joy-con",
+    "8bitdo",
+    "gamesir",
+    "gulikit",
+    "nimbus",
+    "gamepad",
+};
+
+/* Copie bornee sans warning (strncpy a ses propres warnings -Wstringop) */
+static void bt_strlcpy(char *dst, size_t size, const char *src)
+{
+    size_t len = strlen(src);
+    if (len >= size)
+        len = size - 1;
+    memcpy(dst, src, len);
+    dst[len] = '\0';
+}
+
+/* Classe Bluetooth (CoD) : major Peripheral (0x05) + minor Joystick (0x01)
+   ou Gamepad (0x02). Detecte les manettes sans nom connu. */
+static bool bt_class_is_gamepad(unsigned int cod)
+{
+    unsigned int major = (cod >> 8) & 0x1f;
+    unsigned int minor = (cod >> 2) & 0x3f;
+    return major == 0x05 && (minor == 0x01 || minor == 0x02);
+}
+
+static bool bt_name_is_controller(const char *name)
+{
+    if (!name || !name[0])
+        return false;
+
+    char lower[160];
+    size_t i;
+    for (i = 0; name[i] && i < sizeof(lower) - 1; i++) {
+        char cch = name[i];
+        if (cch >= 'A' && cch <= 'Z')
+            cch += 'a' - 'A';
+        lower[i] = cch;
+    }
+    lower[i] = '\0';
+
+    for (size_t p = 0; p < sizeof(bt_name_patterns) / sizeof(bt_name_patterns[0]); p++) {
+        if (strstr(lower, bt_name_patterns[p]))
+            return true;
+    }
+    return false;
+}
+
+static bool bt_dev_is_controller_locked(const btdev_t *d)
+{
+    if (d->has_cod && bt_class_is_gamepad(d->cod))
+        return true;
+    if (bt_name_is_controller(d->alias[0] ? d->alias : d->name))
+        return true;
+    return false;
+}
+
+/* ----- Appels D-Bus generiques (thread etat uniquement) ----- */
+
+static DBusConnection *g_bt_conn; /* bus systeme prive du thread etat */
+
+/* Envoie un appel bloquant, log l'erreur en mode non verbeux.
+   Retourne la reponse (a libérer par l'appelant) ou NULL. */
+static DBusMessage *bt_call(DBusMessage *msg, int timeout_ms, const char *what,
+                            const char *path)
+{
+    DBusError err;
+    dbus_error_init(&err);
+    DBusMessage *reply = dbus_connection_send_with_reply_and_block(
+        g_bt_conn, msg, timeout_ms, &err);
+    dbus_message_unref(msg);
+    if (dbus_error_is_set(&err)) {
+        fprintf(stderr, "[BT] %s (%s): %s\n", what, path, err.message);
+        dbus_error_free(&err);
+        if (reply)
+            dbus_message_unref(reply);
+        return NULL;
+    }
+    return reply;
+}
+
+/* Properties.Set avec une valeur booléenne */
+static void bt_props_set_bool(const char *path, const char *iface,
+                              const char *prop, bool value, const char *what)
+{
+    DBusMessage *msg = dbus_message_new_method_call(BT_BLUEZ, path,
+                                                    BT_PROPS_IFACE, "Set");
+    if (!msg)
+        return;
+
+    DBusMessageIter it, var;
+    dbus_bool_t v = value;
+    dbus_message_iter_init_append(msg, &it);
+    dbus_message_iter_append_basic(&it, DBUS_TYPE_STRING, &iface);
+    dbus_message_iter_append_basic(&it, DBUS_TYPE_STRING, &prop);
+    dbus_message_iter_open_container(&it, DBUS_TYPE_VARIANT, "b", &var);
+    dbus_message_iter_append_basic(&var, DBUS_TYPE_BOOLEAN, &v);
+    dbus_message_iter_close_container(&it, &var);
+
+    DBusMessage *reply = bt_call(msg, 10000, what, path);
+    if (reply)
+        dbus_message_unref(reply);
+}
+
+/* Méthode sans argument sur un objet bluez */
+static bool bt_call_void(const char *path, const char *iface,
+                         const char *method, int timeout_ms, const char *what)
+{
+    DBusMessage *msg = dbus_message_new_method_call(BT_BLUEZ, path,
+                                                    iface, method);
+    if (!msg)
+        return false;
+
+    DBusMessage *reply = bt_call(msg, timeout_ms, what, path);
+    if (reply) {
+        dbus_message_unref(reply);
+        return true;
+    }
+    return false;
+}
+
+/* ----- Parcours des arbres de proprietes D-Bus ----- */
+
+typedef void (*bt_prop_cb)(const char *key, DBusMessageIter *val, void *ctx);
+
+/* props_array pointe sur le ARRAY a{sv} (variant deja ouverte) */
+static void bt_iter_props(DBusMessageIter *props_array, bt_prop_cb cb, void *ctx)
+{
+    if (dbus_message_iter_get_arg_type(props_array) != DBUS_TYPE_ARRAY)
+        return;
+
+    DBusMessageIter a;
+    dbus_message_iter_recurse(props_array, &a);
+    while (dbus_message_iter_get_arg_type(&a) == DBUS_TYPE_DICT_ENTRY) {
+        DBusMessageIter de, var;
+        const char *key = NULL;
+        dbus_message_iter_recurse(&a, &de);
+        if (dbus_message_iter_get_arg_type(&de) == DBUS_TYPE_STRING)
+            dbus_message_iter_get_basic(&de, &key);
+        dbus_message_iter_next(&de);
+        dbus_message_iter_recurse(&de, &var); /* ouvre la variant valeur */
+        if (key)
+            cb(key, &var, ctx);
+        dbus_message_iter_next(&a);
+    }
+}
+
+static void bt_dev_prop_cb(const char *key, DBusMessageIter *val, void *ctx)
+{
+    btdev_t *d = ctx;
+    int t = dbus_message_iter_get_arg_type(val);
+
+    if (!strcmp(key, "Name") && t == DBUS_TYPE_STRING) {
+        const char *s = NULL;
+        dbus_message_iter_get_basic(val, &s);
+        if (s)
+            bt_strlcpy(d->name, sizeof(d->name), s);
+    } else if (!strcmp(key, "Alias") && t == DBUS_TYPE_STRING) {
+        const char *s = NULL;
+        dbus_message_iter_get_basic(val, &s);
+        if (s)
+            bt_strlcpy(d->alias, sizeof(d->alias), s);
+    } else if (!strcmp(key, "Class") && t == DBUS_TYPE_UINT32) {
+        dbus_uint32_t u = 0;
+        dbus_message_iter_get_basic(val, &u);
+        d->cod = u;
+        d->has_cod = true;
+    } else if (!strcmp(key, "Paired") && t == DBUS_TYPE_BOOLEAN) {
+        dbus_bool_t b = 0;
+        dbus_message_iter_get_basic(val, &b);
+        d->paired = b;
+    } else if (!strcmp(key, "Connected") && t == DBUS_TYPE_BOOLEAN) {
+        dbus_bool_t b = 0;
+        dbus_message_iter_get_basic(val, &b);
+        d->connected = b;
+    } else if (!strcmp(key, "Trusted") && t == DBUS_TYPE_BOOLEAN) {
+        dbus_bool_t b = 0;
+        dbus_message_iter_get_basic(val, &b);
+        d->trusted = b;
+    }
+}
+
+static void bt_adp_prop_cb(const char *key, DBusMessageIter *val, void *ctx)
+{
+    btadapt_t *a = ctx;
+    int t = dbus_message_iter_get_arg_type(val);
+
+    if (t != DBUS_TYPE_BOOLEAN)
+        return;
+
+    dbus_bool_t b = 0;
+    dbus_message_iter_get_basic(val, &b);
+
+    if (!strcmp(key, "Powered"))
+        a->powered = b;
+    else if (!strcmp(key, "Pairable"))
+        a->pairable = b;
+    else if (!strcmp(key, "Discoverable"))
+        a->discoverable = b;
+    else if (!strcmp(key, "Discovering"))
+        a->discovering = b;
+}
+
+/* Recherche par path dans la table courante (appelant doit tenir g_bt_lock) */
+static btdev_t *bt_find_dev(const char *path)
+{
+    for (int i = 0; i < g_bt_ndevices; i++)
+        if (!strcmp(g_bt_devices[i].path, path))
+            return &g_bt_devices[i];
+    return NULL;
+}
+
+/* ----- ObjectManager.GetManagedObjects : etat complet ----- */
+
+static int bt_collect(void)
+{
+    /* Sauvegarde des infos transitoires (fails, started_here) par path */
+    btdev_t old_dev[BT_MAX_DEVICES];
+    int nold_dev = g_bt_ndevices;
+    btadapt_t old_adp[BT_MAX_ADAPTERS];
+    int nold_adp = g_bt_nadapters;
+    pthread_mutex_lock(&g_bt_lock);
+    memcpy(old_dev, g_bt_devices, sizeof(old_dev));
+    memcpy(old_adp, g_bt_adapters, sizeof(old_adp));
+    pthread_mutex_unlock(&g_bt_lock);
+
+    DBusMessage *msg = dbus_message_new_method_call(BT_BLUEZ, "/",
+                                                    BT_OM_IFACE,
+                                                    "GetManagedObjects");
+    if (!msg)
+        return -1;
+
+    DBusMessage *reply = bt_call(msg, 15000, "GetManagedObjects", "/");
+    if (!reply)
+        return -1;
+
+    pthread_mutex_lock(&g_bt_lock);
+    g_bt_ndevices = 0;
+    g_bt_nadapters = 0;
+
+    DBusMessageIter root, objs;
+    bool ok = dbus_message_iter_init(reply, &root)
+              && dbus_message_iter_get_arg_type(&root) == DBUS_TYPE_ARRAY;
+    if (ok) {
+        dbus_message_iter_recurse(&root, &objs);
+        while (dbus_message_iter_get_arg_type(&objs) == DBUS_TYPE_DICT_ENTRY) {
+            DBusMessageIter entry, ifaces;
+            const char *opath = NULL;
+            dbus_message_iter_recurse(&objs, &entry);
+            if (dbus_message_iter_get_arg_type(&entry) == DBUS_TYPE_OBJECT_PATH)
+                dbus_message_iter_get_basic(&entry, &opath);
+            dbus_message_iter_next(&entry); /* ARRAY a{sa{sv}} (variant aplatie) */
+
+            if (opath && dbus_message_iter_get_arg_type(&entry) == DBUS_TYPE_ARRAY) {
+                dbus_message_iter_recurse(&entry, &ifaces);
+                while (dbus_message_iter_get_arg_type(&ifaces)
+                       == DBUS_TYPE_DICT_ENTRY) {
+                    DBusMessageIter ie;
+                    const char *iface = NULL;
+                    dbus_message_iter_recurse(&ifaces, &ie);
+                    if (dbus_message_iter_get_arg_type(&ie) == DBUS_TYPE_STRING)
+                        dbus_message_iter_get_basic(&ie, &iface);
+                    dbus_message_iter_next(&ie); /* ARRAY a{sv} (variant aplatie) */
+
+                    if (iface && !strcmp(iface, BT_DEV_IFACE)
+                        && g_bt_ndevices < BT_MAX_DEVICES) {
+                        btdev_t *d = &g_bt_devices[g_bt_ndevices];
+                        memset(d, 0, sizeof(*d));
+                        bt_strlcpy(d->path, sizeof(d->path), opath);
+                        bt_iter_props(&ie, bt_dev_prop_cb, d);
+                        /* Restaure les compteurs d'echec du meme path */
+                        for (int j = 0; j < nold_dev; j++) {
+                            if (!strcmp(old_dev[j].path, d->path)) {
+                                d->fails = old_dev[j].fails;
+                                d->last_try = old_dev[j].last_try;
+                                break;
+                            }
+                        }
+                        g_bt_ndevices++;
+                    } else if (iface && !strcmp(iface, BT_ADP_IFACE)
+                               && g_bt_nadapters < BT_MAX_ADAPTERS) {
+                        btadapt_t *a = &g_bt_adapters[g_bt_nadapters];
+                        memset(a, 0, sizeof(*a));
+                        bt_strlcpy(a->path, sizeof(a->path), opath);
+                        bt_iter_props(&ie, bt_adp_prop_cb, a);
+                        /* Restaure started_here du meme path */
+                        for (int j = 0; j < nold_adp; j++) {
+                            if (!strcmp(old_adp[j].path, a->path)) {
+                                a->started_here = old_adp[j].started_here;
+                                break;
+                            }
+                        }
+                        g_bt_nadapters++;
+                    }
+                    dbus_message_iter_next(&ifaces);
+                }
+            }
+            dbus_message_iter_next(&objs);
+        }
+    }
+
+    pthread_mutex_unlock(&g_bt_lock);
+    dbus_message_unref(reply);
+    return ok ? 0 : -1;
+}
+
+/* ----- Appairage automatique d'une manette decouverte ----- */
+
+static void bt_try_autopair(const char *path)
+{
+    btdev_t snapshot;
+    bool doit = false;
+
+    pthread_mutex_lock(&g_bt_lock);
+    btdev_t *d = bt_find_dev(path);
+    if (d && !d->paired && bt_dev_is_controller_locked(d)
+        && d->fails < BT_PAIR_MAX_FAILS
+        && time(NULL) - d->last_try >= BT_PAIR_RETRY_S) {
+        d->last_try = time(NULL);
+        snapshot = *d;
+        doit = true;
+    }
+    pthread_mutex_unlock(&g_bt_lock);
+
+    if (!doit || !g_bt_agent_ready)
+        return;
+
+    const char *label = snapshot.alias[0] ? snapshot.alias : snapshot.name;
+    fprintf(stderr, "[BT] Manette a appairer detectee: %s (%s)\n",
+            label[0] ? label : "nom inconnu", path);
+
+    /* Couper la decouverte pendant le pairing (plus fiable) */
+    pthread_mutex_lock(&g_bt_lock);
+    for (int i = 0; i < g_bt_nadapters; i++) {
+        if (g_bt_adapters[i].discovering && g_bt_adapters[i].started_here) {
+            char adp_path[64];
+            bt_strlcpy(adp_path, sizeof(adp_path), g_bt_adapters[i].path);
+            g_bt_adapters[i].started_here = false;
+            pthread_mutex_unlock(&g_bt_lock);
+            bt_call_void(adp_path, BT_ADP_IFACE, "StopDiscovery", 10000,
+                         "StopDiscovery");
+            pthread_mutex_lock(&g_bt_lock);
+        }
+    }
+    pthread_mutex_unlock(&g_bt_lock);
+
+    /* Pair : l'agent enregistre sur l'autre connexion repond aux requetes */
+    if (!bt_call_void(path, BT_DEV_IFACE, "Pair", 30000, "Pair")) {
+        pthread_mutex_lock(&g_bt_lock);
+        d = bt_find_dev(path);
+        if (d)
+            d->fails++;
+        pthread_mutex_unlock(&g_bt_lock);
+        return;
+    }
+
+    fprintf(stderr, "[BT] Appairage reussi: %s\n", label);
+
+    /* Trusted : evite les futurs dialogues d'autorisation HID */
+    bt_props_set_bool(path, BT_DEV_IFACE, "Trusted", true, "Trusted");
+
+    /* Connect (certaines manettes attendent que le PC initie) */
+    bt_call_void(path, BT_DEV_IFACE, "Connect", 30000, "Connect");
+
+    pthread_mutex_lock(&g_bt_lock);
+    d = bt_find_dev(path);
+    if (d)
+        d->fails = 0;
+    pthread_mutex_unlock(&g_bt_lock);
+
+    g_bt_dirty = true;
+}
+
+/* ----- Recalcul et application de l'etat ----- */
+
+static void bt_refresh_state(void)
+{
+    if (!g_bt_bluez_up)
+        return;
+    if (bt_collect() < 0)
+        return;
+
+    pthread_mutex_lock(&g_bt_lock);
+
+    int n_ctrl = 0;
+    for (int i = 0; i < g_bt_ndevices; i++) {
+        if (g_bt_devices[i].connected
+            && bt_dev_is_controller_locked(&g_bt_devices[i]))
+            n_ctrl++;
+    }
+
+    bool want_pairing = (n_ctrl == 0);
+    if (want_pairing && !g_bt_pairing_mode) {
+        /* Nouveau cycle : les manettes en echec ont droit a une nouvelle
+           chance au prochain passage en mode pairing */
+        for (int i = 0; i < g_bt_ndevices; i++)
+            g_bt_devices[i].fails = 0;
+        fprintf(stderr, "[BT] Aucune manette connectee: mode pairing actif\n");
+    } else if (!want_pairing && g_bt_pairing_mode) {
+        fprintf(stderr, "[BT] %d manette(s) connectee(s): pairing coupe\n",
+                n_ctrl);
+    }
+    g_bt_pairing_mode = want_pairing;
+
+    /* Copie les decisions prises sous verrou pour agir hors verrou */
+    struct {
+        char path[64];
+        bool stop_disc;
+        bool disc_off;
+        bool pairable_on;
+        bool disc_on;
+        bool start_disc;
+    } todo[BT_MAX_ADAPTERS];
+    int ntodo = 0;
+
+    struct {
+        char path[192];
+        bool trust_only; /* paired sans trusted: juste Trusted=true */
+    } pair_candidates[BT_MAX_DEVICES];
+    int ncandidates = 0;
+
+    for (int i = 0; i < g_bt_nadapters && ntodo < BT_MAX_ADAPTERS; i++) {
+        btadapt_t *a = &g_bt_adapters[i];
+        if (!a->powered)
+            continue; /* BT eteint par l'utilisateur: respect */
+
+        memset(&todo[ntodo], 0, sizeof(todo[ntodo]));
+        bt_strlcpy(todo[ntodo].path, sizeof(todo[ntodo].path), a->path);
+
+        if (!want_pairing) {
+            if (a->discovering && a->started_here) {
+                todo[ntodo].stop_disc = true;
+                a->started_here = false;
+            }
+            if (a->discoverable)
+                todo[ntodo].disc_off = true;
+        } else {
+            if (!a->pairable)
+                todo[ntodo].pairable_on = true;
+            if (!a->discoverable)
+                todo[ntodo].disc_on = true;
+            if (!a->discovering)
+                todo[ntodo].start_disc = true;
+        }
+        ntodo++;
+    }
+
+    if (want_pairing) {
+        for (int i = 0; i < g_bt_ndevices; i++) {
+            btdev_t *d = &g_bt_devices[i];
+            if (d->paired && !d->trusted
+                && bt_dev_is_controller_locked(d)) {
+                /* Manette deja appairee mais non trusted (pairing manuel
+                   ancien): evite les futurs dialogues d'autorisation */
+                bt_strlcpy(pair_candidates[ncandidates].path,
+                           sizeof(pair_candidates[ncandidates].path),
+                           d->path);
+                pair_candidates[ncandidates].trust_only = true;
+                ncandidates++;
+            } else if (!d->paired && bt_dev_is_controller_locked(d)) {
+                bt_strlcpy(pair_candidates[ncandidates].path,
+                           sizeof(pair_candidates[ncandidates].path),
+                           d->path);
+                pair_candidates[ncandidates].trust_only = false;
+                ncandidates++;
+            }
+        }
+    }
+
+    pthread_mutex_unlock(&g_bt_lock);
+
+    for (int i = 0; i < ntodo; i++) {
+        if (todo[i].stop_disc)
+            bt_call_void(todo[i].path, BT_ADP_IFACE, "StopDiscovery", 10000,
+                         "StopDiscovery");
+        if (todo[i].disc_off)
+            bt_props_set_bool(todo[i].path, BT_ADP_IFACE, "Discoverable",
+                              false, "Discoverable off");
+        if (todo[i].pairable_on)
+            bt_props_set_bool(todo[i].path, BT_ADP_IFACE, "Pairable", true,
+                              "Pairable on");
+        if (todo[i].disc_on)
+            bt_props_set_bool(todo[i].path, BT_ADP_IFACE, "Discoverable",
+                              true, "Discoverable on");
+        if (todo[i].start_disc) {
+            if (bt_call_void(todo[i].path, BT_ADP_IFACE, "StartDiscovery",
+                             10000, "StartDiscovery silencieux")) {
+                pthread_mutex_lock(&g_bt_lock);
+                for (int j = 0; j < g_bt_nadapters; j++)
+                    if (!strcmp(g_bt_adapters[j].path, todo[i].path))
+                        g_bt_adapters[j].started_here = true;
+                pthread_mutex_unlock(&g_bt_lock);
+            }
+        }
+    }
+
+    for (int i = 0; i < ncandidates; i++) {
+        if (pair_candidates[i].trust_only)
+            bt_props_set_bool(pair_candidates[i].path, BT_DEV_IFACE,
+                              "Trusted", true, "Trusted");
+        else
+            bt_try_autopair(pair_candidates[i].path);
+    }
+}
+
+/* ----- Traitement des signaux bluez (thread etat) ----- */
+
+static void bt_on_properties_changed(DBusMessage *m)
+{
+    DBusMessageIter it;
+    const char *iface = NULL;
+
+    if (!dbus_message_iter_init(m, &it)
+        || dbus_message_iter_get_arg_type(&it) != DBUS_TYPE_STRING)
+        return;
+    dbus_message_iter_get_basic(&it, &iface);
+    if (!iface)
+        return;
+
+    /* On ne reagit qu'aux proprietes utiles (les changements RSSI pendant
+       la decouverte sont tres frequents et inutiles ici) */
+    dbus_message_iter_next(&it); /* a{sv} changed */
+
+    struct stmt {
+        bool relevant;
+    } st = { false };
+
+    if (!strcmp(iface, BT_DEV_IFACE)) {
+        DBusMessageIter arr, a;
+        arr = it;
+        if (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_ARRAY) {
+            dbus_message_iter_recurse(&arr, &a);
+            while (!st.relevant
+                   && dbus_message_iter_get_arg_type(&a) == DBUS_TYPE_DICT_ENTRY) {
+                DBusMessageIter de;
+                const char *key = NULL;
+                dbus_message_iter_recurse(&a, &de);
+                if (dbus_message_iter_get_arg_type(&de) == DBUS_TYPE_STRING)
+                    dbus_message_iter_get_basic(&de, &key);
+                if (key && (!strcmp(key, "Connected") || !strcmp(key, "Paired")
+                            || !strcmp(key, "Name") || !strcmp(key, "Alias")
+                            || !strcmp(key, "Class")))
+                    st.relevant = true;
+                dbus_message_iter_next(&a);
+            }
+        }
+    } else if (!strcmp(iface, BT_ADP_IFACE)) {
+        DBusMessageIter arr, a;
+        arr = it;
+        if (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_ARRAY) {
+            dbus_message_iter_recurse(&arr, &a);
+            while (!st.relevant
+                   && dbus_message_iter_get_arg_type(&a) == DBUS_TYPE_DICT_ENTRY) {
+                DBusMessageIter de;
+                const char *key = NULL;
+                dbus_message_iter_recurse(&a, &de);
+                if (dbus_message_iter_get_arg_type(&de) == DBUS_TYPE_STRING)
+                    dbus_message_iter_get_basic(&de, &key);
+                if (key && (!strcmp(key, "Powered")
+                            || !strcmp(key, "Discovering")))
+                    st.relevant = true;
+                dbus_message_iter_next(&a);
+            }
+        }
+    }
+
+    if (st.relevant)
+        g_bt_dirty = true;
+}
+
+static DBusHandlerResult bt_state_filter(DBusConnection *conn, DBusMessage *m,
+                                         void *data)
+{
+    (void)conn;
+    (void)data;
+
+    if (dbus_message_get_type(m) != DBUS_MESSAGE_TYPE_SIGNAL)
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+
+    const char *iface = dbus_message_get_interface(m);
+    const char *member = dbus_message_get_member(m);
+    if (!iface || !member)
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+
+    if (!strcmp(iface, BT_OM_IFACE)
+        && (!strcmp(member, "InterfacesAdded")
+            || !strcmp(member, "InterfacesRemoved"))) {
+        g_bt_dirty = true;
+    } else if (!strcmp(iface, BT_PROPS_IFACE)
+               && !strcmp(member, "PropertiesChanged")) {
+        bt_on_properties_changed(m);
+    }
+
+    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+}
+
+/* ----- Agent de pairing (seconde connexion, thread dedie) -----
+   Connexion separee obligatoire : les appels bloquants (Pair) du thread
+   etat ne doivent pas bloquer les reponses aux requetes de l'agent. */
+
+static DBusConnection *g_bt_agent_conn;
+
+/* Verifie (table courante) si un path correspond a une manette */
+static bool bt_agent_path_is_controller(const char *path)
+{
+    bool ok = false;
+    pthread_mutex_lock(&g_bt_lock);
+    btdev_t *d = bt_find_dev(path);
+    if (d && bt_dev_is_controller_locked(d))
+        ok = true;
+    pthread_mutex_unlock(&g_bt_lock);
+    return ok;
+}
+
+static DBusHandlerResult bt_agent_filter(DBusConnection *conn, DBusMessage *m,
+                                         void *data)
+{
+    (void)data;
+
+    if (dbus_message_get_type(m) != DBUS_MESSAGE_TYPE_METHOD_CALL)
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+
+    const char *path = dbus_message_get_path(m);
+    const char *iface = dbus_message_get_interface(m);
+    const char *member = dbus_message_get_member(m);
+
+    if (!path || strcmp(path, BT_AGENT_PATH) || !iface
+        || strcmp(iface, BT_AGENT_IFACE) || !member)
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+
+    DBusMessage *reply = NULL;
+
+    if (!strcmp(member, "Release") || !strcmp(member, "Cancel")
+        || !strcmp(member, "DisplayPinCode")
+        || !strcmp(member, "DisplayPasskey")) {
+        reply = dbus_message_new_method_return(m);
+    } else if (!strcmp(member, "RequestPinCode")
+               || !strcmp(member, "RequestPasskey")) {
+        /* PIN legacy jamais utilise par les manettes modernes */
+        reply = dbus_message_new_error(m, "org.bluez.Error.Rejected",
+                                       "PIN non supporte");
+    } else if (!strcmp(member, "RequestConfirmation")
+               || !strcmp(member, "RequestAuthorization")
+               || !strcmp(member, "AuthorizeService")) {
+        /* 1er argument = object path du peripherique */
+        const char *devpath = NULL;
+        DBusMessageIter it;
+        if (dbus_message_iter_init(m, &it)
+            && dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_OBJECT_PATH)
+            dbus_message_iter_get_basic(&it, &devpath);
+
+        if (devpath && bt_agent_path_is_controller(devpath)) {
+            reply = dbus_message_new_method_return(m);
+            fprintf(stderr, "[BT] Pairing accepte: %s\n", devpath);
+        } else {
+            reply = dbus_message_new_error(m, "org.bluez.Error.Rejected",
+                                           "pas une manette");
+            fprintf(stderr, "[BT] Pairing refuse (pas une manette): %s\n",
+                    devpath ? devpath : "?");
+        }
+    }
+
+    if (reply) {
+        dbus_connection_send(conn, reply, NULL);
+        dbus_connection_flush(conn);
+        dbus_message_unref(reply);
+        return DBUS_HANDLER_RESULT_HANDLED;
+    }
+
+    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+}
+
+static void bt_agent_register(void)
+{
+    DBusMessage *msg = dbus_message_new_method_call(BT_BLUEZ, "/org/bluez",
+                                                    BT_AGENT_MGR,
+                                                    "RegisterAgent");
+    if (!msg)
+        return;
+
+    const char *apath = BT_AGENT_PATH;
+    const char *cap = "NoInputNoOutput";
+    dbus_message_append_args(msg,
+        DBUS_TYPE_OBJECT_PATH, &apath,
+        DBUS_TYPE_STRING, &cap,
+        DBUS_TYPE_INVALID);
+
+    DBusError err;
+    dbus_error_init(&err);
+    DBusMessage *reply = dbus_connection_send_with_reply_and_block(
+        g_bt_agent_conn, msg, 10000, &err);
+    dbus_message_unref(msg);
+    if (dbus_error_is_set(&err)) {
+        fprintf(stderr, "[BT] RegisterAgent: %s\n", err.message);
+        dbus_error_free(&err);
+        if (reply)
+            dbus_message_unref(reply);
+        return;
+    }
+    if (reply)
+        dbus_message_unref(reply);
+
+    /* PAS de RequestDefaultAgent volontairement : bluedevil (KDE) garde la
+       main pour les pairings manuels avec confirmation utilisateur. Notre
+       agent n'est utilise que pour les pairings que nous initions. */
+    g_bt_agent_ready = true;
+    fprintf(stderr, "[BT] Agent de pairing enregistre\n");
+}
+
+static void *bt_agent_thread(void *arg)
+{
+    (void)arg;
+
+    DBusError err;
+    dbus_error_init(&err);
+    g_bt_agent_conn = dbus_bus_get_private(DBUS_BUS_SYSTEM, &err);
+    if (!g_bt_agent_conn) {
+        fprintf(stderr, "[BT] Bus systeme (agent) indisponible: %s\n",
+                err.message);
+        dbus_error_free(&err);
+        return NULL;
+    }
+    dbus_connection_set_exit_on_disconnect(g_bt_agent_conn, FALSE);
+
+    DBusObjectPathVTable vtable = {
+        .unregister_function = NULL,
+        .message_function = bt_agent_filter,
+    };
+    if (!dbus_connection_register_object_path(g_bt_agent_conn, BT_AGENT_PATH,
+                                              &vtable, NULL)) {
+        fprintf(stderr, "[BT] Enregistrement du path agent impossible\n");
+        dbus_connection_close(g_bt_agent_conn);
+        dbus_connection_unref(g_bt_agent_conn);
+        g_bt_agent_conn = NULL;
+        return NULL;
+    }
+
+    bool registered = false;
+
+    while (*g_bt_run) {
+        if (!g_bt_bluez_up) {
+            if (registered) {
+                registered = false;
+                g_bt_agent_ready = false;
+            }
+            usleep(500000);
+            continue;
+        }
+        if (!registered) {
+            bt_agent_register();
+            registered = g_bt_agent_ready;
+        }
+
+        dbus_connection_read_write(g_bt_agent_conn, 500);
+        while (dbus_connection_get_dispatch_status(g_bt_agent_conn)
+               == DBUS_DISPATCH_DATA_REMAINS)
+            dbus_connection_dispatch(g_bt_agent_conn);
+    }
+
+    g_bt_agent_ready = false;
+    dbus_connection_close(g_bt_agent_conn);
+    dbus_connection_unref(g_bt_agent_conn);
+    g_bt_agent_conn = NULL;
+    return NULL;
+}
+
+/* ----- Verrou inter-sessions : une seule instance pilote le BT ----- */
+
+static bool bt_lock_try_acquire(void)
+{
+    if (g_bt_lock_fd >= 0)
+        return true;
+
+    int fd = open(BT_LOCK_PATH, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+    if (fd < 0)
+        return false;
+    fchmod(fd, 0666); /* un autre utilisateur doit pouvoir prendre le relais */
+
+    struct flock fl = {
+        .l_type = F_WRLCK,
+        .l_whence = SEEK_SET,
+        .l_start = 0,
+        .l_len = 0,
+    };
+    if (fcntl(fd, F_SETLK, &fl) < 0) {
+        close(fd);
+        return false;
+    }
+
+    g_bt_lock_fd = fd;
+    fprintf(stderr, "[BT] Verrou acquis: cette instance pilote le Bluetooth\n");
+    return true;
+}
+
+/* ----- Thread etat : surveillance + application ----- */
+
+static void *bt_state_thread(void *arg)
+{
+    (void)arg;
+
+    DBusError err;
+    dbus_error_init(&err);
+    g_bt_conn = dbus_bus_get_private(DBUS_BUS_SYSTEM, &err);
+    if (!g_bt_conn) {
+        fprintf(stderr, "[BT] Bus systeme indisponible: %s\n", err.message);
+        dbus_error_free(&err);
+        return NULL;
+    }
+    dbus_connection_set_exit_on_disconnect(g_bt_conn, FALSE);
+
+    dbus_connection_add_filter(g_bt_conn, bt_state_filter, NULL, NULL);
+    dbus_bus_add_match(g_bt_conn,
+        "type='signal',sender='org.bluez',"
+        "interface='org.freedesktop.DBus.ObjectManager'", &err);
+    dbus_error_free(&err);
+    dbus_bus_add_match(g_bt_conn,
+        "type='signal',sender='org.bluez',"
+        "interface='org.freedesktop.DBus.Properties'", &err);
+    dbus_error_free(&err);
+
+    time_t last_refresh = 0;
+
+    while (*g_bt_run) {
+        /* Attente de bluetoothd */
+        dbus_error_init(&err);
+        bool up = dbus_bus_name_has_owner(g_bt_conn, BT_BLUEZ, &err);
+        if (dbus_error_is_set(&err)) {
+            dbus_error_free(&err);
+            up = false;
+        }
+        if (!up) {
+            if (g_bt_bluez_up)
+                fprintf(stderr, "[BT] bluetoothd introuvable, pause\n");
+            g_bt_bluez_up = false;
+            sleep(2);
+            continue;
+        }
+        if (!g_bt_bluez_up) {
+            g_bt_bluez_up = true;
+            g_bt_dirty = true; /* recalcul complet au retour de bluez */
+        }
+
+        dbus_connection_read_write(g_bt_conn, 500);
+        while (dbus_connection_get_dispatch_status(g_bt_conn)
+               == DBUS_DISPATCH_DATA_REMAINS)
+            dbus_connection_dispatch(g_bt_conn);
+
+        time_t now = time(NULL);
+        if (g_bt_dirty || now - last_refresh >= BT_WATCHDOG_S) {
+            g_bt_dirty = false;
+            last_refresh = now;
+            bt_refresh_state();
+        }
+    }
+
+    /* Etat sur en sortant : coupe ce qu'on a active */
+    if (g_bt_bluez_up && bt_collect() == 0) {
+        for (int i = 0; i < g_bt_nadapters; i++) {
+            if (g_bt_adapters[i].discovering && g_bt_adapters[i].started_here)
+                bt_call_void(g_bt_adapters[i].path, BT_ADP_IFACE,
+                             "StopDiscovery", 10000, "StopDiscovery sortie");
+            if (g_bt_adapters[i].discoverable)
+                bt_props_set_bool(g_bt_adapters[i].path, BT_ADP_IFACE,
+                                  "Discoverable", false,
+                                  "Discoverable off sortie");
+        }
+    }
+    g_bt_bluez_up = false;
+
+    dbus_connection_close(g_bt_conn);
+    dbus_connection_unref(g_bt_conn);
+    g_bt_conn = NULL;
+    fprintf(stderr, "[BT] Autopair arrete, mode pairing desactive\n");
+    return NULL;
+}
+
+/* ----- Thread manager : verrou puis lancement des 2 threads BT ----- */
+
+static void *bt_manager(void *arg)
+{
+    (void)arg;
+
+    while (*g_bt_run && !bt_lock_try_acquire())
+        sleep(3);
+    if (!*g_bt_run)
+        return NULL;
+
+    pthread_t t_state, t_agent;
+    bool has_state = pthread_create(&t_state, NULL, bt_state_thread, NULL) == 0;
+    bool has_agent = pthread_create(&t_agent, NULL, bt_agent_thread, NULL) == 0;
+
+    if (has_state)
+        pthread_join(t_state, NULL);
+    if (has_agent)
+        pthread_join(t_agent, NULL);
+
+    if (g_bt_lock_fd >= 0) {
+        close(g_bt_lock_fd); /* libere le flock */
+        g_bt_lock_fd = -1;
+    }
+    return NULL;
+}
+
+static void bt_autopair_start(volatile bool *running_flag)
+{
+    g_bt_run = running_flag;
+    *g_bt_run = true;
+
+    /* Obligatoire avant TOUT usage multi-thread de libdbus
+       (thread BT + thread principal avec le bus session) */
+    dbus_threads_init_default();
+
+    if (pthread_create(&g_bt_manager_thread, NULL, bt_manager, NULL) != 0)
+        fprintf(stderr, "[WARN] Thread BT autopair non demarre\n");
+}
+
+static void bt_autopair_stop(void)
+{
+    pthread_join(g_bt_manager_thread, NULL);
+}
+
+/* =========================================================================
  * PROGRAMME PRINCIPAL
  * ========================================================================= */
 
@@ -621,6 +1624,8 @@ int main(void)
 {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+
+    bt_autopair_start(&running);
 
     setup_vt_tracking();
 
@@ -746,6 +1751,8 @@ int main(void)
         dbus_connection_unref(dbus_conn);
         dbus_conn = NULL;
     }
+
+    bt_autopair_stop();
 
     return 0;
 }

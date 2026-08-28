@@ -942,6 +942,19 @@ Gestionnaire principal des raccourcis manette en C natif (~500 Ko RAM) :
   - Filtrage des événements quand le VT n'est pas actif (pas de conflit entre sessions)
   - Reprise automatique au retour sur le VT
 
+**Auto-pairing Bluetooth des manettes** (intégré au binaire, threads dédiés) :
+- **Règle** : 0 manette BT connectée → mode pairing (decouverte active + discoverable + pairable, appairage auto des manettes vues) ; ≥ 1 manette connectée → decouverte et discoverable coupés (zero impact latence pendant le jeu, justifié par le quirk kernel `HCI_QUIRK_NO_SCAN_WHILE_CONNECTED` et bluez#123 : l'inquiry BR/EDR peut geler les inputs sur chips combo WiFi/BT)
+- **Pairable reste toujours actif** : c'est un simple listen passif (page scan) sans impact radio, indispensable pour que les autres manettes déjà appairées puissent se reconnecter
+- **BT éteint par l'utilisateur** (`Powered=false`, rfkill...) → le module ne touche à rien (suit l'état via les signaux Adapter1, reprend quand le BT est rallumé)
+- **Multi-session/utilisateur** : verrou `flock` sur `/tmp/gablue-bt-autopair.lock` (0666) — une seule instance pilote le BT, les autres attendent ; libéré automatiquement à la mort du process
+- **Détection "manette"** (liste large) : classe Bluetooth Peripheral Joystick/Gamepad (CoD major 0x05 + minor 0x01/0x02) **ou** nom contenant `controller`, `dualsense`, `dualshock`, `xbox`, `joy-con`, `8bitdo`, `gamesir`, `gulikit`, `nimbus`, `gamepad` (DS4, DualSense, Xbox, Switch Pro/Joy-Con, 8BitDo...)
+- **Sécurité** : agent D-Bus `NoInputNoOutput` enregistré sur `/org/gablue/btautopair` qui n'accepte un pairing que si le périphérique est reconnu comme manette (refuse écouteurs, téléphones, devices inconnus). **Pas de `RequestDefaultAgent`** : bluedevil (KDE) garde la main pour les pairings manuels avec confirmation utilisateur — notre agent ne sert que pour les pairings initiés par le module
+- **Architecture** : 2 threads + 2 connexions bus système privées séparées — la connexion "état" fait les appels bloquants (Pair ~30s) pendant que la connexion "agent" répond aux requêtes de pairing (évite le deadlock D-Bus single-thread). `dbus_threads_init_default()` appelé avant tout usage D-Bus
+- **Auto-pair** : manette non appairée reconnue → `Pair` + `Trusted=true` + `Connect` ; anti-boucle : max 3 échecs, retry espacé de 20s, compteurs réinitialisés à chaque nouveau cycle 0 manette
+- **Sortie propre** : à l'arrêt, StopDiscovery (si lancé par nous) + Discoverable off
+- Chaque manette appairée (même manuellement) est marquée `Trusted=true` pour éviter les dialogues d'autorisation HID
+- Note API libdbus : les valeurs des dict entries de `GetManagedObjects` sont exposées aplaties (le variant du niveau dict est transparent), contrairement aux variantes `a{sv}` des propriétés qui nécessitent un recurse
+
 ### Binaire gablue-isomount (/usr/bin)
 
 Monteur d'images disque en C natif (~2.7 Mo RAM) :
