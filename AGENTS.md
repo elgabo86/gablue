@@ -79,7 +79,6 @@ Le projet construit 6 variantes distinctes :
 │       └── lib/                            # Bibliothèques modulaires (~60 fichiers)
 ├── files/
 │   ├── scripts/                           # Scripts d'installation bash
-│   │   ├── brew                           # Installation Homebrew
 │   │   ├── build-c                       # Compilation sources C
 │   │   ├── build-gwine                    # Assemblage script gwine standalone
 │   │   ├── cleanup                        # Nettoyage intermédiaire
@@ -262,6 +261,9 @@ FROM ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}:${KERNEL_FLAVOR}-${FEDORA_VERSION}
 FROM scratch AS nvidia-common-files
 COPY files/system/nvidia-common /
 
+# Étape intermédiaire : image Homebrew pré-construite (aligné Bazzite d0c9330, digest épinglé)
+FROM ghcr.io/ublue-os/brew:latest@sha256:<digest> AS brew
+
 # Image de base
 FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}
 
@@ -271,6 +273,9 @@ ARG SOURCE_IMAGE
 ARG DX_MODE
 ARG KERNEL_FLAVOR
 ARG KERNEL_VERSION
+
+# Copie des fichiers Homebrew pré-construits (avant files/system/all pour le cache)
+COPY --from=brew /system_files/ /
 
 # Copie des fichiers système communs (les scripts sont bind-mountés, pas copiés)
 COPY files/system/all /
@@ -468,6 +473,7 @@ Exclusions importantes :
 ### 5. rpm - Paquets RPM
 
 Installation extensive de paquets organisée par catégories :
+- **Homebrew** : brew n'est **pas** installé en RPM (`ublue-brew` est déprécié upstream, dernier build COPR 11/2025) — fourni par l'étape intermédiaire `FROM ghcr.io/ublue-os/brew:latest@sha256:...` du Containerfile-gablue (aligné Bazzite `d0c9330`) qui copie `/system_files/` (tarball `/usr/share/homebrew.tar.zst`, services `brew-setup.service`/`brew-update.timer`/`brew-upgrade.timer`, preset, intégration shell — contenu identique à l'ancien RPM). Le digest est épinglé, à bumper ponctuellement vers le dernier `:latest` (le `brew-update.timer` maintient brew à jour côté client de toute façon)
 - **CLI** : fswatch, btop, fastfetch, git, atuin, tldr, amdsmi, jq, zoxide, bpftune-gaming (fork gaming de bpftune, depuis Terra 44 — aligné Bazzite `4333b30`, détection traffic UDP burst des jeux pour réduire la latence réseau ; le service reste `bpftune.service`), etc.
 - **Réseau** : tailscale, rar
 - **Multimédia** : yt-dlp, openh264.x86_64 + openh264.i686 (vrai codec Cisco H.264 depuis negativo17 `fedora-multimedia`, installé explicitement avec `--allowerasing` — aligné Bazzite `5161562`, voir exclusion `noopenh264` dans copr)
@@ -532,6 +538,7 @@ Configuration post-installation étendue :
 - MIME par défaut (Windows.desktop, Linux.desktop)
 - **Mises à jour automatiques** : active `AutomaticUpdatePolicy=stage` dans `/etc/rpm-ostreed.conf` (copie depuis `/usr/share/ublue-os/update-services/etc/rpm-ostreed.conf` fourni par le RPM `ublue-os-update-services`) et reprogramme les timers flatpak + rpm-ostree le samedi à 04:00 avec `RandomizedDelaySec=10m`
 - **Linuxbrew** : ajoute `/home/linuxbrew/.linuxbrew/bin` au `secure_path` de sudo
+- `toggle-updates` upstream (RPM ublue-os-just, `/usr/share/ublue-os/just/10-update.just`) reste intact (flatpak + rpm-ostree uniquement) — la variante globale incluant les timers brew est la recette Gablue `toggle-updates-all` (60-custom.just)
 - **Correction fstrim** (aligné Bazzite `8a76282f` qui remplace le sed `6a10aa2`, fedora-silverblue/issue-tracker#689) : drop-in `files/system/all/usr/lib/systemd/system/fstrim.service.d/workaround-no-root-trim.conf` qui remplace `ExecStart` par `/usr/bin/fstrim --listed-in /proc/self/mountinfo` — avec composefs, `/etc/fstab` ne reflète pas les montages réels, fstrim ne trimmait pas correctement. **Divergence volontaire** : le drop-in inclut `ExecStart=` vide avant la nouvelle ligne (fstrim.service est `Type=oneshot`, sans reset le drop-in *ajouterait* une seconde exécution au lieu de remplacer l'originale — omission dans le drop-in Bazzite)
 
 **Correction composefs** (dans post-install, toutes variantes) :
@@ -1010,7 +1017,7 @@ Commandes ujust disponibles :
 - **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`, `configure-amd-hdmi21` (karg `amdgpu.dcfeaturemask=0x402` — fonctionnalités HDMI 2.1 supplémentaires ; backport Bazzite `f92d411`, renommé de `configure-amd-vrr` par Bazzite `150cf40e`)
 - **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`, `cpuid-emu-on/off`
 - **Virtualisation** : `docker-enable/disable`, `dx-group`, `setup-kvmfr`, `libvirt-reset-cache` (efface le cache capabilities libvirt, corrige l'erreur "video model 'virtio' unsupported" dans virt-manager)
-- **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`, `ssd-thermal-limit` (limite thermique NVMe via HCTM, interactif, persistant)
+- **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`, `ssd-thermal-limit` (limite thermique NVMe via HCTM, interactif, persistant), `toggle-updates-all` (active/désactive toutes les mises à jour auto : système, flatpaks et brew — contrairement à `toggle-updates` upstream qui ne touche pas brew)
 - **Affichage** : `kwin-display-reset` (met de côté avec horodatage `~/.config/kwinoutputconfig.json` et `/var/lib/plasmalogin/.config/kwinoutputconfig.json` — dépannage écran noir / « hors portée » au login quand KWin force un mode sauvegardé non supporté), `vrr-fix`
 - **Rebase** : `gablue-rebase-*` pour changer de variante
 

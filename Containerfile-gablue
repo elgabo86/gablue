@@ -25,6 +25,11 @@ FROM ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}:${KERNEL_FLAVOR}-${FEDORA_VERSION}
 FROM scratch AS nvidia-common-files
 COPY files/system/nvidia-common /
 
+# Étape intermédiaire : image Homebrew pré-construite par ublue-os (aligné Bazzite d0c9330)
+# Remplace l'ancien RPM ublue-brew (déprécié upstream, COPR plus rebuildé depuis 11/2025)
+# Digest épinglé, à bumper ponctuellement vers le dernier build de :latest
+FROM ghcr.io/ublue-os/brew:latest@sha256:e3b6878ed7b5ca963fd3f54ce44e6ab83da7533b28c83b2a11b92a5fedaa4adb AS brew
+
 # Image de base pour la construction finale
 FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}
 
@@ -43,6 +48,11 @@ COPY src/gablue-isomount /src/gablue-isomount
 COPY src/gwine-launcher /src/gwine-launcher
 COPY src/composefs-fix /src/composefs-fix
 COPY src/cpuid-fault /src/cpuid-fault
+
+# Copie des fichiers Homebrew pré-construits (tarball /usr/share/homebrew.tar.zst,
+# services brew-setup/update/upgrade, preset, intégration shell — contenu identique à l'ancien RPM ublue-brew)
+# Placé avant files/system/all pour profiter du cache (ce layer ne rebuilde que si le digest change)
+COPY --from=brew /system_files/ /
 
 # Copie des fichiers système dans l'image
 COPY files/system/all /

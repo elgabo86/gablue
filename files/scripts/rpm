@@ -85,8 +85,9 @@ dnf5 -y install --enable-repo="*fedora-multimedia*" --allowerasing \
 # =============================================================================
 
 # Outils système et monitoring
+# Brew n'est plus un RPM (ublue-brew déprécié upstream) : fourni par l'image OCI
+# ublue-os/brew copiée dans le Containerfile (aligné Bazzite d0c9330)
 dnf5 -y install \
-    ublue-brew \
     fswatch \
     iotop-c \
     wol \

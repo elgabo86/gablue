@@ -606,6 +606,38 @@ foreground-booster-disable:
     systemctl --user stop plasma-foreground-booster.service 2>/dev/null
     echo "Foreground booster disabled."
 
+# Enable or disable ALL automatic updates (system, flatpaks and brew)
+toggle-updates-all ACTION="":
+    #!/usr/bin/bash
+    source /usr/lib/ujust/ujust.sh
+    CURRENT_STATE="Disabled"
+    if systemctl -q is-enabled rpm-ostreed-automatic.timer; then
+      CURRENT_STATE="Enabled"
+    fi
+    OPTION="{{ ACTION }}"
+    if [ "$OPTION" == "help" ]; then
+      echo "Usage: ujust toggle-updates-all <option>"
+      echo "  <option>: Specify the quick option to skip the prompt"
+      echo "  Use 'enable' to enable automatic updates for system, flatpaks and brew."
+      echo "  Use 'disable' to disable automatic updates for system, flatpaks and brew."
+      exit 0
+    elif [ -z "$OPTION" ]; then
+      echo "Automatic updates are currently: ${bold}${CURRENT_STATE}${normal}"
+      echo "Enable or Disable ALL automatic updates (system, flatpaks and brew)?"
+      OPTION=$(ugum choose Enable Disable)
+    fi
+    if [ "${OPTION,,}" == "enable" ]; then
+      sudo systemctl enable --now flatpak-system-update.timer rpm-ostreed-automatic.timer brew-update.timer brew-upgrade.timer
+      systemctl enable --now --user flatpak-user-update.timer
+      echo "All automatic updates have been ${green}${bold}enabled${normal}."
+    elif [ "${OPTION,,}" == "disable" ]; then
+      sudo systemctl disable --now flatpak-system-update.timer rpm-ostreed-automatic.timer brew-update.timer brew-upgrade.timer
+      systemctl disable --now --user flatpak-user-update.timer
+      echo "All automatic updates have been ${red}${bold}disabled${normal}."
+    else
+      echo "No changes were made."
+    fi
+
 # Update gablue and flatpaks
 gablue-update:
     #!/usr/bin/bash
