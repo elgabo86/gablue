@@ -68,7 +68,8 @@ Le projet construit 6 variantes distinctes :
 │   │   └── Makefile                       # Compilation
 │   ├── gamepadshortcuts/                  # Sources C du gestionnaire de raccourcis manette
 │   │   ├── gamepadshortcuts.c             # Programme principal (inotify VT, evdev)
-│   │   └── Makefile                       # Compilation
+│   │   ├── mouse.c                        # Emulation souris/clavier via manette (evdev, uinput)
+│   │   └── Makefile                       # Compilation (2 binaires)
 │   ├── gablue-isomount/                    # Sources C du monteur d'images disque
 │   │   ├── gablue-isomount.c              # Programme principal (UDisks2 DBus, Dolphin)
 │   │   └── Makefile                       # Compilation
@@ -485,7 +486,7 @@ Installation extensive de paquets organisée par catégories :
 - **KDE** : okular, gwenview, kcalc, yakuake (Kinoite uniquement)
 - **Polices** : nerd-fonts
 - **Runtime** : patch, bzip2, sqlite, uv
-- **Python (scripts Gablue)** : python3-evdev, python3-uinput, python3-pyside6
+- **Python (scripts Gablue)** : python3-evdev, python3-pyside6 (python3-uinput retiré : cassé sous Python 3.14 par la suppression de distutils, `mouse.py` remplacé par le binaire C `gamepadshortcuts-mouse`)
 - **SELinux** : checkpolicy, selinux-policy-devel
 - **Libs 32-bit Wine/Proton complètes** : fontconfig, freetype, X11 (composite, cursor, damage, fix, i, inerama, randr, render, tst, v), Wayland (epoxy, decor, cursor, egl), core (gnutls, unwind, cups, openldap), audio (pulseaudio, pipewire upgrade + libs, FAudio, alsa, openal, ogg, vorbis, flac, sndfile), vulkan-loader (terra-mesa), vidéo (libva, libvdpau)
 
@@ -509,7 +510,7 @@ Paquets supprimés :
 ### 5b. build-c / build-gwine - Compilation des sources
 
 **build-c** (appelé après pypi) :
-- Compile les binaires C depuis `/src/gamepadshortcuts`, `/src/ds2xbox`, `/src/gablue-isomount`
+- Compile les binaires C depuis `/src/gamepadshortcuts` (gamepadshortcuts + gamepadshortcuts-mouse), `/src/ds2xbox`, `/src/gablue-isomount`
 - Installation via `make -C <dir> install DESTDIR=`
 - Nettoie les sources après compilation (`rm -rf /src/<dir>`)
 - Désinstalle `dbus-devel` après compilation (inutile dans l'image finale)
@@ -948,6 +949,7 @@ Gestionnaire principal des raccourcis manette en C natif (~500 Ko RAM) :
   - Une instance par session (autostart KDE)
   - Filtrage des événements quand le VT n'est pas actif (pas de conflit entre sessions)
   - Reprise automatique au retour sur le VT
+- `gamepadshortcuts-mouse` : Émulation souris/clavier via manette (Home+R3 pour activer/quitter), binaire C natif (evdev + uinput) remplaçant `mouse.py` — l'ancien script plantait sous Python 3.14 car `python-uinput` importe `distutils` (supprimé de la stdlib). Mapping identique : stick droit = souris (courbe FPS), R1/L1 = clics, D-pad = flèches, Croix/Rond/Carré/Triangle = Espace/Tab/Retour/F4, Start/Select = Entrée/F11, L3 = Échap, L2/R2 = Alt/Shift
 
 ### Binaire gablue-isomount (/usr/bin)
 
@@ -992,7 +994,6 @@ Interface de télévision Gablue en Python (PySide6 + libmpv) :
 Scripts lancés par le binaire gamepadshortcuts :
 - `launchgamepadshortcuts` : Lanceur avec lockfile par user
 - `menuvsr.py` : Menu VR pour actions système (PySide6 + evdev, glassmorphism)
-- `mouse.py` : Contrôle souris via manette
 - `decoblue` : Déconnexion Bluetooth
 - `launchyt` : Lancement YouTube
 - `openes` : Overture EmulationStation

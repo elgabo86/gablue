@@ -308,6 +308,20 @@ static pid_t launch_python_script(const char *script)
     return pid;
 }
 
+static pid_t launch_binary(const char *path)
+{
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork launch_binary");
+        return -1;
+    }
+    if (pid == 0) {
+        execl(path, path, (char *)NULL);
+        _exit(1);
+    }
+    return pid;
+}
+
 static void launch_shell_cmd(const char *cmd)
 {
     pid_t pid = fork();
@@ -351,7 +365,7 @@ static void handle_combinations(void)
         home_pressed = false;
     } else if (r3_pressed && !mouse_running) {
         fprintf(stderr, "[ACTION] MOUSE\n");
-        mouse_pid = launch_python_script(SCRIPTS_DIR "/mouse.py");
+        mouse_pid = launch_binary("/usr/bin/gamepadshortcuts-mouse");
         mouse_running = true;
         r3_pressed = false;
     } else if (l3_pressed) {
@@ -725,7 +739,7 @@ int main(void)
 
         /* Surveillance des processus enfants (toujours actif pour
            nettoyer les pid) */
-        check_child(&mouse_pid, &mouse_running, "mouse.py");
+        check_child(&mouse_pid, &mouse_running, "gamepadshortcuts-mouse");
         check_child(&menuvsr_pid, &menuvsr_running, "menuvsr.py");
     }
 
