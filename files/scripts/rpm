@@ -15,10 +15,10 @@ set -eoux pipefail
 # Restreint aux dépôts officiels pour ne pas toucher Mesa, kernel ou NVIDIA
 dnf5 -y upgrade --refresh --repo=fedora --repo=updates
 
-# Verrouiller la version de plasma-desktop pour éviter les conflits de version
-# Cela empêche plasma-desktop d'être mis à niveau pendant l'installation de paquets
+# Verrouiller les paquets qt6 et plasma pour éviter les conflits de version
+# pendant l'installation de paquets et la dérive d'ABI Qt (aligné Bazzite c9ef733)
 if [ "$SOURCE_IMAGE" == "kinoite" ]; then
-    dnf5 versionlock add plasma-desktop
+    dnf5 versionlock add "qt6-*" "plasma-*"
 fi
 
 # =============================================================================

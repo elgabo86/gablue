@@ -433,6 +433,7 @@ Exclusions importantes :
 - Mesa et kernel des dépôts Fedora (fournis par Terra)
 - `noopenh264` exclu de `*fedora*` et `updates*` (aligné Bazzite `5161562`) : stub vide de Fedora qui `Obsoletes` le vrai codec Cisco openh264 — l'exclusion l'empêche de le remplacer lors des installs/upgrades
 - Exclusions bazzite : pipewire-*, bluez-*, xorg-x11-server-Xwayland, wireplumber-* (alignement i686/x86_64 fc44)
+- Exclusions staging : scx-tools, scx-scheds, kf6-*, mesa*, mutter* (aligné Bazzite) — staging est sans priorité (comme fedora) : un build plus récent gagnerait au tri par version et ferait dériver kf6 (non couvert par le versionlock qt6/plasma) ou scx (attendu du COPR cachyos) ; `ostree` reste installable pour le swap
 - Priorité Terra = 3 (haute)
 
 ### 2. kernel - Installation du kernel OGC + akmods
@@ -494,7 +495,7 @@ Installation extensive de paquets organisée par catégories :
 - `dnf5 -y upgrade --refresh --repo=fedora --repo=updates` **avant** toute installation
 - L'image Kinoite de base peut avoir jusqu'à 48h de retard sur les mises à jour Fedora
 - Restreint aux dépôts officiels uniquement : les exclusions `mesa-*` et `kernel-*` du copr protègent Mesa et kernel, NVIDIA vient des RPMs akmods externes
-- Exécuté avant le versionlock de plasma-desktop pour que ce dernier soit déjà à jour avant d'être verrouillé
+- Exécuté avant le versionlock `qt6-*`/`plasma-*` (aligné Bazzite `c9ef733`, anti-dérive ABI Qt — remplace l'ancien lock `plasma-desktop` seul) pour que ces paquets soient déjà à jour avant d'être verrouillés
 
 Paquets supprimés :
 - firefox, firefox-langpacks, htop

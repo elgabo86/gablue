@@ -49,6 +49,12 @@ done && unset -v copr
 # Le dépôt bazzite-multilib a des versions i686 en retard sur Fedora fc44, causant des conflits
 dnf5 -y config-manager setopt "*bazzite*".priority=1 "*bazzite*".exclude="pipewire-* bluez-* xorg-x11-server-Xwayland wireplumber-*"
 
+# Exclusions staging (aligné Bazzite) : scx-tools scx-scheds kf6-* mesa* mutter*
+# staging est sans priorité (comme fedora) : un build plus récent gagnerait au tri
+# par version et ferait dériver kf6 (non couvert par le versionlock qt6/plasma)
+# ou scx (attendu du COPR cachyos). ostree n'est pas exclu (swap ci-dessous)
+dnf5 -y config-manager setopt "*staging*".exclude="scx-tools scx-scheds kf6-* mesa* mutter*"
+
 # Swap d'ostree vers la version patchée de ublue-os/staging (fix flatpak)
 # (aligné Bazzite b771fae6)
 declare -A toswap=(
