@@ -333,6 +333,7 @@ lib/dir-config.sh
 ### Sandboxing
 - Utilisation de bubblewrap pour isoler l'exécution des jeux
 - Restrictions sur les accès système pour la sécurité
+- **bwrap >= 0.12** (fc44) refuse de monter sur une destination symlink (`Can't mount on symlink destination`) : toute destination de montage pouvant être un symlink doit passer par `bwrap_resolve_dest()` (sandbox.sh), qui résout via `readlink -f`. Concerne notamment `--tmpfs /home` (/home → /var/home sur Fedora Atomic/ostree) et les fichiers `/etc/*` (`/etc/resolv.conf`, `/etc/localtime`...). Les destinations *sous* un symlink (ex: `/home/gab/...`) ne sont pas affectées.
 
 ### Variables d'environnement
 - `WINEPREFIX`, `WINEARCH`, `WINEFSYNC`, `WINENTSYNC`

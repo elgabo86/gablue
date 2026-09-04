@@ -10,6 +10,18 @@ bwrap_add() {
     BWRAP_ARGS+=("$@")
 }
 
+# Résout une destination de montage si c'est un symlink (bwrap >= 0.12
+# refuse de monter sur une destination symlink, ex: /home -> var/home sur
+# Fedora Atomic, /etc/resolv.conf, /etc/localtime). Renvoie le chemin inchangé sinon.
+bwrap_resolve_dest() {
+    local dest="$1"
+    if [ -L "$dest" ]; then
+        readlink -f "$dest" 2>/dev/null || echo "$dest"
+    else
+        echo "$dest"
+    fi
+}
+
 bwrap_reset() {
     BWRAP_ARGS=()
 }
@@ -345,15 +357,16 @@ build_bwrap_args() {
     
     bwrap_add --ro-bind / /
     bwrap_add --proc /proc
-    bwrap_add --tmpfs /home
+    # /home est un symlink (vers /var/home) sur Fedora Atomic/ostree :
+    # bwrap >= 0.12 refuse de monter sur une destination symlink,
+    # on résout donc le chemin réel (readlink -f renvoie /home si pas un symlink)
+    bwrap_add --tmpfs "$(readlink -f /home 2>/dev/null || echo /home)"
     
-    bwrap_add --bind-try /etc/resolv.conf /etc/resolv.conf
-    bwrap_add --bind-try /etc/hosts /etc/hosts
-    bwrap_add --bind-try /etc/ssl /etc/ssl
-    bwrap_add --bind-try /etc/ca-certificates /etc/ca-certificates
-    bwrap_add --bind-try /etc/pki /etc/pki
-    bwrap_add --bind-try /etc/localtime /etc/localtime
-    bwrap_add --bind-try /etc/machine-id /etc/machine-id
+    local etc_path
+    for etc_path in /etc/resolv.conf /etc/hosts /etc/ssl /etc/ca-certificates /etc/pki /etc/machine-id; do
+        bwrap_add --bind-try "$etc_path" "$(bwrap_resolve_dest "$etc_path")"
+    done
+    bwrap_add --bind-try /etc/localtime "$(bwrap_resolve_dest /etc/localtime)"
     bwrap_add --ro-bind-try /etc/ld.so.cache /etc/ld.so.cache
     
     build_bwrap_devices
