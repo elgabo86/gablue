@@ -43,11 +43,16 @@
     grep -zq "GABLUE_ES_LAUNCH=1" /proc/$pid/environ 2>/dev/null && kill -9 "$pid" 2>/dev/null
   done &
 
-  # Jellyfin Desktop : kill du wrapper flatpak + terminaison du sandbox complet
-  pgrep -u "$USER" -f "flatpak run .*JellyfinDesktop" | while read -r pid; do
+  # Jellyfin Desktop : kill du sandbox complet si lancé depuis ES-DE
+  # (le wrapper "flatpak run" n'existe plus une fois l'app lancée et l'env GABLUE_ES_LAUNCH
+  # n'est visible que dans le processus applicatif du sandbox, pas dans les bwrap ;
+  # flatpak kill ne termine pas le sous-sandbox WebEngine, d'où le pkill des bwrap restants)
+  for pid in $(pgrep -u "$USER" -f "jellyfin-desktop"); do
     if grep -zq "GABLUE_ES_LAUNCH=1" /proc/$pid/environ 2>/dev/null; then
       kill -9 "$pid" 2>/dev/null
       flatpak kill org.jellyfin.JellyfinDesktop 2>/dev/null
+      pkill -9 -u "$USER" -f "bwrap .*jellyfin-desktop" 2>/dev/null
+      break
     fi
   done &
 
