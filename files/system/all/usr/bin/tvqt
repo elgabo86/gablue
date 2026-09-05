@@ -1567,7 +1567,10 @@ def main():
     app.setStyleSheet(APP_STYLESHEET)
 
     win = TVWindow()
-    win.show()
+    if "--fullscreen" in sys.argv or "-f" in sys.argv:
+        win.showFullScreen()
+    else:
+        win.show()
     sys.exit(app.exec())
 
 

@@ -159,6 +159,34 @@ if [ $INTEGRATE_EXIT -eq 0 ]; then
             echo "Le dossier /usr/share/ublue-os/gablue/esde/custom_systems n'existe pas."
             kdialog --title "Installation ES-DE" --warningcontinuecancel "Le dossier custom_systems n'a pas été trouvé à l'emplacement attendu."
         fi
+        # Copier les lanceurs Tools (Gablue TV, Jellyfin) dans le dossier ROMs
+        TOOLS_SRC="/usr/share/ublue-os/gablue/esde/tools"
+        if [ -d "$TOOLS_SRC" ]; then
+            ROMPATH="$HOME/Roms"
+            # Lire le ROMDirectory configuré dans ES-DE si présent (défaut ~/Roms)
+            if [ -f "$HOME/ES-DE/settings/es_settings.xml" ]; then
+                CONFIGURED_ROMPATH=$(grep -oP 'ROMDirectory" value="\K[^"]*' "$HOME/ES-DE/settings/es_settings.xml" | head -1)
+                if [ -n "$CONFIGURED_ROMPATH" ]; then
+                    ROMPATH="$CONFIGURED_ROMPATH"
+                fi
+            fi
+            echo "Copie des lanceurs Tools vers $ROMPATH/tools/..."
+            mkdir -p "$ROMPATH/tools"
+            for launcher in "$TOOLS_SRC"/*.sh; do
+                name=$(basename "$launcher")
+                # Ne pas écraser un lanceur personnalisé existant
+                if [ ! -f "$ROMPATH/tools/$name" ]; then
+                    cp "$launcher" "$ROMPATH/tools/$name"
+                    chmod +x "$ROMPATH/tools/$name"
+                    echo "Lanceur copié : $name"
+                else
+                    echo "Lanceur déjà présent, non modifié : $name"
+                fi
+            done
+            unset -v launcher name
+        else
+            echo "Le dossier $TOOLS_SRC n'existe pas, lanceurs Tools non installés."
+        fi
         kdialog --title "Installation ES-DE" --msgbox "Installation de ES-DE terminée avec succès !"
     else
         kdialog --title "Installation ES-DE" --error "Le fichier $DESKTOP_FILE n'a pas été trouvé."
