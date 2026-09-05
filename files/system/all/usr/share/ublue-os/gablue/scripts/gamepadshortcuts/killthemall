@@ -21,13 +21,14 @@
   pgrep -u "$USER" -f bottles | xargs -I {} sh -c 'ps -p {} -o comm= | grep -q "^bwrap$" && kill -9 {}' &
 
    # Kill des émulateurs (tous en parallèle)
-  for emu in azahar suyu eden sudachi dolphin-emu yuzu retroarch xemu rpcs3 duckstation pcsx2 lime3ds ryujinx Cemu flycast shadps4 PokeMMO PPSSPP; do
+  for emu in azahar suyu eden sudachi dolphin-emu yuzu retroarch xemu rpcs3 duckstation pcsx2 lime3ds ryujinx Cemu flycast shadps4 PokeMMO PPSSPP xenia_edge; do
     pgrep -u "$USER" -f "$emu" | xargs -n1 kill -9 &
   done
 
   # Commande spécifique pour eden et citron avec fusermount
   (pgrep -u "$USER" -f mount_eden | xargs -r -n1 kill -9 && fusermount -uz /tmp/.mount_eden*) &
   (pgrep -u "$USER" -f citron | xargs -r -n1 kill -9 && fusermount -uz /tmp/.mount_citro*) &
+  (pgrep -u "$USER" -f xenia_edge | xargs -r -n1 kill -9 && fusermount -uz /tmp/.mount_xenia*) &
 
   # Kill des processus sober
   pkill -u "$USER" -9 sober &

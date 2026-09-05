@@ -46,6 +46,15 @@
             <entry>~/AppImages/sudachi</entry>
         </rule>
     </emulator>
+    <emulator name="XENIA-EDGE">
+        <!-- Xbox 360 emulator Xenia Edge -->
+        <rule type="systempath">
+            <entry>xenia_edge</entry>
+        </rule>
+        <rule type="staticpath">
+            <entry>~/AppImages/xenia_edge.appimage</entry>
+        </rule>
+    </emulator>
     <emulator name="AZAHAR">
         <!-- Nintendo 3DS emulator Azahar -->
         <rule type="staticpath">
