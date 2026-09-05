@@ -35,6 +35,21 @@
   # Kill x2go
   pkill -u "$USER" -9 x2goclient &
 
+  # Kill Gablue TV et Jellyfin uniquement s'ils ont été lancés depuis ES-DE
+  # (variable GABLUE_ES_LAUNCH exportée par les lanceurs Tools d'ES-DE)
+  # tvqt : kill direct du processus
+  pgrep -u "$USER" -f "/usr/bin/tvqt" | while read -r pid; do
+    grep -zq "GABLUE_ES_LAUNCH=1" /proc/$pid/environ 2>/dev/null && kill -9 "$pid" 2>/dev/null
+  done &
+
+  # Jellyfin Desktop : kill du wrapper flatpak + terminaison du sandbox complet
+  pgrep -u "$USER" -f "flatpak run .*JellyfinDesktop" | while read -r pid; do
+    if grep -zq "GABLUE_ES_LAUNCH=1" /proc/$pid/environ 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null
+      flatpak kill org.jellyfin.JellyfinDesktop 2>/dev/null
+    fi
+  done &
+
   # Kill uniquement les processus enfants de launchlin.sh (pas le script lui-même)
   # pour permettre le cleanup et démontage du LGP
   pgrep -u "$USER" -f "launchlin\.sh" | while read pid; do

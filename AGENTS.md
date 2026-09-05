@@ -999,7 +999,7 @@ Scripts lancés par le binaire gamepadshortcuts :
 - `decoblue` : Déconnexion Bluetooth
 - `launchyt` : Lancement YouTube
 - `openes` : Overture EmulationStation
-- `killthemall` : Tue tous les émulateurs de la session courante
+- `killthemall` : Tue tous les émulateurs de la session courante. Tue aussi Gablue TV (tvqt) et Jellyfin Desktop (flatpak) **uniquement** s'ils ont été lancés depuis ES-DE (variable `GABLUE_ES_LAUNCH=1` exportée par les lanceurs Tools, vérifiée dans `/proc/<pid>/environ` ; pour Jellyfin, `flatpak kill` termine le sandbox complet)
 - `takescreenshot`, `startstoprecord` : Capture d'écran / enregistrement
 - `changefps`, `showhidemango` : Contrôle FPS / overlay MangoHud
 
