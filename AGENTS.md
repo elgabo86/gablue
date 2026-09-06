@@ -476,6 +476,7 @@ Exclusions importantes :
 
 Installation extensive de paquets organisée par catégories :
 - **Homebrew** : brew n'est **pas** installé en RPM (`ublue-brew` est déprécié upstream, dernier build COPR 11/2025) — fourni par l'étape intermédiaire `FROM ghcr.io/ublue-os/brew:latest@sha256:...` du Containerfile-gablue (aligné Bazzite `d0c9330`) qui copie `/system_files/` (tarball `/usr/share/homebrew.tar.zst`, services `brew-setup.service`/`brew-update.timer`/`brew-upgrade.timer`, preset, intégration shell — contenu identique à l'ancien RPM). Le digest est épinglé, à bumper ponctuellement vers le dernier `:latest` (le `brew-update.timer` maintient brew à jour côté client de toute façon)
+- **libxcrypt-compat** (section CLI) : requis par le Portable Ruby de brew 4.0+ (`libcrypt.so.1`, absent de fc44 qui ne fournit plus que `libcrypt.so.2`) — sans lui, `brew upgrade` échoue sur « Failed to upgrade Homebrew Portable Ruby! » ; aligné Bazzite (Containerfile)
 - **CLI** : fswatch, btop, fastfetch, git, atuin, tldr, amdsmi, jq, zoxide, bpftune-gaming (fork gaming de bpftune, depuis Terra 44 — aligné Bazzite `4333b30`, détection traffic UDP burst des jeux pour réduire la latence réseau ; le service reste `bpftune.service`), etc.
 - **Réseau** : tailscale, rar
 - **Multimédia** : yt-dlp, openh264.x86_64 + openh264.i686 (vrai codec Cisco H.264 depuis negativo17 `fedora-multimedia`, installé explicitement avec `--allowerasing` — aligné Bazzite `5161562`, voir exclusion `noopenh264` dans copr)

@@ -87,7 +87,10 @@ dnf5 -y install --enable-repo="*fedora-multimedia*" --allowerasing \
 # Outils système et monitoring
 # Brew n'est plus un RPM (ublue-brew déprécié upstream) : fourni par l'image OCI
 # ublue-os/brew copiée dans le Containerfile (aligné Bazzite d0c9330)
+# libxcrypt-compat : requis par le Portable Ruby de brew (libcrypt.so.1, absent
+# de Fedora 44 qui ne fournit plus que libcrypt.so.2) — aligné Bazzite Containerfile
 dnf5 -y install \
+    libxcrypt-compat \
     fswatch \
     iotop-c \
     wol \
