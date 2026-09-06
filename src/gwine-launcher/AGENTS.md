@@ -386,6 +386,7 @@ podman run --rm -v "$(pwd)/lib:/src:z" docker.io/library/fedora:43 bash -c \
 - La source choisie est stockée dans les globales `_DXVK_SOURCE` / `_VKD3D_SOURCE` ("official" ou "bottles")
 - Téléchargement automatique depuis GitHub
 - Système de vérification SHA256
+- **Validation d'intégrité des archives téléchargées** (fix septembre 2026) : `validate_archive()` (download.sh) détecte le format par magic bytes (xz/gzip/zstd/7z/zip/MSI-OLE) et teste le flux complet (`xz -t`, `gzip -t`...) pour détecter les téléchargements tronqués qui restent sur disque. `download_archive()` enchaîne téléchargement + validation + **1 retry** en cas de corruption, et supprime l'archive en cas d'échec final (jamais de fichier corrompu en cache). Utilisé par : runner gwine (`download_gwine` valide aussi l'archive en cache et purges-la si corrompue ; échec d'extraction → re-téléchargement → purge + fallback version existante), `download_github_component`, `download_and_install_component` (DXVK/VKD3D/NVAPI), Mono/Gecko (offline.sh, qui purge aussi les .msi corrompus déjà en cache avant re-téléchargement). Le pack cache `gwine-cache.tar.xz` (bundle) a déjà sa propre vérification SHA256. Attention : `case` bash exige un match complet du mot → les patterns magic courts (gzip `1f8b`, zip `504b`) doivent finir par `*`
 - Gestion des versions avec backup automatique
 - Support offline avec cache local
 - Mode `--cachepack` pour créer des packs déployables sur machines sans internet

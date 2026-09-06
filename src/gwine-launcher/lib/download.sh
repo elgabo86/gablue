@@ -67,6 +67,94 @@ extract_archive() {
     return 0
 }
 
+# Valide l'intégrité d'une archive téléchargée
+# Détecte le format par magic bytes puis teste le flux complet (détecte les
+# téléchargements tronqués/corrompus qui restent présents sur disque)
+# Usage: validate_archive <archive_path>
+# Retourne 0 si l'archive est intacte, 1 sinon
+validate_archive() {
+    local archive_path="$1"
+
+    # Fichier inexistant ou vide (échec wget crée un fichier vide)
+    [ -s "$archive_path" ] || return 1
+
+    local magic
+    magic=$(od -An -tx1 -N4 "$archive_path" 2>/dev/null | tr -d ' \n')
+
+    case "$magic" in
+        fd377a58*)
+            # xz
+            xz -t "$archive_path" 2>/dev/null
+            ;;
+        1f8b*)
+            # gzip
+            gzip -t "$archive_path" 2>/dev/null
+            ;;
+        28b52ffd*)
+            # zstd
+            if command -v zstd &>/dev/null; then
+                zstd -t "$archive_path" >/dev/null 2>&1
+            else
+                tar --zstd -tf "$archive_path" >/dev/null 2>&1
+            fi
+            ;;
+        377abc*)
+            # 7z (magic complet: 37 7a bc af 27 1c)
+            if command -v 7z &>/dev/null; then
+                7z t "$archive_path" >/dev/null 2>&1
+            else
+                return 1
+            fi
+            ;;
+        504b*)
+            # zip
+            if command -v unzip &>/dev/null; then
+                unzip -tqq "$archive_path" >/dev/null 2>&1
+            else
+                return 1
+            fi
+            ;;
+        d0cf11e0*)
+            # MSI (OLE Compound File)
+            if command -v 7z &>/dev/null; then
+                7z t "$archive_path" >/dev/null 2>&1
+            else
+                # Magic valide mais pas d'outil pour tester l'intégrité complète
+                return 0
+            fi
+            ;;
+        *)
+            # Format inconnu (page d'erreur HTML, JSON, fichier tronqué...)
+            return 1
+            ;;
+    esac
+}
+
+# Télécharge une archive avec validation d'intégrité (1 retry si corrompue)
+# L'archive est supprimée en cas d'échec final (pas de fichier corrompu en cache)
+# Usage: download_archive <url> <output_path> [description]
+# Retourne 0 si succès, 1 sinon
+download_archive() {
+    local url="$1"
+    local output_path="$2"
+    local description="${3:-archive}"
+    local attempt
+
+    for attempt in 1 2; do
+        rm -f "$output_path"
+        if download_file "$url" "$output_path" "$description" && validate_archive "$output_path"; then
+            return 0
+        fi
+        if [ "$attempt" -lt 2 ] && [ -s "$output_path" ]; then
+            echo "Archive corrompue (téléchargement incomplet ?), nouvelle tentative..."
+        fi
+    done
+
+    rm -f "$output_path"
+    echo "Erreur: $description corrompu ou illisible après 2 tentatives de téléchargement"
+    return 1
+}
+
 # Fonction générique pour télécharger et installer un composant GitHub
 # Usage: download_github_component <cache_dir> <component_name> <version> <url> <archive_type> [no_confirm]
 download_github_component() {
@@ -96,7 +184,7 @@ download_github_component() {
     temp_dir=$(mktemp -d)
     local archive_path="$temp_dir/${component_name}.${archive_type}"
     
-    if ! download_file "$download_url" "$archive_path" "$component_name"; then
+    if ! download_archive "$download_url" "$archive_path" "$component_name"; then
         rm -rf "$temp_dir"
         return 1
     fi
@@ -141,8 +229,8 @@ download_and_install_component() {
         _COMPONENT_OLD_VERSION="$old_version"
     fi
     
-    # Télécharger
-    if ! wget -q --show-progress "$url" -O "$archive_temp" 2>&1; then
+    # Télécharger (avec validation d'intégrité et retry)
+    if ! download_archive "$url" "$archive_temp" "$name"; then
         if [ -n "$_COMPONENT_OLD_VERSION" ]; then
             mv "$_COMPONENT_OLD_VERSION.backup" "$_COMPONENT_OLD_VERSION"
             echo "✗ Échec du téléchargement de $name - Version précédente conservée"

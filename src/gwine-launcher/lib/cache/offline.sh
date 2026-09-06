@@ -21,12 +21,12 @@ download_missing_components() {
         local GECKO32_URL="https://dl.winehq.org/wine/wine-gecko/${GECKO_VER}/wine-gecko-${GECKO_VER}-x86.msi"
         
         mkdir -p "$WINE_CACHE_DIR"
-        
+
         rm -f "$WINE_CACHE_DIR"/wine-mono-*.msi "$WINE_CACHE_DIR"/wine-gecko-*.msi
-        
-        wget -q --show-progress "$MONO_URL" -O "$MONO_FILE" 2>&1 || echo "Warning: Échec du téléchargement de Wine Mono"
-        wget -q --show-progress "$GECKO_URL" -O "$GECKO64_FILE" 2>&1 || echo "Warning: Échec du téléchargement de Wine Gecko (x64)"
-        wget -q --show-progress "$GECKO32_URL" -O "$GECKO32_FILE" 2>&1 || echo "Warning: Échec du téléchargement de Wine Gecko (x86)"
+
+        download_archive "$MONO_URL" "$MONO_FILE" "Wine Mono" || echo "Warning: Échec du téléchargement de Wine Mono"
+        download_archive "$GECKO_URL" "$GECKO64_FILE" "Wine Gecko (x64)" || echo "Warning: Échec du téléchargement de Wine Gecko (x64)"
+        download_archive "$GECKO32_URL" "$GECKO32_FILE" "Wine Gecko (x86)" || echo "Warning: Échec du téléchargement de Wine Gecko (x86)"
     fi
     
     ensure_dirs "$DXVK_CACHE_DIR" "$VKD3D_CACHE_DIR"
@@ -57,7 +57,7 @@ download_missing_components() {
             local DXVK_TEMP="$DXVK_CACHE_DIR/dxvk.tar.gz"
             local DXVK_DIR="$DXVK_CACHE_DIR/dxvk-${DXVK_VERSION}"
             
-            wget -q --show-progress "$DXVK_URL" -O "$DXVK_TEMP" 2>&1 || echo "Warning: Échec du téléchargement de DXVK"
+            download_archive "$DXVK_URL" "$DXVK_TEMP" "DXVK" || echo "Warning: Échec du téléchargement de DXVK"
             if [ -f "$DXVK_TEMP" ]; then
                 ensure_dir -s "$DXVK_DIR"
                 local temp_extract="$DXVK_CACHE_DIR/.temp_dxvk"
@@ -104,10 +104,10 @@ download_missing_components() {
             local VKD3D_TEMP="$VKD3D_CACHE_DIR/vkd3d.tar"
             local VKD3D_DIR="$VKD3D_CACHE_DIR/vkd3d-proton-${VKD3D_VERSION}"
             
-            if ! wget -q --show-progress "$VKD3D_URL" -O "$VKD3D_TEMP" 2>&1; then
+            if ! download_archive "$VKD3D_URL" "$VKD3D_TEMP" "VKD3D-Proton"; then
                 if [ -n "$VKD3D_FALLBACK_URL" ]; then
                     echo "Format .tar.zst indisponible, tentative .tar.gz..."
-                    wget -q --show-progress "$VKD3D_FALLBACK_URL" -O "$VKD3D_TEMP" 2>&1 || echo "Warning: Échec du téléchargement de VKD3D-Proton"
+                    download_archive "$VKD3D_FALLBACK_URL" "$VKD3D_TEMP" "VKD3D-Proton" || echo "Warning: Échec du téléchargement de VKD3D-Proton"
                 else
                     echo "Warning: Échec du téléchargement de VKD3D-Proton"
                 fi
@@ -430,38 +430,47 @@ prepare_full_offline_cache() {
         rm -f "$old"
     done
     shopt -u nullglob
-    
+
+    # Purger les .msi corrompus d'un téléchargement interrompu (force le re-téléchargement)
+    local msi
+    for msi in "$mono_file" "$gecko64_file" "$gecko32_file"; do
+        if [ -f "$msi" ] && ! validate_archive "$msi"; then
+            echo "   ⚠️ $(basename "$msi") corrompu, re-téléchargement..."
+            rm -f "$msi"
+        fi
+    done
+
     if [ ! -f "$mono_file" ]; then
         echo "   Téléchargement de Wine Mono..."
-        if ! wget -q --show-progress "$MONO_URL" -O "$mono_file" 2>&1; then
+        if download_archive "$MONO_URL" "$mono_file" "Wine Mono"; then
+            echo "   ✓ Wine Mono téléchargé"
+        else
             echo "   ⚠️ Échec du téléchargement de Wine Mono"
             failed=true
-        else
-            echo "   ✓ Wine Mono téléchargé"
         fi
     else
         echo "   ✓ Wine Mono déjà en cache"
     fi
-    
+
     if [ ! -f "$gecko64_file" ]; then
         echo "   Téléchargement de Wine Gecko (x64)..."
-        if ! wget -q --show-progress "$GECKO_URL" -O "$gecko64_file" 2>&1; then
+        if download_archive "$GECKO_URL" "$gecko64_file" "Wine Gecko (x64)"; then
+            echo "   ✓ Wine Gecko (x64) téléchargé"
+        else
             echo "   ⚠️ Échec du téléchargement de Wine Gecko (x64)"
             failed=true
-        else
-            echo "   ✓ Wine Gecko (x64) téléchargé"
         fi
     else
         echo "   ✓ Wine Gecko (x64) déjà en cache"
     fi
-    
+
     if [ ! -f "$gecko32_file" ]; then
         echo "   Téléchargement de Wine Gecko (x86)..."
-        if ! wget -q --show-progress "$GECKO32_URL" -O "$gecko32_file" 2>&1; then
+        if download_archive "$GECKO32_URL" "$gecko32_file" "Wine Gecko (x86)"; then
+            echo "   ✓ Wine Gecko (x86) téléchargé"
+        else
             echo "   ⚠️ Échec du téléchargement de Wine Gecko (x86)"
             failed=true
-        else
-            echo "   ✓ Wine Gecko (x86) téléchargé"
         fi
     else
         echo "   ✓ Wine Gecko (x86) déjà en cache"

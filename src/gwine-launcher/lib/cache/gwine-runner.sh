@@ -46,6 +46,13 @@ install_gwine_from_cache() {
     local version_name
     version_name=$(basename "$latest_archive" .tar.xz)
 
+    # Valider l'archive en cache (peut être corrompue par un téléchargement interrompu)
+    if ! validate_archive "$latest_archive"; then
+        echo "Archive en cache corrompue: $(basename "$latest_archive")"
+        rm -f "$latest_archive"
+        return 1
+    fi
+
     echo "Installation de $version_name depuis le cache..."
 
     local temp_dir="$CACHE_DIR/.temp_gwine_install"
@@ -167,9 +174,19 @@ download_gwine() {
         rm -f "$old_archive"
     fi
 
+    if [ -f "$archive_path" ]; then
+        # Valider l'archive en cache (peut être corrompue par un téléchargement interrompu)
+        if validate_archive "$archive_path"; then
+            echo "Archive trouvée dans le cache: $archive_path"
+        else
+            echo "Archive en cache corrompue, re-téléchargement..."
+            rm -f "$archive_path"
+        fi
+    fi
+
     if [ ! -f "$archive_path" ]; then
         echo "Téléchargement depuis: $download_url"
-        if ! download_file "$download_url" "$archive_path" "gwine"; then
+        if ! download_archive "$download_url" "$archive_path" "gwine"; then
             rm -rf "$temp_dir"
             if [ -n "$current_version" ] && [ "$current_version" != "unknown" ]; then
                 echo "Utilisation de la version existante: $current_version"
@@ -178,19 +195,26 @@ download_gwine() {
             return 1
         fi
         echo "Archive sauvegardée dans: $archive_path"
-    else
-        echo "Archive trouvée dans le cache: $archive_path"
     fi
 
     echo "Extraction..."
     local extract_dir="$temp_dir/extracted"
     if ! extract_archive "$archive_path" "$extract_dir" "tar.xz"; then
-        rm -rf "$temp_dir"
-        if [ -n "$current_version" ] && [ "$current_version" != "unknown" ]; then
-            echo "Utilisation de la version existante: $current_version"
-            return 0
+        # L'archive a passé la validation mais est illisible : purge et re-téléchargement
+        echo "Archive corrompue, re-téléchargement..."
+        rm -rf "$extract_dir"
+        if ! download_archive "$download_url" "$archive_path" "gwine" || \
+           ! extract_archive "$archive_path" "$extract_dir" "tar.xz"; then
+            # Purge du cache pour ne pas bloquer les prochaines mises à jour
+            rm -rf "$temp_dir"
+            rm -f "$archive_path"
+            echo "Erreur: archive de $latest_version illisible, supprimée du cache"
+            if [ -n "$current_version" ] && [ "$current_version" != "unknown" ]; then
+                echo "Utilisation de la version existante: $current_version"
+                return 0
+            fi
+            return 1
         fi
-        return 1
     fi
 
     # Installation
