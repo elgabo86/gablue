@@ -53,8 +53,12 @@ flatpak install -y --noninteractive "org.freedesktop.Platform.VulkanLayer.MangoH
 echo "MangoHud flatpak (${FREEDESKTOP_BRANCH}) installé"
 
 # OBS VkCapture (couche Vulkan pour capture OBS, optionnel)
-flatpak install -y --noninteractive "org.freedesktop.Platform.VulkanLayer.OBSVkCapture//${FREEDESKTOP_BRANCH}"
-echo "OBS VkCapture flatpak (${FREEDESKTOP_BRANCH}) installé"
+# Détection dynamique de la dernière branche OBSVkCapture (peut être en retard sur
+# freedesktop : ex. 25.08 publié quand MangoHud est déjà en 26.08)
+OBSVKCAPTURE_BRANCH=$(flatpak remote-ls flathub --runtime 2>/dev/null | awk -F'\t' '$2 == "org.freedesktop.Platform.VulkanLayer.OBSVkCapture" && $4 ~ /^[0-9]+\.[0-9]+$/ {print $4}' | sort -V | tail -1)
+OBSVKCAPTURE_BRANCH="${OBSVKCAPTURE_BRANCH:-25.08}"
+flatpak install -y --noninteractive "org.freedesktop.Platform.VulkanLayer.OBSVkCapture//${OBSVKCAPTURE_BRANCH}"
+echo "OBS VkCapture flatpak (${OBSVKCAPTURE_BRANCH}) installé"
 
 # Proton-GE (compatibilité Steam, lié à Steam)
 flatpak install -y --noninteractive com.valvesoftware.Steam.CompatibilityTool.Proton-GE
