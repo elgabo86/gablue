@@ -1,13 +1,14 @@
 [Desktop Entry]
-Comment=Exécutez des applications Linux
-Exec=/usr/share/ublue-os/gablue/scripts/launchlin.sh %f
+Comment=Exécute les Linux Game Packs
+Exec=/usr/share/ublue-os/gablue/scripts/lgplaunch.sh %f
 Icon=tux
-Keywords[fr_CH]=linux;game;jeu;native;
-Keywords=linux;game;jeu;native;
+Keywords[fr_CH]=lgp;linux;game;jeu;pack;
+Keywords=lgp;linux;game;jeu;pack;
 MimeType=application/x-lgp;
+Name=LGP
 NoDisplay=true
 Path=
-StartupWMClass=launchlin
+StartupWMClass=lgplaunch
 Terminal=false
 TerminalOptions=
 Type=Application

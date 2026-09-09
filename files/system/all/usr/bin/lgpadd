@@ -13,7 +13,7 @@
 #   --switch            : lien dans ~/Roms/switch (section "Nintendo Switch")
 #
 # Les systèmes ES-DE "switch" et "desktop" supportent nativement l'extension
-# .lgp (lancement via launchlin.sh), pas besoin de lanceur .sh : on crée un
+# .lgp (lancement via lgplaunch.sh), pas besoin de lanceur .sh : on crée un
 # lien symbolique direct du .lgp et on télécharge le cover dans
 # ~/ES-DE/downloaded_media/<section>/covers (s'il n'existe pas déjà).
 

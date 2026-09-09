@@ -101,8 +101,8 @@ esac
 
 # Définit la commande d'exécution principale et l'action alternative
 if [ "$FILETYPE" = "lgp" ]; then
-    # Pour les .lgp : utiliser launchlin.sh (pas de mode fix)
-    EXEC_COMMAND="/usr/share/ublue-os/gablue/scripts/launchlin.sh \"$EXE_PATH\""
+    # Pour les .lgp : utiliser lgplaunch.sh (pas de mode fix)
+    EXEC_COMMAND="/usr/share/ublue-os/gablue/scripts/lgplaunch.sh \"$EXE_PATH\""
     ALT_ACTION=""
     ALT_NAME=""
     ALT_EXEC=""

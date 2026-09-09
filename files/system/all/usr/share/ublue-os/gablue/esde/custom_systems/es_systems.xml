@@ -17,7 +17,7 @@
         <path>%ROMPATH%/switch</path>
         <extension>.nca .NCA .nro .NRO .nso .NSO .nsp .NSP .xci .XCI .lgp .LGP</extension>
         <command label="Eden (appimage)">%EMULATOR_EDEN% -f -g %ROM%</command>
-        <command label="LGP Linux Game Pack">/usr/share/ublue-os/gablue/scripts/launchlin.sh %ROM%</command>
+        <command label="LGP Linux Game Pack">/usr/share/ublue-os/gablue/scripts/lgplaunch.sh %ROM%</command>
         <command label="Citron (archgab)">/usr/bin/distrobox-enter  -n archgab  --  citron -f -g %ROM%</command>
         <command label="Citron (archgab) (Mangohud)">/usr/bin/distrobox-enter  -n archgab  --  mangohud citron -f -g %ROM%</command>
         <command label="Citron (appimage)">%EMULATOR_CITRON% -f -g %ROM%</command>
@@ -67,7 +67,7 @@
         <fullname>Desktop Applications</fullname>
         <path>%ROMPATH%/desktop</path>
         <extension>.lgp .LGP</extension>
-        <command label="LGP Linux Game Pack">/usr/share/ublue-os/gablue/scripts/launchlin.sh %ROM%</command>
+        <command label="LGP Linux Game Pack">/usr/share/ublue-os/gablue/scripts/lgplaunch.sh %ROM%</command>
         <platform>linux</platform>
         <theme>desktop</theme>
     </system>

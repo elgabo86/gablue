@@ -283,9 +283,9 @@ if [ -f /usr/share/applications/mimeapps.list ]; then
         sed -i "/^\[Default Applications\]/a ${mimetype}=Windows.desktop" /usr/share/applications/mimeapps.list
     done
 
-    # Ajouter l'association pour les fichiers .lgp (Linux Game Project)
+    # Ajouter l'association pour les fichiers .lgp (Linux Game Pack)
     sed -i "\#^application/x-lgp=#d" /usr/share/applications/mimeapps.list
-    sed -i "/^\[Default Applications\]/a application/x-lgp=Linux.desktop" /usr/share/applications/mimeapps.list
+    sed -i "/^\[Default Applications\]/a application/x-lgp=LGP.desktop" /usr/share/applications/mimeapps.list
 fi
 
 # Mettre à jour la base de données MIME pour les nouveaux types

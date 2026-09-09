@@ -1,0 +1,18 @@
+[Desktop Entry]
+Comment=Exécute les Linux Game Packs dans un terminal
+Exec=/usr/share/ublue-os/gablue/scripts/lgplaunch.sh %f; exec bash
+Icon=tux
+Keywords[fr_CH]=lgp;linux;game;jeu;pack;
+Keywords=lgp;linux;game;jeu;pack;
+MimeType=application/x-lgp;
+Name=LGP (Mode Terminal)
+NoDisplay=true
+Path=
+StartupWMClass=lgplaunch
+Terminal=true
+TerminalOptions=
+Type=Application
+X-GNOME-UsesNotifications=true
+X-KDE-SubstituteUID=false
+X-KDE-Username=
+X-KDE-StartupNotify=false

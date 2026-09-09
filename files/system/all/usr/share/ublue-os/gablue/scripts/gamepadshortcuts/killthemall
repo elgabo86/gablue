@@ -56,9 +56,11 @@
     fi
   done &
 
-  # Kill uniquement les processus enfants de launchlin.sh (pas le script lui-même)
+  # Kill uniquement les processus enfants de lgplaunch.sh (pas le script lui-même)
   # pour permettre le cleanup et démontage du LGP
-  pgrep -u "$USER" -f "launchlin\.sh" | while read pid; do
+  # Le pattern couvre aussi l'ancien nom launchlin.sh (symlink de compat :
+  # les raccourcis créés par les anciennes versions affichent ce nom en cmdline)
+  pgrep -u "$USER" -f "lgplaunch\.sh|launchlin\.sh" | while read pid; do
       # Liste tous les processus enfants directs et indirects
       local children
       children=$(pgrep -P "$pid")

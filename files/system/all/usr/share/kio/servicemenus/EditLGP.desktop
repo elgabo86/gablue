@@ -2,7 +2,12 @@
 Type=Service
 Name=Edit LGP Package
 MimeType=application/x-lgp;
-Actions=ExtractLGP
+Actions=SelectExe;ExtractLGP
+
+[Desktop Action SelectExe]
+Name=Lancer un autre exécutable dans le LGP
+Icon=tux
+Exec=/usr/share/ublue-os/gablue/scripts/lgplaunch.sh --exe %f
 
 [Desktop Action ExtractLGP]
 Name=Extraire le LGP dans un dossier
