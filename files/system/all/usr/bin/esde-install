@@ -24,6 +24,54 @@ if ! flatpak list | grep -q "it.mijorus.gearlever"; then
     exit 1
 fi
 
+# Copier les fichiers Gablue (custom_systems + lanceurs Tools)
+# Appelée que ES-DE soit réinstallé ou déjà présent (réinstallation refusée)
+copy_gablue_files() {
+    # Copier le dossier custom_systems dans ~/ES-DE/
+    if [ -d "/usr/share/ublue-os/gablue/esde/custom_systems" ]; then
+        echo "Copie du dossier custom_systems vers ~/ES-DE/..."
+        mkdir -p "$HOME/ES-DE"
+        cp -r "/usr/share/ublue-os/gablue/esde/custom_systems" "$HOME/ES-DE/"
+        if [ $? -eq 0 ]; then
+            echo "Dossier custom_systems copié avec succès !"
+        else
+            echo "Erreur lors de la copie du dossier custom_systems."
+            kdialog --title "Installation ES-DE" --error "Erreur lors de la copie du dossier custom_systems."
+        fi
+    else
+        echo "Le dossier /usr/share/ublue-os/gablue/esde/custom_systems n'existe pas."
+        kdialog --title "Installation ES-DE" --warningcontinuecancel "Le dossier custom_systems n'a pas été trouvé à l'emplacement attendu."
+    fi
+    # Copier les lanceurs Tools (Gablue TV, Jellyfin, YouTube) dans le dossier ROMs
+    TOOLS_SRC="/usr/share/ublue-os/gablue/esde/tools"
+    if [ -d "$TOOLS_SRC" ]; then
+        ROMPATH="$HOME/Roms"
+        # Lire le ROMDirectory configuré dans ES-DE si présent (défaut ~/Roms)
+        if [ -f "$HOME/ES-DE/settings/es_settings.xml" ]; then
+            CONFIGURED_ROMPATH=$(grep -oP 'ROMDirectory" value="\K[^"]*' "$HOME/ES-DE/settings/es_settings.xml" | head -1)
+            if [ -n "$CONFIGURED_ROMPATH" ]; then
+                ROMPATH="$CONFIGURED_ROMPATH"
+            fi
+        fi
+        echo "Copie des lanceurs Tools vers $ROMPATH/tools/..."
+        mkdir -p "$ROMPATH/tools"
+        for launcher in "$TOOLS_SRC"/*.sh; do
+            name=$(basename "$launcher")
+            # Ne pas écraser un lanceur personnalisé existant
+            if [ ! -f "$ROMPATH/tools/$name" ]; then
+                cp "$launcher" "$ROMPATH/tools/$name"
+                chmod +x "$ROMPATH/tools/$name"
+                echo "Lanceur copié : $name"
+            else
+                echo "Lanceur déjà présent, non modifié : $name"
+            fi
+        done
+        unset -v launcher name
+    else
+        echo "Le dossier $TOOLS_SRC n'existe pas, lanceurs Tools non installés."
+    fi
+}
+
 # Déterminer le dossier de téléchargement
 DOWNLOAD_DIR=$(xdg-user-dir DOWNLOAD)
 if [ -z "$DOWNLOAD_DIR" ] || [ ! -d "$DOWNLOAD_DIR" ]; then
@@ -48,7 +96,9 @@ if [ -f "$APPIMAGE_FILE" ] && flatpak run it.mijorus.gearlever --list-installed 
         fi
         rm -f "$APPIMAGE_FILE"
     else
-        kdialog --title "Installation ES-DE" --msgbox "Installation annulée."
+        # Pas de réinstallation : mettre à jour quand même les fichiers Gablue
+        copy_gablue_files
+        kdialog --title "Installation ES-DE" --msgbox "ES-DE déjà installé.\n\nLes fichiers Gablue (custom_systems et lanceurs Tools) ont été mis à jour."
         exit 0
     fi
 fi
@@ -144,49 +194,8 @@ if [ $INTEGRATE_EXIT -eq 0 ]; then
             echo "Erreur lors de la mise à jour de la base de données des applications."
             kdialog --title "Installation ES-DE" --error "Erreur lors de la mise à jour de la base de données des applications."
         fi
-        # Copier le dossier custom_systems dans ~/ES-DE/
-        if [ -d "/usr/share/ublue-os/gablue/esde/custom_systems" ]; then
-            echo "Copie du dossier custom_systems vers ~/ES-DE/..."
-            mkdir -p "$HOME/ES-DE"
-            cp -r "/usr/share/ublue-os/gablue/esde/custom_systems" "$HOME/ES-DE/"
-            if [ $? -eq 0 ]; then
-                echo "Dossier custom_systems copié avec succès !"
-            else
-                echo "Erreur lors de la copie du dossier custom_systems."
-                kdialog --title "Installation ES-DE" --error "Erreur lors de la copie du dossier custom_systems."
-            fi
-        else
-            echo "Le dossier /usr/share/ublue-os/gablue/esde/custom_systems n'existe pas."
-            kdialog --title "Installation ES-DE" --warningcontinuecancel "Le dossier custom_systems n'a pas été trouvé à l'emplacement attendu."
-        fi
-        # Copier les lanceurs Tools (Gablue TV, Jellyfin) dans le dossier ROMs
-        TOOLS_SRC="/usr/share/ublue-os/gablue/esde/tools"
-        if [ -d "$TOOLS_SRC" ]; then
-            ROMPATH="$HOME/Roms"
-            # Lire le ROMDirectory configuré dans ES-DE si présent (défaut ~/Roms)
-            if [ -f "$HOME/ES-DE/settings/es_settings.xml" ]; then
-                CONFIGURED_ROMPATH=$(grep -oP 'ROMDirectory" value="\K[^"]*' "$HOME/ES-DE/settings/es_settings.xml" | head -1)
-                if [ -n "$CONFIGURED_ROMPATH" ]; then
-                    ROMPATH="$CONFIGURED_ROMPATH"
-                fi
-            fi
-            echo "Copie des lanceurs Tools vers $ROMPATH/tools/..."
-            mkdir -p "$ROMPATH/tools"
-            for launcher in "$TOOLS_SRC"/*.sh; do
-                name=$(basename "$launcher")
-                # Ne pas écraser un lanceur personnalisé existant
-                if [ ! -f "$ROMPATH/tools/$name" ]; then
-                    cp "$launcher" "$ROMPATH/tools/$name"
-                    chmod +x "$ROMPATH/tools/$name"
-                    echo "Lanceur copié : $name"
-                else
-                    echo "Lanceur déjà présent, non modifié : $name"
-                fi
-            done
-            unset -v launcher name
-        else
-            echo "Le dossier $TOOLS_SRC n'existe pas, lanceurs Tools non installés."
-        fi
+        # Copier les fichiers Gablue (custom_systems + lanceurs Tools)
+        copy_gablue_files
         kdialog --title "Installation ES-DE" --msgbox "Installation de ES-DE terminée avec succès !"
     else
         kdialog --title "Installation ES-DE" --error "Le fichier $DESKTOP_FILE n'a pas été trouvé."
