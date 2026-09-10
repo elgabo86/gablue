@@ -11,7 +11,29 @@ DESKTOP_DIR="$HOME/.local/share/applications"
 mkdir -p "$CACHE_DIR" "$APPIMAGES_DIR"
 
 # ---------------------------------------------------------------------------
-# 1. Nettoyage : supprimer toutes les anciennes versions sauf le .desktop actif
+# 1. Téléchargement
+# ---------------------------------------------------------------------------
+RELEASE_JSON=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest")
+
+ASSET_NAME_PATTERN="xenia_edge_linux.AppImage"
+DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r --arg pattern "$ASSET_NAME_PATTERN" \
+    '.assets[] | select(.name | contains($pattern)) | .browser_download_url')
+
+if [ -z "$DOWNLOAD_URL" ]; then
+    echo "Erreur : AppImage non trouvé dans la dernière release."
+    exit 1
+fi
+
+ASSET_NAME=$(basename "$DOWNLOAD_URL")
+NEW_APPIMAGE_PATH="$CACHE_DIR/$ASSET_NAME"
+
+echo "Téléchargement de $ASSET_NAME..."
+curl -L -o "$NEW_APPIMAGE_PATH" "$DOWNLOAD_URL"
+chmod +x "$NEW_APPIMAGE_PATH"
+
+# ---------------------------------------------------------------------------
+# 2. Nettoyage : supprimer toutes les anciennes versions (uniquement
+# maintenant que la nouvelle est téléchargée, pour ne jamais rester sans l'app)
 # ---------------------------------------------------------------------------
 echo "Nettoyage des anciennes versions..."
 
@@ -32,27 +54,6 @@ if [ -d "$APPIMAGES_DIR/.icons" ]; then
         rm -f "$icon"
     done
 fi
-
-# ---------------------------------------------------------------------------
-# 2. Téléchargement
-# ---------------------------------------------------------------------------
-RELEASE_JSON=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest")
-
-ASSET_NAME_PATTERN="xenia_edge_linux.AppImage"
-DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r --arg pattern "$ASSET_NAME_PATTERN" \
-    '.assets[] | select(.name | contains($pattern)) | .browser_download_url')
-
-if [ -z "$DOWNLOAD_URL" ]; then
-    echo "Erreur : AppImage non trouvé dans la dernière release."
-    exit 1
-fi
-
-ASSET_NAME=$(basename "$DOWNLOAD_URL")
-NEW_APPIMAGE_PATH="$CACHE_DIR/$ASSET_NAME"
-
-echo "Téléchargement de $ASSET_NAME..."
-curl -L -o "$NEW_APPIMAGE_PATH" "$DOWNLOAD_URL"
-chmod +x "$NEW_APPIMAGE_PATH"
 
 # ---------------------------------------------------------------------------
 # 3. Intégration GearLever (gère icônes + .desktop, peut crasher sur le %f)

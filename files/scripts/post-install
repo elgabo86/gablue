@@ -14,13 +14,11 @@ chmod +x /usr/bin/ventoy
 chmod +x /usr/bin/dlcover
 chmod +x /usr/bin/lol
 chmod +x /usr/bin/dlv
-chmod +x /usr/bin/citron-install
 chmod +x /usr/bin/eden-install
 chmod +x /usr/bin/gskill
 chmod +x /usr/bin/limitw
 chmod +x /usr/bin/encode64
 chmod +x /usr/bin/decode64
-chmod +x /usr/bin/qwen-install
 chmod +x /usr/bin/clean-media
 chmod +x /usr/bin/azahar-install
 chmod +x /usr/bin/xenia-install
@@ -30,7 +28,6 @@ chmod +x /usr/bin/wgpcheck
 chmod +x /usr/bin/wgpadd
 chmod +x /usr/bin/lgpadd
 chmod +x /usr/bin/esde-install
-chmod +x /usr/bin/hermes-install
 chmod +x /usr/bin/lgp-thumbnailer
 chmod +x /usr/bin/wgp-thumbnailer
 chmod +x /usr/bin/ds2xbox

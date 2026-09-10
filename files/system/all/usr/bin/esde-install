@@ -87,14 +87,10 @@ APPIMAGE_FILE="$APPIMAGES_DIR/esde.appimage"
 if [ -f "$APPIMAGE_FILE" ] && flatpak run it.mijorus.gearlever --list-installed | grep -q "ES-DE"; then
     kdialog --title "Installation ES-DE" --yesno "ES-DE semble déjà installé via Gearlever !\n\nFichier trouvé :\n- $APPIMAGE_FILE\n\nVoulez-vous réinstaller ES-DE ?"
     if [ $? -eq 0 ]; then
-        echo "Suppression de l'installation existante..."
-        echo y | flatpak run it.mijorus.gearlever --remove "$APPIMAGE_FILE" 2>/dev/null || true
-        update-desktop-database "$HOME/.local/share/applications"
-        if [ $? -ne 0 ]; then
-            kdialog --title "Installation ES-DE" --error "Erreur lors de la suppression de l'ancienne installation."
-            exit 1
-        fi
-        rm -f "$APPIMAGE_FILE"
+        # Réinstallation demandée : l'ancienne installation ne sera supprimée
+        # qu'après le téléchargement et la vérification de la nouvelle (par sécurité)
+        WAS_INSTALLED=1
+        echo "Réinstallation demandée, la nouvelle version sera téléchargée en premier..."
     else
         # Pas de réinstallation : mettre à jour quand même les fichiers Gablue
         copy_gablue_files
@@ -152,6 +148,15 @@ fi
 # Rendre le fichier exécutable
 echo "Rendre $FILENAME exécutable..."
 chmod +x "$FILENAME"
+
+# Supprimer l'ancienne installation (uniquement maintenant que la nouvelle
+# est téléchargée et vérifiée, pour ne jamais rester sans ES-DE)
+if [ "${WAS_INSTALLED:-0}" = 1 ]; then
+    echo "Suppression de l'ancienne installation..."
+    echo y | flatpak run it.mijorus.gearlever --remove "$APPIMAGE_FILE" 2>/dev/null || true
+    update-desktop-database "$HOME/.local/share/applications" || true
+    rm -f "$APPIMAGE_FILE"
+fi
 
 # Afficher une boîte de dialogue avec une barre qui tourne pendant l'intégration
 DBUS_REF=$(kdialog --title "Installation ES-DE" --progressbar "Intégration de ES-DE avec Gearlever en cours..." 0)

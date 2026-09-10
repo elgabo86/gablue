@@ -11,14 +11,6 @@ CACHE_DIR="$HOME/.cache/shadps4"
 APPIMAGES_DIR="$HOME/AppImages"
 mkdir -p "$CACHE_DIR"
 
-# Vérifier si une version est déjà installée et la supprimer
-INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -maxdepth 1 -iname "shadps4*.appimage" | head -n1 || true)
-
-if [ -n "$INSTALLED_APPIMAGE" ]; then
-    echo "Suppression de la version installée existante."
-    yes | flatpak run it.mijorus.gearlever --remove "$INSTALLED_APPIMAGE" 2>/dev/null || true
-fi
-
 # Obtenir les infos de la dernière release via GitHub API
 RELEASE_JSON=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest")
 
@@ -55,6 +47,16 @@ if [ -z "$APPIMAGE_FILE" ]; then
 fi
 
 echo "AppImage trouvé : $(basename "$APPIMAGE_FILE")"
+
+# Supprimer la version installée existante (uniquement maintenant, après
+# téléchargement et extraction réussis de la nouvelle, pour ne jamais
+# rester sans l'application)
+INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -maxdepth 1 -iname "shadps4*.appimage" | head -n1 || true)
+
+if [ -n "$INSTALLED_APPIMAGE" ]; then
+    echo "Suppression de la version installée existante."
+    yes | flatpak run it.mijorus.gearlever --remove "$INSTALLED_APPIMAGE" 2>/dev/null || true
+fi
 
 # Installer avec GearLever sans confirmation
 echo "Installation/Mise à jour avec GearLever..."
