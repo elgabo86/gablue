@@ -26,11 +26,11 @@ Images and the system are continuously updated, following the latest Fedora rele
 
 | Component | Version |
 |---|---|
-| Last build | 2026-09-09 |
+| Last build | 2026-09-10 |
 | Fedora | 44 |
 | Kernel (OGC) | 7.2.3 (rev 3.1) |
 | Mesa (Terra) | 26.2.2 |
-| KDE Plasma | 6.7.4 |
+| KDE Plasma | 6.7.5 |
 | NVIDIA (open) | 610.57.04 |
 | NVIDIA (closed) | 580.178.04 |
 
