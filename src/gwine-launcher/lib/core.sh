@@ -90,8 +90,14 @@ USE_BIND_MOUNTS=true
 
 # Fonctions utilitaires de base
 
+# Arrêt avec erreur. Usage: error_exit <message> [titre_kdialog]
 error_exit() {
     echo "Erreur: $1" >&2
+    # Afficher l'erreur graphiquement si --kdialog est actif (contexte .desktop avec
+    # Terminal=false, sinon l'utilisateur ne voit jamais le message)
+    if [ "${_USE_KDIALOG:-false}" = "true" ] && command -v kdialog &>/dev/null && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+        kdialog --title "${2:-Erreur}" --error "$1" 2>/dev/null || true
+    fi
     exit 1
 }
 

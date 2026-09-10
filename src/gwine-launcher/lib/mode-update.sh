@@ -14,7 +14,9 @@ update_components() {
     
     # Vérifier la connexion réseau
     if ! curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
-        error_exit "Pas de connexion internet - mise à jour impossible"
+        # error_exit affiche le kdialog graphiquement si --kdialog est actif
+        # (le .desktop a Terminal=false, sans cela l'utilisateur ne voit rien)
+        error_exit "Pas de connexion internet - mise à jour impossible" "Mise à jour des composants"
     fi
     
     local has_updates=false
@@ -179,6 +181,22 @@ update_components() {
             echo "  - DXVK-NVAPI: ${current_nvapi:-Inconnue}"
         fi
         echo ""
+        # Message graphique si --kdialog est actif (le .desktop a Terminal=false,
+        # sans cela l'utilisateur ne voit rien)
+        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+            local up_to_date_msg="Tous les composants sont déjà à jour !\n\nVersions installées :\n"
+            up_to_date_msg+="  - gwine : ${current_runner_version:-Inconnue}\n"
+            if [ "$current_dxvk_mode" = "dxvk-async" ]; then
+                up_to_date_msg+="  - DXVK-GPLAsync : ${current_dxvk_async:-Inconnue}\n"
+            else
+                up_to_date_msg+="  - DXVK : ${current_dxvk:-Inconnue}\n"
+            fi
+            up_to_date_msg+="  - VKD3D-Proton : ${current_vkd3d:-Inconnue}"
+            if is_nvidia_gpu; then
+                up_to_date_msg+="\n  - DXVK-NVAPI : ${current_nvapi:-Inconnue}"
+            fi
+            kdialog --title "Mise à jour des composants" --msgbox "$up_to_date_msg" 2>/dev/null || true
+        fi
         exit 0
     fi
     
