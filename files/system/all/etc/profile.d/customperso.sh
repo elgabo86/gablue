@@ -35,6 +35,8 @@ alias changefps="/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/changefps"
 
 alias opencode-install="curl -fsSL https://opencode.ai/install | bash"
 
+alias opencode2-install="curl -fsSL https://opencode.ai/v2/install | bash"
+
 # Ignore duplicate
 HISTCONTROL=ignoredups
 
