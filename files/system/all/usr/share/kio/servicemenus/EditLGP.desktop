@@ -7,7 +7,7 @@ Actions=SelectExe;ExtractLGP
 [Desktop Action SelectExe]
 Name=Lancer un autre exécutable dans le LGP
 Icon=tux
-Exec=/usr/share/ublue-os/gablue/scripts/lgplaunch.sh --exe %f
+Exec=/usr/bin/lgplaunch --exe %f
 
 [Desktop Action ExtractLGP]
 Name=Extraire le LGP dans un dossier

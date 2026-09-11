@@ -1,6 +1,6 @@
 [Desktop Entry]
 Comment=Exécute les Linux Game Packs
-Exec=/usr/share/ublue-os/gablue/scripts/lgplaunch.sh %f
+Exec=/usr/bin/lgplaunch %f
 Icon=tux
 Keywords[fr_CH]=lgp;linux;game;jeu;pack;
 Keywords=lgp;linux;game;jeu;pack;

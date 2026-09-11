@@ -4,7 +4,7 @@
 # - .exe/.wgp : crée un lanceur .sh (gwine) et un lien dans ~/Roms/windows
 # - .lgp      : crée un lien symbolique direct dans ~/Roms/switch ou ~/Roms/desktop
 #               (les systèmes switch et desktop d'ES-DE supportent nativement .lgp
-#                via la commande lgplaunch.sh, pas besoin de lanceur .sh)
+#                via la commande lgplaunch, pas besoin de lanceur .sh)
 # Télécharge aussi la cover dans ~/ES-DE/downloaded_media/<section>/covers
 
 # Vérifier si un chemin est fourni
@@ -76,7 +76,7 @@ else
 fi
 
 # Pour les .exe/.wgp : création du lanceur .sh
-# (inutile pour les .lgp, lancés directement par lgplaunch.sh via le système ES-DE)
+# (inutile pour les .lgp, lancés directement par lgplaunch via le système ES-DE)
 if [ "$filetype" != "lgp" ]; then
     # Déterminer le dossier de sortie pour le script
     # Pour les .wgp, utiliser un sous-dossier .es-wgp
@@ -162,7 +162,7 @@ fi
 
 # Créer le lien symbolique dans le dossier Roms
 if [ "$filetype" = "lgp" ]; then
-    # Pour les .lgp, lien direct vers le fichier (lancé par lgplaunch.sh dans ES-DE)
+    # Pour les .lgp, lien direct vers le fichier (lancé par lgplaunch dans ES-DE)
     link_game="$link_dir/$sh_name.lgp"
     ln -sf "$fullpath" "$link_game"
     echo "Lien symbolique créé : $link_game -> $fullpath"

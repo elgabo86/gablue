@@ -1,1 +1,1 @@
-lgplaunch.sh
+/usr/bin/lgplaunch

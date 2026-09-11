@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ################################################################################
-# lgplaunch.sh - Script de lancement de jeux Linux (ex-launchlin.sh)
+# lgplaunch - Script de lancement de jeux Linux (ex-launchlin.sh)
 #
 # Ce script permet de lancer des jeux/applications Linux via des paquets LGP
 # compressés, avec support :
@@ -13,8 +13,8 @@
 #
 # NOTE: Utilise squashfuse (FUSE) pour le .lgp et kernel overlayfs pour .temp
 # Avantage : pas besoin de sudo, copy-on-write rapide pour les gros fichiers
-# Un symlink de compat launchlin.sh -> lgplaunch.sh est fourni pour les
-# raccourcis .desktop créés par les anciennes versions.
+# Un symlink de compat launchlin.sh (ancien emplacement scripts/) -> /usr/bin/lgplaunch
+# est fourni pour les raccourcis .desktop créés par les anciennes versions.
 ################################################################################
 
 #======================================
