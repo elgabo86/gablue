@@ -301,6 +301,7 @@ COOLDOWN_MS = 180
 GRID_SPACING = 14
 GRID_MARGIN = 20
 CARD_RADIUS = 16
+CURSOR_HIDE_MS = 2500  # délai de masquage du curseur en lecture
 
 # =============================================================================
 # FEUILLE DE STYLE GLOBALE
@@ -689,6 +690,12 @@ class TVWindow(QMainWindow):
         self._loading_timer.setSingleShot(True)
         self._loading_timer.timeout.connect(self._hide_loading)
 
+        # --- Masquage automatique du curseur pendant la lecture ---
+        self._cursor_hidden = False
+        self._cursor_timer = QTimer(self)
+        self._cursor_timer.setSingleShot(True)
+        self._cursor_timer.timeout.connect(self._hide_cursor)
+
         # --- Manette ---
         self._gamepad = None
         self._last_scan = 0.0
@@ -816,6 +823,9 @@ class TVWindow(QMainWindow):
         # --- Widget vidéo intégré (libmpv + OpenGL) ---
         self._video_widget = MpvWidget()
         self._video_widget._right_click_cb = self._stop_video
+        # Suivi souris + filtre d'événements pour le masquage auto du curseur
+        self._video_widget.setMouseTracking(True)
+        self._video_widget.installEventFilter(self)
         self._stack.addWidget(self._video_widget)  # index 1 : vidéo
 
         root.addWidget(self._stack, 1)
@@ -855,6 +865,11 @@ class TVWindow(QMainWindow):
         self._loading_subtitle.setObjectName("loadingSubtitle")
         self._loading_subtitle.setAlignment(Qt.AlignCenter)
         load_layout.addWidget(self._loading_subtitle)
+
+        # L'overlay couvre la vidéo au démarrage : suivi souris + filtre
+        # pour réafficher le curseur même pendant le chargement
+        self._loading_overlay.setMouseTracking(True)
+        self._loading_overlay.installEventFilter(self)
 
     def _build_country_pills(self):
         """Crée les pastilles de filtrage par pays."""
@@ -1126,6 +1141,7 @@ class TVWindow(QMainWindow):
 
         self._video_widget.play(url)
         self._loading_timer.start(3000)
+        self._cursor_timer.start(CURSOR_HIDE_MS)
 
         # Empêche l'extinction d'écran pendant la lecture (portail freedesktop)
         self._inhibit_screensaver()
@@ -1149,6 +1165,7 @@ class TVWindow(QMainWindow):
         self._top_bar.show()
         self._hide_loading()
         self._uninhibit_screensaver()
+        self._restore_cursor()
 
     def _inhibit_screensaver(self):
         """Empêche l'extinction d'écran via org.freedesktop.PowerManagement."""
@@ -1418,11 +1435,54 @@ class TVWindow(QMainWindow):
         super().changeEvent(event)
 
     # =========================================================================
+    # CURSEUR (masquage automatique en lecture)
+    # =========================================================================
+
+    def eventFilter(self, obj, event):
+        """Détecte l'activité souris sur la zone vidéo (curseur auto-masqué).
+
+        Filtre installé sur le widget vidéo et l'overlay de chargement :
+        tout mouvement/clic pendant la lecture réaffiche le curseur et
+        reprogramme son masquage.
+        """
+        if event.type() in (
+            QEvent.MouseMove,
+            QEvent.MouseButtonPress,
+            QEvent.MouseButtonRelease,
+            QEvent.MouseButtonDblClick,
+            QEvent.Wheel,
+        ):
+            self._on_user_activity()
+        return super().eventFilter(obj, event)
+
+    def _on_user_activity(self):
+        """Réaffiche le curseur et reprogramme son masquage (mode lecture)."""
+        if self._stack.currentIndex() != 1:
+            return
+        if self._cursor_hidden:
+            self._restore_cursor()
+        self._cursor_timer.start(CURSOR_HIDE_MS)
+
+    def _restore_cursor(self):
+        """Réaffiche le curseur et arrête le timer de masquage."""
+        self._cursor_timer.stop()
+        if self._cursor_hidden:
+            self._cursor_hidden = False
+            self._video_widget.unsetCursor()
+
+    def _hide_cursor(self):
+        """Masque le curseur après inactivité pendant la lecture."""
+        if self._stack.currentIndex() == 1 and not self._cursor_hidden:
+            self._cursor_hidden = True
+            self._video_widget.setCursor(Qt.BlankCursor)
+
+    # =========================================================================
     # CLAVIER
     # =========================================================================
 
     def keyPressEvent(self, event):
         """Raccourcis clavier."""
+        self._on_user_activity()  # une touche pressée réaffiche le curseur
         key = event.key()
         watching = self._stack.currentIndex() == 1
 

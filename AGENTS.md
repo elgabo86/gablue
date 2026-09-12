@@ -992,6 +992,7 @@ Interface de télévision Gablue en Python (PySide6 + libmpv) :
 - Bascule grille/vidéo transparente : [A] lance/stop, [B] retour grille, D-pad = volume/seek
 - **Fullscreen** : automatique au lancement d'une chaîne, double-clic gauche = toggle, clic droit = retour grille
 - **GUI masquée** en mode vidéo : barre supérieure et OSD cachés, seul le flux vidéo est visible
+- **Curseur auto-masqué** en lecture : curseur souris caché après 2,5s d'inactivité (`CURSOR_HIDE_MS`, timer mono-shot) — tout mouvement souris/clic/touche le réaffiche immédiatement (filtre d'événements sur le widget vidéo et l'overlay de chargement, mouse tracking activé + suivi clavier via `keyPressEvent`) ; curseur restauré au retour à la grille
 
 ### Scripts gamepadshortcuts (/usr/share/ublue-os/gablue/scripts/gamepadshortcuts)
 
