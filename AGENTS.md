@@ -545,11 +545,15 @@ Configuration post-installation étendue :
 - `toggle-updates` upstream (RPM ublue-os-just, `/usr/share/ublue-os/just/10-update.just`) reste intact (flatpak + rpm-ostree uniquement) — la variante globale incluant les timers brew est la recette Gablue `toggle-updates-all` (60-custom.just)
 - **Correction fstrim** (aligné Bazzite `8a76282f` qui remplace le sed `6a10aa2`, fedora-silverblue/issue-tracker#689) : drop-in `files/system/all/usr/lib/systemd/system/fstrim.service.d/workaround-no-root-trim.conf` qui remplace `ExecStart` par `/usr/bin/fstrim --listed-in /proc/self/mountinfo` — avec composefs, `/etc/fstab` ne reflète pas les montages réels, fstrim ne trimmait pas correctement. **Divergence volontaire** : le drop-in inclut `ExecStart=` vide avant la nouvelle ligne (fstrim.service est `Type=oneshot`, sans reset le drop-in *ajouterait* une seconde exécution au lieu de remplacer l'originale — omission dans le drop-in Bazzite)
 
-**Correction composefs** (dans post-install, toutes variantes) :
+**Correction composefs** (toutes variantes) :
 - Compile un LD_PRELOAD minimal (`gablue-composefs-fix.so`, ~2.6 Ko) qui intercepte `statfs`/`statfs64`
 - Corrige l'affichage de l'espace libre dans Dolphin sur les systèmes composefs (Fedora Kinoite 42+)
 - L'overlay composefs en `/` rapporte 0 blocs libres, le hook redirige `/`, `/home` et `/home/*` vers `/var/home` (btrfs)
-- Injection via `sed` dans le `.desktop` Dolphin (`Exec=env LD_PRELOAD=...`)
+- Injection via `sed` dans le `.desktop` Dolphin (`Exec=env LD_PRELOAD=...`) — dans post-install
+- **Couverture des lancements hors `.desktop`** : un Dolphin démarré sans le hook affiche 0 o libre, et ses processus enfants (kioworker, qui font le `statfs` réel via `QStorageInfo` dans `FileProtocol::fileSystemFreeSpace`) héritent de son env → le bug persiste dans toute la session, jusqu'au reboot. Deux portes d'entrée couvertes :
+  - Drop-in systemd user `usr/lib/systemd/user/plasma-dolphin.service.d/gablue-composefs-fix.conf` (`Environment=LD_PRELOAD=...`) : l'activation D-Bus `org.freedesktop.FileManager1` (« Ouvrir le dossier contenant » depuis n'importe quelle app) démarre `dolphin --daemon` via `plasma-dolphin.service` sans le preload (dbus-broker honore `SystemdService=` → activation systemd)
+  - `gablue-isomount` réinjecte le `LD_PRELOAD` avant son `execlp("dolphin")` direct (voir section dédiée)
+- Reste non couvert (accepté, rare) : lancement manuel en terminal
 - Sources dans `src/composefs-fix/`
 
 **Correction plasmalogin settle udev** (TEMPORAIRE, toutes variantes) :
@@ -962,6 +966,7 @@ Monteur d'images disque en C natif (~2.7 Mo RAM) :
 - `gablue-isomount` : Remplace le plugin dolphin-plugins mountisoaction (bug KDE #471487)
 - Monte les fichiers ISO/IMG/EFI via l'API UDisks2 DBus (LoopSetup + Filesystem.Mount)
 - Ouvre une nouvelle fenêtre Dolphin sur le point de montage (panneau Devices à jour)
+- Réinjecte le LD_PRELOAD composefs-fix au lancement de Dolphin (l'`execlp` direct ne passe pas par le `.desktop` patché, sinon barre d'espace libre à 0 o dans cette instance)
 - Démontage automatique quand toutes les instances Dolphin sont fermées
 - Si le device est occupé (autre programme), attend sa libération avant démontage
 - Si l'image est déjà montée, ouvre juste une nouvelle fenêtre sans remonter

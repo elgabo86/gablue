@@ -26,6 +26,10 @@
 #define MOUNT_RETRIES 15
 #define MOUNT_RETRY_DELAY_US 200000
 
+/* Hook composefs : re-injecte le LD_PRELOAD manquant quand Dolphin n'est pas
+ * lance via le .desktop patche (voir open_dolphin_window) */
+#define COMPOSEFS_FIX_SO "/usr/lib64/gablue-composefs-fix.so"
+
 static void die(const char *msg) {
     fprintf(stderr, "%s\n", msg);
     exit(1);
@@ -154,6 +158,12 @@ static char *udisks_mount(DBusConnection *sys, const char *obj_path) {
 static void open_dolphin_window(const char *mount_point) {
     printf("Ouverture de Dolphin sur %s\n", mount_point);
     if (!fork()) {
+        /* Ce lancement ne passe pas par le .desktop patche (LD_PRELOAD) :
+         * sans le hook, la barre d'espace libre affiche 0 o sur l'overlay
+         * composefs de /, et ce process peut servir toute la session */
+        if (access(COMPOSEFS_FIX_SO, F_OK) == 0) {
+            setenv("LD_PRELOAD", COMPOSEFS_FIX_SO, 1);
+        }
         execlp("dolphin", "dolphin", mount_point, NULL);
         _exit(1);
     }
