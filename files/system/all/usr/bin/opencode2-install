@@ -1,0 +1,97 @@
+#!/bin/bash
+
+# Script pour installer/mettre à jour OpenCode 2 (@opencode/cli) via npm
+# Remplace les anciens alias opencode-install (V1) et opencode2-install (script curl)
+# - Désinstalle OpenCode 1 si présent (npm @opencode-ai/opencode ou install curl)
+# - Désinstalle OpenCode 2 s'il n'est pas installé via npm (install curl ou brew)
+# - Installe npm via Homebrew si absent
+# - Installe @opencode/cli en global npm
+# - Crée le symlink ~/.local/bin/opencode vers le binaire npm (opencode2)
+
+# Dépendances : homebrew (fourni par Gablue, requis seulement si npm absent), timeout (coreutils)
+
+set -e
+
+NPM_PACKAGE="@opencode/cli"
+LOCAL_BIN="$HOME/.local/bin"
+
+echo "=== OpenCode 2 : installation via npm ==="
+
+# Homebrew (requis uniquement pour installer npm au besoin)
+BREW="$(command -v brew || true)"
+if [ -z "$BREW" ] && [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
+    BREW="/home/linuxbrew/.linuxbrew/bin/brew"
+fi
+
+# --- Étape 1 : désinstaller OpenCode 1 (V1) si existant ---
+if command -v npm &>/dev/null && npm list -g --depth=0 @opencode-ai/opencode &>/dev/null; then
+    echo "Désinstallation d'OpenCode 1 (npm @opencode-ai/opencode)..."
+    npm uninstall -g @opencode-ai/opencode && echo "✓ OpenCode 1 (npm) désinstallé."
+fi
+
+# --- Étape 2 : désinstaller OpenCode 2 s'il n'est pas installé via npm ---
+# (installation par script curl : binaire dans ~/.opencode/bin + ligne PATH dans le shell)
+if ! (command -v npm &>/dev/null && npm list -g --depth=0 "$NPM_PACKAGE" &>/dev/null); then
+    echo "Recherche d'une installation OpenCode non-npm à désinstaller..."
+
+    # Arrêter proprement le service qui tourne sur l'ancien binaire
+    if command -v opencode &>/dev/null; then
+        timeout 15 opencode service stop &>/dev/null || true
+    fi
+
+    # Formula brew éventuelle
+    if [ -n "$BREW" ] && "$BREW" list --formula 2>/dev/null | grep -qx "opencode"; then
+        echo "Désinstallation de la formula brew opencode..."
+        "$BREW" uninstall --ignore-dependencies opencode || true
+    fi
+
+    # Binaire(s) de l'installation curl : ~/.opencode/bin/
+    if [ -d "$HOME/.opencode/bin" ]; then
+        echo "Suppression de $HOME/.opencode/bin (installation curl)..."
+        rm -rf "$HOME/.opencode/bin"
+    fi
+
+    # Ligne PATH ajoutée par le script curl (sinon elle masque l'installation npm)
+    for RC in "$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_profile"; do
+        if [ -f "$RC" ]; then
+            sed -i -E '\|^[[:space:]]*#?[[:space:]]*(export[[:space:]]+)?PATH=.*\.opencode/bin.*$|d' "$RC" 2>/dev/null || true
+        fi
+    done
+
+    echo "✓ Ancienne installation non-npm désinstallée."
+else
+    echo "✓ OpenCode 2 déjà installé via npm."
+fi
+
+# --- Étape 3 : installer npm via Homebrew si absent ---
+if command -v npm &>/dev/null; then
+    echo "✓ npm déjà installé ($(npm --version))."
+else
+    if [ -z "$BREW" ]; then
+        echo "✗ Erreur : npm absent et Homebrew introuvable (impossible d'installer npm)."
+        exit 1
+    fi
+    echo "npm absent : installation de Node.js (npm) via Homebrew..."
+    "$BREW" install node
+    echo "✓ npm installé ($(npm --version))."
+fi
+
+# --- Étape 4 : installer OpenCode 2 via npm ---
+echo "Installation de $NPM_PACKAGE via npm..."
+# --allow-scripts : exécute le postinstall officiel (npm récent le bloque par défaut)
+npm install -g --allow-scripts="$NPM_PACKAGE" "$NPM_PACKAGE" \
+    || npm install -g "$NPM_PACKAGE"
+echo "✓ OpenCode $(timeout 10 opencode --version 2>/dev/null || echo "2") installé via npm."
+
+# --- Étape 5 : symlink ~/.local/bin/opencode vers le binaire npm (opencode2) ---
+NPM_BIN="$(npm prefix -g)/bin"
+mkdir -p "$LOCAL_BIN"
+if [ "$(readlink -f "$LOCAL_BIN/opencode" 2>/dev/null)" != "$(readlink -f "$NPM_BIN/opencode2" 2>/dev/null)" ]; then
+    ln -sfn "$NPM_BIN/opencode2" "$LOCAL_BIN/opencode"
+    echo "✓ Symlink créé : $LOCAL_BIN/opencode -> $NPM_BIN/opencode2"
+fi
+
+# Redémarrer le service pour repartir sur le nouveau binaire (best-effort)
+timeout 30 opencode service restart &>/dev/null || true
+
+echo "Opération terminée. OpenCode 2 est disponible via 'opencode' et 'opencode2'."
