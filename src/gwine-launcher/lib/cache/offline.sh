@@ -7,7 +7,7 @@
 download_missing_components() {
     echo "Téléchargement des composants manquants..."
     
-    local MONO_VER="11.2.0"
+    local MONO_VER="11.3.0"
     local GECKO_VER="2.47.4"
     local WINE_CACHE_DIR="$COMPONENTS_DIR/wine-cache"
     local MONO_FILE="$WINE_CACHE_DIR/wine-mono-${MONO_VER}-x86.msi"
@@ -131,7 +131,7 @@ download_missing_components() {
 
 # Indique si le cache local est incomplet (mono/gecko, dxvk ou vkd3d manquant)
 local_cache_incomplete() {
-    local MONO_VER="11.2.0"
+    local MONO_VER="11.3.0"
     local GECKO_VER="2.47.4"
     if [ ! -f "$COMPONENTS_DIR/wine-cache/wine-mono-${MONO_VER}-x86.msi" ] || \
        [ ! -f "$COMPONENTS_DIR/wine-cache/wine-gecko-${GECKO_VER}-x86_64.msi" ] || \
@@ -409,7 +409,7 @@ prepare_full_offline_cache() {
     local WINE_CACHE="$COMPONENTS_DIR/wine-cache"
     ensure_dir "$WINE_CACHE"
     
-    local MONO_VER="11.2.0"
+    local MONO_VER="11.3.0"
     local GECKO_VER="2.47.4"
     local MONO_URL="https://dl.winehq.org/wine/wine-mono/${MONO_VER}/wine-mono-${MONO_VER}-x86.msi"
     local GECKO_URL="https://dl.winehq.org/wine/wine-gecko/${GECKO_VER}/wine-gecko-${GECKO_VER}-x86_64.msi"

@@ -88,7 +88,7 @@ create_cachepack() {
     fi
     
     local wine_cache="$COMPONENTS_SOURCE/wine-cache"
-    if [ ! -f "$wine_cache/wine-mono-11.2.0-x86.msi" ] || \
+    if [ ! -f "$wine_cache/wine-mono-11.3.0-x86.msi" ] || \
        [ ! -f "$wine_cache/wine-gecko-2.47.4-x86_64.msi" ] || \
        [ ! -f "$wine_cache/wine-gecko-2.47.4-x86.msi" ]; then
         echo "  ⚠️  Wine Mono/Gecko manquants"
