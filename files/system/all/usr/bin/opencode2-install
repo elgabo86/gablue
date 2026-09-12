@@ -7,6 +7,7 @@
 # - Installe npm via Homebrew si absent
 # - Installe @opencode/cli en global npm
 # - Crée le symlink ~/.local/bin/opencode vers le binaire npm (opencode2)
+# - Installe l'entrée « Ouvrir avec OpenCode » pour les dossiers dans Dolphin (~/.local/share/applications)
 
 # Dépendances : homebrew (fourni par Gablue, requis seulement si npm absent), timeout (coreutils)
 
@@ -90,6 +91,29 @@ if [ "$(readlink -f "$LOCAL_BIN/opencode" 2>/dev/null)" != "$(readlink -f "$NPM_
     ln -sfn "$NPM_BIN/opencode2" "$LOCAL_BIN/opencode"
     echo "✓ Symlink créé : $LOCAL_BIN/opencode -> $NPM_BIN/opencode2"
 fi
+
+# --- Étape 6 : entrée « Ouvrir avec OpenCode » pour les dossiers dans Dolphin ---
+# .desktop NoDisplay : invisible dans le menu des applications, proposé dans
+# Dolphin → clic droit → « Ouvrir avec » sur un dossier (même pattern que
+# LGPTerminal/WindowsTerminal : Terminal=true → lancé dans le terminal système)
+APPS_DIR="$HOME/.local/share/applications"
+mkdir -p "$APPS_DIR"
+cat > "$APPS_DIR/gablue-opencode.desktop" <<EOF
+[Desktop Entry]
+Comment=Ouvre le dossier dans OpenCode
+Exec=$LOCAL_BIN/opencode %f
+Icon=utilities-terminal
+MimeType=inode/directory;
+Name=OpenCode
+NoDisplay=true
+Terminal=true
+Type=Application
+X-KDE-StartupNotify=false
+EOF
+echo "✓ Entrée « Ouvrir avec OpenCode » installée : $APPS_DIR/gablue-opencode.desktop"
+
+# Rafraîchir le cache KSycoca pour une prise en effet immédiate dans « Ouvrir avec » (best-effort)
+command -v kbuildsycoca6 &>/dev/null && kbuildsycoca6 --noincremental &>/dev/null || true
 
 # Redémarrer le service pour repartir sur le nouveau binaire (best-effort)
 timeout 30 opencode service restart &>/dev/null || true
