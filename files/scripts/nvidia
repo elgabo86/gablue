@@ -98,6 +98,12 @@ for svc in nvidia-suspend nvidia-resume nvidia-hibernate nvidia-suspend-then-hib
     fi
 done && unset -v svc
 
+# Désactivation de nvidia-persistenced (aligné Bazzite e93936b)
+# Le démon maintient le pilote initialisé en permanence : il empêche le GPU
+# de s'éteindre complètement, en conflit avec les setups hybrides (supergfxctl,
+# RTD3) sur laptop
+systemctl disable nvidia-persistenced.service
+
 # =============================================================================
 # VK_HDR_LAYER (PILOTES CLOSED UNIQUEMENT)
 # =============================================================================
