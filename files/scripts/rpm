@@ -360,6 +360,11 @@ dnf5 -y install \
     libratbag-ratbagd \
     oversteer-udev
 
+# Règles udev manettes 8BitDo : accès utilisateur (uaccess) hidraw pour le
+# dongle 2.4GHz et le Bluetooth (outils firmware/update sans root)
+# Depuis Terra (dépôt actif pendant le build), aligné Bazzite 805f8b7
+dnf5 -y install 8bitdo-udev-rules
+
 # =============================================================================
 # OUTILS RUNTIME
 # =============================================================================
