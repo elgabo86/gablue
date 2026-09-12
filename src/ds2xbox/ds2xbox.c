@@ -30,6 +30,8 @@ static enum bus_filter busfilter = BUS_FILTER_ALL;
 #define PID_XBOX360 0x028e
 #define FF_MIN_INTERVAL_MS 16
 #define FF_KEEPALIVE_MS 20
+#define FF_IDLE_POLL_MS 100
+#define EVENTS_BATCH 64
 
 struct controller_map {
     uint16_t pid;
@@ -124,17 +126,11 @@ static long time_diff_ms(struct timespec *a, struct timespec *b) {
 static void stop_rumble(struct controller *ctrl) {
     pthread_mutex_lock(&ctrl->ff_mutex);
     if (ctrl->sony_ff_uploaded && ctrl->is_playing) {
-        struct ff_effect effect;
-        memset(&effect, 0, sizeof(effect));
-        effect.type = FF_RUMBLE;
-        effect.id = ctrl->sony_ff_id;
-        effect.replay.length = 0;
-        ioctl(ctrl->fd_src, EVIOCSFF, &effect);
-
+        /* value=0 suffit pour stopper un effet ff-memless (pas besoin d'ioctl) */
         struct input_event ev = {
             .type = EV_FF,
             .code = ctrl->sony_ff_id,
-            .value = 1
+            .value = 0
         };
         write(ctrl->fd_src, &ev, sizeof(ev));
 
@@ -167,17 +163,11 @@ static void update_effect(struct controller *ctrl, uint16_t strong, uint16_t wea
 
     if (strong == 0 && weak == 0) {
         if (ctrl->sony_ff_uploaded && ctrl->is_playing) {
-            struct ff_effect effect;
-            memset(&effect, 0, sizeof(effect));
-            effect.type = FF_RUMBLE;
-            effect.id = ctrl->sony_ff_id;
-            effect.replay.length = 0;
-            ioctl(ctrl->fd_src, EVIOCSFF, &effect);
-
+            /* value=0 suffit pour stopper (pas besoin d'ioctl EVIOCSFF) */
             struct input_event ev = {
                 .type = EV_FF,
                 .code = ctrl->sony_ff_id,
-                .value = 1
+                .value = 0
             };
             write(ctrl->fd_src, &ev, sizeof(ev));
 
@@ -268,20 +258,22 @@ static void handle_ff_play(struct controller *ctrl, int value) {
         return;
     }
 
-    pthread_mutex_lock(&ctrl->ff_mutex);
-    bool can_play = (ctrl->current_strong != 0 || ctrl->current_weak != 0);
-    pthread_mutex_unlock(&ctrl->ff_mutex);
-
-    if (!can_play) {
-        return;
-    }
-
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
 
-    if (time_diff_ms(&now, &ctrl->last_ff_event) < FF_MIN_INTERVAL_MS) {
+    pthread_mutex_lock(&ctrl->ff_mutex);
+    bool can_play = (ctrl->current_strong != 0 || ctrl->current_weak != 0);
+    /* Le throttle ne s'applique qu'aux re-play quand le rumble joue déjà :
+     * dropper un play initial retarderait le démarrage du rumble jusqu'au
+     * prochain play du jeu (jusqu'à FF_MIN_INTERVAL_MS de latence). */
+    bool throttled = ctrl->is_playing &&
+                     time_diff_ms(&now, &ctrl->last_ff_event) < FF_MIN_INTERVAL_MS;
+    pthread_mutex_unlock(&ctrl->ff_mutex);
+
+    if (!can_play || throttled) {
         return;
     }
+
     ctrl->last_ff_event = now;
 
     play_rumble(ctrl);
@@ -296,7 +288,27 @@ static void *ff_thread_func(void *arg) {
     pfd.events = POLLIN;
 
     while (ctrl->ff_running && running) {
-        int ret = poll(&pfd, 1, 5);
+        /* Timeout adaptatif : réveil pile au prochain keepalive quand un rumble
+         * joue, poll lent sinon (économie les ~200 réveils/s par manette). */
+        int timeout = FF_IDLE_POLL_MS;
+        pthread_mutex_lock(&ctrl->ff_mutex);
+        if (ctrl->is_playing && ctrl->sony_ff_uploaded) {
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            long since_keepalive = time_diff_ms(&now, &ctrl->last_keepalive);
+            long since_play = time_diff_ms(&now, &ctrl->last_ff_event);
+            /* Le keepalive exige les deux délais >= FF_KEEPALIVE_MS : on attend
+             * donc que le plus ancien des deux atteigne le seuil. */
+            long oldest = (since_keepalive < since_play) ? since_keepalive : since_play;
+            long remaining = FF_KEEPALIVE_MS - oldest;
+            if (remaining < 0)
+                remaining = 0;
+            if (remaining < FF_IDLE_POLL_MS)
+                timeout = (int)remaining;
+        }
+        pthread_mutex_unlock(&ctrl->ff_mutex);
+
+        int ret = poll(&pfd, 1, timeout);
         if (ret < 0) {
             if (errno == EINTR)
                 continue;
@@ -583,60 +595,97 @@ static inline short convert_stick_value(int value) {
     return stick_lut[value & 0xFF];
 }
 
-static void map_ps_to_xbox(struct input_event *ev) {
+/* Retourne false si l'event doit être droppé (code non déclaré côté device Xbox) */
+static bool map_ps_to_xbox(struct input_event *ev) {
     switch (ev->code) {
-    case BTN_SOUTH:   ev->code = BTN_A; break;
-    case BTN_EAST:    ev->code = BTN_B; break;
-    case BTN_WEST:    ev->code = BTN_X; break;
-    case BTN_NORTH:   ev->code = BTN_Y; break;
-    case BTN_TL:      ev->code = BTN_TL; break;
-    case BTN_TR:      ev->code = BTN_TR; break;
-    case BTN_TL2:     break;
-    case BTN_TR2:     break;
-    case BTN_SELECT:  ev->code = BTN_SELECT; break;
-    case BTN_START:   ev->code = BTN_START; break;
-    case BTN_MODE:    ev->code = BTN_MODE; break;
-    case BTN_THUMBL:  ev->code = BTN_THUMBL; break;
-    case BTN_THUMBR:  ev->code = BTN_THUMBR; break;
+    case BTN_SOUTH:   ev->code = BTN_A;         return true;
+    case BTN_EAST:    ev->code = BTN_B;         return true;
+    case BTN_WEST:    ev->code = BTN_X;         return true;
+    case BTN_NORTH:   ev->code = BTN_Y;         return true;
+    case BTN_TL:      /* identique côté Xbox */ return true;
+    case BTN_TR:                                return true;
+    case BTN_SELECT:                            return true;
+    case BTN_START:                             return true;
+    case BTN_MODE:                              return true;
+    case BTN_THUMBL:                            return true;
+    case BTN_THUMBR:                            return true;
+    default:
+        /* BTN_TL2/BTN_TR2 : gâchettes digitales couvertes par ABS_Z/ABS_RZ ;
+         * les autres codes (mute, etc.) n'existent pas sur le device Xbox */
+        return false;
     }
 }
 
-static void map_axis_to_xbox(struct input_event *ev) {
+/* Retourne false si l'event doit être droppé (axe non déclaré côté device Xbox) */
+static bool map_axis_to_xbox(struct input_event *ev) {
     switch (ev->code) {
     case ABS_X:
     case ABS_Y:
     case ABS_RX:
     case ABS_RY:
         ev->value = convert_stick_value(ev->value);
-        break;
+        return true;
     case ABS_Z:
     case ABS_RZ:
     case ABS_HAT0X:
     case ABS_HAT0Y:
-        break;
+        return true;
     default:
-        break;
+        return false;
+    }
+}
+
+/* Écriture groupée : réessaie sur écriture partielle (buffer uinput plein)
+ * ou signal, au lieu de perdre silencieusement des events. */
+static void write_all(int fd, const struct input_event *buf, size_t len) {
+    const char *p = (const char *)buf;
+    while (len > 0) {
+        ssize_t written = write(fd, p, len);
+        if (written < 0) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+                continue;
+            perror("write uinput");
+            return;
+        }
+        p += written;
+        len -= (size_t)written;
     }
 }
 
 static void handle_event(struct controller *ctrl) {
-    struct input_event ev;
+    /* Batch : 1 read + 1 write par rapport de manette au lieu de 2 syscalls
+     * par event (un rapport complet DS peut contenir 20-40 events) */
+    struct input_event in[EVENTS_BATCH];
+    struct input_event out[EVENTS_BATCH];
     ssize_t bytes;
 
-    while ((bytes = read(ctrl->fd_src, &ev, sizeof(ev))) > 0) {
-        if (bytes != sizeof(ev))
-            continue;
+    while ((bytes = read(ctrl->fd_src, in, sizeof(in))) > 0) {
+        size_t n = (size_t)bytes / sizeof(struct input_event);
+        size_t m = 0;
 
-        if (ev.type == EV_KEY) {
-            map_ps_to_xbox(&ev);
-        } else if (ev.type == EV_ABS) {
-            map_axis_to_xbox(&ev);
+        for (size_t i = 0; i < n; i++) {
+            struct input_event *ev = &in[i];
+
+            switch (ev->type) {
+            case EV_SYN:
+                out[m++] = *ev;
+                break;
+            case EV_KEY:
+                if (map_ps_to_xbox(ev))
+                    out[m++] = *ev;
+                break;
+            case EV_ABS:
+                if (map_axis_to_xbox(ev))
+                    out[m++] = *ev;
+                break;
+            default:
+                /* EV_MSC (MSC_SCAN), EV_LED, etc. : inutiles pour un gamepad */
+                break;
+            }
         }
 
-        if (write(ctrl->fd_dst, &ev, sizeof(ev)) < 0) {
-            if (errno != EAGAIN && errno != EWOULDBLOCK)
-                perror("write uinput");
-        }
+        if (m > 0)
+            write_all(ctrl->fd_dst, out, m * sizeof(struct input_event));
     }
 
     if (bytes == 0 || (bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
