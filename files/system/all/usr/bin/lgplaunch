@@ -616,6 +616,13 @@ _copy_dir_with_symlinks() {
     local src_base_dir="${3:-}"
     local dst_base_dir="${4:-}"
 
+    # dotglob : inclure les fichiers cachés (sinon perdus silencieusement à
+    # l'amorçage des saves, ex: .mkw_recompiled_managed_nand) ; état sauvegardé
+    # et restauré pour ne pas fuiter hors de la fonction
+    local _saved_shopt
+    _saved_shopt="$(shopt -p dotglob nullglob)"
+    shopt -s dotglob nullglob
+
     mkdir -p "$dst_dir"
 
     # Copier chaque élément individuellement
@@ -636,6 +643,8 @@ _copy_dir_with_symlinks() {
             _copy_dir_with_symlinks "$item" "$dst_item" "$src_base_dir" "$dst_base_dir"
         fi
     done
+
+    eval "$_saved_shopt"
 }
 
 # Copie récursive un dossier en réécrivant les symlinks externes pour pointer vers MOUNT_DIR
@@ -643,6 +652,12 @@ _copy_dir_with_symlinks() {
 _copy_dir_rewrite_symlinks() {
     local src_dir="$1"
     local dst_dir="$2"
+
+    # dotglob : inclure les fichiers cachés (sinon perdus silencieusement à
+    # l'amorçage des saves) ; état sauvegardé et restauré pour ne pas fuiter
+    local _saved_shopt
+    _saved_shopt="$(shopt -p dotglob nullglob)"
+    shopt -s dotglob nullglob
 
     mkdir -p "$dst_dir"
 
@@ -710,6 +725,8 @@ _copy_dir_rewrite_symlinks() {
             _copy_dir_rewrite_symlinks "$item" "$dst_item"
         fi
     done
+
+    eval "$_saved_shopt"
 }
 
 # Copie un fichier symlink en réécrivant la cible si externe
@@ -1193,7 +1210,8 @@ run_lgp_mode() {
 
     # Exporter les variables globales utilisées par les fonctions
     export _LGP_MODE MOUNT_DIR MOUNT_BASE LGPACK_NAME GAME_INTERNAL_NAME \
-           SAVES_SYMLINK SAVES_REAL EXTRA_SYMLINK EXTRA_REAL TEMP_SYMLINK TEMP_REAL \
+           SAVES_SYMLINK SAVES_REAL EXTRA_BASE EXTRA_DIR EXTRA_SYMLINK EXTRA_REAL \
+           TEMP_SYMLINK TEMP_REAL \
            args FULL_EXE_PATH REAL_EXE_PATH HOME_REAL SELECT_EXE_MODE \
            _LGP_KERNEL_OVERLAY_MOUNTS _LGP_USING_KERNEL_OVERLAY \
            _GAME_TEMP_ID _FULL_OVERLAY_MOUNT _FULL_OVERLAY_UPPER _FULL_OVERLAY_WORK \
