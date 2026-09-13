@@ -362,10 +362,16 @@ dnf5 -y install \
     libratbag-ratbagd \
     oversteer-udev
 
-# Règles udev manettes 8BitDo : accès utilisateur (uaccess) hidraw pour le
-# dongle 2.4GHz et le Bluetooth (outils firmware/update sans root)
-# Depuis Terra (dépôt actif pendant le build), aligné Bazzite 805f8b7
-dnf5 -y install 8bitdo-udev-rules
+# Règles udev manettes : accès utilisateur (uaccess) hidraw — 8BitDo (dongle
+# 2.4GHz, Bluetooth, USB : outils firmware/update sans root, mode DInput gyro +
+# boutons additionnels via SDL hidapi), Flydigi, DualShock 3/4, DualSense,
+# Switch Pro/Joy-Con, PowerA, HORI... (~100 devices, règles maintenues par Valve)
+# Depuis Fedora officiel (paquet noarch ~15 Ko, zéro dépendance, pas de scriptlet) :
+# les règles 8BitDo sont dans 60-steam-input.rules upstream depuis 10/2025
+# (ValveSoftware/steam-devices PR #66) — Gablue n'installe pas le RPM Steam
+# (flatpak uniquement) donc pas de steam-devices automatique, installation
+# explicite nécessaire (remplace 8bitdo-udev-rules Terra, aligné Bazzite e5dbc91)
+dnf5 -y install steam-devices
 
 # =============================================================================
 # OUTILS RUNTIME
