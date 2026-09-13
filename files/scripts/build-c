@@ -46,6 +46,7 @@ echo "OK : gamepadshortcuts-mouse compile et installe"
 
 build_and_verify "/src/ds2xbox" "ds2xbox" "ds2xbox"
 build_and_verify "/src/gablue-isomount" "gablue-isomount" "gablue-isomount"
+build_and_verify "/src/gablue-kbdnav" "gablue-kbdnav" "gablue-kbdnav"
 
 # Compilation du hook composefs-fix (correction espace libre Dolphin)
 # Necessite gcc, compile AVANT de supprimer le compilateur

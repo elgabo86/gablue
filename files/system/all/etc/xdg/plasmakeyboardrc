@@ -1,0 +1,21 @@
+# Presets systeme pour plasma-keyboard (clavier virtuel KDE)
+# KConfig : /etc/xdg sert de defaut, la config utilisateur (~/.config/plasmakeyboardrc)
+# a la priorite si presente.
+#
+# keyboardNavigationEnabled : navigation du clavier virtuel aux touches
+# fleches + Entree (option KCM prevue pour Bigscreen/accessibilite).
+# Requis par gablue-kbdnav (pont manette -> clavier virtuel).
+#
+# enabledLocales : plasma-keyboard n'a pas de layout fr_CH (repli
+# alphabetique sur fr_CA sinon) -> fr_FR force (AZERTY, accents directs).
+# A remplacer par un layout fr_CH custom QML le cas echeant.
+#
+# panelFillScreenWidth : false = clavier centre (largeur plafonnee a 3:1
+# avec marges et coins arrondis) au lieu de toute la largeur de l'ecran —
+# couvre beaucoup moins le bureau (hauteur elle-meme non configurable,
+# hardcodee a 30% de l'ecran dans le style Breeze).
+
+[General]
+keyboardNavigationEnabled=true
+enabledLocales=fr_FR
+panelFillScreenWidth=false
