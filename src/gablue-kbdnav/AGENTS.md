@@ -68,7 +68,7 @@ Deux propriétés KWin (`org.kde.KWin /VirtualKeyboard`, interface
 | active | visible | État |
 |--------|---------|------|
 | true   | true    | **Frappe autorisée** (IM active + panneau exposé : le grab clavier de l'IM capture les flèches, jamais re-transmises) |
-| true   | false (1,5 s) | **L'utilisateur a fermé le clavier via son UI → sortie du pont** (sinon il resterait grabé à vie) |
+| true   | false (0,5 s) | **L'utilisateur a fermé le clavier via son UI → sortie du pont** (sinon il resterait grabé à vie) |
 | false  | false   | Focus hors champ texte → **quarantaine** : pad grabé muet, le pont reste, re-focus → tout reprend |
 
 Point clé : quand le focus est sur une app **sans** champ texte

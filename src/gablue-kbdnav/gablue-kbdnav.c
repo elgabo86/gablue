@@ -63,8 +63,10 @@
 #define REPEAT_PERIOD_MS 60
 #define POLL_TIMEOUT_MS 30
 
-/* Fermeture du clavier via son UI : sortie du pont après ce délai */
-#define EXIT_AFTER_CLOSED_MS 1500
+/* Fermeture du clavier via son UI : sortie du pont après ce délai de
+   confirmation (filtre les micro-coupures transitoires du panneau ;
+   le poll passe à 100 ms pendant la confirmation pour rester réactif) */
+#define EXIT_AFTER_CLOSED_MS 500
 
 static volatile bool running = true;
 
@@ -499,7 +501,10 @@ static void poll_im_state(void)
 {
     static long last_check = 0;
     long now = now_ns();
-    if (now - last_check < 250000000L)
+    /* 250 ms en veille, 100 ms pendant la confirmation de fermeture
+       (invisible_since actif) pour une sortie réactive */
+    long interval = (invisible_since != 0) ? 100000000L : 250000000L;
+    if (now - last_check < interval)
         return;
     last_check = now;
 
