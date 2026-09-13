@@ -43,21 +43,40 @@ gamepadshortcuts lance juste le binaire. Le pont gère tout :
 2. **Frappe** : injection uinput
 3. **Sortie** (Home+Carré, Home+R3 → mode souris, fermeture via l'UI du
    clavier, déconnexion manette, SIGTERM) : masquage du clavier
-   (`mode Never (0)`) + **kill -9 de plasma-keyboard** + tout relâché
+   (`setMode Never (0)` puis `setMode NonMouseInput (1)`, cf.
+   ci-dessous) + **kill -9 de plasma-keyboard** + tout relâché
 
-### Pourquoi mode Never au repos et le kill de plasma-keyboard
+### Pourquoi la séquence de sortie Never (0) → NonMouseInput (1) et le kill
 
 - En mode `NonMouseInput` (1, défaut), KWin refuse d'afficher le panneau
-  au clavier/souris (`shouldShowOnActive()` exige un dernier input
-  tactile) — `forceActivate` seul est donc inopérant. Le mode
-  `AnyInput (2)` est la seule façon d'afficher, mais il fait popper le
-  clavier à chaque champ texte. D'où le toggle **Never ↔ AnyInput** géré
-  par le pont : rien ne poppe jamais spontanément.
-- Piège résiduel du mode Never : une app peut ré-afficher un panneau
-  **déjà mappé** (demande `text-input` explicite). Le `kill -9` fait
-  repartir plasma-keyboard avec un panneau jamais mappé, incapable de
-  réapparaître. KWin relance l'IM automatiquement sur crash
+  au clavier/souris (`shouldShowOnActive()` n'accepte que touch/tablet) —
+  `forceActivate` seul est donc inopérant. Le mode `AnyInput (2)` est la
+  seule façon d'afficher, mais il fait popper le clavier à chaque champ
+  texte. D'où le toggle **AnyInput ↔ repos** géré par le pont : rien ne
+  poppe jamais spontanément pendant la session.
+- **Le mode `Never (0)` n'est jamais l'état final** : c'est le mode
+  « Désactivé » et l'applet OSK du system tray (`manage-inputmethod`)
+  passe alors en `ActiveStatus` — son icône s'affiche en permanence dans
+  la barre des tâches (comportement Plasma 6.5/6.6). En `NonMouseInput`
+  (défaut Kinoite), l'applet reste cachée (`PassiveStatus`).
+- `setMode` de KWin **persiste** le mode dans kwinrc
+  (`[Wayland] VirtualKeyboardMode`) : le 1 final restaure la config par
+  défaut au lieu de laisser un `Never` durable (qui tuerait aussi
+  l'affichage tactile hors manette).
+- Ordre obligatoire **0 puis 1** : seul le passage à `Never` déclenche
+  `hide()` côté KWin, qui masque le panneau **et** reset
+  `m_showRequested`/`m_forceShowRequested` — sans ce reset, le `show()`
+  inconditionnel de `setPanel()` ré-afficherait le panneau re-mappé après
+  le redémarrage de l'IM. Le `setMode(1)` n'affiche rien.
+- Piège résiduel : une app peut ré-afficher un panneau **déjà mappé**
+  (demande `text-input` explicite). Le `kill -9` fait repartir
+  plasma-keyboard avec un panneau jamais mappé, incapable de
+  réapparaître ; en `NonMouseInput`, ni clavier ni manette ne
+  re-déclenchent le panneau. KWin relance l'IM automatiquement sur crash
   (`QProcess::CrashExit`, 5 relances max / fenêtre de 20 s).
+- Vigilance : le `setMode(2)` du démarrage persiste aussi `AnyInput`
+  dans kwinrc — si le pont meurt brutalement (SIGKILL, crash), l'état
+  reste « popups spontanés » jusqu'au prochain cycle complet du pont.
 
 ### Quarantaine de frappe (poll D-Bus 250 ms)
 
@@ -161,6 +180,11 @@ serait aveugle). VT actif → re-grab et reprise.
   de fermeture via l'UI ; sans lui le pont reste grabé à vie.
 - **Conserver le `kill -9` de plasma-keyboard dans cleanup()** : sans lui,
   les apps ré-affichent le panneau fermé via leurs demandes text-input.
+- **Conserver l'ordre `setMode(0)` puis `setMode(1)` dans cleanup()** :
+  le 0 fournit le `hide()`/reset `m_showRequested` (le 1 seul laisse le
+  panneau réapparaître après le kill), le 1 final évite l'applet OSK
+  visible et le `Never` persistant dans kwinrc — ne pas inverser, ni
+  fusionner en un seul appel.
 - **Le SIGUSR1 ne doit partir qu'au parent `gamepadshortcuts`** : en test
   manuel (parent = shell), le kill ferait mourir le shell.
 - Les `system()` (busctl/qdbus/pkill) sont volontaires (prototype-simple) ;

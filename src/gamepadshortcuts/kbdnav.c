@@ -14,7 +14,8 @@
  *   2. Affichage du clavier (KWin : mode AnyInput + forceActivate)
  *   3. Frappe -> flèches/Entrée/Echap/Backspace/Espace/Tab injectés
  *   4. Sortie (Home+Carré, Home+R3 -> mode souris, fermeture via l'UI du
- *      clavier, déconnexion) -> masquage du clavier + tout relâché
+ *      clavier, déconnexion) -> masquage + retour au mode défaut
+ *      (NonMouseInput) + redémarrage de l'IM + tout relâché
  *
  * Quarantaine de frappe (poll D-Bus 250 ms) : les touches ne sont
  * injectées que si l'input method est active ET le panneau visible
@@ -771,13 +772,27 @@ static void cleanup(void)
 
     cleanup_vt_tracking();
 
-    /* Masquer le clavier à la sortie du pont (mode Never : plus aucun
-       popup spontané) + redémarrage de l'IM : en mode Never, une app peut
-       quand même ré-afficher un panneau déjà mappé via text-input — le
-       redémarrage repart d'un panneau non mappé, incapable de réapparaître.
-       KWin relance plasma-keyboard automatiquement sur crash. */
+    /* Masquer le clavier à la sortie du pont + remise au mode par défaut.
+       Deux setMode obligatoires, dans cet ordre :
+       - setMode(Never 0) : KWin appelle hide() -> masque le panneau ET
+         reset m_showRequested/m_forceShowRequested ; sans ce reset, le
+         show() inconditionnel de setPanel() ré-afficherait le panneau
+         re-mappé après le redémarrage de l'IM.
+       - setMode(NonMouseInput 1, "Touch and Tablet", défaut Kinoite) :
+         état final. Contrairement à Never, l'applet OSK du system tray
+         (manage-inputmethod) reste cachée (en Never elle passe en
+         ActiveStatus : icône en permanence dans la barre des tâches),
+         et la config persistée par KWin dans kwinrc
+         ([Wayland] VirtualKeyboardMode) revient au défaut : le panneau
+         ne peut réapparaître qu'au toucher/tablette, jamais au
+         clavier/souris/manette.
+       Redémarrage de l'IM (kill) : repart d'un panneau non mappé,
+       incapable de réapparaître spontanément. KWin relance
+       plasma-keyboard automatiquement sur crash. */
     int rc = system("busctl --user set-property org.kde.KWin /VirtualKeyboard "
-                    "org.kde.kwin.VirtualKeyboard mode i 0 2>/dev/null");
+                    "org.kde.kwin.VirtualKeyboard mode i 0 2>/dev/null && "
+                    "busctl --user set-property org.kde.KWin /VirtualKeyboard "
+                    "org.kde.kwin.VirtualKeyboard mode i 1 2>/dev/null");
     (void)rc;
     rc = system("pkill -9 -x plasma-keyboard 2>/dev/null");
     (void)rc;
@@ -828,9 +843,10 @@ int main(int argc, char **argv)
                     "B=Échap  Carré=Backspace  Triangle=Espace  L1/R1=Tab  Start=quitter  "
                     "Home+Carré=quitter  Home+R3=mode souris  fermeture UI du clavier=quitter\n");
 
-    /* Afficher le clavier (mode AnyInput + forceActivate). Le masquage se
-       fait dans cleanup() (mode Never) — cycle de vie 100 % auto-porté :
-       gamepadshortcuts lance juste le binaire via Home+Carré. */
+    /* Afficher le clavier (mode AnyInput + forceActivate). Le masquage et
+       la remise au mode défaut (NonMouseInput) se font dans cleanup() —
+       cycle de vie 100 % auto-porté : gamepadshortcuts lance juste le
+       binaire via Home+Carré. */
     int rc = system("busctl --user set-property org.kde.KWin /VirtualKeyboard "
                     "org.kde.kwin.VirtualKeyboard mode i 2 2>/dev/null && "
                     "qdbus org.kde.KWin /VirtualKeyboard "
