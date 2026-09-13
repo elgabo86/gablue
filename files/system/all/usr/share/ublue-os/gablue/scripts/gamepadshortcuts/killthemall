@@ -4,9 +4,11 @@
 {
   # Recherche et kill tous les processus Windows (xbox360 inclus)
   # Exclure gwine pour permettre le cleanup des locks
+  # Exclure opencode.exe : binaire du CLI opencode (build Bun npm) qui garde
+  # l'extension .exe même sur Linux — kill du serveur = reboot du service
   for pid in $(pgrep -u "$USER" -f -i "\\.exe|\\.bat"); do
     comm=$(ps -p $pid -o comm= 2>/dev/null)
-    if [[ "$comm" != "gwine" ]] && [[ "$comm" != "bash" ]] && [ "$pid" != "$$" ]; then
+    if [[ "$comm" != "gwine" ]] && [[ "$comm" != "bash" ]] && [[ "$comm" != "opencode.exe" ]] && [ "$pid" != "$$" ]; then
       kill -9 $pid 2>/dev/null
     fi
   done
