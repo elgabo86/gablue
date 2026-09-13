@@ -36,17 +36,23 @@ build_and_verify() {
 
 build_and_verify "/src/gamepadshortcuts" "gamepadshortcuts" "gamepadshortcuts"
 
-# gamepadshortcuts-mouse : emulation souris via manette (remplace mouse.py)
-# Compile par le meme Makefile que gamepadshortcuts (sources supprimees ci-dessus)
+# gamepadshortcuts-mouse (emulation souris) et kbdnav (pont clavier virtuel) :
+# compiles par le meme Makefile que gamepadshortcuts (sources supprimees ci-dessus)
 if [ ! -f "/usr/bin/gamepadshortcuts-mouse" ]; then
     echo "ERREUR FATALE : binaire 'gamepadshortcuts-mouse' absent apres compilation" >&2
     exit 1
 fi
 echo "OK : gamepadshortcuts-mouse compile et installe"
 
+# kbdnav : pont manette -> clavier virtuel (meme Makefile)
+if [ ! -f "/usr/bin/kbdnav" ]; then
+    echo "ERREUR FATALE : binaire 'kbdnav' absent apres compilation" >&2
+    exit 1
+fi
+echo "OK : kbdnav compile et installe"
+
 build_and_verify "/src/ds2xbox" "ds2xbox" "ds2xbox"
 build_and_verify "/src/gablue-isomount" "gablue-isomount" "gablue-isomount"
-build_and_verify "/src/gablue-kbdnav" "gablue-kbdnav" "gablue-kbdnav"
 
 # Compilation du hook composefs-fix (correction espace libre Dolphin)
 # Necessite gcc, compile AVANT de supprimer le compilateur

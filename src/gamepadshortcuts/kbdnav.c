@@ -1,5 +1,5 @@
 /*
- * gablue-kbdnav : pont manette -> clavier virtuel Plasma Keyboard
+ * kbdnav : pont manette -> clavier virtuel Plasma Keyboard
  *
  * Permet de taper au clavier visuel avec la manette de jeu (navigation
  * au D-pad/stick, validation boutons). Le clavier virtuel KDE officiel
@@ -140,7 +140,7 @@ static int uinput_create(void)
     usetup.id.bustype = BUS_USB;
     usetup.id.vendor = 0x1337;
     usetup.id.product = 0x4b44; /* "KD" */
-    strncpy((char *)usetup.name, "gablue-kbdnav", UINPUT_MAX_NAME_SIZE - 1);
+    strncpy((char *)usetup.name, "kbdnav", UINPUT_MAX_NAME_SIZE - 1);
 
     if (ioctl(fd, UI_DEV_SETUP, &usetup) < 0 || ioctl(fd, UI_DEV_CREATE, 0) < 0) {
         perror("[ERREUR] création device uinput");
@@ -148,7 +148,7 @@ static int uinput_create(void)
         return -1;
     }
 
-    fprintf(stderr, "[INFO] Clavier virtuel 'gablue-kbdnav' créé\n");
+    fprintf(stderr, "[INFO] Clavier virtuel 'kbdnav' créé\n");
     return fd;
 }
 

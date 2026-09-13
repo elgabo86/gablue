@@ -69,14 +69,12 @@ Le projet construit 6 variantes distinctes :
 │   ├── gamepadshortcuts/                  # Sources C du gestionnaire de raccourcis manette
 │   │   ├── gamepadshortcuts.c             # Programme principal (inotify VT, evdev)
 │   │   ├── mouse.c                        # Emulation souris/clavier via manette (evdev, uinput)
-│   │   └── Makefile                       # Compilation (2 binaires)
+│   │   ├── kbdnav.c                       # Pont manette -> clavier virtuel (evdev grab, uinput, D-Bus KWin)
+│   │   ├── AGENTS.md                      # Architecture interne (souris + kbdnav)
+│   │   └── Makefile                       # Compilation (3 binaires)
 │   ├── gablue-isomount/                    # Sources C du monteur d'images disque
 │   │   ├── gablue-isomount.c              # Programme principal (UDisks2 DBus, Dolphin)
 │   │   └── Makefile                       # Compilation
-│   ├── gablue-kbdnav/                      # Sources C du pont manette -> clavier virtuel
-│   │   ├── gablue-kbdnav.c                # Programme principal (evdev grab, uinput, D-Bus KWin)
-│   │   ├── Makefile                       # Compilation
-│   │   └── AGENTS.md                      # Architecture interne du pont
 │   └── gwine-launcher/                     # Sources du lanceur gwine (Bash modulaire)
 │       ├── gwine                           # Script point d'entrée
 │       ├── build.sh                        # Assemblage du fichier standalone
@@ -517,7 +515,7 @@ Paquets supprimés :
 ### 5b. build-c / build-gwine - Compilation des sources
 
 **build-c** (appelé après pypi) :
-- Compile les binaires C depuis `/src/gamepadshortcuts` (gamepadshortcuts + gamepadshortcuts-mouse), `/src/ds2xbox`, `/src/gablue-isomount`, `/src/gablue-kbdnav`
+- Compile les binaires C depuis `/src/gamepadshortcuts` (gamepadshortcuts + gamepadshortcuts-mouse + kbdnav, même Makefile), `/src/ds2xbox`, `/src/gablue-isomount`
 - Installation via `make -C <dir> install DESTDIR=`
 - Nettoie les sources après compilation (`rm -rf /src/<dir>`)
 - Désinstalle `dbus-devel` après compilation (inutile dans l'image finale)
@@ -922,7 +920,7 @@ podman images test-build
 
 - **distrobox/distrobox.conf** : Configuration Distrobox
 - **firewalld/zones/nm-shared.xml** : Zone firewall partagée
-- **xdg/plasmakeyboardrc** : Presets clavier virtuel KDE (navigation clavier requise par gablue-kbdnav, layout fr_FR, clavier centré)
+- **xdg/plasmakeyboardrc** : Presets clavier virtuel KDE (navigation clavier requise par kbdnav, layout fr_FR, clavier centré)
 - **profile.d/customperso.sh** : Alias et personnalisations shell
 - **security/limits.d/memlock.conf** : Limites mémoire
 - **skel/.config/gtk-4.0/** : Configuration GTK par défaut
@@ -964,7 +962,7 @@ Gestionnaire principal des raccourcis manette en C natif (~500 Ko RAM) :
   - Filtrage des événements quand le VT n'est pas actif (pas de conflit entre sessions)
   - Reprise automatique au retour sur le VT
 - `gamepadshortcuts-mouse` : Émulation souris/clavier via manette (Home+R3 pour activer/quitter), binaire C natif (evdev + uinput) remplaçant `mouse.py` — l'ancien script plantait sous Python 3.14 car `python-uinput` importe `distutils` (supprimé de la stdlib). Mapping identique : stick droit = souris (courbe FPS), R1/L1 = clics, D-pad = flèches, Croix/Rond/Carré/Triangle = Espace/Tab/Retour/F4, Start/Select = Entrée/F11, L3 = Échap, L2/R2 = Alt/Shift
-- Mode clavier virtuel : **Home+Carré** lance `gablue-kbdnav` (exclusivité mutuelle — tue la souris si active ; Home+R3 fait l'inverse). Pendant le grab du pont, gamepadshortcuts est aveugle : le pont signale sa sortie Home+R3 via SIGUSR1 (handler → flag `pending_mouse_launch`, lancement différé en boucle), et `check_kbdnav()` récolte le processus + `reset_button_states()` à sa sortie (les releases passées pendant le grab laisseraient une combo résiduelle)
+- Mode clavier virtuel : **Home+Carré** lance `kbdnav` (exclusivité mutuelle — tue la souris si active ; Home+R3 fait l'inverse). Pendant le grab du pont, gamepadshortcuts est aveugle : le pont signale sa sortie Home+R3 via SIGUSR1 (handler → flag `pending_mouse_launch`, lancement différé en boucle), et `check_kbdnav()` récolte le processus + `reset_button_states()` à sa sortie (les releases passées pendant le grab laisseraient une combo résiduelle)
 
 ### Binaire gablue-isomount (/usr/bin)
 
@@ -980,10 +978,10 @@ Monteur d'images disque en C natif (~2.7 Mo RAM) :
 - Double-clic : défini comme application par défaut pour les types MIME ISO/IMG/EFI
 - Log dans `/tmp/gablue-isomount.log`
 
-### Binaire gablue-kbdnav (/usr/bin)
+### Binaire kbdnav (/usr/bin)
 
-Pont manette → clavier virtuel Plasma Keyboard en C natif (~25 Ko) :
-- `gablue-kbdnav` : taper au clavier visuel KDE avec la manette (D-pad/stick = flèches, A = Entrée — appui court valide, **maintien = popup d'accents** (long-press ≥ 600 ms, sélection flèches + Entrée, Échap ferme), B = Échap, Carré = Backspace, Triangle = Espace, L1/R1 = Tab, **Start = fermer le clavier**)
+Pont manette → clavier virtuel Plasma Keyboard en C natif (~25 Ko). Source : `src/gamepadshortcuts/kbdnav.c`, compilé et installé par le même Makefile que gamepadshortcuts (comme gamepadshortcuts-mouse) :
+- `kbdnav` : taper au clavier visuel KDE avec la manette (D-pad/stick = flèches, A = Entrée — appui court valide, **maintien = popup d'accents** (long-press ≥ 600 ms, sélection flèches + Entrée, Échap ferme), B = Échap, Carré = Backspace, Triangle = Espace, L1/R1 = Tab, **Start = fermer le clavier**)
 - Cible `plasma-keyboard` (IM KDE officielle, défaut Kinoite 44) pilotée via son option KCM "Keyboard navigation" (flèches + Entrée) — les touches sont injectées via uinput, l'IM les capture via son grab clavier (jamais re-transmises aux apps pendant la frappe)
 - Cycle de vie 100 % auto-porté, lancé par la combo **Home+Carré** de gamepadshortcuts : affichage du clavier (mode KWin AnyInput + forceActivate) → frappe → sortie = masquage (mode Never + kill -9 de plasma-keyboard pour empêcher les apps de ré-afficher le panneau fermé)
 - **Grab evdev exclusif** (EVIOCGRAB) pendant la frappe : plus aucun input manette vers les jeux/apps côté evdev. Limite assumée : les lecteurs hidraw (SDL-hidapi DualSense/Switch Pro, Steam) ne peuvent pas être coupés (aucun mécanisme noyau)
@@ -992,7 +990,7 @@ Pont manette → clavier virtuel Plasma Keyboard en C natif (~25 Ko) :
 - **Home+R3** pendant la frappe : sortie + SIGUSR1 à gamepadshortcuts (aveugle pendant le grab) qui lance le mode souris — exclusivité mutuelle souris ↔ clavier (Home+Carré tue la souris, Home+R3 tue le clavier)
 - **VT tracking** (inotify, pattern gamepadshortcuts) : VT inactif = grab relâché + pause (les autres sessions retrouvent la manette)
 - Presets requis : `/etc/xdg/plasmakeyboardrc` (keyboardNavigationEnabled=true, enabledLocales=fr_FR — pas de layout fr_CH dans plasma-keyboard, repli fr_CA sinon ; layout fr_CH custom QML = v2 ; panelFillScreenWidth=false — clavier centré largeur max 3:1, la hauteur reste hardcodée à 30 % dans le style Breeze)
-- Voir `src/gablue-kbdnav/AGENTS.md` pour l'architecture interne complète
+- Voir `src/gamepadshortcuts/AGENTS.md` pour l'architecture interne complète
 
 ### Interface tvqt (/usr/bin)
 

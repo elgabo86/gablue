@@ -95,7 +95,7 @@ static void signal_handler(int sig)
     running = false;
 }
 
-/* Réception SIGUSR1 : gablue-kbdnav s'est terminé sur Home+R3 et demande le
+/* Réception SIGUSR1 : kbdnav s'est terminé sur Home+R3 et demande le
    passage en mode souris. On est aveugle pendant son grab (EVIOCGRAB) et
    on ne peut pas voir le combo nous-mêmes. Le handler pose seulement un
    flag (fork/exec pas async-safe) ; le lancement est différé dans la
@@ -419,7 +419,7 @@ static void handle_combinations(void)
             mouse_pid = -1;
         }
         fprintf(stderr, "[ACTION] KBDNAV\n");
-        kbdnav_pid = launch_binary("/usr/bin/gablue-kbdnav");
+        kbdnav_pid = launch_binary("/usr/bin/kbdnav");
         kbdnav_running = true;
         square_pressed = false;
         /* Le pont grabbe la manette immédiatement : on devient aveugle et
@@ -583,7 +583,7 @@ static void reset_button_states(void)
     last_volume_time = (struct timespec){0, 0};
 }
 
-/* Surveillance gablue-kbdnav : à sa sortie, réinitialiser les états boutons.
+/* Surveillance kbdnav : à sa sortie, réinitialiser les états boutons.
    On est aveugle pendant son grab (EVIOCGRAB) : les releases de Home etc.
    nous passent sous le nez, sans reset une combo résiduelle déclencherait
    une action parasite au premier événement reçu après sa sortie. */
@@ -594,7 +594,7 @@ static void check_kbdnav(void)
 
     int status;
     if (waitpid(kbdnav_pid, &status, WNOHANG) > 0) {
-        fprintf(stderr, "[INFO] gablue-kbdnav terminé.\n");
+        fprintf(stderr, "[INFO] kbdnav terminé.\n");
         kbdnav_running = false;
         kbdnav_pid = -1;
         reset_button_states();
@@ -807,12 +807,12 @@ int main(void)
         check_child(&menuvsr_pid, &menuvsr_running, "menuvsr.py");
         check_kbdnav();
 
-        /* Demande différée par gablue-kbdnav : sortie sur Home+R3 ->
+        /* Demande différée par kbdnav : sortie sur Home+R3 ->
            passage en mode souris */
         if (pending_mouse_launch) {
             pending_mouse_launch = 0;
             if (!mouse_running && !kbdnav_running) {
-                fprintf(stderr, "[ACTION] MOUSE (demandé par gablue-kbdnav)\n");
+                fprintf(stderr, "[ACTION] MOUSE (demandé par kbdnav)\n");
                 mouse_pid = launch_binary("/usr/bin/gamepadshortcuts-mouse");
                 mouse_running = true;
             }

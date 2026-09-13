@@ -1,8 +1,8 @@
-# Instructions pour les agents - gablue-kbdnav
+# Instructions pour les agents - kbdnav
 
 ## Rôle
 
-Pont manette → clavier virtuel Plasma Keyboard (binaire `/usr/bin/gablue-kbdnav`, ~25 Ko).
+Pont manette → clavier virtuel Plasma Keyboard (binaire `/usr/bin/kbdnav`, ~25 Ko).
 Permet de taper dans n'importe quel champ texte avec la manette de jeu :
 navigation au D-pad/stick dans le clavier virtuel KDE officiel, validation
 des touches, backspace/espace/Tab. Lancé par `gamepadshortcuts` via la
@@ -20,7 +20,7 @@ touches flèches + Entrée. Le pont exploite exactement ce mécanisme :
 Manette (evdev)
     │  EVIOCGRAB (exclusif)
     ▼
-gablue-kbdnav ──uinput──► touches flèches/Entrée/Echap/etc.
+kbdnav ──uinput──► touches flèches/Entrée/Echap/etc.
     │                            │
     │                            ▼
     │                     KWin (grab clavier de l'IM)
@@ -166,5 +166,5 @@ serait aveugle). VT actif → re-grab et reprise.
 - Les `system()` (busctl/qdbus/pkill) sont volontaires (prototype-simple) ;
   une migration vers sd-bus est possible mais pas nécessaire.
 - Après toute modification : `gcc -Wall -Wextra -O2 -std=c11
-  -D_GNU_SOURCE -o /tmp/opencode/gablue-kbdnav gablue-kbdnav.c` puis test
+  -D_GNU_SOURCE -o /tmp/opencode/kbdnav kbdnav.c` puis test
   du cycle complet (affichage → frappe → Home+Carré → tout relâché).
