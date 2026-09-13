@@ -280,11 +280,25 @@ dnf5 -y install \
 # Gaming et performance (gamescope et mangohud depuis terra-extras comme Bazzite a390d80)
 # mangohud migré du COPR bazzite vers Terra : le COPR bazzite abandonne progressivement
 # ses paquets (gamescope déjà sorti), terra-mangohud = même spec, version et packager (KyleGospo)
-dnf5 -y --enable-repo=terra-mesa --enable-repo=terra-extras install \
-    terra-gamescope \
-    terra-gamescope-libs \
+#
+# Archs explicites (.x86_64) OBLIGATOIRES : dnf5 satisfait un argument arch-less avec le
+# i686 déjà tiré en dépendance (le require arch-less de terra-gamescope) — sans ça,
+# terra-gamescope-libs.x86_64 (layer Vulkan WSI 64-bit) et terra-mangohud.x86_64 ne sont
+# jamais installés (bug latent présent avant la migration aussi)
+#
+# install_weak_deps=False OBLIGATOIRE : terra-mangohud a la Recommends conditionnelle
+# (mangohud(x86-32) if glibc(x86-32)) — avec glibc.i686 présent (multilib Wine/Proton),
+# dnf5 tire le COPR mangohud.i686 (seul paquet NOMMÉ mangohud en i686 ; terra-mangohud.i686
+# ne fournit pas mangohud(x86-32)) qui entre en conflit de fichiers avec terra-mangohud.i686
+# (mangoapp, mangohudctl, libMangoHud*.so) → transaction failed. Bazzite neutralise ça
+# via install_weak_deps=False GLOBAL (/etc/dnf/dnf.conf) ; ici setopt local sur cette
+# commande pour ne pas changer le comportement des autres installs
+dnf5 -y --enable-repo=terra-mesa --enable-repo=terra-extras \
+    --setopt=install_weak_deps=False install \
+    terra-gamescope.x86_64 \
+    terra-gamescope-libs.x86_64 \
     terra-gamescope-libs.i686 \
-    terra-mangohud \
+    terra-mangohud.x86_64 \
     terra-mangohud.i686
 
 # Autres outils gaming (Fedora)
