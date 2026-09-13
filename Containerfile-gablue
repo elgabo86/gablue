@@ -28,7 +28,7 @@ COPY files/system/nvidia-common /
 # Étape intermédiaire : image Homebrew pré-construite par ublue-os (aligné Bazzite d0c9330)
 # Remplace l'ancien RPM ublue-brew (déprécié upstream, COPR plus rebuildé depuis 11/2025)
 # Digest épinglé, à bumper ponctuellement vers le dernier build de :latest
-FROM ghcr.io/ublue-os/brew:latest@sha256:e3b6878ed7b5ca963fd3f54ce44e6ab83da7533b28c83b2a11b92a5fedaa4adb AS brew
+FROM ghcr.io/ublue-os/brew:latest@sha256:60ada2d65891d8797beef49d8b43f2108519cbbaf04c9c7363e1a008677fcd35 AS brew
 
 # Image de base pour la construction finale
 FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}
