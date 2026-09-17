@@ -80,6 +80,14 @@ fi
 # --- Étape 4 : installer OpenCode 2 via npm ---
 echo "Installation de $NPM_PACKAGE via npm..."
 # --allow-scripts : exécute le postinstall officiel (npm récent le bloque par défaut)
+# Le tarball npm ne contient qu'un stub de 229 octets : c'est le postinstall qui
+# télécharge le vrai binaire (paquet plateforme) — sans lui, binaire non matérialisé.
+# Persisté aussi en config npm utilisateur car l'updater interne d'OpenCode
+# (« Update OpenCode » / `opencode upgrade`) réinstalle le paquet via npm SANS
+# passer --allow-scripts : sans cet allowScripts global, le postinstall est bloqué,
+# le stub reste en place et la mise à jour échoue en silence sur les machines
+# sans allowlist npm.
+npm config set allow-scripts="$NPM_PACKAGE" --location=user 2>/dev/null || true
 npm install -g --allow-scripts="$NPM_PACKAGE" "$NPM_PACKAGE" \
     || npm install -g "$NPM_PACKAGE"
 echo "✓ OpenCode $(timeout 10 opencode --version 2>/dev/null || echo "2") installé via npm."
