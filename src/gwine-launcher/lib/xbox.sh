@@ -127,7 +127,9 @@ unset_gamescope_default() {
 }
 
 apply_gamescope_default() {
-    if [ "$gamescope_off_mode" = true ]; then
+    # gamescope_file_off : fichier .gamescope du pack = off
+    # (désactive ce pack sans effacer le défaut stocké, contrairement à --no-gamescope)
+    if [ "$gamescope_off_mode" = true ] || [ "${gamescope_file_off:-false}" = true ]; then
         return 0
     fi
     if [ "$gamescope_mode" != true ]; then

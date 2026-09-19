@@ -169,6 +169,10 @@ src/gwine-launcher/
 ./gwine --900 ~/jeu.wgp        # Gamescope 1600x900 interne (raccourci)
 ./gwine --1080 ~/jeu.wgp       # Gamescope 1920x1080 interne (raccourci)
 ./gwine --gamescope-args "-w 1920 -h 1080 -f --mangoapp" ~/jeu.wgp  # Args gamescope personnalisés
+# Fichier .gamescope : gamescope s'active automatiquement au lancement
+#   emplacements : racine du pack .wgp, ou à côté du fichier lancé (.exe/.bat)
+#   contenu = args (ex: "-f -w 1280 -h 720 --adaptive-sync --mangoapp")
+#   vide = défaut gwine, "off" = désactivé pour ce jeu
 ```
 
 ### Configuration gamescope par défaut
@@ -314,6 +318,7 @@ lib/dir-config.sh
 ### Support gamescope
 - `--gamescope`/`--720`/`--900`/`--1080` : gwine se re-exécute sous gamescope comme parent (`exec gamescope ... -- "$0" "$@"`) avec `MANGOHUD=0` (mangoapp gère l'overlay)
 - `--gamescope-args` : args gamescope personnalisés (défaut : `-w 1280 -h 720 -f --mangoapp`, sans `-W`/`-H` pour laisser gamescope détecter la résolution de sortie)
+- **Fichier `.gamescope`** : activation automatique de gamescope au lancement, sans flag CLI (`peek_gamescope_config` dans `wgp/core.sh`, appelé AVANT le re-exec gamescope — rien n'est monté à ce stade). Deux emplacements, dans cet ordre : (1) racine du squashfs d'un `.wgp` via `unsquashfs -cat` (même mécanisme que `.gamename`, prioritaire car choix de l'auteur du pack), (2) sidecar `.gamescope` **à côté du fichier lancé** (`.exe`/`.bat`/`.wgp` — même convention que `.env`/`.args`, modifiable sans reconstruire le pack ; pour un `.wgp` c'est le fallback si la racine du pack n'en contient pas). Contenu interprété : args gamescope en clair (ex: `-f -w 1280 -h 720 --adaptive-sync --mangoapp`), vide/blanc = défaut gwine, `off`/`none`/`disable`/`no` (casse-insensible) = désactivation pour ce jeu. Multi-lignes et `\r` tolérés (normalisés en espaces, word splitting à l'exec). Priorité : options gamescope CLI explicites (`--gamescope-args`/`--720`/...) > fichier `.gamescope` > défaut stocké (`gamescope_default`) ; `--no-gamescope` CLI écrase tout (y compris le fichier). Le `off` du fichier bloque aussi le défaut stocké via `gamescope_file_off` (consommé par `apply_gamescope_default`) sans l'effacer — contrairement à `--no-gamescope` qui le supprime. Le re-exec passe `--gamescope-args "$_gs_args"` explicites au processus enfant (guard `GWINE_GAMESCOPE_WRAPPER` skippe le re-peek : le child ne doit jamais re-exec gamescope). Détection d'« existant » dans le pack par code retour de `-cat` (exit 0 = présent même vide → stoppe le fallback sidecar)
 - Détection gamescope : `launch_wine_game()` remonte l'arbre des processus (`/proc/PID/comm`) pour trouver `gamescope-wl` et `gamescopereaper`, stocke leurs PIDs dans `GWINE_GAMESCOPE_PIDS`
 - Fermeture : à la fin du jeu, kill mangoapp (SIGKILL, évite le segfault DrKonqi) puis gamescope (SIGTERM → SIGKILL fallback)
 - Traps INT/TERM : en mode gamescope, le kill mangoapp+gamescope se fait en premier, le reste du cleanup en silence (`>/dev/null 2>&1`)
@@ -328,6 +333,7 @@ lib/dir-config.sh
 ### Format WGP
 - Fichiers squashfs compressés avec extension `.wgp`
 - Contiennent un fichier `.gamename` pour le nom interne
+- Contiennent optionnellement un fichier `.gamescope` : args gamescope appliqués au lancement (activation auto, voir « Support gamescope ») ; vide = défaut gwine, `off` = gamescope désactivé pour ce jeu. Un sidecar `.gamescope` à côté du `.wgp` sert de fallback si la racine du pack n'en contient pas
 - Support des dossiers `saves/`, `extra/`, `temp/` pour persistance des données
 
 ### Sandboxing

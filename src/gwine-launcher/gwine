@@ -279,6 +279,31 @@ main() {
     # Parser les arguments en premier
     parse_arguments "$@"
 
+    # Détection du fichier .gamescope : activation auto de gamescope
+    # Sources : racine du squashfs pour un .wgp (sonde unsquashfs -cat, le pack
+    # n'est pas encore monté), sinon sidecar .gamescope à côté du fichier lancé
+    # (.exe/.bat/.wgp — même convention que .env/.args)
+    # Priorité : options CLI gamescope > fichier .gamescope > défaut stocké (gamescope_default)
+    # Skippé dans le processus enfant (re-exec) : les args sont passés explicitement
+    # via --gamescope-args en fin de ligne exec ci-dessous
+    if [ -z "${GWINE_GAMESCOPE_WRAPPER:-}" ] && [ -n "$fullpath" ] && [ "$init_mode" != true ]; then
+        # peek_gamescope_config retourne 0 uniquement si un .gamescope a été trouvé
+        if peek_gamescope_config; then
+            if [ "$gamescope_mode" != true ] && [ "$gamescope_off_mode" != true ]; then
+                if [ "${GAMESCOPE_FILE_OFF:-false}" = true ]; then
+                    # Bloque aussi le défaut stocké (apply_gamescope_default)
+                    gamescope_file_off=true
+                    echo "Gamescope désactivé pour ce jeu (fichier .gamescope = off)"
+                else
+                    # Activation auto : args du fichier (vide = défaut de l'étape gamescope)
+                    gamescope_mode=true
+                    gamescope_args="$GAMESCOPE_FILE_ARGS"
+                    echo "Gamescope activé via $GAMESCOPE_FILE_SOURCE: ${gamescope_args:-(défaut)}"
+                fi
+            fi
+        fi
+    fi
+
     # Mode --gamescope : re-exécuter gwine sous gamescope comme parent
     # (la détection gamescope dans l'arbre parent + kill mangoapp/gamescope gère la fermeture)
     if [ "${gamescope_mode:-false}" = "true" ] && [ -z "${GWINE_GAMESCOPE_WRAPPER:-}" ]; then
@@ -290,7 +315,9 @@ main() {
         export MANGOHUD=0
         local _gs_args="${gamescope_args:--w 1280 -h 720 -f --mangoapp}"
         echo "Lancement sous gamescope: $_gs_args"
-        exec gamescope $_gs_args -- "$0" "$@"
+        # --gamescope-args explicite en fin de ligne : le processus enfant récupère
+        # les args gamescope sans re-sonder le fichier .gamescope (guard ci-dessus)
+        exec gamescope $_gs_args -- "$0" "$@" --gamescope-args "$_gs_args"
     fi
 
     if [ "$reset_mode" = true ]; then

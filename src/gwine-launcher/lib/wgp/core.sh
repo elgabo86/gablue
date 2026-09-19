@@ -43,6 +43,84 @@ init_wgp_variables() {
 }
 
 # =============================================================================
+# Détection du fichier .gamescope (pack WGP ou sidecar)
+# =============================================================================
+
+# Sonde la configuration gamescope du fichier lancé ($fullpath), sans rien monter :
+#   - .wgp : fichier .gamescope à la racine du squashfs (unsquashfs -cat, comme
+#     .gamename), sinon fallback sur un sidecar .gamescope à côté du .wgp
+#   - autres (.exe/.bat/...) : sidecar .gamescope à côté du fichier lancé
+#     (même convention que .env/.args)
+# Appelé depuis main() AVANT le re-exec gamescope (rien n'est monté à ce stade)
+# Définit :
+#   GAMESCOPE_FILE_ARGS   - arguments gamescope du fichier ("" = défaut gwine)
+#   GAMESCOPE_FILE_OFF    - "true" si le fichier désactive gamescope pour ce jeu
+#   GAMESCOPE_FILE_SOURCE - emplacement lu (message utilisateur)
+# Retourne 0 si un fichier .gamescope a été trouvé, 1 sinon
+peek_gamescope_config() {
+    GAMESCOPE_FILE_ARGS=""
+    GAMESCOPE_FILE_OFF=false
+    GAMESCOPE_FILE_SOURCE=""
+
+    [ -n "$fullpath" ] || return 1
+
+    local content=""
+    local found=false
+
+    # Racine du pack WGP (prioritaire sur le sidecar : choix de l'auteur du pack)
+    if [[ "$fullpath" == *.wgp ]]; then
+        # unsquashfs est requis par init_wgp_variables de toute façon :
+        # absent ici = sonde pack skippée, le sidecar reste consulté
+        local UNSQUASHFS_BIN=""
+        UNSQUASHFS_BIN=$(command -v unsquashfs 2>/dev/null) || UNSQUASHFS_BIN=""
+        if [ -n "$UNSQUASHFS_BIN" ]; then
+            # exit 0 = fichier présent dans le pack (même vide), != 0 = absent
+            if content=$("$UNSQUASHFS_BIN" -cat "$fullpath" ".gamescope" 2>/dev/null); then
+                found=true
+                GAMESCOPE_FILE_SOURCE=".gamescope du pack"
+            fi
+        fi
+    fi
+
+    # Sidecar à côté du fichier lancé (fallback pour un .wgp sans .gamescope
+    # interne, source principale pour .exe/.bat)
+    if [ "$found" = false ]; then
+        local sidecar
+        sidecar="$(dirname "$fullpath")/.gamescope"
+        if [ -f "$sidecar" ]; then
+            content=$(cat "$sidecar") || return 1
+            found=true
+            GAMESCOPE_FILE_SOURCE="$sidecar"
+        fi
+    fi
+
+    [ "$found" = true ] || return 1
+
+    # Normalisation : CR supprimés, retours à la ligne -> espaces
+    # (les args sont passés non-quotés à exec gamescope : le word splitting s'applique)
+    content="${content//$'\r'/}"
+    content="${content//$'\n'/ }"
+
+    # Compactage pour les tests : fichier vide/blanc = défaut gwine,
+    # mot-clé off = désactivation pour ce jeu (prioritaire sur le défaut stocké,
+    # mais pas sur les options gamescope explicites de la ligne de commande)
+    local compact="${content//[[:space:]]/}"
+    if [ -z "$compact" ]; then
+        return 0
+    fi
+
+    case "${compact,,}" in
+        off|none|disable|disabled|no)
+            GAMESCOPE_FILE_OFF=true
+            ;;
+        *)
+            GAMESCOPE_FILE_ARGS="$content"
+            ;;
+    esac
+    return 0
+}
+
+# =============================================================================
 # Lecture de la configuration du WGP
 # =============================================================================
 

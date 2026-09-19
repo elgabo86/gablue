@@ -45,6 +45,9 @@ show_help() {
     echo "  --env VAR=VAL     Passer une variable d'environnement au jeu (peut être utilisé plusieurs fois)"
     echo "  --args            Arguments à passer au jeu"
     echo "  --gamescope        Lancer le jeu dans gamescope avec mangoapp (désactive MangoHud injecté)"
+    echo "                     Un fichier .gamescope active gamescope automatiquement :"
+    echo "                     à la racine d'un pack .wgp, ou à côté du fichier lancé (.exe/.bat)"
+    echo "                     (contenu = args, vide = défaut, \"off\" = désactivé pour ce jeu)"
     echo "  --gamescope-args  Arguments gamescope personnalisés (ex: \"-w 1920 -h 1080 -W 2560 -H 1440\")"
     echo "  --720             Gamescope en 1280x720 interne (raccourci)"
     echo "  --900             Gamescope en 1600x900 interne (raccourci)"
@@ -74,6 +77,7 @@ show_help() {
     echo "  gwine --720 ~/Jeux/monjeu.wgp       # Gamescope 1280x720"
     echo "  gwine --1080                        # Définir 1080p par défaut pour les futurs lancements"
     echo "  gwine --no-gamescope                # Désactiver gamescope par défaut"
+    echo "  gwine ~/Jeux/monjeu.wgp             # .gamescope (racine du pack ou à côté): gamescope auto"
     echo "  gwine --reg config.reg"
     echo "  gwine --reg add 'HKCU\Software\Wine\DllOverrides' /v ddraw /d native,builtin /f"
     echo "  gwine --reg del 'HKCU\Software\Wine\DllOverrides' /v ddraw /f"
@@ -99,6 +103,7 @@ parse_arguments() {
     gamescope_mode=false
     gamescope_args=""
     gamescope_off_mode=false
+    gamescope_file_off=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --help|-h)
