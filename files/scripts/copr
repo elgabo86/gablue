@@ -90,7 +90,14 @@ dnf5 -y config-manager setopt "terra-mesa".enabled=false
 # Configuration des exclusions Terra : priorité haute et exclusions spécifiques
 # terra-glfw exclu : terra-glfw conflicts avec glfw fedora (cross-arch i686/x86_64),
 # ce qui casse l'installation de mangohud.i686 si terra-glfw est installé avant
-dnf5 -y config-manager setopt "*terra*".priority=3 "*terra*".exclude="nerd-fonts topgrade scx-scheds steam python3-protobuf terra-glfw terra-glfw-devel"
+# waydroid* exclu : waydroid-nvidia (publié sur terra-extras le 20/09/2026) Provides
+# libvirglrenderer.so.1() — avec Terra en priority 3, dnf5 le choisit comme fournisseur
+# de ce symbol à la place de virglrenderer fedora lors de la transaction virtualisation
+# DX (qemu-device-display-*-gl → Requires libvirglrenderer.so.1) : installe un fork
+# waydroid complet + lxc + libgbinder (30+ Mo), active waydroid-container.service
+# dans l'image et évince virglrenderer fedora. L'exclusion fait retomber le solver
+# sur virglrenderer fedora (build 21/09 DX touché : main-dx, nvidia-open-dx)
+dnf5 -y config-manager setopt "*terra*".priority=3 "*terra*".exclude="nerd-fonts topgrade scx-scheds steam python3-protobuf terra-glfw terra-glfw-devel waydroid*"
 
 # =============================================================================
 # FINALISATION
