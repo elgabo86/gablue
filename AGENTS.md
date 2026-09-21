@@ -496,7 +496,7 @@ Installation extensive de paquets organisée par catégories :
 - **Runtime** : patch, bzip2, sqlite, uv
 - **Python (scripts Gablue)** : python3-evdev, python3-pyside6 (python3-uinput retiré : cassé sous Python 3.14 par la suppression de distutils, `mouse.py` remplacé par le binaire C `gamepadshortcuts-mouse`)
 - **SELinux** : checkpolicy, selinux-policy-devel
-- **Libs 32-bit Wine/Proton complètes** : fontconfig, freetype, X11 (composite, cursor, damage, fix, i, inerama, randr, render, tst, v), Wayland (epoxy, decor, cursor, egl), core (gnutls, unwind, cups, openldap), audio (pulseaudio, pipewire upgrade + libs, FAudio, alsa, openal, ogg, vorbis, flac, sndfile), vulkan-loader (terra-mesa), vidéo (libva, libvdpau)
+- **Libs 32-bit Wine/Proton complètes** : fontconfig, freetype, X11 (composite, cursor, damage, fix, i, inerama, randr, render, tst, v), Wayland (epoxy, decor, cursor, egl), core (gnutls, unwind, cups, openldap), audio (pulseaudio, pipewire upgrade + libs, FAudio, alsa, openal, ogg, vorbis, flac, sndfile), vulkan-loader (terra-mesa), vidéo (libva, libvdpau — **upgrade `libva libvdpau` x86_64 avant l'install i686**, même pattern que pipewire-libs : les fichiers %doc de libva entrent en conflit si les arches divergent, et dnf5 install ne upgrade pas un paquet déjà installé (validé en conteneur) ; l'alignement était accidentel via la cascade ffmpeg i686 tirée par le libheif negativo, morte depuis le retrait de libheif de fedora-multimedia (le i686 résout vers le libheif fedora 1.23.4, sans ffmpeg) — fix 21/09/2026, échec build 20-21/09 les 5 variantes)
 
 **Upgrade initial restreint** (toutes variantes) :
 - `dnf5 -y upgrade --refresh --repo=fedora --repo=updates` **avant** toute installation

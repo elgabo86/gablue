@@ -567,6 +567,28 @@ dnf5 -y --setopt=install_weak_deps=False install \
 # Vidéo 32-bit (accélération matérielle pour décodage dans Wine)
 # -----------------------------------------------------------------------------
 
+# Upgrade x86_64 AVANT l'install i686 (même pattern que pipewire-libs ci-dessus) :
+# les fichiers %doc (/usr/share/doc/libva/NEWS) entrent en conflit si les deux arches
+# divergent — x86_64 reste à 2.23.0 (fedora) car l'upgrade initial est restreint aux
+# dépôts fedora/updates, tandis que l'i686 résout vers 2.24.1 (fedora-multimedia) :
+# « file /usr/share/doc/libva/NEWS from install of libva-1:2.24.1-1.fc44.i686 conflicts
+# with file from package libva-2.23.0-3.fc44.x86_64 » (échec build 20-21/09/2026, 5 variantes)
+#
+# Pourquoi ça a cassé le 20/09 : l'alignement était accidentel — la transaction
+# libepoxy/libdecor i686 tirait libheif.i686 (negativo 1:1.21.2-2, Requires
+# ffmpeg-libs) → cascade ffmpeg i686 qui installait libva.i686 ET upgradeait
+# libva.x86_64 dans la même transaction. negativo17 ne fournit plus libheif (le i686
+# résout désormais vers le libheif fedora 0:1.23.4-6, sans dépendance ffmpeg —
+# impossible de le battre au tri EVR avec l'epoch 1 de negativo, donc le paquet a
+# disparu du repo) → cascade morte → plus d'alignement accidentel.
+#
+# dnf5 install ne upgrade PAS un paquet déjà installé (validé en conteneur : le
+# x86_64 reste à 2.23.0 même listé explicitement dans l'install) → upgrade
+# explicite obligatoire. libvdpau : les deux arches à 1.5-11, upgrade préventif.
+dnf5 -y upgrade \
+    libva \
+    libvdpau
+
 dnf5 -y --setopt=install_weak_deps=False install \
     libva.i686 \
     libvdpau.i686
