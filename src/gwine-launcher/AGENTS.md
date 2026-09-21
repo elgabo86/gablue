@@ -277,7 +277,12 @@ lib/dir-config.sh
   - core.sh : Variables globales et utilitaires WGP
   - mount.sh : Montage/démontage squashfuse
   - overlay.sh : Overlays kernel overlayfs (via unshare, user namespaces)
-  - symlinks.sh : Symlinks saves/extras
+  - symlinks.sh : Symlinks saves/extras. **Amorçage PAR ITEM** : un item
+    absent de la destination est copié depuis le pack, un item présent est
+    laissé intact (jamais d'écrasement ni de suppression) — remplace
+    l'ancien « tout ou rien » (copie seulement si le dossier racine du jeu
+    est vide) qui laissait des trous après un changement de classification
+    d'un pack reconstruit. Coût régime stable : un stat par item
   - modes.sh : Modes WGP (sélection exe)
 - **launcher.sh** : Fichier de redirection vers launcher-utils/* + launcher-main.sh
 - **launcher-utils/*** : Utilitaires de lancement

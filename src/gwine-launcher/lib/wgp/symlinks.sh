@@ -21,28 +21,32 @@ prepare_saves() {
     # S'assurer que le repertoire parent du symlink existe
     ensure_dir -s "$SAVES_SYMLINK"
 
-    if [ -d "$SAVES_DIR" ]; then
-        if [ -n "$(find "$SAVES_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
-            # Les sauvegardes existent deja, pas besoin de copier
-            return 0
-        fi
-    fi
-
-    echo "Copie des sauvegardes depuis .save..."
-
+    # Amorçage PAR ITEM : un item absent de la destination est copié depuis
+    # le pack, un item présent est laissé intact (les données du user
+    # gagnent toujours — aucune suppression, aucun écrasement). Remplace
+    # l'ancien « tout ou rien » (copie seulement si le dossier racine du
+    # jeu est vide), qui laissait des trous quand un pack reconstruit
+    # ajoutait ou reclassait un item. Coût en régime stable : un stat par
+    # item, négligeable.
     while IFS= read -r SAVE_REL_PATH; do
         [ -z "$SAVE_REL_PATH" ] && continue
 
         local SAVE_WGP_ITEM="$SAVE_WGP_DIR/$SAVE_REL_PATH"
         local FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
 
-        if [ -d "$SAVE_WGP_ITEM" ]; then
-            _copy_dir_with_symlinks "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM" "$SAVE_WGP_DIR" "$SAVES_DIR"
-        elif [ -e "$SAVE_WGP_ITEM" ]; then
-            mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
-            if [ -L "$SAVE_WGP_ITEM" ]; then
+        if [ -e "$FINAL_SAVE_ITEM" ] || [ -L "$FINAL_SAVE_ITEM" ]; then
+            continue
+        fi
+
+        if [ -e "$SAVE_WGP_ITEM" ] || [ -L "$SAVE_WGP_ITEM" ]; then
+            echo "Amorçage de la sauvegarde manquante: $SAVE_REL_PATH"
+            if [ -d "$SAVE_WGP_ITEM" ]; then
+                _copy_dir_with_symlinks "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM" "$SAVE_WGP_DIR" "$SAVES_DIR"
+            elif [ -L "$SAVE_WGP_ITEM" ]; then
+                mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
                 _copy_symlink_as_abs "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM" "$SAVE_WGP_DIR" "$SAVES_DIR"
             else
+                mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
                 cp -n "$SAVE_WGP_ITEM" "$FINAL_SAVE_ITEM"
             fi
         fi
@@ -72,27 +76,28 @@ prepare_extras() {
         rm -rf "$EXTRA_DIR"
     fi
 
-    if [ -d "$EXTRA_CACHE_DIR" ] && [ -n "$(find "$EXTRA_CACHE_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
-        rm -f "$EXTRA_DIR"
-        ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
-        return 0
-    fi
-
-    echo "Copie des extras depuis .extra..."
-
+    # Amorçage PAR ITEM (comme prepare_saves) : un item absent du cache est
+    # copié depuis le pack, un item présent est intact. Le cache non vide
+    # ne court-circuite PLUS l'amorçage (ancien « tout ou rien » supprimé).
     while IFS= read -r EXTRA_REL_PATH; do
         [ -z "$EXTRA_REL_PATH" ] && continue
 
         local EXTRA_WGP_ITEM="$EXTRA_WGP_DIR/$EXTRA_REL_PATH"
         local FINAL_EXTRA_ITEM="$EXTRA_CACHE_DIR/$EXTRA_REL_PATH"
 
-        if [ -d "$EXTRA_WGP_ITEM" ]; then
-            _copy_dir_with_symlinks "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM" "$EXTRA_WGP_DIR" "$EXTRA_CACHE_DIR"
-        elif [ -e "$EXTRA_WGP_ITEM" ]; then
-            mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
-            if [ -L "$EXTRA_WGP_ITEM" ]; then
+        if [ -e "$FINAL_EXTRA_ITEM" ] || [ -L "$FINAL_EXTRA_ITEM" ]; then
+            continue
+        fi
+
+        if [ -e "$EXTRA_WGP_ITEM" ] || [ -L "$EXTRA_WGP_ITEM" ]; then
+            echo "Amorçage de l'extra manquant: $EXTRA_REL_PATH"
+            if [ -d "$EXTRA_WGP_ITEM" ]; then
+                _copy_dir_with_symlinks "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM" "$EXTRA_WGP_DIR" "$EXTRA_CACHE_DIR"
+            elif [ -L "$EXTRA_WGP_ITEM" ]; then
+                mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
                 _copy_symlink_as_abs "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM" "$EXTRA_WGP_DIR" "$EXTRA_CACHE_DIR"
             else
+                mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
                 cp -n "$EXTRA_WGP_ITEM" "$FINAL_EXTRA_ITEM"
             fi
         fi

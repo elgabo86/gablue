@@ -518,17 +518,13 @@ prepare_saves() {
 
     [ -f "$SAVE_FILE" ] || return 0
 
-    # Vérifier si le dossier existe et contient du contenu
-    if [ -d "$SAVES_DIR" ]; then
-        # Dossier existe vérifier s'il a du contenu
-        if [ -n "$(find "$SAVES_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
-            # Dossier a du contenu ne rien copier
-            return 0
-        fi
-    fi
-    # Dossier n'existe pas ou est vide copier tout depuis .save
-
-    echo "Copie des sauvegardes depuis .save..."
+    # Amorçage PAR ITEM : un item absent de la destination est copié depuis
+    # le pack, un item présent est laissé intact (les données du user
+    # gagnent toujours — aucune suppression, aucun écrasement). Remplace
+    # l'ancien « tout ou rien » (copie seulement si le dossier racine du
+    # jeu est vide), qui laissait des trous quand un pack reconstruit
+    # ajoutait ou reclassait un item. Coût en régime stable : un stat par
+    # item, négligeable.
 
     while IFS= read -r SAVE_REL_PATH; do
         [ -z "$SAVE_REL_PATH" ] && continue
@@ -536,14 +532,20 @@ prepare_saves() {
         local SAVE_LGP_ITEM="$SAVE_LGP_DIR/$SAVE_REL_PATH"
         local FINAL_SAVE_ITEM="$SAVES_DIR/$SAVE_REL_PATH"
 
-        if [ -d "$SAVE_LGP_ITEM" ]; then
-            # Copier récursivement en traitant tous les symlinks
-            _copy_dir_with_symlinks "$SAVE_LGP_ITEM" "$FINAL_SAVE_ITEM" "$SAVE_LGP_DIR" "$SAVES_DIR"
-        elif [ -e "$SAVE_LGP_ITEM" ]; then
-            mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
-            if [ -L "$SAVE_LGP_ITEM" ]; then
+        if [ -e "$FINAL_SAVE_ITEM" ] || [ -L "$FINAL_SAVE_ITEM" ]; then
+            continue
+        fi
+
+        if [ -e "$SAVE_LGP_ITEM" ] || [ -L "$SAVE_LGP_ITEM" ]; then
+            echo "Amorçage de la sauvegarde manquante: $SAVE_REL_PATH"
+            if [ -d "$SAVE_LGP_ITEM" ]; then
+                # Copier récursivement en traitant tous les symlinks
+                _copy_dir_with_symlinks "$SAVE_LGP_ITEM" "$FINAL_SAVE_ITEM" "$SAVE_LGP_DIR" "$SAVES_DIR"
+            elif [ -L "$SAVE_LGP_ITEM" ]; then
+                mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
                 _copy_symlink_as_abs "$SAVE_LGP_ITEM" "$FINAL_SAVE_ITEM" "$SAVE_LGP_DIR" "$SAVES_DIR"
             else
+                mkdir -p "$(dirname "$FINAL_SAVE_ITEM")"
                 cp -n "$SAVE_LGP_ITEM" "$FINAL_SAVE_ITEM"
             fi
         fi
@@ -791,15 +793,9 @@ prepare_extras() {
         rm -rf "$EXTRA_DIR"
     fi
 
-    # Vérifier si les données existent déjà dans le cache
-    if [ -d "$EXTRA_CACHE_DIR" ] && [ -n "$(find "$EXTRA_CACHE_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
-        mkdir -p "$EXTRA_BASE"
-        rm -f "$EXTRA_DIR"
-        ln -s "$EXTRA_CACHE_DIR" "$EXTRA_DIR"
-        return 0
-    fi
-
-    echo "Copie des extras depuis .extra..."
+    # Amorçage PAR ITEM (comme prepare_saves) : un item absent du cache est
+    # copié depuis le pack, un item présent est intact. Le cache non vide
+    # ne court-circuite PLUS l'amorçage (ancien « tout ou rien » supprimé).
 
     while IFS= read -r EXTRA_REL_PATH; do
         [ -z "$EXTRA_REL_PATH" ] && continue
@@ -807,14 +803,20 @@ prepare_extras() {
         local EXTRA_LGP_ITEM="$EXTRA_LGP_DIR/$EXTRA_REL_PATH"
         local FINAL_EXTRA_ITEM="$EXTRA_CACHE_DIR/$EXTRA_REL_PATH"
 
-        if [ -d "$EXTRA_LGP_ITEM" ]; then
-            # Copier récursivement en traitant tous les symlinks
-            _copy_dir_with_symlinks "$EXTRA_LGP_ITEM" "$FINAL_EXTRA_ITEM" "$EXTRA_LGP_DIR" "$EXTRA_CACHE_DIR"
-        elif [ -e "$EXTRA_LGP_ITEM" ]; then
-            mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
-            if [ -L "$EXTRA_LGP_ITEM" ]; then
+        if [ -e "$FINAL_EXTRA_ITEM" ] || [ -L "$FINAL_EXTRA_ITEM" ]; then
+            continue
+        fi
+
+        if [ -e "$EXTRA_LGP_ITEM" ] || [ -L "$EXTRA_LGP_ITEM" ]; then
+            echo "Amorçage de l'extra manquant: $EXTRA_REL_PATH"
+            if [ -d "$EXTRA_LGP_ITEM" ]; then
+                # Copier récursivement en traitant tous les symlinks
+                _copy_dir_with_symlinks "$EXTRA_LGP_ITEM" "$FINAL_EXTRA_ITEM" "$EXTRA_LGP_DIR" "$EXTRA_CACHE_DIR"
+            elif [ -L "$EXTRA_LGP_ITEM" ]; then
+                mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
                 _copy_symlink_as_abs "$EXTRA_LGP_ITEM" "$FINAL_EXTRA_ITEM" "$EXTRA_LGP_DIR" "$EXTRA_CACHE_DIR"
             else
+                mkdir -p "$(dirname "$FINAL_EXTRA_ITEM")"
                 cp -n "$EXTRA_LGP_ITEM" "$FINAL_EXTRA_ITEM"
             fi
         fi
