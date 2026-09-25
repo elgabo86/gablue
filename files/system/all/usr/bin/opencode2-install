@@ -118,6 +118,25 @@ DESKTOP_APPIMAGE="$HOME/AppImages/opencode.appimage"
 DESKTOP_ENTRY="$HOME/.local/share/applications/opencode.desktop"
 STABLE_URL="https://opencode.ai/download/stable/linux-x64-appimage"
 
+# Patch de l'entrée .desktop générée par GearLever :
+# - nom sans numéro de version
+# - --no-sandbox requis par Electron sur Kinoite (chrome-sandbox SUID absent)
+# Idempotent ; appelé aussi quand l'app est déjà à jour, pour réparer les
+# installations précédentes restées non patchées.
+patch_desktop_entry() {
+    if [ -f "$DESKTOP_ENTRY" ]; then
+        sed -i 's/^Name=OpenCode\s*(.*)$/Name=OpenCode/' "$DESKTOP_ENTRY"
+        if grep -q '^Exec=' "$DESKTOP_ENTRY" && ! grep -q '^Exec=.*--no-sandbox' "$DESKTOP_ENTRY"; then
+            if grep -q '^Exec=.*%[fFuU]' "$DESKTOP_ENTRY"; then
+                sed -i 's|^\(Exec=.*\)\(%[fFuU]\)$|\1--no-sandbox \2|' "$DESKTOP_ENTRY"
+            else
+                sed -i 's|^Exec=\(.*\)$|Exec=\1 --no-sandbox|' "$DESKTOP_ENTRY"
+            fi
+        fi
+        chmod u+rw "$DESKTOP_ENTRY"
+    fi
+}
+
 echo "=== OpenCode Desktop : vérification de la dernière version ==="
 # Version cible : extraite de la redirection du lien stable, fallback version npm
 LATEST_VERSION="$(curl -sIL -o /dev/null -w '%{url_effective}' --max-time 30 "$STABLE_URL" 2>/dev/null \
@@ -139,6 +158,7 @@ fi
 if [ -f "$DESKTOP_APPIMAGE" ] && [ -n "$INSTALLED_VERSION" ] && [ -n "$LATEST_VERSION" ] \
     && [ "$INSTALLED_VERSION" = "$LATEST_VERSION" ]; then
     echo "✓ OpenCode Desktop $INSTALLED_VERSION déjà installé (à jour)."
+    patch_desktop_entry
 else
     # GearLever requis pour l'intégration : vérifié AVANT le téléchargement (245 Mo)
     if ! flatpak list 2>/dev/null | grep -q "it.mijorus.gearlever"; then
@@ -185,22 +205,23 @@ else
     echo "Intégration de l'AppImage avec GearLever..."
     yes | flatpak run it.mijorus.gearlever --integrate "$CACHE_FILE" 2>/dev/null || true
 
+    # Re-détection de l'entrée .desktop APRÈS l'intégration : le fallback
+    # initial a tourné AVANT, quand rien n'existait encore (première
+    # installation) — DESKTOP_ENTRY peut être vide ou pointé vers un fichier
+    # disparu lors du remove/integrate.
+    if [ ! -f "$DESKTOP_ENTRY" ]; then
+        DESKTOP_ENTRY="$(grep -rl '^X-AppImage-Name=OpenCode$' "$HOME/.local/share/applications" 2>/dev/null | head -1 || true)"
+    fi
+
     # Correction de l'entrée .desktop générée par GearLever :
     # - nom sans numéro de version
     # - --no-sandbox requis par Electron sur Kinoite (chrome-sandbox SUID absent)
+    patch_desktop_entry
+
     if [ -f "$DESKTOP_ENTRY" ]; then
-        sed -i 's/^Name=OpenCode\s*(.*)$/Name=OpenCode/' "$DESKTOP_ENTRY"
-        if grep -q '^Exec=' "$DESKTOP_ENTRY" && ! grep -q '^Exec=.*--no-sandbox' "$DESKTOP_ENTRY"; then
-            if grep -q '^Exec=.*%[fFuU]' "$DESKTOP_ENTRY"; then
-                sed -i 's|^\(Exec=.*\)\(%[fFuU]\)$|\1--no-sandbox \2|' "$DESKTOP_ENTRY"
-            else
-                sed -i 's|^Exec=\(.*\)$|Exec=\1 --no-sandbox|' "$DESKTOP_ENTRY"
-            fi
-        fi
-        chmod u+rw "$DESKTOP_ENTRY"
         echo "✓ OpenCode Desktop installé : $DESKTOP_APPIMAGE"
     else
-        echo "✗ Erreur : entrée .desktop GearLever introuvable ($DESKTOP_ENTRY)."
+        echo "✗ Erreur : entrée .desktop GearLever introuvable (${DESKTOP_ENTRY:-aucune candidate détectée})."
         rm -f "$CACHE_FILE"
         exit 1
     fi
