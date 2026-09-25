@@ -230,8 +230,15 @@ fi
 cat > "$LOCAL_BIN/opencode-open" <<'WRAPPER'
 #!/bin/bash
 
-# Ouvre un dossier dans OpenCode Desktop : session du dossier mise en tab
-# focalisée dans le store du desktop, GUI relancée dessus si nécessaire.
+# Ouvre un dossier dans OpenCode : mode --cli (TUI dans le dossier, comme
+# « opencode <dossier> ») ou mode GUI par défaut (session du dossier mise en
+# tab focalisée dans le store du desktop, GUI relancée dessus si nécessaire).
+
+CLI_MODE=0
+if [ "$1" = "--cli" ]; then
+    CLI_MODE=1
+    shift
+fi
 
 DIR="${1:-$PWD}"
 if [ -d "$DIR" ]; then
@@ -239,6 +246,21 @@ if [ -d "$DIR" ]; then
 else
     # Fichier passé par erreur : ouvrir son dossier parent
     DIR="$(cd "$(dirname "$DIR")" && pwd)" || exit 1
+fi
+
+# --- Mode CLI : TUI directement dans le dossier (comportement historique) ---
+if [ "$CLI_MODE" = 1 ]; then
+    # Fallback chemin explicite : le PATH de session Dolphin peut manquer ~/.local/bin
+    OC_BIN="$(command -v opencode || true)"
+    if [ -z "$OC_BIN" ] && [ -x "$HOME/.local/bin/opencode" ]; then
+        OC_BIN="$HOME/.local/bin/opencode"
+    fi
+    if [ -z "$OC_BIN" ]; then
+        echo "✗ Erreur : binaire opencode introuvable." >&2
+        exit 1
+    fi
+    cd "$DIR" || exit 1
+    exec "$OC_BIN" "$DIR"
 fi
 
 DESKTOP_CFG="$HOME/.config/ai.opencode.desktop"
@@ -585,6 +607,24 @@ Type=Application
 X-KDE-StartupNotify=false
 EOF
 echo "✓ Entrée « Ouvrir avec OpenCode » installée : $APPS_DIR/gablue-opencode.desktop"
+
+# Entrée terminal « OpenCode CLI » : lance la TUI dans le dossier (comportement
+# historique, conservé en plus de la GUI). Terminal=true → lancée dans le
+# terminal système ; `%k` = chemin du .desktop, le wrapper s'en sert pour
+# émuler l'ancien lancement direct « opencode <dossier> ».
+cat > "$APPS_DIR/gablue-opencode-cli.desktop" <<EOF
+[Desktop Entry]
+Comment=Ouvre le dossier dans OpenCode CLI (terminal)
+Exec=$LOCAL_BIN/opencode-open --cli %f
+Icon=utilities-terminal
+MimeType=inode/directory;
+Name=OpenCode CLI
+NoDisplay=true
+Terminal=true
+Type=Application
+X-KDE-StartupNotify=false
+EOF
+echo "✓ Entrée « Ouvrir avec OpenCode CLI » installée : $APPS_DIR/gablue-opencode-cli.desktop"
 
 # Rafraîchir les caches pour une prise en effet immédiate (best-effort)
 command -v kbuildsycoca6 &>/dev/null && kbuildsycoca6 --noincremental &>/dev/null || true
