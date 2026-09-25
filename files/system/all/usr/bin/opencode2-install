@@ -479,20 +479,139 @@ fi
 # La route restaurée par la GUI au lancement = localStorage
 # « opencode.desktop.window.<id>.last-active-url » (function gie/X9 du bundle),
 # prioritaire sur tout le store SQLite. Format LevelDB log :
-#   [header 7o: crc32c masqué(4) len(2) type(1)][batch: seq(8) count(4) entries]
-#   entry: [type=1][varint klen][key][varint vlen][value]
+#   blocs 32 Ko, records [header 7o: crc32c masqué(4) len(2) type(1)] + payload
+#   types Full=1/First=2/Middle=3/Last=4 (batch long = fragments, jamais à
+#   cheval sur deux blocs) ; batch = [seq(8) count(4) entries] avec
+#   entry = [type=1][varint klen][key][varint vlen][value]
 #   key = "_oc://renderer\x00\x01" + nom-clé, value = \x01 + texte
-# On appelle l'appkey « _oc://renderer » et l'entry dans le DERNIER batch du
-# log 000003.log (réécriture header + zéro-padding). L'app doit être arrêtée.
-if command -v python3 &>/dev/null && [ -f "$HOME/.config/ai.opencode.desktop/Local Storage/leveldb/000003.log" ]; then
-    timeout 30 python3 - "$HOME/.config/ai.opencode.desktop/Local Storage/leveldb/000003.log" "$DIR" <<'PY' >/dev/null 2>&1 || true
-import glob, json, os, sqlite3, struct, sys, time, zlib
+# ATTENTION : le champ count est en offset 8-12 du batch (offset 4-8 = poids
+# fort du seq — bug historique qui écrivait count=1 → « WriteBatch has wrong
+# count » au boot → batch JETÉ → route perdue, l'app restaurait l'ancienne).
+# Stratégie : (1) réparer les batchs dont count ne correspond pas au nombre
+# d'entries parsées, (2) écrire la route en NOUVEAU batch en fin de log
+# (seq = max(seq+count)+1, count=1) — aucun batch de l'app n'est modifié et le
+# dernier batch appliqué gagne. L'app doit être arrêtée (LevelDB verrouillé).
+if command -v python3 &>/dev/null && [ -d "$HOME/.config/ai.opencode.desktop/Local Storage/leveldb" ]; then
+    timeout 30 python3 - "$HOME/.config/ai.opencode.desktop/Local Storage/leveldb" "$DIR" <<'PY' >/dev/null 2>&1 || true
+import glob, json, os, re, sqlite3, struct, sys
 
-log_path, directory = sys.argv[1], sys.argv[2].rstrip("/") or "/"
-
-# 1) route cible : la session connue pour ce directory (tabs.info du store SQLite)
-route = ""
+ldb_dir, directory = sys.argv[1], sys.argv[2].rstrip("/") or "/"
 db = os.path.expanduser("~/.config/ai.opencode.desktop/drafts.sqlite")
+
+BLOCK, HDR = 32768, 7
+
+def read_varint(buf, i):
+    res = shift = 0
+    while True:
+        if i >= len(buf):
+            return None, i
+        b = buf[i]
+        i += 1
+        res |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return res, i
+        shift += 7
+        if shift > 35:
+            return None, i
+
+def crc32c(d):
+    poly = 0x82F63B78
+    c = 0xFFFFFFFF
+    for b in d:
+        c ^= b
+        for _ in range(8):
+            c = (c >> 1) ^ (poly if c & 1 else 0)
+    return c ^ 0xFFFFFFFF
+
+def mask(c):
+    return (((c >> 15) | (c << 17)) + 0xA282EAD8) & 0xFFFFFFFF
+
+def varint(n):
+    out = b""
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        out += bytes([b | (0x80 if n else 0)])
+        if not n:
+            return out
+
+def scan_records(data):
+    """Records physiques : un record tient dans un bloc, jamais à cheval."""
+    recs = []
+    n = len(data)
+    bstart = 0
+    while bstart < n:
+        bend = min(bstart + BLOCK, n)
+        p = bstart
+        while p + HDR <= bend:
+            crc, length, btype = struct.unpack_from("<IHB", data, p)
+            if btype == 0 and crc == 0 and length == 0:
+                break
+            if length > bend - p - HDR:
+                break
+            recs.append((p, p + HDR, length, btype))
+            p += HDR + length
+        bstart += BLOCK
+    return recs
+
+def group_batches(recs):
+    """Assemble les fragments (Full=1, First=2, Middle=3, Last=4) en batchs."""
+    batches, cur = [], None
+    for hdr_off, poff, length, btype in recs:
+        if btype == 1:
+            cur = None
+            if length >= 12:
+                batches.append({"hdr": hdr_off, "poff": poff, "len": length,
+                                "btype": btype, "frags": [(poff, length)]})
+        elif btype == 2:
+            cur = None
+            if length >= 12:
+                cur = {"hdr": hdr_off, "poff": poff, "len": length,
+                       "btype": btype, "frags": [(poff, length)]}
+        elif btype in (3, 4) and cur is not None:
+            cur["frags"].append((poff, length))
+            if btype == 4:
+                batches.append(cur)
+                cur = None
+    return batches
+
+def batch_payload(data, b):
+    return b"".join(data[poff:poff + length] for poff, length in b["frags"])
+
+def count_entries(payload):
+    i, found = 12, 0
+    while i < len(payload):
+        tag = payload[i]
+        i += 1
+        klen, i = read_varint(payload, i)
+        if klen is None or i + klen > len(payload):
+            return -1
+        i += klen
+        if tag == 1:
+            vlen, i = read_varint(payload, i)
+            if vlen is None or i + vlen > len(payload):
+                return -1
+            i += vlen
+        elif tag != 0:
+            return -1
+        found += 1
+    return found
+
+def write_record(data, hdr_off, poff, btype, payload):
+    data[poff:poff + len(payload)] = payload
+    data[hdr_off:hdr_off + HDR] = struct.pack(
+        "<IHB", mask(crc32c(bytes([btype]) + payload)), len(payload), btype)
+
+# --- 0) log actif : le .log au numéro le plus élevé (LevelDB réutilise le
+#        même log, mais par robustesse on ne présume pas de 000003.log) ---
+logs = sorted(glob.glob(os.path.join(ldb_dir, "*.log")),
+              key=lambda p: int(re.sub(r"\D", "", os.path.basename(p)) or 0))
+if not logs:
+    sys.exit(0)
+target = logs[-1]
+
+# --- 1) route cible : session connue pour ce directory (tabs.info) ---
+route = ""
 try:
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     for _name, val in con.execute("SELECT name, value FROM state WHERE key='tabs.info'").fetchall():
@@ -509,30 +628,13 @@ except Exception:
 if not route:
     sys.exit(0)
 
-BLOCK, HDR = 32768, 7
-
-def crc32c(d):
-    poly = 0x82F63B78; c = 0xFFFFFFFF
-    for b in d:
-        c ^= b
-        for _ in range(8): c = (c >> 1) ^ (poly if c & 1 else 0)
-    return c ^ 0xFFFFFFFF
-
-def mask(c): return (((c >> 15) | (c << 17)) + 0xa282ead8) & 0xFFFFFFFF
-
-def varint(n):
-    out = b""
-    while True:
-        b = n & 0x7F; n >>= 7
-        out += bytes([b | (0x80 if n else 0)])
-        if not n: return out
-
-# 2) dernier fenêtre connue : les store names opencode.window.<uuid>.dat
-#    → la clé localStorage porte l'UUID de fenêtre
+# --- 2) fenêtre cible : uuid de la fenêtre la plus récente ---
 win_uuid = ""
 try:
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    row = con.execute("SELECT name FROM state WHERE name LIKE 'opencode.window.%' ORDER BY updated_at DESC LIMIT 1").fetchone()
+    row = con.execute(
+        "SELECT name FROM state WHERE name LIKE 'opencode.window.%' "
+        "ORDER BY updated_at DESC LIMIT 1").fetchone()
     if row:
         win_uuid = row[0].replace("opencode.window.", "").replace(".dat", "")
     con.close()
@@ -541,43 +643,46 @@ except Exception:
 if not win_uuid:
     sys.exit(0)
 
-key = ("_oc://renderer\x00\x01opencode.desktop.window." + win_uuid + ".last-active-url").encode()
+key = (b"_oc://renderer\x00\x01opencode.desktop.window."
+       + win_uuid.encode() + b".last-active-url")
 value = b"\x01" + route.encode()
 
-data = bytearray(open(log_path, "rb").read())
-pos, blocks = 0, []
-while pos + HDR <= len(data):
-    _crc, length, btype = struct.unpack('<IHB', data[pos:pos+HDR])
-    if btype == 0 and length == 0: break
-    blocks.append((pos, pos + HDR, length, btype))
-    pos += HDR + length
-if not blocks:
+data = bytearray(open(target, "rb").read())
+recs = scan_records(data)
+batches = group_batches(recs)
+if not recs:
     sys.exit(0)
-off, poff, length, btype = blocks[-1]
-payload = bytes(data[poff:poff + length])
-if len(payload) < 12:
-    sys.exit(0)
-seq = struct.unpack('<Q', payload[:8])[0]
-count = struct.unpack('<I', payload[4:8])[0]
+
+# --- 3) réparation des batchs corrompus (count != entries parsées) ---
+for b in batches:
+    payload = batch_payload(data, b)
+    found = count_entries(payload)
+    if found < 0:
+        continue
+    if struct.unpack_from("<I", payload, 8)[0] != found:
+        # le champ count vit dans le PREMIER fragment (payload[8:12])
+        fp = bytearray(data[b["poff"]:b["poff"] + b["len"]])
+        fp[8:12] = struct.pack("<I", found)
+        write_record(data, b["hdr"], b["poff"], b["btype"], bytes(fp))
+
+# --- 4) route en NOUVEAU batch en fin de log (gagnant à la restauration :
+#        dernier batch appliqué + seq le plus élevé) ---
+max_seq = 0
+for b in batches:
+    p = batch_payload(data, b)
+    if len(p) >= 12:
+        max_seq = max(max_seq, struct.unpack_from("<Q", p, 0)[0]
+                      + struct.unpack_from("<I", p, 8)[0])
 entry = bytes([1]) + varint(len(key)) + key + varint(len(value)) + value
-new_seq, new_count = seq + 1, count + 1
-head = bytes([(new_seq >> (8 * i)) & 0xFF for i in range(8)]) + \
-       bytes([(new_count >> (8 * i)) & 0xFF for i in range(4)])
-new_payload = head + payload[12:] + entry
-# la place dans le bloc courant : bord de bloc suivant
-block_start = off // BLOCK * BLOCK
-room = BLOCK - (off - block_start) - HDR - len(new_payload)
-if room < 0:
-    sys.exit(0)  # bloc plein : on ne tente pas de splitter (rare)
-new_header = struct.pack('<IHB', mask(crc32c(bytes([btype]) + new_payload)), len(new_payload), btype)
-old_end = poff + length
-new_end = poff + len(new_payload)
-data[poff:old_end] = new_payload
-if old_end < new_end:
-    # on empiète sur le padding zéro : rien à faire (déjà écrit par la slice)
-    pass
-data[off:off + HDR] = new_header
-open(log_path, "wb").write(bytes(data))
+batch = struct.pack("<Q", max_seq + 1) + struct.pack("<I", 1) + entry
+hdr_off, poff, length, btype = recs[-1]
+end = poff + length
+block_end = (end // BLOCK + 1) * BLOCK
+pos = end if end + HDR + len(batch) <= block_end else block_end
+data += bytes(pos - len(data))
+data += struct.pack("<IHB", mask(crc32c(bytes([1]) + batch)), len(batch), 1)
+data += batch
+open(target, "wb").write(bytes(data))
 PY
 fi
 
