@@ -1,15 +1,19 @@
 #!/bin/bash
 
-# Script pour installer/mettre à jour OpenCode 2 (@opencode/cli) via npm
+# Script pour installer/mettre à jour OpenCode 2 (@opencode/cli) via npm + l'app OpenCode Desktop
 # Remplace les anciens alias opencode-install (V1) et opencode2-install (script curl)
 # - Désinstalle OpenCode 1 si présent (npm @opencode-ai/opencode ou install curl)
 # - Désinstalle OpenCode 2 s'il n'est pas installé via npm (install curl ou brew)
 # - Installe npm via Homebrew si absent
 # - Installe @opencode/cli en global npm
 # - Crée le symlink ~/.local/bin/opencode vers le binaire npm (opencode2)
-# - Installe l'entrée « Ouvrir avec OpenCode » pour les dossiers dans Dolphin (~/.local/share/applications)
+# - Installe l'app OpenCode Desktop (AppImage intégrée via GearLever, ~/AppImages/opencode.appimage)
+# - Installe l'entrée « Ouvrir avec OpenCode » pour les dossiers dans Dolphin
+#   (deep-link opencode:// vers l'app desktop, plus le lancement terminal)
 
-# Dépendances : homebrew (fourni par Gablue, requis seulement si npm absent), timeout (coreutils)
+# Dépendances : homebrew (fourni par Gablue, requis seulement si npm absent), timeout (coreutils),
+#               curl, flatpak avec GearLever (it.mijorus.gearlever, requis pour la GUI),
+#               python3 (encodage URL, fallback sed si absent)
 
 set -e
 
@@ -79,6 +83,10 @@ fi
 
 # --- Étape 4 : installer OpenCode 2 via npm ---
 echo "Installation de $NPM_PACKAGE via npm..."
+# Version CLI avant install : sert à ne redémarrer le service de fond qu'en cas
+# de vraie MAJ (un restart inconditionnel rebondit toutes les sessions ouvertes,
+# CLI et desktop, puisque tout le monde est connecté au même serveur)
+CLI_VERSION_BEFORE="$(timeout 10 opencode --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' || true)"
 # --allow-scripts : exécute le postinstall officiel (npm récent le bloque par défaut)
 # Le tarball npm ne contient qu'un stub de 229 octets : c'est le postinstall qui
 # télécharge le vrai binaire (paquet plateforme) — sans lui, binaire non matérialisé.
@@ -91,6 +99,7 @@ npm config set allow-scripts="$NPM_PACKAGE" --location=user 2>/dev/null || true
 npm install -g --allow-scripts="$NPM_PACKAGE" "$NPM_PACKAGE" \
     || npm install -g "$NPM_PACKAGE"
 echo "✓ OpenCode $(timeout 10 opencode --version 2>/dev/null || echo "2") installé via npm."
+CLI_VERSION_AFTER="$(timeout 10 opencode --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' || true)"
 
 # --- Étape 5 : symlink ~/.local/bin/opencode vers le binaire npm (opencode2) ---
 NPM_BIN="$(npm prefix -g)/bin"
@@ -100,30 +109,495 @@ if [ "$(readlink -f "$LOCAL_BIN/opencode" 2>/dev/null)" != "$(readlink -f "$NPM_
     echo "✓ Symlink créé : $LOCAL_BIN/opencode -> $NPM_BIN/opencode2"
 fi
 
-# --- Étape 6 : entrée « Ouvrir avec OpenCode » pour les dossiers dans Dolphin ---
+# --- Étape 6 : installation/mise à jour de l'app OpenCode Desktop (AppImage + GearLever) ---
+# L'app desktop suit le versionnage du CLI (ex. 2.0.16 des deux côtés).
+# Source : https://opencode.ai/download/stable/linux-x64-appimage
+# (redirection vers https://opencode.ai/files/bin/<version>/opencode-desktop-linux-x86_64.AppImage)
+# Intégrée via GearLever dans ~/AppImages/opencode.appimage (même pattern que eden-install)
+DESKTOP_APPIMAGE="$HOME/AppImages/opencode.appimage"
+DESKTOP_ENTRY="$HOME/.local/share/applications/opencode.desktop"
+STABLE_URL="https://opencode.ai/download/stable/linux-x64-appimage"
+
+echo "=== OpenCode Desktop : vérification de la dernière version ==="
+# Version cible : extraite de la redirection du lien stable, fallback version npm
+LATEST_VERSION="$(curl -sIL -o /dev/null -w '%{url_effective}' --max-time 30 "$STABLE_URL" 2>/dev/null \
+    | sed -n 's|.*/bin/\([^/]*\)/.*|\1|p')"
+if ! echo "$LATEST_VERSION" | grep -qE '^[0-9]+(\.[0-9]+)+'; then
+    LATEST_VERSION="$(npm view @opencode/cli version 2>/dev/null || true)"
+fi
+
+# Version installée : champ X-AppImage-Version posé par GearLever dans l'entrée .desktop
+INSTALLED_VERSION=""
+if [ ! -f "$DESKTOP_ENTRY" ]; then
+    # Fallback : GearLever nomme l'entrée d'après l'app ; on cherche par X-AppImage-Name
+    DESKTOP_ENTRY="$(grep -rl '^X-AppImage-Name=OpenCode$' "$HOME/.local/share/applications" 2>/dev/null | head -1 || true)"
+fi
+if [ -f "$DESKTOP_ENTRY" ]; then
+    INSTALLED_VERSION="$(sed -n 's/^X-AppImage-Version=//p' "$DESKTOP_ENTRY" | head -1)"
+fi
+
+if [ -f "$DESKTOP_APPIMAGE" ] && [ -n "$INSTALLED_VERSION" ] && [ -n "$LATEST_VERSION" ] \
+    && [ "$INSTALLED_VERSION" = "$LATEST_VERSION" ]; then
+    echo "✓ OpenCode Desktop $INSTALLED_VERSION déjà installé (à jour)."
+else
+    # GearLever requis pour l'intégration : vérifié AVANT le téléchargement (245 Mo)
+    if ! flatpak list 2>/dev/null | grep -q "it.mijorus.gearlever"; then
+        echo "✗ Erreur : GearLever (flatpak it.mijorus.gearlever) n'est pas installé."
+        echo "  Installez-le d'abord : flatpak install flathub it.mijorus.gearlever"
+        exit 1
+    fi
+
+    if [ -n "$LATEST_VERSION" ]; then
+        echo "Mise à jour d'OpenCode Desktop : ${INSTALLED_VERSION:-absent} -> $LATEST_VERSION"
+    else
+        echo "! Version desktop introuvable, réinstallation forcée..."
+    fi
+
+    CACHE_DIR="$HOME/.cache/opencode-desktop"
+    mkdir -p "$CACHE_DIR"
+    CACHE_FILE="$CACHE_DIR/opencode.appimage"
+
+    echo "Téléchargement de l'AppImage OpenCode Desktop (~245 Mo)..."
+    # -f : échoue sur HTTP 404/5xx au lieu d'écrire une page d'erreur dans le fichier
+    curl -fL --progress-bar --retry 3 "$STABLE_URL" -o "$CACHE_FILE"
+
+    if [ ! -s "$CACHE_FILE" ]; then
+        echo "✗ Erreur : le fichier téléchargé est vide ou absent."
+        exit 1
+    fi
+    chmod +x "$CACHE_FILE"
+
+    # Désintégration de l'ancienne version (GearLever, fallback nettoyage manuel)
+    if [ -f "$DESKTOP_APPIMAGE" ]; then
+        echo "Suppression de l'ancienne version via GearLever (30-60 s possibles)..."
+        if timeout 120s bash -c "yes | flatpak run it.mijorus.gearlever --remove '$DESKTOP_APPIMAGE'" 2>/dev/null; then
+            echo "✓ Ancienne version supprimée via GearLever."
+        else
+            echo "! GearLever a échoué, nettoyage manuel..."
+            rm -f "$DESKTOP_APPIMAGE"
+            rm -f "$DESKTOP_ENTRY"
+            find "$HOME/.local/share/icons" -name "opencode*" -delete 2>/dev/null || true
+            command -v update-desktop-database &>/dev/null \
+                && update-desktop-database "$HOME/.local/share/applications" &>/dev/null || true
+        fi
+    fi
+
+    echo "Intégration de l'AppImage avec GearLever..."
+    yes | flatpak run it.mijorus.gearlever --integrate "$CACHE_FILE" 2>/dev/null || true
+
+    # Correction de l'entrée .desktop générée par GearLever :
+    # - nom sans numéro de version
+    # - --no-sandbox requis par Electron sur Kinoite (chrome-sandbox SUID absent)
+    if [ -f "$DESKTOP_ENTRY" ]; then
+        sed -i 's/^Name=OpenCode\s*(.*)$/Name=OpenCode/' "$DESKTOP_ENTRY"
+        if grep -q '^Exec=' "$DESKTOP_ENTRY" && ! grep -q '^Exec=.*--no-sandbox' "$DESKTOP_ENTRY"; then
+            if grep -q '^Exec=.*%[fFuU]' "$DESKTOP_ENTRY"; then
+                sed -i 's|^\(Exec=.*\)\(%[fFuU]\)$|\1--no-sandbox \2|' "$DESKTOP_ENTRY"
+            else
+                sed -i 's|^Exec=\(.*\)$|Exec=\1 --no-sandbox|' "$DESKTOP_ENTRY"
+            fi
+        fi
+        chmod u+rw "$DESKTOP_ENTRY"
+        echo "✓ OpenCode Desktop installé : $DESKTOP_APPIMAGE"
+    else
+        echo "✗ Erreur : entrée .desktop GearLever introuvable ($DESKTOP_ENTRY)."
+        rm -f "$CACHE_FILE"
+        exit 1
+    fi
+
+    # GearLever déplace normalement le fichier, nettoyage du cache au cas où
+    rm -f "$CACHE_FILE"
+    rmdir --ignore-fail-on-non-empty "$CACHE_DIR" 2>/dev/null || true
+fi
+
+# --- Étape 7 : entrée « Ouvrir avec OpenCode » pour les dossiers dans Dolphin ---
+# Wrapper : ouvre le dossier directement dans la GUI, comme si l'utilisateur
+# venait de le sélectionner. Le desktop ne consomme pas les deep-links en 2.0.16
+# (plumbing câblé, UI sans consommateur, PRs upstream #15479/#45103 ouvertes) et
+# ne lit son store qu'au démarrage de la fenêtre — on fait donc ce que fait la
+# GUI elle-même, à sa place :
+#   1. crée une session API dans le dossier cible (POST /api/session,
+#      location.directory — la session vit sur le serveur de fond partagé)
+#   2. arrête proprement le desktop s'il tourne (les sessions ne sont PAS
+#      perdues : elles sont sur le serveur de fond, la GUI n'est qu'un client)
+#   3. écrit son store (drafts.sqlite, table state) : projet ajouté à
+#      projects.local, lastProject pointé, session ajoutée aux tabs de chaque
+#      fenêtre et focalisée (tabs.recent — schéma key « sidecar\n/server/<b64
+#      'sidecar'>/session/<id> » relevé dans le store réel)
+#   4. relance la GUI via le deep-link opencode://open-project?directory=...
+#      (lance la fenêtre ; consommera le directory tout seul quand upstream
+#      livrera le consommateur)
+cat > "$LOCAL_BIN/opencode-open" <<'WRAPPER'
+#!/bin/bash
+
+# Ouvre un dossier dans OpenCode Desktop : session du dossier mise en tab
+# focalisée dans le store du desktop, GUI relancée dessus si nécessaire.
+
+DIR="${1:-$PWD}"
+if [ -d "$DIR" ]; then
+    DIR="$(cd "$DIR" && pwd)" || exit 1
+else
+    # Fichier passé par erreur : ouvrir son dossier parent
+    DIR="$(cd "$(dirname "$DIR")" && pwd)" || exit 1
+fi
+
+DESKTOP_CFG="$HOME/.config/ai.opencode.desktop"
+DESKTOP_DB="$DESKTOP_CFG/drafts.sqlite"
+
+# --- Lecture du store : session existante pour ce dossier + tab active ? ---
+STORE_INFO="$(timeout 10 python3 - "$DESKTOP_DB" "$DIR" <<'PY' 2>/dev/null || true
+import json, sqlite3, sys, base64
+db, directory = sys.argv[1], sys.argv[2].rstrip("/") or "/"
+try:
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    row = con.execute("SELECT value FROM state WHERE name='opencode.global.dat' AND key='server'").fetchone()
+    data = json.loads(row[0]) if row else {}
+    b64 = base64.b64encode(b"sidecar").decode()
+    r = con.execute("SELECT name, value FROM state WHERE key='tabs.info'").fetchall()
+    found = ""
+    for name, val in r:
+        info = json.loads(val)
+        for k, v in info.items():
+            if str(v.get("directory", "")).rstrip("/") == directory and "/session/" in k:
+                found = k.rsplit("/session/", 1)[1]
+                break
+        if found:
+            break
+    # tab actuellement focalisée (toutes fenêtres, la première trouvée)
+    recent_dir = ""
+    r = con.execute("SELECT value FROM state WHERE key='tabs.recent'").fetchone()
+    if r:
+        key = json.loads(r[0]).get("key", "")
+        sid = key.rsplit("/session/", 1)[-1] if "/session/" in key else ""
+        for name, val in con.execute("SELECT name, value FROM state WHERE key='tabs.info'").fetchall():
+            v = json.loads(val).get(key)
+            if v:
+                recent_dir = str(v.get("directory", "")).rstrip("/")
+                break
+    running = "yes"
+    print(json.dumps({"sid": found, "recent_dir": recent_dir}))
+    con.close()
+except Exception:
+    print(json.dumps({"sid": "", "recent_dir": ""}))
+PY
+)"
+RECENT_DIR="$(printf '%s' "$STORE_INFO" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("recent_dir",""))' 2>/dev/null || true)"
+
+APP_RUNNING=0
+if pgrep -f 'AppImages/opencode\.appimage' >/dev/null 2>&1 \
+    || pgrep -f '/tmp/\.mount_[A-Za-z0-9]+/ai\.opencode\.desktop' >/dev/null 2>&1; then
+    APP_RUNNING=1
+fi
+
+# Dossier déjà affiché par la fenêtre active : simple focus via deep-link
+if [ "$APP_RUNNING" = 1 ] && [ "$(printf '%s' "$RECENT_DIR" | sed 's:/*$::')" = "$(printf '%s' "$DIR" | sed 's:/*$::')" ]; then
+    ENC="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$DIR")"
+    exec xdg-open "opencode://open-project?directory=$ENC"
+fi
+
+# --- Session : toujours CRÉER une session fraîche dans le dossier (best-effort).
+# Pourquoi pas de réutilisation : au boot, si le projet cible n'est pas le projet
+# « actif le plus récent » côté serveur (/api/project, tri par time.active), la GUI
+# retombe sur un autre projet (fallback c()[0] du composant Home). Créer une session
+# fraîche met time.active du projet à NOW → la GUI retombe toujours sur NOTRE dossier.
+# C'est exactement ce que fait l'app quand on ouvre un projet (newDraft).
+SID=""
+URL=""
+OC_BIN="$(command -v opencode || true)"
+if [ -z "$OC_BIN" ] && [ -x "$HOME/.local/bin/opencode" ]; then
+    OC_BIN="$HOME/.local/bin/opencode"
+fi
+if [ -n "$OC_BIN" ]; then
+    URL="$(timeout 10 "$OC_BIN" service status 2>/dev/null | grep -oE 'http://[0-9.]+:[0-9]+' | head -1 || true)"
+fi
+if [ -n "$URL" ] && command -v python3 &>/dev/null && [ -f "$HOME/.config/opencode/service.json" ]; then
+    SID="$(timeout 20 python3 - "$HOME/.config/opencode/service.json" "$URL" "$DIR" <<'PY' 2>/dev/null || true
+import json, sys, base64, urllib.request
+pw_file, url, directory = sys.argv[1], sys.argv[2], sys.argv[3]
+pw = json.load(open(pw_file)).get("password", "")
+body = json.dumps({
+    "location": {"directory": directory},
+    "title": directory.rsplit("/", 1)[-1] or directory,
+}).encode()
+req = urllib.request.Request(url.rstrip("/") + "/api/session", data=body,
+                             headers={"Content-Type": "application/json"})
+req.add_header("Authorization", "Basic " + base64.b64encode(f"opencode:{pw}".encode()).decode())
+try:
+    with urllib.request.urlopen(req, timeout=10) as r:
+        print(json.load(r)["data"]["id"])
+except Exception:
+    pass
+PY
+)"
+fi
+
+# --- Arrêt propre du desktop s'il tourne (client seul : sessions préservées
+#        sur le serveur de fond) ---
+# SIGTERM UNIQUEMENT au process principal (Electron le gère : killSidecar +
+# app.exit(0) → il ferme ses enfants lui-même). Tuer l'arbre en bloc provoque
+# des SIGBUS en cascade : le squashfs AppImage (/tmp/.mount_*) est démonté
+# pendant que zygote/gpu/renderer/crashpad ont encore leurs pages mappées
+# dessus (coredumps constatés). JAMAIS le serveur de fond
+# (~/.config/ai.opencode.desktop/cli/*/opencode-cli serve --service).
+if [ "$APP_RUNNING" = 1 ]; then
+    # 1) SIGTERM au(x) process principal(aux) : binaire .mount sans --type=
+    #    (les enfants ont --type=zygote/gpu/renderer/utility, crashpad a son
+    #    propre binaire chrome_crashpad_handler) + runtime AppImage si monté
+    for p in $(pgrep -f '/tmp/\.mount_[A-Za-z0-9]+/ai\.opencode\.desktop' 2>/dev/null); do
+        PCMD="$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null)" || continue
+        case "$PCMD" in
+            *"--type="*|*crashpad*) continue ;;
+        esac
+        kill -TERM "$p" 2>/dev/null || true
+    done
+    # Runtime AppImage : si aucun process .mount n'existe (app en cours de
+    # lancement, mount pas encore apparu), c'est lui le principal
+    if ! pgrep -f '/tmp/\.mount_[A-Za-z0-9]+/ai\.opencode\.desktop' >/dev/null 2>&1; then
+        pkill -TERM -f 'AppImages/opencode\.appimage' 2>/dev/null || true
+    fi
+    # 2) Attente de l'arbre COMPLET : enfants .mount + crashpad + runtime
+    #    (jusqu'à ~20 s — un SIGKILL prématuré démonte le squashfs sous les
+    #    survivants = SIGBUS)
+    for _ in $(seq 1 40); do
+        APP_ALIVE=0
+        pgrep -f '/tmp/\.mount_[A-Za-z0-9]+/ai\.opencode\.desktop' >/dev/null 2>&1 && APP_ALIVE=1
+        pgrep -f 'AppImages/opencode\.appimage' >/dev/null 2>&1 && APP_ALIVE=1
+        pgrep -f '/tmp/\.mount_[A-Za-z0-9]+/chrome_crashpad_handler' >/dev/null 2>&1 && APP_ALIVE=1
+        [ "$APP_ALIVE" = 0 ] && break
+        sleep 0.5
+    done
+    # 3) SIGKILL en dernier recours (processus récalcitrants uniquement)
+    if [ "$APP_ALIVE" = 1 ]; then
+        pkill -KILL -f '/tmp/\.mount_[A-Za-z0-9]+/ai\.opencode\.desktop' 2>/dev/null || true
+        pkill -KILL -f '/tmp/\.mount_[A-Za-z0-9]+/chrome_crashpad_handler' 2>/dev/null || true
+        pkill -KILL -f 'AppImages/opencode\.appimage' 2>/dev/null || true
+        sleep 1
+    fi
+fi
+
+# --- Store du desktop : projet + lastProject + tab (ré) focalisée ---
+# sqlite3.connect(timeout=...) : busy-handler — l'app qui vient de s'arrêter
+# peut encore tenir le verrou WAL quelques instants. L'écriture est vérifiée
+# (relecture de tabs.recent) et retentée : une écriture ratée silencieusement
+# = l'app repart sur l'ancien tab (bug constaté).
+if command -v python3 &>/dev/null && [ -f "$DESKTOP_DB" ]; then
+    timeout 40 python3 - "$DESKTOP_DB" "$DIR" "$SID" <<'PY' >/dev/null 2>&1 || true
+import json, sqlite3, sys, time, base64
+db, directory, sid = sys.argv[1], sys.argv[2].rstrip("/") or "/", sys.argv[3] or ""
+now = int(time.time() * 1000)
+b64 = base64.b64encode(b"sidecar").decode()
+tab_key = f"sidecar\n/server/{b64}/session/{sid}" if sid else ""
+expected_recent = json.dumps({"key": tab_key}) if tab_key else None
+
+def apply(con):
+    def put(name, key, value):
+        con.execute(
+            "INSERT INTO state(name,key,value,updated_at) VALUES(?,?,?,?) "
+            "ON CONFLICT(name,key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            (name, key, value, now),
+        )
+    # projets + dernier projet + sélection home (liste affichée dans la GUI).
+    # Au démarrage, l'app pré-sélectionne : home.selection (layout) PUIS
+    # projects.last (store server) — ils écrasent tabs.recent s'ils pointent
+    # ailleurs. Les trois doivent viser le dossier cible.
+    row = con.execute("SELECT value FROM state WHERE name='opencode.global.dat' AND key='server'").fetchone()
+    data = json.loads(row[0]) if row else {}
+    projects = data.setdefault("projects", {}).setdefault("local", [])
+    if not any(str(p.get("worktree", "")).rstrip("/") == directory for p in projects):
+        projects.append({"worktree": directory, "expanded": True})
+    data.setdefault("lastProject", {})["local"] = directory
+    put("opencode.global.dat", "server", json.dumps(data, ensure_ascii=False))
+    row = con.execute("SELECT value FROM state WHERE name='opencode.global.dat' AND key='layout'").fetchone()
+    layout = json.loads(row[0]) if row else {}
+    layout.setdefault("home", {})["selection"] = {"server": "sidecar", "directory": directory}
+    put("opencode.global.dat", "layout", json.dumps(layout, ensure_ascii=False))
+    # tabs : session ajoutée + focalisée dans chaque fenêtre connue
+    if sid:
+        names = [r[0] for r in con.execute("SELECT DISTINCT name FROM state WHERE name LIKE 'opencode.window.%'")]
+        for name in names:
+            r = con.execute("SELECT value FROM state WHERE name=? AND key='tabs'", (name,)).fetchone()
+            tabs = json.loads(r[0]) if r else []
+            if not any(t.get("sessionId") == sid for t in tabs):
+                tabs.append({"type": "session", "server": "sidecar", "sessionId": sid})
+            put(name, "tabs", json.dumps(tabs))
+            put(name, "tabs.recent", expected_recent)
+            r = con.execute("SELECT value FROM state WHERE name=? AND key='tabs.info'", (name,)).fetchone()
+            info = json.loads(r[0]) if r else {}
+            info.setdefault(tab_key, {})
+            info[tab_key].setdefault("title", directory.rsplit("/", 1)[-1])
+            info[tab_key]["directory"] = directory
+            put(name, "tabs.info", json.dumps(info, ensure_ascii=False))
+    con.commit()
+
+def verify(con):
+    if not expected_recent:
+        return True
+    for _name, val in con.execute("SELECT name, value FROM state WHERE key='tabs.recent'").fetchall():
+        if val == expected_recent:
+            return True
+    return False
+
+# 3 tentatives : verrou WAL de l'app qui vient de s'arrêter, flush tardif…
+for attempt in range(3):
+    try:
+        con = sqlite3.connect(db, timeout=10)
+        try:
+            apply(con)
+            if verify(con):
+                break
+        finally:
+            con.close()
+    except Exception:
+        pass
+    time.sleep(2)
+PY
+fi
+
+# --- Écriture du localStorage Electron (LevelDB) : la VRAIE clé du démarrage ---
+# La route restaurée par la GUI au lancement = localStorage
+# « opencode.desktop.window.<id>.last-active-url » (function gie/X9 du bundle),
+# prioritaire sur tout le store SQLite. Format LevelDB log :
+#   [header 7o: crc32c masqué(4) len(2) type(1)][batch: seq(8) count(4) entries]
+#   entry: [type=1][varint klen][key][varint vlen][value]
+#   key = "_oc://renderer\x00\x01" + nom-clé, value = \x01 + texte
+# On appelle l'appkey « _oc://renderer » et l'entry dans le DERNIER batch du
+# log 000003.log (réécriture header + zéro-padding). L'app doit être arrêtée.
+if command -v python3 &>/dev/null && [ -f "$HOME/.config/ai.opencode.desktop/Local Storage/leveldb/000003.log" ]; then
+    timeout 30 python3 - "$HOME/.config/ai.opencode.desktop/Local Storage/leveldb/000003.log" "$DIR" <<'PY' >/dev/null 2>&1 || true
+import glob, json, os, sqlite3, struct, sys, time, zlib
+
+log_path, directory = sys.argv[1], sys.argv[2].rstrip("/") or "/"
+
+# 1) route cible : la session connue pour ce directory (tabs.info du store SQLite)
+route = ""
+db = os.path.expanduser("~/.config/ai.opencode.desktop/drafts.sqlite")
+try:
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    for _name, val in con.execute("SELECT name, value FROM state WHERE key='tabs.info'").fetchall():
+        info = json.loads(val)
+        for k, v in info.items():
+            if str(v.get("directory", "")).rstrip("/") == directory and "/session/" in k:
+                route = "/server/c2lkZWNhcg/session/" + k.rsplit("/session/", 1)[1]
+                break
+        if route:
+            break
+    con.close()
+except Exception:
+    pass
+if not route:
+    sys.exit(0)
+
+BLOCK, HDR = 32768, 7
+
+def crc32c(d):
+    poly = 0x82F63B78; c = 0xFFFFFFFF
+    for b in d:
+        c ^= b
+        for _ in range(8): c = (c >> 1) ^ (poly if c & 1 else 0)
+    return c ^ 0xFFFFFFFF
+
+def mask(c): return (((c >> 15) | (c << 17)) + 0xa282ead8) & 0xFFFFFFFF
+
+def varint(n):
+    out = b""
+    while True:
+        b = n & 0x7F; n >>= 7
+        out += bytes([b | (0x80 if n else 0)])
+        if not n: return out
+
+# 2) dernier fenêtre connue : les store names opencode.window.<uuid>.dat
+#    → la clé localStorage porte l'UUID de fenêtre
+win_uuid = ""
+try:
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    row = con.execute("SELECT name FROM state WHERE name LIKE 'opencode.window.%' ORDER BY updated_at DESC LIMIT 1").fetchone()
+    if row:
+        win_uuid = row[0].replace("opencode.window.", "").replace(".dat", "")
+    con.close()
+except Exception:
+    pass
+if not win_uuid:
+    sys.exit(0)
+
+key = ("_oc://renderer\x00\x01opencode.desktop.window." + win_uuid + ".last-active-url").encode()
+value = b"\x01" + route.encode()
+
+data = bytearray(open(log_path, "rb").read())
+pos, blocks = 0, []
+while pos + HDR <= len(data):
+    _crc, length, btype = struct.unpack('<IHB', data[pos:pos+HDR])
+    if btype == 0 and length == 0: break
+    blocks.append((pos, pos + HDR, length, btype))
+    pos += HDR + length
+if not blocks:
+    sys.exit(0)
+off, poff, length, btype = blocks[-1]
+payload = bytes(data[poff:poff + length])
+if len(payload) < 12:
+    sys.exit(0)
+seq = struct.unpack('<Q', payload[:8])[0]
+count = struct.unpack('<I', payload[4:8])[0]
+entry = bytes([1]) + varint(len(key)) + key + varint(len(value)) + value
+new_seq, new_count = seq + 1, count + 1
+head = bytes([(new_seq >> (8 * i)) & 0xFF for i in range(8)]) + \
+       bytes([(new_count >> (8 * i)) & 0xFF for i in range(4)])
+new_payload = head + payload[12:] + entry
+# la place dans le bloc courant : bord de bloc suivant
+block_start = off // BLOCK * BLOCK
+room = BLOCK - (off - block_start) - HDR - len(new_payload)
+if room < 0:
+    sys.exit(0)  # bloc plein : on ne tente pas de splitter (rare)
+new_header = struct.pack('<IHB', mask(crc32c(bytes([btype]) + new_payload)), len(new_payload), btype)
+old_end = poff + length
+new_end = poff + len(new_payload)
+data[poff:old_end] = new_payload
+if old_end < new_end:
+    # on empiète sur le padding zéro : rien à faire (déjà écrit par la slice)
+    pass
+data[off:off + HDR] = new_header
+open(log_path, "wb").write(bytes(data))
+PY
+fi
+
+# --- Relance : deep-link encodé (lance la GUI ; consommera le directory tout
+#     seul quand upstream livrera le consommateur de deep-links) ---
+ENC="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$DIR")"
+exec xdg-open "opencode://open-project?directory=$ENC"
+WRAPPER
+chmod +x "$LOCAL_BIN/opencode-open"
+
 # .desktop NoDisplay : invisible dans le menu des applications, proposé dans
-# Dolphin → clic droit → « Ouvrir avec » sur un dossier (même pattern que
-# LGPTerminal/WindowsTerminal : Terminal=true → lancé dans le terminal système)
+# Dolphin → clic droit → « Ouvrir avec » sur un dossier. Terminal=false : la
+# fenêtre de l'app desktop s'ouvre directement (plus de terminal). Icône : même
+# chemin que l'entrée GearLever (pas d'icône hicolor nommée « opencode »).
 APPS_DIR="$HOME/.local/share/applications"
 mkdir -p "$APPS_DIR"
 cat > "$APPS_DIR/gablue-opencode.desktop" <<EOF
 [Desktop Entry]
-Comment=Ouvre le dossier dans OpenCode
-Exec=$LOCAL_BIN/opencode %f
-Icon=utilities-terminal
+Comment=Ouvre le dossier dans OpenCode Desktop
+Exec=$LOCAL_BIN/opencode-open %f
+Icon=$HOME/AppImages/.icons/opencode
 MimeType=inode/directory;
 Name=OpenCode
 NoDisplay=true
-Terminal=true
+Terminal=false
 Type=Application
 X-KDE-StartupNotify=false
 EOF
 echo "✓ Entrée « Ouvrir avec OpenCode » installée : $APPS_DIR/gablue-opencode.desktop"
 
-# Rafraîchir le cache KSycoca pour une prise en effet immédiate dans « Ouvrir avec » (best-effort)
+# Rafraîchir les caches pour une prise en effet immédiate (best-effort)
 command -v kbuildsycoca6 &>/dev/null && kbuildsycoca6 --noincremental &>/dev/null || true
+command -v update-desktop-database &>/dev/null && update-desktop-database "$APPS_DIR" &>/dev/null || true
 
-# Redémarrer le service pour repartir sur le nouveau binaire (best-effort)
-timeout 30 opencode service restart &>/dev/null || true
+# Redémarrer le service de fond UNIQUEMENT si la version du CLI a changé :
+# CLI, desktop et sessions sont tous connectés au même serveur — un restart
+# inconditionnel rebondit toutes les sessions ouvertes (CLI + desktop) même
+# sans mise à jour (best-effort)
+if [ -n "$CLI_VERSION_AFTER" ] && [ "$CLI_VERSION_BEFORE" != "$CLI_VERSION_AFTER" ]; then
+    echo "Version CLI changée ($CLI_VERSION_BEFORE -> $CLI_VERSION_AFTER), redémarrage du service de fond..."
+    timeout 30 opencode service restart &>/dev/null || true
+fi
 
-echo "Opération terminée. OpenCode 2 est disponible via 'opencode' et 'opencode2'."
+echo "Opération terminée. OpenCode 2 est disponible via 'opencode' et 'opencode2' (CLI)"
+echo "et OpenCode Desktop est disponible dans le menu des applications."
