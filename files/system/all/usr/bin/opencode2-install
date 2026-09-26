@@ -262,11 +262,14 @@ if [ "$1" = "--cli" ]; then
 fi
 
 DIR="${1:-$PWD}"
+# pwd -P : chemin PHYSIQUE — /home est un symlink de /var/home sur ostree,
+# et la GUI déduplique les projets par chaîne exacte (fE ne résout pas les
+# symlinks) : un chemin /home/gab/... créerait un projet alias SANS sessions
 if [ -d "$DIR" ]; then
-    DIR="$(cd "$DIR" && pwd)" || exit 1
+    DIR="$(cd "$DIR" && pwd -P)" || exit 1
 else
     # Fichier passé par erreur : ouvrir son dossier parent
-    DIR="$(cd "$(dirname "$DIR")" && pwd)" || exit 1
+    DIR="$(cd "$(dirname "$DIR")" && pwd -P)" || exit 1
 fi
 
 # --- Mode CLI : TUI directement dans le dossier (comportement historique) ---
@@ -306,17 +309,27 @@ try:
                 break
         if found:
             break
-    # tab actuellement focalisée (toutes fenêtres, la première trouvée)
+    # tab actuellement focalisée (toutes fenêtres, la première trouvée) —
+    # clé session (tabs.info) OU clé draft (le directory vit dans le tab lui-même)
     recent_dir = ""
     r = con.execute("SELECT value FROM state WHERE key='tabs.recent'").fetchone()
     if r:
         key = json.loads(r[0]).get("key", "")
-        sid = key.rsplit("/session/", 1)[-1] if "/session/" in key else ""
-        for name, val in con.execute("SELECT name, value FROM state WHERE key='tabs.info'").fetchall():
-            v = json.loads(val).get(key)
-            if v:
-                recent_dir = str(v.get("directory", "")).rstrip("/")
-                break
+        if key.startswith("draft:"):
+            did = key[len("draft:"):]
+            for name, val in con.execute("SELECT name, value FROM state WHERE key='tabs'").fetchall():
+                for t in json.loads(val):
+                    if t.get("type") == "draft" and t.get("draftID") == did:
+                        recent_dir = str(t.get("directory", "")).rstrip("/")
+                        break
+                if recent_dir:
+                    break
+        else:
+            for name, val in con.execute("SELECT name, value FROM state WHERE key='tabs.info'").fetchall():
+                v = json.loads(val).get(key)
+                if v:
+                    recent_dir = str(v.get("directory", "")).rstrip("/")
+                    break
     running = "yes"
     print(json.dumps({"sid": found, "recent_dir": recent_dir}))
     con.close()
@@ -338,13 +351,16 @@ if [ "$APP_RUNNING" = 1 ] && [ "$(printf '%s' "$RECENT_DIR" | sed 's:/*$::')" = 
     exec xdg-open "opencode://open-project?directory=$ENC"
 fi
 
-# --- Session : toujours CRÉER une session fraîche dans le dossier (best-effort).
-# Pourquoi pas de réutilisation : au boot, si le projet cible n'est pas le projet
-# « actif le plus récent » côté serveur (/api/project, tri par time.active), la GUI
-# retombe sur un autre projet (fallback c()[0] du composant Home). Créer une session
-# fraîche met time.active du projet à NOW → la GUI retombe toujours sur NOTRE dossier.
-# C'est exactement ce que fait l'app quand on ouvre un projet (newDraft).
-SID=""
+# --- Cible : SPEC = « session:<sid> » (réutilisation) ou « draft:<uuid> ».
+# Le « + » de la GUI crée un DRAFT client-side (tab {type:'draft', draftID,
+# server, directory} dans drafts.sqlite), promu en vraie session serveur
+# UNIQUEMENT au premier prompt (promoteDraft). On imite : dossier avec des
+# sessions → réutilise la dernière (PATCH title inchangé = bump time.active
+# du projet à NOW, validé rang 5 → rang 0) ; dossier vierge → tab DRAFT
+# local, RIEN côté serveur (rien dans la liste des sessions si l'utilisateur
+# n'écrit rien — comportement « + » natif, validé dans le bundle : parseur de
+# route tP accepte /new-session?draftId=<id> → {type:'draft'}, URL uP).
+SPEC=""
 URL=""
 OC_BIN="$(command -v opencode || true)"
 if [ -z "$OC_BIN" ] && [ -x "$HOME/.local/bin/opencode" ]; then
@@ -354,22 +370,82 @@ if [ -n "$OC_BIN" ]; then
     URL="$(timeout 10 "$OC_BIN" service status 2>/dev/null | grep -oE 'http://[0-9.]+:[0-9]+' | head -1 || true)"
 fi
 if [ -n "$URL" ] && command -v python3 &>/dev/null && [ -f "$HOME/.config/opencode/service.json" ]; then
-    SID="$(timeout 20 python3 - "$HOME/.config/opencode/service.json" "$URL" "$DIR" <<'PY' 2>/dev/null || true
-import json, sys, base64, urllib.request
+    SPEC="$(timeout 25 python3 - "$HOME/.config/opencode/service.json" "$URL" "$DIR" <<'PY' 2>/dev/null || true
+import base64, json, os, sqlite3, sys, urllib.parse, urllib.request, uuid
 pw_file, url, directory = sys.argv[1], sys.argv[2], sys.argv[3]
 pw = json.load(open(pw_file)).get("password", "")
-body = json.dumps({
-    "location": {"directory": directory},
-    "title": directory.rsplit("/", 1)[-1] or directory,
-}).encode()
-req = urllib.request.Request(url.rstrip("/") + "/api/session", data=body,
-                             headers={"Content-Type": "application/json"})
-req.add_header("Authorization", "Basic " + base64.b64encode(f"opencode:{pw}".encode()).decode())
+auth = "Basic " + base64.b64encode(f"opencode:{pw}".encode()).decode()
+
+def call(method, path, body=None):
+    data = json.dumps(body).encode() if body is not None else None
+    r = urllib.request.Request(url.rstrip("/") + path, data=data, method=method,
+                               headers={"Content-Type": "application/json"})
+    r.add_header("Authorization", auth)
+    with urllib.request.urlopen(r, timeout=10) as resp:
+        return json.load(resp)
+
 try:
-    with urllib.request.urlopen(req, timeout=10) as r:
-        print(json.load(r)["data"]["id"])
+    # dernière session RACINE et non archivée de ce dossier (order=desc trie
+    # par time.updated décroissant — le même ordre que la liste de la GUI)
+    q = urllib.parse.quote(directory, safe="")
+    sessions = call("GET", f"/api/session?directory={q}&order=desc&limit=10").get("data", [])
+    sid, title = "", ""
+    for s in sessions:
+        if s.get("parentID") or (s.get("time") or {}).get("archived"):
+            continue
+        sid, title = s["id"], s.get("title") or ""
+        break
+    if sid:
+        # bump : PATCH title INCHANGÉ met time.active du projet à NOW.
+        # title absent → "" : le serveur tente generate (sans premier message
+        # = no-op) — la session reste sans titre, l'auto-rename natif gardé
+        try:
+            call("PATCH", f"/api/session/{sid}", {"title": title})
+        except Exception:
+            pass
+        print("session:" + sid)
+        sys.exit(0)
+    # dossier vierge : DRAFT local — AUCUNE création serveur (l'auto-rename
+    # natif exige title === undefined de toute façon, et le « + » natif ne
+    # crée la session qu'au premier prompt). Le draftID est ici LA décision
+    # centrale : réutilise le tab draft existant du dossier (store), sinon
+    # UUID frais — le SQLite et le LevelDB patchers utilisent TOUS DEUX cette
+    # valeur (une désynchronisation = route vers un tab inexistant)
+    draft_id = ""
+    try:
+        con = sqlite3.connect(f"file:{os.path.expanduser('~/.config/ai.opencode.desktop/drafts.sqlite')}?mode=ro", uri=True)
+        for _name, val2 in con.execute("SELECT name, value FROM state WHERE key='tabs'").fetchall():
+            for t in json.loads(val2):
+                if t.get("type") == "draft" and str(t.get("directory", "")).rstrip("/") == directory:
+                    draft_id = t["draftID"]
+                    break
+            if draft_id:
+                break
+        con.close()
+    except Exception:
+        pass
+    print("draft:" + (draft_id or str(uuid.uuid4())))
 except Exception:
     pass
+PY
+)"
+fi
+# Fallback sans API : session connue du store → réutilisation, sinon draft local
+if [ -z "$SPEC" ] && command -v python3 &>/dev/null && [ -f "$DESKTOP_DB" ]; then
+    SPEC="$(timeout 10 python3 - "$DESKTOP_DB" "$DIR" <<'PY' 2>/dev/null || true
+import json, sqlite3, sys, uuid
+db, directory = sys.argv[1], sys.argv[2].rstrip("/") or "/"
+try:
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    for _name, val in con.execute("SELECT name, value FROM state WHERE key='tabs.info'").fetchall():
+        info = json.loads(val)
+        for k, v in info.items():
+            if str(v.get("directory", "")).rstrip("/") == directory and "/session/" in k:
+                print("session:" + k.rsplit("/session/", 1)[1])
+                sys.exit(0)
+except Exception:
+    pass
+print("draft:" + str(uuid.uuid4()))
 PY
 )"
 fi
@@ -424,15 +500,27 @@ fi
 # (relecture de tabs.recent) et retentée : une écriture ratée silencieusement
 # = l'app repart sur l'ancien tab (bug constaté).
 if command -v python3 &>/dev/null && [ -f "$DESKTOP_DB" ]; then
-    timeout 40 python3 - "$DESKTOP_DB" "$DIR" "$SID" <<'PY' >/dev/null 2>&1 || true
-import json, sqlite3, sys, time, base64
-db, directory, sid = sys.argv[1], sys.argv[2].rstrip("/") or "/", sys.argv[3] or ""
+    timeout 40 python3 - "$DESKTOP_DB" "$DIR" "$SPEC" <<'PY' >/dev/null 2>&1 || true
+import json, os, sqlite3, sys, time, base64
+db, directory, spec = sys.argv[1], sys.argv[2].rstrip("/") or "/", sys.argv[3] or ""
+kind, _, val = spec.partition(":")
 now = int(time.time() * 1000)
 b64 = base64.b64encode(b"sidecar").decode()
-tab_key = f"sidecar\n/server/{b64}/session/{sid}" if sid else ""
+
+# --- cible du tab : session (route serveur) ou draft (tab client-side) ---
+tab_key, tab_entry, info_entry = "", None, None
+if kind == "session" and val:
+    tab_key = f"sidecar\n/server/{b64}/session/{val}"
+    tab_entry = {"type": "session", "server": "sidecar", "sessionId": val}
+elif kind == "draft" and val:
+    # réutilise un tab draft existant du dossier (ouverture répétée sans
+    # prompt = un seul draft, comme un tab « + » qu'on refocalise)
+    tab_key = f"draft:{val}"
+    tab_entry = {"type": "draft", "draftID": val, "server": "sidecar", "directory": directory}
 expected_recent = json.dumps({"key": tab_key}) if tab_key else None
 
 def apply(con):
+    global tab_key, expected_recent
     def put(name, key, value):
         con.execute(
             "INSERT INTO state(name,key,value,updated_at) VALUES(?,?,?,?) "
@@ -446,30 +534,59 @@ def apply(con):
     row = con.execute("SELECT value FROM state WHERE name='opencode.global.dat' AND key='server'").fetchone()
     data = json.loads(row[0]) if row else {}
     projects = data.setdefault("projects", {}).setdefault("local", [])
-    if not any(str(p.get("worktree", "")).rstrip("/") == directory for p in projects):
-        projects.append({"worktree": directory, "expanded": True})
+    # dédoublonnage par chemin RÉEL : /home est un symlink de /var/home sur
+    # ostree et la GUI déduplique par chaîne exacte (fE ne résout pas les
+    # symlinks) — un alias /home/gab/... s'affiche comme un projet distinct
+    # SANS sessions. On garde une entrée unique par realpath, string
+    # canonicalisée vers directory, insérée en tête (comme projects.open)
+    real_dir = os.path.realpath(directory)
+    kept, seen, merged = [], set(), None
+    for p in projects:
+        w = str(p.get("worktree", "")).rstrip("/")
+        rw = os.path.realpath(w)
+        if rw in seen:
+            continue
+        seen.add(rw)
+        if rw == real_dir:
+            if w != directory:
+                p["worktree"] = directory
+            merged = p
+            kept.insert(0, merged)
+        else:
+            kept.append(p)
+    if merged is None:
+        kept.insert(0, {"worktree": directory, "expanded": True})
+    data["projects"]["local"] = kept
     data.setdefault("lastProject", {})["local"] = directory
     put("opencode.global.dat", "server", json.dumps(data, ensure_ascii=False))
     row = con.execute("SELECT value FROM state WHERE name='opencode.global.dat' AND key='layout'").fetchone()
     layout = json.loads(row[0]) if row else {}
     layout.setdefault("home", {})["selection"] = {"server": "sidecar", "directory": directory}
     put("opencode.global.dat", "layout", json.dumps(layout, ensure_ascii=False))
-    # tabs : session ajoutée + focalisée dans chaque fenêtre connue
-    if sid:
+    # tabs : cible ajoutée + focalisée dans chaque fenêtre connue.
+    # Le draftID vient de la SPEC (décision centrale dans l'étape API :
+    # réutilisation d'un draft existant ou UUID frais) — pas de re-décision
+    # ici, sinon désynchronisation avec la route LevelDB.
+    if tab_entry:
         names = [r[0] for r in con.execute("SELECT DISTINCT name FROM state WHERE name LIKE 'opencode.window.%'")]
         for name in names:
             r = con.execute("SELECT value FROM state WHERE name=? AND key='tabs'", (name,)).fetchone()
             tabs = json.loads(r[0]) if r else []
-            if not any(t.get("sessionId") == sid for t in tabs):
-                tabs.append({"type": "session", "server": "sidecar", "sessionId": sid})
+            if kind == "session":
+                dup = any(t.get("sessionId") == val for t in tabs)
+            else:
+                dup = any(t.get("type") == "draft" and t.get("draftID") == val for t in tabs)
+            if not dup:
+                tabs.append(tab_entry)
             put(name, "tabs", json.dumps(tabs))
             put(name, "tabs.recent", expected_recent)
-            r = con.execute("SELECT value FROM state WHERE name=? AND key='tabs.info'", (name,)).fetchone()
-            info = json.loads(r[0]) if r else {}
-            info.setdefault(tab_key, {})
-            info[tab_key].setdefault("title", directory.rsplit("/", 1)[-1])
-            info[tab_key]["directory"] = directory
-            put(name, "tabs.info", json.dumps(info, ensure_ascii=False))
+            if kind == "session":
+                r = con.execute("SELECT value FROM state WHERE name=? AND key='tabs.info'", (name,)).fetchone()
+                info = json.loads(r[0]) if r else {}
+                info.setdefault(tab_key, {})
+                info[tab_key].setdefault("title", directory.rsplit("/", 1)[-1])
+                info[tab_key]["directory"] = directory
+                put(name, "tabs.info", json.dumps(info, ensure_ascii=False))
     con.commit()
 
 def verify(con):
@@ -513,10 +630,11 @@ fi
 # (seq = max(seq+count)+1, count=1) — aucun batch de l'app n'est modifié et le
 # dernier batch appliqué gagne. L'app doit être arrêtée (LevelDB verrouillé).
 if command -v python3 &>/dev/null && [ -d "$HOME/.config/ai.opencode.desktop/Local Storage/leveldb" ]; then
-    timeout 30 python3 - "$HOME/.config/ai.opencode.desktop/Local Storage/leveldb" "$DIR" <<'PY' >/dev/null 2>&1 || true
+    timeout 30 python3 - "$HOME/.config/ai.opencode.desktop/Local Storage/leveldb" "$DIR" "$SPEC" <<'PY' >/dev/null 2>&1 || true
 import glob, json, os, re, sqlite3, struct, sys
 
-ldb_dir, directory = sys.argv[1], sys.argv[2].rstrip("/") or "/"
+ldb_dir, directory, spec = sys.argv[1], sys.argv[2].rstrip("/") or "/", sys.argv[3] or ""
+kind, _, val = spec.partition(":")
 db = os.path.expanduser("~/.config/ai.opencode.desktop/drafts.sqlite")
 
 BLOCK, HDR = 32768, 7
@@ -623,29 +741,43 @@ def write_record(data, hdr_off, poff, btype, payload):
     data[hdr_off:hdr_off + HDR] = struct.pack(
         "<IHB", mask(crc32c(bytes([btype]) + payload)), len(payload), btype)
 
-# --- 0) log actif : le .log au numéro le plus élevé (LevelDB réutilise le
-#        même log, mais par robustesse on ne présume pas de 000003.log) ---
+# --- 0) log actif : le .log au numéro le plus élevé. Si AUCUN .log n'existe
+#        (compaction récente : tout est dans les .ldb), on CRÉE un nouveau
+#        log (numéro max des fichiers + 1) — la récupération leveldb rejoue
+#        tout log plus récent que celui référencé dans le manifeste ---
 logs = sorted(glob.glob(os.path.join(ldb_dir, "*.log")),
               key=lambda p: int(re.sub(r"\D", "", os.path.basename(p)) or 0))
 if not logs:
-    sys.exit(0)
-target = logs[-1]
+    nums = [int(re.sub(r"\D", "", os.path.basename(p))) for p in glob.glob(os.path.join(ldb_dir, "*"))]
+    nxt = (max(nums) + 1) if nums else 1
+    target = os.path.join(ldb_dir, f"{nxt:06d}.log")
+    open(target, "ab").close()
+else:
+    target = logs[-1]
 
-# --- 1) route cible : session connue pour ce directory (tabs.info) ---
+# --- 1) route cible : SPEC explicite (session réutilisée ou draft local),
+#        sinon fallback sur la session du directory connue de tabs.info ---
 route = ""
-try:
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    for _name, val in con.execute("SELECT name, value FROM state WHERE key='tabs.info'").fetchall():
-        info = json.loads(val)
-        for k, v in info.items():
-            if str(v.get("directory", "")).rstrip("/") == directory and "/session/" in k:
-                route = "/server/c2lkZWNhcg/session/" + k.rsplit("/session/", 1)[1]
+if kind == "session" and val:
+    route = "/server/c2lkZWNhcg/session/" + val
+elif kind == "draft" and val:
+    # route draft : parseur tP du bundle → {type:'draft', draftID} ;
+    # uP = '/new-session?draftId=' + encodeURIComponent(draftID)
+    route = "/new-session?draftId=" + val
+else:
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        for _name, val2 in con.execute("SELECT name, value FROM state WHERE key='tabs.info'").fetchall():
+            info = json.loads(val2)
+            for k, v in info.items():
+                if str(v.get("directory", "")).rstrip("/") == directory and "/session/" in k:
+                    route = "/server/c2lkZWNhcg/session/" + k.rsplit("/session/", 1)[1]
+                    break
+            if route:
                 break
-        if route:
-            break
-    con.close()
-except Exception:
-    pass
+        con.close()
+    except Exception:
+        pass
 if not route:
     sys.exit(0)
 
