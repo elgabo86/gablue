@@ -857,6 +857,7 @@ cat > "$APPS_DIR/gablue-opencode.desktop" <<EOF
 Comment=Ouvre le dossier dans OpenCode Desktop
 Exec=$LOCAL_BIN/opencode-open %f
 Icon=$HOME/AppImages/.icons/opencode
+InitialPreference=10
 MimeType=inode/directory;
 Name=OpenCode
 NoDisplay=true
@@ -875,6 +876,7 @@ cat > "$APPS_DIR/gablue-opencode-cli.desktop" <<EOF
 Comment=Ouvre le dossier dans OpenCode CLI (terminal)
 Exec=$LOCAL_BIN/opencode-open --cli %f
 Icon=utilities-terminal
+InitialPreference=5
 MimeType=inode/directory;
 Name=OpenCode CLI
 NoDisplay=true
@@ -883,6 +885,105 @@ Type=Application
 X-KDE-StartupNotify=false
 EOF
 echo "✓ Entrée « Ouvrir avec OpenCode CLI » installée : $APPS_DIR/gablue-opencode-cli.desktop"
+
+# Ordre déterministe dans « Ouvrir avec » : la position dans [Added
+# Associations] de mimeapps.list définit la préférence (premier listé =
+# en haut du sous-menu Dolphin), InitialPreference n'étant que le repli.
+# GUI en premier, CLI en second — les autres associations du mimetype sont
+# préservées. JAMAIS [Default Applications] : le double-clic d'un dossier
+# doit rester Dolphin. Une SEULE section Added Associations (les sections
+# dupliquées sont hors spec) ; section vide supprimée. Best-effort,
+# réécriture seulement si changement.
+MIMEAPPS="$HOME/.config/mimeapps.list"
+mkdir -p "$HOME/.config"
+timeout 10 python3 - "$MIMEAPPS" <<'PY' >/dev/null 2>&1 || true
+import os, sys
+path = sys.argv[1]
+ours = ["gablue-opencode.desktop", "gablue-opencode-cli.desktop"]
+try:
+    lines = open(path, encoding="utf-8").read().splitlines() if os.path.exists(path) else []
+except Exception:
+    lines = []
+
+def is_header(s):
+    return s.startswith("[") and s.endswith("]")
+
+# collecte des apps existants + retrait de toutes les lignes inode/directory
+existing, out = [], []
+in_added = False
+for ln in lines:
+    s = ln.strip()
+    if is_header(s):
+        in_added = s == "[Added Associations]"
+        out.append(ln)
+        continue
+    if in_added and s.startswith("inode/directory="):
+        existing.extend(x for x in s.split("=", 1)[1].split(";") if x)
+        continue
+    out.append(ln)
+merged, seen = [], set()
+for app in ours + existing:
+    if app not in seen:
+        seen.add(app)
+        merged.append(app)
+new_line = "inode/directory=" + ";".join(merged) + (";" if merged else "")
+if existing == merged:
+    # déjà à notre ordre exact : rien à faire
+    sys.exit(0)
+# position de la première section Added Associations avec contenu réel
+sec_at, cur, has_content = None, None, False
+for i, ln in enumerate(out):
+    s = ln.strip()
+    if is_header(s):
+        if cur is not None and cur[0] == "Added Associations" and has_content and sec_at is None:
+            sec_at = cur[1]
+        cur = (s[1:-1], i)
+        has_content = False
+    elif s and cur is not None and cur[0] == "Added Associations":
+        has_content = True
+if cur is not None and cur[0] == "Added Associations" and has_content and sec_at is None:
+    sec_at = cur[1]
+# purge des sections Added Associations restées vides (après retrait des lignes)
+final, i2 = [], 0
+while i2 < len(out):
+    ln = out[i2]
+    if ln.strip() == "[Added Associations]":
+        j = i2 + 1
+        content = False
+        while j < len(out) and not is_header(out[j].strip()):
+            if out[j].strip():
+                content = True
+            j += 1
+        if not content:
+            i2 = j
+            continue
+    final.append(ln)
+    i2 += 1
+if sec_at is not None:
+    # réindexe après purge : première section Added avec du contenu
+    idx = None
+    cur, has = None, False
+    for i, ln in enumerate(final):
+        s = ln.strip()
+        if is_header(s):
+            if cur == "Added Associations" and has and idx is None:
+                idx = i - 1
+            cur, has = s[1:-1], False
+        elif s and cur == "Added Associations":
+            has = True
+    if cur == "Added Associations" and has and idx is None:
+        idx = len(final) - 1
+    if idx is None:
+        idx = len(final)
+    final.insert(idx + 1, new_line)
+else:
+    if final and final[-1].strip():
+        final.append("")
+    final.append("[Added Associations]")
+    final.append(new_line)
+with open(path, "w", encoding="utf-8") as f:
+    f.write("\n".join(final).rstrip("\n") + "\n")
+PY
 
 # Rafraîchir les caches pour une prise en effet immédiate (best-effort)
 command -v kbuildsycoca6 &>/dev/null && kbuildsycoca6 --noincremental &>/dev/null || true
