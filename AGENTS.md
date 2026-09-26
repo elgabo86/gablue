@@ -647,7 +647,7 @@ nécessaire — le kernel gère le CPUID faulting via `ARCH_SET_CPUID` nativemen
 - Si la clé n'est pas disponible (build local), le module est compilé mais non signé
 - Le certificat public `gablue-kmod.der` est installé dans `/etc/pki/akmods/certs/`
 - **Conflit avec KVM** : le module utilise AMD-V, KVM doit être déchargé avant chargement
-- Géré par les commandes `ujust cpuid-emu-on` / `ujust cpuid-emu-off`
+- **Persistance** (opt-in, géré par `ujust cpuid-emu-on` / `cpuid-emu-off`) : `on` écrit `/etc/modprobe.d/gablue-cpuid-emu.conf` (`blacklist kvm_amd` — bloque l'auto-charge udev au boot, un `modprobe kvm_amd` explicite reste possible) + `/etc/modules-load.d/gablue-cpuid-emu.conf` (`cpuid_fault_emulation`, chargé à chaque boot par `systemd-modules-load.service`) ; la persistance n'est écrite qu'après un chargement réussi (pas d'échec au boot si SVM désactivé dans le BIOS) ; `off` supprime les deux fichiers, décharge le module et recharge `kvm_amd`
 
 ## Workflows GitHub Actions
 
@@ -1059,7 +1059,7 @@ Commandes ujust disponibles :
 - **Système** : `configure-grub`, `kernel-setup`, `mitigations-on/off`
 - **Réseau** : `tailscale-up`, `ssh-on/off`, `toggle-wol`
 - **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`, `configure-amd-hdmi21` (karg `amdgpu.dcfeaturemask=0x402` — fonctionnalités HDMI 2.1 supplémentaires ; backport Bazzite `f92d411`, renommé de `configure-amd-vrr` par Bazzite `150cf40e`)
-- **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`, `cpuid-emu-on/off`
+- **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`, `cpuid-emu-on/off` (persistant via `/etc/modprobe.d` + `/etc/modules-load.d`, blacklist `kvm_amd`)
 - **Virtualisation** : `docker-enable/disable`, `dx-group`, `setup-kvmfr`, `libvirt-reset-cache` (efface le cache capabilities libvirt, corrige l'erreur "video model 'virtio' unsupported" dans virt-manager)
 - **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`, `ssd-thermal-limit` (limite thermique NVMe via HCTM, interactif, persistant), `toggle-updates-all` (active/désactive toutes les mises à jour auto : système, flatpaks et brew — contrairement à `toggle-updates` upstream qui ne touche pas brew)
 - **Affichage** : `kwin-display-reset` (met de côté avec horodatage `~/.config/kwinoutputconfig.json` et `/var/lib/plasmalogin/.config/kwinoutputconfig.json` — dépannage écran noir / « hors portée » au login quand KWin force un mode sauvegardé non supporté), `vrr-fix`

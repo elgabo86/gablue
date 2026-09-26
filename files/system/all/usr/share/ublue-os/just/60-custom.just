@@ -266,22 +266,40 @@ cpuid-fix-off:
     rpm-ostree kargs --delete-if-present=clearcpuid=514
     echo "ALL DONE!!!"
 
-# Activer l'émulation CPUID fault (AMD AM4/Steam Deck uniquement)
+# Activer l'émulation CPUID fault (AMD AM4/Steam Deck uniquement, persistant après reboot)
 cpuid-emu-on:
     #!/usr/bin/bash
+    if ! grep -qw svm /proc/cpuinfo; then
+        echo "CPU sans SVM (AMD-V), module cpuid_fault_emulation inutile"
+        exit 1
+    fi
     if lsmod | grep -q kvm_amd; then
         echo "KVM détecté, déchargement de kvm_amd et kvm..."
         sudo modprobe -r kvm_amd kvm
     fi
-    sudo modprobe cpuid_fault_emulation
-    echo "Module cpuid_fault_emulation chargé"
+    # Test de chargement avant d'écrire la persistance (pas d'échec au boot si BIOS récalcitrant)
+    if ! sudo modprobe cpuid_fault_emulation; then
+        echo "Échec du chargement du module (SVM désactivé dans le BIOS ?), rien de persisté"
+        exit 1
+    fi
+    # Blacklist kvm_amd : bloque l'auto-charge udev au boot (le module ému requiert SVM libre),
+    # un 'modprobe kvm_amd' explicite reste possible (le blacklist ne bloque que l'auto-charge)
+    sudo mkdir -p /etc/modprobe.d
+    echo "blacklist kvm_amd" | sudo tee /etc/modprobe.d/gablue-cpuid-emu.conf > /dev/null
+    # Charge du module à chaque boot via systemd-modules-load.service
+    sudo mkdir -p /etc/modules-load.d
+    echo "cpuid_fault_emulation" | sudo tee /etc/modules-load.d/gablue-cpuid-emu.conf > /dev/null
+    echo "Module cpuid_fault_emulation chargé (persistant, KVM indisponible tant que l'émulation est active)"
 
 # Désactiver l'émulation CPUID fault et restaurer KVM
 cpuid-emu-off:
     #!/usr/bin/bash
-    sudo modprobe -r cpuid_fault_emulation
+    sudo rm -f /etc/modules-load.d/gablue-cpuid-emu.conf /etc/modprobe.d/gablue-cpuid-emu.conf
+    if lsmod | grep -q cpuid_fault_emulation; then
+        sudo modprobe -r cpuid_fault_emulation
+    fi
     sudo modprobe kvm_amd
-    echo "KVM restauré"
+    echo "KVM restauré (déjà effectif maintenant, définitif après reboot)"
 
 # Remove grub double entry
 fix-grub-double-entry:
