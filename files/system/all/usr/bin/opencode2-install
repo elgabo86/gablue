@@ -10,6 +10,9 @@
 # - Installe l'app OpenCode Desktop (AppImage intégrée via GearLever, ~/AppImages/opencode.appimage)
 # - Installe l'entrée « Ouvrir avec OpenCode » pour les dossiers dans Dolphin
 #   (deep-link opencode:// vers l'app desktop, plus le lancement terminal)
+# - Vérifie d'abord les versions (CLI npm + app Desktop) : tout est déjà à jour
+#   et en place -> sortie immédiate, rien n'est réinstallé
+# - --force : réinstallation complète (CLI + Desktop), vérifications ignorées
 
 # Dépendances : homebrew (fourni par Gablue, requis seulement si npm absent), timeout (coreutils),
 #               curl, flatpak avec GearLever (it.mijorus.gearlever, requis pour la GUI),
@@ -19,6 +22,23 @@ set -e
 
 NPM_PACKAGE="@opencode/cli"
 LOCAL_BIN="$HOME/.local/bin"
+
+# Argument optionnel --force : réinstallation complète (CLI + Desktop) en
+# ignorant les vérifications de version — utile pour réparer une installation
+# que le contrôle de MAJ estimerait à jour à tort
+FORCE=0
+for arg in "$@"; do
+    case "$arg" in
+        --force) FORCE=1 ;;
+        *)
+            echo "✗ Erreur : argument inconnu '$arg' (usage : opencode2-install [--force])"
+            exit 1
+            ;;
+    esac
+done
+if [ "$FORCE" = 1 ]; then
+    echo "! Mode --force : vérifications de MAJ ignorées, réinstallation complète."
+fi
 
 echo "=== OpenCode 2 : installation via npm ==="
 
@@ -68,6 +88,72 @@ else
     echo "✓ OpenCode 2 déjà installé via npm."
 fi
 
+# --- Étape 2bis : vérification de mise à jour — sortie immédiate si rien à faire ---
+# Compare les versions installées (CLI npm + app Desktop) aux dernières versions
+# publiées, et vérifie que tous les artefacts sont en place (symlink
+# ~/.local/bin/opencode, AppImage, entrée .desktop GearLever patchée, entrées
+# Dolphin). Tout est bon -> le script s'arrête ici : pas de npm install ni de
+# téléchargement AppImage (~245 Mo) pour rien.
+# Fail-safe : réseau indisponible ou version amont indéterminable -> on
+# poursuit le processus complet (il répare alors tout ce qui manque).
+
+# Chemins app Desktop (définis tôt : utilisés par cette vérification et l'étape 6)
+DESKTOP_APPIMAGE="$HOME/AppImages/opencode.appimage"
+DESKTOP_ENTRY="$HOME/.local/share/applications/opencode.desktop"
+STABLE_URL="https://opencode.ai/download/stable/linux-x64-appimage"
+
+if [ "$FORCE" = 0 ] && command -v npm &>/dev/null && npm list -g --depth=0 "$NPM_PACKAGE" &>/dev/null; then
+    CUR_CLI="$(timeout 10 opencode --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' || true)"
+    NPM_LATEST_VERSION="$(timeout 30 npm view "$NPM_PACKAGE" version 2>/dev/null || true)"
+
+    # Dernière version desktop : redirection du lien stable (l'app desktop suit
+    # le versionnage du CLI), fallback version npm
+    LAST_DESKTOP="$(curl -sIL -o /dev/null -w '%{url_effective}' --max-time 30 "$STABLE_URL" 2>/dev/null \
+        | sed -n 's|.*/bin/\([^/]*\)/.*|\1|p')"
+    if ! echo "$LAST_DESKTOP" | grep -qE '^[0-9]+(\.[0-9]+)+'; then
+        LAST_DESKTOP="$NPM_LATEST_VERSION"
+    fi
+
+    # Version desktop installée : champ X-AppImage-Version posé par GearLever
+    # dans l'entrée .desktop
+    CUR_DESKTOP=""
+    ENTRY_FILE="$DESKTOP_ENTRY"
+    if [ ! -f "$ENTRY_FILE" ]; then
+        # Fallback : GearLever nomme l'entrée d'après l'app ; recherche par X-AppImage-Name
+        ENTRY_FILE="$(grep -rl '^X-AppImage-Name=OpenCode$' "$HOME/.local/share/applications" 2>/dev/null | head -1 || true)"
+    fi
+    if [ -n "$ENTRY_FILE" ] && [ -f "$ENTRY_FILE" ]; then
+        CUR_DESKTOP="$(sed -n 's/^X-AppImage-Version=//p' "$ENTRY_FILE" | head -1)"
+    fi
+
+    # Entrée .desktop déjà patchée (Name sans version + --no-sandbox présent) ?
+    ENTRY_PATCHED=0
+    if [ -f "$DESKTOP_ENTRY" ] && grep -q '^Name=OpenCode$' "$DESKTOP_ENTRY" \
+        && { ! grep -q '^Exec=' "$DESKTOP_ENTRY" || grep -q '^Exec=.*--no-sandbox' "$DESKTOP_ENTRY"; }; then
+        ENTRY_PATCHED=1
+    fi
+
+    # Symlink ~/.local/bin/opencode -> binaire npm en place ?
+    NPM_BIN="$(npm prefix -g)/bin"
+    SYMLINK_OK=0
+    if [ "$(readlink -f "$LOCAL_BIN/opencode" 2>/dev/null)" = "$(readlink -f "$NPM_BIN/opencode2" 2>/dev/null)" ]; then
+        SYMLINK_OK=1
+    fi
+
+    if [ -n "$NPM_LATEST_VERSION" ] && [ -n "$CUR_CLI" ] && [ "$CUR_CLI" = "$NPM_LATEST_VERSION" ] \
+        && [ -n "$CUR_DESKTOP" ] && [ "$CUR_DESKTOP" = "$LAST_DESKTOP" ] \
+        && [ "$SYMLINK_OK" = 1 ] \
+        && [ -f "$DESKTOP_APPIMAGE" ] \
+        && [ "$ENTRY_PATCHED" = 1 ] \
+        && [ -f "$HOME/.local/share/applications/gablue-opencode.desktop" ] \
+        && [ -f "$HOME/.local/share/applications/gablue-opencode-cli.desktop" ]; then
+        echo "✓ OpenCode $CUR_CLI déjà à jour (CLI npm et Desktop), installation complète."
+        echo "  Rien à faire."
+        exit 0
+    fi
+    echo "! Installation incomplète ou mise à jour disponible (CLI ${CUR_CLI:-absente}, Desktop ${CUR_DESKTOP:-absente}) : poursuite."
+fi
+
 # --- Étape 3 : installer npm via Homebrew si absent ---
 if command -v npm &>/dev/null; then
     echo "✓ npm déjà installé ($(npm --version))."
@@ -81,25 +167,37 @@ else
     echo "✓ npm installé ($(npm --version))."
 fi
 
-# --- Étape 4 : installer OpenCode 2 via npm ---
-echo "Installation de $NPM_PACKAGE via npm..."
+# --- Étape 4 : installer/mettre à jour OpenCode 2 via npm (si nécessaire) ---
 # Version CLI avant install : sert à ne redémarrer le service de fond qu'en cas
 # de vraie MAJ (un restart inconditionnel rebondit toutes les sessions ouvertes,
 # CLI et desktop, puisque tout le monde est connecté au même serveur)
 CLI_VERSION_BEFORE="$(timeout 10 opencode --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' || true)"
-# --allow-scripts : exécute le postinstall officiel (npm récent le bloque par défaut)
-# Le tarball npm ne contient qu'un stub de 229 octets : c'est le postinstall qui
-# télécharge le vrai binaire (paquet plateforme) — sans lui, binaire non matérialisé.
-# Persisté aussi en config npm utilisateur car l'updater interne d'OpenCode
-# (« Update OpenCode » / `opencode upgrade`) réinstalle le paquet via npm SANS
-# passer --allow-scripts : sans cet allowScripts global, le postinstall est bloqué,
-# le stub reste en place et la mise à jour échoue en silence sur les machines
-# sans allowlist npm.
-npm config set allow-scripts="$NPM_PACKAGE" --location=user 2>/dev/null || true
-npm install -g --allow-scripts="$NPM_PACKAGE" "$NPM_PACKAGE" \
-    || npm install -g "$NPM_PACKAGE"
-echo "✓ OpenCode $(timeout 10 opencode --version 2>/dev/null || echo "2") installé via npm."
-CLI_VERSION_AFTER="$(timeout 10 opencode --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' || true)"
+if [ -z "${NPM_LATEST_VERSION:-}" ]; then
+    NPM_LATEST_VERSION="$(timeout 30 npm view "$NPM_PACKAGE" version 2>/dev/null || true)"
+fi
+# Déjà installé via npm ET déjà à la dernière version publiée -> skip (évite de
+# re-télécharger tarball + binaire pour rien). Version amont vide (réseau
+# indisponible), binaire cassé ou --force -> on réinstalle, fail-safe.
+if [ "$FORCE" = 0 ] && command -v npm &>/dev/null && npm list -g --depth=0 "$NPM_PACKAGE" &>/dev/null \
+    && [ -n "$NPM_LATEST_VERSION" ] && [ "$CLI_VERSION_BEFORE" = "$NPM_LATEST_VERSION" ]; then
+    echo "✓ OpenCode CLI $CLI_VERSION_BEFORE déjà à jour (npm)."
+    CLI_VERSION_AFTER="$CLI_VERSION_BEFORE"
+else
+    echo "Installation de $NPM_PACKAGE via npm..."
+    # --allow-scripts : exécute le postinstall officiel (npm récent le bloque par défaut)
+    # Le tarball npm ne contient qu'un stub de 229 octets : c'est le postinstall qui
+    # télécharge le vrai binaire (paquet plateforme) — sans lui, binaire non matérialisé.
+    # Persisté aussi en config npm utilisateur car l'updater interne d'OpenCode
+    # (« Update OpenCode » / `opencode upgrade`) réinstalle le paquet via npm SANS
+    # passer --allow-scripts : sans cet allowScripts global, le postinstall est bloqué,
+    # le stub reste en place et la mise à jour échoue en silence sur les machines
+    # sans allowlist npm.
+    npm config set allow-scripts="$NPM_PACKAGE" --location=user 2>/dev/null || true
+    npm install -g --allow-scripts="$NPM_PACKAGE" "$NPM_PACKAGE" \
+        || npm install -g "$NPM_PACKAGE"
+    echo "✓ OpenCode $(timeout 10 opencode --version 2>/dev/null || echo "2") installé via npm."
+    CLI_VERSION_AFTER="$(timeout 10 opencode --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' || true)"
+fi
 
 # --- Étape 5 : symlink ~/.local/bin/opencode vers le binaire npm (opencode2) ---
 NPM_BIN="$(npm prefix -g)/bin"
@@ -114,9 +212,7 @@ fi
 # Source : https://opencode.ai/download/stable/linux-x64-appimage
 # (redirection vers https://opencode.ai/files/bin/<version>/opencode-desktop-linux-x86_64.AppImage)
 # Intégrée via GearLever dans ~/AppImages/opencode.appimage (même pattern que eden-install)
-DESKTOP_APPIMAGE="$HOME/AppImages/opencode.appimage"
-DESKTOP_ENTRY="$HOME/.local/share/applications/opencode.desktop"
-STABLE_URL="https://opencode.ai/download/stable/linux-x64-appimage"
+# (chemins DESKTOP_APPIMAGE / DESKTOP_ENTRY / STABLE_URL définis en Étape 2bis)
 
 # Patch de l'entrée .desktop générée par GearLever :
 # - nom sans numéro de version
@@ -142,7 +238,8 @@ echo "=== OpenCode Desktop : vérification de la dernière version ==="
 LATEST_VERSION="$(curl -sIL -o /dev/null -w '%{url_effective}' --max-time 30 "$STABLE_URL" 2>/dev/null \
     | sed -n 's|.*/bin/\([^/]*\)/.*|\1|p')"
 if ! echo "$LATEST_VERSION" | grep -qE '^[0-9]+(\.[0-9]+)+'; then
-    LATEST_VERSION="$(npm view @opencode/cli version 2>/dev/null || true)"
+    # NPM_LATEST_VERSION déjà récupérée en Étape 2bis/4 (une seule requête npm)
+    LATEST_VERSION="${NPM_LATEST_VERSION:-$(timeout 30 npm view @opencode/cli version 2>/dev/null || true)}"
 fi
 
 # Version installée : champ X-AppImage-Version posé par GearLever dans l'entrée .desktop
@@ -155,7 +252,7 @@ if [ -f "$DESKTOP_ENTRY" ]; then
     INSTALLED_VERSION="$(sed -n 's/^X-AppImage-Version=//p' "$DESKTOP_ENTRY" | head -1)"
 fi
 
-if [ -f "$DESKTOP_APPIMAGE" ] && [ -n "$INSTALLED_VERSION" ] && [ -n "$LATEST_VERSION" ] \
+if [ "$FORCE" = 0 ] && [ -f "$DESKTOP_APPIMAGE" ] && [ -n "$INSTALLED_VERSION" ] && [ -n "$LATEST_VERSION" ] \
     && [ "$INSTALLED_VERSION" = "$LATEST_VERSION" ]; then
     echo "✓ OpenCode Desktop $INSTALLED_VERSION déjà installé (à jour)."
     patch_desktop_entry
@@ -167,7 +264,9 @@ else
         exit 1
     fi
 
-    if [ -n "$LATEST_VERSION" ]; then
+    if [ "$FORCE" = 1 ]; then
+        echo "! Réinstallation forcée d'OpenCode Desktop (--force)..."
+    elif [ -n "$LATEST_VERSION" ]; then
         echo "Mise à jour d'OpenCode Desktop : ${INSTALLED_VERSION:-absent} -> $LATEST_VERSION"
     else
         echo "! Version desktop introuvable, réinstallation forcée..."
