@@ -39,7 +39,16 @@ systemctl enable rpm-ostreed-automatic.timer
 systemctl enable flatpak-system-update.timer
 systemctl --global enable flatpak-user-update.timer
 
-# Brew : activation des timers de mise à jour automatique
+# Brew : activation du service d'extraction du tarball embarqué
+# (/usr/share/homebrew.tar.zst -> /home/linuxbrew, ConditionPathExists=!/etc/.linuxbrew)
+# + des timers de mise à jour automatique.
+# Le preset 01-homebrew.preset (enable brew-setup.service) n'est PAS appliqué
+# aux déploiements bootc/ostree (les presets systemd ne sont évalués qu'à
+# l'installation de RPMs, pas au déploiement d'une image container) : sans cet
+# enable explicite, brew n'est jamais extrait au premier boot et tout script
+# dépendant de brew (opencode2-install...) échoue sur les installations
+# fraîches (même bug Bazzite #3788/#3817, corrigé de la même façon upstream).
+systemctl enable brew-setup.service
 systemctl enable brew-update.timer
 systemctl enable brew-upgrade.timer
 

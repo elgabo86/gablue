@@ -160,6 +160,8 @@ if command -v npm &>/dev/null; then
 else
     if [ -z "$BREW" ]; then
         echo "✗ Erreur : npm absent et Homebrew introuvable (impossible d'installer npm)."
+        echo "  Sur une installation où brew-setup n'a jamais tourné, déclenchez"
+        echo "  l'extraction manuellement : pkexec systemctl start brew-setup.service"
         exit 1
     fi
     echo "npm absent : installation de Node.js (npm) via Homebrew..."
