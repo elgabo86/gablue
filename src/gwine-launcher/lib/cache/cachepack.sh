@@ -135,6 +135,12 @@ create_cachepack() {
     echo "  - Copie des composants..."
     cp -r "$COMPONENTS_SOURCE" "$TEMP_CACHE/"
     
+    # Ne garder que l'archive runner la plus récente dans le pack : le cache
+    # peut accumuler les archives (déploiement du pack cache par-dessus un
+    # runner fraîchement téléchargé) et basename multi-args échoue ensuite
+    # côté consommateurs du pack
+    find "$TEMP_CACHE/components/gwine" -maxdepth 1 -name 'gwine-*.tar.xz' 2>/dev/null | sort -V | head -n -1 | xargs -r rm -f
+    
     local WINCOMPONENTS_SOURCE="$CACHE_SOURCE/wincomponents"
     if [ -d "$WINCOMPONENTS_SOURCE" ]; then
         echo "  - Copie des composants Windows (wincomponents)..."
