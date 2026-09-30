@@ -1037,6 +1037,19 @@ Interface de télévision Gablue en Python (PySide6 + libmpv) :
 - **GUI masquée** en mode vidéo : barre supérieure et OSD cachés, seul le flux vidéo est visible
 - **Curseur auto-masqué** en lecture : curseur souris caché après 2,5s d'inactivité (`CURSOR_HIDE_MS`, timer mono-shot) — tout mouvement souris/clic/touche le réaffiche immédiatement (filtre d'événements sur le widget vidéo et l'overlay de chargement, mouse tracking activé + suivi clavier via `keyPressEvent`) ; curseur restauré au retour à la grille
 
+### Widget panel synthetic-quota (/usr/share/plasma/plasmoids)
+
+Widget Plasma 6 affichant le quota Synthetic dans le panel, équivalent du plugin TUI OpenCode (`~/.config/opencode/plugins/synthetic-quota/tui.tsx`) :
+
+- `org.gablue.synthetic.quota/` : package KPackage standard (metadata.json, contents/config/main.xml, contents/ui/main.qml, contents/code/)
+- **Affichage compact** : `TOK 96.52% · REQ 99.87%` (2 décimales, même format que le TUI) avec code couleur adapté au thème Kirigami (positif > 50 %, neutre > 20 %, négatif ≤ 20 %, désactivé si inconnu) ; panel vertical = pourcentage seul
+- **Représentation étendue** (clic) : barres de progression tokens hebdo + requêtes 5 h, crédits `$34.50 / $36.00`, dates de régénération (nextRegenAt, nextTickAt, renewsAt), badge « Limite 5 h atteinte »
+- **Clé API lue à la source** : le helper Python `contents/code/gablue-synthetic-quota-helper` lit directement `~/.local/share/opencode/opencode.db` (table `credential`, `integration_id='synthetic'`, `active=1`, connexion SQLite read-only WAL-friendly) puis appelle `https://api.synthetic.new/v2/quotas` — pas de dépendance au serveur OpenCode, rotation de clé ramassée au prochain poll
+- **Cache** : dernier résultat valide dans `~/.cache/gablue/synthetic-quota.json` (écriture atomique tmp+rename) — en cas d'échec réseau/API, le widget garde les dernières valeurs avec `stale=true` (tooltip + footer d'erreur) ; erreur `no-key` = affichage `TOK ?` + tooltip explicatif
+- **Data engine** : `P5Support.DataSource` (engine `executable`), le helper est relancé toutes les 60 s (`main.xml` : `refreshInterval`, `decimals`, `showReq`) ; polling depuis plasmashell, clé jamais sur disque en clair hors la db OpenCode elle-même
+- **Spécificités Plasma 6.7** : `PlasmaCore.Theme` n'existe plus (utiliser `Kirigami.Theme.defaultFont`) ; signal `newData` du data engine = `(sourceName, data)` (2 paramètres, pas 3) ; les `Component` top-level après l'objet racine sont interdits en QML (utiliser des inline components `component X: Type {}` à l'intérieur du `PlasmoidItem`)
+- **Essai local avant build image** : symlink `~/.local/share/plasma/plasmoids/org.gablue.synthetic.quota` → répertoire du repo (édition en direct, un restart `plasma-plasmashell.service` recharge le package)
+
 ### Scripts gamepadshortcuts (/usr/share/ublue-os/gablue/scripts/gamepadshortcuts)
 
 Scripts lancés par le binaire gamepadshortcuts :

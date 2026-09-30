@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+      http://www.kde.org/standards/kcfg/1.0/kcfg.xsd" >
+  <kcfgfile name=""/>
+  <group name="General">
+    <!-- Intervalle de rafraîchissement en secondes (60 s comme le plugin TUI) -->
+    <entry name="refreshInterval" type="Int">
+      <default>60</default>
+    </entry>
+    <!-- Nombre de décimales des pourcentages (2 comme le plugin TUI) -->
+    <entry name="decimals" type="Int">
+      <default>2</default>
+    </entry>
+    <!-- Afficher aussi le quota requêtes 5 h (REQ) -->
+    <entry name="showReq" type="Bool">
+      <default>true</default>
+    </entry>
+  </group>
+</kcfg>

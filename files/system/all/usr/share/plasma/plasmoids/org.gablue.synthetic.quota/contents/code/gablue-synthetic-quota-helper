@@ -1,0 +1,161 @@
+#!/usr/bin/python3
+# Helper du widget panel Gablue « Quota Synthetic ».
+# Lit la clé API Synthetic dans la db OpenCode (table credential) puis
+# interroge l'API quotas. Sort un JSON sur stdout (consommé par main.qml
+# via le data engine "executable").
+# En cas d'échec (réseau, API, db verrouillée), retombe sur le dernier
+# résultat valide mis en cache (~/.cache/gablue/synthetic-quota.json)
+# avec stale=true, pour que le widget garde ses dernières valeurs.
+
+import json
+import os
+import sqlite3
+import sys
+import time
+import urllib.request
+
+QUOTAS_URL = "https://api.synthetic.new/v2/quotas"
+HTTP_TIMEOUT = 10
+CACHE_FILE = os.path.join(
+    os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+    "gablue",
+    "synthetic-quota.json",
+)
+
+
+def data_home():
+    return os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+
+
+def read_api_key():
+    """Clé Synthetic depuis la db OpenCode (lecture seule, WAL-friendly)."""
+    db = os.path.join(data_home(), "opencode", "opencode.db")
+    if not os.path.exists(db):
+        return None
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        row = con.execute(
+            "SELECT value FROM credential"
+            " WHERE integration_id = 'synthetic' AND active = 1"
+            " ORDER BY time_updated DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        con.close()
+    if row is None:
+        return None
+    try:
+        value = json.loads(row[0])
+    except (TypeError, ValueError):
+        return None
+    if isinstance(value, dict) and value.get("type") == "key":
+        key = value.get("key")
+        if isinstance(key, str) and key:
+            return key
+    return None
+
+
+def fetch_quotas(key):
+    req = urllib.request.Request(
+        QUOTAS_URL, headers={"Authorization": f"Bearer {key}"}
+    )
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as res:
+        if res.status != 200:
+            raise RuntimeError(f"HTTP {res.status}")
+        return json.loads(res.read().decode("utf-8"))
+
+
+def compute(data):
+    """Extrait les pourcentages restants (même logique que le plugin TUI)."""
+    out = {}
+
+    weekly = data.get("weeklyTokenLimit") or {}
+    pct = weekly.get("percentRemaining")
+    out["weekly"] = pct if isinstance(pct, (int, float)) else None
+    out["weeklyRemaining"] = weekly.get("remainingCredits")
+    out["weeklyMax"] = weekly.get("maxCredits")
+    out["nextRegenAt"] = weekly.get("nextRegenAt")
+
+    rolling = data.get("rollingFiveHourLimit") or {}
+    remaining = rolling.get("remaining")
+    maximum = rolling.get("max")
+    if (
+        isinstance(remaining, (int, float))
+        and isinstance(maximum, (int, float))
+        and maximum > 0
+    ):
+        out["fiveHour"] = max(remaining, 0.0) / maximum * 100.0
+    else:
+        out["fiveHour"] = None
+    out["limited"] = bool(rolling.get("limited"))
+    out["nextTickAt"] = rolling.get("nextTickAt")
+
+    # Fallback (comme le TUI) si weekly et fiveHour sont absents
+    sub = data.get("subscription") or {}
+    limit = sub.get("limit")
+    requests = sub.get("requests")
+    if (
+        isinstance(limit, (int, float))
+        and isinstance(requests, (int, float))
+        and limit > 0
+    ):
+        out["subscription"] = max(limit - requests, 0.0) / limit * 100.0
+    else:
+        out["subscription"] = None
+    out["renewsAt"] = sub.get("renewsAt")
+
+    return out
+
+
+def main():
+    result = {
+        "ok": False,
+        "stale": False,
+        "error": None,
+        "weekly": None,
+        "fiveHour": None,
+        "subscription": None,
+        "limited": False,
+        "weeklyRemaining": None,
+        "weeklyMax": None,
+        "nextRegenAt": None,
+        "nextTickAt": None,
+        "renewsAt": None,
+        "fetchedAt": int(time.time()),
+    }
+
+    try:
+        key = read_api_key()
+        if key is None:
+            result["error"] = "no-key"
+        else:
+            result.update(compute(fetch_quotas(key)))
+            result["ok"] = True
+    except Exception as exc:  # noqa: BLE001 — toute erreur = cache fallback
+        # Jamais de détail de la clé dans les messages d'erreur
+        result["error"] = type(exc).__name__
+
+    # Cache du dernier résultat valide (écriture atomique tmp + rename)
+    if result["ok"]:
+        try:
+            os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+            tmp = CACHE_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(result, fh)
+            os.replace(tmp, CACHE_FILE)
+        except OSError:
+            pass
+    elif result["error"] != "no-key" and os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r", encoding="utf-8") as fh:
+                cached = json.load(fh)
+            cached["stale"] = True
+            result = cached
+        except (OSError, ValueError):
+            pass
+
+    json.dump(result, sys.stdout)
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    main()

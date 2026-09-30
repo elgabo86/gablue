@@ -1,0 +1,19 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Gablue"
+            }
+        ],
+        "Category": "System Information",
+        "Description": "Quota Synthetic (tokens hebdo, requêtes 5 h) — clé API lue depuis la db OpenCode",
+        "Icon": "speedometer",
+        "Id": "org.gablue.synthetic.quota",
+        "License": "MIT",
+        "Name": "Synthetic Quota",
+        "Version": "1.0",
+        "Website": "https://github.com/elgabo86/gablue"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
