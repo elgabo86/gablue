@@ -10,10 +10,9 @@
 # - Installe l'app OpenCode Desktop (AppImage intégrée via GearLever, ~/AppImages/opencode.appimage)
 # - Installe l'entrée « Ouvrir avec OpenCode » pour les dossiers dans Dolphin
 #   (deep-link opencode:// vers l'app desktop, plus le lancement terminal)
-# - Installe les deux MCP locaux référencés par opencode.json :
-#   Lightpanda (@lightpanda/browser npm -g + binaire nightly dans
-#   ~/.cache/lightpanda-node) et chrome-devtools (chrome-devtools-mcp +
-#   Chrome for Testing dans ~/.cache/chrome-devtools-mcp)
+# - Installe le MCP local Lightpanda (@lightpanda/browser npm -g + binaire
+#   nightly dans ~/.cache/lightpanda-node) et l'active par défaut dans
+#   opencode.json (merge idempotent, serveurs existants préservés)
 # - Vérifie d'abord les versions (CLI npm + app Desktop + MCP) : tout est déjà
 #   à jour et en place -> sortie immédiate, rien n'est réinstallé
 # - --force : réinstallation complète (CLI + Desktop + MCP), vérifications ignorées
@@ -44,8 +43,9 @@ if [ "$FORCE" = 1 ]; then
     echo "! Mode --force : vérifications de MAJ ignorées, réinstallation complète."
 fi
 
-# Posé à 1 quand un MCP (Lightpanda ou chrome-devtools) est installé/mis à jour :
-# sert à étendre la condition de redémarrage du service de fond en fin de script
+# Posé à 1 quand le MCP Lightpanda est installé/mis à jour ou que son entrée
+# est créée dans opencode.json : étend la condition de redémarrage du service
+# de fond en fin de script
 MCP_UPDATED=0
 
 echo "=== OpenCode : vérification de l'installation (CLI npm, Desktop, MCP) ==="
@@ -109,31 +109,17 @@ fi
 DESKTOP_APPIMAGE="$HOME/AppImages/opencode.appimage"
 DESKTOP_ENTRY="$HOME/.local/share/applications/opencode.desktop"
 STABLE_URL="https://opencode.ai/download/stable/linux-x64-appimage"
-# Chemin MCP chrome-devtools (défini tôt : vérification 2bis + étape 5ter)
-CDM_CACHE="$HOME/.cache/chrome-devtools-mcp"
 
-# Versions des deux MCP : installées + dernières publiées. Appelée par la
-# vérification 2bis puis par les étapes 5bis/5ter (les fetchs réseau ne sont
-# refaits que si la version amont est encore inconnue — 2bis ne tourne que si
-# FORCE=0, npm présent et CLI installé ; les étapes complètent alors elles-mêmes)
+# Versions du MCP Lightpanda : installée + dernière publiée. Appelé par la
+# vérification 2bis puis par l'étape 5bis (le fetch réseau n'est refait que si
+# la version amont est encore inconnue — 2bis ne tourne que si FORCE=0, npm
+# présent et CLI installé ; l'étape complète alors elle-même)
 refresh_mcp_versions() {
     # Lightpanda : version du paquet npm global (le binaire nightly est
     # téléchargé par le postinstall, sa présence est vérifiée à part)
     CUR_LP="$(npm list -g --depth=0 @lightpanda/browser 2>/dev/null | sed -n 's/.*@lightpanda\/browser@\([^@ ]*\).*/\1/p' || true)"
     if [ -z "${LP_LATEST:-}" ]; then
         LP_LATEST="$(timeout 30 npm view @lightpanda/browser version 2>/dev/null || true)"
-    fi
-    # chrome-devtools-mcp : version du serveur (package.json local) + version
-    # de Chrome for Testing (cible du symlink fixe « chrome », layout versionné
-    # stable-<ver> / linux-<ver>) + dernière stable (last-known-good CfT)
-    CUR_CDM="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$CDM_CACHE/node_modules/chrome-devtools-mcp/package.json" 2>/dev/null | head -1 || true)"
-    if [ -z "${CDM_LATEST:-}" ]; then
-        CDM_LATEST="$(timeout 30 npm view chrome-devtools-mcp version 2>/dev/null || true)"
-    fi
-    CUR_CHROME="$(readlink "$CDM_CACHE/chrome" 2>/dev/null | sed -n 's|.*/chrome/[^/]*-\([0-9][0-9.]*\)/.*|\1|p' || true)"
-    if [ -z "${CHROME_LATEST:-}" ]; then
-        CHROME_LATEST="$(curl -s --max-time 30 https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json 2>/dev/null \
-            | sed -n 's|.*"Stable":{"channel":"Stable","version":"\([0-9][0-9.]*\)".*|\1|p' | head -1 || true)"
     fi
 }
 
@@ -215,19 +201,11 @@ if [ "$FORCE" = 0 ] && command -v npm &>/dev/null && npm list -g --depth=0 "$NPM
     elif [ "$CUR_LP" != "$LP_LATEST" ]; then
         TODO_MAJ+=("MCP Lightpanda $CUR_LP -> $LP_LATEST")
     fi
-    if [ ! -x "$CDM_CACHE/node_modules/.bin/chrome-devtools-mcp" ]; then
-        TODO_MAJ+=("serveur chrome-devtools-mcp absent")
-    elif [ -z "$CDM_LATEST" ] || [ -z "$CUR_CDM" ]; then
-        TODO_MAJ+=("version chrome-devtools-mcp indéterminable (amont ${CDM_LATEST:-?}, installée ${CUR_CDM:-absente}) : réinstallation de contrôle")
-    elif [ "$CUR_CDM" != "$CDM_LATEST" ]; then
-        TODO_MAJ+=("MCP chrome-devtools $CUR_CDM -> $CDM_LATEST")
-    fi
-    if [ ! -x "$CDM_CACHE/chrome" ]; then
-        TODO_MAJ+=("binaire Chrome for Testing absent")
-    elif [ -z "$CHROME_LATEST" ] || [ -z "$CUR_CHROME" ]; then
-        TODO_MAJ+=("version Chrome for Testing indéterminable (amont ${CHROME_LATEST:-?}, installée ${CUR_CHROME:-absente}) : réinstallation de contrôle")
-    elif [ "$CUR_CHROME" != "$CHROME_LATEST" ]; then
-        TODO_MAJ+=("Chrome for Testing $CUR_CHROME -> $CHROME_LATEST")
+    # Entrée lightpanda dans opencode.json ? (absente sur config créée à la
+    # main avant l'activation par défaut — le script l'ajoute, merge non
+    # destructif, cf. étape 5ter)
+    if ! grep -q '"lightpanda"' "$HOME/.config/opencode/opencode.json" 2>/dev/null; then
+        TODO_MAJ+=("entrée MCP lightpanda dans opencode.json")
     fi
 
     if [ ${#TODO_MAJ[@]} -eq 0 ]; then
@@ -303,8 +281,11 @@ else
     # passer --allow-scripts : sans cet allowScripts global, le postinstall est bloqué,
     # le stub reste en place et la mise à jour échoue en silence sur les machines
     # sans allowlist npm.
-    npm install -g --allow-scripts="$NPM_PACKAGE" "$NPM_PACKAGE" \
-        || npm install -g "$NPM_PACKAGE"
+    # @latest explicite OBLIGATOIRE : sans spec de version, npm considère le
+    # paquet déjà installé comme satisfaisant et se contente de le réifier
+    # (sortie trompeuse « changed N packages ») sans jamais monter de version.
+    npm install -g --allow-scripts="$NPM_PACKAGE" "$NPM_PACKAGE@latest" \
+        || npm install -g "$NPM_PACKAGE@latest"
     echo "✓ OpenCode $(timeout 10 opencode --version 2>/dev/null || echo "2") installé via npm."
     CLI_VERSION_AFTER="$(timeout 10 opencode --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' || true)"
 fi
@@ -334,8 +315,10 @@ if [ "$FORCE" = 0 ] && npm list -g --depth=0 @lightpanda/browser &>/dev/null \
     echo "✓ MCP Lightpanda $CUR_LP déjà à jour."
 else
     echo "Installation du MCP Lightpanda (@lightpanda/browser) via npm..."
-    npm install -g --allow-scripts=@lightpanda/browser @lightpanda/browser \
-        || npm install -g @lightpanda/browser \
+    # @latest explicite : sans spec, npm réinstalle la version déjà présente
+    # au lieu de mettre à jour (cf. commentaire Étape 4)
+    npm install -g --allow-scripts=@lightpanda/browser @lightpanda/browser@latest \
+        || npm install -g @lightpanda/browser@latest \
         || echo "! Installation Lightpanda échouée (réseau ?) — le MCP sera absent."
     VERSION_LP="$("$HOME/.cache/lightpanda-node/lightpanda" version 2>/dev/null | tail -1 || true)"
     if [ -x "$HOME/.cache/lightpanda-node/lightpanda" ]; then
@@ -345,46 +328,50 @@ else
     fi
 fi
 
-# --- Étape 5ter : MCP chrome-devtools (chrome-devtools-mcp + Chrome for Testing) ---
-# Référencé par opencode.json (serveur local « chrome-devtools », --executablePath
-# pointé sur le symlink fixe). Tout est confiné dans ~/.cache/chrome-devtools-mcp/ :
-# - serveur MCP (JS pur) dans node_modules/ — bin appelé par opencode.json
-# - Chrome for Testing (stable) dans browsers/, exposé par le symlink fixe « chrome »
-# (chemin CDM_CACHE défini en Étape 2bis)
-if [ "$FORCE" = 0 ]; then
-    refresh_mcp_versions
-fi
-if [ "$FORCE" = 0 ] && [ -n "${CDM_LATEST:-}" ] && [ "${CUR_CDM:-}" = "$CDM_LATEST" ] \
-    && [ -x "$CDM_CACHE/node_modules/.bin/chrome-devtools-mcp" ]; then
-    echo "✓ MCP chrome-devtools $CUR_CDM déjà à jour."
-else
-    echo "Installation du MCP chrome-devtools (chrome-devtools-mcp)..."
-    npm install --prefix "$CDM_CACHE" chrome-devtools-mcp \
-        || echo "! Installation chrome-devtools-mcp échouée (réseau ?) — le MCP sera absent."
-    if [ -x "$CDM_CACHE/node_modules/.bin/chrome-devtools-mcp" ]; then
-        echo "✓ chrome-devtools-mcp installé : $CDM_CACHE/node_modules/.bin/chrome-devtools-mcp"
-        MCP_UPDATED=1
-    fi
-fi
+# --- Étape 5ter : activation du MCP lightpanda dans opencode.json ---
+# Le script installe lightpanda dans tous les cas ; on active son entrée dans
+# la config OpenCode pour qu'une installation fraîche soit prête à l'emploi
+# (merge idempotent et non destructif : serveurs existants (context7, tavily,
+# configs utilisateur) et flags préservés — on n'ajoute que ce qui manque).
+# Config modifiée -> MCP_UPDATED=1 pour redémarrer le service de fond.
+OCFG="$HOME/.config/opencode/opencode.json"
+if command -v python3 &>/dev/null; then
+    RC=0
+    timeout 10 python3 - "$OCFG" <<'PY' || RC=$?
+import json, os, sys
 
-if [ "$FORCE" = 0 ] && [ -n "${CHROME_LATEST:-}" ] && [ "${CUR_CHROME:-}" = "$CHROME_LATEST" ] \
-    && [ -x "$CDM_CACHE/chrome" ]; then
-    echo "✓ Chrome for Testing $CUR_CHROME déjà à jour."
-else
-    echo "Téléchargement de Chrome for Testing (stable)..."
-    # Non fatal : un incident réseau ici ne doit pas priver le reste du script
-    # (entrées Dolphin) ni tuer l'installation d'OpenCode déjà faite
-    npx --yes @puppeteer/browsers install chrome@stable --path "$CDM_CACHE/browsers" \
-        || echo "! Téléchargement de Chrome for Testing échoué (réseau ?) — conservation de la version installée."
-    # Symlink fixe vers la release stable la plus récente (layout versionné :
-    # stable-<ver> sur les vieux @puppeteer/browsers, linux-<ver> sur les récents)
-    LATEST_CHROME_DIR="$(ls -d "$CDM_CACHE"/browsers/chrome/stable-* "$CDM_CACHE"/browsers/chrome/linux-* 2>/dev/null | sort -V | tail -1 || true)"
-    if [ -n "$LATEST_CHROME_DIR" ] && [ -x "$LATEST_CHROME_DIR/chrome-linux64/chrome" ]; then
-        ln -sfn "$LATEST_CHROME_DIR/chrome-linux64/chrome" "$CDM_CACHE/chrome"
-        echo "✓ Chrome for Testing installé : $CDM_CACHE/chrome ($("$CDM_CACHE/chrome" --version 2>/dev/null || echo 'version inconnue'))"
+path = sys.argv[1]
+cfg = {}
+if os.path.exists(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        # config illisible (JSONC avec commentaires ?) : ne pas risquer
+        # d'écraser — l'entrée binaires reste installée, l'utilisateur
+        # branchera lui-même
+        sys.exit(1)
+
+servers = cfg.setdefault("mcp", {}).setdefault("servers", {})
+if "lightpanda" in servers:
+    sys.exit(0)  # déjà présent (même désactivé manuellement : on ne touche pas)
+home = os.path.expanduser("~")
+servers["lightpanda"] = {
+    "type": "local",
+    "command": [f"{home}/.cache/lightpanda-node/lightpanda", "mcp"],
+}
+os.makedirs(os.path.dirname(path), exist_ok=True)
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+sys.exit(2)  # 2 = entrée créée
+PY
+    # RC 0 : déjà présent — RC 2 : entrée créée — RC 1 : config illisible
+    if [ "$RC" = 2 ]; then
+        echo "✓ MCP lightpanda activé dans opencode.json (par défaut, fraîche install)."
         MCP_UPDATED=1
-    else
-        echo "! Release Chrome for Testing introuvable dans $CDM_CACHE/browsers, symlink non retargeté."
+    elif [ "$RC" = 1 ]; then
+        echo "! opencode.json absent ou illisible : lightpanda installé mais non branché."
     fi
 fi
 
@@ -1279,5 +1266,5 @@ if { [ -n "$CLI_VERSION_AFTER" ] && [ "$CLI_VERSION_BEFORE" != "$CLI_VERSION_AFT
 fi
 
 echo "Opération terminée. OpenCode 2 est disponible via 'opencode' et 'opencode2' (CLI),"
-echo "OpenCode Desktop est disponible dans le menu des applications, et les MCP"
-echo "Lightpanda + chrome-devtools sont installés pour opencode.json."
+echo "OpenCode Desktop est disponible dans le menu des applications, et le MCP"
+echo "Lightpanda est installé et activé pour opencode.json."
