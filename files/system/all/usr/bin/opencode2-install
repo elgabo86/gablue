@@ -10,9 +10,13 @@
 # - Installe l'app OpenCode Desktop (AppImage intégrée via GearLever, ~/AppImages/opencode.appimage)
 # - Installe l'entrée « Ouvrir avec OpenCode » pour les dossiers dans Dolphin
 #   (deep-link opencode:// vers l'app desktop, plus le lancement terminal)
-# - Vérifie d'abord les versions (CLI npm + app Desktop) : tout est déjà à jour
-#   et en place -> sortie immédiate, rien n'est réinstallé
-# - --force : réinstallation complète (CLI + Desktop), vérifications ignorées
+# - Installe les deux MCP locaux référencés par opencode.json :
+#   Lightpanda (@lightpanda/browser npm -g + binaire nightly dans
+#   ~/.cache/lightpanda-node) et chrome-devtools (chrome-devtools-mcp +
+#   Chrome for Testing dans ~/.cache/chrome-devtools-mcp)
+# - Vérifie d'abord les versions (CLI npm + app Desktop + MCP) : tout est déjà
+#   à jour et en place -> sortie immédiate, rien n'est réinstallé
+# - --force : réinstallation complète (CLI + Desktop + MCP), vérifications ignorées
 
 # Dépendances : homebrew (fourni par Gablue, requis seulement si npm absent), timeout (coreutils),
 #               curl, flatpak avec GearLever (it.mijorus.gearlever, requis pour la GUI),
@@ -40,7 +44,11 @@ if [ "$FORCE" = 1 ]; then
     echo "! Mode --force : vérifications de MAJ ignorées, réinstallation complète."
 fi
 
-echo "=== OpenCode 2 : installation via npm ==="
+# Posé à 1 quand un MCP (Lightpanda ou chrome-devtools) est installé/mis à jour :
+# sert à étendre la condition de redémarrage du service de fond en fin de script
+MCP_UPDATED=0
+
+echo "=== OpenCode : vérification de l'installation (CLI npm, Desktop, MCP) ==="
 
 # Homebrew (requis uniquement pour installer npm au besoin)
 BREW="$(command -v brew || true)"
@@ -101,6 +109,33 @@ fi
 DESKTOP_APPIMAGE="$HOME/AppImages/opencode.appimage"
 DESKTOP_ENTRY="$HOME/.local/share/applications/opencode.desktop"
 STABLE_URL="https://opencode.ai/download/stable/linux-x64-appimage"
+# Chemin MCP chrome-devtools (défini tôt : vérification 2bis + étape 5ter)
+CDM_CACHE="$HOME/.cache/chrome-devtools-mcp"
+
+# Versions des deux MCP : installées + dernières publiées. Appelée par la
+# vérification 2bis puis par les étapes 5bis/5ter (les fetchs réseau ne sont
+# refaits que si la version amont est encore inconnue — 2bis ne tourne que si
+# FORCE=0, npm présent et CLI installé ; les étapes complètent alors elles-mêmes)
+refresh_mcp_versions() {
+    # Lightpanda : version du paquet npm global (le binaire nightly est
+    # téléchargé par le postinstall, sa présence est vérifiée à part)
+    CUR_LP="$(npm list -g --depth=0 @lightpanda/browser 2>/dev/null | sed -n 's/.*@lightpanda\/browser@\([^@ ]*\).*/\1/p' || true)"
+    if [ -z "${LP_LATEST:-}" ]; then
+        LP_LATEST="$(timeout 30 npm view @lightpanda/browser version 2>/dev/null || true)"
+    fi
+    # chrome-devtools-mcp : version du serveur (package.json local) + version
+    # de Chrome for Testing (cible du symlink fixe « chrome », layout versionné
+    # stable-<ver> / linux-<ver>) + dernière stable (last-known-good CfT)
+    CUR_CDM="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$CDM_CACHE/node_modules/chrome-devtools-mcp/package.json" 2>/dev/null | head -1 || true)"
+    if [ -z "${CDM_LATEST:-}" ]; then
+        CDM_LATEST="$(timeout 30 npm view chrome-devtools-mcp version 2>/dev/null || true)"
+    fi
+    CUR_CHROME="$(readlink "$CDM_CACHE/chrome" 2>/dev/null | sed -n 's|.*/chrome/[^/]*-\([0-9][0-9.]*\)/.*|\1|p' || true)"
+    if [ -z "${CHROME_LATEST:-}" ]; then
+        CHROME_LATEST="$(curl -s --max-time 30 https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json 2>/dev/null \
+            | sed -n 's|.*"Stable":{"channel":"Stable","version":"\([0-9][0-9.]*\)".*|\1|p' | head -1 || true)"
+    fi
+}
 
 if [ "$FORCE" = 0 ] && command -v npm &>/dev/null && npm list -g --depth=0 "$NPM_PACKAGE" &>/dev/null; then
     CUR_CLI="$(timeout 10 opencode --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' || true)"
@@ -140,18 +175,68 @@ if [ "$FORCE" = 0 ] && command -v npm &>/dev/null && npm list -g --depth=0 "$NPM
         SYMLINK_OK=1
     fi
 
-    if [ -n "$NPM_LATEST_VERSION" ] && [ -n "$CUR_CLI" ] && [ "$CUR_CLI" = "$NPM_LATEST_VERSION" ] \
-        && [ -n "$CUR_DESKTOP" ] && [ "$CUR_DESKTOP" = "$LAST_DESKTOP" ] \
-        && [ "$SYMLINK_OK" = 1 ] \
-        && [ -f "$DESKTOP_APPIMAGE" ] \
-        && [ "$ENTRY_PATCHED" = 1 ] \
-        && [ -f "$HOME/.local/share/applications/gablue-opencode.desktop" ] \
-        && [ -f "$HOME/.local/share/applications/gablue-opencode-cli.desktop" ]; then
-        echo "✓ OpenCode $CUR_CLI déjà à jour (CLI npm et Desktop), installation complète."
+    # Versions des deux MCP (installées + amont)
+    refresh_mcp_versions
+
+    # Allowlist npm allow-scripts complète ? Sans l'entrée d'un paquet, son
+    # postinstall serait bloqué lors des mises à jour internes (`opencode
+    # upgrade`, `lightpanda upgrade` réinstallent via npm sans --allow-scripts)
+    ALLOWLIST_OK=0
+    if grep -q '^allow-scripts=.*@opencode/cli' "$HOME/.npmrc" 2>/dev/null \
+        && grep -q '^allow-scripts=.*@lightpanda/browser' "$HOME/.npmrc" 2>/dev/null; then
+        ALLOWLIST_OK=1
+    fi
+
+    # Liste explicite de ce qui manque / sera fait — chaque entrée reflète une
+    # condition de sortie ; liste vide = installation complète et à jour
+    TODO_MAJ=()
+    if [ -z "$NPM_LATEST_VERSION" ] || [ -z "$CUR_CLI" ]; then
+        TODO_MAJ+=("version CLI indéterminable (amont ${NPM_LATEST_VERSION:-?}, installée ${CUR_CLI:-absente}) : réinstallation de contrôle")
+    elif [ "$CUR_CLI" != "$NPM_LATEST_VERSION" ]; then
+        TODO_MAJ+=("CLI $CUR_CLI -> $NPM_LATEST_VERSION")
+    fi
+    if [ -z "$CUR_DESKTOP" ]; then
+        TODO_MAJ+=("Desktop absent (AppImage non intégrée ?)")
+    elif [ -z "$LAST_DESKTOP" ]; then
+        TODO_MAJ+=("version Desktop amont indéterminable (réseau ?) : réinstallation de contrôle")
+    elif [ "$CUR_DESKTOP" != "$LAST_DESKTOP" ]; then
+        TODO_MAJ+=("Desktop $CUR_DESKTOP -> $LAST_DESKTOP")
+    fi
+    [ "$SYMLINK_OK" = 1 ] || TODO_MAJ+=("symlink $LOCAL_BIN/opencode")
+    [ -f "$DESKTOP_APPIMAGE" ] || TODO_MAJ+=("AppImage Desktop absente")
+    [ "$ENTRY_PATCHED" = 1 ] || TODO_MAJ+=("patch entrée .desktop Desktop (Name/--no-sandbox)")
+    [ -f "$HOME/.local/share/applications/gablue-opencode.desktop" ] || TODO_MAJ+=("entrée Dolphin « Ouvrir avec OpenCode »")
+    [ -f "$HOME/.local/share/applications/gablue-opencode-cli.desktop" ] || TODO_MAJ+=("entrée Dolphin « OpenCode CLI »")
+    [ "$ALLOWLIST_OK" = 1 ] || TODO_MAJ+=("allowlist npm allow-scripts")
+    if [ ! -x "$HOME/.cache/lightpanda-node/lightpanda" ]; then
+        TODO_MAJ+=("binaire Lightpanda absent")
+    elif [ -z "$LP_LATEST" ] || [ -z "$CUR_LP" ]; then
+        TODO_MAJ+=("version Lightpanda indéterminable (amont ${LP_LATEST:-?}, installée ${CUR_LP:-absente}) : réinstallation de contrôle")
+    elif [ "$CUR_LP" != "$LP_LATEST" ]; then
+        TODO_MAJ+=("MCP Lightpanda $CUR_LP -> $LP_LATEST")
+    fi
+    if [ ! -x "$CDM_CACHE/node_modules/.bin/chrome-devtools-mcp" ]; then
+        TODO_MAJ+=("serveur chrome-devtools-mcp absent")
+    elif [ -z "$CDM_LATEST" ] || [ -z "$CUR_CDM" ]; then
+        TODO_MAJ+=("version chrome-devtools-mcp indéterminable (amont ${CDM_LATEST:-?}, installée ${CUR_CDM:-absente}) : réinstallation de contrôle")
+    elif [ "$CUR_CDM" != "$CDM_LATEST" ]; then
+        TODO_MAJ+=("MCP chrome-devtools $CUR_CDM -> $CDM_LATEST")
+    fi
+    if [ ! -x "$CDM_CACHE/chrome" ]; then
+        TODO_MAJ+=("binaire Chrome for Testing absent")
+    elif [ -z "$CHROME_LATEST" ] || [ -z "$CUR_CHROME" ]; then
+        TODO_MAJ+=("version Chrome for Testing indéterminable (amont ${CHROME_LATEST:-?}, installée ${CUR_CHROME:-absente}) : réinstallation de contrôle")
+    elif [ "$CUR_CHROME" != "$CHROME_LATEST" ]; then
+        TODO_MAJ+=("Chrome for Testing $CUR_CHROME -> $CHROME_LATEST")
+    fi
+
+    if [ ${#TODO_MAJ[@]} -eq 0 ]; then
+        echo "✓ OpenCode $CUR_CLI déjà à jour (CLI npm, Desktop et MCP), installation complète."
         echo "  Rien à faire."
         exit 0
     fi
-    echo "! Installation incomplète ou mise à jour disponible (CLI ${CUR_CLI:-absente}, Desktop ${CUR_DESKTOP:-absente}) : poursuite."
+    echo "! Installation incomplète ou mise à jour disponible :"
+    printf '  • %s\n' "${TODO_MAJ[@]}"
 fi
 
 # --- Étape 3 : installer npm via Homebrew si absent ---
@@ -169,6 +254,25 @@ else
     echo "✓ npm installé ($(npm --version))."
 fi
 
+# Ajoute un paquet à l'allowlist npm allow-scripts SANS écraser les entrées
+# existantes : `npm config set allow-scripts=X` REMPLACE la valeur entière —
+# des set directs par chaque script d'install s'écraseraient mutuellement
+# (@opencode/cli, @lightpanda/browser, ...). Format stocké : une ligne
+# `allow-scripts=a,b,c` dans ~/.npmrc.
+ensure_allow_scripts() {
+    local pkg cur
+    pkg="$1"
+    cur="$(sed -n 's/^allow-scripts=//p' "$HOME/.npmrc" 2>/dev/null | head -1 | tr -d ' ' || true)"
+    case ",${cur}," in
+        *",${pkg},"*) return 0 ;;
+    esac
+    if [ -n "$cur" ]; then
+        npm config set allow-scripts="${cur},${pkg}" --location=user 2>/dev/null || true
+    else
+        npm config set allow-scripts="$pkg" --location=user 2>/dev/null || true
+    fi
+}
+
 # --- Étape 4 : installer/mettre à jour OpenCode 2 via npm (si nécessaire) ---
 # Version CLI avant install : sert à ne redémarrer le service de fond qu'en cas
 # de vraie MAJ (un restart inconditionnel rebondit toutes les sessions ouvertes,
@@ -180,21 +284,25 @@ fi
 # Déjà installé via npm ET déjà à la dernière version publiée -> skip (évite de
 # re-télécharger tarball + binaire pour rien). Version amont vide (réseau
 # indisponible), binaire cassé ou --force -> on réinstalle, fail-safe.
+# L'allowlist allow-scripts est (ré)assurée dans TOUS les cas — y compris quand
+# le skip s'applique : c'est elle qui rend `opencode upgrade` fonctionnel.
+ensure_allow_scripts "$NPM_PACKAGE"
 if [ "$FORCE" = 0 ] && command -v npm &>/dev/null && npm list -g --depth=0 "$NPM_PACKAGE" &>/dev/null \
     && [ -n "$NPM_LATEST_VERSION" ] && [ "$CLI_VERSION_BEFORE" = "$NPM_LATEST_VERSION" ]; then
     echo "✓ OpenCode CLI $CLI_VERSION_BEFORE déjà à jour (npm)."
     CLI_VERSION_AFTER="$CLI_VERSION_BEFORE"
 else
+    echo "=== OpenCode 2 : installation/mise à jour via npm ==="
     echo "Installation de $NPM_PACKAGE via npm..."
     # --allow-scripts : exécute le postinstall officiel (npm récent le bloque par défaut)
     # Le tarball npm ne contient qu'un stub de 229 octets : c'est le postinstall qui
     # télécharge le vrai binaire (paquet plateforme) — sans lui, binaire non matérialisé.
-    # Persisté aussi en config npm utilisateur car l'updater interne d'OpenCode
-    # (« Update OpenCode » / `opencode upgrade`) réinstalle le paquet via npm SANS
+    # Persisté aussi en config npm utilisateur (additif : les entrées des autres
+    # paquets sont préservées) car l'updater interne d'OpenCode (« Update
+    # OpenCode » / `opencode upgrade`) réinstalle le paquet via npm SANS
     # passer --allow-scripts : sans cet allowScripts global, le postinstall est bloqué,
     # le stub reste en place et la mise à jour échoue en silence sur les machines
     # sans allowlist npm.
-    npm config set allow-scripts="$NPM_PACKAGE" --location=user 2>/dev/null || true
     npm install -g --allow-scripts="$NPM_PACKAGE" "$NPM_PACKAGE" \
         || npm install -g "$NPM_PACKAGE"
     echo "✓ OpenCode $(timeout 10 opencode --version 2>/dev/null || echo "2") installé via npm."
@@ -207,6 +315,77 @@ mkdir -p "$LOCAL_BIN"
 if [ "$(readlink -f "$LOCAL_BIN/opencode" 2>/dev/null)" != "$(readlink -f "$NPM_BIN/opencode2" 2>/dev/null)" ]; then
     ln -sfn "$NPM_BIN/opencode2" "$LOCAL_BIN/opencode"
     echo "✓ Symlink créé : $LOCAL_BIN/opencode -> $NPM_BIN/opencode2"
+fi
+
+# --- Étape 5bis : MCP Lightpanda (@lightpanda/browser) ---
+# Référencé par opencode.json (serveur local « lightpanda »). Paquet npm global :
+# le postinstall télécharge le vrai binaire (build nightly) dans
+# ~/.cache/lightpanda-node/lightpanda — allow-scripts requis, sinon npm bloque
+# le postinstall et le binaire ne se télécharge jamais (MCP muet au démarrage).
+# allowlist (ré)assurée même si le skip s'applique : elle rend `lightpanda
+# upgrade` fonctionnel (réinstallation npm sans --allow-scripts).
+ensure_allow_scripts "@lightpanda/browser"
+if [ "$FORCE" = 0 ]; then
+    refresh_mcp_versions
+fi
+if [ "$FORCE" = 0 ] && npm list -g --depth=0 @lightpanda/browser &>/dev/null \
+    && [ -n "${LP_LATEST:-}" ] && [ "${CUR_LP:-}" = "$LP_LATEST" ] \
+    && [ -x "$HOME/.cache/lightpanda-node/lightpanda" ]; then
+    echo "✓ MCP Lightpanda $CUR_LP déjà à jour."
+else
+    echo "Installation du MCP Lightpanda (@lightpanda/browser) via npm..."
+    npm install -g --allow-scripts=@lightpanda/browser @lightpanda/browser \
+        || npm install -g @lightpanda/browser \
+        || echo "! Installation Lightpanda échouée (réseau ?) — le MCP sera absent."
+    VERSION_LP="$("$HOME/.cache/lightpanda-node/lightpanda" version 2>/dev/null | tail -1 || true)"
+    if [ -x "$HOME/.cache/lightpanda-node/lightpanda" ]; then
+        echo "✓ Lightpanda installé : ${VERSION_LP:-version inconnue}"
+        echo "  Binaire : $HOME/.cache/lightpanda-node/lightpanda"
+        MCP_UPDATED=1
+    fi
+fi
+
+# --- Étape 5ter : MCP chrome-devtools (chrome-devtools-mcp + Chrome for Testing) ---
+# Référencé par opencode.json (serveur local « chrome-devtools », --executablePath
+# pointé sur le symlink fixe). Tout est confiné dans ~/.cache/chrome-devtools-mcp/ :
+# - serveur MCP (JS pur) dans node_modules/ — bin appelé par opencode.json
+# - Chrome for Testing (stable) dans browsers/, exposé par le symlink fixe « chrome »
+# (chemin CDM_CACHE défini en Étape 2bis)
+if [ "$FORCE" = 0 ]; then
+    refresh_mcp_versions
+fi
+if [ "$FORCE" = 0 ] && [ -n "${CDM_LATEST:-}" ] && [ "${CUR_CDM:-}" = "$CDM_LATEST" ] \
+    && [ -x "$CDM_CACHE/node_modules/.bin/chrome-devtools-mcp" ]; then
+    echo "✓ MCP chrome-devtools $CUR_CDM déjà à jour."
+else
+    echo "Installation du MCP chrome-devtools (chrome-devtools-mcp)..."
+    npm install --prefix "$CDM_CACHE" chrome-devtools-mcp \
+        || echo "! Installation chrome-devtools-mcp échouée (réseau ?) — le MCP sera absent."
+    if [ -x "$CDM_CACHE/node_modules/.bin/chrome-devtools-mcp" ]; then
+        echo "✓ chrome-devtools-mcp installé : $CDM_CACHE/node_modules/.bin/chrome-devtools-mcp"
+        MCP_UPDATED=1
+    fi
+fi
+
+if [ "$FORCE" = 0 ] && [ -n "${CHROME_LATEST:-}" ] && [ "${CUR_CHROME:-}" = "$CHROME_LATEST" ] \
+    && [ -x "$CDM_CACHE/chrome" ]; then
+    echo "✓ Chrome for Testing $CUR_CHROME déjà à jour."
+else
+    echo "Téléchargement de Chrome for Testing (stable)..."
+    # Non fatal : un incident réseau ici ne doit pas priver le reste du script
+    # (entrées Dolphin) ni tuer l'installation d'OpenCode déjà faite
+    npx --yes @puppeteer/browsers install chrome@stable --path "$CDM_CACHE/browsers" \
+        || echo "! Téléchargement de Chrome for Testing échoué (réseau ?) — conservation de la version installée."
+    # Symlink fixe vers la release stable la plus récente (layout versionné :
+    # stable-<ver> sur les vieux @puppeteer/browsers, linux-<ver> sur les récents)
+    LATEST_CHROME_DIR="$(ls -d "$CDM_CACHE"/browsers/chrome/stable-* "$CDM_CACHE"/browsers/chrome/linux-* 2>/dev/null | sort -V | tail -1 || true)"
+    if [ -n "$LATEST_CHROME_DIR" ] && [ -x "$LATEST_CHROME_DIR/chrome-linux64/chrome" ]; then
+        ln -sfn "$LATEST_CHROME_DIR/chrome-linux64/chrome" "$CDM_CACHE/chrome"
+        echo "✓ Chrome for Testing installé : $CDM_CACHE/chrome ($("$CDM_CACHE/chrome" --version 2>/dev/null || echo 'version inconnue'))"
+        MCP_UPDATED=1
+    else
+        echo "! Release Chrome for Testing introuvable dans $CDM_CACHE/browsers, symlink non retargeté."
+    fi
 fi
 
 # --- Étape 6 : installation/mise à jour de l'app OpenCode Desktop (AppImage + GearLever) ---
@@ -1090,14 +1269,15 @@ PY
 command -v kbuildsycoca6 &>/dev/null && kbuildsycoca6 --noincremental &>/dev/null || true
 command -v update-desktop-database &>/dev/null && update-desktop-database "$APPS_DIR" &>/dev/null || true
 
-# Redémarrer le service de fond UNIQUEMENT si la version du CLI a changé :
-# CLI, desktop et sessions sont tous connectés au même serveur — un restart
-# inconditionnel rebondit toutes les sessions ouvertes (CLI + desktop) même
-# sans mise à jour (best-effort)
-if [ -n "$CLI_VERSION_AFTER" ] && [ "$CLI_VERSION_BEFORE" != "$CLI_VERSION_AFTER" ]; then
-    echo "Version CLI changée ($CLI_VERSION_BEFORE -> $CLI_VERSION_AFTER), redémarrage du service de fond..."
+# Redémarrer le service de fond si la version du CLI a changé OU si un MCP a
+# été installé/mis à jour : CLI, desktop et sessions sont tous connectés au
+# même serveur — un restart inconditionnel rebondit toutes les sessions ouvertes
+# (CLI + desktop) même sans mise à jour (best-effort)
+if { [ -n "$CLI_VERSION_AFTER" ] && [ "$CLI_VERSION_BEFORE" != "$CLI_VERSION_AFTER" ]; } || [ "$MCP_UPDATED" = 1 ]; then
+    echo "Version CLI changée ($CLI_VERSION_BEFORE -> $CLI_VERSION_AFTER) ou MCP mis à jour, redémarrage du service de fond..."
     timeout 30 opencode service restart &>/dev/null || true
 fi
 
-echo "Opération terminée. OpenCode 2 est disponible via 'opencode' et 'opencode2' (CLI)"
-echo "et OpenCode Desktop est disponible dans le menu des applications."
+echo "Opération terminée. OpenCode 2 est disponible via 'opencode' et 'opencode2' (CLI),"
+echo "OpenCode Desktop est disponible dans le menu des applications, et les MCP"
+echo "Lightpanda + chrome-devtools sont installés pour opencode.json."
