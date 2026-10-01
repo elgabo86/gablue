@@ -116,8 +116,22 @@ curl -fsSL https://github.com/elgabo86/retroplayer/releases/latest/download/retr
 chmod +x /usr/bin/retroplayer
 
 # Installation de ZXTune (lecteur de musique tracker/chiptune)
+# Détection dynamique de la dernière révision publiant un build Linux x86_64
+# (certaines révisions n'existent que pour Android/darwin — ex. r5101, r5111)
+ZXTUNE_REV=""
+for rev in $(curl -fsSL https://storage.zxtune.ru/builds/public/ | grep -oE 'r[0-9]+' | sort -ruV); do
+    if curl -fsIL "https://storage.zxtune.ru/builds/public/${rev}/linux/x86_64/zxtune_${rev}_linux_x86_64.tar.gz" > /dev/null; then
+        ZXTUNE_REV="$rev"
+        break
+    fi
+done && unset -v rev
+if [ -z "$ZXTUNE_REV" ]; then
+    echo "ERREUR FATALE : aucune révision ZXTune avec build Linux x86_64 trouvée" >&2
+    exit 1
+fi
+echo "Installation de ZXTune ${ZXTUNE_REV}"
 # Exclusion des binaires non nécessaires
-curl -s https://storage.zxtune.ru/builds/public/r5100/linux/x86_64/zxtune_r5100_linux_x86_64.tar.gz | tar -xzf - -C / --exclude=./usr/bin/zxtune123 --exclude=./usr/bin/xtractor
+curl -fsSL "https://storage.zxtune.ru/builds/public/${ZXTUNE_REV}/linux/x86_64/zxtune_${ZXTUNE_REV}_linux_x86_64.tar.gz" | tar -xzf - -C / --exclude=./usr/bin/zxtune123 --exclude=./usr/bin/xtractor
 
 # =============================================================================
 # BRANDING GABLUE
