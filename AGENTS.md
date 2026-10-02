@@ -76,12 +76,14 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── gablue-isomount.c              # Programme principal (UDisks2 DBus, Dolphin)
 │   │   └── Makefile                       # Compilation
 │   └── gwine-launcher/                     # Sources du lanceur gwine (Bash modulaire)
+│       ├── AGENTS.md                        # Architecture interne du lanceur
 │       ├── gwine                           # Script point d'entrée
 │       ├── build.sh                        # Assemblage du fichier standalone
 │       ├── completions/                    # Completions bash et zsh
 │       └── lib/                            # Bibliothèques modulaires (~60 fichiers)
 ├── files/
 │   ├── scripts/                           # Scripts d'installation bash
+│   │   ├── AGENTS.md                      # Détail des scripts de build (copr → cpuid-fault)
 │   │   ├── build-c                       # Compilation sources C
 │   │   ├── build-gwine                    # Assemblage script gwine standalone
 │   │   ├── cleanup                        # Nettoyage intermédiaire
@@ -97,12 +99,17 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── rpm                            # Paquets RPM (avec libs 32-bit Wine/Proton)
 │   │   └── systemd                        # Activation services systemd
 │   └── system/                            # Fichiers système à copier
+│       ├── AGENTS.md                      # Docs des fichiers système (/etc, usr/bin, ujust…)
 │       ├── all/                           # Fichiers communs à toutes les variantes
 │       │   ├── etc/xdg/                   # Configs XDG système (kwinrulesrc VRR, autostart, blacklist)
 │       │   └── usr/                       # Binaires, scripts, configurations, services
 │       ├── main/                          # Réservé variante main (actuellement vide)
 │       └── nvidia-common/                 # Fichiers communs nvidia + nvidia-open (modprobe, udev PM, SELinux, CDI, distrobox)
+├── installer/                             # Build ISO live (Containerfile payload, build.sh, hooks Titanoboa)
+│   └── AGENTS.md                          # Fonctionnement du live + build local
+├── local-build/                           # Build ISO local (build-iso.sh)
 ├── .github/
+│   ├── AGENTS.md                          # Docs workflows CI
 │   ├── actions/                           # Composite actions locales
 │   │   └── mount-btrfs-storage/           # Montage loopback BTRFS compressé sur "/"
 │   │       └── action.yml
@@ -117,10 +124,10 @@ Le projet construit 6 variantes distinctes :
 
 ## Commandes de build
 
-### Build local complet
+### Build d'une variante
 
 ```bash
-# Build de l'image principale (main)
+# Exemple : gablue-main — adapter VARIANT / NVIDIA_FLAVOR / DX_MODE selon la variante
 sudo buildah build \
   --file Containerfile-gablue \
   --format "docker" \
@@ -130,43 +137,15 @@ sudo buildah build \
   --build-arg KERNEL_FLAVOR="ogc" \
   --build-arg KERNEL_VERSION="<version>" \
   --tag gablue-main .
-
-# Build de l'image NVIDIA (closed)
-sudo buildah build \
-  --file Containerfile-gablue \
-  --format "docker" \
-  --build-arg VARIANT="nvidia" \
-  --build-arg SOURCE_IMAGE="kinoite" \
-  --build-arg FEDORA_VERSION="44" \
-  --build-arg KERNEL_FLAVOR="ogc" \
-  --build-arg KERNEL_VERSION="<version>" \
-  --build-arg NVIDIA_FLAVOR="nvidia-lts" \
-  --tag gablue-nvidia .
-
-# Build de l'image NVIDIA Open
-sudo buildah build \
-  --file Containerfile-gablue \
-  --format "docker" \
-  --build-arg VARIANT="nvidia-open" \
-  --build-arg SOURCE_IMAGE="kinoite" \
-  --build-arg FEDORA_VERSION="44" \
-  --build-arg KERNEL_FLAVOR="ogc" \
-  --build-arg KERNEL_VERSION="<version>" \
-  --build-arg NVIDIA_FLAVOR="nvidia-open" \
-  --tag gablue-nvidia-open .
-
-# Build de l'image DX (développement)
-sudo buildah build \
-  --file Containerfile-gablue \
-  --format "docker" \
-  --build-arg VARIANT="main" \
-  --build-arg SOURCE_IMAGE="kinoite" \
-  --build-arg FEDORA_VERSION="44" \
-  --build-arg KERNEL_FLAVOR="ogc" \
-  --build-arg KERNEL_VERSION="<version>" \
-  --build-arg DX_MODE="true" \
-  --tag gablue-main-dx .
 ```
+
+| Variante | VARIANT | Build-args additionnels |
+|----------|---------|-------------------------|
+| gablue-main | main | — |
+| gablue-nvidia | nvidia | `NVIDIA_FLAVOR="nvidia-lts"` |
+| gablue-nvidia-open | nvidia-open | `NVIDIA_FLAVOR="nvidia-open"` |
+| gablue-main-dx | main | `DX_MODE="true"` |
+| gablue-nvidia-open-dx | nvidia-open | `NVIDIA_FLAVOR="nvidia-open"` + `DX_MODE="true"` |
 
 ### Vérification de l'image construite
 
@@ -179,6 +158,15 @@ podman run -it gablue-main /bin/bash
 
 # Vérifier le contenu
 podman run gablue-main cat /usr/lib/os-release
+
+# Vérifier les paquets installés
+podman run gablue-main rpm -qa | grep -E "(nvidia|kernel|mesa)"
+
+# Vérifier les services
+podman run gablue-main systemctl list-unit-files --state=enabled
+
+# Vérifier la taille
+podman images gablue-main
 ```
 
 ## Conventions de code
@@ -335,35 +323,6 @@ RUN --mount=type=cache,dst=/var/cache \
 - Terminer par `/ctx/cleanup` pour nettoyer
 - Appeler les scripts directement (`/ctx/script`) sans `sh`
 
-### Justfile (60-custom.just)
-
-**Format** :
-```just
-# Description de la commande
-command-name:
-    #!/usr/bin/bash
-    echo "Hello World"
-```
-
-**Conventions** :
-- Nommage en kebab-case
-- Shebang obligatoire
-- Description sur une ligne avant la commande
-- Indentation avec 4 espaces
-
-**Gestion des subvolumes BTRFS** :
-- `btrfs filesystem defrag -r` ne traverse pas les limites de subvolumes — utiliser `findmnt -t btrfs` filtré par UUID pour lister les points de montage individuels de chaque subvolume
-- En fallback (disques externes où les subvolumes ne sont pas montés séparément), utiliser `sudo btrfs subvolume list` et reconstruire les chemins
-- Exclusions communes aux deux commandes : `.beeshome` (metadata BEES), `root*` (ostree système, reflinks), `*.snapshots` (snapper, reflinks)
-- `btrfs-compress-defrag` exclut en plus `/var` et `var*` (risque reflinks Docker/Podman) — `btrfs-compress` (property set, safe) ne les exclut pas
-- Affichage des filesystems par label (`findmnt -o TARGET,UUID,LABEL`) quand disponible
-- Parsing de la propriété compression via `cut -d= -f2` (car `btrfs property get` renvoie `compression=valeur`)
-- Utiliser `mapfile -t` pour lire les subvolumes dans un tableau
-
-**Complétion bash** :
-- `files/system/all/usr/share/bash-completion/completions/ujust` : surcharge la complétion buggy du paquet `ublue-os-just` (qui n'enregistrait jamais la complétion pour `ujust`)
-- Génère dynamiquement la liste des recettes via `ujust --summary`
-
 ## Gestion des erreurs
 
 ### Commandes critiques vs optionnelles
@@ -419,428 +378,6 @@ for copr in repo1 repo2 repo3; do
 done && unset -v copr
 ```
 
-## Scripts de build détaillés
-
-### 1. copr - Configuration des dépôts
-
-Configure tous les dépôts tiers nécessaires :
-- **keepcache=1** : Activé au début pour que le cache DNF persiste entre builds (désactivé dans finalize)
-- **COPR** : ublue-os/bazzite, ublue-os/bazzite-multilib, ublue-os/staging, ublue-os/packages, che/nerd-fonts, hikariknight/looking-glass-kvmfr, lizardbyte/beta
-  - Migration bazzite-org → ublue-os (août 2026) : le COPR `bazzite-org/bazzite` n'est plus maintenu (dernier build mai 2026), Bazzite utilise `ublue-os/bazzite` qui fournit notamment **bees 0.11** (requis pour `--throttle-factor` dans `configure-beesd`). `bazzite-org/rom-properties` a aussi été retiré : rom-properties vient désormais de **Terra** (comme Bazzite)
-- **Tiers** : Tailscale, Negativo17
-- **Terra (FyraLabs)** : terra-release, terra-release-extras, terra-release-mesa — exclusion `terra-glfw*` ajoutée (août 2026) : terra-glfw a `Conflicts: glfw` cross-arch et casse l'install de `mangohud.i686` (glfw doit rester sur la version fedora, comme Bazzite) — exclusion `waydroid*` ajoutée (21/09/2026) : `waydroid-nvidia` (publié sur terra-extras le 20/09/2026) Provides `libvirglrenderer.so.1` et Obsoletes `waydroid` — avec Terra priority 3, dnf5 le choisit comme fournisseur de ce symbol à la place de virglrenderer fedora lors de la transaction virtualisation DX (`qemu-device-display-*-gl` → Requires `libvirglrenderer.so.1`) : fork waydroid complet + lxc + libgbinder installés, `waydroid-container.service` activé dans l'image, virglrenderer fedora évincé (variantes DX uniquement, main non touchée ; validé en conteneur : exclusion → retombe sur virglrenderer fedora)
-
-Exclusions importantes :
-- **Swap ostree** (aligné Bazzite `b771fae6`) : `dnf5 swap --from-repo=copr:copr.fedorainfracloud.org:ublue-os:staging ostree ostree` — ostree patché par ublue pour corriger un problème flatpak
-- Mesa et kernel des dépôts Fedora (fournis par Terra)
-- `noopenh264` exclu de `*fedora*` et `updates*` (aligné Bazzite `5161562`) : stub vide de Fedora qui `Obsoletes` le vrai codec Cisco openh264 — l'exclusion l'empêche de le remplacer lors des installs/upgrades
-- Exclusions bazzite : pipewire-*, bluez-*, xorg-x11-server-Xwayland, wireplumber-* (alignement i686/x86_64 fc44)
-- Exclusions staging : scx-tools, scx-scheds, kf6-*, mesa*, mutter* (aligné Bazzite) — staging est sans priorité (comme fedora) : un build plus récent gagnerait au tri par version et ferait dériver kf6 (non couvert par le versionlock qt6/plasma) ou scx (attendu du COPR cachyos) ; `ostree` reste installable pour le swap
-- Priorité Terra = 3 (haute)
-
-### 2. kernel - Installation du kernel OGC + akmods
-
-**kernel (stable)** : Installation du kernel OGC et des akmods depuis ublue-os
-- Récupération depuis `ghcr.io/ublue-os/akmods` et `ghcr.io/ublue-os/akmods-extra`
-- Installation du kernel depuis `/tmp/kernel-rpms/`
-- Utilisation du helper `/ctx/install-kmods` qui vérifie l'existence de chaque RPM avant installation (évite les échecs si un module n'est plus présent dans l'image akmods)
-- Kmods communs (via install-kmods) : framework-laptop, kvmfr, openrazer, v4l2loopback, xone, wl
-- Kmods extras (via install-kmods) : zenergy, gcadapter, evdi, kvmfr, new-lg4ff, hid-tmff2, t150-driver, hid-fanatecff, ryzen_smu, sc0710, nct6687d, system76, vhba
-- Versionlock pour verrouiller les versions
-- Installation de scx-scheds depuis COPR bieszczaders/kernel-cachyos-addons
-
-### 3. mesa - Installation Mesa Terra (multilib fc44)
-
-**mesa (stable)** : Swap Mesa vers la version Terra optimisée
-- Swap de `mesa-filesystem` vers terra-mesa
-- Installation x86_64 : dri-drivers, libEGL, libGL, libgbm, vulkan-drivers
-- Installation i686 : dri-drivers, libEGL, libGL, libgbm, vulkan-drivers
-- Terra fc44 : les fichiers `LICENSE.dependencies` sont nommés par arch (`.i386` / `.x86_64`), pas de conflit
-- Versionlock des paquets Mesa
-
-### 4. nvidia - Installation pilotes NVIDIA via akmods
-
-**nvidia (stable)** : Installation via `nvidia-install.sh` de ublue-os
-- Suppression de `nvidia-gpu-firmware` (conflit avec pilotes propriétaires)
-- Activation terra-mesa pour egl-wayland + Mesa i686
-- Installation EGL Wayland (32 et 64 bits)
-- Appel de `nvidia-install.sh` avec `AKMODNV_PATH="/tmp/rpms/nvidia"`, `MULTILIB=1`, `IMAGE_NAME="$SOURCE_IMAGE"`
-- nvidia-install.sh gère : driver, kmod, container-toolkit, supergfxctl, SELinux, dracut force_drivers, staging COPR
-- Configuration post-installation : suppression ICD Nouveau, symlink libnvidia-ml, disable supergfxd
-- Retrait de `nvidia_peermem` de la conf dracut (aligné Bazzite, fix #4569) : `nvidia-install.sh` bascule `omit_drivers` → `force_drivers` ce qui force le chargement de `nvidia_peermem` (module datacenter NVLink/InfiniBand inutile sur desktop, échoue avec "Invalid argument") → `dracut-pre-udev` perdait ~26s à chaque boot
-- Activation explicite des services de gestion d'alimentation NVIDIA (aligné Bazzite, le preset RPM Fusion `70-nvidia.preset` ne s'applique pas de façon fiable en build container) : `nvidia-suspend`, `nvidia-resume`, `nvidia-hibernate`, `nvidia-suspend-then-hibernate`, `nvidia-powerd` — boucle avec test d'existence du fichier unit, certains services sont absents du packaging nvidia-open (ex. `nvidia-suspend`) et ne doivent pas faire échouer le build
-- **Désactivation de `nvidia-persistenced`** (aligné Bazzite `e93936b`) : le démon de persistance maintient le pilote initialisé en permanence — en conflit avec les setups hybrides (supergfxctl, RTD3) où le GPU doit pouvoir s'éteindre complètement
-- Gestion d'alimentation (aligné Bazzite, doc officielle NVIDIA powermanagement) : `nvidia-power.conf` dans `/usr/lib/modprobe.d/` (`NVreg_EnableS0ixPowerManagement=1` + `NVreg_DynamicPowerManagement=0x02` pour S0ix/RTD3) et `80-nvidia-pm.rules` dans `/usr/lib/udev/rules.d/` (runtime PM auto au bind, suppression devices USB xHCI/UCSI NVIDIA qui empêchent la veille) — surtout utile sur laptop, inoffensif sur desktop
-- **VK_hdr_layer** pour pilotes closed uniquement (pas nvidia-open) : extraction manuelle du RPM
-- **nvidia-modeset.conf** : copie de `/etc/modprobe.d/` vers `/usr/lib/modprobe.d/` (workaround Dracut, avec vérification `[ -f ]`) pour pilotes closed, les pilotes open n'ont pas ce fichier
-- Désactivation terra-mesa après installation
-
-### 5. rpm - Paquets RPM
-
-Installation extensive de paquets organisée par catégories :
-- **Homebrew** : brew n'est **pas** installé en RPM (`ublue-brew` est déprécié upstream, dernier build COPR 11/2025) — fourni par l'étape intermédiaire `FROM ghcr.io/ublue-os/brew:latest@sha256:...` du Containerfile-gablue (aligné Bazzite `d0c9330`) qui copie `/system_files/` (tarball `/usr/share/homebrew.tar.zst`, services `brew-setup.service`/`brew-update.timer`/`brew-upgrade.timer`, preset, intégration shell — contenu identique à l'ancien RPM). Le digest est épinglé, à bumper ponctuellement vers le dernier `:latest` (le `brew-update.timer` maintient brew à jour côté client de toute façon). Le tarball ne contient **pas** node/npm — npm est installé à la demande via `brew install node` (opencode2-install), ou présent si l'utilisateur l'a ajouté
-- **Activation `brew-setup.service`** (script systemd, ajout sept. 2026) : le preset `01-homebrew.preset` (`enable brew-setup.service`) fourni par l'image brew n'est **jamais appliqué** aux déploiements bootc/ostree (les presets systemd ne sont évalués qu'à l'installation de RPMs, pas au déploiement d'une image container) — l'activation des seuls timers laissait brew **jamais extrait** au premier boot sur les installations fraîches : `/home/linuxbrew` absent, `brew` introuvable, tout script dépendant échouait (opencode2-install sortait avant d'installer le CLI). Même bug Bazzite #3788/#3817 (« brew is missing on a new installation »), corrigé de la même façon upstream (`systemctl enable brew-setup.service` explicite dans leur Containerfile). Le service est un oneshot idempotent (`ConditionPathExists=!/etc/.linuxbrew`) : sans effet sur les machines où brew est déjà extrait
-- **profile.d gablue-brew.sh** (`files/system/all/etc/profile.d/gablue-brew.sh`) : rend brew visible dans les shells **non-interactifs** — le `/etc/profile.d/brew.sh` uBlue (copié de l'image brew) est réservé aux shells interactifs (`$- == *i*`) : la session Plasma (sourcing non-interactif de profile.d + `~/.bash_profile` par le DM au login — d'où bun/cargo/lmstudio présents mais brew absent de l'env de session), les scripts `bash -lc` et OpenCode (lancé en GUI : tool shells en `bash -c` non-login qui ne sourcent rien et héritent du processus) n'avaient jamais brew dans le PATH. Même logique que brew.sh uBlue sans la garde interactive : exports `HOMEBREW_PREFIX`/`HOMEBREW_CELLAR`/`HOMEBREW_REPOSITORY`/`MANPATH`/`INFOPATH` + ajout **en FIN de PATH** de `bin`/`sbin` — les binaires système restent prioritaires (pas de shadowing du python/git système, seules les commandes absentes de /usr sont comblées). Garde `[ -d /home/linuxbrew/.linuxbrew ]` (premier boot avant `brew-setup.service` = skip propre), anti-doublon par `HOMEBREW_PREFIX` + `case` sur le PATH — cohabitation sans doublon avec brew.sh dans les deux ordres (ordre alphabétique : `brew.sh` d'abord en interactif → le nôtre skip ; en non-interactif brew.sh skip → le nôtre s'exécute). POSIX-safe (`case`/`[ ]`, pas de `[[ ]]`, pas de `set`) car sourcé par le shell du DM. **Ne jamais patcher brew.sh lui-même** (contenu uBlue réécrasé à chaque bump de digest) — ce fichier dédié est re-appliqué à chaque build image
-- **libxcrypt-compat** (section CLI) : requis par le Portable Ruby de brew 4.0+ (`libcrypt.so.1`, absent de fc44 qui ne fournit plus que `libcrypt.so.2`) — sans lui, `brew upgrade` échoue sur « Failed to upgrade Homebrew Portable Ruby! » ; aligné Bazzite (Containerfile)
-- **CLI** : fswatch, btop, fastfetch, git, atuin, tldr, amdsmi, jq, zoxide, bpftune-gaming (fork gaming de bpftune, depuis Terra 44 — aligné Bazzite `4333b30`, détection traffic UDP burst des jeux pour réduire la latence réseau ; le service reste `bpftune.service`), etc.
-- **Réseau** : tailscale, rar
-- **Multimédia** : yt-dlp, openh264.x86_64 + openh264.i686 (vrai codec Cisco H.264 depuis negativo17 `fedora-multimedia`, installé explicitement avec `--allowerasing` — aligné Bazzite `5161562`, voir exclusion `noopenh264` dans copr)
-- **Virtualisation (toutes variantes)** : `qemu-guest-agent` (agent invité QEMU) — léger (~300 Ko), inoffensif sur bare metal (service lié au device virtio-serial `org.qemu.guest_agent.0`, ne démarre pas si absent), utile en VM (IP dans virt-manager, graceful shutdown, snapshots consistants). Installé sur toutes les variantes pour que les ISOs live fonctionnent dans libvirt. Activé par preset Fedora (`enable qemu-guest-agent.service`)
-- **Virtualisation (DX uniquement)** : docker-ce, libvirt, virt-manager, virt-viewer, virt-install, swtpm, guestfs-tools, python3-libguestfs, qemu-kvm-core, qemu-system-ppc/m68k/arm/aarch64-core (émulation rétro), spice-server, et modules QEMU modulaires externes (display qxl/virtio-gpu/virtio-vga, audio spice/pipewire/pa/alsa, usb host/redirect/smartcard, ui spice/gtk/opengl/egl/dbus, char-spice) — les modules virtio/net/pci/vfio sont compilés statiquement dans qemu-system-x86-core (tiré par qemu-kvm-core), requis car `--setopt=install_weak_deps=False` empêche l'auto-install des modules externes en dépendances faibles. `python3-libguestfs` est requis explicitement (paquet Optional du groupe Fedora `Virtualization`) : virt-manager importe le module `guestfs` dans `inspection.py` pour l'inspection des VMs ; sans lui, l'import échoue en silencieux (try/except) et l'inspection/resize via libguestfs est désactivée
-- **Terminal fun** : asciiquarium, cmatrix
-- **Gaming** : sunshine, terra-mangohud (.x86_64/.i686, migré du COPR bazzite vers Terra — aligné Bazzite `a390d80` : le COPR bazzite abandonne progressivement ses paquets (gamescope déjà sorti), terra-mangohud est le même paquet (même spec, version et packager KyleGospo), `Provides: mangohud`, chemins `/usr/bin/mangohud` + `/usr/lib64/mangohud` + `/usr/lib/mangohud` (i686) identiques) + terra-gamescope + terra-gamescope-libs (.x86_64/.i686, depuis terra-extras comme Bazzite — le COPR bazzite ne build plus gamescope et Fedora n'a pas de multilib i686 ; terra-gamescope provides/conflicts `gamescope`, le binaire `/usr/bin/gamescope` reste identique) ; `steam-devices` (règles udev manettes depuis Fedora officiel : `60-steam-input.rules` + `60-steam-vr.rules` maintenues par Valve — 8BitDo 2.4GHz/BT/USB, Flydigi, DualShock, DualSense, Switch, ~100 devices ; noarch ~15 Ko, zéro dépendance, aucun scriptlet — remplace `8bitdo-udev-rules` Terra car les règles 8BitDo sont dans steam-devices upstream depuis 10/2025 (PR #66), aligné Bazzite `e5dbc91` ; Gablue n'installe pas le RPM Steam (flatpak uniquement) donc installation explicite nécessaire)
-  - **Fix conflit terra-mangohud ↔ COPR mangohud** (fix build 13/09) : terra-mangohud a la Recommends conditionnelle `(mangohud(x86-32) if glibc(x86-32))` — avec glibc.i686 présent (multilib Wine/Proton), dnf5 tirait le COPR `mangohud.i686` (seul paquet *nommé* mangohud en i686 ; terra-mangohud.i686 ne fournit pas `mangohud(x86-32)`) → conflit de fichiers (mangoapp, mangohudctl, libMangoHud*.so) → `Transaction failed` dans le step rpm (les 5 variantes). **Fix** : `--setopt=install_weak_deps=False` sur cette commande — Bazzite neutralise le même mécanisme via `install_weak_deps=False` **global** dans `/etc/dnf/dnf.conf` (copié dans son image), Gablue préfère le setopt local pour ne pas changer le comportement des autres installs
-  - **Bug latent corrigé au passage (archs explicites)** : les arguments arch-less (`terra-gamescope-libs`, `terra-mangohud`) étaient satisfaits par le i686 déjà tiré en dépendance (le require `terra-gamescope-libs = EVR` de terra-gamescope est arch-less, satisfait par le i686) → `terra-gamescope-libs.x86_64` (**layer Vulkan WSI 64-bit** `libVkLayer_FROG_gamescope_wsi_x86_64.so`) et `terra-mangohud.x86_64` n'étaient **jamais installés**, même dans les builds "réussis" avant la migration → archs désormais explicites `.x86_64` sur les 5 paquets (comme Bazzite), validé en conteneur fedora:44 (reproduction de l'échec + test du fix)
-- **BTRFS** : snapper, btrfs-assistant (snapshots et maintenance, non activés par défaut)
-- **KDE** : okular, gwenview, kcalc, yakuake (Kinoite uniquement)
-- **Polices** : nerd-fonts
-- **Runtime** : patch, bzip2, sqlite, uv
-- **Python (scripts Gablue)** : python3-evdev, python3-pyside6 (python3-uinput retiré : cassé sous Python 3.14 par la suppression de distutils, `mouse.py` remplacé par le binaire C `gamepadshortcuts-mouse`)
-- **SELinux** : checkpolicy, selinux-policy-devel
-- **Libs 32-bit Wine/Proton complètes** : fontconfig, freetype, X11 (composite, cursor, damage, fix, i, inerama, randr, render, tst, v), Wayland (epoxy, decor, cursor, egl), core (gnutls, unwind, cups, openldap), audio (pulseaudio, pipewire upgrade + libs, FAudio, alsa, openal, ogg, vorbis, flac, sndfile), vulkan-loader (terra-mesa), vidéo (libva, libvdpau — **upgrade `libva libvdpau` x86_64 avant l'install i686**, même pattern que pipewire-libs : les fichiers %doc de libva entrent en conflit si les arches divergent, et dnf5 install ne upgrade pas un paquet déjà installé (validé en conteneur) ; l'alignement était accidentel via la cascade ffmpeg i686 tirée par le libheif negativo, morte depuis le retrait de libheif de fedora-multimedia (le i686 résout vers le libheif fedora 1.23.4, sans ffmpeg) — fix 21/09/2026, échec build 20-21/09 les 5 variantes)
-
-**Upgrade initial restreint** (toutes variantes) :
-- `dnf5 -y upgrade --refresh --repo=fedora --repo=updates` **avant** toute installation
-- L'image Kinoite de base peut avoir jusqu'à 48h de retard sur les mises à jour Fedora
-- Restreint aux dépôts officiels uniquement : les exclusions `mesa-*` et `kernel-*` du copr protègent Mesa et kernel, NVIDIA vient des RPMs akmods externes
-- Exécuté avant le versionlock `qt6-*`/`plasma-*` (aligné Bazzite `c9ef733`, anti-dérive ABI Qt — remplace l'ancien lock `plasma-desktop` seul) pour que ces paquets soient déjà à jour avant d'être verrouillés
-
-Paquets supprimés :
-- firefox, firefox-langpacks, htop
-- plasma-welcome-fedora, plasma-welcome
-- plasma-discover-rpm-ostree (Kinoite)
-
-### 5a. pypi - Packages Python sans équivalent RPM
-
-**pypi** (appelé après rpm) :
-- Installe `terminaltexteffects` depuis PyPI via `uv` (pas d'équivalent RPM Fedora)
-- **Conflit site-packages** : un RPM peut créer un fichier ou symlink à n'importe quel niveau du chemin `/usr/local/lib/python3.14/site-packages/` au lieu d'un répertoire (ex: transition majeure Python), ce qui bloque `uv pip install` (`File exists, os error 17`). Le script remonte la hiérarchie et supprime tout ce qui n'est pas un répertoire, puis crée l'arborescence avec `mkdir -p` avant d'installer
-
-### 5b. build-c / build-gwine - Compilation des sources
-
-**build-c** (appelé après pypi) :
-- Compile les binaires C depuis `/src/gamepadshortcuts` (gamepadshortcuts + gamepadshortcuts-mouse + kbdnav, même Makefile), `/src/ds2xbox`, `/src/gablue-isomount`
-- Installation via `make -C <dir> install DESTDIR=`
-- Nettoie les sources après compilation (`rm -rf /src/<dir>`)
-- Désinstalle `dbus-devel` après compilation (inutile dans l'image finale)
-
-**build-gwine** (appelé après build-c) :
-- Assemble le script gwine standalone depuis `/src/gwine-launcher/`
-- Exécute `build.sh` qui concatène les ~60 fichiers modulaires `lib/` en un script unique
-- Embarque les shims overlayfs (`composefs_statfs_shim.so` 32/64 bits) en base64 pour extraction au runtime
-- Installe `/usr/bin/gwine` et les completions bash/zsh
-- Nettoie les sources après assemblage
-- **IMPORTANT** : toute modification des fichiers `lib/` (ex. `lib/modes/init-main.sh`, `lib/runner.sh`) nécessite un rebuild de l'image pour être effective. Le gwine assemblé est celui utilisé par `build.sh` pour générer le pack cache de l'ISO → l'image doit être reconstruite **avant** l'ISO
-- Voir `src/gwine-launcher/AGENTS.md` pour l'architecture interne du lanceur
-
-### 6. post-install
-
-Configuration post-installation étendue :
-- Permissions des exécutables (chmod +x)
-- Capacités système (setcap pour gamescope)
-- Compilation modules SELinux personnalisés (.te -> .pp)
-- Binaires externes (retroplayer, zxtune)
-- Branding Gablue (os-release)
-- Configuration système (tuned, bluetooth, pipewire, timers)
-- Désactivation des dépôts
-- Nettoyage des fichiers .desktop
-- Configuration DX (iptables, NetworkManager)
-- MIME par défaut (Windows.desktop, LGP.desktop)
-- **Mises à jour automatiques** : active `AutomaticUpdatePolicy=stage` dans `/etc/rpm-ostreed.conf` (copie depuis `/usr/share/ublue-os/update-services/etc/rpm-ostreed.conf` fourni par le RPM `ublue-os-update-services`) et reprogramme les timers flatpak + rpm-ostree le samedi à 04:00 avec `RandomizedDelaySec=10m`
-- **Linuxbrew** : ajoute `/home/linuxbrew/.linuxbrew/bin` au `secure_path` de sudo
-- `toggle-updates` upstream (RPM ublue-os-just, `/usr/share/ublue-os/just/10-update.just`) reste intact (flatpak + rpm-ostree uniquement) — la variante globale incluant les timers brew est la recette Gablue `toggle-updates-all` (60-custom.just)
-- **Correction fstrim** (aligné Bazzite `8a76282f` qui remplace le sed `6a10aa2`, fedora-silverblue/issue-tracker#689) : drop-in `files/system/all/usr/lib/systemd/system/fstrim.service.d/workaround-no-root-trim.conf` qui remplace `ExecStart` par `/usr/bin/fstrim --listed-in /proc/self/mountinfo` — avec composefs, `/etc/fstab` ne reflète pas les montages réels, fstrim ne trimmait pas correctement. **Divergence volontaire** : le drop-in inclut `ExecStart=` vide avant la nouvelle ligne (fstrim.service est `Type=oneshot`, sans reset le drop-in *ajouterait* une seconde exécution au lieu de remplacer l'originale — omission dans le drop-in Bazzite)
-
-**Correction composefs** (toutes variantes) :
-- Compile un LD_PRELOAD minimal (`gablue-composefs-fix.so`, ~2.6 Ko) qui intercepte `statfs`/`statfs64`
-- Corrige l'affichage de l'espace libre dans Dolphin sur les systèmes composefs (Fedora Kinoite 42+)
-- L'overlay composefs en `/` rapporte 0 blocs libres, le hook redirige `/`, `/home` et `/home/*` vers `/var/home` (btrfs)
-- Injection via `sed` dans le `.desktop` Dolphin (`Exec=env LD_PRELOAD=...`) — dans post-install
-- **Couverture des lancements hors `.desktop`** : un Dolphin démarré sans le hook affiche 0 o libre, et ses processus enfants (kioworker, qui font le `statfs` réel via `QStorageInfo` dans `FileProtocol::fileSystemFreeSpace`) héritent de son env → le bug persiste dans toute la session, jusqu'au reboot. Deux portes d'entrée couvertes :
-  - Drop-in systemd user `usr/lib/systemd/user/plasma-dolphin.service.d/gablue-composefs-fix.conf` (`Environment=LD_PRELOAD=...`) : l'activation D-Bus `org.freedesktop.FileManager1` (« Ouvrir le dossier contenant » depuis n'importe quelle app) démarre `dolphin --daemon` via `plasma-dolphin.service` sans le preload (dbus-broker honore `SystemdService=` → activation systemd)
-  - `gablue-isomount` réinjecte le `LD_PRELOAD` avant son `execlp("dolphin")` direct (voir section dédiée)
-- Reste non couvert (accepté, rare) : lancement manuel en terminal
-- Sources dans `src/composefs-fix/`
-
-**Correction plasmalogin settle udev** (TEMPORAIRE, toutes variantes) :
-- **Problème** : plasmalogin.service exécute `udevadm settle --timeout=10` avant de démarrer le greeter, ce qui provoque un écran noir de 10s sur certaines cartes mères (queue udev jamais vide)
-- **Fix** : drop-in `plasmalogin.service.d/90-gablue-settle.conf` remplace le settle aveugle par `/usr/libexec/gablue-wait-devices`
-- **Script** : attend qu'au moins un connecteur `/sys/class/drm/card*-*/status` passe à `connected` (le premier suffit, les écrans suivants sont hotpluggés par KWin) et que `/dev/input/event*` existe, puis 1s de délai fixe pour les docks/HID lents (timeout global 5s, headless = sortie au timeout) — attendre la carte seule ne suffit pas : sur GPU récents (ex. RX 9060 XT / gfx12) le connecteur met plus longtemps, sinon KWin du greeter démarre sans output (« There are no outputs » → écran noir)
-- **Impact** : passe de ~10.2s à ~1.1s sur les systèmes affectés (fixe upstream KDE `a8c752fe` trop conservateur)
-- **À SUPPRIMER** quand Fedora/KDE réduit le timeout du settle natif ou adopte une approche plus ciblée
-- Fichiers : `files/system/all/usr/libexec/gablue-wait-devices`, `files/system/all/usr/lib/systemd/system/plasmalogin.service.d/90-gablue-settle.conf`
-
-**Wrapper swap-session Plasma Bigscreen** (toutes variantes) :
-- Remplace `/usr/bin/plasma-bigscreen-swap-session` par `gablue-bigscreen-swap-session` (script C++ bigscreen appelle ce binaire directement via QProcess)
-- **Fallbacks d'environnement** : le script est lancé depuis bigscreen via QProcess détaché avec un env minimal (pas de DBus/Wayland/locale) — il exporte des fallbacks (`XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, `WAYLAND_DISPLAY`, `QT_QPA_PLATFORM=wayland`, `LANG`) avant tout. Sans `QT_QPA_PLATFORM=wayland`, kscreen-doctor tombe sur xcb et crash (coredump + notification DrKonqi). Au retour, l'env sauvegardé (`saved-env`) est sourcé EN PREMIER dans `swap_to_default` (avant systemctl/kscreen-doctor)
-- **Anti double-invocation** : bigscreen peut émettre le signal de swap deux fois (~2s d'écart) — sans protection, le 2e appel repartait immédiatement en bigscreen et écrasait la restauration (fenêtres re-maximisées sans déco, kwinrc re-pollué). Verrou `flock` (fd 9) + cooldown 6s (fichier `last-swap`). Tous les processus backgroundés ferment le fd 9 (`9>&-`) pour ne pas conserver le verrou (`plasmashell --replace` tourne indéfiniment)
-- **Aller (swap_to_bigscreen)** :
-  - Sauvegarde l'environnement et les settings KWin (`BorderlessMaximizedWindows`, `Placement`, `NoPlugin`)
-  - Source `plasma-bigscreen-common-env` pour charger les variables bigscreen
-  - Écrit les settings KWin bigscreen dans `~/.config/kwinrc` (fenêtres maximisées, sans décorations, pas de plugin déco)
-  - Détecte les écrans connectés et met tous les secondaires en miroir sur le principal via `kscreen-doctor output.X.mirror.Y` (bigscreen ne gère pas le multi-écran)
-  - Lance l'inputhandler via `kioclient exec` (mécanisme KDE natif pour les permissions Wayland `X-KDE-Wayland-Interfaces`)
-  - Remplace plasmashell (`plasmashell --replace`)
-  - Après 2s (bigscreen chargé) : maximise toutes les fenêtres existantes et retire leurs décorations via un script KWin 6 (`workspace.stackingOrder`, `frameGeometry = MaximizeFullArea`, `noBorder = true`)
-- **Retour (swap_to_default)** :
-  - Tue l'inputhandler (SIGTERM puis SIGKILL)
-  - Restaure les settings KWin originaux (supprime les clés si elles n'existaient pas avant)
-  - Relance `plasma-xwaylandvideobridge.service` (tué par bigscreen dans `HomeScreen.qml` — hack qui cassait X11 au retour)
-  - Restaure l'environnement sauvegardé (dont `XDG_CONFIG_DIRS`)
-  - Reconfigure KWin (`qdbus reconfigure`) pour reprendre la config Plasma normale
-  - Annule le mirroring écrans (`output.X.mirror.none`)
-  - Remplace plasmashell
-  - Après 2s : restaure les décorations et dé-maximise les fenêtres via un script KWin 6 (`noBorder = false`, `setMaximize(false, false)` obligatoire car `frameGeometry` est ignoré sur une fenêtre maximisée, puis `frameGeometry` à 80% centré)
-- Détection automatique du mode : basée sur `pgrep -f plasma-bigscreen-inputhandler` (plus fiable que la variable d'env `PLASMA_BIGSCREEN_LAUNCH_REASON` qui n'est pas héritée via KLauncher)
-- Fichiers : `files/system/all/usr/bin/gablue-bigscreen-swap-session`, `files/system/all/usr/share/gablue/kwin-maximize-all.js`, `files/system/all/usr/share/gablue/kwin-restore-windows.js`
-
-**Initialisation session native Bigscreen** (toutes variantes) :
-- Autostart KDE (`/etc/xdg/autostart/gablue-bigscreen-session.desktop`) qui exécute `gablue-bigscreen-session-init` au login (s'exécute dans toutes les sessions Plasma)
-- Détection de la session bigscreen native via `PLASMA_PLATFORM=mediacenter` (variable sourcée par `plasma-bigscreen-common-env` au démarrage de la session native, avant l'autostart)
-- **En session Plasma normale** (non bigscreen) : si un fichier `~/.cache/plasma-bigscreen/kscreen-mirrored.txt` existe (mirroring résiduel d'une session bigscreen précédente), annule le mirroring de chaque output listé via `kscreen-doctor output.X.mirror.none` puis supprime le fichier. Attend l'initialisation de KWin avant d'agir
-- **En session bigscreen native** :
-  - Création du symlink blacklist (`~/.config/applications-blacklistrc` -> `/etc/xdg/applications-blacklistrc`) pour cacher les entrées inutiles dans le menu bigscreen
-  - Attente de l'initialisation KWin (boucle `kscreen-doctor --json`, max 10s)
-  - Mirroring de tous les écrans secondaires sur le principal via `kscreen-doctor output.X.mirror.Y` (bigscreen ne gère pas le multi-écran)
-  - Sauvegarde des noms des outputs mirrorés dans `kscreen-mirrored.txt` (fichier partagé avec `gablue-bigscreen-swap-session`) pour permettre la restauration au prochain login Plasma
-- Note : les actions spécifiques au swap (minimiser/restaurer les fenêtres, sauvegarder/restaurer KWin, gérer l'inputhandler) restent uniquement dans `gablue-bigscreen-swap-session`
-- Fichiers : `files/system/all/usr/libexec/gablue-bigscreen-session-init`, `files/system/all/etc/xdg/autostart/gablue-bigscreen-session.desktop`
-
-### 7. systemd
-
-Activation/désactivation des services systemd :
-- **Activés (toutes variantes)** : rpm-ostreed-automatic, flatpak-update, cec-poweroff-tv, cec-active-source, dmemcg-booster, bpftune (optimisation réseau eBPF, paquet `bpftune-gaming`, aligné Bazzite `4333b30`), **brew-setup** (extraction du tarball Homebrew au premier boot — le preset n'est pas appliqué aux déploiements bootc, voir section rpm)
-- **Désactivés** : scx_loader, tailscaled, displaylink
-- **Masqués** : systemd-remount-fs, flatpak-add-fedora-repos (empêche la réactivation du remote Fedora Flatpak au premier boot ; ce service natif du paquet `flatpak` réajoute `fedora`/`fedora-testing` tant que `/var/lib/flatpak/.fedora-initialized` n'existe pas, annulant le `disable-fedora-flatpak.ks` du kickstart. On garde uniquement Flathub, fourni par `/etc/flatpak/remotes.d/flathub.flatpakrepo`)
-- **Conditionnels (DX)** : ublue-os-libvirt-workarounds, gablue-dx-groups, incus-workaround
-
-### 8. initramfs
-
-Génération de l'initramfs avec dracut :
-- Détection de la version kernel installée via dnf5 repoquery
-- Génération avec options ostree et fido2
-- Permissions sécurisées (0600)
-
-### 9. cleanup / finalize
-
-**cleanup** (appelé après chaque étape RUN) :
-- Suppression de `/tmp/*`, `/var/log/dnf5.log`, `/boot/*`
-- PAS de `dnf5 clean all` (le cache mount `/var/cache` n'entre pas dans l'image, le nettoyer détruirait le cache DNF persistant)
-- PAS de `ostree container commit` (inutile avec bootc/rechunk)
-
-**finalize** (appelé une seule fois à la fin) :
-- `dnf5 config-manager setopt keepcache=0` (désactive le keepcache activé dans copr)
-- Nettoyage de `/var/*` sauf le répertoire cache
-- Migration des utilisateurs/groupes vers `/usr/lib/passwd` et `/usr/lib/group` via `relocate_accounts` (aligné Bazzite `5b1a399`) : nettoie aussi les entrées correspondantes dans `/etc/shadow` et `/etc/gshadow`, et fait échouer le build si une entrée n'a pas persisté dans `/usr/lib/`
-- Nettoyage des fichiers de verrou et de `/usr/etc`
-- PAS de `ostree container commit` (le rechunk dans le workflow s'en occupe)
-
-### 10. cpuid-fault - Module kernel CPUID faulting
-
-Compile le module `cpuid_fault_emulation` (source dans `src/cpuid-fault/`).
-Ce module émule le CPUID faulting sur les CPU AMD sans support natif (AM4, Steam Deck).
-Sur les CPU avec support natif (Intel 4th gen+, AMD Ryzen 7000+), le module n'est pas
-nécessaire — le kernel gère le CPUID faulting via `ARCH_SET_CPUID` nativement.
-
-- Compilation via `make -C /usr/src/kernels/${KVER} M=/src/cpuid-fault modules`
-- Le module est **AMD SVM uniquement** (instructions AMD-V), il sera ignoré sur Intel
-- Signature Secure Boot via `/run/secrets/gablue-kmod-key` (monté depuis le secret CI `GABLUE_KMOD_KEY`)
-- Si la clé n'est pas disponible (build local), le module est compilé mais non signé
-- Le certificat public `gablue-kmod.der` est installé dans `/etc/pki/akmods/certs/`
-- **Conflit avec KVM** : le module utilise AMD-V, KVM doit être déchargé avant chargement
-- **Persistance** (opt-in, géré par `ujust cpuid-emu-on` / `cpuid-emu-off`) : `on` écrit `/etc/modprobe.d/gablue-cpuid-emu.conf` (`blacklist kvm_amd` — bloque l'auto-charge udev au boot, un `modprobe kvm_amd` explicite reste possible) + `/etc/modules-load.d/gablue-cpuid-emu.conf` (`cpuid_fault_emulation`, chargé à chaque boot par `systemd-modules-load.service`) ; la persistance n'est écrite qu'après un chargement réussi (pas d'échec au boot si SVM désactivé dans le BIOS) ; `off` supprime les deux fichiers, décharge le module et recharge `kvm_amd`
-
-## Workflows GitHub Actions
-
-### gablue-builds.yml
-
-Workflow principal déclenché par :
-- Push sur main (avec tags spécifiques : `[main]`, `[nvidia]`, `[dx]`, `[all]`, `[all-iso]`)
-- Pull requests
-- Schedule quotidien (02:00 UTC)
-- Workflow_dispatch (manuel)
-
-**Optimisations** :
-- `paths-ignore` : les modifications de fichiers `.md` et `.txt` ne déclenchent pas de build (les changements dans `.github/**` déclenchent bien la build s'ils portent le bon tag, car les jobs sont filtrés par tag de commit)
-- `concurrency` : annule les builds en cours si un nouveau push arrive sur la même branche
-- **Attention** : un commit avec `[all]` (ou tout autre tag de build) annule la build en cours (concurrency `cancel-in-progress`). Pour committer un changement de workflow sans relancer/annuler une build, utiliser `[skip ci]` (reconnu nativement par GitHub Actions, aucun run déclenché)
-
-**Chaînage ISO (`[all-iso]`)** : le tag `[all-iso]` déclenche les 5 variantes d'images (comme `[all]`). À la fin du workflow, le workflow ISO se déclenche automatiquement via `workflow_run` (voir `build-gablue-live-isos.yml`). Les sous-chaînes ne collisionnent pas : `contains('[all-iso]', '[all]')` et `contains('[all-iso]', '[iso]')` sont tous deux **faux**, donc `[all-iso]` ne déclenche pas l'ISO immédiatement au push.
-
-**Jobs** :
-- `build-main` : Build gablue-main (Containerfile-gablue, nvidia_flavor non défini)
-- `build-nvidia` : Build gablue-nvidia (Containerfile-gablue, kernel_type=ogc-lts, nvidia_flavor=nvidia-lts)
-- `build-nvidia-open` : Build gablue-nvidia-open (Containerfile-gablue, nvidia_flavor=nvidia-open)
-- `build-dx` : Build gablue-main-dx (Containerfile-gablue, nvidia_flavor non défini, DX_MODE=true)
-- `build-nvidia-open-dx` : Build gablue-nvidia-open-dx (Containerfile-gablue, nvidia_flavor=nvidia-open, DX_MODE=true) — restreint à `main` (pas de build sur branche `test`)
-- `update-readme` : Met à jour le tableau de versions du README depuis les artifacts `versions-*` (needs sur les 5 builds d'images, ignoré sur `pull_request` et sur la branche `test`). Téléchargement via `gh run download` wrappé dans `nick-fields/retry@v4` (6 tentatives, 15s) — tolérance au 404 transitoire de l'API artifacts. Après download, présence des 5 JSON vérifiée explicitement avec `exit 1` si un manque (gh CLI peut retourner 0 malgré un échec partiel HTTP 503 d'un artifact, run 32050114931) — permet au retry de se déclencher. Commit `[skip ci]` avec push résilient : boucle jusqu'à 5 tentatives avec `git pull --rebase --autostash origin main` entre chaque essai pour absorber les commits concurrents (ex. un push arrivé pendant les ~50 min de build). Échec du 5e push → `exit 1` (le step échoue au lieu de passer silencieusement en succès)
-
-### reusable-gablue-image.yml
-
-Workflow réutilisable pour le build d'une image :
-
-**Inputs** :
-- `image_name`, `image_desc`, `image_variant` : Identification de l'image
-- `source_image` : Image de base Fedora (kinoite)
-- `fedora_version` : Version Fedora (44 pour toutes)
-- `kernel_type` : Type de kernel (`ogc`), utilisé comme KERNEL_FLAVOR dans le build
-- `kernel_version` : Version du kernel (défaut hardcodé dans `reusable-gablue-image.yml`, surcharge possible par job)
-- `nvidia_flavor` : Flavor NVIDIA (`nvidia-lts` ou `nvidia-open`, optionnel pour variantes non-NVIDIA)
-- `containerfile` : Containerfile explicite (optionnel, défaut Containerfile-gablue)
-
-**Migration rootless (août 2026, Bazzite `033a18f` + `625bebb`)** : tout le workflow tourne **sans sudo** — buildah, podman, skopeo en rootless (storage dans `~/.local/share/containers`). Plus de loopback BTRFS sur ce workflow : le rechunk rootless n'a jamais deux images complètes en storage (raw-img supprimée avant le pull de l'oci-archive), le pic (~25-30G) tient largement dans les ~110G libres des runners ubuntu-26.04. Si le disque sature un jour sur une variante DX, réintroduire `./.github/actions/mount-btrfs-storage` avec `target-dir: ~/.local/share/containers`.
-
-**Étapes** :
-1. Récupération automatique de la version kernel via `skopeo list-tags` uniquement si `kernel_version` est vide — **retry** (3 tentatives, 10s) sur timeout réseau `ghcr.io`
-2. Checkout du dépôt
-3. Maximisation de l'espace de build
-4. ~~Mount BTRFS~~ **Supprimé** (migration rootless — voir encadré ci-dessus ; le loopback reste utilisé par le workflow ISO uniquement)
-5. Build de l'image avec buildah **rootless** (KERNEL_FLAVOR passé via kernel_type, NVIDIA_FLAVOR si fourni) — **retry** via `nick-fields/retry@v4` avec `retry_on: error` et `timeout_minutes` différencié (90 min par défaut, 120 min pour les variantes DX qui installent bien plus de RPMs via des miroirs parfois lents, cf. run 31561460633 où le build DX a timeout à 90 min au COMMIT final) : le script shell détecte les erreurs réseau (EOF, TLS handshake timeout, connection refused/reset, DNS, Curl timeout, etc.) et sort avec le code 1 (retry), les erreurs de build (échec d'un script RUN) sortent avec le code 2 (échec immédiat). **`retry_on_exit_code` NE DOIT PAS être utilisé** car il désactive le retry sur timeout (bug connu [nick-fields/retry#145](https://github.com/nick-fields/retry/issues/145)). Nettoyage `buildah rmi raw-img` au début de chaque tentative. **`set +e -o pipefail` obligatoire** : `nick-fields/retry@v4` n'hérite pas du `pipefail` de GitHub Actions ; sans lui, `$?` capture le code de `tee` (0) au lieu de `buildah` à travers le pipe `| tee`, masquant tout échec de build (l'étape suivante tente alors `buildah from raw-img` sur une image inexistante → podman essaie de la pull depuis les registres → 404/denied)
-6. Préparation des labels OCI dans `${RUNNER_TEMP}/labels.txt` (step "Prepare labels", garde l'id `relabel`) — **ne PAS les appliquer via `buildah config`** : le rechunk rootless reconstruit un manifeste de zéro (Bazzite `625bebb`), des labels posés sur raw-img seraient perdus. Ils sont passés via `--label` à `build-chunked-oci` à l'étape rechunk
-7. Vérification SecureBoot (step "SecureBoot check") : vérifie la présence du certificat Gablue (`/etc/pki/akmods/certs/gablue-secure-boot.der`) et que les kmods du kernel sont bien signés via `modinfo | grep sig_id`. Échec → l'image ne bootera pas en SecureBoot. Le certificat est enrollable côté client via `ujust secureboot`
-8. Collecte des métriques (step "Collect build metrics") : durée de build, espace disque, taille image décompressée (`raw-img`), nombre de RPMs, kernel, mesa, taille compressée (initialement "N/A" car le push n'a pas encore eu lieu) → JSON `metrics-<image>` (artifact, rétention 90 j) + step summary (en anglais). Les libellés affichés sont en anglais, seuls les commentaires YAML restent en français
-9. Rechunk **rootless** avec rpm-ostree (flux Bazzite `033a18f`) : nettoyage de `/run` et `/tmp` dans un bloc `buildah unshare` (un `buildah mount` rootless exige le user namespace), puis `podman run --privileged` de raw-img avec `--mount=type=image,src=localhost/raw-img,target=/rpm-ostree` et sortie `--output oci-archive:` dans `${RUNNER_TEMP}` (plus de partage de `/var/lib/containers`), labels passés via `--label` (un par ligne de `labels.txt`), puis `podman rmi -f raw-img` **avant** `podman pull oci-archive:` + tag `localhost/chunked-img`. **Retry** (3 tentatives, 15s) : abandon immédiat sur erreurs I/O (`no space left`, `read-only`, `disk I/O error`, non récupérable) et sur rpmdb corrompue (`database disk image is malformed` = corruption dans l'image, présente à chaque tentative donc retry inutile), retry sur les autres erreurs transitoires
- 10. Tag et push vers GHCR — **retry bash natif** (pas d'action externe) : une simple boucle `for attempt in 1 2 3` avec `sleep 15` entre tentatives. Le push du tag version utilise `podman push --digestfile` (préfixe `containers-storage:` retiré, flux Bazzite `033a18f`). **NE PAS revenir à `skopeo copy` depuis `containers-storage:`** : en rootless, ce transport exige un user namespace — bloqué par la restriction AppArmor d'Ubuntu 24.04+ (`Error during unshare(...): Operation not permitted`, run test 32068215822). Podman a un profil AppArmor dédié, skopeo non. Le digest est lu depuis le digestfile avec vérification de non-vide pour la signature cosign. **Alias tags** (`latest`, version, pr-N) : poussés via `skopeo copy docker://image@digest → docker://image:tag` **après** la signature cosign (aligné Bazzite `b97f073`) — chaque alias pointe sur le manifeste exact signé, sans re-upload des blobs ; le transport remote→remote ne passe pas par un user namespace et n'est donc pas affecté par AppArmor. **Deux logins sont nécessaires** : `podman login` (rootless) pour `podman push` et `skopeo copy` (partagent le même `auth.json`) et `docker login` pour `cosign` (qui lit `~/.docker/config.json` pour l'auth registre — **ne pas retirer**, cf. run 30272548675). **Pourquoi pas nick-fields/retry@v4 ni wretry.action** : `nick-fields/retry@v4` utilise Node.js `spawn()` qui pipe stdout/stderr — avec une image chunkée (100+ layers), les 100+ lignes "Copying blob" sur stderr saturent le pipe Node.js, l'événement `exit` n'arrive jamais et le process reste bloqué indéfiniment. `wretry.action` (composite, bash natif) fonctionnait mais est déprécié (Node.js 20). Une boucle bash native dans un `run:` standard hérite du stdio du runner (pas de pipe) → pas de hang
-11. Signature avec Cosign (v2.6.1 — le bump cosign v3 + `--use-signing-config=false` est un chantier séparé, à faire sur ce workflow ET l'ISO en même temps)
-12. Métriques post-push (step "Update compressed size") : inspecte le registre distant GHCR via `skopeo inspect --raw docker://$dest_image | jq` en sommant les tailles des layers et du config blob pour obtenir la taille compressée réelle, met à jour le JSON metrics et le step summary. Upload des métriques après cette étape (le fichier JSON final contient la taille compressée)
-
-**Version du kernel** — cascade à 3 niveaux (chaque niveau est validé contre les tags akmods via la fonction `check_akmods`, sinon on descend au suivant) :
-- **Niveau 1 (par défaut)** : kernel **pinné dans le `build.yml` de la branche `main` de Bazzite** — fetch de `raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml` (retry curl 3×10s) puis extraction `awk` du `kernel_version` du premier bloc matrix dont le `kernel_flavor` correspond **exactement** (`ogc` ou `ogc-lts`, ancré en fin de clé) et dont le `fedora_version` (quand présent dans le bloc) correspond ; l'état du bloc courant (`bf`/`bk`) est réinitialisé à chaque ligne `- item`. Suit ainsi les kernels préparés en avance par Bazzite (ex. 7.2.0-ogc2.1 pinné alors que le stable publié est encore 7.1.5)
-- **Niveau 2 (filet de sécurité)** : kernel réellement publié sur l'image stable Bazzite — label OCI `ostree.linux` lu via `skopeo inspect` (retry 3×10s), suffixe `.x86_64` retiré. Source : `ghcr.io/ublue-os/bazzite:stable`, ou `ghcr.io/ublue-os/bazzite-nvidia:stable` pour `nvidia-lts` (Bazzite paire nvidia-lts avec ogc-lts, commit `3eb7b09` — akmods-nvidia-lts ne publie plus que des tags `ogc-lts-*`). Utilisé quand le pin main n'a pas encore ses akmods (kernel RC trop frais) ou que le fetch/parsing échoue
-- **Niveau 3 (fallback)** : dernière version commune via `skopeo list-tags` (retry 3×10s par repo) : tags `ghcr.io/ublue-os/akmods` et, pour NVIDIA, intersection avec les tags `akmods-{NVIDIA_FLAVOR}` (les deux repos doivent avoir le tag) → filtre `{KERNEL_FLAVOR}-{FEDORA_VERSION}-*` en excluant les alias non versionnés (`ogc-44-x86_64`) via `test("^[0-9]")` et en normalisant le suffixe `.x86_64` des alias arch (les deux formes comptent comme une seule version dans l'intersection), tri `sort -V` (avec warning dans les logs)
-- **Vérification d'existence (`check_akmods`)** : chaque niveau valide le tag `akmods:{FLAVOR}-fc{FEDORA}-{VERSION}` via `skopeo inspect` et, si `nvidia_flavor` est défini, `akmods-{NVIDIA_FLAVOR}:{...}` (ex. ublue peut arrêter de builder `akmods-nvidia-lts` contre un kernel RC, cf. bazzite `a5897ab` août 2026)
-- **Manuel** : spécifier `kernel_version` dans un job pour surcharge ponctuelle (le step de détection est alors skippé)
-
-### build-gablue-live-isos.yml
-
-Build des **ISOs live** avec environnement de bureau Plasma complet (tous les 5 jours) :
-- Permet d'essayer Gablue avant installation (LiveCD complet, pas juste Anaconda)
-- **Déclencheurs** : schedule (5 jours), `workflow_dispatch`, push avec `[iso]`, et **`workflow_run`** à la fin du workflow d'images. Le chaînage `workflow_run` ne construit l'ISO que si l'exécution amont a été déclenchée par un **push** (`workflow_run.event == 'push'`), a **réussi** (`conclusion == 'success'`) et que le message de commit contient **`[all-iso]`** — garantit que les images `:latest` sont publiées avant de builder les ISOs. Le checkout utilise `workflow_run.head_sha` pour rester sur le commit d'origine.
-- **Concurrency ISO** : le groupe `build-gablue-live-isos-${{ github.run_id }}-iso` utilise `github.run_id` (et non `github.ref`) pour garantir que chaque run ISO est unique. Sans cela, un `workflow_run` déclenché par un échec de build d'images annulerait un `workflow_dispatch` ISO en cours (même groupe `main-iso`, `cancel-in-progress: true`), alors que ses jobs sont de toute façon `skipped` (conclusion != success).
-- Utilise **Titanoboa**, un installateur bootc qui génère un squashfs live. Le binaire `build_iso.sh` est celui de l'image Titanoboa (`quay.io/fedora/fedora:latest`) patché via `installer/titanoboa_build_iso.sh` (bind-mounté, sans `-all-root` pour préserver l'UID 1000 du préfixe Wine)
-- 5 variantes : gablue-main, gablue-main-dx, gablue-nvidia, gablue-nvidia-open, gablue-nvidia-open-dx
-- **Processus en 2 étapes** :
-  1. Build d'une image container payload via `installer/Containerfile` (basée sur l'image Gablue, flatpaks pré-cachés, swap kernel OGC→vanilla pour Secure Boot). Le stockage podman est sur le loopback BTRFS compressé (composite action `mount-btrfs-storage`) **avec `image_copy_tmp_dir` redirigé dans le loopback** via un drop-in `/etc/containers/containers.conf.d/` : par défaut podman copie le layer diff du commit (~30G non compressés) dans `/var/tmp` **sur le disque hôte**, ce qui saturait l'hôte, affamait le fichier loopback sparse et forçait BTRFS en read-only (les « corruptions » historiques du loopback — read-only fs, disk I/O error — n'étaient que ce mécanisme, pas une corruption intrinsèque). Chemin explicite `/var/lib/containers/image-copy-tmp` plutôt que la valeur spéciale `"storage"` (résolution buggy, podman#28211). La boucle de build (`for attempt in 1 2 3`) **ne retente pas** si le log contient `no space left on device`, `read-only file system` ou `disk I/O error` (erreurs non récupérables : chaque tentative reconstruit une image identique, et un loopback passé read-only est mort) et sort immédiatement. Optimisations espace disque (aligné Bazzite `7ecb26a1`) : `extra-squeeze: "true"` sur `remove-unwanted-software` (équivalent du `tool-cache: true` de `jlumbroso/free-disk-space` : supprime `/opt/hostedtoolcache` et `/usr/share/miniconda`, ~6G), `TMPDIR=/var/lib/containers/image-copy-tmp` sur le `podman build` (temporaires dans le loopback), et un step `if: always()` qui affiche `df -h` + la taille réelle du fichier loopback après le build payload.
-  2. Génération de l'ISO via `podman run` direct (remplace l'action `Zeglius/titanoboa`) : le script patché est bind-mounté sur `/src/build_iso.sh`, le payload `localhost/payload:latest` est monté via `--mount type=image`, le répertoire de sortie ISO est bind-mounté en `/output`. L'image Titanoboa (`quay.io/fedora/fedora:latest`) est **pré-pullée avec retry** (5 tentatives, 15s) avant le `podman run` pour tolérer les timeouts réseau transitoires de `quay.io` (cf. run 30193960415 attempt 1)
-- Signature Cosign + attestation de provenance sur chaque ISO
-- Upload vers BuzzHeavier, release GitHub `latest-live-iso`
-- `timeout-minutes: 180` (le live est plus long à construire)
-- **Job `create-release`** : télécharge les artifacts liens/checksums via `gh run download` wrappé dans `nick-fields/retry@v4` (6 tentatives, 15s) plutôt qu'`actions/download-artifact` — l'API artifacts GitHub peut renvoyer un 404 "workflow run not found" transitoire juste après la fin des jobs ISO (race condition de propagation interne, cf. run 30193960415 attempt 2). Le workflow déclare `actions: read` pour ce faire. La structure de dossiers (un sous-dossier par artifact) est identique à `actions/download-artifact` avec `merge-multiple: false`
-
-#### Build local d'ISO (`local-build/`)
-
-Script de build local pour tester les modifications d'installateur sans CI :
-
-```bash
-# Build de l'ISO main
-./local-build/build-iso.sh main
-
-# Build + test dans QEMU
-./local-build/build-iso.sh main --run
-
-# Pull forcé de l'image de base avant build
-./local-build/build-iso.sh main --pull
-
-# Build rapide sans flatpaks (test)
-./local-build/build-iso.sh main --skip-flatpaks
-```
-
-Variantes disponibles : `main`, `main-dx`, `nvidia`, `nvidia-open`, `nvidia-open-dx`.
-L'ISO est générée dans `local-build/output/` avec `chown` sur le fichier pour les permissions utilisateur. Le script utilise `sudo -v` au début (un seul mot de passe), et bind-mounte `installer/titanoboa_build_iso.sh` (patché sans `-all-root`) par-dessus celui de l'image Titanoboa.
-
-#### Dossier `installer/`
-
-```
-installer/
-├── Containerfile                    # Build payload (FROM image Gablue, bind-mount build.sh, SKIP_FLATPAKS arg)
-├── build.sh                         # Assemblage : flatpaks (requis + optionnels + runtimes, skippables via SKIP_FLATPAKS), swap kernel, dracut-live, livesys, Anaconda, pack cache gwine → /extra, pré-initialisation préfixe Wine live
-├── iso.yaml                         # Config GRUB (label GABLUE_LIVE, timeout 3s, entrées sans apostrophes, enforcing=0)
-├── flatpaks                         # Liste des flatpaks obligatoires (format : ref flatpak)
-├── flatpaks-optional                # Liste des flatpaks optionnels (checklist yad)
-├── titanoboa_hook_preinitramfs.sh   # Swap kernel OGC → vanilla Fedora (Secure Boot)
-├── titanoboa_hook_postrootfs.sh     # Anaconda + kickstart bootc + live tweaks (Xvfb, gparted, etc.)
-├── titanoboa_build_iso.sh           # Patch Titanoboa : retire -all-root de mksquashfs (préserve les UID)
-├── extra/                           # Contenu local arbitraire copié dans /extra du live (gitignore sauf .gitkeep)
-└── system_files/shared/             # Config Anaconda (pre-scripts + post-scripts), autostart, localisation live (fr_CH)
-```
-
-#### Fonctionnement du live
-
-1. **Swap kernel** : Le kernel OGC (non signé) est remplacé par le kernel vanilla Fedora (signé) pour Secure Boot
-2. **Flatpaks** : 
-   - Les listes `installer/flatpaks` (8 apps requises) et `installer/flatpaks-optional` (25 apps optionnelles) définissent quels flatpaks sont **pré-téléchargés** dans l'ISO
-   - **MangoHud** (`org.freedesktop.Platform.VulkanLayer.MangoHud`) : runtime obligatoire, version freedesktop détectée dynamiquement (`flatpak remote-ls flathub --runtime | awk -F'\t'` pour extraire la dernière branche). Installé dans le live et ajouté à la liste requise post-install
-   - **OBS VkCapture** (`org.freedesktop.Platform.VulkanLayer.OBSVkCapture`) : installé dans le live, version freedesktop détectée dynamiquement **indépendamment de MangoHud** (l'upstream Flathub peut publier MangoHud sur une branche plus récente que OBSVkCapture — ex. 26.08 vs 25.08, causait `No remote refs found` en réutilisant la branche MangoHud), **ne suit pas OBS Studio** — si OBS est décoché dans la checklist, OBS VkCapture est aussi désinstallé
-   - **Proton-GE** (`com.valvesoftware.Steam.CompatibilityTool.Proton-GE`) : installé dans le live (branche `stable`), **suit Steam** — si Steam est décoché, Proton-GE est désinstallé
-    - Pour les variantes NVIDIA, les runtimes `org.freedesktop.Platform.GL[32].nvidia-XXX` sont automatiquement ajoutés aux obligatoires (version détectée depuis `rpm -q nvidia-driver`)
-    - **Questions interactives regroupées en `%pre-install`** (`pre-scripts/gablue-questions.ks`, `%include` avant `ostreecontainer`) : toutes les interactions utilisateur (yad) sont posées **après le formatage mais avant le déploiement de l'image**, pour ne plus interrompre l'installation ensuite. `%pre-install` et `%post --nochroot` tournent tous deux dans l'environnement de l'installateur → `/tmp` est partagé, on y écrit les choix lus ensuite par les `%post`. Trois questions :
-      1. **Compression BTRFS zstd** (oui par défaut) : appliquée **immédiatement** via `btrfs property set <subvol> compression zstd` sur les montages `/mnt/sysroot*`. Posée ici car avec **composefs** le `compress=zstd` du fstab généré par Anaconda est **sans effet** (la racine est un overlay, pas un montage btrfs direct). La propriété btrfs est **héritée par tous les nouveaux fichiers** → déploiement ostree, `/var` et flatpaks compressés dès l'écriture. Niveau par défaut (zstd:3, comme `ujust btrfs-compress`)
-      2. **Sélection des flatpaks optionnels** (checklist yad, tout décoché par défaut) : écrit la liste des refs à conserver dans `/tmp/gablue-selected-flatpaks`
-      3. **Cache gwine (applications Windows)** (oui par défaut) : écrit `yes`/`no` dans `/tmp/gablue-install-gwine-cache` ; le texte précise que le cache est aussi téléchargeable en ligne plus tard
-      - yad lancé via `run0 --user=liveuser env XDG_RUNTIME_DIR=... yad`, avec `--on-top --center --skip-taskbar` (sinon le dialogue s'ouvre derrière la fenêtre Anaconda plein écran et l'installation semble figée)
-    - Ensuite, `install-flatpaks.ks` (`%post --nochroot`) **lit** `/tmp/gablue-selected-flatpaks` (fichier absent => aucun optionnel conservé) puis :
-      1. **Copie `/var/lib/flatpak` (live) vers le déploiement ostree** via `rsync -aAXUHKP --open-noatime --filter="-x security.selinux"`. Le filtre `-x security.selinux` est **indispensable** : les fichiers du live sont étiquetés `unlabeled_t` et SELinux enforcing refuse le `lremovexattr`/`lsetxattr` du xattr SELinux sur la cible btrfs (`Permission denied` → rsync code 23 → échec du `%post` → crash Anaconda « Message recipient disconnected from message bus without replying »). Les autres xattrs (`user.ostree*`, critiques) restent copiés. Le label SELinux est assigné à la création par le kernel (contexte du parent `/var/lib` → `var_lib_t`), puis un `restorecon` explicite est appliqué par le post-script `restore-flatpak-selinux.ks` (voir ci-dessous) — filet de sécurité aligné Bazzite `f0bafa6`
-      2. **Désinstalle les optionnels non désirés DIRECTEMENT dans la cible ostree** (pas dans le live) : enregistre une installation flatpak `gtarget` (`/etc/flatpak/installations.d/gtarget.conf`) pointant sur `<deployment>/var/lib/flatpak`, puis `flatpak --installation=gtarget uninstall`. **Pourquoi pas dans le live** : le live monte `/var/lib/flatpak` en overlayfs (bind RO via `var-lib-flatpak.mount`), et `flatpak uninstall` y échoue en `Invalid cross-device link` (EXDEV) car les hardlinks entre `repo/objects` et les checkouts ne traversent pas les couches overlay. La cible ostree est sur btrfs (RW, monolithique) → pas d'EXDEV. En root avec `--installation=<nom>`, flatpak opère directement sur le dépôt sans le helper D-Bus système
-      3. **Itère par ref complète** (pas par ID) via `awk -F/` sur `flatpak list --columns=ref` : MangoHud et OBS VkCapture ont **plusieurs branches installées** (ex. 24.08 + 25.08), un uninstall par ID échouerait avec « Multiple installed refs match … unable to proceed in non-interactive mode »
-      4. **Dépendances conditionnelles** : Proton-GE désinstallé si Steam non coché, OBS VkCapture si OBS non coché
-      5. **Nettoie les runtimes orphelins** via `flatpak --installation=gtarget uninstall --unused`
-      - Le dépôt Flathub est déjà présent dans `/etc/flatpak/remotes.d/` (ajouté par `build.sh`), pas besoin de `flatpak remote-add` lors de l'install
-      - **Post-script `restore-flatpak-selinux.ks`** (`%post` chrooté, `%include` juste après `install-flatpaks.ks`) : `setenforce 0` puis `restorecon -R /var/lib/flatpak` dans le déploiement ostree. Rétablit les contextes SELinux des flatpaks explicitement (le labeling implicite du kernel couvre le cas nominal, mais `restorecon` garantit la conformité à la policy si ce labeling n'a pas joué). Aligné Bazzite `restore-selinux-labels.ks` (commit `f0bafa6`) — Gablue ne reprend que la partie flatpak (`restorecon -R /etc/selinux` est inutile, Gablue ne touche pas au policy-store). Échec non bloquant (`|| :`) car correctif de robustesse, pas critique. Le `%post` chrooté cible bien le `/var/lib/flatpak` du système installé (et non celui, RO, du live)
-3. **Création de compte utilisateur** : Aucun compte pré-rempli — le spoke utilisateur Anaconda est visible et l'utilisateur choisit librement son nom/mot de passe. KDE Plasma gère la création au premier démarrage si le spoke est skippé.
-4. **Session live** : Bureau Plasma complet via `livesys-scripts`, l'installateur Anaconda n'est pas lancé automatiquement (l'utilisateur le lance via `liveinst` si besoin). Les flatpaks pré-cachés sont visibles dans le menu Plasma (XDG_DATA_DIRS configuré dans `/etc/environment.d/99-gablue-flatpak-live.conf`).
-5. **Écran de bienvenue** : `plasma-welcome` est retiré du live (hook postrootfs) pour éviter le lancement automatique au boot
-6. **Dossier Bureau** : `livesys-scripts` crée un dossier `Desktop` (anglais) avec `liveinst.desktop` avant `xdg-user-dirs-update`, l'empêchant d'être renommé. Le dossier reste en anglais (`Desktop`).
-7. **Installation** : Kickstart Anaconda avec `ostreecontainer` (bootc), BTRFS par défaut, compression zstd:1
-8. **Secure Boot** : Enrollment automatique de la clé MOK Gablue avec mot de passe `gablue`
-9. **Post-install** : `bootc switch --mutate-in-place` pour activer la signature
-10. **Services désactivés dans le live** : flatpak-update, cec-poweroff, dmemcg-booster, tailscaled, brew, greenboot...
-11. **NVIDIA live** : Fix `GSK_RENDERER=gl`, réinstallation mesa-vulkan-drivers+nvidia-gpu-firmware (kernel vanilla = pas de drivers proprio, on utilise nouveau)
- 12. **Localisation live** : La session live est configurée en français suisse (`fr_CH.UTF-8`) avec clavier QWERTZ suisse romand (`ch(fr)`). Les fichiers sont dans `system_files/shared/etc/` : `locale.conf` (LANG + LANGUAGE), `vconsole.conf` (KEYMAP=ch-fr), `X11/xorg.conf.d/00-keyboard.conf` (layout XKB). Ces fichiers ne sont copiés que dans le payload live (n'affectent pas l'image installée). Les langpacks (`langpacks-fr`, `glibc-all-langpacks`) proviennent de l'image Gablue de base. **Anaconda** est préconfiguré via le kickstart (`titanoboa_hook_postrootfs.sh`) avec `lang fr_CH.UTF-8` et `keyboard --vckeymap=ch-fr --xlayouts='ch (fr)'` : l'écran de langue/clavier de l'installateur est prérempli en français suisse (l'utilisateur peut toujours changer, le spoke reste visible).
-13. **GRUB** : Les noms d'entrées ne doivent pas contenir d'apostrophes (Titanoboa génère `menuentry '...'` sans échapper les apostrophes internes, ce qui casse le parsing GRUB et ne montre qu'une seule entrée)
- 14. **Dossier `/extra` (live uniquement → déployé à l'install)** : `build.sh` peuple `/extra` du rootfs live. **Le contenu est déployé sur le système installé** par le post-script `install-extra.ks` (voir ci-dessous), et n'est JAMAIS présent dans l'image container (l'installation redéploie l'image propre via `ostreecontainer` + `bootc switch`). Contenu :
-      - **Pack cache gwine** : `build.sh` **télécharge directement** le pack cache pré-construit du repo `elgabo86/gwine-cache` (release hebdomadaire `latest`, produite par `gwine --download-components` + `--cachepack` en amont) : les assets `gwine-cache.tar.xz` (vérifié par son `.sha256`, taille minimale 100 Mo), `install-cache.sh` et `README.txt` sont copiés dans `/extra/gwine-cache-installer/`. Plus aucun téléchargement composant par composant ni re-génération d'archive dans le build ISO. **Fail-fast** : le build échoue (`exit 1`) si gwine est absent (requis pour l'init du préfixe au point 16), si le téléchargement échoue après 3 tentatives (curl `--retry` par asset), si le checksum est invalide, ou si l'archive fait moins de 100 Mo — pour ne jamais générer d'ISO sans le pack cache. URL surchargeable via `GWINE_CACHE_BUNDLE_URL` (miroir/test). Le cache est ré-extrait temporairement pour l'init du préfixe Wine (voir point 16), puis supprimé de l'ISO finale (seule l'archive `/extra` persiste)
-      - **Contenu local** : le dossier `installer/extra/` (bind-monté sur `/src/extra`, gitignore sauf `.gitkeep`) est copié dans `/extra` pour les builds locaux — permet d'embarquer des fichiers/dossiers arbitraires. Absent/vide en CI → section ignorée
- 15. **Post-script `install-extra.ks`** (`%post --nochroot`) : déployé dans le kickstart juste après `install-flatpaks.ks`. Lit `/extra` dans le live et déploie chaque item à sa destination dans le système installé :
-      - **Résolution du déploiement ostree** : en système ostree, `/mnt/sysimage/etc` et `/mnt/sysimage/usr` ne sont **pas** peuplés directement (le système réel vit dans `<deployment>`), donc `/mnt/sysimage` n'est **pas chrootable**. Le script résout `deployment=$(ostree rev-parse --repo=/mnt/sysimage/ostree/repo ostree/0/1/0)` puis `DEPLOY_ROOT=/mnt/sysimage/ostree/deploy/default/deploy/${deployment}.0`. Le passwd est lu dans `${DEPLOY_ROOT}/etc/passwd` (et non `/mnt/sysimage/etc/passwd` qui n'existe pas → sinon `awk: cannot open file` → ScriptError). Les `chown`/`restorecon` se font via `chroot "$DEPLOY_ROOT"` (le home `/home -> var/home` y est accessible)
-      - **Utilisateur** : détection dynamique du premier UID ≥ 1000 créé par Anaconda dans `${DEPLOY_ROOT}/etc/passwd`
-      - **Cache gwine** : crée `~/.cache/gwine` avec `chattr +C` (nodatacow) **avant** extraction pour éviter le CoW btrfs. Extrait `gwine-cache.tar.xz`, applique `chown -R` + `restorecon` non récursif (seul `.cache` est labellisé, pas les 2 Go de gwine). Le runner gwine **n'est pas extrait** (gwine l'installe lui-même à la volée depuis le cache en mode offline — modification apportée dans `src/gwine-launcher/` pour éviter de dupliquer l'espace disque)
-     - **Extensible** : chaque nouvel item (ex. cores RetroArch) s'ajoute comme une section dans le script, avec ses propres `chown`/`restorecon`
-      - **Fallback** : si aucun utilisateur n'est trouvé (spoke sauté, création au premier boot), le script loggue et skip sans échec. `/etc/skel` est laissé en option (commenté) pour les futurs utilisateurs
- 16. **Pré-initialisation du préfixe Wine dans le live** : après le pack cache, `build.sh` pré-initialise un préfixe Wine complet pour la session live. Le préfixe et le runner sont stockés dans `/usr/share/gablue/wine-home/` et `/usr/share/gablue/wine-runner/` (squashfs), avec un symlink `~/Windows → /usr/share/gablue/wine-home` pour que les chemins du registre pointent vers `/home/liveuser/...`. L'init est lancée via `xvfb-run` (Xvfb requis pour PhysX/OpenAL, installateurs `.exe` qui nécessitent `CreateWindow`). Le cache est extrait temporairement pour l'init puis supprimé (seule l'archive `/extra` persiste pour l'install système). `find ... -exec chown 1000:1000 {} +` (au lieu de `chown -R`, race condition sur les `.tmp` Wine) sur les cibles dans `/usr/share/gablue/` pour que liveuser (UID 1000) soit propriétaire au boot. **Livesys** crée l'utilisateur normalement. **Deux protections contre le crash Xvfb sur images NVIDIA** : (1) les variables GLVND (`__GLX_VENDOR_LIBRARY_NAME=mesa`, `__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json`, `LIBGL_ALWAYS_SOFTWARE=1`) protègent le côté client GL (Wine/wineboot), (2) un `mv` temporaire de `libglxserver_nvidia.so` et `libnvidia-egl-gbm.so.1` protège le côté serveur X (Xvfb charge son propre module GLX via le mécanisme Xorg, qui ignore les variables GLVND). Les .so sont restaurés immédiatement après `xvfb-run`.
- 17. **Patch Titanoboa `-all-root`** : `installer/titanoboa_build_iso.sh` est une copie modifiée du `build_iso.sh` de Titanoboa, bind-mountée à la fois par `local-build/build-iso.sh` et par le workflow CI. La seule différence : le `-all-root` est retiré de l'appel `mksquashfs`, ce qui préserve les UID/GID du payload (UID 1000 pour les fichiers Wine). Sans ce patch, tout le squashfs est root:root et liveuser ne peut pas écrire dans le préfixe. Le CI utilise désormais le même script patché (bind-mounté via `-v` dans le `podman run` Titanoboa).
-
-### clean-gablue-images.yml
-
-Nettoyage automatique (tous les dimanches) :
-- Suppression des images > 90 jours
-- Conservation des 7 dernières images taggées
-- Conservation des 7 dernières images non-taggées
-- Packages nettoyés : gablue-main, gablue-nvidia, gablue-nvidia-open, gablue-main-dx, gablue-nvidia-open-dx, gablue-main-test, gablue-nvidia-open-test
-
-### Composite action `mount-btrfs-storage`
-
-**Fichier** : `.github/actions/mount-btrfs-storage/action.yml`
-
-Action composite locale qui remplace `ublue-os/container-storage-action`. Elle crée un loopback BTRFS compressé (zstd:2) sur "/" et y monte le storage podman. Le montage utilise `losetup --direct-io=on` + `mount` (évite le double cache page-cache hôte + loop, remplace `systemd-mount` qui n'expose pas cette option — aligné Bazzite `7ecb26a1`) et `mkfs.btrfs -m single -d single` (dispositif unique, pas de métadonnées dupliquées).
-
-**Runners `ubuntu-26.04`** : les builds utilisent `ubuntu-26.04` depuis août 2026 (aligné sur Bazzite commit `dc41cfb`) — migration motivée par des corruptions rpmdb (`database disk image is malformed`) récurrentes sur les runners `ubuntu-24.04` depuis le 13/08/2026. Si le problème persiste, la cause est ailleurs (rpm-6.0/dnf5 dans l'image de base).
-
-**Pourquoi** : les runners `ubuntu-24.04` ne montent plus de disque temporaire sur `/mnt`. L'action amont détectait l'absence de `/mnt` et sautait **silencieusement** le montage (simple `notice`, pas d'erreur), laissant le storage sur ext4 sans compression. Sur les builds à gros payload (ISO avec flatpaks, rechunk DX), cela causait `no space left on device` au commit/export de l'image.
-
-**Inputs** :
-
-| Input | Défaut | Description |
-|-------|--------|-------------|
-| `target-dir` | `/var/lib/containers` | Répertoire à placer sur le loopback BTRFS |
-| `loopback-free` | `0.9` | Fraction de l'espace libre de "/" allouée au loopback (fichier sparse, occupation physique dépend du contenu compressé) |
-| `mount-opts` | `compress-force=zstd:2,discard=async,noatime` | Options de montage BTRFS |
-
-**Contrainte** : action locale `uses: ./.github/actions/mount-btrfs-storage` — le dépôt doit être **checkout** avant l'appel.
-
-**Utilisation dans les workflows** :
-- ~~`reusable-gablue-image.yml`~~ **Plus utilisée** depuis la migration rootless (flux Bazzite `033a18f` : rechunk oci-archive + `podman rmi raw-img` avant le pull → pic ~25-30G, loin des ~110G libres ; voir encadré dans la section du workflow). Conservée uniquement comme garde-fou si une variante saturait un jour le disque (la pointer alors sur `~/.local/share/containers`)
-- `build-gablue-live-isos.yml` : libérer espace → checkout → mount → drop-in `image_copy_tmp_dir` → build payload → podman run Titanoboa (avec script patché)
-
 ## Messages de commit et tags
 
 **Les messages de commit doivent être rédigés en anglais.**
@@ -889,203 +426,7 @@ shellcheck files/scripts/post-install
 bash -n files/scripts/nom_du_script
 ```
 
-### Test de build local
-
-```bash
-# Build rapide pour test
-sudo buildah build \
-  --file Containerfile-gablue \
-  --build-arg VARIANT="main" \
-  --build-arg SOURCE_IMAGE="kinoite" \
-  --build-arg FEDORA_VERSION="44" \
-  --build-arg KERNEL_FLAVOR="ogc" \
-  --build-arg KERNEL_VERSION="<version>" \
-  --tag test-build .
-
-# Test interactif
-podman run -it test-build /bin/bash
-```
-
-### Vérification post-build
-
-```bash
-# Vérifier les paquets installés
-podman run test-build rpm -qa | grep -E "(nvidia|kernel|mesa)"
-
-# Vérifier les services
-podman run test-build systemctl list-unit-files --state=enabled
-
-# Vérifier la taille
-podman images test-build
-```
-
-## Fichiers système importants
-
-### Configurations système (/etc)
-
-- **distrobox/distrobox.conf** : Configuration Distrobox
-- **firewalld/zones/nm-shared.xml** : Zone firewall partagée
-- **xdg/plasmakeyboardrc** : Presets clavier virtuel KDE (navigation clavier requise par kbdnav, layout fr_FR, clavier centré)
-- **profile.d/customperso.sh** : Alias et personnalisations shell
-- **security/limits.d/memlock.conf** : Limites mémoire
-- **skel/.config/gtk-4.0/** : Configuration GTK par défaut
-- **sudoers.d/nopasswd** : Configuration sudo sans mot de passe
-- **systemd/** : Timeouts et configuration systemd
-- **yum.repos.d/docker-ce.repo** : Dépôt Docker
-
-### Exécution des binaires Windows (binfmt_misc)
-
-- **usr/lib/binfmt.d/gablue-windows.conf** : règle binfmt_misc (magic `MZ` → interpréteur `/usr/bin/gwine`), chargée au boot par `systemd-binfmt.service` (statique, activé par la présence du fichier)
-- Permet `./jeu.exe` en terminal et rend fonctionnel le bouton « Exécuter » de Dolphin/KIO pour les `.exe` ayant le bit `+x` (copies depuis NTFS/exFAT, archives) : le kernel invoque gwine avec le chemin du `.exe`
-- Complément du patch runner `no_exe_executable_bit.mypatch` (dépôt `elgabo86/gwine`) : le wineserver gwine ne pose plus `+x` sur les `.exe`/`.com` créés par les installateurs Windows. Sans `+x`, KIO ouvre nativement les `.exe` avec le handler par défaut (Windows.desktop → gwine), avec icônes et menu « Ouvrir avec » intacts — KIO ne traite un `.exe` comme binaire natif que s'il a le bit exécutable (comportement hardcodé, sans option de config)
-
-### Scripts utilisateur (/usr/bin)
-
-Scripts personnalisés Gablue :
-- `gablue-apk-installer` : Installateur d'APK Android par glisser-déposer (GUI PySide6, compatible Wayland). Supporte les fichiers .apk, .apkm, .xapk, .apks. Détection automatique des appareils USB et WiFi (adb over TCP). Appairage sans fil Android 11+ par code QR manuel. Installation avec remplacement/downgrade automatiques (`-r -d`). Bundles extraits automatiquement via `adb install-multiple`. Fichier `.desktop` dans `/usr/share/applications/gablue-apk-installer.desktop`.
-- `gablue-update` : Mise à jour du système via bootc (script Python autonome dans `/usr/bin`, GUI PySide6 avec PTY pour progression temps réel, fallback CLI automatique si pas d'affichage graphique)
-- `gablue-bigscreen-swap-session` : Wrapper swap-session Plasma Bigscreen
-- `gablue-bigscreen-session-init` : Initialisation session native Bigscreen (autostart, blacklist + mirroring)
-- `opencode2-install` : Installe/met à jour OpenCode 2 (`@opencode/cli`) en global npm (remplace les anciennes installs curl/brew/V1, installe npm via Homebrew si absent, crée le symlink `~/.local/bin/opencode`), **l'app OpenCode Desktop**, l'entrée Dolphin « Ouvrir avec OpenCode » et **le MCP local Lightpanda** (installation + activation par défaut dans `opencode.json`, oct. 2026 — remplace les anciens scripts standalone, supprimés ; chrome-devtools retiré oct. 2026 : ~490 Mo disque + 155 Mo RAM au repos pour un cas d'usage rare, lightpanda seul couvre la lecture/extraction/interaction courante, Cloudflare actif → renoncer). **Allowlist `allow-scripts` persistante et additive** (fonction `ensure_allow_scripts`, oct. 2026) : le tarball npm ne contient qu'un stub de 229 octets, le vrai binaire est fabriqué par le `postinstall` — npm ≥ 11.19 le bloque sans allowlist (`allowScripts`, RFC npm/rfcs#868). L'updater interne d'OpenCode (« Update OpenCode » / `opencode upgrade`) réinstalle via npm **sans** `--allow-scripts` : sans allowlist persistante, le postinstall reste bloqué, le stub n'est jamais remplacé et la MAJ échoue en silence sur les machines sans allowlist npm (le `--allow-scripts` déjà présent ne couvre que l'install initiale du script). **`npm config set allow-scripts=X` REMPLACE la valeur entière** : les set directs par paquet s'écrasaient mutuellement (constaté sur machine réelle — entrée `@lightpanda/browser` effacée du `.npmrc` par le set `@opencode/cli` d'un run postérieur) ; `ensure_allow_scripts` lit la ligne `allow-scripts=` de `~/.npmrc` via sed (pas `npm config get`, qui peut renvoyer la valeur d'un project `.npmrc` prioritaire au cwd) et la réécrit en ajoutant le paquet (`allow-scripts=a,b,c`), idempotent. Appelée dans tous les cas (même quand le skip MAJ s'applique) pour `@opencode/cli` et `@lightpanda/browser`. **Spec `@latest` explicite sur tous les `npm install`** (fix oct. 2026) : sans spec de version, npm considère le paquet déjà installé comme satisfaisant et se contente de le réifier (sortie trompeuse « changed N packages ») sans jamais monter de version — le check 2bis détectait le retard mais l'install ne le comblait jamais (boucle Lightpanda 1.2.0 → 1.6.0 constatée). Désinstallation des installs non-npm (script curl officiel : `~/.opencode/bin` + ligne PATH dans `.bashrc`) conservée en tête (étape 2, avant l'install npm — seules les installs npm sont supportées). Le tarball brew ne contient pas node : `brew install node` (node 26.10 → npm 12.x) validé avec le flux exact du script
-  - **Vérification de MAJ préalable** (Étape 2bis, sept. 2026) : si le CLI est déjà installé via npm, les versions installées (CLI via `opencode --version`, Desktop via `X-AppImage-Version` de l'entrée GearLever, MCP Lightpanda via `npm list -g`) sont comparées aux versions amont (`npm view` + redirection du lien stable) — si tout est à jour **et** que les artefacts sont en place (symlink, AppImage, entrée .desktop patchée `Name=OpenCode` + `--no-sandbox`, entrées Dolphin, binaire Lightpanda, entrée lightpanda dans `opencode.json`, allowlist allow-scripts complète), le script sort immédiatement (pas de npm install ni de téléchargement AppImage ~245 Mo pour rien) ; sinon l'Étape 4 saute aussi le `npm install -g` si le CLI est déjà à la dernière version (le skip de téléchargement Desktop existait déjà en Étape 6). Fail-safe : réseau indisponible ou version amont indéterminable → processus complet poursuivi (il répare tout ce qui manque) ; un artefact absent/manquant → poursuite complète (comportement de réparation préservé, d'où les checks d'artefacts dans la condition de sortie). **`--force`** : bypass de toutes les vérifications (2bis + skips Étapes 4/6) → réinstallation complète CLI + Desktop, argument inconnu refusé avec usage
-  - **GUI OpenCode Desktop** (ajout sept. 2026) : AppImage intégrée via **GearLever** (même pattern que `eden-install`) dans `~/AppImages/opencode.appimage` + `~/.local/share/applications/opencode.desktop`. Source : URL stable `https://opencode.ai/download/stable/linux-x64-appimage` (redirection vers `https://opencode.ai/files/bin/<version>/opencode-desktop-linux-x86_64.AppImage` — assets v2 uniquement sur opencode.ai, les releases GitHub restent en v1.18.x). L'app desktop suit le versionnage npm (ex. 2.0.16 des deux côtés) : version cible extraite de la redirection (fallback `npm view @opencode/cli version`), version installée lue dans `X-AppImage-Version` du `.desktop` GearLever — skip si identiques, sinon téléchargement (`curl -fL --retry`, fail-fast avant tout retrait), désintégration de l'ancienne (`gearlever --remove` + fallback nettoyage manuel, pattern eden), réintégration, puis patch du `.desktop` : `Name=OpenCode` sans suffixe de version et ajout de `--no-sandbox` si absent (Electron, chrome-sandbox SUID absent sur Kinoite — même nécessité que lmstudio). Icône GearLever `$HOME/AppImages/.icons/opencode` (pas d'icône hicolor nommée)
-    - **Re-détection de l'entrée `.desktop` APRÈS l'intégration** (fix 25/09/2026) : à la première installation, le fallback de détection (grep `X-AppImage-Name=OpenCode`) tourne **avant** l'intégration — rien n'existe encore, il écrase `DESKTOP_ENTRY` par une chaîne vide, et le test post-intégration restait sur cette variable vide sans jamais re-chercher → « entrée .desktop GearLever introuvable () » systématique à la première install, entrée GearLever générée non patchée, étapes suivantes sautées. Le patch (Name + `--no-sandbox`) est désormais dans la fonction `patch_desktop_entry` (idempotente), **re-détection** par grep juste après `gearlever --integrate`, et le patch est aussi appliqué quand l'app est déjà à jour (répare les installs précédentes non patchées sans re-télécharger)
-  - **MCP local Lightpanda** (ajout oct. 2026, chrome-devtools retiré le même mois) : installé/mis à jour par l'Étape 5bis, activé par défaut dans `opencode.json` par l'Étape 5ter (remplacent les anciens scripts standalone `install-lightpanda.sh` / `install-chrome-devtools-mcp.sh`, supprimés du dépôt) :
-    - **Lightpanda** : `@lightpanda/browser` en npm **global** — le postinstall télécharge le binaire nightly dans `~/.cache/lightpanda-node/lightpanda`, allow-scripts requis (sans lui npm bloque le postinstall, binaire jamais téléchargé, MCP muet au démarrage) ; skip si version npm = dernière publiée **et** binaire exécutable ; maj manuelle ponctuelle toujours possible via `lightpanda upgrade`
-    - **Activation config (Étape 5ter)** : le script écrit l'entrée `mcp.servers.lightpanda` dans `~/.config/opencode/opencode.json` si absente (python stdlib, merge idempotent et non destructif — serveurs existants et flags utilisateur préservés, entrée déjà présente même `disabled` = no-op). Config illisible (JSONC avec commentaires ?) → warning + poursuite (binaires installés, non branchés). La présence de l'entrée fait partie de la condition de sortie 2bis → réparée au run suivant si retirée à la main. Coût accepté : ~180 Mo disque + ~21 Mo RAM au repos, uniquement quand le service de fond OpenCode tourne
-    - **`MCP_UPDATED`** : posé à 1 quand Lightpanda est installé/mis à jour **ou** que son entrée config vient d'être créée → étend la condition de redémarrage du service de fond (CLI changé OU MCP à jour) ; échecs d'install **non fatals** (warning + poursuite : un incident réseau ne prive ni les entrées Dolphin ni le reste de l'install) ; `--force` réinstalle aussi Lightpanda
-  - **« Ouvrir avec OpenCode » pointe vers la GUI** (remplace le lancement terminal) : wrapper `~/.local/bin/opencode-open` qui ouvre le dossier **directement** dans OpenCode Desktop. Mécanisme complet (rétro-ingénierie du bundle desktop 2.0.16, validé en test réel) :
-    - **Route de démarrage de la GUI = localStorage Electron**, pas le store SQLite : clé `opencode.desktop.window.<uuid>.last-active-url` dans `~/.config/ai.opencode.desktop/Local Storage/leveldb/` (fonction `gie`/`X9` du bundle : si la route ≠ `/`, elle est imposée au boot ; fallback Home → projet serveur le plus récent). Format LevelDB : blocs 32 Ko, records `[crc32c masqué(4) len(2) type(1)]` + payload — types Full=1/First=2/Middle=3/Last=4 (un record ne chevauche **jamais** deux blocs, un batch long est fragmenté) ; batch = `[seq(8) count(4)]` + entries `[type=1][varint klen][key][varint vlen][value]`, clé = `_oc://renderer\0\x01` + nom, value = `\x01` + route ; CRC = **CRC32C Castagnoli** masqué `((c>>15 | c<<17) + 0xa282ead8)`. **Piège historique (bug corrigé 25/09)** : le champ count est en offset 8-12 du batch — l'ancien code le lisait en 4-8 (poids fort du seq, toujours 0) et écrivait `count=1` pour N+1 entries → « WriteBatch has wrong count » au boot → **batch jeté par leveldb** → route perdue, l'app restaurait l'ancien dossier (« ça switch pas » aléatoire). L'ancien scan linéaire pouvait aussi écrire désaligné au bord d'un bloc (dégât collatéral irrécupérable, voir plus bas). Mécanisme actuel : (1) scan **par bloc** avec réassemblage des fragments, (2) **réparation** des batchs dont count ≠ entries parsées (count réécrit + CRC recalculé — récupère les données des batchs jétés), (3) route écrite en **NOUVEAU batch** en fin de log (`seq = max(seq+count)+1`, count=1, record Full placé dans le bloc courant ou au bloc suivant avec bourrage zéro) — aucun batch de l'app modifié, dernier batch appliqué = gagnant, (4) log actif = `*.log` au numéro le plus élevé (rotation gérée). App **obligatoirement arrêtée** (LevelDB verrouillé + buffer mémoire). Résidu connu et assumé : un batch historique (bord de bloc 32768) irrécupérable — clé clobberée par l'ancien code — est jeté à chaque boot (1 ligne « Ignoring error » dans le LOG de leveldb, sans effet ; le réparer réappliquerait des valeurs potentiellement corrompues sur de vraies clés)
-    - **Séquence du wrapper** : (1) dossier canonique (`cd`+`pwd`, fichier → dossier parent) ; (2) si app ouverte ET le dossier est déjà l'onglet actif (store `tabs.info`/`tabs.recent` — clé session OU clé `draft:<uuid>` avec directory dans le tab lui-même) → simple focus par deep-link, fin ; (3) cible SPEC = « session:<sid> » ou « draft:<uuid> » **décidée en un point unique** (le python API — SQLite et LevelDB patchers consomment la même valeur, toute divergence = route vers un tab inexistant) : dossier avec sessions → **réutilise la dernière racine non archivée** (`GET /api/session?directory=<encodé>&order=desc&limit=10`, filtre `parentID`/`time.archived`) via **PATCH title inchangé** (bump `time.updated` de la session ET `time.active` du projet à NOW dans `/api/project` — validé : rang 5 → rang 0 ; title absent → `""` = tentative generate sans premier message = no-op, session reste sans titre) ; dossier vierge → **DRAFT client-side, zéro création serveur** (imite le « + » natif : tab `{type:'draft', draftID, server:'sidecar', directory}` dans `tabs` du store + route `/new-session?draftId=<uuid>` — parseur `tP` du bundle accepte cette route → `{type:'draft',draftID}`, `promoteDraft` ne crée la vraie session qu'au premier prompt, donc rien dans la liste des sessions si l'utilisateur n'écrit rien ; draftID réutilisé si un tab draft du dossier existe déjà) ; fallback sans API : session connue de `tabs.info` → réutilisation, sinon draft local ; auth Basic depuis `~/.config/opencode/service.json`, URL via `opencode service status` ; (4) arrêt propre du desktop : SIGTERM au process principal **seulement** (Electron ferme ses enfants ; tuer l'arbre en bloc démonte le squashfs `/tmp/.mount_*` sous les enfants → SIGBUS en cascade, coredumps), attente de l'arbre complet (zygote/gpu/renderer/**crashpad**) jusqu'à 20 s, SIGKILL en dernier recours ; (5) patch du store SQLite `drafts.sqlite` (table `state`, PK `(name,key)`, `updated_at` epoch ms obligatoire) : projet ajouté à `projects.local` + `lastProject` (clé `server`, name `opencode.global.dat`) + `home.selection` (clé `layout`) + tab ajouté/focalisé (`tabs`, `tabs.recent` — session au format `sidecar\n/server/<b64 sidecar>/session/<id>` + `tabs.info` avec directory, draft au format `draft:<uuid>`, le directory vivant dans le tab) — 3 tentatives avec vérification de relecture (verrou WAL de l'app qui vient de s'arrêter) ; (6) patch du localStorage LevelDB (route selon SPEC : `/server/c2lkZWNhcg/session/<sid>` ou `/new-session?draftId=<uuid>`) ; (7) relance via deep-link `opencode://open-project?directory=<encodé>` (`python3 urllib.parse.quote`, fallback `sed`)
-    - **Sessions jamais perdues** : elles vivent sur le serveur de fond partagé (`opencode-cli serve --service`), la GUI n'est qu'un client — le restart ne coûte que ~2-3 s
-    - **Alias de symlink = projet vide en double (corrigé 26/09)** : sur ostree `/home` est un **symlink de `/var/home`** — un chemin `/home/gab/...` passé au wrapper créait une entrée `projects.local` distincte de l'entrée canonique `/var/home/...` (la GUI déduplique par **chaîne exacte**, `fE` ne résout pas les symlinks) ; la GUI regroupant les sessions par projet serveur (canonical = chemin physique), l'alias s'affichait comme un projet **sans aucune session**. Fix triple : (1) `pwd -P` dans le wrapper (chemin physique partout : deep-link, store, API), (2) le patcher SQLite dédoublonne `projects.local` par `os.path.realpath` (fusionne les alias vers l'entrée canonique, insérée en tête comme `projects.open`), (3) le patcher tourne à chaque ouverture → répare les stores pollués au fil de l'eau. Noter : un échec silencieux du patcher (verrou WAL transitoire, 3 tentatives épuisées) laisse le store inchangé sans trace — d'où l'importance du test manuel verbeux pour diagnostiquer
-    - **Rotation LevelDB (compaction)** : quand leveldb compacte, le contenu migre vers des `.ldb` et le `.log` peut disparaître — le patcheur **crée alors un nouveau log** (numéro max des fichiers + 1) ; la récupération leveldb rejoue tout log plus récent que celui référencé dans le manifeste, la route est donc bien appliquée. Le log actif est toujours le `*.log` au numéro le plus élevé
-    - **Auto-rename natif préservé** : les sessions créées par l'app sont sans titre ; la génération de titre ne s'applique qu'à `title === undefined` ou au titre par défaut « New session - <date> » (condition `bN` du bundle) — un titre explicite (ex. `title=dirname`) bloque le renommage pour toujours (validé en test). Le wrapper ne pose jamais de titre à la création (de toute façon les nouveaux dossiers passent par des drafts, promus sans titre au premier prompt)
-    - **Pas de switch sans fermeture en 2.0.16** (confirmé exhaustivement : 965 chunks JS + chunks main scannés, zéro consommateur de deep-link — le main reçoit les URLs, log « deep link received », forward IPC → `window.__OPENCODE__.deepLinks` + CustomEvent `opencode:deep-link`, mais **aucun listener**) : le plumbing upstream existe (`layout.tsx` : `handleDeepLinks` → `openProject(directory)` = navigation directe ; PRs anomalyco/opencode#15479/#45103) mais n'est pas dans cette build → dès qu'une version desktop le livrera, le deep-link fera le switch **live sans fermer la fenêtre**, sans changer le script
-    - Entrée `gablue-opencode.desktop` : `NoDisplay=true` (réservée au « Ouvrir avec » des dossiers, `MimeType=inode/directory`), `Terminal=false`, `Exec=opencode-open %f`, icône GearLever `$HOME/AppImages/.icons/opencode`
-    - **Double entrée « Ouvrir avec »** : `gablue-opencode.desktop` (GUI, défaut) **et** `gablue-opencode-cli.desktop` (comportement historique) — `Name=OpenCode CLI`, `Terminal=true` (TUI lancée dans le terminal système), même `Exec` avec le flag `--cli` : `opencode-open --cli <dossier>` → `cd <dossier> && exec opencode <dossier>` (fallback `~/.local/bin/opencode` explicite, PATH de session Dolphin incomplet). **Ordre déterministe dans le sous-menu « Ouvrir avec »** (26/09) : l'ordre n'est pas aléatoire — la position dans `[Added Associations]` de `~/.config/mimeapps.list` définit la préférence (premier listé = en haut), `InitialPreference` (10 GUI / 5 CLI dans les `.desktop`) n'étant que le repli ; l'installateur écrit `inode/directory=gablue-opencode.desktop;gablue-opencode-cli.desktop;` en tête de section (les autres associations préservées, idempotent, sections dupliquées/vides purgées — hors spec). JAMAIS `[Default Applications]` : le double-clic d'un dossier doit rester Dolphin
-- Scripts gaming : `azahar-install`, `eden-install`, `esde-install`, `shadps4-install`, `xenia-install`
-- `esde-install` : Installe ES-DE (AppImage téléchargé depuis GitLab + intégration Gearlever), copie `custom_systems` vers `~/ES-DE/` et installe les lanceurs Tools (Gablue TV fullscreen, Jellyfin Desktop mode TV, YouTube via VacuumTube) dans `<ROMPATH>/tools/` (ROMPath lu dans `es_settings.xml` si présent, défaut `~/Roms` ; lanceurs existants non écrasés). Si ES-DE est déjà installé et que la réinstallation est refusée, les fichiers Gablue sont **quand même** copiés (fonction partagée `copy_gablue_files` appelée dans les deux chemins). En cas de réinstallation acceptée, la nouvelle AppImage est téléchargée et vérifiée **avant** la suppression de l'ancienne (un échec de téléchargement ne laisse jamais l'utilisateur sans ES-DE). Sources des lanceurs : `/usr/share/ublue-os/gablue/esde/tools/`
-- Scripts utilitaires : `dlv`, `dlcover`, `tv`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`
-- Ajout en masse de packs dans ES-DE : `wgpadd` (`.wgp` : `--windows` défaut = lanceur `.sh` dans `.es-wgp` + lien dans `~/Roms/windows`, `--xbox360` = lien direct du `.wgp` car le système xbox360 supporte `.wgp` nativement) et `lgpadd` (`.lgp` : `--desktop` défaut / `--switch`, lien direct car `.lgp` est natif dans ces systèmes). Sans argument = tous les packs du dossier courant, avec fichiers en argument = uniquement ceux-ci. Cover téléchargé dans `~/ES-DE/downloaded_media/<section>/covers` si absent
-- **Lanceur LGP `lgplaunch`** (ex-`launchlin.sh` puis `scripts/lgplaunch.sh`, déplacé septembre 2026) : `/usr/bin/lgplaunch` — lancement des `.lgp` (squashfs via squashfuse, saves/extras/temp via symlinks `/tmp/lgp-*` + overlays kernel dans un `unshare -U -m` ; amorçage saves/extras **par item** — item absent de la destination copié depuis le pack, item présent intact, jamais d'écrasement : un pack reconstruit avec une classification modifiée se répare automatiquement au lancement ; même logique dans gwine `lib/wgp/symlinks.sh`) et des exécutables Linux directs (mode classique : ELF/.sh/.py/AppImage, utilisé par `create-game-shortcut.sh`). **`--exe`** : sélection interactive d'un exécutable dans le pack (menu kdialog ou console, scan des binaires ELF/.sh/.py/.AppImage + symlinks internes, surcharge du `.launch` — équivalent de `gwine --exewgp`), déclenché par l'action de menu contextuel `EditLGP.desktop` « Lancer un autre exécutable dans le LGP » (l'action « Extraire » via `unpacklgp.sh` reste disponible). Un **symlink de compat `launchlin.sh` → `/usr/bin/lgplaunch`** est conservé dans l'ancien emplacement `scripts/` : les raccourcis `.desktop` créés par les anciennes versions (contenant l'ancien chemin en dur) continuent de fonctionner ; `killthemall` matche les deux noms en cmdline. Handlers MIME `LGP.desktop`/`LGPTerminal.desktop` (ex-`Linux.desktop`/`LinuxTerminal.desktop`, `NoDisplay` — affichage « Ouvrir avec LGP ») définis par défaut pour `application/x-lgp` dans post-install ; commandes des systèmes ES-DE `desktop`/`switch` dans `es_systems.xml`
-- `limitw` : Réglage des limites TDP des CPU/APU AMD Ryzen via ryzenadj (bash, règle sudoers nopasswd). `--temp` pour la temp max, `--save`/`--reset` pour la persistance via autostart, `--info` pour afficher les valeurs actuelles (non lisible sur certains CPU desktop comme Raphael/Dragon Range, ryzenadj n'a pas de chemin de code PM table pour ces familles).
-- `dlv` : Téléchargeur YouTube unifié (bash) avec support playlist (`--mp3`, `--mp4`, `--mkv`, `--mkv-1080`, `--playlist`). Remplace les anciens alias `dlv-mp*` et le script `ytdl`. Completion bash dans `/usr/share/bash-completion/completions/dlv`.
-- `retroplayer` : TUI Go pour explorer et écouter des musiques rétro (téléchargé depuis GitHub Releases pendant le build, dépôt séparé)
-- Gestion Wine/Proton : `gwine` (assemblé depuis `src/gwine-launcher/`), `scrap-win`
-- `tvqt` : Interface TV Gablue (PySide6 + mpv, navigation manette, ~170 chaînes)
-
-### Binaire gamepadshortcuts (/usr/bin)
-
-Gestionnaire principal des raccourcis manette en C natif (~500 Ko RAM) :
-- `gamepadshortcuts` : Binaire C remplaçant l'ancien script Python (~28 Mo RAM)
-- Détection automatique de manette via `/dev/input/event*` (evdev, ioctl)
-- Support multi-session Wayland : suivi du VT actif via inotify sur `/sys/class/tty/tty0/active`
-  - Une instance par session (autostart KDE)
-  - Filtrage des événements quand le VT n'est pas actif (pas de conflit entre sessions)
-  - Reprise automatique au retour sur le VT
-- `gamepadshortcuts-mouse` : Émulation souris/clavier via manette (Home+R3 pour activer/quitter), binaire C natif (evdev + uinput) remplaçant `mouse.py` — l'ancien script plantait sous Python 3.14 car `python-uinput` importe `distutils` (supprimé de la stdlib). Mapping identique : stick droit = souris (courbe FPS), R1/L1 = clics, D-pad = flèches, Croix/Rond/Carré/Triangle = Espace/Tab/Retour/F4, Start/Select = Entrée/F11, L3 = Échap, L2/R2 = Alt/Shift
-- Mode clavier virtuel : **Home+Carré** lance `kbdnav` (exclusivité mutuelle — tue la souris si active ; Home+R3 fait l'inverse). Pendant le grab du pont, gamepadshortcuts est aveugle : le pont signale sa sortie Home+R3 via SIGUSR1 (handler → flag `pending_mouse_launch`, lancement différé en boucle), et `check_kbdnav()` récolte le processus + `reset_button_states()` à sa sortie (les releases passées pendant le grab laisseraient une combo résiduelle)
-
-### Binaire gablue-isomount (/usr/bin)
-
-Monteur d'images disque en C natif (~2.7 Mo RAM) :
-- `gablue-isomount` : Remplace le plugin dolphin-plugins mountisoaction (bug KDE #471487)
-- Monte les fichiers ISO/IMG/EFI via l'API UDisks2 DBus (LoopSetup + Filesystem.Mount)
-- Ouvre une nouvelle fenêtre Dolphin sur le point de montage (panneau Devices à jour)
-- Réinjecte le LD_PRELOAD composefs-fix au lancement de Dolphin (l'`execlp` direct ne passe pas par le `.desktop` patché, sinon barre d'espace libre à 0 o dans cette instance)
-- Démontage automatique quand toutes les instances Dolphin sont fermées
-- Si le device est occupé (autre programme), attend sa libération avant démontage
-- Si l'image est déjà montée, ouvre juste une nouvelle fenêtre sans remonter
-- Service menu KDE : clic droit → "Monter" (remplace l'action native)
-- Double-clic : défini comme application par défaut pour les types MIME ISO/IMG/EFI
-- Log dans `/tmp/gablue-isomount.log`
-
-### Binaire kbdnav (/usr/bin)
-
-Pont manette → clavier virtuel Plasma Keyboard en C natif (~25 Ko). Source : `src/gamepadshortcuts/kbdnav.c`, compilé et installé par le même Makefile que gamepadshortcuts (comme gamepadshortcuts-mouse) :
-- `kbdnav` : taper au clavier visuel KDE avec la manette (D-pad/stick = flèches, A = Entrée — appui court valide, **maintien = popup d'accents** (long-press ≥ 600 ms, sélection flèches + Entrée, Échap ferme), B = Échap, Carré = Backspace, Triangle = Espace, L1/R1 = Tab, **Start = fermer le clavier**)
-- Cible `plasma-keyboard` (IM KDE officielle, défaut Kinoite 44) pilotée via son option KCM "Keyboard navigation" (flèches + Entrée) — les touches sont injectées via uinput, l'IM les capture via son grab clavier (jamais re-transmises aux apps pendant la frappe)
-- Cycle de vie 100 % auto-porté, lancé par la combo **Home+Carré** de gamepadshortcuts : affichage du clavier (mode KWin AnyInput + forceActivate) → frappe → sortie = masquage (setMode KWin `Never` puis `NonMouseInput` — le mode défaut Kinoite, pour que l'applet OSK du system tray reste cachée et que kwinrc ne persiste pas un `Never` — + kill -9 de plasma-keyboard pour empêcher les apps de ré-afficher le panneau fermé)
-- **Grab evdev exclusif** (EVIOCGRAB) pendant la frappe : plus aucun input manette vers les jeux/apps côté evdev. Limite assumée : les lecteurs hidraw (SDL-hidapi DualSense/Switch Pro, Steam) ne peuvent pas être coupés (aucun mécanisme noyau)
-- **Quarantaine** (poll D-Bus 250 ms) : touches injectées seulement si IM active ET panneau visible — sinon elles partiraient dans l'app focus. Focus hors champ texte = pad muet, re-focus = reprise
-- **Auto-sortie** : fermeture du clavier via son UI détectée (active && !visible persistant 0,5 s) → le pont se termine tout seul. Autres raccourcis de fermeture : **Start**, Home+Carré, Home+R3 (→ souris)
-- **Home+R3** pendant la frappe : sortie + SIGUSR1 à gamepadshortcuts (aveugle pendant le grab) qui lance le mode souris — exclusivité mutuelle souris ↔ clavier (Home+Carré tue la souris, Home+R3 tue le clavier)
-- **VT tracking** (inotify, pattern gamepadshortcuts) : VT inactif = grab relâché + pause (les autres sessions retrouvent la manette)
-- Presets requis : `/etc/xdg/plasmakeyboardrc` (keyboardNavigationEnabled=true, enabledLocales=fr_FR — pas de layout fr_CH dans plasma-keyboard, repli fr_CA sinon ; layout fr_CH custom QML = v2 ; panelFillScreenWidth=false — clavier centré largeur max 3:1, la hauteur reste hardcodée à 30 % dans le style Breeze)
-- Voir `src/gamepadshortcuts/AGENTS.md` pour l'architecture interne complète
-
-### Interface tvqt (/usr/bin)
-
-Interface de télévision Gablue en Python (PySide6 + libmpv) :
-- `tvqt` : Interface TV optimisée manette de jeu (~170 chaînes, navigation D-pad)
-- Lecture des flux HLS via `libmpv` embarqué + `QOpenGLWidget` (API `mpv_render_context` OpenGL)
-- Téléchargement et cache des logos des chaînes
-- Filtrage par pays avec pastilles (Suisse, France, Allemagne, Italie, etc.)
-- Accélération progressive de la navigation au maintien du D-pad
-
-**Gestion du focus Wayland** (ajout 2025) :
-- **Problème** : evdev lit les événements manette même quand tvqt n'est pas au premier plan, provoquant des interférences avec les jeux
-- **Solution** : suivi de l'état d'activation via `changeEvent(QEvent.ActivationChange)` — méthode Qt6 fiable sous Wayland car les événements viennent directement du compositor KWin
-- **Comportement** :
-  - Fenêtre tvqt active → manette fonctionne (navigation chaînes ET lecture vidéo intégrée)
-  - Autre application au premier plan (jeu, etc.) → manette **ignorée**
-
-**Lecteur vidéo intégré** (ajout 2025, refonte 2026) :
-- mpv est embarqué dans la fenêtre tvqt via `libmpv` + `QOpenGLWidget` (API `mpv_render_context` OpenGL)
-- **Python 3.14** : `c_void_p` retourne désormais un `int` Python → wrapper explicite `c_void_p(handle)` requis après `mpv_create()`, sinon ctypes passe le handle en 32-bit (segfault dans `render_context_create`)
-- Plus de fenêtre mpv externe ni de sous-processus : le rendu vidéo est natif dans le widget Qt6, compatible Wayland
-- La manette fonctionne uniquement quand tvqt a le focus Wayland (navigation + contrôle lecture)
-- Bascule grille/vidéo transparente : [A] lance/stop, [B] retour grille, D-pad = volume/seek
-- **Fullscreen** : automatique au lancement d'une chaîne, double-clic gauche = toggle, clic droit = retour grille
-- **GUI masquée** en mode vidéo : barre supérieure et OSD cachés, seul le flux vidéo est visible
-- **Curseur auto-masqué** en lecture : curseur souris caché après 2,5s d'inactivité (`CURSOR_HIDE_MS`, timer mono-shot) — tout mouvement souris/clic/touche le réaffiche immédiatement (filtre d'événements sur le widget vidéo et l'overlay de chargement, mouse tracking activé + suivi clavier via `keyPressEvent`) ; curseur restauré au retour à la grille
-
-### Widget panel synthetic-quota (/usr/share/plasma/plasmoids)
-
-Widget Plasma 6 affichant le quota Synthetic dans le panel, équivalent du plugin TUI OpenCode (`~/.config/opencode/plugins/synthetic-quota/tui.tsx`) :
-
-- `org.gablue.synthetic.quota/` : package KPackage standard (metadata.json, contents/config/main.xml, contents/ui/main.qml, contents/code/)
-- **Affichage compact** : `TOK 96.52% · REQ 99.87%` (2 décimales, même format que le TUI) avec code couleur adapté au thème Kirigami (positif > 50 %, neutre > 20 %, négatif ≤ 20 %, désactivé si inconnu) ; panel vertical = pourcentage seul
-- **Représentation étendue** (clic) : barres de progression tokens hebdo + requêtes 5 h, crédits `$34.50 / $36.00`, dates de régénération (nextRegenAt, nextTickAt, renewsAt), badge « Limite 5 h atteinte »
-- **Clé API lue à la source** : le helper Python `contents/code/gablue-synthetic-quota-helper` lit directement `~/.local/share/opencode/opencode.db` (table `credential`, `integration_id='synthetic'`, `active=1`, connexion SQLite read-only WAL-friendly) puis appelle `https://api.synthetic.new/v2/quotas` — pas de dépendance au serveur OpenCode, rotation de clé ramassée au prochain poll
-- **Cache** : dernier résultat valide dans `~/.cache/gablue/synthetic-quota.json` (écriture atomique tmp+rename) — en cas d'échec réseau/API, le widget garde les dernières valeurs avec `stale=true` (tooltip + footer d'erreur) ; erreur `no-key` = affichage `TOK ?` + tooltip explicatif
-- **Data engine** : `P5Support.DataSource` (engine `executable`), le helper est relancé toutes les 60 s (`main.xml` : `refreshInterval`, `decimals`, `showReq`) ; polling depuis plasmashell, clé jamais sur disque en clair hors la db OpenCode elle-même
-- **Spécificités Plasma 6.7** : `PlasmaCore.Theme` n'existe plus (utiliser `Kirigami.Theme.defaultFont`) ; signal `newData` du data engine = `(sourceName, data)` (2 paramètres, pas 3) ; les `Component` top-level après l'objet racine sont interdits en QML (utiliser des inline components `component X: Type {}` à l'intérieur du `PlasmoidItem`)
-- **Essai local avant build image** : symlink `~/.local/share/plasma/plasmoids/org.gablue.synthetic.quota` → répertoire du repo (édition en direct, un restart `plasma-plasmashell.service` recharge le package)
-
-### Scripts gamepadshortcuts (/usr/share/ublue-os/gablue/scripts/gamepadshortcuts)
-
-Scripts lancés par le binaire gamepadshortcuts :
-- `launchgamepadshortcuts` : Lanceur avec lockfile par user
-- `menuvsr.py` : Menu VR pour actions système (PySide6 + evdev, glassmorphism)
-- `decoblue` : Déconnexion Bluetooth
-- `launchyt` : Lancement YouTube
-- `openes` : Overture EmulationStation
-- `killthemall` : Tue tous les émulateurs de la session courante. Tue aussi Gablue TV (tvqt), Jellyfin Desktop (flatpak) et VacuumTube/YouTube (flatpak) **uniquement** s'ils ont été lancés depuis ES-DE (variable `GABLUE_ES_LAUNCH=1` exportée par les lanceurs Tools, vérifiée dans `/proc/<pid>/environ` ; pour Jellyfin, le wrapper `flatpak run` n'existe plus une fois l'app lancée et l'env n'est pas propagée aux bwrap (sanitisés par flatpak) — la détection se fait donc sur le processus applicatif du sandbox via `pgrep jellyfin-desktop`, puis `flatpak kill` + `pkill` des bwrap restants car le sous-sandbox WebEngine survit au `flatpak kill` ; pour VacuumTube, `GABLUE_ES_LAUNCH` n'est visible que dans le bash wrapper `startvacuumtube` du sandbox — Electron et bwrap la filtrent — détection via `pgrep startvacuumtube` puis `timeout 10 flatpak kill rocks.shy.VacuumTube` : jamais de kill direct des process du sandbox avant `flatpak kill`, ça laisse des orphelins, rend l'instance incohérente et suspend `flatpak kill` sur D-Bus)
-- `takescreenshot`, `startstoprecord` : Capture d'écran / enregistrement
-- `changefps`, `showhidemango` : Contrôle FPS / overlay MangoHud
-
-### Configuration tuned (/usr/lib/tuned)
-
-Profils optimisés Gablue :
-- `balanced-gablue`
-- `balanced-battery-gablue`
-- `throughput-performance-gablue`
-- `powersave-gablue`
-- `powersave-battery-gablue`
-
-### Just commands (/usr/share/ublue-os/just/)
-
-Commandes ujust disponibles :
-- **Système** : `configure-grub`, `kernel-setup`, `mitigations-on/off`
-- **Réseau** : `tailscale-up`, `ssh-on/off`, `toggle-wol`
-- **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`, `configure-amd-hdmi21` (karg `amdgpu.dcfeaturemask=0x402` — fonctionnalités HDMI 2.1 supplémentaires ; backport Bazzite `f92d411`, renommé de `configure-amd-vrr` par Bazzite `150cf40e`)
-- **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`, `cpuid-emu-on/off` (persistant via `/etc/modprobe.d` + `/etc/modules-load.d`, blacklist `kvm_amd`)
-- **Virtualisation** : `docker-enable/disable`, `dx-group`, `setup-kvmfr`, `libvirt-reset-cache` (efface le cache capabilities libvirt, corrige l'erreur "video model 'virtio' unsupported" dans virt-manager)
-- **Maintenance** : `gablue-update`, `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`, `ssd-thermal-limit` (limite thermique NVMe via HCTM, interactif, persistant), `toggle-updates-all` (active/désactive toutes les mises à jour auto : système, flatpaks et brew — contrairement à `toggle-updates` upstream qui ne touche pas brew)
-- **Affichage** : `kwin-display-reset` (met de côté avec horodatage `~/.config/kwinoutputconfig.json` et `/var/lib/plasmalogin/.config/kwinoutputconfig.json` — dépannage écran noir / « hors portée » au login quand KWin force un mode sauvegardé non supporté), `vrr-fix`
-- **Rebase** : `gablue-rebase-*` pour changer de variante
+Le build de test et les vérifications post-build utilisent les commandes de la section « Commandes de build » ci-dessus (tag `test-build` ou nom de variante au choix).
 
 ## Sécurité
 
@@ -1156,13 +497,31 @@ Commandes ujust disponibles :
 - **Documentation uBlue** : https://docs.universal-blue.org/
 - **RetroPlayer** : https://github.com/elgabo86/retroplayer
 
-## Mise à jour de ce document
+## Architecture documentaire (AGENTS.md)
 
-**RÈGLE** : Ce document DOIT être mis à jour avant chaque commit qui modifie la structure, les Containerfiles, les scripts ou les workflows. Ne jamais committer sans avoir vérifié que l'AGENTS.md reflète l'état exact du projet.
+OpenCode ne charge au démarrage que le AGENTS.md global + racine ; les
+AGENTS.md des sous-dossiers sont chargés automatiquement quand l'agent
+lit/travaille dans ces dossiers. La racine = contrat global ; le détail par
+domaine vit dans le sous-dossier concerné. Zéro duplication entre docs.
 
-Ce document doit être mis à jour lors des changements suivants :
+**RÈGLE** : chaque AGENTS.md (racine et sous-dossiers) DOIT être mis à jour
+avant chaque commit qui modifie ce qu'il couvre. Ne jamais committer sans
+vérifier que la doc du domaine reflète l'état exact. Un domaine qui grossit →
+son propre AGENTS.md de sous-dossier + pointeur dans l'index ci-dessous.
+
+### Index des documents
+
+| Domaine | Document | À lire AVANT de... |
+|---------|----------|--------------------|
+| Scripts de build (copr → cpuid-fault) | `files/scripts/AGENTS.md` | modifier `files/scripts/` ou une étape RUN |
+| Fichiers système (/etc, /usr/bin, binfmt, ujust, plasmoid) | `files/system/AGENTS.md` | modifier `files/system/` |
+| Workflows CI | `.github/AGENTS.md` | modifier `.github/` ou un tag de commit |
+| ISO live / installateur | `installer/AGENTS.md` | modifier `installer/` ou `local-build/` |
+| Lanceur gwine | `src/gwine-launcher/AGENTS.md` | modifier `src/gwine-launcher/` |
+| Manette (gamepadshortcuts, mouse, kbdnav) | `src/gamepadshortcuts/AGENTS.md` | modifier `src/gamepadshortcuts/` |
+
+Changements suivant la racine :
 - Ajout d'une nouvelle variante d'image
-- Modification de la structure des scripts ou fichiers système
-- Changement des dépôts ou sources
-- Ajout de nouvelles conventions
-- Modification des workflows
+- Modification de la structure du projet ou des conventions transverses
+- Changement des dépôts ou sources, ajout de nouvelles conventions
+- Nouveau/déplacement d'un AGENTS.md de sous-dossier (index ci-dessus)
