@@ -36,7 +36,13 @@ gamepadshortcuts lui-même — c'est voulu, la frappe a priorité).
 
 ### Cycle de vie (100 % auto-porté)
 
-gamepadshortcuts lance juste le binaire. Le pont gère tout :
+gamepadshortcuts lance le binaire en lui passant le chemin de SA manette
+(`/usr/bin/kbdnav /dev/input/eventX` — celle qui a déclenché la combo ;
+repli sur scan interne côté pont si le device a disparu entre-temps).
+Sans ce contrat, le re-scan interne du pont peut attraper une AUTRE
+manette (ordre `readdir` de /dev/input, renumérotation des nodes après
+reconnexion BT) : le clavier ne répond alors qu'à la mauvaise manette.
+Le pont gère tout :
 
 1. **Démarrage** : grab evdev + affichage du clavier
    (`mode AnyInput (2)` + `forceActivate` via D-Bus KWin)
@@ -173,6 +179,9 @@ serait aveugle). VT actif → re-grab et reprise.
 
 ## Points de vigilance pour les modifications
 
+- **Conserver le contrat argv `/dev/input/eventX`** (chemin imposé par
+  gamepadshortcuts, repli scan interne si absent/invalide) : c'est ce qui
+  garantit que le clavier est piloté par la manette qui a ouvert la combo.
 - **Ne jamais injecter hors `keys_allowed`** : les touches arrivent alors
   dans l'app focus (re-transmission de l'IM quand le panneau n'est pas
   exposé).

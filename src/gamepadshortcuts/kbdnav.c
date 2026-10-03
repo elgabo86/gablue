@@ -9,6 +9,11 @@
  *
  * Cycle de vie (100 % auto-porté, lancé par gamepadshortcuts via
  * Home+Carré) :
+ *   0. Manette imposée par le parent (argument /dev/input/eventX) : le
+ *      pont grabbe LA manette qui a déclenché la combo — pas la première
+ *      trouvée par son propre scan (ordre readdir / reconnexion BT avec
+ *      plusieurs manettes -> clavier contrôlé par la mauvaise manette).
+ *      Device absent entre-temps -> repli sur le scan interne.
  *   1. Grab exclusif de la manette (EVIOCGRAB) -> plus aucun input vers
  *      les jeux/applications pendant la frappe
  *   2. Affichage du clavier (KWin : mode AnyInput + forceActivate)
@@ -800,6 +805,8 @@ static void cleanup(void)
 
 int main(int argc, char **argv)
 {
+    const char *forced_path = NULL;
+
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--no-grab") == 0)
             opt_grab = false;
@@ -811,8 +818,14 @@ int main(int argc, char **argv)
             }
             fprintf(stderr, "[ERREUR] Aucune manette détectée\n");
             return 1;
+        } else if (strncmp(argv[i], "/dev/input/", 11) == 0) {
+            /* Chemin imposé par gamepadshortcuts : manette qui a déclenché
+               la combo Home+Carré (le clavier doit répondre à CETTE
+               manette, pas à celle d'un re-scan hasardeux) */
+            forced_path = argv[i];
         } else {
-            fprintf(stderr, "Usage : %s [--no-grab] [--find]\n", argv[0]);
+            fprintf(stderr, "Usage : %s [--no-grab] [--find] [/dev/input/eventX]\n",
+                    argv[0]);
             return 1;
         }
     }
@@ -823,7 +836,14 @@ int main(int argc, char **argv)
     setup_vt_tracking();
     check_vt_activity();
 
-    gamepad_fd = find_gamepad();
+    if (forced_path)
+        gamepad_fd = test_gamepad_candidate(forced_path, false);
+    if (gamepad_fd < 0) {
+        if (forced_path)
+            fprintf(stderr, "[INFO] Manette %s indisponible, scan interne\n",
+                    forced_path);
+        gamepad_fd = find_gamepad();
+    }
     if (gamepad_fd < 0) {
         fprintf(stderr, "[ERREUR] Aucune manette détectée — relancer après branchement\n");
         cleanup_vt_tracking();

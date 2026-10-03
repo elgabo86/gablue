@@ -198,6 +198,14 @@ static void uninhibit_screensaver(void)
 
 #define VID_SONY 0x054c
 
+/* Chemin de la manette actuellement suivie. Transmis a kbdnav au lancement
+   du clavier virtuel : le pont doit grabber LA manette qui a declenche la
+   combo, pas la premiere trouvee par son propre scan (l'ordre readdir de
+   /dev/input et la numerotation des nodes changent avec plusieurs manettes
+   ou apres une reconnexion BT -> sinon le clavier ne repond qu'a une autre
+   manette que celle qui l'a ouvert). */
+static char gamepad_path[512] = {0};
+
 /* Teste un candidat /dev/input/event* : retourne le fd ouvert si le device
    convient, -1 sinon.
    sony_only : ne retenir que les manettes Sony physiques (passe prioritaire,
@@ -255,6 +263,7 @@ static int test_gamepad_candidate(const char *path, bool sony_only)
 
     fprintf(stderr, "[INFO] Manette trouvee: %s (%s, ABS_Y %d..%d)\n",
             name, path, abs_y_minimum, abs_y_maximum);
+    snprintf(gamepad_path, sizeof(gamepad_path), "%s", path);
     return fd;
 }
 
@@ -332,6 +341,27 @@ static pid_t launch_binary(const char *path)
     }
     if (pid == 0) {
         execl(path, path, (char *)NULL);
+        _exit(1);
+    }
+    return pid;
+}
+
+/* Lance kbdnav en lui transmettant le chemin de la manette suivie : le
+   clavier virtuel sera pilote (et ferme) par LA manette qui a declenche
+   la combo Home+Carré, pas par celle que le scan interne de kbdnav
+   attraperait (peut etre une autre avec plusieurs pads connectes).
+   Repli cote kbdnav : scan interne si le device a disparu entre-temps. */
+static pid_t launch_kbdnav(void)
+{
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork kbdnav");
+        return -1;
+    }
+    if (pid == 0) {
+        if (gamepad_path[0] != '\0')
+            execl("/usr/bin/kbdnav", "kbdnav", gamepad_path, (char *)NULL);
+        execl("/usr/bin/kbdnav", "kbdnav", (char *)NULL);
         _exit(1);
     }
     return pid;
@@ -419,7 +449,7 @@ static void handle_combinations(void)
             mouse_pid = -1;
         }
         fprintf(stderr, "[ACTION] KBDNAV\n");
-        kbdnav_pid = launch_binary("/usr/bin/kbdnav");
+        kbdnav_pid = launch_kbdnav();
         kbdnav_running = true;
         square_pressed = false;
         /* Le pont grabbe la manette immédiatement : on devient aveugle et

@@ -696,24 +696,16 @@ class TVWindow(QMainWindow):
         self._cursor_timer.setSingleShot(True)
         self._cursor_timer.timeout.connect(self._hide_cursor)
 
-        # --- Manette ---
-        self._gamepad = None
+        # --- Manettes : TOUTES les manettes connectées pilotent l'app ---
+        # dict chemin -> evdev.InputDevice, re-scan incrémental toutes les
+        # 2 s (branchement à chaud, renumérotation des nodes après une
+        # reconnexion BT). État par device (hat, axes, fronts boutons) :
+        # deux manettes ne se marchent pas dessus.
+        self._gamepads = {}
+        self._pad_states = {}
         self._last_scan = 0.0
         self._last_input = 0
-        self._last_hat_x = 0
-        self._last_hat_y = 0
-        self._last_cross = False
-        self._last_circle = False
-        self._last_l1 = False
-        self._last_r1 = False
-        self._last_select = False
         self._had_gamepad = False
-
-        # --- État courant du stick/hat (persiste entre les polls) ---
-        self._hat_x = 0
-        self._hat_y = 0
-        self._axis_x = 0.0
-        self._axis_y = 0.0
 
         # --- Accélération navigation (maintien direction) ---
         self._hold_dir = None          # None, 'up', 'down', 'left', 'right'
@@ -727,7 +719,7 @@ class TVWindow(QMainWindow):
         self._setup_ui()
         self._build_country_pills()
         self._filter_channels()
-        self._find_gamepad()
+        self._find_gamepads()
 
         # --- Timers ---
         self._pad_timer = QTimer(self)
@@ -1228,124 +1220,192 @@ class TVWindow(QMainWindow):
             self._hide_loading()
 
     # =========================================================================
-    # MANETTE DE JEU
+    # MANETTES DE JEU (toutes les manettes pilotent l'application)
     # =========================================================================
 
-    def _find_gamepad(self):
-        """Détecte une manette connectée."""
+    @staticmethod
+    def _normalize_axis(value, vmin, vmax):
+        """Normalise un axe brut vers [-1.0, 1.0] selon la plage réelle du
+        device (0.0 au repos). Les pads virtuels ds2xbox sont en
+        -32768..32767 avec repos à 0 : sans normalisation par device, leur
+        repos serait lu comme -1.008 (collé haut/gauche, volume qui monte
+        en boucle)."""
+        if vmax <= vmin:
+            return 0.0
+        norm = 2.0 * (value - vmin) / (vmax - vmin) - 1.0
+        return max(-1.0, min(1.0, norm))
+
+    def _find_gamepads(self):
+        """Détecte les manettes connectées (toutes, pas une seule).
+
+        Re-scan incrémental : ouvre uniquement les nouveaux devices, garde
+        les déjà suivis (leurs états hat/boutons persistent)."""
         try:
-            devices = [evdev.InputDevice(p) for p in evdev.list_devices()]
+            paths = evdev.list_devices()
         except (FileNotFoundError, PermissionError, OSError):
-            self._gamepad = None
-            self._update_osd()
-            return
-        for device in devices:
+            paths = []
+        for path in paths:
+            if path in self._gamepads:
+                continue
             try:
+                device = evdev.InputDevice(path)
                 caps = device.capabilities()
             except (OSError, IOError):
                 continue
-            if ecodes.EV_KEY in caps:
-                keys = caps[ecodes.EV_KEY]
-                if ecodes.BTN_A in keys or ecodes.BTN_SELECT in keys:
-                    self._gamepad = device
-                    self._update_osd()
-                    return
-        self._gamepad = None
+            if ecodes.EV_KEY not in caps:
+                device.close()
+                continue
+            keys = caps[ecodes.EV_KEY]
+            if ecodes.BTN_A not in keys and ecodes.BTN_SELECT not in keys:
+                device.close()
+                continue
+            state = {
+                "hat_x": 0, "hat_y": 0, "phat_x": 0, "phat_y": 0,
+                "axis_x": 0.0, "axis_y": 0.0,
+                "xr": (0, 255), "yr": (0, 255),
+                "cross": False, "circle": False,
+                "l1": False, "r1": False, "select": False,
+            }
+            # Plages réelles des sticks pour la normalisation
+            try:
+                ax = device.absinfo(ecodes.ABS_X)
+                ay = device.absinfo(ecodes.ABS_Y)
+                state["xr"] = (ax.minimum, ax.maximum)
+                state["yr"] = (ay.minimum, ay.maximum)
+            except (OSError, IOError, KeyError, IndexError):
+                pass
+            self._gamepads[path] = device
+            self._pad_states[path] = state
+            print(f"[INFO] Manette ajoutée : {device.name} ({path})",
+                  file=sys.stderr)
         self._update_osd()
+
+    def _drop_gamepad(self, path):
+        """Retire une manette déconnectée (fermeture propre)."""
+        device = self._gamepads.pop(path, None)
+        self._pad_states.pop(path, None)
+        if device:
+            try:
+                device.close()
+            except (OSError, IOError):
+                pass
+        self._update_osd()
+
+    @staticmethod
+    def _device_direction(state):
+        """Direction d'un device : hat prioritaire sur stick, priorité
+        up > down > left > right (sémantique historique mono-pad)."""
+        if state["hat_y"] == -1 or state["axis_y"] < -0.5:
+            return "up"
+        if state["hat_y"] == 1 or state["axis_y"] > 0.5:
+            return "down"
+        if state["hat_x"] == -1 or state["axis_x"] < -0.5:
+            return "left"
+        if state["hat_x"] == 1 or state["axis_x"] > 0.5:
+            return "right"
+        return None
+
+    def _merged_direction(self):
+        """Direction courante toutes manettes confondues.
+
+        Même ordre d'évaluation qu'en mono-pad (up > down > left > right),
+        étendu à tous les devices."""
+        for direction in ("up", "down", "left", "right"):
+            for state in self._pad_states.values():
+                if self._device_direction(state) == direction:
+                    return direction
+        return None
 
     def _update_osd(self):
         """Affiche/masque la barre d'aide manette."""
-        connected = self._gamepad is not None
+        connected = bool(self._gamepads)
         if connected != self._had_gamepad:
             self._had_gamepad = connected
             watching = self._stack.currentIndex() == 1
             self._osd_bar.setVisible(connected and not watching)
 
     def _poll_gamepad(self):
-        """Boucle principale de lecture manette (appelée toutes les ~16ms).
+        """Boucle principale de lecture manettes (appelée toutes les ~16ms).
 
-        L'accélération fonctionne même sans nouveaux événements : l'état
-        du stick/hat est mémorisé entre les appels.
+        TOUTES les manettes connectées pilotent l'application : état tenu
+        par device, détection de fronts par device. L'accélération
+        fonctionne même sans nouveaux événements : l'état du stick/hat
+        est mémorisé entre les appels. Re-scan incrémental toutes les
+        2 s pour suivre les branchements à chaud.
 
-        La manette est ignorée quand tvqt n'est pas la fenêtre active
+        Les manettes sont ignorées quand tvqt n'est pas la fenêtre active
         (focus Wayland géré par changeEvent / ActivationChange).
         """
         if not self._window_active:
             return
 
-        if not self._gamepad:
-            now_ms = time.time() * 1000
-            if now_ms - self._last_scan >= 2000:
-                self._last_scan = now_ms
-                self._find_gamepad()
+        now = time.time() * 1000
+
+        # Re-scan incrémental toutes les 2 s (hotplug, reconnexion BT)
+        if now - self._last_scan >= 2000:
+            self._last_scan = now
+            self._find_gamepads()
+
+        if not self._gamepads:
             return
 
-        now = time.time() * 1000
         watching = self._stack.currentIndex() == 1
 
-        # Lecture des événements si disponibles
+        # Lecture des événements de toutes les manettes
         try:
-            r, _, _ = select.select([self._gamepad], [], [], 0)
-        except (OSError, IOError):
-            self._gamepad = None
-            self._update_osd()
+            ready, _, _ = select.select(list(self._gamepads.values()), [], [], 0)
+        except (OSError, IOError, ValueError):
+            # fd invalide (device disparu) : repartir d'un état propre
+            for path in list(self._gamepads):
+                self._drop_gamepad(path)
             return
 
-        cross_pressed = False
-        circle_pressed = False
-        l1_pressed = False
-        r1_pressed = False
-        select_pressed = False
-        if self._gamepad in r:
+        actions = []  # boutons pressés (fronts détectés) ce poll
+        for device in ready:
+            state = self._pad_states.get(device.path)
+            if state is None:
+                continue
             try:
-                for ev in self._gamepad.read():
-                    if ev.type == ecodes.EV_ABS:
-                        if ev.code == ecodes.ABS_HAT0X:
-                            self._hat_x = ev.value
-                        elif ev.code == ecodes.ABS_HAT0Y:
-                            self._hat_y = ev.value
-                        elif ev.code == ecodes.ABS_X:
-                            self._axis_x = (ev.value - 128) / 127.0
-                        elif ev.code == ecodes.ABS_Y:
-                            self._axis_y = (ev.value - 128) / 127.0
-                    elif ev.type == ecodes.EV_KEY:
-                        if ev.code == BTN_CROSS and ev.value == 1:
-                            cross_pressed = True
-                        elif ev.code == BTN_CIRCLE and ev.value == 1:
-                            circle_pressed = True
-                        elif ev.code == BTN_L1 and ev.value == 1:
-                            l1_pressed = True
-                        elif ev.code == BTN_R1 and ev.value == 1:
-                            r1_pressed = True
-                        elif ev.code == BTN_SELECT and ev.value == 1:
-                            select_pressed = True
+                events = device.read()
             except (OSError, IOError, BlockingIOError):
-                self._gamepad = None
-                self._update_osd()
-                return
+                self._drop_gamepad(device.path)
+                continue
 
-        # Utilise les valeurs persistantes (pas de return quand pas d'événements,
-        # ce qui permet à l'accélération de continuer pendant le maintien)
-        hat_x = self._hat_x
-        hat_y = self._hat_y
-        axis_x = self._axis_x
-        axis_y = self._axis_y
+            for ev in events:
+                if ev.type == ecodes.EV_ABS:
+                    if ev.code == ecodes.ABS_HAT0X:
+                        state["hat_x"] = ev.value
+                    elif ev.code == ecodes.ABS_HAT0Y:
+                        state["hat_y"] = ev.value
+                    elif ev.code == ecodes.ABS_X:
+                        state["axis_x"] = self._normalize_axis(ev.value, *state["xr"])
+                    elif ev.code == ecodes.ABS_Y:
+                        state["axis_y"] = self._normalize_axis(ev.value, *state["yr"])
+                elif ev.type == ecodes.EV_KEY:
+                    pressed = ev.value == 1
+                    if ev.code == BTN_CROSS:
+                        if pressed and not state["cross"]:
+                            actions.append("cross")
+                        state["cross"] = pressed
+                    elif ev.code == BTN_CIRCLE:
+                        if pressed and not state["circle"]:
+                            actions.append("circle")
+                        state["circle"] = pressed
+                    elif ev.code == BTN_L1:
+                        if pressed and not state["l1"]:
+                            actions.append("l1")
+                        state["l1"] = pressed
+                    elif ev.code == BTN_R1:
+                        if pressed and not state["r1"]:
+                            actions.append("r1")
+                        state["r1"] = pressed
+                    elif ev.code == BTN_SELECT:
+                        if pressed and not state["select"]:
+                            actions.append("select")
+                        state["select"] = pressed
 
-        up = hat_y == -1 or axis_y < -0.5
-        down = hat_y == 1 or axis_y > 0.5
-        left = hat_x == -1 or axis_x < -0.5
-        right = hat_x == 1 or axis_x > 0.5
-
-        # === Direction actuelle ===
-        new_dir = None
-        if up:
-            new_dir = "up"
-        elif down:
-            new_dir = "down"
-        elif left:
-            new_dir = "left"
-        elif right:
-            new_dir = "right"
+        # --- Direction actuelle (toutes manettes) ---
+        new_dir = self._merged_direction()
 
         # --- Mode grille : accélération progressive au maintien ---
         if not watching:
@@ -1362,13 +1422,13 @@ class TVWindow(QMainWindow):
                 self._last_repeat = now
                 self._try_move_cursor(new_dir)
 
-        # --- Boutons (tir unique, pas d'accélération) ---
+        # --- Boutons (fronts par device, tir unique, pas d'accélération) ---
         if now - self._last_input >= COOLDOWN_MS:
-            if select_pressed and not self._last_select:
+            if "select" in actions:
                 self._last_input = now
                 self._toggle_fullscreen()
 
-            elif cross_pressed and not self._last_cross:
+            elif "cross" in actions:
                 self._last_input = now
                 if watching:
                     self._pause_toggle()
@@ -1377,7 +1437,7 @@ class TVWindow(QMainWindow):
                     self._play(f"{BASE}/{ch_id}{SUFFIX}/{ch_id}.m3u8", label)
                 self._hold_dir = None
 
-            elif circle_pressed and not self._last_circle:
+            elif "circle" in actions:
                 self._last_input = now
                 if watching:
                     self._stop_video()
@@ -1385,7 +1445,7 @@ class TVWindow(QMainWindow):
                     self.close()
                 return
 
-            elif l1_pressed and not self._last_l1:
+            elif "l1" in actions:
                 self._last_input = now
                 if not watching:
                     self._country_idx = (self._country_idx - 1) % (len(COUNTRIES_ORDER) + 1)
@@ -1393,7 +1453,7 @@ class TVWindow(QMainWindow):
                     self._scroll_to_top()
                 self._hold_dir = None
 
-            elif r1_pressed and not self._last_r1:
+            elif "r1" in actions:
                 self._last_input = now
                 if not watching:
                     self._country_idx = (self._country_idx + 1) % (len(COUNTRIES_ORDER) + 1)
@@ -1401,28 +1461,33 @@ class TVWindow(QMainWindow):
                     self._scroll_to_top()
                 self._hold_dir = None
 
-            # --- Mode lecture : directions sans accélération ---
+            # --- Mode lecture : hat = front par device (un cran = une
+            #     action), stick = répétition au rythme du cooldown.
+            #     Seul le device qui PRODUIT la direction est évalué :
+            #     le garde phat d'une manette au repos (0) ne doit pas
+            #     faire répéter la direction tenue par une autre. ---
             elif watching and new_dir is not None:
-                if new_dir == "up" and self._last_hat_y != -1:
-                    self._last_input = now
-                    self._volume_up()
-                elif new_dir == "down" and self._last_hat_y != 1:
-                    self._last_input = now
-                    self._volume_down()
-                elif new_dir == "left" and self._last_hat_x != -1:
-                    self._last_input = now
-                    self._seek(-10)
-                elif new_dir == "right" and self._last_hat_x != 1:
-                    self._last_input = now
-                    self._seek(10)
+                for state in self._pad_states.values():
+                    if self._device_direction(state) != new_dir:
+                        continue
+                    if new_dir == "up" and state["phat_y"] != -1:
+                        self._last_input = now
+                        self._volume_up()
+                    elif new_dir == "down" and state["phat_y"] != 1:
+                        self._last_input = now
+                        self._volume_down()
+                    elif new_dir == "left" and state["phat_x"] != -1:
+                        self._last_input = now
+                        self._seek(-10)
+                    elif new_dir == "right" and state["phat_x"] != 1:
+                        self._last_input = now
+                        self._seek(10)
+                    break
 
-        self._last_hat_x = hat_x
-        self._last_hat_y = hat_y
-        self._last_cross = cross_pressed
-        self._last_circle = circle_pressed
-        self._last_l1 = l1_pressed
-        self._last_r1 = r1_pressed
-        self._last_select = select_pressed
+        # Fronts hat mémorisés par device pour le mode lecture
+        for state in self._pad_states.values():
+            state["phat_x"] = state["hat_x"]
+            state["phat_y"] = state["hat_y"]
 
     # =========================================================================
     # FOCUS WAYLAND
@@ -1498,14 +1563,18 @@ class TVWindow(QMainWindow):
         elif key == Qt.Key_Return or key == Qt.Key_Enter:
             if watching:
                 self._pause_toggle()
-            elif self._buttons and self._cursor < len(self._buttons):
-                self._buttons[self._cursor].click()
+            elif self._buttons and self._cursor < len(self._filtered):
+                # Les cartes sont des QFrame (pas de .click()) : lancer
+                # directement la chaîne sous le curseur
+                _, (ch_id, label, _) = self._filtered[self._cursor]
+                self._play(f"{BASE}/{ch_id}{SUFFIX}/{ch_id}.m3u8", label)
 
         elif key == Qt.Key_Space:
             if watching:
                 self._pause_toggle()
-            elif self._buttons and self._cursor < len(self._buttons):
-                self._buttons[self._cursor].click()
+            elif self._buttons and self._cursor < len(self._filtered):
+                _, (ch_id, label, _) = self._filtered[self._cursor]
+                self._play(f"{BASE}/{ch_id}{SUFFIX}/{ch_id}.m3u8", label)
 
         elif key == Qt.Key_Backspace:
             if watching:
@@ -1594,11 +1663,13 @@ class TVWindow(QMainWindow):
         self._stop_video()
         self._pad_timer.stop()
         self._load_anim.stop()
-        if self._gamepad:
+        for device in list(self._gamepads.values()):
             try:
-                self._gamepad.close()
+                device.close()
             except (OSError, IOError):
                 pass
+        self._gamepads.clear()
+        self._pad_states.clear()
         super().closeEvent(event)
 
 
