@@ -34,6 +34,7 @@
 - Scripts gaming : `azahar-install`, `eden-install`, `esde-install`, `shadps4-install`, `xenia-install`
 - Scripts utilitaires : `dlv`, `dlcover`, `tv`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`
 - Gestion Wine/Proton : `gwine` (assemblé depuis `src/gwine-launcher/`), `scrap-win`
+- `konsole-run` : wrapper « Lancer dans Konsole » (détail → § konsole-run ci-dessous)
 
 ### opencode2-install
 
@@ -70,6 +71,16 @@ Wrapper qui ouvre le dossier directement dans OpenCode Desktop. Mécanisme rétr
 - `lgplaunch` : lancement `.lgp` (squashfs squashfuse, saves/extras/temp via symlinks `/tmp/lgp-*` + overlays kernel dans `unshare -U -m` ; amorçage par item — absent copié du pack, présent intact, jamais écrasé : un pack re-classé se répare au lancement ; même logique dans gwine `lib/wgp/symlinks.sh`) et exécutables Linux directs (ELF/.sh/.py/AppImage). `--exe` : sélection interactive d'un exécutable (menu kdialog/console, scan ELF/.sh/.py/.AppImage + symlinks, surcharge `.launch`), déclenché par l'action `EditLGP.desktop`. Symlink compat `launchlin.sh` conservé (raccourcis `.desktop` anciens en dur) ; `killthemall` matche les deux noms. Handlers MIME `LGP.desktop`/`LGPTerminal.desktop` (NoDisplay) pour `application/x-lgp` ; commandes ES-DE `desktop`/`switch`
 - `limitw` : limites TDP CPU/APU AMD via ryzenadj (bash, sudoers nopasswd). `--temp` temp max, `--save`/`--reset` persistance autostart, `--info` (non lisible sur certains desktop — Raphael/Dragon Range, pas de chemin PM table)
 - `dlv` : téléchargeur YouTube unifié (playlist : `--mp3`, `--mp4`, `--mkv`, `--mkv-1080`). Remplace `dlv-mp*`/`ytdl` ; completion bash `/usr/share/bash-completion/completions/dlv`
+
+### konsole-run — action « Lancer dans Konsole » (Dolphin)
+
+Wrapper `usr/bin/konsole-run` + service menu `usr/share/kio/servicemenus/konsolerun.desktop` qui REMPLACE celui du paquet konsole (même nom de fichier, le COPY files/system/all écrase ; MimeType étendu à `application/x-shellscript` — l'original ne couvre que `x-executable`) :
+
+- Affiche chemin + nom au lancement, exécution DIRECTE (shebang respecté), shell interactif à la fin (`exec bash`) — le `--hold` natif laissait une session morte non saisissable
+- Script sans +x : `+x` ajouté le temps de l'exécution puis permissions restaurées à l'identique (trap EXIT/INT/TERM/HUP — survit à Ctrl+C/fermeture de fenêtre ; bits spéciaux inclus via `stat -c %a`) ; chmod impossible → erreur claire, rien n'est exécuté
+- chmod +x posé par post-install (convention repo)
+- **Double-clic NON couvert** : KIO (`OpenUrlJob::handleScripts`, ex-KRun) exécute les +x en direct sans consulter l'association MIME ; 3 issues codées en dur (`kiorc` `[Executable scripts] behaviourOnLaunch` = execute/alwaysAsk/open) — aucune ne lance Konsole. Vérifié test bac à sable + code KIO 10/2026
+- Validé local 10/2026 (perms 644 → 755 pendant → 644 après, interruption restaurée) avant intégration
 
 ### Binaire gamepadshortcuts (/usr/bin)
 

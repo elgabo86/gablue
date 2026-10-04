@@ -1,0 +1,46 @@
+#!/usr/bin/bash
+# Exécute un script dans ce terminal : affiche la commande, lance, puis
+# rend la main à un shell interactif (le terminal reste utilisable).
+# Si le script n'est pas exécutable : +x ajouté le temps de l'exécution,
+# puis permissions restaurées à l'identique (trap = filet en cas de
+# Ctrl+C, fermeture de la fenêtre ou autre interruption).
+
+if [[ $# -lt 1 || ! -e "$1" ]]; then
+    echo "Usage: konsole-run <script|exécutable>" >&2
+    exit 1
+fi
+
+target="$1"
+
+# Se placer dans le dossier de la cible (les chemins relatifs fonctionnent)
+cd -- "$(dirname -- "$target")" || true
+
+# Affiche le chemin et le nom au lancement
+echo
+echo "+ ${target}"
+echo
+
+if [[ -x "$target" ]]; then
+    "$target"
+    code=$?
+else
+    # Mémorise les permissions (inclut les bits setuid/setgid/sticky),
+    # ajoute +x le temps de l'exécution, puis restaure
+    old_perms=$(stat -c %a -- "$target")
+    restore_perms() { chmod "$old_perms" -- "$target"; }
+    trap restore_perms EXIT INT TERM HUP
+    if ! chmod +x -- "$target"; then
+        echo "Erreur : impossible de rendre « ${target} » exécutable (droits insuffisants)."
+        exit 1
+    fi
+    echo "(non exécutable → +x ajouté temporairement)"
+    echo
+    "$target"
+    code=$?
+    restore_perms
+    trap - EXIT INT TERM HUP
+fi
+
+echo
+echo "+ terminé (code ${code}) — shell interactif, Ctrl+D pour fermer"
+exec bash

@@ -100,7 +100,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 
 ### post-install
 
-- Permissions +x, setcap gamescope, modules SELinux (.te → .pp), binaires externes (retroplayer, zxtune), branding os-release, config système (tuned, bluetooth, pipewire, timers), désactivation dépôts, nettoyage .desktop, config DX (iptables, NetworkManager), MIME par défaut (Windows.desktop, LGP.desktop)
+- Permissions +x, setcap gamescope, modules SELinux (.te → .pp), binaires externes (retroplayer, zxtune), branding os-release, config système (tuned, bluetooth, pipewire, timers), désactivation dépôts, nettoyage .desktop, config DX (iptables, NetworkManager), MIME par défaut (Windows.desktop, LGP.desktop), chmod konsole-run (wrapper servicemenu Konsole → files/system/AGENTS.md § konsole-run)
 - **Maj auto** : `AutomaticUpdatePolicy=stage` dans `/etc/rpm-ostreed.conf` (copié depuis ublue-os-update-services) + timers flatpak/rpm-ostree samedi 04:00 (`RandomizedDelaySec=10m`)
 - **Linuxbrew** : `/home/linuxbrew/.linuxbrew/bin` au secure_path sudo
 - `toggle-updates` upstream (RPM ublue-os-just) intact (flatpak + rpm-ostree) — variante globale avec timers brew = `toggle-updates-all` (60-custom.just)
