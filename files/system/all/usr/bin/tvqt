@@ -5,25 +5,30 @@ Navigation complète au D-pad, lecture via mpv (libmpv + OpenGL), téléchargeme
 """
 
 import ctypes
+import gzip
+import io
 import locale
 import os
 import sys
 import json
+import threading
 import time
+import xml.sax
 import evdev
 import select
 import shiboken6
 from ctypes import c_void_p, c_char_p, c_int, CFUNCTYPE, Structure
+from datetime import datetime, timezone
 from evdev import ecodes
 from PySide6.QtCore import Qt, QSize, QUrl, QTimer, QEvent, Signal
-from PySide6.QtGui import QIcon, QFont, QPixmap, QOpenGLContext, QPainter, QSurfaceFormat, QCursor
+from PySide6.QtGui import QIcon, QFont, QFontMetrics, QPixmap, QOpenGLContext, QPainter, QSurfaceFormat, QCursor
 from PySide6.QtDBus import QDBusMessage, QDBusConnection
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QScrollArea, QStackedWidget,
     QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton,
-    QLabel, QFrame, QSizePolicy, QSpacerItem,
+    QLabel, QFrame, QSizePolicy, QSpacerItem, QProgressBar,
 )
 
 # =============================================================================
@@ -100,6 +105,7 @@ BTN_CIRCLE = ecodes.BTN_B
 BTN_L1 = ecodes.BTN_TL
 BTN_R1 = ecodes.BTN_TR
 BTN_SELECT = ecodes.BTN_SELECT
+BTN_START = ecodes.BTN_START
 
 # =============================================================================
 # LISTE DES CHAÎNES
@@ -291,17 +297,190 @@ for _, _, c in CHANNELS:
 del _seen
 
 # =============================================================================
+# GUIDE TV (EPG)
+# =============================================================================
+# Source identique à l'appli Android : XMLTV francophone (fichier gzippé,
+# ~150 Mo décompressés, parse SAX en streaming). Le mapping ci-dessous relie
+# les ids XMLTV aux ids de flux de cette appli (base = mapping Android validé,
+# complété de CARAC4 et Canal9 vérifiées dans le fichier).
+
+EPG_URL = "https://xmltvfr.fr/xmltv/xmltv.xml.gz"
+EPG_CACHE_GZ = os.path.join(CONFIG_DIR, "epg.xml.gz")
+EPG_CACHE_TSV = os.path.join(CONFIG_DIR, "epg_parsed.tsv")
+EPG_TTL_S = 12 * 3600  # durée de validité du cache parsé
+
+# Correspondances id XMLTV → id appli, format "xmltv:appli" (curatif : repris
+# de l'appli Android + CARAC4 et Canal9 vérifiées dans le fichier). Les ids
+# étant irréguliers (CStar.fr→d17, Trek.fr→escales, Sat1.de→sateins…), une
+# déduction automatique mapperait de mauvaises chaînes : table explicite.
+EPG_MAP_RAW = """
+    RTSUn.ch:rts1hd RTSDeux.ch:rts2hd SRF1.ch:srf1hd SRF2.ch:srf2hd
+    SRFinfo.ch:srfinfo RSI1.ch:rsila1hd RSI2.ch:rsila2hd
+    TeleBielingue.ch:telebielingue LemanBleu.ch:lemanbleu LaTele.ch:latele
+    RougeTV.ch:rougetv ONETV.ch:onetv LFMTV.ch:lfmtv BLUEZOOM.ch:bluezoomfr
+    CanalAlphaJura.ch:canalalphaju CARAC4.ch:tvsuisseplus Canal9.fr:canal9
+    8MontBlanc.fr:tv8montblanc TF1.fr:tf1hd France2.fr:france2hd
+    France3.fr:france3hd France4.fr:france4hd France5.fr:france5hd
+    M6.fr:m6hd Arte.fr:artehd TMC.fr:tmc W9.fr:w9 NT1.fr:nt1 T18.fr:t18
+    CStar.fr:d17 RTL9.fr:rtl9 AB1.fr:ab1 AB3.fr:ab3 TF1SeriesFilms.fr:hd1
+    6ter.fr:6ter Cherie25.fr:cherie25 NOVO19.fr:novo19 Numero23.fr:numero23
+    LEquipe21.fr:lequipe21 Trek.fr:escales RMCDecouverte.fr:rmcdecouverte
+    PlanetePlus.fr:planeteplus Animaux.fr:animaux TCM.fr:tcm
+    CartoonNetwork.fr:cartoonnetwork Gulli.fr:gulli MTV.fr:mtvfrance
+    KTO.fr:kto CanalPlus.fr:canalplusclair CanalJ.fr:canalj BFMTV.fr:bfmtv
+    BFMBusiness.fr:bfmbusiness CNews.fr:itele LCI.fr:lci LCP100.fr:lcp
+    France24.fr:france24 FranceInfo.fr:franceinfo TV5Monde.fr:tv5mondefbs
+    Euronews.fr:euronews Mezzo.fr:mezzo ComedyCentral.fr:comedycentral
+    ZDF.de:zdfhd 3SAT.de:3sathd Phoenix.de:phoenixhd KIKA.de:kikahd
+    SWR.de:swrbw RTLNitroTV.de:rtlnitro RTL2.de:rtl2 SuperRTL.de:superrtl
+    Vox.de:vox DasErste.de:daserstehd KabelEins.de:kabeleins PRO7.de:pro7
+    Sat1.de:sateins BBC2.uk:bbc2 BBCNews.uk:bbcworld Channel4.uk:channel4
+    SkyNews.us:skynews AlJazeeraEnglish.uk:aljazeera Bloomberg.uk:bloomberg
+"""
+EPG_CHANNEL_MAP = dict(pair.split(":", 1) for pair in EPG_MAP_RAW.split())
+
+
+def _parse_xmltv_time(t):
+    """Convertit une date XMLTV ('20261003200000 +0200') en timestamp UTC.
+
+    Portage du parseur Android : la date est lue comme UTC puis l'offset du
+    fuseau est soustrait ('+0200' = heure locale = UTC-2h)."""
+    if not t or len(t) < 14:
+        return 0
+    try:
+        dt = datetime.strptime(t[:14], "%Y%m%d%H%M%S")
+    except ValueError:
+        return 0
+    ts = dt.replace(tzinfo=timezone.utc).timestamp()
+    tz = t[14:].strip()
+    if tz[:1] in ("+", "-"):
+        try:
+            h = int(tz[1:3])
+            m = int(tz[3:5]) if len(tz) > 3 else 0
+        except ValueError:
+            return ts
+        ts += (-1 if tz[0] == "+" else 1) * (h * 3600 + m * 60)
+    return ts
+
+
+class _EpgSaxHandler(xml.sax.ContentHandler):
+    """Extracteur SAX des programmes XMLTV (chaînes mappées uniquement).
+
+    Streaming : mémoire constante même sur le fichier complet (~150 Mo)."""
+
+    def __init__(self, channel_map):
+        super().__init__()
+        self._map = channel_map
+        self.programmes = []
+        self._in_prog = False
+        self._collect = None   # "title" / "category" / None
+        self._buf = []
+        self._chan = None
+        self._start = 0
+        self._stop = 0
+        self._title = None
+        self._cat = None
+
+    def startElement(self, name, attrs):
+        if name == "programme":
+            chan = attrs.get("channel")
+            self._in_prog = chan in self._map
+            if self._in_prog:
+                self._chan = chan
+                self._start = _parse_xmltv_time(attrs.get("start"))
+                self._stop = _parse_xmltv_time(attrs.get("stop"))
+                self._title = None
+                self._cat = None
+                self._collect = None
+        elif self._in_prog and name in ("title", "category"):
+            self._collect = name
+            self._buf = []
+
+    def characters(self, content):
+        if self._collect:
+            self._buf.append(content)
+
+    def endElement(self, name):
+        if self._collect == name:
+            text = "".join(self._buf).strip()
+            if name == "title":
+                self._title = text
+            elif self._cat is None:
+                self._cat = text or None
+            self._collect = None
+        elif name == "programme" and self._in_prog:
+            self._in_prog = False
+            if self._title and self._start > 0 and self._stop > self._start:
+                self.programmes.append((
+                    self._map[self._chan], self._start, self._stop,
+                    self._title, self._cat or "",
+                ))
+
+
+def parse_xmltv(data, channel_map):
+    """Parse un document XMLTV (brut ou gzip) → [(app_id, start, stop, titre, catégorie)]."""
+    stream = io.BytesIO(data)
+    if data[:2] == b"\x1f\x8b":
+        stream = gzip.GzipFile(fileobj=stream)
+    handler = _EpgSaxHandler(channel_map)
+    xml.sax.parse(stream, handler)
+    return handler.programmes
+
+
+def _tsv_clean(s):
+    """Neutralise tabulations/retours de ligne pour le cache TSV."""
+    return (s or "-").replace("\t", " ").replace("\n", " ").replace("\r", " ")
+
+
+def _write_epg_tsv(path, progs):
+    """Écrit le cache parsé (format identique au cache Android)."""
+    with open(path, "w", encoding="utf-8") as f:
+        for (cid, start, stop, title, cat) in progs:
+            f.write("\t".join((
+                cid, str(int(start)), str(int(stop)),
+                _tsv_clean(title), _tsv_clean(cat), "-",
+            )) + "\n")
+
+
+def _read_epg_tsv(path):
+    """Lit le cache parsé → [(app_id, start, stop, titre, catégorie)]."""
+    out = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            cols = line.rstrip("\r\n").split("\t")
+            if len(cols) < 6:
+                continue
+            try:
+                start, stop = int(cols[1]), int(cols[2])
+            except ValueError:
+                continue
+            title = cols[3]
+            if title and title != "-" and start > 0 and stop > start:
+                out.append((cols[0], start, stop, title,
+                            "" if cols[4] == "-" else cols[4]))
+    return out
+
+
+# =============================================================================
 # DIMENSIONS ET CONSTANTES D'INTERFACE
 # =============================================================================
 
 CARD_W = 168
-CARD_H = 152
+CARD_H = 172
 LOGO_ICON_SIZE = QSize(84, 84)
 COOLDOWN_MS = 180
 GRID_SPACING = 14
 GRID_MARGIN = 20
 CARD_RADIUS = 16
 CURSOR_HIDE_MS = 2500  # délai de masquage du curseur en lecture
+
+# --- Guide TV ---
+GUIDE_CHAN_W = 150    # largeur de la cellule chaîne (logo + nom)
+GUIDE_ROW_H = 96      # hauteur d'une ligne du guide
+GUIDE_BLOCK_H = 84    # hauteur d'un bloc programme
+GUIDE_MAX_PROGS = 8   # programmes affichés par chaîne (en cours + suivants)
+GUIDE_ROW_PITCH = GUIDE_ROW_H + 6      # pas vertical d'une ligne (h + espacement)
+GUIDE_BUFFER_ROWS = 4                  # lignes construites au-delà du visible
 
 # =============================================================================
 # FEUILLE DE STYLE GLOBALE
@@ -434,6 +613,104 @@ QLabel#loadingSubtitle {
     color: #7878a0;
     font-size: 15px;
     background: transparent;
+}
+
+/* --- Bouton bascule Chaînes / Guide --- */
+QPushButton#viewToggle {
+    background-color: #1a1a3a;
+    border: 1px solid #3a3a60;
+    border-radius: 6px;
+    color: #e6b800;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 5px 14px;
+    min-height: 26px;
+    max-height: 30px;
+}
+QPushButton#viewToggle:hover {
+    background-color: #26264e;
+    border-color: #e6b800;
+}
+
+/* --- Ligne « en cours » sous les cartes de chaînes --- */
+QLabel#epgNow {
+    color: #00bcd4;
+    font-size: 11px;
+    font-weight: 600;
+    background: transparent;
+}
+
+/* --- Guide TV --- */
+QLabel#guideStatus {
+    color: #8888a0;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 4px 6px;
+    background: transparent;
+}
+QLabel#guideStatus[failed="true"] {
+    color: #e05555;
+}
+QFrame#guideRow {
+    background-color: #10102c;
+    border: 2px solid #1c1c40;
+    border-radius: 10px;
+}
+QFrame#guideRow[active="true"] {
+    background-color: #14143a;
+    border: 2px solid #e6b800;
+}
+QLabel#guideChanName {
+    color: #e8e8f5;
+    font-size: 12px;
+    font-weight: 600;
+    background: transparent;
+}
+QFrame#progBlock {
+    background-color: #1a1a3e;
+    border: 1px solid #26264c;
+    border-radius: 8px;
+}
+QFrame#progBlock[now="true"] {
+    background-color: #0e323c;
+    border: 1px solid #00bcd4;
+}
+QFrame#progBlock[sel="true"] {
+    background-color: #20204a;
+    border: 2px solid #e6b800;
+}
+QFrame#progBlock[now="true"][sel="true"] {
+    border: 2px solid #e6b800;
+}
+QLabel#progTime {
+    color: #8a8aa8;
+    font-size: 10px;
+    background: transparent;
+}
+QFrame#progBlock[now="true"] QLabel#progTime {
+    color: #6fd8e8;
+}
+QLabel#progTitle {
+    color: #f0f0fa;
+    font-size: 12px;
+    font-weight: 600;
+    background: transparent;
+}
+QLabel#progCat {
+    color: #8888a0;
+    font-size: 10px;
+    background: transparent;
+}
+QProgressBar#progBar {
+    background: #0a2a30;
+    border: none;
+    border-radius: 2px;
+    min-height: 4px;
+    max-height: 4px;
+}
+QProgressBar#progBar::chunk {
+    background-color: #00bcd4;
+    border-radius: 2px;
 }
 """
 
@@ -652,11 +929,35 @@ class MpvWidget(QOpenGLWidget):
 
 
 # =============================================================================
+# ZONE DE PROGRAMMES D'UNE LIGNE DU GUIDE
+# =============================================================================
+
+class _GuideContent(QWidget):
+    """Conteneur des lignes du guide (géométrie manuelle, virtualisées).
+
+    Prévient la fenêtre quand sa largeur change (apparition de la barre
+    de défilement verticale, redimensionnement) pour recaler les lignes
+    déjà construites."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.on_resize = None
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.on_resize:
+            self.on_resize()
+
+
+# =============================================================================
 # FENÊTRE PRINCIPALE
 # =============================================================================
 
 class TVWindow(QMainWindow):
     """Interface TV Gablue avec navigation manette complète."""
+
+    # Signal EPG émis depuis le thread de parsing, reçu dans le thread GUI.
+    _epg_ready = Signal(list)
 
     def __init__(self):
         super().__init__()
@@ -672,7 +973,8 @@ class TVWindow(QMainWindow):
         # --- Réseau (logos) ---
         self._net = QNetworkAccessManager(self)
         self._net.finished.connect(self._on_logo_downloaded)
-        self._logo_buttons = {}
+        self._logo_targets = {}   # app_id -> [(widget, taille)] en attente du logo
+        self._logo_pending = set()
         self._fallback_icon = QIcon.fromTheme("video-display")
 
         # --- Navigation ---
@@ -682,6 +984,10 @@ class TVWindow(QMainWindow):
         self._buttons = []
         self._country_idx = 0
         self._country_pills = []
+        self._countries_current = list(COUNTRIES_ORDER)  # pays des pastilles actives
+        self._active_country = None   # pays du filtre effectivement appliqué
+        self._guide_country_stash = None  # pays grille sans guide, restitué au retour
+        self._return_view = 0  # vue d'origine (grille/guide) pour le retour vidéo
 
         # --- MPV embarqué (libmpv + OpenGL) ---
         # (MpvWidget créé dans _setup_ui)
@@ -715,11 +1021,35 @@ class TVWindow(QMainWindow):
         # --- Inhibition veille écran (portail freedesktop, D-Bus) ---
         self._inhibit_handle = None
 
+        # --- Guide TV (EPG) ---
+        self._epg = {}              # app_id -> [(start, stop, titre, catégorie)] triée
+        self._epg_status = "⏳ Chargement du guide…"
+        self._epg_failed = False
+        self._epg_downloading = False
+        self._card_epg_labels = {}  # app_id -> QLabel « en cours » de la carte
+        self._card_epg_state = {}   # app_id -> (start, stop) du titre affiché
+        self._guide_data = []       # métadonnées des lignes (chaîne + programmes)
+        self._guide_row_widgets = {}  # idx -> widgets construits (lignes visibles)
+        self._guide_row = 0
+        self._guide_slot = 0
+        self._guide_next_flip = 0.0 # timestamp du prochain changement de programme
+        self._grid_dirty = False    # grille à reconstruire au prochain affichage
+        self._guide_dirty = False   # guide à reconstruire au prochain affichage
+        self._logo_pixmem = {}      # app_id -> QPixmap (cache mémoire des logos)
+        self._net_epg = QNetworkAccessManager(self)
+
         # --- Construction de l'interface ---
         self._setup_ui()
         self._build_country_pills()
         self._filter_channels()
         self._find_gamepads()
+
+        # --- Guide TV : chargement initial + horloge de rafraîchissement ---
+        self._epg_ready.connect(self._on_epg_parsed)
+        self._epg_init()
+        self._epg_clock = QTimer(self)
+        self._epg_clock.timeout.connect(self._epg_tick)
+        self._epg_clock.start(30000)
 
         # --- Timers ---
         self._pad_timer = QTimer(self)
@@ -769,6 +1099,14 @@ class TVWindow(QMainWindow):
         title = QLabel("GABLUE  TV")
         title.setObjectName("titleLabel")
         top_layout.addWidget(title)
+
+        # --- Bascule Chaînes / Guide TV ---
+        self._view_toggle = QPushButton("📅 Guide TV")
+        self._view_toggle.setObjectName("viewToggle")
+        self._view_toggle.setCursor(Qt.PointingHandCursor)
+        self._view_toggle.setFocusPolicy(Qt.NoFocus)
+        self._view_toggle.clicked.connect(self._toggle_guide)
+        top_layout.addWidget(self._view_toggle)
 
         # Conteneur scrollable des pastilles
         self._pills_scroll = QScrollArea()
@@ -820,6 +1158,34 @@ class TVWindow(QMainWindow):
         self._video_widget.installEventFilter(self)
         self._stack.addWidget(self._video_widget)  # index 1 : vidéo
 
+        # --- Vue Guide TV (EPG) ---
+        guide_page = QWidget()
+        gp_layout = QVBoxLayout(guide_page)
+        gp_layout.setContentsMargins(16, 10, 16, 8)
+        gp_layout.setSpacing(6)
+
+        self._guide_status = QLabel(self._epg_status)
+        self._guide_status.setObjectName("guideStatus")
+        self._guide_status.setWordWrap(True)
+        gp_layout.addWidget(self._guide_status)
+
+        self._guide_scroll = QScrollArea()
+        self._guide_scroll.setWidgetResizable(True)
+        self._guide_scroll.setFrameShape(QFrame.NoFrame)
+        self._guide_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        # Contenu à géométrie manuelle : seules les lignes visibles sont
+        # construites (virtualisation — ~7000 widgets sinon, transitions
+        # lentes). Défilement vertical natif, lignes hors écran détruites.
+        self._guide_content = _GuideContent()
+        self._guide_content.on_resize = self._guide_fix_widths
+        self._guide_scroll.setWidget(self._guide_content)
+        self._guide_scroll.verticalScrollBar().valueChanged.connect(
+            self._on_guide_scrolled)
+        gp_layout.addWidget(self._guide_scroll, 1)
+
+        self._stack.addWidget(guide_page)  # index 2 : guide TV
+
         root.addWidget(self._stack, 1)
 
         # --- Barre OSD manette ---
@@ -863,8 +1229,15 @@ class TVWindow(QMainWindow):
         self._loading_overlay.setMouseTracking(True)
         self._loading_overlay.installEventFilter(self)
 
-    def _build_country_pills(self):
-        """Crée les pastilles de filtrage par pays."""
+    def _build_country_pills(self, countries=None):
+        """Crée les pastilles de filtrage par pays.
+
+        La liste varie selon la vue : en guide, seuls les pays ayant au
+        moins une chaîne guidée sont proposés (`_sync_pills_for_view`)."""
+        if countries is None:
+            countries = COUNTRIES_ORDER
+        self._countries_current = list(countries)
+
         # Nettoie tout sauf le stretch final
         while self._pills_layout.count() > 1:
             item = self._pills_layout.takeAt(0)
@@ -882,7 +1255,7 @@ class TVWindow(QMainWindow):
         self._pills_layout.insertWidget(0, pill_all)
         self._country_pills.append(pill_all)
 
-        for i, country in enumerate(COUNTRIES_ORDER):
+        for i, country in enumerate(countries):
             pill = QPushButton(country)
             pill.setObjectName("countryPill")
             pill.setCursor(Qt.PointingHandCursor)
@@ -893,9 +1266,57 @@ class TVWindow(QMainWindow):
             self._country_pills.append(pill)
 
     def _select_country(self, idx):
-        """Change le filtre pays."""
+        """Change le filtre pays (index dans la liste des pastilles actives)."""
         self._country_idx = idx
         self._filter_channels()
+
+    def _guide_countries(self):
+        """Pays proposés en vue guide : ceux avec au moins une chaîne EPG."""
+        if not self._epg:
+            return []
+        return [c for c in COUNTRIES_ORDER
+                if any(ch[0] in self._epg for ch in CHANNELS if ch[2] == c)]
+
+    def _sync_pills_for_view(self, force=False):
+        """Adapte les pastilles pays à la vue courante.
+
+        En guide, seuls les pays avec au moins une chaîne guidée sont
+        montrés. Le pays sélectionné est conservé quand c'est possible ;
+        une sélection de grille sans guide est mise de côté et restituée
+        au retour en grille."""
+        idx = self._stack.currentIndex()
+        countries = self._guide_countries() if (idx == 2 and self._epg) else COUNTRIES_ORDER
+        if countries == self._countries_current and not force:
+            return
+
+        current = (self._countries_current[self._country_idx - 1]
+                   if 0 < self._country_idx <= len(self._countries_current) else None)
+        self._build_country_pills(countries)
+
+        if idx == 2:
+            if current and current in countries:
+                self._country_idx = countries.index(current) + 1
+            else:
+                self._guide_country_stash = current
+                self._country_idx = 0
+        else:
+            if current and current in COUNTRIES_ORDER:
+                self._country_idx = COUNTRIES_ORDER.index(current) + 1
+            elif self._guide_country_stash in COUNTRIES_ORDER:
+                self._country_idx = COUNTRIES_ORDER.index(self._guide_country_stash) + 1
+            else:
+                self._country_idx = 0
+            self._guide_country_stash = None
+
+        # Ne refiltre que si le filtre effectif change : d'un aller-retour
+        # grille ↔ guide, la sélection (souvent « Toutes ») ne bouge pas et
+        # la grille ne doit PAS être reconstruite (110 ms à chaque retour).
+        new_country = (None if self._country_idx == 0
+                       else self._countries_current[self._country_idx - 1])
+        if new_country != self._active_country or force:
+            self._filter_channels()
+        else:
+            self._refresh_pills()
 
     def _refresh_pills(self):
         """Met à jour le style actif/inactif des pastilles."""
@@ -922,15 +1343,19 @@ class TVWindow(QMainWindow):
         """Applique le filtre pays et reconstruit la grille."""
         if self._country_idx == 0:
             self._filtered = list(enumerate(CHANNELS))
+            self._active_country = None
         else:
-            country = COUNTRIES_ORDER[self._country_idx - 1]
+            country = self._countries_current[self._country_idx - 1]
             self._filtered = [
                 (i, ch) for i, ch in enumerate(CHANNELS) if ch[2] == country
             ]
+            self._active_country = country
 
         self._count_label.setText(f"{len(self._filtered)} chaînes")
         self._cursor = 0
-        self._rebuild_grid()
+        self._grid_dirty = True
+        self._guide_dirty = True
+        self._rebuild_visible_page()
         self._refresh_pills()
 
     def _rebuild_grid(self):
@@ -942,6 +1367,8 @@ class TVWindow(QMainWindow):
                 item.widget().setParent(None)
 
         self._buttons = []
+        self._card_epg_labels = {}
+        self._card_epg_state = {}
 
         # Calcul du nombre de colonnes
         vw = self._scroll.viewport().width()
@@ -955,7 +1382,9 @@ class TVWindow(QMainWindow):
             col = idx % self._cols
             self._grid.addWidget(card, row, col, Qt.AlignCenter)
             self._buttons.append(card)
-            self._load_logo(ch_id, card)
+
+        # Titres « en cours » (une seule passe, pas dans la boucle)
+        self._update_card_epg()
 
         # Espaceur en bas
         if self._buttons:
@@ -963,9 +1392,10 @@ class TVWindow(QMainWindow):
             self._grid.setRowStretch(last_row + 1, 1)
 
         self._update_card_focus()
+        self._grid_dirty = False
 
     def _make_card(self, ch_id, label, country):
-        """Carte chaîne avec icône centrée verticalement et horizontalement."""
+        """Carte chaîne : logo, nom et programme « en cours » (si guide)."""
         card = QFrame()
         card.setObjectName("channelCard")
         card.setFixedSize(CARD_W, CARD_H)
@@ -981,12 +1411,22 @@ class TVWindow(QMainWindow):
         icon_lbl.setAlignment(Qt.AlignCenter)
         icon_lbl.setPixmap(self._fallback_icon.pixmap(LOGO_ICON_SIZE))
         layout.addWidget(icon_lbl, 0, Qt.AlignCenter)
+        self._load_logo(ch_id, icon_lbl, LOGO_ICON_SIZE)
 
         text_lbl = QLabel(label)
         text_lbl.setAlignment(Qt.AlignCenter)
         text_lbl.setWordWrap(True)
         text_lbl.setStyleSheet("color: #c8c8e0; font-size: 12px; font-weight: 600; background: transparent;")
         layout.addWidget(text_lbl, 0, Qt.AlignCenter)
+
+        # Programme en cours (rempli quand le guide est disponible)
+        epg_lbl = QLabel()
+        epg_lbl.setObjectName("epgNow")
+        epg_lbl.setAlignment(Qt.AlignCenter)
+        epg_lbl.setFixedHeight(16)
+        epg_lbl.hide()
+        layout.addWidget(epg_lbl, 0, Qt.AlignCenter)
+        self._card_epg_labels[ch_id] = epg_lbl
 
         card.setToolTip(f"{label}\n{country}")
 
@@ -1017,6 +1457,644 @@ class TVWindow(QMainWindow):
         sb = self._scroll.verticalScrollBar()
         if sb:
             sb.setValue(0)
+
+    # =========================================================================
+    # VUES : GRILLE / VIDÉO / GUIDE
+    # =========================================================================
+
+    def _show_view(self, idx):
+        """Bascule de vue centralisée (0 grille, 1 vidéo, 2 guide)."""
+        prev = self._stack.currentIndex()
+        self._stack.setCurrentIndex(idx)
+        self._top_bar.setVisible(idx != 1)
+        self._view_toggle.setText("📺 Chaînes" if idx == 2 else "📅 Guide TV")
+        if (idx == 2) != (prev == 2):
+            self._sync_pills_for_view()
+        self._rebuild_visible_page()
+        if idx == 0:
+            self._update_card_epg()
+        elif idx == 2:
+            self._guide_ensure_rows()  # largeurs/viewport à jour (resize caché)
+        self._update_osd()
+
+    def _rebuild_visible_page(self):
+        """Ne reconstruit QUE la page visible si ses données ont changé.
+
+        Les pages cachées sont marquées « sales » et reconstruites au
+        moment de leur affichage — plus jamais de grille + guide reconstruits
+        ensemble à chaque transition."""
+        idx = self._stack.currentIndex()
+        if idx == 0 and self._grid_dirty:
+            self._rebuild_grid()
+        elif idx == 2 and self._guide_dirty:
+            self._rebuild_guide()
+
+    def _toggle_guide(self):
+        """Bascule grille ↔ guide TV (ignoré pendant la lecture).
+
+        Aucune reconstruction ici : les données sont marquées sales par
+        `_filter_channels`/`_apply_epg` et la page visible se reconstruit
+        seule dans `_show_view`. Position de défilement conservée."""
+        idx = self._stack.currentIndex()
+        if idx == 1:
+            return
+        self._show_view(0 if idx == 2 else 2)
+        # guide indisponible (échec réseau) → nouvelle tentative à l'ouverture
+        if idx != 2 and self._epg_failed and not self._epg \
+                and not self._epg_downloading:
+            self._epg_download()
+
+    def _guide_play_current(self):
+        """Lance la chaîne de la ligne courante du guide.
+
+        Le bloc sélectionné (en cours ou à venir) ne change rien : une
+        chaîne live diffuse toujours son programme présent."""
+        if not self._guide_data or self._guide_row >= len(self._guide_data):
+            return
+        row = self._guide_data[self._guide_row]
+        url = f"{BASE}/{row['ch_id']}{SUFFIX}/{row['ch_id']}.m3u8"
+        self._play(url, row["label"])
+
+    # =========================================================================
+    # GUIDE TV (construction + navigation)
+    # =========================================================================
+
+    def _rebuild_guide(self):
+        """Recalcule les métadonnées du guide (lignes/programmes) puis ne
+        construit que les lignes visibles (virtualisation).
+
+        La ligne sélectionnée est restaurée par ch_id et le bloc sélectionné
+        par position — le focus reste sur le programme choisi même s'il
+        n'est pas celui en cours."""
+        prev_ch = prev_slot = None
+        if 0 <= self._guide_row < len(self._guide_data):
+            prev_ch = self._guide_data[self._guide_row]["ch_id"]
+            prev_slot = self._guide_slot
+
+        self._dispose_all_guide_rows()
+        self._guide_data = []
+        self._guide_next_flip = 0.0
+
+        now = time.time()
+        for (i, (ch_id, label, _c)) in self._filtered:
+            entries = self._epg.get(ch_id)
+            if not entries:
+                continue
+            # premier programme non terminé
+            start_idx = 0
+            for j, (s, e, _t, _c2) in enumerate(entries):
+                if e > now:
+                    start_idx = j
+                    break
+            shown = entries[start_idx:start_idx + GUIDE_MAX_PROGS]
+            if not shown:
+                continue
+            # prochain changement de programme (reconstruction du guide)
+            flip = shown[0][0] if shown[0][0] > now else shown[0][1]
+            self._guide_next_flip = (
+                min(self._guide_next_flip, flip) if self._guide_next_flip else flip
+            )
+            self._guide_data.append({
+                "ch_id": ch_id, "label": label, "progs": shown,
+            })
+
+        n = len(self._guide_data)
+        self._guide_content.setMinimumHeight(max(1, n) * GUIDE_ROW_PITCH + 8)
+
+        # restaure la sélection (ligne par ch_id, bloc par position)
+        target = 0
+        if prev_ch:
+            for i, d in enumerate(self._guide_data):
+                if d["ch_id"] == prev_ch:
+                    target = i
+                    break
+        self._guide_row = target
+        if n:
+            slot = prev_slot if prev_slot is not None else 0
+            self._guide_slot = max(
+                0, min(slot, len(self._guide_data[target]["progs"]) - 1))
+
+        self._guide_dirty = False
+        self._guide_ensure_rows()
+        if n:
+            self._guide_reveal_row(self._guide_row)
+        self._refresh_guide_status()
+
+    def _on_guide_scrolled(self, _value):
+        """Défilement vertical du guide → construit les lignes entrantes."""
+        self._guide_ensure_rows()
+
+    def _guide_ensure_rows(self):
+        """Construit les lignes visibles (+ marge), détruit les lointaines.
+
+        Le guide complet ferait ~90 widgets par chaîne × 79 : seules les
+        lignes dans la fenêtre de visualisation existent réellement."""
+        if self._guide_dirty or not self._guide_data:
+            return
+        n = len(self._guide_data)
+        sb = self._guide_scroll.verticalScrollBar()
+        view_h = self._guide_scroll.viewport().height()
+        i0 = max(0, int(sb.value() // GUIDE_ROW_PITCH) - GUIDE_BUFFER_ROWS)
+        i1 = min(n - 1, int((sb.value() + view_h) // GUIDE_ROW_PITCH)
+                 + GUIDE_BUFFER_ROWS)
+        for idx in [i for i in self._guide_row_widgets if i < i0 or i > i1]:
+            self._dispose_guide_row(idx)
+        for idx in range(i0, i1 + 1):
+            if idx not in self._guide_row_widgets:
+                self._build_guide_row(idx)
+        self._guide_fix_widths()
+        self._guide_apply_row_highlight()
+        self._guide_apply_slot()
+
+    def _guide_fix_widths(self):
+        """Recale la largeur des lignes construites sur le contenu."""
+        cw = self._guide_content.width()
+        for w in self._guide_row_widgets.values():
+            if w["frame"].width() != cw:
+                self._guide_resize_row(w, cw)
+
+    def _dispose_guide_row(self, idx):
+        """Détruit les widgets d'une ligne hors écran (les données restent)."""
+        w = self._guide_row_widgets.pop(idx, None)
+        if w:
+            w["frame"].hide()
+            w["frame"].deleteLater()
+
+    def _dispose_all_guide_rows(self):
+        for idx in list(self._guide_row_widgets):
+            self._dispose_guide_row(idx)
+
+    def _build_guide_row(self, idx):
+        """Construit les widgets d'une ligne du guide à géométrie manuelle."""
+        d = self._guide_data[idx]
+        now = time.time()
+        cw = max(200, self._guide_content.width())
+
+        frame = QFrame(self._guide_content)
+        frame.setObjectName("guideRow")
+        frame.setFixedHeight(GUIDE_ROW_H)
+        frame.move(0, idx * GUIDE_ROW_PITCH)
+        frame.resize(cw, GUIDE_ROW_H)
+        # enfant créé après l'affichage du contenu → show() explicite requis
+        # (sans lui, la ligne existe mais reste cachée)
+        frame.show()
+
+        # --- Cellule chaîne (cliquable) ---
+        cell = QWidget(frame)
+        cell.setGeometry(8, 6, GUIDE_CHAN_W, GUIDE_ROW_H - 12)
+        logo_lbl = QLabel(cell)
+        logo_lbl.setFixedSize(56, 38)
+        logo_lbl.setAlignment(Qt.AlignCenter)
+        logo_lbl.move((GUIDE_CHAN_W - 56) // 2, 2)
+        logo_lbl.setPixmap(self._fallback_icon.pixmap(QSize(56, 38)))
+        self._load_logo(d["ch_id"], logo_lbl, QSize(56, 38))
+        logo_lbl.show()
+        name_lbl = QLabel(QFontMetrics(self.font()).elidedText(
+            d["label"], Qt.ElideRight, GUIDE_CHAN_W - 8))
+        name_lbl.setObjectName("guideChanName")
+        name_lbl.setAlignment(Qt.AlignCenter)
+        name_lbl.setToolTip(d["label"])
+        name_lbl.setGeometry(2, 42, GUIDE_CHAN_W - 4, 24)
+        name_lbl.show()
+
+        def on_cell(event=None, cid=d["ch_id"], lab=d["label"]):
+            if event is None or event.button() == Qt.LeftButton:
+                self._play(f"{BASE}/{cid}{SUFFIX}/{cid}.m3u8", lab)
+
+        cell.mousePressEvent = on_cell
+        cell.show()
+
+        # --- Programmes : widget de clipping + blocs positionnés à la main
+        # (remplace la QScrollArea par ligne : 3× moins de widgets) ---
+        clip = QWidget(frame)
+        clip.setGeometry(GUIDE_CHAN_W + 18, 6,
+                         max(50, cw - GUIDE_CHAN_W - 26), GUIDE_ROW_H - 12)
+        clip.show()
+
+        blocks, xs, widths, bars = [], [], [], []
+        x = 2
+        for (s, e, title, cat) in d["progs"]:
+            block, bar = self._make_prog_block(
+                s, e, title, cat, now, d["ch_id"], d["label"])
+            block.setParent(clip)
+            block.move(x, 0)
+            block.show()
+            blocks.append(block)
+            xs.append(x)
+            widths.append(block.width())
+            if bar:
+                bars.append((bar, s, e))
+            x += block.width() + 6
+
+        w = {
+            "frame": frame, "cell": cell, "clip": clip, "blocks": blocks,
+            "xs": xs, "widths": widths, "total_w": x - 6, "hoffset": 0,
+            "bars": bars,
+        }
+
+        # Molette : verticale = défile le guide en suivant la sélection (le
+        # focus passe à la première ligne visible, sur son programme en
+        # cours) ; horizontale (ou Maj+molette) = décale les blocs
+        def on_wheel(event, row=w):
+            delta = event.angleDelta()
+            if event.modifiers() & Qt.ShiftModifier:
+                h = delta.y() or delta.x()
+            elif delta.y() == 0 and delta.x() != 0:
+                h = delta.x()
+            else:
+                sb = self._guide_scroll.verticalScrollBar()
+                sb.setValue(max(0, min(sb.maximum(), sb.value() - delta.y())))
+                self._guide_follow_viewport()
+                event.accept()
+                return
+            vis = row["clip"].width()
+            max_off = max(0, row["total_w"] - vis)
+            self._guide_set_offset(row, max(0, min(max_off, row["hoffset"] - h)))
+            event.accept()
+
+        frame.wheelEvent = on_wheel
+        self._guide_row_widgets[idx] = w
+
+    def _guide_set_offset(self, row, offset):
+        """Décale horizontalement les blocs d'une ligne (défilement manuel)."""
+        row["hoffset"] = offset
+        for i, b in enumerate(row["blocks"]):
+            b.move(row["xs"][i] - offset, 0)
+
+    def _guide_resize_row(self, w, cw):
+        """Met à jour la largeur d'une ligne construite (fenêtre redim.)."""
+        w["frame"].resize(cw, GUIDE_ROW_H)
+        clip_w = max(50, cw - GUIDE_CHAN_W - 26)
+        w["clip"].resize(clip_w, GUIDE_ROW_H - 12)
+        self._guide_set_offset(
+            w, min(w["hoffset"], max(0, w["total_w"] - clip_w)))
+
+    def _guide_reveal_row(self, idx):
+        """Scrolle juste assez pour rendre la ligne sélectionnée visible."""
+        sb = self._guide_scroll.verticalScrollBar()
+        y = idx * GUIDE_ROW_PITCH
+        page = self._guide_scroll.viewport().height()
+        if y < sb.value():
+            sb.setValue(y)
+        elif y + GUIDE_ROW_H > sb.value() + page:
+            sb.setValue(y + GUIDE_ROW_H - page)
+
+    def _guide_follow_viewport(self):
+        """Molette verticale : la sélection suit la première ligne visible
+        et revient à son programme en cours (comme un D-pad haut/bas)."""
+        if self._guide_dirty or not self._guide_data:
+            return
+        sb = self._guide_scroll.verticalScrollBar()
+        idx = min(len(self._guide_data) - 1,
+                  max(0, int((sb.value() + 4) // GUIDE_ROW_PITCH)))
+        if idx != self._guide_row:
+            self._guide_clear_sel(self._guide_row)
+            self._guide_row = idx
+            self._guide_slot = 0
+            self._guide_ensure_rows()
+            self._guide_apply_row_highlight()
+            self._guide_apply_slot()
+
+    def _make_prog_block(self, s, e, title, cat, now, ch_id, label):
+        """Bloc programme : horaires, titre, catégorie, progression (en cours).
+
+        Retourne (bloc, barre_de_progression|None). Le clic lance la chaîne
+        quel que soit le programme (en cours ou à venir)."""
+        current = s <= now < e
+        block = QFrame()
+        block.setObjectName("progBlock")
+        if current:
+            block.setProperty("now", True)
+        minutes = max(1, (e - s) // 60)
+        block.setFixedSize(max(116, min(300, minutes * 4)), GUIDE_BLOCK_H)
+
+        v = QVBoxLayout(block)
+        v.setContentsMargins(8, 6, 8, 6)
+        v.setSpacing(2)
+
+        t_lbl = QLabel(
+            f"{time.strftime('%H:%M', time.localtime(s))} – "
+            f"{time.strftime('%H:%M', time.localtime(e))}"
+        )
+        t_lbl.setObjectName("progTime")
+        v.addWidget(t_lbl)
+
+        title_lbl = QLabel(title)
+        title_lbl.setObjectName("progTitle")
+        title_lbl.setWordWrap(True)
+        title_lbl.setToolTip(title)
+        v.addWidget(title_lbl, 1)
+
+        if cat:
+            cat_lbl = QLabel(cat)
+            cat_lbl.setObjectName("progCat")
+            v.addWidget(cat_lbl)
+
+        bar = None
+        if current:
+            bar = QProgressBar()
+            bar.setObjectName("progBar")
+            bar.setTextVisible(False)
+            bar.setRange(0, 1000)
+            bar.setValue(int(1000 * max(0.0, min(1.0, (now - s) / (e - s)))))
+            v.addWidget(bar)
+
+        def on_click(event=None, cid=ch_id, lab=label):
+            if event is None or event.button() == Qt.LeftButton:
+                self._play(f"{BASE}/{cid}{SUFFIX}/{cid}.m3u8", lab)
+
+        block.mousePressEvent = on_click
+        return block, bar
+
+    def _guide_apply_row_highlight(self):
+        """Met à jour la surbrillance des lignes construites.
+
+        Ne re-polit que les lignes dont l'état change (le polish QSS est
+        coûteux : 11 lignes × 2 à chaque défilement sinon)."""
+        for idx, w in self._guide_row_widgets.items():
+            active = (idx == self._guide_row)
+            if w["frame"].property("active") != active:
+                w["frame"].setProperty("active", active)
+                w["frame"].style().unpolish(w["frame"])
+                w["frame"].style().polish(w["frame"])
+
+    def _guide_apply_slot(self):
+        """Met à jour le bloc sélectionné + décale la ligne pour le garder
+        visible (défilement horizontal manuel). Ne re-polit que les blocs
+        dont la sélection change."""
+        w = self._guide_row_widgets.get(self._guide_row)
+        if w is None:
+            return
+        for j, b in enumerate(w["blocks"]):
+            sel = (j == self._guide_slot)
+            if b.property("sel") != sel:
+                b.setProperty("sel", sel)
+                b.style().unpolish(b)
+                b.style().polish(b)
+        if 0 <= self._guide_slot < len(w["blocks"]):
+            x0 = w["xs"][self._guide_slot]
+            x1 = x0 + w["widths"][self._guide_slot]
+            vis = w["clip"].width()
+            off = w["hoffset"]
+            if x0 < off:              # bloc à gauche du viewport → revenir
+                off = max(0, x0 - 8)
+            elif x1 > off + vis:      # bloc à droite → avancer
+                off = x1 - vis
+            off = max(0, min(off, max(0, w["total_w"] - vis)))
+            if off != w["hoffset"]:
+                self._guide_set_offset(w, off)
+
+    def _guide_set_row(self, idx):
+        """Change de ligne de guide (construit au besoin + défilement).
+
+        Le focus revient au programme en cours de la nouvelle ligne :
+        monter/descendre ne doit pas conserver le décalage horizontal
+        (gauche/droite, lui, le conserve tant qu'on reste sur la ligne).
+        La ligne quittée perd son cadre jaune et revient à son début."""
+        if not self._guide_data:
+            return
+        idx = max(0, min(idx, len(self._guide_data) - 1))
+        if idx != self._guide_row:
+            self._guide_clear_sel(self._guide_row)
+        self._guide_row = idx
+        self._guide_slot = 0
+        self._guide_ensure_rows()
+        self._guide_apply_row_highlight()
+        self._guide_apply_slot()
+        self._guide_reveal_row(idx)
+
+    def _guide_clear_sel(self, idx):
+        """Ligne quittée : retire le cadre jaune du bloc sélectionné et
+        redécale les blocs au début (programme en cours visible)."""
+        w = self._guide_row_widgets.get(idx)
+        if w is None:
+            return
+        for b in w["blocks"]:
+            if b.property("sel"):
+                b.setProperty("sel", False)
+                b.style().unpolish(b)
+                b.style().polish(b)
+        if w["hoffset"]:
+            self._guide_set_offset(w, 0)
+
+    def _guide_step(self, direction):
+        """Un pas de navigation D-pad dans le guide."""
+        if not self._guide_data:
+            return
+        if direction == "up":
+            if self._guide_row > 0:
+                self._guide_set_row(self._guide_row - 1)
+        elif direction == "down":
+            if self._guide_row + 1 < len(self._guide_data):
+                self._guide_set_row(self._guide_row + 1)
+        elif direction == "left":
+            if self._guide_slot > 0:
+                self._guide_slot -= 1
+                self._guide_apply_slot()
+        elif direction == "right":
+            progs = self._guide_data[self._guide_row]["progs"]
+            if self._guide_slot + 1 < len(progs):
+                self._guide_slot += 1
+                self._guide_apply_slot()
+
+    def _refresh_guide_status(self):
+        """Met à jour la ligne de statut du guide (téléchargement/erreur/compte)."""
+        if not hasattr(self, "_guide_status"):
+            return
+        total = len(self._filtered)
+        with_epg = sum(1 for (_i, (cid, _l, _c)) in self._filtered if cid in self._epg)
+        suffix = f"   ·   {with_epg}/{total} chaînes filtrées avec guide"
+        self._guide_status.setText(self._epg_status + suffix)
+        self._guide_status.setProperty("failed", self._epg_failed)
+        self._guide_status.style().unpolish(self._guide_status)
+        self._guide_status.style().polish(self._guide_status)
+
+    # =========================================================================
+    # EPG : CHARGEMENT, CACHE, CYCLE DE VIE
+    # =========================================================================
+
+    def _epg_init(self):
+        """Charge le guide au démarrage : cache TSV frais → direct ; sinon
+        ancien cache affiché puis mise à jour téléchargée en arrière-plan."""
+        progs = []
+        if os.path.exists(EPG_CACHE_TSV):
+            try:
+                progs = _read_epg_tsv(EPG_CACHE_TSV)
+            except OSError:
+                progs = []
+        fresh = (
+            os.path.exists(EPG_CACHE_TSV)
+            and (time.time() - os.path.getmtime(EPG_CACHE_TSV)) < EPG_TTL_S
+        )
+        if progs:
+            self._apply_epg(progs)
+        if fresh:
+            return
+        self._epg_download()
+
+    def _epg_download(self):
+        """Télécharge le fichier XMLTV (asynchrone, GUI thread)."""
+        if self._epg_downloading:
+            return
+        self._epg_downloading = True
+        self._epg_failed = False
+        self._epg_status = "⏳ Téléchargement du guide…"
+        self._refresh_guide_status()
+        request = QNetworkRequest(QUrl(EPG_URL))
+        request.setTransferTimeout(60000)
+        request.setAttribute(
+            QNetworkRequest.Attribute.RedirectPolicyAttribute,
+            QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy,
+        )
+        request.setHeader(
+            QNetworkRequest.KnownHeaders.UserAgentHeader, "GablueTV/1.0"
+        )
+        reply = self._net_epg.get(request)
+        reply.finished.connect(self._on_epg_downloaded)
+
+    def _on_epg_downloaded(self):
+        """Fin du téléchargement XMLTV : cache brut puis parse en thread."""
+        self._epg_downloading = False
+        reply = self.sender()
+        if reply is None:
+            return
+        reply.deleteLater()
+        if reply.error() != QNetworkReply.NetworkError.NoError:
+            self._epg_fail(f"Réseau : {reply.errorString()}")
+            return
+        data = bytes(reply.readAll())
+        if len(data) < 1000:
+            self._epg_fail(f"Réponse trop courte ({len(data)} o)")
+            return
+        try:
+            tmp = EPG_CACHE_GZ + ".part"
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, EPG_CACHE_GZ)
+        except OSError:
+            pass
+        self._epg_status = "⏳ Analyse du guide…"
+        self._refresh_guide_status()
+        threading.Thread(
+            target=self._epg_parse_worker, args=(data,), daemon=True
+        ).start()
+
+    def _epg_parse_worker(self, data):
+        """Parsing XMLTV hors thread GUI (~2 s sur le fichier complet)."""
+        try:
+            progs = parse_xmltv(data, EPG_CHANNEL_MAP)
+        except Exception as exc:
+            print(f"[EPG] erreur de parsing : {exc}", file=sys.stderr)
+            progs = []
+        self._epg_ready.emit(progs)
+
+    def _on_epg_parsed(self, progs):
+        """Réception des programmes parsés (thread GUI) : cache + application."""
+        if not progs:
+            self._epg_fail("Guide vide ou illisible")
+            return
+        try:
+            tmp = EPG_CACHE_TSV + ".part"
+            _write_epg_tsv(tmp, progs)
+            os.replace(tmp, EPG_CACHE_TSV)
+        except OSError:
+            pass
+        self._apply_epg(progs)
+
+    def _epg_fail(self, msg):
+        """Échec EPG : garde les anciennes données si présentes."""
+        if self._epg:
+            self._epg_status = f"⚠ {msg} — guide depuis le cache"
+        else:
+            self._epg_failed = True
+            self._epg_status = f"❌ {msg}"
+        self._refresh_guide_status()
+
+    def _apply_epg(self, progs):
+        """Applique les programmes : index par chaîne, tri, rafraîchissements."""
+        mapping = {}
+        for (cid, start, stop, title, cat) in progs:
+            mapping.setdefault(cid, []).append((start, stop, title, cat))
+        for lst in mapping.values():
+            lst.sort(key=lambda x: x[0])
+        self._epg = mapping
+        self._epg_failed = False
+        self._epg_status = f"📡 {len(mapping)} chaînes avec guide"
+        self._guide_dirty = True
+        self._update_card_epg()
+        self._refresh_guide_status()
+        if self._stack.currentIndex() == 2:
+            # pastilles pays + guide reconstruits avec les nouvelles données
+            self._sync_pills_for_view(force=True)
+
+    def _current_programme(self, ch_id, now=None):
+        """Programme en cours d'une chaîne → (start, stop, titre, catégorie)."""
+        entries = self._epg.get(ch_id)
+        if not entries:
+            return None
+        if now is None:
+            now = time.time()
+        for (start, stop, title, cat) in entries:
+            if start <= now < stop:
+                return (start, stop, title, cat)
+            if start > now:
+                break
+        return None
+
+    def _update_card_epg(self, now=None):
+        """Met à jour la ligne « en cours » des cartes.
+
+        Ne touche qu'aux cartes dont le programme a changé (le remplissage
+        complet des 174 cartes coûte ~100 ms, inacceptable à chaque retour
+        grille / tick de 30 s)."""
+        if now is None:
+            now = time.time()
+        for ch_id, lbl in self._card_epg_labels.items():
+            if not shiboken6.isValid(lbl):
+                continue
+            prog = self._current_programme(ch_id, now)
+            key = (prog[0], prog[1]) if prog else None
+            if self._card_epg_state.get(ch_id) == key:
+                continue
+            self._card_epg_state[ch_id] = key
+            if prog:
+                fm = lbl.fontMetrics()
+                lbl.setText(fm.elidedText(prog[2], Qt.ElideRight, CARD_W - 24))
+                nxt = self._next_programme(ch_id, prog[1])
+                tip = f"Maintenant : {prog[2]}"
+                if nxt:
+                    tip += f"\nEnsuite ({time.strftime('%H:%M', time.localtime(nxt[0]))}) : {nxt[2]}"
+                lbl.setToolTip(tip)
+                lbl.show()
+            else:
+                lbl.hide()
+
+    def _next_programme(self, ch_id, after):
+        """Premier programme commençant après le timestamp donné."""
+        for (start, stop, title, cat) in self._epg.get(ch_id, []):
+            if start >= after:
+                return (start, stop, title, cat)
+        return None
+
+    def _epg_tick(self):
+        """Horloge EPG (30 s) : cartes, barres de progression, bascule de
+        programme dans le guide (reconstruction seulement si visible)."""
+        now = time.time()
+        if self._guide_next_flip and now >= self._guide_next_flip:
+            self._guide_next_flip = 0.0
+            self._guide_dirty = True
+        idx = self._stack.currentIndex()
+        if idx == 0:
+            self._update_card_epg(now)
+        elif idx == 2:
+            if self._guide_dirty:
+                self._rebuild_visible_page()
+            else:
+                # barres des lignes construites seulement
+                for w in self._guide_row_widgets.values():
+                    for bar, start, stop in w["bars"]:
+                        if shiboken6.isValid(bar) and stop > start:
+                            bar.setValue(int(1000 * max(0.0, min(1.0, (now - start) / (stop - start)))))
 
     # =========================================================================
     # ACCÉLÉRATION NAVIGATION
@@ -1073,27 +2151,48 @@ class TVWindow(QMainWindow):
             self._ensure_visible()
         return moved
 
+    def _nav_step(self, direction):
+        """Un pas de navigation D-pad selon la vue courante (grille ou guide)."""
+        if self._stack.currentIndex() == 2:
+            self._guide_step(direction)
+        else:
+            self._try_move_cursor(direction)
+
     # =========================================================================
     # LOGOS
     # =========================================================================
 
-    def _load_logo(self, ch_id, card):
-        """Charge un logo (cache ou réseau)."""
+    def _load_logo(self, ch_id, widget, size):
+        """Charge un logo (mémoire → disque → réseau), multi-cibles.
+
+        Un même logo peut alimenter plusieurs widgets (carte + ligne du
+        guide) : cibles suivies par chaîne, téléchargement dédupliqué.
+        Le pixmap décodé est gardé en mémoire : les reconstructions du
+        guide ne relisent plus les fichiers PNG du disque."""
+        pm = self._logo_pixmem.get(ch_id)
+        if pm is not None:
+            self._set_logo(widget, pm, size)
+            return
         cache_path = os.path.join(LOGO_DIR, f"{ch_id}.png")
         if os.path.exists(cache_path):
-            self._set_card_icon(card, QPixmap(cache_path))
+            pm = QPixmap(cache_path)
+            if not pm.isNull():
+                self._logo_pixmem[ch_id] = pm
+                self._set_logo(widget, pm, size)
+                return
+        self._logo_targets.setdefault(ch_id, []).append((widget, size))
+        if ch_id in self._logo_pending:
             return
-        self._logo_buttons[ch_id] = card
-        url = f"{LOGO_BASE}/{ch_id}.png"
-        self._net.get(QNetworkRequest(QUrl(url)))
+        self._logo_pending.add(ch_id)
+        self._net.get(QNetworkRequest(QUrl(f"{LOGO_BASE}/{ch_id}.png")))
 
-    def _set_card_icon(self, card, pixmap):
-        """Trouve le QLabel icône dans la carte et met le pixmap."""
-        layout = card.layout()
-        if layout and layout.count() > 0:
-            icon_lbl = layout.itemAt(0).widget()
-            if isinstance(icon_lbl, QLabel):
-                icon_lbl.setPixmap(pixmap.scaled(84, 84, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+    @staticmethod
+    def _set_logo(widget, pixmap, size):
+        """Applique un pixmap redimensionné à un QLabel cible (si vivant)."""
+        if isinstance(widget, QLabel) and shiboken6.isValid(widget):
+            widget.setPixmap(
+                pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
 
     def _on_logo_downloaded(self, reply):
         """Callback de téléchargement d'un logo."""
@@ -1108,20 +2207,25 @@ class TVWindow(QMainWindow):
                 f.write(data)
         except OSError:
             return
-        card = self._logo_buttons.pop(ch_id, None)
-        if card and shiboken6.isValid(card):
-            self._set_card_icon(card, QPixmap(cache_path))
+        self._logo_pending.discard(ch_id)
+        targets = self._logo_targets.pop(ch_id, [])
+        pixmap = QPixmap(cache_path)
+        if not pixmap.isNull():
+            self._logo_pixmem[ch_id] = pixmap
+        for widget, size in targets:
+            self._set_logo(widget, pixmap, size)
 
     # =========================================================================
     # LECTURE VIDÉO (libmpv embarqué)
     # =========================================================================
 
     def _play(self, url, label=""):
-        """Lance la lecture (conserve la taille de fenêtre actuelle)."""
+        """Lance la lecture (conserve la taille de fenêtre actuelle).
+
+        La vue d'origine (grille ou guide) est mémorisée pour le retour."""
+        self._return_view = self._stack.currentIndex()
         self._video_widget.command("stop")
-        self._stack.setCurrentIndex(1)
-        self._top_bar.hide()
-        self._osd_bar.hide()
+        self._show_view(1)
 
         self._loading_title.setText(label)
         self._loading_subtitle.setText("Connexion au flux...")
@@ -1151,13 +2255,17 @@ class TVWindow(QMainWindow):
             self._inhibit_screensaver()
 
     def _stop_video(self):
-        """Arrête la lecture et revient à la grille."""
+        """Arrête la lecture et revient à la vue d'origine (grille ou guide)."""
         self._video_widget.command("stop")
-        self._stack.setCurrentIndex(0)
-        self._top_bar.show()
+        self._show_view(self._return_view if self._return_view in (0, 2) else 0)
+        self._return_view = 0
         self._hide_loading()
         self._uninhibit_screensaver()
         self._restore_cursor()
+        # retour au guide : rafraîchit barres de progression / bascule de
+        # programme (rebuild seulement si un programme a basculé)
+        if self._stack.currentIndex() == 2:
+            self._epg_tick()
 
     def _inhibit_screensaver(self):
         """Empêche l'extinction d'écran via org.freedesktop.PowerManagement."""
@@ -1264,15 +2372,15 @@ class TVWindow(QMainWindow):
                 "axis_x": 0.0, "axis_y": 0.0,
                 "xr": (0, 255), "yr": (0, 255),
                 "cross": False, "circle": False,
-                "l1": False, "r1": False, "select": False,
+                "l1": False, "r1": False, "select": False, "start": False,
             }
             # Plages réelles des sticks pour la normalisation
             try:
                 ax = device.absinfo(ecodes.ABS_X)
                 ay = device.absinfo(ecodes.ABS_Y)
-                state["xr"] = (ax.minimum, ax.maximum)
-                state["yr"] = (ay.minimum, ay.maximum)
-            except (OSError, IOError, KeyError, IndexError):
+                state["xr"] = (ax.min, ax.max)
+                state["yr"] = (ay.min, ay.max)
+            except (OSError, IOError, KeyError, IndexError, AttributeError):
                 pass
             self._gamepads[path] = device
             self._pad_states[path] = state
@@ -1317,12 +2425,18 @@ class TVWindow(QMainWindow):
         return None
 
     def _update_osd(self):
-        """Affiche/masque la barre d'aide manette."""
+        """Met à jour texte et visibilité de la barre d'aide manette."""
         connected = bool(self._gamepads)
-        if connected != self._had_gamepad:
-            self._had_gamepad = connected
-            watching = self._stack.currentIndex() == 1
-            self._osd_bar.setVisible(connected and not watching)
+        self._had_gamepad = connected
+        idx = self._stack.currentIndex()
+        texts = {
+            0: "[A] Lancer    [B] Quitter    [Start] Guide TV    [Select] Plein écran    "
+               "[L1/R1] Pays    [D-Pad] Naviguer",
+            2: "[A] Regarder    [B] Retour    [Start] Chaînes    [Select] Plein écran    "
+               "[L1/R1] Pays    [D-Pad] Naviguer le guide",
+        }
+        self._osd_label.setText(texts.get(idx, ""))
+        self._osd_bar.setVisible(connected and idx != 1)
 
     def _poll_gamepad(self):
         """Boucle principale de lecture manettes (appelée toutes les ~16ms).
@@ -1403,11 +2517,15 @@ class TVWindow(QMainWindow):
                         if pressed and not state["select"]:
                             actions.append("select")
                         state["select"] = pressed
+                    elif ev.code == BTN_START:
+                        if pressed and not state["start"]:
+                            actions.append("start")
+                        state["start"] = pressed
 
         # --- Direction actuelle (toutes manettes) ---
         new_dir = self._merged_direction()
 
-        # --- Mode grille : accélération progressive au maintien ---
+        # --- Mode grille/guide : accélération progressive au maintien ---
         if not watching:
             if new_dir is None:
                 self._hold_dir = None
@@ -1415,12 +2533,12 @@ class TVWindow(QMainWindow):
                 hold_ms = now - self._hold_start
                 if now - self._last_repeat >= self._accel_delay(hold_ms):
                     self._last_repeat = now
-                    self._try_move_cursor(new_dir)
+                    self._nav_step(new_dir)
             else:
                 self._hold_dir = new_dir
                 self._hold_start = now
                 self._last_repeat = now
-                self._try_move_cursor(new_dir)
+                self._nav_step(new_dir)
 
         # --- Boutons (fronts par device, tir unique, pas d'accélération) ---
         if now - self._last_input >= COOLDOWN_MS:
@@ -1432,6 +2550,8 @@ class TVWindow(QMainWindow):
                 self._last_input = now
                 if watching:
                     self._pause_toggle()
+                elif self._stack.currentIndex() == 2:
+                    self._guide_play_current()
                 elif self._buttons and self._cursor < len(self._filtered):
                     _, (ch_id, label, _) = self._filtered[self._cursor]
                     self._play(f"{BASE}/{ch_id}{SUFFIX}/{ch_id}.m3u8", label)
@@ -1441,14 +2561,21 @@ class TVWindow(QMainWindow):
                 self._last_input = now
                 if watching:
                     self._stop_video()
+                elif self._stack.currentIndex() == 2:
+                    self._show_view(0)
                 else:
                     self.close()
                 return
 
+            elif "start" in actions:
+                self._last_input = now
+                self._toggle_guide()
+                self._hold_dir = None
+
             elif "l1" in actions:
                 self._last_input = now
                 if not watching:
-                    self._country_idx = (self._country_idx - 1) % (len(COUNTRIES_ORDER) + 1)
+                    self._country_idx = (self._country_idx - 1) % (len(self._countries_current) + 1)
                     self._select_country(self._country_idx)
                     self._scroll_to_top()
                 self._hold_dir = None
@@ -1456,7 +2583,7 @@ class TVWindow(QMainWindow):
             elif "r1" in actions:
                 self._last_input = now
                 if not watching:
-                    self._country_idx = (self._country_idx + 1) % (len(COUNTRIES_ORDER) + 1)
+                    self._country_idx = (self._country_idx + 1) % (len(self._countries_current) + 1)
                     self._select_country(self._country_idx)
                     self._scroll_to_top()
                 self._hold_dir = None
@@ -1546,23 +2673,32 @@ class TVWindow(QMainWindow):
     # =========================================================================
 
     def keyPressEvent(self, event):
-        """Raccourcis clavier."""
+        """Raccourcis clavier (grille / guide / lecture)."""
         self._on_user_activity()  # une touche pressée réaffiche le curseur
         key = event.key()
-        watching = self._stack.currentIndex() == 1
+        mode = self._stack.currentIndex()  # 0 grille, 1 vidéo, 2 guide
+        watching = mode == 1
+        in_guide = mode == 2
 
         if key == Qt.Key_Escape:
             if watching:
                 self._stop_video()
+            elif in_guide:
+                self._show_view(0)
             else:
                 self.close()
 
         elif key == Qt.Key_F11:
             self._toggle_fullscreen()
 
+        elif key == Qt.Key_G:
+            self._toggle_guide()
+
         elif key == Qt.Key_Return or key == Qt.Key_Enter:
             if watching:
                 self._pause_toggle()
+            elif in_guide:
+                self._guide_play_current()
             elif self._buttons and self._cursor < len(self._filtered):
                 # Les cartes sont des QFrame (pas de .click()) : lancer
                 # directement la chaîne sous le curseur
@@ -1572,6 +2708,8 @@ class TVWindow(QMainWindow):
         elif key == Qt.Key_Space:
             if watching:
                 self._pause_toggle()
+            elif in_guide:
+                self._guide_play_current()
             elif self._buttons and self._cursor < len(self._filtered):
                 _, (ch_id, label, _) = self._filtered[self._cursor]
                 self._play(f"{BASE}/{ch_id}{SUFFIX}/{ch_id}.m3u8", label)
@@ -1579,10 +2717,14 @@ class TVWindow(QMainWindow):
         elif key == Qt.Key_Backspace:
             if watching:
                 self._stop_video()
+            elif in_guide:
+                self._show_view(0)
 
         elif key == Qt.Key_Up:
             if watching:
                 self._volume_up()
+            elif in_guide:
+                self._guide_step("up")
             else:
                 new = self._cursor - self._cols
                 if new >= 0:
@@ -1593,6 +2735,8 @@ class TVWindow(QMainWindow):
         elif key == Qt.Key_Down:
             if watching:
                 self._volume_down()
+            elif in_guide:
+                self._guide_step("down")
             else:
                 new = self._cursor + self._cols
                 if new < len(self._buttons):
@@ -1603,6 +2747,8 @@ class TVWindow(QMainWindow):
         elif key == Qt.Key_Left:
             if watching:
                 self._seek(-10)
+            elif in_guide:
+                self._guide_step("left")
             elif self._cursor % self._cols > 0:
                 self._cursor -= 1
                 self._update_card_focus()
@@ -1611,6 +2757,8 @@ class TVWindow(QMainWindow):
         elif key == Qt.Key_Right:
             if watching:
                 self._seek(10)
+            elif in_guide:
+                self._guide_step("right")
             elif (self._cursor % self._cols < self._cols - 1
                   and self._cursor + 1 < len(self._buttons)):
                 self._cursor += 1
@@ -1618,22 +2766,31 @@ class TVWindow(QMainWindow):
                 self._ensure_visible()
 
         elif key == Qt.Key_PageUp:
-            self._country_idx = (self._country_idx - 1) % (len(COUNTRIES_ORDER) + 1)
+            self._country_idx = (self._country_idx - 1) % (len(self._countries_current) + 1)
             self._select_country(self._country_idx)
 
         elif key == Qt.Key_PageDown:
-            self._country_idx = (self._country_idx + 1) % (len(COUNTRIES_ORDER) + 1)
+            self._country_idx = (self._country_idx + 1) % (len(self._countries_current) + 1)
             self._select_country(self._country_idx)
 
         elif key == Qt.Key_Home:
-            self._cursor = 0
-            self._update_card_focus()
-            self._ensure_visible()
+            if in_guide:
+                self._guide_set_row(0)
+                sb = self._guide_scroll.verticalScrollBar()
+                if sb:
+                    sb.setValue(0)
+            else:
+                self._cursor = 0
+                self._update_card_focus()
+                self._ensure_visible()
 
         elif key == Qt.Key_End:
-            self._cursor = max(0, len(self._buttons) - 1)
-            self._update_card_focus()
-            self._ensure_visible()
+            if in_guide:
+                self._guide_set_row(len(self._guide_data) - 1)
+            else:
+                self._cursor = max(0, len(self._buttons) - 1)
+                self._update_card_focus()
+                self._ensure_visible()
 
         else:
             super().keyPressEvent(event)
@@ -1652,7 +2809,11 @@ class TVWindow(QMainWindow):
             new_cols = max(1, (vw - GRID_MARGIN * 2 + GRID_SPACING) // (CARD_W + GRID_SPACING))
             if new_cols != self._cols and self._buttons:
                 self._cols = new_cols
-                self._rebuild_grid()
+                self._grid_dirty = True
+                self._rebuild_visible_page()
+        # guide visible → largeurs des lignes construites à jour
+        if self._stack.currentIndex() == 2:
+            self._guide_ensure_rows()
 
     # =========================================================================
     # FERMETURE
@@ -1663,6 +2824,7 @@ class TVWindow(QMainWindow):
         self._stop_video()
         self._pad_timer.stop()
         self._load_anim.stop()
+        self._epg_clock.stop()
         for device in list(self._gamepads.values()):
             try:
                 device.close()
