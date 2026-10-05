@@ -28,6 +28,7 @@ update_components() {
     local updated_runner=""
     local updated_dxvk=""
     local updated_vkd3d=""
+    local updated_d7vk=""
     local updated_dlls=false
     
     # Vérifier le runner gwine
@@ -133,7 +134,33 @@ update_components() {
             echo "  → Déjà à jour"
         fi
     fi
-    
+
+    # Vérifier D7VK
+    local needs_d7vk_update=false
+    local latest_d7vk=""
+    local current_d7vk=""
+
+    latest_d7vk=$(get_latest_d7vk_version)
+    local d7vk_folder
+    d7vk_folder=$(find "$D7VK_CACHE_DIR" -maxdepth 1 -type d -name "d7vk-*" 2>/dev/null | sort -V | tail -1)
+    [ -n "$d7vk_folder" ] && current_d7vk=$(basename "$d7vk_folder" | sed 's/^d7vk-//')
+
+    echo ""
+    echo "D7VK:"
+    echo "  Version actuelle: ${current_d7vk:-Aucune}"
+    echo "  Dernière version: ${latest_d7vk:-Inconnue}"
+
+    if [ -n "$latest_d7vk" ]; then
+        if [ -z "$current_d7vk" ] || compare_versions "$latest_d7vk" "$current_d7vk"; then
+            has_updates=true
+            needs_d7vk_update=true
+            needs_reinstall_dlls=true
+            echo "  → Mise à jour disponible"
+        else
+            echo "  → Déjà à jour"
+        fi
+    fi
+
     # Vérifier DXVK-NVAPI (NVIDIA uniquement)
     local needs_nvapi_update=false
     local updated_nvapi=""
@@ -177,6 +204,7 @@ update_components() {
             echo "  - DXVK: ${current_dxvk:-Inconnue}"
         fi
         echo "  - VKD3D-Proton: ${current_vkd3d:-Inconnue}"
+        echo "  - D7VK: ${current_d7vk:-Inconnue}"
         if is_nvidia_gpu; then
             echo "  - DXVK-NVAPI: ${current_nvapi:-Inconnue}"
         fi
@@ -191,7 +219,8 @@ update_components() {
             else
                 up_to_date_msg+="  - DXVK : ${current_dxvk:-Inconnue}\n"
             fi
-            up_to_date_msg+="  - VKD3D-Proton : ${current_vkd3d:-Inconnue}"
+            up_to_date_msg+="  - VKD3D-Proton : ${current_vkd3d:-Inconnue}\n"
+            up_to_date_msg+="  - D7VK : ${current_d7vk:-Inconnue}"
             if is_nvidia_gpu; then
                 up_to_date_msg+="\n  - DXVK-NVAPI : ${current_nvapi:-Inconnue}"
             fi
@@ -203,7 +232,7 @@ update_components() {
     # Compter le nombre total d'étapes
     local TOTAL_STEPS=0
     [ -n "$latest_gwine" ] && ((TOTAL_STEPS++))
-    [ -n "$latest_dxvk" ] || [ -n "$latest_vkd3d" ] && ((TOTAL_STEPS++))
+    [ -n "$latest_dxvk" ] || [ -n "$latest_vkd3d" ] || [ "$needs_d7vk_update" = true ] && ((TOTAL_STEPS++))
     [ "$needs_dxvk_async_update" = true ] && ((TOTAL_STEPS++))
     [ "$needs_nvapi_update" = true ] && ((TOTAL_STEPS++))
     [ "$needs_reinstall_dlls" = true ] && ((TOTAL_STEPS++))
@@ -288,6 +317,7 @@ update_components() {
         # Marquer comme mis à jour
         [ -n "$latest_dxvk" ] && updated_dxvk="$latest_dxvk"
         [ -n "$latest_vkd3d" ] && updated_vkd3d="$latest_vkd3d"
+        [ "$needs_d7vk_update" = true ] && updated_d7vk="$latest_d7vk"
         
         # Vérifier annulation après téléchargement
         if progress_is_cancelled "$DBUS_REF"; then
@@ -339,6 +369,10 @@ update_components() {
             progress_close "$DBUS_REF"
             error_exit "Échec de la réinstallation des DLLs"
         fi
+        if ! install_d7vk; then
+            progress_close "$DBUS_REF"
+            error_exit "Échec de la réinstallation de D7VK"
+        fi
         
         updated_dlls=true
     fi
@@ -360,6 +394,9 @@ update_components() {
     fi
     if [ -n "$updated_vkd3d" ]; then
         echo "  ✓ VKD3D-Proton mis à jour vers $updated_vkd3d"
+    fi
+    if [ -n "$updated_d7vk" ]; then
+        echo "  ✓ D7VK mis à jour vers $updated_d7vk"
     fi
     if [ -n "$updated_nvapi" ]; then
         echo "  ✓ DXVK-NVAPI mis à jour vers $updated_nvapi"

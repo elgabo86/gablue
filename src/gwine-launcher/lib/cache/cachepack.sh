@@ -86,6 +86,17 @@ create_cachepack() {
     else
         echo "  ✓ DXVK-NVAPI présent"
     fi
+
+    local has_d7vk=false
+    if [ -d "$D7VK_CACHE_DIR" ]; then
+        find "$D7VK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "d7vk-*" 2>/dev/null | grep -q . && has_d7vk=true
+    fi
+    if [ "$has_d7vk" = false ]; then
+        echo "  ⚠️  D7VK manquant"
+        missing_components=true
+    else
+        echo "  ✓ D7VK présent"
+    fi
     
     local wine_cache="$COMPONENTS_SOURCE/wine-cache"
     if [ ! -f "$wine_cache/wine-mono-11.3.0-x86.msi" ] || \

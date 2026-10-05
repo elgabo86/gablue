@@ -42,9 +42,9 @@ ensure_wineprefix_full() {
     if [ ! -d "$WINEPREFIX" ] || [ ! -f "$WINEPREFIX/system.reg" ]; then
         echo "Préfixe Wine non trouvé, création automatique..."
         
-        local TOTAL_STEPS=5
+        local TOTAL_STEPS=6
         if is_nvidia_gpu; then
-            TOTAL_STEPS=6
+            TOTAL_STEPS=7
         fi
         local CURRENT_STEP=0
         local DBUS_REF=""
@@ -86,9 +86,10 @@ ensure_wineprefix_full() {
         check_progress_cancelled "$DBUS_REF"
         
         ((CURRENT_STEP++))
-        progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation de DXVK/VKD3D..."
+        progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation de DXVK/VKD3D/D7VK..."
         install_dxvk_vkd3d
-        
+        install_d7vk
+
         check_progress_cancelled "$DBUS_REF"
         
         if is_nvidia_gpu; then

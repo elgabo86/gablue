@@ -41,6 +41,22 @@ download_updated_dxvk_vkd3d() {
     
     echo "DXVK - Installé: ${current_dxvk:-Aucun}, Dernière: $latest_dxvk"
     echo "VKD3D - Installé: ${current_vkd3d:-Aucun}, Dernière: $latest_vkd3d"
+
+    local current_d7vk=""
+    local latest_d7vk=""
+    local needs_d7vk_update=false
+
+    latest_d7vk=$(get_latest_d7vk_version)
+    local d7vk_folder
+    d7vk_folder=$(find "$D7VK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "d7vk-*" 2>/dev/null | sort -V | tail -1)
+    [ -n "$d7vk_folder" ] && current_d7vk=$(basename "$d7vk_folder" | sed 's/^d7vk-//')
+    echo "D7VK - Installé: ${current_d7vk:-Aucun}, Dernière: ${latest_d7vk:-Inconnue}"
+
+    if [ -n "$latest_d7vk" ]; then
+        if [ -z "$current_d7vk" ] || compare_versions "$latest_d7vk" "$current_d7vk"; then
+            needs_d7vk_update=true
+        fi
+    fi
     
     local current_nvapi=""
     local latest_nvapi=""
@@ -69,7 +85,7 @@ download_updated_dxvk_vkd3d() {
         fi
     fi
     
-    if [ -z "$latest_dxvk" ] && [ -z "$latest_vkd3d" ] && [ "$needs_nvapi_update" = false ]; then
+    if [ -z "$latest_dxvk" ] && [ -z "$latest_vkd3d" ] && [ "$needs_d7vk_update" = false ] && [ "$needs_nvapi_update" = false ]; then
         echo "Vous avez déjà les dernières versions des composants."
         return 0
     fi
@@ -126,16 +142,27 @@ download_updated_dxvk_vkd3d() {
         fi
     fi
     
+    if [ "$needs_d7vk_update" = true ]; then
+        echo ""
+        echo "Téléchargement de D7VK $latest_d7vk..."
+        if ! download_d7vk --no-confirm; then
+            echo "✗ Échec du téléchargement de D7VK"
+            update_success=false
+        fi
+    fi
+
     if [ "$update_success" = true ]; then
         echo ""
         echo "Mises à jour installées avec succès !"
         if [ -d "$WINEPREFIX" ] && [ "${init_mode:-false}" != "true" ]; then
             echo "Réinstallation des DLLs dans le préfixe Wine..."
             install_dxvk_vkd3d
+            install_d7vk
         fi
+        return 0
     fi
-    
-    return 0
+
+    return 1
 }
 
 # Télécharge VKD3D-Proton uniquement (utilisé quand le mode DXVK async est actif)

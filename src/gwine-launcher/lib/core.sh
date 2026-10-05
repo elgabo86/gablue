@@ -29,6 +29,7 @@ DXVK_CACHE_DIR="$COMPONENTS_DIR/dxvk"
 DXVK_ASYNC_CACHE_DIR="$COMPONENTS_DIR/dxvk-gplasync"
 VKD3D_CACHE_DIR="$COMPONENTS_DIR/vkd3d"
 DXVK_NVAPI_CACHE_DIR="$COMPONENTS_DIR/dxvk-nvapi"
+D7VK_CACHE_DIR="$COMPONENTS_DIR/d7vk"
 
 # URL du pack cache pré-construit (repo elgabo86/gwine-cache, publié chaque
 # semaine). Permet de remplacer le téléchargement composant par composant

@@ -15,7 +15,11 @@
 # Récupère la dernière version de gwine depuis GitHub (release latest)
 get_latest_gwine_version() {
     local version
-    version=$(curl -s --max-time 10 https://api.github.com/repos/elgabo86/gwine/releases/latest 2>/dev/null | grep -oP '"tag_name":\s*"\K[^"]+' | head -1)
+    # Redirection HTML de /releases/latest (302 vers le tag de la dernière
+    # release stable) — pas d'API GitHub (quota 60 req/h anonyme, épuisé
+    # dès une IP partagée/CI, casse les scripts)
+    version=$(curl -s --max-time 10 -o /dev/null -w '%{redirect_url}' "https://github.com/elgabo86/gwine/releases/latest" 2>/dev/null | grep -oE 'tag/[^/?#]*' | head -1)
+    version="${version#tag/}"
 
     if [ -z "$version" ]; then
         return 1

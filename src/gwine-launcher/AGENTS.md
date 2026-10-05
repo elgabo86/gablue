@@ -36,6 +36,7 @@ src/gwine-launcher/
 │   ├── components/          # Modules de gestion des composants
 │   │   ├── utils.sh             # Utilitaires pour composants
 │   │   ├── dxvk.sh              # Gestion DXVK/VKD3D
+│   │   ├── d7vk.sh              # Gestion D7VK (Direct3D 7/6/5/3 → Vulkan, proxy ddraw)
 │   │   ├── nvapi.sh             # Gestion DXVK-NVAPI (NVIDIA uniquement)
 │   │   ├── mono.sh              # Gestion Wine Mono/Gecko
 │   │   └── winetricks.sh        # Intégration winetricks
@@ -243,13 +244,14 @@ lib/dir-config.sh
 - **download.sh** : Téléchargement GitHub, extraction d'archives, récupération versions composants (get_component_version avec double source officiel+bottles pour DXVK/VKD3D)
 - **cache/*** : Gestion du cache
   - gwine-runner.sh : Téléchargement, installation et mise à jour du runner gwine
-  - dxvk-vkd3d.sh : Mise à jour DXVK, VKD3D, NVAPI + download_vkd3d() pour téléchargement VKD3D seul (utilisé quand le mode DXVK async gère DXVK séparément)
-  - offline.sh : Préparation cache, mode offline, téléchargement Mono/Gecko avec vérification de version. `prepare_full_offline_cache()` (appelée par `--download-components`) pré-cache le runner gwine et télécharge **toujours** DXVK-NVAPI (cache portable, indépendant du GPU de la machine qui construit le pack)
-  - cachepack.sh : Création de packs cache pour déploiement offline. Empaquette le runner gwine (une **seule** archive, la plus récente — le cache peut en accumuler plusieurs, voir section pack cache), vérifie DXVK standard + GPLAsync + VKD3D + DXVK-NVAPI + Mono/Gecko + wincomponents. Le `install-cache.sh` généré déploie uniquement gwine
+  - dxvk-vkd3d.sh : Mise à jour DXVK, VKD3D, NVAPI, D7VK + download_vkd3d() pour téléchargement VKD3D seul (utilisé quand le mode DXVK async gère DXVK séparément). `download_updated_dxvk_vkd3d()` retourne désormais 1 si un téléchargement échoue (avant : `return 0` inconditionnel — les échecs n'atteignaient jamais le `error_exit` de `--update`)
+  - offline.sh : Préparation cache, mode offline, téléchargement Mono/Gecko avec vérification de version. `prepare_full_offline_cache()` (appelée par `--download-components`) pré-cache le runner gwine et télécharge **toujours** DXVK-NVAPI et D7VK (cache portable, indépendant du GPU de la machine qui construit le pack)
+  - cachepack.sh : Création de packs cache pour déploiement offline. Empaquette le runner gwine (une **seule** archive, la plus récente — le cache peut en accumuler plusieurs, voir section pack cache), vérifie DXVK standard + GPLAsync + VKD3D + DXVK-NVAPI + D7VK + Mono/Gecko + wincomponents. Le `install-cache.sh` généré déploie uniquement gwine
 - **component.sh** : Fichier de redirection vers components/*
 - **components/*** : Gestion des composants individuels
   - utils.sh : Utilitaires (copy_dll_files, create_dll_overrides, get_wine_system_paths)
   - dxvk.sh : Installation DXVK/VKD3D
+  - d7vk.sh : Installation D7VK (proxy ddraw → Vulkan, sauvegarde du ddraw builtin en ddraw_.dll)
   - nvapi.sh : DXVK-NVAPI (NVIDIA uniquement)
   - mono.sh : Wine Mono/Gecko
   - winetricks.sh : Intégration winetricks
@@ -393,6 +395,7 @@ podman run --rm -v "$(pwd)/lib:/src:z" docker.io/library/fedora:43 bash -c \
 - VKD3D-Proton : double source (officiel `HansKristian-Work/vkd3d-proton` + `bottlesdevs/components`), même règle
 - DXVK-NVAPI : source unique officielle (`jp7677/dxvk-nvapi`, NVIDIA uniquement). L'ancien miroir `bottlesdevs/components` a été abandonné (août 2026) : son flux atom ne liste que les ~10 dernières releases, dxvk-nvapi y disparaît périodiquement (→ échec build ISO), et l'API GitHub paginable est rate-limitée (inutilisable en CI parallèle). L'atom `jp7677` ne contient que des releases nvapi → fiable ; les assets portent le même nom/layout x32-x64. **Installé** dans le préfixe seulement sur GPU NVIDIA (`install_dxvk_nvapi` garde son `is_nvidia_gpu`), mais **toujours téléchargé/empaqueté** dans le cache offline pour rester portable
 - DXVK-GPLAsync : source unique (`gitlab.com/Ph42oN/dxvk-gplasync`, API GitLab v4), version extraite depuis le tag GitLab (format `vX.Y.Z-N`)
+- D7VK : source unique officielle (`WinterSnowfall/d7vk`). Version via la redirection HTML de `github.com/WinterSnowfall/d7vk/releases/latest` (302 → tag, lue via `%{redirect_url}`) : ni le flux atom (il liste aussi les tags sans release — `v2.4_WIP`, `v3.1.1` — qui 404 au download) ni l'API GitHub (quota 60 req/h, épuisé en CI). Asset **zip** — `extract_archive()` gère le cas zip (7z, fallback unzip) — contenant un dossier racine `d7vk-vX.Y.Z/` aplati après extraction (layout attendu `d7vk-X.Y.Z/x32/ddraw.dll`). **Composant requis** comme DXVK : échec de téléchargement = échec de `--update`/`--init`, présence exigée par `--cachepack` et `local_cache_incomplete()`. `install_d7vk()` (components/d7vk.sh) reproduit le mécanisme `PROTON_D7VK_DDRAW` de Proton-CachyOS : sauvegarde du ddraw builtin Wine en `ddraw_.dll` (uniquement si `ddraw.dll` porte le marqueur « Wine builtin » — jamais ré-sauvegarder un d7vk déjà installé, le proxy bouclerait sur lui-même), copie du `ddraw.dll` D7VK (32-bit seul, syswow64 ; le ddraw 64-bit de system32 reste builtin) et override `ddraw=native,builtin`. D7VK est un **proxy** : il traduit D3D7/6/5/3 immediate-mode vers le backend D3D9 de DXVK embarqué et recharge le vrai ddraw depuis `ddraw_.dll`. Nécessite Vulkan 1.4 côté driver (exigence d7vk v2.x — pas de détection pour l'instant, même pari que DXVK mainline qui exige 1.3)
 - `auto_update_components()` détecte le mode DXVK configuré (`dxvk` ou `dxvk-async`) et adapte la vérification/téléchargement en conséquence (async → `download_dxvk_async` + `download_vkd3d`, standard → `download_updated_dxvk_vkd3d`)
 - La source choisie est stockée dans les globales `_DXVK_SOURCE` / `_VKD3D_SOURCE` ("official" ou "bottles")
 - Téléchargement automatique depuis GitHub

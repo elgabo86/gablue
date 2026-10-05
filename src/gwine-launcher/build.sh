@@ -23,6 +23,7 @@ LIB_FILES=(
     "lib/ui.sh"
     "lib/components/utils.sh"
     "lib/components/dxvk.sh"
+    "lib/components/d7vk.sh"
     "lib/components/mono.sh"
     "lib/components/nvapi.sh"
     "lib/components/winetricks.sh"

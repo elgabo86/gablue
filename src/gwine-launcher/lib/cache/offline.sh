@@ -127,6 +127,14 @@ download_missing_components() {
             fi
         fi
     fi
+
+    local has_d7vk=false
+    find "$D7VK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "d7vk-*" 2>/dev/null | grep -q . && has_d7vk=true
+
+    if [ "$has_d7vk" = false ]; then
+        echo "Téléchargement de D7VK..."
+        download_d7vk --no-confirm || echo "Warning: Échec du téléchargement de D7VK"
+    fi
 }
 
 # Indique si le cache local est incomplet (mono/gecko, dxvk ou vkd3d manquant)
@@ -144,6 +152,10 @@ local_cache_incomplete() {
     fi
 
     if [ ! -d "$VKD3D_CACHE_DIR" ] || [ -z "$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null)" ]; then
+        return 0
+    fi
+
+    if [ ! -d "$D7VK_CACHE_DIR" ] || [ -z "$(find "$D7VK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "d7vk-*" 2>/dev/null)" ]; then
         return 0
     fi
 

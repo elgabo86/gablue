@@ -58,6 +58,17 @@ extract_archive() {
                 return 1
             fi
             ;;
+        zip)
+            ensure_dir -s "$dest_dir"
+            if command -v 7z &>/dev/null; then
+                7z x "$archive_path" -o"$dest_dir/" >/dev/null 2>&1 || return 1
+            elif command -v unzip &>/dev/null; then
+                unzip -q -o "$archive_path" -d "$dest_dir" || return 1
+            else
+                echo "Erreur: ni 7z ni unzip ne sont installés"
+                return 1
+            fi
+            ;;
         *)
             echo "Erreur: Type d'archive inconnu: $archive_type"
             return 1
@@ -395,6 +406,17 @@ get_component_version() {
             [ -n "$version" ] && version="${version#v}"
             [ -n "$version" ] && echo "$version"
             ;;
+        d7vk)
+            # Source officielle unique (WinterSnowfall/d7vk). Ni le flux atom
+            # (il liste aussi les tags sans release — v2.4_WIP, v3.1.1 — qui
+            # donnent des 404 au téléchargement) ni l'API GitHub (quota
+            # 60 req/h, épuisé en CI) : on suit la redirection HTML de
+            # /releases/latest vers le tag de la dernière release stable.
+            # Une requête GET ordinaire, aucun quota API.
+            version=$(curl -s -o /dev/null -w '%{redirect_url}' "https://github.com/WinterSnowfall/d7vk/releases/latest" 2>/dev/null | grep -oE 'tag/v[0-9][0-9.]*' | head -1)
+            version="${version#tag/v}"
+            [ -n "$version" ] && echo "$version"
+            ;;
         *)
             return 1
             ;;
@@ -405,3 +427,4 @@ get_component_version() {
 get_latest_dxvk_version() { get_component_version dxvk; }
 get_latest_vkd3d_version() { get_component_version vkd3d; }
 get_latest_dxvk_nvapi_version() { get_component_version dxvk-nvapi; }
+get_latest_d7vk_version() { get_component_version d7vk; }

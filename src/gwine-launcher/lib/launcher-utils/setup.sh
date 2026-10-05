@@ -26,6 +26,7 @@ setup_wine_environment() {
     if [ "${_NEEDS_WINETRICKS_INIT:-0}" = "1" ]; then
         install_winetricks_components
         install_dxvk_vkd3d
+        install_d7vk
         unset _NEEDS_WINETRICKS_INIT
     fi
     

@@ -23,7 +23,7 @@ init_prefix_only() {
     export WINEPREFIX="$HOME_REAL/Windows/Prefix"
     export WINEARCH="win64"
     
-    local TOTAL_STEPS=10
+    local TOTAL_STEPS=11
     local CURRENT_STEP=0
     local DBUS_REF=""
     
@@ -142,7 +142,18 @@ init_prefix_only() {
         progress_close "$DBUS_REF"
         error_exit "Échec de l'installation de DXVK/VKD3D"
     fi
-    
+
+    check_progress_cancelled "$DBUS_REF"
+
+    ((CURRENT_STEP++))
+    progress_update "$DBUS_REF" "$CURRENT_STEP" "Installation de D7VK..."
+
+    if ! install_d7vk; then
+        restore_backup
+        progress_close "$DBUS_REF"
+        error_exit "Échec de l'installation de D7VK"
+    fi
+
     check_progress_cancelled "$DBUS_REF"
     
     ((CURRENT_STEP++))
