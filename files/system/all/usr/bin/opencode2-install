@@ -116,7 +116,8 @@ STABLE_URL="https://opencode.ai/download/stable/linux-x64-appimage"
 # présent et CLI installé ; l'étape complète alors elle-même)
 refresh_mcp_versions() {
     # Lightpanda : version du paquet npm global (le binaire nightly est
-    # téléchargé par le postinstall, sa présence est vérifiée à part)
+    # téléchargé séparément via le CLI `lightpanda install`, sa présence
+    # est vérifiée à part)
     CUR_LP="$(npm list -g --depth=0 @lightpanda/browser 2>/dev/null | sed -n 's/.*@lightpanda\/browser@\([^@ ]*\).*/\1/p' || true)"
     if [ -z "${LP_LATEST:-}" ]; then
         LP_LATEST="$(timeout 30 npm view @lightpanda/browser version 2>/dev/null || true)"
@@ -165,8 +166,9 @@ if [ "$FORCE" = 0 ] && command -v npm &>/dev/null && npm list -g --depth=0 "$NPM
     refresh_mcp_versions
 
     # Allowlist npm allow-scripts complète ? Sans l'entrée d'un paquet, son
-    # postinstall serait bloqué lors des mises à jour internes (`opencode
-    # upgrade`, `lightpanda upgrade` réinstallent via npm sans --allow-scripts)
+    # postinstall serait bloqué lors des réinstallations sans --allow-scripts
+    # (`opencode upgrade`, npm update -g…). Sans effet pour lightpanda depuis
+    # la 1.6.0 (plus de postinstall), conservé par symétrie/défense
     ALLOWLIST_OK=0
     if grep -q '^allow-scripts=.*@opencode/cli' "$HOME/.npmrc" 2>/dev/null \
         && grep -q '^allow-scripts=.*@lightpanda/browser' "$HOME/.npmrc" 2>/dev/null; then
@@ -300,11 +302,12 @@ fi
 
 # --- Étape 5bis : MCP Lightpanda (@lightpanda/browser) ---
 # Référencé par opencode.json (serveur local « lightpanda »). Paquet npm global :
-# le postinstall télécharge le vrai binaire (build nightly) dans
-# ~/.cache/lightpanda-node/lightpanda — allow-scripts requis, sinon npm bloque
-# le postinstall et le binaire ne se télécharge jamais (MCP muet au démarrage).
-# allowlist (ré)assurée même si le skip s'applique : elle rend `lightpanda
-# upgrade` fonctionnel (réinstallation npm sans --allow-scripts).
+# wrapper JS seul — depuis la 1.6.0, plus de postinstall (« Do not download
+# binary on installation ») : le binaire (build nightly, ~180 Mo, checksum
+# vérifié) se télécharge via le CLI du paquet dans
+# ~/.cache/lightpanda-node/lightpanda. allowlist (ré)assurée même si le skip
+# s'applique : sans effet depuis la fin du postinstall, mais inoffensive et
+# protège si upstream re-modélise le téléchargement en script d'installation.
 ensure_allow_scripts "@lightpanda/browser"
 if [ "$FORCE" = 0 ]; then
     refresh_mcp_versions
@@ -320,6 +323,20 @@ else
     npm install -g --allow-scripts=@lightpanda/browser @lightpanda/browser@latest \
         || npm install -g @lightpanda/browser@latest \
         || echo "! Installation Lightpanda échouée (réseau ?) — le MCP sera absent."
+    # Binaire nightly : plus de postinstall npm depuis la 1.6.0 — téléchargement
+    # via le CLI du paquet (chemin npm global explicite, indépendant du PATH).
+    # Partiel non exécutable d'un téléchargement interrompu purgé avant
+    # (ETIMEDOUT constaté : fichier tronqué laissé en place)
+    if [ -f "$HOME/.cache/lightpanda-node/lightpanda" ] \
+        && [ ! -x "$HOME/.cache/lightpanda-node/lightpanda" ]; then
+        rm -f "$HOME/.cache/lightpanda-node/lightpanda"
+    fi
+    LP_CLI="$(npm prefix -g 2>/dev/null)/bin/lightpanda"
+    if [ -x "$LP_CLI" ]; then
+        echo "Téléchargement du binaire nightly Lightpanda (~180 Mo)..."
+        "$LP_CLI" install \
+            || echo "! Téléchargement du binaire Lightpanda échoué (réseau ?) — le MCP sera muet."
+    fi
     VERSION_LP="$("$HOME/.cache/lightpanda-node/lightpanda" version 2>/dev/null | tail -1 || true)"
     if [ -x "$HOME/.cache/lightpanda-node/lightpanda" ]; then
         echo "✓ Lightpanda installé : ${VERSION_LP:-version inconnue}"
