@@ -14,7 +14,11 @@ download_missing_components() {
     local GECKO64_FILE="$WINE_CACHE_DIR/wine-gecko-${GECKO_VER}-x86_64.msi"
     local GECKO32_FILE="$WINE_CACHE_DIR/wine-gecko-${GECKO_VER}-x86.msi"
     
-    if [ ! -f "$MONO_FILE" ] || [ ! -f "$GECKO64_FILE" ] || [ ! -f "$GECKO32_FILE" ]; then
+    # .msi présent mais corrompu (téléchargement interrompu) = traité comme
+    # manquant : purge de tous les .msi puis re-téléchargement
+    if [ ! -f "$MONO_FILE" ] || ! validate_archive "$MONO_FILE" || \
+       [ ! -f "$GECKO64_FILE" ] || ! validate_archive "$GECKO64_FILE" || \
+       [ ! -f "$GECKO32_FILE" ] || ! validate_archive "$GECKO32_FILE"; then
         echo "Téléchargement de Wine Mono et Wine Gecko..."
         local MONO_URL="https://dl.winehq.org/wine/wine-mono/${MONO_VER}/wine-mono-${MONO_VER}-x86.msi"
         local GECKO_URL="https://dl.winehq.org/wine/wine-gecko/${GECKO_VER}/wine-gecko-${GECKO_VER}-x86_64.msi"
@@ -31,11 +35,32 @@ download_missing_components() {
     
     ensure_dirs "$DXVK_CACHE_DIR" "$VKD3D_CACHE_DIR"
     
+    # Dossier présent mais incomplet (extraction partielle) = purgé puis
+    # re-téléchargé, sinon il passerait inaperçu et s'installerait avec des
+    # DLLs manquantes (copy_dll_files skippe silencieusement les fichiers absents)
     local has_dxvk=false
-    find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -qv "gplasync\|nvapi" && has_dxvk=true
+    local dxvk_dir
+    dxvk_dir=$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | sort -V | tail -1)
+    if [ -n "$dxvk_dir" ]; then
+        if component_dir_complete "$dxvk_dir" "dxgi.dll d3d11.dll"; then
+            has_dxvk=true
+        else
+            echo "Dossier DXVK incomplet dans le cache ($(basename "$dxvk_dir")), purge..."
+            rm -rf "$dxvk_dir"
+        fi
+    fi
     
     local has_vkd3d=false
-    find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null | grep -q . && has_vkd3d=true
+    local vkd3d_dir
+    vkd3d_dir=$(find_component_dir "$VKD3D_CACHE_DIR" "vkd3d-proton-*")
+    if [ -n "$vkd3d_dir" ]; then
+        if component_dir_complete "$vkd3d_dir" "d3d12.dll"; then
+            has_vkd3d=true
+        else
+            echo "Dossier VKD3D-Proton incomplet dans le cache ($(basename "$vkd3d_dir")), purge..."
+            rm -rf "$vkd3d_dir"
+        fi
+    fi
     
     if [ "$has_dxvk" = false ]; then
         echo "Téléchargement de DXVK..."
@@ -129,7 +154,16 @@ download_missing_components() {
     fi
 
     local has_d7vk=false
-    find "$D7VK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "d7vk-*" 2>/dev/null | grep -q . && has_d7vk=true
+    local d7vk_dir
+    d7vk_dir=$(find_component_dir "$D7VK_CACHE_DIR" "d7vk-*")
+    if [ -n "$d7vk_dir" ]; then
+        if component_dir_complete "$d7vk_dir" "ddraw.dll"; then
+            has_d7vk=true
+        else
+            echo "Dossier D7VK incomplet dans le cache ($(basename "$d7vk_dir")), purge..."
+            rm -rf "$d7vk_dir"
+        fi
+    fi
 
     if [ "$has_d7vk" = false ]; then
         echo "Téléchargement de D7VK..."
@@ -137,25 +171,38 @@ download_missing_components() {
     fi
 }
 
-# Indique si le cache local est incomplet (mono/gecko, dxvk ou vkd3d manquant)
+# Indique si le cache local est incomplet (mono/gecko, dxvk ou vkd3d manquant).
+# Les fichiers/dossiers présents sont aussi vérifiés en intégrité : un .msi
+# corrompu (validate_archive) ou un dossier de composant partiellement extrait
+# (component_dir_complete) est traité comme manquant → re-téléchargement.
 local_cache_incomplete() {
     local MONO_VER="11.3.0"
     local GECKO_VER="2.47.4"
-    if [ ! -f "$COMPONENTS_DIR/wine-cache/wine-mono-${MONO_VER}-x86.msi" ] || \
-       [ ! -f "$COMPONENTS_DIR/wine-cache/wine-gecko-${GECKO_VER}-x86_64.msi" ] || \
-       [ ! -f "$COMPONENTS_DIR/wine-cache/wine-gecko-${GECKO_VER}-x86.msi" ]; then
+    local WINE_CACHE="$COMPONENTS_DIR/wine-cache"
+    local mono_msi="$WINE_CACHE/wine-mono-${MONO_VER}-x86.msi"
+    local gecko64_msi="$WINE_CACHE/wine-gecko-${GECKO_VER}-x86_64.msi"
+    local gecko32_msi="$WINE_CACHE/wine-gecko-${GECKO_VER}-x86.msi"
+    if [ ! -f "$mono_msi" ] || ! validate_archive "$mono_msi" || \
+       [ ! -f "$gecko64_msi" ] || ! validate_archive "$gecko64_msi" || \
+       [ ! -f "$gecko32_msi" ] || ! validate_archive "$gecko32_msi"; then
         return 0
     fi
 
-    if [ ! -d "$DXVK_CACHE_DIR" ] || [ -z "$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi")" ]; then
+    local dxvk_dir
+    dxvk_dir=$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | sort -V | tail -1)
+    if [ -z "$dxvk_dir" ] || ! component_dir_complete "$dxvk_dir" "dxgi.dll d3d11.dll"; then
         return 0
     fi
 
-    if [ ! -d "$VKD3D_CACHE_DIR" ] || [ -z "$(find "$VKD3D_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null)" ]; then
+    local vkd3d_dir
+    vkd3d_dir=$(find_component_dir "$VKD3D_CACHE_DIR" "vkd3d-proton-*")
+    if [ -z "$vkd3d_dir" ] || ! component_dir_complete "$vkd3d_dir" "d3d12.dll"; then
         return 0
     fi
 
-    if [ ! -d "$D7VK_CACHE_DIR" ] || [ -z "$(find "$D7VK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "d7vk-*" 2>/dev/null)" ]; then
+    local d7vk_dir
+    d7vk_dir=$(find_component_dir "$D7VK_CACHE_DIR" "d7vk-*")
+    if [ -z "$d7vk_dir" ] || ! component_dir_complete "$d7vk_dir" "ddraw.dll"; then
         return 0
     fi
 
@@ -268,12 +315,33 @@ auto_update_components() {
     dxvk_mode=$(get_current_dxvk_mode)
     
     [ -d "$WINE_DIR" ] && [ -f "$WINE_DIR/bin/wine" ] && has_runner=true
+    # Dossier présent mais incomplet (extraction partielle) = purgé pour forcer
+    # le re-téléchargement, même si la version est déjà la dernière
+    local dxvk_dir=""
     if [ "$dxvk_mode" = "dxvk-async" ]; then
-        [ -n "$(find "$DXVK_ASYNC_CACHE_DIR" -maxdepth 1 -type d -name "dxvk*gplasync*" 2>/dev/null)" ] && has_dxvk=true
+        dxvk_dir=$(find_component_dir "$DXVK_ASYNC_CACHE_DIR" "dxvk*gplasync*")
     else
-        [ -n "$(find "$DXVK_CACHE_DIR" -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi")" ] && has_dxvk=true
+        dxvk_dir=$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | sort -V | tail -1)
     fi
-    [ -n "$(find "$VKD3D_CACHE_DIR" -maxdepth 1 -type d -name "vkd3d-proton-*" 2>/dev/null)" ] && has_vkd3d=true
+    if [ -n "$dxvk_dir" ]; then
+        if component_dir_complete "$dxvk_dir" "dxgi.dll d3d11.dll"; then
+            has_dxvk=true
+        else
+            echo "Dossier DXVK incomplet dans le cache ($(basename "$dxvk_dir")), purge..."
+            rm -rf "$dxvk_dir"
+        fi
+    fi
+    
+    local vkd3d_dir
+    vkd3d_dir=$(find_component_dir "$VKD3D_CACHE_DIR" "vkd3d-proton-*")
+    if [ -n "$vkd3d_dir" ]; then
+        if component_dir_complete "$vkd3d_dir" "d3d12.dll"; then
+            has_vkd3d=true
+        else
+            echo "Dossier VKD3D-Proton incomplet dans le cache ($(basename "$vkd3d_dir")), purge..."
+            rm -rf "$vkd3d_dir"
+        fi
+    fi
     
     if curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
         has_network=true

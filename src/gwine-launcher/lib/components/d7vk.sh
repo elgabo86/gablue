@@ -46,6 +46,22 @@ install_d7vk() {
     return 1
 }
 
+# Aplatit le dossier racine du zip D7VK (d7vk-X.Y.Z/d7vk-vX.Y.Z/x32/... ->
+# d7vk-X.Y.Z/x32/...). Le layout attendu par install_dll_component est
+# d7vk-X.Y.Z/x32/ddraw.dll. No-op si déjà aplati.
+_flatten_d7vk_dir() {
+    local d7vk_dir="$1"
+    [ -n "$d7vk_dir" ] || return 0
+    [ -d "$d7vk_dir/x32" ] && return 0
+    local inner_dir
+    inner_dir=$(find "$d7vk_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)
+    if [ -n "$inner_dir" ] && [ -d "$inner_dir/x32" ]; then
+        mv "$inner_dir"/* "$d7vk_dir/" 2>/dev/null || true
+        rmdir "$inner_dir" 2>/dev/null || true
+    fi
+    return 0
+}
+
 # Télécharge D7VK (source unique officielle WinterSnowfall/d7vk)
 download_d7vk() {
     local target_version="${1:-}"
@@ -73,6 +89,9 @@ download_d7vk() {
     [ -n "$d7vk_folder" ] && current_d7vk=$(basename "$d7vk_folder" | sed 's/^d7vk-//')
 
     if [ -n "$current_d7vk" ] && [ "$current_d7vk" = "$target_version" ]; then
+        # Version cible déjà en cache : réparer au besoin un dossier non aplati
+        # (legacy d'un téléchargement antérieur au mécanisme d'aplatissement)
+        _flatten_d7vk_dir "$d7vk_folder"
         echo "D7VK $target_version est déjà installé"
         return 0
     fi
@@ -91,16 +110,7 @@ download_d7vk() {
     if update_component_with_backup "$D7VK_CACHE_DIR" "d7vk-*" _do_download; then
         # Aplatir le dossier racine du zip : le layout attendu par
         # install_dll_component est d7vk-X.Y.Z/x32/ddraw.dll
-        local d7vk_dir
-        d7vk_dir=$(find_component_dir "$D7VK_CACHE_DIR" "d7vk-*")
-        if [ -n "$d7vk_dir" ] && [ ! -d "$d7vk_dir/x32" ]; then
-            local inner_dir
-            inner_dir=$(find "$d7vk_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)
-            if [ -n "$inner_dir" ] && [ -d "$inner_dir/x32" ]; then
-                mv "$inner_dir"/* "$d7vk_dir/" 2>/dev/null || true
-                rmdir "$inner_dir" 2>/dev/null || true
-            fi
-        fi
+        _flatten_d7vk_dir "$(find_component_dir "$D7VK_CACHE_DIR" "d7vk-*")"
         echo "✓ D7VK $target_version installé"
         return 0
     else

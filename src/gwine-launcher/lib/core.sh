@@ -417,6 +417,39 @@ find_component_dir() {
     find "$cache_dir" -mindepth 1 -maxdepth 1 -type d -name "$pattern" | sort -V | tail -1
 }
 
+# Vérifie qu'un dossier de composant extrait contient bien les DLLs attendues
+# (détection des extractions partielles : archives tronquées téléchargées avant
+# validate_archive, extraction interrompue...). Auto-adaptatif au layout :
+# bi-arch (dxvk, vkd3d-proton : x64 + x32/x86) ou mono-arch 32-bit (d7vk).
+# Usage: component_dir_complete <component_dir> <dll_list>
+#   dll_list : DLLs séparées par des espaces (ex: "dxgi.dll d3d11.dll")
+# Retourne 0 si toutes les DLLs sont présentes, 1 sinon (dossier incomplet)
+component_dir_complete() {
+    local component_dir="$1"
+    local dll_list="$2"
+    local dll
+    
+    [ -d "$component_dir" ] || return 1
+    
+    for dll in $dll_list; do
+        if [ -d "$component_dir/x64" ]; then
+            # Layout bi-arch : chaque DLL doit exister en x64 ET en 32-bit
+            if [ ! -f "$component_dir/x64/$dll" ]; then
+                return 1
+            fi
+            if [ ! -f "$component_dir/x32/$dll" ] && [ ! -f "$component_dir/x86/$dll" ]; then
+                return 1
+            fi
+        else
+            # Layout mono-arch 32-bit (d7vk) : la DLL doit exister en x32/x86
+            if [ ! -f "$component_dir/x32/$dll" ] && [ ! -f "$component_dir/x86/$dll" ]; then
+                return 1
+            fi
+        fi
+    done
+    return 0
+}
+
 # =============================================================================
 # Création des liens symboliques pour compatibilité WGP
 # Ces liens permettent aux WGP d'accéder aux répertoires via /tmp/
