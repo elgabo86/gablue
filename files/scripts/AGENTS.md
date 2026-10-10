@@ -33,6 +33,7 @@ Exclusions importantes :
 - Helper `/ctx/install-kmods` : vérifie l'existence de chaque RPM avant install (évite l'échec si un module disparaît de l'image akmods)
 - Kmods communs : framework-laptop, kvmfr, openrazer, v4l2loopback, xone, wl
 - Kmods extras : zenergy, gcadapter, evdi, kvmfr, new-lg4ff, hid-tmff2, t150-driver, hid-fanatecff, ryzen_smu, sc0710, nct6687d, system76, vhba
+- **displaylink userspace installé explicitement** (10/2026) : embarqué par akmods-extra à côté de libevdi (`/tmp/rpms/extra/displaylink*.rpm`, démon + `displaylink.service`) — il n'arrivait avant que via une dep faible de libevdi depuis fedora-multimedia (negativo17) ; disparition silencieuse du repo = docks DisplayLink sans démon + échec systemd (disable d'une unité absente) → install explicite, skip propre par `install-kmods` si akmods-extra cesse de l'embarquer
 - Versionlock des versions ; scx-scheds depuis COPR bieszczaders/kernel-cachyos-addons
 
 ### mesa — Installation Mesa Terra (multilib fc44)
@@ -132,7 +133,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 ### systemd
 
 - **Activés (toutes variantes)** : rpm-ostreed-automatic, flatpak-update, cec-poweroff-tv, cec-active-source, dmemcg-booster, bpftune (Bazzite `4333b30`), brew-setup (voir section rpm)
-- **Désactivés** : scx_loader, tailscaled, displaylink
+- **Désactivés** : scx_loader, tailscaled, displaylink — via garde d'existence `systemctl list-unit-files` (pattern Bazzite, hook titanoboa) : disable sous `set -e` sur une unité absente casse le build (10/2026 : la dep faible qui tirait displaylink depuis fedora-multimedia a sauté → les 5 variantes en échec ; displaylink est désormais installé explicitement depuis akmods-extra, voir § kernel) ; la garde reste en défense contre toute future dérive de la base image ; si l'unité est présente, elle est re-désactivée
 - **Masqués** : systemd-remount-fs, flatpak-add-fedora-repos (le service natif flatpak réajoute fedora/fedora-testing tant que `/var/lib/flatpak/.fedora-initialized` n'existe pas, annulant le kickstart — on garde Flathub seul via `/etc/flatpak/remotes.d/`)
 - **Conditionnels (DX)** : ublue-os-libvirt-workarounds, gablue-dx-groups, incus-workaround
 

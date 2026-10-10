@@ -8,9 +8,16 @@ set -eoux pipefail
 # SERVICES DE BASE
 # =============================================================================
 
-systemctl disable -f scx_loader.service
-systemctl disable -f tailscaled.service
-systemctl disable -f displaylink.service
+# Désactivation de services potentiellement absents de la base image :
+# displaylink n'y est plus installé depuis le rebuild libevdi akmods-extra
+# 1.15.1-3 (10/2026), qui ne tire plus la dépendance depuis fedora-multimedia.
+# Pattern Bazzite (titanoboa_hook_postrootfs) : disable seulement si l'unité
+# existe — un disable sous set -e sur une unité absente casse le build.
+for svc in scx_loader.service tailscaled.service displaylink.service; do
+    if systemctl list-unit-files "$svc" > /dev/null 2>&1; then
+        systemctl disable -f "$svc"
+    fi
+done
 mkdir -p /etc/systemd/system/NetworkManager-wait-online.service.d
 cat > /etc/systemd/system/NetworkManager-wait-online.service.d/override.conf << 'EOF'
 [Service]

@@ -69,23 +69,21 @@
     fi
   done &
 
-  # Kill uniquement les processus enfants de lgplaunch (pas le script lui-même)
-  # pour permettre le cleanup et démontage du LGP
-  # Le pattern couvre aussi l'ancien nom launchlin.sh (symlink de compat :
-  # les raccourcis créés par les anciennes versions affichent ce nom en cmdline)
-  pgrep -u "$USER" -f "lgplaunch|launchlin\.sh" | while read pid; do
-      # Liste tous les processus enfants directs et indirects
-      local children
-      children=$(pgrep -P "$pid")
-      if [ -n "$children" ]; then
-          # Tuer récursivement tous les enfants
-          echo "$children" | while read child_pid; do
-              # Tuer le processus enfant et ses propres enfants
-              pkill -9 -P "$child_pid" 2>/dev/null
-              kill -9 "$child_pid" 2>/dev/null
-          done
-      fi
-  done &
+  # LGP : tuer tout ce qui tourne depuis les packs montés + démonter
+  # Ancre = chemin de montage /tmp/lgpackmount (porté par la cmdline de
+  # squashfuse, du `bash -c` du lanceur et de tous les binaires du jeu).
+  # L'ancien kill "enfants de lgplaunch" ne descendait que de 2 niveaux :
+  # en mode overlay kernel (jeu dans unshare -U -m), il tuait bash -c +
+  # unshare et orphelinait l'arbre du jeu → reparenté à systemd --user,
+  # sans plus aucun "lgplaunch" en cmdline → invisible aux runs suivants
+  # (vécu : Glover-R.lgp 10/2026). L'ancre mount est insensible à la mort
+  # du lanceur et à la profondeur du namespace ; un lanceur vivant voit
+  # son jeu mourir et sort proprement avec son cleanup.
+  pgrep -u "$USER" -f "/tmp/lgpackmount" | xargs -r -n1 kill -9 2>/dev/null &
+
+  # Démontage des packs non-overlay (kernel overlay : le mount vit dans le
+  # namespace et meurt avec lui — fusermount est un no-op sans danger)
+  (fusermount -uz /tmp/lgpackmount-* 2>/dev/null) &
 } > /dev/null 2>&1 &
 
 # Attendre que toutes les tâches en arrière-plan soient terminées (optionnel)

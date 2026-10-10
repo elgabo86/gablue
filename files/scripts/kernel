@@ -61,10 +61,17 @@ dnf5 versionlock add kernel kernel-devel kernel-devel-matched kernel-core kernel
     /tmp/rpms/{common,kmods}/*wl*.rpm
 
 # Installation des kmods extras (depuis akmods-extra)
+# displaylink : userspace DisplayLink (démon + displaylink.service), embarqué
+# par akmods-extra à côté de libevdi — installé EXPLICITEMENT depuis le 10/2026 :
+# il n'arrivait avant que via une dep faible de libevdi résolue depuis
+# fedora-multimedia (negativo17), sautée silencieusement quand le repo ne
+# fournit plus → unité absente → systemd (disable) en échec. Sans lui, les
+# docks DisplayLink n'ont pas de démon (kmod-evdi + libevdi seuls inutiles).
 /ctx/install-kmods \
     /tmp/rpms/{extra,kmods-extra}/*zenergy*.rpm \
     /tmp/rpms/{extra,kmods-extra}/*gcadapter*.rpm \
     /tmp/rpms/{extra,kmods-extra}/*evdi*.rpm \
+    /tmp/rpms/extra/displaylink*.rpm \
     /tmp/rpms/{extra,kmods-extra}/*kvmfr*.rpm \
     /tmp/rpms/{extra,kmods-extra}/*new-lg4ff*.rpm \
     /tmp/rpms/{extra,kmods-extra}/*hid-tmff2*.rpm \
