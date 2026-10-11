@@ -66,6 +66,18 @@ Build des **ISOs live** Plasma complet (tous les 5 jours). Déclencheurs : sched
 
 Nettoyage hebdomadaire (dimanche) : images > 90 jours supprimées ; conservation des 7 dernières taggées + 7 dernières non-taggées. Packages : gablue-main, gablue-nvidia, gablue-nvidia-open, gablue-main-dx, gablue-nvidia-open-dx, gablue-main-test, gablue-nvidia-open-test
 
+## bump-image-digests.yml
+
+Bump hebdo des images pinnées par digest — mini-ubot maison, équivalent du bot Bazzite ubot-7274 (~1 PR/semaine), mais ouvre une PR au lieu de committer direct.
+
+- **Déclencheurs** : schedule lundi 04:00 UTC + `workflow_dispatch` ; concurrency cancel-in-progress
+- **Deps suivies** : tableau `DEPS` dans le step « Vérifier et bumper » — format `"image|fichier"`, une ligne par image pinnée `@sha256:` dans un Containerfile. Ajouter une dep = ajouter une ligne (le pin doit exister dans le fichier, sinon warning + skip)
+- **Mécanique** : `skopeo inspect` (retry 3×10 s, timeouts ghcr.io transitoires) → **normalisation du préfixe `sha256:`** (`{{.Digest}}` l'inclut selon la version de skopeo — sans strip, faux positif hebdo et sed corrompu `@sha256:sha256:…`) → comparaison au pin extrait par grep → `sed` si différent. Tout à jour → job sans effet
+- **PR** : branche `chore/bump-digests-<date>` (ou réutilise la branche d'une PR bump ouverte, détectée par préfixe) ; la branche est TOUJOURS main + 1 commit — force-push assumé qui supersede le contenu précédent, jamais de conflit de rebase. Force-push sûr : namespace `chore/bump-digests-*` réservé au bot, unique écrivain (concurrency)
+- **Validation** : l'ouverture de la PR déclenche les builds des 5 variantes (event `pull_request`) → merge sur CI verte
+- **Merge sans build** : commit/PR sans tag de build → rien au merge ; la build schedule quotidienne (02:00 UTC) ingère le nouveau digest. Push avec `GITHUB_TOKEN` ne déclenche de toute façon jamais de workflow (récursion bloquée par GitHub)
+- **Identité** : `github-actions[bot]` (comme update-readme) ; permissions `contents: write` + `pull-requests: write` ; checkout pinné par SHA (convention repo)
+
 ## Composite action `mount-btrfs-storage`
 
 `.github/actions/mount-btrfs-storage/action.yml` — remplace `ublue-os/container-storage-action` : loopback BTRFS zstd:2 sur `/` + storage podman dessus. `losetup --direct-io=on` + `mount` (évite le double cache page-cache hôte+loop ; remplace `systemd-mount` qui n'expose pas l'option — Bazzite `7ecb26a1`) ; `mkfs.btrfs -m single -d single` (dispositif unique, pas de métadonnées dupliquées).

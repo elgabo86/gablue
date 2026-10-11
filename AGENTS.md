@@ -117,7 +117,8 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── gablue-builds.yml              # Workflow principal de build
 │   │   ├── reusable-gablue-image.yml      # Workflow réutilisable
 │   │   ├── build-gablue-live-isos.yml     # Build des ISOs live (Titanoboa)
-│   │   └── clean-gablue-images.yml        # Nettoyage anciennes images
+│   │   ├── clean-gablue-images.yml        # Nettoyage anciennes images
+│   │   └── bump-image-digests.yml         # Bump hebdo digests images pinnées (PR auto)
 │   └── dependabot.yml                     # Configuration Dependabot
 └── README.md
 ```

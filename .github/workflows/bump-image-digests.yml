@@ -1,0 +1,134 @@
+name: bump-image-digests
+
+# Bump hebdo des images pinnées par digest (mini-ubot maison, équivalent du bot
+# Bazzite ubot-7274) — ouvre / met à jour une PR au lieu de committer directement.
+# Le merge ne déclenche pas de build : la build schedule quotidienne (02:00 UTC)
+# ingère le nouveau digest.
+
+on:
+  schedule:
+    - cron: "0 4 * * 1" # lundi 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: bump-image-digests
+  cancel-in-progress: true
+
+jobs:
+  bump:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+      - name: Vérifier et bumper les digests
+        id: bump
+        run: |
+          set -euo pipefail
+
+          # =============================================================================
+          # Dépendances suivies : "image|fichier" — une ligne par image pinnée via @sha256
+          # Ajouter une dep = ajouter une ligne ici (et la pinner dans le Containerfile)
+          # =============================================================================
+          DEPS=(
+            "ghcr.io/ublue-os/brew:latest|Containerfile-gablue"
+          )
+
+          changed=0
+          summary=""
+          for dep in "${DEPS[@]}"; do
+            image="${dep%%|*}"
+            file="${dep##*|}"
+
+            # Digest courant de l'image (retry 3×10 s — timeouts ghcr.io transitoires)
+            latest=""
+            for i in 1 2 3; do
+              if latest=$(skopeo inspect "docker://${image}" --format '{{.Digest}}' 2>/dev/null); then
+                break
+              fi
+              echo "skopeo inspect échoué pour ${image} (tentative ${i}/3), nouvel essai dans 10 s"
+              sleep 10
+            done
+            if [ -z "${latest}" ]; then
+              echo "::warning::Impossible de récupérer le digest de ${image} — ignoré"
+              continue
+            fi
+            # Normalisation : {{.Digest}} peut inclure le préfixe "sha256:" selon la version de skopeo
+            latest="${latest#sha256:}"
+
+            # Digest actuellement pinné dans le fichier (ligne FROM <image>@sha256:<digest>)
+            pinned=$(grep "^FROM ${image}@sha256:" "${file}" | head -1 | sed -n 's/.*@sha256:\([0-9a-f]\{64\}\).*/\1/p' || true)
+            if [ -z "${pinned}" ]; then
+              echo "::warning::Aucun pin @sha256 trouvé pour ${image} dans ${file} — ignoré"
+              continue
+            fi
+
+            if [ "${pinned}" = "${latest}" ]; then
+              echo "${image} : déjà à jour"
+              continue
+            fi
+
+            sed -i "s|FROM ${image}@sha256:${pinned}|FROM ${image}@sha256:${latest}|g" "${file}"
+            echo "${image} : ${pinned:0:12} -> ${latest:0:12}"
+            summary="${summary}- \`${image}\` : \`${pinned:0:12}\` → \`${latest:0:12}\`"$'\n'
+            changed=1
+          done
+
+          {
+            echo "changed=${changed}"
+            echo "summary<<EOF"
+            echo "${summary}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Créer / mettre à jour la PR
+        if: steps.bump.outputs.changed == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUMP_SUMMARY: ${{ steps.bump.outputs.summary }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Réutiliser la branche d'une PR bump déjà ouverte, sinon branche datée.
+          # La branche est TOUJOURS main + 1 commit (pas de rebase, jamais de conflit) :
+          # le force-push écrase son contenu — namespace réservé au bot (seul écrivain,
+          # concurrency ci-dessus empêche les runs parallèles).
+          branch=$(gh pr list --state open --json headRefName --jq '.[].headRefName' | grep '^chore/bump-digests-' | head -1 || true)
+          if [ -z "${branch}" ]; then
+            branch="chore/bump-digests-$(date +%Y%m%d)"
+          fi
+
+          git checkout -B "${branch}"
+          git add -u
+          git commit -m "chore(deps): bump pinned image digests"
+          git push --force origin "${branch}"
+
+          # PR seulement si elle n'existe pas déjà (sinon le push a mis à jour la branche)
+          existing=$(gh pr list --head "${branch}" --state open --json number --jq 'length')
+          if [ "${existing}" -eq 0 ]; then
+            {
+              echo "Bump automatique des images pinnées (workflow \`bump-image-digests\`) :"
+              echo ""
+              printf '%s' "${BUMP_SUMMARY}"
+              echo ""
+              echo "L'ouverture de cette PR déclenche les builds des 5 variantes (validation)."
+              echo "Le merge ne déclenche pas de build : la build schedule quotidienne (02:00 UTC) ingère le nouveau digest."
+            } > "${RUNNER_TEMP}/pr_body.md"
+            gh pr create \
+              --title "chore(deps): bump pinned image digests" \
+              --body-file "${RUNNER_TEMP}/pr_body.md" \
+              --base main \
+              --head "${branch}"
+          fi
