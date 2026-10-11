@@ -25,12 +25,12 @@ FROM ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}:${KERNEL_FLAVOR}-${FEDORA_VERSION}
 FROM scratch AS nvidia-common-files
 COPY files/system/nvidia-common /
 
-# Étape intermédiaire : image Homebrew pré-construite par ublue-os (aligné Bazzite d0c9330)
+# Étape intermédiaire : image Homebrew pré-construite par ublue-os (aligné Bazzite ea2770f)
 # Remplace l'ancien RPM ublue-brew (déprécié upstream, COPR plus rebuildé depuis 11/2025)
 # NOTE : le tarball ne contient PAS node/npm — npm est installé à la demande via
 # `brew install node` (opencode2-install), ou présent si l'utilisateur l'a ajouté
 # Digest épinglé, à bumper ponctuellement vers le dernier build de :latest
-FROM ghcr.io/ublue-os/brew:latest@sha256:60ada2d65891d8797beef49d8b43f2108519cbbaf04c9c7363e1a008677fcd35 AS brew
+FROM ghcr.io/ublue-os/brew:latest@sha256:5bdf54dc7c21c22db29df6550e3711788719c5123549ea6dc5645d5af47795e3 AS brew
 
 # Image de base pour la construction finale
 FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}

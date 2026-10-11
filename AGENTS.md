@@ -252,7 +252,7 @@ FROM ghcr.io/ublue-os/akmods-${NVIDIA_FLAVOR}:${KERNEL_FLAVOR}-${FEDORA_VERSION}
 FROM scratch AS nvidia-common-files
 COPY files/system/nvidia-common /
 
-# Étape intermédiaire : image Homebrew pré-construite (aligné Bazzite d0c9330, digest épinglé)
+# Étape intermédiaire : image Homebrew pré-construite (aligné Bazzite ea2770f, digest épinglé)
 FROM ghcr.io/ublue-os/brew:latest@sha256:<digest> AS brew
 
 # Image de base
