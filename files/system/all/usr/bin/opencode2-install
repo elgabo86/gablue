@@ -2,7 +2,7 @@
 
 # Script pour installer/mettre à jour OpenCode 2 (@opencode/cli) via npm + l'app OpenCode Desktop
 # Remplace les anciens alias opencode-install (V1) et opencode2-install (script curl)
-# - Désinstalle OpenCode 1 si présent (npm @opencode-ai/opencode ou install curl)
+# - Désinstalle OpenCode 1 si présent (npm opencode-ai ou install curl)
 # - Désinstalle OpenCode 2 s'il n'est pas installé via npm (install curl ou brew)
 # - Installe npm via Homebrew si absent
 # - Installe @opencode/cli en global npm
@@ -57,9 +57,13 @@ if [ -z "$BREW" ] && [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
 fi
 
 # --- Étape 1 : désinstaller OpenCode 1 (V1) si existant ---
-if command -v npm &>/dev/null && npm list -g --depth=0 @opencode-ai/opencode &>/dev/null; then
-    echo "Désinstallation d'OpenCode 1 (npm @opencode-ai/opencode)..."
-    npm uninstall -g @opencode-ai/opencode && echo "✓ OpenCode 1 (npm) désinstallé."
+# Nom npm historique de la V1 : `opencode-ai` (pas de paquet scoped
+# @opencode-ai/opencode — vérifié 404 sur le registre). Sans la bonne
+# désinstallation, le bin-link `opencode` de la V1 dans le préfixe npm
+# (Homebrew) fait échouer `npm install -g @opencode/cli` avec EEXIST.
+if command -v npm &>/dev/null && npm list -g --depth=0 opencode-ai &>/dev/null; then
+    echo "Désinstallation d'OpenCode 1 (npm opencode-ai)..."
+    npm uninstall -g opencode-ai && echo "✓ OpenCode 1 (npm) désinstallé."
 fi
 
 # --- Étape 2 : désinstaller OpenCode 2 s'il n'est pas installé via npm ---
@@ -94,6 +98,37 @@ if ! (command -v npm &>/dev/null && npm list -g --depth=0 "$NPM_PACKAGE" &>/dev/
     echo "✓ Ancienne installation non-npm désinstallée."
 else
     echo "✓ OpenCode 2 déjà installé via npm."
+fi
+
+# --- Fix TLS node (sans privilège) ---
+# brew node ≥ 26.11 lié à openssl@4.0.3 ignore le magasin de certificats
+# intégré : TOUTE vérification TLS node échoue avec UNABLE_TO_GET_ISSUER_CERT_LOCALLY
+# (curl/openssl système OK, moteur de vérification sain, rootCertificates
+# rempli — node 26.10 lié openssl@3 non affecté ; constaté ideapad7 10/2026).
+# Contournement user-level : pointer node vers le bundle système via
+# NODE_EXTRA_CA_CERTS (couvre npm ET le CLI lightpanda) + cafile npm en
+# ceinture de sécurité (survit hors shell interactif : services, cron…).
+# Sonde préalable → fix appliqué seulement si nécessaire ; idempotent ;
+# sans effet quand brew corrige (CAs additionnels redondants mais inoffensifs).
+TLS_BUNDLE=""
+for B in /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/ssl/certs/ca-bundle.crt; do
+    if [ -r "$B" ]; then
+        TLS_BUNDLE="$B"
+        break
+    fi
+done
+if command -v node &>/dev/null && [ -n "$TLS_BUNDLE" ]; then
+    if ! timeout 10 node -e 'require("https").get("https://registry.npmjs.org/",r=>process.exit(0)).on("error",()=>process.exit(1))' 2>/dev/null; then
+        echo "! TLS node cassé (brew node + openssl@4) : contournement NODE_EXTRA_CA_CERTS=$TLS_BUNDLE"
+        export NODE_EXTRA_CA_CERTS="$TLS_BUNDLE"
+        # Persistance pour les shells interactifs (opencode upgrade, lightpanda CLI…)
+        for RC in "$HOME/.bashrc" "$HOME/.profile"; do
+            if [ -f "$RC" ] && ! grep -q "NODE_EXTRA_CA_CERTS" "$RC" 2>/dev/null; then
+                printf '\nexport NODE_EXTRA_CA_CERTS=%s  # fix TLS node brew/openssl@4 (magasin intégré ignoré, posé par opencode2-install)\n' "$TLS_BUNDLE" >> "$RC"
+            fi
+        done
+        npm config set cafile "$TLS_BUNDLE" --location=user 2>/dev/null || true
+    fi
 fi
 
 # --- Étape 2bis : vérification de mise à jour — sortie immédiate si rien à faire ---
