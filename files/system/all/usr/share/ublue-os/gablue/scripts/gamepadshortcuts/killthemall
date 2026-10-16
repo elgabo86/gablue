@@ -70,20 +70,34 @@
   done &
 
   # LGP : tuer tout ce qui tourne depuis les packs montés + démonter
-  # Ancre = chemin de montage /tmp/lgpackmount (porté par la cmdline de
-  # squashfuse, du `bash -c` du lanceur et de tous les binaires du jeu).
+  # Deux ancres car la cmdline seule ne suffit pas :
+  # - cmdline (pgrep -f) : `bash -c` du lanceur + binaires lancés en chemin
+  #   absolu portent le mount en cmdline
+  # - /proc/<pid>/exe : un binaire lancé en chemin RELATIF depuis un script
+  #   du pack (game.sh du MvC Recompiled : `exec ./jeu`) perd le mount de
+  #   sa cmdline au exec → invisible à pgrep -f, mais son exe /proc reste
+  #   ancré dans le mount ; le case couvre aussi le full overlay (`*` dans
+  #   .temppath : jeu lancé depuis /tmp/lgp-full-overlay-$UID)
+  # squashfuse EXCLU du kill : pgrep liste par PID croissant, le démon
+  # (lancé en premier) mourait en premier, AVANT le jeu → le survivant
+  # figeait sur des lectures FUSE mortes (EIO/SIGBUS), fenêtre qui ne se
+  # fermait qu'à l'abort des I/O (vécu MvC Clash of Super Heroes 10/2026).
+  # Le bash heredoc du unshare (cmdline "bash") survit toujours, voit son
+  # jeu mourir et fait le cleanup (unmount → mort du démon) ; le
+  # fusermount final couvre les mounts orphelins.
   # L'ancien kill "enfants de lgplaunch" ne descendait que de 2 niveaux :
   # en mode overlay kernel (jeu dans unshare -U -m), il tuait bash -c +
   # unshare et orphelinait l'arbre du jeu → reparenté à systemd --user,
   # sans plus aucun "lgplaunch" en cmdline → invisible aux runs suivants
   # (vécu : Glover-R.lgp 10/2026). L'ancre mount est insensible à la mort
-  # du lanceur et à la profondeur du namespace ; un lanceur vivant voit
-  # son jeu mourir et sort proprement avec son cleanup.
-  pgrep -u "$USER" -f "/tmp/lgpackmount" | xargs -r -n1 kill -9 2>/dev/null &
-
-  # Démontage des packs non-overlay (kernel overlay : le mount vit dans le
-  # namespace et meurt avec lui — fusermount est un no-op sans danger)
-  (fusermount -uz /tmp/lgpackmount-* 2>/dev/null) &
+  # du lanceur et à la profondeur du namespace.
+  (pgrep -u "$USER" -f "/tmp/lgpackmount" | grep -v squashfuse | xargs -r -n1 kill -9 2>/dev/null
+   for proc in /proc/[0-9]*; do
+     case "$(readlink "$proc/exe" 2>/dev/null)" in
+       /tmp/lgpackmount-*|/tmp/lgp-full-overlay-*) kill -9 "${proc##*/}" 2>/dev/null ;;
+     esac
+   done
+   fusermount -uz /tmp/lgpackmount-* 2>/dev/null) &
 } > /dev/null 2>&1 &
 
 # Attendre que toutes les tâches en arrière-plan soient terminées (optionnel)
