@@ -386,11 +386,19 @@ fi
 # (merge idempotent et non destructif : serveurs existants (context7, tavily,
 # configs utilisateur) et flags préservés — on n'ajoute que ce qui manque).
 # Config modifiée -> MCP_UPDATED=1 pour redémarrer le service de fond.
+#
+# opencode.json peut être un SYMLINK (config partagée : install.sh du dépôt
+# Opencode lie config/* vers ~/.config/opencode/, seul cli.json reste local).
+# Écrire en place le REMPLACE par un fichier ordinaire : le lien est perdu et la
+# machine cesse de suivre la config synchronisée (vécu 17/10 : desktop-gui et le
+# reste invisibles, `opencode mcp list` muet). On écrit donc un temporaire dans
+# le dossier de la cible RÉSOLUE puis os.replace sur ce chemin réel — le lien
+# lui-même n'est jamais remplacé ni traversé par un rename.
 OCFG="$HOME/.config/opencode/opencode.json"
 if command -v python3 &>/dev/null; then
     RC=0
     timeout 10 python3 - "$OCFG" <<'PY' || RC=$?
-import json, os, sys
+import json, os, sys, tempfile
 
 path = sys.argv[1]
 cfg = {}
@@ -413,9 +421,23 @@ servers["lightpanda"] = {
     "command": [f"{home}/.cache/lightpanda-node/lightpanda", "mcp"],
 }
 os.makedirs(os.path.dirname(path), exist_ok=True)
-with open(path, "w", encoding="utf-8") as f:
-    json.dump(cfg, f, indent=2, ensure_ascii=False)
-    f.write("\n")
+# Écriture ATOMIQUE et RESPECTUEUSE DU SYMLINK : on écrit un fichier temporaire
+# dans le dossier RÉEL de la cible (résolu une première fois), puis on remplace
+# ce chemin réel. Passer le lien à os.replace le remplacerait par un fichier
+# ordinaire — c'est exactement le bug que cette étape corrige (constaté en test).
+target = os.path.realpath(path)
+directory = os.path.dirname(target) or "."
+handle, temporary = tempfile.mkstemp(dir=directory, prefix=".opencode.json.", suffix=".tmp")
+try:
+    with os.fdopen(handle, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    if os.path.exists(target):
+        os.chmod(temporary, os.stat(target).st_mode & 0o7777)  # préserve 0600
+    os.replace(temporary, target)  # le symlink n'est jamais touché
+except BaseException:
+    os.unlink(temporary)
+    raise
 sys.exit(2)  # 2 = entrée créée
 PY
     # RC 0 : déjà présent — RC 2 : entrée créée — RC 1 : config illisible
