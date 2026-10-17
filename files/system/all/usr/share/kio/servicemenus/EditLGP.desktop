@@ -2,12 +2,22 @@
 Type=Service
 Name=Edit LGP Package
 MimeType=application/x-lgp;
-Actions=SelectExe;ExtractLGP
+Actions=SelectExe;OpenSaves;OpenExtras;ExtractLGP
 
 [Desktop Action SelectExe]
 Name=Lancer un autre exécutable dans le LGP
 Icon=tux
 Exec=/usr/bin/lgplaunch --exe %f
+
+[Desktop Action OpenSaves]
+Name=Ouvrir le dossier de sauvegardes
+Icon=document-save
+Exec=/usr/share/ublue-os/gablue/scripts/openpackdir.sh --saves %f
+
+[Desktop Action OpenExtras]
+Name=Ouvrir le dossier des extras/cache
+Icon=folder-open-recent
+Exec=/usr/share/ublue-os/gablue/scripts/openpackdir.sh --extras %f
 
 [Desktop Action ExtractLGP]
 Name=Extraire le LGP dans un dossier

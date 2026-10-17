@@ -2,12 +2,22 @@
 Type=Service
 Name=Edit WGP Package
 MimeType=application/x-wgp;
-Actions=LaunchExe;ExtractWGP
+Actions=LaunchExe;OpenSaves;OpenExtras;ExtractWGP
 
 [Desktop Action LaunchExe]
 Name=Lancer un autre .exe dans le WGP
 Icon=windows95
 Exec=gwine --exewgp %f
+
+[Desktop Action OpenSaves]
+Name=Ouvrir le dossier de sauvegardes
+Icon=document-save
+Exec=/usr/share/ublue-os/gablue/scripts/openpackdir.sh --saves %f
+
+[Desktop Action OpenExtras]
+Name=Ouvrir le dossier des extras/cache
+Icon=folder-open-recent
+Exec=/usr/share/ublue-os/gablue/scripts/openpackdir.sh --extras %f
 
 [Desktop Action ExtractWGP]
 Name=Extraire le WGP dans un dossier
