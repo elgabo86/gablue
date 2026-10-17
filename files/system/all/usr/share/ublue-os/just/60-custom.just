@@ -624,6 +624,24 @@ foreground-booster-disable:
     systemctl --user stop plasma-foreground-booster.service 2>/dev/null
     echo "Foreground booster disabled."
 
+# Enable opencode background server at boot (starts now + linger, survives logout)
+opencode-service-enable:
+    #!/usr/bin/bash
+    systemctl --user enable --now opencode.service &&
+    loginctl enable-linger &&
+    clear &&
+    echo "OpenCode service is now enabled at boot (running now, survives logout)" ||
+    echo "Error..."
+
+# Disable opencode background server at boot (stops the running server too)
+opencode-service-disable:
+    #!/usr/bin/bash
+    systemctl --user disable --now opencode.service &&
+    loginctl disable-linger &&
+    clear &&
+    echo "OpenCode service is now disabled (server stopped, default on-demand startup back)" ||
+    echo "Error..."
+
 # Enable or disable ALL automatic updates (system, flatpaks and brew)
 toggle-updates-all ACTION="":
     #!/usr/bin/bash
