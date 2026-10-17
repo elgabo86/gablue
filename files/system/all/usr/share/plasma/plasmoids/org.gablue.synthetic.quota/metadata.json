@@ -7,7 +7,7 @@
             }
         ],
         "Category": "System Information",
-        "Description": "Quota Synthetic (tokens hebdo, requêtes 5 h) — clé API lue depuis la db OpenCode",
+        "Description": "Quota Synthetic (tokens hebdo) — clé API lue depuis la db OpenCode",
         "Icon": "speedometer",
         "Id": "org.gablue.synthetic.quota",
         "License": "MIT",

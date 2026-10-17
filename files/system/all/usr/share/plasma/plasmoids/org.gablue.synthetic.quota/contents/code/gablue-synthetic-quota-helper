@@ -3,6 +3,8 @@
 # Lit la clé API Synthetic dans la db OpenCode (table credential) puis
 # interroge l'API quotas. Sort un JSON sur stdout (consommé par main.qml
 # via le data engine "executable").
+# 10/2026 : l'API ne renvoie plus rollingFiveHourLimit — un seul pourcentage
+# (weeklyTokenLimit.percentRemaining), fallback subscription.
 # En cas d'échec (réseau, API, db verrouillée), retombe sur le dernier
 # résultat valide mis en cache (~/.cache/gablue/synthetic-quota.json)
 # avec stale=true, pour que le widget garde ses dernières valeurs.
@@ -75,21 +77,7 @@ def compute(data):
     out["weeklyMax"] = weekly.get("maxCredits")
     out["nextRegenAt"] = weekly.get("nextRegenAt")
 
-    rolling = data.get("rollingFiveHourLimit") or {}
-    remaining = rolling.get("remaining")
-    maximum = rolling.get("max")
-    if (
-        isinstance(remaining, (int, float))
-        and isinstance(maximum, (int, float))
-        and maximum > 0
-    ):
-        out["fiveHour"] = max(remaining, 0.0) / maximum * 100.0
-    else:
-        out["fiveHour"] = None
-    out["limited"] = bool(rolling.get("limited"))
-    out["nextTickAt"] = rolling.get("nextTickAt")
-
-    # Fallback (comme le TUI) si weekly et fiveHour sont absents
+    # Fallback (comme le TUI) si weekly est absent
     sub = data.get("subscription") or {}
     limit = sub.get("limit")
     requests = sub.get("requests")
@@ -112,13 +100,10 @@ def main():
         "stale": False,
         "error": None,
         "weekly": None,
-        "fiveHour": None,
         "subscription": None,
-        "limited": False,
         "weeklyRemaining": None,
         "weeklyMax": None,
         "nextRegenAt": None,
-        "nextTickAt": None,
         "renewsAt": None,
         "fetchedAt": int(time.time()),
     }

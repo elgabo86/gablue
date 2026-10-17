@@ -123,10 +123,11 @@ TV Gablue en Python (PySide6 + libmpv) : ~170 chaînes, navigation manette D-pad
 ### Widget panel synthetic-quota (/usr/share/plasma/plasmoids)
 
 `org.gablue.synthetic.quota` (Plasma 6) — quota Synthetic dans le panel, équivalent du plugin TUI OpenCode :
-- Compact : `TOK 96.52% · REQ 99.87%` (code couleur Kirigami : positif > 50 %, neutre > 20 %, négatif ≤ 20 %) ; panel vertical = % seul ; étendu (clic) : barres tokens hebdo + requêtes 5 h, crédits, dates de régénération, badge limite
+- 10/2026 : l'API `v2/quotas` ne renvoie plus `rollingFiveHourLimit` — un seul pourcentage (`weeklyTokenLimit.percentRemaining`), fallback `subscription` (limit/requests). L'ancien second quota « REQ » (requêtes 5 h, badge limite, `nextTickAt`, config `showReq`) est supprimé du helper, du QML et de main.xml (le plugin TUI `synthetic-quota/tui.tsx` adapté en miroir)
+- Compact : `TOK 96.52%` (code couleur Kirigami : positif > 50 %, neutre > 20 %, négatif ≤ 20 %) ; panel vertical = % seul ; étendu (clic) : barre tokens hebdo, crédits, dates régénération/renouvellement
 - Helper Python `contents/code/gablue-synthetic-quota-helper` : lit `~/.local/share/opencode/opencode.db` (table `credential`, `integration_id='synthetic'`, `active=1`, SQLite read-only WAL-friendly) puis `https://api.synthetic.new/v2/quotas` — pas de dépendance au serveur OpenCode, rotation de clé ramassée au poll suivant
 - Cache `~/.cache/gablue/synthetic-quota.json` (tmp+rename) : échec réseau → dernières valeurs `stale=true` ; `no-key` → `TOK ?` + tooltip
-- Data engine `P5Support.DataSource` (`executable`), poll 60 s (`main.xml` : `refreshInterval`, `decimals`, `showReq`) ; clé jamais en clair hors la db OpenCode
+- Data engine `P5Support.DataSource` (`executable`), poll 60 s (`main.xml` : `refreshInterval`, `decimals`) ; clé jamais en clair hors la db OpenCode
 - **Plasma 6.7** : `PlasmaCore.Theme` n'existe plus (→ `Kirigami.Theme.defaultFont`) ; signal `newData` = `(sourceName, data)` (2 paramètres, pas 3) ; `Component` top-level interdits en QML (inline components dans le `PlasmoidItem`)
 - Essai local : symlink `~/.local/share/plasma/plasmoids/org.gablue.synthetic.quota` → répertoire du repo + restart `plasma-plasmashell.service`
 

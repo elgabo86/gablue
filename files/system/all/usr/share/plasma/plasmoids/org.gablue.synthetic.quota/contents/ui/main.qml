@@ -1,7 +1,8 @@
 /*
  * Widget panel Gablue — Quota Synthetic
- * Affiche les quotas Synthetic (tokens hebdo, requêtes 5 h) comme le plugin
- * TUI OpenCode (synthetic-quota/tui.tsx), avec le même code couleur.
+ * Affiche le quota Synthetic (tokens hebdo) comme le plugin TUI OpenCode
+ * (synthetic-quota/tui.tsx), avec le même code couleur.
+ * 10/2026 : l'API ne renvoie plus rollingFiveHourLimit — un seul pourcentage.
  * La clé API est lue directement dans la db OpenCode (table credential) par
  * le helper Python contents/code/gablue-synthetic-quota-helper, exécuté via
  * le data engine "executable" (plasma5support).
@@ -24,13 +25,12 @@ PlasmoidItem {
 
     readonly property int refreshInterval: Plasmoid.configuration.refreshInterval
     readonly property int decimals: Plasmoid.configuration.decimals
-    readonly property bool showReq: Plasmoid.configuration.showReq
 
     // =========================================================================
     // État
     // =========================================================================
 
-    // Dernier JSON du helper (champs : weekly, fiveHour, subscription, …)
+    // Dernier JSON du helper (champs : weekly, subscription, …)
     property var quotas: null
     // "no-key", "HTTP 401", nom d'exception, "" si tout va bien
     property string errorText: ""
@@ -40,22 +40,15 @@ PlasmoidItem {
     readonly property bool loading: quotas === null && !noKey
 
     readonly property var weekly: quotas !== null ? quotas.weekly : null
-    readonly property var fiveHour: quotas !== null ? quotas.fiveHour : null
     readonly property var subscription: quotas !== null ? quotas.subscription : null
 
-    // Quota principal : weekly, sinon fiveHour, sinon subscription (fallback TUI)
+    // Quota principal : weekly, sinon subscription (fallback TUI)
     readonly property var primaryPct: {
         if (weekly !== null && weekly !== undefined) {
             return weekly
         }
-        if (fiveHour !== null && fiveHour !== undefined) {
-            return fiveHour
-        }
         return subscription
     }
-
-    readonly property var reqPct:
-        fiveHour !== null && fiveHour !== undefined ? fiveHour : null
 
     readonly property bool isVerticalPanel:
         Plasmoid.location === PlasmaCore.Types.LeftEdge
@@ -128,7 +121,7 @@ PlasmoidItem {
         errorText = data.error ? String(data.error) : ""
     }
 
-    // Texte du panel — format TOK xx% · REQ yy% (identique au plugin TUI)
+    // Texte du panel — format TOK xx% (identique au plugin TUI)
     readonly property string displayText: {
         if (noKey) {
             return "TOK ?"
@@ -137,17 +130,10 @@ PlasmoidItem {
             return "…"
         }
         const w = weekly
-        const f = fiveHour
-        const hasW = w !== null && w !== undefined
-        const hasF = f !== null && f !== undefined
-        if (!hasW && !hasF) {
+        if (w === null || w === undefined) {
             return "TOK " + fmt(subscription)
         }
-        let out = "TOK " + fmt(w)
-        if (showReq && hasF) {
-            out += " · REQ " + fmt(f)
-        }
-        return out
+        return "TOK " + fmt(w)
     }
 
     function tooltipSubText() {
@@ -161,18 +147,11 @@ PlasmoidItem {
         const lines = []
         if (weekly !== null && weekly !== undefined) {
             lines.push("Tokens (7 j) : " + fmt(weekly))
-        }
-        if (fiveHour !== null && fiveHour !== undefined) {
-            lines.push("Requêtes (5 h) : " + fmt(fiveHour))
-        }
-        if (lines.length === 0 && subscription !== null && subscription !== undefined) {
+        } else if (subscription !== null && subscription !== undefined) {
             lines.push("Abonnement : " + fmt(subscription))
         }
         if (creditsText !== "") {
             lines.push("Crédits : " + creditsText)
-        }
-        if (quotas.limited === true) {
-            lines.push("Limite 5 h atteinte")
         }
         if (errorText !== "") {
             lines.push("⚠ " + (stale ? "données en cache — " : "") + errorText)
@@ -284,37 +263,10 @@ PlasmoidItem {
             }
         }
 
-        // ---- Requêtes 5 h ----
-        ColumnLayout {
-            Layout.fillWidth: true
-            visible: root.fiveHour !== null && root.fiveHour !== undefined
-            spacing: Kirigami.Units.smallSpacing
-
-            RowLayout {
-                Layout.fillWidth: true
-
-                PlasmaComponents.Label {
-                    Layout.fillWidth: true
-                    text: "Requêtes (5 heures)"
-                }
-                PlasmaComponents.Label {
-                    text: root.fmt(root.fiveHour)
-                    color: root.stateColor(root.fiveHour)
-                }
-            }
-            PlasmaComponents.ProgressBar {
-                Layout.fillWidth: true
-                from: 0
-                to: 100
-                value: visible ? Math.max(0, Math.min(100, root.fiveHour)) : 0
-            }
-        }
-
-        // ---- Fallback abonnement (si ni weekly ni fiveHour) ----
+        // ---- Fallback abonnement (si weekly absent) ----
         ColumnLayout {
             Layout.fillWidth: true
             visible: (root.weekly === null || root.weekly === undefined)
-                && (root.fiveHour === null || root.fiveHour === undefined)
                 && root.subscription !== null && root.subscription !== undefined
             spacing: Kirigami.Units.smallSpacing
 
@@ -338,13 +290,6 @@ PlasmoidItem {
             }
         }
 
-        // ---- Limite 5 h atteinte ----
-        PlasmaComponents.Label {
-            visible: root.quotas !== null && root.quotas.limited === true
-            text: "⚠ Limite 5 heures atteinte"
-            color: Kirigami.Theme.negativeTextColor
-        }
-
         // ---- Détails ----
         ColumnLayout {
             Layout.fillWidth: true
@@ -358,11 +303,6 @@ PlasmoidItem {
             PlasmaComponents.Label {
                 visible: root.quotas !== null && root.quotas.nextRegenAt
                 text: "Régénération : " + root.formatIso(root.quotas ? root.quotas.nextRegenAt : null)
-                opacity: 0.8
-            }
-            PlasmaComponents.Label {
-                visible: root.quotas !== null && root.quotas.nextTickAt
-                text: "Reset 5 h : " + root.formatIso(root.quotas ? root.quotas.nextTickAt : null)
                 opacity: 0.8
             }
             PlasmaComponents.Label {

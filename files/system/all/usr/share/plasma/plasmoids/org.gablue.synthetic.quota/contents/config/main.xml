@@ -13,9 +13,5 @@
     <entry name="decimals" type="Int">
       <default>2</default>
     </entry>
-    <!-- Afficher aussi le quota requêtes 5 h (REQ) -->
-    <entry name="showReq" type="Bool">
-      <default>true</default>
-    </entry>
   </group>
 </kcfg>
