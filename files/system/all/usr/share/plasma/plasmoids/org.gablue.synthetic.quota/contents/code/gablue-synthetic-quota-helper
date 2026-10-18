@@ -36,10 +36,14 @@ def read_api_key():
         return None
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
+        # PAS de filtre active = 1 : le serveur OpenCode récent stocke
+        # active = NULL (lignes « legacy »), un filtre strict faisait afficher
+        # « no key » au widget. Ordre actif-d'abord puis time_created, même
+        # logique que le plugin TUI synthetic-quota/tui.tsx.
         row = con.execute(
             "SELECT value FROM credential"
-            " WHERE integration_id = 'synthetic' AND active = 1"
-            " ORDER BY time_updated DESC LIMIT 1"
+            " WHERE integration_id = 'synthetic'"
+            " ORDER BY (active = 1) DESC, time_created DESC LIMIT 1"
         ).fetchone()
     finally:
         con.close()
