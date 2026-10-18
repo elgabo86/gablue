@@ -19,6 +19,10 @@
 - **systemd/** : Timeouts et configuration systemd
 - **yum.repos.d/docker-ce.repo** : Dépôt Docker
 
+## Configuration d'installation bootc (/usr/lib/bootc/install)
+
+- **usr/lib/bootc/install/20-gablue.toml** : `root-fs-type = "btrfs"` + `enforce-container-sigpolicy = true` — lus par `bootc install` (Anaconda via `ostreecontainer`, VMs de test, install depuis l'ISO) ; sans `enforce-container-sigpolicy`, le système installé ne vérifie plus la signature de l'image aux mises à jour (les images Gablue sont signées cosign). Même fix upstream Bazzite (#6084, `20-bazzite.toml`) ; la base Kinoite n'a aucun fichier dans ce dossier (créé par ce COPY)
+
 ## Exécution des binaires Windows (binfmt_misc)
 
 - **usr/lib/binfmt.d/gablue-windows.conf** : règle binfmt_misc (magic `MZ` → `/usr/bin/gwine`), chargée au boot par `systemd-binfmt.service` (statique, présence du fichier suffit)
