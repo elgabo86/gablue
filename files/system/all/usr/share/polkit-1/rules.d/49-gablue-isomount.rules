@@ -1,0 +1,14 @@
+// gablue-isomount : Loop.Delete sans mot de passe pour les sessions locales actives.
+// udisks perd le suivi du propriétaire d'un loop device quand le fichier image
+// est supprimé pendant le montage (backing file marqué « (deleted) » par le
+// noyau) → Loop.Delete exige org.freedesktop.udisks2.loop-delete-others
+// (auth_admin_keep) et une fenêtre d'authentification apparaît à la fermeture
+// de Dolphin, alors que le loop a bien été créé par l'utilisateur.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.udisks2.loop-delete-others" &&
+        subject.local == true &&
+        subject.active == true &&
+        subject.isInGroup("wheel")) {
+            return polkit.Result.YES;
+    }
+});

@@ -104,6 +104,7 @@ Monteur d'images disque en C natif (~2,7 Mo RAM), remplace le plugin dolphin-plu
 - Réinjecte le LD_PRELOAD composefs-fix avant son `execlp("dolphin")` (ne passe pas par le .desktop patché — voir files/scripts/AGENTS.md § composefs)
 - Démontage auto quand toutes les instances Dolphin sont fermées ; device occupé → attend sa libération ; déjà montée → nouvelle fenêtre sans remonter
 - Service menu « Monter » + app par défaut MIME ISO/IMG/EFI ; log `/tmp/gablue-isomount.log`
+- Règle polkit `usr/share/polkit-1/rules.d/49-gablue-isomount.rules` : autorise `loop-delete-others` (session locale active + wheel). udisks perd le suivi du propriétaire d'un loop quand le fichier image est supprimé pendant le montage (backing file marqué « (deleted) » par le noyau) → le Loop.Delete d'auto-nettoyage exigeait `auth_admin_keep` = prompt mot de passe à la fermeture de Dolphin (vécu 18-19/10, Kirby + Tails .lgp) ; l'unmount reste silencieux, seul le Loop.Delete était touché
 
 ### Binaire kbdnav (/usr/bin)
 
