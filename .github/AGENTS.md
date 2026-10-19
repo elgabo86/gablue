@@ -77,6 +77,8 @@ Bump hebdo des images pinnées par digest — mini-ubot maison, équivalent du b
 - **Validation** : l'ouverture de la PR déclenche les builds des 5 variantes (event `pull_request`) → merge sur CI verte
 - **Merge sans build** : commit/PR sans tag de build → rien au merge ; la build schedule quotidienne (02:00 UTC) ingère le nouveau digest. Push avec `GITHUB_TOKEN` ne déclenche de toute façon jamais de workflow (récursion bloquée par GitHub)
 - **Identité** : `github-actions[bot]` (comme update-readme) ; permissions `contents: write` + `pull-requests: write` ; checkout pinné par SHA (convention repo)
+- **Prérequis dépôt** : Settings → Actions → General → Workflow permissions → **« Allow GitHub Actions to create and approve pull requests »** DOIT être coché (réglage `can_approve_pull_request_reviews`). Sinon `gh pr create` échoue : `GraphQL: GitHub Actions is not permitted to create or approve pull requests` (réglage indépendant des `permissions:` du workflow). Réglable par API : `gh api -X PUT repos/elgabo86/gablue/actions/permissions/workflow -F can_approve_pull_request_reviews=true`
+- **Branche orpheline** : un run interrompu entre le `git push` et le `gh pr create` laisse une branche `chore/bump-digests-*` sans PR ; le step tombe alors en fallback sur `git ls-remote` pour la réutiliser (sinon nouvelle branche datée à chaque run, anciennes qui traînent)
 
 ## Composite action `mount-btrfs-storage`
 

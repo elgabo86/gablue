@@ -105,7 +105,13 @@ jobs:
           # La branche est TOUJOURS main + 1 commit (pas de rebase, jamais de conflit) :
           # le force-push écrase son contenu — namespace réservé au bot (seul écrivain,
           # concurrency ci-dessus empêche les runs parallèles).
+          # Fallback sur les branches distantes : un run interrompu entre le push et la
+          # création de la PR laisse une branche bump sans PR (elle serait sinon orpheline
+          # et une nouvelle branche datée serait créée à chaque run).
           branch=$(gh pr list --state open --json headRefName --jq '.[].headRefName' | grep '^chore/bump-digests-' | head -1 || true)
+          if [ -z "${branch}" ]; then
+            branch=$(git ls-remote --heads origin 'refs/heads/chore/bump-digests-*' | sed -n 's#.*refs/heads/##p' | sort | tail -1 || true)
+          fi
           if [ -z "${branch}" ]; then
             branch="chore/bump-digests-$(date +%Y%m%d)"
           fi
