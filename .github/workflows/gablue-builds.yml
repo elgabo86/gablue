@@ -147,12 +147,21 @@ jobs:
       # (tolérance au 404 transitoire de l'API artifacts). gh run download
       # crée un sous-dossier par artifact, on aplatit pour reproduire
       # merge-multiple: true.
+      # Fenêtre de retry volontairement large : 10 × 30 s ≈ 4 min 30 s de
+      # patience, car l'API artifacts renvoie des 503 « Egress is over the
+      # account limit » (incident de stockage côté GitHub) qui durent des
+      # minutes — la fenêtre 6 × 15 s (~90 s) de 10/2026 a suffi à faire
+      # échouer un run dont les 5 builds étaient verts (run 39912731811).
+      # on_retry_command vide le dossier partiel : sans ça, un JSON d'une
+      # tentative précédente pourrait satisfaire la vérification de présence
+      # alors que le téléchargement courant a échoué.
       - name: Download version artifacts
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
         with:
           timeout_minutes: 5
-          max_attempts: 6
-          retry_wait_seconds: 15
+          max_attempts: 10
+          retry_wait_seconds: 30
+          on_retry_command: rm -rf versions-data
           command: |
             mkdir -p versions-data
             gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" \

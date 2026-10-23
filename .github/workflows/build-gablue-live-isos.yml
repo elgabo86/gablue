@@ -330,20 +330,30 @@ jobs:
   create-release:
     needs: build-live-iso
     runs-on: ubuntu-26.04
-    timeout-minutes: 10
+    # 10 → 30 min : les deux steps de téléchargement d'artifacts peuvent
+    # désormais patienter ~4 min 30 s chacun (10 × 30 s) lors d'un incident
+    # de stockage GitHub ; 10 min ne laissaient pas la place au retry.
+    timeout-minutes: 30
     steps:
       # Téléchargement via gh CLI avec retry : l'API artifacts GitHub peut
       # renvoyer un 404 "workflow run not found" transitoire juste après la
       # fin des jobs ISO (race condition de propagation interne, cf. run
-      # 30193960415 attempt 2). gh run download supporte les glob patterns
-      # et crée un sous-dossier par artifact (même structure que
-      # actions/download-artifact avec merge-multiple: false).
+      # 30193960415 attempt 2) ou des 503 « Egress is over the account
+      # limit » (incident de stockage côté GitHub, durée de plusieurs
+      # minutes — cf. run 39912731811 sur le workflow d'images). Fenêtre
+      # large : 10 × 30 s ≈ 4 min 30 s. on_retry_command vide le dossier
+      # partiel pour qu'aucun fichier d'une tentative précédente ne fasse
+      # passer la vérification suivante à tort.
+      # gh run download supporte les glob patterns et crée un sous-dossier
+      # par artifact (même structure que actions/download-artifact avec
+      # merge-multiple: false).
       - name: Télécharger les artifacts liens
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
         with:
           timeout_minutes: 5
-          max_attempts: 6
-          retry_wait_seconds: 15
+          max_attempts: 10
+          retry_wait_seconds: 30
+          on_retry_command: rm -rf links
           command: |
             mkdir -p links
             gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" \
@@ -355,8 +365,9 @@ jobs:
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
         with:
           timeout_minutes: 5
-          max_attempts: 6
-          retry_wait_seconds: 15
+          max_attempts: 10
+          retry_wait_seconds: 30
+          on_retry_command: rm -rf checksums
           command: |
             mkdir -p checksums
             gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" \
