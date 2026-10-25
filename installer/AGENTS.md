@@ -23,7 +23,7 @@ Variantes : `main`, `main-dx`, `nvidia`, `nvidia-open`, `nvidia-open-dx`. ISO da
 installer/
 ├── Containerfile                    # Build payload (FROM image Gablue, bind-mount build.sh, SKIP_FLATPAKS arg)
 ├── build.sh                         # Assemblage : flatpaks (requis + optionnels + runtimes, skippables via SKIP_FLATPAKS), swap kernel, dracut-live, livesys, Anaconda, pack cache gwine → /extra, pré-initialisation préfixe Wine live
-├── iso.yaml                         # Config GRUB (label GABLUE_LIVE, timeout 3s, entrées sans apostrophes, enforcing=0)
+├── iso.yaml                         # Config GRUB (label GABLUE_LIVE, timeout 3s, entrées sans apostrophes, enforcing=0, clearcpuid=514/mitigations=off commentés)
 ├── flatpaks                         # Liste des flatpaks obligatoires (format : ref flatpak)
 ├── flatpaks-optional                # Liste des flatpaks optionnels (checklist yad)
 ├── titanoboa_hook_preinitramfs.sh   # Swap kernel OGC → vanilla Fedora (Secure Boot)
@@ -60,10 +60,12 @@ installer/
 5. **plasma-welcome** retiré du live (hook postrootfs — pas de lancement auto au boot)
 6. **Dossier Bureau** : livesys-scripts crée `Desktop` (anglais) avec `liveinst.desktop` avant `xdg-user-dirs-update` (empêche le renommage) — reste en anglais
 7. **Installation** : kickstart Anaconda `ostreecontainer` (bootc), BTRFS par défaut, compression zstd:1
-8. **Secure Boot** : enrollment auto clé MOK Gablue, mot de passe `gablue`
+   - **Détection BitLocker en `%pre`** (dialog yad + QR, porté de Bazzite `d541fd8`) : une partition Windows BitLocker fait échouer/bloquer Anaconda → on prévient avant le partitionnement, avec annulation propre (`pkill liveinst`). Pas de `--timeout` : un seul dialog bloquant, pas une boucle de relance. Nécessite `jq` (installé dans le hook postrootfs)
+   - `efi_dir = fedora` dans le profil Anaconda : doit correspondre au `EFI/fedora` écrit par bootc/shim ET au chemin supprimé par le `%pre-install` du kickstart (un `efi_dir` exotique rendait le nettoyage incohérent)
+8. **Secure Boot** : enrollment auto clé MOK Gablue, mot de passe `gablue` — puis `secureboot-docs.ks` (`%post --nochroot`, non bloquant) affiche un dialog yad (QR vers le repo) si `mokutil -t` voit la clé dans la requête : sans validation MokManager au reboot suivant, l'enrollment est perdu en silence et les kmods signés ne se chargent pas
 9. **Post-install** : `bootc switch --mutate-in-place` pour activer la signature
-10. **Services désactivés dans le live** : flatpak-update, cec-poweroff, dmemcg-booster, tailscaled, brew, greenboot…
-11. **NVIDIA live** : fix `GSK_RENDERER=gl`, réinstallation mesa-vulkan-drivers + nvidia-gpu-firmware (kernel vanilla = pas de driver proprio, on utilise nouveau)
+10. **Services désactivés dans le live** : flatpak-update, cec-poweroff, dmemcg-booster, tailscaled, brew, greenboot… ; **binaire `/usr/bin/rpm-ostree` supprimé** du live (racine = overlay jetable, lancer rpm-ostree y laisse un état incohérent — Bazzite `1fe630e`)
+11. **NVIDIA live** : fix `GSK_RENDERER=gl`, réinstallation mesa-vulkan-drivers + nvidia-gpu-firmware (kernel vanilla = pas de driver proprio, on utilise nouveau). **Garde-fou build** : `ls /usr/share/vulkan/icd.d/nouveau_icd.*.json` doit réussir, sinon `exit 1` — sans ICD nouveau l'ISO sort quand même et l'utilisateur n'a qu'un rendu logiciel (Bazzite `d541fd8`)
 12. **Localisation live** : fr_CH.UTF-8 + clavier QWERTZ suisse romand — fichiers dans `system_files/shared/etc/` : `locale.conf` (LANG+LANGUAGE), `vconsole.conf` (KEYMAP=ch-fr), `X11/xorg.conf.d/00-keyboard.conf` (XKB). Copiés dans le payload live SEULEMENT (pas l'image installée). Langpacks depuis l'image Gablue de base. **Anaconda préconfiguré** via kickstart (`titanoboa_hook_postrootfs.sh`) : `lang fr_CH.UTF-8`, `keyboard --vckeymap=ch-fr --xlayouts='ch (fr)'` — écran langue/clavier prérempli (spoke reste modifiable)
 13. **GRUB** : noms d'entrées SANS apostrophes (Titanoboa génère `menuentry '...'` sans échapper → parsing cassé, une seule entrée visible)
 14. **Dossier `/extra`** (live uniquement → déployé à l'install, JAMAIS dans l'image container — l'install redéploie l'image propre via `ostreecontainer` + `bootc switch`) :

@@ -27,6 +27,12 @@ dnf install -qy --enable-repo=fedora-cisco-openh264 --allowerasing anaconda-live
 
 mkdir -p /var/lib/rpm-state
 
+# Outils des dialogues utilisateur de l'installateur :
+#   qrencode = QR de la doc Secure Boot
+#   yad      = dialogues (déjà installé par build.sh pour livesys, réaffirmé ici)
+#   jq       = lecture du JSON de lsblk pour la détection BitLocker
+dnf install -qy --setopt=install_weak_deps=0 qrencode yad jq
+
 # =============================================================================
 # VARIABLES GABLUE
 # =============================================================================
@@ -38,6 +44,8 @@ imagetag="$(podman images --format '{{ .Tag }}\n' "$imageref" | head -1)"
 sbkey='https://github.com/elgabo86/gablue/raw/main/secure_boot.der'
 SECUREBOOT_KEY="/usr/share/gablue/sb_pubkey.der"
 ENROLLMENT_PASSWORD="gablue"
+SECUREBOOT_DOC_URL="https://github.com/elgabo86/gablue"
+SECUREBOOT_QR="/usr/share/gablue/secure_boot_qr.png"
 
 # =============================================================================
 # BRANDING GABLUE
@@ -61,6 +69,40 @@ cat << KSEOF >> /usr/share/anaconda/interactive-defaults.ks
 # Créer le répertoire de logs
 %pre
 mkdir -p /tmp/anaconda_custom_logs
+%end
+
+# Détection d'une partition Windows BitLocker : Anaconda peut se bloquer ou
+# échouer dessus (partition illisible). On prévient AVANT le partitionnement et
+# on laisse l'utilisateur annuler proprement (porté de Bazzite, #4577/d541fd8).
+%pre --erroronfail --log=/tmp/anaconda_custom_logs/detect_bitlocker.log
+DOCS_QR=/tmp/detect_bitlocker_qr.png
+IS_BITLOCKER=\$(lsblk -o FSTYPE --json | jq '.blockdevices | map(select(.fstype == "BitLocker")) | . != []')
+{ WARNING_MSG="\$(</dev/stdin)"; } << 'WARNINGEOF'
+<span size="x-large">Partition Windows BitLocker détectée</span>
+
+L'installation peut être interrompue par cette partition.
+Dans ce cas, faites <b>une</b> des actions suivantes :
+    a) Débrancher le disque concerné.
+    b) Désactiver BitLocker dans Windows.
+    c) Supprimer la partition avec GNOME Disks.
+
+Voulez-vous continuer ?
+WARNINGEOF
+
+if [[ \$IS_BITLOCKER =~ true ]]; then
+    qrencode -o "\$DOCS_QR" "https://www.wikihow.com/Turn-Off-BitLocker"
+    _EXITLOCK=1
+    while [[ \$_EXITLOCK -ne 0 ]]; do
+        run0 --user=liveuser yad --on-top --center --skip-taskbar \
+            --image="\$DOCS_QR" --text="\$WARNING_MSG" \
+            --button="Oui, continuer":0 --button="Annuler l'installation":10
+        _RETCODE=\$?
+        case \$_RETCODE in
+            0) _EXITLOCK=0 ;;
+            10) _EXITLOCK=0; pkill liveinst; exit 0 ;;
+        esac
+    done
+fi
 %end
 
 # Supprimer le répertoire EFI fedora (doit correspondre à efi_dir du profil)
@@ -105,6 +147,7 @@ ostreecontainer --url=$imageref:$imagetag --transport=containers-storage --no-si
 %include /usr/share/anaconda/post-scripts/restore-flatpak-selinux.ks
 %include /usr/share/anaconda/post-scripts/install-extra.ks
 %include /usr/share/anaconda/post-scripts/secureboot-enroll-key.ks
+%include /usr/share/anaconda/post-scripts/secureboot-docs.ks
 KSEOF
 
 # =============================================================================
@@ -138,6 +181,33 @@ mokutil --timeout -1 || :
 echo -e "$ENROLLMENT_PASSWORD\n$ENROLLMENT_PASSWORD" | mokutil --import "$SECUREBOOT_KEY" || :
 %end
 SBEOF
+
+# =============================================================================
+# POST-SCRIPT : DOCUMENTATION SECURE BOOT (QR + rappel d'enrollment)
+# =============================================================================
+
+# La clé est seulement *ajoutée à la requête MOK* par le script précédent : si
+# l'utilisateur ne valide pas MokManager au démarrage suivant, l'enrollment est
+# perdu et les kmods signés ne se chargent pas (secureboot muet). Ce dialog le
+# lui rappelle explicitement, avec un QR vers la doc. Non bloquant.
+cat << DOCEOF >> /usr/share/anaconda/post-scripts/secureboot-docs.ks
+%post --nochroot --log=/tmp/anaconda_custom_logs/secureboot-docs.log
+if [[ ! -d /sys/firmware/efi ]]; then
+    exit 0
+fi
+if LC_ALL=C mokutil -t "$SECUREBOOT_KEY" 2>/dev/null | grep -q "already in the enrollment request"; then
+    run0 --user=liveuser yad --timeout=0 --on-top --center --skip-taskbar \
+        --button=Ok:0 --image="$SECUREBOOT_QR" --text="<b>Clé Secure Boot Gablue ajoutée</b>
+Au prochain démarrage, le menu MokManager s'ouvre :
+« Enroll MOK » → « Continue » → mot de passe <b>$ENROLLMENT_PASSWORD</b>
+
+Documentation : $SECUREBOOT_DOC_URL"
+fi
+%end
+DOCEOF
+
+# QR généré au build (qrencode installé plus haut), embarqué dans le live
+qrencode -o "$SECUREBOOT_QR" "$SECUREBOOT_DOC_URL"
 
 # =============================================================================
 # DÉSACTIVATION DES SERVICES DANS LE LIVE
@@ -207,6 +277,18 @@ if [[ $imageref == *-nvidia* ]]; then
     for pkg in nvidia-gpu-firmware mesa-vulkan-drivers; do
         dnf -yq reinstall --allowerasing $pkg || dnf -yq install --allowerasing $pkg
     done
+    # Garde-fou : le live NVIDIA n'a AUCUN pilote propriétaire (kernel vanilla) et
+    # repose entièrement sur nouveau. Sans ICD Vulkan nouveau (fichier renommé ou
+    # supprimé par une mise à jour de Mesa), l'ISO se construit quand même et
+    # l'utilisateur se retrouve avec un rendu logiciel sans explication → on
+    # échoue au build plutôt qu'à l'exécution.
+    (
+        shopt -u nullglob
+        ls /usr/share/vulkan/icd.d/nouveau_icd.*.json > /dev/null
+    ) || {
+        echo >&2 "ERREUR : aucun ICD Vulkan nouveau dans /usr/share/vulkan/icd.d/ (live NVIDIA sans accélération GPU)"
+        exit 1
+    }
 fi
 
 # =============================================================================
@@ -225,6 +307,11 @@ dnf -yq remove plasma-welcome || :
 
 # Ne pas vérifier l'image vérifiée
 rm -vf /etc/profile.d/verify_motd.sh
+
+# rpm-ostree n'a aucun sens dans une session live (racine = overlay jetable) et
+# laisse le système dans un état incohérent si l'utilisateur le lance : on retire
+# le binaire du live (Bazzite 1fe630e). L'installateur passe par bootc/ostree.
+rm -f /usr/bin/rpm-ostree
 
 # =============================================================================
 # INSTALLATION GPARTED + XVFB

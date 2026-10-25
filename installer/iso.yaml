@@ -1,6 +1,16 @@
 label: "GABLUE_LIVE"
 grub2:
   timeout: 3
+  # Paramètres communs aux deux entrées :
+  # - enforcing=0 : le payload du live est étiqueté unlabeled_t (squashfs monté
+  #   hors politique) ; SELinux enforcing bloquerait la session.
+  # - clearcpuid=514 : désactive UMIP (X86_FEATURE_UMIP = 16*32+2), qui fait
+  #   fault SGDT/SIDT/SMSW en espace utilisateur — instructions utilisées par
+  #   certains jeux Windows et non émulées avant Linux 5.4. Workaround historique
+  #   Wine conservé pour que le live se comporte comme l'image installée ; il
+  #   taint le noyau (le noyau ne documente plus clearcpuid depuis 7.1) et ne
+  #   concerne QUE le live, jamais le système installé.
+  # - mitigations=off : machine jetable, on privilégie les performances.
   entries:
     - name: "Gablue Live"
       linux: "/images/pxeboot/vmlinuz quiet rhgb root=live:CDLABEL=GABLUE_LIVE enforcing=0 rd.live.image clearcpuid=514 mitigations=off"
