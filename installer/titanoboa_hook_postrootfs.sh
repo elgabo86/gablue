@@ -274,9 +274,41 @@ fi
 
 # Réactiver nouveau pour les variantes NVIDIA (kernel vanilla pas de proprio)
 if [[ $imageref == *-nvidia* ]]; then
-    for pkg in nvidia-gpu-firmware mesa-vulkan-drivers; do
-        dnf -yq reinstall --allowerasing $pkg || dnf -yq install --allowerasing $pkg
-    done
+    dnf -yq reinstall --allowerasing nvidia-gpu-firmware || dnf -yq install --allowerasing nvidia-gpu-firmware
+
+    # ICD Vulkan nouveau : l'image NVIDIA supprime volontairement
+    # /usr/share/vulkan/icd.d/nouveau_icd.*.json (files/scripts/nvidia — conflit
+    # avec le pilote propriétaire). Le live tourne sur nouveau : sans cet ICD,
+    # aucun pilote Vulkan n'est exposé. `dnf reinstall mesa-vulkan-drivers` ne le
+    # restaure PAS (la version Terra installée n'existe plus dans le dépôt →
+    # « already installed », et Fedora mesa est exclu par files/scripts/copr).
+    # On réécrit donc l'ICD à l'identique de celui du paquet Terra
+    # (api_version = info, le loader interroge le pilote de toute façon).
+    if [[ -e /usr/lib64/libvulkan_nouveau.so ]]; then
+        cat > /usr/share/vulkan/icd.d/nouveau_icd.x86_64.json << 'EOF'
+{
+    "ICD": {
+        "api_version": "1.4.354",
+        "library_arch": "64",
+        "library_path": "/usr/lib64/libvulkan_nouveau.so"
+    },
+    "file_format_version": "1.0.1"
+}
+EOF
+    fi
+    if [[ -e /usr/lib/libvulkan_nouveau.so ]]; then
+        cat > /usr/share/vulkan/icd.d/nouveau_icd.i686.json << 'EOF'
+{
+    "ICD": {
+        "api_version": "1.4.354",
+        "library_arch": "32",
+        "library_path": "/usr/lib/libvulkan_nouveau.so"
+    },
+    "file_format_version": "1.0.1"
+}
+EOF
+    fi
+
     # Garde-fou : le live NVIDIA n'a AUCUN pilote propriétaire (kernel vanilla) et
     # repose entièrement sur nouveau. Sans ICD Vulkan nouveau (fichier renommé ou
     # supprimé par une mise à jour de Mesa), l'ISO se construit quand même et
