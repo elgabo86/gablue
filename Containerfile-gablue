@@ -30,7 +30,7 @@ COPY files/system/nvidia-common /
 # NOTE : le tarball ne contient PAS node/npm — npm est installé à la demande via
 # `brew install node` (opencode2-install), ou présent si l'utilisateur l'a ajouté
 # Digest épinglé, à bumper ponctuellement vers le dernier build de :latest
-FROM ghcr.io/ublue-os/brew:latest@sha256:5bdf54dc7c21c22db29df6550e3711788719c5123549ea6dc5645d5af47795e3 AS brew
+FROM ghcr.io/ublue-os/brew:latest@sha256:c201bc801e4828849e8e36c4adcb5c0f38d35ac3ff9546a0ecab0fd2beabf51f AS brew
 
 # Image de base pour la construction finale
 FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}
