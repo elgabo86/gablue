@@ -24,7 +24,7 @@ Exclusions importantes :
 - Mesa et kernel restent Fedora (fournis par Terra)
 - `noopenh264` exclu de `*fedora*`/`updates*` (Bazzite `5161562`) : stub vide Fedora qui Obsoletes le vrai openh264 Cisco
 - Bazzite : pipewire-*, bluez-*, xorg-x11-server-Xwayland, wireplumber-* (alignement i686/x86_64 fc44)
-- Staging : scx-tools, scx-scheds, kf6-*, mesa*, mutter* — staging sans priorité : un build plus récent gagnerait au tri par version → dérive kf6 (hors versionlock qt6/plasma) ou scx (attendu du COPR cachyos) ; `ostree` reste installable (swap)
+- Staging : scx-tools, scx-scheds, kf6-*, mesa*, mutter* — staging sans priorité : un build plus récent gagnerait au tri par version → dérive kf6 (hors versionlock qt6/plasma) ou scx (fourni par Terra) ; `ostree` reste installable (swap)
 - Priorité Terra = 3 (haute)
 
 ### kernel — Installation du kernel OGC + akmods
@@ -34,7 +34,8 @@ Exclusions importantes :
 - Kmods communs : framework-laptop, kvmfr, openrazer, v4l2loopback, xone, wl
 - Kmods extras : zenergy, gcadapter, evdi, kvmfr, new-lg4ff, hid-tmff2, t150-driver, hid-fanatecff, ryzen_smu, sc0710, nct6687d, system76, vhba
 - **displaylink userspace installé explicitement** (10/2026) : embarqué par akmods-extra à côté de libevdi (`/tmp/rpms/extra/displaylink*.rpm`, démon + `displaylink.service`) — il n'arrivait avant que via une dep faible de libevdi depuis fedora-multimedia (negativo17) ; disparition silencieuse du repo = docks DisplayLink sans démon + échec systemd (disable d'une unité absente) → install explicite, skip propre par `install-kmods` si akmods-extra cesse de l'embarquer
-- Versionlock des versions ; scx-scheds depuis COPR bieszczaders/kernel-cachyos-addons
+- Versionlock des versions ; scx-scheds/scx-tools depuis Terra (Bazzite `e5dd121c`, 10/2026 — plus de COPR `bieszczaders/kernel-cachyos-addons`)
+- Terra fc44 : scx 1.1.3-1 quand le COPR cachyos servait 1.1.4-1 → un patch de retard accepté en échange d'un dépôt tiers en moins (revérifier la version avant de s'en étonner)
 
 ### mesa — Installation Mesa Terra (multilib fc44)
 
@@ -68,7 +69,7 @@ Exclusions importantes :
 - **DX** : docker-ce, libvirt, virt-manager, virt-viewer, virt-install, swtpm, guestfs-tools, python3-libguestfs, qemu-kvm-core, qemu-system-ppc/m68k/arm/aarch64-core (émulation rétro), spice-server, modules QEMU externes (display qxl/virtio, audio spice/pipewire/pa/alsa, usb, ui, char)
   - Modules virtio/net/pci/vfio statiques dans qemu-system-x86-core (tiré par qemu-kvm-core) : `--setopt=install_weak_deps=False` empêche l'auto-install des modules externes en dépendances faibles
   - `python3-libguestfs` requis explicitement (Optional du groupe Fedora `Virtualization`) : import `guestfs` silencieux sinon (try/except) → inspection/resize VM désactivée
-- **Gaming** : sunshine ; terra-mangohud + terra-gamescope + terra-gamescope-libs (.x86_64/.i686 — migrés du COPR bazzite vers Terra, Bazzite `a390d80` : même spec/packager KyleGospo, `Provides: mangohud`, chemins/binaires identiques) ; steam-devices (règles udev Valve depuis Fedora, remplace `8bitdo-udev-rules` Terra — règles 8BitDo upstream 10/2025, Bazzite `e5dbc91` ; Gablue n'installe pas le RPM Steam → install explicite)
+- **Gaming** : sunshine ; terra-mangohud + terra-gamescope + terra-gamescope-libs (.x86_64/.i686 — migrés du COPR bazzite vers Terra, Bazzite `a390d80` : même spec/packager KyleGospo, `Provides: mangohud`, chemins/binaires identiques) ; steam-devices (règles udev Valve depuis Fedora, remplace `8bitdo-udev-rules` Terra — règles 8BitDo upstream 10/2025, Bazzite `e5dbc91` ; Gablue n'installe pas le RPM Steam → install explicite) ; game-devices-udev (Terra, Bazzite `0ee37802`, 10/2026 — règles udev `/usr/lib/udev/rules.d/71-*-gdu.rules` manettes/volants tiers, aucune collision avec `60-steam-*` ni `60-openrgb.rules`)
   - **Fix conflit mangohud i686** : Recommends conditionnelle `(mangohud(x86-32) if glibc(x86-32))` de terra-mangohud → dnf5 tirait le COPR `mangohud.i686` (seul *nommé* mangohud i686 ; terra-mangohud.i686 ne Provides pas `mangohud(x86-32)`) → conflit fichiers (mangoapp, mangohudctl, libMangoHud*.so) → Transaction failed. Fix : `--setopt=install_weak_deps=False` sur cette commande (Bazzite le fait global dans dnf.conf ; Gablue préfère le setopt local)
   - **Piège archs explicites** : arguments arch-less satisfaits par le i686 tiré en dépendance (require `terra-gamescope-libs = EVR` arch-less) → les x86_64 (layer Vulkan WSI `libVkLayer_FROG_gamescope_wsi_x86_64.so`) jamais installés sans le voir. Toujours archs explicites sur les paquets multilib (comme Bazzite)
 - **BTRFS** : snapper, btrfs-assistant (non activés par défaut)
@@ -145,6 +146,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 
 **cleanup** (après chaque RUN) :
 - Suppression `/tmp/*`, `/var/log/dnf5.log`, `/boot/*`
+- **Relink du rpmdb** (Bazzite `9085704b`) : `ln -f` (hardlink, jamais symlink) de `/usr/share/rpm/rpmdb.sqlite{,-shm,-wal}` vers `/usr/lib/sysimage/rpm-ostree-base-db/` après chaque transaction rpm. Sans lui l'image porte deux bases (168 Mo + 100 Mo mesurés fc44) et réinstaller un paquet retiré de la base (firefox, htop, plasma-welcome*) diff contre une base périmée (coreos/rpm-ostree#4554) ; contrôle post-build : `stat -c %h` = 2
 - PAS de `dnf5 clean all` (le cache mount `/var/cache` n'entre pas dans l'image, le nettoyer détruirait le cache persistant)
 - PAS de `ostree container commit` (inutile avec bootc/rechunk)
 

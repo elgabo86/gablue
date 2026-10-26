@@ -63,6 +63,7 @@ dnf5 -y install \
     wl-clipboard \
     flatpak-spawn \
     openrgb-udev-rules \
+    game-devices-udev \
     alsa-firmware \
     intel-vaapi-driver \
     libva-utils \

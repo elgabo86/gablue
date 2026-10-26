@@ -6,3 +6,18 @@ rm -rf /tmp/* || true
 rm -rf /var/log/dnf5.log || true
 rm -rf /boot/* || true
 rm -rf /boot/.* || true
+
+# Relier le rpmdb de base à celui de l'image (hardlink, PAS symlink)
+# Sans ça l'image embarque deux bases distinctes : /usr/share/rpm (~168 Mo) et
+# la copie /usr/lib/sysimage/rpm-ostree-base-db (~100 Mo) restée celle de la
+# base kinoite → taille perdue, et réinstallation cassée des paquets retirés de
+# la base (firefox, htop, plasma-welcome*) : rpm-ostree diffe contre une base
+# périmée (coreos/rpm-ostree#4554). Aligné Bazzite 9085704b.
+# Doit tourner APRÈS chaque transaction rpm du build → ici, appelé à chaque RUN.
+for file in rpmdb.sqlite rpmdb.sqlite-shm rpmdb.sqlite-wal; do
+    target="/usr/share/rpm/${file}"
+    link_path="/usr/lib/sysimage/rpm-ostree-base-db/${file}"
+    if [[ -f "${target}" && -f "${link_path}" ]]; then
+        ln -f "${target}" "${link_path}"
+    fi
+done

@@ -96,12 +96,13 @@ popd
 # SECTION 6 : INSTALLATION DES OUTILS SUPPLÉMENTAIRES
 # =============================================================================
 
-# Installation de scx-scheds depuis COPR bieszczaders/kernel-cachyos-addons
-dnf5 -y copr enable bieszczaders/kernel-cachyos-addons && \
+# Installation de scx-scheds/scx-tools depuis Terra (aligné Bazzite e5dd121c)
+# Plus de COPR bieszczaders/kernel-cachyos-addons : un dépôt tiers de moins.
+# Terra fournit les deux paquets (1.1.3-1 au 26/10/2026, un patch derrière le
+# COPR) — d'où le retrait de scx-scheds de "*terra*".exclude dans copr.
 dnf5 -y install \
     scx-scheds \
-    scx-tools && \
-dnf5 -y copr disable bieszczaders/kernel-cachyos-addons
+    scx-tools
 
 dnf5 -y install /tmp/rpms/ublue-os/ublue-os-akmods-addons*.rpm
 

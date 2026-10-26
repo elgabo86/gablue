@@ -97,7 +97,7 @@ dnf5 -y config-manager setopt "terra-mesa".enabled=false
 # waydroid complet + lxc + libgbinder (30+ Mo), active waydroid-container.service
 # dans l'image et évince virglrenderer fedora. L'exclusion fait retomber le solver
 # sur virglrenderer fedora (build 21/09 DX touché : main-dx, nvidia-open-dx)
-dnf5 -y config-manager setopt "*terra*".priority=3 "*terra*".exclude="nerd-fonts topgrade scx-scheds steam python3-protobuf terra-glfw terra-glfw-devel waydroid*"
+dnf5 -y config-manager setopt "*terra*".priority=3 "*terra*".exclude="nerd-fonts topgrade steam python3-protobuf terra-glfw terra-glfw-devel waydroid*"
 
 # =============================================================================
 # FINALISATION
