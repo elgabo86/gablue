@@ -7,7 +7,8 @@
 # compressés, avec support :
 # - Des paquets LGP (.lgp) compressés en squashfs via squashfuse
 # - Des exécutables directs (binaires ELF, AppImages, scripts .sh/.py)
-# - Sélection interactive d'un exécutable dans le pack (--exe)
+# - Sélection d'un exécutable dans le pack : menu (--exe) ou chemin direct
+#   (--exe=game.sh, relatif à la racine du pack)
 # - Script de pré-lancement .script.sh
 # - Kernel overlayfs natif via unshare pour les fichiers temporaires (user namespaces, pas de sudo)
 #
@@ -23,7 +24,10 @@
 args=""
 fullpath=""
 # Mode sélection d'exécutable (--exe) : choisir un binaire dans le pack au lancement
+# --exe           → menu des exécutables du pack
+# --exe=<rel>     → lance directement ce chemin (relatif à la racine du pack)
 SELECT_EXE_MODE=false
+SELECT_EXE_PATH=
 # Normaliser $HOME vers /var/home (chemin réel sur Silverblue/Kinoite)
 HOME_REAL="$(realpath "$HOME")"
 SAVES_SYMLINK="/tmp/lgp-saves-$UID"
@@ -180,6 +184,11 @@ parse_arguments() {
                 ;;
             --exe)
                 SELECT_EXE_MODE=true
+                shift
+                ;;
+            --exe=*)
+                SELECT_EXE_MODE=true
+                SELECT_EXE_PATH="${1#--exe=}"
                 shift
                 ;;
             *)
@@ -410,9 +419,38 @@ _lgp_is_executable() {
 
 # Mode interactif : sélection d'un exécutable dans le LGP
 # Surcharge le contenu de .launch (équivalent de gwine --exewgp pour les WGP)
-# Lit quand même .args du pack, puis propose les exécutables détectés dans le mount
-# (binaires ELF, .sh, .py, .AppImage, y compris via symlinks internes au pack)
+# Lit quand même .args du pack. Deux entrées :
+#   --exe=<rel>  → lance ce chemin du pack sans menu (ex. --exe=launch.sh)
+#   --exe        → menu des exécutables détectés dans le mount (binaires ELF,
+#                  .sh, .py, .AppImage, symlinks internes au pack)
 select_exe_from_lgp() {
+    if [ -n "${SELECT_EXE_PATH:-}" ]; then
+        local rel="${SELECT_EXE_PATH#./}"
+        case "$rel" in
+            /*) echo "Erreur: --exe= attend un chemin RELATIF à la racine du pack: $SELECT_EXE_PATH" >&2
+                cleanup_lgp
+                exit 1 ;;
+            *..*) echo "Erreur: --exe= refuse les '..': $SELECT_EXE_PATH" >&2
+                cleanup_lgp
+                exit 1 ;;
+        esac
+        FULL_EXE_PATH="$MOUNT_DIR/$rel"
+        if [ ! -f "$FULL_EXE_PATH" ]; then
+            echo "Erreur: exécutable introuvable dans le pack: $rel" >&2
+            cleanup_lgp
+            exit 1
+        fi
+        if ! _lgp_is_executable "$FULL_EXE_PATH"; then
+            echo "Erreur: $rel n'est pas un exécutable lancable (ELF, .sh, .py, .AppImage)" >&2
+            cleanup_lgp
+            exit 1
+        fi
+        REAL_EXE_PATH="$(realpath "$FULL_EXE_PATH" 2>/dev/null)"
+        [ -z "$REAL_EXE_PATH" ] && REAL_EXE_PATH="$FULL_EXE_PATH"
+        echo "Exécutable sélectionné: $rel"
+        return 0
+    fi
+
     echo "Recherche des exécutables dans le pack..."
 
     local found=0
@@ -420,7 +458,12 @@ select_exe_from_lgp() {
     local exe_path exe_rel target resolved
 
     # Balayer le mount SANS suivre les symlinks (find -L suivrait les symlinks
-    # /tmp/lgp-saves/... hors du pack) : les symlinks sont traités manuellement
+    # /tmp/lgp-saves/... hors du pack) : les symlinks sont traités manuellement.
+    # Deux passes ordonnées : la RACINE du pack d'abord (.launch, game.sh,
+    # launch.sh, binaires — c'est ce qu'on veut proposer), puis le reste de
+    # l'arbre sans les bibliothèques partagées (des ELF +x qui noyaient le menu :
+    # 20 entrées de app/usr/lib avant d'atteindre la racine) ni la plomberie du
+    # pack (.rebuild = outils de maintenance, .save = données amorcées).
     while IFS= read -r -d '' exe_path; do
         exe_rel="${exe_path#$MOUNT_DIR/}"
         # Exclure le script de pré-lancement (hook, pas un jeu)
@@ -445,8 +488,16 @@ select_exe_from_lgp() {
         fi
 
         # Limiter la taille du menu (comme gwine --exewgp)
-        [ $found -ge 20 ] && break
-    done < <(find "$MOUNT_DIR" \( -type f -o -type l \) -print0 2>/dev/null)
+        [ $found -ge 40 ] && break
+    done < <(
+        # chaque passe est triée SÉPARÉMENT : un tri global mélangerait la
+        # racine et l'arbre (app/... passe avant game.sh à l'alphabet)
+        find "$MOUNT_DIR" -maxdepth 1 \( -type f -o -type l \) -print0 2>/dev/null | sort -z
+        find "$MOUNT_DIR" -mindepth 2 \( -type f -o -type l \) \
+            ! -path "$MOUNT_DIR/.rebuild/*" ! -path "$MOUNT_DIR/.save/*" \
+            ! -path '*/lib/*' ! -name '*.so' ! -name '*.so.*' \
+            ! -name '*.a' ! -name '*.o' ! -name '*.dll' -print0 2>/dev/null | sort -z
+    )
 
     if [ $found -eq 0 ]; then
         echo "Aucun exécutable trouvé dans le pack"
@@ -1215,6 +1266,7 @@ run_lgp_mode() {
            SAVES_SYMLINK SAVES_REAL EXTRA_BASE EXTRA_DIR EXTRA_SYMLINK EXTRA_REAL \
            TEMP_SYMLINK TEMP_REAL \
            args FULL_EXE_PATH REAL_EXE_PATH HOME_REAL SELECT_EXE_MODE \
+           SELECT_EXE_PATH \
            _LGP_KERNEL_OVERLAY_MOUNTS _LGP_USING_KERNEL_OVERLAY \
            _GAME_TEMP_ID _FULL_OVERLAY_MOUNT _FULL_OVERLAY_UPPER _FULL_OVERLAY_WORK \
            UID
