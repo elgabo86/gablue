@@ -81,9 +81,11 @@ dnf5 -y install \
 # renommées *-gdu.rules depuis la 1.x → aucun autre doublon). dnf5 n'a plus
 # --excludepath (contrairement à dnf4) → téléchargement + rpm -i, la règle uinput
 # reste celle d'ublue (version 0.23 sans ACTION!="remove", écart sans effet pratique).
-# À REVOIR EN FC45 : ublue-os/main n'installe plus ublue-os-udev-rules au-delà de
-# Fedora 44 (build_files/install.sh, condition FEDORA_MAJOR_VERSION -le 44) → le
-# conflit disparaît, revenir à un simple `dnf5 -y install game-devices-udev`.
+# Ne PAS croire que fc45 règle le problème : ublue-os/main cesse d'installer
+# ublue-os-udev-rules au-delà de Fedora 44, mais Gablue l'installe lui-même (bloc
+# uBlue ci-dessus) — le paquet f45 du COPR fournit toujours le fichier uinput
+# (vérifié 28/10/2026). Le contournement reste requis tant que les deux paquets
+# sont installés ; il ne saute que si ublue-os-udev-rules est retiré.
 dnf5 -y download game-devices-udev --destdir=/tmp/game-devices-udev
 rpm -i --nodeps --excludepath=/usr/lib/udev/rules.d/71-uinput-dev-early-creation.rules \
     /tmp/game-devices-udev/game-devices-udev-*.rpm
