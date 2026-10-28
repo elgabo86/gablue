@@ -63,7 +63,6 @@ dnf5 -y install \
     wl-clipboard \
     flatpak-spawn \
     openrgb-udev-rules \
-    game-devices-udev \
     alsa-firmware \
     intel-vaapi-driver \
     libva-utils \
@@ -73,6 +72,21 @@ dnf5 -y install \
     ksshaskpass \
     kate \
     bpftune-gaming
+
+# Règles udev manettes/volants tiers (Terra, Bazzite 0ee37802, 10/2026)
+# Conflit de fichiers avec ublue-os-udev-rules : ce dernier vendore game-devices-udev
+# 0.23 (spec : Source1 = tarball codeberg, tous ses *.rules installés dans
+# /usr/lib/udev/rules.d) et fournit déjà 71-uinput-dev-early-creation.rules. Un
+# `dnf5 install` échoue donc sur ce seul fichier (les règles manettes upstream sont
+# renommées *-gdu.rules depuis la 1.x → aucun autre doublon). dnf5 n'a plus
+# --excludepath (contrairement à dnf4) → téléchargement + rpm -i, la règle uinput
+# reste celle d'ublue (version 0.23 sans ACTION!="remove", écart sans effet pratique).
+# À REVOIR EN FC45 : ublue-os/main n'installe plus ublue-os-udev-rules au-delà de
+# Fedora 44 (build_files/install.sh, condition FEDORA_MAJOR_VERSION -le 44) → le
+# conflit disparaît, revenir à un simple `dnf5 -y install game-devices-udev`.
+dnf5 -y download game-devices-udev --destdir=/tmp/game-devices-udev
+rpm -i --nodeps --excludepath=/usr/lib/udev/rules.d/71-uinput-dev-early-creation.rules \
+    /tmp/game-devices-udev/game-devices-udev-*.rpm
 
 # Vrai codec H.264 Cisco en x86_64 + i686 depuis negativo17 (fedora-multimedia)
 # --allowerasing : vire le stub noopenh264 si présent (exclu des repos fedora/updates
