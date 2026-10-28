@@ -41,7 +41,10 @@ jobs:
       image_desc: ${{ github.ref == 'refs/heads/test' && 'Gablue main test image' || 'Gablue main image' }}
       image_variant: "main"
       source_image: "kinoite"
-      fedora_version: "44"
+      # Test volontaire fc45 sur la branche test (28/10/2026) : les images de test
+      # (gablue-main-test) suivent Fedora 45, les images stables restent en 44.
+      # Retour en 44 : remettre la valeur fixe « "44" » ici et sur build-nvidia-open.
+      fedora_version: ${{ github.ref == 'refs/heads/test' && '45' || '44' }}
       kernel_type: "ogc"
 
   build-nvidia:
@@ -86,7 +89,8 @@ jobs:
       image_desc: ${{ github.ref == 'refs/heads/test' && 'Gablue nvidia-open test image' || 'Gablue nvidia-open image' }}
       image_variant: "nvidia-open"
       source_image: "kinoite"
-      fedora_version: "44"
+      # Cf. build-main : branche test = fc45, main = fc44.
+      fedora_version: ${{ github.ref == 'refs/heads/test' && '45' || '44' }}
       kernel_type: "ogc"
       nvidia_flavor: "nvidia-open"
 
