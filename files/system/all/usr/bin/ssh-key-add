@@ -1,0 +1,155 @@
+#!/usr/bin/bash
+
+# Ajoute la clé SSH publique à un serveur distant
+# Crée ~/.ssh/id_ed25519 (sans passphrase) si elle n'existe pas encore, copie la
+# clé publique avec ssh-copy-id (port personnalisé supporté) puis vérifie que la
+# connexion sans mot de passe fonctionne.
+
+set -euo pipefail
+
+KEY="${HOME}/.ssh/id_ed25519"
+PORT=""
+TARGET=""
+
+usage() {
+    cat << 'EOF'
+Usage : ssh-key-add [options] [user@]hôte[:port]
+
+Crée ~/.ssh/id_ed25519 (ed25519, sans passphrase) si elle n'existe pas, puis
+copie la clé publique sur le serveur (ssh-copy-id) et vérifie la connexion
+sans mot de passe.
+
+Options :
+  -p, --port PORT   Port SSH du serveur (défaut : celui de ~/.ssh/config, sinon 22)
+  -h, --help        Affiche cette aide
+
+Exemples :
+  ssh-key-add gab@srv.example.org
+  ssh-key-add -p 2222 gab@srv.example.org
+  ssh-key-add gab@srv.example.org:2222
+  ssh-key-add '[2001:db8::1]:2222'
+EOF
+}
+
+die() {
+    echo "Erreur : $*" >&2
+    exit 2
+}
+
+# =============================================================================
+# SECTION 1 : ANALYSE DES ARGUMENTS
+# =============================================================================
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -p|--port)
+            [[ $# -ge 2 ]] || die "$1 attend un numéro de port."
+            PORT="$2"
+            shift 2
+            ;;
+        --port=*)
+            PORT="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            while [[ $# -gt 0 ]]; do
+                [[ -z "${TARGET}" ]] || die "une seule cible attendue."
+                TARGET="$1"
+                shift
+            done
+            ;;
+        -*)
+            usage >&2
+            die "option inconnue « $1 »."
+            ;;
+        *)
+            [[ -z "${TARGET}" ]] || die "une seule cible attendue (reçu « ${TARGET} » et « $1 »)."
+            TARGET="$1"
+            shift
+            ;;
+    esac
+done
+
+# Sans argument : demander la cible (usage interactif rapide)
+if [[ -z "${TARGET}" ]]; then
+    read -r -p "Serveur ([user@]hôte[:port]) : " TARGET
+    [[ -n "${TARGET}" ]] || die "aucune cible fournie."
+fi
+
+# =============================================================================
+# SECTION 2 : EXTRACTION DU PORT DEPUIS LA CIBLE
+# =============================================================================
+
+# Séparer l'utilisateur de l'hôte (une adresse IPv6 ne contient jamais « @ »)
+USERPART=""
+REST="${TARGET}"
+if [[ "${REST}" == *@* ]]; then
+    USERPART="${REST%@*}@"
+    REST="${REST##*@}"
+fi
+
+# IPv6 entre crochets : [adresse]:port ou [adresse] ; sinon hôte:port
+ADDR_PORT=""
+if [[ "${REST}" =~ ^\[([^]]+)\](:([0-9]+))?$ ]]; then
+    HOSTPART="${BASH_REMATCH[1]}"
+    ADDR_PORT="${BASH_REMATCH[3]}"
+elif [[ "${REST}" =~ ^([^:]+):([0-9]+)$ ]]; then
+    HOSTPART="${BASH_REMATCH[1]}"
+    ADDR_PORT="${BASH_REMATCH[2]}"
+else
+    HOSTPART="${REST}"
+fi
+
+if [[ -n "${ADDR_PORT}" ]]; then
+    [[ -z "${PORT}" ]] || die "port fourni deux fois (-p et « ${TARGET} »)."
+    PORT="${ADDR_PORT}"
+fi
+
+TARGET="${USERPART}${HOSTPART}"
+
+[[ -n "${TARGET}" ]] || die "hôte vide."
+
+if [[ -n "${PORT}" ]]; then
+    [[ "${PORT}" =~ ^[0-9]+$ ]] || die "port invalide « ${PORT} »."
+    (( PORT >= 1 && PORT <= 65535 )) || die "port hors plage (1-65535) : ${PORT}."
+fi
+
+# =============================================================================
+# SECTION 3 : PRÉPARATION DE LA CLÉ
+# =============================================================================
+
+for cmd in ssh-keygen ssh-copy-id ssh; do
+    command -v "${cmd}" > /dev/null || die "${cmd} introuvable (paquet openssh-clients)."
+done
+
+if [[ ! -f "${KEY}" ]]; then
+    echo "Aucune clé trouvée → création de ${KEY} (ed25519, sans passphrase)..."
+    mkdir -p "${HOME}/.ssh"
+    chmod 700 "${HOME}/.ssh"
+    ssh-keygen -t ed25519 -N "" -C "${USER:-$(id -un)}@$(hostname)" -f "${KEY}"
+fi
+
+# =============================================================================
+# SECTION 4 : COPIE DE LA CLÉ ET VÉRIFICATION
+# =============================================================================
+
+SSH_OPTS=()
+if [[ -n "${PORT}" ]]; then
+    SSH_OPTS=(-p "${PORT}")
+fi
+
+echo "Copie de ${KEY}.pub vers ${TARGET}${PORT:+ (port ${PORT})}..."
+ssh-copy-id "${SSH_OPTS[@]}" -i "${KEY}.pub" "${TARGET}"
+
+echo ""
+if ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_OPTS[@]}" "${TARGET}" true 2> /dev/null; then
+    echo "Connexion sans mot de passe OK : ssh ${PORT:+-p ${PORT} }${TARGET}"
+else
+    echo "Clé copiée, mais la connexion sans mot de passe échoue encore."
+    echo "Vérifier côté serveur : PubkeyAuthentication yes / AuthorizedKeysFile / droits du ~."
+fi
