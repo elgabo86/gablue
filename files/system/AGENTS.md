@@ -37,6 +37,7 @@
 - `retroplayer` : TUI Go musiques rétro (GitHub Releases pendant le build, dépôt séparé)
 - Scripts gaming : `azahar-install`, `eden-install`, `esde-install`, `shadps4-install`, `xenia-install`
 - Scripts utilitaires : `dlv`, `dlcover`, `tv`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`
+- `ssh-key-add` : ajoute la clé publique à un serveur (crée `~/.ssh/id_ed25519` ed25519 sans passphrase si absente, `ssh-copy-id`, vérifie la connexion sans mot de passe). Port custom : `-p/--port N`, `user@hôte:N`, IPv6 `[adresse]:N` (sans crochets dans la cible finale) ; `-p` + `:port` = erreur ; sans argument → invite la cible. Script stocké 644, `+x` posé par post-install (convention repo)
 - Gestion Wine/Proton : `gwine` (assemblé depuis `src/gwine-launcher/`), `scrap-win`
 - `konsole-run` : wrapper « Lancer dans Konsole » (détail → § konsole-run ci-dessous)
 
