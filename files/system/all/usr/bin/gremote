@@ -76,9 +76,16 @@ Options :
 La session est éphémère : fermer la fenêtre (ou Ctrl+C) la termine.
 Le pointeur se saisit avec Ctrl droite dans la fenêtre du compositeur.
 
-Réglé pour la latence WAN : H.264 à 3e4 bits par image, soit ~3 Mbit/s visés,
+Réglé pour la latence WAN : H.264 à 3e4 bits par image (~3 Mbit/s visés),
 qualité volontairement basse. Lien rapide ou CPU chargé côté hôte :
 --no-video --compress lz4. Meilleure image : --quality high (~50 Mbit/s).
+
+Attention : waypipe n'encode que des tampons dmabuf OPAQUES 8 BITS
+(Xrgb8888/Xbgr8888). Le compositeur imbriqué présente les siens en ARGB
+(alpha) ou 10 bits → aucun encodage, --video/--bpf sont sans effet sur un
+bureau complet. Ils ne servent qu'avec -a et une application qui présente du
+Xrgb8888 (mesuré : ffplay 21,7 Mio sans vidéo, 2,06 Mio à bpf=3e4). Sur un
+bureau, les vrais leviers sont la taille (720p en 1080p) et --compress.
 
 L'audio passe par SSH : les sockets PipeWire/Pulse de CE poste sont transférés
 vers l'hôte, donc les applications distantes jouent ici. --no-audio pour couper.
