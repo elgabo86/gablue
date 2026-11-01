@@ -7,18 +7,26 @@
 # est un KWin imbriqué : waypipe ne transporte qu'une seule surface Wayland,
 # tout le reste (applications, fichiers, fenêtres) reste sur la machine distante.
 #
-# La session est ÉPHÉMÈRE : elle meurt avec la connexion SSH/waypipe. Ce n'est
-# pas un remplacement de krdp (pas de session persistante, pas d'audio, pas de
-# écran de connexion distant).
+# La session est ÉPHÉMÈRE : elle meurt avec la connexion SSH/waypipe.
+#
+# Deux transports :
+#   - par défaut, waypipe : un KWin imbriqué, aucune session côté hôte, entrée
+#     par le protocole Wayland. Lossless, donc lourd — dépannage et une appli.
+#   - --rdp : KWin/RDP (krdpserver) sur la session graphique EXISTANTE de
+#     l'hôte, l'image et l'entrée passent par RDP, le son par un tunnel SSH.
+#     Rien n'est exposé sur le réseau : RDP est derrière un -L local, l'audio
+#     derrière un -R, et le mot de passe RDP est éphémère.
 #
 # Usage :
 #   gremote [options] utilisateur@hôte
-#   gremote -a konsole utilisateur@hôte        # une application au lieu du bureau
-#   gremote -s 1920x1080 utilisateur@hôte      # taille imposée
-#   gremote --video utilisateur@hôte           # force le codec H.264
+#   gremote -a konsole utilisateur@hôte       # une application au lieu du bureau
+#   gremote --rdp utilisateur@hôte            # bureau existant en RDP tunnelisé
+#   gremote -s 1920x1080 utilisateur@hôte     # taille imposée (waypipe)
+#   gremote --video utilisateur@hôte          # force le codec H.264 (waypipe)
 #
 # Mode serveur (appelé par le client via SSH, ne pas lancer à la main) :
 #   gremote --serve --size 1920x1080 [--app konsole]
+#   gremote --serve --rdp                     (mot de passe lu sur stdin)
 
 set -euo pipefail
 
@@ -40,6 +48,9 @@ DEBUG=0               # 1 = journal côté hôte (filtré, plafonné)
 NO_GPU=0
 DRY_RUN=0
 SERVE=0
+RDP=0                 # 1 = mode RDP tunnelisé (sinon waypipe)
+RDP_PORT=13389        # port LOCAL du -L (127.0.0.1), RDP distant sur 3389
+RDP_LAUNCH=1          # 1 = lancer xfreerdp automatiquement s'il est présent
 CLEAN=0
 EXIT_NO_PROBE=3
 
@@ -66,6 +77,11 @@ Options :
                      débit visé = bpf x 100 (waypipe suppose 100 i/s)
       --compress M   none, lz4[=N] ou zstd[=N] (défaut : zstd)
       --no-gpu       désactiver le transfert dmabuf (écran noir inter-GPU)
+      --rdp          bureau de la session EXISTANTE de l'hôte, en RDP tunnelisé
+                     (image + entrée par RDP, son par tunnel SSH, rien n'est
+                     exposé sur le réseau)
+      --rdp-port N   port LOCAL du tunnel RDP (défaut : 13389)
+      --no-launch    ne pas lancer xfreerdp automatiquement (affiche la commande)
       --audio        transférer le son par SSH (défaut)
       --no-audio     couper l'audio
       --debug        journal côté hôte (filtré, plafonné à 1 Mio), muet sinon
@@ -201,6 +217,24 @@ while [ $# -gt 0 ]; do
             SERVE=1
             shift
             ;;
+        --rdp)
+            RDP=1
+            shift
+            ;;
+        --rdp-port)
+            [ $# -ge 2 ] || die "--rdp-port attend un numéro de port"
+            RDP_PORT="$2"
+            shift 2
+            ;;
+        --rdp-port=*)
+            [ -n "${1#*=}" ] || die "--rdp-port attend un numéro de port"
+            RDP_PORT="${1#*=}"
+            shift
+            ;;
+        --no-launch)
+            RDP_LAUNCH=0
+            shift
+            ;;
         --clean)
             CLEAN=1
             shift
@@ -277,6 +311,102 @@ if [ "$CLEAN" -eq 1 ]; then
     else
         echo "aucune session gremote en cours"
     fi
+    exit 0
+fi
+
+# =============================================================================
+# SECTION 4 bis : MODE SERVEUR RDP (sur l'hôte, dans la session graphique)
+# =============================================================================
+
+if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
+    run_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+    # Le mot de passe arrive par stdin : absent d'argv, donc invisible dans ps.
+    IFS= read -r rdp_pass || die "RDP : mot de passe manquant sur stdin"
+    [ -n "$rdp_pass" ] || die "RDP : mot de passe vide"
+
+    # Compositeur : on veut un KWin (il expose org_kde_plasma_shell), pas un
+    # autre compositeur qui traînerait dans le même XDG_RUNTIME_DIR.
+    compositor=""
+    if [ -n "${WAYLAND_DISPLAY:-}" ] && [ -S "$run_dir/$WAYLAND_DISPLAY" ]; then
+        compositor="$WAYLAND_DISPLAY"
+    elif command -v wayland-info >/dev/null 2>&1; then
+        for sock in "$run_dir"/wayland-*; do
+            [ -S "$sock" ] || continue
+            # Capture puis comparaison : un `wayland-info | grep -q` ferme le
+            # tube au premier succès, waypipe-non, wayland-info prend SIGPIPE et
+            # `pipefail` rendrait le test faux.
+            globals="$(WAYLAND_DISPLAY="$(basename "$sock")" timeout 3 wayland-info 2>/dev/null || true)"
+            case "$globals" in
+                *org_kde_plasma_shell*)
+                    compositor="$(basename "$sock")"
+                    break
+                    ;;
+            esac
+        done
+    else
+        for sock in "$run_dir"/wayland-*; do
+            [ -S "$sock" ] || continue
+            compositor="$(basename "$sock")"
+            break
+        done
+    fi
+    [ -n "$compositor" ] ||
+        die "aucun compositeur KWin dans $run_dir (aucune session graphique ?)"
+
+    export WAYLAND_DISPLAY="$compositor"
+    export XDG_RUNTIME_DIR="$run_dir"
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=${run_dir}/bus"
+    # L'appelant a pu hériter d'un PULSE_SERVER : ici on veut le démon LOCAL,
+    # sinon le puits tunnel se créerait sur le poste client.
+    unset DISPLAY PULSE_SERVER PIPEWIRE_REMOTE
+
+    # Certificat auto-signé : krdpserver refuse de démarrer sans, et l'erreur
+    # part dans une logging category muette (d'où l'exit 255 silencieux).
+    cert_dir="$HOME/.local/share/krdp"
+    mkdir -p "$cert_dir"
+    if [ ! -f "$cert_dir/cert.pem" ] || [ ! -f "$cert_dir/key.pem" ]; then
+        command -v openssl >/dev/null 2>&1 ||
+            die "openssl requis pour générer le certificat RDP"
+        openssl req -x509 -newkey rsa:2048 -keyout "$cert_dir/key.pem" \
+            -out "$cert_dir/cert.pem" -days 365 -nodes \
+            -subj "/CN=$(hostname)" >/dev/null 2>&1 ||
+            die "génération du certificat RDP impossible"
+    fi
+
+    # Son : le Socket Pulse local du client arrive par un -R. On crée un puits
+    # qui pointe dessus et on le met par défaut : tout ce que joue la session
+    # part chez le client, RDP ne transporte que l'image et l'entrée.
+    audio_mod=""
+    prev_sink=""
+    cleanup_rdp() {
+        [ -n "$audio_mod" ] && pactl unload-module "$audio_mod" >/dev/null 2>&1 || true
+        [ -n "$prev_sink" ] && pactl set-default-sink "$prev_sink" >/dev/null 2>&1 || true
+    }
+    if [ -n "${GREMOTE_AUDIO_SOCK:-}" ] && [ -S "${GREMOTE_AUDIO_SOCK:-/nonexistent}" ] &&
+        command -v pactl >/dev/null 2>&1; then
+        prev_sink="$(pactl get-default-sink 2>/dev/null || true)"
+        audio_mod="$(pactl load-module module-tunnel-sink \
+            server="unix:$GREMOTE_AUDIO_SOCK" sink_name=gremote 2>/dev/null || true)"
+        if [ -n "$audio_mod" ]; then
+            pactl set-default-sink gremote >/dev/null 2>&1 || true
+        else
+            audio_mod=""
+            printf 'gremote : puits audio tunnel indisponible, son local\n' >&2
+        fi
+    fi
+
+    command -v krdpserver >/dev/null 2>&1 ||
+        die "krdpserver absent sur l'hôte (paquet krdp)"
+
+    krdpserver --address 127.0.0.1 --port 3389 \
+        --username "${GREMOTE_RDP_USER:-$USER}" --password "$rdp_pass" \
+        --mode RemoteAccess --plasma \
+        --certificate "$cert_dir/cert.pem" \
+        --certificate-key "$cert_dir/key.pem" &
+    srv_pid=$!
+    trap 'kill "$srv_pid" 2>/dev/null || true; cleanup_rdp' EXIT INT TERM
+    wait "$srv_pid"
     exit 0
 fi
 
@@ -375,12 +505,15 @@ fi
 
 [ -n "$TARGET" ] || { usage; exit 1; }
 
-command -v waypipe >/dev/null 2>&1 ||
-    die "waypipe absent sur ce poste (paquet : waypipe)"
+[ "$RDP" -eq 1 ] || { command -v waypipe >/dev/null 2>&1 ||
+    die "waypipe absent sur ce poste (paquet : waypipe)"; }
 command -v ssh >/dev/null 2>&1 || die "ssh absent sur ce poste"
 
-local_version="$(waypipe --version 2>/dev/null | head -1)"
-[ -n "$local_version" ] || die "impossible de lire la version de waypipe"
+local_version=""
+if [ "$RDP" -eq 0 ]; then
+    local_version="$(waypipe --version 2>/dev/null | head -1)"
+    [ -n "$local_version" ] || die "impossible de lire la version de waypipe"
+fi
 
 # Taille par défaut : deux paliers sous la taille de l'écran local (moins de
 # pixels = moins d'octets à encoder, donc moins de latence). Un écran 2K ou plus
@@ -452,7 +585,16 @@ probe_remote() {
     '
 }
 
-if ! probe="$(probe_remote 2>/dev/null)"; then
+# En RDP la sonde waypipe ne sert à rien (pas de protocole à apparier) ; en
+# dry-run elle est sautée, sinon on ne peut pas afficher la commande hors ligne.
+probe_ok=0
+if [ "$RDP" -eq 1 ]; then
+    probe_ok=1
+    probe="$(printf 'x\ngremote\nno\n')"
+elif probe="$(probe_remote 2>/dev/null)"; then
+    probe_ok=1
+fi
+if [ "$probe_ok" -eq 0 ]; then
     cat >&2 <<EOF
 gremote : connexion SSH non interactive impossible vers « $TARGET ».
 
@@ -470,7 +612,7 @@ remote_h264="$(printf '%s\n' "$probe" | sed -n 3p)"
 
 [ -n "$remote_gremote" ] ||
     die "gremote absent sur $TARGET — cette machine doit tourner sur une image Gablue à jour"
-[ "$remote_version" = "$local_version" ] ||
+{ [ "$RDP" -eq 1 ] || [ "$remote_version" = "$local_version" ]; } ||
     die "versions waypipe différentes (local : ${local_version:-?} / distant : ${remote_version:-absent}) — le protocole n'est pas compatible, mets les deux machines à jour"
 
 # =============================================================================
@@ -563,6 +705,59 @@ else
     remote_cmd=(gremote --serve --size "$SIZE")
 fi
 [ -n "$APP" ] && remote_cmd+=(--app "$APP")
+
+# ---------------------------------------------------------------------------
+# Mode RDP : tout passe par SSH. Le -L n'expose RDP que sur 127.0.0.1 du poste
+# local, le -R porte le son du poste vers l'hôte, et le mot de passe RDP est
+# tiré au hasard à chaque session puis jeté. Aucun port ouvert sur le réseau.
+# ---------------------------------------------------------------------------
+if [ "$RDP" -eq 1 ]; then
+    rdp_user="${TARGET%%@*}"
+    rdp_pass="$(head -c 200 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-20)"
+    [ -n "$rdp_pass" ] || die "génération du mot de passe RDP impossible"
+
+    ssh_args+=(-o ExitOnForwardFailure=yes -L "127.0.0.1:${RDP_PORT}:127.0.0.1:3389")
+    remote_cmd=(env "GREMOTE_AUDIO_SOCK=${pulse_sock:-}" "GREMOTE_RDP_USER=${rdp_user}" \
+        gremote --serve --rdp)
+
+    if [ "$DRY_RUN" -eq 1 ]; then
+        printf 'ssh'
+        for arg in ${ssh_args[@]+"${ssh_args[@]}"}; do printf ' %s' "$arg"; done
+        printf ' %s' "$TARGET"
+        for arg in "${remote_cmd[@]}"; do printf ' %s' "$arg"; done
+        printf '   (mot de passe RDP sur stdin)\n'
+        exit 0
+    fi
+
+    printf '%s\n' "$rdp_pass" |
+        ssh ${ssh_args[@]+"${ssh_args[@]}"} "$TARGET" "${remote_cmd[@]}" &
+    ssh_pid=$!
+    trap 'kill "$ssh_pid" 2>/dev/null || true' EXIT INT TERM
+
+    # Attendre que le tunnel écoute (le serveur crée son certificat au 1er run).
+    ready=0
+    for _ in $(seq 1 100); do
+        if (exec 3<>"/dev/tcp/127.0.0.1/${RDP_PORT}") 2>/dev/null; then
+            ready=1
+            break
+        fi
+        kill -0 "$ssh_pid" 2>/dev/null || break
+        sleep 0.2
+    done
+    [ "$ready" -eq 1 ] || die "tunnel RDP indisponible sur 127.0.0.1:${RDP_PORT}"
+
+    if [ "$RDP_LAUNCH" -eq 1 ] && command -v xfreerdp >/dev/null 2>&1; then
+        printf 'gremote : RDP tunnelisé sur 127.0.0.1:%s (utilisateur %s)\n' \
+            "$RDP_PORT" "$rdp_user"
+        xfreerdp /v:127.0.0.1:"$RDP_PORT" /u:"$rdp_user" /p:"$rdp_pass" \
+            /cert:ignore +clipboard /dynamic-resolution
+    else
+        printf 'gremote : connecte-toi avec\n  xfreerdp /v:127.0.0.1:%s /u:%s /p:%s /cert:ignore\n' \
+            "$RDP_PORT" "$rdp_user" "$rdp_pass"
+        wait "$ssh_pid"
+    fi
+    exit 0
+fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
     printf 'waypipe --compress %s' "$COMPRESS"

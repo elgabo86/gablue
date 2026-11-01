@@ -18,7 +18,7 @@ Images and the system are continuously updated, following the latest Fedora rele
 - **Plasma Bigscreen** (BETA) — couch/TV interface, switchable from the desktop session
 - **Flatpak** and **brew** ready out of the box
 - **Automatic weekly updates** — system and flatpaks staged in the background
-- **gremote** — ephemeral remote desktop between Gablue machines: a Plasma session (or a single app) hosted on another machine, shown in a window here. Waypipe + nested KWin; no persistent session, no audio — a stopgap until KRdp grows a real remote login
+- **gremote** — remote desktop between Gablue machines, two transports: waypipe + nested KWin (ephemeral session, no audio), or `--rdp` — the host's *existing* Plasma session over RDP, tunnelled in SSH (no port opened, sound carried by a PipeWire tunnel sink)
 - Optional **DX mode** with Docker, Libvirt, QEMU, and ROCm for AMD
 
 ## Current Versions
@@ -68,6 +68,7 @@ gremote gab@sucina                    # distant Plasma desktop
 gremote -a dolphin gab@sucina         # one application
 gremote -s 1920x1080 gab@sucina       # forced size
 gremote --quality high gab@sucina     # H.264 video, higher bitrate
+gremote --rdp gab@sucina              # existing Plasma session over RDP, sound included
 gremote --bpf 3e5 --codec vp9 gab@sucina
 gremote --compress none gab@sucina    # no compression (fast LAN)
 gremote --clean                       # kill leftover sessions on this machine
