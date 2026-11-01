@@ -30,6 +30,12 @@ TARGET=""
 SIZE=""
 APP=""
 VIDEO="auto"          # auto | hw | sw | none
+CODEC="h264"          # h264 | vp9 | av1
+CODEC_SET=0           # 1 si --codec a été donné explicitement
+BPF=""                # bits par image pour l'encodeur vidéo (prioritaire sur --quality)
+QUALITY=""            # low | medium | high (préréglage de bpf)
+COMPRESS="zstd"       # none | lz4[=N] | zstd[=N]
+AUDIO=1               # 1 = tunnel des sockets Pulse/PipeWire locaux (défaut)
 NO_GPU=0
 DRY_RUN=0
 SERVE=0
@@ -50,16 +56,32 @@ Usage :
 Options :
   -a, --app APP      lancer une seule application (ex. konsole, dolphin)
   -s, --size WxH     taille de l'écran distant (défaut : écran local, plafonné 1920x1080)
-      --video[=MODE] codec vidéo : auto (défaut, H.264 si le GPU distant encode),
-                     hw (VAAPI), sw (logiciel), none
-      --no-video     même chose que --video=none
+      --video[=MODE] codec vidéo : auto (défaut : H.264 si le GPU distant encode
+                     en Vulkan video, sinon logiciel), hw, sw, none
+      --no-video     couper la vidéo (débit brut plus élevé : plutôt pour le LAN)
+      --codec C      h264 (défaut), vp9 ou av1
+      --quality Q    low, medium ou high (2e4 / 1e5 / 5e5 bits par image)
+      --bpf N        débit de la vidéo en bits PAR IMAGE (écrase --quality) :
+                     débit visé = bpf x 100 (waypipe suppose 100 i/s)
+      --compress M   none, lz4[=N] ou zstd[=N] (défaut : zstd)
       --no-gpu       désactiver le transfert dmabuf (écran noir inter-GPU)
+      --audio        transférer le son par SSH (défaut)
+      --no-audio     couper l'audio
   -n, --dry-run      afficher la commande sans l'exécuter
   -h, --help         cette aide
       --clean        terminer les sessions gremote orphelines de cette machine
 
 La session est éphémère : fermer la fenêtre (ou Ctrl+C) la termine.
 Le pointeur se saisit avec Ctrl droite dans la fenêtre du compositeur.
+
+Réglé pour la latence WAN : H.264 à 3e4 bits par image, soit ~3 Mbit/s visés,
+qualité volontairement basse. Lien rapide ou CPU chargé côté hôte :
+--no-video --compress lz4. Meilleure image : --quality high (~50 Mbit/s).
+
+L'audio passe par SSH : les sockets PipeWire/Pulse de CE poste sont transférés
+vers l'hôte, donc les applications distantes jouent ici. --no-audio pour couper.
+
+Les options à valeur acceptent aussi la forme --option=valeur.
 EOF
 }
 
@@ -79,10 +101,18 @@ while [ $# -gt 0 ]; do
             APP="$2"
             shift 2
             ;;
+        --app=*)
+            APP="${1#*=}"
+            shift
+            ;;
         -s|--size)
             [ $# -ge 2 ] || die "$1 attend une valeur (WxH)"
             SIZE="$2"
             shift 2
+            ;;
+        --size=*)
+            SIZE="${1#*=}"
+            shift
             ;;
         --video)
             VIDEO="hw"
@@ -98,6 +128,56 @@ while [ $# -gt 0 ]; do
             ;;
         --no-gpu)
             NO_GPU=1
+            shift
+            ;;
+        --audio)
+            AUDIO=1
+            shift
+            ;;
+        --no-audio)
+            AUDIO=0
+            shift
+            ;;
+        --codec)
+            [ $# -ge 2 ] || die "--codec attend une valeur"
+            CODEC="$2"
+            CODEC_SET=1
+            shift 2
+            ;;
+        --codec=*)
+            [ -n "${1#*=}" ] || die "--codec attend une valeur"
+            CODEC="${1#*=}"
+            CODEC_SET=1
+            shift
+            ;;
+        --quality)
+            [ $# -ge 2 ] || die "--quality attend une valeur"
+            QUALITY="$2"
+            shift 2
+            ;;
+        --quality=*)
+            [ -n "${1#*=}" ] || die "--quality attend une valeur"
+            QUALITY="${1#*=}"
+            shift
+            ;;
+        --bpf)
+            [ $# -ge 2 ] || die "--bpf attend une valeur"
+            BPF="$2"
+            shift 2
+            ;;
+        --bpf=*)
+            [ -n "${1#*=}" ] || die "--bpf attend une valeur"
+            BPF="${1#*=}"
+            shift
+            ;;
+        --compress)
+            [ $# -ge 2 ] || die "--compress attend une valeur"
+            COMPRESS="$2"
+            shift 2
+            ;;
+        --compress=*)
+            [ -n "${1#*=}" ] || die "--compress attend une valeur"
+            COMPRESS="${1#*=}"
             shift
             ;;
         -n|--dry-run)
@@ -135,6 +215,27 @@ case "$VIDEO" in
     auto|hw|sw|none) ;;
     *) die "--video attend auto, hw, sw ou none" ;;
 esac
+
+case "$CODEC" in
+    h264|vp9|av1) ;;
+    *) die "--codec attend h264, vp9 ou av1" ;;
+esac
+
+case "$QUALITY" in
+    ""|low|medium|high) ;;
+    *) die "--quality attend low, medium ou high" ;;
+esac
+
+printf '%s' "$COMPRESS" | grep -qE '^(none|lz4|zstd)(=[0-9]+)?$' ||
+    die "--compress attend none, lz4[=N] ou zstd[=N]"
+
+if [ -n "$BPF" ]; then
+    printf '%s' "$BPF" | grep -qE '^[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$' ||
+        die "--bpf attend un nombre de bits par image (ex. 5e5)"
+fi
+
+[ "$VIDEO" = none ] && [ -n "$BPF$QUALITY" ] &&
+    die "--bpf/--quality n'ont pas de sens avec --video=none"
 
 # =============================================================================
 # SECTION 4 : MODE SERVEUR (exécuté sur l'hôte distant, via waypipe)
@@ -187,10 +288,9 @@ if [ "$SERVE" -eq 1 ]; then
     QT_ACCESSIBILITY=0
     export XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE KDE_FULL_SESSION DESKTOP_SESSION
     export NO_AT_BRIDGE QT_ACCESSIBILITY
-    # Qt logue normalement dans journald ; on veut la trace dans ~/.cache/gremote.log
-    QT_FORCE_STDERR_LOGGING=1
-    QT_ASSUME_STDERR_HAS_CONSOLE=1
-    export QT_FORCE_STDERR_LOGGING QT_ASSUME_STDERR_HAS_CONSOLE
+    # Pas de QT_FORCE_STDERR_LOGGING/ASSUME_STDERR_HAS_CONSOLE : ajoutés pour
+    # diagnostiquer plasmashell, ils ont fait 48 Mo de log en 15 min (vécu 01/11/2026)
+    # et noient les vraies erreurs. Le journal suffit pour les traces de crash.
 
     W=1600
     H=900
@@ -282,15 +382,20 @@ printf '%s' "$SIZE" | grep -qE '^[0-9]+x[0-9]+$' || die "taille invalide : $SIZE
 # SECTION 6 : MODE CLIENT — SONDE DE L'HÔTE DISTANT
 # =============================================================================
 
-# Une seule connexion SSH : version waypipe, présence de gremote, encodage H.264.
+# Une seule connexion SSH : version waypipe, présence de gremote, encodage H.264 matériel.
+# La sonde teste le chemin que waypipe utilise RÉELLEMENT : Vulkan video, via
+# l'encodeur ffmpeg h264_vulkan (src/video.rs : AV_HWDEVICE_TYPE_VULKAN, et
+# setup_video_encode bascule en logiciel si l'extension VK_KHR_video_encode_h264
+# manque). `vainfo` est trompeur ici : VAAPI n'est pas utilisé par waypipe.
 probe_remote() {
     ssh -o BatchMode=yes -o ConnectTimeout=8 -- "$TARGET" '
         w=$(waypipe --version 2>/dev/null | head -1 || true)
         g=$(command -v gremote 2>/dev/null || true)
         h=no
-        if command -v vainfo >/dev/null 2>&1 &&
-           vainfo --display drm --device /dev/dri/renderD128 2>/dev/null |
-               grep -qE "VAProfileH264.*VAEntrypointEncSlice"; then
+        if command -v ffmpeg >/dev/null 2>&1 &&
+           ffmpeg -hide_banner -loglevel error -init_hw_device vulkan=vk:0 \
+               -f lavfi -i testsrc2=size=1280x720:rate=1 -frames:v 1 \
+               -c:v h264_vulkan -f null - >/dev/null 2>&1; then
             h=yes
         fi
         printf "%s\n%s\n%s\n" "$w" "$g" "$h"
@@ -322,31 +427,97 @@ remote_h264="$(printf '%s\n' "$probe" | sed -n 3p)"
 # SECTION 7 : MODE CLIENT — LANCEMENT
 # =============================================================================
 
-case "$VIDEO" in
-    auto)
-        if [ "$remote_h264" = "yes" ]; then
-            video_args=(--video=hw,h264)
-        else
-            video_args=()
-        fi
-        ;;
-    hw) video_args=(--video=hw,h264) ;;
-    sw) video_args=(--video=sw,h264) ;;
-    none) video_args=() ;;
+# Débit de l'encodeur. ATTENTION : waypipe ne fait pas bpf x images/s réelles, il
+# code un framerate nominal de 100 i/s (src/video.rs, les deux chemins sw et hw) :
+#     cr.bit_rate = bpf * 100
+# donc bpf=1.2e5 vise 12 Mbit/s et bpf=3e4 vise 3 Mbit/s. Le défaut ci-dessous
+# (3e4) est choisi pour la latence WAN ; waypipe, lui, prend 1.2e5 par défaut.
+DEFAULT_BPF="3e4"
+case "$QUALITY" in
+    low) quality_bpf=2e4 ;;
+    medium) quality_bpf=1e5 ;;
+    high) quality_bpf=5e5 ;;
+    *) quality_bpf="" ;;
 esac
+target_bpf="${BPF:-${quality_bpf:-$DEFAULT_BPF}}"
+
+# Vidéo ACTIVE par défaut (hors --no-video) : c'est elle qui divise le débit par
+# 10-50 sur un lien lent, donc la latence WAN. H.264 matériel si l'hôte expose
+# Vulkan video, sinon logiciel (x264 ultrafast/zerolatency, ~1 cœur côté hôte).
+# Sur un lien rapide ou une machine chargée : --no-video --compress lz4.
+video_mode="$VIDEO"
+if [ "$video_mode" = "auto" ]; then
+    if [ "$remote_h264" = "yes" ]; then
+        video_mode="hw"
+    else
+        video_mode="sw"
+    fi
+fi
+
+# --video=hw explicite alors que l'hôte n'a pas d'encodage Vulkan : waypipe
+# retomberait en logiciel en silence, on le dit.
+if [ "$video_mode" = "hw" ] && [ "$remote_h264" != "yes" ]; then
+    printf 'gremote : %s n'"'"'a pas d'"'"'encodage H.264 Vulkan, waypipe utilisera le logiciel\n' \
+        "$TARGET" >&2
+fi
+
+video_args=()
+if [ "$video_mode" != "none" ]; then
+    video_opts=("$video_mode" "$CODEC")
+    [ -n "$target_bpf" ] && video_opts+=("bpf=$target_bpf")
+    video_args=(--video="$(IFS=,; printf '%s' "${video_opts[*]}")")
+fi
 
 gpu_args=()
 [ "$NO_GPU" -eq 1 ] && gpu_args=(--no-gpu)
 
-remote_cmd=(gremote --serve --size "$SIZE")
+# Audio : waypipe ne transporte PAS le son (protocole Wayland uniquement). On
+# transfère donc par SSH les sockets PipeWire/Pulse de CE poste vers l'hôte : les
+# applications distantes jouent directement sur les haut-parleurs d'ici, sans
+# port ouvert ni service en plus. Deux -R : Pulse (cas normal, pipewire-pulse)
+# et PipeWire natif (clients qui parlent le protocole natif). Condition côté
+# sshd distant : AllowStreamLocalForwarding — déjà exigé par waypipe.
+# Le chemin local des sockets n'existe pas sur l'hôte : on transfère vers un
+# socket neuf sous /tmp, dont le nom porte l'uid et le PID du client.
+ssh_args=()
+audio_env=()
+if [ "$AUDIO" -eq 1 ]; then
+    run_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    if [ -S "$run_dir/pulse/native" ]; then
+        pulse_sock="/tmp/gremote-pulse-$(id -u)-$$.sock"
+        ssh_args+=(-R "${pulse_sock}:${run_dir}/pulse/native")
+        audio_env+=("PULSE_SERVER=unix:${pulse_sock}")
+        if [ -S "$run_dir/pipewire-0" ]; then
+            pw_sock="/tmp/gremote-pw-$(id -u)-$$.sock"
+            ssh_args+=(-R "${pw_sock}:${run_dir}/pipewire-0")
+            audio_env+=("PIPEWIRE_REMOTE=${pw_sock}")
+        fi
+    else
+        printf 'gremote : aucun PipeWire local (%s/pulse/native), audio désactivé\n' \
+            "$run_dir" >&2
+    fi
+fi
+
+# waypipe ne passe PAS par un shell côté hôte : il fait execvp() sur le premier
+# argument (erreur vécue : "Failed to run program \"PULSE_SERVER=unix:...\"") —
+# d'où `env`, binaire réel, pour poser les variables avant gremote.
+if [ ${#audio_env[@]} -gt 0 ]; then
+    remote_cmd=(env "${audio_env[@]}" gremote --serve --size "$SIZE")
+else
+    remote_cmd=(gremote --serve --size "$SIZE")
+fi
 [ -n "$APP" ] && remote_cmd+=(--app "$APP")
 
 if [ "$DRY_RUN" -eq 1 ]; then
-    printf 'waypipe --compress zstd'
+    printf 'waypipe --compress %s' "$COMPRESS"
     for arg in ${video_args[@]+"${video_args[@]}"} ${gpu_args[@]+"${gpu_args[@]}"}; do
         printf ' %s' "$arg"
     done
-    printf ' ssh %s' "$TARGET"
+    printf ' ssh'
+    for arg in ${ssh_args[@]+"${ssh_args[@]}"}; do
+        printf ' %s' "$arg"
+    done
+    printf ' %s' "$TARGET"
     for arg in "${remote_cmd[@]}"; do
         printf ' %s' "$arg"
     done
@@ -354,5 +525,5 @@ if [ "$DRY_RUN" -eq 1 ]; then
     exit 0
 fi
 
-exec waypipe --compress zstd ${video_args[@]+"${video_args[@]}"} ${gpu_args[@]+"${gpu_args[@]}"} \
-    ssh -- "$TARGET" "${remote_cmd[@]}"
+exec waypipe --compress "$COMPRESS" ${video_args[@]+"${video_args[@]}"} ${gpu_args[@]+"${gpu_args[@]}"} \
+    ssh ${ssh_args[@]+"${ssh_args[@]}"} -- "$TARGET" "${remote_cmd[@]}"

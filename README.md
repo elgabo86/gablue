@@ -64,11 +64,18 @@ cosign verify --key cosign.pub ghcr.io/elgabo86/gablue-main:latest
 `gremote` opens a Plasma session (or a single application) hosted on another Gablue machine and shows it in a window on your desktop — Waypipe over SSH, nested KWin on the remote side. The session dies with the connection: this is a stopgap until KRdp supports remote login.
 
 ```bash
-gremote gab@sucina              # distant Plasma desktop
-gremote -a dolphin gab@sucina   # one application
-gremote -s 1920x1080 gab@sucina # forced size
-gremote --clean                 # kill leftover sessions on this machine
+gremote gab@sucina                    # distant Plasma desktop
+gremote -a dolphin gab@sucina         # one application
+gremote -s 1920x1080 gab@sucina       # forced size
+gremote --quality high gab@sucina     # H.264 video, higher bitrate
+gremote --bpf 3e5 --codec vp9 gab@sucina
+gremote --compress none gab@sucina    # no compression (fast LAN)
+gremote --clean                       # kill leftover sessions on this machine
 ```
+
+Quality and bandwidth are tunable: `--video[=hw|sw|none]` picks the encoder, `--codec h264|vp9|av1` the codec, and `--bpf N` the bitrate **in bits per frame**. Careful: waypipe assumes a nominal 100 fps and sets `bit_rate = bpf × 100` (both software and hardware paths), so 3e4 ≈ 3 Mbit/s, 1e5 ≈ 10 Mbit/s, 5e5 ≈ 50 Mbit/s. `--quality low|medium|high` are presets for 2e4/1e5/5e5. Defaults are tuned for WAN latency: H.264 video on at 3e4 bits per frame (~3 Mbit/s, deliberately low quality), encoded on the remote GPU when it supports Vulkan video — that is what waypipe uses, not VAAPI, and without it waypipe silently falls back to software x264. `--no-video` turns encoding off (raw stream, for a fast LAN or a loaded host). `waypipe bench` measures the best setting for a given link.
+
+Sound is carried separately from Waypipe: `gremote` forwards this machine's PipeWire/Pulse sockets over SSH, so remote applications play on local speakers (on by default, `--no-audio` to disable).
 
 Requires the same `waypipe` version on both ends, a passwordless SSH key (`ssh-key-add`), and `AllowStreamLocalForwarding` on the remote sshd. Known limit: `plasmashell` may not paint its panel in a non-logind session — use `-a konsole` as a fallback.
 
