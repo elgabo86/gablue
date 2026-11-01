@@ -36,6 +36,7 @@ BPF=""                # bits par image pour l'encodeur vidéo (prioritaire sur -
 QUALITY=""            # low | medium | high (préréglage de bpf)
 COMPRESS="zstd"       # none | lz4[=N] | zstd[=N]
 AUDIO=1               # 1 = tunnel des sockets Pulse/PipeWire locaux (défaut)
+DEBUG=0               # 1 = journal côté hôte (filtré, plafonné)
 NO_GPU=0
 DRY_RUN=0
 SERVE=0
@@ -55,7 +56,7 @@ Usage :
 
 Options :
   -a, --app APP      lancer une seule application (ex. konsole, dolphin)
-  -s, --size WxH     taille de l'écran distant (défaut : écran local, plafonné 1920x1080)
+  -s, --size WxH     taille de l'écran distant (défaut : 1600x900 en 2K+, 1280x720 en 1080p)
       --video[=MODE] codec vidéo : auto (défaut : H.264 si le GPU distant encode
                      en Vulkan video, sinon logiciel), hw, sw, none
       --no-video     couper la vidéo (débit brut plus élevé : plutôt pour le LAN)
@@ -67,6 +68,7 @@ Options :
       --no-gpu       désactiver le transfert dmabuf (écran noir inter-GPU)
       --audio        transférer le son par SSH (défaut)
       --no-audio     couper l'audio
+      --debug        journal côté hôte (filtré, plafonné à 1 Mio), muet sinon
   -n, --dry-run      afficher la commande sans l'exécuter
   -h, --help         cette aide
       --clean        terminer les sessions gremote orphelines de cette machine
@@ -136,6 +138,10 @@ while [ $# -gt 0 ]; do
             ;;
         --no-audio)
             AUDIO=0
+            shift
+            ;;
+        --debug)
+            DEBUG=1
             shift
             ;;
         --codec)
@@ -270,9 +276,28 @@ fi
 if [ "$SERVE" -eq 1 ]; then
     [ -n "${WAYLAND_DISPLAY:-}" ] || die "--serve doit être lancé par waypipe (WAYLAND_DISPLAY absent)"
 
-    LOG="${XDG_CACHE_HOME:-$HOME/.cache}/gremote.log"
-    mkdir -p "$(dirname "$LOG")"
-    : > "$LOG"
+    # Journal : MUET par défaut. Tout envoyer dans un fichier a produit 48 Mo en
+    # 15 min (dbus/kded activant org.bluez.obex en boucle, vécu 01/11/2026) — et
+    # un log de session ne vaut pas un log illimité. `--debug` côté client
+    # (GREMOTE_DEBUG=1) l'active, filtré des activations D-Bus et plafonné à 1 Mio.
+    if [ "${GREMOTE_DEBUG:-0}" = 1 ]; then
+        LOG="${XDG_CACHE_HOME:-$HOME/.cache}/gremote.log"
+        mkdir -p "$(dirname "$LOG")"
+        : > "$LOG"
+        OUT="$LOG"
+        export LOG OUT
+        # Plafond : au-delà de 1 Mio, on repart de zéro (debug uniquement).
+        (
+            while sleep 60; do
+                if [ "$(stat -c%s "$LOG" 2>/dev/null || echo 0)" -gt 1048576 ]; then
+                    : > "$LOG"
+                fi
+            done
+        ) &
+    else
+        OUT=/dev/null
+        export OUT
+    fi
 
     # Un DISPLAY hérité du SSH fait croire à X11 et fait planter plasmashell.
     unset DISPLAY
@@ -299,7 +324,7 @@ if [ "$SERVE" -eq 1 ]; then
         H="${SIZE#*x}"
     fi
     APP="${APP:-plasmashell}"
-    export W H APP LOG
+    export W H APP
 
     # PID du serveur waypipe (notre parent) : la session doit mourir avec lui.
     # Constaté le 01/11/2026 : à la fermeture de la fenêtre, kwin_wayland
@@ -312,19 +337,29 @@ if [ "$SERVE" -eq 1 ]; then
     # XWayland exige systemd1, absent d'un bus privé, et son échec tue plasmashell.
     #
     # Le trap nettoie le groupe (kactivitymanagerd, bus privé) sur sortie.
-    exec dbus-run-session -- bash -c '
-        trap "kill -9 0" EXIT HUP INT TERM
-        kactivitymanagerd >>"$LOG" 2>&1 &
-        # Chien de garde : si le serveur waypipe disparaît, la session est terminée.
-        (
-            while grep -qx waypipe "/proc/$waypipe_pid/comm" 2>/dev/null; do sleep 2; done
-            kill -9 0
-        ) &
-        kwin_wayland --wayland-display "$WAYLAND_DISPLAY" --socket wayland-gremote \
-            --width "$W" --height "$H" -- "$APP" >>"$LOG" 2>&1 &
-        kwin_pid=$!
-        wait "$kwin_pid"
-    ' >>"$LOG" 2>&1
+    run_session() {
+        dbus-run-session -- bash -c '
+            trap "kill -9 0" EXIT HUP INT TERM
+            kactivitymanagerd >>"$OUT" 2>&1 &
+            # Chien de garde : si le serveur waypipe disparaît, la session est terminée.
+            (
+                while grep -qx waypipe "/proc/$waypipe_pid/comm" 2>/dev/null; do sleep 2; done
+                kill -9 0
+            ) &
+            kwin_wayland --wayland-display "$WAYLAND_DISPLAY" --socket wayland-gremote \
+                --width "$W" --height "$H" -- "$APP" >>"$OUT" 2>&1 &
+            kwin_pid=$!
+            wait "$kwin_pid"
+        '
+    }
+
+    if [ "${GREMOTE_DEBUG:-0}" = 1 ]; then
+        # Le bruit d'activation D-Bus (kded6 → bluez.obex, etc.) n'apprend rien.
+        run_session 2>&1 |
+            grep -vE 'org\.bluez|activated service|Activating service' >>"$LOG"
+    else
+        run_session >/dev/null 2>&1
+    fi
 fi
 
 # =============================================================================
@@ -340,8 +375,12 @@ command -v ssh >/dev/null 2>&1 || die "ssh absent sur ce poste"
 local_version="$(waypipe --version 2>/dev/null | head -1)"
 [ -n "$local_version" ] || die "impossible de lire la version de waypipe"
 
-# Taille par défaut : écran local, plafonné à 1920x1080, un peu plus petit que
-# l'écran (la barre de titre du compositeur mange une quarantaine de pixels).
+# Taille par défaut : deux paliers sous la taille de l'écran local (moins de
+# pixels = moins d'octets à encoder, donc moins de latence). Un écran 2K ou plus
+# ouvre une session 1600x900, un écran 1080p une 1280x720 (validé 01/11/2026 :
+# 720p reste lisible sur du 1080p et allège nettement le lien). En dessous de
+# 900 px de haut, on prend la taille de l'écran moins 40 px (barre de titre du
+# compositeur).
 local_size() {
     command -v kscreen-doctor >/dev/null 2>&1 || return 1
     command -v jq >/dev/null 2>&1 || return 1
@@ -364,11 +403,15 @@ if [ -z "$SIZE" ]; then
     if detected="$(local_size)" && printf '%s' "$detected" | grep -qE '^[0-9]+x[0-9]+$'; then
         W="${detected%x*}"
         H="${detected#*x}"
-        [ "$W" -gt 1920 ] && W=1920
-        if [ "$H" -gt 1080 ]; then
-            H=1080
-        elif [ "$H" -gt 300 ]; then
-            H=$((H - 40))
+        if [ "$H" -ge 1440 ]; then
+            W=1600
+            H=900
+        elif [ "$H" -ge 900 ]; then
+            W=1280
+            H=720
+        else
+            [ "$W" -gt 1366 ] && W=1366
+            [ "$H" -gt 300 ] && H=$((H - 40))
         fi
         SIZE="${W}x${H}"
     else
@@ -481,9 +524,15 @@ gpu_args=()
 # socket neuf sous /tmp, dont le nom porte l'uid et le PID du client.
 ssh_args=()
 audio_env=()
+[ "$DEBUG" -eq 1 ] && audio_env+=("GREMOTE_DEBUG=1")
 if [ "$AUDIO" -eq 1 ]; then
     run_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
     if [ -S "$run_dir/pulse/native" ]; then
+        # Nom unique (uid + PID) : sshd laisse le socket en place à la
+        # déconnexion, et refuse de réécouter sur un chemin existant — « remote
+        # port forwarding failed », donc plus de son à la 2e session avec un
+        # chemin fixe (vécu 01/11/2026). L'option -o StreamLocalBindUnlink ne
+        # règle rien ici : pour un -R c'est le sshd distant qui décide.
         pulse_sock="/tmp/gremote-pulse-$(id -u)-$$.sock"
         ssh_args+=(-R "${pulse_sock}:${run_dir}/pulse/native")
         audio_env+=("PULSE_SERVER=unix:${pulse_sock}")
@@ -526,4 +575,4 @@ if [ "$DRY_RUN" -eq 1 ]; then
 fi
 
 exec waypipe --compress "$COMPRESS" ${video_args[@]+"${video_args[@]}"} ${gpu_args[@]+"${gpu_args[@]}"} \
-    ssh ${ssh_args[@]+"${ssh_args[@]}"} -- "$TARGET" "${remote_cmd[@]}"
+    ssh ${ssh_args[@]+"${ssh_args[@]}"} "$TARGET" "${remote_cmd[@]}"
