@@ -18,7 +18,7 @@ Images and the system are continuously updated, following the latest Fedora rele
 - **Plasma Bigscreen** (BETA) — couch/TV interface, switchable from the desktop session
 - **Flatpak** and **brew** ready out of the box
 - **Automatic weekly updates** — system and flatpaks staged in the background
-- **gremote** — remote desktop between Gablue machines, two transports: waypipe + nested KWin (ephemeral session, no audio), or `--rdp` — the host's *existing* Plasma session over RDP, tunnelled in SSH (no port opened, sound carried by a PipeWire tunnel sink)
+- **gremote** — remote desktop between Gablue machines: the host's *existing* Plasma session over RDP, tunnelled in SSH — no port opened, sound carried by a PipeWire tunnel sink, ephemeral RDP password. `--waypipe` keeps the old nested-KWin mode (single app, no session needed)
 - Optional **DX mode** with Docker, Libvirt, QEMU, and ROCm for AMD
 
 ## Current Versions
@@ -59,26 +59,46 @@ Images are signed with Cosign. Public key available in this repository.
 cosign verify --key cosign.pub ghcr.io/elgabo86/gablue-main:latest
 ```
 
-## Remote desktop (ephemeral)
+## Remote desktop
 
-`gremote` opens a Plasma session (or a single application) hosted on another Gablue machine and shows it in a window on your desktop — Waypipe over SSH, nested KWin on the remote side. The session dies with the connection: this is a stopgap until KRdp supports remote login.
+`gremote` shows another Gablue machine's desktop in a window. By default it
+attaches to the host's **existing** Plasma session over RDP, tunnelled inside
+SSH: nothing is exposed on the network, the RDP password is drawn per session,
+and the sound comes back through a PipeWire tunnel. A graphical session must
+already be running on the host.
 
 ```bash
-gremote gab@sucina                    # distant Plasma desktop
-gremote -a dolphin gab@sucina         # one application
-gremote -s 1920x1080 gab@sucina       # forced size
-gremote --quality high gab@sucina     # H.264 video, higher bitrate
-gremote --rdp gab@sucina              # existing Plasma session over RDP, sound included
-gremote --bpf 3e5 --codec vp9 gab@sucina
-gremote --compress none gab@sucina    # no compression (fast LAN)
-gremote --clean                       # kill leftover sessions on this machine
+gremote gab@sucina                    # existing Plasma session, RDP + sound
+gremote --rdp-port 13390 gab@sucina   # use another local tunnel port
+gremote --no-launch gab@sucina        # print the xfreerdp line instead of running it
+gremote --no-audio gab@sucina         # no sound tunnel
 ```
 
-Quality and bandwidth are tunable: `--video[=hw|sw|none]` picks the encoder, `--codec h264|vp9|av1` the codec, and `--bpf N` the bitrate **in bits per frame**. Careful: waypipe assumes a nominal 100 fps and sets `bit_rate = bpf × 100` (both software and hardware paths), so 3e4 ≈ 3 Mbit/s, 1e5 ≈ 10 Mbit/s, 5e5 ≈ 50 Mbit/s. `--quality low|medium|high` are presets for 2e4/1e5/5e5. Defaults are tuned for WAN latency: H.264 video on at 3e4 bits per frame (~3 Mbit/s, deliberately low quality), encoded on the remote GPU when it supports Vulkan video — that is what waypipe uses, not VAAPI, and without it waypipe silently falls back to software x264. `--no-video` turns encoding off (raw stream, for a fast LAN or a loaded host). Note that Waypipe only encodes **opaque 8-bit** dmabufs (Xrgb8888/Xbgr8888): a compositor presents its surfaces with alpha or 10-bit, so `--video`/`--bpf` have no effect on a full desktop — they matter for `-a` with an app that presents opaque 8-bit buffers. On a desktop, the levers are the resolution and `--compress`. `waypipe bench` measures the best setting for a given link.
+`--waypipe` keeps the previous mode: a nested KWin displayed in a window, no
+session needed on the host, input through the Wayland protocol, lossless and
+therefore heavy. It is the only mode that does `-a APP` (a single application).
 
-Sound is carried separately from Waypipe: `gremote` forwards this machine's PipeWire/Pulse sockets over SSH, so remote applications play on local speakers (on by default, `--no-audio` to disable). The remote session logs nothing unless `--debug` is passed. Default size follows the local screen down a notch: 1600x900 on 2K and above, 1280x720 on 1080p.
+```bash
+gremote --waypipe -a dolphin gab@sucina      # one application
+gremote --waypipe -s 1920x1080 gab@sucina    # forced size
+gremote --waypipe --quality high gab@sucina  # H.264, higher bitrate
+gremote --clean                              # kill leftover waypipe sessions here
+```
 
-Requires the same `waypipe` version on both ends, a passwordless SSH key (`ssh-key-add`), and `AllowStreamLocalForwarding` on the remote sshd. Known limit: `plasmashell` may not paint its panel in a non-logind session — use `-a konsole` as a fallback.
+In `--waypipe` mode, quality and bandwidth are tunable: `--video[=hw|sw|none]`
+picks the encoder, `--codec h264|vp9|av1` the codec, and `--bpf N` the bitrate
+**in bits per frame**. Careful: waypipe assumes a nominal 100 fps and sets
+`bit_rate = bpf × 100`, so 3e4 ≈ 3 Mbit/s. `--quality low|medium|high` are
+presets for 2e4/1e5/5e5. Encoding goes through Vulkan video on the remote GPU
+(not VAAPI) and silently falls back to software x264 without it. Note that
+Waypipe only encodes **opaque 8-bit** dmabufs (Xrgb8888/Xbgr8888): a compositor
+presents its surfaces with alpha or 10-bit, so `--video`/`--bpf` have no effect
+on a full desktop — they matter for `-a`. The remote session logs nothing unless
+`--debug` is passed.
+
+Both modes need a passwordless SSH key (`ssh-key-add`) and
+`AllowStreamLocalForwarding` on the remote sshd; `--waypipe` additionally needs
+the same `waypipe` version on both ends.
 
 ## Contributing
 
