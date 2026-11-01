@@ -349,6 +349,14 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     compositor=""
     find_compositor() {
         compositor=""
+        # Le socket de notre unité d'abord : un KWin en expose plusieurs
+        # (`gremote-session` plus des wayland-N internes), et le glob ne voit
+        # que les seconds — on choisissait donc un socket qui n'est pas celui
+        # qu'on croit (vécu 02/11/2026).
+        if [ -S "$run_dir/gremote-session" ]; then
+            compositor="gremote-session"
+            return 0
+        fi
         if [ -n "${WAYLAND_DISPLAY:-}" ] && [ -S "$run_dir/$WAYLAND_DISPLAY" ]; then
             compositor="$WAYLAND_DISPLAY"
             return 0
@@ -445,12 +453,24 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
         fi
     fi
 
+    # Mode RDP. RemoteAccess fabrique un écran virtuel et bascule le siège sur le
+    # greeter : parfait pour une session physique, mais sur la session que
+    # gremote crée lui-même (VT3, souvent inactive) la création de ce moniteur
+    # virtuel **échoue** et KRdp referme la connexion aussitôt — le client voit
+    # « connection reset by peer » après l'authentification (vécu 02/11/2026).
+    # SharedAccess capture la sortie réelle des fenêtres de session : c'est ce
+    # qu'on veut ici, et il streame effectivement (VA-API actif pendant le test).
+    rdp_mode=RemoteAccess
+    if systemctl -q is-active "gremote-session@${USER}.service" 2>/dev/null; then
+        rdp_mode=SharedAccess
+    fi
+
     command -v krdpserver >/dev/null 2>&1 ||
         die "krdpserver absent sur l'hôte (paquet krdp)"
 
     krdpserver --address 127.0.0.1 --port 3389 \
         --username "${GREMOTE_RDP_USER:-$USER}" --password "$rdp_pass" \
-        --mode RemoteAccess --plasma \
+        --mode "$rdp_mode" --plasma \
         --certificate "$cert_dir/cert.pem" \
         --certificate-key "$cert_dir/key.pem" &
     srv_pid=$!
