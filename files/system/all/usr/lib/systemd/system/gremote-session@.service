@@ -24,7 +24,12 @@ Environment=DESKTOP_SESSION=plasma
 # cf. la limite documentée dans README.md.
 Environment=XDG_SEAT=seat0
 Environment=XDG_VTNR=3
-ExecStart=/usr/bin/kwin_wayland --socket gremote-session -- plasma_session
+# --no-lockscreen : une session sans connexion PAM « classique » arrive
+# verrouillée (LockedHint=yes) et l'écran de verrouillage de KDE ignore
+# l'entrée synthétique de KRdp — clavier et souris paraissent morts
+# (vécu 02/11/2026). Elle est déjà protégée par SSH puis par le mot de
+# passe RDP éphémère, donc pas d'écran de verrouillage ici.
+ExecStart=/usr/bin/kwin_wayland --no-lockscreen --socket gremote-session -- plasma_session
 # La session survit à la déconnexion SSH : c'est le but (on s'y rattache).
 Restart=no
 
