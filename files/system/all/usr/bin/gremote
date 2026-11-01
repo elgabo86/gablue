@@ -406,6 +406,22 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
         --certificate-key "$cert_dir/key.pem" &
     srv_pid=$!
     trap 'kill "$srv_pid" 2>/dev/null || true; cleanup_rdp' EXIT INT TERM
+
+    # Poignée de main : le client attend cette ligne avant de lancer son client
+    # RDP. Un test de port côté client ne prouve RIEN : un -L ssh accepte la
+    # connexion TCP puis échoue en « channel 2: open failed: Connection refused »
+    # quand le distant n'écoute pas encore (vécu 02/11/2026).
+    up=0
+    for _ in $(seq 1 150); do
+        if (exec 3<>/dev/tcp/127.0.0.1/3389) 2>/dev/null; then
+            up=1
+            break
+        fi
+        kill -0 "$srv_pid" 2>/dev/null || break
+        sleep 0.2
+    done
+    [ "$up" -eq 1 ] || die "krdpserver n'écoute pas sur 127.0.0.1:3389"
+    printf 'GREMOTE-RDP-READY\n'
     wait "$srv_pid"
     exit 0
 fi
@@ -729,22 +745,28 @@ if [ "$RDP" -eq 1 ]; then
         exit 0
     fi
 
+    # La sortie du ssh sert de canal de contrôle : le serveur y écrit
+    # GREMOTE-RDP-READY quand krdpserver écoute vraiment (le certificat est
+    # créé au premier lancement, ça prend une à deux secondes).
+    rdp_log="$(mktemp "${TMPDIR:-/tmp}/gremote-rdp.XXXXXX")"
     printf '%s\n' "$rdp_pass" |
-        ssh ${ssh_args[@]+"${ssh_args[@]}"} "$TARGET" "${remote_cmd[@]}" &
+        ssh ${ssh_args[@]+"${ssh_args[@]}"} "$TARGET" "${remote_cmd[@]}" >"$rdp_log" 2>&1 &
     ssh_pid=$!
-    trap 'kill "$ssh_pid" 2>/dev/null || true' EXIT INT TERM
+    trap 'kill "$ssh_pid" 2>/dev/null || true; rm -f "$rdp_log"' EXIT INT TERM
 
-    # Attendre que le tunnel écoute (le serveur crée son certificat au 1er run).
     ready=0
-    for _ in $(seq 1 100); do
-        if (exec 3<>"/dev/tcp/127.0.0.1/${RDP_PORT}") 2>/dev/null; then
+    for _ in $(seq 1 300); do
+        if grep -qx 'GREMOTE-RDP-READY' "$rdp_log" 2>/dev/null; then
             ready=1
             break
         fi
         kill -0 "$ssh_pid" 2>/dev/null || break
         sleep 0.2
     done
-    [ "$ready" -eq 1 ] || die "tunnel RDP indisponible sur 127.0.0.1:${RDP_PORT}"
+    if [ "$ready" -ne 1 ]; then
+        sed -n '1,12p' "$rdp_log" >&2 2>/dev/null || true
+        die "le serveur RDP de $TARGET n'a pas démarré (voir ci-dessus)"
+    fi
 
     if [ "$RDP_LAUNCH" -eq 1 ] && command -v xfreerdp >/dev/null 2>&1; then
         printf 'gremote : RDP tunnelisé sur 127.0.0.1:%s (utilisateur %s)\n' \
