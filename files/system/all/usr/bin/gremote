@@ -9,20 +9,20 @@
 #
 # La session est ÉPHÉMÈRE : elle meurt avec la connexion SSH/waypipe.
 #
-# Deux transports :
-#   - par défaut, waypipe : un KWin imbriqué, aucune session côté hôte, entrée
-#     par le protocole Wayland. Lossless, donc lourd — dépannage et une appli.
-#   - --rdp : KWin/RDP (krdpserver) sur la session graphique EXISTANTE de
-#     l'hôte, l'image et l'entrée passent par RDP, le son par un tunnel SSH.
-#     Rien n'est exposé sur le réseau : RDP est derrière un -L local, l'audio
-#     derrière un -R, et le mot de passe RDP est éphémère.
+# Transport par défaut : RDP (krdpserver) sur la session graphique EXISTANTE de
+# l'hôte, l'image et l'entrée par RDP, le son par un tunnel PipeWire en SSH. Rien
+# n'est exposé sur le réseau : RDP est derrière un -L local, l'audio derrière un
+# -R, et le mot de passe RDP est éphémère.
+#
+# `--waypipe` garde l'ancien mode : un KWin imbriqué, aucune session côté hôte,
+# entrée par le protocole Wayland, lossless donc lourd. Il reste le seul à savoir
+# faire `-a` (une seule application) et à ne demander aucune session ouverte.
 #
 # Usage :
-#   gremote [options] utilisateur@hôte
-#   gremote -a konsole utilisateur@hôte       # une application au lieu du bureau
-#   gremote --rdp utilisateur@hôte            # bureau existant en RDP tunnelisé
-#   gremote -s 1920x1080 utilisateur@hôte     # taille imposée (waypipe)
-#   gremote --video utilisateur@hôte          # force le codec H.264 (waypipe)
+#   gremote utilisateur@hôte
+#   gremote --waypipe -a konsole utilisateur@hôte   # une appli (compositeur imbriqué)
+#   gremote -s 1920x1080 --waypipe utilisateur@hôte # taille imposée (waypipe)
+#   gremote --video --waypipe utilisateur@hôte      # force H.264 (waypipe)
 #
 # Mode serveur (appelé par le client via SSH, ne pas lancer à la main) :
 #   gremote --serve --size 1920x1080 [--app konsole]
@@ -48,7 +48,7 @@ DEBUG=0               # 1 = journal côté hôte (filtré, plafonné)
 NO_GPU=0
 DRY_RUN=0
 SERVE=0
-RDP=0                 # 1 = mode RDP tunnelisé (sinon waypipe)
+RDP=1                 # 1 = RDP tunnelisé (défaut) ; --waypipe pour l'ancien mode
 RDP_PORT=13389        # port LOCAL du -L (127.0.0.1), RDP distant sur 3389
 RDP_LAUNCH=1          # 1 = lancer xfreerdp automatiquement s'il est présent
 CLEAN=0
@@ -65,9 +65,15 @@ gremote — session Wayland éphémère sur un autre poste Gablue
 Usage :
   gremote [options] utilisateur@hôte
 
+Par défaut, gremote expose la session Plasma DÉJÀ OUVERTE de l'hôte en RDP,
+tunnelisé dans SSH : rien n'est exposé sur le réseau, le son revient par un
+tunnel PipeWire, et le mot de passe RDP est éphémère.
+
 Options :
-  -a, --app APP      lancer une seule application (ex. konsole, dolphin)
-  -s, --size WxH     taille de l'écran distant (défaut : 1600x900 en 2K+, 1280x720 en 1080p)
+      --waypipe      ancien mode (compositeur imbriqué), requis pour -a
+  -a, --app APP      lancer une seule application (ex. konsole, dolphin) — --waypipe
+  -s, --size WxH     taille de l'écran distant (--waypipe ; défaut 1600x900 en
+                     2K+, 1280x720 en 1080p)
       --video[=MODE] codec vidéo : auto (défaut : H.264 si le GPU distant encode
                      en Vulkan video, sinon logiciel), hw, sw, none
       --no-video     couper la vidéo (débit brut plus élevé : plutôt pour le LAN)
@@ -77,9 +83,6 @@ Options :
                      débit visé = bpf x 100 (waypipe suppose 100 i/s)
       --compress M   none, lz4[=N] ou zstd[=N] (défaut : zstd)
       --no-gpu       désactiver le transfert dmabuf (écran noir inter-GPU)
-      --rdp          bureau de la session EXISTANTE de l'hôte, en RDP tunnelisé
-                     (image + entrée par RDP, son par tunnel SSH, rien n'est
-                     exposé sur le réseau)
       --rdp-port N   port LOCAL du tunnel RDP (défaut : 13389)
       --no-launch    ne pas lancer xfreerdp automatiquement (affiche la commande)
       --audio        transférer le son par SSH (défaut)
@@ -221,6 +224,10 @@ while [ $# -gt 0 ]; do
             RDP=1
             shift
             ;;
+        --waypipe)
+            RDP=0
+            shift
+            ;;
         --rdp-port)
             [ $# -ge 2 ] || die "--rdp-port attend un numéro de port"
             RDP_PORT="$2"
@@ -283,6 +290,12 @@ fi
 
 [ "$VIDEO" = none ] && [ -n "$BPF$QUALITY" ] &&
     die "--bpf/--quality n'ont pas de sens avec --video=none"
+
+# -a lance une application dans un compositeur imbriqué : notion propre au mode
+# waypipe, le RDP expose la session entière.
+if [ "$RDP" -eq 1 ] && [ -n "$APP" ]; then
+    die "l'option -a/--app n'existe qu'en mode --waypipe (le RDP expose toute la session)"
+fi
 
 # =============================================================================
 # SECTION 4 : MODE SERVEUR (exécuté sur l'hôte distant, via waypipe)
