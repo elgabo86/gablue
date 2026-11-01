@@ -613,3 +613,19 @@ dnf5 -y upgrade \
 dnf5 -y --setopt=install_weak_deps=False install \
     libva.i686 \
     libvdpau.i686
+
+# H.264 / HEVC matériel Intel : le paquet Fedora (source intel-media-driver-free)
+# est construit SANS les noyaux brevetés → vainfo ne liste ni H.264 ni HEVC, même
+# en décodage (constaté 01/11/2026 sur UHD 630 CometLake : MPEG2/VP8/VP9/JPEG
+# seulement, et `ffmpeg -c:v h264_vaapi` échoue). Le build negativo17 (dépôt
+# fedora-multimedia, déjà présent dans l'image) les active : vainfo expose alors
+# VAProfileH264{Main,High} + VAEntrypointEncSlice et h264_vaapi encode en 1080p.
+# Aligné sur Aurora (build_files/base/01-packages.sh : même distro-sync ciblé) ;
+# Terra n'a pas ce paquet. L'epoch 1 de negativo garantit qu'il ne repasse jamais
+# derrière celui de Fedora au tri EVR, donc pas de versionlock nécessaire.
+if rpm -q libva-intel-media-driver >/dev/null 2>&1; then
+    # installé (base Kinoite) : distro-sync le remplace par la version non-free
+    dnf5 -y distro-sync --skip-unavailable --repo='fedora-multimedia' libva-intel-media-driver
+else
+    dnf5 -y install --skip-unavailable --repo='fedora-multimedia' libva-intel-media-driver
+fi
