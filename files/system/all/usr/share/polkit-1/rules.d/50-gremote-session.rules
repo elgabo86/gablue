@@ -1,0 +1,25 @@
+// gremote : chaque utilisateur peut démarrer et arrêter SA session à distance.
+//
+// gremote-session@<utilisateur>.service crée une vraie session graphique sur
+// VT3 (PAMName=login) afin que krdpserver ait quelque chose à streamer quand
+// personne n'est connecté physiquement. L'unité tourne sous l'utilisateur
+// cible, mais elle est gérée par systemd (root) : sans cette règle il faudrait
+// un mot de passe à chaque connexion, ou un NOPASSWD large — les deux exclus.
+//
+// La comparaison porte sur le nom exact de l'unité : on ne peut donc agir que
+// sur gremote-session@<soi-même>.service, jamais sur celle d'un autre compte ni
+// sur une autre unité du système.
+polkit.addRule(function(action, subject) {
+    if (action.id != "org.freedesktop.systemd1.manage-units") {
+        return;
+    }
+    var unit = action.lookup("unit");
+    if (!unit || unit !== "gremote-session@" + subject.user + ".service") {
+        return;
+    }
+    var verb = action.lookup("verb");
+    if (verb != "start" && verb != "stop" && verb != "restart") {
+        return;
+    }
+    return polkit.Result.YES;
+});

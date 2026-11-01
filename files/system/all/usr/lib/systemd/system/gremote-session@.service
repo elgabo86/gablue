@@ -1,0 +1,32 @@
+[Unit]
+Description=Remote desktop session for %i (gremote)
+Documentation=man:gremote(1)
+After=systemd-user-sessions.service
+Conflicts=shutdown.target
+
+[Service]
+Type=simple
+User=%i
+# PAMName=login donne une vraie session logind (siège + VT), pas un service
+# détaché : sans ça KWin n'a pas les droits DRM et krdpserver n'a rien à
+# capturer. Une règle polkit autorise chaque utilisateur à démarrer SA propre
+# unité (cf. 50-gremote-session.rules), donc aucun mot de passe n'est demandé.
+PAMName=login
+# KWin exige ces variables pour peindre un bureau complet (sans elles
+# plasmashell démarre mais reste noir).
+Environment=XDG_SESSION_TYPE=wayland
+Environment=XDG_CURRENT_DESKTOP=KDE
+Environment=XDG_SESSION_DESKTOP=KDE
+Environment=KDE_FULL_SESSION=true
+Environment=DESKTOP_SESSION=plasma
+# VT dédiée aux sessions à distance : celle du greeter (VT1) et d'un
+# utilisateur local restent libres. Une seule session à distance à la fois,
+# cf. la limite documentée dans README.md.
+Environment=XDG_SEAT=seat0
+Environment=XDG_VTNR=3
+ExecStart=/usr/bin/kwin_wayland --socket gremote-session -- plasma_session
+# La session survit à la déconnexion SSH : c'est le but (on s'y rattache).
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

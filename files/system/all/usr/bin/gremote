@@ -51,6 +51,7 @@ SERVE=0
 RDP=1                 # 1 = RDP tunnelisé (défaut) ; --waypipe pour l'ancien mode
 RDP_PORT=13389        # port LOCAL du -L (127.0.0.1), RDP distant sur 3389
 RDP_LAUNCH=1          # 1 = lancer xfreerdp automatiquement s'il est présent
+NOSTART=0             # 1 = ne pas créer de session si l'hôte n'en a pas
 CLEAN=0
 EXIT_NO_PROBE=3
 
@@ -85,6 +86,7 @@ Options :
       --no-gpu       désactiver le transfert dmabuf (écran noir inter-GPU)
       --rdp-port N   port LOCAL du tunnel RDP (défaut : 13389)
       --no-launch    ne pas lancer xfreerdp automatiquement (affiche la commande)
+      --no-start     ne pas créer de session si l'hôte n'en a pas (échec explicite)
       --audio        transférer le son par SSH (défaut)
       --no-audio     couper l'audio
       --debug        journal côté hôte (filtré, plafonné à 1 Mio), muet sinon
@@ -242,6 +244,10 @@ while [ $# -gt 0 ]; do
             RDP_LAUNCH=0
             shift
             ;;
+        --no-start)
+            NOSTART=1
+            shift
+            ;;
         --clean)
             CLEAN=1
             shift
@@ -341,31 +347,45 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     # Compositeur : on veut un KWin (il expose org_kde_plasma_shell), pas un
     # autre compositeur qui traînerait dans le même XDG_RUNTIME_DIR.
     compositor=""
-    if [ -n "${WAYLAND_DISPLAY:-}" ] && [ -S "$run_dir/$WAYLAND_DISPLAY" ]; then
-        compositor="$WAYLAND_DISPLAY"
-    elif command -v wayland-info >/dev/null 2>&1; then
+    find_compositor() {
+        compositor=""
+        if [ -n "${WAYLAND_DISPLAY:-}" ] && [ -S "$run_dir/$WAYLAND_DISPLAY" ]; then
+            compositor="$WAYLAND_DISPLAY"
+            return 0
+        fi
         for sock in "$run_dir"/wayland-*; do
             [ -S "$sock" ] || continue
-            # Capture puis comparaison : un `wayland-info | grep -q` ferme le
-            # tube au premier succès, waypipe-non, wayland-info prend SIGPIPE et
-            # `pipefail` rendrait le test faux.
-            globals="$(WAYLAND_DISPLAY="$(basename "$sock")" timeout 3 wayland-info 2>/dev/null || true)"
-            case "$globals" in
-                *org_kde_plasma_shell*)
-                    compositor="$(basename "$sock")"
-                    break
-                    ;;
-            esac
-        done
-    else
-        for sock in "$run_dir"/wayland-*; do
-            [ -S "$sock" ] || continue
+            if command -v wayland-info >/dev/null 2>&1; then
+                # Capture puis comparaison : un `wayland-info | grep -q` ferme le
+                # tube au premier succès, wayland-info prend SIGPIPE et `pipefail`
+                # rendrait le test faux.
+                globals="$(WAYLAND_DISPLAY="$(basename "$sock")" timeout 3 wayland-info 2>/dev/null || true)"
+                case "$globals" in
+                    *org_kde_plasma_shell*) ;;
+                    *) continue ;;
+                esac
+            fi
             compositor="$(basename "$sock")"
-            break
+            return 0
         done
+        return 1
+    }
+
+    if ! find_compositor; then
+        # Personne n'est connecté : on crée la session au lieu d'échouer.
+        # L'unité tourne sous CET utilisateur avec PAMName=login (vraie session
+        # logind sur VT3) et la règle polkit 50-gremote-session.rules autorise
+        # chacun à démarrer la sienne : ni mot de passe, ni sudo, ni NOPASSWD.
+        if [ "${GREMOTE_NO_START:-0}" != 1 ] && command -v systemctl >/dev/null 2>&1; then
+            systemctl start "gremote-session@${USER}.service" 2>/dev/null || true
+            for _ in $(seq 1 300); do
+                find_compositor && break
+                sleep 0.2
+            done
+        fi
     fi
     [ -n "$compositor" ] ||
-        die "aucun compositeur KWin dans $run_dir (aucune session graphique ?)"
+        die "aucune session graphique sur $run_dir, et gremote-session@${USER} n'a pas démarré (systemctl status gremote-session@${USER}, journalctl -u gremote-session@${USER})"
 
     export WAYLAND_DISPLAY="$compositor"
     export XDG_RUNTIME_DIR="$run_dir"
@@ -762,8 +782,11 @@ if [ "$RDP" -eq 1 ]; then
     [ -n "$rdp_pass" ] || die "génération du mot de passe RDP impossible"
 
     ssh_args+=(-o ExitOnForwardFailure=yes -L "127.0.0.1:${RDP_PORT}:127.0.0.1:3389")
-    remote_cmd=(env "GREMOTE_AUDIO_SOCK=${pulse_sock:-}" "GREMOTE_RDP_USER=${rdp_user}" \
-        gremote --serve --rdp)
+    remote_cmd=(env "GREMOTE_AUDIO_SOCK=${pulse_sock:-}" "GREMOTE_RDP_USER=${rdp_user}")
+    if [ "$NOSTART" -eq 1 ]; then
+        remote_cmd+=("GREMOTE_NO_START=1")
+    fi
+    remote_cmd+=(gremote --serve --rdp)
 
     if [ "$DRY_RUN" -eq 1 ]; then
         printf 'ssh'

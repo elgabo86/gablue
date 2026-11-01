@@ -61,17 +61,21 @@ cosign verify --key cosign.pub ghcr.io/elgabo86/gablue-main:latest
 
 ## Remote desktop
 
-`gremote` shows another Gablue machine's desktop in a window. By default it
-attaches to the host's **existing** Plasma session over RDP, tunnelled inside
-SSH: nothing is exposed on the network, the RDP password is drawn per session,
-and the sound comes back through a PipeWire tunnel. A graphical session must
-already be running on the host.
+`gremote` shows another Gablue machine's desktop in a window. It attaches to the
+host's Plasma session over RDP, tunnelled inside SSH: nothing is exposed on the
+network, the RDP password is drawn per session, and the sound comes back through
+a PipeWire tunnel. **If nobody is logged in, it creates the session first**
+(`gremote-session@<user>.service`, a real logind session on VT3): you log in with
+your own SSH account and get your own desktop, which survives the disconnect.
+One remote session at a time, and `--no-start` keeps the explicit-failure
+behaviour.
 
 ```bash
 gremote gab@sucina                    # existing Plasma session, RDP + sound
 gremote --rdp-port 13390 gab@sucina   # use another local tunnel port
 gremote --no-launch gab@sucina        # print the xfreerdp line instead of running it
 gremote --no-audio gab@sucina         # no sound tunnel
+gremote --no-start gab@sucina         # never create a session, fail if none
 ```
 
 `--waypipe` keeps the previous mode: a nested KWin displayed in a window, no
