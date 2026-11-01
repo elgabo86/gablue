@@ -12,6 +12,7 @@ Gablue est une distribution immuable personnalisée basée sur **Fedora Kinoite*
 - **NVIDIA** : Support des pilotes NVIDIA closed et open-source via akmods
 - **Virtualisation** : Mode DX avec Docker, Libvirt, QEMU
 - **Gaming** : Optimisations poussées (Gamescope, MangoHud, schedulers)
+- **gremote** : remote desktop Wayland éphémère entre postes Gablue (waypipe + KWin imbriqué) — pont en attendant krdp, pas un remplacement (détail → `files/system/AGENTS.md`)
 
 ## Variantes d'images
 

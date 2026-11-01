@@ -1,0 +1,358 @@
+#!/usr/bin/bash
+
+# gremote — bureau Wayland éphémère vers un autre poste Gablue (waypipe)
+#
+# Ouvre une session Plasma (ou une seule application) hébergée sur une machine
+# distante et l'affiche dans une fenêtre du poste local. Le compositeur distant
+# est un KWin imbriqué : waypipe ne transporte qu'une seule surface Wayland,
+# tout le reste (applications, fichiers, fenêtres) reste sur la machine distante.
+#
+# La session est ÉPHÉMÈRE : elle meurt avec la connexion SSH/waypipe. Ce n'est
+# pas un remplacement de krdp (pas de session persistante, pas d'audio, pas de
+# écran de connexion distant).
+#
+# Usage :
+#   gremote [options] utilisateur@hôte
+#   gremote -a konsole utilisateur@hôte        # une application au lieu du bureau
+#   gremote -s 1920x1080 utilisateur@hôte      # taille imposée
+#   gremote --video utilisateur@hôte           # force le codec H.264
+#
+# Mode serveur (appelé par le client via SSH, ne pas lancer à la main) :
+#   gremote --serve --size 1920x1080 [--app konsole]
+
+set -euo pipefail
+
+# =============================================================================
+# SECTION 1 : VALEURS PAR DÉFAUT
+# =============================================================================
+
+TARGET=""
+SIZE=""
+APP=""
+VIDEO="auto"          # auto | hw | sw | none
+NO_GPU=0
+DRY_RUN=0
+SERVE=0
+CLEAN=0
+EXIT_NO_PROBE=3
+
+# =============================================================================
+# SECTION 2 : AIDE
+# =============================================================================
+
+usage() {
+    cat <<'EOF'
+gremote — session Wayland éphémère sur un autre poste Gablue
+
+Usage :
+  gremote [options] utilisateur@hôte
+
+Options :
+  -a, --app APP      lancer une seule application (ex. konsole, dolphin)
+  -s, --size WxH     taille de l'écran distant (défaut : écran local, plafonné 1920x1080)
+      --video[=MODE] codec vidéo : auto (défaut, H.264 si le GPU distant encode),
+                     hw (VAAPI), sw (logiciel), none
+      --no-video     même chose que --video=none
+      --no-gpu       désactiver le transfert dmabuf (écran noir inter-GPU)
+  -n, --dry-run      afficher la commande sans l'exécuter
+  -h, --help         cette aide
+      --clean        terminer les sessions gremote orphelines de cette machine
+
+La session est éphémère : fermer la fenêtre (ou Ctrl+C) la termine.
+Le pointeur se saisit avec Ctrl droite dans la fenêtre du compositeur.
+EOF
+}
+
+die() {
+    printf 'gremote : %s\n' "$*" >&2
+    exit 1
+}
+
+# =============================================================================
+# SECTION 3 : ARGUMENTS
+# =============================================================================
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -a|--app)
+            [ $# -ge 2 ] || die "$1 attend une valeur"
+            APP="$2"
+            shift 2
+            ;;
+        -s|--size)
+            [ $# -ge 2 ] || die "$1 attend une valeur (WxH)"
+            SIZE="$2"
+            shift 2
+            ;;
+        --video)
+            VIDEO="hw"
+            shift
+            ;;
+        --video=*)
+            VIDEO="${1#*=}"
+            shift
+            ;;
+        --no-video)
+            VIDEO="none"
+            shift
+            ;;
+        --no-gpu)
+            NO_GPU=1
+            shift
+            ;;
+        -n|--dry-run)
+            DRY_RUN=1
+            shift
+            ;;
+        --serve)
+            SERVE=1
+            shift
+            ;;
+        --clean)
+            CLEAN=1
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            die "option inconnue : $1 (voir --help)"
+            ;;
+        *)
+            [ -z "$TARGET" ] || die "cible déjà donnée : $TARGET"
+            TARGET="$1"
+            shift
+            ;;
+    esac
+done
+
+case "$VIDEO" in
+    auto|hw|sw|none) ;;
+    *) die "--video attend auto, hw, sw ou none" ;;
+esac
+
+# =============================================================================
+# SECTION 4 : MODE SERVEUR (exécuté sur l'hôte distant, via waypipe)
+# =============================================================================
+
+# Nettoyage local des sessions orphelines (compositeur imbriqué resté vivant).
+if [ "$CLEAN" -eq 1 ]; then
+    killed=0
+    # Ciblage strict : uniquement les binaires kwin_wayland (jamais un shell dont
+    # la ligne de commande contiendrait la chaîne — piège pgrep -f classique).
+    for pid in $(pgrep -x kwin_wayland || true); do
+        if tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -qx -- '--wayland-display'; then
+            kill -KILL "$pid" 2>/dev/null && killed=1
+        fi
+    done
+    # plasmashell des sessions imbriquées uniquement (marqué par WAYLAND_DISPLAY),
+    # jamais celui d'une session locale.
+    for pid in $(pgrep -x plasmashell || true); do
+        if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null |
+            grep -qx 'WAYLAND_DISPLAY=wayland-gremote'; then
+            kill -KILL "$pid" 2>/dev/null && killed=1
+        fi
+    done
+    if [ "$killed" -eq 1 ]; then
+        echo "sessions gremote terminées"
+    else
+        echo "aucune session gremote en cours"
+    fi
+    exit 0
+fi
+
+if [ "$SERVE" -eq 1 ]; then
+    [ -n "${WAYLAND_DISPLAY:-}" ] || die "--serve doit être lancé par waypipe (WAYLAND_DISPLAY absent)"
+
+    LOG="${XDG_CACHE_HOME:-$HOME/.cache}/gremote.log"
+    mkdir -p "$(dirname "$LOG")"
+    : > "$LOG"
+
+    # Un DISPLAY hérité du SSH fait croire à X11 et fait planter plasmashell.
+    unset DISPLAY
+
+    # Sans ces variables, plasmashell démarre mais ne peint pas le bureau.
+    XDG_CURRENT_DESKTOP=KDE
+    XDG_SESSION_DESKTOP=KDE
+    XDG_SESSION_TYPE=wayland
+    KDE_FULL_SESSION=true
+    DESKTOP_SESSION=plasma
+    # Le pont accessibilité tente d'activer org.a11y.Bus, qui échoue en SSH.
+    NO_AT_BRIDGE=1
+    QT_ACCESSIBILITY=0
+    export XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE KDE_FULL_SESSION DESKTOP_SESSION
+    export NO_AT_BRIDGE QT_ACCESSIBILITY
+    # Qt logue normalement dans journald ; on veut la trace dans ~/.cache/gremote.log
+    QT_FORCE_STDERR_LOGGING=1
+    QT_ASSUME_STDERR_HAS_CONSOLE=1
+    export QT_FORCE_STDERR_LOGGING QT_ASSUME_STDERR_HAS_CONSOLE
+
+    W=1600
+    H=900
+    if [ -n "$SIZE" ]; then
+        W="${SIZE%x*}"
+        H="${SIZE#*x}"
+    fi
+    APP="${APP:-plasmashell}"
+    export W H APP LOG
+
+    # PID du serveur waypipe (notre parent) : la session doit mourir avec lui.
+    # Constaté le 01/11/2026 : à la fermeture de la fenêtre, kwin_wayland
+    # imbriqué ne quitte pas de lui-même et plasmashell survit avec lui.
+    waypipe_pid=$PPID
+    export waypipe_pid
+
+    # Bus D-Bus privé : sur le bus utilisateur persistant, plasmashell se lance
+    # mais ne peint rien (constaté 01/11/2026). Pas de --xwayland non plus :
+    # XWayland exige systemd1, absent d'un bus privé, et son échec tue plasmashell.
+    #
+    # Le trap nettoie le groupe (kactivitymanagerd, bus privé) sur sortie.
+    exec dbus-run-session -- bash -c '
+        trap "kill -9 0" EXIT HUP INT TERM
+        kactivitymanagerd >>"$LOG" 2>&1 &
+        # Chien de garde : si le serveur waypipe disparaît, la session est terminée.
+        (
+            while grep -qx waypipe "/proc/$waypipe_pid/comm" 2>/dev/null; do sleep 2; done
+            kill -9 0
+        ) &
+        kwin_wayland --wayland-display "$WAYLAND_DISPLAY" --socket wayland-gremote \
+            --width "$W" --height "$H" -- "$APP" >>"$LOG" 2>&1 &
+        kwin_pid=$!
+        wait "$kwin_pid"
+    ' >>"$LOG" 2>&1
+fi
+
+# =============================================================================
+# SECTION 5 : MODE CLIENT — VÉRIFICATIONS LOCALES
+# =============================================================================
+
+[ -n "$TARGET" ] || { usage; exit 1; }
+
+command -v waypipe >/dev/null 2>&1 ||
+    die "waypipe absent sur ce poste (paquet : waypipe)"
+command -v ssh >/dev/null 2>&1 || die "ssh absent sur ce poste"
+
+local_version="$(waypipe --version 2>/dev/null | head -1)"
+[ -n "$local_version" ] || die "impossible de lire la version de waypipe"
+
+# Taille par défaut : écran local, plafonné à 1920x1080, un peu plus petit que
+# l'écran (la barre de titre du compositeur mange une quarantaine de pixels).
+local_size() {
+    command -v kscreen-doctor >/dev/null 2>&1 || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+    # On préfère les géométries (écrans réellement activés) ; à défaut, le plus
+    # grand width/height trouvé dans le JSON (les modes supportés, au pire).
+    kscreen-doctor -j 2>/dev/null |
+        jq -r '
+            def geo: [.. | objects | (.geometry? // empty)
+                      | select((.width? | type) == "number" and (.height? | type) == "number")
+                      | {w: .width, h: .height}];
+            def all: [.. | objects
+                      | select((.width? | type) == "number" and (.height? | type) == "number")
+                      | {w: .width, h: .height}];
+            (geo | if length > 0 then . else all end)
+            | sort_by(.w * .h) | last | "\(.w)x\(.h)"' 2>/dev/null ||
+        return 1
+}
+
+if [ -z "$SIZE" ]; then
+    if detected="$(local_size)" && printf '%s' "$detected" | grep -qE '^[0-9]+x[0-9]+$'; then
+        W="${detected%x*}"
+        H="${detected#*x}"
+        [ "$W" -gt 1920 ] && W=1920
+        if [ "$H" -gt 1080 ]; then
+            H=1080
+        elif [ "$H" -gt 300 ]; then
+            H=$((H - 40))
+        fi
+        SIZE="${W}x${H}"
+    else
+        SIZE="1600x900"
+    fi
+fi
+
+printf '%s' "$SIZE" | grep -qE '^[0-9]+x[0-9]+$' || die "taille invalide : $SIZE (attendu WxH)"
+
+# =============================================================================
+# SECTION 6 : MODE CLIENT — SONDE DE L'HÔTE DISTANT
+# =============================================================================
+
+# Une seule connexion SSH : version waypipe, présence de gremote, encodage H.264.
+probe_remote() {
+    ssh -o BatchMode=yes -o ConnectTimeout=8 -- "$TARGET" '
+        w=$(waypipe --version 2>/dev/null | head -1 || true)
+        g=$(command -v gremote 2>/dev/null || true)
+        h=no
+        if command -v vainfo >/dev/null 2>&1 &&
+           vainfo --display drm --device /dev/dri/renderD128 2>/dev/null |
+               grep -qE "VAProfileH264.*VAEntrypointEncSlice"; then
+            h=yes
+        fi
+        printf "%s\n%s\n%s\n" "$w" "$g" "$h"
+    '
+}
+
+if ! probe="$(probe_remote 2>/dev/null)"; then
+    cat >&2 <<EOF
+gremote : connexion SSH non interactive impossible vers « $TARGET ».
+
+Vérifie que :
+  - la machine est joignable et que le compte existe ;
+  - ta clé publique y est installée (ssh-key-add $TARGET) ;
+  - son sshd autorise le transfert de socket (AllowStreamLocalForwarding).
+EOF
+    exit "$EXIT_NO_PROBE"
+fi
+
+remote_version="$(printf '%s\n' "$probe" | sed -n 1p)"
+remote_gremote="$(printf '%s\n' "$probe" | sed -n 2p)"
+remote_h264="$(printf '%s\n' "$probe" | sed -n 3p)"
+
+[ -n "$remote_gremote" ] ||
+    die "gremote absent sur $TARGET — cette machine doit tourner sur une image Gablue à jour"
+[ "$remote_version" = "$local_version" ] ||
+    die "versions waypipe différentes (local : ${local_version:-?} / distant : ${remote_version:-absent}) — le protocole n'est pas compatible, mets les deux machines à jour"
+
+# =============================================================================
+# SECTION 7 : MODE CLIENT — LANCEMENT
+# =============================================================================
+
+case "$VIDEO" in
+    auto)
+        if [ "$remote_h264" = "yes" ]; then
+            video_args=(--video=hw,h264)
+        else
+            video_args=()
+        fi
+        ;;
+    hw) video_args=(--video=hw,h264) ;;
+    sw) video_args=(--video=sw,h264) ;;
+    none) video_args=() ;;
+esac
+
+gpu_args=()
+[ "$NO_GPU" -eq 1 ] && gpu_args=(--no-gpu)
+
+remote_cmd=(gremote --serve --size "$SIZE")
+[ -n "$APP" ] && remote_cmd+=(--app "$APP")
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    printf 'waypipe --compress zstd'
+    for arg in ${video_args[@]+"${video_args[@]}"} ${gpu_args[@]+"${gpu_args[@]}"}; do
+        printf ' %s' "$arg"
+    done
+    printf ' ssh %s' "$TARGET"
+    for arg in "${remote_cmd[@]}"; do
+        printf ' %s' "$arg"
+    done
+    printf '\n'
+    exit 0
+fi
+
+exec waypipe --compress zstd ${video_args[@]+"${video_args[@]}"} ${gpu_args[@]+"${gpu_args[@]}"} \
+    ssh -- "$TARGET" "${remote_cmd[@]}"

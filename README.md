@@ -18,6 +18,7 @@ Images and the system are continuously updated, following the latest Fedora rele
 - **Plasma Bigscreen** (BETA) — couch/TV interface, switchable from the desktop session
 - **Flatpak** and **brew** ready out of the box
 - **Automatic weekly updates** — system and flatpaks staged in the background
+- **gremote** — ephemeral remote desktop between Gablue machines: a Plasma session (or a single app) hosted on another machine, shown in a window here. Waypipe + nested KWin; no persistent session, no audio — a stopgap until KRdp grows a real remote login
 - Optional **DX mode** with Docker, Libvirt, QEMU, and ROCm for AMD
 
 ## Current Versions
@@ -57,6 +58,19 @@ Images are signed with Cosign. Public key available in this repository.
 ```bash
 cosign verify --key cosign.pub ghcr.io/elgabo86/gablue-main:latest
 ```
+
+## Remote desktop (ephemeral)
+
+`gremote` opens a Plasma session (or a single application) hosted on another Gablue machine and shows it in a window on your desktop — Waypipe over SSH, nested KWin on the remote side. The session dies with the connection: this is a stopgap until KRdp supports remote login.
+
+```bash
+gremote gab@sucina              # distant Plasma desktop
+gremote -a dolphin gab@sucina   # one application
+gremote -s 1920x1080 gab@sucina # forced size
+gremote --clean                 # kill leftover sessions on this machine
+```
+
+Requires the same `waypipe` version on both ends, a passwordless SSH key (`ssh-key-add`), and `AllowStreamLocalForwarding` on the remote sshd. Known limit: `plasmashell` may not paint its panel in a non-logind session — use `-a konsole` as a fallback.
 
 ## Contributing
 
