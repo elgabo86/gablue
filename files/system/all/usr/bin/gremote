@@ -31,8 +31,11 @@ DRY_RUN=0
 SERVE=0
 RDP=1                 # 1 = RDP (seul mode depuis le retrait de waypipe)
 RDP_PORT=13389        # port LOCAL du -L ; le port distant dépend du compte
+RDP_PORT_SET=0        # 1 si --rdp-port a été donné (sinon : premier libre)
 RDP_LAUNCH=1          # 1 = lancer xfreerdp automatiquement s'il est présent
 NOSTART=0             # 1 = ne pas créer de session si l'hôte n'en a pas
+QUALITY=60            # qualité d'encodage KRdp (0-100) ; sert de borne en adaptatif
+ADAPTIVE=0            # 0 = qualité épinglée (défaut) ; 1 = adaptée au débit
 
 # =============================================================================
 # SECTION 2 : AIDE
@@ -54,6 +57,9 @@ Options :
       --rdp-port N   port LOCAL du tunnel RDP (défaut : 13389)
       --no-launch    ne pas lancer xfreerdp (affiche la commande)
       --no-start     ne pas créer de session si l'hôte n'en a pas
+      --quality N    qualité d'encodage 0-100 (défaut : 60)
+      --static-quality  épingler la qualité (défaut, image stable)
+      --adaptive     laisser KRdp baisser la qualité selon le débit
       --audio        transférer le son par SSH (défaut)
       --no-audio     couper l'audio
       --debug        journal côté hôte (filtré, plafonné à 1 Mio)
@@ -116,15 +122,35 @@ while [ $# -gt 0 ]; do
         --rdp-port)
             [ $# -ge 2 ] || die "--rdp-port attend un numéro de port"
             RDP_PORT="$2"
+            RDP_PORT_SET=1
             shift 2
             ;;
         --rdp-port=*)
             [ -n "${1#*=}" ] || die "--rdp-port attend un numéro de port"
             RDP_PORT="${1#*=}"
+            RDP_PORT_SET=1
             shift
             ;;
         --no-launch)
             RDP_LAUNCH=0
+            shift
+            ;;
+        --quality)
+            [ $# -ge 2 ] || die "--quality attend une valeur (0-100)"
+            QUALITY="$2"
+            shift 2
+            ;;
+        --quality=*)
+            [ -n "${1#*=}" ] || die "--quality attend une valeur (0-100)"
+            QUALITY="${1#*=}"
+            shift
+            ;;
+        --adaptive)
+            ADAPTIVE=1
+            shift
+            ;;
+        --static-quality)
+            ADAPTIVE=0
             shift
             ;;
         --no-start)
@@ -265,15 +291,45 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     # part chez le client, RDP ne transporte que l'image et l'entrée.
     audio_mod=""
     prev_sink=""
+    # Nom de puits PROPRE à cette connexion. Avec un nom fixe (« gremote »), la
+    # reconnexion sur une session déjà ouverte n'avait plus de son : l'ancien
+    # serveur restait vivant avec son puits par défaut, et son nettoyage
+    # (déclenché quand le nouveau serveur tue son krdpserver) remettait le puits
+    # LOCAL par défaut — juste après que la nouvelle connexion avait fait le
+    # sien. Deux connexions se disputaient donc le même nom et le même défaut
+    # (vécu 02/11/2026 : fermer la fenêtre puis se reconnecter = silence).
+    sink_name="gremote-$$"
     cleanup_rdp() {
-        [ -n "$audio_mod" ] && pactl unload-module "$audio_mod" >/dev/null 2>&1 || true
-        [ -n "$prev_sink" ] && pactl set-default-sink "$prev_sink" >/dev/null 2>&1 || true
+        # Ne décharger que si cet identifiant désigne ENCORE notre puits : PipeWire
+        # réattribue les identifiants de module (536870916 observé deux fois), donc
+        # un `unload-module` tardif supprimait le puits d'une connexion PLUS RÉCENTE
+        # — le son disparaissait à chaque reprise de session (vécu 03/11/2026).
+        if [ -n "$audio_mod" ] &&
+            pactl list short modules 2>/dev/null |
+                awk -v id="$audio_mod" -v n="$sink_name" \
+                    '$1 == id && $0 ~ ("sink_name=" n) { found = 1 } END { exit !found }'; then
+            pactl unload-module "$audio_mod" >/dev/null 2>&1 || true
+        fi
+        # Ne restaurer le défaut que s'il est ENCORE le nôtre : sinon on écraserait
+        # celui d'une connexion plus récente (c'était exactement le bug du son).
+        if [ -n "$prev_sink" ] &&
+            [ "$(pactl get-default-sink 2>/dev/null)" = "$sink_name" ]; then
+            pactl set-default-sink "$prev_sink" >/dev/null 2>&1 || true
+        fi
     }
     if [ -n "${GREMOTE_AUDIO_SOCK:-}" ] && [ -S "${GREMOTE_AUDIO_SOCK:-/nonexistent}" ] &&
         command -v pactl >/dev/null 2>&1; then
+        # Puits orphelins d'une connexion précédente : leur socket a disparu avec
+        # le -R du client, et s'ils restent par défaut tout le son de la session
+        # part dans le vide. On les retire avant d'installer le nôtre.
+        # Le défaut AVANT tout, sinon on mémoriserait le puits orphelin qu'on
+        # s'apprête à retirer et on le restaurerait à la sortie.
         prev_sink="$(pactl get-default-sink 2>/dev/null || true)"
+        pactl list short modules 2>/dev/null |
+            awk '$2 == "module-tunnel-sink" && $0 ~ /sink_name=gremote/ { print $1 }' |
+            while read -r _m; do pactl unload-module "$_m" >/dev/null 2>&1 || true; done
         audio_mod="$(pactl load-module module-tunnel-sink \
-            server="unix:$GREMOTE_AUDIO_SOCK" sink_name=gremote 2>/dev/null || true)"
+            server="unix:$GREMOTE_AUDIO_SOCK" sink_name="$sink_name" 2>/dev/null || true)"
         if [ -n "$audio_mod" ]; then
             # Le puits est enregistré de façon asynchrone : un set-default-sink
             # immédiat échoue en « Aucune entité de ce type » — et comme on
@@ -281,9 +337,9 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
             sock_ok=0
             for _ in $(seq 1 40); do
                 if pactl list short sinks 2>/dev/null |
-                    awk -v n=gremote '$2 == n { found = 1 } END { exit !found }'; then
-                    if pactl set-default-sink gremote >/dev/null 2>&1 &&
-                        [ "$(pactl get-default-sink 2>/dev/null)" = gremote ]; then
+                    awk -v n="$sink_name" '$2 == n { found = 1 } END { exit !found }'; then
+                    if pactl set-default-sink "$sink_name" >/dev/null 2>&1 &&
+                        [ "$(pactl get-default-sink 2>/dev/null)" = "$sink_name" ]; then
                         sock_ok=1
                         break
                     fi
@@ -291,7 +347,8 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
                 sleep 0.25
             done
             [ "$sock_ok" -eq 1 ] ||
-                printf 'gremote : le puits audio « gremote » n'"'"'a pas pu être mis par défaut\n' >&2
+                printf 'gremote : le puits audio « %s » n'"'"'a pas pu être mis par défaut\n' \
+                    "$sink_name" >&2
         else
             audio_mod=""
             printf 'gremote : puits audio tunnel indisponible, son local\n' >&2
@@ -314,6 +371,31 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     command -v krdpserver >/dev/null 2>&1 ||
         die "krdpserver absent sur l'hôte (paquet krdp)"
 
+    # Réparation du shell Plasma avant de streamer. Quand la session est
+    # redémarrée alors que le gestionnaire utilisateur persiste, celui-ci n'a pas
+    # WAYLAND_DISPLAY : plasmashell cherche wayland-0, KWin expose wayland-1,
+    # il abandonne (« Failed to create wl_display ») et le client reçoit un bureau
+    # noir alors que KWin, lui, tourne (vécu 02/11/2026). On remet la variable et
+    # on relance le shell s'il a échoué.
+    if command -v systemctl >/dev/null 2>&1; then
+        _sock="$(ls "$run_dir" 2>/dev/null | grep -m1 -E '^wayland-[0-9]+$' || true)"
+        if [ -n "$_sock" ]; then
+            _uctl() {
+                DBUS_SESSION_BUS_ADDRESS="unix:path=$run_dir/bus" \
+                    systemctl --user "$@" >/dev/null 2>&1
+            }
+            _uctl set-environment WAYLAND_DISPLAY="$_sock" || true
+            if [ "$(DBUS_SESSION_BUS_ADDRESS="unix:path=$run_dir/bus" \
+                    systemctl --user is-active plasma-plasmashell 2>/dev/null)" != active ] &&
+                [ "$(DBUS_SESSION_BUS_ADDRESS="unix:path=$run_dir/bus" \
+                    systemctl --user is-failed plasma-plasmashell 2>/dev/null)" = failed ]; then
+                _uctl reset-failed plasma-plasmashell || true
+                _uctl start plasma-plasmashell || true
+                printf 'gremote : plasmashell relancé (WAYLAND_DISPLAY=%s)\n' "$_sock" >&2
+            fi
+        fi
+    fi
+
     rdp_listen_port="${GREMOTE_RDP_REMOTE_PORT:-$(rdp_remote_port "$(id -un)")}"
 
     # Un krdpserver survivant d'une connexion précédente garde son port : le
@@ -329,9 +411,26 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
         sleep 0.1
     done
 
+    # Qualité : par défaut épinglée (--static-quality) à 60, pour ne pas laisser
+    # l'adaptation faire varier l'image en cours de session.
+    # ATTENTION à la courbe de kpipewire en encodage MATÉRIEL :
+    #   global_quality (QP) = 87 − 0,87 × qualité
+    #     100 → QP 1 (quasi sans perte)   90 → QP ≈ 9 (net)
+    #      60 → QP ≈ 35 (mou)             10 → QP ≈ 78 (très flou)
+    # Donc 60 donne déjà une image molle sur du texte ; 90 est le réglage net.
+    # En logiciel l'indice est ignoré par libx264, qui garde son CRF.
+    rdp_quality_args=()
+    [ -n "$QUALITY" ] && rdp_quality_args+=(--quality "$QUALITY")
+    if [ "$ADAPTIVE" -eq 1 ]; then
+        rdp_quality_args+=(--adaptive-quality)
+    else
+        rdp_quality_args+=(--static-quality)
+    fi
+
     krdpserver --address 127.0.0.1 --port "$rdp_listen_port" \
         --username "${GREMOTE_RDP_USER:-$USER}" --password "$rdp_pass" \
         --mode "$rdp_mode" --plasma \
+        "${rdp_quality_args[@]}" \
         --certificate "$cert_dir/cert.pem" \
         --certificate-key "$cert_dir/key.pem" &
     srv_pid=$!
@@ -413,12 +512,32 @@ if [ "$RDP" -eq 1 ]; then
     [ -n "$rdp_pass" ] || die "génération du mot de passe RDP impossible"
 
     rdp_remote_port_num="$(rdp_remote_port "$rdp_user")"
+
+    # Port LOCAL du tunnel : 13389 est un défaut, pas une contrainte. Deux
+    # sessions en parallèle depuis le même poste (deux comptes « côte à côte »)
+    # se disputaient 13389 et la deuxième échouait sur « bind [127.0.0.1]:13389:
+    # Address already in use » avant même d'atteindre l'hôte (vécu 02/11/2026).
+    # On prend le premier port libre à partir du défaut ; --rdp-port reste
+    # prioritaire quand il est donné.
+    if [ "$RDP_PORT_SET" -eq 0 ]; then
+        for _p in $(seq "$RDP_PORT" $((RDP_PORT + 20))); do
+            if ! (exec 3<>"/dev/tcp/127.0.0.1/$_p") 2>/dev/null; then
+                RDP_PORT="$_p"
+                break
+            fi
+        done
+    fi
     ssh_args+=(-o ExitOnForwardFailure=yes -L "127.0.0.1:${RDP_PORT}:127.0.0.1:${rdp_remote_port_num}")
     remote_cmd=(env "GREMOTE_AUDIO_SOCK=${pulse_sock:-}" "GREMOTE_RDP_USER=${rdp_user}")
     if [ "$NOSTART" -eq 1 ]; then
         remote_cmd+=("GREMOTE_NO_START=1")
     fi
-    remote_cmd+=(gremote --serve --rdp)
+    # GREMOTE_REMOTE_BIN : chemin ABSOLU d'un gremote plus récent sur l'hôte.
+    # Sert à tester avant que l'image ne soit construite et déployée : un ssh non
+    # interactif ne lit pas /etc/profile.d, donc il résout `gremote` vers
+    # /usr/bin/gremote de l'image, qui peut être en retard. Sans cette variable,
+    # le comportement est inchangé (résolution par le PATH de sshd).
+    remote_cmd+=("${GREMOTE_REMOTE_BIN:-gremote}" --serve --rdp)
 
     if [ "$DRY_RUN" -eq 1 ]; then
         printf 'ssh'
@@ -452,19 +571,43 @@ if [ "$RDP" -eq 1 ]; then
         die "le serveur RDP de $TARGET n'a pas démarré (voir ci-dessus)"
     fi
 
-    if [ "$RDP_LAUNCH" -eq 1 ] && command -v xfreerdp >/dev/null 2>&1; then
-        printf 'gremote : RDP tunnelisé sur 127.0.0.1:%s (utilisateur %s)\n' \
-            "$RDP_PORT" "$rdp_user"
+
+    # Client RDP local. sdl-freerdp (client SDL3) est préféré : il parle Wayland
+    # natif, donc ni XWayland ni fenêtre X dans le chemin image/entrée. xfreerdp
+    # reste le repli s'il manque. wlfreerdp n'est PAS utilisé : déprécié en amont
+    # (« nobody is actively working on this », FreeRDP 3.32.2) au profit du client
+    # SDL3.
+    rdp_client=""
+    if [ "$RDP_LAUNCH" -eq 1 ]; then
+        if command -v sdl-freerdp >/dev/null 2>&1; then
+            rdp_client=sdl-freerdp
+        elif command -v xfreerdp >/dev/null 2>&1; then
+            rdp_client=xfreerdp
+        fi
+    fi
+
+    if [ -n "$rdp_client" ]; then
+        printf 'gremote : RDP tunnelisé sur 127.0.0.1:%s (utilisateur %s, client %s)\n' \
+            "$RDP_PORT" "$rdp_user" "$rdp_client"
         # Pas de /network:<type> explicite : TOUT type explicite (lan, wan,
         # broadband, modem) fait cesser le client d'annoncer le pipeline
         # graphique exigé par KRdp, qui répond alors par un DEACTIVATE_ALL
         # immédiat — mesuré 02/11/2026 : explicit = rc 147, défaut = connecté.
         # Le profil est donc laissé en autodétection.
-        xfreerdp /v:127.0.0.1:"$RDP_PORT" /u:"$rdp_user" /p:"$rdp_pass" \
-            /cert:ignore +clipboard /dynamic-resolution
+        #
+        # Mot de passe par stdin (/from-stdin:force), jamais dans argv : la ligne
+        # de commande est lisible par TOUT utilisateur local (ps), donc /p:<mdp>
+        # exposait le secret pendant toute la session. Le :force fait demander le
+        # mot de passe AVANT la connexion (sinon c'est le serveur qui le réclame,
+        # plus tard et moins prévisible). Vérifié 02/11/2026 sur sdl-freerdp :
+        # connexion complète (Remote framebuffer BGRA32, rdpgfx) sans tty.
+        printf '%s\n' "$rdp_pass" |
+            "$rdp_client" /v:127.0.0.1:"$RDP_PORT" /u:"$rdp_user" \
+                /cert:ignore /from-stdin:force +clipboard +dynamic-resolution
     else
-        printf 'gremote : connecte-toi avec\n  xfreerdp /v:127.0.0.1:%s /u:%s /p:%s /cert:ignore\n' \
-            "$RDP_PORT" "$rdp_user" "$rdp_pass"
+        printf 'gremote : connecte-toi avec\n'
+        printf "  printf '%%s\\\\n' '%s' | sdl-freerdp /v:127.0.0.1:%s /u:%s /cert:ignore /from-stdin:force\n" \
+            "$rdp_pass" "$RDP_PORT" "$rdp_user"
         wait "$ssh_pid"
     fi
     exit 0

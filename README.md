@@ -77,7 +77,7 @@ what the client does), and a **virtual** one is created only when there is none.
 ```bash
 gremote gab@sucina                    # existing Plasma session, RDP + sound
 gremote --rdp-port 13390 gab@sucina   # use another local tunnel port
-gremote --no-launch gab@sucina        # print the xfreerdp line instead of running it
+gremote --no-launch gab@sucina        # print the client line instead of running it
 gremote --no-audio gab@sucina         # no sound tunnel
 gremote --no-start gab@sucina         # never create a session, fail if none
 ```
@@ -85,6 +85,12 @@ gremote --no-start gab@sucina         # never create a session, fail if none
 The old waypipe mode (nested KWin, `-a`, `-s`, `--video`, `--codec`, `--quality`,
 `--bpf`, `--compress`, `--no-gpu`, `--clean`) was removed on 02/11/2026 — RDP is
 the only transport now, and the removed code stays in the git history.
+
+The local client is `sdl-freerdp` when present (SDL3, native Wayland — no XWayland
+in the image/input path), with `xfreerdp` as fallback. `wlfreerdp` is not used:
+FreeRDP deprecated it in favour of the SDL3 client. The RDP password never appears
+on a command line (readable by any local user through `ps`): it is piped to the
+client's `/from-stdin:force`.
 
 One passwordless SSH key (`ssh-key-add`) and `AllowStreamLocalForwarding` on the
 remote sshd are all it needs.
