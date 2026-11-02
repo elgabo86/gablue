@@ -33,6 +33,12 @@ Environment=XDG_VTNR=3
 # KWin sur la même VT et le même nom D-Bus, donc un client qui streame
 # l'ancienne session. On refuse de démarrer dans ce cas (message clair)
 # plutôt que d'en empiler un second (vécu 02/11/2026).
+# KWin n'obtient la carte DRM que si sa VT est ACTIVE au moment où il démarre :
+# sinon le compositeur n'a aucune sortie (wl_output absent), le screencast de
+# KRdp n'a rien à capturer et le client RDP reste noir (vécu 02/11/2026). On
+# active donc la VT de la session avant de lancer KWin - en root (+) parce que
+# loginctl activate-session n'est pas accordé à une session distante.
+ExecStartPre=+/bin/sh -c 'for s in $$(loginctl show-user %i -p Sessions --value); do if [ "$$(loginctl show-session $$s -p VTNr --value 2>/dev/null)" = 3 ] && [ "$$(loginctl show-session $$s -p State --value 2>/dev/null)" = online ]; then loginctl activate $$s || true; break; fi; done; /bin/chvt 3 || true; sleep 1'
 ExecStartPre=/bin/sh -c 'test ! -S "$XDG_RUNTIME_DIR/gremote-session"'
 ExecStart=/usr/bin/kwin_wayland --no-lockscreen --socket gremote-session -- plasma_session
 # Les processus vivent dans le scope logind, hors du cgroup de l'unité :
