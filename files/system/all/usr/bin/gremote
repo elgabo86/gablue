@@ -393,16 +393,13 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
         return 1
     }
 
-    # La session à distance est VIRTUELLE : le compositeur est configuré par un
-    # drop-in déposé dans le compte (--virtual), qui s'appliquerait aussi à une
-    # session locale. On refuse donc de démarrer à distance si ce compte a déjà
-    # une session graphique sur le siège — il rouvrira la sienne après.
-    my_uid="$(id -u)"
-    for sid in $(loginctl list-sessions --no-legend 2>/dev/null | awk '$4 == "seat0" { print $1 }'); do
-        [ "$(loginctl show-session "$sid" -p User --value 2>/dev/null)" = "$my_uid" ] || continue
-        die "une session locale est ouverte sur ce compte : la session à distance la rendrait hors-écran — ferme-la d'abord"
-    done
-
+    # Règle de choix du mode, sans exception : s'il existe DÉJÀ une session
+    # graphique pour ce compte — locale (siège, DRM) ou distante — on s'y
+    # attache ; sinon on en crée une VIRTUELLE (hors écran, sans VT ni DRM).
+    # C'est ce qui permet de travailler à côté d'une session physique sans la
+    # déranger, et de ne jamais avoir à en ouvrir une quand on ne travaille
+    # qu'à distance. Conséquence : une session physique déjà ouverte sera
+    # PARTAGÉE (l'écran du serveur montre la même chose que le client).
     if ! find_compositor; then
         # Personne n'est connecté : on crée la session au lieu d'échouer.
         # L'unité tourne sous CET utilisateur avec PAMName=login (vraie session

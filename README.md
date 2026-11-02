@@ -69,7 +69,10 @@ a PipeWire tunnel. **If nobody is logged in, it creates the session first**
 your own desktop, which survives the disconnect. The session is **virtual** —
 KWin renders off-screen, with no DRM device, no VT and no seat — so several
 accounts can be connected at the same time (gab and bdc), and the physical screen
-keeps showing the greeter. `--no-start` keeps the explicit-failure behaviour.
+keeps showing the greeter. The rule is: **an existing graphical session for that
+account is reused** (a physical one is shared — the server's screen then shows
+what the client does), and a **virtual** one is created only when there is none.
+`--no-start` keeps the explicit-failure behaviour.
 
 ```bash
 gremote gab@sucina                    # existing Plasma session, RDP + sound
