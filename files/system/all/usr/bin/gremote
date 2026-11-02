@@ -1,32 +1,22 @@
 #!/usr/bin/bash
 
-# gremote — bureau Wayland éphémère vers un autre poste Gablue (waypipe)
+# gremote — bureau Plasma distant d'un poste Gablue, par RDP tunnelisé en SSH
 #
-# Ouvre une session Plasma (ou une seule application) hébergée sur une machine
-# distante et l'affiche dans une fenêtre du poste local. Le compositeur distant
-# est un KWin imbriqué : waypipe ne transporte qu'une seule surface Wayland,
-# tout le reste (applications, fichiers, fenêtres) reste sur la machine distante.
+# Expose la session graphique de l'hôte (existante, ou créée virtuelle) dans une
+# fenêtre du poste local : image et entrée par RDP, son par un tunnel PipeWire en
+# SSH. Rien n'est exposé sur le réseau — RDP est derrière un -L local, l'audio
+# derrière un -R, et le mot de passe RDP est tiré au hasard à chaque session.
 #
-# La session est ÉPHÉMÈRE : elle meurt avec la connexion SSH/waypipe.
-#
-# Transport par défaut : RDP (krdpserver) sur la session graphique EXISTANTE de
-# l'hôte, l'image et l'entrée par RDP, le son par un tunnel PipeWire en SSH. Rien
-# n'est exposé sur le réseau : RDP est derrière un -L local, l'audio derrière un
-# -R, et le mot de passe RDP est éphémère.
-#
-# `--waypipe` garde l'ancien mode : un KWin imbriqué, aucune session côté hôte,
-# entrée par le protocole Wayland, lossless donc lourd. Il reste le seul à savoir
-# faire `-a` (une seule application) et à ne demander aucune session ouverte.
+# Si l'hôte n'a aucune session graphique pour ce compte, gremote en crée une
+# VIRTUELLE (hors écran, sans VT ni DRM) : plusieurs comptes peuvent travailler
+# en parallèle et l'écran physique n'est pas pris.
 #
 # Usage :
 #   gremote utilisateur@hôte
-#   gremote --waypipe -a konsole utilisateur@hôte   # une appli (compositeur imbriqué)
-#   gremote -s 1920x1080 --waypipe utilisateur@hôte # taille imposée (waypipe)
-#   gremote --video --waypipe utilisateur@hôte      # force H.264 (waypipe)
+#   gremote --no-start utilisateur@hôte    # échouer si aucune session
 #
 # Mode serveur (appelé par le client via SSH, ne pas lancer à la main) :
-#   gremote --serve --size 1920x1080 [--app konsole]
-#   gremote --serve --rdp                     (mot de passe lu sur stdin)
+#   gremote --serve --rdp                  (mot de passe lu sur stdin)
 
 set -euo pipefail
 
@@ -35,25 +25,14 @@ set -euo pipefail
 # =============================================================================
 
 TARGET=""
-SIZE=""
-APP=""
-VIDEO="auto"          # auto | hw | sw | none
-CODEC="h264"          # h264 | vp9 | av1
-CODEC_SET=0           # 1 si --codec a été donné explicitement
-BPF=""                # bits par image pour l'encodeur vidéo (prioritaire sur --quality)
-QUALITY=""            # low | medium | high (préréglage de bpf)
-COMPRESS="zstd"       # none | lz4[=N] | zstd[=N]
 AUDIO=1               # 1 = tunnel des sockets Pulse/PipeWire locaux (défaut)
 DEBUG=0               # 1 = journal côté hôte (filtré, plafonné)
-NO_GPU=0
 DRY_RUN=0
 SERVE=0
-RDP=1                 # 1 = RDP tunnelisé (défaut) ; --waypipe pour l'ancien mode
+RDP=1                 # 1 = RDP (seul mode depuis le retrait de waypipe)
 RDP_PORT=13389        # port LOCAL du -L ; le port distant dépend du compte
 RDP_LAUNCH=1          # 1 = lancer xfreerdp automatiquement s'il est présent
 NOSTART=0             # 1 = ne pas créer de session si l'hôte n'en a pas
-CLEAN=0
-EXIT_NO_PROBE=3
 
 # =============================================================================
 # SECTION 2 : AIDE
@@ -61,65 +40,35 @@ EXIT_NO_PROBE=3
 
 usage() {
     cat <<'EOF'
-gremote — session Wayland éphémère sur un autre poste Gablue
+gremote — bureau Plasma distant d'un poste Gablue (RDP tunnelisé en SSH)
 
 Usage :
   gremote [options] utilisateur@hôte
 
-Par défaut, gremote expose la session Plasma DÉJÀ OUVERTE de l'hôte en RDP,
-tunnelisé dans SSH : rien n'est exposé sur le réseau, le son revient par un
-tunnel PipeWire, et le mot de passe RDP est éphémère.
+Expose la session Plasma de l'hôte dans une fenêtre : image et entrée par RDP,
+son par un tunnel PipeWire, le tout dans SSH. Aucun port n'est exposé sur le
+réseau et le mot de passe RDP est éphémère. Si l'hôte n'a pas de session pour ce
+compte, gremote en crée une VIRTUELLE (hors écran, sans VT ni DRM).
 
 Options :
-      --waypipe      ancien mode (compositeur imbriqué), requis pour -a
-  -a, --app APP      lancer une seule application (ex. konsole, dolphin) — --waypipe
-  -s, --size WxH     taille de l'écran distant (--waypipe ; défaut 1600x900 en
-                     2K+, 1280x720 en 1080p)
-      --video[=MODE] codec vidéo : auto (défaut : H.264 si le GPU distant encode
-                     en Vulkan video, sinon logiciel), hw, sw, none
-      --no-video     couper la vidéo (débit brut plus élevé : plutôt pour le LAN)
-      --codec C      h264 (défaut), vp9 ou av1
-      --quality Q    low, medium ou high (2e4 / 1e5 / 5e5 bits par image)
-      --bpf N        débit de la vidéo en bits PAR IMAGE (écrase --quality) :
-                     débit visé = bpf x 100 (waypipe suppose 100 i/s)
-      --compress M   none, lz4[=N] ou zstd[=N] (défaut : zstd)
-      --no-gpu       désactiver le transfert dmabuf (écran noir inter-GPU)
       --rdp-port N   port LOCAL du tunnel RDP (défaut : 13389)
-      --no-launch    ne pas lancer xfreerdp automatiquement (affiche la commande)
-      --no-start     ne pas créer de session si l'hôte n'en a pas (échec explicite)
+      --no-launch    ne pas lancer xfreerdp (affiche la commande)
+      --no-start     ne pas créer de session si l'hôte n'en a pas
       --audio        transférer le son par SSH (défaut)
       --no-audio     couper l'audio
-      --debug        journal côté hôte (filtré, plafonné à 1 Mio), muet sinon
+      --debug        journal côté hôte (filtré, plafonné à 1 Mio)
   -n, --dry-run      afficher la commande sans l'exécuter
   -h, --help         cette aide
-      --clean        terminer les sessions gremote orphelines de cette machine
 
-La session est éphémère : fermer la fenêtre (ou Ctrl+C) la termine.
-Le pointeur se saisit avec Ctrl droite dans la fenêtre du compositeur.
-
-Réglé pour la latence WAN : H.264 à 3e4 bits par image (~3 Mbit/s visés),
-qualité volontairement basse. Lien rapide ou CPU chargé côté hôte :
---no-video --compress lz4. Meilleure image : --quality high (~50 Mbit/s).
-
-Attention : waypipe n'encode que des tampons dmabuf OPAQUES 8 BITS
-(Xrgb8888/Xbgr8888). Le compositeur imbriqué présente les siens en ARGB
-(alpha) ou 10 bits → aucun encodage, --video/--bpf sont sans effet sur un
-bureau complet. Ils ne servent qu'avec -a et une application qui présente du
-Xrgb8888 (mesuré : ffplay 21,7 Mio sans vidéo, 2,06 Mio à bpf=3e4). Sur un
-bureau, les vrais leviers sont la taille (720p en 1080p) et --compress.
-
-L'audio passe par SSH : les sockets PipeWire/Pulse de CE poste sont transférés
-vers l'hôte, donc les applications distantes jouent ici. --no-audio pour couper.
-
-Les options à valeur acceptent aussi la forme --option=valeur.
+L'ancien mode waypipe (compositeur imbriqué, -a, -s, --video, --codec,
+--quality, --bpf, --compress, --no-gpu, --clean) a été retiré le 02/11/2026.
 EOF
 }
 
-# Port d'écoute propre au COMPTE, dérivé de son nom : deux utilisateurs
-# peuvent ainsi avoir chacun leur session en même temps (chacun son ssh, son
-# krdpserver sur la même machine) sans se disputer 127.0.0.1:3389. Le client
-# calcule le même port à partir du nom de compte, donc aucune négociation et
-# aucun tunnel à rouvrir.
+# Port d'écoute propre au COMPTE, dérivé de son nom : deux utilisateurs peuvent
+# avoir chacun leur session en même temps (chacun son ssh, son krdpserver sur la
+# même machine) sans se disputer 127.0.0.1:3389. Le client calcule le même port à
+# partir du nom de compte, donc aucune négociation et aucun tunnel à rouvrir.
 rdp_remote_port() {
     local u="${1:-$USER}" h=0 i c
     for (( i = 0; i < ${#u}; i++ )); do
@@ -140,40 +89,6 @@ die() {
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        -a|--app)
-            [ $# -ge 2 ] || die "$1 attend une valeur"
-            APP="$2"
-            shift 2
-            ;;
-        --app=*)
-            APP="${1#*=}"
-            shift
-            ;;
-        -s|--size)
-            [ $# -ge 2 ] || die "$1 attend une valeur (WxH)"
-            SIZE="$2"
-            shift 2
-            ;;
-        --size=*)
-            SIZE="${1#*=}"
-            shift
-            ;;
-        --video)
-            VIDEO="hw"
-            shift
-            ;;
-        --video=*)
-            VIDEO="${1#*=}"
-            shift
-            ;;
-        --no-video)
-            VIDEO="none"
-            shift
-            ;;
-        --no-gpu)
-            NO_GPU=1
-            shift
-            ;;
         --audio)
             AUDIO=1
             shift
@@ -186,48 +101,6 @@ while [ $# -gt 0 ]; do
             DEBUG=1
             shift
             ;;
-        --codec)
-            [ $# -ge 2 ] || die "--codec attend une valeur"
-            CODEC="$2"
-            CODEC_SET=1
-            shift 2
-            ;;
-        --codec=*)
-            [ -n "${1#*=}" ] || die "--codec attend une valeur"
-            CODEC="${1#*=}"
-            CODEC_SET=1
-            shift
-            ;;
-        --quality)
-            [ $# -ge 2 ] || die "--quality attend une valeur"
-            QUALITY="$2"
-            shift 2
-            ;;
-        --quality=*)
-            [ -n "${1#*=}" ] || die "--quality attend une valeur"
-            QUALITY="${1#*=}"
-            shift
-            ;;
-        --bpf)
-            [ $# -ge 2 ] || die "--bpf attend une valeur"
-            BPF="$2"
-            shift 2
-            ;;
-        --bpf=*)
-            [ -n "${1#*=}" ] || die "--bpf attend une valeur"
-            BPF="${1#*=}"
-            shift
-            ;;
-        --compress)
-            [ $# -ge 2 ] || die "--compress attend une valeur"
-            COMPRESS="$2"
-            shift 2
-            ;;
-        --compress=*)
-            [ -n "${1#*=}" ] || die "--compress attend une valeur"
-            COMPRESS="${1#*=}"
-            shift
-            ;;
         -n|--dry-run)
             DRY_RUN=1
             shift
@@ -238,10 +111,6 @@ while [ $# -gt 0 ]; do
             ;;
         --rdp)
             RDP=1
-            shift
-            ;;
-        --waypipe)
-            RDP=0
             shift
             ;;
         --rdp-port)
@@ -262,10 +131,6 @@ while [ $# -gt 0 ]; do
             NOSTART=1
             shift
             ;;
-        --clean)
-            CLEAN=1
-            shift
-            ;;
         -h|--help)
             usage
             exit 0
@@ -284,68 +149,6 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
-
-case "$VIDEO" in
-    auto|hw|sw|none) ;;
-    *) die "--video attend auto, hw, sw ou none" ;;
-esac
-
-case "$CODEC" in
-    h264|vp9|av1) ;;
-    *) die "--codec attend h264, vp9 ou av1" ;;
-esac
-
-case "$QUALITY" in
-    ""|low|medium|high) ;;
-    *) die "--quality attend low, medium ou high" ;;
-esac
-
-printf '%s' "$COMPRESS" | grep -qE '^(none|lz4|zstd)(=[0-9]+)?$' ||
-    die "--compress attend none, lz4[=N] ou zstd[=N]"
-
-if [ -n "$BPF" ]; then
-    printf '%s' "$BPF" | grep -qE '^[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$' ||
-        die "--bpf attend un nombre de bits par image (ex. 5e5)"
-fi
-
-[ "$VIDEO" = none ] && [ -n "$BPF$QUALITY" ] &&
-    die "--bpf/--quality n'ont pas de sens avec --video=none"
-
-# -a lance une application dans un compositeur imbriqué : notion propre au mode
-# waypipe, le RDP expose la session entière.
-if [ "$RDP" -eq 1 ] && [ -n "$APP" ]; then
-    die "l'option -a/--app n'existe qu'en mode --waypipe (le RDP expose toute la session)"
-fi
-
-# =============================================================================
-# SECTION 4 : MODE SERVEUR (exécuté sur l'hôte distant, via waypipe)
-# =============================================================================
-
-# Nettoyage local des sessions orphelines (compositeur imbriqué resté vivant).
-if [ "$CLEAN" -eq 1 ]; then
-    killed=0
-    # Ciblage strict : uniquement les binaires kwin_wayland (jamais un shell dont
-    # la ligne de commande contiendrait la chaîne — piège pgrep -f classique).
-    for pid in $(pgrep -x kwin_wayland || true); do
-        if tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -qx -- '--wayland-display'; then
-            kill -KILL "$pid" 2>/dev/null && killed=1
-        fi
-    done
-    # plasmashell des sessions imbriquées uniquement (marqué par WAYLAND_DISPLAY),
-    # jamais celui d'une session locale.
-    for pid in $(pgrep -x plasmashell || true); do
-        if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null |
-            grep -qx 'WAYLAND_DISPLAY=wayland-gremote'; then
-            kill -KILL "$pid" 2>/dev/null && killed=1
-        fi
-    done
-    if [ "$killed" -eq 1 ]; then
-        echo "sessions gremote terminées"
-    else
-        echo "aucune session gremote en cours"
-    fi
-    exit 0
-fi
 
 # =============================================================================
 # SECTION 4 bis : MODE SERVEUR RDP (sur l'hôte, dans la session graphique)
@@ -554,265 +357,24 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     exit 0
 fi
 
-if [ "$SERVE" -eq 1 ]; then
-    [ -n "${WAYLAND_DISPLAY:-}" ] || die "--serve doit être lancé par waypipe (WAYLAND_DISPLAY absent)"
-
-    # Journal : MUET par défaut. Tout envoyer dans un fichier a produit 48 Mo en
-    # 15 min (dbus/kded activant org.bluez.obex en boucle, vécu 01/11/2026) — et
-    # un log de session ne vaut pas un log illimité. `--debug` côté client
-    # (GREMOTE_DEBUG=1) l'active, filtré des activations D-Bus et plafonné à 1 Mio.
-    if [ "${GREMOTE_DEBUG:-0}" = 1 ]; then
-        LOG="${XDG_CACHE_HOME:-$HOME/.cache}/gremote.log"
-        mkdir -p "$(dirname "$LOG")"
-        : > "$LOG"
-        OUT="$LOG"
-        export LOG OUT
-        # Plafond : au-delà de 1 Mio, on repart de zéro (debug uniquement).
-        (
-            while sleep 60; do
-                if [ "$(stat -c%s "$LOG" 2>/dev/null || echo 0)" -gt 1048576 ]; then
-                    : > "$LOG"
-                fi
-            done
-        ) &
-    else
-        OUT=/dev/null
-        export OUT
-    fi
-
-    # Un DISPLAY hérité du SSH fait croire à X11 et fait planter plasmashell.
-    unset DISPLAY
-
-    # Sans ces variables, plasmashell démarre mais ne peint pas le bureau.
-    XDG_CURRENT_DESKTOP=KDE
-    XDG_SESSION_DESKTOP=KDE
-    XDG_SESSION_TYPE=wayland
-    KDE_FULL_SESSION=true
-    DESKTOP_SESSION=plasma
-    # Le pont accessibilité tente d'activer org.a11y.Bus, qui échoue en SSH.
-    NO_AT_BRIDGE=1
-    QT_ACCESSIBILITY=0
-    export XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE KDE_FULL_SESSION DESKTOP_SESSION
-    export NO_AT_BRIDGE QT_ACCESSIBILITY
-    # Pas de QT_FORCE_STDERR_LOGGING/ASSUME_STDERR_HAS_CONSOLE : ajoutés pour
-    # diagnostiquer plasmashell, ils ont fait 48 Mo de log en 15 min (vécu 01/11/2026)
-    # et noient les vraies erreurs. Le journal suffit pour les traces de crash.
-
-    W=1600
-    H=900
-    if [ -n "$SIZE" ]; then
-        W="${SIZE%x*}"
-        H="${SIZE#*x}"
-    fi
-    APP="${APP:-plasmashell}"
-    export W H APP
-
-    # PID du serveur waypipe (notre parent) : la session doit mourir avec lui.
-    # Constaté le 01/11/2026 : à la fermeture de la fenêtre, kwin_wayland
-    # imbriqué ne quitte pas de lui-même et plasmashell survit avec lui.
-    waypipe_pid=$PPID
-    export waypipe_pid
-
-    # Bus D-Bus privé : sur le bus utilisateur persistant, plasmashell se lance
-    # mais ne peint rien (constaté 01/11/2026). Pas de --xwayland non plus :
-    # XWayland exige systemd1, absent d'un bus privé, et son échec tue plasmashell.
-    #
-    # Le trap nettoie le groupe (kactivitymanagerd, bus privé) sur sortie.
-    run_session() {
-        dbus-run-session -- bash -c '
-            trap "kill -9 0" EXIT HUP INT TERM
-            kactivitymanagerd >>"$OUT" 2>&1 &
-            # Chien de garde : si le serveur waypipe disparaît, la session est terminée.
-            (
-                while grep -qx waypipe "/proc/$waypipe_pid/comm" 2>/dev/null; do sleep 2; done
-                kill -9 0
-            ) &
-            kwin_wayland --wayland-display "$WAYLAND_DISPLAY" --socket wayland-gremote \
-                --width "$W" --height "$H" -- "$APP" >>"$OUT" 2>&1 &
-            kwin_pid=$!
-            wait "$kwin_pid"
-        '
-    }
-
-    if [ "${GREMOTE_DEBUG:-0}" = 1 ]; then
-        # Le bruit d'activation D-Bus (kded6 → bluez.obex, etc.) n'apprend rien.
-        run_session 2>&1 |
-            grep -vE 'org\.bluez|activated service|Activating service' >>"$LOG"
-    else
-        run_session >/dev/null 2>&1
-    fi
-fi
-
 # =============================================================================
 # SECTION 5 : MODE CLIENT — VÉRIFICATIONS LOCALES
 # =============================================================================
 
 [ -n "$TARGET" ] || { usage; exit 1; }
 
-[ "$RDP" -eq 1 ] || { command -v waypipe >/dev/null 2>&1 ||
-    die "waypipe absent sur ce poste (paquet : waypipe)"; }
 command -v ssh >/dev/null 2>&1 || die "ssh absent sur ce poste"
-
-local_version=""
-if [ "$RDP" -eq 0 ]; then
-    local_version="$(waypipe --version 2>/dev/null | head -1)"
-    [ -n "$local_version" ] || die "impossible de lire la version de waypipe"
-fi
-
-# Taille par défaut : deux paliers sous la taille de l'écran local (moins de
-# pixels = moins d'octets à encoder, donc moins de latence). Un écran 2K ou plus
-# ouvre une session 1600x900, un écran 1080p une 1280x720 (validé 01/11/2026 :
-# 720p reste lisible sur du 1080p et allège nettement le lien). En dessous de
-# 900 px de haut, on prend la taille de l'écran moins 40 px (barre de titre du
-# compositeur).
-local_size() {
-    command -v kscreen-doctor >/dev/null 2>&1 || return 1
-    command -v jq >/dev/null 2>&1 || return 1
-    # On préfère les géométries (écrans réellement activés) ; à défaut, le plus
-    # grand width/height trouvé dans le JSON (les modes supportés, au pire).
-    kscreen-doctor -j 2>/dev/null |
-        jq -r '
-            def geo: [.. | objects | (.geometry? // empty)
-                      | select((.width? | type) == "number" and (.height? | type) == "number")
-                      | {w: .width, h: .height}];
-            def all: [.. | objects
-                      | select((.width? | type) == "number" and (.height? | type) == "number")
-                      | {w: .width, h: .height}];
-            (geo | if length > 0 then . else all end)
-            | sort_by(.w * .h) | last | "\(.w)x\(.h)"' 2>/dev/null ||
-        return 1
-}
-
-if [ -z "$SIZE" ]; then
-    if detected="$(local_size)" && printf '%s' "$detected" | grep -qE '^[0-9]+x[0-9]+$'; then
-        W="${detected%x*}"
-        H="${detected#*x}"
-        if [ "$H" -ge 1440 ]; then
-            W=1600
-            H=900
-        elif [ "$H" -ge 900 ]; then
-            W=1280
-            H=720
-        else
-            [ "$W" -gt 1366 ] && W=1366
-            [ "$H" -gt 300 ] && H=$((H - 40))
-        fi
-        SIZE="${W}x${H}"
-    else
-        SIZE="1600x900"
-    fi
-fi
-
-printf '%s' "$SIZE" | grep -qE '^[0-9]+x[0-9]+$' || die "taille invalide : $SIZE (attendu WxH)"
-
-# =============================================================================
-# SECTION 6 : MODE CLIENT — SONDE DE L'HÔTE DISTANT
-# =============================================================================
-
-# Une seule connexion SSH : version waypipe, présence de gremote, encodage H.264 matériel.
-# La sonde teste le chemin que waypipe utilise RÉELLEMENT : Vulkan video, via
-# l'encodeur ffmpeg h264_vulkan (src/video.rs : AV_HWDEVICE_TYPE_VULKAN, et
-# setup_video_encode bascule en logiciel si l'extension VK_KHR_video_encode_h264
-# manque). `vainfo` est trompeur ici : VAAPI n'est pas utilisé par waypipe.
-probe_remote() {
-    ssh -o BatchMode=yes -o ConnectTimeout=8 -- "$TARGET" '
-        w=$(waypipe --version 2>/dev/null | head -1 || true)
-        g=$(command -v gremote 2>/dev/null || true)
-        h=no
-        if command -v ffmpeg >/dev/null 2>&1 &&
-           ffmpeg -hide_banner -loglevel error -init_hw_device vulkan=vk:0 \
-               -f lavfi -i testsrc2=size=1280x720:rate=1 -frames:v 1 \
-               -c:v h264_vulkan -f null - >/dev/null 2>&1; then
-            h=yes
-        fi
-        printf "%s\n%s\n%s\n" "$w" "$g" "$h"
-    '
-}
-
-# En RDP la sonde waypipe ne sert à rien (pas de protocole à apparier) ; en
-# dry-run elle est sautée, sinon on ne peut pas afficher la commande hors ligne.
-probe_ok=0
-if [ "$RDP" -eq 1 ]; then
-    probe_ok=1
-    probe="$(printf 'x\ngremote\nno\n')"
-elif probe="$(probe_remote 2>/dev/null)"; then
-    probe_ok=1
-fi
-if [ "$probe_ok" -eq 0 ]; then
-    cat >&2 <<EOF
-gremote : connexion SSH non interactive impossible vers « $TARGET ».
-
-Vérifie que :
-  - la machine est joignable et que le compte existe ;
-  - ta clé publique y est installée (ssh-key-add $TARGET) ;
-  - son sshd autorise le transfert de socket (AllowStreamLocalForwarding).
-EOF
-    exit "$EXIT_NO_PROBE"
-fi
-
-remote_version="$(printf '%s\n' "$probe" | sed -n 1p)"
-remote_gremote="$(printf '%s\n' "$probe" | sed -n 2p)"
-remote_h264="$(printf '%s\n' "$probe" | sed -n 3p)"
-
-[ -n "$remote_gremote" ] ||
-    die "gremote absent sur $TARGET — cette machine doit tourner sur une image Gablue à jour"
-{ [ "$RDP" -eq 1 ] || [ "$remote_version" = "$local_version" ]; } ||
-    die "versions waypipe différentes (local : ${local_version:-?} / distant : ${remote_version:-absent}) — le protocole n'est pas compatible, mets les deux machines à jour"
 
 # =============================================================================
 # SECTION 7 : MODE CLIENT — LANCEMENT
 # =============================================================================
 
-# Débit de l'encodeur. ATTENTION : waypipe ne fait pas bpf x images/s réelles, il
-# code un framerate nominal de 100 i/s (src/video.rs, les deux chemins sw et hw) :
-#     cr.bit_rate = bpf * 100
-# donc bpf=1.2e5 vise 12 Mbit/s et bpf=3e4 vise 3 Mbit/s. Le défaut ci-dessous
-# (3e4) est choisi pour la latence WAN ; waypipe, lui, prend 1.2e5 par défaut.
-DEFAULT_BPF="3e4"
-case "$QUALITY" in
-    low) quality_bpf=2e4 ;;
-    medium) quality_bpf=1e5 ;;
-    high) quality_bpf=5e5 ;;
-    *) quality_bpf="" ;;
-esac
-target_bpf="${BPF:-${quality_bpf:-$DEFAULT_BPF}}"
-
-# Vidéo ACTIVE par défaut (hors --no-video) : c'est elle qui divise le débit par
-# 10-50 sur un lien lent, donc la latence WAN. H.264 matériel si l'hôte expose
-# Vulkan video, sinon logiciel (x264 ultrafast/zerolatency, ~1 cœur côté hôte).
-# Sur un lien rapide ou une machine chargée : --no-video --compress lz4.
-video_mode="$VIDEO"
-if [ "$video_mode" = "auto" ]; then
-    if [ "$remote_h264" = "yes" ]; then
-        video_mode="hw"
-    else
-        video_mode="sw"
-    fi
-fi
-
-# --video=hw explicite alors que l'hôte n'a pas d'encodage Vulkan : waypipe
-# retomberait en logiciel en silence, on le dit.
-if [ "$video_mode" = "hw" ] && [ "$remote_h264" != "yes" ]; then
-    printf 'gremote : %s n'"'"'a pas d'"'"'encodage H.264 Vulkan, waypipe utilisera le logiciel\n' \
-        "$TARGET" >&2
-fi
-
-video_args=()
-if [ "$video_mode" != "none" ]; then
-    video_opts=("$video_mode" "$CODEC")
-    [ -n "$target_bpf" ] && video_opts+=("bpf=$target_bpf")
-    video_args=(--video="$(IFS=,; printf '%s' "${video_opts[*]}")")
-fi
-
-gpu_args=()
-[ "$NO_GPU" -eq 1 ] && gpu_args=(--no-gpu)
-
-# Audio : waypipe ne transporte PAS le son (protocole Wayland uniquement). On
-# transfère donc par SSH les sockets PipeWire/Pulse de CE poste vers l'hôte : les
-# applications distantes jouent directement sur les haut-parleurs d'ici, sans
-# port ouvert ni service en plus. Deux -R : Pulse (cas normal, pipewire-pulse)
-# et PipeWire natif (clients qui parlent le protocole natif). Condition côté
-# sshd distant : AllowStreamLocalForwarding — déjà exigé par waypipe.
+# Audio : KRdp ne transporte pas le son. On transfère donc par SSH les sockets
+# PipeWire/Pulse de CE poste vers l'hôte : les applications distantes jouent
+# directement sur les haut-parleurs d'ici, sans port ouvert ni service en plus.
+# Deux -R : Pulse (cas normal, pipewire-pulse) et PipeWire natif (clients qui
+# parlent le protocole natif). Condition côté sshd distant :
+# AllowStreamLocalForwarding.
 # Le chemin local des sockets n'existe pas sur l'hôte : on transfère vers un
 # socket neuf sous /tmp, dont le nom porte l'uid et le PID du client.
 ssh_args=()
@@ -839,16 +401,6 @@ if [ "$AUDIO" -eq 1 ]; then
             "$run_dir" >&2
     fi
 fi
-
-# waypipe ne passe PAS par un shell côté hôte : il fait execvp() sur le premier
-# argument (erreur vécue : "Failed to run program \"PULSE_SERVER=unix:...\"") —
-# d'où `env`, binaire réel, pour poser les variables avant gremote.
-if [ ${#audio_env[@]} -gt 0 ]; then
-    remote_cmd=(env "${audio_env[@]}" gremote --serve --size "$SIZE")
-else
-    remote_cmd=(gremote --serve --size "$SIZE")
-fi
-[ -n "$APP" ] && remote_cmd+=(--app "$APP")
 
 # ---------------------------------------------------------------------------
 # Mode RDP : tout passe par SSH. Le -L n'expose RDP que sur 127.0.0.1 du poste
@@ -917,23 +469,3 @@ if [ "$RDP" -eq 1 ]; then
     fi
     exit 0
 fi
-
-if [ "$DRY_RUN" -eq 1 ]; then
-    printf 'waypipe --compress %s' "$COMPRESS"
-    for arg in ${video_args[@]+"${video_args[@]}"} ${gpu_args[@]+"${gpu_args[@]}"}; do
-        printf ' %s' "$arg"
-    done
-    printf ' ssh'
-    for arg in ${ssh_args[@]+"${ssh_args[@]}"}; do
-        printf ' %s' "$arg"
-    done
-    printf ' %s' "$TARGET"
-    for arg in "${remote_cmd[@]}"; do
-        printf ' %s' "$arg"
-    done
-    printf '\n'
-    exit 0
-fi
-
-exec waypipe --compress "$COMPRESS" ${video_args[@]+"${video_args[@]}"} ${gpu_args[@]+"${gpu_args[@]}"} \
-    ssh ${ssh_args[@]+"${ssh_args[@]}"} "$TARGET" "${remote_cmd[@]}"

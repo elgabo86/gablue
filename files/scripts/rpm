@@ -148,10 +148,6 @@ dnf5 -y install \
     tcpdump \
     traceroute
 
-# waypipe : proxy de transfert Wayland (exécuter une app Wayland à distance via SSH)
-# Depuis Fedora officiel (0.11.0-2.fc44), léger : lz4/zstd/openssh déjà présents
-dnf5 -y install waypipe
-
 # Outils SELinux pour compilation des modules personnalisés
 dnf5 -y install \
     checkpolicy \
