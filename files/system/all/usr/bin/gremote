@@ -115,6 +115,20 @@ Les options à valeur acceptent aussi la forme --option=valeur.
 EOF
 }
 
+# Port d'écoute propre au COMPTE, dérivé de son nom : deux utilisateurs
+# peuvent ainsi avoir chacun leur session en même temps (chacun son ssh, son
+# krdpserver sur la même machine) sans se disputer 127.0.0.1:3389. Le client
+# calcule le même port à partir du nom de compte, donc aucune négociation et
+# aucun tunnel à rouvrir.
+rdp_remote_port() {
+    local u="${1:-$USER}" h=0 i c
+    for (( i = 0; i < ${#u}; i++ )); do
+        c="${u:i:1}"
+        h=$(( (h * 31 + $(printf '%d' "'$c")) % 200 ))
+    done
+    printf '%d\n' $(( 3400 + h ))
+}
+
 die() {
     printf 'gremote : %s\n' "$*" >&2
     exit 1
@@ -492,20 +506,6 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     # le client reçoit du noir, voire un reset (mesuré 02/11/2026 : SharedAccess
     # encode, RemoteAccess non).
     rdp_mode=SharedAccess
-
-    # Port d'écoute propre au COMPTE, dérivé de son nom : deux utilisateurs
-    # peuvent ainsi avoir chacun leur session en même temps (chacun son ssh, son
-    # krdpserver sur la même machine) sans se disputer 127.0.0.1:3389. Le client
-    # calcule le même port à partir du nom de compte, donc aucune négociation et
-    # aucun tunnel à rouvrir.
-    rdp_remote_port() {
-        local u="${1:-$USER}" h=0 i c
-        for (( i = 0; i < ${#u}; i++ )); do
-            c="${u:i:1}"
-            h=$(( (h * 31 + $(printf '%d' "'$c")) % 200 ))
-        done
-        printf '%d\n' $(( 3400 + h ))
-    }
 
     command -v krdpserver >/dev/null 2>&1 ||
         die "krdpserver absent sur l'hôte (paquet krdp)"
