@@ -65,10 +65,11 @@ cosign verify --key cosign.pub ghcr.io/elgabo86/gablue-main:latest
 host's Plasma session over RDP, tunnelled inside SSH: nothing is exposed on the
 network, the RDP password is drawn per session, and the sound comes back through
 a PipeWire tunnel. **If nobody is logged in, it creates the session first**
-(`gremote-session@<user>.service`, a real logind session on VT3): you log in with
-your own SSH account and get your own desktop, which survives the disconnect.
-One remote session at a time, and `--no-start` keeps the explicit-failure
-behaviour.
+(`gremote-session@<user>.service`): you log in with your own SSH account and get
+your own desktop, which survives the disconnect. The session is **virtual** —
+KWin renders off-screen, with no DRM device, no VT and no seat — so several
+accounts can be connected at the same time (gab and bdc), and the physical screen
+keeps showing the greeter. `--no-start` keeps the explicit-failure behaviour.
 
 ```bash
 gremote gab@sucina                    # existing Plasma session, RDP + sound

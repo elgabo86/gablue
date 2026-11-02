@@ -49,7 +49,7 @@ NO_GPU=0
 DRY_RUN=0
 SERVE=0
 RDP=1                 # 1 = RDP tunnelisé (défaut) ; --waypipe pour l'ancien mode
-RDP_PORT=13389        # port LOCAL du -L (127.0.0.1), RDP distant sur 3389
+RDP_PORT=13389        # port LOCAL du -L ; le port distant dépend du compte
 RDP_LAUNCH=1          # 1 = lancer xfreerdp automatiquement s'il est présent
 NOSTART=0             # 1 = ne pas créer de session si l'hôte n'en a pas
 CLEAN=0
@@ -379,15 +379,14 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
         return 1
     }
 
-    # Une seule session à distance à la fois : la VT3 est réservée (cf. README).
-    # Si un autre compte y a déjà la sienne, on le dit clairement au lieu de
-    # démarrer un compositeur qui lui disputerait la carte DRM.
+    # La session à distance est VIRTUELLE : le compositeur est configuré par un
+    # drop-in déposé dans le compte (--virtual), qui s'appliquerait aussi à une
+    # session locale. On refuse donc de démarrer à distance si ce compte a déjà
+    # une session graphique sur le siège — il rouvrira la sienne après.
     my_uid="$(id -u)"
     for sid in $(loginctl list-sessions --no-legend 2>/dev/null | awk '$4 == "seat0" { print $1 }'); do
-        [ "$(loginctl show-session "$sid" -p VTNr --value 2>/dev/null)" = 3 ] || continue
-        [ "$(loginctl show-session "$sid" -p User --value 2>/dev/null)" = "$my_uid" ] && continue
-        other="$(loginctl show-session "$sid" -p Name --value 2>/dev/null)"
-        die "la session à distance de ${other:-un autre compte} occupe déjà la VT3 — une seule à la fois"
+        [ "$(loginctl show-session "$sid" -p User --value 2>/dev/null)" = "$my_uid" ] || continue
+        die "une session locale est ouverte sur ce compte : la session à distance la rendrait hors-écran — ferme-la d'abord"
     done
 
     if ! find_compositor; then
@@ -416,9 +415,9 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     export XDG_RUNTIME_DIR="$run_dir"
     export DBUS_SESSION_BUS_ADDRESS="unix:path=${run_dir}/bus"
 
-    # Sans sortie (wl_output), KRdp diffuse du noir sans la moindre erreur :
-    # c'est le cas quand KWin a démarré sur une VT inactive. Mieux vaut refuser
-    # que livrer une fenêtre noire qui laisse croire à un bug du client.
+    # Sans sortie (wl_output), KRdp diffuse du noir sans la moindre erreur.
+    # Mieux vaut refuser que livrer une fenêtre noire qui laisse croire à un bug
+    # du client.
     if command -v wayland-info >/dev/null 2>&1; then
         _globals="$(timeout 5 wayland-info 2>/dev/null || true)"
         case "$_globals" in
@@ -488,15 +487,32 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     # « connection reset by peer » après l'authentification (vécu 02/11/2026).
     # SharedAccess capture la sortie réelle des fenêtres de session : c'est ce
     # qu'on veut ici, et il streame effectivement (VA-API actif pendant le test).
-    rdp_mode=RemoteAccess
-    if systemctl -q is-active "gremote-session@${USER}.service" 2>/dev/null; then
-        rdp_mode=SharedAccess
-    fi
+    # SharedAccess capture la sortie réelle du compositeur. RemoteAccess fabrique
+    # un moniteur virtuel : sur une session hors écran il n'est jamais rempli et
+    # le client reçoit du noir, voire un reset (mesuré 02/11/2026 : SharedAccess
+    # encode, RemoteAccess non).
+    rdp_mode=SharedAccess
+
+    # Port d'écoute propre au COMPTE, dérivé de son nom : deux utilisateurs
+    # peuvent ainsi avoir chacun leur session en même temps (chacun son ssh, son
+    # krdpserver sur la même machine) sans se disputer 127.0.0.1:3389. Le client
+    # calcule le même port à partir du nom de compte, donc aucune négociation et
+    # aucun tunnel à rouvrir.
+    rdp_remote_port() {
+        local u="${1:-$USER}" h=0 i c
+        for (( i = 0; i < ${#u}; i++ )); do
+            c="${u:i:1}"
+            h=$(( (h * 31 + $(printf '%d' "'$c")) % 200 ))
+        done
+        printf '%d\n' $(( 3400 + h ))
+    }
 
     command -v krdpserver >/dev/null 2>&1 ||
         die "krdpserver absent sur l'hôte (paquet krdp)"
 
-    # Un krdpserver survivant d'une connexion précédente garde le port 3389 : le
+    rdp_listen_port="${GREMOTE_RDP_REMOTE_PORT:-$(rdp_remote_port "$(id -un)")}"
+
+    # Un krdpserver survivant d'une connexion précédente garde son port : le
     # nouveau ne peut pas s'y lier, et le client se connecte à l'ANCIEN avec le
     # mot de passe neuf — d'où un ERRCONNECT_LOGON_FAILURE à la deuxième
     # connexion alors que tout semble normal (vécu 02/11/2026). On le remplace.
@@ -505,11 +521,11 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     done
 
     for _ in $(seq 1 50); do
-        (exec 3<>/dev/tcp/127.0.0.1/3389) 2>/dev/null || break
+        (exec 3<>/dev/tcp/127.0.0.1/"$rdp_listen_port") 2>/dev/null || break
         sleep 0.1
     done
 
-    krdpserver --address 127.0.0.1 --port 3389 \
+    krdpserver --address 127.0.0.1 --port "$rdp_listen_port" \
         --username "${GREMOTE_RDP_USER:-$USER}" --password "$rdp_pass" \
         --mode "$rdp_mode" --plasma \
         --certificate "$cert_dir/cert.pem" \
@@ -523,15 +539,16 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     # quand le distant n'écoute pas encore (vécu 02/11/2026).
     up=0
     for _ in $(seq 1 150); do
-        if (exec 3<>/dev/tcp/127.0.0.1/3389) 2>/dev/null; then
+        if (exec 3<>/dev/tcp/127.0.0.1/"$rdp_listen_port") 2>/dev/null; then
             up=1
             break
         fi
         kill -0 "$srv_pid" 2>/dev/null || break
         sleep 0.2
     done
-    [ "$up" -eq 1 ] || die "krdpserver n'écoute pas sur 127.0.0.1:3389"
-    printf 'GREMOTE-RDP-READY\n'
+    [ "$up" -eq 1 ] ||
+        die "krdpserver n'écoute pas sur 127.0.0.1:${rdp_listen_port} (port déjà pris par un autre service ?)"
+    printf 'GREMOTE-RDP-READY %s\n' "$rdp_listen_port"
     wait "$srv_pid"
     exit 0
 fi
@@ -842,7 +859,8 @@ if [ "$RDP" -eq 1 ]; then
     rdp_pass="$(head -c 200 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-20)"
     [ -n "$rdp_pass" ] || die "génération du mot de passe RDP impossible"
 
-    ssh_args+=(-o ExitOnForwardFailure=yes -L "127.0.0.1:${RDP_PORT}:127.0.0.1:3389")
+    rdp_remote_port_num="$(rdp_remote_port "$rdp_user")"
+    ssh_args+=(-o ExitOnForwardFailure=yes -L "127.0.0.1:${RDP_PORT}:127.0.0.1:${rdp_remote_port_num}")
     remote_cmd=(env "GREMOTE_AUDIO_SOCK=${pulse_sock:-}" "GREMOTE_RDP_USER=${rdp_user}")
     if [ "$NOSTART" -eq 1 ]; then
         remote_cmd+=("GREMOTE_NO_START=1")
@@ -869,7 +887,7 @@ if [ "$RDP" -eq 1 ]; then
 
     ready=0
     for _ in $(seq 1 300); do
-        if grep -qx 'GREMOTE-RDP-READY' "$rdp_log" 2>/dev/null; then
+        if grep -q '^GREMOTE-RDP-READY' "$rdp_log" 2>/dev/null; then
             ready=1
             break
         fi

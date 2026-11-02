@@ -5,18 +5,25 @@ After=systemd-user-sessions.service
 Conflicts=shutdown.target
 
 [Service]
+# Session à distance en mode VIRTUEL : KWin rend hors écran (`--virtual`), donc
+# aucun accès DRM, aucune VT, aucun siège. C'est ce qui permet à plusieurs
+# comptes d'avoir chacun leur session en même temps (gab et bdc), et à l'écran
+# physique de rester sur le greeter ou sur une session locale.
+#
 # Plasma 6.8 démarre le compositeur comme unité UTILISATEUR
-# (plasma-kwin_wayland.service) : notre unité ne doit donc PAS lancer de KWin,
-# sinon plasma_session en démarre un second, imbriqué dans le premier (le
-# bureau apparaît alors dans une fenêtre « Compositeur WL-0 »).
-# startplasma-wayland ne rend pas la main : on le garde en tâche de fond et on
-# maintient l'unité vivante explicitement, sinon systemd considère le service
-# terminé et la session se retrouve à moitié démontée.
+# (plasma-kwin_wayland.service, ExecStart=kwin_wayland_wrapper --xwayland). On ne
+# lance donc pas de KWin nous-mêmes : plasma_session en démarrerait un second,
+# imbriqué (le bureau apparaissait dans une fenêtre « Compositeur WL-0 »).
+# On ne peut pas non plus passer --virtual en ligne de commande : le compositeur
+# n'est pas lancé d'ici. D'où le drop-in déposé ci-dessous, qui ajoute --virtual
+# à l'unité utilisateur — et qui est RETIRÉ à l'arrêt, pour ne pas transformer
+# en hors-écran les sessions locales suivantes du même compte.
 Type=simple
 User=%i
-# PAMName=login donne une vraie session logind (siège + VT) : sans elle, KWin
-# n'a pas les droits DRM et krdpserver n'a rien à capturer. Une règle polkit
-# autorise chaque utilisateur à démarrer SA propre unité
+# PAMName=login donne une vraie session logind (XDG_RUNTIME_DIR, gestionnaire
+# utilisateur par compte, bus D-Bus). Volontairement SANS XDG_SEAT ni XDG_VTNR :
+# sans siège, KWin n'obtient pas l'ACL de la carte graphique et reste virtuel.
+# Une règle polkit autorise chaque utilisateur à démarrer SA propre unité
 # (cf. 50-gremote-session.rules), donc aucun mot de passe n'est demandé.
 PAMName=login
 Environment=XDG_SESSION_TYPE=wayland
@@ -24,46 +31,31 @@ Environment=XDG_CURRENT_DESKTOP=KDE
 Environment=XDG_SESSION_DESKTOP=KDE
 Environment=KDE_FULL_SESSION=true
 Environment=DESKTOP_SESSION=plasma
-# VT dédiée aux sessions à distance : celle du greeter (VT1) et d'un
-# utilisateur local restent libres.
-Environment=XDG_SEAT=seat0
-Environment=XDG_VTNR=3
 
-# KWin n'ouvre la carte DRM que si sa VT est ACTIVE au moment où il démarre :
-# sur une VT inactive il n'a aucune sortie (wl_output absent), le screencast de
-# KRdp n'a rien à capturer et le client reste noir (mesuré 02/11/2026 :
-# krdpserver à 0 tick pendant une connexion établie). La session PAM n'existant
-# pas encore ici, `loginctl activate` ne peut pas la viser : c'est /bin/chvt qui
-# bascule la console, et logind accorde l'ACL dès que la session apparaît.
-ExecStartPre=+/bin/sh -c '/bin/chvt 3 || true; sleep 1'
-# Un compositeur déjà vivant pour cet utilisateur signifierait une session
-# concurrente : on refuse plutôt que d'en empiler une seconde sur la même VT
-# (deux KWin se disputent le nom D-Bus org.kde.KWin et le maître DRM).
-ExecStartPre=/bin/sh -c '! pgrep -x -u %i kwin_wayland >/dev/null'
+# Drop-in : `--virtual` sur l'unité utilisateur du compositeur, puis relecture.
+# `kwin_wayland_wrapper` ne déclare pas cette option mais transmet les arguments
+# inconnus à kwin_wayland (mesuré 02/11/2026 : sans --virtual la session n'a
+# aucune sortie, avec elle elle expose Virtual-0).
+ExecStartPre=/bin/sh -c 'd="$HOME/.config/systemd/user/plasma-kwin_wayland.service.d"; mkdir -p "$d"; printf "[Service]\nExecStart=\nExecStart=/usr/bin/kwin_wayland_wrapper --xwayland --virtual\n" > "$d/10-gremote-virtual.conf"; XDG_RUNTIME_DIR="/run/user/$(id -u)" systemctl --user daemon-reload'
 
+# startplasma-wayland ne rend pas la main : on le garde en tâche de fond et on
+# maintient l'unité vivante explicitement, sinon systemd considère le service
+# terminé et la session se retrouve à moitié démontée.
 ExecStart=/bin/sh -c '/usr/bin/startplasma-wayland & exec sleep infinity'
 
-# Une session créée hors connexion locale arrive verrouillée (LockedHint=yes) et
-# l'écran de verrouillage de KDE ignore l'entrée synthétique de KRdp : clavier et
-# souris paraissent morts (vécu 02/11/2026). On la déverrouille dès qu'elle est
-# connue — inutile de toucher l'unité utilisateur commune, qui affecterait aussi
-# les sessions locales du compte.
-ExecStartPost=+/bin/sh -c 'for i in $$(seq 1 60); do for s in $$(loginctl show-user %i -p Sessions --value); do if [ "$$(loginctl show-session $$s -p VTNr --value 2>/dev/null)" = 3 ]; then loginctl unlock-session $$s || true; exit 0; fi; done; sleep 0.5; done; true'
+# Une session créée hors connexion locale arrive parfois verrouillée
+# (LockedHint=yes) et l'écran de verrouillage de KDE ignore l'entrée synthétique
+# de KRdp : clavier et souris paraissent morts (vécu 02/11/2026). On la
+# déverrouille dès que le compositeur est là — inutile de toucher l'unité
+# utilisateur commune, qui affecterait aussi les sessions locales du compte.
+ExecStartPost=+/bin/sh -c 'for _ in $$(seq 1 60); do p=$$(pgrep -x -u %i kwin_wayland | head -1); if [ -n "$$p" ]; then s=$$(grep -oE "session-[0-9]+" /proc/$$p/cgroup | head -1); if [ -n "$$s" ]; then loginctl unlock-session "$${s#session-}" || true; exit 0; fi; fi; sleep 0.5; done; true'
 
-# Arrêt dans le bon ordre, sinon deadlock : KWin ignore SIGTERM, donc
-# `systemctl --user stop` attend son TimeoutStopSec (90 s) ; pendant ce temps la
-# session logind reste en `State=closing`, le gestionnaire utilisateur survit et
-# RELANCE le compositeur — la session ne se ferme jamais, et la connexion
-# suivante hérite d'un KWin sans écran (client noir). Donc : ordre d'arrêt
-# asynchrone d'abord (--no-block), puis fermeture de la session logind, qui
-# emporte le gestionnaire utilisateur et empêche tout redémarrage.
-ExecStop=-/bin/sh -c 'runuser -u %i -- systemctl --user stop --no-block plasma-kwin_wayland.service || true'
+# Arrêt dans le bon ordre : KWin ignore SIGTERM, donc `systemctl --user stop`
+# attend son TimeoutStopSec (90 s). On ne bloque pas (--no-block), puis
+# ExecStopPost ferme la session logind et retire le drop-in.
+ExecStop=-/bin/sh -c 'u=$$(id -u %i); runuser -u %i -- env XDG_RUNTIME_DIR=/run/user/$$u DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$$u/bus systemctl --user stop --no-block plasma-kwin_wayland.service || true'
 
-# Les processus vivent dans le scope logind, hors du cgroup de l'unité, et
-# kwin_wayland ignore SIGTERM : sans ce nettoyage, `systemctl stop` laisse un
-# compositeur qui garde le socket ET le nom D-Bus org.kde.KWin, et le client
-# suivant streame l'ancienne session — souvent verrouillée (vécu 02/11/2026).
-ExecStopPost=+/bin/sh -c 'for s in $$(loginctl show-user %i -p Sessions --value); do [ "$$(loginctl show-session $$s -p VTNr --value 2>/dev/null)" = 3 ] && loginctl terminate-session $$s || true; done; for p in $$(pgrep -x -u %i kwin_wayland); do kill -KILL "$$p"; done; for p in $$(pgrep -x -u %i plasma_session; pgrep -x -u %i plasmashell); do kill -KILL "$$p" 2>/dev/null; done; true'
+ExecStopPost=+/bin/sh -c 'for s in $$(loginctl show-user %i -p Sessions --value); do loginctl terminate-session $$s || true; done; for p in $$(pgrep -x -u %i kwin_wayland); do kill -KILL "$$p"; done; for p in $$(pgrep -x -u %i plasma_session; pgrep -x -u %i plasmashell); do kill -KILL "$$p" 2>/dev/null; done; h=$$(getent passwd %i | cut -d: -f6); u=$$(id -u %i); rm -f "$$h/.config/systemd/user/plasma-kwin_wayland.service.d/10-gremote-virtual.conf"; runuser -u %i -- env XDG_RUNTIME_DIR=/run/user/$$u DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$$u/bus systemctl --user daemon-reload 2>/dev/null || true; true'
 
 [Install]
 WantedBy=multi-user.target
