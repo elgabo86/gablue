@@ -899,12 +899,13 @@ if [ "$RDP" -eq 1 ]; then
     if [ "$RDP_LAUNCH" -eq 1 ] && command -v xfreerdp >/dev/null 2>&1; then
         printf 'gremote : RDP tunnelisé sur 127.0.0.1:%s (utilisateur %s)\n' \
             "$RDP_PORT" "$rdp_user"
-        # /network:lan fige le profil réseau : sans lui FreeRDP interroge
-        # NetworkManager, ce qui déclenche une demande d'autorisation polkit
-        # « contrôle des connexions réseau » au milieu de la connexion (vécu
-        # 02/11/2026).
+        # Pas de /network:<type> explicite : TOUT type explicite (lan, wan,
+        # broadband, modem) fait cesser le client d'annoncer le pipeline
+        # graphique exigé par KRdp, qui répond alors par un DEACTIVATE_ALL
+        # immédiat — mesuré 02/11/2026 : explicit = rc 147, défaut = connecté.
+        # Le profil est donc laissé en autodétection.
         xfreerdp /v:127.0.0.1:"$RDP_PORT" /u:"$rdp_user" /p:"$rdp_pass" \
-            /cert:ignore +clipboard /dynamic-resolution /network:lan
+            /cert:ignore +clipboard /dynamic-resolution
     else
         printf 'gremote : connecte-toi avec\n  xfreerdp /v:127.0.0.1:%s /u:%s /p:%s /cert:ignore\n' \
             "$RDP_PORT" "$rdp_user" "$rdp_pass"
