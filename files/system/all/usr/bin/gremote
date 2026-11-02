@@ -401,6 +401,12 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
                 find_compositor && break
                 sleep 0.2
             done
+            # Un démarrage refusé (compositeur résiduel, VT occupée…) laissait
+            # gremote continuer sur une session morte : le client recevait du
+            # noir sans explication. On s'arrête net avec le motif.
+            if [ -z "$compositor" ] || ! systemctl -q is-active "gremote-session@${USER}.service" 2>/dev/null; then
+                die "la session ${USER} n'a pas démarré : $(systemctl show "gremote-session@${USER}.service" -p Result --value 2>/dev/null). Détail : journalctl -u gremote-session@${USER}"
+            fi
         fi
     fi
     [ -n "$compositor" ] ||
@@ -409,6 +415,17 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     export WAYLAND_DISPLAY="$compositor"
     export XDG_RUNTIME_DIR="$run_dir"
     export DBUS_SESSION_BUS_ADDRESS="unix:path=${run_dir}/bus"
+
+    # Sans sortie (wl_output), KRdp diffuse du noir sans la moindre erreur :
+    # c'est le cas quand KWin a démarré sur une VT inactive. Mieux vaut refuser
+    # que livrer une fenêtre noire qui laisse croire à un bug du client.
+    if command -v wayland-info >/dev/null 2>&1; then
+        _globals="$(timeout 5 wayland-info 2>/dev/null || true)"
+        case "$_globals" in
+            *"interface: 'wl_output'"*) ;;
+            *) die "le compositeur ${compositor} n'a aucune sortie (VT inactive ?) — corrige avec : systemctl restart gremote-session@${USER}" ;;
+        esac
+    fi
     # L'appelant a pu hériter d'un PULSE_SERVER : ici on veut le démon LOCAL,
     # sinon le puits tunnel se créerait sur le poste client.
     unset DISPLAY PULSE_SERVER PIPEWIRE_REMOTE
