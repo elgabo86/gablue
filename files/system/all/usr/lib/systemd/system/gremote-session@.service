@@ -38,10 +38,13 @@ Environment=DESKTOP_SESSION=plasma
 # aucune sortie, avec elle elle expose Virtual-0).
 ExecStartPre=/bin/sh -c 'd="$HOME/.config/systemd/user/plasma-kwin_wayland.service.d"; mkdir -p "$d"; printf "[Service]\nExecStart=\nExecStart=/usr/bin/kwin_wayland_wrapper --xwayland --virtual\n" > "$d/10-gremote-virtual.conf"; XDG_RUNTIME_DIR="/run/user/$(id -u)" systemctl --user daemon-reload'
 
-# startplasma-wayland ne rend pas la main : on le garde en tâche de fond et on
-# maintient l'unité vivante explicitement, sinon systemd considère le service
-# terminé et la session se retrouve à moitié démontée.
-ExecStart=/bin/sh -c '/usr/bin/startplasma-wayland & exec sleep infinity'
+# startplasma-wayland vit exactement le temps de la session : il rend la main
+# quand la session se termine. C'est donc lui le processus principal — pas un
+# « sleep infinity » derrière lui, qui empêchait l'unité de s'arrêter et faisait
+# échouer la déconnexion demandée depuis Plasma (« Transaction for
+# graphical-session.target/stop is destructive … contradicts existing jobs ») :
+# la session restait ouverte, logout sans effet (vécu 02/11/2026).
+ExecStart=/usr/bin/startplasma-wayland
 
 # Une session créée hors connexion locale arrive parfois verrouillée
 # (LockedHint=yes) et l'écran de verrouillage de KDE ignore l'entrée synthétique
