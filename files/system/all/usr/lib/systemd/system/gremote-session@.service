@@ -37,6 +37,12 @@ Environment=DESKTOP_SESSION=plasma
 # inconnus à kwin_wayland (mesuré 02/11/2026 : sans --virtual la session n'a
 # aucune sortie, avec elle elle expose Virtual-0).
 ExecStartPre=/bin/sh -c 'd="$HOME/.config/systemd/user/plasma-kwin_wayland.service.d"; mkdir -p "$d"; printf "[Service]\nExecStart=\nExecStart=/usr/bin/kwin_wayland_wrapper --xwayland --virtual\n" > "$d/10-gremote-virtual.conf"; XDG_RUNTIME_DIR="/run/user/$(id -u)" systemctl --user daemon-reload'
+# Un startplasma-wayland ORPHELIN (ppid 1) d'un démarrage précédent garde la
+# main sur la session : la déconnexion demandée depuis Plasma échoue alors sur
+# « Transaction for graphical-session.target/stop is destructive … contradicts
+# existing jobs » et kwin/plasmashell restent vivants (vécu 02/11/2026). On ne
+# vise que les orphelins, jamais celui d'une session locale en cours.
+ExecStartPre=-/bin/sh -c 'for p in $$(pgrep -f -u %i "^/usr/bin/startplasma-wayland$$"); do [ "$$(ps -o ppid= -p $$p | tr -d " ")" = 1 ] && kill -KILL $$p; done; true'
 
 # startplasma-wayland vit exactement le temps de la session : il rend la main
 # quand la session se termine. C'est donc lui le processus principal — pas un
@@ -58,7 +64,7 @@ ExecStartPost=+/bin/sh -c 'for _ in $$(seq 1 60); do p=$$(pgrep -x -u %i kwin_wa
 # ExecStopPost ferme la session logind et retire le drop-in.
 ExecStop=-/bin/sh -c 'u=$$(id -u %i); runuser -u %i -- env XDG_RUNTIME_DIR=/run/user/$$u DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$$u/bus systemctl --user stop --no-block plasma-kwin_wayland.service || true'
 
-ExecStopPost=+/bin/sh -c 'for s in $$(loginctl show-user %i -p Sessions --value); do loginctl terminate-session $$s || true; done; for p in $$(pgrep -x -u %i kwin_wayland); do kill -KILL "$$p"; done; for p in $$(pgrep -x -u %i plasma_session; pgrep -x -u %i plasmashell); do kill -KILL "$$p" 2>/dev/null; done; h=$$(getent passwd %i | cut -d: -f6); u=$$(id -u %i); rm -f "$$h/.config/systemd/user/plasma-kwin_wayland.service.d/10-gremote-virtual.conf"; runuser -u %i -- env XDG_RUNTIME_DIR=/run/user/$$u DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$$u/bus systemctl --user daemon-reload 2>/dev/null || true; true'
+ExecStopPost=+/bin/sh -c 'for s in $$(loginctl show-user %i -p Sessions --value); do loginctl terminate-session $$s || true; done; for p in $$(pgrep -x -u %i kwin_wayland); do kill -KILL "$$p"; done; for p in $$(pgrep -f -u %i "^/usr/bin/startplasma-wayland$$"); do kill -KILL "$$p" 2>/dev/null; done; for p in $$(pgrep -x -u %i plasma_session; pgrep -x -u %i plasmashell); do kill -KILL "$$p" 2>/dev/null; done; h=$$(getent passwd %i | cut -d: -f6); u=$$(id -u %i); rm -f "$$h/.config/systemd/user/plasma-kwin_wayland.service.d/10-gremote-virtual.conf"; runuser -u %i -- env XDG_RUNTIME_DIR=/run/user/$$u DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$$u/bus systemctl --user daemon-reload 2>/dev/null || true; true'
 
 [Install]
 WantedBy=multi-user.target

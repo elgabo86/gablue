@@ -899,8 +899,12 @@ if [ "$RDP" -eq 1 ]; then
     if [ "$RDP_LAUNCH" -eq 1 ] && command -v xfreerdp >/dev/null 2>&1; then
         printf 'gremote : RDP tunnelisé sur 127.0.0.1:%s (utilisateur %s)\n' \
             "$RDP_PORT" "$rdp_user"
+        # /network:lan fige le profil réseau : sans lui FreeRDP interroge
+        # NetworkManager, ce qui déclenche une demande d'autorisation polkit
+        # « contrôle des connexions réseau » au milieu de la connexion (vécu
+        # 02/11/2026).
         xfreerdp /v:127.0.0.1:"$RDP_PORT" /u:"$rdp_user" /p:"$rdp_pass" \
-            /cert:ignore +clipboard /dynamic-resolution
+            /cert:ignore +clipboard /dynamic-resolution /network:lan
     else
         printf 'gremote : connecte-toi avec\n  xfreerdp /v:127.0.0.1:%s /u:%s /p:%s /cert:ignore\n' \
             "$RDP_PORT" "$rdp_user" "$rdp_pass"
