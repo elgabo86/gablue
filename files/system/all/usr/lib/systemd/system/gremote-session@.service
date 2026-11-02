@@ -1,6 +1,5 @@
 [Unit]
 Description=Remote desktop session for %i (gremote)
-Documentation=man:gremote(1)
 After=systemd-user-sessions.service
 Conflicts=shutdown.target
 
