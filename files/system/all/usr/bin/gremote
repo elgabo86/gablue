@@ -406,15 +406,19 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
         # logind sur VT3) et la règle polkit 50-gremote-session.rules autorise
         # chacun à démarrer la sienne : ni mot de passe, ni sudo, ni NOPASSWD.
         if [ "${GREMOTE_NO_START:-0}" != 1 ] && command -v systemctl >/dev/null 2>&1; then
-            systemctl start "gremote-session@${USER}.service" 2>/dev/null || true
-            for _ in $(seq 1 300); do
+            # --no-block : `systemctl start` sans lui attend la fin de
+            # l'ExecStartPost de l'unité (boucle de déverrouillage, jusqu'à 30 s)
+            # alors que le compositeur est déjà prêt bien avant. On attend nous-
+            # mêmes l'apparition du socket, ce qui est le seul critère utile.
+            systemctl start --no-block "gremote-session@${USER}.service" 2>/dev/null || true
+            for _ in $(seq 1 400); do
                 find_compositor && break
                 sleep 0.2
             done
             # Un démarrage refusé (compositeur résiduel, VT occupée…) laissait
             # gremote continuer sur une session morte : le client recevait du
             # noir sans explication. On s'arrête net avec le motif.
-            if [ -z "$compositor" ] || ! systemctl -q is-active "gremote-session@${USER}.service" 2>/dev/null; then
+            if [ -z "$compositor" ]; then
                 die "la session ${USER} n'a pas démarré : $(systemctl show "gremote-session@${USER}.service" -p Result --value 2>/dev/null). Détail : journalctl -u gremote-session@${USER}"
             fi
         fi

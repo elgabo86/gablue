@@ -37,6 +37,14 @@ Environment=DESKTOP_SESSION=plasma
 # inconnus à kwin_wayland (mesuré 02/11/2026 : sans --virtual la session n'a
 # aucune sortie, avec elle elle expose Virtual-0).
 ExecStartPre=/bin/sh -c 'd="$HOME/.config/systemd/user/plasma-kwin_wayland.service.d"; mkdir -p "$d"; printf "[Service]\nExecStart=\nExecStart=/usr/bin/kwin_wayland_wrapper --xwayland --virtual\n" > "$d/10-gremote-virtual.conf"; XDG_RUNTIME_DIR="/run/user/$(id -u)" systemctl --user daemon-reload'
+# powerdevil n'a rien à faire dans une session hors écran et, ici, il n'acquiert
+# jamais son nom D-Bus (accès i2c refusés, portail indisponible) : son job `start`
+# reste « running », ce qui fait échouer la déconnexion (« Transaction for
+# graphical-session.target/stop is destructive … contradicts existing jobs ») et
+# laisse un `plasma-shutdown` coincé qui absorbe toutes les demandes suivantes
+# (« Logout already in progress ») — vécu 02/11/2026. Masqué pour la durée de la
+# session, retiré à l'arrêt.
+ExecStartPre=/bin/sh -c 'd="$HOME/.config/systemd/user"; mkdir -p "$d"; ln -sf /dev/null "$d/plasma-powerdevil.service"; XDG_RUNTIME_DIR="/run/user/$(id -u)" systemctl --user daemon-reload'
 # Un startplasma-wayland ORPHELIN (ppid 1) d'un démarrage précédent garde la
 # main sur la session : la déconnexion demandée depuis Plasma échoue alors sur
 # « Transaction for graphical-session.target/stop is destructive … contradicts
@@ -57,14 +65,22 @@ ExecStart=/usr/bin/startplasma-wayland
 # de KRdp : clavier et souris paraissent morts (vécu 02/11/2026). On la
 # déverrouille dès que le compositeur est là — inutile de toucher l'unité
 # utilisateur commune, qui affecterait aussi les sessions locales du compte.
-ExecStartPost=+/bin/sh -c 'for _ in $$(seq 1 60); do p=$$(pgrep -x -u %i kwin_wayland | head -1); if [ -n "$$p" ]; then s=$$(grep -oE "session-[0-9]+" /proc/$$p/cgroup | head -1); if [ -n "$$s" ]; then loginctl unlock-session "$${s#session-}" || true; exit 0; fi; fi; sleep 0.5; done; true'
+# La session se retrouve via `startplasma-wayland` (dans le scope session-N du
+# PAM), PAS via kwin_wayland, qui vit dans l'unité utilisateur
+# plasma-kwin_wayland.service : chercher kwin faisait boucler 30 s pour rien et
+# l'unité restait « activating » tout ce temps (vécu 02/11/2026).
+ExecStartPost=+/bin/sh -c 'for _ in $$(seq 1 40); do for p in $$(pgrep -f -u %i "^/usr/bin/startplasma-wayland$$") $$(pgrep -x -u %i kwin_wayland); do s=$$(grep -oE "session-[0-9]+" /proc/$$p/cgroup 2>/dev/null | head -1); if [ -n "$$s" ]; then loginctl unlock-session "$${s#session-}" || true; exit 0; fi; done; sleep 0.5; done; true'
 
 # Arrêt dans le bon ordre : KWin ignore SIGTERM, donc `systemctl --user stop`
 # attend son TimeoutStopSec (90 s). On ne bloque pas (--no-block), puis
 # ExecStopPost ferme la session logind et retire le drop-in.
 ExecStop=-/bin/sh -c 'u=$$(id -u %i); runuser -u %i -- env XDG_RUNTIME_DIR=/run/user/$$u DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$$u/bus systemctl --user stop --no-block plasma-kwin_wayland.service || true'
 
-ExecStopPost=+/bin/sh -c 'for s in $$(loginctl show-user %i -p Sessions --value); do loginctl terminate-session $$s || true; done; for p in $$(pgrep -x -u %i kwin_wayland); do kill -KILL "$$p"; done; for p in $$(pgrep -f -u %i "^/usr/bin/startplasma-wayland$$"); do kill -KILL "$$p" 2>/dev/null; done; for p in $$(pgrep -x -u %i plasma_session; pgrep -x -u %i plasmashell); do kill -KILL "$$p" 2>/dev/null; done; h=$$(getent passwd %i | cut -d: -f6); u=$$(id -u %i); rm -f "$$h/.config/systemd/user/plasma-kwin_wayland.service.d/10-gremote-virtual.conf"; runuser -u %i -- env XDG_RUNTIME_DIR=/run/user/$$u DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$$u/bus systemctl --user daemon-reload 2>/dev/null || true; true'
+# Ne terminer QUE notre session : `loginctl show-user %i -p Sessions` liste TOUTES
+# les sessions du compte, y compris un SSH interactif, qui était donc coupé avec
+# la session distante (vécu 02/11/2026). On retrouve la nôtre par le cgroup des
+# processus de la session (scope session-N), avant de les tuer.
+ExecStopPost=+/bin/sh -c 'sid=""; for p in $$(pgrep -f -u %i "^/usr/bin/startplasma-wayland$$") $$(pgrep -x -u %i kwin_wayland); do s=$$(grep -oE "session-[0-9]+" /proc/$$p/cgroup 2>/dev/null | head -1); if [ -n "$$s" ]; then sid="$${s#session-}"; break; fi; done; if [ -n "$$sid" ]; then loginctl terminate-session "$$sid" || true; fi; for p in $$(pgrep -x -u %i kwin_wayland); do kill -KILL "$$p"; done; for p in $$(pgrep -f -u %i "^/usr/bin/startplasma-wayland$$"); do kill -KILL "$$p" 2>/dev/null; done; for p in $$(pgrep -x -u %i plasma_session; pgrep -x -u %i plasmashell); do kill -KILL "$$p" 2>/dev/null; done; h=$$(getent passwd %i | cut -d: -f6); u=$$(id -u %i); rm -f "$$h/.config/systemd/user/plasma-kwin_wayland.service.d/10-gremote-virtual.conf" "$$h/.config/systemd/user/plasma-powerdevil.service"; runuser -u %i -- env XDG_RUNTIME_DIR=/run/user/$$u DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$$u/bus systemctl --user daemon-reload 2>/dev/null || true; true'
 
 [Install]
 WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+/* Sessions SANS SIÈGE = bureaux distants créés par gremote (gremote-session@).
+ *
+ * plasmashell y demande org.freedesktop.NetworkManager.network-control à chaque
+ * démarrage. polkit ne l'autorise pas implicitement (pas de siège), donc l'agent
+ * KDE ouvre un dialogue d'authentification à chaque connexion, sans que personne
+ * ne puisse y répondre utilement (vécu 02/11/2026).
+ *
+ * On refuse cette action SANS demander pour les sessions sans siège : plus de
+ * dialogue, et l'applet réseau du bureau distant ne peut pas activer/désactiver
+ * le réseau. Toute session pourvue d'un siège (locale, greeter, console) n'est
+ * pas concernée et garde son comportement normal.
+ *
+ * Pas de polkit.spawn ici : il lève une exception si le helper sort non-zéro, ce
+ * qui faisait échouer la règle et revenait au dialogue. subject.seat est fourni
+ * directement par polkit (>= 0.120).
+ */
+polkit.addRule(function (action, subject) {
+    if (action.id != "org.freedesktop.NetworkManager.network-control") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (!subject.seat) {
+        return polkit.Result.NO;
+    }
+    return polkit.Result.NOT_HANDLED;
+});
