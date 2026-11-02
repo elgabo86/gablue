@@ -379,6 +379,17 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
         return 1
     }
 
+    # Une seule session à distance à la fois : la VT3 est réservée (cf. README).
+    # Si un autre compte y a déjà la sienne, on le dit clairement au lieu de
+    # démarrer un compositeur qui lui disputerait la carte DRM.
+    my_uid="$(id -u)"
+    for sid in $(loginctl list-sessions --no-legend 2>/dev/null | awk '$4 == "seat0" { print $1 }'); do
+        [ "$(loginctl show-session "$sid" -p VTNr --value 2>/dev/null)" = 3 ] || continue
+        [ "$(loginctl show-session "$sid" -p User --value 2>/dev/null)" = "$my_uid" ] && continue
+        other="$(loginctl show-session "$sid" -p Name --value 2>/dev/null)"
+        die "la session à distance de ${other:-un autre compte} occupe déjà la VT3 — une seule à la fois"
+    done
+
     if ! find_compositor; then
         # Personne n'est connecté : on crée la session au lieu d'échouer.
         # L'unité tourne sous CET utilisateur avec PAMName=login (vraie session
@@ -467,6 +478,19 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
 
     command -v krdpserver >/dev/null 2>&1 ||
         die "krdpserver absent sur l'hôte (paquet krdp)"
+
+    # Un krdpserver survivant d'une connexion précédente garde le port 3389 : le
+    # nouveau ne peut pas s'y lier, et le client se connecte à l'ANCIEN avec le
+    # mot de passe neuf — d'où un ERRCONNECT_LOGON_FAILURE à la deuxième
+    # connexion alors que tout semble normal (vécu 02/11/2026). On le remplace.
+    for pid in $(pgrep -x -u "$(id -un)" krdpserver 2>/dev/null || true); do
+        kill "$pid" 2>/dev/null || true
+    done
+
+    for _ in $(seq 1 50); do
+        (exec 3<>/dev/tcp/127.0.0.1/3389) 2>/dev/null || break
+        sleep 0.1
+    done
 
     krdpserver --address 127.0.0.1 --port 3389 \
         --username "${GREMOTE_RDP_USER:-$USER}" --password "$rdp_pass" \
