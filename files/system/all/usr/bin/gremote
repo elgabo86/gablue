@@ -401,10 +401,16 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     # Un krdpserver survivant d'une connexion précédente garde son port : le
     # nouveau ne peut pas s'y lier, et le client se connecte à l'ANCIEN avec le
     # mot de passe neuf — d'où un ERRCONNECT_LOGON_FAILURE à la deuxième
-    # connexion alors que tout semble normal (vécu 02/11/2026). On le remplace.
+    # connexion alors que tout semble normal (vécu 02/11/2026). On le remplace :
+    # ouvrir une deuxième connexion coupe donc la première, volontairement.
+    replaced=0
     for pid in $(pgrep -x -u "$(id -un)" krdpserver 2>/dev/null || true); do
         kill "$pid" 2>/dev/null || true
+        replaced=$((replaced + 1))
     done
+    if [ "$replaced" -gt 0 ]; then
+        printf 'gremote : connexion précédente coupée (serveur RDP remplacé)\n' >&2
+    fi
 
     for _ in $(seq 1 50); do
         (exec 3<>/dev/tcp/127.0.0.1/"$rdp_listen_port") 2>/dev/null || break
