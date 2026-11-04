@@ -5,6 +5,9 @@
 # via le data engine "executable").
 # 10/2026 : l'API ne renvoie plus rollingFiveHourLimit — un seul pourcentage
 # (weeklyTokenLimit.percentRemaining), fallback subscription.
+# 04/11/2026 : renommé encore — planWeeklyLimit.percentRemaining (weeklyTokenLimit
+# disparu de la réponse). Ancien nom gardé en fallback de lecture — revérifier
+# si ça re-casse (2 renames du champ en un mois).
 # En cas d'échec (réseau, API, db verrouillée), retombe sur le dernier
 # résultat valide mis en cache (~/.cache/gablue/synthetic-quota.json)
 # avec stale=true, pour que le widget garde ses dernières valeurs.
@@ -74,7 +77,8 @@ def compute(data):
     """Extrait les pourcentages restants (même logique que le plugin TUI)."""
     out = {}
 
-    weekly = data.get("weeklyTokenLimit") or {}
+    # 04/11/2026 : renommé côté API — planWeeklyLimit (weeklyTokenLimit disparu)
+    weekly = data.get("planWeeklyLimit") or data.get("weeklyTokenLimit") or {}
     pct = weekly.get("percentRemaining")
     out["weekly"] = pct if isinstance(pct, (int, float)) else None
     out["weeklyRemaining"] = weekly.get("remainingCredits")
