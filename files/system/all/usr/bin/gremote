@@ -176,6 +176,23 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# Qualité d'encodage, construite ICI (et pas dans la section serveur) : le client
+# doit la TRANSMETTRE à la commande distante, sinon --quality/--adaptive sont
+# parsés puis ignorés et le serveur garde ses valeurs par défaut (constaté
+# 04/11/2026 : « --adaptive --quality 100 » lançait un krdpserver en 60 épinglé).
+# Défaut : qualité épinglée à 60, pour que l'image ne varie pas en cours de
+# session. La courbe de kpipewire en encodage MATÉRIEL est brutale :
+#   global_quality (QP) = 87 − 0,87 × qualité  →  100 → QP 1, 90 → QP ≈ 9,
+#   60 → QP ≈ 35 (mou sur du texte), 10 → QP ≈ 78. En logiciel libx264 ignore
+# cet indice et garde son CRF.
+rdp_quality_args=()
+[ -n "$QUALITY" ] && rdp_quality_args+=(--quality "$QUALITY")
+if [ "$ADAPTIVE" -eq 1 ]; then
+    rdp_quality_args+=(--adaptive-quality)
+else
+    rdp_quality_args+=(--static-quality)
+fi
+
 # =============================================================================
 # SECTION 4 bis : MODE SERVEUR RDP (sur l'hôte, dans la session graphique)
 # =============================================================================
@@ -417,22 +434,6 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
         sleep 0.1
     done
 
-    # Qualité : par défaut épinglée (--static-quality) à 60, pour ne pas laisser
-    # l'adaptation faire varier l'image en cours de session.
-    # ATTENTION à la courbe de kpipewire en encodage MATÉRIEL :
-    #   global_quality (QP) = 87 − 0,87 × qualité
-    #     100 → QP 1 (quasi sans perte)   90 → QP ≈ 9 (net)
-    #      60 → QP ≈ 35 (mou)             10 → QP ≈ 78 (très flou)
-    # Donc 60 donne déjà une image molle sur du texte ; 90 est le réglage net.
-    # En logiciel l'indice est ignoré par libx264, qui garde son CRF.
-    rdp_quality_args=()
-    [ -n "$QUALITY" ] && rdp_quality_args+=(--quality "$QUALITY")
-    if [ "$ADAPTIVE" -eq 1 ]; then
-        rdp_quality_args+=(--adaptive-quality)
-    else
-        rdp_quality_args+=(--static-quality)
-    fi
-
     krdpserver --address 127.0.0.1 --port "$rdp_listen_port" \
         --username "${GREMOTE_RDP_USER:-$USER}" --password "$rdp_pass" \
         --mode "$rdp_mode" --plasma \
@@ -543,7 +544,7 @@ if [ "$RDP" -eq 1 ]; then
     # interactif ne lit pas /etc/profile.d, donc il résout `gremote` vers
     # /usr/bin/gremote de l'image, qui peut être en retard. Sans cette variable,
     # le comportement est inchangé (résolution par le PATH de sshd).
-    remote_cmd+=("${GREMOTE_REMOTE_BIN:-gremote}" --serve --rdp)
+    remote_cmd+=("${GREMOTE_REMOTE_BIN:-gremote}" --serve --rdp "${rdp_quality_args[@]}")
 
     if [ "$DRY_RUN" -eq 1 ]; then
         printf 'ssh'
