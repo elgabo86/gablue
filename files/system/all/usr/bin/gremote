@@ -185,12 +185,22 @@ done
 #   global_quality (QP) = 87 − 0,87 × qualité  →  100 → QP 1, 90 → QP ≈ 9,
 #   60 → QP ≈ 35 (mou sur du texte), 10 → QP ≈ 78. En logiciel libx264 ignore
 # cet indice et garde son CRF.
+# Deux vocabulaires, à ne pas confondre : `rdp_quality_args` part tel quel dans
+# la ligne de `krdpserver` (--adaptive-quality), `rdp_remote_quality_args` part
+# vers `gremote --serve` (--adaptive). Envoyer le premier au second échouait sur
+# « option inconnue : --adaptive-quality » (vécu 04/11/2026).
 rdp_quality_args=()
-[ -n "$QUALITY" ] && rdp_quality_args+=(--quality "$QUALITY")
+rdp_remote_quality_args=()
+if [ -n "$QUALITY" ]; then
+    rdp_quality_args+=(--quality "$QUALITY")
+    rdp_remote_quality_args+=(--quality "$QUALITY")
+fi
 if [ "$ADAPTIVE" -eq 1 ]; then
     rdp_quality_args+=(--adaptive-quality)
+    rdp_remote_quality_args+=(--adaptive)
 else
     rdp_quality_args+=(--static-quality)
+    rdp_remote_quality_args+=(--static-quality)
 fi
 
 # =============================================================================
@@ -544,7 +554,7 @@ if [ "$RDP" -eq 1 ]; then
     # interactif ne lit pas /etc/profile.d, donc il résout `gremote` vers
     # /usr/bin/gremote de l'image, qui peut être en retard. Sans cette variable,
     # le comportement est inchangé (résolution par le PATH de sshd).
-    remote_cmd+=("${GREMOTE_REMOTE_BIN:-gremote}" --serve --rdp "${rdp_quality_args[@]}")
+    remote_cmd+=("${GREMOTE_REMOTE_BIN:-gremote}" --serve --rdp "${rdp_remote_quality_args[@]}")
 
     if [ "$DRY_RUN" -eq 1 ]; then
         printf 'ssh'
