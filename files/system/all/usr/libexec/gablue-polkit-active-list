@@ -58,10 +58,10 @@ cat <<'HEADER'
  * les paquets installés, et polkit 127 n'expose plus ces valeurs au JavaScript —
  * les demander depuis une règle bloque polkitd, cf. l'en-tête du générateur).
  *
- * Portée : sujet sans siège local ET session active, c'est-à-dire les bureaux
- * distants gremote comme un login SSH du même compte. Les sessions au siège
- * (console, greeter) ne sont pas concernées, et les refus explicites d'une autre
- * règle restent prioritaires (les fichiers sont évalués par ordre de nom).
+ * Portée : sujet sans siège local, session active, membre de `wheel` — c'est-à-dire
+ * les bureaux distants gremote et un login SSH d'un compte administrateur. Les
+ * sessions au siège (console, greeter) ne sont pas concernées, et les refus
+ * explicites d'une autre règle restent prioritaires (évaluation par nom de fichier).
  */
 var gremote_active_actions = [
 HEADER
@@ -75,7 +75,15 @@ polkit.addRule(function (action, subject) {
     if (subject.local) {
         return polkit.Result.NOT_HANDLED;
     }
-    if (!subject.active) {
+    if (!subject.active || !subject.user) {
+        return polkit.Result.NOT_HANDLED;
+    }
+    // Restreint aux membres de `wheel` : sans cette clause, TOUT sujet non local
+    // y aurait droit — y compris le process d'un compte ordinaire lancé dans une
+    // session SSH distante (mesuré : un process de `nobody` obtenait app-update,
+    // power-off et spice lowlevelusbaccess sans mot de passe). Les comptes qui se
+    // connectent à un bureau distant sont dans `wheel`, donc rien n'est perdu.
+    if (!subject.isInGroup("wheel")) {
         return polkit.Result.NOT_HANDLED;
     }
     if (gremote_active_actions.indexOf(action.id) !== -1) {

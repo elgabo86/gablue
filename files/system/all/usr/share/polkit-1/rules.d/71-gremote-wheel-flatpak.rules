@@ -1,0 +1,42 @@
+/* Installer/désinstaller une appli Flatpak depuis un bureau distant gremote :
+ * comme au siège pour un membre de `wheel`.
+ *
+ * Les actions ci-dessous demandent un mot de passe par défaut, MÊME pour une
+ * session active (`allow_active = auth_admin_keep`) : c'est Fedora qui les
+ * ouvre, dans /usr/share/polkit-1/rules.d/org.freedesktop.Flatpak.rules, aux
+ * membres de `wheel` — mais à condition que `subject.local == true`, c'est-à-dire
+ * une session pourvue d'un siège. Une session gremote n'a pas de siège, donc
+ * Discover y réclamait un mot de passe pour installer ce que le même compte
+ * installe sans rien demander devant l'écran (vécu 04/11/2026).
+ *
+ * On reprend exactement cette condition — membre de `wheel`, session active —
+ * en retirant la seule clause qui parle du siège. Hors `wheel`, rien ne change :
+ * la politique par défaut s'applique (mot de passe), au siège comme en distant.
+ *
+ * Le cas « mettre à jour » (app-update, appstream-update) ne passe pas par ici :
+ * ces actions disent déjà « oui » à une session active, et c'est
+ * 70-gremote-seatless-active.rules qui les ouvre aux sessions sans siège.
+ */
+var gremote_wheel_flatpak_actions = [
+    "org.freedesktop.Flatpak.app-install",
+    "org.freedesktop.Flatpak.runtime-install",
+    "org.freedesktop.Flatpak.app-uninstall",
+    "org.freedesktop.Flatpak.runtime-uninstall",
+    "org.freedesktop.Flatpak.modify-repo"
+];
+
+polkit.addRule(function (action, subject) {
+    if (subject.local) {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (!subject.active || !subject.user) {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (!subject.isInGroup("wheel")) {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (gremote_wheel_flatpak_actions.indexOf(action.id) !== -1) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

@@ -105,11 +105,19 @@ a list generated at image build time by `/usr/libexec/gablue-polkit-active-list`
 so it follows the installed packages. It cannot be computed at runtime: polkit 127
 no longer exposes the action's implicit values to rules, and a rule that asks
 polkitd for them (spawning `pkaction --verbose`) deadlocks and is killed after
-15 s, which delays every check and then shows the dialog anyway. Anything that
-needs a password at the physical console still needs one here. One deliberate
-exception: `NetworkManager.network-control` stays refused
-(`60-gremote-seatless.rules`), so the network applet cannot cut the link the
-session runs on.
+15 s, which delays every check and then shows the dialog anyway. The grant is
+restricted to `wheel` members: without that, any non-local subject would qualify,
+including a plain user's process in a remote SSH session (measured: a `nobody`
+process got `app-update` and `power-off` for free). Anything that needs a password
+at the physical console still needs one here.
+
+Installing or uninstalling a Flatpak from Discover is `auth_admin` by policy, even
+for an active session; Fedora's own rule opens it to `wheel` users but only when
+`subject.local` is true, i.e. at the seat. `71-gremote-wheel-flatpak.rules` mirrors
+that rule minus the seat clause, so a remote desktop installs what the same wheel
+user installs at the keyboard. One deliberate exception to the parity:
+`NetworkManager.network-control` stays refused (`60-gremote-seatless.rules`), so
+the network applet cannot cut the link the session runs on.
 
 ## Contributing
 
