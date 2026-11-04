@@ -156,6 +156,16 @@ RUN --mount=type=cache,dst=/var/cache \
     /ctx/build-gwine && \
     /ctx/cleanup
 
+# Règle polkit des bureaux distants gremote (sessions SANS siège) : la liste des
+# actions qu'une session locale ACTIVE obtient sans mot de passe est dérivée de
+# l'image elle-même, donc elle suit les paquets. Génération ici et non dans le
+# JavaScript de polkit : polkit 127 n'expose plus ces valeurs aux règles, et une
+# règle qui les demande à polkitd (polkit.spawn) se bloque — « Terminating
+# runaway script after 15 seconds », puis retour du dialogue après 10-15 s
+# (vécu 04/11/2026).
+RUN bash /usr/libexec/gablue-polkit-active-list \
+        > /usr/share/polkit-1/rules.d/70-gremote-seatless-active.rules
+
 # Post-installation : configuration finale
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \

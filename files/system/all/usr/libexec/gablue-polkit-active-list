@@ -1,0 +1,86 @@
+#!/usr/bin/bash
+# Génère 70-gremote-seatless-active.rules : la liste des actions polkit qu'une
+# session locale ACTIVE obtient SANS mot de passe sur cette image.
+#
+# Pourquoi figer la liste à la construction : le JavaScript des règles polkit ne
+# peut pas lire les valeurs implicites d'une action (polkit 127 n'expose que
+# `id` et `lookup()`), et il ne peut pas non plus les demander à polkitd —
+# `polkit.spawn(["pkaction", "--action-id", …, "--verbose"])` se bloque, polkit
+# tue la règle (« Terminating runaway script after 15 seconds », puis spawn
+# abandonné après 10 s) et la demande d'authentification revient, précédée de
+# 10-15 s d'attente (vécu 04/11/2026). Hors de polkitd, pkaction répond en
+# quelques millisecondes : la liste est donc calculée ici, à la construction,
+# ce qui la garde alignée sur les paquets de l'image.
+#
+# Usage : gablue-polkit-active-list > /usr/share/polkit-1/rules.d/70-gremote-seatless-active.rules
+set -u
+
+command -v pkaction >/dev/null 2>&1 || {
+    echo "pkaction absent : impossible de générer la liste des actions polkit" >&2
+    exit 1
+}
+
+# Troisième ligne « implicite » de `pkaction --verbose` = allow_active. On ne
+# parse que la valeur (yes / no / auth_*), jamais le libellé : il est localisable.
+ids=$(
+    pkaction | while read -r id; do
+        [ -n "$id" ] || continue
+        value=$(
+            pkaction --action-id "$id" --verbose 2>/dev/null |
+                sed -n 's/^[[:space:]]*[^:]*:[[:space:]]*\(yes\|no\|auth_[a-z_]*\)[[:space:]]*$/\1/p' |
+                sed -n 3p
+        )
+        [ "$value" = "yes" ] && printf '%s\n' "$id"
+    done | sort -u
+)
+
+count=$(printf '%s\n' "$ids" | grep -c . || true)
+[ "$count" -gt 0 ] || {
+    echo "aucune action trouvée : pkaction ne lit pas les politiques ?" >&2
+    exit 1
+}
+
+cat <<'HEADER'
+/* Bureau distant (gremote-session@) : se comporter comme une session LOCALE
+ * ACTIVE, et non plus comme une session « non locale ».
+ *
+ * Une session gremote n'a pas de siège : polkit la classe « non locale » et lui
+ * applique donc les valeurs `implicit_any` de l'action au lieu d'`implicit_active`.
+ * Une action comme org.freedesktop.Flatpak.appstream-update (déclenchée par
+ * plasmashell au démarrage de session) demande alors un mot de passe dans un
+ * bureau distant, alors qu'une session au siège ne demande rien (vécu 04/11/2026).
+ *
+ * La liste ci-dessous contient exactement les actions dont la politique accorde
+ * « oui » à une session ACTIVE sur cette image : on n'accorde donc rien de plus
+ * qu'une session locale, et toute action qui exige un mot de passe même au siège
+ * continue d'en exiger un ici. Elle est GÉNÉRÉE à la construction de l'image par
+ * /usr/libexec/gablue-polkit-active-list (ne pas éditer à la main : la liste suit
+ * les paquets installés, et polkit 127 n'expose plus ces valeurs au JavaScript —
+ * les demander depuis une règle bloque polkitd, cf. l'en-tête du générateur).
+ *
+ * Portée : sujet sans siège local ET session active, c'est-à-dire les bureaux
+ * distants gremote comme un login SSH du même compte. Les sessions au siège
+ * (console, greeter) ne sont pas concernées, et les refus explicites d'une autre
+ * règle restent prioritaires (les fichiers sont évalués par ordre de nom).
+ */
+var gremote_active_actions = [
+HEADER
+
+printf '%s\n' "$ids" | awk 'NR > 1 { print prev "," } { prev = "    \"" $0 "\"" } END { if (NR) print prev }'
+
+cat <<'FOOTER'
+];
+
+polkit.addRule(function (action, subject) {
+    if (subject.local) {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (!subject.active) {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (gremote_active_actions.indexOf(action.id) !== -1) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});
+FOOTER

@@ -95,6 +95,22 @@ client's `/from-stdin:force`.
 One passwordless SSH key (`ssh-key-add`) and `AllowStreamLocalForwarding` on the
 remote sshd are all it needs.
 
+**No authorisation prompts in the remote desktop.** polkit treats a seatless
+session as *not local*, so it falls back on `implicit_any` instead of
+`implicit_active`: plasmashell's Flatpak appstream refresh, fwupd, tuned and 177
+other actions popped an authentication dialog that nobody could answer, while a
+session at the seat asks nothing. `70-gremote-seatless-active.rules` grants those
+sessions exactly what an *active local* session already gets without a password —
+a list generated at image build time by `/usr/libexec/gablue-polkit-active-list`,
+so it follows the installed packages. It cannot be computed at runtime: polkit 127
+no longer exposes the action's implicit values to rules, and a rule that asks
+polkitd for them (spawning `pkaction --verbose`) deadlocks and is killed after
+15 s, which delays every check and then shows the dialog anyway. Anything that
+needs a password at the physical console still needs one here. One deliberate
+exception: `NetworkManager.network-control` stays refused
+(`60-gremote-seatless.rules`), so the network applet cannot cut the link the
+session runs on.
+
 ## Contributing
 
 This is a personal project. Issues and PRs welcome.

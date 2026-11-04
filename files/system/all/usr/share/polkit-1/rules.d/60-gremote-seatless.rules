@@ -11,14 +11,20 @@
  * pas concernée et garde son comportement normal.
  *
  * Pas de polkit.spawn ici : il lève une exception si le helper sort non-zéro, ce
- * qui faisait échouer la règle et revenait au dialogue. subject.seat est fourni
- * directement par polkit (>= 0.120).
+ * qui faisait échouer la règle et revenait au dialogue.
+ *
+ * Le test porte sur subject.local, PAS sur subject.seat : en polkit 127 le sujet
+ * d'un process expose seat=null et session=null **même pour une session au
+ * siège** (mesuré : greeter de seat0 → seat=null, local=true), alors que `local`
+ * distingue correctement les deux cas. Avec !subject.seat la règle refusait donc
+ * NetworkManager à tout le monde, sessions locales comprises (constaté
+ * 04/11/2026).
  */
 polkit.addRule(function (action, subject) {
     if (action.id != "org.freedesktop.NetworkManager.network-control") {
         return polkit.Result.NOT_HANDLED;
     }
-    if (!subject.seat) {
+    if (!subject.local) {
         return polkit.Result.NO;
     }
     return polkit.Result.NOT_HANDLED;
