@@ -163,7 +163,7 @@ RUN --mount=type=cache,dst=/var/cache \
 # règle qui les demande à polkitd (polkit.spawn) se bloque — « Terminating
 # runaway script after 15 seconds », puis retour du dialogue après 10-15 s
 # (vécu 04/11/2026).
-RUN bash /usr/libexec/gablue-polkit-active-list \
+RUN python3 /usr/libexec/gablue-polkit-active-list \
         > /usr/share/polkit-1/rules.d/70-gremote-seatless-active.rules
 
 # Post-installation : configuration finale

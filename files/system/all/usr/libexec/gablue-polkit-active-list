@@ -1,47 +1,38 @@
-#!/usr/bin/bash
-# Génère 70-gremote-seatless-active.rules : la liste des actions polkit qu'une
-# session locale ACTIVE obtient SANS mot de passe sur cette image.
-#
-# Pourquoi figer la liste à la construction : le JavaScript des règles polkit ne
-# peut pas lire les valeurs implicites d'une action (polkit 127 n'expose que
-# `id` et `lookup()`), et il ne peut pas non plus les demander à polkitd —
-# `polkit.spawn(["pkaction", "--action-id", …, "--verbose"])` se bloque, polkit
-# tue la règle (« Terminating runaway script after 15 seconds », puis spawn
-# abandonné après 10 s) et la demande d'authentification revient, précédée de
-# 10-15 s d'attente (vécu 04/11/2026). Hors de polkitd, pkaction répond en
-# quelques millisecondes : la liste est donc calculée ici, à la construction,
-# ce qui la garde alignée sur les paquets de l'image.
-#
-# Usage : gablue-polkit-active-list > /usr/share/polkit-1/rules.d/70-gremote-seatless-active.rules
-set -u
+#!/usr/bin/python3
+"""Génère 70-gremote-seatless-active.rules : la liste des actions polkit qu'une
+session locale ACTIVE obtient SANS mot de passe sur cette image.
 
-command -v pkaction >/dev/null 2>&1 || {
-    echo "pkaction absent : impossible de générer la liste des actions polkit" >&2
-    exit 1
-}
+Pourquoi figer la liste à la construction : le JavaScript des règles polkit ne
+peut pas lire les valeurs implicites d'une action (polkit 127 n'expose que `id` et
+`lookup()`), et il ne peut pas non plus les demander à polkitd — un
+`polkit.spawn(["pkaction", …])` depuis une règle se bloque, polkit tue la règle
+(« Terminating runaway script after 15 seconds », spawn abandonné après 10 s) et
+la demande d'authentification revient, précédée d'une attente de 10-15 s (vécu
+04/11/2026).
 
-# Troisième ligne « implicite » de `pkaction --verbose` = allow_active. On ne
-# parse que la valeur (yes / no / auth_*), jamais le libellé : il est localisable.
-ids=$(
-    pkaction | while read -r id; do
-        [ -n "$id" ] || continue
-        value=$(
-            pkaction --action-id "$id" --verbose 2>/dev/null |
-                sed -n 's/^[[:space:]]*[^:]*:[[:space:]]*\(yes\|no\|auth_[a-z_]*\)[[:space:]]*$/\1/p' |
-                sed -n 3p
-        )
-        [ "$value" = "yes" ] && printf '%s\n' "$id"
-    done | sort -u
+Et `pkaction` n'est pas utilisable non plus ici : il construit une « authority »
+et exige un bus système, absent dans le conteneur de build (« Error getting
+authority: Could not connect », build échoué — vécu 04/11/2026). On lit donc
+directement les fichiers .policy, ce que `pkaction` fait de toute façon pour les
+valeurs implicites (comparé action par action sur l'hôte : 181 identiques).
+
+Usage : gablue-polkit-active-list > /usr/share/polkit-1/rules.d/70-gremote-seatless-active.rules
+"""
+
+import glob
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+# Ordre de précédence de polkit : le premier répertoire gagne pour une action
+# redéfinie.
+ACTION_DIRS = (
+    "/etc/polkit-1/actions",
+    "/usr/local/share/polkit-1/actions",
+    "/usr/share/polkit-1/actions",
 )
 
-count=$(printf '%s\n' "$ids" | grep -c . || true)
-[ "$count" -gt 0 ] || {
-    echo "aucune action trouvée : pkaction ne lit pas les politiques ?" >&2
-    exit 1
-}
-
-cat <<'HEADER'
-/* Bureau distant (gremote-session@) : se comporter comme une session LOCALE
+HEADER = """/* Bureau distant (gremote-session@) : se comporter comme une session LOCALE
  * ACTIVE, et non plus comme une session « non locale ».
  *
  * Une session gremote n'a pas de siège : polkit la classe « non locale » et lui
@@ -55,8 +46,7 @@ cat <<'HEADER'
  * qu'une session locale, et toute action qui exige un mot de passe même au siège
  * continue d'en exiger un ici. Elle est GÉNÉRÉE à la construction de l'image par
  * /usr/libexec/gablue-polkit-active-list (ne pas éditer à la main : la liste suit
- * les paquets installés, et polkit 127 n'expose plus ces valeurs au JavaScript —
- * les demander depuis une règle bloque polkitd, cf. l'en-tête du générateur).
+ * les paquets installés).
  *
  * Portée : sujet sans siège local, session active, membre de `wheel` — c'est-à-dire
  * les bureaux distants gremote et un login SSH d'un compte administrateur. Les
@@ -64,11 +54,9 @@ cat <<'HEADER'
  * explicites d'une autre règle restent prioritaires (évaluation par nom de fichier).
  */
 var gremote_active_actions = [
-HEADER
+"""
 
-printf '%s\n' "$ids" | awk 'NR > 1 { print prev "," } { prev = "    \"" $0 "\"" } END { if (NR) print prev }'
-
-cat <<'FOOTER'
+FOOTER = """\
 ];
 
 polkit.addRule(function (action, subject) {
@@ -91,4 +79,48 @@ polkit.addRule(function (action, subject) {
     }
     return polkit.Result.NOT_HANDLED;
 });
-FOOTER
+"""
+
+
+def collect():
+    """id -> True si allow_active vaut yes, première définition rencontrée."""
+    seen = {}
+    for directory in ACTION_DIRS:
+        for path in sorted(glob.glob(os.path.join(directory, "*.policy"))):
+            try:
+                root = ET.parse(path).getroot()
+            except (ET.ParseError, OSError) as err:
+                print(f"{path}: ignoré ({err})", file=sys.stderr)
+                continue
+            for action in root.iter("action"):
+                action_id = action.get("id")
+                if not action_id or action_id in seen:
+                    continue
+                defaults = action.find("defaults")
+                allow_active = ""
+                if defaults is not None:
+                    allow_active = (defaults.findtext("allow_active") or "").strip()
+                seen[action_id] = allow_active == "yes"
+    return seen
+
+
+def main():
+    actions = collect()
+    if not actions:
+        return "aucune action trouvée dans les fichiers .policy"
+
+    granted = sorted(action_id for action_id, active in actions.items() if active)
+    if not granted:
+        return "aucune action n'accorde « oui » à une session active"
+
+    out = sys.stdout
+    out.write(HEADER)
+    for index, action_id in enumerate(granted):
+        comma = "," if index < len(granted) - 1 else ""
+        out.write(f'    "{action_id}"{comma}\n')
+    out.write(FOOTER)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
