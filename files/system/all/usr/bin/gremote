@@ -32,6 +32,8 @@ SERVE=0
 RDP=1                 # 1 = RDP (seul mode depuis le retrait de waypipe)
 RDP_PORT=13389        # port LOCAL du -L ; le port distant dépend du compte
 RDP_PORT_SET=0        # 1 si --rdp-port a été donné (sinon : premier libre)
+SSH_PORT=""           # port SSH (défaut : ~/.ssh/config, sinon 22)
+SSH_PORT_SET=0        # 1 si -p/--port ou « hôte:port » a fixé le port
 RDP_LAUNCH=1          # 1 = lancer xfreerdp automatiquement s'il est présent
 NOSTART=0             # 1 = ne pas créer de session si l'hôte n'en a pas
 QUALITY=60            # qualité d'encodage KRdp (0-100) ; sert de borne en adaptatif
@@ -46,7 +48,7 @@ usage() {
 gremote — bureau Plasma distant d'un poste Gablue (RDP tunnelisé en SSH)
 
 Usage :
-  gremote [options] utilisateur@hôte
+  gremote [options] utilisateur@hôte[:port]
 
 Expose la session Plasma de l'hôte dans une fenêtre : image et entrée par RDP,
 son par un tunnel PipeWire, le tout dans SSH. Aucun port n'est exposé sur le
@@ -54,6 +56,7 @@ réseau et le mot de passe RDP est éphémère. Si l'hôte n'a pas de session po
 compte, gremote en crée une VIRTUELLE (hors écran, sans VT ni DRM).
 
 Options :
+  -p, --port N   port SSH de l'hôte (défaut : ~/.ssh/config, sinon 22)
       --rdp-port N   port LOCAL du tunnel RDP (défaut : 13389)
       --no-launch    ne pas lancer xfreerdp (affiche la commande)
       --no-start     ne pas créer de session si l'hôte n'en a pas
@@ -119,6 +122,20 @@ while [ $# -gt 0 ]; do
             RDP=1
             shift
             ;;
+        -p|--port)
+            [ $# -ge 2 ] || die "--port attend un numéro de port"
+            [ "$SSH_PORT_SET" -eq 0 ] || die "port SSH déjà donné"
+            SSH_PORT="$2"
+            SSH_PORT_SET=1
+            shift 2
+            ;;
+        --port=*)
+            [ -n "${1#*=}" ] || die "--port attend un numéro de port"
+            [ "$SSH_PORT_SET" -eq 0 ] || die "port SSH déjà donné"
+            SSH_PORT="${1#*=}"
+            SSH_PORT_SET=1
+            shift
+            ;;
         --rdp-port)
             [ $# -ge 2 ] || die "--rdp-port attend un numéro de port"
             RDP_PORT="$2"
@@ -175,6 +192,41 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+# Port dans la cible : « [user@]hôte[:port] », comme ssh-key-add. Une IPv6 nue
+# contient plusieurs « : » et ne peut donc pas être confondue avec un suffixe
+# de port ; une IPv6 avec port s'écrit entre crochets ([adresse]:port).
+if [ -n "$TARGET" ]; then
+    userpart=""
+    rest="$TARGET"
+    if [[ "$rest" == *@* ]]; then
+        userpart="${rest%@*}@"
+        rest="${rest##*@}"
+    fi
+    addr_port=""
+    if [[ "$rest" =~ ^\[([^]]+)\](:([0-9]+))?$ ]]; then
+        hostpart="${BASH_REMATCH[1]}"
+        addr_port="${BASH_REMATCH[3]}"
+    elif [[ "$rest" =~ ^([^:]+):([0-9]+)$ ]]; then
+        hostpart="${BASH_REMATCH[1]}"
+        addr_port="${BASH_REMATCH[2]}"
+    else
+        hostpart="$rest"
+    fi
+    if [ -n "$addr_port" ]; then
+        [ "$SSH_PORT_SET" -eq 0 ] ||
+            die "port SSH fourni deux fois (-p et « $TARGET »)"
+        SSH_PORT="$addr_port"
+        SSH_PORT_SET=1
+    fi
+    TARGET="${userpart}${hostpart}"
+fi
+
+if [ -n "$SSH_PORT" ]; then
+    [[ "$SSH_PORT" =~ ^[0-9]+$ ]] || die "port SSH invalide : « $SSH_PORT »"
+    [ "$SSH_PORT" -ge 1 ] && [ "$SSH_PORT" -le 65535 ] ||
+        die "port SSH hors plage (1-65535) : $SSH_PORT"
+fi
 
 # Qualité d'encodage, construite ICI (et pas dans la section serveur) : le client
 # doit la TRANSMETTRE à la commande distante, sinon --quality/--adaptive sont
@@ -494,6 +546,12 @@ command -v ssh >/dev/null 2>&1 || die "ssh absent sur ce poste"
 # Le chemin local des sockets n'existe pas sur l'hôte : on transfère vers un
 # socket neuf sous /tmp, dont le nom porte l'uid et le PID du client.
 ssh_args=()
+# Port SSH explicite (-p ou « hôte:port »). Sans lui on ne passe RIEN : ssh
+# applique ~/.ssh/config puis 22, alors qu'un « -p 22 » écraserait un Port
+# déjà défini pour cet hôte.
+if [ -n "$SSH_PORT" ]; then
+    ssh_args+=(-p "$SSH_PORT")
+fi
 audio_env=()
 [ "$DEBUG" -eq 1 ] && audio_env+=("GREMOTE_DEBUG=1")
 if [ "$AUDIO" -eq 1 ]; then
@@ -525,6 +583,10 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$RDP" -eq 1 ]; then
     rdp_user="${TARGET%%@*}"
+    # Cible sans « @ » (ex. `gremote sucina:2323`) : ssh se connecte avec le nom
+    # local, donc l'utilisateur RDP est le même — sans ce repli, krdpserver
+    # recevait « sucina » comme nom de compte et refusait la connexion.
+    [[ "$TARGET" == *@* ]] || rdp_user="${USER:-$(id -un)}"
     rdp_pass="$(head -c 200 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-20)"
     [ -n "$rdp_pass" ] || die "génération du mot de passe RDP impossible"
 
@@ -618,9 +680,16 @@ if [ "$RDP" -eq 1 ]; then
         # mot de passe AVANT la connexion (sinon c'est le serveur qui le réclame,
         # plus tard et moins prévisible). Vérifié 02/11/2026 sur sdl-freerdp :
         # connexion complète (Remote framebuffer BGRA32, rdpgfx) sans tty.
+        #
+        # Le code retour du CLIENT n'est pas un échec de gremote : fermer la
+        # fenêtre (ou une coupure réseau) termine la session, et sdl-freerdp
+        # sort alors en 131. Sans ce `|| true`, `set -e` propageait 131 et une
+        # GUI le lisait comme un plantage (vécu 04/11/2026 : dialogue d'erreur
+        # à chaque fermeture d'une session pourtant réussie).
         printf '%s\n' "$rdp_pass" |
             "$rdp_client" /v:127.0.0.1:"$RDP_PORT" /u:"$rdp_user" \
-                /cert:ignore /from-stdin:force +clipboard +dynamic-resolution
+                /cert:ignore /from-stdin:force +clipboard +dynamic-resolution ||
+            true
     else
         printf 'gremote : connecte-toi avec\n'
         printf "  printf '%%s\\\\n' '%s' | sdl-freerdp /v:127.0.0.1:%s /u:%s /cert:ignore /from-stdin:force\n" \

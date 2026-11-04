@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Gablue Manager
+GenericName=Postes SSH, mises à jour et configuration
+Comment=Postes SSH, bureau distant, mises à jour de Gablue et options avancées
+Exec=gablue-manager
+Icon=network-server
+Categories=Network;RemoteAccess;
+Keywords=ssh;gremote;rdp;distant;remote;sftp;scp;wol;wake-on-lan;mise a jour;update;flatpak;gwine;tailscale;config;
+Terminal=false
+StartupNotify=true
+StartupWMClass=gablue-manager

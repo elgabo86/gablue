@@ -1,0 +1,4126 @@
+#!/usr/bin/python3
+
+"""
+Gablue Manager — les postes distants et cette machine, au même endroit.
+
+Liste les machines dont la clé SSH a été installée, vérifie régulièrement
+qu'elles répondent (clé acceptée ou non), puis lance d'un clic :
+
+  • le bureau distant  → gremote (RDP tunnelisé en SSH)
+  • les fichiers       → Dolphin en sftp://
+  • le terminal        → konsole -e ssh
+
+L'ajout d'un poste copie la clé publique locale (ssh-copy-id) : le mot de passe
+n'est demandé qu'une fois, pour la copie, et n'est jamais enregistré.
+
+La carte « Ce poste » gère la machine courante : mises à jour (image Gablue,
+Flatpaks, gwine) et options avancées (atténuations CPU, options noyau) — reprise de
+l'ancien gablue-config.
+
+Lancement : gablue-manager
+            gablue-manager --help
+
+Les postes sont décrits dans ~/.config/gablue/ssh-hosts.json (mode 0600).
+"""
+
+import fcntl
+import getpass
+import glob
+import ipaddress
+import json
+import math
+import os
+import pty
+import re
+import select
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import termios
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+from PySide6.QtCore import (
+    QEvent, QPointF, QProcess, QSize, Qt, QThread, QTimer, Signal,
+)
+from PySide6.QtGui import (
+    QColor, QIcon, QKeySequence, QPainter, QPalette, QPen, QPixmap, QShortcut,
+)
+from PySide6.QtWidgets import (
+    QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
+    QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
+    QInputDialog, QSpinBox, QStackedWidget, QToolButton, QVBoxLayout,
+    QWidget,
+)
+
+# =============================================================================
+# SECTION 1 : CONSTANTES ET CHEMINS
+# =============================================================================
+
+CONFIG_DIR = Path(
+    os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
+) / "gablue"
+HOSTS_FILE = CONFIG_DIR / "ssh-hosts.json"
+
+SSH_DIR = Path.home() / ".ssh"
+PRIVATE_KEY = SSH_DIR / "id_ed25519"
+PUBLIC_KEY = SSH_DIR / "id_ed25519.pub"
+KNOWN_HOSTS = SSH_DIR / "known_hosts"
+AVAHI_SERVICE_FILE = Path("/etc/avahi/services/ssh.service")
+AVAHI_SERVICE_XML = """<?xml version="1.0" standalone="no"?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name replace-wildcards="yes">%h</name>
+  <service>
+    <type>_ssh._tcp</type>
+    <port>22</port>
+  </service>
+</service-group>
+"""
+
+REFRESH_MS = 30_000     # vérification automatique des postes
+CHECK_DEADLINE = 8.0    # secondes par poste (ssh ConnectTimeout = 4)
+PULSE_MS = 60           # cadence de l'animation des pastilles
+WOL_PORTS = (9, 7)      # ports UDP du paquet magique (9 = standard)
+
+# Couleurs des états (lisibles en thème clair comme en thème sombre)
+COLOR_ONLINE = "#37c978"
+COLOR_AUTH = "#e8a33d"
+COLOR_KEY = "#a97cf0"
+COLOR_OFFLINE = "#8b909a"
+COLOR_CHECKING = "#4a9eff"
+
+STATE_TEXT = {
+    "unknown": "Non vérifié",
+    "checking": "Vérification…",
+    "online": "En ligne · clé SSH acceptée",
+    "auth": "Joignable · clé SSH refusée",
+    "hostkey": "Clé d'hôte inconnue",
+    "nokey": "Aucune clé locale",
+    "refused": "Hors ligne · connexion refusée",
+    "timeout": "Hors ligne · délai dépassé",
+    "noroute": "Hors ligne · réseau injoignable",
+    "dns": "Hôte introuvable",
+    "error": "Erreur de connexion",
+}
+
+STATE_COLOR = {
+    "unknown": COLOR_OFFLINE,
+    "checking": COLOR_CHECKING,
+    "online": COLOR_ONLINE,
+    "auth": COLOR_AUTH,
+    "hostkey": COLOR_KEY,
+    "nokey": COLOR_KEY,
+    "refused": COLOR_OFFLINE,
+    "timeout": COLOR_OFFLINE,
+    "noroute": COLOR_OFFLINE,
+    "dns": COLOR_OFFLINE,
+    "error": COLOR_OFFLINE,
+}
+
+# États pour lesquels l'action utile est de (re)copier la clé
+KEY_STATES = ("auth", "hostkey", "nokey")
+
+PASSWORD_RE = re.compile(
+    r"(?i)(?:password|mot de passe|passphrase)[^\n]*:[ \t]*$", re.MULTILINE
+)
+
+
+# =============================================================================
+# SECTION 2 : OUTILS SYSTÈME (ssh, clé, registre)
+# =============================================================================
+
+def _which(name: str) -> str:
+    """Chemin absolu d'un binaire, ou son nom si introuvable."""
+    found = shutil.which(name)
+    if found:
+        return found
+    for candidate in (f"/usr/bin/{name}", f"/usr/local/bin/{name}"):
+        if os.access(candidate, os.X_OK):
+            return candidate
+    return name
+
+
+SSH = _which("ssh")
+SSH_COPY_ID = _which("ssh-copy-id")
+SSH_KEYGEN = _which("ssh-keygen")
+SSH_KEYSCAN = _which("ssh-keyscan")
+AVAHI_BROWSE = _which("avahi-browse")
+IP = _which("ip")
+
+
+def ssh_target(host: dict) -> str:
+    """Cible ssh : utilisateur@hôte (l'hôte IPv6 garde ses deux-points)."""
+    return f'{host["user"]}@{host["host"]}'
+
+
+def address_text(host: dict) -> str:
+    """Adresse lisible : utilisateur@hôte, avec :port si non standard."""
+    text = ssh_target(host)
+    if host["port"] != 22:
+        text += f':{host["port"]}'
+    return text
+
+
+def display_name(host: dict) -> str:
+    return (host.get("label") or "").strip() or host["host"]
+
+
+def dolphin_url(host: dict) -> str:
+    """URL KIO sftp:// (crochets obligatoires autour d'une IPv6)."""
+    addr = host["host"]
+    if ":" in addr and not addr.startswith("["):
+        addr = f"[{addr}]"
+    url = f'sftp://{host["user"]}@{addr}'
+    if host["port"] != 22:
+        url += f':{host["port"]}'
+    return url + "/"
+
+
+def _broadcast_for(address: str) -> str:
+    """Adresse de diffusion du sous-réseau qui route vers `address`."""
+    try:
+        route = subprocess.run(
+            [IP, "route", "get", address], capture_output=True, text=True,
+            timeout=4,
+        )
+        match = re.search(r"\bdev\s+(\S+)", route.stdout)
+        if not match:
+            return ""
+        addr = subprocess.run(
+            [IP, "-o", "-4", "addr", "show", "dev", match.group(1)],
+            capture_output=True, text=True, timeout=4,
+        )
+        found = re.search(r"\binet\s+(\d+\.\d+\.\d+\.\d+/\d+)", addr.stdout)
+        if not found:
+            return ""
+        return str(ipaddress.ip_interface(found.group(1)).network.broadcast_address)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return ""
+
+
+def wake_on_lan(host: dict) -> tuple[bool, str]:
+    """Envoie le paquet magique (broadcast global + diffusion du sous-réseau)."""
+    mac = normalize_mac(host.get("mac", ""))
+    if not mac:
+        return False, "adresse MAC inconnue : renseignez-la dans « Modifier »"
+    payload = b"\xff" * 6 + bytes.fromhex(mac.replace(":", "")) * 16
+    targets = ["255.255.255.255"]
+    subnet = _broadcast_for(host["host"])
+    if subnet and subnet not in targets:
+        targets.append(subnet)
+    sent = 0
+    last_error = ""
+    for address in targets:
+        for port in WOL_PORTS:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                    sock.sendto(payload, (address, port))
+                sent += 1
+            except OSError as exc:
+                last_error = str(exc)
+    if sent:
+        return True, ""
+    return False, last_error or "envoi impossible"
+
+
+def detect_mac(host: dict) -> str:
+    """MAC dans la table ARP locale (gratuit, mais seulement si le poste a parlé)."""
+    try:
+        result = subprocess.run(
+            [IP, "neigh", "show", "to", host["host"]],
+            capture_output=True, text=True, timeout=4,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    match = re.search(r"lladdr\s+([0-9a-fA-F:]{17})", result.stdout)
+    return normalize_mac(match.group(1)) if match else ""
+
+
+def detect_mac_remote(host: dict) -> str:
+    """MAC de l'interface par défaut, lue par SSH (poste en ligne, ARP vide)."""
+    command = (
+        "cat /sys/class/net/$(ip route show default 2>/dev/null"
+        " | awk '{print $5; exit}')/address 2>/dev/null"
+    )
+    try:
+        result = subprocess.run(
+            [SSH, *_ssh_opts(host), ssh_target(host), command],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return normalize_mac(result.stdout.strip()) if result.returncode == 0 else ""
+
+
+def avahi_scan(timeout: float = 8.0,
+               stop: threading.Event | None = None) -> list[dict]:
+    """Postes SSH annoncés en mDNS sur le réseau local."""
+    if AVAHI_BROWSE == "avahi-browse" and not shutil.which("avahi-browse"):
+        return []
+    try:
+        proc = subprocess.Popen(
+            [AVAHI_BROWSE, "-rtp", "_ssh._tcp"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        )
+    except OSError:
+        return []
+    deadline = time.monotonic() + timeout
+    while proc.poll() is None:
+        if ((stop is not None and stop.is_set())
+                or time.monotonic() > deadline):
+            proc.kill()
+            proc.wait()
+            return []
+        time.sleep(0.1)
+    output = proc.stdout.read() if proc.stdout is not None else ""
+    found = []
+    seen = set()
+    for line in output.splitlines():
+        if not line.startswith("="):
+            continue
+        fields = line.split(";")
+        if len(fields) < 10:
+            continue
+        _, _iface, proto, name, service, _domain, hostname, address, port, _txt = \
+            fields[:10]
+        if proto != "IPv4" or service != "_ssh._tcp":
+            continue
+        if not address or "%" in address:
+            continue
+        try:
+            number = int(port or 22)
+        except ValueError:
+            number = 22
+        if (address, number) in seen:
+            continue
+        seen.add((address, number))
+        label = re.sub(r"\s*\[[^]]*\]\s*$", "", name).strip() or hostname
+        found.append({
+            "label": label,
+            "user": getpass.getuser(),
+            "host": address,
+            "port": number,
+        })
+    found.sort(key=lambda item: item["label"].casefold())
+    return found
+
+
+def _ssh_config_sources(path: Path, depth: int = 0, seen=None):
+    """Lignes (clé, valeur) de ~/.ssh/config, Include compris, dans l'ordre."""
+    seen = seen if seen is not None else set()
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return
+    if depth > 3 or resolved in seen or not resolved.is_file():
+        return
+    seen.add(resolved)
+    try:
+        text = resolved.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        match = re.match(r"(?i)^include\s+(.+)$", line)
+        if match:
+            for pattern in match.group(1).split():
+                target = Path(os.path.expanduser(pattern))
+                if not target.is_absolute():
+                    target = SSH_DIR / pattern
+                for item in sorted(glob.glob(str(target))):
+                    yield from _ssh_config_sources(Path(item), depth + 1, seen)
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+        else:
+            key, _, value = line.partition(" ")
+        yield key.strip().lower(), value.strip()
+
+
+def parse_ssh_config() -> list[dict]:
+    """Hôtes concrets de ~/.ssh/config ; les motifs (`*`, `?`, `!`) sont ignorés."""
+    blocks = []
+    defaults = {}
+    current = None
+    for key, value in _ssh_config_sources(SSH_DIR / "config"):
+        if key == "host":
+            current = {"patterns": value.split(), "opts": {}}
+            blocks.append(current)
+        elif key == "match":
+            current = None
+        elif value:
+            if current is None:
+                defaults.setdefault(key, value)
+            else:
+                current["opts"].setdefault(key, value)
+
+    hosts = []
+    seen = set()
+    for block in blocks:
+        for pattern in block["patterns"]:
+            if not pattern or any(ch in pattern for ch in "*?!"):
+                continue
+            options = block["opts"]
+            address = options.get("hostname", pattern)
+            user = options.get("user", defaults.get("user", getpass.getuser()))
+            try:
+                port = int(options.get("port", defaults.get("port", 22)))
+            except ValueError:
+                port = 22
+            if not (1 <= port <= 65535) or not address or "%" in address:
+                continue
+            if any(ch in address for ch in "@/") or "@" in user:
+                continue
+            key = (user, address, port)
+            if key in seen:
+                continue
+            seen.add(key)
+            hosts.append({
+                "label": pattern, "user": user, "host": address, "port": port,
+            })
+    return hosts
+
+
+def normalize_mac(value: object) -> str:
+    """MAC sous forme AA:BB:CC:DD:EE:FF, ou chaîne vide si invalide."""
+    digits = re.sub(r"[^0-9A-Fa-f]", "", str(value or ""))
+    if len(digits) != 12:
+        return ""
+    return ":".join(digits[i:i + 2] for i in range(0, 12, 2)).upper()
+
+
+def normalize_record(item: object) -> dict | None:
+    """Valide une entrée du registre ; None si elle est inutilisable."""
+    if not isinstance(item, dict):
+        return None
+    try:
+        user = str(item["user"]).strip()
+        name = str(item["host"]).strip()
+        port = int(item.get("port", 22))
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not user or not name or not (1 <= port <= 65535):
+        return None
+    return {
+        "id": str(item.get("id") or uuid.uuid4().hex),
+        "label": str(item.get("label") or "").strip(),
+        "user": user,
+        "host": name,
+        "port": port,
+        "mac": normalize_mac(item.get("mac", "")),
+        "key_added": bool(item.get("key_added", False)),
+        "added_at": int(item.get("added_at") or time.time()),
+    }
+
+
+def load_hosts() -> list[dict]:
+    """Lit le registre ; un fichier illisible est écarté, pas écrasé."""
+    try:
+        raw = HOSTS_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        print(f"gablue-manager : {HOSTS_FILE} illisible ({exc})", file=sys.stderr)
+        return []
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        backup = HOSTS_FILE.with_name(
+            f"ssh-hosts.corrupt-{int(time.time())}.json"
+        )
+        try:
+            HOSTS_FILE.replace(backup)
+            print(f"gablue-manager : registre illisible, sauvegardé dans {backup}",
+                  file=sys.stderr)
+        except OSError:
+            pass
+        return []
+    hosts = data.get("hosts") if isinstance(data, dict) else data
+    if not isinstance(hosts, list):
+        return []
+    cleaned = []
+    seen = set()
+    for item in hosts:
+        host = normalize_record(item)
+        if host and host["id"] not in seen:
+            seen.add(host["id"])
+            cleaned.append(host)
+    return cleaned
+
+
+def save_hosts(hosts: list[dict]) -> None:
+    """Écriture atomique et privée (le registre contient des adresses)."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(CONFIG_DIR, 0o700)
+    except OSError:
+        pass
+    payload = json.dumps(
+        {"version": 1, "hosts": hosts}, ensure_ascii=False, indent=2
+    ) + "\n"
+    fd, tmp = tempfile.mkstemp(dir=str(CONFIG_DIR), prefix=".ssh-hosts-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, HOSTS_FILE)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def ensure_local_key() -> tuple[bool, str]:
+    """Crée ~/.ssh/id_ed25519 (sans passphrase) si elle manque."""
+    if PRIVATE_KEY.exists() and PUBLIC_KEY.exists():
+        return True, ""
+    try:
+        SSH_DIR.mkdir(parents=True, exist_ok=True)
+        os.chmod(SSH_DIR, 0o700)
+    except OSError as exc:
+        return False, f"~/.ssh inaccessible ({exc})"
+    try:
+        result = subprocess.run(
+            [SSH_KEYGEN, "-t", "ed25519", "-N", "", "-q",
+             "-C", f"{getpass.getuser()}@{socket.gethostname()}",
+             "-f", str(PRIVATE_KEY)],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"ssh-keygen a échoué ({exc})"
+    if result.returncode != 0 or not PUBLIC_KEY.exists():
+        detail = (result.stderr or result.stdout or "").strip()
+        return False, f"création de la clé impossible : {detail}"
+    return True, ""
+
+
+def _ssh_opts(host: dict, batch: bool = True,
+              accept_new: bool = False) -> list[str]:
+    """Options communes : on teste exactement LA clé gérée par Gablue."""
+    check = "accept-new" if accept_new else "yes"
+    opts = [
+        "-T",
+        "-i", str(PRIVATE_KEY),
+        "-o", "IdentitiesOnly=yes",
+        "-o", "ConnectTimeout=4",
+        "-o", "ConnectionAttempts=1",
+        "-o", f"StrictHostKeyChecking={check}",
+        "-p", str(host["port"]),
+    ]
+    if batch:
+        opts += ["-o", "BatchMode=yes"]
+    return opts
+
+
+def _sudo_run(argv: list[str]) -> tuple[bool, str]:
+    """Exécute une commande privilégiée sans jamais demander de mot de passe."""
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", *argv], capture_output=True, text=True, timeout=25,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, str(exc)
+    if result.returncode == 0:
+        return True, ""
+    lines = (result.stderr or result.stdout or "").strip().splitlines()
+    return False, lines[-1] if lines else ""
+
+
+def set_local_sshd_sudo(enabled: bool) -> tuple[bool, str]:
+    """Tentative silencieuse d'activation/coupure du sshd local.
+
+    `sudo -n` ne demande JAMAIS de mot de passe : sur une image Gablue
+    (/etc/sudoers.d/nopasswd) c'est immédiat, ailleurs ça échoue en quelques
+    millisecondes et l'appelant bascule sur `pkexec` (dialogue PolicyKit).
+    """
+    action = "enable" if enabled else "disable"
+    return _sudo_run([_which("systemctl"), action, "sshd.service", "--now"])
+
+
+def avahi_publish_state() -> tuple[bool, bool]:
+    """(ce poste s'annonce en _ssh._tcp, avahi-daemon est actif)."""
+    daemon = False
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", "avahi-daemon.service"],
+            capture_output=True, text=True, timeout=5,
+        )
+        daemon = result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return AVAHI_SERVICE_FILE.exists(), daemon
+
+
+def write_avahi_service_temp() -> str:
+    """Écrit le fichier de service dans un temporaire (l'écriture /etc/ passe par sudo)."""
+    fd, path = tempfile.mkstemp(prefix="gablue-manager-avahi-", suffix=".service")
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(AVAHI_SERVICE_XML)
+    os.chmod(path, 0o644)
+    return path
+
+
+def avahi_publish_args(enabled: bool, temp_path: str) -> list[str]:
+    """Commande privilégiée : installer le fichier, ou le retirer."""
+    if enabled:
+        return ["install", "-m", "644", temp_path, str(AVAHI_SERVICE_FILE)]
+    return ["rm", "-f", str(AVAHI_SERVICE_FILE)]
+
+
+def local_sshd_state() -> tuple[bool, bool]:
+    """(actif maintenant, activé au démarrage)."""
+    def query(verb: str) -> bool:
+        try:
+            result = subprocess.run(
+                ["systemctl", verb, "sshd.service"],
+                capture_output=True, text=True, timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return result.returncode == 0
+
+    return query("is-active"), query("is-enabled")
+
+
+# -- machine courante : mises à jour et options avancées ----------------------
+OS_RELEASE = Path("/etc/os-release")
+CMDLINE = Path("/proc/cmdline")
+KARG_MITIGATIONS_OFF = "mitigations=off"
+KARG_BT_ERTM = "bluetooth.disable_ertm=1"
+
+
+def local_distro() -> str:
+    """PRETTY_NAME de /etc/os-release, ou chaîne vide."""
+    try:
+        for line in OS_RELEASE.read_text(encoding="utf-8").splitlines():
+            if line.startswith("PRETTY_NAME="):
+                return line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return ""
+
+
+def kernel_cmdline() -> set[str]:
+    """Paramètres du noyau en cours (effet réel = après redémarrage)."""
+    try:
+        return set(CMDLINE.read_text(encoding="utf-8").split())
+    except OSError:
+        return set()
+
+
+def privileged_prefix() -> list[str]:
+    """`sudo -n` si l'image l'autorise (Gablue), sinon `pkexec` (PolicyKit)."""
+    try:
+        probe = subprocess.run(
+            ["sudo", "-n", "true"], capture_output=True, timeout=5,
+        )
+        if probe.returncode == 0:
+            return ["sudo", "-n"]
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ["pkexec"]
+
+
+def probe_key(host: dict, accept_new: bool = False) -> tuple[bool, str]:
+    """La connexion sans mot de passe avec notre clé fonctionne-t-elle ?
+
+    `accept_new` n'est utilisé que par l'installation : l'utilisateur demande
+    explicitement à déposer la clé, on peut donc accepter l'empreinte d'hôte au
+    premier contact (TOFU), comme le fait ssh-copy-id. La vérification
+    périodique, elle, reste stricte et n'écrit jamais dans known_hosts.
+    """
+    if not (PRIVATE_KEY.exists() and PUBLIC_KEY.exists()):
+        return False, "aucune clé locale"
+    try:
+        result = subprocess.run(
+            [SSH, *_ssh_opts(host, accept_new=accept_new),
+             ssh_target(host), "true"],
+            capture_output=True, text=True, timeout=12,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "délai dépassé"
+    except OSError as exc:
+        return False, f"ssh introuvable ({exc})"
+    if result.returncode == 0:
+        return True, ""
+    detail = (result.stderr or "").strip().splitlines()
+    return False, detail[-1] if detail else f"ssh a retourné {result.returncode}"
+
+
+def _fingerprints(keys_text: str) -> list[str]:
+    """Empreintes SHA256 lisibles à partir d'une sortie ssh-keyscan/-F."""
+    if not keys_text.strip():
+        return []
+    try:
+        result = subprocess.run(
+            [SSH_KEYGEN, "-lf", "-"], input=keys_text,
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    prints = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        kind = line.rsplit("(", 1)[1].rstrip(")") if "(" in line else "clé"
+        prints.append(f"{kind:<10} {parts[1]}")
+    return prints
+
+
+def host_key_info(host: dict) -> tuple[str, list[str], list[str], str]:
+    """Empreintes de l'hôte : « known », « unknown », « changed » ou « unreachable ».
+
+    `ssh-keyscan` ne s'authentifie pas et n'écrit rien : il annonce simplement
+    les clés publiques de la machine. On les compare à `~/.ssh/known_hosts`
+    pour distinguer un premier contact (à faire valider) d'une empreinte qui a
+    CHANGÉ (possible attaque de l'homme du milieu : on refuse). Le texte brut
+    est renvoyé pour pouvoir ÉPINGLER exactement les clés montrées à
+    l'utilisateur, sans repasser par le réseau.
+    """
+    names = [host["host"]]
+    if host["port"] != 22:
+        names = [f'[{host["host"]}]:{host["port"]}']
+    else:
+        names.append(f'[{host["host"]}]:22')
+
+    stored: list[str] = []
+    for name in names:
+        try:
+            result = subprocess.run(
+                [SSH_KEYGEN, "-F", name, "-f", str(KNOWN_HOSTS)],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode == 0:
+            stored.extend(_fingerprints(result.stdout))
+    stored = sorted(set(stored))
+
+    raw = ""
+    scanned: list[str] = []
+    try:
+        result = subprocess.run(
+            [SSH_KEYSCAN, "-T", "5", "-p", str(host["port"]), host["host"]],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
+    if result is not None and result.returncode == 0:
+        raw = "\n".join(
+            line for line in result.stdout.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+        scanned = sorted(set(_fingerprints(raw)))
+
+    if stored and scanned:
+        if set(stored) & set(scanned):
+            return "known", scanned, stored, raw
+        return "changed", scanned, stored, raw
+    if stored:
+        return "known", stored, stored, ""
+    if scanned:
+        return "unknown", scanned, stored, raw
+    return "unreachable", [], stored, ""
+
+
+def trust_host_key(raw_keys: str) -> bool:
+    """Épingle dans known_hosts les lignes ssh-keyscan acceptées par l'utilisateur.
+
+    On écrit les clés EXACTES qui ont été affichées (pas celles d'une nouvelle
+    connexion) : si une autre clé se présente ensuite, ssh la refuse. C'est ce
+    qui évite le `accept-new` silencieux et sa fenêtre d'attaque.
+    """
+    lines = [
+        line.strip() for line in raw_keys.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    if not lines:
+        return False
+    try:
+        SSH_DIR.mkdir(parents=True, exist_ok=True)
+        os.chmod(SSH_DIR, 0o700)
+        mode = "a" if KNOWN_HOSTS.exists() else "w"
+        with open(KNOWN_HOSTS, mode, encoding="utf-8") as handle:
+            if mode == "a" and KNOWN_HOSTS.stat().st_size:
+                handle.write("\n")
+            handle.write("\n".join(lines) + "\n")
+        os.chmod(KNOWN_HOSTS, 0o600)
+    except OSError:
+        return False
+    return True
+
+
+def check_host(host: dict, stop: threading.Event) -> tuple[str, str, float, str]:
+    """État d'un poste, sans bloquer la GUI.
+
+    Retourne (état, détail, latence ms, MAC détectée). La latence est le temps
+    du handshake SSH complet (connexion + authentification) : c'est la seule
+    mesure sans ouvrir une connexion TCP supplémentaire à chaque vérification.
+    """
+    if not (PRIVATE_KEY.exists() and PUBLIC_KEY.exists()):
+        return "nokey", "la clé locale sera créée à l'installation", 0.0, ""
+
+    command = [
+        SSH, *_ssh_opts(host),
+        ssh_target(host), "true",
+    ]
+    started = time.monotonic()
+    try:
+        proc = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+    except OSError as exc:
+        return "error", f"ssh introuvable ({exc})", 0.0, ""
+
+    deadline = time.monotonic() + CHECK_DEADLINE
+    while proc.poll() is None:
+        if stop.is_set():
+            proc.kill()
+            proc.wait()
+            return "unknown", "", 0.0, ""
+        if time.monotonic() > deadline:
+            proc.kill()
+            try:
+                proc.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+            return "timeout", "délai dépassé", 0.0, ""
+        time.sleep(0.08)
+
+    try:
+        _, err = proc.communicate(timeout=2)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        _, err = proc.communicate()
+    latency = (time.monotonic() - started) * 1000.0
+    if proc.returncode == 0:
+        mac = ""
+        if not host.get("mac"):
+            mac = detect_mac(host) or detect_mac_remote(host)
+        return "online", "", latency, mac
+
+    text = (err or "").strip()
+    low = text.lower()
+    if "host key verification failed" in low:
+        return "hostkey", "empreinte inconnue ou changée", 0.0, ""
+    if "permission denied" in low:
+        return "auth", "clé refusée", 0.0, ""
+    if "connection refused" in low:
+        return "refused", "connexion refusée", 0.0, ""
+    if "no route to host" in low:
+        return "noroute", "réseau injoignable", 0.0, ""
+    if "could not resolve" in low or "name or service not known" in low:
+        return "dns", "nom introuvable", 0.0, ""
+    if "timed out" in low or "timeout" in low:
+        return "timeout", "délai dépassé", 0.0, ""
+    first = text.splitlines()[0] if text else f"code {proc.returncode}"
+    return "error", first, 0.0, ""
+
+
+def _kill_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except OSError:
+        return
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def _run_with_password(command: list[str], password: str,
+                       log, cancel: threading.Event | None = None) -> tuple[int, str]:
+    """Lance une commande interactive dans un pty et répond aux invites.
+
+    ssh-copy-id demande le mot de passe sur le terminal : on lui donne un vrai
+    pty (session + terminal de contrôle) et on écrit le secret dès qu'une invite
+    « password: » apparaît. Mot de passe jamais dans argv, donc invisible dans ps.
+    """
+    master, slave = pty.openpty()
+
+    def _attach_tty() -> None:
+        os.setsid()
+        try:
+            fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+        except OSError:
+            pass
+
+    try:
+        proc = subprocess.Popen(
+            command, stdin=slave, stdout=slave, stderr=slave,
+            preexec_fn=_attach_tty, close_fds=True,
+            env={**os.environ, "TERM": "dumb"},
+        )
+    except OSError as exc:
+        os.close(master)
+        os.close(slave)
+        return 127, f"{command[0]} introuvable ({exc})"
+    os.close(slave)
+
+    output = ""
+    answered_at = -1
+    deadline = time.monotonic() + 60
+    try:
+        while True:
+            if cancel is not None and cancel.is_set():
+                _kill_group(proc)
+                output += "\n[annulé]\n"
+                break
+            if time.monotonic() > deadline:
+                _kill_group(proc)
+                output += "\n[délai dépassé]\n"
+                break
+            ready, _, _ = select.select([master], [], [], 0.2)
+            if ready:
+                try:
+                    chunk = os.read(master, 4096)
+                except OSError:
+                    chunk = b""
+                if not chunk:
+                    break
+                text = chunk.decode("utf-8", "replace")
+                output += text
+                log(text)
+                tail = output[-8192:]
+                matches = list(PASSWORD_RE.finditer(tail))
+                if matches:
+                    end = len(output) - len(tail) + matches[-1].end()
+                    if end > answered_at:
+                        os.write(master, (password + "\n").encode())
+                        answered_at = end
+            elif proc.poll() is not None:
+                while True:
+                    more, _, _ = select.select([master], [], [], 0)
+                    if not more:
+                        break
+                    try:
+                        chunk = os.read(master, 4096)
+                    except OSError:
+                        chunk = b""
+                    if not chunk:
+                        break
+                    text = chunk.decode("utf-8", "replace")
+                    output += text
+                    log(text)
+                break
+    finally:
+        try:
+            os.close(master)
+        except OSError:
+            pass
+
+    try:
+        code = proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        _kill_group(proc)
+        code = proc.returncode if proc.returncode is not None else 1
+    return code, output
+
+
+def install_key(host: dict, password: str, log, cancel=None,
+                ask_trust=None) -> tuple[bool, str]:
+    """Crée la clé si besoin, la copie avec ssh-copy-id, puis vérifie.
+
+    `ask_trust(empreintes)` est appelé au premier contact : la GUI affiche les
+    empreintes et attend l'accord de l'utilisateur. Une empreinte qui a CHANGÉ
+    n'est jamais acceptée ici, même si l'appelant dirait oui : c'est le signe
+    classique d'une attaque de l'homme du milieu.
+    """
+    ok, error = ensure_local_key()
+    if not ok:
+        return False, error
+    log(f"Clé locale : {PRIVATE_KEY}\n")
+
+    state, scanned, stored, raw = host_key_info(host)
+    if state == "changed":
+        log("Empreinte d'hôte DIFFÉRENTE de celle enregistrée.\n")
+        log("  connue   : " + (", ".join(stored) or "?") + "\n")
+        log("  annoncée : " + (", ".join(scanned) or "?") + "\n")
+        return False, ("l'empreinte de l'hôte a changé — possible attaque ; "
+                       "vérifiez la machine avant de continuer")
+    if state == "unknown":
+        log("Premier contact : empreintes annoncées par l'hôte\n")
+        for item in scanned:
+            log(f"  {item}\n")
+        if ask_trust is None:
+            return False, "empreinte d'hôte inconnue : acceptation explicite requise"
+        if not ask_trust(scanned):
+            return False, "empreinte refusée"
+        if not trust_host_key(raw):
+            return False, "impossible d'enregistrer l'empreinte dans ~/.ssh/known_hosts"
+        log("Empreinte acceptée et enregistrée dans known_hosts.\n")
+    elif state == "unreachable":
+        log("Empreinte d'hôte indisponible (ssh-keyscan).\n")
+        return False, ("empreinte d'hôte indisponible — poste injoignable, "
+                       "réessayez dans un instant")
+
+    ok, _ = probe_key(host)
+    if ok:
+        log("Cette clé est déjà acceptée par le poste.\n")
+        return True, "clé déjà installée"
+
+    if not password:
+        return False, "mot de passe requis pour copier la clé"
+
+    log(f"Copie de {PUBLIC_KEY.name} vers {address_text(host)}…\n")
+    command = [
+        SSH_COPY_ID,
+        "-i", str(PUBLIC_KEY),
+        "-p", str(host["port"]),
+        "-o", "StrictHostKeyChecking=yes",
+        "-o", "ConnectTimeout=10",
+        "-o", "NumberOfPasswordPrompts=2",
+        ssh_target(host),
+    ]
+    code, _ = _run_with_password(command, password, log, cancel)
+
+    ok, detail = probe_key(host)
+    if ok:
+        return True, "clé installée, connexion sans mot de passe vérifiée"
+    if detail:
+        return False, f"la clé n'est pas acceptée après la copie ({detail})"
+    return False, f"ssh-copy-id a échoué (code {code})"
+
+
+# =============================================================================
+# SECTION 3 : TRAVAILLEURS (threads)
+# =============================================================================
+
+class CheckWorker(QThread):
+    """Vérifie tous les postes en parallèle, un signal par résultat."""
+
+    result = Signal(str, str, str, float, str)   # id, état, détail, ms, MAC
+    finished_all = Signal()
+
+    def __init__(self, hosts: list[dict], parent=None):
+        super().__init__(parent)
+        self._hosts = [dict(host) for host in hosts]
+        self._stop = threading.Event()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def run(self) -> None:
+        if not self._hosts:
+            self.finished_all.emit()
+            return
+        workers = max(1, min(6, len(self._hosts)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(check_host, host, self._stop): host["id"]
+                for host in self._hosts
+            }
+            for future in as_completed(futures):
+                host_id = futures[future]
+                try:
+                    state, detail, latency, mac = future.result()
+                except Exception as exc:  # jamais laisser un poste sans état
+                    state, detail, latency, mac = "error", str(exc), 0.0, ""
+                if self._stop.is_set():
+                    continue
+                self.result.emit(host_id, state, detail, latency, mac)
+        self.finished_all.emit()
+
+
+class KeyInstallWorker(QThread):
+    """Copie la clé dans un thread : la fenêtre reste réactive."""
+
+    log = Signal(str)
+    confirm_host_key = Signal(str, object)   # nom affiché, [empreintes]
+    done = Signal(bool, str)
+
+    def __init__(self, host: dict, password: str, parent=None):
+        super().__init__(parent)
+        self._host = dict(host)
+        self._password = password
+        self.cancel = threading.Event()
+        self.trust_event = threading.Event()
+        self.trust_answer = False
+
+    def _ask_trust(self, fingerprints: list[str]) -> bool:
+        """Pose la question dans la GUI puis attend sa réponse."""
+        self.trust_answer = False
+        self.trust_event.clear()
+        self.confirm_host_key.emit(display_name(self._host), fingerprints)
+        while not self.trust_event.wait(0.2):
+            if self.cancel.is_set():
+                return False
+        return self.trust_answer
+
+    def run(self) -> None:
+        try:
+            ok, message = install_key(
+                self._host, self._password, self.log.emit, self.cancel,
+                self._ask_trust,
+            )
+        except Exception as exc:
+            ok, message = False, str(exc)
+        finally:
+            self._password = ""
+        self.done.emit(ok, message)
+
+
+class SshTaskWorker(QThread):
+    """Exécute une commande distante en streaming (arrêt, redémarrage, mise à jour)."""
+
+    log = Signal(str)
+    done = Signal(int)
+
+    def __init__(self, host: dict, command: str, parent=None,
+                 password: str = ""):
+        super().__init__(parent)
+        self._host = dict(host)
+        self._command = command
+        # Mot de passe sudo éventuel : écrit sur stdin (jamais en argv, donc
+        # invisible dans `ps`), utilisé une seule fois par `sudo -S -v`.
+        self._password = password
+        self.cancel = threading.Event()
+
+    def run(self) -> None:
+        argv = [
+            SSH, *_ssh_opts(self._host), ssh_target(self._host), self._command,
+        ]
+        try:
+            proc = subprocess.Popen(
+                argv,
+                stdin=subprocess.PIPE if self._password else subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, start_new_session=True,
+            )
+        except OSError as exc:
+            self.log.emit(f"ssh introuvable ({exc})\n")
+            self.done.emit(127)
+            return
+        if self._password and proc.stdin is not None:
+            try:
+                proc.stdin.write((self._password + "\n").encode("utf-8"))
+                proc.stdin.flush()
+                proc.stdin.close()
+            except OSError:
+                pass
+        assert proc.stdout is not None
+        fd = proc.stdout.fileno()
+        try:
+            while True:
+                if self.cancel.is_set():
+                    _kill_group(proc)
+                    self.log.emit("\n[annulé]\n")
+                    break
+                try:
+                    ready, _, _ = select.select([fd], [], [], 0.2)
+                except (OSError, ValueError):
+                    break
+                if ready:
+                    try:
+                        chunk = os.read(fd, 4096)
+                    except OSError:
+                        chunk = b""
+                    if not chunk:
+                        break
+                    self.log.emit(chunk.decode("utf-8", "replace"))
+                elif proc.poll() is not None:
+                    break
+        finally:
+            proc.stdout.close()
+        try:
+            code = proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _kill_group(proc)
+            code = proc.returncode if proc.returncode is not None else 1
+        self.done.emit(code)
+
+
+# =============================================================================
+# SECTION 4 : APPARENCE (QSS adapté au thème Plasma)
+# =============================================================================
+
+def _rgba(color: QColor, alpha: int) -> str:
+    return f"rgba({color.red()},{color.green()},{color.blue()},{alpha})"
+
+
+QSS_TEMPLATE = """
+QLabel { background: transparent; }
+QLabel#title { font-size: 22px; font-weight: 700; }
+QLabel#subtitle { color: @dim@; font-size: 12px; }
+QLabel#footer { color: @dim@; font-size: 12px; }
+QLabel#hostName { font-size: 15px; font-weight: 600; }
+QLabel#hostDetail { color: @dim@; font-size: 12px; }
+QLabel#hostStatus { font-size: 12px; font-weight: 500; }
+QLabel#emptyTitle { font-size: 18px; font-weight: 600; }
+QLabel#emptyText { color: @dim@; font-size: 13px; }
+QLabel#error { color: #e5484d; font-size: 12px; }
+QLabel#ok { color: @online@; font-size: 12px; font-weight: 600; }
+QLabel#warn { color: @auth@; font-size: 12px; font-weight: 600; }
+QLabel#hint { color: @dim@; font-size: 11px; }
+
+QScrollArea { background: transparent; border: none; }
+QScrollArea > QWidget > QWidget { background: transparent; }
+
+QFrame#hostCard {
+    background: @card@;
+    border: 1px solid @border@;
+    border-radius: 14px;
+}
+QFrame#hostCard[hover="true"] {
+    background: @cardHover@;
+    border-color: @accent@;
+}
+
+QFrame#localCard {
+    background: @card@;
+    border: 1px solid @accentSoft@;
+    border-radius: 14px;
+}
+
+QPushButton {
+    background: @card@;
+    color: @text@;
+    border: 1px solid @border@;
+    border-radius: 9px;
+    padding: 7px 14px;
+    font-size: 12px;
+}
+QPushButton:hover { background: @cardHover@; border-color: @accentSoft@; }
+QPushButton:pressed { background: @pressed@; }
+QPushButton:disabled { color: @dim@; }
+
+QPushButton#accent {
+    background: @accent@;
+    color: @onAccent@;
+    border: 1px solid transparent;
+    font-weight: 600;
+    padding: 7px 16px;
+}
+QPushButton#accent:hover { background: @accentHover@; }
+QPushButton#accent:disabled { background: @card@; color: @dim@; }
+
+QPushButton#ghost {
+    background: transparent;
+    border: 1px solid @border@;
+}
+
+QPushButton#pill {
+    background: transparent;
+    border: 1px solid @border@;
+    border-radius: 11px;
+    padding: 4px 11px;
+    font-size: 11px;
+}
+QPushButton#pill:hover { background: @cardHover@; border-color: @accentSoft@; }
+
+QToolButton#more {
+    background: transparent;
+    color: @text@;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    padding: 4px 10px;
+    font-size: 16px;
+    font-weight: 700;
+}
+QToolButton#more:hover { background: @cardHover@; border-color: @border@; }
+QToolButton#more::menu-indicator { image: none; }
+
+QLineEdit, QSpinBox {
+    background: @field@;
+    color: @text@;
+    border: 1px solid @border@;
+    border-radius: 8px;
+    padding: 7px 10px;
+    selection-background-color: @accent@;
+    selection-color: @onAccent@;
+}
+QLineEdit:focus, QSpinBox:focus { border-color: @accent@; }
+
+QPlainTextEdit {
+    background: @field@;
+    color: @text@;
+    border: 1px solid @border@;
+    border-radius: 8px;
+    font-family: monospace;
+    font-size: 11px;
+}
+
+QProgressBar#busy {
+    background: transparent;
+    border: none;
+    max-height: 3px;
+}
+QProgressBar#busy::chunk { background: @accent@; border-radius: 1px; }
+
+QMenu {
+    background: @menu@;
+    color: @text@;
+    border: 1px solid @border@;
+    border-radius: 10px;
+    padding: 6px;
+}
+QMenu::item { padding: 7px 22px 7px 14px; border-radius: 6px; }
+QMenu::item:selected { background: @accent@; color: @onAccent@; }
+QMenu::separator { height: 1px; background: @border@; margin: 5px 8px; }
+"""
+
+
+def make_qss() -> str:
+    palette = QApplication.palette()
+    dark = palette.color(QPalette.Window).lightness() < 128
+    text = palette.color(QPalette.WindowText)
+    accent = palette.color(QPalette.Highlight)
+    on_accent = palette.color(QPalette.HighlightedText)
+    if accent.lightness() == text.lightness():
+        accent = QColor("#3daee9")
+    base = palette.color(QPalette.Base)
+    white = QColor(255, 255, 255)
+    black = QColor(0, 0, 0)
+    tint = white if dark else black
+    values = {
+        "@card@": _rgba(tint, 20 if dark else 9),
+        "@cardHover@": _rgba(tint, 34 if dark else 16),
+        "@pressed@": _rgba(tint, 46 if dark else 24),
+        "@border@": _rgba(tint, 32 if dark else 26),
+        "@accent@": accent.name(),
+        "@accentSoft@": _rgba(accent, 170),
+        "@accentHover@": (accent.lighter(112) if dark else accent.darker(108)).name(),
+        "@onAccent@": on_accent.name(),
+        "@text@": text.name(),
+        "@dim@": _rgba(text, 160),
+        "@field@": base.name(),
+        "@menu@": base.name(),
+        "@online@": COLOR_ONLINE,
+        "@auth@": COLOR_AUTH,
+    }
+    qss = QSS_TEMPLATE
+    for token, value in values.items():
+        qss = qss.replace(token, value)
+    return qss
+
+
+# =============================================================================
+# SECTION 5 : PASTILLE D'ÉTAT
+# =============================================================================
+
+class StatusDot(QWidget):
+    """Pastille colorée ; halo qui respire quand le poste est en ligne."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(26, 26)
+        self._state = "unknown"
+        self._phase = 0.0
+
+    def set_state(self, state: str) -> None:
+        if state == self._state:
+            return
+        self._state = state
+        self.update()
+
+    def animated(self) -> bool:
+        return self._state in ("online", "checking")
+
+    def tick(self) -> None:
+        if self.animated():
+            self._phase += 0.14
+            self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        center = QPointF(self.width() / 2.0, self.height() / 2.0)
+        color = QColor(STATE_COLOR.get(self._state, COLOR_OFFLINE))
+
+        if self._state == "online":
+            halo = QColor(color)
+            halo.setAlpha(int(40 + 55 * (0.5 + 0.5 * math.sin(self._phase))))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(halo)
+            painter.drawEllipse(center, 9.5, 9.5)
+        elif self._state == "checking":
+            halo = QColor(color)
+            halo.setAlpha(55)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(halo)
+            radius = 6.5 + 2.5 * (0.5 + 0.5 * math.sin(self._phase))
+            painter.drawEllipse(center, radius, radius)
+        elif self._state in ("auth", "hostkey", "nokey"):
+            halo = QColor(color)
+            halo.setAlpha(45)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(halo)
+            painter.drawEllipse(center, 8.5, 8.5)
+
+        painter.setPen(QPen(QColor(0, 0, 0, 60), 1))
+        painter.setBrush(color)
+        painter.drawEllipse(center, 5.0, 5.0)
+        painter.end()
+
+
+# =============================================================================
+# SECTION 6 : CARTE D'UN POSTE
+# =============================================================================
+
+def _make_tool_button(parent, icon_name: str, fallback: str) -> QToolButton:
+    """Bouton-icône compact, avec repli texte si le thème n'a pas l'icône."""
+    button = QToolButton(parent)
+    button.setObjectName("more")
+    button.setCursor(Qt.PointingHandCursor)
+    button.setIconSize(QSize(18, 18))
+    icon = QIcon.fromTheme(icon_name)
+    if icon.isNull():
+        button.setText(fallback)
+    else:
+        button.setIcon(icon)
+    return button
+
+
+class HostCard(QFrame):
+    """Une ligne graphique : état, identité, actions."""
+
+    remote_requested = Signal(str)
+    remote_stop_requested = Signal(str)
+    files_requested = Signal(str)
+    edit_requested = Signal(str)
+    delete_requested = Signal(str)
+    key_requested = Signal(str)
+    terminal_requested = Signal(str)
+    wake_requested = Signal(str)
+    update_requested = Signal(str, str)   # id du poste, type de mise à jour
+    settings_requested = Signal(str)
+    reboot_requested = Signal(str)
+    shutdown_requested = Signal(str)
+
+    def __init__(self, host: dict, parent=None):
+        super().__init__(parent)
+        self.host = host
+        self.setObjectName("hostCard")
+        self.setAttribute(Qt.WA_Hover, True)
+        self.setMinimumHeight(92)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(18, 14, 16, 14)
+        layout.setSpacing(14)
+
+        self.dot = StatusDot(self)
+        layout.addWidget(self.dot, 0, Qt.AlignVCenter)
+
+        texts = QVBoxLayout()
+        texts.setSpacing(2)
+        self.name_label = QLabel(display_name(host), self)
+        self.name_label.setObjectName("hostName")
+        self.detail_label = QLabel(address_text(host), self)
+        self.detail_label.setObjectName("hostDetail")
+        self.status_label = QLabel(STATE_TEXT["unknown"], self)
+        self.status_label.setObjectName("hostStatus")
+        texts.addWidget(self.name_label)
+        texts.addWidget(self.detail_label)
+        texts.addSpacing(3)
+        texts.addWidget(self.status_label)
+        layout.addLayout(texts, 1)
+
+        self.wake_button = QPushButton("Réveiller", self)
+        self.wake_button.setObjectName("ghost")
+        self.wake_button.setCursor(Qt.PointingHandCursor)
+        self.wake_button.setToolTip(
+            "Envoyer un paquet magique Wake-on-LAN à ce poste"
+        )
+        self.wake_button.setVisible(False)
+        self.wake_button.clicked.connect(
+            lambda: self.wake_requested.emit(self.host["id"])
+        )
+        layout.addWidget(self.wake_button, 0, Qt.AlignVCenter)
+
+        self.key_button = QPushButton("Installer la clé", self)
+        self.key_button.setObjectName("ghost")
+        self.key_button.setCursor(Qt.PointingHandCursor)
+        self.key_button.setVisible(False)
+        self.key_button.clicked.connect(
+            lambda: self.key_requested.emit(self.host["id"])
+        )
+        layout.addWidget(self.key_button, 0, Qt.AlignVCenter)
+
+        self.remote_button = QPushButton("Bureau distant", self)
+        self.remote_button.setObjectName("accent")
+        self.remote_button.setCursor(Qt.PointingHandCursor)
+        self.remote_button.setIcon(QIcon.fromTheme("computer"))
+        self.remote_button.setToolTip("Ouvrir le bureau distant de ce poste")
+        self.remote_button.clicked.connect(
+            lambda: self.remote_requested.emit(self.host["id"])
+        )
+        layout.addWidget(self.remote_button, 0, Qt.AlignVCenter)
+        self._remote_active = False
+
+        self.files_button = QPushButton("Fichiers", self)
+        self.files_button.setCursor(Qt.PointingHandCursor)
+        self.files_button.setIcon(QIcon.fromTheme("folder-remote"))
+        self.files_button.setToolTip(f'Parcourir {dolphin_url(host)}')
+        self.files_button.clicked.connect(
+            lambda: self.files_requested.emit(self.host["id"])
+        )
+        layout.addWidget(self.files_button, 0, Qt.AlignVCenter)
+
+        self.terminal_button = QPushButton("Terminal", self)
+        self.terminal_button.setCursor(Qt.PointingHandCursor)
+        self.terminal_button.setIcon(QIcon.fromTheme("utilities-terminal"))
+        self.terminal_button.setToolTip(
+            f"Ouvrir un terminal SSH sur {ssh_target(host)}"
+        )
+        self.terminal_button.clicked.connect(
+            lambda: self.terminal_requested.emit(self.host["id"])
+        )
+        layout.addWidget(self.terminal_button, 0, Qt.AlignVCenter)
+
+        self.more_button = _make_tool_button(self, "view-more-symbolic", "⋮")
+        self.more_button.setPopupMode(QToolButton.InstantPopup)
+        menu = QMenu(self.more_button)
+        self.remote_stop_action = menu.addAction(
+            "Fermer la session de bureau distant"
+        )
+        self.remote_stop_action.setEnabled(False)
+        self.remote_stop_action.triggered.connect(
+            lambda: self.remote_stop_requested.emit(self.host["id"])
+        )
+        menu.addSeparator()
+        self.wake_action = menu.addAction("Réveiller le poste")
+        self.wake_action.triggered.connect(
+            lambda: self.wake_requested.emit(self.host["id"])
+        )
+        menu.addSeparator()
+        update_menu = menu.addMenu("Mettre à jour")
+        for kind, label in (
+            ("gablue", "Gablue (image système)…"),
+            ("flatpak", "Flatpaks…"),
+            ("gwine", "Gwine (composants)…"),
+        ):
+            update_menu.addAction(
+                label,
+                lambda _checked=False, k=kind: self.update_requested.emit(
+                    self.host["id"], k
+                ),
+            )
+        settings_action = menu.addAction("Configuration avancée…")
+        settings_action.triggered.connect(
+            lambda: self.settings_requested.emit(self.host["id"])
+        )
+        reboot_action = menu.addAction("Redémarrer…")
+        reboot_action.triggered.connect(
+            lambda: self.reboot_requested.emit(self.host["id"])
+        )
+        shutdown_action = menu.addAction("Éteindre…")
+        shutdown_action.triggered.connect(
+            lambda: self.shutdown_requested.emit(self.host["id"])
+        )
+        menu.addSeparator()
+        self.key_action = menu.addAction("Installer la clé SSH…")
+        self.key_action.triggered.connect(
+            lambda: self.key_requested.emit(self.host["id"])
+        )
+        edit_action = menu.addAction("Modifier…")
+        edit_action.triggered.connect(
+            lambda: self.edit_requested.emit(self.host["id"])
+        )
+        menu.addSeparator()
+        delete_action = menu.addAction("Supprimer…")
+        delete_action.triggered.connect(
+            lambda: self.delete_requested.emit(self.host["id"])
+        )
+        self.more_button.setMenu(menu)
+        layout.addWidget(self.more_button, 0, Qt.AlignVCenter)
+
+        self.set_state("unknown", "")
+
+    # -- état ---------------------------------------------------------------
+    @property
+    def remote_active(self) -> bool:
+        return self._remote_active
+
+    def set_remote_active(self, active: bool) -> None:
+        """État de la session suivie : active l'entrée « Fermer » du menu ⋯.
+
+        Le bouton, lui, relance toujours une connexion (nouvelle fenêtre) :
+        c'est le comportement attendu, un second client RDP coupant le
+        précédent côté KRdp.
+        """
+        self._remote_active = active
+        self.remote_stop_action.setEnabled(active)
+
+    def set_state(self, state: str, detail: str = "",
+                  latency: float = 0.0) -> None:
+        self.dot.set_state(state)
+        text = STATE_TEXT.get(state, state)
+        if state == "error" and detail:
+            text = f"Erreur : {detail}"
+        if state == "online" and latency:
+            text = f"{text} · {latency:.0f} ms"
+        self.status_label.setText(text)
+        color = STATE_COLOR.get(state, COLOR_OFFLINE)
+        self.status_label.setStyleSheet(f"color: {color};")
+        self.key_button.setVisible(state in KEY_STATES)
+        self.wake_button.setVisible(
+            state in ("refused", "timeout", "noroute", "dns", "error")
+            and bool(self.host.get("mac"))
+        )
+        self.wake_action.setEnabled(bool(self.host.get("mac")))
+        if state == "nokey":
+            self.key_button.setText("Créer la clé")
+        elif state == "hostkey":
+            self.key_button.setText("Accepter et installer")
+        else:
+            self.key_button.setText("Installer la clé")
+        self.key_action.setText(
+            "Réinstaller la clé SSH…" if self.host.get("key_added")
+            else "Installer la clé SSH…"
+        )
+        if detail:
+            self.setToolTip(f"{display_name(self.host)}\n{detail}")
+        else:
+            self.setToolTip("")
+
+    # -- survol -------------------------------------------------------------
+    def _set_hover(self, hovered: bool) -> None:
+        self.setProperty("hover", hovered)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def enterEvent(self, event) -> None:
+        self._set_hover(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._set_hover(False)
+        super().leaveEvent(event)
+
+
+# =============================================================================
+# SECTION 7 : DIALOGUE AJOUT / MODIFICATION
+# =============================================================================
+
+class HostDialog(QDialog):
+    """Saisie d'un poste ; en ajout, propose la copie de la clé."""
+
+    def __init__(self, parent=None, host: dict | None = None,
+                 existing: list[dict] | None = None):
+        super().__init__(parent)
+        self._host = host
+        self._existing = existing or []
+        self._install = False
+        self._password = ""
+
+        self.setWindowTitle(
+            "Modifier le poste" if host else "Ajouter un poste SSH"
+        )
+        self.setModal(True)
+        self.setMinimumWidth(480)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 22, 24, 20)
+        root.setSpacing(12)
+
+        title = QLabel(
+            "Modifier le poste" if host else "Ajouter un poste SSH"
+        )
+        title.setObjectName("title")
+        root.addWidget(title)
+
+        subtitle = QLabel(
+            "La clé publique sera copiée sur la machine pour éviter le mot de "
+            "passe à chaque connexion. Si elle est déjà en place, aucun mot de "
+            "passe n'est demandé."
+            if not host else
+            "Le mot de passe et la clé ne sont pas modifiés ici."
+        )
+        subtitle.setObjectName("subtitle")
+        subtitle.setWordWrap(True)
+        root.addWidget(subtitle)
+        root.addSpacing(6)
+
+        form = QVBoxLayout()
+        form.setSpacing(10)
+
+        form.addWidget(self._field_label("Nom (facultatif)"))
+        self.label_edit = QLineEdit(self)
+        self.label_edit.setPlaceholderText("Salon, atelier, portable…")
+        form.addWidget(self.label_edit)
+
+        form.addWidget(self._field_label("Utilisateur"))
+        self.user_edit = QLineEdit(self)
+        self.user_edit.setPlaceholderText("gab")
+        form.addWidget(self.user_edit)
+
+        form.addWidget(self._field_label("Hôte ou adresse IP"))
+        self.host_edit = QLineEdit(self)
+        self.host_edit.setPlaceholderText("sucina.local ou 192.168.1.42")
+        form.addWidget(self.host_edit)
+
+        form.addWidget(self._field_label("Port SSH"))
+        self.port_spin = QSpinBox(self)
+        self.port_spin.setRange(1, 65535)
+        self.port_spin.setValue(22)
+        self.port_spin.setMaximumWidth(140)
+        form.addWidget(self.port_spin)
+
+        form.addWidget(self._field_label(
+            "Adresse MAC (Wake-on-LAN, facultatif)"
+        ))
+        mac_row = QHBoxLayout()
+        mac_row.setSpacing(8)
+        self.mac_edit = QLineEdit(self)
+        self.mac_edit.setPlaceholderText("AA:BB:CC:DD:EE:FF")
+        mac_row.addWidget(self.mac_edit, 1)
+        self.mac_button = QPushButton("Détecter", self)
+        self.mac_button.setObjectName("ghost")
+        self.mac_button.setCursor(Qt.PointingHandCursor)
+        self.mac_button.clicked.connect(self._detect_mac)
+        mac_row.addWidget(self.mac_button)
+        form.addLayout(mac_row)
+        self.mac_hint = QLabel(
+            "Capturée automatiquement au premier contact réussi ; utile pour "
+            "réveiller un poste éteint.", self,
+        )
+        self.mac_hint.setObjectName("hint")
+        self.mac_hint.setWordWrap(True)
+        form.addWidget(self.mac_hint)
+
+        if not host:
+            self.password_label = self._field_label(
+                "Mot de passe SSH (une seule fois)"
+            )
+            self.password_edit = QLineEdit(self)
+            self.password_edit.setEchoMode(QLineEdit.Password)
+            self.password_edit.setPlaceholderText(
+                "utilisé pour copier la clé, jamais enregistré"
+            )
+            form.addWidget(self.password_label)
+            form.addWidget(self.password_edit)
+        else:
+            # Aucun champ mot de passe en modification : un widget enfant non
+            # ajouté au layout s'afficherait quand même dans le coin du dialogue.
+            self.password_edit = None
+        root.addLayout(form)
+
+        hint = QLabel(
+            "Le mot de passe ne sert qu'à déposer la clé publique dans "
+            "~/.ssh/authorized_keys du poste (ssh-copy-id). Il n'est écrit nulle part."
+        )
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        if not host:
+            root.addWidget(hint)
+
+        self.error_label = QLabel(self)
+        self.error_label.setObjectName("error")
+        self.error_label.setWordWrap(True)
+        self.error_label.setVisible(False)
+        root.addWidget(self.error_label)
+
+        root.addSpacing(4)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(8)
+        buttons.addStretch(1)
+        cancel = QPushButton("Annuler", self)
+        cancel.setObjectName("ghost")
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel)
+
+        if host:
+            save = QPushButton("Enregistrer", self)
+            save.setObjectName("accent")
+            save.setDefault(True)
+            save.clicked.connect(lambda: self._submit(False))
+            buttons.addWidget(save)
+        else:
+            plain = QPushButton("Ajouter", self)
+            plain.clicked.connect(lambda: self._submit(False))
+            buttons.addWidget(plain)
+
+            self.key_button = QPushButton("Ajouter et copier la clé", self)
+            self.key_button.setObjectName("accent")
+            self.key_button.setDefault(True)
+            self.key_button.clicked.connect(lambda: self._submit(True))
+            buttons.addWidget(self.key_button)
+        root.addLayout(buttons)
+
+        if host:
+            self.label_edit.setText(host.get("label", ""))
+            self.user_edit.setText(host["user"])
+            self.host_edit.setText(host["host"])
+            self.port_spin.setValue(host["port"])
+            self.mac_edit.setText(host.get("mac", ""))
+        else:
+            self.user_edit.setText(getpass.getuser())
+        self.host_edit.textChanged.connect(self._sync_placeholder)
+        self._sync_placeholder(self.host_edit.text())
+
+    @staticmethod
+    def _field_label(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("hostDetail")
+        return label
+
+    def _sync_placeholder(self, text: str) -> None:
+        if not self.label_edit.text():
+            self.label_edit.setPlaceholderText(text.strip() or "Salon, atelier…")
+
+    def _detect_mac(self) -> None:
+        address = self.host_edit.text().strip()
+        if not address:
+            self.mac_hint.setText("Indiquez d'abord l'hôte.")
+            return
+        mac = detect_mac({"host": address})
+        if mac:
+            self.mac_edit.setText(mac)
+            self.mac_hint.setText("Adresse MAC lue dans la table ARP locale.")
+        else:
+            self.mac_hint.setText(
+                "Introuvable pour l'instant : le poste doit avoir communiqué "
+                "récemment sur le réseau. Elle sera capturée à la prochaine "
+                "connexion réussie."
+            )
+
+    def _show_error(self, message: str) -> None:
+        self.error_label.setText(message)
+        self.error_label.setVisible(True)
+
+    def _submit(self, install: bool) -> None:
+        self.error_label.setVisible(False)
+        host = self.host_edit.text().strip()
+        user = self.user_edit.text().strip()
+        label = self.label_edit.text().strip()
+        port = int(self.port_spin.value())
+        mac_text = self.mac_edit.text().strip()
+        mac = normalize_mac(mac_text)
+
+        if not host:
+            return self._show_error("Indiquez l'hôte ou l'adresse IP du poste.")
+        if any(ch.isspace() for ch in host) or "/" in host:
+            return self._show_error("L'hôte ne doit contenir ni espace ni « / ».")
+        if "@" in host:
+            return self._show_error(
+                "Mettez l'utilisateur dans le champ « Utilisateur », pas dans l'hôte."
+            )
+        if not user:
+            return self._show_error("Indiquez le nom d'utilisateur SSH.")
+        if any(ch.isspace() for ch in user) or any(ch in user for ch in "@:/"):
+            return self._show_error("Nom d'utilisateur invalide.")
+        if mac_text and not mac:
+            return self._show_error(
+                "Adresse MAC invalide (format attendu : AA:BB:CC:DD:EE:FF)."
+            )
+
+        for other in self._existing:
+            if self._host and other["id"] == self._host["id"]:
+                continue
+            if (other["user"], other["host"], other["port"]) == (user, host, port):
+                return self._show_error(
+                    f'{display_name(other)} utilise déjà {user}@{host}:{port}.'
+                )
+
+        self._install = install
+        self._password = (
+            self.password_edit.text()
+            if install and self.password_edit is not None else ""
+        )
+        self.result_record = {
+            "id": (self._host or {}).get("id") or uuid.uuid4().hex,
+            "label": label,
+            "user": user,
+            "host": host,
+            "port": port,
+            "mac": mac,
+            "key_added": bool((self._host or {}).get("key_added", False)),
+            "added_at": int((self._host or {}).get("added_at") or time.time()),
+        }
+        self.accept()
+
+    def install_requested(self) -> bool:
+        return self._install
+
+    def password(self) -> str:
+        return self._password
+
+
+# =============================================================================
+# SECTION 8 : DIALOGUE D'INSTALLATION DE LA CLÉ
+# =============================================================================
+
+class KeyInstallDialog(QDialog):
+    """Copie la clé publique, avec invite de mot de passe et journal."""
+
+    installed = Signal()
+
+    def __init__(self, parent=None, host: dict | None = None,
+                 password: str = ""):
+        super().__init__(parent)
+        self._host = dict(host or {})
+        self._worker: KeyInstallWorker | None = None
+        self._success = False
+
+        self.setWindowTitle(f"Clé SSH — {display_name(self._host)}")
+        self.setModal(True)
+        self.setMinimumWidth(520)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 22, 24, 20)
+        root.setSpacing(12)
+
+        title = QLabel(f"Copier la clé vers {display_name(self._host)}")
+        title.setObjectName("title")
+        root.addWidget(title)
+
+        explanation = QLabel(
+            f'La clé publique {PUBLIC_KEY.name} sera ajoutée à '
+            f'~/.ssh/authorized_keys sur {address_text(self._host)}. '
+            "Ensuite, plus de mot de passe : connexion, bureau distant et "
+            "fichiers passent par la clé."
+        )
+        explanation.setObjectName("subtitle")
+        explanation.setWordWrap(True)
+        root.addWidget(explanation)
+        root.addSpacing(4)
+
+        root.addWidget(HostDialog._field_label("Mot de passe SSH"))
+        self.password_edit = QLineEdit(self)
+        self.password_edit.setEchoMode(QLineEdit.Password)
+        self.password_edit.setPlaceholderText(
+            "mot de passe du compte distant (jamais enregistré)"
+        )
+        self.password_edit.setText(password)
+        root.addWidget(self.password_edit)
+
+        hint = QLabel(
+            "Le mot de passe sert uniquement à ssh-copy-id, il n'est ni écrit "
+            "sur le disque ni stocké dans la configuration."
+        )
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        self.result_label = QLabel(self)
+        self.result_label.setWordWrap(True)
+        self.result_label.setVisible(False)
+        root.addWidget(self.result_label)
+
+        self.log_view = QPlainTextEdit(self)
+        self.log_view.setReadOnly(True)
+        self.log_view.setFixedHeight(150)
+        self.log_view.setVisible(False)
+        root.addWidget(self.log_view)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.close_button = QPushButton("Fermer", self)
+        self.close_button.setObjectName("ghost")
+        self.close_button.clicked.connect(self.reject)
+        buttons.addWidget(self.close_button)
+
+        self.install_button = QPushButton("Installer la clé", self)
+        self.install_button.setObjectName("accent")
+        self.install_button.setDefault(True)
+        self.install_button.clicked.connect(self._start)
+        buttons.addWidget(self.install_button)
+        root.addLayout(buttons)
+
+        self.password_edit.returnPressed.connect(self._start)
+
+    def _start(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            return
+        password = self.password_edit.text()
+        self.password_edit.setEnabled(False)
+        self.install_button.setEnabled(False)
+        self.install_button.setText("Installation…")
+        self.result_label.setVisible(False)
+        self.log_view.setVisible(True)
+        self.log_view.clear()
+        self.log_view.appendPlainText(
+            f"→ {address_text(self._host)}\n"
+        )
+
+        worker = KeyInstallWorker(self._host, password, self)
+        worker.log.connect(self._append_log)
+        worker.confirm_host_key.connect(self._ask_host_key)
+        worker.done.connect(self._finished)
+        self._worker = worker
+        worker.start()
+
+    def _ask_host_key(self, name: str, fingerprints: list) -> None:
+        """Premier contact : montrer l'empreinte, ne jamais l'accepter en douce."""
+        details = "\n".join(f"    {item}" for item in fingerprints) or "    (aucune)"
+        text = (
+            f"Le poste « {name} » n'est pas encore dans ~/.ssh/known_hosts.\n\n"
+            f"Empreintes annoncées par la machine :\n{details}\n\n"
+            "Vérifiez-les sur le poste, par exemple :\n"
+            "    ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub\n\n"
+            "Accepter cette empreinte pour les prochaines connexions ?"
+        )
+        answer = QMessageBox.question(
+            self, "Premier contact — vérifier l'empreinte", text,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        worker = self._worker
+        if worker is not None:
+            worker.trust_answer = answer == QMessageBox.Yes
+            worker.trust_event.set()
+
+    def _append_log(self, text: str) -> None:
+        self.log_view.insertPlainText(text)
+        bar = self.log_view.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def _finished(self, ok: bool, message: str) -> None:
+        self._success = ok
+        self.result_label.setVisible(True)
+        if ok:
+            self.result_label.setObjectName("ok")
+            self.result_label.setText(f"Clé installée — {message}.")
+            self.install_button.setVisible(False)
+            self.close_button.setText("Fermer")
+            self.close_button.setDefault(True)
+            self.installed.emit()
+        else:
+            self.result_label.setObjectName("warn")
+            self.result_label.setText(f"Échec — {message}.")
+            self.password_edit.setEnabled(True)
+            self.install_button.setEnabled(True)
+            self.install_button.setText("Réessayer")
+        self.result_label.style().unpolish(self.result_label)
+        self.result_label.style().polish(self.result_label)
+        # Succès : le secret n'a plus d'utilité, on le jette. Échec : on le
+        # laisse en place (masqué) pour que « Réessayer » ne le redemande pas.
+        if ok:
+            self.password_edit.setText("")
+
+    def reject(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.cancel.set()
+            self._worker.trust_event.set()   # débloque l'attente d'empreinte
+            self._worker.wait(3000)
+        super().reject()
+
+    def key_installed(self) -> bool:
+        return self._success
+
+
+class RemoteTaskDialog(QDialog):
+    """Commande distante avec journal en direct (arrêt, redémarrage, mise à jour)."""
+
+    def __init__(self, parent=None, host: dict | None = None, title: str = "",
+                 subtitle: str = "", command: str = "",
+                 ok_if_disconnect: bool = False, hint_from_output=None,
+                 password: str = ""):
+        super().__init__(parent)
+        self._host = dict(host or {})
+        self._command = command
+        self._password = password
+        self._ok_if_disconnect = ok_if_disconnect
+        self._hint_from_output = hint_from_output
+        self._worker: SshTaskWorker | None = None
+        self._output: list[str] = []
+        self._cancelled = False
+        self._running = True
+
+        self.setWindowTitle(title or f"Action — {display_name(self._host)}")
+        self.setModal(True)
+        self.setMinimumWidth(560)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 22, 24, 20)
+        root.setSpacing(10)
+
+        heading = QLabel(title or display_name(self._host), self)
+        heading.setObjectName("title")
+        root.addWidget(heading)
+
+        if subtitle:
+            detail = QLabel(subtitle, self)
+            detail.setObjectName("subtitle")
+            detail.setWordWrap(True)
+            root.addWidget(detail)
+
+        self.log_view = QPlainTextEdit(self)
+        self.log_view.setReadOnly(True)
+        self.log_view.setMinimumHeight(260)
+        self.log_view.setMaximumBlockCount(5000)
+        root.addWidget(self.log_view, 1)
+
+        self.result_label = QLabel(self)
+        self.result_label.setWordWrap(True)
+        self.result_label.setVisible(False)
+        root.addWidget(self.result_label)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.cancel_button = QPushButton("Annuler", self)
+        self.cancel_button.setObjectName("ghost")
+        self.cancel_button.clicked.connect(self._cancel)
+        buttons.addWidget(self.cancel_button)
+
+        self.close_button = QPushButton("Fermer", self)
+        self.close_button.setObjectName("accent")
+        self.close_button.setVisible(False)
+        self.close_button.clicked.connect(self.accept)
+        buttons.addWidget(self.close_button)
+        root.addLayout(buttons)
+
+        self.log_view.appendPlainText(
+            f"→ {ssh_target(self._host)} (port {self._host['port']})\n"
+            f"$ {command}\n\n"
+        )
+        QTimer.singleShot(60, self._start)
+
+    def _start(self) -> None:
+        worker = SshTaskWorker(
+            self._host, self._command, self, password=self._password
+        )
+        worker.log.connect(self._append)
+        worker.done.connect(self._finished)
+        self._worker = worker
+        worker.start()
+
+    def _append(self, text: str) -> None:
+        self._output.append(text)
+        self.log_view.insertPlainText(text)
+        bar = self.log_view.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def _cancel(self) -> None:
+        if not self._running or self._worker is None:
+            return
+        self._cancelled = True
+        self.cancel_button.setEnabled(False)
+        self._worker.cancel.set()
+
+    def _finished(self, code: int) -> None:
+        self._running = False
+        output = "".join(self._output)
+        ok = code == 0
+        if not ok and self._ok_if_disconnect and code == 255:
+            low = output.lower()
+            if any(mark in low for mark in (
+                "closed by remote", "connection reset", "broken pipe",
+                "disconnected", "connection to",
+            )):
+                ok = True
+
+        self.result_label.setVisible(True)
+        if self._cancelled:
+            self.result_label.setObjectName("warn")
+            self.result_label.setText("Action annulée.")
+        elif ok:
+            extra = ""
+            if self._hint_from_output is not None:
+                extra = self._hint_from_output(output) or ""
+            self.result_label.setObjectName("ok")
+            self.result_label.setText(
+                "Terminé." + (f" {extra}" if extra else "")
+            )
+        else:
+            self.result_label.setObjectName("warn")
+            self.result_label.setText(f"Échec (code {code}).")
+        self.result_label.style().unpolish(self.result_label)
+        self.result_label.style().polish(self.result_label)
+
+        self.cancel_button.setVisible(False)
+        self.close_button.setVisible(True)
+        self.close_button.setDefault(True)
+
+    def reject(self) -> None:
+        if self._running and self._worker is not None:
+            answer = QMessageBox.question(
+                self, "Action en cours",
+                "L'action n'est pas terminée. L'annuler et fermer ?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            self._cancelled = True
+            self._worker.cancel.set()
+            self._worker.wait(3000)
+        super().reject()
+
+
+class AvahiWorker(QThread):
+    """Recherche mDNS des services SSH du réseau local."""
+
+    found = Signal(object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.stop = threading.Event()
+
+    def run(self) -> None:
+        try:
+            self.found.emit(avahi_scan(stop=self.stop))
+        except Exception:
+            self.found.emit([])
+
+
+class CandidateDialog(QDialog):
+    """Liste à cocher de postes à ajouter (découverte mDNS ou ssh_config)."""
+
+    def __init__(self, parent=None, title: str = "", subtitle: str = "",
+                 candidates: list[dict] | None = None,
+                 existing: list[dict] | None = None):
+        super().__init__(parent)
+        known = {
+            (host["user"], host["host"], host["port"]) for host in (existing or [])
+        }
+        self._candidates = [
+            item for item in (candidates or [])
+            if (item["user"], item["host"], item["port"]) not in known
+        ]
+        self.selected: list[dict] = []
+
+        self.setWindowTitle(title or "Postes à ajouter")
+        self.setModal(True)
+        self.setMinimumWidth(540)
+        self.setMinimumHeight(420)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 22, 24, 20)
+        root.setSpacing(10)
+
+        heading = QLabel(title or "Postes à ajouter", self)
+        heading.setObjectName("title")
+        root.addWidget(heading)
+
+        detail = QLabel(subtitle, self)
+        detail.setObjectName("subtitle")
+        detail.setWordWrap(True)
+        root.addWidget(detail)
+
+        self.list_widget = QListWidget(self)
+        for candidate in self._candidates:
+            text = (
+                f'{candidate.get("label") or candidate["host"]} — '
+                f'{candidate["user"]}@{candidate["host"]}:{candidate["port"]}'
+            )
+            item = QListWidgetItem(text, self.list_widget)
+            item.setData(Qt.UserRole, candidate)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            # Rien n'est coché d'avance : la découverte propose, elle n'ajoute
+            # pas. Sinon la touche Entrée (bouton par défaut) suffirait à
+            # inscrire tous les postes trouvés sans regarder la liste.
+            item.setCheckState(Qt.Unchecked)
+        root.addWidget(self.list_widget, 1)
+
+        tools = QHBoxLayout()
+        tools.setSpacing(8)
+        self.all_button = QPushButton("Tout cocher", self)
+        self.all_button.setObjectName("ghost")
+        self.all_button.setCursor(Qt.PointingHandCursor)
+        self.all_button.setEnabled(bool(self._candidates))
+        self.all_button.clicked.connect(self._toggle_all)
+        tools.addWidget(self.all_button)
+        tools.addStretch(1)
+        self.count_label = QLabel(self)
+        self.count_label.setObjectName("hint")
+        tools.addWidget(self.count_label)
+        root.addLayout(tools)
+
+        self.note = QLabel(
+            "La clé SSH n'est pas encore installée : utilisez « Installer la "
+            "clé » sur la carte une fois le poste ajouté."
+            if self._candidates else
+            "Aucun nouveau poste à ajouter.",
+            self,
+        )
+        self.note.setObjectName("hint")
+        self.note.setWordWrap(True)
+        root.addWidget(self.note)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        cancel = QPushButton("Annuler", self)
+        cancel.setObjectName("ghost")
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel)
+
+        self.add_button = QPushButton("Ajouter", self)
+        self.add_button.setObjectName("accent")
+        self.add_button.setDefault(True)
+        self.add_button.clicked.connect(self._accept)
+        buttons.addWidget(self.add_button)
+        root.addLayout(buttons)
+
+        self.list_widget.itemChanged.connect(self._sync_selection)
+        self._sync_selection()
+
+    def _checked(self) -> list[dict]:
+        chosen = []
+        for index in range(self.list_widget.count()):
+            item = self.list_widget.item(index)
+            if item.checkState() == Qt.Checked:
+                chosen.append(item.data(Qt.UserRole))
+        return chosen
+
+    def _toggle_all(self) -> None:
+        target = Qt.Unchecked if self._checked() else Qt.Checked
+        for index in range(self.list_widget.count()):
+            self.list_widget.item(index).setCheckState(target)
+
+    def _sync_selection(self) -> None:
+        count = len(self._checked())
+        total = self.list_widget.count()
+        self.all_button.setText("Tout décocher" if count == total and total
+                                else "Tout cocher")
+        self.count_label.setText(
+            f"{count} sélectionné{'s' if count > 1 else ''} sur {total}"
+        )
+        self.add_button.setEnabled(count > 0)
+        self.add_button.setText(f"Ajouter ({count})" if count else "Ajouter")
+
+    def _accept(self) -> None:
+        chosen = self._checked()
+        if not chosen:
+            self.note.setText("Cochez au moins un poste.")
+            return
+        self.selected = chosen
+        self.accept()
+
+
+class LocalTaskDialog(QDialog):
+    """Commande locale en streaming (mises à jour, options système).
+
+    Même déroulé que `RemoteTaskDialog`, mais via `QProcess` sur CETTE machine :
+    sortie fusionnée en direct, annulation possible, et `sudo -n` / `pkexec`
+    choisi automatiquement pour les commandes qui exigent root.
+    """
+
+    def __init__(self, parent=None, title: str = "", subtitle: str = "",
+                 argv: list[str] | None = None, root: bool = False,
+                 hint_from_output=None):
+        super().__init__(parent)
+        self._argv = list(argv or [])
+        self._root = root
+        self._hint_from_output = hint_from_output
+        self._process: QProcess | None = None
+        self._output: list[str] = []
+        self._cancelled = False
+        self._running = True
+
+        self.setWindowTitle(title or "Action sur ce poste")
+        self.setModal(True)
+        self.setMinimumWidth(620)
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(24, 22, 24, 20)
+        root_layout.setSpacing(10)
+
+        heading = QLabel(title or "Action sur ce poste", self)
+        heading.setObjectName("title")
+        root_layout.addWidget(heading)
+
+        if subtitle:
+            detail = QLabel(subtitle, self)
+            detail.setObjectName("subtitle")
+            detail.setWordWrap(True)
+            root_layout.addWidget(detail)
+
+        self.log_view = QPlainTextEdit(self)
+        self.log_view.setReadOnly(True)
+        self.log_view.setMinimumHeight(280)
+        self.log_view.setMaximumBlockCount(20000)
+        root_layout.addWidget(self.log_view, 1)
+
+        self.result_label = QLabel(self)
+        self.result_label.setWordWrap(True)
+        self.result_label.setVisible(False)
+        root_layout.addWidget(self.result_label)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.cancel_button = QPushButton("Annuler", self)
+        self.cancel_button.setObjectName("ghost")
+        self.cancel_button.clicked.connect(self._cancel)
+        buttons.addWidget(self.cancel_button)
+
+        self.close_button = QPushButton("Fermer", self)
+        self.close_button.setObjectName("accent")
+        self.close_button.setVisible(False)
+        self.close_button.clicked.connect(self.accept)
+        buttons.addWidget(self.close_button)
+        root_layout.addLayout(buttons)
+
+        QTimer.singleShot(60, self._start)
+
+    def _start(self) -> None:
+        argv = list(self._argv)
+        if self._root:
+            prefix = privileged_prefix()
+            if prefix == ["pkexec"] and shutil.which("pkexec") is None:
+                self._append(
+                    "Ni sudo sans mot de passe ni pkexec : action impossible.\n"
+                )
+                self._finished(127)
+                return
+            argv = [*prefix, *argv]
+
+        self.log_view.appendPlainText("$ " + " ".join(argv) + "\n\n")
+        process = QProcess(self)
+        process.setProcessChannelMode(QProcess.MergedChannels)
+        process.setProgram(argv[0])
+        process.setArguments(argv[1:])
+        process.readyReadStandardOutput.connect(self._drain)
+        process.finished.connect(self._finished)
+        process.errorOccurred.connect(self._start_failed)
+        if hasattr(process, "setChildProcessModifier"):
+            # Propre session : l'annulation emporte les enfants (bootc, ssh…).
+            process.setChildProcessModifier(os.setsid)
+        self._process = process
+        process.start()
+
+    def _drain(self) -> None:
+        if self._process is None:
+            return
+        chunk = bytes(self._process.readAllStandardOutput())
+        if chunk:
+            self._append(chunk.decode("utf-8", "replace"))
+
+    def _append(self, text: str) -> None:
+        if not text:
+            return
+        self._output.append(text)
+        self.log_view.insertPlainText(text)
+        bar = self.log_view.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def _cancel(self) -> None:
+        if not self._running or self._process is None:
+            return
+        self._cancelled = True
+        self.cancel_button.setEnabled(False)
+        self._append("\n[annulation…]\n")
+        self._process.kill()
+
+    def _start_failed(self, error) -> None:
+        # finished() n'est pas émis quand le programme n'a pas pu démarrer.
+        if error != QProcess.FailedToStart:
+            return
+        self._append(f"\nLancement impossible ({self._argv[0]}).\n")
+        self._finished(127)
+
+    def _finished(self, code: int) -> None:
+        self._running = False
+        output = "".join(self._output)
+        ok = code == 0
+        self.result_label.setVisible(True)
+        if self._cancelled:
+            self.result_label.setObjectName("warn")
+            self.result_label.setText("Action annulée.")
+        elif ok:
+            extra = ""
+            if self._hint_from_output is not None:
+                extra = self._hint_from_output(output) or ""
+            self.result_label.setObjectName("ok")
+            self.result_label.setText("Terminé." + (f" {extra}" if extra else ""))
+        else:
+            self.result_label.setObjectName("warn")
+            reasons = {
+                126: "autorisation refusée",
+                127: "non autorisé ou commande absente",
+                125: "dialogue PolicyKit absent ou annulé",
+            }
+            detail = reasons.get(code, "")
+            self.result_label.setText(
+                f"Échec (code {code})" + (f" — {detail}" if detail else "") + "."
+            )
+        self.result_label.style().unpolish(self.result_label)
+        self.result_label.style().polish(self.result_label)
+
+        self.cancel_button.setVisible(False)
+        self.close_button.setVisible(True)
+        self.close_button.setDefault(True)
+        self._process = None
+
+    def reject(self) -> None:
+        if self._running and self._process is not None:
+            answer = QMessageBox.question(
+                self, "Action en cours",
+                "L'action n'est pas terminée. L'annuler et fermer ?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            self._cancelled = True
+            self._process.kill()
+            self._process.waitForFinished(3000)
+        super().reject()
+
+
+class LocalCard(QFrame):
+    """La machine courante : mises à jour et options avancées."""
+
+    update_requested = Signal(str)   # "gablue" | "flatpak" | "gwine"
+    config_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("localCard")
+        # Même hauteur et même amorce que les cartes de postes : la pastille
+        # d'état y fait 26 px, l'icône doit occuper la même largeur, sinon le
+        # texte et les boutons de cette carte sont décalés de 2 px.
+        self.setMinimumHeight(92)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(18, 14, 16, 14)
+        layout.setSpacing(14)
+
+        icon = QLabel(self)
+        icon.setFixedSize(26, 26)
+        icon.setAlignment(Qt.AlignCenter)
+        pixmap = QIcon.fromTheme("computer").pixmap(QSize(20, 20))
+        if not pixmap.isNull():
+            icon.setPixmap(pixmap)
+        layout.addWidget(icon, 0, Qt.AlignVCenter)
+
+        texts = QVBoxLayout()
+        texts.setSpacing(2)
+        self.name_label = QLabel("Ce poste", self)
+        self.name_label.setObjectName("hostName")
+        host = socket.gethostname()
+        distro = local_distro()
+        detail = f"{getpass.getuser()}@{host}"
+        if distro:
+            detail += f" · {distro}"
+        self.detail_label = QLabel(detail, self)
+        self.detail_label.setObjectName("hostDetail")
+        self.hint_label = QLabel("Mises à jour et options de cette machine", self)
+        self.hint_label.setObjectName("hostStatus")
+        texts.addWidget(self.name_label)
+        texts.addWidget(self.detail_label)
+        texts.addSpacing(3)
+        texts.addWidget(self.hint_label)
+        layout.addLayout(texts, 1)
+
+        self.update_button = QPushButton("Mettre à jour", self)
+        self.update_button.setObjectName("accent")
+        self.update_button.setCursor(Qt.PointingHandCursor)
+        self.update_button.setIcon(QIcon.fromTheme("system-software-update"))
+        menu = QMenu(self.update_button)
+        menu.addAction(
+            "Gablue (image système)…", lambda: self.update_requested.emit("gablue")
+        )
+        menu.addAction(
+            "Flatpaks…", lambda: self.update_requested.emit("flatpak")
+        )
+        menu.addAction(
+            "Gwine (composants)…", lambda: self.update_requested.emit("gwine")
+        )
+        self.update_button.setMenu(menu)
+        layout.addWidget(self.update_button, 0, Qt.AlignVCenter)
+
+        self.config_button = QPushButton("Configuration…", self)
+        self.config_button.setObjectName("ghost")
+        self.config_button.setCursor(Qt.PointingHandCursor)
+        self.config_button.setIcon(QIcon.fromTheme("settings-configure"))
+        self.config_button.setToolTip(
+            "Atténuations CPU et options du noyau"
+        )
+        self.config_button.clicked.connect(self.config_requested.emit)
+        layout.addWidget(self.config_button, 0, Qt.AlignVCenter)
+
+
+def ssh_capture(host: dict, command: str,
+                timeout: float = 12.0) -> tuple[int, str]:
+    """Exécute une commande distante et rend (code, sortie)."""
+    try:
+        result = subprocess.run(
+            [SSH, *_ssh_opts(host), ssh_target(host), command],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 255, ""
+    return result.returncode, result.stdout
+
+
+def remote_sudo_nopasswd(host: dict) -> bool:
+    """`sudo -n` passe-t-il sur ce poste (image Gablue) ?"""
+    code, _ = ssh_capture(host, "sudo -n true", timeout=10)
+    return code == 0
+
+
+def remote_sudo_prefix(password: str) -> str:
+    """Ligne qui valide sudo une fois pour toutes (mot de passe sur stdin)."""
+    if not password:
+        return ""
+    return "sudo -S -p '' -v || exit 1\n"
+
+
+def ask_remote_password(parent, host: dict) -> str | None:
+    """Mot de passe sudo du poste distant ; jamais enregistré, jamais en argv."""
+    text, ok = QInputDialog.getText(
+        parent, "Autorisation root",
+        f"Mot de passe de « {host['user']} » sur {display_name(host)} :\n"
+        "sudo le demande sur ce poste ; il n'est ni affiché ni enregistré.",
+        QLineEdit.Password,
+    )
+    return text if ok else None
+
+
+def local_action_argv(action: str) -> list[str]:
+    """Commande locale correspondant à une action de configuration."""
+    rpm = _which("rpm-ostree")
+    if action == "mitigations_off":
+        return [rpm, "kargs", f"--append-if-missing={KARG_MITIGATIONS_OFF}"]
+    if action == "mitigations_on":
+        return [rpm, "kargs", f"--delete-if-present={KARG_MITIGATIONS_OFF}"]
+    if action == "ertm_apply":
+        return [rpm, "kargs", f"--append-if-missing={KARG_BT_ERTM}"]
+    if action == "ertm_remove":
+        return [rpm, "kargs", f"--delete-if-present={KARG_BT_ERTM}"]
+    raise ValueError(action)
+
+
+def remote_action_script(action: str, user: str) -> str:
+    """Script distant correspondant à une action de configuration.
+
+    Chaque commande privilégiée utilise `sudo -n` : l'appelant a déjà validé
+    sudo (`remote_sudo_prefix`) quand un mot de passe était nécessaire.
+    """
+    sudo = "/usr/bin/sudo -n"
+    if action == "mitigations_off":
+        return f"{sudo} /usr/bin/rpm-ostree kargs --append-if-missing={KARG_MITIGATIONS_OFF}\n"
+    if action == "mitigations_on":
+        return f"{sudo} /usr/bin/rpm-ostree kargs --delete-if-present={KARG_MITIGATIONS_OFF}\n"
+    if action == "ertm_apply":
+        return f"{sudo} /usr/bin/rpm-ostree kargs --append-if-missing={KARG_BT_ERTM}\n"
+    if action == "ertm_remove":
+        return f"{sudo} /usr/bin/rpm-ostree kargs --delete-if-present={KARG_BT_ERTM}\n"
+    raise ValueError(action)
+
+
+class SettingsDialog(QDialog):
+    """Socle des options avancées : état réel affiché, action inverse proposée.
+
+    La lecture de l'état et l'exécution viennent de la sous-classe :
+    machine courante (`LocalSettingsDialog`) ou poste distant par SSH
+    (`RemoteSettingsDialog`).
+    """
+
+    def __init__(self, parent=None, title: str = "Configuration avancée",
+                 subtitle: str = ""):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.setMinimumWidth(640)
+        self.setMinimumHeight(430)
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(24, 22, 24, 20)
+        root_layout.setSpacing(10)
+
+        heading = QLabel(title, self)
+        heading.setObjectName("title")
+        root_layout.addWidget(heading)
+
+        note = QLabel(subtitle, self)
+        note.setObjectName("subtitle")
+        note.setWordWrap(True)
+        root_layout.addWidget(note)
+
+        self.rows_layout = QVBoxLayout()
+        self.rows_layout.setSpacing(8)
+        root_layout.addLayout(self.rows_layout, 1)
+        self.rows: dict[str, tuple[QLabel, QPushButton]] = {}
+
+        self._add_row(
+            "mitigations", "Atténuations du processeur",
+            "mitigations=off retire les correctifs contre les failles CPU "
+            "(gain sur les vieux processeurs, risque de sécurité assumé).",
+            self._toggle_mitigations,
+        )
+        self._add_row(
+            "ertm", "Options du noyau (Bluetooth)",
+            "Ajoute bluetooth.disable_ertm=1 (réglage recommandé par Gablue).",
+            self._toggle_ertm,
+        )
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        close = QPushButton("Fermer", self)
+        close.setObjectName("accent")
+        close.setDefault(True)
+        close.clicked.connect(self.accept)
+        buttons.addWidget(close)
+        root_layout.addLayout(buttons)
+
+        self.state: dict = {"ok": False}
+        self.refresh()
+
+    def _add_row(self, key: str, title: str, description: str,
+                 handler) -> None:
+        frame = QFrame(self)
+        frame.setObjectName("hostCard")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(6)
+
+        top = QHBoxLayout()
+        top.setSpacing(10)
+        name = QLabel(title, frame)
+        name.setObjectName("hostName")
+        top.addWidget(name)
+        top.addStretch(1)
+        state = QLabel(frame)
+        state.setObjectName("hostStatus")
+        top.addWidget(state)
+        button = QPushButton(frame)
+        button.setObjectName("ghost")
+        button.setCursor(Qt.PointingHandCursor)
+        button.clicked.connect(handler)
+        top.addWidget(button)
+        layout.addLayout(top)
+
+        detail = QLabel(description, frame)
+        detail.setObjectName("hostDetail")
+        detail.setWordWrap(True)
+        layout.addWidget(detail)
+
+        self.rows_layout.addWidget(frame)
+        self.rows[key] = (state, button)
+
+    def _set_row(self, key: str, text: str, color: str, button_text: str,
+                 enabled: bool) -> None:
+        state, button = self.rows[key]
+        state.setText(text)
+        state.setStyleSheet(f"color: {color};")
+        button.setText(button_text)
+        button.setEnabled(enabled)
+
+    # -- état ---------------------------------------------------------------
+    def refresh(self) -> None:
+        self.state = self.read_state()
+        ok = bool(self.state.get("ok"))
+        off = bool(self.state.get("mitigations_off"))
+        self._set_row(
+            "mitigations",
+            "inconnu" if not ok else ("désactivées" if off else "activées"),
+            COLOR_AUTH if off else COLOR_ONLINE,
+            "Réactiver" if off else "Désactiver", ok,
+        )
+        ertm = bool(self.state.get("ertm"))
+        self._set_row(
+            "ertm",
+            "inconnu" if not ok else ("appliquées" if ertm else "non appliquées"),
+            COLOR_ONLINE if ertm else COLOR_OFFLINE,
+            "Retirer" if ertm else "Appliquer", ok,
+        )
+
+    # -- actions ------------------------------------------------------------
+    def _toggle_mitigations(self) -> None:
+        if not self.state.get("ok"):
+            return
+        off = bool(self.state.get("mitigations_off"))
+        question = (
+            "Réactiver les atténuations du processeur ?\n\n"
+            "Le paramètre mitigations=off sera retiré ; effet au prochain "
+            "démarrage."
+            if off else
+            "Désactiver les atténuations du processeur ?\n\n"
+            "Le noyau démarrera avec mitigations=off : les correctifs contre "
+            "les failles CPU (Spectre, Meltdown…) ne seront plus actifs. "
+            "Effet au prochain démarrage."
+        )
+        if QMessageBox.question(
+            self, "Atténuations du processeur", question,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        self.apply(
+            "mitigations_on" if off else "mitigations_off",
+            "Atténuations du processeur",
+            "rpm-ostree kargs — effet au prochain démarrage.",
+        )
+
+    def _toggle_ertm(self) -> None:
+        if not self.state.get("ok"):
+            return
+        applied = bool(self.state.get("ertm"))
+        question = (
+            "Retirer les options noyau de Gablue ?\n\n"
+            "bluetooth.disable_ertm=1 sera supprimé. Effet au prochain démarrage."
+            if applied else
+            "Appliquer les options noyau recommandées ?\n\n"
+            "bluetooth.disable_ertm=1 sera ajouté. "
+            "Effet au prochain démarrage."
+        )
+        if QMessageBox.question(
+            self, "Options du noyau", question,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        self.apply(
+            "ertm_remove" if applied else "ertm_apply",
+            "Options du noyau",
+            "rpm-ostree kargs — effet au prochain démarrage.",
+        )
+
+    # -- à fournir par la sous-classe ---------------------------------------
+    def read_state(self) -> dict:
+        raise NotImplementedError
+
+    def apply(self, action: str, title: str, subtitle: str) -> None:
+        raise NotImplementedError
+
+
+class LocalSettingsDialog(SettingsDialog):
+    """Options avancées de la machine courante."""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            parent, "Configuration avancée",
+            "Réglages de cette machine. Les paramètres du noyau s'appliquent au "
+            "prochain démarrage.",
+        )
+
+    def read_state(self) -> dict:
+        cmdline = kernel_cmdline()
+        return {
+            "ok": True,
+            "mitigations_off": KARG_MITIGATIONS_OFF in cmdline,
+            "ertm": KARG_BT_ERTM in cmdline,
+        }
+
+    def apply(self, action: str, title: str, subtitle: str) -> None:
+        dialog = LocalTaskDialog(
+            self, title=title, subtitle=subtitle,
+            argv=local_action_argv(action), root=True,
+        )
+        dialog.exec()
+        self.refresh()
+
+
+class RemoteSettingsDialog(SettingsDialog):
+    """Options avancées d'un poste distant, lues et appliquées par SSH."""
+
+    def __init__(self, parent=None, host: dict | None = None):
+        self.host = dict(host or {})
+        super().__init__(
+            parent, f"Configuration avancée — {display_name(self.host)}",
+            f"Réglages de {address_text(self.host)}, lus et modifiés par SSH. "
+            "Les paramètres du noyau s'appliquent au prochain démarrage.",
+        )
+
+    def read_state(self) -> dict:
+        code, output = ssh_capture(self.host, "cat /proc/cmdline")
+        if code != 0:
+            return {"ok": False}
+        cmdline = set(output.split())
+        return {
+            "ok": True,
+            "mitigations_off": KARG_MITIGATIONS_OFF in cmdline,
+            "ertm": KARG_BT_ERTM in cmdline,
+        }
+
+    def apply(self, action: str, title: str, subtitle: str) -> None:
+        password = ""
+        if not remote_sudo_nopasswd(self.host):
+            password = ask_remote_password(self, self.host)
+            if password is None:
+                return
+        command = remote_sudo_prefix(password) + remote_action_script(
+            action, self.host.get("user") or getpass.getuser()
+        )
+        dialog = RemoteTaskDialog(
+            self, host=self.host, title=title, subtitle=subtitle,
+            command=command, password=password,
+        )
+        dialog.exec()
+        self.refresh()
+
+
+# =============================================================================
+# SECTION 9 : FENÊTRE PRINCIPALE
+# =============================================================================
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Gablue Manager")
+        self.resize(980, 680)
+        self.setMinimumSize(780, 520)
+        self.setWindowIcon(QIcon.fromTheme("network-server"))
+
+        self._hosts = load_hosts()
+        self._states: dict[str, tuple[str, str]] = {}
+        self._latency: dict[str, float] = {}
+        self._cards: dict[str, HostCard] = {}
+        self._dots: list[StatusDot] = []
+        self._checker: CheckWorker | None = None
+        self._jobs: list[dict] = []
+        self._last_check: float | None = None
+        self._display_order: list[str] = []
+        self._discovering = False
+        self._avahi_worker: AvahiWorker | None = None
+        self._sshd_process: QProcess | None = None
+        self._avahi_process: QProcess | None = None
+        self._avahi_temp = ""
+
+        self._build_ui()
+        self.setStyleSheet(make_qss())
+        self._rebuild_cards()
+        self._update_sshd_button()
+        self._update_avahi_button()
+
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.setInterval(PULSE_MS)
+        self._pulse_timer.timeout.connect(self._tick_pulse)
+        self._pulse_timer.start()
+
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(REFRESH_MS)
+        self._refresh_timer.timeout.connect(self.refresh_all)
+        self._refresh_timer.start()
+
+        self._job_timer = QTimer(self)
+        self._job_timer.setInterval(1200)
+        self._job_timer.timeout.connect(self._poll_jobs)
+        self._job_timer.start()
+
+        QTimer.singleShot(150, self.refresh_all)
+
+    # -- construction -------------------------------------------------------
+    def _build_ui(self) -> None:
+        central = QWidget(self)
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        header = QWidget(central)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(26, 22, 26, 14)
+        header_layout.setSpacing(12)
+
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
+        title = QLabel("Gablue Manager", header)
+        title.setObjectName("title")
+        subtitle = QLabel(
+            "Postes SSH, mises à jour et configuration", header
+        )
+        subtitle.setObjectName("subtitle")
+        titles.addWidget(title)
+        titles.addWidget(subtitle)
+        header_layout.addLayout(titles)
+        header_layout.addStretch(1)
+
+        self.refresh_button = _make_tool_button(header, "view-refresh", "⟳")
+        self.refresh_button.setToolTip("Vérifier maintenant (F5)")
+        self.refresh_button.clicked.connect(self.refresh_all)
+        header_layout.addWidget(self.refresh_button)
+
+        # Un seul point d'entrée pour peupler la liste : la découverte mDNS et
+        # l'import ~/.ssh/config sont des façons d'ajouter un poste, pas des
+        # commandes à part dans un menu « ⋯ » séparé.
+        self.add_button = QPushButton("Ajouter un poste", header)
+        self.add_button.setObjectName("accent")
+        self.add_button.setCursor(Qt.PointingHandCursor)
+        self.add_button.setIcon(QIcon.fromTheme("list-add"))
+        add_menu = QMenu(self.add_button)
+        add_menu.addAction("Saisir un poste à la main…", self.add_host)
+        add_menu.addAction(
+            "Rechercher sur le réseau (mDNS)…", self.discover_hosts
+        )
+        add_menu.addAction(
+            "Importer depuis ~/.ssh/config…", self.import_ssh_config
+        )
+        self.add_button.setMenu(add_menu)
+        header_layout.addWidget(self.add_button)
+        root.addWidget(header)
+
+        self.busy = QProgressBar(central)
+        self.busy.setObjectName("busy")
+        self.busy.setRange(0, 0)
+        self.busy.setTextVisible(False)
+        self.busy.setFixedHeight(3)
+        self.busy.setVisible(False)
+        root.addWidget(self.busy)
+
+        # Carte « Ce poste » : toujours visible, indépendante de la liste.
+        self.local_card = LocalCard(central)
+        self.local_card.update_requested.connect(self.local_update)
+        self.local_card.config_requested.connect(self.open_settings)
+        local_holder = QWidget(central)
+        local_layout = QHBoxLayout(local_holder)
+        local_layout.setContentsMargins(26, 0, 26, 6)
+        local_layout.addWidget(self.local_card)
+        root.addWidget(local_holder)
+
+        self.stack = QStackedWidget(central)
+        root.addWidget(self.stack, 1)
+
+        # Page vide
+        empty = QWidget(self.stack)
+        empty_layout = QVBoxLayout(empty)
+        empty_layout.setContentsMargins(40, 40, 40, 60)
+        empty_layout.setSpacing(10)
+        empty_layout.addStretch(1)
+        icon = QLabel(empty)
+        pixmap = QIcon.fromTheme("network-server").pixmap(QSize(72, 72))
+        if pixmap.isNull():
+            pixmap = QPixmap(72, 72)
+            pixmap.fill(Qt.transparent)
+        icon.setPixmap(pixmap)
+        icon.setAlignment(Qt.AlignCenter)
+        empty_layout.addWidget(icon)
+        empty_title = QLabel("Aucun poste SSH", empty)
+        empty_title.setObjectName("emptyTitle")
+        empty_title.setAlignment(Qt.AlignCenter)
+        empty_layout.addWidget(empty_title)
+        empty_text = QLabel(
+            "Ajoutez une machine pour y déposer votre clé, lancer son bureau "
+            "distant (gremote) ou parcourir ses fichiers dans Dolphin.",
+            empty,
+        )
+        empty_text.setObjectName("emptyText")
+        empty_text.setAlignment(Qt.AlignCenter)
+        empty_text.setWordWrap(True)
+        empty_text.setMaximumWidth(520)
+        # QLabel en wordWrap rapporte une hauteur d'une ligne : sans plancher,
+        # le texte est rogné et les boutons se collent dessus.
+        empty_text.setMinimumHeight(48)
+        empty_layout.addWidget(empty_text, 0, Qt.AlignHCenter)
+        empty_layout.addSpacing(8)
+        empty_buttons = QHBoxLayout()
+        empty_buttons.setSpacing(8)
+        empty_buttons.addStretch(1)
+        empty_add = QPushButton("Ajouter un poste", empty)
+        empty_add.setObjectName("accent")
+        empty_add.setCursor(Qt.PointingHandCursor)
+        empty_add.clicked.connect(self.add_host)
+        empty_buttons.addWidget(empty_add)
+        empty_discover = QPushButton("Rechercher sur le réseau", empty)
+        empty_discover.setCursor(Qt.PointingHandCursor)
+        empty_discover.clicked.connect(self.discover_hosts)
+        empty_buttons.addWidget(empty_discover)
+        empty_buttons.addStretch(1)
+        empty_layout.addLayout(empty_buttons)
+        empty_layout.addStretch(2)
+        self.stack.addWidget(empty)
+
+        # Page liste
+        self.scroll = QScrollArea(self.stack)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.viewport().setAutoFillBackground(False)
+        content = QWidget(self.scroll)
+        content.setAutoFillBackground(False)
+        self.cards_layout = QVBoxLayout(content)
+        self.cards_layout.setContentsMargins(26, 6, 26, 18)
+        self.cards_layout.setSpacing(10)
+        self.cards_layout.addStretch(1)
+        self.scroll.setWidget(content)
+        self.stack.addWidget(self.scroll)
+
+        footer = QWidget(central)
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(26, 6, 26, 14)
+        self.footer_label = QLabel(footer)
+        self.footer_label.setObjectName("footer")
+        footer_layout.addWidget(self.footer_label)
+        footer_layout.addStretch(1)
+        self.sshd_button = QPushButton(footer)
+        self.sshd_button.setObjectName("pill")
+        self.sshd_button.setCursor(Qt.PointingHandCursor)
+        self.sshd_button.clicked.connect(self.toggle_local_sshd)
+        footer_layout.addWidget(self.sshd_button)
+        footer_layout.addSpacing(6)
+
+        self.avahi_button = QPushButton(footer)
+        self.avahi_button.setObjectName("pill")
+        self.avahi_button.setCursor(Qt.PointingHandCursor)
+        self.avahi_button.clicked.connect(self.toggle_avahi)
+        footer_layout.addWidget(self.avahi_button)
+        footer_layout.addSpacing(10)
+        self.auto_label = QLabel(
+            f"Vérification automatique toutes les {REFRESH_MS // 1000} s",
+            footer,
+        )
+        self.auto_label.setObjectName("footer")
+        footer_layout.addWidget(self.auto_label)
+        root.addWidget(footer)
+
+        for sequence, slot in (("Ctrl+N", self.add_host),
+                               ("F5", self.refresh_all)):
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.activated.connect(slot)
+
+        self._update_footer()
+
+    # -- registre -----------------------------------------------------------
+    def _save(self) -> None:
+        try:
+            save_hosts(self._hosts)
+        except OSError as exc:
+            QMessageBox.critical(
+                self, "Enregistrement impossible",
+                f"Le registre {HOSTS_FILE} n'a pas pu être écrit :\n{exc}",
+            )
+
+    def _host(self, host_id: str) -> dict | None:
+        for host in self._hosts:
+            if host["id"] == host_id:
+                return host
+        return None
+
+    # -- cartes -------------------------------------------------------------
+    def _rebuild_cards(self) -> None:
+        while self.cards_layout.count():
+            item = self.cards_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._cards.clear()
+        self._dots.clear()
+
+        for host in self._sorted_hosts():
+            card = HostCard(host, self.scroll.widget())
+            card.remote_requested.connect(self.launch_remote)
+            card.remote_stop_requested.connect(self.stop_remote)
+            card.files_requested.connect(self.open_files)
+            card.key_requested.connect(self.install_key_dialog)
+            card.edit_requested.connect(self.edit_host)
+            card.delete_requested.connect(self.delete_host)
+            card.terminal_requested.connect(self.open_terminal)
+            card.wake_requested.connect(self.wake_host)
+            card.update_requested.connect(self.update_host)
+            card.settings_requested.connect(self.open_remote_settings)
+            card.reboot_requested.connect(self.reboot_host)
+            card.shutdown_requested.connect(self.shutdown_host)
+            state, detail = self._states.get(host["id"], ("unknown", ""))
+            card.set_state(state, detail, self._latency.get(host["id"], 0.0))
+            card.set_remote_active(self._remote_job(host["id"]) is not None)
+            self.cards_layout.addWidget(card)
+            self._cards[host["id"]] = card
+            self._dots.append(card.dot)
+
+        self.cards_layout.addStretch(1)
+        self._display_order = [host["id"] for host in self._sorted_hosts()]
+        self.stack.setCurrentIndex(0 if not self._hosts else 1)
+        self._update_footer()
+
+    def _sorted_hosts(self) -> list[dict]:
+        """Postes en ligne d'abord, puis par nom."""
+        def key(host: dict):
+            state = self._states.get(host["id"], ("unknown", ""))[0]
+            return (0 if state == "online" else 1, display_name(host).casefold())
+        return sorted(self._hosts, key=key)
+
+    def _tick_pulse(self) -> None:
+        for dot in self._dots:
+            dot.tick()
+
+    # -- vérification -------------------------------------------------------
+    def refresh_all(self) -> None:
+        self._update_sshd_button()
+        self._update_avahi_button()
+        if self._checker is not None and self._checker.isRunning():
+            return
+        if not self._hosts:
+            self._update_footer()
+            return
+        for host in self._hosts:
+            self._states[host["id"]] = ("checking", "")
+        self._apply_states()
+        self.busy.setVisible(True)
+
+        checker = CheckWorker(self._hosts, self)
+        checker.result.connect(self._on_check_result)
+        checker.finished_all.connect(self._on_check_done)
+        self._checker = checker
+        checker.start()
+
+    def _on_check_result(self, host_id: str, state: str, detail: str,
+                         latency: float, mac: str) -> None:
+        if state == "unknown":
+            return
+        self._states[host_id] = (state, detail)
+        self._latency[host_id] = latency
+        host = self._host(host_id)
+        if host is not None and mac and not host.get("mac"):
+            # MAC capturée au premier contact réussi : indispensable au réveil
+            # (WoL) une fois le poste éteint. Enregistrée une seule fois.
+            host["mac"] = mac
+            self._save()
+        card = self._cards.get(host_id)
+        if card is not None:
+            card.set_state(state, detail, latency)
+        self._update_footer()
+
+    def _on_check_done(self) -> None:
+        self.busy.setVisible(False)
+        self._last_check = time.time()
+        self._update_footer()
+        if self._checker is not None:
+            # finished_all part de run() : on laisse le thread sortir avant de
+            # détruire l'objet, sinon « QThread: Destroyed while running ».
+            self._checker.wait(2000)
+            self._checker.deleteLater()
+            self._checker = None
+        # Tri « en ligne d'abord » : on ne réordonne qu'à la fin d'une passe,
+        # pas pendant, sinon les cartes sautent sous le curseur.
+        if [host["id"] for host in self._sorted_hosts()] != self._display_order:
+            self._rebuild_cards()
+
+    def _apply_states(self) -> None:
+        for host_id, card in self._cards.items():
+            state, detail = self._states.get(host_id, ("unknown", ""))
+            card.set_state(state, detail, self._latency.get(host_id, 0.0))
+
+    def _update_footer(self) -> None:
+        total = len(self._hosts)
+        online = sum(
+            1 for host in self._hosts
+            if self._states.get(host["id"], ("", ""))[0] == "online"
+        )
+        if total == 0:
+            self.footer_label.setText("Aucun poste enregistré")
+        else:
+            noun = "poste" if total == 1 else "postes"
+            self.footer_label.setText(f"{total} {noun} · {online} en ligne")
+        if self._last_check:
+            self.auto_label.setText(
+                "Vérifié à "
+                + time.strftime("%H:%M:%S", time.localtime(self._last_check))
+                + f" · auto toutes les {REFRESH_MS // 1000} s"
+            )
+
+    # -- serveur SSH local --------------------------------------------------
+    def _pending(self, process: QProcess | None) -> bool:
+        """Une bascule privilégiée attend PolicyKit : le libellé reste figé."""
+        return process is not None and process.state() != QProcess.NotRunning
+
+    def _update_sshd_button(self) -> None:
+        if self._pending(self._sshd_process):
+            return
+        active, enabled = local_sshd_state()
+        if active:
+            self.sshd_button.setText("Serveur SSH : activé")
+            self.sshd_button.setStyleSheet(f"color: {COLOR_ONLINE};")
+        else:
+            self.sshd_button.setText("Serveur SSH : désactivé")
+            self.sshd_button.setStyleSheet(f"color: {COLOR_OFFLINE};")
+        boot = "démarre au boot" if enabled else "ne démarre pas au boot"
+        self.sshd_button.setToolTip(
+            f"Serveur SSH de cette machine ({boot})\n"
+            + ("Cliquer pour le couper" if active else "Cliquer pour l'activer")
+        )
+
+    def _update_avahi_button(self) -> None:
+        if self._pending(self._avahi_process):
+            return
+        published, daemon = avahi_publish_state()
+        if not daemon:
+            self.avahi_button.setText("Annonce mDNS : avahi arrêté")
+            self.avahi_button.setStyleSheet(f"color: {COLOR_AUTH};")
+        elif published:
+            self.avahi_button.setText("Annonce mDNS : activée")
+            self.avahi_button.setStyleSheet(f"color: {COLOR_ONLINE};")
+        else:
+            self.avahi_button.setText("Annonce mDNS : désactivée")
+            self.avahi_button.setStyleSheet(f"color: {COLOR_OFFLINE};")
+        self.avahi_button.setToolTip(
+            "Annonce ce poste en SSH (_ssh._tcp, port 22) en mDNS.\n"
+            "Visible uniquement depuis le même réseau local (nom d'hôte, "
+            "adresse IP et port — aucun compte ni clé).\n"
+            + ("Cliquer pour ne plus l'annoncer" if published
+               else "Cliquer pour l'annoncer")
+        )
+
+    def toggle_local_sshd(self) -> None:
+        active, _enabled = local_sshd_state()
+        if active:
+            answer = QMessageBox.question(
+                self, "Serveur SSH local",
+                "Couper le serveur SSH de cette machine ?\n\n"
+                "Les connexions entrantes seront refusées : bureau distant "
+                "(gremote) et fichiers depuis un autre poste, ainsi que SSH "
+                "vers ce poste, ne fonctionneront plus.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+        else:
+            answer = QMessageBox.question(
+                self, "Serveur SSH local",
+                "Activer le serveur SSH de cette machine ?\n\n"
+                "Ce poste acceptera les connexions SSH entrantes (avec la clé "
+                "publique de l'autre poste) et pourra servir de cible à "
+                "gremote et au partage de fichiers.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+        if answer != QMessageBox.Yes:
+            return
+        enabled = not active
+
+        # Chemin rapide : sudo sans mot de passe (image Gablue). Sinon PolicyKit.
+        ok, _detail = set_local_sshd_sudo(enabled)
+        if ok:
+            self._update_sshd_button()
+            return
+
+        if shutil.which("pkexec") is None:
+            QMessageBox.critical(
+                self, "Serveur SSH local",
+                "Ni sudo sans mot de passe ni pkexec ne sont disponibles sur "
+                "ce poste : bascule impossible.",
+            )
+            return
+
+        action = "enable" if enabled else "disable"
+        self.sshd_button.setEnabled(False)
+        self.sshd_button.setText("Serveur SSH local : autorisation…")
+        process = QProcess(self)
+        process.setProgram("pkexec")
+        process.setArguments(
+            [_which("systemctl"), action, "sshd.service", "--now"]
+        )
+        process.finished.connect(self._sshd_toggled)
+        process.errorOccurred.connect(self._sshd_start_failed)
+        self._sshd_process = process
+        process.start()
+
+    def _sshd_start_failed(self, error) -> None:
+        # finished() n'est PAS émis quand le programme n'a pas pu démarrer.
+        if error != QProcess.FailedToStart:
+            return
+        self._sshd_process = None
+        self.sshd_button.setEnabled(True)
+        QMessageBox.critical(
+            self, "Serveur SSH local", "pkexec n'a pas pu démarrer.",
+        )
+        self._update_sshd_button()
+
+    def _sshd_toggled(self, code: int, _status) -> None:
+        self._sshd_process = None
+        self.sshd_button.setEnabled(True)
+        if code != 0:
+            reasons = {
+                126: "autorisation refusée",
+                127: "non autorisé (PolicyKit)",
+                125: "dialogue PolicyKit absent ou annulé",
+            }
+            QMessageBox.critical(
+                self, "Serveur SSH local",
+                "Échec de la bascule : "
+                + reasons.get(code, f"code {code}") + ".",
+            )
+        self._update_sshd_button()
+
+    # -- annonce mDNS de ce poste -------------------------------------------
+    def toggle_avahi(self) -> None:
+        published, daemon = avahi_publish_state()
+        if not daemon:
+            QMessageBox.information(
+                self, "Annonce mDNS",
+                "avahi-daemon n'est pas actif sur ce poste : l'annonce ne "
+                "servirait à rien.\n\nL'activer avec :\n"
+                "    sudo systemctl enable --now avahi-daemon",
+            )
+            return
+        if published:
+            answer = QMessageBox.question(
+                self, "Annonce mDNS",
+                "Ne plus annoncer ce poste en SSH sur le réseau local ?\n\n"
+                "La découverte automatique depuis les autres postes ne le "
+                "trouvera plus ; l'accès SSH reste possible en saisissant "
+                "l'adresse à la main.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+        else:
+            answer = QMessageBox.question(
+                self, "Annonce mDNS",
+                "Annoncer ce poste en SSH (_ssh._tcp) sur le réseau local ?\n\n"
+                "Les autres postes du même réseau verront son nom d'hôte, son "
+                "adresse IP et le port 22. Aucun compte ni clé n'est publié, "
+                "et rien ne sort du réseau local.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+        if answer != QMessageBox.Yes:
+            return
+
+        enabled = not published
+        temp_path = write_avahi_service_temp() if enabled else ""
+        argv = avahi_publish_args(enabled, temp_path)
+        argv[0] = _which(argv[0])
+
+        ok, _detail = _sudo_run(argv)
+        if ok:
+            self._cleanup_avahi_temp(temp_path)
+            self._update_avahi_button()
+            return
+
+        if shutil.which("pkexec") is None:
+            self._cleanup_avahi_temp(temp_path)
+            QMessageBox.critical(
+                self, "Annonce mDNS",
+                "Ni sudo sans mot de passe ni pkexec ne sont disponibles sur "
+                "ce poste : bascule impossible.",
+            )
+            return
+
+        self._avahi_temp = temp_path
+        self.avahi_button.setEnabled(False)
+        self.avahi_button.setText("Annonce mDNS : autorisation…")
+        process = QProcess(self)
+        process.setProgram("pkexec")
+        process.setArguments(argv)
+        process.finished.connect(self._avahi_toggled)
+        process.errorOccurred.connect(self._avahi_start_failed)
+        self._avahi_process = process
+        process.start()
+
+    def _cleanup_avahi_temp(self, path: str = "") -> None:
+        path = path or self._avahi_temp
+        self._avahi_temp = ""
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def _avahi_toggled(self, code: int, _status) -> None:
+        self._cleanup_avahi_temp()
+        self._avahi_process = None
+        self.avahi_button.setEnabled(True)
+        if code != 0:
+            reasons = {
+                126: "autorisation refusée",
+                127: "non autorisé (PolicyKit)",
+                125: "dialogue PolicyKit absent ou annulé",
+            }
+            QMessageBox.critical(
+                self, "Annonce mDNS",
+                "Échec de la bascule : "
+                + reasons.get(code, f"code {code}") + ".",
+            )
+        self._update_avahi_button()
+
+    def _avahi_start_failed(self, error) -> None:
+        if error != QProcess.FailedToStart:
+            return
+        self._cleanup_avahi_temp()
+        self._avahi_process = None
+        self.avahi_button.setEnabled(True)
+        QMessageBox.critical(
+            self, "Annonce mDNS", "pkexec n'a pas pu démarrer.",
+        )
+        self._update_avahi_button()
+
+    # -- actions ------------------------------------------------------------
+    def add_host(self) -> None:
+        dialog = HostDialog(self, existing=self._hosts)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        host = dialog.result_record
+        self._hosts.append(host)
+        self._save()
+        self._states[host["id"]] = ("unknown", "")
+        self._rebuild_cards()
+        self.refresh_all()
+        if dialog.install_requested():
+            self.install_key_dialog(host["id"], password=dialog.password())
+
+    def edit_host(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        dialog = HostDialog(self, host=host, existing=self._hosts)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        updated = dialog.result_record
+        self._hosts = [
+            updated if item["id"] == host_id else item for item in self._hosts
+        ]
+        self._save()
+        self._rebuild_cards()
+        self._states.pop(host_id, None)
+        self.refresh_all()
+
+    def delete_host(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        answer = QMessageBox.question(
+            self, "Supprimer le poste",
+            f"Retirer « {display_name(host)} » ({address_text(host)}) de la "
+            "liste ?\n\nLa clé reste sur la machine distante et dans "
+            "~/.ssh/known_hosts ; rien d'autre n'est supprimé.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        job = self._remote_job(host_id)
+        if job is not None:
+            self._stop_job(job)
+        self._hosts = [item for item in self._hosts if item["id"] != host_id]
+        self._states.pop(host_id, None)
+        self._save()
+        self._rebuild_cards()
+        self._update_footer()
+
+    def install_key_dialog(self, host_id: str, password: str = "") -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        dialog = KeyInstallDialog(self, host=host, password=password)
+        dialog.installed.connect(lambda: self._key_installed(host_id))
+        dialog.exec()
+
+    def _key_installed(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        host["key_added"] = True
+        self._save()
+        self._states[host_id] = ("checking", "")
+        self._apply_states()
+        self.refresh_all()
+
+    def launch_remote(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        card = self._cards.get(host_id)
+        gremote = shutil.which("gremote")
+        if gremote is None and Path("/usr/bin/gremote").exists():
+            gremote = "/usr/bin/gremote"
+        if gremote is None:
+            QMessageBox.critical(
+                self, "gremote introuvable",
+                "gremote n'est pas installé sur ce poste.",
+            )
+            return
+        command = [gremote]
+        if host["port"] != 22:
+            command += ["-p", str(host["port"])]
+        command.append(ssh_target(host))
+        # Chaque clic ouvre une nouvelle fenêtre, même si une session tourne
+        # déjà : KRdp ne garde qu'une session par utilisateur, le nouveau
+        # client coupe le précédent et sort en 2 (STATE_RUN_QUIT) — ce n'est
+        # pas un échec à annoncer. 131 = sdl-freerdp à la fermeture normale.
+        launched = self._launch(
+            command, f"Bureau distant — {display_name(host)}",
+            ignore_codes={2, 131}, host_id=host_id, kind="remote",
+        )
+        if launched is not None and card is not None:
+            card.set_remote_active(True)
+
+    def stop_remote(self, host_id: str) -> None:
+        """Ferme les sessions RDP lancées par l'app (menu ⋯ de la carte)."""
+        host = self._host(host_id)
+        jobs = [
+            job for job in self._jobs
+            if job.get("kind") == "remote" and job.get("host_id") == host_id
+            and job["process"].poll() is None
+        ]
+        if host is None or not jobs:
+            return
+        answer = QMessageBox.question(
+            self, "Fermer la session",
+            f"Fermer la session de bureau distant ouverte vers "
+            f"« {display_name(host)} » ?\n\nLa fenêtre RDP va se fermer.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        for job in jobs:
+            self._stop_job(job)
+        card = self._cards.get(host_id)
+        if card is not None:
+            card.set_remote_active(False)
+        self.auto_label.setText(f"Session fermée — {display_name(host)}")
+
+    def open_files(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        url = dolphin_url(host)
+        if shutil.which("dolphin"):
+            command = ["dolphin", url]
+        else:
+            command = ["xdg-open", url]
+        self._launch(command, f"Fichiers — {display_name(host)}")
+
+    def open_terminal(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        ssh = shutil.which("ssh") or "ssh"
+        remote = [ssh]
+        if host["port"] != 22:
+            remote += ["-p", str(host["port"])]
+        remote.append(ssh_target(host))
+        if shutil.which("konsole"):
+            command = ["konsole", "-e", *remote]
+        elif shutil.which("xdg-terminal-exec"):
+            command = ["xdg-terminal-exec", *remote]
+        else:
+            QMessageBox.critical(
+                self, "Terminal SSH",
+                "Aucun terminal trouvé (konsole ou xdg-terminal-exec).",
+            )
+            return
+        self._launch(command, f"Terminal — {display_name(host)}")
+
+    def wake_host(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        if not host.get("mac"):
+            QMessageBox.information(
+                self, "Wake-on-LAN",
+                "Aucune adresse MAC n'est enregistrée pour ce poste.\n\n"
+                "Elle est capturée automatiquement dès qu'une connexion "
+                "réussit ; sinon renseignez-la dans « Modifier ».",
+            )
+            return
+        ok, error = wake_on_lan(host)
+        if not ok:
+            QMessageBox.warning(
+                self, "Wake-on-LAN", f"Envoi du paquet magique impossible :\n{error}"
+            )
+            return
+        self.auto_label.setText(f"Réveil envoyé à {display_name(host)}…")
+        self._states[host_id] = ("checking", "réveil envoyé")
+        self._apply_states()
+        # Démarrage + sshd : on re-vérifie plusieurs fois plutôt qu'une seule.
+        for delay in (3000, 7000, 12000, 20000, 30000):
+            QTimer.singleShot(delay, self.refresh_all)
+
+    def update_host(self, host_id: str, kind: str = "gablue") -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        if kind == "gablue":
+            self.update_remote_gablue(host)
+        elif kind == "flatpak":
+            self.update_remote_flatpaks(host)
+        elif kind == "gwine":
+            self.update_remote_gwine(host)
+
+    def update_remote_gablue(self, host: dict) -> None:
+        answer = QMessageBox.question(
+            self, "Mettre à jour Gablue",
+            f"Télécharger la nouvelle image Gablue de « {display_name(host)} » "
+            f"({address_text(host)}) ?\n\n"
+            "Le poste continue de tourner ; l'image s'applique à son prochain "
+            "redémarrage. Les Flatpaks se mettent à jour séparément.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        script = (
+            "sudo -n /usr/bin/bootc upgrade\n"
+            "rc=$?\n"
+            "echo '---STATUS---'\n"
+            "sudo -n /usr/bin/bootc status 2>/dev/null || true\n"
+            "exit $rc\n"
+        )
+        self._run_remote_script(
+            host, f"Mise à jour — {display_name(host)}",
+            "bootc upgrade, appliqué au prochain redémarrage.", script,
+            root=True,
+            hint_from_output=lambda text: (
+                "Redémarrage nécessaire pour appliquer la nouvelle image."
+                if "staged" in text.lower() else "Le poste est à jour."
+            ),
+        )
+
+    def update_remote_flatpaks(self, host: dict) -> None:
+        answer = QMessageBox.question(
+            self, "Mettre à jour les Flatpaks",
+            f"Mettre à jour les applications Flatpak de "
+            f"« {display_name(host)} » ({address_text(host)}) ?\n\n"
+            "Compte et système ; la partie système passe par sudo sur le poste.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        script = (
+            "flatpak update --user -y || rc=1\n"
+            "sudo -n /usr/bin/flatpak update --system -y || true\n"
+            "exit ${rc:-0}\n"
+        )
+        self._run_remote_script(
+            host, f"Flatpaks — {display_name(host)}",
+            "flatpak update (compte puis système).", script, root=True,
+        )
+
+    def update_remote_gwine(self, host: dict) -> None:
+        answer = QMessageBox.question(
+            self, "Mettre à jour gwine",
+            f"Mettre à jour gwine sur « {display_name(host)} » "
+            f"({address_text(host)}) ?\n\n"
+            "gwine --init réinstalle le runner et ses composants (DXVK, VKD3D) "
+            "puis vérifie le préfixe. Le téléchargement peut prendre plusieurs "
+            "minutes.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._run_remote_script(
+            host, f"gwine — {display_name(host)}",
+            "gwine --init — runner et composants Windows.",
+            "gwine --init\n",
+        )
+
+    def open_remote_settings(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        RemoteSettingsDialog(self, host).exec()
+
+    def _run_remote_script(self, host: dict, title: str, subtitle: str,
+                           script: str, root: bool = False,
+                           ok_if_disconnect: bool = False,
+                           hint_from_output=None) -> None:
+        """Exécute un script distant, en demandant le mot de passe sudo si besoin."""
+        password = ""
+        if root and not remote_sudo_nopasswd(host):
+            password = ask_remote_password(self, host)
+            if password is None:
+                return
+        command = (remote_sudo_prefix(password) if root else "") + script
+        dialog = RemoteTaskDialog(
+            self, host=host, title=title, subtitle=subtitle, command=command,
+            password=password, ok_if_disconnect=ok_if_disconnect,
+            hint_from_output=hint_from_output,
+        )
+        dialog.exec()
+        QTimer.singleShot(1500, self.refresh_all)
+
+    def reboot_host(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        answer = QMessageBox.question(
+            self, "Redémarrer le poste",
+            f"Redémarrer « {display_name(host)} » ({address_text(host)}) ?\n\n"
+            "Toutes les sessions ouvertes sur ce poste seront interrompues.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._run_remote_script(
+            host, f"Redémarrage — {display_name(host)}",
+            "systemctl reboot via SSH.", "sudo -n /usr/bin/systemctl reboot\n",
+            root=True, ok_if_disconnect=True,
+        )
+
+    def shutdown_host(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        answer = QMessageBox.question(
+            self, "Éteindre le poste",
+            f"Éteindre « {display_name(host)} » ({address_text(host)}) ?\n\n"
+            "Toutes les sessions ouvertes sur ce poste seront interrompues. "
+            "Il ne redémarrera qu'à la main ou par Wake-on-LAN.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._run_remote_script(
+            host, f"Extinction — {display_name(host)}",
+            "systemctl poweroff via SSH.",
+            "sudo -n /usr/bin/systemctl poweroff\n",
+            root=True, ok_if_disconnect=True,
+        )
+
+    def _run_remote(self, host: dict, title: str, subtitle: str, command: str,
+                    ok_if_disconnect: bool = False,
+                    hint_from_output=None) -> None:
+        dialog = RemoteTaskDialog(
+            self, host=host, title=title, subtitle=subtitle, command=command,
+            ok_if_disconnect=ok_if_disconnect,
+            hint_from_output=hint_from_output,
+        )
+        dialog.exec()
+        QTimer.singleShot(1500, self.refresh_all)
+
+    # -- machine courante : mises à jour et configuration --------------------
+    def local_update(self, kind: str) -> None:
+        if kind == "gablue":
+            self.update_local_gablue()
+        elif kind == "flatpak":
+            self.update_local_flatpaks()
+        elif kind == "gwine":
+            self.update_local_gwine()
+
+    def update_local_gablue(self) -> None:
+        """Image système Gablue (bootc), appliquée au prochain démarrage."""
+        answer = QMessageBox.question(
+            self, "Mise à jour de Gablue",
+            "Télécharger la nouvelle image système Gablue ?\n\n"
+            "Le poste continue de tourner normalement ; l'image s'applique au "
+            "prochain redémarrage. Les Flatpaks se mettent à jour séparément.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._run_local_task(
+            "Mise à jour de Gablue",
+            "bootc upgrade — l'image téléchargée s'applique au prochain "
+            "redémarrage.",
+            [_which("bootc"), "upgrade"], root=True,
+            hint_from_output=lambda text: (
+                "Redémarrage nécessaire pour appliquer la nouvelle image."
+                if "staged" in text.lower() or "staging" in text.lower()
+                else ""
+            ),
+        )
+
+    def update_local_flatpaks(self) -> None:
+        flatpak = shutil.which("flatpak")
+        if flatpak is None:
+            QMessageBox.critical(
+                self, "Flatpak", "flatpak n'est pas installé sur ce poste."
+            )
+            return
+        answer = QMessageBox.question(
+            self, "Mise à jour des Flatpaks",
+            "Mettre à jour les applications Flatpak ?\n\n"
+            "Les applications du compte et du système sont concernées ; "
+            "PolicyKit peut demander une autorisation pour la partie système.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._run_local_task(
+            "Mise à jour des Flatpaks",
+            "flatpak update -y — compte et système.",
+            [flatpak, "update", "-y"],
+        )
+
+    def update_local_gwine(self) -> None:
+        gwine = shutil.which("gwine") or (
+            "/usr/bin/gwine" if Path("/usr/bin/gwine").exists() else ""
+        )
+        if not gwine:
+            QMessageBox.critical(
+                self, "gwine", "gwine n'est pas installé sur ce poste."
+            )
+            return
+        answer = QMessageBox.question(
+            self, "Mise à jour de gwine",
+            "Mettre à jour gwine ?\n\n"
+            "gwine --init réinstalle le runner Wine et ses composants "
+            "(DXVK, VKD3D) puis vérifie le préfixe. Le téléchargement peut "
+            "prendre plusieurs minutes.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._run_local_task(
+            "Mise à jour de gwine",
+            "gwine --init — runner et composants Windows.",
+            [gwine, "--init"],
+        )
+
+    def open_settings(self) -> None:
+        LocalSettingsDialog(self).exec()
+
+    def _run_local_task(self, title: str, subtitle: str, argv: list[str],
+                        root: bool = False, hint_from_output=None) -> None:
+        if argv and shutil.which(argv[0]) is None and not Path(argv[0]).exists():
+            QMessageBox.critical(
+                self, title,
+                f"« {argv[0]} » introuvable sur ce poste.",
+            )
+            return
+        dialog = LocalTaskDialog(
+            self, title=title, subtitle=subtitle, argv=argv, root=root,
+            hint_from_output=hint_from_output,
+        )
+        dialog.exec()
+
+    # -- découverte / import ------------------------------------------------
+    def discover_hosts(self) -> None:
+        if self._discovering:
+            return
+        if AVAHI_BROWSE == "avahi-browse" and not shutil.which("avahi-browse"):
+            QMessageBox.information(
+                self, "Découverte Avahi",
+                "avahi-browse n'est pas installé (paquet avahi-tools).",
+            )
+            return
+        self._discovering = True
+        self.busy.setVisible(True)
+        self.auto_label.setText("Recherche de services SSH sur le réseau…")
+        worker = AvahiWorker(self)
+        worker.found.connect(self._discovery_done)
+        worker.finished.connect(worker.deleteLater)
+        self._avahi_worker = worker
+        worker.start()
+
+    def _discovery_done(self, hosts: list) -> None:
+        self._discovering = False
+        self._avahi_worker = None
+        self.busy.setVisible(False)
+        self._update_footer()
+        if not hosts:
+            QMessageBox.information(
+                self, "Découverte Avahi",
+                "Aucun service SSH annoncé sur le réseau local.\n\n"
+                "Vérifiez qu'avahi-daemon tourne sur les postes et qu'ils sont "
+                "sur le même réseau.",
+            )
+            return
+        self._pick_candidates(
+            "Postes découverts sur le réseau",
+            "Services SSH annoncés en mDNS (Avahi). Rien n'est ajouté sans "
+            "votre accord : cochez les postes à inscrire dans votre liste.",
+            hosts,
+        )
+
+    def import_ssh_config(self) -> None:
+        candidates = parse_ssh_config()
+        if not candidates:
+            QMessageBox.information(
+                self, "Import ~/.ssh/config",
+                "Aucun hôte concret trouvé dans ~/.ssh/config\n"
+                "(les motifs * ? ! sont ignorés).",
+            )
+            return
+        self._pick_candidates(
+            "Importer depuis ~/.ssh/config",
+            "Hôtes déclarés dans ~/.ssh/config. Cochez ceux à ajouter.",
+            candidates,
+        )
+
+    def _pick_candidates(self, title: str, subtitle: str,
+                        candidates: list[dict]) -> None:
+        dialog = CandidateDialog(self, title, subtitle, candidates, self._hosts)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        added = 0
+        for candidate in dialog.selected:
+            if self._add_record(candidate):
+                added += 1
+        if added:
+            self._save()
+            self._rebuild_cards()
+            self.refresh_all()
+
+    def _add_record(self, candidate: dict) -> bool:
+        host = {
+            "id": uuid.uuid4().hex,
+            "label": str(candidate.get("label") or "").strip(),
+            "user": str(candidate["user"]).strip(),
+            "host": str(candidate["host"]).strip(),
+            "port": int(candidate.get("port", 22)),
+            "mac": normalize_mac(candidate.get("mac", "")) or detect_mac(candidate),
+            "key_added": False,
+            "added_at": int(time.time()),
+        }
+        if not host["user"] or not host["host"]:
+            return False
+        for other in self._hosts:
+            if (other["user"], other["host"], other["port"]) == (
+                host["user"], host["host"], host["port"]
+            ):
+                return False
+        self._hosts.append(host)
+        self._states[host["id"]] = ("unknown", "")
+        return True
+
+    def _launch(self, command: list[str], label: str,
+                ignore_codes: set[int] | None = None,
+                host_id: str = "", kind: str = "") -> dict | None:
+        """Lance un outil externe et signale un échec sans bloquer la session.
+
+        `ignore_codes` : codes de sortie qui ne sont pas des échecs (ex. la
+        fermeture d'une fenêtre RDP), pour ne pas afficher de faux dialogue.
+        `host_id`/`kind` : permettent de retrouver une session déjà ouverte
+        vers ce poste (bureau distant) et de l'arrêter depuis la carte.
+        """
+        executable = shutil.which(command[0]) or (
+            command[0] if Path(command[0]).exists() else None
+        )
+        if executable is None:
+            QMessageBox.critical(
+                self, label, f"« {command[0]} » introuvable sur ce poste."
+            )
+            return None
+        command[0] = executable
+        handle = tempfile.NamedTemporaryFile(
+            prefix="gablue-manager-", suffix=".log", delete=False
+        )
+        try:
+            process = subprocess.Popen(
+                command, stdin=subprocess.DEVNULL, stdout=handle,
+                stderr=subprocess.STDOUT, start_new_session=True,
+                close_fds=True,
+            )
+        except OSError as exc:
+            handle.close()
+            try:
+                os.unlink(handle.name)
+            except OSError:
+                pass
+            QMessageBox.critical(self, label, f"Lancement impossible :\n{exc}")
+            return None
+        finally:
+            handle.close()
+        job = {
+            "process": process, "path": handle.name, "label": label,
+            "ignore": set(ignore_codes or ()), "host_id": host_id,
+            "kind": kind, "stopped": False,
+        }
+        self._jobs.append(job)
+        return job
+
+    def _remote_job(self, host_id: str) -> dict | None:
+        """Session de bureau distant encore vivante pour ce poste."""
+        for job in self._jobs:
+            if job.get("kind") != "remote" or job.get("host_id") != host_id:
+                continue
+            if job["process"].poll() is None:
+                return job
+        return None
+
+    def _stop_job(self, job: dict) -> None:
+        """Ferme une session lancée par l'app (groupe de processus complet).
+
+        SIGTERM d'abord : `gremote` nettoie son tunnel SSH, son puits audio et
+        son serveur RDP. SIGKILL seulement s'il traîne encore après 3 s.
+        """
+        job["stopped"] = True
+        process = job["process"]
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        except OSError:
+            return
+
+        def force() -> None:
+            if process.poll() is None:
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                except OSError:
+                    pass
+
+        QTimer.singleShot(3000, force)
+
+    def _poll_jobs(self) -> None:
+        for job in list(self._jobs):
+            code = job["process"].poll()
+            if code is None:
+                continue
+            self._jobs.remove(job)
+            path = Path(job["path"])
+            if job.get("kind") == "remote":
+                card = self._cards.get(job.get("host_id", ""))
+                if card is not None:
+                    card.set_remote_active(
+                        self._remote_job(job.get("host_id", "")) is not None
+                    )
+            if (code != 0 and code not in job["ignore"]
+                    and not job.get("stopped") and self.isVisible()):
+                try:
+                    lines = path.read_text(
+                        encoding="utf-8", errors="replace"
+                    ).splitlines()[-15:]
+                    tail = "\n".join(line[:160] for line in lines)
+                    tail = tail or "(aucune sortie)"
+                except OSError:
+                    tail = "(journal illisible)"
+                QMessageBox.warning(
+                    self, job["label"],
+                    f"La commande a échoué (code {code}).\n\n{tail}",
+                )
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+    # -- focus / fermeture --------------------------------------------------
+    def changeEvent(self, event) -> None:
+        # Revenir sur la fenêtre rafraîchit l'état sans attendre les 30 s.
+        if event.type() == QEvent.ActivationChange and self.isActiveWindow():
+            if not self._last_check or time.time() - self._last_check > 8:
+                self.refresh_all()
+        super().changeEvent(event)
+
+    def closeEvent(self, event) -> None:
+        self._refresh_timer.stop()
+        self._pulse_timer.stop()
+        self._job_timer.stop()
+        if self._checker is not None and self._checker.isRunning():
+            self._checker.stop()
+            self._checker.wait(4000)
+        if self._avahi_worker is not None and self._avahi_worker.isRunning():
+            self._avahi_worker.stop.set()
+            self._avahi_worker.wait(3000)
+        if (self._sshd_process is not None
+                and self._sshd_process.state() != QProcess.NotRunning):
+            self._sshd_process.kill()
+        if (self._avahi_process is not None
+                and self._avahi_process.state() != QProcess.NotRunning):
+            self._avahi_process.kill()
+        self._cleanup_avahi_temp()
+        super().closeEvent(event)
+
+
+# =============================================================================
+# SECTION 10 : POINT D'ENTRÉE
+# =============================================================================
+
+HELP = """Usage : gablue-manager
+
+Gablue Manager : postes SSH et machine courante au même endroit.
+
+Postes distants : liste des machines dont la clé a été installée, état en ligne/
+hors ligne et latence, bureau distant (gremote), fichiers (Dolphin en sftp://),
+terminal SSH, réveil Wake-on-LAN, arrêt, redémarrage et mise à jour, découverte
+mDNS, import de ~/.ssh/config, ajout d'un poste avec copie de la clé.
+
+Cette machine : serveur SSH et annonce mDNS, mises à jour (image Gablue,
+Flatpaks, gwine) et options avancées (atténuations CPU, options noyau).
+
+Configuration : ~/.config/gablue/ssh-hosts.json (mode 0600)
+Clé locale    : ~/.ssh/id_ed25519 (créée au besoin, sans passphrase)
+"""
+
+
+def main() -> int:
+    if any(arg in ("-h", "--help") for arg in sys.argv[1:]):
+        print(HELP)
+        return 0
+    if not (os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")):
+        print("gablue-manager : aucun affichage (Wayland/X11) disponible.",
+              file=sys.stderr)
+        return 1
+
+    app = QApplication(sys.argv)
+    app.setApplicationName("gablue-manager")
+    app.setApplicationDisplayName("Gablue Manager")
+    app.setDesktopFileName("gablue-manager")
+    app.setOrganizationName("Gablue")
+    app.setWindowIcon(QIcon.fromTheme("network-server"))
+
+    window = MainWindow()
+    window.show()
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

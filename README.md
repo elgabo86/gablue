@@ -19,6 +19,7 @@ Images and the system are continuously updated, following the latest Fedora rele
 - **Flatpak** and **brew** ready out of the box
 - **Automatic weekly updates** — system and flatpaks staged in the background
 - **gremote** — remote desktop between Gablue machines: the host's *existing* Plasma session over RDP, tunnelled in SSH — no port opened, sound carried by a PipeWire tunnel sink, ephemeral RDP password. when no session exists one is created **virtually**, so several accounts can work at once without taking the physical screen
+- **gablue-manager** — « Gablue Manager »: one window for this machine and the remote ones — SSH host list with latency and online indicator, one-click remote desktop (`gremote`), file browsing (Dolphin over sftp), SSH terminal, Wake-on-LAN, remote shutdown/reboot/update, mDNS discovery, `~/.ssh/config` import, host addition with automatic key copy, local SSH server and mDNS announcement toggles, plus local updates (Gablue image, Flatpaks, gwine) and advanced options (CPU mitigations, kernel options)
 - Optional **DX mode** with Docker, Libvirt, QEMU, and ROCm for AMD
 
 ## Current Versions
@@ -76,6 +77,8 @@ what the client does), and a **virtual** one is created only when there is none.
 
 ```bash
 gremote gab@sucina                    # existing Plasma session, RDP + sound
+gremote gab@sucina:2323               # SSH on a non-standard port
+gremote -p 2323 gab@sucina            # same, explicit option
 gremote --rdp-port 13390 gab@sucina   # use another local tunnel port
 gremote --no-launch gab@sucina        # print the client line instead of running it
 gremote --no-audio gab@sucina         # no sound tunnel
@@ -94,6 +97,23 @@ client's `/from-stdin:force`.
 
 One passwordless SSH key (`ssh-key-add`) and `AllowStreamLocalForwarding` on the
 remote sshd are all it needs.
+
+`gablue-manager` (menu → Gablue Manager) does the same graphically: it lists the hosts
+with latency, shows whether the key is accepted (green online, orange key
+refused, purple unknown host fingerprint, grey offline), launches the remote
+desktop, Dolphin (`sftp://`) or an SSH terminal in one click, opens a new
+desktop window on every click (the second client takes over the first, and its
+exit code is not reported as a failure), can close that session from the card
+menu, wakes an offline machine over Wake-on-LAN, reboots / shuts down / updates
+a host, discovers machines over mDNS, imports `~/.ssh/config`, and copies the
+key to a new host — the password is asked once and never stored. It can also
+turn the local SSH server on or off, switch the local mDNS announcement of that
+server (`/etc/avahi/services/ssh.service`) on or off, and manage this machine:
+Gablue image, Flatpak and gwine updates, plus advanced options (CPU mitigations,
+kernel options) that used to live in the old `gablue-config`
+dialog. Every one of those updates and options is also available **on the remote
+hosts**, from each host's menu — sudo there asks for the remote password once if
+the image does not allow it without.
 
 **No authorisation prompts in the remote desktop.** polkit treats a seatless
 session as *not local*, so it falls back on `implicit_any` instead of
