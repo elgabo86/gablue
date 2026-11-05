@@ -3047,12 +3047,6 @@ class RemoteSettingsDialog(SettingsDialog):
 
 # -- options de gwine : DXVK, affichage et manettes Sony en Xbox 360 ----------
 
-GWINE_FILTERS = (
-    ("all", "Toutes les manettes Sony"),
-    ("ds4", "DualShock 4"),
-    ("dualsense", "DualSense"),
-)
-
 GWINE_DISPLAYS = (
     ("x11", "X11 (XWayland)"),
     ("wayland", "Wayland natif (expérimental)"),
@@ -3091,7 +3085,6 @@ def parse_gwine_options(text: str) -> dict:
         "dxvk_async": values.get("dxvk_mode") == "dxvk-async",
         "wayland": values.get("display_mode") == "wayland",
         "xbox": values.get("xbox_default") == "on",
-        "filter": values.get("xbox_filter", "all"),
     }
 
 
@@ -3100,10 +3093,11 @@ class GwineOptionsDialog(QDialog):
 
     Trois réglages persistants de `~/.local/share/gwine/options` : le DXVK
     asynchrone (GPLAsync), le mode d'affichage (X11 par défaut, Wayland natif
-    expérimental) et l'émulation Xbox 360 des manettes Sony (ds2xbox, avec son
-    filtre). « Appliquer » passe par gwine lui-même — il garde le fichier au
-    bon format et réinstalle les DLL DXVK du préfixe — donc le réglage vaut dès
-    le prochain lancement. Un poste distant est lu et modifié par SSH.
+    expérimental) et l'émulation Xbox 360 des manettes Sony (ds2xbox, tout ou
+    rien : toutes les manettes Sony). « Appliquer » passe par gwine lui-même —
+    il garde le fichier au bon format et réinstalle les DLL DXVK du préfixe —
+    donc le réglage vaut dès le prochain lancement. Un poste distant est lu et
+    modifié par SSH.
     """
 
     def __init__(self, parent=None, host: dict | None = None):
@@ -3174,23 +3168,14 @@ class GwineOptionsDialog(QDialog):
 
         self.xbox_check = QCheckBox("Manettes Sony en mode Xbox 360", self)
         self.xbox_check.setCursor(Qt.PointingHandCursor)
-        self.xbox_check.toggled.connect(self._on_xbox_toggled)
-        self.filter_combo = QComboBox(self)
-        for value, label in GWINE_FILTERS:
-            self.filter_combo.addItem(label, value)
-        self.filter_combo.currentIndexChanged.connect(self._update_apply)
-        self.filter_label = QLabel("Manettes concernées :", self)
-        self.filter_label.setObjectName("hostDetail")
-        filter_box = QHBoxLayout()
-        filter_box.setSpacing(8)
-        filter_box.addWidget(self.filter_label)
-        filter_box.addWidget(self.filter_combo)
+        self.xbox_check.toggled.connect(self._update_apply)
         self._add_card(
             self.xbox_check,
-            "ds2xbox présente les manettes Sony comme des manettes Xbox 360 : "
-            "les jeux Windows qui n'acceptent que ce type fonctionnent sans "
-            "configuration, les autres y voient une manette Xbox.",
-            extra=filter_box, key="xbox",
+            "ds2xbox présente toutes les manettes Sony (DualShock 4 comme "
+            "DualSense) comme des manettes Xbox 360 : les jeux Windows qui "
+            "n'acceptent que ce type fonctionnent sans configuration, les "
+            "autres y voient une manette Xbox.",
+            key="xbox",
         )
 
         buttons = QHBoxLayout()
@@ -3278,7 +3263,6 @@ class GwineOptionsDialog(QDialog):
                 "dxvk_async": bool(self.state.get("dxvk_async")),
                 "wayland": bool(self.state.get("wayland")),
                 "xbox": bool(self.state.get("xbox")),
-                "filter": self.state.get("filter", "all"),
             }
             if installed else {}
         )
@@ -3287,11 +3271,10 @@ class GwineOptionsDialog(QDialog):
             check.setChecked(False)
             check.setEnabled(installed)
             check.blockSignals(False)
-        for combo in (self.display_combo, self.filter_combo):
-            combo.blockSignals(True)
-            combo.setCurrentIndex(0)
-            combo.blockSignals(False)
-            combo.setEnabled(installed)
+        self.display_combo.blockSignals(True)
+        self.display_combo.setCurrentIndex(0)
+        self.display_combo.blockSignals(False)
+        self.display_combo.setEnabled(installed)
         if installed:
             self.dxvk_check.blockSignals(True)
             self.dxvk_check.setChecked(self.initial["dxvk_async"])
@@ -3300,8 +3283,6 @@ class GwineOptionsDialog(QDialog):
             self.xbox_check.setChecked(self.initial["xbox"])
             self.xbox_check.blockSignals(False)
             self._select(self.display_combo, "wayland" if self.initial["wayland"] else "x11")
-            self._select(self.filter_combo, self.initial["filter"])
-        self._on_xbox_toggled()
         self._update_apply()
 
     @staticmethod
@@ -3316,14 +3297,7 @@ class GwineOptionsDialog(QDialog):
             "dxvk_async": self.dxvk_check.isChecked(),
             "wayland": (self.display_combo.currentData() or "x11") == "wayland",
             "xbox": self.xbox_check.isChecked(),
-            "filter": self.filter_combo.currentData() or "all",
         }
-
-    def _on_xbox_toggled(self) -> None:
-        enabled = self.xbox_check.isEnabled() and self.xbox_check.isChecked()
-        self.filter_label.setEnabled(enabled)
-        self.filter_combo.setEnabled(enabled)
-        self._update_apply()
 
     def changed(self) -> dict:
         """Ce qui diffère de la configuration actuelle de gwine."""
@@ -3332,9 +3306,6 @@ class GwineOptionsDialog(QDialog):
         for key in ("dxvk_async", "wayland", "xbox"):
             if desired[key] != self.initial.get(key):
                 changes[key] = desired[key]
-        if desired["xbox"] and "xbox" not in changes:
-            if desired["filter"] != self.initial.get("filter"):
-                changes["filter"] = desired["filter"]
         return changes
 
     def _update_recommendations(self) -> None:
@@ -3379,19 +3350,7 @@ class GwineOptionsDialog(QDialog):
         if "wayland" in changes:
             args.append("--wayland" if changes["wayland"] else "--x11")
         if "xbox" in changes:
-            if changes["xbox"]:
-                extra = {
-                    "ds4": " --xbox-ds4",
-                    "dualsense": " --xbox-dualsense",
-                }.get(self.desired()["filter"], "")
-                args.append("--xbox-on" + extra)
-            else:
-                args.append("--xbox-off")
-        elif "filter" in changes:
-            extra = {"ds4": " --xbox-ds4", "dualsense": " --xbox-dualsense"}.get(
-                changes["filter"], ""
-            )
-            args.append("--xbox-on" + extra)
+            args.append("--xbox-on" if changes["xbox"] else "--xbox-off")
         return args
 
     def describe(self, changes: dict) -> str:
@@ -3412,9 +3371,6 @@ class GwineOptionsDialog(QDialog):
                 "Manettes Sony en Xbox 360 : "
                 + ("activé" if changes["xbox"] else "désactivé")
             )
-        if "filter" in changes:
-            label = dict(GWINE_FILTERS).get(changes["filter"], changes["filter"])
-            labels.append(f"Manettes concernées : {label.lower()}")
         return "\n".join(f"• {label}" for label in labels)
 
     def apply_changes(self) -> None:
