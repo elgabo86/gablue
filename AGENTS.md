@@ -76,6 +76,10 @@ Le projet construit 6 variantes distinctes :
 │   ├── gablue-isomount/                    # Sources C du monteur d'images disque
 │   │   ├── gablue-isomount.c              # Programme principal (UDisks2 DBus, Dolphin)
 │   │   └── Makefile                       # Compilation
+│   ├── gablue-manager/                     # Sources de Gablue Manager (Python modulaire)
+│   │   ├── AGENTS.md                       # Paquet, dialogues, privilèges
+│   │   ├── gablue-manager                  # Lanceur /usr/bin (sys.path + main)
+│   │   └── gablue_manager/                 # Paquet : app, window, dialogs/, local, ssh…
 │   └── gwine-launcher/                     # Sources du lanceur gwine (Bash modulaire)
 │       ├── AGENTS.md                        # Architecture interne du lanceur
 │       ├── gwine                           # Script point d'entrée
@@ -520,6 +524,7 @@ son propre AGENTS.md de sous-dossier + pointeur dans l'index ci-dessous.
 | Workflows CI | `.github/AGENTS.md` | modifier `.github/` ou un tag de commit |
 | ISO live / installateur | `installer/AGENTS.md` | modifier `installer/` ou `local-build/` |
 | Lanceur gwine | `src/gwine-launcher/AGENTS.md` | modifier `src/gwine-launcher/` |
+| Gablue Manager (GUI, paquet `gablue_manager`) | `src/gablue-manager/AGENTS.md` | modifier `src/gablue-manager/` ou un dialogue |
 | Manette (gamepadshortcuts, mouse, kbdnav) | `src/gamepadshortcuts/AGENTS.md` | modifier `src/gamepadshortcuts/` |
 
 Changements suivant la racine :

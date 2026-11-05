@@ -92,7 +92,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - `terminaltexteffects` via `uv` (appelé après rpm)
 - **Conflit site-packages** : un RPM peut poser un fichier/symlink à n'importe quel niveau de `/usr/local/lib/python3.14/site-packages/` (transition majeure Python) → `uv pip install` échoue (`File exists, os error 17`) ; le script remonte la hiérarchie, supprime ce qui n'est pas un répertoire, `mkdir -p` avant install
 
-### build-c / build-gwine — Compilation des sources
+### build-c / build-gwine / build-manager — Compilation des sources
 
 **build-c** (après pypi) :
 - Compile `/src/gamepadshortcuts` (gamepadshortcuts + gamepadshortcuts-mouse + kbdnav, même Makefile), `/src/ds2xbox`, `/src/gablue-isomount`
@@ -102,6 +102,12 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - Assemble le standalone depuis `/src/gwine-launcher/` : `build.sh` concatène les ~60 fichiers `lib/`, embarque les shims overlayfs (`composefs_statfs_shim.so` 32/64 bits, base64), installe `/usr/bin/gwine` + completions bash/zsh ; sources nettoyées
 - **IMPORTANT** : toute modif de `lib/` nécessite un rebuild d'image pour être effective. Le gwine assemblé sert au pack cache de l'ISO → reconstruire l'image AVANT l'ISO
 - Architecture interne → `src/gwine-launcher/AGENTS.md`
+
+**build-manager** (après build-gwine) :
+- Installe le paquet Python `/src/gablue-manager/gablue_manager/` dans `/usr/lib/gablue-manager/` et le lanceur `src/gablue-manager/gablue-manager` en `/usr/bin/gablue-manager` (755) ; sources nettoyées
+- **Pas de `.pyc` dans l'image** (`__pycache__` supprimé) : ils seraient liés au Python du build, pas à celui du poste, et `/usr` est en lecture seule sur composefs
+- Toute modif du paquet nécessite un rebuild d'image pour être effective — le lanceur ne lit que `/usr/lib/gablue-manager`
+- Architecture interne → `src/gablue-manager/AGENTS.md`
 
 ### post-install
 
