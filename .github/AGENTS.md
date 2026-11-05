@@ -99,3 +99,7 @@ Bump hebdo des images pinnées par digest — mini-ubot maison, équivalent du b
 **Utilisation** :
 - ~~`reusable-gablue-image.yml`~~ plus utilisée depuis la migration rootless — conservée comme garde-fou si une variante sature un jour (pointer sur `~/.local/share/containers`)
 - `build-gablue-live-isos.yml` : libérer espace → checkout → mount → drop-in `image_copy_tmp_dir` → build payload → podman run Titanoboa (script patché)
+
+## Épinglage des actions
+
+- **Actions GitHub épinglées par SHA** : toutes les actions tierces sont pinnées par SHA (avec commentaire `# vX.Y.Z`) pour la sécurité supply-chain, mises à jour par Dependabot (daily)
