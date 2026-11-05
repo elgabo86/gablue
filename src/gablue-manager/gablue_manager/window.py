@@ -27,6 +27,7 @@ from .dialogs.gwine import GwineOptionsDialog
 from .dialogs.host import CandidateDialog, HostDialog
 from .dialogs.kernel import LocalSettingsDialog, RemoteSettingsDialog
 from .dialogs.key import KeyInstallDialog
+from .dialogs.system import SystemDialog
 from .dialogs.tailscale import TailscaleDialog
 from .hosts import detect_mac, load_hosts, parse_ssh_config, save_hosts, wake_on_lan
 from .local import (
@@ -35,6 +36,7 @@ from .local import (
 )
 from .ssh import ask_remote_password, remote_sudo_nopasswd, remote_sudo_prefix
 from .style import make_qss
+from .uiutil import app_icon
 from .tasks import LocalTaskDialog, RemoteTaskDialog, start_task
 from .util import address_text, display_name, dolphin_url, normalize_mac, ssh_target
 from .widgets import HostCard, LocalCard, StatusDot, _make_tool_button
@@ -46,7 +48,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Gablue Manager")
         self.resize(980, 680)
         self.setMinimumSize(780, 520)
-        self.setWindowIcon(QIcon.fromTheme("network-server"))
+        self.setWindowIcon(app_icon())
 
         self._hosts = load_hosts()
         self._states: dict[str, tuple[str, str]] = {}
@@ -152,6 +154,7 @@ class MainWindow(QMainWindow):
         self.local_card.update_requested.connect(self.local_update)
         self.local_card.apps_requested.connect(self.open_apps)
         self.local_card.config_requested.connect(self.open_settings)
+        self.local_card.system_requested.connect(self.open_local_system)
         self.local_card.gwine_requested.connect(self.open_local_gwine_options)
         self.local_card.booster_requested.connect(
             self.open_local_foreground_booster
@@ -175,7 +178,7 @@ class MainWindow(QMainWindow):
         empty_layout.setSpacing(10)
         empty_layout.addStretch(1)
         icon = QLabel(empty)
-        pixmap = QIcon.fromTheme("network-server").pixmap(QSize(72, 72))
+        pixmap = app_icon().pixmap(QSize(72, 72))
         if pixmap.isNull():
             pixmap = QPixmap(72, 72)
             pixmap.fill(Qt.transparent)
@@ -1085,6 +1088,9 @@ class MainWindow(QMainWindow):
 
     def open_settings(self) -> None:
         LocalSettingsDialog(self).exec()
+
+    def open_local_system(self) -> None:
+        SystemDialog(self).exec()
 
     def open_local_gwine_options(self) -> None:
         GwineOptionsDialog(self).exec()

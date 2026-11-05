@@ -326,6 +326,7 @@ class LocalCard(QFrame):
     update_requested = Signal(str)   # "gablue" | "flatpak" | "gwine"
     apps_requested = Signal()
     config_requested = Signal()
+    system_requested = Signal()
     gwine_requested = Signal()
     booster_requested = Signal()
     tailscale_requested = Signal()
@@ -410,6 +411,7 @@ class LocalCard(QFrame):
         self.config_button.setIcon(QIcon.fromTheme("settings-configure"))
         config_menu = QMenu(self.config_button)
         config_menu.addAction("Réglages du noyau…", self.config_requested.emit)
+        config_menu.addAction("Services et variante…", self.system_requested.emit)
         config_menu.addAction("Options de gwine…", self.gwine_requested.emit)
         config_menu.addAction(
             "Priorité au premier plan…", self.booster_requested.emit

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="gablue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a86d8"/>
+      <stop offset="1" stop-color="#24549a"/>
+    </linearGradient>
+    <mask id="gcut">
+      <rect x="0" y="0" width="256" height="256" fill="#ffffff"/>
+      <path d="M 185.34 87.85 A 70 70 0 0 1 196.96 116.00 L 164.06 116.00 A 38 38 0 0 0 159.13 106.20 Z" fill="#000000"/>
+    </mask>
+  </defs>
+  <rect x="12" y="12" width="232" height="232" rx="52" fill="url(#gablue)"/>
+  <path d="M 197.14 117.05 L 197.14 138.95 L 183.75 143.99 L 178.73 156.12 L 184.63 169.14 L 169.14 184.63 L 156.12 178.73 L 143.99 183.75 L 138.95 197.14 L 117.05 197.14 L 112.01 183.75 L 99.88 178.73 L 86.86 184.63 L 71.37 169.14 L 77.27 156.12 L 72.25 143.99 L 58.86 138.95 L 58.86 117.05 L 72.25 112.01 L 77.27 99.88 L 71.37 86.86 L 86.86 71.37 L 99.88 77.27 L 112.01 72.25 L 117.05 58.86 L 138.95 58.86 L 143.99 72.25 L 156.12 77.27 L 169.14 71.37 L 184.63 86.86 L 178.73 99.88 L 183.75 112.01 Z M 166 128 A 38 38 0 1 0 90 128 A 38 38 0 1 0 166 128 Z" fill="#ffffff" fill-rule="evenodd" mask="url(#gcut)"/>
+  <path d="M 140 116 H 172 V 140 H 140 A 12 12 0 0 1 140 116 Z" fill="#ffffff"/>
+</svg>

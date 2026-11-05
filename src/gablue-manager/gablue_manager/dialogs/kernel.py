@@ -38,6 +38,13 @@ CHOICE_LABELS = {
         "certains casques. Le désactiver (bluetooth.disable_ertm=1) les "
         "stabilise, au prix d'un débit un peu plus faible.",
     ),
+    "hdmi21": (
+        "HDMI 2.1 sur GPU AMD",
+        "Active amdgpu.dcfeaturemask=0x402 : FreeSync et les fonctions HDMI 2.1 "
+        "sur les GPU AMD récents. Certains écrans scintillent avec ce réglage "
+        "(ex-`ujust configure-amd-hdmi21`) : à activer si l'écran le supporte, "
+        "à laisser désactivé sinon.",
+    ),
     "cpuid_emu": (
         "Émulation CPUID fault (AMD AM4 / Steam Deck)",
         "Le noyau masque les instructions CPUID que certains jeux gèrent mal "
@@ -53,6 +60,7 @@ CHOICE_STATE = {
     "mitigations": {True: "activées", False: "désactivées"},
     "cpuid": {True: "activé", False: "désactivé"},
     "ertm": {True: "désactivé", False: "activé"},
+    "hdmi21": {True: "activé", False: "désactivé"},
     "cpuid_emu": {True: "activée", False: "désactivée"},
 }
 
@@ -61,6 +69,7 @@ CHOICE_STATE = {
 CHOICE_RECOMMENDED = {
     "mitigations": True,    # garder les protections : sécurité d'abord
     "ertm": True,           # réglage recommandé par Gablue
+    "hdmi21": False,        # scintillements possibles : opt-in explicite
     "cpuid_emu": False,     # niche AMD : KVM doit rester disponible
 }
 
@@ -77,7 +86,7 @@ class SettingsDialog(QDialog):
     (`LocalSettingsDialog`) ou poste distant par SSH (`RemoteSettingsDialog`).
     """
 
-    ROWS = ("mitigations", "cpuid", "ertm", "cpuid_emu")
+    ROWS = ("mitigations", "cpuid", "ertm", "hdmi21", "cpuid_emu")
 
     def __init__(self, parent=None, title: str = "Configuration avancée",
                  subtitle: str = ""):
@@ -117,7 +126,9 @@ class SettingsDialog(QDialog):
         self.close_button = QPushButton("Fermer", self)
         self.close_button.setObjectName("ghost")
         self.close_button.setCursor(Qt.PointingHandCursor)
-        self.close_button.clicked.connect(self.accept)
+        # « Fermer » passe par reject() : avec des cases modifiées, il demande
+        # confirmation au lieu de jeter les choix en silence.
+        self.close_button.clicked.connect(self.reject)
         buttons.addWidget(self.close_button)
         self.apply_button = QPushButton("Appliquer", self)
         self.apply_button.setObjectName("accent")
@@ -178,10 +189,16 @@ class SettingsDialog(QDialog):
         self._update_apply()
 
     def changed(self) -> list[str]:
-        """Clés dont la case diffère de l'état du noyau."""
+        """Clés dont la case diffère de l'état du noyau.
+
+        État illisible : `initial` est vide, une case décochée ne doit pas
+        passer pour un changement (même piège que dans `SystemDialog`).
+        """
+        if not self.state.get("ok"):
+            return []
         return [
             key for key, check in self.checks.items()
-            if check.isChecked() != self.initial.get(key)
+            if check.isChecked() != bool(self.initial.get(key))
         ]
 
     def _update_recommendations(self) -> None:
@@ -262,9 +279,9 @@ class LocalSettingsDialog(SettingsDialog):
     def __init__(self, parent=None):
         super().__init__(
             parent, "Configuration avancée",
-            "Réglages de cette machine : ligne de commande du noyau et "
-            "émulation CPUID, effet au prochain démarrage. Les changements "
-            "partent ensemble, en une seule opération.",
+            "Réglages de cette machine : ligne de commande du noyau (dont "
+            "HDMI 2.1) et émulation CPUID, effet au prochain démarrage. "
+            "Les changements partent ensemble, en une seule opération.",
         )
 
     def read_state(self) -> dict:

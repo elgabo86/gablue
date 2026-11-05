@@ -1,0 +1,141 @@
+#!/usr/bin/bash
+
+# gablue-atuin — historique shell partagé (ble.sh + atuin)
+# (ex-`ujust atuin-setup` ; le retrait n'existait pas)
+#
+# atuin est fourni par l'image (RPM) : « installer » pose ble.sh dans
+# ~/.local/share et branche le shell dans ~/.bashrc ; « retirer » enlève ce
+# branchement et ble.sh. L'historique ~/.local/share/atuin et la configuration
+# ~/.config/atuin ne sont JAMAIS touchés.
+#
+# S'exécute en tant qu'utilisateur (pas de sudo) : les fichiers modifiés sont
+# les siens. Un instantané de ~/.bashrc est conservé avant chaque retrait.
+#
+# Usage : gablue-atuin on|off|status
+
+set -eu
+
+BASHRC="${HOME}/.bashrc"
+BLESH_DIR="${HOME}/.local/share/blesh"
+BEGIN_MARKER="# >>> gablue atuin >>>"
+END_MARKER="# <<< gablue atuin <<<"
+BLESH_URL="https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz"
+
+usage() {
+    echo "Usage : gablue-atuin on|off|status" >&2
+    exit 2
+}
+
+integration_active() {
+    [ -f "$BASHRC" ] && grep -qs 'atuin init bash' "$BASHRC"
+}
+
+# Retire le bloc balisé, les lignes héritées d'ujust et le garde-fou qui les
+# entoure ; tout le reste de ~/.bashrc est recopié à l'identique.
+strip_integration() {
+    local source_file="$1"
+    local target_file="$2"
+    awk '
+        $0 == "# >>> gablue atuin >>>" { skip = 1; next }
+        skip == 1 { if ($0 == "# <<< gablue atuin <<<") skip = 0; next }
+        /^[[:space:]]*source[[:space:]]+.*\.local\/share\/blesh\/ble\.sh[[:space:]]*$/ { next }
+        /^[[:space:]]*eval[[:space:]]+"\$\(atuin init bash/ { next }
+        /^if \[ ! -f \/run\/\.containerenv \]/ {
+            getline first
+            if (first ~ /atuin init bash/) {
+                getline second
+                if (second ~ /^[[:space:]]*fi[[:space:]]*$/) { next }
+                print first
+                print second
+                next
+            }
+            print
+            print first
+            next
+        }
+        { print }
+    ' "$source_file" > "$target_file"
+}
+
+install_integration() {
+    if ! command -v atuin >/dev/null 2>&1; then
+        echo "atuin est absent de cette image : rien à installer." >&2
+        exit 1
+    fi
+
+    if [ ! -d "$BLESH_DIR" ]; then
+        local workdir
+        workdir="$(mktemp -d)"
+        echo "Téléchargement de ble.sh…"
+        curl --fail --location --silent --show-error \
+            -o "$workdir/ble-nightly.tar.xz" "$BLESH_URL"
+        tar -xJf "$workdir/ble-nightly.tar.xz" -C "$workdir"
+        bash "$workdir/ble-nightly/ble.sh" --install "$HOME/.local/share"
+        rm -rf "$workdir"
+    fi
+
+    touch "$BASHRC"
+    # Les lignes d'ujust (non balisées) seraient chargées en double avec le
+    # bloc : on les fond dedans avant d'ajouter le bloc.
+    if grep -qs 'atuin init bash' "$BASHRC"; then
+        local temporary
+        temporary="$(mktemp)"
+        strip_integration "$BASHRC" "$temporary"
+        cat "$temporary" > "$BASHRC"
+        rm -f "$temporary"
+    fi
+
+    # `--disable-up-arrow` : la flèche Haut reste à ble.sh (historique du
+    # shell) ; atuin s'ouvre par Ctrl-R. C'est la configuration du poste de
+    # référence (05/11/2026), reprise telle quelle.
+    cat >> "$BASHRC" <<'EOF'
+
+# >>> gablue atuin >>>
+source ~/.local/share/blesh/ble.sh
+
+if [ ! -f /run/.containerenv ] && [ -z "$DISTROBOX_ENTER_PATH" ]; then
+    eval "$(atuin init bash --disable-up-arrow)"
+fi
+# <<< gablue atuin <<<
+EOF
+    echo "Intégration atuin activée : nouvelle session (ou « source ~/.bashrc »)."
+}
+
+remove_integration() {
+    if ! integration_active; then
+        echo "Intégration atuin déjà inactive."
+        return 0
+    fi
+
+    local backup="${BASHRC}.gablue-atuin.bak"
+    cp -p "$BASHRC" "$backup"
+    local temporary
+    temporary="$(mktemp)"
+    strip_integration "$BASHRC" "$temporary"
+    cat "$temporary" > "$BASHRC"
+    rm -f "$temporary"
+
+    # ble.sh est un outil réinstallable, pas une donnée : il part avec
+    # l'intégration. L'historique (~/.local/share/atuin) et la configuration
+    # (~/.config/atuin) restent en place.
+    rm -rf "$BLESH_DIR"
+    echo "Intégration atuin retirée (historique conservé)."
+    echo "Sauvegarde du shell : $backup"
+    echo "Nouvelle session (ou « source ~/.bashrc ») pour l'appliquer."
+}
+
+status_integration() {
+    if integration_active; then
+        echo "Intégration atuin active."
+        return 0
+    fi
+    echo "Intégration atuin inactive."
+    return 1
+}
+
+case "${1:-}" in
+    on)     install_integration ;;
+    off)    remove_integration ;;
+    status) status_integration ;;
+    *)      usage ;;
+esac

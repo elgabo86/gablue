@@ -8,8 +8,10 @@ jour, analyse des fichiers d'options, formats ssh). Lancer depuis la racine :
 """
 
 import ipaddress
+import json
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -22,10 +24,14 @@ from gablue_manager import apps, hosts, local, util  # noqa: E402
 
 class KargsTest(unittest.TestCase):
     def test_choices(self):
-        choices = local.kargs_choices({"mitigations=off", "clearcpuid=514"}, True)
+        choices = local.kargs_choices(
+            {"mitigations=off", "clearcpuid=514", "amdgpu.dcfeaturemask=0x402"},
+            True,
+        )
         self.assertFalse(choices["mitigations"])
         self.assertTrue(choices["cpuid"])
         self.assertFalse(choices["ertm"])
+        self.assertTrue(choices["hdmi21"])
         self.assertTrue(choices["cpuid_emu"])
 
     def test_script_groups_kargs(self):
@@ -33,6 +39,17 @@ class KargsTest(unittest.TestCase):
         self.assertEqual(
             script,
             "sudo -n /usr/libexec/gablue-kargs --mitigations off --ertm on\n",
+        )
+
+    def test_script_hdmi21_goes_through_kargs(self):
+        script = local.kernel_apply_script({"hdmi21": True})
+        self.assertEqual(
+            script, "sudo -n /usr/libexec/gablue-kargs --hdmi21 on\n"
+        )
+        script = local.kernel_apply_script({"hdmi21": False, "ertm": True})
+        self.assertEqual(
+            script,
+            "sudo -n /usr/libexec/gablue-kargs --ertm on --hdmi21 off\n",
         )
 
     def test_script_cpuid_alone(self):
@@ -43,6 +60,81 @@ class KargsTest(unittest.TestCase):
         script = local.kernel_apply_script({"cpuid": True, "cpuid_emu": False})
         self.assertIn("gablue-kargs --cpuid on", script)
         self.assertIn("gablue-cpuid-emu off", script)
+
+
+class SystemTest(unittest.TestCase):
+    def test_parse_variant(self):
+        status = {
+            "deployments": [
+                {"booted": False, "container-image-reference":
+                    "ostree-image-signed:docker://ghcr.io/elgabo86/gablue-nvidia:latest"},
+                {"booted": True, "container-image-reference":
+                    "ostree-image-signed:docker://ghcr.io/elgabo86/gablue-main-dx:latest"},
+            ]
+        }
+        self.assertEqual(local.parse_variant(json.dumps(status)), "main-dx")
+        self.assertEqual(local.parse_variant("pas du json"), "")
+        self.assertEqual(local.parse_variant(json.dumps({"deployments": []})), "")
+
+    def test_docker_only_on_dx(self):
+        self.assertTrue(local.docker_available("main-dx"))
+        self.assertTrue(local.docker_available("nvidia-open-dx"))
+        self.assertFalse(local.docker_available("main"))
+        self.assertFalse(local.docker_available("nvidia-open"))
+        self.assertFalse(local.docker_available(""))
+
+    def test_system_script(self):
+        script = local.system_apply_script({
+            "displaylink": True,
+            "docker": False,
+            "low_latency": True,
+            "broadcom_wl": False,
+            "atuin": True,
+        })
+        self.assertEqual(
+            script,
+            "sudo -n /usr/libexec/gablue-service displaylink.service on\n"
+            "sudo -n /usr/libexec/gablue-service docker.service off\n"
+            "sudo -n /usr/libexec/gablue-low-latency on\n"
+            "sudo -n /usr/libexec/gablue-broadcom-wl off\n"
+            "/usr/bin/gablue-atuin on\n",
+        )
+
+    def test_system_script_partial(self):
+        self.assertEqual(
+            local.system_apply_script({"low_latency": False}),
+            "sudo -n /usr/libexec/gablue-low-latency off\n",
+        )
+        # atuin ne passe jamais par sudo : fichiers de l'utilisateur.
+        self.assertNotIn(
+            "sudo", local.system_apply_script({"atuin": False})
+        )
+
+    def test_rebase_script(self):
+        self.assertEqual(
+            local.rebase_script("nvidia-open-dx"),
+            "sudo -n /usr/libexec/gablue-rebase nvidia-open-dx\n",
+        )
+
+    def test_atuin_active_reads_bashrc(self):
+        with tempfile.TemporaryDirectory() as home:
+            bashrc = Path(home) / ".bashrc"
+            previous = os.environ.get("HOME")
+            os.environ["HOME"] = home
+            try:
+                self.assertFalse(local.atuin_active())      # fichier absent
+                bashrc.write_text("export PATH=~/bin:$PATH\n", encoding="utf-8")
+                self.assertFalse(local.atuin_active())
+                bashrc.write_text(
+                    'eval "$(atuin init bash --disable-up-arrow)"\n',
+                    encoding="utf-8",
+                )
+                self.assertTrue(local.atuin_active())
+            finally:
+                if previous is None:
+                    os.environ.pop("HOME", None)
+                else:
+                    os.environ["HOME"] = previous
 
 
 class TailscaleTest(unittest.TestCase):

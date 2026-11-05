@@ -120,6 +120,10 @@ KARG_CLEARCPUID = "clearcpuid=514"      # ex-`ujust cpuid-fix-on`
 
 KARG_BT_ERTM = "bluetooth.disable_ertm=1"
 
+# HDMI 2.1 sur GPU AMD (ex-`ujust configure-amd-hdmi21`) : FreeSync élargi,
+# au prix de scintillements possibles sur certains écrans.
+KARG_HDMI21 = "amdgpu.dcfeaturemask=0x402"
+
 # Helpers privilégiés (NOPASSWD dans /etc/sudoers.d/nopasswd) : ils n'acceptent
 # que des options connues, jamais une ligne de commande noyau arbitraire.
 KARG_HELPER = "/usr/libexec/gablue-kargs"
@@ -129,3 +133,27 @@ CPUID_EMU_HELPER = "/usr/libexec/gablue-cpuid-emu"
 TAILSCALE_HELPER = "/usr/libexec/gablue-tailscale"
 
 CPUID_EMU_CONF = Path("/etc/modules-load.d/gablue-cpuid-emu.conf")
+
+# Services, couche Vulkan et pilote Wi-Fi : ex-recettes ujust, mêmes helpers.
+SERVICE_HELPER = "/usr/libexec/gablue-service"
+
+LOW_LATENCY_HELPER = "/usr/libexec/gablue-low-latency"
+
+BROADCOM_HELPER = "/usr/libexec/gablue-broadcom-wl"
+
+REBASE_HELPER = "/usr/libexec/gablue-rebase"
+
+ATUIN_HELPER = "/usr/bin/gablue-atuin"
+
+LOW_LATENCY_FILE = Path("/etc/profile.d/vulkan-low-latency.sh")
+
+BROADCOM_WL_FILE = Path("/etc/modprobe.d/wl-enable.conf")
+
+# Variantes publiées par Gablue (le rebase bascule d'une image à l'autre).
+REBASE_VARIANTS = (
+    ("main", "main — standard, sans NVIDIA"),
+    ("main-dx", "main-dx — développement (Docker, libvirt, ROCm)"),
+    ("nvidia", "nvidia — pilotes NVIDIA propriétaires"),
+    ("nvidia-open", "nvidia-open — pilotes NVIDIA open source"),
+    ("nvidia-open-dx", "nvidia-open-dx — NVIDIA open + développement"),
+)

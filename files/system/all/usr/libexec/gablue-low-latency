@@ -1,0 +1,31 @@
+#!/usr/bin/bash
+
+# gablue-low-latency — couche Vulkan low-latency pour toutes les sessions
+# (ex-`ujust low-latency-enable` / `low-latency-disable`)
+#
+# Écrit /etc/profile.d/vulkan-low-latency.sh, lu au prochain démarrage de
+# session. Appelé via sudo -n (règle NOPASSWD).
+#
+# Usage : gablue-low-latency on|off
+
+set -eu
+
+TARGET=/etc/profile.d/vulkan-low-latency.sh
+
+case "${1:-}" in
+    on)
+        temporary="$(mktemp)"
+        printf '%s\n' 'export LOW_LATENCY_LAYER=1' > "$temporary"
+        install -Dm644 "$temporary" "$TARGET"
+        rm -f "$temporary"
+        echo "Couche Vulkan low-latency activée (nouvelle session requise)."
+        ;;
+    off)
+        rm -f "$TARGET"
+        echo "Couche Vulkan low-latency désactivée (nouvelle session requise)."
+        ;;
+    *)
+        echo "Usage : gablue-low-latency on|off" >&2
+        exit 2
+        ;;
+esac

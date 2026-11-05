@@ -1,0 +1,32 @@
+#!/usr/bin/bash
+
+# gablue-service — active ou désactive un service système géré par Gablue Manager
+#
+# Appelé via sudo -n (règle NOPASSWD dans /etc/sudoers.d/nopasswd) : le script
+# n'accepte QUE les unités de la liste, jamais un `systemctl` libre en root.
+#
+# Usage : gablue-service <displaylink.service|docker.service> on|off
+
+set -eu
+
+usage() {
+    echo "Usage : gablue-service <displaylink.service|docker.service> on|off" >&2
+    exit 2
+}
+
+[ $# -eq 2 ] || usage
+
+unit="$1"
+action="$2"
+
+case "$unit" in
+    displaylink.service|docker.service) ;;
+    *) usage ;;
+esac
+
+case "$action" in
+    on)     exec /usr/bin/systemctl enable --now "$unit" ;;
+    off)    exec /usr/bin/systemctl disable --now "$unit" ;;
+    status) exec /usr/bin/systemctl is-enabled "$unit" ;;
+    *) usage ;;
+esac

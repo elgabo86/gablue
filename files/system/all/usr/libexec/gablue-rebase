@@ -1,0 +1,26 @@
+#!/usr/bin/bash
+
+# gablue-rebase — bascule l'image Gablue vers une autre variante
+# (ex-`ujust gablue-rebase`, choix fait dans Gablue Manager)
+#
+# Appelé via sudo -n (règle NOPASSWD dans /etc/sudoers.d/nopasswd) : le script
+# n'accepte QUE les variantes publiées, jamais une référence d'image libre.
+# Le nouveau déploiement prend effet au redémarrage.
+#
+# Usage : gablue-rebase <main|main-dx|nvidia|nvidia-open|nvidia-open-dx>
+
+set -eu
+
+variant="${1:-}"
+
+case "$variant" in
+    main|main-dx|nvidia|nvidia-open|nvidia-open-dx) ;;
+    *)
+        echo "Variante inconnue : ${variant:-aucune}" >&2
+        echo "Usage : gablue-rebase <main|main-dx|nvidia|nvidia-open|nvidia-open-dx>" >&2
+        exit 2
+        ;;
+esac
+
+exec /usr/bin/rpm-ostree rebase \
+    "ostree-image-signed:docker://ghcr.io/elgabo86/gablue-${variant}:latest"

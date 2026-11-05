@@ -1,11 +1,24 @@
-"""Ajustements d'affichage partagés (style des libellés, hauteur).
+"""Ajustements d'affichage partagés (style des libellés, hauteur, icône).
 """
 
 from PySide6.QtCore import QEvent, QObject, QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QDialog, QLabel
+
+def app_icon() -> QIcon:
+    """Icône de Gablue Manager, avec repli sur l'ancienne icône réseau.
+
+    L'icône `gablue-manager` vient de l'image (`hicolor/scalable/apps`) ; hors
+    image (lancement depuis le dépôt), le thème ne la connaît pas encore et on
+    garde `network-server` plutôt qu'une fenêtre sans icône.
+    """
+    icon = QIcon.fromTheme("gablue-manager")
+    return icon if not icon.isNull() else QIcon.fromTheme("network-server")
 
 class _FitOnShow(QObject):
     """Réduit un dialogue à la hauteur de son contenu, une fois affiché."""
+
+    done = False    # attribut de classe : eventFilter peut passer avant l'init
 
     def __init__(self, dialog: QDialog, width: int):
         super().__init__(dialog)

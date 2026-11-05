@@ -1,0 +1,37 @@
+#!/usr/bin/bash
+
+# gablue-broadcom-wl — pilote Wi-Fi Broadcom `wl` (BCM4360 des vieux MacBooks)
+# (ex-`ujust configure-broadcom-wl` / `revert-broadcom-wl`)
+#
+# Active : /etc/modprobe.d/wl-enable.conf blackliste b43, bcma et brcmfmac pour
+# que le pilote propriétaire prenne la carte. Désactive : supprime ce fichier,
+# les pilotes open source reprennent la main. Redémarrage requis dans les deux
+# sens. Appelé via sudo -n (règle NOPASSWD).
+#
+# Usage : gablue-broadcom-wl on|off
+
+set -eu
+
+TARGET=/etc/modprobe.d/wl-enable.conf
+
+case "${1:-}" in
+    on)
+        temporary="$(mktemp)"
+        printf '%s\n' \
+            'install wl /sbin/modprobe --ignore-install wl' \
+            'blacklist b43' \
+            'blacklist bcma' \
+            'blacklist brcmfmac' > "$temporary"
+        install -Dm644 "$temporary" "$TARGET"
+        rm -f "$temporary"
+        echo "Pilote Broadcom wl activé (redémarrage requis)."
+        ;;
+    off)
+        rm -f "$TARGET"
+        echo "Pilote Broadcom wl désactivé (pilotes libres par défaut, redémarrage requis)."
+        ;;
+    *)
+        echo "Usage : gablue-broadcom-wl on|off" >&2
+        exit 2
+        ;;
+esac

@@ -115,7 +115,7 @@ lib/dir-config.sh
 - **modes/*** : Modules d'initialisation du préfixe
   - init-main.sh : init_prefix_only, init_wineprefix
   - init-ensure.sh : ensure_wineprefix, ensure_wineprefix_full
-- **mode-update.sh** : Mode --update. Feedback graphique complet quand `--kdialog` est actif (contexte .desktop `WindowsUpdate.desktop` avec `Terminal=false`, sinon tout le stdout/stderr est perdu) : `kdialog --msgbox` avec les versions installées si tout est déjà à jour ; les échecs (pas de connexion, téléchargement) passent par `error_exit` qui affiche un `kdialog --error`
+- **mode-update.sh** : Mode --update. Feedback graphique complet quand `--kdialog` est actif (contexte d'un lanceur .desktop `Terminal=false` — l'entrée `WindowsUpdate.desktop` a été retirée de l'image le 05/11/2026, le manager met à jour gwine lui-même, sinon tout le stdout/stderr est perdu) : `kdialog --msgbox` avec les versions installées si tout est déjà à jour ; les échecs (pas de connexion, téléchargement) passent par `error_exit` qui affiche un `kdialog --error`
 - **mode-tools.sh** : Outils Wine (--regedit, --winecfg, --winetricks, --reg avec sous-commandes add/del/get)
 - **dir-config.sh** : Configuration répertoires bind mounts
 

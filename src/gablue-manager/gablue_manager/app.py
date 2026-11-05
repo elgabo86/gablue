@@ -4,9 +4,9 @@
 import os
 import sys
 
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from .uiutil import app_icon
 from .window import MainWindow
 
 HELP = """Usage : gablue-manager
@@ -46,7 +46,7 @@ def main() -> int:
     app.setApplicationDisplayName("Gablue Manager")
     app.setDesktopFileName("gablue-manager")
     app.setOrganizationName("Gablue")
-    app.setWindowIcon(QIcon.fromTheme("network-server"))
+    app.setWindowIcon(app_icon())
 
     window = MainWindow()
     window.show()

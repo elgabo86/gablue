@@ -7,3 +7,7 @@
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-kargs *
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-cpuid-emu on, /usr/libexec/gablue-cpuid-emu off, /usr/libexec/gablue-cpuid-emu status
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-tailscale on *, /usr/libexec/gablue-tailscale off
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-service displaylink.service on, /usr/libexec/gablue-service displaylink.service off, /usr/libexec/gablue-service docker.service on, /usr/libexec/gablue-service docker.service off
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-low-latency on, /usr/libexec/gablue-low-latency off
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-broadcom-wl on, /usr/libexec/gablue-broadcom-wl off
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-rebase main, /usr/libexec/gablue-rebase main-dx, /usr/libexec/gablue-rebase nvidia, /usr/libexec/gablue-rebase nvidia-open, /usr/libexec/gablue-rebase nvidia-open-dx

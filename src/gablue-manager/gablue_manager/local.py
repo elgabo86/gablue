@@ -3,7 +3,9 @@ Tailscale).
 """
 
 import configparser
+import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -11,9 +13,11 @@ import tempfile
 from pathlib import Path
 
 from .constants import (
-    AVAHI_SERVICE_FILE, AVAHI_SERVICE_XML, CMDLINE, CPUID_EMU_CONF, CPUID_EMU_HELPER,
-    KARG_BT_ERTM, KARG_CLEARCPUID, KARG_HELPER, KARG_MITIGATIONS_OFF, OS_RELEASE,
-    TAILSCALE_HELPER, _which,
+    ATUIN_HELPER, AVAHI_SERVICE_FILE, AVAHI_SERVICE_XML, BROADCOM_HELPER,
+    BROADCOM_WL_FILE, CMDLINE, CPUID_EMU_CONF, CPUID_EMU_HELPER, KARG_BT_ERTM,
+    KARG_CLEARCPUID, KARG_HDMI21, KARG_HELPER, KARG_MITIGATIONS_OFF,
+    LOW_LATENCY_FILE, LOW_LATENCY_HELPER, OS_RELEASE, REBASE_HELPER,
+    SERVICE_HELPER, TAILSCALE_HELPER, _which,
 )
 from .ssh import ssh_capture
 
@@ -147,6 +151,7 @@ def kargs_choices(kargs: set[str], emu_active: bool = False) -> dict[str, bool]:
         "mitigations": KARG_MITIGATIONS_OFF not in kargs,
         "cpuid": KARG_CLEARCPUID in kargs,
         "ertm": KARG_BT_ERTM in kargs,
+        "hdmi21": KARG_HDMI21 in kargs,
         "cpuid_emu": emu_active,
     }
 
@@ -158,7 +163,7 @@ def kernel_apply_script(changes: dict[str, bool]) -> str:
     elle ne touche pas la ligne de commande mais charge un module.
     """
     flags: list[str] = []
-    for key in ("mitigations", "cpuid", "ertm"):
+    for key in ("mitigations", "cpuid", "ertm", "hdmi21"):
         if key in changes:
             flags += [f"--{key}", "on" if changes[key] else "off"]
     lines: list[str] = []
@@ -280,3 +285,129 @@ def parse_tailscale_state(output: str) -> dict:
         "active": values.get("active") == "active",
         "server": values.get("server", ""),
     }
+
+
+# =============================================================================
+# SERVICES, COUCHE VULKAN ET VARIANTE (ex-recettes ujust)
+# =============================================================================
+
+def parse_variant(text: str) -> str:
+    """Variante Gablue de l'image démarrée, depuis `rpm-ostree status --json`.
+
+    Le déploiement `booted` porte sa référence d'image
+    (`ostree-image-signed:docker://…/gablue-main-dx:latest`) : on en extrait le
+    nom. Chaîne vide hors image Gablue ou si le format change.
+    """
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return ""
+    for deployment in data.get("deployments", []):
+        if not deployment.get("booted"):
+            continue
+        reference = str(deployment.get("container-image-reference") or "")
+        match = re.search(r"gablue-([a-z0-9-]+)", reference)
+        return match.group(1) if match else ""
+    return ""
+
+
+def local_variant() -> str:
+    """Variante de l'image démarrée (lecture sans privilège)."""
+    try:
+        result = subprocess.run(
+            ["rpm-ostree", "status", "--json"],
+            capture_output=True, text=True, timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return parse_variant(result.stdout)
+
+
+def service_enabled(name: str) -> bool:
+    """Le service est-il activé au démarrage ?"""
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-enabled", name],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def docker_available(variant: str) -> bool:
+    """Le basculement Docker n'a de sens que sur une variante DX."""
+    return variant.endswith("-dx")
+
+
+def atuin_active() -> bool:
+    """L'intégration atuin est-elle branchée dans le shell de l'utilisateur ?"""
+    try:
+        text = (Path.home() / ".bashrc").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except OSError:
+        return False
+    return "atuin init bash" in text
+
+
+def atuin_available() -> bool:
+    """Le helper gablue-atuin est-il installé (présent dans l'image) ?"""
+    return Path(ATUIN_HELPER).is_file()
+
+
+def system_helpers_available() -> bool:
+    """Les helpers de ce dialogue sont-ils tous installés ?"""
+    return all(
+        Path(path).is_file()
+        for path in (SERVICE_HELPER, LOW_LATENCY_HELPER, BROADCOM_HELPER,
+                     REBASE_HELPER, ATUIN_HELPER)
+    )
+
+
+def system_choices() -> dict:
+    """État des bascules : services, couche Vulkan, Wi-Fi et atuin."""
+    return {
+        "displaylink": service_enabled("displaylink.service"),
+        "docker": service_enabled("docker.service"),
+        "low_latency": LOW_LATENCY_FILE.is_file(),
+        "broadcom_wl": BROADCOM_WL_FILE.is_file(),
+        "atuin": atuin_active(),
+    }
+
+
+def system_apply_script(changes: dict[str, bool]) -> str:
+    """Script d'application : un helper par domaine, en un seul passage."""
+    lines: list[str] = []
+    for key, unit in (
+        ("displaylink", "displaylink.service"),
+        ("docker", "docker.service"),
+    ):
+        if key in changes:
+            lines.append(
+                f"sudo -n {SERVICE_HELPER} {unit} "
+                + ("on" if changes[key] else "off")
+            )
+    if "low_latency" in changes:
+        lines.append(
+            f"sudo -n {LOW_LATENCY_HELPER} "
+            + ("on" if changes["low_latency"] else "off")
+        )
+    if "broadcom_wl" in changes:
+        lines.append(
+            f"sudo -n {BROADCOM_HELPER} "
+            + ("on" if changes["broadcom_wl"] else "off")
+        )
+    if "atuin" in changes:
+        # Intégration du shell : fichiers de l'utilisateur, aucun privilège.
+        lines.append(
+            f"{ATUIN_HELPER} " + ("on" if changes["atuin"] else "off")
+        )
+    return "\n".join(lines) + "\n"
+
+
+def rebase_script(variant: str) -> str:
+    """Bascule vers une autre variante d'image (redémarrage ensuite)."""
+    return f"sudo -n {REBASE_HELPER} {variant}\n"
