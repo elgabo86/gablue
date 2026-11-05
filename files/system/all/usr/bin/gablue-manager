@@ -15,9 +15,14 @@ n'est demandé qu'une fois, pour la copie, et n'est jamais enregistré.
 
 La carte « Ce poste » gère la machine courante : mises à jour (image Gablue,
 Flatpaks, gwine), options du noyau (protections du processeur, correctif CPUID,
-mode ERTM du Bluetooth), options de gwine (DXVK asynchrone, X11 ou Wayland,
-manettes en Xbox 360) et priorité au premier plan — reprise de l'ancien
-gablue-config et des recettes ujust correspondantes.
+mode ERTM, émulation CPUID fault), options de gwine (DXVK asynchrone, X11 ou
+Wayland, manettes en Xbox 360), priorité au premier plan et Tailscale (le lien
+du serveur est demandé, jamais codé en dur) — reprise de l'ancien gablue-config
+et des recettes ujust correspondantes.
+
+Chaque opération tourne dans sa propre fenêtre : plusieurs postes peuvent être
+mis à jour, réglés ou redémarrés en même temps, sans bloquer la fenêtre
+principale.
 
 Lancement : gablue-manager
             gablue-manager --help
@@ -37,6 +42,7 @@ import pty
 import re
 import select
 import shutil
+import shlex
 import signal
 import socket
 import subprocess
@@ -50,7 +56,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QEvent, QPointF, QProcess, QSize, Qt, QThread, QTimer, Signal,
+    QEvent, QObject, QPointF, QProcess, QSize, Qt, QThread, QTimer, Signal,
 )
 from PySide6.QtGui import (
     QColor, QIcon, QKeySequence, QPainter, QPalette, QPen, QPixmap, QShortcut,
@@ -606,6 +612,13 @@ KARG_MITIGATIONS_OFF = "mitigations=off"
 KARG_CLEARCPUID = "clearcpuid=514"      # ex-`ujust cpuid-fix-on`
 KARG_BT_ERTM = "bluetooth.disable_ertm=1"
 
+# Helpers privilégiés (NOPASSWD dans /etc/sudoers.d/nopasswd) : ils n'acceptent
+# que des options connues, jamais une ligne de commande noyau arbitraire.
+KARG_HELPER = "/usr/libexec/gablue-kargs"
+CPUID_EMU_HELPER = "/usr/libexec/gablue-cpuid-emu"
+TAILSCALE_HELPER = "/usr/libexec/gablue-tailscale"
+CPUID_EMU_CONF = Path("/etc/modules-load.d/gablue-cpuid-emu.conf")
+
 
 def local_distro() -> str:
     """PRETTY_NAME de /etc/os-release, ou chaîne vide."""
@@ -627,10 +640,18 @@ def kernel_cmdline() -> set[str]:
 
 
 def privileged_prefix() -> list[str]:
-    """`sudo -n` si l'image l'autorise (Gablue), sinon `pkexec` (PolicyKit)."""
+    """`sudo -n` si l'image l'autorise (Gablue), sinon `pkexec` (PolicyKit).
+
+    `sudo -n true` ne peut pas servir de sonde : aucune règle pour `true`, même
+    sur une image Gablue, si bien que le test échouait toujours et que TOUTE
+    action root passait par le dialogue PolicyKit malgré la règle sudoers. On
+    sonde `gablue-cpuid-emu status`, autorisé en NOPASSWD dans l'image et sans
+    effet ; hors image Gablue il échoue en quelques millisecondes.
+    """
     try:
         probe = subprocess.run(
-            ["sudo", "-n", "true"], capture_output=True, timeout=5,
+            ["sudo", "-n", CPUID_EMU_HELPER, "status"],
+            capture_output=True, timeout=5,
         )
         if probe.returncode == 0:
             return ["sudo", "-n"]
@@ -1435,6 +1456,7 @@ class HostCard(QFrame):
     settings_requested = Signal(str)
     gwine_requested = Signal(str)
     booster_requested = Signal(str)
+    tailscale_requested = Signal(str)
     reboot_requested = Signal(str)
     shutdown_requested = Signal(str)
 
@@ -1558,6 +1580,10 @@ class HostCard(QFrame):
         booster_action = menu.addAction("Priorité au premier plan…")
         booster_action.triggered.connect(
             lambda: self.booster_requested.emit(self.host["id"])
+        )
+        tailscale_action = menu.addAction("Tailscale…")
+        tailscale_action.triggered.connect(
+            lambda: self.tailscale_requested.emit(self.host["id"])
         )
         reboot_action = menu.addAction("Redémarrer…")
         reboot_action.triggered.connect(
@@ -2110,6 +2136,16 @@ class KeyInstallDialog(QDialog):
         if ok:
             self.password_edit.setText("")
 
+    def abort(self) -> None:
+        """Annule et ferme sans demander (fermeture de la fenêtre principale)."""
+        if self._probe_worker is not None and self._probe_worker.isRunning():
+            self._probe_worker.wait(5000)
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.cancel.set()
+            self._worker.trust_event.set()   # débloque l'attente d'empreinte
+            self._worker.wait(3000)
+        self.accept()
+
     def reject(self) -> None:
         if self._worker is not None and self._worker.isRunning():
             self._worker.cancel.set()
@@ -2123,6 +2159,8 @@ class KeyInstallDialog(QDialog):
 
 class RemoteTaskDialog(QDialog):
     """Commande distante avec journal en direct (arrêt, redémarrage, mise à jour)."""
+
+    completed = Signal(bool)     # (succès) — émis à la fin, avant fermeture
 
     def __init__(self, parent=None, host: dict | None = None, title: str = "",
                  subtitle: str = "", command: str = "",
@@ -2140,7 +2178,8 @@ class RemoteTaskDialog(QDialog):
         self._running = True
 
         self.setWindowTitle(title or f"Action — {display_name(self._host)}")
-        self.setModal(True)
+        # Non modale : `start_task` l'affiche sans bloquer les autres postes.
+        self.setModal(False)
         self.setMinimumWidth(560)
 
         root = QVBoxLayout(self)
@@ -2243,6 +2282,15 @@ class RemoteTaskDialog(QDialog):
         self.cancel_button.setVisible(False)
         self.close_button.setVisible(True)
         self.close_button.setDefault(True)
+        self.completed.emit(self._cancelled is False and ok)
+
+    def abort(self) -> None:
+        """Annule et ferme sans demander (fermeture de la fenêtre principale)."""
+        if self._running and self._worker is not None:
+            self._cancelled = True
+            self._worker.cancel.set()
+            self._worker.wait(3000)
+        self.accept()
 
     def reject(self) -> None:
         if self._running and self._worker is not None:
@@ -2404,8 +2452,12 @@ class LocalTaskDialog(QDialog):
 
     Même déroulé que `RemoteTaskDialog`, mais via `QProcess` sur CETTE machine :
     sortie fusionnée en direct, annulation possible, et `sudo -n` / `pkexec`
-    choisi automatiquement pour les commandes qui exigent root.
+    choisi automatiquement pour les commandes qui exigent root. Non modale, comme
+    lui : plusieurs opérations peuvent tourner ensemble et la fenêtre principale
+    reste utilisable.
     """
+
+    completed = Signal(bool)     # (succès) — émis à la fin, avant fermeture
 
     def __init__(self, parent=None, title: str = "", subtitle: str = "",
                  argv: list[str] | None = None, root: bool = False,
@@ -2420,7 +2472,7 @@ class LocalTaskDialog(QDialog):
         self._running = True
 
         self.setWindowTitle(title or "Action sur ce poste")
-        self.setModal(True)
+        self.setModal(False)
         self.setMinimumWidth(620)
 
         root_layout = QVBoxLayout(self)
@@ -2552,6 +2604,14 @@ class LocalTaskDialog(QDialog):
         self.close_button.setVisible(True)
         self.close_button.setDefault(True)
         self._process = None
+        self.completed.emit(ok and not self._cancelled)
+
+    def abort(self) -> None:
+        """Annule et ferme sans demander (fermeture de la fenêtre principale)."""
+        if self._running and self._process is not None:
+            self._cancelled = True
+            self._process.kill()
+        self.accept()
 
     def reject(self) -> None:
         if self._running and self._process is not None:
@@ -2575,6 +2635,7 @@ class LocalCard(QFrame):
     config_requested = Signal()
     gwine_requested = Signal()
     booster_requested = Signal()
+    tailscale_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2633,9 +2694,10 @@ class LocalCard(QFrame):
         self.update_button.setMenu(menu)
         layout.addWidget(self.update_button, 0, Qt.AlignVCenter)
 
-        # Un seul bouton, deux dialogues : réglages du noyau (kargs) et
-        # options de gwine (préfixe Windows). Elles ne s'appliquent pas au
-        # même endroit, d'où deux entrées plutôt qu'un dialogue fourre-tout.
+        # Un bouton, un menu : réglages du noyau (kargs + émulation CPUID),
+        # options de gwine (préfixe Windows), priorité au premier plan et
+        # Tailscale. Chacun s'applique à un endroit différent, d'où des
+        # entrées séparées plutôt qu'un dialogue fourre-tout.
         self.config_button = QPushButton("Configuration", self)
         self.config_button.setObjectName("ghost")
         self.config_button.setCursor(Qt.PointingHandCursor)
@@ -2646,6 +2708,7 @@ class LocalCard(QFrame):
         config_menu.addAction(
             "Priorité au premier plan…", self.booster_requested.emit
         )
+        config_menu.addAction("Tailscale…", self.tailscale_requested.emit)
         self.config_button.setMenu(config_menu)
         layout.addWidget(self.config_button, 0, Qt.AlignVCenter)
 
@@ -2687,6 +2750,59 @@ def ask_remote_password(parent, host: dict) -> str | None:
     return text if ok else None
 
 
+# -- tâches : plusieurs opérations en parallèle ------------------------------
+
+def start_task(parent, dialog: QDialog) -> None:
+    """Affiche une tâche sans bloquer la fenêtre principale.
+
+    Une opération sur un poste n'a aucune raison d'empêcher celle d'un autre :
+    chaque tâche est une fenêtre **non modale**, rattachée à la fenêtre
+    principale (qui la garde en vie) et suivie jusqu'à la fin pour rafraîchir
+    les cartes. Plusieurs `exec()` imbriqués, eux, bloquaient tout.
+    """
+    root = parent
+    while root is not None and root.parent() is not None:
+        root = root.parent()      # la fenêtre principale est la racine
+    dialog.setModal(False)
+    dialog.setWindowModality(Qt.NonModal)
+    if root is not None and root is not dialog:
+        dialog.setParent(root, dialog.windowFlags())
+    tasks = getattr(root, "_tasks", None)
+    if tasks is not None:
+        tasks.append(dialog)
+        dialog.finished.connect(lambda _=0: _task_closed(root, dialog))
+    completed = getattr(dialog, "completed", None)
+    if completed is not None:
+        completed.connect(lambda _ok: _task_completed(root))
+    dialog.show()
+    dialog.raise_()
+    dialog.activateWindow()
+
+
+def _task_closed(root, dialog: QDialog) -> None:
+    """Oublie la tâche fermée et libère sa fenêtre."""
+    tasks = getattr(root, "_tasks", None)
+    if tasks is not None and dialog in tasks:
+        tasks.remove(dialog)
+    dialog.deleteLater()
+
+
+def _task_completed(root) -> None:
+    """Rafraîchit les cartes quand une tâche se termine, sans attendre la fermeture."""
+    refresh = getattr(root, "refresh_all", None)
+    if refresh is None:
+        return
+
+    def run() -> None:
+        try:
+            refresh()
+        except RuntimeError:      # fenêtre principale déjà fermée
+            pass
+
+    # Laisse au poste distant le temps de se remettre (extinction, reboot).
+    QTimer.singleShot(1200, run)
+
+
 # -- réglages du noyau : état du prochain démarrage et application groupée ----
 
 def kargs_pending() -> set[str]:
@@ -2707,6 +2823,48 @@ def kargs_pending() -> set[str]:
     except (OSError, subprocess.TimeoutExpired):
         pass
     return kernel_cmdline()
+
+
+class _FitOnShow(QObject):
+    """Réduit un dialogue à la hauteur de son contenu, une fois affiché."""
+
+    def __init__(self, dialog: QDialog, width: int):
+        super().__init__(dialog)
+        self.dialog = dialog
+        self.width = width
+        self.done = False
+
+    def eventFilter(self, obj, event) -> bool:
+        if not self.done and event.type() == QEvent.Show:
+            self.done = True
+            QTimer.singleShot(0, self._apply)
+        return False
+
+    def _apply(self) -> None:
+        try:
+            layout = self.dialog.layout()
+        except RuntimeError:      # dialogue déjà détruit avant le timer
+            return
+        if layout is None:
+            return
+        width = self.dialog.width() or self.width
+        height = layout.heightForWidth(width)
+        if height > 0:
+            self.dialog.resize(width, height)
+
+
+def fit_dialog_height(dialog: QDialog, width: int) -> None:
+    """Donne au dialogue la hauteur de son contenu à sa largeur finale.
+
+    Un QDialog se dimensionne pour sa largeur « naturelle », plus étroite :
+    les textes repliés y comptent plus de lignes, et une fois élargi par
+    `setMinimumWidth` le dialogue garde un vide sous les cartes. Le calcul
+    n'est juste qu'une fois la fenêtre affichée (sa largeur est alors connue),
+    d'où le filtre sur l'événement Show.
+    """
+    if width > 0:
+        dialog._fit_on_show = _FitOnShow(dialog, width)
+        dialog.installEventFilter(dialog._fit_on_show)
 
 
 def restyle_label(widget: QLabel, name: str) -> None:
@@ -2739,6 +2897,14 @@ CHOICE_LABELS = {
         "certains casques. Le désactiver (bluetooth.disable_ertm=1) les "
         "stabilise, au prix d'un débit un peu plus faible.",
     ),
+    "cpuid_emu": (
+        "Émulation CPUID fault (AMD AM4 / Steam Deck)",
+        "Le noyau masque les instructions CPUID que certains jeux gèrent mal "
+        "sur ces processeurs (ex-`ujust cpuid-emu-on`). Le module a besoin de "
+        "SVM (AMD-V) et l'occupe : KVM et les machines virtuelles sont "
+        "indisponibles tant que l'émulation tourne. Persistant après "
+        "redémarrage.",
+    ),
 }
 
 # Mot affiché dans la confirmation, selon l'état de la case.
@@ -2746,6 +2912,7 @@ CHOICE_STATE = {
     "mitigations": {True: "activées", False: "désactivées"},
     "cpuid": {True: "activé", False: "désactivé"},
     "ertm": {True: "désactivé", False: "activé"},
+    "cpuid_emu": {True: "activée", False: "désactivée"},
 }
 
 # Valeur recommandée, pour les cases qui en ont une : le correctif CPUID en
@@ -2753,30 +2920,57 @@ CHOICE_STATE = {
 CHOICE_RECOMMENDED = {
     "mitigations": True,    # garder les protections : sécurité d'abord
     "ertm": True,           # réglage recommandé par Gablue
+    "cpuid_emu": False,     # niche AMD : KVM doit rester disponible
 }
 
 
-def kargs_choices(kargs: set[str]) -> dict[str, bool]:
+def cpuid_emu_active() -> bool:
+    """L'émulation CPUID fault est-elle persistée sur ce poste ?"""
+    return CPUID_EMU_CONF.exists()
+
+
+def kargs_choices(kargs: set[str], emu_active: bool = False) -> dict[str, bool]:
     """État des cases à cocher : coché = réglage Gablue appliqué."""
     return {
         "mitigations": KARG_MITIGATIONS_OFF not in kargs,
         "cpuid": KARG_CLEARCPUID in kargs,
         "ertm": KARG_BT_ERTM in kargs,
+        "cpuid_emu": emu_active,
     }
 
 
-def kargs_ops(key: str, checked: bool) -> list[str]:
-    """Opérations `rpm-ostree kargs` pour un choix donné."""
-    if key == "mitigations":
-        option = "--delete-if-present" if checked else "--append-if-missing"
-        return [f"{option}={KARG_MITIGATIONS_OFF}"]
-    if key == "cpuid":
-        option = "--append-if-missing" if checked else "--delete-if-present"
-        return [f"{option}={KARG_CLEARCPUID}"]
-    if key == "ertm":
-        option = "--append-if-missing" if checked else "--delete-if-present"
-        return [f"{option}={KARG_BT_ERTM}"]
-    raise ValueError(key)
+def kernel_apply_script(changes: dict[str, bool]) -> str:
+    """Script d'application : les helpers /usr/libexec, en un seul passage.
+
+    Les trois paramètres du noyau partent dans un unique `rpm-ostree kargs`
+    (un déploiement) ; l'émulation CPUID fault passe par son propre helper car
+    elle ne touche pas la ligne de commande mais charge un module.
+    """
+    flags: list[str] = []
+    for key in ("mitigations", "cpuid", "ertm"):
+        if key in changes:
+            flags += [f"--{key}", "on" if changes[key] else "off"]
+    lines: list[str] = []
+    if flags:
+        lines.append(f"sudo -n {KARG_HELPER} " + " ".join(flags))
+    if "cpuid_emu" in changes:
+        lines.append(
+            f"sudo -n {CPUID_EMU_HELPER} "
+            + ("on" if changes["cpuid_emu"] else "off")
+        )
+    return "\n".join(lines) + "\n"
+
+
+def remote_helpers_nopasswd(host: dict) -> bool:
+    """Les helpers `/usr/libexec` passent-ils sans mot de passe à distance ?
+
+    `sudo -n true` ne dit rien (aucune règle pour `true`, même sur une image
+    Gablue) et `sudo -l <cmd>` rend toujours 0. On sonde donc la sous-commande
+    `status` du helper, sans effet : elle répond 0 quand la règle NOPASSWD
+    existe, et sudo rend 1 quand il réclame le mot de passe.
+    """
+    code, _ = ssh_capture(host, f"sudo -n {CPUID_EMU_HELPER} status", timeout=10)
+    return code == 0
 
 
 def flatpak_update_script() -> str:
@@ -2802,16 +2996,17 @@ def flatpak_update_script() -> str:
 class SettingsDialog(QDialog):
     """Options avancées : des cases à cocher, un seul bouton « Appliquer ».
 
-    Les trois réglages sont des paramètres du noyau : les choix sont accumulés
-    puis envoyés en **un seul** `rpm-ostree kargs` — un déploiement, une
-    autorisation — au lieu d'un aller-retour par case. L'état lu est celui du
+    Trois réglages sont des paramètres du noyau, accumulés puis envoyés en
+    **un seul** appel à `/usr/libexec/gablue-kargs` — un déploiement, sans
+    mot de passe grâce à la règle sudoers — au lieu d'un aller-retour par
+    case ; le quatrième charge l'émulation CPUID fault. L'état lu est celui du
     prochain démarrage, donc les cases restent justes une fois appliquées.
 
     La lecture et l'exécution viennent des sous-classes : machine courante
     (`LocalSettingsDialog`) ou poste distant par SSH (`RemoteSettingsDialog`).
     """
 
-    ROWS = ("mitigations", "cpuid", "ertm")
+    ROWS = ("mitigations", "cpuid", "ertm", "cpuid_emu")
 
     def __init__(self, parent=None, title: str = "Configuration avancée",
                  subtitle: str = ""):
@@ -2863,6 +3058,7 @@ class SettingsDialog(QDialog):
         self.state: dict = {"ok": False}
         self.initial: dict[str, bool] = {}
         self.refresh()
+        fit_dialog_height(self, 640)
 
     def _add_row(self, key: str, label: str, description: str) -> None:
         frame = QFrame(self)
@@ -2887,6 +3083,7 @@ class SettingsDialog(QDialog):
             recommendation.setObjectName("hint")
             layout.addWidget(recommendation)
             self.recommendations[key] = recommendation
+        layout.addStretch(1)
 
         self.rows_layout.addWidget(frame)
 
@@ -2894,7 +3091,13 @@ class SettingsDialog(QDialog):
     def refresh(self) -> None:
         self.state = self.read_state()
         ok = bool(self.state.get("ok"))
-        choices = kargs_choices(self.state.get("kargs", set())) if ok else {}
+        choices = (
+            kargs_choices(
+                self.state.get("kargs", set()),
+                bool(self.state.get("cpuid_emu")),
+            )
+            if ok else {}
+        )
         self.initial = dict(choices)
         for key, check in self.checks.items():
             check.blockSignals(True)
@@ -2955,12 +3158,12 @@ class SettingsDialog(QDialog):
         )
         if answer != QMessageBox.Yes:
             return
-        ops = [
-            operation for key in keys
-            for operation in kargs_ops(key, self.checks[key].isChecked())
-        ]
-        self.apply(ops)
-        self.refresh()
+        changes = {key: self.checks[key].isChecked() for key in keys}
+        # La tâche s'ouvre dans sa propre fenêtre : ce dialogue n'a plus rien à
+        # montrer (son état serait lu avant la fin de l'opération) et le fermer
+        # rend la main tout de suite pour un autre poste.
+        if self.apply(changes):
+            self.accept()
 
     def reject(self) -> None:
         # Fermer avec des cases modifiées ne doit pas jeter les choix en
@@ -2979,7 +3182,7 @@ class SettingsDialog(QDialog):
     def read_state(self) -> dict:
         raise NotImplementedError
 
-    def apply(self, ops: list[str]) -> None:
+    def apply(self, changes: dict[str, bool]) -> bool:
         raise NotImplementedError
 
 
@@ -2989,21 +3192,29 @@ class LocalSettingsDialog(SettingsDialog):
     def __init__(self, parent=None):
         super().__init__(
             parent, "Configuration avancée",
-            "Réglages de cette machine, écrits dans la ligne de commande du "
-            "noyau : effet au prochain démarrage. Les changements partent "
-            "ensemble, en une seule opération.",
+            "Réglages de cette machine : ligne de commande du noyau et "
+            "émulation CPUID, effet au prochain démarrage. Les changements "
+            "partent ensemble, en une seule opération.",
         )
 
     def read_state(self) -> dict:
-        return {"ok": True, "kargs": kargs_pending()}
+        return {
+            "ok": True,
+            "kargs": kargs_pending(),
+            "cpuid_emu": cpuid_emu_active(),
+        }
 
-    def apply(self, ops: list[str]) -> None:
+    def apply(self, changes: dict[str, bool]) -> bool:
+        # `sudo -n` : sur l'image Gablue les helpers sont autorisés sans mot de
+        # passe (sudoers), donc aucune invite. Hors image, l'échec est affiché
+        # dans le journal plutôt que de faire surgir un dialogue root.
         dialog = LocalTaskDialog(
             self, title="Réglages du noyau",
-            subtitle="rpm-ostree kargs — effet au prochain démarrage.",
-            argv=[_which("rpm-ostree"), "kargs", *ops], root=True,
+            subtitle="Helpers Gablue — effet au prochain démarrage.",
+            argv=[_which("bash"), "-c", kernel_apply_script(changes)],
         )
-        dialog.exec()
+        start_task(self, dialog)
+        return True
 
 
 class RemoteSettingsDialog(SettingsDialog):
@@ -3013,36 +3224,42 @@ class RemoteSettingsDialog(SettingsDialog):
         self.host = dict(host or {})
         super().__init__(
             parent, f"Configuration avancée — {display_name(self.host)}",
-            f"Réglages de {address_text(self.host)}, lus et appliqués par SSH : "
-            "effet à son prochain démarrage. Les changements partent ensemble, "
-            "en une seule opération.",
+            f"Réglages de {address_text(self.host)}, lus et appliqués par SSH "
+            "(helpers Gablue en NOPASSWD) : effet à "
+            "son prochain démarrage. Les changements partent ensemble, en une "
+            "seule opération.",
         )
 
     def read_state(self) -> dict:
-        code, output = ssh_capture(
-            self.host, "rpm-ostree kargs 2>/dev/null || cat /proc/cmdline"
-        )
-        if code != 0 or not output.strip():
+        code, output = ssh_capture(self.host, (
+            "rpm-ostree kargs 2>/dev/null || cat /proc/cmdline\n"
+            "if [ -f /etc/modules-load.d/gablue-cpuid-emu.conf ]; "
+            "then echo gablue-cpuid-emu=on; else echo gablue-cpuid-emu=off; fi\n"
+        ))
+        lines = [line for line in output.splitlines() if line.strip()]
+        if code != 0 or len(lines) < 2:
             return {"ok": False}
-        return {"ok": True, "kargs": set(output.split())}
+        emu = lines[-1].strip().endswith("=on")
+        return {
+            "ok": True,
+            "kargs": set(lines[0].split()),
+            "cpuid_emu": emu,
+        }
 
-    def apply(self, ops: list[str]) -> None:
+    def apply(self, changes: dict[str, bool]) -> bool:
         password = ""
-        if not remote_sudo_nopasswd(self.host):
+        if not remote_helpers_nopasswd(self.host):
             password = ask_remote_password(self, self.host)
             if password is None:
-                return
-        command = (
-            remote_sudo_prefix(password)
-            + "sudo -n /usr/bin/rpm-ostree kargs "
-            + " ".join(ops) + "\n"
-        )
+                return False
+        command = remote_sudo_prefix(password) + kernel_apply_script(changes)
         dialog = RemoteTaskDialog(
             self, host=self.host, title="Réglages du noyau",
-            subtitle="rpm-ostree kargs — effet au prochain démarrage.",
+            subtitle="Helpers Gablue — effet à son prochain démarrage.",
             command=command, password=password,
         )
-        dialog.exec()
+        start_task(self, dialog)
+        return True
 
 
 # -- options de gwine : DXVK, affichage et manettes Sony en Xbox 360 ----------
@@ -3226,6 +3443,7 @@ class GwineOptionsDialog(QDialog):
             recommendation.setObjectName("hint")
             layout.addWidget(recommendation)
             self.recommendations[key] = recommendation
+        layout.addStretch(1)
 
         self.rows_layout.addWidget(frame)
 
@@ -3402,8 +3620,8 @@ class GwineOptionsDialog(QDialog):
                 subtitle="gwine — effet au prochain lancement.",
                 argv=[_which("bash"), "-c", script],
             )
-        dialog.exec()
-        self.refresh()
+        start_task(self, dialog)
+        self.accept()
 
     def reject(self) -> None:
         if self.changed():
@@ -3507,6 +3725,7 @@ class ForegroundBoosterDialog(QDialog):
         self.recommendation = QLabel(frame)
         self.recommendation.setObjectName("hint")
         frame_layout.addWidget(self.recommendation)
+        frame_layout.addStretch(1)
         self.rows_layout.addWidget(frame)
 
         buttons = QHBoxLayout()
@@ -3530,6 +3749,7 @@ class ForegroundBoosterDialog(QDialog):
         self.state: dict = {"ok": False}
         self.initial = True
         self.refresh()
+        fit_dialog_height(self, 660)
 
     # -- état ---------------------------------------------------------------
     def read_state(self) -> dict:
@@ -3633,8 +3853,8 @@ class ForegroundBoosterDialog(QDialog):
                 subtitle="kcgroupsrc — réglage persistant, effet immédiat.",
                 argv=[_which("bash"), "-c", script],
             )
-        dialog.exec()
-        self.refresh()
+        start_task(self, dialog)
+        self.accept()
 
     def reject(self) -> None:
         if self.changed():
@@ -3646,6 +3866,257 @@ class ForegroundBoosterDialog(QDialog):
             if answer != QMessageBox.Yes:
                 return
         super().reject()
+
+
+
+# -- Tailscale : activation, serveur de connexion demandé à l'utilisateur ----
+
+TAILSCALE_STATE_SCRIPT = r"""
+printf 'enabled=%s\n' "$(systemctl is-enabled tailscaled.service 2>/dev/null | head -n 1)"
+printf 'active=%s\n' "$(systemctl is-active tailscaled.service 2>/dev/null | head -n 1)"
+printf 'server=%s\n' "$(tailscale debug prefs 2>/dev/null | tr ',' '\n' | grep -m1 'ControlURL' | cut -d'"' -f4)"
+printf 'installed=%s\n' "$(command -v tailscale >/dev/null 2>&1 && echo yes || echo no)"
+"""
+
+
+def parse_tailscale_state(output: str) -> dict:
+    """État Tailscale à partir des lignes `clé=valeur` du script ci-dessus."""
+    values: dict[str, str] = {}
+    for line in output.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() in ("enabled", "active", "server", "installed"):
+            values[key.strip()] = value.strip()
+    return {
+        "installed": values.get("installed") == "yes",
+        "enabled": values.get("enabled") == "enabled",
+        "active": values.get("active") == "active",
+        "server": values.get("server", ""),
+    }
+
+
+def valid_tailscale_server(url: str) -> bool:
+    """Lien de control server : http(s), sans espace ni guillemet."""
+    return (
+        url.startswith(("http://", "https://"))
+        and len(url) > 9
+        and not any(char.isspace() or char in "'\"" for char in url)
+    )
+
+
+def tailscale_apply_script(enabled: bool, server: str = "") -> str:
+    """Commande du helper : `on --login-server URL` ou `off`."""
+    if enabled:
+        return (
+            f"sudo -n {TAILSCALE_HELPER} on --login-server "
+            f"{shlex.quote(server)}\n"
+        )
+    return f"sudo -n {TAILSCALE_HELPER} off\n"
+
+
+class TailscaleDialog(QDialog):
+    """Activer ou couper Tailscale, avec le serveur de connexion demandé.
+
+    `ujust tailscale-up` codait le serveur en dur : ici le lien est saisi à
+    l'activation (prérempli avec celui déjà configuré) et validé avant de
+    partir. L'application passe par le helper NOPASSWD, localement ou par SSH.
+    """
+
+    def __init__(self, parent=None, host: dict | None = None):
+        super().__init__(parent)
+        self.host = dict(host or {})
+        remote = bool(self.host)
+        self.setWindowTitle(
+            "Tailscale" + (f" — {display_name(self.host)}" if remote else "")
+        )
+        self.setModal(True)
+        self.setMinimumWidth(660)
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(24, 22, 24, 20)
+        root_layout.setSpacing(10)
+
+        heading = QLabel("Tailscale", self)
+        heading.setObjectName("title")
+        root_layout.addWidget(heading)
+
+        note = QLabel(
+            f"État de {address_text(self.host)}, lu et modifié par SSH."
+            if remote else
+            "Connexion de ce poste à un réseau privé Tailscale ou headscale."
+        )
+        note.setObjectName("subtitle")
+        note.setWordWrap(True)
+        root_layout.addWidget(note)
+
+        self.rows_layout = QVBoxLayout()
+        self.rows_layout.setSpacing(8)
+        root_layout.addLayout(self.rows_layout, 1)
+
+        frame = QFrame(self)
+        frame.setObjectName("hostCard")
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setContentsMargins(16, 12, 16, 12)
+        frame_layout.setSpacing(6)
+        self.check = QCheckBox("Connecter ce poste à Tailscale", frame)
+        self.check.setCursor(Qt.PointingHandCursor)
+        self.check.toggled.connect(self._update_apply)
+        frame_layout.addWidget(self.check)
+        detail = QLabel(
+            "Le serveur de connexion (headscale ou Tailscale) est demandé à "
+            "l'activation : aucun lien n'est codé en dur. `tailscale up` "
+            "affiche ensuite la page de validation dans le navigateur. Le "
+            "service reste actif après un redémarrage ; décocher le coupe et "
+            "le désactive.",
+            frame,
+        )
+        detail.setObjectName("hostDetail")
+        detail.setWordWrap(True)
+        frame_layout.addWidget(detail)
+        self.recommendation = QLabel(frame)
+        self.recommendation.setObjectName("hint")
+        frame_layout.addWidget(self.recommendation)
+        frame_layout.addStretch(1)
+        self.rows_layout.addWidget(frame)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+        self.hint_label = QLabel(self)
+        self.hint_label.setObjectName("hostStatus")
+        buttons.addWidget(self.hint_label)
+        buttons.addStretch(1)
+        self.close_button = QPushButton("Fermer", self)
+        self.close_button.setObjectName("ghost")
+        self.close_button.setCursor(Qt.PointingHandCursor)
+        self.close_button.clicked.connect(self.accept)
+        buttons.addWidget(self.close_button)
+        self.apply_button = QPushButton("Appliquer", self)
+        self.apply_button.setObjectName("accent")
+        self.apply_button.setCursor(Qt.PointingHandCursor)
+        self.apply_button.clicked.connect(self.apply_changes)
+        buttons.addWidget(self.apply_button)
+        root_layout.addLayout(buttons)
+
+        self.state: dict = {"ok": False}
+        self.initial = False
+        self.refresh()
+        fit_dialog_height(self, 660)
+
+    # -- état ---------------------------------------------------------------
+    def read_state(self) -> dict:
+        if self.host:
+            code, output = ssh_capture(self.host, TAILSCALE_STATE_SCRIPT)
+        else:
+            try:
+                result = subprocess.run(
+                    [_which("bash"), "-c", TAILSCALE_STATE_SCRIPT],
+                    capture_output=True, text=True, timeout=10,
+                )
+                code, output = result.returncode, result.stdout
+            except (OSError, subprocess.TimeoutExpired):
+                code, output = 1, ""
+        if code != 0 and not output.strip():
+            return {"ok": False}
+        return {"ok": True, **parse_tailscale_state(output)}
+
+    def refresh(self) -> None:
+        self.state = self.read_state()
+        ok = bool(self.state.get("ok"))
+        installed = ok and bool(self.state.get("installed"))
+        self.initial = bool(self.state.get("enabled")) if installed else False
+        self.check.blockSignals(True)
+        self.check.setChecked(self.initial)
+        self.check.blockSignals(False)
+        self.check.setEnabled(installed)
+        self._update_apply()
+
+    def changed(self) -> bool:
+        return self.check.isEnabled() and self.check.isChecked() != self.initial
+
+    def _update_apply(self) -> None:
+        differs = bool(self.state.get("ok")) and self.check.isChecked()
+        message = "Recommandé : désactivé"
+        if differs:
+            message += " — votre choix diffère"
+        self.recommendation.setText(message)
+        restyle_label(self.recommendation, "warn" if differs else "hint")
+        if not self.state.get("ok"):
+            self.apply_button.setEnabled(False)
+            self.hint_label.setText("État illisible — réglage non modifiable.")
+            return
+        if not self.state.get("installed"):
+            self.apply_button.setEnabled(False)
+            self.hint_label.setText(
+                "tailscale n'est pas installé sur ce poste."
+            )
+            return
+        dirty = self.changed()
+        self.apply_button.setEnabled(dirty)
+        self.hint_label.setText(
+            "Réglage à appliquer" if dirty else "Aucun changement."
+        )
+
+    # -- application --------------------------------------------------------
+    def apply_changes(self) -> None:
+        if not self.changed():
+            return
+        enabled = self.check.isChecked()
+        server = ""
+        if enabled:
+            current = self.state.get("server") or "https://"
+            text, ok = QInputDialog.getText(
+                self, "Serveur Tailscale",
+                "Lien du serveur de connexion (headscale ou Tailscale) :",
+                QLineEdit.Normal, current,
+            )
+            if not ok:
+                return
+            server = text.strip()
+            if not valid_tailscale_server(server):
+                QMessageBox.warning(
+                    self, "Serveur Tailscale",
+                    "Le lien doit commencer par http:// ou https://, sans "
+                    "espace ni guillemet.",
+                )
+                return
+        answer = QMessageBox.question(
+            self, "Tailscale",
+            (
+                f"Connecter ce poste au serveur\n{server} ?\n\n"
+                "Une page de validation peut s'ouvrir dans le navigateur."
+            ) if enabled else
+            "Couper Tailscale et désactiver son service au démarrage ?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        if self._start(enabled, server):
+            self.accept()
+
+    def _start(self, enabled: bool, server: str) -> bool:
+        script = tailscale_apply_script(enabled, server)
+        subtitle = (
+            "tailscale up — validation dans le navigateur."
+            if enabled else
+            "tailscale down — service arrêté et désactivé."
+        )
+        if self.host:
+            password = ""
+            if not remote_helpers_nopasswd(self.host):
+                password = ask_remote_password(self, self.host)
+                if password is None:
+                    return False
+            command = remote_sudo_prefix(password) + script
+            dialog = RemoteTaskDialog(
+                self, host=self.host, title="Tailscale",
+                subtitle=subtitle, command=command, password=password,
+            )
+        else:
+            dialog = LocalTaskDialog(
+                self, title="Tailscale", subtitle=subtitle,
+                argv=[_which("bash"), "-c", script],
+            )
+        start_task(self, dialog)
+        return True
 
 
 # =============================================================================
@@ -3667,6 +4138,7 @@ class MainWindow(QMainWindow):
         self._dots: list[StatusDot] = []
         self._checker: CheckWorker | None = None
         self._jobs: list[dict] = []
+        self._tasks: list[QDialog] = []      # fenêtres d'opération en cours
         self._last_check: float | None = None
         self._display_order: list[str] = []
         self._discovering = False
@@ -3763,6 +4235,9 @@ class MainWindow(QMainWindow):
         self.local_card.gwine_requested.connect(self.open_local_gwine_options)
         self.local_card.booster_requested.connect(
             self.open_local_foreground_booster
+        )
+        self.local_card.tailscale_requested.connect(
+            self.open_local_tailscale
         )
         local_holder = QWidget(central)
         local_layout = QHBoxLayout(local_holder)
@@ -3912,6 +4387,7 @@ class MainWindow(QMainWindow):
             card.settings_requested.connect(self.open_remote_settings)
             card.gwine_requested.connect(self.open_remote_gwine_options)
             card.booster_requested.connect(self.open_remote_foreground_booster)
+            card.tailscale_requested.connect(self.open_remote_tailscale)
             card.reboot_requested.connect(self.reboot_host)
             card.shutdown_requested.connect(self.shutdown_host)
             state, detail = self._states.get(host["id"], ("unknown", ""))
@@ -4290,7 +4766,7 @@ class MainWindow(QMainWindow):
             return
         dialog = KeyInstallDialog(self, host=host, password=password)
         dialog.installed.connect(lambda: self._key_installed(host_id))
-        dialog.exec()
+        start_task(self, dialog)
 
     def _key_installed(self, host_id: str) -> None:
         host = self._host(host_id)
@@ -4509,8 +4985,7 @@ class MainWindow(QMainWindow):
             password=password, ok_if_disconnect=ok_if_disconnect,
             hint_from_output=hint_from_output,
         )
-        dialog.exec()
-        QTimer.singleShot(1500, self.refresh_all)
+        start_task(self, dialog)
 
     def reboot_host(self, host_id: str) -> None:
         host = self._host(host_id)
@@ -4558,8 +5033,7 @@ class MainWindow(QMainWindow):
             ok_if_disconnect=ok_if_disconnect,
             hint_from_output=hint_from_output,
         )
-        dialog.exec()
-        QTimer.singleShot(1500, self.refresh_all)
+        start_task(self, dialog)
 
     # -- machine courante : mises à jour et configuration --------------------
     def local_update(self, kind: str) -> None:
@@ -4662,6 +5136,15 @@ class MainWindow(QMainWindow):
             return
         ForegroundBoosterDialog(self, host).exec()
 
+    def open_local_tailscale(self) -> None:
+        TailscaleDialog(self).exec()
+
+    def open_remote_tailscale(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        TailscaleDialog(self, host).exec()
+
     def _run_local_task(self, title: str, subtitle: str, argv: list[str],
                         root: bool = False, hint_from_output=None) -> None:
         if argv and shutil.which(argv[0]) is None and not Path(argv[0]).exists():
@@ -4674,7 +5157,7 @@ class MainWindow(QMainWindow):
             self, title=title, subtitle=subtitle, argv=argv, root=root,
             hint_from_output=hint_from_output,
         )
-        dialog.exec()
+        start_task(self, dialog)
 
     # -- découverte / import ------------------------------------------------
     def discover_hosts(self) -> None:
@@ -4884,6 +5367,28 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
 
     def closeEvent(self, event) -> None:
+        # Les tâches sont maintenant non modales : elles peuvent encore tourner
+        # quand la fenêtre principale se ferme. Les laisser derrière soi
+        # détruirait leur QProcess/QThread en vol.
+        if self._tasks:
+            answer = QMessageBox.question(
+                self, "Opérations en cours",
+                f"{len(self._tasks)} opération"
+                f"{'s' if len(self._tasks) > 1 else ''} encore en cours."
+                "\n\nLes annuler et quitter ?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                event.ignore()
+                return
+            for task in list(self._tasks):
+                abort = getattr(task, "abort", None)
+                if abort is not None:
+                    abort()
+                else:
+                    task.accept()
+            self._tasks.clear()
+
         self._refresh_timer.stop()
         self._pulse_timer.stop()
         self._job_timer.stop()
@@ -4918,8 +5423,10 @@ mDNS, import de ~/.ssh/config, ajout d'un poste avec copie de la clé.
 
 Cette machine : serveur SSH et annonce mDNS, mises à jour (image Gablue,
 Flatpaks, gwine), réglages du noyau (protections du processeur, correctif CPUID,
-mode ERTM), options de gwine (DXVK, affichage, manettes) et priorité au premier
-plan — les changements de chaque dialogue partent ensemble.
+mode ERTM, émulation CPUID fault), options de gwine (DXVK, affichage, manettes),
+priorité au premier plan et Tailscale (lien du serveur demandé) — les
+changements de chaque dialogue partent ensemble. Les opérations s'ouvrent dans
+leur propre fenêtre : plusieurs postes peuvent être traités en même temps.
 
 Configuration : ~/.config/gablue/ssh-hosts.json (mode 0600)
 Clé locale    : ~/.ssh/id_ed25519 (créée au besoin, sans passphrase)

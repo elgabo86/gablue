@@ -4,3 +4,6 @@
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/efibootmgr --bootorder *
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/bootc upgrade, /usr/bin/bootc upgrade *
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/flatpak update --system -y
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-kargs *
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-cpuid-emu on, /usr/libexec/gablue-cpuid-emu off, /usr/libexec/gablue-cpuid-emu status
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-tailscale on *, /usr/libexec/gablue-tailscale off

@@ -1,0 +1,71 @@
+#!/usr/bin/bash
+
+# gablue-tailscale — active ou coupe Tailscale sur ce poste
+#
+# Reprise de `ujust tailscale-up`, sans serveur codé en dur : le lien du
+# control server (headscale ou Tailscale) est fourni à l'appel et validé ici.
+# Appelé via sudo -n (règle NOPASSWD) : seules les deux formes ci-dessous
+# passent, aucune commande arbitraire.
+#
+# Usage : gablue-tailscale on --login-server URL
+#         gablue-tailscale off
+
+set -eu
+
+usage() {
+    echo "Usage : gablue-tailscale on --login-server URL | off" >&2
+    exit 2
+}
+
+if ! command -v tailscale > /dev/null 2>&1; then
+    echo "tailscale n'est pas installé sur ce poste." >&2
+    exit 1
+fi
+
+case "${1:-}" in
+    on)
+        shift
+        server=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --login-server)
+                    [ $# -ge 2 ] || usage
+                    server="$2"
+                    shift 2
+                    ;;
+                *)
+                    usage
+                    ;;
+            esac
+        done
+        [ -n "$server" ] || usage
+        case "$server" in
+            http://*|https://*) ;;
+            *) echo "Lien de serveur invalide : « $server » (http:// ou https:// attendu)." >&2; exit 2 ;;
+        esac
+        case "$server" in
+            *[[:space:]]*) echo "Lien de serveur invalide : pas d'espace." >&2; exit 2 ;;
+        esac
+        # L'opérateur est le compte qui a lancé la commande (sudo), pour qu'il
+        # puisse piloter tailscale sans root ensuite.
+        operator="${SUDO_USER:-$(id -un)}"
+        systemctl enable --now tailscaled.service
+        firewall-cmd --add-masquerade --zone=FedoraWorkstation --permanent || true
+        firewall-cmd --add-interface=tailscale0 --zone=trusted --permanent || true
+        firewall-cmd --reload || true
+        echo "Connexion au serveur $server…"
+        echo "Une page de validation peut s'ouvrir dans le navigateur."
+        tailscale up --operator="$operator" --login-server="$server"
+        ;;
+    off)
+        [ $# -eq 1 ] || usage
+        tailscale down || true
+        systemctl disable --now tailscaled.service || true
+        firewall-cmd --remove-interface=tailscale0 --zone=trusted --permanent || true
+        firewall-cmd --reload || true
+        echo "Tailscale coupé : service arrêté et désactivé au démarrage."
+        ;;
+    *)
+        usage
+        ;;
+esac

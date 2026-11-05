@@ -46,6 +46,9 @@ chmod +x /usr/bin/gablue-manager
 chmod +x /usr/bin/ssh-key-add
 chmod +x /usr/bin/gremote
 chmod +x /usr/libexec/gablue-wait-devices
+chmod +x /usr/libexec/gablue-kargs
+chmod +x /usr/libexec/gablue-cpuid-emu
+chmod +x /usr/libexec/gablue-tailscale
 chmod +x /usr/libexec/archgab-update
 chmod +x /usr/libexec/gablue-bigscreen-session-init
 chmod +x /usr/libexec/gablue-dx-groups

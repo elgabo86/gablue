@@ -1,0 +1,45 @@
+#!/usr/bin/bash
+
+# gablue-kargs — applique les paramètres du noyau gérés par Gablue Manager
+#
+# Appelé via sudo -n (règle NOPASSWD dans /etc/sudoers.d/nopasswd) : le script
+# n'accepte QUE les options connues, jamais des arguments kargs arbitraires.
+# Un `rpm-ostree kargs` libre en NOPASSWD permettrait d'ajouter init=/bin/sh au
+# noyau, c'est-à-dire de fabriquer un accès root persistant sans mot de passe.
+#
+# Usage : gablue-kargs [--mitigations on|off] [--cpuid on|off] [--ertm on|off]
+#   --mitigations on   protège contre les failles du processeur (défaut noyau)
+#   --mitigations off  ajoute mitigations=off (plus rapide, failles ouvertes)
+#   --cpuid on         ajoute clearcpuid=514 (correctif pour certains jeux)
+#   --cpuid off        retire clearcpuid=514
+#   --ertm on          mode ERTM du Bluetooth actif (retire bluetooth.disable_ertm=1)
+#   --ertm off         désactive ERTM (ajoute bluetooth.disable_ertm=1)
+
+set -eu
+
+usage() {
+    echo "Usage : gablue-kargs [--mitigations on|off] [--cpuid on|off] [--ertm on|off]" >&2
+    exit 2
+}
+
+operations=()
+
+while [ $# -gt 0 ]; do
+    [ $# -ge 2 ] || usage
+    key="$1"
+    value="$2"
+    shift 2
+    case "$key:$value" in
+        --mitigations:on)  operations+=("--delete-if-present=mitigations=off") ;;
+        --mitigations:off) operations+=("--append-if-missing=mitigations=off") ;;
+        --cpuid:on)        operations+=("--append-if-missing=clearcpuid=514") ;;
+        --cpuid:off)       operations+=("--delete-if-present=clearcpuid=514") ;;
+        --ertm:on)         operations+=("--delete-if-present=bluetooth.disable_ertm=1") ;;
+        --ertm:off)        operations+=("--append-if-missing=bluetooth.disable_ertm=1") ;;
+        *) usage ;;
+    esac
+done
+
+[ ${#operations[@]} -gt 0 ] || usage
+
+exec /usr/bin/rpm-ostree kargs "${operations[@]}"

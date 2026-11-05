@@ -1,0 +1,64 @@
+#!/usr/bin/bash
+
+# gablue-cpuid-emu — active ou désactive l'émulation CPUID fault (AMD)
+#
+# Reprise propre de `ujust cpuid-emu-on/off`, appelée via sudo -n (règle
+# NOPASSWD) : aucune commande arbitraire, seulement « on » ou « off ».
+#
+# Le module cpuid_fault_emulation exige SVM (AMD-V) libre : il ne cohabite pas
+# avec kvm_amd, d'où le blacklist posé en même temps que le chargement.
+#
+# Usage : gablue-cpuid-emu on|off
+
+set -eu
+
+MODULE="cpuid_fault_emulation"
+LOAD_CONF="/etc/modules-load.d/gablue-cpuid-emu.conf"
+BLACKLIST_CONF="/etc/modprobe.d/gablue-cpuid-emu.conf"
+
+case "${1:-}" in
+    on)
+        if ! grep -qw svm /proc/cpuinfo; then
+            echo "CPU sans SVM (AMD-V) : l'émulation CPUID fault ne sert à rien ici." >&2
+            exit 1
+        fi
+        if lsmod | grep -q '^kvm_amd'; then
+            echo "KVM est chargé : déchargement de kvm_amd et kvm…"
+            modprobe -r kvm_amd kvm || true
+        fi
+        # Test de chargement AVANT d'écrire la persistance : un BIOS qui masque
+        # SVM ne doit pas laisser le poste tenter le module à chaque démarrage.
+        if ! modprobe "$MODULE"; then
+            echo "Échec du chargement de $MODULE (SVM occupé ou absent du BIOS ?), rien de persisté." >&2
+            exit 1
+        fi
+        mkdir -p /etc/modprobe.d /etc/modules-load.d
+        printf 'blacklist kvm_amd\n' > "$BLACKLIST_CONF"
+        printf '%s\n' "$MODULE" > "$LOAD_CONF"
+        echo "Module $MODULE chargé ; KVM indisponible tant que l'émulation est active."
+        echo "Persistant après redémarrage."
+        ;;
+    off)
+        rm -f "$LOAD_CONF" "$BLACKLIST_CONF"
+        if lsmod | grep -q "^${MODULE}"; then
+            modprobe -r "$MODULE" || true
+        fi
+        modprobe kvm_amd 2>/dev/null || true
+        echo "Émulation CPUID fault désactivée et KVM restauré."
+        echo "Définitif après redémarrage."
+        ;;
+    status)
+        # Sonde sans effet, autorisée en NOPASSWD : `sudo -n gablue-cpuid-emu
+        # status` répond 0 quand la règle existe, 1 quand sudo réclame le mot
+        # de passe — c'est le seul moyen fiable de savoir avant d'agir.
+        if [ -f "$LOAD_CONF" ]; then
+            echo "on"
+        else
+            echo "off"
+        fi
+        ;;
+    *)
+        echo "Usage : gablue-cpuid-emu on|off|status" >&2
+        exit 2
+        ;;
+esac
