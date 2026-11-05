@@ -3056,7 +3056,7 @@ GWINE_DISPLAYS = (
 GWINE_RECOMMENDED = {
     "dxvk_async": ("DXVK standard, sans async", False),
     "wayland": ("X11 (XWayland)", False),
-    "xbox": ("désactivé, à activer au cas par cas", False),
+    "xbox": ("désactivé", False),
 }
 
 
@@ -3172,9 +3172,10 @@ class GwineOptionsDialog(QDialog):
         self._add_card(
             self.xbox_check,
             "ds2xbox présente toutes les manettes Sony (DualShock 4 comme "
-            "DualSense) comme des manettes Xbox 360 : les jeux Windows qui "
-            "n'acceptent que ce type fonctionnent sans configuration, les "
-            "autres y voient une manette Xbox.",
+            "DualSense) comme des manettes Xbox 360. À activer si vous ne "
+            "voulez pas vous prendre la tête avec la compatibilité des "
+            "manettes sous Windows : les jeux qui n'acceptent que l'XInput "
+            "fonctionnent alors sans configuration.",
             key="xbox",
         )
 
