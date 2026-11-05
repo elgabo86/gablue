@@ -12,7 +12,6 @@
 
 - ujust hide-grub                 # Permet de cacher le menu de boot au démarrage de la machine
 - ujust fix-grub-double-entry     # Retire les lignes à double du menu de boot au démarrage de la machine
-- ujust distrobox-archgab         # Permet d'installer un système archlinux
 - ujust windows-install           # Installe ou réinstalle une bouteille windows où les .exe s'executent par défaut
 - ujust tailscale-up              # Permet de configuer et faire une demande d'ajout sur le réseau tailscale de Sucina
 - ujust ssh-on                    # Activer la connection à distance SSH de la machine

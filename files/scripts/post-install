@@ -54,7 +54,6 @@ chmod +x /usr/libexec/gablue-service
 chmod +x /usr/libexec/gablue-low-latency
 chmod +x /usr/libexec/gablue-broadcom-wl
 chmod +x /usr/libexec/gablue-rebase
-chmod +x /usr/libexec/archgab-update
 chmod +x /usr/libexec/gablue-bigscreen-session-init
 chmod +x /usr/libexec/gablue-dx-groups
 

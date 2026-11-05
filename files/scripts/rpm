@@ -290,7 +290,6 @@ dnf5 -y install \
 dnf5 -y install \
     gnome-disk-utility \
     skanpage \
-    x2goclient \
     snapper \
     btrfs-assistant
 

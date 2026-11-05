@@ -567,11 +567,6 @@ brew-reset:
     echo "ALL DONE!!!"
     echo "Restart computer to reuse brew"
 
-# Install/Reinstall custom Archlinux
-distrobox-archgab:
-    #!/usr/bin/bash
-    /usr/libexec/archgab-update
-
 # Remove default bottle but keep user data
 windows-remove:
     #!/usr/bin/bash
