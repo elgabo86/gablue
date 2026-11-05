@@ -80,12 +80,16 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── AGENTS.md                       # Paquet, dialogues, privilèges
 │   │   ├── gablue-manager                  # Lanceur /usr/bin (sys.path + main)
 │   │   └── gablue_manager/                 # Paquet : app, window, dialogs/, local, ssh…
-│   └── gwine-launcher/                     # Sources du lanceur gwine (Bash modulaire)
-│       ├── AGENTS.md                        # Architecture interne du lanceur
-│       ├── gwine                           # Script point d'entrée
-│       ├── build.sh                        # Assemblage du fichier standalone
-│       ├── completions/                    # Completions bash et zsh
-│       └── lib/                            # Bibliothèques modulaires (~60 fichiers)
+│   ├── gwine-launcher/                     # Sources du lanceur gwine (Bash modulaire)
+│   │   ├── AGENTS.md                        # Architecture interne du lanceur
+│   │   ├── gwine                           # Script point d'entrée
+│   │   ├── build.sh                        # Assemblage du fichier standalone
+│   │   ├── completions/                    # Completions bash et zsh
+│   │   └── lib/                            # Bibliothèques modulaires (~60 fichiers)
+│   └── tvqt/                               # Sources de Gablue TV (Python modulaire)
+│       ├── AGENTS.md                        # Paquet, vues, manettes, EPG
+│       ├── tvqt                            # Lanceur /usr/bin (sys.path + main)
+│       └── gablue_tv/                      # Paquet : app, window, grid, guide…
 ├── files/
 │   ├── scripts/                           # Scripts d'installation bash
 │   │   ├── AGENTS.md                      # Détail des scripts de build (copr → cpuid-fault)
@@ -525,6 +529,7 @@ son propre AGENTS.md de sous-dossier + pointeur dans l'index ci-dessous.
 | ISO live / installateur | `installer/AGENTS.md` | modifier `installer/` ou `local-build/` |
 | Lanceur gwine | `src/gwine-launcher/AGENTS.md` | modifier `src/gwine-launcher/` |
 | Gablue Manager (GUI, paquet `gablue_manager`) | `src/gablue-manager/AGENTS.md` | modifier `src/gablue-manager/` ou un dialogue |
+| TV Gablue (tvqt, paquet `gablue_tv`) | `src/tvqt/AGENTS.md` | modifier `src/tvqt/` ou une vue |
 | Manette (gamepadshortcuts, mouse, kbdnav) | `src/gamepadshortcuts/AGENTS.md` | modifier `src/gamepadshortcuts/` |
 
 Changements suivant la racine :

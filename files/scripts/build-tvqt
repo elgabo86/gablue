@@ -1,0 +1,33 @@
+#!/usr/bin/bash
+
+# Installation de Gablue TV (tvqt) depuis ses sources modulaires
+# Le paquet Python va dans /usr/lib/tvqt, le lanceur dans /usr/bin/tvqt :
+# le nom du binaire ne change pas (menu, gablue-tv.desktop, ES-DE, killthemall).
+
+set -eoux pipefail
+
+SRC_DIR="/src/tvqt"
+
+if [ ! -d "$SRC_DIR/gablue_tv" ]; then
+    echo "ATTENTION: sources tvqt introuvables dans $SRC_DIR"
+    exit 1
+fi
+
+# =============================================================================
+# INSTALLATION
+# =============================================================================
+
+install -d /usr/lib/tvqt
+cp -a "$SRC_DIR/gablue_tv" /usr/lib/tvqt/
+install -Dm755 "$SRC_DIR/tvqt" /usr/bin/tvqt
+
+# =============================================================================
+# NETTOYAGE
+# =============================================================================
+
+# Aucun .pyc dans l'image : ils seraient liés au Python du build, pas à celui
+# du poste (et /usr est en lecture seule sur composefs).
+find /usr/lib/tvqt -name '__pycache__' -type d -prune -exec rm -rf {} +
+
+rm -rf "$SRC_DIR"
+rmdir /src 2>/dev/null || true

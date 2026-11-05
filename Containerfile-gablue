@@ -49,6 +49,7 @@ COPY src/ds2xbox /src/ds2xbox
 COPY src/gablue-isomount /src/gablue-isomount
 COPY src/gwine-launcher /src/gwine-launcher
 COPY src/gablue-manager /src/gablue-manager
+COPY src/tvqt /src/tvqt
 COPY src/composefs-fix /src/composefs-fix
 COPY src/cpuid-fault /src/cpuid-fault
 
@@ -163,6 +164,14 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=tmpfs,dst=/tmp \
     /ctx/build-manager && \
+    /ctx/cleanup
+
+# Gablue TV : paquet Python dans /usr/lib/tvqt + lanceur /usr/bin/tvqt
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/build-tvqt && \
     /ctx/cleanup
 
 # Règle polkit des bureaux distants gremote (sessions SANS siège) : la liste des

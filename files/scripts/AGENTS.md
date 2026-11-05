@@ -92,7 +92,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - `terminaltexteffects` via `uv` (appelé après rpm)
 - **Conflit site-packages** : un RPM peut poser un fichier/symlink à n'importe quel niveau de `/usr/local/lib/python3.14/site-packages/` (transition majeure Python) → `uv pip install` échoue (`File exists, os error 17`) ; le script remonte la hiérarchie, supprime ce qui n'est pas un répertoire, `mkdir -p` avant install
 
-### build-c / build-gwine / build-manager — Compilation des sources
+### build-c / build-gwine / build-manager / build-tvqt — Compilation des sources
 
 **build-c** (après pypi) :
 - Compile `/src/gamepadshortcuts` (gamepadshortcuts + gamepadshortcuts-mouse + kbdnav, même Makefile), `/src/ds2xbox`, `/src/gablue-isomount`
@@ -108,6 +108,11 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - **Pas de `.pyc` dans l'image** (`__pycache__` supprimé) : ils seraient liés au Python du build, pas à celui du poste, et `/usr` est en lecture seule sur composefs
 - Toute modif du paquet nécessite un rebuild d'image pour être effective — le lanceur ne lit que `/usr/lib/gablue-manager`
 - Architecture interne → `src/gablue-manager/AGENTS.md`
+
+**build-tvqt** (après build-manager) :
+- Installe le paquet Python `/src/tvqt/gablue_tv/` dans `/usr/lib/tvqt/` et le lanceur `src/tvqt/tvqt` en `/usr/bin/tvqt` (755) ; sources nettoyées
+- Mêmes règles que build-manager : pas de `.pyc` dans l'image, rebuild d'image obligatoire (le lanceur ne lit que `/usr/lib/tvqt`)
+- Architecture interne → `src/tvqt/AGENTS.md`
 
 ### post-install
 
