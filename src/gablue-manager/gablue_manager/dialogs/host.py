@@ -7,22 +7,22 @@ import uuid
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton,
-    QSpinBox, QVBoxLayout,
+    QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit,
+    QListWidget, QListWidgetItem, QPushButton, QSpinBox, QVBoxLayout,
+    QWidget,
 )
 
 from ..hosts import detect_mac
 from ..util import display_name, normalize_mac
 
 class HostDialog(QDialog):
-    """Saisie d'un poste ; en ajout, propose la copie de la clé."""
+    """Saisie d'un poste ; en ajout, la clé SSH est copiée automatiquement."""
 
     def __init__(self, parent=None, host: dict | None = None,
                  existing: list[dict] | None = None):
         super().__init__(parent)
         self._host = host
         self._existing = existing or []
-        self._install = False
         self._password = ""
 
         self.setWindowTitle(
@@ -42,9 +42,9 @@ class HostDialog(QDialog):
         root.addWidget(title)
 
         subtitle = QLabel(
-            "La clé publique sera copiée sur la machine pour éviter le mot de "
-            "passe à chaque connexion. Si elle est déjà en place, aucun mot de "
-            "passe n'est demandé."
+            "La clé publique est copiée sur la machine dès l'ajout, pour "
+            "éviter le mot de passe à chaque connexion. Si elle est déjà en "
+            "place, aucun mot de passe n'est demandé : laissez le champ vide."
             if not host else
             "Le mot de passe et la clé ne sont pas modifiés ici."
         )
@@ -102,7 +102,7 @@ class HostDialog(QDialog):
 
         if not host:
             self.password_label = self._field_label(
-                "Mot de passe SSH (une seule fois)"
+                "Mot de passe SSH (si nécessaire)"
             )
             self.password_edit = QLineEdit(self)
             self.password_edit.setEchoMode(QLineEdit.Password)
@@ -149,14 +149,13 @@ class HostDialog(QDialog):
             save.clicked.connect(lambda: self._submit(False))
             buttons.addWidget(save)
         else:
-            plain = QPushButton("Ajouter", self)
-            plain.clicked.connect(lambda: self._submit(False))
-            buttons.addWidget(plain)
-
-            self.key_button = QPushButton("Ajouter et copier la clé", self)
+            # Un seul bouton : la copie de la clé fait partie de l'ajout. Le
+            # dialogue de clé vérifie d'abord si elle est déjà acceptée, et ne
+            # demande un mot de passe que dans le cas contraire.
+            self.key_button = QPushButton("Ajouter", self)
             self.key_button.setObjectName("accent")
             self.key_button.setDefault(True)
-            self.key_button.clicked.connect(lambda: self._submit(True))
+            self.key_button.clicked.connect(self._submit)
             buttons.addWidget(self.key_button)
         root.addLayout(buttons)
 
@@ -201,7 +200,7 @@ class HostDialog(QDialog):
         self.error_label.setText(message)
         self.error_label.setVisible(True)
 
-    def _submit(self, install: bool) -> None:
+    def _submit(self) -> None:
         self.error_label.setVisible(False)
         host = self.host_edit.text().strip()
         user = self.user_edit.text().strip()
@@ -235,10 +234,8 @@ class HostDialog(QDialog):
                     f'{display_name(other)} utilise déjà {user}@{host}:{port}.'
                 )
 
-        self._install = install
         self._password = (
-            self.password_edit.text()
-            if install and self.password_edit is not None else ""
+            self.password_edit.text() if self.password_edit is not None else ""
         )
         self.result_record = {
             "id": (self._host or {}).get("id") or uuid.uuid4().hex,
@@ -252,14 +249,19 @@ class HostDialog(QDialog):
         }
         self.accept()
 
-    def install_requested(self) -> bool:
-        return self._install
-
     def password(self) -> str:
         return self._password
 
 class CandidateDialog(QDialog):
-    """Liste à cocher de postes à ajouter (découverte mDNS ou ssh_config)."""
+    """Liste à cocher de postes à ajouter (découverte mDNS ou ssh_config).
+
+    Une ligne par **machine** : Avahi annonce une adresse par interface (LAN,
+    Tailscale, pont docker…), le filtrage et le regroupement sont faits en
+    amont (`hosts.group_candidates`) ; quand plusieurs adresses joignables
+    restent, une liste déroulante choisit celle qu'on enregistre.
+    """
+
+    KIND_LABELS = {"lan": "LAN", "tailscale": "Tailscale"}
 
     def __init__(self, parent=None, title: str = "", subtitle: str = "",
                  candidates: list[dict] | None = None,
@@ -268,15 +270,24 @@ class CandidateDialog(QDialog):
         known = {
             (host["user"], host["host"], host["port"]) for host in (existing or [])
         }
+
+        def already_known(item: dict) -> bool:
+            addresses = [address for address, _kind in item.get("hosts", [])] or [
+                item["host"]
+            ]
+            return any(
+                (item["user"], address, item["port"]) in known
+                for address in addresses
+            )
+
         self._candidates = [
-            item for item in (candidates or [])
-            if (item["user"], item["host"], item["port"]) not in known
+            item for item in (candidates or []) if not already_known(item)
         ]
         self.selected: list[dict] = []
 
         self.setWindowTitle(title or "Postes à ajouter")
         self.setModal(True)
-        self.setMinimumWidth(540)
+        self.setMinimumWidth(580)
         self.setMinimumHeight(420)
 
         root = QVBoxLayout(self)
@@ -293,18 +304,9 @@ class CandidateDialog(QDialog):
         root.addWidget(detail)
 
         self.list_widget = QListWidget(self)
+        self.list_widget.setSpacing(2)
         for candidate in self._candidates:
-            text = (
-                f'{candidate.get("label") or candidate["host"]} — '
-                f'{candidate["user"]}@{candidate["host"]}:{candidate["port"]}'
-            )
-            item = QListWidgetItem(text, self.list_widget)
-            item.setData(Qt.UserRole, candidate)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            # Rien n'est coché d'avance : la découverte propose, elle n'ajoute
-            # pas. Sinon la touche Entrée (bouton par défaut) suffirait à
-            # inscrire tous les postes trouvés sans regarder la liste.
-            item.setCheckState(Qt.Unchecked)
+            self._add_row(candidate)
         root.addWidget(self.list_widget, 1)
 
         tools = QHBoxLayout()
@@ -322,10 +324,12 @@ class CandidateDialog(QDialog):
         root.addLayout(tools)
 
         self.note = QLabel(
-            "La clé SSH n'est pas encore installée : utilisez « Installer la "
-            "clé » sur la carte une fois le poste ajouté."
+            "La clé SSH est copiée sur chaque poste ajouté ; le mot de passe "
+            "n'est demandé que s'il la refuse encore. Une adresse LAN est "
+            "préférée à une adresse Tailscale quand les deux existent."
             if self._candidates else
-            "Aucun nouveau poste à ajouter.",
+            "Aucun nouveau poste à ajouter : les adresses de cette machine "
+            "sont écartées, et un poste déjà enregistré ne s'affiche pas.",
             self,
         )
         self.note.setObjectName("hint")
@@ -346,23 +350,74 @@ class CandidateDialog(QDialog):
         buttons.addWidget(self.add_button)
         root.addLayout(buttons)
 
-        self.list_widget.itemChanged.connect(self._sync_selection)
         self._sync_selection()
 
+    # -- lignes -------------------------------------------------------------
+    def _add_row(self, candidate: dict) -> None:
+        addresses = list(candidate.get("hosts") or [(candidate["host"], "")])
+        port = int(candidate.get("port", 22))
+        text = f'{candidate.get("label") or candidate["host"]} — ' \
+               f'{candidate["user"]}'
+        if port != 22:
+            text += f" (port {port})"
+
+        widget = QWidget(self.list_widget)
+        row = QHBoxLayout(widget)
+        row.setContentsMargins(8, 4, 8, 4)
+        row.setSpacing(12)
+
+        check = QCheckBox(text, widget)
+        # Rien n'est coché d'avance : la découverte propose, elle n'ajoute pas.
+        check.setCheckState(Qt.Unchecked)
+        check.stateChanged.connect(self._sync_selection)
+        row.addWidget(check, 1)
+
+        combo = None
+        if len(addresses) > 1:
+            combo = QComboBox(widget)
+            for address, kind in addresses:
+                label = self.KIND_LABELS.get(kind, kind)
+                combo.addItem(f"{address} ({label})" if label else address,
+                              address)
+            combo.setToolTip(
+                "Adresse enregistrée pour ce poste (la première est choisie "
+                "automatiquement)."
+            )
+            row.addWidget(combo)
+        else:
+            address, kind = addresses[0]
+            label = self.KIND_LABELS.get(kind, kind)
+            detail = QLabel(f"{address} ({label})" if label else address, widget)
+            detail.setObjectName("hint")
+            row.addWidget(detail)
+
+        item = QListWidgetItem(self.list_widget)
+        item.setData(Qt.UserRole, {
+            "candidate": candidate, "check": check, "combo": combo,
+        })
+        item.setSizeHint(widget.sizeHint())
+        self.list_widget.setItemWidget(item, widget)
+
+    # -- sélection ----------------------------------------------------------
     def _checked(self) -> list[dict]:
         chosen = []
         for index in range(self.list_widget.count()):
-            item = self.list_widget.item(index)
-            if item.checkState() == Qt.Checked:
-                chosen.append(item.data(Qt.UserRole))
+            payload = self.list_widget.item(index).data(Qt.UserRole)
+            if not payload["check"].isChecked():
+                continue
+            record = dict(payload["candidate"])
+            if payload["combo"] is not None:
+                record["host"] = payload["combo"].currentData()
+            chosen.append(record)
         return chosen
 
     def _toggle_all(self) -> None:
         target = Qt.Unchecked if self._checked() else Qt.Checked
         for index in range(self.list_widget.count()):
-            self.list_widget.item(index).setCheckState(target)
+            payload = self.list_widget.item(index).data(Qt.UserRole)
+            payload["check"].setCheckState(target)
 
-    def _sync_selection(self) -> None:
+    def _sync_selection(self, *_args) -> None:
         count = len(self._checked())
         total = self.list_widget.count()
         self.all_button.setText("Tout décocher" if count == total and total

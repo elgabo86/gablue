@@ -22,6 +22,10 @@ class KeyInstallDialog(QDialog):
                  password: str = ""):
         super().__init__(parent)
         self._host = dict(host or {})
+        # Mot de passe éventuellement saisi dans le dialogue d'ajout : il sert
+        # à lancer la copie sans redemander quoi que ce soit.
+        self._initial_password = password
+        self._auto_started = False
         self._worker: KeyInstallWorker | None = None
         self._probe_worker: KeyProbeWorker | None = None
         self._success = False
@@ -153,6 +157,12 @@ class KeyInstallDialog(QDialog):
         self.form_box.setVisible(True)
         self.install_button.setVisible(True)
         self.password_edit.setFocus()
+        # Le mot de passe vient du dialogue d'ajout : l'utilisateur a déjà
+        # demandé la copie en ajoutant le poste, on ne lui fait pas cliquer une
+        # deuxième fois.
+        if self._initial_password and not self._auto_started:
+            self._auto_started = True
+            QTimer.singleShot(0, self._start)
 
     def _start(self) -> None:
         if self._worker is not None and self._worker.isRunning():

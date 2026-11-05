@@ -21,6 +21,7 @@ from .constants import (
     AVAHI_BROWSE, COLOR_AUTH, COLOR_OFFLINE, COLOR_ONLINE, HOSTS_FILE, PULSE_MS,
     REFRESH_MS, _which,
 )
+from .dialogs.apps import AppsDialog
 from .dialogs.booster import ForegroundBoosterDialog
 from .dialogs.gwine import GwineOptionsDialog
 from .dialogs.host import CandidateDialog, HostDialog
@@ -37,7 +38,7 @@ from .style import make_qss
 from .tasks import LocalTaskDialog, RemoteTaskDialog, start_task
 from .util import address_text, display_name, dolphin_url, normalize_mac, ssh_target
 from .widgets import HostCard, LocalCard, StatusDot, _make_tool_button
-from .workers import AvahiWorker, CheckWorker
+from .workers import AvahiWorker, CheckWorker, KeyProbeWorker
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -55,6 +56,8 @@ class MainWindow(QMainWindow):
         self._checker: CheckWorker | None = None
         self._jobs: list[dict] = []
         self._tasks: list[QDialog] = []      # fenêtres d'opération en cours
+        self._key_queue: list[dict] = []     # postes à équiper après un import
+        self._key_workers: set = set()       # sondes de clé en vol
         self._last_check: float | None = None
         self._display_order: list[str] = []
         self._discovering = False
@@ -147,6 +150,7 @@ class MainWindow(QMainWindow):
         # Carte « Ce poste » : toujours visible, indépendante de la liste.
         self.local_card = LocalCard(central)
         self.local_card.update_requested.connect(self.local_update)
+        self.local_card.apps_requested.connect(self.open_apps)
         self.local_card.config_requested.connect(self.open_settings)
         self.local_card.gwine_requested.connect(self.open_local_gwine_options)
         self.local_card.booster_requested.connect(
@@ -304,6 +308,7 @@ class MainWindow(QMainWindow):
             card.gwine_requested.connect(self.open_remote_gwine_options)
             card.booster_requested.connect(self.open_remote_foreground_booster)
             card.tailscale_requested.connect(self.open_remote_tailscale)
+            card.apps_requested.connect(self.open_host_apps)
             card.reboot_requested.connect(self.reboot_host)
             card.shutdown_requested.connect(self.shutdown_host)
             state, detail = self._states.get(host["id"], ("unknown", ""))
@@ -635,8 +640,9 @@ class MainWindow(QMainWindow):
         self._states[host["id"]] = ("unknown", "")
         self._rebuild_cards()
         self.refresh_all()
-        if dialog.install_requested():
-            self.install_key_dialog(host["id"], password=dialog.password())
+        # L'ajout inclut la copie de la clé : le dialogue de clé vérifie
+        # d'abord si elle est déjà acceptée (aucun mot de passe dans ce cas).
+        self.install_key_dialog(host["id"], password=dialog.password())
 
     def edit_host(self, host_id: str) -> None:
         host = self._host(host_id)
@@ -682,6 +688,41 @@ class MainWindow(QMainWindow):
             return
         dialog = KeyInstallDialog(self, host=host, password=password)
         dialog.installed.connect(lambda: self._key_installed(host_id))
+        start_task(self, dialog)
+
+    def _install_keys(self, hosts: list[dict]) -> None:
+        """Copie la clé sur des postes importés, sans fenêtre si elle est déjà là.
+
+        Une sonde muette par poste (thread, jamais le thread GUI) : la clé est
+        enregistrée comme installée quand elle passe, et le dialogue de copie ne
+        s'ouvre que pour les postes qui la refusent encore. Les dialogues sont
+        enchaînés (une fenêtre à la fois) pour ne pas empiler les mots de passe.
+        """
+        self._key_queue = list(hosts)
+        self._probe_next_key()
+
+    def _probe_next_key(self) -> None:
+        if not self._key_queue:
+            return
+        host = self._key_queue.pop(0)
+        worker = KeyProbeWorker(host, self)
+        self._key_workers.add(worker)
+        worker.finished.connect(lambda w=worker: self._key_workers.discard(w))
+        worker.done.connect(
+            lambda ok, _detail, h=dict(host): self._key_probed(h, ok)
+        )
+        worker.start()
+
+    def _key_probed(self, host: dict, ok: bool) -> None:
+        if ok:
+            self._key_installed(host["id"])
+            self._probe_next_key()
+            return
+        dialog = KeyInstallDialog(self, host=host)
+        dialog.installed.connect(lambda h=host["id"]: self._key_installed(h))
+        # La suite attend la fermeture de cette fenêtre : un mot de passe à la
+        # fois, et l'utilisateur peut renoncer sans bloquer les suivants.
+        dialog.finished.connect(lambda _code: self._probe_next_key())
         start_task(self, dialog)
 
     def _key_installed(self, host_id: str) -> None:
@@ -1031,6 +1072,17 @@ class MainWindow(QMainWindow):
             [gwine, "--init"],
         )
 
+    def open_apps(self) -> None:
+        # Non modal : les installations tournent dans leurs propres fenêtres et
+        # on peut en lancer plusieurs de suite, ou continuer ailleurs.
+        AppsDialog(self).show()
+
+    def open_host_apps(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        AppsDialog(self, host).show()
+
     def open_settings(self) -> None:
         LocalSettingsDialog(self).exec()
 
@@ -1134,16 +1186,19 @@ class MainWindow(QMainWindow):
         dialog = CandidateDialog(self, title, subtitle, candidates, self._hosts)
         if dialog.exec() != QDialog.Accepted:
             return
-        added = 0
+        added: list[dict] = []
         for candidate in dialog.selected:
-            if self._add_record(candidate):
-                added += 1
+            record = self._add_record(candidate)
+            if record is not None:
+                added.append(record)
         if added:
             self._save()
             self._rebuild_cards()
             self.refresh_all()
+            # La clé est copiée automatiquement sur les postes importés.
+            self._install_keys(added)
 
-    def _add_record(self, candidate: dict) -> bool:
+    def _add_record(self, candidate: dict) -> dict | None:
         host = {
             "id": uuid.uuid4().hex,
             "label": str(candidate.get("label") or "").strip(),
@@ -1155,15 +1210,15 @@ class MainWindow(QMainWindow):
             "added_at": int(time.time()),
         }
         if not host["user"] or not host["host"]:
-            return False
+            return None
         for other in self._hosts:
             if (other["user"], other["host"], other["port"]) == (
                 host["user"], host["host"], host["port"]
             ):
-                return False
+                return None
         self._hosts.append(host)
         self._states[host["id"]] = ("unknown", "")
-        return True
+        return host
 
     def _launch(self, command: list[str], label: str,
                 ignore_codes: set[int] | None = None,

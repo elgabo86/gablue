@@ -22,8 +22,11 @@ Cette machine : serveur SSH et annonce mDNS, mises à jour (image Gablue,
 Flatpaks, gwine), réglages du noyau (protections du processeur, correctif CPUID,
 mode ERTM, émulation CPUID fault), options de gwine (DXVK, affichage, manettes),
 priorité au premier plan et Tailscale (lien du serveur demandé) — les
-changements de chaque dialogue partent ensemble. Les opérations s'ouvrent dans
-leur propre fenêtre : plusieurs postes peuvent être traités en même temps.
+changements de chaque dialogue partent ensemble. Applications AppImage, sur ce
+poste comme à distance (menu ⋯ d'un poste) : installation, mise à jour et
+suppression d'ES-DE, Azahar, Eden, Xenia, ShadPS4 et OpenCode 2 (configuration,
+sauvegardes et sessions conservées). Les opérations s'ouvrent dans leur propre
+fenêtre : plusieurs postes peuvent être traités en même temps.
 
 Configuration : ~/.config/gablue/ssh-hosts.json (mode 0600)
 Clé locale    : ~/.ssh/id_ed25519 (créée au besoin, sans passphrase)

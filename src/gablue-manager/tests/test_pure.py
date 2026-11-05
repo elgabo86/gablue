@@ -7,6 +7,8 @@ jour, analyse des fichiers d'options, formats ssh). Lancer depuis la racine :
         -s src/gablue-manager/tests -v
 """
 
+import ipaddress
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -15,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from gablue_manager import local, util  # noqa: E402
+from gablue_manager import apps, hosts, local, util  # noqa: E402
 
 
 class KargsTest(unittest.TestCase):
@@ -100,6 +102,337 @@ class GwineTest(unittest.TestCase):
                 "[Foreground Booster]\nautostart=false\n"
             )
         )
+
+
+class AppsTest(unittest.TestCase):
+    by_key = {app.key: app for app in apps.APPS}
+
+    def test_find_appimage(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "eden.appimage").touch()
+            (directory / "esde.appimage_3.4.0.OLD").touch()
+            (directory / "xenia_edge.appimage").touch()
+            self.assertEqual(
+                apps.find_appimage(self.by_key["eden"], directory).name,
+                "eden.appimage",
+            )
+            self.assertIsNone(
+                apps.find_appimage(self.by_key["azahar"], directory)
+            )
+            self.assertTrue(
+                apps.state(
+                    self.by_key["xenia"], {str(directory / "xenia_edge.appimage"):
+                                            "1.2"}, directory,
+                )["installed"]
+            )
+
+    def test_install_argv(self):
+        self.assertEqual(
+            apps.install_argv(self.by_key["esde"])[-1], "--yes"
+        )
+        self.assertNotIn("--yes", apps.install_argv(self.by_key["eden"]))
+        self.assertTrue(
+            apps.install_argv(self.by_key["eden"])[0].endswith(
+                "eden-install"
+            )
+        )
+
+    def test_config_argv(self):
+        argv = apps.config_argv()
+        self.assertTrue(argv[0].endswith("esde-install"))
+        self.assertEqual(argv[1], "--config-only")
+
+    def test_remove_script_keeps_data(self):
+        script = apps.remove_script(self.by_key["eden"])
+        self.assertIn(
+            f'"$HOME/AppImages"/{self.by_key["eden"].pattern}', script
+        )
+        self.assertIn("gearlever --remove", script)
+        self.assertNotIn("$HOME/ES-DE", script)     # configuration conservée
+        self.assertNotIn("Roms", script)
+
+    def test_opencode_remove_uses_script(self):
+        argv = apps.remove_argv(self.by_key["opencode"])
+        self.assertTrue(argv[0].endswith("opencode2-remove"))
+        self.assertEqual(len(argv), 1)
+
+    def test_opencode_describe_partial(self):
+        app = self.by_key["opencode"]
+        self.assertEqual(
+            apps.describe(app, {"installed": False, "path": None,
+                                "version": "", "cli": "2.0.16"}),
+            "Installé — CLI 2.0.16",
+        )
+        image = Path("/home/gab/AppImages/opencode.appimage")
+        text = apps.describe(
+            app,
+            {"installed": True, "path": image, "version": "2.0.16",
+             "cli": "2.0.16"},
+        )
+        self.assertEqual(
+            text, "Installé — CLI 2.0.16 · opencode.appimage · version 2.0.16"
+        )
+        self.assertEqual(
+            apps.describe(app, {"installed": False, "path": None,
+                                "version": "", "cli": ""}),
+            "Non installé",
+        )
+        self.assertFalse(
+            apps.installed_any(app, {"installed": False, "path": None,
+                                     "version": "", "cli": ""})
+        )
+
+    def test_script_has_option(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "esde-install"
+            script.write_text("#!/bin/bash\n", encoding="utf-8")
+            self.assertFalse(
+                apps.script_has_option(str(script), "--config-only")
+            )
+            script.write_text(
+                "        --config-only) CONFIG_ONLY=1 ;;\n", encoding="utf-8"
+            )
+            self.assertTrue(
+                apps.script_has_option(str(script), "--config-only")
+            )
+            self.assertFalse(
+                apps.script_has_option("/absent/esde-install", "--config-only")
+            )
+
+    def test_esde_rom_path(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self.assertEqual(apps.esde_rom_path(home), home / "Roms")
+            settings = home / "ES-DE/settings"
+            settings.mkdir(parents=True)
+            (settings / "es_settings.xml").write_text(
+                '<string name="ROMDirectory" value="/mnt/roms" />\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(apps.esde_rom_path(home), Path("/mnt/roms"))
+
+    def test_copy_esde_config(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home, share = root / "home", root / "share"
+            (share / "custom_systems").mkdir(parents=True)
+            (share / "custom_systems" / "es_systems.xml").write_text(
+                "x", encoding="utf-8"
+            )
+            (share / "tools").mkdir()
+            (share / "tools" / "TV.sh").write_text("tv", encoding="utf-8")
+            (share / "tools" / "Jellyfin.sh").write_text("jf", encoding="utf-8")
+
+            copied = apps.copy_esde_config(home, share)
+            self.assertIn("custom_systems", copied)
+            self.assertTrue(
+                (home / "ES-DE/custom_systems/es_systems.xml").is_file()
+            )
+            launcher = home / "Roms/tools/TV.sh"
+            self.assertTrue(os.access(launcher, os.X_OK))
+
+            # Un lanceur personnalisé n'est jamais écrasé (ni recopié).
+            launcher.write_text("perso", encoding="utf-8")
+            (home / "Roms/tools/Jellyfin.sh").unlink()
+            copied = apps.copy_esde_config(home, share)
+            self.assertNotIn("TV.sh", copied)
+            self.assertIn("Jellyfin.sh", copied)
+            self.assertEqual(launcher.read_text(encoding="utf-8"), "perso")
+
+    def test_parse_version(self):
+        self.assertEqual(apps.parse_version("2.0.16"), "2.0.16")
+        self.assertEqual(apps.parse_version("opencode 2.1.0\n"), "2.1.0")
+        self.assertEqual(apps.parse_version("pas de version"), "")
+
+    def test_remote_state(self):
+        output = (
+            "##gearlever\n"
+            "yes\n"
+            "ES-DE      [3.4.0]    [UpdatesNotAvailable]        "
+            "/home/gab/AppImages/esde.appimage\n"
+            "Eden       [v0.2.1]   [StaticFileUpdater|embedded] "
+            "/home/gab/AppImages/eden.appimage\n"
+            "##images\n"
+            "esde.appimage\n"
+            "eden.appimage\n"
+            "xenia_edge.appimage\n"
+            "##cli\n"
+            "2.1.4\n"
+            "##scripts\n"
+            "esde-install\t/usr/bin/esde-install\t --yes --config-only\n"
+            "azahar-install\t-\t\n"
+            "eden-install\t/usr/bin/eden-install\t\n"
+            "opencode2-install\t/usr/bin/opencode2-install\t\n"
+            "opencode2-remove\t/usr/bin/opencode2-remove\t\n"
+        )
+        states, gearlever = apps.remote_states(output)
+        self.assertTrue(gearlever)
+        self.assertTrue(states["esde"]["installed"])
+        self.assertEqual(states["esde"]["name"], "esde.appimage")
+        self.assertEqual(states["esde"]["version"], "3.4.0")
+        self.assertEqual(
+            states["esde"]["options"], {"--yes", "--config-only"}
+        )
+        self.assertEqual(states["eden"]["version"], "v0.2.1")
+        self.assertEqual(states["xenia"]["cli"], "")
+        self.assertEqual(states["opencode"]["cli"], "2.1.4")
+        self.assertTrue(states["opencode"]["remover"].endswith(
+            "opencode2-remove"
+        ))
+        self.assertFalse(states["azahar"]["installed"])
+        self.assertFalse(states["azahar"]["script_ok"])
+
+    def test_remote_commands(self):
+        output = (
+            "##gearlever\nno\n##images\n"
+            "esde.appimage\neden.appimage\nopencode.appimage\n"
+            "##cli\n2.1.4\n##scripts\n"
+            "esde-install\t/usr/bin/esde-install\t --yes --config-only\n"
+            "eden-install\t/usr/bin/eden-install\t\n"
+            "opencode2-remove\t/usr/bin/opencode2-remove\t\n"
+        )
+        states, gearlever = apps.remote_states(output)
+        self.assertFalse(gearlever)
+        self.assertEqual(
+            apps.install_command(self.by_key["esde"], states["esde"]),
+            "/usr/bin/esde-install --yes",
+        )
+        self.assertEqual(
+            apps.install_command(self.by_key["eden"], states["eden"]),
+            "/usr/bin/eden-install",
+        )
+        self.assertEqual(
+            apps.config_command(states["esde"]),
+            "/usr/bin/esde-install --config-only",
+        )
+        self.assertEqual(apps.config_command(states["eden"]), "")
+        self.assertEqual(
+            apps.remove_command(self.by_key["opencode"], states["opencode"]),
+            "/usr/bin/opencode2-remove",
+        )
+        self.assertTrue(
+            apps.remove_command(
+                self.by_key["eden"], states["eden"]
+            ).startswith("bash -c ")
+        )
+
+    def test_remote_without_gearlever_or_scripts(self):
+        states, gearlever = apps.remote_states("##gearlever\nno\n")
+        self.assertFalse(gearlever)
+        self.assertFalse(apps.installed_any(
+            self.by_key["eden"], states["eden"]
+        ))
+        self.assertEqual(apps.config_command(states["esde"]), "")
+        self.assertEqual(
+            apps.remove_command(self.by_key["opencode"], states["opencode"]),
+            "",
+        )
+
+    def test_parse_gearlever_listing(self):
+        versions = apps.parse_gearlever_listing(
+            "Eden         [UNKNOWN]         [GithubUpdater|embedded]   "
+            "/home/gab/AppImages/eden.appimage\n"
+            "Xenia Edge   [Not specified]   [UpdatesNotAvailable]      "
+            "/home/gab/AppImages/xenia_edge.appimage\n"
+            "LM-Studio    [0.4.21+2]        [UpdatesNotAvailable]      "
+            "/home/gab/AppImages/lmstudio.appimage\n"
+        )
+        self.assertEqual(versions["/home/gab/AppImages/eden.appimage"], "")
+        self.assertEqual(
+            versions["/home/gab/AppImages/xenia_edge.appimage"], ""
+        )
+        self.assertEqual(
+            versions["/home/gab/AppImages/lmstudio.appimage"], "0.4.21+2"
+        )
+
+
+class DiscoveryTest(unittest.TestCase):
+    own = {"127.0.0.1", "172.17.0.1", "192.168.1.50", "100.64.0.10"}
+    networks = [
+        ipaddress.ip_network("127.0.0.0/8"),
+        ipaddress.ip_network("172.17.0.0/16"),
+        ipaddress.ip_network("192.168.1.0/24"),
+        ipaddress.ip_network("100.64.0.10/32"),
+    ]
+
+    def entry(self, address, hostname="gigafed.local", port=22):
+        return {"label": hostname.split(".")[0], "hostname": hostname,
+                "user": "gab", "host": address, "port": port}
+
+    def test_parse_local_ipv4(self):
+        own, networks = hosts.parse_local_ipv4(
+            "2: enp5s0    inet 192.168.1.50/24 brd 192.168.1.255 scope global\n"
+            "3: docker0    inet 172.17.0.1/16 brd 172.17.255.255 scope global\n"
+            "4: lo         inet 127.0.0.1/8 scope host lo\n"
+        )
+        self.assertEqual(own, {"192.168.1.50", "172.17.0.1", "127.0.0.1"})
+        self.assertEqual(
+            [str(network) for network in networks],
+            ["192.168.1.0/24", "172.17.0.0/16", "127.0.0.0/8"],
+        )
+
+    def test_address_kind(self):
+        kind = lambda address: hosts.address_kind(
+            address, self.own, self.networks
+        )
+        self.assertEqual(kind("192.168.1.109"), "lan")
+        self.assertEqual(kind("100.64.0.45"), "tailscale")
+        self.assertEqual(kind("127.0.0.1"), "")        # boucle locale
+        self.assertEqual(kind("172.17.0.1"), "")       # notre docker0
+        self.assertEqual(kind("172.18.0.1"), "")       # pont d'une autre machine
+        self.assertEqual(kind("169.254.3.4"), "")      # lien local
+        self.assertEqual(kind("8.8.8.8"), "")          # hors de notre lien
+
+    def test_group_one_machine(self):
+        groups = hosts.group_candidates(
+            [
+                self.entry("127.0.0.1"),
+                self.entry("172.17.0.1"),
+                self.entry("100.64.0.45"),
+                self.entry("192.168.1.109"),
+            ],
+            self.own, self.networks,
+        )
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["host"], "192.168.1.109")
+        self.assertEqual(
+            groups[0]["hosts"],
+            [("192.168.1.109", "lan"), ("100.64.0.45", "tailscale")],
+        )
+
+    def test_group_tailscale_only(self):
+        groups = hosts.group_candidates(
+            [self.entry("127.0.0.1"), self.entry("100.64.0.45")],
+            self.own, self.networks,
+        )
+        self.assertEqual([item["host"] for item in groups], ["100.64.0.45"])
+
+    def test_group_separates_machines_and_ports(self):
+        groups = hosts.group_candidates(
+            [
+                self.entry("192.168.1.109"),
+                self.entry("192.168.1.20", hostname="sureau.local"),
+                self.entry("192.168.1.109", port=2222),
+            ],
+            self.own, self.networks,
+        )
+        self.assertEqual(len(groups), 3)
+        self.assertEqual(
+            sorted(item["label"] for item in groups),
+            ["gigafed", "gigafed", "sureau"],
+        )
+
+    def test_group_without_networks_is_permissive(self):
+        groups = hosts.group_candidates(
+            [self.entry("172.18.0.1"), self.entry("127.0.0.1")],
+            self.own, [],
+        )
+        self.assertEqual([item["host"] for item in groups], ["172.18.0.1"])
 
 
 class UtilTest(unittest.TestCase):

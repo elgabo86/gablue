@@ -1,28 +1,69 @@
 #!/bin/bash
 
-# Vérifier si kdialog est installé
-if ! command -v kdialog &> /dev/null; then
-    echo "Erreur : kdialog n'est pas installé." >&2
-    exit 1
-fi
+# Installation / mise à jour d'ES-DE (AppImage GitLab + GearLever), avec copie
+# des fichiers Gablue (custom_systems + lanceurs Tools).
+#
+# Usage :
+#   esde-install                 installation ou mise à jour interactive (kdialog)
+#   esde-install --yes           sans aucune boîte de dialogue (appelé par
+#                                gablue-manager : le journal fait office de retour)
+#   esde-install --config-only   recopie seulement custom_systems et les lanceurs
+#                                Tools dans ~/ES-DE et <ROMPath>/tools
+#   esde-install --help
 
-# Vérifier si update-desktop-database est installé
-if ! command -v update-desktop-database &> /dev/null; then
-    echo "Erreur : update-desktop-database n'est pas installé." >&2
-    exit 1
-fi
 
-# Vérifier si jq est installé (nécessaire pour parser l'API GitLab)
-if ! command -v jq &> /dev/null; then
-    echo "Erreur : jq n'est pas installé." >&2
-    exit 1
-fi
+CONFIG_ONLY=0
+AUTO=0
 
-# Vérifier si flatpak et Gearlever sont installés
-if ! flatpak list | grep -q "it.mijorus.gearlever"; then
-    kdialog --title "Installation ES-DE" --error "Erreur : Gearlever n'est pas installé via flatpak."
+usage() {
+    cat <<'EOF'
+Usage : esde-install [--yes] [--config-only]
+
+  --yes          ne rien demander (aucune boîte de dialogue kdialog)
+  --config-only  mettre à jour uniquement la configuration Gablue d'ES-DE
+                 (custom_systems + lanceurs Tools), sans toucher à l'AppImage
+  -h, --help     afficher cette aide
+EOF
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        --config-only) CONFIG_ONLY=1 ;;
+        --yes|-y)      AUTO=1 ;;
+        -h|--help)     usage; exit 0 ;;
+        *)
+            echo "Option inconnue : $arg" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+# Retours vers l'utilisateur : boîtes kdialog en interactif, journal sinon.
+fail() {
+    if [ "$AUTO" = 1 ]; then
+        echo "ERREUR : $1" >&2
+    else
+        kdialog --title "Installation ES-DE" --error "$1"
+    fi
     exit 1
-fi
+}
+
+warn() {
+    if [ "$AUTO" = 1 ]; then
+        echo "ATTENTION : $1" >&2
+    else
+        kdialog --title "Installation ES-DE" --warningcontinuecancel "$1"
+    fi
+}
+
+note() {
+    if [ "$AUTO" = 1 ]; then
+        echo "$1"
+    else
+        kdialog --title "Installation ES-DE" --msgbox "$1"
+    fi
+}
 
 # Copier les fichiers Gablue (custom_systems + lanceurs Tools)
 # Appelée que ES-DE soit réinstallé ou déjà présent (réinstallation refusée)
@@ -36,11 +77,11 @@ copy_gablue_files() {
             echo "Dossier custom_systems copié avec succès !"
         else
             echo "Erreur lors de la copie du dossier custom_systems."
-            kdialog --title "Installation ES-DE" --error "Erreur lors de la copie du dossier custom_systems."
+            warn "Erreur lors de la copie du dossier custom_systems."
         fi
     else
         echo "Le dossier /usr/share/ublue-os/gablue/esde/custom_systems n'existe pas."
-        kdialog --title "Installation ES-DE" --warningcontinuecancel "Le dossier custom_systems n'a pas été trouvé à l'emplacement attendu."
+        warn "Le dossier custom_systems n'a pas été trouvé à l'emplacement attendu."
     fi
     # Copier les lanceurs Tools (Gablue TV, Jellyfin, YouTube) dans le dossier ROMs
     TOOLS_SRC="/usr/share/ublue-os/gablue/esde/tools"
@@ -72,11 +113,40 @@ copy_gablue_files() {
     fi
 }
 
+# --config-only : uniquement les fichiers Gablue, aucun outil requis en plus.
+if [ "$CONFIG_ONLY" = 1 ]; then
+    copy_gablue_files
+    echo "Configuration Gablue d'ES-DE mise à jour (custom_systems et lanceurs Tools)."
+    exit 0
+fi
+
+# Vérifier si kdialog est installé
+if [ "$AUTO" = 0 ] && ! command -v kdialog &> /dev/null; then
+    echo "Erreur : kdialog n'est pas installé." >&2
+    exit 1
+fi
+
+# Vérifier si update-desktop-database est installé
+if ! command -v update-desktop-database &> /dev/null; then
+    echo "Erreur : update-desktop-database n'est pas installé." >&2
+    exit 1
+fi
+
+# Vérifier si jq est installé (nécessaire pour parser l'API GitLab)
+if ! command -v jq &> /dev/null; then
+    echo "Erreur : jq n'est pas installé." >&2
+    exit 1
+fi
+
+# Vérifier si flatpak et Gearlever sont installés
+if ! flatpak list | grep -q "it.mijorus.gearlever"; then
+    fail "Gearlever n'est pas installé via flatpak."
+fi
+
 # Déterminer le dossier de téléchargement
 DOWNLOAD_DIR=$(xdg-user-dir DOWNLOAD)
 if [ -z "$DOWNLOAD_DIR" ] || [ ! -d "$DOWNLOAD_DIR" ]; then
-    kdialog --title "Installation ES-DE" --error "Erreur : impossible de déterminer ou d'accéder au dossier de téléchargement."
-    exit 1
+    fail "Impossible de déterminer ou d'accéder au dossier de téléchargement."
 fi
 
 # Définir le dossier où Gearlever stocke les AppImages
@@ -85,24 +155,29 @@ APPIMAGE_FILE="$APPIMAGES_DIR/esde.appimage"
 
 # Vérifier si ES-DE est déjà installé via Gearlever dans ~/AppImages
 if [ -f "$APPIMAGE_FILE" ] && flatpak run it.mijorus.gearlever --list-installed | grep -q "ES-DE"; then
-    kdialog --title "Installation ES-DE" --yesno "ES-DE semble déjà installé via Gearlever !\n\nFichier trouvé :\n- $APPIMAGE_FILE\n\nVoulez-vous réinstaller ES-DE ?"
-    if [ $? -eq 0 ]; then
-        # Réinstallation demandée : l'ancienne installation ne sera supprimée
-        # qu'après le téléchargement et la vérification de la nouvelle (par sécurité)
+    if [ "$AUTO" = 1 ]; then
+        # Appel non interactif : on met à jour directement.
         WAS_INSTALLED=1
-        echo "Réinstallation demandée, la nouvelle version sera téléchargée en premier..."
+        echo "ES-DE déjà installé, mise à jour demandée."
     else
-        # Pas de réinstallation : mettre à jour quand même les fichiers Gablue
-        copy_gablue_files
-        kdialog --title "Installation ES-DE" --msgbox "ES-DE déjà installé.\n\nLes fichiers Gablue (custom_systems et lanceurs Tools) ont été mis à jour."
-        exit 0
+        kdialog --title "Installation ES-DE" --yesno "ES-DE semble déjà installé via Gearlever !\n\nFichier trouvé :\n- $APPIMAGE_FILE\n\nVoulez-vous réinstaller ES-DE ?"
+        if [ $? -eq 0 ]; then
+            # Réinstallation demandée : l'ancienne installation ne sera supprimée
+            # qu'après le téléchargement et la vérification de la nouvelle (par sécurité)
+            WAS_INSTALLED=1
+            echo "Réinstallation demandée, la nouvelle version sera téléchargée en premier..."
+        else
+            # Pas de réinstallation : mettre à jour quand même les fichiers Gablue
+            copy_gablue_files
+            note "ES-DE déjà installé.\n\nLes fichiers Gablue (custom_systems et lanceurs Tools) ont été mis à jour."
+            exit 0
+        fi
     fi
 fi
 
 # Vérifier les permissions du dossier de téléchargement
 if [ ! -w "$DOWNLOAD_DIR" ]; then
-    kdialog --title "Installation ES-DE" --error "Erreur : pas de permission d'écriture dans $DOWNLOAD_DIR."
-    exit 1
+    fail "Pas de permission d'écriture dans $DOWNLOAD_DIR."
 fi
 
 # URL de l'API GitLab pour les releases
@@ -113,36 +188,36 @@ echo "Récupération du lien de téléchargement..."
 DOWNLOAD_URL=$(curl -s --retry 3 "$API_URL" | jq -r '.[0].assets.links[] | select(.name == "ES-DE_x64.AppImage") | .url')
 
 if [ -z "$DOWNLOAD_URL" ]; then
-    kdialog --title "Installation ES-DE" --error "Erreur : impossible de trouver le lien de téléchargement pour ES-DE_x64.AppImage."
-    exit 1
+    fail "Impossible de trouver le lien de téléchargement pour ES-DE_x64.AppImage."
 fi
 
 # Nom du fichier de destination dans le dossier de téléchargement
 FILENAME="$DOWNLOAD_DIR/esde.appimage"
 
-# Afficher une boîte de dialogue avec une barre qui tourne pendant le téléchargement
-DBUS_REF=$(kdialog --title "Installation ES-DE" --progressbar "Téléchargement de ES-DE en cours..." 0)
-qdbus $DBUS_REF Set "" value 0 >/dev/null  # Pas de progression réelle
+# Barre de progression kdialog en interactif uniquement
+DBUS_REF=""
+if [ "$AUTO" = 0 ]; then
+    DBUS_REF=$(kdialog --title "Installation ES-DE" --progressbar "Téléchargement de ES-DE en cours..." 0)
+    qdbus "$DBUS_REF" Set "" value 0 >/dev/null  # Pas de progression réelle
+fi
 
-# Télécharger le fichier avec barre de progression visible dans le terminal
 echo "Téléchargement de $DOWNLOAD_URL vers $FILENAME..."
 curl -L --progress-bar "$DOWNLOAD_URL" -o "$FILENAME"
 DOWNLOAD_STATUS=$?
 
-# Fermer la boîte de dialogue
-qdbus $DBUS_REF close >/dev/null
+if [ -n "$DBUS_REF" ]; then
+    qdbus "$DBUS_REF" close >/dev/null
+fi
 
 if [ $DOWNLOAD_STATUS -ne 0 ]; then
     rm -f "$FILENAME"
-    kdialog --title "Installation ES-DE" --error "Erreur lors du téléchargement de l'AppImage."
-    exit 1
+    fail "Erreur lors du téléchargement de l'AppImage."
 fi
 
 # Vérifier si le fichier existe et n'est pas vide
 if [ ! -s "$FILENAME" ]; then
     rm -f "$FILENAME"
-    kdialog --title "Installation ES-DE" --error "Erreur : le fichier téléchargé est vide ou n'existe pas."
-    exit 1
+    fail "Le fichier téléchargé est vide ou n'existe pas."
 fi
 
 # Rendre le fichier exécutable
@@ -158,19 +233,23 @@ if [ "${WAS_INSTALLED:-0}" = 1 ]; then
     rm -f "$APPIMAGE_FILE"
 fi
 
-# Afficher une boîte de dialogue avec une barre qui tourne pendant l'intégration
-DBUS_REF=$(kdialog --title "Installation ES-DE" --progressbar "Intégration de ES-DE avec Gearlever en cours..." 0)
-qdbus $DBUS_REF Set "" value 0 >/dev/null  # Pas de progression réelle
+# Barre de progression kdialog en interactif uniquement
+DBUS_REF=""
+if [ "$AUTO" = 0 ]; then
+    DBUS_REF=$(kdialog --title "Installation ES-DE" --progressbar "Intégration de ES-DE avec Gearlever en cours..." 0)
+    qdbus "$DBUS_REF" Set "" value 0 >/dev/null  # Pas de progression réelle
+fi
 
 # Installer avec Gearlever
 echo "Intégration de ES-DE avec Gearlever..."
 echo y | flatpak run it.mijorus.gearlever --integrate "$FILENAME" 2>/dev/null
 INTEGRATE_EXIT=$?
 
-# Fermer la boîte de dialogue
-qdbus $DBUS_REF close >/dev/null
+if [ -n "$DBUS_REF" ]; then
+    qdbus "$DBUS_REF" close >/dev/null
+fi
 
-# Vérifier si l'installation a réussi
+# Vérifier que l'installation a réussi
 if [ $INTEGRATE_EXIT -eq 0 ]; then
     DESKTOP_FILE="$HOME/.local/share/applications/esde.desktop"
     if [ -f "$DESKTOP_FILE" ]; then
@@ -184,11 +263,7 @@ if [ $INTEGRATE_EXIT -eq 0 ]; then
         chmod u+rwx "$HOME/.local/share/applications"
         # Valider le fichier .desktop
         if command -v desktop-file-validate &> /dev/null; then
-            desktop-file-validate "$DESKTOP_FILE" || {
-                echo "Erreur : le fichier $DESKTOP_FILE est invalide."
-                kdialog --title "Installation ES-DE" --error "Le fichier .desktop est invalide."
-                exit 1
-            }
+            desktop-file-validate "$DESKTOP_FILE" || fail "Le fichier $DESKTOP_FILE est invalide."
         fi
         # Mettre à jour la base de données des applications
         kbuildsycoca6
@@ -196,17 +271,14 @@ if [ $INTEGRATE_EXIT -eq 0 ]; then
         if [ $? -eq 0 ]; then
             echo "Base de données des applications mise à jour avec succès !"
         else
-            echo "Erreur lors de la mise à jour de la base de données des applications."
-            kdialog --title "Installation ES-DE" --error "Erreur lors de la mise à jour de la base de données des applications."
+            fail "Erreur lors de la mise à jour de la base de données des applications."
         fi
         # Copier les fichiers Gablue (custom_systems + lanceurs Tools)
         copy_gablue_files
-        kdialog --title "Installation ES-DE" --msgbox "Installation de ES-DE terminée avec succès !"
+        note "Installation de ES-DE terminée avec succès !"
     else
-        kdialog --title "Installation ES-DE" --error "Le fichier $DESKTOP_FILE n'a pas été trouvé."
-        exit 1
+        fail "Le fichier $DESKTOP_FILE n'a pas été trouvé."
     fi
 else
-    kdialog --title "Installation ES-DE" --error "Erreur lors de l'installation avec Gearlever."
-    exit 1
+    fail "Erreur lors de l'installation avec Gearlever."
 fi

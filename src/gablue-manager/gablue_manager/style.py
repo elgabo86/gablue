@@ -17,6 +17,7 @@ QLabel#footer { color: @dim@; font-size: 12px; }
 QLabel#hostName { font-size: 15px; font-weight: 600; }
 QLabel#hostDetail { color: @dim@; font-size: 12px; }
 QLabel#hostStatus { font-size: 12px; font-weight: 500; }
+QLabel#groupName { color: @dim@; font-size: 12px; font-weight: 600; }
 QCheckBox { font-size: 14px; font-weight: 600; spacing: 8px; }
 QLabel#emptyTitle { font-size: 18px; font-weight: 600; }
 QLabel#emptyText { color: @dim@; font-size: 13px; }

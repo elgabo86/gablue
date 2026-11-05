@@ -92,9 +92,103 @@ def detect_mac_remote(host: dict) -> str:
         return ""
     return normalize_mac(result.stdout.strip()) if result.returncode == 0 else ""
 
+TAILSCALE_NETWORK = ipaddress.IPv4Network("100.64.0.0/10")
+
+
+def parse_local_ipv4(text: str) -> tuple[set[str], list]:
+    """Adresses et sous-réseaux IPv4 de cette machine (`ip -o -4 addr show`).
+
+    Sert à distinguer les adresses du poste distant qui sont réellement sur
+    notre lien (LAN) de celles qui ne sont que des interfaces internes de
+    cette machine : boucle locale, pont docker/podman, virbr0 de libvirt…
+    """
+    own: set[str] = set()
+    networks: list = []
+    for match in re.finditer(r"inet (\d+\.\d+\.\d+\.\d+)/(\d+)", text):
+        try:
+            interface = ipaddress.ip_interface(f"{match.group(1)}/{match.group(2)}")
+        except ValueError:
+            continue
+        own.add(str(interface.ip))
+        networks.append(interface.network)
+    return own, networks
+
+
+def local_ipv4() -> tuple[set[str], list]:
+    """Interfaces IPv4 du poste (`ip` absent ou muet → ensemble vide)."""
+    try:
+        result = subprocess.run(
+            [IP, "-o", "-4", "addr", "show"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return set(), []
+    if result.returncode != 0:
+        return set(), []
+    return parse_local_ipv4(result.stdout)
+
+
+def address_kind(address: str, own: set[str], networks: list) -> str:
+    """« lan », « tailscale » ou « » (adresse inutilisable depuis ce poste)."""
+    try:
+        ip = ipaddress.IPv4Address(address)
+    except ValueError:
+        return ""
+    if ip.is_loopback or ip.is_link_local or str(ip) in own:
+        return ""
+    if ip in TAILSCALE_NETWORK:
+        return "tailscale"
+    if not networks:
+        # Pas de table d'interfaces : rester permissif plutôt que de tout
+        # masquer, on n'a alors que le filtre boucle locale / nos adresses.
+        return "lan"
+    return "lan" if any(ip in network for network in networks) else ""
+
+
+def group_candidates(entries: list[dict], own: set[str] | None = None,
+                     networks: list | None = None) -> list[dict]:
+    """Une entrée par machine : adresses inutiles écartées, LAN puis Tailscale.
+
+    Avahi publie une adresse par interface du poste (boucle locale, docker0,
+    tailscale0, LAN…). On ne garde que celles joignables d'ici et on les
+    regroupe sous le nom mDNS de la machine.
+    """
+    if own is None or networks is None:
+        own, networks = local_ipv4()
+    kinds = ("lan", "tailscale")
+    grouped: dict[tuple, dict] = {}
+    for entry in entries:
+        kind = address_kind(str(entry.get("host", "")), own, networks)
+        if not kind:
+            continue
+        key = (
+            str(entry.get("hostname") or entry.get("label") or "").casefold(),
+            str(entry.get("user", "")),
+            int(entry.get("port", 22)),
+        )
+        record = grouped.get(key)
+        if record is None:
+            record = {
+                "label": entry.get("label") or entry.get("hostname") or "",
+                "user": entry.get("user", ""),
+                "port": int(entry.get("port", 22)),
+                "hosts": [],
+            }
+            grouped[key] = record
+        if entry["host"] not in [item[0] for item in record["hosts"]]:
+            record["hosts"].append((str(entry["host"]), kind))
+    found = []
+    for record in grouped.values():
+        record["hosts"].sort(key=lambda item: kinds.index(item[1]))
+        record["host"] = record["hosts"][0][0]
+        found.append(record)
+    found.sort(key=lambda item: item["label"].casefold())
+    return found
+
+
 def avahi_scan(timeout: float = 8.0,
                stop: threading.Event | None = None) -> list[dict]:
-    """Postes SSH annoncés en mDNS sur le réseau local."""
+    """Postes SSH annoncés en mDNS sur le réseau local, une entrée par machine."""
     if AVAHI_BROWSE == "avahi-browse" and not shutil.which("avahi-browse"):
         return []
     try:
@@ -113,8 +207,7 @@ def avahi_scan(timeout: float = 8.0,
             return []
         time.sleep(0.1)
     output = proc.stdout.read() if proc.stdout is not None else ""
-    found = []
-    seen = set()
+    entries = []
     for line in output.splitlines():
         if not line.startswith("="):
             continue
@@ -131,18 +224,15 @@ def avahi_scan(timeout: float = 8.0,
             number = int(port or 22)
         except ValueError:
             number = 22
-        if (address, number) in seen:
-            continue
-        seen.add((address, number))
         label = re.sub(r"\s*\[[^]]*\]\s*$", "", name).strip() or hostname
-        found.append({
+        entries.append({
             "label": label,
+            "hostname": hostname or label,
             "user": getpass.getuser(),
             "host": address,
             "port": number,
         })
-    found.sort(key=lambda item: item["label"].casefold())
-    return found
+    return group_candidates(entries)
 
 def _ssh_config_sources(path: Path, depth: int = 0, seen=None):
     """Lignes (clé, valeur) de ~/.ssh/config, Include compris, dans l'ordre."""

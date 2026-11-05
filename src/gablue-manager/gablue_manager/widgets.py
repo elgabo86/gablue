@@ -99,6 +99,7 @@ class HostCard(QFrame):
     gwine_requested = Signal(str)
     booster_requested = Signal(str)
     tailscale_requested = Signal(str)
+    apps_requested = Signal(str)
     reboot_requested = Signal(str)
     shutdown_requested = Signal(str)
 
@@ -227,6 +228,10 @@ class HostCard(QFrame):
         tailscale_action.triggered.connect(
             lambda: self.tailscale_requested.emit(self.host["id"])
         )
+        apps_action = menu.addAction("Applications…")
+        apps_action.triggered.connect(
+            lambda: self.apps_requested.emit(self.host["id"])
+        )
         reboot_action = menu.addAction("Redémarrer…")
         reboot_action.triggered.connect(
             lambda: self.reboot_requested.emit(self.host["id"])
@@ -319,6 +324,7 @@ class LocalCard(QFrame):
     """La machine courante : mises à jour et options avancées."""
 
     update_requested = Signal(str)   # "gablue" | "flatpak" | "gwine"
+    apps_requested = Signal()
     config_requested = Signal()
     gwine_requested = Signal()
     booster_requested = Signal()
@@ -380,6 +386,19 @@ class LocalCard(QFrame):
         )
         self.update_button.setMenu(menu)
         layout.addWidget(self.update_button, 0, Qt.AlignVCenter)
+
+        # Les applications AppImage (GearLever) sont des programmes, pas des
+        # réglages : entrée à part, à côté des mises à jour.
+        self.apps_button = QPushButton("Applications", self)
+        self.apps_button.setObjectName("ghost")
+        self.apps_button.setCursor(Qt.PointingHandCursor)
+        self.apps_button.setIcon(QIcon.fromTheme("applications-utilities"))
+        self.apps_button.setToolTip(
+            "Installer, mettre à jour ou supprimer ES-DE, Azahar, Eden, "
+            "Xenia, ShadPS4 et OpenCode 2"
+        )
+        self.apps_button.clicked.connect(self.apps_requested.emit)
+        layout.addWidget(self.apps_button, 0, Qt.AlignVCenter)
 
         # Un bouton, un menu : réglages du noyau (kargs + émulation CPUID),
         # options de gwine (préfixe Windows), priorité au premier plan et

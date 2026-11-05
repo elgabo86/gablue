@@ -1,0 +1,184 @@
+#!/usr/bin/bash
+
+# Désinstalle OpenCode 2 : CLI npm, app Desktop (AppImage GearLever), entrées
+# Dolphin « Ouvrir avec » et MCP Lightpanda installés par opencode2-install.
+#
+# La configuration et les données ne sont JAMAIS touchées :
+#   ~/.config/opencode/             (opencode.json, clés, skills)
+#   ~/.config/ai.opencode.desktop/  (drafts.sqlite, Local Storage, sessions du desktop)
+#   ~/.local/share/opencode/        (historique des sessions)
+#   ~/.npmrc                        (allow-scripts, cafile)
+# Réinstaller avec `opencode2-install` retrouve donc tout tel quel.
+#
+# Sans argument, sans dialogue : le journal de Gablue Manager fait office de
+# retour. Idempotent, chaque étape est best-effort (rien à faire = succès).
+
+set -uo pipefail
+
+APPIMAGE="$HOME/AppImages/opencode.appimage"
+APPS_DIR="$HOME/.local/share/applications"
+LOCAL_BIN="$HOME/.local/bin"
+MIMEAPPS="$HOME/.config/mimeapps.list"
+NPM_PACKAGE="@opencode/cli"
+LP_PACKAGE="@lightpanda/browser"
+
+NPM="$(command -v npm 2>/dev/null || true)"
+if [ -z "$NPM" ] && [ -x /home/linuxbrew/.linuxbrew/bin/npm ]; then
+    NPM="/home/linuxbrew/.linuxbrew/bin/npm"
+fi
+
+# =============================================================================
+# 1. ARRÊT PROPRE (serveur de fond puis app Desktop)
+# =============================================================================
+
+# Le serveur de fond porte toutes les sessions (CLI et desktop) : on l'arrête
+# avant de retirer le binaire sur lequel il tourne.
+if command -v opencode &>/dev/null; then
+    echo "Arrêt du serveur de fond OpenCode..."
+    timeout 20 opencode service stop &>/dev/null || true
+fi
+
+# App Desktop : SIGTERM au processus PRINCIPAL seulement. Tuer l'arbre en bloc
+# démonte le squashfs de l'AppImage (/tmp/.mount_*) sous les enfants encore
+# vivants (zygote/gpu/renderer/crashpad) et provoque des SIGBUS en cascade.
+if pgrep -f '/tmp/\.mount_[A-Za-z0-9]+/ai\.opencode\.desktop' >/dev/null 2>&1 \
+    || pgrep -f 'AppImages/opencode\.appimage' >/dev/null 2>&1; then
+    echo "Fermeture d'OpenCode Desktop..."
+    for pid in $(pgrep -f '/tmp/\.mount_[A-Za-z0-9]+/ai\.opencode\.desktop' 2>/dev/null); do
+        CMD="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" || continue
+        case "$CMD" in
+            *"--type="*|*crashpad*) continue ;;
+        esac
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    if ! pgrep -f '/tmp/\.mount_[A-Za-z0-9]+/ai\.opencode\.desktop' >/dev/null 2>&1; then
+        pkill -TERM -f 'AppImages/opencode\.appimage' 2>/dev/null || true
+    fi
+    ALIVE=1
+    for _ in $(seq 1 20); do
+        ALIVE=0
+        pgrep -f '/tmp/\.mount_[A-Za-z0-9]+/ai\.opencode\.desktop' >/dev/null 2>&1 && ALIVE=1
+        pgrep -f 'AppImages/opencode\.appimage' >/dev/null 2>&1 && ALIVE=1
+        pgrep -f '/tmp/\.mount_[A-Za-z0-9]+/chrome_crashpad_handler' >/dev/null 2>&1 && ALIVE=1
+        [ "$ALIVE" = 0 ] && break
+        sleep 0.5
+    done
+    if [ "$ALIVE" = 1 ]; then
+        pkill -KILL -f '/tmp/\.mount_[A-Za-z0-9]+/ai\.opencode\.desktop' 2>/dev/null || true
+        pkill -KILL -f '/tmp/\.mount_[A-Za-z0-9]+/chrome_crashpad_handler' 2>/dev/null || true
+        pkill -KILL -f 'AppImages/opencode\.appimage' 2>/dev/null || true
+    fi
+fi
+
+# =============================================================================
+# 2. APP DESKTOP (AppImage + intégration GearLever)
+# =============================================================================
+
+if [ -f "$APPIMAGE" ]; then
+    echo "Retrait de l'AppImage et de l'entrée de menu..."
+    if flatpak list 2>/dev/null | grep -q "it.mijorus.gearlever"; then
+        timeout 120 bash -c "yes | flatpak run it.mijorus.gearlever --remove '$APPIMAGE'" \
+            &>/dev/null || true
+    fi
+    rm -f "$APPIMAGE"
+    rm -f "$APPS_DIR/opencode.desktop"
+    rm -f "$HOME/AppImages/.icons/opencode"*
+    find "$HOME/.local/share/icons" -name "opencode*" -delete 2>/dev/null || true
+    rm -rf "$HOME/.cache/opencode-desktop"
+fi
+
+# =============================================================================
+# 3. ENTRÉES DOLPHIN « OUVRIR AVEC » (fichiers + association mimeapps)
+# =============================================================================
+
+rm -f "$APPS_DIR/gablue-opencode.desktop" "$APPS_DIR/gablue-opencode-cli.desktop"
+
+# Retire UNIQUEMENT nos deux entrées de inode/directory, préserve les autres
+# associations (l'ordre des restantes est conservé) et supprime une section
+# [Added Associations] laissée vide.
+if [ -f "$MIMEAPPS" ]; then
+    timeout 10 python3 - "$MIMEAPPS" <<'PY' >/dev/null 2>&1 || true
+import os, sys
+
+path = sys.argv[1]
+ours = {"gablue-opencode.desktop", "gablue-opencode-cli.desktop"}
+try:
+    lines = open(path, encoding="utf-8").read().splitlines()
+except OSError:
+    sys.exit(0)
+
+def is_header(line):
+    return line.startswith("[") and line.endswith("]")
+
+out, in_added = [], False
+for line in lines:
+    text = line.strip()
+    if is_header(text):
+        in_added = text == "[Added Associations]"
+        out.append(line)
+        continue
+    if in_added and text.startswith("inode/directory="):
+        kept = [x for x in text.split("=", 1)[1].split(";") if x and x not in ours]
+        if kept:
+            out.append("inode/directory=" + ";".join(kept) + ";")
+        continue
+    out.append(line)
+
+# Sections [Added Associations] devenues vides
+final, index = [], 0
+while index < len(out):
+    if out[index].strip() == "[Added Associations]":
+        end = index + 1
+        content = False
+        while end < len(out) and not is_header(out[end].strip()):
+            if out[end].strip():
+                content = True
+            end += 1
+        if not content:
+            index = end
+            continue
+    final.append(out[index])
+    index += 1
+
+text = "\n".join(final).rstrip("\n")
+if text:
+    open(path, "w", encoding="utf-8").write(text + "\n")
+else:
+    os.unlink(path)
+PY
+fi
+
+# =============================================================================
+# 4. LIGNE DE COMMANDE (npm) ET LANCEURS
+# =============================================================================
+
+if [ -n "$NPM" ]; then
+    if "$NPM" list -g --depth=0 "$NPM_PACKAGE" &>/dev/null; then
+        echo "Désinstallation de $NPM_PACKAGE (npm)..."
+        "$NPM" uninstall -g "$NPM_PACKAGE" &>/dev/null || true
+    fi
+    if "$NPM" list -g --depth=0 "$LP_PACKAGE" &>/dev/null; then
+        echo "Désinstallation de $LP_PACKAGE (npm)..."
+        "$NPM" uninstall -g "$LP_PACKAGE" &>/dev/null || true
+    fi
+fi
+
+# Symlink uniquement (jamais un vrai fichier déposé à la main)
+if [ -L "$LOCAL_BIN/opencode" ]; then
+    rm -f "$LOCAL_BIN/opencode"
+fi
+rm -f "$LOCAL_BIN/opencode-open"
+rm -rf "$HOME/.cache/lightpanda-node"
+
+# =============================================================================
+# 5. CACHES D'APPLICATIONS
+# =============================================================================
+
+command -v kbuildsycoca6 &>/dev/null && kbuildsycoca6 --noincremental &>/dev/null || true
+if command -v update-desktop-database &>/dev/null; then
+    update-desktop-database "$APPS_DIR" &>/dev/null || true
+fi
+
+echo "✓ OpenCode 2 désinstallé."
+echo "  Conservés : ~/.config/opencode, ~/.config/ai.opencode.desktop"
+echo "  (drafts.sqlite, sessions) et ~/.local/share/opencode."
