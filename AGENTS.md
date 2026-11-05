@@ -85,11 +85,12 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── gablue-manager                  # Lanceur /usr/bin (sys.path + main)
 │   │   └── gablue_manager/                 # Paquet : app, window, dialogs/, local, ssh…
 │   ├── gwine-launcher/                     # Sources du lanceur gwine (Bash modulaire)
-│   │   ├── AGENTS.md                        # Architecture interne du lanceur
+│   │   ├── AGENTS.md                        # Contrat du lanceur (CLI, structure, build)
 │   │   ├── gwine                           # Script point d'entrée
 │   │   ├── build.sh                        # Assemblage du fichier standalone
 │   │   ├── completions/                    # Completions bash et zsh
 │   │   └── lib/                            # Bibliothèques modulaires (~60 fichiers)
+│   │       └── AGENTS.md                    # Architecture, modules, points techniques
 │   ├── lgplaunch/                          # Sources de lgplaunch (Bash modulaire)
 │   │   ├── AGENTS.md                        # Modules, montage LGP, overlays
 │   │   ├── lgplaunch                       # Lanceur de développement (source lib/)
@@ -100,6 +101,7 @@ Le projet construit 6 variantes distinctes :
 │       ├── tvqt                            # Lanceur /usr/bin (sys.path + main)
 │       └── gablue_tv/                      # Paquet : app, window, grid, guide…
 ├── files/
+│   ├── AGENTS.md                          # Conventions Bash/Containerfile, build, dépannage
 │   ├── scripts/                           # Scripts d'installation bash
 │   │   ├── AGENTS.md                      # Détail des scripts de build (copr → cpuid-fault)
 │   │   ├── build-c                       # Compilation sources C
@@ -150,7 +152,7 @@ en fin de RUN), appels aux scripts via `/ctx/<script>`.
 
 Commandes de build, vérification de l'image, conventions détaillées
 (Bash/Containerfile), gestion des erreurs, tests et dépannage →
-`files/scripts/AGENTS.md`.
+`files/AGENTS.md`.
 
 ## Messages de commit et tags
 
@@ -239,11 +241,13 @@ son propre AGENTS.md de sous-dossier + pointeur dans l'index ci-dessous.
 
 | Domaine | Document | À lire AVANT de... |
 |---------|----------|--------------------|
-| Scripts de build + conventions (Bash, Containerfile), build/vérification/dépannage | `files/scripts/AGENTS.md` | modifier `files/scripts/`, le `Containerfile-gablue` ou une étape RUN |
+| Conventions d'écriture (Bash, Containerfile), build/vérification, erreurs, tests, dépannage | `files/AGENTS.md` | modifier le `Containerfile-gablue`, une étape RUN ou écrire un script |
+| Scripts de build (détail copr → cpuid-fault, post-install, systemd) | `files/scripts/AGENTS.md` | modifier ou ajouter un script appelé par un RUN |
 | Fichiers système (/etc, /usr/bin, binfmt, ujust, plasmoid) | `files/system/AGENTS.md` | modifier `files/system/` |
 | Workflows CI | `.github/AGENTS.md` | modifier `.github/` ou un tag de commit |
 | ISO live / installateur | `installer/AGENTS.md` | modifier `installer/` ou `local-build/` |
-| Lanceur gwine | `src/gwine-launcher/AGENTS.md` | modifier `src/gwine-launcher/` |
+| Lanceur gwine (CLI, structure, build) | `src/gwine-launcher/AGENTS.md` | modifier `gwine`, `build.sh` ou `completions/` |
+| gwine — modules `lib/` (architecture, composants, overlays, shims) | `src/gwine-launcher/lib/AGENTS.md` | modifier un fichier de `src/gwine-launcher/lib/` |
 | Gablue Manager (GUI, paquet `gablue_manager`) | `src/gablue-manager/AGENTS.md` | modifier `src/gablue-manager/` ou un dialogue |
 | TV Gablue (tvqt, paquet `gablue_tv`) | `src/tvqt/AGENTS.md` | modifier `src/tvqt/` ou une vue |
 | Installateur APK (paquet `gablue_apk_installer`) | `src/gablue-apk-installer/AGENTS.md` | modifier `src/gablue-apk-installer/` |

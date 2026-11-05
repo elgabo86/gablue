@@ -1,0 +1,241 @@
+# Gwine — modules `lib/` (src/gwine-launcher/lib)
+
+> Sous-document de `src/gwine-launcher/AGENTS.md` (CLI, structure, build).
+> Architecture interne, responsabilités des modules et points techniques :
+> à lire avant de modifier un fichier de `lib/`. Toute modif de `lib/` exige
+> un rebuild d'image — le binaire installé est le standalone assemblé.
+
+## Architecture du code
+
+### Flux d'exécution principal
+1. `main()` dans `gwine` - point d'entrée
+2. `parse_arguments()` - Analyse des arguments CLI
+3. Si `--gamescope`/`--720`/`--900`/`--1080` : re-exécution de gwine sous gamescope comme parent (`exec gamescope ... -- gwine "$@"`)
+4. `run_wgp_mode()` ou `run_classic_mode()` selon le type de fichier
+5. Montage du pack WGP (si applicable)
+6. Initialisation du préfixe Wine
+7. Configuration GPU (Vulkan)
+8. Détection gamescope dans l'arbre parent (`GWINE_GAMESCOPE_PIDS`) pour kill mangoapp+gamescope à la fermeture
+9. Lancement avec sandboxing bubblewrap
+
+### Ordre de chargement des modules (gwine)
+```bash
+lib/core.sh
+lib/parse-args.sh
+lib/xbox.sh
+lib/runner.sh
+lib/dxvk-mode.sh
+lib/display-mode.sh
+lib/download.sh
+lib/gpu.sh
+lib/ui.sh
+lib/component.sh          # -> charge components/*
+lib/wincomponents.sh      # -> charge wincomponents/*
+lib/cache/gwine-runner.sh
+lib/cache/dxvk-vkd3d.sh
+lib/cache/offline.sh
+lib/cache/cachepack.sh
+lib/wineprefix.sh
+lib/wineserver-manager.sh # -> charge wineserver/*
+lib/sandbox.sh
+lib/wgp.sh                # -> charge wgp/*
+lib/launcher.sh           # -> charge launcher-utils/* + launcher-main.sh
+lib/mode-init.sh          # -> charge modes/*
+lib/mode-update.sh
+lib/mode-tools.sh
+lib/dir-config.sh
+```
+
+### Modules et responsabilités
+
+- **core.sh** : Variables globales, fonctions utilitaires (find_component_dir, component_dir_complete — complétude des dossiers de composants extraits)
+- **parse-args.sh** : Analyse des arguments CLI, validation, aide (show_help)
+- **xbox.sh** : Gestion ds2xbox (émulation Xbox 360, compteur références, config par défaut) + gamescope par défaut (set/get/apply_gamescope_default)
+- **runner.sh** : Gestion des runners Wine/Proton
+- **dxvk-mode.sh** : Configuration DXVK standard vs GPLAsync
+- **display-mode.sh** : Gestion du mode d'affichage (Wayland natif vs X11/XWayland)
+- **ui.sh** : Barres de progression kdialog, GameMode. `_get_qdbus_cmd()` détecte la commande qdbus disponible (`qdbus6`, `qdbus-qt6`, `qdbus-qt5`, `qdbus`) ; toutes les fonctions `progress_*` et les gardes kdialog (init-ensure.sh, mode-update.sh) l'utilisent au lieu de tester `qdbus` en dur
+- **gpu.sh** : Détection automatique du GPU et configuration Vulkan
+- **download.sh** : Téléchargement GitHub, extraction d'archives, récupération versions composants (get_component_version avec double source officiel+bottles pour DXVK/VKD3D)
+- **cache/*** : Gestion du cache
+  - gwine-runner.sh : Téléchargement, installation et mise à jour du runner gwine
+  - dxvk-vkd3d.sh : Mise à jour DXVK, VKD3D, NVAPI, D7VK + download_vkd3d() pour téléchargement VKD3D seul (utilisé quand le mode DXVK async gère DXVK séparément). `download_updated_dxvk_vkd3d()` retourne désormais 1 si un téléchargement échoue (avant : `return 0` inconditionnel — les échecs n'atteignaient jamais le `error_exit` de `--update`)
+  - offline.sh : Préparation cache, mode offline, téléchargement Mono/Gecko avec vérification de version **et d'intégrité** (.msi validés par `validate_archive` avant usage du cache). `local_cache_incomplete()` traite comme manquant tout .msi corrompu ou dossier de composant partiellement extrait → réparation automatique au prochain `--init`/`prepare_local_cache`. `prepare_full_offline_cache()` (appelée par `--download-components`) pré-cache le runner gwine et télécharge **toujours** DXVK-NVAPI et D7VK (cache portable, indépendant du GPU de la machine qui construit le pack)
+  - cachepack.sh : Création de packs cache pour déploiement offline. Empaquette le runner gwine (une **seule** archive, la plus récente — le cache peut en accumuler plusieurs, voir section pack cache), vérifie DXVK standard + GPLAsync + VKD3D + DXVK-NVAPI + D7VK + Mono/Gecko + wincomponents. Le `install-cache.sh` généré déploie uniquement gwine
+- **component.sh** : Fichier de redirection vers components/*
+- **components/*** : Gestion des composants individuels
+  - utils.sh : Utilitaires (copy_dll_files, create_dll_overrides, get_wine_system_paths)
+  - dxvk.sh : Installation DXVK/VKD3D
+  - d7vk.sh : Installation D7VK (proxy ddraw → Vulkan, sauvegarde du ddraw builtin en ddraw_.dll)
+  - nvapi.sh : DXVK-NVAPI (NVIDIA uniquement)
+  - mono.sh : Wine Mono/Gecko
+  - winetricks.sh : Intégration winetricks
+- **wincomponents.sh** : Fichier de redirection vers wincomponents/*
+- **wincomponents/*** : Installation des composants Windows (remplace winetricks)
+  - defs.sh : URLs, checksums, liste des composants requis
+  - utils.sh : Téléchargement et vérification du cache. `COMPONENT_URLS` accepte **plusieurs URLs séparées par des espaces** : la première est la source principale, les suivantes sont des miroirs de secours essayés dans l'ordre (`download_component` boucle sur la liste, `--timeout=60 --tries=2` par URL). Le nom de fichier du cache vient toujours de la première URL. Les composants dépendant de web.archive.org (souvent en panne 503) ont un miroir **arquivo.pt** (`/noFrame/replay/<timestamp>/<url>`, checksum SHA256 identique) : msls31, vb6run, wmp9
+  - vcrun.sh : Visual C++ Redistributables (2010-2022, VCRUN6)
+  - dotnet.sh : .NET Desktop Runtime (6, 7, 8)
+  - directx.sh : DirectX, XACT Engine, D3DCompiler
+  - fonts.sh : Core Fonts et Tahoma
+  - misc.sh : OpenAL, PhysX, MSLS31, VB6 Runtime
+  - wmp9.sh : Windows Media Player 9 + wsh57. setup_wm.exe installe les codecs de base (wmvcore, wmp, l3codeca.acm) en 32 et 64-bit. Le pack supplémentaire wm9codecs (WM9Codecs9x.exe) est ignoré silencieusement en 64-bit car superflu.
+  - main.sh : Fonction principale install_all_wincomponents
+- **wineprefix.sh** : Création/gestion du préfixe Wine, copie ICU 68 DLLs (gwine uniquement). `wineboot_init_prefix()` appelle `setup_wine_temp_symlinks()` **avant** de rendre la main : les symlink `Temp` doivent être valides avant toute installation `msiexec` (Mono/Gecko), sinon `advpack:create_tmp_ini_file Can't get temp ini file path`. `setup_wine_temp_symlinks()` répare aussi les symlinks cassés (target inexistant après nettoyage du cache `~/.cache/gwine`) qui persistent via `~/Windows/UserData` sync entre machines (Syncthing)
+- **wineserver-manager.sh** : Fichier de redirection vers wineserver/*
+- **wineserver/*** : Gestion du wineserver persistant
+  - init.sh : Initialisation système de locks
+  - master.sh : Gestion instance maître (namespaces partagés)
+  - counter.sh : Compteur d'instances
+  - server.sh : Gestion wineserver (wait, kill, wrappers)
+  - cleanup.sh : Nettoyage locks orphelins
+- **wgp.sh** : Fichier de redirection vers wgp/*
+- **wgp/*** : Gestion des packs WGP
+  - core.sh : Variables globales et utilitaires WGP
+  - mount.sh : Montage/démontage squashfuse
+  - overlay.sh : Overlays kernel overlayfs (via unshare, user namespaces)
+  - symlinks.sh : Symlinks saves/extras. **Amorçage PAR ITEM** : un item
+    absent de la destination est copié depuis le pack, un item présent est
+    laissé intact (jamais d'écrasement ni de suppression) — remplace
+    l'ancien « tout ou rien » (copie seulement si le dossier racine du jeu
+    est vide) qui laissait des trous après un changement de classification
+    d'un pack reconstruit. Coût régime stable : un stat par item
+  - modes.sh : Modes WGP (sélection exe)
+- **launcher.sh** : Fichier de redirection vers launcher-utils/* + launcher-main.sh
+- **launcher-utils/*** : Utilitaires de lancement
+  - env.sh : Chargement fichiers .env
+  - registry.sh : Installation fichiers .reg
+  - pds.sh : Configuration ProgramData Saves
+  - paths.sh : Utilitaires de chemins (transliterate, create_temp_path)
+  - conflict.sh : Vérification conflits d'instance
+  - setup.sh : Configuration environnement Wine
+- **launcher-main.sh** : Lancement effectif des jeux avec Wine (launch_wine_game), détection gamescope dans l'arbre parent, kill mangoapp+gamescope à la fermeture
+- **sandbox.sh** : Configuration bubblewrap pour le sandboxing
+- **mode-init.sh** : Fichier de redirection vers modes/*
+- **modes/*** : Modules d'initialisation du préfixe
+  - init-main.sh : init_prefix_only, init_wineprefix
+  - init-ensure.sh : ensure_wineprefix, ensure_wineprefix_full
+- **mode-update.sh** : Mode --update. Feedback graphique complet quand `--kdialog` est actif (contexte .desktop `WindowsUpdate.desktop` avec `Terminal=false`, sinon tout le stdout/stderr est perdu) : `kdialog --msgbox` avec les versions installées si tout est déjà à jour ; les échecs (pas de connexion, téléchargement) passent par `error_exit` qui affiche un `kdialog --error`
+- **mode-tools.sh** : Outils Wine (--regedit, --winecfg, --winetricks, --reg avec sous-commandes add/del/get)
+- **dir-config.sh** : Configuration répertoires bind mounts
+
+## Points techniques importants
+
+### Support gamescope
+- `--gamescope`/`--720`/`--900`/`--1080` : gwine se re-exécute sous gamescope comme parent (`exec gamescope ... -- "$0" "$@"`) avec `MANGOHUD=0` (mangoapp gère l'overlay)
+- `--gamescope-args` : args gamescope personnalisés (défaut : `-w 1280 -h 720 -f --mangoapp`, sans `-W`/`-H` pour laisser gamescope détecter la résolution de sortie)
+- **Fichier `.gamescope`** : activation automatique de gamescope au lancement, sans flag CLI (`peek_gamescope_config` dans `wgp/core.sh`, appelé AVANT le re-exec gamescope — rien n'est monté à ce stade). Deux emplacements, dans cet ordre : (1) racine du squashfs d'un `.wgp` via `unsquashfs -cat` (même mécanisme que `.gamename`, prioritaire car choix de l'auteur du pack), (2) sidecar `.gamescope` **à côté du fichier lancé** (`.exe`/`.bat`/`.wgp` — même convention que `.env`/`.args`, modifiable sans reconstruire le pack ; pour un `.wgp` c'est le fallback si la racine du pack n'en contient pas). Contenu interprété : args gamescope en clair (ex: `-f -w 1280 -h 720 --adaptive-sync --mangoapp`), vide/blanc = défaut gwine, `off`/`none`/`disable`/`no` (casse-insensible) = désactivation pour ce jeu. Multi-lignes et `\r` tolérés (normalisés en espaces, word splitting à l'exec). Priorité : options gamescope CLI explicites (`--gamescope-args`/`--720`/...) > fichier `.gamescope` > défaut stocké (`gamescope_default`) ; `--no-gamescope` CLI écrase tout (y compris le fichier). Le `off` du fichier bloque aussi le défaut stocké via `gamescope_file_off` (consommé par `apply_gamescope_default`) sans l'effacer — contrairement à `--no-gamescope` qui le supprime. Le re-exec passe `--gamescope-args "$_gs_args"` explicites au processus enfant (guard `GWINE_GAMESCOPE_WRAPPER` skippe le re-peek : le child ne doit jamais re-exec gamescope). Détection d'« existant » dans le pack par code retour de `-cat` (exit 0 = présent même vide → stoppe le fallback sidecar)
+- Détection gamescope : `launch_wine_game()` remonte l'arbre des processus (`/proc/PID/comm`) pour trouver `gamescope-wl` et `gamescopereaper`, stocke leurs PIDs dans `GWINE_GAMESCOPE_PIDS`
+- Fermeture : à la fin du jeu, kill mangoapp (SIGKILL, évite le segfault DrKonqi) puis gamescope (SIGTERM → SIGKILL fallback)
+- Traps INT/TERM : en mode gamescope, le kill mangoapp+gamescope se fait en premier, le reste du cleanup en silence (`>/dev/null 2>&1`)
+- Défaut gamescope : `set_gamescope_default`/`apply_gamescope_default` dans `xbox.sh` (même fichier `~/.local/share/gwine/options` que xbox), `--no-gamescope` désactive le défaut
+- Bugs gamescope connis : #777 (ne se ferme pas à la fin du jeu), #1482 (gamescopereaper ne tue pas winedevice), MangoHud #1284 (mangoapp reste après fermeture), #1585 (segfault mangoapp)
+
+### Système d'overlay
+- Utilisation du kernel overlayfs natif via `unshare` (user namespaces) pour les overlays WGP (.temp)
+- Montage différé : les overlays sont montés dans le même unshare que bwrap au moment du lancement
+- Le workdir doit être sur un chemin SÉPARÉ du upperdir (pas `.work/` dans upperdir)
+
+### Format WGP
+- Fichiers squashfs compressés avec extension `.wgp`
+- Contiennent un fichier `.gamename` pour le nom interne
+- Contiennent optionnellement un fichier `.gamescope` : args gamescope appliqués au lancement (activation auto, voir « Support gamescope ») ; vide = défaut gwine, `off` = gamescope désactivé pour ce jeu. Un sidecar `.gamescope` à côté du `.wgp` sert de fallback si la racine du pack n'en contient pas
+- Support des dossiers `saves/`, `extra/`, `temp/` pour persistance des données
+
+### Sandboxing
+- Utilisation de bubblewrap pour isoler l'exécution des jeux
+- Restrictions sur les accès système pour la sécurité
+- **bwrap >= 0.12** (fc44) refuse de monter sur une destination symlink (`Can't mount on symlink destination`) : toute destination de montage pouvant être un symlink doit passer par `bwrap_resolve_dest()` (sandbox.sh), qui résout via `readlink -f`. Concerne notamment `--tmpfs /home` (/home → /var/home sur Fedora Atomic/ostree) et les fichiers `/etc/*` (`/etc/resolv.conf`, `/etc/localtime`...). Les destinations *sous* un symlink (ex: `/home/gab/...`) ne sont pas affectées.
+
+### Variables d'environnement
+- `WINEPREFIX`, `WINEARCH`, `WINEFSYNC`, `WINENTSYNC`
+- `VK_ICD_FILENAMES` (sélection du driver Vulkan)
+- `DISABLE_GAMEMODE=1` pour désactiver GameMode
+- `WINE_LARGE_ADDRESS_AWARE=1` activé par défaut
+- `LC_ALL=fr_FR.UTF-8` par défaut (surchargeable via `--env` ou variable d'environnement)
+- `DXVK_ASYNC=1` en mode dxvk-async
+- `SDL_GAMECONTROLLER_IGNORE_DEVICES` en mode xbox (IDs Sony masqués, voir xbox.sh)
+- `GWINE_NO_STATFS_SHIM=1` pour désactiver le shim overlayfs statfs
+- `GWINE_CACHE_BUNDLE_URL` pour surcharger l'URL du pack cache pré-construit (défaut : `https://github.com/elgabo86/gwine-cache/releases/download/latest`)
+- `GST_PLUGIN_SYSTEM_PATH_1_0` (plugins bundlés uniquement, pas de paths système)
+- `GST_PLUGIN_FEATURE_RANK` (nvh264dec:0,nvh265dec:0 en mode proton)
+- `GST_REGISTRY` / `GST_REGISTRY_1_0` (cache registry dédié gwine)
+- `GST_REGISTRY_32` (cache registry i686 dédié gwine)
+- `GST_PLUGIN_SCANNER` / `GST_PLUGIN_SCANNER_1_0` (scanner bundlé 64-bit)
+- `GST_PLUGIN_SCANNER_32` (scanner bundlé 32-bit)
+
+### Overlayfs statfs shim — Fix Kinoite/composefs
+
+Sur Fedora Kinoite (ostree), le rootfs `/` est un overlayfs read-only avec `f_bavail=0`. Wine mappe Z: vers `/`, donc `GetDiskFreeSpaceEx(NULL)` retourne 0 MB → les jeux qui vérifient l'espace disque du CWD crashent (ex: AGS v3.6 "Unable to write in the savegame directory").
+
+**Architecture du shim** :
+- `composefs_statfs_shim.c` : source C qui intercepte `fstatfs`/`fstatfs64`/`statvfs`/`statvfs64`/`fstatvfs`/`fstatvfs64` via `LD_PRELOAD`
+- Quand `f_type == OVERLAYFS_SUPER_MAGIC (0x794c7630)` et `f_bavail == 0`, le shim remplace les valeurs par des blocks factices (50000000 blocks = ~200 GB)
+- Deux binaires : 64-bit (`lib64/`) et 32-bit (`lib/`) — Wine lance des processus mixtes 32/64-bit
+- `LD_PRELOAD` utilise `$LIB` de glibc : `$GWINE_LIB_DIR/$LIB/composefs_statfs_shim.so` → le dynamic linker charge automatiquement le bon .so selon la classe ELF du process (pas de messages `wrong ELF class`)
+
+**Installation runtime** :
+- Mode standalone : les .so sont embarqués en base64 dans `gwine-standalone.sh`, extraits via `_gwine_extract_shims()` dans `$GWINE_LIB_DIR/lib/` et `$GWINE_LIB_DIR/lib64/`
+- Mode développement : les .so sont copiés depuis `lib/` du repo vers `$GWINE_LIB_DIR/`
+
+**Détection** : `stat -f / --printf="%a"` retourne `0` (f_bavail) sur Kinoite → shim activé automatiquement
+
+**Recompilation** (si modification du source C) :
+```bash
+# 64-bit
+gcc -shared -fPIC -o lib/composefs_statfs_shim.so lib/composefs_statfs_shim.c -ldl
+# 32-bit (nécessite glibc-devel.i686, utiliser le container Fedora)
+podman run --rm -v "$(pwd)/lib:/src:z" docker.io/library/fedora:43 bash -c \
+  "dnf install -y gcc glibc-devel.i686 && gcc -m32 -shared -fPIC -o /src/composefs_statfs_shim32.so /src/composefs_statfs_shim.c -ldl"
+```
+
+### Gestion des composants
+- DXVK : double source (officiel `doitsujin/dxvk` + `bottlesdevs/components`), prend la version la plus haute (priorité officiel en cas d'égalité)
+- VKD3D-Proton : double source (officiel `HansKristian-Work/vkd3d-proton` + `bottlesdevs/components`), même règle
+- DXVK-NVAPI : source unique officielle (`jp7677/dxvk-nvapi`, NVIDIA uniquement). L'ancien miroir `bottlesdevs/components` a été abandonné (août 2026) : son flux atom ne liste que les ~10 dernières releases, dxvk-nvapi y disparaît périodiquement (→ échec build ISO), et l'API GitHub paginable est rate-limitée (inutilisable en CI parallèle). L'atom `jp7677` ne contient que des releases nvapi → fiable ; les assets portent le même nom/layout x32-x64. **Installé** dans le préfixe seulement sur GPU NVIDIA (`install_dxvk_nvapi` garde son `is_nvidia_gpu`), mais **toujours téléchargé/empaqueté** dans le cache offline pour rester portable
+- DXVK-GPLAsync : source unique (`gitlab.com/Ph42oN/dxvk-gplasync`, API GitLab v4), version extraite depuis le tag GitLab (format `vX.Y.Z-N`)
+- D7VK : source unique officielle (`WinterSnowfall/d7vk`). Version via la redirection HTML de `github.com/WinterSnowfall/d7vk/releases/latest` (302 → tag, lue via `%{redirect_url}`) : ni le flux atom (il liste aussi les tags sans release — `v2.4_WIP`, `v3.1.1` — qui 404 au download) ni l'API GitHub (quota 60 req/h, épuisé en CI). Asset **zip** — `extract_archive()` gère le cas zip (7z, fallback unzip) — contenant un dossier racine `d7vk-vX.Y.Z/` aplati après extraction (layout attendu `d7vk-X.Y.Z/x32/ddraw.dll`). L'aplatissement est factorisé dans `_flatten_d7vk_dir()` (d7vk.sh), appelé après un nouveau download **et** dans le chemin « déjà installé » de `download_d7vk` — un dossier non aplati d'une ancienne version du code (legacy en cache) est réparé sans re-téléchargement. **Composant requis** comme DXVK : échec de téléchargement = échec de `--update`/`--init`, présence exigée par `--cachepack` et `local_cache_incomplete()`. `install_d7vk()` (components/d7vk.sh) reproduit le mécanisme `PROTON_D7VK_DDRAW` de Proton-CachyOS : sauvegarde du ddraw builtin Wine en `ddraw_.dll` (uniquement si `ddraw.dll` porte le marqueur « Wine builtin » — jamais ré-sauvegarder un d7vk déjà installé, le proxy bouclerait sur lui-même), copie du `ddraw.dll` D7VK (32-bit seul, syswow64 ; le ddraw 64-bit de system32 reste builtin) et override `ddraw=native,builtin`. D7VK est un **proxy** : il traduit D3D7/6/5/3 immediate-mode vers le backend D3D9 de DXVK embarqué et recharge le vrai ddraw depuis `ddraw_.dll`. Nécessite Vulkan 1.4 côté driver (exigence d7vk v2.x — pas de détection pour l'instant, même pari que DXVK mainline qui exige 1.3)
+- `auto_update_components()` détecte le mode DXVK configuré (`dxvk` ou `dxvk-async`) et adapte la vérification/téléchargement en conséquence (async → `download_dxvk_async` + `download_vkd3d`, standard → `download_updated_dxvk_vkd3d`). Purge aussi les dossiers dxvk/vkd3d incomplets (`component_dir_complete`) pour forcer le re-téléchargement même à version égale
+- La source choisie est stockée dans les globales `_DXVK_SOURCE` / `_VKD3D_SOURCE` ("official" ou "bottles")
+- Téléchargement automatique depuis GitHub
+- Système de vérification SHA256
+- **Validation d'intégrité des archives téléchargées** (fix septembre 2026) : `validate_archive()` (download.sh) détecte le format par magic bytes (xz/gzip/zstd/7z/zip/MSI-OLE) et teste le flux complet (`xz -t`, `gzip -t`...) pour détecter les téléchargements tronqués qui restent sur disque. `download_archive()` enchaîne téléchargement + validation + **1 retry** en cas de corruption, et supprime l'archive en cas d'échec final (jamais de fichier corrompu en cache). Utilisé par : runner gwine (`download_gwine` valide aussi l'archive en cache et purges-la si corrompue ; échec d'extraction → re-téléchargement → purge + fallback version existante), `download_github_component`, `download_and_install_component` (DXVK/VKD3D/NVAPI), Mono/Gecko (offline.sh, qui purge aussi les .msi corrompus déjà en cache avant re-téléchargement). Le pack cache `gwine-cache.tar.xz` (bundle) a déjà sa propre vérification SHA256. Attention : `case` bash exige un match complet du mot → les patterns magic courts (gzip `1f8b`, zip `504b`) doivent finir par `*`
+- **Validation du cache au moment de la LECTURE** (fix octobre 2026) : un cache rempli AVANT le fix septembre 2026 (ou corrompu après coup) n'était pas re-vérifié — un .msi Mono/Gecko corrompu faisait échouer `msiexec` à l'init (restauration du préfixe, purge manuelle nécessaire), et un dossier DXVK/VKD3D partiellement extrait s'installait avec des DLLs manquantes (`copy_dll_files` skippe silencieusement les fichiers absents → « succès » dégradé). Désormais :
+  - `component_dir_complete()` (core.sh) vérifie la complétude d'un dossier extrait : auto-adaptatif au layout (bi-arch `x64` + `x32`/`x86` pour dxvk/vkd3d/gplasync → chaque DLL doit exister des deux côtés ; mono-arch 32-bit pour d7vk → `x32`/`x86` seul). DLLs sentinelles : `dxgi.dll d3d11.dll` (DXVK/GPLAsync), `d3d12.dll` (VKD3D, `d3d12core.dll` absent des vieilles versions → pas exigé), `ddraw.dll` (D7VK)
+  - `local_cache_incomplete()` et `download_missing_components()` (offline.sh) valident les .msi (`validate_archive`, testé `7z t` sur les vrais Mono/Gecko, ~0,3-0,8 s par fichier) et la complétude des dossiers dxvk/vkd3d/d7vk ; un élément incomplet est **purgé** avant re-téléchargement (sinon re-DL futile : `download_d7vk` dirait « déjà installé », et un dir de même version fusionnerait avec les restes)
+  - `auto_update_components()` (offline.sh) purge aussi les dossiers dxvk/vkd3d incomplets → `has_dxvk`/`has_vkd3d`=false → re-téléchargement forcé **même si la version est déjà la dernière** (après purge `current_*` est vide, la comparaison de version ne court-circuite plus)
+  - DXVK-NVAPI reste en check présence seule (pas de complétude) : le tarball jp7677 contient un dossier racine imbriqué `dxvk-nvapi-vX.Y.Z/` que `download_dxvk_nvapi` n'aplatit pas — un check de complétude ferait une boucle de re-téléchargements sans réparation (bug existant hors périmètre, à traiter séparément si voulu)
+  - Ne jamais utiliser `find_component_dir` pour DXVK standard sans exclure `gplasync\|nvapi` : le pattern `dxvk-*` matche aussi `dxvk-gplasync-*`/`dxvk-nvapi-*` et `sort -V | tail -1` choisirait le mauvais dossier (g > chiffres). Les checks offline.sh gardent le `grep -v "gplasync\|nvapi"` historique
+- Gestion des versions avec backup automatique
+- Support offline avec cache local
+- Mode `--cachepack` pour créer des packs déployables sur machines sans internet
+- **Installation du runner depuis le cache en mode offline** : le runner extrait vit dans `~/.local/share/gwine/runner`, tandis que le cache `~/.cache/gwine/components/gwine` ne contient que l'archive. Pour permettre de ne déployer QUE `~/.cache/gwine` (ex. déploiement offline pendant l'install Anaconda), deux points d'entrée installent le runner extrait à la volée depuis le cache si absent :
+  - `init_prefix_only()` (modes/init-main.sh) : en mode `--init --offline`, si `$WINE_DIR/bin/wine` est absent, appelle `install_gwine_from_cache` puis `update_runner_paths` (au lieu de l'ancien `error_exit` immédiat). Échec uniquement si aucune archive n'est dans le cache
+  - `ensure_runner_installed()` (runner.sh) : au lancement d'un jeu sans réseau, tente la même installation depuis le cache avant d'échouer (préserve le comportement online : si réseau dispo, télécharge la dernière version)
+- **Détection automatique du mode offline (first-run)** : quand le préfixe n'existe pas et qu'un jeu est lancé pour la première fois, `check_prefix_or_offer_init()` (gwine) détecte automatiquement si le cache local est complet via `gablue_offline_cache_ready()` (offline.sh). Si le cache contient le runner (archive), Wine Mono/Gecko, et les wincomponents, l'init se fait en mode `--init --offline` avec barre de progression kdialog, **sans jamais solliciter le réseau**. Si le cache est incomplet, le comportement actuel est conservé (proposition d'init online). `gablue_offline_cache_ready()` vérifie :
+  - Archive du runner présente (`components/gwine/gwine-*.tar.xz`)
+  - Wine Mono/Gecko présents (`components/wine-cache/wine-mono-*.msi`, `wine-gecko-*.msi`)
+  - Composants Windows présents (`wincomponents/`, validés par `check_wincomponents_cache`)
+- **Lancement automatique après init** : `check_prefix_or_offer_init()` lance l'init comme sous-processus (pas de `exec`) et retourne après succès, permettant au programme appelant (.exe/.wgp) d'être lancé automatiquement. Des notifications `kdialog --passivepopup` informent l'utilisateur du début et de la fin de l'init. En cas d'échec, un `kdialog --error` est affiché.
+
+### Build standalone
+- `build.sh` assemble tous les modules en un fichier `gwine-standalone.sh`
+- Les shims overlayfs .so sont embarqués en base64 et extraits au runtime
+- Utilise les fichiers de redirection pour charger les sous-modules
+- Le fichier généré ne doit pas être commité
+
+## Précautions et cas particuliers
+
+- **Overlayfs shim** : Sur Kinoite, le rootfs a `f_bavail=0` → le shim corrige `GetDiskFreeSpaceEx(NULL)` automatiquement
+- **Overlays kernel** : Nécessitent un workdir SÉPARÉ de l'upperdir (le kernel overlayfs via unshare échoue si workdir ⊆ upperdir)
+- **Caractères non-ASCII et composants de chemin invalides Windows** : `run_classic_mode` (gwine) couvre les deux cas par un **même** mécanisme — un symlink temporaire pointant vers le DOSSIER de l'exécutable (`$gwine_temp_base/gamedir` → dossier réel), pas vers l'exécutable seul. Pourquoi le dossier et pas l'exe : un launcher qui appelle `CreateProcess` pour un sous-exécutable **adjacent** calcule son chemin depuis son propre dossier ; si seul l'exe principal est symlinké, les fichiers voisins ne sont pas accessibles via le chemin temporaire ASCII → le launcher retombe sur le chemin réel accentué → `CreateProcess() returned 2`. En symlinkant le dossier, tous les fichiers adjacents restent accessibles. Deux cas couverts :
+  1. **Accents** (`fullpath` contient des non-ASCII)
+  2. **Composants invalides** (dossier finissant par `.` ou espace, ex: ISO montée avec un label finissant par un point : `/run/media/user/GAME.BUILD.123./setup.exe`) : Windows interdit ces noms, règle émulée par Wine lors de la conversion → fichier introuvable.
+  
+  Détection : `realpath -s` (normalise `.`/`..` sans résoudre les symlinks) puis test des patterns `*"./"*` et `*" /"*` sur le dirname suffixé d'un `/` pour les composants invalides, et `*[^[:ascii:]]*` sur le `fullpath` original pour les accents. Wine ne résout pas les symlinks pour `GetModuleFileName`/`GetCurrentDirectory` (le chemin vu reste ASCII), mais le kernel Linux résout le symlink `gamedir` au moment du `open()` → les fichiers adjacents sont accessibles. Limite connue : le CWD physique (`getcwd()`) garde le nom réel → les accès relatifs au CWD côté Windows restent dégradés (bénin pour la plupart des installateurs/jeux). `gwine_temp_base` est volontairement **globale** (pas `local`) pour rester visible dans les traps EXIT/INT/TERM qui la nettoient
+- **Verrous de processus** : Évite les conflits sur les packs WGP
+- **Relancement** : Support du relancement d'un jeu déjà en cours d'exécution
+- **Mono/Gecko** : Les versions sont hardcodées dans le code (MONO_VER, GECKO_VER dans offline.sh). Version actuelle : Wine Mono **11.3.0** (aligné Proton `00fc30a`, fix régression `Path.GetFullPath` de 11.2.x), Gecko 2.47.4. Le cache vérifie la présence des fichiers exacts (pas juste « dossier non vide ») **et leur intégrité** (`validate_archive` dans `local_cache_incomplete()`/`download_missing_components()` — un .msi corrompu est purgé et re-téléchargé automatiquement au lieu de faire échouer `msiexec` à l'init). Les anciennes versions sont supprimées avant téléchargement. En cas de mise à jour des versions hardcodées, penser à mettre à jour les 4 endroits : `local_cache_incomplete()`, `download_missing_components()`, `prepare_full_offline_cache()` (offline.sh) **et la vérification dans create_cachepack() (cachepack.sh)** — un oubli sur ce dernier fait échouer `--cachepack` avec « Wine Mono/Gecko manquants ».
+- **Pack cache pré-construit (repo gwine-cache, août 2026)** : le repo séparé `elgabo86/gwine-cache` publie chaque semaine une release `latest` contenant `gwine-cache.tar.xz` (cache `~/.cache/gwine` complet : runner + DXVK + GPLAsync + VKD3D + NVAPI + Mono/Gecko + wincomponents), son `.sha256` et `manifest.json` (skip de publication si manifest inchangé). `download_cache_bundle()` (offline.sh) télécharge ce pack en **un seul download**, vérifie le checksum SHA256 (archive non vérifiable refusée), et l'extrait dans `$CACHE_DIR`. Deux points d'accroche : `prepare_local_cache()` (vrai premier lancement uniquement, via la garde `gwine_cache_essentially_empty()` — un cache partiel reste sur le téléchargement unitaire) et `prepare_full_offline_cache()` (`--download-components`) où les étapes unitaires subséquentes ne récupèrent que les composants **plus récents que le pack** ou absents. **Piège accumulation d'archives runner (fix septembre 2026)** : `--download-components` sauvegarde d'abord le runner fraîchement téléchargé dans `components/gwine/`, PUIS déploie le pack par-dessus — si le pack contient déjà des archives, le cache en accumule (`basename` multi-arguments échoue d'ailleurs en exit 1 silencieux avec `2>/dev/null` ; c'est ce qui a fait diverger le manifest `runner:` du pack publié). `create_cachepack()` prune donc les archives dans sa copie de staging pour ne publier que la plus récente (`sort -V | head -n -1`) ; côté consommateurs du pack, extraire le runner via `find | sort -V | tail -1`, jamais un glob nu dans `basename`. Note : le build ISO de gablue n'utilise plus `gwine --download-components` — il télécharge directement les assets de la release `latest` (tar.xz + install-cache.sh + README.txt) dans `/extra` (voir installer/build.sh). **Fallback systématique** : tout échec (404, checksum, archive) → téléchargement unitaire historique. URL surchargeable via `GWINE_CACHE_BUNDLE_URL` (tests/miroirs). `--update` n'est pas concerné (toujours unitaire).
+- **DXVK/VKD3D sources** : get_component_version compare officiel et bottlesdevs, et affiche `version source` sur stdout (2 champs, ex: `3.0.2-1-abc1234 bottles`). **Ne pas utiliser `version=$(get_latest_dxvk_version)`** : la fonction tourne en sous-shell, une variable globale `_DXVK_SOURCE` serait perdue (bug historique : URL officielle reconstruite avec la version bottles → 404). Toujours parser avec `read -r version _DXVK_SOURCE < <(get_latest_dxvk_version) || true` pour récupérer la source dans le shell courant. Les fonctions de téléchargement (dxvk-vkd3d.sh, offline.sh) construisent l'URL selon `_DXVK_SOURCE` / `_VKD3D_SOURCE` ("official" ou "bottles") ; les appelants qui n'ont besoin que de la version (mode-update.sh) ignorent le 2e champ.
+
