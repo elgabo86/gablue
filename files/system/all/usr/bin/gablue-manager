@@ -14,8 +14,8 @@ L'ajout d'un poste copie la clé publique locale (ssh-copy-id) : le mot de passe
 n'est demandé qu'une fois, pour la copie, et n'est jamais enregistré.
 
 La carte « Ce poste » gère la machine courante : mises à jour (image Gablue,
-Flatpaks, gwine) et options avancées (atténuations CPU, options noyau) — reprise de
-l'ancien gablue-config.
+Flatpaks, gwine) et options avancées (protections du processeur, mode ERTM du
+Bluetooth) — reprise de l'ancien gablue-config.
 
 Lancement : gablue-manager
             gablue-manager --help
@@ -53,7 +53,7 @@ from PySide6.QtGui import (
     QColor, QIcon, QKeySequence, QPainter, QPalette, QPen, QPixmap, QShortcut,
 )
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
     QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
     QInputDialog, QSpinBox, QStackedWidget, QToolButton, QVBoxLayout,
@@ -1163,6 +1163,7 @@ QLabel#footer { color: @dim@; font-size: 12px; }
 QLabel#hostName { font-size: 15px; font-weight: 600; }
 QLabel#hostDetail { color: @dim@; font-size: 12px; }
 QLabel#hostStatus { font-size: 12px; font-weight: 500; }
+QCheckBox { font-size: 14px; font-weight: 600; spacing: 8px; }
 QLabel#emptyTitle { font-size: 18px; font-weight: 600; }
 QLabel#emptyText { color: @dim@; font-size: 13px; }
 QLabel#error { color: #e5484d; font-size: 12px; }
@@ -2532,7 +2533,7 @@ class LocalCard(QFrame):
         self.config_button.setCursor(Qt.PointingHandCursor)
         self.config_button.setIcon(QIcon.fromTheme("settings-configure"))
         self.config_button.setToolTip(
-            "Atténuations CPU et options du noyau"
+            "Protections du processeur et mode ERTM du Bluetooth"
         )
         self.config_button.clicked.connect(self.config_requested.emit)
         layout.addWidget(self.config_button, 0, Qt.AlignVCenter)
@@ -2575,45 +2576,103 @@ def ask_remote_password(parent, host: dict) -> str | None:
     return text if ok else None
 
 
-def local_action_argv(action: str) -> list[str]:
-    """Commande locale correspondant à une action de configuration."""
-    rpm = _which("rpm-ostree")
-    if action == "mitigations_off":
-        return [rpm, "kargs", f"--append-if-missing={KARG_MITIGATIONS_OFF}"]
-    if action == "mitigations_on":
-        return [rpm, "kargs", f"--delete-if-present={KARG_MITIGATIONS_OFF}"]
-    if action == "ertm_apply":
-        return [rpm, "kargs", f"--append-if-missing={KARG_BT_ERTM}"]
-    if action == "ertm_remove":
-        return [rpm, "kargs", f"--delete-if-present={KARG_BT_ERTM}"]
-    raise ValueError(action)
+# -- réglages du noyau : état du prochain démarrage et application groupée ----
 
+def kargs_pending() -> set[str]:
+    """Paramètres du noyau du **prochain démarrage** (`rpm-ostree kargs`).
 
-def remote_action_script(action: str, user: str) -> str:
-    """Script distant correspondant à une action de configuration.
-
-    Chaque commande privilégiée utilise `sudo -n` : l'appelant a déjà validé
-    sudo (`remote_sudo_prefix`) quand un mot de passe était nécessaire.
+    `/proc/cmdline` ne décrit que le noyau en cours : après un changement il
+    faudrait redémarrer pour voir le nouvel état, alors que `rpm-ostree kargs`
+    affiche déjà la ligne de commande du déploiement à venir — en lecture, sans
+    root. Repli sur `/proc/cmdline` hors système ostree.
     """
-    sudo = "/usr/bin/sudo -n"
-    if action == "mitigations_off":
-        return f"{sudo} /usr/bin/rpm-ostree kargs --append-if-missing={KARG_MITIGATIONS_OFF}\n"
-    if action == "mitigations_on":
-        return f"{sudo} /usr/bin/rpm-ostree kargs --delete-if-present={KARG_MITIGATIONS_OFF}\n"
-    if action == "ertm_apply":
-        return f"{sudo} /usr/bin/rpm-ostree kargs --append-if-missing={KARG_BT_ERTM}\n"
-    if action == "ertm_remove":
-        return f"{sudo} /usr/bin/rpm-ostree kargs --delete-if-present={KARG_BT_ERTM}\n"
-    raise ValueError(action)
+    try:
+        result = subprocess.run(
+            [_which("rpm-ostree"), "kargs"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return set(result.stdout.split())
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return kernel_cmdline()
+
+
+# Libellé de la case, puis description affichée dessous.
+CHOICE_LABELS = {
+    "mitigations": (
+        "Protections contre les failles du processeur",
+        "Spectre, Meltdown et les autres failles du processeur sont corrigées "
+        "par le noyau. Les désactiver (mitigations=off) accélère les vieux "
+        "processeurs, mais laisse ces failles exploitables.",
+    ),
+    "ertm": (
+        "Désactiver le mode ERTM du Bluetooth",
+        "Le mode de retransmission ERTM fait décrocher certaines manettes et "
+        "certains casques. Le désactiver (bluetooth.disable_ertm=1) les "
+        "stabilise, au prix d'un débit un peu plus faible.",
+    ),
+}
+
+# Mot affiché dans la confirmation, selon l'état de la case.
+CHOICE_STATE = {
+    "mitigations": {True: "activées", False: "désactivées"},
+    "ertm": {True: "désactivé", False: "activé"},
+}
+
+
+def kargs_choices(kargs: set[str]) -> dict[str, bool]:
+    """État des cases à cocher : coché = réglage Gablue appliqué."""
+    return {
+        "mitigations": KARG_MITIGATIONS_OFF not in kargs,
+        "ertm": KARG_BT_ERTM in kargs,
+    }
+
+
+def kargs_ops(key: str, checked: bool) -> list[str]:
+    """Opérations `rpm-ostree kargs` pour un choix donné."""
+    if key == "mitigations":
+        option = "--delete-if-present" if checked else "--append-if-missing"
+        return [f"{option}={KARG_MITIGATIONS_OFF}"]
+    if key == "ertm":
+        option = "--append-if-missing" if checked else "--delete-if-present"
+        return [f"{option}={KARG_BT_ERTM}"]
+    raise ValueError(key)
+
+
+def flatpak_update_script() -> str:
+    """Mise à jour des Flatpaks : compte, puis système sans mot de passe.
+
+    Sans option, `flatpak update` ne vise que l'installation système (défaut de
+    flatpak) et PolicyKit demande le mot de passe ; l'image autorise
+    `/usr/bin/flatpak update --system -y` dans `/etc/sudoers.d/nopasswd`
+    (arguments exacts, aucun joker), donc `sudo -n` passe sans dialogue. Hors
+    image Gablue la règle manque : l'appel direct reprend la main et PolicyKit
+    demande l'autorisation comme avant.
+    """
+    return (
+        "rc=0\n"
+        "if [ -n \"$(flatpak --user list --columns=application 2>/dev/null)\" ]; "
+        "then flatpak update --user -y || rc=$?; fi\n"
+        "sudo -n flatpak update --system -y || "
+        "flatpak update --system -y || rc=$?\n"
+        "exit $rc\n"
+    )
 
 
 class SettingsDialog(QDialog):
-    """Socle des options avancées : état réel affiché, action inverse proposée.
+    """Options avancées : des cases à cocher, un seul bouton « Appliquer ».
 
-    La lecture de l'état et l'exécution viennent de la sous-classe :
-    machine courante (`LocalSettingsDialog`) ou poste distant par SSH
-    (`RemoteSettingsDialog`).
+    Les deux réglages sont des paramètres du noyau : les choix sont accumulés
+    puis envoyés en **un seul** `rpm-ostree kargs` — un déploiement, une
+    autorisation — au lieu d'un aller-retour par case. L'état lu est celui du
+    prochain démarrage, donc les cases restent justes une fois appliquées.
+
+    La lecture et l'exécution viennent des sous-classes : machine courante
+    (`LocalSettingsDialog`) ou poste distant par SSH (`RemoteSettingsDialog`).
     """
+
+    ROWS = ("mitigations", "ertm")
 
     def __init__(self, parent=None, title: str = "Configuration avancée",
                  subtitle: str = ""):
@@ -2621,7 +2680,6 @@ class SettingsDialog(QDialog):
         self.setWindowTitle(title)
         self.setModal(True)
         self.setMinimumWidth(640)
-        self.setMinimumHeight(430)
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(24, 22, 24, 20)
@@ -2639,55 +2697,45 @@ class SettingsDialog(QDialog):
         self.rows_layout = QVBoxLayout()
         self.rows_layout.setSpacing(8)
         root_layout.addLayout(self.rows_layout, 1)
-        self.rows: dict[str, tuple[QLabel, QPushButton]] = {}
-
-        self._add_row(
-            "mitigations", "Atténuations du processeur",
-            "mitigations=off retire les correctifs contre les failles CPU "
-            "(gain sur les vieux processeurs, risque de sécurité assumé).",
-            self._toggle_mitigations,
-        )
-        self._add_row(
-            "ertm", "Options du noyau (Bluetooth)",
-            "Ajoute bluetooth.disable_ertm=1 (réglage recommandé par Gablue).",
-            self._toggle_ertm,
-        )
+        self.checks: dict[str, QCheckBox] = {}
+        for key in self.ROWS:
+            label, description = CHOICE_LABELS[key]
+            self._add_row(key, label, description)
 
         buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+        self.hint_label = QLabel(self)
+        self.hint_label.setObjectName("hostStatus")
+        buttons.addWidget(self.hint_label)
         buttons.addStretch(1)
-        close = QPushButton("Fermer", self)
-        close.setObjectName("accent")
-        close.setDefault(True)
-        close.clicked.connect(self.accept)
-        buttons.addWidget(close)
+        self.close_button = QPushButton("Fermer", self)
+        self.close_button.setObjectName("ghost")
+        self.close_button.setCursor(Qt.PointingHandCursor)
+        self.close_button.clicked.connect(self.accept)
+        buttons.addWidget(self.close_button)
+        self.apply_button = QPushButton("Appliquer", self)
+        self.apply_button.setObjectName("accent")
+        self.apply_button.setCursor(Qt.PointingHandCursor)
+        self.apply_button.clicked.connect(self.apply_changes)
+        buttons.addWidget(self.apply_button)
         root_layout.addLayout(buttons)
 
         self.state: dict = {"ok": False}
+        self.initial: dict[str, bool] = {}
         self.refresh()
 
-    def _add_row(self, key: str, title: str, description: str,
-                 handler) -> None:
+    def _add_row(self, key: str, label: str, description: str) -> None:
         frame = QFrame(self)
         frame.setObjectName("hostCard")
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(6)
 
-        top = QHBoxLayout()
-        top.setSpacing(10)
-        name = QLabel(title, frame)
-        name.setObjectName("hostName")
-        top.addWidget(name)
-        top.addStretch(1)
-        state = QLabel(frame)
-        state.setObjectName("hostStatus")
-        top.addWidget(state)
-        button = QPushButton(frame)
-        button.setObjectName("ghost")
-        button.setCursor(Qt.PointingHandCursor)
-        button.clicked.connect(handler)
-        top.addWidget(button)
-        layout.addLayout(top)
+        check = QCheckBox(label, frame)
+        check.setCursor(Qt.PointingHandCursor)
+        check.toggled.connect(self._update_apply)
+        layout.addWidget(check)
+        self.checks[key] = check
 
         detail = QLabel(description, frame)
         detail.setObjectName("hostDetail")
@@ -2695,89 +2743,85 @@ class SettingsDialog(QDialog):
         layout.addWidget(detail)
 
         self.rows_layout.addWidget(frame)
-        self.rows[key] = (state, button)
-
-    def _set_row(self, key: str, text: str, color: str, button_text: str,
-                 enabled: bool) -> None:
-        state, button = self.rows[key]
-        state.setText(text)
-        state.setStyleSheet(f"color: {color};")
-        button.setText(button_text)
-        button.setEnabled(enabled)
 
     # -- état ---------------------------------------------------------------
     def refresh(self) -> None:
         self.state = self.read_state()
         ok = bool(self.state.get("ok"))
-        off = bool(self.state.get("mitigations_off"))
-        self._set_row(
-            "mitigations",
-            "inconnu" if not ok else ("désactivées" if off else "activées"),
-            COLOR_AUTH if off else COLOR_ONLINE,
-            "Réactiver" if off else "Désactiver", ok,
-        )
-        ertm = bool(self.state.get("ertm"))
-        self._set_row(
-            "ertm",
-            "inconnu" if not ok else ("appliquées" if ertm else "non appliquées"),
-            COLOR_ONLINE if ertm else COLOR_OFFLINE,
-            "Retirer" if ertm else "Appliquer", ok,
-        )
+        choices = kargs_choices(self.state.get("kargs", set())) if ok else {}
+        self.initial = dict(choices)
+        for key, check in self.checks.items():
+            check.blockSignals(True)
+            check.setChecked(bool(choices.get(key)))
+            check.blockSignals(False)
+            check.setEnabled(ok)
+        self._update_apply()
 
-    # -- actions ------------------------------------------------------------
-    def _toggle_mitigations(self) -> None:
-        if not self.state.get("ok"):
-            return
-        off = bool(self.state.get("mitigations_off"))
-        question = (
-            "Réactiver les atténuations du processeur ?\n\n"
-            "Le paramètre mitigations=off sera retiré ; effet au prochain "
-            "démarrage."
-            if off else
-            "Désactiver les atténuations du processeur ?\n\n"
-            "Le noyau démarrera avec mitigations=off : les correctifs contre "
-            "les failles CPU (Spectre, Meltdown…) ne seront plus actifs. "
-            "Effet au prochain démarrage."
-        )
-        if QMessageBox.question(
-            self, "Atténuations du processeur", question,
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        ) != QMessageBox.Yes:
-            return
-        self.apply(
-            "mitigations_on" if off else "mitigations_off",
-            "Atténuations du processeur",
-            "rpm-ostree kargs — effet au prochain démarrage.",
-        )
+    def changed(self) -> list[str]:
+        """Clés dont la case diffère de l'état du noyau."""
+        return [
+            key for key, check in self.checks.items()
+            if check.isChecked() != self.initial.get(key)
+        ]
 
-    def _toggle_ertm(self) -> None:
+    def _update_apply(self) -> None:
         if not self.state.get("ok"):
+            self.apply_button.setEnabled(False)
+            self.hint_label.setText("État illisible — réglages non modifiables.")
             return
-        applied = bool(self.state.get("ertm"))
-        question = (
-            "Retirer les options noyau de Gablue ?\n\n"
-            "bluetooth.disable_ertm=1 sera supprimé. Effet au prochain démarrage."
-            if applied else
-            "Appliquer les options noyau recommandées ?\n\n"
-            "bluetooth.disable_ertm=1 sera ajouté. "
-            "Effet au prochain démarrage."
+        changed = self.changed()
+        self.apply_button.setEnabled(bool(changed))
+        if changed:
+            count = len(changed)
+            self.hint_label.setText(
+                f"{count} réglage{'s' if count > 1 else ''} à appliquer"
+            )
+        else:
+            self.hint_label.setText("Aucun changement.")
+
+    # -- application groupée ------------------------------------------------
+    def apply_changes(self) -> None:
+        keys = self.changed()
+        if not keys:
+            return
+        details = "\n".join(
+            f"• {CHOICE_LABELS[key][0]} : "
+            f"{CHOICE_STATE[key][self.checks[key].isChecked()]}"
+            for key in keys
         )
-        if QMessageBox.question(
-            self, "Options du noyau", question,
+        answer = QMessageBox.question(
+            self, "Réglages du noyau",
+            f"Appliquer ces réglages ?\n\n{details}\n\n"
+            "Ils prennent effet au prochain démarrage.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        ) != QMessageBox.Yes:
-            return
-        self.apply(
-            "ertm_remove" if applied else "ertm_apply",
-            "Options du noyau",
-            "rpm-ostree kargs — effet au prochain démarrage.",
         )
+        if answer != QMessageBox.Yes:
+            return
+        ops = [
+            operation for key in keys
+            for operation in kargs_ops(key, self.checks[key].isChecked())
+        ]
+        self.apply(ops)
+        self.refresh()
+
+    def reject(self) -> None:
+        # Fermer avec des cases modifiées ne doit pas jeter les choix en
+        # silence : l'application se fait uniquement par « Appliquer ».
+        if self.changed():
+            answer = QMessageBox.question(
+                self, "Réglages non appliqués",
+                "Fermer sans appliquer les réglages modifiés ?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+        super().reject()
 
     # -- à fournir par la sous-classe ---------------------------------------
     def read_state(self) -> dict:
         raise NotImplementedError
 
-    def apply(self, action: str, title: str, subtitle: str) -> None:
+    def apply(self, ops: list[str]) -> None:
         raise NotImplementedError
 
 
@@ -2787,25 +2831,21 @@ class LocalSettingsDialog(SettingsDialog):
     def __init__(self, parent=None):
         super().__init__(
             parent, "Configuration avancée",
-            "Réglages de cette machine. Les paramètres du noyau s'appliquent au "
-            "prochain démarrage.",
+            "Réglages de cette machine, écrits dans la ligne de commande du "
+            "noyau : effet au prochain démarrage. Les changements partent "
+            "ensemble, en une seule opération.",
         )
 
     def read_state(self) -> dict:
-        cmdline = kernel_cmdline()
-        return {
-            "ok": True,
-            "mitigations_off": KARG_MITIGATIONS_OFF in cmdline,
-            "ertm": KARG_BT_ERTM in cmdline,
-        }
+        return {"ok": True, "kargs": kargs_pending()}
 
-    def apply(self, action: str, title: str, subtitle: str) -> None:
+    def apply(self, ops: list[str]) -> None:
         dialog = LocalTaskDialog(
-            self, title=title, subtitle=subtitle,
-            argv=local_action_argv(action), root=True,
+            self, title="Réglages du noyau",
+            subtitle="rpm-ostree kargs — effet au prochain démarrage.",
+            argv=[_which("rpm-ostree"), "kargs", *ops], root=True,
         )
         dialog.exec()
-        self.refresh()
 
 
 class RemoteSettingsDialog(SettingsDialog):
@@ -2815,36 +2855,36 @@ class RemoteSettingsDialog(SettingsDialog):
         self.host = dict(host or {})
         super().__init__(
             parent, f"Configuration avancée — {display_name(self.host)}",
-            f"Réglages de {address_text(self.host)}, lus et modifiés par SSH. "
-            "Les paramètres du noyau s'appliquent au prochain démarrage.",
+            f"Réglages de {address_text(self.host)}, lus et appliqués par SSH : "
+            "effet à son prochain démarrage. Les changements partent ensemble, "
+            "en une seule opération.",
         )
 
     def read_state(self) -> dict:
-        code, output = ssh_capture(self.host, "cat /proc/cmdline")
-        if code != 0:
+        code, output = ssh_capture(
+            self.host, "rpm-ostree kargs 2>/dev/null || cat /proc/cmdline"
+        )
+        if code != 0 or not output.strip():
             return {"ok": False}
-        cmdline = set(output.split())
-        return {
-            "ok": True,
-            "mitigations_off": KARG_MITIGATIONS_OFF in cmdline,
-            "ertm": KARG_BT_ERTM in cmdline,
-        }
+        return {"ok": True, "kargs": set(output.split())}
 
-    def apply(self, action: str, title: str, subtitle: str) -> None:
+    def apply(self, ops: list[str]) -> None:
         password = ""
         if not remote_sudo_nopasswd(self.host):
             password = ask_remote_password(self, self.host)
             if password is None:
                 return
-        command = remote_sudo_prefix(password) + remote_action_script(
-            action, self.host.get("user") or getpass.getuser()
+        command = (
+            remote_sudo_prefix(password)
+            + "sudo -n /usr/bin/rpm-ostree kargs "
+            + " ".join(ops) + "\n"
         )
         dialog = RemoteTaskDialog(
-            self, host=self.host, title=title, subtitle=subtitle,
+            self, host=self.host, title="Réglages du noyau",
+            subtitle="rpm-ostree kargs — effet au prochain démarrage.",
             command=command, password=password,
         )
         dialog.exec()
-        self.refresh()
 
 
 # =============================================================================
@@ -3650,19 +3690,16 @@ class MainWindow(QMainWindow):
             self, "Mettre à jour les Flatpaks",
             f"Mettre à jour les applications Flatpak de "
             f"« {display_name(host)} » ({address_text(host)}) ?\n\n"
-            "Compte et système ; la partie système passe par sudo sur le poste.",
+            "Compte et système. La partie système est autorisée sans mot de "
+            "passe sur un poste Gablue (règle sudoers de l'image) ; si elle "
+            "manque, le journal le dit au lieu de demander le mot de passe.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
-        script = (
-            "flatpak update --user -y || rc=1\n"
-            "sudo -n /usr/bin/flatpak update --system -y || true\n"
-            "exit ${rc:-0}\n"
-        )
         self._run_remote_script(
             host, f"Flatpaks — {display_name(host)}",
-            "flatpak update (compte puis système).", script, root=True,
+            "flatpak update --user puis --system.", flatpak_update_script(),
         )
 
     def update_remote_gwine(self, host: dict) -> None:
@@ -3799,16 +3836,17 @@ class MainWindow(QMainWindow):
         answer = QMessageBox.question(
             self, "Mise à jour des Flatpaks",
             "Mettre à jour les applications Flatpak ?\n\n"
-            "Les applications du compte et du système sont concernées ; "
-            "PolicyKit peut demander une autorisation pour la partie système.",
+            "Les applications du compte et du système sont concernées. La "
+            "partie système passe par sudo : sur Gablue elle est autorisée "
+            "sans mot de passe, ailleurs PolicyKit le demandera.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
         self._run_local_task(
             "Mise à jour des Flatpaks",
-            "flatpak update -y — compte et système.",
-            [flatpak, "update", "-y"],
+            "flatpak update --user puis --system.",
+            [_which("bash"), "-c", flatpak_update_script()],
         )
 
     def update_local_gwine(self) -> None:
@@ -4094,7 +4132,8 @@ terminal SSH, réveil Wake-on-LAN, arrêt, redémarrage et mise à jour, découv
 mDNS, import de ~/.ssh/config, ajout d'un poste avec copie de la clé.
 
 Cette machine : serveur SSH et annonce mDNS, mises à jour (image Gablue,
-Flatpaks, gwine) et options avancées (atténuations CPU, options noyau).
+Flatpaks, gwine) et options avancées (protections du processeur, mode ERTM du
+Bluetooth), appliquées ensemble en une seule opération.
 
 Configuration : ~/.config/gablue/ssh-hosts.json (mode 0600)
 Clé locale    : ~/.ssh/id_ed25519 (créée au besoin, sans passphrase)
