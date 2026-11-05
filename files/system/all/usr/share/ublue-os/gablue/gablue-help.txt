@@ -22,8 +22,6 @@
 
 - neofetch                        # Affiche la configuration actuelle du système
 
-- gablue-update                   # Permet de forcer la mise à jour système + les applications flatpak
-
 - goarch                          # Permet le lancer le système archlinux (à installer avant)
 
 - ujust toggle-updates            # Active/Désactive les mise à jour automatiques (activé par défaut)

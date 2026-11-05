@@ -41,7 +41,6 @@ chmod +x /usr/bin/wallpaper-import
 
 chmod +x /usr/bin/gablue-isomount
 chmod +x /usr/bin/konsole-run
-chmod +x /usr/bin/gablue-update
 chmod +x /usr/bin/gablue-apk-installer
 chmod +x /usr/bin/gablue-manager
 chmod +x /usr/bin/ssh-key-add

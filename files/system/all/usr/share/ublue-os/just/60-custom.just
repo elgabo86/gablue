@@ -656,11 +656,6 @@ toggle-updates-all ACTION="":
       echo "No changes were made."
     fi
 
-# Update gablue and flatpaks
-gablue-update:
-    #!/usr/bin/bash
-    /usr/bin/gablue-update
-
 # Rebase Gablue to another variant
 gablue-rebase:
     #!/usr/bin/bash

@@ -422,7 +422,7 @@ dnf5 -y install \
 # =============================================================================
 
 # Modules requis par les scripts et applications Gablue
-# (evdev = manette, pyside6 = interfaces graphiques tvqt/gablue-update/menus)
+# (evdev = manette, pyside6 = interfaces graphiques tvqt/gablue-manager/menus)
 # python3-uinput retire : casse sous Python 3.14 (distutils supprime),
 # mouse.py remplace par le binaire C gamepadshortcuts-mouse
 dnf5 -y install \

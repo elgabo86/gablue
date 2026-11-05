@@ -21,8 +21,6 @@ alias sherlock="podman run --rm docker.io/sherlock/sherlock:latest"
 
 alias fkill="ps aux | grep 'bwrap' | grep -v 'SyncThingy' | grep -v 'xdg-dbus-proxy' | grep -v 'grep' | awk '{print $2}' | xargs kill -9"
 
-alias gablue-update="ujust gablue-update"
-
 alias vrr-on="kscreen-doctor output.1.vrrpolicy.automatic"
 
 alias vrr-off="kscreen-doctor output.1.vrrpolicy.never"
