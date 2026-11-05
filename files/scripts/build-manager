@@ -1,0 +1,33 @@
+#!/usr/bin/bash
+
+# Installation de Gablue Manager depuis ses sources modulaires
+# Le paquet Python va dans /usr/lib/gablue-manager, le lanceur dans /usr/bin :
+# /usr/bin/gablue-manager reste le point d'entrée (menu, .desktop, --help).
+
+set -eoux pipefail
+
+SRC_DIR="/src/gablue-manager"
+
+if [ ! -d "$SRC_DIR/gablue_manager" ]; then
+    echo "ATTENTION: sources gablue-manager introuvables dans $SRC_DIR"
+    exit 1
+fi
+
+# =============================================================================
+# INSTALLATION
+# =============================================================================
+
+install -d /usr/lib/gablue-manager
+cp -a "$SRC_DIR/gablue_manager" /usr/lib/gablue-manager/
+install -Dm755 "$SRC_DIR/gablue-manager" /usr/bin/gablue-manager
+
+# =============================================================================
+# NETTOYAGE
+# =============================================================================
+
+# Aucun .pyc dans l'image : ils seraient liés au Python du build, pas à celui
+# du poste (et /usr est en lecture seule sur composefs).
+find /usr/lib/gablue-manager -name '__pycache__' -type d -prune -exec rm -rf {} +
+
+rm -rf "$SRC_DIR"
+rmdir /src 2>/dev/null || true

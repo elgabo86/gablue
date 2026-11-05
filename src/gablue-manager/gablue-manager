@@ -1,0 +1,23 @@
+#!/usr/bin/python3
+
+"""Lanceur de Gablue Manager.
+
+Le paquet Python vit dans /usr/lib/gablue-manager (installé par
+`files/scripts/build-manager`) ; en développement, ce lanceur trouve le paquet
+juste à côté de lui, si bien que `src/gablue-manager/gablue-manager` marche
+directement depuis le dépôt.
+"""
+
+import sys
+from pathlib import Path
+
+_HERE = Path(__file__).resolve().parent
+for _candidate in (_HERE, Path("/usr/lib/gablue-manager")):
+    if (_candidate / "gablue_manager").is_dir():
+        sys.path.insert(0, str(_candidate))
+        break
+
+from gablue_manager.app import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

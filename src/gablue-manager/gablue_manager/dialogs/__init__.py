@@ -1,0 +1,1 @@
+"""Dialogues de Gablue Manager."""
