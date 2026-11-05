@@ -14,8 +14,10 @@ L'ajout d'un poste copie la clé publique locale (ssh-copy-id) : le mot de passe
 n'est demandé qu'une fois, pour la copie, et n'est jamais enregistré.
 
 La carte « Ce poste » gère la machine courante : mises à jour (image Gablue,
-Flatpaks, gwine) et options avancées (protections du processeur, mode ERTM du
-Bluetooth) — reprise de l'ancien gablue-config.
+Flatpaks, gwine), options du noyau (protections du processeur, correctif CPUID,
+mode ERTM du Bluetooth), options de gwine (DXVK asynchrone, X11 ou Wayland,
+manettes en Xbox 360) et priorité au premier plan — reprise de l'ancien
+gablue-config et des recettes ujust correspondantes.
 
 Lancement : gablue-manager
             gablue-manager --help
@@ -23,6 +25,7 @@ Lancement : gablue-manager
 Les postes sont décrits dans ~/.config/gablue/ssh-hosts.json (mode 0600).
 """
 
+import configparser
 import fcntl
 import getpass
 import glob
@@ -53,7 +56,8 @@ from PySide6.QtGui import (
     QColor, QIcon, QKeySequence, QPainter, QPalette, QPen, QPixmap, QShortcut,
 )
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout,
+    QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
     QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
     QInputDialog, QSpinBox, QStackedWidget, QToolButton, QVBoxLayout,
@@ -599,6 +603,7 @@ def local_sshd_state() -> tuple[bool, bool]:
 OS_RELEASE = Path("/etc/os-release")
 CMDLINE = Path("/proc/cmdline")
 KARG_MITIGATIONS_OFF = "mitigations=off"
+KARG_CLEARCPUID = "clearcpuid=514"      # ex-`ujust cpuid-fix-on`
 KARG_BT_ERTM = "bluetooth.disable_ertm=1"
 
 
@@ -1077,6 +1082,23 @@ class KeyInstallWorker(QThread):
         self.done.emit(ok, message)
 
 
+class KeyProbeWorker(QThread):
+    """Vérifie si la clé est déjà acceptée, avant de demander un mot de passe."""
+
+    done = Signal(bool, str)
+
+    def __init__(self, host: dict, parent=None):
+        super().__init__(parent)
+        self._host = dict(host)
+
+    def run(self) -> None:
+        try:
+            ok, detail = probe_key(self._host)
+        except Exception as exc:      # le dialogue ne doit jamais rester muet
+            ok, detail = False, str(exc)
+        self.done.emit(ok, detail)
+
+
 class SshTaskWorker(QThread):
     """Exécute une commande distante en streaming (arrêt, redémarrage, mise à jour)."""
 
@@ -1238,7 +1260,7 @@ QToolButton#more {
 QToolButton#more:hover { background: @cardHover@; border-color: @border@; }
 QToolButton#more::menu-indicator { image: none; }
 
-QLineEdit, QSpinBox {
+QLineEdit, QSpinBox, QComboBox {
     background: @field@;
     color: @text@;
     border: 1px solid @border@;
@@ -1247,7 +1269,16 @@ QLineEdit, QSpinBox {
     selection-background-color: @accent@;
     selection-color: @onAccent@;
 }
-QLineEdit:focus, QSpinBox:focus { border-color: @accent@; }
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border-color: @accent@; }
+QComboBox::drop-down { border: none; width: 22px; }
+QComboBox QAbstractItemView {
+    background: @menu@;
+    color: @text@;
+    border: 1px solid @border@;
+    border-radius: 8px;
+    selection-background-color: @accent@;
+    selection-color: @onAccent@;
+}
 
 QPlainTextEdit {
     background: @field@;
@@ -1402,6 +1433,8 @@ class HostCard(QFrame):
     wake_requested = Signal(str)
     update_requested = Signal(str, str)   # id du poste, type de mise à jour
     settings_requested = Signal(str)
+    gwine_requested = Signal(str)
+    booster_requested = Signal(str)
     reboot_requested = Signal(str)
     shutdown_requested = Signal(str)
 
@@ -1514,9 +1547,17 @@ class HostCard(QFrame):
                     self.host["id"], k
                 ),
             )
-        settings_action = menu.addAction("Configuration avancée…")
+        settings_action = menu.addAction("Réglages du noyau…")
         settings_action.triggered.connect(
             lambda: self.settings_requested.emit(self.host["id"])
+        )
+        gwine_action = menu.addAction("Options de gwine…")
+        gwine_action.triggered.connect(
+            lambda: self.gwine_requested.emit(self.host["id"])
+        )
+        booster_action = menu.addAction("Priorité au premier plan…")
+        booster_action.triggered.connect(
+            lambda: self.booster_requested.emit(self.host["id"])
         )
         reboot_action = menu.addAction("Redémarrer…")
         reboot_action.triggered.connect(
@@ -1870,6 +1911,7 @@ class KeyInstallDialog(QDialog):
         super().__init__(parent)
         self._host = dict(host or {})
         self._worker: KeyInstallWorker | None = None
+        self._probe_worker: KeyProbeWorker | None = None
         self._success = False
 
         self.setWindowTitle(f"Clé SSH — {display_name(self._host)}")
@@ -1880,37 +1922,52 @@ class KeyInstallDialog(QDialog):
         root.setContentsMargins(24, 22, 24, 20)
         root.setSpacing(12)
 
-        title = QLabel(f"Copier la clé vers {display_name(self._host)}")
-        title.setObjectName("title")
-        root.addWidget(title)
+        self.title = QLabel(f"Copier la clé vers {display_name(self._host)}")
+        self.title.setObjectName("title")
+        root.addWidget(self.title)
 
-        explanation = QLabel(
+        self.explanation = QLabel(
             f'La clé publique {PUBLIC_KEY.name} sera ajoutée à '
             f'~/.ssh/authorized_keys sur {address_text(self._host)}. '
             "Ensuite, plus de mot de passe : connexion, bureau distant et "
             "fichiers passent par la clé."
         )
-        explanation.setObjectName("subtitle")
-        explanation.setWordWrap(True)
-        root.addWidget(explanation)
+        self.explanation.setObjectName("subtitle")
+        self.explanation.setWordWrap(True)
+        root.addWidget(self.explanation)
         root.addSpacing(4)
 
-        root.addWidget(HostDialog._field_label("Mot de passe SSH"))
-        self.password_edit = QLineEdit(self)
+        # Rien n'est demandé tant qu'on ne sait pas si la clé est déjà là : un
+        # poste qui l'accepte déjà n'a besoin d'aucun mot de passe, et le
+        # champ n'apparaît qu'une fois la vérification terminée.
+        self.status_label = QLabel("Vérification de la clé sur le poste…", self)
+        self.status_label.setObjectName("hint")
+        self.status_label.setWordWrap(True)
+        root.addWidget(self.status_label)
+
+        self.form_box = QWidget(self)
+        form = QVBoxLayout(self.form_box)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(6)
+        form.addWidget(HostDialog._field_label("Mot de passe SSH"))
+        self.password_edit = QLineEdit(self.form_box)
         self.password_edit.setEchoMode(QLineEdit.Password)
         self.password_edit.setPlaceholderText(
             "mot de passe du compte distant (jamais enregistré)"
         )
         self.password_edit.setText(password)
-        root.addWidget(self.password_edit)
+        form.addWidget(self.password_edit)
 
         hint = QLabel(
             "Le mot de passe sert uniquement à ssh-copy-id, il n'est ni écrit "
-            "sur le disque ni stocké dans la configuration."
+            "sur le disque ni stocké dans la configuration.",
+            self.form_box,
         )
         hint.setObjectName("hint")
         hint.setWordWrap(True)
-        root.addWidget(hint)
+        form.addWidget(hint)
+        self.form_box.setVisible(False)
+        root.addWidget(self.form_box)
 
         self.result_label = QLabel(self)
         self.result_label.setWordWrap(True)
@@ -1934,10 +1991,56 @@ class KeyInstallDialog(QDialog):
         self.install_button.setObjectName("accent")
         self.install_button.setDefault(True)
         self.install_button.clicked.connect(self._start)
+        self.install_button.setVisible(False)
         buttons.addWidget(self.install_button)
         root.addLayout(buttons)
 
         self.password_edit.returnPressed.connect(self._start)
+        QTimer.singleShot(60, self._probe)
+
+    # -- vérification préalable ---------------------------------------------
+    def _probe(self) -> None:
+        # La vérification est bornée par les délais de ssh (4 s) : laisser la
+        # fenêtre se fermer pendant ce temps détruirait le thread en vol.
+        self.close_button.setEnabled(False)
+        worker = KeyProbeWorker(self._host, self)
+        worker.done.connect(self._probe_done)
+        self._probe_worker = worker
+        worker.start()
+
+    def _probe_done(self, ok: bool, detail: str) -> None:
+        self._probe_worker = None
+        self.close_button.setEnabled(True)
+        if ok:
+            self.title.setText(
+                f"Clé déjà installée sur {display_name(self._host)}"
+            )
+            self.explanation.setVisible(False)
+            self.status_label.setText(
+                "Cette clé est déjà acceptée par le poste : aucune action "
+                "nécessaire, aucun mot de passe à saisir."
+            )
+            restyle_label(self.status_label, "ok")
+            self.form_box.setVisible(False)
+            self.install_button.setVisible(False)
+            self.close_button.setDefault(True)
+            self.close_button.setFocus()
+            self._success = True
+            self.installed.emit()
+            self.adjustSize()
+            return
+        restyle_label(self.status_label, "hint")
+        if detail:
+            self.status_label.setText(
+                f"La clé n'est pas encore acceptée ({detail})."
+            )
+        else:
+            self.status_label.setText(
+                "La clé n'est pas encore acceptée par ce poste."
+            )
+        self.form_box.setVisible(True)
+        self.install_button.setVisible(True)
+        self.password_edit.setFocus()
 
     def _start(self) -> None:
         if self._worker is not None and self._worker.isRunning():
@@ -2470,6 +2573,8 @@ class LocalCard(QFrame):
 
     update_requested = Signal(str)   # "gablue" | "flatpak" | "gwine"
     config_requested = Signal()
+    gwine_requested = Signal()
+    booster_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2528,14 +2633,20 @@ class LocalCard(QFrame):
         self.update_button.setMenu(menu)
         layout.addWidget(self.update_button, 0, Qt.AlignVCenter)
 
-        self.config_button = QPushButton("Configuration…", self)
+        # Un seul bouton, deux dialogues : réglages du noyau (kargs) et
+        # options de gwine (préfixe Windows). Elles ne s'appliquent pas au
+        # même endroit, d'où deux entrées plutôt qu'un dialogue fourre-tout.
+        self.config_button = QPushButton("Configuration", self)
         self.config_button.setObjectName("ghost")
         self.config_button.setCursor(Qt.PointingHandCursor)
         self.config_button.setIcon(QIcon.fromTheme("settings-configure"))
-        self.config_button.setToolTip(
-            "Protections du processeur et mode ERTM du Bluetooth"
+        config_menu = QMenu(self.config_button)
+        config_menu.addAction("Réglages du noyau…", self.config_requested.emit)
+        config_menu.addAction("Options de gwine…", self.gwine_requested.emit)
+        config_menu.addAction(
+            "Priorité au premier plan…", self.booster_requested.emit
         )
-        self.config_button.clicked.connect(self.config_requested.emit)
+        self.config_button.setMenu(config_menu)
         layout.addWidget(self.config_button, 0, Qt.AlignVCenter)
 
 
@@ -2598,6 +2709,15 @@ def kargs_pending() -> set[str]:
     return kernel_cmdline()
 
 
+def restyle_label(widget: QLabel, name: str) -> None:
+    """Change l'objectName d'un libellé et réapplique la feuille de style."""
+    if widget.objectName() == name:
+        return
+    widget.setObjectName(name)
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+
+
 # Libellé de la case, puis description affichée dessous.
 CHOICE_LABELS = {
     "mitigations": (
@@ -2605,6 +2725,13 @@ CHOICE_LABELS = {
         "Spectre, Meltdown et les autres failles du processeur sont corrigées "
         "par le noyau. Les désactiver (mitigations=off) accélère les vieux "
         "processeurs, mais laisse ces failles exploitables.",
+    ),
+    "cpuid": (
+        "Correctif CPUID pour certains jeux",
+        "Certains jeux (Hogwarts Legacy, entre autres, sur Ryzen) plantent "
+        "parce que le noyau annonce une extension du processeur qu'ils gèrent "
+        "mal. L'option clearcpuid=514 la masque : à activer seulement si un jeu "
+        "plante au lancement, à laisser désactivée sinon.",
     ),
     "ertm": (
         "Désactiver le mode ERTM du Bluetooth",
@@ -2617,7 +2744,15 @@ CHOICE_LABELS = {
 # Mot affiché dans la confirmation, selon l'état de la case.
 CHOICE_STATE = {
     "mitigations": {True: "activées", False: "désactivées"},
+    "cpuid": {True: "activé", False: "désactivé"},
     "ertm": {True: "désactivé", False: "activé"},
+}
+
+# Valeur recommandée, pour les cases qui en ont une : le correctif CPUID en
+# est exclu, il dépend du jeu et n'a pas de « bon » réglage par défaut.
+CHOICE_RECOMMENDED = {
+    "mitigations": True,    # garder les protections : sécurité d'abord
+    "ertm": True,           # réglage recommandé par Gablue
 }
 
 
@@ -2625,6 +2760,7 @@ def kargs_choices(kargs: set[str]) -> dict[str, bool]:
     """État des cases à cocher : coché = réglage Gablue appliqué."""
     return {
         "mitigations": KARG_MITIGATIONS_OFF not in kargs,
+        "cpuid": KARG_CLEARCPUID in kargs,
         "ertm": KARG_BT_ERTM in kargs,
     }
 
@@ -2634,6 +2770,9 @@ def kargs_ops(key: str, checked: bool) -> list[str]:
     if key == "mitigations":
         option = "--delete-if-present" if checked else "--append-if-missing"
         return [f"{option}={KARG_MITIGATIONS_OFF}"]
+    if key == "cpuid":
+        option = "--append-if-missing" if checked else "--delete-if-present"
+        return [f"{option}={KARG_CLEARCPUID}"]
     if key == "ertm":
         option = "--append-if-missing" if checked else "--delete-if-present"
         return [f"{option}={KARG_BT_ERTM}"]
@@ -2663,7 +2802,7 @@ def flatpak_update_script() -> str:
 class SettingsDialog(QDialog):
     """Options avancées : des cases à cocher, un seul bouton « Appliquer ».
 
-    Les deux réglages sont des paramètres du noyau : les choix sont accumulés
+    Les trois réglages sont des paramètres du noyau : les choix sont accumulés
     puis envoyés en **un seul** `rpm-ostree kargs` — un déploiement, une
     autorisation — au lieu d'un aller-retour par case. L'état lu est celui du
     prochain démarrage, donc les cases restent justes une fois appliquées.
@@ -2672,7 +2811,7 @@ class SettingsDialog(QDialog):
     (`LocalSettingsDialog`) ou poste distant par SSH (`RemoteSettingsDialog`).
     """
 
-    ROWS = ("mitigations", "ertm")
+    ROWS = ("mitigations", "cpuid", "ertm")
 
     def __init__(self, parent=None, title: str = "Configuration avancée",
                  subtitle: str = ""):
@@ -2698,6 +2837,7 @@ class SettingsDialog(QDialog):
         self.rows_layout.setSpacing(8)
         root_layout.addLayout(self.rows_layout, 1)
         self.checks: dict[str, QCheckBox] = {}
+        self.recommendations: dict[str, QLabel] = {}
         for key in self.ROWS:
             label, description = CHOICE_LABELS[key]
             self._add_row(key, label, description)
@@ -2742,6 +2882,12 @@ class SettingsDialog(QDialog):
         detail.setWordWrap(True)
         layout.addWidget(detail)
 
+        if key in CHOICE_RECOMMENDED:
+            recommendation = QLabel(frame)
+            recommendation.setObjectName("hint")
+            layout.addWidget(recommendation)
+            self.recommendations[key] = recommendation
+
         self.rows_layout.addWidget(frame)
 
     # -- état ---------------------------------------------------------------
@@ -2764,7 +2910,19 @@ class SettingsDialog(QDialog):
             if check.isChecked() != self.initial.get(key)
         ]
 
+    def _update_recommendations(self) -> None:
+        ok = bool(self.state.get("ok"))
+        for key, label in self.recommendations.items():
+            recommended = CHOICE_RECOMMENDED[key]
+            differs = ok and self.checks[key].isChecked() != recommended
+            text = f"Recommandé : {CHOICE_STATE[key][recommended]}"
+            if differs:
+                text += " — votre choix diffère"
+            label.setText(text)
+            restyle_label(label, "warn" if differs else "hint")
+
     def _update_apply(self) -> None:
+        self._update_recommendations()
         if not self.state.get("ok"):
             self.apply_button.setEnabled(False)
             self.hint_label.setText("État illisible — réglages non modifiables.")
@@ -2887,6 +3045,652 @@ class RemoteSettingsDialog(SettingsDialog):
         dialog.exec()
 
 
+# -- options de gwine : DXVK, affichage et manettes Sony en Xbox 360 ----------
+
+GWINE_FILTERS = (
+    ("all", "Toutes les manettes Sony"),
+    ("ds4", "DualShock 4"),
+    ("dualsense", "DualSense"),
+)
+
+GWINE_DISPLAYS = (
+    ("x11", "X11 (XWayland)"),
+    ("wayland", "Wayland natif (expérimental)"),
+)
+
+# Valeur recommandée de chaque réglage (libellé, valeur).
+GWINE_RECOMMENDED = {
+    "dxvk_async": ("DXVK standard, sans async", False),
+    "wayland": ("X11 (XWayland)", False),
+    "xbox": ("désactivé, à activer au cas par cas", False),
+}
+
+
+def gwine_binary() -> str:
+    """Chemin de gwine (repli /usr/bin, le PATH d'une session GUI est incomplet)."""
+    found = shutil.which("gwine")
+    if found:
+        return found
+    fallback = Path("/usr/bin/gwine")
+    return str(fallback) if fallback.exists() else "gwine"
+
+
+def gwine_options_path() -> Path:
+    """Fichier d'options de gwine (`$GWINE_DIR/options`)."""
+    return Path.home() / ".local/share/gwine/options"
+
+
+def parse_gwine_options(text: str) -> dict:
+    """Lit `dxvk_mode`, `display_mode`, `xbox_default` et `xbox_filter`."""
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+    return {
+        "dxvk_async": values.get("dxvk_mode") == "dxvk-async",
+        "wayland": values.get("display_mode") == "wayland",
+        "xbox": values.get("xbox_default") == "on",
+        "filter": values.get("xbox_filter", "all"),
+    }
+
+
+class GwineOptionsDialog(QDialog):
+    """Options de gwine, communes à tous les lancements de jeux Windows.
+
+    Trois réglages persistants de `~/.local/share/gwine/options` : le DXVK
+    asynchrone (GPLAsync), le mode d'affichage (X11 par défaut, Wayland natif
+    expérimental) et l'émulation Xbox 360 des manettes Sony (ds2xbox, avec son
+    filtre). « Appliquer » passe par gwine lui-même — il garde le fichier au
+    bon format et réinstalle les DLL DXVK du préfixe — donc le réglage vaut dès
+    le prochain lancement. Un poste distant est lu et modifié par SSH.
+    """
+
+    def __init__(self, parent=None, host: dict | None = None):
+        super().__init__(parent)
+        self.host = dict(host or {})
+        remote = bool(self.host)
+        self.setWindowTitle(
+            "Options de gwine" + (f" — {display_name(self.host)}" if remote else "")
+        )
+        self.setModal(True)
+        self.setMinimumWidth(680)
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(24, 22, 24, 20)
+        root_layout.setSpacing(10)
+
+        heading = QLabel("Options de gwine", self)
+        heading.setObjectName("title")
+        root_layout.addWidget(heading)
+
+        if remote:
+            note_text = (
+                f"Réglages de {address_text(self.host)}, lus et modifiés par "
+                "SSH : effet à son prochain lancement de jeu."
+            )
+        else:
+            note_text = (
+                "Réglages communs à tous les lancements de jeux Windows sur ce "
+                "poste : effet au prochain lancement."
+            )
+        note = QLabel(note_text, self)
+        note.setObjectName("subtitle")
+        note.setWordWrap(True)
+        root_layout.addWidget(note)
+
+        self.rows_layout = QVBoxLayout()
+        self.rows_layout.setSpacing(8)
+        root_layout.addLayout(self.rows_layout, 1)
+        self.recommendations: dict[str, QLabel] = {}
+
+        self.dxvk_check = QCheckBox("DXVK asynchrone (GPLAsync)", self)
+        self.dxvk_check.setCursor(Qt.PointingHandCursor)
+        self.dxvk_check.toggled.connect(self._update_apply)
+        self._add_card(
+            self.dxvk_check,
+            "Compile les shaders en tâche de fond : moins de saccades aux "
+            "premiers lancements, mais quelques jeux peuvent afficher des "
+            "artefacts. Le préfixe reçoit les DLL correspondantes au changement.",
+            key="dxvk_async",
+        )
+
+        display_title = QLabel("Affichage des jeux", self)
+        display_title.setObjectName("hostName")
+        self.display_combo = QComboBox(self)
+        for value, label in GWINE_DISPLAYS:
+            self.display_combo.addItem(label, value)
+        self.display_combo.currentIndexChanged.connect(self._update_apply)
+        display_box = QHBoxLayout()
+        display_box.setSpacing(8)
+        display_box.addWidget(self.display_combo)
+        self._add_card(
+            display_title,
+            "X11 (XWayland) est le mode par défaut et le plus sûr. Le Wayland "
+            "natif est expérimental : plus direct, mais certains jeux, overlays "
+            "et gamescope peuvent mal s'y comporter.",
+            extra=display_box, key="wayland",
+        )
+
+        self.xbox_check = QCheckBox("Manettes Sony en mode Xbox 360", self)
+        self.xbox_check.setCursor(Qt.PointingHandCursor)
+        self.xbox_check.toggled.connect(self._on_xbox_toggled)
+        self.filter_combo = QComboBox(self)
+        for value, label in GWINE_FILTERS:
+            self.filter_combo.addItem(label, value)
+        self.filter_combo.currentIndexChanged.connect(self._update_apply)
+        self.filter_label = QLabel("Manettes concernées :", self)
+        self.filter_label.setObjectName("hostDetail")
+        filter_box = QHBoxLayout()
+        filter_box.setSpacing(8)
+        filter_box.addWidget(self.filter_label)
+        filter_box.addWidget(self.filter_combo)
+        self._add_card(
+            self.xbox_check,
+            "ds2xbox présente les manettes Sony comme des manettes Xbox 360 : "
+            "les jeux Windows qui n'acceptent que ce type fonctionnent sans "
+            "configuration, les autres y voient une manette Xbox.",
+            extra=filter_box, key="xbox",
+        )
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+        self.hint_label = QLabel(self)
+        self.hint_label.setObjectName("hostStatus")
+        buttons.addWidget(self.hint_label)
+        buttons.addStretch(1)
+        self.close_button = QPushButton("Fermer", self)
+        self.close_button.setObjectName("ghost")
+        self.close_button.setCursor(Qt.PointingHandCursor)
+        self.close_button.clicked.connect(self.accept)
+        buttons.addWidget(self.close_button)
+        self.apply_button = QPushButton("Appliquer", self)
+        self.apply_button.setObjectName("accent")
+        self.apply_button.setCursor(Qt.PointingHandCursor)
+        self.apply_button.clicked.connect(self.apply_changes)
+        buttons.addWidget(self.apply_button)
+        root_layout.addLayout(buttons)
+
+        self.state: dict = {"ok": False}
+        self.initial: dict = {}
+        self.refresh()
+
+    def _add_card(self, title_widget, description: str,
+                  extra: QHBoxLayout | None = None, key: str = "") -> None:
+        frame = QFrame(self)
+        frame.setObjectName("hostCard")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(6)
+
+        top = QHBoxLayout()
+        top.setSpacing(10)
+        top.addWidget(title_widget, 1)
+        if extra is not None:
+            top.addLayout(extra)
+        layout.addLayout(top)
+
+        detail = QLabel(description, frame)
+        detail.setObjectName("hostDetail")
+        detail.setWordWrap(True)
+        layout.addWidget(detail)
+
+        if key:
+            recommendation = QLabel(frame)
+            recommendation.setObjectName("hint")
+            layout.addWidget(recommendation)
+            self.recommendations[key] = recommendation
+
+        self.rows_layout.addWidget(frame)
+
+    # -- état ---------------------------------------------------------------
+    def read_state(self) -> dict:
+        if self.host:
+            code, output = ssh_capture(
+                self.host,
+                "cat ~/.local/share/gwine/options 2>/dev/null; echo '---'; "
+                "command -v gwine || true",
+            )
+            if code != 0:
+                return {"ok": False}
+            config, _, binary = output.partition("---")
+            state = parse_gwine_options(config)
+            state["installed"] = bool(binary.strip())
+        else:
+            try:
+                text = gwine_options_path().read_text(encoding="utf-8")
+            except OSError:
+                text = ""
+            state = parse_gwine_options(text)
+            state["installed"] = (
+                shutil.which("gwine") is not None
+                or Path("/usr/bin/gwine").exists()
+            )
+        state["ok"] = True
+        return state
+
+    def refresh(self) -> None:
+        self.state = self.read_state()
+        ok = bool(self.state.get("ok"))
+        installed = ok and bool(self.state.get("installed"))
+        self.initial = (
+            {
+                "dxvk_async": bool(self.state.get("dxvk_async")),
+                "wayland": bool(self.state.get("wayland")),
+                "xbox": bool(self.state.get("xbox")),
+                "filter": self.state.get("filter", "all"),
+            }
+            if installed else {}
+        )
+        for check in (self.dxvk_check, self.xbox_check):
+            check.blockSignals(True)
+            check.setChecked(False)
+            check.setEnabled(installed)
+            check.blockSignals(False)
+        for combo in (self.display_combo, self.filter_combo):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+            combo.setEnabled(installed)
+        if installed:
+            self.dxvk_check.blockSignals(True)
+            self.dxvk_check.setChecked(self.initial["dxvk_async"])
+            self.dxvk_check.blockSignals(False)
+            self.xbox_check.blockSignals(True)
+            self.xbox_check.setChecked(self.initial["xbox"])
+            self.xbox_check.blockSignals(False)
+            self._select(self.display_combo, "wayland" if self.initial["wayland"] else "x11")
+            self._select(self.filter_combo, self.initial["filter"])
+        self._on_xbox_toggled()
+        self._update_apply()
+
+    @staticmethod
+    def _select(combo: QComboBox, value: str) -> None:
+        index = combo.findData(value)
+        combo.blockSignals(True)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
+    def desired(self) -> dict:
+        return {
+            "dxvk_async": self.dxvk_check.isChecked(),
+            "wayland": (self.display_combo.currentData() or "x11") == "wayland",
+            "xbox": self.xbox_check.isChecked(),
+            "filter": self.filter_combo.currentData() or "all",
+        }
+
+    def _on_xbox_toggled(self) -> None:
+        enabled = self.xbox_check.isEnabled() and self.xbox_check.isChecked()
+        self.filter_label.setEnabled(enabled)
+        self.filter_combo.setEnabled(enabled)
+        self._update_apply()
+
+    def changed(self) -> dict:
+        """Ce qui diffère de la configuration actuelle de gwine."""
+        desired = self.desired()
+        changes = {}
+        for key in ("dxvk_async", "wayland", "xbox"):
+            if desired[key] != self.initial.get(key):
+                changes[key] = desired[key]
+        if desired["xbox"] and "xbox" not in changes:
+            if desired["filter"] != self.initial.get("filter"):
+                changes["filter"] = desired["filter"]
+        return changes
+
+    def _update_recommendations(self) -> None:
+        ok = bool(self.state.get("ok"))
+        desired = self.desired()
+        for key, label in self.recommendations.items():
+            text, value = GWINE_RECOMMENDED[key]
+            differs = ok and desired[key] != value
+            message = f"Recommandé : {text}"
+            if differs:
+                message += " — votre choix diffère"
+            label.setText(message)
+            restyle_label(label, "warn" if differs else "hint")
+
+    def _update_apply(self) -> None:
+        self._update_recommendations()
+        if not self.state.get("ok"):
+            self.apply_button.setEnabled(False)
+            self.hint_label.setText("État illisible — options non modifiables.")
+            return
+        if not self.state.get("installed"):
+            self.apply_button.setEnabled(False)
+            self.hint_label.setText("gwine n'est pas installé sur ce poste.")
+            return
+        changes = self.changed()
+        self.apply_button.setEnabled(bool(changes))
+        if changes:
+            count = len(changes)
+            self.hint_label.setText(
+                f"{count} option{'s' if count > 1 else ''} à appliquer"
+            )
+        else:
+            self.hint_label.setText("Aucun changement.")
+
+    # -- application --------------------------------------------------------
+    def commands(self) -> list[str]:
+        """Arguments gwine correspondant aux changements demandés."""
+        changes = self.changed()
+        args: list[str] = []
+        if "dxvk_async" in changes:
+            args.append("--dxvk-async" if changes["dxvk_async"] else "--dxvk")
+        if "wayland" in changes:
+            args.append("--wayland" if changes["wayland"] else "--x11")
+        if "xbox" in changes:
+            if changes["xbox"]:
+                extra = {
+                    "ds4": " --xbox-ds4",
+                    "dualsense": " --xbox-dualsense",
+                }.get(self.desired()["filter"], "")
+                args.append("--xbox-on" + extra)
+            else:
+                args.append("--xbox-off")
+        elif "filter" in changes:
+            extra = {"ds4": " --xbox-ds4", "dualsense": " --xbox-dualsense"}.get(
+                changes["filter"], ""
+            )
+            args.append("--xbox-on" + extra)
+        return args
+
+    def describe(self, changes: dict) -> str:
+        labels = []
+        if "dxvk_async" in changes:
+            labels.append(
+                "DXVK asynchrone : "
+                + ("activé" if changes["dxvk_async"] else "désactivé")
+            )
+        if "wayland" in changes:
+            labels.append(
+                "Affichage : "
+                + ("Wayland natif (expérimental)" if changes["wayland"]
+                   else "X11 (XWayland)")
+            )
+        if "xbox" in changes:
+            labels.append(
+                "Manettes Sony en Xbox 360 : "
+                + ("activé" if changes["xbox"] else "désactivé")
+            )
+        if "filter" in changes:
+            label = dict(GWINE_FILTERS).get(changes["filter"], changes["filter"])
+            labels.append(f"Manettes concernées : {label.lower()}")
+        return "\n".join(f"• {label}" for label in labels)
+
+    def apply_changes(self) -> None:
+        changes = self.changed()
+        if not changes:
+            return
+        answer = QMessageBox.question(
+            self, "Options de gwine",
+            f"Appliquer ces options ?\n\n{self.describe(changes)}\n\n"
+            "Elles s'appliquent au prochain lancement d'un jeu.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        binary = "gwine" if self.host else gwine_binary()
+        script = "exec < /dev/null\n" + " && ".join(
+            f"{binary} {argument}" for argument in self.commands()
+        ) + "\n"
+        if self.host:
+            dialog = RemoteTaskDialog(
+                self, host=self.host, title="Options de gwine",
+                subtitle="gwine — effet au prochain lancement.",
+                command=script,
+            )
+        else:
+            dialog = LocalTaskDialog(
+                self, title="Options de gwine",
+                subtitle="gwine — effet au prochain lancement.",
+                argv=[_which("bash"), "-c", script],
+            )
+        dialog.exec()
+        self.refresh()
+
+    def reject(self) -> None:
+        if self.changed():
+            answer = QMessageBox.question(
+                self, "Options non appliquées",
+                "Fermer sans appliquer les options modifiées ?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+        super().reject()
+
+
+# -- priorité au premier plan (ex-`ujust foreground-booster-*`) ---------------
+
+def parse_foreground_booster(text: str) -> bool:
+    """Lit `[Foreground Booster] autostart` de kcgroupsrc (absent = activé)."""
+    parser = configparser.RawConfigParser(strict=False)
+    parser.optionxform = str
+    try:
+        if text.strip():
+            parser.read_string(text)
+        if parser.has_option("Foreground Booster", "autostart"):
+            return parser.getboolean("Foreground Booster", "autostart")
+    except (configparser.Error, ValueError):
+        pass
+    return True
+
+
+def foreground_booster_path() -> Path:
+    return Path.home() / ".config/kcgroupsrc"
+
+
+class ForegroundBoosterDialog(QDialog):
+    """Priorité au premier plan de Plasma (ex-`ujust foreground-booster-*`).
+
+    Une case, appliquée tout de suite : `kwriteconfig6` écrit `autostart` dans
+    `~/.config/kcgroupsrc` (réglage persistant, relu à chaque ouverture de
+    session) et le service utilisateur `plasma-foreground-booster` est relancé
+    ou arrêté. Aucun privilège, aucun redémarrage de la machine.
+    """
+
+    def __init__(self, parent=None, host: dict | None = None):
+        super().__init__(parent)
+        self.host = dict(host or {})
+        remote = bool(self.host)
+        self.setWindowTitle(
+            "Priorité au premier plan"
+            + (f" — {display_name(self.host)}" if remote else "")
+        )
+        self.setModal(True)
+        self.setMinimumWidth(660)
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(24, 22, 24, 20)
+        root_layout.setSpacing(10)
+
+        heading = QLabel("Priorité au premier plan", self)
+        heading.setObjectName("title")
+        root_layout.addWidget(heading)
+
+        if remote:
+            note_text = (
+                f"Réglages de {address_text(self.host)}, lus et modifiés par "
+                "SSH : appliqué à sa prochaine ouverture de session si le "
+                "service ne peut pas être relancé à distance."
+            )
+        else:
+            note_text = (
+                "Réglage de la session Plasma : appliqué tout de suite, sans "
+                "redémarrage."
+            )
+        note = QLabel(note_text, self)
+        note.setObjectName("subtitle")
+        note.setWordWrap(True)
+        root_layout.addWidget(note)
+
+        self.rows_layout = QVBoxLayout()
+        self.rows_layout.setSpacing(8)
+        root_layout.addLayout(self.rows_layout, 1)
+
+        frame = QFrame(self)
+        frame.setObjectName("hostCard")
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setContentsMargins(16, 12, 16, 12)
+        frame_layout.setSpacing(6)
+        self.check = QCheckBox("Booster l'application au premier plan", frame)
+        self.check.setCursor(Qt.PointingHandCursor)
+        self.check.toggled.connect(self._update_apply)
+        frame_layout.addWidget(self.check)
+        detail = QLabel(
+            "Plasma donne plus de priorité au processeur et au disque de la "
+            "fenêtre active : les jeux restent fluides. À désactiver si vous "
+            "compilez, encodez ou synchronisez en arrière-plan — le booster "
+            "peut affamer ces tâches.",
+            frame,
+        )
+        detail.setObjectName("hostDetail")
+        detail.setWordWrap(True)
+        frame_layout.addWidget(detail)
+        self.recommendation = QLabel(frame)
+        self.recommendation.setObjectName("hint")
+        frame_layout.addWidget(self.recommendation)
+        self.rows_layout.addWidget(frame)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+        self.hint_label = QLabel(self)
+        self.hint_label.setObjectName("hostStatus")
+        buttons.addWidget(self.hint_label)
+        buttons.addStretch(1)
+        self.close_button = QPushButton("Fermer", self)
+        self.close_button.setObjectName("ghost")
+        self.close_button.setCursor(Qt.PointingHandCursor)
+        self.close_button.clicked.connect(self.accept)
+        buttons.addWidget(self.close_button)
+        self.apply_button = QPushButton("Appliquer", self)
+        self.apply_button.setObjectName("accent")
+        self.apply_button.setCursor(Qt.PointingHandCursor)
+        self.apply_button.clicked.connect(self.apply_changes)
+        buttons.addWidget(self.apply_button)
+        root_layout.addLayout(buttons)
+
+        self.state: dict = {"ok": False}
+        self.initial = True
+        self.refresh()
+
+    # -- état ---------------------------------------------------------------
+    def read_state(self) -> dict:
+        if self.host:
+            code, output = ssh_capture(
+                self.host,
+                "cat ~/.config/kcgroupsrc 2>/dev/null; echo '---'; "
+                "command -v kwriteconfig6 || true",
+            )
+            if code != 0:
+                return {"ok": False}
+            config, _, binary = output.partition("---")
+            return {
+                "ok": True,
+                "installed": bool(binary.strip()),
+                "enabled": parse_foreground_booster(config),
+            }
+        try:
+            text = foreground_booster_path().read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        return {
+            "ok": True,
+            "installed": _which("kwriteconfig6") is not None,
+            "enabled": parse_foreground_booster(text),
+        }
+
+    def refresh(self) -> None:
+        self.state = self.read_state()
+        ok = bool(self.state.get("ok"))
+        installed = ok and bool(self.state.get("installed"))
+        self.initial = bool(self.state.get("enabled", True)) if installed else True
+        self.check.blockSignals(True)
+        self.check.setChecked(self.initial if installed else False)
+        self.check.blockSignals(False)
+        self.check.setEnabled(installed)
+        self._update_apply()
+
+    def changed(self) -> bool:
+        return self.check.isEnabled() and self.check.isChecked() != self.initial
+
+    def _update_apply(self) -> None:
+        differs = bool(self.state.get("ok")) and not self.check.isChecked()
+        message = "Recommandé : activé"
+        if differs:
+            message += " — votre choix diffère"
+        self.recommendation.setText(message)
+        restyle_label(self.recommendation, "warn" if differs else "hint")
+        if not self.state.get("ok"):
+            self.apply_button.setEnabled(False)
+            self.hint_label.setText("État illisible — réglage non modifiable.")
+            return
+        if not self.state.get("installed"):
+            self.apply_button.setEnabled(False)
+            self.hint_label.setText(
+                "kwriteconfig6 est absent : impossible de régler ce poste."
+            )
+            return
+        dirty = self.changed()
+        self.apply_button.setEnabled(dirty)
+        self.hint_label.setText(
+            "Réglage à appliquer" if dirty else "Aucun changement."
+        )
+
+    # -- application --------------------------------------------------------
+    def apply_changes(self) -> None:
+        if not self.changed():
+            return
+        enabled = self.check.isChecked()
+        answer = QMessageBox.question(
+            self, "Priorité au premier plan",
+            ("Booster l'application au premier plan ?" if enabled
+             else "Désactiver le boost du premier plan ?") + "\n\n"
+            + ("La fenêtre active recevra la priorité du processeur et du "
+               "disque." if enabled else
+               "Les compilations, encodages et synchronisations en arrière-plan "
+               "retrouveront leur part de processeur."),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        value = "true" if enabled else "false"
+        action = "restart" if enabled else "stop"
+        script = (
+            "exec < /dev/null\n"
+            "kwriteconfig6 --file kcgroupsrc --group 'Foreground Booster' "
+            f"--key autostart {value}\n"
+            f"systemctl --user {action} plasma-foreground-booster.service "
+            "2>/dev/null || true\n"
+        )
+        if self.host:
+            dialog = RemoteTaskDialog(
+                self, host=self.host, title="Priorité au premier plan",
+                subtitle="kcgroupsrc — réglage persistant, effet immédiat en "
+                         "session locale.",
+                command=script,
+            )
+        else:
+            dialog = LocalTaskDialog(
+                self, title="Priorité au premier plan",
+                subtitle="kcgroupsrc — réglage persistant, effet immédiat.",
+                argv=[_which("bash"), "-c", script],
+            )
+        dialog.exec()
+        self.refresh()
+
+    def reject(self) -> None:
+        if self.changed():
+            answer = QMessageBox.question(
+                self, "Réglage non appliqué",
+                "Fermer sans appliquer le réglage modifié ?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+        super().reject()
+
+
 # =============================================================================
 # SECTION 9 : FENÊTRE PRINCIPALE
 # =============================================================================
@@ -2999,6 +3803,10 @@ class MainWindow(QMainWindow):
         self.local_card = LocalCard(central)
         self.local_card.update_requested.connect(self.local_update)
         self.local_card.config_requested.connect(self.open_settings)
+        self.local_card.gwine_requested.connect(self.open_local_gwine_options)
+        self.local_card.booster_requested.connect(
+            self.open_local_foreground_booster
+        )
         local_holder = QWidget(central)
         local_layout = QHBoxLayout(local_holder)
         local_layout.setContentsMargins(26, 0, 26, 6)
@@ -3145,6 +3953,8 @@ class MainWindow(QMainWindow):
             card.wake_requested.connect(self.wake_host)
             card.update_requested.connect(self.update_host)
             card.settings_requested.connect(self.open_remote_settings)
+            card.gwine_requested.connect(self.open_remote_gwine_options)
+            card.booster_requested.connect(self.open_remote_foreground_booster)
             card.reboot_requested.connect(self.reboot_host)
             card.shutdown_requested.connect(self.shutdown_host)
             state, detail = self._states.get(host["id"], ("unknown", ""))
@@ -3877,6 +4687,24 @@ class MainWindow(QMainWindow):
     def open_settings(self) -> None:
         LocalSettingsDialog(self).exec()
 
+    def open_local_gwine_options(self) -> None:
+        GwineOptionsDialog(self).exec()
+
+    def open_remote_gwine_options(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        GwineOptionsDialog(self, host).exec()
+
+    def open_local_foreground_booster(self) -> None:
+        ForegroundBoosterDialog(self).exec()
+
+    def open_remote_foreground_booster(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        ForegroundBoosterDialog(self, host).exec()
+
     def _run_local_task(self, title: str, subtitle: str, argv: list[str],
                         root: bool = False, hint_from_output=None) -> None:
         if argv and shutil.which(argv[0]) is None and not Path(argv[0]).exists():
@@ -4132,8 +4960,9 @@ terminal SSH, réveil Wake-on-LAN, arrêt, redémarrage et mise à jour, découv
 mDNS, import de ~/.ssh/config, ajout d'un poste avec copie de la clé.
 
 Cette machine : serveur SSH et annonce mDNS, mises à jour (image Gablue,
-Flatpaks, gwine) et options avancées (protections du processeur, mode ERTM du
-Bluetooth), appliquées ensemble en une seule opération.
+Flatpaks, gwine), réglages du noyau (protections du processeur, correctif CPUID,
+mode ERTM), options de gwine (DXVK, affichage, manettes) et priorité au premier
+plan — les changements de chaque dialogue partent ensemble.
 
 Configuration : ~/.config/gablue/ssh-hosts.json (mode 0600)
 Clé locale    : ~/.ssh/id_ed25519 (créée au besoin, sans passphrase)
