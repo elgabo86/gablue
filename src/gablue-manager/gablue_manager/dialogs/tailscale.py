@@ -16,7 +16,9 @@ from ..local import (
 )
 from ..ssh import ask_remote_password, remote_sudo_prefix, ssh_capture
 from ..tasks import LocalTaskDialog, RemoteTaskDialog, start_task
-from ..uiutil import fit_dialog_height, restyle_label
+from ..uiutil import (
+    fit_dialog_height, recommendation_badge, set_recommendation,
+)
 from ..util import address_text, display_name
 
 class TailscaleDialog(QDialog):
@@ -46,9 +48,9 @@ class TailscaleDialog(QDialog):
         root_layout.addWidget(heading)
 
         note = QLabel(
-            f"État de {address_text(self.host)}, lu et modifié par SSH."
+            f"État de {address_text(self.host)}, par SSH."
             if remote else
-            "Connexion de ce poste à un réseau privé Tailscale ou headscale."
+            "Connexion à un réseau privé Tailscale."
         )
         note.setObjectName("subtitle")
         note.setWordWrap(True)
@@ -63,24 +65,24 @@ class TailscaleDialog(QDialog):
         frame_layout = QVBoxLayout(frame)
         frame_layout.setContentsMargins(16, 12, 16, 12)
         frame_layout.setSpacing(6)
+        top = QHBoxLayout()
+        top.setSpacing(8)
         self.check = QCheckBox("Connecter ce poste à Tailscale", frame)
         self.check.setCursor(Qt.PointingHandCursor)
         self.check.toggled.connect(self._update_apply)
-        frame_layout.addWidget(self.check)
+        top.addWidget(self.check)
+        self.recommendation = recommendation_badge(frame)
+        top.addWidget(self.recommendation)
+        top.addStretch(1)
+        frame_layout.addLayout(top)
         detail = QLabel(
-            "Le serveur de connexion (headscale ou Tailscale) est demandé à "
-            "l'activation : aucun lien n'est codé en dur. `tailscale up` "
-            "affiche ensuite la page de validation dans le navigateur. Le "
-            "service reste actif après un redémarrage ; décocher le coupe et "
-            "le désactive.",
+            "Le serveur est demandé à l'activation. Décocher coupe et "
+            "désactive le service.",
             frame,
         )
         detail.setObjectName("hostDetail")
         detail.setWordWrap(True)
         frame_layout.addWidget(detail)
-        self.recommendation = QLabel(frame)
-        self.recommendation.setObjectName("hint")
-        frame_layout.addWidget(self.recommendation)
         frame_layout.addStretch(1)
         self.rows_layout.addWidget(frame)
 
@@ -139,12 +141,9 @@ class TailscaleDialog(QDialog):
         return self.check.isEnabled() and self.check.isChecked() != self.initial
 
     def _update_apply(self) -> None:
-        differs = bool(self.state.get("ok")) and self.check.isChecked()
-        message = "Recommandé : désactivé"
-        if differs:
-            message += " — votre choix diffère"
-        self.recommendation.setText(message)
-        restyle_label(self.recommendation, "warn" if differs else "hint")
+        ok = bool(self.state.get("ok"))
+        differs = ok and self.check.isChecked()
+        set_recommendation(self.recommendation, "décocher", differs, ok)
         if not self.state.get("ok"):
             self.apply_button.setEnabled(False)
             self.hint_label.setText("État illisible — réglage non modifiable.")
@@ -171,7 +170,7 @@ class TailscaleDialog(QDialog):
             current = self.state.get("server") or "https://"
             text, ok = QInputDialog.getText(
                 self, "Serveur Tailscale",
-                "Lien du serveur de connexion (headscale ou Tailscale) :",
+                "Lien du serveur :",
                 QLineEdit.Normal, current,
             )
             if not ok:
@@ -187,10 +186,10 @@ class TailscaleDialog(QDialog):
         answer = QMessageBox.question(
             self, "Tailscale",
             (
-                f"Connecter ce poste au serveur\n{server} ?\n\n"
-                "Une page de validation peut s'ouvrir dans le navigateur."
+                f"Connecter au serveur\n{server} ?\n\n"
+                "Une page de validation peut s'ouvrir."
             ) if enabled else
-            "Couper Tailscale et désactiver son service au démarrage ?",
+            "Couper Tailscale et son démarrage automatique ?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
@@ -201,9 +200,9 @@ class TailscaleDialog(QDialog):
     def _start(self, enabled: bool, server: str) -> bool:
         script = tailscale_apply_script(enabled, server)
         subtitle = (
-            "tailscale up — validation dans le navigateur."
+            "Validation dans le navigateur."
             if enabled else
-            "tailscale down — service arrêté et désactivé."
+            "Service arrêté et désactivé."
         )
         if self.host:
             password = ""

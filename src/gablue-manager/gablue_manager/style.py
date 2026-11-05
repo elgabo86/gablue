@@ -25,6 +25,24 @@ QLabel#error { color: #e5484d; font-size: 12px; }
 QLabel#ok { color: @online@; font-size: 12px; font-weight: 600; }
 QLabel#warn { color: @auth@; font-size: 12px; font-weight: 600; }
 QLabel#hint { color: @dim@; font-size: 11px; }
+QLabel#recommend {
+    background: @onlineSoft@;
+    color: @online@;
+    border: 1px solid @onlineBorder@;
+    border-radius: 9px;
+    padding: 1px 8px;
+    font-size: 11px;
+    font-weight: 600;
+}
+QLabel#recommendWarn {
+    background: @authSoft@;
+    color: @auth@;
+    border: 1px solid @authBorder@;
+    border-radius: 9px;
+    padding: 1px 8px;
+    font-size: 11px;
+    font-weight: 600;
+}
 
 QScrollArea { background: transparent; border: none; }
 QScrollArea > QWidget > QWidget { background: transparent; }
@@ -167,7 +185,11 @@ def make_qss() -> str:
         "@field@": base.name(),
         "@menu@": base.name(),
         "@online@": COLOR_ONLINE,
+        "@onlineSoft@": _rgba(QColor(COLOR_ONLINE), 34),
+        "@onlineBorder@": _rgba(QColor(COLOR_ONLINE), 110),
         "@auth@": COLOR_AUTH,
+        "@authSoft@": _rgba(QColor(COLOR_AUTH), 34),
+        "@authBorder@": _rgba(QColor(COLOR_AUTH), 120),
     }
     qss = QSS_TEMPLATE
     for token, value in values.items():

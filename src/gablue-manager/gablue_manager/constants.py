@@ -151,9 +151,9 @@ BROADCOM_WL_FILE = Path("/etc/modprobe.d/wl-enable.conf")
 
 # Variantes publiées par Gablue (le rebase bascule d'une image à l'autre).
 REBASE_VARIANTS = (
-    ("main", "main — standard, sans NVIDIA"),
-    ("main-dx", "main-dx — développement (Docker, libvirt, ROCm)"),
-    ("nvidia", "nvidia — pilotes NVIDIA propriétaires"),
-    ("nvidia-open", "nvidia-open — pilotes NVIDIA open source"),
-    ("nvidia-open-dx", "nvidia-open-dx — NVIDIA open + développement"),
+    ("main", "main — standard"),
+    ("main-dx", "main-dx — développement"),
+    ("nvidia", "nvidia — NVIDIA propriétaire"),
+    ("nvidia-open", "nvidia-open — NVIDIA open source"),
+    ("nvidia-open-dx", "nvidia-open-dx — NVIDIA open + DX"),
 )

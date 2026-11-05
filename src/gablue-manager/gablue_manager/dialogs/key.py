@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from ..constants import PUBLIC_KEY
 from ..uiutil import restyle_label
 from ..util import address_text, display_name
 from ..workers import KeyInstallWorker, KeyProbeWorker
@@ -43,10 +42,8 @@ class KeyInstallDialog(QDialog):
         root.addWidget(self.title)
 
         self.explanation = QLabel(
-            f'La clé publique {PUBLIC_KEY.name} sera ajoutée à '
-            f'~/.ssh/authorized_keys sur {address_text(self._host)}. '
-            "Ensuite, plus de mot de passe : connexion, bureau distant et "
-            "fichiers passent par la clé."
+            f"Votre clé publique sera ajoutée sur {address_text(self._host)}. "
+            "Ensuite, plus de mot de passe."
         )
         self.explanation.setObjectName("subtitle")
         self.explanation.setWordWrap(True)
@@ -75,9 +72,7 @@ class KeyInstallDialog(QDialog):
         form.addWidget(self.password_edit)
 
         hint = QLabel(
-            "Le mot de passe sert uniquement à ssh-copy-id, il n'est ni écrit "
-            "sur le disque ni stocké dans la configuration.",
-            self.form_box,
+            "Sert une fois, jamais enregistré.", self.form_box,
         )
         hint.setObjectName("hint")
         hint.setWordWrap(True)
@@ -133,8 +128,7 @@ class KeyInstallDialog(QDialog):
             )
             self.explanation.setVisible(False)
             self.status_label.setText(
-                "Cette clé est déjà acceptée par le poste : aucune action "
-                "nécessaire, aucun mot de passe à saisir."
+                "Clé déjà acceptée : rien à faire."
             )
             restyle_label(self.status_label, "ok")
             self.form_box.setVisible(False)

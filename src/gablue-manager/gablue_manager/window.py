@@ -190,8 +190,8 @@ class MainWindow(QMainWindow):
         empty_title.setAlignment(Qt.AlignCenter)
         empty_layout.addWidget(empty_title)
         empty_text = QLabel(
-            "Ajoutez une machine pour y déposer votre clé, lancer son bureau "
-            "distant (gremote) ou parcourir ses fichiers dans Dolphin.",
+            "Ajoutez un poste pour le bureau distant, les fichiers ou le "
+            "terminal.",
             empty,
         )
         empty_text.setObjectName("emptyText")
@@ -1167,8 +1167,7 @@ class MainWindow(QMainWindow):
             return
         self._pick_candidates(
             "Postes découverts sur le réseau",
-            "Services SSH annoncés en mDNS (Avahi). Rien n'est ajouté sans "
-            "votre accord : cochez les postes à inscrire dans votre liste.",
+            "Cochez les postes à ajouter.",
             hosts,
         )
 
@@ -1183,7 +1182,7 @@ class MainWindow(QMainWindow):
             return
         self._pick_candidates(
             "Importer depuis ~/.ssh/config",
-            "Hôtes déclarés dans ~/.ssh/config. Cochez ceux à ajouter.",
+            "Cochez les hôtes à ajouter.",
             candidates,
         )
 

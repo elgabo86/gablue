@@ -14,7 +14,7 @@ from ..constants import _which
 from ..local import gwine_binary, gwine_options_path, parse_gwine_options
 from ..ssh import ssh_capture
 from ..tasks import LocalTaskDialog, RemoteTaskDialog, start_task
-from ..uiutil import restyle_label
+from ..uiutil import recommendation_badge, set_recommendation
 from ..util import address_text, display_name
 
 GWINE_DISPLAYS = (
@@ -22,11 +22,11 @@ GWINE_DISPLAYS = (
     ("wayland", "Wayland natif (expérimental)"),
 )
 
-# Valeur recommandée de chaque réglage (libellé, valeur).
+# Valeur recommandée de chaque réglage (pastille, valeur).
 GWINE_RECOMMENDED = {
-    "dxvk_async": ("DXVK standard, sans async", False),
+    "dxvk_async": ("décocher", False),
     "wayland": ("X11 (XWayland)", False),
-    "xbox": ("désactivé", False),
+    "xbox": ("décocher", False),
 }
 
 class GwineOptionsDialog(QDialog):
@@ -61,13 +61,13 @@ class GwineOptionsDialog(QDialog):
 
         if remote:
             note_text = (
-                f"Réglages de {address_text(self.host)}, lus et modifiés par "
-                "SSH : effet à son prochain lancement de jeu."
+                f"Réglages de {address_text(self.host)}, par SSH. Effet au "
+                "prochain lancement."
             )
         else:
             note_text = (
-                "Réglages communs à tous les lancements de jeux Windows sur ce "
-                "poste : effet au prochain lancement."
+                "Réglages communs aux jeux Windows. Effet au prochain "
+                "lancement."
             )
         note = QLabel(note_text, self)
         note.setObjectName("subtitle")
@@ -84,9 +84,8 @@ class GwineOptionsDialog(QDialog):
         self.dxvk_check.toggled.connect(self._update_apply)
         self._add_card(
             self.dxvk_check,
-            "Compile les shaders en tâche de fond : moins de saccades aux "
-            "premiers lancements, mais quelques jeux peuvent afficher des "
-            "artefacts. Le préfixe reçoit les DLL correspondantes au changement.",
+            "Compile les shaders en fond (DirectX 9-11, pas DX12) : moins de "
+            "saccades ; artefacts possibles.",
             key="dxvk_async",
         )
 
@@ -101,9 +100,8 @@ class GwineOptionsDialog(QDialog):
         display_box.addWidget(self.display_combo)
         self._add_card(
             display_title,
-            "X11 (XWayland) est le mode par défaut et le plus sûr. Le Wayland "
-            "natif est expérimental : plus direct, mais certains jeux, overlays "
-            "et gamescope peuvent mal s'y comporter.",
+            "X11 est le plus sûr. Wayland natif : certains jeux et overlays "
+            "peuvent mal réagir.",
             extra=display_box, key="wayland",
         )
 
@@ -112,11 +110,7 @@ class GwineOptionsDialog(QDialog):
         self.xbox_check.toggled.connect(self._update_apply)
         self._add_card(
             self.xbox_check,
-            "ds2xbox présente toutes les manettes Sony (DualShock 4 comme "
-            "DualSense) comme des manettes Xbox 360. À activer si vous ne "
-            "voulez pas vous prendre la tête avec la compatibilité des "
-            "manettes sous Windows : les jeux qui n'acceptent que l'XInput "
-            "fonctionnent alors sans configuration.",
+            "Les manettes Sony passent en Xbox 360 pour les jeux XInput.",
             key="xbox",
         )
 
@@ -152,9 +146,14 @@ class GwineOptionsDialog(QDialog):
 
         top = QHBoxLayout()
         top.setSpacing(10)
-        top.addWidget(title_widget, 1)
+        top.addWidget(title_widget)
         if extra is not None:
             top.addLayout(extra)
+        if key:
+            badge = recommendation_badge(frame)
+            top.addWidget(badge)
+            self.recommendations[key] = badge
+        top.addStretch(1)
         layout.addLayout(top)
 
         detail = QLabel(description, frame)
@@ -162,11 +161,6 @@ class GwineOptionsDialog(QDialog):
         detail.setWordWrap(True)
         layout.addWidget(detail)
 
-        if key:
-            recommendation = QLabel(frame)
-            recommendation.setObjectName("hint")
-            layout.addWidget(recommendation)
-            self.recommendations[key] = recommendation
         layout.addStretch(1)
 
         self.rows_layout.addWidget(frame)
@@ -254,14 +248,10 @@ class GwineOptionsDialog(QDialog):
     def _update_recommendations(self) -> None:
         ok = bool(self.state.get("ok"))
         desired = self.desired()
-        for key, label in self.recommendations.items():
-            text, value = GWINE_RECOMMENDED[key]
+        for key, badge in self.recommendations.items():
+            hint, value = GWINE_RECOMMENDED[key]
             differs = ok and desired[key] != value
-            message = f"Recommandé : {text}"
-            if differs:
-                message += " — votre choix diffère"
-            label.setText(message)
-            restyle_label(label, "warn" if differs else "hint")
+            set_recommendation(badge, hint, differs, ok)
 
     def _update_apply(self) -> None:
         self._update_recommendations()
@@ -323,7 +313,7 @@ class GwineOptionsDialog(QDialog):
         answer = QMessageBox.question(
             self, "Options de gwine",
             f"Appliquer ces options ?\n\n{self.describe(changes)}\n\n"
-            "Elles s'appliquent au prochain lancement d'un jeu.",
+            "Effet au prochain lancement.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
@@ -335,13 +325,13 @@ class GwineOptionsDialog(QDialog):
         if self.host:
             dialog = RemoteTaskDialog(
                 self, host=self.host, title="Options de gwine",
-                subtitle="gwine — effet au prochain lancement.",
+                subtitle="Effet au prochain lancement.",
                 command=script,
             )
         else:
             dialog = LocalTaskDialog(
                 self, title="Options de gwine",
-                subtitle="gwine — effet au prochain lancement.",
+                subtitle="Effet au prochain lancement.",
                 argv=[_which("bash"), "-c", script],
             )
         start_task(self, dialog)

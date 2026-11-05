@@ -1,7 +1,7 @@
 """Ajustements d'affichage partagés (style des libellés, hauteur, icône).
 """
 
-from PySide6.QtCore import QEvent, QObject, QTimer
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QDialog, QLabel
 
@@ -64,3 +64,36 @@ def restyle_label(widget: QLabel, name: str) -> None:
     widget.setObjectName(name)
     widget.style().unpolish(widget)
     widget.style().polish(widget)
+
+def recommendation_badge(parent) -> QLabel:
+    """Pastille de conseil, posée à côté du libellé d'un réglage.
+
+    Elle porte le sens dans son texte (jamais dans la seule couleur) : le
+    libellé en 12 px risquait de passer pour une note de bas de page.
+    """
+    badge = QLabel(parent)
+    badge.setObjectName("recommend")
+    badge.setAlignment(Qt.AlignCenter)
+    badge.setToolTip(
+        "Réglage conseillé par Gablue. Le choix reste libre : votre valeur "
+        "est conservée telle quelle."
+    )
+    return badge
+
+def set_recommendation(badge: QLabel, hint: str, differs: bool,
+                       known: bool = True) -> None:
+    """Met la pastille à jour pour le choix courant.
+
+    `hint` dit en clair la valeur conseillée (« cocher », « X11 »), affichée
+    quand le choix s'en écarte ; quand il la suit, « ✓ Conseillé » suffit et
+    la pastille passe au vert. Sans état lisible, elle disparaît.
+    """
+    badge.setVisible(known)
+    if not known:
+        return
+    if differs:
+        badge.setText(f"Conseillé : {hint}")
+        restyle_label(badge, "recommendWarn")
+    else:
+        badge.setText("✓ Conseillé")
+        restyle_label(badge, "recommend")

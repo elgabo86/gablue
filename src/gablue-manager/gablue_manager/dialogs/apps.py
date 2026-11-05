@@ -176,10 +176,7 @@ class AppsDialog(QDialog):
             )
             if code != 0:
                 self.states = {}
-                self.note.setText(
-                    f"{display_name(self.host)} est injoignable : "
-                    "l'état des applications est indisponible."
-                )
+                self.note.setText(f"{display_name(self.host)} est injoignable.")
                 restyle_label(self.note, "warn")
                 self._apply_rows()
                 return
@@ -191,17 +188,13 @@ class AppsDialog(QDialog):
         target = "ce poste" if self.host is not None else "cette machine"
         if self.gearlever:
             self.note.setText(
-                f"AppImages de {target} (~/AppImages), intégrées au menu par "
-                "GearLever. Installer ou mettre à jour télécharge la dernière "
-                "version publiée ; configuration, sauvegardes et jeux sont "
-                "conservés, y compris à la suppression."
+                f"AppImages de {target}, gérées par GearLever. Données "
+                "conservées à la suppression."
             )
             restyle_label(self.note, "subtitle")
         else:
             self.note.setText(
-                f"GearLever (it.mijorus.gearlever) n'est pas installé sur "
-                f"{target} : l'installation et la mise à jour sont "
-                "indisponibles, la suppression reste possible."
+                f"GearLever absent de {target} : installation indisponible."
             )
             restyle_label(self.note, "warn")
 
@@ -265,13 +258,13 @@ class AppsDialog(QDialog):
             title = f"{app.name} — mise à jour"
             question = (
                 f"Mettre à jour {app.name} ?\n\nLa version actuelle sera "
-                "remplacée une fois la nouvelle téléchargée et vérifiée."
+                "remplacée."
             )
         else:
             title = f"{app.name} — installation"
             question = (
                 f"Installer {app.name} ?\n\nLa dernière version sera "
-                "téléchargée puis intégrée au menu par GearLever."
+                "téléchargée et ajoutée au menu."
             )
         answer = QMessageBox.question(
             self, title, question,
@@ -279,7 +272,7 @@ class AppsDialog(QDialog):
         )
         if answer != QMessageBox.Yes:
             return
-        subtitle = f"{app.script} — téléchargement et intégration GearLever."
+        subtitle = "Téléchargement et intégration."
         if self.host is None:
             self._run(LocalTaskDialog(
                 self, title=title, subtitle=subtitle,
@@ -297,15 +290,13 @@ class AppsDialog(QDialog):
             return
         if app.cli:
             detail = (
-                "Le programme et son entrée de menu seront retirés. La "
-                "configuration et les sessions (~/.config/opencode, "
-                "~/.local/share/opencode) ne sont pas touchées."
+                "Retire le programme et son entrée de menu. Configuration et "
+                "sessions conservées."
             )
         else:
             detail = (
-                "L'AppImage et son entrée de menu seront retirées. La "
-                "configuration, les sauvegardes et les jeux ne sont pas "
-                "touchés."
+                "Retire l'AppImage et l'entrée de menu. Sauvegardes et jeux "
+                "conservés."
             )
         answer = QMessageBox.question(
             self, f"Supprimer {app.name}",
@@ -314,7 +305,7 @@ class AppsDialog(QDialog):
         )
         if answer != QMessageBox.Yes:
             return
-        subtitle = "Programme et entrée de menu — configuration conservée."
+        subtitle = "Configuration conservée."
         if self.host is None:
             self._run(LocalTaskDialog(
                 self, title=f"{app.name} — suppression",
@@ -325,9 +316,8 @@ class AppsDialog(QDialog):
         if not command:
             QMessageBox.warning(
                 self, f"Supprimer {app.name}",
-                f"{app.remover} est absent de {display_name(self.host)} : "
-                "mettre à jour l'image de ce poste pour pouvoir supprimer "
-                "proprement.",
+                f"{app.remover} absent de {display_name(self.host)} : "
+                "mettez à jour l'image du poste.",
             )
             return
         self._run(RemoteTaskDialog(
@@ -338,24 +328,21 @@ class AppsDialog(QDialog):
     def update_esde_config(self) -> None:
         answer = QMessageBox.question(
             self, "Configuration d'ES-DE",
-            "Recopier les fichiers Gablue d'ES-DE (custom_systems et lanceurs "
-            "Tools) ?\n\nLes lanceurs personnalisés déjà présents ne sont pas "
-            "écrasés.",
+            "Recopier les fichiers Gablue d'ES-DE ?\n\nLanceurs "
+            "personnalisés conservés.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
-        subtitle = (
-            "custom_systems et lanceurs Tools, sans toucher à l'AppImage."
-        )
+        subtitle = "Fichiers Gablue, AppImage intacte."
         if self.host is not None:
             state = self.states.get("esde")
             command = config_command(state) if state else ""
             if not command:
                 QMessageBox.warning(
                     self, "Configuration d'ES-DE",
-                    f"esde-install de {display_name(self.host)} ne connaît pas "
-                    "« --config-only » : mettre à jour l'image de ce poste.",
+                    f"esde-install de {display_name(self.host)} est trop "
+                    "ancien : mettez à jour l'image du poste.",
                 )
                 return
             self._run(RemoteTaskDialog(

@@ -13,40 +13,31 @@ from ..local import (
     system_apply_script, system_choices, system_helpers_available,
 )
 from ..tasks import LocalTaskDialog, start_task
-from ..uiutil import fit_dialog_height, restyle_label
+from ..uiutil import (
+    fit_dialog_height, recommendation_badge, set_recommendation,
+)
 
 # Libellé de la case, puis description affichée dessous.
 CHOICE_LABELS = {
     "displaylink": (
-        "Prise en charge DisplayLink",
-        "Démarre displaylink.service au boot : nécessaire pour les stations "
-        "d'accueil et adaptateurs USB qui ajoutent des écrans. Inutile sans "
-        "matériel DisplayLink, le service reste alors arrêté.",
+        "DisplayLink",
+        "Pour les docks et adaptateurs d'écran en USB.",
     ),
     "docker": (
         "Docker",
-        "Démarre docker.service au boot (conteneurs et images Docker). "
-        "Réservé aux variantes DX de Gablue, qui embarquent le paquet.",
+        "Démarre le service Docker au boot.",
     ),
     "low_latency": (
-        "Couche Vulkan low-latency",
-        "Exporte LOW_LATENCY_LAYER=1 dans toutes les sessions (fichier "
-        "/etc/profile.d/vulkan-low-latency.sh) : moins de latence dans les "
-        "jeux compatibles. Une nouvelle session est nécessaire pour "
-        "l'appliquer.",
+        "Vulkan low-latency",
+        "Réduit la latence des jeux Vulkan (nouvelle session).",
     ),
     "broadcom_wl": (
-        "Pilote Wi-Fi Broadcom wl",
-        "Pour les vieux MacBooks (BCM4360) : blackliste les pilotes libres "
-        "b43, bcma et brcmfmac au profit du pilote propriétaire wl. "
-        "Redémarrage requis dans les deux sens.",
+        "Wi-Fi Broadcom wl",
+        "Pilote propriétaire pour vieux MacBooks. Redémarrage requis.",
     ),
     "atuin": (
-        "Historique atuin partagé",
-        "Installe ble.sh et branche atuin dans ~/.bashrc (ex-`ujust "
-        "atuin-setup`). La désactivation retire ce branchement et ble.sh, "
-        "mais conserve l'historique (~/.local/share/atuin) et la "
-        "configuration (~/.config/atuin).",
+        "Historique atuin",
+        "Historique commun à vos terminaux. Ctrl-R pour l'ouvrir.",
     ),
 }
 
@@ -56,7 +47,7 @@ CHOICE_STATE = {
     "docker": {True: "activé", False: "désactivé"},
     "low_latency": {True: "activée", False: "désactivée"},
     "broadcom_wl": {True: "activé", False: "désactivé"},
-    "atuin": {True: "activée", False: "désactivée"},
+    "atuin": {True: "activée", False: "désactivée — historique conservé"},
 }
 
 # Valeur recommandée pour la machine : services inutiles éteints, confort
@@ -95,9 +86,7 @@ class SystemDialog(QDialog):
         root_layout.addWidget(heading)
 
         note = QLabel(
-            "Réglages de cette machine, ex-recettes `ujust` : services, couche "
-            "Vulkan, pilote Wi-Fi et historique atuin. Les changements partent "
-            "ensemble ; la variante se bascule à part et demande un "
+            "Services et pilotes de cette machine. La variante demande un "
             "redémarrage.",
             self,
         )
@@ -150,10 +139,18 @@ class SystemDialog(QDialog):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(6)
 
+        top = QHBoxLayout()
+        top.setSpacing(8)
         check = QCheckBox(label, frame)
         check.setCursor(Qt.PointingHandCursor)
         check.toggled.connect(self._update_apply)
-        layout.addWidget(check)
+        top.addWidget(check)
+        if key in CHOICE_RECOMMENDED:
+            badge = recommendation_badge(frame)
+            top.addWidget(badge)
+            self.recommendations[key] = badge
+        top.addStretch(1)
+        layout.addLayout(top)
         self.checks[key] = check
 
         detail = QLabel(description, frame)
@@ -161,11 +158,6 @@ class SystemDialog(QDialog):
         detail.setWordWrap(True)
         layout.addWidget(detail)
 
-        if key in CHOICE_RECOMMENDED:
-            recommendation = QLabel(frame)
-            recommendation.setObjectName("hint")
-            layout.addWidget(recommendation)
-            self.recommendations[key] = recommendation
         layout.addStretch(1)
 
         self.frames[key] = frame
@@ -183,9 +175,8 @@ class SystemDialog(QDialog):
         layout.addWidget(title)
 
         detail = QLabel(
-            "Bascule l'image vers une autre variante (standard, DX, NVIDIA) : "
-            "le nouveau déploiement est téléchargé puis prend effet au "
-            "redémarrage. Vos fichiers personnels sont conservés.",
+            "Télécharge une autre variante. Effet au redémarrage, fichiers "
+            "conservés.",
             frame,
         )
         detail.setObjectName("hostDetail")
@@ -256,14 +247,12 @@ class SystemDialog(QDialog):
 
     def _update_recommendations(self) -> None:
         ok = bool(self.state.get("ok"))
-        for key, label in self.recommendations.items():
+        for key, badge in self.recommendations.items():
             recommended = CHOICE_RECOMMENDED[key]
             differs = ok and self.checks[key].isChecked() != recommended
-            text = f"Recommandé : {CHOICE_STATE[key][recommended]}"
-            if differs:
-                text += " — votre choix diffère"
-            label.setText(text)
-            restyle_label(label, "warn" if differs else "hint")
+            set_recommendation(
+                badge, "cocher" if recommended else "décocher", differs, ok
+            )
 
     def _update_variant(self) -> None:
         current = self.state.get("variant", "")
@@ -321,9 +310,7 @@ class SystemDialog(QDialog):
         answer = QMessageBox.question(
             self, "Services et pilotes",
             f"Appliquer ces réglages ?\n\n{details}\n\n"
-            "Les services et la couche Vulkan prennent effet tout de suite "
-            "(nouvelle session pour le shell), le pilote Wi-Fi au "
-            "redémarrage.",
+            "Wi-Fi : au redémarrage. Vulkan et atuin : nouvelle session.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
@@ -331,7 +318,7 @@ class SystemDialog(QDialog):
         changes = {key: self.checks[key].isChecked() for key in keys}
         dialog = LocalTaskDialog(
             self, title="Services et pilotes",
-            subtitle="Helpers Gablue — journal des opérations.",
+            subtitle="Journal des opérations.",
             argv=["/usr/bin/bash", "-c", system_apply_script(changes)],
         )
         start_task(self, dialog)
@@ -358,17 +345,15 @@ class SystemDialog(QDialog):
         label = self.variant_combo.currentText()
         answer = QMessageBox.question(
             self, "Changer de variante",
-            f"Basculer cette machine vers « {label} » ?\n\n"
-            "L'image sera téléchargée puis le nouveau déploiement prendra "
-            "effet au redémarrage. Vos fichiers personnels sont conservés, "
-            "mais la session en cours ne change pas.",
+            f"Basculer vers « {label} » ?\n\n"
+            "Téléchargement, puis redémarrage. Fichiers conservés.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
         dialog = LocalTaskDialog(
             self, title=f"Basculer vers {variant}",
-            subtitle="Téléchargement de l'image — redémarrage ensuite.",
+            subtitle="Téléchargement, puis redémarrage.",
             argv=["/usr/bin/bash", "-c", rebase_script(variant)],
         )
         start_task(self, dialog)

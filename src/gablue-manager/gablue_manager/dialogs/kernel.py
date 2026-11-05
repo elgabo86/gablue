@@ -14,44 +14,32 @@ from ..local import (
 )
 from ..ssh import ask_remote_password, remote_sudo_prefix, ssh_capture
 from ..tasks import LocalTaskDialog, RemoteTaskDialog, start_task
-from ..uiutil import fit_dialog_height, restyle_label
+from ..uiutil import (
+    fit_dialog_height, recommendation_badge, set_recommendation,
+)
 from ..util import address_text, display_name
 
 # Libellé de la case, puis description affichée dessous.
 CHOICE_LABELS = {
     "mitigations": (
-        "Protections contre les failles du processeur",
-        "Spectre, Meltdown et les autres failles du processeur sont corrigées "
-        "par le noyau. Les désactiver (mitigations=off) accélère les vieux "
-        "processeurs, mais laisse ces failles exploitables.",
+        "Protections du processeur",
+        "Contre Spectre et Meltdown. À laisser activé.",
     ),
     "cpuid": (
-        "Correctif CPUID pour certains jeux",
-        "Certains jeux (Hogwarts Legacy, entre autres, sur Ryzen) plantent "
-        "parce que le noyau annonce une extension du processeur qu'ils gèrent "
-        "mal. L'option clearcpuid=514 la masque : à activer seulement si un jeu "
-        "plante au lancement, à laisser désactivée sinon.",
+        "Correctif CPUID",
+        "Débloque certains jeux qui plantent au lancement.",
     ),
     "ertm": (
         "Désactiver le mode ERTM du Bluetooth",
-        "Le mode de retransmission ERTM fait décrocher certaines manettes et "
-        "certains casques. Le désactiver (bluetooth.disable_ertm=1) les "
-        "stabilise, au prix d'un débit un peu plus faible.",
+        "Stabilise certaines manettes et casques.",
     ),
     "hdmi21": (
-        "HDMI 2.1 sur GPU AMD",
-        "Active amdgpu.dcfeaturemask=0x402 : FreeSync et les fonctions HDMI 2.1 "
-        "sur les GPU AMD récents. Certains écrans scintillent avec ce réglage "
-        "(ex-`ujust configure-amd-hdmi21`) : à activer si l'écran le supporte, "
-        "à laisser désactivé sinon.",
+        "HDMI 2.1 (GPU AMD)",
+        "Active le HDMI 2.1 (FreeSync inclus). Peut scintiller.",
     ),
     "cpuid_emu": (
-        "Émulation CPUID fault (AMD AM4 / Steam Deck)",
-        "Le noyau masque les instructions CPUID que certains jeux gèrent mal "
-        "sur ces processeurs (ex-`ujust cpuid-emu-on`). Le module a besoin de "
-        "SVM (AMD-V) et l'occupe : KVM et les machines virtuelles sont "
-        "indisponibles tant que l'émulation tourne. Persistant après "
-        "redémarrage.",
+        "Émulation CPUID fault",
+        "Jeux AMD AM4 / Steam Deck. KVM déchargé pendant l'émulation.",
     ),
 }
 
@@ -149,10 +137,18 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(6)
 
+        top = QHBoxLayout()
+        top.setSpacing(8)
         check = QCheckBox(label, frame)
         check.setCursor(Qt.PointingHandCursor)
         check.toggled.connect(self._update_apply)
-        layout.addWidget(check)
+        top.addWidget(check)
+        if key in CHOICE_RECOMMENDED:
+            badge = recommendation_badge(frame)
+            top.addWidget(badge)
+            self.recommendations[key] = badge
+        top.addStretch(1)
+        layout.addLayout(top)
         self.checks[key] = check
 
         detail = QLabel(description, frame)
@@ -160,11 +156,6 @@ class SettingsDialog(QDialog):
         detail.setWordWrap(True)
         layout.addWidget(detail)
 
-        if key in CHOICE_RECOMMENDED:
-            recommendation = QLabel(frame)
-            recommendation.setObjectName("hint")
-            layout.addWidget(recommendation)
-            self.recommendations[key] = recommendation
         layout.addStretch(1)
 
         self.rows_layout.addWidget(frame)
@@ -203,14 +194,12 @@ class SettingsDialog(QDialog):
 
     def _update_recommendations(self) -> None:
         ok = bool(self.state.get("ok"))
-        for key, label in self.recommendations.items():
+        for key, badge in self.recommendations.items():
             recommended = CHOICE_RECOMMENDED[key]
             differs = ok and self.checks[key].isChecked() != recommended
-            text = f"Recommandé : {CHOICE_STATE[key][recommended]}"
-            if differs:
-                text += " — votre choix diffère"
-            label.setText(text)
-            restyle_label(label, "warn" if differs else "hint")
+            set_recommendation(
+                badge, "cocher" if recommended else "décocher", differs, ok
+            )
 
     def _update_apply(self) -> None:
         self._update_recommendations()
@@ -279,9 +268,7 @@ class LocalSettingsDialog(SettingsDialog):
     def __init__(self, parent=None):
         super().__init__(
             parent, "Configuration avancée",
-            "Réglages de cette machine : ligne de commande du noyau (dont "
-            "HDMI 2.1) et émulation CPUID, effet au prochain démarrage. "
-            "Les changements partent ensemble, en une seule opération.",
+            "Réglages du noyau. Effet au prochain démarrage.",
         )
 
     def read_state(self) -> dict:
@@ -297,7 +284,7 @@ class LocalSettingsDialog(SettingsDialog):
         # dans le journal plutôt que de faire surgir un dialogue root.
         dialog = LocalTaskDialog(
             self, title="Réglages du noyau",
-            subtitle="Helpers Gablue — effet au prochain démarrage.",
+            subtitle="Effet au prochain démarrage.",
             argv=[_which("bash"), "-c", kernel_apply_script(changes)],
         )
         start_task(self, dialog)
@@ -310,10 +297,8 @@ class RemoteSettingsDialog(SettingsDialog):
         self.host = dict(host or {})
         super().__init__(
             parent, f"Configuration avancée — {display_name(self.host)}",
-            f"Réglages de {address_text(self.host)}, lus et appliqués par SSH "
-            "(helpers Gablue en NOPASSWD) : effet à "
-            "son prochain démarrage. Les changements partent ensemble, en une "
-            "seule opération.",
+            f"Réglages de {address_text(self.host)}, par SSH. Effet à son "
+            "prochain démarrage.",
         )
 
     def read_state(self) -> dict:
@@ -341,7 +326,7 @@ class RemoteSettingsDialog(SettingsDialog):
         command = remote_sudo_prefix(password) + kernel_apply_script(changes)
         dialog = RemoteTaskDialog(
             self, host=self.host, title="Réglages du noyau",
-            subtitle="Helpers Gablue — effet à son prochain démarrage.",
+            subtitle="Effet à son prochain démarrage.",
             command=command, password=password,
         )
         start_task(self, dialog)

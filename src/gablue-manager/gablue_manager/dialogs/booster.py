@@ -11,7 +11,9 @@ from ..constants import _which
 from ..local import foreground_booster_path, parse_foreground_booster
 from ..ssh import ssh_capture
 from ..tasks import LocalTaskDialog, RemoteTaskDialog, start_task
-from ..uiutil import fit_dialog_height, restyle_label
+from ..uiutil import (
+    fit_dialog_height, recommendation_badge, set_recommendation,
+)
 from ..util import address_text, display_name
 
 class ForegroundBoosterDialog(QDialog):
@@ -43,16 +45,9 @@ class ForegroundBoosterDialog(QDialog):
         root_layout.addWidget(heading)
 
         if remote:
-            note_text = (
-                f"Réglages de {address_text(self.host)}, lus et modifiés par "
-                "SSH : appliqué à sa prochaine ouverture de session si le "
-                "service ne peut pas être relancé à distance."
-            )
+            note_text = f"Réglage de {address_text(self.host)}, par SSH."
         else:
-            note_text = (
-                "Réglage de la session Plasma : appliqué tout de suite, sans "
-                "redémarrage."
-            )
+            note_text = "Appliqué tout de suite, sans redémarrage."
         note = QLabel(note_text, self)
         note.setObjectName("subtitle")
         note.setWordWrap(True)
@@ -67,23 +62,24 @@ class ForegroundBoosterDialog(QDialog):
         frame_layout = QVBoxLayout(frame)
         frame_layout.setContentsMargins(16, 12, 16, 12)
         frame_layout.setSpacing(6)
+        top = QHBoxLayout()
+        top.setSpacing(8)
         self.check = QCheckBox("Booster l'application au premier plan", frame)
         self.check.setCursor(Qt.PointingHandCursor)
         self.check.toggled.connect(self._update_apply)
-        frame_layout.addWidget(self.check)
+        top.addWidget(self.check)
+        self.recommendation = recommendation_badge(frame)
+        top.addWidget(self.recommendation)
+        top.addStretch(1)
+        frame_layout.addLayout(top)
         detail = QLabel(
-            "Plasma donne plus de priorité au processeur et au disque de la "
-            "fenêtre active : les jeux restent fluides. À désactiver si vous "
-            "compilez, encodez ou synchronisez en arrière-plan — le booster "
-            "peut affamer ces tâches.",
+            "Priorité à la fenêtre active. À couper si vous compilez ou "
+            "encodez en arrière-plan.",
             frame,
         )
         detail.setObjectName("hostDetail")
         detail.setWordWrap(True)
         frame_layout.addWidget(detail)
-        self.recommendation = QLabel(frame)
-        self.recommendation.setObjectName("hint")
-        frame_layout.addWidget(self.recommendation)
         frame_layout.addStretch(1)
         self.rows_layout.addWidget(frame)
 
@@ -151,12 +147,9 @@ class ForegroundBoosterDialog(QDialog):
         return self.check.isEnabled() and self.check.isChecked() != self.initial
 
     def _update_apply(self) -> None:
-        differs = bool(self.state.get("ok")) and not self.check.isChecked()
-        message = "Recommandé : activé"
-        if differs:
-            message += " — votre choix diffère"
-        self.recommendation.setText(message)
-        restyle_label(self.recommendation, "warn" if differs else "hint")
+        ok = bool(self.state.get("ok"))
+        differs = ok and not self.check.isChecked()
+        set_recommendation(self.recommendation, "cocher", differs, ok)
         if not self.state.get("ok"):
             self.apply_button.setEnabled(False)
             self.hint_label.setText("État illisible — réglage non modifiable.")
@@ -180,12 +173,10 @@ class ForegroundBoosterDialog(QDialog):
         enabled = self.check.isChecked()
         answer = QMessageBox.question(
             self, "Priorité au premier plan",
-            ("Booster l'application au premier plan ?" if enabled
+            ("Activer le boost du premier plan ?" if enabled
              else "Désactiver le boost du premier plan ?") + "\n\n"
-            + ("La fenêtre active recevra la priorité du processeur et du "
-               "disque." if enabled else
-               "Les compilations, encodages et synchronisations en arrière-plan "
-               "retrouveront leur part de processeur."),
+            + ("La fenêtre active passe prioritaire." if enabled else
+               "Les tâches de fond retrouvent leur part."),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
@@ -202,14 +193,13 @@ class ForegroundBoosterDialog(QDialog):
         if self.host:
             dialog = RemoteTaskDialog(
                 self, host=self.host, title="Priorité au premier plan",
-                subtitle="kcgroupsrc — réglage persistant, effet immédiat en "
-                         "session locale.",
+                subtitle="Effet immédiat en session locale.",
                 command=script,
             )
         else:
             dialog = LocalTaskDialog(
                 self, title="Priorité au premier plan",
-                subtitle="kcgroupsrc — réglage persistant, effet immédiat.",
+                subtitle="Effet immédiat.",
                 argv=[_which("bash"), "-c", script],
             )
         start_task(self, dialog)

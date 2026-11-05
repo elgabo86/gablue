@@ -45,9 +45,7 @@ class App:
 APPS: tuple[App, ...] = (
     App(
         "esde", "ES-DE",
-        "EmulationStation Desktop Edition : frontend manette qui lance tous "
-        "les autres émulateurs. Son installation copie aussi les systèmes "
-        "Gablue et les lanceurs Tools (Gablue TV, Jellyfin, YouTube).",
+        "Frontend manette ; copie aussi les systèmes et lanceurs Gablue.",
         "emulateur",
         "esde*.appimage", "esde-install", "esde",
         # Sans boîte de dialogue : le journal du manager fait office de retour.
@@ -55,32 +53,31 @@ APPS: tuple[App, ...] = (
     ),
     App(
         "azahar", "Azahar",
-        "Émulateur Nintendo 3DS (AzaharPlus), AppImage intégrée par GearLever.",
+        "Émulateur Nintendo 3DS.",
         "emulateur",
         "azahar*.appimage", "azahar-install", "azahar",
     ),
     App(
         "eden", "Eden",
-        "Émulateur Nintendo Switch (build Linux PGO).",
+        "Émulateur Nintendo Switch.",
         "emulateur",
         "*eden*.appimage", "eden-install", "eden",
     ),
     App(
         "xenia", "Xenia Edge",
-        "Émulateur Xbox 360 (xenia-edge).",
+        "Émulateur Xbox 360.",
         "emulateur",
         "xenia*.appimage", "xenia-install", "xenia",
     ),
     App(
         "shadps4", "ShadPS4",
-        "Émulateur PlayStation 4 (ShadPS4Plus), livré en archive ZIP.",
+        "Émulateur PlayStation 4.",
         "emulateur",
         "shadps4*.appimage", "shadps4-install", "shadps4",
     ),
     App(
         "opencode", "OpenCode 2",
-        "Éditeur et agent de code : CLI npm, app Desktop et MCP Lightpanda. "
-        "Son installation ajoute les entrées Dolphin « Ouvrir avec ».",
+        "Éditeur et agent de code.",
         "outil",
         "opencode*.appimage", "opencode2-install", "opencode",
         cli="opencode", remover="opencode2-remove",

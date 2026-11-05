@@ -42,11 +42,10 @@ class HostDialog(QDialog):
         root.addWidget(title)
 
         subtitle = QLabel(
-            "La clé publique est copiée sur la machine dès l'ajout, pour "
-            "éviter le mot de passe à chaque connexion. Si elle est déjà en "
-            "place, aucun mot de passe n'est demandé : laissez le champ vide."
+            "La clé SSH est copiée à l'ajout. Laissez le mot de passe vide "
+            "si elle est déjà en place."
             if not host else
-            "Le mot de passe et la clé ne sont pas modifiés ici."
+            "Le mot de passe et la clé ne changent pas."
         )
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
@@ -93,8 +92,7 @@ class HostDialog(QDialog):
         mac_row.addWidget(self.mac_button)
         form.addLayout(mac_row)
         self.mac_hint = QLabel(
-            "Capturée automatiquement au premier contact réussi ; utile pour "
-            "réveiller un poste éteint.", self,
+            "Utile pour réveiller un poste éteint.", self,
         )
         self.mac_hint.setObjectName("hint")
         self.mac_hint.setWordWrap(True)
@@ -118,8 +116,7 @@ class HostDialog(QDialog):
         root.addLayout(form)
 
         hint = QLabel(
-            "Le mot de passe ne sert qu'à déposer la clé publique dans "
-            "~/.ssh/authorized_keys du poste (ssh-copy-id). Il n'est écrit nulle part."
+            "Sert une fois, pour copier la clé. Jamais enregistré."
         )
         hint.setObjectName("hint")
         hint.setWordWrap(True)
@@ -191,9 +188,7 @@ class HostDialog(QDialog):
             self.mac_hint.setText("Adresse MAC lue dans la table ARP locale.")
         else:
             self.mac_hint.setText(
-                "Introuvable pour l'instant : le poste doit avoir communiqué "
-                "récemment sur le réseau. Elle sera capturée à la prochaine "
-                "connexion réussie."
+                "Introuvable : le poste n'a pas communiqué récemment."
             )
 
     def _show_error(self, message: str) -> None:
@@ -324,12 +319,9 @@ class CandidateDialog(QDialog):
         root.addLayout(tools)
 
         self.note = QLabel(
-            "La clé SSH est copiée sur chaque poste ajouté ; le mot de passe "
-            "n'est demandé que s'il la refuse encore. Une adresse LAN est "
-            "préférée à une adresse Tailscale quand les deux existent."
+            "La clé SSH est copiée à l'ajout. Adresse LAN préférée."
             if self._candidates else
-            "Aucun nouveau poste à ajouter : les adresses de cette machine "
-            "sont écartées, et un poste déjà enregistré ne s'affiche pas.",
+            "Aucun nouveau poste à ajouter.",
             self,
         )
         self.note.setObjectName("hint")
