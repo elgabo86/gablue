@@ -1,0 +1,39 @@
+#!/bin/bash
+
+# Lanceur lgplaunch — source de développement.
+# /usr/bin/lgplaunch est assemblé depuis lib/*.sh par build.sh ; ce fichier
+# ne sert qu'à lancer la version du dépôt (même code, source en place).
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+source "$SCRIPT_DIR/lib/core.sh"
+source "$SCRIPT_DIR/lib/overlay.sh"
+source "$SCRIPT_DIR/lib/args.sh"
+source "$SCRIPT_DIR/lib/lgp.sh"
+source "$SCRIPT_DIR/lib/exe.sh"
+source "$SCRIPT_DIR/lib/saves.sh"
+source "$SCRIPT_DIR/lib/copy.sh"
+source "$SCRIPT_DIR/lib/extras.sh"
+source "$SCRIPT_DIR/lib/temp.sh"
+source "$SCRIPT_DIR/lib/symlinks.sh"
+source "$SCRIPT_DIR/lib/env.sh"
+source "$SCRIPT_DIR/lib/launch.sh"
+source "$SCRIPT_DIR/lib/modes.sh"
+
+#======================================
+# Fonction principale
+#======================================
+
+main() {
+    parse_arguments "$@"
+
+    # Déterminer le mode
+    if [[ "$fullpath" == *.lgp ]]; then
+        run_lgp_mode
+    else
+        run_classic_mode
+    fi
+}
+
+# Lancement du script
+main "$@"

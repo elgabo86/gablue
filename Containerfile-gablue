@@ -50,6 +50,8 @@ COPY src/gablue-isomount /src/gablue-isomount
 COPY src/gwine-launcher /src/gwine-launcher
 COPY src/gablue-manager /src/gablue-manager
 COPY src/tvqt /src/tvqt
+COPY src/gablue-apk-installer /src/gablue-apk-installer
+COPY src/lgplaunch /src/lgplaunch
 COPY src/composefs-fix /src/composefs-fix
 COPY src/cpuid-fault /src/cpuid-fault
 
@@ -172,6 +174,22 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=tmpfs,dst=/tmp \
     /ctx/build-tvqt && \
+    /ctx/cleanup
+
+# Installateur APK : paquet Python dans /usr/lib/gablue-apk-installer + lanceur
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/build-apk-installer && \
+    /ctx/cleanup
+
+# lgplaunch : modules lib/*.sh assemblés en /usr/bin/lgplaunch (comme gwine)
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/build-lgplaunch && \
     /ctx/cleanup
 
 # Règle polkit des bureaux distants gremote (sessions SANS siège) : la liste des

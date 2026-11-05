@@ -73,6 +73,10 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── kbdnav.c                       # Pont manette -> clavier virtuel (evdev grab, uinput, D-Bus KWin)
 │   │   ├── AGENTS.md                      # Architecture interne (souris + kbdnav)
 │   │   └── Makefile                       # Compilation (3 binaires)
+│   ├── gablue-apk-installer/               # Installateur APK (Python modulaire)
+│   │   ├── AGENTS.md                        # Paquet, appareils, installation
+│   │   ├── gablue-apk-installer            # Lanceur /usr/bin (sys.path + main)
+│   │   └── gablue_apk_installer/           # Paquet : app, window, device, install, dialogs/
 │   ├── gablue-isomount/                    # Sources C du monteur d'images disque
 │   │   ├── gablue-isomount.c              # Programme principal (UDisks2 DBus, Dolphin)
 │   │   └── Makefile                       # Compilation
@@ -86,6 +90,11 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── build.sh                        # Assemblage du fichier standalone
 │   │   ├── completions/                    # Completions bash et zsh
 │   │   └── lib/                            # Bibliothèques modulaires (~60 fichiers)
+│   ├── lgplaunch/                          # Sources de lgplaunch (Bash modulaire)
+│   │   ├── AGENTS.md                        # Modules, montage LGP, overlays
+│   │   ├── lgplaunch                       # Lanceur de développement (source lib/)
+│   │   ├── build.sh                        # Assemblage lib/*.sh → standalone
+│   │   └── lib/                            # Modules (core, lgp, saves, exe, modes…)
 │   └── tvqt/                               # Sources de Gablue TV (Python modulaire)
 │       ├── AGENTS.md                        # Paquet, vues, manettes, EPG
 │       ├── tvqt                            # Lanceur /usr/bin (sys.path + main)
@@ -530,6 +539,8 @@ son propre AGENTS.md de sous-dossier + pointeur dans l'index ci-dessous.
 | Lanceur gwine | `src/gwine-launcher/AGENTS.md` | modifier `src/gwine-launcher/` |
 | Gablue Manager (GUI, paquet `gablue_manager`) | `src/gablue-manager/AGENTS.md` | modifier `src/gablue-manager/` ou un dialogue |
 | TV Gablue (tvqt, paquet `gablue_tv`) | `src/tvqt/AGENTS.md` | modifier `src/tvqt/` ou une vue |
+| Installateur APK (paquet `gablue_apk_installer`) | `src/gablue-apk-installer/AGENTS.md` | modifier `src/gablue-apk-installer/` |
+| lgplaunch (modules Bash `lib/`) | `src/lgplaunch/AGENTS.md` | modifier `src/lgplaunch/` |
 | Manette (gamepadshortcuts, mouse, kbdnav) | `src/gamepadshortcuts/AGENTS.md` | modifier `src/gamepadshortcuts/` |
 
 Changements suivant la racine :

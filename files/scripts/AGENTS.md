@@ -92,7 +92,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - `terminaltexteffects` via `uv` (appelé après rpm)
 - **Conflit site-packages** : un RPM peut poser un fichier/symlink à n'importe quel niveau de `/usr/local/lib/python3.14/site-packages/` (transition majeure Python) → `uv pip install` échoue (`File exists, os error 17`) ; le script remonte la hiérarchie, supprime ce qui n'est pas un répertoire, `mkdir -p` avant install
 
-### build-c / build-gwine / build-manager / build-tvqt — Compilation des sources
+### build-c / build-gwine / build-manager / build-tvqt / build-apk-installer / build-lgplaunch — Compilation des sources
 
 **build-c** (après pypi) :
 - Compile `/src/gamepadshortcuts` (gamepadshortcuts + gamepadshortcuts-mouse + kbdnav, même Makefile), `/src/ds2xbox`, `/src/gablue-isomount`
@@ -113,6 +113,16 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - Installe le paquet Python `/src/tvqt/gablue_tv/` dans `/usr/lib/tvqt/` et le lanceur `src/tvqt/tvqt` en `/usr/bin/tvqt` (755) ; sources nettoyées
 - Mêmes règles que build-manager : pas de `.pyc` dans l'image, rebuild d'image obligatoire (le lanceur ne lit que `/usr/lib/tvqt`)
 - Architecture interne → `src/tvqt/AGENTS.md`
+
+**build-apk-installer** (après build-tvqt) :
+- Installe le paquet Python `/src/gablue-apk-installer/gablue_apk_installer/` dans `/usr/lib/gablue-apk-installer/` et le lanceur `src/gablue-apk-installer/gablue-apk-installer` en `/usr/bin/gablue-apk-installer` (755) ; sources nettoyées
+- Mêmes règles que build-manager : pas de `.pyc` dans l'image, rebuild d'image obligatoire (le lanceur ne lit que `/usr/lib/gablue-apk-installer`)
+- Architecture interne → `src/gablue-apk-installer/AGENTS.md`
+
+**build-lgplaunch** (après build-apk-installer) :
+- `build.sh` concatène `/src/lgplaunch/lib/*.sh` (ordre de `LIB_FILES`) + le `main` du lanceur → `lgplaunch-standalone.sh` (gitignoré), installé en `/usr/bin/lgplaunch` (755) ; sources nettoyées
+- Assemblage = simple concat : **toute modif de `lib/` exige un rebuild d'image** ; ne pas éditer le standalone
+- Architecture interne → `src/lgplaunch/AGENTS.md`
 
 ### post-install
 

@@ -1,0 +1,33 @@
+#!/usr/bin/bash
+
+# Installation de l'installateur APK Gablue depuis ses sources modulaires
+# Le paquet Python va dans /usr/lib/gablue-apk-installer, le lanceur dans
+# /usr/bin/gablue-apk-installer (menu, .desktop, glisser-déposer Dolphin).
+
+set -eoux pipefail
+
+SRC_DIR="/src/gablue-apk-installer"
+
+if [ ! -d "$SRC_DIR/gablue_apk_installer" ]; then
+    echo "ATTENTION: sources gablue-apk-installer introuvables dans $SRC_DIR"
+    exit 1
+fi
+
+# =============================================================================
+# INSTALLATION
+# =============================================================================
+
+install -d /usr/lib/gablue-apk-installer
+cp -a "$SRC_DIR/gablue_apk_installer" /usr/lib/gablue-apk-installer/
+install -Dm755 "$SRC_DIR/gablue-apk-installer" /usr/bin/gablue-apk-installer
+
+# =============================================================================
+# NETTOYAGE
+# =============================================================================
+
+# Aucun .pyc dans l'image : ils seraient liés au Python du build, pas à celui
+# du poste (et /usr est en lecture seule sur composefs).
+find /usr/lib/gablue-apk-installer -name '__pycache__' -type d -prune -exec rm -rf {} +
+
+rm -rf "$SRC_DIR"
+rmdir /src 2>/dev/null || true

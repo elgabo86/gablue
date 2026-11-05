@@ -1,0 +1,38 @@
+#!/usr/bin/bash
+
+# Assemblage de lgplaunch depuis ses modules puis installation
+# build.sh concatène lib/*.sh + le code principal en un fichier standalone
+# (comme gwine-launcher) ; le binaire /usr/bin/lgplaunch ne change pas.
+
+set -eoux pipefail
+
+SRC_DIR="/src/lgplaunch"
+
+if [ ! -d "$SRC_DIR/lib" ]; then
+    echo "ATTENTION: sources lgplaunch introuvables dans $SRC_DIR"
+    exit 1
+fi
+
+# =============================================================================
+# ASSEMBLAGE
+# =============================================================================
+
+bash "$SRC_DIR/build.sh"
+
+if [ ! -f "$SRC_DIR/lgplaunch-standalone.sh" ]; then
+    echo "ERREUR: assemblage lgplaunch échoué, lgplaunch-standalone.sh introuvable"
+    exit 1
+fi
+
+# =============================================================================
+# INSTALLATION
+# =============================================================================
+
+install -Dm755 "$SRC_DIR/lgplaunch-standalone.sh" /usr/bin/lgplaunch
+
+# =============================================================================
+# NETTOYAGE
+# =============================================================================
+
+rm -rf "$SRC_DIR"
+rmdir /src 2>/dev/null || true

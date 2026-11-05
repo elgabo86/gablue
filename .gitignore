@@ -4,6 +4,7 @@ cosign.private
 todo.md
 *.pyc
 src/gwine-launcher/gwine-standalone.sh
+src/lgplaunch/lgplaunch-standalone.sh
 src/ds2xbox/ds2xbox
 src/gamepadshortcuts/gamepadshortcuts
 src/gablue-isomount/gablue-isomount
