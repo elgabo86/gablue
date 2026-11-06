@@ -24,9 +24,9 @@ GWINE_DISPLAYS = (
 
 # Valeur recommandée de chaque réglage (pastille, valeur).
 GWINE_RECOMMENDED = {
-    "dxvk_async": ("décocher", False),
-    "wayland": ("X11 (XWayland)", False),
-    "xbox": ("décocher", False),
+    "dxvk_async": ("à désactiver", False),
+    "wayland": ("choisir X11 (XWayland)", False),
+    "xbox": ("à désactiver", False),
 }
 
 # État conseillé, dit en clair à côté d'un réglage déjà conforme : « ✓ Conseillé »

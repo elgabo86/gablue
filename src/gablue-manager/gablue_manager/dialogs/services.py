@@ -215,7 +215,9 @@ class ServicesDialog(QDialog):
             recommended = CHOICE_RECOMMENDED[key]
             differs = ok and self.checks[key].isChecked() != recommended
             set_recommendation(
-                badge, "cocher" if recommended else "décocher", differs, ok,
+                badge,
+                "à activer" if recommended else "à désactiver",
+                differs, ok,
                 advice=CHOICE_STATE[key][recommended],
             )
 

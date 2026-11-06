@@ -84,8 +84,9 @@ def set_recommendation(badge: QLabel, hint: str, differs: bool,
                        known: bool = True, advice: str = "") -> None:
     """Met la pastille à jour pour le choix courant.
 
-    `hint` dit en clair **le geste** qui rejoint le conseil (« cocher »,
-    « décocher », « X11 ») ; il n'apparaît que quand le choix s'en écarte.
+    `hint` dit en clair **le geste** qui rejoint le conseil (« à activer »,
+    « à désactiver », « choisir X11 ») ; il n'apparaît que quand le choix s'en
+    écarte.
     `advice` dit **l'état conseillé** (« activé », « désactivé », « X11 ») et
     s'affiche quand le choix le suit : un « ✓ Conseillé » seul, posé à côté
     d'une case décochée, se lisait comme « il est conseillé de cocher » —

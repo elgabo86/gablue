@@ -150,7 +150,7 @@ class ForegroundBoosterDialog(QDialog):
         ok = bool(self.state.get("ok"))
         differs = ok and not self.check.isChecked()
         set_recommendation(
-            self.recommendation, "cocher", differs, ok, advice="activé"
+            self.recommendation, "à activer", differs, ok, advice="activé"
         )
         if not self.state.get("ok"):
             self.apply_button.setEnabled(False)
