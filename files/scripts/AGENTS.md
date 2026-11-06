@@ -91,7 +91,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 ### pypi — Packages Python sans équivalent RPM
 
 - `terminaltexteffects` via `uv` (appelé après rpm)
-- **Conflit site-packages** : un RPM peut poser un fichier/symlink à n'importe quel niveau de `/usr/local/lib/python3.14/site-packages/` (transition majeure Python) → `uv pip install` échoue (`File exists, os error 17`) ; le script remonte la hiérarchie, supprime ce qui n'est pas un répertoire, `mkdir -p` avant install
+- **Conflit site-packages** : un RPM peut poser un fichier/symlink à n'importe quel niveau de `/usr/local/lib/pythonX.Y/site-packages/` (transition majeure Python) → `uv pip install` échoue (`File exists, os error 17`) ; le script remonte la hiérarchie, supprime ce qui n'est pas un répertoire, `mkdir -p` avant install. `X.Y` est déduit du Python de l'image (`python3 -c`), jamais codé en dur : un chemin figé visait 3.14 et serait resté muet sur 3.15 en fc45
 
 ### build-c / build-gwine / build-manager / build-tvqt / build-apk-installer / build-lgplaunch — Compilation des sources
 

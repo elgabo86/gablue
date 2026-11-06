@@ -41,7 +41,7 @@ jobs:
       image_desc: ${{ github.ref == 'refs/heads/test' && 'Gablue main test image' || 'Gablue main image' }}
       image_variant: "main"
       source_image: "kinoite"
-      fedora_version: "44"
+      fedora_version: "45"
       kernel_type: "ogc"
 
   build-nvidia:
@@ -61,7 +61,7 @@ jobs:
       image_desc: "Gablue nvidia image"
       image_variant: "nvidia"
       source_image: "kinoite"
-      fedora_version: "44"
+      fedora_version: "45"
       # Kernel OGC LTS : Bazzite paire le driver NVIDIA LTS closed avec le
       # kernel ogc-lts (commit 3eb7b09) — akmods-nvidia-lts ne publie plus
       # que des tags ogc-lts-*
@@ -86,7 +86,7 @@ jobs:
       image_desc: ${{ github.ref == 'refs/heads/test' && 'Gablue nvidia-open test image' || 'Gablue nvidia-open image' }}
       image_variant: "nvidia-open"
       source_image: "kinoite"
-      fedora_version: "44"
+      fedora_version: "45"
       kernel_type: "ogc"
       nvidia_flavor: "nvidia-open"
 
@@ -107,7 +107,7 @@ jobs:
       image_desc: "Gablue main-dx image (développement avec virtualisation)"
       image_variant: "main"
       source_image: "kinoite"
-      fedora_version: "44"
+      fedora_version: "45"
       kernel_type: "ogc"
 
   build-nvidia-open-dx:
@@ -127,7 +127,7 @@ jobs:
       image_desc: "Gablue nvidia-open-dx image (développement avec virtualisation)"
       image_variant: "nvidia-open"
       source_image: "kinoite"
-      fedora_version: "44"
+      fedora_version: "45"
       kernel_type: "ogc"
       nvidia_flavor: "nvidia-open"
 
@@ -212,7 +212,7 @@ jobs:
 
           fedora = os.environ['fedora']
           kernel = os.environ['kernel']
-          # Reformater 7.1.5-ogc2.1.fc44 -> 7.1.5 (rev 2.1)
+          # Reformater 7.3.1-ogc6.1.fc45 -> 7.3.1 (rev 6.1)
           m = re.match(r'^(\d+\.\d+\.\d+)-ogc([\d.]+)\.fc\d+.*$', kernel)
           if m:
               kernel = f'{m.group(1)} (rev {m.group(2)})'

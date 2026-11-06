@@ -102,7 +102,7 @@ src/gwine-launcher/
 - bubblewrap (sandboxing)
 - wget, curl (téléchargements)
 - tar, 7z (extraction)
-- kdialog, qdbus (interface graphique optionnelle). La commande qdbus est détectée dynamiquement par `_get_qdbus_cmd()` (ui.sh) qui teste `qdbus6`, `qdbus-qt6` (Plasma 6 / Kinoite fc44), `qdbus-qt5` puis `qdbus`. Sans qdbus, les barres de progression kdialog sont silencieusement désactivées (l'init/update fonctionne quand même, sans feedback visuel)
+- kdialog, qdbus (interface graphique optionnelle). La commande qdbus est détectée dynamiquement par `_get_qdbus_cmd()` (ui.sh) qui teste `qdbus6`, `qdbus-qt6` (Plasma 6 / Kinoite fc45), `qdbus-qt5` puis `qdbus`. Sans qdbus, les barres de progression kdialog sont silencieusement désactivées (l'init/update fonctionne quand même, sans feedback visuel)
 - gamemoded (GameMode pour performances)
 
 ### Support GPU

@@ -13,7 +13,10 @@ set -eoux pipefail
 # d'un répertoire dans le chemin (ex: transition majeure Python), ce qui bloque
 # uv pip install (File exists). On remonte la hiérarchie et nettoie tout ce qui
 # n'est pas un répertoire, puis on crée le dossier.
-TARGET="/usr/local/lib/python3.14/site-packages"
+# Version déduite du Python de l'image (3.14 en fc44, 3.15 en fc45...) : un chemin
+# codé en dur viserait une hiérarchie obsolète et laisserait le conflit en place.
+PYVER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+TARGET="/usr/local/lib/python${PYVER}/site-packages"
 CURRENT=""
 IFS="/" read -ra PARTS <<< "$TARGET"
 for PART in "${PARTS[@]}"; do

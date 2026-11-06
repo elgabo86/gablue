@@ -19,7 +19,7 @@ sudo buildah build \
   --format "docker" \
   --build-arg VARIANT="main" \
   --build-arg SOURCE_IMAGE="kinoite" \
-  --build-arg FEDORA_VERSION="44" \
+  --build-arg FEDORA_VERSION="45" \
   --build-arg KERNEL_FLAVOR="ogc" \
   --build-arg KERNEL_VERSION="<version>" \
   --tag gablue-main .

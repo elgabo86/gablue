@@ -54,9 +54,12 @@ jobs:
     steps:
       # Étape pour récupérer la version du kernel
       # Cascade de sources :
-      # 1. Le kernel pinné dans le build.yml de la branche main de Bazzite
-      #    (le plus récent : préparé en avance, ex. 7.2.0 alors que le stable
-      #    publié est encore en 7.1.5) — validé contre les tags akmods
+      # 1. Le kernel pinné dans la matrice de la branche main de Bazzite
+      #    (le plus récent : préparé en avance, ex. 7.2.15 alors que notre
+      #    stable publié est encore sur un kernel antérieur) — validé contre
+      #    les tags akmods. Depuis 10-11/2026 la matrice n'est plus dans
+      #    build.yml mais dans build.py (table IMAGES + DEFAULTS, les images
+      #    LTS référencent la constante LTS_KERNEL_VERSION).
       # 2. Le kernel réellement publié sur l'image stable Bazzite (label OCI
       #    ostree.linux) — filet de sécurité si le pin main n'a pas encore
       #    ses akmods
@@ -94,21 +97,51 @@ jobs:
 
           KERNEL_VERSION=""
 
-          # 1. Kernel pinné dans le build.yml de la branche main de Bazzite
-          #    Pour chaque entrée matrix : fedora_version + kernel_flavor puis
-          #    kernel_version. On extrait le kernel_version du premier bloc
-          #    dont le kernel_flavor (ogc ou ogc-lts) correspond exactement.
+          # 1. Kernel pinné dans la matrice de la branche main de Bazzite
+          #    (build.py : table IMAGES + DEFAULTS, les images LTS renvoient à
+          #    la constante LTS_KERNEL_VERSION). On prend le kernel_version du
+          #    premier bloc dont le kernel_flavor (ogc ou ogc-lts) correspond
+          #    exactement, on résout la constante éventuelle, et on refuse la
+          #    matrice si son fedora_version n'est pas celle qu'on construit
+          #    (sinon on adopterait un kernel fc45 pour une image fc44).
+          cat > /tmp/parse-bazzite-matrix.py <<'PY'
+          import re, sys
+
+          src = sys.stdin.read()
+          flavor, fedora = sys.argv[1], sys.argv[2]
+
+          # Constantes module-level éventuelles (ex. LTS_KERNEL_VERSION = "…")
+          consts = dict(re.findall(r'^([A-Z][A-Z0-9_]*)\s*=\s*"([^"]*)"', src, re.M))
+
+          def block(name):
+              m = re.search(rf'^{name}\s*(?::[^=\n]+)?=\s*\{{(.*?)^\}}', src, re.M | re.S)
+              return m.group(1) if m else ""
+
+          def field(text, key):
+              m = re.search(rf'"{key}"\s*:\s*("([^"]*)"|\d+|[A-Z][A-Z0-9_]*)', text)
+              return m.group(1).strip('"') if m else None
+
+          defaults = block("DEFAULTS")
+          if field(defaults, "fedora_version") != fedora:
+              sys.exit(1)
+
+          for row in re.findall(r'\{[^{}]*\}', block("IMAGES"), re.S):
+              if (field(row, "kernel_flavor") or field(defaults, "kernel_flavor")) != flavor:
+                  continue
+              version = field(row, "kernel_version") or field(defaults, "kernel_version")
+              if version:
+                  print(consts.get(version, version))
+                  break
+          PY
           for attempt in 1 2 3; do
-            BUILD_YML=$(curl -fsSL "https://raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml" 2>/dev/null || true)
-            if [ -n "$BUILD_YML" ]; then
-              PINNED=$(echo "$BUILD_YML" | awk -v kf="$KERNEL_FLAVOR" -v fv="$FEDORA_VERSION" '
-                /^[[:space:]]*-[[:space:]]/ { bf=""; bk="" }
-                /fedora_version:/ { v=$0; sub(/.*fedora_version:[[:space:]]*/, "", v); bf=v }
-                /kernel_flavor:/  { v=$0; sub(/.*kernel_flavor:[[:space:]]*/,  "", v); bk=v }
-                /kernel_version:/ {
-                  v=$0; sub(/.*kernel_version:[[:space:]]*/, "", v)
-                  if (bk == kf && (bf == "" || bf == fv)) { print v; exit }
-                }')
+            BUILD_PY=$(curl -fsSL "https://raw.githubusercontent.com/ublue-os/bazzite/main/build.py" 2>/dev/null || true)
+            if [ -n "$BUILD_PY" ]; then
+              PINNED=""
+              if ! PINNED=$(printf '%s' "$BUILD_PY" \
+                | python3 /tmp/parse-bazzite-matrix.py "$KERNEL_FLAVOR" "$FEDORA_VERSION" 2>/dev/null); then
+                echo "::warning::Matrice bazzite main illisible ou pas de kernel ${KERNEL_FLAVOR} pour fc${FEDORA_VERSION}"
+                PINNED=""
+              fi
               if [ -n "$PINNED" ]; then
                 echo "Kernel pinné dans bazzite main pour ${KERNEL_FLAVOR}/fc${FEDORA_VERSION} : $PINNED"
                 if check_akmods "$PINNED"; then
@@ -123,12 +156,12 @@ jobs:
             if [ "$attempt" -eq 3 ]; then
               echo "::warning::Impossible de lire le pin kernel de bazzite main après 3 tentatives"
             fi
-            echo "Lecture build.yml bazzite tentative $attempt échouée, retry dans 10s..."
+            echo "Lecture build.py bazzite tentative $attempt échouée, retry dans 10s..."
             sleep 10
           done
 
           # 2. Kernel réellement publié sur l'image stable Bazzite
-          #    (label ostree.linux, format : 7.1.5-ogc5.1.fc44.x86_64 -> tag
+          #    (label ostree.linux, format : 7.2.15-ogc1.1.fc45.x86_64 -> tag
           #    akmods sans le suffixe arch)
           if [ -z "$KERNEL_VERSION" ]; then
             for attempt in 1 2 3; do
@@ -184,9 +217,9 @@ jobs:
             }
 
             # Extrait les versions kernel des tags {FLAVOR}-{FEDORA}-{VERSION}
-            # Exclut les alias (ogc-44-x86_64) : la version doit commencer par
+            # Exclut les alias (ogc-45-x86_64) : la version doit commencer par
             # un chiffre. Normalise en retirant le suffixe .x86_64 des alias
-            # arch (ex. 7.2.0-ogc3.rc7.1.fc44.x86_64) pour que les deux formes
+            # arch (ex. 7.3.1-ogc6.1.fc45.x86_64) pour que les deux formes
             # comptent comme une seule version dans l'intersection.
             extract_versions() {
               jq -r --arg kf "$KERNEL_FLAVOR" --arg fv "$FEDORA_VERSION" '

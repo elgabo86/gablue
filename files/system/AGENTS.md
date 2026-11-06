@@ -121,7 +121,7 @@ Monteur d'images disque en C natif (~2,7 Mo RAM), remplace le plugin dolphin-plu
 
 Pont manette → clavier virtuel Plasma Keyboard en C natif (~25 Ko). Source `src/gamepadshortcuts/kbdnav.c`, même Makefile que gamepadshortcuts :
 - D-pad/stick = flèches, A = Entrée (appui court valide, maintien ≥ 600 ms = popup d'accents — flèches + Entrée, Échap ferme), B = Échap, Carré = Backspace, Triangle = Espace, L1/R1 = Tab, Start = fermer
-- Cible `plasma-keyboard` (IM KDE, défaut Kinoite 44) via son KCM « Keyboard navigation » — touches injectées uinput, captées par le grab de l'IM (jamais re-transmises aux apps pendant la frappe)
+- Cible `plasma-keyboard` (IM KDE, défaut Kinoite 45) via son KCM « Keyboard navigation » — touches injectées uinput, captées par le grab de l'IM (jamais re-transmises aux apps pendant la frappe)
 - Cycle de vie auto-porté, lancé par Home+Carré : affichage clavier (KWin AnyInput + forceActivate) → frappe → sortie = masquage (setMode KWin `Never` puis `NonMouseInput` — le défaut Kinoite, pour que kwinrc ne persiste pas `Never` + kill -9 plasma-keyboard pour empêcher les apps de ré-afficher le panneau fermé)
 - Grab evdev exclusif (EVIOCGRAB) pendant la frappe (limite assumée : lecteurs hidraw SDL/Steam non coupables — aucun mécanisme noyau) ; quarantaine (poll D-Bus 250 ms) : touches injectées seulement si IM active ET panneau visible ; auto-sortie quand le clavier se ferme (active && !visible 0,5 s) ou Start/Home+Carré/Home+R3 (→ souris, avec SIGUSR1)
 - **Manette imposée par le parent** (argv `/dev/input/eventX` = device suivi par gamepadshortcuts) : grab + frappe sur LA manette qui a ouvert la combo ; device disparu → repli scan interne ; `--no-grab`/`--find` conservés

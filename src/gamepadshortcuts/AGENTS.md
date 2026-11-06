@@ -11,7 +11,7 @@ combo **Home+Carré** (l'instance est tracked via `check_kbdnav()`).
 ## Architecture générale
 
 Le clavier virtuel KDE officiel est **plasma-keyboard** (input method
-Wayland, successeur de Maliit depuis Plasma 6.5/6.6, défaut Fedora 44).
+Wayland, successeur de Maliit depuis Plasma 6.5/6.6, défaut Fedora 45).
 Son KCM propose une option **"Keyboard navigation"** (créée pour
 Bigscreen/accessibilité) : le clavier virtuel se pilote alors aux
 touches flèches + Entrée. Le pont exploite exactement ce mécanisme :
@@ -173,7 +173,7 @@ serait aveugle). VT actif → re-grab et reprise.
 - `files/system/all/etc/xdg/plasmakeyboardrc` : presets **obligatoires**
   — `keyboardNavigationEnabled=true` (sinon les flèches ne naviguent pas),
   `enabledLocales=fr_FR` et `panelFillScreenWidth=false` (clavier centré).
-- plasma-keyboard doit tourner (défaut Kinoite 44, lancé par KWin).
+- plasma-keyboard doit tourner (défaut Kinoite 45, lancé par KWin).
 - `busctl`/`qdbus` dans le PATH session, `/dev/uinput` accessible
   (uaccess logind).
 

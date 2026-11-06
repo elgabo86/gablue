@@ -6,9 +6,9 @@ Gablue est une distribution immuable personnalisée basée sur **Fedora Kinoite*
 
 ### Caractéristiques principales
 
-- **Base** : Fedora Kinoite 44 (KDE Plasma)
+- **Base** : Fedora Kinoite 45 (KDE Plasma)
 - **Kernel** : OGC kernel depuis ublue-os/akmods (optimisé pour le gaming)
-- **Mesa** : Terra Mesa (version plus récente pour meilleures performances, multilib fc44)
+- **Mesa** : Terra Mesa (version plus récente pour meilleures performances, multilib fc45)
 - **NVIDIA** : Support des pilotes NVIDIA closed et open-source via akmods
 - **Virtualisation** : Mode DX avec Docker, Libvirt, QEMU
 - **Gaming** : Optimisations poussées (Gamescope, MangoHud, schedulers)
