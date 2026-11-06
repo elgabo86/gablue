@@ -298,7 +298,7 @@ jobs:
           cat "$METRICS_FILE"
 
       - name: Upload ISO metrics
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: metrics-${{ matrix.image_name }}-iso
           path: ${{ matrix.image_name }}-iso-metrics.json
@@ -316,13 +316,13 @@ jobs:
           echo "$LINK" > "${ISO_NAME}-live-link.txt"
 
       - name: Upload artifact lien
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.image_name }}-live-link
           path: ${{ matrix.image_name }}-live-link.txt
 
       - name: Upload artifact checksum
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.image_name }}-live-checksum
           path: ${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso-CHECKSUM
