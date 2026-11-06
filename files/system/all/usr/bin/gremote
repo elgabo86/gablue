@@ -38,6 +38,8 @@ RDP_LAUNCH=1          # 1 = lancer xfreerdp automatiquement s'il est présent
 NOSTART=0             # 1 = ne pas créer de session si l'hôte n'en a pas
 QUALITY=60            # qualité d'encodage KRdp (0-100) ; sert de borne en adaptatif
 ADAPTIVE=0            # 0 = qualité épinglée (défaut) ; 1 = adaptée au débit
+FIT=1                 # 1 = session physique ajustée dans une petite fenêtre
+FIT_SIZE=1280x720     # taille de cette fenêtre (--fit-size)
 
 # =============================================================================
 # SECTION 2 : AIDE
@@ -58,16 +60,27 @@ compte, gremote en crée une VIRTUELLE (hors écran, sans VT ni DRM).
 Options :
   -p, --port N   port SSH de l'hôte (défaut : ~/.ssh/config, sinon 22)
       --rdp-port N   port LOCAL du tunnel RDP (défaut : 13389)
-      --no-launch    ne pas lancer xfreerdp (affiche la commande)
+      --no-launch    ne pas lancer le client RDP (affiche la commande)
       --no-start     ne pas créer de session si l'hôte n'en a pas
       --quality N    qualité d'encodage 0-100 (défaut : 60)
       --static-quality  épingler la qualité (défaut, image stable)
       --adaptive     laisser KRdp baisser la qualité selon le débit
+      --fit-size WxH  fenêtre ajustée d'une session PHYSIQUE (défaut : 1280x720)
+      --no-fit       session physique en taille réelle (aucune mise à l'échelle)
       --audio        transférer le son par SSH (défaut)
       --no-audio     couper l'audio
       --debug        journal côté hôte (filtré, plafonné à 1 Mio)
   -n, --dry-run      afficher la commande sans l'exécuter
   -h, --help         cette aide
+
+Client RDP choisi d'après la session de l'hôte : session PHYSIQUE (bureau réel
+déjà ouvert) → xfreerdp avec mise à l'échelle (+smart-sizing), tout le bureau
+tient dans une petite fenêtre redimensionnable ; session VIRTUELLE (créée hors
+écran par gremote) → sdl-freerdp, Wayland natif, résolution suivie par
++dynamic-resolution. sdl-freerdp ne sait PAS mettre à l'échelle (il ignore
+/smart-sizing), d'où les deux clients. Un hôte d'une image antérieure n'annonce
+pas le type : il est traité comme physique (mise à l'échelle), son bureau étant
+le plus souvent ouvert.
 
 L'ancien mode waypipe (compositeur imbriqué, -a, -s, --video, --codec,
 --quality, --bpf, --compress, --no-gpu, --clean) a été retiré le 02/11/2026.
@@ -168,6 +181,25 @@ while [ $# -gt 0 ]; do
             ;;
         --static-quality)
             ADAPTIVE=0
+            shift
+            ;;
+        --fit-size)
+            [ $# -ge 2 ] || die "--fit-size attend une taille (ex. 1280x720)"
+            [[ "$2" =~ ^[0-9]+x[0-9]+$ ]] ||
+                die "--fit-size attend <largeur>x<hauteur> : « $2 »"
+            FIT_SIZE="$2"
+            FIT=1
+            shift 2
+            ;;
+        --fit-size=*)
+            [[ "${1#*=}" =~ ^[0-9]+x[0-9]+$ ]] ||
+                die "--fit-size attend <largeur>x<hauteur> : « ${1#*=} »"
+            FIT_SIZE="${1#*=}"
+            FIT=1
+            shift
+            ;;
+        --no-fit)
+            FIT=0
             shift
             ;;
         --no-start)
@@ -333,6 +365,19 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     fi
     [ -n "$compositor" ] ||
         die "aucune session graphique sur $run_dir, et gremote-session@${USER} n'a pas démarré (systemctl status gremote-session@${USER}, journalctl -u gremote-session@${USER})"
+
+    # Type de session, transmis au client dans la ligne de poignée de main. Le
+    # socket `gremote-session` est celui que crée notre unité hors écran : tout
+    # autre compositeur est une session PHYSIQUE, sur le siège et l'écran réels.
+    # La distinction commande le client RDP : sur une session physique on ne
+    # peut pas changer la résolution (ce serait le moniteur du poste), donc il
+    # faut un client qui mette l'image à l'échelle — xfreerdp ; sdl-freerdp
+    # ignore /smart-sizing.
+    if [ "$compositor" = "gremote-session" ]; then
+        session_kind=virtual
+    else
+        session_kind=physical
+    fi
 
     export WAYLAND_DISPLAY="$compositor"
     export XDG_RUNTIME_DIR="$run_dir"
@@ -520,7 +565,7 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     done
     [ "$up" -eq 1 ] ||
         die "krdpserver n'écoute pas sur 127.0.0.1:${rdp_listen_port} (port déjà pris par un autre service ?)"
-    printf 'GREMOTE-RDP-READY %s\n' "$rdp_listen_port"
+    printf 'GREMOTE-RDP-READY %s %s\n' "$rdp_listen_port" "$session_kind"
     wait "$srv_pid"
     exit 0
 fi
@@ -651,13 +696,42 @@ if [ "$RDP" -eq 1 ]; then
     fi
 
 
-    # Client RDP local. sdl-freerdp (client SDL3) est préféré : il parle Wayland
-    # natif, donc ni XWayland ni fenêtre X dans le chemin image/entrée. xfreerdp
-    # reste le repli s'il manque. wlfreerdp n'est PAS utilisé : déprécié en amont
-    # (« nobody is actively working on this », FreeRDP 3.32.2) au profit du client
-    # SDL3.
+    # Type de session annoncé par l'hôte (3e champ de la poignée de main) :
+    # « physical » = bureau réel déjà ouvert, « virtual » = session créée hors
+    # écran par gremote. Un hôte d'une image antérieure n'envoie que le port :
+    # on ne SAIT pas, et c'est « unknown » — pas « virtuelle ». Traiter
+    # l'inconnu comme virtuel condamnait à sdl-freerdp, donc sans mise à
+    # l'échelle, exactement le symptôme rapporté (vécu 06/11/2026 : gen1 encore
+    # sur l'ancienne image, bureau physique, annoncé « session virtuelle »).
+    rdp_kind="$(awk '/^GREMOTE-RDP-READY/ { print $3; exit }' "$rdp_log" 2>/dev/null || true)"
+    case "$rdp_kind" in
+        physical|virtual) ;;
+        *) rdp_kind=unknown ;;
+    esac
+
+    # Client RDP local, choisi d'après la session :
+    # - PHYSIQUE : xfreerdp, seul à savoir mettre l'image à l'échelle
+    #   (+smart-sizing). sdl-freerdp ignore l'option (« /smart-sizing and
+    #   /multimon are currently not supported, ignoring »), et +dynamic-resolution
+    #   demanderait au serveur de changer la résolution, donc l'écran réel.
+    #   Contrepartie : fenêtre X11 (XWayland), image réduite en bitmap.
+    # - INCONNUE (hôte pas à jour) : même choix que physique — un poste qui
+    #   n'annonce rien a le plus souvent son bureau ouvert, et se tromper dans
+    #   ce sens donne un bureau entier en petit au lieu d'un bureau coupé.
+    # - VIRTUELLE : sdl-freerdp, Wayland natif, et +dynamic-resolution y est
+    #   sans risque (rien de physique à redimensionner) : le texte reste net.
+    # wlfreerdp n'est PAS utilisé : déprécié en amont (« nobody is actively
+    # working on this », FreeRDP 3.32.2) au profit du client SDL3.
     rdp_client=""
-    if [ "$RDP_LAUNCH" -eq 1 ]; then
+    rdp_args=()
+    if [ "$rdp_kind" != "virtual" ] && command -v xfreerdp >/dev/null 2>&1; then
+        if [ -n "${DISPLAY:-}" ]; then
+            rdp_client=xfreerdp
+        else
+            printf "gremote : pas de DISPLAY pour xfreerdp — repli sdl-freerdp, sans mise à l'échelle\n" >&2
+        fi
+    fi
+    if [ -z "$rdp_client" ]; then
         if command -v sdl-freerdp >/dev/null 2>&1; then
             rdp_client=sdl-freerdp
         elif command -v xfreerdp >/dev/null 2>&1; then
@@ -665,9 +739,24 @@ if [ "$RDP" -eq 1 ]; then
         fi
     fi
 
-    if [ -n "$rdp_client" ]; then
-        printf 'gremote : RDP tunnelisé sur 127.0.0.1:%s (utilisateur %s, client %s)\n' \
-            "$RDP_PORT" "$rdp_user" "$rdp_client"
+    if [ "$rdp_client" = "xfreerdp" ]; then
+        rdp_args+=(+clipboard)
+        if [ "$FIT" -eq 1 ]; then
+            rdp_args+=("+smart-sizing:${FIT_SIZE}")
+        fi
+    elif [ -n "$rdp_client" ]; then
+        rdp_args+=(+clipboard +dynamic-resolution)
+    fi
+
+    case "$rdp_kind" in
+        physical) session_label="physique" ;;
+        virtual)  session_label="virtuelle" ;;
+        *)        session_label="non annoncée par l'hôte" ;;
+    esac
+
+    if [ "$RDP_LAUNCH" -eq 1 ] && [ -n "$rdp_client" ]; then
+        printf 'gremote : RDP tunnelisé sur 127.0.0.1:%s (utilisateur %s, session %s, client %s)\n' \
+            "$RDP_PORT" "$rdp_user" "$session_label" "$rdp_client"
         # Pas de /network:<type> explicite : TOUT type explicite (lan, wan,
         # broadband, modem) fait cesser le client d'annoncer le pipeline
         # graphique exigé par KRdp, qui répond alors par un DEACTIVATE_ALL
@@ -688,12 +777,16 @@ if [ "$RDP" -eq 1 ]; then
         # à chaque fermeture d'une session pourtant réussie).
         printf '%s\n' "$rdp_pass" |
             "$rdp_client" /v:127.0.0.1:"$RDP_PORT" /u:"$rdp_user" \
-                /cert:ignore /from-stdin:force +clipboard +dynamic-resolution ||
+                /cert:ignore /from-stdin:force "${rdp_args[@]}" ||
             true
     else
+        # --no-launch (ou aucun client installé) : la commande affichée est
+        # EXACTEMENT celle qui aurait été lancée, client et options compris.
         printf 'gremote : connecte-toi avec\n'
-        printf "  printf '%%s\\\\n' '%s' | sdl-freerdp /v:127.0.0.1:%s /u:%s /cert:ignore /from-stdin:force\n" \
-            "$rdp_pass" "$RDP_PORT" "$rdp_user"
+        printf "  printf '%%s\\\\n' '%s' | %s /v:127.0.0.1:%s /u:%s /cert:ignore /from-stdin:force" \
+            "$rdp_pass" "${rdp_client:-sdl-freerdp}" "$RDP_PORT" "$rdp_user"
+        for _arg in ${rdp_args[@]+"${rdp_args[@]}"}; do printf ' %s' "$_arg"; done
+        printf '\n'
         wait "$ssh_pid"
     fi
     exit 0

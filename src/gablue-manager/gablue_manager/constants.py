@@ -32,7 +32,15 @@ CHECK_DEADLINE = 8.0    # secondes par poste (ssh ConnectTimeout = 4)
 
 PULSE_MS = 60           # cadence de l'animation des pastilles
 
-WOL_PORTS = (9, 7)      # ports UDP du paquet magique (9 = standard)
+# États où la sonde automatique ne sert à rien et coûte cher : une connexion
+# fermée avant authentification compte comme une offense pour
+# `PerSourcePenalties` (OpenSSH 9.8+), et sonder toutes les 30 s un poste qui
+# refuse la clé finit par faire bannir cette machine par son sshd.
+NO_AUTO_PROBE_STATES = ("auth", "hostkey", "penalty")
+
+# Une clé refusée par le poste ne se répare pas en attendant : l'action utile
+# est de (re)copier la clé.
+KEY_STATES = ("auth", "hostkey", "nokey")
 
 # Couleurs des états (lisibles en thème clair comme en thème sombre)
 COLOR_ONLINE = "#37c978"
@@ -51,6 +59,7 @@ STATE_TEXT = {
     "online": "En ligne · clé SSH acceptée",
     "auth": "Joignable · clé SSH refusée",
     "hostkey": "Clé d'hôte inconnue",
+    "penalty": "Poste bloquant temporairement cette machine",
     "nokey": "Aucune clé locale",
     "refused": "Hors ligne · connexion refusée",
     "timeout": "Hors ligne · délai dépassé",
@@ -65,6 +74,7 @@ STATE_COLOR = {
     "online": COLOR_ONLINE,
     "auth": COLOR_AUTH,
     "hostkey": COLOR_KEY,
+    "penalty": COLOR_AUTH,
     "nokey": COLOR_KEY,
     "refused": COLOR_OFFLINE,
     "timeout": COLOR_OFFLINE,
@@ -72,9 +82,6 @@ STATE_COLOR = {
     "dns": COLOR_OFFLINE,
     "error": COLOR_OFFLINE,
 }
-
-# États pour lesquels l'action utile est de (re)copier la clé
-KEY_STATES = ("auth", "hostkey", "nokey")
 
 PASSWORD_RE = re.compile(
     r"(?i)(?:password|mot de passe|passphrase)[^\n]*:[ \t]*$", re.MULTILINE
@@ -95,8 +102,6 @@ SSH = _which("ssh")
 SSH_COPY_ID = _which("ssh-copy-id")
 
 SSH_KEYGEN = _which("ssh-keygen")
-
-SSH_KEYSCAN = _which("ssh-keyscan")
 
 AVAHI_BROWSE = _which("avahi-browse")
 

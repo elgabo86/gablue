@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 
 from .constants import COLOR_OFFLINE, KEY_STATES, STATE_COLOR, STATE_TEXT
 from .local import local_distro
-from .util import address_text, display_name, dolphin_url, ssh_target
+from .util import active_kind, address_text, display_name, dolphin_url, ssh_target
 
 class StatusDot(QWidget):
     """Pastille colorée ; halo qui respire quand le poste est en ligne."""
@@ -93,7 +93,6 @@ class HostCard(QFrame):
     delete_requested = Signal(str)
     key_requested = Signal(str)
     terminal_requested = Signal(str)
-    wake_requested = Signal(str)
     update_requested = Signal(str, str)   # id du poste, type de mise à jour
     settings_requested = Signal(str)
     gwine_requested = Signal(str)
@@ -131,18 +130,6 @@ class HostCard(QFrame):
         texts.addSpacing(3)
         texts.addWidget(self.status_label)
         layout.addLayout(texts, 1)
-
-        self.wake_button = QPushButton("Réveiller", self)
-        self.wake_button.setObjectName("ghost")
-        self.wake_button.setCursor(Qt.PointingHandCursor)
-        self.wake_button.setToolTip(
-            "Envoyer un paquet magique Wake-on-LAN à ce poste"
-        )
-        self.wake_button.setVisible(False)
-        self.wake_button.clicked.connect(
-            lambda: self.wake_requested.emit(self.host["id"])
-        )
-        layout.addWidget(self.wake_button, 0, Qt.AlignVCenter)
 
         self.key_button = QPushButton("Installer la clé", self)
         self.key_button.setObjectName("ghost")
@@ -193,11 +180,6 @@ class HostCard(QFrame):
         self.remote_stop_action.setEnabled(False)
         self.remote_stop_action.triggered.connect(
             lambda: self.remote_stop_requested.emit(self.host["id"])
-        )
-        menu.addSeparator()
-        self.wake_action = menu.addAction("Réveiller le poste")
-        self.wake_action.triggered.connect(
-            lambda: self.wake_requested.emit(self.host["id"])
         )
         menu.addSeparator()
         update_menu = menu.addMenu("Mettre à jour")
@@ -289,11 +271,13 @@ class HostCard(QFrame):
         color = STATE_COLOR.get(state, COLOR_OFFLINE)
         self.status_label.setStyleSheet(f"color: {color};")
         self.key_button.setVisible(state in KEY_STATES)
-        self.wake_button.setVisible(
-            state in ("refused", "timeout", "noroute", "dns", "error")
-            and bool(self.host.get("mac"))
-        )
-        self.wake_action.setEnabled(bool(self.host.get("mac")))
+        # Adresse réellement utilisée : elle change quand le LAN ne répond plus
+        # et que la sonde bascule sur Tailscale (ou l'inverse).
+        detail_text = address_text(self.host)
+        kind = active_kind(self.host)
+        if kind:
+            detail_text += f" · {kind}"
+        self.detail_label.setText(detail_text)
         if state == "nokey":
             self.key_button.setText("Créer la clé")
         elif state == "hostkey":

@@ -1,7 +1,7 @@
 """Copie de la clé SSH vers un poste.
 """
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton,
     QVBoxLayout, QWidget,
@@ -18,7 +18,7 @@ class KeyInstallDialog(QDialog):
     installed = Signal()
 
     def __init__(self, parent=None, host: dict | None = None,
-                 password: str = ""):
+                 password: str = "", prescan: dict | None = None):
         super().__init__(parent)
         self._host = dict(host or {})
         # Mot de passe éventuellement saisi dans le dialogue d'ajout : il sert
@@ -27,11 +27,14 @@ class KeyInstallDialog(QDialog):
         self._auto_started = False
         self._worker: KeyInstallWorker | None = None
         self._probe_worker: KeyProbeWorker | None = None
+        self._prescan = prescan
         self._success = False
 
         self.setWindowTitle(f"Clé SSH — {display_name(self._host)}")
         self.setModal(True)
-        self.setMinimumWidth(520)
+        # Assez large pour que l'adresse et la consigne tiennent sur une ligne,
+        # et pour que le champ de mot de passe ne soit pas écrasé.
+        self.setMinimumWidth(640)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 22, 24, 20)
@@ -63,20 +66,23 @@ class KeyInstallDialog(QDialog):
         form.setContentsMargins(0, 0, 0, 0)
         form.setSpacing(6)
         form.addWidget(HostDialog._field_label("Mot de passe SSH"))
-        self.password_edit = QLineEdit(self.form_box)
-        self.password_edit.setEchoMode(QLineEdit.Password)
-        self.password_edit.setPlaceholderText(
-            "mot de passe du compte distant (jamais enregistré)"
-        )
-        self.password_edit.setText(password)
-        form.addWidget(self.password_edit)
-
+        # La consigne est AU-DESSUS du champ : sous le champ, elle se lisait
+        # comme une légende des boutons.
         hint = QLabel(
             "Sert une fois, jamais enregistré.", self.form_box,
         )
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         form.addWidget(hint)
+        self.password_edit = QLineEdit(self.form_box)
+        self.password_edit.setEchoMode(QLineEdit.Password)
+        self.password_edit.setMinimumHeight(34)
+        self.password_edit.setMinimumWidth(480)
+        self.password_edit.setPlaceholderText(
+            "mot de passe du compte distant (jamais enregistré)"
+        )
+        self.password_edit.setText(password)
+        form.addWidget(self.password_edit)
         self.form_box.setVisible(False)
         root.addWidget(self.form_box)
 
@@ -107,7 +113,22 @@ class KeyInstallDialog(QDialog):
         root.addLayout(buttons)
 
         self.password_edit.returnPressed.connect(self._start)
-        QTimer.singleShot(60, self._probe)
+        if self._prescan is not None:
+            # Sonde déjà faite par l'appelant (import, carte) : on réutilise
+            # son résultat au lieu d'ouvrir une connexion de plus.
+            QTimer.singleShot(0, lambda: self._probe_done(self._prescan))
+        elif self._initial_password:
+            # Le mot de passe vient du dialogue d'ajout : la sonde préalable
+            # serait une connexion de plus, donc une offense de plus pour un
+            # sshd qui limite les essais. `install_key` vérifie déjà si la clé
+            # est acceptée avant de demander quoi que ce soit.
+            self.form_box.setVisible(True)
+            self.install_button.setVisible(True)
+            self.status_label.setText("Copie de la clé en cours…")
+            self._auto_started = True
+            QTimer.singleShot(0, self._start)
+        else:
+            QTimer.singleShot(60, self._probe)
 
     # -- vérification préalable ---------------------------------------------
     def _probe(self) -> None:
@@ -119,10 +140,13 @@ class KeyInstallDialog(QDialog):
         self._probe_worker = worker
         worker.start()
 
-    def _probe_done(self, ok: bool, detail: str) -> None:
+    def _probe_done(self, info: dict) -> None:
         self._probe_worker = None
+        # Gardé pour l'installation : une seule connexion aura servi à la fois
+        # à connaître l'empreinte et à savoir que la clé est refusée.
+        self._prescan = info
         self.close_button.setEnabled(True)
-        if ok:
+        if info.get("authenticated"):
             self.title.setText(
                 f"Clé déjà installée sur {display_name(self._host)}"
             )
@@ -140,12 +164,36 @@ class KeyInstallDialog(QDialog):
             self.adjustSize()
             return
         restyle_label(self.status_label, "hint")
-        if detail:
+        state = info.get("state", "")
+        error = (info.get("error") or "").strip()
+        low = error.lower()
+        if state == "unknown":
+            # Ce n'est pas la clé qui est refusée : c'est l'empreinte du poste
+            # qui n'est pas encore connue. Le dire évite de croire que la copie
+            # a échoué alors que rien n'a encore été tenté.
             self.status_label.setText(
-                f"La clé n'est pas encore acceptée ({detail})."
+                "Empreinte d'hôte inconnue : « Installer la clé » vous la fera "
+                "vérifier avant toute écriture."
+            )
+        elif state == "changed":
+            self.status_label.setText(
+                "L'empreinte enregistrée ne correspond plus à celle du poste : "
+                "copie refusée par sécurité. Vérifiez la machine."
+            )
+            restyle_label(self.status_label, "warn")
+        elif "not allowed at this time" in low or "connection reset" in low:
+            self.status_label.setText(
+                "Le poste limite temporairement les connexions de cette "
+                "machine (sshd). Patientez une minute, puis réessayez."
+            )
+        elif state == "unreachable":
+            self.status_label.setText(
+                "Poste injoignable pour l'instant : réessayez dans un instant."
             )
         else:
+            last = error.splitlines()[-1] if error else ""
             self.status_label.setText(
+                f"La clé n'est pas encore acceptée ({last})." if last else
                 "La clé n'est pas encore acceptée par ce poste."
             )
         self.form_box.setVisible(True)
@@ -172,7 +220,7 @@ class KeyInstallDialog(QDialog):
             f"→ {address_text(self._host)}\n"
         )
 
-        worker = KeyInstallWorker(self._host, password, self)
+        worker = KeyInstallWorker(self._host, password, self, self._prescan)
         worker.log.connect(self._append_log)
         worker.confirm_host_key.connect(self._ask_host_key)
         worker.done.connect(self._finished)
@@ -180,22 +228,37 @@ class KeyInstallDialog(QDialog):
         worker.start()
 
     def _ask_host_key(self, name: str, fingerprints: list) -> None:
-        """Premier contact : montrer l'empreinte, ne jamais l'accepter en douce."""
+        """Premier contact : montrer l'empreinte, ne jamais l'accepter en douce.
+
+        Le bouton dit ce qu'il fait (« Accepter l'empreinte ») : un « Oui »
+        générique dans une boîte posée par-dessus un journal se lisait mal, et
+        l'empreinte doit être épinglée sous TOUTES les adresses du poste (LAN
+        et Tailscale), sinon un changement d'adresse redemande la confiance.
+        """
         details = "\n".join(f"    {item}" for item in fingerprints) or "    (aucune)"
         text = (
             f"Le poste « {name} » n'est pas encore dans ~/.ssh/known_hosts.\n\n"
             f"Empreintes annoncées par la machine :\n{details}\n\n"
             "Vérifiez-les sur le poste, par exemple :\n"
             "    ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub\n\n"
-            "Accepter cette empreinte pour les prochaines connexions ?"
+            "Accepter ces empreintes pour les prochaines connexions ?"
         )
-        answer = QMessageBox.question(
-            self, "Premier contact — vérifier l'empreinte", text,
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        )
+        box = QMessageBox(self)
+        box.setWindowTitle("Premier contact — vérifier l'empreinte")
+        box.setIcon(QMessageBox.Question)
+        box.setText(text)
+        accept = box.addButton("Accepter l'empreinte", QMessageBox.AcceptRole)
+        refuse = box.addButton("Refuser", QMessageBox.RejectRole)
+        box.setDefaultButton(refuse)
+        box.setWindowModality(Qt.ApplicationModal)
+        box.show()
+        box.raise_()
+        box.activateWindow()
+        box.exec()
+        answer = box.clickedButton() is accept
         worker = self._worker
         if worker is not None:
-            worker.trust_answer = answer == QMessageBox.Yes
+            worker.trust_answer = answer
             worker.trust_event.set()
 
     def _append_log(self, text: str) -> None:

@@ -18,7 +18,7 @@ Images and the system are continuously updated, following the latest Fedora rele
 - **Flatpak** and **brew** ready out of the box
 - **Automatic weekly updates** — system and flatpaks staged in the background
 - **gremote** — remote desktop between Gablue machines: the host's *existing* Plasma session over RDP, tunnelled in SSH — no port opened, sound carried by a PipeWire tunnel sink, ephemeral RDP password. when no session exists one is created **virtually**, so several accounts can work at once without taking the physical screen
-- **gablue-manager** — « Gablue Manager »: one window for this machine and the remote ones — SSH host list with latency and online indicator, one-click remote desktop (`gremote`), file browsing (Dolphin over sftp), SSH terminal, Wake-on-LAN, remote shutdown/reboot/update, mDNS discovery, `~/.ssh/config` import, host addition with automatic key copy, local SSH server and mDNS announcement toggles, plus local updates (Gablue image, Flatpaks, gwine) and advanced options (CPU mitigations, CPUID fix, Bluetooth ERTM, HDMI 2.1 on AMD GPUs, CPUID fault emulation, services and image variant — DisplayLink, Docker on DX variants, Vulkan low-latency, Broadcom wl driver, atuin shell history, rebase to another Gablue variant — gwine DXVK/display/gamepad settings, foreground booster, Tailscale with a user-supplied login server), and app management — install, update or remove ES-DE, Azahar, Eden, Xenia, ShadPS4 and OpenCode 2, on this machine or over SSH on a remote host (AppImages via GearLever; config, saves and sessions are kept on removal)
+- **gablue-manager** — « Gablue Manager »: one window for this machine and the remote ones — SSH host list with latency and online indicator, one-click remote desktop (`gremote`), file browsing (Dolphin over sftp), SSH terminal, remote shutdown/reboot/update, mDNS discovery, `~/.ssh/config` import, host addition with automatic key copy, local SSH server and mDNS announcement toggles, plus local updates (Gablue image, Flatpaks, gwine) and advanced options (CPU mitigations, CPUID fix, Bluetooth ERTM, HDMI 2.1 on AMD GPUs, CPUID fault emulation, services and image variant — DisplayLink, Docker on DX variants, Vulkan low-latency, Broadcom wl driver, atuin shell history, rebase to another Gablue variant — gwine DXVK/display/gamepad settings, foreground booster, Tailscale with a user-supplied login server), and app management — install, update or remove ES-DE, Azahar, Eden, Xenia, ShadPS4 and OpenCode 2, on this machine or over SSH on a remote host (AppImages via GearLever; config, saves and sessions are kept on removal)
 - Optional **DX mode** with Docker, Libvirt, QEMU, and ROCm for AMD
 
 ## Current Versions
@@ -103,8 +103,8 @@ refused, purple unknown host fingerprint, grey offline), launches the remote
 desktop, Dolphin (`sftp://`) or an SSH terminal in one click, opens a new
 desktop window on every click (the second client takes over the first, and its
 exit code is not reported as a failure), can close that session from the card
-menu, wakes an offline machine over Wake-on-LAN, reboots / shuts down / updates
-a host, discovers machines over mDNS, imports `~/.ssh/config`, and copies the
+menu, reboots / shuts down / updates a host, discovers machines over mDNS,
+imports `~/.ssh/config`, and copies the
 key to a new host — the password is asked once and never stored. It can also
 turn the local SSH server on or off, switch the local mDNS announcement of that
 server (`/etc/avahi/services/ssh.service`) on or off, and manage this machine:

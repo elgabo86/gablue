@@ -11,14 +11,14 @@ from concurrent.futures import as_completed
 from PySide6.QtCore import QThread, Signal
 
 from .constants import SSH
-from .hosts import avahi_scan
-from .ssh import _kill_group, check_host, install_key, probe_key
+from .hosts import avahi_scan, remote_addresses
+from .ssh import _kill_group, check_host, install_key, key_status
 from .util import _ssh_opts, display_name, ssh_target
 
 class CheckWorker(QThread):
     """Vérifie tous les postes en parallèle, un signal par résultat."""
 
-    result = Signal(str, str, str, float, str)   # id, état, détail, ms, MAC
+    result = Signal(str, str, str, float, str)   # id, état, détail, ms, adresse
     finished_all = Signal()
 
     def __init__(self, hosts: list[dict], parent=None):
@@ -42,12 +42,12 @@ class CheckWorker(QThread):
             for future in as_completed(futures):
                 host_id = futures[future]
                 try:
-                    state, detail, latency, mac = future.result()
+                    state, detail, latency, address = future.result()
                 except Exception as exc:  # jamais laisser un poste sans état
-                    state, detail, latency, mac = "error", str(exc), 0.0, ""
+                    state, detail, latency, address = "error", str(exc), 0.0, ""
                 if self._stop.is_set():
                     continue
-                self.result.emit(host_id, state, detail, latency, mac)
+                self.result.emit(host_id, state, detail, latency, address)
         self.finished_all.emit()
 
 class KeyInstallWorker(QThread):
@@ -57,10 +57,14 @@ class KeyInstallWorker(QThread):
     confirm_host_key = Signal(str, object)   # nom affiché, [empreintes]
     done = Signal(bool, str)
 
-    def __init__(self, host: dict, password: str, parent=None):
+    def __init__(self, host: dict, password: str, parent=None,
+                 prescan: dict | None = None):
         super().__init__(parent)
         self._host = dict(host)
         self._password = password
+        # Résultat de la sonde du dialogue (une connexion) : il porte les clés
+        # annoncées et le fait que la clé est refusée, plus besoin de rescanner.
+        self._prescan = prescan
         self.cancel = threading.Event()
         self.trust_event = threading.Event()
         self.trust_answer = False
@@ -79,7 +83,7 @@ class KeyInstallWorker(QThread):
         try:
             ok, message = install_key(
                 self._host, self._password, self.log.emit, self.cancel,
-                self._ask_trust,
+                self._ask_trust, self._prescan,
             )
         except Exception as exc:
             ok, message = False, str(exc)
@@ -88,9 +92,15 @@ class KeyInstallWorker(QThread):
         self.done.emit(ok, message)
 
 class KeyProbeWorker(QThread):
-    """Vérifie si la clé est déjà acceptée, avant de demander un mot de passe."""
+    """Une seule connexion : empreinte de l'hôte ET clé déjà acceptée ?
 
-    done = Signal(bool, str)
+    Elle sert aussi de pré-scan à l'installation (`prescan`) : sans ça, la
+    copie repayerait une connexion refusée, et deux échecs rapprochés suffisent
+    à faire bloquer le client par `PerSourcePenalties` (5 s par échec, seuil
+    15 s).
+    """
+
+    done = Signal(object)      # key_status()
 
     def __init__(self, host: dict, parent=None):
         super().__init__(parent)
@@ -98,10 +108,29 @@ class KeyProbeWorker(QThread):
 
     def run(self) -> None:
         try:
-            ok, detail = probe_key(self._host)
+            info = key_status(self._host)
         except Exception as exc:      # le dialogue ne doit jamais rester muet
-            ok, detail = False, str(exc)
-        self.done.emit(ok, detail)
+            info = {
+                "authenticated": False, "state": "error", "raw": "",
+                "fingerprints": [], "stored": [], "error": str(exc),
+            }
+        self.done.emit(info)
+
+class AddressWorker(QThread):
+    """Adresses d'un poste (LAN + Tailscale), lues chez lui en une connexion."""
+
+    done = Signal(str, object)      # id du poste, [{address, kind}]
+
+    def __init__(self, host: dict, parent=None):
+        super().__init__(parent)
+        self._host = dict(host)
+
+    def run(self) -> None:
+        try:
+            found = remote_addresses(self._host)
+        except Exception:            # une sonde d'agrément ne doit rien casser
+            found = []
+        self.done.emit(self._host["id"], found)
 
 class SshTaskWorker(QThread):
     """Exécute une commande distante en streaming (arrêt, redémarrage, mise à jour)."""

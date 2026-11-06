@@ -15,7 +15,7 @@ Gablue Manager : postes SSH et machine courante au même endroit.
 
 Postes distants : liste des machines dont la clé a été installée, état en ligne/
 hors ligne et latence, bureau distant (gremote), fichiers (Dolphin en sftp://),
-terminal SSH, réveil Wake-on-LAN, arrêt, redémarrage et mise à jour, découverte
+terminal SSH, arrêt, redémarrage et mise à jour, découverte
 mDNS, import de ~/.ssh/config, ajout d'un poste avec copie de la clé.
 
 Cette machine : serveur SSH et annonce mDNS, mises à jour (image Gablue,

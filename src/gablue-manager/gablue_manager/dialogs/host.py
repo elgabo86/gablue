@@ -12,8 +12,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..hosts import detect_mac
-from ..util import display_name, normalize_mac
+from ..util import display_name
 
 class HostDialog(QDialog):
     """Saisie d'un poste ; en ajout, la clé SSH est copiée automatiquement."""
@@ -76,27 +75,6 @@ class HostDialog(QDialog):
         self.port_spin.setValue(22)
         self.port_spin.setMaximumWidth(140)
         form.addWidget(self.port_spin)
-
-        form.addWidget(self._field_label(
-            "Adresse MAC (Wake-on-LAN, facultatif)"
-        ))
-        mac_row = QHBoxLayout()
-        mac_row.setSpacing(8)
-        self.mac_edit = QLineEdit(self)
-        self.mac_edit.setPlaceholderText("AA:BB:CC:DD:EE:FF")
-        mac_row.addWidget(self.mac_edit, 1)
-        self.mac_button = QPushButton("Détecter", self)
-        self.mac_button.setObjectName("ghost")
-        self.mac_button.setCursor(Qt.PointingHandCursor)
-        self.mac_button.clicked.connect(self._detect_mac)
-        mac_row.addWidget(self.mac_button)
-        form.addLayout(mac_row)
-        self.mac_hint = QLabel(
-            "Utile pour réveiller un poste éteint.", self,
-        )
-        self.mac_hint.setObjectName("hint")
-        self.mac_hint.setWordWrap(True)
-        form.addWidget(self.mac_hint)
 
         if not host:
             self.password_label = self._field_label(
@@ -161,7 +139,6 @@ class HostDialog(QDialog):
             self.user_edit.setText(host["user"])
             self.host_edit.setText(host["host"])
             self.port_spin.setValue(host["port"])
-            self.mac_edit.setText(host.get("mac", ""))
         else:
             self.user_edit.setText(getpass.getuser())
         self.host_edit.textChanged.connect(self._sync_placeholder)
@@ -177,20 +154,6 @@ class HostDialog(QDialog):
         if not self.label_edit.text():
             self.label_edit.setPlaceholderText(text.strip() or "Salon, atelier…")
 
-    def _detect_mac(self) -> None:
-        address = self.host_edit.text().strip()
-        if not address:
-            self.mac_hint.setText("Indiquez d'abord l'hôte.")
-            return
-        mac = detect_mac({"host": address})
-        if mac:
-            self.mac_edit.setText(mac)
-            self.mac_hint.setText("Adresse MAC lue dans la table ARP locale.")
-        else:
-            self.mac_hint.setText(
-                "Introuvable : le poste n'a pas communiqué récemment."
-            )
-
     def _show_error(self, message: str) -> None:
         self.error_label.setText(message)
         self.error_label.setVisible(True)
@@ -201,8 +164,6 @@ class HostDialog(QDialog):
         user = self.user_edit.text().strip()
         label = self.label_edit.text().strip()
         port = int(self.port_spin.value())
-        mac_text = self.mac_edit.text().strip()
-        mac = normalize_mac(mac_text)
 
         if not host:
             return self._show_error("Indiquez l'hôte ou l'adresse IP du poste.")
@@ -216,11 +177,6 @@ class HostDialog(QDialog):
             return self._show_error("Indiquez le nom d'utilisateur SSH.")
         if any(ch.isspace() for ch in user) or any(ch in user for ch in "@:/"):
             return self._show_error("Nom d'utilisateur invalide.")
-        if mac_text and not mac:
-            return self._show_error(
-                "Adresse MAC invalide (format attendu : AA:BB:CC:DD:EE:FF)."
-            )
-
         for other in self._existing:
             if self._host and other["id"] == self._host["id"]:
                 continue
@@ -232,15 +188,19 @@ class HostDialog(QDialog):
         self._password = (
             self.password_edit.text() if self.password_edit is not None else ""
         )
+        previous = self._host or {}
         self.result_record = {
-            "id": (self._host or {}).get("id") or uuid.uuid4().hex,
+            "id": previous.get("id") or uuid.uuid4().hex,
             "label": label,
             "user": user,
             "host": host,
             "port": port,
-            "mac": mac,
-            "key_added": bool((self._host or {}).get("key_added", False)),
-            "added_at": int((self._host or {}).get("added_at") or time.time()),
+            # Les adresses de secours (Tailscale…) et l'adresse active sont
+            # conservées : changer le nom ou le port ne doit pas les perdre.
+            "addresses": list(previous.get("addresses") or []),
+            "active": str(previous.get("active") or ""),
+            "key_added": bool(previous.get("key_added", False)),
+            "added_at": int(previous.get("added_at") or time.time()),
         }
         self.accept()
 

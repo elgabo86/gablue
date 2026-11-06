@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from gablue_manager import apps, hosts, local, util  # noqa: E402
+from gablue_manager import apps, hosts, local, ssh, util  # noqa: E402
 
 
 class KargsTest(unittest.TestCase):
@@ -556,6 +556,54 @@ class DiscoveryTest(unittest.TestCase):
         self.assertEqual([item["host"] for item in groups], ["172.18.0.1"])
 
 
+class RemoteAddressTest(unittest.TestCase):
+    own = {"192.168.1.109"}
+
+    def test_parse_lan_and_tailscale(self):
+        text = "192.168.1.110\n100.64.0.45\n"
+        self.assertEqual(
+            hosts.parse_remote_addresses(text, "192.168.1.110", self.own),
+            [{"address": "100.64.0.45", "kind": "tailscale"}],
+        )
+
+    def test_parse_filters_noise(self):
+        text = ("127.0.0.1\n169.254.1.2\n192.168.1.109\n"
+                "1.1.1.1\n8.8.8.8\n10.0.0.7\n100.64.0.45\n")
+        self.assertEqual(
+            hosts.parse_remote_addresses(text, "", self.own),
+            [
+                {"address": "10.0.0.7", "kind": "lan"},
+                {"address": "100.64.0.45", "kind": "tailscale"},
+            ],
+        )
+
+
+class PinnedHostKeyTest(unittest.TestCase):
+    def test_pins_every_address(self):
+        raw = "[192.168.1.110]:2222 ssh-ed25519 AAAA\n# commentaire\n"
+        self.assertEqual(
+            ssh.pinned_entries(raw, ["192.168.1.110", "100.64.0.45"], 2222),
+            [
+                "[192.168.1.110]:2222 ssh-ed25519 AAAA",
+                "[100.64.0.45]:2222 ssh-ed25519 AAAA",
+            ],
+        )
+
+    def test_port_22_stays_plain(self):
+        raw = "192.168.1.110 ssh-ed25519 AAAA\n"
+        self.assertEqual(
+            ssh.pinned_entries(raw, ["192.168.1.110"], 22),
+            ["192.168.1.110 ssh-ed25519 AAAA"],
+        )
+
+    def test_hashed_known_hosts_is_rewritten(self):
+        raw = "|1|abc=|def= ssh-ed25519 AAAA\n"
+        self.assertEqual(
+            ssh.pinned_entries(raw, ["gen1.local"], 22),
+            ["gen1.local ssh-ed25519 AAAA"],
+        )
+
+
 class UtilTest(unittest.TestCase):
     host = {"user": "gab", "host": "sucina.local", "port": 22}
 
@@ -571,10 +619,48 @@ class UtilTest(unittest.TestCase):
         url = util.dolphin_url({"user": "gab", "host": "fd00::1", "port": 2222})
         self.assertEqual(url, "sftp://gab@[fd00::1]:2222/")
 
-    def test_normalize_mac(self):
-        self.assertEqual(util.normalize_mac("aa-bb-cc-dd-ee-ff"),
-                         "AA:BB:CC:DD:EE:FF")
-        self.assertEqual(util.normalize_mac("pas une mac"), "")
+    def test_active_address_falls_back(self):
+        host = {
+            "user": "gab", "host": "192.168.1.110", "port": 22,
+            "addresses": [{"address": "100.64.0.45", "kind": "tailscale"}],
+            "active": "",
+        }
+        self.assertEqual(util.host_addresses(host),
+                         ["192.168.1.110", "100.64.0.45"])
+        self.assertEqual(util.ssh_target(host), "gab@192.168.1.110")
+        self.assertEqual(util.active_kind(host), "")
+        host["active"] = "100.64.0.45"
+        self.assertEqual(util.ssh_target(host), "gab@100.64.0.45")
+        self.assertEqual(util.address_text(host), "gab@100.64.0.45")
+        self.assertEqual(util.active_kind(host), "Tailscale")
+        self.assertEqual(util.dolphin_url(host), "sftp://gab@100.64.0.45/")
+
+    def test_normalize_record_addresses(self):
+        record = util.normalize_record({
+            "user": "gab", "host": "192.168.1.110", "port": 22,
+            "addresses": [
+                {"address": "100.64.0.45", "kind": "tailscale"},
+                {"address": "192.168.1.110", "kind": "lan"},   # doublon
+                {"address": "100.64.0.45", "kind": "tailscale"},  # doublon
+                "pas une adresse avec espaces",
+                "10.0.0.7",
+            ],
+            "active": "100.64.0.45",
+            "mac": "AA:BB:CC:DD:EE:FF",     # ancien champ, ignoré
+        })
+        self.assertEqual(record["addresses"], [
+            {"address": "100.64.0.45", "kind": "tailscale"},
+            {"address": "10.0.0.7", "kind": ""},
+        ])
+        self.assertEqual(record["active"], "100.64.0.45")
+        self.assertNotIn("mac", record)
+
+    def test_normalize_record_drops_unknown_active(self):
+        record = util.normalize_record({
+            "user": "gab", "host": "192.168.1.110", "active": "10.9.9.9",
+        })
+        self.assertEqual(record["active"], "")
+        self.assertEqual(record["addresses"], [])
 
     def test_ssh_opts(self):
         opts = util._ssh_opts(self.host)

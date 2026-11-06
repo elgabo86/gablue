@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (
 )
 
 from .constants import (
-    AVAHI_BROWSE, COLOR_AUTH, COLOR_OFFLINE, COLOR_ONLINE, HOSTS_FILE, PULSE_MS,
-    REFRESH_MS, _which,
+    AVAHI_BROWSE, COLOR_AUTH, COLOR_OFFLINE, COLOR_ONLINE, HOSTS_FILE,
+    NO_AUTO_PROBE_STATES, PULSE_MS, REFRESH_MS, _which,
 )
 from .dialogs.apps import AppsDialog
 from .dialogs.booster import ForegroundBoosterDialog
@@ -30,7 +30,7 @@ from .dialogs.key import KeyInstallDialog
 from .dialogs.services import ServicesDialog
 from .dialogs.tailscale import TailscaleDialog
 from .dialogs.variant import VariantDialog
-from .hosts import detect_mac, load_hosts, parse_ssh_config, save_hosts, wake_on_lan
+from .hosts import load_hosts, parse_ssh_config, save_hosts
 from .local import (
     _sudo_run, avahi_apply_args, avahi_publish_state, flatpak_update_script,
     local_sshd_state, set_local_sshd_sudo,
@@ -39,9 +39,9 @@ from .ssh import ask_remote_password, remote_sudo_nopasswd, remote_sudo_prefix
 from .style import make_qss
 from .uiutil import app_icon
 from .tasks import LocalTaskDialog, RemoteTaskDialog, start_task
-from .util import address_text, display_name, dolphin_url, normalize_mac, ssh_target
+from .util import address_text, display_name, dolphin_url, host_addresses, ssh_target
 from .widgets import HostCard, LocalCard, StatusDot, _make_tool_button
-from .workers import AvahiWorker, CheckWorker, KeyProbeWorker
+from .workers import AddressWorker, AvahiWorker, CheckWorker, KeyProbeWorker
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -57,6 +57,8 @@ class MainWindow(QMainWindow):
         self._cards: dict[str, HostCard] = {}
         self._dots: list[StatusDot] = []
         self._checker: CheckWorker | None = None
+        self._address_workers: set[AddressWorker] = set()
+        self._address_queried: set[str] = set()
         self._jobs: list[dict] = []
         self._tasks: list[QDialog] = []      # fenêtres d'opération en cours
         self._key_queue: list[dict] = []     # postes à équiper après un import
@@ -119,7 +121,7 @@ class MainWindow(QMainWindow):
 
         self.refresh_button = _make_tool_button(header, "view-refresh", "⟳")
         self.refresh_button.setToolTip("Vérifier maintenant (F5)")
-        self.refresh_button.clicked.connect(self.refresh_all)
+        self.refresh_button.clicked.connect(lambda: self.refresh_all(force=True))
         header_layout.addWidget(self.refresh_button)
 
         # Un seul point d'entrée pour peupler la liste : la découverte mDNS et
@@ -257,17 +259,19 @@ class MainWindow(QMainWindow):
         footer_layout.addWidget(self.avahi_button)
         footer_layout.addSpacing(10)
         self.auto_label = QLabel(
-            f"Vérification automatique toutes les {REFRESH_MS // 1000} s",
+            f"Vérification automatique toutes les {REFRESH_MS // 1000} s "
+            "(F5 : tout revérifier)",
             footer,
         )
         self.auto_label.setObjectName("footer")
         footer_layout.addWidget(self.auto_label)
         root.addWidget(footer)
 
-        for sequence, slot in (("Ctrl+N", self.add_host),
-                               ("F5", self.refresh_all)):
-            shortcut = QShortcut(QKeySequence(sequence), self)
-            shortcut.activated.connect(slot)
+        QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self.add_host)
+        # F5 force la vérification, y compris des postes volontairement laissés
+        # au repos (clé refusée, empreinte inconnue).
+        QShortcut(QKeySequence("F5"), self).activated.connect(
+            lambda: self.refresh_all(force=True))
 
         self._update_footer()
 
@@ -306,7 +310,6 @@ class MainWindow(QMainWindow):
             card.edit_requested.connect(self.edit_host)
             card.delete_requested.connect(self.delete_host)
             card.terminal_requested.connect(self.open_terminal)
-            card.wake_requested.connect(self.wake_host)
             card.update_requested.connect(self.update_host)
             card.settings_requested.connect(self.open_remote_settings)
             card.gwine_requested.connect(self.open_remote_gwine_options)
@@ -339,7 +342,16 @@ class MainWindow(QMainWindow):
             dot.tick()
 
     # -- vérification -------------------------------------------------------
-    def refresh_all(self) -> None:
+    def refresh_all(self, force: bool = False) -> None:
+        """Vérifie les postes ; `force` ignore le repos des états bloqués.
+
+        On ne resonde PAS les postes dont la clé est refusée ou l'empreinte
+        inconnue : chaque tentative est une connexion fermée avant
+        authentification, comptée comme une offense par `PerSourcePenalties`
+        (OpenSSH 9.8+). Les sonder toutes les 30 s finissait par faire bannir
+        cette machine par leur sshd — et empêchait ensuite l'empreinte d'être
+        récupérée, donc la clé d'être installée. F5 / « Vérifier » force.
+        """
         self._update_sshd_button()
         self._update_avahi_button()
         if self._checker is not None and self._checker.isRunning():
@@ -347,33 +359,78 @@ class MainWindow(QMainWindow):
         if not self._hosts:
             self._update_footer()
             return
-        for host in self._hosts:
+        targets = [
+            host for host in self._hosts
+            if force or self._states.get(host["id"], ("", ""))[0]
+            not in NO_AUTO_PROBE_STATES
+        ]
+        if not targets:
+            self._update_footer()
+            return
+        for host in targets:
             self._states[host["id"]] = ("checking", "")
         self._apply_states()
         self.busy.setVisible(True)
 
-        checker = CheckWorker(self._hosts, self)
+        checker = CheckWorker(targets, self)
         checker.result.connect(self._on_check_result)
         checker.finished_all.connect(self._on_check_done)
         self._checker = checker
         checker.start()
 
     def _on_check_result(self, host_id: str, state: str, detail: str,
-                         latency: float, mac: str) -> None:
+                         latency: float, address: str) -> None:
         if state == "unknown":
             return
         self._states[host_id] = (state, detail)
         self._latency[host_id] = latency
         host = self._host(host_id)
-        if host is not None and mac and not host.get("mac"):
-            # MAC capturée au premier contact réussi : indispensable au réveil
-            # (WoL) une fois le poste éteint. Enregistrée une seule fois.
-            host["mac"] = mac
-            self._save()
+        if host is not None and address:
+            # L'adresse qui a répondu devient celle des actions : LAN à la
+            # maison, Tailscale en déplacement, sans rien demander.
+            active = "" if address == host["host"] else address
+            if active != host.get("active", ""):
+                host["active"] = active
+                self._save()
+            if state == "online" and not host.get("addresses"):
+                self._ask_addresses(host_id)
         card = self._cards.get(host_id)
         if card is not None:
             card.set_state(state, detail, latency)
         self._update_footer()
+
+    def _ask_addresses(self, host_id: str) -> None:
+        """Demande au poste ses adresses (LAN + Tailscale), une fois par session."""
+        if host_id in self._address_queried:
+            return
+        host = self._host(host_id)
+        if host is None:
+            return
+        self._address_queried.add(host_id)
+        worker = AddressWorker(host, self)
+        self._address_workers.add(worker)
+        worker.finished.connect(lambda w=worker: self._address_workers.discard(w))
+        worker.done.connect(self._addresses_found)
+        worker.start()
+
+    def _addresses_found(self, host_id: str, found: list) -> None:
+        host = self._host(host_id)
+        if host is None or not found:
+            return
+        known = set(host_addresses(host))
+        added = [
+            item for item in found
+            if isinstance(item, dict) and item.get("address")
+            and item["address"] not in known
+        ]
+        if not added:
+            return
+        host["addresses"] = [*(host.get("addresses") or []), *added]
+        self._save()
+        card = self._cards.get(host_id)
+        if card is not None:
+            state, detail = self._states.get(host_id, ("unknown", ""))
+            card.set_state(state, detail, self._latency.get(host_id, 0.0))
 
     def _on_check_done(self) -> None:
         self.busy.setVisible(False)
@@ -698,16 +755,18 @@ class MainWindow(QMainWindow):
         self._key_workers.add(worker)
         worker.finished.connect(lambda w=worker: self._key_workers.discard(w))
         worker.done.connect(
-            lambda ok, _detail, h=dict(host): self._key_probed(h, ok)
+            lambda info, h=dict(host): self._key_probed(h, info)
         )
         worker.start()
 
-    def _key_probed(self, host: dict, ok: bool) -> None:
-        if ok:
+    def _key_probed(self, host: dict, info: dict) -> None:
+        if info.get("authenticated"):
             self._key_installed(host["id"])
             self._probe_next_key()
             return
-        dialog = KeyInstallDialog(self, host=host)
+        # La sonde est passée au dialogue : l'installation réutilise ses clés
+        # au lieu d'ouvrir une connexion refusée de plus.
+        dialog = KeyInstallDialog(self, host=host, prescan=info)
         dialog.installed.connect(lambda h=host["id"]: self._key_installed(h))
         # La suite attend la fermeture de cette fenêtre : un mot de passe à la
         # fois, et l'utilisateur peut renoncer sans bloquer les suivants.
@@ -723,6 +782,9 @@ class MainWindow(QMainWindow):
         self._states[host_id] = ("checking", "")
         self._apply_states()
         self.refresh_all()
+        # La clé fonctionne : c'est le moment de demander au poste ses
+        # adresses (dont Tailscale, jamais annoncée en mDNS).
+        self._ask_addresses(host_id)
 
     def launch_remote(self, host_id: str) -> None:
         host = self._host(host_id)
@@ -809,31 +871,6 @@ class MainWindow(QMainWindow):
             )
             return
         self._launch(command, f"Terminal — {display_name(host)}")
-
-    def wake_host(self, host_id: str) -> None:
-        host = self._host(host_id)
-        if host is None:
-            return
-        if not host.get("mac"):
-            QMessageBox.information(
-                self, "Wake-on-LAN",
-                "Aucune adresse MAC n'est enregistrée pour ce poste.\n\n"
-                "Elle est capturée automatiquement dès qu'une connexion "
-                "réussit ; sinon renseignez-la dans « Modifier ».",
-            )
-            return
-        ok, error = wake_on_lan(host)
-        if not ok:
-            QMessageBox.warning(
-                self, "Wake-on-LAN", f"Envoi du paquet magique impossible :\n{error}"
-            )
-            return
-        self.auto_label.setText(f"Réveil envoyé à {display_name(host)}…")
-        self._states[host_id] = ("checking", "réveil envoyé")
-        self._apply_states()
-        # Démarrage + sshd : on re-vérifie plusieurs fois plutôt qu'une seule.
-        for delay in (3000, 7000, 12000, 20000, 30000):
-            QTimer.singleShot(delay, self.refresh_all)
 
     def update_host(self, host_id: str, kind: str = "gablue") -> None:
         host = self._host(host_id)
@@ -959,7 +996,7 @@ class MainWindow(QMainWindow):
             self, "Éteindre le poste",
             f"Éteindre « {display_name(host)} » ({address_text(host)}) ?\n\n"
             "Toutes les sessions ouvertes sur ce poste seront interrompues. "
-            "Il ne redémarrera qu'à la main ou par Wake-on-LAN.",
+            "Il ne redémarrera qu'à la main.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
@@ -1193,13 +1230,21 @@ class MainWindow(QMainWindow):
             self._install_keys(added)
 
     def _add_record(self, candidate: dict) -> dict | None:
+        # La découverte connaît déjà toutes les adresses de la machine (LAN et
+        # Tailscale) : on garde les autres en secours au lieu d'en jeter.
+        addresses = [
+            {"address": address, "kind": kind}
+            for address, kind in candidate.get("hosts") or []
+            if address and address != candidate.get("host")
+        ]
         host = {
             "id": uuid.uuid4().hex,
             "label": str(candidate.get("label") or "").strip(),
             "user": str(candidate["user"]).strip(),
             "host": str(candidate["host"]).strip(),
             "port": int(candidate.get("port", 22)),
-            "mac": normalize_mac(candidate.get("mac", "")) or detect_mac(candidate),
+            "addresses": addresses,
+            "active": "",
             "key_added": False,
             "added_at": int(time.time()),
         }
@@ -1363,6 +1408,14 @@ class MainWindow(QMainWindow):
         if self._avahi_worker is not None and self._avahi_worker.isRunning():
             self._avahi_worker.stop.set()
             self._avahi_worker.wait(3000)
+        # Sondes d'adresses et de clés : un QThread détruit alors qu'il tourne
+        # fait tomber l'application à la sortie.
+        for worker in [*self._address_workers, *self._key_workers]:
+            if worker.isRunning():
+                worker.wait(4000)
+                if worker.isRunning():      # ssh bloqué : on ne bloque pas la sortie
+                    worker.terminate()
+                    worker.wait(500)
         if (self._sshd_process is not None
                 and self._sshd_process.state() != QProcess.NotRunning):
             self._sshd_process.kill()

@@ -1,4 +1,4 @@
-"""Registre des postes, découverte mDNS, import ssh_config, WoL.
+"""Registre des postes, découverte mDNS, import ssh_config.
 """
 
 import getpass
@@ -8,7 +8,6 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -16,81 +15,8 @@ import threading
 import time
 from pathlib import Path
 
-from .constants import AVAHI_BROWSE, CONFIG_DIR, HOSTS_FILE, IP, SSH, SSH_DIR, WOL_PORTS
-from .util import _ssh_opts, normalize_mac, normalize_record, ssh_target
-
-def _broadcast_for(address: str) -> str:
-    """Adresse de diffusion du sous-réseau qui route vers `address`."""
-    try:
-        route = subprocess.run(
-            [IP, "route", "get", address], capture_output=True, text=True,
-            timeout=4,
-        )
-        match = re.search(r"\bdev\s+(\S+)", route.stdout)
-        if not match:
-            return ""
-        addr = subprocess.run(
-            [IP, "-o", "-4", "addr", "show", "dev", match.group(1)],
-            capture_output=True, text=True, timeout=4,
-        )
-        found = re.search(r"\binet\s+(\d+\.\d+\.\d+\.\d+/\d+)", addr.stdout)
-        if not found:
-            return ""
-        return str(ipaddress.ip_interface(found.group(1)).network.broadcast_address)
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        return ""
-
-def wake_on_lan(host: dict) -> tuple[bool, str]:
-    """Envoie le paquet magique (broadcast global + diffusion du sous-réseau)."""
-    mac = normalize_mac(host.get("mac", ""))
-    if not mac:
-        return False, "adresse MAC inconnue : renseignez-la dans « Modifier »"
-    payload = b"\xff" * 6 + bytes.fromhex(mac.replace(":", "")) * 16
-    targets = ["255.255.255.255"]
-    subnet = _broadcast_for(host["host"])
-    if subnet and subnet not in targets:
-        targets.append(subnet)
-    sent = 0
-    last_error = ""
-    for address in targets:
-        for port in WOL_PORTS:
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                    sock.sendto(payload, (address, port))
-                sent += 1
-            except OSError as exc:
-                last_error = str(exc)
-    if sent:
-        return True, ""
-    return False, last_error or "envoi impossible"
-
-def detect_mac(host: dict) -> str:
-    """MAC dans la table ARP locale (gratuit, mais seulement si le poste a parlé)."""
-    try:
-        result = subprocess.run(
-            [IP, "neigh", "show", "to", host["host"]],
-            capture_output=True, text=True, timeout=4,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    match = re.search(r"lladdr\s+([0-9a-fA-F:]{17})", result.stdout)
-    return normalize_mac(match.group(1)) if match else ""
-
-def detect_mac_remote(host: dict) -> str:
-    """MAC de l'interface par défaut, lue par SSH (poste en ligne, ARP vide)."""
-    command = (
-        "cat /sys/class/net/$(ip route show default 2>/dev/null"
-        " | awk '{print $5; exit}')/address 2>/dev/null"
-    )
-    try:
-        result = subprocess.run(
-            [SSH, *_ssh_opts(host), ssh_target(host), command],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    return normalize_mac(result.stdout.strip()) if result.returncode == 0 else ""
+from .constants import AVAHI_BROWSE, CONFIG_DIR, HOSTS_FILE, IP, SSH, SSH_DIR
+from .util import _ssh_opts, normalize_record, ssh_target
 
 TAILSCALE_NETWORK = ipaddress.IPv4Network("100.64.0.0/10")
 
@@ -143,6 +69,78 @@ def address_kind(address: str, own: set[str], networks: list) -> str:
         # masquer, on n'a alors que le filtre boucle locale / nos adresses.
         return "lan"
     return "lan" if any(ip in network for network in networks) else ""
+
+
+# Une seule adresse LAN (celle de la route par défaut, pas docker0) et
+# l'adresse Tailscale si le service y répond.
+REMOTE_ADDRESS_SCRIPT = (
+    "ip -4 route get 1.1.1.1 2>/dev/null"
+    " | sed -n 's/.* src \\([0-9.]*\\).*/\\1/p';"
+    " tailscale ip -4 2>/dev/null; true"
+)
+
+
+def remote_address_kind(address: str, own: set[str] | None = None) -> str:
+    """« lan », « tailscale » ou « » pour une adresse rapportée par le poste.
+
+    Contrairement à `address_kind` (qui juge ce qui est joignable d'ICI), on
+    garde ici l'adresse LAN même hors de nos sous-réseaux directs : elle reste
+    la bonne adresse une fois rentré à la maison, et le filtrage par
+    sous-réseau local ne concerne que les annonces mDNS.
+    """
+    if own is None:
+        own, _networks = local_ipv4()
+    try:
+        ip = ipaddress.IPv4Address(address)
+    except ValueError:
+        return ""
+    if (ip.is_loopback or ip.is_link_local or ip.is_multicast
+            or ip.is_unspecified or str(ip) in own):
+        return ""
+    if ip in TAILSCALE_NETWORK:
+        return "tailscale"
+    return "lan" if ip.is_private else ""
+
+
+def parse_remote_addresses(text: str, main: str = "",
+                           own: set[str] | None = None) -> list[dict]:
+    """Adresses IPv4 d'un poste, lues chez lui (`ip route` + `tailscale ip`).
+
+    Avahi n'annonce pas l'interface `tailscale0` par défaut : l'adresse
+    Tailscale d'un poste ne peut pas venir de la découverte mDNS. La seule
+    façon fiable de la connaître, c'est de demander au poste lui-même — ce que
+    fait cette sonde après une connexion réussie. L'adresse LAN vient de la
+    route par défaut (pas des interfaces : docker0 et consorts n'ont rien à
+    faire dans le registre).
+    """
+    if own is None:
+        own, _networks = local_ipv4()
+    found: list[dict] = []
+    seen = {main} if main else set()
+    for token in re.findall(r"\b\d+\.\d+\.\d+\.\d+\b", text or ""):
+        if token in seen:
+            continue
+        kind = remote_address_kind(token, own)
+        if not kind:
+            continue
+        seen.add(token)
+        found.append({"address": token, "kind": kind})
+    found.sort(key=lambda item: ("lan", "tailscale").index(item["kind"]))
+    return found
+
+
+def remote_addresses(host: dict) -> list[dict]:
+    """Adresses du poste lues par SSH (une connexion, silencieux si échec)."""
+    try:
+        result = subprocess.run(
+            [SSH, *_ssh_opts(host), ssh_target(host), REMOTE_ADDRESS_SCRIPT],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    return parse_remote_addresses(result.stdout, host["host"])
 
 
 def group_candidates(entries: list[dict], own: set[str] | None = None,
