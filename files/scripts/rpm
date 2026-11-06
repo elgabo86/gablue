@@ -244,14 +244,22 @@ if [ "${DX_MODE:-false}" == "true" ]; then
         dnf5 -y --setopt=install_weak_deps=False install rocm-hip rocm-opencl rocm-clinfo rocm-smi
 
         # Suppression du compilateur ROCm (inutile au runtime)
-        # rocm-llvm-static pèse 1.9 Go à lui seul
-        rpm -e --nodeps \
+        # rocm-llvm-static pèse 2,2 Go à lui seul.
+        # Ne retirer QUE les paquets réellement installés : les dépendances ROCm
+        # bougent d'une release à l'autre (fc45 / ROCm 7.2.2 : rocm-libc++-devel
+        # n'est plus tiré) et `rpm -e` échoue sur le premier absent — « error:
+        # package rocm-libc++-devel is not installed », les deux variantes DX en
+        # échec (build 06/11/2026).
+        mapfile -t rocm_dev_pkgs < <(rpm -q --qf '%{NAME}\n' \
             rocm-llvm-static \
             rocm-llvm-devel \
             rocm-clang-devel \
             rocm-libc++-devel \
             rocm-clang-runtime-devel \
-            rocm-lld
+            rocm-lld 2>/dev/null | grep -v '^package ')
+        if [ ${#rocm_dev_pkgs[@]} -gt 0 ]; then
+            rpm -e --nodeps "${rocm_dev_pkgs[@]}"
+        fi
 
         # Empêcher leur réinstallation future
         dnf5 versionlock exclude \
