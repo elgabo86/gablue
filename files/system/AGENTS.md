@@ -33,7 +33,6 @@
 ## Scripts utilisateur (/usr/bin)
 
 - `gablue-apk-installer` : installateur APK par glisser-déposer — le code vit dans `src/gablue-apk-installer/` (paquet `gablue_apk_installer`, installé en `/usr/lib/gablue-apk-installer/` par `files/scripts/build-apk-installer`) ; contrat complet → `src/gablue-apk-installer/AGENTS.md`
-- `gablue-bigscreen-swap-session` / `gablue-bigscreen-session-init` : swap-session Bigscreen + init session native (détail → files/scripts/AGENTS.md § post-install)
 - `retroplayer` : TUI Go musiques rétro (GitHub Releases pendant le build, dépôt séparé)
 - Scripts gaming : `azahar-install`, `eden-install`, `esde-install`, `shadps4-install`, `xenia-install`
 - Scripts utilitaires : `dlv`, `dlcover`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`

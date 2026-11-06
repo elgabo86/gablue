@@ -15,7 +15,6 @@ Images and the system are continuously updated, following the latest Fedora rele
 - **Gwine** — seamless Wine runner: launch .exe and .wgp files directly with no prefix management, thanks to a single shared prefix built on Proton sources. Bundles ds2xbox to emulate an Xbox controller for Wine games (like Steam)
 - **Game packages** — .wgp (Windows Game Pack) and .lgp (Linux Game Pack) self-contained squashfs game bundles: package a full compressed PC game into a single file you can create yourself, then run it directly with no installation required
 - **Gamepad shortcuts** — native C daemon for system actions via controller
-- **Plasma Bigscreen** (BETA) — couch/TV interface, switchable from the desktop session
 - **Flatpak** and **brew** ready out of the box
 - **Automatic weekly updates** — system and flatpaks staged in the background
 - **gremote** — remote desktop between Gablue machines: the host's *existing* Plasma session over RDP, tunnelled in SSH — no port opened, sound carried by a PipeWire tunnel sink, ephemeral RDP password. when no session exists one is created **virtually**, so several accounts can work at once without taking the physical screen

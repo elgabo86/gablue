@@ -145,19 +145,6 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - Script : attend un connecteur `/sys/class/drm/card*-*/status` = connected (le 1er suffit, écrans suivants hotpluggés) + `/dev/input/event*`, puis 1 s fixe (docks/HID lents), timeout 5 s (headless = sortie au timeout). Attendre la carte seule ne suffit pas : GPU récents (ex. RX 9060 XT/gfx12) → KWin greeter sans output → écran noir
 - ~10,2 s → ~1,1 s (fixe upstream KDE `a8c752fe` trop conservateur)
 
-**gablue-bigscreen-swap-session** (remplace `/usr/bin/plasma-bigscreen-swap-session`, appelé par QProcess du script C++ bigscreen) :
-- **Env** : QProcess détaché = env minimal → fallbacks exportés avant tout (`XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, `WAYLAND_DISPLAY`, `QT_QPA_PLATFORM=wayland`, `LANG`) ; sans `QT_QPA_PLATFORM=wayland`, kscreen-doctor xcb → coredump. Au retour, saved-env sourcé EN PREMIER
-- **Anti double-invocation** : signal bigscreen émis 2× (~2 s d'écart) → le 2e appel repartait en bigscreen et écrasait la restauration → flock (fd 9) + cooldown 6 s (`last-swap`) ; processus backgroundés ferment fd 9 (`plasmashell --replace` infini)
-- **Aller** : sauvegarde env + settings KWin (`BorderlessMaximizedWindows`, `Placement`, `NoPlugin`) ; source `plasma-bigscreen-common-env` ; kwinrc bigscreen (max sans déco, pas de plugin) ; mirroring secondaires → principal (`kscreen-doctor output.X.mirror.Y`) ; inputhandler via `kioclient exec` (mécanisme natif permissions Wayland) ; `plasmashell --replace` ; +2 s : maximise tout + `noBorder = true` (script KWin 6)
-- **Retour** : kill inputhandler (TERM puis KILL) ; restaure settings (supprime les clés absentes avant) ; relance `plasma-xwaylandvideobridge.service` (tué par bigscreen `HomeScreen.qml` — hack qui casse X11 au retour) ; restaure env (dont `XDG_CONFIG_DIRS`) ; `qdbus reconfigure` ; annule mirroring (`mirror.none`) ; `plasmashell --replace` ; +2 s : déco + `setMaximize(false, false)` (frameGeometry ignoré sur fenêtre maximisée) puis frameGeometry 80 % centré
-- Détection mode : `pgrep -f plasma-bigscreen-inputhandler` (plus fiable que `PLASMA_BIGSCREEN_LAUNCH_REASON`, non héritée via KLauncher)
-
-**gablue-bigscreen-session-init** (autostart KDE, toutes sessions) :
-- Détection session native : `PLASMA_PLATFORM=mediacenter` (sourcé par `plasma-bigscreen-common-env` avant autostart)
-- Session Plasma normale : `~/.cache/plasma-bigscreen/kscreen-mirrored.txt` résiduel → annule le mirroring listé + supprime le fichier (après init KWin)
-- Session bigscreen native : symlink blacklist (`~/.config/applications-blacklistrc` → `/etc/xdg/`) ; attente KWin (`kscreen-doctor --json`, 10 s max) ; mirroring secondaires ; sauvegarde des outputs mirrorés dans `kscreen-mirrored.txt` (partagé avec swap-session)
-- Actions swap (fenêtres, KWin, inputhandler) : uniquement dans swap-session
-
 ### systemd
 
 - **Activés (toutes variantes)** : rpm-ostreed-automatic, flatpak-update, cec-poweroff-tv, cec-active-source, dmemcg-booster, bpftune (Bazzite `4333b30`), brew-setup (voir section rpm)
