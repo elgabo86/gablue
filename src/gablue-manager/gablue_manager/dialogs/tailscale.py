@@ -16,9 +16,7 @@ from ..local import (
 )
 from ..ssh import ask_remote_password, remote_sudo_prefix, ssh_capture
 from ..tasks import LocalTaskDialog, RemoteTaskDialog, start_task
-from ..uiutil import (
-    fit_dialog_height, recommendation_badge, set_recommendation,
-)
+from ..uiutil import fit_dialog_height
 from ..util import address_text, display_name
 
 class TailscaleDialog(QDialog):
@@ -71,8 +69,8 @@ class TailscaleDialog(QDialog):
         self.check.setCursor(Qt.PointingHandCursor)
         self.check.toggled.connect(self._update_apply)
         top.addWidget(self.check)
-        self.recommendation = recommendation_badge(frame)
-        top.addWidget(self.recommendation)
+        # Pas de pastille de conseil : Tailscale est un opt-in (on l'utilise ou
+        # pas), il n'y a pas de « bon » réglage à recommander.
         top.addStretch(1)
         frame_layout.addLayout(top)
         detail = QLabel(
@@ -141,9 +139,6 @@ class TailscaleDialog(QDialog):
         return self.check.isEnabled() and self.check.isChecked() != self.initial
 
     def _update_apply(self) -> None:
-        ok = bool(self.state.get("ok"))
-        differs = ok and self.check.isChecked()
-        set_recommendation(self.recommendation, "décocher", differs, ok)
         if not self.state.get("ok"):
             self.apply_button.setEnabled(False)
             self.hint_label.setText("État illisible — réglage non modifiable.")

@@ -149,7 +149,9 @@ class ForegroundBoosterDialog(QDialog):
     def _update_apply(self) -> None:
         ok = bool(self.state.get("ok"))
         differs = ok and not self.check.isChecked()
-        set_recommendation(self.recommendation, "cocher", differs, ok)
+        set_recommendation(
+            self.recommendation, "cocher", differs, ok, advice="activé"
+        )
         if not self.state.get("ok"):
             self.apply_button.setEnabled(False)
             self.hint_label.setText("État illisible — réglage non modifiable.")

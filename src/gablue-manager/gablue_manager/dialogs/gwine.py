@@ -29,6 +29,14 @@ GWINE_RECOMMENDED = {
     "xbox": ("décocher", False),
 }
 
+# État conseillé, dit en clair à côté d'un réglage déjà conforme : « ✓ Conseillé »
+# seul se lisait comme « il est conseillé de changer ».
+GWINE_ADVICE = {
+    "dxvk_async": "DXVK standard",
+    "wayland": "X11 (XWayland)",
+    "xbox": "désactivé",
+}
+
 class GwineOptionsDialog(QDialog):
     """Options de gwine, communes à tous les lancements de jeux Windows.
 
@@ -251,7 +259,9 @@ class GwineOptionsDialog(QDialog):
         for key, badge in self.recommendations.items():
             hint, value = GWINE_RECOMMENDED[key]
             differs = ok and desired[key] != value
-            set_recommendation(badge, hint, differs, ok)
+            set_recommendation(
+                badge, hint, differs, ok, advice=GWINE_ADVICE[key]
+            )
 
     def _update_apply(self) -> None:
         self._update_recommendations()

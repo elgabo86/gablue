@@ -186,7 +186,7 @@ class MainWindow(QMainWindow):
         icon.setPixmap(pixmap)
         icon.setAlignment(Qt.AlignCenter)
         empty_layout.addWidget(icon)
-        empty_title = QLabel("Aucun poste SSH", empty)
+        empty_title = QLabel("Aucun poste distant", empty)
         empty_title.setObjectName("emptyTitle")
         empty_title.setAlignment(Qt.AlignCenter)
         empty_layout.addWidget(empty_title)
@@ -402,7 +402,7 @@ class MainWindow(QMainWindow):
             if self._states.get(host["id"], ("", ""))[0] == "online"
         )
         if total == 0:
-            self.footer_label.setText("Aucun poste enregistré")
+            self.footer_label.setText("Aucun poste distant enregistré")
         else:
             noun = "poste" if total == 1 else "postes"
             self.footer_label.setText(f"{total} {noun} · {online} en ligne")

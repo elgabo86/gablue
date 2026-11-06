@@ -54,12 +54,12 @@ CHOICE_STATE = {
     "auto_updates": {True: "activées", False: "désactivées"},
 }
 
-# Valeur recommandée pour la machine : services inutiles éteints, confort
-# Gablue allumé.
+# Valeur recommandée pour la machine : les réglages de confort Gablue allumés.
+# DisplayLink et le Wi-Fi Broadcom n'en ont pas : ils dépendent du matériel
+# présent, pas d'un « bon » réglage — une pastille y dirait « décochez » à
+# quelqu'un qui a justement le dock ou la carte.
 CHOICE_RECOMMENDED = {
-    "displaylink": False,   # seulement avec du matériel DisplayLink
     "low_latency": True,    # réglage Gablue
-    "broadcom_wl": False,   # matériel ancien et spécifique
     "atuin": True,          # historique partagé, déjà en place sur l'image
     "auto_updates": True,   # image et Flatpaks à jour sans y penser
 }
@@ -215,7 +215,8 @@ class ServicesDialog(QDialog):
             recommended = CHOICE_RECOMMENDED[key]
             differs = ok and self.checks[key].isChecked() != recommended
             set_recommendation(
-                badge, "cocher" if recommended else "décocher", differs, ok
+                badge, "cocher" if recommended else "décocher", differs, ok,
+                advice=CHOICE_STATE[key][recommended],
             )
 
     def _update_apply(self) -> None:
