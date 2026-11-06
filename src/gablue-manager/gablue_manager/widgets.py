@@ -222,7 +222,7 @@ class HostCard(QFrame):
             "Options de gwine…",
             lambda: self.gwine_requested.emit(self.host["id"]),
         )
-        settings_menu.addAction(
+        games_menu.addAction(
             "Priorité au premier plan…",
             lambda: self.booster_requested.emit(self.host["id"]),
         )
@@ -406,8 +406,8 @@ class LocalCard(QFrame):
         layout.addWidget(self.apps_button, 0, Qt.AlignVCenter)
 
         # Un bouton, un menu rangé par domaine : noyau et matériel (kargs +
-        # émulation CPUID), services et pilotes, variante de l'image, priorité
-        # au premier plan, puis jeux (préfixe Windows) et réseau (Tailscale).
+        # émulation CPUID), services et pilotes, variante de l'image, puis jeux
+        # (préfixe Windows, priorité au premier plan) et réseau (Tailscale).
         # Chacun s'applique à un endroit différent, d'où des entrées séparées
         # plutôt qu'un dialogue fourre-tout.
         self.config_button = QPushButton("Configuration", self)
@@ -423,12 +423,12 @@ class LocalCard(QFrame):
         config_menu.addAction(
             "Variante de l'image…", self.variant_requested.emit
         )
-        config_menu.addAction(
-            "Priorité au premier plan…", self.booster_requested.emit
-        )
         config_menu.addSeparator()
         games_menu = config_menu.addMenu("Jeux")
         games_menu.addAction("Options de gwine…", self.gwine_requested.emit)
+        games_menu.addAction(
+            "Priorité au premier plan…", self.booster_requested.emit
+        )
         network_menu = config_menu.addMenu("Réseau")
         network_menu.addAction("Tailscale…", self.tailscale_requested.emit)
         self.config_button.setMenu(config_menu)
