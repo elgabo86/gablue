@@ -30,6 +30,13 @@
 - Permet `./jeu.exe` en terminal et le bouton « Exécuter » de Dolphin/KIO pour les `.exe` avec bit `+x` (copies NTFS/exFAT, archives)
 - Complément du patch runner `no_exe_executable_bit.mypatch` (dépôt `elgabo86/gwine`) : le wineserver gwine ne pose plus `+x` sur les `.exe`/`.com` créés par les installateurs → KIO les ouvre nativement via Windows.desktop → gwine (icônes + « Ouvrir avec » intacts). KIO ne traite un `.exe` comme binaire natif QUE s'il a `+x` (hardcodé, sans option)
 
+## Unités systemd utilisateur (/usr/lib/systemd/user)
+
+Drop-ins dans `*.service.d/`, appliqués à l'échelle du système (priorité plus faible que `~/.config/systemd/user/`, donc un drop-in utilisateur de même nom écrase le nôtre — laisser le même nom de fichier pour que le retrait côté utilisateur soit transparent).
+
+- **plasma-dolphin.service.d/gablue-composefs-fix.conf** : réinjecte `LD_PRELOAD` du composefs-fix quand Dolphin est lancé par activation D-Bus (voir § composefs de `files/scripts/AGENTS.md`)
+- **plasma-foreground-booster.service.d/10-after-plasmashell.conf** : `After=plasma-plasmashell.service`, correctif upstream kcgroups 0.2 absent du paquet Terra 0.1-3. Sans lui le booster démarre en parallèle du compositeur, Wayland n'existe pas encore, Qt ne trouve aucun plugin de plateforme et **abort** (coredump à chaque login, service relancé ensuite par `Restart=on-failure`). Après le bump Terra vers 0.2 le fichier devient un doublon inoffensif, à retirer. `plasmashell` plutôt que `plasma-kwin_wayland` : en `Type=dbus`, son « started » prouve un démarrage réel, alors que KWin en `Type=simple` peut être lancé sans avoir créé le socket
+
 ## Scripts utilisateur (/usr/bin)
 
 - `gablue-apk-installer` : installateur APK par glisser-déposer — le code vit dans `src/gablue-apk-installer/` (paquet `gablue_apk_installer`, installé en `/usr/lib/gablue-apk-installer/` par `files/scripts/build-apk-installer`) ; contrat complet → `src/gablue-apk-installer/AGENTS.md`
