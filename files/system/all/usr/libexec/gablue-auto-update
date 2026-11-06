@@ -1,0 +1,34 @@
+#!/usr/bin/bash
+
+# gablue-auto-update — active ou désactive les mises à jour automatiques système
+#
+# Appelé via sudo -n (règle NOPASSWD dans /etc/sudoers.d/nopasswd) : le script
+# n'accepte QUE « on », « off » ou « status », jamais un `systemctl` libre en
+# root. Le timer Flatpak de la session (~/.config/systemd/user) n'est pas ici :
+# il appartient à l'utilisateur, Gablue Manager le bascule sans privilège.
+#
+# Usage : gablue-auto-update on|off|status
+
+set -eu
+
+units=(rpm-ostreed-automatic.timer flatpak-system-update.timer)
+
+usage() {
+    echo "Usage : gablue-auto-update on|off|status" >&2
+    exit 2
+}
+
+[ $# -eq 1 ] || usage
+
+case "$1" in
+    on)     exec /usr/bin/systemctl enable --now "${units[@]}" ;;
+    off)    exec /usr/bin/systemctl disable --now "${units[@]}" ;;
+    status)
+        # 0 seulement si TOUS les timers système sont activés.
+        for unit in "${units[@]}"; do
+            /usr/bin/systemctl is-enabled --quiet "$unit" || exit 1
+        done
+        exit 0
+        ;;
+    *) usage ;;
+esac

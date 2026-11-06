@@ -53,6 +53,8 @@ chmod +x /usr/libexec/gablue-service
 chmod +x /usr/libexec/gablue-low-latency
 chmod +x /usr/libexec/gablue-broadcom-wl
 chmod +x /usr/libexec/gablue-rebase
+chmod +x /usr/libexec/gablue-auto-update
+chmod +x /usr/libexec/gablue-avahi
 chmod +x /usr/libexec/gablue-dx-groups
 
 # Rendre exécutables les scripts supplémentaires Gablue

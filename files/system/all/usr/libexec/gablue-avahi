@@ -1,0 +1,50 @@
+#!/usr/bin/bash
+
+# gablue-avahi — annonce (ou retire) ce poste en SSH sur le réseau local
+#
+# Appelé via sudo -n (règle NOPASSWD dans /etc/sudoers.d/nopasswd) : le script
+# n'accepte QUE « on », « off » ou « status ». Il n'écrit qu'un fichier connu,
+# jamais un chemin fourni par l'appelant — l'annonce mDNS était le dernier
+# réglage de Gablue Manager à passer par un fichier temporaire en argument.
+#
+# Avahi surveille /etc/avahi/services et recharge seul (~1 s).
+#
+# Usage : gablue-avahi on|off|status
+
+set -eu
+
+file=/etc/avahi/services/ssh.service
+
+usage() {
+    echo "Usage : gablue-avahi on|off|status" >&2
+    exit 2
+}
+
+[ $# -eq 1 ] || usage
+
+case "$1" in
+    on)
+        mkdir -p /etc/avahi/services
+        umask 022
+        cat > "$file.tmp" << 'EOF'
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name replace-wildcards="yes">%h</name>
+  <service>
+    <type>_ssh._tcp</type>
+    <port>22</port>
+  </service>
+</service-group>
+EOF
+        chmod 644 "$file.tmp"
+        mv -f "$file.tmp" "$file"
+        ;;
+    off)
+        rm -f "$file"
+        ;;
+    status)
+        [ -f "$file" ]
+        ;;
+    *) usage ;;
+esac

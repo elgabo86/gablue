@@ -61,6 +61,18 @@ class KargsTest(unittest.TestCase):
         self.assertIn("gablue-kargs --cpuid on", script)
         self.assertIn("gablue-cpuid-emu off", script)
 
+    def test_avahi_args(self):
+        # Helper à liste fermée : aucun chemin temporaire en argument, sinon la
+        # règle sudoers exacte ne matcherait pas (invite PolicyKit).
+        self.assertEqual(
+            local.avahi_apply_args(True),
+            ["/usr/libexec/gablue-avahi", "on"],
+        )
+        self.assertEqual(
+            local.avahi_apply_args(False),
+            ["/usr/libexec/gablue-avahi", "off"],
+        )
+
 
 class SystemTest(unittest.TestCase):
     def test_parse_variant(self):
@@ -108,6 +120,23 @@ class SystemTest(unittest.TestCase):
         # atuin ne passe jamais par sudo : fichiers de l'utilisateur.
         self.assertNotIn(
             "sudo", local.system_apply_script({"atuin": False})
+        )
+
+    def test_auto_update_script(self):
+        script = local.system_apply_script({"auto_updates": True})
+        self.assertEqual(
+            script,
+            "sudo -n /usr/libexec/gablue-auto-update on\n"
+            "systemctl --user enable --now flatpak-user-update.timer "
+            "|| echo \"Timer Flatpak utilisateur inchangé (pas de session).\"\n",
+        )
+        self.assertIn(
+            "sudo -n /usr/libexec/gablue-auto-update off",
+            local.system_apply_script({"auto_updates": False}),
+        )
+        self.assertIn(
+            "systemctl --user disable --now flatpak-user-update.timer",
+            local.system_apply_script({"auto_updates": False}),
         )
 
     def test_rebase_script(self):

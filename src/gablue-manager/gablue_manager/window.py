@@ -27,12 +27,13 @@ from .dialogs.gwine import GwineOptionsDialog
 from .dialogs.host import CandidateDialog, HostDialog
 from .dialogs.kernel import LocalSettingsDialog, RemoteSettingsDialog
 from .dialogs.key import KeyInstallDialog
-from .dialogs.system import SystemDialog
+from .dialogs.services import ServicesDialog
 from .dialogs.tailscale import TailscaleDialog
+from .dialogs.variant import VariantDialog
 from .hosts import detect_mac, load_hosts, parse_ssh_config, save_hosts, wake_on_lan
 from .local import (
-    _sudo_run, avahi_publish_args, avahi_publish_state, flatpak_update_script,
-    local_sshd_state, set_local_sshd_sudo, write_avahi_service_temp,
+    _sudo_run, avahi_apply_args, avahi_publish_state, flatpak_update_script,
+    local_sshd_state, set_local_sshd_sudo,
 )
 from .ssh import ask_remote_password, remote_sudo_nopasswd, remote_sudo_prefix
 from .style import make_qss
@@ -66,7 +67,6 @@ class MainWindow(QMainWindow):
         self._avahi_worker: AvahiWorker | None = None
         self._sshd_process: QProcess | None = None
         self._avahi_process: QProcess | None = None
-        self._avahi_temp = ""
 
         self._build_ui()
         self.setStyleSheet(make_qss())
@@ -153,8 +153,9 @@ class MainWindow(QMainWindow):
         self.local_card = LocalCard(central)
         self.local_card.update_requested.connect(self.local_update)
         self.local_card.apps_requested.connect(self.open_apps)
-        self.local_card.config_requested.connect(self.open_settings)
-        self.local_card.system_requested.connect(self.open_local_system)
+        self.local_card.kernel_requested.connect(self.open_settings)
+        self.local_card.services_requested.connect(self.open_local_services)
+        self.local_card.variant_requested.connect(self.open_local_variant)
         self.local_card.gwine_requested.connect(self.open_local_gwine_options)
         self.local_card.booster_requested.connect(
             self.open_local_foreground_booster
@@ -565,18 +566,15 @@ class MainWindow(QMainWindow):
             return
 
         enabled = not published
-        temp_path = write_avahi_service_temp() if enabled else ""
-        argv = avahi_publish_args(enabled, temp_path)
+        argv = avahi_apply_args(enabled)
         argv[0] = _which(argv[0])
 
         ok, _detail = _sudo_run(argv)
         if ok:
-            self._cleanup_avahi_temp(temp_path)
             self._update_avahi_button()
             return
 
         if shutil.which("pkexec") is None:
-            self._cleanup_avahi_temp(temp_path)
             QMessageBox.critical(
                 self, "Annonce mDNS",
                 "Ni sudo sans mot de passe ni pkexec ne sont disponibles sur "
@@ -584,7 +582,6 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self._avahi_temp = temp_path
         self.avahi_button.setEnabled(False)
         self.avahi_button.setText("Annonce mDNS : autorisation…")
         process = QProcess(self)
@@ -595,17 +592,7 @@ class MainWindow(QMainWindow):
         self._avahi_process = process
         process.start()
 
-    def _cleanup_avahi_temp(self, path: str = "") -> None:
-        path = path or self._avahi_temp
-        self._avahi_temp = ""
-        if path:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
-
     def _avahi_toggled(self, code: int, _status) -> None:
-        self._cleanup_avahi_temp()
         self._avahi_process = None
         self.avahi_button.setEnabled(True)
         if code != 0:
@@ -624,7 +611,6 @@ class MainWindow(QMainWindow):
     def _avahi_start_failed(self, error) -> None:
         if error != QProcess.FailedToStart:
             return
-        self._cleanup_avahi_temp()
         self._avahi_process = None
         self.avahi_button.setEnabled(True)
         QMessageBox.critical(
@@ -1089,8 +1075,11 @@ class MainWindow(QMainWindow):
     def open_settings(self) -> None:
         LocalSettingsDialog(self).exec()
 
-    def open_local_system(self) -> None:
-        SystemDialog(self).exec()
+    def open_local_services(self) -> None:
+        ServicesDialog(self).exec()
+
+    def open_local_variant(self) -> None:
+        VariantDialog(self).exec()
 
     def open_local_gwine_options(self) -> None:
         GwineOptionsDialog(self).exec()
@@ -1380,5 +1369,4 @@ class MainWindow(QMainWindow):
         if (self._avahi_process is not None
                 and self._avahi_process.state() != QProcess.NotRunning):
             self._avahi_process.kill()
-        self._cleanup_avahi_temp()
         super().closeEvent(event)

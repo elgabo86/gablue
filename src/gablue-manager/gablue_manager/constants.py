@@ -22,16 +22,9 @@ KNOWN_HOSTS = SSH_DIR / "known_hosts"
 
 AVAHI_SERVICE_FILE = Path("/etc/avahi/services/ssh.service")
 
-AVAHI_SERVICE_XML = """<?xml version="1.0" standalone="no"?>
-<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
-<service-group>
-  <name replace-wildcards="yes">%h</name>
-  <service>
-    <type>_ssh._tcp</type>
-    <port>22</port>
-  </service>
-</service-group>
-"""
+# Helper d'annonce mDNS (NOPASSWD) : il écrit le fichier lui-même, aucun chemin
+# libre en argument — `install` sur un temporaire ne serait pas blanchissable.
+AVAHI_HELPER = "/usr/libexec/gablue-avahi"
 
 REFRESH_MS = 30_000     # vérification automatique des postes
 
@@ -148,6 +141,14 @@ ATUIN_HELPER = "/usr/bin/gablue-atuin"
 LOW_LATENCY_FILE = Path("/etc/profile.d/vulkan-low-latency.sh")
 
 BROADCOM_WL_FILE = Path("/etc/modprobe.d/wl-enable.conf")
+
+# Mises à jour automatiques : timers système fournis par l'image (image OSTree)
+# et par flatpak. Le timer utilisateur vit dans la session, il n'est donc pas
+# concerné par la règle sudoers ; même périmètre que `ujust toggle-updates`
+# (upstream), sans brew qui a son propre calendrier du samedi.
+AUTO_UPDATE_HELPER = "/usr/libexec/gablue-auto-update"
+
+AUTO_UPDATE_USER_TIMER = "flatpak-user-update.timer"
 
 # Variantes publiées par Gablue (le rebase bascule d'une image à l'autre).
 REBASE_VARIANTS = (

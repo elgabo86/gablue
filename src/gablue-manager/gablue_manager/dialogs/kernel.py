@@ -52,10 +52,10 @@ CHOICE_STATE = {
     "cpuid_emu": {True: "activée", False: "désactivée"},
 }
 
-# Valeur recommandée, pour les cases qui en ont une : le correctif CPUID en
-# est exclu, il dépend du jeu et n'a pas de « bon » réglage par défaut.
+# Valeur recommandée par case : ce que Gablue conseille d'avoir coché.
 CHOICE_RECOMMENDED = {
     "mitigations": True,    # garder les protections : sécurité d'abord
+    "cpuid": True,          # débloque des jeux, sans coût ailleurs
     "ertm": True,           # réglage recommandé par Gablue
     "hdmi21": False,        # scintillements possibles : opt-in explicite
     "cpuid_emu": False,     # niche AMD : KVM doit rester disponible
@@ -183,7 +183,7 @@ class SettingsDialog(QDialog):
         """Clés dont la case diffère de l'état du noyau.
 
         État illisible : `initial` est vide, une case décochée ne doit pas
-        passer pour un changement (même piège que dans `SystemDialog`).
+        passer pour un changement (même piège que dans `ServicesDialog`).
         """
         if not self.state.get("ok"):
             return []

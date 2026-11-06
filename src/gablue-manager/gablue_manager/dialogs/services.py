@@ -1,16 +1,15 @@
-"""Services, pilotes et variante de la machine courante (ex-recettes ujust).
+"""Services et pilotes de la machine courante (ex-recettes ujust).
 """
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
-    QPushButton, QVBoxLayout,
+    QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+    QVBoxLayout,
 )
 
-from ..constants import REBASE_VARIANTS
 from ..local import (
-    docker_available, local_variant, rebase_script,
-    system_apply_script, system_choices, system_helpers_available,
+    auto_update_available, docker_available, local_variant, services_choices,
+    services_helpers_available, system_apply_script,
 )
 from ..tasks import LocalTaskDialog, start_task
 from ..uiutil import (
@@ -39,6 +38,10 @@ CHOICE_LABELS = {
         "Historique atuin",
         "Historique commun à vos terminaux. Ctrl-R pour l'ouvrir.",
     ),
+    "auto_updates": (
+        "Mises à jour automatiques",
+        "Image Gablue (au redémarrage) et Flatpaks (système et compte).",
+    ),
 }
 
 # Mot affiché dans la confirmation, selon l'état de la case.
@@ -48,6 +51,7 @@ CHOICE_STATE = {
     "low_latency": {True: "activée", False: "désactivée"},
     "broadcom_wl": {True: "activé", False: "désactivé"},
     "atuin": {True: "activée", False: "désactivée — historique conservé"},
+    "auto_updates": {True: "activées", False: "désactivées"},
 }
 
 # Valeur recommandée pour la machine : services inutiles éteints, confort
@@ -57,23 +61,26 @@ CHOICE_RECOMMENDED = {
     "low_latency": True,    # réglage Gablue
     "broadcom_wl": False,   # matériel ancien et spécifique
     "atuin": True,          # historique partagé, déjà en place sur l'image
+    "auto_updates": True,   # image et Flatpaks à jour sans y penser
 }
 
-class SystemDialog(QDialog):
-    """Services, pilotes et variante : des cases, un seul « Appliquer ».
+class ServicesDialog(QDialog):
+    """Services et pilotes : des cases à cocher, un seul « Appliquer ».
 
     Les bascules passent par les helpers `/usr/libexec` (sudoers NOPASSWD) en
     **une seule** opération ; l'intégration atuin, elle, ne touche que les
-    fichiers de l'utilisateur. La variante est un choix séparé : elle rebase
-    l'image et ne prend effet qu'au redémarrage, donc elle a son propre bouton
-    et sa propre confirmation.
+    fichiers de l'utilisateur. La variante d'image a son propre dialogue : elle
+    rebase le poste et ne prend effet qu'au redémarrage.
     """
 
-    ROWS = ("displaylink", "docker", "low_latency", "broadcom_wl", "atuin")
+    ROWS = (
+        "displaylink", "docker", "low_latency", "broadcom_wl", "atuin",
+        "auto_updates",
+    )
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Services et variante")
+        self.setWindowTitle("Services et pilotes")
         self.setModal(True)
         self.setMinimumWidth(680)
 
@@ -81,13 +88,13 @@ class SystemDialog(QDialog):
         root_layout.setContentsMargins(24, 22, 24, 20)
         root_layout.setSpacing(10)
 
-        heading = QLabel("Services et variante", self)
+        heading = QLabel("Services et pilotes", self)
         heading.setObjectName("title")
         root_layout.addWidget(heading)
 
         note = QLabel(
-            "Services et pilotes de cette machine. La variante demande un "
-            "redémarrage.",
+            "Services et pilotes de cette machine. Effet immédiat, sauf le "
+            "Wi-Fi (redémarrage) et Vulkan/atuin (nouvelle session).",
             self,
         )
         note.setObjectName("subtitle")
@@ -102,8 +109,6 @@ class SystemDialog(QDialog):
         self.recommendations: dict[str, QLabel] = {}
         for key in self.ROWS:
             self._add_row(key)
-
-        self._build_variant_row(root_layout)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(10)
@@ -163,70 +168,29 @@ class SystemDialog(QDialog):
         self.frames[key] = frame
         self.rows_layout.addWidget(frame)
 
-    def _build_variant_row(self, root_layout: QVBoxLayout) -> None:
-        frame = QFrame(self)
-        frame.setObjectName("hostCard")
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(6)
-
-        title = QLabel("Variante de Gablue", frame)
-        title.setObjectName("hostName")
-        layout.addWidget(title)
-
-        detail = QLabel(
-            "Télécharge une autre variante. Effet au redémarrage, fichiers "
-            "conservés.",
-            frame,
-        )
-        detail.setObjectName("hostDetail")
-        detail.setWordWrap(True)
-        layout.addWidget(detail)
-
-        row = QHBoxLayout()
-        row.setSpacing(10)
-        self.variant_combo = QComboBox(frame)
-        self.variant_combo.setCursor(Qt.PointingHandCursor)
-        for variant, label in REBASE_VARIANTS:
-            self.variant_combo.addItem(label, variant)
-        self.variant_combo.currentIndexChanged.connect(self._update_rebase)
-        row.addWidget(self.variant_combo, 1)
-
-        self.current_label = QLabel(frame)
-        self.current_label.setObjectName("hint")
-        row.addWidget(self.current_label)
-
-        self.rebase_button = QPushButton("Basculer", frame)
-        self.rebase_button.setObjectName("ghost")
-        self.rebase_button.setCursor(Qt.PointingHandCursor)
-        self.rebase_button.clicked.connect(self.rebase)
-        row.addWidget(self.rebase_button)
-        layout.addLayout(row)
-
-        self.variant_frame = frame
-        root_layout.addWidget(frame)
-
     # -- état ---------------------------------------------------------------
     def refresh(self) -> None:
-        helpers = system_helpers_available()
+        helpers = services_helpers_available()
         variant = local_variant()
         self.state = {
             "ok": helpers,
             "variant": variant,
-            "choices": system_choices() if helpers else {},
+            "choices": services_choices() if helpers else {},
         }
         choices = self.state["choices"]
         self.initial = dict(choices)
         # Docker n'existe que sur une variante DX : ailleurs, la case n'est pas
-        # affichée du tout (pas de paquet, pas de service).
-        docker_ok = docker_available(variant)
-        self.frames["docker"].setVisible(docker_ok)
+        # affichée du tout (pas de paquet, pas de service). Les mises à jour
+        # automatiques demandent le helper de l'image : sur une image plus
+        # ancienne, la ligne disparaît au lieu de proposer un réglage qui
+        # échouerait.
+        self.frames["docker"].setVisible(docker_available(variant))
+        self.frames["auto_updates"].setVisible(auto_update_available())
         for key, check in self.checks.items():
             check.blockSignals(True)
             check.setChecked(bool(choices.get(key)))
             check.blockSignals(False)
             check.setEnabled(helpers)
-        self._update_variant()
         self._update_apply()
 
     def changed(self) -> list[str]:
@@ -253,31 +217,6 @@ class SystemDialog(QDialog):
             set_recommendation(
                 badge, "cocher" if recommended else "décocher", differs, ok
             )
-
-    def _update_variant(self) -> None:
-        current = self.state.get("variant", "")
-        index = self.variant_combo.findData(current)
-        if index >= 0:
-            self.variant_combo.blockSignals(True)
-            self.variant_combo.setCurrentIndex(index)
-            self.variant_combo.blockSignals(False)
-            self.current_label.setText("variante actuelle")
-        else:
-            # Image non Gablue ou format inconnu : ne pas laisser croire qu'une
-            # variante est sélectionnée.
-            self.variant_combo.blockSignals(True)
-            self.variant_combo.setCurrentIndex(-1)
-            self.variant_combo.blockSignals(False)
-            self.current_label.setText("variante inconnue")
-        self._update_rebase()
-
-    def _update_rebase(self) -> None:
-        current = self.state.get("variant", "")
-        choice = self.variant_combo.currentData()
-        available = bool(self.state.get("ok"))
-        self.rebase_button.setEnabled(
-            available and bool(choice) and choice != current
-        )
 
     def _update_apply(self) -> None:
         self._update_recommendations()
@@ -336,25 +275,3 @@ class SystemDialog(QDialog):
             if answer != QMessageBox.Yes:
                 return
         super().reject()
-
-    def rebase(self) -> None:
-        variant = self.variant_combo.currentData()
-        current = self.state.get("variant", "")
-        if not variant or variant == current:
-            return
-        label = self.variant_combo.currentText()
-        answer = QMessageBox.question(
-            self, "Changer de variante",
-            f"Basculer vers « {label} » ?\n\n"
-            "Téléchargement, puis redémarrage. Fichiers conservés.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        )
-        if answer != QMessageBox.Yes:
-            return
-        dialog = LocalTaskDialog(
-            self, title=f"Basculer vers {variant}",
-            subtitle="Téléchargement, puis redémarrage.",
-            argv=["/usr/bin/bash", "-c", rebase_script(variant)],
-        )
-        start_task(self, dialog)
-        self.accept()

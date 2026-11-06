@@ -4,20 +4,19 @@ Tailscale).
 
 import configparser
 import json
-import os
 import re
 import shlex
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 
 from .constants import (
-    ATUIN_HELPER, AVAHI_SERVICE_FILE, AVAHI_SERVICE_XML, BROADCOM_HELPER,
-    BROADCOM_WL_FILE, CMDLINE, CPUID_EMU_CONF, CPUID_EMU_HELPER, KARG_BT_ERTM,
-    KARG_CLEARCPUID, KARG_HDMI21, KARG_HELPER, KARG_MITIGATIONS_OFF,
-    LOW_LATENCY_FILE, LOW_LATENCY_HELPER, OS_RELEASE, REBASE_HELPER,
-    SERVICE_HELPER, TAILSCALE_HELPER, _which,
+    ATUIN_HELPER, AUTO_UPDATE_HELPER, AUTO_UPDATE_USER_TIMER, AVAHI_HELPER,
+    AVAHI_SERVICE_FILE, BROADCOM_HELPER, BROADCOM_WL_FILE, CMDLINE,
+    CPUID_EMU_CONF, CPUID_EMU_HELPER, KARG_BT_ERTM, KARG_CLEARCPUID,
+    KARG_HDMI21, KARG_HELPER, KARG_MITIGATIONS_OFF, LOW_LATENCY_FILE,
+    LOW_LATENCY_HELPER, OS_RELEASE, REBASE_HELPER, SERVICE_HELPER,
+    TAILSCALE_HELPER, _which,
 )
 from .ssh import ssh_capture
 
@@ -57,19 +56,14 @@ def avahi_publish_state() -> tuple[bool, bool]:
         pass
     return AVAHI_SERVICE_FILE.exists(), daemon
 
-def write_avahi_service_temp() -> str:
-    """Écrit le fichier de service dans un temporaire (l'écriture /etc/ passe par sudo)."""
-    fd, path = tempfile.mkstemp(prefix="gablue-manager-avahi-", suffix=".service")
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(AVAHI_SERVICE_XML)
-    os.chmod(path, 0o644)
-    return path
+def avahi_apply_args(enabled: bool) -> list[str]:
+    """Commande privilégiée : publier ou retirer l'annonce mDNS.
 
-def avahi_publish_args(enabled: bool, temp_path: str) -> list[str]:
-    """Commande privilégiée : installer le fichier, ou le retirer."""
-    if enabled:
-        return ["install", "-m", "644", temp_path, str(AVAHI_SERVICE_FILE)]
-    return ["rm", "-f", str(AVAHI_SERVICE_FILE)]
+    Le fichier de service est écrit par le helper, pas par l'appelant : un
+    `install` avec un chemin temporaire en argument ne pourrait pas être
+    blanchi aux arguments exacts dans sudoers (d'où une invite PolicyKit).
+    """
+    return [AVAHI_HELPER, "on" if enabled else "off"]
 
 def local_sshd_state() -> tuple[bool, bool]:
     """(actif maintenant, activé au démarrage)."""
@@ -337,6 +331,43 @@ def service_enabled(name: str) -> bool:
     return result.returncode == 0
 
 
+def user_service_enabled(name: str) -> bool:
+    """Le service *utilisateur* est-il activé (timer de la session) ?"""
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "is-enabled", name],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def auto_update_available() -> bool:
+    """Le helper des mises à jour automatiques est-il dans l'image ?"""
+    return Path(AUTO_UPDATE_HELPER).is_file()
+
+
+def auto_updates_enabled() -> bool:
+    """Image Gablue *et* Flatpaks sont-ils mis à jour automatiquement ?
+
+    Les timers système sont lus par le helper (même liste fermée que pour la
+    bascule) ; le timer Flatpak de la session se lit sans privilège. Les deux
+    sont traités comme un seul réglage : une moitié éteinte ne doit pas
+    s'afficher « activé ».
+    """
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", AUTO_UPDATE_HELPER, "status"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and user_service_enabled(
+        AUTO_UPDATE_USER_TIMER
+    )
+
+
 def docker_available(variant: str) -> bool:
     """Le basculement Docker n'a de sens que sur une variante DX."""
     return variant.endswith("-dx")
@@ -358,23 +389,29 @@ def atuin_available() -> bool:
     return Path(ATUIN_HELPER).is_file()
 
 
-def system_helpers_available() -> bool:
-    """Les helpers de ce dialogue sont-ils tous installés ?"""
+def services_helpers_available() -> bool:
+    """Les helpers du dialogue « Services et pilotes » sont-ils installés ?"""
     return all(
         Path(path).is_file()
         for path in (SERVICE_HELPER, LOW_LATENCY_HELPER, BROADCOM_HELPER,
-                     REBASE_HELPER, ATUIN_HELPER)
+                     ATUIN_HELPER)
     )
 
 
-def system_choices() -> dict:
-    """État des bascules : services, couche Vulkan, Wi-Fi et atuin."""
+def rebase_helper_available() -> bool:
+    """Le helper de bascule de variante est-il installé ?"""
+    return Path(REBASE_HELPER).is_file()
+
+
+def services_choices() -> dict:
+    """État des bascules : services, couche Vulkan, Wi-Fi, atuin, màj auto."""
     return {
         "displaylink": service_enabled("displaylink.service"),
         "docker": service_enabled("docker.service"),
         "low_latency": LOW_LATENCY_FILE.is_file(),
         "broadcom_wl": BROADCOM_WL_FILE.is_file(),
         "atuin": atuin_active(),
+        "auto_updates": auto_update_available() and auto_updates_enabled(),
     }
 
 
@@ -404,6 +441,20 @@ def system_apply_script(changes: dict[str, bool]) -> str:
         # Intégration du shell : fichiers de l'utilisateur, aucun privilège.
         lines.append(
             f"{ATUIN_HELPER} " + ("on" if changes["atuin"] else "off")
+        )
+    if "auto_updates" in changes:
+        enabled = changes["auto_updates"]
+        # Timers système par le helper (règle sudoers NOPASSWD, liste fermée),
+        # puis le timer Flatpak de la session, sans privilège. `--user` échoue
+        # sans bus de session : on le dit au lieu de faire échouer une moitié
+        # déjà appliquée.
+        lines.append(
+            f"sudo -n {AUTO_UPDATE_HELPER} " + ("on" if enabled else "off")
+        )
+        lines.append(
+            f"systemctl --user {'enable' if enabled else 'disable'} --now "
+            f"{AUTO_UPDATE_USER_TIMER} "
+            "|| echo \"Timer Flatpak utilisateur inchangé (pas de session).\""
         )
     return "\n".join(lines) + "\n"
 

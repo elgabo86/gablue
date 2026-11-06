@@ -11,3 +11,7 @@
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-low-latency on, /usr/libexec/gablue-low-latency off
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-broadcom-wl on, /usr/libexec/gablue-broadcom-wl off
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-rebase main, /usr/libexec/gablue-rebase main-dx, /usr/libexec/gablue-rebase nvidia, /usr/libexec/gablue-rebase nvidia-open, /usr/libexec/gablue-rebase nvidia-open-dx
+%wheel ALL=(ALL) NOPASSWD: /usr/bin/systemctl enable sshd.service --now, /usr/bin/systemctl disable sshd.service --now
+%wheel ALL=(ALL) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-avahi on, /usr/libexec/gablue-avahi off, /usr/libexec/gablue-avahi status
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-auto-update on, /usr/libexec/gablue-auto-update off, /usr/libexec/gablue-auto-update status

@@ -16,8 +16,8 @@ import time
 from PySide6.QtWidgets import QInputDialog, QLineEdit
 
 from .constants import (
-    CHECK_DEADLINE, KNOWN_HOSTS, PASSWORD_RE, PRIVATE_KEY, PUBLIC_KEY, SSH,
-    SSH_COPY_ID, SSH_DIR, SSH_KEYGEN, SSH_KEYSCAN,
+    AUTO_UPDATE_HELPER, CHECK_DEADLINE, KNOWN_HOSTS, PASSWORD_RE, PRIVATE_KEY,
+    PUBLIC_KEY, SSH, SSH_COPY_ID, SSH_DIR, SSH_KEYGEN, SSH_KEYSCAN,
 )
 from .hosts import detect_mac, detect_mac_remote
 from .util import _ssh_opts, address_text, display_name, ssh_target
@@ -415,8 +415,17 @@ def ssh_capture(host: dict, command: str,
     return result.returncode, result.stdout
 
 def remote_sudo_nopasswd(host: dict) -> bool:
-    """`sudo -n` passe-t-il sur ce poste (image Gablue) ?"""
-    code, _ = ssh_capture(host, "sudo -n true", timeout=10)
+    """`sudo -n` passe-t-il sur ce poste (image Gablue) ?
+
+    On sonde un helper autorisé en NOPASSWD (`gablue-auto-update status`), PAS
+    `sudo -n true` : aucune règle sudoers ne vise `true`, même sur Gablue, donc
+    la sonde échouait toujours et TOUTE action root distante (redémarrage,
+    extinction, `bootc upgrade` pourtant autorisé) réclamait le mot de passe.
+    Même piège et même remède que `privileged_prefix()` en local.
+    """
+    code, _ = ssh_capture(
+        host, f"sudo -n {AUTO_UPDATE_HELPER} status", timeout=10
+    )
     return code == 0
 
 def remote_sudo_prefix(password: str) -> str:

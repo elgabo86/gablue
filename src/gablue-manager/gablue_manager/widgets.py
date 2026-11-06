@@ -212,21 +212,24 @@ class HostCard(QFrame):
                     self.host["id"], k
                 ),
             )
-        settings_action = menu.addAction("Réglages du noyau…")
-        settings_action.triggered.connect(
-            lambda: self.settings_requested.emit(self.host["id"])
+        settings_menu = menu.addMenu("Réglages")
+        settings_menu.addAction(
+            "Noyau et matériel…",
+            lambda: self.settings_requested.emit(self.host["id"]),
         )
-        gwine_action = menu.addAction("Options de gwine…")
-        gwine_action.triggered.connect(
-            lambda: self.gwine_requested.emit(self.host["id"])
+        games_menu = settings_menu.addMenu("Jeux")
+        games_menu.addAction(
+            "Options de gwine…",
+            lambda: self.gwine_requested.emit(self.host["id"]),
         )
-        booster_action = menu.addAction("Priorité au premier plan…")
-        booster_action.triggered.connect(
-            lambda: self.booster_requested.emit(self.host["id"])
+        settings_menu.addAction(
+            "Priorité au premier plan…",
+            lambda: self.booster_requested.emit(self.host["id"]),
         )
-        tailscale_action = menu.addAction("Tailscale…")
-        tailscale_action.triggered.connect(
-            lambda: self.tailscale_requested.emit(self.host["id"])
+        network_menu = settings_menu.addMenu("Réseau")
+        network_menu.addAction(
+            "Tailscale…",
+            lambda: self.tailscale_requested.emit(self.host["id"]),
         )
         apps_action = menu.addAction("Applications…")
         apps_action.triggered.connect(
@@ -325,8 +328,9 @@ class LocalCard(QFrame):
 
     update_requested = Signal(str)   # "gablue" | "flatpak" | "gwine"
     apps_requested = Signal()
-    config_requested = Signal()
-    system_requested = Signal()
+    kernel_requested = Signal()
+    services_requested = Signal()
+    variant_requested = Signal()
     gwine_requested = Signal()
     booster_requested = Signal()
     tailscale_requested = Signal()
@@ -401,21 +405,31 @@ class LocalCard(QFrame):
         self.apps_button.clicked.connect(self.apps_requested.emit)
         layout.addWidget(self.apps_button, 0, Qt.AlignVCenter)
 
-        # Un bouton, un menu : réglages du noyau (kargs + émulation CPUID),
-        # options de gwine (préfixe Windows), priorité au premier plan et
-        # Tailscale. Chacun s'applique à un endroit différent, d'où des
-        # entrées séparées plutôt qu'un dialogue fourre-tout.
+        # Un bouton, un menu rangé par domaine : noyau et matériel (kargs +
+        # émulation CPUID), services et pilotes, variante de l'image, priorité
+        # au premier plan, puis jeux (préfixe Windows) et réseau (Tailscale).
+        # Chacun s'applique à un endroit différent, d'où des entrées séparées
+        # plutôt qu'un dialogue fourre-tout.
         self.config_button = QPushButton("Configuration", self)
         self.config_button.setObjectName("ghost")
         self.config_button.setCursor(Qt.PointingHandCursor)
         self.config_button.setIcon(QIcon.fromTheme("settings-configure"))
         config_menu = QMenu(self.config_button)
-        config_menu.addAction("Réglages du noyau…", self.config_requested.emit)
-        config_menu.addAction("Services et variante…", self.system_requested.emit)
-        config_menu.addAction("Options de gwine…", self.gwine_requested.emit)
+        config_menu.addAction("Noyau et matériel…", self.kernel_requested.emit)
+        config_menu.addSeparator()
+        config_menu.addAction(
+            "Services et pilotes…", self.services_requested.emit
+        )
+        config_menu.addAction(
+            "Variante de l'image…", self.variant_requested.emit
+        )
         config_menu.addAction(
             "Priorité au premier plan…", self.booster_requested.emit
         )
-        config_menu.addAction("Tailscale…", self.tailscale_requested.emit)
+        config_menu.addSeparator()
+        games_menu = config_menu.addMenu("Jeux")
+        games_menu.addAction("Options de gwine…", self.gwine_requested.emit)
+        network_menu = config_menu.addMenu("Réseau")
+        network_menu.addAction("Tailscale…", self.tailscale_requested.emit)
         self.config_button.setMenu(config_menu)
         layout.addWidget(self.config_button, 0, Qt.AlignVCenter)
