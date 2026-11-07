@@ -27,7 +27,7 @@ DEFAULTS = {
     "check_flatpak": True,
     "check_brew": True,
     "check_gwine": True,
-    "check_interval": 360,          # minutes, 6 h
+    "check_interval": 120,          # minutes, 2 h
 }
 
 # Bornes des préférences numériques : 5 min (pas de martèlement réseau) à
