@@ -106,17 +106,31 @@ class SystemTest(unittest.TestCase):
         })
         self.assertEqual(
             script,
+            "printf '%s\\n' DisplayLink\n"
+            "printf '%s\\n' '::gablue:step 1 5 DisplayLink'\n"
             "sudo -n /usr/libexec/gablue-service displaylink.service on\n"
+            "printf '%s\\n' Docker\n"
+            "printf '%s\\n' '::gablue:step 2 5 Docker'\n"
             "sudo -n /usr/libexec/gablue-service docker.service off\n"
+            "printf '%s\\n' 'Vulkan low-latency'\n"
+            "printf '%s\\n' '::gablue:step 3 5 Vulkan low-latency'\n"
             "sudo -n /usr/libexec/gablue-low-latency on\n"
+            "printf '%s\\n' 'Pilote Wi-Fi Broadcom'\n"
+            "printf '%s\\n' '::gablue:step 4 5 Pilote Wi-Fi Broadcom'\n"
             "sudo -n /usr/libexec/gablue-broadcom-wl off\n"
-            "/usr/bin/gablue-atuin on\n",
+            "printf '%s\\n' 'Historique atuin'\n"
+            "printf '%s\\n' '::gablue:step 5 5 Historique atuin'\n"
+            "/usr/bin/gablue-atuin on\n"
+            "printf '%s\\n' ::gablue:done\n",
         )
 
     def test_system_script_partial(self):
         self.assertEqual(
             local.system_apply_script({"low_latency": False}),
-            "sudo -n /usr/libexec/gablue-low-latency off\n",
+            "printf '%s\\n' 'Vulkan low-latency'\n"
+            "printf '%s\\n' '::gablue:step 1 1 Vulkan low-latency'\n"
+            "sudo -n /usr/libexec/gablue-low-latency off\n"
+            "printf '%s\\n' ::gablue:done\n",
         )
         # atuin ne passe jamais par sudo : fichiers de l'utilisateur.
         self.assertNotIn(
@@ -127,9 +141,12 @@ class SystemTest(unittest.TestCase):
         script = local.system_apply_script({"auto_updates": True})
         self.assertEqual(
             script,
+            "printf '%s\\n' 'Mises à jour automatiques'\n"
+            "printf '%s\\n' '::gablue:step 1 1 Mises à jour automatiques'\n"
             "sudo -n /usr/libexec/gablue-auto-update on\n"
             "systemctl --user enable --now flatpak-user-update.timer "
-            "|| echo \"Timer Flatpak utilisateur inchangé (pas de session).\"\n",
+            "|| echo \"Timer Flatpak utilisateur inchangé (pas de session).\"\n"
+            "printf '%s\\n' ::gablue:done\n",
         )
         self.assertIn(
             "sudo -n /usr/libexec/gablue-auto-update off",
@@ -418,6 +435,48 @@ class TailscaleTest(unittest.TestCase):
             local.tailscale_apply_script(False),
             "sudo -n /usr/libexec/gablue-tailscale off\n",
         )
+
+    def test_find_auth_url(self):
+        output = (
+            "Connexion au serveur https://head.example…\n"
+            "Une page de validation peut s'ouvrir dans le navigateur.\n"
+            "To authenticate, visit:\n\n"
+            "\thttps://head.example/register/abc123\n\n"
+            "Success.\n"
+        )
+        # Le serveur de connexion est écarté, le lien d'enregistrement (le
+        # dernier, quel que soit le chemin du serveur) est retenu.
+        self.assertEqual(
+            local.find_auth_url(output, ("https://head.example",)),
+            "https://head.example/register/abc123",
+        )
+        self.assertEqual(
+            local.find_auth_url("https://login.tailscale.com/a/xyz."),
+            "https://login.tailscale.com/a/xyz",
+        )
+        # Seul le serveur est connu pour l'instant : rien à copier.
+        self.assertEqual(
+            local.find_auth_url(
+                "Connexion au serveur https://head.example…\n",
+                ("https://head.example",),
+            ),
+            "",
+        )
+        self.assertEqual(local.find_auth_url(""), "")
+
+    def test_registered(self):
+        self.assertTrue(local.tailscale_registered(
+            '{"BackendState": "Running", "Self": {}}'
+        ))
+        self.assertFalse(local.tailscale_registered(
+            '{"BackendState": "NeedsLogin"}'
+        ))
+        # Avertissement avant le JSON : on part de la première accolade.
+        self.assertTrue(local.tailscale_registered(
+            'warning: something\n{"BackendState": "Running"}'
+        ))
+        self.assertFalse(local.tailscale_registered("pas du json"))
+        self.assertFalse(local.tailscale_registered(""))
 
 
 class CliTest(unittest.TestCase):

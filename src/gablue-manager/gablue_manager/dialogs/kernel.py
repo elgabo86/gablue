@@ -289,6 +289,12 @@ class LocalSettingsDialog(SettingsDialog):
             self, title="Réglages du noyau",
             subtitle="Effet au prochain démarrage.",
             argv=[_which("bash"), "-c", kernel_apply_script(changes)],
+            # Les kargs partent en un seul déploiement rpm-ostree : aucune
+            # progression mesurable, la barre indéterminée dit seulement que
+            # ça travaille (journal derrière « Terminal »).
+            progress_mode="busy",
+            progress_text="Application des réglages du noyau…",
+            reveal_log_on_error=True,
         )
         start_task(self, dialog)
         return True
@@ -331,6 +337,8 @@ class RemoteSettingsDialog(SettingsDialog):
             self, host=self.host, title="Réglages du noyau",
             subtitle="Effet à son prochain démarrage.",
             command=command, password=password,
+            progress_mode="busy",
+            progress_text="Application des réglages du noyau…",
         )
         start_task(self, dialog)
         return True

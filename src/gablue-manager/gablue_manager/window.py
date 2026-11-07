@@ -42,7 +42,9 @@ from .local import (
 from .ssh import ask_remote_password, remote_sudo_nopasswd, remote_sudo_prefix
 from .style import make_qss
 from .uiutil import app_icon
-from .tasks import LocalTaskDialog, RemoteTaskDialog, start_task
+from .tasks import (
+    LocalTaskDialog, RemoteTaskDialog, SequentialTaskDialog, start_task,
+)
 from .util import (
     address_text, display_name, dolphin_url, has_address_kind, ssh_target,
 )
@@ -1137,7 +1139,9 @@ class MainWindow(QMainWindow):
 
     # -- machine courante : mises à jour et configuration --------------------
     def local_update(self, kind: str) -> None:
-        if kind == "gablue":
+        if kind == "all":
+            self.update_local_all()
+        elif kind == "gablue":
             self.update_local_gablue()
         elif kind == "flatpak":
             self.update_local_flatpaks()
@@ -1145,6 +1149,94 @@ class MainWindow(QMainWindow):
             self.update_local_gwine()
         elif kind == "brew":
             self.update_local_brew()
+
+    def update_local_all(self) -> None:
+        """Tout mettre à jour d'un trait, avec une barre **globale**.
+
+        Chaque mise à jour garde son propre analyseur ; la fenêtre globale
+        additionne les étapes terminées et la fraction de l'étape courante.
+        L'ordre est celui des dépendances réelles : l'image d'abord (elle peut
+        apporter un nouveau gwine), puis Flatpak, gwine et Homebrew, qui ne
+        dépendent pas de l'image mais prennent le plus de temps.
+        """
+        steps = self._local_update_steps()
+        if not steps:
+            QMessageBox.information(
+                self, "Tout mettre à jour",
+                "Rien à mettre à jour sur ce poste : ni image Gablue "
+                "accessible, ni flatpak, ni gwine, ni Homebrew.",
+            )
+            return
+        listed = "\n".join(f"• {step['label']}" for step in steps)
+        answer = QMessageBox.question(
+            self, "Tout mettre à jour",
+            "Mettre à jour, dans cet ordre :\n\n"
+            f"{listed}\n\n"
+            "Chaque étape démarre à la fin de la précédente ; si l'une "
+            "échoue, les suivantes ne sont pas lancées. L'image Gablue "
+            "s'applique au prochain redémarrage.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        dialog = SequentialTaskDialog(
+            self,
+            title="Tout mettre à jour",
+            subtitle=f"{len(steps)} mises à jour enchaînées sur ce poste.",
+            steps=steps,
+        )
+        start_task(self, dialog)
+
+    def _local_update_steps(self) -> list[dict]:
+        """Étapes réellement possibles sur ce poste, dans l'ordre.
+
+        Un outil absent n'est pas une erreur : il est simplement omis, sinon
+        « tout mettre à jour » échouerait sur chaque poste où Homebrew ou
+        flatpak n'est pas installé.
+        """
+        steps: list[dict] = []
+        if Path(UPDATE_HELPER).is_file():
+            steps.append({
+                "label": "Gablue (image système)",
+                "argv": [UPDATE_HELPER],
+                "root": True,
+                "fifo": UPDATE_PROGRESS_FIFO,
+                "hint": gablue_update_hint,
+            })
+        else:
+            bootc = shutil.which("bootc")
+            if bootc:
+                steps.append({
+                    "label": "Gablue (image système)",
+                    "argv": [bootc, "upgrade"],
+                    "root": True,
+                    "hint": gablue_update_hint,
+                })
+        if shutil.which("flatpak"):
+            steps.append({
+                "label": "Flatpaks",
+                "argv": [_which("bash"), "-c", flatpak_update_script()],
+                "hint": flatpak_update_hint,
+                "parser": parse_flatpak_progress,
+            })
+        gwine = shutil.which("gwine") or (
+            "/usr/bin/gwine" if Path("/usr/bin/gwine").exists() else ""
+        )
+        if gwine:
+            steps.append({
+                "label": "gwine (composants)",
+                "argv": [gwine, "--init"],
+                "parser": parse_gablue_progress,
+                "env": {"GABLUE_PROGRESS": "1"},
+            })
+        if brew_available():
+            steps.append({
+                "label": "Homebrew",
+                "argv": [_which("bash"), "-c", brew_update_script()],
+                "hint": brew_update_hint,
+                "parser": brew_progress_parser(),
+            })
+        return steps
 
     def update_local_gablue(self) -> None:
         """Image système Gablue (bootc), appliquée au prochain démarrage."""

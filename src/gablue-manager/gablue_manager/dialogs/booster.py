@@ -197,12 +197,17 @@ class ForegroundBoosterDialog(QDialog):
                 self, host=self.host, title="Priorité au premier plan",
                 subtitle="Effet immédiat en session locale.",
                 command=script,
+                progress_mode="busy",
+                progress_text="Application du réglage…",
             )
         else:
             dialog = LocalTaskDialog(
                 self, title="Priorité au premier plan",
                 subtitle="Effet immédiat.",
                 argv=[_which("bash"), "-c", script],
+                progress_mode="busy",
+                progress_text="Application du réglage…",
+                reveal_log_on_error=True,
             )
         start_task(self, dialog)
         self.accept()

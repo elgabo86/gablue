@@ -557,6 +557,45 @@ def valid_tailscale_server(url: str) -> bool:
         and not any(char.isspace() or char in "'\"" for char in url)
     )
 
+AUTH_URL_RE = re.compile(r"https?://[^\s'\"<>]+")
+
+def find_auth_url(text: str, exclude: tuple[str, ...] = ()) -> str:
+    """Lien d'enregistrement dans la sortie de `tailscale up`.
+
+    Le helper écrit d'abord « Connexion au serveur <control server>… », puis
+    tailscale affiche le lien d'authentification, toujours en dernier. On
+    prend donc le dernier lien qui n'est pas le serveur de connexion : le
+    chemin varie selon le serveur (Tailscale `/a/…`, headscale
+    `/register/…`), le coder en dur en casserait un des deux.
+    """
+    ignored = {url.rstrip("/") for url in exclude if url}
+    urls = [
+        match.group(0).rstrip(".,;:)]}…!")
+        for match in AUTH_URL_RE.finditer(text or "")
+    ]
+    for url in reversed(urls):
+        if url.rstrip("/") in ignored:
+            continue
+        return url
+    return ""
+
+def tailscale_registered(text: str) -> bool:
+    """`tailscale status --json` : nœud authentifié et actif ?
+
+    Lu sans privilège (l'appareil est confié à l'opérateur par
+    `--operator`), comme sonde de validation : dès que le navigateur a
+    confirmé, l'état passe à `Running` et le lien d'enregistrement n'a plus
+    lieu d'être affiché.
+    """
+    start = (text or "").find("{")
+    if start < 0:
+        return False
+    try:
+        data = json.loads(text[start:])
+    except (TypeError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("BackendState") == "Running"
+
 def tailscale_apply_script(enabled: bool, server: str = "") -> str:
     """Commande du helper : `on --login-server URL` ou `off`."""
     if enabled:
@@ -724,46 +763,60 @@ def services_choices() -> dict:
 
 
 def system_apply_script(changes: dict[str, bool]) -> str:
-    """Script d'application : un helper par domaine, en un seul passage."""
-    lines: list[str] = []
-    for key, unit in (
-        ("displaylink", "displaylink.service"),
-        ("docker", "docker.service"),
+    """Script d'application : un helper par domaine, en un seul passage.
+
+    Un seul « Appliquer » peut toucher six domaines : chacun annonce son
+    avancement (`::gablue:step n total libellé`, retiré du journal par
+    `parse_gablue_progress`) juste avant ses commandes, et `done` conclut.
+    """
+    steps: list[tuple[str, list[str]]] = []
+    for key, unit, label in (
+        ("displaylink", "displaylink.service", "DisplayLink"),
+        ("docker", "docker.service", "Docker"),
     ):
         if key in changes:
-            lines.append(
+            steps.append((label, [
                 f"sudo -n {SERVICE_HELPER} {unit} "
                 + ("on" if changes[key] else "off")
-            )
+            ]))
     if "low_latency" in changes:
-        lines.append(
+        steps.append(("Vulkan low-latency", [
             f"sudo -n {LOW_LATENCY_HELPER} "
             + ("on" if changes["low_latency"] else "off")
-        )
+        ]))
     if "broadcom_wl" in changes:
-        lines.append(
+        steps.append(("Pilote Wi-Fi Broadcom", [
             f"sudo -n {BROADCOM_HELPER} "
             + ("on" if changes["broadcom_wl"] else "off")
-        )
+        ]))
     if "atuin" in changes:
         # Intégration du shell : fichiers de l'utilisateur, aucun privilège.
-        lines.append(
+        steps.append(("Historique atuin", [
             f"{ATUIN_HELPER} " + ("on" if changes["atuin"] else "off")
-        )
+        ]))
     if "auto_updates" in changes:
         enabled = changes["auto_updates"]
         # Timers système par le helper (règle sudoers NOPASSWD, liste fermée),
         # puis le timer Flatpak de la session, sans privilège. `--user` échoue
         # sans bus de session : on le dit au lieu de faire échouer une moitié
         # déjà appliquée.
-        lines.append(
-            f"sudo -n {AUTO_UPDATE_HELPER} " + ("on" if enabled else "off")
-        )
-        lines.append(
+        steps.append(("Mises à jour automatiques", [
+            f"sudo -n {AUTO_UPDATE_HELPER} " + ("on" if enabled else "off"),
             f"systemctl --user {'enable' if enabled else 'disable'} --now "
             f"{AUTO_UPDATE_USER_TIMER} "
-            "|| echo \"Timer Flatpak utilisateur inchangé (pas de session).\""
-        )
+            "|| echo \"Timer Flatpak utilisateur inchangé (pas de session).\"",
+        ]))
+    total = len(steps)
+    lines: list[str] = []
+    for index, (label, commands) in enumerate(steps, 1):
+        quoted = shlex.quote(label)
+        lines.append(f"printf '%s\\n' {quoted}")
+        lines.append(f"printf '%s\\n' " + shlex.quote(
+            f"::gablue:step {index} {total} {label}"
+        ))
+        lines.extend(commands)
+    if lines:
+        lines.append("printf '%s\\n' " + shlex.quote("::gablue:done"))
     return "\n".join(lines) + "\n"
 
 

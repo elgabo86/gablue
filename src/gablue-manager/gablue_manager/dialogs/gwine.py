@@ -337,12 +337,17 @@ class GwineOptionsDialog(QDialog):
                 self, host=self.host, title="Options de gwine",
                 subtitle="Effet au prochain lancement.",
                 command=script,
+                progress_mode="busy",
+                progress_text="Application des options de gwine…",
             )
         else:
             dialog = LocalTaskDialog(
                 self, title="Options de gwine",
                 subtitle="Effet au prochain lancement.",
                 argv=[_which("bash"), "-c", script],
+                progress_mode="busy",
+                progress_text="Application des options de gwine…",
+                reveal_log_on_error=True,
             )
         start_task(self, dialog)
         self.accept()

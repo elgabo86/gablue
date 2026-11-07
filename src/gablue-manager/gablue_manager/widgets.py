@@ -454,6 +454,10 @@ class LocalCard(QFrame):
         self.update_button.setIcon(QIcon.fromTheme("system-software-update"))
         menu = QMenu(self.update_button)
         menu.addAction(
+            "Tout mettre à jour…", lambda: self.update_requested.emit("all")
+        )
+        menu.addSeparator()
+        menu.addAction(
             "Gablue (image système)…", lambda: self.update_requested.emit("gablue")
         )
         menu.addAction(

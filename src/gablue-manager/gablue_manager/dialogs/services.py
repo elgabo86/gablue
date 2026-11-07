@@ -8,8 +8,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..local import (
-    auto_update_available, docker_available, local_variant, services_choices,
-    services_helpers_available, system_apply_script,
+    auto_update_available, docker_available, local_variant, parse_gablue_progress,
+    services_choices, services_helpers_available, system_apply_script,
 )
 from ..tasks import LocalTaskDialog, start_task
 from ..uiutil import (
@@ -263,6 +263,12 @@ class ServicesDialog(QDialog):
             self, title="Services et pilotes",
             subtitle="Journal des opérations.",
             argv=["/usr/bin/bash", "-c", system_apply_script(changes)],
+            # Le script annonce chaque domaine demandé (`::gablue:step`) : la
+            # barre avance par réglage appliqué, le journal reste derrière
+            # « Terminal ».
+            progress_parser=parse_gablue_progress,
+            progress_text="Application des réglages…",
+            reveal_log_on_error=True,
         )
         start_task(self, dialog)
         self.accept()

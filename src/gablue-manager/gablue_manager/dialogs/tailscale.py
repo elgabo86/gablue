@@ -11,8 +11,9 @@ from PySide6.QtWidgets import (
 
 from ..constants import _which
 from ..local import (
-    TAILSCALE_STATE_SCRIPT, parse_tailscale_state, remote_helpers_nopasswd,
-    tailscale_apply_script, valid_tailscale_server,
+    TAILSCALE_STATE_SCRIPT, find_auth_url, parse_tailscale_state,
+    remote_helpers_nopasswd, tailscale_apply_script, tailscale_registered,
+    valid_tailscale_server,
 )
 from ..ssh import ask_remote_password, remote_sudo_prefix, ssh_capture
 from ..tasks import LocalTaskDialog, RemoteTaskDialog, start_task
@@ -209,11 +210,32 @@ class TailscaleDialog(QDialog):
             dialog = RemoteTaskDialog(
                 self, host=self.host, title="Tailscale",
                 subtitle=subtitle, command=command, password=password,
+                progress_mode="busy",
+                progress_text=("Connexion à Tailscale…" if enabled
+                               else "Coupure de Tailscale…"),
+                auth_link_parser=(
+                    lambda text: find_auth_url(text, (server,))
+                    if enabled else ""
+                ),
             )
         else:
             dialog = LocalTaskDialog(
                 self, title="Tailscale", subtitle=subtitle,
                 argv=[_which("bash"), "-c", script],
+                progress_mode="busy",
+                progress_text=("Connexion à Tailscale…" if enabled
+                               else "Coupure de Tailscale…"),
+                reveal_log_on_error=True,
+                # Le lien d'enregistrement est affiché dans la fenêtre (bouton
+                # « Copier le lien ») : `tailscale up` lancé en root n'ouvre
+                # aucun navigateur. La sonde `tailscale status --json` dit
+                # quand la validation est faite, et le lien disparaît.
+                auth_link_parser=(
+                    lambda text: find_auth_url(text, (server,))
+                    if enabled else ""
+                ),
+                auth_check_argv=[_which("tailscale"), "status", "--json"],
+                auth_check_parser=tailscale_registered,
             )
         start_task(self, dialog)
         return True

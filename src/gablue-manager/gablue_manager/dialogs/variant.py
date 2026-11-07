@@ -145,6 +145,11 @@ class VariantDialog(QDialog):
             self, title=f"Basculer vers {variant}",
             subtitle="Téléchargement, puis redémarrage.",
             argv=["/usr/bin/bash", "-c", rebase_script(variant)],
+            # rpm-ostree ne publie pas de pourcentage ici : barre indéterminée,
+            # journal derrière « Terminal ».
+            progress_mode="busy",
+            progress_text="Téléchargement de la nouvelle image…",
+            reveal_log_on_error=True,
         )
         start_task(self, dialog)
         self.accept()
