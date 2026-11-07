@@ -1506,7 +1506,26 @@ class MainWindow(QMainWindow):
         RyzenDialog(self).exec()
 
     def open_clean_system(self) -> None:
-        CleanDialog(self).exec()
+        # Non modal : le dialogue reste ouvert pendant qu'une tâche tourne,
+        # sans désactiver la fenêtre de progression. Une seule instance.
+        existing = getattr(self, "_clean_dialog", None)
+        if existing is not None:
+            try:
+                existing.raise_()
+                existing.activateWindow()
+                return
+            except RuntimeError:      # fermé et détruit entre-temps
+                self._clean_dialog = None
+        dialog = CleanDialog(self)
+        dialog.setModal(False)
+        dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+        dialog.finished.connect(
+            lambda _result=0: setattr(self, "_clean_dialog", None)
+        )
+        self._clean_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def open_grub(self) -> None:
         GrubDialog(self).exec()
