@@ -100,6 +100,10 @@ class AppsDialog(QDialog):
         self.latest: dict[str, dict] = {}
         self._latest_worker = None
         self._latest_generation = 0
+        # Sonde en cours : le bouton des applications installées est grisé
+        # (« Vérification… ») au lieu de laisser croire qu'une mise à jour
+        # est disponible ou déjà faite.
+        self._checking = False
         for group, title in GROUPS:
             section = QLabel(title, self)
             section.setObjectName("groupName")
@@ -220,6 +224,7 @@ class AppsDialog(QDialog):
             if installed_any(app, self.states.get(app.key) or {})
         ]
         self.latest = {}
+        self._checking = bool(installed)
         if not installed:
             return
         self._latest_generation += 1
@@ -233,11 +238,13 @@ class AppsDialog(QDialog):
         _ACTIVE_WORKERS.add(worker)
         self._latest_worker = worker
         worker.start()
+        self._apply_rows()      # « Vérification… » tout de suite
 
     def _latest_done(self, info: dict, generation: int) -> None:
         # Une passe plus récente (rafraîchissement après installation) gagne.
         if generation != self._latest_generation:
             return
+        self._checking = False
         self.latest = dict(info or {})
         try:
             self._apply_rows()
@@ -279,7 +286,14 @@ class AppsDialog(QDialog):
             info = self.latest.get(app.key) or {}
             update = update_available(state, info) if installed else None
             action = row["action"]
-            if installed and update is False:
+            if installed and self._checking:
+                # Sonde en cours : ni « Mettre à jour » (on ne sait pas
+                # encore) ni « À jour » (ce serait mentir).
+                action.setText("Vérification…")
+                action.setObjectName("accent")
+                action.setEnabled(False)
+                action.setToolTip("Recherche de la dernière version publiée…")
+            elif installed and update is False:
                 # Vérifié à jour : bouton vert, inerte. Un clic relancerait
                 # un téléchargement pour rien.
                 action.setText("À jour")
