@@ -200,22 +200,47 @@ sed -i 's/OnCalendar=\*-\*-\* 4:00:00/OnCalendar=Sat \*-\*-\* 04:00:00/' /usr/li
 sed -i '/OnBootSec=/d' /usr/lib/systemd/system/flatpak-system-update.timer
 sed -i '/OnBootSec=/d' /usr/lib/systemd/user/flatpak-user-update.timer
 
-# 3. rpm-ostree : override timer → samedi 04:00 + delai aléatoire 10 min
-sed -i 's/OnCalendar=\*-\*-\* 4:00:00/OnCalendar=Sat \*-\*-\* 04:00:00/' /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
-sed -i '/OnBootSec=/d'        /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
-sed -i '/OnUnitInactiveSec=/d' /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
-echo 'RandomizedDelaySec=10m' >> /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
+# 3. rpm-ostree : override timer → samedi 04:00 + délai aléatoire 10 min
+# RandomizedDelaySec ne vaut que dans [Timer] : l'ancien `echo >>` soudait ses
+# octets à la dernière ligne (pas de \n final) → « Failed to parse
+# Persistent=trueRandomizedDelaySec=10m, ignoring ». On répare le collage d'un
+# build antérieur, puis on neutralise tout déclencheur hérité avant de poser le
+# nôtre une seule fois dans [Timer] (l'état d'entrée n'a plus d'importance).
+rpm_timer_override="/usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/override.conf"
+sed -i 's/^Persistent=trueRandomizedDelaySec=.*/Persistent=true/' "$rpm_timer_override"
+sed -i -e '/^OnBootSec=/d' -e '/^OnUnitInactiveSec=/d' -e '/^OnCalendar=/d' -e '/^RandomizedDelaySec=/d' "$rpm_timer_override"
+sed -i '/^\[Timer\]/a OnCalendar=Sat *-*-* 04:00:00\nRandomizedDelaySec=10m' "$rpm_timer_override"
 
 # 4. Activer les mises à jour automatiques rpm-ostree (stage)
 cp /usr/share/ublue-os/update-services/etc/rpm-ostreed.conf /etc/rpm-ostreed.conf
 
-# 5. Brew : passer de périodique à samedi 04:00 + délai aléatoire 10 min
-sed -i 's/OnBootSec=10min/OnCalendar=Sat *-*-* 04:00:00/' /usr/lib/systemd/system/brew-update.timer
-sed -i '/OnUnitInactiveSec=/d' /usr/lib/systemd/system/brew-update.timer
-echo 'RandomizedDelaySec=10m' >> /usr/lib/systemd/system/brew-update.timer
-sed -i 's/OnBootSec=30min/OnCalendar=Sat *-*-* 04:00:00/' /usr/lib/systemd/system/brew-upgrade.timer
-sed -i '/OnUnitInactiveSec=/d' /usr/lib/systemd/system/brew-upgrade.timer
-echo 'RandomizedDelaySec=10m' >> /usr/lib/systemd/system/brew-upgrade.timer
+# 5. Brew : update samedi 03:30, upgrade samedi 04:00 — JAMAIS simultanés
+# Vécu 07/11/2026 (sucina) : les deux tiraient à 04:00:00, le RandomizedDelaySec
+# de l'époque étant appendé après [Install] — ignoré par systemd
+# (RandomizedDelayUSec=0). Le `brew update` concurrent a alors remplacé les gems
+# du vendor bundle (bindata 3.0.0 → 3.0.1) pendant que l'upgrade installait
+# libnghttp2 : « cannot load such file …/bindata-3.0.0/lib/bindata.rb », unité en
+# échec et 5 paquets laissés en retard. Le décalage seul ne suffit pas si
+# l'update déborde : le drop-in ci-dessous sérialise les deux unités.
+for brew_timer in brew-update brew-upgrade; do
+    brew_unit="/usr/lib/systemd/system/${brew_timer}.timer"
+    # Neutraliser le déclencheur hérité du digest (OnBootSec sur les versions
+    # récentes, OnUnitInactiveSec avant) : OnCalendar est une LISTE, laisser
+    # l'ancien en place ajouterait un second calendrier au lieu de le remplacer.
+    sed -i -e '/^OnBootSec=/d' -e '/^OnUnitInactiveSec=/d' -e '/^OnCalendar=/d' -e '/^RandomizedDelaySec=/d' "$brew_unit"
+done
+sed -i '/^\[Timer\]/a OnCalendar=Sat *-*-* 03:30:00\nRandomizedDelaySec=5m' /usr/lib/systemd/system/brew-update.timer
+sed -i '/^\[Timer\]/a OnCalendar=Sat *-*-* 04:00:00\nRandomizedDelaySec=5m' /usr/lib/systemd/system/brew-upgrade.timer
+
+# L'upgrade attend la fin de l'update. Déposé dans /etc (pas /usr/lib) : le
+# drop-in survit au bump du digest ghcr.io/ublue-os/brew, qui réécrit les unités.
+install -d /etc/systemd/system/brew-upgrade.service.d
+cat > /etc/systemd/system/brew-upgrade.service.d/10-after-update.conf <<'BREWEOF'
+# Un `brew update` concurrent remplace vendor/bundle sous une installation en
+# cours (vendor/portable-ruby + gems) : l'upgrade ne doit jamais le croiser.
+[Unit]
+After=brew-update.service
+BREWEOF
 
 # 6. Ajouter linuxbrew au secure_path de sudo
 sed -Ei 's|secure_path = (.*)|secure_path = \1:/home/linuxbrew/.linuxbrew/bin|' /etc/sudoers
