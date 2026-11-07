@@ -200,9 +200,14 @@ def pending_reboot_reasons() -> list[str]:
     """Ce qui attend un redémarrage pour prendre effet (lecture sans root).
 
     Quatre sources, dans l'ordre où on les présente :
-    image ostree staged, kargs du prochain démarrage différents, configs noyau
-    écrites depuis le démarrage (Wi-Fi Broadcom, émulation CPUID), et module
-    d'émulation encore chargé alors que sa persistance a été retirée.
+    image ostree staged, kargs du prochain démarrage différents, configs
+    écrites depuis le démarrage (Wi-Fi Broadcom, couche Vulkan low-latency,
+    émulation CPUID), et module d'émulation encore chargé alors que sa
+    persistance a été retirée.
+
+    La couche Vulkan low-latency ne demande qu'une **nouvelle session**, mais
+    elle est signalée comme les autres : sans redémarrage ni reconnexion,
+    le réglage reste sans effet et l'utilisateur n'a aucun autre signe.
     """
     reasons: list[str] = []
     try:
@@ -222,6 +227,8 @@ def pending_reboot_reasons() -> list[str]:
     boot = boot_time()
     if written_since(BROADCOM_WL_FILE, boot):
         reasons.append("pilote Wi-Fi Broadcom wl")
+    if written_since(LOW_LATENCY_FILE, boot):
+        reasons.append("couche Vulkan low-latency (nouvelle session)")
     if (written_since(CPUID_EMU_CONF, boot)
             or written_since(CPUID_EMU_BLACKLIST, boot)
             or ("cpuid_fault_emulation" in loaded_modules()
