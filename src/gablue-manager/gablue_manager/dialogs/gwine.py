@@ -26,7 +26,6 @@ GWINE_DISPLAYS = (
 GWINE_RECOMMENDED = {
     "dxvk_async": ("à désactiver", False),
     "wayland": ("choisir X11 (XWayland)", False),
-    "xbox": ("à désactiver", False),
 }
 
 # État conseillé, dit en clair à côté d'un réglage déjà conforme : « ✓ Conseillé »
@@ -34,7 +33,6 @@ GWINE_RECOMMENDED = {
 GWINE_ADVICE = {
     "dxvk_async": "DXVK standard",
     "wayland": "X11 (XWayland)",
-    "xbox": "désactivé",
 }
 
 class GwineOptionsDialog(QDialog):
@@ -119,7 +117,6 @@ class GwineOptionsDialog(QDialog):
         self._add_card(
             self.xbox_check,
             "Les manettes Sony passent en Xbox 360 pour les jeux XInput.",
-            key="xbox",
         )
 
         buttons = QHBoxLayout()

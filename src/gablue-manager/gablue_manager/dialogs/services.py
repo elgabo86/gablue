@@ -61,7 +61,6 @@ CHOICE_STATE = {
 # quelqu'un qui a justement le dock ou la carte.
 CHOICE_RECOMMENDED = {
     "low_latency": True,    # réglage Gablue
-    "atuin": True,          # historique partagé, déjà en place sur l'image
     "auto_updates": True,   # image et Flatpaks à jour sans y penser
 }
 

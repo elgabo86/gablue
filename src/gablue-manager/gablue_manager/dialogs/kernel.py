@@ -57,7 +57,6 @@ CHOICE_RECOMMENDED = {
     "mitigations": True,    # garder les protections : sécurité d'abord
     "cpuid": True,          # débloque des jeux, sans coût ailleurs
     "ertm": True,           # réglage recommandé par Gablue
-    "hdmi21": False,        # scintillements possibles : opt-in explicite
     "cpuid_emu": False,     # niche AMD : KVM doit rester disponible
 }
 
