@@ -4,13 +4,13 @@
 import os
 import shutil
 
-from PySide6.QtCore import QProcess, QTimer, Qt, Signal
+from PySide6.QtCore import QProcess, QSocketNotifier, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QPushButton,
-    QVBoxLayout,
+    QDialog, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QProgressBar,
+    QPushButton, QVBoxLayout,
 )
 
-from .local import privileged_prefix
+from .local import parse_progress_event, privileged_prefix
 from .util import display_name, ssh_target
 from .workers import SshTaskWorker
 
@@ -163,6 +163,15 @@ class RemoteTaskDialog(QDialog):
             self._worker.wait(3000)
         super().reject()
 
+def _human_bytes(value: int) -> str:
+    """Taille lisible (o, Kio, Mio, Gio) — journal de progression de bootc."""
+    size = float(max(0, int(value)))
+    for unit in ("o", "Kio", "Mio", "Gio"):
+        if size < 1024 or unit == "Gio":
+            return f"{size:.0f} {unit}" if unit == "o" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} Gio"
+
 class LocalTaskDialog(QDialog):
     """Commande locale en streaming (mises à jour, options système).
 
@@ -177,7 +186,7 @@ class LocalTaskDialog(QDialog):
 
     def __init__(self, parent=None, title: str = "", subtitle: str = "",
                  argv: list[str] | None = None, root: bool = False,
-                 hint_from_output=None):
+                 hint_from_output=None, progress_fifo: str = ""):
         super().__init__(parent)
         self._argv = list(argv or [])
         self._root = root
@@ -186,6 +195,13 @@ class LocalTaskDialog(QDialog):
         self._output: list[str] = []
         self._cancelled = False
         self._running = True
+        # Progression structurée (bootc) : FIFO écrit par le helper root.
+        self._progress_fifo = progress_fifo
+        self._progress_fd = -1
+        self._progress_notifier: QSocketNotifier | None = None
+        self._progress_tries = 0
+        self._progress_buffer = ""
+        self._progress_seen = False
 
         self.setWindowTitle(title or "Action sur ce poste")
         self.setModal(False)
@@ -205,10 +221,27 @@ class LocalTaskDialog(QDialog):
             detail.setWordWrap(True)
             root_layout.addWidget(detail)
 
+        # Progression lisible quand la commande sait la publier (bootc) : le
+        # journal passe alors au second plan, derrière un bouton « Terminal ».
+        self.progress_label = QLabel(self)
+        self.progress_label.setObjectName("hostDetail")
+        self.progress_label.setWordWrap(True)
+        self.progress_label.setVisible(bool(progress_fifo))
+        root_layout.addWidget(self.progress_label)
+
+        self.progress_bar = QProgressBar(self)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setRange(0, 0)     # indéterminé tant qu'aucun événement
+        self.progress_bar.setVisible(bool(progress_fifo))
+        root_layout.addWidget(self.progress_bar)
+        if progress_fifo:
+            self.progress_label.setText("Préparation de la mise à jour…")
+
         self.log_view = QPlainTextEdit(self)
         self.log_view.setReadOnly(True)
         self.log_view.setMinimumHeight(280)
         self.log_view.setMaximumBlockCount(20000)
+        self.log_view.setVisible(not progress_fifo)
         root_layout.addWidget(self.log_view, 1)
 
         self.result_label = QLabel(self)
@@ -217,6 +250,15 @@ class LocalTaskDialog(QDialog):
         root_layout.addWidget(self.result_label)
 
         buttons = QHBoxLayout()
+        if progress_fifo:
+            self.log_toggle = QPushButton("Terminal", self)
+            self.log_toggle.setObjectName("ghost")
+            self.log_toggle.setCheckable(True)
+            self.log_toggle.setToolTip("Afficher le journal complet de bootc")
+            self.log_toggle.toggled.connect(self._toggle_log)
+            buttons.addWidget(self.log_toggle)
+        else:
+            self.log_toggle = None
         buttons.addStretch(1)
         self.cancel_button = QPushButton("Annuler", self)
         self.cancel_button.setObjectName("ghost")
@@ -257,6 +299,86 @@ class LocalTaskDialog(QDialog):
             process.setChildProcessModifier(os.setsid)
         self._process = process
         process.start()
+        if self._progress_fifo:
+            QTimer.singleShot(0, self._progress_open)
+
+    # -- progression structurée (bootc) -------------------------------------
+    def _toggle_log(self, shown: bool) -> None:
+        self.log_view.setVisible(shown)
+        if self.log_toggle is not None:
+            self.log_toggle.setToolTip(
+                "Masquer le journal" if shown
+                else "Afficher le journal complet de bootc"
+            )
+        self.adjustSize()
+
+    def _progress_open(self) -> None:
+        """Ouvre le FIFO dès que le helper l'a créé (il tourne en root)."""
+        if self._progress_fd >= 0 or not self._progress_fifo or not self._running:
+            return
+        if not os.path.exists(self._progress_fifo):
+            if self._progress_tries < 50:      # ~5 s, le temps que sudo démarre
+                self._progress_tries += 1
+                QTimer.singleShot(100, self._progress_open)
+            return
+        try:
+            fd = os.open(self._progress_fifo, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            if self._progress_tries < 50:
+                self._progress_tries += 1
+                QTimer.singleShot(100, self._progress_open)
+            return
+        self._progress_fd = fd
+        notifier = QSocketNotifier(fd, QSocketNotifier.Read, self)
+        notifier.activated.connect(self._read_progress)
+        self._progress_notifier = notifier
+
+    def _read_progress(self) -> None:
+        if self._progress_fd < 0:
+            return
+        try:
+            chunk = os.read(self._progress_fd, 65536)
+        except (BlockingIOError, InterruptedError):
+            return
+        except OSError:
+            self._stop_progress()
+            return
+        if not chunk:                      # plus d'écrivain (bootc terminé)
+            self._stop_progress()
+            return
+        self._progress_buffer += chunk.decode("utf-8", "replace")
+        while "\n" in self._progress_buffer:
+            line, _, self._progress_buffer = \
+                self._progress_buffer.partition("\n")
+            info = parse_progress_event(line)
+            if info:
+                self._apply_progress(info)
+
+    def _apply_progress(self, info: dict) -> None:
+        self._progress_seen = True
+        label = info.get("label") or "Mise à jour en cours"
+        total = int(info.get("bytes_total") or 0)
+        if total > 0:
+            label += " — " + _human_bytes(int(info.get("bytes") or 0)) \
+                     + " / " + _human_bytes(total)
+        self.progress_label.setText(label)
+        percent = info.get("percent")
+        if percent is None:
+            self.progress_bar.setRange(0, 0)
+        else:
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(int(round(float(percent))))
+
+    def _stop_progress(self) -> None:
+        if self._progress_notifier is not None:
+            self._progress_notifier.setEnabled(False)
+            self._progress_notifier = None
+        if self._progress_fd >= 0:
+            try:
+                os.close(self._progress_fd)
+            except OSError:
+                pass
+            self._progress_fd = -1
 
     def _drain(self) -> None:
         if self._process is None:
@@ -290,8 +412,17 @@ class LocalTaskDialog(QDialog):
 
     def _finished(self, code: int) -> None:
         self._running = False
+        self._stop_progress()
         output = "".join(self._output)
         ok = code == 0
+        if self._progress_fifo:
+            # Sans aucun événement, il n'y avait rien à télécharger (bootc
+            # répond « No changes in… ») : la barre n'aurait rien à montrer.
+            self.progress_bar.setVisible(self._progress_seen)
+            self.progress_label.setVisible(self._progress_seen)
+            if self._progress_seen and ok:
+                self.progress_bar.setRange(0, 100)
+                self.progress_bar.setValue(100)
         self.result_label.setVisible(True)
         if self._cancelled:
             self.result_label.setObjectName("warn")
@@ -327,6 +458,7 @@ class LocalTaskDialog(QDialog):
         if self._running and self._process is not None:
             self._cancelled = True
             self._process.kill()
+        self._stop_progress()
         self.accept()
 
     def reject(self) -> None:
@@ -341,6 +473,7 @@ class LocalTaskDialog(QDialog):
             self._cancelled = True
             self._process.kill()
             self._process.waitForFinished(3000)
+        self._stop_progress()
         super().reject()
 
 def start_task(parent, dialog: QDialog) -> None:

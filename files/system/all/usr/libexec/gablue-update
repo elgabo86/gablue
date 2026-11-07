@@ -1,0 +1,33 @@
+#!/usr/bin/bash
+
+# gablue-update — `bootc upgrade` avec sa progression JSONL pour Gablue Manager
+#
+# Appelé via sudo -n (règle NOPASSWD, aucun argument accepté) : le manager ne
+# peut pas transmettre un descripteur à travers sudo (sudo ferme les fd >= 3),
+# d'où un FIFO à chemin fixe, créé ici en root et lu sans privilège par
+# Gablue Manager.
+#
+# bootc exige un tube pour `--progress-fd` (son écriture passe par epoll, un
+# fichier ordinaire est refusé) ; le FIFO est donc ouvert en lecture-écriture,
+# ce qui évite tout blocage quand le lecteur arrive après coup et empêche
+# SIGPIPE si le manager s'arrête.
+#
+# Usage : gablue-update
+
+set -eu
+
+FIFO=/run/gablue/update-progress.fifo
+BOOTC=/usr/bin/bootc
+
+install -d -m 0755 /run/gablue
+rm -f "$FIFO"
+mkfifo -m 0644 "$FIFO"
+
+exec 3<>"$FIFO"
+rc=0
+# La sortie humaine reste sur stdout/stderr (journal du manager) ; seuls les
+# événements de progression passent par le FIFO.
+"$BOOTC" upgrade --progress-fd 3 || rc=$?
+exec 3>&-
+rm -f "$FIFO"
+exit "$rc"

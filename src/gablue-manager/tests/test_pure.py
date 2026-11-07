@@ -203,6 +203,37 @@ class SystemTest(unittest.TestCase):
             self.assertFalse(local.written_since(path, time.time() + 60))
             self.assertFalse(local.written_since(Path(tmp) / "absent", 1.0))
 
+    def test_progress_event(self):
+        info = local.parse_progress_event(json.dumps({
+            "type": "ProgressBytes", "task": "pulling",
+            "description": "Pulling layers", "id": "x",
+            "bytesCached": 0, "bytes": 11, "bytesTotal": 42,
+            "stepsCached": 0, "steps": 0, "stepsTotal": 3, "subtasks": [],
+        }))
+        self.assertAlmostEqual(info["percent"], 26.19, places=1)
+        self.assertEqual(info["label"], "Téléchargement de l'image")
+        self.assertEqual(info["bytes_total"], 42)
+
+        steps = local.parse_progress_event(json.dumps({
+            "type": "ProgressSteps", "task": "importing",
+            "description": "Layers", "id": "x",
+            "stepsCached": 1, "steps": 1, "stepsTotal": 4, "subtasks": [],
+        }))
+        self.assertEqual(steps["percent"], 50.0)
+
+        # Total inconnu → barre indéterminée.
+        unknown = local.parse_progress_event(json.dumps({
+            "type": "ProgressBytes", "task": "pulling",
+            "bytes": 5, "bytesTotal": 0,
+        }))
+        self.assertIsNone(unknown["percent"])
+
+        # Start, JSON tronqué, ligne vide : rien à afficher.
+        self.assertEqual(local.parse_progress_event(
+            '{"type":"Start","version":"0.1.0"}'), {})
+        self.assertEqual(local.parse_progress_event("pas du json"), {})
+        self.assertEqual(local.parse_progress_event(""), {})
+
     def test_rebase_script(self):
         self.assertEqual(
             local.rebase_script("nvidia-open-dx"),

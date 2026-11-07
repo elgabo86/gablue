@@ -163,6 +163,14 @@ BREW_BINARY = Path("/home/linuxbrew/.linuxbrew/bin/brew")
 # `toggle-updates-all`.
 AUTO_UPDATE_HELPER = "/usr/libexec/gablue-auto-update"
 
+# Mise à jour de l'image : helper root qui lance `bootc upgrade` et publie sa
+# progression JSONL (`--progress-fd`) dans un FIFO à chemin fixe. Un descripteur
+# passé par l'app ne survivrait pas à sudo (il ferme les fd >= 3), d'où le FIFO
+# que le manager lit sans privilège.
+UPDATE_HELPER = "/usr/libexec/gablue-update"
+
+UPDATE_PROGRESS_FIFO = "/run/gablue/update-progress.fifo"
+
 AUTO_UPDATE_USER_TIMER = "flatpak-user-update.timer"
 
 # Variantes publiées par Gablue (le rebase bascule d'une image à l'autre).

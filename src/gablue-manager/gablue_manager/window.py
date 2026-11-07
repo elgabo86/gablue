@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (
 
 from .constants import (
     AVAHI_BROWSE, COLOR_AUTH, COLOR_OFFLINE, COLOR_ONLINE, HOSTS_FILE,
-    NO_AUTO_PROBE_STATES, PULSE_MS, REFRESH_MS, _which,
+    NO_AUTO_PROBE_STATES, PULSE_MS, REFRESH_MS, UPDATE_HELPER,
+    UPDATE_PROGRESS_FIFO, _which,
 )
 from .dialogs.apps import AppsDialog
 from .dialogs.booster import ForegroundBoosterDialog
@@ -1152,12 +1153,20 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.Yes:
             return
+        # Helper dédié : il publie la progression JSONL de bootc dans un FIFO
+        # (sudo ferme les fd >= 3, l'app ne peut pas lui en passer un). Repli
+        # sur bootc direct tant que l'image n'a pas le helper.
+        if Path(UPDATE_HELPER).is_file():
+            argv, fifo = [UPDATE_HELPER], UPDATE_PROGRESS_FIFO
+        else:
+            argv, fifo = [_which("bootc"), "upgrade"], ""
         self._run_local_task(
             "Mise à jour de Gablue",
             "bootc upgrade — l'image téléchargée s'applique au prochain "
             "redémarrage.",
-            [_which("bootc"), "upgrade"], root=True,
+            argv, root=True,
             hint_from_output=gablue_update_hint,
+            progress_fifo=fifo,
         )
 
     def update_local_flatpaks(self) -> None:
@@ -1278,7 +1287,8 @@ class MainWindow(QMainWindow):
         TailscaleDialog(self, host).exec()
 
     def _run_local_task(self, title: str, subtitle: str, argv: list[str],
-                        root: bool = False, hint_from_output=None) -> None:
+                        root: bool = False, hint_from_output=None,
+                        progress_fifo: str = "") -> None:
         if argv and shutil.which(argv[0]) is None and not Path(argv[0]).exists():
             QMessageBox.critical(
                 self, title,
@@ -1287,7 +1297,7 @@ class MainWindow(QMainWindow):
             return
         dialog = LocalTaskDialog(
             self, title=title, subtitle=subtitle, argv=argv, root=root,
-            hint_from_output=hint_from_output,
+            hint_from_output=hint_from_output, progress_fifo=progress_fifo,
         )
         start_task(self, dialog)
 

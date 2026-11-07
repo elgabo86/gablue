@@ -609,3 +609,54 @@ def system_apply_script(changes: dict[str, bool]) -> str:
 def rebase_script(variant: str) -> str:
     """Bascule vers une autre variante d'image (redémarrage ensuite)."""
     return f"sudo -n {REBASE_HELPER} {variant}\n"
+
+# Tâches de bootc (champ machine `task` de la progression JSONL) → libellé.
+PROGRESS_TASKS = {
+    "pulling": "Téléchargement de l'image",
+    "ostree_chunk": "Téléchargement des objets OSTree",
+    "ostree_derived": "Construction de la couche dérivée",
+    "importing": "Import de l'image",
+    "composing": "Écriture du déploiement",
+}
+
+def parse_progress_event(line: str) -> dict:
+    """Événement JSONL de `bootc upgrade --progress-fd` → progression lisible.
+
+    Chaque ligne est un objet `{type: ProgressBytes|ProgressSteps, …}` (voir
+    `progress_jsonl.rs` de bootc). `{}` pour tout le reste (message Start, JSON
+    tronqué, ligne vide). Le pourcentage prend les octets quand le total est
+    connu (images), sinon les étapes (couches), sinon None → barre indéterminée.
+    """
+    try:
+        event = json.loads(line)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(event, dict) or event.get("type") not in (
+        "ProgressBytes", "ProgressSteps",
+    ):
+        return {}
+
+    def number(key: str) -> int:
+        try:
+            return int(event.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    total = number("bytesTotal")
+    done = number("bytes") + number("bytesCached")
+    steps_total = number("stepsTotal")
+    steps = number("steps") + number("stepsCached")
+    percent: float | None = None
+    if total > 0:
+        percent = 100.0 * done / total
+    elif steps_total > 0:
+        percent = 100.0 * steps / steps_total
+    task = str(event.get("task") or "")
+    return {
+        "label": PROGRESS_TASKS.get(task) or str(event.get("description") or ""),
+        "percent": None if percent is None else max(0.0, min(100.0, percent)),
+        "bytes": done,
+        "bytes_total": total,
+        "steps": steps,
+        "steps_total": steps_total,
+    }

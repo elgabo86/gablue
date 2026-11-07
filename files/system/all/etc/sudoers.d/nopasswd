@@ -15,3 +15,4 @@
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-avahi on, /usr/libexec/gablue-avahi off, /usr/libexec/gablue-avahi status
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-auto-update on, /usr/libexec/gablue-auto-update off, /usr/libexec/gablue-auto-update status
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-update
