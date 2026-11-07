@@ -1211,6 +1211,7 @@ class MainWindow(QMainWindow):
                     "argv": [bootc, "upgrade"],
                     "root": True,
                     "hint": gablue_update_hint,
+                    "busy": True,      # sans helper, bootc est muet
                 })
         if shutil.which("flatpak"):
             steps.append({
@@ -1263,6 +1264,11 @@ class MainWindow(QMainWindow):
             argv, root=True,
             hint_from_output=gablue_update_hint,
             progress_fifo=fifo,
+            # Image antérieure au helper : bootc ne publie alors aucune
+            # progression. Barre indéterminée plutôt que le journal brut, la
+            # présentation reste la même (journal derrière « Terminal »).
+            progress_mode="auto" if fifo else "busy",
+            progress_text="Téléchargement de l'image système…",
         )
 
     def update_local_flatpaks(self) -> None:
@@ -1400,7 +1406,9 @@ class MainWindow(QMainWindow):
                         root: bool = False, hint_from_output=None,
                         progress_fifo: str = "",
                         progress_parser=None,
-                        env_extra: dict | None = None) -> None:
+                        env_extra: dict | None = None,
+                        progress_mode: str = "auto",
+                        progress_text: str = "") -> None:
         if argv and shutil.which(argv[0]) is None and not Path(argv[0]).exists():
             QMessageBox.critical(
                 self, title,
@@ -1411,6 +1419,7 @@ class MainWindow(QMainWindow):
             self, title=title, subtitle=subtitle, argv=argv, root=root,
             hint_from_output=hint_from_output, progress_fifo=progress_fifo,
             progress_parser=progress_parser, env_extra=env_extra,
+            progress_mode=progress_mode, progress_text=progress_text,
         )
         start_task(self, dialog)
 

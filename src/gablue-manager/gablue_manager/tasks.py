@@ -995,6 +995,12 @@ class SequentialTaskDialog(QDialog):
         total = max(1, len(self._steps))
         done = max(0, min(self._index, total))
         percent = self._step_percent
+        step = self._steps[self._index] if 0 <= self._index < total else {}
+        if step.get("busy") and percent is None:
+            # Étape muette (bootc sans helper, rebase…) : la barre balaie au
+            # lieu de rester figée sur un pourcentage inventé.
+            self.progress_bar.setRange(0, 0)
+            return
         fraction = 0.0 if percent is None else max(0.0, min(100.0, percent)) / 100.0
         value = 100.0 * (done + fraction) / total
         self.progress_bar.setRange(0, 100)
