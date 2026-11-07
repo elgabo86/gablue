@@ -191,8 +191,6 @@ UPDATE_HELPER = "/usr/libexec/gablue-update"
 
 UPDATE_PROGRESS_FIFO = "/run/gablue/update-progress.fifo"
 
-AUTO_UPDATE_USER_TIMER = "flatpak-user-update.timer"
-
 # Variantes publiées par Gablue (le rebase bascule d'une image à l'autre).
 REBASE_VARIANTS = (
     ("main", "main — standard"),

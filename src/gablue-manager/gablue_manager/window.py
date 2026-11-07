@@ -97,6 +97,7 @@ class MainWindow(QMainWindow):
         self._reboot_worker: RebootWorker | None = None
         self._updates_state: dict | None = None
         self._updates_worker: UpdateCheckWorker | None = None
+        self._updates_pending = False
 
         self._build_ui()
         self.setStyleSheet(make_qss())
@@ -502,6 +503,27 @@ class MainWindow(QMainWindow):
         self._updates_state = state
         self.local_card.end_checking()
         self.local_card.set_updates(state)
+        if self._updates_pending:
+            # Sonde lancée avant la fin d'une mise à jour : elle décrit
+            # l'avant, on en refait une tout de suite.
+            self._updates_pending = False
+            QTimer.singleShot(0, lambda: self.check_updates(force=True))
+
+    def _updates_after_task(self, ok: bool) -> None:
+        """Mise à jour terminée : re-sonder sans attendre la fréquence.
+
+        Sinon le compteur de la carte et la pastille du tray gardaient l'état
+        d'avant la mise à jour jusqu'au prochain créneau (120 min par défaut) :
+        gwine à jour affichait encore « 1 mise à jour » et le point rouge
+        (vécu 07/11/2026).
+        """
+        if not ok:
+            return
+        instance.send(instance.tray_socket(), b"updates")
+        if self._updates_worker is not None and self._updates_worker.isRunning():
+            self._updates_pending = True
+            return
+        self.check_updates(force=True)
 
     def _on_check_result(self, host_id: str, state: str, detail: str,
                          latency: float, address: str) -> None:
@@ -1083,8 +1105,7 @@ class MainWindow(QMainWindow):
             self, "Mettre à jour Gablue",
             f"Télécharger la nouvelle image Gablue de « {display_name(host)} » "
             f"({address_text(host)}) ?\n\n"
-            "Le poste continue de tourner ; l'image s'applique à son prochain "
-            "redémarrage. Les Flatpaks se mettent à jour séparément.",
+            "Elle s'applique à son prochain redémarrage.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
@@ -1098,7 +1119,7 @@ class MainWindow(QMainWindow):
         )
         self._run_remote_script(
             host, f"Mise à jour — {display_name(host)}",
-            "bootc upgrade, appliqué au prochain redémarrage.", script,
+            "La nouvelle image s'applique au prochain redémarrage.", script,
             root=True,
             # Seul le compte rendu d'upgrade fait foi : `bootc status` décrit
             # aussi le déploiement en attente et contiendrait « staged » même
@@ -1112,35 +1133,28 @@ class MainWindow(QMainWindow):
         answer = QMessageBox.question(
             self, "Mettre à jour les Flatpaks",
             f"Mettre à jour les applications Flatpak de "
-            f"« {display_name(host)} » ({address_text(host)}) ?\n\n"
-            "Compte et système. La partie système est autorisée sans mot de "
-            "passe sur un poste Gablue (règle sudoers de l'image) ; si elle "
-            "manque, le journal le dit au lieu de demander le mot de passe.",
+            f"« {display_name(host)} » ({address_text(host)}) ?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
         self._run_remote_script(
             host, f"Flatpaks — {display_name(host)}",
-            "flatpak update --user puis --system.", flatpak_update_script(),
+            "Applications Flatpak système.", flatpak_update_script(),
         )
 
     def update_remote_gwine(self, host: dict) -> None:
         answer = QMessageBox.question(
             self, "Mettre à jour gwine",
             f"Mettre à jour gwine sur « {display_name(host)} » "
-            f"({address_text(host)}) ?\n\n"
-            "gwine --init vérifie s'il existe une nouvelle version du runner "
-            "Wine ou de ses composants (DXVK, VKD3D, D7VK) et ne réinitialise "
-            "le préfixe que dans ce cas. Sur un poste déjà à jour, rien n'est "
-            "modifié ; sinon le téléchargement peut prendre plusieurs minutes.",
+            f"({address_text(host)}) ?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
         self._run_remote_script(
             host, f"gwine — {display_name(host)}",
-            "gwine --init — vérification du runner et des composants.",
+            "Runner Wine et composants (DXVK, VKD3D, D7VK).",
             "gwine --init\n",
         )
 
@@ -1148,17 +1162,14 @@ class MainWindow(QMainWindow):
         answer = QMessageBox.question(
             self, "Mettre à jour Homebrew",
             f"Mettre à jour les formules Homebrew de « {display_name(host)} » "
-            f"({address_text(host)}) ?\n\n"
-            "brew update puis brew upgrade. Les formules installées sur le "
-            "poste passent à leur dernière version ; rien d'autre n'est "
-            "touché.",
+            f"({address_text(host)}) ?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
         self._run_remote_script(
             host, f"Homebrew — {display_name(host)}",
-            "brew update puis brew upgrade.", brew_update_script(),
+            "Formules installées par brew.", brew_update_script(),
         )
 
     def open_remote_settings(self, host_id: str) -> None:
@@ -1188,7 +1199,8 @@ class MainWindow(QMainWindow):
     def _run_remote_script(self, host: dict, title: str, subtitle: str,
                            script: str, root: bool = False,
                            ok_if_disconnect: bool = False,
-                           hint_from_output=None) -> None:
+                           hint_from_output=None,
+                           close_on_success: bool = False) -> None:
         """Exécute un script distant, en demandant le mot de passe sudo si besoin."""
         password = ""
         if root and not remote_sudo_nopasswd(host):
@@ -1200,6 +1212,7 @@ class MainWindow(QMainWindow):
             self, host=host, title=title, subtitle=subtitle, command=command,
             password=password, ok_if_disconnect=ok_if_disconnect,
             hint_from_output=hint_from_output,
+            close_on_success=close_on_success,
         )
         start_task(self, dialog)
 
@@ -1218,7 +1231,7 @@ class MainWindow(QMainWindow):
         self._run_remote_script(
             host, f"Redémarrage — {display_name(host)}",
             "systemctl reboot via SSH.", "sudo -n /usr/bin/systemctl reboot\n",
-            root=True, ok_if_disconnect=True,
+            root=True, ok_if_disconnect=True, close_on_success=True,
         )
 
     def shutdown_host(self, host_id: str) -> None:
@@ -1238,7 +1251,7 @@ class MainWindow(QMainWindow):
             host, f"Extinction — {display_name(host)}",
             "systemctl poweroff via SSH.",
             "sudo -n /usr/bin/systemctl poweroff\n",
-            root=True, ok_if_disconnect=True,
+            root=True, ok_if_disconnect=True, close_on_success=True,
         )
 
     def _run_remote(self, host: dict, title: str, subtitle: str, command: str,
@@ -1288,9 +1301,8 @@ class MainWindow(QMainWindow):
             self, "Tout mettre à jour",
             "Mettre à jour, dans cet ordre :\n\n"
             f"{listed}\n\n"
-            "Chaque étape démarre à la fin de la précédente ; si l'une "
-            "échoue, les suivantes ne sont pas lancées. L'image Gablue "
-            "s'applique au prochain redémarrage.",
+            "Arrêt au premier échec ; l'image Gablue s'applique au prochain "
+            "redémarrage.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
@@ -1301,6 +1313,7 @@ class MainWindow(QMainWindow):
             subtitle=f"{len(steps)} mises à jour enchaînées sur ce poste.",
             steps=steps,
         )
+        dialog.completed.connect(self._updates_after_task)
         start_task(self, dialog)
 
     def _local_update_steps(self) -> list[dict]:
@@ -1360,8 +1373,7 @@ class MainWindow(QMainWindow):
         answer = QMessageBox.question(
             self, "Mise à jour de Gablue",
             "Télécharger la nouvelle image système Gablue ?\n\n"
-            "Le poste continue de tourner normalement ; l'image s'applique au "
-            "prochain redémarrage. Les Flatpaks se mettent à jour séparément.",
+            "Elle s'applique au prochain redémarrage.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
@@ -1375,10 +1387,10 @@ class MainWindow(QMainWindow):
             argv, fifo = [_which("bootc"), "upgrade"], ""
         self._run_local_task(
             "Mise à jour de Gablue",
-            "bootc upgrade — l'image téléchargée s'applique au prochain "
-            "redémarrage.",
+            "La nouvelle image s'applique au prochain redémarrage.",
             argv, root=True,
             hint_from_output=gablue_update_hint,
+            refresh_updates=True,
             progress_fifo=fifo,
             # Image antérieure au helper : bootc ne publie alors aucune
             # progression. Barre indéterminée plutôt que le journal brut, la
@@ -1396,23 +1408,21 @@ class MainWindow(QMainWindow):
             return
         answer = QMessageBox.question(
             self, "Mise à jour des Flatpaks",
-            "Mettre à jour les applications Flatpak ?\n\n"
-            "Les applications du compte et du système sont concernées. La "
-            "partie système passe par sudo : sur Gablue elle est autorisée "
-            "sans mot de passe, ailleurs PolicyKit le demandera.",
+            "Mettre à jour les applications Flatpak du système ?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
         self._run_local_task(
             "Mise à jour des Flatpaks",
-            "flatpak update --user puis --system.",
+            "Applications Flatpak système.",
             [_which("bash"), "-c", flatpak_update_script()],
             # Hors terminal, flatpak écrit « Updating 3/7… » puis des lignes
             # avec le pourcentage : la barre les lit, le journal reste derrière
             # le bouton « Terminal ».
             hint_from_output=flatpak_update_hint,
             progress_parser=parse_flatpak_progress,
+            refresh_updates=True,
         )
 
     def update_local_gwine(self) -> None:
@@ -1426,24 +1436,21 @@ class MainWindow(QMainWindow):
             return
         answer = QMessageBox.question(
             self, "Mise à jour de gwine",
-            "Mettre à jour gwine ?\n\n"
-            "gwine --init vérifie s'il existe une nouvelle version du runner "
-            "Wine ou de ses composants (DXVK, VKD3D, D7VK) et ne réinitialise "
-            "le préfixe que dans ce cas. Sur un poste déjà à jour, rien n'est "
-            "modifié ; sinon le téléchargement peut prendre plusieurs minutes.",
+            "Mettre à jour gwine (runner Wine et composants) ?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
         self._run_local_task(
             "Mise à jour de gwine",
-            "gwine --init — vérification du runner et des composants.",
+            "Runner Wine et composants (DXVK, VKD3D, D7VK).",
             [gwine, "--init"],
             # gwine publie ses étapes sur la sortie (« ::gablue:step ») :
             # une vraie barre remplace le journal, qui reste derrière
             # « Terminal ».
             progress_parser=parse_gablue_progress,
             env_extra={"GABLUE_PROGRESS": "1"},
+            refresh_updates=True,
         )
 
     def update_local_brew(self) -> None:
@@ -1454,21 +1461,20 @@ class MainWindow(QMainWindow):
             return
         answer = QMessageBox.question(
             self, "Mise à jour de Homebrew",
-            "Mettre à jour les formules Homebrew ?\n\n"
-            "brew update puis brew upgrade, comme les timers automatiques du "
-            "samedi. Aucun mot de passe : brew travaille dans son préfixe.",
+            "Mettre à jour les formules Homebrew ?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
         self._run_local_task(
             "Mise à jour de Homebrew",
-            "brew update puis brew upgrade.",
+            "Formules installées par brew.",
             [_which("bash"), "-c", brew_update_script()],
             # Homebrew ne donne aucun pourcentage hors terminal (curl est muet) :
             # la barre avance par formule, d'après ses en-têtes.
             hint_from_output=brew_update_hint,
             progress_parser=brew_progress_parser(),
+            refresh_updates=True,
         )
 
     def open_apps(self) -> None:
@@ -1608,7 +1614,8 @@ class MainWindow(QMainWindow):
                         progress_parser=None,
                         env_extra: dict | None = None,
                         progress_mode: str = "auto",
-                        progress_text: str = "") -> None:
+                        progress_text: str = "",
+                        refresh_updates: bool = False) -> None:
         if argv and shutil.which(argv[0]) is None and not Path(argv[0]).exists():
             QMessageBox.critical(
                 self, title,
@@ -1621,6 +1628,8 @@ class MainWindow(QMainWindow):
             progress_parser=progress_parser, env_extra=env_extra,
             progress_mode=progress_mode, progress_text=progress_text,
         )
+        if refresh_updates:
+            dialog.completed.connect(self._updates_after_task)
         start_task(self, dialog)
 
     # -- recherche sur le réseau local -------------------------------------

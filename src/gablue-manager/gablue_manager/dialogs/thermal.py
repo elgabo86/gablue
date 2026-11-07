@@ -131,6 +131,12 @@ class ThermalDialog(QDialog):
 
         support = bool(device.get("hctm"))
         enabled = bool(device.get("enabled"))
+        # HCTM désactivé : le firmware impose ses propres seuils et le minimum
+        # autorisé (`mntmt`, souvent 83 °C) est au niveau du throttle du SSD,
+        # donc une limite réglée ici ne protège rien. La case reste inerte —
+        # seul un disque déjà limité (donc décochable pour rendre la main au
+        # firmware) est modifiable.
+        editable = support and enabled
         if not device.get("readable", True):
             detail_text = (
                 "État illisible : privilèges ou nvme-cli indisponible."
@@ -140,7 +146,8 @@ class ThermalDialog(QDialog):
                 f"HCTM actif — TMT1 {device.get('tmt1')} °C, "
                 f"TMT2 {device.get('tmt2')} °C"
                 if enabled else
-                "HCTM désactivé — le firmware du SSD décide seul."
+                "HCTM désactivé — seuils imposés par le firmware, non "
+                "réglables ici."
             )
         else:
             detail_text = "Ce SSD ne supporte pas HCTM (limite non réglable)."
@@ -183,17 +190,22 @@ class ThermalDialog(QDialog):
         second = max(45, min(second, max(maximum_t2, 45)))
 
         check.blockSignals(True)
-        check.setChecked(enabled and support)
+        check.setChecked(editable)
         check.blockSignals(False)
-        check.setEnabled(support)
+        check.setEnabled(editable)
         if not support:
             check.setToolTip("HCTM non supporté par ce contrôleur.")
+        elif not enabled:
+            check.setToolTip(
+                "HCTM désactivé : la limite est imposée par le firmware du "
+                "SSD, elle ne peut pas être réglée ici."
+            )
         first_spin.setValue(first)
         second_spin.setValue(second)
         self._select_matching(combo, first, second)
 
         for widget in (combo, first_spin, second_spin):
-            widget.setEnabled(support and check.isChecked())
+            widget.setEnabled(editable and check.isChecked())
         check.toggled.connect(
             lambda checked, row=key: self._set_editable(row, checked)
         )

@@ -88,13 +88,14 @@ class RemoteTaskDialog(QDialog):
                  ok_if_disconnect: bool = False, hint_from_output=None,
                  password: str = "",
                  progress_mode: str = "auto", progress_text: str = "",
-                 auth_link_parser=None):
+                 auth_link_parser=None, close_on_success: bool = False):
         super().__init__(parent)
         self._host = dict(host or {})
         self._command = command
         self._password = password
         self._ok_if_disconnect = ok_if_disconnect
         self._hint_from_output = hint_from_output
+        self._close_on_success = close_on_success
         self._worker: SshTaskWorker | None = None
         self._output: list[str] = []
         self._cancelled = False
@@ -280,6 +281,11 @@ class RemoteTaskDialog(QDialog):
         self.close_button.setVisible(True)
         self.close_button.setDefault(True)
         self.completed.emit(self._cancelled is False and ok)
+        if self._close_on_success and ok and not self._cancelled:
+            # Action « on lance et on oublie » (redémarrage, extinction) : la
+            # carte du poste montre le résultat, la fenêtre n'apporte rien de
+            # plus. Délai court pour laisser lire « Terminé. ».
+            QTimer.singleShot(1500, self.accept)
 
     def abort(self) -> None:
         """Annule et ferme sans demander (fermeture de la fenêtre principale)."""

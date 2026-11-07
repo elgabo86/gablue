@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 
 from .constants import (
-    ATUIN_HELPER, AUTO_UPDATE_HELPER, AUTO_UPDATE_USER_TIMER, AVAHI_HELPER,
+    ATUIN_HELPER, AUTO_UPDATE_HELPER, AVAHI_HELPER,
     AVAHI_SERVICE_FILE, BOOTSELECT_HELPER, BREW_BINARY, BROADCOM_HELPER,
     BROADCOM_WL_FILE, BTRFS_HELPER, CLEAN_HELPER, CMDLINE,
     CPUID_EMU_BLACKLIST,
@@ -297,22 +297,17 @@ def remote_helpers_nopasswd(host: dict) -> bool:
     return code == 0
 
 def flatpak_update_script() -> str:
-    """Mise à jour des Flatpaks : compte, puis système sans mot de passe.
+    """Mise à jour des Flatpaks **système** uniquement, sans mot de passe.
 
-    Sans option, `flatpak update` ne vise que l'installation système (défaut de
-    flatpak) et PolicyKit demande le mot de passe ; l'image autorise
-    `/usr/bin/flatpak update --system -y` dans `/etc/sudoers.d/nopasswd`
-    (arguments exacts, aucun joker), donc `sudo -n` passe sans dialogue. Hors
-    image Gablue la règle manque : l'appel direct reprend la main et PolicyKit
-    demande l'autorisation comme avant.
+    Gablue n'installe rien en `--user` : aucune installation du compte n'est
+    mise à jour ici. L'image autorise `/usr/bin/flatpak update --system -y`
+    dans `/etc/sudoers.d/nopasswd` (arguments exacts, aucun joker), donc
+    `sudo -n` passe sans dialogue. Hors image Gablue la règle manque : l'appel
+    direct reprend la main et PolicyKit demande l'autorisation comme avant.
     """
     return (
-        "rc=0\n"
-        "if [ -n \"$(flatpak --user list --columns=application 2>/dev/null)\" ]; "
-        "then flatpak update --user -y || rc=$?; fi\n"
         "sudo -n flatpak update --system -y || "
-        "flatpak update --system -y || rc=$?\n"
-        "exit $rc\n"
+        "flatpak update --system -y\n"
     )
 
 # Ligne de progression de flatpak hors terminal (sortie non « fancy ») :
@@ -342,10 +337,6 @@ def parse_flatpak_progress(line: str) -> dict:
     l'autre ; sur la ligne d'ouverture (aucun pourcentage), on retient le début
     de l'opération. `{}` pour toute autre ligne (« Looking for updates… »,
     « Nothing to do. »), qui reste donc du journal.
-
-    Le script lance deux mises à jour successives (compte puis système) : les
-    compteurs repartent de zéro à la seconde, la barre peut donc redescendre une
-    fois entre les deux phases.
     """
     match = _FLATPAK_OP_RE.match(line or "")
     if match is None:
@@ -370,15 +361,12 @@ def parse_flatpak_progress(line: str) -> dict:
     }
 
 def flatpak_update_hint(text: str) -> str:
-    """Phrase de fin de journal pour `flatpak update`.
+    """Phrase de fin de journal pour `flatpak update --system`.
 
-    Le script enchaîne deux mises à jour (compte puis système) : la seconde
-    répond presque toujours « Nothing to do. » même quand la première a mis des
-    applications à jour. On ne conclut donc « rien à faire » que si aucune
-    opération n'a démarré — sinon le compte rendu mentirait.
+    Une seule installation est mise à jour (le système) : « Nothing to do. »
+    veut donc bien dire qu'il n'y avait rien à faire. L'ancien script enchaînait
+    compte puis système, et la seconde phase aurait menti.
     """
-    if any(_FLATPAK_OP_RE.match(line) for line in (text or "").splitlines()):
-        return ""
     if "Nothing to do." in (text or ""):
         return "Aucune mise à jour disponible."
     return ""
@@ -636,20 +624,57 @@ printf 'enabled=%s\n' "$(systemctl is-enabled tailscaled.service 2>/dev/null | h
 printf 'active=%s\n' "$(systemctl is-active tailscaled.service 2>/dev/null | head -n 1)"
 printf 'server=%s\n' "$(tailscale debug prefs 2>/dev/null | tr ',' '\n' | grep -m1 'ControlURL' | cut -d'"' -f4)"
 printf 'installed=%s\n' "$(command -v tailscale >/dev/null 2>&1 && echo yes || echo no)"
+printf 'status=%s\n' "$(tailscale status --json 2>/dev/null | tr -d '\n')"
 """
+
+def parse_tailscale_status(text: str) -> dict:
+    """`tailscale status --json` → réseau, nom du nœud et adresse.
+
+    `CurrentTailnet.Name` est le serveur de contrôle chez Headscale (le domaine
+    du tailnet chez Tailscale SaaS) ; `MagicDNSSuffix` donne le suffixe commun
+    des noms. Le nom utilisable par les autres nœuds est `Self.DNSName`, dont on
+    retire le point final et le suffixe MagicDNS (affiché à part).
+    """
+    start = (text or "").find("{")
+    if start < 0:
+        return {}
+    try:
+        data = json.loads(text[start:])
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    self_info = data.get("Self") or {}
+    tailnet = data.get("CurrentTailnet") or {}
+    addresses = self_info.get("TailscaleIPs") or []
+    suffix = str(tailnet.get("MagicDNSSuffix") or "")
+    name = str(self_info.get("DNSName") or "").rstrip(".")
+    if suffix and name.endswith("." + suffix):
+        # Le nom court suffit dans l'interface : « gigafed », pas
+        # « gigafed.tail.io » quand le réseau s'appelle déjà tail.io.
+        name = name[: -(len(suffix) + 1)]
+    return {
+        "backend": str(data.get("BackendState") or ""),
+        "network": suffix or str(tailnet.get("Name") or ""),
+        "node": name or str(self_info.get("HostName") or ""),
+        "address": str(addresses[0]) if addresses else "",
+    }
+
 
 def parse_tailscale_state(output: str) -> dict:
     """État Tailscale à partir des lignes `clé=valeur` du script ci-dessus."""
     values: dict[str, str] = {}
     for line in output.splitlines():
         key, _, value = line.partition("=")
-        if key.strip() in ("enabled", "active", "server", "installed"):
+        if key.strip() in ("enabled", "active", "server", "installed",
+                           "status"):
             values[key.strip()] = value.strip()
     return {
         "installed": values.get("installed") == "yes",
         "enabled": values.get("enabled") == "enabled",
         "active": values.get("active") == "active",
         "server": values.get("server", ""),
+        "status": parse_tailscale_status(values.get("status", "")),
     }
 
 
@@ -703,45 +728,12 @@ def service_enabled(name: str) -> bool:
     return result.returncode == 0
 
 
-def user_service_enabled(name: str) -> bool:
-    """Le service *utilisateur* est-il activé (timer de la session) ?"""
-    try:
-        result = subprocess.run(
-            ["systemctl", "--user", "is-enabled", name],
-            capture_output=True, text=True, timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
-
-
 def auto_update_available() -> bool:
     """Le helper des mises à jour automatiques est-il dans l'image ?"""
     return Path(AUTO_UPDATE_HELPER).is_file()
 
 
 AUTO_UPDATE_TARGETS = ("image", "flatpak", "brew")
-
-def auto_update_calendar(frequency: str) -> str:
-    """Calendrier systemd du rythme choisi (04:00, comme l'image)."""
-    return "*-*-* 04:00:00" if frequency == "daily" else "Sat *-*-* 04:00:00"
-
-def auto_update_schedule_dropin(frequency: str) -> str:
-    """Drop-in `[Timer]` commun aux timers système et au timer du compte.
-
-    Les trois déclencheurs sont remis à zéro avant le nôtre : `rpm-ostreed`
-    porte `OnBootSec`/`OnUnitInactiveSec` et l'image un `OnCalendar` samedi —
-    sans les vider, le timer cumulerait deux calendriers.
-    """
-    return (
-        "[Timer]\n"
-        "OnBootSec=\n"
-        "OnUnitInactiveSec=\n"
-        "OnCalendar=\n"
-        f"OnCalendar={auto_update_calendar(frequency)}\n"
-        "Persistent=true\n"
-        "RandomizedDelaySec=10m\n"
-    )
 
 def parse_auto_update_status(text: str) -> dict:
     """Lignes `clé=valeur` du helper → domaines actifs et fréquence de chacun."""
@@ -769,14 +761,9 @@ def parse_auto_update_status(text: str) -> dict:
     }
 
 def auto_update_state() -> dict:
-    """État complet : timers système (helper) + timer Flatpak de la session.
-
-    `flatpak` n'est vrai que si les deux moitiés tournent : une image mise à
-    jour sans les applications du compte ne doit pas s'afficher « activé ».
-    """
+    """État complet des timers système, lu par le helper privilégié."""
     state = {
         "ok": False, "image": False, "flatpak": False, "brew": False,
-        "user_flatpak": user_service_enabled(AUTO_UPDATE_USER_TIMER),
         "frequencies": {domain: "weekly" for domain in AUTO_UPDATE_TARGETS},
     }
     try:
@@ -789,7 +776,6 @@ def auto_update_state() -> dict:
     if result.returncode != 0:
         return state
     state.update(parse_auto_update_status(result.stdout))
-    state["flatpak"] = state["flatpak"] and state["user_flatpak"]
     state["ok"] = True
     return state
 
@@ -812,14 +798,14 @@ def _steps_script(steps: list[tuple[str, list[str]]]) -> str:
         lines.append("printf '%s\\n' " + shlex.quote("::gablue:done"))
     return "\n".join(lines) + "\n"
 
-def auto_update_script(changes: dict[str, bool], desired: dict[str, bool],
+def auto_update_script(changes: dict[str, bool],
                        frequencies: dict[str, str]) -> str:
-    """Script d'application : domaines modifiés, fréquences, timer du compte.
+    """Script d'application : domaines modifiés et fréquences.
 
     `frequencies` ne porte que les domaines dont la fréquence change : un
     domaine inchangé garde son drop-in, ou le défaut hebdomadaire de l'image.
-    Le timer Flatpak de la session est géré ici, sans privilège, parce que son
-    drop-in vit dans `~/.config/systemd/user`.
+    Tout passe par le helper système : Gablue ne met à jour que les Flatpaks
+    `--system`, il n'y a plus de timer du compte à basculer.
     """
     steps: list[tuple[str, list[str]]] = []
     for key, label in (
@@ -842,46 +828,7 @@ def auto_update_script(changes: dict[str, bool], desired: dict[str, bool],
                 f"sudo -n {AUTO_UPDATE_HELPER} schedule {key} "
                 f"{frequencies[key]}"
             ]))
-    if "flatpak" in changes or "flatpak" in frequencies:
-        steps.append((
-            "Flatpaks du compte",
-            _auto_update_user_steps(desired, frequencies.get("flatpak")),
-        ))
     return _steps_script(steps)
-
-
-def _auto_update_user_steps(desired: dict[str, bool],
-                            frequency: str | None) -> list[str]:
-    """Timer Flatpak du compte : drop-in (si fréquence changée) puis bascule.
-
-    Sans session utilisateur joignable (`systemctl --user` absent, SSH), le
-    drop-in reste écrit et la bascule échoue proprement : le prochain
-    démarrage de session appliquera le bon calendrier.
-    """
-    user: list[str] = []
-    if frequency:
-        dropin = auto_update_schedule_dropin(frequency)
-        user += [
-            'dir="$HOME/.config/systemd/user/'
-            f'{AUTO_UPDATE_USER_TIMER}.d"',
-            'mkdir -p "$dir"',
-            'cat > "$dir/50-gablue-schedule.conf" <<\'EOF\'',
-            *dropin.splitlines(),
-            "EOF",
-            "systemctl --user daemon-reload || true",
-        ]
-    if desired.get("flatpak"):
-        user += [
-            f"systemctl --user enable --now {AUTO_UPDATE_USER_TIMER} "
-            '|| echo "Timer Flatpak utilisateur inchangé (pas de session)."',
-            f"systemctl --user restart {AUTO_UPDATE_USER_TIMER} || true",
-        ]
-    else:
-        user.append(
-            f"systemctl --user disable --now {AUTO_UPDATE_USER_TIMER} "
-            '|| echo "Timer Flatpak utilisateur inchangé (pas de session)."'
-        )
-    return user
 
 
 def docker_available(variant: str) -> bool:

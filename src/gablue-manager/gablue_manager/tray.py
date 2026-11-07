@@ -338,7 +338,12 @@ class Tray:
             self._build_menu()
 
 def _tray_message(tray: Tray, app: QApplication, server) -> None:
-    """Message de la fenêtre : `quit` (icône coupée) ou `reload` (préférences)."""
+    """Message de la fenêtre : `quit`, `reload` (préférences) ou `updates`.
+
+    `updates` = une mise à jour vient de se terminer : l'icône re-sonde tout
+    de suite, sinon sa pastille rouge gardait l'état d'avant jusqu'au prochain
+    créneau (vécu 07/11/2026).
+    """
     socket = server.nextPendingConnection()
     if socket is None:
         return
@@ -351,6 +356,8 @@ def _tray_message(tray: Tray, app: QApplication, server) -> None:
     socket.deleteLater()
     if message == b"reload":
         tray.reload()
+    elif message == b"updates":
+        tray.refresh_updates(force=True)
     else:
         app.quit()
 

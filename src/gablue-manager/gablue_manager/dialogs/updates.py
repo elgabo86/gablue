@@ -4,8 +4,8 @@ L'image Gablue livre tous les timers **désactivés** : c'est l'utilisateur qui
 décide ici ce qui se met à jour tout seul (image, Flatpaks, Homebrew) et à
 quelle fréquence — chaque domaine a la sienne (quotidien ou hebdomadaire).
 Le helper privilégié `/usr/libexec/gablue-auto-update` applique les timers
-système ; le timer Flatpak du compte est basculé sans privilège
-(`systemctl --user`).
+système ; Gablue ne met à jour que les Flatpaks `--system`, il n'y a aucun
+timer du compte à basculer.
 """
 
 from PySide6.QtCore import Qt
@@ -29,7 +29,7 @@ DOMAIN_LABELS = {
     ),
     "flatpak": (
         "Flatpaks",
-        "Applications Flatpak du système et de votre compte.",
+        "Applications Flatpak du système.",
     ),
     "brew": (
         "Homebrew",
@@ -248,15 +248,12 @@ class AutoUpdatesDialog(QDialog):
         if answer != QMessageBox.Yes:
             return
         changes = {key: self.checks[key].isChecked() for key in keys}
-        desired = {
-            key: self.checks[key].isChecked() for key in self.ROWS
-        }
         dialog = LocalTaskDialog(
             self, title="Mises à jour automatiques",
             subtitle="Journal des opérations.",
             argv=[
                 "/usr/bin/bash", "-c",
-                auto_update_script(changes, desired, frequencies),
+                auto_update_script(changes, frequencies),
             ],
             # Le script annonce chaque réglage (`::gablue:step`) : la barre
             # avance par opération, le journal reste derrière « Terminal ».

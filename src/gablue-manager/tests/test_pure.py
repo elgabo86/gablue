@@ -139,21 +139,6 @@ class SystemTest(unittest.TestCase):
             "sudo", local.system_apply_script({"atuin": False})
         )
 
-    def test_auto_update_schedule(self):
-        self.assertEqual(local.auto_update_calendar("daily"), "*-*-* 04:00:00")
-        self.assertEqual(
-            local.auto_update_calendar("weekly"), "Sat *-*-* 04:00:00"
-        )
-        dropin = local.auto_update_schedule_dropin("daily")
-        # Les déclencheurs de l'image sont remis à zéro : sans ça le timer
-        # cumulerait son OnBootSec/OnUnitInactiveSec et deux calendriers.
-        self.assertIn("OnBootSec=\n", dropin)
-        self.assertIn("OnUnitInactiveSec=\n", dropin)
-        self.assertIn("OnCalendar=\n", dropin)
-        self.assertIn("OnCalendar=*-*-* 04:00:00\n", dropin)
-        self.assertIn("Persistent=true", dropin)
-        self.assertIn("RandomizedDelaySec=10m", dropin)
-
     def test_parse_auto_update_status(self):
         text = (
             "image=enabled\nflatpak=disabled\nbrew=enabled\n"
@@ -182,9 +167,7 @@ class SystemTest(unittest.TestCase):
 
     def test_auto_update_script(self):
         script = local.auto_update_script(
-            {"image": True, "brew": False},
-            {"image": True, "flatpak": False, "brew": False},
-            {"image": "weekly"},
+            {"image": True, "brew": False}, {"image": "weekly"},
         )
         self.assertIn(
             "sudo -n /usr/libexec/gablue-auto-update image on", script
@@ -196,46 +179,28 @@ class SystemTest(unittest.TestCase):
             "sudo -n /usr/libexec/gablue-auto-update schedule image weekly",
             script,
         )
-        # Flatpaks inchangés : ni bascule système, ni timer du compte.
+        # Flatpaks inchangés : aucune bascule.
         self.assertNotIn("gablue-auto-update flatpak", script)
         self.assertNotIn("systemctl --user", script)
         self.assertIn("'::gablue:step 3 3 Fréquence — image Gablue'", script)
 
         enabled = local.auto_update_script(
-            {"flatpak": True},
-            {"image": False, "flatpak": True, "brew": False},
-            {"flatpak": "daily"},
-        )
-        self.assertIn(
-            "systemctl --user enable --now flatpak-user-update.timer",
-            enabled,
-        )
-        self.assertIn("OnCalendar=*-*-* 04:00:00", enabled)
-        self.assertIn(
-            "sudo -n /usr/libexec/gablue-auto-update schedule flatpak daily",
-            enabled,
+            {"flatpak": True}, {"flatpak": "daily"},
         )
         self.assertIn(
             "sudo -n /usr/libexec/gablue-auto-update flatpak on", enabled
         )
-        self.assertIn("'::gablue:step 3 3 Flatpaks du compte'", enabled)
-
-        disabled = local.auto_update_script(
-            {"flatpak": False},
-            {"image": False, "flatpak": False, "brew": False},
-            {},
-        )
         self.assertIn(
-            "systemctl --user disable --now flatpak-user-update.timer",
-            disabled,
+            "sudo -n /usr/libexec/gablue-auto-update schedule flatpak daily",
+            enabled,
         )
+        # Gablue ne met à jour que les Flatpaks système : plus de timer du
+        # compte à écrire ou à basculer.
+        self.assertNotIn("systemctl --user", enabled)
+        self.assertIn("'::gablue:step 2 2 Fréquence — Flatpaks'", enabled)
 
-        # Fréquence seule : aucun timer basculé, seul le calendrier change.
-        frequency_only = local.auto_update_script(
-            {},
-            {"image": False, "flatpak": False, "brew": False},
-            {"brew": "daily"},
-        )
+        # Fréquence seule : aucun domaine basculé, seul le calendrier change.
+        frequency_only = local.auto_update_script({}, {"brew": "daily"})
         self.assertIn(
             "sudo -n /usr/libexec/gablue-auto-update schedule brew daily",
             frequency_only,
@@ -388,8 +353,8 @@ class SystemTest(unittest.TestCase):
             self.assertEqual(local.parse_flatpak_progress(text), {}, text)
 
     def test_flatpak_update_hint(self):
-        # Deux phases (compte puis système) : « Nothing to do. » de la seconde
-        # ne doit pas faire croire que rien n'a été mis à jour.
+        # Une seule installation (système) : « Nothing to do. » veut dire
+        # qu'il n'y avait rien à faire.
         self.assertEqual(
             local.flatpak_update_hint(
                 "Looking for updates\u2026\nNothing to do.\n"
@@ -397,12 +362,15 @@ class SystemTest(unittest.TestCase):
             "Aucune mise à jour disponible.",
         )
         self.assertEqual(
-            local.flatpak_update_hint(
-                "Updating 1/2\u2026\nNothing to do.\n"
-            ),
+            local.flatpak_update_hint("Updating 1/2\u2026          45%\n"),
             "",
         )
         self.assertEqual(local.flatpak_update_hint(""), "")
+
+    def test_flatpak_update_script_is_system_only(self):
+        script = local.flatpak_update_script()
+        self.assertIn("flatpak update --system -y", script)
+        self.assertNotIn("--user", script)
 
     def test_brew_progress(self):
         parse = local.brew_progress_parser()
@@ -927,11 +895,28 @@ class TailscaleTest(unittest.TestCase):
         state = local.parse_tailscale_state(
             "enabled=enabled\nactive=inactive\n"
             "server=https://head.example\ninstalled=yes\n"
+            'status={"BackendState": "Running", "Self": {"DNSName": "x.y."}}\n'
         )
         self.assertEqual(state["server"], "https://head.example")
         self.assertTrue(state["installed"])
         self.assertTrue(state["enabled"])
         self.assertFalse(state["active"])
+        self.assertEqual(state["status"]["backend"], "Running")
+        self.assertEqual(state["status"]["node"], "x.y")
+
+    def test_parse_status(self):
+        status = local.parse_tailscale_status(
+            '{"BackendState": "Running", '
+            '"Self": {"DNSName": "gigafed.tail.io.", "HostName": "gigafed", '
+            '"TailscaleIPs": ["100.64.0.45", "fd7a::2"]}, '
+            '"CurrentTailnet": {"Name": "head.example", '
+            '"MagicDNSSuffix": "tail.io"}}'
+        )
+        self.assertEqual(status["backend"], "Running")
+        self.assertEqual(status["network"], "tail.io")
+        self.assertEqual(status["node"], "gigafed")
+        self.assertEqual(status["address"], "100.64.0.45")
+        self.assertEqual(local.parse_tailscale_status(""), {})
 
     def test_valid_server(self):
         self.assertTrue(local.valid_tailscale_server("https://head.example"))

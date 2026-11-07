@@ -139,18 +139,19 @@ def parse_flatpak_updates(text: str) -> list[str]:
     return sorted(apps)
 
 def check_flatpaks() -> dict:
-    """Applications Flatpak en retard, installation système et compte."""
-    apps: list[str] = []
-    for extra in ((), ("--user",)):
-        returncode, text = _run(
-            ["flatpak", "remote-ls", *extra, "--updates",
-             "--columns=application"],
-            60,
-        )
-        if returncode == 0:
-            apps.extend(parse_flatpak_updates(text))
-    unique = sorted(set(apps))
-    return {"state": "updates" if unique else "uptodate", "apps": unique}
+    """Applications Flatpak système en retard.
+
+    Gablue n'installe rien en `--user` : la sonde ne regarde que l'installation
+    système, sinon des applications du compte compteraient comme « à mettre à
+    jour » alors que le bouton ne les mettrait pas à jour.
+    """
+    returncode, text = _run(
+        ["flatpak", "remote-ls", "--updates", "--columns=application"], 60,
+    )
+    if returncode != 0:
+        return {"state": "unknown", "apps": []}
+    apps = parse_flatpak_updates(text)
+    return {"state": "updates" if apps else "uptodate", "apps": apps}
 
 # -- Homebrew ---------------------------------------------------------------
 

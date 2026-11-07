@@ -169,6 +169,7 @@ class BootDialog(QDialog):
             progress_parser=parse_gablue_progress,
             progress_text="Préparation du démarrage…",
             reveal_log_on_error=True,
+            close_on_success=True,
         )
         start_task(self, task)
         # Dialogue modal : rester ouvert désactiverait la fenêtre de

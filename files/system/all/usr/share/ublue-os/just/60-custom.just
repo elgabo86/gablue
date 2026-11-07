@@ -641,7 +641,6 @@ toggle-updates-all ACTION="":
     fi
     if [ "${OPTION,,}" == "enable" ]; then
       sudo systemctl enable --now flatpak-system-update.timer rpm-ostreed-automatic.timer brew-update.timer brew-upgrade.timer
-      systemctl enable --now --user flatpak-user-update.timer
       echo "All automatic updates have been ${green}${bold}enabled${normal}."
     elif [ "${OPTION,,}" == "disable" ]; then
       sudo systemctl disable --now flatpak-system-update.timer rpm-ostreed-automatic.timer brew-update.timer brew-upgrade.timer

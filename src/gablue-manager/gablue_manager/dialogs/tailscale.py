@@ -82,6 +82,14 @@ class TailscaleDialog(QDialog):
         detail.setObjectName("hostDetail")
         detail.setWordWrap(True)
         frame_layout.addWidget(detail)
+
+        # Réseau, nom et adresse : ce que les autres postes voient de celui-ci.
+        self.info = QLabel(frame)
+        self.info.setObjectName("hostDetail")
+        self.info.setWordWrap(True)
+        self.info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.info.setVisible(False)
+        frame_layout.addWidget(self.info)
         frame_layout.addStretch(1)
         self.rows_layout.addWidget(frame)
 
@@ -134,7 +142,37 @@ class TailscaleDialog(QDialog):
         self.check.setChecked(self.initial)
         self.check.blockSignals(False)
         self.check.setEnabled(installed)
+        self._update_info()
         self._update_apply()
+
+    def _update_info(self) -> None:
+        """Réseau Tailscale, nom et adresse du poste, quand il est connecté."""
+        status = self.state.get("status") or {}
+        running = status.get("backend") == "Running"
+        lines: list[str] = []
+        if running:
+            server = str(self.state.get("server") or "")
+            for prefix in ("https://", "http://"):
+                if server.startswith(prefix):
+                    server = server[len(prefix):]
+            server = server.strip("/")
+            network = str(status.get("network") or "")
+            if network or server:
+                suffix = f" · serveur {server}" if server else ""
+                lines.append(
+                    f"Réseau : {network or 'inconnu'}{suffix}"
+                )
+            node = str(status.get("node") or "")
+            if node:
+                address = str(status.get("address") or "")
+                lines.append(
+                    "Nom sur le réseau : " + node
+                    + (f" ({address})" if address else "")
+                )
+        elif self.state.get("enabled") and self.state.get("active"):
+            lines.append("Pas encore connecté au réseau Tailscale.")
+        self.info.setText("\n".join(lines))
+        self.info.setVisible(bool(lines))
 
     def changed(self) -> bool:
         return self.check.isEnabled() and self.check.isChecked() != self.initial
