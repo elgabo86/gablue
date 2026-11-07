@@ -1,0 +1,194 @@
+#!/usr/bin/python3
+
+"""gablue-secureboot — clés Secure Boot Gablue (enrollment MOK).
+
+Équivalent non interactif de la recette `ujust secureboot` et de l'enrollment
+fait par l'ISO : programme l'ajout des certificats Gablue à la liste MOK
+(Machine Owner Key). La demande est écrite dans les variables EFI ; c'est le
+menu MokManager, au démarrage suivant, qui l'applique.
+
+    status   état JSON (EFI, Secure Boot, chaque certificat)
+    enroll   programme l'enrollment des certificats présents
+
+Sous-commandes appelées par Gablue Manager en `sudo -n` (règles sudoers
+exactes) : `/etc/pki/akmods/certs` est en 0700 root, donc même la lecture des
+certificats passe par root. Aucun argument libre n'est accepté.
+
+Le mot de passe MOK (`gablue`, public : ISO et recette ujust) n'est pas un
+secret — il confirme seulement la demande au clavier, avant tout démarrage
+Linux. Il ne contient que des lettres dont la position est identique en
+QWERTY US et en suisse français (`ch-fr`) : le menu MokManager utilise le
+clavier du firmware (QWERTY en pratique), et « gablue » se tape pareil dans
+les deux cas.
+"""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+MOKUTIL = "/usr/bin/mokutil"
+EFI_DIR = Path("/sys/firmware/efi")
+
+# Mot de passe d'enrollment, identique à celui de l'ISO Gablue.
+PASSWORD = "gablue"
+
+# Certificats livrés dans l'image : kmods ublue-os d'un côté, modules signés
+# localement (cpuid-fault) de l'autre. Les deux doivent être enrôlés.
+KEYS = (
+    (
+        "/etc/pki/akmods/certs/gablue-secure-boot.der",
+        "Gablue Secure Boot (kmods ublue-os)",
+    ),
+    (
+        "/etc/pki/akmods/certs/gablue-kmod.der",
+        "Gablue Kernel Module Signing (modules locaux)",
+    ),
+)
+
+
+def usage() -> int:
+    print("Usage : gablue-secureboot status | enroll", file=sys.stderr)
+    return 2
+
+
+def mok(*args: str, stdin: str | None = None) -> tuple[int, str]:
+    """Lance mokutil ; jamais d'exception (code 127 si l'outil manque)."""
+    try:
+        result = subprocess.run(
+            [MOKUTIL, *args], input=stdin, capture_output=True, text=True,
+            timeout=90,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 127, ""
+    return result.returncode, (result.stdout or "") + (result.stderr or "")
+
+
+def secure_boot_state() -> str:
+    """« enabled », « disabled », « unsupported » (pas d'EFI) ou « unknown »."""
+    if not EFI_DIR.is_dir():
+        return "unsupported"
+    code, text = mok("--sb-state")
+    if "SecureBoot enabled" in text:
+        return "enabled"
+    if "SecureBoot disabled" in text:
+        return "disabled"
+    return "unknown"
+
+
+def key_state(path: str) -> str:
+    """« missing », « enrolled », « pending », « not-enrolled », « blocked »
+    ou « unknown ».
+
+    Attention au code de retour de `mokutil --test-key` : il vaut **0 quand la
+    clé n'est pas enrôlée** et **1 quand elle l'est déjà** (ou déjà en attente,
+    ou révoquée) — l'inverse d'une erreur. Seul un code 127 (mokutil absent)
+    est une panne ; le reste se lit dans le texte.
+    """
+    if not Path(path).is_file():
+        return "missing"
+    return parse_test_key(*mok("--test-key", path))
+
+
+def parse_test_key(code: int, text: str) -> str:
+    """Texte de `mokutil --test-key` → état (séparé pour les tests)."""
+    if code == 127:
+        return "unknown"
+    if "already in the enrollment request" in text:
+        return "pending"
+    if "is already enrolled" in text or "is already in db" in text:
+        return "enrolled"
+    if "is blocked" in text:
+        return "blocked"
+    if "is not enrolled" in text:
+        return "not-enrolled"
+    return "unknown"
+
+
+def collect() -> dict:
+    return {
+        "efi": EFI_DIR.is_dir(),
+        "secure_boot": secure_boot_state(),
+        "password": PASSWORD,
+        "keys": [
+            {"path": path, "label": label, "state": key_state(path)}
+            for path, label in KEYS
+        ],
+    }
+
+
+def enroll() -> int:
+    if not EFI_DIR.is_dir():
+        print("Démarrage EFI non détecté : aucun enrôlement possible.")
+        return 1
+
+    # Le menu MokManager attend sans limite : une demande non validée resterait
+    # sinon proposée à chaque démarrage après expiration du délai.
+    code, text = mok("--timeout", "-1")
+    if code != 0:
+        print("Attention : impossible de désactiver le délai MokManager.")
+        first = (text.strip().splitlines() or [""])[0]
+        if first:
+            print(f"  {first}")
+
+    failed = False
+    for path, label in KEYS:
+        state = key_state(path)
+        if state == "missing":
+            print(f"• {label} : certificat absent de l'image, ignoré.")
+            continue
+        if state == "enrolled":
+            print(f"• {label} : déjà enrôlée.")
+            continue
+        if state == "pending":
+            print(f"• {label} : demande déjà en attente.")
+            continue
+        if state == "blocked":
+            print(f"• {label} : révoquée dans le firmware (dbx), enrôlement "
+                  "impossible.")
+            failed = True
+            continue
+        if state == "unknown":
+            print(f"• {label} : état illisible, ignoré.")
+            failed = True
+            continue
+        code, text = mok(
+            "--import", path, stdin=f"{PASSWORD}\n{PASSWORD}\n"
+        )
+        after = key_state(path)
+        if code == 0 and after in ("pending", "enrolled"):
+            print(f"• {label} : demande d'enrôlement posée.")
+            continue
+        failed = True
+        print(f"• {label} : échec de l'enrôlement.")
+        for line in (text.strip().splitlines() or [])[:3]:
+            print(f"  {line}")
+
+    if failed:
+        return 1
+    print("")
+    print("Au prochain démarrage : « Enroll MOK » → « Continue » → "
+          f"mot de passe « {PASSWORD} ».")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 2:
+        return usage()
+    # `/etc/pki/akmods/certs` est en 0700 root : hors root, les certificats
+    # paraîtraient « absents » alors qu'ils existent.
+    if os.geteuid() != 0:
+        print("gablue-secureboot doit être lancé en root (sudo -n).",
+              file=sys.stderr)
+        return 1
+    if argv[1] == "status":
+        print(json.dumps(collect(), ensure_ascii=False))
+        return 0
+    if argv[1] == "enroll":
+        return enroll()
+    return usage()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

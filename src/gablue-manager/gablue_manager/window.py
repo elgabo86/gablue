@@ -32,6 +32,7 @@ from .dialogs.host import CandidateDialog, HostDialog
 from .dialogs.kernel import LocalSettingsDialog, RemoteSettingsDialog
 from .dialogs.key import KeyInstallDialog
 from .dialogs.prefs import PrefsDialog
+from .dialogs.secureboot import SecureBootDialog
 from .dialogs.services import ServicesDialog
 from .dialogs.stversions import StVersionsDialog
 from .dialogs.tailscale import TailscaleDialog
@@ -202,6 +203,8 @@ class MainWindow(QMainWindow):
         self.local_card.clean_requested.connect(self.open_clean_system)
         self.local_card.stversions_requested.connect(self.open_stversions)
         self.local_card.grub_requested.connect(self.open_grub)
+        self.local_card.secureboot_requested.connect(self.open_secureboot)
+        self.local_card.firmware_requested.connect(self.reboot_firmware)
         self.local_card.gwine_requested.connect(self.open_local_gwine_options)
         self.local_card.booster_requested.connect(
             self.open_local_foreground_booster
@@ -1487,6 +1490,43 @@ class MainWindow(QMainWindow):
 
     def open_grub(self) -> None:
         GrubDialog(self).exec()
+
+    def open_secureboot(self) -> None:
+        SecureBootDialog(self).exec()
+
+    def reboot_firmware(self) -> None:
+        """Redémarre dans le BIOS/UEFI, après confirmation.
+
+        `systemctl reboot --firmware-setup` pose la demande dans les
+        variables EFI ; le menu du firmware s'ouvre au démarrage suivant, puis
+        le démarrage normal reprend à sa fermeture. `sudo -n` et règle
+        sudoers exacte : aucune invite (un échec de règle s'affiche dans
+        le journal de la tâche, pas dans un dialogue de mot de passe).
+        """
+        if not Path("/sys/firmware/efi").is_dir():
+            QMessageBox.information(
+                self, "Redémarrer dans le BIOS",
+                "Ce poste ne démarre pas en mode UEFI : le BIOS ne peut pas "
+                "être ouvert depuis Gablue. Utilisez la touche du fabricant "
+                "au démarrage.",
+            )
+            return
+        answer = QMessageBox.question(
+            self, "Redémarrer dans le BIOS",
+            "Redémarrer maintenant dans le BIOS (UEFI) ?\n\n"
+            "Le poste redémarre immédiatement et le menu du BIOS s'ouvre à "
+            "la place de Gablue ; le démarrage normal reprend à sa "
+            "fermeture.\n\n"
+            "Les sessions ouvertes seront interrompues.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._launch(
+            ["sudo", "-n", "/usr/bin/systemctl", "reboot",
+             "--firmware-setup"],
+            "Redémarrer dans le BIOS",
+        )
 
     def open_local_gwine_options(self) -> None:
         GwineOptionsDialog(self).exec()

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from .constants import COLOR_OFFLINE, KEY_STATES, STATE_COLOR, STATE_TEXT
-from .local import local_distro
+from .local import local_distro, secure_boot_label, secure_boot_state
 from .style import accent_color
 from .updates import (
     DOMAINS, compact_summary, domain_count, summary_lines, total_updates,
@@ -414,6 +414,8 @@ class LocalCard(QFrame):
     clean_requested = Signal()
     stversions_requested = Signal()
     grub_requested = Signal()
+    secureboot_requested = Signal()
+    firmware_requested = Signal()
     gwine_requested = Signal()
     booster_requested = Signal()
     tailscale_requested = Signal()
@@ -448,6 +450,11 @@ class LocalCard(QFrame):
         detail = f"{getpass.getuser()}@{host}"
         if distro:
             detail += f" · {distro}"
+        # Secure Boot se lit sans privilège (`mokutil --sb-state`) : l'état
+        # figure sur la carte, pas seulement dans l'outil d'enrôlement.
+        boot_state = secure_boot_label(secure_boot_state())
+        if boot_state:
+            detail += f" · {boot_state}"
         self.detail_label = QLabel(detail, self)
         self.detail_label.setObjectName("hostDetail")
         self.hint_label = QLabel("Mises à jour et options de cette machine", self)
@@ -518,6 +525,10 @@ class LocalCard(QFrame):
         config_menu = QMenu(self.config_button)
         config_menu.addAction("Noyau et matériel…", self.kernel_requested.emit)
         config_menu.addAction("Menu GRUB…", self.grub_requested.emit)
+        config_menu.addAction("Secure Boot…", self.secureboot_requested.emit)
+        config_menu.addAction(
+            "Redémarrer dans le BIOS…", self.firmware_requested.emit
+        )
         config_menu.addSeparator()
         config_menu.addAction(
             "Mises à jour automatiques…", self.updates_requested.emit

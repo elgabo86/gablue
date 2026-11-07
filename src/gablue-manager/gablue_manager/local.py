@@ -16,7 +16,7 @@ from .constants import (
     AVAHI_SERVICE_FILE, BREW_BINARY, BROADCOM_HELPER, BROADCOM_WL_FILE,
     BTRFS_HELPER, CLEAN_HELPER, CMDLINE, CPUID_EMU_BLACKLIST,
     CPUID_EMU_CONF, CPUID_EMU_HELPER, GAMEPAD_HELPER, GRUB_HELPER,
-    NVME_THERMAL_HELPER,
+    NVME_THERMAL_HELPER, SECUREBOOT_HELPER,
     KARG_BT_ERTM, KARG_CLEARCPUID,
     KARG_HDMI21, KARG_HELPER, KARG_MITIGATIONS_OFF, LOW_LATENCY_FILE,
     LOW_LATENCY_HELPER, OS_RELEASE, REBASE_HELPER, SERVICE_HELPER,
@@ -1368,6 +1368,101 @@ def grub_apply_script(value: str) -> str:
     else:
         command = f"sudo -n {GRUB_HELPER} set {value}"
     return _steps_script([("Menu GRUB", [command])])
+
+
+# -- Secure Boot : état et enrôlement des clés MOK ---------------------------
+
+SECURE_BOOT_STATES = ("enabled", "disabled", "unsupported", "unknown")
+SECURE_BOOT_KEY_STATES = (
+    "missing", "enrolled", "pending", "not-enrolled", "blocked", "unknown",
+)
+
+
+def secure_boot_state() -> str:
+    """État Secure Boot : « enabled », « disabled », « unsupported », « unknown ».
+
+    `mokutil --sb-state` ne demande aucun privilège : la carte « Ce poste »
+    peut l'afficher au démarrage, sans helper ni sudo.
+    """
+    if not Path("/sys/firmware/efi").is_dir():
+        return "unsupported"
+    code, text = _run(["mokutil", "--sb-state"], 15)
+    if code == 127:
+        return "unknown"
+    if "SecureBoot enabled" in text:
+        return "enabled"
+    if "SecureBoot disabled" in text:
+        return "disabled"
+    return "unknown"
+
+
+def secure_boot_label(state: str) -> str:
+    """Libellé court pour la carte « Ce poste » ("" si l'état est inconnu)."""
+    return {
+        "enabled": "Secure Boot activé",
+        "disabled": "Secure Boot désactivé",
+        "unsupported": "démarrage BIOS",
+    }.get(state, "")
+
+
+def parse_secureboot_status(text: str) -> dict:
+    """JSON du helper → dict validé ({} si illisible ou incomplet)."""
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    secure_boot = str(data.get("secure_boot") or "")
+    if secure_boot not in SECURE_BOOT_STATES:
+        return {}
+    keys: list[dict] = []
+    for item in data.get("keys") or []:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "")
+        state = str(item.get("state") or "")
+        if not path or state not in SECURE_BOOT_KEY_STATES:
+            continue
+        keys.append({
+            "path": path,
+            "label": str(item.get("label") or path),
+            "state": state,
+        })
+    if not keys:
+        return {}
+    return {
+        "efi": bool(data.get("efi")),
+        "secure_boot": secure_boot,
+        "password": str(data.get("password") or ""),
+        "keys": keys,
+    }
+
+
+def secureboot_helper_available() -> bool:
+    """Le helper d'enrôlement MOK est-il installé (image à jour) ?"""
+    return Path(SECUREBOOT_HELPER).is_file()
+
+
+def secureboot_status() -> dict:
+    """État lu par le helper en `sudo -n` ; {} s'il est absent ou illisible.
+
+    Les certificats vivent dans `/etc/pki/akmods/certs` (0700 root) : même la
+    lecture passe par root, jamais par une invite de mot de passe.
+    """
+    if not secureboot_helper_available():
+        return {}
+    code, text = _run(["sudo", "-n", SECUREBOOT_HELPER, "status"], 90)
+    if code != 0:
+        return {}
+    return parse_secureboot_status(text)
+
+
+def secureboot_enroll_script() -> str:
+    """Script d'enrôlement (une étape) : la demande prend effet au reboot."""
+    return _steps_script(
+        [("Secure Boot", [f"sudo -n {SECUREBOOT_HELPER} enroll"])]
+    )
 
 
 def rebase_helper_available() -> bool:

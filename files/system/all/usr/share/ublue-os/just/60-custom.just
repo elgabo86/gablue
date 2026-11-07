@@ -729,16 +729,18 @@ snapshots-disable:
     echo ""
     echo "Snapshots BTRFS désactivés et configuration supprimée."
 
-# Enroll Gablue Secure Boot keys - Enter password "secureblue" if prompted
+# Enroll Gablue Secure Boot keys - Enter password "gablue" if prompted
 secureboot:
     #!/usr/bin/bash
-    ENROLLMENT_PASSWORD="secureblue"
+    ENROLLMENT_PASSWORD="gablue"
     SECUREBOOT_KEY=/etc/pki/akmods/certs/gablue-secure-boot.der
     CPUID_FAULT_KEY=/etc/pki/akmods/certs/gablue-kmod.der
     sudo mokutil --timeout -1
     echo -e "$ENROLLMENT_PASSWORD\n$ENROLLMENT_PASSWORD" | sudo mokutil --import "$SECUREBOOT_KEY"
     echo -e "$ENROLLMENT_PASSWORD\n$ENROLLMENT_PASSWORD" | sudo mokutil --import "$CPUID_FAULT_KEY"
-    echo 'At next reboot, the moktool UEFI menu UI will be displayed (*QWERTY* keyboard input and navigation).\nThen, select "Enroll MOK", and input "secureblue" as the password'
+    echo "Au prochain démarrage, le menu MokManager s'ouvre avant Linux (clavier du firmware)."
+    echo "Choisir « Enroll MOK » → « Continue », puis le mot de passe « gablue »."
+    echo "Le mot de passe ne contient que des lettres à la même position en QWERTY et en suisse français."
 
 # Configure beesd for BTRFS deduplication (pas active par defaut)
 configure-beesd ACTION="":

@@ -557,6 +557,81 @@ class SystemTest(unittest.TestCase):
             local.grub_apply_script("unset"),
         )
 
+    def test_secureboot(self):
+        script = local.secureboot_enroll_script()
+        self.assertIn("sudo -n /usr/libexec/gablue-secureboot enroll", script)
+        # Une seule étape : l'effet est au reboot, pas ici.
+        self.assertIn("'::gablue:step 1 1 Secure Boot'", script)
+
+        status = local.parse_secureboot_status(json.dumps({
+            "efi": True,
+            "secure_boot": "enabled",
+            "password": "gablue",
+            "keys": [
+                {"path": "/a.der", "label": "A", "state": "enrolled"},
+                {"path": "/b.der", "label": "B", "state": "not-enrolled"},
+                # Entrées incomplètes : ignorées, pas d'exception.
+                {"path": "", "label": "C", "state": "enrolled"},
+                {"path": "/c.der", "label": "C", "state": "bizarre"},
+            ],
+        }))
+        self.assertEqual(status["secure_boot"], "enabled")
+        self.assertEqual(status["password"], "gablue")
+        self.assertEqual(
+            [(key["path"], key["state"]) for key in status["keys"]],
+            [("/a.der", "enrolled"), ("/b.der", "not-enrolled")],
+        )
+        self.assertEqual(local.parse_secureboot_status("pas du json"), {})
+        self.assertEqual(
+            local.parse_secureboot_status('{"secure_boot": "enabled"}'), {}
+        )
+        self.assertEqual(
+            local.parse_secureboot_status(
+                '{"secure_boot": "peut-être", "keys": '
+                '[{"path": "/a.der", "state": "enrolled"}]}'
+            ),
+            {},
+        )
+        self.assertEqual(
+            local.secure_boot_label("enabled"), "Secure Boot activé"
+        )
+        self.assertEqual(
+            local.secure_boot_label("disabled"), "Secure Boot désactivé"
+        )
+        self.assertEqual(local.secure_boot_label("unknown"), "")
+
+    def test_secureboot_helper_key_states(self):
+        """`mokutil --test-key` sort 0 quand la clé N'EST PAS enrôlée."""
+        import importlib.machinery
+        import importlib.util
+
+        path = (ROOT.parents[1] / "files/system/all/usr/libexec/"
+                "gablue-secureboot")
+        # Le helper n'a pas d'extension `.py` : loader explicite.
+        loader = importlib.machinery.SourceFileLoader(
+            "gablue_secureboot_helper", str(path)
+        )
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        self.assertEqual(
+            module.parse_test_key(0, "k.der is not enrolled"), "not-enrolled"
+        )
+        self.assertEqual(
+            module.parse_test_key(1, "k.der is already enrolled"), "enrolled"
+        )
+        self.assertEqual(
+            module.parse_test_key(
+                1, "k.der is already in the enrollment request"
+            ),
+            "pending",
+        )
+        self.assertEqual(
+            module.parse_test_key(1, "k.der is blocked in dbx"), "blocked"
+        )
+        self.assertEqual(module.parse_test_key(127, ""), "unknown")
+        self.assertEqual(module.key_state("/inexistant.der"), "missing")
+
     def test_format_size(self):
         self.assertEqual(local.format_size(None), "")
         self.assertEqual(local.format_size(0), "")
