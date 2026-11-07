@@ -15,7 +15,6 @@ chmod +x /usr/bin/dlcover
 chmod +x /usr/bin/lol
 chmod +x /usr/bin/dlv
 chmod +x /usr/bin/eden-install
-chmod +x /usr/bin/gskill
 chmod +x /usr/bin/limitw
 chmod +x /usr/bin/encode64
 chmod +x /usr/bin/decode64
