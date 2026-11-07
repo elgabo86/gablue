@@ -34,8 +34,9 @@ from .dialogs.variant import VariantDialog
 from .hosts import load_hosts, parse_ssh_config, save_hosts
 from .local import (
     _sudo_run, avahi_apply_args, avahi_publish_state, brew_available,
-    brew_update_script, flatpak_update_hint, flatpak_update_script,
-    gablue_update_hint, local_sshd_state, privileged_prefix,
+    brew_progress_parser, brew_update_hint, brew_update_script,
+    flatpak_update_hint, flatpak_update_script, gablue_update_hint,
+    local_sshd_state, parse_flatpak_progress, privileged_prefix,
     set_local_sshd_sudo,
 )
 from .ssh import ask_remote_password, remote_sudo_nopasswd, remote_sudo_prefix
@@ -1195,7 +1196,7 @@ class MainWindow(QMainWindow):
             # avec le pourcentage : la barre les lit, le journal reste derrière
             # le bouton « Terminal ».
             hint_from_output=flatpak_update_hint,
-            progress_lines=True,
+            progress_parser=parse_flatpak_progress,
         )
 
     def update_local_gwine(self) -> None:
@@ -1243,6 +1244,10 @@ class MainWindow(QMainWindow):
             "Mise à jour de Homebrew",
             "brew update puis brew upgrade.",
             [_which("bash"), "-c", brew_update_script()],
+            # Homebrew ne donne aucun pourcentage hors terminal (curl est muet) :
+            # la barre avance par formule, d'après ses en-têtes.
+            hint_from_output=brew_update_hint,
+            progress_parser=brew_progress_parser(),
         )
 
     def open_apps(self) -> None:
@@ -1295,7 +1300,7 @@ class MainWindow(QMainWindow):
     def _run_local_task(self, title: str, subtitle: str, argv: list[str],
                         root: bool = False, hint_from_output=None,
                         progress_fifo: str = "",
-                        progress_lines: bool = False) -> None:
+                        progress_parser=None) -> None:
         if argv and shutil.which(argv[0]) is None and not Path(argv[0]).exists():
             QMessageBox.critical(
                 self, title,
@@ -1305,7 +1310,7 @@ class MainWindow(QMainWindow):
         dialog = LocalTaskDialog(
             self, title=title, subtitle=subtitle, argv=argv, root=root,
             hint_from_output=hint_from_output, progress_fifo=progress_fifo,
-            progress_lines=progress_lines,
+            progress_parser=progress_parser,
         )
         start_task(self, dialog)
 

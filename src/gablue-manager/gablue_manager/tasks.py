@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QPushButton, QVBoxLayout,
 )
 
-from .local import parse_flatpak_progress, parse_progress_event, privileged_prefix
+from .local import parse_progress_event, privileged_prefix
 from .util import display_name, ssh_target
 from .workers import SshTaskWorker
 
@@ -187,7 +187,7 @@ class LocalTaskDialog(QDialog):
     def __init__(self, parent=None, title: str = "", subtitle: str = "",
                  argv: list[str] | None = None, root: bool = False,
                  hint_from_output=None, progress_fifo: str = "",
-                 progress_lines: bool = False):
+                 progress_parser=None):
         super().__init__(parent)
         self._argv = list(argv or [])
         self._root = root
@@ -203,10 +203,10 @@ class LocalTaskDialog(QDialog):
         self._progress_tries = 0
         self._progress_buffer = ""
         self._progress_seen = False
-        # Progression lue dans le journal (flatpak, hors terminal) : la barre
-        # remplace le journal, qui reste accessible par le bouton « Terminal ».
-        self._progress_lines = progress_lines
-        self._progress_ui = bool(progress_fifo or progress_lines)
+        # Progression lue dans le journal (flatpak, brew) : la barre remplace le
+        # journal, qui reste accessible par le bouton « Terminal ».
+        self._progress_parser = progress_parser
+        self._progress_ui = bool(progress_fifo or progress_parser)
         self._line_buffer = ""
 
         self.setWindowTitle(title or "Action sur ce poste")
@@ -243,7 +243,7 @@ class LocalTaskDialog(QDialog):
         root_layout.addWidget(self.progress_bar)
         if progress_fifo:
             self.progress_label.setText("Préparation de la mise à jour…")
-        elif progress_lines:
+        elif progress_parser is not None:
             self.progress_label.setText("Recherche de mises à jour…")
 
         self.log_view = QPlainTextEdit(self)
@@ -378,17 +378,16 @@ class LocalTaskDialog(QDialog):
             self.progress_bar.setRange(0, 100)
             self.progress_bar.setValue(int(round(float(percent))))
 
-    def _apply_flatpak_progress(self, info: dict) -> None:
+    def _apply_line_progress(self, info: dict) -> None:
         self._progress_seen = True
-        total = int(info.get("total") or 1)
-        op = int(info.get("op") or 1)
-        label = info.get("label") or "Mise à jour des Flatpaks"
-        if total > 1:
-            label += f" {op}/{total}"
-        self.progress_label.setText(label)
+        self.progress_label.setText(info.get("label") or "Mise à jour en cours")
         percent = info.get("percent")
+        if percent is None:
+            # Travail en cours sans total connu (téléchargements de brew).
+            self.progress_bar.setRange(0, 0)
+            return
         self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(int(round(float(percent or 0.0))))
+        self.progress_bar.setValue(int(round(float(percent))))
 
     def _read_progress_lines(self, text: str) -> None:
         """Découpe la sortie en lignes complètes et en tire la progression.
@@ -397,21 +396,22 @@ class LocalTaskDialog(QDialog):
         deux fois, d'où le tampon. Les lignes non reconnues restent dans le
         journal, rien n'est consommé.
         """
-        if not self._progress_lines:
+        if self._progress_parser is None:
             return
         self._line_buffer += text
         while "\n" in self._line_buffer:
             line, _, self._line_buffer = self._line_buffer.partition("\n")
-            info = parse_flatpak_progress(line)
+            info = self._progress_parser(line)
             if info:
-                self._apply_flatpak_progress(info)
+                self._apply_line_progress(info)
 
     def _flush_progress_lines(self) -> None:
         if self._line_buffer:
-            info = parse_flatpak_progress(self._line_buffer)
+            info = (self._progress_parser(self._line_buffer)
+                    if self._progress_parser is not None else {})
             self._line_buffer = ""
             if info:
-                self._apply_flatpak_progress(info)
+                self._apply_line_progress(info)
 
     def _stop_progress(self) -> None:
         if self._progress_notifier is not None:

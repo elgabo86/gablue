@@ -238,7 +238,7 @@ class SystemTest(unittest.TestCase):
         # Ouverture d'opération : « Updating 3/7… » (le 3e sur 7).
         opening = local.parse_flatpak_progress("Updating 3/7\u2026")
         self.assertEqual(opening["action"], "Updating")
-        self.assertEqual(opening["label"], "Mise à jour des Flatpaks")
+        self.assertEqual(opening["label"], "Mise à jour des Flatpaks 3/7")
         self.assertEqual((opening["op"], opening["total"]), (3, 7))
         self.assertAlmostEqual(opening["percent"], 100 * 2 / 7, places=2)
 
@@ -294,6 +294,74 @@ class SystemTest(unittest.TestCase):
             "",
         )
         self.assertEqual(local.flatpak_update_hint(""), "")
+
+    def test_brew_progress(self):
+        parse = local.brew_progress_parser()
+
+        # Tant que le résumé n'est pas là, rien à afficher (l'étiquette
+        # initiale « Recherche de mises à jour… » couvre le brew update).
+        self.assertEqual(parse("==> Updating Homebrew..."), {})
+        self.assertEqual(parse("Already up-to-date."), {})
+
+        # Téléchargements en cours : la liste de l'en-tête donne déjà le
+        # nombre de formules, mais aucun pourcentage → barre indéterminée.
+        fetch = parse("==> Fetching downloads for: htop, wget")
+        self.assertIsNone(fetch["percent"])
+        self.assertEqual(fetch["label"], "Téléchargement de 2 formules")
+        self.assertEqual(
+            parse("==> Fetching downloads for: a, b and c")["label"],
+            "Téléchargement de 3 formules",
+        )
+        self.assertEqual(
+            parse("==> Fetching downloads for: seul")["label"],
+            "Téléchargement de la formule…",
+        )
+
+        total = parse("==> Upgrading 3 outdated packages:")
+        self.assertEqual(total["percent"], 0.0)
+        self.assertEqual(total["label"], "Mise à jour de 3 formules")
+
+        step = parse("==> Upgrading htop")
+        self.assertAlmostEqual(step["percent"], 100 / 3, places=2)
+        self.assertEqual(step["label"], "Mise à jour de htop (1/3)")
+
+        # Une dépendance n'est pas dans le total : elle ne doit pas avancer la
+        # barre (Homebrew écrit « Upgrading <formule> dependency: <dep> … »).
+        self.assertEqual(
+            parse("==> Upgrading wget dependency: openssl@3 (3.0 -> 3.1)"), {}
+        )
+        self.assertAlmostEqual(
+            parse("==> Upgrading wget")["percent"], 200 / 3, places=2
+        )
+        self.assertEqual(parse("==> Pouring htop--3.3.0.bottle.tar.gz"), {})
+        self.assertEqual(
+            parse("🍺  /home/linuxbrew/Cellar/htop/3.3.0: 20 files"), {}
+        )
+
+        # Une seule formule : libellé sans compteur, 100 %.
+        solo = local.brew_progress_parser()
+        solo("==> Upgrading 1 outdated package:")
+        info = solo("==> Upgrading nasm")
+        self.assertEqual(info["label"], "Mise à jour de nasm")
+        self.assertEqual(info["percent"], 100.0)
+
+        # Dépendants hors total : on borne à 100 % au lieu de dépasser.
+        self.assertEqual(parse("==> Upgrading extra")["percent"], 100.0)
+
+    def test_brew_update_hint(self):
+        # Rien en retard : brew upgrade n'écrit rien, brew update peut se
+        # contenter de « Already up-to-date. ».
+        self.assertEqual(
+            local.brew_update_hint(
+                "==> Updating Homebrew...\nAlready up-to-date.\n"
+            ),
+            "Aucune formule à mettre à jour.",
+        )
+        self.assertEqual(
+            local.brew_update_hint("==> Upgrading 2 outdated packages:\n"), ""
+        )
+        self.assertEqual(local.brew_update_hint("==> Upgrading foo\n"), "")
+        self.assertEqual(local.brew_update_hint(""), "Aucune formule à mettre à jour.")
 
     def test_rebase_script(self):
         self.assertEqual(

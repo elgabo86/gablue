@@ -333,9 +333,12 @@ def parse_flatpak_progress(line: str) -> dict:
     if percentages:
         percent = max(0.0, min(100.0, float(percentages[-1])))
     done = min(op, total) - 1 + (percent or 0.0) / 100.0
+    label = FLATPAK_ACTIONS.get(action, "Mise à jour des Flatpaks")
+    if total > 1:
+        label += f" {op}/{total}"
     return {
         "action": action,
-        "label": FLATPAK_ACTIONS.get(action, "Mise à jour des Flatpaks"),
+        "label": label,
         "op": op,
         "total": total,
         "percent": min(100.0, 100.0 * done / total),
@@ -388,6 +391,99 @@ def brew_update_script() -> str:
         "\"$brew\" upgrade || rc=$?\n"
         "exit $rc\n"
     )
+
+# En-têtes de `brew upgrade` (sortie non TTY, sans couleur) : liste des
+# téléchargements, total éventuel, puis une ligne par formule. Homebrew 7 les
+# écrit en clair, mais ne donne aucun pourcentage : voir `brew_progress_parser`.
+_BREW_TOTAL_RE = re.compile(
+    r"^==>\s+Upgrading\s+(\d+)\s+outdated\s+(?:packages?|casks?|formulae?)\s*:"
+)
+_BREW_STEP_RE = re.compile(r"^==>\s+Upgrading\s+(.+?)\s*$")
+_BREW_FETCH_RE = re.compile(r"^==>\s+Fetching downloads for\s*:\s*(.+?)\s*$")
+
+def brew_progress_parser():
+    """Analyseur stateful de `brew upgrade` → progression par formule.
+
+    Homebrew ne publie **aucun pourcentage** quand sa sortie n'est pas un
+    terminal : `curl` est lancé avec `--silent` (`utils/curl.rb`, vérifié sur
+    Homebrew 7.0.12 le 07/11/2026), donc ni jauge ni débit, et la file de
+    téléchargements concurrente n'affiche que des lignes de fin. Ce qui reste
+    fiable, ce sont ses en-têtes : « Fetching downloads for: a, b » donne la
+    liste des formules à télécharger (Homebrew 7 ne résume qu'après), chaque
+    « Upgrading <nom> » avance d'une formule, et un éventuel « Upgrading N
+    outdated packages: » (versions antérieures) fixe le total. La barre
+    progresse donc par paquets, pas en octets ; les lignes de dépendance
+    (« Upgrading <formule> dependency: <dep> … ») ne comptent pas, elles ne font
+    pas partie du total.
+
+    Renvoie un appelable `(ligne) -> info` : `{"label", "percent"}` (percent
+    `None` = barre indéterminée, pendant les téléchargements) ou `{}` pour les
+    lignes sans intérêt. L'état (total, rang) vit dans la fermeture : chaque
+    fenêtre de tâche a le sien.
+    """
+    state = {"total": 0, "op": 0}
+
+    def info(label: str, percent: float | None) -> dict:
+        return {"label": label, "percent": percent}
+
+    def parse(line: str) -> dict:
+        text = (line or "").rstrip()
+        match = _BREW_TOTAL_RE.match(text)
+        if match is not None:
+            state["total"] = max(1, int(match.group(1)))
+            state["op"] = 0
+            count = state["total"]
+            return info(
+                f"Mise à jour de {count} "
+                + ("formule" if count == 1 else "formules"),
+                0.0,
+            )
+        match = _BREW_FETCH_RE.match(text)
+        if match is not None:
+            # Téléchargements en cours : le résumé « Upgrading N … » n'arrive
+            # qu'après (Homebrew 7), mais l'en-tête de la file donne déjà la
+            # liste des formules concernées. Aucun pourcentage n'est
+            # disponible : la barre reste indéterminée.
+            names = match.group(1)
+            count = len([name for name in re.split(r",\s*|\s+and\s+", names)
+                         if name.strip()])
+            state["total"] = count
+            state["op"] = 0
+            label = ("Téléchargement de la formule…" if count <= 1
+                     else f"Téléchargement de {count} formules")
+            return info(label, None)
+        match = _BREW_STEP_RE.match(text)
+        if match is None:
+            return {}
+        name = match.group(1)
+        if " dependency:" in name:      # dépendance tirée par une formule
+            return {}
+        state["op"] += 1
+        total = state["total"]
+        percent = None
+        if total > 0:
+            state["op"] = min(state["op"], total)
+            percent = 100.0 * state["op"] / total
+        label = f"Mise à jour de {name}"
+        if total > 1:
+            label += f" ({state['op']}/{total})"
+        return info(label, percent)
+
+    return parse
+
+def brew_update_hint(text: str) -> str:
+    """Phrase de fin de journal pour `brew update` + `brew upgrade`.
+
+    `brew upgrade` n'écrit rien quand aucune formule n'est en retard (un
+    `brew update` sans changement se contente de « Already up-to-date. ») :
+    sans en-tête d'upgrade, le compte rendu doit le dire au lieu de laisser un
+    simple « Terminé. ».
+    """
+    if any(_BREW_TOTAL_RE.match(line) or _BREW_STEP_RE.match(line)
+           or _BREW_FETCH_RE.match(line)
+           for line in (text or "").splitlines()):
+        return ""
+    return "Aucune formule à mettre à jour."
 
 def gablue_update_hint(text: str) -> str:
     """Phrase de fin de journal pour `bootc upgrade`.
