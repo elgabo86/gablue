@@ -273,15 +273,23 @@ class AppsDialog(QDialog):
         if answer != QMessageBox.Yes:
             return
         subtitle = "Téléchargement et intégration."
+        # Même présentation que les autres réglages : barre indéterminée, et
+        # journal derrière « Terminal » (révélé à l'échec). Le script est muet
+        # sur sa progression, mais ses lignes restent disponibles au besoin.
         if self.host is None:
             self._run(LocalTaskDialog(
                 self, title=title, subtitle=subtitle,
                 argv=install_argv(app),
+                progress_mode="busy",
+                progress_text="Téléchargement et intégration…",
+                reveal_log_on_error=True,
             ))
         else:
             self._run(RemoteTaskDialog(
                 self, host=self.host, title=title, subtitle=subtitle,
                 command=install_command(app, state),
+                progress_mode="busy",
+                progress_text="Téléchargement et intégration…",
             ))
 
     def remove(self, app) -> None:
@@ -310,6 +318,9 @@ class AppsDialog(QDialog):
             self._run(LocalTaskDialog(
                 self, title=f"{app.name} — suppression",
                 subtitle=subtitle, argv=remove_argv(app),
+                progress_mode="busy",
+                progress_text="Suppression…",
+                reveal_log_on_error=True,
             ))
             return
         command = remove_command(app, state)
@@ -323,6 +334,8 @@ class AppsDialog(QDialog):
         self._run(RemoteTaskDialog(
             self, host=self.host, title=f"{app.name} — suppression",
             subtitle=subtitle, command=command,
+            progress_mode="busy",
+            progress_text="Suppression…",
         ))
 
     def update_esde_config(self) -> None:
@@ -348,6 +361,8 @@ class AppsDialog(QDialog):
             self._run(RemoteTaskDialog(
                 self, host=self.host, title="ES-DE — configuration",
                 subtitle=subtitle, command=command,
+                progress_mode="busy",
+                progress_text="Copie de la configuration…",
             ))
             return
         script = _which("esde-install")
@@ -355,6 +370,9 @@ class AppsDialog(QDialog):
             self._run(LocalTaskDialog(
                 self, title="ES-DE — configuration", subtitle=subtitle,
                 argv=config_argv(),
+                progress_mode="busy",
+                progress_text="Copie de la configuration…",
+                reveal_log_on_error=True,
             ))
             return
         # Image plus ancienne que le manager : le script ignore l'option et
