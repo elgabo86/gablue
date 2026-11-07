@@ -7,7 +7,7 @@ D-Bus à installer, et une socket laissée par un processus tué est reprise.
 """
 
 import os
-import shutil
+import subprocess
 import sys
 
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -50,17 +50,34 @@ def send(name: str, message: bytes = b"raise") -> bool:
     socket.disconnectFromServer()
     return True
 
-def manager_command() -> list[str]:
-    """Commande qui ouvre la fenêtre principale (image ou dépôt).
+def package_root() -> str:
+    """Dossier à mettre dans `PYTHONPATH` (parent du paquet `gablue_manager`)."""
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    L'image installe `/usr/bin/gablue-manager` ; en développement, on relance
-    le lanceur du dépôt lui-même, et `python3 -m gablue_manager` en dernier
-    recours.
+def manager_command() -> list[str]:
+    """Commande qui relance CETTE version de Gablue Manager.
+
+    On n'appelle pas `gablue-manager` trouvé dans le PATH : sur une image
+    antérieure à la version courante, ce binaire ignore ses arguments et ouvre
+    la fenêtre principale même pour `--tray`. Un « Appliquer » sans changement
+    dans les préférences relançait donc un tray qui affichait une seconde
+    fenêtre (vécu 07/11/2026). Le module importé par ce processus est la seule
+    version dont on connaît le comportement.
     """
-    installed = shutil.which("gablue-manager")
-    if installed:
-        return [installed]
-    launcher = os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else ""
-    if launcher and os.path.isfile(launcher) and os.access(launcher, os.X_OK):
-        return [launcher]
     return [sys.executable, "-m", "gablue_manager"]
+
+def spawn(argv: list[str]) -> bool:
+    """Lance la commande détachée avec le bon `PYTHONPATH` ; False si échec."""
+    env = dict(os.environ)
+    root = package_root()
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = root if not existing else root + os.pathsep + existing
+    try:
+        subprocess.Popen(
+            argv, env=env, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        return False
+    return True

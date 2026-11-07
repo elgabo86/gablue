@@ -131,7 +131,14 @@ class PrefsDialog(QDialog):
         buttons.addWidget(self.apply_button)
         root_layout.addLayout(buttons)
 
+        self.tray_check.toggled.connect(self._update_apply)
+        self.auto_check.toggled.connect(self._update_apply)
+        for check in self.domain_checks.values():
+            check.toggled.connect(self._update_apply)
+        self.interval_spin.valueChanged.connect(self._update_apply)
+
         self._update_enabled()
+        self._update_apply()
         fit_dialog_height(self, 640)
 
     @staticmethod
@@ -164,5 +171,23 @@ class PrefsDialog(QDialog):
         values["check_interval"] = self.interval_spin.value()
         return values
 
+    def changed(self) -> bool:
+        """Un réglage diffère-t-il de ce qui est enregistré ?"""
+        return self.values() != self.initial
+
+    def _update_apply(self) -> None:
+        changes = self.changed()
+        self.apply_button.setEnabled(changes)
+        if self.auto_check.isChecked():
+            self.hint_label.setText(
+                "Changements non appliqués." if changes else ""
+            )
+
     def apply(self) -> None:
+        # Rien de modifié : ne rien écrire et surtout ne relancer personne.
+        # Le tray était auparavant démarré à chaque « Appliquer » ; avec une
+        # image antérieure, le binaire du PATH ignore `--tray` et ouvre une
+        # seconde fenêtre Gablue Manager (vécu 07/11/2026).
+        if not self.changed():
+            return
         self.accept()

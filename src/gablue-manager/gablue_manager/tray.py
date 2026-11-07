@@ -14,7 +14,7 @@ et la fréquence choisis dans les préférences, et à la demande par le menu.
 import sys
 import time
 
-from PySide6.QtCore import QProcess, QTimer, Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtNetwork import QNetworkInformation
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
@@ -126,8 +126,7 @@ class Tray:
         """Ramène la fenêtre existante, ou la lance dans son processus."""
         if instance.send(instance.gui_socket(), b"raise"):
             return
-        command = instance.manager_command()
-        QProcess.startDetached(command[0], command[1:])
+        instance.spawn(instance.manager_command())
 
     def _activated(self, reason) -> None:
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
@@ -141,8 +140,7 @@ class Tray:
         """
         if instance.send(instance.gui_socket(), b"toggle"):
             return
-        command = instance.manager_command()
-        QProcess.startDetached(command[0], command[1:])
+        instance.spawn(instance.manager_command())
 
     # -- redémarrage requis -----------------------------------------------
     def refresh(self) -> None:

@@ -451,8 +451,9 @@ class MainWindow(QMainWindow):
         if not values.get("tray"):
             instance.send(instance.tray_socket(), b"quit")
         elif not instance.send(instance.tray_socket(), b"reload"):
-            command = instance.manager_command() + ["--tray"]
-            QProcess.startDetached(command[0], command[1:])
+            # Même version que cette fenêtre : un ancien binaire du PATH
+            # ignorerait `--tray` et ouvrirait une seconde fenêtre.
+            instance.spawn(instance.manager_command() + ["--tray"])
         self._updates_state = None
         self.check_updates(force=True)
 
