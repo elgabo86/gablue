@@ -47,6 +47,28 @@ QLabel#recommendWarn {
 QScrollArea { background: transparent; border: none; }
 QScrollArea > QWidget > QWidget { background: transparent; }
 
+QTabWidget::pane {
+    border: 1px solid @border@;
+    border-radius: 12px;
+    top: -1px;
+}
+QTabBar::tab {
+    background: transparent;
+    color: @dim@;
+    border: 1px solid transparent;
+    border-top-left-radius: 9px;
+    border-top-right-radius: 9px;
+    padding: 7px 14px;
+    margin-right: 4px;
+    font-size: 12px;
+}
+QTabBar::tab:selected {
+    background: @card@;
+    color: @text@;
+    border-color: @border@;
+}
+QTabBar::tab:hover { color: @text@; }
+
 QFrame#hostCard {
     background: @card@;
     border: 1px solid @border@;

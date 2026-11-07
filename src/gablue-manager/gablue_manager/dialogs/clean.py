@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton,
-    QScrollArea, QVBoxLayout, QWidget,
+    QScrollArea, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from .. import local
@@ -132,8 +132,12 @@ class CleanDialog(QDialog):
         note.setWordWrap(True)
         root_layout.addWidget(note)
 
-        # La liste grandit avec les domaines et les dossiers Syncthing : un
-        # ascenseur évite un dialogue plus haut que l'écran sur un 1080p.
+        # Deux onglets : le nettoyage par domaine d'un côté, les anciennes
+        # versions Syncthing de l'autre. Les mélanger dans une seule liste
+        # allongeait le dialogue et brouillait les deux gestes (l'un supprime,
+        # l'autre ouvre Dolphin). Un ascenseur par onglet tient sur un 1080p.
+        self.tabs = QTabWidget(self)
+        self.tabs.setDocumentMode(True)
         content = QWidget(self)
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
@@ -145,7 +149,8 @@ class CleanDialog(QDialog):
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setWidget(content)
-        root_layout.addWidget(self.scroll, 1)
+        self.tabs.addTab(self.scroll, "Nettoyage")
+        root_layout.addWidget(self.tabs, 1)
 
         self.buttons: dict[str, QPushButton] = {}
         self.size_labels: dict[str, QLabel] = {}
@@ -158,14 +163,17 @@ class CleanDialog(QDialog):
         for domain in CLEAN_DOMAINS:
             self._add_row(domain)
 
-        # Anciennes versions Syncthing : section locale seulement (le dossier
-        # appartient à CETTE session, un poste distant a les siennes).
+        # Anciennes versions Syncthing : onglet local seulement (le dossier
+        # appartient à CETTE session, un poste distant a les siennes). Il
+        # n'existe que si Syncthing tourne et déclare des `.stversions`.
         self.versions = None
         if self.host is None:
-            self.versions = StVersionsSection(self)
-            content_layout.addWidget(self.versions)
-            if not self.versions.refresh():
-                self.versions.setVisible(False)
+            versions = StVersionsSection(self)
+            if versions.refresh():
+                self.versions = versions
+                self.tabs.addTab(versions, "Anciennes versions Syncthing")
+            else:
+                versions.deleteLater()
 
         buttons = QHBoxLayout()
         buttons.setSpacing(10)

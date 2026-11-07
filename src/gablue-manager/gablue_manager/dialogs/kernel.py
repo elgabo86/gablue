@@ -59,7 +59,6 @@ CHOICE_RECOMMENDED = {
     "mitigations": True,    # garder les protections : sécurité d'abord
     "cpuid": True,          # débloque des jeux, sans coût ailleurs
     "ertm": True,           # réglage recommandé par Gablue
-    "cpuid_emu": False,     # AM4 / Steam Deck : à activer si un jeu l'exige
 }
 
 class SettingsDialog(QDialog):
