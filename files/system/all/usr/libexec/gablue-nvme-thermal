@@ -1,0 +1,205 @@
+#!/usr/bin/python3
+
+"""gablue-nvme-thermal — limite thermique des SSD NVMe (HCTM).
+
+HCTM (Host Controlled Thermal Management, feature 0x10) laisse le système
+piloter deux seuils de throttle : TMT1 (doux) et TMT2 (agressif). `-s` rend le
+réglage persistant côté contrôleur (il survit au reboot).
+
+Sous-commandes, appelées par Gablue Manager en `sudo -n` (règles sudoers
+exactes) :
+
+    status                          état JSON de chaque contrôleur
+    set <dev> <tmt1_c> <tmt2_c>     active HCTM avec ces seuils
+    off <dev>                       rend la main au firmware
+
+Le statut est lu ici parce que `nvme id-ctrl` et `nvme get-feature` exigent
+root ; le dialogue ne manipule qu'un JSON stable. Aucun modèle n'est codé en
+dur : les bornes viennent de `mntmt`/`mxtmt` du contrôleur.
+"""
+
+import glob
+import json
+import re
+import subprocess
+import sys
+
+NVME = "/usr/bin/nvme"
+FEATURE = "0x10"
+KELVIN = 273
+
+# Bornes de la recette ujust (et de NVMe-MI) : en dessous, le SSD throttle en
+# permanence ; au-dessus, la limite ne protège plus rien.
+MIN_TMT1, MAX_TMT1 = 40, 85
+MIN_TMT2, MAX_TMT2 = 45, 90
+
+DEVICE_RE = re.compile(r"^/dev/nvme\d+$")
+
+
+def usage() -> int:
+    print(
+        "Usage : gablue-nvme-thermal status | "
+        "set <dev> <tmt1_c> <tmt2_c> | off <dev>",
+        file=sys.stderr,
+    )
+    return 2
+
+
+def nvme(*args: str) -> tuple[int, str]:
+    """Lance nvme-cli ; jamais d'exception (code 127 si absent)."""
+    try:
+        result = subprocess.run(
+            [NVME, *args], capture_output=True, text=True, timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 127, ""
+    return result.returncode, (result.stdout or "") + (result.stderr or "")
+
+
+def controllers() -> list[str]:
+    """Contrôleurs `/dev/nvmeN`, sans les namespaces `/dev/nvmeNnM`."""
+    return sorted(
+        device for device in glob.glob("/dev/nvme*")
+        if DEVICE_RE.fullmatch(device)
+    )
+
+
+def identify(device: str) -> dict:
+    code, text = nvme("id-ctrl", device, "-o", "json")
+    if code != 0:
+        return {}
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def kelvin_to_celsius(value) -> int:
+    """Valeur Kelvin de `id-ctrl` → °C (0 si absente : le contrôleur ne la dit pas)."""
+    try:
+        kelvin = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return kelvin - KELVIN if kelvin >= KELVIN else 0
+
+
+def hctm_supported(info: dict) -> bool:
+    try:
+        return bool(int(info.get("hctma") or 0) & 1)
+    except (TypeError, ValueError):
+        return False
+
+
+def feature_state(device: str) -> dict:
+    """État HCTM courant : seuils décodés depuis la valeur de la feature 0x10."""
+    code, text = nvme("get-feature", device, "-f", FEATURE, "--verbose")
+    state = {"enabled": False, "tmt1": 0, "tmt2": 0}
+    if code != 0:
+        return state
+    match = re.search(r"Current value\s*:\s*(0x[0-9a-fA-F]+|\d+)", text)
+    if match is None:
+        return state
+    value = int(match.group(1), 0)
+    if value == 0:
+        return state            # contrôle firmware par défaut
+    first = (value >> 16) & 0xFFFF
+    second = value & 0xFFFF
+    # TMT1 à 0 K = HCTM activé mais pas encore configuré : l'utilisateur doit
+    # choisir des seuils, ce n'est pas un état « limité ».
+    if first == 0:
+        return {"enabled": False, "tmt1": 0, "tmt2": 0}
+    return {
+        "enabled": True,
+        "tmt1": first - KELVIN if first >= KELVIN else 0,
+        "tmt2": second - KELVIN if second >= KELVIN else 0,
+    }
+
+
+def status() -> int:
+    devices = []
+    for device in controllers():
+        info = identify(device)
+        supported = hctm_supported(info)
+        state = feature_state(device) if supported else {
+            "enabled": False, "tmt1": 0, "tmt2": 0,
+        }
+        devices.append({
+            "device": device,
+            "model": str(info.get("mn") or "").strip() or "Modèle inconnu",
+            "readable": bool(info),
+            "hctm": supported,
+            "min_tmt1": max(MIN_TMT1, kelvin_to_celsius(info.get("mntmt"))),
+            "max_tmt1": MAX_TMT1,
+            "min_tmt2": MIN_TMT2,
+            "max_tmt2": min(MAX_TMT2, kelvin_to_celsius(info.get("mxtmt")))
+                        if kelvin_to_celsius(info.get("mxtmt")) else MAX_TMT2,
+            **state,
+        })
+    print(json.dumps({"devices": devices}, ensure_ascii=False))
+    return 0
+
+
+def check_device(device: str) -> dict:
+    if not DEVICE_RE.fullmatch(device):
+        raise SystemExit(f"Refusé : « {device} » n'est pas un contrôleur NVMe.")
+    info = identify(device)
+    if not hctm_supported(info):
+        raise SystemExit(f"{device} ne supporte pas HCTM.")
+    return info
+
+
+def set_thresholds(device: str, first: int, second: int) -> int:
+    info = check_device(device)
+    minimum = max(MIN_TMT1, kelvin_to_celsius(info.get("mntmt")))
+    if not minimum <= first <= MAX_TMT1:
+        raise SystemExit(
+            f"TMT1 hors bornes : {first} °C (attendu {minimum}…{MAX_TMT1})."
+        )
+    if not MIN_TMT2 <= second <= MAX_TMT2:
+        raise SystemExit(
+            f"TMT2 hors bornes : {second} °C (attendu {MIN_TMT2}…{MAX_TMT2})."
+        )
+    if first >= second:
+        raise SystemExit("TMT1 doit être inférieur à TMT2.")
+
+    value = ((first + KELVIN) << 16) | (second + KELVIN)
+    code, text = nvme(
+        "set-feature", device, "-f", FEATURE, "-V", f"0x{value:08x}", "-s",
+    )
+    if code != 0:
+        print(text.strip() or "Échec de set-feature.", file=sys.stderr)
+        return 1
+    print(f"✓ HCTM {first}/{second} °C appliqué sur {device} (persistant).")
+    return 0
+
+
+def disable(device: str) -> int:
+    check_device(device)
+    code, text = nvme("set-feature", device, "-f", FEATURE, "-V", "0", "-s")
+    if code != 0:
+        print(text.strip() or "Échec de set-feature.", file=sys.stderr)
+        return 1
+    print(f"✓ HCTM désactivé sur {device} : contrôle firmware.")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if not argv:
+        return usage()
+    command, args = argv[0], argv[1:]
+    if command == "status" and not args:
+        return status()
+    if command == "off" and len(args) == 1:
+        return disable(args[0])
+    if command == "set" and len(args) == 3:
+        try:
+            first, second = int(args[1]), int(args[2])
+        except ValueError:
+            return usage()
+        return set_thresholds(args[0], first, second)
+    return usage()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

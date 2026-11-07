@@ -409,6 +409,10 @@ class LocalCard(QFrame):
     updates_requested = Signal()
     services_requested = Signal()
     variant_requested = Signal()
+    btrfs_requested = Signal()
+    thermal_requested = Signal()
+    clean_requested = Signal()
+    stversions_requested = Signal()
     gwine_requested = Signal()
     booster_requested = Signal()
     tailscale_requested = Signal()
@@ -521,6 +525,18 @@ class LocalCard(QFrame):
         )
         config_menu.addAction(
             "Variante de l'image…", self.variant_requested.emit
+        )
+        config_menu.addAction(
+            "Compression Btrfs…", self.btrfs_requested.emit
+        )
+        config_menu.addAction(
+            "Limite thermique NVMe…", self.thermal_requested.emit
+        )
+        config_menu.addAction(
+            "Nettoyer le système…", self.clean_requested.emit
+        )
+        config_menu.addAction(
+            "Versions Syncthing…", self.stversions_requested.emit
         )
         config_menu.addSeparator()
         games_menu = config_menu.addMenu("Jeux")

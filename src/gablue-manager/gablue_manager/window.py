@@ -24,13 +24,17 @@ from .constants import (
 )
 from .dialogs.apps import AppsDialog
 from .dialogs.booster import ForegroundBoosterDialog
+from .dialogs.btrfs import BtrfsDialog
+from .dialogs.clean import CleanDialog
 from .dialogs.gwine import GwineOptionsDialog
 from .dialogs.host import CandidateDialog, HostDialog
 from .dialogs.kernel import LocalSettingsDialog, RemoteSettingsDialog
 from .dialogs.key import KeyInstallDialog
 from .dialogs.prefs import PrefsDialog
 from .dialogs.services import ServicesDialog
+from .dialogs.stversions import StVersionsDialog
 from .dialogs.tailscale import TailscaleDialog
+from .dialogs.thermal import ThermalDialog
 from .dialogs.updates import AutoUpdatesDialog
 from .dialogs.variant import VariantDialog
 from .hosts import load_hosts, save_hosts
@@ -192,6 +196,10 @@ class MainWindow(QMainWindow):
         self.local_card.updates_requested.connect(self.open_local_updates)
         self.local_card.services_requested.connect(self.open_local_services)
         self.local_card.variant_requested.connect(self.open_local_variant)
+        self.local_card.btrfs_requested.connect(self.open_local_btrfs)
+        self.local_card.thermal_requested.connect(self.open_local_thermal)
+        self.local_card.clean_requested.connect(self.open_clean_system)
+        self.local_card.stversions_requested.connect(self.open_stversions)
         self.local_card.gwine_requested.connect(self.open_local_gwine_options)
         self.local_card.booster_requested.connect(
             self.open_local_foreground_booster
@@ -1462,6 +1470,18 @@ class MainWindow(QMainWindow):
 
     def open_local_variant(self) -> None:
         VariantDialog(self).exec()
+
+    def open_local_btrfs(self) -> None:
+        BtrfsDialog(self).exec()
+
+    def open_local_thermal(self) -> None:
+        ThermalDialog(self).exec()
+
+    def open_clean_system(self) -> None:
+        CleanDialog(self).exec()
+
+    def open_stversions(self) -> None:
+        StVersionsDialog(self).exec()
 
     def open_local_gwine_options(self) -> None:
         GwineOptionsDialog(self).exec()

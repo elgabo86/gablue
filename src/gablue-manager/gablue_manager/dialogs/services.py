@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..local import (
-    docker_available, local_variant, parse_gablue_progress,
+    docker_available, gamepad_available, local_variant, parse_gablue_progress,
     services_choices, services_helpers_available, system_apply_script,
 )
 from ..tasks import LocalTaskDialog, start_task
@@ -38,6 +38,11 @@ CHOICE_LABELS = {
         "Historique atuin",
         "Historique commun à vos terminaux. Ctrl-R pour l'ouvrir.",
     ),
+    "gamepad": (
+        "Raccourcis manette",
+        "Captures, menu de jeu et enregistrement depuis la manette, à "
+        "l'ouverture de session. Effet immédiat.",
+    ),
 }
 
 # Mot affiché dans la confirmation, selon l'état de la case.
@@ -47,6 +52,7 @@ CHOICE_STATE = {
     "low_latency": {True: "activée", False: "désactivée"},
     "broadcom_wl": {True: "activé", False: "désactivé"},
     "atuin": {True: "activée", False: "désactivée — historique conservé"},
+    "gamepad": {True: "activés", False: "désactivés"},
 }
 
 # Valeur recommandée pour la machine : les réglages de confort Gablue allumés.
@@ -68,6 +74,7 @@ class ServicesDialog(QDialog):
 
     ROWS = (
         "displaylink", "docker", "low_latency", "broadcom_wl", "atuin",
+        "gamepad",
     )
 
     def __init__(self, parent=None):
@@ -164,9 +171,11 @@ class ServicesDialog(QDialog):
     def refresh(self) -> None:
         helpers = services_helpers_available()
         variant = local_variant()
+        gamepad = gamepad_available()
         self.state = {
             "ok": helpers,
             "variant": variant,
+            "gamepad": gamepad,
             "choices": services_choices() if helpers else {},
         }
         choices = self.state["choices"]
@@ -178,7 +187,13 @@ class ServicesDialog(QDialog):
             check.blockSignals(True)
             check.setChecked(bool(choices.get(key)))
             check.blockSignals(False)
-            check.setEnabled(helpers)
+            # Le helper des raccourcis manette a son propre contrôle : absent
+            # (image antérieure), la case est grisée sans condamner le reste.
+            check.setEnabled(helpers and (key != "gamepad" or gamepad))
+            if key == "gamepad" and helpers and not gamepad:
+                check.setToolTip(
+                    "Helper absent de cette image — reconstruction requise."
+                )
         self._update_apply()
 
     def changed(self) -> list[str]:

@@ -1,0 +1,54 @@
+#!/usr/bin/bash
+
+# gablue-btrfs-compress — drapeau de compression d'un système de fichiers Btrfs
+#
+# Appelé par Gablue Manager avec `sudo -n` (règles sudoers exactes sur les
+# sous-commandes `zstd` et `none`). Le drapeau est posé par `btrfs property set`
+# sur le point de montage : il vaut pour les fichiers créés ENSUITE (les
+# données existantes ne sont pas recompressées), dans tous les sous-dossiers.
+#
+# Seuls les points de montage Btrfs réellement montés sont acceptés : le
+# chemin est revérifié ici, une règle sudoers à joker ne doit pas permettre de
+# poser un drapeau sur un chemin arbitraire.
+#
+# Usage : gablue-btrfs-compress zstd|none <point-de-montage>
+
+set -euo pipefail
+
+BTRFS="/usr/bin/btrfs"
+
+usage() {
+    echo "Usage : gablue-btrfs-compress zstd|none <point-de-montage>" >&2
+    exit 2
+}
+
+action="${1:-}"
+target="${2:-}"
+case "$action" in
+    zstd|none) ;;
+    *) usage ;;
+esac
+[ -n "$target" ] || usage
+
+# Le chemin doit être exactement un montage Btrfs en cours : ni un fichier, ni
+# un sous-dossier, ni un disque non Btrfs.
+if ! findmnt -t btrfs -o TARGET -n -l | grep -Fxq -- "$target"; then
+    echo "Refusé : « $target » n'est pas un point de montage Btrfs." >&2
+    exit 1
+fi
+
+if [ "$action" = "zstd" ]; then
+    echo "→ Compression zstd sur $target…"
+    "$BTRFS" property set "$target" compression zstd
+else
+    echo "→ Désactivation de la compression sur $target…"
+    "$BTRFS" property set "$target" compression ""
+fi
+
+value=$("$BTRFS" property get "$target" compression 2>/dev/null \
+        | sed -n 's/^compression=//p' || true)
+if [ -n "$value" ]; then
+    echo "✓ compression=$value sur $target"
+else
+    echo "✓ compression désactivée sur $target"
+fi

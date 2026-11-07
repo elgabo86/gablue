@@ -4,6 +4,7 @@ Tailscale).
 
 import configparser
 import json
+import os
 import re
 import shlex
 import shutil
@@ -13,13 +14,27 @@ from pathlib import Path
 from .constants import (
     ATUIN_HELPER, AUTO_UPDATE_HELPER, AUTO_UPDATE_USER_TIMER, AVAHI_HELPER,
     AVAHI_SERVICE_FILE, BREW_BINARY, BROADCOM_HELPER, BROADCOM_WL_FILE,
-    CMDLINE, CPUID_EMU_BLACKLIST, CPUID_EMU_CONF, CPUID_EMU_HELPER,
+    BTRFS_HELPER, CLEAN_HELPER, CMDLINE, CPUID_EMU_BLACKLIST,
+    CPUID_EMU_CONF, CPUID_EMU_HELPER, GAMEPAD_HELPER, NVME_THERMAL_HELPER,
     KARG_BT_ERTM, KARG_CLEARCPUID,
     KARG_HDMI21, KARG_HELPER, KARG_MITIGATIONS_OFF, LOW_LATENCY_FILE,
     LOW_LATENCY_HELPER, OS_RELEASE, REBASE_HELPER, SERVICE_HELPER,
     TAILSCALE_HELPER, _which,
 )
 from .ssh import ssh_capture
+
+
+def _run(argv: list[str], timeout: int,
+         env: dict | None = None) -> tuple[int, str]:
+    """Lance une sonde ; code 127 et sortie vide si elle n'existe pas."""
+    try:
+        result = subprocess.run(
+            argv, capture_output=True, text=True, timeout=timeout, env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 127, ""
+    return result.returncode, (result.stdout or "") + (result.stderr or "")
+
 
 def _sudo_run(argv: list[str]) -> tuple[bool, str]:
     """Exécute une commande privilégiée sans jamais demander de mot de passe."""
@@ -854,6 +869,23 @@ def atuin_available() -> bool:
     return Path(ATUIN_HELPER).is_file()
 
 
+def gamepad_available() -> bool:
+    """Le helper des raccourcis manette est-il installé (image à jour) ?"""
+    return Path(GAMEPAD_HELPER).is_file()
+
+
+def gamepad_active() -> bool:
+    """Les raccourcis manette Gablue sont-ils configurés pour démarrer ?"""
+    try:
+        result = subprocess.run(
+            [GAMEPAD_HELPER, "status"], capture_output=True, text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
 def services_helpers_available() -> bool:
     """Les helpers du dialogue « Services et pilotes » sont-ils installés ?"""
     return all(
@@ -861,6 +893,451 @@ def services_helpers_available() -> bool:
         for path in (SERVICE_HELPER, LOW_LATENCY_HELPER, BROADCOM_HELPER,
                      ATUIN_HELPER)
     )
+
+
+def clean_available() -> bool:
+    """Le helper de nettoyage système est-il installé (image à jour) ?"""
+    return Path(CLEAN_HELPER).is_file()
+
+
+# Domaines de nettoyage, dans l'ordre où ils s'appliquent.
+CLEAN_DOMAINS = (
+    "podman", "flatpak", "ostree", "brew",
+    "gwine_temp", "gwine_shaders", "gwine", "wgp", "lgp", "opencode",
+)
+
+# Caches purement régénérables : composants et shaders gwine, amorçage des
+# extras WGP/LGP, paquets npm des plugins OpenCode. Jamais les sauvegardes
+# (~/.local/share/lgp-saves, ~/.local/share/opencode) ni la configuration.
+CLEAN_CACHE_SUFFIXES = {
+    "gwine_temp": ".cache/gwine/temp",
+    "gwine_shaders": ".cache/gwine/shader-cache",
+    "gwine": ".cache/gwine",
+    "wgp": ".cache/wgp-extra",
+    "lgp": ".cache/lgp-extra",
+    "opencode": ".cache/opencode/npm",
+}
+
+
+def clean_cache_path(domain: str) -> Path | None:
+    """Dossier de cache régénérable d'un domaine (None si ce n'est pas un cache)."""
+    suffix = CLEAN_CACHE_SUFFIXES.get(domain)
+    return Path.home() / suffix if suffix else None
+
+
+def format_size(value: int | None) -> str:
+    """Octets → texte lisible (« 3.4 Gio ») ; "" si la taille est inconnue."""
+    if value is None or value <= 0:
+        return ""
+    size = float(value)
+    for unit in ("o", "Kio", "Mio"):
+        if size < 1024:
+            return f"{size:.0f} {unit}"
+        size /= 1024
+    return f"{size:.1f} Gio"
+
+
+def parse_podman_reclaimable(text: str) -> int | None:
+    """`podman system df --format json` → octets récupérables (somme des types)."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(data, list):
+        return None
+    total = 0
+    found = False
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        try:
+            total += int(item.get("RawReclaimable"))
+        except (TypeError, ValueError):
+            continue
+        found = True
+    return total if found else None
+
+
+def podman_reclaimable() -> int | None:
+    """Espace que `podman system prune -a --volumes` peut rendre."""
+    code, text = _run(["podman", "system", "df", "--format", "json"], 30)
+    if code != 0:
+        return None
+    return parse_podman_reclaimable(text)
+
+
+def cache_size(domain: str) -> int | None:
+    """Taille apparente d'un cache régénérable (octets), None si absent.
+
+    `du -sb` compte les blocs réellement occupés d'après les tailles de
+    fichiers : c'est l'ordre de grandeur du gain, pas une promesse à l'octet.
+    """
+    path = clean_cache_path(domain)
+    if path is None or not path.exists():
+        return None
+    code, text = _run(["du", "-sb", str(path)], 120)
+    if code != 0:
+        return None
+    first = (text.split() or [""])[0]
+    try:
+        return int(first)
+    except (TypeError, ValueError):
+        return None
+
+
+def clean_domain_available(domain: str) -> bool:
+    """Le domaine peut-il être nettoyé sur cette machine ?"""
+    if domain == "podman":
+        return bool(_which("podman"))          # variantes DX uniquement
+    if domain == "flatpak":
+        return bool(_which("flatpak")) or clean_available()
+    if domain == "ostree":
+        return clean_available()
+    if domain == "brew":
+        return brew_available()
+    path = clean_cache_path(domain)
+    if path is not None:
+        return path.exists()
+    return False
+
+
+def clean_system_script(
+    domains: list[str] | tuple[str, ...] | None = None,
+) -> str:
+    """Nettoyage des restes inutilisés, pour les domaines demandés.
+
+    Sans argument : tous les domaines disponibles (comportement de la recette
+    `ujust clean-system`). Podman et Homebrew tournent en utilisateur : leurs
+    images, volumes et cache sont les siens. Les Flatpaks du **compte** aussi ;
+    les Flatpaks **système** et `rpm-ostree cleanup` passent par le helper
+    privilégié (sous-commandes exactes du sudoers), magasins root obligent.
+    """
+    selected = set(domains) if domains is not None else set(CLEAN_DOMAINS)
+    steps: list[tuple[str, list[str]]] = []
+    if "podman" in selected and _which("podman"):
+        # `system prune -a --volumes` : images, conteneurs arrêtés, réseaux,
+        # cache de build ET volumes non utilisés — le geste complet demandé.
+        steps.append(("Podman", ["podman system prune -a --volumes -f"]))
+    if "flatpak" in selected:
+        commands: list[str] = []
+        if _which("flatpak"):
+            commands.append("flatpak uninstall --unused --user -y || true")
+        if clean_available():
+            commands.append(f"sudo -n {CLEAN_HELPER} flatpak")
+        if commands:
+            steps.append(("Flatpaks", commands))
+    if "ostree" in selected and clean_available():
+        steps.append(("rpm-ostree", [
+            f"sudo -n {CLEAN_HELPER} rpm-ostree",
+        ]))
+    for domain, label in (
+        ("gwine_temp", "Cache gwine — temp"),
+        ("gwine_shaders", "Cache gwine — shaders"),
+        ("gwine", "Cache gwine"),
+        ("wgp", "Cache WGP"),
+        ("lgp", "Cache LGP"),
+        ("opencode", "Cache OpenCode"),
+    ):
+        if domain not in selected:
+            continue
+        path = clean_cache_path(domain)
+        if path is not None and path.exists():
+            # `rm -rf` sur un chemin figé (jamais une variable de shell) :
+            # le cache est régénéré au prochain lancement de l'outil.
+            steps.append((label, [f"rm -rf -- {shlex.quote(str(path))}"]))
+    if "brew" in selected and brew_available():
+        # Même préfixe et mêmes exports que `brew_update_script` : le PATH
+        # d'une session GUI ne contient pas `/home/linuxbrew/.linuxbrew/bin`.
+        steps.append(("Homebrew", [
+            "brew=/home/linuxbrew/.linuxbrew/bin/brew",
+            'if [ ! -x "$brew" ]; then brew="$(command -v brew)"; fi',
+            'if [ -n "$brew" ]; then',
+            '    prefix="${brew%/bin/brew}"',
+            '    export HOMEBREW_PREFIX="$prefix"',
+            '    export HOMEBREW_CELLAR="$prefix/Cellar"',
+            '    export HOMEBREW_REPOSITORY="$prefix/Homebrew"',
+            '    export HOMEBREW_NO_AUTO_UPDATE=1',
+            '    "$brew" autoremove || true',
+            '    "$brew" cleanup || true',
+            'fi',
+        ]))
+    return _steps_script(steps)
+
+
+# -- Btrfs : compression par système de fichiers ----------------------------
+
+# Montages techniques : /etc et /sysroot ne sont pas des cibles utiles (ils
+# doublonnent le système), et /run/bees/* appartient au démon de déduplication.
+BTRFS_EXCLUDED_TARGETS = ("/etc",)
+BTRFS_EXCLUDED_PREFIXES = ("/sysroot", "/run/bees")
+
+
+def parse_btrfs_mounts(text: str) -> list[dict]:
+    """`findmnt -t btrfs -o TARGET,UUID,LABEL -J` → montages affichables.
+
+    Un point de montage = une ligne : sur ostree, `/var` et `/var/home` sont
+    deux sous-volumes distincts du même disque, avec chacun son drapeau de
+    compression — les fusionner par UUID afficherait un état faux.
+    """
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return []
+    filesystems = data.get("filesystems") if isinstance(data, dict) else None
+    if not isinstance(filesystems, list):
+        return []
+    rows: list[dict] = []
+    seen: set[str] = set()
+    # `findmnt -J` imbrique les montages enfants (`/var/home` sous `/var`) :
+    # les ignorer ferait disparaître un sous-volume de la liste.
+    pending = list(filesystems)
+    while pending:
+        item = pending.pop(0)
+        if not isinstance(item, dict):
+            continue
+        pending.extend(item.get("children") or [])
+        target = str(item.get("target") or "")
+        if not target or target in seen:
+            continue
+        if target in BTRFS_EXCLUDED_TARGETS:
+            continue
+        if target.startswith(BTRFS_EXCLUDED_PREFIXES):
+            continue
+        seen.add(target)
+        rows.append({
+            "target": target,
+            "uuid": str(item.get("uuid") or ""),
+            "label": str(item.get("label") or ""),
+        })
+    return sorted(rows, key=lambda row: row["target"])
+
+
+def btrfs_compression(path: str) -> str:
+    """Drapeau de compression d'un chemin (`zstd`, `lzo`… ; "" = aucun)."""
+    try:
+        result = subprocess.run(
+            [_which("btrfs"), "property", "get", path, "compression"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    for line in (result.stdout or "").splitlines():
+        if line.startswith("compression="):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+def btrfs_filesystems() -> list[dict]:
+    """Montages Btrfs présents, avec l'état de compression de chacun."""
+    try:
+        result = subprocess.run(
+            ["findmnt", "-t", "btrfs", "-o", "TARGET,UUID,LABEL", "-J"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    rows = parse_btrfs_mounts(result.stdout)
+    for row in rows:
+        row["compression"] = btrfs_compression(row["target"])
+    return rows
+
+
+def btrfs_helper_available() -> bool:
+    """Le helper de compression Btrfs est-il installé (image à jour) ?"""
+    return Path(BTRFS_HELPER).is_file()
+
+
+def btrfs_apply_script(changes: dict[str, bool]) -> str:
+    """Un `btrfs property set` par montage modifié (helper privilégié)."""
+    steps: list[tuple[str, list[str]]] = []
+    for target, enabled in changes.items():
+        action = "zstd" if enabled else "none"
+        steps.append((f"Compression {target}", [
+            f"sudo -n {BTRFS_HELPER} {action} {shlex.quote(target)}"
+        ]))
+    return _steps_script(steps)
+
+
+# -- NVMe : limite thermique (HCTM) -----------------------------------------
+
+# Presets proposés par la recette ujust, du plus prudent au plus permissif :
+# (TMT1 « throttle doux », TMT2 « throttle agressif ») en °C.
+NVME_PRESETS = ((65, 70), (70, 75), (75, 80))
+
+
+def nvme_thermal_helper_available() -> bool:
+    """Le helper de limite thermique NVMe est-il installé ?"""
+    return Path(NVME_THERMAL_HELPER).is_file()
+
+
+def nvme_thermal_devices() -> list[dict]:
+    """État HCTM de chaque contrôleur NVMe (lu par le helper privilégié).
+
+    La lecture (`id-ctrl`, `get-feature`) exige root sur nvme-cli : le helper
+    la fait en une passe et rend un JSON stable, que le dialogue consomme.
+    """
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", NVME_THERMAL_HELPER, "status"],
+            capture_output=True, text=True, timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    try:
+        data = json.loads(result.stdout)
+    except ValueError:
+        return []
+    devices = data.get("devices") if isinstance(data, dict) else None
+    if not isinstance(devices, list):
+        return []
+    return [item for item in devices if isinstance(item, dict)]
+
+
+def nvme_thermal_script(
+    changes: dict[str, tuple[int, int] | None],
+) -> str:
+    """Un `set-feature` (ou une remise au firmware) par SSD modifié."""
+    steps: list[tuple[str, list[str]]] = []
+    for device, thresholds in changes.items():
+        if thresholds is None:
+            steps.append((f"{device} : contrôle firmware", [
+                f"sudo -n {NVME_THERMAL_HELPER} off {shlex.quote(device)}"
+            ]))
+            continue
+        first, second = thresholds
+        steps.append((f"{device} : {first}/{second} °C", [
+            f"sudo -n {NVME_THERMAL_HELPER} set {shlex.quote(device)} "
+            f"{int(first)} {int(second)}"
+        ]))
+    return _steps_script(steps)
+
+
+# -- Syncthing : dossiers de versions (.stversions) --------------------------
+
+# Emplacements connus du config.xml de Syncthing, y compris le bac à sable
+# Flatpak (SyncThingy range son état sous ~/.var/app/<id>/.local/state).
+SYNCTHING_CONFIG_GLOBS = (
+    ".local/state/syncthing/config.xml",
+    ".config/syncthing/config.xml",
+    ".var/app/*/.local/state/syncthing/config.xml",
+    ".var/app/*/config/syncthing/config.xml",
+    ".var/app/*/data/syncthing/config.xml",
+)
+
+
+def syncthing_running() -> bool:
+    """Le démon Syncthing tourne-t-il (Flatpak compris) ?"""
+    code, _ = _run(["pgrep", "-x", "syncthing"], 5)
+    return code == 0
+
+
+def syncthing_config_paths(home: Path | None = None) -> list[Path]:
+    """Config.xml de Syncthing présents sur la machine (dédoublonnés)."""
+    root = home or Path.home()
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for pattern in SYNCTHING_CONFIG_GLOBS:
+        for path in root.glob(pattern):
+            if path.is_file() and path not in seen:
+                seen.add(path)
+                paths.append(path)
+    return paths
+
+
+def parse_syncthing_folders(text: str, home: Path | None = None) -> list[dict]:
+    """`config.xml` → dossiers de versions (`.stversions`) déclarés.
+
+    Syncthing crée `.stversions` dans le dossier synchronisé, sauf si
+    `versionsPath` est renseigné : ce chemin-là fait foi. Les `~` sont
+    développés avec le vrai home (le Flatpak voit le même /home).
+    """
+    import xml.etree.ElementTree as ElementTree
+
+    try:
+        root = ElementTree.fromstring(text)
+    except ElementTree.ParseError:
+        return []
+    home_path = home or Path.home()
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for folder in root.iter("folder"):
+        folder_path = (folder.get("path") or "").strip()
+        if not folder_path:
+            continue
+        versions = ""
+        for child in folder:
+            if child.tag == "versionsPath":
+                versions = (child.text or "").strip()
+                break
+        def expand(value: str) -> str:
+            # Le home passé fait foi (`~` du config.xml) ; sinon ~ de l'utilisateur.
+            if value == "~" or value.startswith("~/"):
+                return str(home_path / value[2:]) if value != "~" else str(home_path)
+            return os.path.expanduser(value)
+
+        folder_path = expand(folder_path)
+        versions = expand(versions) if versions else os.path.join(
+            folder_path, ".stversions"
+        )
+        if versions in seen:
+            continue
+        seen.add(versions)
+        rows.append({
+            "label": (folder.get("label") or "").strip(),
+            "path": folder_path,
+            "versions": versions,
+        })
+    return rows
+
+
+def syncthing_version_dirs(home: Path | None = None) -> list[dict]:
+    """Dossiers `.stversions` existants, avec leur libellé de dossier.
+
+    Config illisible ou absente : repli sur `~/Syncthing/*/.stversions`, la
+    disposition créée par l'assistant Syncthing.
+    """
+    home_path = home or Path.home()
+    rows: list[dict] = []
+    for config in syncthing_config_paths(home_path):
+        try:
+            text = config.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rows.extend(parse_syncthing_folders(text, home_path))
+    if not rows:
+        for path in sorted(home_path.glob("Syncthing/*/.stversions")):
+            if path.is_dir():
+                rows.append({
+                    "label": path.parent.name,
+                    "path": str(path.parent),
+                    "versions": str(path),
+                })
+    existing = []
+    seen: set[str] = set()
+    for row in rows:
+        if row["versions"] in seen or not Path(row["versions"]).is_dir():
+            continue
+        seen.add(row["versions"])
+        existing.append(row)
+    return existing
+
+
+def versions_dir_size(path: str) -> int | None:
+    """Taille apparente d'un dossier `.stversions` (octets), None si absente."""
+    if not Path(path).is_dir():
+        return None
+    code, text = _run(["du", "-sb", path], 180)
+    if code != 0:
+        return None
+    first = (text.split() or [""])[0]
+    try:
+        return int(first)
+    except (TypeError, ValueError):
+        return None
 
 
 def rebase_helper_available() -> bool:
@@ -876,13 +1353,14 @@ def services_choices() -> dict:
         "low_latency": LOW_LATENCY_FILE.is_file(),
         "broadcom_wl": BROADCOM_WL_FILE.is_file(),
         "atuin": atuin_active(),
+        "gamepad": gamepad_active() if gamepad_available() else False,
     }
 
 
 def system_apply_script(changes: dict[str, bool]) -> str:
     """Script d'application : un helper par domaine, en un seul passage.
 
-    Un seul « Appliquer » peut toucher cinq domaines ; `_steps_script` publie
+    Un seul « Appliquer » peut toucher six domaines ; `_steps_script` publie
     leur avancement pour la barre du dialogue.
     """
     steps: list[tuple[str, list[str]]] = []
@@ -909,6 +1387,11 @@ def system_apply_script(changes: dict[str, bool]) -> str:
         # Intégration du shell : fichiers de l'utilisateur, aucun privilège.
         steps.append(("Historique atuin", [
             f"{ATUIN_HELPER} " + ("on" if changes["atuin"] else "off")
+        ]))
+    if "gamepad" in changes:
+        # Autostart de session : fichiers de l'utilisateur, aucun privilège.
+        steps.append(("Raccourcis manette", [
+            f"{GAMEPAD_HELPER} " + ("on" if changes["gamepad"] else "off")
         ]))
     return _steps_script(steps)
 

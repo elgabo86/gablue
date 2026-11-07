@@ -147,6 +147,14 @@ REBASE_HELPER = "/usr/libexec/gablue-rebase"
 
 ATUIN_HELPER = "/usr/bin/gablue-atuin"
 
+GAMEPAD_HELPER = "/usr/bin/gablue-gamepad"
+
+CLEAN_HELPER = "/usr/libexec/gablue-clean"
+
+BTRFS_HELPER = "/usr/libexec/gablue-btrfs-compress"
+
+NVME_THERMAL_HELPER = "/usr/libexec/gablue-nvme-thermal"
+
 LOW_LATENCY_FILE = Path("/etc/profile.d/vulkan-low-latency.sh")
 
 BROADCOM_WL_FILE = Path("/etc/modprobe.d/wl-enable.conf")

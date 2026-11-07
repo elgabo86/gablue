@@ -469,6 +469,156 @@ class SystemTest(unittest.TestCase):
                 else:
                     os.environ["HOME"] = previous
 
+    def test_gamepad_script(self):
+        script = local.system_apply_script({"gamepad": False})
+        self.assertIn("/usr/bin/gablue-gamepad off", script)
+        # Autostart de session : fichiers de l'utilisateur, jamais de sudo.
+        self.assertNotIn("sudo", script)
+
+    def test_clean_script_all_domains(self):
+        import tempfile
+        import unittest.mock as mock
+        cache = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(cache, True))
+        with mock.patch.object(
+            local, "_which", lambda name: f"/usr/bin/{name}"
+        ), mock.patch.object(
+            local, "brew_available", lambda: True
+        ), mock.patch.object(
+            local, "clean_available", lambda: True
+        ), mock.patch.object(
+            local, "clean_cache_path", lambda _domain: cache
+        ):
+            script = local.clean_system_script()
+        # Podman : le geste complet demandé (volumes compris).
+        self.assertIn("podman system prune -a --volumes -f", script)
+        self.assertIn("flatpak uninstall --unused --user -y", script)
+        self.assertIn("sudo -n /usr/libexec/gablue-clean flatpak", script)
+        self.assertIn("sudo -n /usr/libexec/gablue-clean rpm-ostree", script)
+        self.assertIn('"$brew" autoremove', script)
+        self.assertIn('"$brew" cleanup', script)
+        # Six caches régénérables : un rm -rf par domaine.
+        self.assertIn(f"rm -rf -- {cache}", script)
+        self.assertEqual(script.count("rm -rf --"), 6)
+        self.assertIn("'::gablue:step 10 10 Homebrew'", script)
+
+    def test_clean_script_selection(self):
+        import unittest.mock as mock
+        with mock.patch.object(
+            local, "_which", lambda name: f"/usr/bin/{name}"
+        ), mock.patch.object(
+            local, "brew_available", lambda: True
+        ), mock.patch.object(
+            local, "clean_available", lambda: True
+        ):
+            script = local.clean_system_script(["podman"])
+        self.assertIn("podman system prune", script)
+        self.assertNotIn("flatpak", script)
+        self.assertNotIn("rpm-ostree", script)
+        # Un domaine absent de la sélection ne compte pas dans le total.
+        self.assertIn("'::gablue:step 1 1 Podman'", script)
+
+    def test_btrfs_mounts(self):
+        text = json.dumps({"filesystems": [
+            {"target": "/etc", "uuid": "u", "label": "l"},
+            {"target": "/sysroot", "uuid": "u", "label": "l",
+             "children": [{"target": "/sysroot/ostree/var", "uuid": "u"}]},
+            {"target": "/run/bees/home", "uuid": "u", "label": "l"},
+            {"target": "/var", "uuid": "u", "label": "l",
+             "children": [{"target": "/var/home", "uuid": "u", "label": "l"}]},
+            {"target": "/var", "uuid": "u", "label": "l"},
+        ]})
+        rows = local.parse_btrfs_mounts(text)
+        # Un sous-volume n'est pas fusionné avec son voisin : /var et /var/home
+        # portent chacun leur drapeau.
+        self.assertEqual(
+            [row["target"] for row in rows], ["/var", "/var/home"]
+        )
+        self.assertEqual(local.parse_btrfs_mounts("pas du json"), [])
+
+    def test_btrfs_script(self):
+        script = local.btrfs_apply_script({"/var": True, "/var/home": False})
+        self.assertIn(
+            "sudo -n /usr/libexec/gablue-btrfs-compress zstd /var", script
+        )
+        self.assertIn(
+            "sudo -n /usr/libexec/gablue-btrfs-compress none /var/home",
+            script,
+        )
+        self.assertIn("'::gablue:step 2 2", script)
+
+    def test_format_size(self):
+        self.assertEqual(local.format_size(None), "")
+        self.assertEqual(local.format_size(0), "")
+        self.assertEqual(local.format_size(900), "900 o")
+        self.assertEqual(local.format_size(1536), "2 Kio")
+        self.assertEqual(local.format_size(2 * 1024 ** 3), "2.0 Gio")
+
+    def test_podman_reclaimable(self):
+        text = json.dumps([
+            {"Type": "Images", "RawReclaimable": 100},
+            {"Type": "Containers", "RawReclaimable": 25},
+            {"Type": "Local Volumes", "RawReclaimable": 0},
+        ])
+        self.assertEqual(local.parse_podman_reclaimable(text), 125)
+        self.assertIsNone(local.parse_podman_reclaimable("pas du json"))
+
+    def test_syncthing_versions(self):
+        import tempfile
+        home = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(home, True))
+        config_dir = home / ".local/state/syncthing"
+        config_dir.mkdir(parents=True)
+        synced = home / "Sync/docs"
+        (synced / ".stversions").mkdir(parents=True)
+        custom = home / "CustomVersions"
+        custom.mkdir()
+        (config_dir / "config.xml").write_text(
+            "<configuration>"
+            f'<folder id="a" label="Docs" path="{synced}">'
+            '<versioning type="trashcan"/></folder>'
+            f'<folder id="b" label="Autre" path="{home}/Other">'
+            f"<versionsPath>{custom}</versionsPath></folder>"
+            "</configuration>",
+            encoding="utf-8",
+        )
+        dirs = local.syncthing_version_dirs(home)
+        self.assertEqual(
+            [(item["label"], item["versions"]) for item in dirs],
+            [("Docs", str(synced / ".stversions")),
+             ("Autre", str(custom))],
+        )
+        # Chemin par défaut : .stversions DANS le dossier synchronisé.
+        parsed = local.parse_syncthing_folders(
+            f'<configuration><folder label="X" path="{home}/X"/></configuration>',
+            home,
+        )
+        self.assertEqual(
+            parsed[0]["versions"], str(home / "X/.stversions")
+        )
+        # `~` du config.xml se développe avec le home fourni.
+        parsed = local.parse_syncthing_folders(
+            '<configuration><folder label="Y" path="~/Sync/Y"/></configuration>',
+            home,
+        )
+        self.assertEqual(
+            parsed[0]["versions"], str(home / "Sync/Y/.stversions")
+        )
+
+    def test_nvme_script(self):
+        script = local.nvme_thermal_script({
+            "/dev/nvme0": (70, 75),
+            "/dev/nvme1": None,
+        })
+        self.assertIn(
+            "sudo -n /usr/libexec/gablue-nvme-thermal set /dev/nvme0 70 75",
+            script,
+        )
+        self.assertIn(
+            "sudo -n /usr/libexec/gablue-nvme-thermal off /dev/nvme1", script
+        )
+        self.assertIn("'::gablue:step 2 2", script)
+
 
 class TailscaleTest(unittest.TestCase):
     def test_parse(self):

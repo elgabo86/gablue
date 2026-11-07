@@ -1,0 +1,117 @@
+#!/usr/bin/bash
+
+# gablue-gamepad — raccourcis manette Gablue (autostart de session)
+#
+# Les raccourcis sont livrés par l'image et lancés à l'ouverture de session par
+# `/etc/xdg/autostart/gablue-gamepadshortcuts.desktop`. `off` les coupe de deux
+# façons, parce qu'aucune ne suffit seule :
+#   - un masque d'autostart utilisateur (`~/.config/autostart`, Hidden=true :
+#     mécanisme standard XDG, celui qu'utilise le panneau Plasma) → ils ne
+#     reviendront pas à la prochaine session ;
+#   - arrêt de l'instance en cours (lanceur + binaire) → ils s'arrêtent tout de
+#     suite, sans attendre une déconnexion.
+# `on` fait l'inverse et relance immédiatement.
+#
+# Aucun privilège : l'autostart est dans le dossier de l'utilisateur et les
+# processus arrêtés sont les siens. Le masque ne modifie jamais l'image.
+#
+# Usage : gablue-gamepad on|off|status
+#   status : 0 = actifs, 1 = désactivés
+
+set -eu
+
+AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+OVERRIDE="$AUTOSTART_DIR/gablue-gamepadshortcuts.desktop"
+LAUNCHER="/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/launchgamepadshortcuts"
+BINARY="/usr/bin/gamepadshortcuts"
+
+usage() {
+    echo "Usage : gablue-gamepad on|off|status" >&2
+    exit 2
+}
+
+# Actifs = pas de masque Hidden=true (l'image fournit l'entrée d'autostart).
+enabled() {
+    [ -f "$OVERRIDE" ] || return 0
+    ! grep -Eiq '^[[:space:]]*Hidden[[:space:]]*=[[:space:]]*true[[:space:]]*$' "$OVERRIDE"
+}
+
+# PIDs (utilisateur courant) du lanceur et du binaire. Le lanceur est un
+# script bash : son `comm` est tronqué à 15 caractères, donc on lit la ligne
+# de commande complète de chaque processus et on exige les chemins exacts.
+# Aucun `pkill -f` : le motif pourrait désigner un shell lançateur.
+running_pids() {
+    local dir pid uid own cmd
+    uid=$(id -u)
+    for dir in /proc/[0-9]*; do
+        pid=${dir#/proc/}
+        [ -r "$dir/cmdline" ] || continue
+        own=$(sed -n 's/^Uid:[[:space:]]*\([0-9]*\).*/\1/p' \
+              "$dir/status" 2>/dev/null || true)
+        [ "$own" = "$uid" ] || continue
+        cmd=$(tr '\0' ' ' < "$dir/cmdline" 2>/dev/null || true)
+        case " $cmd " in
+            *" $LAUNCHER "*|*" $BINARY "*) printf '%s\n' "$pid" ;;
+        esac
+    done
+}
+
+stop_running() {
+    local pids pid attempt
+    pids=$(running_pids || true)
+    [ -n "$pids" ] || return 0
+    echo "Arrêt des raccourcis manette (PID : $(echo $pids))…"
+    for pid in $pids; do
+        kill "$pid" 2>/dev/null || true
+    done
+    # Le lanceur relance le binaire toutes les secondes : on laisse un court
+    # instant aux deux pour sortir, puis on force.
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        pids=$(running_pids || true)
+        [ -n "$pids" ] && { sleep 0.2; continue; }
+        return 0
+    done
+    echo "Arrêt forcé."
+    for pid in $pids; do
+        kill -9 "$pid" 2>/dev/null || true
+    done
+}
+
+start_running() {
+    if [ -n "$(running_pids || true)" ]; then
+        echo "Raccourcis manette déjà actifs."
+        return 0
+    fi
+    setsid "$LAUNCHER" </dev/null >/dev/null 2>&1 &
+    echo "Raccourcis manette lancés."
+}
+
+case "${1:-}" in
+    on)
+        rm -f "$OVERRIDE"
+        start_running
+        ;;
+    off)
+        mkdir -p "$AUTOSTART_DIR"
+        cat > "$OVERRIDE" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Gablue Gamepad Shortcuts (désactivés)
+Comment=Masque posé par Gablue Manager — retirer ce fichier réactive les raccourcis
+Hidden=true
+EOF
+        chmod 644 "$OVERRIDE"
+        stop_running
+        ;;
+    status)
+        if enabled; then
+            echo "enabled"
+            exit 0
+        fi
+        echo "disabled"
+        exit 1
+        ;;
+    *)
+        usage
+        ;;
+esac
