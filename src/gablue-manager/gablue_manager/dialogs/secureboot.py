@@ -252,11 +252,8 @@ class SecureBootDialog(QDialog):
             progress_text="Programmation de l'enrôlement…",
             reveal_log_on_error=True,
         )
-        # L'état passe à « demande en attente » dès la fin : on le relit ici
-        # plutôt que de fermer le dialogue, pour que l'utilisateur voie le
-        # résultat sans rouvrir l'outil.
-        task.completed.connect(self._task_finished)
         start_task(self, task)
-
-    def _task_finished(self, _ok: bool) -> None:
-        self.refresh()
+        # Le dialogue est modal (`exec()`) : rester ouvert désactiverait la
+        # fenêtre de progression, dont « Fermer » deviendrait inerte. Le
+        # résultat (demande en attente) se voit en rouvrant l'outil.
+        self.accept()

@@ -361,10 +361,11 @@ class CleanDialog(QDialog):
             progress_text="Nettoyage…",
             reveal_log_on_error=True,
         )
-        task.completed.connect(
-            lambda _ok, chosen=domain: self._domain_done(chosen)
-        )
         start_task(self, task)
+        # Le dialogue est modal (`exec()`) : tant qu'il reste ouvert, il
+        # désactive TOUTES les autres fenêtres de l'app, y compris la tâche
+        # qu'il vient de lancer — « Fermer » y était inerte (vécu 07/11/2026).
+        self.accept()
 
     def _remote_clean(self, domain: str, label: str) -> None:
         """Vide un domaine sur le poste distant, mot de passe seulement si root."""
@@ -389,36 +390,5 @@ class CleanDialog(QDialog):
             progress_mode="busy",
             progress_text="Nettoyage…",
         )
-        task.completed.connect(
-            lambda _ok, chosen=domain: self._domain_done(chosen)
-        )
         start_task(self, task)
-
-    def _domain_done(self, domain: str) -> None:
-        """Relance la mesure du domaine vidé et réactive son bouton."""
-        try:
-            self.sizes.pop(domain, None)
-            if self.host is None:
-                self.buttons[domain].setEnabled(
-                    self.available.get(domain, False)
-                )
-                self._start_sizes([domain])
-                return
-            # Aucune re-sonde ici : `completed` est émis pendant que
-            # `RemoteTaskDialog._finished` tient encore la boucle GUI, et une
-            # connexion SSH synchrone (jusqu'à 60 s) gelait la fenêtre de
-            # progression — impossible de cliquer « Fermer » (vécu 07/11/2026).
-            # On met donc la ligne à jour localement ; rouvrir le dialogue
-            # refait une sonde exacte.
-            self.sizes.pop(domain, None)
-            self.size_labels[domain].setText("?")
-            if domain in local.CLEAN_CACHE_SUFFIXES:
-                # Le cache vient d'être supprimé : plus rien à vider.
-                self.available[domain] = False
-            self.buttons[domain].setEnabled(
-                self.available.get(domain, False)
-            )
-            self._update_hint()
-        except RuntimeError:
-            # Dialogue fermé pendant la tâche : plus rien à rafraîchir.
-            return
+        self.accept()
