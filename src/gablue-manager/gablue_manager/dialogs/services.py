@@ -32,7 +32,7 @@ CHOICE_LABELS = {
     ),
     "broadcom_wl": (
         "Wi-Fi Broadcom wl",
-        "Pilote propriétaire pour vieux MacBooks. Redémarrage requis.",
+        "Pilote propriétaire pour vieux MacBooks.",
     ),
     "atuin": (
         "Historique atuin",
@@ -94,8 +94,8 @@ class ServicesDialog(QDialog):
         root_layout.addWidget(heading)
 
         note = QLabel(
-            "Services et pilotes de cette machine. Effet immédiat, sauf le "
-            "Wi-Fi (redémarrage) et Vulkan/atuin (nouvelle session).",
+            "Services et pilotes de cette machine. Vulkan et atuin prennent "
+            "effet à la nouvelle session.",
             self,
         )
         note.setObjectName("subtitle")
@@ -253,7 +253,7 @@ class ServicesDialog(QDialog):
         answer = QMessageBox.question(
             self, "Services et pilotes",
             f"Appliquer ces réglages ?\n\n{details}\n\n"
-            "Wi-Fi : au redémarrage. Vulkan et atuin : nouvelle session.",
+            "Vulkan et atuin : nouvelle session.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
