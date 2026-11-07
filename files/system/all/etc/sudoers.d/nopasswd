@@ -19,3 +19,4 @@
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-clean flatpak, /usr/libexec/gablue-clean rpm-ostree
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-btrfs-compress zstd *, /usr/libexec/gablue-btrfs-compress none *
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-nvme-thermal status, /usr/libexec/gablue-nvme-thermal set *, /usr/libexec/gablue-nvme-thermal off *
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-grub status, /usr/libexec/gablue-grub set 0, /usr/libexec/gablue-grub set 1, /usr/libexec/gablue-grub set 2, /usr/libexec/gablue-grub unset

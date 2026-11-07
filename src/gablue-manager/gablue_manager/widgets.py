@@ -413,6 +413,7 @@ class LocalCard(QFrame):
     thermal_requested = Signal()
     clean_requested = Signal()
     stversions_requested = Signal()
+    grub_requested = Signal()
     gwine_requested = Signal()
     booster_requested = Signal()
     tailscale_requested = Signal()
@@ -516,6 +517,7 @@ class LocalCard(QFrame):
         self.config_button.setIcon(QIcon.fromTheme("settings-configure"))
         config_menu = QMenu(self.config_button)
         config_menu.addAction("Noyau et matériel…", self.kernel_requested.emit)
+        config_menu.addAction("Menu GRUB…", self.grub_requested.emit)
         config_menu.addSeparator()
         config_menu.addAction(
             "Mises à jour automatiques…", self.updates_requested.emit

@@ -1,0 +1,98 @@
+#!/usr/bin/bash
+
+# gablue-grub — visibilité du menu GRUB (`menu_auto_hide`)
+#
+# Équivalent non interactif de `ujust configure-grub`, appelé par Gablue
+# Manager avec `sudo -n` (règles sudoers exactes sur chaque forme).
+# `menu_auto_hide` vit dans `/boot/grub2/grubenv`, illisible et non inscriptible
+# sans root ; il est relu au démarrage par GRUB.
+#
+#   0 (ou clé absente) : le menu s'affiche toujours
+#   1                  : masqué après un démarrage réussi, SAUF en double-boot
+#   2                  : masqué après un démarrage réussi, même en double-boot
+#
+# `/boot` peut être monté en lecture seule sur certaines installations : le
+# helper le remet en écriture le temps de l'écriture, puis restaure son état.
+#
+# Usage : gablue-grub status | set 0|1|2 | unset
+
+set -euo pipefail
+
+GRUBENV_BOOT="/boot"
+
+usage() {
+    echo "Usage : gablue-grub status | set 0|1|2 | unset" >&2
+    exit 2
+}
+
+boot_read_only() {
+    findmnt -no OPTIONS --target "$GRUBENV_BOOT" 2>/dev/null \
+        | tr ',' '\n' | grep -qx 'ro'
+}
+
+with_boot_writable() {
+    local restore=0
+    if boot_read_only; then
+        restore=1
+        mount -o remount,rw "$GRUBENV_BOOT" || {
+            echo "Impossible de remonter $GRUBENV_BOOT en écriture." >&2
+            exit 1
+        }
+    fi
+    local code=0
+    "$@" || code=$?
+    if [ "$restore" = 1 ]; then
+        mount -o remount,ro "$GRUBENV_BOOT" || true
+    fi
+    return "$code"
+}
+
+status() {
+    local output value
+    # grub2-editenv écrit un .new même pour `list` : root obligatoire, et ses
+    # avertissements de périphérique partent sur stderr. Un échec ne doit PAS
+    # se lire « non défini » (le manager afficherait « toujours afficher »).
+    if ! output=$(grub2-editenv - list 2>/dev/null); then
+        echo "Lecture de grubenv impossible." >&2
+        exit 1
+    fi
+    value=$(printf '%s\n' "$output" \
+            | awk -F= '$1 == "menu_auto_hide" {print $2}' | head -1)
+    if [ -z "$value" ]; then
+        echo "unset"
+    else
+        echo "$value"
+    fi
+}
+
+set_value() {
+    echo "→ menu_auto_hide=$1"
+    grub2-editenv - set "menu_auto_hide=$1"
+}
+
+unset_value() {
+    echo "→ menu_auto_hide retiré (menu toujours affiché)"
+    grub2-editenv - unset menu_auto_hide
+}
+
+case "${1:-}" in
+    status)
+        [ $# -eq 1 ] || usage
+        status
+        ;;
+    set)
+        [ $# -eq 2 ] || usage
+        case "$2" in
+            0|1|2) ;;
+            *) usage ;;
+        esac
+        with_boot_writable set_value "$2"
+        ;;
+    unset)
+        [ $# -eq 1 ] || usage
+        with_boot_writable unset_value
+        ;;
+    *)
+        usage
+        ;;
+esac

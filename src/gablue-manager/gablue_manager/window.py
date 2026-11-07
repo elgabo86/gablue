@@ -26,6 +26,7 @@ from .dialogs.apps import AppsDialog
 from .dialogs.booster import ForegroundBoosterDialog
 from .dialogs.btrfs import BtrfsDialog
 from .dialogs.clean import CleanDialog
+from .dialogs.grub import GrubDialog
 from .dialogs.gwine import GwineOptionsDialog
 from .dialogs.host import CandidateDialog, HostDialog
 from .dialogs.kernel import LocalSettingsDialog, RemoteSettingsDialog
@@ -200,6 +201,7 @@ class MainWindow(QMainWindow):
         self.local_card.thermal_requested.connect(self.open_local_thermal)
         self.local_card.clean_requested.connect(self.open_clean_system)
         self.local_card.stversions_requested.connect(self.open_stversions)
+        self.local_card.grub_requested.connect(self.open_grub)
         self.local_card.gwine_requested.connect(self.open_local_gwine_options)
         self.local_card.booster_requested.connect(
             self.open_local_foreground_booster
@@ -1482,6 +1484,9 @@ class MainWindow(QMainWindow):
 
     def open_stversions(self) -> None:
         StVersionsDialog(self).exec()
+
+    def open_grub(self) -> None:
+        GrubDialog(self).exec()
 
     def open_local_gwine_options(self) -> None:
         GwineOptionsDialog(self).exec()

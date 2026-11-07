@@ -155,6 +155,8 @@ BTRFS_HELPER = "/usr/libexec/gablue-btrfs-compress"
 
 NVME_THERMAL_HELPER = "/usr/libexec/gablue-nvme-thermal"
 
+GRUB_HELPER = "/usr/libexec/gablue-grub"
+
 LOW_LATENCY_FILE = Path("/etc/profile.d/vulkan-low-latency.sh")
 
 BROADCOM_WL_FILE = Path("/etc/modprobe.d/wl-enable.conf")

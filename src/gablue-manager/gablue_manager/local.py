@@ -15,7 +15,8 @@ from .constants import (
     ATUIN_HELPER, AUTO_UPDATE_HELPER, AUTO_UPDATE_USER_TIMER, AVAHI_HELPER,
     AVAHI_SERVICE_FILE, BREW_BINARY, BROADCOM_HELPER, BROADCOM_WL_FILE,
     BTRFS_HELPER, CLEAN_HELPER, CMDLINE, CPUID_EMU_BLACKLIST,
-    CPUID_EMU_CONF, CPUID_EMU_HELPER, GAMEPAD_HELPER, NVME_THERMAL_HELPER,
+    CPUID_EMU_CONF, CPUID_EMU_HELPER, GAMEPAD_HELPER, GRUB_HELPER,
+    NVME_THERMAL_HELPER,
     KARG_BT_ERTM, KARG_CLEARCPUID,
     KARG_HDMI21, KARG_HELPER, KARG_MITIGATIONS_OFF, LOW_LATENCY_FILE,
     LOW_LATENCY_HELPER, OS_RELEASE, REBASE_HELPER, SERVICE_HELPER,
@@ -1338,6 +1339,35 @@ def versions_dir_size(path: str) -> int | None:
         return int(first)
     except (TypeError, ValueError):
         return None
+
+
+# -- GRUB : visibilité du menu (menu_auto_hide) ------------------------------
+
+def grub_helper_available() -> bool:
+    """Le helper du menu GRUB est-il installé (image à jour) ?"""
+    return Path(GRUB_HELPER).is_file()
+
+
+def grub_menu_state() -> str:
+    """`menu_auto_hide` courant : « unset », « 0 », « 1 », « 2 » ou "" (illisible).
+
+    `grubenv` est en 0700 root : la lecture passe par le helper en `sudo -n`
+    (jamais d'invite de mot de passe, comme le reste de Gablue Manager).
+    """
+    code, text = _run(["sudo", "-n", GRUB_HELPER, "status"], 15)
+    if code != 0:
+        return ""
+    value = (text.strip().splitlines() or [""])[0].strip()
+    return value if value in ("unset", "0", "1", "2") else ""
+
+
+def grub_apply_script(value: str) -> str:
+    """Script d'application (une étape) pour la valeur choisie."""
+    if value == "unset":
+        command = f"sudo -n {GRUB_HELPER} unset"
+    else:
+        command = f"sudo -n {GRUB_HELPER} set {value}"
+    return _steps_script([("Menu GRUB", [command])])
 
 
 def rebase_helper_available() -> bool:

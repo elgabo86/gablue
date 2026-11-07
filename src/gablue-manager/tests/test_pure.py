@@ -547,6 +547,16 @@ class SystemTest(unittest.TestCase):
         )
         self.assertIn("'::gablue:step 2 2", script)
 
+    def test_grub_script(self):
+        self.assertIn(
+            "sudo -n /usr/libexec/gablue-grub set 2",
+            local.grub_apply_script("2"),
+        )
+        self.assertIn(
+            "sudo -n /usr/libexec/gablue-grub unset",
+            local.grub_apply_script("unset"),
+        )
+
     def test_format_size(self):
         self.assertEqual(local.format_size(None), "")
         self.assertEqual(local.format_size(0), "")
