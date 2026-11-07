@@ -13,7 +13,8 @@ from pathlib import Path
 from .constants import (
     ATUIN_HELPER, AUTO_UPDATE_HELPER, AUTO_UPDATE_USER_TIMER, AVAHI_HELPER,
     AVAHI_SERVICE_FILE, BREW_BINARY, BROADCOM_HELPER, BROADCOM_WL_FILE,
-    CMDLINE, CPUID_EMU_CONF, CPUID_EMU_HELPER, KARG_BT_ERTM, KARG_CLEARCPUID,
+    CMDLINE, CPUID_EMU_BLACKLIST, CPUID_EMU_CONF, CPUID_EMU_HELPER,
+    KARG_BT_ERTM, KARG_CLEARCPUID,
     KARG_HDMI21, KARG_HELPER, KARG_MITIGATIONS_OFF, LOW_LATENCY_FILE,
     LOW_LATENCY_HELPER, OS_RELEASE, REBASE_HELPER, SERVICE_HELPER,
     TAILSCALE_HELPER, _which,
@@ -139,6 +140,95 @@ def cpuid_emu_active() -> bool:
     """L'émulation CPUID fault est-elle persistée sur ce poste ?"""
     return CPUID_EMU_CONF.exists()
 
+def boot_time() -> float:
+    """Horodatage du démarrage courant (`btime` de /proc/stat), 0 si illisible."""
+    try:
+        for line in Path("/proc/stat").read_text(encoding="utf-8").splitlines():
+            if line.startswith("btime "):
+                return float(line.split()[1])
+    except (OSError, ValueError):
+        pass
+    return 0.0
+
+def written_since(path: Path, since: float) -> bool:
+    """Ce fichier a-t-il été écrit après ce moment ?
+
+    Sert à distinguer une config livrée par l'image (date du build, bien avant
+    le démarrage) d'une bascule faite depuis : seule la seconde attend un
+    redémarrage, et le test se nettoie tout seul une fois le poste redémarré.
+    """
+    try:
+        return path.is_file() and since > 0 and path.stat().st_mtime > since
+    except OSError:
+        return False
+
+def loaded_modules() -> set[str]:
+    """Modules noyau chargés (lecture sans privilège)."""
+    try:
+        text = Path("/proc/modules").read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    return {line.split()[0] for line in text.splitlines() if line.strip()}
+
+def parse_staged_deployment(text: str) -> bool:
+    """Une image téléchargée attend-elle un redémarrage ?
+
+    `rpm-ostree status --json` marque ce déploiement `staged: true` ; les
+    anciens déploiements (pinned, précédent) ne le sont pas.
+    """
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return False
+    return any(
+        bool(deployment.get("staged"))
+        for deployment in data.get("deployments", [])
+        if isinstance(deployment, dict)
+    )
+
+def kargs_pending_change(current: set[str], pending: set[str]) -> bool:
+    """Les paramètres du noyau en cours diffèrent-ils de ceux du prochain boot ?
+
+    `BOOT_IMAGE=` n'existe que dans `/proc/cmdline` et décrit le noyau en
+    cours : sans l'écarter, tout poste semblerait en attente de redémarrage.
+    """
+    def stable(args: set[str]) -> set[str]:
+        return {arg for arg in args if not arg.startswith("BOOT_IMAGE=")}
+    return stable(current) != stable(pending)
+
+def pending_reboot_reasons() -> list[str]:
+    """Ce qui attend un redémarrage pour prendre effet (lecture sans root).
+
+    Quatre sources, dans l'ordre où on les présente :
+    image ostree staged, kargs du prochain démarrage différents, configs noyau
+    écrites depuis le démarrage (Wi-Fi Broadcom, émulation CPUID), et module
+    d'émulation encore chargé alors que sa persistance a été retirée.
+    """
+    reasons: list[str] = []
+    try:
+        result = subprocess.run(
+            [_which("rpm-ostree"), "status", "--json"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
+    if (result is not None and result.returncode == 0
+            and parse_staged_deployment(result.stdout)):
+        reasons.append("nouvelle image Gablue téléchargée")
+
+    if kargs_pending_change(kernel_cmdline(), kargs_pending()):
+        reasons.append("paramètres du noyau modifiés")
+
+    boot = boot_time()
+    if written_since(BROADCOM_WL_FILE, boot):
+        reasons.append("pilote Wi-Fi Broadcom wl")
+    if (written_since(CPUID_EMU_CONF, boot)
+            or written_since(CPUID_EMU_BLACKLIST, boot)
+            or ("cpuid_fault_emulation" in loaded_modules()
+                and not CPUID_EMU_CONF.exists())):
+        reasons.append("émulation CPUID fault")
+    return reasons
+
 def kargs_choices(kargs: set[str], emu_active: bool = False) -> dict[str, bool]:
     """État des cases à cocher : coché = réglage Gablue appliqué."""
     return {
@@ -233,6 +323,29 @@ def brew_update_script() -> str:
         "\"$brew\" upgrade || rc=$?\n"
         "exit $rc\n"
     )
+
+def gablue_update_hint(text: str) -> str:
+    """Phrase de fin de journal pour `bootc upgrade`.
+
+    bootc répond « No changes in … » quand rien n'est nouveau, et ajoute
+    « Staged update present, not changed » quand un déploiement attend déjà un
+    redémarrage. Chercher « staged » sans traiter ce cas annonçait « nouvelle
+    image » après une mise à jour sans changement (vécu 07/11/2026) ; le
+    message doit dire la vérité : rien de neuf, ou une image déjà en attente.
+    """
+    low = (text or "").lower()
+    if "no changes in" in low or "staged update present" in low:
+        if "staged update present" in low or "no changes in staged image" in low:
+            return (
+                "Rien de nouveau à télécharger ; une image est déjà en "
+                "attente — redémarrage pour l'appliquer."
+            )
+        return "Aucune mise à jour disponible : le poste est déjà à jour."
+    if any(mark in low for mark in (
+        "queued for next boot", "staged but not queued", "upgraded", "staged",
+    )):
+        return "Redémarrage nécessaire pour appliquer la nouvelle image."
+    return ""
 
 def gwine_binary() -> str:
     """Chemin de gwine (repli /usr/bin, le PATH d'une session GUI est incomplet)."""

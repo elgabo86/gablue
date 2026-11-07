@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -155,6 +156,52 @@ class SystemTest(unittest.TestCase):
         # Aucun privilège : brew reste dans son préfixe et le cache du compte.
         self.assertNotIn("sudo", script)
         self.assertIn("exit 127", script)   # brew absent → échec explicite
+
+    def test_gablue_update_hint(self):
+        up_to_date = (
+            "No changes in ostree-image-signed:docker://ghcr.io/x/gablue-main"
+            ":latest => sha256:abc\n"
+        )
+        self.assertIn("déjà à jour", local.gablue_update_hint(up_to_date))
+        self.assertNotIn("Redémarrage", local.gablue_update_hint(up_to_date))
+
+        # Déploiement déjà en attente : rien de neuf, mais le redémarrage
+        # reste nécessaire — et le message doit le dire sans parler de
+        # « nouvelle image ».
+        already_staged = up_to_date + "Staged update present, not changed\n"
+        hint = local.gablue_update_hint(already_staged)
+        self.assertIn("déjà en attente", hint)
+        self.assertNotIn("Redémarrage nécessaire", hint)
+
+        new_image = "Queued for next boot: ostree-image-signed:docker://…\n"
+        self.assertIn("Redémarrage nécessaire", local.gablue_update_hint(new_image))
+        self.assertEqual(local.gablue_update_hint(""), "")
+
+    def test_reboot_pending_helpers(self):
+        # BOOT_IMAGE n'existe que dans /proc/cmdline : il ne doit pas faire
+        # croire à un changement de kargs.
+        self.assertFalse(local.kargs_pending_change(
+            {"quiet", "BOOT_IMAGE=/vmlinuz"}, {"quiet"},
+        ))
+        self.assertTrue(local.kargs_pending_change(
+            {"quiet", "mitigations=off"}, {"quiet"},
+        ))
+        # Déploiement staged = image téléchargée en attente de redémarrage.
+        self.assertTrue(local.parse_staged_deployment(json.dumps(
+            {"deployments": [{"staged": False}, {"staged": True}]}
+        )))
+        self.assertFalse(local.parse_staged_deployment(json.dumps(
+            {"deployments": [{"staged": False}]}
+        )))
+        self.assertFalse(local.parse_staged_deployment("pas du json"))
+        # Fichier écrit après le démarrage = bascule à appliquer ; une config
+        # livrée par l'image (date antérieure) ne compte pas.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "conf"
+            path.write_text("x\n", encoding="utf-8")
+            self.assertTrue(local.written_since(path, 1.0))
+            self.assertFalse(local.written_since(path, time.time() + 60))
+            self.assertFalse(local.written_since(Path(tmp) / "absent", 1.0))
 
     def test_rebase_script(self):
         self.assertEqual(

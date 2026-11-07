@@ -12,6 +12,7 @@ from PySide6.QtCore import QThread, Signal
 
 from .constants import SSH
 from .hosts import avahi_scan, remote_addresses
+from .local import pending_reboot_reasons
 from .ssh import _kill_group, check_host, install_key, key_status
 from .util import _ssh_opts, display_name, ssh_target
 
@@ -131,6 +132,18 @@ class AddressWorker(QThread):
         except Exception:            # une sonde d'agrément ne doit rien casser
             found = []
         self.done.emit(self._host["id"], found)
+
+class RebootWorker(QThread):
+    """Ce qui attend un redémarrage (image staged, kargs, modules)."""
+
+    done = Signal(object)           # liste de raisons lisibles
+
+    def run(self) -> None:
+        try:
+            reasons = pending_reboot_reasons()
+        except Exception:            # une sonde d'agrément ne doit rien casser
+            reasons = []
+        self.done.emit(reasons)
 
 class SshTaskWorker(QThread):
     """Exécute une commande distante en streaming (arrêt, redémarrage, mise à jour)."""

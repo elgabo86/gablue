@@ -132,6 +132,10 @@ TAILSCALE_HELPER = "/usr/libexec/gablue-tailscale"
 
 CPUID_EMU_CONF = Path("/etc/modules-load.d/gablue-cpuid-emu.conf")
 
+# Blacklist de kvm_amd posée avec l'émulation : sa date dit si le module doit
+# être (dé)chargé au prochain démarrage.
+CPUID_EMU_BLACKLIST = Path("/etc/modprobe.d/gablue-cpuid-emu.conf")
+
 # Services, couche Vulkan et pilote Wi-Fi : ex-recettes ujust, mêmes helpers.
 SERVICE_HELPER = "/usr/libexec/gablue-service"
 

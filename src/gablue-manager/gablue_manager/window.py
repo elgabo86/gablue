@@ -33,8 +33,8 @@ from .dialogs.variant import VariantDialog
 from .hosts import load_hosts, parse_ssh_config, save_hosts
 from .local import (
     _sudo_run, avahi_apply_args, avahi_publish_state, brew_available,
-    brew_update_script, flatpak_update_script, local_sshd_state,
-    set_local_sshd_sudo,
+    brew_update_script, flatpak_update_script, gablue_update_hint,
+    local_sshd_state, privileged_prefix, set_local_sshd_sudo,
 )
 from .ssh import ask_remote_password, remote_sudo_nopasswd, remote_sudo_prefix
 from .style import make_qss
@@ -44,7 +44,9 @@ from .util import (
     address_text, display_name, dolphin_url, has_address_kind, ssh_target,
 )
 from .widgets import HostCard, LocalCard, StatusDot, _make_tool_button
-from .workers import AddressWorker, AvahiWorker, CheckWorker, KeyProbeWorker
+from .workers import (
+    AddressWorker, AvahiWorker, CheckWorker, KeyProbeWorker, RebootWorker,
+)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -72,6 +74,8 @@ class MainWindow(QMainWindow):
         self._avahi_worker: AvahiWorker | None = None
         self._sshd_process: QProcess | None = None
         self._avahi_process: QProcess | None = None
+        self._reboot_reasons: list[str] = []
+        self._reboot_worker: RebootWorker | None = None
 
         self._build_ui()
         self.setStyleSheet(make_qss())
@@ -248,6 +252,15 @@ class MainWindow(QMainWindow):
         self.footer_label.setObjectName("footer")
         footer_layout.addWidget(self.footer_label)
         footer_layout.addStretch(1)
+        # Pastille « Redémarrage requis » : elle vient de l'état du poste, pas
+        # d'un drapeau de session — fermer et rouvrir l'app la retrouve.
+        self.reboot_button = QPushButton(footer)
+        self.reboot_button.setObjectName("pill")
+        self.reboot_button.setCursor(Qt.PointingHandCursor)
+        self.reboot_button.setVisible(False)
+        self.reboot_button.clicked.connect(self.reboot_local)
+        footer_layout.addWidget(self.reboot_button)
+        footer_layout.addSpacing(6)
         self.sshd_button = QPushButton(footer)
         self.sshd_button.setObjectName("pill")
         self.sshd_button.setCursor(Qt.PointingHandCursor)
@@ -357,6 +370,7 @@ class MainWindow(QMainWindow):
         """
         self._update_sshd_button()
         self._update_avahi_button()
+        self._refresh_reboot()
         if self._checker is not None and self._checker.isRunning():
             return
         if not self._hosts:
@@ -701,6 +715,56 @@ class MainWindow(QMainWindow):
         )
         self._update_avahi_button()
 
+    # -- redémarrage en attente ---------------------------------------------
+    def _refresh_reboot(self) -> None:
+        """Calcule l'état « redémarrage requis » hors thread GUI.
+
+        L'état est relu à chaque passe (et au démarrage) : une image staged ou
+        des kargs en attente survivent à la fermeture de l'app, il ne doit donc
+        pas vivre dans un drapeau de session.
+        """
+        if self._reboot_worker is not None and self._reboot_worker.isRunning():
+            return
+        worker = RebootWorker(self)
+        self._reboot_worker = worker
+        worker.done.connect(self._reboot_state)
+        worker.start()
+
+    def _reboot_state(self, reasons: list) -> None:
+        self._reboot_reasons = [str(reason) for reason in reasons or []]
+        self._update_reboot_button()
+
+    def _update_reboot_button(self) -> None:
+        reasons = self._reboot_reasons
+        self.reboot_button.setVisible(bool(reasons))
+        if not reasons:
+            return
+        self.reboot_button.setText("Redémarrage requis")
+        self.reboot_button.setStyleSheet(f"color: {COLOR_AUTH};")
+        self.reboot_button.setToolTip(
+            "En attente d'un redémarrage :\n"
+            + "\n".join(f"• {reason}" for reason in reasons)
+            + "\n\nCliquer pour redémarrer ce poste"
+        )
+
+    def reboot_local(self) -> None:
+        reasons = self._reboot_reasons
+        if not reasons:
+            return
+        detail = "\n".join(f"• {reason}" for reason in reasons)
+        answer = QMessageBox.question(
+            self, "Redémarrer ce poste",
+            "Redémarrer maintenant pour appliquer :\n\n"
+            f"{detail}\n\n"
+            "Toutes les sessions ouvertes seront interrompues.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._launch(
+            privileged_prefix() + ["systemctl", "reboot"], "Redémarrage"
+        )
+
     # -- actions ------------------------------------------------------------
     def add_host(self) -> None:
         dialog = HostDialog(self, existing=self._hosts)
@@ -933,9 +997,11 @@ class MainWindow(QMainWindow):
             host, f"Mise à jour — {display_name(host)}",
             "bootc upgrade, appliqué au prochain redémarrage.", script,
             root=True,
-            hint_from_output=lambda text: (
-                "Redémarrage nécessaire pour appliquer la nouvelle image."
-                if "staged" in text.lower() else "Le poste est à jour."
+            # Seul le compte rendu d'upgrade fait foi : `bootc status` décrit
+            # aussi le déploiement en attente et contiendrait « staged » même
+            # quand rien n'a changé.
+            hint_from_output=lambda text: gablue_update_hint(
+                text.split("---STATUS---")[0]
             ),
         )
 
@@ -1090,11 +1156,7 @@ class MainWindow(QMainWindow):
             "bootc upgrade — l'image téléchargée s'applique au prochain "
             "redémarrage.",
             [_which("bootc"), "upgrade"], root=True,
-            hint_from_output=lambda text: (
-                "Redémarrage nécessaire pour appliquer la nouvelle image."
-                if "staged" in text.lower() or "staging" in text.lower()
-                else ""
-            ),
+            hint_from_output=gablue_update_hint,
         )
 
     def update_local_flatpaks(self) -> None:
