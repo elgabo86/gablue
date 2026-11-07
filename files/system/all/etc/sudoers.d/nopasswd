@@ -14,6 +14,7 @@
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/systemctl enable sshd.service --now, /usr/bin/systemctl disable sshd.service --now
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-avahi on, /usr/libexec/gablue-avahi off, /usr/libexec/gablue-avahi status
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-hwinfo
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-auto-update status, /usr/libexec/gablue-auto-update image on, /usr/libexec/gablue-auto-update image off, /usr/libexec/gablue-auto-update flatpak on, /usr/libexec/gablue-auto-update flatpak off, /usr/libexec/gablue-auto-update brew on, /usr/libexec/gablue-auto-update brew off, /usr/libexec/gablue-auto-update schedule image daily, /usr/libexec/gablue-auto-update schedule image weekly, /usr/libexec/gablue-auto-update schedule flatpak daily, /usr/libexec/gablue-auto-update schedule flatpak weekly, /usr/libexec/gablue-auto-update schedule brew daily, /usr/libexec/gablue-auto-update schedule brew weekly
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-update
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-clean flatpak

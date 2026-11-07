@@ -255,7 +255,7 @@ class AppsDialog(QDialog):
         target = "ce poste" if self.host is not None else "cette machine"
         if self.gearlever:
             self.note.setText(
-                f"AppImages de {target}, gérées par GearLever. Données "
+                f"Applications de {target}, gérées par GearLever. Données "
                 "conservées à la suppression."
             )
             restyle_label(self.note, "subtitle")
@@ -398,7 +398,7 @@ class AppsDialog(QDialog):
             )
         else:
             detail = (
-                "Retire l'AppImage et l'entrée de menu. Sauvegardes et jeux "
+                "Retire l'application et l'entrée de menu. Sauvegardes et jeux "
                 "conservés."
             )
         answer = QMessageBox.question(
@@ -442,7 +442,7 @@ class AppsDialog(QDialog):
         )
         if answer != QMessageBox.Yes:
             return
-        subtitle = "Fichiers Gablue, AppImage intacte."
+        subtitle = "Fichiers Gablue, application intacte."
         if self.host is not None:
             state = self.states.get("esde")
             command = config_command(state) if state else ""

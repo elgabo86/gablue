@@ -6,7 +6,7 @@ Deux familles de réglages, toutes deux propres à la session de l'utilisateur :
   `gablue-manager --tray` (autostart) et par la fenêtre principale ;
 - la **vérification des mises à jour** : interrupteur général (`check_auto`),
   domaines surveillés (`check_image`, `check_flatpak`, `check_brew`,
-  `check_gwine`) et fréquence (`check_interval`, en minutes).
+  `check_gwine`, `check_apps`) et fréquence (`check_interval`, en minutes).
 
 Une préférence absente ou illisible vaut la valeur par défaut : la barre d'état
 et les vérifications sont actives, comme le veut l'image Gablue.
@@ -27,6 +27,7 @@ DEFAULTS = {
     "check_flatpak": True,
     "check_brew": True,
     "check_gwine": True,
+    "check_apps": True,
     "check_interval": 120,          # minutes, 2 h
 }
 
@@ -34,7 +35,7 @@ DEFAULTS = {
 # 24 h (une fois par jour).
 INTERVAL_RANGE = (5, 1440)
 
-CHECK_DOMAINS = ("image", "flatpak", "brew", "gwine")
+CHECK_DOMAINS = ("image", "flatpak", "brew", "gwine", "apps")
 
 def load_prefs() -> dict:
     """Préférences relues à chaque appel ; absent ou illisible = défauts."""

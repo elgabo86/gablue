@@ -16,19 +16,21 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import local
+from . import apps, local
 from .constants import BREW_BINARY
 
-DOMAINS = ("image", "flatpak", "brew", "gwine")
+DOMAINS = ("image", "flatpak", "brew", "gwine", "apps")
 
 DOMAIN_LABELS = {
     "image": "Image Gablue",
     "flatpak": "Flatpaks",
     "brew": "Homebrew",
     "gwine": "Composants gwine",
+    "apps": "Applications",
 }
 
 GWINE_LABELS = {
@@ -40,16 +42,46 @@ GWINE_LABELS = {
     "cache": "Composants manquants",
 }
 
+# Commandes en cours : à la fermeture de la fenêtre on les tue, sinon un
+# `brew update` de deux minutes retient le processus après la fermeture
+# (vécu 07/11/2026) — le pool de threads attend ses tâches à la sortie.
+_ACTIVE: set = set()
+_ACTIVE_LOCK = threading.Lock()
+
+
+def cancel_running() -> None:
+    """Tue les sondes externes en cours (fermeture de la fenêtre)."""
+    with _ACTIVE_LOCK:
+        processes = list(_ACTIVE)
+    for process in processes:
+        try:
+            process.kill()
+        except OSError:
+            pass
+
+
 def _run(argv: list[str], timeout: int,
          env: dict | None = None) -> tuple[int, str]:
     """Lance une sonde ; code 127 et sortie vide si elle n'existe pas."""
     try:
-        result = subprocess.run(
-            argv, capture_output=True, text=True, timeout=timeout, env=env,
+        process = subprocess.Popen(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=env,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError:
         return 127, ""
-    return result.returncode, (result.stdout or "") + (result.stderr or "")
+    with _ACTIVE_LOCK:
+        _ACTIVE.add(process)
+    try:
+        output, error = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        output, error = process.communicate()
+        return 127, (output or "") + (error or "")
+    finally:
+        with _ACTIVE_LOCK:
+            _ACTIVE.discard(process)
+    return process.returncode, (output or "") + (error or "")
 
 # -- image Gablue -----------------------------------------------------------
 
@@ -228,6 +260,24 @@ def check_gwine() -> dict:
     )
     return parse_gwine_check(text, returncode)
 
+def check_apps() -> dict:
+    """Applications AppImage installées en retard.
+
+    La sonde passe par les flux de releases (jamais l'API GitHub) et reste
+    honnête : un flux muet laisse le domaine « indéterminé » plutôt que de
+    conclure « à jour ». Aucune application installée → domaine indisponible,
+    comme un outil absent du poste.
+    """
+    pending, unknown, installed = apps.pending_updates()
+    if pending:
+        names = [
+            app.name for app in apps.APPS if app.key in set(pending)
+        ]
+        return {"state": "updates", "apps": sorted(names)}
+    if not installed:
+        return {"state": "unavailable", "apps": []}
+    return {"state": "unknown" if unknown else "uptodate", "apps": []}
+
 # -- agrégat ----------------------------------------------------------------
 
 def check_all(enabled: dict[str, bool] | None = None,
@@ -252,6 +302,8 @@ def check_all(enabled: dict[str, bool] | None = None,
             jobs["brew"] = pool.submit(check_brew)
         if online and enabled.get("gwine"):
             jobs["gwine"] = pool.submit(check_gwine)
+        if online and enabled.get("apps"):
+            jobs["apps"] = pool.submit(check_apps)
         for domain, future in jobs.items():
             try:
                 results[domain] = future.result()
@@ -285,6 +337,8 @@ def domain_count(domain: str, result: dict) -> int:
         return len(result.get("formulas") or [])
     if domain == "gwine":
         return len(result.get("components") or [])
+    if domain == "apps":
+        return len(result.get("apps") or [])
     return 0
 
 def total_updates(state: dict | None) -> int:
@@ -298,7 +352,30 @@ def total_updates(state: dict | None) -> int:
 def has_updates(state: dict | None) -> bool:
     return total_updates(state) > 0
 
-def _days_text(days: int | None) -> str:
+def image_detail(image: dict) -> str:
+    """Ligne « Image Gablue » : celle qui tourne, puis celle en attente.
+
+    `version` est le déploiement amorcé (celui qui tourne) ; `staged_version`
+    n'existe que si une image attend le redémarrage. On nomme les deux plutôt
+    que d'afficher « nouvelle image en attente » sans dire laquelle — et la
+    version tournante reste affichée même quand une autre est en attente
+    (vécu 07/11/2026).
+    """
+    version = str(image.get("version") or "")
+    staged = str(image.get("staged_version") or "")
+    parts: list[str] = []
+    if version:
+        parts.append(f"actuelle {version}")
+    if image.get("staged"):
+        if staged:
+            parts.append(f"en attente {staged}")
+        else:
+            parts.append("mise à jour en attente")
+    elif version and image.get("days") is not None:
+        parts.append("déployée " + days_text(image.get("days")))
+    return " · ".join(parts)
+
+def days_text(days: int | None) -> str:
     if days is None:
         return ""
     if days <= 0:
@@ -322,14 +399,23 @@ def summary_lines(state: dict | None) -> list[str]:
     image = domains.get("image")
     if image:
         status = image.get("state")
-        version = image.get("staged_version") or image.get("version") or ""
+        version = image.get("version") or ""
+        staged_version = image.get("staged_version") or ""
         if status == "available":
             if image.get("staged"):
                 detail = "mise à jour téléchargée, redémarrage requis"
+                if staged_version and version:
+                    detail += f" — {version} → {staged_version}"
+                elif staged_version:
+                    detail += f" — version {staged_version}"
             else:
+                # `bootc upgrade --check` ne donne pas la version de l'image
+                # distante : `version` est celle qui tourne. On l'annonce
+                # comme telle, jamais comme la nouvelle (mensonge constaté
+                # dans le résumé avant le 07/11/2026).
                 detail = "mise à jour disponible"
-            if version:
-                detail += f" — version {version}"
+                if version:
+                    detail += f" — actuelle {version}"
             lines.append(f"Image Gablue : {detail}")
         elif status == "uptodate":
             lines.append("Image Gablue : à jour")
@@ -340,10 +426,10 @@ def summary_lines(state: dict | None) -> list[str]:
         if image.get("days") is not None:
             lines.append(
                 "Dernière mise à jour de Gablue : "
-                + _days_text(image.get("days"))
+                + days_text(image.get("days"))
             )
 
-    for domain in ("flatpak", "brew", "gwine"):
+    for domain in ("flatpak", "brew", "gwine", "apps"):
         result = domains.get(domain) or {}
         status = result.get("state")
         label = DOMAIN_LABELS[domain]
@@ -354,6 +440,8 @@ def summary_lines(state: dict | None) -> list[str]:
                 lines.append(
                     f"{label} : " + _list_text(result.get("formulas"))
                 )
+            elif domain == "apps":
+                lines.append(f"{label} : " + _list_text(result.get("apps")))
             else:
                 parts = []
                 for component in result.get("components") or []:
@@ -407,5 +495,5 @@ def compact_summary(state: dict | None) -> str:
     age = (domains.get("image") or {}).get("days")
     text = "Aucune mise à jour disponible"
     if age is not None:
-        text += f" · Gablue mis à jour {_days_text(age)}"
+        text += f" · Gablue mis à jour {days_text(age)}"
     return text

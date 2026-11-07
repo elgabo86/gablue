@@ -26,6 +26,11 @@ AVAHI_SERVICE_FILE = Path("/etc/avahi/services/ssh.service")
 # libre en argument — `install` sur un temporaire ne serait pas blanchissable.
 AVAHI_HELPER = "/usr/libexec/gablue-avahi"
 
+# Barrettes mémoire : la table SMBIOS (DMI) n'est lisible qu'en root, d'où un
+# helper NOPASSWD sans argument qui rend un JSON (aucune autre commande root
+# n'est ouverte par cette règle).
+HWINFO_HELPER = "/usr/libexec/gablue-hwinfo"
+
 REFRESH_MS = 30_000     # vérification automatique des postes
 
 CHECK_DEADLINE = 8.0    # secondes par poste (ssh ConnectTimeout = 4)
@@ -56,7 +61,7 @@ COLOR_CHECKING = "#4a9eff"
 STATE_TEXT = {
     "unknown": "Non vérifié",
     "checking": "Vérification…",
-    "online": "En ligne · clé SSH acceptée",
+    "online": "En ligne",
     "auth": "Joignable · clé SSH refusée",
     "hostkey": "Clé d'hôte inconnue",
     "penalty": "Poste bloquant temporairement cette machine",

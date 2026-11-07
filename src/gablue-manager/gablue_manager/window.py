@@ -4,6 +4,7 @@
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import tempfile
 import time
@@ -13,15 +14,14 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QProcess, QSize, QTimer, Qt
 from PySide6.QtGui import QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
-    QPushButton, QScrollArea, QStackedWidget, QToolButton, QVBoxLayout,
-    QWidget,
+    QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWindow, QMenu,
+    QMessageBox, QPushButton, QScrollArea, QStackedWidget, QTabWidget,
+    QToolButton, QVBoxLayout, QWidget,
 )
 
 from .constants import (
-    AVAHI_BROWSE, COLOR_AUTH, COLOR_OFFLINE, COLOR_ONLINE, HOSTS_FILE,
-    NO_AUTO_PROBE_STATES, PULSE_MS, REFRESH_MS, UPDATE_HELPER,
-    UPDATE_PROGRESS_FIFO, _which,
+    AVAHI_BROWSE, HOSTS_FILE, NO_AUTO_PROBE_STATES, PULSE_MS, REFRESH_MS,
+    UPDATE_HELPER, UPDATE_PROGRESS_FIFO, _which,
 )
 from .dialogs.apps import AppsDialog
 from .dialogs.booster import ForegroundBoosterDialog
@@ -42,37 +42,66 @@ from .dialogs.thermal import ThermalDialog
 from .dialogs.updates import AutoUpdatesDialog
 from .dialogs.variant import VariantDialog
 from .hosts import load_hosts, save_hosts
-from . import instance, prefs
+from . import instance, prefs, remote_updates, updates
+
+from .apps import update_script as apps_update_script
 from .local import (
     _sudo_run, avahi_apply_args, avahi_publish_state, brew_available,
-    brew_progress_parser, brew_update_hint, brew_update_script,
-    flatpak_update_hint, flatpak_update_script, gablue_update_hint,
-    local_sshd_state, parse_flatpak_progress, parse_gablue_progress,
-    privileged_prefix, set_local_sshd_sudo,
+    brew_progress_parser, brew_update_hint, brew_update_script, disk_rows,
+    flatpak_update_hint, flatpak_update_script, format_memory_modules,
+    gablue_update_hint, hardware_summary, local_sshd_state,
+    parse_flatpak_progress, parse_gablue_progress, privileged_prefix,
+    set_local_sshd_sudo,
 )
 from .ssh import ask_remote_password, remote_sudo_nopasswd, remote_sudo_prefix
 from .style import make_qss
 from .uiutil import app_icon, network_online
 from .tasks import (
-    LocalTaskDialog, RemoteTaskDialog, SequentialTaskDialog, start_task,
+    LocalTaskDialog, RemoteBatchDialog, RemoteTaskDialog, SequentialTaskDialog,
+    start_task,
 )
 from .util import (
     address_text, display_name, dolphin_url, has_address_kind, ssh_target,
 )
 from .widgets import (
-    BusyProgressBar, HostCard, LocalCard, StatusDot, _make_tool_button,
+    AccessPanel, BusyProgressBar, CenteredTabs, HostCard, InfoPanel, LocalCard,
+    LocalConfigMenu, NoticeBar, StatusDot, UpdatesPanel, _make_tool_button,
 )
 from .workers import (
-    AddressWorker, AvahiWorker, CheckWorker, KeyProbeWorker, RebootWorker,
+    AddressWorker, AppsUpdateWorker, AvahiWorker, CheckWorker, KeyProbeWorker,
+    HardwareWorker, RebootWorker, RemoteHardwareWorker, RemoteUpdatesWorker,
     UpdateCheckWorker,
 )
+
+def _is_running(worker) -> bool:
+    """`isRunning()` d'une sonde, sans exploser si son objet C++ est détruit."""
+    try:
+        return bool(worker.isRunning())
+    except RuntimeError:
+        return False
+
+
+def _ask_stop(worker) -> None:
+    """Demande l'arrêt d'une sonde : `stop()` appelable ou `threading.Event`."""
+    stop = getattr(worker, "stop", None)
+    if callable(stop):
+        try:
+            stop()
+        except Exception:            # une sonde d'agrément ne doit rien casser
+            pass
+    elif hasattr(stop, "set"):       # AvahiWorker : Event
+        stop.set()
+    cancel = getattr(worker, "cancel", None)
+    if hasattr(cancel, "set"):       # SshTaskWorker
+        cancel.set()
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Gablue Manager")
-        self.resize(980, 680)
-        self.setMinimumSize(780, 520)
+        self.resize(1120, 780)
+        self.setMinimumSize(940, 600)
         self.setWindowIcon(app_icon())
 
         self._hosts = load_hosts()
@@ -85,6 +114,9 @@ class MainWindow(QMainWindow):
         self._address_queried: set[str] = set()
         self._jobs: list[dict] = []
         self._tasks: list[QDialog] = []      # fenêtres d'opération en cours
+        # Un dialogue de nettoyage par cible (local ou poste), non modal : une
+        # tâche lancée depuis un dialogue modal reste bloquée par la modalité.
+        self._clean_dialogs: dict[str, CleanDialog] = {}
         self._key_queue: list[dict] = []     # postes à équiper après un import
         self._key_workers: set = set()       # sondes de clé en vol
         self._last_check: float | None = None
@@ -95,15 +127,37 @@ class MainWindow(QMainWindow):
         self._avahi_process: QProcess | None = None
         self._reboot_reasons: list[str] = []
         self._reboot_worker: RebootWorker | None = None
+        self._hardware_worker: HardwareWorker | None = None
+        # Nom commercial du GPU lu par Vulkan une fois par session : le
+        # résumé relu toutes les 30 s ne doit pas le réécraser avec le nom du
+        # die que donne `lspci`.
+        self._gpu_name = ""
+        # Un onglet par poste distant, avec la même page que le poste local :
+        # résumé matériel chargé à l'ouverture de l'onglet (cache par session),
+        # et état/joignabilité sondé seulement quand on est sur cet onglet.
+        self._panes: dict[str, dict] = {}
+        self._hosts_page: QWidget | None = None
+        self._remote_hardware: dict[str, dict] = {}
+        self._remote_hardware_at: dict[str, float] = {}
+        self._remote_hardware_workers: dict[str, RemoteHardwareWorker] = {}
+        self._sshd_state: tuple[bool, bool] = (False, False)
+        self._avahi_state: tuple[bool, bool] = (False, True)
         self._updates_state: dict | None = None
         self._updates_worker: UpdateCheckWorker | None = None
+        self._apps_worker: AppsUpdateWorker | None = None
+        # Mises à jour des postes distants : connues seulement après un clic
+        # (« Vérifier les mises à jour »), une par poste, jamais en fond.
+        self._remote_updates: dict[str, dict] = {}
+        self._remote_check_queue: list[str] = []
+        self._remote_check_workers: list[RemoteUpdatesWorker] = []
+        self._batch_host_ids: list[str] = []
         self._updates_pending = False
 
         self._build_ui()
         self.setStyleSheet(make_qss())
         self._rebuild_cards()
-        self._update_sshd_button()
-        self._update_avahi_button()
+        self._refresh_access()
+        self._refresh_hardware()
 
         self._pulse_timer = QTimer(self)
         self._pulse_timer.setInterval(PULSE_MS)
@@ -121,6 +175,9 @@ class MainWindow(QMainWindow):
         self._job_timer.start()
 
         QTimer.singleShot(150, self.refresh_all)
+        # Les barrettes passent par dmidecode (root) : hors thread GUI, une
+        # fois par session — la mémoire change au reboot, pas à l'usage.
+        QTimer.singleShot(250, self._load_hardware)
 
     # -- construction -------------------------------------------------------
     def _build_ui(self) -> None:
@@ -131,30 +188,19 @@ class MainWindow(QMainWindow):
         root.setSpacing(0)
 
         header = QWidget(central)
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(26, 22, 26, 14)
-        header_layout.setSpacing(12)
+        # Grille à trois colonnes : une marge de la largeur du bouton à gauche,
+        # le titre au centre exact de la fenêtre, le bouton à droite. Une
+        # simple rangée décalait le titre de la moitié du bouton.
+        header_layout = QGridLayout(header)
+        header_layout.setContentsMargins(26, 20, 26, 8)
+        header_layout.setHorizontalSpacing(0)
 
-        titles = QVBoxLayout()
-        titles.setSpacing(0)
         title = QLabel("Gablue Manager", header)
         title.setObjectName("title")
-        subtitle = QLabel(
-            "Postes SSH, mises à jour et configuration", header
-        )
-        subtitle.setObjectName("subtitle")
-        titles.addWidget(title)
-        titles.addWidget(subtitle)
-        header_layout.addLayout(titles)
-        header_layout.addStretch(1)
+        title.setAlignment(Qt.AlignCenter)
+        header_layout.addWidget(title, 0, 1)
 
-        self.refresh_button = _make_tool_button(header, "view-refresh", "⟳")
-        self.refresh_button.setToolTip("Vérifier maintenant (F5)")
-        self.refresh_button.clicked.connect(lambda: self.refresh_all(force=True))
-        header_layout.addWidget(self.refresh_button)
-
-        # Préférences de l'app dans un dialogue : barre d'état et vérification
-        # des mises à jour (interrupteur, domaines, fréquence).
+        # Préférences de l'app : barre d'état et vérification des mises à jour.
         self.settings_button = _make_tool_button(
             header, "settings-configure", "⚙"
         )
@@ -167,12 +213,177 @@ class MainWindow(QMainWindow):
         settings_menu.addSeparator()
         settings_menu.addAction("Quitter Gablue Manager", self.close)
         self.settings_button.setMenu(settings_menu)
-        header_layout.addWidget(self.settings_button)
+        header_layout.addWidget(
+            self.settings_button, 0, 2, Qt.AlignRight | Qt.AlignVCenter
+        )
+        side = max(36, self.settings_button.sizeHint().width())
+        # Largeur figée à la taille réelle : la colonne de droite ne peut pas
+        # s'élargir au-delà, sinon le titre glisse vers la gauche.
+        self.settings_button.setFixedWidth(side)
+        header_layout.setColumnMinimumWidth(0, side)
+        header_layout.setColumnMinimumWidth(2, side)
+        header_layout.setColumnStretch(1, 1)
+        root.addWidget(header)
 
-        # Un seul point d'entrée pour peupler la liste : la recherche sur le
-        # réseau local est une façon d'ajouter un poste, pas une commande à
-        # part dans un menu « ⋯ » séparé.
-        self.add_button = QPushButton("Ajouter un poste", header)
+        # Raisons d'allumer la bande : une sonde, une recherche de mises à
+        # jour ou une autre tâche peuvent se chevaucher ; la bande reste
+        # allumée tant qu'il en reste une.
+        self._busy_reasons: set[str] = set()
+        self.busy = BusyProgressBar(central, track=False)
+        self.busy.setObjectName("busy")
+        self.busy.setRange(0, 0)
+        self.busy.setTextVisible(False)
+        self.busy.setFixedHeight(3)
+        # Toujours visible, mais muet au repos : sa place reste réservée et
+        # l'interface ne descend plus de 3 px à chaque vérification.
+        self.busy.set_active(False)
+        root.addWidget(self.busy)
+
+        # Deux onglets fixes, centrés : le poste local et « Postes SSH ».
+        # La page d'un poste distant ne prend plus d'onglet — elle s'ouvre
+        # dans « Postes SSH » (clic sur sa carte).
+        self.tabs = CenteredTabs(central)
+        self.tabs.setObjectName("mainTabs")
+        # Pas de mode document : sa ligne de base pleine largeur flotte
+        # au-dessus d'onglets centrés, et le QSS habille déjà la barre.
+        self.tabs.addTab(
+            self._build_local_tab(), QIcon.fromTheme("computer"),
+            self._local_tab_title(),
+        )
+        self._hosts_page = self._build_hosts_tab()
+        self.tabs.addTab(
+            self._hosts_page, QIcon.fromTheme("network-server"),
+            "Postes SSH",
+        )
+        root.addWidget(self.tabs.header())
+        root.addWidget(self.tabs, 1)
+        # Cliquer le titre « Postes SSH » alors qu'on regarde un poste ramène
+        # à la liste : la barre native n'émet rien pour un onglet déjà courant.
+        self.tabs.reclicked.connect(self._tab_reclicked)
+
+        footer = QWidget(central)
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(26, 4, 26, 12)
+        self.footer_label = QLabel(footer)
+        self.footer_label.setObjectName("footer")
+        footer_layout.addWidget(self.footer_label)
+        footer_layout.addStretch(1)
+        # Libellé libre, sans horodatage : il n'affiche que des messages
+        # ponctuels (recherche réseau, session fermée), effacés à la passe
+        # suivante. La vérification automatique reste silencieuse.
+        self.auto_label = QLabel("", footer)
+        self.auto_label.setObjectName("footer")
+        footer_layout.addWidget(self.auto_label)
+        root.addWidget(footer)
+
+        QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self.add_host)
+        # F5 force la vérification de l'onglet courant : les postes distants
+        # ne sont sondés que sur leur onglet (voir `refresh_all`).
+        QShortcut(QKeySequence("F5"), self).activated.connect(
+            lambda: self.refresh_all(force=True, activity=True))
+        self.tabs.currentChanged.connect(self._tab_changed)
+
+        self._update_footer()
+
+    def _build_local_tab(self) -> QWidget:
+        """La machine courante : carte, mises à jour, matériel et système.
+
+        L'onglet est dans une zone défilante : le résumé matériel tient à
+        l'aise sur un grand écran, et rien n'est rogné sur une fenêtre basse.
+        """
+        scroll = QScrollArea(self.tabs)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.viewport().setAutoFillBackground(False)
+        content = QWidget(scroll)
+        content.setAutoFillBackground(False)
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(26, 16, 26, 18)
+        layout.setSpacing(12)
+
+        # « Redémarrage requis » : bandeau actionnable, pas une pastille au
+        # pied de page — il concerne le poste qu'on a sous les yeux.
+        self.reboot_bar = NoticeBar(content)
+        self.reboot_bar.action_requested.connect(self.reboot_local)
+        self.reboot_bar.setVisible(False)
+        layout.addWidget(self.reboot_bar)
+
+        # Toute la configuration du poste local vit dans un menu : la carte
+        # n'en porte que le bouton, comme la carte d'un poste distant.
+        self.local_config = LocalConfigMenu(content)
+        self.local_config.apps_requested.connect(self.open_apps)
+        self.local_config.kernel_requested.connect(self.open_settings)
+        self.local_config.updates_requested.connect(self.open_local_updates)
+        self.local_config.services_requested.connect(self.open_local_services)
+        self.local_config.variant_requested.connect(self.open_local_variant)
+        self.local_config.btrfs_requested.connect(self.open_local_btrfs)
+        self.local_config.thermal_requested.connect(self.open_local_thermal)
+        self.local_config.ryzen_requested.connect(self.open_local_ryzen)
+        self.local_config.clean_requested.connect(self.open_clean_system)
+        self.local_config.grub_requested.connect(self.open_grub)
+        self.local_config.secureboot_requested.connect(self.open_secureboot)
+        self.local_config.bootselect_requested.connect(self.open_boot_select)
+        self.local_config.firmware_requested.connect(self.reboot_firmware)
+        self.local_config.gwine_requested.connect(
+            self.open_local_gwine_options
+        )
+        self.local_config.booster_requested.connect(
+            self.open_local_foreground_booster
+        )
+        self.local_config.tailscale_requested.connect(
+            self.open_local_tailscale
+        )
+        # Le même état que le panneau d'accès : menu Réseau et panneau se
+        # mettent à jour ensemble, jamais l'un sans l'autre.
+        self.local_config.sshd_requested.connect(self.toggle_local_sshd)
+        self.local_config.avahi_requested.connect(self.toggle_avahi)
+
+        # La carte du poste local est revenue (jugée plus jolie qu'un bouton
+        # seul en haut de l'onglet, vécu 07/11/2026) : identité + bouton
+        # Configuration, comme la carte d'un poste distant.
+        self.local_card = LocalCard(self.local_config, content)
+        layout.addWidget(self.local_card)
+
+        self.updates_panel = UpdatesPanel(content)
+        self.updates_panel.check_requested.connect(
+            lambda: self.check_updates(force=True, activity=True)
+        )
+        self.updates_panel.set_update_menu([
+            ("Tout mettre à jour…", lambda: self.local_update("all")),
+            None,
+            ("Gablue…", lambda: self.local_update("gablue")),
+            ("Flatpaks…", lambda: self.local_update("flatpak")),
+            ("Gwine…", lambda: self.local_update("gwine")),
+            ("Brew…", lambda: self.local_update("brew")),
+            ("Applications…", lambda: self.local_update("apps")),
+        ])
+        layout.addWidget(self.updates_panel)
+
+        self.info_panel = InfoPanel(content)
+        self.info_panel.filelight_requested.connect(self.open_filelight)
+        layout.addWidget(self.info_panel)
+
+        layout.addStretch(1)
+        scroll.setWidget(content)
+        return scroll
+
+    def _build_hosts_tab(self) -> QWidget:
+        """Les postes distants : ajout, recherche, état et mises à jour."""
+        page = QWidget(self.tabs)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(26, 16, 26, 8)
+        layout.setSpacing(10)
+
+        # Actions de l'onglet, pas de la fenêtre : ajouter et rechercher des
+        # postes, rafraîchir leur état, lancer leurs mises à jour. La rangée
+        # entière disparaît quand la page d'un poste est affichée : ses
+        # actions sont dans la carte du poste, pas dans la barre de la liste.
+        self.list_toolbar = QWidget(page)
+        toolbar = QHBoxLayout(self.list_toolbar)
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        toolbar.setSpacing(8)
+        self.add_button = QPushButton("Ajouter un poste", self.list_toolbar)
         self.add_button.setObjectName("accent")
         self.add_button.setCursor(Qt.PointingHandCursor)
         self.add_button.setIcon(QIcon.fromTheme("list-add"))
@@ -182,53 +393,36 @@ class MainWindow(QMainWindow):
             "Rechercher sur le réseau local…", self.discover_hosts
         )
         self.add_button.setMenu(add_menu)
-        header_layout.addWidget(self.add_button)
-        root.addWidget(header)
+        toolbar.addWidget(self.add_button)
+        toolbar.addStretch(1)
 
-        self.busy = BusyProgressBar(central)
-        self.busy.setObjectName("busy")
-        self.busy.setRange(0, 0)
-        self.busy.setTextVisible(False)
-        self.busy.setFixedHeight(3)
-        self.busy.setVisible(False)
-        root.addWidget(self.busy)
+        self.remote_updates_button = QPushButton(
+            "Mises à jour des postes", page
+        )
+        self.remote_updates_button.setObjectName("accent")
+        self.remote_updates_button.setCursor(Qt.PointingHandCursor)
+        self.remote_updates_button.setIcon(
+            QIcon.fromTheme("system-software-update")
+        )
+        self.remote_updates_button.setToolTip(
+            "Vérifier ou lancer les mises à jour des postes en ligne — "
+            "uniquement sur ce clic"
+        )
+        hosts_menu = QMenu(self.remote_updates_button)
+        hosts_menu.addAction(
+            "Vérifier les mises à jour", self.check_remote_updates
+        )
+        hosts_menu.addAction("Tout mettre à jour…", self.update_all_hosts)
+        self.remote_updates_button.setMenu(hosts_menu)
+        toolbar.addWidget(self.remote_updates_button)
 
-        # Carte « Ce poste » : toujours visible, indépendante de la liste.
-        self.local_card = LocalCard(central)
-        self.local_card.update_requested.connect(self.local_update)
-        self.local_card.check_requested.connect(
-            lambda: self.check_updates(force=True)
-        )
-        self.local_card.apps_requested.connect(self.open_apps)
-        self.local_card.kernel_requested.connect(self.open_settings)
-        self.local_card.updates_requested.connect(self.open_local_updates)
-        self.local_card.services_requested.connect(self.open_local_services)
-        self.local_card.variant_requested.connect(self.open_local_variant)
-        self.local_card.btrfs_requested.connect(self.open_local_btrfs)
-        self.local_card.thermal_requested.connect(self.open_local_thermal)
-        self.local_card.ryzen_requested.connect(self.open_local_ryzen)
-        self.local_card.clean_requested.connect(self.open_clean_system)
-        self.local_card.grub_requested.connect(self.open_grub)
-        self.local_card.secureboot_requested.connect(self.open_secureboot)
-        self.local_card.bootselect_requested.connect(
-            self.open_boot_select
-        )
-        self.local_card.firmware_requested.connect(self.reboot_firmware)
-        self.local_card.gwine_requested.connect(self.open_local_gwine_options)
-        self.local_card.booster_requested.connect(
-            self.open_local_foreground_booster
-        )
-        self.local_card.tailscale_requested.connect(
-            self.open_local_tailscale
-        )
-        local_holder = QWidget(central)
-        local_layout = QHBoxLayout(local_holder)
-        local_layout.setContentsMargins(26, 0, 26, 6)
-        local_layout.addWidget(self.local_card)
-        root.addWidget(local_holder)
+        # Pas de bouton « Rafraîchir l'état » : la passe automatique (30 s,
+        # retour sur la fenêtre) suffit au quotidien, et F5 reste là pour
+        # forcer une sonde immédiate, bande animée comprise.
+        layout.addWidget(self.list_toolbar)
 
-        self.stack = QStackedWidget(central)
-        root.addWidget(self.stack, 1)
+        self.stack = QStackedWidget(page)
+        layout.addWidget(self.stack, 1)
 
         # Page vide
         empty = QWidget(self.stack)
@@ -288,56 +482,20 @@ class MainWindow(QMainWindow):
         content = QWidget(self.scroll)
         content.setAutoFillBackground(False)
         self.cards_layout = QVBoxLayout(content)
-        self.cards_layout.setContentsMargins(26, 6, 26, 18)
+        self.cards_layout.setContentsMargins(0, 4, 0, 18)
         self.cards_layout.setSpacing(10)
         self.cards_layout.addStretch(1)
         self.scroll.setWidget(content)
         self.stack.addWidget(self.scroll)
 
-        footer = QWidget(central)
-        footer_layout = QHBoxLayout(footer)
-        footer_layout.setContentsMargins(26, 6, 26, 14)
-        self.footer_label = QLabel(footer)
-        self.footer_label.setObjectName("footer")
-        footer_layout.addWidget(self.footer_label)
-        footer_layout.addStretch(1)
-        # Pastille « Redémarrage requis » : elle vient de l'état du poste, pas
-        # d'un drapeau de session — fermer et rouvrir l'app la retrouve.
-        self.reboot_button = QPushButton(footer)
-        self.reboot_button.setObjectName("pill")
-        self.reboot_button.setCursor(Qt.PointingHandCursor)
-        self.reboot_button.setVisible(False)
-        self.reboot_button.clicked.connect(self.reboot_local)
-        footer_layout.addWidget(self.reboot_button)
-        footer_layout.addSpacing(6)
-        self.sshd_button = QPushButton(footer)
-        self.sshd_button.setObjectName("pill")
-        self.sshd_button.setCursor(Qt.PointingHandCursor)
-        self.sshd_button.clicked.connect(self.toggle_local_sshd)
-        footer_layout.addWidget(self.sshd_button)
-        footer_layout.addSpacing(6)
-
-        self.avahi_button = QPushButton(footer)
-        self.avahi_button.setObjectName("pill")
-        self.avahi_button.setCursor(Qt.PointingHandCursor)
-        self.avahi_button.clicked.connect(self.toggle_avahi)
-        footer_layout.addWidget(self.avahi_button)
-        footer_layout.addSpacing(10)
-        # Libellé libre, sans horodatage : il n'affiche que des messages
-        # ponctuels (recherche réseau, session fermée), effacés à la passe
-        # suivante. La vérification automatique reste silencieuse.
-        self.auto_label = QLabel("", footer)
-        self.auto_label.setObjectName("footer")
-        footer_layout.addWidget(self.auto_label)
-        root.addWidget(footer)
-
-        QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self.add_host)
-        # F5 force la vérification, y compris des postes volontairement laissés
-        # au repos (clé refusée, empreinte inconnue).
-        QShortcut(QKeySequence("F5"), self).activated.connect(
-            lambda: self.refresh_all(force=True))
-
-        self._update_footer()
+        # Ce que les autres postes peuvent joindre de celui-ci : compact, au
+        # pied de l'onglet — c'est la contrepartie de la liste des postes, pas
+        # un réglage du poste local.
+        self.access_panel = AccessPanel(page)
+        self.access_panel.sshd_requested.connect(self.toggle_local_sshd)
+        self.access_panel.avahi_requested.connect(self.toggle_avahi)
+        layout.addWidget(self.access_panel)
+        return page
 
     # -- registre -----------------------------------------------------------
     def _save(self) -> None:
@@ -366,36 +524,289 @@ class MainWindow(QMainWindow):
         self._dots.clear()
 
         for host in self._sorted_hosts():
-            card = HostCard(host, self.scroll.widget())
-            card.remote_requested.connect(self.launch_remote)
-            card.remote_stop_requested.connect(self.stop_remote)
-            card.files_requested.connect(self.open_files)
-            card.key_requested.connect(self.install_key_dialog)
-            card.edit_requested.connect(self.edit_host)
-            card.delete_requested.connect(self.delete_host)
-            card.terminal_requested.connect(self.open_terminal)
-            card.update_requested.connect(self.update_host)
-            card.settings_requested.connect(self.open_remote_settings)
-            card.clean_requested.connect(self.open_remote_clean)
-            card.btrfs_requested.connect(self.open_remote_btrfs)
-            card.thermal_requested.connect(self.open_remote_thermal)
-            card.gwine_requested.connect(self.open_remote_gwine_options)
-            card.booster_requested.connect(self.open_remote_foreground_booster)
-            card.tailscale_requested.connect(self.open_remote_tailscale)
-            card.apps_requested.connect(self.open_host_apps)
-            card.reboot_requested.connect(self.reboot_host)
-            card.shutdown_requested.connect(self.shutdown_host)
-            state, detail = self._states.get(host["id"], ("unknown", ""))
-            card.set_state(state, detail, self._latency.get(host["id"], 0.0))
-            card.set_remote_active(self._remote_job(host["id"]) is not None)
+            card = self._make_host_card(host, self.scroll.widget())
             self.cards_layout.addWidget(card)
             self._cards[host["id"]] = card
             self._dots.append(card.dot)
 
         self.cards_layout.addStretch(1)
         self._display_order = [host["id"] for host in self._sorted_hosts()]
-        self.stack.setCurrentIndex(0 if not self._hosts else 1)
+        # Un réordonnancement (un poste passe en ligne) ne doit pas éjecter
+        # la page du poste qu'on regarde.
+        if self._host_view_host() is None:
+            self.stack.setCurrentIndex(0 if not self._hosts else 1)
+        self._refresh_pane_titles()
+        self._rebuild_pane_states()
         self._update_footer()
+
+    def _make_host_card(self, host: dict, parent) -> HostCard:
+        """Carte d'un poste, avec toutes ses actions câblées.
+
+        La même carte sert dans la liste « Postes SSH » et dans l'onglet du
+        poste : une seule définition des signaux, donc les deux vues se
+        comportent pareil.
+        """
+        card = HostCard(host, parent)
+        card.open_requested.connect(self.open_host_tab)
+        card.remote_requested.connect(self.launch_remote)
+        card.remote_stop_requested.connect(self.stop_remote)
+        card.files_requested.connect(self.open_files)
+        card.key_requested.connect(self.install_key_dialog)
+        card.edit_requested.connect(self.edit_host)
+        card.delete_requested.connect(self.delete_host)
+        card.terminal_requested.connect(self.open_terminal)
+        card.update_requested.connect(self.update_host)
+        card.check_requested.connect(self.check_host_updates)
+        card.settings_requested.connect(self.open_remote_settings)
+        card.clean_requested.connect(self.open_remote_clean)
+        card.btrfs_requested.connect(self.open_remote_btrfs)
+        card.thermal_requested.connect(self.open_remote_thermal)
+        card.gwine_requested.connect(self.open_remote_gwine_options)
+        card.booster_requested.connect(self.open_remote_foreground_booster)
+        card.tailscale_requested.connect(self.open_remote_tailscale)
+        card.apps_requested.connect(self.open_host_apps)
+        card.reboot_requested.connect(self.reboot_host)
+        card.shutdown_requested.connect(self.shutdown_host)
+        card.set_state(
+            self._states.get(host["id"], ("unknown", ""))[0],
+            self._states.get(host["id"], ("unknown", ""))[1],
+            self._latency.get(host["id"], 0.0),
+        )
+        card.set_updates(self._remote_updates.get(host["id"]))
+        card.set_remote_active(self._remote_job(host["id"]) is not None)
+        return card
+
+    # -- onglets par poste ---------------------------------------------------
+    def _local_tab_title(self) -> str:
+        """« Gigafed (local) » : le nom de la machine, pas un terme générique."""
+        name = socket.gethostname().strip() or "Ce poste"
+        return f"{name[:1].upper()}{name[1:]} (local)"
+
+    def _hosts_tab_index(self) -> int:
+        """L'onglet « Postes SSH » reste collé au poste local (position 1)."""
+        if self._hosts_page is None:
+            return -1
+        return self.tabs.indexOf(self._hosts_page)
+
+    def _host_view_host(self) -> dict | None:
+        """Poste dont la page est affichée dans « Postes SSH », s'il y en a un."""
+        widget = self.stack.currentWidget()
+        for host_id, pane in self._panes.items():
+            if pane["page"] is widget:
+                return self._host(host_id)
+        return None
+
+    def _current_pane_host(self) -> dict | None:
+        """Poste qu'on a sous les yeux (None pour le local ou la liste)."""
+        if self.tabs.currentIndex() != self._hosts_tab_index():
+            return None
+        return self._host_view_host()
+
+    def open_host_tab(self, host_id: str) -> None:
+        """Affiche la page d'un poste dans l'onglet « Postes SSH ».
+
+        Clic sur sa carte (le fond, le nom ou la ligne d'état) : la liste
+        laisse la place à la page du poste, dans le même onglet. Pas d'onglet
+        par poste — deux onglets suffisent, et la croix au-dessus de la carte
+        ramène à la liste.
+        """
+        host = self._host(host_id)
+        if host is None:
+            return
+        if self.tabs.currentIndex() != self._hosts_tab_index():
+            self.tabs.setCurrentIndex(self._hosts_tab_index())
+        pane = self._panes.get(host_id)
+        if pane is None:
+            pane = self._build_host_pane(host)
+        if self.tabs.currentIndex() == self._hosts_tab_index() \
+                and self.stack.currentWidget() is pane["page"]:
+            return
+        self.stack.setCurrentWidget(pane["page"])
+        self.list_toolbar.setVisible(False)
+        self.access_panel.setVisible(False)
+        # Ouvrir la page vaut visite : état du poste et résumé matériel sont
+        # chargés tout de suite (avant, c'est le changement d'onglet qui le
+        # faisait ; sans cet appel, le panneau restait vide jusqu'au passage
+        # du timer de 30 s).
+        self.refresh_all()
+        self._update_footer()
+
+    def show_hosts_list(self) -> None:
+        """Revient à la liste des postes (croix de la page, titre d'onglet)."""
+        self.stack.setCurrentIndex(0 if not self._hosts else 1)
+        self.list_toolbar.setVisible(True)
+        self.access_panel.setVisible(True)
+        self._update_footer()
+
+    def _close_button(self) -> QToolButton:
+        """Croix de fermeture de la page d'un poste (au-dessus de la carte).
+
+        Plus grande que la croix des onglets : ici c'est la seule sortie
+        visible vers la liste, elle doit se cliquer sans viser.
+        """
+        button = QToolButton(self)
+        button.setObjectName("pageClose")
+        button.setText("✕")
+        button.setToolTip("Revenir à la liste des postes")
+        button.setCursor(Qt.PointingHandCursor)
+        button.setAutoRaise(True)
+        button.setFixedSize(30, 30)
+        button.clicked.connect(self.show_hosts_list)
+        return button
+
+    def _destroy_pane(self, host_id: str) -> None:
+        """Retire et détruit la page d'un poste (poste supprimé)."""
+        pane = self._panes.pop(host_id, None)
+        if pane is None:
+            return
+        self.stack.removeWidget(pane["page"])
+        pane["page"].deleteLater()
+
+    def _refresh_pane_titles(self) -> None:
+        """Nom de la carte d'un poste = nom courant (renommage, libellé)."""
+        for host_id, pane in self._panes.items():
+            host = self._host(host_id)
+            if host is None:
+                continue
+            pane["card"].name_label.setText(display_name(host))
+
+    def _build_host_pane(self, host: dict) -> dict:
+        """Page d'un poste distant : carte, mises à jour, matériel et système.
+
+        La page vit dans la pile de l'onglet « Postes SSH », à côté de la
+        liste : même onglet, deux vues — aucune place perdue en barre
+        d'onglets quand on a dix postes.
+        """
+        scroll = QScrollArea(self.stack)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.viewport().setAutoFillBackground(False)
+        content = QWidget(scroll)
+        content.setAutoFillBackground(False)
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(26, 16, 26, 18)
+        layout.setSpacing(12)
+
+        card = self._make_host_card(host, content)
+        # La mise à jour vit dans le panneau du dessous, à côté de
+        # « Vérifier » : la carte ne garde que l'identité et les accès.
+        card.update_button.setVisible(False)
+        # Croix de fermeture de la page, seule au-dessus de la carte : elle
+        # ramène à la liste des postes, sans alourdir la rangée d'actions.
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.addStretch(1)
+        header.addWidget(self._close_button())
+        layout.addLayout(header)
+        layout.addWidget(card)
+
+        host_id = host["id"]
+        panel = UpdatesPanel(content)
+        panel.check_requested.connect(
+            lambda checked=False, hid=host_id:
+            self.check_host_updates(hid)
+        )
+        panel.set_update_menu([
+            ("Tout mettre à jour…",
+             lambda: self.update_host(host_id, "all")),
+            None,
+            ("Gablue…",
+             lambda: self.update_host(host_id, "gablue")),
+            ("Flatpaks…",
+             lambda: self.update_host(host_id, "flatpak")),
+            ("Gwine…",
+             lambda: self.update_host(host_id, "gwine")),
+            ("Brew…",
+             lambda: self.update_host(host_id, "brew")),
+        ])
+        panel.set_updates(self._remote_updates.get(host_id))
+        layout.addWidget(panel)
+
+        info = InfoPanel(content)
+        layout.addWidget(info)
+        layout.addStretch(1)
+        scroll.setWidget(content)
+        self.stack.addWidget(scroll)
+        self._panes[host["id"]] = {
+            "page": scroll, "card": card, "updates": panel, "info": info,
+        }
+        values = self._remote_hardware.get(host["id"])
+        if values:
+            self._fill_info_pane(info, values, links=False)
+        return self._panes[host["id"]]
+
+    def _rebuild_pane_states(self) -> None:
+        """État et compteurs connus, appliqués aux deux vues d'un poste."""
+        for host_id, pane in self._panes.items():
+            state, detail = self._states.get(host_id, ("unknown", ""))
+            pane["card"].set_state(state, detail, self._latency.get(host_id, 0.0))
+            pane["card"].set_updates(self._remote_updates.get(host_id))
+            pane["updates"].set_updates(self._remote_updates.get(host_id))
+            pane["card"].set_remote_active(
+                self._remote_job(host_id) is not None
+            )
+
+    def _fill_info_pane(self, panel: InfoPanel, values: dict,
+                        links: bool) -> None:
+        values = dict(values or {})
+        rows = values.pop("disk_rows", None)
+        values.pop("disks", None)
+        model_label = values.pop("model_label", "")
+        panel.set_values(values)
+        if model_label:
+            panel.set_label("model", model_label)
+        if rows is not None:
+            panel.set_disks(rows, links=links)
+
+    # -- matériel d'un poste distant ----------------------------------------
+    def _load_remote_hardware(self, host_id: str, force: bool = False) -> None:
+        """Charge le résumé matériel d'un poste, une fois par session.
+
+        L'onglet déclenche la sonde ; une tentative ratée (poste injoignable)
+        n'est pas rejouée avant une minute, pour ne pas ouvrir une connexion
+        SSH à chaque passage du timer.
+        """
+        pane = self._panes.get(host_id)
+        host = self._host(host_id)
+        if pane is None or host is None:
+            return
+        # Un poste qui refuse la clé ou dont l'empreinte est inconnue ne
+        # reçoit aucune connexion de confort : chacune est une offense pour
+        # `PerSourcePenalties` (voir `refresh_all`).
+        state = self._states.get(host_id, ("unknown", ""))[0]
+        if state not in ("unknown", "online"):
+            return
+        if host_id in self._remote_hardware_workers:
+            return
+        if not force:
+            if host_id in self._remote_hardware:
+                return
+            if time.time() - self._remote_hardware_at.get(host_id, 0.0) < 60:
+                return
+        self._remote_hardware_at[host_id] = time.time()
+        worker = RemoteHardwareWorker(host, self)
+        worker.done.connect(self._remote_hardware_ready)
+        worker.finished.connect(
+            lambda w=worker, hid=host_id: self._remote_hardware_finished(hid, w)
+        )
+        self._remote_hardware_workers[host_id] = worker
+        worker.start()
+
+    def _remote_hardware_finished(self, host_id: str, worker) -> None:
+        if self._remote_hardware_workers.get(host_id) is worker:
+            self._remote_hardware_workers.pop(host_id, None)
+        worker.deleteLater()
+
+    def _remote_hardware_ready(self, host_id: str, values: dict) -> None:
+        self._remote_hardware_at[host_id] = time.time()
+        if not values or self._host(host_id) is None:
+            return
+        self._remote_hardware[host_id] = values
+        pane = self._panes.get(host_id)
+        if pane is not None:
+            # Filelight ne lit que la machine locale : pas de lien ici.
+            self._fill_info_pane(pane["info"], values, links=False)
 
     def _sorted_hosts(self) -> list[dict]:
         """Postes en ligne d'abord, puis par nom."""
@@ -409,43 +820,135 @@ class MainWindow(QMainWindow):
             dot.tick()
 
     # -- vérification -------------------------------------------------------
-    def refresh_all(self, force: bool = False) -> None:
-        """Vérifie les postes ; `force` ignore le repos des états bloqués.
+    def refresh_all(self, force: bool = False,
+                    activity: bool = False) -> None:
+        """État de l'onglet courant seulement.
 
-        On ne resonde PAS les postes dont la clé est refusée ou l'empreinte
-        inconnue : chaque tentative est une connexion fermée avant
-        authentification, comptée comme une offense par `PerSourcePenalties`
-        (OpenSSH 9.8+). Les sonder toutes les 30 s finissait par faire bannir
-        cette machine par leur sshd — et empêchait ensuite l'empreinte d'être
-        récupérée, donc la clé d'être installée. F5 / « Vérifier » force.
+        Sur l'onglet d'un poste, seule cette machine est sondée (état, latence
+        et, à la première visite, résumé matériel) ; sur « Postes SSH », tous
+        les postes en ligne ; sur le poste local, rien ne part sur le réseau.
+        F5 force une passe complète de l'onglet.
+
+        `force` ignore le repos des états bloqués : on ne resonde PAS les
+        postes dont la clé est refusée ou l'empreinte inconnue, car chaque
+        tentative est une connexion fermée avant authentification, comptée
+        comme une offense par `PerSourcePenalties` (OpenSSH 9.8+). Les sonder
+        toutes les 30 s finissait par faire bannir cette machine par leur
+        sshd — et empêchait ensuite l'empreinte d'être récupérée, donc la clé
+        d'être installée. F5 force.
+
+        `activity` allume la bande bleue de l'en-tête : réservée au geste
+        explicite (F5). Une passe automatique — timer
+        de 30 s, retour sur la fenêtre, ouverture d'une page — doit rester
+        invisible (demandé le 07/11/2026).
         """
-        self._update_sshd_button()
-        self._update_avahi_button()
-        self._refresh_reboot()
-        self.check_updates()
-        if self._checker is not None and self._checker.isRunning():
-            return
-        if not self._hosts:
+        self._refresh_local_state()
+        host = self._current_pane_host()
+        if host is not None:
+            self._load_remote_hardware(host["id"])
+            self._probe_hosts([host], force, activity)
             self._update_footer()
             return
+        if self.tabs.currentIndex() != self._hosts_tab_index():
+            self._update_footer()
+            return
+        self._probe_hosts(self._hosts, force, activity)
+        self._update_footer()
+
+    def _probe_hosts(self, hosts: list[dict], force: bool = False,
+                     activity: bool = False) -> None:
+        """Lance les sondes d'état des postes demandés (jamais périodiques ici)."""
+        if self._checker is not None and self._checker.isRunning():
+            return
+        if not hosts:
+            return
         targets = [
-            host for host in self._hosts
+            host for host in hosts
             if force or self._states.get(host["id"], ("", ""))[0]
             not in NO_AUTO_PROBE_STATES
         ]
         if not targets:
-            self._update_footer()
             return
-        for host in targets:
-            self._states[host["id"]] = ("checking", "")
+        # Aucun état « Vérification… » pendant la passe : le texte change de
+        # largeur et la carte saute à chaque rafraîchissement. La pastille
+        # pulse (`dot.tick`) et chaque poste garde « En ligne · N ms »
+        # jusqu'à la réponse, qui ne réécrit que les millisecondes.
         self._apply_states()
-        self.busy.setVisible(True)
+        # Seul un rafraîchissement demandé montre la bande animée.
+        if activity:
+            self._set_busy("probe", True)
 
         checker = CheckWorker(targets, self)
         checker.result.connect(self._on_check_result)
         checker.finished_all.connect(self._on_check_done)
         self._checker = checker
         checker.start()
+
+    def _refresh_local_state(self) -> None:
+        """Sondes du poste courant : locales, sans réseau ni attente root."""
+        self._refresh_access()
+        self._refresh_reboot()
+        self._refresh_hardware()
+        self.check_updates()
+
+    def _tab_reclicked(self, index: int) -> None:
+        """Clic sur l'onglet déjà courant : « Postes SSH » referme la page."""
+        if index == self._hosts_tab_index():
+            self.show_hosts_list()
+
+    def _tab_changed(self, index: int) -> None:
+        """Changement d'onglet : sonde seulement la machine qu'on regarde.
+
+        « Postes SSH » s'ouvre toujours sur la liste : la page d'un poste se
+        rouvre d'un clic sur sa carte. Arriver sur la liste sonde tous
+        les cartes ; revenir moins de 8 s plus tard ne relance rien.
+        """
+        self._update_footer()
+        if index != self._hosts_tab_index():
+            return
+        if self._host_view_host() is not None:
+            self.show_hosts_list()
+        if not self._last_check or time.time() - self._last_check > 8:
+            self.refresh_all(force=True)
+
+    def _refresh_hardware(self) -> None:
+        """Résumé matériel : lectures locales, `lspci` mis en cache."""
+        values = hardware_summary()
+        values.pop("disks", None)
+        # Le nom Vulkan (VBIOS) est plus précis que celui du die : il est lu
+        # hors thread GUI au démarrage et conservé pour toutes les passes.
+        if self._gpu_name:
+            values["gpu"] = self._gpu_name
+        # La première ligne est un modèle constructeur ou, sur une machine
+        # assemblée, la carte mère : le libellé suit ce qui est affiché.
+        model_label = values.pop("model_label", "")
+        self.info_panel.set_values(values)
+        if model_label:
+            self.info_panel.set_label("model", model_label)
+        self.info_panel.set_disks(disk_rows())
+
+    def _load_hardware(self) -> None:
+        """Charge barrettes et nom Vulkan du GPU hors thread GUI."""
+        if self._hardware_worker is not None and self._hardware_worker.isRunning():
+            return
+        worker = HardwareWorker(self)
+        self._hardware_worker = worker
+        worker.done.connect(self._hardware_ready)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _hardware_ready(self, values: dict) -> None:
+        self._hardware_worker = None
+        text = format_memory_modules((values or {}).get("modules") or [])
+        if text:
+            self.info_panel.set_values({"modules": text})
+        gpu = str((values or {}).get("gpu") or "")
+        if gpu:
+            # Nom commercial exact (VBIOS via Mesa) : il remplace le nom du
+            # die que `lspci` donnait à l'ouverture.
+            self._gpu_name = gpu
+            self.info_panel.set_values({"gpu": gpu})
+
 
     # -- préférences ---------------------------------------------------------
     def set_prefs(self, values: dict) -> None:
@@ -466,13 +969,17 @@ class MainWindow(QMainWindow):
         self.check_updates(force=True)
 
     # -- mises à jour disponibles -------------------------------------------
-    def check_updates(self, force: bool = False) -> None:
+    def check_updates(self, force: bool = False,
+                      activity: bool = False) -> None:
         """Sonde les mises à jour, hors thread GUI, selon les préférences.
 
         Sans `force`, rien n'est lancé si l'utilisateur a coupé les
         vérifications, si une opération est en cours, ou si la dernière passe
         est plus récente que la fréquence choisie. Hors ligne, aucune sonde
         réseau : la carte l'affiche et s'arrête là.
+
+        `activity` allume la bande de l'en-tête : un clic sur « Vérifier »
+        doit se voir, la sonde automatique non.
         """
         values = prefs.load_prefs()
         online = network_online()
@@ -484,7 +991,9 @@ class MainWindow(QMainWindow):
             return
         if not force and not online:
             self._updates_state = {"online": False, "domains": {}}
-            self.local_card.set_updates(self._updates_state)
+            self.updates_panel.set_updates(self._updates_state)
+            self._update_image_cell(self._updates_state)
+            self._update_footer()
             return
         checked = (self._updates_state or {}).get("checked_at")
         if not force and checked and \
@@ -495,19 +1004,38 @@ class MainWindow(QMainWindow):
         worker = UpdateCheckWorker(domains, online, self)
         self._updates_worker = worker
         worker.done.connect(self._updates_done)
-        self.local_card.set_checking()
+        self.updates_panel.set_checking()
+        if activity:
+            self._set_busy("updates", True)
         worker.start()
 
     def _updates_done(self, state: dict) -> None:
         self._updates_worker = None
+        self._set_busy("updates", False)
         self._updates_state = state
-        self.local_card.end_checking()
-        self.local_card.set_updates(state)
+        self.updates_panel.end_checking()
+        self.updates_panel.set_updates(state)
+        self._update_image_cell(state)
+        self._update_footer()
         if self._updates_pending:
             # Sonde lancée avant la fin d'une mise à jour : elle décrit
             # l'avant, on en refait une tout de suite.
             self._updates_pending = False
             QTimer.singleShot(0, lambda: self.check_updates(force=True))
+
+    def _update_image_cell(self, state: dict | None) -> None:
+        """Ligne « Image Gablue » du résumé : celle qui tourne, et l'attente.
+
+        L'information vient de la sonde des mises à jour (lecture locale de
+        `rpm-ostree status`) : aucune commande supplémentaire pour l'afficher,
+        et rien n'est inventé tant que la sonde n'a pas répondu. Une image
+        staged donne « actuelle X · en attente Y », jamais « nouvelle image »
+        sans version.
+        """
+        image = ((state or {}).get("domains") or {}).get("image") or {}
+        detail = updates.image_detail(image)
+        if detail:
+            self.info_panel.set_values({"image": detail})
 
     def _updates_after_task(self, ok: bool) -> None:
         """Mise à jour terminée : re-sonder sans attendre la fréquence.
@@ -524,6 +1052,144 @@ class MainWindow(QMainWindow):
             self._updates_pending = True
             return
         self.check_updates(force=True)
+
+    # -- mises à jour des postes distants (à la demande) --------------------
+    def check_host_updates(self, host_id: str) -> None:
+        """Vérifier les mises à jour d'un poste, sur **ce clic** seulement."""
+        host = self._host(host_id)
+        if host is None:
+            return
+        self._set_host_checking(host_id)
+        worker = RemoteUpdatesWorker(host, self)
+        worker.done.connect(self._on_remote_updates)
+        self._remote_check_workers.append(worker)
+        worker.finished.connect(
+            lambda w=worker: self._remote_check_finished(w)
+        )
+        worker.start()
+
+    def _set_host_checking(self, host_id: str) -> None:
+        """« Vérification… » sur les deux vues d'un poste, jamais un verdict."""
+        card = self._cards.get(host_id)
+        if card is not None:
+            card.set_checking()
+        pane = self._panes.get(host_id)
+        if pane is not None:
+            pane["card"].set_checking()
+            pane["updates"].set_checking()
+
+    def check_remote_updates(self) -> None:
+        """Vérifier les mises à jour de tous les postes en ligne.
+
+        Trois connexions à la fois : une sonde par poste, aucune périodicité.
+        """
+        online = self._online_hosts()
+        if not online:
+            QMessageBox.information(
+                self, "Mises à jour des postes",
+                "Aucun poste en ligne à vérifier.",
+            )
+            return
+        for host in online:
+            if host["id"] not in self._remote_check_queue:
+                self._remote_check_queue.append(host["id"])
+            self._set_host_checking(host["id"])
+        self._pump_remote_checks()
+
+    def _online_hosts(self) -> list[dict]:
+        """Postes dont la dernière sonde d'état dit « en ligne »."""
+        return [
+            host for host in self._hosts
+            if self._states.get(host["id"], ("", ""))[0] == "online"
+        ]
+
+    def _pump_remote_checks(self) -> None:
+        while self._remote_check_queue and len(self._remote_check_workers) < 3:
+            host_id = self._remote_check_queue.pop(0)
+            host = self._host(host_id)
+            if host is None:
+                continue
+            worker = RemoteUpdatesWorker(host, self)
+            worker.done.connect(self._on_remote_updates)
+            self._remote_check_workers.append(worker)
+            worker.finished.connect(
+                lambda w=worker: self._remote_check_finished(w)
+            )
+            worker.start()
+
+    def _remote_check_finished(self, worker) -> None:
+        if worker in self._remote_check_workers:
+            self._remote_check_workers.remove(worker)
+        worker.deleteLater()
+        self._pump_remote_checks()
+
+    def _on_remote_updates(self, host_id: str, state: dict) -> None:
+        """Sonde distante terminée : carte à jour, état conservé pour la suite."""
+        self._remote_updates[host_id] = state
+        card = self._cards.get(host_id)
+        if card is not None:
+            card.set_updates(state)
+        pane = self._panes.get(host_id)
+        if pane is not None:
+            pane["card"].set_updates(state)
+            pane["updates"].end_checking()
+            pane["updates"].set_updates(state)
+
+    def update_all_hosts(self) -> None:
+        """Mettre à jour tous les postes en ligne, en parallèle."""
+        online = self._online_hosts()
+        if not online:
+            QMessageBox.information(
+                self, "Mises à jour des postes",
+                "Aucun poste en ligne à mettre à jour.",
+            )
+            return
+        listed = "\n".join(
+            f"• {display_name(host)}" for host in online
+        )
+        answer = QMessageBox.question(
+            self, "Mises à jour des postes",
+            f"Mettre à jour {len(online)} poste(s) en parallèle ?\n\n"
+            f"{listed}\n\n"
+            "Image Gablue, Flatpaks, gwine et Homebrew. L'image s'applique au "
+            "prochain redémarrage ; un échec n'arrête que le poste concerné.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._batch_host_ids = [host["id"] for host in online]
+        dialog = RemoteBatchDialog(
+            self, hosts=online, command=remote_updates.UPDATE_CHAIN,
+            subtitle=f"{len(online)} poste(s) mis à jour en parallèle.",
+        )
+        dialog.completed.connect(self._batch_done)
+        start_task(self, dialog)
+
+    def _batch_done(self, ok: bool) -> None:
+        """Lot terminé : les compteurs connus de ces cartes sont périmés."""
+        if not ok:
+            return
+        for host_id in self._batch_host_ids:
+            self._forget_remote_updates(host_id)
+        self._batch_host_ids = []
+
+    def _remote_after_task(self, host_id: str, ok: bool) -> None:
+        """Mise à jour d'un poste terminée : son compteur connu est périmé."""
+        if not ok:
+            return
+        self._forget_remote_updates(host_id)
+
+    def _forget_remote_updates(self, host_id: str) -> None:
+        """Oublie un état de mises à jour périmé, dans les deux vues du poste."""
+        if self._remote_updates.pop(host_id, None) is None:
+            return
+        card = self._cards.get(host_id)
+        if card is not None:
+            card.set_updates(None)
+        pane = self._panes.get(host_id)
+        if pane is not None:
+            pane["card"].set_updates(None)
+            pane["updates"].set_updates(None)
 
     def _on_check_result(self, host_id: str, state: str, detail: str,
                          latency: float, address: str) -> None:
@@ -548,6 +1214,9 @@ class MainWindow(QMainWindow):
         card = self._cards.get(host_id)
         if card is not None:
             card.set_state(state, detail, latency)
+        pane = self._panes.get(host_id)
+        if pane is not None:
+            pane["card"].set_state(state, detail, latency)
         self._update_footer()
 
     def _ask_addresses(self, host_id: str) -> None:
@@ -602,8 +1271,21 @@ class MainWindow(QMainWindow):
             state, detail = self._states.get(host_id, ("unknown", ""))
             card.set_state(state, detail, self._latency.get(host_id, 0.0))
 
+    def _set_busy(self, reason: str, active: bool) -> None:
+        """Bande d'activité partagée : allumée tant qu'une raison l'exige.
+
+        Plusieurs tâches peuvent se chevaucher (sonde d'état, recherche de
+        mises à jour, découverte réseau, applications) : la dernière à finir
+        n'éteint pas la bande d'une autre.
+        """
+        if active:
+            self._busy_reasons.add(reason)
+        else:
+            self._busy_reasons.discard(reason)
+        self.busy.set_active(bool(self._busy_reasons))
+
     def _on_check_done(self) -> None:
-        self.busy.setVisible(False)
+        self._set_busy("probe", False)
         self._last_check = time.time()
         self._update_footer()
         if self._checker is not None:
@@ -621,18 +1303,40 @@ class MainWindow(QMainWindow):
         for host_id, card in self._cards.items():
             state, detail = self._states.get(host_id, ("unknown", ""))
             card.set_state(state, detail, self._latency.get(host_id, 0.0))
+        for host_id, pane in self._panes.items():
+            state, detail = self._states.get(host_id, ("unknown", ""))
+            pane["card"].set_state(
+                state, detail, self._latency.get(host_id, 0.0)
+            )
 
     def _update_footer(self) -> None:
+        """Barre discrète + compteurs dans les titres d'onglets.
+
+        Le pied ne parle plus que du contexte : aucun poste enregistré ou
+        nombre de postes en ligne sur « Postes SSH », rien sur les postes.
+        Les titres portent les compteurs utiles (postes, mises à jour).
+        """
         total = len(self._hosts)
         online = sum(
             1 for host in self._hosts
             if self._states.get(host["id"], ("", ""))[0] == "online"
         )
-        if total == 0:
+        on_hosts = getattr(self, "tabs", None) is not None \
+            and self.tabs.currentIndex() == self._hosts_tab_index()
+        if not on_hosts:
+            self.footer_label.setText("")
+        elif total == 0:
             self.footer_label.setText("Aucun poste distant enregistré")
         else:
             noun = "poste" if total == 1 else "postes"
             self.footer_label.setText(f"{total} {noun} · {online} en ligne")
+        if getattr(self, "tabs", None) is not None:
+            index = self._hosts_tab_index()
+            if index >= 0:
+                self.tabs.setTabText(
+                    index, f"Postes SSH ({total})" if total else "Postes SSH"
+                )
+            self.tabs.setTabText(0, self._local_tab_title())
         self.auto_label.setText("")
 
     # -- serveur SSH local --------------------------------------------------
@@ -640,41 +1344,24 @@ class MainWindow(QMainWindow):
         """Une bascule privilégiée attend PolicyKit : le libellé reste figé."""
         return process is not None and process.state() != QProcess.NotRunning
 
-    def _update_sshd_button(self) -> None:
-        if self._pending(self._sshd_process):
-            return
-        active, enabled = local_sshd_state()
-        if active:
-            self.sshd_button.setText("Serveur SSH : activé")
-            self.sshd_button.setStyleSheet(f"color: {COLOR_ONLINE};")
-        else:
-            self.sshd_button.setText("Serveur SSH : désactivé")
-            self.sshd_button.setStyleSheet(f"color: {COLOR_OFFLINE};")
-        boot = "démarre au boot" if enabled else "ne démarre pas au boot"
-        self.sshd_button.setToolTip(
-            f"Serveur SSH de cette machine ({boot})\n"
-            + ("Cliquer pour le couper" if active else "Cliquer pour l'activer")
-        )
+    def _refresh_access(self) -> None:
+        """Serveur SSH + annonce locale : un seul état, deux affichages.
 
-    def _update_avahi_button(self) -> None:
-        if self._pending(self._avahi_process):
-            return
-        published, daemon = avahi_publish_state()
-        if not daemon:
-            self.avahi_button.setText("Annonce locale : service arrêté")
-            self.avahi_button.setStyleSheet(f"color: {COLOR_AUTH};")
-        elif published:
-            self.avahi_button.setText("Annonce locale : activée")
-            self.avahi_button.setStyleSheet(f"color: {COLOR_ONLINE};")
-        else:
-            self.avahi_button.setText("Annonce locale : désactivée")
-            self.avahi_button.setStyleSheet(f"color: {COLOR_OFFLINE};")
-        self.avahi_button.setToolTip(
-            "Publie ce poste sur le réseau local pour l'accès SSH (nom "
-            "d'hôte, adresse IP et port 22 — aucun compte ni clé).\n"
-            "Visible uniquement depuis le même réseau local.\n"
-            + ("Cliquer pour ne plus l'annoncer" if published
-               else "Cliquer pour l'annoncer")
+        Le panneau « Accès depuis les autres postes » et le menu
+        Configuration ▸ Réseau lisent le même couple : impossible d'en voir un
+        à jour et l'autre périmé.
+        """
+        if not self._pending(self._sshd_process):
+            self._sshd_state = local_sshd_state()
+        if not self._pending(self._avahi_process):
+            self._avahi_state = avahi_publish_state()
+        self._apply_access_state()
+
+    def _apply_access_state(self) -> None:
+        self.access_panel.set_sshd(*self._sshd_state)
+        self.access_panel.set_avahi(*self._avahi_state)
+        self.local_config.set_access_state(
+            self._sshd_state, self._avahi_state
         )
 
     def toggle_local_sshd(self) -> None:
@@ -704,7 +1391,7 @@ class MainWindow(QMainWindow):
         # Chemin rapide : sudo sans mot de passe (image Gablue). Sinon PolicyKit.
         ok, _detail = set_local_sshd_sudo(enabled)
         if ok:
-            self._update_sshd_button()
+            self._refresh_access()
             return
 
         if shutil.which("pkexec") is None:
@@ -716,8 +1403,7 @@ class MainWindow(QMainWindow):
             return
 
         action = "enable" if enabled else "disable"
-        self.sshd_button.setEnabled(False)
-        self.sshd_button.setText("Serveur SSH local : autorisation…")
+        self.access_panel.set_sshd_pending()
         process = QProcess(self)
         process.setProgram("pkexec")
         process.setArguments(
@@ -733,15 +1419,13 @@ class MainWindow(QMainWindow):
         if error != QProcess.FailedToStart:
             return
         self._sshd_process = None
-        self.sshd_button.setEnabled(True)
+        self._refresh_access()
         QMessageBox.critical(
             self, "Serveur SSH local", "pkexec n'a pas pu démarrer.",
         )
-        self._update_sshd_button()
 
     def _sshd_toggled(self, code: int, _status) -> None:
         self._sshd_process = None
-        self.sshd_button.setEnabled(True)
         if code != 0:
             reasons = {
                 126: "autorisation refusée",
@@ -753,7 +1437,7 @@ class MainWindow(QMainWindow):
                 "Échec de la bascule : "
                 + reasons.get(code, f"code {code}") + ".",
             )
-        self._update_sshd_button()
+        self._refresh_access()
 
     # -- annonce locale de ce poste -----------------------------------------
     def toggle_avahi(self) -> None:
@@ -793,7 +1477,7 @@ class MainWindow(QMainWindow):
 
         ok, _detail = _sudo_run(argv)
         if ok:
-            self._update_avahi_button()
+            self._refresh_access()
             return
 
         if shutil.which("pkexec") is None:
@@ -804,8 +1488,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self.avahi_button.setEnabled(False)
-        self.avahi_button.setText("Annonce locale : autorisation…")
+        self.access_panel.set_avahi_pending()
         process = QProcess(self)
         process.setProgram("pkexec")
         process.setArguments(argv)
@@ -816,7 +1499,6 @@ class MainWindow(QMainWindow):
 
     def _avahi_toggled(self, code: int, _status) -> None:
         self._avahi_process = None
-        self.avahi_button.setEnabled(True)
         if code != 0:
             reasons = {
                 126: "autorisation refusée",
@@ -828,17 +1510,16 @@ class MainWindow(QMainWindow):
                 "Échec de la bascule : "
                 + reasons.get(code, f"code {code}") + ".",
             )
-        self._update_avahi_button()
+        self._refresh_access()
 
     def _avahi_start_failed(self, error) -> None:
         if error != QProcess.FailedToStart:
             return
         self._avahi_process = None
-        self.avahi_button.setEnabled(True)
+        self._refresh_access()
         QMessageBox.critical(
             self, "Annonce locale", "pkexec n'a pas pu démarrer.",
         )
-        self._update_avahi_button()
 
     # -- redémarrage en attente ---------------------------------------------
     def _refresh_reboot(self) -> None:
@@ -857,19 +1538,22 @@ class MainWindow(QMainWindow):
 
     def _reboot_state(self, reasons: list) -> None:
         self._reboot_reasons = [str(reason) for reason in reasons or []]
-        self._update_reboot_button()
+        self._update_reboot_bar()
 
-    def _update_reboot_button(self) -> None:
+    def _update_reboot_bar(self) -> None:
+        """Bandeau « redémarrage requis » du poste local, actionnable."""
         reasons = self._reboot_reasons
-        self.reboot_button.setVisible(bool(reasons))
         if not reasons:
+            self.reboot_bar.clear()
             return
-        self.reboot_button.setText("Redémarrage requis")
-        self.reboot_button.setStyleSheet(f"color: {COLOR_AUTH};")
-        self.reboot_button.setToolTip(
-            "En attente d'un redémarrage :\n"
-            + "\n".join(f"• {reason}" for reason in reasons)
-            + "\n\nCliquer pour redémarrer ce poste"
+        detail = "\n".join(f"• {reason}" for reason in reasons)
+        text = f"Redémarrage requis : {reasons[0]}"
+        if len(reasons) > 1:
+            text += f" (+{len(reasons) - 1})"
+        self.reboot_bar.set_message(
+            text,
+            "En attente d'un redémarrage :\n" + detail
+            + "\n\nCliquer sur « Redémarrer… » pour les appliquer.",
         )
 
     def reboot_local(self) -> None:
@@ -939,6 +1623,13 @@ class MainWindow(QMainWindow):
             self._stop_job(job)
         self._hosts = [item for item in self._hosts if item["id"] != host_id]
         self._states.pop(host_id, None)
+        self._remote_updates.pop(host_id, None)
+        self._remote_hardware.pop(host_id, None)
+        self._remote_hardware_at.pop(host_id, None)
+        # Un poste supprimé n'a plus de page : la détruire avant que ses
+        # widgets ne pointent sur un poste absent du registre.
+        self._destroy_pane(host_id)
+        self.show_hosts_list()
         self._save()
         self._rebuild_cards()
         self._update_footer()
@@ -1031,7 +1722,7 @@ class MainWindow(QMainWindow):
             card.set_remote_active(True)
 
     def stop_remote(self, host_id: str) -> None:
-        """Ferme les sessions RDP lancées par l'app (menu ⋯ de la carte)."""
+        """Ferme les sessions RDP lancées par l'app (menu Configuration)."""
         host = self._host(host_id)
         jobs = [
             job for job in self._jobs
@@ -1066,6 +1757,28 @@ class MainWindow(QMainWindow):
             command = ["xdg-open", url]
         self._launch(command, f"Fichiers — {display_name(host)}")
 
+    def open_filelight(self, path: str) -> None:
+        """Ouvre Filelight sur un dossier (le disque système → le home).
+
+        Filelight ne lit que la machine locale : l'appel n'a de sens que pour
+        le poste local, et l'échec est dit au lieu de rester silencieux.
+        """
+        target = Path(str(path or ""))
+        if not target.is_dir():
+            target = Path.home()
+        binary = _which("filelight")
+        if binary is None:
+            QMessageBox.information(
+                self, "Filelight",
+                "Filelight n'est pas installé sur ce poste.",
+            )
+            return
+        if not QProcess.startDetached(binary, [str(target)]):
+            QMessageBox.warning(
+                self, "Filelight",
+                f"Filelight n'a pas pu démarrer sur {target}.",
+            )
+
     def open_terminal(self, host_id: str) -> None:
         host = self._host(host_id)
         if host is None:
@@ -1091,7 +1804,9 @@ class MainWindow(QMainWindow):
         host = self._host(host_id)
         if host is None:
             return
-        if kind == "gablue":
+        if kind == "all":
+            self.update_remote_all(host)
+        elif kind == "gablue":
             self.update_remote_gablue(host)
         elif kind == "flatpak":
             self.update_remote_flatpaks(host)
@@ -1099,6 +1814,23 @@ class MainWindow(QMainWindow):
             self.update_remote_gwine(host)
         elif kind == "brew":
             self.update_remote_brew(host)
+
+    def update_remote_all(self, host: dict) -> None:
+        """Tout mettre à jour sur un poste : image, Flatpaks, gwine, Homebrew."""
+        answer = QMessageBox.question(
+            self, "Tout mettre à jour",
+            f"Mettre à jour « {display_name(host)} » en entier ?\n\n"
+            "Image Gablue, Flatpaks, gwine et Homebrew. L'image s'applique au "
+            "prochain redémarrage.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._run_remote_script(
+            host, f"Tout mettre à jour — {display_name(host)}",
+            "Image, Flatpaks, gwine et Homebrew.",
+            remote_updates.UPDATE_CHAIN, root=True,
+        )
 
     def update_remote_gablue(self, host: dict) -> None:
         answer = QMessageBox.question(
@@ -1178,12 +1910,6 @@ class MainWindow(QMainWindow):
             return
         RemoteSettingsDialog(self, host).exec()
 
-    def open_remote_clean(self, host_id: str) -> None:
-        host = self._host(host_id)
-        if host is None:
-            return
-        CleanDialog(self, host).exec()
-
     def open_remote_btrfs(self, host_id: str) -> None:
         host = self._host(host_id)
         if host is None:
@@ -1213,6 +1939,11 @@ class MainWindow(QMainWindow):
             password=password, ok_if_disconnect=ok_if_disconnect,
             hint_from_output=hint_from_output,
             close_on_success=close_on_success,
+        )
+        # Une action distante peut changer l'état des mises à jour : les
+        # compteurs connus de cette carte sont oubliés, jamais devinés.
+        dialog.completed.connect(
+            lambda ok, hid=host["id"]: self._remote_after_task(hid, ok)
         )
         start_task(self, dialog)
 
@@ -1278,6 +2009,8 @@ class MainWindow(QMainWindow):
             self.update_local_gwine()
         elif kind == "brew":
             self.update_local_brew()
+        elif kind == "apps":
+            self.update_local_apps()
 
     def update_local_all(self) -> None:
         """Tout mettre à jour d'un trait, avec une barre **globale**.
@@ -1477,6 +2210,62 @@ class MainWindow(QMainWindow):
             refresh_updates=True,
         )
 
+    def update_local_apps(self) -> None:
+        """Mettre à jour les AppImages installées (scripts d'installation).
+
+        La liste à mettre à jour vient du réseau (un flux de releases par
+        application) : la sonde tourne hors du fil graphique, la barre
+        d'activité tient l'utilisateur pendant ce temps.
+        """
+        answer = QMessageBox.question(
+            self, "Mettre à jour les applications",
+            "Mettre à jour les applications installées sur ce poste ?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        if self._apps_worker is not None and self._apps_worker.isRunning():
+            return
+        self._set_busy("apps", True)
+        worker = AppsUpdateWorker(self)
+        worker.done.connect(self._apps_update_ready)
+        self._apps_worker = worker
+        worker.start()
+
+    def _apps_update_ready(self, result) -> None:
+        """Sonde terminée : lancer les installations, ou dire pourquoi non."""
+        self._apps_worker = None
+        self._set_busy("apps", False)
+        pending, unknown, installed = result
+        if not installed:
+            QMessageBox.information(
+                self, "Applications",
+                "Aucune application n'est installée sur ce poste.",
+            )
+            return
+        if not pending:
+            if unknown:
+                QMessageBox.warning(
+                    self, "Applications",
+                    "Mise à jour impossible à déterminer : les flux de "
+                    "versions n'ont pas répondu pour au moins une "
+                    "application.",
+                )
+            else:
+                QMessageBox.information(
+                    self, "Applications",
+                    "Toutes les applications installées sont à jour.",
+                )
+            return
+        self._run_local_task(
+            "Mise à jour des applications",
+            "Applications installées (GearLever).",
+            [_which("bash"), "-c", apps_update_script(pending)],
+            progress_parser=parse_gablue_progress,
+            progress_text="Mise à jour des applications…",
+            refresh_updates=True,
+        )
+
     def open_apps(self) -> None:
         # Non modal : les installations tournent dans leurs propres fenêtres et
         # on peut en lancer plusieurs de suite, ou continuer ailleurs.
@@ -1516,23 +2305,40 @@ class MainWindow(QMainWindow):
         RyzenDialog(self).exec()
 
     def open_clean_system(self) -> None:
-        # Non modal : le dialogue reste ouvert pendant qu'une tâche tourne,
-        # sans désactiver la fenêtre de progression. Une seule instance.
-        existing = getattr(self, "_clean_dialog", None)
+        """Nettoyer ce poste : dialogue non modal, une instance."""
+        self._open_clean(None)
+
+    def open_remote_clean(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is not None:
+            self._open_clean(host)
+
+    def _open_clean(self, host: dict | None) -> None:
+        """Ouvre le nettoyage sans bloquer la fenêtre de progression.
+
+        Une tâche lancée depuis un dialogue **modal** s'affiche mais ne reçoit
+        aucun clic : la modalité du dialogue parent (nettoyage d'un poste
+        distant ouvert par `exec()`) bloquait « Fermer » sur la fenêtre de
+        progression terminée (vécu 07/11/2026). Le dialogue reste donc ouvert
+        sans modalité, comme pour le poste local, et une seule instance par
+        cible évite d'en empiler.
+        """
+        key = host["id"] if host else ""
+        existing = self._clean_dialogs.get(key)
         if existing is not None:
             try:
                 existing.raise_()
                 existing.activateWindow()
                 return
             except RuntimeError:      # fermé et détruit entre-temps
-                self._clean_dialog = None
-        dialog = CleanDialog(self)
+                self._clean_dialogs.pop(key, None)
+        dialog = CleanDialog(self, host) if host else CleanDialog(self)
         dialog.setModal(False)
         dialog.setAttribute(Qt.WA_DeleteOnClose, True)
         dialog.finished.connect(
-            lambda _result=0: setattr(self, "_clean_dialog", None)
+            lambda _result=0, k=key: self._clean_dialogs.pop(k, None)
         )
-        self._clean_dialog = dialog
+        self._clean_dialogs[key] = dialog
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
@@ -1644,7 +2450,7 @@ class MainWindow(QMainWindow):
             )
             return
         self._discovering = True
-        self.busy.setVisible(True)
+        self._set_busy("discover", True)
         self.auto_label.setText("Recherche de postes sur le réseau local…")
         worker = AvahiWorker(self)
         worker.found.connect(self._discovery_done)
@@ -1655,7 +2461,7 @@ class MainWindow(QMainWindow):
     def _discovery_done(self, hosts: list) -> None:
         self._discovering = False
         self._avahi_worker = None
-        self.busy.setVisible(False)
+        self._set_busy("discover", False)
         self._update_footer()
         if not hosts:
             QMessageBox.information(
@@ -1828,6 +2634,53 @@ class MainWindow(QMainWindow):
                 pass
 
     # -- focus / fermeture --------------------------------------------------
+    def _background_workers(self) -> list:
+        """Sondes de fond encore vivantes (toutes classes confondues)."""
+        workers = [
+            self._checker, self._updates_worker, self._apps_worker,
+            self._avahi_worker, self._hardware_worker,
+            *self._remote_hardware_workers.values(),
+            *self._remote_check_workers,
+            *self._address_workers, *self._key_workers,
+        ]
+        return [
+            worker for worker in workers
+            if worker is not None and _is_running(worker)
+        ]
+
+    def has_running_workers(self) -> bool:
+        """Reste-t-il une sonde après la fermeture ?
+
+        L'entrée du programme s'en sert pour sortir immédiatement
+        (`os._exit`) : attendre un `brew update` de deux minutes après que la
+        fenêtre a disparu, c'est ce qui faisait croire que le processus était
+        bloqué (vécu 07/11/2026).
+        """
+        return bool(self._background_workers())
+
+    def _settle_workers(self, entries, budget: float = 3.0) -> None:
+        """Arrête les sondes de fond avant la fermeture de la fenêtre.
+
+        Deux temps : on demande l'arrêt à toutes (annulation coopérative),
+        puis on attend avec un budget global. Jamais `terminate()` — couper
+        un thread Python en plein appel (pthread_cancel) laisse
+        l'interpréteur dans un état incohérent et fait tomber le processus.
+        Ce qui résiste est laissé vivant : `has_running_workers` fait alors
+        sortir l'entrée du programme sans attendre.
+        """
+        entries = [
+            (worker, timeout) for worker, timeout in entries
+            if worker is not None and _is_running(worker)
+        ]
+        for worker, _timeout in entries:
+            _ask_stop(worker)
+        deadline = time.monotonic() + budget
+        for worker, timeout in entries:
+            remaining = min(timeout, deadline - time.monotonic())
+            if remaining <= 0:
+                break
+            worker.wait(int(remaining * 1000))
+
     def changeEvent(self, event) -> None:
         # Revenir sur la fenêtre rafraîchit l'état sans attendre les 30 s.
         if event.type() == QEvent.ActivationChange and self.isActiveWindow():
@@ -1861,20 +2714,27 @@ class MainWindow(QMainWindow):
         self._refresh_timer.stop()
         self._pulse_timer.stop()
         self._job_timer.stop()
-        if self._checker is not None and self._checker.isRunning():
-            self._checker.stop()
-            self._checker.wait(4000)
-        if self._avahi_worker is not None and self._avahi_worker.isRunning():
-            self._avahi_worker.stop.set()
-            self._avahi_worker.wait(3000)
-        # Sondes d'adresses et de clés : un QThread détruit alors qu'il tourne
-        # fait tomber l'application à la sortie.
-        for worker in [*self._address_workers, *self._key_workers]:
-            if worker.isRunning():
-                worker.wait(4000)
-                if worker.isRunning():      # ssh bloqué : on ne bloque pas la sortie
-                    worker.terminate()
-                    worker.wait(500)
+        # Toutes les sondes de fond : arrêt demandé, attente courte, puis
+        # coupure. Un QThread détruit en vol fait tomber l'application
+        # (« QThread: Destroyed while thread is still running »), et une
+        # commande de plusieurs minutes retenait le processus après la
+        # fermeture (vécu 07/11/2026).
+        # Un seul budget d'attente pour toutes les sondes : elles tournent en
+        # parallèle, les attendre l'une après l'autre ferait payer la somme
+        # des temps sur une fermeture.
+        self._settle_workers([
+            (self._checker, 2.0),
+            (self._updates_worker, 2.0),
+            (self._apps_worker, 1.0),
+            (self._avahi_worker, 2.0),
+            # La sonde Vulkan charge le pilote : quelques secondes.
+            (self._hardware_worker, 4.0),
+            *[(worker, 2.0)
+              for worker in self._remote_hardware_workers.values()],
+            *[(worker, 2.0) for worker in self._remote_check_workers],
+            *[(worker, 2.0) for worker in self._address_workers],
+            *[(worker, 2.0) for worker in self._key_workers],
+        ])
         if (self._sshd_process is not None
                 and self._sshd_process.state() != QProcess.NotRunning):
             self._sshd_process.kill()

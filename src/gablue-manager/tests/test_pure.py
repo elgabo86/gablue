@@ -21,7 +21,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from gablue_manager import (  # noqa: E402
-    apps, cli, hosts, journal, local, prefs, ssh, updates, util,
+    apps, cli, hosts, journal, local, prefs, remote_hardware, remote_updates,
+    ssh, updates, util,
 )
 
 
@@ -890,6 +891,118 @@ class SystemTest(unittest.TestCase):
         self.assertIn("'::gablue:step 2 2", script)
 
 
+class HardwareTest(unittest.TestCase):
+    """Résumé matériel : analyses pures (aucune lecture root)."""
+
+    def test_parse_cpu_info(self):
+        text = (
+            "processor\t: 0\n"
+            "model name\t: AMD Ryzen 7 7800X3D 8-Core Processor\n"
+            "cpu cores\t: 8\n"
+            "siblings\t: 16\n\n"
+            "processor\t: 1\n"
+            "model name\t: AMD Ryzen 7 7800X3D 8-Core Processor\n"
+        )
+        info = local.parse_cpu_info(text)
+        self.assertEqual(
+            info["model"], "AMD Ryzen 7 7800X3D 8-Core Processor"
+        )
+        self.assertEqual(info["cores"], 8)
+        self.assertEqual(info["threads"], 16)
+        self.assertEqual(
+            local.cpu_label(text),
+            "AMD Ryzen 7 7800X3D 8-Core Processor · 8 cœurs / 16 threads",
+        )
+
+    def test_parse_cpu_without_cores_field(self):
+        # ARM et quelques VMs n'exposent pas « cpu cores » : les blocs
+        # « processor » restent la seule mesure.
+        info = local.parse_cpu_info("processor\t: 0\nprocessor\t: 1\n")
+        self.assertEqual(info["threads"], 2)
+        self.assertEqual(info["cores"], 0)
+
+    def test_parse_lspci_display(self):
+        amd = (
+            '03:00.0 "VGA compatible controller [0300]" '
+            '"Advanced Micro Devices, Inc. [AMD/ATI] [1002]" '
+            '"Navi 44 [Radeon RX 9050 / 9060 XT] [7590]" -rc0 -p00 '
+            '"Sapphire Technology Limited [1da2]" "Device [a493]"'
+        )
+        self.assertEqual(
+            local.parse_lspci_display(amd),
+            "Navi 44 [Radeon RX 9050 / 9060 XT]",
+        )
+        intel = (
+            '00:02.0 "VGA compatible controller [0300]" '
+            '"Intel Corporation [8086]" '
+            '"Raptor Lake-S GT1 [UHD Graphics 770] [a780]" -r04 -p00 '
+            '"ASUSTeK Computer Inc. [1043]" "Device [8882]"'
+        )
+        # La marque n'apparaît pas dans le nom du périphérique : elle est
+        # ajoutée une seule fois, sinon « UHD Graphics » ne dit rien.
+        self.assertEqual(
+            local.parse_lspci_display(intel),
+            "Intel Raptor Lake-S GT1 [UHD Graphics 770]",
+        )
+        self.assertEqual(local.parse_lspci_display(""), "")
+
+    def test_format_capacity(self):
+        self.assertEqual(local.format_capacity(16 * 1024 ** 3), "16 Gio")
+        self.assertEqual(local.format_capacity(2 * 1024 ** 4), "2 Tio")
+        self.assertEqual(local.format_capacity(0), "0 Gio")
+
+    def test_format_uptime(self):
+        self.assertEqual(local.format_uptime(0), "0 min")
+        self.assertEqual(local.format_uptime(3725), "1 h 02")
+        self.assertEqual(
+            local.format_uptime(5 * 86400 + 4 * 3600), "5 j 4 h"
+        )
+
+    def test_memory_total(self):
+        self.assertAlmostEqual(
+            local.memory_total_gib("MemTotal:       32490004 kB\n"),
+            30.98, places=2,
+        )
+        self.assertIsNone(local.memory_total_gib("rien"))
+
+    def test_memory_modules(self):
+        data = json.dumps({"modules": [
+            {
+                "size_gib": 16, "type": "DDR5", "speed": 4800,
+                "configured_speed": 6000,
+            },
+            {
+                "size_gib": 16, "type": "DDR5", "speed": 4800,
+                "configured_speed": 6000,
+            },
+            {"size_gib": 0, "type": "DDR5"},
+        ]})
+        modules = local.parse_memory_modules(data)
+        self.assertEqual(len(modules), 2)
+        # La vitesse effective (Configured Memory Speed) prime sur celle du
+        # profil JEDEC : c'est celle à laquelle la machine tourne.
+        self.assertEqual(modules[0]["speed"], 6000)
+        self.assertEqual(
+            local.format_memory_modules(modules),
+            "2 × 16 Gio · DDR5 · 6000 MT/s",
+        )
+
+    def test_memory_modules_mixed(self):
+        modules = [
+            {"size_gib": 16, "type": "DDR5", "speed": 5600},
+            {"size_gib": 32, "type": "DDR5", "speed": 5600},
+        ]
+        self.assertEqual(
+            local.format_memory_modules(modules),
+            "1 × 16 Gio + 1 × 32 Gio · DDR5 · 5600 MT/s",
+        )
+
+    def test_memory_modules_garbage(self):
+        self.assertEqual(local.parse_memory_modules("pas du json"), [])
+        self.assertEqual(local.parse_memory_modules("{}"), [])
+        self.assertEqual(local.format_memory_modules([]), "")
+
+
 class TailscaleTest(unittest.TestCase):
     def test_parse(self):
         state = local.parse_tailscale_state(
@@ -1029,14 +1142,16 @@ class PrefsTest(unittest.TestCase):
         values["check_brew"] = False
         self.assertEqual(
             prefs.check_domains(values),
-            {"image": True, "flatpak": True, "brew": False, "gwine": True},
+            {"image": True, "flatpak": True, "brew": False, "gwine": True,
+             "apps": True},
         )
         # L'interrupteur général coupe la surveillance automatique, sans
         # effacer les domaines choisis (le bouton « Vérifier » les réutilise).
         values["check_auto"] = False
         self.assertEqual(
             prefs.auto_check_domains(values),
-            {"image": False, "flatpak": False, "brew": False, "gwine": False},
+            {"image": False, "flatpak": False, "brew": False, "gwine": False,
+             "apps": False},
         )
         self.assertFalse(prefs.checks_enabled(values))
         self.assertTrue(prefs.check_domains(values)["image"])
@@ -1157,6 +1272,93 @@ class UpdatesTest(unittest.TestCase):
             "gwine": {"state": "offline"},
         }}
         self.assertIn("1 mise à jour", updates.compact_summary(offline_staged))
+
+
+    def test_apps_domain(self):
+        state = {"online": True, "domains": {
+            "apps": {"state": "updates", "apps": ["Eden", "ES-DE"]},
+            "image": {"state": "uptodate"},
+        }}
+        self.assertEqual(
+            updates.domain_count("apps", state["domains"]["apps"]), 2
+        )
+        self.assertIn(
+            "Applications : Eden, ES-DE",
+            "\n".join(updates.summary_lines(state)),
+        )
+        self.assertIn("2 mises à jour", updates.compact_summary(state))
+        # Aucune application installée : domaine indisponible, pas « à jour ».
+        unavailable = {"state": "unavailable", "apps": []}
+        self.assertEqual(updates.domain_count("apps", unavailable), 0)
+        self.assertIn(
+            "Applications : absent de ce poste",
+            "\n".join(updates.summary_lines(
+                {"online": True, "domains": {"apps": unavailable}}
+            )),
+        )
+
+
+class RemoteUpdatesTest(unittest.TestCase):
+    """Sonde d'un poste distant : script balisé et analyse côté manager."""
+
+    def sample(self, staged_version: str = "") -> str:
+        deployments = [
+            {"booted": True, "version": "20261106", "timestamp": 0},
+        ]
+        if staged_version:
+            deployments.append(
+                {"booted": False, "staged": True, "version": staged_version}
+            )
+        return "\n".join([
+            "::gablue:image",
+            json.dumps({"deployments": deployments}),
+            "::gablue:image-check",
+            "Update available for: ghcr.io/elgabo86/gablue-main:latest",
+            "rc=0",
+            "::gablue:flatpak",
+            "org.kde.krita",
+            "::gablue:brew",
+            "nobrew",
+            "::gablue:gwine",
+            "component|runner|1.2|1.3",
+            "gwine-check: updates",
+            "rc=10",
+        ])
+
+    def test_parse_check(self):
+        state = remote_updates.parse_check(self.sample(), now=100.0)
+        self.assertEqual(state["checked_at"], 100.0)
+        self.assertTrue(state["online"])
+        domains = state["domains"]
+        self.assertEqual(domains["image"]["state"], "available")
+        self.assertFalse(domains["image"]["staged"])
+        self.assertEqual(
+            domains["flatpak"],
+            {"state": "updates", "apps": ["org.kde.krita"]},
+        )
+        # Homebrew absent du poste : « indisponible », pas « à jour ».
+        self.assertEqual(domains["brew"]["state"], "unavailable")
+        self.assertEqual(domains["gwine"]["state"], "updates")
+        self.assertEqual(updates.total_updates(state), 3)
+
+    def test_staged_image_wins(self):
+        state = remote_updates.parse_check(
+            self.sample("20261107"), now=1.0
+        )
+        image = state["domains"]["image"]
+        self.assertEqual(image["state"], "available")
+        self.assertTrue(image["staged"])
+        self.assertEqual(image["staged_version"], "20261107")
+
+    def test_update_chain(self):
+        chain = remote_updates.UPDATE_CHAIN
+        for command in (
+            "bootc upgrade", "flatpak update --system -y",
+            "gwine --init", "brew upgrade",
+        ):
+            self.assertIn(command, chain)
+        # Gablue n'installe qu'en système : aucune mise à jour du compte.
+        self.assertNotIn("--user", chain)
 
 
 class JournalTest(unittest.TestCase):
@@ -1352,6 +1554,43 @@ class AppsTest(unittest.TestCase):
                 "eden-install"
             )
         )
+
+    def test_app_update_verdicts(self):
+        states = {
+            "esde": {"installed": True, "mtime": 100.0, "version": "3.4.0",
+                     "cli": ""},
+            "eden": {"installed": True, "mtime": 100.0, "version": "0.0.1",
+                     "cli": ""},
+            "xenia": {"installed": True, "mtime": 100.0, "version": "",
+                      "cli": ""},
+            "azahar": {"installed": False, "mtime": 0.0, "version": "",
+                       "cli": ""},
+        }
+        infos = {
+            "esde": {"version": "3.4.0"},
+            "eden": {"version": "0.0.2"},
+            "xenia": {},                 # flux muet : verdict indéterminé
+        }
+        pending, unknown = apps.app_update_verdicts(states, infos)
+        self.assertEqual(pending, ["eden"])
+        self.assertTrue(unknown)
+        # Rien d'installé : ni mise à jour, ni doute.
+        self.assertEqual(
+            apps.app_update_verdicts(
+                {"azahar": {"installed": False, "mtime": 0.0, "cli": ""}}, {}
+            ),
+            ([], False),
+        )
+
+    def test_update_script(self):
+        script = apps.update_script(["eden", "esde"])
+        lines = script.strip().splitlines()
+        self.assertEqual(len(lines), 4)
+        self.assertIn("::gablue:step 1 2 ES-DE", lines[0])
+        self.assertTrue(lines[1].endswith("esde-install --yes"))
+        self.assertIn("::gablue:step 2 2 Eden", lines[2])
+        self.assertTrue(lines[3].endswith("eden-install"))
+        self.assertEqual(apps.update_script([]), "")
 
     def test_config_argv(self):
         argv = apps.config_argv()
@@ -1878,6 +2117,58 @@ class UtilTest(unittest.TestCase):
         self.assertIn("BatchMode=yes", opts)
         self.assertIn("IdentitiesOnly=yes", opts)
         self.assertIn(str(Path.home() / ".ssh/id_ed25519"), opts)
+
+
+class RemoteHardwareTest(unittest.TestCase):
+    DF = (
+        "/dev/nvme0n1p3 1000000000 500000000 400000000 60% /var/home\n"
+        "/dev/nvme0n1p3 1000000000 500000000 400000000 60% /var\n"
+        "/dev/nvme0n1p2 200000000 100000000 80000000 60% /boot\n"
+        "/dev/nvme0n1p1 100000000 50000000 40000000 60% /boot/efi\n"
+        "/dev/sda1 2000000000 1000000000 900000000 50% /var/hdd1"
+    )
+
+    def test_df_skips_boot_partitions(self):
+        rows = local.parse_df(self.DF, "/var/home/gab")
+        mounts = [row["mount"] for row in rows]
+        self.assertEqual(mounts, ["/var/home", "/var/hdd1"])
+        labelled = local.disk_rows_from_df(self.DF, "/var/home/gab")
+        self.assertEqual(labelled[0]["label"], "Dossier personnel")
+
+    def test_boot_time_from_proc_stat(self):
+        text = (
+            "::gablue:os\npretty=Gablue 45\nhome=/var/home/gab\n"
+            "::gablue:df\n" + self.DF + "\n"
+            "::gablue:boot\nbtime 1762500000\n"
+        )
+        values = remote_hardware.parse_hardware(text, now=1762503600)
+        self.assertEqual(values["uptime"], "depuis 1 h 00")
+        self.assertNotIn("efi", values["disks"])
+        self.assertNotIn("boot :", values["disks"])
+
+
+
+
+class ImageDetailTest(unittest.TestCase):
+    def test_staged_shows_running_and_pending(self):
+        text = updates.image_detail({
+            "version": "20261106-10h51",
+            "staged": True,
+            "staged_version": "20261107-16h59",
+            "days": 2,
+        })
+        self.assertEqual(
+            text, "actuelle 20261106-10h51 · en attente 20261107-16h59"
+        )
+
+    def test_running_only_shows_age(self):
+        text = updates.image_detail({"version": "20261106-10h51", "days": 0})
+        self.assertEqual(text, "actuelle 20261106-10h51 · déployée aujourd'hui")
+
+    def test_staged_without_version(self):
+        text = updates.image_detail({"staged": True, "version": "20261106"})
+        self.assertEqual(text, "actuelle 20261106 · mise à jour en attente")
+
 
 
 if __name__ == "__main__":

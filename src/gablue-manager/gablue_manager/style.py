@@ -69,6 +69,18 @@ QTabBar::tab:selected {
 }
 QTabBar::tab:hover { color: @text@; }
 
+/* Croix de fermeture de la page d'un poste, seule au-dessus de la carte :
+   plus grande que la croix d'onglet d'autrefois, c'est la sortie vers la
+   liste. */
+QToolButton#pageClose {
+    background: transparent;
+    border: none;
+    border-radius: 10px;
+    color: @dim@;
+    font-size: 17px;
+}
+QToolButton#pageClose:hover { background: @cardHover@; color: @text@; }
+
 QFrame#hostCard {
     background: @card@;
     border: 1px solid @border@;
@@ -84,6 +96,50 @@ QFrame#localCard {
     border: 1px solid @accentSoft@;
     border-radius: 14px;
 }
+
+/* Panneaux du résumé (matériel, accès) : même famille que les cartes, sans
+   l'accent de la carte du poste local. */
+QFrame#panel {
+    background: @card@;
+    border: 1px solid @border@;
+    border-radius: 14px;
+}
+QLabel#panelTitle { font-size: 13px; font-weight: 600; }
+QLabel#specLabel { color: @dim@; font-size: 11px; }
+QLabel#specValue { font-size: 13px; }
+QLabel#updateLine { font-size: 12px; }
+
+/* Bandeau actionnable (redémarrage requis) : orange, mais dans le ton du
+   thème — il alerte sans crier. */
+QFrame#notice {
+    background: @authSoft@;
+    border: 1px solid @authBorder@;
+    border-radius: 12px;
+}
+QLabel#noticeText { color: @auth@; font-size: 12px; font-weight: 600; }
+
+/* Onglets racine : le contenu n'est pas encadré, seuls les onglets portent le
+   contour — la fenêtre reste une page, pas un formulaire. */
+QTabWidget#mainTabs::pane { border: none; }
+QTabWidget#mainTabs QTabBar::tab { padding: 8px 16px; font-size: 13px; }
+
+/* Onglets de la fenêtre : boutons d'un en-tête maison, centrés (la barre
+   native de QTabWidget ne sait pas se centrer sous QSS). */
+QPushButton#tabButton {
+    background: transparent;
+    color: @dim@;
+    border: 1px solid transparent;
+    border-top-left-radius: 9px;
+    border-top-right-radius: 9px;
+    padding: 8px 16px;
+    font-size: 13px;
+}
+QPushButton#tabButton:checked {
+    background: @card@;
+    color: @text@;
+    border-color: @border@;
+}
+QPushButton#tabButton:hover { color: @text@; }
 
 QPushButton {
     background: @card@;
@@ -125,15 +181,6 @@ QPushButton#ok:disabled {
     color: @online@;
     border-color: @onlineBorder@;
 }
-
-QPushButton#pill {
-    background: transparent;
-    border: 1px solid @border@;
-    border-radius: 11px;
-    padding: 4px 11px;
-    font-size: 11px;
-}
-QPushButton#pill:hover { background: @cardHover@; border-color: @accentSoft@; }
 
 QToolButton#more {
     background: transparent;

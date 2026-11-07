@@ -11,10 +11,10 @@ from concurrent.futures import as_completed
 
 from PySide6.QtCore import QThread, Signal
 
-from . import journal, updates
+from . import apps, journal, remote_hardware, remote_updates, updates
 from .constants import SSH
 from .hosts import avahi_scan, remote_addresses
-from .local import pending_reboot_reasons
+from .local import memory_modules, pending_reboot_reasons, vulkan_gpu_name
 from .ssh import _kill_group, check_host, install_key, key_status
 from .util import _ssh_opts, display_name, ssh_target
 
@@ -147,6 +147,30 @@ class RebootWorker(QThread):
             reasons = []
         self.done.emit(reasons)
 
+class HardwareWorker(QThread):
+    """Matériel lu hors thread GUI : barrettes (root) et nom Vulkan du GPU.
+
+    `dmidecode` exige root : le helper NOPASSWD `gablue-hwinfo` rend un JSON.
+    Absent (image antérieure), la liste reste vide — la mémoire totale vient de
+    /proc/meminfo et ne dépend pas de ce worker. Vulkan charge les pilotes
+    pour donner le nom commercial du GPU : quelques dizaines de ms qui n'ont
+    rien à faire sur le thread de l'interface.
+    """
+
+    done = Signal(object)           # {"modules": [...], "gpu": "..."}
+
+    def run(self) -> None:
+        result: dict = {"modules": [], "gpu": ""}
+        try:
+            result["modules"] = memory_modules()
+        except Exception:            # une sonde d'agrément ne doit rien casser
+            pass
+        try:
+            result["gpu"] = vulkan_gpu_name()
+        except Exception:
+            pass
+        self.done.emit(result)
+
 class UpdateCheckWorker(QThread):
     """Sonde les mises à jour disponibles (image, Flatpaks, brew, gwine).
 
@@ -161,6 +185,17 @@ class UpdateCheckWorker(QThread):
         super().__init__(parent)
         self._enabled = dict(enabled) if enabled is not None else None
         self._online = bool(online)
+        self._stop = threading.Event()
+
+    def stop(self) -> None:
+        """Fermeture de la fenêtre : tuer les commandes en cours.
+
+        Sans cela, un `brew update` de deux minutes retient le processus
+        après la fermeture, et un QThread détruit en vol fait tomber
+        l'application (vécu 07/11/2026).
+        """
+        self._stop.set()
+        updates.cancel_running()
 
     def run(self) -> None:
         try:
@@ -176,6 +211,84 @@ class UpdateCheckWorker(QThread):
                 "domains": {},
             }
         self.done.emit(state)
+
+class AppsUpdateWorker(QThread):
+    """Applications AppImage installées qui ont une mise à jour.
+
+    La sonde interroge un flux de releases par application : elle reste hors
+    du fil graphique, comme les autres vérifications réseau.
+    """
+
+    done = Signal(object)           # (clés à mettre à jour, doute, installées)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._stop = threading.Event()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def run(self) -> None:
+        try:
+            result = apps.pending_updates(stop=self._stop)
+        except Exception as error:   # une sonde ne doit rien casser
+            journal.log_failure(
+                "Vérification des applications interrompue",
+                detail=repr(error),
+            )
+            result = ([], True, 0)
+        self.done.emit(result)
+
+class RemoteUpdatesWorker(QThread):
+    """Mises à jour d'un poste distant, sondées à la demande.
+
+    Une seule connexion SSH (`remote_updates.CHECK_SCRIPT`) et l'analyse ici ;
+    aucun lancement périodique : la carte d'un poste ne sait rien tant que
+    l'utilisateur n'a pas demandé.
+    """
+
+    done = Signal(str, object)      # id du poste, état au format « local »
+
+    def __init__(self, host: dict, parent=None):
+        super().__init__(parent)
+        self._id = host["id"]
+        self._host = dict(host)
+
+    def run(self) -> None:
+        try:
+            state = remote_updates.check(self._host)
+        except Exception as error:   # une sonde ne doit rien casser
+            journal.log_failure(
+                f"Vérification des mises à jour de {self._host.get('name', '')}",
+                detail=repr(error),
+            )
+            state = {"online": False, "domains": {}}
+        self.done.emit(self._id, state)
+
+class RemoteHardwareWorker(QThread):
+    """Résumé matériel d'un poste distant, en une seule connexion SSH.
+
+    Chargé seulement quand l'onglet du poste s'ouvre (ou au premier
+    rafraîchissement de cet onglet) : aucun balayage périodique du réseau.
+    """
+
+    done = Signal(str, object)      # id du poste, valeurs pour InfoPanel
+
+    def __init__(self, host: dict, parent=None):
+        super().__init__(parent)
+        self._id = host["id"]
+        self._host = dict(host)
+
+    def run(self) -> None:
+        try:
+            values = remote_hardware.check(self._host)
+        except Exception as error:   # une sonde d'agrément ne doit rien casser
+            journal.log_failure(
+                f"Matériel de {display_name(self._host)}",
+                detail=repr(error),
+            )
+            values = {}
+        self.done.emit(self._id, values)
 
 class SshTaskWorker(QThread):
     """Exécute une commande distante en streaming (arrêt, redémarrage, mise à jour)."""

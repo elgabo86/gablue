@@ -201,7 +201,9 @@ manager le bascule sans privilège et lui écrit son calendrier), plus `gablue-u
 --progress-fd 3` avec le fd 3 sur `/run/gablue/update-progress.fifo` (FIFO 0644 créé par le
 helper), parce que sudo ferme les fd ≥ 3 — l'app ne peut donc pas lui passer un descripteur, et
 Gablue Manager lit le FIFO sans privilège pour sa barre de progression (bootc exige un tube :
-son écriture passe par epoll, un fichier ordinaire est refusé). `gablue-clean` traite une
+son écriture passe par epoll, un fichier ordinaire est refusé). `gablue-hwinfo` (aucun argument)
+rend les barrettes mémoire en JSON (`dmidecode -t memory`, root) pour le résumé matériel du
+manager — emplacements vides écartés, erreur de lecture → liste vide, jamais d'échec visible. `gablue-clean` traite une
 sous-commande (`flatpak` : Flatpaks système inutilisés).
 `gablue-btrfs-compress` pose ou retire le drapeau `compression=zstd` sur un montage Btrfs
 (chemin revérifié contre `findmnt -t btrfs`) : il vaut pour les fichiers créés ensuite.

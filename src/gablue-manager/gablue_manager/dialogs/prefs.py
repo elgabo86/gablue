@@ -16,9 +16,14 @@ from ..uiutil import fit_dialog_height
 
 DOMAIN_LABELS = {
     "image": ("Image Gablue", "Interroge le registre (quelques kilo-octets)."),
-    "flatpak": ("Flatpaks", "Applications Flatpak système et du compte."),
+    "flatpak": ("Flatpaks", "Applications Flatpak système."),
     "brew": ("Homebrew", "Formules installées par brew."),
     "gwine": ("Composants gwine", "Runner, DXVK, VKD3D, D7VK, NVAPI."),
+    "apps": (
+        "Applications",
+        "Applications installées (ES-DE, Azahar, Eden, Xenia, ShadPS4, "
+        "OpenCode 2) : un flux de releases par application.",
+    ),
 }
 
 class PrefsDialog(QDialog):

@@ -23,10 +23,10 @@ Cette machine : serveur SSH et annonce locale, mises à jour (image Gablue,
 Flatpaks, gwine), réglages du noyau (protections du processeur, correctif CPUID,
 mode ERTM, émulation CPUID fault), options de gwine (DXVK, affichage, manettes),
 priorité au premier plan et Tailscale (lien du serveur demandé) — les
-changements de chaque dialogue partent ensemble. Applications AppImage, sur ce
-poste comme à distance (menu ⋯ d'un poste) : installation, mise à jour et
-suppression d'ES-DE, Azahar, Eden, Xenia, ShadPS4 et OpenCode 2 (configuration,
-sauvegardes et sessions conservées). Les opérations s'ouvrent dans leur propre
+changements de chaque dialogue partent ensemble. Applications (émulateurs et
+outils), sur ce poste comme à distance (menu Configuration d'un poste) :
+installation, mise à jour et suppression d'ES-DE, Azahar, Eden, Xenia, ShadPS4
+et OpenCode 2 (configuration, sauvegardes et sessions conservées). Les opérations s'ouvrent dans leur propre
 fenêtre : plusieurs postes peuvent être traités en même temps.
 
   --tray
@@ -127,4 +127,10 @@ def main() -> int:
     window = MainWindow()
     server.newConnection.connect(lambda: _window_message(server, window))
     window.show()
-    return app.exec()
+    code = app.exec()
+    if window.has_running_workers():
+        # Une sonde (SSH, flux de releases) peut survivre à la fermeture :
+        # attendre un `brew update` de deux minutes retenait le processus, et
+        # détruire un QThread en vol faisait tomber Python. On sort, point.
+        os._exit(code)
+    return code

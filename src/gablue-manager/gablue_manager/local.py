@@ -9,6 +9,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from .constants import (
@@ -17,6 +18,7 @@ from .constants import (
     BROADCOM_WL_FILE, BTRFS_HELPER, CLEAN_HELPER, CMDLINE,
     CPUID_EMU_BLACKLIST,
     CPUID_EMU_CONF, CPUID_EMU_HELPER, GAMEPAD_HELPER, GRUB_HELPER,
+    HWINFO_HELPER,
     NVME_THERMAL_HELPER, RYZENADJ_BINARY, RYZENADJ_HELPER, RYZENADJ_SERVICE,
     SECUREBOOT_HELPER,
     KARG_BT_ERTM, KARG_CLEARCPUID,
@@ -179,6 +181,671 @@ def written_since(path: Path, since: float) -> bool:
         return path.is_file() and since > 0 and path.stat().st_mtime > since
     except OSError:
         return False
+
+# -- matériel et système de ce poste ----------------------------------------
+
+DMI_DIR = Path("/sys/class/dmi/id")
+
+# Valeurs que les fabricants laissent quand le champ DMI n'est pas renseigné :
+# les afficher donnerait « ASUS System Product Name » comme nom de machine.
+GENERIC_DMI = {
+    "", "system product name", "to be filled by o.e.m.", "default string",
+    "not specified", "none", "unknown", "system version",
+}
+
+# Identifiants PCI des principaux fabricants de GPU, pour le repli sans lspci.
+GPU_VENDORS = {
+    "0x1002": "AMD", "0x10de": "NVIDIA", "0x8086": "Intel",
+    "0x1af4": "Virtio", "0x13b5": "ARM",
+}
+
+# lspci est une sonde à part : son résultat ne change pas de la session, on le
+# garde pour ne pas relancer un processus à chaque rafraîchissement.
+_GPU_LABEL: str | None = None
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+def _gio_amount(value: float) -> str:
+    """Nombre en Gio, sans décimale inutile (« 16 », « 31 », « 1,8 »)."""
+    if abs(value - round(value)) < 0.05:
+        return str(int(round(value)))
+    return f"{value:.1f}".replace(".", ",")
+
+def format_gib(value: float) -> str:
+    """« 31 Gio » — mémoire totale, sans décimale inutile."""
+    return f"{_gio_amount(value)} Gio"
+
+def format_capacity(num_bytes: int) -> str:
+    """Taille lisible en Gio/Tio (base 1024, unités françaises)."""
+    gio = max(0, int(num_bytes)) / (1024 ** 3)
+    if gio >= 1024:
+        return f"{_gio_amount(gio / 1024)} Tio"
+    return f"{_gio_amount(gio)} Gio"
+
+def format_uptime(seconds: float) -> str:
+    """Durée de démarrage, la plus courte lisible (« 3 h 12 », « 5 j 4 h »)."""
+    total = max(0, int(seconds))
+    days, rest = divmod(total, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes = rest // 60
+    if days:
+        return f"{days} j {hours} h"
+    if hours:
+        return f"{hours} h {minutes:02d}"
+    return f"{minutes} min"
+
+def parse_cpu_info(text: str) -> dict:
+    """`/proc/cpuinfo` → modèle, cœurs physiques et threads.
+
+    Les champs `cpu cores` et `siblings` ne sont pas présents partout (ARM) :
+    on compte alors les blocs `processor`, qui donnent les threads.
+    """
+    model = ""
+    cores = 0
+    threads = 0
+    siblings = 0
+    for line in (text or "").splitlines():
+        key, sep, value = line.partition(":")
+        if not sep:
+            continue
+        key = key.strip()
+        value = value.strip()
+        if key == "model name" and not model:
+            model = re.sub(r"\s+", " ", value)
+        elif key == "cpu cores" and not cores and value.isdigit():
+            cores = int(value)
+        elif key == "siblings" and not siblings and value.isdigit():
+            siblings = int(value)
+        elif key == "processor":
+            threads += 1
+    return {
+        "model": model,
+        "cores": cores,
+        "threads": max(threads, siblings),
+    }
+
+def cpu_label_parts(model: str, cores: int, threads: int) -> str:
+    """Modèle du processeur et nombre de cœurs/threads, en une ligne."""
+    if not model:
+        return ""
+    if cores and threads and threads != cores:
+        return f"{model} · {cores} cœurs / {threads} threads"
+    count = cores or threads
+    return f"{model} · {count} cœurs" if count else model
+
+def cpu_label(text: str | None = None) -> str:
+    """Modèle du processeur et nombre de cœurs/threads, depuis /proc/cpuinfo."""
+    if text is None:
+        text = _read_text(Path("/proc/cpuinfo"))
+    info = parse_cpu_info(text)
+    return cpu_label_parts(info["model"], info["cores"], info["threads"])
+
+def parse_lspci_display(text: str) -> str:
+    """Sortie de `lspci -mm -nn -d ::0300` → nom commercial de la carte.
+
+    `-mm` découpe chaque carte en champs entre guillemets : classe, fabricant,
+    périphérique, sous-système. Le nom du périphérique porte déjà la marque
+    (« Radeon », « GeForce »), on n'ajoute le fabricant que s'il manque
+    (« Intel » pour un « UHD Graphics »).
+    """
+    for line in (text or "").splitlines():
+        fields = re.findall(r'"([^"]*)"', line)
+        if len(fields) < 3:
+            continue
+        vendor = re.sub(r"\s*\[[0-9A-Fa-f]{4}\]\s*$", "", fields[1]).strip()
+        device = re.sub(r"\s*\[[0-9A-Fa-f]{4}\]\s*$", "", fields[2]).strip()
+        if not device or device.casefold().startswith(("device", "unknown")):
+            continue
+        brand = _gpu_brand(vendor)
+        named = any(
+            word in device
+            for word in ("Radeon", "GeForce", "Arc", "Intel", "AMD", "NVIDIA")
+        )
+        return device if named or not brand else f"{brand} {device}"
+    return ""
+
+def _gpu_brand(vendor: str) -> str:
+    """Fabricant court : « Advanced Micro Devices [AMD/ATI] » → « AMD »."""
+    match = re.search(r"\[([^\]]+)\]\s*$", vendor or "")
+    if match:
+        vendor = match.group(1).split("/")[0]
+    lowered = (vendor or "").casefold()
+    for needle, name in (
+        ("advanced micro devices", "AMD"), ("nvidia", "NVIDIA"),
+        ("intel", "Intel"),
+    ):
+        if needle in lowered:
+            return name
+    # « ATI » seul, jamais comme sous-chaîne : « corporation » la contient.
+    if re.search(r"\bati\b", lowered):
+        return "AMD"
+    return (vendor or "").split(",")[0].strip()
+
+def gpu_label() -> str:
+    """Carte graphique de ce poste, ou chaîne vide si introuvable.
+
+    `lspci` donne le nom commercial ; sans lui, `/sys/class/drm` ne fournit que
+    le fabricant et le pilote, ce qui reste utile (« AMD (amdgpu) »).
+    """
+    global _GPU_LABEL
+    if _GPU_LABEL is not None:
+        return _GPU_LABEL
+    label = ""
+    if shutil.which("lspci"):
+        code, text = _run(["lspci", "-mm", "-nn", "-d", "::0300"], 5)
+        if code == 0:
+            label = parse_lspci_display(text)
+    _GPU_LABEL = label or _gpu_from_sysfs()
+    return _GPU_LABEL
+
+def parse_vulkan_name(name: str) -> str:
+    """« AMD Radeon RX 9060 XT (RADV GFX1200) » → « AMD Radeon RX 9060 XT ».
+
+    Mesa ajoute le pilote et le die entre parenthèses ; KInfoCenter affiche le
+    nom commercial nu, on fait pareil. Seuls ces suffixes connus sont retirés
+    (jamais le « (R) » d'Intel).
+    """
+    cleaned = re.sub(
+        r"\s*\((?:RADV|LLVM|Mesa|AMD proprietary)[^)]*\)\s*$",
+        "", (name or "").strip(), flags=re.IGNORECASE,
+    )
+    # Codes de die en majuscules (« (TGL GT2) », « (GFX1200) ») : ils
+    # n'apprennent rien à l'utilisateur, le modèle commercial suffit.
+    cleaned = re.sub(r"\s*\([A-Z][A-Z0-9 ]{1,}\)\s*$", "", cleaned)
+    return cleaned.strip()
+
+def vulkan_gpu_name() -> str:
+    """Nom commercial du GPU par Vulkan, ou chaîne vide.
+
+    C'est la source de KInfoCenter : `lspci` ne connaît que le nom du die
+    (« Navi 44 [Radeon RX 9050 / 9060 XT] »), alors que le pilote Mesa lit la
+    VBIOS et expose le modèle exact (« AMD Radeon RX 9060 XT »). L'instance
+    Vulkan est minimale et détruite aussitôt ; l'appel se fait depuis un
+    thread de fond (le chargement des pilotes prend quelques dizaines de ms).
+    """
+    try:
+        import ctypes
+    except ImportError:
+        return ""
+
+    class _ApplicationInfo(ctypes.Structure):
+        _fields_ = [
+            ("sType", ctypes.c_int32), ("pNext", ctypes.c_void_p),
+            ("pApplicationName", ctypes.c_char_p),
+            ("applicationVersion", ctypes.c_uint32),
+            ("pEngineName", ctypes.c_char_p),
+            ("engineVersion", ctypes.c_uint32),
+            ("apiVersion", ctypes.c_uint32),
+        ]
+
+    # sType de VkInstanceCreateInfo = 1, celui de VkApplicationInfo = 0.
+    class _InstanceCreateInfo(ctypes.Structure):
+        _fields_ = [
+            ("sType", ctypes.c_int32), ("pNext", ctypes.c_void_p),
+            ("flags", ctypes.c_uint32),
+            ("pApplicationInfo", ctypes.POINTER(_ApplicationInfo)),
+            ("enabledLayerCount", ctypes.c_uint32),
+            ("ppEnabledLayerNames", ctypes.c_void_p),
+            ("enabledExtensionCount", ctypes.c_uint32),
+            ("ppEnabledExtensionNames", ctypes.c_void_p),
+        ]
+
+    try:
+        lib = ctypes.CDLL("libvulkan.so.1")
+    except OSError:
+        return ""
+    try:
+        # Signatures explicites : sans elles, ctypes tronque les pointeurs en
+        # 64 bits et l'appel part en segfault.
+        lib.vkCreateInstance.argtypes = [
+            ctypes.POINTER(_InstanceCreateInfo), ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        lib.vkCreateInstance.restype = ctypes.c_int32
+        lib.vkDestroyInstance.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        lib.vkEnumeratePhysicalDevices.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32),
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        lib.vkEnumeratePhysicalDevices.restype = ctypes.c_int32
+        lib.vkGetPhysicalDeviceProperties.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p,
+        ]
+
+        app_info = _ApplicationInfo(
+            0, None, b"gablue-manager", 1, b"gablue-manager", 1, 4194304,
+        )
+        create_info = _InstanceCreateInfo(
+            1, None, 0, ctypes.pointer(app_info), 0, None, 0, None,
+        )
+        instance = ctypes.c_void_p()
+        if lib.vkCreateInstance(
+            ctypes.byref(create_info), None, ctypes.byref(instance)
+        ) != 0:
+            return ""
+        try:
+            count = ctypes.c_uint32(0)
+            if lib.vkEnumeratePhysicalDevices(
+                instance, ctypes.byref(count), None
+            ) != 0 or count.value == 0:
+                return ""
+            devices = (ctypes.c_void_p * count.value)()
+            if lib.vkEnumeratePhysicalDevices(
+                instance, ctypes.byref(count), devices
+            ) != 0:
+                return ""
+            for index in range(count.value):
+                # VkPhysicalDeviceProperties : deviceName commence à l'octet
+                # 20 (cinq uint32) et fait 256 octets.
+                buffer = ctypes.create_string_buffer(1024)
+                lib.vkGetPhysicalDeviceProperties(devices[index], buffer)
+                raw = bytes(buffer)[20:20 + 256]
+                name = parse_vulkan_name(
+                    raw.split(b"\0", 1)[0].decode("utf-8", "replace")
+                )
+                if not name:
+                    continue
+                if any(
+                    word in name.casefold()
+                    for word in ("llvmpipe", "lavapipe", "swiftshader")
+                ):
+                    continue
+                return name
+            return ""
+        finally:
+            lib.vkDestroyInstance(instance, None)
+    except Exception:
+        return ""
+
+def _gpu_from_sysfs() -> str:
+    for device in sorted(Path("/sys/class/drm").glob("card*/device")):
+        vendor = _read_text(device / "vendor").lower()
+        if not vendor:
+            continue
+        driver = ""
+        for line in _read_text(device / "uevent").splitlines():
+            if line.startswith("DRIVER="):
+                driver = line.split("=", 1)[1].strip()
+        name = GPU_VENDORS.get(vendor, vendor)
+        return f"{name} ({driver})" if driver else name
+    return ""
+
+def memory_total_gib(text: str) -> float | None:
+    """`/proc/meminfo` → mémoire utilisable en Gio (None si illisible)."""
+    match = re.search(r"^MemTotal:\s+(\d+)\s*kB", text or "", re.MULTILINE)
+    if not match:
+        return None
+    return int(match.group(1)) / (1024 ** 2)
+
+def format_memory_modules(modules: list[dict]) -> str:
+    """Barrettes → « 2 × 16 Gio · DDR5 · 6000 MT/s » (chaîne vide sans module)."""
+    rows = [
+        module for module in (modules or [])
+        if isinstance(module, dict) and float(module.get("size_gib") or 0) > 0
+    ]
+    if not rows:
+        return ""
+    counts: dict[float, int] = {}
+    for module in rows:
+        size = round(float(module["size_gib"]), 1)
+        counts[size] = counts.get(size, 0) + 1
+    total = sum(size * count for size, count in counts.items())
+    count = sum(counts.values())
+    if len(counts) == 1:
+        if count == 1:
+            sizes = f"{_gio_amount(total)} Gio"
+        else:
+            sizes = f"{count} × {_gio_amount(total / count)} Gio"
+    else:
+        sizes = " + ".join(
+            f"{n} × {_gio_amount(size)} Gio"
+            for size, n in sorted(counts.items())
+        )
+    kinds = sorted({str(module.get("type") or "") for module in rows} - {""})
+    brands = sorted({
+        str(module.get("manufacturer") or "").strip() for module in rows
+    } - {"", "Unknown", "Not Specified", "No Module Installed"})
+    speeds = sorted({
+        int(module.get("speed") or 0) for module in rows
+        if int(module.get("speed") or 0) > 0
+    })
+    parts = [sizes]
+    if brands:
+        parts.append("/".join(brands))
+    if kinds:
+        parts.append("/".join(kinds))
+    if speeds:
+        parts.append("/".join(str(speed) for speed in speeds) + " MT/s")
+    return " · ".join(parts)
+
+def parse_memory_modules(text: str) -> list[dict]:
+    """JSON du helper `gablue-hwinfo` → barrettes exploitables.
+
+    Le helper sort `{"modules": [{size_gib, type, speed, configured_speed}]}` ;
+    une sortie illisible (helper absent, dmidecode muet) donne une liste vide,
+    jamais une exception — la mémoire totale, elle, vient de /proc/meminfo.
+    """
+    try:
+        data = json.loads(text or "")
+    except (TypeError, ValueError):
+        return []
+    modules = data.get("modules") if isinstance(data, dict) else None
+    rows: list[dict] = []
+    for item in modules or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            size = float(item.get("size_gib") or 0)
+        except (TypeError, ValueError):
+            continue
+        if size <= 0:
+            continue
+        speed = item.get("configured_speed") or item.get("speed") or 0
+        try:
+            speed = int(speed)
+        except (TypeError, ValueError):
+            speed = 0
+        rows.append({
+            "size_gib": round(size, 1),
+            "type": str(item.get("type") or "").strip(),
+            "speed": max(0, speed),
+            "manufacturer": str(item.get("manufacturer") or "").strip(),
+        })
+    return rows
+
+def memory_modules() -> list[dict]:
+    """Barrettes mémoire lues par le helper NOPASSWD (liste vide sinon)."""
+    if not Path(HWINFO_HELPER).is_file():
+        return []
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", HWINFO_HELPER],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    return parse_memory_modules(result.stdout)
+
+def identity_from_dmi(values: dict[str, str]) -> dict[str, str]:
+    """Identité de la machine à partir des champs DMI.
+
+    Même règle en local (fichiers `/sys/class/dmi/id`) et à distance (sonde
+    SSH) : un produit générique laisse la place à la carte mère, seule
+    information réellement utile sur une machine assemblée.
+    """
+    vendor = str(values.get("sys_vendor") or "").strip()
+    product = str(values.get("product_name") or "").strip()
+    if product and product.casefold() not in GENERIC_DMI:
+        model = " ".join(part for part in (vendor, product) if part)
+        label = "Modèle"
+    else:
+        model = " ".join(part for part in (
+            str(values.get("board_vendor") or "").strip(),
+            str(values.get("board_name") or "").strip(),
+        ) if part)
+        label = "Carte mère"
+    bios = " · ".join(part for part in (
+        str(values.get("bios_version") or "").strip(),
+        str(values.get("bios_date") or "").strip(),
+    ) if part)
+    return {"model": model, "model_label": label, "bios": bios}
+
+def machine_identity() -> dict[str, str]:
+    """Modèle de la machine et version du BIOS, lus dans `/sys/class/dmi/id`."""
+    return identity_from_dmi({
+        name: _read_text(DMI_DIR / name)
+        for name in (
+            "sys_vendor", "product_name", "board_vendor", "board_name",
+            "bios_version", "bios_date",
+        )
+    })
+
+# Types de systèmes de fichiers sans disque réel (pseudo-fs, boucles, overlay)
+# et points de montage système qui n'ont pas leur place sur le résumé.
+MOUNT_SKIP_TYPES = {
+    "autofs", "binfmt_misc", "bpf", "cgroup", "cgroup2", "composefs",
+    "configfs", "debugfs", "devpts", "devtmpfs", "efivarfs", "fusectl",
+    "hugetlbfs", "mqueue", "nsfs", "overlay", "proc", "pstore", "ramfs",
+    "rpc_pipefs", "securityfs", "selinuxfs", "squashfs", "sysfs", "tmpfs",
+    "tracefs",
+}
+
+MOUNT_SKIP_POINTS = {
+    "/boot", "/boot/efi", "/dev", "/etc", "/proc", "/sys", "/sysroot",
+}
+
+# /proc/mounts échappe espaces et autres caractères en octal.
+MOUNT_ESCAPES = ("\\040", "\\011", "\\012", "\\134")
+MOUNT_CHARS = (" ", "\t", "\n", "\\")
+
+def _mount_path(value: str) -> str:
+    for escape, char in zip(MOUNT_ESCAPES, MOUNT_CHARS):
+        value = value.replace(escape, char)
+    return value
+
+def _real_home(home: str | None = None) -> str:
+    """Dossier personnel réel : sur ostree, `/home` est un lien vers /var/home."""
+    return os.path.realpath(str(home or Path.home()))
+
+def _home_mount(mount: str, home: str) -> bool:
+    """Ce montage porte-t-il le dossier personnel ? (« / » est le système)."""
+    if mount == "/":
+        return False
+    base = mount.rstrip("/")
+    return mount == home or home.startswith(base + "/")
+
+def _pick_mounts(entries: list[tuple], home: str) -> list[tuple]:
+    """Un seul montage par périphérique, le plus parlant pour l'utilisateur.
+
+    Un SSD Btrfs apparaît plusieurs fois (/var, /var/home, /sysroot…) : on
+    garde le montage qui porte le dossier personnel, sinon le plus court.
+    """
+    by_source: dict[str, list[tuple]] = {}
+    for entry in entries:
+        by_source.setdefault(entry[0], []).append(entry)
+    picked: list[tuple] = []
+    for group in by_source.values():
+        picked.append(sorted(group, key=lambda item: (
+            0 if _home_mount(item[1], home) else 1,
+            -len(item[1]) if _home_mount(item[1], home) else len(item[1]),
+            item[1],
+        ))[0])
+    picked.sort(key=lambda item: (
+        0 if _home_mount(item[1], home) else 1, len(item[1]), item[1]
+    ))
+    return picked
+
+def parse_mounts(text: str, home: str | None = None) -> list[dict]:
+    """`/proc/mounts` → un système de fichiers réel par périphérique."""
+    home = _real_home(home)
+    entries: list[tuple] = []
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        source, mount, fstype = parts[0], _mount_path(parts[1]), parts[2]
+        if not source.startswith("/dev/"):
+            continue
+        if fstype in MOUNT_SKIP_TYPES or mount in MOUNT_SKIP_POINTS:
+            continue
+        entries.append((source, mount, fstype))
+    return [
+        {"source": entry[0], "mount": entry[1], "fstype": entry[2]}
+        for entry in _pick_mounts(entries, home)
+    ]
+
+def parse_df(text: str, home: str | None = None) -> list[dict]:
+    """`df -P -B1` → disques réels, taille et espace libre en octets.
+
+    Sert au poste distant : `shutil.disk_usage` ne voit que la machine locale.
+    Les partitions d'amorçage (`/boot`, `/boot/efi`) et les pseudo-systèmes
+    sont écartés comme pour `/proc/mounts`, sinon « efi » et « boot »
+    apparaissent au milieu des disques de données.
+    """
+    home = _real_home(home)
+    entries: list[tuple] = []
+    for line in (text or "").splitlines():
+        fields = line.split(None, 5)
+        if len(fields) < 6 or not fields[0].startswith("/dev/"):
+            continue
+        mount = fields[5].strip()
+        if mount in MOUNT_SKIP_POINTS:
+            continue
+        try:
+            total = int(fields[1])
+            free = int(fields[3])
+        except ValueError:
+            continue
+        entries.append((fields[0], mount, total, free))
+    return [
+        {"source": entry[0], "mount": entry[1],
+         "total": entry[2], "free": entry[3]}
+        for entry in _pick_mounts(entries, home)
+    ]
+
+def mount_label(mount: str, home: str | None = None) -> str:
+    """Nom court d'un montage : « Dossier personnel », « hdd1 », « /mnt/x »."""
+    home = _real_home(home)
+    if mount == home or (mount != "/" and home.startswith(mount.rstrip("/") + "/")):
+        return "Dossier personnel"
+    if mount == "/":
+        return "Système"
+    name = Path(mount).name
+    return name or mount
+
+def disk_row(source: str, mount: str, total, free,
+             home: str | None = None) -> dict | None:
+    """Un disque prêt à afficher : nom, tailles, pourcentage et cible Filelight.
+
+    `path` est le dossier à ouvrir dans Filelight : le point de montage, sauf
+    pour le disque du système — y scanner `/usr` en lecture seule et l'image
+    entière n'apprend rien, le dossier personnel est ce que l'utilisateur
+    cherche (choix explicite, 07/11/2026).
+    """
+    home = _real_home(home)
+    try:
+        total = int(total or 0)
+        free = int(free or 0)
+    except (TypeError, ValueError):
+        return None
+    if total <= 0:
+        return None
+    free = max(0, min(free, total))
+    used = total - free
+    system = mount == "/" or _home_mount(mount, home)
+    return {
+        "source": source,
+        "mount": mount,
+        "label": mount_label(mount, home),
+        "total": total,
+        "free": free,
+        "percent": int(round(used * 100 / total)),
+        "text": (
+            f"{format_capacity(free)} libres sur {format_capacity(total)}"
+        ),
+        "path": home if system else mount,
+        "system": system,
+    }
+
+def disk_rows(text: str | None = None, home: str | None = None) -> list[dict]:
+    """Disques de la machine courante, lus dans `/proc/mounts`."""
+    if text is None:
+        text = _read_text(Path("/proc/mounts"))
+    home = _real_home(home)
+    rows: list[dict] = []
+    for entry in parse_mounts(text, home):
+        try:
+            usage = shutil.disk_usage(entry["mount"])
+        except OSError:
+            continue
+        row = disk_row(
+            entry["source"], entry["mount"], usage.total, usage.free, home
+        )
+        if row is not None:
+            rows.append(row)
+    return rows
+
+def disk_rows_from_df(text: str, home: str | None = None) -> list[dict]:
+    """`df -P -B1` → disques prêts à afficher (poste distant)."""
+    home = _real_home(home)
+    rows: list[dict] = []
+    for entry in parse_df(text, home):
+        row = disk_row(
+            entry["source"], entry["mount"], entry["total"], entry["free"],
+            home,
+        )
+        if row is not None:
+            rows.append(row)
+    return rows
+
+def format_disk_row(row: dict) -> str:
+    """Une ligne de disque : « hdd1 : 1,3 Tio libres sur 1,8 Tio · 50 % utilisé »."""
+    return (
+        f"{row.get('label') or row.get('mount') or ''} : "
+        f"{row.get('text') or ''} · {int(row.get('percent') or 0)} % utilisé"
+    )
+
+def format_disks(rows: list[dict], home: str | None = None) -> str:
+    """Disques en texte, une ligne chacun (poste distant, infobulles)."""
+    home = _real_home(home)
+    lines: list[str] = []
+    for row in rows or []:
+        entry = row
+        if "percent" not in entry:
+            entry = disk_row(
+                str(row.get("source") or ""), str(row.get("mount") or ""),
+                row.get("total"), row.get("free"), home,
+            )
+        if entry:
+            lines.append(format_disk_row(entry))
+    return "\n".join(lines)
+
+def disks_label(text: str | None = None) -> str:
+    """Disques de la machine courante, une ligne chacun."""
+    return "\n".join(format_disk_row(row) for row in disk_rows(text))
+
+def parse_secure_boot(text: str, efi: bool) -> str:
+    """`mokutil --sb-state` + présence d'EFI → enabled|disabled|unsupported|unknown."""
+    if not efi:
+        return "unsupported"
+    if "SecureBoot enabled" in (text or ""):
+        return "enabled"
+    if "SecureBoot disabled" in (text or ""):
+        return "disabled"
+    return "unknown"
+
+def hardware_summary() -> dict[str, str]:
+    """Résumé de la machine, en lectures locales uniquement.
+
+    Pas de sous-processus coûteux : `lspci` est mis en cache, tout le reste
+    vient de /proc, /sys et `disk_usage`. Les barrettes, qui demandent root,
+    et le nom commercial du GPU (Vulkan) arrivent par `workers.HardwareWorker`.
+    """
+    values = machine_identity()
+    values["system"] = local_distro()
+    values["cpu"] = cpu_label()
+    values["gpu"] = gpu_label()
+    total = memory_total_gib(_read_text(Path("/proc/meminfo")))
+    values["memory"] = format_gib(total) if total else ""
+    values["disks"] = disks_label()
+    try:
+        values["kernel"] = os.uname().release
+    except OSError:
+        values["kernel"] = ""
+    boot = boot_time()
+    values["uptime"] = (
+        "depuis " + format_uptime(time.time() - boot) if boot > 0 else ""
+    )
+    values["secure_boot"] = secure_boot_label(secure_boot_state())
+    return {key: value for key, value in values.items() if value}
+
+
 
 def loaded_modules() -> set[str]:
     """Modules noyau chargés (lecture sans privilège)."""
@@ -1649,11 +2316,7 @@ def secure_boot_state() -> str:
     code, text = _run(["mokutil", "--sb-state"], 15)
     if code == 127:
         return "unknown"
-    if "SecureBoot enabled" in text:
-        return "enabled"
-    if "SecureBoot disabled" in text:
-        return "disabled"
-    return "unknown"
+    return parse_secure_boot(text, True)
 
 
 def secure_boot_label(state: str) -> str:

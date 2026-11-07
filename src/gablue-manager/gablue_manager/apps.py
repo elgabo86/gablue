@@ -20,6 +20,7 @@ import shlex
 import shutil
 import subprocess
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -408,6 +409,65 @@ def update_available(current: dict, info: dict) -> bool | None:
     return None
 
 
+def app_update_verdicts(states: dict[str, dict],
+                        infos: dict[str, dict]) -> tuple[list[str], bool]:
+    """Clés des applications installées à mettre à jour, et doute éventuel.
+
+    `infos` porte la dernière version publiée par application ({} = flux muet
+    ou version non comparable) : le verdict vaut alors `None`, qui n'est pas
+    une erreur mais interdit de conclure « tout est à jour ».
+    """
+    pending: list[str] = []
+    unknown = False
+    for app in APPS:
+        current = states.get(app.key)
+        if not current or not installed_any(app, current):
+            continue
+        verdict = update_available(current, infos.get(app.key) or {})
+        if verdict is True:
+            pending.append(app.key)
+        elif verdict is None:
+            unknown = True
+    return pending, unknown
+
+
+def pending_updates(stop=None) -> tuple[list[str], bool, int]:
+    """(clés à mettre à jour, doute, nombre d'applications installées).
+
+    Sonde réseau : un flux de releases par application, interrogés en
+    parallèle (GearLever ne publie rien). `{}` côté version publiée laisse le
+    verdict indéterminé au lieu de mentir.
+
+    `stop` (threading.Event) vient de la fermeture de la fenêtre : on cesse
+    d'attendre les applications restantes, sans bloquer la sortie. Les flux
+    déjà partis expirent d'eux-mêmes (`FEED_TIMEOUT`).
+    """
+    states = all_states()
+    installed = [app for app in APPS if installed_any(app, states[app.key])]
+    if not installed:
+        return [], False, 0
+    infos: dict[str, dict] = {}
+    pool = ThreadPoolExecutor(max_workers=4)
+    try:
+        futures = {
+            app.key: pool.submit(latest_info, app) for app in installed
+        }
+        for app in installed:
+            if stop is not None and stop.is_set():
+                infos[app.key] = {}
+                continue
+            try:
+                infos[app.key] = futures[app.key].result(
+                    timeout=FEED_TIMEOUT + 2
+                )
+            except Exception:
+                infos[app.key] = {}
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    pending, unknown = app_update_verdicts(states, infos)
+    return pending, unknown, len(installed)
+
+
 def describe(app: App, current: dict) -> str:
     """Texte d'état d'une ligne du dialogue."""
     if not installed_any(app, current):
@@ -428,6 +488,28 @@ def describe(app: App, current: dict) -> str:
 def install_argv(app: App) -> list[str]:
     """Commande d'installation / mise à jour (le script fait les deux)."""
     return [_which(app.script), *app.install_args]
+
+
+def update_script(keys) -> str:
+    """Script bash : mettre à jour les applications listées, une par une.
+
+    Le script d'installation de chaque application télécharge la dernière
+    release et réintègre l'AppImage dans le menu (GearLever) ; `--yes` coupe
+    ses questions. Les marqueurs `::gablue:step` font avancer la barre du
+    manager quand plusieurs applications s'enchaînent.
+    """
+    wanted = set(keys)
+    selected = [app for app in APPS if app.key in wanted]
+    if not selected:
+        return ""
+    total = len(selected)
+    lines: list[str] = []
+    for index, app in enumerate(selected, start=1):
+        lines.append(
+            f"printf '::gablue:step {index} {total} {app.name}\\n'"
+        )
+        lines.append(shlex.join(install_argv(app)))
+    return "\n".join(lines) + "\n"
 
 
 def config_argv() -> list[str]:

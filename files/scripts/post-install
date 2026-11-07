@@ -64,6 +64,7 @@ chmod +x /usr/libexec/gablue-bootnext
 chmod +x /usr/libexec/gablue-secureboot
 chmod +x /usr/libexec/gablue-ryzenadj
 chmod +x /usr/libexec/gablue-avahi
+chmod +x /usr/libexec/gablue-hwinfo
 chmod +x /usr/libexec/gablue-dx-groups
 
 # Rendre exécutables les scripts supplémentaires Gablue

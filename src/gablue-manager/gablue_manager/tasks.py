@@ -10,14 +10,15 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QPushButton,
-    QVBoxLayout, QWidget,
+    QDialog, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QProgressBar,
+    QPushButton, QVBoxLayout, QWidget,
 )
 
 from . import journal
 from .local import parse_progress_event, privileged_prefix
 from .util import display_name, ssh_target
 from .widgets import BusyProgressBar
+from .workers import SshTaskWorker
 
 def _display_command(argv: list[str]) -> str:
     """Commande lisible pour le journal : un script multi-ligne est résumé.
@@ -245,8 +246,10 @@ class RemoteTaskDialog(QDialog):
             self.progress_label.setText(
                 "Terminé." if ok else "Interrompu."
             )
-            if not ok and self.log_toggle is not None:
-                self.log_toggle.setChecked(True)    # montrer la cause
+            # Une annulation n'a pas de cause à montrer : le journal reste
+            # fermé (demandé le 07/11/2026).
+            if not ok and not self._cancelled and self.log_toggle is not None:
+                self.log_toggle.setChecked(True)
 
         if ok or self._cancelled:
             self.link_row.setVisible(False)     # validé ou abandonné
@@ -281,7 +284,11 @@ class RemoteTaskDialog(QDialog):
         self.close_button.setVisible(True)
         self.close_button.setDefault(True)
         self.completed.emit(self._cancelled is False and ok)
-        if self._close_on_success and ok and not self._cancelled:
+        if self._cancelled:
+            # Annuler, c'est arrêter : la fenêtre de progression se referme
+            # au lieu de rester sur « Action annulée. ».
+            QTimer.singleShot(0, self.accept)
+        elif self._close_on_success and ok:
             # Action « on lance et on oublie » (redémarrage, extinction) : la
             # carte du poste montre le résultat, la fenêtre n'apporte rien de
             # plus. Délai court pour laisser lire « Terminé. ».
@@ -773,9 +780,11 @@ class LocalTaskDialog(QDialog):
                     # Fige le dernier pourcentage atteint au lieu de laisser
                     # une barre indéterminée tourner.
                     self.progress_bar.setRange(0, 100)
-        if not ok and self._reveal_log_on_error and self.log_toggle is not None:
+        if (not ok and not self._cancelled
+                and self._reveal_log_on_error and self.log_toggle is not None):
             # En CLI (gwine), la fenêtre est le seul canal : montrer le journal
-            # au lieu d'un simple « Échec (code N) » sans explication.
+            # au lieu d'un simple « Échec (code N) » sans explication. Une
+            # annulation n'a rien à expliquer : le journal reste fermé.
             self.log_toggle.setChecked(True)
         self.result_label.setVisible(True)
         if self._cancelled:
@@ -811,7 +820,10 @@ class LocalTaskDialog(QDialog):
         self.close_button.setDefault(True)
         self._process = None
         self.completed.emit(ok and not self._cancelled)
-        if self._close_on_success and ok and not self._cancelled:
+        if self._cancelled:
+            # Annuler, c'est arrêter : on ferme la fenêtre de progression.
+            QTimer.singleShot(0, self.accept)
+        elif self._close_on_success and ok:
             # Mode CLI : l'appelant (gwine) enchaîne aussitôt, la fenêtre ne
             # doit pas rester devant le jeu.
             QTimer.singleShot(0, self.accept)
@@ -1043,8 +1055,8 @@ class SequentialTaskDialog(QDialog):
         self._stop_progress()
         self._flush_lines()
         if self._cancelled:
-            self._finish_with("Action annulée : les étapes suivantes ne sont pas lancées.",
-                              ok=False)
+            self._finish_with("Action annulée.", ok=False)
+            QTimer.singleShot(0, self.accept)
             return
         step = self._steps[self._index]
         if code == 0:
@@ -1332,3 +1344,184 @@ def _task_completed(root) -> None:
 
     # Laisse au poste distant le temps de se remettre (extinction, reboot).
     QTimer.singleShot(1200, run)
+
+
+class RemoteBatchDialog(QDialog):
+    """Même mise à jour sur plusieurs postes, **en parallèle**, une fenêtre.
+
+    Un `SshTaskWorker` par poste (trois en vol au plus), une ligne par poste,
+    une barre globale et un journal commun : on voit où en est chaque machine
+    sans empiler une fenêtre par poste. Se ferme d'elle-même quand tout a
+    réussi ; reste ouverte avec les échecs sinon.
+    """
+
+    completed = Signal(bool)        # tous les postes ont réussi
+
+    MAX_PARALLEL = 3
+
+    def __init__(self, parent=None, hosts=None, command: str = "",
+                 title: str = "Mises à jour des postes",
+                 subtitle: str = ""):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(False)
+        self.setMinimumWidth(700)
+
+        self._hosts = [dict(host) for host in (hosts or [])]
+        self._command = command
+        self._queue = list(range(len(self._hosts)))
+        self._workers: dict[int, SshTaskWorker] = {}
+        self._rows: dict[int, QLabel] = {}
+        self._results: dict[int, int] = {}
+        self._cancelled = False
+        self._finished = False
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(22, 20, 22, 18)
+        root.setSpacing(10)
+
+        heading = QLabel(title, self)
+        heading.setObjectName("title")
+        root.addWidget(heading)
+        self.subtitle = QLabel(
+            subtitle or f"{len(self._hosts)} poste(s) en parallèle.", self
+        )
+        self.subtitle.setObjectName("subtitle")
+        self.subtitle.setWordWrap(True)
+        root.addWidget(self.subtitle)
+
+        rows = QVBoxLayout()
+        rows.setSpacing(4)
+        for index, host in enumerate(self._hosts):
+            line = QHBoxLayout()
+            name = QLabel(display_name(host), self)
+            name.setObjectName("hostName")
+            status = QLabel("En attente", self)
+            status.setObjectName("hostStatus")
+            line.addWidget(name, 1)
+            line.addWidget(status, 0, Qt.AlignRight)
+            rows.addLayout(line)
+            self._rows[index] = status
+        root.addLayout(rows)
+
+        self.progress = QProgressBar(self)
+        self.progress.setRange(0, max(1, len(self._hosts)))
+        self.progress.setValue(0)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(4)
+        root.addWidget(self.progress)
+
+        self.log_view = QPlainTextEdit(self)
+        self.log_view.setReadOnly(True)
+        self.log_view.setMaximumHeight(150)
+        self.log_view.setVisible(False)
+        root.addWidget(self.log_view)
+
+        self.summary = QLabel("", self)
+        self.summary.setObjectName("hostDetail")
+        root.addWidget(self.summary)
+
+        buttons = QHBoxLayout()
+        self.log_button = QPushButton("Journal", self)
+        self.log_button.setCheckable(True)
+        self.log_button.toggled.connect(self.log_view.setVisible)
+        buttons.addWidget(self.log_button)
+        buttons.addStretch(1)
+        self.cancel_button = QPushButton("Annuler", self)
+        self.cancel_button.clicked.connect(self.abort)
+        buttons.addWidget(self.cancel_button)
+        self.close_button = QPushButton("Fermer", self)
+        self.close_button.setVisible(False)
+        self.close_button.clicked.connect(self.accept)
+        buttons.addWidget(self.close_button)
+        root.addLayout(buttons)
+
+        # Laisser la fenêtre s'afficher avant le premier ssh.
+        QTimer.singleShot(60, self._start_next)
+
+    # -- déroulé ------------------------------------------------------------
+    def _set_row(self, index: int, text: str, color: str = "") -> None:
+        label = self._rows[index]
+        label.setText(text)
+        label.setStyleSheet(f"color: {color};" if color else "")
+
+    def _append(self, index: int, text: str) -> None:
+        if not text:
+            return
+        host = self._hosts[index]
+        prefix = display_name(host)
+        for line in text.splitlines():
+            if line.strip():
+                self.log_view.appendPlainText(f"[{prefix}] {line}")
+
+    def _start_next(self) -> None:
+        while self._queue and len(self._workers) < self.MAX_PARALLEL:
+            index = self._queue.pop(0)
+            self._set_row(index, "En cours…")
+            worker = SshTaskWorker(self._hosts[index], self._command, self)
+            worker.log.connect(
+                lambda text, i=index: self._append(i, text)
+            )
+            worker.done.connect(
+                lambda code, i=index: self._host_done(i, code)
+            )
+            self._workers[index] = worker
+            worker.start()
+
+    def _host_done(self, index: int, code: int) -> None:
+        worker = self._workers.pop(index, None)
+        if worker is not None:
+            worker.wait(1000)
+        self._results[index] = code
+        from .constants import COLOR_ONLINE, COLOR_OFFLINE
+        if code == 0:
+            self._set_row(index, "Terminé", COLOR_ONLINE)
+        elif self._cancelled:
+            self._set_row(index, "Annulé")
+        else:
+            self._set_row(index, f"Échec (code {code})", COLOR_OFFLINE)
+        self.progress.setValue(self.progress.value() + 1)
+        if self._queue:
+            self._start_next()
+        elif not self._workers:
+            self._finish()
+
+    def _finish(self) -> None:
+        if self._finished:
+            return
+        self._finished = True
+        done = sum(1 for code in self._results.values() if code == 0)
+        total = len(self._hosts)
+        self.cancel_button.setVisible(False)
+        self.close_button.setVisible(True)
+        self.close_button.setDefault(True)
+        self.summary.setText(f"{done}/{total} poste(s) mis à jour.")
+        ok = not self._cancelled and done == total
+        self.completed.emit(ok)
+        if ok:
+            # Action « on lance et on oublie » : les cartes montrent le
+            # résultat, la fenêtre n'apporte plus rien. Délai court pour
+            # laisser lire « Terminé ».
+            QTimer.singleShot(1500, self.accept)
+
+    def abort(self) -> None:
+        """Annule : les postes en vol sont interrompus, la file est vidée."""
+        self._cancelled = True
+        self.cancel_button.setEnabled(False)
+        for index in self._queue:
+            self._set_row(index, "Annulé")
+        self._queue.clear()
+        for worker in self._workers.values():
+            worker.cancel.set()
+        if not self._workers:
+            self._finish()
+
+    def closeEvent(self, event) -> None:
+        if self._finished:
+            super().closeEvent(event)
+            return
+        # Fermer la fenêtre pendant l'opération = annuler, proprement : les
+        # ssh en cours sont tués, la fenêtre se ferme une fois les workers
+        # sortis (sinon QThread détruit pendant qu'il tourne).
+        self.abort()
+        event.ignore()
