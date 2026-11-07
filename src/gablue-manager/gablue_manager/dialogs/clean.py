@@ -20,10 +20,15 @@ from PySide6.QtWidgets import (
 
 from .. import local
 from ..local import (
-    CLEAN_DOMAINS, clean_domain_available, clean_system_script,
-    parse_gablue_progress,
+    CLEAN_DOMAINS, REMOTE_CLEAN_PROBE, clean_domain_available,
+    clean_system_script, parse_gablue_progress, parse_remote_clean_state,
+    remote_clean_script, remote_helpers_nopasswd,
 )
-from ..tasks import LocalTaskDialog, start_task
+from ..ssh import (
+    ask_remote_password, remote_sudo_prefix, ssh_capture,
+)
+from ..tasks import LocalTaskDialog, RemoteTaskDialog, start_task
+from ..util import display_name
 from .stversions import StVersionsSection
 
 CHOICE_LABELS = {
@@ -97,9 +102,13 @@ class _SizeWorker(QThread):
 class CleanDialog(QDialog):
     """Une carte par domaine de nettoyage, un bouton « Vider » par carte."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, host: dict | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Nettoyer le système")
+        self.host = dict(host) if host else None
+        self.setWindowTitle(
+            "Nettoyer le système" if self.host is None
+            else f"Nettoyer le système — {display_name(self.host)}"
+        )
         self.setModal(True)
         self.setMinimumWidth(700)
 
@@ -114,7 +123,9 @@ class CleanDialog(QDialog):
         note = QLabel(
             "Chaque outil se vide séparément, après confirmation. Vos fichiers "
             "personnels, vos jeux et la configuration des applications ne sont "
-            "pas touchés.",
+            "pas touchés."
+            + ("" if self.host is None else " Exécuté sur le poste distant, "
+               "par SSH."),
             self,
         )
         note.setObjectName("subtitle")
@@ -139,17 +150,22 @@ class CleanDialog(QDialog):
         self.buttons: dict[str, QPushButton] = {}
         self.size_labels: dict[str, QLabel] = {}
         self.sizes: dict[str, int | None] = {}
-        self.available: dict[str, bool] = {}
+        # L'état vient d'ici en local ou d'une sonde SSH sur un poste distant.
+        self.state = self.read_state()
+        # Garde aussi `clean_helper` (hors CLEAN_DOMAINS) : il décide si la
+        # partie système des Flatpaks a besoin du mot de passe sudo.
+        self.available = dict(self.state.get("available") or {})
         for domain in CLEAN_DOMAINS:
             self._add_row(domain)
 
-        # Anciennes versions Syncthing : même dialogue, section à part. Elle
-        # ne supprime rien (le clic ouvre Dolphin), donc pas de bouton
-        # « Vider » — mais c'est bien un nettoyage que l'utilisateur fait ici.
-        self.versions = StVersionsSection(self)
-        content_layout.addWidget(self.versions)
-        if not self.versions.refresh():
-            self.versions.setVisible(False)
+        # Anciennes versions Syncthing : section locale seulement (le dossier
+        # appartient à CETTE session, un poste distant a les siennes).
+        self.versions = None
+        if self.host is None:
+            self.versions = StVersionsSection(self)
+            content_layout.addWidget(self.versions)
+            if not self.versions.refresh():
+                self.versions.setVisible(False)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(10)
@@ -178,15 +194,27 @@ class CleanDialog(QDialog):
             height = min(height, screen.availableGeometry().height() - 80)
         self.resize(760, max(560, height))
 
-    @staticmethod
-    def measurable(domain: str) -> bool:
+    def read_state(self) -> dict:
+        """Disponibilités et tailles : local, ou une sonde SSH unique."""
+        if self.host is None:
+            return {"available": {
+                domain: clean_domain_available(domain)
+                for domain in CLEAN_DOMAINS
+            }}
+        code, text = ssh_capture(self.host, REMOTE_CLEAN_PROBE, timeout=60)
+        if code != 0 and not text:
+            return {"available": {}, "sizes": {}}
+        return parse_remote_clean_state(text)
+
+    def measurable(self, domain: str) -> bool:
         """Une taille est-elle calculable ? (Podman via `system df`, caches via `du`.)"""
+        if self.host is not None:
+            return domain in (self.state.get("sizes") or {})
         return domain == "podman" or local.clean_cache_path(domain) is not None
 
     def _add_row(self, domain: str) -> None:
         label, description = CHOICE_LABELS[domain]
-        available = clean_domain_available(domain)
-        self.available[domain] = available
+        available = self.available.get(domain, False)
 
         frame = QFrame(self)
         frame.setObjectName("hostCard")
@@ -243,6 +271,10 @@ class CleanDialog(QDialog):
     # -- état ---------------------------------------------------------------
     def _start_sizes(self, domains: list[str] | None = None) -> None:
         """Mesure en fond les domaines qui ont un volume identifiable."""
+        if self.host is not None:
+            # La sonde SSH a déjà tout mesuré : rien à lancer en fond.
+            self._sizes_done(dict(self.state.get("sizes") or {}))
+            return
         if domains is None:
             domains = [
                 domain for domain in CLEAN_DOMAINS
@@ -310,6 +342,9 @@ class CleanDialog(QDialog):
         if answer != QMessageBox.Yes:
             return
         self.buttons[domain].setEnabled(False)
+        if self.host is not None:
+            self._remote_clean(domain, label)
+            return
         task = LocalTaskDialog(
             self, title=f"Vider — {label}",
             subtitle="Suppression des restes inutilisés.",
@@ -323,12 +358,59 @@ class CleanDialog(QDialog):
         )
         start_task(self, task)
 
+    def _remote_clean(self, domain: str, label: str) -> None:
+        """Vide un domaine sur le poste distant, mot de passe seulement si root."""
+        password = ""
+        needs_root = (
+            domain == "flatpak" and self.available.get("clean_helper", False)
+        )
+        if needs_root and not remote_helpers_nopasswd(self.host):
+            password = ask_remote_password(self, self.host)
+            if password is None:
+                self.buttons[domain].setEnabled(
+                    self.available.get(domain, False)
+                )
+                return
+        command = remote_sudo_prefix(password) + remote_clean_script(
+            domain, self.available
+        )
+        task = RemoteTaskDialog(
+            self, host=self.host, title=f"Vider — {label}",
+            subtitle="Suppression des restes inutilisés, par SSH.",
+            command=command, password=password,
+            progress_mode="busy",
+            progress_text="Nettoyage…",
+        )
+        task.completed.connect(
+            lambda _ok, chosen=domain: self._domain_done(chosen)
+        )
+        start_task(self, task)
+
     def _domain_done(self, domain: str) -> None:
         """Relance la mesure du domaine vidé et réactive son bouton."""
         try:
-            self.buttons[domain].setEnabled(self.available.get(domain, False))
             self.sizes.pop(domain, None)
-            self._start_sizes([domain])
+            if self.host is None:
+                self.buttons[domain].setEnabled(
+                    self.available.get(domain, False)
+                )
+                self._start_sizes([domain])
+                return
+            # Aucune re-sonde ici : `completed` est émis pendant que
+            # `RemoteTaskDialog._finished` tient encore la boucle GUI, et une
+            # connexion SSH synchrone (jusqu'à 60 s) gelait la fenêtre de
+            # progression — impossible de cliquer « Fermer » (vécu 07/11/2026).
+            # On met donc la ligne à jour localement ; rouvrir le dialogue
+            # refait une sonde exacte.
+            self.sizes.pop(domain, None)
+            self.size_labels[domain].setText("?")
+            if domain in local.CLEAN_CACHE_SUFFIXES:
+                # Le cache vient d'être supprimé : plus rien à vider.
+                self.available[domain] = False
+            self.buttons[domain].setEnabled(
+                self.available.get(domain, False)
+            )
+            self._update_hint()
         except RuntimeError:
             # Dialogue fermé pendant la tâche : plus rien à rafraîchir.
             return

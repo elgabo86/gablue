@@ -1136,6 +1136,7 @@ def parse_remote_clean_state(text: str) -> dict:
             available["flatpak"] = True
         elif line == "CLEAN_HELPER":
             available["flatpak"] = True
+            available["clean_helper"] = True
         elif line == "BREW":
             available["brew"] = True
         elif line.startswith("PODMAN_DF="):
@@ -1288,6 +1289,18 @@ def nvme_thermal_helper_available() -> bool:
     return Path(NVME_THERMAL_HELPER).is_file()
 
 
+def parse_nvme_thermal_devices(text: str) -> list[dict]:
+    """JSON de `gablue-nvme-thermal status` → cartes de contrôleurs."""
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return []
+    devices = data.get("devices") if isinstance(data, dict) else None
+    if not isinstance(devices, list):
+        return []
+    return [item for item in devices if isinstance(item, dict)]
+
+
 def nvme_thermal_devices() -> list[dict]:
     """État HCTM de chaque contrôleur NVMe (lu par le helper privilégié).
 
@@ -1303,14 +1316,114 @@ def nvme_thermal_devices() -> list[dict]:
         return []
     if result.returncode != 0:
         return []
-    try:
-        data = json.loads(result.stdout)
-    except ValueError:
-        return []
-    devices = data.get("devices") if isinstance(data, dict) else None
-    if not isinstance(devices, list):
-        return []
-    return [item for item in devices if isinstance(item, dict)]
+    return parse_nvme_thermal_devices(result.stdout)
+
+
+# -- Maintenance à distance : sondes et commandes SSH -----------------------
+
+# Une seule connexion par outil. Le helper local n'existe pas forcément sur
+# le poste (image antérieure) : la sonde le dit, le dialogue grise alors ce
+# qui ne peut pas être appliqué.
+
+REMOTE_NVME_THERMAL_PROBE = "\n".join((
+    'if [ -x /usr/libexec/gablue-nvme-thermal ]; then',
+    '    echo HELPER',
+    '    sudo -n /usr/libexec/gablue-nvme-thermal status 2>/dev/null '
+    '|| echo UNREADABLE',
+    'else',
+    '    echo NO_HELPER',
+    'fi',
+)) + "\n"
+
+
+def parse_remote_nvme_thermal_state(text: str) -> dict:
+    """Sortie de `REMOTE_NVME_THERMAL_PROBE` → `{"ok", "devices"}`."""
+    markers = {"HELPER", "NO_HELPER", "UNREADABLE"}
+    lines = (text or "").splitlines()
+    helper = any(line.strip() == "HELPER" for line in lines)
+    payload = "\n".join(
+        line for line in lines if line.strip() not in markers
+    )
+    devices = parse_nvme_thermal_devices(payload)
+    return {"ok": helper and bool(devices), "devices": devices}
+
+
+REMOTE_BTRFS_PROBE = "\n".join((
+    'if [ -x /usr/libexec/gablue-btrfs-compress ]; then',
+    '    echo HELPER',
+    'else',
+    '    echo NO_HELPER',
+    'fi',
+    'findmnt -t btrfs -o TARGET,UUID,LABEL -J 2>/dev/null',
+    'findmnt -t btrfs -o TARGET -n -r 2>/dev/null | while IFS= read -r t; do',
+    '    c=$(btrfs property get "$t" compression 2>/dev/null '
+    "| sed -n 's/^compression=//p')",
+    '    printf "COMP\\t%s\\t%s\\n" "$t" "$c"',
+    'done',
+)) + "\n"
+
+
+def parse_btrfs_remote_state(text: str) -> dict:
+    """Sortie de `REMOTE_BTRFS_PROBE` → `{"ok", "filesystems"}`.
+
+    Le JSON de `findmnt` occupe plusieurs lignes et précède les lignes
+    `COMP` (un point de montage par ligne, compression lue sans privilège).
+    """
+    helper = False
+    compressions: dict[str, str] = {}
+    json_lines: list[str] = []
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped == "HELPER":
+            helper = True
+            continue
+        if stripped == "NO_HELPER":
+            continue
+        if line.startswith("COMP\t"):
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                compressions[parts[1]] = parts[2] if len(parts) > 2 else ""
+            continue
+        json_lines.append(line)
+    filesystems = parse_btrfs_mounts("\n".join(json_lines))
+    for row in filesystems:
+        row["compression"] = compressions.get(row["target"], "")
+    return {"ok": helper, "filesystems": filesystems}
+
+
+def btrfs_remote_script(changes: dict[str, bool]) -> str:
+    """Un `btrfs property set` par montage, sans marqueurs de progression.
+
+    `RemoteTaskDialog` n'accepte pas `progress_parser` : les étapes
+    `::gablue:` du script local ne seraient pas interprétées, on écrit donc
+    les commandes nues.
+    """
+    lines: list[str] = []
+    for target, enabled in changes.items():
+        action = "zstd" if enabled else "none"
+        lines.append(
+            f"sudo -n {BTRFS_HELPER} {action} {shlex.quote(target)}"
+        )
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def nvme_thermal_remote_script(
+    changes: dict[str, tuple[int, int] | None],
+) -> str:
+    """`set-feature` (ou remise au firmware) par contrôleur, commandes nues."""
+    lines: list[str] = []
+    for device, thresholds in changes.items():
+        if thresholds is None:
+            lines.append(
+                f"sudo -n {NVME_THERMAL_HELPER} off {shlex.quote(device)}"
+            )
+            continue
+        first, second = thresholds
+        lines.append(
+            f"sudo -n {NVME_THERMAL_HELPER} set {shlex.quote(device)} "
+            f"{int(first)} {int(second)}"
+        )
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def nvme_thermal_script(

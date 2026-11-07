@@ -17,11 +17,17 @@ from PySide6.QtWidgets import (
 )
 
 from ..local import (
-    NVME_PRESETS, nvme_thermal_devices, nvme_thermal_helper_available,
+    NVME_PRESETS, REMOTE_NVME_THERMAL_PROBE, nvme_thermal_devices,
+    nvme_thermal_helper_available, nvme_thermal_remote_script,
     nvme_thermal_script, parse_gablue_progress,
+    parse_remote_nvme_thermal_state, remote_helpers_nopasswd,
 )
-from ..tasks import LocalTaskDialog, start_task
+from ..ssh import (
+    ask_remote_password, remote_sudo_prefix, ssh_capture,
+)
+from ..tasks import LocalTaskDialog, RemoteTaskDialog, start_task
 from ..uiutil import fit_dialog_height
+from ..util import display_name
 
 PRESET_LABELS = {
     (65, 70): "65/70 °C (conservatif)",
@@ -53,9 +59,13 @@ def presets_for(device: dict) -> list[tuple[int, int, str]]:
 class ThermalDialog(QDialog):
     """Un contrôleur par carte : case + seuils, un seul « Appliquer »."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, host: dict | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Limite thermique NVMe")
+        self.host = dict(host) if host else None
+        self.setWindowTitle(
+            "Limite thermique NVMe" if self.host is None
+            else f"Limite thermique NVMe — {display_name(self.host)}"
+        )
         self.setModal(True)
         self.setMinimumWidth(700)
 
@@ -69,7 +79,8 @@ class ThermalDialog(QDialog):
 
         note = QLabel(
             "Seuils de throttle du SSD (HCTM). TMT1 ralentit doucement, TMT2 "
-            "plus fort. Réglage persistant, appliqué par le contrôleur.",
+            "plus fort. Réglage persistant, appliqué par le contrôleur."
+            + ("" if self.host is None else " Poste distant, par SSH."),
             self,
         )
         note.setObjectName("subtitle")
@@ -216,15 +227,32 @@ class ThermalDialog(QDialog):
         combo.setCurrentIndex(combo.count() - 1)     # « Personnalisé »
 
     # -- état ---------------------------------------------------------------
+    def read_state(self) -> dict:
+        """État HCTM : local, ou une sonde SSH (le helper lit en root)."""
+        if self.host is None:
+            available = nvme_thermal_helper_available()
+            return {
+                "ok": available,
+                "devices": nvme_thermal_devices() if available else [],
+            }
+        code, text = ssh_capture(
+            self.host, REMOTE_NVME_THERMAL_PROBE, timeout=30
+        )
+        if code != 0 and not text:
+            return {"ok": False, "devices": []}
+        return parse_remote_nvme_thermal_state(text)
+
     def refresh(self) -> None:
-        available = nvme_thermal_helper_available()
-        devices = nvme_thermal_devices() if available else []
-        self.state = {"ok": available, "devices": devices}
+        self.state = self.read_state()
+        devices = self.state.get("devices") or []
+        available = bool(self.state.get("ok"))
         for device in devices:
             self._add_row(device)
         if not available:
             self.hint_label.setText(
                 "Helper absent de cette image — reconstruction requise."
+                if self.host is None else
+                "Helper absent du poste distant — image à reconstruire."
             )
         elif not devices:
             self.hint_label.setText(
@@ -329,6 +357,9 @@ class ThermalDialog(QDialog):
                     f"{device} : TMT1 doit être inférieur à TMT2.",
                 )
                 return
+        if self.host is not None:
+            self._apply_remote(changes)
+            return
         dialog = LocalTaskDialog(
             self, title="Limite thermique NVMe",
             subtitle="Seuils HCTM des contrôleurs.",
@@ -336,6 +367,28 @@ class ThermalDialog(QDialog):
             progress_parser=parse_gablue_progress,
             progress_text="Application des seuils…",
             reveal_log_on_error=True,
+        )
+        start_task(self, dialog)
+        self.accept()
+
+    def _apply_remote(
+        self, changes: dict[str, tuple[int, int] | None],
+    ) -> None:
+        """Applique par SSH ; mot de passe seulement si la règle manque."""
+        password = ""
+        if not remote_helpers_nopasswd(self.host):
+            password = ask_remote_password(self, self.host)
+            if password is None:
+                return
+        command = remote_sudo_prefix(password) + nvme_thermal_remote_script(
+            changes
+        )
+        dialog = RemoteTaskDialog(
+            self, host=self.host, title="Limite thermique NVMe",
+            subtitle="Seuils HCTM des contrôleurs, par SSH.",
+            command=command, password=password,
+            progress_mode="busy",
+            progress_text="Application des seuils…",
         )
         start_task(self, dialog)
         self.accept()

@@ -39,7 +39,9 @@ CHOICE_LABELS = {
     ),
     "cpuid_emu": (
         "Émulation CPUID fault",
-        "Jeux AMD AM4 / Steam Deck. KVM déchargé pendant l'émulation.",
+        "Réservé aux PC AM4 et à la Steam Deck : cette émulation permet à "
+        "certains jeux de s'y lancer. Inutile sur Ryzen 7000+ et Intel 4e "
+        "génération et plus, qui gèrent le CPUID faulting nativement.",
     ),
 }
 
@@ -57,7 +59,7 @@ CHOICE_RECOMMENDED = {
     "mitigations": True,    # garder les protections : sécurité d'abord
     "cpuid": True,          # débloque des jeux, sans coût ailleurs
     "ertm": True,           # réglage recommandé par Gablue
-    "cpuid_emu": False,     # niche AMD : KVM doit rester disponible
+    "cpuid_emu": False,     # AM4 / Steam Deck : à activer si un jeu l'exige
 }
 
 class SettingsDialog(QDialog):

@@ -188,6 +188,9 @@ class HostCard(QFrame):
     terminal_requested = Signal(str)
     update_requested = Signal(str, str)   # id du poste, type de mise à jour
     settings_requested = Signal(str)
+    clean_requested = Signal(str)
+    btrfs_requested = Signal(str)
+    thermal_requested = Signal(str)
     gwine_requested = Signal(str)
     booster_requested = Signal(str)
     tailscale_requested = Signal(str)
@@ -307,6 +310,21 @@ class HostCard(QFrame):
             "Tailscale…",
             lambda: self.tailscale_requested.emit(self.host["id"]),
         )
+        # Maintenance à distance : les outils qui n'ont besoin ni du firmware
+        # ni de la console du poste. GRUB, Secure Boot et le BIOS restent
+        # strictement locaux.
+        maintenance_menu = menu.addMenu("Maintenance")
+        for label, signal in (
+            ("Nettoyer le système…", self.clean_requested),
+            ("Compression Btrfs…", self.btrfs_requested),
+            ("Limite thermique NVMe…", self.thermal_requested),
+        ):
+            maintenance_menu.addAction(
+                label,
+                lambda _checked=False, target=signal: target.emit(
+                    self.host["id"]
+                ),
+            )
         apps_action = menu.addAction("Applications…")
         apps_action.triggered.connect(
             lambda: self.apps_requested.emit(self.host["id"])

@@ -371,6 +371,9 @@ class MainWindow(QMainWindow):
             card.terminal_requested.connect(self.open_terminal)
             card.update_requested.connect(self.update_host)
             card.settings_requested.connect(self.open_remote_settings)
+            card.clean_requested.connect(self.open_remote_clean)
+            card.btrfs_requested.connect(self.open_remote_btrfs)
+            card.thermal_requested.connect(self.open_remote_thermal)
             card.gwine_requested.connect(self.open_remote_gwine_options)
             card.booster_requested.connect(self.open_remote_foreground_booster)
             card.tailscale_requested.connect(self.open_remote_tailscale)
@@ -1159,6 +1162,24 @@ class MainWindow(QMainWindow):
         if host is None:
             return
         RemoteSettingsDialog(self, host).exec()
+
+    def open_remote_clean(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        CleanDialog(self, host).exec()
+
+    def open_remote_btrfs(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        BtrfsDialog(self, host).exec()
+
+    def open_remote_thermal(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        ThermalDialog(self, host).exec()
 
     def _run_remote_script(self, host: dict, title: str, subtitle: str,
                            script: str, root: bool = False,

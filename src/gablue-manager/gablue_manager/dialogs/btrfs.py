@@ -16,19 +16,28 @@ from PySide6.QtWidgets import (
 )
 
 from ..local import (
-    btrfs_apply_script, btrfs_filesystems, btrfs_helper_available,
-    parse_gablue_progress,
+    REMOTE_BTRFS_PROBE, btrfs_apply_script, btrfs_filesystems,
+    btrfs_helper_available, btrfs_remote_script, parse_btrfs_remote_state,
+    parse_gablue_progress, remote_helpers_nopasswd,
 )
-from ..tasks import LocalTaskDialog, start_task
+from ..ssh import (
+    ask_remote_password, remote_sudo_prefix, ssh_capture,
+)
+from ..tasks import LocalTaskDialog, RemoteTaskDialog, start_task
 from ..uiutil import fit_dialog_height
+from ..util import display_name
 
 
 class BtrfsDialog(QDialog):
     """Cases à cocher des montages Btrfs, un seul « Appliquer »."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, host: dict | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Compression Btrfs")
+        self.host = dict(host) if host else None
+        self.setWindowTitle(
+            "Compression Btrfs" if self.host is None
+            else f"Compression Btrfs — {display_name(self.host)}"
+        )
         self.setModal(True)
         self.setMinimumWidth(680)
 
@@ -43,7 +52,8 @@ class BtrfsDialog(QDialog):
         note = QLabel(
             "Drapeau de compression des systèmes de fichiers Btrfs montés. "
             "Il s'applique aux nouveaux fichiers ; les données existantes ne "
-            "sont pas recompressées.",
+            "sont pas recompressées."
+            + ("" if self.host is None else " Poste distant, par SSH."),
             self,
         )
         note.setObjectName("subtitle")
@@ -109,10 +119,23 @@ class BtrfsDialog(QDialog):
         self.rows_layout.addWidget(frame)
 
     # -- état ---------------------------------------------------------------
+    def read_state(self) -> dict:
+        """Montages et compression : local, ou une seule sonde SSH."""
+        if self.host is None:
+            available = btrfs_helper_available()
+            return {
+                "ok": available,
+                "filesystems": btrfs_filesystems() if available else [],
+            }
+        code, text = ssh_capture(self.host, REMOTE_BTRFS_PROBE, timeout=30)
+        if code != 0 and not text:
+            return {"ok": False, "filesystems": []}
+        return parse_btrfs_remote_state(text)
+
     def refresh(self) -> None:
-        available = btrfs_helper_available()
-        filesystems = btrfs_filesystems() if available else []
-        self.state = {"ok": available, "filesystems": filesystems}
+        self.state = self.read_state()
+        available = bool(self.state.get("ok"))
+        filesystems = self.state.get("filesystems") or []
         for filesystem in filesystems:
             self._add_row(filesystem)
             self.initial[filesystem["target"]] = bool(
@@ -126,6 +149,8 @@ class BtrfsDialog(QDialog):
         if not available:
             self.hint_label.setText(
                 "Helper absent de cette image — reconstruction requise."
+                if self.host is None else
+                "Helper absent du poste distant — image à reconstruire."
             )
         elif not filesystems:
             self.hint_label.setText("Aucun système de fichiers Btrfs monté.")
@@ -173,6 +198,9 @@ class BtrfsDialog(QDialog):
         )
         if answer != QMessageBox.Yes:
             return
+        if self.host is not None:
+            self._apply_remote(changes)
+            return
         dialog = LocalTaskDialog(
             self, title="Compression Btrfs",
             subtitle="Drapeau de compression des montages.",
@@ -180,6 +208,24 @@ class BtrfsDialog(QDialog):
             progress_parser=parse_gablue_progress,
             progress_text="Application des drapeaux…",
             reveal_log_on_error=True,
+        )
+        start_task(self, dialog)
+        self.accept()
+
+    def _apply_remote(self, changes: dict[str, bool]) -> None:
+        """Applique par SSH ; mot de passe seulement si la règle NOPASSWD manque."""
+        password = ""
+        if not remote_helpers_nopasswd(self.host):
+            password = ask_remote_password(self, self.host)
+            if password is None:
+                return
+        command = remote_sudo_prefix(password) + btrfs_remote_script(changes)
+        dialog = RemoteTaskDialog(
+            self, host=self.host, title="Compression Btrfs",
+            subtitle="Drapeau de compression des montages, par SSH.",
+            command=command, password=password,
+            progress_mode="busy",
+            progress_text="Application des drapeaux…",
         )
         start_task(self, dialog)
         self.accept()

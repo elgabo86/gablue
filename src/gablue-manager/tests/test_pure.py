@@ -738,6 +738,87 @@ class SystemTest(unittest.TestCase):
         self.assertIsNone(module.read_limit())
         self.assertEqual((module.MIN_TEMP, module.MAX_TEMP), (45, 110))
 
+    def test_remote_clean_state(self):
+        """Sonde SSH : disponibilités, tailles, helper système séparé."""
+        text = "\n".join((
+            "DIR .cache/gwine/temp 2048",
+            "PODMAN",
+            'PODMAN_DF=[{"RawReclaimable": 100}]',
+            "FLATPAK",
+            "CLEAN_HELPER",
+            "BREW",
+        ))
+        state = local.parse_remote_clean_state(text)
+        self.assertTrue(state["available"]["podman"])
+        self.assertTrue(state["available"]["flatpak"])
+        self.assertTrue(state["available"]["brew"])
+        self.assertTrue(state["available"]["gwine_temp"])
+        self.assertTrue(state["available"]["clean_helper"])
+        self.assertFalse(state["available"]["lgp"])
+        self.assertEqual(state["sizes"]["podman"], 100)
+        self.assertEqual(state["sizes"]["gwine_temp"], 2048)
+        # Le script système des Flatpaks dépend du helper, pas de l'outil.
+        with_helper = local.remote_clean_script("flatpak", state["available"])
+        self.assertIn("flatpak uninstall --unused --user -y", with_helper)
+        self.assertIn("gablue-clean flatpak", with_helper)
+        without = local.remote_clean_script(
+            "flatpak", {"flatpak": True, "clean_helper": False}
+        )
+        self.assertNotIn("gablue-clean", without)
+
+    def test_remote_btrfs_state(self):
+        """JSON findmnt multi-ligne + une ligne COMP par montage."""
+        text = "\n".join((
+            "HELPER",
+            '{"filesystems": [{"target": "/var", "uuid": "u1", '
+            '"label": "root", "children": [{"target": "/var/home", '
+            '"uuid": "u1", "label": ""}]}, '
+            '{"target": "/etc", "uuid": "u1", "label": ""}]}',
+            "COMP\t/var\tzstd",
+            "COMP\t/var/home\t",
+        ))
+        state = local.parse_btrfs_remote_state(text)
+        self.assertTrue(state["ok"])
+        self.assertEqual(
+            [(row["target"], row["compression"])
+             for row in state["filesystems"]],
+            [("/var", "zstd"), ("/var/home", "")],
+        )
+        without = local.parse_btrfs_remote_state("NO_HELPER\n{}")
+        self.assertFalse(without["ok"])
+        self.assertEqual(without["filesystems"], [])
+
+    def test_remote_nvme_and_scripts(self):
+        """Sonde NVMe et commandes distantes sans marqueurs de progression."""
+        payload = json.dumps({"devices": [
+            {"device": "/dev/nvme0", "hctm": True, "enabled": True},
+        ]})
+        state = local.parse_remote_nvme_thermal_state("HELPER\n" + payload)
+        self.assertTrue(state["ok"])
+        self.assertEqual(state["devices"][0]["device"], "/dev/nvme0")
+        # Sans le marqueur du helper, les seuils restent illisibles.
+        self.assertFalse(
+            local.parse_remote_nvme_thermal_state(payload)["ok"]
+        )
+        self.assertEqual(
+            local.parse_remote_nvme_thermal_state("NO_HELPER\n")["devices"],
+            [],
+        )
+
+        self.assertEqual(
+            local.btrfs_remote_script({"/var": True}),
+            "sudo -n /usr/libexec/gablue-btrfs-compress zstd /var\n",
+        )
+        script = local.nvme_thermal_remote_script({
+            "/dev/nvme0": (70, 75),
+            "/dev/nvme1": None,
+        })
+        self.assertIn(
+            "gablue-nvme-thermal set /dev/nvme0 70 75", script
+        )
+        self.assertIn("gablue-nvme-thermal off /dev/nvme1", script)
+        self.assertNotIn("::gablue:", script)
+
     def test_format_size(self):
         self.assertEqual(local.format_size(None), "")
         self.assertEqual(local.format_size(0), "")
