@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Gablue Manager (barre d'état)
+Comment=Accès rapide à Gablue Manager depuis la barre d'état
+Exec=gablue-manager --tray
+Icon=gablue-manager
+Terminal=false
+NoDisplay=true
+OnlyShowIn=KDE;
+X-GNOME-Autostart-enabled=true
+X-KDE-autostart-after=panel

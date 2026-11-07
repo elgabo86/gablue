@@ -1,41 +1,136 @@
 #!/usr/bin/bash
 
-# gablue-auto-update — active ou désactive les mises à jour automatiques système
+# gablue-auto-update — mises à jour automatiques : domaines et rythme
 #
-# Appelé via sudo -n (règle NOPASSWD dans /etc/sudoers.d/nopasswd) : le script
-# n'accepte QUE « on », « off » ou « status », jamais un `systemctl` libre en
-# root. Le timer Flatpak de la session (~/.config/systemd/user) n'est pas ici :
-# il appartient à l'utilisateur, Gablue Manager le bascule sans privilège.
+# Appelé via sudo -n (règles NOPASSWD exactes dans /etc/sudoers.d/nopasswd) :
+# le script n'accepte QUE les formes listées ci-dessous, jamais un `systemctl`
+# libre en root. Les timers sont livrés DÉSACTIVÉS par l'image : c'est
+# l'utilisateur qui choisit, depuis Gablue Manager, ce qui se met à jour tout
+# seul et à quel rythme.
 #
-# Brew est inclus (contrairement à `ujust toggle-updates` upstream) : les deux
-# timers sont activés au build, donc décocher « mises à jour automatiques » en
-# les laissant tourner aurait menti. `brew update` et `brew upgrade` restent
-# deux unités distinctes (l'ordre update → upgrade est un drop-in sur le
-# service d'upgrade), on bascule donc les deux timers.
+# Le timer Flatpak de la session (~/.config/systemd/user) n'est pas ici : il
+# appartient à l'utilisateur, Gablue Manager le bascule et lui écrit son
+# calendrier sans privilège.
 #
-# Usage : gablue-auto-update on|off|status
+# Brew est deux unités (update puis upgrade, ordonné par drop-in) : on bascule
+# toujours les deux ensemble.
+#
+# Usage : gablue-auto-update status
+#         gablue-auto-update image on|off
+#         gablue-auto-update flatpak on|off
+#         gablue-auto-update brew on|off
+#         gablue-auto-update schedule daily|weekly
 
 set -eu
 
-units=(rpm-ostreed-automatic.timer flatpak-system-update.timer
-       brew-update.timer brew-upgrade.timer)
+SYSTEMCTL=/usr/bin/systemctl
+IMAGE_TIMER=rpm-ostreed-automatic.timer
+FLATPAK_TIMER=flatpak-system-update.timer
+BREW_TIMERS=(brew-update.timer brew-upgrade.timer)
+SCHEDULE_DROPIN=50-gablue-schedule.conf
+SYSTEM_DIR=/etc/systemd/system
+# Rythmes proposés : 04:00, comme l'image (samedi par défaut), pour que les
+# mises à jour soient prêtes au réveil sans réveiller la machine exprès.
+DAILY_CALENDAR='*-*-* 04:00:00'
+WEEKLY_CALENDAR='Sat *-*-* 04:00:00'
 
 usage() {
-    echo "Usage : gablue-auto-update on|off|status" >&2
+    echo "Usage : gablue-auto-update status | image on|off | flatpak on|off | brew on|off | schedule daily|weekly" >&2
     exit 2
 }
 
-[ $# -eq 1 ] || usage
+# Écrit le calendrier d'un timer système (drop-in /etc, au-dessus de l'unité).
+write_schedule() {
+    local unit="$1"
+    local calendar="$2"
+    local dir="${SYSTEM_DIR}/${unit}.d"
+    install -d -m 0755 "$dir"
+    printf '%s\n' \
+        '[Timer]' \
+        'OnBootSec=' \
+        'OnUnitInactiveSec=' \
+        'OnCalendar=' \
+        "OnCalendar=${calendar}" \
+        'Persistent=true' \
+        'RandomizedDelaySec=10m' \
+        > "${dir}/${SCHEDULE_DROPIN}"
+}
 
-case "$1" in
-    on)     exec /usr/bin/systemctl enable --now "${units[@]}" ;;
-    off)    exec /usr/bin/systemctl disable --now "${units[@]}" ;;
+switch_units() {
+    local action="$1"
+    shift
+    if [ "$action" = "on" ]; then
+        "$SYSTEMCTL" enable --now "$@"
+    else
+        "$SYSTEMCTL" disable --now "$@"
+    fi
+}
+
+case "${1:-}" in
     status)
-        # 0 seulement si TOUS les timers système sont activés.
-        for unit in "${units[@]}"; do
-            /usr/bin/systemctl is-enabled --quiet "$unit" || exit 1
+        [ $# -eq 1 ] || usage
+        if "$SYSTEMCTL" is-enabled --quiet "$IMAGE_TIMER"; then
+            echo "image=enabled"
+        else
+            echo "image=disabled"
+        fi
+        if "$SYSTEMCTL" is-enabled --quiet "$FLATPAK_TIMER"; then
+            echo "flatpak=enabled"
+        else
+            echo "flatpak=disabled"
+        fi
+        brew=enabled
+        for unit in "${BREW_TIMERS[@]}"; do
+            "$SYSTEMCTL" is-enabled --quiet "$unit" || brew=disabled
         done
-        exit 0
+        echo "brew=$brew"
+        # Calendrier effectif : notre drop-in s'il existe, sinon l'image est
+        # hebdomadaire (samedi 04:00 dans les unités livrées).
+        calendar="$(
+            sed -n 's/^OnCalendar=//p' \
+                "${SYSTEM_DIR}/${FLATPAK_TIMER}.d/${SCHEDULE_DROPIN}" \
+                2>/dev/null | tail -n 1
+        )"
+        case "$calendar" in
+            "") echo "frequency=weekly" ;;
+            *Sat*) echo "frequency=weekly" ;;
+            *) echo "frequency=daily" ;;
+        esac
         ;;
-    *) usage ;;
+    image)
+        [ $# -eq 2 ] || usage
+        case "$2" in on|off) ;; *) usage ;; esac
+        switch_units "$2" "$IMAGE_TIMER"
+        ;;
+    flatpak)
+        [ $# -eq 2 ] || usage
+        case "$2" in on|off) ;; *) usage ;; esac
+        switch_units "$2" "$FLATPAK_TIMER"
+        ;;
+    brew)
+        [ $# -eq 2 ] || usage
+        case "$2" in on|off) ;; *) usage ;; esac
+        switch_units "$2" "${BREW_TIMERS[@]}"
+        ;;
+    schedule)
+        [ $# -eq 2 ] || usage
+        case "$2" in
+            daily)  calendar="$DAILY_CALENDAR" ;;
+            weekly) calendar="$WEEKLY_CALENDAR" ;;
+            *) usage ;;
+        esac
+        for unit in "$IMAGE_TIMER" "$FLATPAK_TIMER" "${BREW_TIMERS[@]}"; do
+            write_schedule "$unit" "$calendar"
+        done
+        "$SYSTEMCTL" daemon-reload
+        # Un timer déjà actif reprend le nouveau calendrier tout de suite.
+        for unit in "$IMAGE_TIMER" "$FLATPAK_TIMER" "${BREW_TIMERS[@]}"; do
+            if "$SYSTEMCTL" is-active --quiet "$unit"; then
+                "$SYSTEMCTL" restart "$unit"
+            fi
+        done
+        ;;
+    *)
+        usage
+        ;;
 esac

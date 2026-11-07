@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from gablue_manager import apps, cli, hosts, local, ssh, util  # noqa: E402
+from gablue_manager import apps, cli, hosts, local, prefs, ssh, util  # noqa: E402
 
 
 class KargsTest(unittest.TestCase):
@@ -137,24 +137,85 @@ class SystemTest(unittest.TestCase):
             "sudo", local.system_apply_script({"atuin": False})
         )
 
-    def test_auto_update_script(self):
-        script = local.system_apply_script({"auto_updates": True})
+    def test_auto_update_schedule(self):
+        self.assertEqual(local.auto_update_calendar("daily"), "*-*-* 04:00:00")
         self.assertEqual(
-            script,
-            "printf '%s\\n' 'Mises à jour automatiques'\n"
-            "printf '%s\\n' '::gablue:step 1 1 Mises à jour automatiques'\n"
-            "sudo -n /usr/libexec/gablue-auto-update on\n"
-            "systemctl --user enable --now flatpak-user-update.timer "
-            "|| echo \"Timer Flatpak utilisateur inchangé (pas de session).\"\n"
-            "printf '%s\\n' ::gablue:done\n",
+            local.auto_update_calendar("weekly"), "Sat *-*-* 04:00:00"
+        )
+        dropin = local.auto_update_schedule_dropin("daily")
+        # Les déclencheurs de l'image sont remis à zéro : sans ça le timer
+        # cumulerait son OnBootSec/OnUnitInactiveSec et deux calendriers.
+        self.assertIn("OnBootSec=\n", dropin)
+        self.assertIn("OnUnitInactiveSec=\n", dropin)
+        self.assertIn("OnCalendar=\n", dropin)
+        self.assertIn("OnCalendar=*-*-* 04:00:00\n", dropin)
+        self.assertIn("Persistent=true", dropin)
+        self.assertIn("RandomizedDelaySec=10m", dropin)
+
+    def test_parse_auto_update_status(self):
+        text = (
+            "image=enabled\nflatpak=disabled\nbrew=enabled\n"
+            "frequency=daily\n"
+        )
+        self.assertEqual(
+            local.parse_auto_update_status(text),
+            {"image": True, "flatpak": False, "brew": True,
+             "frequency": "daily"},
+        )
+        # Sortie vide : tout désactivé, rythme de l'image (hebdomadaire).
+        self.assertEqual(
+            local.parse_auto_update_status(""),
+            {"image": False, "flatpak": False, "brew": False,
+             "frequency": "weekly"},
+        )
+        self.assertEqual(
+            local.parse_auto_update_status("frequency=hourly")["frequency"],
+            "weekly",
+        )
+
+    def test_auto_update_script(self):
+        script = local.auto_update_script(
+            {"image": True, "brew": False},
+            {"image": True, "flatpak": False, "brew": False},
+            "weekly",
         )
         self.assertIn(
-            "sudo -n /usr/libexec/gablue-auto-update off",
-            local.system_apply_script({"auto_updates": False}),
+            "sudo -n /usr/libexec/gablue-auto-update image on", script
         )
+        self.assertIn(
+            "sudo -n /usr/libexec/gablue-auto-update brew off", script
+        )
+        self.assertIn(
+            "sudo -n /usr/libexec/gablue-auto-update schedule weekly", script
+        )
+        # Le timer Flatpak du compte suit `desired`, sans privilège.
         self.assertIn(
             "systemctl --user disable --now flatpak-user-update.timer",
-            local.system_apply_script({"auto_updates": False}),
+            script,
+        )
+        self.assertNotIn(
+            "gablue-auto-update flatpak", script
+        )
+        # 2 domaines + rythme + timer du compte.
+        self.assertIn("'::gablue:step 4 4 Flatpaks du compte'", script)
+
+        enabled = local.auto_update_script(
+            {}, {"image": False, "flatpak": True, "brew": False}, "daily"
+        )
+        self.assertIn(
+            "systemctl --user enable --now flatpak-user-update.timer",
+            enabled,
+        )
+        self.assertIn("OnCalendar=*-*-* 04:00:00", enabled)
+        self.assertIn(
+            "sudo -n /usr/libexec/gablue-auto-update schedule daily", enabled
+        )
+
+    def test_system_script_ignores_auto_updates(self):
+        # Les mises à jour automatiques ont leur propre dialogue : la clé
+        # héritée ne doit plus rien produire dans « Services et pilotes ».
+        self.assertEqual(
+            local.system_apply_script({"auto_updates": True}).strip(), ""
         )
 
     def test_brew_update_script(self):
@@ -477,6 +538,42 @@ class TailscaleTest(unittest.TestCase):
         ))
         self.assertFalse(local.tailscale_registered("pas du json"))
         self.assertFalse(local.tailscale_registered(""))
+
+
+class PrefsTest(unittest.TestCase):
+    def test_defaults_and_roundtrip(self):
+        import unittest.mock as mock
+        with tempfile.TemporaryDirectory() as home:
+            config = Path(home) / "gablue"
+            with mock.patch.object(prefs, "CONFIG_DIR", config), \
+                    mock.patch.object(prefs, "PREFS_FILE",
+                                      config / "preferences.json"):
+                # Absent : la barre d'état est active par défaut.
+                self.assertTrue(prefs.tray_enabled())
+                prefs.set_tray_enabled(False)
+                self.assertFalse(prefs.tray_enabled())
+                self.assertEqual(
+                    json.loads(prefs.PREFS_FILE.read_text(encoding="utf-8")),
+                    {"tray": False},
+                )
+                self.assertEqual(
+                    prefs.PREFS_FILE.stat().st_mode & 0o777, 0o600
+                )
+                # Fichier illisible : retomber sur le défaut, jamais planter.
+                prefs.PREFS_FILE.write_text("{pas du json", encoding="utf-8")
+                self.assertTrue(prefs.tray_enabled())
+                prefs.set_tray_enabled(True)
+                self.assertTrue(prefs.tray_enabled())
+                # Clé inconnue ou valeur non booléenne : ignorée.
+                prefs.PREFS_FILE.write_text(
+                    '{"tray": "oui", "autre": 1}', encoding="utf-8"
+                )
+                self.assertTrue(prefs.tray_enabled())
+                prefs.set_tray_enabled(True)
+                self.assertEqual(
+                    json.loads(prefs.PREFS_FILE.read_text(encoding="utf-8")),
+                    {"tray": True},
+                )
 
 
 class CliTest(unittest.TestCase):

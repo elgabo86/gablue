@@ -702,24 +702,135 @@ def auto_update_available() -> bool:
     return Path(AUTO_UPDATE_HELPER).is_file()
 
 
-def auto_updates_enabled() -> bool:
-    """Image Gablue, Flatpaks et Homebrew sont-ils mis à jour automatiquement ?
+AUTO_UPDATE_TARGETS = ("image", "flatpak", "brew")
 
-    Les timers système sont lus par le helper (même liste fermée que pour la
-    bascule, brew compris) ; le timer Flatpak de la session se lit sans
-    privilège. Le tout est traité comme un seul réglage : une moitié éteinte
-    ne doit pas s'afficher « activé ».
+def auto_update_calendar(frequency: str) -> str:
+    """Calendrier systemd du rythme choisi (04:00, comme l'image)."""
+    return "*-*-* 04:00:00" if frequency == "daily" else "Sat *-*-* 04:00:00"
+
+def auto_update_schedule_dropin(frequency: str) -> str:
+    """Drop-in `[Timer]` commun aux timers système et au timer du compte.
+
+    Les trois déclencheurs sont remis à zéro avant le nôtre : `rpm-ostreed`
+    porte `OnBootSec`/`OnUnitInactiveSec` et l'image un `OnCalendar` samedi —
+    sans les vider, le timer cumulerait deux calendriers.
     """
+    return (
+        "[Timer]\n"
+        "OnBootSec=\n"
+        "OnUnitInactiveSec=\n"
+        "OnCalendar=\n"
+        f"OnCalendar={auto_update_calendar(frequency)}\n"
+        "Persistent=true\n"
+        "RandomizedDelaySec=10m\n"
+    )
+
+def parse_auto_update_status(text: str) -> dict:
+    """Lignes `clé=valeur` du helper → domaines actifs et rythme."""
+    values: dict[str, str] = {}
+    for line in (text or "").splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() in ("image", "flatpak", "brew", "frequency"):
+            values[key.strip()] = value.strip()
+    frequency = values.get("frequency", "weekly")
+    return {
+        "image": values.get("image") == "enabled",
+        "flatpak": values.get("flatpak") == "enabled",
+        "brew": values.get("brew") == "enabled",
+        "frequency": frequency if frequency in ("daily", "weekly") else "weekly",
+    }
+
+def auto_update_state() -> dict:
+    """État complet : timers système (helper) + timer Flatpak de la session.
+
+    `flatpak` n'est vrai que si les deux moitiés tournent : une image mise à
+    jour sans les applications du compte ne doit pas s'afficher « activé ».
+    """
+    state = {
+        "ok": False, "image": False, "flatpak": False, "brew": False,
+        "user_flatpak": user_service_enabled(AUTO_UPDATE_USER_TIMER),
+        "frequency": "weekly",
+    }
     try:
         result = subprocess.run(
             ["sudo", "-n", AUTO_UPDATE_HELPER, "status"],
             capture_output=True, text=True, timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0 and user_service_enabled(
-        AUTO_UPDATE_USER_TIMER
-    )
+        return state
+    if result.returncode != 0:
+        return state
+    state.update(parse_auto_update_status(result.stdout))
+    state["flatpak"] = state["flatpak"] and state["user_flatpak"]
+    state["ok"] = True
+    return state
+
+def _steps_script(steps: list[tuple[str, list[str]]]) -> str:
+    """Assemble des étapes en un script qui publie sa progression.
+
+    Chaque domaine annonce `::gablue:step n total libellé` (retiré du journal
+    par `parse_gablue_progress`) juste avant ses commandes, et `done` conclut.
+    Le total ne compte que les domaines réellement modifiés.
+    """
+    total = len(steps)
+    lines: list[str] = []
+    for index, (label, commands) in enumerate(steps, 1):
+        lines.append(f"printf '%s\\n' " + shlex.quote(label))
+        lines.append(f"printf '%s\\n' " + shlex.quote(
+            f"::gablue:step {index} {total} {label}"
+        ))
+        lines.extend(commands)
+    if lines:
+        lines.append("printf '%s\\n' " + shlex.quote("::gablue:done"))
+    return "\n".join(lines) + "\n"
+
+def auto_update_script(changes: dict[str, bool], desired: dict[str, bool],
+                       frequency: str) -> str:
+    """Script d'application : domaines modifiés, rythme, timer du compte.
+
+    Le rythme est écrit même inchangé (idempotent) : c'est lui qui crée les
+    drop-ins `/etc` absents sur une image fraîche. Le timer Flatpak de la
+    session est géré ici, sans privilège, parce que son drop-in vit dans
+    `~/.config/systemd/user`.
+    """
+    steps: list[tuple[str, list[str]]] = []
+    for key, label in (
+        ("image", "Image Gablue"),
+        ("flatpak", "Flatpaks système"),
+        ("brew", "Homebrew"),
+    ):
+        if key in changes:
+            steps.append((label, [
+                f"sudo -n {AUTO_UPDATE_HELPER} {key} "
+                + ("on" if changes[key] else "off")
+            ]))
+    steps.append(("Rythme", [
+        f"sudo -n {AUTO_UPDATE_HELPER} schedule {frequency}"
+    ]))
+
+    dropin = auto_update_schedule_dropin(frequency)
+    user = [
+        'dir="$HOME/.config/systemd/user/'
+        f'{AUTO_UPDATE_USER_TIMER}.d"',
+        'mkdir -p "$dir"',
+        'cat > "$dir/50-gablue-schedule.conf" <<\'EOF\'',
+        *dropin.splitlines(),
+        "EOF",
+        "systemctl --user daemon-reload || true",
+    ]
+    if desired.get("flatpak"):
+        user += [
+            f"systemctl --user enable --now {AUTO_UPDATE_USER_TIMER} "
+            '|| echo "Timer Flatpak utilisateur inchangé (pas de session)."',
+            f"systemctl --user restart {AUTO_UPDATE_USER_TIMER} || true",
+        ]
+    else:
+        user.append(
+            f"systemctl --user disable --now {AUTO_UPDATE_USER_TIMER} "
+            '|| echo "Timer Flatpak utilisateur inchangé (pas de session)."'
+        )
+    steps.append(("Flatpaks du compte", user))
+    return _steps_script(steps)
 
 
 def docker_available(variant: str) -> bool:
@@ -758,23 +869,21 @@ def rebase_helper_available() -> bool:
 
 
 def services_choices() -> dict:
-    """État des bascules : services, couche Vulkan, Wi-Fi, atuin, màj auto."""
+    """État des bascules : services, couche Vulkan, Wi-Fi, atuin."""
     return {
         "displaylink": service_enabled("displaylink.service"),
         "docker": service_enabled("docker.service"),
         "low_latency": LOW_LATENCY_FILE.is_file(),
         "broadcom_wl": BROADCOM_WL_FILE.is_file(),
         "atuin": atuin_active(),
-        "auto_updates": auto_update_available() and auto_updates_enabled(),
     }
 
 
 def system_apply_script(changes: dict[str, bool]) -> str:
     """Script d'application : un helper par domaine, en un seul passage.
 
-    Un seul « Appliquer » peut toucher six domaines : chacun annonce son
-    avancement (`::gablue:step n total libellé`, retiré du journal par
-    `parse_gablue_progress`) juste avant ses commandes, et `done` conclut.
+    Un seul « Appliquer » peut toucher cinq domaines ; `_steps_script` publie
+    leur avancement pour la barre du dialogue.
     """
     steps: list[tuple[str, list[str]]] = []
     for key, unit, label in (
@@ -801,30 +910,7 @@ def system_apply_script(changes: dict[str, bool]) -> str:
         steps.append(("Historique atuin", [
             f"{ATUIN_HELPER} " + ("on" if changes["atuin"] else "off")
         ]))
-    if "auto_updates" in changes:
-        enabled = changes["auto_updates"]
-        # Timers système par le helper (règle sudoers NOPASSWD, liste fermée),
-        # puis le timer Flatpak de la session, sans privilège. `--user` échoue
-        # sans bus de session : on le dit au lieu de faire échouer une moitié
-        # déjà appliquée.
-        steps.append(("Mises à jour automatiques", [
-            f"sudo -n {AUTO_UPDATE_HELPER} " + ("on" if enabled else "off"),
-            f"systemctl --user {'enable' if enabled else 'disable'} --now "
-            f"{AUTO_UPDATE_USER_TIMER} "
-            "|| echo \"Timer Flatpak utilisateur inchangé (pas de session).\"",
-        ]))
-    total = len(steps)
-    lines: list[str] = []
-    for index, (label, commands) in enumerate(steps, 1):
-        quoted = shlex.quote(label)
-        lines.append(f"printf '%s\\n' {quoted}")
-        lines.append(f"printf '%s\\n' " + shlex.quote(
-            f"::gablue:step {index} {total} {label}"
-        ))
-        lines.extend(commands)
-    if lines:
-        lines.append("printf '%s\\n' " + shlex.quote("::gablue:done"))
-    return "\n".join(lines) + "\n"
+    return _steps_script(steps)
 
 
 def rebase_script(variant: str) -> str:

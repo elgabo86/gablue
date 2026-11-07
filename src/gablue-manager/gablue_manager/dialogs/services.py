@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..local import (
-    auto_update_available, docker_available, local_variant, parse_gablue_progress,
+    docker_available, local_variant, parse_gablue_progress,
     services_choices, services_helpers_available, system_apply_script,
 )
 from ..tasks import LocalTaskDialog, start_task
@@ -38,11 +38,6 @@ CHOICE_LABELS = {
         "Historique atuin",
         "Historique commun à vos terminaux. Ctrl-R pour l'ouvrir.",
     ),
-    "auto_updates": (
-        "Mises à jour automatiques",
-        "Image Gablue (au redémarrage), Flatpaks (système et compte) et "
-        "Homebrew (le samedi).",
-    ),
 }
 
 # Mot affiché dans la confirmation, selon l'état de la case.
@@ -52,7 +47,6 @@ CHOICE_STATE = {
     "low_latency": {True: "activée", False: "désactivée"},
     "broadcom_wl": {True: "activé", False: "désactivé"},
     "atuin": {True: "activée", False: "désactivée — historique conservé"},
-    "auto_updates": {True: "activées", False: "désactivées"},
 }
 
 # Valeur recommandée pour la machine : les réglages de confort Gablue allumés.
@@ -61,7 +55,6 @@ CHOICE_STATE = {
 # quelqu'un qui a justement le dock ou la carte.
 CHOICE_RECOMMENDED = {
     "low_latency": True,    # réglage Gablue
-    "auto_updates": True,   # image et Flatpaks à jour sans y penser
 }
 
 class ServicesDialog(QDialog):
@@ -75,7 +68,6 @@ class ServicesDialog(QDialog):
 
     ROWS = (
         "displaylink", "docker", "low_latency", "broadcom_wl", "atuin",
-        "auto_updates",
     )
 
     def __init__(self, parent=None):
@@ -180,12 +172,8 @@ class ServicesDialog(QDialog):
         choices = self.state["choices"]
         self.initial = dict(choices)
         # Docker n'existe que sur une variante DX : ailleurs, la case n'est pas
-        # affichée du tout (pas de paquet, pas de service). Les mises à jour
-        # automatiques demandent le helper de l'image : sur une image plus
-        # ancienne, la ligne disparaît au lieu de proposer un réglage qui
-        # échouerait.
+        # affichée du tout (pas de paquet, pas de service).
         self.frames["docker"].setVisible(docker_available(variant))
-        self.frames["auto_updates"].setVisible(auto_update_available())
         for key, check in self.checks.items():
             check.blockSignals(True)
             check.setChecked(bool(choices.get(key)))

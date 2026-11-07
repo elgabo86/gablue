@@ -32,6 +32,21 @@ systemctl mask systemd-remount-fs.service
 # ce que le kickstart Anaconda a supprime pendant l'install)
 systemctl mask flatpak-add-fedora-repos.service
 
+# Mises à jour automatiques DÉSACTIVÉES par défaut : c'est l'utilisateur qui
+# choisit, dans Gablue Manager, les domaines (image, Flatpaks, brew) et le
+# rythme (quotidien / hebdomadaire). La base Fedora active les timers par
+# preset ; on retire explicitement les liens pour que l'image livrée n'en
+# active aucun. `gablue-auto-update` les rebranche à la demande.
+for timer in rpm-ostreed-automatic.timer flatpak-system-update.timer \
+             brew-update.timer brew-upgrade.timer; do
+    if systemctl list-unit-files "$timer" > /dev/null 2>&1; then
+        systemctl disable "$timer"
+    fi
+done
+if systemctl list-unit-files flatpak-user-update.timer > /dev/null 2>&1; then
+    systemctl --global disable flatpak-user-update.timer
+fi
+
 # Optimisation réseau automatique via eBPF (aligné Bazzite c9494204)
 systemctl enable bpftune.service
 
@@ -42,13 +57,10 @@ if [ "${DX_MODE:-false}" == "true" ]; then
     systemctl enable -f incus-workaround.service
 fi
 
-systemctl enable rpm-ostreed-automatic.timer
-systemctl enable flatpak-system-update.timer
-systemctl --global enable flatpak-user-update.timer
-
 # Brew : activation du service d'extraction du tarball embarqué
 # (/usr/share/homebrew.tar.zst -> /home/linuxbrew, ConditionPathExists=!/etc/.linuxbrew)
-# + des timers de mise à jour automatique.
+# (les timers brew, eux, sont livrés désactivés comme les autres mises à jour
+# automatiques ; voir le bloc plus haut).
 # Le preset 01-homebrew.preset (enable brew-setup.service) n'est PAS appliqué
 # aux déploiements bootc/ostree (les presets systemd ne sont évalués qu'à
 # l'installation de RPMs, pas au déploiement d'une image container) : sans cet
@@ -56,8 +68,6 @@ systemctl --global enable flatpak-user-update.timer
 # dépendant de brew (opencode2-install...) échoue sur les installations
 # fraîches (même bug Bazzite #3788/#3817, corrigé de la même façon upstream).
 systemctl enable brew-setup.service
-systemctl enable brew-update.timer
-systemctl enable brew-upgrade.timer
 
 # Services HDMI-CEC pour contrôle TV
 systemctl enable cec-poweroff-tv.service

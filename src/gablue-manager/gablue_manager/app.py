@@ -27,6 +27,12 @@ suppression d'ES-DE, Azahar, Eden, Xenia, ShadPS4 et OpenCode 2 (configuration,
 sauvegardes et sessions conservées). Les opérations s'ouvrent dans leur propre
 fenêtre : plusieurs postes peuvent être traités en même temps.
 
+  --tray
+      Icône de barre d'état seule (démarrage de session). Un clic ouvre la
+      fenêtre ; une pastille rouge signale un redémarrage requis ou une mise
+      à jour. La fenêtre n'est chargée qu'au clic : aucune sonde SSH ni
+      registre des postes avant.
+
 Modes sans fenêtre principale (utilisés par gwine) :
   --progress --title T [--subtitle T] [--auto-close-success] -- commande…
       Exécute la commande dans la fenêtre de progression du manager, journal
@@ -42,8 +48,22 @@ Modes sans fenêtre principale (utilisés par gwine) :
       diffère) et l'imprime sur la sortie ; sortie 1 si annulé.
 
 Configuration : ~/.config/gablue/ssh-hosts.json (mode 0600)
+                ~/.config/gablue/preferences.json (barre d'état)
 Clé locale    : ~/.ssh/id_ed25519 (créée au besoin, sans passphrase)
 """
+
+def _has_display() -> bool:
+    return bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
+
+def _raise_window(server, window) -> None:
+    """Un second lancement ramène la fenêtre existante, sans en ouvrir une autre."""
+    socket = server.nextPendingConnection()
+    if socket is None:
+        return
+    socket.disconnected.connect(socket.deleteLater)
+    window.show()
+    window.raise_()
+    window.activateWindow()
 
 def main() -> int:
     args = sys.argv[1:]
@@ -52,16 +72,22 @@ def main() -> int:
     if any(arg in ("-h", "--help") for arg in head):
         print(HELP)
         return 0
+    if args == ["--tray"]:
+        if not _has_display():
+            return 0        # démarrage de session sans affichage : rien à faire
+        from .tray import run
+        return run()
     if args:
         from .cli import run
         return run(args)
-    if not (os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")):
+    if not _has_display():
         print("gablue-manager : aucun affichage (Wayland/X11) disponible.",
               file=sys.stderr)
         return 1
 
     from PySide6.QtWidgets import QApplication
 
+    from . import instance
     from .uiutil import app_icon
     from .window import MainWindow
 
@@ -72,6 +98,11 @@ def main() -> int:
     app.setOrganizationName("Gablue")
     app.setWindowIcon(app_icon())
 
+    server = instance.claim(instance.gui_socket())
+    if server is None:
+        instance.send(instance.gui_socket(), b"raise")
+        return 0
     window = MainWindow()
+    server.newConnection.connect(lambda: _raise_window(server, window))
     window.show()
     return app.exec()

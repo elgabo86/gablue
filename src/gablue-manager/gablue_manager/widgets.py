@@ -402,6 +402,7 @@ class LocalCard(QFrame):
     update_requested = Signal(str)   # "gablue" | "flatpak" | "gwine" | "brew"
     apps_requested = Signal()
     kernel_requested = Signal()
+    updates_requested = Signal()
     services_requested = Signal()
     variant_requested = Signal()
     gwine_requested = Signal()
@@ -497,6 +498,9 @@ class LocalCard(QFrame):
         config_menu = QMenu(self.config_button)
         config_menu.addAction("Noyau et matériel…", self.kernel_requested.emit)
         config_menu.addSeparator()
+        config_menu.addAction(
+            "Mises à jour automatiques…", self.updates_requested.emit
+        )
         config_menu.addAction(
             "Services et pilotes…", self.services_requested.emit
         )

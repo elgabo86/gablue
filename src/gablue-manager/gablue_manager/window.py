@@ -30,8 +30,10 @@ from .dialogs.kernel import LocalSettingsDialog, RemoteSettingsDialog
 from .dialogs.key import KeyInstallDialog
 from .dialogs.services import ServicesDialog
 from .dialogs.tailscale import TailscaleDialog
+from .dialogs.updates import AutoUpdatesDialog
 from .dialogs.variant import VariantDialog
 from .hosts import load_hosts, save_hosts
+from . import instance, prefs
 from .local import (
     _sudo_run, avahi_apply_args, avahi_publish_state, brew_available,
     brew_progress_parser, brew_update_hint, brew_update_script,
@@ -138,6 +140,25 @@ class MainWindow(QMainWindow):
         self.refresh_button.clicked.connect(lambda: self.refresh_all(force=True))
         header_layout.addWidget(self.refresh_button)
 
+        # Préférences de l'app : l'icône de barre d'état se coupe ici, sans
+        # toucher à l'autostart (le mode tray relit la préférence au démarrage
+        # de session et sort tout seul quand elle est désactivée).
+        self.settings_button = _make_tool_button(
+            header, "settings-configure", "⚙"
+        )
+        self.settings_button.setToolTip("Préférences")
+        settings_menu = QMenu(self.settings_button)
+        self.tray_action = settings_menu.addAction(
+            "Icône dans la barre d'état"
+        )
+        self.tray_action.setCheckable(True)
+        self.tray_action.setChecked(prefs.tray_enabled())
+        self.tray_action.toggled.connect(self.set_tray_enabled)
+        settings_menu.addSeparator()
+        settings_menu.addAction("Quitter Gablue Manager", self.close)
+        self.settings_button.setMenu(settings_menu)
+        header_layout.addWidget(self.settings_button)
+
         # Un seul point d'entrée pour peupler la liste : la recherche sur le
         # réseau local est une façon d'ajouter un poste, pas une commande à
         # part dans un menu « ⋯ » séparé.
@@ -167,6 +188,7 @@ class MainWindow(QMainWindow):
         self.local_card.update_requested.connect(self.local_update)
         self.local_card.apps_requested.connect(self.open_apps)
         self.local_card.kernel_requested.connect(self.open_settings)
+        self.local_card.updates_requested.connect(self.open_local_updates)
         self.local_card.services_requested.connect(self.open_local_services)
         self.local_card.variant_requested.connect(self.open_local_variant)
         self.local_card.gwine_requested.connect(self.open_local_gwine_options)
@@ -398,6 +420,16 @@ class MainWindow(QMainWindow):
         checker.finished_all.connect(self._on_check_done)
         self._checker = checker
         checker.start()
+
+    # -- préférences ---------------------------------------------------------
+    def set_tray_enabled(self, enabled: bool) -> None:
+        """Active ou coupe l'icône de barre d'état (préférence utilisateur)."""
+        prefs.set_tray_enabled(enabled)
+        if enabled:
+            command = instance.manager_command() + ["--tray"]
+            QProcess.startDetached(command[0], command[1:])
+        else:
+            instance.send(instance.tray_socket(), b"quit")
 
     def _on_check_result(self, host_id: str, state: str, detail: str,
                          latency: float, address: str) -> None:
@@ -1368,6 +1400,9 @@ class MainWindow(QMainWindow):
 
     def open_local_services(self) -> None:
         ServicesDialog(self).exec()
+
+    def open_local_updates(self) -> None:
+        AutoUpdatesDialog(self).exec()
 
     def open_local_variant(self) -> None:
         VariantDialog(self).exec()
