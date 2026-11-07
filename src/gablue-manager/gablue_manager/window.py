@@ -14,7 +14,8 @@ from PySide6.QtCore import QEvent, QProcess, QSize, QTimer, Qt
 from PySide6.QtGui import QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
-    QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QStackedWidget, QToolButton, QVBoxLayout,
+    QWidget,
 )
 
 from .constants import (
@@ -156,6 +157,9 @@ class MainWindow(QMainWindow):
             header, "settings-configure", "⚙"
         )
         self.settings_button.setToolTip("Préférences")
+        # Sans InstantPopup, un clic rapide sur un QToolButton à menu ne fait
+        # rien (il faut maintenir le bouton) : le menu ne s'ouvrait jamais.
+        self.settings_button.setPopupMode(QToolButton.InstantPopup)
         settings_menu = QMenu(self.settings_button)
         settings_menu.addAction("Préférences…", self.open_prefs)
         settings_menu.addSeparator()
