@@ -314,11 +314,10 @@ class MainWindow(QMainWindow):
         self.avahi_button.clicked.connect(self.toggle_avahi)
         footer_layout.addWidget(self.avahi_button)
         footer_layout.addSpacing(10)
-        self.auto_label = QLabel(
-            f"Vérification automatique toutes les {REFRESH_MS // 1000} s "
-            "(F5 : tout revérifier)",
-            footer,
-        )
+        # Libellé libre, sans horodatage : il n'affiche que des messages
+        # ponctuels (recherche réseau, session fermée), effacés à la passe
+        # suivante. La vérification automatique reste silencieuse.
+        self.auto_label = QLabel("", footer)
         self.auto_label.setObjectName("footer")
         footer_layout.addWidget(self.auto_label)
         root.addWidget(footer)
@@ -600,12 +599,7 @@ class MainWindow(QMainWindow):
         else:
             noun = "poste" if total == 1 else "postes"
             self.footer_label.setText(f"{total} {noun} · {online} en ligne")
-        if self._last_check:
-            self.auto_label.setText(
-                "Vérifié à "
-                + time.strftime("%H:%M:%S", time.localtime(self._last_check))
-                + f" · auto toutes les {REFRESH_MS // 1000} s"
-            )
+        self.auto_label.setText("")
 
     # -- serveur SSH local --------------------------------------------------
     def _pending(self, process: QProcess | None) -> bool:
