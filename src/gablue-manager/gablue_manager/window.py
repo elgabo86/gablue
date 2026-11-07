@@ -1027,16 +1027,17 @@ class MainWindow(QMainWindow):
             self, "Mettre à jour gwine",
             f"Mettre à jour gwine sur « {display_name(host)} » "
             f"({address_text(host)}) ?\n\n"
-            "gwine --init réinstalle le runner et ses composants (DXVK, VKD3D) "
-            "puis vérifie le préfixe. Le téléchargement peut prendre plusieurs "
-            "minutes.",
+            "gwine --init vérifie s'il existe une nouvelle version du runner "
+            "Wine ou de ses composants (DXVK, VKD3D, D7VK) et ne réinitialise "
+            "le préfixe que dans ce cas. Sur un poste déjà à jour, rien n'est "
+            "modifié ; sinon le téléchargement peut prendre plusieurs minutes.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
         self._run_remote_script(
             host, f"gwine — {display_name(host)}",
-            "gwine --init — runner et composants Windows.",
+            "gwine --init — vérification du runner et des composants.",
             "gwine --init\n",
         )
 
@@ -1194,16 +1195,17 @@ class MainWindow(QMainWindow):
         answer = QMessageBox.question(
             self, "Mise à jour de gwine",
             "Mettre à jour gwine ?\n\n"
-            "gwine --init réinstalle le runner Wine et ses composants "
-            "(DXVK, VKD3D) puis vérifie le préfixe. Le téléchargement peut "
-            "prendre plusieurs minutes.",
+            "gwine --init vérifie s'il existe une nouvelle version du runner "
+            "Wine ou de ses composants (DXVK, VKD3D, D7VK) et ne réinitialise "
+            "le préfixe que dans ce cas. Sur un poste déjà à jour, rien n'est "
+            "modifié ; sinon le téléchargement peut prendre plusieurs minutes.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
         self._run_local_task(
             "Mise à jour de gwine",
-            "gwine --init — runner et composants Windows.",
+            "gwine --init — vérification du runner et des composants.",
             [gwine, "--init"],
         )
 

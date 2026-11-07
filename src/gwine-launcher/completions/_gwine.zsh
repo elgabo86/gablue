@@ -15,7 +15,8 @@ gwine_commands() {
         '--reset:Réinitialiser toutes les options par défaut'
         '--nofix:Ignorer le fichier .fix d'"'"'un jeu'
         '--exewgp:Mode interactif pour choisir l\'exécutable dans un WGP'
-        '--init:Initialiser/réinitialiser le préfixe Wine'
+        '--init:Initialiser le préfixe Wine (si un composant a changé)'
+        '--force:Forcer la réinitialisation complète du préfixe (avec --init)'
         '--offline:Mode offline pour --init'
         '--update:Mettre à jour les composants'
         '--kdialog:Activer les dialogues graphiques kdialog'
@@ -79,7 +80,8 @@ _arguments -C \
     '--reset[Réinitialiser toutes les options par défaut]' \
     '--nofix[Ignorer le fichier .fix d'"'"'un jeu]' \
     '--exewgp[Mode interactif pour choisir l\'exécutable dans un WGP]' \
-    '--init[Initialiser/réinitialiser le préfixe Wine]' \
+    '--init[Initialiser le préfixe Wine (si un composant a changé)]' \
+    '--force[Forcer la réinitialisation complète du préfixe (avec --init)]' \
     '--offline[Mode offline pour --init]' \
     '--update[Mettre à jour les composants]' \
     '--kdialog[Activer les dialogues graphiques kdialog]' \

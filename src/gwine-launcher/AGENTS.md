@@ -120,7 +120,8 @@ src/gwine-launcher/
 
 ### Initialisation et mise à jour
 ```bash
-./gwine --init                  # Initialisation standard
+./gwine --init                  # Init/MAJ : seulement si un composant a changé
+./gwine --init --force          # Réinitialisation complète forcée
 ./gwine --init --offline        # Mode offline
 ./gwine --init --kdialog        # Avec interface graphique
 ./gwine --init --dxvk-async     # Init avec DXVK-GPLAsync
@@ -128,6 +129,11 @@ src/gwine-launcher/
 ./gwine --download-components   # Télécharger tous les composants
 ./gwine --cachepack             # Créer un pack cache pour offline
 ```
+
+`--init` est la voie de mise à jour (gablue-manager, local et distant) : il ne
+réinitialise le préfixe que si un composant manque ou a une nouvelle version
+(runner gwine, DXVK/GPLAsync, VKD3D, D7VK, NVAPI, Mono/Gecko, wincomponents) ;
+sinon il rend la main sans rien toucher. `--force` réinitialise même à jour.
 
 ### Mode DXVK
 ```bash

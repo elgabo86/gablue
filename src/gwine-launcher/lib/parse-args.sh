@@ -11,7 +11,8 @@ show_help() {
     echo ""
     echo "Options:"
     echo "  --help            Afficher cette aide"
-    echo "  --init            Initialiser/réinitialiser le préfixe Wine"
+    echo "  --init            Initialiser/réinitialiser le préfixe Wine (seulement si un composant a changé)"
+    echo "  --force           Forcer la réinitialisation complète du préfixe (avec --init)"
     echo "  --offline         Mode offline pour --init (vérifie que les composants sont en cache)"
     echo "  --update          Mettre à jour les composants (DXVK, VKD3D, gwine)"
     echo "  --kdialog         Activer les dialogues graphiques kdialog pour --init et --update"
@@ -67,6 +68,7 @@ show_help() {
     echo "  gwine ~/Jeux/monjeu.exe"
     echo "  gwine --init"
     echo "  gwine --init --dxvk-async   # Init avec DXVK-GPLAsync"
+    echo "  gwine --init --force        # Réinitialiser même sans nouveau composant"
     echo "  gwine --dxvk                # Utiliser DXVK standard"
     echo "  gwine --dxvk-async          # Utiliser DXVK-GPLAsync (DXVK_ASYNC=1)"
     echo "  gwine --x11                 # Utiliser X11/XWayland comme mode d'affichage"
@@ -86,7 +88,7 @@ show_help() {
 }
 
 # Options valides reconnues par gwine
-VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--dxvk" "--dxvk-async" "--gamescope" "--gamescope-args" "--720" "--900" "--1080" "--no-gamescope")
+VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--force" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--dxvk" "--dxvk-async" "--gamescope" "--gamescope-args" "--720" "--900" "--1080" "--no-gamescope")
 
 # Vérifie si une option est valide
 is_valid_option() {
@@ -151,6 +153,10 @@ parse_arguments() {
                 ;;
             --init)
                 export init_mode=true
+                shift
+                ;;
+            --force)
+                force_init=true
                 shift
                 ;;
             --offline)

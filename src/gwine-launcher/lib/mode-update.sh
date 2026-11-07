@@ -231,7 +231,7 @@ update_components() {
     
     # Compter le nombre total d'étapes
     local TOTAL_STEPS=0
-    [ -n "$latest_gwine" ] && ((TOTAL_STEPS++))
+    [ -n "$latest_runner" ] && ((TOTAL_STEPS++))
     [ -n "$latest_dxvk" ] || [ -n "$latest_vkd3d" ] || [ "$needs_d7vk_update" = true ] && ((TOTAL_STEPS++))
     [ "$needs_dxvk_async_update" = true ] && ((TOTAL_STEPS++))
     [ "$needs_nvapi_update" = true ] && ((TOTAL_STEPS++))

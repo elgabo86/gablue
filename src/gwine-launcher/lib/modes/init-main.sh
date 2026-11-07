@@ -6,6 +6,29 @@
 
 init_prefix_only() {
     
+    # `gwine --init` est la voie de mise à jour (gablue-manager, poste local
+    # ou distant) : sans nouveau composant et avec un préfixe sain, ne rien
+    # refaire. `--force` réinitialise le préfixe à la demande, et `--offline`
+    # reste une init explicite depuis le cache (pas de version à comparer).
+    # `--reset` et les modes DXVK explicites changent les DLL du préfixe :
+    # l'init complète s'impose même sans nouvelle version.
+    local explicit_reinit=false
+    if [ "${force_init:-false}" = "true" ] || [ "${reset_mode:-false}" = "true" ] || \
+       [ "${dxvk_mode:-false}" = "true" ] || [ "${dxvk_async_mode:-false}" = "true" ]; then
+        explicit_reinit=true
+    fi
+    if [ "${OFFLINE_MODE:-false}" != "true" ] && [ "$explicit_reinit" != "true" ] \
+       && [ -d "$WINEPREFIX" ] && [ -f "$WINEPREFIX/system.reg" ] \
+       && ! components_update_available; then
+        echo "Tous les composants sont déjà à jour, le préfixe Wine est conservé."
+        echo "Utilisez 'gwine --init --force' pour réinitialiser le préfixe."
+        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+            kdialog --title "Initialisation du préfixe Wine" --msgbox \
+                "Tous les composants sont déjà à jour.\n\nLe préfixe Wine n'a pas été modifié. Utilisez 'gwine --init --force' pour le réinitialiser." 2>/dev/null || true
+        fi
+        exit 0
+    fi
+
     echo "Initialisation du préfixe Wine..."
     echo "Runner utilisé: gwine"
     
@@ -53,8 +76,11 @@ init_prefix_only() {
         if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
             kdialog --passivepopup "Vérification des mises à jour du runner..." 5
         fi
-        # Toujours vérifier les mises à jour, même si le runner est déjà installé
-        download_gwine "force"
+        # --force réinstalle le runner même à version égale (réparation) ;
+        # sinon seul un runner plus récent est téléchargé.
+        local runner_force="false"
+        [ "${force_init:-false}" = "true" ] && runner_force="true"
+        download_gwine "$runner_force"
     fi
     
     require_wine

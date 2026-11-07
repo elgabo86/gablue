@@ -8,7 +8,7 @@ gwine_completions() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Options disponibles
-    opts="--help -h --fix --xbox --xbox-ds4 --xbox-dualsense --xbox-on --xbox-off --reset --nofix --exewgp --init --offline --update --kdialog --cmd
+    opts="--help -h --fix --xbox --xbox-ds4 --xbox-dualsense --xbox-on --xbox-off --reset --nofix --exewgp --init --force --offline --update --kdialog --cmd
           --regedit --reg --winecfg --winetricks --winetrick --download-components
           --cachepack --nosandbox --joytest --args --gameid --use-ln-mounts --kill --dir
           --x11 --wayland --env --dxvk --dxvk-async --gamescope --gamescope-args --720 --900 --1080 --no-gamescope"
