@@ -1,25 +1,25 @@
 #!/usr/bin/bash
 
-# gablue-auto-update — mises à jour automatiques : domaines et rythme
+# gablue-auto-update — mises à jour automatiques : domaines et fréquences
 #
 # Appelé via sudo -n (règles NOPASSWD exactes dans /etc/sudoers.d/nopasswd) :
 # le script n'accepte QUE les formes listées ci-dessous, jamais un `systemctl`
 # libre en root. Les timers sont livrés DÉSACTIVÉS par l'image : c'est
 # l'utilisateur qui choisit, depuis Gablue Manager, ce qui se met à jour tout
-# seul et à quel rythme.
+# seul et à quelle fréquence (chaque domaine a la sienne).
 #
 # Le timer Flatpak de la session (~/.config/systemd/user) n'est pas ici : il
 # appartient à l'utilisateur, Gablue Manager le bascule et lui écrit son
 # calendrier sans privilège.
 #
 # Brew est deux unités (update puis upgrade, ordonné par drop-in) : on bascule
-# toujours les deux ensemble.
+# toujours les deux ensemble, et une seule fréquence les pilote.
 #
 # Usage : gablue-auto-update status
 #         gablue-auto-update image on|off
 #         gablue-auto-update flatpak on|off
 #         gablue-auto-update brew on|off
-#         gablue-auto-update schedule daily|weekly
+#         gablue-auto-update schedule image|flatpak|brew daily|weekly
 
 set -eu
 
@@ -29,13 +29,13 @@ FLATPAK_TIMER=flatpak-system-update.timer
 BREW_TIMERS=(brew-update.timer brew-upgrade.timer)
 SCHEDULE_DROPIN=50-gablue-schedule.conf
 SYSTEM_DIR=/etc/systemd/system
-# Rythmes proposés : 04:00, comme l'image (samedi par défaut), pour que les
-# mises à jour soient prêtes au réveil sans réveiller la machine exprès.
+# Fréquences proposées : 04:00, comme l'image (samedi par défaut), pour que
+# les mises à jour soient prêtes au réveil sans réveiller la machine exprès.
 DAILY_CALENDAR='*-*-* 04:00:00'
 WEEKLY_CALENDAR='Sat *-*-* 04:00:00'
 
 usage() {
-    echo "Usage : gablue-auto-update status | image on|off | flatpak on|off | brew on|off | schedule daily|weekly" >&2
+    echo "Usage : gablue-auto-update status | image on|off | flatpak on|off | brew on|off | schedule image|flatpak|brew daily|weekly" >&2
     exit 2
 }
 
@@ -66,36 +66,70 @@ switch_units() {
     fi
 }
 
+# Fréquence effective d'une unité : notre drop-in s'il existe, sinon l'image
+# est hebdomadaire (samedi 04:00 dans les unités livrées).
+unit_frequency() {
+    local unit="$1"
+    local calendar
+    calendar="$(
+        sed -n 's/^OnCalendar=//p' \
+            "${SYSTEM_DIR}/${unit}.d/${SCHEDULE_DROPIN}" \
+            2>/dev/null | tail -n 1
+    )"
+    case "$calendar" in
+        ""|*Sat*) echo weekly ;;
+        *) echo daily ;;
+    esac
+}
+
+status() {
+    if "$SYSTEMCTL" is-enabled --quiet "$IMAGE_TIMER"; then
+        echo "image=enabled"
+    else
+        echo "image=disabled"
+    fi
+    if "$SYSTEMCTL" is-enabled --quiet "$FLATPAK_TIMER"; then
+        echo "flatpak=enabled"
+    else
+        echo "flatpak=disabled"
+    fi
+    brew=enabled
+    for unit in "${BREW_TIMERS[@]}"; do
+        "$SYSTEMCTL" is-enabled --quiet "$unit" || brew=disabled
+    done
+    echo "brew=$brew"
+    echo "image_frequency=$(unit_frequency "$IMAGE_TIMER")"
+    echo "flatpak_frequency=$(unit_frequency "$FLATPAK_TIMER")"
+    echo "brew_frequency=$(unit_frequency "${BREW_TIMERS[0]}")"
+}
+
+# Fréquence d'UN domaine : ses unités seulement, sans toucher aux autres.
+schedule_domain() {
+    local domain="$1"
+    local calendar="$2"
+    local units=()
+    case "$domain" in
+        image) units=("$IMAGE_TIMER") ;;
+        flatpak) units=("$FLATPAK_TIMER") ;;
+        brew) units=("${BREW_TIMERS[@]}") ;;
+        *) usage ;;
+    esac
+    for unit in "${units[@]}"; do
+        write_schedule "$unit" "$calendar"
+    done
+    "$SYSTEMCTL" daemon-reload
+    # Un timer déjà actif reprend la nouvelle fréquence tout de suite.
+    for unit in "${units[@]}"; do
+        if "$SYSTEMCTL" is-active --quiet "$unit"; then
+            "$SYSTEMCTL" restart "$unit"
+        fi
+    done
+}
+
 case "${1:-}" in
     status)
         [ $# -eq 1 ] || usage
-        if "$SYSTEMCTL" is-enabled --quiet "$IMAGE_TIMER"; then
-            echo "image=enabled"
-        else
-            echo "image=disabled"
-        fi
-        if "$SYSTEMCTL" is-enabled --quiet "$FLATPAK_TIMER"; then
-            echo "flatpak=enabled"
-        else
-            echo "flatpak=disabled"
-        fi
-        brew=enabled
-        for unit in "${BREW_TIMERS[@]}"; do
-            "$SYSTEMCTL" is-enabled --quiet "$unit" || brew=disabled
-        done
-        echo "brew=$brew"
-        # Calendrier effectif : notre drop-in s'il existe, sinon l'image est
-        # hebdomadaire (samedi 04:00 dans les unités livrées).
-        calendar="$(
-            sed -n 's/^OnCalendar=//p' \
-                "${SYSTEM_DIR}/${FLATPAK_TIMER}.d/${SCHEDULE_DROPIN}" \
-                2>/dev/null | tail -n 1
-        )"
-        case "$calendar" in
-            "") echo "frequency=weekly" ;;
-            *Sat*) echo "frequency=weekly" ;;
-            *) echo "frequency=daily" ;;
-        esac
+        status
         ;;
     image)
         [ $# -eq 2 ] || usage
@@ -113,22 +147,13 @@ case "${1:-}" in
         switch_units "$2" "${BREW_TIMERS[@]}"
         ;;
     schedule)
-        [ $# -eq 2 ] || usage
-        case "$2" in
+        [ $# -eq 3 ] || usage
+        case "$3" in
             daily)  calendar="$DAILY_CALENDAR" ;;
             weekly) calendar="$WEEKLY_CALENDAR" ;;
             *) usage ;;
         esac
-        for unit in "$IMAGE_TIMER" "$FLATPAK_TIMER" "${BREW_TIMERS[@]}"; do
-            write_schedule "$unit" "$calendar"
-        done
-        "$SYSTEMCTL" daemon-reload
-        # Un timer déjà actif reprend le nouveau calendrier tout de suite.
-        for unit in "$IMAGE_TIMER" "$FLATPAK_TIMER" "${BREW_TIMERS[@]}"; do
-            if "$SYSTEMCTL" is-active --quiet "$unit"; then
-                "$SYSTEMCTL" restart "$unit"
-            fi
-        done
+        schedule_domain "$2" "$calendar"
         ;;
     *)
         usage

@@ -192,7 +192,7 @@ Tous appelés en `sudo -n` par Gablue Manager (règles NOPASSWD exactes) et ferm
 requis), `gablue-rebase <variante>` (`rpm-ostree rebase` vers
 `ostree-image-signed:docker://ghcr.io/elgabo86/gablue-<variante>:latest`, variantes publiées
 seulement, effet au redémarrage) et `gablue-auto-update` (`status` ;
-`image|flatpak|brew on|off` ; `schedule daily|weekly` — timers
+`image|flatpak|brew on|off` ; `schedule image|flatpak|brew daily|weekly` (fréquence propre à chaque domaine) — timers
 `rpm-ostreed-automatic.timer`, `flatpak-system-update.timer` et les deux de brew,
 livrés **désactivés** par l'image : les mises à jour automatiques sont un opt-in
 depuis Gablue Manager ; le timer Flatpak de la session reste à l'utilisateur, le

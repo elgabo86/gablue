@@ -1,10 +1,11 @@
-"""Mises à jour automatiques : opt-in, domaines et rythme.
+"""Mises à jour automatiques : opt-in, domaines et fréquence par domaine.
 
 L'image Gablue livre tous les timers **désactivés** : c'est l'utilisateur qui
 décide ici ce qui se met à jour tout seul (image, Flatpaks, Homebrew) et à
-quel rythme (quotidien ou hebdomadaire). Le helper privilégié
-`/usr/libexec/gablue-auto-update` applique les timers système ; le timer
-Flatpak du compte est basculé sans privilège (`systemctl --user`).
+quelle fréquence — chaque domaine a la sienne (quotidien ou hebdomadaire).
+Le helper privilégié `/usr/libexec/gablue-auto-update` applique les timers
+système ; le timer Flatpak du compte est basculé sans privilège
+(`systemctl --user`).
 """
 
 from PySide6.QtCore import Qt
@@ -41,8 +42,9 @@ FREQUENCIES = (
     ("weekly", "Chaque semaine"),
 )
 
+
 class AutoUpdatesDialog(QDialog):
-    """Trois domaines, un rythme, un seul « Appliquer ».
+    """Trois domaines, une fréquence chacun, un seul « Appliquer ».
 
     Rien n'est activé par défaut : tant que l'utilisateur ne coche rien,
     aucun timer ne tourne. Cocher un domaine active à la fois les timers
@@ -55,7 +57,7 @@ class AutoUpdatesDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Mises à jour automatiques")
         self.setModal(True)
-        self.setMinimumWidth(680)
+        self.setMinimumWidth(700)
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(24, 22, 24, 20)
@@ -67,7 +69,7 @@ class AutoUpdatesDialog(QDialog):
 
         note = QLabel(
             "Désactivées par défaut. Choisissez ce qui se met à jour tout "
-            "seul et à quel rythme ; les mises à jour ont lieu la nuit, sans "
+            "seul et sa fréquence ; les mises à jour ont lieu la nuit, sans "
             "réveiller la machine.",
             self,
         )
@@ -80,33 +82,16 @@ class AutoUpdatesDialog(QDialog):
         root_layout.addLayout(self.rows_layout, 1)
         self.frames: dict[str, QFrame] = {}
         self.checks: dict[str, QCheckBox] = {}
+        self.combos: dict[str, QComboBox] = {}
         for key in self.ROWS:
             self._add_row(key)
-
-        # Rythme commun aux trois domaines : un seul calendrier à retenir.
-        schedule = QFrame(self)
-        schedule.setObjectName("hostCard")
-        schedule_layout = QHBoxLayout(schedule)
-        schedule_layout.setContentsMargins(16, 12, 16, 12)
-        schedule_layout.setSpacing(10)
-        schedule_title = QLabel("Rythme", schedule)
-        schedule_title.setObjectName("hostName")
-        schedule_layout.addWidget(schedule_title)
-        schedule_layout.addStretch(1)
-        self.frequency_combo = QComboBox(schedule)
-        self.frequency_combo.setCursor(Qt.PointingHandCursor)
-        for value, label in FREQUENCIES:
-            self.frequency_combo.addItem(label, value)
-        self.frequency_combo.currentIndexChanged.connect(self._update_apply)
-        schedule_layout.addWidget(self.frequency_combo)
-        root_layout.addWidget(schedule)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(10)
         self.hint_label = QLabel(self)
         self.hint_label.setObjectName("hostStatus")
-        buttons.addWidget(self.hint_label)
-        buttons.addStretch(1)
+        self.hint_label.setWordWrap(True)
+        buttons.addWidget(self.hint_label, 1)
         self.close_button = QPushButton("Fermer", self)
         self.close_button.setObjectName("ghost")
         self.close_button.setCursor(Qt.PointingHandCursor)
@@ -121,9 +106,11 @@ class AutoUpdatesDialog(QDialog):
 
         self.state: dict = {"ok": False}
         self.initial: dict[str, bool] = {}
-        self.initial_frequency = "weekly"
+        self.initial_frequencies: dict[str, str] = {
+            key: "weekly" for key in self.ROWS
+        }
         self.refresh()
-        fit_dialog_height(self, 680)
+        fit_dialog_height(self, 700)
 
     # -- construction -------------------------------------------------------
     def _add_row(self, key: str) -> None:
@@ -134,11 +121,25 @@ class AutoUpdatesDialog(QDialog):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(6)
 
+        top = QHBoxLayout()
+        top.setSpacing(10)
         check = QCheckBox(label, frame)
         check.setCursor(Qt.PointingHandCursor)
         check.toggled.connect(self._update_apply)
-        layout.addWidget(check)
+        top.addWidget(check)
+        top.addStretch(1)
+        frequency_label = QLabel("Fréquence", frame)
+        frequency_label.setObjectName("hostStatus")
+        top.addWidget(frequency_label)
+        combo = QComboBox(frame)
+        combo.setCursor(Qt.PointingHandCursor)
+        for value, text in FREQUENCIES:
+            combo.addItem(text, value)
+        combo.currentIndexChanged.connect(self._update_apply)
+        top.addWidget(combo)
+        layout.addLayout(top)
         self.checks[key] = check
+        self.combos[key] = combo
 
         detail = QLabel(description, frame)
         detail.setObjectName("hostDetail")
@@ -157,17 +158,21 @@ class AutoUpdatesDialog(QDialog):
         self.initial = {
             key: bool(choices.get(key)) for key in self.ROWS
         }
-        self.initial_frequency = self.state.get("frequency", "weekly")
+        frequencies = self.state.get("frequencies") or {}
+        self.initial_frequencies = {
+            key: frequencies.get(key, "weekly") for key in self.ROWS
+        }
         for key, check in self.checks.items():
             check.blockSignals(True)
             check.setChecked(self.initial[key])
             check.blockSignals(False)
             check.setEnabled(available)
-        index = self.frequency_combo.findData(self.initial_frequency)
-        self.frequency_combo.blockSignals(True)
-        self.frequency_combo.setCurrentIndex(index if index >= 0 else 1)
-        self.frequency_combo.blockSignals(False)
-        self.frequency_combo.setEnabled(available)
+        for key, combo in self.combos.items():
+            index = combo.findData(self.initial_frequencies[key])
+            combo.blockSignals(True)
+            combo.setCurrentIndex(index if index >= 0 else 1)
+            combo.blockSignals(False)
+            combo.setEnabled(available)
         if not available:
             self.hint_label.setText(
                 "Helper absent de cette image — reconstruction requise."
@@ -183,44 +188,57 @@ class AutoUpdatesDialog(QDialog):
             if self.checks[key].isChecked() != self.initial[key]
         ]
 
-    def frequency_changed(self) -> bool:
-        return (
-            bool(self.state.get("ok"))
-            and self.frequency_combo.currentData() != self.initial_frequency
-        )
+    def frequency_changes(self) -> dict[str, str]:
+        """Fréquences choisies qui diffèrent de l'état courant."""
+        if not self.state.get("ok"):
+            return {}
+        return {
+            key: self.combos[key].currentData()
+            for key in self.ROWS
+            if self.combos[key].currentData() != self.initial_frequencies[key]
+        }
 
     def _update_apply(self) -> None:
         if not self.state.get("ok"):
             self.apply_button.setEnabled(False)
             return
         changed = self.changed()
-        rhythm = self.frequency_changed()
-        self.apply_button.setEnabled(bool(changed) or rhythm)
+        frequencies = self.frequency_changes()
+        self.apply_button.setEnabled(bool(changed) or bool(frequencies))
+        parts: list[str] = []
         if changed:
             count = len(changed)
-            text = f"{count} domaine{'s' if count > 1 else ''} à appliquer"
-            if rhythm:
-                text += " et le rythme"
-            self.hint_label.setText(text)
-        elif rhythm:
-            self.hint_label.setText("Nouveau rythme à appliquer")
-        else:
-            self.hint_label.setText("Aucun changement.")
+            parts.append(
+                f"{count} domaine{'s' if count > 1 else ''} "
+                f"modifié{'s' if count > 1 else ''}"
+            )
+        if frequencies:
+            count = len(frequencies)
+            parts.append(
+                f"{count} fréquence{'s' if count > 1 else ''} "
+                f"modifiée{'s' if count > 1 else ''}"
+            )
+        self.hint_label.setText(
+            " et ".join(parts) if parts else "Aucun changement."
+        )
 
     # -- application --------------------------------------------------------
     def apply_changes(self) -> None:
         keys = self.changed()
-        frequency = self.frequency_combo.currentData()
-        frequency_changed = self.frequency_changed()
-        if not keys and not frequency_changed:
+        frequencies = self.frequency_changes()
+        if not keys and not frequencies:
             return
         details = [
             f"• {DOMAIN_LABELS[key][0]} : "
             f"{'activé' if self.checks[key].isChecked() else 'désactivé'}"
             for key in keys
         ]
-        if frequency_changed:
-            details.append(f"• Rythme : {self.frequency_combo.currentText()}")
+        for key, value in frequencies.items():
+            text = next(
+                label for candidate, label in FREQUENCIES
+                if candidate == value
+            )
+            details.append(f"• {DOMAIN_LABELS[key][0]} : {text.lower()}")
         answer = QMessageBox.question(
             self, "Mises à jour automatiques",
             "Appliquer ces réglages ?\n\n" + "\n".join(details) + "\n\n"
@@ -238,11 +256,10 @@ class AutoUpdatesDialog(QDialog):
             subtitle="Journal des opérations.",
             argv=[
                 "/usr/bin/bash", "-c",
-                auto_update_script(changes, desired, frequency),
+                auto_update_script(changes, desired, frequencies),
             ],
-            # Le script annonce chaque domaine (`::gablue:step`) : la barre
-            # avance par réglage appliqué, le journal reste derrière
-            # « Terminal ».
+            # Le script annonce chaque réglage (`::gablue:step`) : la barre
+            # avance par opération, le journal reste derrière « Terminal ».
             progress_parser=parse_gablue_progress,
             progress_text="Application des réglages…",
             reveal_log_on_error=True,
@@ -251,9 +268,9 @@ class AutoUpdatesDialog(QDialog):
         self.accept()
 
     def reject(self) -> None:
-        # Fermer avec des cases modifiées ne doit pas jeter les choix en
-        # silence : l'application se fait uniquement par « Appliquer ».
-        if self.changed() or self.frequency_changed():
+        # Fermer avec des réglages modifiés ne doit pas les jeter en silence :
+        # l'application se fait uniquement par « Appliquer ».
+        if self.changed() or self.frequency_changes():
             answer = QMessageBox.question(
                 self, "Réglages non appliqués",
                 "Fermer sans appliquer les réglages modifiés ?",

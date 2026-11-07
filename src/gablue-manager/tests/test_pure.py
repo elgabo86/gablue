@@ -157,21 +157,26 @@ class SystemTest(unittest.TestCase):
     def test_parse_auto_update_status(self):
         text = (
             "image=enabled\nflatpak=disabled\nbrew=enabled\n"
-            "frequency=daily\n"
+            "image_frequency=daily\nflatpak_frequency=weekly\n"
+            "brew_frequency=daily\n"
         )
         self.assertEqual(
             local.parse_auto_update_status(text),
             {"image": True, "flatpak": False, "brew": True,
-             "frequency": "daily"},
+             "frequencies": {"image": "daily", "flatpak": "weekly",
+                             "brew": "daily"}},
         )
-        # Sortie vide : tout désactivé, rythme de l'image (hebdomadaire).
+        # Sortie vide : tout désactivé, fréquence de l'image (hebdomadaire).
         self.assertEqual(
             local.parse_auto_update_status(""),
             {"image": False, "flatpak": False, "brew": False,
-             "frequency": "weekly"},
+             "frequencies": {"image": "weekly", "flatpak": "weekly",
+                             "brew": "weekly"}},
         )
         self.assertEqual(
-            local.parse_auto_update_status("frequency=hourly")["frequency"],
+            local.parse_auto_update_status(
+                "image_frequency=horaire"
+            )["frequencies"]["image"],
             "weekly",
         )
 
@@ -179,7 +184,7 @@ class SystemTest(unittest.TestCase):
         script = local.auto_update_script(
             {"image": True, "brew": False},
             {"image": True, "flatpak": False, "brew": False},
-            "weekly",
+            {"image": "weekly"},
         )
         self.assertIn(
             "sudo -n /usr/libexec/gablue-auto-update image on", script
@@ -188,21 +193,18 @@ class SystemTest(unittest.TestCase):
             "sudo -n /usr/libexec/gablue-auto-update brew off", script
         )
         self.assertIn(
-            "sudo -n /usr/libexec/gablue-auto-update schedule weekly", script
-        )
-        # Le timer Flatpak du compte suit `desired`, sans privilège.
-        self.assertIn(
-            "systemctl --user disable --now flatpak-user-update.timer",
+            "sudo -n /usr/libexec/gablue-auto-update schedule image weekly",
             script,
         )
-        self.assertNotIn(
-            "gablue-auto-update flatpak", script
-        )
-        # 2 domaines + rythme + timer du compte.
-        self.assertIn("'::gablue:step 4 4 Flatpaks du compte'", script)
+        # Flatpaks inchangés : ni bascule système, ni timer du compte.
+        self.assertNotIn("gablue-auto-update flatpak", script)
+        self.assertNotIn("systemctl --user", script)
+        self.assertIn("'::gablue:step 3 3 Fréquence — image Gablue'", script)
 
         enabled = local.auto_update_script(
-            {}, {"image": False, "flatpak": True, "brew": False}, "daily"
+            {"flatpak": True},
+            {"image": False, "flatpak": True, "brew": False},
+            {"flatpak": "daily"},
         )
         self.assertIn(
             "systemctl --user enable --now flatpak-user-update.timer",
@@ -210,8 +212,35 @@ class SystemTest(unittest.TestCase):
         )
         self.assertIn("OnCalendar=*-*-* 04:00:00", enabled)
         self.assertIn(
-            "sudo -n /usr/libexec/gablue-auto-update schedule daily", enabled
+            "sudo -n /usr/libexec/gablue-auto-update schedule flatpak daily",
+            enabled,
         )
+        self.assertIn(
+            "sudo -n /usr/libexec/gablue-auto-update flatpak on", enabled
+        )
+        self.assertIn("'::gablue:step 3 3 Flatpaks du compte'", enabled)
+
+        disabled = local.auto_update_script(
+            {"flatpak": False},
+            {"image": False, "flatpak": False, "brew": False},
+            {},
+        )
+        self.assertIn(
+            "systemctl --user disable --now flatpak-user-update.timer",
+            disabled,
+        )
+
+        # Fréquence seule : aucun timer basculé, seul le calendrier change.
+        frequency_only = local.auto_update_script(
+            {},
+            {"image": False, "flatpak": False, "brew": False},
+            {"brew": "daily"},
+        )
+        self.assertIn(
+            "sudo -n /usr/libexec/gablue-auto-update schedule brew daily",
+            frequency_only,
+        )
+        self.assertNotIn(" systemctl --user", frequency_only)
 
     def test_system_script_ignores_auto_updates(self):
         # Les mises à jour automatiques ont leur propre dialogue : la clé

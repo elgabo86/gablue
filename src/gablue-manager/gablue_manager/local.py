@@ -742,18 +742,28 @@ def auto_update_schedule_dropin(frequency: str) -> str:
     )
 
 def parse_auto_update_status(text: str) -> dict:
-    """Lignes `clé=valeur` du helper → domaines actifs et rythme."""
+    """Lignes `clé=valeur` du helper → domaines actifs et fréquence de chacun."""
     values: dict[str, str] = {}
     for line in (text or "").splitlines():
         key, _, value = line.partition("=")
-        if key.strip() in ("image", "flatpak", "brew", "frequency"):
-            values[key.strip()] = value.strip()
-    frequency = values.get("frequency", "weekly")
+        key = key.strip()
+        if key in (
+            "image", "flatpak", "brew",
+            "image_frequency", "flatpak_frequency", "brew_frequency",
+        ):
+            values[key] = value.strip()
+
+    def frequency(domain: str) -> str:
+        value = values.get(f"{domain}_frequency", "weekly")
+        return value if value in ("daily", "weekly") else "weekly"
+
     return {
         "image": values.get("image") == "enabled",
         "flatpak": values.get("flatpak") == "enabled",
         "brew": values.get("brew") == "enabled",
-        "frequency": frequency if frequency in ("daily", "weekly") else "weekly",
+        "frequencies": {
+            domain: frequency(domain) for domain in AUTO_UPDATE_TARGETS
+        },
     }
 
 def auto_update_state() -> dict:
@@ -765,7 +775,7 @@ def auto_update_state() -> dict:
     state = {
         "ok": False, "image": False, "flatpak": False, "brew": False,
         "user_flatpak": user_service_enabled(AUTO_UPDATE_USER_TIMER),
-        "frequency": "weekly",
+        "frequencies": {domain: "weekly" for domain in AUTO_UPDATE_TARGETS},
     }
     try:
         result = subprocess.run(
@@ -801,13 +811,13 @@ def _steps_script(steps: list[tuple[str, list[str]]]) -> str:
     return "\n".join(lines) + "\n"
 
 def auto_update_script(changes: dict[str, bool], desired: dict[str, bool],
-                       frequency: str) -> str:
-    """Script d'application : domaines modifiés, rythme, timer du compte.
+                       frequencies: dict[str, str]) -> str:
+    """Script d'application : domaines modifiés, fréquences, timer du compte.
 
-    Le rythme est écrit même inchangé (idempotent) : c'est lui qui crée les
-    drop-ins `/etc` absents sur une image fraîche. Le timer Flatpak de la
-    session est géré ici, sans privilège, parce que son drop-in vit dans
-    `~/.config/systemd/user`.
+    `frequencies` ne porte que les domaines dont la fréquence change : un
+    domaine inchangé garde son drop-in, ou le défaut hebdomadaire de l'image.
+    Le timer Flatpak de la session est géré ici, sans privilège, parce que son
+    drop-in vit dans `~/.config/systemd/user`.
     """
     steps: list[tuple[str, list[str]]] = []
     for key, label in (
@@ -820,20 +830,44 @@ def auto_update_script(changes: dict[str, bool], desired: dict[str, bool],
                 f"sudo -n {AUTO_UPDATE_HELPER} {key} "
                 + ("on" if changes[key] else "off")
             ]))
-    steps.append(("Rythme", [
-        f"sudo -n {AUTO_UPDATE_HELPER} schedule {frequency}"
-    ]))
+    for key, label in (
+        ("image", "Fréquence — image Gablue"),
+        ("flatpak", "Fréquence — Flatpaks"),
+        ("brew", "Fréquence — Homebrew"),
+    ):
+        if key in frequencies:
+            steps.append((label, [
+                f"sudo -n {AUTO_UPDATE_HELPER} schedule {key} "
+                f"{frequencies[key]}"
+            ]))
+    if "flatpak" in changes or "flatpak" in frequencies:
+        steps.append((
+            "Flatpaks du compte",
+            _auto_update_user_steps(desired, frequencies.get("flatpak")),
+        ))
+    return _steps_script(steps)
 
-    dropin = auto_update_schedule_dropin(frequency)
-    user = [
-        'dir="$HOME/.config/systemd/user/'
-        f'{AUTO_UPDATE_USER_TIMER}.d"',
-        'mkdir -p "$dir"',
-        'cat > "$dir/50-gablue-schedule.conf" <<\'EOF\'',
-        *dropin.splitlines(),
-        "EOF",
-        "systemctl --user daemon-reload || true",
-    ]
+
+def _auto_update_user_steps(desired: dict[str, bool],
+                            frequency: str | None) -> list[str]:
+    """Timer Flatpak du compte : drop-in (si fréquence changée) puis bascule.
+
+    Sans session utilisateur joignable (`systemctl --user` absent, SSH), le
+    drop-in reste écrit et la bascule échoue proprement : le prochain
+    démarrage de session appliquera le bon calendrier.
+    """
+    user: list[str] = []
+    if frequency:
+        dropin = auto_update_schedule_dropin(frequency)
+        user += [
+            'dir="$HOME/.config/systemd/user/'
+            f'{AUTO_UPDATE_USER_TIMER}.d"',
+            'mkdir -p "$dir"',
+            'cat > "$dir/50-gablue-schedule.conf" <<\'EOF\'',
+            *dropin.splitlines(),
+            "EOF",
+            "systemctl --user daemon-reload || true",
+        ]
     if desired.get("flatpak"):
         user += [
             f"systemctl --user enable --now {AUTO_UPDATE_USER_TIMER} "
@@ -845,8 +879,7 @@ def auto_update_script(changes: dict[str, bool], desired: dict[str, bool],
             f"systemctl --user disable --now {AUTO_UPDATE_USER_TIMER} "
             '|| echo "Timer Flatpak utilisateur inchangé (pas de session)."'
         )
-    steps.append(("Flatpaks du compte", user))
-    return _steps_script(steps)
+    return user
 
 
 def docker_available(variant: str) -> bool:
