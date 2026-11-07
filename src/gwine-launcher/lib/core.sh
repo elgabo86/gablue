@@ -9,8 +9,15 @@ GWINE_DIR="$HOME/.local/share/gwine"
 GWINE_LIB_DIR="$GWINE_DIR"
 HOME_REAL="$(realpath "$HOME")"
 WINDOWS_HOME="$HOME_REAL/Windows/UserData"
-# Répertoire /tmp partagé pour le multi-instance (doit être défini avant les symlinks)
-GWINE_LOCK_DIR="/tmp/gwine-locks-$USER"
+# Sans écran (SSH, service, poste distant), Wine tente le pilote X11 et bloque
+# sur les installateurs graphiques même silencieux — PhysX restait suspendu à
+# l'infini (constaté gen1, 07/11/2026). `DISPLAY=` vide lui fait prendre le
+# chemin sans fenêtre : wineboot, msiexec /quiet et les installateurs /s
+# passent. Sur un poste avec session, DISPLAY (XWayland) est déjà défini.
+if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    export DISPLAY=
+fi
+# Répertoire /tmp partagé pour le multi-instance (doit être défini avant les symlinks)GWINE_LOCK_DIR="/tmp/gwine-locks-$USER"
 SHARED_TMP_DIR="$GWINE_LOCK_DIR/tmp"
 
 # Chemins des symlinks dans le /tmp partagé (visibles par toutes les instances sandbox/non-sandbox)

@@ -28,16 +28,46 @@ install_physx() {
     
     local cache_file="$WINCOMPONENTS_CACHE/physx/PhysX_9.23.1019_SystemSoftware.exe"
     
-    if [ -f "$cache_file" ]; then
-        echo "  - Lancement de l'installateur PhysX..."
-        if WINEPREFIX="$WINEPREFIX" "$WINE_BIN" "$cache_file" /s 2>/dev/null; then
+    if [ ! -f "$cache_file" ]; then
+        echo "  ✗ Fichier PhysX non trouvé dans le cache"
+        return 1
+    fi
+    
+    echo "  - Lancement de l'installateur PhysX..."
+    # L'auto-extracteur NVIDIA (PackageLauncher NVI2) lance `setup.exe` en
+    # enfant puis attend sa fin : sans écran, cet enfant reste suspendu et
+    # l'init ne rend jamais la main, même avec `-s` (constaté gen1,
+    # 07/11/2026 : `C:\NVIDIA\PhysX\Temp\setup.exe` vivant des heures).
+    # On extrait donc la charge utile nous-mêmes (le .exe embarque une
+    # archive 7z) et on lance `setup.exe -s` directement : ~21 s, code 0 sur
+    # un préfixe neuf, avec les DLL attendues en place. `-s` est bien le
+    # drapeau silencieux de NVI2 (`/s`, `/quiet` et `-s -noreboot` échouent).
+    local payload="$WINEPREFIX/drive_c/NVIDIA/PhysX/Temp"
+    if command -v 7z >/dev/null 2>&1 \
+       && rm -rf "$payload" && mkdir -p "$payload" \
+       && 7z x -y -o"$payload" "$cache_file" >/dev/null 2>&1; then
+        if timeout 300 env WINEPREFIX="$WINEPREFIX" \
+                "$WINE_BIN" "$payload/setup.exe" -s >/dev/null 2>&1; then
             echo "  ✓ PhysX installé"
         else
             echo "  ⚠ PhysX installé (peut déjà être présent)"
         fi
+        # La charge utile pèse 229 Mo une fois extraite : elle n'a plus
+        # d'utilité après l'installation (l'auto-extracteur la laissait
+        # traîner dans le préfixe).
+        rm -rf "$payload"
+        rmdir "$WINEPREFIX/drive_c/NVIDIA/PhysX" \
+              "$WINEPREFIX/drive_c/NVIDIA" 2>/dev/null || true
+        return 0
+    fi
+    
+    # Sans 7z : auto-extracteur d'origine, borné par un timeout puisqu'il
+    # peut se figer sans écran.
+    if timeout 300 env WINEPREFIX="$WINEPREFIX" \
+            "$WINE_BIN" "$cache_file" /s 2>/dev/null; then
+        echo "  ✓ PhysX installé"
     else
-        echo "  ✗ Fichier PhysX non trouvé dans le cache"
-        return 1
+        echo "  ⚠ PhysX installé (peut déjà être présent)"
     fi
     
     return 0

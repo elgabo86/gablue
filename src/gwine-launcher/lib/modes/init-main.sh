@@ -47,8 +47,19 @@ init_prefix_only() {
        [ "${dxvk_mode:-false}" = "true" ] || [ "${dxvk_async_mode:-false}" = "true" ]; then
         explicit_reinit=true
     fi
+    # Le préfixe se lit sur le chemin réel : WINEPREFIX n'est exporté que plus
+    # bas (et pas du tout pour `--init`), donc le tester ici était toujours
+    # faux et `--init` reconstruisait le préfixe à chaque appel (vécu
+    # 07/11/2026 : mise à jour gwine relançant plusieurs minutes de
+    # téléchargement alors que tout était à jour).
+    # Le marqueur de fin d'init évite le piège inverse : un préfixe laissé à
+    # moitié (annulation, coupure SSH) a bien un `system.reg` mais pas DXVK ni
+    # les composants suivants — il doit être reconstruit.
+    local prefix="$HOME_REAL/Windows/Prefix"
+    local init_marker="$GWINE_DIR/.prefix-init-complete"
     if [ "${OFFLINE_MODE:-false}" != "true" ] && [ "$explicit_reinit" != "true" ] \
-       && [ -d "$WINEPREFIX" ] && [ -f "$WINEPREFIX/system.reg" ] \
+       && [ -f "$init_marker" ] \
+       && [ -d "$prefix" ] && [ -f "$prefix/system.reg" ] \
        && ! components_update_available; then
         echo "Tous les composants sont déjà à jour, le préfixe Wine est conservé."
         echo "Utilisez 'gwine --init --force' pour réinitialiser le préfixe."
@@ -145,6 +156,16 @@ init_prefix_only() {
     echo "Phase 2/2 : Installation dans le préfixe Wine..."
     echo ""
 
+    # Init sans écran : toute cette phase se déroule sans fenêtre. Sans ça,
+    # chaque installateur Wine ouvre sa propre fenêtre X11/Wayland et vole le
+    # focus du bureau pendant l'installation (vécu 07/11/2026). Aucun
+    # installateur n'a besoin d'afficher quoi que ce soit : la progression
+    # passe par stdout et par la fenêtre de Gablue Manager, qui est un autre
+    # processus et garde son écran. Rien à restaurer : `--init` est un
+    # processus dédié qui se termine après (le lancement de jeu, lui, garde
+    # son affichage).
+    export DISPLAY= WAYLAND_DISPLAY=
+
     # Restauration de l'ancien préfixe sur interruption (SIGTERM de Gablue
     # Manager, Ctrl-C). Le dialogue de progression envoie SIGTERM avant tout
     # SIGKILL, précisément pour laisser ce nettoyage se faire.
@@ -229,6 +250,9 @@ init_prefix_only() {
         rm -rf "$PREFIX_BACKUP_PATH"
     fi
     trap - INT TERM
+    # Marqueur de fin d'init : seule une init menée à son terme autorise la
+    # garde d'entrée à sauter la reconstruction aux appels suivants.
+    touch "$GWINE_DIR/.prefix-init-complete"
     progress_done "Préfixe Wine initialisé."
 
     # Afficher le mode DXVK configuré
