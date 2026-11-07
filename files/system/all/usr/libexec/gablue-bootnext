@@ -1,0 +1,282 @@
+#!/usr/bin/bash
+
+# gablue-bootnext — démarrer une seule fois sur un autre système
+#
+# Appelé par Gablue Manager avec `sudo -n` (règle sudoers exacte). Le poste
+# redémarre sur le disque choisi via `BootNext`, consommé par le firmware :
+# au démarrage suivant, BootOrder reprend la main et Gablue revient.
+#
+#   gablue-bootnext list       -> `id<TAB>libellé<TAB>détail` par option
+#   gablue-bootnext boot <id>  -> arme BootNext puis redémarre
+#
+# `id` est un numéro d'entrée EFI (4 hexadécimaux) ou `esp:/dev/sdX1` pour un
+# disque amorçable que le firmware ne connaît pas encore (une entrée NVRAM
+# temporaire est créée pour la circonstance, puis retirée du BootOrder).
+#
+# Jamais le système principal : les entrées de son disque sont écartées, et
+# `boot` revérifie ce point côté root (aucune confiance dans l'appelant).
+# UEFI uniquement ; un disque en démarrage hérité (MBR/CSM) n'est pas proposé.
+
+set -euo pipefail
+
+ESP_TYPE="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+TEMP_MOUNTS=()
+
+usage() {
+    echo "Usage : gablue-bootnext list | boot <id>" >&2
+    exit 2
+}
+
+fail() {
+    echo "$*" >&2
+    exit 1
+}
+
+cleanup() {
+    local point
+    for point in "${TEMP_MOUNTS[@]}"; do
+        umount "$point" 2>/dev/null || true
+        rmdir "$point" 2>/dev/null || true
+    done
+}
+
+trap cleanup EXIT
+
+# Disque qui porte le système en cours (celui de /boot/efi, sinon de /).
+main_disk() {
+    local source
+    source=$(findmnt -no SOURCE /boot/efi 2>/dev/null | head -1 || true)
+    if [ -z "$source" ]; then
+        source=$(findmnt -no SOURCE / 2>/dev/null | head -1 || true)
+    fi
+    [ -n "$source" ] || return 0
+    lsblk -no PKNAME "$source" 2>/dev/null | head -1 || true
+}
+
+# « sdd · Samsung Portable SSD T5 EVO · 1.8T »
+disk_detail() {
+    local disk=$1 model size
+    model=$(lsblk -dno MODEL "/dev/$disk" 2>/dev/null \
+            | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' || true)
+    size=$(lsblk -dno SIZE "/dev/$disk" 2>/dev/null | head -1 \
+           | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' || true)
+    if [ -n "$model" ]; then
+        printf '%s · %s · %s' "$disk" "$model" "$size"
+    else
+        printf '%s · %s' "$disk" "$size"
+    fi
+}
+
+# Nom lisible d'un répertoire de distribution EFI.
+vendor_name() {
+    case "${1,,}" in
+        fedora)       echo "Fedora" ;;
+        gablue)       echo "Gablue" ;;
+        microsoft)    echo "Windows" ;;
+        ubuntu)       echo "Ubuntu" ;;
+        debian)       echo "Debian" ;;
+        arch)         echo "Arch Linux" ;;
+        manjaro)      echo "Manjaro" ;;
+        opensuse)     echo "openSUSE" ;;
+        linuxmint|mint) echo "Linux Mint" ;;
+        pop)          echo "Pop!_OS" ;;
+        endeavouros)  echo "EndeavourOS" ;;
+        bazzite)      echo "Bazzite" ;;
+        nobara)       echo "Nobara" ;;
+        *)            local name=${1,,}; echo "${name^}" ;;
+    esac
+}
+
+# Monte une partition ESP en lecture seule si elle ne l'est pas déjà.
+mount_esp() {
+    local part=$1 point
+    point=$(findmnt -no TARGET --source "$part" 2>/dev/null | head -1 || true)
+    if [ -n "$point" ]; then
+        printf '%s' "$point"
+        return 0
+    fi
+    point=$(mktemp -d /run/gablue-bootnext.XXXXXX)
+    if mount -o ro,noexec,nosuid,nodev "$part" "$point" 2>/dev/null; then
+        TEMP_MOUNTS+=("$point")
+        printf '%s' "$point"
+        return 0
+    fi
+    rmdir "$point" 2>/dev/null || true
+    return 1
+}
+
+# Chargeur amorçable d'une ESP -> `nom<TAB>\chemin\chargeur.efi`.
+# Shim signé d'abord (Secure Boot), puis Windows, puis le repli amovible.
+find_loader() {
+    local root=$1 path dir
+    for path in "$root"/EFI/*/shimx64.efi; do
+        [ -f "$path" ] || continue
+        dir=$(basename "$(dirname "$path")")
+        [ "$dir" = "BOOT" ] && continue
+        printf '%s\t%s\n' "$(vendor_name "$dir")" "\\EFI\\$dir\\shimx64.efi"
+        return 0
+    done
+    if [ -f "$root/EFI/Microsoft/Boot/bootmgfw.efi" ]; then
+        printf 'Windows\t\\EFI\\Microsoft\\Boot\\bootmgfw.efi\n'
+        return 0
+    fi
+    if [ -f "$root/EFI/BOOT/BOOTX64.EFI" ]; then
+        printf 'Démarrage externe\t\\EFI\\BOOT\\BOOTX64.EFI\n'
+        return 0
+    fi
+    for path in "$root"/EFI/*/grubx64.efi; do
+        [ -f "$path" ] || continue
+        dir=$(basename "$(dirname "$path")")
+        [ "$dir" = "BOOT" ] && continue
+        printf '%s\t%s\n' "$(vendor_name "$dir")" "\\EFI\\$dir\\grubx64.efi"
+        return 0
+    done
+    return 1
+}
+
+# PARTUUID d'une ligne `efibootmgr -v` (chemin HD(...,GPT,<uuid>,...)).
+entry_partuuid() {
+    sed -nE 's/^.*HD\([^,]+,GPT,([^,]+),.*$/\1/p' <<<"$1"
+}
+
+list_options() {
+    local main line num rest label devpath partuuid part disk parttype pkname
+    local mount info vendor loader
+    local -A seen=()
+
+    main=$(main_disk)
+    [ -n "$main" ] || fail "Disque du système en cours introuvable."
+
+    # 1. Entrées EFI déjà présentes sur un autre disque.
+    while IFS= read -r line; do
+        [[ $line =~ ^Boot([0-9A-Fa-f]{4})\*?[[:space:]](.*)$ ]] || continue
+        num=${BASH_REMATCH[1]}
+        rest=${BASH_REMATCH[2]}
+        label=${rest%%$'\t'*}
+        devpath=""
+        [[ $rest == *$'\t'* ]] && devpath=${rest#*$'\t'}
+        [[ $devpath == HD\(* ]] || continue
+        partuuid=$(entry_partuuid "$devpath")
+        [ -n "$partuuid" ] || continue
+        part=$(findfs PARTUUID="$partuuid" 2>/dev/null || true)
+        [ -n "$part" ] || continue          # disque absent : option morte
+        disk=$(lsblk -no PKNAME "$part" 2>/dev/null | head -1 || true)
+        [ -n "$disk" ] && [ "$disk" != "$main" ] || continue
+        [ -n "${seen[$partuuid]:-}" ] && continue
+        seen[$partuuid]=1
+        # Un libellé peut commencer par une espace (entrée désactivée).
+        label=${label#"${label%%[![:space:]]*}"}
+        [ -n "$label" ] || label="Système ($disk)"
+        printf '%s\t%s\t%s\n' "$num" "$label" "$(disk_detail "$disk")"
+    done < <(efibootmgr -v 2>/dev/null)
+
+    # 2. Disques amorçables sans entrée EFI (clé USB, disque installé à la
+    #    main) : une ESP avec un chargeur connu suffit.
+    while IFS= read -r line; do
+        IFS='|' read -r part parttype pkname <<<"$line"
+        [ "$parttype" = "$ESP_TYPE" ] || continue
+        [ -n "$pkname" ] && [ "$pkname" != "$main" ] || continue
+        [ -b "$part" ] || continue
+        partuuid=$(lsblk -no PARTUUID "$part" 2>/dev/null | head -1 || true)
+        [ -n "$partuuid" ] || continue
+        [ -n "${seen[$partuuid]:-}" ] && continue
+        mount=$(mount_esp "$part" || true)
+        [ -n "$mount" ] || continue
+        info=$(find_loader "$mount" || true)
+        [ -n "$info" ] || continue
+        vendor=${info%%$'\t'*}
+        loader=${info#*$'\t'}
+        [ -n "$loader" ] || continue
+        seen[$partuuid]=1
+        printf 'esp:%s\t%s\t%s\n' "$part" "$vendor" \
+            "$(disk_detail "$pkname")"
+    done < <(lsblk -lno PATH,PARTTYPE,PKNAME 2>/dev/null \
+             | sed 's/[[:space:]]\{1,\}/|/g')
+}
+
+boot_on() {
+    local id=$1 main partuuid part disk label loader mount info vendor
+    local partnum order num line
+
+    main=$(main_disk)
+    [ -n "$main" ] || fail "Disque du système en cours introuvable."
+
+    case "$id" in
+        [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f])
+            num=${id^^}
+            line=$(efibootmgr -v 2>/dev/null \
+                   | grep -E "^Boot$num\*?[[:space:]]" | head -1 || true)
+            [ -n "$line" ] || fail "Entrée EFI $num inconnue."
+            partuuid=$(entry_partuuid "$line")
+            [ -n "$partuuid" ] || fail "Entrée $num : ce n'est pas un disque."
+            part=$(findfs PARTUUID="$partuuid" 2>/dev/null || true)
+            [ -n "$part" ] || fail "Entrée $num : le disque est absent."
+            disk=$(lsblk -no PKNAME "$part" 2>/dev/null | head -1 || true)
+            [ -n "$disk" ] && [ "$disk" != "$main" ] \
+                || fail "Entrée $num : c'est le système en cours."
+            label=$(sed -E 's/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]//' \
+                    <<<"$line")
+            label=${label%%$'\t'*}
+            ;;
+        esp:/dev/*)
+            part=${id#esp:}
+            [ -b "$part" ] || fail "Périphérique absent : $part"
+            [ "$(lsblk -no PARTTYPE "$part" 2>/dev/null \
+                 | head -1 || true)" = "$ESP_TYPE" ] \
+                || fail "$part n'est pas une partition EFI."
+            disk=$(lsblk -no PKNAME "$part" 2>/dev/null | head -1 || true)
+            [ -n "$disk" ] && [ "$disk" != "$main" ] \
+                || fail "Ce disque porte le système en cours."
+            mount=$(mount_esp "$part" || true)
+            [ -n "$mount" ] || fail "Montage de $part impossible."
+            info=$(find_loader "$mount" || true)
+            [ -n "$info" ] || fail "Aucun chargeur amorçable sur $part."
+            vendor=${info%%$'\t'*}
+            loader=${info#*$'\t'}
+            label="Gablue : $vendor ($disk)"
+            partnum=$(lsblk -no PARTN "$part" 2>/dev/null | head -1 || true)
+            [ -n "$partnum" ] || fail "Numéro de partition introuvable."
+            order=$(efibootmgr 2>/dev/null \
+                    | sed -n 's/^BootOrder:[[:space:]]*//p' | head -1 || true)
+            efibootmgr -c -d "/dev/$disk" -p "$partnum" -L "$label" \
+                       -l "$loader" >/dev/null \
+                || fail "Création de l'entrée EFI impossible (NVRAM pleine ?)."
+            # L'entrée n'a pas à rester dans l'ordre permanent : BootNext
+            # suffit et le démarrage suivant doit revenir à Gablue.
+            if [ -n "$order" ]; then
+                efibootmgr --bootorder "$order" >/dev/null || true
+            fi
+            num=$(efibootmgr -v 2>/dev/null | grep -F -- "$label" \
+                  | sed -nE 's/^Boot([0-9A-Fa-f]{4}).*/\1/p' | head -1 \
+                  || true)
+            [ -n "$num" ] || fail "Entrée EFI créée mais introuvable."
+            ;;
+        *)
+            usage
+            ;;
+    esac
+
+    efibootmgr --bootnext "$num" >/dev/null \
+        || fail "Impossible d'armer BootNext sur $num."
+    efibootmgr 2>/dev/null | grep -qi "^BootNext: $num" \
+        || fail "BootNext n'a pas pris l'entrée $num."
+    echo "Démarrage unique préparé : $num — $label"
+    sync
+    systemctl reboot
+}
+
+case "${1:-}" in
+    list)
+        [ $# -eq 1 ] || usage
+        [ -d /sys/firmware/efi ] || fail "Ce poste n'est pas en UEFI."
+        list_options
+        ;;
+    boot)
+        [ $# -eq 2 ] || usage
+        [ -d /sys/firmware/efi ] || fail "Ce poste n'est pas en UEFI."
+        boot_on "$2"
+        ;;
+    *)
+        usage
+        ;;
+esac

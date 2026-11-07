@@ -25,6 +25,7 @@ from .constants import (
 )
 from .dialogs.apps import AppsDialog
 from .dialogs.booster import ForegroundBoosterDialog
+from .dialogs.boot import BootDialog
 from .dialogs.btrfs import BtrfsDialog
 from .dialogs.clean import CleanDialog
 from .dialogs.grub import GrubDialog
@@ -208,6 +209,9 @@ class MainWindow(QMainWindow):
         self.local_card.clean_requested.connect(self.open_clean_system)
         self.local_card.grub_requested.connect(self.open_grub)
         self.local_card.secureboot_requested.connect(self.open_secureboot)
+        self.local_card.bootselect_requested.connect(
+            self.open_boot_select
+        )
         self.local_card.firmware_requested.connect(self.reboot_firmware)
         self.local_card.gwine_requested.connect(self.open_local_gwine_options)
         self.local_card.booster_requested.connect(
@@ -1532,6 +1536,10 @@ class MainWindow(QMainWindow):
 
     def open_secureboot(self) -> None:
         SecureBootDialog(self).exec()
+
+    def open_boot_select(self) -> None:
+        """Choisir un autre disque amorçable pour le prochain démarrage."""
+        BootDialog(self).exec()
 
     def reboot_firmware(self) -> None:
         """Redémarre dans le BIOS/UEFI, après confirmation.

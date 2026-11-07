@@ -20,6 +20,7 @@
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-btrfs-compress zstd *, /usr/libexec/gablue-btrfs-compress none *
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-nvme-thermal status, /usr/libexec/gablue-nvme-thermal set *, /usr/libexec/gablue-nvme-thermal off *
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-grub status, /usr/libexec/gablue-grub set 0, /usr/libexec/gablue-grub set 1, /usr/libexec/gablue-grub set 2, /usr/libexec/gablue-grub unset
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-bootnext list, /usr/libexec/gablue-bootnext boot *
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-secureboot status, /usr/libexec/gablue-secureboot enroll
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-ryzenadj status, /usr/libexec/gablue-ryzenadj set *, /usr/libexec/gablue-ryzenadj off
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/systemctl reboot --firmware-setup

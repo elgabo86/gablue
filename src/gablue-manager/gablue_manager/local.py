@@ -13,8 +13,9 @@ from pathlib import Path
 
 from .constants import (
     ATUIN_HELPER, AUTO_UPDATE_HELPER, AUTO_UPDATE_USER_TIMER, AVAHI_HELPER,
-    AVAHI_SERVICE_FILE, BREW_BINARY, BROADCOM_HELPER, BROADCOM_WL_FILE,
-    BTRFS_HELPER, CLEAN_HELPER, CMDLINE, CPUID_EMU_BLACKLIST,
+    AVAHI_SERVICE_FILE, BOOTSELECT_HELPER, BREW_BINARY, BROADCOM_HELPER,
+    BROADCOM_WL_FILE, BTRFS_HELPER, CLEAN_HELPER, CMDLINE,
+    CPUID_EMU_BLACKLIST,
     CPUID_EMU_CONF, CPUID_EMU_HELPER, GAMEPAD_HELPER, GRUB_HELPER,
     NVME_THERMAL_HELPER, RYZENADJ_BINARY, RYZENADJ_HELPER, RYZENADJ_SERVICE,
     SECUREBOOT_HELPER,
@@ -1775,6 +1776,67 @@ def secureboot_enroll_script() -> str:
     return _steps_script(
         [("Secure Boot", [f"sudo -n {SECUREBOOT_HELPER} enroll"])]
     )
+
+
+# -- Démarrage unique sur un autre système (BootNext) -----------------------
+
+def parse_boot_options(text: str) -> list[dict]:
+    """Sortie du helper `list` → options {id, label, detail}.
+
+    Une option par ligne `id<TAB>libellé<TAB>détail` ; l'identifiant est un
+    numéro EFI (4 hexadécimaux) ou `esp:/dev/sdX1`. Toute autre forme est
+    écartée : le dialogue ne doit jamais envoyer au helper une valeur qu'il
+    n'a pas lui-même proposée.
+    """
+    options: list[dict] = []
+    seen: set[str] = set()
+    for raw in (text or "").splitlines():
+        parts = raw.split("\t")
+        if len(parts) < 2:
+            continue
+        ident = parts[0].strip()
+        label = parts[1].strip()
+        detail = parts[2].strip() if len(parts) > 2 else ""
+        if not ident or not label or ident in seen:
+            continue
+        if not re.fullmatch(r"[0-9A-Fa-f]{4}|esp:/dev/[A-Za-z0-9]+", ident):
+            continue
+        seen.add(ident)
+        options.append({"id": ident, "label": label, "detail": detail})
+    return options
+
+
+def bootselect_helper_available() -> bool:
+    """Le helper de démarrage ponctuel est-il installé (image à jour) ?"""
+    return Path(BOOTSELECT_HELPER).is_file()
+
+
+def boot_options() -> dict:
+    """{state, options} — autres disques amorçables, système principal exclu.
+
+    Le helper lit `efibootmgr`, résout les disques et monte les ESP en
+    lecture seule : tout passe par `sudo -n` (règle sudoers exacte), jamais
+    par une invite de mot de passe. `state` : « ok », « empty » (aucun autre
+    disque), « unsupported » (poste non UEFI), « absent » (image antérieure)
+    ou « error » (lecture impossible).
+    """
+    if not Path("/sys/firmware/efi").is_dir():
+        return {"state": "unsupported", "options": []}
+    if not bootselect_helper_available():
+        return {"state": "absent", "options": []}
+    code, text = _run(["sudo", "-n", BOOTSELECT_HELPER, "list"], 45)
+    if code != 0:
+        return {"state": "error", "options": []}
+    options = parse_boot_options(text)
+    return {"state": "ok" if options else "empty", "options": options}
+
+
+def boot_select_script(ident: str) -> str:
+    """Script d'une étape : arme BootNext puis redémarre (le helper fait tout)."""
+    return _steps_script([(
+        "Démarrage unique",
+        [f"sudo -n {BOOTSELECT_HELPER} boot {shlex.quote(ident)}"],
+    )])
 
 
 def rebase_helper_available() -> bool:

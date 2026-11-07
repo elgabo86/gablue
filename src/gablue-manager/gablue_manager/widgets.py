@@ -435,6 +435,7 @@ class LocalCard(QFrame):
     clean_requested = Signal()
     grub_requested = Signal()
     secureboot_requested = Signal()
+    bootselect_requested = Signal()
     firmware_requested = Signal()
     gwine_requested = Signal()
     booster_requested = Signal()
@@ -556,6 +557,10 @@ class LocalCard(QFrame):
         )
 
         boot_menu = config_menu.addMenu("Démarrage")
+        boot_menu.addAction(
+            "Démarrer sur un autre système…",
+            self.bootselect_requested.emit,
+        )
         boot_menu.addAction("Menu GRUB…", self.grub_requested.emit)
         boot_menu.addAction("Secure Boot…", self.secureboot_requested.emit)
         boot_menu.addAction(

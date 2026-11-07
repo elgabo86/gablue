@@ -61,6 +61,7 @@ chmod +x /usr/libexec/gablue-clean
 chmod +x /usr/libexec/gablue-btrfs-compress
 chmod +x /usr/libexec/gablue-nvme-thermal
 chmod +x /usr/libexec/gablue-grub
+chmod +x /usr/libexec/gablue-bootnext
 chmod +x /usr/libexec/gablue-secureboot
 chmod +x /usr/libexec/gablue-ryzenadj
 chmod +x /usr/libexec/gablue-avahi

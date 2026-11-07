@@ -157,6 +157,8 @@ NVME_THERMAL_HELPER = "/usr/libexec/gablue-nvme-thermal"
 
 GRUB_HELPER = "/usr/libexec/gablue-grub"
 
+BOOTSELECT_HELPER = "/usr/libexec/gablue-bootnext"
+
 SECUREBOOT_HELPER = "/usr/libexec/gablue-secureboot"
 
 RYZENADJ_BINARY = "/usr/bin/ryzenadj"

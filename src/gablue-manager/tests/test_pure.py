@@ -585,6 +585,36 @@ class SystemTest(unittest.TestCase):
             local.grub_apply_script("unset"),
         )
 
+    def test_boot_options(self):
+        text = (
+            "0001\tFedora\tsdd · Samsung Portable SSD T5 EVO · 1.8T\n"
+            "esp:/dev/sdd1\tWindows\tsdb · Disque externe · 512G\n"
+            "0001\tDoublon\tignoré\n"
+            "minuit\tX\ty\n"
+            "0003\tSans détail\n"
+            "0004\t\tlibellé vide\n"
+        )
+        options = local.parse_boot_options(text)
+        self.assertEqual(
+            [option["id"] for option in options],
+            ["0001", "esp:/dev/sdd1", "0003"],
+        )
+        self.assertEqual(options[0]["label"], "Fedora")
+        self.assertEqual(options[1]["detail"], "sdb · Disque externe · 512G")
+        self.assertEqual(options[2]["detail"], "")
+        self.assertEqual(local.parse_boot_options(""), [])
+        self.assertEqual(local.parse_boot_options("pas de tabulation"), [])
+
+        script = local.boot_select_script("0001")
+        self.assertIn(
+            "sudo -n /usr/libexec/gablue-bootnext boot 0001", script
+        )
+        self.assertIn("'::gablue:step 1 1 Démarrage unique'", script)
+        self.assertIn(
+            "/usr/libexec/gablue-bootnext boot esp:/dev/sdd1",
+            local.boot_select_script("esp:/dev/sdd1"),
+        )
+
     def test_secureboot(self):
         script = local.secureboot_enroll_script()
         self.assertIn("sudo -n /usr/libexec/gablue-secureboot enroll", script)
