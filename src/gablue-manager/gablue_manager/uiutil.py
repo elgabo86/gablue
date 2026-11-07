@@ -15,6 +15,37 @@ def app_icon() -> QIcon:
     icon = QIcon.fromTheme("gablue-manager")
     return icon if not icon.isNull() else QIcon.fromTheme("network-server")
 
+def network_information():
+    """Point d'accès Qt à l'état du réseau (None si aucun greffon).
+
+    `QNetworkInformation` interroge NetworkManager par D-Bus : aucune sonde
+    réseau à nous, et un signal quand la connexion apparaît ou disparaît.
+    """
+    from PySide6.QtNetwork import QNetworkInformation
+    info = QNetworkInformation.instance()
+    if info is None:
+        QNetworkInformation.loadDefaultBackend()
+        info = QNetworkInformation.instance()
+    return info
+
+def network_online() -> bool:
+    """La machine a-t-elle une connexion internet ?
+
+    Sans greffon réseau (Qt compilé sans NetworkManager, session minimale),
+    on répond oui : les sondes elles-mêmes échoueront proprement, et mieux
+    vaut un essai qu'une fonctionnalité muette.
+    """
+    from PySide6.QtNetwork import QNetworkInformation
+    info = network_information()
+    if info is None:
+        return True
+    try:
+        if not info.supports(QNetworkInformation.Feature.Reachability):
+            return True
+        return info.reachability() == QNetworkInformation.Reachability.Online
+    except RuntimeError:
+        return True
+
 class _FitOnShow(QObject):
     """Réduit un dialogue à la hauteur de son contenu, une fois affiché."""
 

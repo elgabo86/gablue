@@ -28,6 +28,7 @@ from .dialogs.gwine import GwineOptionsDialog
 from .dialogs.host import CandidateDialog, HostDialog
 from .dialogs.kernel import LocalSettingsDialog, RemoteSettingsDialog
 from .dialogs.key import KeyInstallDialog
+from .dialogs.prefs import PrefsDialog
 from .dialogs.services import ServicesDialog
 from .dialogs.tailscale import TailscaleDialog
 from .dialogs.updates import AutoUpdatesDialog
@@ -43,7 +44,7 @@ from .local import (
 )
 from .ssh import ask_remote_password, remote_sudo_nopasswd, remote_sudo_prefix
 from .style import make_qss
-from .uiutil import app_icon
+from .uiutil import app_icon, network_online
 from .tasks import (
     LocalTaskDialog, RemoteTaskDialog, SequentialTaskDialog, start_task,
 )
@@ -55,6 +56,7 @@ from .widgets import (
 )
 from .workers import (
     AddressWorker, AvahiWorker, CheckWorker, KeyProbeWorker, RebootWorker,
+    UpdateCheckWorker,
 )
 
 class MainWindow(QMainWindow):
@@ -85,6 +87,8 @@ class MainWindow(QMainWindow):
         self._avahi_process: QProcess | None = None
         self._reboot_reasons: list[str] = []
         self._reboot_worker: RebootWorker | None = None
+        self._updates_state: dict | None = None
+        self._updates_worker: UpdateCheckWorker | None = None
 
         self._build_ui()
         self.setStyleSheet(make_qss())
@@ -140,20 +144,14 @@ class MainWindow(QMainWindow):
         self.refresh_button.clicked.connect(lambda: self.refresh_all(force=True))
         header_layout.addWidget(self.refresh_button)
 
-        # Préférences de l'app : l'icône de barre d'état se coupe ici, sans
-        # toucher à l'autostart (le mode tray relit la préférence au démarrage
-        # de session et sort tout seul quand elle est désactivée).
+        # Préférences de l'app dans un dialogue : barre d'état et vérification
+        # des mises à jour (interrupteur, domaines, fréquence).
         self.settings_button = _make_tool_button(
             header, "settings-configure", "⚙"
         )
         self.settings_button.setToolTip("Préférences")
         settings_menu = QMenu(self.settings_button)
-        self.tray_action = settings_menu.addAction(
-            "Icône dans la barre d'état"
-        )
-        self.tray_action.setCheckable(True)
-        self.tray_action.setChecked(prefs.tray_enabled())
-        self.tray_action.toggled.connect(self.set_tray_enabled)
+        settings_menu.addAction("Préférences…", self.open_prefs)
         settings_menu.addSeparator()
         settings_menu.addAction("Quitter Gablue Manager", self.close)
         self.settings_button.setMenu(settings_menu)
@@ -186,6 +184,9 @@ class MainWindow(QMainWindow):
         # Carte « Ce poste » : toujours visible, indépendante de la liste.
         self.local_card = LocalCard(central)
         self.local_card.update_requested.connect(self.local_update)
+        self.local_card.check_requested.connect(
+            lambda: self.check_updates(force=True)
+        )
         self.local_card.apps_requested.connect(self.open_apps)
         self.local_card.kernel_requested.connect(self.open_settings)
         self.local_card.updates_requested.connect(self.open_local_updates)
@@ -397,6 +398,7 @@ class MainWindow(QMainWindow):
         self._update_sshd_button()
         self._update_avahi_button()
         self._refresh_reboot()
+        self.check_updates()
         if self._checker is not None and self._checker.isRunning():
             return
         if not self._hosts:
@@ -422,14 +424,60 @@ class MainWindow(QMainWindow):
         checker.start()
 
     # -- préférences ---------------------------------------------------------
-    def set_tray_enabled(self, enabled: bool) -> None:
-        """Active ou coupe l'icône de barre d'état (préférence utilisateur)."""
-        prefs.set_tray_enabled(enabled)
-        if enabled:
+    def set_prefs(self, values: dict) -> None:
+        """Applique le dialogue des préférences (barre d'état + vérifications).
+
+        Le tray relit ses préférences à chaque sonde, mais on le prévient pour
+        qu'il recalcule tout de suite (fréquence, domaines, pastille) ; s'il ne
+        tourne pas encore, on le lance.
+        """
+        prefs.save_prefs(values)
+        if not values.get("tray"):
+            instance.send(instance.tray_socket(), b"quit")
+        elif not instance.send(instance.tray_socket(), b"reload"):
             command = instance.manager_command() + ["--tray"]
             QProcess.startDetached(command[0], command[1:])
-        else:
-            instance.send(instance.tray_socket(), b"quit")
+        self._updates_state = None
+        self.check_updates(force=True)
+
+    # -- mises à jour disponibles -------------------------------------------
+    def check_updates(self, force: bool = False) -> None:
+        """Sonde les mises à jour, hors thread GUI, selon les préférences.
+
+        Sans `force`, rien n'est lancé si l'utilisateur a coupé les
+        vérifications, si une opération est en cours, ou si la dernière passe
+        est plus récente que la fréquence choisie. Hors ligne, aucune sonde
+        réseau : la carte l'affiche et s'arrête là.
+        """
+        values = prefs.load_prefs()
+        online = network_online()
+        if not force and not prefs.checks_enabled(values):
+            return
+        if self._updates_worker is not None and self._updates_worker.isRunning():
+            return
+        if not force and self._tasks:
+            return
+        if not force and not online:
+            self._updates_state = {"online": False, "domains": {}}
+            self.local_card.set_updates(self._updates_state)
+            return
+        checked = (self._updates_state or {}).get("checked_at")
+        if not force and checked and \
+                time.time() - checked < prefs.check_interval_seconds(values):
+            return
+        domains = prefs.check_domains(values) if force \
+            else prefs.auto_check_domains(values)
+        worker = UpdateCheckWorker(domains, online, self)
+        self._updates_worker = worker
+        worker.done.connect(self._updates_done)
+        self.local_card.set_checking()
+        worker.start()
+
+    def _updates_done(self, state: dict) -> None:
+        self._updates_worker = None
+        self._updates_state = state
+        self.local_card.end_checking()
+        self.local_card.set_updates(state)
 
     def _on_check_result(self, host_id: str, state: str, detail: str,
                          latency: float, address: str) -> None:
@@ -1168,6 +1216,8 @@ class MainWindow(QMainWindow):
 
     # -- machine courante : mises à jour et configuration --------------------
     def local_update(self, kind: str) -> None:
+        # Les compteurs affichés vont changer : la prochaine passe re-sonde.
+        self._updates_state = None
         if kind == "all":
             self.update_local_all()
         elif kind == "gablue":
@@ -1397,6 +1447,12 @@ class MainWindow(QMainWindow):
 
     def open_settings(self) -> None:
         LocalSettingsDialog(self).exec()
+
+    def open_prefs(self) -> None:
+        dialog = PrefsDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        self.set_prefs(dialog.values())
 
     def open_local_services(self) -> None:
         ServicesDialog(self).exec()

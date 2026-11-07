@@ -14,6 +14,7 @@ show_help() {
     echo "  --init            Initialiser/réinitialiser le préfixe Wine (seulement si un composant a changé)"
     echo "  --force           Forcer la réinitialisation complète du préfixe (avec --init)"
     echo "  --offline         Mode offline pour --init (vérifie que les composants sont en cache)"
+    echo "  --check           Avec --init : dire quelles mises à jour existent, sans rien installer"
     echo "  --update          Mettre à jour les composants (DXVK, VKD3D, gwine)"
     echo "  --fix             Activer le mode fix manette"
     echo "  --xbox            Émulation manettes Sony en Xbox 360 via ds2xbox"
@@ -68,6 +69,7 @@ show_help() {
     echo "  gwine --init"
     echo "  gwine --init --dxvk-async   # Init avec DXVK-GPLAsync"
     echo "  gwine --init --force        # Réinitialiser même sans nouveau composant"
+    echo "  gwine --init --check        # Vérifier les composants sans rien modifier"
     echo "  gwine --dxvk                # Utiliser DXVK standard"
     echo "  gwine --dxvk-async          # Utiliser DXVK-GPLAsync (DXVK_ASYNC=1)"
     echo "  gwine --x11                 # Utiliser X11/XWayland comme mode d'affichage"
@@ -87,7 +89,7 @@ show_help() {
 }
 
 # Options valides reconnues par gwine
-VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--force" "--offline" "--update" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--dxvk" "--dxvk-async" "--gamescope" "--gamescope-args" "--720" "--900" "--1080" "--no-gamescope")
+VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--check" "--force" "--offline" "--update" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--dxvk" "--dxvk-async" "--gamescope" "--gamescope-args" "--720" "--900" "--1080" "--no-gamescope")
 
 # Vérifie si une option est valide
 is_valid_option() {
@@ -160,6 +162,10 @@ parse_arguments() {
                 ;;
             --offline)
                 OFFLINE_MODE=true
+                shift
+                ;;
+            --check)
+                check_mode=true
                 shift
                 ;;
             --update)

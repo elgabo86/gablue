@@ -5,7 +5,7 @@ import getpass
 import math
 import socket
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor, QIcon, QPainter, QPainterPath, QPalette, QPen,
 )
@@ -17,6 +17,9 @@ from PySide6.QtWidgets import (
 from .constants import COLOR_OFFLINE, KEY_STATES, STATE_COLOR, STATE_TEXT
 from .local import local_distro
 from .style import accent_color
+from .updates import (
+    DOMAINS, compact_summary, domain_count, summary_lines, total_updates,
+)
 from .util import active_kind, address_text, display_name, dolphin_url, ssh_target
 
 class BusyProgressBar(QProgressBar):
@@ -399,7 +402,8 @@ class HostCard(QFrame):
 class LocalCard(QFrame):
     """La machine courante : mises à jour et options avancées."""
 
-    update_requested = Signal(str)   # "gablue" | "flatpak" | "gwine" | "brew"
+    update_requested = Signal(str)   # "all" | "gablue" | "flatpak" | "gwine" | "brew"
+    check_requested = Signal()
     apps_requested = Signal()
     kernel_requested = Signal()
     updates_requested = Signal()
@@ -443,6 +447,10 @@ class LocalCard(QFrame):
         self.detail_label.setObjectName("hostDetail")
         self.hint_label = QLabel("Mises à jour et options de cette machine", self)
         self.hint_label.setObjectName("hostStatus")
+        # Quand une mise à jour attend, cliquer la ligne ouvre le menu des
+        # mises à jour (même geste que le bouton, sans ajouter de pastille).
+        self.hint_label.installEventFilter(self)
+        self._updates_clickable = False
         texts.addWidget(self.name_label)
         texts.addWidget(self.detail_label)
         texts.addSpacing(3)
@@ -454,23 +462,30 @@ class LocalCard(QFrame):
         self.update_button.setCursor(Qt.PointingHandCursor)
         self.update_button.setIcon(QIcon.fromTheme("system-software-update"))
         menu = QMenu(self.update_button)
+        self.check_action = menu.addAction(
+            "Vérifier les mises à jour", self.check_requested.emit
+        )
+        menu.addSeparator()
         menu.addAction(
             "Tout mettre à jour…", lambda: self.update_requested.emit("all")
         )
         menu.addSeparator()
-        menu.addAction(
-            "Gablue (image système)…", lambda: self.update_requested.emit("gablue")
-        )
-        menu.addAction(
-            "Flatpaks…", lambda: self.update_requested.emit("flatpak")
-        )
-        menu.addAction(
-            "Gwine (composants)…", lambda: self.update_requested.emit("gwine")
-        )
-        menu.addAction(
-            "Brew (formules)…", lambda: self.update_requested.emit("brew")
-        )
+        # Les entrées de domaine portent le compte trouvé par la dernière
+        # vérification (`set_updates`) : on sait quoi lancer sans ouvrir.
+        self.update_actions: dict[str, tuple[object, str]] = {}
+        for key, domain, label in (
+            ("gablue", "image", "Gablue (image système)…"),
+            ("flatpak", "flatpak", "Flatpaks…"),
+            ("gwine", "gwine", "Gwine (composants)…"),
+            ("brew", "brew", "Brew (formules)…"),
+        ):
+            action = menu.addAction(label)
+            action.triggered.connect(
+                lambda _checked=False, kind=key: self.update_requested.emit(kind)
+            )
+            self.update_actions[key] = (action, label, domain)
         self.update_button.setMenu(menu)
+        self.updates_state: dict | None = None
         layout.addWidget(self.update_button, 0, Qt.AlignVCenter)
 
         # Les applications AppImage (GearLever) sont des programmes, pas des
@@ -517,3 +532,52 @@ class LocalCard(QFrame):
         network_menu.addAction("Tailscale…", self.tailscale_requested.emit)
         self.config_button.setMenu(config_menu)
         layout.addWidget(self.config_button, 0, Qt.AlignVCenter)
+
+    # -- mises à jour disponibles ------------------------------------------
+    def set_updates(self, state: dict | None) -> None:
+        """Affiche ce que la dernière vérification a trouvé.
+
+        La ligne sous le nom du poste reste courte (elle ne doit pas pousser
+        les boutons) ; le menu et les infobulles portent le détail. Un domaine
+        sans mise à jour garde son libellé nu.
+        """
+        self.updates_state = state
+        total = total_updates(state)
+        self.hint_label.setText(
+            compact_summary(state) or "Mises à jour et options de cette machine"
+        )
+        lines = summary_lines(state)
+        if total:
+            lines.append("Cliquer pour ouvrir les mises à jour.")
+        tooltip = "\n".join(lines) if lines else ""
+        self.hint_label.setToolTip(tooltip)
+        self.update_button.setToolTip(tooltip)
+        # La ligne n'est cliquable que s'il y a quelque chose à faire : une
+        # carte au repos garde son libellé inerte (pas de curseur trompeur).
+        self._updates_clickable = bool(total)
+        self.hint_label.setCursor(
+            Qt.PointingHandCursor if total else Qt.ArrowCursor
+        )
+        self.update_button.setText(
+            f"Mettre à jour ({total})" if total else "Mettre à jour"
+        )
+        domains = (state or {}).get("domains") or {}
+        for key, (action, label, domain) in self.update_actions.items():
+            count = domain_count(domain, domains.get(domain) or {})
+            action.setText(f"{label} — {count}" if count else label)
+
+    def set_checking(self) -> None:
+        self.hint_label.setText("Vérification des mises à jour…")
+        self.check_action.setEnabled(False)
+
+    def end_checking(self) -> None:
+        self.check_action.setEnabled(True)
+
+    def eventFilter(self, obj, event) -> bool:
+        """Clic sur la ligne d'état → menu « Mettre à jour », s'il y a lieu."""
+        if obj is self.hint_label and self._updates_clickable \
+                and event.type() == QEvent.MouseButtonRelease \
+                and event.button() == Qt.LeftButton:
+            self.update_button.showMenu()
+            return True
+        return super().eventFilter(obj, event)

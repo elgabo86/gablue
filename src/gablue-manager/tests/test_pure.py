@@ -20,7 +20,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from gablue_manager import apps, cli, hosts, local, prefs, ssh, util  # noqa: E402
+from gablue_manager import (  # noqa: E402
+    apps, cli, hosts, local, prefs, ssh, updates, util,
+)
 
 
 class KargsTest(unittest.TestCase):
@@ -548,13 +550,21 @@ class PrefsTest(unittest.TestCase):
             with mock.patch.object(prefs, "CONFIG_DIR", config), \
                     mock.patch.object(prefs, "PREFS_FILE",
                                       config / "preferences.json"):
-                # Absent : la barre d'état est active par défaut.
+                # Absent : barre d'état et vérifications actives par défaut.
                 self.assertTrue(prefs.tray_enabled())
+                self.assertTrue(prefs.checks_enabled())
+                self.assertEqual(
+                    prefs.check_interval_seconds(), 360 * 60
+                )
                 prefs.set_tray_enabled(False)
                 self.assertFalse(prefs.tray_enabled())
+                stored = json.loads(
+                    prefs.PREFS_FILE.read_text(encoding="utf-8")
+                )
+                self.assertFalse(stored["tray"])
+                # Toutes les clés connues sont écrites, aux défauts près.
                 self.assertEqual(
-                    json.loads(prefs.PREFS_FILE.read_text(encoding="utf-8")),
-                    {"tray": False},
+                    set(stored), set(prefs.DEFAULTS)
                 )
                 self.assertEqual(
                     prefs.PREFS_FILE.stat().st_mode & 0o777, 0o600
@@ -564,16 +574,152 @@ class PrefsTest(unittest.TestCase):
                 self.assertTrue(prefs.tray_enabled())
                 prefs.set_tray_enabled(True)
                 self.assertTrue(prefs.tray_enabled())
-                # Clé inconnue ou valeur non booléenne : ignorée.
+                # Clé inconnue, valeur non booléenne ou intervalle aberrant :
+                # ignorés ou ramenés dans les bornes.
                 prefs.PREFS_FILE.write_text(
-                    '{"tray": "oui", "autre": 1}', encoding="utf-8"
+                    '{"tray": "oui", "autre": 1, "check_interval": 999999}',
+                    encoding="utf-8",
                 )
-                self.assertTrue(prefs.tray_enabled())
-                prefs.set_tray_enabled(True)
+                values = prefs.load_prefs()
+                self.assertTrue(values["tray"])
                 self.assertEqual(
-                    json.loads(prefs.PREFS_FILE.read_text(encoding="utf-8")),
-                    {"tray": True},
+                    values["check_interval"], prefs.INTERVAL_RANGE[1]
                 )
+                self.assertNotIn("autre", values)
+
+    def test_check_domains(self):
+        values = dict(prefs.DEFAULTS)
+        values["check_brew"] = False
+        self.assertEqual(
+            prefs.check_domains(values),
+            {"image": True, "flatpak": True, "brew": False, "gwine": True},
+        )
+        # L'interrupteur général coupe la surveillance automatique, sans
+        # effacer les domaines choisis (le bouton « Vérifier » les réutilise).
+        values["check_auto"] = False
+        self.assertEqual(
+            prefs.auto_check_domains(values),
+            {"image": False, "flatpak": False, "brew": False, "gwine": False},
+        )
+        self.assertFalse(prefs.checks_enabled(values))
+        self.assertTrue(prefs.check_domains(values)["image"])
+        self.assertEqual(
+            prefs.check_interval_seconds({**values, "check_interval": 2}),
+            5 * 60,
+        )
+
+
+class UpdatesTest(unittest.TestCase):
+    def test_deployment_age(self):
+        deployments = {
+            "deployments": [
+                {"booted": False, "staged": True, "version": "20261107",
+                 "timestamp": 0},
+                {"booted": True, "staged": False, "version": "20261106",
+                 "timestamp": 1_800_000_000},
+            ]
+        }
+        info = updates.parse_deployment_age(
+            json.dumps(deployments), now=1_800_000_000 + 3 * 86400
+        )
+        self.assertEqual(info["days"], 3)
+        self.assertEqual(info["version"], "20261106")
+        self.assertTrue(info["staged"])
+        self.assertEqual(info["staged_version"], "20261107")
+        self.assertEqual(updates.parse_deployment_age("pas du json"), {})
+        self.assertEqual(updates.parse_deployment_age("{}"), {})
+
+    def test_bootc_check(self):
+        self.assertEqual(
+            updates.parse_bootc_check("Update available for: img", 0),
+            "available",
+        )
+        self.assertEqual(
+            updates.parse_bootc_check("No update available.", 0), "uptodate"
+        )
+        self.assertEqual(
+            updates.parse_bootc_check(
+                "No changes in image => sha256:abc", 0
+            ),
+            "uptodate",
+        )
+        self.assertEqual(updates.parse_bootc_check("erreur réseau", 1),
+                         "unknown")
+
+    def test_gwine_check(self):
+        text = (
+            "component|runner|1.2.3|1.3.0\n"
+            "component|cache||\n"
+            "gwine-check: updates\n"
+        )
+        result = updates.parse_gwine_check(text, 10)
+        self.assertEqual(result["state"], "updates")
+        self.assertEqual(result["components"][0]["key"], "runner")
+        self.assertEqual(result["components"][0]["latest"], "1.3.0")
+        self.assertEqual(result["components"][1]["key"], "cache")
+        self.assertEqual(
+            updates.parse_gwine_check("gwine-check: uptodate", 0)["state"],
+            "uptodate",
+        )
+        self.assertEqual(
+            updates.parse_gwine_check("gwine-check: unknown", 3)["state"],
+            "unknown",
+        )
+
+    def test_flatpak_and_brew_lists(self):
+        self.assertEqual(
+            updates.parse_flatpak_updates(
+                "org.kde.krita\n\norg.gimp.GIMP\norg.kde.krita\n"
+            ),
+            ["org.gimp.GIMP", "org.kde.krita"],
+        )
+        self.assertEqual(
+            updates.parse_brew_outdated("==> Outdated\nhello\nwget\n"),
+            ["hello", "wget"],
+        )
+
+    def test_summary(self):
+        state = {
+            "checked_at": 1.0,
+            "online": True,
+            "domains": {
+                "image": {"state": "available", "days": 12,
+                          "version": "20261107", "staged": False},
+                "flatpak": {"state": "updates",
+                            "apps": ["org.kde.krita", "org.gimp.GIMP"]},
+                "brew": {"state": "uptodate", "formulas": []},
+                "gwine": {"state": "updates", "components": [
+                    {"key": "runner", "current": "1.2.3", "latest": "1.3.0"},
+                ]},
+            },
+        }
+        self.assertEqual(updates.total_updates(state), 4)
+        self.assertTrue(updates.has_updates(state))
+        text = "\n".join(updates.summary_lines(state))
+        self.assertIn("Image Gablue : mise à jour disponible", text)
+        self.assertIn("il y a 12 jours", text)
+        self.assertIn("Homebrew : à jour", text)
+        self.assertIn("Runner gwine 1.2.3 → 1.3.0", text)
+        self.assertIn("4 mises à jour", updates.compact_summary(state))
+        # Tous les domaines sautés : le dire, ne pas annoncer « à jour ».
+        skipped = {"online": True, "domains": {
+            domain: {"state": "skipped"} for domain in updates.DOMAINS
+        }}
+        self.assertEqual(updates.compact_summary(skipped),
+                         "Vérifications de mises à jour désactivées")
+        self.assertEqual(
+            updates.compact_summary({"online": False, "domains": {}}),
+            "Hors ligne — vérification impossible",
+        )
+        # Hors ligne mais image déjà téléchargée : le redémarrage reste à
+        # faire, on ne le cache pas derrière « hors ligne ».
+        offline_staged = {"online": False, "domains": {
+            "image": {"state": "available", "staged": True, "days": 2},
+            "flatpak": {"state": "offline"},
+            "brew": {"state": "offline"},
+            "gwine": {"state": "offline"},
+        }}
+        self.assertIn("1 mise à jour", updates.compact_summary(offline_staged))
 
 
 class CliTest(unittest.TestCase):

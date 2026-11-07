@@ -302,6 +302,107 @@ prepare_local_cache() {
     fi
 }
 
+# Liste les composants gwine en retard, sans rien télécharger ni installer.
+# Une ligne par composant : `component|clé|version_actuelle|version_disponible`
+# (version actuelle vide = composant absent). Utilisé par `gwine --init --check`
+# et par Gablue Manager pour annoncer les mises à jour sans les appliquer.
+# Retourne 0 si au moins un composant est en retard, 1 si tout est à jour,
+# 2 si le réseau (ou une version publiée) ne peut pas être obtenu.
+components_outdated_list() {
+    if ! curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
+        return 2
+    fi
+
+    local found=1
+
+    # Cache de base incomplet (runner, Mono/Gecko, wincomponents, dossiers
+    # extraits partiels) : une init reste nécessaire même sans version neuve.
+    if [ ! -f "$WINE_DIR/bin/wine" ]; then
+        echo "component|runner||"
+        found=0
+    fi
+    if local_cache_incomplete 2>/dev/null || \
+       ! check_wincomponents_cache >/dev/null 2>&1; then
+        echo "component|cache||"
+        found=0
+    fi
+
+    # Runner gwine
+    if [ -f "$WINE_DIR/bin/wine" ]; then
+        local latest_runner current_runner
+        latest_runner=$(get_latest_gwine_version 2>/dev/null) || return 2
+        [ -n "$latest_runner" ] || return 2
+        current_runner=$(cat "$GWINE_DIR/.version" 2>/dev/null || echo "")
+        if [ -z "$current_runner" ] || \
+           compare_versions "$latest_runner" "$current_runner"; then
+            echo "component|runner|${current_runner}|${latest_runner}"
+            found=0
+        fi
+    fi
+
+    # DXVK (standard ou GPLAsync selon le mode configuré)
+    local dxvk_mode dxvk_dir current_dxvk=""
+    dxvk_mode=$(get_current_dxvk_mode)
+    if [ "$dxvk_mode" = "dxvk-async" ]; then
+        local latest_dxvk_async
+        latest_dxvk_async=$(get_latest_dxvk_async_version 2>/dev/null) || return 2
+        [ -n "$latest_dxvk_async" ] || return 2
+        dxvk_dir=$(find_component_dir "$DXVK_ASYNC_CACHE_DIR" "dxvk*gplasync*")
+        [ -n "$dxvk_dir" ] && current_dxvk=$(basename "$dxvk_dir" | sed 's/^dxvk-gplasync-//')
+        if [ -z "$current_dxvk" ] || [ "$current_dxvk" != "$latest_dxvk_async" ]; then
+            echo "component|dxvk|${current_dxvk}|${latest_dxvk_async}"
+            found=0
+        fi
+    else
+        local latest_dxvk
+        read -r latest_dxvk _ < <(get_latest_dxvk_version) || true
+        [ -n "$latest_dxvk" ] || return 2
+        dxvk_dir=$(find "$DXVK_CACHE_DIR" -mindepth 1 -maxdepth 1 -type d -name "dxvk-*" 2>/dev/null | grep -v "gplasync\|nvapi" | sort -V | tail -1)
+        [ -n "$dxvk_dir" ] && current_dxvk=$(basename "$dxvk_dir" | sed 's/^dxvk-//')
+        if [ -z "$current_dxvk" ] || compare_versions "$latest_dxvk" "$current_dxvk"; then
+            echo "component|dxvk|${current_dxvk}|${latest_dxvk}"
+            found=0
+        fi
+    fi
+
+    # VKD3D-Proton
+    local latest_vkd3d current_vkd3d="" vkd3d_dir
+    read -r latest_vkd3d _ < <(get_latest_vkd3d_version) || true
+    [ -n "$latest_vkd3d" ] || return 2
+    vkd3d_dir=$(find_component_dir "$VKD3D_CACHE_DIR" "vkd3d-proton-*")
+    [ -n "$vkd3d_dir" ] && current_vkd3d=$(basename "$vkd3d_dir" | sed 's/^vkd3d-proton-//')
+    if [ -z "$current_vkd3d" ] || compare_versions "$latest_vkd3d" "$current_vkd3d"; then
+        echo "component|vkd3d|${current_vkd3d}|${latest_vkd3d}"
+        found=0
+    fi
+
+    # D7VK
+    local latest_d7vk current_d7vk="" d7vk_dir
+    latest_d7vk=$(get_latest_d7vk_version 2>/dev/null) || return 2
+    [ -n "$latest_d7vk" ] || return 2
+    d7vk_dir=$(find_component_dir "$D7VK_CACHE_DIR" "d7vk-*")
+    [ -n "$d7vk_dir" ] && current_d7vk=$(basename "$d7vk_dir" | sed 's/^d7vk-//')
+    if [ -z "$current_d7vk" ] || compare_versions "$latest_d7vk" "$current_d7vk"; then
+        echo "component|d7vk|${current_d7vk}|${latest_d7vk}"
+        found=0
+    fi
+
+    # DXVK-NVAPI (NVIDIA uniquement)
+    if is_nvidia_gpu; then
+        local latest_nvapi current_nvapi="" nvapi_dir
+        latest_nvapi=$(get_latest_dxvk_nvapi_version 2>/dev/null) || return 2
+        [ -n "$latest_nvapi" ] || return 2
+        nvapi_dir=$(find_component_dir "$DXVK_NVAPI_CACHE_DIR" "dxvk-nvapi-*")
+        [ -n "$nvapi_dir" ] && current_nvapi=$(basename "$nvapi_dir" | sed 's/^dxvk-nvapi-v//; s/^dxvk-nvapi-//')
+        if [ -z "$current_nvapi" ] || compare_versions "$latest_nvapi" "$current_nvapi"; then
+            echo "component|nvapi|${current_nvapi}|${latest_nvapi}"
+            found=0
+        fi
+    fi
+
+    return $found
+}
+
 # Indique si un composant est absent ou plus récent que ce qui est en cache :
 # runner gwine, DXVK (ou GPLAsync selon le mode), VKD3D-Proton, D7VK,
 # DXVK-NVAPI (NVIDIA), Mono/Gecko et wincomponents.

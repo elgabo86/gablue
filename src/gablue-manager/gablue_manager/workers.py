@@ -5,11 +5,13 @@ import os
 import select
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import as_completed
 
 from PySide6.QtCore import QThread, Signal
 
+from . import updates
 from .constants import SSH
 from .hosts import avahi_scan, remote_addresses
 from .local import pending_reboot_reasons
@@ -144,6 +146,32 @@ class RebootWorker(QThread):
         except Exception:            # une sonde d'agrément ne doit rien casser
             reasons = []
         self.done.emit(reasons)
+
+class UpdateCheckWorker(QThread):
+    """Sonde les mises à jour disponibles (image, Flatpaks, brew, gwine).
+
+    `enabled` vient des préférences, `online` de la barre d'état
+    (`QNetworkInformation`) : hors ligne, seules les sondes locales tournent.
+    """
+
+    done = Signal(object)           # état renvoyé par updates.check_all
+
+    def __init__(self, enabled: dict[str, bool] | None = None,
+                 online: bool = True, parent=None):
+        super().__init__(parent)
+        self._enabled = dict(enabled) if enabled is not None else None
+        self._online = bool(online)
+
+    def run(self) -> None:
+        try:
+            state = updates.check_all(self._enabled, self._online)
+        except Exception:            # une sonde d'agrément ne doit rien casser
+            state = {
+                "checked_at": time.time(),
+                "online": self._online,
+                "domains": {},
+            }
+        self.done.emit(state)
 
 class SshTaskWorker(QThread):
     """Exécute une commande distante en streaming (arrêt, redémarrage, mise à jour)."""

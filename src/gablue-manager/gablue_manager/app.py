@@ -55,12 +55,29 @@ Clé locale    : ~/.ssh/id_ed25519 (créée au besoin, sans passphrase)
 def _has_display() -> bool:
     return bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
 
-def _raise_window(server, window) -> None:
-    """Un second lancement ramène la fenêtre existante, sans en ouvrir une autre."""
+def _window_message(server, window) -> None:
+    """Message d'une autre instance : `raise` la ramène, `toggle` la ferme.
+
+    `toggle` vient d'un clic sur l'icône de barre d'état : fenêtre ouverte →
+    elle se ferme (et l'app se termine, plus rien ne tourne en fond) ;
+    fenêtre absente → elle s'ouvre. `raise` (menu du tray, second lancement)
+    se contente de la ramener devant.
+    """
     socket = server.nextPendingConnection()
     if socket is None:
         return
-    socket.disconnected.connect(socket.deleteLater)
+    if not socket.waitForReadyRead(200):
+        # Ancien appelant qui n'écrit rien : comportement historique.
+        socket.deleteLater()
+        window.show()
+        window.raise_()
+        window.activateWindow()
+        return
+    message = bytes(socket.readAll()).strip()
+    socket.deleteLater()
+    if message == b"toggle" and window.isVisible():
+        window.close()
+        return
     window.show()
     window.raise_()
     window.activateWindow()
@@ -103,6 +120,6 @@ def main() -> int:
         instance.send(instance.gui_socket(), b"raise")
         return 0
     window = MainWindow()
-    server.newConnection.connect(lambda: _raise_window(server, window))
+    server.newConnection.connect(lambda: _window_message(server, window))
     window.show()
     return app.exec()

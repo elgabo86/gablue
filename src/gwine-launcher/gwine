@@ -436,6 +436,13 @@ main() {
     
     # Initialiser les chemins du runner
     init_runner_paths
+
+    # `--init --check` : annoncer les mises à jour sans rien modifier. Placé
+    # avant la configuration DXVK/affichage pour ne toucher à aucune option.
+    if [ "$check_mode" = true ]; then
+        check_updates_mode
+        exit $?
+    fi
     
     # Initialiser le mode DXVK (dxvk ou dxvk-async) si spécifié avec --init
     if [ "$init_mode" = true ]; then

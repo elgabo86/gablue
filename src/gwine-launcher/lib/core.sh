@@ -55,6 +55,7 @@ nofix_mode=false
 reset_mode=false
 exewgp_mode=false
 init_mode=false
+check_mode=false
 force_init=false
 update_mode=false
 cmd_mode=false

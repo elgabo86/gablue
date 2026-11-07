@@ -8,6 +8,32 @@
 # gwine est lancé par un .exe/.wgp (plus de kdialog).
 ################################################################################
 
+# `gwine --init --check` : dire quelles mises à jour existent, sans rien
+# télécharger ni installer. Lisible en terminal et reprise par Gablue Manager
+# (lignes `component|clé|actuelle|disponible`, puis `gwine-check: état`).
+# Codes de sortie : 0 = tout à jour, 10 = mises à jour disponibles,
+# 3 = indéterminé (hors ligne, version publiée introuvable, gwine ancien).
+check_updates_mode() {
+    local lines status
+    lines=$(components_outdated_list)
+    case $? in
+        0) status="updates" ;;
+        1) status="uptodate" ;;
+        *) status="unknown" ;;
+    esac
+
+    if [ -n "$lines" ]; then
+        printf '%s\n' "$lines"
+    fi
+    echo "gwine-check: $status"
+
+    case "$status" in
+        updates)  return 10 ;;
+        uptodate) return 0 ;;
+        *)        return 3 ;;
+    esac
+}
+
 init_prefix_only() {
 
     # `gwine --init` est la voie de mise à jour (gablue-manager, poste local

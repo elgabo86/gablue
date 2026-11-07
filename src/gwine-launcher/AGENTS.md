@@ -123,6 +123,7 @@ src/gwine-launcher/
 ./gwine --init                  # Init/MAJ : seulement si un composant a changé
 ./gwine --init --force          # Réinitialisation complète forcée
 ./gwine --init --offline        # Mode offline
+./gwine --init --check          # Dire quelles mises à jour existent, sans rien installer
 ./gwine --init --dxvk-async     # Init avec DXVK-GPLAsync
 ./gwine --update                # Mettre à jour les composants
 ./gwine --download-components   # Télécharger tous les composants
@@ -133,6 +134,14 @@ src/gwine-launcher/
 réinitialise le préfixe que si un composant manque ou a une nouvelle version
 (runner gwine, DXVK/GPLAsync, VKD3D, D7VK, NVAPI, Mono/Gecko, wincomponents) ;
 sinon il rend la main sans rien toucher. `--force` réinitialise même à jour.
+
+`--init --check` répond à « qu'est-ce qui peut être mis à jour ? » sans rien
+télécharger ni installer : une ligne `component|clé|actuelle|disponible` par
+composant en retard (runner gwine, DXVK/GPLAsync, VKD3D, D7VK, NVAPI, cache
+incomplet), puis `gwine-check: updates|uptodate|unknown`. Codes de sortie
+**0** (à jour), **10** (mises à jour), **3** (indéterminé : hors ligne, version
+publiée introuvable, gwine trop ancien pour l'option). Gablue Manager s'en sert
+pour sa vérification de mises à jour (domaine « composants gwine »).
 
 Premier lancement (`.exe`/`.wgp` sans préfixe) : `check_prefix_or_offer_init()`
 lance l'init comme sous-processus dans la **fenêtre de progression de Gablue

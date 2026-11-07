@@ -16,6 +16,7 @@ gwine_commands() {
         '--nofix:Ignorer le fichier .fix d'"'"'un jeu'
         '--exewgp:Mode interactif pour choisir l\'exécutable dans un WGP'
         '--init:Initialiser le préfixe Wine (si un composant a changé)'
+        '--check:Avec --init : dire quelles mises à jour existent, sans rien installer'
         '--force:Forcer la réinitialisation complète du préfixe (avec --init)'
         '--offline:Mode offline pour --init'
         '--update:Mettre à jour les composants'
@@ -80,6 +81,7 @@ _arguments -C \
     '--nofix[Ignorer le fichier .fix d'"'"'un jeu]' \
     '--exewgp[Mode interactif pour choisir l\'exécutable dans un WGP]' \
     '--init[Initialiser le préfixe Wine (si un composant a changé)]' \
+    '--check[Avec --init : dire quelles mises à jour existent, sans rien installer]' \
     '--force[Forcer la réinitialisation complète du préfixe (avec --init)]' \
     '--offline[Mode offline pour --init]' \
     '--update[Mettre à jour les composants]' \
