@@ -46,6 +46,7 @@ ARG IMAGE_DATE
 # Copie des sources pour compilation et assemblage
 COPY src/gamepadshortcuts /src/gamepadshortcuts
 COPY src/ds2xbox /src/ds2xbox
+COPY src/gablue-dualsense /src/gablue-dualsense
 COPY src/gablue-isomount /src/gablue-isomount
 COPY src/gwine-launcher /src/gwine-launcher
 COPY src/gablue-manager /src/gablue-manager

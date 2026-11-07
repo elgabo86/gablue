@@ -77,6 +77,10 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── AGENTS.md                        # Paquet, appareils, installation
 │   │   ├── gablue-apk-installer            # Lanceur /usr/bin (sys.path + main)
 │   │   └── gablue_apk_installer/           # Paquet : app, window, device, install, dialogs/
+│   ├── gablue-dualsense/                   # Sources C de l'outil firmware DualSense / Edge
+│   │   ├── AGENTS.md                       # Protocole, détection de famille, invariants
+│   │   ├── dualsense-ctl.c                # État + flash (hidapi, rapports 0xF4/0xF5)
+│   │   └── Makefile                       # Compilation (hidapi-devel)
 │   ├── gablue-isomount/                    # Sources C du monteur d'images disque
 │   │   ├── gablue-isomount.c              # Programme principal (UDisks2 DBus, Dolphin)
 │   │   └── Makefile                       # Compilation
@@ -251,6 +255,7 @@ son propre AGENTS.md de sous-dossier + pointeur dans l'index ci-dessous.
 | Gablue Manager (GUI, paquet `gablue_manager`) | `src/gablue-manager/AGENTS.md` | modifier `src/gablue-manager/` ou un dialogue |
 | TV Gablue (tvqt, paquet `gablue_tv`) | `src/tvqt/AGENTS.md` | modifier `src/tvqt/` ou une vue |
 | Installateur APK (paquet `gablue_apk_installer`) | `src/gablue-apk-installer/AGENTS.md` | modifier `src/gablue-apk-installer/` |
+| Firmware DualSense / Edge (`gablue-dualsense`) | `src/gablue-dualsense/AGENTS.md` | modifier `dualsense-ctl.c`, le script `/usr/bin/gablue-dualsense` ou la détection de famille |
 | lgplaunch (modules Bash `lib/`) | `src/lgplaunch/AGENTS.md` | modifier `src/lgplaunch/` |
 | Manette (gamepadshortcuts, mouse, kbdnav) | `src/gamepadshortcuts/AGENTS.md` | modifier `src/gamepadshortcuts/` |
 

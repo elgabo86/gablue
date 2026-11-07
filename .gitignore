@@ -8,6 +8,7 @@ src/lgplaunch/lgplaunch-standalone.sh
 src/ds2xbox/ds2xbox
 src/gamepadshortcuts/gamepadshortcuts
 src/gablue-isomount/gablue-isomount
+src/gablue-dualsense/gablue-dualsense-ctl
 
 # Contenu extra local pour les builds ISO (copié dans /extra du live, non versionné)
 /installer/extra/*
