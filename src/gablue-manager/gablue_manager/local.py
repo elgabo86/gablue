@@ -290,6 +290,71 @@ def flatpak_update_script() -> str:
         "exit $rc\n"
     )
 
+# Ligne de progression de flatpak hors terminal (sortie non « fancy ») :
+# « Updating 3/7… » à l'ouverture de chaque opération, puis la même ligne suivie
+# d'une barre en espaces et du pourcentage, réémise à chaque changement. Les
+# msgid anglais ne sont pas traduits en français (vérifié 07/11/2026, flatpak
+# 1.18.4 : « Updating %d/%d… » et « %3d%% » ont un msgstr vide dans po/fr.po).
+_FLATPAK_OP_RE = re.compile(
+    r"^\s*(Updating|Installing|Uninstalling)(?:\s+(\d+)/(\d+))?\u2026"
+)
+_FLATPAK_PERCENT_RE = re.compile(r"(\d{1,3})\s*%")
+
+FLATPAK_ACTIONS = {
+    "Updating": "Mise à jour des Flatpaks",
+    "Installing": "Installation de Flatpaks",
+    "Uninstalling": "Désinstallation de Flatpaks",
+}
+
+def parse_flatpak_progress(line: str) -> dict:
+    """Ligne de `flatpak update` → progression (action, op/total, pourcentage).
+
+    Hors terminal, flatpak ne dessine pas son tableau : il écrit l'ouverture de
+    chaque opération (« Updating 3/7… ») puis réémet cette ligne avec le
+    pourcentage (« Updating 3/7…      45% 1,2 Mo/s ») à chaque changement. Le
+    pourcentage renvoyé est global à la phase en cours —
+    `(op - 1 + pct / 100) / total` — pour que la barre avance d'une opération à
+    l'autre ; sur la ligne d'ouverture (aucun pourcentage), on retient le début
+    de l'opération. `{}` pour toute autre ligne (« Looking for updates… »,
+    « Nothing to do. »), qui reste donc du journal.
+
+    Le script lance deux mises à jour successives (compte puis système) : les
+    compteurs repartent de zéro à la seconde, la barre peut donc redescendre une
+    fois entre les deux phases.
+    """
+    match = _FLATPAK_OP_RE.match(line or "")
+    if match is None:
+        return {}
+    action = match.group(1)
+    op = int(match.group(2) or 1)
+    total = max(1, int(match.group(3) or 1))
+    percentages = _FLATPAK_PERCENT_RE.findall(line[match.end():])
+    percent = None
+    if percentages:
+        percent = max(0.0, min(100.0, float(percentages[-1])))
+    done = min(op, total) - 1 + (percent or 0.0) / 100.0
+    return {
+        "action": action,
+        "label": FLATPAK_ACTIONS.get(action, "Mise à jour des Flatpaks"),
+        "op": op,
+        "total": total,
+        "percent": min(100.0, 100.0 * done / total),
+    }
+
+def flatpak_update_hint(text: str) -> str:
+    """Phrase de fin de journal pour `flatpak update`.
+
+    Le script enchaîne deux mises à jour (compte puis système) : la seconde
+    répond presque toujours « Nothing to do. » même quand la première a mis des
+    applications à jour. On ne conclut donc « rien à faire » que si aucune
+    opération n'a démarré — sinon le compte rendu mentirait.
+    """
+    if any(_FLATPAK_OP_RE.match(line) for line in (text or "").splitlines()):
+        return ""
+    if "Nothing to do." in (text or ""):
+        return "Aucune mise à jour disponible."
+    return ""
+
 def brew_available() -> bool:
     """Homebrew est-il installé sur ce poste ?"""
     return BREW_BINARY.exists() or shutil.which("brew") is not None

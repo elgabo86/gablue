@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QPushButton, QVBoxLayout,
 )
 
-from .local import parse_progress_event, privileged_prefix
+from .local import parse_flatpak_progress, parse_progress_event, privileged_prefix
 from .util import display_name, ssh_target
 from .workers import SshTaskWorker
 
@@ -186,7 +186,8 @@ class LocalTaskDialog(QDialog):
 
     def __init__(self, parent=None, title: str = "", subtitle: str = "",
                  argv: list[str] | None = None, root: bool = False,
-                 hint_from_output=None, progress_fifo: str = ""):
+                 hint_from_output=None, progress_fifo: str = "",
+                 progress_lines: bool = False):
         super().__init__(parent)
         self._argv = list(argv or [])
         self._root = root
@@ -202,6 +203,11 @@ class LocalTaskDialog(QDialog):
         self._progress_tries = 0
         self._progress_buffer = ""
         self._progress_seen = False
+        # Progression lue dans le journal (flatpak, hors terminal) : la barre
+        # remplace le journal, qui reste accessible par le bouton « Terminal ».
+        self._progress_lines = progress_lines
+        self._progress_ui = bool(progress_fifo or progress_lines)
+        self._line_buffer = ""
 
         self.setWindowTitle(title or "Action sur ce poste")
         self.setModal(False)
@@ -221,27 +227,30 @@ class LocalTaskDialog(QDialog):
             detail.setWordWrap(True)
             root_layout.addWidget(detail)
 
-        # Progression lisible quand la commande sait la publier (bootc) : le
-        # journal passe alors au second plan, derrière un bouton « Terminal ».
+        # Progression lisible quand la commande sait la publier (bootc via son
+        # FIFO, flatpak en lisant ses lignes) : le journal passe alors au
+        # second plan, derrière un bouton « Terminal ».
         self.progress_label = QLabel(self)
         self.progress_label.setObjectName("hostDetail")
         self.progress_label.setWordWrap(True)
-        self.progress_label.setVisible(bool(progress_fifo))
+        self.progress_label.setVisible(self._progress_ui)
         root_layout.addWidget(self.progress_label)
 
         self.progress_bar = QProgressBar(self)
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setRange(0, 0)     # indéterminé tant qu'aucun événement
-        self.progress_bar.setVisible(bool(progress_fifo))
+        self.progress_bar.setVisible(self._progress_ui)
         root_layout.addWidget(self.progress_bar)
         if progress_fifo:
             self.progress_label.setText("Préparation de la mise à jour…")
+        elif progress_lines:
+            self.progress_label.setText("Recherche de mises à jour…")
 
         self.log_view = QPlainTextEdit(self)
         self.log_view.setReadOnly(True)
         self.log_view.setMinimumHeight(280)
         self.log_view.setMaximumBlockCount(20000)
-        self.log_view.setVisible(not progress_fifo)
+        self.log_view.setVisible(not self._progress_ui)
         root_layout.addWidget(self.log_view, 1)
 
         self.result_label = QLabel(self)
@@ -250,11 +259,11 @@ class LocalTaskDialog(QDialog):
         root_layout.addWidget(self.result_label)
 
         buttons = QHBoxLayout()
-        if progress_fifo:
+        if self._progress_ui:
             self.log_toggle = QPushButton("Terminal", self)
             self.log_toggle.setObjectName("ghost")
             self.log_toggle.setCheckable(True)
-            self.log_toggle.setToolTip("Afficher le journal complet de bootc")
+            self.log_toggle.setToolTip("Afficher le journal complet")
             self.log_toggle.toggled.connect(self._toggle_log)
             buttons.addWidget(self.log_toggle)
         else:
@@ -302,13 +311,13 @@ class LocalTaskDialog(QDialog):
         if self._progress_fifo:
             QTimer.singleShot(0, self._progress_open)
 
-    # -- progression structurée (bootc) -------------------------------------
+    # -- progression (bootc par FIFO, flatpak dans le journal) --------------
     def _toggle_log(self, shown: bool) -> None:
         self.log_view.setVisible(shown)
         if self.log_toggle is not None:
             self.log_toggle.setToolTip(
                 "Masquer le journal" if shown
-                else "Afficher le journal complet de bootc"
+                else "Afficher le journal complet"
             )
         self.adjustSize()
 
@@ -369,6 +378,41 @@ class LocalTaskDialog(QDialog):
             self.progress_bar.setRange(0, 100)
             self.progress_bar.setValue(int(round(float(percent))))
 
+    def _apply_flatpak_progress(self, info: dict) -> None:
+        self._progress_seen = True
+        total = int(info.get("total") or 1)
+        op = int(info.get("op") or 1)
+        label = info.get("label") or "Mise à jour des Flatpaks"
+        if total > 1:
+            label += f" {op}/{total}"
+        self.progress_label.setText(label)
+        percent = info.get("percent")
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(int(round(float(percent or 0.0))))
+
+    def _read_progress_lines(self, text: str) -> None:
+        """Découpe la sortie en lignes complètes et en tire la progression.
+
+        `QProcess` livre des morceaux arbitraires : une ligne peut arriver en
+        deux fois, d'où le tampon. Les lignes non reconnues restent dans le
+        journal, rien n'est consommé.
+        """
+        if not self._progress_lines:
+            return
+        self._line_buffer += text
+        while "\n" in self._line_buffer:
+            line, _, self._line_buffer = self._line_buffer.partition("\n")
+            info = parse_flatpak_progress(line)
+            if info:
+                self._apply_flatpak_progress(info)
+
+    def _flush_progress_lines(self) -> None:
+        if self._line_buffer:
+            info = parse_flatpak_progress(self._line_buffer)
+            self._line_buffer = ""
+            if info:
+                self._apply_flatpak_progress(info)
+
     def _stop_progress(self) -> None:
         if self._progress_notifier is not None:
             self._progress_notifier.setEnabled(False)
@@ -394,6 +438,7 @@ class LocalTaskDialog(QDialog):
         self.log_view.insertPlainText(text)
         bar = self.log_view.verticalScrollBar()
         bar.setValue(bar.maximum())
+        self._read_progress_lines(text)
 
     def _cancel(self) -> None:
         if not self._running or self._process is None:
@@ -413,11 +458,13 @@ class LocalTaskDialog(QDialog):
     def _finished(self, code: int) -> None:
         self._running = False
         self._stop_progress()
+        self._flush_progress_lines()
         output = "".join(self._output)
         ok = code == 0
-        if self._progress_fifo:
+        if self._progress_ui:
             # Sans aucun événement, il n'y avait rien à télécharger (bootc
-            # répond « No changes in… ») : la barre n'aurait rien à montrer.
+            # répond « No changes in… », flatpak « Nothing to do. ») : la barre
+            # n'aurait rien à montrer.
             self.progress_bar.setVisible(self._progress_seen)
             self.progress_label.setVisible(self._progress_seen)
             if self._progress_seen and ok:

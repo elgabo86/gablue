@@ -234,6 +234,67 @@ class SystemTest(unittest.TestCase):
         self.assertEqual(local.parse_progress_event("pas du json"), {})
         self.assertEqual(local.parse_progress_event(""), {})
 
+    def test_flatpak_progress(self):
+        # Ouverture d'opération : « Updating 3/7… » (le 3e sur 7).
+        opening = local.parse_flatpak_progress("Updating 3/7\u2026")
+        self.assertEqual(opening["action"], "Updating")
+        self.assertEqual(opening["label"], "Mise à jour des Flatpaks")
+        self.assertEqual((opening["op"], opening["total"]), (3, 7))
+        self.assertAlmostEqual(opening["percent"], 100 * 2 / 7, places=2)
+
+        # Même ligne réémise avec le pourcentage et le débit (barre en espaces
+        # hors terminal, taille localisée).
+        line = "Updating 3/7\u2026" + " " * 20 + " 45% 1,2 Mo/s"
+        info = local.parse_flatpak_progress(line)
+        self.assertAlmostEqual(info["percent"], 100 * 2.45 / 7, places=2)
+
+        # Une seule opération : pas de compteur dans la ligne.
+        alone = local.parse_flatpak_progress("Updating\u2026")
+        self.assertEqual((alone["op"], alone["total"]), (1, 1))
+        self.assertEqual(alone["percent"], 0.0)
+        self.assertEqual(
+            local.parse_flatpak_progress("Updating\u2026   67%")["percent"],
+            67.0,
+        )
+
+        # Install / uninstall et bornage du pourcentage.
+        self.assertEqual(
+            local.parse_flatpak_progress("Installing 2/5\u2026 10%")["percent"],
+            100 * 1.1 / 5,
+        )
+        self.assertEqual(
+            local.parse_flatpak_progress("Updating 1/1\u2026 120%")["percent"],
+            100.0,
+        )
+
+        # Tout le reste va au journal, sans toucher la barre.
+        for text in (
+            "Looking for updates\u2026",
+            "Nothing to do.",
+            # Ne pas confondre avec l'ouverture d'opération : pas d'ellipse
+            # juste après le verbe.
+            "Updating to rebased version",
+            "",
+        ):
+            self.assertEqual(local.parse_flatpak_progress(text), {}, text)
+
+    def test_flatpak_update_hint(self):
+        # Deux phases (compte puis système) : « Nothing to do. » de la seconde
+        # ne doit pas faire croire que rien n'a été mis à jour.
+        self.assertEqual(
+            local.flatpak_update_hint(
+                "Looking for updates\u2026\nNothing to do.\n"
+            ),
+            "Aucune mise à jour disponible.",
+        )
+        self.assertEqual(
+            local.flatpak_update_hint(
+                "Updating 1/2\u2026\nNothing to do.\n"
+            ),
+            "",
+        )
+        self.assertEqual(local.flatpak_update_hint(""), "")
+
     def test_rebase_script(self):
         self.assertEqual(
             local.rebase_script("nvidia-open-dx"),

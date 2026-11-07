@@ -34,8 +34,9 @@ from .dialogs.variant import VariantDialog
 from .hosts import load_hosts, parse_ssh_config, save_hosts
 from .local import (
     _sudo_run, avahi_apply_args, avahi_publish_state, brew_available,
-    brew_update_script, flatpak_update_script, gablue_update_hint,
-    local_sshd_state, privileged_prefix, set_local_sshd_sudo,
+    brew_update_script, flatpak_update_hint, flatpak_update_script,
+    gablue_update_hint, local_sshd_state, privileged_prefix,
+    set_local_sshd_sudo,
 )
 from .ssh import ask_remote_password, remote_sudo_nopasswd, remote_sudo_prefix
 from .style import make_qss
@@ -1190,6 +1191,11 @@ class MainWindow(QMainWindow):
             "Mise à jour des Flatpaks",
             "flatpak update --user puis --system.",
             [_which("bash"), "-c", flatpak_update_script()],
+            # Hors terminal, flatpak écrit « Updating 3/7… » puis des lignes
+            # avec le pourcentage : la barre les lit, le journal reste derrière
+            # le bouton « Terminal ».
+            hint_from_output=flatpak_update_hint,
+            progress_lines=True,
         )
 
     def update_local_gwine(self) -> None:
@@ -1288,7 +1294,8 @@ class MainWindow(QMainWindow):
 
     def _run_local_task(self, title: str, subtitle: str, argv: list[str],
                         root: bool = False, hint_from_output=None,
-                        progress_fifo: str = "") -> None:
+                        progress_fifo: str = "",
+                        progress_lines: bool = False) -> None:
         if argv and shutil.which(argv[0]) is None and not Path(argv[0]).exists():
             QMessageBox.critical(
                 self, title,
@@ -1298,6 +1305,7 @@ class MainWindow(QMainWindow):
         dialog = LocalTaskDialog(
             self, title=title, subtitle=subtitle, argv=argv, root=root,
             hint_from_output=hint_from_output, progress_fifo=progress_fifo,
+            progress_lines=progress_lines,
         )
         start_task(self, dialog)
 
