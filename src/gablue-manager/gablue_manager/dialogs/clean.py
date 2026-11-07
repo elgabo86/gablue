@@ -12,9 +12,10 @@ l'outil ne sait pas donner (Flatpaks, Homebrew) sont affichées « ? ».
 """
 
 from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton,
-    QVBoxLayout,
+    QScrollArea, QVBoxLayout, QWidget,
 )
 
 from .. import local
@@ -23,7 +24,7 @@ from ..local import (
     parse_gablue_progress,
 )
 from ..tasks import LocalTaskDialog, start_task
-from ..uiutil import fit_dialog_height
+from .stversions import StVersionsSection
 
 CHOICE_LABELS = {
     "podman": (
@@ -120,9 +121,20 @@ class CleanDialog(QDialog):
         note.setWordWrap(True)
         root_layout.addWidget(note)
 
+        # La liste grandit avec les domaines et les dossiers Syncthing : un
+        # ascenseur évite un dialogue plus haut que l'écran sur un 1080p.
+        content = QWidget(self)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(8)
         self.rows_layout = QVBoxLayout()
         self.rows_layout.setSpacing(8)
-        root_layout.addLayout(self.rows_layout, 1)
+        content_layout.addLayout(self.rows_layout)
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setWidget(content)
+        root_layout.addWidget(self.scroll, 1)
 
         self.buttons: dict[str, QPushButton] = {}
         self.size_labels: dict[str, QLabel] = {}
@@ -130,6 +142,14 @@ class CleanDialog(QDialog):
         self.available: dict[str, bool] = {}
         for domain in CLEAN_DOMAINS:
             self._add_row(domain)
+
+        # Anciennes versions Syncthing : même dialogue, section à part. Elle
+        # ne supprime rien (le clic ouvre Dolphin), donc pas de bouton
+        # « Vider » — mais c'est bien un nettoyage que l'utilisateur fait ici.
+        self.versions = StVersionsSection(self)
+        content_layout.addWidget(self.versions)
+        if not self.versions.refresh():
+            self.versions.setVisible(False)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(10)
@@ -147,9 +167,17 @@ class CleanDialog(QDialog):
 
         self._update_hint()
         self._start_sizes()
-        fit_dialog_height(self, 700)
+        self._fit_height()
 
     # -- construction -------------------------------------------------------
+    def _fit_height(self) -> None:
+        """Hauteur raisonnable, plafonnée à l'écran ; l'ascenseur fait le reste."""
+        height = 860
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            height = min(height, screen.availableGeometry().height() - 80)
+        self.resize(760, max(560, height))
+
     @staticmethod
     def measurable(domain: str) -> bool:
         """Une taille est-elle calculable ? (Podman via `system df`, caches via `du`.)"""

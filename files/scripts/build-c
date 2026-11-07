@@ -11,7 +11,7 @@ set -eoux pipefail
 # =============================================================================
 
 # Dépendances de compilation (supprimées après build)
-dnf5 -y install gcc dbus-devel
+dnf5 -y install gcc dbus-devel hidapi-devel pkgconf-pkg-config
 
 # Fonction de build securisee : compile et verifie le binaire final
 build_and_verify() {
@@ -52,6 +52,7 @@ fi
 echo "OK : kbdnav compile et installe"
 
 build_and_verify "/src/ds2xbox" "ds2xbox" "ds2xbox"
+build_and_verify "/src/gablue-dualsense" "gablue-dualsense-ctl" "gablue-dualsense"
 build_and_verify "/src/gablue-isomount" "gablue-isomount" "gablue-isomount"
 
 # Compilation du hook composefs-fix (correction espace libre Dolphin)

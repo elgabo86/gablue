@@ -1,18 +1,17 @@
-"""Dossiers de versions Syncthing (`.stversions`) : voir, mesurer, ouvrir.
+"""Anciennes versions Syncthing (`.stversions`) : voir, mesurer, ouvrir.
 
 Syncthing garde une copie des fichiers modifiés ou supprimés dans un dossier
 `.stversions` par dossier synchronisé (ou dans le `versionsPath` configuré).
-Cet outil ne supprime **rien** : il liste, mesure la taille et ouvre le dossier
-choisi dans Dolphin, pour que le ménage se fasse à la main, fichier par
-fichier.
+Cette section, intégrée à « Nettoyer le système », ne supprime **rien** : elle
+liste, mesure la taille et ouvre le dossier choisi dans Dolphin, pour que le
+ménage se fasse à la main, fichier par fichier.
 """
 
 import shutil
 
 from PySide6.QtCore import QProcess, Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
-    QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from .. import local
@@ -38,7 +37,7 @@ class _SizeWorker(QThread):
         self.done.emit(sizes)
 
 
-class _VersionRow(QFrame):
+class VersionRow(QFrame):
     """Une ligne cliquable : ouvre son dossier dans le gestionnaire de fichiers."""
 
     def __init__(self, entry: dict, parent=None):
@@ -49,7 +48,7 @@ class _VersionRow(QFrame):
         self.setToolTip("Ouvrir ce dossier dans Dolphin")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setContentsMargins(16, 10, 16, 10)
         layout.setSpacing(4)
 
         top = QHBoxLayout()
@@ -86,86 +85,66 @@ class _VersionRow(QFrame):
             QProcess.startDetached("xdg-open", [self.path])
 
 
-class StVersionsDialog(QDialog):
-    """Liste des `.stversions` d'une session Syncthing active."""
+class StVersionsSection(QFrame):
+    """Section « Anciennes versions Syncthing » du dialogue de nettoyage."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Versions Syncthing")
-        self.setModal(True)
-        self.setMinimumWidth(720)
+        self.setObjectName("hostCard")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(6)
 
-        root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(24, 22, 24, 20)
-        root_layout.setSpacing(10)
-
-        heading = QLabel("Versions Syncthing", self)
-        heading.setObjectName("title")
-        root_layout.addWidget(heading)
+        title = QLabel("Anciennes versions Syncthing", self)
+        title.setObjectName("hostName")
+        layout.addWidget(title)
 
         self.note = QLabel(self)
-        self.note.setObjectName("subtitle")
+        self.note.setObjectName("hostDetail")
         self.note.setWordWrap(True)
-        root_layout.addWidget(self.note)
+        layout.addWidget(self.note)
 
         self.rows_widget = QWidget(self)
         self.rows_layout = QVBoxLayout(self.rows_widget)
         self.rows_layout.setContentsMargins(0, 0, 0, 0)
-        self.rows_layout.setSpacing(8)
+        self.rows_layout.setSpacing(6)
         self.scroll = QScrollArea(self)
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setWidget(self.rows_widget)
-        root_layout.addWidget(self.scroll, 1)
+        self.scroll.setMaximumHeight(220)
+        layout.addWidget(self.scroll)
 
-        buttons = QHBoxLayout()
-        buttons.setSpacing(10)
-        self.hint_label = QLabel(self)
-        self.hint_label.setObjectName("hostStatus")
-        buttons.addWidget(self.hint_label)
-        buttons.addStretch(1)
-        self.close_button = QPushButton("Fermer", self)
-        self.close_button.setObjectName("ghost")
-        self.close_button.setCursor(Qt.PointingHandCursor)
-        self.close_button.setDefault(True)
-        self.close_button.clicked.connect(self.accept)
-        buttons.addWidget(self.close_button)
-        root_layout.addLayout(buttons)
-
-        self.rows: list[_VersionRow] = []
+        self.rows: list[VersionRow] = []
         self.sizes: dict[str, int | None] = {}
         self._size_worker = None
-        self.refresh()
-        self.adjustSize()
+        self._note_base = ""
 
-    # -- état ---------------------------------------------------------------
-    def refresh(self) -> None:
+    def refresh(self) -> bool:
+        """Remplit la section ; False si Syncthing est inactif ou sans dossier."""
         if not local.syncthing_running():
-            self.note.setText(
-                "Syncthing n'est pas actif : rien à lister pour l'instant."
-            )
-            self.hint_label.setText("Démarrez Syncthing puis rouvrez cet outil.")
-            self.scroll.setVisible(False)
-            return
+            self.note.setText("Syncthing n'est pas actif sur ce poste.")
+            return False
         entries = local.syncthing_version_dirs()
         if not entries:
             self.note.setText(
                 "Syncthing est actif, mais aucun dossier .stversions n'a été "
                 "trouvé."
             )
-            self.scroll.setVisible(False)
-            self.hint_label.setText("")
-            return
-        self.note.setText(
-            "Syncthing est actif. Cliquez un dossier pour l'ouvrir dans "
-            "Dolphin et faire le ménage à la main — rien n'est supprimé ici."
+            return False
+        self._note_base = (
+            "Fichiers modifiés ou supprimés conservés par Syncthing. Cliquez "
+            "un dossier pour l'ouvrir dans Dolphin et faire le ménage à la "
+            "main — rien n'est supprimé ici."
         )
+        self.note.setText(self._note_base)
         for entry in entries:
-            row = _VersionRow(entry, self.rows_widget)
+            row = VersionRow(entry, self.rows_widget)
             self.rows_layout.addWidget(row)
             self.rows.append(row)
         self.rows_layout.addStretch(1)
         self._start_sizes([entry["versions"] for entry in entries])
+        return True
 
     def _start_sizes(self, paths: list[str]) -> None:
         worker = _SizeWorker(paths)
@@ -184,11 +163,6 @@ class StVersionsDialog(QDialog):
             row.size_text(size)
             total += size or 0
         if total:
-            self.hint_label.setText(
-                f"{len(self.rows)} dossier{'s' if len(self.rows) > 1 else ''}"
-                f" · {local.format_size(total)} au total"
-            )
-        else:
-            self.hint_label.setText(
-                f"{len(self.rows)} dossier{'s' if len(self.rows) > 1 else ''}"
+            self.note.setText(
+                f"{self._note_base} — {local.format_size(total)} au total."
             )

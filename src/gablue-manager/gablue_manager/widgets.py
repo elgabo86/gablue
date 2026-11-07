@@ -412,7 +412,6 @@ class LocalCard(QFrame):
     btrfs_requested = Signal()
     thermal_requested = Signal()
     clean_requested = Signal()
-    stversions_requested = Signal()
     grub_requested = Signal()
     secureboot_requested = Signal()
     firmware_requested = Signal()
@@ -513,50 +512,50 @@ class LocalCard(QFrame):
         self.apps_button.clicked.connect(self.apps_requested.emit)
         layout.addWidget(self.apps_button, 0, Qt.AlignVCenter)
 
-        # Un bouton, un menu rangé par domaine : noyau et matériel (kargs +
-        # émulation CPUID), services et pilotes, variante de l'image, puis jeux
-        # (préfixe Windows, priorité au premier plan) et réseau (Tailscale).
-        # Chacun s'applique à un endroit différent, d'où des entrées séparées
-        # plutôt qu'un dialogue fourre-tout.
+        # Un bouton, cinq sous-menus : Système (réglages du poste), Démarrage
+        # (firmware et bootloader), Outils (maintenance), Jeux (préfixe
+        # Windows, priorité au premier plan), Réseau (Tailscale). Aucune
+        # action ne traîne à la racine : on sait où chercher.
         self.config_button = QPushButton("Configuration", self)
         self.config_button.setObjectName("ghost")
         self.config_button.setCursor(Qt.PointingHandCursor)
         self.config_button.setIcon(QIcon.fromTheme("settings-configure"))
         config_menu = QMenu(self.config_button)
-        config_menu.addAction("Noyau et matériel…", self.kernel_requested.emit)
-        config_menu.addAction("Menu GRUB…", self.grub_requested.emit)
-        config_menu.addAction("Secure Boot…", self.secureboot_requested.emit)
-        config_menu.addAction(
-            "Redémarrer dans le BIOS…", self.firmware_requested.emit
-        )
-        config_menu.addSeparator()
-        config_menu.addAction(
-            "Mises à jour automatiques…", self.updates_requested.emit
-        )
-        config_menu.addAction(
+
+        system_menu = config_menu.addMenu("Système")
+        system_menu.addAction("Noyau et matériel…", self.kernel_requested.emit)
+        system_menu.addAction(
             "Services et pilotes…", self.services_requested.emit
         )
-        config_menu.addAction(
+        system_menu.addAction(
+            "Mises à jour automatiques…", self.updates_requested.emit
+        )
+        system_menu.addAction(
             "Variante de l'image…", self.variant_requested.emit
         )
-        config_menu.addAction(
-            "Compression Btrfs…", self.btrfs_requested.emit
+
+        boot_menu = config_menu.addMenu("Démarrage")
+        boot_menu.addAction("Menu GRUB…", self.grub_requested.emit)
+        boot_menu.addAction("Secure Boot…", self.secureboot_requested.emit)
+        boot_menu.addAction(
+            "Redémarrer dans le BIOS…", self.firmware_requested.emit
         )
-        config_menu.addAction(
-            "Limite thermique NVMe…", self.thermal_requested.emit
-        )
-        config_menu.addAction(
+
+        tools_menu = config_menu.addMenu("Outils")
+        tools_menu.addAction(
             "Nettoyer le système…", self.clean_requested.emit
         )
-        config_menu.addAction(
-            "Versions Syncthing…", self.stversions_requested.emit
+        tools_menu.addAction("Compression Btrfs…", self.btrfs_requested.emit)
+        tools_menu.addAction(
+            "Limite thermique NVMe…", self.thermal_requested.emit
         )
-        config_menu.addSeparator()
+
         games_menu = config_menu.addMenu("Jeux")
         games_menu.addAction("Options de gwine…", self.gwine_requested.emit)
         games_menu.addAction(
             "Priorité au premier plan…", self.booster_requested.emit
         )
+
         network_menu = config_menu.addMenu("Réseau")
         network_menu.addAction("Tailscale…", self.tailscale_requested.emit)
         self.config_button.setMenu(config_menu)

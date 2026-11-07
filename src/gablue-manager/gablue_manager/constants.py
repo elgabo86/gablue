@@ -159,6 +159,12 @@ GRUB_HELPER = "/usr/libexec/gablue-grub"
 
 SECUREBOOT_HELPER = "/usr/libexec/gablue-secureboot"
 
+RYZENADJ_BINARY = "/usr/bin/ryzenadj"
+
+RYZENADJ_HELPER = "/usr/libexec/gablue-ryzenadj"
+
+RYZENADJ_SERVICE = "gablue-ryzenadj.service"
+
 LOW_LATENCY_FILE = Path("/etc/profile.d/vulkan-low-latency.sh")
 
 BROADCOM_WL_FILE = Path("/etc/modprobe.d/wl-enable.conf")

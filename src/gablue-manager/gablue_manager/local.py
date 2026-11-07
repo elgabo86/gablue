@@ -16,7 +16,8 @@ from .constants import (
     AVAHI_SERVICE_FILE, BREW_BINARY, BROADCOM_HELPER, BROADCOM_WL_FILE,
     BTRFS_HELPER, CLEAN_HELPER, CMDLINE, CPUID_EMU_BLACKLIST,
     CPUID_EMU_CONF, CPUID_EMU_HELPER, GAMEPAD_HELPER, GRUB_HELPER,
-    NVME_THERMAL_HELPER, SECUREBOOT_HELPER,
+    NVME_THERMAL_HELPER, RYZENADJ_BINARY, RYZENADJ_HELPER,
+    SECUREBOOT_HELPER,
     KARG_BT_ERTM, KARG_CLEARCPUID,
     KARG_HDMI21, KARG_HELPER, KARG_MITIGATIONS_OFF, LOW_LATENCY_FILE,
     LOW_LATENCY_HELPER, OS_RELEASE, REBASE_HELPER, SERVICE_HELPER,
@@ -1072,22 +1073,111 @@ def clean_system_script(
             # le cache est régénéré au prochain lancement de l'outil.
             steps.append((label, [f"rm -rf -- {shlex.quote(str(path))}"]))
     if "brew" in selected and brew_available():
-        # Même préfixe et mêmes exports que `brew_update_script` : le PATH
-        # d'une session GUI ne contient pas `/home/linuxbrew/.linuxbrew/bin`.
-        steps.append(("Homebrew", [
-            "brew=/home/linuxbrew/.linuxbrew/bin/brew",
-            'if [ ! -x "$brew" ]; then brew="$(command -v brew)"; fi',
-            'if [ -n "$brew" ]; then',
-            '    prefix="${brew%/bin/brew}"',
-            '    export HOMEBREW_PREFIX="$prefix"',
-            '    export HOMEBREW_CELLAR="$prefix/Cellar"',
-            '    export HOMEBREW_REPOSITORY="$prefix/Homebrew"',
-            '    export HOMEBREW_NO_AUTO_UPDATE=1',
-            '    "$brew" autoremove || true',
-            '    "$brew" cleanup || true',
-            'fi',
-        ]))
+        steps.append(("Homebrew", list(BREW_CLEAN_COMMANDS)))
     return _steps_script(steps)
+
+
+# Même préfixe et mêmes exports que `brew_update_script` : le PATH d'une
+# session GUI ne contient pas `/home/linuxbrew/.linuxbrew/bin`. Partagé par le
+# nettoyage local et distant (le poste distant a la même disposition).
+BREW_CLEAN_COMMANDS = (
+    "brew=/home/linuxbrew/.linuxbrew/bin/brew",
+    'if [ ! -x "$brew" ]; then brew="$(command -v brew)"; fi',
+    'if [ -n "$brew" ]; then',
+    '    prefix="${brew%/bin/brew}"',
+    '    export HOMEBREW_PREFIX="$prefix"',
+    '    export HOMEBREW_CELLAR="$prefix/Cellar"',
+    '    export HOMEBREW_REPOSITORY="$prefix/Homebrew"',
+    '    export HOMEBREW_NO_AUTO_UPDATE=1',
+    '    "$brew" autoremove || true',
+    '    "$brew" cleanup || true',
+    'fi',
+)
+
+
+# -- Nettoyage à distance ----------------------------------------------------
+
+# Sonde unique (une seule connexion SSH) : présence des outils, caches et
+# tailles, `podman system df` compacté sur une ligne pour être analysable.
+REMOTE_CLEAN_PROBE = "\n".join((
+    'for d in .cache/gwine/temp .cache/gwine/shader-cache .cache/wgp-extra '
+    '.cache/lgp-extra .cache/opencode/npm; do',
+    '    [ -d "$HOME/$d" ] && printf "DIR %s %s\\n" "$d" '
+    '"$(du -sb "$HOME/$d" 2>/dev/null | cut -f1)"',
+    'done',
+    'if command -v podman >/dev/null 2>&1; then',
+    '    echo PODMAN',
+    '    printf "PODMAN_DF=%s\\n" '
+    '"$(podman system df --format json 2>/dev/null | tr -d "\\n")"',
+    'fi',
+    'command -v flatpak >/dev/null 2>&1 && echo FLATPAK',
+    '[ -f /usr/libexec/gablue-clean ] && echo CLEAN_HELPER',
+    'if [ -x /home/linuxbrew/.linuxbrew/bin/brew ] '
+    '|| command -v brew >/dev/null 2>&1; then echo BREW; fi',
+)) + "\n"
+
+
+def parse_remote_clean_state(text: str) -> dict:
+    """Sortie de `REMOTE_CLEAN_PROBE` → disponibilités et tailles par domaine.
+
+    « ? » (taille inconnue) vient de l'absence de mesure : Flatpaks et Homebrew
+    ne savent pas la donner, exactement comme en local.
+    """
+    suffixes = {suffix: domain for domain, suffix in CLEAN_CACHE_SUFFIXES.items()}
+    # Un Flatpak système peut exister sans commande `flatpak` côté utilisateur.
+    available = {domain: False for domain in CLEAN_DOMAINS}
+    sizes: dict[str, int | None] = {}
+    podman_df = ""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line == "PODMAN":
+            available["podman"] = True
+        elif line == "FLATPAK":
+            available["flatpak"] = True
+        elif line == "CLEAN_HELPER":
+            available["flatpak"] = True
+        elif line == "BREW":
+            available["brew"] = True
+        elif line.startswith("PODMAN_DF="):
+            podman_df = line.split("=", 1)[1]
+        elif line.startswith("DIR "):
+            parts = line.split(" ", 2)
+            if len(parts) != 3:
+                continue
+            domain = suffixes.get(parts[1])
+            if domain is None:
+                continue
+            available[domain] = True
+            try:
+                sizes[domain] = int(parts[2])
+            except ValueError:
+                sizes[domain] = None
+    if available["podman"]:
+        sizes["podman"] = parse_podman_reclaimable(podman_df) if podman_df else None
+    return {"available": available, "sizes": sizes}
+
+
+def remote_clean_script(domain: str, available: dict) -> str:
+    """Commandes de nettoyage d'UN domaine, exécutées sur le poste distant.
+
+    Mêmes gestes qu'en local, mais sans rien supposer de l'image locale : la
+    présence des outils et du helper vient de la sonde du poste.
+    """
+    if domain == "podman":
+        return "podman system prune -a --volumes -f || true\n"
+    if domain == "flatpak":
+        commands: list[str] = []
+        if available.get("flatpak"):
+            commands.append("flatpak uninstall --unused --user -y || true")
+        if available.get("clean_helper"):
+            commands.append(f"sudo -n {CLEAN_HELPER} flatpak")
+        return "\n".join(commands) + ("\n" if commands else "")
+    if domain == "brew":
+        return "\n".join(BREW_CLEAN_COMMANDS) + "\n"
+    suffix = CLEAN_CACHE_SUFFIXES.get(domain)
+    if suffix:
+        return f'rm -rf -- "$HOME/{suffix}"\n'
+    return ""
 
 
 # -- Btrfs : compression par système de fichiers ----------------------------

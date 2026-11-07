@@ -35,7 +35,6 @@ from .dialogs.key import KeyInstallDialog
 from .dialogs.prefs import PrefsDialog
 from .dialogs.secureboot import SecureBootDialog
 from .dialogs.services import ServicesDialog
-from .dialogs.stversions import StVersionsDialog
 from .dialogs.tailscale import TailscaleDialog
 from .dialogs.thermal import ThermalDialog
 from .dialogs.updates import AutoUpdatesDialog
@@ -205,7 +204,6 @@ class MainWindow(QMainWindow):
         self.local_card.btrfs_requested.connect(self.open_local_btrfs)
         self.local_card.thermal_requested.connect(self.open_local_thermal)
         self.local_card.clean_requested.connect(self.open_clean_system)
-        self.local_card.stversions_requested.connect(self.open_stversions)
         self.local_card.grub_requested.connect(self.open_grub)
         self.local_card.secureboot_requested.connect(self.open_secureboot)
         self.local_card.firmware_requested.connect(self.reboot_firmware)
@@ -1482,9 +1480,6 @@ class MainWindow(QMainWindow):
 
     def open_clean_system(self) -> None:
         CleanDialog(self).exec()
-
-    def open_stversions(self) -> None:
-        StVersionsDialog(self).exec()
 
     def open_grub(self) -> None:
         GrubDialog(self).exec()

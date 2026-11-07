@@ -97,7 +97,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 ### build-c / build-gwine / build-manager / build-tvqt / build-apk-installer / build-lgplaunch — Compilation des sources
 
 **build-c** (après pypi) :
-- Compile `/src/gamepadshortcuts` (gamepadshortcuts + gamepadshortcuts-mouse + kbdnav, même Makefile), `/src/ds2xbox`, `/src/gablue-isomount`
+- Compile `/src/gamepadshortcuts` (gamepadshortcuts + gamepadshortcuts-mouse + kbdnav, même Makefile), `/src/ds2xbox`, `/src/gablue-dualsense` (`gablue-dualsense-ctl`, hidapi), `/src/gablue-isomount`
 - `make -C <dir> install DESTDIR=` ; sources nettoyées après (`rm -rf /src/<dir>`) ; `dbus-devel` désinstallé après (inutile en image finale)
 
 **build-gwine** (après build-c) :

@@ -1,0 +1,392 @@
+#!/usr/bin/bash
+
+# gablue-dualsense — mise à jour du firmware des manettes DualSense / Edge
+#
+# Le flash utilise le protocole officiel Sony (rapports HID 0xF4/0xF5) en USB,
+# via /usr/bin/gablue-dualsense-ctl. Aucun privilège : l'accès à /dev/hidraw*
+# est déjà accordé à l'utilisateur par les règles udev uaccess de l'image
+# (ublue-os-udev-rules et steam-devices).
+#
+# La famille de firmware (0004, 000B, 000E pour la DualSense, 0044 pour
+# l'Edge) n'est PAS déduite du protocole : la manette accepte l'en-tête de
+# n'importe quelle famille (vérifié le 07/11/2026 sur firmware 0630), donc
+# flasher la mauvaise image est un vrai risque. Elle est déduite :
+#   1. de la date de compilation du firmware courant, comparée aux images
+#      candidates quand la manette est déjà à la dernière version ;
+#   2. sinon d'une table version → famille (versions historiques connues) ;
+#   3. sinon `--target` est obligatoire.
+#
+# Usage : gablue-dualsense [status|check|update] [--target 0004|000B|000E|0044] [--yes]
+#   status : état (défaut)
+#   check  : état + disponibilité d'une mise à jour (code 1 si disponible)
+#   update : télécharge et flashe la dernière version de la bonne famille
+#
+# Codes de sortie : 0 ok / à jour, 1 usage ou mise à jour disponible (check),
+# 2 erreur (réseau, image, refus de la manette…).
+
+set -eu
+
+CTL="${GABLUE_DUALSENSE_CTL:-/usr/bin/gablue-dualsense-ctl}"
+INFO_URL="https://fwupdater.dl.playstation.net/fwupdater/info.json"
+FW_BASE="https://fwupdater.dl.playstation.net/fwupdater"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/gablue/dualsense"
+FW_SIZE=950272
+
+usage() {
+    cat >&2 <<'EOF'
+Usage : gablue-dualsense [status|check|update] [--target 0004|000B|000E|0044] [--yes]
+
+  status   affiche la manette, son firmware et la famille détectée (défaut)
+  check    comme status, code de sortie 1 si une mise à jour est disponible
+  update   télécharge et installe la dernière version (USB obligatoire)
+
+  --target FAMILLE  force la famille de firmware (0004, 000B, 000E, 0044)
+  --yes             ne demande pas de confirmation avant le flash
+
+La famille est détectée automatiquement ; si elle ne peut pas l'être, le
+numéro de modèle (BDM-0xx, sous la manette) ou l'historique des versions
+permet de la choisir avec --target.
+EOF
+}
+
+die() {
+    echo "Erreur : $*" >&2
+    exit 2
+}
+
+ctl_info() {
+    "$CTL" info 2>/dev/null || true
+}
+
+field() {
+    printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1
+}
+
+# ---------------------------------------------------------------- réseau
+
+fetch_latest_json() {
+    curl -fsS --max-time 20 "$INFO_URL" || die "Sony injoignable (info.json)"
+}
+
+latest_of() {
+    printf '%s\n' "$INFO_JSON" |
+        sed -n "s/.*\"FwUpdate$1LatestVersion\"[[:space:]]*:[[:space:]]*\"\(0x[0-9a-fA-F]*\)\".*/\1/p" |
+        head -1
+}
+
+# Télécharge les 256 premiers octets d'une image (en-tête uniquement).
+fetch_header() {
+    local target=$1 version=$2 out
+    case "$version" in 0x*) ;; *) version="0x$version" ;; esac
+    out="$CACHE_DIR/hdr-$target-$version.bin"
+    if [ ! -s "$out" ] || [ "$(stat -c%s "$out")" -ne 256 ]; then
+        curl -fsS --max-time 30 -r 0-255 \
+            "$FW_BASE/fwupdate$target/$version/FWUPDATE$target.bin" \
+            -o "$out.part" 2>/dev/null || return 1
+        [ "$(stat -c%s "$out.part")" -eq 256 ] || return 1
+        mv "$out.part" "$out"
+    fi
+    printf '%s\n' "$out"
+}
+
+# En-tête d'une version archivée (le CDN Sony ne sert que la dernière).
+# Source : dépôt Paliverse/DualSense-List-of-Firmwares (archives officielles).
+fetch_archive_header() {
+    local target=$1 version=$2 dev=dualsense out
+    case "$version" in 0x*) ;; *) version="0x$version" ;; esac
+    out="$CACHE_DIR/arch-$target-$version.bin"
+    [ "$target" = "0044" ] && dev=dualsense-edge
+    if [ ! -s "$out" ] || [ "$(stat -c%s "$out")" -ne 256 ]; then
+        curl -fsS --max-time 30 -r 0-255 \
+            "https://raw.githubusercontent.com/Paliverse/DualSense-List-of-Firmwares/main/firmware/$dev/type-$target/$version/FWUPDATE$target.bin" \
+            -o "$out.part" 2>/dev/null || return 1
+        [ "$(stat -c%s "$out.part")" -eq 256 ] || return 1
+        mv "$out.part" "$out"
+    fi
+    printf '%s\n' "$out"
+}
+
+# fichier → "date|heure|famille|version"
+header_fields() {
+    local hdr=$1 b
+    read -ra b <<<"$(od -An -tu1 -j 116 -N 6 "$hdr")"
+    printf '%s|%s|%04x|%04x\n' \
+        "$(dd if="$hdr" bs=1 skip=64 count=11 status=none)" \
+        "$(dd if="$hdr" bs=1 skip=80 count=8 status=none)" \
+        "$((b[0] + b[1] * 256 + b[2] * 65536 + b[3] * 16777216))" \
+        "$((b[4] + b[5] * 256))"
+}
+
+download_image() { # famille version → chemin
+    local target=$1 version=$2 out="$CACHE_DIR/FWUPDATE$1-$2.bin"
+    if [ -s "$out" ] && [ "$(stat -c%s "$out")" -eq "$FW_SIZE" ]; then
+        printf '%s\n' "$out"
+        return 0
+    fi
+    echo "Téléchargement de FWUPDATE$target $version…" >&2
+    curl -fsS --max-time 300 \
+        "$FW_BASE/fwupdate$target/$version/FWUPDATE$target.bin" \
+        -o "$out.part" || die "téléchargement du firmware $target $version échoué"
+    [ "$(stat -c%s "$out.part")" -eq "$FW_SIZE" ] ||
+        die "taille du firmware inattendue ($(stat -c%s "$out.part") octets)"
+    mv "$out.part" "$out"
+    printf '%s\n' "$out"
+}
+
+# ---------------------------------------------------------------- famille
+
+# Versions historiques connues → familles possibles (Paliverse, 11/2026).
+# Filet de sécurité quand aucun en-tête ne peut être téléchargé (hors ligne,
+# dépôt d'archives indisponible) : les versions communes à deux familles
+# (0520, 0630) restent alors indéterminées.
+variants_of() {
+    case "${1,,}" in
+        0297 | 0307 | 0356 | 0402 | 0458) echo "0004" ;;
+        0520 | 0630) echo "0004 000B" ;;
+        0633 | 0641) echo "000E" ;;
+        0113 | 0154 | 0180 | 0200 | 0213 | 0217) echo "0044" ;;
+        *) echo "" ;;
+    esac
+}
+
+# version date heure → famille sur stdout, code 1 si indéterminée
+resolve_family() {
+    local cur=$1 date=$2 time=$3 t hdr hdate htime hfam hver variants count
+    local cands pass
+
+    if [ "$PID" = "0df2" ]; then
+        cands="0044"
+    else
+        cands="0004 000B 000E"
+    fi
+
+    # La date de compilation reportée par la manette vient de l'image qu'elle
+    # exécute : une correspondance à la seconde identifie la famille de façon
+    # certaine (0004 et 000B partagent la version 0630 avec des dates
+    # différentes : 10:10:32 contre 10:38:40).
+    for pass in cdn archive; do
+        for t in $cands; do
+            if [ "$pass" = "cdn" ]; then
+                [ "$(latest_of "$t")" = "0x$cur" ] || continue
+                hdr=$(fetch_header "$t" "$cur") || continue
+            else
+                hdr=$(fetch_archive_header "$t" "$cur") || continue
+            fi
+            IFS='|' read -r hdate htime hfam hver < <(header_fields "$hdr")
+            if [ "$hdate|$htime" = "$date|$time" ] && [ "$hver" = "$cur" ] && [ "$hfam" = "$t" ]; then
+                echo "$t"
+                return 0
+            fi
+        done
+    done
+
+    # Repli : table des versions historiques
+    variants=$(variants_of "$cur")
+    count=$(printf '%s\n' $variants | grep -c .)
+    if [ "$count" -eq 1 ]; then
+        echo "$variants"
+        return 0
+    fi
+    return 1
+}
+
+# ---------------------------------------------------------------- affichage
+
+print_state() {
+    local target=$1 latest=$2 cur=$3
+    echo "Manette       : $MODEL_LABEL ($PID) en $CONN_LABEL"
+    echo "Firmware      : $cur ($BUILD_DATE $BUILD_TIME)"
+    if [ -n "$BATTERY" ]; then
+        echo "Batterie      : $BATTERY % ($BATTERY_STATE)"
+    fi
+    if [ -n "$target" ]; then
+        echo "Famille       : $target"
+        if [ "$latest" = "0x$cur" ]; then
+            echo "État          : à jour (0x$cur)"
+        else
+            echo "Disponible    : ${latest#0x} ($latest)"
+        fi
+    else
+        echo "Famille       : indéterminée"
+        echo "État          : choisir avec --target (0004, 000B, 000E ou 0044)"
+    fi
+}
+
+# ---------------------------------------------------------------- principal
+
+COMMAND=""
+TARGET_OPT=""
+ASSUME_YES=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --target)
+            [ $# -ge 2 ] || { usage; die "--target attend une famille"; }
+            TARGET_OPT=$2
+            shift 2
+            ;;
+        --target=*)
+            TARGET_OPT=${1#--target=}
+            shift
+            ;;
+        --yes | -y)
+            ASSUME_YES=1
+            shift
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        -*)
+            usage
+            die "option inconnue : $1"
+            ;;
+        *)
+            [ -z "$COMMAND" ] || { usage; die "argument en trop : $1"; }
+            COMMAND=$1
+            shift
+            ;;
+    esac
+done
+COMMAND=${COMMAND:-status}
+
+case "$COMMAND" in
+    status | check | update) ;;
+    *) usage; die "commande inconnue : $COMMAND" ;;
+esac
+
+command -v "$CTL" >/dev/null 2>&1 || die "$CTL absent (image Gablue incomplète ?)"
+mkdir -p "$CACHE_DIR"
+
+INFO=$(ctl_info)
+CONNECTED=$(field "$INFO" CONNECTED)
+[ "$CONNECTED" != "no" ] || die "aucune manette détectée (branchez-la en USB)"
+
+PID=$(field "$INFO" PID)
+if [ "$PID" = "0df2" ]; then MODEL_LABEL="DualSense Edge"; else MODEL_LABEL="DualSense"; fi
+case "$CONNECTED" in
+    usb) CONN_LABEL="USB" ;;
+    bluetooth) CONN_LABEL="Bluetooth" ;;
+    *) CONN_LABEL=$CONNECTED ;;
+esac
+CUR=$(field "$INFO" VERSION)
+BUILD_DATE=$(field "$INFO" BUILD_DATE)
+BUILD_TIME=$(field "$INFO" BUILD_TIME)
+BATTERY=$(field "$INFO" BATTERY)
+BATTERY_STATE=$(field "$INFO" BATTERY_STATE)
+
+OFFLINE=0
+if ! INFO_JSON=$(fetch_latest_json 2>/dev/null); then
+    INFO_JSON=""
+    OFFLINE=1
+fi
+
+if [ "$OFFLINE" -eq 1 ] && [ "$COMMAND" != "status" ]; then
+    die "Sony injoignable : vérifiez la connexion (info.json)"
+fi
+
+if [ -n "$TARGET_OPT" ]; then
+    case "$TARGET_OPT" in
+        0004 | 000B | 000E)
+            [ "$PID" = "0ce6" ] || die "la famille $TARGET_OPT ne concerne que la DualSense"
+            TARGET=$TARGET_OPT
+            ;;
+        0044)
+            [ "$PID" = "0df2" ] || die "la famille 0044 ne concerne que la DualSense Edge"
+            TARGET=$TARGET_OPT
+            ;;
+        *) die "famille inconnue : $TARGET_OPT (0004, 000B, 000E ou 0044)" ;;
+    esac
+else
+    if [ "$OFFLINE" -eq 0 ]; then
+        TARGET=$(resolve_family "$CUR" "$BUILD_DATE" "$BUILD_TIME" || true)
+    else
+        TARGET=""
+    fi
+fi
+
+LATEST=""
+if [ -n "$TARGET" ]; then
+    LATEST=$(latest_of "$TARGET")
+fi
+
+if [ "$COMMAND" = "status" ]; then
+    print_state "$TARGET" "$LATEST" "$CUR"
+    if [ "$OFFLINE" -eq 1 ]; then
+        echo "Réseau        : hors ligne, mise à jour non vérifiée"
+    fi
+    exit 0
+fi
+
+if [ -z "$TARGET" ]; then
+    echo "Impossible de déterminer la famille de firmware." >&2
+    echo "Version installée : $CUR" >&2
+    echo "Dernières versions : 0004 $(latest_of 0004), 000B $(latest_of 000B), 000E $(latest_of 000E), 0044 $(latest_of 0044)" >&2
+    echo "Relancez avec --target (0004, 000B, 000E ou 0044)." >&2
+    exit 2
+fi
+
+if [ "$LATEST" = "0x$CUR" ]; then
+    echo "Manette à jour : $MODEL_LABEL $TARGET, firmware 0x$CUR."
+    exit 0
+fi
+
+if [ "$COMMAND" = "check" ]; then
+    print_state "$TARGET" "$LATEST" "$CUR"
+    exit 1
+fi
+
+# update
+if [ "$CONNECTED" != "usb" ]; then
+    die "mise à jour impossible en Bluetooth : branchez la manette en USB"
+fi
+if [ -n "$BATTERY" ] && [ "$BATTERY" -lt 10 ]; then
+    die "batterie trop faible ($BATTERY %) : chargez la manette (minimum 10 %)"
+fi
+
+print_state "$TARGET" "$LATEST" "$CUR"
+echo
+
+if [ "$ASSUME_YES" -eq 0 ]; then
+    printf 'Flasher %s %s → %s ? La manette doit rester branchée. [o/N] ' \
+        "$MODEL_LABEL" "$CUR" "${LATEST#0x}"
+    read -r answer || answer=""
+    case "$answer" in
+        o | O | oui | Oui | OUI | y | Y | yes) ;;
+        *) echo "Annulé."; exit 0 ;;
+    esac
+fi
+
+IMAGE=$(download_image "$TARGET" "$LATEST")
+IFS='|' read -r _ _ fw_fam fw_ver < <(header_fields "$IMAGE")
+[ "$fw_fam" = "$TARGET" ] || die "l'image téléchargée vise la famille $fw_fam, pas $TARGET"
+[ "$fw_ver" = "${LATEST#0x}" ] || die "version inattendue dans l'image : $fw_ver"
+
+set +e
+"$CTL" flash "$IMAGE"
+rc=$?
+set -e
+case $rc in
+    0) ;;
+    5) die "batterie trop faible : chargez la manette" ;;
+    6) die "image incompatible" ;;
+    8) die "la manette a refusé l'image (version non plus récente, ou famille inattendue)" ;;
+    *) die "échec du flash (code $rc)" ;;
+esac
+
+# La manette se réénumère : on attend qu'elle réponde pour confirmer.
+echo
+echo "Attente de la manette…"
+NEWVER=""
+for _ in $(seq 1 30); do
+    sleep 0.5
+    NEW=$(ctl_info)
+    [ "$(field "$NEW" CONNECTED)" != "no" ] || continue
+    NEWVER=$(field "$NEW" VERSION)
+    [ -n "$NEWVER" ] && break
+done
+if [ "$NEWVER" = "${LATEST#0x}" ]; then
+    echo "Firmware installé : $NEWVER. Mise à jour terminée."
+    exit 0
+fi
+echo "Firmware détecté après flash : ${NEWVER:-inconnu} ; rebranchez la manette puis « gablue-dualsense status »."
+exit 0

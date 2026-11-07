@@ -33,6 +33,7 @@ chmod +x /usr/bin/opencode2-install
 chmod +x /usr/bin/opencode2-remove
 chmod +x /usr/bin/gablue-atuin
 chmod +x /usr/bin/gablue-gamepad
+chmod +x /usr/bin/gablue-dualsense
 chmod +x /usr/bin/lgp-thumbnailer
 chmod +x /usr/bin/wgp-thumbnailer
 chmod +x /usr/bin/ds2xbox
