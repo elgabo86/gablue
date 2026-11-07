@@ -660,6 +660,84 @@ class SystemTest(unittest.TestCase):
         self.assertEqual(module.parse_test_key(127, ""), "unknown")
         self.assertEqual(module.key_state("/inexistant.der"), "missing")
 
+    def test_ryzen_limit(self):
+        """Limite Tctl : état JSON tolérant et script d'un seul geste."""
+        status = local.parse_ryzenadj_status(json.dumps({
+            "supported": True,
+            "limit": 85,
+            "service_enabled": True,
+            "service_active": True,
+        }))
+        self.assertEqual(
+            status,
+            {"supported": True, "limit": 85, "service_enabled": True,
+             "service_active": True},
+        )
+        self.assertEqual(
+            local.parse_ryzenadj_status(json.dumps({
+                "supported": True, "limit": None,
+                "service_enabled": False, "service_active": False,
+            })),
+            {"supported": True, "limit": None, "service_enabled": False,
+             "service_active": False},
+        )
+        # Illisible : pas de JSON, pas de « supported » booléen, hors bornes.
+        self.assertEqual(local.parse_ryzenadj_status("pas du json"), {})
+        self.assertEqual(
+            local.parse_ryzenadj_status('{"limit": 85}'), {}
+        )
+        self.assertEqual(
+            local.parse_ryzenadj_status(
+                '{"supported": true, "limit": 200}'
+            ),
+            {},
+        )
+        self.assertEqual(
+            local.parse_ryzenadj_status(
+                '{"supported": true, "limit": "chaud"}'
+            ),
+            {},
+        )
+
+        script = local.ryzenadj_script(85)
+        self.assertIn("sudo -n /usr/libexec/gablue-ryzenadj set 85", script)
+        self.assertIn("85 °C", script)
+        # Hors bornes : jamais transmis tel quel au helper.
+        self.assertIn(
+            "sudo -n /usr/libexec/gablue-ryzenadj set 110",
+            local.ryzenadj_script(999),
+        )
+        off = local.ryzenadj_script(None)
+        self.assertIn("sudo -n /usr/libexec/gablue-ryzenadj off", off)
+        self.assertNotIn(" set ", off)
+
+    def test_ryzen_helper_config(self):
+        """Le helper relit sa configuration et refuse une valeur hors bornes."""
+        import importlib.machinery
+        import importlib.util
+        import tempfile
+
+        path = (ROOT.parents[1] / "files/system/all/usr/libexec/"
+                "gablue-ryzenadj")
+        loader = importlib.machinery.SourceFileLoader(
+            "gablue_ryzenadj_helper", str(path)
+        )
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(folder, True))
+        module.CONF = folder / "ryzenadj.conf"
+        self.assertIsNone(module.read_limit())
+        module.CONF.write_text("TCTL_TEMP=85\n", encoding="utf-8")
+        self.assertEqual(module.read_limit(), 85)
+        module.CONF.write_text("TCTL_TEMP=120\n", encoding="utf-8")
+        self.assertIsNone(module.read_limit())
+        module.CONF.write_text("TDP=35\n", encoding="utf-8")
+        self.assertIsNone(module.read_limit())
+        self.assertEqual((module.MIN_TEMP, module.MAX_TEMP), (45, 110))
+
     def test_format_size(self):
         self.assertEqual(local.format_size(None), "")
         self.assertEqual(local.format_size(0), "")

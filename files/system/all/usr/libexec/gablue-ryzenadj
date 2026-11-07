@@ -1,0 +1,180 @@
+#!/usr/bin/python3
+"""gablue-ryzenadj — limite de température Tctl des CPU Ryzen (ryzenadj -f).
+
+`ryzenadj -f <n>` fixe la limite Tctl (°C) ; le réglage est perdu au reboot.
+Le helper écrit la valeur dans `/etc/gablue/ryzenadj.conf` et pilote l'unité
+`gablue-ryzenadj.service` (oneshot) : elle réapplique la limite à chaque
+démarrage, avant l'ouverture de session.
+
+Sous-commandes, appelées par Gablue Manager en `sudo -n` (règles sudoers
+exactes) :
+
+    status     état JSON (support, limite choisie, unité)
+    set <n>    45…110 °C : écrit la configuration et active l'unité
+    off        retire la configuration et désactive l'unité
+    apply      (interne, unité) applique la valeur configurée
+
+Aucun argument libre : `set` ne prend qu'un entier revérifié côté root.
+"""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+RYZENADJ = "/usr/bin/ryzenadj"
+CONF = Path("/etc/gablue/ryzenadj.conf")
+SERVICE = "gablue-ryzenadj.service"
+SYSTEMCTL = "/usr/bin/systemctl"
+
+# Bornes de la recette `limitw --temp` (50…105) élargies d'un cran côté froid :
+# sous 45 °C le CPU throttle presque en permanence, au-dessus de 110 °C la
+# limite ne protège plus rien.
+MIN_TEMP, MAX_TEMP = 45, 110
+
+
+def usage() -> int:
+    print("Usage : gablue-ryzenadj status | set <45-110> | off",
+          file=sys.stderr)
+    return 2
+
+
+def run(argv: list[str], timeout: int = 20) -> tuple[int, str]:
+    try:
+        result = subprocess.run(
+            argv, capture_output=True, text=True, timeout=timeout
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 127, ""
+    return result.returncode, (result.stdout or "") + (result.stderr or "")
+
+
+def on_ryzen() -> bool:
+    """Le CPU est-il un AMD Ryzen ? (ryzenadj ne fonctionne que là.)"""
+    try:
+        info = Path("/proc/cpuinfo").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except OSError:
+        return False
+    return "AuthenticAMD" in info and "Ryzen" in info
+
+
+def supported() -> bool:
+    return Path(RYZENADJ).is_file() and on_ryzen()
+
+
+def read_limit() -> int | None:
+    """Valeur du fichier de configuration (None si absent ou illisible)."""
+    try:
+        text = CONF.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() != "TCTL_TEMP":
+            continue
+        try:
+            limit = int(value.strip())
+        except ValueError:
+            return None
+        return limit if MIN_TEMP <= limit <= MAX_TEMP else None
+    return None
+
+
+def service_state() -> tuple[bool, bool]:
+    enabled, _ = run([SYSTEMCTL, "is-enabled", "--quiet", SERVICE], 10)
+    active, _ = run([SYSTEMCTL, "is-active", "--quiet", SERVICE], 10)
+    return enabled == 0, active == 0
+
+
+def status() -> int:
+    enabled, active = service_state()
+    print(json.dumps({
+        "supported": supported(),
+        "limit": read_limit(),
+        "service_enabled": enabled,
+        "service_active": active,
+    }))
+    return 0
+
+
+def apply_limit() -> int:
+    limit = read_limit()
+    if limit is None:
+        # Aucune limite demandée : l'unité est un no-op.
+        return 0
+    code, text = run([RYZENADJ, "-f", str(limit)], 30)
+    if code == 0:
+        print(f"→ Limite Tctl appliquée : {limit} °C")
+        return 0
+    print(f"ryzenadj a échoué (code {code})." , file=sys.stderr)
+    for line in (text.strip().splitlines() or [])[:5]:
+        print(line, file=sys.stderr)
+    return 1
+
+
+def set_limit(value: str) -> int:
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        return usage()
+    if not MIN_TEMP <= limit <= MAX_TEMP:
+        print(f"La limite doit être comprise entre {MIN_TEMP} et {MAX_TEMP} °C.",
+              file=sys.stderr)
+        return 2
+    if not supported():
+        print("ryzenadj ou un CPU Ryzen est absent : limite impossible.",
+              file=sys.stderr)
+        return 1
+    CONF.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(CONF.parent, 0o755)
+    temporary = CONF.with_suffix(".tmp")
+    temporary.write_text(f"TCTL_TEMP={limit}\n", encoding="utf-8")
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, CONF)
+    # `enable --now` démarre l'unité : la limite est appliquée tout de suite,
+    # puis à chaque démarrage, avant toute session.
+    code, text = run([SYSTEMCTL, "enable", "--now", SERVICE], 60)
+    if code != 0:
+        print("Impossible d'activer l'unité gablue-ryzenadj.service.",
+              file=sys.stderr)
+        for line in (text.strip().splitlines() or [])[:5]:
+            print(line, file=sys.stderr)
+        return 1
+    print(f"✓ Limite Tctl {limit} °C, persistante (prochain démarrage compris).")
+    return 0
+
+
+def disable() -> int:
+    run([SYSTEMCTL, "disable", "--now", SERVICE], 60)
+    try:
+        CONF.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        print(f"Configuration non supprimée : {exc}", file=sys.stderr)
+        return 1
+    print("✓ Limite Tctl retirée (le firmware reprend la main).")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if os.geteuid() != 0:
+        print("gablue-ryzenadj doit être lancé en root (sudo -n).",
+              file=sys.stderr)
+        return 1
+    if len(argv) == 2 and argv[1] == "status":
+        return status()
+    if len(argv) == 3 and argv[1] == "set":
+        return set_limit(argv[2])
+    if len(argv) == 2 and argv[1] == "off":
+        return disable()
+    if len(argv) == 2 and argv[1] == "apply":
+        return apply_limit()
+    return usage()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

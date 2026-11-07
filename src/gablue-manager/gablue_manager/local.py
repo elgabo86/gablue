@@ -16,7 +16,7 @@ from .constants import (
     AVAHI_SERVICE_FILE, BREW_BINARY, BROADCOM_HELPER, BROADCOM_WL_FILE,
     BTRFS_HELPER, CLEAN_HELPER, CMDLINE, CPUID_EMU_BLACKLIST,
     CPUID_EMU_CONF, CPUID_EMU_HELPER, GAMEPAD_HELPER, GRUB_HELPER,
-    NVME_THERMAL_HELPER, RYZENADJ_BINARY, RYZENADJ_HELPER,
+    NVME_THERMAL_HELPER, RYZENADJ_BINARY, RYZENADJ_HELPER, RYZENADJ_SERVICE,
     SECUREBOOT_HELPER,
     KARG_BT_ERTM, KARG_CLEARCPUID,
     KARG_HDMI21, KARG_HELPER, KARG_MITIGATIONS_OFF, LOW_LATENCY_FILE,
@@ -1330,6 +1330,88 @@ def nvme_thermal_script(
             f"{int(first)} {int(second)}"
         ]))
     return _steps_script(steps)
+
+
+# -- Ryzen : limite de température Tctl (ryzenadj -f) -----------------------
+
+# Bornes du helper : sous 45 °C le CPU throttle presque en permanence,
+# au-dessus de 110 °C la limite ne protège plus rien. `limitw --temp` accepte
+# 50…105 ; le helper élargit d'un cran utile côté froid.
+RYZENADJ_MIN_TEMP, RYZENADJ_MAX_TEMP = 45, 110
+
+
+def ryzen_cpu() -> bool:
+    """Le CPU est-il un AMD Ryzen (seul cas où ryzenadj agit) ?"""
+    try:
+        info = Path("/proc/cpuinfo").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except OSError:
+        return False
+    return "AuthenticAMD" in info and "Ryzen" in info
+
+
+def ryzenadj_available() -> bool:
+    """Un CPU Ryzen et l'outil ryzenadj : la limite a un sens sur ce poste."""
+    return Path(RYZENADJ_BINARY).is_file() and ryzen_cpu()
+
+
+def ryzenadj_helper_available() -> bool:
+    """Le helper de limite Tctl est-il installé par l'image ?"""
+    return Path(RYZENADJ_HELPER).is_file()
+
+
+def parse_ryzenadj_status(text: str) -> dict:
+    """Sortie JSON du helper → état stable ; {} si illisible.
+
+    Le helper est la seule source : la limite vit dans
+    `/etc/gablue/ryzenadj.conf` (lisible par root seulement en pratique) et
+    l'unité `gablue-ryzenadj.service` la réapplique à chaque démarrage.
+    """
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    if not isinstance(data.get("supported"), bool):
+        return {}
+    limit = data.get("limit")
+    if limit is not None:
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            return {}
+        if not RYZENADJ_MIN_TEMP <= limit <= RYZENADJ_MAX_TEMP:
+            return {}
+    return {
+        "supported": data["supported"],
+        "limit": limit,
+        "service_enabled": bool(data.get("service_enabled")),
+        "service_active": bool(data.get("service_active")),
+    }
+
+
+def ryzenadj_status() -> dict:
+    """État lu en `sudo -n` (aucune invite) ; {} si le helper échoue."""
+    code, text = _run(["sudo", "-n", RYZENADJ_HELPER, "status"], 15)
+    if code != 0:
+        return {}
+    return parse_ryzenadj_status(text)
+
+
+def ryzenadj_script(limit: int | None) -> str:
+    """Un seul geste : appliquer la limite (et activer) ou la retirer."""
+    if limit is None:
+        return _steps_script([(
+            "Retirer la limite Tctl",
+            [f"sudo -n {RYZENADJ_HELPER} off"],
+        )])
+    value = max(RYZENADJ_MIN_TEMP, min(int(limit), RYZENADJ_MAX_TEMP))
+    return _steps_script([(
+        f"Limiter Tctl à {value} °C",
+        [f"sudo -n {RYZENADJ_HELPER} set {value}"],
+    )])
 
 
 # -- Syncthing : dossiers de versions (.stversions) --------------------------

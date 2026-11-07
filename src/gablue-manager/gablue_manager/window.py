@@ -33,6 +33,7 @@ from .dialogs.host import CandidateDialog, HostDialog
 from .dialogs.kernel import LocalSettingsDialog, RemoteSettingsDialog
 from .dialogs.key import KeyInstallDialog
 from .dialogs.prefs import PrefsDialog
+from .dialogs.ryzen import RyzenDialog
 from .dialogs.secureboot import SecureBootDialog
 from .dialogs.services import ServicesDialog
 from .dialogs.tailscale import TailscaleDialog
@@ -203,6 +204,7 @@ class MainWindow(QMainWindow):
         self.local_card.variant_requested.connect(self.open_local_variant)
         self.local_card.btrfs_requested.connect(self.open_local_btrfs)
         self.local_card.thermal_requested.connect(self.open_local_thermal)
+        self.local_card.ryzen_requested.connect(self.open_local_ryzen)
         self.local_card.clean_requested.connect(self.open_clean_system)
         self.local_card.grub_requested.connect(self.open_grub)
         self.local_card.secureboot_requested.connect(self.open_secureboot)
@@ -1477,6 +1479,9 @@ class MainWindow(QMainWindow):
 
     def open_local_thermal(self) -> None:
         ThermalDialog(self).exec()
+
+    def open_local_ryzen(self) -> None:
+        RyzenDialog(self).exec()
 
     def open_clean_system(self) -> None:
         CleanDialog(self).exec()

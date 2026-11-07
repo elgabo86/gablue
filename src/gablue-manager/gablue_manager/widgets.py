@@ -15,7 +15,9 @@ from PySide6.QtWidgets import (
 )
 
 from .constants import COLOR_OFFLINE, KEY_STATES, STATE_COLOR, STATE_TEXT
-from .local import local_distro, secure_boot_label, secure_boot_state
+from .local import (
+    local_distro, ryzenadj_available, secure_boot_label, secure_boot_state,
+)
 from .style import accent_color
 from .updates import (
     DOMAINS, compact_summary, domain_count, summary_lines, total_updates,
@@ -411,6 +413,7 @@ class LocalCard(QFrame):
     variant_requested = Signal()
     btrfs_requested = Signal()
     thermal_requested = Signal()
+    ryzen_requested = Signal()
     clean_requested = Signal()
     grub_requested = Signal()
     secureboot_requested = Signal()
@@ -549,6 +552,12 @@ class LocalCard(QFrame):
         tools_menu.addAction(
             "Limite thermique NVMe…", self.thermal_requested.emit
         )
+        # Uniquement là où ryzenadj agit : un CPU Ryzen avec l'outil présent.
+        # Sur les autres postes, l'entrée n'a aucun sens et n'est pas proposée.
+        if ryzenadj_available():
+            tools_menu.addAction(
+                "Limite de température CPU…", self.ryzen_requested.emit
+            )
 
         games_menu = config_menu.addMenu("Jeux")
         games_menu.addAction("Options de gwine…", self.gwine_requested.emit)

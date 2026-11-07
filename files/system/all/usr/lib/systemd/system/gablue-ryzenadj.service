@@ -1,0 +1,13 @@
+[Unit]
+Description=Gablue - limite de température Tctl des CPU Ryzen
+Documentation=man:ryzenadj(1)
+ConditionPathExists=/etc/gablue/ryzenadj.conf
+After=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/gablue-ryzenadj apply
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
