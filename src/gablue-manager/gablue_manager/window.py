@@ -40,7 +40,9 @@ from .ssh import ask_remote_password, remote_sudo_nopasswd, remote_sudo_prefix
 from .style import make_qss
 from .uiutil import app_icon
 from .tasks import LocalTaskDialog, RemoteTaskDialog, start_task
-from .util import address_text, display_name, dolphin_url, host_addresses, ssh_target
+from .util import (
+    address_text, display_name, dolphin_url, has_address_kind, ssh_target,
+)
 from .widgets import HostCard, LocalCard, StatusDot, _make_tool_button
 from .workers import AddressWorker, AvahiWorker, CheckWorker, KeyProbeWorker
 
@@ -393,7 +395,11 @@ class MainWindow(QMainWindow):
             if active != host.get("active", ""):
                 host["active"] = active
                 self._save()
-            if state == "online" and not host.get("addresses"):
+            if state == "online" and not has_address_kind(host, "tailscale"):
+                # Sonde tant que l'adresse Tailscale manque, même si des
+                # adresses de secours existent déjà : la découverte mDNS n'en
+                # donne qu'en LAN, et un poste sans Tailscale connu est
+                # injoignable en déplacement.
                 self._ask_addresses(host_id)
         card = self._cards.get(host_id)
         if card is not None:
@@ -418,15 +424,34 @@ class MainWindow(QMainWindow):
         host = self._host(host_id)
         if host is None or not found:
             return
-        known = set(host_addresses(host))
-        added = [
+        fresh = [
             item for item in found
             if isinstance(item, dict) and item.get("address")
-            and item["address"] not in known
         ]
-        if not added:
+        if not fresh:
             return
-        host["addresses"] = [*(host.get("addresses") or []), *added]
+        # Le poste fait foi pour les types qu'il rapporte : une adresse
+        # Tailscale périmée (nœud réauthentifié) ou un ancien LAN est remplacé,
+        # au lieu de s'empiler et d'ajouter un délai à chaque vérification.
+        # L'adresse principale enregistrée n'est jamais retirée : c'est le choix
+        # de l'utilisateur, et `active` couvre le cas où elle a changé.
+        fresh_kinds = {str(item.get("kind") or "") for item in fresh}
+        kept = [
+            item for item in host.get("addresses") or []
+            if str(item.get("kind") or "") not in fresh_kinds
+        ]
+        merged = list(kept)
+        for item in fresh:
+            address = str(item["address"])
+            kind = str(item.get("kind") or "")
+            if address == host["host"] or address in {
+                str(entry.get("address") or "") for entry in merged
+            }:
+                continue
+            merged.append({"address": address, "kind": kind})
+        if merged == (host.get("addresses") or []):
+            return
+        host["addresses"] = merged
         self._save()
         card = self._cards.get(host_id)
         if card is not None:

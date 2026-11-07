@@ -526,6 +526,38 @@ class DiscoveryTest(unittest.TestCase):
         self.assertEqual(kind("169.254.3.4"), "")      # lien local
         self.assertEqual(kind("8.8.8.8"), "")          # hors de notre lien
 
+    def test_known_targets_cover_every_address(self):
+        # Un poste revu par Tailscale alors qu'il est enregistré en LAN est la
+        # même machine : toutes les adresses du registre comptent.
+        existing = [{
+            "user": "gab", "host": "192.168.1.109", "port": 22,
+            "addresses": [{"address": "100.64.0.45", "kind": "tailscale"}],
+        }]
+        targets = hosts.known_targets(existing)
+        self.assertIn(("gab", "192.168.1.109", 22), targets)
+        self.assertIn(("gab", "100.64.0.45", 22), targets)
+
+        tailscale_only = {
+            "user": "gab", "host": "100.64.0.45", "port": 22,
+            "hosts": [("100.64.0.45", "tailscale"),
+                      ("192.168.1.109", "lan")],
+        }
+        self.assertTrue(hosts.candidate_known(tailscale_only, targets))
+
+    def test_candidate_known_respects_user_and_port(self):
+        targets = hosts.known_targets([{
+            "user": "gab", "host": "192.168.1.109", "port": 22,
+        }])
+        self.assertFalse(hosts.candidate_known(
+            {"user": "bdc", "host": "192.168.1.109", "port": 22}, targets
+        ))
+        self.assertFalse(hosts.candidate_known(
+            {"user": "gab", "host": "192.168.1.109", "port": 2222}, targets
+        ))
+        self.assertFalse(hosts.candidate_known(
+            {"user": "gab", "host": "192.168.1.110", "port": 22}, targets
+        ))
+
     def test_group_one_machine(self):
         groups = hosts.group_candidates(
             [

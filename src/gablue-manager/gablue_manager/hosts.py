@@ -184,6 +184,46 @@ def group_candidates(entries: list[dict], own: set[str] | None = None,
     return found
 
 
+def known_targets(hosts: list[dict] | None) -> set[tuple[str, str, int]]:
+    """Triplets (utilisateur, adresse, port) déjà enregistrés.
+
+    **Toutes** les adresses d'un poste comptent, pas seulement la principale :
+    un poste enregistré en LAN puis revu par Tailscale est la même machine, et
+    inversement. Sans ça, relancer une découverte reproposait un poste déjà
+    ajouté dès que l'adresse annoncée n'était pas celle du registre.
+    """
+    targets: set[tuple[str, str, int]] = set()
+    for host in hosts or []:
+        user = str(host.get("user") or "")
+        try:
+            port = int(host.get("port", 22) or 22)
+        except (TypeError, ValueError):
+            continue
+        entries = [{"address": host.get("host")}, *(host.get("addresses") or [])]
+        for entry in entries:
+            address = str((entry or {}).get("address") or "")
+            if user and address:
+                targets.add((user, address, port))
+    return targets
+
+
+def candidate_known(candidate: dict,
+                    targets: set[tuple[str, str, int]]) -> bool:
+    """Ce poste proposé est-il déjà dans le registre (une de ses adresses) ?"""
+    user = str(candidate.get("user") or "")
+    try:
+        port = int(candidate.get("port", 22) or 22)
+    except (TypeError, ValueError):
+        return False
+    addresses = [
+        address for address, _kind in candidate.get("hosts") or []
+    ] or [candidate.get("host")]
+    return any(
+        (user, str(address), port) in targets
+        for address in addresses if address
+    )
+
+
 def avahi_scan(timeout: float = 8.0,
                stop: threading.Event | None = None) -> list[dict]:
     """Postes SSH annoncés en mDNS sur le réseau local, une entrée par machine."""

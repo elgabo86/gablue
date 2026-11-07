@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..hosts import candidate_known, known_targets
 from ..util import display_name
 
 class HostDialog(QDialog):
@@ -214,6 +215,10 @@ class CandidateDialog(QDialog):
     Tailscale, pont docker…), le filtrage et le regroupement sont faits en
     amont (`hosts.group_candidates`) ; quand plusieurs adresses joignables
     restent, une liste déroulante choisit celle qu'on enregistre.
+
+    Les postes déjà au registre restent affichés, grisés et non cochables,
+    suffixés « déjà ajouté » : une seconde découverte ne doit pas ressembler à
+    une panne (liste vide) alors qu'elle a bien vu la machine.
     """
 
     KIND_LABELS = {"lan": "LAN", "tailscale": "Tailscale"}
@@ -222,22 +227,18 @@ class CandidateDialog(QDialog):
                  candidates: list[dict] | None = None,
                  existing: list[dict] | None = None):
         super().__init__(parent)
-        known = {
-            (host["user"], host["host"], host["port"]) for host in (existing or [])
-        }
-
-        def already_known(item: dict) -> bool:
-            addresses = [address for address, _kind in item.get("hosts", [])] or [
-                item["host"]
-            ]
-            return any(
-                (item["user"], address, item["port"]) in known
-                for address in addresses
-            )
-
-        self._candidates = [
-            item for item in (candidates or []) if not already_known(item)
-        ]
+        targets = known_targets(existing)
+        candidates = list(candidates or [])
+        # Les postes déjà enregistrés restent visibles, marqués comme tels :
+        # une découverte qui retombe sur un poste connu affichait une liste
+        # vide, ce qui ressemblait à une panne plutôt qu'à « déjà ajouté ».
+        known_flags = [candidate_known(item, targets) for item in candidates]
+        # Les nouveaux d'abord : la liste reste courte à lire.
+        self._rows = sorted(
+            zip(candidates, known_flags), key=lambda pair: pair[1]
+        )
+        self._selectable = sum(1 for flag in known_flags if not flag)
+        self._known_count = len(known_flags) - self._selectable
         self.selected: list[dict] = []
 
         self.setWindowTitle(title or "Postes à ajouter")
@@ -260,8 +261,8 @@ class CandidateDialog(QDialog):
 
         self.list_widget = QListWidget(self)
         self.list_widget.setSpacing(2)
-        for candidate in self._candidates:
-            self._add_row(candidate)
+        for candidate, known in self._rows:
+            self._add_row(candidate, known)
         root.addWidget(self.list_widget, 1)
 
         tools = QHBoxLayout()
@@ -269,7 +270,7 @@ class CandidateDialog(QDialog):
         self.all_button = QPushButton("Tout cocher", self)
         self.all_button.setObjectName("ghost")
         self.all_button.setCursor(Qt.PointingHandCursor)
-        self.all_button.setEnabled(bool(self._candidates))
+        self.all_button.setEnabled(bool(self._selectable))
         self.all_button.clicked.connect(self._toggle_all)
         tools.addWidget(self.all_button)
         tools.addStretch(1)
@@ -278,12 +279,18 @@ class CandidateDialog(QDialog):
         tools.addWidget(self.count_label)
         root.addLayout(tools)
 
-        self.note = QLabel(
+        plural = "s" if self._known_count > 1 else ""
+        note_text = (
             "La clé SSH est copiée à l'ajout. Adresse LAN préférée."
-            if self._candidates else
-            "Aucun nouveau poste à ajouter.",
-            self,
+            if self._selectable else
+            "Aucun nouveau poste à ajouter."
         )
+        if self._known_count:
+            note_text += (
+                f"\n{self._known_count} poste{plural} déjà ajouté{plural} — "
+                f"affiché{plural} pour mémoire, non proposé{plural} à nouveau."
+            )
+        self.note = QLabel(note_text, self)
         self.note.setObjectName("hint")
         self.note.setWordWrap(True)
         root.addWidget(self.note)
@@ -305,13 +312,15 @@ class CandidateDialog(QDialog):
         self._sync_selection()
 
     # -- lignes -------------------------------------------------------------
-    def _add_row(self, candidate: dict) -> None:
+    def _add_row(self, candidate: dict, known: bool = False) -> None:
         addresses = list(candidate.get("hosts") or [(candidate["host"], "")])
         port = int(candidate.get("port", 22))
         text = f'{candidate.get("label") or candidate["host"]} — ' \
                f'{candidate["user"]}'
         if port != 22:
             text += f" (port {port})"
+        if known:
+            text += " · déjà ajouté"
 
         widget = QWidget(self.list_widget)
         row = QHBoxLayout(widget)
@@ -321,6 +330,13 @@ class CandidateDialog(QDialog):
         check = QCheckBox(text, widget)
         # Rien n'est coché d'avance : la découverte propose, elle n'ajoute pas.
         check.setCheckState(Qt.Unchecked)
+        if known:
+            # Déjà au registre : visible pour dire que la découverte l'a bien
+            # vu, mais ni cochable ni recompté dans la sélection.
+            check.setEnabled(False)
+            check.setToolTip(
+                "Ce poste est déjà dans la liste ; rien à ajouter."
+            )
         check.stateChanged.connect(self._sync_selection)
         row.addWidget(check, 1)
 
@@ -346,6 +362,7 @@ class CandidateDialog(QDialog):
         item = QListWidgetItem(self.list_widget)
         item.setData(Qt.UserRole, {
             "candidate": candidate, "check": check, "combo": combo,
+            "known": known,
         })
         item.setSizeHint(widget.sizeHint())
         self.list_widget.setItemWidget(item, widget)
@@ -367,16 +384,22 @@ class CandidateDialog(QDialog):
         target = Qt.Unchecked if self._checked() else Qt.Checked
         for index in range(self.list_widget.count()):
             payload = self.list_widget.item(index).data(Qt.UserRole)
+            if payload.get("known"):
+                continue            # déjà au registre : jamais cochable
             payload["check"].setCheckState(target)
 
     def _sync_selection(self, *_args) -> None:
         count = len(self._checked())
-        total = self.list_widget.count()
-        self.all_button.setText("Tout décocher" if count == total and total
-                                else "Tout cocher")
-        self.count_label.setText(
-            f"{count} sélectionné{'s' if count > 1 else ''} sur {total}"
+        total = self._selectable
+        self.all_button.setText(
+            "Tout décocher" if total and count == total else "Tout cocher"
         )
+        if total:
+            self.count_label.setText(
+                f"{count} sélectionné{'s' if count > 1 else ''} sur {total}"
+            )
+        else:
+            self.count_label.setText("Aucun nouveau poste")
         self.add_button.setEnabled(count > 0)
         self.add_button.setText(f"Ajouter ({count})" if count else "Ajouter")
 

@@ -34,6 +34,19 @@ def host_addresses(host: dict) -> list[str]:
             found.append(address)
     return found
 
+def has_address_kind(host: dict, kind: str) -> bool:
+    """Une adresse de secours de ce type est-elle déjà connue ?
+
+    Sert à décider s'il faut demander ses adresses au poste : tant qu'aucune
+    adresse Tailscale n'est connue, un poste enregistré en LAN devient
+    injoignable en déplacement — la sonde doit donc tourner même si d'autres
+    adresses de secours existent déjà.
+    """
+    return any(
+        str(item.get("kind") or "") == kind
+        for item in host.get("addresses") or []
+    )
+
 def active_kind(host: dict) -> str:
     """Type de l'adresse active (« LAN », « Tailscale » ou vide)."""
     current = active_address(host)
