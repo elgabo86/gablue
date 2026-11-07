@@ -935,10 +935,12 @@ def clean_available() -> bool:
     return Path(CLEAN_HELPER).is_file()
 
 
-# Domaines de nettoyage, dans l'ordre où ils s'appliquent.
+# Domaines de nettoyage, dans l'ordre affiché. Les caches régénérables
+# d'abord (petits gestes fréquents), les grands outils ensuite — Podman,
+# Flatpaks et Homebrew ferment la liste, leur nettoyage étant plus lourd.
 CLEAN_DOMAINS = (
-    "podman", "flatpak", "brew",
     "gwine_temp", "gwine_shaders", "wgp", "lgp", "opencode",
+    "podman", "flatpak", "brew",
 )
 
 # Caches purement régénérables : composants et shaders gwine, amorçage des
