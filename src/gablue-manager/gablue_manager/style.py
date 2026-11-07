@@ -112,6 +112,20 @@ QPushButton#ghost {
     border: 1px solid @border@;
 }
 
+/* Vérifié à jour (Applications) : vert et inerte, pas grisé comme un bouton
+   qui aurait perdu sa fonction. */
+QPushButton#ok {
+    background: @onlineSoft@;
+    color: @online@;
+    border: 1px solid @onlineBorder@;
+    font-weight: 600;
+}
+QPushButton#ok:disabled {
+    background: @onlineSoft@;
+    color: @online@;
+    border-color: @onlineBorder@;
+}
+
 QPushButton#pill {
     background: transparent;
     border: 1px solid @border@;

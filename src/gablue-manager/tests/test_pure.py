@@ -1448,6 +1448,87 @@ class AppsTest(unittest.TestCase):
         self.assertEqual(apps.parse_version("opencode 2.1.0\n"), "2.1.0")
         self.assertEqual(apps.parse_version("pas de version"), "")
 
+    def test_latest_feeds(self):
+        """Flux Atom/Gitea/npm : version et date, sans l'API GitHub."""
+        atom = (
+            "<feed><title>Releases</title>"
+            "<entry><title>AzaharPlus 2126.2-A</title>"
+            "<updated>2026-11-01T12:00:00Z</updated>"
+            '<link rel="alternate" href="https://github.com/AzaharPlus/'
+            'AzaharPlus/releases/tag/AZAHAR_PLUS_2126_2_A"/>'
+            "</entry></feed>"
+        )
+        info = apps.parse_atom_latest(atom)
+        # Version pointée du titre, pas le tag bricolé.
+        self.assertEqual(info["version"], "2126.2")
+        self.assertAlmostEqual(
+            info["published"], 1793534400.0, delta=1.0
+        )
+        gitlab = (
+            "<feed><entry><updated>2026-11-02T00:00:00Z</updated>"
+            '<link href="https://gitlab.com/es-de/emulationstation-de/'
+            '-/releases/v3.5.0"/></entry></feed>'
+        )
+        self.assertEqual(
+            apps.parse_atom_latest(gitlab)["version"], "v3.5.0"
+        )
+        self.assertEqual(apps.parse_atom_latest(""), {})
+
+        # Flux qui mélange l'émulateur et ses outils (shadPS4Plus).
+        mixed = (
+            "<feed><entry><title>ShadPs4Plus PKG Extractor 1.1</title>"
+            "<link href=\"https://github.com/x/releases/tag/PKG_EXTRACTOR\"/>"
+            "<updated>2026-05-14T00:00:00Z</updated></entry>"
+            "<entry><title>ShadPs4Plus 0.12.0 A</title>"
+            "<link href=\"https://github.com/x/releases/tag/SHAD_PS4\"/>"
+            "<updated>2025-12-02T00:00:00Z</updated></entry></feed>"
+        )
+        self.assertEqual(
+            apps.parse_atom_latest(mixed, r"^ShadPs4Plus\s+\d")["version"],
+            "0.12.0",
+        )
+        # Sans filtre, la première entrée (l'outil) gagnerait.
+        self.assertEqual(
+            apps.parse_atom_latest(mixed)["version"], "1.1"
+        )
+
+        gitea = ('{"tag_name": "v0.2.1", '
+                 '"published_at": "2026-11-01T00:00:00Z"}')
+        self.assertEqual(apps.parse_gitea_latest(gitea)["version"], "v0.2.1")
+        self.assertIsNotNone(apps.parse_gitea_latest(gitea)["published"])
+        self.assertEqual(apps.parse_npm_latest('{"version": "2.2.6"}'),
+                         {"version": "2.2.6", "published": None})
+
+        self.assertEqual(apps.version_tuple("v0.2.1"), (0, 2, 1))
+        self.assertEqual(apps.version_tuple("azahar 2126.2-A"), (2126, 2))
+        self.assertEqual(apps.version_tuple(""), ())
+
+    def test_update_available(self):
+        """Version si comparable, sinon date ; jamais « à jour » au doute."""
+        self.assertTrue(apps.update_available(
+            {"version": "2.1.4"}, {"version": "2.2.6"},
+        ))
+        self.assertFalse(apps.update_available(
+            {"version": "2.2.6"}, {"version": "2.2.6"},
+        ))
+        # OpenCode sans version AppImage : la CLI fait foi.
+        self.assertFalse(apps.update_available(
+            {"version": "", "cli": "2.2.6"}, {"version": "2.2.6"},
+        ))
+        # Tag non numérique (hachage) → date de publication.
+        self.assertTrue(apps.update_available(
+            {"version": "", "mtime": 1000.0},
+            {"version": "9809e6f", "published": 2000.0},
+        ))
+        self.assertFalse(apps.update_available(
+            {"version": "", "mtime": 1000.0},
+            {"version": "9809e6f", "published": 500.0},
+        ))
+        self.assertIsNone(apps.update_available({"version": "1.0"}, {}))
+        self.assertIsNone(apps.update_available(
+            {"version": "", "mtime": 0}, {"version": "", "published": 0},
+        ))
+
     def test_remote_state(self):
         output = (
             "##gearlever\n"
@@ -1460,6 +1541,9 @@ class AppsTest(unittest.TestCase):
             "esde.appimage\n"
             "eden.appimage\n"
             "xenia_edge.appimage\n"
+            "##mtimes\n"
+            "esde.appimage\t1767225600\n"
+            "eden.appimage\t1767225600\n"
             "##cli\n"
             "2.1.4\n"
             "##scripts\n"
@@ -1478,6 +1562,8 @@ class AppsTest(unittest.TestCase):
             states["esde"]["options"], {"--yes", "--config-only"}
         )
         self.assertEqual(states["eden"]["version"], "v0.2.1")
+        self.assertEqual(states["esde"]["mtime"], 1767225600.0)
+        self.assertEqual(states["xenia"]["mtime"], 0.0)
         self.assertEqual(states["xenia"]["cli"], "")
         self.assertEqual(states["opencode"]["cli"], "2.1.4")
         self.assertTrue(states["opencode"]["remover"].endswith(

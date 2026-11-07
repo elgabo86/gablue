@@ -11,12 +11,15 @@ l'AppImage (`opencode2-remove` : CLI npm, entrées Dolphin, MCP Lightpanda).
 Dans tous les cas la configuration, les sauvegardes et les jeux sont conservés.
 """
 
+import datetime
 import fnmatch
+import json
 import os
 import re
 import shlex
 import shutil
 import subprocess
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,6 +43,12 @@ class App:
     install_args: tuple[str, ...] = ()
     cli: str = ""       # commande dont on lit `--version` (installation mixte)
     remover: str = ""   # script de suppression dédié (sinon suppression générique)
+    # Source de la dernière version publiée. JAMAIS l'API GitHub (quota
+    # anonyme 60 req/h par IP) : flux Atom pour GitHub/GitLab, API Gitea pour
+    # Eden, registre npm pour OpenCode.
+    latest_kind: str = ""     # "github" | "gitlab" | "gitea" | "npm"
+    latest_id: str = ""       # dépôt, URL Gitea ou nom npm
+    latest_filter: str = ""   # filtre sur le titre, si le flux mélange tout
 
 
 APPS: tuple[App, ...] = (
@@ -50,30 +59,39 @@ APPS: tuple[App, ...] = (
         "esde*.appimage", "esde-install", "esde",
         # Sans boîte de dialogue : le journal du manager fait office de retour.
         install_args=("--yes",),
+        latest_kind="gitlab", latest_id="es-de/emulationstation-de",
     ),
     App(
         "azahar", "Azahar",
         "Émulateur Nintendo 3DS.",
         "emulateur",
         "azahar*.appimage", "azahar-install", "azahar",
+        latest_kind="github", latest_id="AzaharPlus/AzaharPlus",
     ),
     App(
         "eden", "Eden",
         "Émulateur Nintendo Switch.",
         "emulateur",
         "*eden*.appimage", "eden-install", "eden",
+        latest_kind="gitea",
+        latest_id="https://git.eden-emu.dev/api/v1/repos/eden-emu/eden/"
+                  "releases/latest",
     ),
     App(
         "xenia", "Xenia Edge",
         "Émulateur Xbox 360.",
         "emulateur",
         "xenia*.appimage", "xenia-install", "xenia",
+        latest_kind="github", latest_id="has207/xenia-edge",
     ),
     App(
         "shadps4", "ShadPS4",
         "Émulateur PlayStation 4.",
         "emulateur",
         "shadps4*.appimage", "shadps4-install", "shadps4",
+        latest_kind="github", latest_id="AzaharPlus/shadPS4Plus",
+        # Le flux mélange l'émulateur et ses outils (PKG Extractor).
+        latest_filter=r"^ShadPs4Plus\s+\d",
     ),
     App(
         "opencode", "OpenCode 2",
@@ -81,6 +99,7 @@ APPS: tuple[App, ...] = (
         "outil",
         "opencode*.appimage", "opencode2-install", "opencode",
         cli="opencode", remover="opencode2-remove",
+        latest_kind="npm", latest_id="@opencode/cli",
     ),
 )
 
@@ -210,10 +229,15 @@ def state(app: App, versions: dict[str, str] | None = None,
     remover = _which(app.remover) if app.remover else ""
     if remover and not Path(remover).is_file():
         remover = ""
+    try:
+        mtime = image.stat().st_mtime if image is not None else 0.0
+    except OSError:
+        mtime = 0.0
     return {
         "installed": image is not None,
         "name": image.name if image is not None else "",
         "path": image,
+        "mtime": mtime,
         "version": version,
         "cli": cli_version(app.cli),
         "script": script,
@@ -232,6 +256,156 @@ def all_states() -> dict[str, dict]:
 def installed_any(app: App, current: dict) -> bool:
     """Installation partielle comprise (CLI seule, AppImage seule)."""
     return bool(current["installed"] or current["cli"])
+
+
+# -- Mises à jour des AppImages --------------------------------------------
+#
+# Aucune requête à api.github.com : le quota anonyme est de 60 req/h par IP,
+# partagé par tous les postes du réseau. Les flux Atom des releases (GitHub,
+# GitLab) n'ont pas de quota, Gitea expose sa propre API et npm son registre.
+
+FEED_TIMEOUT = 8.0
+
+
+def _fetch_text(url: str, timeout: float = FEED_TIMEOUT) -> str:
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "gablue-manager"},
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read().decode("utf-8", "replace")
+
+
+def parse_iso_timestamp(value: str) -> float | None:
+    """Date ISO 8601 → epoch ; None si vide ou illisible."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        return None
+
+
+def parse_atom_latest(text: str, title_filter: str = "") -> dict:
+    """Première entrée retenue d'un flux Atom de releases → version + date.
+
+    La version est le premier numéro pointé du titre (les tags sont parfois
+    des hachages ou des noms d'outils) ; à défaut, le dernier segment du lien
+    de release (GitHub `releases/tag/<tag>`, GitLab `-/releases/<tag>`). La
+    date vient de `<updated>` de l'entrée. `title_filter` écarte les releases
+    qui ne sont pas l'application (ex. les outils du dépôt shadPS4Plus).
+    """
+    for entry in re.finditer(r"<entry>(.*?)</entry>", text or "", re.S):
+        body = entry.group(1)
+        title = re.search(r"<title>(.*?)</title>", body, re.S)
+        title_text = title.group(1) if title is not None else ""
+        if title_filter and not re.search(title_filter, title_text):
+            continue
+        version = ""
+        dotted = re.search(r"\d+(?:\.\d+)+", title_text)
+        if dotted is not None:
+            version = dotted.group(0)
+        else:
+            link = re.search(
+                r'<link[^>]+href="([^"]*releases/(?:tag/)?[^"]+)"', body
+            )
+            if link is not None:
+                version = link.group(1).rstrip("/").rsplit("/", 1)[-1]
+        updated = re.search(r"<updated>(.*?)</updated>", body)
+        return {
+            "version": version,
+            "published": (
+                parse_iso_timestamp(updated.group(1)) if updated else None
+            ),
+        }
+    return {}
+
+
+def parse_gitea_latest(text: str) -> dict:
+    """`releases/latest` de Gitea → version (tag) + date de publication."""
+    try:
+        data = json.loads(text or "")
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        "version": str(data.get("tag_name") or ""),
+        "published": parse_iso_timestamp(
+            data.get("published_at") or data.get("created_at") or ""
+        ),
+    }
+
+
+def parse_npm_latest(text: str) -> dict:
+    """Document `/latest` du registre npm → version (pas de date utile)."""
+    try:
+        data = json.loads(text or "")
+    except ValueError:
+        return {}
+    version = data.get("version") if isinstance(data, dict) else None
+    return {"version": str(version or ""), "published": None}
+
+
+def version_tuple(text: str) -> tuple[int, ...]:
+    """Nombres d'une version, comparables (« v0.2.1 » → (0, 2, 1))."""
+    match = re.search(r"\d+(?:\.\d+)*", text or "")
+    if match is None:
+        return ()
+    return tuple(int(part) for part in match.group(0).split("."))
+
+
+def latest_info(app: App) -> dict:
+    """Dernière version publiée de l'application ({} si indéterminable)."""
+    kind, ident = app.latest_kind, app.latest_id
+    if not kind or not ident:
+        return {}
+    try:
+        if kind == "github":
+            return parse_atom_latest(
+                _fetch_text(f"https://github.com/{ident}/releases.atom"),
+                app.latest_filter,
+            )
+        if kind == "gitlab":
+            return parse_atom_latest(
+                _fetch_text(f"https://gitlab.com/{ident}/-/releases.atom"),
+                app.latest_filter,
+            )
+        if kind == "gitea":
+            return parse_gitea_latest(_fetch_text(ident))
+        if kind == "npm":
+            return parse_npm_latest(_fetch_text(
+                f"https://registry.npmjs.org/{ident}/latest"
+            ))
+    except (OSError, ValueError):
+        return {}
+    return {}
+
+
+def update_available(current: dict, info: dict) -> bool | None:
+    """Mise à jour disponible ? `None` = impossible de conclure.
+
+    Comparaison de version quand les deux côtés en donnent une (certains tags
+    GitHub sont des hachages) ; sinon date de publication de la release contre
+    date du fichier installé. En cas de doute on ne dit jamais « à jour » :
+    le bouton reste utilisable.
+    """
+    if not info:
+        return None
+    latest = version_tuple(info.get("version") or "")
+    installed = version_tuple(
+        current.get("version") or current.get("cli") or ""
+    )
+    if latest and installed:
+        return latest > installed
+    published = info.get("published")
+    mtime = current.get("mtime") or 0
+    if published and mtime:
+        # Petite marge : le fichier est écrit juste après la publication.
+        return published > float(mtime) + 60
+    return None
 
 
 def describe(app: App, current: dict) -> str:
@@ -372,6 +546,12 @@ else
 fi
 echo "##images"
 ls -1 "$HOME/AppImages" 2>/dev/null
+echo "##mtimes"
+for f in "$HOME/AppImages"/*; do
+    [ -f "$f" ] || continue
+    printf '%s\t%s\n' "$(basename "$f")" \
+        "$(stat -c %Y "$f" 2>/dev/null || echo 0)"
+done
 echo "##cli"
 if command -v opencode >/dev/null 2>&1; then opencode --version 2>/dev/null; fi
 echo "##scripts"
@@ -408,6 +588,15 @@ def parse_remote_state(text: str) -> dict:
         parse_gearlever_listing("\n".join(gearlever_lines[1:]))
         if gearlever else {}
     )
+    mtimes: dict[str, float] = {}
+    for line in sections.get("mtimes", []):
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        try:
+            mtimes[parts[0].strip()] = float(parts[1])
+        except ValueError:
+            continue
     scripts: dict[str, dict] = {}
     for line in sections.get("scripts", []):
         parts = line.split("\t")
@@ -420,6 +609,7 @@ def parse_remote_state(text: str) -> dict:
         "gearlever": gearlever,
         "versions": versions,
         "images": [line for line in sections.get("images", []) if line.strip()],
+        "mtimes": mtimes,
         "cli": parse_version("\n".join(sections.get("cli", []))),
         "scripts": scripts,
     }
@@ -443,6 +633,7 @@ def remote_states(text: str) -> tuple[dict[str, dict], bool]:
             "installed": bool(name),
             "name": name,
             "path": None,
+            "mtime": parsed["mtimes"].get(name, 0.0) if name else 0.0,
             "version": version,
             "cli": parsed["cli"] if app.key == "opencode" else "",
             "script": info.get("path", ""),

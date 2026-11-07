@@ -6,7 +6,7 @@ la machine courante (`host=None`) comme un poste distant (état lu en une seule
 connexion SSH, actions dans un `RemoteTaskDialog`).
 """
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
     QPushButton, QScrollArea, QVBoxLayout, QWidget,
@@ -15,14 +15,37 @@ from PySide6.QtWidgets import (
 from ..apps import (
     APPS, GROUPS, REMOTE_STATE_SCRIPT, all_states, config_argv, config_command,
     copy_esde_config, describe, gearlever_available, install_argv,
-    install_command, installed_any, remote_states, remove_argv, remove_command,
-    script_has_option,
+    install_command, installed_any, latest_info, remote_states, remove_argv,
+    remove_command, script_has_option, update_available,
 )
 from ..constants import _which
 from ..ssh import ssh_capture
 from ..tasks import LocalTaskDialog, RemoteTaskDialog, start_task
 from ..uiutil import restyle_label
 from ..util import display_name
+
+# Sondes réseau en fond : un flux par application installée. Le worker vit
+# sans parent pour survivre à la fermeture du dialogue (sinon « QThread
+# destroyed while running »).
+_ACTIVE_WORKERS: set = set()
+
+
+class _LatestWorker(QThread):
+    """Dernière version publiée de chaque application installée."""
+
+    done = Signal(object)          # dict[clé d'application, info]
+
+    def __init__(self, applications, parent=None):
+        super().__init__(parent)
+        self._applications = list(applications)
+
+    def run(self) -> None:
+        info: dict[str, dict] = {}
+        for app in self._applications:
+            data = latest_info(app)
+            if data:
+                info[app.key] = data
+        self.done.emit(info)
 
 
 class AppsDialog(QDialog):
@@ -73,6 +96,10 @@ class AppsDialog(QDialog):
         self.rows: dict[str, dict] = {}
         self.states: dict[str, dict] = {}
         self.gearlever = False
+        # Dernière version publiée, remplie en fond après l'état local.
+        self.latest: dict[str, dict] = {}
+        self._latest_worker = None
+        self._latest_generation = 0
         for group, title in GROUPS:
             section = QLabel(title, self)
             section.setObjectName("groupName")
@@ -183,6 +210,39 @@ class AppsDialog(QDialog):
             self.states, self.gearlever = remote_states(output)
             self._set_note()
         self._apply_rows()
+        self._start_latest_check()
+
+    # -- mises à jour disponibles -------------------------------------------
+    def _start_latest_check(self) -> None:
+        """Sonde les versions publiées des seules applications installées."""
+        installed = [
+            app for app in APPS
+            if installed_any(app, self.states.get(app.key) or {})
+        ]
+        self.latest = {}
+        if not installed:
+            return
+        self._latest_generation += 1
+        generation = self._latest_generation
+        worker = _LatestWorker(installed)
+        worker.done.connect(
+            lambda info, gen=generation: self._latest_done(info, gen)
+        )
+        worker.finished.connect(lambda: _ACTIVE_WORKERS.discard(worker))
+        worker.finished.connect(worker.deleteLater)
+        _ACTIVE_WORKERS.add(worker)
+        self._latest_worker = worker
+        worker.start()
+
+    def _latest_done(self, info: dict, generation: int) -> None:
+        # Une passe plus récente (rafraîchissement après installation) gagne.
+        if generation != self._latest_generation:
+            return
+        self.latest = dict(info or {})
+        try:
+            self._apply_rows()
+        except RuntimeError:        # dialogue fermé entre-temps
+            return
 
     def _set_note(self) -> None:
         target = "ce poste" if self.host is not None else "cette machine"
@@ -216,17 +276,38 @@ class AppsDialog(QDialog):
             row["state"].setText(describe(app, state))
             restyle_label(row["state"], "ok" if installed else "hint")
 
-            row["action"].setText(
-                "Mettre à jour" if installed else "Installer"
-            )
-            row["action"].setEnabled(self.gearlever and state["script_ok"])
-            if not state["script_ok"]:
-                row["action"].setToolTip(
-                    f"{app.script} introuvable sur ce poste (image à mettre à "
-                    "jour)."
+            info = self.latest.get(app.key) or {}
+            update = update_available(state, info) if installed else None
+            action = row["action"]
+            if installed and update is False:
+                # Vérifié à jour : bouton vert, inerte. Un clic relancerait
+                # un téléchargement pour rien.
+                action.setText("À jour")
+                action.setObjectName("ok")
+                action.setEnabled(False)
+                action.setToolTip(
+                    f"Dernière version installée ({info.get('version') or ''})."
                 )
             else:
-                row["action"].setToolTip("")
+                action.setText("Mettre à jour" if installed else "Installer")
+                action.setObjectName("accent")
+                action.setEnabled(
+                    self.gearlever and state["script_ok"]
+                )
+                if not state["script_ok"]:
+                    action.setToolTip(
+                        f"{app.script} introuvable sur ce poste (image à "
+                        "mettre à jour)."
+                    )
+                elif installed and update is True:
+                    action.setToolTip(
+                        f"Version {info.get('version') or 'récente'} "
+                        "disponible."
+                    )
+                else:
+                    action.setToolTip("")
+            action.style().unpolish(action)
+            action.style().polish(action)
             row["remove"].setEnabled(installed)
             if app.remover and installed and not state.get("remover"):
                 row["remove"].setEnabled(False)
