@@ -230,7 +230,7 @@ par post-install.
 
 - **Système** : `configure-grub`, `kernel-setup`, `mitigations-on/off`
 - **Réseau** : `tailscale-up`, `ssh-on/off`, `toggle-wol`
-- **GPU** : `amd-corectrl-set-kargs`, `toggle-i915-sleep-fix`, `configure-amd-hdmi21` (karg `amdgpu.dcfeaturemask=0x402` — HDMI 2.1 ; Bazzite `f92d411`, renommé de `configure-amd-vrr` par Bazzite `150cf40e`)
+- **GPU** : `toggle-i915-sleep-fix`, `configure-amd-hdmi21` (karg `amdgpu.dcfeaturemask=0x402` — HDMI 2.1 ; Bazzite `f92d411`, renommé de `configure-amd-vrr` par Bazzite `150cf40e`)
 - **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`, `cpuid-emu-on/off` (persistant via `/etc/modprobe.d` + `/etc/modules-load.d`, blacklist kvm_amd)
 - **Virtualisation** : `docker-enable/disable`, `dx-group`, `setup-kvmfr`, `libvirt-reset-cache` (cache capabilities libvirt, corrige « video model 'virtio' unsupported » dans virt-manager)
 - **Maintenance** : `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`, `ssd-thermal-limit` (HCTM NVMe, interactif, persistant), `toggle-updates-all` (système + flatpaks + brew — contrairement à `toggle-updates` upstream sans brew)

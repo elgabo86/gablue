@@ -192,13 +192,6 @@ configure-grub ACTION="":
       apply_setting "$OPTION"
     fi
 
-# Add amd kargs to have advanced settings in CoreCtrl
-amd-corectrl-set-kargs:
-    #!/usr/bin/bash
-    echo 'Setting needed kargs for CoreCtrl...'
-    rpm-ostree kargs --append-if-missing=$(printf 'amdgpu.ppfeaturemask=0x%x\n' "$(($(cat /sys/module/amdgpu/parameters/ppfeaturemask) | 0x4000))")
-    echo "ALL DONE!!!"
-
 # Configure AMD HDMI 2.1 (default: disabled, enables additional HDMI 2.1 features on AMD GPUs)
 configure-amd-hdmi21 ACTION="":
     #!/usr/bin/bash

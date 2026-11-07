@@ -31,8 +31,6 @@
 
 - ujust changelogs                # Afficher les changements effectués de la mise à jour
 
-- ujust amd-corectrl-set-kargs    # Permet d'activer le controle avancé des cartes graphiques AMD (utile pour CoreCtl)
-
 - ujust ssh-off                   # Désactiver la connection à distance SSH de la machine
 
 - ujust sound-432                 # Change la sortie générale audio en 432hz

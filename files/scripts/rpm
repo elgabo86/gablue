@@ -291,7 +291,6 @@ dnf5 -y install \
 # Outil de streaming et contrôle système
 dnf5 -y install \
     sunshine \
-    corectrl \
     solaar
 
 # Utilitaires système et bureautique
