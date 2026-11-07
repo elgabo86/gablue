@@ -2,6 +2,8 @@
 
 alias gablue-help="cat /usr/share/ublue-os/gablue/gablue-help.txt"
 
+alias gablue-update="sudo bootc upgrade"
+
 alias goarch="distrobox enter archgab"
 
 
