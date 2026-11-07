@@ -1,15 +1,19 @@
-"""Nettoyer le système : choisir les domaines, puis confirmer.
+"""Nettoyer le système : un bouton « Vider » par outil, avec confirmation.
 
-Équivalent graphique de `ujust clean-system`, avec une case par domaine :
-Podman (`system prune -a --volumes`), Flatpaks inutilisés (compte + système),
-rpm-ostree (`cleanup -bm`) et Homebrew (autoremove + cleanup). Un domaine dont
-l'outil manque (Podman hors variante DX, Homebrew absent) est grisé, jamais
-coché en silence.
+Équivalent graphique de `ujust clean-system`, mais sans sélection multiple :
+chaque domaine se vide séparément — Podman (`system prune -a --volumes`),
+Flatpaks inutilisés (compte + système), Homebrew (autoremove + cleanup) et les
+caches régénérables (gwine temp/shaders, WGP, LGP, npm d'OpenCode). Une carte
+par domaine : nom, gain estimé, bouton « Vider », puis une confirmation qui
+rappelle ce que le geste supprime.
+
+Les tailles se mesurent en fond (`podman system df`, `du -sb`) ; celles que
+l'outil ne sait pas donner (Flatpaks, Homebrew) sont affichées « ? ».
 """
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+    QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton,
     QVBoxLayout,
 )
 
@@ -32,11 +36,6 @@ CHOICE_LABELS = {
         "Applications et runtimes inutilisés, pour le compte et pour le "
         "système.",
     ),
-    "ostree": (
-        "rpm-ostree",
-        "Anciens déploiements de l'image et métadonnées obsolètes. Le "
-        "déploiement en cours n'est pas touché.",
-    ),
     "brew": (
         "Homebrew",
         "Formules devenues inutiles (autoremove) et cache de téléchargement "
@@ -50,11 +49,6 @@ CHOICE_LABELS = {
     "gwine_shaders": (
         "Cache gwine — shaders",
         "Shaders compilés par Wine/DXVK. Recompilés au fil des lancements.",
-    ),
-    "gwine": (
-        "Cache gwine — complet",
-        "Composants Wine/DXVK téléchargés, shaders et temporaires. Récupérés "
-        "au prochain lancement de gwine.",
     ),
     "wgp": (
         "Cache WGP",
@@ -100,7 +94,7 @@ class _SizeWorker(QThread):
 
 
 class CleanDialog(QDialog):
-    """Une case par domaine de nettoyage, un seul « Nettoyer »."""
+    """Une carte par domaine de nettoyage, un bouton « Vider » par carte."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -117,9 +111,9 @@ class CleanDialog(QDialog):
         root_layout.addWidget(heading)
 
         note = QLabel(
-            "Supprime les restes inutilisés des outils choisis. Vos fichiers "
-            "personnels, vos jeux et la configuration des applications ne "
-            "sont pas touchés.",
+            "Chaque outil se vide séparément, après confirmation. Vos fichiers "
+            "personnels, vos jeux et la configuration des applications ne sont "
+            "pas touchés.",
             self,
         )
         note.setObjectName("subtitle")
@@ -130,36 +124,37 @@ class CleanDialog(QDialog):
         self.rows_layout.setSpacing(8)
         root_layout.addLayout(self.rows_layout, 1)
 
-        self.checks: dict[str, QCheckBox] = {}
+        self.buttons: dict[str, QPushButton] = {}
         self.size_labels: dict[str, QLabel] = {}
         self.sizes: dict[str, int | None] = {}
         self.available: dict[str, bool] = {}
         for domain in CLEAN_DOMAINS:
             self._add_row(domain)
-        self._start_sizes()
 
         buttons = QHBoxLayout()
         buttons.setSpacing(10)
         self.hint_label = QLabel(self)
         self.hint_label.setObjectName("hostStatus")
-        buttons.addWidget(self.hint_label)
-        buttons.addStretch(1)
+        self.hint_label.setWordWrap(True)
+        buttons.addWidget(self.hint_label, 1)
         self.close_button = QPushButton("Fermer", self)
         self.close_button.setObjectName("ghost")
         self.close_button.setCursor(Qt.PointingHandCursor)
+        self.close_button.setDefault(True)
         self.close_button.clicked.connect(self.accept)
         buttons.addWidget(self.close_button)
-        self.clean_button = QPushButton("Nettoyer", self)
-        self.clean_button.setObjectName("accent")
-        self.clean_button.setCursor(Qt.PointingHandCursor)
-        self.clean_button.clicked.connect(self.clean)
-        buttons.addWidget(self.clean_button)
         root_layout.addLayout(buttons)
 
-        self._update_apply()
+        self._update_hint()
+        self._start_sizes()
         fit_dialog_height(self, 700)
 
     # -- construction -------------------------------------------------------
+    @staticmethod
+    def measurable(domain: str) -> bool:
+        """Une taille est-elle calculable ? (Podman via `system df`, caches via `du`.)"""
+        return domain == "podman" or local.clean_cache_path(domain) is not None
+
     def _add_row(self, domain: str) -> None:
         label, description = CHOICE_LABELS[domain]
         available = clean_domain_available(domain)
@@ -173,17 +168,29 @@ class CleanDialog(QDialog):
 
         top = QHBoxLayout()
         top.setSpacing(8)
-        check = QCheckBox(label, frame)
-        check.setCursor(Qt.PointingHandCursor)
-        check.setChecked(available)          # tout ce qui peut l'être, par défaut
-        check.setEnabled(available)
-        check.toggled.connect(self._update_apply)
-        top.addWidget(check)
+        name = QLabel(label, frame)
+        name.setObjectName("hostName")
+        top.addWidget(name)
         top.addStretch(1)
         size_label = QLabel("", frame)
         size_label.setObjectName("hint")
+        if available:
+            # « ? » : l'outil ne sait pas donner la taille ; « … » en attendant
+            # la mesure (remplacé dès que le worker a fini).
+            size_label.setText("…" if self.measurable(domain) else "?")
         self.size_labels[domain] = size_label
         top.addWidget(size_label)
+        button = QPushButton("Vider", frame)
+        button.setObjectName("ghost")
+        button.setCursor(Qt.PointingHandCursor)
+        button.setEnabled(available)
+        if not available:
+            button.setToolTip(self._missing_text(domain))
+        button.clicked.connect(
+            lambda _checked=False, chosen=domain: self.clean(chosen)
+        )
+        self.buttons[domain] = button
+        top.addWidget(button)
         layout.addLayout(top)
 
         detail = QLabel(
@@ -193,7 +200,6 @@ class CleanDialog(QDialog):
         detail.setWordWrap(True)
         layout.addWidget(detail)
 
-        self.checks[domain] = check
         self.rows_layout.addWidget(frame)
 
     @staticmethod
@@ -202,17 +208,21 @@ class CleanDialog(QDialog):
             return "Podman n'est pas installé sur cette variante."
         if domain == "brew":
             return "Homebrew n'est pas installé sur ce poste."
-        if domain == "ostree":
-            return "Helper absent de cette image — reconstruction requise."
+        if domain == "flatpak":
+            return "Flatpak n'est pas installé sur ce poste."
         return "Rien à nettoyer : ce cache est absent sur ce poste."
 
     # -- état ---------------------------------------------------------------
-    def _start_sizes(self) -> None:
+    def _start_sizes(self, domains: list[str] | None = None) -> None:
         """Mesure en fond les domaines qui ont un volume identifiable."""
+        if domains is None:
+            domains = [
+                domain for domain in CLEAN_DOMAINS
+                if self.available.get(domain) and self.measurable(domain)
+            ]
         domains = [
-            domain for domain in CLEAN_DOMAINS
-            if self.available.get(domain)
-            and (domain == "podman" or local.clean_cache_path(domain) is not None)
+            domain for domain in domains
+            if self.available.get(domain) and self.measurable(domain)
         ]
         if not domains:
             return
@@ -227,55 +237,70 @@ class CleanDialog(QDialog):
         worker.start()
 
     def _sizes_done(self, sizes: dict) -> None:
-        self.sizes = dict(sizes or {})
+        # Une mesure relancée après nettoyage ne concerne qu'un domaine : on
+        # fusionne pour ne pas effacer les tailles des autres.
+        self.sizes.update(sizes or {})
         for domain, label in self.size_labels.items():
-            label.setText(local.format_size(self.sizes.get(domain)))
-        self._update_apply()
+            if not self.available.get(domain):
+                continue
+            if not self.measurable(domain):
+                label.setText("?")
+                continue
+            size = self.sizes.get(domain)
+            label.setText("?" if size is None else local.format_size(size))
+        self._update_hint()
 
-    def selected(self) -> list[str]:
-        return [
-            domain for domain in CLEAN_DOMAINS
-            if self.available.get(domain) and self.checks[domain].isChecked()
-        ]
-
-    def _update_apply(self) -> None:
-        chosen = self.selected()
-        self.clean_button.setEnabled(bool(chosen))
-        if chosen:
-            total = sum(self.sizes.get(domain) or 0 for domain in chosen)
-            gain = f" · {local.format_size(total)} à récupérer" if total else ""
-            self.hint_label.setText(
-                f"{len(chosen)} domaine{'s' if len(chosen) > 1 else ''} "
-                f"à nettoyer{gain}"
-            )
-        elif any(self.available.values()):
-            self.hint_label.setText("Aucun domaine sélectionné.")
-        else:
-            self.hint_label.setText("Aucun outil de nettoyage disponible.")
+    def _update_hint(self) -> None:
+        total = sum(size or 0 for size in self.sizes.values())
+        parts: list[str] = []
+        if total:
+            parts.append(f"≈ {local.format_size(total)} récupérables")
+        if any(
+            label.text() == "?"
+            for domain, label in self.size_labels.items()
+            if self.available.get(domain)
+        ):
+            parts.append("« ? » : taille non mesurable")
+        self.hint_label.setText(" · ".join(parts))
 
     # -- application --------------------------------------------------------
-    def clean(self) -> None:
-        chosen = self.selected()
-        if not chosen:
+    def clean(self, domain: str) -> None:
+        """Vide un seul domaine, après confirmation explicite."""
+        if not self.available.get(domain):
             return
-        details = "\n".join(
-            f"• {CHOICE_LABELS[domain][0]}" for domain in chosen
-        )
+        label, description = CHOICE_LABELS[domain]
+        size = self.sizes.get(domain)
+        gain = ""
+        if size:
+            gain = f"\n\nEspace récupérable : {local.format_size(size)}."
         answer = QMessageBox.question(
-            self, "Nettoyer le système",
-            f"Nettoyer ces domaines ?\n\n{details}\n\n"
+            self, f"Vider — {label}",
+            f"Vider « {label} » ?\n\n{description}{gain}\n\n"
             "Cette action est immédiate et ne peut pas être annulée.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
-        dialog = LocalTaskDialog(
-            self, title="Nettoyer le système",
+        self.buttons[domain].setEnabled(False)
+        task = LocalTaskDialog(
+            self, title=f"Vider — {label}",
             subtitle="Suppression des restes inutilisés.",
-            argv=["/usr/bin/bash", "-c", clean_system_script(chosen)],
+            argv=["/usr/bin/bash", "-c", clean_system_script([domain])],
             progress_parser=parse_gablue_progress,
             progress_text="Nettoyage…",
             reveal_log_on_error=True,
         )
-        start_task(self, dialog)
-        self.accept()
+        task.completed.connect(
+            lambda _ok, chosen=domain: self._domain_done(chosen)
+        )
+        start_task(self, task)
+
+    def _domain_done(self, domain: str) -> None:
+        """Relance la mesure du domaine vidé et réactive son bouton."""
+        try:
+            self.buttons[domain].setEnabled(self.available.get(domain, False))
+            self.sizes.pop(domain, None)
+            self._start_sizes([domain])
+        except RuntimeError:
+            # Dialogue fermé pendant la tâche : plus rien à rafraîchir.
+            return

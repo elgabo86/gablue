@@ -2,22 +2,21 @@
 
 # gablue-clean — nettoyage système (partie privilégiée)
 #
-# Appelé par Gablue Manager avec `sudo -n` (règles sudoers exactes sur les
-# sous-commandes). Deux domaines seulement touchent des magasins root :
+# Appelé par Gablue Manager avec `sudo -n` (règle sudoers exacte). Un seul
+# domaine touche un magasin root :
 #
 #   flatpak     retire les Flatpaks système inutilisés
-#   rpm-ostree  anciens déploiements de base (-b) et métadonnées (-m)
 #
 # La partie utilisateur (Podman, formules et cache Homebrew, Flatpaks du
 # compte) reste au manager : ce sont d'AUTRES magasins, sur lesquels root
 # n'aurait pas la main (images rootless, préfixe brew de l'utilisateur).
 #
-# Usage : gablue-clean flatpak|rpm-ostree
+# Usage : gablue-clean flatpak
 
 set -euo pipefail
 
 usage() {
-    echo "Usage : gablue-clean flatpak|rpm-ostree" >&2
+    echo "Usage : gablue-clean flatpak" >&2
     exit 2
 }
 
@@ -26,12 +25,6 @@ case "${1:-}" in
         echo "→ Flatpaks système inutilisés…"
         # Rien à retirer n'est pas une erreur : le code 0 est conservé.
         flatpak uninstall --unused --system -y || true
-        ;;
-    rpm-ostree)
-        echo "→ Anciens déploiements rpm-ostree et métadonnées…"
-        # -b : anciens déploiements de base ; -m : métadonnées obsolètes.
-        # Le déploiement courant, /etc et /var ne sont pas touchés.
-        rpm-ostree cleanup -bm
         ;;
     *)
         usage

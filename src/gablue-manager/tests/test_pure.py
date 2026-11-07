@@ -494,13 +494,12 @@ class SystemTest(unittest.TestCase):
         self.assertIn("podman system prune -a --volumes -f", script)
         self.assertIn("flatpak uninstall --unused --user -y", script)
         self.assertIn("sudo -n /usr/libexec/gablue-clean flatpak", script)
-        self.assertIn("sudo -n /usr/libexec/gablue-clean rpm-ostree", script)
         self.assertIn('"$brew" autoremove', script)
         self.assertIn('"$brew" cleanup', script)
-        # Six caches régénérables : un rm -rf par domaine.
+        # Cinq caches régénérables : un rm -rf par domaine.
         self.assertIn(f"rm -rf -- {cache}", script)
-        self.assertEqual(script.count("rm -rf --"), 6)
-        self.assertIn("'::gablue:step 10 10 Homebrew'", script)
+        self.assertEqual(script.count("rm -rf --"), 5)
+        self.assertIn("'::gablue:step 8 8 Homebrew'", script)
 
     def test_clean_script_selection(self):
         import unittest.mock as mock

@@ -16,7 +16,7 @@
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-avahi on, /usr/libexec/gablue-avahi off, /usr/libexec/gablue-avahi status
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-auto-update status, /usr/libexec/gablue-auto-update image on, /usr/libexec/gablue-auto-update image off, /usr/libexec/gablue-auto-update flatpak on, /usr/libexec/gablue-auto-update flatpak off, /usr/libexec/gablue-auto-update brew on, /usr/libexec/gablue-auto-update brew off, /usr/libexec/gablue-auto-update schedule daily, /usr/libexec/gablue-auto-update schedule weekly
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-update
-%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-clean flatpak, /usr/libexec/gablue-clean rpm-ostree
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-clean flatpak
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-btrfs-compress zstd *, /usr/libexec/gablue-btrfs-compress none *
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-nvme-thermal status, /usr/libexec/gablue-nvme-thermal set *, /usr/libexec/gablue-nvme-thermal off *
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-grub status, /usr/libexec/gablue-grub set 0, /usr/libexec/gablue-grub set 1, /usr/libexec/gablue-grub set 2, /usr/libexec/gablue-grub unset

@@ -903,8 +903,8 @@ def clean_available() -> bool:
 
 # Domaines de nettoyage, dans l'ordre où ils s'appliquent.
 CLEAN_DOMAINS = (
-    "podman", "flatpak", "ostree", "brew",
-    "gwine_temp", "gwine_shaders", "gwine", "wgp", "lgp", "opencode",
+    "podman", "flatpak", "brew",
+    "gwine_temp", "gwine_shaders", "wgp", "lgp", "opencode",
 )
 
 # Caches purement régénérables : composants et shaders gwine, amorçage des
@@ -913,7 +913,6 @@ CLEAN_DOMAINS = (
 CLEAN_CACHE_SUFFIXES = {
     "gwine_temp": ".cache/gwine/temp",
     "gwine_shaders": ".cache/gwine/shader-cache",
-    "gwine": ".cache/gwine",
     "wgp": ".cache/wgp-extra",
     "lgp": ".cache/lgp-extra",
     "opencode": ".cache/opencode/npm",
@@ -992,8 +991,6 @@ def clean_domain_available(domain: str) -> bool:
         return bool(_which("podman"))          # variantes DX uniquement
     if domain == "flatpak":
         return bool(_which("flatpak")) or clean_available()
-    if domain == "ostree":
-        return clean_available()
     if domain == "brew":
         return brew_available()
     path = clean_cache_path(domain)
@@ -1010,8 +1007,8 @@ def clean_system_script(
     Sans argument : tous les domaines disponibles (comportement de la recette
     `ujust clean-system`). Podman et Homebrew tournent en utilisateur : leurs
     images, volumes et cache sont les siens. Les Flatpaks du **compte** aussi ;
-    les Flatpaks **système** et `rpm-ostree cleanup` passent par le helper
-    privilégié (sous-commandes exactes du sudoers), magasins root obligent.
+    les Flatpaks **système** passent par le helper privilégié (sous-commande
+    exacte du sudoers), magasin root oblige.
     """
     selected = set(domains) if domains is not None else set(CLEAN_DOMAINS)
     steps: list[tuple[str, list[str]]] = []
@@ -1027,14 +1024,9 @@ def clean_system_script(
             commands.append(f"sudo -n {CLEAN_HELPER} flatpak")
         if commands:
             steps.append(("Flatpaks", commands))
-    if "ostree" in selected and clean_available():
-        steps.append(("rpm-ostree", [
-            f"sudo -n {CLEAN_HELPER} rpm-ostree",
-        ]))
     for domain, label in (
         ("gwine_temp", "Cache gwine — temp"),
         ("gwine_shaders", "Cache gwine — shaders"),
-        ("gwine", "Cache gwine"),
         ("wgp", "Cache WGP"),
         ("lgp", "Cache LGP"),
         ("opencode", "Cache OpenCode"),
