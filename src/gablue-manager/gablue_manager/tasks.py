@@ -357,6 +357,7 @@ class LocalTaskDialog(QDialog):
             progress_mode == "busy"
             or bool(progress_fifo or progress_parser)
         )
+        self._progress_busy = progress_mode == "busy"
         self._line_buffer = ""
         # Enregistrement Tailscale : lien lu dans la sortie, validé par une
         # sonde périodique (l'appareil est confié à l'opérateur par le helper).
@@ -746,6 +747,17 @@ class LocalTaskDialog(QDialog):
             if self._progress_seen and ok:
                 self.progress_bar.setRange(0, 100)
                 self.progress_bar.setValue(100)
+            elif not ok:
+                if self._progress_busy:
+                    # Arrêt d'une étape non mesurable (annulation, échec) :
+                    # plus rien ne tourne, la barre ne doit pas continuer à
+                    # balayer derrière « Action annulée. ».
+                    self.progress_bar.setVisible(False)
+                    self.progress_label.setVisible(False)
+                else:
+                    # Fige le dernier pourcentage atteint au lieu de laisser
+                    # une barre indéterminée tourner.
+                    self.progress_bar.setRange(0, 100)
         if not ok and self._reveal_log_on_error and self.log_toggle is not None:
             # En CLI (gwine), la fenêtre est le seul canal : montrer le journal
             # au lieu d'un simple « Échec (code N) » sans explication.
@@ -1058,6 +1070,9 @@ class SequentialTaskDialog(QDialog):
         self.completed.emit(True)
 
     def _finish_with(self, message: str, ok: bool) -> None:
+        # Fin sur échec ou annulation : la barre reprend un mode déterminé,
+        # sinon une étape muette la laisserait balayer derrière le résultat.
+        self.progress_bar.setRange(0, 100)
         self.result_label.setObjectName("ok" if ok else "warn")
         self.result_label.setText(message)
         self.result_label.style().unpolish(self.result_label)
