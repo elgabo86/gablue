@@ -31,7 +31,7 @@ from .dialogs.key import KeyInstallDialog
 from .dialogs.services import ServicesDialog
 from .dialogs.tailscale import TailscaleDialog
 from .dialogs.variant import VariantDialog
-from .hosts import load_hosts, parse_ssh_config, save_hosts
+from .hosts import load_hosts, save_hosts
 from .local import (
     _sudo_run, avahi_apply_args, avahi_publish_state, brew_available,
     brew_progress_parser, brew_update_hint, brew_update_script,
@@ -138,9 +138,9 @@ class MainWindow(QMainWindow):
         self.refresh_button.clicked.connect(lambda: self.refresh_all(force=True))
         header_layout.addWidget(self.refresh_button)
 
-        # Un seul point d'entrée pour peupler la liste : la découverte mDNS et
-        # l'import ~/.ssh/config sont des façons d'ajouter un poste, pas des
-        # commandes à part dans un menu « ⋯ » séparé.
+        # Un seul point d'entrée pour peupler la liste : la recherche sur le
+        # réseau local est une façon d'ajouter un poste, pas une commande à
+        # part dans un menu « ⋯ » séparé.
         self.add_button = QPushButton("Ajouter un poste", header)
         self.add_button.setObjectName("accent")
         self.add_button.setCursor(Qt.PointingHandCursor)
@@ -148,10 +148,7 @@ class MainWindow(QMainWindow):
         add_menu = QMenu(self.add_button)
         add_menu.addAction("Saisir un poste à la main…", self.add_host)
         add_menu.addAction(
-            "Rechercher sur le réseau (mDNS)…", self.discover_hosts
-        )
-        add_menu.addAction(
-            "Importer depuis ~/.ssh/config…", self.import_ssh_config
+            "Rechercher sur le réseau local…", self.discover_hosts
         )
         self.add_button.setMenu(add_menu)
         header_layout.addWidget(self.add_button)
@@ -543,18 +540,18 @@ class MainWindow(QMainWindow):
             return
         published, daemon = avahi_publish_state()
         if not daemon:
-            self.avahi_button.setText("Annonce mDNS : avahi arrêté")
+            self.avahi_button.setText("Annonce locale : service arrêté")
             self.avahi_button.setStyleSheet(f"color: {COLOR_AUTH};")
         elif published:
-            self.avahi_button.setText("Annonce mDNS : activée")
+            self.avahi_button.setText("Annonce locale : activée")
             self.avahi_button.setStyleSheet(f"color: {COLOR_ONLINE};")
         else:
-            self.avahi_button.setText("Annonce mDNS : désactivée")
+            self.avahi_button.setText("Annonce locale : désactivée")
             self.avahi_button.setStyleSheet(f"color: {COLOR_OFFLINE};")
         self.avahi_button.setToolTip(
-            "Annonce ce poste en SSH (_ssh._tcp, port 22) en mDNS.\n"
-            "Visible uniquement depuis le même réseau local (nom d'hôte, "
-            "adresse IP et port — aucun compte ni clé).\n"
+            "Publie ce poste sur le réseau local pour l'accès SSH (nom "
+            "d'hôte, adresse IP et port 22 — aucun compte ni clé).\n"
+            "Visible uniquement depuis le même réseau local.\n"
             + ("Cliquer pour ne plus l'annoncer" if published
                else "Cliquer pour l'annoncer")
         )
@@ -637,30 +634,30 @@ class MainWindow(QMainWindow):
             )
         self._update_sshd_button()
 
-    # -- annonce mDNS de ce poste -------------------------------------------
+    # -- annonce locale de ce poste -----------------------------------------
     def toggle_avahi(self) -> None:
         published, daemon = avahi_publish_state()
         if not daemon:
             QMessageBox.information(
-                self, "Annonce mDNS",
-                "avahi-daemon n'est pas actif sur ce poste : l'annonce ne "
-                "servirait à rien.\n\nL'activer avec :\n"
+                self, "Annonce locale",
+                "Le service d'annonce locale n'est pas actif sur ce poste : "
+                "l'annonce ne servirait à rien.\n\nL'activer avec :\n"
                 "    sudo systemctl enable --now avahi-daemon",
             )
             return
         if published:
             answer = QMessageBox.question(
-                self, "Annonce mDNS",
+                self, "Annonce locale",
                 "Ne plus annoncer ce poste en SSH sur le réseau local ?\n\n"
-                "La découverte automatique depuis les autres postes ne le "
+                "La recherche automatique depuis les autres postes ne le "
                 "trouvera plus ; l'accès SSH reste possible en saisissant "
                 "l'adresse à la main.",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
         else:
             answer = QMessageBox.question(
-                self, "Annonce mDNS",
-                "Annoncer ce poste en SSH (_ssh._tcp) sur le réseau local ?\n\n"
+                self, "Annonce locale",
+                "Annoncer ce poste en SSH sur le réseau local ?\n\n"
                 "Les autres postes du même réseau verront son nom d'hôte, son "
                 "adresse IP et le port 22. Aucun compte ni clé n'est publié, "
                 "et rien ne sort du réseau local.",
@@ -680,14 +677,14 @@ class MainWindow(QMainWindow):
 
         if shutil.which("pkexec") is None:
             QMessageBox.critical(
-                self, "Annonce mDNS",
+                self, "Annonce locale",
                 "Ni sudo sans mot de passe ni pkexec ne sont disponibles sur "
                 "ce poste : bascule impossible.",
             )
             return
 
         self.avahi_button.setEnabled(False)
-        self.avahi_button.setText("Annonce mDNS : autorisation…")
+        self.avahi_button.setText("Annonce locale : autorisation…")
         process = QProcess(self)
         process.setProgram("pkexec")
         process.setArguments(argv)
@@ -706,7 +703,7 @@ class MainWindow(QMainWindow):
                 125: "dialogue PolicyKit absent ou annulé",
             }
             QMessageBox.critical(
-                self, "Annonce mDNS",
+                self, "Annonce locale",
                 "Échec de la bascule : "
                 + reasons.get(code, f"code {code}") + ".",
             )
@@ -718,7 +715,7 @@ class MainWindow(QMainWindow):
         self._avahi_process = None
         self.avahi_button.setEnabled(True)
         QMessageBox.critical(
-            self, "Annonce mDNS", "pkexec n'a pas pu démarrer.",
+            self, "Annonce locale", "pkexec n'a pas pu démarrer.",
         )
         self._update_avahi_button()
 
@@ -1423,19 +1420,20 @@ class MainWindow(QMainWindow):
         )
         start_task(self, dialog)
 
-    # -- découverte / import ------------------------------------------------
+    # -- recherche sur le réseau local -------------------------------------
     def discover_hosts(self) -> None:
         if self._discovering:
             return
         if AVAHI_BROWSE == "avahi-browse" and not shutil.which("avahi-browse"):
             QMessageBox.information(
-                self, "Découverte Avahi",
-                "avahi-browse n'est pas installé (paquet avahi-tools).",
+                self, "Recherche sur le réseau local",
+                "L'outil de recherche réseau n'est pas installé "
+                "(paquet avahi-tools).",
             )
             return
         self._discovering = True
         self.busy.setVisible(True)
-        self.auto_label.setText("Recherche de services SSH sur le réseau…")
+        self.auto_label.setText("Recherche de postes sur le réseau local…")
         worker = AvahiWorker(self)
         worker.found.connect(self._discovery_done)
         worker.finished.connect(worker.deleteLater)
@@ -1449,31 +1447,16 @@ class MainWindow(QMainWindow):
         self._update_footer()
         if not hosts:
             QMessageBox.information(
-                self, "Découverte Avahi",
-                "Aucun service SSH annoncé sur le réseau local.\n\n"
-                "Vérifiez qu'avahi-daemon tourne sur les postes et qu'ils sont "
-                "sur le même réseau.",
+                self, "Recherche sur le réseau local",
+                "Aucun poste annoncé sur le réseau local.\n\n"
+                "Vérifiez que l'annonce locale est active sur les postes et "
+                "qu'ils sont sur le même réseau.",
             )
             return
         self._pick_candidates(
-            "Postes découverts sur le réseau",
+            "Postes trouvés sur le réseau local",
             "Cochez les postes à ajouter.",
             hosts,
-        )
-
-    def import_ssh_config(self) -> None:
-        candidates = parse_ssh_config()
-        if not candidates:
-            QMessageBox.information(
-                self, "Import ~/.ssh/config",
-                "Aucun hôte concret trouvé dans ~/.ssh/config\n"
-                "(les motifs * ? ! sont ignorés).",
-            )
-            return
-        self._pick_candidates(
-            "Importer depuis ~/.ssh/config",
-            "Cochez les hôtes à ajouter.",
-            candidates,
         )
 
     def _pick_candidates(self, title: str, subtitle: str,

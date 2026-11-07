@@ -209,7 +209,7 @@ class HostDialog(QDialog):
         return self._password
 
 class CandidateDialog(QDialog):
-    """Liste à cocher de postes à ajouter (découverte mDNS ou ssh_config).
+    """Liste à cocher de postes à ajouter (recherche sur le réseau local).
 
     Une ligne par **machine** : Avahi annonce une adresse par interface (LAN,
     Tailscale, pont docker…), le filtrage et le regroupement sont faits en

@@ -1,8 +1,7 @@
-"""Registre des postes, découverte mDNS, import ssh_config.
+"""Registre des postes et recherche sur le réseau local.
 """
 
 import getpass
-import glob
 import ipaddress
 import json
 import os
@@ -15,7 +14,7 @@ import threading
 import time
 from pathlib import Path
 
-from .constants import AVAHI_BROWSE, CONFIG_DIR, HOSTS_FILE, IP, SSH, SSH_DIR
+from .constants import AVAHI_BROWSE, CONFIG_DIR, HOSTS_FILE, IP, SSH
 from .util import _ssh_opts, normalize_record, ssh_target
 
 TAILSCALE_NETWORK = ipaddress.IPv4Network("100.64.0.0/10")
@@ -271,82 +270,6 @@ def avahi_scan(timeout: float = 8.0,
             "port": number,
         })
     return group_candidates(entries)
-
-def _ssh_config_sources(path: Path, depth: int = 0, seen=None):
-    """Lignes (clé, valeur) de ~/.ssh/config, Include compris, dans l'ordre."""
-    seen = seen if seen is not None else set()
-    try:
-        resolved = path.resolve()
-    except OSError:
-        return
-    if depth > 3 or resolved in seen or not resolved.is_file():
-        return
-    seen.add(resolved)
-    try:
-        text = resolved.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return
-    for raw in text.splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if not line:
-            continue
-        match = re.match(r"(?i)^include\s+(.+)$", line)
-        if match:
-            for pattern in match.group(1).split():
-                target = Path(os.path.expanduser(pattern))
-                if not target.is_absolute():
-                    target = SSH_DIR / pattern
-                for item in sorted(glob.glob(str(target))):
-                    yield from _ssh_config_sources(Path(item), depth + 1, seen)
-            continue
-        if "=" in line:
-            key, _, value = line.partition("=")
-        else:
-            key, _, value = line.partition(" ")
-        yield key.strip().lower(), value.strip()
-
-def parse_ssh_config() -> list[dict]:
-    """Hôtes concrets de ~/.ssh/config ; les motifs (`*`, `?`, `!`) sont ignorés."""
-    blocks = []
-    defaults = {}
-    current = None
-    for key, value in _ssh_config_sources(SSH_DIR / "config"):
-        if key == "host":
-            current = {"patterns": value.split(), "opts": {}}
-            blocks.append(current)
-        elif key == "match":
-            current = None
-        elif value:
-            if current is None:
-                defaults.setdefault(key, value)
-            else:
-                current["opts"].setdefault(key, value)
-
-    hosts = []
-    seen = set()
-    for block in blocks:
-        for pattern in block["patterns"]:
-            if not pattern or any(ch in pattern for ch in "*?!"):
-                continue
-            options = block["opts"]
-            address = options.get("hostname", pattern)
-            user = options.get("user", defaults.get("user", getpass.getuser()))
-            try:
-                port = int(options.get("port", defaults.get("port", 22)))
-            except ValueError:
-                port = 22
-            if not (1 <= port <= 65535) or not address or "%" in address:
-                continue
-            if any(ch in address for ch in "@/") or "@" in user:
-                continue
-            key = (user, address, port)
-            if key in seen:
-                continue
-            seen.add(key)
-            hosts.append({
-                "label": pattern, "user": user, "host": address, "port": port,
-            })
-    return hosts
 
 def load_hosts() -> list[dict]:
     """Lit le registre ; un fichier illisible est écarté, pas écrasé."""

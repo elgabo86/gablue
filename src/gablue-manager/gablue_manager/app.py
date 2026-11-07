@@ -14,10 +14,10 @@ Sans option : fenêtre principale (postes SSH et machine courante).
 
 Postes distants : liste des machines dont la clé a été installée, état en ligne/
 hors ligne et latence, bureau distant (gremote), fichiers (Dolphin en sftp://),
-terminal SSH, arrêt, redémarrage et mise à jour, découverte
-mDNS, import de ~/.ssh/config, ajout d'un poste avec copie de la clé.
+terminal SSH, arrêt, redémarrage et mise à jour, recherche
+des postes sur le réseau local, ajout d'un poste avec copie de la clé.
 
-Cette machine : serveur SSH et annonce mDNS, mises à jour (image Gablue,
+Cette machine : serveur SSH et annonce locale, mises à jour (image Gablue,
 Flatpaks, gwine), réglages du noyau (protections du processeur, correctif CPUID,
 mode ERTM, émulation CPUID fault), options de gwine (DXVK, affichage, manettes),
 priorité au premier plan et Tailscale (lien du serveur demandé) — les
