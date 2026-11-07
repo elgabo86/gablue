@@ -46,7 +46,8 @@ def badge_icon(base: QIcon, alert: bool) -> QIcon:
         painter.setRenderHint(QPainter.Antialiasing)
         painter.drawPixmap(0, 0, pixmap)
         # Pastille en bas à droite, proportionnelle à la taille demandée.
-        side = max(5, int(pixmap.width() * 0.42))
+        # 34 % : lisible sans manger l'icône (42 % faisait une tache).
+        side = max(5, int(pixmap.width() * 0.34))
         border = max(1, side // 8)
         painter.setPen(QPen(QColor(255, 255, 255, 220), border))
         painter.setBrush(QColor(BADGE_COLOR))
@@ -58,6 +59,59 @@ def badge_icon(base: QIcon, alert: bool) -> QIcon:
         painter.end()
         icon.addPixmap(canvas)
     return icon if not icon.isNull() else base
+
+# -- présentation de l'état ------------------------------------------------
+#
+# L'infobulle et le menu montrent les mêmes informations, mais l'infobulle
+# n'accepte que du texte : lignes courtes, une par élément. Les raisons de
+# redémarrage arrivent en minuscules depuis les sondes ; on les met en phrase
+# et on supprime le doublon avec la ligne « Image Gablue » (l'image staged y
+# est déjà décrite avec sa version).
+
+def _sentence(text: str) -> str:
+    text = (text or "").strip()
+    return text[:1].upper() + text[1:] if text else ""
+
+
+def _staged_image(state: dict | None) -> tuple[bool, str]:
+    """Image déjà téléchargée ? (bool, version de l'image staged)."""
+    image = ((state or {}).get("domains") or {}).get("image") or {}
+    if image.get("state") != "available" or not image.get("staged"):
+        return False, ""
+    version = str(image.get("staged_version") or image.get("version") or "")
+    return True, version
+
+
+def tray_lines(events: list[str], state: dict | None,
+               offline: bool = False) -> tuple[list[str], list[str]]:
+    """(raisons de redémarrage, lignes de mises à jour) pour le tray."""
+    staged, version = _staged_image(state)
+    alerts: list[str] = []
+    if staged:
+        text = "Image Gablue"
+        if version:
+            text += f" — version {version}"
+        alerts.append(text + " téléchargée")
+    for reason in events:
+        text = _sentence(reason)
+        if not text:
+            continue
+        if staged and text.lower().startswith("nouvelle image"):
+            continue
+        alerts.append(text)
+    domains: list[str] = []
+    for line in updates.summary_lines(state):
+        if staged and line.startswith("Image Gablue"):
+            continue
+        domains.append(line.replace(" : ", " — ", 1))
+    if offline and not any("hors ligne" in line.lower() for line in domains):
+        domains.append("Hors ligne — vérifications en pause")
+    if not domains and state is not None:
+        text = updates.compact_summary(state)
+        if text:
+            domains.append(text)
+    return alerts, domains
+
 
 class Tray:
     """Icône de barre d'état et état local, sans fenêtre principale."""
@@ -73,20 +127,11 @@ class Tray:
         self._offline = False
         self._server = None
 
+        self._checking = False
         self.menu = QMenu()
-        self.open_action = self.menu.addAction("Ouvrir Gablue Manager")
-        self.open_action.triggered.connect(self.open_manager)
-        self.event_action = self.menu.addAction("")
-        self.event_action.setEnabled(False)
-        self.event_action.setVisible(False)
-        self.updates_action = self.menu.addAction("")
-        self.updates_action.setEnabled(False)
-        self.updates_action.setVisible(False)
-        self.check_action = self.menu.addAction("Vérifier les mises à jour")
-        self.check_action.triggered.connect(lambda: self.refresh_updates(True))
-        self.menu.addSeparator()
-        quit_action = self.menu.addAction("Quitter")
-        quit_action.triggered.connect(self.app.quit)
+        self.menu.aboutToShow.connect(self._build_menu)
+        self.check_action = None
+        self._build_menu()
 
         self.icon = QSystemTrayIcon(
             badge_icon(self.base_icon, False), self.app
@@ -200,8 +245,8 @@ class Tray:
         self._update_worker = worker
         worker.done.connect(self._updates_done)
         worker.finished.connect(worker.deleteLater)
-        self.check_action.setEnabled(False)
-        self.check_action.setText("Vérification des mises à jour…")
+        self._checking = True
+        self._build_menu()
         worker.start()
 
     def _updates_done(self, state: dict) -> None:
@@ -209,8 +254,7 @@ class Tray:
         self.updates_state = state
         self._offline = False
         self._last_check = (state or {}).get("checked_at") or time.time()
-        self.check_action.setEnabled(True)
-        self.check_action.setText("Vérifier les mises à jour")
+        self._checking = False
         self._update_icon()
 
     def _reachability_changed(self, reachability) -> None:
@@ -238,38 +282,60 @@ class Tray:
         self.events = [str(event) for event in events]
         self._update_icon()
 
+    def _build_menu(self) -> None:
+        """Un menu lisible : sections, une ligne par élément, actions en bas.
+
+        Reconstruit à chaque changement d'état : QMenu ne sait pas insérer
+        proprement un bloc variable au milieu d'actions existantes.
+        """
+        self.menu.clear()
+        open_action = self.menu.addAction("Ouvrir Gablue Manager")
+        font = open_action.font()
+        font.setBold(True)
+        open_action.setFont(font)
+        open_action.triggered.connect(self.open_manager)
+
+        alerts, domains = tray_lines(
+            self.events, self.updates_state, self._offline
+        )
+        if alerts:
+            self.menu.addSection("Redémarrage requis")
+            for text in alerts:
+                self.menu.addAction(text).setEnabled(False)
+        if domains:
+            self.menu.addSection("Mises à jour")
+            for text in domains:
+                self.menu.addAction(text).setEnabled(False)
+
+        self.menu.addSeparator()
+        self.check_action = self.menu.addAction(
+            "Vérification des mises à jour…" if self._checking
+            else "Vérifier les mises à jour"
+        )
+        self.check_action.setEnabled(not self._checking)
+        self.check_action.triggered.connect(lambda: self.refresh_updates(True))
+        quit_action = self.menu.addAction("Quitter")
+        quit_action.triggered.connect(self.app.quit)
+
     def _update_icon(self) -> None:
         pending = updates.has_updates(self.updates_state)
         alert = bool(self.events) or pending
         self.icon.setIcon(badge_icon(self.base_icon, alert))
 
-        lines: list[str] = []
-        if self.events:
-            lines.extend(self.events)
-        lines.extend(updates.summary_lines(self.updates_state))
-        if self._offline:
-            lines.append("Hors ligne — vérification des mises à jour en pause.")
-        tooltip = "Gablue Manager"
-        if lines:
-            tooltip += "\n" + "\n".join(lines)
-        self.icon.setToolTip(tooltip)
+        alerts, domains = tray_lines(
+            self.events, self.updates_state, self._offline
+        )
+        lines = ["Gablue Manager"]
+        if alerts:
+            lines.append("Redémarrage requis")
+            lines.extend("• " + text for text in alerts)
+        lines.extend("• " + text for text in domains)
+        self.icon.setToolTip("\n".join(lines))
 
-        if self.events:
-            self.event_action.setText("Redémarrage requis — " + self.events[0])
-        self.event_action.setVisible(bool(self.events))
-
-        total = updates.total_updates(self.updates_state)
-        if pending:
-            text = f"{total} mise{'s' if total > 1 else ''} à jour disponible" \
-                f"{'s' if total > 1 else ''}"
-        elif self.updates_state and self.updates_state.get("online") is False:
-            text = "Mises à jour : hors ligne"
-        elif self.updates_state:
-            text = "Aucune mise à jour disponible"
-        else:
-            text = ""
-        self.updates_action.setText(text)
-        self.updates_action.setVisible(bool(text))
+        # Ne pas reconstruire un menu ouvert sous les doigts : `aboutToShow`
+        # le rafraîchit à la prochaine ouverture.
+        if not self.menu.isVisible():
+            self._build_menu()
 
 def _tray_message(tray: Tray, app: QApplication, server) -> None:
     """Message de la fenêtre : `quit` (icône coupée) ou `reload` (préférences)."""
