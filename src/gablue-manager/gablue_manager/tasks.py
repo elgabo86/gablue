@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from . import journal
 from .local import parse_progress_event, privileged_prefix
 from .util import display_name, ssh_target
 from .widgets import BusyProgressBar
@@ -266,6 +267,14 @@ class RemoteTaskDialog(QDialog):
             self.result_label.setText(f"Échec (code {code}).")
         self.result_label.style().unpolish(self.result_label)
         self.result_label.style().polish(self.result_label)
+
+        # Un échec distant laisse une trace durable (journald) : la fenêtre,
+        # elle, disparaît avec la session. Aucun envoi si l'action a été
+        # annulée par l'utilisateur, et l'anti-spam de `journal` borne le reste.
+        if not ok and not self._cancelled:
+            journal.log_failure(
+                self.windowTitle(), detail=output[-4000:], code=code,
+            )
 
         self.cancel_button.setVisible(False)
         self.close_button.setVisible(True)
@@ -786,6 +795,11 @@ class LocalTaskDialog(QDialog):
         self.result_label.style().unpolish(self.result_label)
         self.result_label.style().polish(self.result_label)
 
+        if not ok and not self._cancelled:
+            journal.log_failure(
+                self.windowTitle(), detail=output[-4000:], code=code,
+            )
+
         self.cancel_button.setVisible(False)
         self.close_button.setVisible(True)
         self.close_button.setDefault(True)
@@ -1095,6 +1109,10 @@ class SequentialTaskDialog(QDialog):
         self._step_percent = None
         self._apply_global()
         label = self._steps[self._index]["label"] if self._index >= 0 else "étape"
+        journal.log_failure(
+            f"{self.windowTitle()} — {label}",
+            detail="".join(self._output)[-4000:], code=code,
+        )
         self._finish_with(
             f"Échec de « {label} » (code {code}). "
             "Les étapes suivantes ne sont pas lancées.",

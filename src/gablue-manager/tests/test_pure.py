@@ -21,7 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from gablue_manager import (  # noqa: E402
-    apps, cli, hosts, local, prefs, ssh, updates, util,
+    apps, cli, hosts, journal, local, prefs, ssh, updates, util,
 )
 
 
@@ -720,6 +720,68 @@ class UpdatesTest(unittest.TestCase):
             "gwine": {"state": "offline"},
         }}
         self.assertIn("1 mise à jour", updates.compact_summary(offline_staged))
+
+
+class JournalTest(unittest.TestCase):
+    def setUp(self):
+        import unittest.mock as mock
+        self.mock = mock
+        patcher = mock.patch.dict(journal._seen, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        journal._sent = 0
+
+    def test_encode(self):
+        self.assertEqual(
+            journal.encode({"MESSAGE": "a\nb", "PRIORITY": "3"}),
+            b"MESSAGE=a\\nb\nPRIORITY=3\n",
+        )
+        clipped = journal.encode(
+            {"MESSAGE": "x" * (journal.MAX_VALUE + 10)}
+        ).decode()
+        self.assertTrue(clipped.rstrip("\n").endswith("[… tronqué]"))
+        self.assertLess(len(clipped), journal.MAX_VALUE + 100)
+
+    def test_failure_fields(self):
+        sent = []
+        with self.mock.patch.object(
+            journal, "_send", lambda data: sent.append(data) or True
+        ):
+            self.assertTrue(
+                journal.log_failure("Échec de la tâche", "détail\nsuite", code=7)
+            )
+        self.assertEqual(len(sent), 1)
+        text = sent[0].decode()
+        self.assertIn("SYSLOG_IDENTIFIER=gablue-manager", text)
+        self.assertIn("PRIORITY=3", text)
+        self.assertIn("GABLUE_CODE=7", text)
+        self.assertIn("Échec de la tâche — échec (code 7)", text)
+        self.assertIn("détail\\nsuite", text)
+
+    def test_dedup_and_cap(self):
+        sent = []
+        with self.mock.patch.object(
+            journal, "_send", lambda data: sent.append(data) or True
+        ):
+            # Même erreur (même première ligne, même priorité) : une seule
+            # entrée par fenêtre de 10 minutes.
+            self.assertTrue(journal.log_failure("Échec A", code=1))
+            self.assertFalse(journal.log_failure("Échec A", code=1))
+            self.assertTrue(journal.log_failure("Échec B", code=1))
+            # Plafond : la dernière entrée autorisée est suivie d'un avis.
+            journal._sent = journal.MAX_ENTRIES - 1
+            self.assertTrue(journal.log_failure("Échec C", code=1))
+            self.assertFalse(journal.log_failure("Échec D", code=1))
+        self.assertEqual(len(sent), 4)    # A, B, C + avis de coupure
+        self.assertIn(b"Limite de", sent[-1])
+
+    def test_send_never_raises(self):
+        with self.mock.patch.object(
+            journal, "NATIVE_SOCKET", "/nonexistant",
+        ), self.mock.patch.object(
+            journal, "SYSLOG_SOCKET", "/nonexistant",
+        ):
+            self.assertFalse(journal.log("test"))
 
 
 class CliTest(unittest.TestCase):

@@ -8,6 +8,8 @@ s'en sert pour l'initialisation du préfixe Wine, à la place de kdialog.
 import os
 import sys
 
+from . import journal
+
 HELP = """Usage : gablue-manager [mode]
 
 Sans option : fenêtre principale (postes SSH et machine courante).
@@ -83,6 +85,9 @@ def _window_message(server, window) -> None:
     window.activateWindow()
 
 def main() -> int:
+    # Une exception non attrapée doit laisser une trace : la fenêtre peut être
+    # lancée depuis le menu, sans terminal pour lire sa sortie d'erreur.
+    journal.install_excepthook()
     args = sys.argv[1:]
     # --help après « -- » appartient à la commande, pas à nous.
     head = args[:args.index("--")] if "--" in args else args

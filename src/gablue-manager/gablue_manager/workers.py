@@ -11,7 +11,7 @@ from concurrent.futures import as_completed
 
 from PySide6.QtCore import QThread, Signal
 
-from . import updates
+from . import journal, updates
 from .constants import SSH
 from .hosts import avahi_scan, remote_addresses
 from .local import pending_reboot_reasons
@@ -165,7 +165,11 @@ class UpdateCheckWorker(QThread):
     def run(self) -> None:
         try:
             state = updates.check_all(self._enabled, self._online)
-        except Exception:            # une sonde d'agrément ne doit rien casser
+        except Exception as error:   # une sonde d'agrément ne doit rien casser
+            journal.log_failure(
+                "Vérification des mises à jour interrompue",
+                detail=repr(error),
+            )
             state = {
                 "checked_at": time.time(),
                 "online": self._online,
