@@ -112,8 +112,10 @@ class StVersionsSection(QFrame):
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setWidget(self.rows_widget)
-        self.scroll.setMaximumHeight(220)
-        layout.addWidget(self.scroll)
+        # Le panneau occupe tout l'onglet : la liste prend l'espace libre.
+        # Sans ce facteur d'étirement, Qt répartissait le vide entre le titre,
+        # la note et la liste — gros trous au milieu du panneau (vécu 07/11/2026).
+        layout.addWidget(self.scroll, 1)
 
         self.rows: list[VersionRow] = []
         self.sizes: dict[str, int | None] = {}
