@@ -220,7 +220,7 @@ par post-install.
 - **Gaming** : `scx-enable/disable`, `cpuid-fix-on/off`, `cpuid-emu-on/off` (persistant via `/etc/modprobe.d` + `/etc/modules-load.d`, blacklist kvm_amd)
 - **Virtualisation** : `docker-enable/disable`, `dx-group`, `setup-kvmfr`, `libvirt-reset-cache` (cache capabilities libvirt, corrige « video model 'virtio' unsupported » dans virt-manager)
 - **Maintenance** : `brew-reset`, `pyenv-remove`, `snapshots-enable/disable`, `btrfs-compress`, `btrfs-compress-defrag`, `ssd-thermal-limit` (HCTM NVMe, interactif, persistant), `toggle-updates-all` (système + flatpaks + brew — contrairement à `toggle-updates` upstream sans brew)
-- **Affichage** : `kwin-display-reset` (met de côté avec horodatage `~/.config/kwinoutputconfig.json` + `/var/lib/plasmalogin/.config/kwinoutputconfig.json` — dépannage écran noir / hors portée au login), `vrr-fix`
+- **Affichage** : `kwin-display-reset` (met de côté avec horodatage `~/.config/kwinoutputconfig.json` + `/var/lib/plasmalogin/.config/kwinoutputconfig.json` — dépannage écran noir / hors portée au login). Règles VRR par application : livrées dans `/etc/xdg/kwinrulesrc`, appliquées seules par KWin 6.8 qui complète `[General] Order` avec tous les groupes présents (défauts système inclus, lus même en `NoGlobals`). L'ex-`vrr-fix` est retiré : il écrivait la clé legacy `[General] rules`, que KWin 6.8 traite comme liste exclusive et qui supprime donc les règles de fenêtre de l'utilisateur ; le nécessaire sur Plasma 6.7 (qui n'énumérait que par `rules`) est couvert par la montée en 6.8
 - **Rebase** : `gablue-rebase-*` pour changer de variante (le manager le fait par `/usr/libexec/gablue-rebase`, sans passer par ujust)
 
 ### Justfile (60-custom.just) — conventions d'écriture
