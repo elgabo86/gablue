@@ -25,33 +25,19 @@ select_exe_from_wgp() {
         exit 1
     fi
 
-    local menu_args=("Choisissez un exécutable à lancer :")
-
+    local -a rel_paths=()
     for exe in "${exe_array[@]}"; do
         local rel_path="${exe#$MOUNT_DIR/}"
-        menu_args+=("$rel_path" "$rel_path")
+        rel_paths+=("$rel_path")
     done
 
+    # Choix graphique par Gablue Manager, menu numéroté en terminal — plus de
+    # kdialog. `ui_choose` imprime le choix sur stdout.
     local EXE_REL_PATH
-    if command -v kdialog &> /dev/null; then
-        EXE_REL_PATH=$(kdialog --menu "${menu_args[@]}")
-    else
-        echo ""
-        echo "Exécutables disponibles:"
-        for i in "${!exe_array[@]}"; do
-            local rel_path="${exe_array[$i]#$MOUNT_DIR/}"
-            echo "  $((i+1)). $rel_path"
-        done
-        echo ""
-        read -p "Entrez le numéro de l'exécutable: " choice
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#exe_array[@]} ]; then
-            EXE_REL_PATH="${exe_array[$((choice-1))]#$MOUNT_DIR/}"
-        fi
-    fi
-    
-    local exit_status=$?
+    EXE_REL_PATH=$(ui_choose "Choisir un exécutable" \
+        "Choisissez un exécutable à lancer :" "${rel_paths[@]}") || true
 
-    if [ $exit_status -ne 0 ] || [ -z "$EXE_REL_PATH" ]; then
+    if [ -z "$EXE_REL_PATH" ]; then
         echo "Annulé par l'utilisateur"
         cleanup_wgp
         exit 0

@@ -77,14 +77,8 @@ OFFLINE_MODE=false
 GAME_INTERNAL_NAME=""
 MOUNT_DIR=""
 
-# Variable globale pour stocker la référence dbus du progress dialog
-_PROGRESS_DBUS_REF=""
-
 # Variable globale pour stocker le PID du processus gamemode
 _GWINE_GAMEMODE_PID=""
-
-# Variable globale pour contrôler l'utilisation de kdialog
-_USE_KDIALOG=false
 
 # Par défaut, utiliser des bind mounts (meilleure compatibilité)
 # Pour utiliser les liens symboliques classiques, utiliser --use-ln-mounts
@@ -92,14 +86,11 @@ USE_BIND_MOUNTS=true
 
 # Fonctions utilitaires de base
 
-# Arrêt avec erreur. Usage: error_exit <message> [titre_kdialog]
+# Arrêt avec erreur. Usage: error_exit <message>
+# Le message part sur stderr : le journal de la tâche Gablue Manager le montre
+# (et le révèle en cas d'échec), le terminal aussi.
 error_exit() {
     echo "Erreur: $1" >&2
-    # Afficher l'erreur graphiquement si --kdialog est actif (contexte .desktop avec
-    # Terminal=false, sinon l'utilisateur ne voit jamais le message)
-    if [ "${_USE_KDIALOG:-false}" = "true" ] && command -v kdialog &>/dev/null && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
-        kdialog --title "${2:-Erreur}" --error "$1" 2>/dev/null || true
-    fi
     exit 1
 }
 

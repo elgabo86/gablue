@@ -17,14 +17,10 @@ cleanup_winetricks_interrupt() {
         kill "$pid" 2>/dev/null
         wait "$pid" 2>/dev/null
     fi
-    trap - INT
+    trap - INT TERM
     echo ""
     echo "Installation interrompue par l'utilisateur"
-    
-    if [ -n "$_PROGRESS_DBUS_REF" ]; then
-        progress_close "$_PROGRESS_DBUS_REF" 2>/dev/null
-    fi
-    
+
     restore_wineprefix || exit 1
     exit 130
 }
@@ -34,16 +30,16 @@ install_winetricks_components() {
     export WINE="$WINE_BIN"
     export PATH="$WINE_DIR/bin:$PATH"
     
-    trap cleanup_winetricks_interrupt INT
+    trap cleanup_winetricks_interrupt INT TERM
     
     if ! install_all_wincomponents; then
-        trap - INT
+        trap - INT TERM
         echo ""
         echo "Erreur: L'installation des composants Windows a échoué"
         return 1
     fi
     
-    trap - INT
+    trap - INT TERM
     
     echo "Installation des composants Windows terminée avec succès"
     return 0

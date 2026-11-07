@@ -9,19 +9,16 @@ install_wine_mono_gecko() {
     local WINE_CACHE="$COMPONENTS_DIR/wine-cache"
     local _MONO_GECKO_PID=""
     
-    trap '_mono_gecko_interrupt' INT
+    trap '_mono_gecko_interrupt' INT TERM
     
     _mono_gecko_interrupt() {
         if [ -n "$_MONO_GECKO_PID" ] && kill -0 "$_MONO_GECKO_PID" 2>/dev/null; then
             kill "$_MONO_GECKO_PID" 2>/dev/null
             wait "$_MONO_GECKO_PID" 2>/dev/null
         fi
-        trap - INT
+        trap - INT TERM
         echo ""
         echo "Installation interrompue par l'utilisateur"
-        if [ -n "$_PROGRESS_DBUS_REF" ]; then
-            progress_close "$_PROGRESS_DBUS_REF" 2>/dev/null
-        fi
         restore_wineprefix
         exit 130
     }
@@ -45,7 +42,7 @@ install_wine_mono_gecko() {
                 _MONO_GECKO_PID=$!
                 
                 if ! wait "$_MONO_GECKO_PID"; then
-                    trap - INT
+                    trap - INT TERM
                     _MONO_GECKO_PID=""
                     echo "    ⚠️  Échec installation $(basename "$mono_msi")"
                     return 1
@@ -69,7 +66,7 @@ install_wine_mono_gecko() {
                 _MONO_GECKO_PID=$!
                 
                 if ! wait "$_MONO_GECKO_PID"; then
-                    trap - INT
+                    trap - INT TERM
                     _MONO_GECKO_PID=""
                     echo "    ⚠️  Échec installation $(basename "$gecko_msi")"
                     return 1
@@ -79,7 +76,7 @@ install_wine_mono_gecko() {
             fi
         done
         
-        trap - INT
+        trap - INT TERM
         
         if [ "$mono_installed" = false ] || [ "$gecko_installed" = false ]; then
             echo "Erreur: Mono ou Gecko n'ont pas pu être installés depuis le cache"

@@ -149,15 +149,9 @@ manage_registry() {
             echo "Chemin Windows: $win_path"
             echo "WINEPREFIX: $WINEPREFIX"
             if ! WINEPREFIX="$WINEPREFIX" "$WINE_BIN" regedit.exe /S "$win_path" 2>/dev/null; then
-                if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-                    kdialog --title "Erreur" --error "Échec de l'installation du fichier de registre:\n$reg_file_path"
-                fi
                 error_exit "Échec de l'installation du fichier de registre"
             fi
             echo "Fichier de registre installé avec succès"
-            if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-                kdialog --title "Succès" --msgbox "Le fichier de registre a été installé avec succès:\n$reg_file_path"
-            fi
             ;;
     esac
     

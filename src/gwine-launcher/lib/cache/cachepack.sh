@@ -218,22 +218,15 @@ if ! command -v gwine &> /dev/null; then
     exit 1
 fi
 
-# Demander confirmation
-if command -v kdialog &> /dev/null; then
-    if ! kdialog --title "Déploiement du cache" --yesno "Voulez-vous déployer le cache Gwine sur ce système ?"; then
-        echo "Déploiement annulé."
-        exit 0
-    fi
-else
-    echo "Ce script va déployer le cache Gwine dans:"
-    echo "  - $CACHE_DIR"
-    echo "  - $GWINE_DIR"
-    echo ""
-    read -p "Voulez-vous déployer le cache ? [O/n]: " -r
-    if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
-        echo "Déploiement annulé."
-        exit 0
-    fi
+# Demander confirmation (terminal : ce script se lance depuis une console)
+echo "Ce script va déployer le cache Gwine dans:"
+echo "  - $CACHE_DIR"
+echo "  - $GWINE_DIR"
+echo ""
+read -p "Voulez-vous déployer le cache ? [O/n]: " -r
+if [[ ! "$REPLY" =~ ^[OoYy]$ ]] && [ -n "$REPLY" ]; then
+    echo "Déploiement annulé."
+    exit 0
 fi
 
 echo ""
@@ -293,26 +286,20 @@ echo ""
 
 # Demander si l'utilisateur veut lancer --init --offline
 echo "Voulez-vous maintenant initialiser le préfixe Wine ?"
-echo "Cela lancera: gwine --init --offline --kdialog"
+echo "Cela lancera: gwine --init --offline"
 echo ""
 
 INIT_CONFIRM=false
-if command -v kdialog &> /dev/null; then
-    if kdialog --title "Initialisation" --yesno "Voulez-vous initialiser le préfixe Wine maintenant ?\n\nCela configurera Wine avec tous les composants nécessaires."; then
-        INIT_CONFIRM=true
-    fi
-else
-    read -p "Lancer l'initialisation ? [O/n]: " -r
-    if [[ "$REPLY" =~ ^[OoYy]$ ]] || [ -z "$REPLY" ]; then
-        INIT_CONFIRM=true
-    fi
+read -p "Lancer l'initialisation ? [O/n]: " -r
+if [[ "$REPLY" =~ ^[OoYy]$ ]] || [ -z "$REPLY" ]; then
+    INIT_CONFIRM=true
 fi
 
 if [ "$INIT_CONFIRM" = true ]; then
     echo ""
     echo "Lancement de l'initialisation..."
     echo "========================================"
-    gwine --init --offline --kdialog
+    gwine --init --offline
 else
     echo ""
     echo "Pour initialiser plus tard, lancez:"
@@ -349,7 +336,7 @@ Instructions:
    Le script va:
    - Déployer le cache dans ~/.cache/gwine/
    - Installer gwine dans ~/.local/share/gwine/runner/
-   - Proposer d'initialiser le préfixe Wine (avec kdialog si disponible)
+   - Proposer d'initialiser le préfixe Wine (progression via Gablue Manager)
 
 3. Alternative manuelle:
    - Extraire gwine-cache.tar.xz dans ~/.cache/gwine/
@@ -360,7 +347,6 @@ Notes:
 ======
 - Assurez-vous que les dépendances système sont installées
   (wine, squashfuse, bubblewrap, etc.)
-- Le script détecte automatiquement si kdialog est disponible
 - Le préfixe Wine sera créé dans ~/Windows/Prefix/
 - Le runner gwine est inclus dans le pack
 - Deux versions DXVK sont incluses : standard et GPLAsync

@@ -36,8 +36,8 @@ from .local import (
     _sudo_run, avahi_apply_args, avahi_publish_state, brew_available,
     brew_progress_parser, brew_update_hint, brew_update_script,
     flatpak_update_hint, flatpak_update_script, gablue_update_hint,
-    local_sshd_state, parse_flatpak_progress, privileged_prefix,
-    set_local_sshd_sudo,
+    local_sshd_state, parse_flatpak_progress, parse_gablue_progress,
+    privileged_prefix, set_local_sshd_sudo,
 )
 from .ssh import ask_remote_password, remote_sudo_nopasswd, remote_sudo_prefix
 from .style import make_qss
@@ -1225,6 +1225,11 @@ class MainWindow(QMainWindow):
             "Mise à jour de gwine",
             "gwine --init — vérification du runner et des composants.",
             [gwine, "--init"],
+            # gwine publie ses étapes sur la sortie (« ::gablue:step ») :
+            # une vraie barre remplace le journal, qui reste derrière
+            # « Terminal ».
+            progress_parser=parse_gablue_progress,
+            env_extra={"GABLUE_PROGRESS": "1"},
         )
 
     def update_local_brew(self) -> None:
@@ -1302,7 +1307,8 @@ class MainWindow(QMainWindow):
     def _run_local_task(self, title: str, subtitle: str, argv: list[str],
                         root: bool = False, hint_from_output=None,
                         progress_fifo: str = "",
-                        progress_parser=None) -> None:
+                        progress_parser=None,
+                        env_extra: dict | None = None) -> None:
         if argv and shutil.which(argv[0]) is None and not Path(argv[0]).exists():
             QMessageBox.critical(
                 self, title,
@@ -1312,7 +1318,7 @@ class MainWindow(QMainWindow):
         dialog = LocalTaskDialog(
             self, title=title, subtitle=subtitle, argv=argv, root=root,
             hint_from_output=hint_from_output, progress_fifo=progress_fifo,
-            progress_parser=progress_parser,
+            progress_parser=progress_parser, env_extra=env_extra,
         )
         start_task(self, dialog)
 

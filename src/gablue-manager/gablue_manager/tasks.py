@@ -4,7 +4,9 @@
 import os
 import shutil
 
-from PySide6.QtCore import QProcess, QSocketNotifier, QTimer, Qt, Signal
+from PySide6.QtCore import (
+    QProcess, QProcessEnvironment, QSocketNotifier, QTimer, Qt, Signal,
+)
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QPushButton,
     QVBoxLayout,
@@ -13,7 +15,6 @@ from PySide6.QtWidgets import (
 from .local import parse_progress_event, privileged_prefix
 from .util import display_name, ssh_target
 from .widgets import BusyProgressBar
-from .workers import SshTaskWorker
 
 class RemoteTaskDialog(QDialog):
     """Commande distante avec journal en direct (arrêt, redémarrage, mise à jour)."""
@@ -86,6 +87,11 @@ class RemoteTaskDialog(QDialog):
         QTimer.singleShot(60, self._start)
 
     def _start(self) -> None:
+        # Import tardif : les tâches locales (progression CLI, mises à jour de
+        # gwine) n'ont pas besoin du module SSH, qui n'a donc aucune raison
+        # d'être chargé en mode `--progress`.
+        from .workers import SshTaskWorker
+
         worker = SshTaskWorker(
             self._host, self._command, self, password=self._password
         )
@@ -188,15 +194,23 @@ class LocalTaskDialog(QDialog):
     def __init__(self, parent=None, title: str = "", subtitle: str = "",
                  argv: list[str] | None = None, root: bool = False,
                  hint_from_output=None, progress_fifo: str = "",
-                 progress_parser=None):
+                 progress_parser=None, env_extra: dict | None = None,
+                 close_on_success: bool = False,
+                 reveal_log_on_error: bool = False):
         super().__init__(parent)
         self._argv = list(argv or [])
         self._root = root
         self._hint_from_output = hint_from_output
+        self._env_extra = dict(env_extra or {})
+        self._close_on_success = close_on_success
+        self._reveal_log_on_error = reveal_log_on_error
         self._process: QProcess | None = None
         self._output: list[str] = []
         self._cancelled = False
         self._running = True
+        # Code de sortie de la commande (None tant qu'elle n'a pas rendu la
+        # main) : le mode CLI de Gablue Manager le renvoie à l'appelant.
+        self.exit_code: int | None = None
         # Progression structurée (bootc) : FIFO écrit par le helper root.
         self._progress_fifo = progress_fifo
         self._progress_fd = -1
@@ -285,6 +299,11 @@ class LocalTaskDialog(QDialog):
 
         QTimer.singleShot(60, self._start)
 
+    @property
+    def cancelled(self) -> bool:
+        """L'utilisateur a-t-il annulé l'opération ?"""
+        return self._cancelled
+
     def _start(self) -> None:
         argv = list(self._argv)
         if self._root:
@@ -300,6 +319,14 @@ class LocalTaskDialog(QDialog):
         self.log_view.appendPlainText("$ " + " ".join(argv) + "\n\n")
         process = QProcess(self)
         process.setProcessChannelMode(QProcess.MergedChannels)
+        if self._env_extra:
+            env = QProcessEnvironment.systemEnvironment()
+            for key, value in self._env_extra.items():
+                if value is None:
+                    env.remove(key)
+                else:
+                    env.insert(key, value)
+            process.setProcessEnvironment(env)
         process.setProgram(argv[0])
         process.setArguments(argv[1:])
         process.readyReadStandardOutput.connect(self._drain)
@@ -391,29 +418,40 @@ class LocalTaskDialog(QDialog):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(int(round(float(percent))))
 
-    def _read_progress_lines(self, text: str) -> None:
+    def _read_progress_lines(self, text: str) -> str:
         """Découpe la sortie en lignes complètes et en tire la progression.
 
         `QProcess` livre des morceaux arbitraires : une ligne peut arriver en
-        deux fois, d'où le tampon. Les lignes non reconnues restent dans le
-        journal, rien n'est consommé.
+        deux fois, d'où le tampon. Les lignes de protocole sont consommées
+        (`hide`) et ne vont pas au journal ; les autres sont rendues à
+        l'appelant, seul chargé de les afficher.
         """
         if self._progress_parser is None:
-            return
+            return text
         self._line_buffer += text
+        kept: list[str] = []
         while "\n" in self._line_buffer:
             line, _, self._line_buffer = self._line_buffer.partition("\n")
             info = self._progress_parser(line)
             if info:
                 self._apply_line_progress(info)
+                if info.get("hide"):
+                    continue
+            kept.append(line + "\n")
+        return "".join(kept)
 
     def _flush_progress_lines(self) -> None:
-        if self._line_buffer:
-            info = (self._progress_parser(self._line_buffer)
-                    if self._progress_parser is not None else {})
-            self._line_buffer = ""
-            if info:
-                self._apply_line_progress(info)
+        if not self._line_buffer:
+            return
+        leftover, self._line_buffer = self._line_buffer, ""
+        info = (self._progress_parser(leftover)
+                if self._progress_parser is not None else {})
+        if info:
+            self._apply_line_progress(info)
+            if info.get("hide"):
+                return
+        if leftover:
+            self.log_view.insertPlainText(leftover)
 
     def _stop_progress(self) -> None:
         if self._progress_notifier is not None:
@@ -437,10 +475,12 @@ class LocalTaskDialog(QDialog):
         if not text:
             return
         self._output.append(text)
-        self.log_view.insertPlainText(text)
+        shown = self._read_progress_lines(text)
+        if not shown:
+            return
+        self.log_view.insertPlainText(shown)
         bar = self.log_view.verticalScrollBar()
         bar.setValue(bar.maximum())
-        self._read_progress_lines(text)
 
     def _cancel(self) -> None:
         if not self._running or self._process is None:
@@ -448,7 +488,15 @@ class LocalTaskDialog(QDialog):
         self._cancelled = True
         self.cancel_button.setEnabled(False)
         self._append("\n[annulation…]\n")
-        self._process.kill()
+        # SIGTERM d'abord : gwine restaure l'ancien préfixe sur ce signal, un
+        # SIGKILL immédiat le laisserait à moitié construit. SIGKILL seulement
+        # si le programme s'accroche.
+        self._process.terminate()
+        QTimer.singleShot(4000, self._kill_if_running)
+
+    def _kill_if_running(self) -> None:
+        if self._running and self._process is not None:
+            self._process.kill()
 
     def _start_failed(self, error) -> None:
         # finished() n'est pas émis quand le programme n'a pas pu démarrer.
@@ -459,6 +507,7 @@ class LocalTaskDialog(QDialog):
 
     def _finished(self, code: int) -> None:
         self._running = False
+        self.exit_code = int(code)
         self._stop_progress()
         self._flush_progress_lines()
         output = "".join(self._output)
@@ -472,6 +521,10 @@ class LocalTaskDialog(QDialog):
             if self._progress_seen and ok:
                 self.progress_bar.setRange(0, 100)
                 self.progress_bar.setValue(100)
+        if not ok and self._reveal_log_on_error and self.log_toggle is not None:
+            # En CLI (gwine), la fenêtre est le seul canal : montrer le journal
+            # au lieu d'un simple « Échec (code N) » sans explication.
+            self.log_toggle.setChecked(True)
         self.result_label.setVisible(True)
         if self._cancelled:
             self.result_label.setObjectName("warn")
@@ -501,12 +554,19 @@ class LocalTaskDialog(QDialog):
         self.close_button.setDefault(True)
         self._process = None
         self.completed.emit(ok and not self._cancelled)
+        if self._close_on_success and ok and not self._cancelled:
+            # Mode CLI : l'appelant (gwine) enchaîne aussitôt, la fenêtre ne
+            # doit pas rester devant le jeu.
+            QTimer.singleShot(0, self.accept)
 
     def abort(self) -> None:
         """Annule et ferme sans demander (fermeture de la fenêtre principale)."""
         if self._running and self._process is not None:
             self._cancelled = True
-            self._process.kill()
+            self._process.terminate()
+            if not self._process.waitForFinished(3000):
+                self._process.kill()
+                self._process.waitForFinished(1000)
         self._stop_progress()
         self.accept()
 
@@ -520,8 +580,10 @@ class LocalTaskDialog(QDialog):
             if answer != QMessageBox.Yes:
                 return
             self._cancelled = True
-            self._process.kill()
-            self._process.waitForFinished(3000)
+            self._process.terminate()
+            if not self._process.waitForFinished(3000):
+                self._process.kill()
+                self._process.waitForFinished(1000)
         self._stop_progress()
         super().reject()
 

@@ -89,22 +89,10 @@ check_exe_instance_conflict() {
         if [[ "$real_existing_dir" != "$real_download_dir"* ]] && [ "$existing_in_run_media" = false ]; then
             if [ "$real_current_exe_dir" != "$real_existing_dir" ]; then
                 local should_stop=false
-                local game_name
-                game_name=$(basename "$existing_exe_dir")
-                
-                local kdialog_msg="Un programme Windows (.exe) est deja en cours.\n\nAttention : Les programmes Windows hors des dossiers autorises ne peuvent pas tourner simultanement. Si vous arretez ce programme, tous les autres programmes Windows en cours seront aussi fermes (ils partagent le meme wineserver).\n\nVoulez-vous arreter TOUS les programmes Windows et lancer celui-ci ?"
-
-                if command -v kdialog &>/dev/null; then
-                    if kdialog --title "Conflit d'instance" --yes-label "Oui, tout arreter" --no-label "Non, annuler" --warningyesno "$kdialog_msg"; then
-                        should_stop=true
-                    fi
-                else
-                    echo ""
-                    echo "Un programme Windows (.exe) est en cours : $game_name"
-                    echo "Attention: Les programmes Windows hors dossiers autorises ne peuvent pas tourner simultanement."
-                    echo "Arreter ce programme fermera aussi les autres programmes Windows (wineserver partage)."
-                    read -p "Voulez-vous arreter tous les programmes Windows et lancer celui-ci ? (o/N): " -r
-                    [[ "$REPLY" =~ ^[oOyY]$ ]] && should_stop=true
+                if ui_confirm "Conflit d'instance" \
+                    "Un programme Windows (.exe) est déjà en cours.\n\nAttention : les programmes Windows hors des dossiers autorisés ne peuvent pas tourner simultanément. Si vous arrêtez ce programme, tous les autres programmes Windows en cours seront aussi fermés (ils partagent le même wineserver).\n\nVoulez-vous arrêter TOUS les programmes Windows et lancer celui-ci ?" \
+                    "Oui, tout arrêter" "Non, annuler"; then
+                    should_stop=true
                 fi
 
                 if [ "$should_stop" = true ]; then

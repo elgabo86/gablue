@@ -821,3 +821,56 @@ def parse_progress_event(line: str) -> dict:
         "steps": steps,
         "steps_total": steps_total,
     }
+
+# Protocole de progression des outils externes (gwine) vers le dialogue de
+# tâche. Une ligne = un événement, sur la sortie fusionnée de la commande :
+#   ::gablue:step 4 12 Installation de Wine Mono et Gecko
+#   ::gablue:busy Téléchargement des composants Windows
+#   ::gablue:done Initialisation terminée
+# Les lignes de protocole sont retirées du journal (`hide`) : l'outil écrit sa
+# version lisible juste à côté, le journal reste donc du texte pour l'humain.
+GABLUE_PROGRESS_PREFIX = "::gablue:"
+
+def parse_gablue_progress(line: str) -> dict:
+    """Ligne de protocole `::gablue:` → progression du dialogue.
+
+    `step n total libellé` : une étape commence ; n-1 étapes sont derrière, donc
+    la barre affiche `(n-1)/total` — elle n'atteint 100 % qu'au `done` final.
+    `busy libellé` : travail sans total (téléchargement) → barre indéterminée.
+    `done [libellé]` : 100 %. `{}` pour toute autre ligne (journal normal).
+    """
+    text = (line or "").rstrip()
+    if not text.startswith(GABLUE_PROGRESS_PREFIX):
+        return {}
+    verb, _, rest = text[len(GABLUE_PROGRESS_PREFIX):].strip().partition(" ")
+    rest = rest.strip()
+    if verb == "step":
+        parts = rest.split(" ", 2)
+        if len(parts) < 3:
+            return {}
+        try:
+            step = int(parts[0])
+            total = max(1, int(parts[1]))
+        except ValueError:
+            return {}
+        step = min(max(1, step), total)
+        return {
+            "hide": True,
+            "label": f"Étape {step}/{total} — {parts[2]}",
+            "percent": 100.0 * (step - 1) / total,
+            "step": step,
+            "total": total,
+        }
+    if verb == "busy":
+        return {
+            "hide": True,
+            "label": rest or "Opération en cours…",
+            "percent": None,
+        }
+    if verb == "done":
+        return {
+            "hide": True,
+            "label": rest or "Terminé.",
+            "percent": 100.0,
+        }
+    return {}

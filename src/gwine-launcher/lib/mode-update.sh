@@ -14,15 +14,14 @@ update_components() {
     
     # Vérifier la connexion réseau
     if ! curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
-        # error_exit affiche le kdialog graphiquement si --kdialog est actif
-        # (le .desktop a Terminal=false, sans cela l'utilisateur ne voit rien)
-        error_exit "Pas de connexion internet - mise à jour impossible" "Mise à jour des composants"
+        error_exit "Pas de connexion internet - mise à jour impossible"
     fi
+
+    progress_busy "Recherche des mises à jour…"
     
     local has_updates=false
     local needs_reinstall_dlls=false
     local CURRENT_STEP=0
-    local DBUS_REF=""
     
     # Variables pour stocker les mises à jour effectuées
     local updated_runner=""
@@ -209,38 +208,19 @@ update_components() {
             echo "  - DXVK-NVAPI: ${current_nvapi:-Inconnue}"
         fi
         echo ""
-        # Message graphique si --kdialog est actif (le .desktop a Terminal=false,
-        # sans cela l'utilisateur ne voit rien)
-        if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
-            local up_to_date_msg="Tous les composants sont déjà à jour !\n\nVersions installées :\n"
-            up_to_date_msg+="  - gwine : ${current_runner_version:-Inconnue}\n"
-            if [ "$current_dxvk_mode" = "dxvk-async" ]; then
-                up_to_date_msg+="  - DXVK-GPLAsync : ${current_dxvk_async:-Inconnue}\n"
-            else
-                up_to_date_msg+="  - DXVK : ${current_dxvk:-Inconnue}\n"
-            fi
-            up_to_date_msg+="  - VKD3D-Proton : ${current_vkd3d:-Inconnue}\n"
-            up_to_date_msg+="  - D7VK : ${current_d7vk:-Inconnue}"
-            if is_nvidia_gpu; then
-                up_to_date_msg+="\n  - DXVK-NVAPI : ${current_nvapi:-Inconnue}"
-            fi
-            kdialog --title "Mise à jour des composants" --msgbox "$up_to_date_msg" 2>/dev/null || true
-        fi
+        progress_done "Tous les composants sont déjà à jour."
         exit 0
     fi
     
     # Compter le nombre total d'étapes
     local TOTAL_STEPS=0
     [ -n "$latest_runner" ] && ((TOTAL_STEPS++))
-    [ -n "$latest_dxvk" ] || [ -n "$latest_vkd3d" ] || [ "$needs_d7vk_update" = true ] && ((TOTAL_STEPS++))
+    if [ -n "$latest_dxvk" ] || [ -n "$latest_vkd3d" ] || [ "$needs_d7vk_update" = true ]; then
+        ((TOTAL_STEPS++))
+    fi
     [ "$needs_dxvk_async_update" = true ] && ((TOTAL_STEPS++))
     [ "$needs_nvapi_update" = true ] && ((TOTAL_STEPS++))
     [ "$needs_reinstall_dlls" = true ] && ((TOTAL_STEPS++))
-    
-    # Créer la barre de progression (sans bouton Annuler pour --update, uniquement avec --kdialog)
-    if [ "$_USE_KDIALOG" = "true" ] && [ $TOTAL_STEPS -gt 0 ] && command -v kdialog &>/dev/null && [ -n "$(_get_qdbus_cmd)" ]; then
-        DBUS_REF=$(progress_create "Mise à jour des composants" "$TOTAL_STEPS" "false")
-    fi
     
     # Effectuer les mises à jour
     echo "Installation des mises à jour..."
@@ -250,27 +230,13 @@ update_components() {
         if [ -z "$current_runner_version" ] || compare_versions "$latest_runner" "$current_runner_version"; then
             ((CURRENT_STEP++))
             
-            progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de gwine..."
-            
-            if progress_is_cancelled "$DBUS_REF"; then
-                progress_close "$DBUS_REF"
-                echo "Mise à jour annulée par l'utilisateur"
-                exit 0
-            fi
+            progress_step "$CURRENT_STEP" "$TOTAL_STEPS" "Téléchargement de gwine..."
             
             if ! download_gwine "false" "true"; then
-                progress_close "$DBUS_REF"
                 error_exit "Échec de la mise à jour de gwine"
             fi
             
             updated_runner="gwine $latest_runner"
-            
-            # Vérifier annulation après téléchargement
-            if progress_is_cancelled "$DBUS_REF"; then
-                progress_close "$DBUS_REF"
-                echo "Mise à jour annulée par l'utilisateur"
-                exit 0
-            fi
         fi
     fi
     
@@ -278,39 +244,18 @@ update_components() {
     if [ "$needs_dxvk_async_update" = true ]; then
         # Mettre à jour DXVK-GPLAsync
         ((CURRENT_STEP++))
-        progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de DXVK-GPLAsync..."
-        
-        if progress_is_cancelled "$DBUS_REF"; then
-            progress_close "$DBUS_REF"
-            echo "Mise à jour annulée par l'utilisateur"
-            exit 0
-        fi
+        progress_step "$CURRENT_STEP" "$TOTAL_STEPS" "Téléchargement de DXVK-GPLAsync..."
         
         if ! download_dxvk_async "false" "true"; then
-            progress_close "$DBUS_REF"
             error_exit "Échec de la mise à jour de DXVK-GPLAsync"
         fi
         
         updated_dxvk="DXVK-GPLAsync $latest_dxvk_async"
-        
-        # Vérifier annulation après téléchargement
-        if progress_is_cancelled "$DBUS_REF"; then
-            progress_close "$DBUS_REF"
-            echo "Mise à jour annulée par l'utilisateur"
-            exit 0
-        fi
     elif [ -n "$latest_dxvk" ] || [ -n "$latest_vkd3d" ]; then
         ((CURRENT_STEP++))
-        progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de DXVK/VKD3D-Proton..."
-        
-        if progress_is_cancelled "$DBUS_REF"; then
-            progress_close "$DBUS_REF"
-            echo "Mise à jour annulée par l'utilisateur"
-            exit 0
-        fi
+        progress_step "$CURRENT_STEP" "$TOTAL_STEPS" "Téléchargement de DXVK/VKD3D-Proton..."
         
         if ! download_updated_dxvk_vkd3d --no-confirm; then
-            progress_close "$DBUS_REF"
             error_exit "Échec de la mise à jour de DXVK/VKD3D"
         fi
         
@@ -318,59 +263,30 @@ update_components() {
         [ -n "$latest_dxvk" ] && updated_dxvk="$latest_dxvk"
         [ -n "$latest_vkd3d" ] && updated_vkd3d="$latest_vkd3d"
         [ "$needs_d7vk_update" = true ] && updated_d7vk="$latest_d7vk"
-        
-        # Vérifier annulation après téléchargement
-        if progress_is_cancelled "$DBUS_REF"; then
-            progress_close "$DBUS_REF"
-            echo "Mise à jour annulée par l'utilisateur"
-            exit 0
-        fi
     fi
     
     # Mettre à jour DXVK-NVAPI si nécessaire (NVIDIA)
     if [ "$needs_nvapi_update" = true ]; then
         ((CURRENT_STEP++))
-        progress_update "$DBUS_REF" "$CURRENT_STEP" "Téléchargement de DXVK-NVAPI..."
-        
-        if progress_is_cancelled "$DBUS_REF"; then
-            progress_close "$DBUS_REF"
-            echo "Mise à jour annulée par l'utilisateur"
-            exit 0
-        fi
+        progress_step "$CURRENT_STEP" "$TOTAL_STEPS" "Téléchargement de DXVK-NVAPI..."
         
         if ! download_dxvk_nvapi --no-confirm; then
-            progress_close "$DBUS_REF"
             echo "Warning: Échec de la mise à jour de DXVK-NVAPI"
         else
             updated_nvapi="$latest_nvapi"
-        fi
-        
-        # Vérifier annulation après téléchargement
-        if progress_is_cancelled "$DBUS_REF"; then
-            progress_close "$DBUS_REF"
-            echo "Mise à jour annulée par l'utilisateur"
-            exit 0
         fi
     fi
     
     # Réinstaller les DLLs dans le préfixe si nécessaire
     if [ "$needs_reinstall_dlls" = true ] && [ -d "$HOME_REAL/Windows/Prefix" ]; then
         ((CURRENT_STEP++))
-        progress_update "$DBUS_REF" "$CURRENT_STEP" "Réinstallation des DLLs..."
-        
-        if progress_is_cancelled "$DBUS_REF"; then
-            progress_close "$DBUS_REF"
-            echo "Mise à jour annulée par l'utilisateur"
-            exit 0
-        fi
+        progress_step "$CURRENT_STEP" "$TOTAL_STEPS" "Réinstallation des DLLs..."
         
         export WINEPREFIX="$HOME_REAL/Windows/Prefix"
         if ! install_dxvk_vkd3d; then
-            progress_close "$DBUS_REF"
             error_exit "Échec de la réinstallation des DLLs"
         fi
         if ! install_d7vk; then
-            progress_close "$DBUS_REF"
             error_exit "Échec de la réinstallation de D7VK"
         fi
         
@@ -378,8 +294,7 @@ update_components() {
     fi
     
     # Finaliser
-    progress_update "$DBUS_REF" "$TOTAL_STEPS" "Finalisation..."
-    progress_close "$DBUS_REF"
+    progress_done "Mise à jour des composants terminée."
     
     # Afficher le résumé des mises à jour
     echo ""

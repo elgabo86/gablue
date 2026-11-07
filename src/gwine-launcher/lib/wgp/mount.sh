@@ -117,13 +117,10 @@ mount_wgp() {
         LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null | cut -d: -f1)
         if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
             local RELAUNCH=false
-            local QUESTION="$WGPACK_NAME est déjà lancé.\n\nVoulez-vous arrêter l'instance en cours et relancer le jeu ?"
-            
-            if command -v kdialog &> /dev/null; then
-                kdialog --warningyesno "$QUESTION" --yes-label "Oui, relancer" --no-label "Non, annuler" && RELAUNCH=true
-            else
-                read -p "$QUESTION (o/N): " -r
-                [[ "$REPLY" =~ ^[oOyY]$ ]] && RELAUNCH=true
+            if ui_confirm "$WGPACK_NAME" \
+                "$WGPACK_NAME est déjà lancé.\n\nVoulez-vous arrêter l'instance en cours et relancer le jeu ?" \
+                "Oui, relancer" "Non, annuler"; then
+                RELAUNCH=true
             fi
             
             if [ "$RELAUNCH" = true ]; then

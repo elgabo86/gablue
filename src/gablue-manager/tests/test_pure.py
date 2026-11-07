@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from gablue_manager import apps, hosts, local, ssh, util  # noqa: E402
+from gablue_manager import apps, cli, hosts, local, ssh, util  # noqa: E402
 
 
 class KargsTest(unittest.TestCase):
@@ -420,7 +420,75 @@ class TailscaleTest(unittest.TestCase):
         )
 
 
+class CliTest(unittest.TestCase):
+    def test_progress(self):
+        opts = cli.parse_args([
+            "--progress", "--title", "Initialisation de gwine",
+            "--subtitle", "test", "--auto-close-success", "--",
+            "gwine", "--init", "--offline",
+        ])
+        self.assertEqual(opts["mode"], "progress")
+        self.assertEqual(opts["title"], "Initialisation de gwine")
+        self.assertTrue(opts["auto_close_success"])
+        # Les options de la commande après « -- » ne sont pas à nous.
+        self.assertEqual(opts["command"], ["gwine", "--init", "--offline"])
+
+    def test_confirm_choose(self):
+        opts = cli.parse_args([
+            "--confirm", "--title", "T", "--text", "Question ?",
+            "--yes", "Migrer", "--no", "Annuler",
+        ])
+        self.assertEqual((opts["yes"], opts["no"]), ("Migrer", "Annuler"))
+        opts = cli.parse_args([
+            "--choose", "--title", "T", "--text", "Choix",
+            "--item", "a.exe", "--item", "b.exe\tB (64-bit)",
+        ])
+        self.assertEqual(opts["items"], ["a.exe", "b.exe\tB (64-bit)"])
+
+    def test_erreurs(self):
+        with self.assertRaises(cli.UsageError):
+            cli.parse_args(["--inconnu"])
+        with self.assertRaises(cli.UsageError):
+            cli.parse_args(["--progress", "--title"])   # valeur manquante
+        with self.assertRaises(cli.UsageError):
+            cli.parse_args(["--progress", "--title", "T", "gwine", "--init"])  # sans --
+
+
 class GwineTest(unittest.TestCase):
+    def test_gablue_progress_protocol(self):
+        # Étape n/total : n-1 étapes derrière, la barre n'atteint pas 100 %.
+        info = local.parse_gablue_progress(
+            "::gablue:step 4 12 Installation de Wine Mono et Gecko"
+        )
+        self.assertTrue(info["hide"])
+        self.assertEqual(info["label"], "Étape 4/12 — Installation de Wine Mono et Gecko")
+        self.assertAlmostEqual(info["percent"], 25.0)
+
+        first = local.parse_gablue_progress("::gablue:step 1 4 Préparation")
+        self.assertEqual(first["percent"], 0.0)
+
+        # Total inconnu : barre indéterminée (balayage de gauche à droite).
+        busy = local.parse_gablue_progress(
+            "::gablue:busy Téléchargement des composants Windows"
+        )
+        self.assertIsNone(busy["percent"])
+        self.assertTrue(busy["hide"])
+
+        done = local.parse_gablue_progress("::gablue:done Préfixe Wine initialisé.")
+        self.assertEqual(done["percent"], 100.0)
+        self.assertEqual(done["label"], "Préfixe Wine initialisé.")
+
+        # Lignes ordinaires : journal, rien à consommer.
+        for line in ("", "Installation de Mono", "Error: ::gablue:step 1 2 x"):
+            if line.startswith("::gablue:step"):
+                continue
+            self.assertEqual(local.parse_gablue_progress(line), {})
+        # Ligne malformée : ignorée, pas d'exception.
+        self.assertEqual(local.parse_gablue_progress("::gablue:step 2"), {})
+        self.assertEqual(
+            local.parse_gablue_progress("::gablue:step a b libellé"), {}
+        )
+
     def test_options(self):
         state = local.parse_gwine_options(
             "dxvk_mode=dxvk-async\ndisplay_mode=wayland\nxbox_default=on\n"

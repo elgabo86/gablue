@@ -1,188 +1,136 @@
 #!/bin/bash
 
 ################################################################################
-# ui.sh - Interface utilisateur (kdialog, barres de progression, GameMode)
+# ui.sh - Interface utilisateur : progression via Gablue Manager, GameMode
+#
+# gwine n'utilise plus kdialog. Ses fenêtres (progression, confirmation, choix
+# de l'exécutable d'un WGP) passent par `gablue-manager`, qui ouvrira une seule
+# boîte sans sa fenêtre principale. Sans session graphique ou sans le manager,
+# tout retombe sur le terminal (et jamais sur une boîte muette).
 ################################################################################
 
-# Détecte la commande qdbus disponible
-# Plasma 6 (Kinoite fc45) fournit qdbus-qt6 ; les anciens systèmes qdbus6/qdbus-qt5/qdbus
-_get_qdbus_cmd() {
-    if command -v qdbus6 &>/dev/null; then
-        echo "qdbus6"
-    elif command -v qdbus-qt6 &>/dev/null; then
-        echo "qdbus-qt6"
-    elif command -v qdbus-qt5 &>/dev/null; then
-        echo "qdbus-qt5"
-    elif command -v qdbus &>/dev/null; then
-        echo "qdbus"
-    else
-        echo ""
+# Préfixe du protocole lu par `gablue-manager --progress` (local.parse_gablue_progress).
+GWINE_PROGRESS_PREFIX="::gablue:"
+
+# Gablue Manager est-il utilisable ici ? (session graphique + binaire présent)
+gui_available() {
+    [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v gablue-manager >/dev/null 2>&1
+}
+
+# Un parent (Gablue Manager) attend-il notre progression sur la sortie ?
+progress_enabled() {
+    [ "${GABLUE_PROGRESS:-0}" = "1" ]
+}
+
+# Étape n/total : ligne lisible pour le journal + événement pour la barre.
+# Usage: progress_step <n> <total> <libellé>
+progress_step() {
+    local n="$1" total="$2" label="$3"
+    printf '[%s/%s] %s\n' "$n" "$total" "$label" >&2
+    if progress_enabled; then
+        printf '%sstep %s %s %s\n' \
+            "$GWINE_PROGRESS_PREFIX" "$n" "$total" "$label" >&2
     fi
 }
 
-# Crée une barre de progression kdialog
-# Usage: progress_create "Titre" nombre_étapes [show_cancel] [force]
-# Paramètre show_cancel: "true" pour afficher le bouton Annuler (défaut: true)
-# Paramètre force: "true" pour forcer kdialog même sans --kdialog (défaut: false)
-# Retourne la référence dbus via stdout
-progress_create() {
+# Travail en cours dont le total est inconnu (téléchargement) : la barre du
+# manager balaie de gauche à droite. Usage: progress_busy <libellé>
+progress_busy() {
+    printf '%s\n' "$1" >&2
+    if progress_enabled; then
+        printf '%sbusy %s\n' "$GWINE_PROGRESS_PREFIX" "$1" >&2
+    fi
+}
+
+# Fin de l'opération : la barre passe à 100 %. Usage: progress_done [libellé]
+progress_done() {
+    local label="${1:-Terminé.}"
+    if progress_enabled; then
+        printf '%sdone %s\n' "$GWINE_PROGRESS_PREFIX" "$label" >&2
+    fi
+}
+
+# Pose une question oui/non. Gablue Manager si possible, sinon terminal.
+# Usage: ui_confirm <titre> <texte> [libellé_oui] [libellé_non]
+# Retourne 0 pour oui, 1 pour non (ou pas de moyen de demander).
+ui_confirm() {
     local title="$1"
-    local steps="${2:-10}"
-    local show_cancel="${3:-true}"
-    local force="${4:-false}"
-    
-    # Ne pas créer de barre de progression si kdialog n'est pas explicitement activé
-    # sauf si force=true (pour création auto du préfixe)
-    if [ "$_USE_KDIALOG" != "true" ] && [ "$force" != "true" ]; then
-        return
-    fi
-    
-    local qdbus_cmd
-    qdbus_cmd=$(_get_qdbus_cmd)
-    
-    if command -v kdialog &>/dev/null && [ -n "$qdbus_cmd" ]; then
-        local dbusRef
-        dbusRef=$(kdialog --title "$title" --progressbar "Initialisation..." "$steps" 2>/dev/null)
-        # Nettoyer la référence (enlever les retours à la ligne et espaces)
-        dbusRef=$(printf '%s' "$dbusRef" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        if [ -n "$dbusRef" ]; then
-            # Stocker dans la variable globale pour pouvoir fermer lors d'interruption
-            _PROGRESS_DBUS_REF="$dbusRef"
-            # Split pour configurer le dialogue
-            local service path
-            read service path <<< "$(_split_dbus_ref "$dbusRef")"
-            # Activer/désactiver le bouton Annuler selon le paramètre
-            if [ "$show_cancel" = "true" ]; then
-                $qdbus_cmd "$service" "$path" showCancelButton true >/dev/null 2>&1 || true
-            fi
-            printf '%s' "$dbusRef"
+    local text="${2//\\n/$'\n'}"
+    local yes_label="${3:-Oui}" no_label="${4:-Non}"
+
+    if gui_available; then
+        if gablue-manager --confirm --title "$title" --text "$text" \
+            --yes "$yes_label" --no "$no_label"; then
+            return 0
         fi
+        return 1
     fi
-}
 
-# Met à jour la barre de progression
-# Usage: progress_update dbus_ref valeur "Message"
-progress_update() {
-    local dbusRef="$1"
-    local value="$2"
-    local message="$3"
-    
-    local qdbus_cmd
-    qdbus_cmd=$(_get_qdbus_cmd)
-    
-    if [ -n "$dbusRef" ] && [ -n "$qdbus_cmd" ]; then
-        local service path
-        read service path <<< "$(_split_dbus_ref "$dbusRef")"
-        $qdbus_cmd "$service" "$path" Set "" value "$value" >/dev/null 2>&1 || true
-        if [ -n "$message" ]; then
-            $qdbus_cmd "$service" "$path" setLabelText "$message" >/dev/null 2>&1 || true
-        fi
+    if [ -t 0 ]; then
+        printf '%s\n' "$text"
+        local reply=""
+        read -r -p "Confirmer ? (o/N) : " reply
+        [[ "$reply" =~ ^[oOyY]$ ]] && return 0
     fi
+    return 1
 }
 
-# Ferme la barre de progression
-# Usage: progress_close dbus_ref
-progress_close() {
-    local dbusRef="$1"
-    
-    local qdbus_cmd
-    qdbus_cmd=$(_get_qdbus_cmd)
-    
-    if [ -n "$dbusRef" ] && [ -n "$qdbus_cmd" ]; then
-        local service path
-        read service path <<< "$(_split_dbus_ref "$dbusRef")"
-        $qdbus_cmd "$service" "$path" close >/dev/null 2>&1 || true
+# Fait choisir une valeur parmi plusieurs. Gablue Manager si possible, sinon
+# menu numéroté sur le terminal. Imprime le choix sur la sortie standard.
+# Usage: ui_choose <titre> <texte> <valeur> [valeur…]
+# Retourne 1 si annulé ou sans moyen de choisir.
+ui_choose() {
+    local title="$1" text="$2"
+    shift 2
+    local -a values=("$@")
+    [ "${#values[@]}" -eq 0 ] && return 1
+
+    if gui_available; then
+        local -a args=()
+        local value
+        for value in "${values[@]}"; do
+            args+=(--item "$value")
+        done
+        local choice
+        choice=$(gablue-manager --choose --title "$title" --text "$text" \
+            "${args[@]}") || return 1
+        printf '%s\n' "$choice"
+        return 0
     fi
-    # Réinitialiser la variable globale
-    _PROGRESS_DBUS_REF=""
-}
 
-# Split dbusRef into service and path
-_split_dbus_ref() {
-    local dbusRef="$1"
-    # Split on space: "org.kde.kdialog-xxx /ProgressDialog" -> service path
-    local service=$(echo "$dbusRef" | awk '{print $1}')
-    local path=$(echo "$dbusRef" | awk '{print $2}')
-    echo "$service $path"
-}
-
-# Vérifie si l'utilisateur a cliqué sur Annuler
-# Usage: progress_is_cancelled dbus_ref
-# Retourne 0 si annulé, 1 sinon
-# Note: quand kdialog est fermé (Annuler), le service DBus disparaît
-progress_is_cancelled() {
-    local dbusRef="$1"
-    
-    local qdbus_cmd
-    qdbus_cmd=$(_get_qdbus_cmd)
-    
-    if [ -n "$dbusRef" ] && [ -n "$qdbus_cmd" ]; then
-        # Split the reference
-        local service path
-        read service path <<< "$(_split_dbus_ref "$dbusRef")"
-        
-        # Vérifier wasCancelled - si le service n'existe pas, ça retourne vide
-        local cancelled
-        cancelled=$($qdbus_cmd "$service" "$path" wasCancelled 2>/dev/null)
-        if [ "$cancelled" = "true" ] || [ -z "$cancelled" ]; then
-            # true = bouton annuler cliqué
-            # vide = dialogue fermé = annulé
+    if [ -t 0 ]; then
+        printf '%s\n\n' "$text"
+        local index
+        for index in "${!values[@]}"; do
+            printf '  %s. %s\n' "$((index + 1))" "${values[$index]}"
+        done
+        echo ""
+        local reply=""
+        read -r -p "Numéro : " reply
+        if [[ "$reply" =~ ^[0-9]+$ ]] && [ "$reply" -ge 1 ] && \
+           [ "$reply" -le "${#values[@]}" ]; then
+            printf '%s\n' "${values[$((reply - 1))]}"
             return 0
         fi
     fi
     return 1
 }
 
-# Gère l'annulation par l'utilisateur avec fermeture de la barre de progression
-# Usage: handle_cancellation dbus_ref [--with-backup] [message_personnalisé]
-handle_cancellation() {
-    local dbus_ref="$1"
-    local with_backup=false
-    local custom_message="Initialisation annulée par l'utilisateur"
-    
-    shift
-    # Vérifier les options
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --with-backup)
-                with_backup=true
-                ;;
-            *)
-                custom_message="$1"
-                ;;
-        esac
-        shift
-    done
-    
-    # Restaurer le backup si demandé
-    if [ "$with_backup" = true ]; then
-        restore_backup 2>/dev/null || true
-    fi
-    
-    progress_close "$dbus_ref"
-    echo "$custom_message"
-    if [ "$_USE_KDIALOG" = "true" ] && command -v kdialog &>/dev/null; then
-        kdialog --title "Initialisation annulée" --msgbox "L'initialisation du préfixe a été annulée.\n\nL'ancien préfixe a été restauré."
-    fi
-    exit 0
-}
+# Lance une commande dans la fenêtre de progression de Gablue Manager.
+# Usage: run_with_progress <titre> <sous-titre> -- <commande…>
+# Sans manager (ou déjà piloté par lui), la commande tourne directement.
+run_with_progress() {
+    local title="$1" subtitle="$2"
+    shift 2
+    [ "${1:-}" = "--" ] && shift
 
-# Vérifie si l'utilisateur a annulé et gère l'annulation si nécessaire
-# Usage: check_progress_cancelled <dbus_ref> [--with-backup] [message_personnalisé]
-# Retourne 0 si annulé (ne revient pas car exit), 1 sinon
-check_progress_cancelled() {
-    local dbus_ref="$1"
-    shift
-    
-    if [ -z "$dbus_ref" ]; then
-        return 1
+    if gui_available && ! progress_enabled; then
+        GABLUE_PROGRESS=1 gablue-manager --progress \
+            --title "$title" --subtitle "$subtitle" \
+            --auto-close-success -- "$@"
+        return $?
     fi
-    
-    if ! progress_is_cancelled "$dbus_ref"; then
-        return 1
-    fi
-    
-    handle_cancellation "$dbus_ref" "$@"
+    "$@"
 }
 
 # Vérifie si gamemode est actuellement actif
@@ -202,18 +150,18 @@ gamemode_start() {
     if [ "${DISABLE_GAMEMODE:-0}" = "1" ]; then
         return 0
     fi
-    
+
     if ! command -v gamemoded &>/dev/null; then
         return 0
     fi
-    
+
     # Lancer gamemoded -r qui bloque et maintient gamemode actif
     # Ce processus doit rester en vie pendant tout le jeu
     # Rediriger stdin pour éviter qu'il ne bloque sur l'entrée du terminal
     gamemoded -r </dev/null &>/dev/null &
     _GWINE_GAMEMODE_PID=$!
     sleep 0.1
-    
+
     if is_gamemode_active; then
         echo "GameMode activé (PID: $_GWINE_GAMEMODE_PID)"
     fi

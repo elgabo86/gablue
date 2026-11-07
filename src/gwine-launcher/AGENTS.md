@@ -28,7 +28,7 @@ src/gwine-launcher/
 │   ├── runner.sh            # Gestion des runners Wine/Proton
 │   ├── dxvk-mode.sh         # Gestion du mode DXVK standard/async
 │   ├── display-mode.sh      # Gestion du mode d'affichage (Wayland vs X11)
-│   ├── ui.sh                # Interface utilisateur (kdialog, GameMode)
+│   ├── ui.sh                # Interface utilisateur (Gablue Manager, GameMode)
 │   ├── gpu.sh               # Détection GPU et configuration Vulkan
 │   ├── download.sh          # Téléchargement et gestion GitHub
 │   ├── cache/               # Modules de gestion du cache
@@ -102,7 +102,7 @@ src/gwine-launcher/
 - bubblewrap (sandboxing)
 - wget, curl (téléchargements)
 - tar, 7z (extraction)
-- kdialog, qdbus (interface graphique optionnelle). La commande qdbus est détectée dynamiquement par `_get_qdbus_cmd()` (ui.sh) qui teste `qdbus6`, `qdbus-qt6` (Plasma 6 / Kinoite fc45), `qdbus-qt5` puis `qdbus`. Sans qdbus, les barres de progression kdialog sont silencieusement désactivées (l'init/update fonctionne quand même, sans feedback visuel)
+- gablue-manager (interface graphique optionnelle) : progression, confirmation et choix passent par ses modes CLI (`--progress`, `--confirm`, `--choose`) au lieu de kdialog. Sans session graphique ou sans le binaire, tout retombe sur le terminal (l'init fonctionne quand même, avec un journal lisible)
 - gamemoded (GameMode pour performances)
 
 ### Support GPU
@@ -123,7 +123,6 @@ src/gwine-launcher/
 ./gwine --init                  # Init/MAJ : seulement si un composant a changé
 ./gwine --init --force          # Réinitialisation complète forcée
 ./gwine --init --offline        # Mode offline
-./gwine --init --kdialog        # Avec interface graphique
 ./gwine --init --dxvk-async     # Init avec DXVK-GPLAsync
 ./gwine --update                # Mettre à jour les composants
 ./gwine --download-components   # Télécharger tous les composants
@@ -134,6 +133,14 @@ src/gwine-launcher/
 réinitialise le préfixe que si un composant manque ou a une nouvelle version
 (runner gwine, DXVK/GPLAsync, VKD3D, D7VK, NVAPI, Mono/Gecko, wincomponents) ;
 sinon il rend la main sans rien toucher. `--force` réinitialise même à jour.
+
+Premier lancement (`.exe`/`.wgp` sans préfixe) : `check_prefix_or_offer_init()`
+lance l'init comme sous-processus dans la **fenêtre de progression de Gablue
+Manager** (`gablue-manager --progress … -- gwine --init`, fermée d'elle-même en
+cas de succès), puis enchaîne sur le jeu. Cache offline complet → init
+`--offline` directe ; sinon `gablue-manager --confirm` demande avant de
+télécharger. Sans manager, confirmation au terminal et init en direct. Aucune
+fenêtre kdialog.
 
 ### Mode DXVK
 ```bash

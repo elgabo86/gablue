@@ -15,7 +15,6 @@ show_help() {
     echo "  --force           Forcer la réinitialisation complète du préfixe (avec --init)"
     echo "  --offline         Mode offline pour --init (vérifie que les composants sont en cache)"
     echo "  --update          Mettre à jour les composants (DXVK, VKD3D, gwine)"
-    echo "  --kdialog         Activer les dialogues graphiques kdialog pour --init et --update"
     echo "  --fix             Activer le mode fix manette"
     echo "  --xbox            Émulation manettes Sony en Xbox 360 via ds2xbox"
     echo "  --xbox-ds4        Émulation DualShock 4 uniquement en Xbox 360"
@@ -88,7 +87,7 @@ show_help() {
 }
 
 # Options valides reconnues par gwine
-VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--force" "--offline" "--update" "--kdialog" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--dxvk" "--dxvk-async" "--gamescope" "--gamescope-args" "--720" "--900" "--1080" "--no-gamescope")
+VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--force" "--offline" "--update" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--dxvk" "--dxvk-async" "--gamescope" "--gamescope-args" "--720" "--900" "--1080" "--no-gamescope")
 
 # Vérifie si une option est valide
 is_valid_option() {
@@ -165,10 +164,6 @@ parse_arguments() {
                 ;;
             --update)
                 update_mode=true
-                shift
-                ;;
-            --kdialog)
-                _USE_KDIALOG=true
                 shift
                 ;;
             --cmd)

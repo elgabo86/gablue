@@ -19,7 +19,6 @@ gwine_commands() {
         '--force:Forcer la réinitialisation complète du préfixe (avec --init)'
         '--offline:Mode offline pour --init'
         '--update:Mettre à jour les composants'
-        '--kdialog:Activer les dialogues graphiques kdialog'
         '--cmd:Ouvrir un terminal Wine ou exécuter une commande (cmd /C)'
         '--regedit:Lancer l\'éditeur de registre'
         '--reg:Installer un fichier de registre'
@@ -84,7 +83,6 @@ _arguments -C \
     '--force[Forcer la réinitialisation complète du préfixe (avec --init)]' \
     '--offline[Mode offline pour --init]' \
     '--update[Mettre à jour les composants]' \
-    '--kdialog[Activer les dialogues graphiques kdialog]' \
     '--cmd[Ouvrir un terminal Wine ou exécuter une commande (cmd /C)]:commande:_files -g "*.bat *.exe *.cmd *.msi"' \
     '--regedit[Lancer l\'éditeur de registre]' \
     '--reg[Installer un fichier de registre]:fichier reg:_files -g "*.reg"' \

@@ -6,16 +6,25 @@
 # Ce script remplace l'ancien lanceur basé sur Bottles.
 # Il nettoie l'ancienne bouteille et initialise gwine.
 # Les données utilisateur (sauvegardes de jeux) sont conservées.
+#
+# Fenêtres : Gablue Manager (confirmation + progression), jamais kdialog.
+# Sans session graphique, tout se fait dans le terminal.
 ################################################################################
 
 set -eou pipefail
+
+_ui_available() {
+    [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v gablue-manager >/dev/null 2>&1
+}
 
 # =============================================================================
 # Notification de début de migration
 # =============================================================================
 
-if command -v kdialog >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
-    kdialog --msgbox "L'ancien système Bottles va être migré vers Gwine.\n\nVos données utilisateur (sauvegardes de jeux) sont conservées." 2>/dev/null || true
+if _ui_available; then
+    gablue-manager --confirm --title "Migration vers gwine" \
+        --text "L'ancien système Bottles va être migré vers Gwine.\n\nVos données utilisateur (sauvegardes de jeux) sont conservées." \
+        --yes "Migrer" --no "Annuler" || exit 0
 fi
 
 # =============================================================================
@@ -30,14 +39,11 @@ ujust windows-remove || true
 # =============================================================================
 
 echo "Initialisation de gwine..."
-if command -v kdialog >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
-    kdialog --passivepopup "Initialisation de gwine en cours..." 5 2>/dev/null || true
-    if gwine --init --kdialog; then
-        kdialog --passivepopup "Migration vers gwine terminée !" 6 2>/dev/null || true
-    else
-        kdialog --error "L'initialisation de gwine a échoué." 2>/dev/null || true
-        exit 1
-    fi
+if _ui_available; then
+    GABLUE_PROGRESS=1 gablue-manager --progress \
+        --title "Migration vers gwine" \
+        --subtitle "Création du préfixe Wine et installation des composants." \
+        --auto-close-success -- gwine --init || exit 1
 else
     gwine --init || exit 1
 fi

@@ -10,7 +10,8 @@ Sources = ce dossier (`src/gablue-manager/`), installées par
 | Fichier | Rôle |
 |---|---|
 | `gablue-manager` | lanceur `/usr/bin/gablue-manager` : ajoute `/usr/lib/gablue-manager` (ou le dossier courant en développement) au `sys.path` puis `gablue_manager.app.main()` |
-| `gablue_manager/app.py` | `HELP` et `main()` (QApplication, QSS, fenêtre) |
+| `gablue_manager/app.py` | `HELP` et `main()` : fenêtre principale, ou modes CLI (`cli.py`) |
+| `gablue_manager/cli.py` | modes `--progress`, `--confirm`, `--choose` (une boîte, sans `MainWindow` ni sondes SSH) |
 | `gablue_manager/constants.py` | chemins, binaires (`_which`), couleurs et textes d'état, constantes kargs/helpers |
 | `gablue_manager/util.py` | cible ssh, nom affiché, URL KIO, normalisation MAC, options ssh communes |
 | `gablue_manager/hosts.py` | registre `ssh-hosts.json`, découverte mDNS, import `~/.ssh/config`, adresses du poste |
@@ -44,6 +45,27 @@ fonction dans le module le plus bas, pas par un import tardif.
 - Développement : `src/gablue-manager/gablue-manager --help` marche depuis le
   dépôt ; `PYTHONPATH=src/gablue-manager python3 -c "import gablue_manager.app"`.
 - L'image doit être reconstruite pour valider l'installation (pas l'ISO).
+
+## Modes CLI (sans fenêtre principale)
+
+`gablue-manager` sans argument ouvre la fenêtre principale. Trois modes
+n'instancient **que** la boîte demandée : `MainWindow` n'est jamais créée, donc
+aucune sonde SSH (les `CheckWorker` du timer de 30 s), aucun scan Avahi, aucun
+accès au registre des postes.
+
+| Mode | Rôle |
+|---|---|
+| `--progress --title T [--subtitle T] [--auto-close-success\|--auto-close] -- commande…` | `LocalTaskDialog` sur la commande (canaux fusionnés, annulation SIGTERM puis SIGKILL). La commande publie `::gablue:step n total texte`, `::gablue:busy texte` (total inconnu) et `::gablue:done [texte]` ; ces lignes de protocole sont retirées du journal (`local.parse_gablue_progress`), l'outil écrivant sa version lisible à côté. Échec → journal révélé ; `--auto-close-success` ferme la fenêtre en cas de succès. Code de sortie = celui de la commande (130 si annulé). |
+| `--confirm --title T --text T [--yes T] [--no T]` | `QMessageBox` ; sortie 0 = oui, 1 = non. |
+| `--choose --title T --text T --item valeur [--item valeur…]` | `QInputDialog` ; imprime la valeur choisie (libellé après une tabulation), sortie 1 si annulé. |
+
+Sans affichage, `--progress` exécute la commande telle quelle (sans protocole)
+et `--confirm` répond non : gwine reste utilisable en terminal. gwine s'en sert
+au premier lancement (initialisation du préfixe dans la fenêtre de progression),
+dans `conflict.sh`/`wgp/mount.sh` (oui/non) et `wgp/modes.sh` (choix de
+l'exécutable d'un WGP). Les mises à jour locales de gwine dans la fenêtre
+principale passent aussi `GABLUE_PROGRESS=1` et `parse_gablue_progress`, donc
+la barre d'étapes remplace le journal, resté derrière « Terminal ».
 
 ## Comportement
 
