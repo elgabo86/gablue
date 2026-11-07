@@ -155,6 +155,9 @@ class CleanDialog(QDialog):
         self.buttons: dict[str, QPushButton] = {}
         self.size_labels: dict[str, QLabel] = {}
         self.sizes: dict[str, int | None] = {}
+        # Caches vidés pendant cette ouverture : la ligne dit « vidé » plutôt
+        # qu'un « ? » qui se lirait comme « taille inconnue ».
+        self.emptied: set[str] = set()
         # L'état vient d'ici en local ou d'une sonde SSH sur un poste distant.
         self.state = self.read_state()
         # Garde aussi `clean_helper` (hors CLEAN_DOMAINS) : il décide si la
@@ -362,7 +365,7 @@ class CleanDialog(QDialog):
             reveal_log_on_error=True,
         )
         task.completed.connect(
-            lambda _ok, chosen=domain: self._domain_done(chosen)
+            lambda ok, chosen=domain: self._domain_done(chosen, ok)
         )
         start_task(self, task)
 
@@ -390,13 +393,23 @@ class CleanDialog(QDialog):
             progress_text="Nettoyage…",
         )
         task.completed.connect(
-            lambda _ok, chosen=domain: self._domain_done(chosen)
+            lambda ok, chosen=domain: self._domain_done(chosen, ok)
         )
         start_task(self, task)
 
-    def _domain_done(self, domain: str) -> None:
+    def _domain_done(self, domain: str, ok: bool = True) -> None:
         """Après la tâche : ligne mise à jour sans bloquer la boucle GUI."""
         try:
+            # Cache vidé avec succès : le dossier n'existe plus, « vidé » est
+            # plus juste (et plus rassurant) qu'un « ? » de taille inconnue.
+            if ok and domain in local.CLEAN_CACHE_SUFFIXES:
+                self.emptied.add(domain)
+                self.sizes.pop(domain, None)
+                self.available[domain] = False
+                self.buttons[domain].setEnabled(False)
+                self.size_labels[domain].setText("vidé")
+                self._update_hint()
+                return
             self.sizes.pop(domain, None)
             if self.host is None:
                 # Mesure en fond (`du -sb`) : le dialogue reste utilisable.
@@ -411,9 +424,6 @@ class CleanDialog(QDialog):
             # l'app, la fenêtre de progression comprise. Rouvrir le dialogue
             # refait une sonde exacte.
             self.size_labels[domain].setText("?")
-            if domain in local.CLEAN_CACHE_SUFFIXES:
-                # Le cache vient d'être supprimé : plus rien à vider.
-                self.available[domain] = False
             self.buttons[domain].setEnabled(
                 self.available.get(domain, False)
             )
