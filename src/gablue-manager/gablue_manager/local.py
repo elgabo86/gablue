@@ -12,8 +12,8 @@ from pathlib import Path
 
 from .constants import (
     ATUIN_HELPER, AUTO_UPDATE_HELPER, AUTO_UPDATE_USER_TIMER, AVAHI_HELPER,
-    AVAHI_SERVICE_FILE, BROADCOM_HELPER, BROADCOM_WL_FILE, CMDLINE,
-    CPUID_EMU_CONF, CPUID_EMU_HELPER, KARG_BT_ERTM, KARG_CLEARCPUID,
+    AVAHI_SERVICE_FILE, BREW_BINARY, BROADCOM_HELPER, BROADCOM_WL_FILE,
+    CMDLINE, CPUID_EMU_CONF, CPUID_EMU_HELPER, KARG_BT_ERTM, KARG_CLEARCPUID,
     KARG_HDMI21, KARG_HELPER, KARG_MITIGATIONS_OFF, LOW_LATENCY_FILE,
     LOW_LATENCY_HELPER, OS_RELEASE, REBASE_HELPER, SERVICE_HELPER,
     TAILSCALE_HELPER, _which,
@@ -200,6 +200,40 @@ def flatpak_update_script() -> str:
         "exit $rc\n"
     )
 
+def brew_available() -> bool:
+    """Homebrew est-il installé sur ce poste ?"""
+    return BREW_BINARY.exists() or shutil.which("brew") is not None
+
+def brew_update_script() -> str:
+    """Mise à jour de Homebrew : `brew update` puis `brew upgrade`.
+
+    Même mécanique que les deux timers de l'image (même ordre, même préfixe) :
+    le chemin est absolu parce que le PATH d'une session GUI ne contient pas
+    `/home/linuxbrew/.linuxbrew/bin`, et `HOMEBREW_NO_AUTO_UPDATE` évite un
+    second `brew update` implicite pendant l'upgrade. Le préfixe se déduit du
+    binaire **sans le résoudre** (`/home` est un lien vers `/var/home` sur
+    ostree, et brew compare ses chemins à ceux de son installation). Aucun
+    privilège : brew travaille dans son préfixe et dans le cache de
+    l'utilisateur.
+    """
+    return (
+        "brew=/home/linuxbrew/.linuxbrew/bin/brew\n"
+        "if [ ! -x \"$brew\" ]; then brew=\"$(command -v brew)\"; fi\n"
+        "if [ -z \"$brew\" ]; then\n"
+        "    echo \"Homebrew introuvable sur ce poste.\"\n"
+        "    exit 127\n"
+        "fi\n"
+        "prefix=\"${brew%/bin/brew}\"\n"
+        "export HOMEBREW_PREFIX=\"$prefix\"\n"
+        "export HOMEBREW_CELLAR=\"$prefix/Cellar\"\n"
+        "export HOMEBREW_REPOSITORY=\"$prefix/Homebrew\"\n"
+        "export HOMEBREW_NO_AUTO_UPDATE=1\n"
+        "rc=0\n"
+        "\"$brew\" update || rc=$?\n"
+        "\"$brew\" upgrade || rc=$?\n"
+        "exit $rc\n"
+    )
+
 def gwine_binary() -> str:
     """Chemin de gwine (repli /usr/bin, le PATH d'une session GUI est incomplet)."""
     found = shutil.which("gwine")
@@ -349,12 +383,12 @@ def auto_update_available() -> bool:
 
 
 def auto_updates_enabled() -> bool:
-    """Image Gablue *et* Flatpaks sont-ils mis à jour automatiquement ?
+    """Image Gablue, Flatpaks et Homebrew sont-ils mis à jour automatiquement ?
 
     Les timers système sont lus par le helper (même liste fermée que pour la
-    bascule) ; le timer Flatpak de la session se lit sans privilège. Les deux
-    sont traités comme un seul réglage : une moitié éteinte ne doit pas
-    s'afficher « activé ».
+    bascule, brew compris) ; le timer Flatpak de la session se lit sans
+    privilège. Le tout est traité comme un seul réglage : une moitié éteinte
+    ne doit pas s'afficher « activé ».
     """
     try:
         result = subprocess.run(

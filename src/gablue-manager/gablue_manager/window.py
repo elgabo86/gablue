@@ -32,8 +32,9 @@ from .dialogs.tailscale import TailscaleDialog
 from .dialogs.variant import VariantDialog
 from .hosts import load_hosts, parse_ssh_config, save_hosts
 from .local import (
-    _sudo_run, avahi_apply_args, avahi_publish_state, flatpak_update_script,
-    local_sshd_state, set_local_sshd_sudo,
+    _sudo_run, avahi_apply_args, avahi_publish_state, brew_available,
+    brew_update_script, flatpak_update_script, local_sshd_state,
+    set_local_sshd_sudo,
 )
 from .ssh import ask_remote_password, remote_sudo_nopasswd, remote_sudo_prefix
 from .style import make_qss
@@ -882,6 +883,8 @@ class MainWindow(QMainWindow):
             self.update_remote_flatpaks(host)
         elif kind == "gwine":
             self.update_remote_gwine(host)
+        elif kind == "brew":
+            self.update_remote_brew(host)
 
     def update_remote_gablue(self, host: dict) -> None:
         answer = QMessageBox.question(
@@ -944,6 +947,23 @@ class MainWindow(QMainWindow):
             host, f"gwine — {display_name(host)}",
             "gwine --init — runner et composants Windows.",
             "gwine --init\n",
+        )
+
+    def update_remote_brew(self, host: dict) -> None:
+        answer = QMessageBox.question(
+            self, "Mettre à jour Homebrew",
+            f"Mettre à jour les formules Homebrew de « {display_name(host)} » "
+            f"({address_text(host)}) ?\n\n"
+            "brew update puis brew upgrade. Les formules installées sur le "
+            "poste passent à leur dernière version ; rien d'autre n'est "
+            "touché.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._run_remote_script(
+            host, f"Homebrew — {display_name(host)}",
+            "brew update puis brew upgrade.", brew_update_script(),
         )
 
     def open_remote_settings(self, host_id: str) -> None:
@@ -1026,6 +1046,8 @@ class MainWindow(QMainWindow):
             self.update_local_flatpaks()
         elif kind == "gwine":
             self.update_local_gwine()
+        elif kind == "brew":
+            self.update_local_brew()
 
     def update_local_gablue(self) -> None:
         """Image système Gablue (bootc), appliquée au prochain démarrage."""
@@ -1096,6 +1118,27 @@ class MainWindow(QMainWindow):
             "Mise à jour de gwine",
             "gwine --init — runner et composants Windows.",
             [gwine, "--init"],
+        )
+
+    def update_local_brew(self) -> None:
+        if not brew_available():
+            QMessageBox.critical(
+                self, "Homebrew", "Homebrew n'est pas installé sur ce poste."
+            )
+            return
+        answer = QMessageBox.question(
+            self, "Mise à jour de Homebrew",
+            "Mettre à jour les formules Homebrew ?\n\n"
+            "brew update puis brew upgrade, comme les timers automatiques du "
+            "samedi. Aucun mot de passe : brew travaille dans son préfixe.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._run_local_task(
+            "Mise à jour de Homebrew",
+            "brew update puis brew upgrade.",
+            [_which("bash"), "-c", brew_update_script()],
         )
 
     def open_apps(self) -> None:

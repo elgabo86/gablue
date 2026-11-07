@@ -40,7 +40,8 @@ CHOICE_LABELS = {
     ),
     "auto_updates": (
         "Mises à jour automatiques",
-        "Image Gablue (au redémarrage) et Flatpaks (système et compte).",
+        "Image Gablue (au redémarrage), Flatpaks (système et compte) et "
+        "Homebrew (le samedi).",
     ),
 }
 

@@ -187,6 +187,7 @@ class HostCard(QFrame):
             ("gablue", "Gablue (image système)…"),
             ("flatpak", "Flatpaks…"),
             ("gwine", "Gwine (composants)…"),
+            ("brew", "Brew (formules)…"),
         ):
             update_menu.addAction(
                 label,
@@ -310,7 +311,7 @@ class HostCard(QFrame):
 class LocalCard(QFrame):
     """La machine courante : mises à jour et options avancées."""
 
-    update_requested = Signal(str)   # "gablue" | "flatpak" | "gwine"
+    update_requested = Signal(str)   # "gablue" | "flatpak" | "gwine" | "brew"
     apps_requested = Signal()
     kernel_requested = Signal()
     services_requested = Signal()
@@ -372,6 +373,9 @@ class LocalCard(QFrame):
         )
         menu.addAction(
             "Gwine (composants)…", lambda: self.update_requested.emit("gwine")
+        )
+        menu.addAction(
+            "Brew (formules)…", lambda: self.update_requested.emit("brew")
         )
         self.update_button.setMenu(menu)
         layout.addWidget(self.update_button, 0, Qt.AlignVCenter)

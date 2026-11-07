@@ -18,7 +18,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QInputDialog, QLineEdit
 
 from .constants import (
-    AUTO_UPDATE_HELPER, CHECK_DEADLINE, KNOWN_HOSTS, PASSWORD_RE, PRIVATE_KEY,
+    CHECK_DEADLINE, CPUID_EMU_HELPER, KNOWN_HOSTS, PASSWORD_RE, PRIVATE_KEY,
     PUBLIC_KEY, SSH, SSH_COPY_ID, SSH_DIR, SSH_KEYGEN,
 )
 from .util import _ssh_opts, address_text, display_name, host_addresses, ssh_target
@@ -576,14 +576,18 @@ def ssh_capture(host: dict, command: str,
 def remote_sudo_nopasswd(host: dict) -> bool:
     """`sudo -n` passe-t-il sur ce poste (image Gablue) ?
 
-    On sonde un helper autorisé en NOPASSWD (`gablue-auto-update status`), PAS
+    On sonde un helper autorisé en NOPASSWD (`gablue-cpuid-emu status`), PAS
     `sudo -n true` : aucune règle sudoers ne vise `true`, même sur Gablue, donc
     la sonde échouait toujours et TOUTE action root distante (redémarrage,
     extinction, `bootc upgrade` pourtant autorisé) réclamait le mot de passe.
-    Même piège et même remède que `privileged_prefix()` en local.
+    Même piège et même remède que `privileged_prefix()` en local. `status` de
+    `gablue-cpuid-emu` se contente d'imprimer on/off et sort 0 ; celui de
+    `gablue-auto-update` sort 1 dès qu'un timer est désactivé, ce qui faisait
+    croire à une règle absente (donc mot de passe) sur un poste dont les mises
+    à jour automatiques étaient coupées — vécu 07/11/2026.
     """
     code, _ = ssh_capture(
-        host, f"sudo -n {AUTO_UPDATE_HELPER} status", timeout=10
+        host, f"sudo -n {CPUID_EMU_HELPER} status", timeout=10
     )
     return code == 0
 

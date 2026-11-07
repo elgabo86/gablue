@@ -147,10 +147,16 @@ LOW_LATENCY_FILE = Path("/etc/profile.d/vulkan-low-latency.sh")
 
 BROADCOM_WL_FILE = Path("/etc/modprobe.d/wl-enable.conf")
 
-# Mises à jour automatiques : timers système fournis par l'image (image OSTree)
-# et par flatpak. Le timer utilisateur vit dans la session, il n'est donc pas
-# concerné par la règle sudoers ; même périmètre que `ujust toggle-updates`
-# (upstream), sans brew qui a son propre calendrier du samedi.
+# Homebrew de l'image (préfixe uBlue). Le PATH d'une session GUI ne le contient
+# pas forcément (`/etc/profile.d/gablue-brew.sh` n'est lu que par les shells),
+# d'où le chemin absolu pour la mise à jour manuelle.
+BREW_BINARY = Path("/home/linuxbrew/.linuxbrew/bin/brew")
+
+# Mises à jour automatiques : timers système fournis par l'image (image OSTree),
+# par flatpak et par brew. Le timer utilisateur vit dans la session, il n'est
+# donc pas concerné par la règle sudoers ; périmètre plus large que
+# `ujust toggle-updates` upstream (qui laisse brew de côté), comme
+# `toggle-updates-all`.
 AUTO_UPDATE_HELPER = "/usr/libexec/gablue-auto-update"
 
 AUTO_UPDATE_USER_TIMER = "flatpak-user-update.timer"

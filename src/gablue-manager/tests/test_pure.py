@@ -139,6 +139,23 @@ class SystemTest(unittest.TestCase):
             local.system_apply_script({"auto_updates": False}),
         )
 
+    def test_brew_update_script(self):
+        script = local.brew_update_script()
+        # Même ordre que les deux timers de l'image, et pas de second update
+        # implicite pendant l'upgrade.
+        self.assertIn('"$brew" update || rc=$?', script)
+        self.assertIn('"$brew" upgrade || rc=$?', script)
+        self.assertIn("HOMEBREW_NO_AUTO_UPDATE=1", script)
+        # Chemin absolu : le PATH d'une session GUI n'a pas brew.
+        self.assertIn("/home/linuxbrew/.linuxbrew/bin/brew", script)
+        # Préfixe littéral, jamais résolu : /home est un lien vers /var/home
+        # sur ostree, et brew compare ses chemins à ceux de son installation.
+        self.assertIn('prefix="${brew%/bin/brew}"', script)
+        self.assertNotIn("pwd -P", script)
+        # Aucun privilège : brew reste dans son préfixe et le cache du compte.
+        self.assertNotIn("sudo", script)
+        self.assertIn("exit 127", script)   # brew absent → échec explicite
+
     def test_rebase_script(self):
         self.assertEqual(
             local.rebase_script("nvidia-open-dx"),

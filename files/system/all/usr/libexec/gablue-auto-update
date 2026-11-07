@@ -7,11 +7,18 @@
 # root. Le timer Flatpak de la session (~/.config/systemd/user) n'est pas ici :
 # il appartient à l'utilisateur, Gablue Manager le bascule sans privilège.
 #
+# Brew est inclus (contrairement à `ujust toggle-updates` upstream) : les deux
+# timers sont activés au build, donc décocher « mises à jour automatiques » en
+# les laissant tourner aurait menti. `brew update` et `brew upgrade` restent
+# deux unités distinctes (l'ordre update → upgrade est un drop-in sur le
+# service d'upgrade), on bascule donc les deux timers.
+#
 # Usage : gablue-auto-update on|off|status
 
 set -eu
 
-units=(rpm-ostreed-automatic.timer flatpak-system-update.timer)
+units=(rpm-ostreed-automatic.timer flatpak-system-update.timer
+       brew-update.timer brew-upgrade.timer)
 
 usage() {
     echo "Usage : gablue-auto-update on|off|status" >&2

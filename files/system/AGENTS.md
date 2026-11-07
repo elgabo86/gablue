@@ -16,7 +16,7 @@
 - **profile.d/customperso.sh** : Alias et personnalisations shell
 - **security/limits.d/memlock.conf** : Limites mémoire
 - **skel/.config/gtk-4.0/** : Configuration GTK par défaut
-- **sudoers.d/nopasswd** : Sudo sans mot de passe pour `%wheel` — `ryzenadj`, `cpupower`, `efibootmgr --bootnext|--bootorder *`, `bootc upgrade`, `flatpak update --system -y` (arguments **exacts**, aucun joker sur flatpak : ni install, ni remote, ni app id) et les helpers `/usr/libexec/gablue-kargs`, `gablue-cpuid-emu` (`on|off|status`), `gablue-tailscale` (`on --login-server …|off`), `gablue-service` (unités `displaylink.service` et `docker.service` seulement, `on|off`), `gablue-low-latency` (`on|off`), `gablue-broadcom-wl` (`on|off`), `gablue-rebase` (les cinq variantes publiées seulement), `gablue-auto-update` (`on|off|status`, timers `rpm-ostreed-automatic.timer` + `flatpak-system-update.timer`) et `gablue-avahi` (`on|off|status`, annonce `_ssh._tcp`) — plus deux commandes systemd aux arguments exacts, `enable|disable sshd.service --now` (pastille « Serveur SSH » de Gablue Manager) et `reboot|poweroff` (actions distantes, équivalentes au polkit qu'un membre de wheel peut déjà déclencher en session locale) — jamais `rpm-ostree kargs` ni une référence d'image libre en direct, un kargs libre en NOPASSWD permettrait `init=/bin/sh` sur le prochain démarrage et un rebase libre permettrait de démarrer n'importe quelle image en root
+- **sudoers.d/nopasswd** : Sudo sans mot de passe pour `%wheel` — `ryzenadj`, `cpupower`, `efibootmgr --bootnext|--bootorder *`, `bootc upgrade`, `flatpak update --system -y` (arguments **exacts**, aucun joker sur flatpak : ni install, ni remote, ni app id) et les helpers `/usr/libexec/gablue-kargs`, `gablue-cpuid-emu` (`on|off|status`), `gablue-tailscale` (`on --login-server …|off`), `gablue-service` (unités `displaylink.service` et `docker.service` seulement, `on|off`), `gablue-low-latency` (`on|off`), `gablue-broadcom-wl` (`on|off`), `gablue-rebase` (les cinq variantes publiées seulement), `gablue-auto-update` (`on|off|status`, timers `rpm-ostreed-automatic.timer` + `flatpak-system-update.timer` + `brew-update.timer` + `brew-upgrade.timer`) et `gablue-avahi` (`on|off|status`, annonce `_ssh._tcp`) — plus deux commandes systemd aux arguments exacts, `enable|disable sshd.service --now` (pastille « Serveur SSH » de Gablue Manager) et `reboot|poweroff` (actions distantes, équivalentes au polkit qu'un membre de wheel peut déjà déclencher en session locale) — jamais `rpm-ostree kargs` ni une référence d'image libre en direct, un kargs libre en NOPASSWD permettrait `init=/bin/sh` sur le prochain démarrage et un rebase libre permettrait de démarrer n'importe quelle image en root
 - **systemd/** : Timeouts et configuration systemd
 - **yum.repos.d/docker-ce.repo** : Dépôt Docker
 
@@ -190,8 +190,9 @@ Tous appelés en `sudo -n` par Gablue Manager (règles NOPASSWD exactes) et ferm
 requis), `gablue-rebase <variante>` (`rpm-ostree rebase` vers
 `ostree-image-signed:docker://ghcr.io/elgabo86/gablue-<variante>:latest`, variantes publiées
 seulement, effet au redémarrage) et `gablue-auto-update on|off|status` (timers
-`rpm-ostreed-automatic.timer` + `flatpak-system-update.timer` uniquement — le timer Flatpak de la
-session reste à l'utilisateur, Gablue Manager le bascule sans privilège). Aucun de ces helpers
+`rpm-ostreed-automatic.timer` + `flatpak-system-update.timer` + `brew-update.timer` +
+`brew-upgrade.timer` — le timer Flatpak de la session reste à l'utilisateur, Gablue Manager le
+bascule sans privilège). Aucun de ces helpers
 n'accepte d'argument libre : c'est la contrepartie du NOPASSWD. Scripts stockés 644, `+x` posé
 par post-install.
 
