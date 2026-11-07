@@ -6,12 +6,13 @@ import shutil
 
 from PySide6.QtCore import QProcess, QSocketNotifier, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QProgressBar,
-    QPushButton, QVBoxLayout,
+    QDialog, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QPushButton,
+    QVBoxLayout,
 )
 
 from .local import parse_progress_event, privileged_prefix
 from .util import display_name, ssh_target
+from .widgets import BusyProgressBar
 from .workers import SshTaskWorker
 
 class RemoteTaskDialog(QDialog):
@@ -236,7 +237,8 @@ class LocalTaskDialog(QDialog):
         self.progress_label.setVisible(self._progress_ui)
         root_layout.addWidget(self.progress_label)
 
-        self.progress_bar = QProgressBar(self)
+        self.progress_bar = BusyProgressBar(self)
+        self.progress_bar.setObjectName("taskProgress")
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setRange(0, 0)     # indéterminé tant qu'aucun événement
         self.progress_bar.setVisible(self._progress_ui)

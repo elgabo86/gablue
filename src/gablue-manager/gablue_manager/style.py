@@ -145,7 +145,20 @@ QProgressBar#busy {
     border: none;
     max-height: 3px;
 }
-QProgressBar#busy::chunk { background: @accent@; border-radius: 1px; }
+QProgressBar#taskProgress {
+    background: @barTrack@;
+    border: none;
+    border-radius: 5px;
+    min-height: 22px;
+    max-height: 22px;
+    color: @text@;
+    font-size: 11px;
+    text-align: center;
+}
+QProgressBar#taskProgress::chunk {
+    background: @accent@;
+    border-radius: 5px;
+}
 
 QMenu {
     background: @menu@;
@@ -159,14 +172,25 @@ QMenu::item:selected { background: @accent@; color: @onAccent@; }
 QMenu::separator { height: 1px; background: @border@; margin: 5px 8px; }
 """
 
+def accent_color() -> QColor:
+    """Couleur d'accent effective — celle du QSS, repli compris.
+
+    Certains thèmes Plasma donnent une couleur de surbrillance aussi claire que
+    le texte : invisible en fond de barre. `make_qss` bascule alors sur le bleu
+    Gablue, et la peinture (barre indéterminée) doit utiliser la même.
+    """
+    palette = QApplication.palette()
+    accent = palette.color(QPalette.Highlight)
+    if accent.lightness() == palette.color(QPalette.WindowText).lightness():
+        accent = QColor("#3daee9")
+    return accent
+
 def make_qss() -> str:
     palette = QApplication.palette()
     dark = palette.color(QPalette.Window).lightness() < 128
     text = palette.color(QPalette.WindowText)
-    accent = palette.color(QPalette.Highlight)
+    accent = accent_color()
     on_accent = palette.color(QPalette.HighlightedText)
-    if accent.lightness() == text.lightness():
-        accent = QColor("#3daee9")
     base = palette.color(QPalette.Base)
     white = QColor(255, 255, 255)
     black = QColor(0, 0, 0)
@@ -176,6 +200,7 @@ def make_qss() -> str:
         "@cardHover@": _rgba(tint, 34 if dark else 16),
         "@pressed@": _rgba(tint, 46 if dark else 24),
         "@border@": _rgba(tint, 32 if dark else 26),
+        "@barTrack@": _rgba(tint, 26 if dark else 22),
         "@accent@": accent.name(),
         "@accentSoft@": _rgba(accent, 170),
         "@accentHover@": (accent.lighter(112) if dark else accent.darker(108)).name(),

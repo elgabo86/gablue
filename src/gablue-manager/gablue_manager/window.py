@@ -14,7 +14,7 @@ from PySide6.QtCore import QEvent, QProcess, QSize, QTimer, Qt
 from PySide6.QtGui import QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
-    QProgressBar, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from .constants import (
@@ -46,7 +46,9 @@ from .tasks import LocalTaskDialog, RemoteTaskDialog, start_task
 from .util import (
     address_text, display_name, dolphin_url, has_address_kind, ssh_target,
 )
-from .widgets import HostCard, LocalCard, StatusDot, _make_tool_button
+from .widgets import (
+    BusyProgressBar, HostCard, LocalCard, StatusDot, _make_tool_button,
+)
 from .workers import (
     AddressWorker, AvahiWorker, CheckWorker, KeyProbeWorker, RebootWorker,
 )
@@ -153,7 +155,7 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.add_button)
         root.addWidget(header)
 
-        self.busy = QProgressBar(central)
+        self.busy = BusyProgressBar(central)
         self.busy.setObjectName("busy")
         self.busy.setRange(0, 0)
         self.busy.setTextVisible(False)

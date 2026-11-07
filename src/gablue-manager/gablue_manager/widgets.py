@@ -1,20 +1,108 @@
-"""Pastille d'état, cartes des postes et carte « Ce poste ».
+"""Barre d'activité, pastille d'état, cartes des postes et carte « Ce poste ».
 """
 
 import getpass
 import math
 import socket
 
-from PySide6.QtCore import QPointF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QColor, QIcon, QPainter, QPainterPath, QPalette, QPen,
+)
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QToolButton,
-    QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton,
+    QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .constants import COLOR_OFFLINE, KEY_STATES, STATE_COLOR, STATE_TEXT
 from .local import local_distro
+from .style import accent_color
 from .util import active_kind, address_text, display_name, dolphin_url, ssh_target
+
+class BusyProgressBar(QProgressBar):
+    """Barre qui balaie de gauche à droite quand le total est inconnu.
+
+    `QProgressBar` en mode indéterminé (minimum == maximum) s'en remet au style
+    Qt : sous une feuille de style maison, l'animation ne part pas et la barre
+    reste inerte — or c'est justement la phase où l'on veut montrer que ça
+    travaille (téléchargements de brew, bootc sans total). On peint donc
+    nous-mêmes un segment qui traverse la piste, à 60 images/s ; le mode
+    déterminé garde le rendu natif (texte du pourcentage compris).
+    """
+
+    # Un balayage complet (sortie à droite, réentrée à gauche) par 1,2 s.
+    PERIOD_MS = 1200
+    STEP_MS = 16
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._phase = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.STEP_MS)
+        self._timer.timeout.connect(self._advance)
+
+    def _indeterminate(self) -> bool:
+        return self.maximum() == self.minimum()
+
+    def setRange(self, minimum: int, maximum: int) -> None:
+        was_busy = self._indeterminate()
+        super().setRange(minimum, maximum)
+        if self._indeterminate() and not was_busy:
+            self._phase = 0.0          # départ à gauche, jamais au milieu
+        self._sync_timer()
+        self.update()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._sync_timer()
+
+    def hideEvent(self, event) -> None:
+        # Un timer qui tourne sur une barre cachée ne fait que du calcul.
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def _sync_timer(self) -> None:
+        if self._indeterminate() and self.isVisible():
+            if not self._timer.isActive():
+                self._timer.start()
+        else:
+            self._timer.stop()
+
+    def _advance(self) -> None:
+        self._phase = (self._phase + self.STEP_MS / self.PERIOD_MS) % 1.0
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        if not self._indeterminate():
+            super().paintEvent(event)
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+        radius = min(rect.height() / 2.0, 5.0)
+        track = QPainterPath()
+        track.addRoundedRect(rect, radius, radius)
+
+        # QProgressBar ne peint son fond QSS que dans son propre paintEvent :
+        # ici on le remplace, la piste est donc à redessiner, avec les mêmes
+        # teintes que @barTrack@ (thème clair comme sombre).
+        window = self.palette().color(QPalette.Window)
+        tint = (QColor(255, 255, 255, 26) if window.lightness() < 128
+                else QColor(0, 0, 0, 22))
+        painter.fillPath(track, tint)
+
+        width = max(rect.width() * 0.32, min(48.0, rect.width()))
+        x = rect.left() + (rect.width() + width) * self._phase - width
+        segment = QPainterPath()
+        segment.addRoundedRect(
+            QRectF(x, rect.top(), width, rect.height()), radius, radius
+        )
+        painter.setClipPath(track)     # pas de débordement des coins arrondis
+        painter.fillPath(segment, accent_color())
+        painter.end()
 
 class StatusDot(QWidget):
     """Pastille colorée ; halo qui respire quand le poste est en ligne."""
