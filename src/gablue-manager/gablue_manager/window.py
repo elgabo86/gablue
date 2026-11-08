@@ -44,6 +44,7 @@ from .dialogs.variant import VariantDialog
 from .hosts import load_hosts, save_hosts
 from . import instance, prefs, remote_updates, updates
 
+from .apps import names_for as apps_names
 from .apps import update_script as apps_update_script
 from .local import (
     _sudo_run, avahi_apply_args, avahi_publish_state, brew_available,
@@ -69,8 +70,8 @@ from .widgets import (
 )
 from .workers import (
     AddressWorker, AppsUpdateWorker, AvahiWorker, CheckWorker, KeyProbeWorker,
-    HardwareWorker, RebootWorker, RemoteHardwareWorker, RemoteUpdatesWorker,
-    UpdateCheckWorker,
+    HardwareWorker, RebootWorker, RemoteAppsWorker, RemoteHardwareWorker,
+    RemoteUpdatesWorker, UpdateCheckWorker,
 )
 
 def _is_running(worker) -> bool:
@@ -156,7 +157,14 @@ class MainWindow(QMainWindow):
         self._remote_updates: dict[str, dict] = {}
         self._remote_check_queue: list[str] = []
         self._remote_check_workers: list[RemoteUpdatesWorker] = []
+        # Sonde des AppImages d'un poste (une connexion SSH par clic) : la
+        # liste des applications en retard décide de la commande à lancer.
+        self._remote_apps_workers: list[RemoteAppsWorker] = []
         self._batch_host_ids: list[str] = []
+        # Lot « tout mettre à jour » : postes retenus et chaîne propre à chacun,
+        # le temps que les sondes d'AppImages répondent.
+        self._batch_hosts: list[dict] = []
+        self._batch_commands: dict[str, str] = {}
         self._updates_pending = False
 
         self._build_ui()
@@ -1155,7 +1163,13 @@ class MainWindow(QMainWindow):
             pane["updates"].set_updates(state)
 
     def update_all_hosts(self) -> None:
-        """Mettre à jour tous les postes en ligne, en parallèle."""
+        """Mettre à jour tous les postes en ligne, en parallèle.
+
+        Les commandes dépendent de ce que chaque poste a d'installé : une
+        sonde d'AppImages part donc d'abord sur chaque poste (une connexion
+        SSH, flux de releases lus d'ici), puis la fenêtre du lot reçoit la
+        chaîne propre à chacun.
+        """
         online = self._online_hosts()
         if not online:
             QMessageBox.information(
@@ -1170,16 +1184,34 @@ class MainWindow(QMainWindow):
             self, "Mises à jour des postes",
             f"Mettre à jour {len(online)} poste(s) en parallèle ?\n\n"
             f"{listed}\n\n"
-            "Image Gablue, Flatpaks, gwine et Homebrew. L'image s'applique au "
-            "prochain redémarrage ; un échec n'arrête que le poste concerné.",
+            "Image Gablue, Flatpaks, gwine, applications et Homebrew. L'image "
+            "s'applique au prochain redémarrage ; un échec n'arrête que le "
+            "poste concerné.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
-        self._batch_host_ids = [host["id"] for host in online]
+        if self._batch_hosts:
+            return          # une sonde de lot est déjà partie
+        self._batch_hosts = list(online)
+        self._batch_commands = {}
+        for host in online:
+            self._probe_remote_apps(host, self._batch_probe_ready)
+
+    def _batch_probe_ready(self, host: dict, result) -> None:
+        """Sonde d'un poste terminée : sa chaîne est prête, le lot attend les autres."""
+        pending, _unknown, _installed, states = result
+        self._batch_commands[host["id"]] = remote_updates.update_chain(
+            pending, states
+        )
+        if len(self._batch_commands) < len(self._batch_hosts):
+            return
+        hosts = self._batch_hosts
+        self._batch_hosts = []
+        self._batch_host_ids = [entry["id"] for entry in hosts]
         dialog = RemoteBatchDialog(
-            self, hosts=online, command=remote_updates.UPDATE_CHAIN,
-            subtitle=f"{len(online)} poste(s) mis à jour en parallèle.",
+            self, hosts=hosts, commands=self._batch_commands,
+            subtitle=f"{len(hosts)} poste(s) mis à jour en parallèle.",
         )
         dialog.completed.connect(self._batch_done)
         start_task(self, dialog)
@@ -1833,22 +1865,102 @@ class MainWindow(QMainWindow):
             self.update_remote_gwine(host)
         elif kind == "brew":
             self.update_remote_brew(host)
+        elif kind == "apps":
+            self.update_remote_apps(host)
+
+    def _probe_remote_apps(self, host: dict, then) -> None:
+        """Sonde les AppImages d'un poste (une connexion SSH), puis `then`.
+
+        Les flux de releases se lisent d'ici : le poste ne fait que dire ce qui
+        est installé. Aucune périodicité, la sonde part d'un clic.
+        """
+        worker = RemoteAppsWorker(host, self)
+        worker.done.connect(
+            lambda host_id, result: then(self._host(host_id) or host, result)
+        )
+        self._remote_apps_workers.append(worker)
+        worker.finished.connect(
+            lambda w=worker: self._remote_apps_finished(w)
+        )
+        worker.start()
+
+    def _remote_apps_finished(self, worker) -> None:
+        if worker in self._remote_apps_workers:
+            self._remote_apps_workers.remove(worker)
+        worker.deleteLater()
 
     def update_remote_all(self, host: dict) -> None:
-        """Tout mettre à jour sur un poste : image, Flatpaks, gwine, Homebrew."""
+        """Tout mettre à jour sur un poste : image, Flatpaks, gwine, applis, brew.
+
+        La sonde des AppImages part d'abord : sans elle, la chaîne ne saurait
+        pas quoi passer aux scripts d'installation, et la confirmation ne
+        pourrait pas dire ce qui sera réellement mis à jour.
+        """
+        self._probe_remote_apps(host, self._offer_remote_all)
+
+    def _offer_remote_all(self, host: dict, result) -> None:
+        pending, _unknown, _installed, states = result
+        detail = ""
+        if pending:
+            detail = (
+                "\nApplications en retard : "
+                + ", ".join(apps_names(pending)) + "."
+            )
         answer = QMessageBox.question(
             self, "Tout mettre à jour",
             f"Mettre à jour « {display_name(host)} » en entier ?\n\n"
-            "Image Gablue, Flatpaks, gwine et Homebrew. L'image s'applique au "
-            "prochain redémarrage.",
+            "Image Gablue, Flatpaks, gwine, applications et Homebrew."
+            f"{detail}\n\n"
+            "L'image s'applique au prochain redémarrage.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
         self._run_remote_script(
             host, f"Tout mettre à jour — {display_name(host)}",
-            "Image, Flatpaks, gwine et Homebrew.",
-            remote_updates.UPDATE_CHAIN, root=True,
+            "Image, Flatpaks, gwine, applications et Homebrew.",
+            remote_updates.update_chain(pending, states), root=True,
+        )
+
+    def update_remote_apps(self, host: dict) -> None:
+        """Applications (AppImages) d'un poste : sonde puis scripts du poste."""
+        self._probe_remote_apps(host, self._offer_remote_apps)
+
+    def _offer_remote_apps(self, host: dict, result) -> None:
+        pending, unknown, installed, states = result
+        if not installed:
+            QMessageBox.information(
+                self, "Applications",
+                f"Aucune application n'est installée sur « "
+                f"{display_name(host)} ».",
+            )
+            return
+        if not pending:
+            if unknown:
+                QMessageBox.warning(
+                    self, "Applications",
+                    "Mise à jour impossible à déterminer : les flux de "
+                    "versions n'ont pas répondu pour au moins une "
+                    "application.",
+                )
+            else:
+                QMessageBox.information(
+                    self, "Applications",
+                    "Toutes les applications installées sont à jour sur "
+                    f"« {display_name(host)} ».",
+                )
+            return
+        names = ", ".join(apps_names(pending))
+        answer = QMessageBox.question(
+            self, "Mettre à jour les applications",
+            f"Mettre à jour {names} sur « {display_name(host)} » ?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._run_remote_script(
+            host, f"Mise à jour des applications — {display_name(host)}",
+            names + ".", remote_updates.apps_chain(pending, states),
         )
 
     def update_remote_gablue(self, host: dict) -> None:
@@ -2037,15 +2149,28 @@ class MainWindow(QMainWindow):
         Chaque mise à jour garde son propre analyseur ; la fenêtre globale
         additionne les étapes terminées et la fraction de l'étape courante.
         L'ordre est celui des dépendances réelles : l'image d'abord (elle peut
-        apporter un nouveau gwine), puis Flatpak, gwine et Homebrew, qui ne
-        dépendent pas de l'image mais prennent le plus de temps.
+        apporter un nouveau gwine), puis Flatpak, gwine et applications, qui ne
+        dépendent pas de l'image mais prennent du temps ; Homebrew en dernier,
+        parce que c'est l'étape la plus longue et la plus fragile — un échec ne
+        doit pas laisser les AppImages en retard.
+
+        Les applications n'ont pas d'état local : la liste des AppImages en
+        retard vient du réseau (un flux de releases par application), donc la
+        sonde part d'abord, hors fil graphique, et l'étape est omise quand tout
+        est à jour.
         """
-        steps = self._local_update_steps()
+        self._probe_apps(self._offer_local_all)
+
+    def _offer_local_all(self, result) -> None:
+        """Sonde des applications terminée : proposer la séquence exacte."""
+        pending = result[0]
+        steps = self._local_update_steps(pending)
         if not steps:
             QMessageBox.information(
                 self, "Tout mettre à jour",
                 "Rien à mettre à jour sur ce poste : ni image Gablue "
-                "accessible, ni flatpak, ni gwine, ni Homebrew.",
+                "accessible, ni flatpak, ni gwine, ni application, "
+                "ni Homebrew.",
             )
             return
         listed = "\n".join(f"• {step['label']}" for step in steps)
@@ -2068,12 +2193,13 @@ class MainWindow(QMainWindow):
         dialog.completed.connect(self._updates_after_task)
         start_task(self, dialog)
 
-    def _local_update_steps(self) -> list[dict]:
+    def _local_update_steps(self, pending_apps=None) -> list[dict]:
         """Étapes réellement possibles sur ce poste, dans l'ordre.
 
         Un outil absent n'est pas une erreur : il est simplement omis, sinon
         « tout mettre à jour » échouerait sur chaque poste où Homebrew ou
-        flatpak n'est pas installé.
+        flatpak n'est pas installé. `pending_apps` vient de la sonde réseau
+        (`apps.pending_updates`) : vide, aucune étape applications.
         """
         steps: list[dict] = []
         if Path(UPDATE_HELPER).is_file():
@@ -2110,6 +2236,18 @@ class MainWindow(QMainWindow):
                 "argv": [gwine, "--init"],
                 "parser": parse_gablue_progress,
                 "env": {"GABLUE_PROGRESS": "1"},
+            })
+        pending = list(pending_apps or [])
+        if pending:
+            names = ", ".join(apps_names(pending))
+            steps.append({
+                "label": f"Applications ({names})",
+                "argv": [_which("bash"), "-c", apps_update_script(pending)],
+                "parser": parse_gablue_progress,
+                # Un AppImage se télécharge d'un bloc : aucune fraction à
+                # afficher pendant le transfert, la barre balaie et le libellé
+                # nomme l'application en cours (i/N).
+                "busy": True,
             })
         if brew_available():
             steps.append({
@@ -2243,18 +2381,32 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.Yes:
             return
-        if self._apps_worker is not None and self._apps_worker.isRunning():
+        self._probe_apps(self._apps_update_ready)
+
+    def _probe_apps(self, then) -> None:
+        """Sonde des AppImages en retard, puis `then(result)` sur le fil GUI.
+
+        `result` = `(clés à mettre à jour, doute, nombre installé)` de
+        `apps.pending_updates`. La sonde interroge un flux de releases par
+        application : elle tourne hors du fil graphique, la bande d'activité
+        tient l'utilisateur pendant ce temps, et une sonde déjà partie n'est
+        pas doublée.
+        """
+        if _is_running(self._apps_worker):
             return
         self._set_busy("apps", True)
         worker = AppsUpdateWorker(self)
-        worker.done.connect(self._apps_update_ready)
+        worker.done.connect(lambda result: self._apps_probed(result, then))
         self._apps_worker = worker
         worker.start()
 
-    def _apps_update_ready(self, result) -> None:
-        """Sonde terminée : lancer les installations, ou dire pourquoi non."""
+    def _apps_probed(self, result, then) -> None:
         self._apps_worker = None
         self._set_busy("apps", False)
+        then(result)
+
+    def _apps_update_ready(self, result) -> None:
+        """Sonde terminée : lancer les installations, ou dire pourquoi non."""
         pending, unknown, installed = result
         if not installed:
             QMessageBox.information(
@@ -2276,9 +2428,15 @@ class MainWindow(QMainWindow):
                     "Toutes les applications installées sont à jour.",
                 )
             return
+        names = ", ".join(apps_names(pending))
+        count = len(pending)
+        subtitle = (
+            f"1 application : {names}."
+            if count == 1 else f"{count} applications : {names}."
+        )
         self._run_local_task(
             "Mise à jour des applications",
-            "Applications installées (GearLever).",
+            subtitle,
             [_which("bash"), "-c", apps_update_script(pending)],
             progress_parser=parse_gablue_progress,
             progress_text="Mise à jour des applications…",
@@ -2660,6 +2818,7 @@ class MainWindow(QMainWindow):
             self._avahi_worker, self._hardware_worker,
             *self._remote_hardware_workers.values(),
             *self._remote_check_workers,
+            *self._remote_apps_workers,
             *self._address_workers, *self._key_workers,
         ]
         return [
@@ -2751,6 +2910,7 @@ class MainWindow(QMainWindow):
             *[(worker, 2.0)
               for worker in self._remote_hardware_workers.values()],
             *[(worker, 2.0) for worker in self._remote_check_workers],
+            *[(worker, 2.0) for worker in self._remote_apps_workers],
             *[(worker, 2.0) for worker in self._address_workers],
             *[(worker, 2.0) for worker in self._key_workers],
         ])

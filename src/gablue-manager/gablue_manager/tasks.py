@@ -1437,6 +1437,7 @@ class RemoteBatchDialog(QDialog):
     MAX_PARALLEL = 3
 
     def __init__(self, parent=None, hosts=None, command: str = "",
+                 commands: dict[str, str] | None = None,
                  title: str = "Mises à jour des postes",
                  subtitle: str = ""):
         super().__init__(parent)
@@ -1446,6 +1447,10 @@ class RemoteBatchDialog(QDialog):
 
         self._hosts = [dict(host) for host in (hosts or [])]
         self._command = command
+        # Une commande par poste quand elle dépend de ce qu'il a d'installé
+        # (applications) : le script de la chaîne n'est alors pas le même pour
+        # tous. Absent → `command`, le même script pour tout le monde.
+        self._commands = dict(commands or {})
         self._queue = list(range(len(self._hosts)))
         self._workers: dict[int, SshTaskWorker] = {}
         self._rows: dict[int, QLabel] = {}
@@ -1535,7 +1540,9 @@ class RemoteBatchDialog(QDialog):
         while self._queue and len(self._workers) < self.MAX_PARALLEL:
             index = self._queue.pop(0)
             self._set_row(index, "En cours…")
-            worker = SshTaskWorker(self._hosts[index], self._command, self)
+            host = self._hosts[index]
+            command = self._commands.get(host.get("id") or "", self._command)
+            worker = SshTaskWorker(host, command, self)
             worker.log.connect(
                 lambda text, i=index: self._append(i, text)
             )

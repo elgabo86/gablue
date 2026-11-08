@@ -1569,6 +1569,22 @@ class UpdatesTest(unittest.TestCase):
         )
 
     def test_apps_domain(self):
+        # La même fabrique sert le poste local (`pending_updates`) et un poste
+        # distant (`pending_for` sur les états reçus par SSH).
+        self.assertEqual(
+            updates.apps_domain(["esde"], False, 3),
+            {"state": "updates", "apps": ["ES-DE"]},
+        )
+        self.assertEqual(
+            updates.apps_domain([], False, 3), {"state": "uptodate", "apps": []}
+        )
+        self.assertEqual(
+            updates.apps_domain([], True, 2), {"state": "unknown", "apps": []}
+        )
+        self.assertEqual(
+            updates.apps_domain([], True, 0),
+            {"state": "unavailable", "apps": []},
+        )
         state = {"online": True, "domains": {
             "apps": {"state": "updates", "apps": ["Eden", "ES-DE"]},
             "image": {"state": "uptodate"},
@@ -1645,7 +1661,7 @@ class RemoteUpdatesTest(unittest.TestCase):
         self.assertEqual(image["staged_version"], "20261107")
 
     def test_update_chain(self):
-        chain = remote_updates.UPDATE_CHAIN
+        chain = remote_updates.update_chain()
         for command in (
             "bootc upgrade", "flatpak update --system -y",
             "gwine --init", "brew upgrade",
@@ -1653,6 +1669,60 @@ class RemoteUpdatesTest(unittest.TestCase):
             self.assertIn(command, chain)
         # Gablue n'installe qu'en système : aucune mise à jour du compte.
         self.assertNotIn("--user", chain)
+        # Sans application en retard, aucune section applications.
+        self.assertNotIn("Applications", chain)
+
+    def test_update_chain_apps(self):
+        states = {
+            "esde": {"script": "/usr/bin/esde-install",
+                     "options": {"--yes", "--config-only"}},
+            "eden": {"script": "/usr/bin/eden-install", "options": set()},
+            "xenia": {"script": "", "options": set()},
+        }
+        chain = remote_updates.update_chain(["esde", "eden", "xenia"], states)
+        self.assertIn("== Applications ==", chain)
+        self.assertIn("/usr/bin/esde-install --yes || rc=1", chain)
+        self.assertIn("/usr/bin/eden-install || rc=1", chain)
+        self.assertIn("Xenia Edge : script manquant, ignoré", chain)
+        # 3 étapes + 2 applications + `brew update` + `brew upgrade`.
+        self.assertEqual(chain.count("|| rc=1"), 7)
+        # Un script qui ne connaît pas `--yes` ouvrirait ses boîtes kdialog :
+        # ce n'est pas une mise à jour, c'est une attente infinie.
+        old = {"esde": {"script": "/usr/bin/esde-install", "options": set()}}
+        chain = remote_updates.update_chain(["esde"], old)
+        self.assertIn("antérieure à --yes, ignoré", chain)
+        self.assertNotIn("esde-install --yes", chain)
+
+    def test_apps_chain_alone(self):
+        states = {"esde": {"script": "/usr/bin/esde-install",
+                           "options": {"--yes"}}}
+        chain = remote_updates.apps_chain(["esde"], states)
+        self.assertTrue(chain.startswith("rc=0\n"))
+        self.assertIn("esde-install --yes || rc=1", chain)
+        self.assertIn("exit $rc", chain)
+        self.assertNotIn("bootc", chain)
+        self.assertEqual(remote_updates.apps_chain([], {}), "")
+
+    def test_check_script_keeps_apps_sections_apart(self):
+        # Les sections `##` des AppImages ne doivent pas tomber dans la
+        # dernière section `::gablue:` (le gwine), sinon son analyse est fausse.
+        text = (
+            "::gablue:gwine\n"
+            "rc=0\n"
+            "::gablue:apps\n"
+            "##gearlever\n"
+            "yes\n"
+            "##images\n"
+            "esde.appimage\n"
+            "##scripts\n"
+            "esde-install\t/usr/bin/esde-install\t --yes\n"
+        )
+        parsed = remote_updates.sections(text)
+        self.assertEqual(parsed["gwine"], ["rc=0"])
+        states, gearlever = apps.remote_states(text)
+        self.assertTrue(gearlever)
+        self.assertTrue(states["esde"]["installed"])
+        self.assertEqual(states["esde"]["options"], {"--yes"})
 
 
 class JournalTest(unittest.TestCase):
@@ -1884,12 +1954,26 @@ class AppsTest(unittest.TestCase):
     def test_update_script(self):
         script = apps.update_script(["eden", "esde"])
         lines = script.strip().splitlines()
-        self.assertEqual(len(lines), 4)
-        self.assertIn("::gablue:step 1 2 ES-DE", lines[0])
-        self.assertTrue(lines[1].endswith("esde-install --yes"))
-        self.assertIn("::gablue:step 2 2 Eden", lines[2])
-        self.assertTrue(lines[3].endswith("eden-install"))
+        # `set -e` : une application en échec arrête la suite.
+        self.assertEqual(lines[0], "set -e")
+        self.assertIn("::gablue:step 1 2 ES-DE", lines[1])
+        # Le marqueur `busy` fait balayer la barre pendant le téléchargement,
+        # qui n'a aucun pourcentage à montrer.
+        self.assertIn("::gablue:busy", lines[2])
+        self.assertIn("(1/2)", lines[2])
+        self.assertTrue(lines[3].endswith("esde-install --yes"))
+        self.assertIn("::gablue:step 2 2 Eden", lines[4])
+        self.assertIn("(2/2)", lines[5])
+        self.assertTrue(lines[6].endswith("eden-install"))
         self.assertEqual(apps.update_script([]), "")
+
+    def test_names_for(self):
+        # Ordre du catalogue, pas celui des clés reçues : la confirmation et
+        # la fenêtre de tâche listent toujours la même chose.
+        self.assertEqual(
+            apps.names_for({"eden", "esde"}), ["ES-DE", "Eden"],
+        )
+        self.assertEqual(apps.names_for(("inconnue",)), [])
 
     def test_config_argv(self):
         argv = apps.config_argv()

@@ -311,6 +311,19 @@ def check_gwine() -> dict:
     )
     return parse_gwine_check(text, returncode)
 
+def apps_domain(pending, unknown: bool, installed: int) -> dict:
+    """État du domaine « applications » depuis une sonde (`pending_updates`).
+
+    Partagé par les deux postes : le local sonde ses propres AppImages, un
+    poste distant rend les mêmes trois valeurs par SSH (`remote_updates`).
+    """
+    if pending:
+        return {"state": "updates", "apps": sorted(apps.names_for(pending))}
+    if not installed:
+        return {"state": "unavailable", "apps": []}
+    return {"state": "unknown" if unknown else "uptodate", "apps": []}
+
+
 def check_apps() -> dict:
     """Applications AppImage installées en retard.
 
@@ -319,15 +332,7 @@ def check_apps() -> dict:
     conclure « à jour ». Aucune application installée → domaine indisponible,
     comme un outil absent du poste.
     """
-    pending, unknown, installed = apps.pending_updates()
-    if pending:
-        names = [
-            app.name for app in apps.APPS if app.key in set(pending)
-        ]
-        return {"state": "updates", "apps": sorted(names)}
-    if not installed:
-        return {"state": "unavailable", "apps": []}
-    return {"state": "unknown" if unknown else "uptodate", "apps": []}
+    return apps_domain(*apps.pending_updates())
 
 # -- agrégat ----------------------------------------------------------------
 

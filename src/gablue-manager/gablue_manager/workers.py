@@ -244,6 +244,32 @@ class AppsUpdateWorker(QThread):
             result = ([], True, 0)
         self.done.emit(result)
 
+class RemoteAppsWorker(QThread):
+    """AppImages en retard sur un poste distant (une connexion SSH + les flux).
+
+    Sonde **à la demande** : elle ne part que d'un clic (mise à jour de ce
+    poste, lot sur les postes en ligne), jamais d'un timer. Les flux de
+    releases se lisent d'ici, le poste n'a rien à télécharger pour être jugé.
+    """
+
+    done = Signal(str, object)      # id, (à mettre à jour, doute, installées, états)
+
+    def __init__(self, host: dict, parent=None):
+        super().__init__(parent)
+        self._id = host["id"]
+        self._host = dict(host)
+
+    def run(self) -> None:
+        try:
+            result = remote_updates.probe_apps(self._host)
+        except Exception as error:   # une sonde ne doit rien casser
+            journal.log_failure(
+                f"Applications de {display_name(self._host)}",
+                detail=repr(error),
+            )
+            result = ([], True, 0, {})
+        self.done.emit(self._id, result)
+
 class RemoteUpdatesWorker(QThread):
     """Mises à jour d'un poste distant, sondées à la demande.
 

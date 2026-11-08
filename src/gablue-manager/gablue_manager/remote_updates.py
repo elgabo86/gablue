@@ -7,14 +7,18 @@ SSH exécute un script qui imprime des sections balisées (`::gablue:<nom>`),
 l'analyse est faite ici avec les mêmes règles que pour le poste local.
 
 Les domaines vérifiés sont ceux qu'on peut mettre à jour à distance depuis le
-manager : image Gablue, Flatpaks, Homebrew, composants gwine. Les AppImages du
-poste distant ne sont pas sondées (pas d'entrée de mise à jour pour elles).
+manager : image Gablue, Flatpaks, Homebrew, composants gwine et applications
+(AppImages). Les états d'AppImages voyagent dans la même connexion (sections
+`##nom` du dialogue « Applications », précédées de `::gablue:apps`) ; les flux
+de releases, eux, se lisent **d'ici** : le poste n'a besoin d'aucun accès
+réseau sortant pour être déclaré à jour.
 """
 
 import re
+import shlex
 import time
 
-from . import updates
+from . import apps, updates
 from .ssh import ssh_capture
 
 # Une seule connexion : chaque section est balisée, son code de retour est
@@ -42,25 +46,103 @@ else
 fi
 """
 
-# « Tout mettre à jour » sur un poste distant : l'image d'abord (elle peut
-# apporter un nouveau gwine), puis Flatpaks, gwine et Homebrew — le même ordre
-# que sur le poste local. Chaque étape tente de s'exécuter même si la
-# précédente échoue (`sudo -n` manquant sur un poste hors image), et le code de
-# sortie reste non nul : la fenêtre du lot affiche l'échec du poste sans
-# interrompre les autres.
-UPDATE_CHAIN = r"""
-rc=0
-sudo -n /usr/bin/bootc upgrade || rc=1
-sudo -n /usr/bin/flatpak update --system -y || rc=1
-if command -v gwine >/dev/null 2>&1; then
-    gwine --init || rc=1
-fi
-if command -v brew >/dev/null 2>&1; then
-    HOMEBREW_NO_AUTO_UPDATE=1 brew update || rc=1
-    brew upgrade || rc=1
-fi
-exit $rc
-"""
+def _echo(text: str) -> str:
+    """Ligne lisible du journal distant (`echo` sans risque de quoting)."""
+    return "echo " + shlex.quote(text)
+
+
+# Les applications ne peuvent pas être décidées par le poste : leur liste vient
+# de `probe_apps` (flux de releases lus d'ici) et leurs commandes sont celles
+# du poste, lues par `apps.remote_states`. Aucun marqueur `::gablue:` ici : un
+# `RemoteTaskDialog` n'a pas d'analyseur, la fenêtre montre le journal.
+def apps_section(pending_apps=(), states=None) -> str:
+    """Lignes bash qui mettent à jour les applications d'un poste distant.
+
+    Une application dont le script manque, ou dont le script ne connaît pas
+    l'option attendue (`--yes` sur une image antérieure : il ouvrirait ses
+    boîtes kdialog et la tâche attendrait indéfiniment), est ignorée avec un
+    message dans le journal — jamais lancée en interactif.
+    """
+    states = states or {}
+    wanted = set(pending_apps or ())
+    lines: list[str] = []
+    for app in apps.APPS:
+        if app.key not in wanted:
+            continue
+        current = states.get(app.key) or {}
+        if not current.get("script"):
+            lines.append(_echo(f"{app.name} : script manquant, ignoré"))
+            continue
+        options = current.get("options") or ()
+        if app.install_args and app.install_args[0] not in options:
+            lines.append(_echo(
+                f"{app.name} : image du poste antérieure à "
+                f"{app.install_args[0]}, ignoré"
+            ))
+            continue
+        lines.append(_echo(f"Mise à jour de {app.name}…"))
+        lines.append(apps.install_command(app, current) + " || rc=1")
+    return "\n".join(lines)
+
+
+def update_chain(pending_apps=(), states=None) -> str:
+    """Script « tout mettre à jour » d'un poste distant.
+
+    L'image d'abord (elle peut apporter un nouveau gwine), puis Flatpaks,
+    gwine, applications et Homebrew — le même ordre que sur le poste local.
+    Chaque étape tente de s'exécuter même si la précédente échoue (`sudo -n`
+    manquant sur un poste hors image) et le code de sortie reste non nul : la
+    fenêtre du lot affiche l'échec du poste sans interrompre les autres.
+
+    `pending_apps` et `states` viennent de `probe_apps` : vide, aucune section
+    applications (le poste est à jour sur ce domaine).
+    """
+    section = apps_section(pending_apps, states)
+    apps_block = f'echo "== Applications =="\n{section}\n' if section else ""
+    return (
+        "rc=0\n"
+        "sudo -n /usr/bin/bootc upgrade || rc=1\n"
+        "sudo -n /usr/bin/flatpak update --system -y || rc=1\n"
+        "if command -v gwine >/dev/null 2>&1; then\n"
+        "    gwine --init || rc=1\n"
+        "fi\n"
+        + apps_block +
+        "if command -v brew >/dev/null 2>&1; then\n"
+        "    HOMEBREW_NO_AUTO_UPDATE=1 brew update || rc=1\n"
+        "    brew upgrade || rc=1\n"
+        "fi\n"
+        "exit $rc\n"
+    )
+
+
+def apps_chain(pending_apps=(), states=None) -> str:
+    """Script des applications seules (entrée « Applications… » d'un poste)."""
+    section = apps_section(pending_apps, states)
+    if not section:
+        return ""
+    return "rc=0\n" + section + "\nexit $rc\n"
+
+
+def probe_apps(host: dict, timeout: float = 90.0) -> tuple:
+    """AppImages d'un poste distant : une connexion SSH + les flux de releases.
+
+    Rend `(clés à mettre à jour, doute, installées, états)` — les états servent
+    à construire les commandes (`install_command` a besoin des options que le
+    script du poste connaît). Poste injoignable → `([], True, 0, {})`, jamais
+    « tout est à jour ».
+    """
+    code, text = ssh_capture(host, apps.REMOTE_STATE_SCRIPT, timeout=timeout)
+    if code != 0 or "##gearlever" not in (text or ""):
+        return [], True, 0, {}
+    states, _gearlever = apps.remote_states(text)
+    pending, unknown, installed = apps.pending_for(states)
+    return pending, unknown, installed, states
+
+
+# État des AppImages greffé sur la sonde : ses sections `##nom` sont précédées
+# d'un marqueur `::gablue:apps`, sinon elles atterrissent dans la dernière
+# section `::gablue:` (le gwine) et faussent son analyse.
+APPS_STATE_SCRIPT = "echo '::gablue:apps'\n" + apps.REMOTE_STATE_SCRIPT
 
 MARKER = "::gablue:"
 _RC_RE = re.compile(r"^rc=(\d+)\s*$", re.MULTILINE)
@@ -159,7 +241,16 @@ def parse_check(text: str, now: float | None = None) -> dict:
 
 def check(host: dict, timeout: float = 240.0) -> dict:
     """Sonde un poste distant ; injoignable → état « hors ligne »."""
-    code, text = ssh_capture(host, CHECK_SCRIPT, timeout=timeout)
+    code, text = ssh_capture(
+        host, CHECK_SCRIPT + "\n" + APPS_STATE_SCRIPT, timeout=timeout,
+    )
     if code != 0 or MARKER not in (text or ""):
         return {"checked_at": time.time(), "online": False, "domains": {}}
-    return parse_check(text)
+    state = parse_check(text)
+    # Les applications demandent les flux de releases : lus d'ici, donc après
+    # la connexion, sans rien exiger du réseau du poste.
+    states, _gearlever = apps.remote_states(text)
+    state["domains"]["apps"] = updates.apps_domain(
+        *apps.pending_for(states)
+    )
+    return state

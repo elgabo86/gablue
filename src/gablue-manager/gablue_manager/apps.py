@@ -433,18 +433,20 @@ def app_update_verdicts(states: dict[str, dict],
     return pending, unknown
 
 
-def pending_updates(stop=None) -> tuple[list[str], bool, int]:
+def pending_for(states: dict[str, dict],
+                stop=None) -> tuple[list[str], bool, int]:
     """(clés à mettre à jour, doute, nombre d'applications installées).
 
-    Sonde réseau : un flux de releases par application, interrogés en
-    parallèle (GearLever ne publie rien). `{}` côté version publiée laisse le
-    verdict indéterminé au lieu de mentir.
+    Mêmes verdicts que `pending_updates`, sur des états **déjà lus** : le poste
+    local lit les siens (`all_states`), un poste distant les reçoit par SSH
+    (`remote_states`). Les flux de releases, eux, se lisent toujours d'ici —
+    aucun poste n'a besoin d'un accès réseau sortant pour être à jour.
 
+    `{}` côté version publiée laisse le verdict indéterminé au lieu de mentir.
     `stop` (threading.Event) vient de la fermeture de la fenêtre : on cesse
     d'attendre les applications restantes, sans bloquer la sortie. Les flux
     déjà partis expirent d'eux-mêmes (`FEED_TIMEOUT`).
     """
-    states = all_states()
     installed = [app for app in APPS if installed_any(app, states[app.key])]
     if not installed:
         return [], False, 0
@@ -470,6 +472,11 @@ def pending_updates(stop=None) -> tuple[list[str], bool, int]:
     return pending, unknown, len(installed)
 
 
+def pending_updates(stop=None) -> tuple[list[str], bool, int]:
+    """Applications installées sur CE poste qui ont une mise à jour."""
+    return pending_for(all_states(), stop)
+
+
 def describe(app: App, current: dict) -> str:
     """Texte d'état d'une ligne du dialogue."""
     if not installed_any(app, current):
@@ -492,23 +499,55 @@ def install_argv(app: App) -> list[str]:
     return [_which(app.script), *app.install_args]
 
 
+def names_for(keys) -> list[str]:
+    """Noms affichés des applications correspondant à ces clés.
+
+    L'ordre est celui du catalogue (`APPS`), donc stable d'un affichage à
+    l'autre : le dialogue et la confirmation listent la même chose.
+    """
+    wanted = set(keys)
+    return [app.name for app in APPS if app.key in wanted]
+
+
+def _marker(text: str) -> str:
+    """Ligne de protocole `::gablue:` écrite par le script sur sa sortie.
+
+    `printf '%s\\n'` plutôt qu'un format à trous : un nom d'application avec
+    une apostrophe casserait un `printf '<texte>'` en single quotes.
+    """
+    return "printf '%s\\n' " + shlex.quote(text)
+
+
 def update_script(keys) -> str:
     """Script bash : mettre à jour les applications listées, une par une.
 
     Le script d'installation de chaque application télécharge la dernière
     release et réintègre l'AppImage dans le menu (GearLever) ; `--yes` coupe
-    ses questions. Les marqueurs `::gablue:step` font avancer la barre du
-    manager quand plusieurs applications s'enchaînent.
+    ses questions.
+
+    Progression : `::gablue:step i/N` pose le plancher de la barre (i-1
+    applications derrière), puis `::gablue:busy` la fait **balayer** pendant le
+    téléchargement de l'application en cours — un AppImage arrive d'un bloc
+    (cURL sans pourcentage exploitable), donc le libellé dit quelle application
+    travaille et le balayage montre que ça avance. Sans ce marqueur, la barre
+    restait figée sur `(i-1)/N` pendant toute la durée du transfert : c'était
+    un « 0 % » pendant une minute pour une application unique (vécu 08/11/2026).
+
+    `set -e` : une application en échec arrête la suite, le code de sortie est
+    celui de la première qui a échoué — sinon la dernière qui réussit rendait
+    « Terminé » alors qu'une autre n'avait pas été mise à jour.
     """
     wanted = set(keys)
     selected = [app for app in APPS if app.key in wanted]
     if not selected:
         return ""
     total = len(selected)
-    lines: list[str] = []
+    lines: list[str] = ["set -e"]
     for index, app in enumerate(selected, start=1):
+        lines.append(_marker(f"::gablue:step {index} {total} {app.name}"))
         lines.append(
-            f"printf '::gablue:step {index} {total} {app.name}\\n'"
+            _marker(f"::gablue:busy Mise à jour de {app.name} "
+                    f"({index}/{total})…")
         )
         lines.append(shlex.join(install_argv(app)))
     return "\n".join(lines) + "\n"

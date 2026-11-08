@@ -920,6 +920,7 @@ class HostCard(QFrame):
             ("gablue", "image", "Gablue…"),
             ("flatpak", "flatpak", "Flatpaks…"),
             ("gwine", "gwine", "Gwine…"),
+            ("apps", "apps", "Applications…"),
             ("brew", "brew", "Brew…"),
         ):
             action = update_menu.addAction(label)
