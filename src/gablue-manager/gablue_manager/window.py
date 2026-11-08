@@ -365,14 +365,17 @@ class MainWindow(QMainWindow):
         self.updates_panel.check_requested.connect(
             lambda: self.check_updates(force=True, activity=True)
         )
+        # L'ordre suit la chaîne « tout mettre à jour » (applications avant
+        # Homebrew, l'étape la plus longue et la plus fragile) : le menu dit
+        # donc la séquence réelle, jamais un ordre qui la contredit.
         self.updates_panel.set_update_menu([
             ("Tout mettre à jour…", lambda: self.local_update("all")),
             None,
             ("Gablue…", lambda: self.local_update("gablue")),
             ("Flatpaks…", lambda: self.local_update("flatpak")),
             ("Gwine…", lambda: self.local_update("gwine")),
-            ("Brew…", lambda: self.local_update("brew")),
             ("Applications…", lambda: self.local_update("apps")),
+            ("Brew…", lambda: self.local_update("brew")),
         ])
         layout.addWidget(self.updates_panel)
 
@@ -733,6 +736,8 @@ class MainWindow(QMainWindow):
              lambda: self.update_host(host_id, "flatpak")),
             ("Gwine…",
              lambda: self.update_host(host_id, "gwine")),
+            ("Applications…",
+             lambda: self.update_host(host_id, "apps")),
             ("Brew…",
              lambda: self.update_host(host_id, "brew")),
         ])
