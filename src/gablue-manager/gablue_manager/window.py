@@ -381,6 +381,7 @@ class MainWindow(QMainWindow):
 
         self.info_panel = InfoPanel(content)
         self.info_panel.filelight_requested.connect(self.open_filelight)
+        self.info_panel.refresh_requested.connect(self.refresh_info_local)
         layout.addWidget(self.info_panel)
 
         layout.addStretch(1)
@@ -745,6 +746,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(panel)
 
         info = InfoPanel(content)
+        info.refresh_requested.connect(
+            lambda hid=host_id: self.refresh_info_host(hid)
+        )
         layout.addWidget(info)
         layout.addStretch(1)
         scroll.setWidget(content)
@@ -783,30 +787,57 @@ class MainWindow(QMainWindow):
         panel.set_temperatures(temperatures)
 
     # -- matériel d'un poste distant ----------------------------------------
-    def _load_remote_hardware(self, host_id: str, force: bool = False) -> None:
+    def refresh_info_local(self) -> None:
+        """Relire le matériel de CE poste à la demande (bouton du panneau).
+
+        `_refresh_hardware` est instantané (/sys, uptime, disques) ; le reste
+        (barrettes, nom Vulkan, SMART) passe par le helper en root, donc un
+        thread, et c'est `_hardware_ready` qui rend la main au bouton.
+        """
+        self.info_panel.set_refreshing(True)
+        self._set_busy("hardware", True)
+        self._refresh_hardware()
+        self._load_hardware()
+
+    def refresh_info_host(self, host_id: str) -> None:
+        """Relire le matériel d'un poste à la demande (une connexion SSH).
+
+        Une seule si la sonde peut partir : un poste qui refuse la clé ou dont
+        l'empreinte est inconnue n'en reçoit pas une de plus, et le bouton
+        n'est pas laissé grisé pour une sonde qui n'a pas commencé.
+        """
+        pane = self._panes.get(host_id)
+        if pane is None:
+            return
+        if not self._load_remote_hardware(host_id, force=True):
+            return
+        pane["info"].set_refreshing(True)
+        self._set_busy("hardware", True)
+
+    def _load_remote_hardware(self, host_id: str, force: bool = False) -> bool:
         """Charge le résumé matériel d'un poste, une fois par session.
 
         L'onglet déclenche la sonde ; une tentative ratée (poste injoignable)
         n'est pas rejouée avant une minute, pour ne pas ouvrir une connexion
-        SSH à chaque passage du timer.
+        SSH à chaque passage du timer. Rend True quand une sonde est partie.
         """
         pane = self._panes.get(host_id)
         host = self._host(host_id)
         if pane is None or host is None:
-            return
+            return False
         # Un poste qui refuse la clé ou dont l'empreinte est inconnue ne
         # reçoit aucune connexion de confort : chacune est une offense pour
         # `PerSourcePenalties` (voir `refresh_all`).
         state = self._states.get(host_id, ("unknown", ""))[0]
         if state not in ("unknown", "online"):
-            return
+            return False
         if host_id in self._remote_hardware_workers:
-            return
+            return False
         if not force:
             if host_id in self._remote_hardware:
-                return
+                return False
             if time.time() - self._remote_hardware_at.get(host_id, 0.0) < 60:
-                return
+                return False
         self._remote_hardware_at[host_id] = time.time()
         worker = RemoteHardwareWorker(host, self)
         worker.done.connect(self._remote_hardware_ready)
@@ -815,18 +846,24 @@ class MainWindow(QMainWindow):
         )
         self._remote_hardware_workers[host_id] = worker
         worker.start()
+        return True
 
     def _remote_hardware_finished(self, host_id: str, worker) -> None:
         if self._remote_hardware_workers.get(host_id) is worker:
             self._remote_hardware_workers.pop(host_id, None)
         worker.deleteLater()
+        # Filet : la sonde a répondu (ou a été abandonnée), la bande d'activité
+        # et le bouton ne doivent pas rester bloqués.
+        self._set_busy("hardware", False)
 
     def _remote_hardware_ready(self, host_id: str, values: dict) -> None:
         self._remote_hardware_at[host_id] = time.time()
+        pane = self._panes.get(host_id)
+        if pane is not None:
+            pane["info"].set_refreshing(False)
         if not values or self._host(host_id) is None:
             return
         self._remote_hardware[host_id] = values
-        pane = self._panes.get(host_id)
         if pane is not None:
             # Filelight ne lit que la machine locale : pas de lien ici.
             self._fill_info_pane(pane["info"], values, links=False)
@@ -967,6 +1004,10 @@ class MainWindow(QMainWindow):
 
     def _hardware_ready(self, values: dict) -> None:
         self._hardware_worker = None
+        # Relecture demandée depuis le panneau (ou passe de démarrage) : la
+        # sonde a rendu la main, le bouton et la bande d'activité suivent.
+        self.info_panel.set_refreshing(False)
+        self._set_busy("hardware", False)
         text = format_memory_modules((values or {}).get("modules") or [])
         if text:
             self.info_panel.set_values({"modules": text})

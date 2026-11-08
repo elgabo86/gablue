@@ -292,6 +292,10 @@ def _make_tool_button(parent, icon_name: str, fallback: str) -> QToolButton:
         button.setIcon(icon)
     return button
 
+# Infobulle du bouton de relecture du panneau « Matériel et système » : elle
+# nomme ce que la passe de 30 s ne refait pas (lectures root, sonde Vulkan).
+REFRESH_INFO_TIP = "Relire le matériel de ce poste (barrettes, GPU, SMART)"
+
 # L'ordre fait la lecture : matériel d'abord, puis le système.
 INFO_FIELDS = (
     ("model", "Modèle"),
@@ -317,6 +321,7 @@ class InfoPanel(QFrame):
     """Résumé matériel et système de la machine courante, en deux colonnes."""
 
     filelight_requested = Signal(str)
+    refresh_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -327,7 +332,20 @@ class InfoPanel(QFrame):
 
         title = QLabel("Matériel et système", self)
         title.setObjectName("panelTitle")
-        layout.addWidget(title)
+        # Relecture à la demande : /sys et l'uptime sont gratuits, mais les
+        # barrettes, le nom Vulkan et le SMART passent par le helper en root.
+        # Ces lectures restent au démarrage et sur ce clic, jamais dans la
+        # passe de 30 s.
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(6)
+        header.addWidget(title)
+        header.addStretch(1)
+        self.refresh_button = _make_tool_button(self, "view-refresh", "↻")
+        self.refresh_button.setToolTip(REFRESH_INFO_TIP)
+        self.refresh_button.clicked.connect(self.refresh_requested.emit)
+        header.addWidget(self.refresh_button)
+        layout.addLayout(header)
 
         grid = QGridLayout()
         grid.setHorizontalSpacing(28)
@@ -439,6 +457,13 @@ class InfoPanel(QFrame):
         label = self._labels.get(key)
         if label is not None and text:
             label.setText(text)
+
+    def set_refreshing(self, active: bool) -> None:
+        """Bouton de relecture grisé pendant la sonde : aucun double clic."""
+        self.refresh_button.setEnabled(not active)
+        self.refresh_button.setToolTip(
+            "Lecture du matériel…" if active else REFRESH_INFO_TIP
+        )
 
     def set_temperatures(self, text: str) -> None:
         """Bloc sous la colonne de gauche ; rien à afficher sans capteur.
