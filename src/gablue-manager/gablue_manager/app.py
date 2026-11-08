@@ -25,7 +25,7 @@ mode ERTM, émulation CPUID fault), options de gwine (DXVK, affichage, manettes)
 priorité au premier plan et Tailscale (lien du serveur demandé) — les
 changements de chaque dialogue partent ensemble. Applications (émulateurs et
 outils), sur ce poste comme à distance (menu Configuration d'un poste) :
-installation, mise à jour et suppression d'ES-DE, Azahar, Eden, Xenia, ShadPS4
+installation, mise à jour et suppression d'ES-DE, Azahar, Eden, Xenia, Lichii
 et OpenCode 2 (configuration, sauvegardes et sessions conservées). Les opérations s'ouvrent dans leur propre
 fenêtre : plusieurs postes peuvent être traités en même temps.
 

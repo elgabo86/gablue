@@ -21,7 +21,7 @@ DOMAIN_LABELS = {
     "gwine": ("Composants gwine", "Runner, DXVK, VKD3D, D7VK, NVAPI."),
     "apps": (
         "Applications",
-        "Applications installées (ES-DE, Azahar, Eden, Xenia, ShadPS4, "
+        "Applications installées (ES-DE, Azahar, Eden, Xenia, Lichii, "
         "OpenCode 2) : un flux de releases par application.",
     ),
 }

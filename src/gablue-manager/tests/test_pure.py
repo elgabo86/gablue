@@ -1545,9 +1545,14 @@ class AppsTest(unittest.TestCase):
             (directory / "eden.appimage").touch()
             (directory / "esde.appimage_3.4.0.OLD").touch()
             (directory / "xenia_edge.appimage").touch()
+            (directory / "lichii.appimage").touch()
             self.assertEqual(
                 apps.find_appimage(self.by_key["eden"], directory).name,
                 "eden.appimage",
+            )
+            self.assertEqual(
+                apps.find_appimage(self.by_key["lichii"], directory).name,
+                "lichii.appimage",
             )
             self.assertIsNone(
                 apps.find_appimage(self.by_key["azahar"], directory)
@@ -1743,7 +1748,8 @@ class AppsTest(unittest.TestCase):
         )
         self.assertEqual(apps.parse_atom_latest(""), {})
 
-        # Flux qui mélange l'émulateur et ses outils (shadPS4Plus).
+        # Flux qui mélange plusieurs applications (dépôt non géré, mais le
+        # cas est réel : le filtre de titre écarte l'entrée parasite).
         mixed = (
             "<feed><entry><title>ShadPs4Plus PKG Extractor 1.1</title>"
             "<link href=\"https://github.com/x/releases/tag/PKG_EXTRACTOR\"/>"
@@ -1771,6 +1777,33 @@ class AppsTest(unittest.TestCase):
         self.assertEqual(apps.version_tuple("v0.2.1"), (0, 2, 1))
         self.assertEqual(apps.version_tuple("azahar 2126.2-A"), (2126, 2))
         self.assertEqual(apps.version_tuple(""), ())
+
+    def test_lichii(self):
+        """Flux partagé avec Eglantine : filtre par titre, tag comme version."""
+        feed = (
+            "<feed>"
+            "<entry><title>Eglantine nx2 build 65 (3bdd53d)</title>"
+            '<link rel="alternate" href="https://github.com/zortos293/Lichii/'
+            'releases/tag/build-65"/>'
+            "<updated>2026-11-05T00:00:00Z</updated></entry>"
+            "<entry><title>Lichii nx2 build 117 (89440b2)</title>"
+            '<link rel="alternate" href="https://github.com/zortos293/Lichii/'
+            'releases/tag/build-117"/>'
+            "<updated>2026-11-07T22:43:36Z</updated></entry></feed>"
+        )
+        filter_ = self.by_key["lichii"].latest_filter
+        info = apps.parse_atom_latest(feed, filter_)
+        # Pas de version pointée dans le titre : le tag porte la version.
+        self.assertEqual(info["version"], "build-117")
+        # Sans filtre, la première entrée du flux (Eglantine) gagnerait.
+        self.assertEqual(apps.parse_atom_latest(feed)["version"], "build-65")
+        # GearLever rapporte le X-AppImage-Version complet : même build.
+        self.assertFalse(apps.update_available(
+            {"version": "build-117-89440b2"}, info,
+        ))
+        self.assertTrue(apps.update_available(
+            {"version": "build-116-92f0212"}, info,
+        ))
 
     def test_update_available(self):
         """Version si comparable, sinon date ; jamais « à jour » au doute."""

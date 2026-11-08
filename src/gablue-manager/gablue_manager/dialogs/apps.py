@@ -1,6 +1,6 @@
 """Section « Applications » : installer, mettre à jour ou supprimer les AppImages.
 
-Émulateurs (ES-DE, Azahar, Eden, Xenia, ShadPS4) et outils (OpenCode 2), tous
+Émulateurs (ES-DE, Azahar, Eden, Xenia, Lichii) et outils (OpenCode 2), tous
 installés dans `~/AppImages` et intégrés au menu par GearLever. Le dialogue sert
 la machine courante (`host=None`) comme un poste distant (état lu en une seule
 connexion SSH, actions dans un `RemoteTaskDialog`).

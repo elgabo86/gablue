@@ -86,13 +86,15 @@ APPS: tuple[App, ...] = (
         latest_kind="github", latest_id="has207/xenia-edge",
     ),
     App(
-        "shadps4", "ShadPS4",
-        "Émulateur PlayStation 4.",
+        "lichii", "Lichii",
+        "Émulateur Nintendo Switch moderne (build PGO).",
         "emulateur",
-        "shadps4*.appimage", "shadps4-install", "shadps4",
-        latest_kind="github", latest_id="AzaharPlus/shadPS4Plus",
-        # Le flux mélange l'émulateur et ses outils (PKG Extractor).
-        latest_filter=r"^ShadPs4Plus\s+\d",
+        "lichii*.appimage", "lichii-install", "lichii",
+        latest_kind="github", latest_id="zortos293/Lichii",
+        # Le flux mêle les releases Eglantine (dépôt amont) ; les titres
+        # « Lichii nx2 build 117 » n'ont pas de version pointée, c'est le tag
+        # (`build-117`) qui sert de version.
+        latest_filter=r"^Lichii\b",
     ),
     App(
         "opencode", "OpenCode 2",
@@ -296,7 +298,7 @@ def parse_atom_latest(text: str, title_filter: str = "") -> dict:
     des hachages ou des noms d'outils) ; à défaut, le dernier segment du lien
     de release (GitHub `releases/tag/<tag>`, GitLab `-/releases/<tag>`). La
     date vient de `<updated>` de l'entrée. `title_filter` écarte les releases
-    qui ne sont pas l'application (ex. les outils du dépôt shadPS4Plus).
+    qui ne sont pas l'application (ex. les releases Eglantine du dépôt Lichii).
     """
     for entry in re.finditer(r"<entry>(.*?)</entry>", text or "", re.S):
         body = entry.group(1)
@@ -638,7 +640,7 @@ echo "##cli"
 if command -v opencode >/dev/null 2>&1; then opencode --version 2>/dev/null; fi
 echo "##scripts"
 for script in esde-install azahar-install eden-install xenia-install \
-              shadps4-install opencode2-install opencode2-remove; do
+              lichii-install opencode2-install opencode2-remove; do
     path="$(command -v "$script" 2>/dev/null || true)"
     if [ -z "$path" ]; then
         printf '%s\t%s\t\n' "$script" "-"

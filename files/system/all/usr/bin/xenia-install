@@ -13,14 +13,33 @@ mkdir -p "$CACHE_DIR" "$APPIMAGES_DIR"
 # ---------------------------------------------------------------------------
 # 1. Téléchargement
 # ---------------------------------------------------------------------------
-RELEASE_JSON=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest")
-
+# Dernière release SANS api.github.com (quota anonyme 60 req/h par IP, partagé
+# par tout le réseau) : le flux Atom des releases donne les tags (ici des
+# hachages de commit), la page `expanded_assets` du tag donne l'asset exact.
 ASSET_NAME_PATTERN="xenia_edge_linux.AppImage"
-DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r --arg pattern "$ASSET_NAME_PATTERN" \
-    '.assets[] | select(.name | contains($pattern)) | .browser_download_url')
+DOWNLOAD_URL=""
+
+CANDIDATES=$(curl -fsL "https://github.com/$REPO/releases.atom" |
+    tr -d '\n' | sed 's|<entry>|\n<entry>|g' |
+    awk '
+        {
+            if (match($0, /releases\/tag\/[^"]+/))
+                print substr($0, RSTART + 13, RLENGTH - 13)
+        }')
+
+for TAG in $CANDIDATES; do
+    ASSET_PATH=$(curl -fsL \
+        "https://github.com/$REPO/releases/expanded_assets/$TAG" |
+        grep -o "$REPO/releases/download/[^\"]*" |
+        grep -i -- "$ASSET_NAME_PATTERN" | head -n1)
+    if [ -n "$ASSET_PATH" ]; then
+        DOWNLOAD_URL="https://github.com/$ASSET_PATH"
+        break
+    fi
+done
 
 if [ -z "$DOWNLOAD_URL" ]; then
-    echo "Erreur : AppImage non trouvé dans la dernière release."
+    echo "Erreur : aucune release de Xenia Edge ne publie d'AppImage Linux."
     exit 1
 fi
 
