@@ -294,7 +294,22 @@ class SystemTest(unittest.TestCase):
             "description": "Layers", "id": "x",
             "stepsCached": 1, "steps": 1, "stepsTotal": 4, "subtasks": [],
         }))
-        self.assertEqual(steps["percent"], 50.0)
+        # `stepsCached` = déjà présent cumulé, pas un avancement de CE
+        # téléchargement : 1 étape sur 4, pas 2 (vécu 08/11/2026).
+        self.assertEqual(steps["percent"], 25.0)
+
+        # Ligne réelle de bootc 1.17.1 (backend ostree, 08/11/2026) : le cache
+        # d'une exécution précédente vaut 4,3 Gio pour 772 Mio à télécharger.
+        # L'additionner collait la barre à 100 % dès le premier événement.
+        real = local.parse_progress_event(
+            '{"bytes":8193,"bytesCached":4296727642,'
+            '"bytesTotal":772729517,"description":"Pulling Image: sha256:cdf",'
+            '"id":"sha256:cdf","steps":0,"stepsCached":118,"stepsTotal":10,'
+            '"subtasks":[],"task":"pulling","type":"ProgressBytes"}'
+        )
+        self.assertLess(real["percent"], 0.01)
+        self.assertEqual((real["bytes"], real["bytes_total"]), (8193, 772729517))
+        self.assertEqual(real["label"], "Téléchargement de l'image")
 
         # Total inconnu → barre indéterminée.
         unknown = local.parse_progress_event(json.dumps({

@@ -4,6 +4,8 @@
 import html
 import os
 import shutil
+import signal
+import time
 
 from PySide6.QtCore import (
     QProcess, QProcessEnvironment, QSocketNotifier, QTimer, Qt, Signal,
@@ -19,6 +21,51 @@ from .local import parse_progress_event, privileged_prefix
 from .util import display_name, ssh_target
 from .widgets import BusyProgressBar
 from .workers import SshTaskWorker
+
+def _own_session(argv: list[str]) -> list[str]:
+    """Commande dans sa propre session : son groupe se tue d'un seul coup.
+
+    PySide6 n'expose pas `QProcess.setChildProcessModifier` (6.11.2 : absent),
+    donc `os.setsid` n'était jamais appelé et `bootc` restait dans le groupe de
+    Gablue Manager. `setsid` fait le travail et `exec` directement : le pid du
+    processus reste celui de la commande, son groupe est tuable, et SIGTERM
+    n'atteint plus que l'opération (vécu 08/11/2026 : « annuler n'annule pas
+    la mise à jour »).
+    """
+    wrapper = shutil.which("setsid")
+    if wrapper is None:
+        return argv
+    return [wrapper, *argv]
+
+def _signal_tree(process, sig: int) -> None:
+    """Signale le **groupe** de la commande, pas seulement son lanceur.
+
+    `QProcess.terminate()` n'atteint que `sudo` ou `bash` : `bootc` continue
+    alors son téléchargement après l'annulation. On tue le groupe — jamais le
+    nôtre, si la commande n'a pas pu être isolée.
+    """
+    try:
+        pid = int(process.processId())
+    except (RuntimeError, TypeError, ValueError):
+        return
+    if pid > 0:
+        try:
+            same_group = os.getpgid(pid) == os.getpgid(0)
+        except OSError:
+            same_group = True       # processus disparu : ne pas risquer le sien
+        if not same_group:
+            try:
+                os.killpg(pid, sig)
+                return
+            except OSError:
+                pass                # groupe déjà parti : on retombe sur le pid
+    try:
+        if sig == signal.SIGTERM:
+            process.terminate()
+        else:
+            process.kill()
+    except RuntimeError:                 # objet C++ déjà détruit
+        pass
 
 def _display_command(argv: list[str]) -> str:
     """Commande lisible pour le journal : un script multi-ligne est résumé.
@@ -366,6 +413,10 @@ class LocalTaskDialog(QDialog):
         self._progress_notifier: QSocketNotifier | None = None
         self._progress_tries = 0
         self._progress_buffer = ""
+        # Instant du lancement : un FIFO plus ancien est un reste d'une
+        # opération précédente (annulée), pas celui que le helper crée pour
+        # nous — y lire donnerait une barre figée pour toujours.
+        self._progress_started = 0.0
         # En mode « busy » la barre est voulue dès le départ, même si la
         # commande n'écrit rien : elle doit rester visible à la fin.
         self._progress_seen = progress_mode == "busy"
@@ -493,7 +544,9 @@ class LocalTaskDialog(QDialog):
                 return
             argv = [*prefix, *argv]
 
+        argv = _own_session(argv)
         self.log_view.appendPlainText("$ " + _display_command(argv) + "\n\n")
+        self._progress_started = time.time()
         process = QProcess(self)
         process.setProcessChannelMode(QProcess.MergedChannels)
         if self._env_extra:
@@ -509,9 +562,6 @@ class LocalTaskDialog(QDialog):
         process.readyReadStandardOutput.connect(self._drain)
         process.finished.connect(self._finished)
         process.errorOccurred.connect(self._start_failed)
-        if hasattr(process, "setChildProcessModifier"):
-            # Propre session : l'annulation emporte les enfants (bootc, ssh…).
-            process.setChildProcessModifier(os.setsid)
         self._process = process
         process.start()
         if self._progress_fifo:
@@ -533,6 +583,16 @@ class LocalTaskDialog(QDialog):
             return
         if not os.path.exists(self._progress_fifo):
             if self._progress_tries < 50:      # ~5 s, le temps que sudo démarre
+                self._progress_tries += 1
+                QTimer.singleShot(100, self._progress_open)
+            return
+        try:
+            age = self._progress_started - os.stat(self._progress_fifo).st_mtime
+        except OSError:
+            age = None
+        if age is None or age > 0.5:
+            # FIFO d'une opération précédente : le helper va le recréer.
+            if self._progress_tries < 50:
                 self._progress_tries += 1
                 QTimer.singleShot(100, self._progress_open)
             return
@@ -732,13 +792,14 @@ class LocalTaskDialog(QDialog):
         self._append("\n[annulation…]\n")
         # SIGTERM d'abord : gwine restaure l'ancien préfixe sur ce signal, un
         # SIGKILL immédiat le laisserait à moitié construit. SIGKILL seulement
-        # si le programme s'accroche.
-        self._process.terminate()
+        # si le programme s'accroche. Le signal part au groupe : `sudo` et
+        # `bash` ne suffisent pas, `bootc` continue sinon son téléchargement.
+        _signal_tree(self._process, signal.SIGTERM)
         QTimer.singleShot(4000, self._kill_if_running)
 
     def _kill_if_running(self) -> None:
         if self._running and self._process is not None:
-            self._process.kill()
+            _signal_tree(self._process, signal.SIGKILL)
 
     def _start_failed(self, error) -> None:
         # finished() n'est pas émis quand le programme n'a pas pu démarrer.
@@ -892,6 +953,10 @@ class SequentialTaskDialog(QDialog):
         self._progress_notifier: QSocketNotifier | None = None
         self._progress_tries = 0
         self._progress_buffer = ""
+        # Instant du lancement : un FIFO plus ancien est un reste d'une
+        # opération précédente (annulée), pas celui que le helper crée pour
+        # nous — y lire donnerait une barre figée pour toujours.
+        self._progress_started = 0.0
 
         self.setWindowTitle(title or "Mise à jour complète")
         self.setModal(False)
@@ -1009,6 +1074,10 @@ class SequentialTaskDialog(QDialog):
                 return
             argv = [*prefix, *argv]
 
+        argv = _own_session(argv)
+        # Instant du lancement de CETTE étape : le FIFO de bootc doit être
+        # plus récent que lui (sinon c'est le reste d'une opération annulée).
+        self._progress_started = time.time()
         self.log_view.appendPlainText(
             f"\n== {step['label']} ==\n$ " + _display_command(argv) + "\n"
         )
@@ -1028,8 +1097,6 @@ class SequentialTaskDialog(QDialog):
         process.readyReadStandardOutput.connect(self._drain)
         process.finished.connect(self._step_finished)
         process.errorOccurred.connect(self._start_failed)
-        if hasattr(process, "setChildProcessModifier"):
-            process.setChildProcessModifier(os.setsid)
         self._process = process
         process.start()
         if self._progress_fifo:
@@ -1203,6 +1270,16 @@ class SequentialTaskDialog(QDialog):
                 QTimer.singleShot(100, self._open_fifo)
             return
         try:
+            age = self._progress_started - os.stat(self._progress_fifo).st_mtime
+        except OSError:
+            age = None
+        if age is None or age > 0.5:
+            # FIFO d'une opération précédente : le helper va le recréer.
+            if self._progress_tries < 50:
+                self._progress_tries += 1
+                QTimer.singleShot(100, self._open_fifo)
+            return
+        try:
             fd = os.open(self._progress_fifo, os.O_RDONLY | os.O_NONBLOCK)
         except OSError:
             if self._progress_tries < 50:
@@ -1263,19 +1340,19 @@ class SequentialTaskDialog(QDialog):
         self._cancelled = True
         self.cancel_button.setEnabled(False)
         self._append("\n[annulation…]\n")
-        self._process.terminate()
+        _signal_tree(self._process, signal.SIGTERM)
         QTimer.singleShot(4000, self._kill_if_running)
 
     def _kill_if_running(self) -> None:
         if self._running and self._process is not None:
-            self._process.kill()
+            _signal_tree(self._process, signal.SIGKILL)
 
     def abort(self) -> None:
         if self._running and self._process is not None:
             self._cancelled = True
-            self._process.terminate()
+            _signal_tree(self._process, signal.SIGTERM)
             if not self._process.waitForFinished(3000):
-                self._process.kill()
+                _signal_tree(self._process, signal.SIGKILL)
                 self._process.waitForFinished(1000)
         self._stop_progress()
         self.accept()

@@ -2515,6 +2515,7 @@ PROGRESS_TASKS = {
     "ostree_chunk": "Téléchargement des objets OSTree",
     "ostree_derived": "Construction de la couche dérivée",
     "importing": "Import de l'image",
+    "staging": "Préparation du déploiement",
     "composing": "Écriture du déploiement",
 }
 
@@ -2525,6 +2526,13 @@ def parse_progress_event(line: str) -> dict:
     `progress_jsonl.rs` de bootc). `{}` pour tout le reste (message Start, JSON
     tronqué, ligne vide). Le pourcentage prend les octets quand le total est
     connu (images), sinon les étapes (couches), sinon None → barre indéterminée.
+
+    Seuls `bytes` et `steps` comptent : `bytesCached`/`stepsCached` sont le
+    **déjà présent cumulé**, pas un avancement de l'opération en cours. Les
+    additionner donnait « 4,0 Gio / 772 Mio » et une barre à 100 % dès le
+    premier événement (constaté le 08/11/2026, bootc 1.17.1, backend ostree :
+    `bytesCached` 4 296 727 642 pour `bytesTotal` 772 729 517, et 118 étapes
+    en cache pour 10 à faire).
     """
     try:
         event = json.loads(line)
@@ -2542,9 +2550,9 @@ def parse_progress_event(line: str) -> dict:
             return 0
 
     total = number("bytesTotal")
-    done = number("bytes") + number("bytesCached")
+    done = number("bytes")
     steps_total = number("stepsTotal")
-    steps = number("steps") + number("stepsCached")
+    steps = number("steps")
     percent: float | None = None
     if total > 0:
         percent = 100.0 * done / total

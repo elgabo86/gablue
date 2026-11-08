@@ -47,6 +47,54 @@ QLabel#recommendWarn {
 QScrollArea { background: transparent; border: none; }
 QScrollArea > QWidget > QWidget { background: transparent; }
 
+/* Barres de défilement : sans ces règles Qt peint la sienne, noire, qui jure
+   avec le reste (constaté 08/11/2026 dans le journal des tâches). Poignée
+   arrondie sur piste transparente, sans flèches ; l'accent n'arrive qu'au
+   clic pour ne pas crier. */
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 0;
+    border: none;
+}
+QScrollBar:horizontal {
+    background: transparent;
+    height: 10px;
+    margin: 0;
+    border: none;
+}
+QScrollBar::handle:vertical {
+    background: @scrollHandle@;
+    border-radius: 4px;
+    min-height: 28px;
+    margin: 2px;
+}
+QScrollBar::handle:horizontal {
+    background: @scrollHandle@;
+    border-radius: 4px;
+    min-width: 28px;
+    margin: 2px;
+}
+QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {
+    background: @scrollHover@;
+}
+QScrollBar::handle:vertical:pressed, QScrollBar::handle:horizontal:pressed {
+    background: @accent@;
+}
+QScrollBar::add-line, QScrollBar::sub-line {
+    background: transparent;
+    border: none;
+    width: 0;
+    height: 0;
+}
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+QScrollBar::up-arrow, QScrollBar::down-arrow,
+QScrollBar::left-arrow, QScrollBar::right-arrow {
+    width: 0;
+    height: 0;
+    background: transparent;
+}
+
 QTabWidget::pane {
     border: 1px solid @border@;
     border-radius: 12px;
@@ -284,6 +332,8 @@ def make_qss() -> str:
         "@pressed@": _rgba(tint, 46 if dark else 24),
         "@border@": _rgba(tint, 32 if dark else 26),
         "@barTrack@": _rgba(tint, 26 if dark else 22),
+        "@scrollHandle@": _rgba(tint, 60 if dark else 45),
+        "@scrollHover@": _rgba(tint, 110 if dark else 85),
         "@accent@": accent.name(),
         "@accentSoft@": _rgba(accent, 170),
         "@accentHover@": (accent.lighter(112) if dark else accent.darker(108)).name(),

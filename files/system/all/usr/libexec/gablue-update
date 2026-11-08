@@ -23,11 +23,19 @@ install -d -m 0755 /run/gablue
 rm -f "$FIFO"
 mkfifo -m 0644 "$FIFO"
 
+# Un FIFO laissé par une mise à jour annulée serait relu comme celui de la
+# nouvelle opération (barre figée, plus aucun événement) : on le retire
+# toujours, y compris quand l'annulation tue le helper en pleine descente.
+cleanup() {
+    exec 3>&- || true
+    rm -f "$FIFO"
+}
+trap cleanup EXIT
+trap 'exit 143' TERM INT
+
 exec 3<>"$FIFO"
 rc=0
 # La sortie humaine reste sur stdout/stderr (journal du manager) ; seuls les
 # événements de progression passent par le FIFO.
 "$BOOTC" upgrade --progress-fd 3 || rc=$?
-exec 3>&-
-rm -f "$FIFO"
 exit "$rc"
