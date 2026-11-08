@@ -54,7 +54,9 @@ from .local import (
     parse_flatpak_progress, parse_gablue_progress, privileged_prefix,
     set_local_sshd_sudo,
 )
-from .ssh import ask_remote_password, remote_sudo_nopasswd, remote_sudo_prefix
+from .ssh import (
+    ask_remote_password, key_ready, remote_sudo_nopasswd, remote_sudo_prefix,
+)
 from .style import make_qss
 from .uiutil import app_icon, network_online
 from .tasks import (
@@ -118,7 +120,8 @@ class MainWindow(QMainWindow):
         # Un dialogue de nettoyage par cible (local ou poste), non modal : une
         # tâche lancée depuis un dialogue modal reste bloquée par la modalité.
         self._clean_dialogs: dict[str, CleanDialog] = {}
-        self._key_queue: list[dict] = []     # postes à équiper après un import
+        self._key_queue: list[dict] = []     # {"host", "password", "pending"}
+        self._key_rejected: list[tuple[str, str]] = []   # (nom, raison)
         self._key_workers: set = set()       # sondes de clé en vol
         self._last_check: float | None = None
         self._display_order: list[str] = []
@@ -1681,15 +1684,9 @@ class MainWindow(QMainWindow):
         dialog = HostDialog(self, existing=self._hosts)
         if dialog.exec() != QDialog.Accepted:
             return
-        host = dialog.result_record
-        self._hosts.append(host)
-        self._save()
-        self._states[host["id"]] = ("unknown", "")
-        self._rebuild_cards()
-        self.refresh_all()
-        # L'ajout inclut la copie de la clé : le dialogue de clé vérifie
-        # d'abord si elle est déjà acceptée (aucun mot de passe dans ce cas).
-        self.install_key_dialog(host["id"], password=dialog.password())
+        # Rien n'entre au registre avant la vérification de la clé : un poste
+        # dont la clé ne passe pas n'est jamais ajouté (demandé 08/11/2026).
+        self._install_keys([dialog.result_record], dialog.password())
 
     def edit_host(self, host_id: str) -> None:
         host = self._host(host_id)
@@ -1741,58 +1738,105 @@ class MainWindow(QMainWindow):
         if host is None:
             return
         dialog = KeyInstallDialog(self, host=host, password=password)
-        dialog.installed.connect(lambda: self._key_installed(host_id))
+        item = {"host": host, "password": password, "pending": False}
+        dialog.installed.connect(lambda it=item: self._key_installed(it))
         start_task(self, dialog)
 
-    def _install_keys(self, hosts: list[dict]) -> None:
-        """Copie la clé sur des postes importés, sans fenêtre si elle est déjà là.
+    def _install_keys(self, hosts: list[dict], password: str = "") -> None:
+        """Copie la clé des postes à ajouter, sans fenêtre si elle est déjà là.
 
-        Une sonde muette par poste (thread, jamais le thread GUI) : la clé est
-        enregistrée comme installée quand elle passe, et le dialogue de copie ne
-        s'ouvre que pour les postes qui la refusent encore. Les dialogues sont
-        enchaînés (une fenêtre à la fois) pour ne pas empiler les mots de passe.
+        Une sonde muette par poste (thread, jamais le thread GUI). Un poste
+        n'entre au registre qu'une fois la clé acceptée **et** l'empreinte
+        épinglée : tant que ce n'est pas prouvé, il reste hors de `_hosts`,
+        n'est pas écrit dans `ssh-hosts.json` et n'apparaît pas dans la liste.
+        Le dialogue ne s'ouvre que pour ceux qui la refusent encore (mot de
+        passe) ou dont l'empreinte reste à accepter ; les fenêtres sont
+        enchaînées, une à la fois.
         """
-        self._key_queue = list(hosts)
+        self._key_queue = [
+            {"host": dict(host), "password": password, "pending": True}
+            for host in hosts
+        ]
+        self._key_rejected = []
         self._probe_next_key()
 
     def _probe_next_key(self) -> None:
         if not self._key_queue:
+            self._key_report()
             return
-        host = self._key_queue.pop(0)
-        worker = KeyProbeWorker(host, self)
+        item = self._key_queue.pop(0)
+        worker = KeyProbeWorker(item["host"], self)
         self._key_workers.add(worker)
         worker.finished.connect(lambda w=worker: self._key_workers.discard(w))
-        worker.done.connect(
-            lambda info, h=dict(host): self._key_probed(h, info)
-        )
+        worker.done.connect(lambda info, it=item: self._key_probed(it, info))
         worker.start()
 
-    def _key_probed(self, host: dict, info: dict) -> None:
-        if info.get("authenticated"):
-            self._key_installed(host["id"])
+    def _key_probed(self, item: dict, info: dict) -> None:
+        host = item["host"]
+        if key_ready(info):
+            self._key_installed(item)
             self._probe_next_key()
             return
         # La sonde est passée au dialogue : l'installation réutilise ses clés
         # au lieu d'ouvrir une connexion refusée de plus.
-        dialog = KeyInstallDialog(self, host=host, prescan=info)
-        dialog.installed.connect(lambda h=host["id"]: self._key_installed(h))
+        dialog = KeyInstallDialog(
+            self, host=host, password=item["password"], prescan=info
+        )
+        dialog.installed.connect(lambda it=item: self._key_installed(it))
         # La suite attend la fermeture de cette fenêtre : un mot de passe à la
         # fois, et l'utilisateur peut renoncer sans bloquer les suivants.
-        dialog.finished.connect(lambda _code: self._probe_next_key())
+        dialog.finished.connect(
+            lambda _code, d=dialog, it=item: self._key_dialog_closed(d, it)
+        )
         start_task(self, dialog)
 
-    def _key_installed(self, host_id: str) -> None:
-        host = self._host(host_id)
-        if host is None:
+    def _key_dialog_closed(self, dialog: KeyInstallDialog, item: dict) -> None:
+        """Fenêtre fermée sans succès : le poste en attente est écarté."""
+        if not dialog.key_installed():
+            self._key_rejected.append(
+                (display_name(item["host"]), dialog.failure_text())
+            )
+        self._probe_next_key()
+
+    def _key_report(self) -> None:
+        """Dit quels postes n'ont pas été ajoutés, et pourquoi."""
+        rejected = self._key_rejected
+        self._key_rejected = []
+        if not rejected:
             return
-        host["key_added"] = True
-        self._save()
-        self._states[host_id] = ("checking", "")
-        self._apply_states()
+        lines = "\n".join(f"• {name} — {reason}" for name, reason in rejected)
+        QMessageBox.warning(
+            self, "Postes non ajoutés",
+            "La clé SSH n'a pas pu être vérifiée sur :\n\n"
+            f"{lines}\n\n"
+            "Ces postes ne sont pas dans la liste. Réessayez l'ajout avec le "
+            "mot de passe SSH du poste si la clé manque.",
+        )
+
+    def _key_installed(self, item: dict) -> None:
+        host = item["host"]
+        if item.get("pending"):
+            # Premier ajout : c'est SEULEMENT maintenant que le registre, le
+            # disque et la liste reçoivent le poste.
+            if self._host(host["id"]) is not None:
+                return
+            host["key_added"] = True
+            self._hosts.append(host)
+            self._states[host["id"]] = ("checking", "")
+            self._save()
+            self._rebuild_cards()
+        else:
+            stored = self._host(host["id"])
+            if stored is None:
+                return
+            stored["key_added"] = True
+            self._save()
+            self._states[host["id"]] = ("checking", "")
+            self._apply_states()
         self.refresh_all()
         # La clé fonctionne : c'est le moment de demander au poste ses
         # adresses (dont Tailscale, jamais annoncée en mDNS).
-        self._ask_addresses(host_id)
+        self._ask_addresses(host["id"])
 
     def launch_remote(self, host_id: str) -> None:
         host = self._host(host_id)
@@ -2716,13 +2760,16 @@ class MainWindow(QMainWindow):
             if record is not None:
                 added.append(record)
         if added:
-            self._save()
-            self._rebuild_cards()
-            self.refresh_all()
-            # La clé est copiée automatiquement sur les postes importés.
+            # Rien n'est enregistré ici : la clé est vérifiée d'abord, et un
+            # poste dont elle ne passe pas n'est jamais ajouté.
             self._install_keys(added)
 
     def _add_record(self, candidate: dict) -> dict | None:
+        """Fiche d'un poste découvert, sans l'ajouter au registre.
+
+        L'ajout effectif (`_key_installed`) n'a lieu qu'une fois la clé
+        vérifiée : la découverte ne suffit pas.
+        """
         # La découverte connaît déjà toutes les adresses de la machine (LAN et
         # Tailscale) : on garde les autres en secours au lieu d'en jeter.
         addresses = [
@@ -2748,8 +2795,6 @@ class MainWindow(QMainWindow):
                 host["user"], host["host"], host["port"]
             ):
                 return None
-        self._hosts.append(host)
-        self._states[host["id"]] = ("unknown", "")
         return host
 
     def _launch(self, command: list[str], label: str,

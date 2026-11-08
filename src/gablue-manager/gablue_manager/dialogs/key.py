@@ -1,12 +1,18 @@
 """Copie de la clé SSH vers un poste.
+
+Le poste n'entre dans la liste qu'une fois la clé acceptée **et** l'empreinte
+d'hôte épinglée : ce dialogue ne porte donc plus de bouton « Installer la
+clé ». Il demande le mot de passe seulement quand il en faut un (Entrée lance
+la copie) et démarre seul l'épinglage quand la clé est déjà acceptée.
 """
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton,
-    QVBoxLayout, QWidget,
+    QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
+    QPushButton, QVBoxLayout, QWidget,
 )
 
+from ..ssh import key_ready
 from ..uiutil import restyle_label
 from ..util import address_text, display_name
 from ..workers import KeyInstallWorker, KeyProbeWorker
@@ -29,6 +35,7 @@ class KeyInstallDialog(QDialog):
         self._probe_worker: KeyProbeWorker | None = None
         self._prescan = prescan
         self._success = False
+        self._message = ""
 
         self.setWindowTitle(f"Clé SSH — {display_name(self._host)}")
         self.setModal(True)
@@ -69,7 +76,8 @@ class KeyInstallDialog(QDialog):
         # La consigne est AU-DESSUS du champ : sous le champ, elle se lisait
         # comme une légende des boutons.
         hint = QLabel(
-            "Sert une fois, jamais enregistré.", self.form_box,
+            "Sert une fois, jamais enregistré. Entrée lance la copie.",
+            self.form_box,
         )
         hint.setObjectName("hint")
         hint.setWordWrap(True)
@@ -103,13 +111,6 @@ class KeyInstallDialog(QDialog):
         self.close_button.setObjectName("ghost")
         self.close_button.clicked.connect(self.reject)
         buttons.addWidget(self.close_button)
-
-        self.install_button = QPushButton("Installer la clé", self)
-        self.install_button.setObjectName("accent")
-        self.install_button.setDefault(True)
-        self.install_button.clicked.connect(self._start)
-        self.install_button.setVisible(False)
-        buttons.addWidget(self.install_button)
         root.addLayout(buttons)
 
         self.password_edit.returnPressed.connect(self._start)
@@ -123,7 +124,6 @@ class KeyInstallDialog(QDialog):
             # sshd qui limite les essais. `install_key` vérifie déjà si la clé
             # est acceptée avant de demander quoi que ce soit.
             self.form_box.setVisible(True)
-            self.install_button.setVisible(True)
             self.status_label.setText("Copie de la clé en cours…")
             self._auto_started = True
             QTimer.singleShot(0, self._start)
@@ -146,17 +146,17 @@ class KeyInstallDialog(QDialog):
         # à connaître l'empreinte et à savoir que la clé est refusée.
         self._prescan = info
         self.close_button.setEnabled(True)
-        if info.get("authenticated"):
+        authenticated = bool(info.get("authenticated"))
+        if key_ready(info):
             self.title.setText(
                 f"Clé déjà installée sur {display_name(self._host)}"
             )
             self.explanation.setVisible(False)
             self.status_label.setText(
-                "Clé déjà acceptée : rien à faire."
+                "Clé déjà acceptée et empreinte enregistrée : rien à faire."
             )
             restyle_label(self.status_label, "ok")
             self.form_box.setVisible(False)
-            self.install_button.setVisible(False)
             self.close_button.setDefault(True)
             self.close_button.setFocus()
             self._success = True
@@ -167,52 +167,73 @@ class KeyInstallDialog(QDialog):
         state = info.get("state", "")
         error = (info.get("error") or "").strip()
         low = error.lower()
+        last = error.splitlines()[-1] if error else ""
         if state == "unknown":
-            # Ce n'est pas la clé qui est refusée : c'est l'empreinte du poste
-            # qui n'est pas encore connue. Le dire évite de croire que la copie
-            # a échoué alors que rien n'a encore été tenté.
+            # Clé déjà acceptée mais empreinte non épinglée : il ne reste que
+            # la question de confiance, aucun mot de passe à demander.
             self.status_label.setText(
-                "Empreinte d'hôte inconnue : « Installer la clé » vous la fera "
-                "vérifier avant toute écriture."
+                "Empreinte d'hôte inconnue : elle sera vérifiée et enregistrée "
+                "avant toute copie."
             )
+            self._message = "empreinte d'hôte non acceptée"
         elif state == "changed":
             self.status_label.setText(
                 "L'empreinte enregistrée ne correspond plus à celle du poste : "
                 "copie refusée par sécurité. Vérifiez la machine."
             )
             restyle_label(self.status_label, "warn")
+            self._message = "empreinte d'hôte changée"
         elif "not allowed at this time" in low or "connection reset" in low:
             self.status_label.setText(
                 "Le poste limite temporairement les connexions de cette "
                 "machine (sshd). Patientez une minute, puis réessayez."
             )
+            self._message = "poste temporairement limité (sshd)"
         elif state == "unreachable":
             self.status_label.setText(
                 "Poste injoignable pour l'instant : réessayez dans un instant."
             )
+            self._message = "poste injoignable"
         else:
-            last = error.splitlines()[-1] if error else ""
             self.status_label.setText(
                 f"La clé n'est pas encore acceptée ({last})." if last else
                 "La clé n'est pas encore acceptée par ce poste."
             )
-        self.form_box.setVisible(True)
-        self.install_button.setVisible(True)
-        self.password_edit.setFocus()
-        # Le mot de passe vient du dialogue d'ajout : l'utilisateur a déjà
-        # demandé la copie en ajoutant le poste, on ne lui fait pas cliquer une
-        # deuxième fois.
-        if self._initial_password and not self._auto_started:
-            self._auto_started = True
-            QTimer.singleShot(0, self._start)
+            self._message = last or "clé refusée par le poste"
+        # La clé déjà acceptée n'a besoin d'aucun mot de passe : seul
+        # l'épinglage reste à faire, il démarre tout seul. Sinon le champ
+        # apparaît et Entrée lance la copie.
+        self.form_box.setVisible(not authenticated)
+        if authenticated:
+            self._auto_start()
+        else:
+            self.password_edit.setEnabled(True)
+            self.password_edit.setFocus()
+            # Le mot de passe vient du dialogue d'ajout : l'utilisateur a déjà
+            # demandé la copie en ajoutant le poste.
+            if self._initial_password:
+                self._auto_start()
+        self.adjustSize()
+
+    def _auto_start(self) -> None:
+        """Démarre la copie une seule fois, sans clic supplémentaire."""
+        if self._auto_started:
+            return
+        self._auto_started = True
+        QTimer.singleShot(0, self._start)
 
     def _start(self) -> None:
         if self._worker is not None and self._worker.isRunning():
             return
         password = self.password_edit.text()
+        authenticated = bool((self._prescan or {}).get("authenticated"))
+        if not authenticated and not password:
+            self._show_result("Mot de passe requis pour copier la clé.", False)
+            self.password_edit.setFocus()
+            return
         self.password_edit.setEnabled(False)
-        self.install_button.setEnabled(False)
-        self.install_button.setText("Installation…")
+        self.status_label.setText("Copie de la clé en cours…")
+        restyle_label(self.status_label, "hint")
         self.result_label.setVisible(False)
         self.log_view.setVisible(True)
         self.log_view.clear()
@@ -266,28 +287,42 @@ class KeyInstallDialog(QDialog):
         bar = self.log_view.verticalScrollBar()
         bar.setValue(bar.maximum())
 
-    def _finished(self, ok: bool, message: str) -> None:
-        self._success = ok
+    def _show_result(self, text: str, ok: bool) -> None:
+        self.result_label.setObjectName("ok" if ok else "warn")
+        self.result_label.setText(text)
         self.result_label.setVisible(True)
-        if ok:
-            self.result_label.setObjectName("ok")
-            self.result_label.setText(f"Clé installée — {message}.")
-            self.install_button.setVisible(False)
-            self.close_button.setText("Fermer")
-            self.close_button.setDefault(True)
-            self.installed.emit()
-        else:
-            self.result_label.setObjectName("warn")
-            self.result_label.setText(f"Échec — {message}.")
-            self.password_edit.setEnabled(True)
-            self.install_button.setEnabled(True)
-            self.install_button.setText("Réessayer")
         self.result_label.style().unpolish(self.result_label)
         self.result_label.style().polish(self.result_label)
-        # Succès : le secret n'a plus d'utilité, on le jette. Échec : on le
-        # laisse en place (masqué) pour que « Réessayer » ne le redemande pas.
+
+    def _finished(self, ok: bool, message: str) -> None:
+        self._success = ok
+        self._message = message
+        authenticated = bool((self._prescan or {}).get("authenticated"))
         if ok:
+            self._show_result(f"Clé installée — {message}.", True)
+            self.status_label.setText(
+                "Clé installée, empreinte enregistrée : plus de mot de passe "
+                "ni de question au prochain contact."
+            )
+            restyle_label(self.status_label, "ok")
             self.password_edit.setText("")
+            self.form_box.setVisible(False)
+            self.close_button.setDefault(True)
+            self.close_button.setFocus()
+            self.installed.emit()
+        else:
+            self._show_result(f"Échec — {message}.", False)
+            self.status_label.setText(
+                "Corrigez si besoin, puis Entrée pour réessayer."
+            )
+            restyle_label(self.status_label, "hint")
+            self.password_edit.setEnabled(True)
+            self.form_box.setVisible(not authenticated)
+            self.password_edit.setFocus()
+
+    def failure_text(self) -> str:
+        """Dernière raison d'échec, pour l'appelant qui écarte le poste."""
+        return self._message or "clé SSH non installée"
 
     def abort(self) -> None:
         """Annule et ferme sans demander (fermeture de la fenêtre principale)."""

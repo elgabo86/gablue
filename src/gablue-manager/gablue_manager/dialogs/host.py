@@ -42,8 +42,9 @@ class HostDialog(QDialog):
         root.addWidget(title)
 
         subtitle = QLabel(
-            "La clé SSH est copiée à l'ajout. Laissez le mot de passe vide "
-            "si elle est déjà en place."
+            "Le poste n'est ajouté qu'une fois la clé SSH vérifiée (elle est "
+            "copiée à l'ajout). Laissez le mot de passe vide si elle est déjà "
+            "en place."
             if not host else
             "Le mot de passe et la clé ne changent pas."
         )
@@ -281,7 +282,7 @@ class CandidateDialog(QDialog):
 
         plural = "s" if self._known_count > 1 else ""
         note_text = (
-            "La clé SSH est copiée à l'ajout. Adresse LAN préférée."
+            "Le poste n'est ajouté que si sa clé SSH passe. Adresse LAN préférée."
             if self._selectable else
             "Aucun nouveau poste à ajouter."
         )

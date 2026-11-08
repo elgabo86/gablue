@@ -2556,6 +2556,104 @@ class PinnedHostKeyTest(unittest.TestCase):
         )
 
 
+class KeyReadyTest(unittest.TestCase):
+    """« Clé installée » exige la clé acceptée ET l'empreinte épinglée.
+
+    Le pré-scan travaille sur un known_hosts jetable : `authenticated` seul
+    laissait ajouter un poste « clé installée » sans jamais épingler
+    l'empreinte, ce qui affichait « Clé d'hôte inconnue » (vécu 08/11/2026).
+    """
+
+    def test_accepted_and_pinned(self):
+        self.assertTrue(ssh.key_ready({"authenticated": True, "state": "known"}))
+
+    def test_accepted_but_unpinned(self):
+        self.assertFalse(ssh.key_ready({"authenticated": True, "state": "unknown"}))
+
+    def test_refused(self):
+        self.assertFalse(ssh.key_ready({"authenticated": False, "state": "known"}))
+        self.assertFalse(ssh.key_ready({}))
+        self.assertFalse(ssh.key_ready(None))
+
+
+class InstallKeyOrderTest(unittest.TestCase):
+    """L'ordre clé/empreinte : l'épinglage passe AVANT le verdict de succès."""
+
+    host = {"user": "gab", "host": "192.168.1.113", "port": 22,
+            "addresses": [], "active": ""}
+
+    def _install(self, info, password="", trust=True):
+        calls = {"pin": 0, "copy": 0, "probe": 0}
+        saved = (ssh.key_status, ssh.ensure_local_key, ssh.trust_host_key,
+                 ssh.probe_key, ssh._run_with_password)
+        ssh.key_status = lambda _host: info
+        ssh.ensure_local_key = lambda: (True, "")
+        ssh.trust_host_key = lambda _raw, _host: (calls.__setitem__(
+            "pin", calls["pin"] + 1) or True)
+        ssh.probe_key = lambda _host: (calls.__setitem__(
+            "probe", calls["probe"] + 1) or (True, ""))
+        ssh._run_with_password = lambda *_args, **_kwargs: (
+            calls.__setitem__("copy", calls["copy"] + 1) or (0, ""))
+        try:
+            ok, message = ssh.install_key(
+                self.host, password, lambda *_a: None, None,
+                lambda _prints: trust, info,
+            )
+        finally:
+            (ssh.key_status, ssh.ensure_local_key, ssh.trust_host_key,
+             ssh.probe_key, ssh._run_with_password) = saved
+        return ok, message, calls
+
+    def test_pinned_and_accepted_needs_nothing(self):
+        ok, _message, calls = self._install(
+            {"authenticated": True, "state": "known", "raw": "",
+             "fingerprints": [], "stored": [], "error": ""}
+        )
+        self.assertTrue(ok)
+        self.assertEqual(calls, {"pin": 0, "copy": 0, "probe": 0})
+
+    def test_accepted_but_unpinned_pins_without_password(self):
+        ok, _message, calls = self._install(
+            {"authenticated": True, "state": "unknown", "raw": "",
+             "fingerprints": [], "stored": [], "error": ""}
+        )
+        self.assertTrue(ok)
+        self.assertEqual(calls["pin"], 1)
+        self.assertEqual(calls["copy"], 0)
+
+    def test_accepted_but_unpinned_needs_trust(self):
+        ok, message, calls = self._install(
+            {"authenticated": True, "state": "unknown", "raw": "",
+             "fingerprints": [], "stored": [], "error": ""},
+            trust=False,
+        )
+        self.assertFalse(ok)
+        self.assertIn("empreinte refusée", message)
+        self.assertEqual(calls["pin"], 0)
+        self.assertEqual(calls["copy"], 0)
+
+    def test_changed_fingerprint_is_refused(self):
+        ok, message, calls = self._install(
+            {"authenticated": True, "state": "changed", "raw": "",
+             "fingerprints": [], "stored": [], "error": ""}
+        )
+        self.assertFalse(ok)
+        self.assertIn("changé", message)
+        self.assertEqual(calls["pin"], 0)
+        self.assertEqual(calls["copy"], 0)
+
+    def test_refused_key_copies_with_password(self):
+        ok, _message, calls = self._install(
+            {"authenticated": False, "state": "unknown", "raw": "",
+             "fingerprints": [], "stored": [], "error": ""},
+            password="secret",
+        )
+        self.assertTrue(ok)
+        self.assertEqual(calls["pin"], 1)
+        self.assertEqual(calls["copy"], 1)
+        self.assertEqual(calls["probe"], 1)
+
+
 class UtilTest(unittest.TestCase):
     host = {"user": "gab", "host": "sucina.local", "port": 22}
 

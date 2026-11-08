@@ -217,6 +217,20 @@ def key_status(host: dict) -> dict:
         "error": error,
     }
 
+def key_ready(info: dict) -> bool:
+    """Clé acceptée ET empreinte d'hôte épinglée ?
+
+    `scan_host_keys`/`key_status` travaillent sur un `known_hosts` jetable :
+    `authenticated` prouve seulement que la clé publique est dans
+    `authorized_keys`, jamais que l'empreinte du poste est dans le vrai
+    `~/.ssh/known_hosts`. Un poste dont la clé était déjà copiée (autre
+    machine, ancienne session) repondait donc « clé installée » sans jamais
+    épingler l'empreinte, et la carte restait « Clé d'hôte inconnue »
+    (vécu 08/11/2026). Les deux conditions sont nécessaires.
+    """
+    info = info or {}
+    return bool(info.get("authenticated")) and info.get("state") == "known"
+
 def pinned_entries(raw_keys: str, addresses: list[str], port: int) -> list[str]:
     """Lignes known_hosts à écrire : les clés annoncées, sous chaque adresse.
 
@@ -478,10 +492,6 @@ def install_key(host: dict, password: str, log, cancel=None,
     scanned = list(info.get("fingerprints") or [])
     stored = list(info.get("stored") or [])
 
-    if info.get("authenticated"):
-        log("Cette clé est déjà acceptée par le poste.\n")
-        return True, "clé déjà installée"
-
     if raw:
         # L'empreinte a pu être épinglée depuis le pré-scan (nouvel essai après
         # « Réessayer ») : la comparaison est locale et gratuite, on la refait
@@ -515,6 +525,13 @@ def install_key(host: dict, password: str, log, cancel=None,
         return False, ("aucune clé annoncée par le poste — injoignable, ou "
                        "connexions temporairement limitées (sshd) ; attendez "
                        "une minute puis réessayez")
+
+    # Une clé déjà acceptée ne dispense PAS de l'épinglage ci-dessus : le
+    # `known_hosts` jetable du pré-scan ne dit rien du vrai fichier. Le succès
+    # n'est donc prononcé qu'une fois `state == "known"`.
+    if info.get("authenticated"):
+        log("Cette clé est déjà acceptée par le poste.\n")
+        return True, "clé déjà installée"
 
     if not password:
         return False, "mot de passe requis pour copier la clé"
