@@ -1318,6 +1318,39 @@ class UpdatesTest(unittest.TestCase):
         self.assertIn("1 mise à jour", updates.compact_summary(offline_staged))
 
 
+    def test_notification_text(self):
+        # Auto : parle seulement quand le compteur monte (pas de doublon
+        # toutes les deux heures) ; manuel : répond toujours, même « rien ».
+        upd = {"checked_at": 1.0, "online": True, "domains": {
+            "image": {"state": "available", "staged": False,
+                      "version": "20261107-23h18",
+                      "available_version": "20261108-00h52"},
+            "flatpak": {"state": "updates", "apps": ["org.kde.krita"]},
+        }}
+        title, body = updates.notification_text(upd)
+        self.assertEqual(title, "2 mises à jour disponibles")
+        self.assertIn("20261107-23h18 → 20261108-00h52", body)
+        self.assertIn("org.kde.krita", body)
+        self.assertIsNone(updates.notification_text(upd, upd))
+        self.assertEqual(updates.notification_text(upd, upd, manual=True)[0],
+                         "2 mises à jour disponibles")
+        # Rien à signaler, mais l'utilisateur a demandé : il reçoit sa réponse.
+        none = {"online": True, "domains": {
+            "image": {"state": "uptodate", "days": 3},
+            "flatpak": {"state": "uptodate", "apps": []},
+        }}
+        self.assertEqual(updates.notification_text(none),
+                         None)
+        self.assertEqual(updates.notification_text(none, manual=True),
+                         ("Aucune mise à jour", "Gablue mis à jour il y a 3 jours"))
+        self.assertEqual(
+            updates.notification_text({"online": False, "domains": {}},
+                                      manual=True),
+            ("Vérification des mises à jour",
+             "Hors ligne — vérification impossible"),
+        )
+        self.assertIsNone(updates.notification_text(None, manual=True))
+
     def test_unverified_domains(self):
         # Un domaine illisible n'autorise ni « À jour » ni « aucune mise à
         # jour » : le résumé doit nommer le doute (vécu 08/11/2026).

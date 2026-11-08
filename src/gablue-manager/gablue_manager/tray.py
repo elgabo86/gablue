@@ -26,6 +26,7 @@ from .workers import RebootWorker, UpdateCheckWorker
 REBOOT_MS = 300_000           # 5 min : assez frais, sans réveil inutile
 BADGE_COLOR = "#e01b24"       # rouge KDE, lisible sur l'icône bleue
 MIN_RECHECK = 300             # pas de re-sonde sur un flottement de réseau
+NOTIFY_MS = 8000              # notification brève : le temps de lire une ligne
 
 # Référence du tray vivant : `run()` en garde une, sinon Python peut libérer
 # l'objet pendant que la boucle Qt tourne (le menu et le timer avec lui).
@@ -126,6 +127,9 @@ class Tray:
         self._last_check: float = 0.0
         self._offline = False
         self._server = None
+        # La vérification en cours doit-elle parler en fin de passe ? Vrai
+        # pour un clic sur « Vérifier les mises à jour », faux pour le timer.
+        self._notify_result = False
 
         self._checking = False
         self.menu = QMenu()
@@ -220,13 +224,17 @@ class Tray:
         else:
             self.update_timer.stop()
 
-    def refresh_updates(self, force: bool = False) -> None:
+    def refresh_updates(self, force: bool = False,
+                        notify: bool | None = None) -> None:
         """Sonde les mises à jour — jamais sans réseau, jamais sans demande.
 
         `force` vient du menu : il ignore l'interrupteur général et la
         fréquence, mais reste soumis à la connexion (hors ligne, on n'essaie
-        même pas).
+        même pas). `notify` choisit qui parle : par défaut une vérification
+        demandée répond toujours, une passe automatique seulement si elle
+        trouve du nouveau.
         """
+        wanted = bool(force if notify is None else notify)
         values = prefs.load_prefs()
         if not force and not prefs.checks_enabled(values):
             return
@@ -241,6 +249,9 @@ class Tray:
             if self.updates_state is None:
                 self.updates_state = {"online": False, "domains": {}}
             self._update_icon()
+            if wanted:
+                self._notify_updates({"online": False, "domains": {}},
+                                     manual=True)
             return
         self._offline = False
         if not force and self._last_check and \
@@ -250,6 +261,7 @@ class Tray:
             else prefs.auto_check_domains(values)
         worker = UpdateCheckWorker(domains, online)
         self._update_worker = worker
+        self._notify_result = wanted
         worker.done.connect(self._updates_done)
         worker.finished.connect(worker.deleteLater)
         self._checking = True
@@ -257,6 +269,7 @@ class Tray:
         worker.start()
 
     def _updates_done(self, state: dict) -> None:
+        previous = self.updates_state
         self._update_worker = None
         self.updates_state = state
         self._offline = False
@@ -268,6 +281,17 @@ class Tray:
         if prefs.checks_enabled(prefs.load_prefs()):
             self.update_timer.start()
         self._update_icon()
+        self._notify_updates(state, previous, manual=self._notify_result)
+        self._notify_result = False
+
+    def _notify_updates(self, state: dict | None, previous: dict | None = None,
+                        manual: bool = False) -> None:
+        """Notification brève : ce que la pastille dit, en une ligne de titre."""
+        message = updates.notification_text(state, previous, manual)
+        if not message:
+            return
+        title, body = message
+        self.icon.showMessage(title, body, self.base_icon, NOTIFY_MS)
 
     def _reachability_changed(self, reachability) -> None:
         """La connexion revient : une sonde si le dernier état est ancien."""
@@ -369,7 +393,9 @@ def _tray_message(tray: Tray, app: QApplication, server) -> None:
     if message == b"reload":
         tray.reload()
     elif message == b"updates":
-        tray.refresh_updates(force=True)
+        # La fenêtre vient de finir une mise à jour : elle affiche déjà le
+        # résultat, le tray rafraîchit sa pastille sans doubler d'une bulle.
+        tray.refresh_updates(force=True, notify=False)
     else:
         app.quit()
 

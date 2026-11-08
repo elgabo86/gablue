@@ -569,3 +569,37 @@ def compact_summary(state: dict | None) -> str:
     if age is not None:
         text += f" · Gablue mis à jour {days_text(age)}"
     return text
+
+
+def notification_text(state: dict | None, previous: dict | None = None,
+                      manual: bool = False) -> tuple[str, str] | None:
+    """(titre, corps) de la notification du tray, ou None pour ne rien dire.
+
+    Une passe **automatique** ne parle que si elle trouve du nouveau (le
+    compteur monte) : répéter « 3 mises à jour disponibles » toutes les deux
+    heures serait du bruit, la pastille rouge suffit. Une vérification
+    **demandée** (menu du tray) répond toujours, y compris « aucune mise à
+    jour », sinon le clic reste sans effet visible.
+    """
+    if not state:
+        return None
+    total = total_updates(state)
+    if total:
+        if not manual and total <= total_updates(previous):
+            return None
+        title = ("1 mise à jour disponible" if total == 1
+                 else f"{total} mises à jour disponibles")
+        body = "\n".join(
+            line for line in summary_lines(state)
+            if not line.endswith(" : à jour")
+        )
+        return title, body
+    if not manual:
+        return None
+    detail = compact_summary(state)
+    if detail.startswith("Aucune mise à jour disponible"):
+        # Le titre le dit déjà ; le corps ne garde que l'âge de l'image.
+        return "Aucune mise à jour", detail.partition(" · ")[2]
+    # Hors ligne, domaine illisible, vérifications coupées : le titre dit le
+    # doute, le corps dit pourquoi.
+    return "Vérification des mises à jour", detail
