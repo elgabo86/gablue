@@ -18,7 +18,7 @@ Images and the system are continuously updated, following the latest Fedora rele
 - **Flatpak** and **brew** ready out of the box
 - **Automatic weekly updates** — system and flatpaks staged in the background
 - **gremote** — remote desktop between Gablue machines: RDP tunnelled in SSH, no port opened, sound and a per-session password. Reuses the host's Plasma session, or creates a virtual one when nobody is logged in, so several accounts can work without touching the physical screen
-- **gablue-manager** — one window for this machine and the remote ones: SSH hosts, remote desktop, sftp files, terminal, remote shutdown/reboot/update, network discovery, local system options (CPU mitigations, CPUID, HDMI 2.1, image variant) and app management (ES-DE, Azahar, Eden, Xenia, Lichii, OpenCode 2), here or over SSH
+- **gablue-manager** — one window for this machine and the remote ones: SSH hosts, remote desktop, sftp files, terminal, remote shutdown/reboot/update, network discovery, local system options (CPU mitigations, CPUID, HDMI 2.1, image variant) and extra apps to install, update or remove (games, emulators, tools), here or over SSH
 - Optional **DX mode** with Docker, Libvirt, QEMU, and ROCm for AMD
 
 ## Current Versions
