@@ -934,12 +934,12 @@ class HardwareTest(unittest.TestCase):
         # (nom, valeur) : deux corps de texte, comme les lignes de disques.
         text = ("CPU\u00a048\u00a0°C\n"
                 "SSD\u00a01\u00a037\u00a0°C\u00a0✓  SSD\u00a02\u00a032\u00a0°C\u00a0✓\n"
-                "HDD3\u00a036\u00a0°C  HDD2\u00a037\u00a0°C\u00a0✗\n"
+                "HDD\u00a01\u00a0(hdd1)\u00a036\u00a0°C  HDD\u00a02\u00a0(hdd2)\u00a037\u00a0°C\u00a0✗\n"
                 "RAM\u00a01\u00a033\u00a0°C")
         self.assertEqual(local.temperature_measures(text), [
             [("CPU", "48 °C")],
             [("SSD 1", "37 °C ✓"), ("SSD 2", "32 °C ✓")],
-            [("HDD3", "36 °C"), ("HDD2", "37 °C ✗")],
+            [("HDD 1 (hdd1)", "36 °C"), ("HDD 2 (hdd2)", "37 °C ✗")],
             [("RAM 1", "33 °C")],
         ])
         # Le nom peut lui-même porter une insécable : couper au premier
@@ -1045,7 +1045,7 @@ class HardwareTest(unittest.TestCase):
                     "temps": [("Tctl", 30.0)]}]
         self.assertEqual(
             local.temperature_summary(devices, sata=[("hdd1", 36.0)]),
-            "CPU\u00a030\u00a0°C\nHDD1\u00a036\u00a0°C",
+            "CPU\u00a030\u00a0°C\nHDD\u00a0(hdd1)\u00a036\u00a0°C",
         )
         # Une ligne par famille : les disques d'une même famille se partagent
         # leur ligne, les barrettes passent en dernier.
@@ -1055,7 +1055,7 @@ class HardwareTest(unittest.TestCase):
                  {"chip": "spd5118", "temps": [("temp1", 35.0)]}],
                 sata=[("hdd1", 36.0), ("hdd2", 37.0)],
             ),
-            "HDD1\u00a036\u00a0°C  HDD2\u00a037\u00a0°C\n"
+            "HDD\u00a01\u00a0(hdd1)\u00a036\u00a0°C  HDD\u00a02\u00a0(hdd2)\u00a037\u00a0°C\n"
             "RAM\u00a01\u00a033\u00a0°C  RAM\u00a02\u00a035\u00a0°C",
         )
         # Six disques SATA : deux lignes de trois, la case n'a pas la place
@@ -1064,8 +1064,8 @@ class HardwareTest(unittest.TestCase):
                ("hdd4", 37.0), ("hdd5", 38.0), ("hdd6", 39.0)]
         self.assertEqual(
             local.format_temperatures({}, sata=six),
-            "HDD1\u00a033\u00a0°C  HDD2\u00a034\u00a0°C  HDD3\u00a036\u00a0°C\n"
-            "HDD4\u00a037\u00a0°C  HDD5\u00a038\u00a0°C  HDD6\u00a039\u00a0°C",
+            "HDD\u00a01\u00a0(hdd1)\u00a033\u00a0°C  HDD\u00a02\u00a0(hdd2)\u00a034\u00a0°C  HDD\u00a03\u00a0(hdd3)\u00a036\u00a0°C\n"
+            "HDD\u00a04\u00a0(hdd4)\u00a037\u00a0°C  HDD\u00a05\u00a0(hdd5)\u00a038\u00a0°C  HDD\u00a06\u00a0(hdd6)\u00a039\u00a0°C",
         )
         # Ordre d'affichage : le helper rend ses disques dans son propre
         # ordre (« 3 2 1 » à l'écran, vécu 08/11/2026), on trie par nom.
@@ -1074,8 +1074,16 @@ class HardwareTest(unittest.TestCase):
                 {}, sata=[("hdd3", 36.0), ("hdd1", 33.0),
                           ("hdd10", 40.0), ("hdd2", 34.0)],
             ),
-            "HDD1\u00a033\u00a0°C  HDD2\u00a034\u00a0°C  HDD3\u00a036\u00a0°C\n"
-            "HDD10\u00a040\u00a0°C",
+            "HDD\u00a01\u00a0(hdd1)\u00a033\u00a0°C  HDD\u00a02\u00a0(hdd2)\u00a034\u00a0°C  HDD\u00a03\u00a0(hdd3)\u00a036\u00a0°C\n"
+            "HDD\u00a04\u00a0(hdd10)\u00a040\u00a0°C",
+        )
+        # Les montages ne portent pas les mêmes noms partout : le disque est
+        # numéroté comme les SSD, le montage passe entre parenthèses.
+        self.assertEqual(
+            local.format_temperatures(
+                {}, sata=[("films", 31.0), ("data2", 33.0, True)],
+            ),
+            "HDD\u00a01\u00a0(data2)\u00a033\u00a0°C\u00a0✓  HDD\u00a02\u00a0(films)\u00a031\u00a0°C",
         )
         # Tri naturel : « hdd10 » après « hdd2 », jamais avant.
         self.assertEqual(
@@ -1138,8 +1146,8 @@ class HardwareTest(unittest.TestCase):
                                 ("hdd3", 36.0, None)])
         self.assertEqual(
             local.format_temperatures({}, sata=rows),
-            "HDD1\u00a033\u00a0°C\u00a0✓  HDD2\u00a034\u00a0°C\u00a0✗  "
-            "HDD3\u00a036\u00a0°C",
+            "HDD\u00a01\u00a0(hdd1)\u00a033\u00a0°C\u00a0✓  HDD\u00a02\u00a0(hdd2)\u00a034\u00a0°C\u00a0✗  "
+            "HDD\u00a03\u00a0(hdd3)\u00a036\u00a0°C",
         )
         self.assertEqual(local.parse_hwinfo("pas du json"), {})
         self.assertEqual(local.parse_hwinfo('{"disks": []}'), {"disks": []})

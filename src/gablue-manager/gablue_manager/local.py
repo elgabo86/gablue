@@ -1255,19 +1255,23 @@ def format_temperatures(values: dict,
         if value:
             lines.append(_measure(label, value))
     # Les disques SATA arrivent dans l'ordre du helper : on les trie par nom
-    # (hdd1, hdd2, hdd10) et on met leur nom en majuscules comme les autres
-    # familles — « hdd2 » à côté de « SSD 1 » et « RAM 1 » jurait, et
-    # « 3 2 1 » se lisait à l'envers (vécu 08/11/2026). Les SSD et barrettes
-    # gardent leur casse : leur étiquette dit un disque (« SSD 1 (Système) »).
+    # (hdd1, hdd2, hdd10) — « 3 2 1 » se lisait à l'envers (vécu 08/11/2026).
+    # Leur nom vient du point de montage, qui change d'un poste à l'autre
+    # (« hdd2 », « data2 », « films ») : ils sont donc numérotés comme les SSD
+    # (« HDD 1 ») et le montage passe entre parenthèses — sans lui, « DATA2 »
+    # ne disait plus de quel disque il s'agissait (demandé le 08/11/2026).
     sata = sorted(sata or [], key=lambda entry: natural_key(str(entry[0])))
-    for entries, upper in (
-        (values.get("ssd"), False), (sata, True), (values.get("ram"), False),
-    ):
+    sata = [
+        (f"{label} ({entry[0]})", entry[1]) + tuple(entry[2:])
+        for (label, _), entry in zip(
+            _numbered([entry[1] for entry in sata], "HDD"), sata
+        )
+    ]
+    for entries in (values.get("ssd"), sata, values.get("ram")):
         entries = [entry for entry in entries or [] if entry]
         for start in range(0, len(entries), TEMPS_PER_LINE):
             lines.append("  ".join(
-                _measure(str(entry[0]).upper() if upper else str(entry[0]),
-                         entry[1],
+                _measure(str(entry[0]), entry[1],
                          entry[2] if len(entry) > 2 else None)
                 for entry in entries[start:start + TEMPS_PER_LINE]
             ))
