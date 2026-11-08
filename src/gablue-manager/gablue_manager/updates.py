@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from . import apps, journal, local
 from .constants import BREW_BINARY
 
-DOMAINS = ("image", "flatpak", "brew", "gwine", "apps")
+DOMAINS = ("image", "flatpak", "gwine", "apps", "brew")
 
 DOMAIN_LABELS = {
     "image": "Image Gablue",
@@ -499,7 +499,7 @@ def summary_lines(state: dict | None) -> list[str]:
         elif status != "skipped":
             lines.append("Image Gablue : vérification impossible")
 
-    for domain in ("flatpak", "brew", "gwine", "apps"):
+    for domain in ("flatpak", "gwine", "apps", "brew"):
         result = domains.get(domain) or {}
         status = result.get("state")
         label = DOMAIN_LABELS[domain]

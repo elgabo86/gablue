@@ -17,13 +17,13 @@ from ..uiutil import fit_dialog_height
 DOMAIN_LABELS = {
     "image": ("Image Gablue", "Interroge le registre (quelques kilo-octets)."),
     "flatpak": ("Flatpaks", "Applications Flatpak système."),
-    "brew": ("Homebrew", "Formules installées par brew."),
     "gwine": ("Composants gwine", "Runner, DXVK, VKD3D, D7VK, NVAPI."),
     "apps": (
         "Applications",
         "Applications installées (ES-DE, Azahar, Eden, Xenia, Lichii, "
         "OpenCode 2) : un flux de releases par application.",
     ),
+    "brew": ("Homebrew", "Formules installées par brew."),
 }
 
 class PrefsDialog(QDialog):
@@ -88,7 +88,10 @@ class PrefsDialog(QDialog):
         check_layout.addWidget(self.auto_check)
 
         self.domain_checks: dict[str, QCheckBox] = {}
-        for domain, (label, description) in DOMAIN_LABELS.items():
+        # Ordre canonique (`prefs.CHECK_DOMAINS`), le même que les menus et les
+        # chaînes de mise à jour : une seule liste, jamais une copie qui dérive.
+        for domain in prefs.CHECK_DOMAINS:
+            label, description = DOMAIN_LABELS[domain]
             check = QCheckBox(label, check_card)
             check.setCursor(Qt.PointingHandCursor)
             check.setChecked(bool(self.initial.get(f"check_{domain}", True)))

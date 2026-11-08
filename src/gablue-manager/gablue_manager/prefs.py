@@ -35,7 +35,7 @@ DEFAULTS = {
 # 24 h (une fois par jour).
 INTERVAL_RANGE = (5, 1440)
 
-CHECK_DOMAINS = ("image", "flatpak", "brew", "gwine", "apps")
+CHECK_DOMAINS = ("image", "flatpak", "gwine", "apps", "brew")
 
 def load_prefs() -> dict:
     """Préférences relues à chaque appel ; absent ou illisible = défauts."""
