@@ -128,6 +128,12 @@ class MainWindow(QMainWindow):
         self._reboot_reasons: list[str] = []
         self._reboot_worker: RebootWorker | None = None
         self._hardware_worker: HardwareWorker | None = None
+        # Températures et verdict SMART des disques SATA : lus **une fois** par
+        # le helper NOPASSWD, à l'ouverture. Un disque ne chauffe pas en
+        # quelques minutes et `smartctl` coûte un processus par disque : pas de
+        # rafraîchissement périodique, contrairement à /sys (gratuit).
+        self._disk_temps: list[tuple] = []
+        self._nvm_smart: dict[str, bool] = {}
         # Nom commercial du GPU lu par Vulkan une fois par session : le
         # résumé relu toutes les 30 s ne doit pas le réécraser avec le nom du
         # die que donne `lspci`.
@@ -175,8 +181,10 @@ class MainWindow(QMainWindow):
         self._job_timer.start()
 
         QTimer.singleShot(150, self.refresh_all)
-        # Les barrettes passent par dmidecode (root) : hors thread GUI, une
-        # fois par session — la mémoire change au reboot, pas à l'usage.
+        # Les barrettes passent par dmidecode (root) et les disques par
+        # smartctl : hors thread GUI, **une seule fois** par session — la
+        # mémoire change au reboot, et une température de disque n'a pas
+        # besoin d'un `smartctl` toutes les cinq minutes.
         QTimer.singleShot(250, self._load_hardware)
 
     # -- construction -------------------------------------------------------
@@ -752,12 +760,14 @@ class MainWindow(QMainWindow):
         values = dict(values or {})
         rows = values.pop("disk_rows", None)
         values.pop("disks", None)
+        temperatures = values.pop("temperatures", "")
         model_label = values.pop("model_label", "")
         panel.set_values(values)
         if model_label:
             panel.set_label("model", model_label)
         if rows is not None:
             panel.set_disks(rows, links=links)
+        panel.set_temperatures(temperatures)
 
     # -- matériel d'un poste distant ----------------------------------------
     def _load_remote_hardware(self, host_id: str, force: bool = False) -> None:
@@ -913,12 +923,16 @@ class MainWindow(QMainWindow):
 
     def _refresh_hardware(self) -> None:
         """Résumé matériel : lectures locales, `lspci` mis en cache."""
-        values = hardware_summary()
+        values = hardware_summary(self._disk_temps, self._nvm_smart)
         values.pop("disks", None)
+        temperatures = values.pop("temperatures", "")
+        vram = values.pop("vram", "")
         # Le nom Vulkan (VBIOS) est plus précis que celui du die : il est lu
         # hors thread GUI au démarrage et conservé pour toutes les passes.
         if self._gpu_name:
             values["gpu"] = self._gpu_name
+        if vram and values.get("gpu"):
+            values["gpu"] = f"{values['gpu']} · {vram}"
         # La première ligne est un modèle constructeur ou, sur une machine
         # assemblée, la carte mère : le libellé suit ce qui est affiché.
         model_label = values.pop("model_label", "")
@@ -926,6 +940,7 @@ class MainWindow(QMainWindow):
         if model_label:
             self.info_panel.set_label("model", model_label)
         self.info_panel.set_disks(disk_rows())
+        self.info_panel.set_temperatures(temperatures)
 
     def _load_hardware(self) -> None:
         """Charge barrettes et nom Vulkan du GPU hors thread GUI."""
@@ -947,7 +962,11 @@ class MainWindow(QMainWindow):
             # Nom commercial exact (VBIOS via Mesa) : il remplace le nom du
             # die que `lspci` donnait à l'ouverture.
             self._gpu_name = gpu
-            self.info_panel.set_values({"gpu": gpu})
+        self._disk_temps = list((values or {}).get("disks") or [])
+        self._nvm_smart = dict((values or {}).get("nvm") or {})
+        # Une seule passe pour la ligne « Températures » : CPU/GPU recalculés
+        # depuis /sys, disques SATA depuis le cache du helper.
+        self._refresh_hardware()
 
 
     # -- préférences ---------------------------------------------------------

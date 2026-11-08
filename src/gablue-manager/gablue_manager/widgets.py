@@ -19,13 +19,38 @@ from .constants import (
     COLOR_AUTH, COLOR_OFFLINE, COLOR_ONLINE, KEY_STATES, STATE_COLOR,
     STATE_TEXT,
 )
-from .local import local_distro, ryzenadj_available
+from .local import (
+    SMART_MARKS, format_disk_totals, local_distro, ryzenadj_available,
+    temperature_measures,
+)
 from .style import accent_color
 from .updates import (
     DOMAINS, days_text, domain_count, summary_lines, total_updates,
     unverified_domains,
 )
 from .util import active_kind, address_text, display_name, dolphin_url, ssh_target
+
+class ClickLabel(QLabel):
+    """Libellé cliquable : ouvre Filelight sur le disque qu'il décrit.
+
+    Le bouton « Libérer de l'espace » ajoutait une ligne de boutons par
+    disque, doublait la hauteur de la section et écartait les disques les uns
+    des autres. Le chiffre lui-même (« 7,7 Gio libres sur 3,6 Tio ») est la
+    cible naturelle, et la ligne reste une simple ligne de texte.
+    """
+
+    clicked = Signal()
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAttribute(Qt.WA_Hover, True)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if (event.button() == Qt.LeftButton
+                and self.rect().contains(event.position().toPoint())):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
 
 class CenteredTabs(QTabWidget):
     """QTabWidget à deux onglets, centrés, avec un en-tête maison.
@@ -279,6 +304,12 @@ INFO_FIELDS = (
     ("image", "Image Gablue"),
     ("system", "Système"),
     ("uptime", "Démarrage"),
+)
+
+# Hors grille : « Secure Boot » passe en tête du bloc de droite, pour que les
+# deux colonnes se remplissent sur la même hauteur (11 champs laissaient la
+# dernière rangée à moitié vide, d'où un trou sous « Démarrage »).
+EXTRA_FIELDS = (
     ("secure_boot", "Secure Boot"),
 )
 
@@ -305,36 +336,96 @@ class InfoPanel(QFrame):
         self._labels: dict[str, QLabel] = {}
         for index, (key, label) in enumerate(INFO_FIELDS):
             row, column = divmod(index, 2)
-            cell = QVBoxLayout()
-            cell.setSpacing(1)
-            name = QLabel(label, self)
-            name.setObjectName("specLabel")
-            value = QLabel("—", self)
-            value.setObjectName("specValue")
-            # Copier une ligne (modèle de barrette, version) sans ouvrir un
-            # terminal est le geste attendu sur un résumé.
-            value.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            cell.addWidget(name)
-            cell.addWidget(value)
+            cell = self._field_cell(key, label)
             grid.addLayout(cell, row, column)
-            self._values[key] = value
-            self._labels[key] = name
+
+        # Températures : bloc sous la colonne de gauche, dans le prolongement
+        # du tableau (même étiquette au-dessus, même largeur). Le bloc entier
+        # disparaît quand aucun capteur n'est lisible sans privilège.
+        self._temps_cell = QWidget(self)
+        temps_layout = QVBoxLayout(self._temps_cell)
+        temps_layout.setContentsMargins(0, 0, 0, 0)
+        temps_layout.setSpacing(1)
+        self._temps_title = QLabel("Températures", self._temps_cell)
+        self._temps_title.setObjectName("specLabel")
+        # Une ligne par famille, empilées : deux colonnes mettaient le SSD en
+        # face du CPU, ce qui se lisait comme une seule ligne (vécu 08/11/2026).
+        # Chaque ligne est une rangée de libellés (nom + mesure), pas un seul
+        # texte : voir `set_temperatures`.
+        self._temps_lines: list[QWidget] = []
+        temps_layout.addWidget(self._temps_title)
+        # Ressort final : sans lui, la cellule étirée par le bloc voisin
+        # répartissait la hauteur entre les lignes et les écartait.
+        temps_layout.addStretch(1)
+        self._temps_cell.setVisible(False)
+
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         layout.addLayout(grid)
 
-        # Les disques ne tiennent pas dans une case du tableau : une ligne par
-        # périphérique, avec son pourcentage et le lien Filelight. Ils passent
-        # donc sous la grille, sur toute la largeur.
-        self._disks_title = QLabel("Disques", self)
+        # Sous la grille, deux blocs côte à côte : disques à gauche,
+        # températures à droite. Empilés, ils laissaient un trou sous « Secure
+        # Boot » ou repoussaient « Disques » de plusieurs lignes (vécu
+        # 08/11/2026) ; côte à côte, chacun prend la hauteur de l'autre.
+        bottom = QHBoxLayout()
+        bottom.setSpacing(28)
+
+        # Colonne de gauche : les champs hors grille (« Secure Boot ») puis
+        # les disques, continus sous la dernière ligne du tableau.
+        self._left_block = QWidget(self)
+        left_layout = QVBoxLayout(self._left_block)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(10)
+        for key, label in EXTRA_FIELDS:
+            left_layout.addLayout(self._field_cell(key, label))
+
+        self._disks_block = QWidget(self._left_block)
+        disks_layout = QVBoxLayout(self._disks_block)
+        disks_layout.setContentsMargins(0, 0, 0, 0)
+        disks_layout.setSpacing(1)
+        self._disks_title = QLabel("Disques", self._disks_block)
         self._disks_title.setObjectName("specLabel")
         self._disks_title.setVisible(False)
-        layout.addWidget(self._disks_title)
+        disks_layout.addWidget(self._disks_title)
         self._disks_box = QVBoxLayout()
         self._disks_box.setContentsMargins(0, 0, 0, 0)
-        self._disks_box.setSpacing(3)
-        layout.addLayout(self._disks_box)
+        self._disks_box.setSpacing(1)
+        disks_layout.addLayout(self._disks_box)
         self._disk_lines: list[QWidget] = []
+        # Ligne de synthèse collée à la dernière ligne de disque, dans le même
+        # empilement serré — pas de ligne vide avant elle.
+        self._disks_total = QLabel("", self._disks_block)
+        self._disks_total.setObjectName("specLabel")
+        self._disks_total.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._disks_total.setVisible(False)
+        disks_layout.addWidget(self._disks_total)
+        left_layout.addWidget(self._disks_block)
+
+        bottom.addWidget(self._left_block, 1)
+        bottom.addWidget(self._temps_cell, 1)
+
+        layout.addLayout(bottom)
+
+    def _field_cell(self, key: str, label: str) -> QVBoxLayout:
+        """Libellé au-dessus de sa valeur, avec un ressort qui les garde serrés."""
+        cell = QVBoxLayout()
+        cell.setSpacing(1)
+        name = QLabel(label, self)
+        name.setObjectName("specLabel")
+        value = QLabel("—", self)
+        value.setObjectName("specValue")
+        # Copier une ligne (modèle de barrette, version) sans ouvrir un
+        # terminal est le geste attendu sur un résumé.
+        value.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        cell.addWidget(name)
+        cell.addWidget(value)
+        # Sans ce ressort, une case voisine plus haute étire la case et écarte
+        # le libellé de sa valeur — « Secure Boot » se retrouvait à 40 px de
+        # « Secure Boot désactivé » (vécu 08/11).
+        cell.addStretch(1)
+        self._values[key] = value
+        self._labels[key] = name
+        return cell
 
     def set_values(self, values: dict[str, str]) -> None:
         """Met à jour les champs fournis ; un champ vide garde l'ancienne valeur."""
@@ -349,6 +440,58 @@ class InfoPanel(QFrame):
         if label is not None and text:
             label.setText(text)
 
+    def set_temperatures(self, text: str) -> None:
+        """Bloc sous la colonne de gauche ; rien à afficher sans capteur.
+
+        L'étiquette suit ce qu'on sait montrer : « Températures » quand il n'y
+        a que des mesures, « Températures et SMART » dès qu'un verdict (✓/✗)
+        figure dans la case — un poste sans disque SATA n'a pas de verdict à
+        annoncer. Les lignes arrivent une par famille (séparées par `\n`),
+        empilées et serrées.
+        """
+        text = (text or "").strip()
+        rows = temperature_measures(text)
+        for row in self._temps_lines:
+            row.setParent(None)
+            row.deleteLater()
+        self._temps_lines.clear()
+        for measures in rows:
+            line = QWidget(self._temps_cell)
+            line_layout = QHBoxLayout(line)
+            line_layout.setContentsMargins(0, 0, 0, 0)
+            line_layout.setSpacing(6)
+            detail = None
+            for index, (name, value) in enumerate(measures):
+                if index:
+                    # Mesure suivante un peu détachée, comme les colonnes
+                    # d'une ligne de disque.
+                    line_layout.addSpacing(12)
+                # Nom et mesure sur le même modèle qu'un disque : le nom au
+                # corps des valeurs (13 px, clair), la mesure en gris (11 px).
+                label = QLabel(name, line)
+                label.setObjectName("specValue")
+                label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                line_layout.addWidget(label)
+                if value:
+                    detail = QLabel(value, line)
+                    detail.setObjectName("specLabel")
+                    detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                    line_layout.addWidget(detail)
+            line_layout.addStretch(1)
+            # Même hauteur de ligne que les disques : le grand corps du nom ne
+            # doit pas élargir la rangée.
+            if detail is not None:
+                line.setFixedHeight(detail.sizeHint().height())
+            layout = self._temps_cell.layout()
+            # Inséré avant le ressort final, qui doit rester en dernier.
+            layout.insertWidget(layout.count() - 1, line)
+            self._temps_lines.append(line)
+        verdict = any(mark in text for mark in SMART_MARKS.values())
+        self._temps_title.setText(
+            "Températures et SMART" if verdict else "Températures"
+        )
+        self._temps_cell.setVisible(bool(rows))
+
     def set_disks(self, rows: list[dict], links: bool = True) -> None:
         """Une ligne par disque : nom, tailles, pourcentage, Filelight.
 
@@ -361,6 +504,7 @@ class InfoPanel(QFrame):
         self._disk_lines.clear()
         rows = [row for row in (rows or []) if row]
         self._disks_title.setVisible(bool(rows))
+        self._disks_block.setVisible(bool(rows))
         for row in rows:
             line = QWidget(self)
             line_layout = QHBoxLayout(line)
@@ -368,36 +512,44 @@ class InfoPanel(QFrame):
             line_layout.setSpacing(8)
             name = QLabel(f"{row.get('label') or row.get('mount') or ''} :", line)
             name.setObjectName("specValue")
-            detail = QLabel(str(row.get("text") or ""), line)
+            text = str(row.get("text") or "")
+            if links and row.get("path"):
+                path = str(row["path"])
+                detail = ClickLabel(text, line)
+                detail.setToolTip(
+                    f"Ouvrir Filelight sur {path} pour voir ce qui occupe "
+                    "le disque"
+                )
+                detail.clicked.connect(
+                    lambda p=path: self.filelight_requested.emit(p)
+                )
+            else:
+                detail = QLabel(text, line)
+                detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
             detail.setObjectName("specLabel")
-            detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
             percent_value = int(row.get("percent") or 0)
-            percent = QLabel(f"{percent_value} %", line)
+            # Le pourcentage est celui de l'espace **utilisé** (comme `df` et
+            # Dolphin) : la ligne parle de Gio libres, un « 100 % » nu se
+            # lisait à l'envers — « tout est libre ? » (question 08/11/2026).
+            percent = QLabel(f"{percent_value} % utilisé", line)
             percent.setObjectName("specLabel")
             if percent_value >= 90:
                 percent.setStyleSheet(f"color: {COLOR_OFFLINE};")
             line_layout.addWidget(name)
             line_layout.addWidget(detail)
             line_layout.addWidget(percent)
-            if links and row.get("path"):
-                button = QPushButton("Libérer de l'espace", line)
-                button.setObjectName("ghost")
-                button.setCursor(Qt.PointingHandCursor)
-                path = str(row["path"])
-                button.setToolTip(
-                    f"Ouvrir Filelight sur {path} pour voir ce qui occupe "
-                    "le disque"
-                )
-                button.clicked.connect(
-                    lambda checked=False, p=path:
-                    self.filelight_requested.emit(p)
-                )
-                line_layout.addWidget(button)
-            # Le bouton suit immédiatement les chiffres du disque : poussé à
-            # droite, il semblait appartenir à une autre ligne.
+            # Serré comme les lignes de températures : une ligne par disque,
+            # sans bouton ni hauteur de commande.
             line_layout.addStretch(1)
+            line.setFixedHeight(detail.sizeHint().height())
             self._disks_box.addWidget(line)
             self._disk_lines.append(line)
+        # La synthèse reste la dernière ligne du bloc, collée aux disques.
+        self._disks_box.removeWidget(self._disks_total)
+        self._disks_box.addWidget(self._disks_total)
+        totals = format_disk_totals(rows)
+        self._disks_total.setText(totals)
+        self._disks_total.setVisible(bool(totals))
 
 class UpdatesPanel(QFrame):
     """Détail des mises à jour disponibles, comme les lignes du tray.

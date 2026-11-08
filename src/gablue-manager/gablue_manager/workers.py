@@ -14,7 +14,9 @@ from PySide6.QtCore import QThread, Signal
 from . import apps, journal, remote_hardware, remote_updates, updates
 from .constants import SSH
 from .hosts import avahi_scan, remote_addresses
-from .local import memory_modules, pending_reboot_reasons, vulkan_gpu_name
+from .local import (hwinfo, memory_modules_from, nvm_smart,
+                   pending_reboot_reasons, sata_temperatures,
+                   vulkan_gpu_name)
 from .ssh import _kill_group, check_host, install_key, key_status
 from .util import _ssh_opts, display_name, ssh_target
 
@@ -157,12 +159,15 @@ class HardwareWorker(QThread):
     rien à faire sur le thread de l'interface.
     """
 
-    done = Signal(object)           # {"modules": [...], "gpu": "..."}
+    done = Signal(object)           # {"modules": [...], "gpu": "...", "disks": [...]}
 
     def run(self) -> None:
-        result: dict = {"modules": [], "gpu": ""}
+        result: dict = {"modules": [], "gpu": "", "disks": [], "nvm": {}}
         try:
-            result["modules"] = memory_modules()
+            payload = hwinfo()       # un seul appel root : barrettes + disques
+            result["modules"] = memory_modules_from(payload)
+            result["disks"] = sata_temperatures(payload)
+            result["nvm"] = nvm_smart(payload)
         except Exception:            # une sonde d'agrément ne doit rien casser
             pass
         try:

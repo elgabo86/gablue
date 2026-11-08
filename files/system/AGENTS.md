@@ -209,8 +209,17 @@ annulée ne laisse pas un tube mort que la suivante relirait ; bootc tourne en a
 `TERM`/`INT`/`HUP` le tuent lui-même (TERM puis KILL) — sinon « Annuler » ne coupait que sudo
 et le helper quand sudo isole la commande dans son propre pty, et le téléchargement continuait
 (vécu 08/11/2026). `gablue-hwinfo` (aucun argument)
-rend les barrettes mémoire en JSON (`dmidecode -t memory`, root) pour le résumé matériel du
-manager — emplacements vides écartés, erreur de lecture → liste vide, jamais d'échec visible. `gablue-clean` traite une
+rend en JSON les barrettes mémoire (`dmidecode -t memory`, root) **et** la température des
+disques SATA (`smartctl -n standby,3 -d sat -j -H -A`, root — la température **et** le verdict
+SMART `smart_status.passed`, une seule commande ATA) pour le résumé matériel du manager —
+emplacements vides écartés, erreur de lecture → liste vide, jamais d'échec visible. Les disques
+sont rendus **tous**, y compris ceux en veille (`celsius: null`) : c'est ce qui garde la
+numérotation stable d'une lecture à l'autre. `-n standby` fait sortir smartctl **avant** toute
+lecture SMART sur un disque endormi (seul `CHECK POWER MODE` est envoyé, sans plateaux en
+rotation) et `-d sat` coupe l'autodétection de type, dont le manuel de smartctl prévient qu'elle
+peut réveiller le disque — **jamais** de `drivetemp` pour ça : ce pilote lit le SMART sans
+regarder le mode d'alimentation. La température est lue dans `raw.string` (« 25 (0 17 0 0 0) »),
+pas dans `raw.value` qui vaut l'entier 48 bits complet sur certains disques (ST4000VN008). `gablue-clean` traite une
 sous-commande (`flatpak` : Flatpaks système inutilisés).
 `gablue-btrfs-compress` pose ou retire le drapeau `compression=zstd` sur un montage Btrfs
 (chemin revérifié contre `findmnt -t btrfs`) : il vaut pour les fichiers créés ensuite.

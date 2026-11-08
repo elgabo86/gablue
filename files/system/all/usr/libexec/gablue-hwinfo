@@ -1,20 +1,36 @@
 #!/usr/bin/python3
-"""gablue-hwinfo — barrettes mémoire du poste, en JSON.
+"""gablue-hwinfo — barrettes mémoire et température des disques, en JSON.
 
-`dmidecode` lit la table SMBIOS, réservée à root : ce helper est affiché par
-Gablue Manager à l'ouverture du résumé matériel, via une règle sudoers exacte
-et sans argument (aucune commande arbitraire n'est ouverte par la règle).
+`dmidecode` lit la table SMBIOS et `smartctl` parle directement aux disques :
+les deux veulent root. Ce helper est affiché par Gablue Manager à l'ouverture
+du résumé matériel, via une règle sudoers exacte et sans argument (aucune
+commande arbitraire n'est ouverte par la règle).
 
 Sortie : {"modules": [{"size_gib", "type", "speed", "configured_speed",
-"locator", "manufacturer", "part_number"}]} — les emplacements vides sont
-écartés, une erreur de lecture rend une liste vide (jamais un code d'échec
-qui ferait afficher une erreur à l'utilisateur).
+"locator", "manufacturer", "part_number"}],
+"disks": [{"device": "sda", "mount": "/var/hdd1", "celsius": 36}]} — les
+emplacements vides sont écartés, une erreur de lecture rend une liste vide
+(jamais un code d'échec qui ferait afficher une erreur à l'utilisateur).
+
+Les disques SATA sont lus avec `smartctl -n standby,3 -d sat` : `-n` fait
+sortir smartctl AVANT toute lecture SMART quand le disque est en veille (il
+n'interroge que `CHECK POWER MODE`, que les disques répondent sans plateaux en
+rotation) et `-d sat` évite l'autodétection, dont le manuel de smartctl
+prévient qu'elle peut réveiller le disque. Un disque en veille, muet ou sans
+sonde rend `celsius: null` — on ne le réveille pas pour afficher un chiffre.
 """
 
 import json
 import re
 import subprocess
 import sys
+from pathlib import Path
+
+BLOCK_ROOT = Path("/sys/block")
+MOUNTS = Path("/proc/mounts")
+# Attributs SMART portant la température : 194 sur la plupart des disques,
+# 190 sur les Seagate récents.
+TEMPERATURE_ATTRIBUTES = (190, 194)
 
 SIZE_RE = re.compile(r"(\d+)\s*(B|K(?:i)?B|M(?:i)?B|G(?:i)?B|T(?:i)?B)", re.IGNORECASE)
 NUMBER_RE = re.compile(r"(\d+)")
@@ -87,6 +103,151 @@ def parse(text: str) -> list[dict]:
     return [module for module in modules if module.get("size_gib")]
 
 
+def mount_points(text: str | None = None) -> dict[str, str]:
+    """`/proc/mounts` → {« sda »: « /var/hdd1 »} (premier montage vu).
+
+    Un disque peut porter plusieurs systèmes de fichiers ; la première ligne
+    suffit à lui donner un nom lisible, celui que la page « Disques » affiche
+    déjà.
+    """
+    if text is None:
+        try:
+            text = MOUNTS.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return {}
+    names: dict[str, str] = {}
+    for line in text.splitlines():
+        source, _, rest = line.partition(" ")
+        mount = rest.partition(" ")[0]
+        match = re.fullmatch(r"/dev/(sd[a-z]+)\d*", source)
+        if match and match.group(1) not in names:
+            names[match.group(1)] = mount
+    return names
+
+
+def smartctl_smart(device: str) -> dict:
+    """Température et santé SMART d'un disque, en un seul `smartctl`.
+
+    `{"celsius": 36, "smart": True}` ; `smart` vaut None quand le disque ne
+    publie pas son verdict (pont USB, disque muet). Un disque en veille rend
+    `{"celsius": None, "smart": None}` : on n'a rien lu du tout.
+    """
+    try:
+        result = subprocess.run(
+            ["smartctl", "-n", "standby,3", "-d", "sat",
+             "-j", "-H", "-A", device],
+            capture_output=True, text=True, timeout=8,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {"celsius": None, "smart": None}
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except ValueError:
+        return {"celsius": None, "smart": None}
+    if not isinstance(payload, dict):
+        return {"celsius": None, "smart": None}
+    if (payload.get("smartctl") or {}).get("exit_status"):
+        return {"celsius": None, "smart": None}
+    passed = (payload.get("smart_status") or {}).get("passed")
+    table = ((payload.get("ata_smart_attributes") or {}).get("table")) or []
+    celsius = None
+    for attribute in table:
+        if attribute.get("id") in TEMPERATURE_ATTRIBUTES:
+            celsius = attribute_temperature(attribute)
+            if celsius is not None:
+                break
+    return {
+        "celsius": celsius,
+        "smart": passed if isinstance(passed, bool) else None,
+    }
+
+
+def attribute_temperature(attribute: dict) -> float | None:
+    """Température d'un attribut SMART, en degrés Celsius.
+
+    Le champ `raw.string` est la source sûre : sur certains disques (ST4000VN008),
+    `raw.value` est l'entier 48 bits complet — 73014444057, pas 25 °C — alors
+    que la chaîne porte « 25 (0 17 0 0 0) ». On lit donc le premier nombre de
+    la chaîne, et `raw.value` seulement s'il tombe dans une plage plausible.
+    """
+    raw = attribute.get("raw") or {}
+    text = str(raw.get("string") or "").strip()
+    match = re.match(r"(-?\d+)", text)
+    candidates = [float(match.group(1))] if match else []
+    value = raw.get("value")
+    if isinstance(value, (int, float)):
+        candidates.append(float(value))
+    for celsius in candidates:
+        if 0 < celsius < 120:           # au-delà, c'est un entier brut encodé
+            return celsius
+    return None
+
+
+def nvme_smart() -> dict[str, bool]:
+    """Verdict SMART de chaque NVMe du poste : {« nvme0 »: True}.
+
+    Un `smartctl -H` par NVMe (quelques dizaines de ms, aucune donnée lue) :
+    la température, elle, vient déjà de `/sys/class/hwmon`. Un disque qui ne
+    publie pas son verdict est simplement absent du dictionnaire.
+    """
+    verdicts: dict[str, bool] = {}
+    for entry in sorted(BLOCK_ROOT.glob("nvme*n*")):
+        device = entry.name.rsplit("n", 1)[0]      # nvme0n1 → nvme0
+        if device in verdicts:
+            continue
+        try:
+            result = subprocess.run(
+                ["smartctl", "-j", "-H", f"/dev/{device}"],
+                capture_output=True, text=True, timeout=8,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        try:
+            payload = json.loads(result.stdout or "{}")
+        except ValueError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if (payload.get("smartctl") or {}).get("exit_status"):
+            continue
+        passed = (payload.get("smart_status") or {}).get("passed")
+        if isinstance(passed, bool):
+            verdicts[device] = passed
+            continue
+        # Certains NVMe ne remplissent que le journal de santé : `critical_warning`
+        # à zéro vaut verdict sain.
+        warning = ((payload.get("nvme_smart_health_information_log") or {})
+                   .get("critical_warning"))
+        if isinstance(warning, int):
+            verdicts[device] = warning == 0
+    return verdicts
+
+
+def disks() -> list[dict]:
+    """Disques SATA du poste : périphérique, montage et température.
+
+    Tous les disques sont rendus, y compris ceux en veille (`celsius: null`) :
+    la numérotation affichée reste stable d'une lecture à l'autre, même quand
+    un disque s'endort. Les NVMe ne sont pas ici, ils ont déjà leur capteur
+    dans `/sys/class/hwmon`.
+    """
+    try:
+        entries = sorted(BLOCK_ROOT.glob("sd*"))
+    except OSError:
+        return []
+    mounts = mount_points()
+    result = []
+    for entry in entries:
+        reading = smartctl_smart(f"/dev/{entry.name}")
+        result.append({
+            "device": entry.name,
+            "mount": mounts.get(entry.name, ""),
+            "celsius": reading["celsius"],
+            "smart": reading["smart"],
+        })
+    return result
+
+
 def main() -> int:
     try:
         result = subprocess.run(
@@ -97,7 +258,8 @@ def main() -> int:
         result = None
     modules = parse(result.stdout) if result is not None else []
     try:
-        print(json.dumps({"modules": modules}, ensure_ascii=False))
+        print(json.dumps({"modules": modules, "disks": disks(),
+                          "nvm": nvme_smart()}, ensure_ascii=False))
     except (BrokenPipeError, OSError):
         return 1
     return 0

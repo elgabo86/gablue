@@ -929,6 +929,164 @@ class HardwareTest(unittest.TestCase):
             "AMD Ryzen 7 7800X3D 8-Core Processor · 8 cœurs / 16 threads",
         )
 
+    def test_temperature_measures(self):
+        # Chaque ligne de `format_temperatures` se recompose en mesures
+        # (nom, valeur) : deux corps de texte, comme les lignes de disques.
+        text = ("CPU\u00a048\u00a0°C\n"
+                "SSD\u00a01\u00a037\u00a0°C\u00a0✓  SSD\u00a02\u00a032\u00a0°C\u00a0✓\n"
+                "hdd3\u00a036\u00a0°C  hdd2\u00a037\u00a0°C\u00a0✗\n"
+                "RAM\u00a01\u00a033\u00a0°C")
+        self.assertEqual(local.temperature_measures(text), [
+            [("CPU", "48 °C")],
+            [("SSD 1", "37 °C ✓"), ("SSD 2", "32 °C ✓")],
+            [("hdd3", "36 °C"), ("hdd2", "37 °C ✗")],
+            [("RAM 1", "33 °C")],
+        ])
+        # Le nom peut lui-même porter une insécable : couper au premier
+        # séparateur donnerait « SSD » + « 1 37 °C ». Lignes vides ignorées.
+        self.assertEqual(local.temperature_measures("\n\n"), [])
+        self.assertEqual(local.temperature_measures(""),
+                         [])
+        # Une mesure inattendue n'est jamais perdue : tout passe en nom.
+        self.assertEqual(local.temperature_measures("Capteur muet"),
+                         [[("Capteur muet", "")]])
+
+    def test_temperatures(self):
+        # Capteurs réels : k10temp + amdgpu (gen1), coretemp seul (sucina,
+        # iGPU Intel sans capteur). Un seul capteur par nature, avec
+        # l'étiquette significative.
+        gen1 = [
+            {"chip": "acpitz", "temps": [("temp1", 20.0)]},
+            {"chip": "amdgpu", "temps": [("edge", 30.0), ("junction", 45.0)]},
+            {"chip": "k10temp", "temps": [("Tctl", 30.875),
+                                          ("Tccd1", 30.0)]},
+            {"chip": "nvme", "temps": [("Composite", 36.85)]},
+        ]
+        values = local.parse_hwmon(gen1)
+        self.assertEqual(values["cpu"], 30.875)
+        self.assertEqual(values["gpu"], 30.0)      # edge, pas junction
+        self.assertEqual(
+            local.format_temperatures(values),
+            "CPU\u00a031\u00a0°C\nGPU\u00a030\u00a0°C\nSSD\u00a037\u00a0°C",
+        )
+        sucina = [
+            {"chip": "coretemp", "temps": [("Package id 0", 45.0),
+                                           ("Core 0", 60.0)]},
+        ]
+        values = local.parse_hwmon(sucina)
+        self.assertEqual(values["cpu"], 45.0)      # package, pas le max
+        self.assertIsNone(values["gpu"])
+        self.assertEqual(local.format_temperatures(values), "CPU\u00a045\u00a0°C")
+        # Pilote sans étiquette connue : le maximum reste une mesure.
+        self.assertEqual(
+            local.parse_hwmon([{"chip": "amdgpu",
+                                "temps": [("junction", 41.0)]}])["gpu"],
+            41.0,
+        )
+        # Disques : pilote `nvme` → « SSD », numéroté dès qu'il y en a
+        # plusieurs (deux instances hwmon distinctes, pas une seule).
+        one = [{"chip": "nvme", "device": "nvme0",
+                "temps": [("Composite", 36.85), ("Sensor 1", 40.0)]}]
+        values = local.parse_hwmon(one)
+        self.assertEqual(values["ssd"], [("SSD", 36.85, None)])
+        two = one + [{"chip": "nvme", "device": "nvme1",
+                      "temps": [("Composite", 32.0)]}]
+        self.assertEqual(local.parse_hwmon(two)["ssd"],
+                         [("SSD 1", 36.85, None), ("SSD 2", 32.0, None)])
+        # Verdict SMART d'un NVMe : rattaché par le nom du périphérique hwmon.
+        self.assertEqual(
+            local.parse_hwmon(two, {"nvme1": True})["ssd"],
+            [("SSD 1", 36.85, None), ("SSD 2", 32.0, True)],
+        )
+        self.assertEqual(
+            local.format_temperatures(local.parse_hwmon(two, {"nvme1": True})),
+            "SSD\u00a01\u00a037\u00a0°C  SSD\u00a02\u00a032\u00a0°C\u00a0✓",
+        )
+        self.assertEqual(
+            local.format_temperatures(local.parse_hwmon(two)),
+            "SSD\u00a01\u00a037\u00a0°C  SSD\u00a02\u00a032\u00a0°C",
+        )
+        # Une ligne par capteur et par périphérique (script SSH) : les deux
+        # NVMe ne doivent pas fusionner en un seul disque à six sondes.
+        lines = ("nvme|nvme0|Composite|36850\n"
+                 "nvme|nvme0|Sensor 1|40000\n"
+                 "nvme|nvme1|Composite|32000\n"
+                 "k10temp|0000:00:18.3|Tctl|43500\n")
+        values = local.parse_hwmon(local.parse_hwmon_lines(lines))
+        self.assertEqual(values["cpu"], 43.5)
+        self.assertEqual(values["ssd"],
+                         [("SSD 1", 36.85, None), ("SSD 2", 32.0, None)])
+        self.assertEqual(local.parse_hwmon([]),
+                         {"cpu": None, "gpu": None, "ssd": [], "ram": []})
+        self.assertEqual(local.format_temperatures({}), "")
+
+    def test_sata_temperatures(self):
+        # Le helper rend tous les disques SATA, y compris ceux en veille :
+        # `celsius: null` = endormi (jamais réveillé), donc rien à afficher.
+        payload = {"modules": [], "disks": [
+            {"device": "sda", "mount": "/var/hdd3", "celsius": 36.0},
+            {"device": "sdb", "mount": "/var/hdd2", "celsius": None},
+            {"device": "sdc", "mount": "", "celsius": 25.0},
+        ]}
+        self.assertEqual(local.sata_temperatures(payload),
+                         [("hdd3", 36.0, None), ("sdc", 25.0, None)])
+        # Disque non monté : nom du périphérique, jamais un « hddN » qui
+        # pourrait tomber sur le nom de montage d'un autre disque.
+        payload["disks"] = [
+            {"device": "sda", "mount": "/var/hdd2", "celsius": 30.0},
+            {"device": "sdb", "mount": "", "celsius": 31.0},
+        ]
+        self.assertEqual(local.sata_temperatures(payload),
+                         [("hdd2", 30.0, None), ("sdb", 31.0, None)])
+        self.assertEqual(local.sata_temperatures({}), [])
+        self.assertEqual(local.sata_temperatures({"disks": "nope"}), [])
+        # Fusion avec les capteurs hwmon, dans l'ordre CPU · GPU · SSD · hdd.
+        devices = [{"chip": "k10temp", "device": "0000:00:18.3",
+                    "temps": [("Tctl", 30.0)]}]
+        self.assertEqual(
+            local.temperature_summary(devices, sata=[("hdd1", 36.0)]),
+            "CPU\u00a030\u00a0°C\nhdd1\u00a036\u00a0°C",
+        )
+        # Une ligne par famille : les disques d'une même famille se partagent
+        # leur ligne, les barrettes passent en dernier.
+        self.assertEqual(
+            local.temperature_summary(
+                [{"chip": "spd5118", "temps": [("temp1", 33.0)]},
+                 {"chip": "spd5118", "temps": [("temp1", 35.0)]}],
+                sata=[("hdd1", 36.0), ("hdd2", 37.0)],
+            ),
+            "hdd1\u00a036\u00a0°C  hdd2\u00a037\u00a0°C\n"
+            "RAM\u00a01\u00a033\u00a0°C  RAM\u00a02\u00a035\u00a0°C",
+        )
+        # Six disques SATA : deux lignes de trois, la case n'a pas la place
+        # pour six mesures d'affilée.
+        six = [("hdd1", 33.0), ("hdd2", 34.0), ("hdd3", 36.0),
+               ("hdd4", 37.0), ("hdd5", 38.0), ("hdd6", 39.0)]
+        self.assertEqual(
+            local.format_temperatures({}, sata=six),
+            "hdd1\u00a033\u00a0°C  hdd2\u00a034\u00a0°C  hdd3\u00a036\u00a0°C\n"
+            "hdd4\u00a037\u00a0°C  hdd5\u00a038\u00a0°C  hdd6\u00a039\u00a0°C",
+        )
+        # Verdict SMART : ✓ quand `smartctl -H` passe, ✗ quand il échoue,
+        # rien quand le disque ne le publie pas (pont USB, disque muet).
+        payload["disks"] = [
+            {"device": "sda", "mount": "/var/hdd1", "celsius": 33.0,
+             "smart": True},
+            {"device": "sdb", "mount": "/var/hdd2", "celsius": 34.0,
+             "smart": False},
+            {"device": "sdc", "mount": "/var/hdd3", "celsius": 36.0},
+        ]
+        rows = local.sata_temperatures(payload)
+        self.assertEqual(rows, [("hdd1", 33.0, True), ("hdd2", 34.0, False),
+                                ("hdd3", 36.0, None)])
+        self.assertEqual(
+            local.format_temperatures({}, sata=rows),
+            "hdd1\u00a033\u00a0°C\u00a0✓  hdd2\u00a034\u00a0°C\u00a0✗  "
+            "hdd3\u00a036\u00a0°C",
+        )
+        self.assertEqual(local.parse_hwinfo("pas du json"), {})
+        self.assertEqual(local.parse_hwinfo('{"disks": []}'), {"disks": []})
+
     def test_parse_cpu_without_cores_field(self):
         # ARM et quelques VMs n'exposent pas « cpu cores » : les blocs
         # « processor » restent la seule mesure.
@@ -979,6 +1137,41 @@ class HardwareTest(unittest.TestCase):
             30.98, places=2,
         )
         self.assertIsNone(local.memory_total_gib("rien"))
+
+    def test_memory_usage(self):
+        # « Utilisée » = MemTotal − MemAvailable : le cache de fichiers ne
+        # doit pas compter comme de la mémoire occupée.
+        text = ("MemTotal:       32490004 kB\n"
+                "MemFree:         1055000 kB\n"
+                "MemAvailable:   26444996 kB\n")
+        self.assertEqual(local.format_memory(text),
+                         "5,8 Gio utilisés sur 31 Gio · 19 %")
+        # Sans MemAvailable : le total seul, jamais un pourcentage inventé.
+        self.assertEqual(local.format_memory("MemTotal: 32490004 kB"),
+                         "31 Gio")
+        self.assertEqual(local.format_memory(""), "")
+        self.assertIsNone(local.memory_used_gib("MemTotal: 1 kB"))
+
+    def test_vram(self):
+        # Carte dédiée : amdgpu publie le fabricant des puces (samsung) ;
+        # NVIDIA passe par /proc. Les deux disent « VRAM ».
+        dedicated = "total=17095983104\nvendor=samsung\n"
+        self.assertEqual(local.parse_vram(dedicated), (15.921875, True))
+        self.assertEqual(local.parse_vram("Video Memory:   8192 MiB"),
+                         (8.0, True))
+        # APU : pas de mémoire propre, le fichier de fabricant est absent —
+        # la valeur est une tranche de RAM réservée par le BIOS.
+        self.assertEqual(local.parse_vram("total=8589934592\nvendor=\n"),
+                         (8.0, False))
+        self.assertEqual(local.parse_vram(""), (None, False))
+        self.assertEqual(local.parse_vram("Carte inconnue"), (None, False))
+        # Libellés : « VRAM » pour du dédié, « RAM allouée » pour un APU ;
+        # 15,9 Gio annoncés 16, mais 0,5 reste 0,5.
+        self.assertEqual(local.format_vram(15.921875, True), "16 Gio VRAM")
+        self.assertEqual(local.format_vram(8.0, True), "8 Gio VRAM")
+        self.assertEqual(local.format_vram(0.5, True), "0,5 Gio VRAM")
+        self.assertEqual(local.format_vram(8.0, False),
+                         "8 Gio (RAM allouée)")
 
     def test_memory_modules(self):
         data = json.dumps({"modules": [
@@ -2268,6 +2461,18 @@ class RemoteHardwareTest(unittest.TestCase):
         self.assertEqual(mounts, ["/var/home", "/var/hdd1"])
         labelled = local.disk_rows_from_df(self.DF, "/var/home/gab")
         self.assertEqual(labelled[0]["label"], "Dossier personnel")
+
+    def test_disk_totals(self):
+        rows = [
+            {"total": 4 * 1024 ** 4, "free": 1024 ** 4},        # 4 Tio, 1 libre
+            {"total": 2 * 1024 ** 4, "free": 512 * 1024 ** 3},  # 2 Tio, 0,5 libre
+        ]
+        self.assertEqual(local.format_disk_totals(rows),
+                         "Total : 1,5 Tio libres sur 6 Tio   75 % utilisé")
+        # Un seul disque : sa ligne dit déjà tout, pas de synthèse.
+        self.assertEqual(local.format_disk_totals(rows[:1]), "")
+        self.assertEqual(local.format_disk_totals([]), "")
+        self.assertEqual(local.format_disk_totals([{"total": 0}]), "")
 
     def test_boot_time_from_proc_stat(self):
         text = (

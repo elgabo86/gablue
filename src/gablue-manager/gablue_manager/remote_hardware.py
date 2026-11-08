@@ -6,9 +6,10 @@ sections balisées (`::gablue:<nom>`) ramène les fichiers bruts (/proc, DMI,
 les fonctions de `local` — une seule façon de formatter un processeur, une
 barrette ou un disque.
 
-Aucun privilège obligatoire : les barrettes passent par le helper NOPASSWD
-`gablue-hwinfo` quand il existe (image récente), sinon la ligne reste vide ;
-le reste est lisible par l'utilisateur du SSH.
+Aucun privilège obligatoire : les barrettes et la température des disques
+SATA passent par le helper NOPASSWD `gablue-hwinfo` quand il existe (image
+récente), sinon la ligne reste vide ; le reste est lisible par l'utilisateur
+du SSH. Les capteurs hwmon (`/sys/class/hwmon`) ne demandent rien.
 """
 
 import time
@@ -36,15 +37,32 @@ grep -m1 '^model name' /proc/cpuinfo 2>/dev/null || true
 awk -F: '/^cpu cores/{gsub(/ /,"",$2); print "cores="$2; exit}' /proc/cpuinfo 2>/dev/null
 echo "threads=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)"
 echo '::gablue:mem'
-grep '^MemTotal' /proc/meminfo 2>/dev/null || true
+grep -E '^Mem(Total|Available)' /proc/meminfo 2>/dev/null || true
 echo '::gablue:modules'
 sudo -n /usr/libexec/gablue-hwinfo 2>/dev/null || echo '{}'
 echo '::gablue:gpu'
 lspci -mm -nn -d ::0300 2>/dev/null || true
+echo '::gablue:vram'
+for d in /sys/class/drm/card*/device; do
+    [ -e "$d/mem_info_vram_total" ] || continue
+    echo "total=$(cat "$d/mem_info_vram_total" 2>/dev/null)"
+    echo "vendor=$(cat "$d/mem_info_vram_vendor" 2>/dev/null)"
+done
+grep -i 'Video Memory' /proc/driver/nvidia/gpus/*/information 2>/dev/null || true
 echo '::gablue:vulkan'
 timeout 8 vulkaninfo --summary 2>/dev/null | sed -n 's/^[[:space:]]*deviceName[[:space:]]*=[[:space:]]*//p' | head -2 || true
 echo '::gablue:df'
 df -P -B1 2>/dev/null | grep '^/dev/' || true
+echo '::gablue:temps'
+for d in /sys/class/hwmon/hwmon*; do
+    chip=$(cat "$d/name" 2>/dev/null) || continue
+    dev=$(basename "$(readlink -f "$d/device" 2>/dev/null)" 2>/dev/null)
+    for f in "$d"/temp*_input; do
+        [ -e "$f" ] || continue
+        label=$(cat "${f%_input}_label" 2>/dev/null)
+        echo "$chip|$dev|${label:-temp1}|$(cat "$f" 2>/dev/null)"
+    done
+done
 echo '::gablue:kernel'
 uname -r 2>/dev/null || true
 echo '::gablue:boot'
@@ -99,11 +117,14 @@ def parse_hardware(text: str, now: float | None = None) -> dict:
             threads = _int(line.partition("=")[2])
     values["cpu"] = local.cpu_label_parts(model, cores, threads)
 
-    total = local.memory_total_gib("\n".join(split.get("mem", [])))
-    values["memory"] = local.format_gib(total) if total else ""
+    values["memory"] = local.format_memory("\n".join(split.get("mem", [])))
 
-    modules = local.parse_memory_modules("\n".join(split.get("modules", [])))
-    values["modules"] = local.format_memory_modules(modules)
+    # Le même helper rend les barrettes ET la température des disques SATA
+    # (`smartctl -n standby` : un disque en veille n'est pas réveillé).
+    hwinfo = local.parse_hwinfo("\n".join(split.get("modules", [])))
+    values["modules"] = local.format_memory_modules(
+        local.memory_modules_from(hwinfo)
+    )
 
     gpu = local.parse_lspci_display("\n".join(split.get("gpu", [])))
     for line in split.get("vulkan", []):
@@ -114,7 +135,9 @@ def parse_hardware(text: str, now: float | None = None) -> dict:
         ):
             gpu = name
             break
-    values["gpu"] = gpu
+    vram, dedicated = local.parse_vram("\n".join(split.get("vram", [])))
+    values["gpu"] = (f"{gpu} · {local.format_vram(vram, dedicated)}"
+                     if vram and gpu else gpu)
 
     df_text = "\n".join(split.get("df", []))
     disk_rows = local.disk_rows_from_df(df_text, home)
@@ -122,6 +145,15 @@ def parse_hardware(text: str, now: float | None = None) -> dict:
     # La page d'un poste distant affiche les mêmes lignes de disques que le
     # local (sans bouton Filelight, qui ne lit que la machine courante).
     values["disk_rows"] = disk_rows
+
+    # Températures CPU/GPU/NVMe : le poste imprime ses capteurs hwmon, les
+    # disques SATA viennent du helper ; analyse et sélection sont celles du
+    # poste local.
+    values["temperatures"] = local.temperature_summary(
+        local.parse_hwmon_lines("\n".join(split.get("temps", []))),
+        sata=local.sata_temperatures(hwinfo),
+        nvm=local.nvm_smart(hwinfo),
+    )
 
     kernel = next((line.strip() for line in split.get("kernel", [])
                    if line.strip()), "")

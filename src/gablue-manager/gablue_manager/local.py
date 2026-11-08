@@ -481,6 +481,93 @@ def memory_total_gib(text: str) -> float | None:
         return None
     return int(match.group(1)) / (1024 ** 2)
 
+def memory_used_gib(text: str) -> float | None:
+    """Mémoire réellement occupée : `MemTotal` − `MemAvailable`, en Gio.
+
+    `MemAvailable` est l'estimation du noyau de ce qui reste utilisable sans
+    swapper — cache de fichiers compris. C'est la seule mesure qui ne compte
+    pas le cache comme « mémoire utilisée » : `MemFree` seul donnerait 25 Gio
+    « occupés » sur un poste qui ne fait que lire des fichiers.
+    """
+    total = re.search(r"^MemTotal:\s+(\d+)\s*kB", text or "", re.MULTILINE)
+    available = re.search(r"^MemAvailable:\s+(\d+)\s*kB", text or "",
+                          re.MULTILINE)
+    if not total or not available:
+        return None
+    used = int(total.group(1)) - int(available.group(1))
+    return max(0.0, used / (1024 ** 2))
+
+def format_memory(text: str) -> str:
+    """« 12,4 Gio utilisés sur 31 Gio · 40 % » (vide si `/proc` illisible).
+
+    Sans `MemAvailable` (vieux noyau, poste exotique), on retombe sur le seul
+    total plutôt que d'inventer un pourcentage.
+    """
+    total = memory_total_gib(text)
+    if not total:
+        return ""
+    used = memory_used_gib(text)
+    if used is None:
+        return format_gib(total)
+    return (f"{format_gib(used)} utilisés sur {format_gib(total)}"
+            f" · {round(used / total * 100)} %")
+
+def parse_vram(text: str) -> tuple[float | None, bool]:
+    """(taille en Gio, mémoire dédiée) depuis `/sys` (amdgpu) ou `/proc` (NVIDIA).
+
+    Format attendu : des paires `total=<octets>` / `vendor=<fabricant>` par
+    carte, ou les lignes « Video Memory: 8192 MiB » de `/proc/driver/nvidia`.
+    Plusieurs cartes → la plus grosse.
+
+    « Dédiée » veut dire mémoire **propre à la carte** : amdgpu ne publie
+    `mem_info_vram_vendor` que dans ce cas. Sur un APU la VRAM est une tranche
+    de RAM système réservée par le BIOS, et le fichier est absent — d'où le
+    libellé « RAM allouée » plutôt que « VRAM », qui laisserait croire à de la
+    mémoire en plus.
+    """
+    best: float | None = None
+    dedicated = False
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line.startswith("total="):
+            digits = line[len("total="):].strip()
+            if digits.isdigit():
+                value = int(digits) / (1024 ** 3)
+                best = value if best is None else max(best, value)
+        elif line.startswith("vendor="):
+            dedicated = dedicated or bool(line[len("vendor="):].strip())
+        else:
+            match = re.search(r"Video Memory:\s*(\d+)\s*MiB", line,
+                              re.IGNORECASE)
+            if match:
+                value = int(match.group(1)) / 1024
+                best = value if best is None else max(best, value)
+                dedicated = True
+    return best, dedicated
+
+def format_vram(gib: float, dedicated: bool = True) -> str:
+    """« 16 Gio VRAM », ou « 8 Gio (RAM allouée) » sur un APU.
+
+    Une carte vendue 16 Go en annonce 15,9 une fois la mémoire réservée
+    retirée par le pilote ; sous 4 Gio on garde la décimale, au-dessus
+    l'arrondi à l'entier est ce que l'utilisateur connaît. Sur un APU, le GPU
+    n'a pas de mémoire propre : la valeur est une tranche de RAM réservée par
+    le BIOS, et « VRAM » ferait croire à de la mémoire supplémentaire.
+    """
+    value = f"{round(gib)}" if gib >= 4 else _gio_amount(gib)
+    return f"{value} Gio VRAM" if dedicated else f"{value} Gio (RAM allouée)"
+
+def gpu_vram() -> tuple[float | None, bool]:
+    """VRAM de la machine courante, sans privilège (amdgpu puis NVIDIA)."""
+    texts: list[str] = []
+    for path in sorted(Path("/").glob(str(VRAM_SYSFS).lstrip("/"))):
+        texts.append(f"total={_read_text(path).strip()}")
+        vendor = _read_text(path.parent / VRAM_VENDOR.name).strip()
+        texts.append(f"vendor={vendor}")
+    for path in sorted(Path("/").glob(str(VRAM_NVIDIA).lstrip("/"))):
+        texts.append(_read_text(path))
+    return parse_vram("\n".join(texts))
+
 def format_memory_modules(modules: list[dict]) -> str:
     """Barrettes → « 2 × 16 Gio · DDR5 · 6000 MT/s » (chaîne vide sans module)."""
     rows = [
@@ -529,10 +616,10 @@ def parse_memory_modules(text: str) -> list[dict]:
     une sortie illisible (helper absent, dmidecode muet) donne une liste vide,
     jamais une exception — la mémoire totale, elle, vient de /proc/meminfo.
     """
-    try:
-        data = json.loads(text or "")
-    except (TypeError, ValueError):
-        return []
+    return memory_modules_from(parse_hwinfo(text))
+
+def memory_modules_from(data: dict) -> list[dict]:
+    """Partie « modules » du JSON du helper → barrettes (liste vide sinon)."""
     modules = data.get("modules") if isinstance(data, dict) else None
     rows: list[dict] = []
     for item in modules or []:
@@ -557,20 +644,64 @@ def parse_memory_modules(text: str) -> list[dict]:
         })
     return rows
 
-def memory_modules() -> list[dict]:
-    """Barrettes mémoire lues par le helper NOPASSWD (liste vide sinon)."""
+def hwinfo() -> dict:
+    """JSON du helper NOPASSWD `gablue-hwinfo` ({} s'il est absent ou muet).
+
+    Une seule invocation rend les barrettes **et** la température des disques
+    SATA : chaque appel passe par sudo, on ne le paie pas deux fois.
+    """
     if not Path(HWINFO_HELPER).is_file():
-        return []
+        return {}
     try:
         result = subprocess.run(
             ["sudo", "-n", HWINFO_HELPER],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=60,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return []
+        return {}
     if result.returncode != 0:
-        return []
-    return parse_memory_modules(result.stdout)
+        return {}
+    return parse_hwinfo(result.stdout)
+
+def parse_hwinfo(text: str) -> dict:
+    """Sortie du helper → dictionnaire (`{}` si elle est illisible)."""
+    try:
+        data = json.loads(text or "")
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+def memory_modules() -> list[dict]:
+    """Barrettes mémoire lues par le helper NOPASSWD (liste vide sinon)."""
+    return memory_modules_from(hwinfo())
+
+def sata_temperatures(data: dict | None = None) -> list[tuple]:
+    """Disques SATA du helper → [(« hdd1 », 36.0)] ; un disque en veille est écarté.
+
+    `celsius` absent = disque endormi (ou sans sonde) : il ne s'affiche pas,
+    et il n'a surtout pas été réveillé pour ça. Le nom vient du point de
+    montage, celui que la page « Disques » affiche déjà (« hdd1 », « data2 ») ;
+    un disque non monté garde son nom de périphérique (« sdc »), sans risque
+    de collision avec un nom de montage. Le troisième champ est le verdict
+    `smartctl -H` du disque (True/False), ou None s'il ne le publie pas.
+    """
+    payload = hwinfo() if data is None else data
+    rows: list[tuple] = []
+    for item in (payload or {}).get("disks") or []:
+        if not isinstance(item, dict):
+            continue
+        celsius = item.get("celsius")
+        if not isinstance(celsius, (int, float)):
+            continue
+        mount = str(item.get("mount") or "").rstrip("/")
+        device = str(item.get("device") or "")
+        name = os.path.basename(mount) or device
+        if not name:
+            continue
+        smart = item.get("smart")
+        rows.append((name, float(celsius),
+                     smart if isinstance(smart, bool) else None))
+    return rows
 
 def identity_from_dmi(values: dict[str, str]) -> dict[str, str]:
     """Identité de la machine à partir des champs DMI.
@@ -771,6 +902,28 @@ def disk_rows(text: str | None = None, home: str | None = None) -> list[dict]:
             rows.append(row)
     return rows
 
+def format_disk_totals(rows: list[dict]) -> str:
+    """« Total : 1,9 Tio libres sur 13 Tio   85 % utilisé » (vide si un seul).
+
+    Même forme qu'une ligne de disque — espace libre d'abord, pourcentage
+    utilisé ensuite — sinon la synthèse se lisait autrement que ce qu'elle
+    résume. Addition des disques **affichés**, donc sans double compte : les
+    points de montage d'un même périphérique sont déjà ramenés à un seul
+    (`parse_mounts`). Rien à ajouter avec un disque unique : sa ligne dit
+    déjà tout.
+    """
+    rows = [row for row in (rows or []) if row]
+    if len(rows) < 2:
+        return ""
+    total = sum(int(row.get("total") or 0) for row in rows)
+    free = sum(int(row.get("free") or 0) for row in rows)
+    if total <= 0:
+        return ""
+    used = max(0, total - free)
+    return (f"Total : {format_capacity(free)} libres sur "
+            f"{format_capacity(total)}   "
+            f"{round(used / total * 100)} % utilisé")
+
 def disk_rows_from_df(text: str, home: str | None = None) -> list[dict]:
     """`df -P -B1` → disques prêts à afficher (poste distant)."""
     home = _real_home(home)
@@ -820,7 +973,257 @@ def parse_secure_boot(text: str, efi: bool) -> str:
         return "disabled"
     return "unknown"
 
-def hardware_summary() -> dict[str, str]:
+# -- températures -----------------------------------------------------------
+#
+# `/sys/class/hwmon` est la seule source sans privilège : chaque pilote y
+# expose ses capteurs (k10temp/coretemp pour le CPU, amdgpu/nvidia pour le
+# GPU, nvme/drivetemp pour les disques). Les valeurs sont en millidegrés.
+
+HWMON_ROOT = Path("/sys/class/hwmon")
+CPU_TEMP_CHIPS = ("k10temp", "coretemp", "zenpower", "cpu_thermal")
+# Étiquettes utiles : « Tctl » (k10temp), « Package id 0 » (coretemp),
+# « Tdie » (zenpower). À défaut, le maximum des capteurs du pilote.
+CPU_TEMP_LABELS = ("Tctl", "Tdie", "Package id 0")
+GPU_TEMP_CHIPS = ("amdgpu", "radeon", "nouveau", "i915", "xe", "nvidia")
+GPU_TEMP_LABELS = ("edge", "temp1")
+DISK_TEMP_CHIPS = ("nvme", "drivetemp")
+DISK_TEMP_LABELS = ("Composite", "temp1")
+# Barrettes : `spd5118` (DDR5) et `jc42` (DDR4) exposent `temp1` par barrette.
+RAM_TEMP_CHIPS = ("spd5118", "jc42")
+RAM_TEMP_LABELS = ("temp1",)
+# VRAM : amdgpu l'expose dans /sys (octets), NVIDIA dans /proc (MiB).
+VRAM_SYSFS = Path("/sys/class/drm/card*/device/mem_info_vram_total")
+VRAM_VENDOR = Path("mem_info_vram_vendor")
+VRAM_NVIDIA = Path("/proc/driver/nvidia/gpus/*/information")
+
+# Espace insécable : « hdd5 38 °C » reste d'un bloc quand la case se replie.
+NBSP = "\u00a0"
+# Disques d'une même famille par ligne : au-delà, la case déborde.
+TEMPS_PER_LINE = 3
+
+def read_hwmon(root: Path | None = None) -> list[dict]:
+    """Capteurs `/sys/class/hwmon` → [{chip, device, temps: [(label, °C)]}]."""
+    base = HWMON_ROOT if root is None else root
+    try:
+        entries = sorted(base.glob("hwmon*"))
+    except OSError:
+        return []
+    devices: list[dict] = []
+    for entry in entries:
+        chip = _read_text(entry / "name")
+        if not chip:
+            continue
+        temps: list[tuple[str, float]] = []
+        for path in sorted(entry.glob("temp*_input")):
+            try:
+                celsius = int(_read_text(path)) / 1000.0
+            except ValueError:
+                continue
+            label = _read_text(
+                Path(str(path)[: -len("_input")] + "_label")
+            )
+            temps.append((label or "temp1", celsius))
+        if not temps:
+            continue
+        try:
+            device = os.path.basename(os.readlink(entry / "device"))
+        except OSError:
+            device = ""
+        devices.append({"chip": chip, "device": device, "temps": temps})
+    return devices
+
+def parse_hwmon_lines(text: str) -> list[dict]:
+    """Lignes `capteur|périphérique|étiquette|millidegrés` → dicts de `read_hwmon`.
+
+    Même lecture en local (`read_hwmon` sur /sys) qu'à distance (le script SSH
+    imprime ces lignes) : une seule analyse, une seule sélection. Le
+    périphérique sépare deux pilotes de même nom — deux NVMe sont deux
+    instances `nvme`, pas un seul capteur à douze températures.
+    """
+    devices: dict[tuple[str, str], list[tuple[str, float]]] = {}
+    for line in (text or "").splitlines():
+        chip, sep, rest = line.partition("|")
+        if not sep:
+            continue
+        device, sep, rest = rest.partition("|")
+        if not sep:
+            continue
+        label, sep, raw = rest.partition("|")
+        if not sep:
+            continue
+        try:
+            celsius = int(raw.strip()) / 1000.0
+        except ValueError:
+            continue
+        devices.setdefault((chip.strip(), device.strip()), []).append(
+            (label.strip() or "temp1", celsius)
+        )
+    return [
+        {"chip": chip, "device": device, "temps": temps}
+        for (chip, device), temps in devices.items() if chip
+    ]
+
+def _pick_temperature(temps: list[tuple[str, float]],
+                      preferred: tuple[str, ...]) -> float | None:
+    for label, celsius in temps:
+        if label in preferred:
+            return celsius
+    return max((value for _, value in temps), default=None)
+
+def _numbered(values: list[float], label: str) -> list[tuple[str, float]]:
+    """Températures d'une famille → [(« SSD », 31), (« SSD 2 », 33)…].
+
+    Un seul élément garde le nom seul ; plusieurs sont numérotés dans l'ordre
+    des capteurs, qui ne dépend que du matériel.
+    """
+    if len(values) == 1:
+        return [(label, values[0])]
+    return [(f"{label} {index}", value) for index, value in enumerate(values, 1)]
+
+def nvm_smart(data: dict | None = None) -> dict[str, bool]:
+    """Verdicts SMART des NVMe rendus par le helper : {« nvme0 »: True}."""
+    if data is None:
+        data = hwinfo()
+    verdicts = (data or {}).get("nvm")
+    if not isinstance(verdicts, dict):
+        return {}
+    return {str(device): bool(passed)
+            for device, passed in verdicts.items()
+            if isinstance(passed, bool)}
+
+def parse_hwmon(devices: list[dict],
+                nvm_smart_map: dict[str, bool] | None = None) -> dict:
+    """Capteurs hwmon → températures utiles (CPU, GPU, SSD, RAM).
+
+    Un seul capteur par nature : le premier pilote connu qui en donne, avec
+    l'étiquette significative quand elle existe (`edge` plutôt que
+    `junction`, `Tctl` plutôt que les cœurs, `Composite` plutôt que les
+    sondes internes). Un pilote absent — pas de capteur GPU sur un iGPU
+    Intel, par exemple — ne s'invente pas : la valeur manque et rien ne
+    s'affiche. Disques et barrettes sont numérotés : « SSD » puis « SSD 1 »,
+    « SSD 2 », « RAM 1 », « RAM 2 ».
+    """
+    cpu: float | None = None
+    gpu: float | None = None
+    disks: list[tuple[str, float]] = []
+    ram: list[float] = []
+    for device in devices or []:
+        chip = str(device.get("chip") or "")
+        temps = list(device.get("temps") or [])
+        if not temps:
+            continue
+        if cpu is None and chip in CPU_TEMP_CHIPS:
+            cpu = _pick_temperature(temps, CPU_TEMP_LABELS)
+        elif gpu is None and chip in GPU_TEMP_CHIPS:
+            gpu = _pick_temperature(temps, GPU_TEMP_LABELS)
+        elif chip in DISK_TEMP_CHIPS:
+            value = _pick_temperature(temps, DISK_TEMP_LABELS)
+            if value is not None:
+                disks.append((str(device.get("device") or ""), value))
+        elif chip in RAM_TEMP_CHIPS:
+            value = _pick_temperature(temps, RAM_TEMP_LABELS)
+            if value is not None:
+                ram.append(value)
+    # Le nom est numéroté à part, puis rattaché au périphérique hwmon : c'est
+    # ce dernier qui porte le verdict SMART venu du helper (`nvme0`).
+    names = _numbered([value for _, value in disks], "SSD")
+    ssd = [
+        (name, value, (nvm_smart_map or {}).get(device))
+        for (device, value), (name, _) in zip(disks, names)
+    ]
+    return {
+        "cpu": cpu,
+        "gpu": gpu,
+        "ssd": ssd,
+        "ram": _numbered(ram, "RAM"),
+    }
+
+# Verdict SMART d'un disque SATA, tel que `smartctl -H` le rend.
+SMART_MARKS = {True: "✓", False: "✗"}
+
+def _measure(name: str, value: float, smart: bool | None = None) -> str:
+    """« hdd5 38 °C ✓ » : les espaces internes sont insécables.
+
+    La case du tableau peut se replier ; une mesure ne doit jamais être
+    coupée en deux entre son nom, son chiffre, son unité et son verdict. Le
+    verdict n'apparaît que s'il est connu : un disque en veille, ou un pont
+    USB qui ne publie rien, n'affiche ni ✓ ni ✗.
+    """
+    text = f"{str(name).replace(' ', NBSP)}{NBSP}{value:.0f}{NBSP}°C"
+    mark = SMART_MARKS.get(smart)
+    return f"{text}{NBSP}{mark}" if mark else text
+
+def temperature_measures(text: str) -> list[list[tuple[str, str]]]:
+    """« SSD 1 37 °C ✓  SSD 2 32 °C ✓ » → [[("SSD 1", "37 °C ✓"), …]].
+
+    Une ligne de `format_temperatures` porte jusqu'à trois mesures séparées
+    par deux espaces, chacune « nom <insécable> 38 <insécable> °C … ». Le nom
+    peut lui-même contenir une insécable (« SSD 1 », « RAM 2 »), d'où la
+    recherche du **dernier** séparateur devant le chiffre et non d'une simple
+    coupure au premier : couper bêtement donnerait « SSD » + « 1 37 °C ».
+
+    Sert à composer chaque ligne en deux corps de texte, comme les lignes de
+    disques : le nom en clair, la mesure en gris. Les espaces insécables sont
+    rendues comme des espaces normales — la composition n'en a plus besoin,
+    chaque morceau est un libellé à part.
+    """
+    rows: list[list[tuple[str, str]]] = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        measures: list[tuple[str, str]] = []
+        for chunk in re.split(r" {2,}", line):
+            match = re.match(r"^(.+?)\u00a0(\d+(?:[.,]\d+)?\u00a0°C.*)$", chunk)
+            name, detail = (match.group(1), match.group(2)) if match else (chunk, "")
+            measures.append((name.replace(NBSP, " "),
+                             detail.replace(NBSP, " ").strip()))
+        rows.append(measures)
+    return rows
+
+def format_temperatures(values: dict,
+                        sata: list[tuple[str, float]] | None = None) -> str:
+    """Une ligne par famille — « CPU », « GPU », « SSD 1  SSD 2 »…
+
+    Les disques d'une même famille partagent leur ligne (un NVMe par SSD, un
+    SATA par hdd) : sur un poste à six disques, une seule ligne pour tout
+    serait illisible et une ligne par disque prendrait toute la hauteur. Rien
+    n'est inventé : une famille sans capteur ne produit aucune ligne.
+    """
+    values = values or {}
+    lines: list[str] = []
+    for key, label in (("cpu", "CPU"), ("gpu", "GPU")):
+        value = values.get(key)
+        if value:
+            lines.append(_measure(label, value))
+    for entries in (values.get("ssd"), sata, values.get("ram")):
+        entries = [entry for entry in entries or [] if entry]
+        # Trois disques par ligne : six disques SATA sur une seule ligne
+        # sortiraient de la case (constaté sur sucina), et une ligne par
+        # disque prendrait toute la hauteur du panneau.
+        for start in range(0, len(entries), TEMPS_PER_LINE):
+            lines.append("  ".join(
+                _measure(entry[0], entry[1],
+                         entry[2] if len(entry) > 2 else None)
+                for entry in entries[start:start + TEMPS_PER_LINE]
+            ))
+    return "\n".join(lines)
+
+def temperature_summary(devices: list[dict] | None = None,
+                        sata: list[tuple] | None = None,
+                        nvm: dict[str, bool] | None = None) -> str:
+    """Températures du poste, prêtes à afficher (vide si aucun capteur).
+
+    `sata` vient du helper `gablue-hwinfo` (`smartctl -n standby`) : les
+    disques SATA n'ont pas de capteur hwmon tant que `drivetemp` n'est pas
+    chargé, et ce pilote lit le SMART sans regarder le mode d'alimentation —
+    il réveillerait les disques endormis, ce que la sonde évite.
+    """
+    values = parse_hwmon(read_hwmon() if devices is None else devices, nvm)
+    return format_temperatures(values, sata)
+
+def hardware_summary(sata: list[tuple] | None = None,
+                     nvm: dict[str, bool] | None = None) -> dict[str, str]:
     """Résumé de la machine, en lectures locales uniquement.
 
     Pas de sous-processus coûteux : `lspci` est mis en cache, tout le reste
@@ -831,9 +1234,17 @@ def hardware_summary() -> dict[str, str]:
     values["system"] = local_distro()
     values["cpu"] = cpu_label()
     values["gpu"] = gpu_label()
-    total = memory_total_gib(_read_text(Path("/proc/meminfo")))
-    values["memory"] = format_gib(total) if total else ""
+    vram, dedicated = gpu_vram()
+    if vram:
+        # Gardé à part : la fenêtre remplace le nom du die par le nom
+        # commercial (Vulkan) et doit pouvoir réattacher la VRAM.
+        values["vram"] = format_vram(vram, dedicated)
+    values["memory"] = format_memory(_read_text(Path("/proc/meminfo")))
     values["disks"] = disks_label()
+    # Températures CPU/GPU/NVMe : /sys seulement, aucun privilège (vide si la
+    # machine n'expose pas de capteur) ; `sata` vient du helper `gablue-hwinfo`
+    # (smartctl sans réveil), mis en cache par la fenêtre.
+    values["temperatures"] = temperature_summary(sata=sata, nvm=nvm)
     try:
         values["kernel"] = os.uname().release
     except OSError:
