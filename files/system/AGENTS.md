@@ -204,8 +204,11 @@ manager le bascule sans privilège et lui écrit son calendrier), plus `gablue-u
 helper), parce que sudo ferme les fd ≥ 3 — l'app ne peut donc pas lui passer un descripteur, et
 Gablue Manager lit le FIFO sans privilège pour sa barre de progression (bootc exige un tube :
 son écriture passe par epoll, un fichier ordinaire est refusé ; le FIFO fait 64 Kio, donc un
-lecteur doit suivre, et le helper le retire à sa sortie — `trap EXIT`, `TERM` relayé en `exit 143`
-— pour qu'une mise à jour annulée ne laisse pas un tube mort que la suivante relirait). `gablue-hwinfo` (aucun argument)
+lecteur doit suivre, et le helper le retire à sa sortie (`trap EXIT`) pour qu'une mise à jour
+annulée ne laisse pas un tube mort que la suivante relirait ; bootc tourne en arrière-plan et
+`TERM`/`INT`/`HUP` le tuent lui-même (TERM puis KILL) — sinon « Annuler » ne coupait que sudo
+et le helper quand sudo isole la commande dans son propre pty, et le téléchargement continuait
+(vécu 08/11/2026). `gablue-hwinfo` (aucun argument)
 rend les barrettes mémoire en JSON (`dmidecode -t memory`, root) pour le résumé matériel du
 manager — emplacements vides écartés, erreur de lecture → liste vide, jamais d'échec visible. `gablue-clean` traite une
 sous-commande (`flatpak` : Flatpaks système inutilisés).

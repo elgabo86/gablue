@@ -23,6 +23,8 @@ install -d -m 0755 /run/gablue
 rm -f "$FIFO"
 mkfifo -m 0644 "$FIFO"
 
+bootc_pid=""
+
 # Un FIFO laissé par une mise à jour annulée serait relu comme celui de la
 # nouvelle opération (barre figée, plus aucun événement) : on le retire
 # toujours, y compris quand l'annulation tue le helper en pleine descente.
@@ -30,12 +32,30 @@ cleanup() {
     exec 3>&- || true
     rm -f "$FIFO"
 }
+
+# Un signal doit emporter bootc **lui-même** : `sudo` peut isoler la commande
+# dans son propre pty (session séparée), donc « Annuler » ne tue parfois que
+# sudo et le helper — bootc continuait alors son téléchargement de plusieurs
+# gigaoctets dans le dos de l'utilisateur (vécu 08/11/2026). TERM puis KILL.
+stop_bootc() {
+    if [ -n "$bootc_pid" ]; then
+        kill -TERM "$bootc_pid" 2>/dev/null || true
+        sleep 1
+        kill -KILL "$bootc_pid" 2>/dev/null || true
+    fi
+    exit 143
+}
+
 trap cleanup EXIT
-trap 'exit 143' TERM INT
+trap stop_bootc TERM INT HUP
 
 exec 3<>"$FIFO"
 rc=0
 # La sortie humaine reste sur stdout/stderr (journal du manager) ; seuls les
-# événements de progression passent par le FIFO.
-"$BOOTC" upgrade --progress-fd 3 || rc=$?
+# événements de progression passent par le FIFO. bootc tourne en arrière-plan
+# pour que les signaux arrivent au trap pendant l'attente.
+"$BOOTC" upgrade --progress-fd 3 &
+bootc_pid=$!
+wait "$bootc_pid" || rc=$?
+bootc_pid=""
 exit "$rc"
