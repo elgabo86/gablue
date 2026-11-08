@@ -340,20 +340,24 @@ class MainWindow(QMainWindow):
         self.local_config.avahi_requested.connect(self.toggle_avahi)
 
         # La carte du poste local est revenue (jugée plus jolie qu'un bouton
-        # seul en haut de l'onglet, vécu 07/11/2026) : identité, mise à jour
-        # et Configuration, comme la carte d'un poste distant.
+        # seul en haut de l'onglet, vécu 07/11/2026) : identité + bouton
+        # Configuration, comme la carte d'un poste distant.
         self.local_card = LocalCard(self.local_config, content)
-        # Même bouton et même menu que sur la carte d'un poste distant : la
-        # vérification est la première entrée, le panneau n'a plus de bouton.
-        self.local_card.update_requested.connect(self.local_update)
-        self.local_card.check_requested.connect(
-            lambda: self.check_updates(force=True, activity=True)
-        )
         layout.addWidget(self.local_card)
 
         self.updates_panel = UpdatesPanel(content)
-        # Le détail seul : les actions vivent sur la carte du poste.
-        self.updates_panel.update_button.setVisible(False)
+        self.updates_panel.check_requested.connect(
+            lambda: self.check_updates(force=True, activity=True)
+        )
+        self.updates_panel.set_update_menu([
+            ("Tout mettre à jour…", lambda: self.local_update("all")),
+            None,
+            ("Gablue…", lambda: self.local_update("gablue")),
+            ("Flatpaks…", lambda: self.local_update("flatpak")),
+            ("Gwine…", lambda: self.local_update("gwine")),
+            ("Brew…", lambda: self.local_update("brew")),
+            ("Applications…", lambda: self.local_update("apps")),
+        ])
         layout.addWidget(self.updates_panel)
 
         self.info_panel = InfoPanel(content)
@@ -699,11 +703,11 @@ class MainWindow(QMainWindow):
 
         host_id = host["id"]
         panel = UpdatesPanel(content)
-        # Même menu que sur la carte : la vérification d'abord, puis tout
-        # mettre à jour et les domaines. Plus de bouton « Vérifier » à côté.
+        panel.check_requested.connect(
+            lambda checked=False, hid=host_id:
+            self.check_host_updates(hid)
+        )
         panel.set_update_menu([
-            ("Vérifier les mises à jour",
-             lambda: self.check_host_updates(host_id)),
             ("Tout mettre à jour…",
              lambda: self.update_host(host_id, "all")),
             None,
@@ -988,7 +992,6 @@ class MainWindow(QMainWindow):
         if not force and not online:
             self._updates_state = {"online": False, "domains": {}}
             self.updates_panel.set_updates(self._updates_state)
-            self.local_card.set_updates(self._updates_state)
             self._update_image_cell(self._updates_state)
             self._update_footer()
             return
@@ -1002,7 +1005,6 @@ class MainWindow(QMainWindow):
         self._updates_worker = worker
         worker.done.connect(self._updates_done)
         self.updates_panel.set_checking()
-        self.local_card.set_checking()
         if activity:
             self._set_busy("updates", True)
         worker.start()
@@ -1013,7 +1015,6 @@ class MainWindow(QMainWindow):
         self._updates_state = state
         self.updates_panel.end_checking()
         self.updates_panel.set_updates(state)
-        self.local_card.set_updates(state)
         self._update_image_cell(state)
         self._update_footer()
         if self._updates_pending:
