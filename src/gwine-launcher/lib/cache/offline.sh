@@ -238,7 +238,10 @@ download_cache_bundle() {
 
     echo "Téléchargement du pack cache gwine pré-construit..."
 
-    if ! wget -q --show-progress "$bundle_base/gwine-cache.tar.xz" -O "$archive" 2>&1; then
+    # --tries/--timeout : ~1,1 Go depuis le CDN GitHub, une coupure transitoire
+    # ne doit pas faire basculer sur le téléchargement unitaire complet
+    if ! wget -q --show-progress --tries=3 --timeout=30 --waitretry=10 \
+            "$bundle_base/gwine-cache.tar.xz" -O "$archive" 2>&1; then
         echo "  ⚠️ Pack cache indisponible, téléchargement unitaire..."
         rm -rf "$temp_dir"
         return 1
@@ -246,7 +249,8 @@ download_cache_bundle() {
 
     # Vérification d'intégrité : le checksum est publié à côté de l'archive,
     # une archive non vérifiable est refusée
-    if ! wget -q "$bundle_base/gwine-cache.tar.xz.sha256" -O "$temp_dir/gwine-cache.tar.xz.sha256" 2>/dev/null; then
+    if ! wget -q --tries=3 --timeout=15 \
+            "$bundle_base/gwine-cache.tar.xz.sha256" -O "$temp_dir/gwine-cache.tar.xz.sha256" 2>/dev/null; then
         echo "  ⚠️ Checksum introuvable, téléchargement unitaire..."
         rm -rf "$temp_dir"
         return 1

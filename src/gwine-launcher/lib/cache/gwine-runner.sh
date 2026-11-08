@@ -12,20 +12,45 @@
 # Fonctions de récupération de version
 # =============================================================================
 
+# URL et paramètres de récupération de version (surchargeables : tests, miroirs)
+GWINE_RELEASES_LATEST_URL="${GWINE_RELEASES_LATEST_URL:-https://github.com/elgabo86/gwine/releases/latest}"
+GWINE_VERSION_FETCH_ATTEMPTS="${GWINE_VERSION_FETCH_ATTEMPTS:-3}"
+GWINE_VERSION_FETCH_TIMEOUT="${GWINE_VERSION_FETCH_TIMEOUT:-8}"
+
 # Récupère la dernière version de gwine depuis GitHub (release latest)
 get_latest_gwine_version() {
-    local version
+    local attempt response http_code redirect_url version
+    local last_http_code=""
+
     # Redirection HTML de /releases/latest (302 vers le tag de la dernière
     # release stable) — pas d'API GitHub (quota 60 req/h anonyme, épuisé
-    # dès une IP partagée/CI, casse les scripts)
-    version=$(curl -s --max-time 10 -o /dev/null -w '%{redirect_url}' "https://github.com/elgabo86/gwine/releases/latest" 2>/dev/null | grep -oE 'tag/[^/?#]*' | head -1)
-    version="${version#tag/}"
+    # dès une IP partagée/CI, casse les scripts).
+    # Plusieurs tentatives : GitHub renvoie parfois des timeouts aux requêtes
+    # anonymes (constaté 08/11/2026 : 3 × 10 s sans réponse depuis un runner
+    # gwine-cache alors que github.com répondait) — un timeout isolé ne doit
+    # pas être interprété comme une absence de réseau.
+    for (( attempt = 1; attempt <= GWINE_VERSION_FETCH_ATTEMPTS; attempt++ )); do
+        response=$(curl -s --max-time "$GWINE_VERSION_FETCH_TIMEOUT" -o /dev/null \
+            -w '%{http_code} %{redirect_url}' "$GWINE_RELEASES_LATEST_URL" 2>/dev/null)
+        http_code="${response%% *}"
+        redirect_url="${response#* }"
+        last_http_code="${http_code:-aucun}"
 
-    if [ -z "$version" ]; then
-        return 1
-    fi
+        version=$(printf '%s' "$redirect_url" | grep -oE 'tag/[^/?#]*' | head -1)
+        version="${version#tag/}"
+        if [ -n "$version" ]; then
+            echo "$version"
+            return 0
+        fi
 
-    echo "$version"
+        if [ "$attempt" -lt "$GWINE_VERSION_FETCH_ATTEMPTS" ]; then
+            sleep 2
+        fi
+    done
+
+    # stderr : les appelants capturent stdout (substitution de commande)
+    echo "⚠️  Version de gwine introuvable ($GWINE_VERSION_FETCH_ATTEMPTS tentatives, dernier code HTTP: $last_http_code)" >&2
+    return 1
 }
 
 # =============================================================================
@@ -123,7 +148,7 @@ download_gwine() {
     latest_version=$(get_latest_gwine_version)
 
     if [ -z "$latest_version" ]; then
-        echo "Impossible de récupérer la dernière version (pas de connexion internet)"
+        echo "Impossible de récupérer la dernière version (réseau GitHub indisponible ou version publiée introuvable)"
         echo "Tentative d'installation depuis le cache..."
         if install_gwine_from_cache; then
             return 0

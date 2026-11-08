@@ -473,9 +473,16 @@ main() {
         ensure_dxvk_installed
     fi
     
-    # Pour les modes qui nécessitent Wine/Proton, s'assurer que le runner est installé
-    # Sauf pour --init: init_prefix_only() l'installe lui-même (cache ou réseau)
-    if [ "$init_mode" != true ]; then
+    # Pour les modes qui nécessitent Wine/Proton, s'assurer que le runner est installé.
+    # Exceptions :
+    #  - --init : init_prefix_only() l'installe lui-même (cache ou réseau) ;
+    #  - --download-components : prepare_full_offline_cache() déploie d'abord le
+    #    pack cache pré-construit, qui contient l'archive du runner. Installer le
+    #    runner ici imposait une requête GitHub anonyme AVANT le pack et faisait
+    #    échouer tout le run gwine-cache quand elle expirait (constaté 08/11/2026) ;
+    #  - --cachepack : ne fait que lire/archiver le cache, aucun runner requis.
+    if [ "$init_mode" != true ] && [ "$download_wincomponents_mode" != true ] && \
+       [ "$cachepack_mode" != true ]; then
         ensure_runner_installed
     fi
 
