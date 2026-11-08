@@ -408,9 +408,12 @@ class UpdatesPanel(QFrame):
     et formules en retard. Les lignes « à jour » sont écartées (le statut le
     dit déjà), tout le reste est repris de `updates.summary_lines` — une seule
     source pour les deux affichages.
-    """
 
-    check_requested = Signal()
+    Le panneau ne porte plus de bouton « Vérifier » : la vérification est la
+    première entrée du menu « Mettre à jour », comme sur la carte d'un poste
+    distant. Son bouton « Mettre à jour » ne sert qu'aux pages de postes
+    distants — sur le poste local, c'est la carte qui le porte.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -428,17 +431,6 @@ class UpdatesPanel(QFrame):
         self.status.setObjectName("specLabel")
         header.addWidget(self.status)
         header.addStretch(1)
-        self.check_button = QPushButton("Vérifier", self)
-        self.check_button.setObjectName("ghost")
-        self.check_button.setCursor(Qt.PointingHandCursor)
-        self.check_button.setIcon(QIcon.fromTheme("view-refresh"))
-        self.check_button.setToolTip(
-            "Vérifier les mises à jour de ce poste maintenant"
-        )
-        self.check_button.clicked.connect(self.check_requested.emit)
-        header.addWidget(self.check_button)
-        # Mise à jour au même endroit que « Vérifier » : la carte du poste
-        # n'a plus à porter ce bouton, elle ne garde que son identité.
         self.update_button = QPushButton("Mettre à jour", self)
         self.update_button.setObjectName("accent")
         self.update_button.setCursor(Qt.PointingHandCursor)
@@ -453,11 +445,11 @@ class UpdatesPanel(QFrame):
         self._lines: list[QLabel] = []
 
     def set_checking(self) -> None:
-        self.check_button.setEnabled(False)
+        self.update_button.setEnabled(False)
         self.status.setText("Vérification en cours…")
 
     def end_checking(self) -> None:
-        self.check_button.setEnabled(True)
+        self.update_button.setEnabled(True)
 
     def set_update_menu(self, entries: list) -> None:
         """Remplit le menu de « Mettre à jour » (None = séparateur).
@@ -475,7 +467,7 @@ class UpdatesPanel(QFrame):
         self.update_button.setMenu(menu)
 
     def set_updates(self, state: dict | None) -> None:
-        self.check_button.setEnabled(True)
+        self.update_button.setEnabled(True)
         total = total_updates(state)
         self.update_button.setText(
             f"Mettre à jour ({total})" if total else "Mettre à jour"
@@ -1148,14 +1140,17 @@ class LocalConfigMenu(QMenu):
 
 
 class LocalCard(QFrame):
-    """La machine courante : identité et configuration, comme une carte de poste.
+    """La machine courante : identité, mise à jour et configuration.
 
     Même hauteur et mêmes marges qu'une carte de poste (92 px, icône dans un
-    emplacement de 26 px comme la pastille d'état), et le même bouton
-    **Configuration** libellé : les deux onglets se ressemblent. La carte ne
-    porte ni mise à jour ni applications — le panneau « Mises à jour » et le
-    menu de configuration les portent déjà.
+    emplacement de 26 px comme la pastille d'état), et les mêmes boutons
+    libellés : **Mettre à jour** (menu : vérifier, tout mettre à jour, puis un
+    domaine par entrée, compteurs compris) puis **Configuration**. Le panneau
+    « Mises à jour » ne porte plus que le détail, sans bouton.
     """
+
+    update_requested = Signal(str)        # type de mise à jour
+    check_requested = Signal()            # vérifier maintenant
 
     def __init__(self, config_menu: QMenu, parent=None):
         super().__init__(parent)
@@ -1202,4 +1197,62 @@ class LocalCard(QFrame):
         self.config_button.setIcon(QIcon.fromTheme("settings-configure"))
         self.config_button.setToolTip("Configuration de ce poste")
         self.config_button.setMenu(config_menu)
+
+        # Même bouton et même menu que la carte d'un poste distant, à la même
+        # place (action principale d'abord) : le panneau « Mises à jour » ne
+        # garde que le détail, la vérification est la première entrée du menu.
+        self.update_button = QPushButton("Mettre à jour", self)
+        self.update_button.setObjectName("accent")
+        self.update_button.setCursor(Qt.PointingHandCursor)
+        self.update_button.setIcon(QIcon.fromTheme("system-software-update"))
+        self.update_button.setToolTip("Mettre à jour ce poste")
+        update_menu = QMenu(self.update_button)
+        self.check_action = update_menu.addAction(
+            "Vérifier les mises à jour",
+            lambda: self.check_requested.emit(),
+        )
+        update_menu.addAction(
+            "Tout mettre à jour…", lambda: self.update_requested.emit("all")
+        )
+        update_menu.addSeparator()
+        self.update_actions: dict[str, tuple[object, str, str]] = {}
+        for kind, domain, label in (
+            ("gablue", "image", "Gablue…"),
+            ("flatpak", "flatpak", "Flatpaks…"),
+            ("gwine", "gwine", "Gwine…"),
+            ("brew", "brew", "Brew…"),
+            ("apps", "apps", "Applications…"),
+        ):
+            action = update_menu.addAction(label)
+            action.triggered.connect(
+                lambda _checked=False, k=kind: self.update_requested.emit(k)
+            )
+            self.update_actions[kind] = (action, label, domain)
+        self.update_button.setMenu(update_menu)
+        self.updates_state: dict | None = None
+        layout.addWidget(self.update_button, 0, Qt.AlignVCenter)
         layout.addWidget(self.config_button, 0, Qt.AlignVCenter)
+
+    def set_updates(self, state: dict | None) -> None:
+        """Compteur sur le bouton, comptes du menu et infobulle détaillée."""
+        self.updates_state = state
+        total = total_updates(state)
+        self.update_button.setText(
+            f"Mettre à jour ({total})" if total else "Mettre à jour"
+        )
+        lines = summary_lines(state) if state else []
+        if total:
+            lines.append("Vérifier à nouveau depuis le menu.")
+        self.update_button.setToolTip(
+            "\n".join(lines) or "Mettre à jour ce poste"
+        )
+        self.check_action.setEnabled(True)
+        domains = (state or {}).get("domains") or {}
+        for key, (action, label, domain) in self.update_actions.items():
+            count = domain_count(domain, domains.get(domain) or {})
+            action.setText(f"{label} — {count}" if count else label)
+
+    def set_checking(self) -> None:
+        """Vérification en cours : aucun verdict avant la réponse."""
+        self.check_action.setEnabled(False)
+        self.update_button.setText("Vérification…")
