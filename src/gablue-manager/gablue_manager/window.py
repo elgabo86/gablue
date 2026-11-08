@@ -1090,6 +1090,11 @@ class MainWindow(QMainWindow):
         self.updates_panel.set_updates(state)
         self._update_image_cell(state)
         self._update_footer()
+        # Le tray est un autre processus : il reçoit l'état déjà calculé au
+        # lieu de refaire les mêmes sondes, donc sa pastille et son menu
+        # disent le même chiffre que la carte dès cette vérification-ci, pas
+        # au prochain créneau de son timer (vécu 08/11/2026).
+        instance.send(instance.tray_socket(), updates.state_message(state))
         if self._updates_pending:
             # Sonde lancée avant la fin d'une mise à jour : elle décrit
             # l'avant, on en refait une tout de suite.

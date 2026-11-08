@@ -1633,6 +1633,32 @@ class UpdatesTest(unittest.TestCase):
             "3 domaines non vérifiés",
         )
 
+    def test_state_message(self):
+        # La fenêtre pousse son état au tray (`state:<json>`) : même données
+        # des deux côtés, aucune sonde à refaire.
+        state = {"online": True, "checked_at": 1_800_000_000, "domains": {
+            "image": {"state": "uptodate"},
+            "apps": {"state": "updates", "apps": ["ES-DE", "Éden"]},
+        }}
+        message = updates.state_message(state)
+        self.assertTrue(message.startswith(b"state:"))
+        self.assertEqual(updates.parse_state_message(message), state)
+        # Un message d'une autre nature, tronqué ou d'une autre version n'est
+        # pas un état : le tray reprend ses messages connus, il ne casse pas.
+        self.assertIsNone(updates.parse_state_message(b"updates"))
+        self.assertIsNone(updates.parse_state_message(b"reload"))
+        self.assertIsNone(updates.parse_state_message(b"state:"))
+        self.assertIsNone(updates.parse_state_message(b"state:{pas du json"))
+        self.assertIsNone(updates.parse_state_message(b"state:[1, 2]"))
+        self.assertIsNone(updates.parse_state_message(b"state:{}"))
+        self.assertIsNone(updates.parse_state_message(b""))
+        # L'état d'une machine hors ligne reste un état valide (domaines vides).
+        offline = {"online": False, "domains": {}}
+        self.assertEqual(
+            updates.parse_state_message(updates.state_message(offline)),
+            offline,
+        )
+
     def test_apps_domain(self):
         # La même fabrique sert le poste local (`pending_updates`) et un poste
         # distant (`pending_for` sur les états reçus par SSH).

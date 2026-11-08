@@ -268,6 +268,28 @@ class Tray:
         self._build_menu()
         worker.start()
 
+    def apply_state(self, state: dict) -> None:
+        """État poussé par la fenêtre : même affichage qu'une sonde, sans sonde.
+
+        La fenêtre vient de conclure ; refaire la passe ici doublerait le
+        réseau (registre, flux de releases) et pourrait aboutir à un autre
+        chiffre que la carte que l'utilisateur vient de lire (vécu 08/11/2026 :
+        mise à jour trouvée dans la fenêtre, pastille muette jusqu'au créneau
+        suivant). Une sonde déjà en vol garde la main : son résultat est plus
+        frais que l'état poussé, qui l'écraserait par un plus ancien.
+        """
+        if self._update_worker is not None and self._update_worker.isRunning():
+            return
+        self._checking = False
+        self.updates_state = state
+        self._offline = False
+        self._last_check = state.get("checked_at") or time.time()
+        # Le créneau repart de cet état : `_last_check` est à jour, le timer
+        # ne rejoue donc pas une passe qui vient d'être faite par la fenêtre.
+        if prefs.checks_enabled(prefs.load_prefs()):
+            self.update_timer.start()
+        self._update_icon()
+
     def _updates_done(self, state: dict) -> None:
         previous = self.updates_state
         self._update_worker = None
@@ -374,8 +396,11 @@ class Tray:
             self._build_menu()
 
 def _tray_message(tray: Tray, app: QApplication, server) -> None:
-    """Message de la fenêtre : `quit`, `reload` (préférences) ou `updates`.
+    """Message de la fenêtre : `quit`, `reload`, `updates` ou `state:<json>`.
 
+    `state:<json>` = la fenêtre vient de sonder et pousse son résultat : le
+    tray l'applique tel quel au lieu de refaire les mêmes sondes réseau, donc
+    la pastille, l'infobulle et le menu disent le même chiffre que la carte.
     `updates` = une mise à jour vient de se terminer : l'icône re-sonde tout
     de suite, sinon sa pastille rouge gardait l'état d'avant jusqu'au prochain
     créneau (vécu 07/11/2026).
@@ -388,9 +413,23 @@ def _tray_message(tray: Tray, app: QApplication, server) -> None:
     if not socket.waitForReadyRead(200):
         socket.deleteLater()
         return
-    message = bytes(socket.readAll()).strip()
+    chunks = [bytes(socket.readAll())]
+    # Un état poussé peut dépasser un tampon : on vide tant qu'il arrive, en
+    # restant borné (une fenêtre qui se fige ne doit pas figer le tray).
+    for _ in range(64):
+        if not socket.bytesAvailable() and not socket.waitForReadyRead(20):
+            break
+        chunk = bytes(socket.readAll())
+        if not chunk:
+            break
+        chunks.append(chunk)
+    message = b"".join(chunks).strip()
     socket.deleteLater()
-    if message == b"reload":
+    state = updates.parse_state_message(message)
+    if state is not None:
+        # La fenêtre affiche déjà le résultat : aucune bulle en double.
+        tray.apply_state(state)
+    elif message == b"reload":
         tray.reload()
     elif message == b"updates":
         # La fenêtre vient de finir une mise à jour : elle affiche déjà le

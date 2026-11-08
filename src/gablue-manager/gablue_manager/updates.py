@@ -409,6 +409,36 @@ def total_updates(state: dict | None) -> int:
 def has_updates(state: dict | None) -> bool:
     return total_updates(state) > 0
 
+# La fenêtre et le tray sont deux processus : l'état voyage déjà calculé, sinon
+# le tray refaisait les mêmes sondes (registre, flux de releases) et pouvait
+# afficher un autre chiffre que la carte que l'utilisateur venait de lire.
+STATE_PREFIX = b"state:"
+
+def state_message(state: dict | None) -> bytes:
+    """État complet sous la forme `state:<json>`, prêt pour le tray.
+
+    `default=str` : une valeur exotique ajoutée un jour à un domaine part en
+    texte au lieu de lever dans le thread graphique de la fenêtre.
+    """
+    return STATE_PREFIX + json.dumps(state or {}, default=str).encode("utf-8")
+
+def parse_state_message(message: bytes) -> dict | None:
+    """Inverse de `state_message` ; None si le message n'est pas un état.
+
+    Un message vide, tronqué ou d'une autre version retombe sur None : le
+    tray le traite alors comme avant (message inconnu), jamais il ne casse.
+    """
+    message = message or b""
+    if not message.startswith(STATE_PREFIX):
+        return None
+    try:
+        state = json.loads(message[len(STATE_PREFIX):].decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(state, dict) or not isinstance(state.get("domains"), dict):
+        return None
+    return state
+
 def unverified_domains(state: dict | None) -> list[str]:
     """Domaines dont la sonde n'a pas pu conclure (état « unknown »).
 
