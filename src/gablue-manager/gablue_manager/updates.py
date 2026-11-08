@@ -157,6 +157,18 @@ def parse_bootc_check(text: str, returncode: int = 0) -> str:
         return "uptodate"
     return "unknown"
 
+_BOOTC_VERSION_RE = re.compile(r"^\s*Version:\s*(\S+)\s*$", re.MULTILINE)
+
+def parse_bootc_version(text: str) -> str:
+    """Version de l'image distante annoncée par `bootc upgrade --check`.
+
+    bootc écrit le bloc `Update available for: …` puis `Version:` (et
+    `Digest:`) — vérifié le 08/11/2026 avec bootc 1.17.1. Une version
+    antérieure qui n'en donne pas laisse la ligne du résumé sans cible.
+    """
+    match = _BOOTC_VERSION_RE.search(text or "")
+    return match.group(1) if match else ""
+
 def check_image(online: bool = True) -> dict:
     """Disponibilité d'une image plus récente + âge de celle qui tourne.
 
@@ -183,6 +195,12 @@ def check_image(online: bool = True) -> dict:
         ["sudo", "-n", "bootc", "upgrade", "--check"], 120,
     )
     result["state"] = parse_bootc_check(output, returncode)
+    # Version de l'image **distante** quand bootc l'annonce : sans elle, le
+    # résumé ne pouvait dire que « actuelle X » et laissait croire qu'aucune
+    # version n'arrivait (vécu 08/11/2026).
+    result["available_version"] = (
+        parse_bootc_version(output) if result["state"] == "available" else ""
+    )
     return result
 
 # -- Flatpaks ---------------------------------------------------------------
@@ -456,12 +474,17 @@ def summary_lines(state: dict | None) -> list[str]:
                 elif staged_version:
                     detail += f" — version {staged_version}"
             else:
-                # `bootc upgrade --check` ne donne pas la version de l'image
-                # distante : `version` est celle qui tourne. On l'annonce
-                # comme telle, jamais comme la nouvelle (mensonge constaté
-                # dans le résumé avant le 07/11/2026).
+                # `bootc upgrade --check` annonce la version distante
+                # (`Version:`) : on la nomme, précédée de celle qui tourne.
+                # Une version de bootc qui ne la donne pas retombait sur
+                # « actuelle X », qui ne disait pas ce qui arrive.
                 detail = "mise à jour disponible"
-                if version:
+                available = str(image.get("available_version") or "")
+                if available and version:
+                    detail += f" — {version} → {available}"
+                elif available:
+                    detail += f" — version {available}"
+                elif version:
                     detail += f" — actuelle {version}"
             lines.append(f"Image Gablue : {detail}")
         elif status == "uptodate":
@@ -470,11 +493,6 @@ def summary_lines(state: dict | None) -> list[str]:
             lines.append("Image Gablue : non vérifiée (hors ligne)")
         elif status != "skipped":
             lines.append("Image Gablue : vérification impossible")
-        if image.get("days") is not None:
-            lines.append(
-                "Dernière mise à jour de Gablue : "
-                + days_text(image.get("days"))
-            )
 
     for domain in ("flatpak", "brew", "gwine", "apps"):
         result = domains.get(domain) or {}

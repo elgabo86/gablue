@@ -1213,6 +1213,30 @@ class UpdatesTest(unittest.TestCase):
         self.assertEqual(updates.parse_bootc_check("erreur réseau", 1),
                          "unknown")
 
+    def test_bootc_target_version(self):
+        # Sortie réelle de `bootc upgrade --check` (bootc 1.17.1, 08/11/2026).
+        text = (
+            "Update available for: "
+            "ostree-image-signed:docker://ghcr.io/elgabo86/gablue-main-dx:latest\n"
+            "  Version: 20261108-00h52\n"
+            "  Digest: sha256:6cabe743e3e5\n"
+            "Total new layers: 128   Size: 5.1 GB\n"
+        )
+        self.assertEqual(updates.parse_bootc_version(text), "20261108-00h52")
+        self.assertEqual(updates.parse_bootc_version("No update available."), "")
+        self.assertEqual(updates.parse_bootc_version(""), "")
+        # Le résumé nomme la cible, pas seulement l'image qui tourne.
+        image = {"state": "available", "staged": False,
+                 "version": "20261107-23h18",
+                 "available_version": "20261108-00h52"}
+        line = "\n".join(updates.summary_lines({"domains": {"image": image}}))
+        self.assertIn("20261107-23h18 → 20261108-00h52", line)
+        # Bootc muet sur la version : on ne prétend pas connaître la cible.
+        silent = {**image, "available_version": ""}
+        line = "\n".join(updates.summary_lines({"domains": {"image": silent}}))
+        self.assertIn("actuelle 20261107-23h18", line)
+        self.assertNotIn("→", line)
+
     def test_gwine_check(self):
         text = (
             "component|runner|1.2.3|1.3.0\n"
@@ -1264,7 +1288,12 @@ class UpdatesTest(unittest.TestCase):
         self.assertTrue(updates.has_updates(state))
         text = "\n".join(updates.summary_lines(state))
         self.assertIn("Image Gablue : mise à jour disponible", text)
-        self.assertIn("il y a 12 jours", text)
+        # L'âge du déploiement n'est pas une « mise à jour » : il vit dans
+        # « Matériel et système » et dans le statut, jamais dans la liste.
+        self.assertNotIn("Dernière mise à jour de Gablue", text)
+        self.assertIn(
+            "il y a 12 jours", updates.image_detail(state["domains"]["image"])
+        )
         self.assertIn("Homebrew : à jour", text)
         self.assertIn("Runner gwine 1.2.3 → 1.3.0", text)
         self.assertIn("4 mises à jour", updates.compact_summary(state))

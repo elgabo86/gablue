@@ -115,6 +115,7 @@ def parse_check(text: str, now: float | None = None) -> dict:
             "state": "available",
             "staged": False,
             "version": deployment.get("version", ""),
+            "available_version": updates.parse_bootc_version(image_text),
             "days": deployment.get("days"),
         }
     elif verdict == "uptodate":

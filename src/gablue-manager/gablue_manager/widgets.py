@@ -486,12 +486,11 @@ class UpdatesPanel(QFrame):
             return
         # Une ligne par domaine ; « à jour » est déjà dans le statut, inutile
         # de remplir le panneau de bonnes nouvelles. L'âge du déploiement ne
-        # figure pas ici : il est dans « Matériel et système » (et dans le
-        # statut), une deuxième fois serait du bruit (demandé le 08/11/2026).
+        # figure nulle part ici : il est dans « Matériel et système » et dans
+        # le statut (« image déployée aujourd'hui »), demandé le 08/11/2026.
         lines = [
             line for line in summary_lines(state)
             if not line.endswith(" : à jour")
-            and not line.startswith("Dernière mise à jour de Gablue")
         ]
         self._clear()
         for text in lines:
