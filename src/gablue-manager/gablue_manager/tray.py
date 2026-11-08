@@ -204,9 +204,16 @@ class Tray:
 
     # -- mises à jour disponibles -----------------------------------------
     def schedule_updates(self) -> None:
-        """Cale la fréquence sur les préférences (minutes, bornée)."""
+        """Cale la fréquence sur les préférences (minutes, bornée).
+
+        `QTimer` compte en **millisecondes** alors que les préférences sont en
+        minutes : sans le ×1000, l'intervalle de 120 min valait 7,2 s et le
+        tray relisait `preferences.json` toutes les 7 secondes (vécu
+        08/11/2026, constaté au strace).
+        """
         values = prefs.load_prefs()
-        self.update_timer.setInterval(prefs.check_interval_seconds(values))
+        interval = prefs.check_interval_seconds(values) * 1000
+        self.update_timer.setInterval(interval)
         if prefs.checks_enabled(values):
             if not self.update_timer.isActive():
                 self.update_timer.start()
@@ -255,6 +262,11 @@ class Tray:
         self._offline = False
         self._last_check = (state or {}).get("checked_at") or time.time()
         self._checking = False
+        # Prochaine passe à un intervalle **plein** après la fin de celle-ci :
+        # sans ce redémarrage, un tick tombé juste avant le garde `_last_check`
+        # repoussait la sonde d'un intervalle de plus.
+        if prefs.checks_enabled(prefs.load_prefs()):
+            self.update_timer.start()
         self._update_icon()
 
     def _reachability_changed(self, reachability) -> None:

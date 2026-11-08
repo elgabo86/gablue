@@ -1289,6 +1289,30 @@ class UpdatesTest(unittest.TestCase):
         self.assertIn("1 mise à jour", updates.compact_summary(offline_staged))
 
 
+    def test_unverified_domains(self):
+        # Un domaine illisible n'autorise ni « À jour » ni « aucune mise à
+        # jour » : le résumé doit nommer le doute (vécu 08/11/2026).
+        state = {"online": True, "domains": {
+            "image": {"state": "uptodate", "days": 1},
+            "flatpak": {"state": "unknown", "apps": []},
+            "brew": {"state": "unavailable", "formulas": []},
+            "gwine": {"state": "uptodate", "components": []},
+            "apps": {"state": "uptodate", "apps": []},
+        }}
+        self.assertEqual(updates.unverified_domains(state), ["flatpak"])
+        self.assertEqual(updates.unverified_domains(None), [])
+        self.assertEqual(
+            updates.compact_summary(state), "1 domaine non vérifié"
+        )
+        self.assertEqual(
+            updates.compact_summary({**state, "domains": {
+                **state["domains"],
+                "brew": {"state": "unknown"},
+                "apps": {"state": "unknown"},
+            }}),
+            "3 domaines non vérifiés",
+        )
+
     def test_apps_domain(self):
         state = {"online": True, "domains": {
             "apps": {"state": "updates", "apps": ["Eden", "ES-DE"]},

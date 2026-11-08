@@ -23,6 +23,7 @@ from .local import local_distro, ryzenadj_available
 from .style import accent_color
 from .updates import (
     DOMAINS, days_text, domain_count, summary_lines, total_updates,
+    unverified_domains,
 )
 from .util import active_kind, address_text, display_name, dolphin_url, ssh_target
 
@@ -529,6 +530,13 @@ class UpdatesPanel(QFrame):
         ]
         if unknown and len(unknown) == len(DOMAINS):
             return "Vérification impossible"
+        unverified = unverified_domains(state)
+        if unverified:
+            # Une sonde qui a échoué ne se couvre pas d'un « À jour » : le
+            # corps du panneau nomme le domaine, le statut ne le noie plus.
+            if len(unverified) == 1:
+                return "À jour, sauf 1 domaine non vérifié"
+            return f"À jour, sauf {len(unverified)} domaines non vérifiés"
         age = (domains.get("image") or {}).get("days")
         text = "À jour"
         if age is not None:

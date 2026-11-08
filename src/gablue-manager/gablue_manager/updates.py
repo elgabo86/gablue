@@ -20,7 +20,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import apps, local
+from . import apps, journal, local
 from .constants import BREW_BINARY
 
 DOMAINS = ("image", "flatpak", "brew", "gwine", "apps")
@@ -58,6 +58,31 @@ def cancel_running() -> None:
             process.kill()
         except OSError:
             pass
+
+
+# Un domaine dont la sonde échoue n'est journalisé qu'une fois par processus :
+# la passe revient toutes les deux heures, une entrée à chaque fois noierait
+# le journal alors que la cause est la même (outil cassé, réseau, privilège).
+_FAILED: dict[str, str] = {}
+_FAILED_LOCK = threading.Lock()
+
+
+def _note_failure(domain: str, detail: str) -> None:
+    """Sonde de domaine en échec → journald, une fois par processus.
+
+    Le panneau et le tray disent « vérification impossible » ; sans cette
+    entrée, cette panne-là ne laissait aucune trace et se lisait comme un
+    « à jour » de plus (vécu 08/11/2026).
+    """
+    with _FAILED_LOCK:
+        if domain in _FAILED:
+            return
+        _FAILED[domain] = detail
+    journal.log_failure(
+        "Sonde de mises à jour impossible — "
+        + DOMAIN_LABELS.get(domain, domain),
+        detail=detail,
+    )
 
 
 def _run(argv: list[str], timeout: int,
@@ -181,6 +206,10 @@ def check_flatpaks() -> dict:
         ["flatpak", "remote-ls", "--updates", "--columns=application"], 60,
     )
     if returncode != 0:
+        _note_failure(
+            "flatpak",
+            f"flatpak remote-ls --updates — code {returncode}\n{text[-400:]}",
+        )
         return {"state": "unknown", "apps": []}
     apps = parse_flatpak_updates(text)
     return {"state": "updates" if apps else "uptodate", "apps": apps}
@@ -216,6 +245,10 @@ def check_brew() -> dict:
     env["HOMEBREW_NO_ENV_HINTS"] = "1"
     returncode, text = _run([binary, "outdated", "--quiet"], 120, env)
     if returncode != 0:
+        _note_failure(
+            "brew",
+            f"brew outdated — code {returncode}\n{text[-400:]}",
+        )
         return {"state": "unknown", "formulas": []}
     formulas = parse_brew_outdated(text)
     return {
@@ -307,7 +340,8 @@ def check_all(enabled: dict[str, bool] | None = None,
         for domain, future in jobs.items():
             try:
                 results[domain] = future.result()
-            except Exception:              # une sonde d'agrément ne casse rien
+            except Exception as error:      # une sonde d'agrément ne casse rien
+                _note_failure(domain, repr(error))
                 results[domain] = {"state": "unknown"}
 
     for domain in DOMAINS:
@@ -351,6 +385,19 @@ def total_updates(state: dict | None) -> int:
 
 def has_updates(state: dict | None) -> bool:
     return total_updates(state) > 0
+
+def unverified_domains(state: dict | None) -> list[str]:
+    """Domaines dont la sonde n'a pas pu conclure (état « unknown »).
+
+    Un domaine illisible n'est pas un domaine à jour : le statut doit le
+    dire, sinon « À jour » couvre une sonde qui a échoué (vécu 08/11/2026).
+    `unavailable` (« absent de ce poste ») est une réponse, pas un doute.
+    """
+    domains = (state or {}).get("domains") or {}
+    return [
+        domain for domain in DOMAINS
+        if (domains.get(domain) or {}).get("state") == "unknown"
+    ]
 
 def image_detail(image: dict) -> str:
     """Ligne « Image Gablue » : celle qui tourne, puis celle en attente.
@@ -492,6 +539,13 @@ def compact_summary(state: dict | None) -> str:
     ]
     if unknown and len(unknown) == len(DOMAINS):
         return "Vérification impossible"
+    unverified = unverified_domains(state)
+    if unverified:
+        # Même règle que le statut du panneau : un domaine illisible n'autorise
+        # pas à annoncer « aucune mise à jour ».
+        if len(unverified) == 1:
+            return "1 domaine non vérifié"
+        return f"{len(unverified)} domaines non vérifiés"
     age = (domains.get("image") or {}).get("days")
     text = "Aucune mise à jour disponible"
     if age is not None:
