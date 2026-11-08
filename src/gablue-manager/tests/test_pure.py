@@ -934,12 +934,12 @@ class HardwareTest(unittest.TestCase):
         # (nom, valeur) : deux corps de texte, comme les lignes de disques.
         text = ("CPU\u00a048\u00a0°C\n"
                 "SSD\u00a01\u00a037\u00a0°C\u00a0✓  SSD\u00a02\u00a032\u00a0°C\u00a0✓\n"
-                "hdd3\u00a036\u00a0°C  hdd2\u00a037\u00a0°C\u00a0✗\n"
+                "HDD3\u00a036\u00a0°C  HDD2\u00a037\u00a0°C\u00a0✗\n"
                 "RAM\u00a01\u00a033\u00a0°C")
         self.assertEqual(local.temperature_measures(text), [
             [("CPU", "48 °C")],
             [("SSD 1", "37 °C ✓"), ("SSD 2", "32 °C ✓")],
-            [("hdd3", "36 °C"), ("hdd2", "37 °C ✗")],
+            [("HDD3", "36 °C"), ("HDD2", "37 °C ✗")],
             [("RAM 1", "33 °C")],
         ])
         # Le nom peut lui-même porter une insécable : couper au premier
@@ -1045,7 +1045,7 @@ class HardwareTest(unittest.TestCase):
                     "temps": [("Tctl", 30.0)]}]
         self.assertEqual(
             local.temperature_summary(devices, sata=[("hdd1", 36.0)]),
-            "CPU\u00a030\u00a0°C\nhdd1\u00a036\u00a0°C",
+            "CPU\u00a030\u00a0°C\nHDD1\u00a036\u00a0°C",
         )
         # Une ligne par famille : les disques d'une même famille se partagent
         # leur ligne, les barrettes passent en dernier.
@@ -1055,7 +1055,7 @@ class HardwareTest(unittest.TestCase):
                  {"chip": "spd5118", "temps": [("temp1", 35.0)]}],
                 sata=[("hdd1", 36.0), ("hdd2", 37.0)],
             ),
-            "hdd1\u00a036\u00a0°C  hdd2\u00a037\u00a0°C\n"
+            "HDD1\u00a036\u00a0°C  HDD2\u00a037\u00a0°C\n"
             "RAM\u00a01\u00a033\u00a0°C  RAM\u00a02\u00a035\u00a0°C",
         )
         # Six disques SATA : deux lignes de trois, la case n'a pas la place
@@ -1064,8 +1064,65 @@ class HardwareTest(unittest.TestCase):
                ("hdd4", 37.0), ("hdd5", 38.0), ("hdd6", 39.0)]
         self.assertEqual(
             local.format_temperatures({}, sata=six),
-            "hdd1\u00a033\u00a0°C  hdd2\u00a034\u00a0°C  hdd3\u00a036\u00a0°C\n"
-            "hdd4\u00a037\u00a0°C  hdd5\u00a038\u00a0°C  hdd6\u00a039\u00a0°C",
+            "HDD1\u00a033\u00a0°C  HDD2\u00a034\u00a0°C  HDD3\u00a036\u00a0°C\n"
+            "HDD4\u00a037\u00a0°C  HDD5\u00a038\u00a0°C  HDD6\u00a039\u00a0°C",
+        )
+        # Ordre d'affichage : le helper rend ses disques dans son propre
+        # ordre (« 3 2 1 » à l'écran, vécu 08/11/2026), on trie par nom.
+        self.assertEqual(
+            local.format_temperatures(
+                {}, sata=[("hdd3", 36.0), ("hdd1", 33.0),
+                          ("hdd10", 40.0), ("hdd2", 34.0)],
+            ),
+            "HDD1\u00a033\u00a0°C  HDD2\u00a034\u00a0°C  HDD3\u00a036\u00a0°C\n"
+            "HDD10\u00a040\u00a0°C",
+        )
+        # Tri naturel : « hdd10 » après « hdd2 », jamais avant.
+        self.assertEqual(
+            sorted(["hdd10", "hdd2", "hdd1"], key=local.natural_key),
+            ["hdd1", "hdd2", "hdd10"],
+        )
+        # Quel disque est « SSD 2 » ? L'étiquette de la page « Disques » le
+        # dit, et le disque du système s'appelle « Système » (08/11/2026).
+        self.assertEqual(local.disk_key("nvme0n1p3"), "nvme0")
+        self.assertEqual(local.disk_key("sdc1"), "sdc")
+        self.assertEqual(local.disk_key("mmcblk0p2"), "mmcblk0")
+        labels = local.disk_labels([
+            {"source": "/dev/nvme0n1p3", "label": "Dossier personnel",
+             "system": True},
+            {"source": "/dev/nvme1n1p1", "label": "ssdtemp", "system": False},
+            {"source": "/dev/sdc1", "label": "hdd1", "system": False},
+        ])
+        self.assertEqual(
+            labels, {"nvme0": "Système", "nvme1": "ssdtemp", "sdc": "hdd1"},
+        )
+        two_disks = [
+            {"chip": "nvme", "device": "nvme0",
+             "temps": [("Composite", 36.85)]},
+            {"chip": "nvme", "device": "nvme1",
+             "temps": [("Composite", 30.0)]},
+        ]
+        # Le périphérique hwmon porte l'étiquette ; sans elle, le nom reste nu.
+        self.assertEqual(
+            [entry[0] for entry in local.parse_hwmon(
+                two_disks, labels={"nvme0": "Système", "nvme1": "ssdtemp"},
+            )["ssd"]],
+            ["SSD 1 (Système)", "SSD 2 (ssdtemp)"],
+        )
+        self.assertEqual(
+            [entry[0] for entry in local.parse_hwmon(two_disks)["ssd"]],
+            ["SSD 1", "SSD 2"],
+        )
+        self.assertEqual(
+            local.temperature_summary(
+                two_disks,
+                disks=[{"source": "/dev/nvme0n1p3", "system": True,
+                        "label": "Dossier personnel"},
+                       {"source": "/dev/nvme1n1p1", "label": "ssdtemp",
+                        "system": False}],
+            ),
+            "SSD\u00a01\u00a0(Système)\u00a037\u00a0°C  "
+            "SSD\u00a02\u00a0(ssdtemp)\u00a030\u00a0°C",
         )
         # Verdict SMART : ✓ quand `smartctl -H` passe, ✗ quand il échoue,
         # rien quand le disque ne le publie pas (pont USB, disque muet).
@@ -1081,8 +1138,8 @@ class HardwareTest(unittest.TestCase):
                                 ("hdd3", 36.0, None)])
         self.assertEqual(
             local.format_temperatures({}, sata=rows),
-            "hdd1\u00a033\u00a0°C\u00a0✓  hdd2\u00a034\u00a0°C\u00a0✗  "
-            "hdd3\u00a036\u00a0°C",
+            "HDD1\u00a033\u00a0°C\u00a0✓  HDD2\u00a034\u00a0°C\u00a0✗  "
+            "HDD3\u00a036\u00a0°C",
         )
         self.assertEqual(local.parse_hwinfo("pas du json"), {})
         self.assertEqual(local.parse_hwinfo('{"disks": []}'), {"disks": []})

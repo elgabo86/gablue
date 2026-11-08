@@ -153,6 +153,7 @@ def parse_hardware(text: str, now: float | None = None) -> dict:
         local.parse_hwmon_lines("\n".join(split.get("temps", []))),
         sata=local.sata_temperatures(hwinfo),
         nvm=local.nvm_smart(hwinfo),
+        disks=disk_rows,
     )
 
     kernel = next((line.strip() for line in split.get("kernel", [])

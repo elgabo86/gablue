@@ -1091,8 +1091,45 @@ def nvm_smart(data: dict | None = None) -> dict[str, bool]:
             for device, passed in verdicts.items()
             if isinstance(passed, bool)}
 
+def disk_key(name: str) -> str:
+    """Périphérique de base d'un nom de source : « nvme0n1p3 » → « nvme0 ».
+
+    Une partition (`sdc1`, `nvme0n1p3`) ramène à son disque : c'est le disque
+    qui a un capteur de température et un point de montage à nommer.
+    """
+    base = os.path.basename(str(name or "").strip())
+    match = re.match(r"(nvme\d+|mmcblk\d+|md\d+|loop\d+)", base)
+    if match:
+        return match.group(1)
+    match = re.match(r"([a-z]+)", base)
+    return match.group(1) if match else base
+
+
+def disk_labels(rows: list[dict] | None = None) -> dict[str, str]:
+    """Périphérique → texte entre parenthèses dans le bloc de températures.
+
+    « SSD 2 » ne dit pas quel disque c'est : on reprend l'étiquette de la page
+    « Disques » (« hdd2 », « ssdtemp ») — et le disque qui porte `/` ou le
+    dossier personnel s'appelle « Système » (demandé le 08/11/2026). Un disque
+    à plusieurs points de montage garde « Système » s'il l'est, sinon le
+    premier label rencontré.
+    """
+    labels: dict[str, str] = {}
+    for row in rows or []:
+        source = str(row.get("source") or "")
+        key = disk_key(source)
+        if not source or not key:
+            continue
+        if row.get("system"):
+            labels[key] = "Système"
+            continue
+        labels.setdefault(key, str(row.get("label") or ""))
+    return {key: text for key, text in labels.items() if text}
+
+
 def parse_hwmon(devices: list[dict],
-                nvm_smart_map: dict[str, bool] | None = None) -> dict:
+                nvm_smart_map: dict[str, bool] | None = None,
+                labels: dict[str, str] | None = None) -> dict:
     """Capteurs hwmon → températures utiles (CPU, GPU, SSD, RAM).
 
     Un seul capteur par nature : le premier pilote connu qui en donne, avec
@@ -1101,7 +1138,8 @@ def parse_hwmon(devices: list[dict],
     sondes internes). Un pilote absent — pas de capteur GPU sur un iGPU
     Intel, par exemple — ne s'invente pas : la valeur manque et rien ne
     s'affiche. Disques et barrettes sont numérotés : « SSD » puis « SSD 1 »,
-    « SSD 2 », « RAM 1 », « RAM 2 ».
+    « SSD 2 », « RAM 1 », « RAM 2 ». `labels` (périphérique → étiquette,
+    `disk_labels`) ajoute le disque concerné en clair : « SSD 1 (Système) ».
     """
     cpu: float | None = None
     gpu: float | None = None
@@ -1127,10 +1165,16 @@ def parse_hwmon(devices: list[dict],
     # Le nom est numéroté à part, puis rattaché au périphérique hwmon : c'est
     # ce dernier qui porte le verdict SMART venu du helper (`nvme0`).
     names = _numbered([value for _, value in disks], "SSD")
-    ssd = [
-        (name, value, (nvm_smart_map or {}).get(device))
-        for (device, value), (name, _) in zip(disks, names)
-    ]
+    ssd = []
+    for (device, value), (name, _) in zip(disks, names):
+        # Le périphérique hwmon (« nvme1 ») donne l'étiquette du disque ; il
+        # porte aussi le verdict SMART venu du helper.
+        label = (labels or {}).get(disk_key(device))
+        ssd.append((
+            f"{name} ({label})" if label else name,
+            value,
+            (nvm_smart_map or {}).get(device),
+        ))
     return {
         "cpu": cpu,
         "gpu": gpu,
@@ -1181,6 +1225,20 @@ def temperature_measures(text: str) -> list[list[tuple[str, str]]]:
         rows.append(measures)
     return rows
 
+def natural_key(text: str) -> tuple[str, ...]:
+    """Clé de tri « naturelle » : « hdd2 » avant « hdd10 », « hdd1 » avant « sdc ».
+
+    Un tri texte classerait 10 avant 2, et l'ordre rendu par `hwinfo` suivait
+    ses propres montages : la ligne de températures SATA s'affichait « 3 2 1 »,
+    à l'envers de la numérotation (vécu 08/11/2026). Les nombres sont comparés
+    comme des nombres, le reste comme du texte insensible à la casse.
+    """
+    parts = re.split(r"(\d+)", (text or "").casefold())
+    return tuple(
+        f"{int(part):08d}" if part.isdigit() else part for part in parts
+    )
+
+
 def format_temperatures(values: dict,
                         sata: list[tuple[str, float]] | None = None) -> str:
     """Une ligne par famille — « CPU », « GPU », « SSD 1  SSD 2 »…
@@ -1196,14 +1254,20 @@ def format_temperatures(values: dict,
         value = values.get(key)
         if value:
             lines.append(_measure(label, value))
-    for entries in (values.get("ssd"), sata, values.get("ram")):
+    # Les disques SATA arrivent dans l'ordre du helper : on les trie par nom
+    # (hdd1, hdd2, hdd10) et on met leur nom en majuscules comme les autres
+    # familles — « hdd2 » à côté de « SSD 1 » et « RAM 1 » jurait, et
+    # « 3 2 1 » se lisait à l'envers (vécu 08/11/2026). Les SSD et barrettes
+    # gardent leur casse : leur étiquette dit un disque (« SSD 1 (Système) »).
+    sata = sorted(sata or [], key=lambda entry: natural_key(str(entry[0])))
+    for entries, upper in (
+        (values.get("ssd"), False), (sata, True), (values.get("ram"), False),
+    ):
         entries = [entry for entry in entries or [] if entry]
-        # Trois disques par ligne : six disques SATA sur une seule ligne
-        # sortiraient de la case (constaté sur sucina), et une ligne par
-        # disque prendrait toute la hauteur du panneau.
         for start in range(0, len(entries), TEMPS_PER_LINE):
             lines.append("  ".join(
-                _measure(entry[0], entry[1],
+                _measure(str(entry[0]).upper() if upper else str(entry[0]),
+                         entry[1],
                          entry[2] if len(entry) > 2 else None)
                 for entry in entries[start:start + TEMPS_PER_LINE]
             ))
@@ -1211,7 +1275,8 @@ def format_temperatures(values: dict,
 
 def temperature_summary(devices: list[dict] | None = None,
                         sata: list[tuple] | None = None,
-                        nvm: dict[str, bool] | None = None) -> str:
+                        nvm: dict[str, bool] | None = None,
+                        disks: list[dict] | None = None) -> str:
     """Températures du poste, prêtes à afficher (vide si aucun capteur).
 
     `sata` vient du helper `gablue-hwinfo` (`smartctl -n standby`) : les
@@ -1219,7 +1284,9 @@ def temperature_summary(devices: list[dict] | None = None,
     chargé, et ce pilote lit le SMART sans regarder le mode d'alimentation —
     il réveillerait les disques endormis, ce que la sonde évite.
     """
-    values = parse_hwmon(read_hwmon() if devices is None else devices, nvm)
+    values = parse_hwmon(
+        read_hwmon() if devices is None else devices, nvm, disk_labels(disks),
+    )
     return format_temperatures(values, sata)
 
 def hardware_summary(sata: list[tuple] | None = None,
@@ -1244,7 +1311,9 @@ def hardware_summary(sata: list[tuple] | None = None,
     # Températures CPU/GPU/NVMe : /sys seulement, aucun privilège (vide si la
     # machine n'expose pas de capteur) ; `sata` vient du helper `gablue-hwinfo`
     # (smartctl sans réveil), mis en cache par la fenêtre.
-    values["temperatures"] = temperature_summary(sata=sata, nvm=nvm)
+    values["temperatures"] = temperature_summary(
+        sata=sata, nvm=nvm, disks=disk_rows(),
+    )
     try:
         values["kernel"] = os.uname().release
     except OSError:
