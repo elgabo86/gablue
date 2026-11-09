@@ -1,0 +1,34 @@
+#!/bin/bash
+
+# Téléchargement d'une AppImage, avec tentatives et anti-cale.
+#
+# Pendant bash de la politique du moteur `gablue-apps` (voir /usr/libexec/
+# gablue-apps) pour les scripts qui gardent leur propre téléchargement.
+# Constaté le 09/11/2026 : la même URL GitHub a été servie à 1,1 s puis à 59,7 s
+# selon la connexion, et une connexion morte ne rendait plus rien — `curl` sans
+# ces bornes attend indéfiniment et l'installation paraît gelée à 0 %.
+#
+# Pas de reprise (`--continue-at`) ici : la destination a un nom fixe, une
+# reprise pourrait coller un morceau d'une version à une autre. Le moteur s'en
+# charge, avec un dossier de cache par release.
+#
+# Usage : gablue-fetch <url> <destination> [libellé]
+
+set -e
+
+URL="$1"
+DEST="$2"
+LABEL="${3:-$(basename "$DEST")}"
+
+if [ -z "$URL" ] || [ -z "$DEST" ]; then
+    echo "Usage : gablue-fetch <url> <destination> [libellé]" >&2
+    exit 2
+fi
+
+mkdir -p "$(dirname "$DEST")"
+echo "Téléchargement de $LABEL..."
+
+exec curl --fail --location --show-error \
+    --retry 4 --retry-delay 2 --retry-all-errors \
+    --connect-timeout 15 --speed-limit 200000 --speed-time 30 \
+    --output "$DEST" "$URL"

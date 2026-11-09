@@ -1,0 +1,832 @@
+#!/usr/bin/python3
+"""gablue-apps — installation et mise à jour des AppImages de Gablue.
+
+Un seul moteur pour tout ce qui touche aux AppImages : trouver la dernière
+release, télécharger avec reprise et anti-cale, vérifier que le fichier est
+bien un ELF, confier l'intégration à GearLever, corriger l'entrée de menu.
+
+Ce que le moteur ne fait PAS : décider quoi installer. Le catalogue
+(`/usr/share/ublue-os/gablue/apps.toml`) porte les noms, motifs, dépôts et
+règles de version ; Gablue Manager le lit aussi pour son dialogue. Une
+application nouvelle ne se décrit donc plus dans deux langages à la fois.
+
+    gablue-apps list                      # clés et noms du catalogue
+    gablue-apps probe lichii [--json]     # dernière release publiée
+    gablue-apps install lichii            # installation / mise à jour
+    gablue-apps install lichii --dry-run  # jusqu'au téléchargement vérifié
+
+Progression : quand la sortie n'est pas un terminal (Gablue Manager), le moteur
+écrit des marqueurs `::gablue:` ; le dialogue de tâche en tire le libellé et la
+barre — `percent` donne le **pourcentage réel** du transfert, que `curl` ne
+savait pas fournir (d'où les fenêtres figées à « 0 % » pendant tout l'AppImage).
+Sur un terminal, aucun marqueur : une jauge lisible suffit.
+
+Aucune requête à `api.github.com` : quota anonyme de 60 req/h par IP, partagé
+par tout le réseau. Flux Atom, page `expanded_assets` et API Gitea suffisent.
+"""
+
+import argparse
+import datetime
+import fnmatch
+import json
+import os
+import platform
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import tomllib
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+GEARLEVER_ID = "it.mijorus.gearlever"
+USER_AGENT = "gablue-apps"
+NET_TIMEOUT = 20.0
+
+# Politique réseau. Constaté le 09/11/2026 sur ce poste : la même URL GitHub a
+# été servie à 1,1 s (38 Mio/s) puis à 59,7 s (2,3 Mio/s) selon la connexion,
+# et une connexion morte ne rendait plus rien du tout — `curl` sans ces bornes
+# attend indéfiniment, la fenêtre reste à 0 % et l'utilisateur croit à un gel.
+ATTEMPTS = 4
+MIN_SPEED = 200_000          # octets/s : en dessous, la connexion est morte
+SLOW_SECONDS = 30.0          # durée d'observation avant de conclure
+READ_TIMEOUT = 20.0          # un read muet au-delà = connexion abandonnée
+CHUNK = 1 << 20
+
+# Même disposition relative dans l'image (`/usr/libexec` → `/usr/share`) et
+# dans le dépôt (`files/system/all/usr/libexec` → `.../usr/share`) : une seule
+# règle, aucun chemin en dur dans le code de test.
+CATALOG_RELATIVE = Path("share/ublue-os/gablue/apps.toml")
+
+PROTOCOL_PREFIX = "::gablue:"
+
+
+class EngineError(RuntimeError):
+    """Échec lisible par l'utilisateur (message affiché tel quel)."""
+
+
+class DownloadError(EngineError):
+    """Transfert interrompu, incomplet ou trop lent."""
+
+
+# -- sortie ----------------------------------------------------------------
+
+def _say(text: str) -> None:
+    print(text, flush=True)
+
+
+def _proto(line: str) -> None:
+    """Marqueur de progression, réservé à un lecteur machine.
+
+    Écrit seulement quand la sortie est un tube : sur un terminal, ces lignes
+    n'apprendraient rien à l'humain (le dialogue les masque de son journal).
+    """
+    if sys.stdout.isatty():
+        return
+    print(PROTOCOL_PREFIX + line, flush=True)
+
+
+def _mib(value: float) -> str:
+    return f"{value / (1024 * 1024):.1f}".replace(".", ",")
+
+
+class Reporter:
+    """Jauge de téléchargement : une ligne sur terminal, `percent` sinon.
+
+    Deux sorties pour un même compteur d'octets. Le pourcentage est borné à
+    100 et n'est émis qu'après un demi-seconde, pour ne pas noyer l'interface
+    (un AppImage fait ~50 lectures par seconde).
+    """
+
+    def __init__(self, label: str):
+        self.label = label
+        self.tty = sys.stdout.isatty()
+        self.started = time.monotonic()
+        self.last_emit = 0.0
+        self.total = 0
+        self.done = 0
+        # Octets déjà présents (reprise) : ils ne comptent pas dans le débit,
+        # sinon un partiel de 51 Mio afficherait « 429 Mio/s » à la reprise.
+        self.base = 0
+
+    def resume(self, offset: int) -> None:
+        self.base = offset
+        self.started = time.monotonic()
+
+    def busy(self) -> None:
+        _proto(f"busy {self.label}")
+        if self.tty:
+            print(f"{self.label}…", flush=True)
+
+    def progress(self, done: int, total: int) -> None:
+        self.done, self.total = done, total
+        now = time.monotonic()
+        if now - self.last_emit < 0.5 and (not total or done < total):
+            return
+        self.last_emit = now
+        elapsed = max(1e-6, now - self.started)
+        rate = max(0, done - self.base) / elapsed
+        if total:
+            percent = 100.0 * done / total
+            detail = (f"{_mib(done)} / {_mib(total)} Mio · "
+                      f"{_mib(rate)} Mio/s")
+        else:
+            percent = None
+            detail = f"{_mib(done)} Mio · {_mib(rate)} Mio/s"
+        if self.tty:
+            head = f"{percent:5.1f} %" if percent is not None else "     ?  "
+            print(f"\r  {head}  {detail}   ", end="", flush=True)
+        elif percent is None:
+            _proto(f"busy {self.label} — {detail}")
+        else:
+            _proto(f"percent {percent:.1f} {self.label} — {detail}")
+
+    def finish(self) -> None:
+        if self.tty and self.last_emit:
+            print(flush=True)
+
+
+# -- catalogue -------------------------------------------------------------
+
+def catalog_path() -> Path:
+    """Emplacement du catalogue : variable d'environnement, puis image/dépôt."""
+    override = os.environ.get("GABLUE_APPS_TOML")
+    if override:
+        return Path(override)
+    beside = Path(__file__).resolve().parents[1] / CATALOG_RELATIVE
+    if beside.is_file():
+        return beside
+    return Path("/usr/share/ublue-os/gablue/apps.toml")
+
+
+def load_catalog(path: Path | None = None) -> dict:
+    """Catalogue complet : groupes (ordre d'affichage) et applications."""
+    target = Path(path) if path is not None else catalog_path()
+    try:
+        with target.open("rb") as handle:
+            data = tomllib.load(handle)
+    except OSError as exc:
+        raise EngineError(f"catalogue illisible : {target} ({exc})") from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise EngineError(f"catalogue invalide : {target} ({exc})") from exc
+    groups = [
+        (str(group.get("key") or ""), str(group.get("label") or ""))
+        for group in data.get("group") or []
+    ]
+    apps = [app for app in data.get("app") or [] if app.get("key")]
+    if not groups or not apps:
+        raise EngineError(f"catalogue vide : {target}")
+    return {"groups": groups, "apps": apps, "path": target}
+
+
+def find_app(catalog: dict, key: str) -> dict:
+    for app in catalog["apps"]:
+        if app["key"] == key:
+            return app
+    known = ", ".join(app["key"] for app in catalog["apps"])
+    raise EngineError(f"application inconnue « {key} » (connues : {known})")
+
+
+# -- dernière release ------------------------------------------------------
+
+def fetch_text(url: str, timeout: float = NET_TIMEOUT) -> str:
+    request = urllib.request.Request(
+        url, headers={"User-Agent": USER_AGENT},
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read().decode("utf-8", "replace")
+
+
+def _arch_token(release: dict) -> str:
+    """Nom d'architecture utilisé par l'amont (Eden dit `amd64`, pas x86_64)."""
+    machine = platform.machine() or "x86_64"
+    mapping = release.get("arch") or {}
+    return str(mapping.get(machine, machine))
+
+
+_ATOM_ENTRY = re.compile(r"<entry>(.*?)</entry>", re.S)
+# GitHub : `/releases/tag/<tag>` ; GitLab : `/-/releases/<tag>`.
+_ATOM_TAG = re.compile(r'<link[^>]+href="[^"]*releases/(?:tag/)?([^"/]+)"')
+_ATOM_TITLE = re.compile(r"<title>(.*?)</title>", re.S)
+_ATOM_UPDATED = re.compile(r"<updated>(.*?)</updated>", re.S)
+_DOTTED = re.compile(r"\d+(?:\.\d+)+")
+_ASSET_HREF = re.compile(r'href="([^"]*/releases/download/[^"]+)"')
+
+
+def atom_latest(feed_url: str, title_filter: str = "") -> dict:
+    """Première release retenue d'un flux Atom → tag, version et date.
+
+    La **version** est le premier numéro pointé du titre quand il y en a un
+    (« AzaharPlus 2126.2-A » → `2126.2`, « ES-DE 3.5.0 » → `3.5.0`), sinon le
+    tag (`build-125`, ou un hachage de commit) : c'est ce que compare le
+    manager à ce que GearLever rapporte. La **date** (`<updated>`) sert quand
+    aucune des deux parties n'a de numéro comparable (Xenia : tag = hachage).
+    """
+    feed = fetch_text(feed_url)
+    for entry in _ATOM_ENTRY.finditer(feed):
+        body = entry.group(1)
+        title = _ATOM_TITLE.search(body)
+        title_text = title.group(1) if title is not None else ""
+        if title_filter and not re.search(title_filter, title_text):
+            continue
+        match = _ATOM_TAG.search(body)
+        if match is None:
+            continue
+        tag = match.group(1)
+        dotted = _DOTTED.search(title_text)
+        updated = _ATOM_UPDATED.search(body)
+        return {
+            "tag": tag,
+            "version": dotted.group(0) if dotted is not None else tag,
+            "published": (
+                _iso_epoch(updated.group(1)) if updated is not None else None
+            ),
+        }
+    return {}
+
+
+def tag_from_atom(repo: str, title_filter: str = "") -> str:
+    """Tag de la première release du flux Atom d'un dépôt GitHub."""
+    return str(atom_latest(
+        f"https://github.com/{repo}/releases.atom", title_filter
+    ).get("tag") or "")
+
+
+def tag_from_latest(repo: str) -> str:
+    """Tag de `/releases/latest`, lu sur la redirection.
+
+    `Cache-Control: no-store` : GitHub a servi un 504 instantané mis en cache
+    par un intermédiaire sur cette URL (09/11/2026) — sans cet en-tête
+    l'installation échouait sur « dernière release indéterminable ».
+    """
+    request = urllib.request.Request(
+        f"https://github.com/{repo}/releases/latest",
+        headers={"User-Agent": USER_AGENT, "Cache-Control": "no-store"},
+        method="HEAD",
+    )
+    with urllib.request.urlopen(request, timeout=NET_TIMEOUT) as response:
+        final = response.geturl()
+    if "/releases/tag/" not in final:
+        return ""
+    return final.rstrip("/").rsplit("/", 1)[-1]
+
+
+def asset_from_expanded(repo: str, tag: str, pattern: str) -> tuple[str, str]:
+    """(nom, URL) du premier asset publié qui correspond au motif.
+
+    Certains dépôts nomment leurs assets avec la version (« azaharplus-2126.2-A-
+    linux.AppImage ») : impossible de construire le nom d'avance, la page
+    `expanded_assets` du tag le donne. Le flux n'a pas de quota, la page non plus.
+    """
+    page = fetch_text(
+        f"https://github.com/{repo}/releases/expanded_assets/{tag}"
+    )
+    for href in _ASSET_HREF.findall(page):
+        name = href.rsplit("/", 1)[-1]
+        if re.search(pattern, name):
+            return name, "https://github.com" + href
+    return "", ""
+
+
+def _iso_epoch(value: str) -> float | None:
+    text = (value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        return None
+
+
+def resolve(app: dict) -> dict:
+    """Dernière release de l'application → tag, version, nom d'asset et URL."""
+    release = app.get("release") or {}
+    kind = str(release.get("kind") or "")
+    arch = _arch_token(release)
+    template = str(release.get("asset") or "").replace("{arch}", arch)
+    pattern = str(release.get("asset_regex") or "").replace("{arch}", arch)
+
+    if kind in ("github", "github-latest"):
+        repo = str(release.get("repo") or "")
+        if not repo:
+            raise EngineError(f"{app['key']} : `repo` manquant au catalogue")
+        version, published = "", None
+        try:
+            if kind == "github":
+                entry = atom_latest(
+                    f"https://github.com/{repo}/releases.atom",
+                    str(release.get("title_filter") or ""),
+                )
+                tag = str(entry.get("tag") or "")
+                version = str(entry.get("version") or "")
+                published = entry.get("published")
+            else:
+                tag = tag_from_latest(repo)
+        except (OSError, urllib.error.URLError) as exc:
+            raise EngineError(
+                f"dernière release de {app['name']} introuvable ({exc})"
+            ) from exc
+        if not tag:
+            raise EngineError(
+                f"dernière release de {app['name']} introuvable"
+            )
+        if template:
+            name = template
+            url = f"https://github.com/{repo}/releases/download/{tag}/{name}"
+        else:
+            name, url = asset_from_expanded(repo, tag, pattern)
+            if not url:
+                raise EngineError(
+                    f"aucun asset de {app['name']} ne correspond à « {pattern} » "
+                    f"(release {tag})"
+                )
+        return {"tag": tag, "version": version or tag, "name": name,
+                "url": url, "published": published}
+
+    if kind == "gitea":
+        api = str(release.get("api") or "")
+        if not api:
+            raise EngineError(f"{app['key']} : `api` manquante au catalogue")
+        try:
+            data = json.loads(fetch_text(api, timeout=NET_TIMEOUT))
+        except (OSError, urllib.error.URLError, ValueError) as exc:
+            raise EngineError(
+                f"dernière release de {app['name']} introuvable ({exc})"
+            ) from exc
+        tag = str(data.get("tag_name") or "")
+        assets = data.get("assets") or []
+        for asset in assets:
+            name = str(asset.get("name") or "")
+            if name and re.search(pattern, name):
+                return {
+                    "tag": tag or name,
+                    "version": tag or name,
+                    "name": name,
+                    "url": str(asset.get("browser_download_url") or ""),
+                    "published": _iso_epoch(
+                        str(data.get("published_at")
+                            or data.get("created_at") or "")
+                    ),
+                }
+        raise EngineError(
+            f"aucun asset de {app['name']} ne correspond à « {pattern} » "
+            f"(release {tag or 'inconnue'})"
+        )
+
+    if kind == "gitlab":
+        project = str(release.get("project") or "")
+        if not project:
+            raise EngineError(f"{app['key']} : `project` manquant au catalogue")
+        try:
+            entry = atom_latest(
+                f"https://gitlab.com/{project}/-/releases.atom"
+            )
+        except (OSError, urllib.error.URLError) as exc:
+            raise EngineError(
+                f"dernière release de {app['name']} introuvable ({exc})"
+            ) from exc
+        tag = str(entry.get("tag") or "")
+        if not tag:
+            raise EngineError(f"dernière release de {app['name']} introuvable")
+        return {"tag": tag, "version": str(entry.get("version") or tag),
+                "name": "", "url": "", "published": entry.get("published")}
+
+    if kind == "npm":
+        package = str(release.get("package") or "")
+        if not package:
+            raise EngineError(f"{app['key']} : `package` manquant au catalogue")
+        try:
+            data = json.loads(fetch_text(
+                f"https://registry.npmjs.org/{package}/latest"
+            ))
+        except (OSError, urllib.error.URLError, ValueError) as exc:
+            raise EngineError(
+                f"dernière version de {app['name']} introuvable ({exc})"
+            ) from exc
+        version = str((data or {}).get("version") or "")
+        if not version:
+            raise EngineError(
+                f"dernière version de {app['name']} introuvable"
+            )
+        return {"tag": version, "version": version, "name": "", "url": "",
+                "published": None}
+
+    raise EngineError(
+        f"{app['key']} : moteur non armé pour `kind = \"{kind}\"` "
+        "(github, github-latest, gitea, gitlab, npm)"
+    )
+
+
+# -- téléchargement --------------------------------------------------------
+
+def _expected_total(response, offset: int) -> int:
+    """Taille totale du fichier d'après les en-têtes (0 si inconnue)."""
+    ranged = response.headers.get("Content-Range") or ""
+    if "/" in ranged:
+        tail = ranged.rsplit("/", 1)[-1].strip()
+        if tail.isdigit():
+            return int(tail)
+    length = (response.headers.get("Content-Length") or "").strip()
+    if length.isdigit():
+        return offset + int(length)
+    return 0
+
+
+def _open(url: str, offset: int):
+    """Ouvre le flux (repris à `offset` si demandé) ; `(None, offset)` si complet."""
+    request = urllib.request.Request(
+        url, headers={"User-Agent": USER_AGENT},
+    )
+    if offset:
+        request.add_header("Range", f"bytes={offset}-")
+    try:
+        return urllib.request.urlopen(request, timeout=READ_TIMEOUT)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 416 and offset:
+            # Le partiel couvre déjà tout le fichier (run précédent tué après
+            # la dernière écriture) : rien à télécharger, la vérification suit.
+            return None
+        raise DownloadError(f"HTTP {exc.code} sur {url}") from exc
+    except (OSError, urllib.error.URLError) as exc:
+        raise DownloadError(f"réseau : {exc}") from exc
+
+
+def _pump(response, part: Path, offset: int, reporter: Reporter) -> int:
+    """Écrit le corps dans le fichier partiel, avec chien de garde de débit."""
+    if offset and response.getcode() != 206:
+        # Le serveur a ignoré le Range : repartir de zéro plutôt que coller
+        # deux morceaux de builds différentes. La taille annoncée est alors
+        # celle du fichier entier, pas du reste — d'où le recalcul après.
+        offset = 0
+    total = _expected_total(response, offset)
+    mode = "ab" if offset else "wb"
+    done = offset
+    window_start = time.monotonic()
+    window_bytes = 0
+    with response, part.open(mode) as handle:
+        while True:
+            try:
+                chunk = response.read(CHUNK)
+            except (OSError, socket.timeout) as exc:
+                raise DownloadError(f"lecture interrompue ({exc})") from exc
+            if not chunk:
+                break
+            handle.write(chunk)
+            done += len(chunk)
+            window_bytes += len(chunk)
+            reporter.progress(done, total)
+            elapsed = time.monotonic() - window_start
+            if elapsed >= SLOW_SECONDS:
+                rate = window_bytes / elapsed
+                if rate < MIN_SPEED:
+                    raise DownloadError(
+                        f"connexion trop lente ({rate / 1024:.0f} Kio/s "
+                        f"pendant {elapsed:.0f} s)"
+                    )
+                window_start, window_bytes = time.monotonic(), 0
+    size = part.stat().st_size
+    if total and size != total:
+        raise DownloadError(f"transfert incomplet ({size} / {total} octets)")
+    return size
+
+
+def download(url: str, dest: Path, reporter: Reporter) -> int:
+    """Télécharge `url` vers `dest` (reprise, tentatives, anti-cale).
+
+    Le fichier partiel vit à côté de la destination : `dest` n'apparaît
+    qu'entier, et un run interrompu reprend au même endroit au lieu de repartir
+    de zéro (le moteur range chaque release dans son propre dossier de cache,
+    donc un partiel ne peut jamais être collé à une autre build).
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(dest.name + ".part")
+    if dest.exists() and not part.exists():
+        # Release déjà téléchargée (run précédent interrompu après le
+        # transfert, ou `--dry-run` rejoué) : le dossier de cache porte le
+        # tag, c'est donc bien la même build. Aucun octet à redemander.
+        size = dest.stat().st_size
+        if size:
+            reporter.resume(size)
+            _say(f"  {dest.name} déjà téléchargé ({_mib(size)} Mio).")
+            reporter.progress(size, size)
+            return size
+    last_error = ""
+    for attempt in range(1, ATTEMPTS + 1):
+        offset = part.stat().st_size if part.exists() else 0
+        try:
+            response = _open(url, offset)
+            if response is None:
+                size = part.stat().st_size
+                reporter.resume(size)
+                reporter.progress(size, size)
+                os.replace(part, dest)
+                return size
+            reporter.resume(offset)
+            size = _pump(response, part, offset, reporter)
+            # Le partiel ne devient la destination qu'une fois complet : un
+            # fichier présent dans le cache est toujours entier.
+            os.replace(part, dest)
+            return size
+        except DownloadError as exc:
+            last_error = str(exc)
+            reporter.finish()
+            _say(f"  {last_error}")
+            if attempt < ATTEMPTS:
+                delay = min(2 * attempt, 8)
+                _say(f"  Nouvelle tentative dans {delay} s…")
+                reporter.busy()
+                time.sleep(delay)
+    raise DownloadError(
+        f"{reporter.label} : abandon après {ATTEMPTS} essais ({last_error})"
+    )
+
+
+def verify_appimage(path: Path) -> int:
+    """Contrôle d'intégrité minimal : un AppImage est un binaire ELF.
+
+    Un fichier vide, une page d'erreur HTML ou un partiel ne doivent jamais
+    remplacer l'installation existante.
+    """
+    try:
+        with path.open("rb") as handle:
+            magic = handle.read(4)
+    except OSError as exc:
+        raise DownloadError(f"fichier illisible : {path} ({exc})") from exc
+    if magic != b"\x7fELF":
+        path.unlink(missing_ok=True)
+        raise DownloadError("le fichier téléchargé n'est pas un AppImage")
+    path.chmod(0o755)
+    return path.stat().st_size
+
+
+# -- GearLever et entrée de menu -------------------------------------------
+
+def gearlever_available() -> bool:
+    try:
+        result = subprocess.run(
+            ["flatpak", "info", GEARLEVER_ID],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def _confirm_all() -> str:
+    """« oui » répété : GearLever demande « Remplacer ? » et referme son stdin.
+
+    Les scripts d'origine pipaient `yes |` ; le moteur écrit une réserve de
+    réponses d'un coup (même effet, sans processus supplémentaire).
+    """
+    return "y\n" * 50
+
+
+def gearlever(action: str, image: Path, timeout: float = 300.0) -> bool:
+    """`--integrate` / `--remove` par GearLever ; False si absent ou en échec."""
+    try:
+        result = subprocess.run(
+            ["flatpak", "run", GEARLEVER_ID, action, str(image)],
+            input=_confirm_all(), text=True, capture_output=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def appimages_dir() -> Path:
+    return Path.home() / "AppImages"
+
+
+def installed_images(app: dict) -> list[Path]:
+    """AppImages installées qui correspondent au motif de l'application."""
+    directory = appimages_dir()
+    try:
+        entries = list(directory.iterdir())
+    except OSError:
+        return []
+    pattern = str(app.get("pattern") or "").lower()
+    return [
+        entry for entry in sorted(entries)
+        if entry.is_file() and fnmatch.fnmatch(entry.name.lower(), pattern)
+    ]
+
+
+def remove_image(app: dict, image: Path) -> None:
+    """Retire une AppImage et son entrée de menu (repli manuel si besoin).
+
+    Le repli couvre deux cas : GearLever absent/en échec, et GearLever qui
+    répond 0 en laissant le fichier (le script d'origine doutait déjà de lui).
+    """
+    _say(f"Suppression de {image.name}")
+    if gearlever("--remove", image) and not image.exists():
+        return
+    image.unlink(missing_ok=True)
+    desktop = str(app.get("desktop") or "")
+    if not desktop:
+        return
+    applications = Path.home() / ".local/share/applications"
+    icons = Path.home() / ".local/share/icons"
+    for path in applications.glob(f"{desktop}*.desktop"):
+        path.unlink(missing_ok=True)
+    for path in icons.glob(f"hicolor/*/apps/{desktop}*"):
+        path.unlink(missing_ok=True)
+    for path in icons.glob(f"{desktop}*"):
+        path.unlink(missing_ok=True)
+    for path in (appimages_dir() / ".icons").glob(f"{desktop}*"):
+        path.unlink(missing_ok=True)
+
+
+def patch_desktop(app: dict) -> None:
+    """Nom affiché dans le menu, et clés à retirer de l'entrée GearLever.
+
+    GearLever nomme l'entrée d'après le `Name` de l'AppImage et sa version
+    (« Lichii (build-117-89440b2) », « AzaharPlus (2126.2-A) ») : le catalogue
+    impose le libellé (`desktop_name`), la clé de version est retirée quand
+    elle n'apprend rien (`desktop_drop`), et Eden voit son fichier renommé
+    (`desktop_file`) comme le faisait son script.
+    """
+    prefix = str(app.get("desktop") or "")
+    if not prefix:
+        return
+    folder = Path.home() / ".local/share/applications"
+    # Insensible à la casse : GearLever nomme d'après le `Name` interne de
+    # l'AppImage (« Eden-v0.2.1…desktop », « AzaharPlus (…) »), pas d'après
+    # le motif du catalogue.
+    candidates = sorted(
+        entry for entry in folder.glob("*.desktop")
+        if entry.name.lower().startswith(prefix.lower())
+    )
+    if not candidates:
+        return
+    target = candidates[0]
+    wanted_file = str(app.get("desktop_file") or "")
+    if wanted_file:
+        renamed = folder / f"{wanted_file}.desktop"
+        if target != renamed:
+            try:
+                target.replace(renamed)
+            except OSError:
+                return
+            target = renamed
+    try:
+        text = target.read_text(encoding="utf-8")
+    except OSError:
+        return
+    name = str(app.get("desktop_name") or "")
+    drops = tuple(str(key) for key in app.get("desktop_drop") or ())
+    lines: list[str] = []
+    for line in text.splitlines():
+        if name and line.startswith("Name="):
+            lines.append(f"Name={name}")
+            continue
+        if any(line.startswith(f"{key}=") for key in drops):
+            continue
+        lines.append(line)
+    try:
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError:
+        return
+
+
+def refresh_menu() -> None:
+    """Recalcule le cache des entrées de menu (KDE 6, repli freedesktop)."""
+    for binary, arguments in (
+        ("kbuildsycoca6", []),
+        ("update-desktop-database", [str(Path.home() / ".local/share/"
+                                         "applications")]),
+    ):
+        found = shutil.which(binary)
+        if found is None:
+            continue
+        try:
+            subprocess.run([found, *arguments], capture_output=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        return
+
+
+def cache_dir(app: dict) -> Path:
+    return Path.home() / ".cache" / str(app["key"])
+
+
+# -- commandes -------------------------------------------------------------
+
+def install(app: dict, dry_run: bool = False) -> int:
+    """Installe ou met à jour l'application. Retourne un code de sortie."""
+    name = str(app["name"])
+    release = resolve(app)
+    _say(f"Dernière release : {release['tag']}")
+    asset = str(release["name"])
+    # Un dossier par release : une reprise ne peut viser que la même build.
+    target = cache_dir(app) / str(release["tag"]) / asset
+    reporter = Reporter(f"Téléchargement de {asset}")
+    _say(f"Téléchargement de {asset}…")
+    reporter.busy()
+    try:
+        size = download(str(release["url"]), target, reporter)
+    finally:
+        reporter.finish()
+    verify_appimage(target)
+    _say(f"  {_mib(size)} Mio vérifiés (AppImage ELF).")
+    if dry_run:
+        _say(f"Mode --dry-run : {target} conservé, aucune intégration.")
+        return 0
+
+    if not gearlever_available():
+        raise EngineError(
+            "GearLever (it.mijorus.gearlever) est absent : "
+            "intégration impossible."
+        )
+    for image in installed_images(app):
+        remove_image(app, image)
+    _say("Installation/Mise à jour avec GearLever…")
+    _proto(f"busy Intégration de {name} dans le menu…")
+    if not gearlever("--integrate", target):
+        raise EngineError("GearLever n'a pas intégré l'AppImage.")
+    if not installed_images(app):
+        raise EngineError(
+            "GearLever n'a pas intégré l'AppImage (fichier absent de "
+            "~/AppImages)."
+        )
+    patch_desktop(app)
+    shutil.rmtree(cache_dir(app), ignore_errors=True)
+    refresh_menu()
+    _proto(f"done {name} est à jour.")
+    _say(f"Opération terminée. {name} est installé.")
+    return 0
+
+
+def probe(app: dict) -> dict:
+    """Dernière release publiée, sans rien télécharger ni intégrer."""
+    return resolve(app)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="gablue-apps",
+        description="Installation et mise à jour des AppImages de Gablue.",
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("list", help="clés et noms du catalogue")
+
+    probe_parser = commands.add_parser("probe", help="dernière release publiée")
+    probe_parser.add_argument("key")
+    probe_parser.add_argument("--json", action="store_true",
+                              help="sortie lisible par une machine")
+
+    install_parser = commands.add_parser("install",
+                                         help="installer ou mettre à jour")
+    install_parser.add_argument("key")
+    install_parser.add_argument("--dry-run", action="store_true",
+                                help="télécharger et vérifier sans intégrer")
+    install_parser.add_argument("--yes", action="store_true",
+                                help="accepté pour compatibilité "
+                                     "(le moteur ne pose jamais de question)")
+
+    args = parser.parse_args(argv)
+    try:
+        catalog = load_catalog()
+        if args.command == "list":
+            for app in catalog["apps"]:
+                print(f"{app['key']}\t{app['name']}")
+            return 0
+        app = find_app(catalog, args.key)
+        if args.command == "install" and not app.get("engine"):
+            raise EngineError(
+                f"{app['name']} est encore servie par son script de l'image "
+                f"({app.get('script') or 'absent'}) : le moteur ne l'installe "
+                "pas."
+            )
+        if args.command == "probe":
+            info = probe(app)
+            if args.json:
+                print(json.dumps(
+                    {
+                        "key": app["key"],
+                        "tag": info["tag"],
+                        "version": info["version"],
+                        "name": info["name"],
+                        "url": info["url"],
+                        "published": info.get("published"),
+                    },
+                    ensure_ascii=False,
+                ))
+            else:
+                print(f"{app['name']} : {info['version']}")
+                print(f"  asset : {info['name']}")
+                print(f"  url   : {info['url']}")
+            return 0
+        return install(app, dry_run=args.dry_run)
+    except EngineError as exc:
+        print(f"Erreur : {exc}", file=sys.stderr, flush=True)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

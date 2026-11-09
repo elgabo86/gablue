@@ -1,17 +1,19 @@
 """Applications AppImage gérées par GearLever (émulateurs et outils).
 
-Chaque application a déjà son script d'installation dans `/usr/bin` (dernière
-release, intégration GearLever, correction du `.desktop`, copie des fichiers
-Gablue pour ES-DE). Le manager ne réimplémente pas cette logique : il lance le
-script et affiche son journal. ES-DE expose `--config-only` pour ne recopier que
-la configuration Gablue (`custom_systems` + lanceurs Tools).
+Le catalogue (noms, motifs, dépôts, règles de version) n'est **pas** ici : il
+vit dans `/usr/share/ublue-os/gablue/apps.toml`, la même source que le moteur
+d'installation `/usr/libexec/gablue-apps`. Le manager ne réimplémente donc ni la
+liste des applications, ni la résolution de la dernière version : il lance le
+script de l'image (`-install`, coquille du moteur pour les applications
+migrées) et demande au moteur la version publiée (`gablue-apps probe --json`).
 
-La suppression est faite ici, ou par un script dédié quand elle touche plus que
-l'AppImage (`opencode2-remove` : CLI npm, entrées Dolphin, MCP Lightpanda).
-Dans tous les cas la configuration, les sauvegardes et les jeux sont conservés.
+ES-DE expose `--config-only` pour ne recopier que la configuration Gablue
+(`custom_systems` + lanceurs Tools). La suppression est faite ici, ou par un
+script dédié quand elle touche plus que l'AppImage (`opencode2-remove` : CLI
+npm, entrées Dolphin, MCP Lightpanda). Dans tous les cas la configuration, les
+sauvegardes et les jeux sont conservés.
 """
 
-import datetime
 import fnmatch
 import json
 import os
@@ -19,15 +21,20 @@ import re
 import shlex
 import shutil
 import subprocess
-import urllib.request
+import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from .constants import _which
+from .constants import APPS_ENGINE, _which
 
 GEARLEVER_ID = "it.mijorus.gearlever"
 ESDE_SHARE = Path("/usr/share/ublue-os/gablue/esde")
+
+# Catalogue partagé avec le moteur : même fichier dans l'image, et le même
+# chemin relatif depuis le dépôt (lecture de développement et tests).
+CATALOG_IMAGE = Path("/usr/share/ublue-os/gablue/apps.toml")
+CATALOG_REPO = Path("files/system/all/usr/share/ublue-os/gablue/apps.toml")
 
 
 @dataclass(frozen=True)
@@ -44,72 +51,63 @@ class App:
     install_args: tuple[str, ...] = ()
     cli: str = ""       # commande dont on lit `--version` (installation mixte)
     remover: str = ""   # script de suppression dédié (sinon suppression générique)
-    # Source de la dernière version publiée. JAMAIS l'API GitHub (quota
-    # anonyme 60 req/h par IP) : flux Atom pour GitHub/GitLab, API Gitea pour
-    # Eden, registre npm pour OpenCode.
-    latest_kind: str = ""     # "github" | "gitlab" | "gitea" | "npm"
-    latest_id: str = ""       # dépôt, URL Gitea ou nom npm
-    latest_filter: str = ""   # filtre sur le titre, si le flux mélange tout
 
 
-APPS: tuple[App, ...] = (
-    App(
-        "esde", "ES-DE",
-        "Frontend manette ; copie aussi les systèmes et lanceurs Gablue.",
-        "emulateur",
-        "esde*.appimage", "esde-install", "esde",
-        # Sans boîte de dialogue : le journal du manager fait office de retour.
-        install_args=("--yes",),
-        latest_kind="gitlab", latest_id="es-de/emulationstation-de",
-    ),
-    App(
-        "azahar", "Azahar",
-        "Émulateur Nintendo 3DS.",
-        "emulateur",
-        "azahar*.appimage", "azahar-install", "azahar",
-        latest_kind="github", latest_id="AzaharPlus/AzaharPlus",
-    ),
-    App(
-        "eden", "Eden",
-        "Émulateur Nintendo Switch.",
-        "emulateur",
-        "*eden*.appimage", "eden-install", "eden",
-        latest_kind="gitea",
-        latest_id="https://git.eden-emu.dev/api/v1/repos/eden-emu/eden/"
-                  "releases/latest",
-    ),
-    App(
-        "xenia", "Xenia Edge",
-        "Émulateur Xbox 360.",
-        "emulateur",
-        "xenia*.appimage", "xenia-install", "xenia",
-        latest_kind="github", latest_id="has207/xenia-edge",
-    ),
-    App(
-        "lichii", "Lichii",
-        "Émulateur Nintendo Switch moderne (build PGO).",
-        "emulateur",
-        "lichii*.appimage", "lichii-install", "lichii",
-        latest_kind="github", latest_id="zortos293/Lichii",
-        # Le flux mêle les releases Eglantine (dépôt amont) ; les titres
-        # « Lichii nx2 build 117 » n'ont pas de version pointée, c'est le tag
-        # (`build-117`) qui sert de version.
-        latest_filter=r"^Lichii\b",
-    ),
-    App(
-        "opencode", "OpenCode 2",
-        "Éditeur et agent de code.",
-        "outil",
-        "opencode*.appimage", "opencode2-install", "opencode",
-        cli="opencode", remover="opencode2-remove",
-        latest_kind="npm", latest_id="@opencode/cli",
-    ),
-)
+def catalog_file() -> Path | None:
+    """Catalogue partagé avec le moteur, ou None s'il est absent.
 
-GROUPS: tuple[tuple[str, str], ...] = (
-    ("emulateur", "Émulateurs"),
-    ("outil", "Outils"),
-)
+    L'image le livre à `/usr/share/ublue-os/gablue/apps.toml` ; dans le dépôt
+    (développement, tests) il est sous `files/system/all/usr/…`. Un catalogue
+    manquant n'est pas une erreur fatale : le dialogue se vide au lieu de
+    faire tomber le manager.
+    """
+    override = os.environ.get("GABLUE_APPS_TOML")
+    if override:
+        return Path(override)
+    if CATALOG_IMAGE.is_file():
+        return CATALOG_IMAGE
+    repo = Path(__file__).resolve().parents[3] / CATALOG_REPO
+    return repo if repo.is_file() else None
+
+
+def load_catalog(path: Path | None = None
+                 ) -> tuple[tuple[App, ...], tuple[tuple[str, str], ...]]:
+    """(applications, groupes) lus du catalogue TOML, dans l'ordre du fichier."""
+    target = Path(path) if path is not None else catalog_file()
+    if target is None:
+        return (), ()
+    try:
+        with target.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        return (), ()
+    groups = tuple(
+        (str(group.get("key") or ""), str(group.get("label") or ""))
+        for group in data.get("group") or []
+        if group.get("key")
+    )
+    apps = tuple(
+        App(
+            key=str(row["key"]),
+            name=str(row.get("name") or row["key"]),
+            description=str(row.get("description") or ""),
+            group=str(row.get("group") or ""),
+            pattern=str(row.get("pattern") or ""),
+            script=str(row.get("script") or ""),
+            desktop=str(row.get("desktop") or ""),
+            install_args=tuple(
+                str(argument) for argument in row.get("install_args") or ()
+            ),
+            cli=str(row.get("cli") or ""),
+            remover=str(row.get("remover") or ""),
+        )
+        for row in data.get("app") or []
+        if row.get("key")
+    )
+    return apps, groups
+
+
+APPS, GROUPS = load_catalog()
 
 
 def appimages_dir() -> Path:
@@ -263,93 +261,43 @@ def installed_any(app: App, current: dict) -> bool:
 
 # -- Mises à jour des AppImages --------------------------------------------
 #
-# Aucune requête à api.github.com : le quota anonyme est de 60 req/h par IP,
-# partagé par tous les postes du réseau. Les flux Atom des releases (GitHub,
-# GitLab) n'ont pas de quota, Gitea expose sa propre API et npm son registre.
+# Une seule résolution dans toute l'image : le moteur `/usr/libexec/gablue-apps`
+# (`probe <clé> --json`), celui qui téléchargera. Le manager ne recalcule donc
+# plus les versions lui-même — il avait sa propre lecture du flux Atom, qui ne
+# distingue pas les pré-releases et proposait une « mise à jour » (Lichii
+# build-130) que le moteur refusait d'installer (`/releases/latest` → 125).
 
-FEED_TIMEOUT = 8.0
-
-
-def _fetch_text(url: str, timeout: float = FEED_TIMEOUT) -> str:
-    request = urllib.request.Request(
-        url, headers={"User-Agent": "gablue-manager"},
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read().decode("utf-8", "replace")
+PROBE_TIMEOUT = 25.0        # le moteur borne lui-même chaque requête à 20 s
 
 
-def parse_iso_timestamp(value: str) -> float | None:
-    """Date ISO 8601 → epoch ; None si vide ou illisible."""
-    text = (value or "").strip()
-    if not text:
-        return None
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    try:
-        return datetime.datetime.fromisoformat(text).timestamp()
-    except ValueError:
-        return None
+def latest_info(app: App) -> dict:
+    """Dernière version publiée, telle que la voit le moteur d'installation.
 
-
-def parse_atom_latest(text: str, title_filter: str = "") -> dict:
-    """Première entrée retenue d'un flux Atom de releases → version + date.
-
-    La version est le premier numéro pointé du titre (les tags sont parfois
-    des hachages ou des noms d'outils) ; à défaut, le dernier segment du lien
-    de release (GitHub `releases/tag/<tag>`, GitLab `-/releases/<tag>`). La
-    date vient de `<updated>` de l'entrée. `title_filter` écarte les releases
-    qui ne sont pas l'application (ex. les releases Eglantine du dépôt Lichii).
+    `{}` quand le moteur est absent (image antérieure) ou que le réseau ne
+    répond pas : le verdict reste indéterminé et le bouton reste actif — on ne
+    dit jamais « à jour » à tort.
     """
-    for entry in re.finditer(r"<entry>(.*?)</entry>", text or "", re.S):
-        body = entry.group(1)
-        title = re.search(r"<title>(.*?)</title>", body, re.S)
-        title_text = title.group(1) if title is not None else ""
-        if title_filter and not re.search(title_filter, title_text):
-            continue
-        version = ""
-        dotted = re.search(r"\d+(?:\.\d+)+", title_text)
-        if dotted is not None:
-            version = dotted.group(0)
-        else:
-            link = re.search(
-                r'<link[^>]+href="([^"]*releases/(?:tag/)?[^"]+)"', body
-            )
-            if link is not None:
-                version = link.group(1).rstrip("/").rsplit("/", 1)[-1]
-        updated = re.search(r"<updated>(.*?)</updated>", body)
-        return {
-            "version": version,
-            "published": (
-                parse_iso_timestamp(updated.group(1)) if updated else None
-            ),
-        }
-    return {}
-
-
-def parse_gitea_latest(text: str) -> dict:
-    """`releases/latest` de Gitea → version (tag) + date de publication."""
+    if not Path(APPS_ENGINE).is_file():
+        return {}
     try:
-        data = json.loads(text or "")
+        result = subprocess.run(
+            [APPS_ENGINE, "probe", app.key, "--json"],
+            capture_output=True, text=True, timeout=PROBE_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if result.returncode != 0:
+        return {}
+    try:
+        data = json.loads(result.stdout or "")
     except ValueError:
         return {}
     if not isinstance(data, dict):
         return {}
     return {
-        "version": str(data.get("tag_name") or ""),
-        "published": parse_iso_timestamp(
-            data.get("published_at") or data.get("created_at") or ""
-        ),
+        "version": str(data.get("version") or ""),
+        "published": data.get("published"),
     }
-
-
-def parse_npm_latest(text: str) -> dict:
-    """Document `/latest` du registre npm → version (pas de date utile)."""
-    try:
-        data = json.loads(text or "")
-    except ValueError:
-        return {}
-    version = data.get("version") if isinstance(data, dict) else None
-    return {"version": str(version or ""), "published": None}
 
 
 def version_tuple(text: str) -> tuple[int, ...]:
@@ -358,33 +306,6 @@ def version_tuple(text: str) -> tuple[int, ...]:
     if match is None:
         return ()
     return tuple(int(part) for part in match.group(0).split("."))
-
-
-def latest_info(app: App) -> dict:
-    """Dernière version publiée de l'application ({} si indéterminable)."""
-    kind, ident = app.latest_kind, app.latest_id
-    if not kind or not ident:
-        return {}
-    try:
-        if kind == "github":
-            return parse_atom_latest(
-                _fetch_text(f"https://github.com/{ident}/releases.atom"),
-                app.latest_filter,
-            )
-        if kind == "gitlab":
-            return parse_atom_latest(
-                _fetch_text(f"https://gitlab.com/{ident}/-/releases.atom"),
-                app.latest_filter,
-            )
-        if kind == "gitea":
-            return parse_gitea_latest(_fetch_text(ident))
-        if kind == "npm":
-            return parse_npm_latest(_fetch_text(
-                f"https://registry.npmjs.org/{ident}/latest"
-            ))
-    except (OSError, ValueError):
-        return {}
-    return {}
 
 
 def update_available(current: dict, info: dict) -> bool | None:
@@ -444,8 +365,8 @@ def pending_for(states: dict[str, dict],
 
     `{}` côté version publiée laisse le verdict indéterminé au lieu de mentir.
     `stop` (threading.Event) vient de la fermeture de la fenêtre : on cesse
-    d'attendre les applications restantes, sans bloquer la sortie. Les flux
-    déjà partis expirent d'eux-mêmes (`FEED_TIMEOUT`).
+    d'attendre les applications restantes, sans bloquer la sortie. Les sondes
+    déjà parties expirent d'elles-mêmes (`PROBE_TIMEOUT`).
     """
     installed = [app for app in APPS if installed_any(app, states[app.key])]
     if not installed:
@@ -462,7 +383,7 @@ def pending_for(states: dict[str, dict],
                 continue
             try:
                 infos[app.key] = futures[app.key].result(
-                    timeout=FEED_TIMEOUT + 2
+                    timeout=PROBE_TIMEOUT + 2
                 )
             except Exception:
                 infos[app.key] = {}

@@ -519,8 +519,10 @@ else
     CACHE_FILE="$CACHE_DIR/opencode.appimage"
 
     echo "Téléchargement de l'AppImage OpenCode Desktop (~245 Mo)..."
-    # -f : échoue sur HTTP 404/5xx au lieu d'écrire une page d'erreur dans le fichier
-    curl -fL --progress-bar --retry 3 "$STABLE_URL" -o "$CACHE_FILE"
+    # `gablue-fetch` : --fail (pas de page d'erreur écrite dans le fichier),
+    # tentatives, et abandon d'une connexion morte (même politique que le
+    # moteur gablue-apps).
+    gablue-fetch "$STABLE_URL" "$CACHE_FILE" "OpenCode 2"
 
     if [ ! -s "$CACHE_FILE" ]; then
         echo "✗ Erreur : le fichier téléchargé est vide ou absent."

@@ -1,91 +1,11 @@
 #!/bin/bash
 
-# Script pour télécharger et installer/mettre à jour AzaharPlus (Linux version) avec GearLever
-
-# Dépendances : curl, flatpak (GearLever installé comme it.mijorus.gearlever), yes
+# Azahar — coquille de compatibilité.
+#
+# Le téléchargement (reprise, anti-cale, contrôle ELF) et l'intégration
+# GearLever vivent dans le moteur `/usr/libexec/gablue-apps`, décrit par
+# `/usr/share/ublue-os/gablue/apps.toml`. Ce nom reste : CLI documentée, sonde
+# d'état de Gablue Manager, habitude des utilisateurs.
 
 set -e
-
-REPO="AzaharPlus/AzaharPlus"
-CACHE_DIR="$HOME/.cache/azahar"
-APPIMAGES_DIR="$HOME/AppImages"
-mkdir -p "$CACHE_DIR"
-
-# Dernière release SANS api.github.com (quota anonyme 60 req/h par IP, partagé
-# par tout le réseau) : le flux Atom des releases donne les tags et la page
-# `expanded_assets` du tag donne le nom exact de l'asset (celui d'AzaharPlus
-# porte la version, il change à chaque release).
-ASSET_NAME_PATTERN="linux.AppImage"
-DOWNLOAD_URL=""
-
-CANDIDATES=$(curl -fsL "https://github.com/$REPO/releases.atom" |
-    tr -d '\n' | sed 's|<entry>|\n<entry>|g' |
-    awk '
-        {
-            if (!match($0, /<title>[^<]*<\/title>/)) next
-            title = substr($0, RSTART + 7, RLENGTH - 15)
-            if (title !~ /^AzaharPlus /) next
-            if (match($0, /releases\/tag\/[^"]+/))
-                print substr($0, RSTART + 13, RLENGTH - 13)
-        }')
-
-for TAG in $CANDIDATES; do
-    ASSET_PATH=$(curl -fsL \
-        "https://github.com/$REPO/releases/expanded_assets/$TAG" |
-        grep -o "$REPO/releases/download/[^\"]*" |
-        grep -i -- "$ASSET_NAME_PATTERN" | head -n1)
-    if [ -n "$ASSET_PATH" ]; then
-        DOWNLOAD_URL="https://github.com/$ASSET_PATH"
-        break
-    fi
-done
-
-if [ -z "$DOWNLOAD_URL" ]; then
-    echo "Erreur : aucune release d'AzaharPlus ne publie d'AppImage Linux."
-    exit 1
-fi
-
-# Extraire le nom du fichier
-ASSET_NAME=$(basename "$DOWNLOAD_URL")
-
-# Chemin du fichier à télécharger
-APPIMAGE_FILE="$CACHE_DIR/$ASSET_NAME"
-
-# Télécharger l'AppImage
-echo "Téléchargement de $ASSET_NAME..."
-curl -L -o "$APPIMAGE_FILE" "$DOWNLOAD_URL"
-chmod +x "$APPIMAGE_FILE"
-
-echo "AppImage téléchargé : $ASSET_NAME"
-
-# Vérifier si une version est déjà installée et la supprimer
-INSTALLED_APPIMAGE=$(find "$APPIMAGES_DIR" -maxdepth 1 -iname "azahar*.appimage" | head -n1 || true)
-
-if [ -n "$INSTALLED_APPIMAGE" ]; then
-    echo "Suppression de la version installée existante."
-    yes | flatpak run it.mijorus.gearlever --remove "$INSTALLED_APPIMAGE" 2>/dev/null || true
-fi
-
-# Installer avec GearLever sans confirmation (comme dans le script original)
-echo "Installation/Mise à jour avec GearLever..."
-yes | flatpak run it.mijorus.gearlever --integrate "$APPIMAGE_FILE" 2>/dev/null || true
-
-# Corriger le .desktop pour enlever le (hash) et mettre la première lettre en majuscule
-DESKTOP_DIR="$HOME/.local/share/applications"
-DESKTOP_FILE=$(find "$DESKTOP_DIR" -name "azahar*.desktop" -type f | head -n1)
-if [ -n "$DESKTOP_FILE" ]; then
-    sed -i 's/^Name=[Aa]zahar[Pp]lus (.*)$/Name=AzaharPlus/' "$DESKTOP_FILE"
-    sed -i 's/^Name=[Aa]zahar[Pp]lus$/Name=AzaharPlus/' "$DESKTOP_FILE"
-    sed -i 's/^Name=[Aa]zahar (.*)$/Name=Azahar/' "$DESKTOP_FILE"
-    sed -i 's/^Name=[Aa]zahar$/Name=Azahar/' "$DESKTOP_FILE"
-    sed -i '/^X-AppImage-Version=/d' "$DESKTOP_FILE"  # Optionnel: enlever la ligne version
-fi
-
-# Nettoyer le cache
-rm -f "$APPIMAGE_FILE"
-rmdir --ignore-fail-on-non-empty "$CACHE_DIR"
-
-# Rafraîchir les fichiers .desktop
-kbuildsycoca6
-
-echo "Opération terminée."
+exec /usr/libexec/gablue-apps install azahar "$@"

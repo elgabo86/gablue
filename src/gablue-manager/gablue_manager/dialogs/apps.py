@@ -19,6 +19,7 @@ from ..apps import (
     remove_command, script_has_option, update_available,
 )
 from ..constants import _which
+from ..local import parse_gablue_progress
 from ..ssh import ssh_capture
 from ..tasks import LocalTaskDialog, RemoteTaskDialog, start_task
 from ..uiutil import restyle_label
@@ -375,7 +376,11 @@ class AppsDialog(QDialog):
             self._run(LocalTaskDialog(
                 self, title=title, subtitle=subtitle,
                 argv=install_argv(app),
-                progress_mode="busy",
+                # Le moteur publie `::gablue:percent` (octets réels) : la barre
+                # montre le transfert au lieu de balayer sans fin — les scripts
+                # restés en bash (ES-DE, OpenCode) n'émettent rien, la barre
+                # reste alors indéterminée comme avant.
+                progress_parser=parse_gablue_progress,
                 progress_text="Téléchargement et intégration…",
                 reveal_log_on_error=True,
             ))

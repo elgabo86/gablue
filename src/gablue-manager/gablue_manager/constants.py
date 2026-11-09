@@ -160,6 +160,11 @@ GAMEPAD_HELPER = "/usr/bin/gablue-gamepad"
 
 CLEAN_HELPER = "/usr/libexec/gablue-clean"
 
+# Moteur d'installation des AppImages (`/usr/libexec`, donc absent du PATH :
+# `_which` ne le trouverait jamais). C'est lui qui résout la dernière version
+# publiée et qui télécharge — une seule vérité pour le manager et la CLI.
+APPS_ENGINE = "/usr/libexec/gablue-apps"
+
 BTRFS_HELPER = "/usr/libexec/gablue-btrfs-compress"
 
 NVME_THERMAL_HELPER = "/usr/libexec/gablue-nvme-thermal"

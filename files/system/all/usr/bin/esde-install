@@ -202,7 +202,9 @@ if [ "$AUTO" = 0 ]; then
 fi
 
 echo "Téléchargement de $DOWNLOAD_URL vers $FILENAME..."
-curl -L --progress-bar "$DOWNLOAD_URL" -o "$FILENAME"
+# `gablue-fetch` : tentatives et abandon d'une connexion morte (même politique
+# que le moteur gablue-apps).
+gablue-fetch "$DOWNLOAD_URL" "$FILENAME" "ES-DE"
 DOWNLOAD_STATUS=$?
 
 if [ -n "$DBUS_REF" ]; then

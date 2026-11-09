@@ -1,111 +1,11 @@
 #!/bin/bash
 
-# Script pour télécharger et installer/mettre à jour Lichii (Linux, build PGO)
-# avec GearLever
-# Source : GitHub zortos293/Lichii (fork d'Eglantine, émulateur Switch moderne)
-# PGO = Profile Guided Optimization : la build recommandée par l'amont.
+# Lichii — coquille de compatibilité.
+#
+# Le téléchargement (reprise, anti-cale, contrôle ELF) et l'intégration
+# GearLever vivent dans le moteur `/usr/libexec/gablue-apps`, décrit par
+# `/usr/share/ublue-os/gablue/apps.toml`. Ce nom reste : CLI documentée, sonde
+# d'état de Gablue Manager, habitude des utilisateurs.
 
 set -e
-
-REPO="zortos293/Lichii"
-CACHE_DIR="$HOME/.cache/lichii"
-APPIMAGES_DIR="$HOME/AppImages"
-DESKTOP_DIR="$HOME/.local/share/applications"
-mkdir -p "$CACHE_DIR" "$APPIMAGES_DIR"
-
-# Architecture des AppImages publiées (x86_64 ou aarch64)
-case "$(uname -m)" in
-    x86_64|amd64)
-        ARCH="x86_64"
-        ;;
-    aarch64|arm64)
-        ARCH="aarch64"
-        ;;
-    *)
-        echo "Erreur : architecture $(uname -m) non prise en charge par Lichii."
-        exit 1
-        ;;
-esac
-
-# Dernière release SANS api.github.com (quota anonyme 60 req/h par IP, partagé
-# par tout le réseau) : la redirection de /releases/latest donne le tag, et
-# l'asset suit l'URL publiée pour ce tag.
-# `Cache-Control: no-store` : GitHub a servi un 504 instantané (mis en cache
-# par un intermédiaire) sur ces URL le 09/11/2026 — sans l'en-tête, l'install
-# échouait sur « impossible de déterminer la dernière release » sans recours.
-LATEST_URL=$(curl -sIL -H 'Cache-Control: no-store' -o /dev/null \
-    -w '%{url_effective}' "https://github.com/$REPO/releases/latest")
-case "$LATEST_URL" in
-    */releases/tag/*)
-        TAG="${LATEST_URL##*/}"
-        ;;
-    *)
-        TAG=""
-        ;;
-esac
-
-if [ -z "$TAG" ]; then
-    echo "Erreur : impossible de déterminer la dernière release de Lichii."
-    exit 1
-fi
-
-ASSET_NAME="lichii-linux-$ARCH-pgo.AppImage"
-DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$ASSET_NAME"
-NEW_APPIMAGE="$CACHE_DIR/$ASSET_NAME"
-
-echo "Dernière release : $TAG"
-echo "Téléchargement de $ASSET_NAME..."
-curl -fL -o "$NEW_APPIMAGE" "$DOWNLOAD_URL"
-
-# Un AppImage est un binaire ELF : un fichier vide ou une page d'erreur HTML
-# ne doit jamais remplacer l'installation existante.
-if [ ! -s "$NEW_APPIMAGE" ] || [ "$(head -c 4 "$NEW_APPIMAGE" | od -An -tx1 |
-        tr -d ' \n')" != "7f454c46" ]; then
-    echo "Erreur : le fichier téléchargé n'est pas un AppImage."
-    rm -f "$NEW_APPIMAGE"
-    exit 1
-fi
-chmod +x "$NEW_APPIMAGE"
-
-# Supprimer la version installée seulement MAINTENANT : la nouvelle est
-# téléchargée et vérifiée, un échec ne laisse jamais sans application.
-OLD_APPIMAGE=$(find "$APPIMAGES_DIR" -maxdepth 1 -iname "lichii*.appimage" |
-    head -n1 || true)
-
-if [ -n "$OLD_APPIMAGE" ]; then
-    echo "Suppression de la version installée existante."
-    if ! yes | flatpak run it.mijorus.gearlever --remove "$OLD_APPIMAGE" \
-            2>/dev/null; then
-        # Repli manuel : GearLever absent ou en échec.
-        rm -f "$OLD_APPIMAGE"
-        rm -f "$DESKTOP_DIR"/lichii*.desktop
-        rm -f "$HOME/.local/share/icons"/hicolor/*/apps/lichii*
-        rm -f "$APPIMAGES_DIR/.icons"/lichii*
-    fi
-fi
-
-echo "Installation/Mise à jour avec GearLever..."
-yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE" 2>/dev/null ||
-    true
-
-if ! find "$APPIMAGES_DIR" -maxdepth 1 -iname "lichii*.appimage" | grep -q .; then
-    echo "Erreur : GearLever n'a pas intégré l'AppImage."
-    exit 1
-fi
-
-# GearLever nomme l'entrée d'après le nom interne de l'AppImage et sa version
-# (« Lichii (build-117-89440b2) ») : le menu doit dire « Lichii ».
-DESKTOP_FILE="$DESKTOP_DIR/lichii.desktop"
-if [ -f "$DESKTOP_FILE" ]; then
-    sed -i 's/^Name=.*$/Name=Lichii/' "$DESKTOP_FILE"
-fi
-
-# GearLever copie l'AppImage dans ~/AppImages : le cache ne sert plus.
-rm -f "$NEW_APPIMAGE"
-rmdir --ignore-fail-on-non-empty "$CACHE_DIR" 2>/dev/null || true
-
-if command -v kbuildsycoca6 >/dev/null 2>&1; then
-    kbuildsycoca6
-fi
-
-echo "Opération terminée. Lichii (build PGO) est installé."
+exec /usr/libexec/gablue-apps install lichii "$@"

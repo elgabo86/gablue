@@ -1,117 +1,13 @@
 #!/bin/bash
 
-# Script pour télécharger et installer/mettre à jour Xenia Edge (Linux version) avec GearLever
+# Xenia Edge — coquille de compatibilité.
+#
+# Le téléchargement (reprise, anti-cale, contrôle ELF) et l'intégration
+# GearLever vivent dans le moteur `/usr/libexec/gablue-apps`, décrit par
+# `/usr/share/ublue-os/gablue/apps.toml`. L'asset porte un nom fixe, le tag est
+# un hachage de commit : le moteur lit les deux dans le flux et la page
+# `expanded_assets` du tag. Ce nom reste : CLI documentée, sonde d'état de
+# Gablue Manager, habitude des utilisateurs.
 
 set -e
-
-REPO="has207/xenia-edge"
-CACHE_DIR="$HOME/.cache/xenia"
-APPIMAGES_DIR="$HOME/AppImages"
-DESKTOP_DIR="$HOME/.local/share/applications"
-mkdir -p "$CACHE_DIR" "$APPIMAGES_DIR"
-
-# ---------------------------------------------------------------------------
-# 1. Téléchargement
-# ---------------------------------------------------------------------------
-# Dernière release SANS api.github.com (quota anonyme 60 req/h par IP, partagé
-# par tout le réseau) : le flux Atom des releases donne les tags (ici des
-# hachages de commit), la page `expanded_assets` du tag donne l'asset exact.
-ASSET_NAME_PATTERN="xenia_edge_linux.AppImage"
-DOWNLOAD_URL=""
-
-CANDIDATES=$(curl -fsL "https://github.com/$REPO/releases.atom" |
-    tr -d '\n' | sed 's|<entry>|\n<entry>|g' |
-    awk '
-        {
-            if (match($0, /releases\/tag\/[^"]+/))
-                print substr($0, RSTART + 13, RLENGTH - 13)
-        }')
-
-for TAG in $CANDIDATES; do
-    ASSET_PATH=$(curl -fsL \
-        "https://github.com/$REPO/releases/expanded_assets/$TAG" |
-        grep -o "$REPO/releases/download/[^\"]*" |
-        grep -i -- "$ASSET_NAME_PATTERN" | head -n1)
-    if [ -n "$ASSET_PATH" ]; then
-        DOWNLOAD_URL="https://github.com/$ASSET_PATH"
-        break
-    fi
-done
-
-if [ -z "$DOWNLOAD_URL" ]; then
-    echo "Erreur : aucune release de Xenia Edge ne publie d'AppImage Linux."
-    exit 1
-fi
-
-ASSET_NAME=$(basename "$DOWNLOAD_URL")
-NEW_APPIMAGE_PATH="$CACHE_DIR/$ASSET_NAME"
-
-echo "Téléchargement de $ASSET_NAME..."
-curl -L -o "$NEW_APPIMAGE_PATH" "$DOWNLOAD_URL"
-chmod +x "$NEW_APPIMAGE_PATH"
-
-# ---------------------------------------------------------------------------
-# 2. Nettoyage : supprimer toutes les anciennes versions (uniquement
-# maintenant que la nouvelle est téléchargée, pour ne jamais rester sans l'app)
-# ---------------------------------------------------------------------------
-echo "Nettoyage des anciennes versions..."
-
-# Supprimer les vieux AppImages de GearLever et du disque
-if [ -d "$APPIMAGES_DIR" ]; then
-    find "$APPIMAGES_DIR" -maxdepth 1 \( -iname "xenia*.AppImage" -o -iname "xenia*.appimage" \) -print0 2>/dev/null | \
-    while IFS= read -r -d '' appimage; do
-        echo "  Suppression: $appimage"
-        yes | flatpak run it.mijorus.gearlever --remove "$appimage" 2>/dev/null || true
-        rm -f "$appimage"
-    done
-fi
-
-# Supprimer les vieilles icônes numérotées (GearLever les accumule)
-if [ -d "$APPIMAGES_DIR/.icons" ]; then
-    find "$APPIMAGES_DIR/.icons" -maxdepth 1 -name "xenia_edge.appimage_*" -print0 2>/dev/null | \
-    while IFS= read -r -d '' icon; do
-        rm -f "$icon"
-    done
-fi
-
-# ---------------------------------------------------------------------------
-# 3. Intégration GearLever (gère icônes + .desktop, peut crasher sur le %f)
-# ---------------------------------------------------------------------------
-echo "Intégration avec GearLever..."
-# Le bug configparser (%f) crashe à la fin, mais le .desktop et les icônes
-# sont déjà créés à ce stade.
-yes | flatpak run it.mijorus.gearlever --integrate "$NEW_APPIMAGE_PATH" 2>/dev/null || true
-
-# ---------------------------------------------------------------------------
-# 4. Corriger le .desktop
-# ---------------------------------------------------------------------------
-DESKTOP_FILE=$(find "$DESKTOP_DIR" -name "xenia_edge*.desktop" -type f 2>/dev/null | head -n1)
-if [ -n "$DESKTOP_FILE" ]; then
-    sed -i 's/^Name=Xenia Edge (.*)$/Name=Xenia Edge/' "$DESKTOP_FILE"
-    sed -i 's/^Name=xenia_edge (.*)$/Name=Xenia Edge/' "$DESKTOP_FILE"
-    sed -i 's/^Name=xenia_edge$/Name=Xenia Edge/' "$DESKTOP_FILE"
-    sed -i '/^X-AppImage-Version=/d' "$DESKTOP_FILE"
-else
-    echo "Attention : GearLever n'a pas créé de .desktop, installation manuelle..."
-    DEST_APPIMAGE="$APPIMAGES_DIR/xenia_edge.appimage"
-    cp "$NEW_APPIMAGE_PATH" "$DEST_APPIMAGE"
-    chmod +x "$DEST_APPIMAGE"
-    cat > "$DESKTOP_DIR/xenia_edge.desktop" << DESKTOPEOF
-[Desktop Entry]
-Name=Xenia Edge
-Type=Application
-Exec=$DEST_APPIMAGE
-Icon=xenia_edge
-Categories=Game;Emulator;
-DESKTOPEOF
-fi
-
-# ---------------------------------------------------------------------------
-# 5. Nettoyage
-# ---------------------------------------------------------------------------
-rm -f "$NEW_APPIMAGE_PATH"
-rmdir --ignore-fail-on-non-empty "$CACHE_DIR"
-
-kbuildsycoca6
-
-echo "Opération terminée."
+exec /usr/libexec/gablue-apps install xenia "$@"

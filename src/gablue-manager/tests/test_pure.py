@@ -1963,6 +1963,28 @@ class GwineTest(unittest.TestCase):
         self.assertEqual(done["percent"], 100.0)
         self.assertEqual(done["label"], "Préfixe Wine initialisé.")
 
+        # Avancement mesuré (téléchargement du moteur d'AppImages) : le
+        # libellé suit la valeur, la barre est déterministe.
+        measured = local.parse_gablue_progress(
+            "::gablue:percent 42.3 Téléchargement de lichii — 56,7 / 134,2 Mio"
+        )
+        self.assertTrue(measured["hide"])
+        self.assertAlmostEqual(measured["percent"], 42.3)
+        self.assertEqual(
+            measured["label"],
+            "Téléchargement de lichii — 56,7 / 134,2 Mio",
+        )
+        # Borné à 100, jamais d'exception sur une valeur illisible.
+        self.assertEqual(
+            local.parse_gablue_progress("::gablue:percent 250 x")["percent"],
+            100.0,
+        )
+        self.assertEqual(local.parse_gablue_progress("::gablue:percent ?"), {})
+        self.assertEqual(
+            local.parse_gablue_progress("::gablue:percent 10")["label"],
+            "Téléchargement…",
+        )
+
         # Lignes ordinaires : journal, rien à consommer.
         for line in ("", "Installation de Mono", "Error: ::gablue:step 1 2 x"):
             if line.startswith("::gablue:step"):
@@ -2223,87 +2245,79 @@ class AppsTest(unittest.TestCase):
         self.assertEqual(apps.parse_version("opencode 2.1.0\n"), "2.1.0")
         self.assertEqual(apps.parse_version("pas de version"), "")
 
-    def test_latest_feeds(self):
-        """Flux Atom/Gitea/npm : version et date, sans l'API GitHub."""
-        atom = (
-            "<feed><title>Releases</title>"
-            "<entry><title>AzaharPlus 2126.2-A</title>"
-            "<updated>2026-11-01T12:00:00Z</updated>"
-            '<link rel="alternate" href="https://github.com/AzaharPlus/'
-            'AzaharPlus/releases/tag/AZAHAR_PLUS_2126_2_A"/>'
-            "</entry></feed>"
-        )
-        info = apps.parse_atom_latest(atom)
-        # Version pointée du titre, pas le tag bricolé.
-        self.assertEqual(info["version"], "2126.2")
-        self.assertAlmostEqual(
-            info["published"], 1793534400.0, delta=1.0
-        )
-        gitlab = (
-            "<feed><entry><updated>2026-11-02T00:00:00Z</updated>"
-            '<link href="https://gitlab.com/es-de/emulationstation-de/'
-            '-/releases/v3.5.0"/></entry></feed>'
+    def test_catalog(self):
+        """Catalogue TOML partagé avec le moteur : ordre, champs, groupes."""
+        self.assertEqual(
+            [app.key for app in apps.APPS],
+            ["esde", "azahar", "eden", "xenia", "lichii", "opencode"],
         )
         self.assertEqual(
-            apps.parse_atom_latest(gitlab)["version"], "v3.5.0"
+            apps.GROUPS,
+            (("emulateur", "Émulateurs"), ("outil", "Outils")),
         )
-        self.assertEqual(apps.parse_atom_latest(""), {})
+        self.assertEqual(self.by_key["esde"].install_args, ("--yes",))
+        self.assertEqual(self.by_key["opencode"].cli, "opencode")
+        self.assertEqual(self.by_key["opencode"].remover, "opencode2-remove")
+        self.assertEqual(self.by_key["eden"].pattern, "*eden*.appimage")
+        self.assertEqual(self.by_key["lichii"].script, "lichii-install")
 
-        # Flux qui mélange plusieurs applications (dépôt non géré, mais le
-        # cas est réel : le filtre de titre écarte l'entrée parasite).
-        mixed = (
-            "<feed><entry><title>ShadPs4Plus PKG Extractor 1.1</title>"
-            "<link href=\"https://github.com/x/releases/tag/PKG_EXTRACTOR\"/>"
-            "<updated>2026-05-14T00:00:00Z</updated></entry>"
-            "<entry><title>ShadPs4Plus 0.12.0 A</title>"
-            "<link href=\"https://github.com/x/releases/tag/SHAD_PS4\"/>"
-            "<updated>2025-12-02T00:00:00Z</updated></entry></feed>"
+    def test_latest_info_asks_engine(self):
+        """La dernière version vient du moteur, pas d'un flux relu ici.
+
+        Deux résolutions concurrentes se contredisaient : le flux Atom du
+        manager ignore les pré-releases et proposait une mise à jour que le
+        moteur (`/releases/latest`) refusait d'installer.
+        """
+        from unittest import mock
+
+        payload = (
+            '{"key": "lichii", "tag": "build-125", "version": "build-125", '
+            '"name": "x", "url": "y", "published": 1794254796.0}'
         )
+        done = mock.Mock(returncode=0, stdout=payload)
+        with mock.patch.object(apps, "APPS_ENGINE", __file__), \
+                mock.patch.object(
+                    apps.subprocess, "run", return_value=done
+                ) as run:
+            info = apps.latest_info(self.by_key["lichii"])
+        self.assertEqual(info["version"], "build-125")
+        self.assertEqual(info["published"], 1794254796.0)
         self.assertEqual(
-            apps.parse_atom_latest(mixed, r"^ShadPs4Plus\s+\d")["version"],
-            "0.12.0",
-        )
-        # Sans filtre, la première entrée (l'outil) gagnerait.
-        self.assertEqual(
-            apps.parse_atom_latest(mixed)["version"], "1.1"
+            run.call_args[0][0][1:], ["probe", "lichii", "--json"],
         )
 
-        gitea = ('{"tag_name": "v0.2.1", '
-                 '"published_at": "2026-11-01T00:00:00Z"}')
-        self.assertEqual(apps.parse_gitea_latest(gitea)["version"], "v0.2.1")
-        self.assertIsNotNone(apps.parse_gitea_latest(gitea)["published"])
-        self.assertEqual(apps.parse_npm_latest('{"version": "2.2.6"}'),
-                         {"version": "2.2.6", "published": None})
+    def test_latest_info_without_engine(self):
+        """Moteur absent (image antérieure) : verdict indéterminé, pas d'erreur."""
+        from unittest import mock
 
+        with mock.patch.object(
+            apps, "APPS_ENGINE", "/absent/gablue-apps"
+        ):
+            self.assertEqual(apps.latest_info(self.by_key["eden"]), {})
+
+    def test_latest_info_engine_failure(self):
+        """Moteur en échec ou sortie illisible : {} (jamais « à jour »)."""
+        from unittest import mock
+
+        for done in (
+            mock.Mock(returncode=1, stdout=""),
+            mock.Mock(returncode=0, stdout="pas du JSON"),
+            mock.Mock(returncode=0, stdout="[]"),
+        ):
+            with mock.patch.object(apps, "APPS_ENGINE", __file__), \
+                    mock.patch.object(apps.subprocess, "run", return_value=done):
+                self.assertEqual(apps.latest_info(self.by_key["eden"]), {})
+
+    def test_version_tuple(self):
         self.assertEqual(apps.version_tuple("v0.2.1"), (0, 2, 1))
         self.assertEqual(apps.version_tuple("azahar 2126.2-A"), (2126, 2))
         self.assertEqual(apps.version_tuple(""), ())
-
-    def test_lichii(self):
-        """Flux partagé avec Eglantine : filtre par titre, tag comme version."""
-        feed = (
-            "<feed>"
-            "<entry><title>Eglantine nx2 build 65 (3bdd53d)</title>"
-            '<link rel="alternate" href="https://github.com/zortos293/Lichii/'
-            'releases/tag/build-65"/>'
-            "<updated>2026-11-05T00:00:00Z</updated></entry>"
-            "<entry><title>Lichii nx2 build 117 (89440b2)</title>"
-            '<link rel="alternate" href="https://github.com/zortos293/Lichii/'
-            'releases/tag/build-117"/>'
-            "<updated>2026-11-07T22:43:36Z</updated></entry></feed>"
-        )
-        filter_ = self.by_key["lichii"].latest_filter
-        info = apps.parse_atom_latest(feed, filter_)
-        # Pas de version pointée dans le titre : le tag porte la version.
-        self.assertEqual(info["version"], "build-117")
-        # Sans filtre, la première entrée du flux (Eglantine) gagnerait.
-        self.assertEqual(apps.parse_atom_latest(feed)["version"], "build-65")
         # GearLever rapporte le X-AppImage-Version complet : même build.
         self.assertFalse(apps.update_available(
-            {"version": "build-117-89440b2"}, info,
+            {"version": "build-117-89440b2"}, {"version": "build-117"},
         ))
         self.assertTrue(apps.update_available(
-            {"version": "build-116-92f0212"}, info,
+            {"version": "build-116-92f0212"}, {"version": "build-117"},
         ))
 
     def test_update_available(self):

@@ -1,0 +1,171 @@
+# Catalogue des applications AppImage de Gablue.
+#
+# Source de vérité UNIQUE : le moteur `/usr/libexec/gablue-apps` y lit comment
+# trouver et télécharger chaque release, Gablue Manager y lit les noms, motifs
+# et états affichés, et lui demande la dernière version (`gablue-apps probe
+# <clé> --json`) au lieu de la recalculer de son côté. Une application nouvelle
+# ne se décrit donc plus dans deux langages à la fois.
+#
+# `engine = true`  : le moteur fait tout (résolution, téléchargement vérifié,
+#                    GearLever, entrée de menu) ; le `/usr/bin/<app>-install`
+#                    n'est plus qu'une coquille de compatibilité.
+# `engine = false` : l'application garde son script de l'image (esde-install,
+#                    opencode2-install) — le contrat du manager ne change pas,
+#                    mais sa dernière version se lit quand même ici.
+#
+# Champs communs (lus par les deux) :
+#   key, name, description, group, pattern   identité et motif du fichier
+#                                            installé dans ~/AppImages
+#   script                                   commande d'installation
+#   desktop                                  préfixe .desktop / icônes à retirer
+#   desktop_name / desktop_file / desktop_drop  nom imposé dans le menu,
+#                                            fichier .desktop visé et clés à
+#                                            retirer (facultatifs, moteur)
+#   install_args                             arguments passés au script
+#   cli                                      commande dont on lit `--version`
+#   remover                                  script de suppression dédié
+#
+# Bloc [app.release] (moteur) :
+#   kind = "github"          flux Atom du dépôt → tag ; nom d'asset par gabarit
+#                            (`asset`) ou lu dans la page expanded_assets
+#                            (`asset_regex`)
+#   kind = "github-latest"   redirection de /releases/latest → tag (flux pollué
+#                            par des releases sans version pointée ou en
+#                            pré-release, que le flux Atom ne distingue pas)
+#   kind = "gitea"           API Gitea `releases/latest` → tag et URL d'asset
+#   kind = "gitlab"          flux Atom d'un projet GitLab → tag
+#   kind = "npm"             registre npm `/latest` → version
+#   repo / api / project / package   identité selon le kind
+#   asset                    gabarit du nom d'asset, `{arch}` substitué
+#   asset_regex              motif cherché dans les noms d'asset publiés
+#   title_filter             filtre sur le titre du flux, quand il mélange
+#                            plusieurs applications (kind github)
+#   [app.release.arch]       nom d'architecture utilisé dans les assets, quand
+#                            l'amont ne dit pas `x86_64` (Eden : `amd64`)
+
+[[group]]
+key = "emulateur"
+label = "Émulateurs"
+
+[[group]]
+key = "outil"
+label = "Outils"
+
+[[app]]
+key = "esde"
+name = "ES-DE"
+description = "Frontend manette ; copie aussi les systèmes et lanceurs Gablue."
+group = "emulateur"
+pattern = "esde*.appimage"
+script = "esde-install"
+desktop = "esde"
+install_args = ["--yes"]
+engine = false
+
+[app.release]
+kind = "gitlab"
+project = "es-de/emulationstation-de"
+
+[[app]]
+key = "azahar"
+name = "Azahar"
+description = "Émulateur Nintendo 3DS."
+group = "emulateur"
+pattern = "azahar*.appimage"
+script = "azahar-install"
+desktop = "azahar"
+# GearLever écrit « AzaharPlus (2126.2-A) » : le menu doit dire « Azahar »,
+# sans la clé de version (le manager lit la version par GearLever).
+desktop_name = "Azahar"
+desktop_drop = ["X-AppImage-Version"]
+engine = true
+
+# L'asset porte la version dans son nom (« azaharplus-2126.2-A-linux.AppImage »),
+# impossible à construire d'avance : la page expanded_assets du tag le donne.
+[app.release]
+kind = "github"
+repo = "AzaharPlus/AzaharPlus"
+asset_regex = 'azaharplus-[^"]*-linux\.AppImage$'
+
+[[app]]
+key = "eden"
+name = "Eden"
+description = "Émulateur Nintendo Switch."
+group = "emulateur"
+pattern = "*eden*.appimage"
+script = "eden-install"
+desktop = "eden"
+# Le .desktop que GearLever crée porte le nom complet ; Eden le veut court.
+desktop_name = "Eden"
+desktop_file = "eden"
+engine = true
+
+# Eden publie sur sa propre instance Gitea : l'API `releases/latest` donne le
+# tag et l'URL d'asset (build PGO amd64, la recommandée par l'amont).
+[app.release]
+kind = "gitea"
+api = "https://git.eden-emu.dev/api/v1/repos/eden-emu/eden/releases/latest"
+asset_regex = 'Eden-Linux-.*-{arch}-clang-pgo\.AppImage$'
+
+[app.release.arch]
+x86_64 = "amd64"
+aarch64 = "aarch64"
+
+[[app]]
+key = "xenia"
+name = "Xenia Edge"
+description = "Émulateur Xbox 360."
+group = "emulateur"
+pattern = "xenia*.appimage"
+script = "xenia-install"
+desktop = "xenia"
+desktop_name = "Xenia Edge"
+desktop_drop = ["X-AppImage-Version"]
+engine = true
+
+# Le tag est un hachage de commit, l'asset un nom fixe : flux Atom pour le tag,
+# expanded_assets pour le nom exact.
+[app.release]
+kind = "github"
+repo = "has207/xenia-edge"
+asset_regex = 'xenia_edge_linux\.AppImage$'
+
+[[app]]
+key = "lichii"
+name = "Lichii"
+description = "Émulateur Nintendo Switch moderne (build PGO)."
+group = "emulateur"
+pattern = "lichii*.appimage"
+script = "lichii-install"
+desktop = "lichii"
+engine = true
+# GearLever nomme l'entrée d'après le nom interne de l'AppImage et sa version
+# (« Lichii (build-117-89440b2) ») : le menu doit dire « Lichii ».
+desktop_name = "Lichii"
+
+# Le flux Atom du dépôt porte des releases sans préfixe (« build-121 ») et des
+# pré-releases que /releases/latest écarte : la redirection fait foi pour le tag.
+[app.release]
+kind = "github-latest"
+repo = "zortos293/Lichii"
+asset = "lichii-linux-{arch}-pgo.AppImage"
+
+[app.release.arch]
+x86_64 = "x86_64"
+aarch64 = "aarch64"
+
+[[app]]
+key = "opencode"
+name = "OpenCode 2"
+description = "Éditeur et agent de code."
+group = "outil"
+pattern = "opencode*.appimage"
+script = "opencode2-install"
+desktop = "opencode"
+cli = "opencode"
+remover = "opencode2-remove"
+engine = false
+
+[app.release]
+kind = "npm"
+package = "@opencode/cli"

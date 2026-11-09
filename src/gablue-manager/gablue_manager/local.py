@@ -3060,10 +3060,12 @@ def parse_progress_event(line: str) -> dict:
         "steps_total": steps_total,
     }
 
-# Protocole de progression des outils externes (gwine) vers le dialogue de
-# tâche. Une ligne = un événement, sur la sortie fusionnée de la commande :
+# Protocole de progression des outils externes (gwine, moteur d'AppImages) vers
+# le dialogue de tâche. Une ligne = un événement, sur la sortie fusionnée de la
+# commande :
 #   ::gablue:step 4 12 Installation de Wine Mono et Gecko
 #   ::gablue:busy Téléchargement des composants Windows
+#   ::gablue:percent 42.3 Téléchargement de lichii… — 56,7 / 134,2 Mio
 #   ::gablue:done Initialisation terminée
 # Les lignes de protocole sont retirées du journal (`hide`) : l'outil écrit sa
 # version lisible juste à côté, le journal reste donc du texte pour l'humain.
@@ -3075,6 +3077,9 @@ def parse_gablue_progress(line: str) -> dict:
     `step n total libellé` : une étape commence ; n-1 étapes sont derrière, donc
     la barre affiche `(n-1)/total` — elle n'atteint 100 % qu'au `done` final.
     `busy libellé` : travail sans total (téléchargement) → barre indéterminée.
+    `percent valeur libellé` : avancement mesuré (téléchargement du moteur
+    d'AppImages, qui compte les octets) — la valeur est toujours un nombre
+    décimal à point, le libellé suit après l'espace.
     `done [libellé]` : 100 %. `{}` pour toute autre ligne (journal normal).
     """
     text = (line or "").rstrip()
@@ -3104,6 +3109,17 @@ def parse_gablue_progress(line: str) -> dict:
             "hide": True,
             "label": rest or "Opération en cours…",
             "percent": None,
+        }
+    if verb == "percent":
+        value, _, label = rest.partition(" ")
+        try:
+            percent = float(value)
+        except ValueError:
+            return {}
+        return {
+            "hide": True,
+            "label": label.strip() or "Téléchargement…",
+            "percent": max(0.0, min(100.0, percent)),
         }
     if verb == "done":
         return {
