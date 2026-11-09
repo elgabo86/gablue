@@ -130,8 +130,11 @@ fi
 # =============================================================================
 
 # Installation de RetroPlayer (TUI lecteur de musiques rétro)
-# Téléchargement du binaire depuis la dernière release GitHub
-curl -fsSL https://github.com/elgabo86/retroplayer/releases/latest/download/retroplayer -o /usr/bin/retroplayer
+# Téléchargement du binaire depuis la dernière release GitHub.
+# `Cache-Control: no-store` : GitHub a servi un 504 instantané (mis en cache
+# par un intermédiaire) sur ces URL `/releases/latest` le 09/11/2026 — sans cet
+# en-tête le build entier tombait pour une panne réseau passagère.
+curl -fsSL -H 'Cache-Control: no-store' https://github.com/elgabo86/retroplayer/releases/latest/download/retroplayer -o /usr/bin/retroplayer
 chmod +x /usr/bin/retroplayer
 
 # Installation de ZXTune (lecteur de musique tracker/chiptune)

@@ -30,8 +30,11 @@ esac
 # Dernière release SANS api.github.com (quota anonyme 60 req/h par IP, partagé
 # par tout le réseau) : la redirection de /releases/latest donne le tag, et
 # l'asset suit l'URL publiée pour ce tag.
-LATEST_URL=$(curl -sIL -o /dev/null -w '%{url_effective}' \
-    "https://github.com/$REPO/releases/latest")
+# `Cache-Control: no-store` : GitHub a servi un 504 instantané (mis en cache
+# par un intermédiaire) sur ces URL le 09/11/2026 — sans l'en-tête, l'install
+# échouait sur « impossible de déterminer la dernière release » sans recours.
+LATEST_URL=$(curl -sIL -H 'Cache-Control: no-store' -o /dev/null \
+    -w '%{url_effective}' "https://github.com/$REPO/releases/latest")
 case "$LATEST_URL" in
     */releases/tag/*)
         TAG="${LATEST_URL##*/}"
