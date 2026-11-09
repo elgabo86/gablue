@@ -77,7 +77,16 @@ from .workers import (
 )
 
 def _is_running(worker) -> bool:
-    """`isRunning()` d'une sonde, sans exploser si son objet C++ est détruit."""
+    """`isRunning()` d'une sonde, sans exploser si son objet C++ est détruit.
+
+    `None` (sonde jamais lancée, ou déjà consommée par son `done`) n'est pas
+    une erreur : c'est l'état initial de tous les pointeurs de sonde de la
+    fenêtre. Sans ce test, chaque action qui part d'une sonde (« Tout mettre
+    à jour… » local ou distant) mourait sur un `AttributeError` silencieux et
+    le clic ne faisait rien du tout (vécu 09/11/2026).
+    """
+    if worker is None:
+        return False
     try:
         return bool(worker.isRunning())
     except RuntimeError:

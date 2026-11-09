@@ -79,8 +79,8 @@ tient dans une petite fenêtre redimensionnable ; session VIRTUELLE (créée hor
 écran par gremote) → sdl-freerdp, Wayland natif, résolution suivie par
 +dynamic-resolution. sdl-freerdp ne sait PAS mettre à l'échelle (il ignore
 /smart-sizing), d'où les deux clients. Un hôte d'une image antérieure n'annonce
-pas le type : il est traité comme physique (mise à l'échelle), son bureau étant
-le plus souvent ouvert.
+pas le type : gremote le lui demande alors sur une seconde connexion SSH (socket
+`gremote-session` = virtuelle, sinon physique) ; sans réponse, physique.
 
 L'ancien mode waypipe (compositeur imbriqué, -a, -s, --video, --codec,
 --quality, --bpf, --compress, --no-gpu, --clean) a été retiré le 02/11/2026.
@@ -699,14 +699,34 @@ if [ "$RDP" -eq 1 ]; then
     # Type de session annoncé par l'hôte (3e champ de la poignée de main) :
     # « physical » = bureau réel déjà ouvert, « virtual » = session créée hors
     # écran par gremote. Un hôte d'une image antérieure n'envoie que le port :
-    # on ne SAIT pas, et c'est « unknown » — pas « virtuelle ». Traiter
-    # l'inconnu comme virtuel condamnait à sdl-freerdp, donc sans mise à
-    # l'échelle, exactement le symptôme rapporté (vécu 06/11/2026 : gen1 encore
-    # sur l'ancienne image, bureau physique, annoncé « session virtuelle »).
+    # le type est alors DÉDUIT d'une seconde connexion SSH (une seule, et
+    # seulement dans ce cas) — le socket `gremote-session` n'existe qu'à la
+    # session hors écran, et à cet instant krdpserver écoute déjà, donc la
+    # session est en place. Deviner « physique » à l'aveugle donnait un bureau
+    # virtuel mis à l'échelle au lieu d'une résolution qui suit la fenêtre
+    # (vécu 09/11/2026 : hôte encore en 20261106, bureau virtuel figé en
+    # xfreerdp) ; deviner « virtuelle » coupait un bureau physique (06/11/2026).
+    # Réponse impossible (pas de clé SSH non interactive, réseau) → physique :
+    # un bureau entier en petit vaut mieux qu'un bureau coupé.
     rdp_kind="$(awk '/^GREMOTE-RDP-READY/ { print $3; exit }' "$rdp_log" 2>/dev/null || true)"
     case "$rdp_kind" in
         physical|virtual) ;;
-        *) rdp_kind=unknown ;;
+        *)
+            rdp_kind=physical
+            kind_probe_args=(-o BatchMode=yes -o ConnectTimeout=5)
+            if [ -n "$SSH_PORT" ]; then
+                kind_probe_args+=(-p "$SSH_PORT")
+            fi
+            # XDG_RUNTIME_DIR est celui de la session PAM de l'utilisateur ;
+            # son absence (compte sans session) ne peut pas arriver ici, le
+            # serveur vient de trouver un compositeur.
+            kind_probe="$(ssh "${kind_probe_args[@]}" "$TARGET" \
+                'if [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/gremote-session" ]; then echo virtual; else echo physical; fi' \
+                </dev/null 2>/dev/null || true)"
+            case "$kind_probe" in
+                virtual|physical) rdp_kind="$kind_probe" ;;
+            esac
+            ;;
     esac
 
     # Client RDP local, choisi d'après la session :
@@ -715,11 +735,9 @@ if [ "$RDP" -eq 1 ]; then
     #   /multimon are currently not supported, ignoring »), et +dynamic-resolution
     #   demanderait au serveur de changer la résolution, donc l'écran réel.
     #   Contrepartie : fenêtre X11 (XWayland), image réduite en bitmap.
-    # - INCONNUE (hôte pas à jour) : même choix que physique — un poste qui
-    #   n'annonce rien a le plus souvent son bureau ouvert, et se tromper dans
-    #   ce sens donne un bureau entier en petit au lieu d'un bureau coupé.
     # - VIRTUELLE : sdl-freerdp, Wayland natif, et +dynamic-resolution y est
     #   sans risque (rien de physique à redimensionner) : le texte reste net.
+    # Le type est toujours connu ici (annoncé, sinon demandé à l'hôte).
     # wlfreerdp n'est PAS utilisé : déprécié en amont (« nobody is actively
     # working on this », FreeRDP 3.32.2) au profit du client SDL3.
     rdp_client=""
@@ -748,11 +766,11 @@ if [ "$RDP" -eq 1 ]; then
         rdp_args+=(+clipboard +dynamic-resolution)
     fi
 
-    case "$rdp_kind" in
-        physical) session_label="physique" ;;
-        virtual)  session_label="virtuelle" ;;
-        *)        session_label="non annoncée par l'hôte" ;;
-    esac
+    if [ "$rdp_kind" = "virtual" ]; then
+        session_label="virtuelle"
+    else
+        session_label="physique"
+    fi
 
     if [ "$RDP_LAUNCH" -eq 1 ] && [ -n "$rdp_client" ]; then
         printf 'gremote : RDP tunnelisé sur 127.0.0.1:%s (utilisateur %s, session %s, client %s)\n' \
