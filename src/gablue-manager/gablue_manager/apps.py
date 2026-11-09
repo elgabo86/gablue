@@ -374,15 +374,23 @@ def pending_for(states: dict[str, dict],
     infos: dict[str, dict] = {}
     pool = ThreadPoolExecutor(max_workers=4)
     try:
-        futures = {
-            app.key: pool.submit(latest_info, app) for app in installed
-        }
+        try:
+            futures = {
+                app.key: pool.submit(latest_info, app) for app in installed
+            }
+        except RuntimeError:
+            # Interpréteur en cours d'arrêt (`cannot schedule new futures
+            # after interpreter shutdown`) : plus personne n'attend de
+            # verdict, on rend « indéterminé » au lieu de lever (vécu
+            # 09/11/2026, sonde survivante à la fermeture).
+            return [], True, len(installed)
         for app in installed:
-            if stop is not None and stop.is_set():
+            future = futures.get(app.key)
+            if future is None or (stop is not None and stop.is_set()):
                 infos[app.key] = {}
                 continue
             try:
-                infos[app.key] = futures[app.key].result(
+                infos[app.key] = future.result(
                     timeout=PROBE_TIMEOUT + 2
                 )
             except Exception:

@@ -952,7 +952,11 @@ class MainWindow(QMainWindow):
 
         checker = CheckWorker(targets, self)
         checker.result.connect(self._on_check_result)
-        checker.finished_all.connect(self._on_check_done)
+        # Le slot reçoit SON worker : `finished_all` est livré plus tard, et
+        # `self._checker` peut déjà pointer sur la passe suivante.
+        checker.finished_all.connect(lambda w=checker: self._on_check_done(w))
+        # Seule destruction sûre d'un QThread : après son `finished`.
+        checker.finished.connect(checker.deleteLater)
         self._checker = checker
         checker.start()
 
@@ -1398,15 +1402,15 @@ class MainWindow(QMainWindow):
             self._busy_reasons.discard(reason)
         self.busy.set_active(bool(self._busy_reasons))
 
-    def _on_check_done(self) -> None:
+    def _on_check_done(self, worker) -> None:
         self._set_busy("probe", False)
         self._last_check = time.time()
         self._update_footer()
-        if self._checker is not None:
-            # finished_all part de run() : on laisse le thread sortir avant de
-            # détruire l'objet, sinon « QThread: Destroyed while running ».
-            self._checker.wait(2000)
-            self._checker.deleteLater()
+        # Jamais `self._checker` : un `deleteLater()` sur une sonde encore en
+        # vol fait tomber Qt (« QThread: Destroyed while thread is still
+        # running », vécu 09/11/2026). Un pointeur périmé ne coupe pas non
+        # plus l'état de la passe suivante.
+        if self._checker is worker:
             self._checker = None
         # Tri « en ligne d'abord » : on ne réordonne qu'à la fin d'une passe,
         # pas pendant, sinon les cartes sautent sous le curseur.

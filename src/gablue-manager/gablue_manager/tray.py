@@ -11,6 +11,7 @@ ligne (`QNetworkInformation`, alimenté par NetworkManager), selon les domaines
 et la fréquence choisis dans les préférences, et à la demande par le menu.
 """
 
+import os
 import sys
 import time
 
@@ -132,6 +133,10 @@ class Tray:
         self._notify_result = False
 
         self._checking = False
+        # Un worker encore vivant à la sortie garde sa référence : PySide
+        # détruirait son QThread (« Destroyed while thread is still running »)
+        # et `wait()` n'arrête rien. `run()` sort alors par `os._exit`.
+        self._lingering = False
         self.menu = QMenu()
         self.menu.aboutToShow.connect(self._build_menu)
         self.check_action = None
@@ -161,14 +166,23 @@ class Tray:
         self.app.aboutToQuit.connect(self._shutdown)
 
     def _shutdown(self) -> None:
-        """Laisse les sondes en cours finir avant de détruire leurs QThread."""
+        """Arrête les sondes en cours avant de détruire leurs QThread."""
         self.timer.stop()
         self.update_timer.stop()
         for worker in (self._worker, self._update_worker):
-            if worker is not None:
-                worker.wait(5000)
-        self._worker = None
-        self._update_worker = None
+            if worker is None:
+                continue
+            # `wait()` seul ne demande rien : un `brew update` ou un
+            # `gwine --init --check` continue de tourner (vécu 09/11/2026 :
+            # interpréteur en arrêt, sonde encore vivante).
+            stop = getattr(worker, "stop", None)
+            if callable(stop):
+                stop()
+            worker.wait(5000)
+        self._lingering = any(
+            worker is not None and worker.isRunning()
+            for worker in (self._worker, self._update_worker)
+        )
 
     # -- accès ------------------------------------------------------------
     def open_manager(self) -> None:
@@ -464,4 +478,9 @@ def run() -> int:
     tray.refresh()
     tray.refresh_updates()          # à l'ouverture de session
     _TRAY = tray
-    return app.exec()
+    code = app.exec()
+    if tray._lingering:
+        # Une sonde résiste (réseau mort, commande externe lente) : sortir sans
+        # laisser Python démonter un QThread vivant, comme la fenêtre (app.py).
+        os._exit(code)
+    return code
