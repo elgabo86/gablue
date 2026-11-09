@@ -1515,6 +1515,33 @@ class UpdatesTest(unittest.TestCase):
             "unknown",
         )
 
+    def test_check_gwine_logs_unknown(self):
+        # « vérification impossible » sans trace ne se diagnostiquait pas :
+        # le code retour et la fin de sortie partent dans journald.
+        import unittest.mock as mock
+        with mock.patch.object(
+            updates, "_run",
+            return_value=(1, "Erreur: Option invalide '--check'\n"),
+        ), mock.patch.object(
+            updates, "_FAILED", {}
+        ), mock.patch.object(
+            updates.journal, "log_failure"
+        ) as log:
+            result = updates.check_gwine()
+        self.assertEqual(result["state"], "unknown")
+        log.assert_called_once()
+        detail = log.call_args.kwargs.get("detail", "")
+        self.assertIn("code 1", detail)
+        self.assertIn("Option invalide", detail)
+        # Un verdict concluant ne journalise rien (pas de bruit).
+        with mock.patch.object(
+            updates, "_run", return_value=(0, "gwine-check: uptodate\n"),
+        ), mock.patch.object(updates, "_FAILED", {}), mock.patch.object(
+            updates.journal, "log_failure"
+        ) as log:
+            self.assertEqual(updates.check_gwine()["state"], "uptodate")
+        log.assert_not_called()
+
     def test_flatpak_and_brew_lists(self):
         self.assertEqual(
             updates.parse_flatpak_updates(
@@ -1973,6 +2000,26 @@ class GwineTest(unittest.TestCase):
                 "[Foreground Booster]\nautostart=false\n"
             )
         )
+
+    def test_gwine_binary_prefers_image(self):
+        # Le binaire de l'image gagne sur un gwine personnel du PATH : un
+        # ~/.local/bin/gwine d'une version antérieure ignore `--check` et
+        # faisait répondre « vérification impossible » (vécu 09/11/2026).
+        import unittest.mock as mock
+        with mock.patch.object(Path, "exists", return_value=True), \
+                mock.patch.object(local.shutil, "which",
+                                  return_value="/home/x/.local/bin/gwine"):
+            self.assertEqual(local.gwine_binary(), "/usr/bin/gwine")
+        # Hors image : le PATH, puis le nom nu (résolution par le shell).
+        with mock.patch.object(Path, "exists", return_value=False), \
+                mock.patch.object(local.shutil, "which",
+                                  return_value="/home/x/.local/bin/gwine"):
+            self.assertEqual(
+                local.gwine_binary(), "/home/x/.local/bin/gwine"
+            )
+        with mock.patch.object(Path, "exists", return_value=False), \
+                mock.patch.object(local.shutil, "which", return_value=None):
+            self.assertEqual(local.gwine_binary(), "gwine")
 
 
 class AppsTest(unittest.TestCase):

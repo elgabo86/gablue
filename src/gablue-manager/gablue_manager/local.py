@@ -18,7 +18,7 @@ from .constants import (
     BROADCOM_WL_FILE, BTRFS_HELPER, CLEAN_HELPER, CMDLINE,
     CPUID_EMU_BLACKLIST,
     CPUID_EMU_CONF, CPUID_EMU_HELPER, GAMEPAD_HELPER, GRUB_HELPER,
-    HWINFO_HELPER,
+    GWINE_IMAGE_BINARY, HWINFO_HELPER,
     NVME_THERMAL_HELPER, RYZENADJ_BINARY, RYZENADJ_HELPER, RYZENADJ_SERVICE,
     SECUREBOOT_HELPER,
     KARG_BT_ERTM, KARG_CLEARCPUID,
@@ -1673,12 +1673,20 @@ def gablue_update_hint(text: str) -> str:
     return ""
 
 def gwine_binary() -> str:
-    """Chemin de gwine (repli /usr/bin, le PATH d'une session GUI est incomplet)."""
-    found = shutil.which("gwine")
-    if found:
-        return found
-    fallback = Path("/usr/bin/gwine")
-    return str(fallback) if fallback.exists() else "gwine"
+    """Chemin de gwine : celui de l'image d'abord, le PATH ensuite.
+
+    Un gwine personnel dans `~/.local/bin` (copie d'une version antérieure)
+    passe avant `/usr/bin` dans le PATH d'une session graphique. Il ne connaît
+    pas `--init --check` : il sortait 1 avec zéro ligne `component|`, et la
+    vérification répondait « impossible » à chaque passe quel que soit l'état
+    du réseau (vécu 09/11/2026). Le binaire installé par l'image est la
+    référence — c'est lui que les mises à jour remplacent ; le PATH ne sert
+    plus que hors image (développement, où /usr/bin/gwine peut manquer).
+    """
+    image = Path(GWINE_IMAGE_BINARY)
+    if image.exists():
+        return str(image)
+    return shutil.which("gwine") or "gwine"
 
 def gwine_options_path() -> Path:
     """Fichier d'options de gwine (`$GWINE_DIR/options`)."""

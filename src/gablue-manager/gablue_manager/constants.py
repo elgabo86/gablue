@@ -152,6 +152,10 @@ REBASE_HELPER = "/usr/libexec/gablue-rebase"
 
 ATUIN_HELPER = "/usr/bin/gablue-atuin"
 
+# Binaire gwine de l'image : c'est la référence pour `--init --check` (un
+# gwine personnel dans ~/.local/bin peut être plus ancien et ignorer l'option).
+GWINE_IMAGE_BINARY = "/usr/bin/gwine"
+
 GAMEPAD_HELPER = "/usr/bin/gablue-gamepad"
 
 CLEAN_HELPER = "/usr/libexec/gablue-clean"

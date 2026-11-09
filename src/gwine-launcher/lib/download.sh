@@ -323,10 +323,10 @@ get_github_release_version() {
     echo "$version"
 }
 
-# Récupère la dernière version de gwine depuis GitHub
-get_latest_gwine_version() {
-    curl -s "https://github.com/elgabo86/gwine/releases.atom" 2>/dev/null | grep -oE 'gwine-[0-9]+\.[0-9]+\.r[0-9]+\.g[0-9a-f]+' | head -1
-}
+# La version du runner gwine est résolue par gwine-runner.sh (redirection
+# /releases/latest puis repli flux Atom) : ne pas redéfinir la fonction ici,
+# une définition locale de download.sh était chargée avant et restait ensuite
+# masquée, avec un motif de tag périmé (gwine-X.Y.rN.gSHA).
 
 # Récupère la dernière version d'un composant depuis GitHub
 # Usage: get_component_version <type>
@@ -413,8 +413,27 @@ get_component_version() {
             # 60 req/h, épuisé en CI) : on suit la redirection HTML de
             # /releases/latest vers le tag de la dernière release stable.
             # Une requête GET ordinaire, aucun quota API.
-            version=$(curl -s -o /dev/null -w '%{redirect_url}' "https://github.com/WinterSnowfall/d7vk/releases/latest" 2>/dev/null | grep -oE 'tag/v[0-9][0-9.]*' | head -1)
+            # `Cache-Control: no-store` : sans lui cette redirection répondait
+            # 504 sur l'URL nue (élément négatif en cache côté GitHub, constaté
+            # 09/11/2026 — avec l'en-tête, 6/6 en 302) et toute version D7VK
+            # devenait introuvable.
+            version=$(curl -s --max-time 10 -H 'Cache-Control: no-store' \
+                -o /dev/null -w '%{redirect_url}' \
+                "https://github.com/WinterSnowfall/d7vk/releases/latest" 2>/dev/null \
+                | grep -oE 'tag/v[0-9][0-9.]*' | head -1)
             version="${version#tag/v}"
+            if [ -z "$version" ]; then
+                # Repli : flux Atom, en écartant les tags sans release. On ne
+                # garde que vX.Y[.Z] nus (v2.5_WIP est publié en tête du flux
+                # mais n'a aucun asset), la première entrée restante est la
+                # dernière release stable.
+                version=$(curl -s --max-time 10 -H 'Cache-Control: no-store' \
+                    "https://github.com/WinterSnowfall/d7vk/releases.atom" 2>/dev/null \
+                    | grep -oE 'releases/tag/v[0-9][^"]*' \
+                    | sed 's|releases/tag/||' \
+                    | grep -E '^v[0-9]+(\.[0-9]+)*$' | head -1)
+                version="${version#v}"
+            fi
             [ -n "$version" ] && echo "$version"
             ;;
         *)

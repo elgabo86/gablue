@@ -14,6 +14,7 @@
 
 # URL et paramètres de récupération de version (surchargeables : tests, miroirs)
 GWINE_RELEASES_LATEST_URL="${GWINE_RELEASES_LATEST_URL:-https://github.com/elgabo86/gwine/releases/latest}"
+GWINE_RELEASES_ATOM_URL="${GWINE_RELEASES_ATOM_URL:-https://github.com/elgabo86/gwine/releases.atom}"
 GWINE_VERSION_FETCH_ATTEMPTS="${GWINE_VERSION_FETCH_ATTEMPTS:-3}"
 GWINE_VERSION_FETCH_TIMEOUT="${GWINE_VERSION_FETCH_TIMEOUT:-8}"
 
@@ -25,12 +26,19 @@ get_latest_gwine_version() {
     # Redirection HTML de /releases/latest (302 vers le tag de la dernière
     # release stable) — pas d'API GitHub (quota 60 req/h anonyme, épuisé
     # dès une IP partagée/CI, casse les scripts).
+    # `Cache-Control: no-store` : depuis le 09/11/2026 cette redirection
+    # répond 504, en 50 ms, sur l'URL nue (élément négatif mis en cache par
+    # un intermédiaire de GitHub) — le même GET avec l'en-tête rend le 302
+    # (6/6 constatés). Sans lui, les trois tentatives rejouaient le même 504
+    # et gwine --init --check concluait « indéterminé » alors que le réseau
+    # et le dépôt allaient bien.
     # Plusieurs tentatives : GitHub renvoie parfois des timeouts aux requêtes
     # anonymes (constaté 08/11/2026 : 3 × 10 s sans réponse depuis un runner
     # gwine-cache alors que github.com répondait) — un timeout isolé ne doit
     # pas être interprété comme une absence de réseau.
     for (( attempt = 1; attempt <= GWINE_VERSION_FETCH_ATTEMPTS; attempt++ )); do
-        response=$(curl -s --max-time "$GWINE_VERSION_FETCH_TIMEOUT" -o /dev/null \
+        response=$(curl -s --max-time "$GWINE_VERSION_FETCH_TIMEOUT" \
+            -H 'Cache-Control: no-store' -o /dev/null \
             -w '%{http_code} %{redirect_url}' "$GWINE_RELEASES_LATEST_URL" 2>/dev/null)
         http_code="${response%% *}"
         redirect_url="${response#* }"
@@ -47,6 +55,19 @@ get_latest_gwine_version() {
             sleep 2
         fi
     done
+
+    # Repli : flux Atom des releases (jamais l'API GitHub). Il répondait 200
+    # pendant que /releases/latest rendait 504, et sa première entrée est la
+    # dernière release publiée — le tag a exactement le format du fichier
+    # `.version` (gwine-X.Y.Z.aammjj).
+    version=$(curl -s --max-time "$GWINE_VERSION_FETCH_TIMEOUT" \
+        -H 'Cache-Control: no-store' "$GWINE_RELEASES_ATOM_URL" 2>/dev/null \
+        | grep -oE 'releases/tag/[^"]*' | head -1)
+    version="${version#releases/tag/}"
+    if [ -n "$version" ]; then
+        echo "$version"
+        return 0
+    fi
 
     # stderr : les appelants capturent stdout (substitution de commande)
     echo "⚠️  Version de gwine introuvable ($GWINE_VERSION_FETCH_ATTEMPTS tentatives, dernier code HTTP: $last_http_code)" >&2

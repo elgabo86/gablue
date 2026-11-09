@@ -305,11 +305,25 @@ def parse_gwine_check(text: str, returncode: int = 0) -> dict:
     return {"state": state, "components": components}
 
 def check_gwine() -> dict:
-    """Composants gwine (runner, DXVK, VKD3D, D7VK, NVAPI) en retard."""
+    """Composants gwine (runner, DXVK, VKD3D, D7VK, NVAPI) en retard.
+
+    Un verdict « unknown » est journalisé avec le code retour et la fin de la
+    sortie : un gwine trop ancien (option `--check` inconnue) ou une version
+    introuvable côté GitHub produisait « vérification impossible » à l'écran
+    sans laisser la moindre trace, donc sans moyen de savoir laquelle des deux
+    causes (vécu 09/11/2026).
+    """
     returncode, text = _run(
         [local.gwine_binary(), "--init", "--check"], 120,
     )
-    return parse_gwine_check(text, returncode)
+    result = parse_gwine_check(text, returncode)
+    if result["state"] == "unknown":
+        _note_failure(
+            "gwine",
+            f"gwine --init --check → code {returncode} : "
+            + (text or "").strip()[-500:],
+        )
+    return result
 
 def apps_domain(pending, unknown: bool, installed: int) -> dict:
     """État du domaine « applications » depuis une sonde (`pending_updates`).
