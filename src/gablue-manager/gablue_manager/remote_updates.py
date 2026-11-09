@@ -22,25 +22,30 @@ from . import apps, updates
 from .ssh import ssh_capture
 
 # Une seule connexion : chaque section est balisée, son code de retour est
-# écrit en clair (`rc=`) pour ne pas créer une fausse section.
+# écrit en clair (`rc=`) pour ne pas créer une fausse section. Les marqueurs
+# sont émis par `printf '\n…'` : `rpm-ostree status --json` ne finit **pas**
+# par un saut de ligne, et un `echo` collait `::gablue:image-check` au `}` du
+# JSON — la section disparaissait (image « vérification impossible » sur tous
+# les postes, et `json.loads` raté donc plus de version ni d'âge, vécu
+# 09/11/2026), le `rc=` suivant collé pareil.
 CHECK_SCRIPT = r"""
-echo '::gablue:image'
+printf '\n::gablue:image\n'
 rpm-ostree status --json 2>/dev/null || echo '{}'
-echo '::gablue:image-check'
+printf '\n::gablue:image-check\n'
 sudo -n /usr/bin/bootc upgrade --check 2>&1
-echo "rc=$?"
-echo '::gablue:flatpak'
+printf '\nrc=%s\n' "$?"
+printf '\n::gablue:flatpak\n'
 flatpak remote-ls --updates --columns=application 2>/dev/null || true
-echo '::gablue:brew'
+printf '\n::gablue:brew\n'
 if command -v brew >/dev/null 2>&1; then
     HOMEBREW_NO_AUTO_UPDATE=1 brew outdated --quiet 2>/dev/null || true
 else
     echo 'nobrew'
 fi
-echo '::gablue:gwine'
+printf '\n::gablue:gwine\n'
 if command -v gwine >/dev/null 2>&1; then
     timeout 180 gwine --init --check 2>&1
-    echo "rc=$?"
+    printf '\nrc=%s\n' "$?"
 else
     echo 'rc=127'
 fi

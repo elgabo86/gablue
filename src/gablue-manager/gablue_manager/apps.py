@@ -589,24 +589,24 @@ def remove_script(app: App) -> str:
 # =============================================================================
 
 REMOTE_STATE_SCRIPT = r"""
-echo "##gearlever"
+printf '\n##gearlever\n'
 if flatpak info it.mijorus.gearlever >/dev/null 2>&1; then
     echo yes
     flatpak run it.mijorus.gearlever --list-installed 2>/dev/null
 else
     echo no
 fi
-echo "##images"
+printf '\n##images\n'
 ls -1 "$HOME/AppImages" 2>/dev/null
-echo "##mtimes"
+printf '\n##mtimes\n'
 for f in "$HOME/AppImages"/*; do
     [ -f "$f" ] || continue
     printf '%s\t%s\n' "$(basename "$f")" \
         "$(stat -c %Y "$f" 2>/dev/null || echo 0)"
 done
-echo "##cli"
+printf '\n##cli\n'
 if command -v opencode >/dev/null 2>&1; then opencode --version 2>/dev/null; fi
-echo "##scripts"
+printf '\n##scripts\n'
 for script in esde-install azahar-install eden-install xenia-install \
               lichii-install opencode2-install opencode2-remove; do
     path="$(command -v "$script" 2>/dev/null || true)"
