@@ -203,8 +203,9 @@ fi
 
 echo "Téléchargement de $DOWNLOAD_URL vers $FILENAME..."
 # `gablue-fetch` : tentatives et abandon d'une connexion morte (même politique
-# que le moteur gablue-apps).
-gablue-fetch "$DOWNLOAD_URL" "$FILENAME" "ES-DE"
+# que le moteur gablue-apps). Appel par chemin absolu : /usr/libexec n'est pas
+# dans le PATH (vécu 10/11/2026, « gablue-fetch: commande introuvable »).
+/usr/libexec/gablue-fetch "$DOWNLOAD_URL" "$FILENAME" "ES-DE"
 DOWNLOAD_STATUS=$?
 
 if [ -n "$DBUS_REF" ]; then

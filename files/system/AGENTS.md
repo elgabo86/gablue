@@ -217,7 +217,10 @@ patch `.desktop`, nettoyage du cache, `kbuildsycoca6`.
 - `gablue-fetch <url> <dest> [libellé]` : même politique réseau en bash pour les
   scripts restés tels quels ; **sans reprise** (destination au nom fixe, une
   reprise collerait deux builds) — la reprise n'existe que dans le moteur, grâce
-  au dossier de cache par tag.
+  au dossier de cache par tag. Les appelants l'invoquent par **chemin absolu**
+  `/usr/libexec/gablue-fetch` : `/usr/libexec` n'est pas dans le `PATH` de
+  l'utilisateur (vécu 10/11/2026 : « gablue-fetch: commande introuvable » cassait
+  `opencode2-install` et `esde-install`).
 - Vécu 09/11/2026 : la même URL d'asset GitHub a été servie à 1,1 s (38 Mio/s)
   puis à 59,7 s (2,3 Mio/s) selon la connexion, et une connexion morte ne
   rendait plus rien — `curl` sans borne attend indéfiniment. Le moteur rend la

@@ -521,8 +521,12 @@ else
     echo "Téléchargement de l'AppImage OpenCode Desktop (~245 Mo)..."
     # `gablue-fetch` : --fail (pas de page d'erreur écrite dans le fichier),
     # tentatives, et abandon d'une connexion morte (même politique que le
-    # moteur gablue-apps).
-    gablue-fetch "$STABLE_URL" "$CACHE_FILE" "OpenCode 2"
+    # moteur gablue-apps). Appel par chemin absolu : /usr/libexec n'est pas dans
+    # le PATH (vécu 10/11/2026, « gablue-fetch: commande introuvable »).
+    if ! /usr/libexec/gablue-fetch "$STABLE_URL" "$CACHE_FILE" "OpenCode 2"; then
+        echo "✗ Erreur : téléchargement de l'AppImage OpenCode Desktop impossible."
+        exit 1
+    fi
 
     if [ ! -s "$CACHE_FILE" ]; then
         echo "✗ Erreur : le fichier téléchargé est vide ou absent."
