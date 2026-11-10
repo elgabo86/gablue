@@ -148,6 +148,17 @@ dnf5 -y install \
     tcpdump \
     traceroute
 
+# Pilotage X11 pour gremote (session physique) : xdotool recale la taille de la
+# fenêtre xfreerdp sur le ratio du bureau distant, xev rapporte ses
+# ConfigureNotify, xprop sert à reconnaître une fenêtre maximisée ou en plein
+# écran (que la surveillance ne doit pas contredire). KWin ignore les
+# indications ICCCM de ratio (PAspect) et smart-sizing étire l'image : c'est la
+# seule voie côté client. Aucun de ces outils n'est présent par défaut.
+dnf5 -y install \
+    xdotool \
+    xev \
+    xprop
+
 # Outils SELinux pour compilation des modules personnalisés
 dnf5 -y install \
     checkpolicy \

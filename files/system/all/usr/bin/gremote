@@ -36,10 +36,15 @@ SSH_PORT=""           # port SSH (défaut : ~/.ssh/config, sinon 22)
 SSH_PORT_SET=0        # 1 si -p/--port ou « hôte:port » a fixé le port
 RDP_LAUNCH=1          # 1 = lancer xfreerdp automatiquement s'il est présent
 NOSTART=0             # 1 = ne pas créer de session si l'hôte n'en a pas
-QUALITY=60            # qualité d'encodage KRdp (0-100) ; sert de borne en adaptatif
-ADAPTIVE=0            # 0 = qualité épinglée (défaut) ; 1 = adaptée au débit
+QUALITY=75            # qualité d'encodage KRdp (0-100) ; sert de borne en adaptatif
+# Mode de qualité : « auto » (défaut) = adaptatif sur une session PHYSIQUE,
+# épinglé sur une VIRTUELLE. Le choix est fait par le SERVEUR, seul à connaître
+# le type de session : un bureau réel en 1440p ne tient pas à qualité fixe, un
+# bureau virtuel suit la fenêtre et une image qui varie s'y voit (constaté
+# 04/11/2026). --adaptive / --static-quality forcent l'un ou l'autre.
+QUALITY_MODE="auto"
 FIT=1                 # 1 = session physique ajustée dans une petite fenêtre
-FIT_SIZE=1280x720     # taille de cette fenêtre (--fit-size)
+FIT_SIZE=1280x720     # taille MAXIMALE de cette fenêtre (le ratio de l'hôte est gardé)
 
 # =============================================================================
 # SECTION 2 : AIDE
@@ -62,10 +67,12 @@ Options :
       --rdp-port N   port LOCAL du tunnel RDP (défaut : 13389)
       --no-launch    ne pas lancer le client RDP (affiche la commande)
       --no-start     ne pas créer de session si l'hôte n'en a pas
-      --quality N    qualité d'encodage 0-100 (défaut : 60)
-      --static-quality  épingler la qualité (défaut, image stable)
-      --adaptive     laisser KRdp baisser la qualité selon le débit
-      --fit-size WxH  fenêtre ajustée d'une session PHYSIQUE (défaut : 1280x720)
+      --quality N    qualité d'encodage 0-100, borne haute en adaptatif (défaut : 75)
+      --adaptive     laisser KRdp baisser la qualité selon le débit (défaut sur
+                     une session PHYSIQUE)
+      --static-quality  épingler la qualité (défaut sur une session VIRTUELLE)
+      --fit-size WxH  taille MAXIMALE de la fenêtre d'une session PHYSIQUE
+                     (défaut : 1280x720), ratio de l'hôte respecté
       --no-fit       session physique en taille réelle (aucune mise à l'échelle)
       --audio        transférer le son par SSH (défaut)
       --no-audio     couper l'audio
@@ -81,6 +88,11 @@ tient dans une petite fenêtre redimensionnable ; session VIRTUELLE (créée hor
 /smart-sizing), d'où les deux clients. Un hôte d'une image antérieure n'annonce
 pas le type : gremote le lui demande alors sur une seconde connexion SSH (socket
 `gremote-session` = virtuelle, sinon physique) ; sans réponse, physique.
+
+En session PHYSIQUE, la fenêtre garde le ratio du bureau distant quand on
+l'étire : xfreerdp seul étire l'image (échelles x et y indépendantes) et KWin
+ignore les indications de ratio X11, donc gremote recale la taille à chaque
+redimensionnement (comme le fait un lecteur vidéo).
 
 L'ancien mode waypipe (compositeur imbriqué, -a, -s, --video, --codec,
 --quality, --bpf, --compress, --no-gpu, --clean) a été retiré le 02/11/2026.
@@ -103,6 +115,177 @@ rdp_remote_port() {
 die() {
     printf 'gremote : %s\n' "$*" >&2
     exit 1
+}
+
+# Géométrie du bureau capturé par KRdp, lue dans la sortie de `wayland-info` :
+# « WxH » de l'union des sorties (celle qui a le drapeau `current`). Le client
+# en a besoin pour garder le ratio de l'hôte quand on étire la fenêtre, et il ne
+# peut PAS le deviner : en session physique KRdp streame la sortie réelle, à sa
+# résolution, quoi que demande le client (mesuré 06/11/2026). Vide si
+# indéterminable (l'appelant n'annonce alors que le port et le type).
+output_geometry() {
+    local line inout=0 x=0 y=0 w=0 h=0 first=1 x1=0 y1=0 x2=0 y2=0
+    while IFS= read -r line; do
+        case "$line" in
+            "interface: "*)
+                if [[ "$line" == *"'wl_output'"* ]]; then
+                    inout=1
+                else
+                    inout=0
+                fi
+                x=0 y=0 w=0 h=0
+                continue
+                ;;
+        esac
+        [ "$inout" -eq 1 ] || continue
+        if [[ "$line" =~ ^[[:space:]]*x:\ (-?[0-9]+),\ y:\ (-?[0-9]+) ]]; then
+            x="${BASH_REMATCH[1]}"
+            y="${BASH_REMATCH[2]}"
+        elif [[ "$line" =~ ^[[:space:]]*width:\ ([0-9]+)\ px,\ height:\ ([0-9]+)\ px ]]; then
+            w="${BASH_REMATCH[1]}"
+            h="${BASH_REMATCH[2]}"
+        elif [[ "$line" == *"flags:"*current* ]] && [ "$w" -gt 0 ] && [ "$h" -gt 0 ]; then
+            # `current` = mode actif de CETTE sortie : on cumule son rectangle
+            if [ "$first" -eq 1 ]; then
+                x1="$x" y1="$y" x2="$((x + w))" y2="$((y + h))" first=0
+            else
+                if [ "$x" -lt "$x1" ]; then x1="$x"; fi
+                if [ "$y" -lt "$y1" ]; then y1="$y"; fi
+                if [ "$((x + w))" -gt "$x2" ]; then x2="$((x + w))"; fi
+                if [ "$((y + h))" -gt "$y2" ]; then y2="$((y + h))"; fi
+            fi
+            w=0 h=0
+        fi
+    done
+    if [ "$first" -eq 0 ] && [ "$((x2 - x1))" -gt 0 ] && [ "$((y2 - y1))" -gt 0 ]; then
+        printf '%sx%s\n' "$((x2 - x1))" "$((y2 - y1))"
+    fi
+}
+
+# Taille de fenêtre qui contient FIT_SIZE en gardant le ratio de l'hôte.
+# Argument vide ou illisible (hôte d'une image antérieure) → FIT_SIZE tel quel,
+# c'est-à-dire le comportement d'avant.
+fit_for_aspect() {
+    local remote="$1" fw="${FIT_SIZE%x*}" fh="${FIT_SIZE#*x}" ow oh w h
+    if [[ ! "$remote" =~ ^([0-9]+)x([0-9]+)$ ]]; then
+        printf '%s\n' "$FIT_SIZE"
+        return 0
+    fi
+    ow="${BASH_REMATCH[1]}"
+    oh="${BASH_REMATCH[2]}"
+    if [ "$ow" -le 0 ] || [ "$oh" -le 0 ]; then
+        printf '%s\n' "$FIT_SIZE"
+        return 0
+    fi
+    # Comparaison en croix : arithmétique entière, aucun arrondi flottant
+    if [ "$((fw * oh))" -le "$((fh * ow))" ]; then
+        w="$fw"
+        h="$(((fw * oh + ow / 2) / ow))"
+    else
+        h="$fh"
+        w="$(((fh * ow + oh / 2) / oh))"
+    fi
+    if [ "$w" -lt 1 ]; then w=1; fi
+    if [ "$h" -lt 1 ]; then h=1; fi
+    printf '%sx%s\n' "$w" "$h"
+}
+
+# Garde le ratio du bureau distant pendant le redimensionnement de la fenêtre
+# xfreerdp. KWin n'honore pas les indications ICCCM de ratio (PAspect est lu
+# puis ignoré, seules les tailles min/max comptent), et smart-sizing applique
+# une échelle horizontale ET verticale distinctes : sans ce recalage, étirer la
+# fenêtre déforme l'image. On refait donc ce que fait un lecteur vidéo pour son
+# image — recaler la taille sur chaque ConfigureNotify.
+#   $1 = identifiants de fenêtres déjà présentes (écartés : autre session)
+#   $2 = « WxH » du bureau distant
+aspect_watch() {
+    local prior="$1" remote="$2" ow oh win="" cand line w h pw="" ph="" tw th in_cfg=0
+    local ev_fifo="" ev_pid=""
+    [[ "$remote" =~ ^([0-9]+)x([0-9]+)$ ]] || return 0
+    ow="${BASH_REMATCH[1]}"
+    oh="${BASH_REMATCH[2]}"
+    trap 'exit 0' TERM INT
+    # La fenêtre n'existe qu'une fois la connexion RDP établie : on l'attend.
+    # Les XID croissent, la plus récente est la nôtre ; `prior` écarte celles
+    # d'une session déjà ouverte (deux gremote en parallèle sont légitimes).
+    for _ in $(seq 1 300); do
+        for cand in $(xdotool search --onlyvisible --class xfreerdp 2>/dev/null || true); do
+            case "$prior" in
+                *" $cand "*) continue ;;
+            esac
+            win="$cand"
+            break
+        done
+        [ -n "$win" ] && break
+        sleep 0.1
+    done
+    [ -n "$win" ] || return 0
+    # xev ne rapporte que les événements de structure : ConfigureNotify donne la
+    # taille CLIENT, celle que xfreerdp met à l'échelle. Il écrit dans un tube
+    # nommé (mkfifo, pas un fichier : un fichier donne EOF immédiat) pour qu'on
+    # garde son PID — un xev posé sur une fenêtre détruite n'expire pas de
+    # lui-même, il faut le tuer.
+    ev_dir="$(mktemp -d "${TMPDIR:-/tmp}/gremote-aspect.XXXXXX")"
+    ev_fifo="$ev_dir/events"
+    mkfifo "$ev_fifo"
+    xev -id "$win" -event structure >"$ev_fifo" 2>/dev/null &
+    ev_pid=$!
+    trap 'kill "$ev_pid" 2>/dev/null || true; rm -rf "$ev_dir"; exit 0' TERM INT
+    while IFS= read -r line; do
+        case "$line" in
+            "ConfigureNotify event"*)
+                in_cfg=1
+                continue
+                ;;
+            "DestroyNotify event"*)
+                # Fenêtre fermée par l'utilisateur : plus rien à surveiller.
+                break
+                ;;
+        esac
+        [ "$in_cfg" -eq 1 ] || continue
+        in_cfg=0
+        [[ "$line" =~ width\ ([0-9]+),\ height\ ([0-9]+) ]] || continue
+        w="${BASH_REMATCH[1]}"
+        h="${BASH_REMATCH[2]}"
+        [ "$w" -gt 1 ] && [ "$h" -gt 1 ] || continue
+        # Maximisée ou plein écran : le ratio ne peut pas être tenu, on ne se
+        # bat pas contre le gestionnaire de fenêtres.
+        if xprop -id "$win" _NET_WM_STATE 2>/dev/null |
+            grep -qE 'MAXIMIZED|FULLSCREEN'; then
+            continue
+        fi
+        # Bord tiré = la dimension qui bouge commande ; coin = le plus petit
+        # facteur d'échelle (la fenêtre reste dans la zone demandée).
+        if [ -n "$pw" ] && [ "$w" -eq "$pw" ] && [ "$h" -ne "$ph" ]; then
+            tw="$(((h * ow + oh / 2) / oh))"
+            th="$h"
+        elif [ -n "$pw" ] && [ "$h" -eq "$ph" ] && [ "$w" -ne "$pw" ]; then
+            tw="$w"
+            th="$(((w * oh + ow / 2) / ow))"
+        elif [ "$((w * oh))" -le "$((h * ow))" ]; then
+            tw="$w"
+            th="$(((w * oh + ow / 2) / ow))"
+        else
+            th="$h"
+            tw="$(((h * ow + oh / 2) / oh))"
+        fi
+        if [ "$tw" -lt 1 ]; then tw=1; fi
+        if [ "$th" -lt 1 ]; then th=1; fi
+        # Déjà au ratio (à 1 px près, arrondi entier) : rien à faire, sinon le
+        # recalage se rappellerait lui-même indéfiniment.
+        if [ "$((tw > w ? tw - w : w - tw))" -le 1 ] &&
+            [ "$((th > h ? th - h : h - th))" -le 1 ]; then
+            pw="$w"
+            ph="$h"
+            continue
+        fi
+        xdotool windowsize "$win" "$tw" "$th" 2>/dev/null || true
+        pw="$tw"
+        ph="$th"
+    done <"$ev_fifo"
+    kill "$ev_pid" 2>/dev/null || true
+    rm -rf "$ev_dir"
+    return 0
 }
 
 # =============================================================================
@@ -176,11 +359,11 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --adaptive)
-            ADAPTIVE=1
+            QUALITY_MODE="adaptive"
             shift
             ;;
         --static-quality)
-            ADAPTIVE=0
+            QUALITY_MODE="static"
             shift
             ;;
         --fit-size)
@@ -264,11 +447,17 @@ fi
 # doit la TRANSMETTRE à la commande distante, sinon --quality/--adaptive sont
 # parsés puis ignorés et le serveur garde ses valeurs par défaut (constaté
 # 04/11/2026 : « --adaptive --quality 100 » lançait un krdpserver en 60 épinglé).
-# Défaut : qualité épinglée à 60, pour que l'image ne varie pas en cours de
-# session. La courbe de kpipewire en encodage MATÉRIEL est brutale :
+# Mode « auto » (défaut) : on n'ajoute AUCUN drapeau à la ligne distante, c'est
+# le serveur qui tranche — seul à connaître le type de session AVANT de lancer
+# krdpserver. Adaptatif par défaut sur une session physique (un bureau réel en
+# 1440p ne tient pas à qualité épinglée sur un lien modeste), épinglé sur une
+# virtuelle (image stable ; rien à adapter puisque la résolution suit la
+# fenêtre). Un hôte d'une image antérieure garde son défaut (épinglé), sans
+# dégât : il ignore simplement qu'on aurait préféré l'adaptatif.
+# Courbe de kpipewire en encodage MATÉRIEL :
 #   global_quality (QP) = 87 − 0,87 × qualité  →  100 → QP 1, 90 → QP ≈ 9,
-#   60 → QP ≈ 35 (mou sur du texte), 10 → QP ≈ 78. En logiciel libx264 ignore
-# cet indice et garde son CRF.
+#   75 (défaut) → QP ≈ 22, 60 → QP ≈ 35 (mou sur du texte), 10 → QP ≈ 78.
+#   En logiciel libx264 ignore cet indice et garde son CRF.
 # Deux vocabulaires, à ne pas confondre : `rdp_quality_args` part tel quel dans
 # la ligne de `krdpserver` (--adaptive-quality), `rdp_remote_quality_args` part
 # vers `gremote --serve` (--adaptive). Envoyer le premier au second échouait sur
@@ -276,16 +465,12 @@ fi
 rdp_quality_args=()
 rdp_remote_quality_args=()
 if [ -n "$QUALITY" ]; then
-    rdp_quality_args+=(--quality "$QUALITY")
     rdp_remote_quality_args+=(--quality "$QUALITY")
 fi
-if [ "$ADAPTIVE" -eq 1 ]; then
-    rdp_quality_args+=(--adaptive-quality)
-    rdp_remote_quality_args+=(--adaptive)
-else
-    rdp_quality_args+=(--static-quality)
-    rdp_remote_quality_args+=(--static-quality)
-fi
+case "$QUALITY_MODE" in
+    adaptive) rdp_remote_quality_args+=(--adaptive) ;;
+    static) rdp_remote_quality_args+=(--static-quality) ;;
+esac
 
 # =============================================================================
 # SECTION 4 bis : MODE SERVEUR RDP (sur l'hôte, dans la session graphique)
@@ -379,6 +564,22 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
         session_kind=physical
     fi
 
+    # Qualité d'encodage pour krdpserver. C'est ICI que « auto » se tranche : le
+    # serveur est le seul à connaître le type de session avant de démarrer RDP.
+    # Qualité par défaut (60) = borne haute en adaptatif ; adaptive-quality est
+    # le défaut de krdpserver mais on l'écrit, une configuration du poste peut
+    # l'avoir coupé.
+    rdp_quality_args=()
+    if [ -n "$QUALITY" ]; then
+        rdp_quality_args+=(--quality "$QUALITY")
+    fi
+    if [ "$QUALITY_MODE" = "adaptive" ] ||
+        { [ "$QUALITY_MODE" = "auto" ] && [ "$session_kind" = "physical" ]; }; then
+        rdp_quality_args+=(--adaptive-quality)
+    else
+        rdp_quality_args+=(--static-quality)
+    fi
+
     export WAYLAND_DISPLAY="$compositor"
     export XDG_RUNTIME_DIR="$run_dir"
     export DBUS_SESSION_BUS_ADDRESS="unix:path=${run_dir}/bus"
@@ -386,12 +587,17 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     # Sans sortie (wl_output), KRdp diffuse du noir sans la moindre erreur.
     # Mieux vaut refuser que livrer une fenêtre noire qui laisse croire à un bug
     # du client.
+    output_size=""
     if command -v wayland-info >/dev/null 2>&1; then
         _globals="$(timeout 5 wayland-info 2>/dev/null || true)"
         case "$_globals" in
             *"interface: 'wl_output'"*) ;;
             *) die "le compositeur ${compositor} n'a aucune sortie (VT inactive ?) — corrige avec : systemctl restart gremote-session@${USER}" ;;
         esac
+        # Annoncée au client : en session physique, c'est le seul moyen pour lui
+        # de garder le ratio du bureau quand il étire la fenêtre (KRdp streame la
+        # sortie réelle à sa résolution, quoi que demande le client).
+        output_size="$(printf '%s\n' "$_globals" | output_geometry || true)"
     fi
     # L'appelant a pu hériter d'un PULSE_SERVER : ici on veut le démon LOCAL,
     # sinon le puits tunnel se créerait sur le poste client.
@@ -565,7 +771,14 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     done
     [ "$up" -eq 1 ] ||
         die "krdpserver n'écoute pas sur 127.0.0.1:${rdp_listen_port} (port déjà pris par un autre service ?)"
-    printf 'GREMOTE-RDP-READY %s %s\n' "$rdp_listen_port" "$session_kind"
+    printf 'GREMOTE-RDP-READY %s %s' "$rdp_listen_port" "$session_kind"
+    # 4e champ facultatif : « WxH » du bureau capturé, pour que le client garde
+    # le ratio de l'hôte en redimensionnant sa fenêtre. Absent = client d'avant,
+    # ou géométrie illisible : il retombe sur une fenêtre étirée (inchangé).
+    if [ -n "$output_size" ]; then
+        printf ' %s' "$output_size"
+    fi
+    printf '\n'
     wait "$srv_pid"
     exit 0
 fi
@@ -709,6 +922,10 @@ if [ "$RDP" -eq 1 ]; then
     # Réponse impossible (pas de clé SSH non interactive, réseau) → physique :
     # un bureau entier en petit vaut mieux qu'un bureau coupé.
     rdp_kind="$(awk '/^GREMOTE-RDP-READY/ { print $3; exit }' "$rdp_log" 2>/dev/null || true)"
+    # 4e champ : géométrie du bureau capturé (« WxH »), facultative — absente
+    # d'un hôte d'une image antérieure, d'où le repli sur une fenêtre étirée.
+    rdp_size="$(awk '/^GREMOTE-RDP-READY/ { print $4; exit }' "$rdp_log" 2>/dev/null || true)"
+    [[ "$rdp_size" =~ ^[0-9]+x[0-9]+$ ]] || rdp_size=""
     case "$rdp_kind" in
         physical|virtual) ;;
         *)
@@ -760,7 +977,10 @@ if [ "$RDP" -eq 1 ]; then
     if [ "$rdp_client" = "xfreerdp" ]; then
         rdp_args+=(+clipboard)
         if [ "$FIT" -eq 1 ]; then
-            rdp_args+=("+smart-sizing:${FIT_SIZE}")
+            # Taille de fenêtre déduite de FIT_SIZE ET du ratio de l'hôte : sans
+            # ça la fenêtre d'origine tombe déjà mal (16:10 distant dans du
+            # 16:9 de FIT_SIZE) et l'image démarre étirée.
+            rdp_args+=("+smart-sizing:$(fit_for_aspect "$rdp_size")")
         fi
     elif [ -n "$rdp_client" ]; then
         rdp_args+=(+clipboard +dynamic-resolution)
@@ -793,10 +1013,40 @@ if [ "$RDP" -eq 1 ]; then
         # sort alors en 131. Sans ce `|| true`, `set -e` propageait 131 et une
         # GUI le lisait comme un plantage (vécu 04/11/2026 : dialogue d'erreur
         # à chaque fermeture d'une session pourtant réussie).
+        #
+        # Client lancé en ARRIÈRE-PLAN : la surveillance du ratio (session
+        # physique seulement, voir aspect_watch) doit pouvoir démarrer pendant
+        # que la fenêtre se crée. Les fenêtres xfreerdp déjà ouvertes sont
+        # relevées AVANT, pour qu'elle ne s'accroche pas à une autre session.
+        aspect_prior=" "
+        if [ "$rdp_client" = "xfreerdp" ] && command -v xdotool >/dev/null 2>&1; then
+            # `|| true` obligatoire : sans fenêtre xfreerdp ouverte, xdotool sort
+            # en 1 et `pipefail` ferait échouer toute la ligne (`set -e`).
+            aspect_prior=" $(
+                xdotool search --class xfreerdp 2>/dev/null | tr '\n' ' ' || true
+            )"
+        fi
         printf '%s\n' "$rdp_pass" |
             "$rdp_client" /v:127.0.0.1:"$RDP_PORT" /u:"$rdp_user" \
-                /cert:ignore /from-stdin:force "${rdp_args[@]}" ||
-            true
+                /cert:ignore /from-stdin:force "${rdp_args[@]}" &
+        rdp_pid=$!
+        aspect_pid=""
+        if [ "$rdp_client" = "xfreerdp" ] && [ "$FIT" -eq 1 ] && [ -n "$rdp_size" ] &&
+            command -v xdotool >/dev/null 2>&1 && command -v xev >/dev/null 2>&1 &&
+            command -v xprop >/dev/null 2>&1; then
+            aspect_watch "$aspect_prior" "$rdp_size" &
+            aspect_pid=$!
+            # Sortie anormale (Ctrl+C, TERM) : la surveillance et son xev
+            # partent avec gremote, comme le ssh.
+            trap 'kill "$aspect_pid" 2>/dev/null || true; kill "$ssh_pid" 2>/dev/null || true; rm -f "$rdp_log"' EXIT INT TERM
+        fi
+        wait "$rdp_pid" || true
+        if [ -n "$aspect_pid" ]; then
+            # xev est un enfant du sous-shell : on le tue AVANT le sous-shell,
+            # sinon il survit à la fermeture de gremote sur une fenêtre morte.
+            pkill -P "$aspect_pid" 2>/dev/null || true
+            kill "$aspect_pid" 2>/dev/null || true
+        fi
     else
         # --no-launch (ou aucun client installé) : la commande affichée est
         # EXACTEMENT celle qui aurait été lancée, client et options compris.
