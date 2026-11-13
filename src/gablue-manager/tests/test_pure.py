@@ -2763,6 +2763,120 @@ class InstallKeyOrderTest(unittest.TestCase):
         self.assertEqual(calls["probe"], 1)
 
 
+class AdoptAddressKeyTest(unittest.TestCase):
+    """Une adresse de secours jamais épinglée hérite de la clé déjà connue.
+
+    `sucina` n'avait son empreinte que sous son nom : dès que le mDNS ne
+    résolvait plus, la sonde tombait sur `100.64.0.2`, que
+    `StrictHostKeyChecking=yes` refusait — carte « Clé d'hôte inconnue » pour
+    une machine parfaitement connue (vécu 13/11/2026).
+    """
+
+    host = {
+        "user": "gab", "host": "sucina", "port": 22, "active": "",
+        "addresses": [{"address": "100.64.0.2", "kind": "tailscale"}],
+    }
+
+    def _adopt(self, stored, raw, scanned_stored=None):
+        calls = {"scan": 0, "pin": 0}
+        saved = (ssh.scan_host_keys, ssh._stored_fingerprints,
+                 ssh.host_key_state, ssh.trust_host_key)
+        ssh.scan_host_keys = lambda _host, _address="": (
+            calls.__setitem__("scan", calls["scan"] + 1) or (raw, True, ""))
+        ssh._stored_fingerprints = lambda _address, _port: list(stored)
+        ssh.host_key_state = lambda _host, _raw: (
+            "known" if scanned_stored is None else scanned_stored[0],
+            scanned_stored[1] if scanned_stored else ["k"],
+            scanned_stored[2] if scanned_stored else ["k"],
+        )
+        ssh.trust_host_key = lambda _raw, _host: (
+            calls.__setitem__("pin", calls["pin"] + 1) or True)
+        try:
+            ok = ssh.adopt_address_key(self.host, "100.64.0.2")
+        finally:
+            (ssh.scan_host_keys, ssh._stored_fingerprints,
+             ssh.host_key_state, ssh.trust_host_key) = saved
+        return ok, calls
+
+    def test_without_known_key_nothing_is_scanned(self):
+        ok, calls = self._adopt([], "100.64.0.2 ssh-ed25519 AAAA\n")
+        self.assertFalse(ok)
+        self.assertEqual(calls, {"scan": 0, "pin": 0})
+
+    def test_same_key_is_pinned(self):
+        ok, calls = self._adopt(
+            ["ssh-ed25519 AAAA"], "100.64.0.2 ssh-ed25519 AAAA\n")
+        self.assertTrue(ok)
+        self.assertEqual(calls, {"scan": 1, "pin": 1})
+
+    def test_different_key_is_never_written(self):
+        ok, calls = self._adopt(
+            ["ssh-ed25519 AAAA"], "100.64.0.2 ssh-ed25519 BBBB\n",
+            scanned_stored=("changed", ["ssh-ed25519 BBBB"],
+                            ["ssh-ed25519 AAAA"]),
+        )
+        self.assertFalse(ok)
+        self.assertEqual(calls, {"scan": 1, "pin": 0})
+
+    def test_mute_scan_changes_nothing(self):
+        ok, calls = self._adopt(["ssh-ed25519 AAAA"], "")
+        self.assertFalse(ok)
+        self.assertEqual(calls, {"scan": 1, "pin": 0})
+
+
+class CheckHostAdoptionTest(unittest.TestCase):
+    """La sonde épingle l'adresse de secours et resonde au lieu d'échouer."""
+
+    host = {
+        "user": "gab", "host": "sucina", "port": 22, "active": "",
+        "addresses": [{"address": "100.64.0.2", "kind": "tailscale"}],
+    }
+
+    def test_hostkey_on_fallback_address_ends_online(self):
+        probed = []
+
+        def fake_probe(_host, address, _stop):
+            probed.append(address)
+            if address == "sucina":
+                return "dns", "nom introuvable", 0.0
+            if probed.count("100.64.0.2") == 1:
+                return "hostkey", "empreinte inconnue ou changée", 0.0
+            return "online", "", 12.0
+
+        saved = (ssh._probe_address, ssh.adopt_address_key,
+                 ssh.PRIVATE_KEY, ssh.PUBLIC_KEY)
+        ssh._probe_address = fake_probe
+        ssh.adopt_address_key = lambda _host, _address: True
+        ssh.PRIVATE_KEY = ROOT  # n'importe quel chemin existant
+        ssh.PUBLIC_KEY = ROOT
+        try:
+            state, _detail, latency, address = ssh.check_host(
+                self.host, __import__("threading").Event())
+        finally:
+            ssh._probe_address, ssh.adopt_address_key = saved[0], saved[1]
+            ssh.PRIVATE_KEY, ssh.PUBLIC_KEY = saved[2], saved[3]
+        self.assertEqual(state, "online")
+        self.assertEqual(address, "100.64.0.2")
+        self.assertEqual(probed, ["sucina", "100.64.0.2", "100.64.0.2"])
+
+    def test_unadoptable_key_still_reports_hostkey(self):
+        saved = (ssh._probe_address, ssh.adopt_address_key,
+                 ssh.PRIVATE_KEY, ssh.PUBLIC_KEY)
+        ssh._probe_address = lambda _host, _address, _stop: (
+            "hostkey", "empreinte inconnue ou changée", 0.0)
+        ssh.adopt_address_key = lambda _host, _address: False
+        ssh.PRIVATE_KEY = ROOT
+        ssh.PUBLIC_KEY = ROOT
+        try:
+            state, _detail, _latency, address = ssh.check_host(
+                self.host, __import__("threading").Event())
+        finally:
+            ssh._probe_address, ssh.adopt_address_key = saved[0], saved[1]
+            ssh.PRIVATE_KEY, ssh.PUBLIC_KEY = saved[2], saved[3]
+        self.assertEqual(state, "hostkey")
+        self.assertEqual(address, "sucina")
+
+
 class UtilTest(unittest.TestCase):
     host = {"user": "gab", "host": "sucina.local", "port": 22}
 

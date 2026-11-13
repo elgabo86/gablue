@@ -108,7 +108,7 @@ def looks_penalized(text: str) -> bool:
     low = (text or "").lower()
     return any(mark in low for mark in PENALTY_MARKS)
 
-def scan_host_keys(host: dict) -> tuple[str, bool, str]:
+def scan_host_keys(host: dict, address: str = "") -> tuple[str, bool, str]:
     """Clés d'hôte de la machine, en UNE connexion (known_hosts jetable).
 
     `ssh-keyscan` ouvre une connexion PAR type de clé — six d'affilée — et
@@ -121,6 +121,9 @@ def scan_host_keys(host: dict) -> tuple[str, bool, str]:
     La même connexion teste l'authentification : code 0 = notre clé est DÉJÀ
     acceptée, inutile de refaire une sonde (chaque échec de plus rapproche du
     blocage). Retourne (clés brutes, clé acceptée, erreur ssh).
+
+    `address` vise une adresse précise du poste (LAN, Tailscale) ; vide =
+    l'adresse active.
     """
     handle, path = tempfile.mkstemp(prefix="gablue-hostkey-")
     os.close(handle)
@@ -140,7 +143,7 @@ def scan_host_keys(host: dict) -> tuple[str, bool, str]:
                  "-o", "UpdateHostKeys=no",
                  "-o", "ConnectTimeout=5",
                  "-p", str(host["port"]),
-                 ssh_target(host), "true"],
+                 ssh_target(host, address), "true"],
                 capture_output=True, text=True, timeout=20,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -256,6 +259,19 @@ def pinned_entries(raw_keys: str, addresses: list[str], port: int) -> list[str]:
                 entries.append(entry)
     return entries
 
+def _stored_entries() -> set[tuple[str, str, str]]:
+    """Triplets (hôte, type, clé) déjà présents dans `known_hosts`."""
+    found: set[tuple[str, str, str]] = set()
+    try:
+        text = KNOWN_HOSTS.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return found
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and not parts[0].startswith("#"):
+            found.add((parts[0], parts[1], parts[2]))
+    return found
+
 def trust_host_key(raw_keys: str, host: dict) -> bool:
     """Épingle les clés EXACTES affichées, sous toutes les adresses du poste.
 
@@ -264,10 +280,21 @@ def trust_host_key(raw_keys: str, host: dict) -> bool:
     qui évite le `accept-new` silencieux et sa fenêtre d'attaque. Elles sont
     épinglées sous chaque adresse connue — même machine, même clé — pour que
     passer du LAN à Tailscale ne redéclenche pas une demande de confiance.
+
+    Une clé déjà écrite n'est pas répétée : l'appel est idempotent, ce qui rend
+    l'adoption d'une nouvelle adresse (`adopt_address_key`) sûre à répéter.
     """
     entries = pinned_entries(raw_keys, host_addresses(host), host["port"])
     if not entries:
         return False
+    present = _stored_entries()
+    entries = [
+        entry for entry in entries
+        if tuple(entry.split()[:3]) not in present
+    ]
+    if not entries:
+        return True
+
     try:
         SSH_DIR.mkdir(parents=True, exist_ok=True)
         os.chmod(SSH_DIR, 0o700)
@@ -280,6 +307,35 @@ def trust_host_key(raw_keys: str, host: dict) -> bool:
     except OSError:
         return False
     return True
+
+def adopt_address_key(host: dict, address: str) -> bool:
+    """Épingle l'empreinte d'une adresse quand c'est la MÊME clé qu'ailleurs.
+
+    Un poste ajouté par son nom — ou dont les adresses LAN/Tailscale ont été
+    demandées au poste APRÈS l'accord sur l'empreinte — n'a ses clés épinglées
+    que sous ce nom. Dès que le nom ne résout plus (mDNS qui traîne), la sonde
+    bascule sur l'adresse IP, que `StrictHostKeyChecking=yes` refuse : la carte
+    annonçait « Clé d'hôte inconnue » alors que la machine était parfaitement
+    connue, puis revenait « En ligne » au rafraîchissement suivant (vécu
+    13/11/2026, sucina : `sucina` épinglé, `100.64.0.2` absent, et la carte
+    violette dès que le nom manquait).
+
+    On n'accepte ici QUE la clé déjà épinglée pour une autre adresse du même
+    poste : une clé différente reste un refus (empreinte changée, MITM), elle
+    n'est jamais écrite. Une connexion au plus, et seulement dans ce cas de
+    figure — sans empreinte connue, rien n'est scanné (aucune offense inutile
+    pour `PerSourcePenalties`).
+    """
+    if not any(_stored_fingerprints(item, host["port"])
+               for item in host_addresses(host)):
+        return False
+    raw, _authenticated, _error = scan_host_keys(host, address)
+    if not raw:
+        return False
+    _state, scanned, stored = host_key_state(host, raw)
+    if not scanned or not set(scanned) & set(stored):
+        return False
+    return trust_host_key(raw, host)
 
 def _probe_address(host: dict, address: str,
                    stop: threading.Event) -> tuple[str, str, float]:
@@ -361,6 +417,14 @@ def check_host(host: dict, stop: threading.Event) -> tuple[str, str, float, str]
         state, detail, latency = _probe_address(host, address, stop)
         if state == "unknown":          # vérification annulée
             return "unknown", "", 0.0, ""
+        if state == "hostkey":
+            # Adresse de secours jamais épinglée alors que la clé du poste est
+            # connue sous son nom : on l'épingle et on resonde, au lieu
+            # d'afficher « Clé d'hôte inconnue » pour une machine connue.
+            if adopt_address_key(host, address):
+                state, detail, latency = _probe_address(host, address, stop)
+                if state == "unknown":
+                    return "unknown", "", 0.0, ""
         last = (state, detail, latency, address)
         if state in REACHED_STATES:
             break
