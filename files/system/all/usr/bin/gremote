@@ -95,14 +95,18 @@ déjà ouvert) → xfreerdp avec mise à l'échelle (+smart-sizing), tout le bur
 tient dans une petite fenêtre redimensionnable ; session VIRTUELLE (créée hors
 écran par gremote) → sdl-freerdp, Wayland natif, résolution suivie par
 +dynamic-resolution. sdl-freerdp ne sait PAS mettre à l'échelle (il ignore
-/smart-sizing), d'où les deux clients. Un hôte d'une image antérieure n'annonce
-pas le type : gremote le lui demande alors sur une seconde connexion SSH (socket
-`gremote-session` = virtuelle, sinon physique) ; sans réponse, physique.
+/smart-sizing), d'où les deux clients. Le type est annoncé par l'hôte, qui
+reconnaît sa session hors écran à sa sortie virtuelle (« Virtual-0 ») ; un hôte
+d'une image antérieure ne l'annonce pas : gremote le lui demande alors sur une
+seconde connexion SSH (socket `gremote-session` = virtuelle, sinon physique) ;
+sans réponse, physique.
 
 En session PHYSIQUE, la fenêtre garde le ratio du bureau distant quand on
 l'étire : xfreerdp seul étire l'image (échelles x et y indépendantes) et KWin
 ignore les indications de ratio X11, donc gremote recale la taille à chaque
-redimensionnement (comme le fait un lecteur vidéo).
+redimensionnement (comme le fait un lecteur vidéo). Une session VIRTUELLE n'a
+jamais ce recalage : sa résolution suit la fenêtre, donc la fenêtre s'étire
+librement et l'image reste nette.
 
 L'ancien mode waypipe (compositeur imbriqué, -a, -s, --video, --codec,
 --quality, --bpf, --compress, --no-gpu, --clean) a été retiré le 02/11/2026.
@@ -170,6 +174,33 @@ output_geometry() {
     if [ "$first" -eq 0 ] && [ "$((x2 - x1))" -gt 0 ] && [ "$((y2 - y1))" -gt 0 ]; then
         printf '%sx%s\n' "$((x2 - x1))" "$((y2 - y1))"
     fi
+}
+
+# Noms des sorties (wl_output) de la sortie de `wayland-info`, une par ligne.
+# Le backend VIRTUEL de KWin nomme ses sorties « Virtual-0 », « Virtual-1 »… :
+# c'est le seul marqueur de session hors écran qui reste depuis que le
+# compositeur est lancé par son unité utilisateur (le socket s'appelle alors
+# `wayland-N`, plus le `gremote-session` de l'ancienne conception, et le nom du
+# socket ne dit donc plus rien du type de session). Constaté sur kwin 6.8.2 le
+# 13/11/2026 — revérifier à chaque montée de version de KWin.
+output_names() {
+    local line inout=0
+    while IFS= read -r line; do
+        case "$line" in
+            "interface: "*)
+                if [[ "$line" == *"'wl_output'"* ]]; then
+                    inout=1
+                else
+                    inout=0
+                fi
+                continue
+                ;;
+        esac
+        [ "$inout" -eq 1 ] || continue
+        if [[ "$line" =~ ^[[:space:]]*name:\ (.+)$ ]]; then
+            printf '%s\n' "${BASH_REMATCH[1]}"
+        fi
+    done
 }
 
 # Taille de fenêtre qui contient FIT_SIZE en gardant le ratio de l'hôte.
@@ -498,10 +529,11 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     compositor=""
     find_compositor() {
         compositor=""
-        # Le socket de notre unité d'abord : un KWin en expose plusieurs
-        # (`gremote-session` plus des wayland-N internes), et le glob ne voit
-        # que les seconds — on choisissait donc un socket qui n'est pas celui
-        # qu'on croit (vécu 02/11/2026).
+        # Socket de l'ancienne conception (gremote lançait lui-même le
+        # compositeur avec ce nom) : gardé en tête au cas où il existerait
+        # encore. Depuis Plasma 6.8 le compositeur est lancé par son unité
+        # utilisateur et `kwin_wayland_wrapper` lui impose `wayland-N` : le type
+        # de session ne se déduit donc plus du nom du socket (voir plus bas).
         if [ -S "$run_dir/gremote-session" ]; then
             compositor="gremote-session"
             return 0
@@ -561,14 +593,49 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     [ -n "$compositor" ] ||
         die "aucune session graphique sur $run_dir, et gremote-session@${USER} n'a pas démarré (systemctl status gremote-session@${USER}, journalctl -u gremote-session@${USER})"
 
-    # Type de session, transmis au client dans la ligne de poignée de main. Le
-    # socket `gremote-session` est celui que crée notre unité hors écran : tout
-    # autre compositeur est une session PHYSIQUE, sur le siège et l'écran réels.
+    export WAYLAND_DISPLAY="$compositor"
+    export XDG_RUNTIME_DIR="$run_dir"
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=${run_dir}/bus"
+
+    # Sans sortie (wl_output), KRdp diffuse du noir sans la moindre erreur.
+    # Mieux vaut refuser que livrer une fenêtre noire qui laisse croire à un bug
+    # du client.
+    output_size=""
+    virtual_output=0
+    if command -v wayland-info >/dev/null 2>&1; then
+        _globals="$(timeout 5 wayland-info 2>/dev/null || true)"
+        case "$_globals" in
+            *"interface: 'wl_output'"*) ;;
+            *) die "le compositeur ${compositor} n'a aucune sortie (VT inactive ?) — corrige avec : systemctl restart gremote-session@${USER}" ;;
+        esac
+        # Annoncée au client : en session physique, c'est le seul moyen pour lui
+        # de garder le ratio du bureau quand il étire la fenêtre (KRdp streame la
+        # sortie réelle à sa résolution, quoi que demande le client).
+        output_size="$(printf '%s\n' "$_globals" | output_geometry || true)"
+        # Sortie « Virtual-N » = backend virtuel de KWin (voir output_names).
+        _names="$(printf '%s\n' "$_globals" | output_names || true)"
+        while IFS= read -r _name; do
+            case "$_name" in
+                Virtual*) virtual_output=1 ;;
+            esac
+        done <<<"$_names"
+    fi
+
+    # Type de session, transmis au client dans la ligne de poignée de main.
+    # VIRTUELLE = celle que notre unité crée hors écran : la seule dont la
+    # sortie est celle du backend virtuel de KWin. On ne teste plus le nom du
+    # socket : depuis Plasma 6.8 le compositeur est lancé par son unité
+    # utilisateur, `kwin_wayland_wrapper` lui impose `wayland-N`, et le socket
+    # `gremote-session` de l'ancienne conception n'existe donc plus — toute
+    # session virtuelle était annoncée PHYSIQUE (constaté 13/11/2026 : mise à
+    # l'échelle xfreerdp, fenêtre recalée au ratio et qualité adaptative sur un
+    # bureau virtuel). Le nom `gremote-session` reste accepté pour un hôte d'une
+    # image antérieure.
     # La distinction commande le client RDP : sur une session physique on ne
     # peut pas changer la résolution (ce serait le moniteur du poste), donc il
     # faut un client qui mette l'image à l'échelle — xfreerdp ; sdl-freerdp
-    # ignore /smart-sizing.
-    if [ "$compositor" = "gremote-session" ]; then
+    # ignore /smart-sizing. Une session virtuelle, elle, suit la fenêtre.
+    if [ "$compositor" = "gremote-session" ] || [ "$virtual_output" -eq 1 ]; then
         session_kind=virtual
     else
         session_kind=physical
@@ -576,7 +643,7 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
 
     # Qualité d'encodage pour krdpserver. C'est ICI que « auto » se tranche : le
     # serveur est le seul à connaître le type de session avant de démarrer RDP.
-    # Qualité par défaut (60) = borne haute en adaptatif ; adaptive-quality est
+    # Qualité par défaut (75) = borne haute en adaptatif ; adaptive-quality est
     # le défaut de krdpserver mais on l'écrit, une configuration du poste peut
     # l'avoir coupé.
     rdp_quality_args=()
@@ -588,26 +655,6 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
         rdp_quality_args+=(--adaptive-quality)
     else
         rdp_quality_args+=(--static-quality)
-    fi
-
-    export WAYLAND_DISPLAY="$compositor"
-    export XDG_RUNTIME_DIR="$run_dir"
-    export DBUS_SESSION_BUS_ADDRESS="unix:path=${run_dir}/bus"
-
-    # Sans sortie (wl_output), KRdp diffuse du noir sans la moindre erreur.
-    # Mieux vaut refuser que livrer une fenêtre noire qui laisse croire à un bug
-    # du client.
-    output_size=""
-    if command -v wayland-info >/dev/null 2>&1; then
-        _globals="$(timeout 5 wayland-info 2>/dev/null || true)"
-        case "$_globals" in
-            *"interface: 'wl_output'"*) ;;
-            *) die "le compositeur ${compositor} n'a aucune sortie (VT inactive ?) — corrige avec : systemctl restart gremote-session@${USER}" ;;
-        esac
-        # Annoncée au client : en session physique, c'est le seul moyen pour lui
-        # de garder le ratio du bureau quand il étire la fenêtre (KRdp streame la
-        # sortie réelle à sa résolution, quoi que demande le client).
-        output_size="$(printf '%s\n' "$_globals" | output_geometry || true)"
     fi
     # L'appelant a pu hériter d'un PULSE_SERVER : ici on veut le démon LOCAL,
     # sinon le puits tunnel se créerait sur le poste client.
@@ -1020,16 +1067,18 @@ if [ "$RDP" -eq 1 ]; then
 
     # Type de session annoncé par l'hôte (3e champ de la poignée de main) :
     # « physical » = bureau réel déjà ouvert, « virtual » = session créée hors
-    # écran par gremote. Un hôte d'une image antérieure n'envoie que le port :
-    # le type est alors DÉDUIT d'une seconde connexion SSH (une seule, et
-    # seulement dans ce cas) — le socket `gremote-session` n'existe qu'à la
-    # session hors écran, et à cet instant krdpserver écoute déjà, donc la
-    # session est en place. Deviner « physique » à l'aveugle donnait un bureau
-    # virtuel mis à l'échelle au lieu d'une résolution qui suit la fenêtre
-    # (vécu 09/11/2026 : hôte encore en 20261106, bureau virtuel figé en
-    # xfreerdp) ; deviner « virtuelle » coupait un bureau physique (06/11/2026).
-    # Réponse impossible (pas de clé SSH non interactive, réseau) → physique :
-    # un bureau entier en petit vaut mieux qu'un bureau coupé.
+    # écran par gremote (l'hôte le sait par la sortie virtuelle de KWin). Un
+    # hôte d'une image antérieure n'envoie que le port : le type est alors
+    # DÉDUIT d'une seconde connexion SSH (une seule, et seulement dans ce cas) —
+    # c'est la règle de CETTE image-là (socket `gremote-session`), reproduite
+    # telle quelle plutôt qu'une autre inventée ici ; à cet instant krdpserver
+    # écoute déjà, donc la session est en place. Deviner « physique » à
+    # l'aveugle donnait un bureau virtuel mis à l'échelle au lieu d'une
+    # résolution qui suit la fenêtre (vécu 09/11/2026 : hôte encore en
+    # 20261106, bureau virtuel figé en xfreerdp) ; deviner « virtuelle » coupait
+    # un bureau physique (06/11/2026). Réponse impossible (pas de clé SSH non
+    # interactive, réseau) → physique : un bureau entier en petit vaut mieux
+    # qu'un bureau coupé.
     rdp_kind="$(awk '/^GREMOTE-RDP-READY/ { print $3; exit }' "$rdp_log" 2>/dev/null || true)"
     # 4e champ : géométrie du bureau capturé (« WxH »), facultative — absente
     # d'un hôte d'une image antérieure, d'où le repli sur une fenêtre étirée.
@@ -1085,7 +1134,13 @@ if [ "$RDP" -eq 1 ]; then
 
     if [ "$rdp_client" = "xfreerdp" ]; then
         rdp_args+=(+clipboard)
-        if [ "$FIT" -eq 1 ]; then
+        if [ "$rdp_kind" = "virtual" ]; then
+            # Repli sur une session VIRTUELLE (sdl-freerdp absent du poste) :
+            # rien à mettre à l'échelle, le bureau distant suit la fenêtre.
+            # Surtout ni smart-sizing ni recalage au ratio, qui figeraient la
+            # résolution du bureau virtuel au lieu de la laisser s'adapter.
+            rdp_args+=(+dynamic-resolution)
+        elif [ "$FIT" -eq 1 ]; then
             # Taille de fenêtre déduite de FIT_SIZE ET du ratio de l'hôte : sans
             # ça la fenêtre d'origine tombe déjà mal (16:10 distant dans du
             # 16:9 de FIT_SIZE) et l'image démarre étirée.
@@ -1128,7 +1183,8 @@ if [ "$RDP" -eq 1 ]; then
         # que la fenêtre se crée. Les fenêtres xfreerdp déjà ouvertes sont
         # relevées AVANT, pour qu'elle ne s'accroche pas à une autre session.
         aspect_prior=" "
-        if [ "$rdp_client" = "xfreerdp" ] && command -v xdotool >/dev/null 2>&1; then
+        if [ "$rdp_kind" != "virtual" ] && [ "$rdp_client" = "xfreerdp" ] &&
+            command -v xdotool >/dev/null 2>&1; then
             # `|| true` obligatoire : sans fenêtre xfreerdp ouverte, xdotool sort
             # en 1 et `pipefail` ferait échouer toute la ligne (`set -e`).
             aspect_prior=" $(
@@ -1140,7 +1196,8 @@ if [ "$RDP" -eq 1 ]; then
                 /cert:ignore /from-stdin:force "${rdp_args[@]}" &
         rdp_pid=$!
         aspect_pid=""
-        if [ "$rdp_client" = "xfreerdp" ] && [ "$FIT" -eq 1 ] && [ -n "$rdp_size" ] &&
+        if [ "$rdp_kind" != "virtual" ] && [ "$rdp_client" = "xfreerdp" ] &&
+            [ "$FIT" -eq 1 ] && [ -n "$rdp_size" ] &&
             command -v xdotool >/dev/null 2>&1 && command -v xev >/dev/null 2>&1 &&
             command -v xprop >/dev/null 2>&1; then
             aspect_watch "$aspect_prior" "$rdp_size" &
