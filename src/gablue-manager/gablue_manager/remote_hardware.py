@@ -117,13 +117,18 @@ def parse_hardware(text: str, now: float | None = None) -> dict:
             threads = _int(line.partition("=")[2])
     values["cpu"] = local.cpu_label_parts(model, cores, threads)
 
-    values["memory"] = local.format_memory("\n".join(split.get("mem", [])))
-
     # Le même helper rend les barrettes ET la température des disques SATA
     # (`smartctl -n standby` : un disque en veille n'est pas réveillé).
     hwinfo = local.parse_hwinfo("\n".join(split.get("modules", [])))
-    values["modules"] = local.format_memory_modules(
-        local.memory_modules_from(hwinfo)
+    modules = local.memory_modules_from(hwinfo)
+
+    values["memory"] = local.format_memory(
+        "\n".join(split.get("mem", [])), modules
+    )
+    values["modules"] = local.format_memory_modules(modules)
+    # « Barrette » au singulier quand le poste n'en a qu'une.
+    values["modules_label"] = (
+        local.memory_modules_label(modules) if modules else ""
     )
 
     gpu = local.parse_lspci_display("\n".join(split.get("gpu", [])))

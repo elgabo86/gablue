@@ -1217,6 +1217,26 @@ class HardwareTest(unittest.TestCase):
         self.assertEqual(local.format_memory(""), "")
         self.assertIsNone(local.memory_used_gib("MemTotal: 1 kB"))
 
+    def test_memory_installed_note(self):
+        # Un iGPU réserve une tranche : la somme des barrettes est rappelée
+        # entre parenthèses, sinon « Barrettes » semble contredire le total.
+        text = ("MemTotal:       15100000 kB\n"
+                "MemAvailable:    9000000 kB\n")
+        modules = [{"size_gib": 8}, {"size_gib": 8}]
+        self.assertEqual(
+            local.format_memory(text, modules),
+            "5,8 Gio utilisés sur 14,4 Gio (16 Gio installés) · 40 %",
+        )
+        # Mêmes arrondis : aucune parenthèse, ce serait un doublon.
+        text = ("MemTotal:       16700000 kB\n"
+                "MemAvailable:   10000000 kB\n")
+        self.assertEqual(
+            local.format_memory(text, [{"size_gib": 16}]),
+            "6,4 Gio utilisés sur 15,9 Gio · 40 %",
+        )
+        self.assertEqual(local.memory_installed_gib([{"size_gib": 16}]), 16)
+        self.assertEqual(local.memory_installed_gib([]), 0)
+
     def test_vram(self):
         # Carte dédiée : amdgpu publie le fabricant des puces (samsung) ;
         # NVIDIA passe par /proc. Les deux disent « VRAM ».
@@ -1259,6 +1279,34 @@ class HardwareTest(unittest.TestCase):
             local.format_memory_modules(modules),
             "2 × 16 Gio · DDR5 · 6000 MT/s",
         )
+
+    def test_memory_modules_single(self):
+        modules = [
+            {"size_gib": 16, "type": "DDR4", "speed": 2133,
+             "manufacturer": "Kingston"},
+        ]
+        # Une barrette seule garde le « 1 × » : sans lui, « 16 Gio » se lisait
+        # comme le total installé alors que la ligne « Mémoire » donne la RAM
+        # utilisable (vécu 13/11/2026, fednuc).
+        self.assertEqual(
+            local.format_memory_modules(modules),
+            "1 × 16 Gio · Kingston · DDR4 · 2133 MT/s",
+        )
+        self.assertEqual(local.memory_modules_label(modules), "Barrette")
+
+    def test_memory_modules_label_plural(self):
+        self.assertEqual(
+            local.memory_modules_label([{"size_gib": 8}, {"size_gib": 8}]),
+            "Barrettes",
+        )
+        # Une taille nulle n'est pas une barrette : le libellé suit.
+        self.assertEqual(
+            local.memory_modules_label(
+                [{"size_gib": 8}, {"size_gib": 0}]
+            ),
+            "Barrette",
+        )
+        self.assertEqual(local.memory_modules_label([]), "Barrettes")
 
     def test_memory_modules_mixed(self):
         modules = [
@@ -2807,6 +2855,27 @@ class RemoteHardwareTest(unittest.TestCase):
         self.assertEqual(local.format_disk_totals(rows[:1]), "")
         self.assertEqual(local.format_disk_totals([]), "")
         self.assertEqual(local.format_disk_totals([{"total": 0}]), "")
+
+    def test_single_module_label(self):
+        text = (
+            "::gablue:mem\n"
+            "MemTotal:       15300000 kB\n"
+            "MemAvailable:    6100000 kB\n"
+            "::gablue:modules\n"
+            '{"modules": [{"size_gib": 16, "type": "DDR4", "speed": 2133,'
+            ' "manufacturer": "Kingston"}], "disks": [], "nvm": {}}\n'
+        )
+        values = remote_hardware.parse_hardware(text, now=1762503600)
+        self.assertEqual(
+            values["modules"], "1 × 16 Gio · Kingston · DDR4 · 2133 MT/s"
+        )
+        self.assertEqual(values["modules_label"], "Barrette")
+        # La mémoire installée accompagne la mémoire utilisable, y compris
+        # sur un poste distant (même analyse que le poste local).
+        self.assertEqual(
+            values["memory"],
+            "8,8 Gio utilisés sur 14,6 Gio (16 Gio installés) · 60 %",
+        )
 
     def test_boot_time_from_proc_stat(self):
         text = (

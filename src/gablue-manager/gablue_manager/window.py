@@ -51,6 +51,7 @@ from .local import (
     brew_progress_parser, brew_update_hint, brew_update_script, disk_rows,
     flatpak_update_hint, flatpak_update_script, format_memory_modules,
     gablue_update_hint, hardware_summary, local_sshd_state,
+    memory_modules_label,
     parse_flatpak_progress, parse_gablue_progress, privileged_prefix,
     set_local_sshd_sudo,
 )
@@ -147,6 +148,10 @@ class MainWindow(QMainWindow):
         # rafraîchissement périodique, contrairement à /sys (gratuit).
         self._disk_temps: list[tuple] = []
         self._nvm_smart: dict[str, bool] = {}
+        # Barrettes du dernier relevé root : elles ne servent qu'à nommer la
+        # mémoire **installée** à côté de la mémoire utilisable (un iGPU en
+        # réserve une tranche, sinon les deux lignes se contredisent).
+        self._memory_modules: list[dict] = []
         # Nom commercial du GPU lu par Vulkan une fois par session : le
         # résumé relu toutes les 30 s ne doit pas le réécraser avec le nom du
         # die que donne `lspci`.
@@ -791,9 +796,12 @@ class MainWindow(QMainWindow):
         values.pop("disks", None)
         temperatures = values.pop("temperatures", "")
         model_label = values.pop("model_label", "")
+        modules_label = values.pop("modules_label", "")
         panel.set_values(values)
         if model_label:
             panel.set_label("model", model_label)
+        if modules_label:
+            panel.set_label("modules", modules_label)
         if rows is not None:
             panel.set_disks(rows, links=links)
         panel.set_temperatures(temperatures)
@@ -989,7 +997,9 @@ class MainWindow(QMainWindow):
 
     def _refresh_hardware(self) -> None:
         """Résumé matériel : lectures locales, `lspci` mis en cache."""
-        values = hardware_summary(self._disk_temps, self._nvm_smart)
+        values = hardware_summary(
+            self._disk_temps, self._nvm_smart, self._memory_modules
+        )
         values.pop("disks", None)
         temperatures = values.pop("temperatures", "")
         vram = values.pop("vram", "")
@@ -1024,9 +1034,16 @@ class MainWindow(QMainWindow):
         # sonde a rendu la main, le bouton et la bande d'activité suivent.
         self.info_panel.set_refreshing(False)
         self._set_busy("hardware", False)
-        text = format_memory_modules((values or {}).get("modules") or [])
+        modules = list((values or {}).get("modules") or [])
+        text = format_memory_modules(modules)
         if text:
             self.info_panel.set_values({"modules": text})
+            # « Barrette » au singulier quand il n'y en a qu'une.
+            self.info_panel.set_label("modules", memory_modules_label(modules))
+        # Mémoire installée : la somme des barrettes relue ici sert à la ligne
+        # « Mémoire » (voir `_refresh_hardware`), donc elle est gardée même
+        # quand la ligne « Barrettes » est vide.
+        self._memory_modules = modules
         gpu = str((values or {}).get("gpu") or "")
         if gpu:
             # Nom commercial exact (VBIOS via Mesa) : il remplace le nom du

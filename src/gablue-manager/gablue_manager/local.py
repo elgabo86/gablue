@@ -497,8 +497,15 @@ def memory_used_gib(text: str) -> float | None:
     used = int(total.group(1)) - int(available.group(1))
     return max(0.0, used / (1024 ** 2))
 
-def format_memory(text: str) -> str:
+def format_memory(text: str, modules: list[dict] | None = None) -> str:
     """« 12,4 Gio utilisés sur 31 Gio · 40 % » (vide si `/proc` illisible).
+
+    `modules` (barrettes du helper) ajoute la mémoire **installée** entre
+    parenthèses quand elle diffère du total utilisable : « 9,1 Gio utilisés sur
+    14,6 Gio (16 Gio installés) · 62 % ». Sur un iGPU le BIOS réserve une
+    tranche, et sans ce rappel « Barrettes : 1 × 16 Gio » semblait contredire
+    « 14,6 Gio » (vécu 13/11/2026, fednuc). Rien n'est ajouté quand les deux
+    arrondis coïncident : ce serait un doublon.
 
     Sans `MemAvailable` (vieux noyau, poste exotique), on retombe sur le seul
     total plutôt que d'inventer un pourcentage.
@@ -509,7 +516,11 @@ def format_memory(text: str) -> str:
     used = memory_used_gib(text)
     if used is None:
         return format_gib(total)
-    return (f"{format_gib(used)} utilisés sur {format_gib(total)}"
+    installed = memory_installed_gib(modules or [])
+    note = ""
+    if installed and round(installed) > round(total):
+        note = f" ({format_gib(installed)} installés)"
+    return (f"{format_gib(used)} utilisés sur {format_gib(total)}{note}"
             f" · {round(used / total * 100)} %")
 
 def parse_vram(text: str) -> tuple[float | None, bool]:
@@ -568,25 +579,44 @@ def gpu_vram() -> tuple[float | None, bool]:
         texts.append(_read_text(path))
     return parse_vram("\n".join(texts))
 
-def format_memory_modules(modules: list[dict]) -> str:
-    """Barrettes → « 2 × 16 Gio · DDR5 · 6000 MT/s » (chaîne vide sans module)."""
-    rows = [
+def memory_module_rows(modules: list[dict]) -> list[dict]:
+    """Barrettes exploitables : une taille nulle n'est pas une barrette."""
+    return [
         module for module in (modules or [])
         if isinstance(module, dict) and float(module.get("size_gib") or 0) > 0
     ]
+
+def memory_installed_gib(modules: list[dict]) -> float:
+    """Mémoire physique installée : somme des barrettes (0 sans module connu)."""
+    return sum(float(module["size_gib"]) for module in memory_module_rows(modules))
+
+def memory_modules_label(modules: list[dict]) -> str:
+    """Libellé du champ : « Barrette » pour une seule, « Barrettes » sinon.
+
+    Une barrette unique s'affichait sous un libellé au pluriel, sans le « 1 × »
+    que porte le cas à plusieurs : le nombre de modules ne se lisait nulle part
+    (vécu 13/11/2026, fednuc).
+    """
+    return "Barrette" if len(memory_module_rows(modules)) == 1 else "Barrettes"
+
+def format_memory_modules(modules: list[dict]) -> str:
+    """Barrettes → « 2 × 16 Gio · DDR5 · 6000 MT/s » (chaîne vide sans module).
+
+    Le nombre est **toujours** écrit, même pour une barrette seule (« 1 × 16
+    Gio ») : « 16 Gio » nu se lisait comme le total installé, en conflit avec la
+    ligne « Mémoire » qui donne la RAM utilisable (déduction du BIOS).
+    """
+    rows = memory_module_rows(modules)
     if not rows:
         return ""
     counts: dict[float, int] = {}
     for module in rows:
         size = round(float(module["size_gib"]), 1)
         counts[size] = counts.get(size, 0) + 1
-    total = sum(size * count for size, count in counts.items())
     count = sum(counts.values())
     if len(counts) == 1:
-        if count == 1:
-            sizes = f"{_gio_amount(total)} Gio"
-        else:
-            sizes = f"{count} × {_gio_amount(total / count)} Gio"
+        size = next(iter(counts))
+        sizes = f"{count} × {_gio_amount(size)} Gio"
     else:
         sizes = " + ".join(
             f"{n} × {_gio_amount(size)} Gio"
@@ -1294,12 +1324,15 @@ def temperature_summary(devices: list[dict] | None = None,
     return format_temperatures(values, sata)
 
 def hardware_summary(sata: list[tuple] | None = None,
-                     nvm: dict[str, bool] | None = None) -> dict[str, str]:
+                     nvm: dict[str, bool] | None = None,
+                     modules: list[dict] | None = None) -> dict[str, str]:
     """Résumé de la machine, en lectures locales uniquement.
 
     Pas de sous-processus coûteux : `lspci` est mis en cache, tout le reste
     vient de /proc, /sys et `disk_usage`. Les barrettes, qui demandent root,
-    et le nom commercial du GPU (Vulkan) arrivent par `workers.HardwareWorker`.
+    et le nom commercial du GPU (Vulkan) arrivent par `workers.HardwareWorker`
+    ; `modules` (le dernier relevé, mis en cache par la fenêtre) sert
+    seulement à nommer la mémoire installée à côté de la mémoire utilisable.
     """
     values = machine_identity()
     values["system"] = local_distro()
@@ -1310,7 +1343,9 @@ def hardware_summary(sata: list[tuple] | None = None,
         # Gardé à part : la fenêtre remplace le nom du die par le nom
         # commercial (Vulkan) et doit pouvoir réattacher la VRAM.
         values["vram"] = format_vram(vram, dedicated)
-    values["memory"] = format_memory(_read_text(Path("/proc/meminfo")))
+    values["memory"] = format_memory(
+        _read_text(Path("/proc/meminfo")), modules
+    )
     values["disks"] = disks_label()
     # Températures CPU/GPU/NVMe : /sys seulement, aucun privilège (vide si la
     # machine n'expose pas de capteur) ; `sata` vient du helper `gablue-hwinfo`
