@@ -881,6 +881,7 @@ class HostCard(QFrame):
     gwine_requested = Signal(str)
     booster_requested = Signal(str)
     tailscale_requested = Signal(str)
+    wifi_powersave_requested = Signal(str)
     apps_requested = Signal(str)
     reboot_requested = Signal(str)
     shutdown_requested = Signal(str)
@@ -1023,6 +1024,10 @@ class HostCard(QFrame):
         network_menu.addAction(
             "Tailscale…",
             lambda: self.tailscale_requested.emit(self.host["id"]),
+        )
+        network_menu.addAction(
+            "Veille Wi-Fi…",
+            lambda: self.wifi_powersave_requested.emit(self.host["id"]),
         )
         # Compression et limite thermique sont des réglages du matériel,
         # pas de l'entretien : ils rejoignent « Réglages », comme sur le
@@ -1243,6 +1248,7 @@ class LocalConfigMenu(QMenu):
     gwine_requested = Signal()
     booster_requested = Signal()
     tailscale_requested = Signal()
+    wifi_powersave_requested = Signal()
     sshd_requested = Signal()
     avahi_requested = Signal()
 
@@ -1279,6 +1285,9 @@ class LocalConfigMenu(QMenu):
 
         network_menu = settings_menu.addMenu("Réseau")
         network_menu.addAction("Tailscale…", self.tailscale_requested.emit)
+        network_menu.addAction(
+            "Veille Wi-Fi…", self.wifi_powersave_requested.emit
+        )
         network_menu.addSeparator()
         # Même état que le panneau « Accès à ce poste » : le libellé dit le
         # geste, jamais une case à cocher qui se désynchronise.

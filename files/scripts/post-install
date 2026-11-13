@@ -34,6 +34,7 @@ chmod +x /usr/bin/opencode2-remove
 # quels) : le catalogue `apps.toml` vit dans /usr/share, il n'a pas de mode.
 chmod +x /usr/libexec/gablue-apps
 chmod +x /usr/libexec/gablue-fetch
+chmod +x /usr/libexec/gablue-wifi-powersave
 chmod +x /usr/bin/gablue-atuin
 chmod +x /usr/bin/gablue-gamepad
 chmod +x /usr/bin/gablue-dualsense

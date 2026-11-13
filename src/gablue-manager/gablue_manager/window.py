@@ -41,6 +41,7 @@ from .dialogs.tailscale import TailscaleDialog
 from .dialogs.thermal import ThermalDialog
 from .dialogs.updates import AutoUpdatesDialog
 from .dialogs.variant import VariantDialog
+from .dialogs.wifi import WifiPowersaveDialog
 from .hosts import load_hosts, save_hosts
 from . import instance, prefs, remote_updates, updates
 
@@ -367,6 +368,9 @@ class MainWindow(QMainWindow):
         self.local_config.tailscale_requested.connect(
             self.open_local_tailscale
         )
+        self.local_config.wifi_powersave_requested.connect(
+            self.open_local_wifi_powersave
+        )
         # Le même état que le panneau d'accès : menu Réseau et panneau se
         # mettent à jour ensemble, jamais l'un sans l'autre.
         self.local_config.sshd_requested.connect(self.toggle_local_sshd)
@@ -601,6 +605,7 @@ class MainWindow(QMainWindow):
         card.gwine_requested.connect(self.open_remote_gwine_options)
         card.booster_requested.connect(self.open_remote_foreground_booster)
         card.tailscale_requested.connect(self.open_remote_tailscale)
+        card.wifi_powersave_requested.connect(self.open_remote_wifi_powersave)
         card.apps_requested.connect(self.open_host_apps)
         card.reboot_requested.connect(self.reboot_host)
         card.shutdown_requested.connect(self.shutdown_host)
@@ -1868,6 +1873,33 @@ class MainWindow(QMainWindow):
         # adresses (dont Tailscale, jamais annoncée en mDNS).
         self._ask_addresses(host["id"])
 
+    def _remote_audio_choice(self, host: dict) -> "bool | None":
+        """« Bureau distant » : avec son (défaut), sans son, ou None si annulé.
+
+        KRdp ne transporte pas l'audio : gremote le tunnellise en SSH. Sans son
+        (`--no-audio`), aucun puits tunnel n'est créé et le son du poste distant
+        reste sur ses propres haut-parleurs.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("Bureau distant")
+        box.setText(f"Ouvrir le bureau distant de « {display_name(host)} » ?")
+        box.setInformativeText(
+            "Avec son : l'audio du poste distant est envoyé ici.\n"
+            "Sans son : il continue de jouer sur le poste distant."
+        )
+        with_sound = box.addButton("Avec son", QMessageBox.AcceptRole)
+        without_sound = box.addButton("Sans son", QMessageBox.RejectRole)
+        box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(with_sound)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is with_sound:
+            return True
+        if clicked is without_sound:
+            return False
+        return None
+
     def launch_remote(self, host_id: str) -> None:
         host = self._host(host_id)
         if host is None:
@@ -1882,9 +1914,14 @@ class MainWindow(QMainWindow):
                 "gremote n'est pas installé sur ce poste.",
             )
             return
+        audio = self._remote_audio_choice(host)
+        if audio is None:
+            return
         command = [gremote]
         if host["port"] != 22:
             command += ["-p", str(host["port"])]
+        if not audio:
+            command.append("--no-audio")
         command.append(ssh_target(host))
         # Chaque clic ouvre une nouvelle fenêtre, même si une session tourne
         # déjà : KRdp ne garde qu'une session par utilisateur, le nouveau
@@ -2715,6 +2752,15 @@ class MainWindow(QMainWindow):
         if host is None:
             return
         TailscaleDialog(self, host).exec()
+
+    def open_local_wifi_powersave(self) -> None:
+        WifiPowersaveDialog(self).exec()
+
+    def open_remote_wifi_powersave(self, host_id: str) -> None:
+        host = self._host(host_id)
+        if host is None:
+            return
+        WifiPowersaveDialog(self, host).exec()
 
     def _run_local_task(self, title: str, subtitle: str, argv: list[str],
                         root: bool = False, hint_from_output=None,

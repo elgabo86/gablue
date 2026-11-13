@@ -135,6 +135,9 @@ CPUID_EMU_HELPER = "/usr/libexec/gablue-cpuid-emu"
 
 TAILSCALE_HELPER = "/usr/libexec/gablue-tailscale"
 
+# Veille radio Wi-Fi (power save) : `on|off|status`, drop-in NetworkManager.
+WIFI_POWERSAVE_HELPER = "/usr/libexec/gablue-wifi-powersave"
+
 CPUID_EMU_CONF = Path("/etc/modules-load.d/gablue-cpuid-emu.conf")
 
 # Blacklist de kvm_amd posée avec l'émulation : sa date dit si le module doit

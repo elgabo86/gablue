@@ -1324,6 +1324,44 @@ class HardwareTest(unittest.TestCase):
         self.assertEqual(local.format_memory_modules([]), "")
 
 
+class WifiPowersaveTest(unittest.TestCase):
+    def test_parse_off(self):
+        state = local.parse_wifi_powersave_state(
+            "config=off\niface=wlp4s0:off\niface=wlp11s0:off\n"
+        )
+        self.assertEqual(state["config"], "off")
+        self.assertTrue(state["disabled"])
+        self.assertTrue(state["present"])
+        self.assertEqual(
+            state["ifaces"], {"wlp4s0": "off", "wlp11s0": "off"}
+        )
+
+    def test_parse_default_and_empty(self):
+        state = local.parse_wifi_powersave_state("config=default\n")
+        self.assertEqual(state["config"], "default")
+        self.assertFalse(state["disabled"])
+        self.assertFalse(state["present"])
+        self.assertEqual(local.parse_wifi_powersave_state("")["config"],
+                         "default")
+
+    def test_parse_ignores_garbage(self):
+        state = local.parse_wifi_powersave_state(
+            "config=bizarre\niface=wlp4s0:\niface=:on\niface=wlp4s0:peut-être\n"
+        )
+        self.assertEqual(state["config"], "default")
+        self.assertEqual(state["ifaces"], {})
+
+    def test_apply_script(self):
+        self.assertEqual(
+            local.wifi_powersave_apply_script(True),
+            "sudo -n /usr/libexec/gablue-wifi-powersave off\n",
+        )
+        self.assertEqual(
+            local.wifi_powersave_apply_script(False),
+            "sudo -n /usr/libexec/gablue-wifi-powersave on\n",
+        )
+
+
 class TailscaleTest(unittest.TestCase):
     def test_parse(self):
         state = local.parse_tailscale_state(

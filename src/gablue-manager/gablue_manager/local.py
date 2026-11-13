@@ -24,7 +24,7 @@ from .constants import (
     KARG_BT_ERTM, KARG_CLEARCPUID,
     KARG_HDMI21, KARG_HELPER, KARG_MITIGATIONS_OFF, LOW_LATENCY_FILE,
     LOW_LATENCY_HELPER, OS_RELEASE, REBASE_HELPER, SERVICE_HELPER,
-    TAILSCALE_HELPER, _which,
+    TAILSCALE_HELPER, WIFI_POWERSAVE_HELPER, _which,
 )
 from .ssh import ssh_capture
 
@@ -1869,6 +1869,59 @@ def parse_tailscale_state(output: str) -> dict:
         "active": values.get("active") == "active",
         "server": values.get("server", ""),
         "status": parse_tailscale_status(values.get("status", "")),
+    }
+
+
+# =============================================================================
+# VEILLE RADIO WI-FI (power save)
+# =============================================================================
+
+def wifi_powersave_apply_script(disabled: bool) -> str:
+    """Commande du helper : `off` (veille coupée) ou `on` (défaut)."""
+    return f"sudo -n {WIFI_POWERSAVE_HELPER} {'off' if disabled else 'on'}\n"
+
+
+# Lecture SANS privilège : le drop-in de NetworkManager est en 0644 et
+# `iw ... get power_save` ne demande pas root. `phy80211` couvre les noyaux
+# récents, `wireless` les anciens pilotes — un glob sur `*/wireless` seul ne
+# trouve plus rien sur cfg80211 (constaté 13/11/2026).
+WIFI_POWERSAVE_STATE_SCRIPT = r"""
+conf=/etc/NetworkManager/conf.d/99-gablue-wifi-powersave.conf
+state=default
+if [ -r "$conf" ]; then
+    case "$(awk -F= '/^[[:space:]]*wifi\.powersave[[:space:]]*=/ {
+            gsub(/[[:space:]]/, "", $2); print $2; exit }' "$conf")" in
+        2) state=off ;;
+        3) state=on ;;
+    esac
+fi
+printf 'config=%s\n' "$state"
+for d in /sys/class/net/*; do
+    [ -e "$d/phy80211" ] || [ -e "$d/wireless" ] || continue
+    iface=$(basename "$d")
+    printf 'iface=%s:%s\n' "$iface" \
+        "$(iw dev "$iface" get power_save 2>/dev/null | awk '{ print $3 }')"
+done
+"""
+
+def parse_wifi_powersave_state(output: str) -> dict:
+    """`config=…` + une ligne `iface=<nom>:<on|off>` par interface sans fil."""
+    config = "default"
+    ifaces: dict[str, str] = {}
+    for line in output.splitlines():
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key == "config" and value.strip() in ("on", "off", "default"):
+            config = value.strip()
+        elif key == "iface" and ":" in value:
+            name, _, state = value.strip().rpartition(":")
+            if name and state in ("on", "off"):
+                ifaces[name] = state
+    return {
+        "config": config,
+        "ifaces": ifaces,
+        "present": bool(ifaces),
+        "disabled": config == "off",
     }
 
 
