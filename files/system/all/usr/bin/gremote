@@ -4,8 +4,9 @@
 #
 # Expose la session graphique de l'hôte (existante, ou créée virtuelle) dans une
 # fenêtre du poste local : image et entrée par RDP, son par un tunnel PipeWire en
-# SSH. Rien n'est exposé sur le réseau — RDP est derrière un -L local, l'audio
-# derrière un -R, et le mot de passe RDP est tiré au hasard à chaque session.
+# SSH (sur sa propre connexion, pour ne pas subir les rafales vidéo). Rien n'est
+# exposé sur le réseau — RDP est derrière un -L local, l'audio derrière un -R,
+# et le mot de passe RDP est tiré au hasard à chaque session.
 #
 # Si l'hôte n'a aucune session graphique pour ce compte, gremote en crée une
 # VIRTUELLE (hors écran, sans VT ni DRM) : plusieurs comptes peuvent travailler
@@ -26,6 +27,13 @@ set -euo pipefail
 
 TARGET=""
 AUDIO=1               # 1 = tunnel des sockets Pulse/PipeWire locaux (défaut)
+# Tampon du puits tunnel audio. `latency_msec` est bien pris par PipeWire
+# (module-protocol-pulse, `latency_msec=<fixed latency in ms>`), mais PAS au
+# sens littéral : mesuré 13/11/2026 sur PipeWire 1.6.11, `node.latency` vaut
+# valeur × 6 échantillons (soit /8 en ms) et plafonne à 8192 échantillons
+# (`default.clock.quantum-limit`), donc ~171 ms à 48 kHz. 1500 sature le
+# plafond ; au-delà aucun effet. Quirk de version : revérifier avant de s'y fier.
+AUDIO_LATENCY_MSEC="${GREMOTE_AUDIO_LATENCY:-1500}"
 DEBUG=0               # 1 = journal côté hôte (filtré, plafonné)
 DRY_RUN=0
 SERVE=0
@@ -74,8 +82,10 @@ Options :
       --fit-size WxH  taille MAXIMALE de la fenêtre d'une session PHYSIQUE
                      (défaut : 1280x720), ratio de l'hôte respecté
       --no-fit       session physique en taille réelle (aucune mise à l'échelle)
-      --audio        transférer le son par SSH (défaut)
-      --no-audio     couper l'audio
+      --audio        transférer le son par SSH (défaut), sur une connexion
+                     dédiée : une rafale vidéo ne le bloque plus derrière elle
+      --no-audio     couper l'audio — le son du poste distant reste sur SES
+                     haut-parleurs (aucun puits tunnel n'est créé)
       --debug        journal côté hôte (filtré, plafonné à 1 Mio)
   -n, --dry-run      afficher la commande sans l'exécuter
   -h, --help         cette aide
@@ -629,6 +639,35 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     # sien. Deux connexions se disputaient donc le même nom et le même défaut
     # (vécu 02/11/2026 : fermer la fenêtre puis se reconnecter = silence).
     sink_name="gremote-$$"
+    # Puits tunnel orphelins d'une session précédente : leur socket a disparu
+    # avec le -R du client, et s'ils restent par défaut tout le son de la
+    # session part dans le vide. Nettoyage INCONDITIONNEL (même sans audio
+    # demandé) : c'est ce qui rend le son au poste quand on se connecte en
+    # « sans son » (--no-audio) — le puits de la session d'avant ne doit pas
+    # rester le défaut, sinon le poste distant serait muet.
+    drop_stale_tunnels() {
+        pactl list short modules 2>/dev/null |
+            awk '$2 == "module-tunnel-sink" && $0 ~ /sink_name=gremote/ { print $1 }' |
+            while read -r _m; do pactl unload-module "$_m" >/dev/null 2>&1 || true; done
+    }
+    # Après le retrait, le défaut peut désigner un puits disparu (silence) :
+    # on reprend le premier puits LOCAL, jamais un gremote-* (celui d'un pair).
+    ensure_local_sink() {
+        local cur local_sink
+        cur="$(pactl get-default-sink 2>/dev/null || true)"
+        case "$cur" in
+            ""|gremote-*) ;;
+            *)
+                pactl list short sinks 2>/dev/null |
+                    awk -v n="$cur" '$2 == n { found = 1 } END { exit !found }' &&
+                    return 0
+                ;;
+        esac
+        local_sink="$(pactl list short sinks 2>/dev/null |
+            awk '$2 !~ /^gremote-/ { print $2; exit }')"
+        [ -n "$local_sink" ] &&
+            pactl set-default-sink "$local_sink" >/dev/null 2>&1 || true
+    }
     cleanup_rdp() {
         # Ne décharger que si cet identifiant désigne ENCORE notre puits : PipeWire
         # réattribue les identifiants de module (536870916 observé deux fois), donc
@@ -647,19 +686,36 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
             pactl set-default-sink "$prev_sink" >/dev/null 2>&1 || true
         fi
     }
-    if [ -n "${GREMOTE_AUDIO_SOCK:-}" ] && [ -S "${GREMOTE_AUDIO_SOCK:-/nonexistent}" ] &&
-        command -v pactl >/dev/null 2>&1; then
-        # Puits orphelins d'une connexion précédente : leur socket a disparu avec
-        # le -R du client, et s'ils restent par défaut tout le son de la session
-        # part dans le vide. On les retire avant d'installer le nôtre.
+    if command -v pactl >/dev/null 2>&1; then
         # Le défaut AVANT tout, sinon on mémoriserait le puits orphelin qu'on
         # s'apprête à retirer et on le restaurerait à la sortie.
         prev_sink="$(pactl get-default-sink 2>/dev/null || true)"
-        pactl list short modules 2>/dev/null |
-            awk '$2 == "module-tunnel-sink" && $0 ~ /sink_name=gremote/ { print $1 }' |
-            while read -r _m; do pactl unload-module "$_m" >/dev/null 2>&1 || true; done
+        drop_stale_tunnels
+        # Un gremote-* (même le nôtre) n'est jamais un défaut à restaurer.
+        case "$prev_sink" in gremote-*) prev_sink="" ;; esac
+        ensure_local_sink
+    fi
+    if [ -n "${GREMOTE_AUDIO_SOCK:-}" ] && command -v pactl >/dev/null 2>&1; then
+        # Le -R vit sur une connexion SSH SÉPARÉE de celle du tunnel RDP : à
+        # l'instant où cette commande démarre, le socket peut ne pas encore
+        # exister ici. On l'attend (5 s) — module-tunnel-sink échoue net sur un
+        # socket absent (« Connexion refusée ») et la session restait muette.
+        for _ in $(seq 1 50); do
+            [ -S "$GREMOTE_AUDIO_SOCK" ] && break
+            sleep 0.1
+        done
+    fi
+    if [ -n "${GREMOTE_AUDIO_SOCK:-}" ] && [ -S "${GREMOTE_AUDIO_SOCK:-/nonexistent}" ] &&
+        command -v pactl >/dev/null 2>&1; then
         audio_mod="$(pactl load-module module-tunnel-sink \
-            server="unix:$GREMOTE_AUDIO_SOCK" sink_name="$sink_name" 2>/dev/null || true)"
+            server="unix:$GREMOTE_AUDIO_SOCK" sink_name="$sink_name" \
+            latency_msec="$AUDIO_LATENCY_MSEC" 2>/dev/null || true)"
+        # PipeWire d'une image antérieure dont le module ignore `latency_msec` :
+        # mieux vaut un son saccadé qu'aucun son, on recharge sans le tampon.
+        if [ -z "$audio_mod" ]; then
+            audio_mod="$(pactl load-module module-tunnel-sink \
+                server="unix:$GREMOTE_AUDIO_SOCK" sink_name="$sink_name" 2>/dev/null || true)"
+        fi
         if [ -n "$audio_mod" ]; then
             # Le puits est enregistré de façon asynchrone : un set-default-sink
             # immédiat échoue en « Aucune entité de ce type » — et comme on
@@ -802,7 +858,8 @@ command -v ssh >/dev/null 2>&1 || die "ssh absent sur ce poste"
 # parlent le protocole natif). Condition côté sshd distant :
 # AllowStreamLocalForwarding.
 # Le chemin local des sockets n'existe pas sur l'hôte : on transfère vers un
-# socket neuf sous /tmp, dont le nom porte l'uid et le PID du client.
+# socket neuf sous /tmp, dont le nom porte l'uid et le PID du client. Ces -R
+# vivent sur leur PROPRE connexion SSH (voir plus bas), pas sur celle du -L.
 ssh_args=()
 # Port SSH explicite (-p ou « hôte:port »). Sans lui on ne passe RIEN : ssh
 # applique ~/.ssh/config puis 22, alors qu'un « -p 22 » écraserait un Port
@@ -810,6 +867,7 @@ ssh_args=()
 if [ -n "$SSH_PORT" ]; then
     ssh_args+=(-p "$SSH_PORT")
 fi
+audio_args=()
 audio_env=()
 [ "$DEBUG" -eq 1 ] && audio_env+=("GREMOTE_DEBUG=1")
 if [ "$AUDIO" -eq 1 ]; then
@@ -821,11 +879,11 @@ if [ "$AUDIO" -eq 1 ]; then
         # chemin fixe (vécu 01/11/2026). L'option -o StreamLocalBindUnlink ne
         # règle rien ici : pour un -R c'est le sshd distant qui décide.
         pulse_sock="/tmp/gremote-pulse-$(id -u)-$$.sock"
-        ssh_args+=(-R "${pulse_sock}:${run_dir}/pulse/native")
+        audio_args+=(-R "${pulse_sock}:${run_dir}/pulse/native")
         audio_env+=("PULSE_SERVER=unix:${pulse_sock}")
         if [ -S "$run_dir/pipewire-0" ]; then
             pw_sock="/tmp/gremote-pw-$(id -u)-$$.sock"
-            ssh_args+=(-R "${pw_sock}:${run_dir}/pipewire-0")
+            audio_args+=(-R "${pw_sock}:${run_dir}/pipewire-0")
             audio_env+=("PIPEWIRE_REMOTE=${pw_sock}")
         fi
     else
@@ -833,11 +891,19 @@ if [ "$AUDIO" -eq 1 ]; then
             "$run_dir" >&2
     fi
 fi
+# Le son a SA PROPRE connexion SSH (au lieu de partager celle du -L RDP) : dans
+# un seul TCP, chaque rafale d'image bloque le PCM derrière elle et chaque
+# segment perdu retarde l'audio d'un aller-retour — d'où les saccades sur un
+# lien qui jitte (mesuré 13/11/2026 : RTT 58 ms, pics à 197 ms sur le Wi-Fi de
+# l'hôte, tampon du tunnel 25 ms). `-C` compresse le PCM (~1,3-1,5×, CPU
+# négligeable) et reste réservé à cette connexion : zlib ne gagne rien sur le
+# H.264 du tunnel RDP.
 
 # ---------------------------------------------------------------------------
 # Mode RDP : tout passe par SSH. Le -L n'expose RDP que sur 127.0.0.1 du poste
-# local, le -R porte le son du poste vers l'hôte, et le mot de passe RDP est
-# tiré au hasard à chaque session puis jeté. Aucun port ouvert sur le réseau.
+# local, le -R porte le son du poste vers l'hôte (sur sa connexion dédiée), et
+# le mot de passe RDP est tiré au hasard à chaque session puis jeté. Aucun port
+# ouvert sur le réseau.
 # ---------------------------------------------------------------------------
 if [ "$RDP" -eq 1 ]; then
     rdp_user="${TARGET%%@*}"
@@ -876,7 +942,24 @@ if [ "$RDP" -eq 1 ]; then
     # le comportement est inchangé (résolution par le PATH de sshd).
     remote_cmd+=("${GREMOTE_REMOTE_BIN:-gremote}" --serve --rdp "${rdp_remote_quality_args[@]}")
 
+    # Une seule sortie pour tout : la connexion audio vit déjà au moment où le
+    # client RDP et la surveillance du ratio démarrent.
+    client_cleanup() {
+        if [ -n "${aspect_pid:-}" ]; then kill "$aspect_pid" 2>/dev/null || true; fi
+        if [ -n "${ssh_pid:-}" ]; then kill "$ssh_pid" 2>/dev/null || true; fi
+        if [ -n "${audio_ssh_pid:-}" ]; then kill "$audio_ssh_pid" 2>/dev/null || true; fi
+        if [ -n "${rdp_log:-}" ]; then rm -f "$rdp_log"; fi
+        if [ -n "${audio_log:-}" ]; then rm -f "$audio_log"; fi
+        return 0
+    }
+
     if [ "$DRY_RUN" -eq 1 ]; then
+        if [ "${#audio_args[@]}" -gt 0 ]; then
+            printf 'ssh -N -C -o ExitOnForwardFailure=yes'
+            if [ -n "$SSH_PORT" ]; then printf ' -p %s' "$SSH_PORT"; fi
+            for arg in "${audio_args[@]}"; do printf ' %s' "$arg"; done
+            printf ' %s\n' "$TARGET"
+        fi
         printf 'ssh'
         for arg in ${ssh_args[@]+"${ssh_args[@]}"}; do printf ' %s' "$arg"; done
         printf ' %s' "$TARGET"
@@ -885,6 +968,24 @@ if [ "$RDP" -eq 1 ]; then
         exit 0
     fi
 
+    # Tunnel audio : connexion SSH dédiée, montée AVANT la principale pour que
+    # le socket existe quand le serveur crée son puits (il l'attend 5 s de son
+    # côté). stdin sur /dev/null : le mot de passe RDP passe par celui du ssh
+    # principal. `-N` : aucune commande distante, seulement les -R.
+    audio_ssh_pid=""
+    audio_log=""
+    if [ "${#audio_args[@]}" -gt 0 ]; then
+        audio_ssh_opts=(-N -C -o ExitOnForwardFailure=yes)
+        if [ -n "$SSH_PORT" ]; then
+            audio_ssh_opts+=(-p "$SSH_PORT")
+        fi
+        audio_log="$(mktemp "${TMPDIR:-/tmp}/gremote-audio.XXXXXX")"
+        ssh "${audio_ssh_opts[@]}" "${audio_args[@]}" "$TARGET" \
+            </dev/null >"$audio_log" 2>&1 &
+        audio_ssh_pid=$!
+    fi
+    trap client_cleanup EXIT INT TERM HUP
+
     # La sortie du ssh sert de canal de contrôle : le serveur y écrit
     # GREMOTE-RDP-READY quand krdpserver écoute vraiment (le certificat est
     # créé au premier lancement, ça prend une à deux secondes).
@@ -892,7 +993,6 @@ if [ "$RDP" -eq 1 ]; then
     printf '%s\n' "$rdp_pass" |
         ssh ${ssh_args[@]+"${ssh_args[@]}"} "$TARGET" "${remote_cmd[@]}" >"$rdp_log" 2>&1 &
     ssh_pid=$!
-    trap 'kill "$ssh_pid" 2>/dev/null || true; rm -f "$rdp_log"' EXIT INT TERM
 
     ready=0
     for _ in $(seq 1 300); do
@@ -906,6 +1006,15 @@ if [ "$RDP" -eq 1 ]; then
     if [ "$ready" -ne 1 ]; then
         sed -n '1,12p' "$rdp_log" >&2 2>/dev/null || true
         die "le serveur RDP de $TARGET n'a pas démarré (voir ci-dessus)"
+    fi
+
+    # Tunnel audio mort tout de suite (clé refusée, forwarding de socket
+    # interdit par le sshd distant) : l'hôte a attendu le socket puis joué en
+    # local, et le client n'en savait rien. On le dit, une fois.
+    if [ -n "$audio_ssh_pid" ] && ! kill -0 "$audio_ssh_pid" 2>/dev/null; then
+        printf 'gremote : tunnel audio interrompu — le son reste sur %s\n' "$TARGET" >&2
+        sed -n '1,3p' "$audio_log" >&2 2>/dev/null || true
+        audio_ssh_pid=""
     fi
 
 
@@ -1037,8 +1146,7 @@ if [ "$RDP" -eq 1 ]; then
             aspect_watch "$aspect_prior" "$rdp_size" &
             aspect_pid=$!
             # Sortie anormale (Ctrl+C, TERM) : la surveillance et son xev
-            # partent avec gremote, comme le ssh.
-            trap 'kill "$aspect_pid" 2>/dev/null || true; kill "$ssh_pid" 2>/dev/null || true; rm -f "$rdp_log"' EXIT INT TERM
+            # partent avec gremote — client_cleanup connaît déjà aspect_pid.
         fi
         wait "$rdp_pid" || true
         if [ -n "$aspect_pid" ]; then

@@ -64,9 +64,10 @@ cosign verify --key cosign.pub ghcr.io/elgabo86/gablue-main:latest
 `gremote` shows another Gablue machine's desktop in a window. It attaches to the
 host's Plasma session over RDP, tunnelled inside SSH: nothing is exposed on the
 network, the RDP password is drawn per session, and the sound comes back through
-a PipeWire tunnel. **If nobody is logged in, it creates the session first**
-(`gremote-session@<user>.service`): you log in with your own SSH account and get
-your own desktop, which survives the disconnect. The session is **virtual** —
+a PipeWire tunnel on **its own SSH connection**, so a video burst no longer
+blocks it behind itself. **If nobody is logged in, it creates the session
+first** (`gremote-session@<user>.service`): you log in with your own SSH account
+and get your own desktop, which survives the disconnect. The session is **virtual** —
 KWin renders off-screen, with no DRM device, no VT and no seat — so several
 accounts can be connected at the same time (gab and bdc), and the physical screen
 keeps showing the greeter. The rule is: **an existing graphical session for that
@@ -80,7 +81,7 @@ gremote gab@sucina:2323               # SSH on a non-standard port
 gremote -p 2323 gab@sucina            # same, explicit option
 gremote --rdp-port 13390 gab@sucina   # use another local tunnel port
 gremote --no-launch gab@sucina        # print the client line instead of running it
-gremote --no-audio gab@sucina         # no sound tunnel
+gremote --no-audio gab@sucina         # no sound tunnel: sound stays on the host
 gremote --no-start gab@sucina         # never create a session, fail if none
 ```
 
