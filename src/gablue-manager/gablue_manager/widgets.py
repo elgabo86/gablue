@@ -25,8 +25,8 @@ from .local import (
 )
 from .style import accent_color
 from .updates import (
-    DOMAINS, days_text, domain_count, summary_lines, total_updates,
-    unverified_domains,
+    DOMAINS, days_text, domain_count, staged_image, summary_lines,
+    total_updates, unverified_domains,
 )
 from .util import active_kind, address_text, display_name, dolphin_url, ssh_target
 
@@ -692,6 +692,11 @@ class UpdatesPanel(QFrame):
         total = total_updates(state)
         if total:
             return f"{total} disponible{'s' if total > 1 else ''}"
+        if staged_image(state):
+            # Une image téléchargée n'est pas une mise à jour à faire : le
+            # geste restant est un redémarrage, et le corps du panneau nomme
+            # déjà la version en attente.
+            return "Redémarrage requis"
         if domains and all(
             (result or {}).get("state") == "skipped"
             for result in domains.values()
@@ -1150,6 +1155,10 @@ class HostCard(QFrame):
             total = total_updates(self.updates_state)
             if total:
                 text += f" · {total} mise{'s' if total > 1 else ''} à jour"
+            elif staged_image(self.updates_state):
+                # Image déjà téléchargée : rien à faire depuis la carte, sinon
+                # redémarrer — ne pas la lire comme « à jour ».
+                text += " · redémarrage requis"
             elif self.updates_state.get("online", True):
                 text += " · à jour"
             else:

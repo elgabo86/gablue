@@ -401,7 +401,11 @@ def domain_count(domain: str, result: dict) -> int:
     if state != "updates" and not (domain == "image" and state == "available"):
         return 0
     if domain == "image":
-        return 1
+        # Une image DÉJÀ téléchargée n'est plus une mise à jour « disponible » :
+        # il ne reste qu'à redémarrer, et la pastille « Redémarrage requis » du
+        # pied de page le dit. La compter donnait « 1 mise à jour » puis un
+        # « Mettre à jour » qui ne téléchargeait rien (vécu 13/11/2026).
+        return 0 if (result or {}).get("staged") else 1
     if domain == "flatpak":
         return len(result.get("apps") or [])
     if domain == "brew":
@@ -411,6 +415,17 @@ def domain_count(domain: str, result: dict) -> int:
     if domain == "apps":
         return len(result.get("apps") or [])
     return 0
+
+def staged_image(state: dict | None) -> dict:
+    """Déploiement déjà téléchargé qui attend le redémarrage (`{}` sinon)."""
+    image = ((state or {}).get("domains") or {}).get("image") or {}
+    return image if image.get("staged") else {}
+
+def staged_text(state: dict | None) -> str:
+    """« Image <version> téléchargée — redémarrage requis »."""
+    version = str(staged_image(state).get("staged_version") or "")
+    head = f"Image {version} téléchargée" if version else "Image téléchargée"
+    return head + " — redémarrage requis"
 
 def total_updates(state: dict | None) -> int:
     if not state:
@@ -589,8 +604,8 @@ def compact_summary(state: dict | None) -> str:
         return "Vérifications de mises à jour désactivées"
     total = total_updates(state)
     if total:
-        # Une image déjà téléchargée compte même hors ligne : le redémarrage
-        # reste à faire, la connexion n'y change rien.
+        # Seuls les domaines réellement en retard sont nommés : une image déjà
+        # téléchargée n'est pas du lot (elle n'attend qu'un redémarrage).
         names = [
             DOMAIN_LABELS[domain].lower()
             for domain in DOMAINS
@@ -598,6 +613,10 @@ def compact_summary(state: dict | None) -> str:
         ]
         count = f"{total} mise{'s' if total > 1 else ''} à jour"
         return count + " : " + ", ".join(names)
+    if staged_image(state):
+        # Rien à télécharger : le redémarrage reste à faire, et « aucune mise
+        # à jour disponible » se lirait comme « tout est appliqué ».
+        return staged_text(state)
     if not state.get("online", True):
         return "Hors ligne — vérification impossible"
     unknown = [

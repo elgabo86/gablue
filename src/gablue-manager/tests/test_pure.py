@@ -1640,15 +1640,36 @@ class UpdatesTest(unittest.TestCase):
             updates.compact_summary({"online": False, "domains": {}}),
             "Hors ligne — vérification impossible",
         )
-        # Hors ligne mais image déjà téléchargée : le redémarrage reste à
-        # faire, on ne le cache pas derrière « hors ligne ».
+        # Image déjà téléchargée : ce n'est PLUS une mise à jour « disponible »
+        # (rien à télécharger, seule reste un redémarrage), donc pas de +1 —
+        # et le résumé le dit au lieu d'annoncer « aucune mise à jour »
+        # (vécu 13/11/2026 : « 1 mise à jour » puis un « Mettre à jour » sans
+        # rien à faire).
         offline_staged = {"online": False, "domains": {
             "image": {"state": "available", "staged": True, "days": 2},
             "flatpak": {"state": "offline"},
             "brew": {"state": "offline"},
             "gwine": {"state": "offline"},
         }}
-        self.assertIn("1 mise à jour", updates.compact_summary(offline_staged))
+        self.assertEqual(updates.total_updates(offline_staged), 0)
+        self.assertIn("redémarrage requis",
+                      updates.compact_summary(offline_staged))
+        staged = {"online": True, "domains": {
+            "image": {"state": "available", "staged": True, "days": 2,
+                      "version": "20261109-11h34",
+                      "staged_version": "20261112-08h54"},
+            "flatpak": {"state": "updates", "apps": ["org.kde.krita"]},
+        }}
+        self.assertEqual(updates.total_updates(staged), 1)
+        self.assertEqual(
+            updates.staged_text(staged),
+            "Image 20261112-08h54 téléchargée — redémarrage requis",
+        )
+        self.assertIn(
+            "Image Gablue : mise à jour téléchargée",
+            "\n".join(updates.summary_lines(staged)),
+        )
+        self.assertIn("1 mise à jour", updates.compact_summary(staged))
 
 
     def test_notification_text(self):
