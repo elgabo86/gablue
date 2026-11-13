@@ -17,7 +17,8 @@ WINDOWS_HOME="$HOME_REAL/Windows/UserData"
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
     export DISPLAY=
 fi
-# Répertoire /tmp partagé pour le multi-instance (doit être défini avant les symlinks)GWINE_LOCK_DIR="/tmp/gwine-locks-$USER"
+# Répertoire /tmp partagé pour le multi-instance (doit être défini avant les symlinks)
+GWINE_LOCK_DIR="/tmp/gwine-locks-$USER"
 SHARED_TMP_DIR="$GWINE_LOCK_DIR/tmp"
 
 # Chemins des symlinks dans le /tmp partagé (visibles par toutes les instances sandbox/non-sandbox)

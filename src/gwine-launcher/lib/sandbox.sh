@@ -248,9 +248,12 @@ build_bwrap_user_dirs() {
         fi
         
         if [ "$access_mode" = "ro" ]; then
-            bwrap_add --ro-bind "$exe_dir" "$exe_dir"
+            bwrap_add --ro-bind "$exe_dir" "$(bwrap_resolve_dest "$exe_dir")"
         else
-            bwrap_add --bind "$exe_dir" "$exe_dir"
+            # run_classic_mode peut avoir redirigé le dossier de l'exe via un
+            # symlink ($gamedir → dossier au chemin accentué) : bwrap refuse
+            # de monter SUR un symlink, on monte donc le dossier réel.
+            bwrap_add --bind "$exe_dir" "$(bwrap_resolve_dest "$exe_dir")"
         fi
     fi
 }

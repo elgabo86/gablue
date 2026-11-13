@@ -165,7 +165,11 @@ run_classic_mode() {
         echo "Chemin incompatible Windows détecté (dossier finissant par '.' ou espace)"
     fi
     if [ "$need_temp" = true ]; then
-        gwine_temp_base=$(mktemp -d)
+        # Le bac temporaire vit dans le /tmp partagé ($SHARED_TMP_DIR, monté
+        # sur /tmp dans la sandbox) : un mktemp dans le /tmp HÔTE ne serait
+        # pas visible sous bwrap, qui binde $SHARED_TMP_DIR sur /tmp.
+        mkdir -p "$SHARED_TMP_DIR"
+        gwine_temp_base=$(mktemp -d "$SHARED_TMP_DIR/gwine-tmp.XXXXXX")
         ln -sfn "$norm_dir" "$gwine_temp_base/gamedir"
         new_fullpath="$gwine_temp_base/gamedir/$(basename "$norm_path")"
         echo "Redirection via symlink: $new_fullpath"
