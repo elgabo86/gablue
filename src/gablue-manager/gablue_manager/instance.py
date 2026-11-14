@@ -20,6 +20,16 @@ def tray_socket() -> str:
     """Nom du canal de l'icône de barre d'état."""
     return f"gablue-manager-tray-{os.getuid()}"
 
+def update_socket() -> str:
+    """Nom du canal qui réserve « une mise à jour à la fois » sur ce poste.
+
+    Le mode `--update` le revendique pour toute sa durée : deux `bootc upgrade`
+    ou deux `flatpak update` simultanés se marcheraient dessus (verrou dpkg-like
+    d'ostree, cache de brew), et la fenêtre principale peut lancer la même mise
+    à jour que le tray.
+    """
+    return f"gablue-manager-update-{os.getuid()}"
+
 def claim(name: str) -> QLocalServer | None:
     """Écoute sur ce nom ; None si une instance vivante l'occupe déjà.
 
@@ -37,6 +47,18 @@ def claim(name: str) -> QLocalServer | None:
         return None
     QLocalServer.removeServer(name)
     return server if server.listen(name) else None
+
+def release(server) -> None:
+    """Rend un canal pris par `claim` : le ferme et retire sa socket.
+
+    Utilisé par la fenêtre pour le verrou de mise à jour, qu'elle garde le temps
+    d'une tâche (le mode `--update`, lui, le garde jusqu'à la fin du processus).
+    """
+    if server is None:
+        return
+    name = server.serverName()
+    server.close()
+    QLocalServer.removeServer(name)
 
 def send(name: str, message: bytes = b"raise") -> bool:
     """Prévient l'instance déjà lancée ; False si personne n'écoute."""
@@ -66,15 +88,23 @@ def manager_command() -> list[str]:
     """
     return [sys.executable, "-m", "gablue_manager"]
 
-def spawn(argv: list[str]) -> bool:
-    """Lance la commande détachée avec le bon `PYTHONPATH` ; False si échec."""
+def manager_argv(*args: str) -> list[str]:
+    """`manager_command()` suivi d'arguments : un mode CLI à relancer."""
+    return [*manager_command(), *args]
+
+def package_environment() -> dict:
+    """Environnement d'un enfant qui doit importer CE paquet (`PYTHONPATH`)."""
     env = dict(os.environ)
     root = package_root()
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = root if not existing else root + os.pathsep + existing
+    return env
+
+def spawn(argv: list[str]) -> bool:
+    """Lance la commande détachée avec le bon `PYTHONPATH` ; False si échec."""
     try:
         subprocess.Popen(
-            argv, env=env, stdin=subprocess.DEVNULL,
+            argv, env=package_environment(), stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True,
         )

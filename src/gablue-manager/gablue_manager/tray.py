@@ -15,7 +15,7 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QProcess, QProcessEnvironment, QTimer, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtNetwork import QNetworkInformation
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
@@ -32,6 +32,11 @@ NOTIFY_MS = 8000              # notification brève : le temps de lire une ligne
 # Référence du tray vivant : `run()` en garde une, sinon Python peut libérer
 # l'objet pendant que la boucle Qt tourne (le menu et le timer avec lui).
 _TRAY: "Tray | None" = None
+
+# Mises à jour détachées à la sortie de l'icône : `QProcess` tuait l'enfant en
+# se détruisant, d'où cette référence qui empêche le démontage (le processus
+# sort ensuite par `os._exit`).
+_DETACHED_JOBS: list = []
 
 def badge_icon(base: QIcon, alert: bool) -> QIcon:
     """Icône du manager, avec une pastille rouge quand un événement attend."""
@@ -136,6 +141,15 @@ class Tray:
         self._notify_result = False
 
         self._checking = False
+        # Mise à jour lancée depuis le menu : le sous-processus `--update` est
+        # suivi ici (`QProcess`) — « en cours » dans le menu, et personne d'autre
+        # ne peut en lancer une seconde depuis cette icône.
+        self._job: QProcess | None = None
+        self._job_domain = ""
+        # Une vérification demandée pendant qu'une sonde tourne ne doit pas
+        # être perdue : elle repart à la fin de celle-ci (son résultat est
+        # antérieur à l'événement qui l'a demandée).
+        self._recheck_after = False
         # Un worker encore vivant à la sortie garde sa référence : PySide
         # détruirait son QThread (« Destroyed while thread is still running »)
         # et `wait()` n'arrête rien. `run()` sort alors par `os._exit`.
@@ -186,6 +200,15 @@ class Tray:
             worker is not None and worker.isRunning()
             for worker in (self._worker, self._update_worker)
         )
+        # Une mise à jour lancée depuis le menu survit à l'icône : `QProcess`
+        # tue son enfant en se détruisant. On le détache (sans parent, gardé par
+        # le module) et `run()` sort par `os._exit` — sinon Python démonterait
+        # l'objet à l'arrêt et tuerait le `brew upgrade` en vol.
+        if self._job is not None and self._job.state() != QProcess.NotRunning:
+            self._job.setParent(None)
+            _DETACHED_JOBS.append(self._job)
+            self._job = None
+            self._lingering = True
 
     # -- accès ------------------------------------------------------------
     def open_manager(self) -> None:
@@ -193,6 +216,56 @@ class Tray:
         if instance.send(instance.gui_socket(), b"raise"):
             return
         instance.spawn(instance.manager_command())
+
+    # -- mises à jour appliquées depuis l'icône ----------------------------
+    def start_update(self, domain: str) -> None:
+        """Applique les mises à jour d'un domaine sans ouvrir la fenêtre.
+
+        Le travail vit dans son propre processus (`--update`), pas dans
+        l'icône : `QProcess` y donne « en cours » dans le menu et la fin, sans
+        charger `Tasks`/`MainWindow` ici. Le sous-processus prévient la barre
+        d'état en fin de passe (message `updates`) ; s'il meurt avant, la
+        pastille le verra à la sonde suivante.
+        """
+        if self._job is not None:
+            return
+        argv = instance.manager_argv(
+            "--update", domain, "--auto-close-success",
+        )
+        process = QProcess(self.app)
+        process.setProgram(argv[0])
+        process.setArguments(argv[1:])
+        # `PYTHONPATH` de la version courante : le `gablue-manager` du PATH
+        # peut être celui d'une image antérieure (voir
+        # `instance.manager_command`).
+        environment = QProcessEnvironment.systemEnvironment()
+        for key, value in instance.package_environment().items():
+            environment.insert(key, value)
+        process.setProcessEnvironment(environment)
+        process.finished.connect(self._update_finished)
+        process.errorOccurred.connect(self._update_failed)
+        self._job = process
+        self._job_domain = domain
+        process.start()
+        self._update_icon()
+
+    def _update_finished(self, _code: int, _status=None) -> None:
+        self._job = None
+        self._job_domain = ""
+        self._update_icon()
+
+    def _update_failed(self, error) -> None:
+        """Le sous-processus n'a pas pu démarrer : rends le menu utilisable."""
+        if error != QProcess.FailedToStart:
+            return
+        self._job = None
+        self._job_domain = ""
+        self._update_icon()
+        self.icon.showMessage(
+            "Mise à jour impossible",
+            "Gablue Manager n'a pas pu lancer sa fenêtre de mise à jour.",
+            self.base_icon, NOTIFY_MS,
+        )
 
     def _activated(self, reason) -> None:
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
@@ -346,6 +419,26 @@ class Tray:
         self._update_icon()
         self._notify_updates(state, previous, manual=self._notify_result)
         self._notify_result = False
+        if self._recheck_after:
+            # Une vérification a été demandée **pendant** cette passe : son
+            # résultat est antérieur à l'événement qui l'a motivée (mise à jour
+            # terminée ailleurs), il ne peut pas servir de réponse.
+            self._recheck_after = False
+            self.request_update_check()
+
+    def request_update_check(self) -> None:
+        """Sonde demandée de l'extérieur, sans en perdre une seule.
+
+        Le message `updates` arrive quand une mise à jour vient de finir (menu
+        de l'icône, fenêtre principale, autre machine par ssh). Si une sonde est
+        déjà en vol, son résultat ne connaît pas encore cet événement : on la
+        rejoue à sa fin au lieu de la jeter, sinon la pastille rouge restait
+        jusqu'au créneau suivant (2 h, vécu 07/11/2026).
+        """
+        if self._update_worker is not None and self._update_worker.isRunning():
+            self._recheck_after = True
+            return
+        self.refresh_updates(force=True, notify=False)
 
     def _notify_updates(self, state: dict | None, previous: dict | None = None,
                         manual: bool = False) -> None:
@@ -407,6 +500,7 @@ class Tray:
                 self.menu.addAction(text).setEnabled(False)
 
         self.menu.addSeparator()
+        self._update_menu()
         self.check_action = self.menu.addAction(
             "Vérification des mises à jour…" if self._checking
             else "Vérifier les mises à jour"
@@ -415,6 +509,47 @@ class Tray:
         self.check_action.triggered.connect(lambda: self.refresh_updates(True))
         quit_action = self.menu.addAction("Quitter")
         quit_action.triggered.connect(self.app.quit)
+
+    def _update_menu(self) -> None:
+        """Sous-menu « Mettre à jour » : tout d'un trait, ou un domaine.
+
+        Les domaines sans mise à jour en attente sont grisés plutôt que masqués :
+        la liste reste stable d'une ouverture à l'autre, et l'état de la sonde se
+        lit sans cliquer. Pendant une mise à jour, une seule ligne « en cours » :
+        deux `flatpak update` simultanés se marcheraient dessus.
+        """
+        menu = self.menu.addMenu("Mettre à jour")
+        if self._job is not None:
+            label = updates.DOMAIN_LABELS.get(self._job_domain, "Mises à jour")
+            if self._job_domain == "all":
+                label = "Toutes les mises à jour"
+            menu.addAction(f"Mise à jour en cours — {label}…").setEnabled(False)
+            return
+        state = self.updates_state
+        total = updates.total_updates(state)
+        all_action = menu.addAction(
+            f"Tout mettre à jour ({total})" if total else "Tout mettre à jour"
+        )
+        all_action.triggered.connect(lambda: self.start_update("all"))
+        menu.addSeparator()
+        for domain in updates.DOMAINS:
+            result = ((state or {}).get("domains") or {}).get(domain) or {}
+            count = updates.domain_count(domain, result)
+            text = updates.DOMAIN_LABELS[domain]
+            if count:
+                text += f" ({count})"
+            action = menu.addAction(text)
+            action.setEnabled(count > 0)
+            action.triggered.connect(
+                lambda _checked=False, name=domain: self.start_update(name)
+            )
+        if state is None:
+            # Jamais sondé : les compteurs manquent, mais « tout mettre à jour »
+            # reste utile — il sonde les applications avant de partir.
+            menu.addSeparator()
+            menu.addAction(
+                "État inconnu — vérifier les mises à jour"
+            ).setEnabled(False)
 
     def _update_icon(self) -> None:
         pending = updates.has_updates(self.updates_state)
@@ -428,6 +563,11 @@ class Tray:
         if alerts:
             lines.append("Redémarrage requis")
             lines.extend("• " + text for text in alerts)
+        if self._job is not None:
+            label = updates.DOMAIN_LABELS.get(self._job_domain, "Mises à jour")
+            if self._job_domain == "all":
+                label = "toutes les mises à jour"
+            lines.append(f"Mise à jour en cours — {label}")
         lines.extend("• " + text for text in domains)
         self.icon.setToolTip("\n".join(lines))
 
@@ -473,9 +613,10 @@ def _tray_message(tray: Tray, app: QApplication, server) -> None:
     elif message == b"reload":
         tray.reload()
     elif message == b"updates":
-        # La fenêtre vient de finir une mise à jour : elle affiche déjà le
-        # résultat, le tray rafraîchit sa pastille sans doubler d'une bulle.
-        tray.refresh_updates(force=True, notify=False)
+        # Une mise à jour vient de finir (fenêtre, menu de l'icône, autre
+        # machine par ssh) : le tray rafraîchit sa pastille sans doubler d'une
+        # bulle, et rejoue la sonde si elle était déjà en vol.
+        tray.request_update_check()
     else:
         app.quit()
 

@@ -20,7 +20,7 @@ from . import journal, remote_updates
 from .local import parse_progress_event, privileged_prefix
 from .util import display_name, ssh_target
 from .widgets import BusyProgressBar
-from .workers import SshTaskWorker
+from .workers import RebootWorker, SshTaskWorker
 
 def _own_session(argv: list[str]) -> list[str]:
     """Commande dans sa propre session : son groupe se tue d'un seul coup.
@@ -93,6 +93,122 @@ def _short_command(command: str) -> str:
         return command.strip()
     return f"<script — {len(lines)} lignes>"
 
+
+# Sondes de redémarrage en vol : la référence doit vivre jusqu'à `finished`,
+# sinon le QThread serait détruit avec la fenêtre de tâche qu'il sert — et Qt
+# tombe alors le processus (« Destroyed while thread is still running »).
+_REBOOT_PROBES: set = set()
+
+def _reboot_row(dialog: QDialog) -> QWidget:
+    """Ligne « redémarrer maintenant / plus tard », masquée jusqu'au verdict.
+
+    Construite avec le dialogue (aucune fenêtre créée à la fin d'une tâche) et
+    montrée seulement quand `local.pending_reboot_reasons` a quelque chose à
+    dire : une image ostree staged, des kargs du prochain démarrage, une config
+    de pilote écrite depuis le boot. C'est la même source que le bandeau
+    « Redémarrage requis » de la fenêtre principale.
+    """
+    row = QWidget(dialog)
+    layout = QHBoxLayout(row)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(10)
+
+    label = QLabel(row)
+    label.setObjectName("hostDetail")
+    label.setWordWrap(True)
+    layout.addWidget(label, 1)
+
+    later = QPushButton("Plus tard", row)
+    later.setObjectName("ghost")
+    later.setCursor(Qt.PointingHandCursor)
+    later.clicked.connect(row.hide)
+    layout.addWidget(later)
+
+    now = QPushButton("Redémarrer maintenant", row)
+    now.setObjectName("accent")
+    now.setCursor(Qt.PointingHandCursor)
+    now.clicked.connect(lambda: _reboot_now(dialog))
+    layout.addWidget(now)
+
+    row.setVisible(False)
+    dialog.reboot_row = row
+    dialog.reboot_label = label
+    dialog.reboot_now_button = now
+    dialog.reboot_later_button = later
+    return row
+
+def _reboot_now(dialog: QDialog) -> None:
+    """Demande le redémarrage, sans fenêtre de plus : la tâche est finie.
+
+    Détaché (`startDetached`) : le redémarrage ne doit pas dépendre de la vie de
+    ce processus, qui sort avec sa fenêtre. Même commande que le bandeau de la
+    fenêtre principale (`privileged_prefix` + `systemctl reboot`).
+    """
+    argv = [*privileged_prefix(), "systemctl", "reboot"]
+    started = QProcess.startDetached(argv[0], argv[1:])
+    if isinstance(started, tuple):        # PySide6 rend (bool, pid)
+        started = started[0]
+    if not started:
+        dialog.reboot_label.setObjectName("warn")
+        dialog.reboot_label.setText(
+            "Redémarrage impossible : " + " ".join(argv) + " n'a pas pu être "
+            "lancé. Redémarrez le poste à la main."
+        )
+        dialog.reboot_label.style().unpolish(dialog.reboot_label)
+        dialog.reboot_label.style().polish(dialog.reboot_label)
+        return
+    dialog.reboot_label.setText("Redémarrage en cours…")
+    dialog.reboot_now_button.setEnabled(False)
+    dialog.reboot_later_button.setEnabled(False)
+
+def _offer_reboot(dialog: QDialog) -> bool:
+    """Propose le redémarrage restant, hors du fil graphique.
+
+    `pending_reboot_reasons` lance `rpm-ostree status --json` et `rpm-ostree
+    kargs` : quelques centaines de millisecondes, jamais dans le fil qui vient
+    d'afficher « Terminé ». Rend True tout de suite (la proposition arrive plus
+    tard) : l'appelant ne doit donc pas fermer la fenêtre d'un succès tant que
+    le verdict n'est pas rendu — `_reboot_verdict` la ferme s'il n'y a rien.
+
+    La sonde **n'est pas** parentée à la fenêtre : la fenêtre principale qui se
+    ferme pendant ce temps détruit ses tâches, et un `QThread` détruit en vol
+    fait tomber le processus (vécu 05–09/11/2026). D'où la référence de module,
+    qui vit jusqu'à `finished`.
+    """
+    if not getattr(dialog, "_offer_reboot", False):
+        return False
+    worker = RebootWorker()
+    worker.done.connect(lambda reasons: _reboot_verdict(dialog, reasons))
+    worker.finished.connect(lambda: _REBOOT_PROBES.discard(worker))
+    worker.finished.connect(worker.deleteLater)
+    dialog._reboot_worker = worker
+    dialog.reboot_row.setVisible(False)
+    _REBOOT_PROBES.add(worker)
+    worker.start()
+    return True
+
+def _reboot_verdict(dialog: QDialog, reasons) -> None:
+    """Sonde rendue : afficher la proposition, ou fermer le succès annoncé."""
+    listed = [str(reason) for reason in (reasons or []) if str(reason).strip()]
+    if listed:
+        try:
+            dialog._reboot_worker = None
+            dialog.reboot_label.setObjectName("hostDetail")
+            dialog.reboot_label.setText(
+                "Redémarrage requis pour appliquer : "
+                + ", ".join(listed) + "."
+            )
+            dialog.reboot_label.style().unpolish(dialog.reboot_label)
+            dialog.reboot_label.style().polish(dialog.reboot_label)
+            dialog.reboot_row.setVisible(True)
+        except RuntimeError:       # fenêtre de tâche déjà fermée
+            pass
+        return
+    if getattr(dialog, "_close_on_success", False):
+        try:
+            QTimer.singleShot(0, dialog.accept)
+        except RuntimeError:
+            pass
 
 class _AuthLinkRow(QWidget):
     """Lien d'enregistrement (Tailscale) : cliquable, copiable, masquable.
@@ -478,13 +594,15 @@ class LocalTaskDialog(QDialog):
                  reveal_log_on_error: bool = False,
                  progress_mode: str = "auto", progress_text: str = "",
                  auth_link_parser=None, auth_check_argv: list[str] | None = None,
-                 auth_check_parser=None):
+                 auth_check_parser=None, offer_reboot: bool = False):
         super().__init__(parent)
         self._argv = list(argv or [])
         self._root = root
         self._hint_from_output = hint_from_output
         self._env_extra = dict(env_extra or {})
         self._close_on_success = close_on_success
+        self._offer_reboot = offer_reboot
+        self._reboot_worker = None
         self._reveal_log_on_error = reveal_log_on_error
         self._process: QProcess | None = None
         self._output: list[str] = []
@@ -587,6 +705,10 @@ class LocalTaskDialog(QDialog):
         self.result_label.setWordWrap(True)
         self.result_label.setVisible(False)
         root_layout.addWidget(self.result_label)
+
+        # Proposition de redémarrage : elle n'apparaît qu'après un succès dont
+        # l'effet attend le prochain démarrage (image staged, kargs…).
+        root_layout.addWidget(_reboot_row(self))
 
         buttons = QHBoxLayout()
         if self._progress_ui:
@@ -970,10 +1092,13 @@ class LocalTaskDialog(QDialog):
         if self._cancelled:
             # Annuler, c'est arrêter : on ferme la fenêtre de progression.
             QTimer.singleShot(0, self.accept)
-        elif self._close_on_success and ok:
-            # Mode CLI : l'appelant (gwine) enchaîne aussitôt, la fenêtre ne
-            # doit pas rester devant le jeu.
-            QTimer.singleShot(0, self.accept)
+        elif ok:
+            # Un succès ne ferme pas tout seul quand il peut rester un
+            # redémarrage à proposer : `_reboot_verdict` tranche ensuite.
+            if not _offer_reboot(self) and self._close_on_success:
+                # Mode CLI : l'appelant (gwine) enchaîne aussitôt, la fenêtre
+                # ne doit pas rester devant le jeu.
+                QTimer.singleShot(0, self.accept)
 
     def abort(self) -> None:
         """Annule et ferme sans demander (fermeture de la fenêtre principale)."""
@@ -1021,9 +1146,14 @@ class SequentialTaskDialog(QDialog):
     completed = Signal(bool)     # (succès) — émis à la fin, avant fermeture
 
     def __init__(self, parent=None, title: str = "", subtitle: str = "",
-                 steps: list[dict] | None = None):
+                 steps: list[dict] | None = None,
+                 close_on_success: bool = False,
+                 offer_reboot: bool = False):
         super().__init__(parent)
         self._steps = [dict(step) for step in (steps or [])]
+        self._close_on_success = close_on_success
+        self._offer_reboot = offer_reboot
+        self._reboot_worker = None
         self._index = -1
         self._process: QProcess | None = None
         self._output: list[str] = []
@@ -1090,6 +1220,10 @@ class SequentialTaskDialog(QDialog):
         self.result_label.setWordWrap(True)
         self.result_label.setVisible(False)
         root.addWidget(self.result_label)
+
+        # Même proposition qu'en tâche unique : la séquence vient de télécharger
+        # une image, elle ne prend effet qu'au redémarrage.
+        root.addWidget(_reboot_row(self))
 
         buttons = QHBoxLayout()
         self.log_toggle = QPushButton("Terminal", self)
@@ -1253,6 +1387,10 @@ class SequentialTaskDialog(QDialog):
         self.close_button.setVisible(True)
         self.close_button.setDefault(True)
         self.completed.emit(True)
+        # Un redémarrage peut rester à proposer (image staged) : le verdict de
+        # la sonde décide alors de fermer, pas le mode « fermer si succès ».
+        if not _offer_reboot(self) and self._close_on_success:
+            QTimer.singleShot(0, self.accept)
 
     def _finish_with(self, message: str, ok: bool) -> None:
         # Fin sur échec ou annulation : la barre reprend un mode déterminé,

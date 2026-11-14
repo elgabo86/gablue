@@ -21,9 +21,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from gablue_manager import (  # noqa: E402
-    apps, cli, hosts, journal, local, prefs, remote_hardware, remote_updates,
-    ssh, updates, util,
+    apps, cli, hosts, journal, local, local_updates, prefs, remote_hardware,
+    remote_updates, ssh, updates, util,
 )
+# `instance` (QLocalServer/QLocalSocket) vit dans `test_task_dialogs` : les
+# tests de ce fichier restent sans PySide6.
 
 
 class KargsTest(unittest.TestCase):
@@ -3198,6 +3200,81 @@ class ImageDetailTest(unittest.TestCase):
         text = updates.image_detail({"staged": True, "version": "20261106"})
         self.assertEqual(text, "actuelle 20261106 · mise à jour en attente")
 
+
+class LocalUpdateStepsTest(unittest.TestCase):
+    """Séquence appliquée par la fenêtre, la barre d'état et `--update`."""
+
+    @staticmethod
+    def domain_of(step: dict) -> str:
+        label = step["label"]
+        for domain, base in local_updates.STEP_LABELS.items():
+            if label == base or label.startswith(base + " ("):
+                return domain
+        raise AssertionError(f"libellé d'étape inconnu : {label}")
+
+    def test_order_follows_domains(self):
+        steps = local_updates.steps()
+        domains = [self.domain_of(step) for step in steps]
+        expected = [d for d in updates.DOMAINS if d in domains]
+        self.assertEqual(domains, expected)
+
+    def test_apps_step_needs_pending(self):
+        self.assertIsNone(local_updates.step_for("apps"))
+        self.assertIsNone(local_updates.step_for("apps", []))
+        key = apps.APPS[0].key
+        step = local_updates.step_for("apps", [key])
+        self.assertIsNotNone(step)
+        self.assertIn(apps.APPS[0].name, step["label"])
+        self.assertTrue(step["busy"])
+        self.assertIn(apps.APPS[0].name, "".join(step["argv"]))
+
+    def test_every_step_is_complete(self):
+        for step in local_updates.steps([apps.APPS[0].key]):
+            self.assertTrue(step["argv"])
+            self.assertIn(self.domain_of(step), updates.DOMAINS)
+
+    def test_unknown_domain_has_no_step(self):
+        self.assertIsNone(local_updates.step_for("inconnu"))
+
+    def test_needs_apps_probe(self):
+        self.assertTrue(local_updates.needs_apps_probe("all"))
+        self.assertTrue(local_updates.needs_apps_probe("apps"))
+        for domain in ("image", "flatpak", "gwine", "brew"):
+            self.assertFalse(local_updates.needs_apps_probe(domain))
+
+    def test_local_task_kwargs_map_busy(self):
+        step = local_updates.step_for("apps", [apps.APPS[0].key])
+        kwargs = local_updates.local_task_kwargs(step)
+        self.assertEqual(kwargs["progress_mode"], "busy")
+        self.assertEqual(kwargs["argv"], step["argv"])
+        self.assertTrue(kwargs["progress_text"])
+
+
+class UpdateModeArgsTest(unittest.TestCase):
+    """`--update <domaine>` : un seul domaine, refusé sinon."""
+
+    def test_domain(self):
+        opts = cli.parse_args(["--update", "flatpak"])
+        self.assertEqual(opts["mode"], "update")
+        self.assertEqual(opts["domain"], "flatpak")
+        self.assertFalse(opts["auto_close_success"])
+
+    def test_all_and_option(self):
+        opts = cli.parse_args(["--update", "all", "--auto-close-success"])
+        self.assertEqual(opts["domain"], "all")
+        self.assertTrue(opts["auto_close_success"])
+
+    def test_refusals(self):
+        for argv in (["--update"], ["--update", "tout"],
+                     ["--update", "flatpak", "brew"],
+                     ["--update", "--force", "flatpak"]):
+            with self.assertRaises(cli.UsageError):
+                cli.parse_args(argv)
+
+    def test_other_modes_untouched(self):
+        opts = cli.parse_args(["--progress", "--title", "T", "--", "true"])
+        self.assertEqual(opts["mode"], "progress")
+        self.assertEqual(opts["command"], ["true"])
 
 
 if __name__ == "__main__":

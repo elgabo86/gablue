@@ -1,8 +1,9 @@
 """Point d'entrée de Gablue Manager.
 
-Sans argument : fenêtre principale. Les modes `--progress`, `--confirm` et
-`--choose` (voir `cli.py`) ouvrent une seule boîte et rendent un code : gwine
-s'en sert pour l'initialisation du préfixe Wine, à la place de kdialog.
+Sans argument : fenêtre principale. Les modes `--progress`, `--confirm`,
+`--choose` et `--update` (voir `cli.py`) n'ouvrent que ce qu'ils doivent et
+rendent un code : gwine s'en sert pour l'initialisation du préfixe Wine, la
+barre d'état pour appliquer les mises à jour sans charger la fenêtre.
 """
 
 import os
@@ -33,9 +34,20 @@ fenêtre : plusieurs postes peuvent être traités en même temps.
       Icône de barre d'état seule (démarrage de session). Un clic ouvre la
       fenêtre ; une pastille rouge signale un redémarrage requis ou une mise
       à jour. La fenêtre n'est chargée qu'au clic : aucune sonde SSH ni
-      registre des postes avant.
+      registre des postes avant. Son menu « Mettre à jour » applique les mises
+      à jour sans ouvrir la fenêtre : tout d'un trait, ou un domaine à la fois
+      (image Gablue, Flatpaks, gwine, applications, Homebrew), dans la même
+      fenêtre de progression que l'application ; un redémarrage encore
+      nécessaire est proposé à la fin.
 
-Modes sans fenêtre principale (utilisés par gwine) :
+Modes sans fenêtre principale (utilisés par gwine et la barre d'état) :
+  --update all|image|flatpak|gwine|apps|brew [--auto-close-success]
+      Applique les mises à jour de ce poste, un domaine ou tous, dans la
+      fenêtre de progression et rien d'autre (aucune fenêtre principale, aucune
+      sonde SSH). Une seule mise à jour à la fois par poste : sortie 4 si une
+      autre tourne déjà, 0 si tout a réussi, 1 en échec, 130 si annulé.
+      --auto-close-success ferme la fenêtre en cas de succès — sauf s'il reste
+      un redémarrage à proposer, qui garde la fenêtre pour son bouton.
   --progress --title T [--subtitle T] [--auto-close-success] -- commande…
       Exécute la commande dans la fenêtre de progression du manager, journal
       derrière le bouton « Terminal ». La commande publie ses étapes sur sa

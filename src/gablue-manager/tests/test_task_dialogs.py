@@ -299,5 +299,192 @@ class RemoteBatchDialogTest(unittest.TestCase):
         self.assertEqual(dialog._workers, {})
 
 
+@unittest.skipIf(QApplication is None, "PySide6 absent")
+class RebootProposalTest(unittest.TestCase):
+    """Fin de mise à jour : proposer le redémarrage dans la même fenêtre."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.home = tempfile.TemporaryDirectory()
+        os.environ["HOME"] = cls.home.name
+        cls.app = QApplication.instance() or QApplication([])
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.home.cleanup()
+
+    def _sequential(self, **kwargs):
+        from gablue_manager import tasks
+
+        return tasks.SequentialTaskDialog(
+            None, title="Tout mettre à jour",
+            steps=[{"label": "Test", "argv": ["true"]}], **kwargs,
+        )
+
+    def _single(self, **kwargs):
+        from gablue_manager import tasks
+
+        return tasks.LocalTaskDialog(None, title="Test", argv=["true"], **kwargs)
+
+    def test_reasons_show_the_proposal(self):
+        from gablue_manager import tasks
+
+        dialog = self._sequential(offer_reboot=True)
+        self.assertTrue(dialog.reboot_row.isHidden())
+        tasks._reboot_verdict(dialog, ["nouvelle image Gablue téléchargée"])
+        self.assertTrue(dialog.reboot_row.isVisibleTo(dialog))
+        self.assertIn("nouvelle image Gablue",
+                      dialog.reboot_label.text())
+
+    def test_no_reason_closes_a_success(self):
+        from gablue_manager import tasks
+
+        dialog = self._sequential(offer_reboot=True, close_on_success=True)
+        dialog.show()
+        tasks._reboot_verdict(dialog, [])
+        self.app.processEvents()
+        self.assertFalse(dialog.isVisible())
+
+    def test_a_reason_keeps_the_window_open(self):
+        from gablue_manager import tasks
+
+        dialog = self._sequential(offer_reboot=True, close_on_success=True)
+        dialog.show()
+        tasks._reboot_verdict(dialog, ["paramètres du noyau modifiés"])
+        self.app.processEvents()
+        self.assertTrue(dialog.isVisible())
+
+    def test_single_task_offers_it_too(self):
+        from gablue_manager import tasks
+
+        self.assertFalse(tasks._offer_reboot(self._single()))
+        dialog = self._single(offer_reboot=True)
+        tasks._reboot_verdict(dialog, ["émulation CPUID fault"])
+        self.assertTrue(dialog.reboot_row.isVisibleTo(dialog))
+
+
+@unittest.skipIf(QApplication is None, "PySide6 absent")
+class TrayUpdateMenuTest(unittest.TestCase):
+    """Sous-menu « Mettre à jour » : un domaine par action, grisé sans attente."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.home = tempfile.TemporaryDirectory()
+        os.environ["HOME"] = cls.home.name
+        cls.app = QApplication.instance() or QApplication([])
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.home.cleanup()
+
+    def _menu(self, state):
+        from gablue_manager import tray
+
+        icon = tray.Tray(self.app)
+        icon.updates_state = state
+        icon._build_menu()
+        for action in icon.menu.actions():
+            if action.text() == "Mettre à jour":
+                return icon, action.menu()
+        raise AssertionError("sous-menu « Mettre à jour » absent")
+
+    def test_domains_greyed_without_state(self):
+        _icon, menu = self._menu(None)
+        texts = [a.text() for a in menu.actions() if not a.isSeparator()]
+        self.assertEqual(texts[0], "Tout mettre à jour")
+        self.assertTrue(menu.actions()[0].isEnabled())
+        for action in menu.actions():
+            if action.isSeparator() or action.text() == "Tout mettre à jour":
+                continue
+            self.assertFalse(action.isEnabled(), action.text())
+
+    def test_counts_and_enabling(self):
+        state = {"checked_at": 1.0, "domains": {
+            "image": {"state": "available", "version": "20261115"},
+            "flatpak": {"state": "updates", "apps": ["a", "b"]},
+            "gwine": {"state": "uptodate", "components": []},
+            "apps": {"state": "updates", "apps": ["ES-DE"]},
+            "brew": {"state": "unknown", "formulas": []},
+        }}
+        _icon, menu = self._menu(state)
+        by_text = {a.text(): a for a in menu.actions() if not a.isSeparator()}
+        self.assertIn("Tout mettre à jour (4)", by_text)
+        self.assertTrue(by_text["Image Gablue (1)"].isEnabled())
+        self.assertTrue(by_text["Flatpaks (2)"].isEnabled())
+        self.assertTrue(by_text["Applications (1)"].isEnabled())
+        self.assertFalse(by_text["Composants gwine"].isEnabled())
+        self.assertFalse(by_text["Homebrew"].isEnabled())
+
+    def test_a_running_update_locks_the_menu(self):
+        icon, _menu = self._menu({"checked_at": 1.0, "domains": {
+            "flatpak": {"state": "updates", "apps": ["a"]},
+        }})
+        icon._job = object()
+        icon._job_domain = "flatpak"
+        icon._build_menu()
+        menu = next(a.menu() for a in icon.menu.actions()
+                    if a.text() == "Mettre à jour")
+        actions = [a for a in menu.actions() if not a.isSeparator()]
+        self.assertEqual(len(actions), 1)
+        self.assertIn("en cours", actions[0].text())
+        self.assertFalse(actions[0].isEnabled())
+
+    def test_start_update_tracks_its_subprocess(self):
+        from unittest import mock
+
+        from gablue_manager import instance
+
+        icon, _menu = self._menu(None)
+        with mock.patch.object(
+            instance, "manager_argv",
+            return_value=["/usr/bin/bash", "-c", "exit 0"],
+        ) as argv:
+            icon.start_update("flatpak")
+            self.assertTrue(argv.called)
+            self.assertIsNotNone(icon._job)
+            # Un second clic ne lance rien : le poste est réservé.
+            running = icon._job
+            icon.start_update("brew")
+            self.assertIs(icon._job, running)
+            self.assertTrue(icon._job.waitForFinished(5000))
+        self.app.processEvents()            # livraison du signal `finished`
+        self.assertIsNone(icon._job)
+        self.assertEqual(icon._job_domain, "")
+
+
+@unittest.skipIf(QApplication is None, "PySide6 absent")
+class UpdateLockTest(unittest.TestCase):
+    """`instance.update_socket` : une mise à jour à la fois sur ce poste."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_update_channel_is_per_user(self):
+        from gablue_manager import instance
+
+        self.assertTrue(instance.update_socket().endswith(f"-{os.getuid()}"))
+        self.assertNotEqual(instance.update_socket(), instance.tray_socket())
+
+    def test_manager_argv_keeps_module_invocation(self):
+        from gablue_manager import instance
+
+        argv = instance.manager_argv("--update", "brew")
+        self.assertEqual(argv[-2:], ["--update", "brew"])
+        self.assertIn("gablue_manager", argv)
+
+    def test_release_frees_the_channel(self):
+        from gablue_manager import instance
+
+        name = f"gablue-manager-test-lock-{os.getpid()}"
+        first = instance.claim(name)
+        self.assertIsNotNone(first)
+        self.assertIsNone(instance.claim(name))     # déjà pris
+        instance.release(first)
+        again = instance.claim(name)                # rendu, donc reprenable
+        self.assertIsNotNone(again)
+        instance.release(again)
+
+
 if __name__ == "__main__":
     unittest.main()

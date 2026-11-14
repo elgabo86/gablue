@@ -20,8 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from .constants import (
-    AVAHI_BROWSE, HOSTS_FILE, NO_AUTO_PROBE_STATES, PULSE_MS, REFRESH_MS,
-    UPDATE_HELPER, UPDATE_PROGRESS_FIFO, _which,
+    AVAHI_BROWSE, HOSTS_FILE, NO_AUTO_PROBE_STATES, PULSE_MS, REFRESH_MS, _which,
 )
 from .dialogs.apps import AppsDialog
 from .dialogs.booster import ForegroundBoosterDialog
@@ -43,18 +42,14 @@ from .dialogs.updates import AutoUpdatesDialog
 from .dialogs.variant import VariantDialog
 from .dialogs.wifi import WifiPowersaveDialog
 from .hosts import load_hosts, save_hosts
-from . import instance, prefs, remote_updates, updates
+from . import instance, local_updates, prefs, remote_updates, updates
 
 from .apps import names_for as apps_names
-from .apps import update_script as apps_update_script
 from .local import (
-    _sudo_run, avahi_apply_args, avahi_publish_state, brew_available,
-    brew_progress_parser, brew_update_hint, brew_update_script, disk_rows,
-    flatpak_update_hint, flatpak_update_script, format_memory_modules,
+    _sudo_run, avahi_apply_args, avahi_publish_state, brew_update_script,
+    disk_rows, flatpak_update_script, format_memory_modules,
     gablue_update_hint, hardware_summary, local_sshd_state,
-    memory_modules_label,
-    parse_flatpak_progress, parse_gablue_progress, privileged_prefix,
-    set_local_sshd_sudo,
+    memory_modules_label, privileged_prefix, set_local_sshd_sudo,
 )
 from .ssh import (
     ask_remote_password, key_ready, remote_sudo_nopasswd, remote_sudo_prefix,
@@ -174,6 +169,11 @@ class MainWindow(QMainWindow):
         self._last_image_check: float = 0.0
         self._updates_worker: UpdateCheckWorker | None = None
         self._apps_worker: AppsUpdateWorker | None = None
+        # Verrou « une mise à jour locale à la fois » (`instance.update_socket`) :
+        # deux `bootc upgrade` ou deux `flatpak update` simultanés se marcheraient
+        # dessus, et le menu de la barre d'état peut lancer la même. Gardé le
+        # temps de la tâche, rendu à sa fermeture.
+        self._update_lock = None
         # Mises à jour des postes distants : connues seulement après un clic
         # (« Vérifier les mises à jour »), une par poste, jamais en fond.
         self._remote_updates: dict[str, dict] = {}
@@ -2399,13 +2399,9 @@ class MainWindow(QMainWindow):
     def update_local_all(self) -> None:
         """Tout mettre à jour d'un trait, avec une barre **globale**.
 
-        Chaque mise à jour garde son propre analyseur ; la fenêtre globale
-        additionne les étapes terminées et la fraction de l'étape courante.
-        L'ordre est celui des dépendances réelles : l'image d'abord (elle peut
-        apporter un nouveau gwine), puis Flatpak, gwine et applications, qui ne
-        dépendent pas de l'image mais prennent du temps ; Homebrew en dernier,
-        parce que c'est l'étape la plus longue et la plus fragile — un échec ne
-        doit pas laisser les AppImages en retard.
+        La liste des étapes — ordre des dépendances, repli sur `bootc` sans
+        helper, outils absents omis — vit dans `local_updates` : le menu de la
+        barre d'état (mode `--update all`) applique exactement la même.
 
         Les applications n'ont pas d'état local : la liste des AppImages en
         retard vient du réseau (un flux de releases par application), donc la
@@ -2417,7 +2413,7 @@ class MainWindow(QMainWindow):
     def _offer_local_all(self, result) -> None:
         """Sonde des applications terminée : proposer la séquence exacte."""
         pending = result[0]
-        steps = self._local_update_steps(pending)
+        steps = local_updates.steps(pending)
         if not steps:
             QMessageBox.information(
                 self, "Tout mettre à jour",
@@ -2437,188 +2433,88 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.Yes:
             return
+        if not self._claim_update_lock():
+            return
         dialog = SequentialTaskDialog(
             self,
             title="Tout mettre à jour",
             subtitle=f"{len(steps)} mises à jour enchaînées sur ce poste.",
             steps=steps,
+            offer_reboot=True,
         )
         dialog.completed.connect(self._updates_after_task)
+        self._hold_update_lock_until_done(dialog)
         start_task(self, dialog)
-
-    def _local_update_steps(self, pending_apps=None) -> list[dict]:
-        """Étapes réellement possibles sur ce poste, dans l'ordre.
-
-        Un outil absent n'est pas une erreur : il est simplement omis, sinon
-        « tout mettre à jour » échouerait sur chaque poste où Homebrew ou
-        flatpak n'est pas installé. `pending_apps` vient de la sonde réseau
-        (`apps.pending_updates`) : vide, aucune étape applications.
-        """
-        steps: list[dict] = []
-        if Path(UPDATE_HELPER).is_file():
-            steps.append({
-                "label": "Gablue (image système)",
-                "argv": [UPDATE_HELPER],
-                "root": True,
-                "fifo": UPDATE_PROGRESS_FIFO,
-                "hint": gablue_update_hint,
-            })
-        else:
-            bootc = shutil.which("bootc")
-            if bootc:
-                steps.append({
-                    "label": "Gablue (image système)",
-                    "argv": [bootc, "upgrade"],
-                    "root": True,
-                    "hint": gablue_update_hint,
-                    "busy": True,      # sans helper, bootc est muet
-                })
-        if shutil.which("flatpak"):
-            steps.append({
-                "label": "Flatpaks",
-                "argv": [_which("bash"), "-c", flatpak_update_script()],
-                "hint": flatpak_update_hint,
-                "parser": parse_flatpak_progress,
-            })
-        gwine = shutil.which("gwine") or (
-            "/usr/bin/gwine" if Path("/usr/bin/gwine").exists() else ""
-        )
-        if gwine:
-            steps.append({
-                "label": "gwine (composants)",
-                "argv": [gwine, "--init"],
-                "parser": parse_gablue_progress,
-                "env": {"GABLUE_PROGRESS": "1"},
-            })
-        pending = list(pending_apps or [])
-        if pending:
-            names = ", ".join(apps_names(pending))
-            steps.append({
-                "label": f"Applications ({names})",
-                "argv": [_which("bash"), "-c", apps_update_script(pending)],
-                "parser": parse_gablue_progress,
-                # Un AppImage se télécharge d'un bloc : aucune fraction à
-                # afficher pendant le transfert, la barre balaie et le libellé
-                # nomme l'application en cours (i/N).
-                "busy": True,
-            })
-        if brew_available():
-            steps.append({
-                "label": "Homebrew",
-                "argv": [_which("bash"), "-c", brew_update_script()],
-                "hint": brew_update_hint,
-                "parser": brew_progress_parser(),
-            })
-        return steps
 
     def update_local_gablue(self) -> None:
         """Image système Gablue (bootc), appliquée au prochain démarrage."""
+        step = local_updates.step_for("image")
+        if step is None:
+            QMessageBox.critical(
+                self, local_updates.TITLES["image"],
+                "bootc n'est pas installé sur ce poste.",
+            )
+            return
         answer = QMessageBox.question(
-            self, "Mise à jour de Gablue",
+            self, local_updates.TITLES["image"],
             "Télécharger la nouvelle image système Gablue ?\n\n"
             "Elle s'applique au prochain redémarrage.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
-        # Helper dédié : il publie la progression JSONL de bootc dans un FIFO
-        # (sudo ferme les fd >= 3, l'app ne peut pas lui en passer un). Repli
-        # sur bootc direct tant que l'image n'a pas le helper.
-        if Path(UPDATE_HELPER).is_file():
-            argv, fifo = [UPDATE_HELPER], UPDATE_PROGRESS_FIFO
-        else:
-            argv, fifo = [_which("bootc"), "upgrade"], ""
-        self._run_local_task(
-            "Mise à jour de Gablue",
-            "La nouvelle image s'applique au prochain redémarrage.",
-            argv, root=True,
-            hint_from_output=gablue_update_hint,
-            refresh_updates=True,
-            progress_fifo=fifo,
-            # Image antérieure au helper : bootc ne publie alors aucune
-            # progression. Barre indéterminée plutôt que le journal brut, la
-            # présentation reste la même (journal derrière « Terminal »).
-            progress_mode="auto" if fifo else "busy",
-            progress_text="Téléchargement de l'image système…",
-        )
+        self._run_local_step("image", step)
 
     def update_local_flatpaks(self) -> None:
-        flatpak = shutil.which("flatpak")
-        if flatpak is None:
+        step = local_updates.step_for("flatpak")
+        if step is None:
             QMessageBox.critical(
-                self, "Flatpak", "flatpak n'est pas installé sur ce poste."
+                self, local_updates.TITLES["flatpak"],
+                "flatpak n'est pas installé sur ce poste.",
             )
             return
         answer = QMessageBox.question(
-            self, "Mise à jour des Flatpaks",
+            self, local_updates.TITLES["flatpak"],
             "Mettre à jour les applications Flatpak du système ?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
-        self._run_local_task(
-            "Mise à jour des Flatpaks",
-            "Applications Flatpak système.",
-            [_which("bash"), "-c", flatpak_update_script()],
-            # Hors terminal, flatpak écrit « Updating 3/7… » puis des lignes
-            # avec le pourcentage : la barre les lit, le journal reste derrière
-            # le bouton « Terminal ».
-            hint_from_output=flatpak_update_hint,
-            progress_parser=parse_flatpak_progress,
-            refresh_updates=True,
-        )
+        self._run_local_step("flatpak", step)
 
     def update_local_gwine(self) -> None:
-        gwine = shutil.which("gwine") or (
-            "/usr/bin/gwine" if Path("/usr/bin/gwine").exists() else ""
-        )
-        if not gwine:
+        step = local_updates.step_for("gwine")
+        if step is None:
             QMessageBox.critical(
-                self, "gwine", "gwine n'est pas installé sur ce poste."
+                self, local_updates.TITLES["gwine"],
+                "gwine n'est pas installé sur ce poste.",
             )
             return
         answer = QMessageBox.question(
-            self, "Mise à jour de gwine",
+            self, local_updates.TITLES["gwine"],
             "Mettre à jour gwine (runner Wine et composants) ?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
-        self._run_local_task(
-            "Mise à jour de gwine",
-            "Runner Wine et composants (DXVK, VKD3D, D7VK).",
-            [gwine, "--init"],
-            # gwine publie ses étapes sur la sortie (« ::gablue:step ») :
-            # une vraie barre remplace le journal, qui reste derrière
-            # « Terminal ».
-            progress_parser=parse_gablue_progress,
-            env_extra={"GABLUE_PROGRESS": "1"},
-            refresh_updates=True,
-        )
+        self._run_local_step("gwine", step)
 
     def update_local_brew(self) -> None:
-        if not brew_available():
+        step = local_updates.step_for("brew")
+        if step is None:
             QMessageBox.critical(
-                self, "Homebrew", "Homebrew n'est pas installé sur ce poste."
+                self, local_updates.TITLES["brew"],
+                "Homebrew n'est pas installé sur ce poste.",
             )
             return
         answer = QMessageBox.question(
-            self, "Mise à jour de Homebrew",
+            self, local_updates.TITLES["brew"],
             "Mettre à jour les formules Homebrew ?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
-        self._run_local_task(
-            "Mise à jour de Homebrew",
-            "Formules installées par brew.",
-            [_which("bash"), "-c", brew_update_script()],
-            # Homebrew ne donne aucun pourcentage hors terminal (curl est muet) :
-            # la barre avance par formule, d'après ses en-têtes.
-            hint_from_output=brew_update_hint,
-            progress_parser=brew_progress_parser(),
-            refresh_updates=True,
-        )
+        self._run_local_step("brew", step)
 
     def update_local_apps(self) -> None:
         """Mettre à jour les AppImages installées (scripts d'installation).
@@ -2687,14 +2583,9 @@ class MainWindow(QMainWindow):
             f"1 application : {names}."
             if count == 1 else f"{count} applications : {names}."
         )
-        self._run_local_task(
-            "Mise à jour des applications",
-            subtitle,
-            [_which("bash"), "-c", apps_update_script(pending)],
-            progress_parser=parse_gablue_progress,
-            progress_text="Mise à jour des applications…",
-            refresh_updates=True,
-        )
+        step = local_updates.step_for("apps", pending)
+        if step is not None:
+            self._run_local_step("apps", step, subtitle=subtitle)
 
     def open_apps(self) -> None:
         # Non modal : les installations tournent dans leurs propres fenêtres et
@@ -2860,22 +2751,83 @@ class MainWindow(QMainWindow):
                         env_extra: dict | None = None,
                         progress_mode: str = "auto",
                         progress_text: str = "",
-                        refresh_updates: bool = False) -> None:
+                        refresh_updates: bool = False,
+                        offer_reboot: bool = False,
+                        holds_update_lock: bool = False) -> None:
         if argv and shutil.which(argv[0]) is None and not Path(argv[0]).exists():
             QMessageBox.critical(
                 self, title,
                 f"« {argv[0]} » introuvable sur ce poste.",
             )
+            if holds_update_lock:
+                self._release_update_lock()
             return
         dialog = LocalTaskDialog(
             self, title=title, subtitle=subtitle, argv=argv, root=root,
             hint_from_output=hint_from_output, progress_fifo=progress_fifo,
             progress_parser=progress_parser, env_extra=env_extra,
             progress_mode=progress_mode, progress_text=progress_text,
+            offer_reboot=offer_reboot,
         )
         if refresh_updates:
             dialog.completed.connect(self._updates_after_task)
+        if holds_update_lock:
+            self._hold_update_lock_until_done(dialog)
         start_task(self, dialog)
+
+    def _hold_update_lock_until_done(self, dialog) -> None:
+        """Rend le verrou de mise à jour dès la fin de la commande.
+
+        `completed` arrive quand la commande rend la main ; `finished` quand la
+        fenêtre se ferme (annulation, échec gardé ouvert) — les deux, pour que le
+        menu de la barre d'état ne reste pas bloqué sur un résultat affiché.
+        """
+        dialog.completed.connect(lambda _ok=True: self._release_update_lock())
+        dialog.finished.connect(lambda _code=0: self._release_update_lock())
+
+    def _run_local_step(self, domain: str, step: dict,
+                        subtitle: str | None = None) -> None:
+        """Fenêtre de progression d'une étape de `local_updates`.
+
+        La commande, ses analyseurs et ses replis sont écrits une seule fois :
+        la séquence « tout mettre à jour », le menu de la barre d'état et les
+        actions d'un domaine passent tous par la même étape.
+        """
+        if not self._claim_update_lock():
+            return
+        self._run_local_task(
+            local_updates.TITLES[domain],
+            local_updates.SUBTITLES.get(domain, "") if subtitle is None
+            else subtitle,
+            refresh_updates=True,
+            offer_reboot=True,
+            holds_update_lock=True,
+            **local_updates.local_task_kwargs(step),
+        )
+
+    def _claim_update_lock(self) -> bool:
+        """Réserve ce poste pour une mise à jour, ou dit pourquoi non.
+
+        Le canal est le même que celui du mode `--update` (menu de l'icône) :
+        un `bootc upgrade` et un `flatpak update` simultanés se marcheraient
+        dessus, et deux clics ne doivent pas doubler la tâche. Le verrou reste
+        pris tant que la tâche tourne dans cette fenêtre.
+        """
+        if self._update_lock is None:
+            self._update_lock = instance.claim(instance.update_socket())
+            if self._update_lock is not None:
+                return True
+        QMessageBox.information(
+            self, "Mise à jour en cours",
+            "Une mise à jour de ce poste est déjà en cours "
+            "(cette fenêtre ou le menu de la barre d'état). "
+            "Attendez qu'elle se termine.",
+        )
+        return False
+
+    def _release_update_lock(self) -> None:
+        instance.release(self._update_lock)
+        self._update_lock = None
 
     # -- recherche sur le réseau local -------------------------------------
     def discover_hosts(self) -> None:
