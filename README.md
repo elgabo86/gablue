@@ -89,11 +89,14 @@ The old waypipe mode (nested KWin, `-a`, `-s`, `--video`, `--codec`, `--quality`
 `--bpf`, `--compress`, `--no-gpu`, `--clean`) was removed on 02/11/2026 — RDP is
 the only transport now, and the removed code stays in the git history.
 
-The local client is `sdl-freerdp` when present (SDL3, native Wayland — no XWayland
-in the image/input path), with `xfreerdp` as fallback. `wlfreerdp` is not used:
-FreeRDP deprecated it in favour of the SDL3 client. The RDP password never appears
-on a command line (readable by any local user through `ps`): it is piped to the
-client's `/from-stdin:force`.
+The local client is `sdl-freerdp` (SDL3, native Wayland — no XWayland in the
+image/input path). `wlfreerdp` is not used: FreeRDP deprecated it in favour of the
+SDL3 client. A virtual session follows the window (`+dynamic-resolution`); a
+physical session cannot change resolution without resizing the real screen, so it
+is shown 1:1 at the remote resolution. The automatic scaling and aspect-ratio
+handling tried with `xfreerdp` were removed on 14/11/2026. The RDP password never
+appears on a command line (readable by any local user through `ps`): it is piped
+to the client's `/from-stdin:force`.
 
 One passwordless SSH key (`ssh-key-add`) and `AllowStreamLocalForwarding` on the
 remote sshd are all it needs.

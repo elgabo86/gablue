@@ -42,7 +42,7 @@ RDP_PORT=13389        # port LOCAL du -L ; le port distant dépend du compte
 RDP_PORT_SET=0        # 1 si --rdp-port a été donné (sinon : premier libre)
 SSH_PORT=""           # port SSH (défaut : ~/.ssh/config, sinon 22)
 SSH_PORT_SET=0        # 1 si -p/--port ou « hôte:port » a fixé le port
-RDP_LAUNCH=1          # 1 = lancer xfreerdp automatiquement s'il est présent
+RDP_LAUNCH=1          # 1 = lancer sdl-freerdp automatiquement s'il est présent
 NOSTART=0             # 1 = ne pas créer de session si l'hôte n'en a pas
 QUALITY=75            # qualité d'encodage KRdp (0-100) ; sert de borne en adaptatif
 # Mode de qualité : « auto » (défaut) = adaptatif sur une session PHYSIQUE,
@@ -51,8 +51,6 @@ QUALITY=75            # qualité d'encodage KRdp (0-100) ; sert de borne en adap
 # bureau virtuel suit la fenêtre et une image qui varie s'y voit (constaté
 # 04/11/2026). --adaptive / --static-quality forcent l'un ou l'autre.
 QUALITY_MODE="auto"
-FIT=1                 # 1 = session physique ajustée dans une petite fenêtre
-FIT_SIZE=1280x720     # taille MAXIMALE de cette fenêtre (le ratio de l'hôte est gardé)
 
 # =============================================================================
 # SECTION 2 : AIDE
@@ -79,9 +77,6 @@ Options :
       --adaptive     laisser KRdp baisser la qualité selon le débit (défaut sur
                      une session PHYSIQUE)
       --static-quality  épingler la qualité (défaut sur une session VIRTUELLE)
-      --fit-size WxH  taille MAXIMALE de la fenêtre d'une session PHYSIQUE
-                     (défaut : 1280x720), ratio de l'hôte respecté
-      --no-fit       session physique en taille réelle (aucune mise à l'échelle)
       --audio        transférer le son par SSH (défaut), sur une connexion
                      dédiée : une rafale vidéo ne le bloque plus derrière elle
       --no-audio     couper l'audio — le son du poste distant reste sur SES
@@ -90,23 +85,16 @@ Options :
   -n, --dry-run      afficher la commande sans l'exécuter
   -h, --help         cette aide
 
-Client RDP choisi d'après la session de l'hôte : session PHYSIQUE (bureau réel
-déjà ouvert) → xfreerdp avec mise à l'échelle (+smart-sizing), tout le bureau
-tient dans une petite fenêtre redimensionnable ; session VIRTUELLE (créée hors
-écran par gremote) → sdl-freerdp, Wayland natif, résolution suivie par
-+dynamic-resolution. sdl-freerdp ne sait PAS mettre à l'échelle (il ignore
-/smart-sizing), d'où les deux clients. Le type est annoncé par l'hôte, qui
-reconnaît sa session hors écran à sa sortie virtuelle (« Virtual-0 ») ; un hôte
-d'une image antérieure ne l'annonce pas : gremote le lui demande alors sur une
-seconde connexion SSH (socket `gremote-session` = virtuelle, sinon physique) ;
-sans réponse, physique.
-
-En session PHYSIQUE, la fenêtre garde le ratio du bureau distant quand on
-l'étire : xfreerdp seul étire l'image (échelles x et y indépendantes) et KWin
-ignore les indications de ratio X11, donc gremote recale la taille à chaque
-redimensionnement (comme le fait un lecteur vidéo). Une session VIRTUELLE n'a
-jamais ce recalage : sa résolution suit la fenêtre, donc la fenêtre s'étire
-librement et l'image reste nette.
+Client RDP : sdl-freerdp (SDL3, Wayland natif), quelle que soit la session. Une
+session VIRTUELLE (créée hors écran par gremote) suit la fenêtre
+(+dynamic-resolution) : rien de physique n'est redimensionné, l'image reste
+nette. Une session PHYSIQUE (bureau réel déjà ouvert) ne peut pas changer de
+résolution — ce serait l'écran du poste — donc l'image est affichée à sa
+résolution réelle, sans mise à l'échelle : une fenêtre de la taille de l'écran
+distant. Le type est annoncé par l'hôte, qui reconnaît sa session hors écran à
+sa sortie virtuelle (« Virtual-0 ») ; un hôte d'une image antérieure ne
+l'annonce pas : gremote le lui demande alors sur une seconde connexion SSH
+(socket `gremote-session` = virtuelle, sinon physique) ; sans réponse, physique.
 
 L'ancien mode waypipe (compositeur imbriqué, -a, -s, --video, --codec,
 --quality, --bpf, --compress, --no-gpu, --clean) a été retiré le 02/11/2026.
@@ -129,51 +117,6 @@ rdp_remote_port() {
 die() {
     printf 'gremote : %s\n' "$*" >&2
     exit 1
-}
-
-# Géométrie du bureau capturé par KRdp, lue dans la sortie de `wayland-info` :
-# « WxH » de l'union des sorties (celle qui a le drapeau `current`). Le client
-# en a besoin pour garder le ratio de l'hôte quand on étire la fenêtre, et il ne
-# peut PAS le deviner : en session physique KRdp streame la sortie réelle, à sa
-# résolution, quoi que demande le client (mesuré 06/11/2026). Vide si
-# indéterminable (l'appelant n'annonce alors que le port et le type).
-output_geometry() {
-    local line inout=0 x=0 y=0 w=0 h=0 first=1 x1=0 y1=0 x2=0 y2=0
-    while IFS= read -r line; do
-        case "$line" in
-            "interface: "*)
-                if [[ "$line" == *"'wl_output'"* ]]; then
-                    inout=1
-                else
-                    inout=0
-                fi
-                x=0 y=0 w=0 h=0
-                continue
-                ;;
-        esac
-        [ "$inout" -eq 1 ] || continue
-        if [[ "$line" =~ ^[[:space:]]*x:\ (-?[0-9]+),\ y:\ (-?[0-9]+) ]]; then
-            x="${BASH_REMATCH[1]}"
-            y="${BASH_REMATCH[2]}"
-        elif [[ "$line" =~ ^[[:space:]]*width:\ ([0-9]+)\ px,\ height:\ ([0-9]+)\ px ]]; then
-            w="${BASH_REMATCH[1]}"
-            h="${BASH_REMATCH[2]}"
-        elif [[ "$line" == *"flags:"*current* ]] && [ "$w" -gt 0 ] && [ "$h" -gt 0 ]; then
-            # `current` = mode actif de CETTE sortie : on cumule son rectangle
-            if [ "$first" -eq 1 ]; then
-                x1="$x" y1="$y" x2="$((x + w))" y2="$((y + h))" first=0
-            else
-                if [ "$x" -lt "$x1" ]; then x1="$x"; fi
-                if [ "$y" -lt "$y1" ]; then y1="$y"; fi
-                if [ "$((x + w))" -gt "$x2" ]; then x2="$((x + w))"; fi
-                if [ "$((y + h))" -gt "$y2" ]; then y2="$((y + h))"; fi
-            fi
-            w=0 h=0
-        fi
-    done
-    if [ "$first" -eq 0 ] && [ "$((x2 - x1))" -gt 0 ] && [ "$((y2 - y1))" -gt 0 ]; then
-        printf '%sx%s\n' "$((x2 - x1))" "$((y2 - y1))"
-    fi
 }
 
 # Noms des sorties (wl_output) de la sortie de `wayland-info`, une par ligne.
@@ -201,132 +144,6 @@ output_names() {
             printf '%s\n' "${BASH_REMATCH[1]}"
         fi
     done
-}
-
-# Taille de fenêtre qui contient FIT_SIZE en gardant le ratio de l'hôte.
-# Argument vide ou illisible (hôte d'une image antérieure) → FIT_SIZE tel quel,
-# c'est-à-dire le comportement d'avant.
-fit_for_aspect() {
-    local remote="$1" fw="${FIT_SIZE%x*}" fh="${FIT_SIZE#*x}" ow oh w h
-    if [[ ! "$remote" =~ ^([0-9]+)x([0-9]+)$ ]]; then
-        printf '%s\n' "$FIT_SIZE"
-        return 0
-    fi
-    ow="${BASH_REMATCH[1]}"
-    oh="${BASH_REMATCH[2]}"
-    if [ "$ow" -le 0 ] || [ "$oh" -le 0 ]; then
-        printf '%s\n' "$FIT_SIZE"
-        return 0
-    fi
-    # Comparaison en croix : arithmétique entière, aucun arrondi flottant
-    if [ "$((fw * oh))" -le "$((fh * ow))" ]; then
-        w="$fw"
-        h="$(((fw * oh + ow / 2) / ow))"
-    else
-        h="$fh"
-        w="$(((fh * ow + oh / 2) / oh))"
-    fi
-    if [ "$w" -lt 1 ]; then w=1; fi
-    if [ "$h" -lt 1 ]; then h=1; fi
-    printf '%sx%s\n' "$w" "$h"
-}
-
-# Garde le ratio du bureau distant pendant le redimensionnement de la fenêtre
-# xfreerdp. KWin n'honore pas les indications ICCCM de ratio (PAspect est lu
-# puis ignoré, seules les tailles min/max comptent), et smart-sizing applique
-# une échelle horizontale ET verticale distinctes : sans ce recalage, étirer la
-# fenêtre déforme l'image. On refait donc ce que fait un lecteur vidéo pour son
-# image — recaler la taille sur chaque ConfigureNotify.
-#   $1 = identifiants de fenêtres déjà présentes (écartés : autre session)
-#   $2 = « WxH » du bureau distant
-aspect_watch() {
-    local prior="$1" remote="$2" ow oh win="" cand line w h pw="" ph="" tw th in_cfg=0
-    local ev_fifo="" ev_pid=""
-    [[ "$remote" =~ ^([0-9]+)x([0-9]+)$ ]] || return 0
-    ow="${BASH_REMATCH[1]}"
-    oh="${BASH_REMATCH[2]}"
-    trap 'exit 0' TERM INT
-    # La fenêtre n'existe qu'une fois la connexion RDP établie : on l'attend.
-    # Les XID croissent, la plus récente est la nôtre ; `prior` écarte celles
-    # d'une session déjà ouverte (deux gremote en parallèle sont légitimes).
-    for _ in $(seq 1 300); do
-        for cand in $(xdotool search --onlyvisible --class xfreerdp 2>/dev/null || true); do
-            case "$prior" in
-                *" $cand "*) continue ;;
-            esac
-            win="$cand"
-            break
-        done
-        [ -n "$win" ] && break
-        sleep 0.1
-    done
-    [ -n "$win" ] || return 0
-    # xev ne rapporte que les événements de structure : ConfigureNotify donne la
-    # taille CLIENT, celle que xfreerdp met à l'échelle. Il écrit dans un tube
-    # nommé (mkfifo, pas un fichier : un fichier donne EOF immédiat) pour qu'on
-    # garde son PID — un xev posé sur une fenêtre détruite n'expire pas de
-    # lui-même, il faut le tuer.
-    ev_dir="$(mktemp -d "${TMPDIR:-/tmp}/gremote-aspect.XXXXXX")"
-    ev_fifo="$ev_dir/events"
-    mkfifo "$ev_fifo"
-    xev -id "$win" -event structure >"$ev_fifo" 2>/dev/null &
-    ev_pid=$!
-    trap 'kill "$ev_pid" 2>/dev/null || true; rm -rf "$ev_dir"; exit 0' TERM INT
-    while IFS= read -r line; do
-        case "$line" in
-            "ConfigureNotify event"*)
-                in_cfg=1
-                continue
-                ;;
-            "DestroyNotify event"*)
-                # Fenêtre fermée par l'utilisateur : plus rien à surveiller.
-                break
-                ;;
-        esac
-        [ "$in_cfg" -eq 1 ] || continue
-        in_cfg=0
-        [[ "$line" =~ width\ ([0-9]+),\ height\ ([0-9]+) ]] || continue
-        w="${BASH_REMATCH[1]}"
-        h="${BASH_REMATCH[2]}"
-        [ "$w" -gt 1 ] && [ "$h" -gt 1 ] || continue
-        # Maximisée ou plein écran : le ratio ne peut pas être tenu, on ne se
-        # bat pas contre le gestionnaire de fenêtres.
-        if xprop -id "$win" _NET_WM_STATE 2>/dev/null |
-            grep -qE 'MAXIMIZED|FULLSCREEN'; then
-            continue
-        fi
-        # Bord tiré = la dimension qui bouge commande ; coin = le plus petit
-        # facteur d'échelle (la fenêtre reste dans la zone demandée).
-        if [ -n "$pw" ] && [ "$w" -eq "$pw" ] && [ "$h" -ne "$ph" ]; then
-            tw="$(((h * ow + oh / 2) / oh))"
-            th="$h"
-        elif [ -n "$pw" ] && [ "$h" -eq "$ph" ] && [ "$w" -ne "$pw" ]; then
-            tw="$w"
-            th="$(((w * oh + ow / 2) / ow))"
-        elif [ "$((w * oh))" -le "$((h * ow))" ]; then
-            tw="$w"
-            th="$(((w * oh + ow / 2) / ow))"
-        else
-            th="$h"
-            tw="$(((h * ow + oh / 2) / oh))"
-        fi
-        if [ "$tw" -lt 1 ]; then tw=1; fi
-        if [ "$th" -lt 1 ]; then th=1; fi
-        # Déjà au ratio (à 1 px près, arrondi entier) : rien à faire, sinon le
-        # recalage se rappellerait lui-même indéfiniment.
-        if [ "$((tw > w ? tw - w : w - tw))" -le 1 ] &&
-            [ "$((th > h ? th - h : h - th))" -le 1 ]; then
-            pw="$w"
-            ph="$h"
-            continue
-        fi
-        xdotool windowsize "$win" "$tw" "$th" 2>/dev/null || true
-        pw="$tw"
-        ph="$th"
-    done <"$ev_fifo"
-    kill "$ev_pid" 2>/dev/null || true
-    rm -rf "$ev_dir"
-    return 0
 }
 
 # =============================================================================
@@ -405,25 +222,6 @@ while [ $# -gt 0 ]; do
             ;;
         --static-quality)
             QUALITY_MODE="static"
-            shift
-            ;;
-        --fit-size)
-            [ $# -ge 2 ] || die "--fit-size attend une taille (ex. 1280x720)"
-            [[ "$2" =~ ^[0-9]+x[0-9]+$ ]] ||
-                die "--fit-size attend <largeur>x<hauteur> : « $2 »"
-            FIT_SIZE="$2"
-            FIT=1
-            shift 2
-            ;;
-        --fit-size=*)
-            [[ "${1#*=}" =~ ^[0-9]+x[0-9]+$ ]] ||
-                die "--fit-size attend <largeur>x<hauteur> : « ${1#*=} »"
-            FIT_SIZE="${1#*=}"
-            FIT=1
-            shift
-            ;;
-        --no-fit)
-            FIT=0
             shift
             ;;
         --no-start)
@@ -600,7 +398,6 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     # Sans sortie (wl_output), KRdp diffuse du noir sans la moindre erreur.
     # Mieux vaut refuser que livrer une fenêtre noire qui laisse croire à un bug
     # du client.
-    output_size=""
     virtual_output=0
     if command -v wayland-info >/dev/null 2>&1; then
         _globals="$(timeout 5 wayland-info 2>/dev/null || true)"
@@ -608,10 +405,6 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
             *"interface: 'wl_output'"*) ;;
             *) die "le compositeur ${compositor} n'a aucune sortie (VT inactive ?) — corrige avec : systemctl restart gremote-session@${USER}" ;;
         esac
-        # Annoncée au client : en session physique, c'est le seul moyen pour lui
-        # de garder le ratio du bureau quand il étire la fenêtre (KRdp streame la
-        # sortie réelle à sa résolution, quoi que demande le client).
-        output_size="$(printf '%s\n' "$_globals" | output_geometry || true)"
         # Sortie « Virtual-N » = backend virtuel de KWin (voir output_names).
         _names="$(printf '%s\n' "$_globals" | output_names || true)"
         while IFS= read -r _name; do
@@ -627,14 +420,13 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     # socket : depuis Plasma 6.8 le compositeur est lancé par son unité
     # utilisateur, `kwin_wayland_wrapper` lui impose `wayland-N`, et le socket
     # `gremote-session` de l'ancienne conception n'existe donc plus — toute
-    # session virtuelle était annoncée PHYSIQUE (constaté 13/11/2026 : mise à
-    # l'échelle xfreerdp, fenêtre recalée au ratio et qualité adaptative sur un
-    # bureau virtuel). Le nom `gremote-session` reste accepté pour un hôte d'une
-    # image antérieure.
-    # La distinction commande le client RDP : sur une session physique on ne
-    # peut pas changer la résolution (ce serait le moniteur du poste), donc il
-    # faut un client qui mette l'image à l'échelle — xfreerdp ; sdl-freerdp
-    # ignore /smart-sizing. Une session virtuelle, elle, suit la fenêtre.
+    # session virtuelle était annoncée PHYSIQUE (constaté 13/11/2026 : fenêtre
+    # figée à la résolution du moniteur virtuel et qualité adaptative au lieu du
+    # suivi de fenêtre). Le nom `gremote-session` reste accepté pour un hôte
+    # d'une image antérieure.
+    # La distinction commande les options du client RDP : une session physique ne
+    # peut pas changer de résolution (ce serait le moniteur du poste), une
+    # session virtuelle suit la fenêtre (+dynamic-resolution).
     if [ "$compositor" = "gremote-session" ] || [ "$virtual_output" -eq 1 ]; then
         session_kind=virtual
     else
@@ -874,14 +666,7 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     done
     [ "$up" -eq 1 ] ||
         die "krdpserver n'écoute pas sur 127.0.0.1:${rdp_listen_port} (port déjà pris par un autre service ?)"
-    printf 'GREMOTE-RDP-READY %s %s' "$rdp_listen_port" "$session_kind"
-    # 4e champ facultatif : « WxH » du bureau capturé, pour que le client garde
-    # le ratio de l'hôte en redimensionnant sa fenêtre. Absent = client d'avant,
-    # ou géométrie illisible : il retombe sur une fenêtre étirée (inchangé).
-    if [ -n "$output_size" ]; then
-        printf ' %s' "$output_size"
-    fi
-    printf '\n'
+    printf 'GREMOTE-RDP-READY %s %s\n' "$rdp_listen_port" "$session_kind"
     wait "$srv_pid"
     exit 0
 fi
@@ -990,9 +775,8 @@ if [ "$RDP" -eq 1 ]; then
     remote_cmd+=("${GREMOTE_REMOTE_BIN:-gremote}" --serve --rdp "${rdp_remote_quality_args[@]}")
 
     # Une seule sortie pour tout : la connexion audio vit déjà au moment où le
-    # client RDP et la surveillance du ratio démarrent.
+    # client RDP démarre.
     client_cleanup() {
-        if [ -n "${aspect_pid:-}" ]; then kill "$aspect_pid" 2>/dev/null || true; fi
         if [ -n "${ssh_pid:-}" ]; then kill "$ssh_pid" 2>/dev/null || true; fi
         if [ -n "${audio_ssh_pid:-}" ]; then kill "$audio_ssh_pid" 2>/dev/null || true; fi
         if [ -n "${rdp_log:-}" ]; then rm -f "$rdp_log"; fi
@@ -1073,17 +857,12 @@ if [ "$RDP" -eq 1 ]; then
     # c'est la règle de CETTE image-là (socket `gremote-session`), reproduite
     # telle quelle plutôt qu'une autre inventée ici ; à cet instant krdpserver
     # écoute déjà, donc la session est en place. Deviner « physique » à
-    # l'aveugle donnait un bureau virtuel mis à l'échelle au lieu d'une
-    # résolution qui suit la fenêtre (vécu 09/11/2026 : hôte encore en
-    # 20261106, bureau virtuel figé en xfreerdp) ; deviner « virtuelle » coupait
+    # l'aveugle privait un bureau virtuel du suivi de fenêtre (vécu 09/11/2026 :
+    # hôte encore en 20261106) ; deviner « virtuelle » coupait
     # un bureau physique (06/11/2026). Réponse impossible (pas de clé SSH non
     # interactive, réseau) → physique : un bureau entier en petit vaut mieux
     # qu'un bureau coupé.
     rdp_kind="$(awk '/^GREMOTE-RDP-READY/ { print $3; exit }' "$rdp_log" 2>/dev/null || true)"
-    # 4e champ : géométrie du bureau capturé (« WxH »), facultative — absente
-    # d'un hôte d'une image antérieure, d'où le repli sur une fenêtre étirée.
-    rdp_size="$(awk '/^GREMOTE-RDP-READY/ { print $4; exit }' "$rdp_log" 2>/dev/null || true)"
-    [[ "$rdp_size" =~ ^[0-9]+x[0-9]+$ ]] || rdp_size=""
     case "$rdp_kind" in
         physical|virtual) ;;
         *)
@@ -1104,50 +883,26 @@ if [ "$RDP" -eq 1 ]; then
             ;;
     esac
 
-    # Client RDP local, choisi d'après la session :
-    # - PHYSIQUE : xfreerdp, seul à savoir mettre l'image à l'échelle
-    #   (+smart-sizing). sdl-freerdp ignore l'option (« /smart-sizing and
-    #   /multimon are currently not supported, ignoring »), et +dynamic-resolution
-    #   demanderait au serveur de changer la résolution, donc l'écran réel.
-    #   Contrepartie : fenêtre X11 (XWayland), image réduite en bitmap.
-    # - VIRTUELLE : sdl-freerdp, Wayland natif, et +dynamic-resolution y est
-    #   sans risque (rien de physique à redimensionner) : le texte reste net.
-    # Le type est toujours connu ici (annoncé, sinon demandé à l'hôte).
+    # Client RDP local : sdl-freerdp (SDL3, Wayland natif), quelle que soit la
+    # session. +dynamic-resolution n'est demandé que sur une session VIRTUELLE :
+    # là, la résolution du bureau distant peut suivre la fenêtre sans rien
+    # casser et le texte reste net. Sur une session PHYSIQUE, la demander ferait
+    # changer la résolution de l'écran réel ; le client affiche donc la sortie à
+    # sa résolution, sans mise à l'échelle (fenêtre de la taille de l'écran
+    # distant). L'échelle automatique et le recalage au ratio essayés avec
+    # xfreerdp (+smart-sizing, xdotool/xev) ont été retirés le 14/11/2026 : la
+    # fenêtre se battait contre le gestionnaire de fenêtres.
     # wlfreerdp n'est PAS utilisé : déprécié en amont (« nobody is actively
     # working on this », FreeRDP 3.32.2) au profit du client SDL3.
+    # Le type est toujours connu ici (annoncé, sinon demandé à l'hôte).
     rdp_client=""
     rdp_args=()
-    if [ "$rdp_kind" != "virtual" ] && command -v xfreerdp >/dev/null 2>&1; then
-        if [ -n "${DISPLAY:-}" ]; then
-            rdp_client=xfreerdp
-        else
-            printf "gremote : pas de DISPLAY pour xfreerdp — repli sdl-freerdp, sans mise à l'échelle\n" >&2
-        fi
-    fi
-    if [ -z "$rdp_client" ]; then
-        if command -v sdl-freerdp >/dev/null 2>&1; then
-            rdp_client=sdl-freerdp
-        elif command -v xfreerdp >/dev/null 2>&1; then
-            rdp_client=xfreerdp
-        fi
-    fi
-
-    if [ "$rdp_client" = "xfreerdp" ]; then
+    if command -v sdl-freerdp >/dev/null 2>&1; then
+        rdp_client=sdl-freerdp
         rdp_args+=(+clipboard)
         if [ "$rdp_kind" = "virtual" ]; then
-            # Repli sur une session VIRTUELLE (sdl-freerdp absent du poste) :
-            # rien à mettre à l'échelle, le bureau distant suit la fenêtre.
-            # Surtout ni smart-sizing ni recalage au ratio, qui figeraient la
-            # résolution du bureau virtuel au lieu de la laisser s'adapter.
             rdp_args+=(+dynamic-resolution)
-        elif [ "$FIT" -eq 1 ]; then
-            # Taille de fenêtre déduite de FIT_SIZE ET du ratio de l'hôte : sans
-            # ça la fenêtre d'origine tombe déjà mal (16:10 distant dans du
-            # 16:9 de FIT_SIZE) et l'image démarre étirée.
-            rdp_args+=("+smart-sizing:$(fit_for_aspect "$rdp_size")")
         fi
-    elif [ -n "$rdp_client" ]; then
-        rdp_args+=(+clipboard +dynamic-resolution)
     fi
 
     if [ "$rdp_kind" = "virtual" ]; then
@@ -1177,41 +932,11 @@ if [ "$RDP" -eq 1 ]; then
         # sort alors en 131. Sans ce `|| true`, `set -e` propageait 131 et une
         # GUI le lisait comme un plantage (vécu 04/11/2026 : dialogue d'erreur
         # à chaque fermeture d'une session pourtant réussie).
-        #
-        # Client lancé en ARRIÈRE-PLAN : la surveillance du ratio (session
-        # physique seulement, voir aspect_watch) doit pouvoir démarrer pendant
-        # que la fenêtre se crée. Les fenêtres xfreerdp déjà ouvertes sont
-        # relevées AVANT, pour qu'elle ne s'accroche pas à une autre session.
-        aspect_prior=" "
-        if [ "$rdp_kind" != "virtual" ] && [ "$rdp_client" = "xfreerdp" ] &&
-            command -v xdotool >/dev/null 2>&1; then
-            # `|| true` obligatoire : sans fenêtre xfreerdp ouverte, xdotool sort
-            # en 1 et `pipefail` ferait échouer toute la ligne (`set -e`).
-            aspect_prior=" $(
-                xdotool search --class xfreerdp 2>/dev/null | tr '\n' ' ' || true
-            )"
-        fi
         printf '%s\n' "$rdp_pass" |
             "$rdp_client" /v:127.0.0.1:"$RDP_PORT" /u:"$rdp_user" \
                 /cert:ignore /from-stdin:force "${rdp_args[@]}" &
         rdp_pid=$!
-        aspect_pid=""
-        if [ "$rdp_kind" != "virtual" ] && [ "$rdp_client" = "xfreerdp" ] &&
-            [ "$FIT" -eq 1 ] && [ -n "$rdp_size" ] &&
-            command -v xdotool >/dev/null 2>&1 && command -v xev >/dev/null 2>&1 &&
-            command -v xprop >/dev/null 2>&1; then
-            aspect_watch "$aspect_prior" "$rdp_size" &
-            aspect_pid=$!
-            # Sortie anormale (Ctrl+C, TERM) : la surveillance et son xev
-            # partent avec gremote — client_cleanup connaît déjà aspect_pid.
-        fi
         wait "$rdp_pid" || true
-        if [ -n "$aspect_pid" ]; then
-            # xev est un enfant du sous-shell : on le tue AVANT le sous-shell,
-            # sinon il survit à la fermeture de gremote sur une fenêtre morte.
-            pkill -P "$aspect_pid" 2>/dev/null || true
-            kill "$aspect_pid" 2>/dev/null || true
-        fi
     else
         # --no-launch (ou aucun client installé) : la commande affichée est
         # EXACTEMENT celle qui aurait été lancée, client et options compris.
