@@ -49,6 +49,14 @@ run_wgp_mode() {
     init_wgp_variables
     mount_wgp
 
+    # --exewgp : choisir l'exécutable AVANT toute préparation. Le menu ne doit
+    # pas attendre l'init du préfixe ni l'amorçage des saves/extras : ce travail
+    # se voit comme un lanceur figé (10-20 s avant le dialogue sur un pack qui
+    # amorce ses données). Le montage, lui, reste indispensable au scan.
+    if [ "$exewgp_mode" = true ]; then
+        select_exe_from_wgp
+    fi
+
     read_wgp_xbox_config
 
     init_wineprefix
@@ -66,13 +74,13 @@ run_wgp_mode() {
 
     prepare_saves
     prepare_extras
-    
-    if [ "$exewgp_mode" = true ]; then
-        select_exe_from_wgp
-    else
+
+    # Mode normal : la config du pack (.launch, .args, .fix) se lit comme avant,
+    # après l'init. En --exewgp le choix est déjà fait plus haut.
+    if [ "$exewgp_mode" != true ]; then
         read_wgp_config
     fi
-    
+
     prepare_temps
 
     local exe_dir

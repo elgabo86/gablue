@@ -100,7 +100,12 @@ lib/dir-config.sh
     l'ancien « tout ou rien » (copie seulement si le dossier racine du jeu
     est vide) qui laissait des trous après un changement de classification
     d'un pack reconstruit. Coût régime stable : un stat par item
-  - modes.sh : Modes WGP (sélection exe)
+  - modes.sh : Modes WGP (sélection exe) — en `--exewgp`, `run_wgp_mode`
+    appelle `select_exe_from_wgp` **juste après `mount_wgp`**, avant
+    `init_wineprefix` et l'amorçage saves/extras : le menu doit sortir tout de
+    suite, la préparation passe après le choix (sinon le dialogue n'arrivait
+    qu'après 10-20 s de travail sur un pack qui amorce ses données, vécu
+    14/11/2026). `prepare_temps` reste après la sélection
 - **launcher.sh** : Fichier de redirection vers launcher-utils/* + launcher-main.sh
 - **launcher-utils/*** : Utilitaires de lancement
   - env.sh : Chargement fichiers .env

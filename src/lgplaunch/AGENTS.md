@@ -65,7 +65,10 @@ réécriture). Le code principal (`main`) est extrait du lanceur par
   encore vide au moment du calcul de `REL_EXE` — le chemin de l'exe redirigé
   est ensuite réécrit par `read_lgp_config` et le jeu s'exécute depuis le mont
   squashfuse ; l'overlay complet reste monté et utilisable par son chemin
-  `/tmp/lgp-full-overlay/...`.
+  `/tmp/lgp-full-overlay/...`. En mode `--exe` le choix a lieu **avant**
+  `prepare_temps` (voir ci-dessous) : `FULL_EXE_PATH` y est donc déjà rempli,
+  et `run_lgp_mode` le restaure vers le mont après coup pour ne pas changer
+  d'où part le jeu.
 - **`--exe`** (action `EditLGP.desktop`) : `--exe` = menu des exécutables du
   pack, `--exe=<rel>` = chemin direct relatif à la racine (absolu et `..`
   refusés). Scan en deux passes — **racine du pack d'abord** (`.launch`,
@@ -75,6 +78,10 @@ réécriture). Le code principal (`main`) est extrait du lanceur par
   `.so` et son `launch.sh` n'apparaissait jamais (vécu F-ZERO GX 10/2026).
   Symlinks suivis manuellement (jamais `find -L`, qui sortirait du pack par
   `/tmp/lgp-saves/...`). Menu par `kdialog`, repli numéroté sur `/dev/tty`.
+  Le menu sort **avant** l'amorçage saves/extras, l'overlay temp et le hook
+  `.script.sh` du pack : ces étapes passent après le choix (sinon le dialogue
+  ne s'affichait qu'après plusieurs secondes de préparation, vécu 14/11/2026) ;
+  seul le montage et son scan précèdent.
 - **Classique** : exécutable direct, `.script.sh` du dossier puis `.env`,
   arguments `--args`.
 - **Nettoyage** : `trap cleanup_lgp EXIT` (démontage FUSE, symlinks, overlays

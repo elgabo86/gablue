@@ -51,6 +51,20 @@ run_lgp_mode() {
     unshare -U -m --map-root-user bash <<'LGP_NAMESPACE_EOF'
         _lgp_setup_bind_mounts
 
+        # Mode --exe : le menu de choix sort TOUT DE SUITE, avant l'amorçage
+        # saves/extras, l'overlay temp et le hook .script.sh du pack — ce
+        # travail peut prendre des secondes et se voyait comme un lanceur figé
+        # (10-20 s avant le dialogue). Seul le scan du mont est nécessaire avant.
+        if [ "${SELECT_EXE_MODE:-false}" = "true" ]; then
+            select_exe_from_lgp
+            # Relatif au mont, préfixe cité (un nom de pack peut contenir des
+            # globs : [], * — le motif ne doit pas les interpréter).
+            case "$FULL_EXE_PATH" in
+                "$MOUNT_DIR"/*) SELECTED_REL="${FULL_EXE_PATH#"$MOUNT_DIR"/}" ;;
+                *) SELECTED_REL="" ;;
+            esac
+        fi
+
         setup_saves_symlink
         setup_extras_symlink
         setup_temp_symlink
@@ -59,9 +73,12 @@ run_lgp_mode() {
         prepare_temps
         execute_prelaunch_script
         if [ "${SELECT_EXE_MODE:-false}" = "true" ]; then
-            # Mode --exe : sélection interactive d'un exécutable dans le pack
-            # (surcharge le contenu de .launch, .args du pack reste chargé)
-            select_exe_from_lgp
+            # prepare_full_overlay réécrit FULL_EXE_PATH vers l'overlay (le
+            # choix était alors fait avant lui) : on garde le chemin du mont,
+            # comme avant le déplacement du menu — le jeu part du squashfs.
+            if [ -n "${SELECTED_REL:-}" ]; then
+                FULL_EXE_PATH="$MOUNT_DIR/$SELECTED_REL"
+            fi
         else
             read_lgp_config
         fi
