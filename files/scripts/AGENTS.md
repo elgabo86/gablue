@@ -138,7 +138,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 
 **Correction composefs** (toutes variantes) :
 - LD_PRELOAD `gablue-composefs-fix.so` (~2,6 Ko, `src/composefs-fix/`) intercepte statfs/statfs64 : overlay composefs `/` rapporte 0 blocs libres → redirection `/`, `/home`, `/home/*` → `/var/home` (btrfs)
-- Injection : sed `.desktop` Dolphin (post-install) + drop-in user `plasma-dolphin.service.d` (activation D-Bus `org.freedesktop.FileManager1` démarre `dolphin --daemon` hors .desktop) + réinjection dans `gablue-isomount` (execlp direct)
+- Injection : sed `.desktop` Dolphin (post-install) + drop-in user `plasma-dolphin.service.d` (activation D-Bus `org.freedesktop.FileManager1` démarre `dolphin --daemon` hors .desktop) + réinjection dans `gablue-isomount` (execlp direct) et dans Gablue Manager (`util.dolphin_command` → `env LD_PRELOAD=… dolphin`, fichiers SSH et dossier `.stversions`)
 - Enfants (kioworker) héritent de l'env → un Dolphin lancé sans le hook propage le bug à toute la session (jusqu'au reboot). Non couvert (rare, accepté) : lancement manuel terminal
 
 **plasmalogin settle udev** (TEMPORAIRE — à supprimer quand Fedora/KDE corrige) :

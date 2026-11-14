@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import local
+from ..util import dolphin_command
 
 # Mesures en fond : `du` sur des dizaines de gigaoctets prend du temps. Le
 # worker vit sans parent pour survivre à la fermeture du dialogue.
@@ -78,11 +79,11 @@ class VersionRow(QFrame):
         super().mouseReleaseEvent(event)
 
     def open(self) -> None:
-        dolphin = shutil.which("dolphin")
-        if dolphin:
-            QProcess.startDetached(dolphin, [self.path])
+        if shutil.which("dolphin"):
+            command = dolphin_command(self.path)
         else:
-            QProcess.startDetached("xdg-open", [self.path])
+            command = ["xdg-open", self.path]
+        QProcess.startDetached(command[0], command[1:])
 
 
 class StVersionsSection(QFrame):

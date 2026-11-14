@@ -31,6 +31,11 @@ AVAHI_HELPER = "/usr/libexec/gablue-avahi"
 # n'est ouverte par cette règle).
 HWINFO_HELPER = "/usr/libexec/gablue-hwinfo"
 
+# Hook LD_PRELOAD de l'image (correction de l'espace libre Dolphin sur
+# l'overlay composefs de /) : le .desktop est patché, un Dolphin lancé par
+# une autre voie doit le réinjecter lui-même.
+COMPOSEFS_FIX_SO = Path("/usr/lib64/gablue-composefs-fix.so")
+
 REFRESH_MS = 30_000     # vérification automatique des postes
 
 CHECK_DEADLINE = 8.0    # secondes par poste (ssh ConnectTimeout = 4)

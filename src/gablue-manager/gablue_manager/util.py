@@ -4,7 +4,7 @@
 import time
 import uuid
 
-from .constants import PRIVATE_KEY
+from .constants import COMPOSEFS_FIX_SO, PRIVATE_KEY
 
 def _clean_address(value: object) -> str:
     """Adresse utilisable en argument de ssh, ou chaîne vide."""
@@ -78,6 +78,18 @@ def dolphin_url(host: dict) -> str:
     if host["port"] != 22:
         url += f':{host["port"]}'
     return url + "/"
+
+def dolphin_command(target: str) -> list[str]:
+    """Commande Dolphin, hook composefs de l'image réinjecté.
+
+    Le `.desktop` de l'image porte déjà `LD_PRELOAD`, mais un Dolphin lancé
+    depuis l'application ne passe pas par lui : sans le hook, la barre
+    d'espace libre affiche 0 o sur l'overlay composefs de /, et ce processus
+    sert ensuite toutes les fenêtres de la session.
+    """
+    if COMPOSEFS_FIX_SO.exists():
+        return ["env", f"LD_PRELOAD={COMPOSEFS_FIX_SO}", "dolphin", target]
+    return ["dolphin", target]
 
 def normalize_record(item: object) -> dict | None:
     """Valide une entrée du registre ; None si elle est inutilisable."""

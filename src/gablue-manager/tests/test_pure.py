@@ -2982,6 +2982,21 @@ class UtilTest(unittest.TestCase):
         url = util.dolphin_url({"user": "gab", "host": "fd00::1", "port": 2222})
         self.assertEqual(url, "sftp://gab@[fd00::1]:2222/")
 
+    def test_dolphin_command_injects_composefs_fix(self):
+        saved = util.COMPOSEFS_FIX_SO
+        try:
+            util.COMPOSEFS_FIX_SO = Path("/nonexistent/gablue-composefs-fix.so")
+            self.assertEqual(util.dolphin_command("sftp://gab@gen1/"),
+                             ["dolphin", "sftp://gab@gen1/"])
+            with tempfile.NamedTemporaryFile(suffix=".so") as handle:
+                util.COMPOSEFS_FIX_SO = Path(handle.name)
+                self.assertEqual(
+                    util.dolphin_command("/home"),
+                    ["env", f"LD_PRELOAD={handle.name}", "dolphin", "/home"],
+                )
+        finally:
+            util.COMPOSEFS_FIX_SO = saved
+
     def test_active_address_falls_back(self):
         host = {
             "user": "gab", "host": "192.168.1.110", "port": 22,

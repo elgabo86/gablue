@@ -66,7 +66,8 @@ from .tasks import (
     start_task,
 )
 from .util import (
-    address_text, display_name, dolphin_url, has_address_kind, ssh_target,
+    address_text, display_name, dolphin_command, dolphin_url, has_address_kind,
+    ssh_target,
 )
 from .widgets import (
     AccessPanel, BusyProgressBar, CenteredTabs, HostCard, InfoPanel, LocalCard,
@@ -1980,7 +1981,7 @@ class MainWindow(QMainWindow):
             return
         url = dolphin_url(host)
         if shutil.which("dolphin"):
-            command = ["dolphin", url]
+            command = dolphin_command(url)
         else:
             command = ["xdg-open", url]
         self._launch(command, f"Fichiers — {display_name(host)}")
