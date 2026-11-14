@@ -19,7 +19,10 @@ import shlex
 import time
 
 from . import apps, updates
-from .local import GABLUE_PROGRESS_PREFIX, parse_gablue_progress, parse_progress_event
+from .local import (
+    GABLUE_PROGRESS_PREFIX, brew_progress_parser, parse_flatpak_progress,
+    parse_gablue_progress, parse_progress_event,
+)
 from .ssh import ssh_capture
 
 # Une seule connexion : chaque section est balisée, son code de retour est
@@ -68,24 +71,39 @@ def apps_section(pending_apps=(), states=None) -> str:
     l'option attendue (`--yes` sur une image antérieure : il ouvrirait ses
     boîtes kdialog et la tâche attendrait indéfiniment), est ignorée avec un
     message dans le journal — jamais lancée en interactif.
+
+    Progression : `::gablue:step i/N` compte les applications **réellement
+    lancées** (les ignorées ne font pas avancer la barre pour rien), et le
+    moteur d'AppImages publie ensuite son propre `percent` — même protocole
+    qu'en local (`apps.update_script`), donc rien de neuf côté poste.
     """
     states = states or {}
     wanted = set(pending_apps or ())
-    lines: list[str] = []
+    skipped: list[str] = []
+    runnable: list[tuple] = []
     for app in apps.APPS:
         if app.key not in wanted:
             continue
         current = states.get(app.key) or {}
         if not current.get("script"):
-            lines.append(_echo(f"{app.name} : script manquant, ignoré"))
+            skipped.append(_echo(f"{app.name} : script manquant, ignoré"))
             continue
         options = current.get("options") or ()
         if app.install_args and app.install_args[0] not in options:
-            lines.append(_echo(
+            skipped.append(_echo(
                 f"{app.name} : image du poste antérieure à "
                 f"{app.install_args[0]}, ignoré"
             ))
             continue
+        runnable.append((app, current))
+
+    lines: list[str] = list(skipped)
+    total = len(runnable)
+    for index, (app, current) in enumerate(runnable, start=1):
+        lines.append(_marker(f"::gablue:step {index} {total} {app.name}"))
+        lines.append(_marker(
+            f"::gablue:busy Mise à jour de {app.name} ({index}/{total})…"
+        ))
         lines.append(_echo(f"Mise à jour de {app.name}…"))
         lines.append(apps.install_command(app, current) + " || rc=1")
     return "\n".join(lines)
@@ -105,17 +123,24 @@ STAGES = (
 STEP_MARKER = "::gablue:stage "
 PROGRESS_MARKER = "::gablue:progress "
 
+def _marker(text: str) -> str:
+    """Ligne de protocole sur la sortie du poste.
+
+    `printf '\\n%s\\n'` avec un argument `shlex.quote` : le saut de ligne
+    d'ouverture empêche le collage à une sortie qui n'a pas fini par `\\n`, et
+    le format à trous évite qu'un libellé (nom d'application) casse le quoting.
+    """
+    return "printf '\\n%s\\n' " + shlex.quote(text)
+
 def _stage(index: int, total: int, label: str) -> str:
-    """Annonce d'une étape de la chaîne ; `printf` comme partout (une sortie
-    sans saut de ligne final collait le marqueur à la ligne précédente, vécu
-    09/11/2026).
+    """Annonce d'une étape de la chaîne.
 
     Verbe `stage` et non `step` : les scripts d'installation d'AppImages
     publient déjà `::gablue:step n total` pour leur **propre** progression, et
     deux numérotations sur un même flux se marcheraient dessus — la
     sous-progression d'une application écraserait le compte des étapes du poste.
     """
-    return f"printf '\\n::gablue:stage {index} {total} {label}\\n'"
+    return _marker(f"::gablue:stage {index} {total} {label}")
 
 
 IMAGE_UPGRADE = (
@@ -148,8 +173,12 @@ IMAGE_UPGRADE = (
 FLATPAK_UPGRADE = "sudo -n /usr/bin/flatpak update --system -y || rc=1"
 
 GWINE_UPGRADE = (
+    # `GABLUE_PROGRESS=1` : gwine publie alors ses `::gablue:step|busy|done`
+    # en plus de ses lignes lisibles (lib/ui.sh), les mêmes marqueurs qu'en
+    # local. Effet de bord utile : `run_with_progress` n'ouvre plus de fenêtre sur
+    # le poste distant, il exécute directement.
     "if command -v gwine >/dev/null 2>&1; then\n"
-    "    gwine --init || rc=1\n"
+    "    GABLUE_PROGRESS=1 gwine --init || rc=1\n"
     "fi"
 )
 
@@ -337,21 +366,35 @@ def check(host: dict, timeout: float = 240.0) -> dict:
 class HostProgress:
     """Progression d'un poste du lot, découpée depuis son flux ssh.
 
-    Le poste n'annonce que deux choses : l'étape qu'il commence
-    (`::gablue:stage n total libellé`) et, pendant l'image, les événements JSONL
-    de `bootc --progress-fd` (`::gablue:progress {…}`). Tout le reste repart au
-    journal, et ces lignes de protocole en sont retirées : le journal reste du
-    texte pour l'humain. Une ligne incomplète est gardée pour le morceau
-    suivant — le ssh découpe ses lectures n'importe où.
+    Le poste annonce ses étapes (`::gablue:stage n total libellé`) et, selon
+    l'étape, mesure ce qu'il fait :
+
+    - **image** : JSONL de `bootc --progress-fd`, étiqueté `::gablue:progress` ;
+    - **gwine** : ses propres `::gablue:step|busy|done` (`GABLUE_PROGRESS=1`) ;
+    - **applications** : `::gablue:step|busy` de la section, puis le `percent`
+      du moteur d'AppImages ;
+    - **Flatpaks** et **Homebrew** : aucune marque ni effort côté poste, mais
+      leur sortie lisible porte de quoi mesurer — `local.parse_flatpak_progress`
+      (`Updating 3/7… 45 %`) et `local.brew_progress_parser` (`Upgrading x` sur
+      le total annoncé), les mêmes analyseurs qu'en local.
+
+    Tout le reste repart au journal, et les lignes de protocole en sont
+    retirées : le journal reste du texte pour l'humain. Une ligne incomplète est
+    gardée pour le morceau suivant — le ssh découpe ses lectures n'importe où.
 
     `percent` ne rend **rien** tant que l'étape courante n'a pas de mesure
-    (Flatpaks, gwine, Homebrew, applications : muets) : la fenêtre montre alors
-    une barre qui balaie au lieu d'un pourcentage figé. `fraction`, elle, est
-    toujours un nombre — c'est ce que consomme la barre **globale** du lot.
+    (téléchargement d'une AppImage, `brew` qui ne publie aucun pourcentage) :
+    la fenêtre montre alors une barre qui balaie au lieu d'un pourcentage figé.
+    `fraction`, elle, est toujours un nombre — c'est ce que consomme la barre
+    **globale** du lot.
     """
+
+    # Étapes dont la sortie lisible suffit à mesurer (aucun marqueur requis).
+    LINE_STAGES = (STAGES[1], STAGES[4])
 
     def __init__(self) -> None:
         self._buffer = ""
+        self._brew = brew_progress_parser()      # état par poste
         self.step = 0
         self.total = 0
         self.stage = ""
@@ -366,14 +409,19 @@ class HostProgress:
         kept: list[str] = []
         while "\n" in self._buffer:
             line, _, self._buffer = self._buffer.partition("\n")
-            if not self._consume(line):
-                kept.append(line + "\n")
+            if self._consume(line):
+                continue
+            self._measure(line)
+            kept.append(line + "\n")
         return "".join(kept)
 
     def flush(self) -> str:
         """Reste de la dernière ligne (commande finie sans saut de ligne)."""
         line, self._buffer = self._buffer, ""
-        return "" if self._consume(line) else line
+        if self._consume(line):
+            return ""
+        self._measure(line)
+        return line
 
     def _consume(self, line: str) -> bool:
         """Absorbe une ligne de protocole ; faux si elle va au journal."""
@@ -405,6 +453,19 @@ class HostProgress:
             self.intra = info.get("percent")
             self.detail = str(info.get("label") or "")
         return True
+
+    def _measure(self, line: str) -> None:
+        """Mesure une ligne lisible de l'étape courante (elle reste au journal)."""
+        if self.stage not in self.LINE_STAGES:
+            return
+        parser = (
+            parse_flatpak_progress if self.stage == STAGES[1] else self._brew
+        )
+        info = parser((line or "").rstrip())
+        if not info:
+            return
+        self.intra = info.get("percent")
+        self.detail = str(info.get("label") or "")
 
     # -- affichage ----------------------------------------------------------
     @property

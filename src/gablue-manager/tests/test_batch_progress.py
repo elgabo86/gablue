@@ -69,14 +69,14 @@ class ChainMarkersTest(unittest.TestCase):
         self.assertIn("Applications : à jour", without)
         self.assertNotIn("xenia-install", without)
 
-    def test_no_step_marker_is_concatenated(self):
+    def test_no_stage_marker_is_concatenated(self):
         # Un marqueur collé à une sortie sans saut de ligne final a déjà coûté
         # une section entière (09/11/2026) : chaque `printf` ouvre ET ferme.
         script = remote_updates.update_chain()
         for line in script.splitlines():
             if "::gablue:stage" in line:
-                self.assertTrue(line.startswith("printf '"))
-                self.assertTrue(line.endswith("\\n'"))
+                self.assertTrue(line.startswith("printf '\\n%s\\n' "))
+                self.assertTrue(line.rstrip().endswith("'"))
 
 
 class HostProgressTest(unittest.TestCase):
@@ -140,6 +140,40 @@ class HostProgressTest(unittest.TestCase):
         # « 0 % » : la barre balaie, elle ne ment pas.
         self.state.feed("::gablue:progress " + _bytes_event(5, 10) + "\n")
         self.assertIsNone(self.state.percent)
+
+    def test_flatpak_stage_is_measured_from_its_output(self):
+        # Aucun marqueur côté poste : la sortie de `flatpak update` suffit.
+        self.state.feed("::gablue:stage 2 5 Flatpaks\n")
+        kept = self.state.feed("Updating 2/4…\n")
+        self.assertEqual(kept, "Updating 2/4…\n")      # reste au journal
+        # « 2/4 » sans pourcentage : la phase est à (2-1)/4 = 25 %, soit 5 %
+        # d'une étape sur cinq, donc 25 % de la chaîne (étape 2 : base 20 %).
+        self.assertAlmostEqual(self.state.percent, 25.0)
+        self.state.feed("Updating 2/4…                    50%  1,2 Mo/s\n")
+        self.assertAlmostEqual(self.state.percent, 27.5)   # (1 + 0,375) / 5
+        self.assertIn("Flatpaks", self.state.label())
+
+    def test_brew_stage_is_measured_per_formula(self):
+        self.state.feed("::gablue:stage 5 5 Homebrew\n")
+        self.state.feed("==> Upgrading 2 outdated packages:\n")
+        self.assertAlmostEqual(self.state.percent, 80.0)    # 4/5, aucune formule
+        self.state.feed("==> Upgrading llhttp\n")
+        self.assertAlmostEqual(self.state.percent, 90.0)
+        self.state.feed("==> Upgrading osslsigncode\n")
+        self.assertAlmostEqual(self.state.percent, 100.0)
+        self.assertIn("osslsigncode", self.state.label())
+
+    def test_brew_fetch_leaves_the_bar_indeterminate(self):
+        # Homebrew ne publie aucun pourcentage (curl --silent hors terminal) :
+        # balayage, jamais un chiffre inventé.
+        self.state.feed("::gablue:stage 5 5 Homebrew\n")
+        self.state.feed("==> Fetching downloads for: llhttp and osslsigncode\n")
+        self.assertIsNone(self.state.percent)
+        self.assertIn("formules", self.state.label())
+
+    def test_gwine_runs_with_progress_enabled(self):
+        script = remote_updates.update_chain()
+        self.assertIn("GABLUE_PROGRESS=1 gwine --init", script)
 
     def test_app_markers_feed_the_current_stage(self):
         # Le moteur d'AppImages publie les verbes du protocole local : ils
