@@ -109,16 +109,24 @@ class PrefsDialog(QDialog):
         interval_label.setObjectName("hostName")
         interval_row.addWidget(interval_label)
         interval_row.addStretch(1)
-        self.interval_spin = QSpinBox(check_card)
-        low, high = prefs.INTERVAL_RANGE
-        self.interval_spin.setRange(low, high)
-        self.interval_spin.setSingleStep(15)
-        self.interval_spin.setSuffix(" minutes")
-        self.interval_spin.setValue(int(
-            self.initial.get("check_interval", prefs.DEFAULTS["check_interval"])
-        ))
+        self.interval_spin = self._interval_spin(check_card, "check_interval")
         interval_row.addWidget(self.interval_spin)
         check_layout.addLayout(interval_row)
+
+        # L'image Gablue a sa propre cadence : elle n'est construite qu'une
+        # fois par semaine, alors que Flatpaks, gwine, applications et brew
+        # bougent tous les jours.
+        image_row = QHBoxLayout()
+        image_row.setSpacing(10)
+        image_label = QLabel("Fréquence image", check_card)
+        image_label.setObjectName("hostName")
+        image_row.addWidget(image_label)
+        image_row.addStretch(1)
+        self.image_interval_spin = self._interval_spin(
+            check_card, "check_image_interval"
+        )
+        image_row.addWidget(self.image_interval_spin)
+        check_layout.addLayout(image_row)
         root_layout.addWidget(check_card)
 
         buttons = QHBoxLayout()
@@ -155,6 +163,16 @@ class PrefsDialog(QDialog):
         frame.setObjectName("hostCard")
         return frame
 
+    def _interval_spin(self, parent, key: str) -> QSpinBox:
+        """Champ « N minutes » d'une fréquence, borné comme les préférences."""
+        spin = QSpinBox(parent)
+        low, high = prefs.INTERVAL_RANGE
+        spin.setRange(low, high)
+        spin.setSingleStep(15)
+        spin.setSuffix(" minutes")
+        spin.setValue(int(self.initial.get(key, prefs.DEFAULTS[key])))
+        return spin
+
     # -- état ---------------------------------------------------------------
     def _update_enabled(self) -> None:
         """Domaines et fréquence ne servent à rien sans surveillance."""
@@ -162,6 +180,7 @@ class PrefsDialog(QDialog):
         for check in self.domain_checks.values():
             check.setEnabled(auto)
         self.interval_spin.setEnabled(auto)
+        self.image_interval_spin.setEnabled(auto)
         if auto:
             self.hint_label.setText("")
         else:
@@ -177,6 +196,7 @@ class PrefsDialog(QDialog):
         for domain, check in self.domain_checks.items():
             values[f"check_{domain}"] = check.isChecked()
         values["check_interval"] = self.interval_spin.value()
+        values["check_image_interval"] = self.image_interval_spin.value()
         return values
 
     def changed(self) -> bool:

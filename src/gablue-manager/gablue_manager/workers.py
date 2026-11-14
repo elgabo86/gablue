@@ -186,10 +186,11 @@ class UpdateCheckWorker(QThread):
     done = Signal(object)           # état renvoyé par updates.check_all
 
     def __init__(self, enabled: dict[str, bool] | None = None,
-                 online: bool = True, parent=None):
+                 online: bool = True, parent=None, deferred=()):
         super().__init__(parent)
         self._enabled = dict(enabled) if enabled is not None else None
         self._online = bool(online)
+        self._deferred = tuple(deferred)
         self._stop = threading.Event()
 
     def stop(self) -> None:
@@ -204,7 +205,8 @@ class UpdateCheckWorker(QThread):
 
     def run(self) -> None:
         try:
-            state = updates.check_all(self._enabled, self._online)
+            state = updates.check_all(self._enabled, self._online,
+                                      deferred=self._deferred)
         except Exception as error:   # une sonde d'agrément ne doit rien casser
             journal.log_failure(
                 "Vérification des mises à jour interrompue",

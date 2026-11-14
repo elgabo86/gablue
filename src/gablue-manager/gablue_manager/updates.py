@@ -351,28 +351,38 @@ def check_apps() -> dict:
 # -- agrégat ----------------------------------------------------------------
 
 def check_all(enabled: dict[str, bool] | None = None,
-              online: bool = True) -> dict:
+              online: bool = True,
+              deferred=()) -> dict:
     """Sonde les domaines demandés, en parallèle, sans jamais lever.
 
     `enabled` vient des préférences (`prefs.check_domains`) ; un domaine
     décoché n'apparaît pas dans le résultat. Hors ligne, seules les sondes
     locales tournent (image déjà téléchargée, âge du déploiement).
+
+    `deferred` nomme les domaines **pas dus cette passe-ci** (l'image a sa
+    propre cadence, 24 h contre 2 h) : ils ne sont pas sondés et sortent en
+    `{"state": "deferred"}`, que l'appelant complète avec le résultat
+    précédent via `merge_states` — sinon chaque passe des autres domaines
+    effacerait l'état de l'image.
     """
     enabled = {domain: True for domain in DOMAINS} if enabled is None \
         else dict(enabled)
+    waiting = {str(domain) for domain in deferred}
+    wanted = {domain: bool(value) and domain not in waiting
+              for domain, value in enabled.items()}
     results: dict[str, dict] = {}
 
     jobs = {}
     with ThreadPoolExecutor(max_workers=4) as pool:
-        if enabled.get("image"):
+        if wanted.get("image"):
             jobs["image"] = pool.submit(check_image, online)
-        if online and enabled.get("flatpak"):
+        if online and wanted.get("flatpak"):
             jobs["flatpak"] = pool.submit(check_flatpaks)
-        if online and enabled.get("brew"):
+        if online and wanted.get("brew"):
             jobs["brew"] = pool.submit(check_brew)
-        if online and enabled.get("gwine"):
+        if online and wanted.get("gwine"):
             jobs["gwine"] = pool.submit(check_gwine)
-        if online and enabled.get("apps"):
+        if online and wanted.get("apps"):
             jobs["apps"] = pool.submit(check_apps)
         for domain, future in jobs.items():
             try:
@@ -386,6 +396,8 @@ def check_all(enabled: dict[str, bool] | None = None,
             continue
         if not enabled.get(domain):
             results[domain] = {"state": "skipped"}
+        elif domain in waiting:
+            results[domain] = {"state": "deferred"}
         else:
             results[domain] = {"state": "offline"}
 
@@ -393,7 +405,30 @@ def check_all(enabled: dict[str, bool] | None = None,
         "checked_at": time.time(),
         "online": bool(online),
         "domains": results,
+        "deferred": sorted(domain for domain in DOMAINS
+                           if domain in waiting and enabled.get(domain)),
     }
+
+def merge_states(previous: dict | None, state: dict | None) -> dict | None:
+    """État neuf, complété par les domaines reportés à une passe ultérieure.
+
+    Un domaine `deferred` n'a pas été sondé : son résultat précédent est
+    conservé tel quel. Un domaine **décoché** (`skipped`) ne l'est jamais :
+    ses anciennes mises à jour continueraient sinon à compter après la
+    désactivation. `deferred` reste dans l'état : c'est lui qui dit à
+    l'appelant de ne pas dater la sonde de ce domaine.
+    """
+    if not previous or not state:
+        return state
+    domains = dict(state.get("domains") or {})
+    earlier = (previous.get("domains") or {})
+    for domain, result in list(domains.items()):
+        if (result or {}).get("state") != "deferred":
+            continue
+        domains[domain] = earlier.get(domain) or {"state": "unknown"}
+    merged = dict(state)
+    merged["domains"] = domains
+    return merged
 
 def domain_count(domain: str, result: dict) -> int:
     """Nombre d'éléments en retard pour un domaine (image = 0 ou 1)."""

@@ -1463,7 +1463,10 @@ class PrefsTest(unittest.TestCase):
                 self.assertTrue(prefs.tray_enabled())
                 self.assertTrue(prefs.checks_enabled())
                 self.assertEqual(
-                    prefs.check_interval_seconds(), 1440 * 60
+                    prefs.check_interval_seconds(), 120 * 60
+                )
+                self.assertEqual(
+                    prefs.image_interval_seconds(), 1440 * 60
                 )
                 prefs.set_tray_enabled(False)
                 self.assertFalse(prefs.tray_enabled())
@@ -1521,6 +1524,34 @@ class PrefsTest(unittest.TestCase):
 
 
 class UpdatesTest(unittest.TestCase):
+    def test_deferred_domains_keep_previous_result(self):
+        """Deux cadences : l'image reportée garde son état, le reste le perd."""
+        values = dict(prefs.DEFAULTS)
+        self.assertEqual(prefs.check_interval_seconds(values), 120 * 60)
+        self.assertEqual(prefs.image_interval_seconds(values), 1440 * 60)
+        # Une valeur aberrante est ramenée dans les bornes, pas ignorée.
+        self.assertEqual(
+            prefs.image_interval_seconds({"check_image_interval": 999999}),
+            prefs.INTERVAL_RANGE[1] * 60,
+        )
+        enabled = {"image": True, "flatpak": True, "gwine": False,
+                   "apps": False, "brew": False}
+        state = updates.check_all(enabled, online=False, deferred={"image"})
+        # Le domaine reporté n'est pas sondé et le dit.
+        self.assertEqual(state["domains"]["image"], {"state": "deferred"})
+        self.assertEqual(state["deferred"], ["image"])
+        previous = {
+            "checked_at": 1.0, "online": True, "deferred": [],
+            "domains": {"image": {"state": "available", "days": 3}},
+        }
+        merged = updates.merge_states(previous, state)
+        # Résultat précédent conservé pour l'image…
+        self.assertEqual(merged["domains"]["image"]["state"], "available")
+        # …et le domaine décoché reste « skipped », jamais l'ancien résultat.
+        self.assertEqual(merged["domains"]["gwine"]["state"], "skipped")
+        # Le premier état (aucun précédent) reste tel quel.
+        self.assertEqual(updates.merge_states(None, state), state)
+
     def test_deployment_age(self):
         deployments = {
             "deployments": [

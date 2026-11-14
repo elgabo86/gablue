@@ -6,7 +6,9 @@ Deux familles de réglages, toutes deux propres à la session de l'utilisateur :
   `gablue-manager --tray` (autostart) et par la fenêtre principale ;
 - la **vérification des mises à jour** : interrupteur général (`check_auto`),
   domaines surveillés (`check_image`, `check_flatpak`, `check_brew`,
-  `check_gwine`, `check_apps`) et fréquence (`check_interval`, en minutes).
+  `check_gwine`, `check_apps`) et **deux fréquences** en minutes — `check_interval`
+  pour tout sauf l'image (2 h), `check_image_interval` pour l'image Gablue
+  (24 h : elle n'est construite qu'une fois par semaine).
 
 Une préférence absente ou illisible vaut la valeur par défaut : la barre d'état
 et les vérifications sont actives, comme le veut l'image Gablue.
@@ -28,7 +30,8 @@ DEFAULTS = {
     "check_brew": True,
     "check_gwine": True,
     "check_apps": True,
-    "check_interval": 1440,         # minutes, 24 h (l'image sort 1×/semaine)
+    "check_interval": 120,          # minutes, 2 h (flatpak, gwine, apps, brew)
+    "check_image_interval": 1440,   # minutes, 24 h (l'image sort 1×/semaine)
 }
 
 # Bornes des préférences numériques : 5 min (pas de martèlement réseau) à
@@ -108,13 +111,27 @@ def auto_check_domains(values: dict | None = None) -> dict[str, bool]:
         return {domain: False for domain in CHECK_DOMAINS}
     return check_domains(values)
 
-def check_interval_seconds(values: dict | None = None) -> int:
+def _interval_seconds(values: dict | None, key: str) -> int:
+    """Fréquence d'une clé en minutes, ramenée dans les bornes, en secondes."""
     values = load_prefs() if values is None else values
-    minutes = values.get("check_interval", DEFAULTS["check_interval"])
+    minutes = values.get(key, DEFAULTS[key])
     if not isinstance(minutes, int) or isinstance(minutes, bool):
-        minutes = DEFAULTS["check_interval"]
+        minutes = DEFAULTS[key]
     low, high = INTERVAL_RANGE
     return min(high, max(low, minutes)) * 60
+
+def check_interval_seconds(values: dict | None = None) -> int:
+    """Passe des domaines ordinaires (Flatpaks, gwine, applications, brew)."""
+    return _interval_seconds(values, "check_interval")
+
+def image_interval_seconds(values: dict | None = None) -> int:
+    """Passe de l'image Gablue, bien plus lente : elle sort 1×/semaine.
+
+    `bootc upgrade --check` interroge le registre à chaque sonde : la lancer
+    toutes les 2 h faisait 12 requêtes par jour et par poste pour une image
+    qui ne change qu'une fois par semaine.
+    """
+    return _interval_seconds(values, "check_image_interval")
 
 def checks_enabled(values: dict | None = None) -> bool:
     """Au moins un domaine est-il surveillé automatiquement ?"""

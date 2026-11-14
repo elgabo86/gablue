@@ -168,6 +168,9 @@ class MainWindow(QMainWindow):
         self._sshd_state: tuple[bool, bool] = (False, False)
         self._avahi_state: tuple[bool, bool] = (False, True)
         self._updates_state: dict | None = None
+        # Dernière sonde de l'IMAGE : cadence propre (24 h), plus lente que la
+        # passe des autres domaines (2 h). 0 = jamais sondée → due.
+        self._last_image_check: float = 0.0
         self._updates_worker: UpdateCheckWorker | None = None
         self._apps_worker: AppsUpdateWorker | None = None
         # Mises à jour des postes distants : connues seulement après un clic
@@ -1112,7 +1115,13 @@ class MainWindow(QMainWindow):
             return
         domains = prefs.check_domains(values) if force \
             else prefs.auto_check_domains(values)
-        worker = UpdateCheckWorker(domains, online, self)
+        deferred = set()
+        if not force and time.time() - self._last_image_check < \
+                prefs.image_interval_seconds(values):
+            # L'image sort 1×/semaine : `bootc upgrade --check` toutes les 2 h
+            # interrogeait le registre pour rien (cf. tray._deferred_domains).
+            deferred.add("image")
+        worker = UpdateCheckWorker(domains, online, self, deferred)
         self._updates_worker = worker
         worker.done.connect(self._updates_done)
         self.updates_panel.set_checking()
@@ -1123,7 +1132,13 @@ class MainWindow(QMainWindow):
     def _updates_done(self, state: dict) -> None:
         self._updates_worker = None
         self._set_busy("updates", False)
+        # Les domaines reportés (image, cadence à 24 h) gardent leur résultat
+        # précédent : une passe des Flatpaks ne doit pas effacer l'image.
+        state = updates.merge_states(self._updates_state, state)
         self._updates_state = state
+        if "image" not in ((state or {}).get("deferred") or []):
+            self._last_image_check = (state or {}).get("checked_at") or \
+                time.time()
         self.updates_panel.end_checking()
         self.updates_panel.set_updates(state)
         self._update_image_cell(state)

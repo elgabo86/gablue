@@ -126,6 +126,9 @@ class Tray:
         self._update_worker: UpdateCheckWorker | None = None
         self.updates_state: dict | None = None
         self._last_check: float = 0.0
+        # Dernière sonde de l'IMAGE : cadence propre (24 h), plus lente que la
+        # passe des autres domaines (2 h). 0 = jamais sondée → due.
+        self._last_image_check: float = 0.0
         self._offline = False
         self._server = None
         # La vérification en cours doit-elle parler en fin de passe ? Vrai
@@ -238,6 +241,22 @@ class Tray:
         else:
             self.update_timer.stop()
 
+    def _deferred_domains(self, values: dict, force: bool = False) -> set:
+        """Domaines dont la sonde n'est pas due cette passe-ci.
+
+        L'image Gablue est construite une fois par semaine : la sonder à
+        chaque passe des autres domaines interrogeait le registre (`bootc
+        upgrade --check`) toutes les 2 h pour rien. Son dernier résultat est
+        conservé par `updates.merge_states`. Une vérification demandée
+        (`force`) sonde tout.
+        """
+        if force:
+            return set()
+        if time.time() - self._last_image_check < \
+                prefs.image_interval_seconds(values):
+            return {"image"}
+        return set()
+
     def refresh_updates(self, force: bool = False,
                         notify: bool | None = None) -> None:
         """Sonde les mises à jour — jamais sans réseau, jamais sans demande.
@@ -273,7 +292,8 @@ class Tray:
             return
         domains = prefs.check_domains(values) if force \
             else prefs.auto_check_domains(values)
-        worker = UpdateCheckWorker(domains, online)
+        worker = UpdateCheckWorker(domains, online,
+                                   deferred=self._deferred_domains(values, force))
         self._update_worker = worker
         self._notify_result = wanted
         worker.done.connect(self._updates_done)
@@ -298,6 +318,8 @@ class Tray:
         self.updates_state = state
         self._offline = False
         self._last_check = state.get("checked_at") or time.time()
+        if "image" not in (state.get("deferred") or []):
+            self._last_image_check = self._last_check
         # Le créneau repart de cet état : `_last_check` est à jour, le timer
         # ne rejoue donc pas une passe qui vient d'être faite par la fenêtre.
         if prefs.checks_enabled(prefs.load_prefs()):
@@ -307,9 +329,14 @@ class Tray:
     def _updates_done(self, state: dict) -> None:
         previous = self.updates_state
         self._update_worker = None
+        # Un domaine reporté (image, cadence à 24 h) garde son résultat
+        # précédent : sinon la passe des Flatpaks effacerait l'état de l'image.
+        state = updates.merge_states(previous, state)
         self.updates_state = state
         self._offline = False
         self._last_check = (state or {}).get("checked_at") or time.time()
+        if "image" not in ((state or {}).get("deferred") or []):
+            self._last_image_check = self._last_check
         self._checking = False
         # Prochaine passe à un intervalle **plein** après la fin de celle-ci :
         # sans ce redémarrage, un tick tombé juste avant le garde `_last_check`
