@@ -1,0 +1,23 @@
+#!/usr/bin/python3
+
+"""Lanceur de Gablue Share (GUI).
+
+En développement, le paquet est lu depuis ce dossier ; dans l'image, depuis
+/usr/lib/gablue-share.
+"""
+
+import os
+import sys
+
+ICI = os.path.dirname(os.path.abspath(__file__))
+PAQUET = os.path.join(ICI, "gablue_share")
+if not os.path.isdir(PAQUET):
+    PAQUET = "/usr/lib/gablue-share"
+    sys.path.insert(0, PAQUET)
+else:
+    sys.path.insert(0, ICI)
+
+from gablue_share.app import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

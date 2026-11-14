@@ -15,12 +15,32 @@ Deux processus, séparés pour la RAM :
 ## État
 
 - **M1 (livré)** : démon HTTP, `/api/info`, `/api/list`, `/f/` (Range/ETag),
-  `/a/` (tar), filtre d'adresses, rechargement à chaud, `--parent-pid`.
-  `cargo test` : 23 tests (8 unitaires + 15 d'intégration, vrai serveur, vrai
-  système de fichiers, vrais sockets).
-- **M2** : GUI + découverte mDNS/Tailscale.
-- **M3** : file persistante, reprise, bascule permanente, gablue-manager.
+  `/a/` (tar), filtre d'adresses, rechargement à chaud, `--parent-pid`,
+  annonce mDNS. `cargo test` : 24 tests (8 unitaires + 16 d'intégration, vrai
+  serveur, vrai système de fichiers, vrais sockets).
+- **M2 (livré)** : GUI PySide6 (liste des dossiers partagés persistante,
+  découverte LAN/tailnet, navigation, téléchargement fichier + dossier).
+  Vérifié en headless : capture réelle de la fenêtre, reprise d'un `.part`
+  (500 Kio → 2 Mio, hash identique), extraction tar, collision `(1)`.
+- **M3** : file persistante (reprise après fermeture, rattachement par
+  `peer_id`), bascule permanente, gablue-manager.
 - **M4** : image (build Rust en étape dédiée, unités systemd, firewalld, icône).
+
+## Paquet (GUI)
+
+Sources = ce dossier, installées par `files/scripts/build-share` (M4).
+
+| Fichier | Rôle |
+|---|---|
+| `gablue-share` | lanceur `/usr/bin` (sys.path puis `gablue_share.app.main`) |
+| `gablue_share/app.py` | `main()`, `--check` (construit la fenêtre et sort, sans démon) |
+| `gablue_share/config.py` | **les dossiers partagés** : `share.json`, écriture atomique, fichier corrompu mis de côté |
+| `gablue_share/daemon.py` | démarrage/arrêt du démon, adoption d'un démon permanent |
+| `gablue_share/discovery.py` | registre des postes, mDNS (avahi-browse) + sonde Tailscale |
+| `gablue_share/api.py` | client HTTP du protocole (threads) |
+| `gablue_share/downloads.py` | transfert fichier (reprise) et dossier (tar), `.part` |
+| `gablue_share/window.py` | trois panneaux : mon partage, postes/navigation, transferts |
+| `gablue_share/style.py`, `util.py`, `constants.py` | QSS dérivé de la palette, formatage, chemins |
 
 ## Découverte — règles non négociables
 
@@ -60,6 +80,12 @@ disparaît, ce qui se lit comme une panne.
 Invariants :
 
 - **Lecture seule.** Aucun verbe d'écriture, aucun état côté serveur.
+- **Toujours un `Content-Length` quand la taille est connue** :
+  `Response::with_chunked_threshold(usize::MAX)` est obligatoire, sinon
+  `tiny_http` bascule en chunked au-delà de 32 Kio — le `HEAD` d'un gros
+  fichier ne dit plus sa taille et la reprise perd son point de départ
+  (bug trouvé à l'intégration du 14/11/2026, test de régression dans
+  `tests/protocol.rs`). Le tar, de longueur inconnue, reste chunked.
 - **ETag = mtime (ns) + taille.** Gratuit et stable entre deux démarrages :
   c'est ce qui rend la reprise d'un téléchargement possible après fermeture de
   l'app. Si le fichier a changé, l'ETag change et la reprise repart de zéro.
@@ -74,11 +100,18 @@ Invariants :
 - Le port par défaut (47823) est **fixe** : la sonde Tailscale ne peut pas
   découvrir un port dynamique.
 
-## File de téléchargement (M3, contrat à respecter)
+## File de téléchargement (M2 partiel, M3 pour la persistance)
 
-- La file vit dans la GUI (`~/.local/state/gablue-share/queue.json`, écriture
-  atomique), pas dans le démon : fermer la GUI arrête les transferts, le démon
-  continue de servir si la permanence est active.
+Déjà en place (M2) : un transfert à la fois, `.part` dans le dossier de
+destination, reprise `HEAD` → ETag → `Range` + `If-Range` (200 = fichier
+changé, on repart de zéro), annulation coopérative, dossier en tar.
+
+Reste à faire (M3) : la file survit à la fermeture de l'app et se rattache
+seule au poste retrouvé.
+
+- La file vivra dans la GUI (`~/.local/state/gablue-share/queue.json`,
+  écriture atomique), pas dans le démon : fermer la GUI arrête les transferts,
+  le démon continue de servir si la permanence est active.
 - Un élément est identifié par `(peer_id, share_id, chemin relatif)`, **jamais
   par une adresse** : au redémarrage, la découverte retrouve le poste (LAN ou
   Tailscale, l'adresse a pu changer) et la reprise repart seule.
@@ -114,6 +147,18 @@ curl -s localhost:47823/a/s1 | tar -tf -        # archive du dossier
 
 Mesures de référence (14/11/2026, loopback) : 2 Gio servis à 3,7 Go/s, RSS
 3,0 Mo, 10 threads. À revérifier après un changement de version de `tiny_http`.
+
+GUI sans affichage (validation après une modification) :
+
+```bash
+QT_QPA_PLATFORM=offscreen XDG_CONFIG_HOME=/tmp/opencode/cfg \
+  ./gablue-share --check     # construit la fenêtre, ne démarre rien
+```
+
+Capture réelle sans session graphique : `window.grab().save(...)` sous
+`QT_QPA_PLATFORM=offscreen` (voir l'historique de la session du 14/11/2026) —
+c'est ce qui a montré le chemin de partage qui débordait sur deux lignes, pas
+les tests.
 
 ## Décisions et alternatives écartées
 

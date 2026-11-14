@@ -20,8 +20,22 @@ fn h(name: &str, value: &str) -> Header {
     Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("en-tête ASCII valide")
 }
 
-fn body_response(status: u16, headers: Vec<Header>, body: Body, length: Option<usize>) -> Response<Body> {
-    Response::new(StatusCode(status), headers, body, length, None)
+fn body_response(
+    status: u16,
+    headers: Vec<Header>,
+    body: Body,
+    length: Option<usize>,
+) -> Response<Body> {
+    let response = Response::new(StatusCode(status), headers, body, length, None);
+    // Sans ce plafond, tiny_http passe en chunked tout corps > 32 Kio : plus de
+    // Content-Length, donc plus de taille annoncée pour la reprise (le HEAD
+    // d'un gros fichier ne dit plus sa taille). Les réponses à longueur connue
+    // déclarent toujours leur longueur ; le tar (longueur inconnue) reste chunked.
+    if length.is_some() {
+        response.with_chunked_threshold(usize::MAX)
+    } else {
+        response
+    }
 }
 
 fn json_response(status: u16, value: &Value) -> Response<Body> {
@@ -258,7 +272,6 @@ fn serve_file(req: &Request, cfg: &Config, share_id: &str, rel: &[String], head:
     match spec {
         RangeSpec::Full => {
             if head {
-                headers.push(h("Content-Length", &size.to_string()));
                 return body_response(200, headers, Box::new(std::io::empty()), Some(size as usize));
             }
             match File::open(&path) {
@@ -273,7 +286,6 @@ fn serve_file(req: &Request, cfg: &Config, share_id: &str, rel: &[String], head:
                 &format!("bytes {start}-{end}/{size}"),
             ));
             if head {
-                headers.push(h("Content-Length", &length.to_string()));
                 return body_response(206, headers, Box::new(std::io::empty()), Some(length as usize));
             }
             match File::open(&path) {

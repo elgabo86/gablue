@@ -2,6 +2,7 @@
 //! local et le tailnet, sans authentification. Aucun état client, aucune
 //! écriture : il peut être tué à tout moment.
 
+pub mod announce;
 pub mod config;
 pub mod files;
 pub mod net;
@@ -52,6 +53,7 @@ pub fn run(
     eprintln!("gablue-shared : écoute sur {bound}");
 
     spawn_reloader(config_path, Arc::clone(&state));
+    announce::spawn(Arc::clone(&state), bound.port());
 
     let workers = options.threads.max(1);
     for _ in 1..workers {

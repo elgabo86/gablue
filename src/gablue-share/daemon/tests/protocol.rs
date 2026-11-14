@@ -31,6 +31,7 @@ fn fixture() -> Fixture {
     std::fs::create_dir_all(root.join("donnees/sub")).unwrap();
     std::fs::write(root.join("donnees/a.txt"), b"hello").unwrap();
     std::fs::write(root.join("donnees/sub/b.bin"), vec![7u8; 700]).unwrap();
+    std::fs::write(root.join("donnees/gros.bin"), vec![3u8; 64 * 1024]).unwrap();
     std::fs::create_dir_all(root.join("donnees/vide")).unwrap();
     std::os::unix::fs::symlink("/etc/passwd", root.join("donnees/fuite")).unwrap();
     std::os::unix::fs::symlink("a.txt", root.join("donnees/lien-interne")).unwrap();
@@ -215,6 +216,24 @@ fn if_range_with_another_etag_sends_the_whole_file() {
     );
     assert_eq!(status, 206);
     assert_eq!(body, b"he");
+}
+
+#[test]
+fn large_files_declare_their_length_instead_of_chunking() {
+    let fixture = fixture();
+    let (status, head, body) = get(&fixture, "/f/s1/gros.bin");
+    assert_eq!(status, 200);
+    assert!(head.contains("Content-Length: 65536"), "{head}");
+    assert!(!head.to_lowercase().contains("transfer-encoding"), "{head}");
+    assert_eq!(body.len(), 65536);
+
+    let (status, head, body) = raw(
+        &fixture,
+        "HEAD /f/s1/gros.bin HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n",
+    );
+    assert_eq!(status, 200);
+    assert!(head.contains("Content-Length: 65536"), "{head}");
+    assert!(body.is_empty());
 }
 
 #[test]

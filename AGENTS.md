@@ -90,6 +90,7 @@ Le projet construit 6 variantes distinctes :
 │   │   └── gablue_manager/                 # Paquet : app, window, dialogs/, local, ssh…
 │   ├── gablue-share/                       # Partage de dossiers LAN/Tailscale
 │   │   ├── AGENTS.md                       # Protocole, découverte, invariants
+│   │   ├── gablue_share/                   # GUI PySide6 (découverte, navigation, transferts)
 │   │   └── daemon/                         # Démon Rust `gablue-shared` (src/, tests/)
 │   ├── gwine-launcher/                     # Sources du lanceur gwine (Bash modulaire)
 │   │   ├── AGENTS.md                        # Contrat du lanceur (CLI, structure, build)
