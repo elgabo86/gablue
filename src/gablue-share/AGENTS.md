@@ -10,7 +10,7 @@ Deux processus, séparés pour la RAM :
 | Processus | Rôle | Qt | RSS mesuré (14/11/2026) |
 |---|---|---|---|
 | `gablue-shared` (`daemon/`, Rust) | sert les dossiers en HTTP, annonce le poste | non | **3,0 Mo** au repos et pendant un transfert (pic 3,0 Mo) |
-| `gablue-share` (GUI PySide6, à venir) | découverte, navigation, file de téléchargement | oui | ~70-120 Mo, seulement fenêtre ouverte |
+| `gablue-share` (GUI PySide6) | découverte, navigation, file de téléchargement | oui | ~70-120 Mo, seulement fenêtre ouverte |
 
 ## État
 
@@ -26,11 +26,18 @@ Deux processus, séparés pour la RAM :
   rattachement automatique au poste retrouvé, reprise, mode permanent
   (`systemd --user`) avec bascule depuis la GUI — et entrée « Réseau ▸ Partage
   local… » dans gablue-manager (permanence + ouverture de l'app).
-- **M4** : image (build Rust en étape dédiée, unités systemd, firewalld, icône).
+- **M4** : image (build Rust en étape `share-build` jetée après coup, unité
+  `systemd --user`, ouverture firewalld, `.desktop`, icône), installée par
+  `files/scripts/build-share`. Vérifié en conteneur le 14/11/2026 : étape
+  `share-build` verte (binaire 808 656 octets, lié à `libc`/`libgcc_s` seuls) et
+  `build-share` rejoué dans `fedora:45` (paquet + lanceur posés, sources
+  retirées, zéro `__pycache__`) ; **pas encore** de build d'image complet, donc
+  l'installation réelle reste à voir.
 
 ## Paquet (GUI)
 
-Sources = ce dossier, installées par `files/scripts/build-share` (M4).
+Sources = ce dossier, installées par `files/scripts/build-share` (paquet dans
+`/usr/lib/gablue-share/`, lanceur `/usr/bin/gablue-share`).
 
 | Fichier | Rôle |
 |---|---|
@@ -125,15 +132,16 @@ Invariants :
 
 ## Permanence (M3)
 
-- Vérifié : `systemd-analyze --user verify` accepte l'unité générée.
+- Vérifié : `systemd-analyze --user verify` accepte l'unité (celle de l'image,
+  `files/system/all/usr/lib/systemd/user/gablue-share.service`).
 - La vérité est `systemctl --user is-enabled gablue-share.service`, jamais un
   champ du JSON : sinon la case ment dès qu'on touche aux unités à la main.
 - Cocher : la GUI arrête son démon éphémère puis `enable --now` ; décocher :
   `disable --now` puis la GUI reprend un démon enfant. Si un service tourne
   déjà, la GUI l'adopte (`Daemon.external`) et ne le tue jamais.
-- `ensure_unit()` écrit l'unité dans `~/.config/systemd/user/` si l'image ne la
-  fournit pas (transition avant M4) ; l'image la livrera dans
-  `/usr/lib/systemd/user/`.
+- L'unité est livrée par l'image dans `/usr/lib/systemd/user/` ; `ensure_unit()`
+  ne l'écrit dans `~/.config/systemd/user/` que si elle manque (lancement depuis
+  le dépôt, image antérieure à M4).
 - L'unité est un service **utilisateur** : elle démarre avec la session, pas au
   boot. Pour un poste sans session graphique, `loginctl enable-linger` serait
   nécessaire — hors périmètre.
@@ -143,7 +151,7 @@ Invariants :
 ```bash
 cd src/gablue-share/daemon
 cargo build --release      # binaire : target/release/gablue-shared
-cargo test                 # 23 tests, aucun réseau externe
+cargo test                 # 24 tests, aucun réseau externe
 ```
 
 Développement local :
