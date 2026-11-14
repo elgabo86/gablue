@@ -79,6 +79,35 @@ class ChainMarkersTest(unittest.TestCase):
                 self.assertTrue(line.rstrip().endswith("'"))
 
 
+class ImageChainTest(unittest.TestCase):
+    """Action « Mettre à jour Gablue » d'un poste seul.
+
+    Elle lançait `bootc upgrade` nu : aucune étape annoncée, donc ni barre ni
+    libellé pendant tout le tirage de l'image (même trou que le lot, corrigé).
+    """
+
+    def test_single_stage_is_announced(self):
+        script = remote_updates.image_chain()
+        self.assertIn(
+            f"::gablue:stage 1 1 {remote_updates.STAGES[0]}", script
+        )
+
+    def test_uses_the_same_image_block_then_status(self):
+        script = remote_updates.image_chain()
+        self.assertIn(remote_updates.IMAGE_UPGRADE, script)
+        self.assertIn("/usr/libexec/gablue-update", script)
+        self.assertIn("---STATUS---", script)
+        self.assertIn("bootc status", script)
+        self.assertIn("\nrc=0\n", script)
+        self.assertIn("exit $rc", script)
+
+    def test_chain_is_a_single_step(self):
+        # Le dialogue mono-poste n'affiche pas d'étapes : un seul marqueur
+        # suffit, et deux compteurs feraient reculer la barre.
+        script = remote_updates.image_chain()
+        self.assertEqual(script.count("::gablue:stage"), 1)
+
+
 class HostProgressTest(unittest.TestCase):
     def setUp(self):
         self.state = remote_updates.HostProgress()

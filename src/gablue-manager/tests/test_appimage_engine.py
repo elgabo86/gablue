@@ -853,6 +853,36 @@ class DownloadCommandTest(unittest.TestCase):
         self.assertFalse(dest.exists())
         self.assertIn("Erreur", err.getvalue())
 
+    def test_appimage_option_rejects_a_non_elf(self):
+        # Un 200 peut porter une page d'erreur : le contrôle ELF retire le
+        # fichier au lieu de laisser un faux AppImage remplacer le bon.
+        dest = self.dir / "out" / "faux.appimage"
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "stdout", out), \
+                mock.patch.object(sys, "stderr", err):
+            code = engine.main([
+                "download", f"{self.base}/payload.bin", str(dest),
+                "--appimage",
+            ])
+        self.assertEqual(code, 1)
+        self.assertFalse(dest.exists())
+        self.assertFalse(dest.with_name(dest.name + ".part").exists())
+        self.assertIn("pas un AppImage", err.getvalue())
+
+    def test_appimage_option_accepts_an_elf(self):
+        elf = b"\x7fELF" + b"\x00" * 4096
+        (self.dir / "tool.appimage").write_bytes(elf)
+        dest = self.dir / "out" / "tool.appimage"
+        out = io.StringIO()
+        with mock.patch.object(sys, "stdout", out):
+            code = engine.main([
+                "download", f"{self.base}/tool.appimage", str(dest),
+                "--appimage",
+            ])
+        self.assertEqual(code, 0)
+        self.assertEqual(dest.read_bytes(), elf)
+        self.assertTrue(dest.stat().st_mode & 0o111)   # exécutable
+
     def test_existing_destination_is_kept(self):
         # Le moteur ne redemande pas une release déjà téléchargée ; c'est
         # `gablue-fetch` qui efface avant (nom de fichier fixe = pas de reprise

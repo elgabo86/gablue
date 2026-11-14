@@ -781,6 +781,10 @@ def download_command(args) -> int:
     reporter.busy()
     try:
         size = download(args.url, dest, reporter)
+        if args.appimage:
+            # Un 200 peut porter une page d'erreur : le contrôle ELF retire le
+            # fichier au lieu de laisser un faux AppImage remplacer le bon.
+            size = verify_appimage(dest)
     except DownloadError as exc:
         reporter.finish()
         print(f"Erreur : {exc}", file=sys.stderr, flush=True)
@@ -819,6 +823,9 @@ def main(argv: list[str] | None = None) -> int:
     download_parser.add_argument("dest")
     download_parser.add_argument("--label", default="",
                                  help="libellé de la barre et du journal")
+    download_parser.add_argument("--appimage", action="store_true",
+                                 help="vérifier que le fichier est un AppImage "
+                                      "(ELF) et le rendre exécutable")
 
     args = parser.parse_args(argv)
     # `download` ne touche pas au catalogue : un script peut s'en servir même

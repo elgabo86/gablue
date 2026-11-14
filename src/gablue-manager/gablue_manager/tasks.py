@@ -79,6 +79,21 @@ def _display_command(argv: list[str]) -> str:
         return f"{fixed} <script>"
     return " ".join(argv)
 
+
+def _short_command(command: str) -> str:
+    """Commande distante résumée pour l'en-tête du journal.
+
+    Une chaîne de mise à jour fait 30 à 90 lignes (cinq étapes, sections
+    gardées par des tests) : l'en-tête déversait tout le script et la première
+    sortie réelle tombait hors écran. On ne garde donc qu'un résumé ; le script
+    entier s'écrit au journal au premier affichage de « Terminal ».
+    """
+    lines = command.splitlines()
+    if len(lines) <= 1:
+        return command.strip()
+    return f"<script — {len(lines)} lignes>"
+
+
 class _AuthLinkRow(QWidget):
     """Lien d'enregistrement (Tailscale) : cliquable, copiable, masquable.
 
@@ -226,9 +241,10 @@ class RemoteTaskDialog(QDialog):
         buttons.addWidget(self.close_button)
         root.addLayout(buttons)
 
+        self._script_shown = len(command.splitlines()) <= 1
         self.log_view.appendPlainText(
             f"→ {ssh_target(self._host)} (port {self._host['port']})\n"
-            f"$ {command}\n\n"
+            f"$ {_short_command(command)}\n\n"
         )
         QTimer.singleShot(60, self._start)
 
@@ -290,6 +306,14 @@ class RemoteTaskDialog(QDialog):
 
     def _toggle_log(self, shown: bool) -> None:
         self.log_view.setVisible(shown)
+        if shown and not self._script_shown:
+            # Le résumé de l'en-tête tient la première sortie réelle visible ;
+            # le script complet reste consultable, une fois, pour qui en a
+            # besoin (échec à comprendre, commande à rejouer).
+            self._script_shown = True
+            self.log_view.appendPlainText(
+                "== Script ==\n" + self._command + "\n\n"
+            )
         if self.log_toggle is not None:
             self.log_toggle.setToolTip(
                 "Masquer le journal" if shown
@@ -408,6 +432,22 @@ def _elapsed_text(seconds: float) -> str:
     if minutes:
         return f"{minutes} min {secs:02d} s"
     return f"{secs} s"
+
+
+def _minutes(seconds: float) -> str:
+    """Durée en minutes rondes, pour un message de silence (« 30 min »).
+
+    Le chien de garde parle de **minutes**, pas de secondes : « muet depuis
+    607 s » se lit mal, alors que la précision n'apporte rien à cette échelle.
+    """
+    total = max(0, int(seconds)) // 60
+    if total < 1:
+        return "moins d'une minute"
+    if total >= 60:
+        hours, minutes = divmod(total, 60)
+        return f"{hours} h {minutes:02d} min"
+    return f"{total} min"
+
 
 def _human_bytes(value: int) -> str:
     """Taille lisible (o, Kio, Mio, Gio) — journal de progression de bootc."""
@@ -1482,10 +1522,17 @@ class RemoteBatchDialog(QDialog):
 
     MAX_PARALLEL = 3
 
+    # Chien de garde par poste : aucun octet ni marqueur depuis N secondes.
+    # `ServerAlive` ne voit que les liens morts ; un `brew` vivant qui ne rend
+    # plus rien (miroir muet, processus bloqué) laissait « En cours » à vie.
+    STALL_WARN = 600            # 10 min : la ligne le dit, sans rien tuer
+    STALL_ABORT = 1800          # 30 min : on abandonne CE poste, pas le lot
+    LOG_TAIL = 4000             # caractères gardés par poste pour journald
+
     def __init__(self, parent=None, hosts=None, command: str = "",
                  commands: dict[str, str] | None = None,
                  title: str = "Mises à jour des postes",
-                 subtitle: str = ""):
+                 subtitle: str = "", await_commands: bool = False):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setModal(False)
@@ -1497,14 +1544,28 @@ class RemoteBatchDialog(QDialog):
         # (applications) : le script de la chaîne n'est alors pas le même pour
         # tous. Absent → `command`, le même script pour tout le monde.
         self._commands = dict(commands or {})
-        self._queue = list(range(len(self._hosts)))
+        # `await_commands` : la fenêtre s'ouvre avant les sondes (applications)
+        # et chaque poste démarre dès que `set_command` lui donne sa chaîne.
+        self._awaiting: set[int] = {
+            index for index, host in enumerate(self._hosts)
+            if await_commands
+            and (host.get("id") or "") not in self._commands
+        }
+        self._queue = [
+            index for index in range(len(self._hosts))
+            if index not in self._awaiting
+        ]
         self._workers: dict[int, SshTaskWorker] = {}
         self._rows: dict[int, QLabel] = {}
         self._bars: dict[int, BusyProgressBar] = {}
         self._details: dict[int, QLabel] = {}
         self._durations: dict[int, QLabel] = {}
+        self._retry: dict[int, QPushButton] = {}
         self._progress: dict[int, remote_updates.HostProgress] = {}
         self._starts: dict[int, float] = {}
+        self._last_activity: dict[int, float] = {}
+        self._logs: dict[int, str] = {}
+        self._stalled: dict[int, str] = {}
         self._results: dict[int, int] = {}
         self._cancelled = False
         self._finished = False
@@ -1533,7 +1594,12 @@ class RemoteBatchDialog(QDialog):
             name.setObjectName("hostName")
             status = QLabel("En attente", self)
             status.setObjectName("hostStatus")
+            retry = QPushButton("Relancer", self)
+            retry.setObjectName("ghost")
+            retry.setVisible(False)
+            retry.clicked.connect(lambda _=False, i=index: self._retry_host(i))
             line.addWidget(name, 1)
+            line.addWidget(retry, 0, Qt.AlignRight)
             line.addWidget(status, 0, Qt.AlignRight)
             block.addLayout(line)
             # Une barre par poste : trois ssh tournent en même temps, une barre
@@ -1563,6 +1629,12 @@ class RemoteBatchDialog(QDialog):
             self._durations[index] = duration
             self._progress[index] = remote_updates.HostProgress()
             self._starts[index] = 0.0
+            self._last_activity[index] = 0.0
+            self._logs[index] = ""
+            self._retry[index] = retry
+            if index in self._awaiting:
+                status.setText("Préparation…")
+                detail.setText("Sonde des applications…")
         root.addLayout(rows)
 
         self.progress = QProgressBar(self)
@@ -1618,6 +1690,7 @@ class RemoteBatchDialog(QDialog):
         """Sortie d'un poste : protocole consommé, reste au journal commun."""
         if not text:
             return
+        self._last_activity[index] = time.monotonic()
         state = self._progress[index]
         visible = state.feed(text)
         self._sync_progress(index)
@@ -1628,6 +1701,10 @@ class RemoteBatchDialog(QDialog):
         for line in visible.splitlines():
             if line.strip():
                 self.log_view.appendPlainText(f"[{prefix}] {line}")
+        # Trace par poste pour journald : un échec de lot ne laissait sinon
+        # **rien** dans journalctl, alors que c'est la seule trace durable.
+        kept = (self._logs[index] + visible)[-self.LOG_TAIL:]
+        self._logs[index] = kept
 
     def _sync_progress(self, index: int) -> None:
         """Barre et libellé du poste d'après son dernier événement."""
@@ -1665,18 +1742,41 @@ class RemoteBatchDialog(QDialog):
             )
 
     def _tick(self) -> None:
-        """Durée écoulée des postes en vol, une fois par seconde."""
+        """Durée écoulée et silence des postes en vol, une fois par seconde."""
         now = time.monotonic()
         for index in list(self._workers):
             start = self._starts.get(index) or 0.0
-            if start:
-                self._durations[index].setText(_elapsed_text(now - start))
+            if not start:
+                continue
+            self._durations[index].setText(_elapsed_text(now - start))
+            self._watch(index, now)
+
+    def _watch(self, index: int, now: float) -> None:
+        """Silence anormal d'un poste : on le dit, puis on l'abandonne."""
+        if index in self._stalled:
+            return
+        last = self._last_activity.get(index) or self._starts.get(index) or now
+        idle = now - last
+        if idle >= self.STALL_ABORT:
+            reason = f"aucun progrès depuis {_minutes(self.STALL_ABORT)}"
+            self._stalled[index] = reason
+            self._details[index].setText(f"Abandon — {reason}")
+            self._append(index, f"\n[abandonné — {reason}]\n")
+            worker = self._workers.get(index)
+            if worker is not None:
+                worker.cancel.set()
+        elif idle >= self.STALL_WARN:
+            self._details[index].setText(
+                f"{self._progress[index].label() or 'En cours'} "
+                f"— muet depuis {_minutes(idle)}"
+            )
 
     def _start_next(self) -> None:
         while self._queue and len(self._workers) < self.MAX_PARALLEL:
             index = self._queue.pop(0)
             self._set_row(index, "En cours…")
             self._starts[index] = time.monotonic()
+            self._last_activity[index] = self._starts[index]
             self._details[index].setText("Démarrage…")
             self._bars[index].setVisible(True)
             host = self._hosts[index]
@@ -1690,6 +1790,76 @@ class RemoteBatchDialog(QDialog):
             )
             self._workers[index] = worker
             worker.start()
+
+    def set_command(self, index: int, command: str) -> None:
+        """Chaîne d'un poste prête (sonde finie) : il démarre dès qu'un slot se libère.
+
+        La fenêtre s'ouvre avant les sondes d'applications ; chaque poste y
+        attend « Sonde des applications… », puis reçoit ici son script. Un
+        poste dont la chaîne serait vide (rien à mettre à jour) ne démarre
+        pas : il est marqué terminé, sans ssh inutile.
+        """
+        if self._cancelled or self._finished:
+            return
+        self._commands[self._hosts[index].get("id") or ""] = command
+        if index not in self._awaiting:
+            return
+        self._awaiting.discard(index)
+        if not command.strip():
+            self._results[index] = 0
+            self._set_row(index, "À jour")
+            self._details[index].setText("")
+            self._progress[index].finished = True
+            self._apply_global()
+            self._maybe_finish()
+            return
+        self._set_row(index, "En attente")
+        self._details[index].setText("")
+        self._queue.append(index)
+        self._start_next()
+
+    def _retry_host(self, index: int) -> None:
+        """Relancer **un** poste, sans rejouer le lot.
+
+        Un échec sur une machine sur six obligeait à tout relancer, y compris
+        les cinq qui venaient de finir. Le script est déjà connu (`_commands`) :
+        on remet la ligne à zéro et on la remet dans la file.
+        """
+        if self._cancelled:
+            return
+        if index in self._workers or index in self._queue:
+            return
+        command = self._commands.get(
+            self._hosts[index].get("id") or "", self._command
+        )
+        if not command.strip():
+            return
+        self._retry[index].setVisible(False)
+        self._results.pop(index, None)
+        self._stalled.pop(index, None)
+        self._progress[index] = remote_updates.HostProgress()
+        self._starts[index] = 0.0
+        self._last_activity[index] = 0.0
+        self._logs[index] = ""
+        self._set_row(index, "En attente")
+        self._details[index].setText("")
+        self._durations[index].setText("")
+        self._bars[index].setVisible(False)
+        if self._finished:
+            # Le lot s'était refermé sur un échec : on le rouvre pour ce poste.
+            self._finished = False
+            self.close_button.setVisible(False)
+            self.cancel_button.setVisible(True)
+            self.cancel_button.setEnabled(True)
+            self._ticker.start()
+        self._apply_global()
+        self._queue.append(index)
+        self._start_next()
+
+    def _maybe_finish(self) -> None:
+        """Fermer le lot seulement quand plus rien n'attend ni ne tourne."""
+        if not self._queue and not self._workers and not self._awaiting:
+            self._finish()
 
     def _host_done(self, index: int, code: int) -> None:
         worker = self._workers.pop(index, None)
@@ -1708,7 +1878,8 @@ class RemoteBatchDialog(QDialog):
         start = self._starts.get(index) or 0.0
         elapsed = _elapsed_text(time.monotonic() - start) if start else ""
         bar = self._bars[index]
-        from .constants import COLOR_ONLINE, COLOR_OFFLINE
+        from .constants import COLOR_AUTH, COLOR_ONLINE, COLOR_OFFLINE
+        reason = self._stalled.get(index) or ""
         if code == 0:
             self._set_row(index, "Terminé", COLOR_ONLINE)
             bar.setRange(0, 1000)
@@ -1721,17 +1892,34 @@ class RemoteBatchDialog(QDialog):
             self._details[index].setText("")
             self._durations[index].setText("")
         else:
-            self._set_row(index, f"Échec (code {code})", COLOR_OFFLINE)
+            if reason:
+                # Abandon du chien de garde : ce n'est pas le poste qui a
+                # répondu « échec », c'est nous qui avons coupé un silence.
+                self._set_row(index, "Abandonné", COLOR_AUTH)
+                self._details[index].setText(
+                    f"Aucun progrès depuis {_minutes(self.STALL_ABORT)}"
+                )
+            else:
+                self._set_row(index, f"Échec (code {code})", COLOR_OFFLINE)
+                self._details[index].setText("")
             bar.setVisible(False)
-            self._details[index].setText("")
             self._durations[index].setText(
                 f"après {elapsed}" if elapsed else ""
+            )
+            self._retry[index].setVisible(True)
+            # Un échec de lot ne laissait **rien** dans journalctl, alors que
+            # c'est la seule trace qui survit à la session. Le journal par
+            # poste est borné à `LOG_TAIL`, l'anti-spam de `journal` borne le
+            # reste ; la fenêtre, elle, ferme avec la session.
+            journal.log_failure(
+                f"Mises à jour — {display_name(self._hosts[index])}",
+                detail=self._logs.get(index) or leftover, code=code,
             )
         self._apply_global()
         if self._queue:
             self._start_next()
-        elif not self._workers:
-            self._finish()
+        else:
+            self._maybe_finish()
 
     def _finish(self) -> None:
         if self._finished:
@@ -1758,7 +1946,14 @@ class RemoteBatchDialog(QDialog):
         self.cancel_button.setEnabled(False)
         for index in self._queue:
             self._set_row(index, "Annulé")
+            self._details[index].setText("")
         self._queue.clear()
+        for index in self._awaiting:
+            # Sonde encore en cours : la fenêtre se ferme, personne ne lui
+            # livrera sa chaîne (`set_command` refuse dès `_cancelled`).
+            self._set_row(index, "Annulé")
+            self._details[index].setText("")
+        self._awaiting.clear()
         for index in self._workers:
             self._bars[index].setVisible(False)
         for worker in self._workers.values():

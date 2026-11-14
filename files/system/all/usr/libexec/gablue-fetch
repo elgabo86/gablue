@@ -31,4 +31,5 @@ mkdir -p "$(dirname "$DEST")"
 rm -f "$DEST" "$DEST.part"
 echo "Téléchargement de $LABEL..."
 
-exec /usr/libexec/gablue-apps download "$URL" "$DEST" --label "$LABEL"
+exec /usr/libexec/gablue-apps download "$URL" "$DEST" \
+    --label "$LABEL" --appimage

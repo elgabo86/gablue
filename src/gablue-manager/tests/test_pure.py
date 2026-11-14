@@ -2417,6 +2417,7 @@ class AppsTest(unittest.TestCase):
             '"name": "x", "url": "y", "published": 1794254796.0}'
         )
         done = mock.Mock(returncode=0, stdout=payload)
+        apps.forget_latest()
         with mock.patch.object(apps, "APPS_ENGINE", __file__), \
                 mock.patch.object(
                     apps.subprocess, "run", return_value=done
@@ -2432,6 +2433,7 @@ class AppsTest(unittest.TestCase):
         """Moteur absent (image antérieure) : verdict indéterminé, pas d'erreur."""
         from unittest import mock
 
+        apps.forget_latest()
         with mock.patch.object(
             apps, "APPS_ENGINE", "/absent/gablue-apps"
         ):
@@ -2446,9 +2448,86 @@ class AppsTest(unittest.TestCase):
             mock.Mock(returncode=0, stdout="pas du JSON"),
             mock.Mock(returncode=0, stdout="[]"),
         ):
+            apps.forget_latest()
             with mock.patch.object(apps, "APPS_ENGINE", __file__), \
                     mock.patch.object(apps.subprocess, "run", return_value=done):
                 self.assertEqual(apps.latest_info(self.by_key["eden"]), {})
+
+    def test_latest_info_cache_saves_duplicate_probes(self):
+        """Six postes ne relisent pas six fois le même flux de releases.
+
+        `pending_for` sonde chaque poste séparément : sans cache, un lot de six
+        postes faisait trente lectures du même flux (une par poste et par
+        application), et la fenêtre attendait la somme des postes.
+        """
+        from unittest import mock
+
+        app = self.by_key["lichii"]
+        payload = '{"key": "lichii", "version": "build-125", "published": 1.0}'
+        done = mock.Mock(returncode=0, stdout=payload)
+        apps.forget_latest()
+        with mock.patch.object(apps, "APPS_ENGINE", __file__), \
+                mock.patch.object(
+                    apps.subprocess, "run", return_value=done
+                ) as run:
+            first = apps.latest_info(app)
+            second = apps.latest_info(app)
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(first, second)
+            # Un appelant ne peut pas corrompre le cache.
+            first["version"] = "bidon"
+            self.assertEqual(
+                apps.latest_info(app)["version"], "build-125"
+            )
+            # Une action (installation, suppression) invalide cette clé.
+            apps.forget_latest(app.key)
+            apps.latest_info(app)
+            self.assertEqual(run.call_count, 2)
+
+    def test_latest_info_cache_respects_ttl(self):
+        from unittest import mock
+
+        app = self.by_key["eden"]
+        clock = [1000.0]
+        done = mock.Mock(
+            returncode=0, stdout='{"version": "v1", "published": 1.0}'
+        )
+        apps.forget_latest()
+        with mock.patch.object(apps, "APPS_ENGINE", __file__), \
+                mock.patch.object(apps, "time", mock.Mock(
+                    monotonic=lambda: clock[0]
+                )), \
+                mock.patch.object(
+                    apps.subprocess, "run", return_value=done
+                ) as run:
+            apps.latest_info(app)
+            clock[0] += apps.INFO_TTL - 1
+            apps.latest_info(app)
+            self.assertEqual(run.call_count, 1)
+            clock[0] += 2                      # TTL dépassé
+            apps.latest_info(app)
+            self.assertEqual(run.call_count, 2)
+            # `ttl=0` force une lecture, sans attendre l'expiration.
+            apps.latest_info(app, ttl=0)
+            self.assertEqual(run.call_count, 3)
+        apps.forget_latest()
+
+    def test_latest_info_failure_is_cached_briefly(self):
+        """Un flux muet n'est pas redemandé trente fois dans la même sonde."""
+        from unittest import mock
+
+        app = self.by_key["xenia"]
+        done = mock.Mock(returncode=1, stdout="")
+        apps.forget_latest()
+        with mock.patch.object(apps, "APPS_ENGINE", __file__), \
+                mock.patch.object(
+                    apps.subprocess, "run", return_value=done
+                ) as run:
+            self.assertEqual(apps.latest_info(app), {})
+            self.assertEqual(apps.latest_info(app), {})
+            self.assertEqual(run.call_count, 1)
+        apps.forget_latest()
+        self.assertLess(apps.INFO_ERROR_TTL, apps.INFO_TTL)
 
     def test_version_tuple(self):
         self.assertEqual(apps.version_tuple("v0.2.1"), (0, 2, 1))

@@ -230,6 +230,24 @@ def apps_chain(pending_apps=(), states=None) -> str:
     return "rc=0\n" + section + "\nexit $rc\n"
 
 
+def image_chain() -> str:
+    """Étape image seule : action « Mettre à jour Gablue » d'un poste.
+
+    Même bloc que dans `update_chain` (progression JSONL comprise), suivi de
+    `bootc status` : `gablue_update_hint` lit le compte rendu d'upgrade, et la
+    version amorcée n'apparaît que dans le status. Sans marqueur d'étape, la
+    fenêtre n'avait ni barre ni libellé pendant le tirage de l'image.
+    """
+    return "\n".join([
+        _stage(1, 1, STAGES[0]),
+        "rc=0",
+        IMAGE_UPGRADE,
+        "echo '---STATUS---'",
+        "sudo -n /usr/bin/bootc status 2>/dev/null || true",
+        "exit $rc",
+    ]) + "\n"
+
+
 def probe_apps(host: dict, timeout: float = 90.0) -> tuple:
     """AppImages d'un poste distant : une connexion SSH + les flux de releases.
 

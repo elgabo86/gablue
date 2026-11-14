@@ -228,7 +228,10 @@ patch `.desktop`, nettoyage du cache, `kbuildsycoca6`.
   vrai pourcentage pour l'AppImage d'ES-DE et celle d'OpenCode Desktop (~245
   Mio) : `curl` n'en donne aucun hors terminal. Elle efface la destination
   avant de télécharger (**pas de reprise entre deux versions**, le nom de
-  fichier est fixe ; la reprise *dans* un run est celle du moteur). Les
+  fichier est fixe ; la reprise *dans* un run est celle du moteur) et passe
+  `--appimage` : le moteur vérifie le magic ELF et rend le fichier exécutable,
+  donc une page d'erreur servie en 200 ne remplace plus l'installation (le
+  fichier est retiré, la tâche échoue). Les
   appelants l'invoquent par **chemin absolu** `/usr/libexec/gablue-fetch` :
   `/usr/libexec` n'est pas dans le `PATH` de l'utilisateur (vécu 10/11/2026 :
   « gablue-fetch: commande introuvable » cassait `opencode2-install` et

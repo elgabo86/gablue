@@ -21,6 +21,8 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
+import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -269,14 +271,34 @@ def installed_any(app: App, current: dict) -> bool:
 
 PROBE_TIMEOUT = 25.0        # le moteur borne lui-même chaque requête à 20 s
 
+# Cache des versions publiées. Un lot de six postes sonde **six fois** le même
+# flux par application (30 lectures identiques) : la durée du lot était celle
+# de la somme des postes, sans rien de plus à apprendre. Les releases ne
+# changent pas dans la minute, un TTL court suffit donc à tout ramener à une
+# lecture par application ; les échecs sont gardés moins longtemps, pour qu'un
+# réseau revenu se voie vite.
+INFO_TTL = 300.0            # 5 min
+INFO_ERROR_TTL = 60.0       # flux muet / réseau tombé
 
-def latest_info(app: App) -> dict:
-    """Dernière version publiée, telle que la voit le moteur d'installation.
+_latest_cache: dict[str, tuple[float, float, dict]] = {}
+_latest_lock = threading.Lock()
 
-    `{}` quand le moteur est absent (image antérieure) ou que le réseau ne
-    répond pas : le verdict reste indéterminé et le bouton reste actif — on ne
-    dit jamais « à jour » à tort.
+
+def forget_latest(key: str | None = None) -> None:
+    """Oublier une version publiée : après une installation ou une suppression.
+
+    Sans cela, le dialogue rappellerait l'ancienne version pendant le TTL et
+    proposerait encore une mise à jour qui vient d'être faite.
     """
+    with _latest_lock:
+        if key is None:
+            _latest_cache.clear()
+        else:
+            _latest_cache.pop(key, None)
+
+
+def _probe_latest(app: App) -> dict:
+    """Interroge le moteur, sans cache (`gablue-apps probe --json`)."""
     if not Path(APPS_ENGINE).is_file():
         return {}
     try:
@@ -298,6 +320,32 @@ def latest_info(app: App) -> dict:
         "version": str(data.get("version") or ""),
         "published": data.get("published"),
     }
+
+
+def latest_info(app: App, ttl: float = INFO_TTL) -> dict:
+    """Dernière version publiée, telle que la voit le moteur d'installation.
+
+    `{}` quand le moteur est absent (image antérieure) ou que le réseau ne
+    répond pas : le verdict reste indéterminé et le bouton reste actif — on ne
+    dit jamais « à jour » à tort.
+
+    Le résultat est mis en cache `INFO_TTL` secondes (verrouillé : les sondes
+    de postes tournent en parallèle). `ttl=0` force une lecture, et
+    `forget_latest()` invalide après une action.
+    """
+    now = time.monotonic()
+    with _latest_lock:
+        cached = _latest_cache.get(app.key)
+        if cached is not None:
+            fetched, lifetime, info = cached
+            if ttl > 0 and now - fetched < lifetime:
+                return dict(info)
+    info = _probe_latest(app)
+    lifetime = ttl if info else min(ttl, INFO_ERROR_TTL)
+    if lifetime > 0:
+        with _latest_lock:
+            _latest_cache[app.key] = (time.monotonic(), lifetime, info)
+    return dict(info)
 
 
 def version_tuple(text: str) -> tuple[int, ...]:

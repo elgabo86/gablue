@@ -15,8 +15,8 @@ from PySide6.QtWidgets import (
 from ..apps import (
     APPS, GROUPS, REMOTE_STATE_SCRIPT, all_states, config_argv, config_command,
     copy_esde_config, describe, gearlever_available, install_argv,
-    install_command, installed_any, latest_info, remote_states, remove_argv,
-    remove_command, script_has_option, update_available,
+    forget_latest, install_command, installed_any, latest_info, remote_states,
+    remove_argv, remove_command, script_has_option, update_available,
 )
 from ..constants import _which
 from ..local import parse_gablue_progress
@@ -383,14 +383,14 @@ class AppsDialog(QDialog):
                 progress_parser=parse_gablue_progress,
                 progress_text="Téléchargement et intégration…",
                 reveal_log_on_error=True,
-            ))
+            ), app.key)
         else:
             self._run(RemoteTaskDialog(
                 self, host=self.host, title=title, subtitle=subtitle,
                 command=install_command(app, state),
                 progress_mode="busy",
                 progress_text="Téléchargement et intégration…",
-            ))
+            ), app.key)
 
     def remove(self, app) -> None:
         state = self.states.get(app.key)
@@ -421,7 +421,7 @@ class AppsDialog(QDialog):
                 progress_mode="busy",
                 progress_text="Suppression…",
                 reveal_log_on_error=True,
-            ))
+            ), app.key)
             return
         command = remove_command(app, state)
         if not command:
@@ -436,7 +436,7 @@ class AppsDialog(QDialog):
             subtitle=subtitle, command=command,
             progress_mode="busy",
             progress_text="Suppression…",
-        ))
+        ), app.key)
 
     def update_esde_config(self) -> None:
         answer = QMessageBox.question(
@@ -496,6 +496,14 @@ class AppsDialog(QDialog):
             )
         QMessageBox.information(self, "Configuration d'ES-DE", detail)
 
-    def _run(self, dialog) -> None:
-        dialog.completed.connect(lambda _ok: self.refresh())
+    def _run(self, dialog, key: str = "") -> None:
+        def done(_ok: bool) -> None:
+            # Le cache a servi au verdict ; une action vient de changer ce qui
+            # est installé, donc sa version publiée est relue au lieu de
+            # resservir une réponse d'avant l'action.
+            if key:
+                forget_latest(key)
+            self.refresh()
+
+        dialog.completed.connect(done)
         start_task(self, dialog)

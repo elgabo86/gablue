@@ -1270,9 +1270,11 @@ class MainWindow(QMainWindow):
         """Mettre à jour tous les postes en ligne, en parallèle.
 
         Les commandes dépendent de ce que chaque poste a d'installé : une
-        sonde d'AppImages part donc d'abord sur chaque poste (une connexion
-        SSH, flux de releases lus d'ici), puis la fenêtre du lot reçoit la
-        chaîne propre à chacun.
+        sonde d'AppImages part sur chaque poste (une connexion SSH, flux de
+        releases lus d'ici). La fenêtre du lot s'ouvre **tout de suite** et
+        chaque poste y annonce « Sonde des applications… » : elle attendait
+        auparavant la dernière sonde (90 s de délai au pire, plusieurs minutes
+        à six postes) sans rien afficher (corrigé le 14/11/2026).
         """
         online = self._online_hosts()
         if not online:
@@ -1299,34 +1301,60 @@ class MainWindow(QMainWindow):
             return          # une sonde de lot est déjà partie
         self._batch_hosts = list(online)
         self._batch_commands = {}
-        for host in online:
-            self._probe_remote_apps(host, self._batch_probe_ready)
-
-    def _batch_probe_ready(self, host: dict, result) -> None:
-        """Sonde d'un poste terminée : sa chaîne est prête, le lot attend les autres."""
-        pending, _unknown, _installed, states = result
-        self._batch_commands[host["id"]] = remote_updates.update_chain(
-            pending, states
-        )
-        if len(self._batch_commands) < len(self._batch_hosts):
-            return
-        hosts = self._batch_hosts
-        self._batch_hosts = []
-        self._batch_host_ids = [entry["id"] for entry in hosts]
+        self._batch_host_ids = [entry["id"] for entry in online]
         dialog = RemoteBatchDialog(
-            self, hosts=hosts, commands=self._batch_commands,
-            subtitle=f"{len(hosts)} poste(s) mis à jour en parallèle.",
+            self, hosts=online, commands={}, await_commands=True,
+            subtitle=f"{len(online)} poste(s) mis à jour en parallèle.",
         )
         dialog.completed.connect(self._batch_done)
         start_task(self, dialog)
+        for index, host in enumerate(online):
+            self._probe_remote_apps(
+                host,
+                lambda h, result, i=index, d=dialog:
+                    self._batch_probe_ready(h, result, i, d),
+            )
+
+    def _batch_probe_ready(self, host: dict, result, index: int,
+                           dialog) -> None:
+        """Sonde d'un poste terminée : on lui livre sa chaîne et il démarre."""
+        pending, _unknown, _installed, states = result
+        command = remote_updates.update_chain(pending, states)
+        self._batch_commands[host["id"]] = command
+        # La fenêtre a pu être fermée (donc le lot annulé) pendant la sonde.
+        dialog.set_command(index, command)
+        if len(self._batch_commands) >= len(self._batch_hosts):
+            self._batch_hosts = []
 
     def _batch_done(self, ok: bool) -> None:
-        """Lot terminé : les compteurs connus de ces cartes sont périmés."""
+        """Lot terminé : les chiffres des cartes sont périmés — on les relit.
+
+        Les compteurs d'un poste (« 3 applications, image en attente ») datent
+        d'avant la mise à jour. Les oublier laissait un « — » qu'il fallait
+        re-sonder poste par poste à la main ; les relire ici referme la boucle.
+        Une seule fois par poste, trois connexions à la fois, et jamais sur un
+        lot annulé ou en échec (l'état d'un poste qui vient d'échouer n'est pas
+        plus fiable juste après).
+        """
+        host_ids = list(self._batch_host_ids)
         if not ok:
+            # Échec : on oublie les compteurs sans sonder (l'état d'un poste
+            # qui vient d'échouer n'est pas plus fiable juste après), mais on
+            # garde la liste — une relance réussie depuis la fenêtre doit
+            # pouvoir re-sonder ces mêmes postes.
+            for host_id in host_ids:
+                self._forget_remote_updates(host_id)
             return
-        for host_id in self._batch_host_ids:
-            self._forget_remote_updates(host_id)
         self._batch_host_ids = []
+        for host_id in host_ids:
+            self._forget_remote_updates(host_id)
+        for host_id in host_ids:
+            if self._host(host_id) is None:
+                continue
+            if host_id not in self._remote_check_queue:
+                self._remote_check_queue.append(host_id)
+            self._set_host_checking(host_id)
+        self._pump_remote_checks()
 
     def _remote_after_task(self, host_id: str, ok: bool) -> None:
         """Mise à jour d'un poste terminée : son compteur connu est périmé."""
@@ -2152,16 +2180,10 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.Yes:
             return
-        script = (
-            "sudo -n /usr/bin/bootc upgrade\n"
-            "rc=$?\n"
-            "echo '---STATUS---'\n"
-            "sudo -n /usr/bin/bootc status 2>/dev/null || true\n"
-            "exit $rc\n"
-        )
         self._run_remote_script(
             host, f"Mise à jour — {display_name(host)}",
-            "La nouvelle image s'applique au prochain redémarrage.", script,
+            "La nouvelle image s'applique au prochain redémarrage.",
+            remote_updates.image_chain(),
             root=True,
             # Seul le compte rendu d'upgrade fait foi : `bootc status` décrit
             # aussi le déploiement en attente et contiendrait « staged » même
@@ -2169,6 +2191,9 @@ class MainWindow(QMainWindow):
             hint_from_output=lambda text: gablue_update_hint(
                 text.split("---STATUS---")[0]
             ),
+            # Même progression que dans la chaîne : sans elle, cette action
+            # restait muette pendant tout le tirage de l'image.
+            progress_mode="busy",
         )
 
     def update_remote_flatpaks(self, host: dict) -> None:
