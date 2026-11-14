@@ -98,7 +98,7 @@ fn serve(request: tiny_http::Request, state: &Shared, allow_nonlocal: bool) {
 ///   couper un transfert ;
 /// - un disque externe monté ou débranché ne change pas le fichier : on re-vérifie
 ///   donc la disponibilité de chaque partage (un `stat` par partage, toutes les
-///   2 s) et on recharge seulement si elle a bougé. Coût négligeable, et c'est ce
+///   3 s) et on recharge seulement si elle a bougé. Coût négligeable, et c'est ce
 ///   qui fait apparaître/disparaître un partage sans intervention.
 fn spawn_reloader(path: PathBuf, state: Shared) {
     std::thread::spawn(move || {

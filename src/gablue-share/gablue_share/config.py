@@ -8,6 +8,7 @@ le démon relit à chaud (mtime) sans redémarrer ni couper un transfert.
 import hashlib
 import json
 import os
+import stat
 import tempfile
 import time
 import uuid
@@ -159,9 +160,11 @@ def share_available(path: str) -> bool:
         status = candidate.stat()
     except OSError:
         return False
-    if not candidate.is_dir():
+    if not stat.S_ISDIR(status.st_mode):
         return False
-    if str(candidate).startswith(MOUNT_ROOTS):
+    # Comparaison par composants (`/mntfoo` n'est pas sous `/mnt`), comme
+    # `Path::starts_with` côté démon.
+    if any(candidate.is_relative_to(root) for root in MOUNT_ROOTS):
         try:
             parent = candidate.parent.stat()
         except OSError:
@@ -171,10 +174,10 @@ def share_available(path: str) -> bool:
     return True
 
 
-def rename_share(document: dict, share_id: str, name: str) -> tuple[bool, str]:
+def rename_share(document: dict, identifier: str, name: str) -> tuple[bool, str]:
     """Renomme un partage. Nom vide → nom du dossier (règle de l'app)."""
     for entry in document.get("shares", []):
-        if entry.get("id") != share_id:
+        if entry.get("id") != identifier:
             continue
         cleaned = name.strip() or Path(entry.get("path", "")).name or "Partage"
         previous = entry.get("name")

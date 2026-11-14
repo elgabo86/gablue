@@ -131,6 +131,10 @@ Invariants :
   mais au second plan, **rien** quand elle est cachée ou réduite. Le coût réel
   est un `readdir`+`stat` côté démon à chaque sonde : mesuré à ~15 ms pour
   20 000 entrées, soit 0,5 % d'un cœur au pire — et zéro au repos.
+  Mesures du 15/11/2026 sur 3000 fichiers : sonde `304` **0,2 ms**, listing
+  de 10 entrées 1 ms, 10 recherches 4 ms chacune, RSS **3,2 Mo** au repos et
+  3,7 Mo après 50 requêtes (stable ensuite) — la charge des nouvelles routes
+  ne laisse aucune empreinte.
 - **Pagination** : `PAGE = 500` côté GUI, la suite se charge en défilant
   (`offset`). Le serveur borne à 5000 par requête. Le tri (`sort=name|size|mtime`,
   `desc=1`) est fait **côté serveur** : trier la page affichée donnerait un
