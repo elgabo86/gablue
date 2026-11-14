@@ -88,7 +88,12 @@ fn query_param(query: &str, key: &str) -> Option<String> {
             None => (pair, ""),
         };
         if name == key {
-            return files::percent_decode(value);
+            // `application/x-www-form-urlencoded` : `+` vaut une espace dans une
+            // valeur de requête (le client encode les espaces ainsi). Un `+`
+            // littéral dans un nom de fichier arrive, lui, en `%2B` — d'où la
+            // conversion ici et nulle part ailleurs (le chemin d'URL, lui,
+            // garde ses `+`).
+            return files::percent_decode(&value.replace('+', " "));
         }
     }
     None
@@ -111,26 +116,34 @@ pub fn handle(req: &Request, cfg: &Config) -> Response<Body> {
         None => help(cfg),
         Some("api") => match segments.get(1).map(String::as_str) {
             Some("info") if segments.len() == 2 => api_info(cfg),
-            Some("list") if segments.len() == 3 => api_list(cfg, &segments[2], query),
+            Some("list") if segments.len() == 3 => api_list(req, cfg, &segments[2], query, head),
+            Some("find") if segments.len() == 3 => api_find(cfg, &segments[2], query),
+            Some("size") if segments.len() == 3 => api_size(cfg, &segments[2], query),
             _ => error(404, "route inconnue"),
         },
         Some("f") if segments.len() >= 3 => {
             serve_file(req, cfg, &segments[1], &segments[2..], head)
         }
-        Some("a") if segments.len() >= 2 => serve_tar(cfg, &segments[1], &segments[2..]),
+        Some("a") if segments.len() >= 2 => serve_tar(cfg, &segments[1], &segments[2..], query),
         _ => error(404, "route inconnue"),
     }
 }
 
 fn share_or_404<'a>(cfg: &'a Config, id: &str) -> Result<&'a Share, Response<Body>> {
-    cfg.share(id)
-        .ok_or_else(|| error(404, "partage inconnu"))
+    match cfg.share(id) {
+        // Un disque débranché n'est pas « inconnu » : le dire évite de faire
+        // croire à une faute de configuration côté pair.
+        Some(share) if !share.available => {
+            Err(error(404, "partage indisponible (dossier absent)"))
+        }
+        Some(share) => Ok(share),
+        None => Err(error(404, "partage inconnu")),
+    }
 }
 
 fn api_info(cfg: &Config) -> Response<Body> {
     let shares: Vec<Value> = cfg
-        .shares
-        .iter()
+        .available()
         .map(|share| json!({ "id": share.id, "name": share.name }))
         .collect();
     json_response(
@@ -145,7 +158,7 @@ fn api_info(cfg: &Config) -> Response<Body> {
     )
 }
 
-fn api_list(cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
+fn api_list(req: &Request, cfg: &Config, share_id: &str, query: &str, head: bool) -> Response<Body> {
     let share = match share_or_404(cfg, share_id) {
         Ok(share) => share,
         Err(response) => return response,
@@ -162,6 +175,30 @@ fn api_list(cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
     if !dir.is_dir() {
         return error(404, "ce n'est pas un dossier");
     }
+
+    // `HEAD` = simple empreinte du dossier : la GUI demande « ça a bougé ? »
+    // toutes les quelques secondes sans relire le listing (quelques centaines
+    // d'octets au lieu de plusieurs centaines de Kio sur un gros dossier).
+    if head {
+        let tag = match files::fingerprint(&share.root, &dir) {
+            Ok(tag) => tag,
+            Err(err) => return error(500, &format!("lecture impossible : {err}")),
+        };
+        let unchanged = req
+            .headers()
+            .iter()
+            .find(|header| header.field.equiv("If-None-Match"))
+            .map(|header| header.value.as_str().trim() == tag)
+            .unwrap_or(false);
+        let status = if unchanged { 304 } else { 200 };
+        return body_response(
+            status,
+            vec![h("ETag", &tag), h("Cache-Control", "no-store")],
+            Box::new(std::io::empty()),
+            Some(0),
+        );
+    }
+
     let offset = query_param(query, "offset")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
@@ -169,8 +206,10 @@ fn api_list(cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(LIST_DEFAULT)
         .clamp(1, LIST_MAX);
+    let sort = files::Sort::parse(&query_param(query, "sort").unwrap_or_default());
+    let descending = query_param(query, "desc").map(|value| value == "1").unwrap_or(false);
 
-    let (entries, truncated) = match files::list(&share.root, &dir, offset, limit) {
+    let (entries, truncated, tag) = match files::list(&share.root, &dir, offset, limit, sort, descending) {
         Ok(page) => page,
         Err(err) => return error(500, &format!("lecture impossible : {err}")),
     };
@@ -183,14 +222,104 @@ fn api_list(cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
             Value::String(parts.join("/"))
         }
     };
+    let body = json!({
+        "share": share.id,
+        "path": segments.join("/"),
+        "parent": parent,
+        "entries": entries,
+        "truncated": truncated,
+    })
+    .to_string();
+    let length = body.len();
+    body_response(
+        200,
+        vec![
+            h("Content-Type", "application/json; charset=utf-8"),
+            h("Cache-Control", "no-store"),
+            // Le même ETag que le HEAD : sans lui, la première lecture ne
+            // laisserait aucune référence et la sonde suivante relancerait un
+            // listing complet pour rien.
+            h("ETag", &tag),
+        ],
+        Box::new(Cursor::new(body.into_bytes())),
+        Some(length),
+    )
+}
+
+/// Recherche récursive par nom dans un partage (ou un sous-dossier).
+///
+/// Budget de temps fixe : c'est ce qui garantit qu'un partage de 200 000
+/// fichiers ne bloque pas le serveur. `truncated` dit au client que le résultat
+/// est partiel, `scanned` lui donne une idée du coût.
+fn api_find(cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
+    let share = match share_or_404(cfg, share_id) {
+        Ok(share) => share,
+        Err(response) => return response,
+    };
+    let needle = match query_param(query, "q") {
+        Some(value) if !value.trim().is_empty() => value.trim().to_string(),
+        _ => return error(400, "paramètre q manquant"),
+    };
+    let relative = query_param(query, "path").unwrap_or_default();
+    let segments = match files::split_path(&relative) {
+        Some(segments) => segments,
+        None => return error(400, "chemin invalide"),
+    };
+    let start = match files::resolve(&share.root, &segments) {
+        Some(path) if path.is_dir() => path,
+        _ => return error(404, "dossier introuvable"),
+    };
+    let limit = query_param(query, "limit")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(200)
+        .clamp(1, 1000);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
+    let (entries, truncated, scanned) = files::search(&share.root, &start, &needle, deadline, limit);
+    json_response(
+        200,
+        &json!({
+            "share": share.id,
+            "query": needle,
+            "path": segments.join("/"),
+            "entries": entries,
+            "truncated": truncated,
+            "scanned": scanned,
+        }),
+    )
+}
+
+/// Taille d'un dossier : calculée à la demande, bornée dans le temps.
+///
+/// Coûteux sur un arbre géant, donc jamais calculée pour tout un listing —
+/// seulement quand l'utilisateur désigne un dossier. `complete: false` signifie
+/// « au moins » : les chiffres sont un minorant.
+fn api_size(cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
+    let share = match share_or_404(cfg, share_id) {
+        Ok(share) => share,
+        Err(response) => return response,
+    };
+    let relative = query_param(query, "path").unwrap_or_default();
+    let segments = match files::split_path(&relative) {
+        Some(segments) => segments,
+        None => return error(400, "chemin invalide"),
+    };
+    let dir = match files::resolve(&share.root, &segments) {
+        Some(path) => path,
+        None => return error(404, "dossier introuvable"),
+    };
+    if !dir.is_dir() {
+        return error(404, "ce n'est pas un dossier");
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(600);
+    let (files, bytes, complete) = files::tree_size(&dir, deadline);
     json_response(
         200,
         &json!({
             "share": share.id,
             "path": segments.join("/"),
-            "parent": parent,
-            "entries": entries,
-            "truncated": truncated,
+            "files": files,
+            "bytes": bytes,
+            "complete": complete,
         }),
     )
 }
@@ -301,7 +430,23 @@ fn serve_file(req: &Request, cfg: &Config, share_id: &str, rel: &[String], head:
     }
 }
 
-fn serve_tar(cfg: &Config, share_id: &str, rel: &[String]) -> Response<Body> {
+/// Nom de dossier acceptable dans une archive : jamais de traversée ni de nom
+/// caché, sinon une entrée `../` sortirait du dossier de destination.
+fn safe_archive_name(raw: &str) -> Option<String> {
+    let name = raw.trim();
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.starts_with('.')
+        || name.contains('/')
+        || name.contains('\\')
+    {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+fn serve_tar(cfg: &Config, share_id: &str, rel: &[String], query: &str) -> Response<Body> {
     let share = match share_or_404(cfg, share_id) {
         Ok(share) => share,
         Err(response) => return response,
@@ -310,9 +455,12 @@ fn serve_tar(cfg: &Config, share_id: &str, rel: &[String]) -> Response<Body> {
         Some(path) => path,
         None => return error(404, "dossier introuvable"),
     };
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
+    // `?as=` : nom du dossier dans l'archive. Sans lui, le tar prend le nom
+    // physique du dossier ; pour un partage entier (téléchargé sous le nom du
+    // partage), le client impose ce nom-là. Un nom de traversée est refusé.
+    let name = query_param(query, "as")
+        .and_then(|raw| safe_archive_name(&raw))
+        .or_else(|| path.file_name().map(|n| n.to_string_lossy().to_string()))
         .unwrap_or_else(|| share.name.clone());
     let stream = match TarStream::new(&path, &name) {
         Ok(stream) => stream,

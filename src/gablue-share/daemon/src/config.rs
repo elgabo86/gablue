@@ -20,6 +20,8 @@ pub struct Share {
     pub path: PathBuf,
     /// Chemin canonique : borne de tous les accès (anti-symlink sortant).
     pub root: PathBuf,
+    /// Le dossier est réellement là maintenant (disque externe monté).
+    pub available: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -34,6 +36,39 @@ impl Config {
     pub fn share(&self, id: &str) -> Option<&Share> {
         self.shares.iter().find(|s| s.id == id)
     }
+
+    /// Partages réellement servis : un disque débranché n'est ni annoncé, ni
+    /// listé dans `/api/info`, ni servi — il réapparaît seul au remontage.
+    pub fn available(&self) -> impl Iterator<Item = &Share> {
+        self.shares.iter().filter(|share| share.available)
+    }
+}
+
+/// Racines où un dossier peut être un point de montage de disque externe.
+const MOUNT_ROOTS: [&str; 3] = ["/mnt", "/media", "/run/media"];
+
+/// Le partage est-il utilisable à cet instant ?
+///
+/// Un disque externe débranché ne répond plus ; sous udisks le dossier de
+/// montage (`/run/media/<user>/<label>`) disparaît avec lui, donc `is_dir`
+/// suffit. Reste le point de montage manuel (`/mnt/sauvegarde` dans fstab) :
+/// le dossier reste là, vide, sur le système de fichiers racine. On le reconnaît
+/// à son périphérique, identique à celui de son parent.
+pub fn is_available(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    let meta = match fs::metadata(path) {
+        Ok(meta) if meta.is_dir() => meta,
+        _ => return false,
+    };
+    if MOUNT_ROOTS.iter().any(|root| path.starts_with(root)) {
+        if let Some(parent) = path.parent().and_then(|parent| fs::metadata(parent).ok()) {
+            if parent.dev() == meta.dev() {
+                return false; // point de montage vide : rien n'est monté dessus
+            }
+        }
+    }
+    true
 }
 
 /// Chemin de la configuration, aligné sur le reste de Gablue.
@@ -89,12 +124,17 @@ pub fn load(path: &Path) -> Result<Config, String> {
             continue;
         }
         let path = PathBuf::from(declared);
-        let root = match path.canonicalize() {
-            Ok(root) if root.is_dir() => root,
-            _ => {
-                eprintln!("partage ignoré (absent ou pas un dossier) : {declared}");
-                continue;
-            }
+        // Un disque débranché n'est pas une erreur : le partage reste déclaré,
+        // simplement indisponible, et revient dès que le chemin réapparaît.
+        let (root, available) = if path.is_dir() {
+            let root = path.canonicalize().unwrap_or_else(|_| path.clone());
+            (root, is_available(&path))
+        } else if !path.exists() {
+            eprintln!("partage en attente (dossier absent) : {declared}");
+            (path.clone(), false)
+        } else {
+            eprintln!("partage ignoré (pas un dossier) : {declared}");
+            continue;
         };
         let mut id = item
             .get("id")
@@ -122,6 +162,7 @@ pub fn load(path: &Path) -> Result<Config, String> {
             name,
             path,
             root,
+            available,
         });
     }
 

@@ -92,22 +92,39 @@ fn serve(request: tiny_http::Request, state: &Shared, allow_nonlocal: bool) {
     }
 }
 
-/// Surveille `share.json` : la GUI écrit, le démon recharge sans redémarrer,
-/// donc sans couper un transfert en cours.
+/// Surveille `share.json` **et** la présence des dossiers partagés.
+///
+/// - la GUI écrit le fichier → rechargement à chaud, sans redémarrer et sans
+///   couper un transfert ;
+/// - un disque externe monté ou débranché ne change pas le fichier : on re-vérifie
+///   donc la disponibilité de chaque partage (un `stat` par partage, toutes les
+///   2 s) et on recharge seulement si elle a bougé. Coût négligeable, et c'est ce
+///   qui fait apparaître/disparaître un partage sans intervention.
 fn spawn_reloader(path: PathBuf, state: Shared) {
     std::thread::spawn(move || {
-        let mut last = mtime(&path);
+        let mut last_mtime = mtime(&path);
         loop {
-            std::thread::sleep(Duration::from_secs(2));
+            std::thread::sleep(Duration::from_secs(3));
             let now = mtime(&path);
-            if now == last {
+            let file_changed = now != last_mtime;
+            let availability_changed = {
+                let snapshot = Arc::clone(&state.read().unwrap_or_else(|poison| poison.into_inner()));
+                snapshot
+                    .shares
+                    .iter()
+                    .any(|share| config::is_available(&share.path) != share.available)
+            };
+            if !file_changed && !availability_changed {
                 continue;
             }
-            last = now;
+            last_mtime = now;
             match config::load(&path) {
                 Ok(cfg) => {
+                    let shares = cfg.available().count();
                     *state.write().unwrap_or_else(|poison| poison.into_inner()) = Arc::new(cfg);
-                    eprintln!("gablue-shared : configuration rechargée");
+                    eprintln!(
+                        "gablue-shared : configuration rechargée ({shares} partage(s) disponible(s))"
+                    );
                 }
                 Err(err) => eprintln!("gablue-shared : rechargement ignoré ({err})"),
             }

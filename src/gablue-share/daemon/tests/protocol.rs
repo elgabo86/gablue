@@ -22,6 +22,12 @@ impl Drop for Fixture {
 }
 
 fn fixture() -> Fixture {
+    fixture_with(false)
+}
+
+/// `detached` : ajoute un second partage dont le dossier n'existe pas encore,
+/// comme un disque externe débranché.
+fn fixture_with(detached: bool) -> Fixture {
     let index = COUNTER.fetch_add(1, Ordering::SeqCst);
     let root = std::env::temp_dir().join(format!(
         "gablue-share-test-{}-{index}",
@@ -33,16 +39,28 @@ fn fixture() -> Fixture {
     std::fs::write(root.join("donnees/sub/b.bin"), vec![7u8; 700]).unwrap();
     std::fs::write(root.join("donnees/gros.bin"), vec![3u8; 64 * 1024]).unwrap();
     std::fs::create_dir_all(root.join("donnees/vide")).unwrap();
+    std::fs::create_dir_all(root.join("donnees/avec espace")).unwrap();
+    std::fs::write(root.join("donnees/avec espace/f.txt"), b"espace").unwrap();
+    std::fs::write(root.join("donnees/a+b.txt"), b"plus").unwrap();
     std::os::unix::fs::symlink("/etc/passwd", root.join("donnees/fuite")).unwrap();
     std::os::unix::fs::symlink("a.txt", root.join("donnees/lien-interne")).unwrap();
 
     let config = root.join("share.json");
+    let mut shares = format!(
+        r#"{{"id":"s1","name":"Données","path":"{}"}}"#,
+        root.join("donnees").display()
+    );
+    if detached {
+        shares.push_str(&format!(
+            r#",{{"id":"s2","name":"Disque amovible","path":"{}"}}"#,
+            root.join("amovible").display()
+        ));
+    }
     std::fs::write(
         &config,
         format!(
             r#"{{"version":1,"peer_id":"test-peer","name":"poste-test","port":0,
-               "shares":[{{"id":"s1","name":"Données","path":"{}"}}]}}"#,
-            root.join("donnees").display()
+               "shares":[{shares}]}}"#
         ),
     )
     .unwrap();
@@ -264,6 +282,173 @@ fn path_traversal_and_outside_symlinks_are_refused() {
             "{path} devrait être refusé, reçu {status}"
         );
     }
+}
+
+#[test]
+fn list_answers_a_conditional_head_so_the_gui_can_poll_cheaply() {
+    let fixture = fixture();
+    let (status, head, _) = get(&fixture, "/api/list/s1");
+    assert_eq!(status, 200);
+    let tag = head
+        .lines()
+        .find(|line| line.to_lowercase().starts_with("etag:"))
+        .and_then(|line| line.split_once(':'))
+        .map(|(_, value)| value.trim().to_string())
+        .unwrap_or_else(|| panic!("pas d'ETag dans :\n{head}"));
+
+    // Rien n'a bougé : 304, corps vide.
+    let (status, head, body) = raw(
+        &fixture,
+        &format!(
+            "HEAD /api/list/s1 HTTP/1.1\r\nHost: t\r\nIf-None-Match: {tag}\r\nConnection: close\r\n\r\n"
+        ),
+    );
+    assert_eq!(status, 304, "{head}");
+    assert!(body.is_empty());
+
+    // Un fichier apparaît : un GET sans condition donne une autre empreinte.
+    std::fs::write(fixture.root.join("donnees/nouveau.txt"), b"x").unwrap();
+    let (status, head, _) = raw(
+        &fixture,
+        &format!(
+            "HEAD /api/list/s1 HTTP/1.1\r\nHost: t\r\nIf-None-Match: {tag}\r\nConnection: close\r\n\r\n"
+        ),
+    );
+    assert_eq!(status, 200, "l'ancienne empreinte devait être périmée :\n{head}");
+    assert!(!head.contains(&tag), "l'ETag n'a pas changé :\n{head}");
+}
+
+#[test]
+fn detached_share_is_hidden_and_refused() {
+    let fixture = fixture_with(true);
+    let (status, _, body) = get(&fixture, "/api/info");
+    let text = String::from_utf8_lossy(&body);
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("\"id\":\"s1\""), "{text}");
+    assert!(
+        !text.contains("\"id\":\"s2\""),
+        "un partage absent ne doit pas être annoncé : {text}"
+    );
+
+    let (status, _, body) = get(&fixture, "/api/list/s2");
+    let text = String::from_utf8_lossy(&body);
+    assert_eq!(status, 404, "{text}");
+    assert!(text.contains("indisponible"), "{text}");
+}
+
+#[test]
+fn detached_share_comes_back_when_its_folder_reappears() {
+    let fixture = fixture_with(true);
+    let before = String::from_utf8_lossy(&get(&fixture, "/api/info").2).to_string();
+    assert!(!before.contains("\"id\":\"s2\""), "{before}");
+
+    // Le disque est remonté : personne ne touche à share.json.
+    std::fs::create_dir_all(fixture.root.join("amovible")).unwrap();
+    std::fs::write(fixture.root.join("amovible/photos.bin"), vec![9u8; 32]).unwrap();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(12);
+    loop {
+        let text = String::from_utf8_lossy(&get(&fixture, "/api/info").2).to_string();
+        if text.contains("\"id\":\"s2\"") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "le partage n'est jamais revenu : {text}"
+        );
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    let (status, _, body) = get(&fixture, "/api/list/s2");
+    assert_eq!(status, 200);
+    assert!(String::from_utf8_lossy(&body).contains("photos.bin"));
+}
+
+#[test]
+fn archive_prefix_can_be_renamed_but_traversal_names_are_ignored() {
+    let fixture = fixture();
+    let (status, _, body) = get(&fixture, "/a/s1?as=Photos");
+    assert_eq!(status, 200);
+    let head = String::from_utf8_lossy(&body[..512.min(body.len())]).to_string();
+    assert!(head.contains("Photos/"), "{head}");
+
+    // Nom de traversée : refusé, on retombe sur le nom physique du dossier.
+    let (status, _, body) = get(&fixture, "/a/s1?as=..%2Fevade");
+    assert_eq!(status, 200);
+    let head = String::from_utf8_lossy(&body[..512.min(body.len())]).to_string();
+    assert!(head.contains("donnees/"), "{head}");
+    assert!(!head.contains("evade"), "{head}");
+}
+
+#[test]
+fn recursive_search_finds_by_name_and_never_leaves_the_share() {
+    let fixture = fixture();
+    let (status, _, body) = get(&fixture, "/api/find/s1?q=B."); 
+    let text = String::from_utf8_lossy(&body);
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("\"path\":\"sub/b.bin\""), "{text}");
+    assert!(text.contains("\"scanned\":"), "{text}");
+
+    // Insensible à la casse, et le symlink sortant (/etc/passwd) reste invisible.
+    let (_, _, body) = get(&fixture, "/api/find/s1?q=PASSWD");
+    assert!(!String::from_utf8_lossy(&body).contains("fuite"));
+
+    let (status, _, body) = get(&fixture, "/api/find/s1?q=");
+    assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
+}
+
+#[test]
+fn folder_size_is_bounded_and_announces_its_completeness() {
+    let fixture = fixture();
+    let (status, _, body) = get(&fixture, "/api/size/s1?path=sub");
+    let text = String::from_utf8_lossy(&body);
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("\"files\":1"), "{text}");
+    assert!(text.contains("\"bytes\":700"), "{text}");
+    assert!(text.contains("\"complete\":true"), "{text}");
+}
+
+#[test]
+fn listing_can_be_sorted_and_paginated_by_the_client() {
+    let fixture = fixture();
+    // Les dossiers restent en tête quelle que soit la clé demandée.
+    let (_, _, body) = get(&fixture, "/api/list/s1?sort=size&desc=1&limit=50");
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let entries = payload["entries"].as_array().unwrap();
+    assert_eq!(entries[0]["type"], "dir", "{payload}");
+    let files: Vec<&str> = entries
+        .iter()
+        .filter(|entry| entry["type"] == "file")
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(files.first().copied(), Some("gros.bin"), "plus gros d'abord : {files:?}");
+
+    // La pagination par offset rend la suite sans recalculer depuis zéro.
+    let (_, _, page1) = get(&fixture, "/api/list/s1?limit=2");
+    let (_, _, page2) = get(&fixture, "/api/list/s1?limit=2&offset=2");
+    let first: serde_json::Value = serde_json::from_slice(&page1).unwrap();
+    let second: serde_json::Value = serde_json::from_slice(&page2).unwrap();
+    assert_ne!(first["entries"][0]["name"], second["entries"][0]["name"]);
+    assert_eq!(first["truncated"], true);
+}
+
+#[test]
+fn spaces_and_plus_signs_survive_the_query_encoding() {
+    let fixture = fixture();
+    // `+` dans une valeur de requête vaut une espace (encodage de formulaire).
+    let (status, _, body) = get(&fixture, "/api/list/s1?path=avec+espace");
+    let text = String::from_utf8_lossy(&body);
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("f.txt"), "{text}");
+
+    // Un `+` littéral dans un nom de fichier arrive en %2B et reste un `+`.
+    let (status, _, body) = get(&fixture, "/f/s1/a%2Bb.txt");
+    assert_eq!(status, 200);
+    assert_eq!(body, b"plus");
+
+    // Le dossier qui contient une espace se visite aussi.
+    let (status, _, body) = get(&fixture, "/api/list/s1?path=avec%20espace");
+    assert_eq!(status, 200);
+    assert!(String::from_utf8_lossy(&body).contains("f.txt"));
 }
 
 #[test]

@@ -32,7 +32,11 @@ pub fn spawn(state: Shared, port: u16) {
         loop {
             let (name, peer_id, shares) = {
                 let snapshot = Arc::clone(&state.read().unwrap_or_else(|p| p.into_inner()));
-                (snapshot.name.clone(), snapshot.peer_id.clone(), snapshot.shares.len())
+                (
+                    snapshot.name.clone(),
+                    snapshot.peer_id.clone(),
+                    snapshot.available().count(),
+                )
             };
             let wanted = if shares == 0 {
                 None

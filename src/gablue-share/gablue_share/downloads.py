@@ -68,6 +68,13 @@ class Job:
         self.error = error
         self.identifier = identifier or f"j{int(time.time() * 1000):x}-{os.getpid():x}"
         self.created = created or time.time()
+        # Transitoires (jamais écrits dans le fichier) : débit courant, nombre
+        # de tentatives et date du prochain essai (reprise auto, avec attente
+        # croissante pour ne pas marteler un poste éteint).
+        self.speed = 0.0
+        self.attempts = 0
+        self.next_attempt = 0.0
+        self._last_measure = (0.0, 0)
 
     # --- affichage ------------------------------------------------------
     def title(self) -> str:
@@ -191,18 +198,22 @@ class DownloadWorker(QThread):
             self.waiting.emit(self.job, "peer")
             return
         self.job.state = "en cours"
+        self.job.speed = 0.0
+        self.job._last_measure = (time.monotonic(), self.job.done)
         self.progress.emit(self.job)
         try:
             if self.job.is_dir:
                 self._download_folder()
             else:
                 self._download_file()
-            if self.job.state == "annulé":
+            if self.job.state in ("annulé", "en pause"):
                 return
             self.job.state = "terminé"
             self.completed.emit(self.job)
         except Cancelled:
-            self.job.state = "annulé"
+            # « en pause » est un arrêt voulu, pas un annulation.
+            if self.job.state not in ("en pause", "annulé"):
+                self.job.state = "annulé"
         except api.ApiError as error:
             message = str(error)
             if "injoignable" in message:
@@ -213,6 +224,15 @@ class DownloadWorker(QThread):
                 self.failed.emit(self.job, message)
         except (OSError, tarfile.TarError) as error:
             self.failed.emit(self.job, f"{type(error).__name__} : {error}")
+
+    def _measure(self) -> None:
+        """Débit lissé sur la fenêtre écoulée (affichage, jamais décision)."""
+        now = time.monotonic()
+        previous_time, previous_done = self.job._last_measure
+        elapsed = now - previous_time
+        if elapsed >= 0.5:
+            self.job.speed = max(0.0, (self.job.done - previous_done) / elapsed)
+            self.job._last_measure = (now, self.job.done)
 
     # --- fichier --------------------------------------------------------
     def _download_file(self) -> None:
@@ -260,6 +280,7 @@ class DownloadWorker(QThread):
                     self.job.done += len(chunk)
                     now = time.monotonic()
                     if now - last_emit > 0.15:
+                        self._measure()
                         self.progress.emit(self.job)
                         last_emit = now
                 stream.flush()
@@ -281,9 +302,12 @@ class DownloadWorker(QThread):
             nonlocal received
             received += count
             self.job.done = received
+            self._measure()
             self.progress.emit(self.job)
 
-        response = api.open_tar(base, self.job.share_id, self.job.path)
+        # `as=nom` : le dossier extrait porte le nom affiché dans l'app,
+        # pas le nom physique du dossier côté source.
+        response = api.open_tar(base, self.job.share_id, self.job.path, self.job.name)
         with response:
             stream = _Counter(response, account, self.isInterruptionRequested)
             # filter="data" refuse les chemins absolus et les sorties d'arbre.
@@ -297,6 +321,7 @@ class Downloads(QObject):
     """File ordonnée et persistante : un transfert à la fois."""
 
     changed = Signal()
+    finished = Signal(object, bool)  # job, succès (notification côté fenêtre)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -307,6 +332,14 @@ class Downloads(QObject):
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(800)
         self._save_timer.timeout.connect(self.save)
+        # Reprise automatique : un élément « en attente du poste » n'attend pas
+        # un événement de découverte pour réessayer (le poste peut rester
+        # annoncé alors que son disque ou son application revient). Attente
+        # croissante 5 s → 5 min : rien ne martèle un poste éteint.
+        self._retry_timer = QTimer(self)
+        self._retry_timer.setInterval(5000)
+        self._retry_timer.timeout.connect(self._retry_waiting)
+        self._retry_timer.start()
         self.load()
 
     # --- persistance ----------------------------------------------------
@@ -371,15 +404,37 @@ class Downloads(QObject):
         self._pump()
 
     def retry(self, job: Job) -> None:
-        if not job.retryable() and job.state != WAITING_PEER:
+        if job.state not in ("échec",) and not job.retryable() and job.state != WAITING_PEER:
             return
         job.error = ""
+        job.attempts = 0
+        job.next_attempt = 0.0
+        job.state = "en attente" if job.peer else WAITING_PEER
+        self._touch()
+        self._pump()
+
+    def pause(self, job: Job) -> None:
+        """Suspend un transfert ; le `.part` garde la progression."""
+        if job.state in ("terminé", "échec", "annulé", "en pause"):
+            return
+        job.state = "en pause"
+        worker = self._worker
+        if worker is not None and worker.job is job:
+            worker.requestInterruption()
+        self._touch()
+        self._pump()
+
+    def resume(self, job: Job) -> None:
+        if job.state != "en pause":
+            return
+        job.attempts = 0
+        job.next_attempt = 0.0
         job.state = "en attente" if job.peer else WAITING_PEER
         self._touch()
         self._pump()
 
     def cancel(self, job: Job) -> None:
-        if job.state in ("en attente", "en cours", WAITING_PEER, WAITING_SHARE):
+        if job.state in ("en attente", "en cours", "en pause", WAITING_PEER, WAITING_SHARE):
             job.state = "annulé"
             worker = self._worker
             if worker is not None and worker.job is job:
@@ -388,10 +443,24 @@ class Downloads(QObject):
             self._pump()
 
     def remove(self, job: Job) -> None:
+        """Retire de la file **et** efface le `.part` laissé sur disque.
+
+        Un élément retiré volontairement ne doit pas laisser un demi-fichier
+        caché dans le dossier de destination pour toujours.
+        """
         self.cancel(job)
+        self._discard_parts(job)
         if job in self.jobs:
             self.jobs.remove(job)
             self._touch()
+
+    @staticmethod
+    def _discard_parts(job: Job) -> None:
+        for candidate in job.dest.parent.glob(f".{job.dest.name}.*.part"):
+            try:
+                candidate.unlink()
+            except OSError:
+                pass
 
     def pending(self) -> int:
         return sum(1 for job in self.jobs if job.state in ("en attente", "en cours", WAITING_PEER, WAITING_SHARE))
@@ -412,6 +481,8 @@ class Downloads(QObject):
                 continue
             job.peer = peer
             job.peer_name = peer.name
+            job.attempts = 0
+            job.next_attempt = 0.0
             if job.state == WAITING_PEER:
                 job.state = "en attente"
                 changed = True
@@ -455,15 +526,25 @@ class Downloads(QObject):
 
     def _on_completed(self, job: Job) -> None:
         job.done = job.total or job.done
+        job.speed = 0.0
+        job.attempts = 0
         self._touch()
+        self.finished.emit(job, True)
 
     def _on_failed(self, job: Job, message: str) -> None:
         job.state = "échec"
         job.error = message
+        job.speed = 0.0
         self._touch()
+        self.finished.emit(job, False)
 
     def _on_waiting(self, job: Job, kind: str) -> None:
         job.peer = None
+        job.attempts += 1
+        # 5 s, 10, 20, 40, 80, 160 puis 300 s : on réessaie de plus en plus
+        # espacé, sans jamais abandonner (un disque remonté doit repartir seul).
+        delay = min(300, 5 * (2 ** (job.attempts - 1)))
+        job.next_attempt = time.time() + delay
         if kind == "share":
             job.state = WAITING_SHARE
             job.error = "partage introuvable"
@@ -471,6 +552,38 @@ class Downloads(QObject):
             job.state = WAITING_PEER
             job.error = "poste injoignable"
         self._touch()
+
+    def _retry_waiting(self) -> None:
+        """Relance périodique des éléments en attente (reprise transparente)."""
+        now = time.time()
+        changed = False
+        for job in self.jobs:
+            if job.state not in (WAITING_PEER, WAITING_SHARE):
+                continue
+            if job.next_attempt and job.next_attempt > now:
+                continue
+            peer = self._known_peers.get(job.peer_id)
+            if peer is None:
+                job.next_attempt = now + 60  # pas la peine d'essayer : poste absent
+                continue
+            job.peer = peer
+            job.peer_name = peer.name
+            job.state = "en attente"
+            changed = True
+        if changed:
+            self._touch()
+            self._pump()
+
+    def summary(self) -> tuple[float, int, float]:
+        """(débit cumulé, octets restants, secondes estimées) pour l'en-tête."""
+        speed = sum(job.speed for job in self.jobs if job.state == "en cours")
+        remaining = sum(
+            max(0, job.total - job.done)
+            for job in self.jobs
+            if job.state in ("en attente", "en cours")
+        )
+        eta = remaining / speed if speed > 0 else 0.0
+        return speed, remaining, eta
 
     def _on_worker_finished(self) -> None:
         self._worker = None

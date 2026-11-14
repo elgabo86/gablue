@@ -5,6 +5,7 @@ la fermeture de l'app, au redémarrage et au mode permanent, et c'est elle que
 le démon relit à chaud (mtime) sans redémarrer ni couper un transfert.
 """
 
+import hashlib
 import json
 import os
 import tempfile
@@ -79,20 +80,28 @@ def load() -> dict:
     if not isinstance(document.get("shares"), list):
         document["shares"] = []
     cleaned = []
+    normalised = False
     for entry in document["shares"]:
         if not isinstance(entry, dict):
             continue
         path = str(entry.get("path", "")).strip()
         if not path:
             continue
+        identifier = share_id(path)
+        if str(entry.get("id") or "") != identifier:
+            normalised = True
         cleaned.append(
             {
-                "id": str(entry.get("id") or f"s{uuid.uuid4().hex[:8]}"),
+                "id": identifier,
                 "name": str(entry.get("name") or Path(path).name or "Partage"),
                 "path": path,
             }
         )
     document["shares"] = cleaned
+    if normalised:
+        # Identifiants d'une version antérieure : on les réaligne une fois,
+        # pour que le même dossier garde toujours le même identifiant.
+        save(document)
     return document
 
 
@@ -116,9 +125,69 @@ def save(document: dict) -> None:
         raise
 
 
+def share_id(path: str) -> str:
+    """Identifiant **stable et invisible** d'un partage.
+
+    Dérivé du chemin réel, jamais du nom affiché : renommer un partage ne casse
+    rien, et retirer puis re-ajouter le même dossier redonne le même identifiant
+    — c'est ce qui permet à la file de téléchargement de se rattacher.
+    """
+    digest = hashlib.sha256(share_key({"path": path}).encode("utf-8")).hexdigest()
+    return f"s{digest[:12]}"
+
+
 def share_key(entry: dict) -> str:
     """Chemin réel : deux écritures différentes du même dossier = un seul partage."""
     return str(Path(entry.get("path", "")).expanduser().resolve())
+
+
+#: Racines où un dossier peut être un point de montage de disque externe.
+MOUNT_ROOTS = ("/mnt", "/media", "/run/media")
+
+
+def share_available(path: str) -> bool:
+    """Le dossier d'un partage est-il là *maintenant* ?
+
+    Miroir de `config::is_available` côté démon, qui fait foi pour le réseau :
+    un disque externe débranché n'existe plus (udisks retire son point de
+    montage), et un point de montage manuel laissé vide se reconnaît à son
+    périphérique, identique à celui de son parent. Sert seulement à l'affichage
+    du panneau — la décision de servir ou d'annoncer appartient au démon.
+    """
+    candidate = Path(path)
+    try:
+        status = candidate.stat()
+    except OSError:
+        return False
+    if not candidate.is_dir():
+        return False
+    if str(candidate).startswith(MOUNT_ROOTS):
+        try:
+            parent = candidate.parent.stat()
+        except OSError:
+            return True
+        if parent.st_dev == status.st_dev:
+            return False  # rien n'est monté sur ce dossier vide
+    return True
+
+
+def rename_share(document: dict, share_id: str, name: str) -> tuple[bool, str]:
+    """Renomme un partage. Nom vide → nom du dossier (règle de l'app)."""
+    for entry in document.get("shares", []):
+        if entry.get("id") != share_id:
+            continue
+        cleaned = name.strip() or Path(entry.get("path", "")).name or "Partage"
+        previous = entry.get("name")
+        if cleaned == previous:
+            return True, ""
+        entry["name"] = cleaned
+        try:
+            save(document)
+        except OSError as error:
+            entry["name"] = previous
+            return False, f"Écriture impossible : {error}"
+        return True, ""
+    return False, "Partage introuvable."
 
 
 def add_share(document: dict, path: str, name: str = "") -> tuple[bool, str]:
@@ -135,7 +204,7 @@ def add_share(document: dict, path: str, name: str = "") -> tuple[bool, str]:
         return False, "Ce dossier est déjà partagé."
     document["shares"].append(
         {
-            "id": f"s{uuid.uuid4().hex[:8]}",
+            "id": share_id(str(resolved)),
             "name": name.strip() or resolved.name or "Partage",
             "path": str(resolved),
         }

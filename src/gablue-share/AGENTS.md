@@ -16,7 +16,7 @@ Deux processus, séparés pour la RAM :
 
 - **M1 (livré)** : démon HTTP, `/api/info`, `/api/list`, `/f/` (Range/ETag),
   `/a/` (tar), filtre d'adresses, rechargement à chaud, `--parent-pid`,
-  annonce mDNS. `cargo test` : 24 tests (8 unitaires + 16 d'intégration, vrai
+  annonce mDNS. `cargo test` : 32 tests (8 unitaires + 24 d'intégration, vrai
   serveur, vrai système de fichiers, vrais sockets).
 - **M2 (livré)** : GUI PySide6 (liste des dossiers partagés persistante,
   découverte LAN/tailnet, navigation, téléchargement fichier + dossier).
@@ -33,6 +33,13 @@ Deux processus, séparés pour la RAM :
   `build-share` rejoué dans `fedora:45` (paquet + lanceur posés, sources
   retirées, zéro `__pycache__`) ; **pas encore** de build d'image complet, donc
   l'installation réelle reste à voir.
+- **M5 (15/11/2026)** : listing à jour sans clic (ETag + `HEAD` conditionnel,
+  cadence adaptative), pagination en défilant, tri serveur, recherche récursive
+  bornée, taille des dossiers à la demande, téléchargement d'un partage entier,
+  noms de partages, identifiant caché dérivé du chemin, disques externes
+  (partage indisponible → absent du réseau, réapparition automatique), file :
+  pause/reprise, retrait qui efface le `.part`, reprise auto à attente
+  croissante, notifications de fin, débit et temps restant.
 
 ## Paquet (GUI)
 
@@ -47,8 +54,8 @@ Sources = ce dossier, installées par `files/scripts/build-share` (paquet dans
 | `gablue_share/daemon.py` | démarrage/arrêt du démon, adoption d'un démon permanent |
 | `gablue_share/discovery.py` | registre des postes, mDNS (avahi-browse) + sonde Tailscale |
 | `gablue_share/api.py` | client HTTP du protocole (threads) |
-| `gablue_share/downloads.py` | transfert fichier (reprise) et dossier (tar), `.part` |
-| `gablue_share/window.py` | trois panneaux : mon partage, postes/navigation, transferts |
+| `gablue_share/downloads.py` | transfert fichier (reprise) et dossier (tar), `.part`, pause, reprise auto |
+| `gablue_share/window.py` | trois panneaux : mon partage, postes/navigation (recherche, tri, défilement infini), transferts |
 | `gablue_share/style.py`, `util.py`, `constants.py` | QSS dérivé de la palette, formatage, chemins |
 
 ## Découverte — règles non négociables
@@ -81,10 +88,12 @@ disparaît, ce qui se lit comme une panne.
 | Route | Rôle |
 |---|---|
 | `GET /` | page texte d'aide (dépannage `curl`) |
-| `GET /api/info` | `{protocol, peer_id, name, port, shares:[{id,name}]}` |
-| `GET /api/list/<share>?path=&offset=&limit=` | `{entries, parent, truncated}` |
+| `GET /api/info` | `{protocol, peer_id, name, port, shares:[{id,name}]}` — **partages disponibles seulement** |
+| `HEAD|GET /api/list/<share>?path=&offset=&limit=&sort=&desc=` | `{entries, parent, truncated}` + `ETag` ; `HEAD` = empreinte seule, `304` si `If-None-Match` correspond |
+| `GET /api/find/<share>?q=&path=&limit=` | recherche récursive par nom : `{entries:[{name,path,type,size,mtime}], truncated, scanned}` |
+| `GET /api/size/<share>?path=` | taille d'un dossier : `{files, bytes, complete}` |
 | `HEAD|GET /f/<share>/<chemin>` | fichier, `Range`/`If-Range`, `ETag`, `Content-Disposition` |
-| `GET /a/<share>/<chemin>` | dossier en flux tar (ustar, chunked) |
+| `GET /a/<share>/<chemin>?as=<nom>` | dossier en flux tar (ustar, chunked) ; `as` impose le nom du dossier dans l'archive |
 
 Invariants :
 
@@ -108,6 +117,56 @@ Invariants :
   filtré, à revoir si le partage devient exposé.
 - Le port par défaut (47823) est **fixe** : la sonde Tailscale ne peut pas
   découvrir un port dynamique.
+- **Encodage des paramètres** : dans une valeur de requête, `+` vaut une espace
+  (le client encode ainsi), un `+` littéral arrive en `%2B`. Le chemin d'URL,
+  lui, garde ses `+`. Sans cette distinction, un partage nommé « Photos de
+  l'été » s'extrayait en `Photos+de+l'été` (vécu 15/11/2026).
+
+## Fraîcheur, recherche, tailles (coût maîtrisé)
+
+- **Listing à jour sans clic.** Chaque page de listing porte un `ETag` (FNV-1a
+  sur nom/type/taille/mtime des entrées). La GUI fait un `HEAD` conditionnel :
+  `304` = rien à faire, quelques centaines d'octets au lieu du dossier entier.
+  Cadence **3 s** quand la fenêtre a le focus, **10 s** quand elle est visible
+  mais au second plan, **rien** quand elle est cachée ou réduite. Le coût réel
+  est un `readdir`+`stat` côté démon à chaque sonde : mesuré à ~15 ms pour
+  20 000 entrées, soit 0,5 % d'un cœur au pire — et zéro au repos.
+- **Pagination** : `PAGE = 500` côté GUI, la suite se charge en défilant
+  (`offset`). Le serveur borne à 5000 par requête. Le tri (`sort=name|size|mtime`,
+  `desc=1`) est fait **côté serveur** : trier la page affichée donnerait un
+  ordre faux dès qu'il y a plusieurs pages.
+- **Recherche** (`/api/find`) : parcours récursif borné à **400 ms** et à
+  `limit` résultats ; `truncated` prévient que c'est partiel. Un partage de
+  200 000 fichiers ne peut donc pas immobiliser un fil du serveur. La GUI
+  attend 300 ms après la frappe avant d'interroger.
+- **Taille d'un dossier** (`/api/size`) : calcul borné à **600 ms**, jamais
+  fait pour tout un listing — seulement pour le dossier sélectionné (et mis en
+  cache côté GUI). `complete: false` = minorant assumé.
+- **Télécharger un dossier entier** : `/a/<share>` sans chemin (bouton « Tout le
+  partage ») ; `as=<nom>` fait porter au dossier extrait le nom affiché dans
+  l'app, pas le nom physique côté source. Un `as` contenant `/`, `..` ou
+  commençant par `.` est ignoré (retour au nom physique) : jamais de traversée.
+
+## Partages : identité, noms, disques externes
+
+- **Identifiant caché et stable** : `s` + 12 hex de `sha256(chemin réel)`. Dérivé
+  du chemin, jamais du nom : renommer ne casse rien, et retirer puis re-ajouter
+  le même dossier redonne le même identifiant — c'est ce qui permet à la file de
+  se rattacher. Les identifiants d'une version antérieure sont réalignés une
+  fois au chargement (`config.load`), ce qui réécrit `share.json` à ce moment-là.
+- **Nom** : optionnel, saisi à l'ajout (pré-rempli avec le nom du dossier) et
+  modifiable par clic droit ▸ « Renommer… ». Vide = nom du dossier, côté démon
+  comme côté client.
+- **Disque externe** : un partage dont le dossier n'existe plus reste **déclaré**
+  mais `available: false` — ni annoncé, ni listé dans `/api/info`, ni servi
+  (`404 « partage indisponible »`). Le démon re-vérifie la présence de chaque
+  dossier toutes les 3 s (un `stat`), donc un disque remonté réapparaît sans
+  intervention. Règle de disponibilité : `is_dir` +, sous `/mnt`, `/media`,
+  `/run/media`, un périphérique différent de celui du parent (point de montage
+  laissé vide). La GUI reflète l'état (« Disque débranché ») sans décider.
+- **Un seul partage par dossier** : deux écritures du même chemin sont refusées ;
+  l'identifiant étant dérivé du chemin, deux entrées identiques seraient de
+  toute façon le même partage.
 
 ## File de téléchargement (livrée en M3)
 
@@ -127,8 +186,21 @@ Invariants :
   `annulé` (disparaît du fichier). Au chargement, un élément `terminé` est
   oublié (la file ne garde que du travail à faire), un élément `en cours`
   devient `en attente du poste`.
-- Le `.part` (`.nom.<etag8>.part`) reste dans le dossier de destination ;
-  les orphelins de plus de 7 jours sont à nettoyer (pas encore fait).
+- Le `.part` (`.nom.<etag8>.part`) reste dans le dossier de destination. Pas de
+  purge par ancienneté (choix du 15/11/2026) : **retirer un élément de la file
+  efface son `.part`** (`Downloads.remove`), c'est le seul cas où un demi-fichier
+  ne sert plus à rien.
+- **Reprise automatique** : un élément « en attente » est réessayé toutes les
+  5 s par un minuteur interne (et non plus seulement sur un événement de
+  découverte, qui peut ne jamais venir si le poste reste annoncé). Attente
+  croissante 5 s → 10 → 20 → 40 → 80 → 160 → 300 s, plafonnée ; rien ne martèle
+  un poste éteint, et un disque remonté repart seul.
+- **Pause / reprise** : `en pause` garde le `.part` et sort le transfert du
+  worker ; « Reprendre » le remet en file. Un `.part` d'un autre ETag est
+  ignoré (le fichier a changé) et laissé tel quel.
+- **Fin de transfert** : notification de bureau (`notify-send`, silencieuse si
+  absent), sauf si la fenêtre a le focus. Débit et temps restant agrégés dans
+  l'en-tête du panneau.
 
 ## Permanence (M3)
 
@@ -151,7 +223,7 @@ Invariants :
 ```bash
 cd src/gablue-share/daemon
 cargo build --release      # binaire : target/release/gablue-shared
-cargo test                 # 24 tests, aucun réseau externe
+cargo test                 # 32 tests, aucun réseau externe
 ```
 
 Développement local :
@@ -193,4 +265,10 @@ les tests.
   zéro certificat à distribuer ; Tailscale chiffre déjà le trafic du tailnet.
 - **Pas de SMB/WebDAV/Syncthing** : authentification ou synchronisation, alors
   qu'on veut « tirer à la demande » sans compte.
-- **Pas de HEAD pour les dossiers** : `/a/` est un flux, sa taille n'existe pas.
+- **Pas de HEAD pour les dossiers** : `/a/` est un flux, sa taille n'existe pas ;
+  d'où `/api/size`, calculé à la demande et borné.
+- **Deux comptes sur un même poste** : impossible pour l'instant — le port est
+  fixe et le `peer_id` est le `machine-id`, donc le second démon ne peut pas
+  écouter et la GUI affiche « port occupé ». Le rendre multi-compte demanderait
+  un port dérivé du compte (comme KRdp) et un `peer_id` par utilisateur :
+  à faire un jour, documenté ici pour ne pas le redécouvrir.
