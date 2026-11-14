@@ -136,6 +136,42 @@ class _FakeWorker:
 
 
 @unittest.skipIf(QApplication is None, "PySide6 absent")
+class RemoteTrayPokeWorkerTest(unittest.TestCase):
+    """Réveil du tray d'un poste : une seule commande ssh, best-effort."""
+
+    def test_runs_the_poke_script_over_ssh(self):
+        from unittest import mock
+
+        from gablue_manager import remote_updates, workers
+
+        worker = workers.RemoteTrayPokeWorker(HOST)
+        with mock.patch.object(
+            workers, "ssh_capture", return_value=(0, "")
+        ) as sent:
+            worker.run()
+        sent.assert_called_once()
+        args, kwargs = sent.call_args
+        self.assertEqual(args[0], HOST)
+        self.assertEqual(args[1], remote_updates.TRAY_POKE_SCRIPT)
+        self.assertGreaterEqual(kwargs.get("timeout", 0), 10)
+
+    def test_a_dead_host_is_silent(self):
+        from unittest import mock
+
+        from gablue_manager import workers
+
+        worker = workers.RemoteTrayPokeWorker(HOST)
+        with mock.patch.object(
+            workers, "ssh_capture", return_value=(255, "")
+        ) as sent, mock.patch.object(
+            workers.journal, "log_failure"
+        ) as logged:
+            worker.run()
+        sent.assert_called_once()
+        self.assertFalse(logged.called)
+
+
+@unittest.skipIf(QApplication is None, "PySide6 absent")
 class RemoteBatchDialogTest(unittest.TestCase):
     """Lot de postes : attente des sondes, relance d'un seul poste, watchdog.
 

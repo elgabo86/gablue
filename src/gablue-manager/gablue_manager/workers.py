@@ -17,7 +17,7 @@ from .hosts import avahi_scan, remote_addresses
 from .local import (hwinfo, memory_modules_from, nvm_smart,
                    pending_reboot_reasons, sata_temperatures,
                    vulkan_gpu_name)
-from .ssh import _kill_group, check_host, install_key, key_status
+from .ssh import _kill_group, check_host, install_key, key_status, ssh_capture
 from .util import _ssh_opts, display_name, ssh_target
 
 class CheckWorker(QThread):
@@ -271,6 +271,33 @@ class RemoteAppsWorker(QThread):
             )
             result = ([], True, 0, {})
         self.done.emit(self._id, result)
+
+class RemoteTrayPokeWorker(QThread):
+    """Réveille la pastille d'un poste après une mise à jour.
+
+    Le badge est calculé par le tray **du poste**, à l'ouverture de session
+    puis à sa cadence (2 h par défaut) : une mise à jour lancée d'ici ne le
+    rafraîchit pas, et il restait rouge alors que plus rien ne manquait
+    (vécu 14/11/2026, gen1). On lui envoie `updates`, le même message que la
+    fenêtre adresse à son propre tray. Best-effort : sans session graphique,
+    personne n'écoute — ce n'est pas une erreur, et ça ne laisse pas de trace.
+    """
+
+    def __init__(self, host: dict, parent=None):
+        super().__init__(parent)
+        self._host = dict(host)
+
+    def run(self) -> None:
+        try:
+            ssh_capture(
+                self._host, remote_updates.TRAY_POKE_SCRIPT, timeout=20
+            )
+        except Exception as error:      # un thread ne doit jamais lever
+            journal.log_failure(
+                f"Pastille de {display_name(self._host)}",
+                detail=repr(error),
+            )
+
 
 class RemoteUpdatesWorker(QThread):
     """Mises à jour d'un poste distant, sondées à la demande.

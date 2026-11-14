@@ -75,6 +75,7 @@ from .widgets import (
 from .workers import (
     AddressWorker, AppsUpdateWorker, AvahiWorker, CheckWorker, KeyProbeWorker,
     HardwareWorker, RebootWorker, RemoteAppsWorker, RemoteHardwareWorker,
+    RemoteTrayPokeWorker,
     RemoteUpdatesWorker, UpdateCheckWorker,
 )
 
@@ -181,6 +182,8 @@ class MainWindow(QMainWindow):
         # Sonde des AppImages d'un poste (une connexion SSH par clic) : la
         # liste des applications en retard décide de la commande à lancer.
         self._remote_apps_workers: list[RemoteAppsWorker] = []
+        # Réveils de pastille après une mise à jour distante (best-effort).
+        self._tray_pokes: list[RemoteTrayPokeWorker] = []
         self._batch_host_ids: list[str] = []
         # Lot « tout mettre à jour » : postes retenus et chaîne propre à chacun,
         # le temps que les sondes d'AppImages répondent.
@@ -1337,17 +1340,18 @@ class MainWindow(QMainWindow):
         plus fiable juste après).
         """
         host_ids = list(self._batch_host_ids)
-        if not ok:
-            # Échec : on oublie les compteurs sans sonder (l'état d'un poste
-            # qui vient d'échouer n'est pas plus fiable juste après), mais on
-            # garde la liste — une relance réussie depuis la fenêtre doit
-            # pouvoir re-sonder ces mêmes postes.
-            for host_id in host_ids:
-                self._forget_remote_updates(host_id)
-            return
-        self._batch_host_ids = []
         for host_id in host_ids:
             self._forget_remote_updates(host_id)
+            # Chaque poste a, au moins en partie, été mis à jour : sa propre
+            # pastille doit être relue, sinon elle garde l'état d'avant (elle
+            # sonde à l'ouverture de session puis toutes les deux heures).
+            self._poke_tray(host_id)
+        if not ok:
+            # Échec : on ne sonde pas les compteurs (l'état d'un poste qui
+            # vient d'échouer n'est pas plus fiable juste après), mais on
+            # garde la liste — une relance réussie doit pouvoir re-sonder.
+            return
+        self._batch_host_ids = []
         for host_id in host_ids:
             if self._host(host_id) is None:
                 continue
@@ -1356,11 +1360,40 @@ class MainWindow(QMainWindow):
             self._set_host_checking(host_id)
         self._pump_remote_checks()
 
-    def _remote_after_task(self, host_id: str, ok: bool) -> None:
-        """Mise à jour d'un poste terminée : son compteur connu est périmé."""
+    def _remote_after_task(self, host_id: str, ok: bool,
+                           poke: bool = False) -> None:
+        """Mise à jour d'un poste terminée : compteurs périmés, pastille réveillée.
+
+        Le badge vit dans la session du poste ; une mise à jour lancée d'ici ne
+        le rafraîchit pas, et sa prochaine sonde peut être deux heures plus
+        tard (vécu 14/11/2026 : gen1 restait rouge après un lot réussi). Seule
+        une action réussie le mérite : un échec n'a rien changé.
+        """
         if not ok:
             return
         self._forget_remote_updates(host_id)
+        if poke:
+            self._poke_tray(host_id)
+
+    def _poke_tray(self, host_id: str) -> None:
+        """Demander au tray du poste de re-sonder, sans bloquer la fenêtre.
+
+        Le message part sur la socket d'instance du poste (`updates`), comme
+        celui que la fenêtre adresse à son propre tray. Best-effort : sans
+        session graphique, il n'y a personne à réveiller.
+        """
+        host = self._host(host_id)
+        if host is None:
+            return
+        worker = RemoteTrayPokeWorker(host, self)
+        self._tray_pokes.append(worker)
+        worker.finished.connect(lambda w=worker: self._tray_poke_done(w))
+        worker.start()
+
+    def _tray_poke_done(self, worker) -> None:
+        if worker in self._tray_pokes:
+            self._tray_pokes.remove(worker)
+        worker.deleteLater()
 
     def _forget_remote_updates(self, host_id: str) -> None:
         """Oublie un état de mises à jour périmé, dans les deux vues du poste."""
@@ -2125,7 +2158,7 @@ class MainWindow(QMainWindow):
             host, f"Tout mettre à jour — {display_name(host)}",
             "Image, Flatpaks, gwine, applications et Homebrew.",
             remote_updates.update_chain(pending, states), root=True,
-            progress_mode="busy",
+            progress_mode="busy", poke_tray=True,
         )
 
     def update_remote_apps(self, host: dict) -> None:
@@ -2167,7 +2200,7 @@ class MainWindow(QMainWindow):
         self._run_remote_script(
             host, f"Mise à jour des applications — {display_name(host)}",
             names + ".", remote_updates.apps_chain(pending, states),
-            progress_mode="busy",
+            progress_mode="busy", poke_tray=True,
         )
 
     def update_remote_gablue(self, host: dict) -> None:
@@ -2193,7 +2226,7 @@ class MainWindow(QMainWindow):
             ),
             # Même progression que dans la chaîne : sans elle, cette action
             # restait muette pendant tout le tirage de l'image.
-            progress_mode="busy",
+            progress_mode="busy", poke_tray=True,
         )
 
     def update_remote_flatpaks(self, host: dict) -> None:
@@ -2208,6 +2241,7 @@ class MainWindow(QMainWindow):
         self._run_remote_script(
             host, f"Flatpaks — {display_name(host)}",
             "Applications Flatpak système.", flatpak_update_script(),
+            poke_tray=True,
         )
 
     def update_remote_gwine(self, host: dict) -> None:
@@ -2222,7 +2256,7 @@ class MainWindow(QMainWindow):
         self._run_remote_script(
             host, f"gwine — {display_name(host)}",
             "Runner Wine et composants (DXVK, VKD3D, D7VK).",
-            "gwine --init\n",
+            "gwine --init\n", poke_tray=True,
         )
 
     def update_remote_brew(self, host: dict) -> None:
@@ -2237,6 +2271,7 @@ class MainWindow(QMainWindow):
         self._run_remote_script(
             host, f"Homebrew — {display_name(host)}",
             "Formules installées par brew.", brew_update_script(),
+            poke_tray=True,
         )
 
     def open_remote_settings(self, host_id: str) -> None:
@@ -2262,13 +2297,17 @@ class MainWindow(QMainWindow):
                            ok_if_disconnect: bool = False,
                            hint_from_output=None,
                            close_on_success: bool = False,
-                           progress_mode: str = "auto") -> None:
+                           progress_mode: str = "auto",
+                           poke_tray: bool = False) -> None:
         """Exécute un script distant, en demandant le mot de passe sudo si besoin.
 
         `progress_mode="busy"` pour une chaîne de mise à jour : le script publie
         ses étapes et, pour l'image, le JSONL de bootc, donc la fenêtre montre
         une barre et un libellé au lieu d'un journal muet pendant vingt minutes
         (`tasks.RemoteTaskDialog`).
+
+        `poke_tray` : l'action change les mises à jour du poste, donc sa propre
+        pastille doit être relue à la fin (elle ne nous voit pas passer).
         """
         password = ""
         if root and not remote_sudo_nopasswd(host):
@@ -2284,9 +2323,11 @@ class MainWindow(QMainWindow):
             progress_mode=progress_mode,
         )
         # Une action distante peut changer l'état des mises à jour : les
-        # compteurs connus de cette carte sont oubliés, jamais devinés.
+        # compteurs connus de cette carte sont oubliés, jamais devinés — et la
+        # pastille du poste est réveillée quand l'action les touche.
         dialog.completed.connect(
-            lambda ok, hid=host["id"]: self._remote_after_task(hid, ok)
+            lambda ok, hid=host["id"], wake=poke_tray:
+                self._remote_after_task(hid, ok, poke=wake)
         )
         start_task(self, dialog)
 
@@ -3041,6 +3082,7 @@ class MainWindow(QMainWindow):
             *self._remote_hardware_workers.values(),
             *self._remote_check_workers,
             *self._remote_apps_workers,
+            *self._tray_pokes,
             *self._address_workers, *self._key_workers,
         ]
         return [
@@ -3133,6 +3175,7 @@ class MainWindow(QMainWindow):
               for worker in self._remote_hardware_workers.values()],
             *[(worker, 2.0) for worker in self._remote_check_workers],
             *[(worker, 2.0) for worker in self._remote_apps_workers],
+            *[(worker, 2.0) for worker in self._tray_pokes],
             *[(worker, 2.0) for worker in self._address_workers],
             *[(worker, 2.0) for worker in self._key_workers],
         ])

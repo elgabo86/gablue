@@ -237,6 +237,93 @@ class HostProgressTest(unittest.TestCase):
         self.assertEqual(self.state.feed("::gablue:stage x y\n"), "")
 
 
+class TrayPokeTest(unittest.TestCase):
+    """Réveil de la pastille d'un poste après une mise à jour.
+
+    Le badge est calculé dans **la session du poste**, à l'ouverture de session
+    puis à sa cadence (2 h) : sans ce message, il gardait l'état d'avant la
+    mise à jour jusqu'à la sonde suivante (vécu 14/11/2026, gen1 restait rouge
+    après un lot pourtant réussi). Le script est testé pour de vrai : une
+    socket locale joue le tray.
+    """
+
+    def _run(self, env):
+        import subprocess
+
+        return subprocess.run(
+            ["bash", "-c", remote_updates.TRAY_POKE_SCRIPT],
+            env=env, capture_output=True, text=True, timeout=20,
+            check=False,
+        )
+
+    def test_script_sends_updates_on_the_instance_socket(self):
+        import os
+        import socket
+        import tempfile
+        import threading
+
+        with tempfile.TemporaryDirectory() as base:
+            path = os.path.join(
+                base, f"gablue-manager-tray-{os.getuid()}"
+            )
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(path)
+            server.listen(1)
+            received: list[bytes] = []
+
+            def accept() -> None:
+                conn, _address = server.accept()
+                conn.settimeout(5)
+                received.append(conn.recv(64))
+                conn.close()
+
+            thread = threading.Thread(target=accept, daemon=True)
+            thread.start()
+            # `QLocalServer` met ses sockets dans le dossier temporaire de Qt
+            # (`/tmp` en pratique), pas dans `$XDG_RUNTIME_DIR` : c'est ce que
+            # le script doit viser en premier.
+            env = dict(os.environ, TMPDIR=base)
+            env.pop("XDG_RUNTIME_DIR", None)
+            result = self._run(env)
+            thread.join(5)
+            server.close()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(received, [b"updates"])
+
+    def test_without_a_session_it_is_not_an_error(self):
+        # Un poste sans session graphique n'a personne à réveiller : le
+        # script sort 0 et ne laisse rien dans le journal de la tâche.
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as base:
+            env = dict(os.environ, TMPDIR=base)
+            env.pop("XDG_RUNTIME_DIR", None)
+            result = self._run(env)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stderr.strip(), "")
+
+    def test_script_tries_qt_temp_then_runtime_dirs(self):
+        # La socket réelle est `/tmp/gablue-manager-tray-<uid>` (QLocalServer
+        # utilise `QDir::tempPath()`, vérifié sur gen1 le 14/11/2026 : rien
+        # dans `/run/user/1000`). Les chemins systemd restent en secours.
+        script = remote_updates.TRAY_POKE_SCRIPT
+        self.assertIn("tempfile.gettempdir()", script)
+        self.assertIn("XDG_RUNTIME_DIR", script)
+        self.assertIn("/run/user/%d", script)
+        self.assertIn("gablue-manager-tray-%d", script)
+
+    def test_script_is_valid_bash(self):
+        import subprocess
+
+        result = subprocess.run(
+            ["bash", "-n"], input=remote_updates.TRAY_POKE_SCRIPT,
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
 class KeepaliveTest(unittest.TestCase):
     def test_long_tasks_get_a_keepalive(self):
         opts = util._ssh_opts(

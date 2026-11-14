@@ -248,6 +248,46 @@ def image_chain() -> str:
     ]) + "\n"
 
 
+# Réveil de la pastille d'un poste après une mise à jour. Le badge est calculé
+# dans **sa** session (ouverture de session, puis toutes les deux heures) : une
+# mise à jour lancée d'une autre machine ne le rafraîchit pas, et il restait
+# rouge alors que plus rien ne manquait (vécu 14/11/2026, gen1). Le message
+# `updates` est celui que la fenêtre adresse à son propre tray : ici on écrit
+# sur la socket d'instance du poste. `QLocalServer` la place dans le dossier
+# temporaire de Qt (`QDir::tempPath()`, donc `/tmp` ou `$TMPDIR`) et non dans
+# `$XDG_RUNTIME_DIR` — vérifié le 14/11/2026 : `/tmp/gablue-manager-tray-1000`,
+# rien dans `/run/user/1000`. On essaie donc les emplacements plausibles dans
+# l'ordre, et on s'arrête au premier qui accepte (une socket restée d'un
+# processus tué refuse la connexion). Best-effort : sans session graphique,
+# personne n'écoute, et `|| true` évite d'en faire un échec de tâche.
+TRAY_POKE_SCRIPT = """\
+if [ -x /usr/bin/python3 ]; then PY=/usr/bin/python3; else PY=python3; fi
+"$PY" - <<'GBLK' 2>/dev/null || true
+import os, socket, tempfile
+uid = os.getuid()
+name = "gablue-manager-tray-%d" % uid
+bases = [
+    tempfile.gettempdir(),                      # QLocalServer : /tmp
+    os.environ.get("XDG_RUNTIME_DIR") or "",    # si Qt y passait un jour
+    "/run/user/%d" % uid,
+]
+for base in bases:
+    if not base:
+        continue
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(2.0)
+    try:
+        sock.connect(os.path.join(base, name))
+    except OSError:
+        sock.close()
+        continue
+    sock.sendall(b"updates")
+    sock.close()
+    break
+GBLK
+"""
+
+
 def probe_apps(host: dict, timeout: float = 90.0) -> tuple:
     """AppImages d'un poste distant : une connexion SSH + les flux de releases.
 
