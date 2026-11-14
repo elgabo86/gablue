@@ -252,6 +252,11 @@ class RemoteTaskDialog(QDialog):
         # libellé progressent à la place, et bootc alimente enfin un vrai
         # pourcentage au lieu de laisser la fenêtre muette 20 minutes.
         visible = self._progress_state.feed(text)
+        # La mesure se met à jour **même** quand le morceau n'est que du
+        # protocole : pendant un téléchargement, le flux ne contient que des
+        # `percent`, et sortir ici laisserait la barre figée (bug corrigé le
+        # 14/11/2026, vu à la relecture du chemin mono-poste).
+        self._apply_remote_progress()
         if not visible:
             return
         self._output.append(visible)
@@ -262,7 +267,6 @@ class RemoteTaskDialog(QDialog):
                 self.link_row.show_url(url)
                 self.adjustSize()
         self.log_view.insertPlainText(visible)
-        self._apply_remote_progress()
         bar = self.log_view.verticalScrollBar()
         bar.setValue(bar.maximum())
 
