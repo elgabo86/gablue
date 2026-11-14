@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QPushButton, QVBoxLayout, QWidget,
 )
 
-from . import journal
+from . import journal, remote_updates
 from .local import parse_progress_event, privileged_prefix
 from .util import display_name, ssh_target
 from .widgets import BusyProgressBar
@@ -154,6 +154,7 @@ class RemoteTaskDialog(QDialog):
         self._progress_busy = progress_mode == "busy"
         self._auth_link_parser = auth_link_parser
         self._auth_url = ""
+        self._progress_state = remote_updates.HostProgress()
 
         self.setWindowTitle(title or f"Action — {display_name(self._host)}")
         # Non modale : `start_task` l'affiche sans bloquer les autres postes.
@@ -246,16 +247,42 @@ class RemoteTaskDialog(QDialog):
         worker.start()
 
     def _append(self, text: str) -> None:
-        self._output.append(text)
+        # Les chaînes distantes publient des étapes et, pour l'image, le JSONL
+        # de bootc (`::gablue:`). Le journal n'en garde rien ; la barre et le
+        # libellé progressent à la place, et bootc alimente enfin un vrai
+        # pourcentage au lieu de laisser la fenêtre muette 20 minutes.
+        visible = self._progress_state.feed(text)
+        if not visible:
+            return
+        self._output.append(visible)
         if self._auth_link_parser is not None and not self._auth_url:
             url = self._auth_link_parser("".join(self._output)) or ""
             if url:
                 self._auth_url = url
                 self.link_row.show_url(url)
                 self.adjustSize()
-        self.log_view.insertPlainText(text)
+        self.log_view.insertPlainText(visible)
+        self._apply_remote_progress()
         bar = self.log_view.verticalScrollBar()
         bar.setValue(bar.maximum())
+
+    def _apply_remote_progress(self) -> None:
+        """Barre et libellé d'une action distante d'après ses marqueurs."""
+        if not self._progress_busy or not self._running:
+            return
+        state = self._progress_state
+        label = state.label()
+        percent = state.percent
+        if label:
+            self.progress_label.setText(
+                f"{label} — {percent:.0f} %" if percent is not None else label
+            )
+        if percent is None:
+            if self.progress_bar.maximum() != 0:
+                self.progress_bar.setRange(0, 0)
+        else:
+            self.progress_bar.setRange(0, 1000)
+            self.progress_bar.setValue(int(round(percent * 10)))
 
     def _toggle_log(self, shown: bool) -> None:
         self.log_view.setVisible(shown)
@@ -275,6 +302,10 @@ class RemoteTaskDialog(QDialog):
 
     def _finished(self, code: int) -> None:
         self._running = False
+        leftover = self._progress_state.flush()
+        if leftover:
+            self._output.append(leftover)
+            self.log_view.insertPlainText(leftover)
         output = "".join(self._output)
         ok = code == 0
         if not ok and self._ok_if_disconnect and code == 255:
@@ -362,6 +393,17 @@ class RemoteTaskDialog(QDialog):
             self._worker.cancel.set()
             self._worker.wait(3000)
         super().reject()
+
+def _elapsed_text(seconds: float) -> str:
+    """Durée lisible d'une tâche : « 42 s », « 3 min 07 s », « 1 h 04 min »."""
+    total = max(0, int(seconds))
+    minutes, secs = divmod(total, 60)
+    if minutes >= 60:
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours} h {minutes:02d} min"
+    if minutes:
+        return f"{minutes} min {secs:02d} s"
+    return f"{secs} s"
 
 def _human_bytes(value: int) -> str:
     """Taille lisible (o, Kio, Mio, Gio) — journal de progression de bootc."""
@@ -1454,6 +1496,11 @@ class RemoteBatchDialog(QDialog):
         self._queue = list(range(len(self._hosts)))
         self._workers: dict[int, SshTaskWorker] = {}
         self._rows: dict[int, QLabel] = {}
+        self._bars: dict[int, BusyProgressBar] = {}
+        self._details: dict[int, QLabel] = {}
+        self._durations: dict[int, QLabel] = {}
+        self._progress: dict[int, remote_updates.HostProgress] = {}
+        self._starts: dict[int, float] = {}
         self._results: dict[int, int] = {}
         self._cancelled = False
         self._finished = False
@@ -1473,8 +1520,10 @@ class RemoteBatchDialog(QDialog):
         root.addWidget(self.subtitle)
 
         rows = QVBoxLayout()
-        rows.setSpacing(4)
+        rows.setSpacing(10)
         for index, host in enumerate(self._hosts):
+            block = QVBoxLayout()
+            block.setSpacing(2)
             line = QHBoxLayout()
             name = QLabel(display_name(host), self)
             name.setObjectName("hostName")
@@ -1482,12 +1531,38 @@ class RemoteBatchDialog(QDialog):
             status.setObjectName("hostStatus")
             line.addWidget(name, 1)
             line.addWidget(status, 0, Qt.AlignRight)
-            rows.addLayout(line)
+            block.addLayout(line)
+            # Une barre par poste : trois ssh tournent en même temps, une barre
+            # globale seule ne disait laquelle avance (et restait à 0 pendant
+            # tout le téléchargement d'image de 1,9 Go, vécu 14/11/2026).
+            bar = BusyProgressBar(self)
+            bar.setObjectName("taskProgress")
+            bar.setTextVisible(False)
+            bar.setFixedHeight(4)
+            bar.setRange(0, 0)
+            bar.setVisible(False)
+            block.addWidget(bar)
+            detail_line = QHBoxLayout()
+            detail_line.setSpacing(10)
+            detail = QLabel("", self)
+            detail.setObjectName("hostDetail")
+            detail.setTextFormat(Qt.PlainText)
+            duration = QLabel("", self)
+            duration.setObjectName("hostDetail")
+            detail_line.addWidget(detail, 1)
+            detail_line.addWidget(duration, 0, Qt.AlignRight)
+            block.addLayout(detail_line)
+            rows.addLayout(block)
             self._rows[index] = status
+            self._bars[index] = bar
+            self._details[index] = detail
+            self._durations[index] = duration
+            self._progress[index] = remote_updates.HostProgress()
+            self._starts[index] = 0.0
         root.addLayout(rows)
 
         self.progress = QProgressBar(self)
-        self.progress.setRange(0, max(1, len(self._hosts)))
+        self.progress.setRange(0, 1000)
         self.progress.setValue(0)
         self.progress.setTextVisible(False)
         self.progress.setFixedHeight(4)
@@ -1521,6 +1596,14 @@ class RemoteBatchDialog(QDialog):
         # Laisser la fenêtre s'afficher avant le premier ssh.
         QTimer.singleShot(60, self._start_next)
 
+        # Une durée qui monte, même quand le poste est muet (téléchargement
+        # d'image) : sans elle, « En cours… » depuis vingt minutes ne se
+        # distingue pas d'un blocage.
+        self._ticker = QTimer(self)
+        self._ticker.setInterval(1000)
+        self._ticker.timeout.connect(self._tick)
+        self._ticker.start()
+
     # -- déroulé ------------------------------------------------------------
     def _set_row(self, index: int, text: str, color: str = "") -> None:
         label = self._rows[index]
@@ -1528,18 +1611,70 @@ class RemoteBatchDialog(QDialog):
         label.setStyleSheet(f"color: {color};" if color else "")
 
     def _append(self, index: int, text: str) -> None:
+        """Sortie d'un poste : protocole consommé, reste au journal commun."""
         if not text:
+            return
+        state = self._progress[index]
+        visible = state.feed(text)
+        self._sync_progress(index)
+        if not visible:
             return
         host = self._hosts[index]
         prefix = display_name(host)
-        for line in text.splitlines():
+        for line in visible.splitlines():
             if line.strip():
                 self.log_view.appendPlainText(f"[{prefix}] {line}")
+
+    def _sync_progress(self, index: int) -> None:
+        """Barre et libellé du poste d'après son dernier événement."""
+        state = self._progress[index]
+        bar = self._bars[index]
+        percent = state.percent
+        if percent is None:
+            # Étape sans mesure (Flatpaks, gwine…) : balayage plutôt qu'un
+            # pourcentage figé qui se lit « bloqué ».
+            if bar.maximum() != 0:
+                bar.setRange(0, 0)
+        else:
+            if bar.maximum() != 1000:
+                bar.setRange(0, 1000)
+            bar.setValue(int(round(percent * 10)))
+        label = state.label()
+        if label:
+            self._details[index].setText(label)
+        self._apply_global()
+
+    def _apply_global(self) -> None:
+        """Barre globale = moyenne des avancements, pas un compte de finis."""
+        if not self._hosts:
+            return
+        total = sum(
+            self._progress[index].fraction for index in range(len(self._hosts))
+        )
+        self.progress.setValue(int(round(1000 * total / len(self._hosts))))
+        if not self._finished:
+            # La barre globale a besoin de sa légende : seule, elle se lisait
+            # comme une ligne de poste de plus.
+            done = len(self._results)
+            self.summary.setText(
+                f"{done}/{len(self._hosts)} poste(s) terminé(s)"
+            )
+
+    def _tick(self) -> None:
+        """Durée écoulée des postes en vol, une fois par seconde."""
+        now = time.monotonic()
+        for index in list(self._workers):
+            start = self._starts.get(index) or 0.0
+            if start:
+                self._durations[index].setText(_elapsed_text(now - start))
 
     def _start_next(self) -> None:
         while self._queue and len(self._workers) < self.MAX_PARALLEL:
             index = self._queue.pop(0)
             self._set_row(index, "En cours…")
+            self._starts[index] = time.monotonic()
+            self._details[index].setText("Démarrage…")
+            self._bars[index].setVisible(True)
             host = self._hosts[index]
             command = self._commands.get(host.get("id") or "", self._command)
             worker = SshTaskWorker(host, command, self)
@@ -1557,14 +1692,38 @@ class RemoteBatchDialog(QDialog):
         if worker is not None:
             worker.wait(1000)
         self._results[index] = code
+        state = self._progress[index]
+        # Même en échec, le poste a fini : la barre globale compte le travail
+        # fait, les échecs étant dits par la ligne et le résumé.
+        state.finished = True
+        leftover = state.flush()
+        if leftover.strip():
+            self.log_view.appendPlainText(
+                f"[{display_name(self._hosts[index])}] {leftover}"
+            )
+        start = self._starts.get(index) or 0.0
+        elapsed = _elapsed_text(time.monotonic() - start) if start else ""
+        bar = self._bars[index]
         from .constants import COLOR_ONLINE, COLOR_OFFLINE
         if code == 0:
             self._set_row(index, "Terminé", COLOR_ONLINE)
+            bar.setRange(0, 1000)
+            bar.setValue(1000)
+            self._details[index].setText("")
+            self._durations[index].setText(elapsed)
         elif self._cancelled:
             self._set_row(index, "Annulé")
+            bar.setVisible(False)          # un balayage derrière « Annulé » ment
+            self._details[index].setText("")
+            self._durations[index].setText("")
         else:
             self._set_row(index, f"Échec (code {code})", COLOR_OFFLINE)
-        self.progress.setValue(self.progress.value() + 1)
+            bar.setVisible(False)
+            self._details[index].setText("")
+            self._durations[index].setText(
+                f"après {elapsed}" if elapsed else ""
+            )
+        self._apply_global()
         if self._queue:
             self._start_next()
         elif not self._workers:
@@ -1574,6 +1733,7 @@ class RemoteBatchDialog(QDialog):
         if self._finished:
             return
         self._finished = True
+        self._ticker.stop()
         done = sum(1 for code in self._results.values() if code == 0)
         total = len(self._hosts)
         self.cancel_button.setVisible(False)
@@ -1595,6 +1755,8 @@ class RemoteBatchDialog(QDialog):
         for index in self._queue:
             self._set_row(index, "Annulé")
         self._queue.clear()
+        for index in self._workers:
+            self._bars[index].setVisible(False)
         for worker in self._workers.values():
             worker.cancel.set()
         if not self._workers:

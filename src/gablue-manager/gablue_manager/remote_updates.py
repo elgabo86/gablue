@@ -19,6 +19,7 @@ import shlex
 import time
 
 from . import apps, updates
+from .local import GABLUE_PROGRESS_PREFIX, parse_gablue_progress, parse_progress_event
 from .ssh import ssh_capture
 
 # Une seule connexion : chaque section est balisée, son code de retour est
@@ -90,6 +91,75 @@ def apps_section(pending_apps=(), states=None) -> str:
     return "\n".join(lines)
 
 
+# Étapes de la chaîne, dans l'ordre où le poste les exécute. Le nombre est fixe
+# (une étape sautée s'annonce quand même) pour que la barre d'un poste sache où
+# elle en est sans deviner ce que le poste a d'installé.
+STAGES = (
+    "Image Gablue",
+    "Flatpaks",
+    "gwine",
+    "Applications",
+    "Homebrew",
+)
+
+STEP_MARKER = "::gablue:stage "
+PROGRESS_MARKER = "::gablue:progress "
+
+def _stage(index: int, total: int, label: str) -> str:
+    """Annonce d'une étape de la chaîne ; `printf` comme partout (une sortie
+    sans saut de ligne final collait le marqueur à la ligne précédente, vécu
+    09/11/2026).
+
+    Verbe `stage` et non `step` : les scripts d'installation d'AppImages
+    publient déjà `::gablue:step n total` pour leur **propre** progression, et
+    deux numérotations sur un même flux se marcheraient dessus — la
+    sous-progression d'une application écraserait le compte des étapes du poste.
+    """
+    return f"printf '\\n::gablue:stage {index} {total} {label}\\n'"
+
+
+IMAGE_UPGRADE = (
+    # Progression réelle de l'étape qui dure : `bootc upgrade --progress-fd`
+    # refuse les fd 1 et 2, et sudo ferme les fd ≥ 3 par défaut (`-C 99` serait
+    # refusé sans `closefrom_override`, vérifié le 14/11/2026). On réutilise donc
+    # le helper de l'image, déjà NOPASSWD et sans argument : il publie le JSONL
+    # de bootc dans un FIFO, et un lecteur de la **même** session ssh l'étiquette
+    # en `::gablue:progress`. Bonus : ses traps tuent bootc quand le ssh tombe
+    # (annulation du lot, lien coupé), ce que `sudo bootc` seul ne fait pas.
+    # Sans le helper (image antérieure), repli muet mais fonctionnel.
+    "if [ -x /usr/libexec/gablue-update ]; then\n"
+    "    sudo -n /usr/libexec/gablue-update &\n"
+    "    helper=$!\n"
+    "    while [ ! -p /run/gablue/update-progress.fifo ]"
+    " && kill -0 \"$helper\" 2>/dev/null; do sleep 0.1; done\n"
+    "    while IFS= read -r line; do"
+    " printf '::gablue:progress %s\\n' \"$line\";"
+    " done 2>/dev/null < /run/gablue/update-progress.fifo &\n"
+    "    reader=$!\n"
+    "    wait \"$helper\"\n"
+    "    helper_rc=$?\n"
+    "    kill \"$reader\" 2>/dev/null || true\n"
+    "    case \"$helper_rc\" in 0) ;; *) rc=1 ;; esac\n"
+    "else\n"
+    "    sudo -n /usr/bin/bootc upgrade || rc=1\n"
+    "fi"
+)
+
+FLATPAK_UPGRADE = "sudo -n /usr/bin/flatpak update --system -y || rc=1"
+
+GWINE_UPGRADE = (
+    "if command -v gwine >/dev/null 2>&1; then\n"
+    "    gwine --init || rc=1\n"
+    "fi"
+)
+
+BREW_UPGRADE = (
+    "if command -v brew >/dev/null 2>&1; then\n"
+    "    HOMEBREW_NO_AUTO_UPDATE=1 brew update || rc=1\n"
+    "    brew upgrade || rc=1\n"
+    "fi"
+)
+
 def update_chain(pending_apps=(), states=None) -> str:
     """Script « tout mettre à jour » d'un poste distant.
 
@@ -99,25 +169,28 @@ def update_chain(pending_apps=(), states=None) -> str:
     manquant sur un poste hors image) et le code de sortie reste non nul : la
     fenêtre du lot affiche l'échec du poste sans interrompre les autres.
 
+    **Progression** : chaque étape s'annonce (`::gablue:stage n 5 libellé`),
+    même celles qui seront sautées (`command -v`), pour que le nombre d'étapes
+    soit fixe et que la barre du poste ne mente pas. L'image, elle, publie en
+    plus ses événements JSONL (`::gablue:progress {…}`), seule mesure réelle
+    d'une étape qui dure un quart d'heure — voir `IMAGE_UPGRADE`. Ces lignes
+    sont **lues et retirées du journal** par `HostProgress`.
+
     `pending_apps` et `states` viennent de `probe_apps` : vide, aucune section
     applications (le poste est à jour sur ce domaine).
     """
     section = apps_section(pending_apps, states)
-    apps_block = f'echo "== Applications =="\n{section}\n' if section else ""
-    return (
-        "rc=0\n"
-        "sudo -n /usr/bin/bootc upgrade || rc=1\n"
-        "sudo -n /usr/bin/flatpak update --system -y || rc=1\n"
-        "if command -v gwine >/dev/null 2>&1; then\n"
-        "    gwine --init || rc=1\n"
-        "fi\n"
-        + apps_block +
-        "if command -v brew >/dev/null 2>&1; then\n"
-        "    HOMEBREW_NO_AUTO_UPDATE=1 brew update || rc=1\n"
-        "    brew upgrade || rc=1\n"
-        "fi\n"
-        "exit $rc\n"
+    total = len(STAGES)
+    apps_block = (
+        f"echo '== Applications =='\n{section}"
+        if section else "echo 'Applications : à jour'"
     )
+    lines = ["rc=0", _stage(1, total, STAGES[0]), IMAGE_UPGRADE]
+    lines += [_stage(2, total, STAGES[1]), FLATPAK_UPGRADE]
+    lines += [_stage(3, total, STAGES[2]), GWINE_UPGRADE]
+    lines += [_stage(4, total, STAGES[3]), apps_block]
+    lines += [_stage(5, total, STAGES[4]), BREW_UPGRADE, "exit $rc"]
+    return "\n".join(lines) + "\n"
 
 
 def apps_chain(pending_apps=(), states=None) -> str:
@@ -259,3 +332,104 @@ def check(host: dict, timeout: float = 240.0) -> dict:
         *apps.pending_for(states)
     )
     return state
+
+
+class HostProgress:
+    """Progression d'un poste du lot, découpée depuis son flux ssh.
+
+    Le poste n'annonce que deux choses : l'étape qu'il commence
+    (`::gablue:stage n total libellé`) et, pendant l'image, les événements JSONL
+    de `bootc --progress-fd` (`::gablue:progress {…}`). Tout le reste repart au
+    journal, et ces lignes de protocole en sont retirées : le journal reste du
+    texte pour l'humain. Une ligne incomplète est gardée pour le morceau
+    suivant — le ssh découpe ses lectures n'importe où.
+
+    `percent` ne rend **rien** tant que l'étape courante n'a pas de mesure
+    (Flatpaks, gwine, Homebrew, applications : muets) : la fenêtre montre alors
+    une barre qui balaie au lieu d'un pourcentage figé. `fraction`, elle, est
+    toujours un nombre — c'est ce que consomme la barre **globale** du lot.
+    """
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self.step = 0
+        self.total = 0
+        self.stage = ""
+        self.detail = ""
+        self.intra: float | None = None
+        self.finished = False
+
+    # -- flux ---------------------------------------------------------------
+    def feed(self, text: str) -> str:
+        """Consomme un morceau de sortie ; rend le texte à écrire au journal."""
+        self._buffer += text or ""
+        kept: list[str] = []
+        while "\n" in self._buffer:
+            line, _, self._buffer = self._buffer.partition("\n")
+            if not self._consume(line):
+                kept.append(line + "\n")
+        return "".join(kept)
+
+    def flush(self) -> str:
+        """Reste de la dernière ligne (commande finie sans saut de ligne)."""
+        line, self._buffer = self._buffer, ""
+        return "" if self._consume(line) else line
+
+    def _consume(self, line: str) -> bool:
+        """Absorbe une ligne de protocole ; faux si elle va au journal."""
+        text = (line or "").strip()
+        if not text.startswith(GABLUE_PROGRESS_PREFIX):
+            return False
+        if text.startswith(STEP_MARKER):
+            parts = text[len(STEP_MARKER):].split(" ", 2)
+            if len(parts) == 3:
+                try:
+                    self.step = max(1, int(parts[0]))
+                    self.total = max(1, int(parts[1]))
+                except ValueError:
+                    return True
+                self.stage = parts[2].strip()
+                self.detail = ""
+                self.intra = None
+            return True
+        if text.startswith(PROGRESS_MARKER):
+            event = parse_progress_event(text[len(PROGRESS_MARKER):])
+            if event:
+                self.intra = event.get("percent")
+                self.detail = str(event.get("label") or "")
+            return True
+        # Sous-progression d'une étape (moteur d'AppImages, gwine) : mêmes
+        # verbes que le protocole local, donc le même analyseur.
+        info = parse_gablue_progress(text)
+        if info:
+            self.intra = info.get("percent")
+            self.detail = str(info.get("label") or "")
+        return True
+
+    # -- affichage ----------------------------------------------------------
+    @property
+    def percent(self) -> float | None:
+        """Avancement global mesuré (0…100), None : barre indéterminée."""
+        if self.finished:
+            return 100.0
+        if self.intra is None or not self.total or not self.step:
+            return None
+        return 100.0 * self.fraction
+
+    @property
+    def fraction(self) -> float:
+        """Avancement 0…1 sur la chaîne entière, même sans mesure d'étape."""
+        if self.finished:
+            return 1.0
+        if not self.total or not self.step:
+            return 0.0
+        part = 0.0
+        if self.intra is not None:
+            part = max(0.0, min(1.0, self.intra / 100.0))
+        return max(0.0, min(1.0, (self.step - 1 + part) / self.total))
+
+    def label(self) -> str:
+        """« Image Gablue · Téléchargement de l'image » (vide avant l'étape 1)."""
+        if not self.stage:
+            return ""
+        return " · ".join(part for part in (self.stage, self.detail) if part)

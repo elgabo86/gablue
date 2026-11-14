@@ -128,6 +128,13 @@ def _ssh_opts(host: dict, batch: bool = True) -> list[str]:
 
     `StrictHostKeyChecking=yes` partout (jamais `accept-new`) : une clé d'hôte
     inconnue doit être épinglée explicitement, pas acceptée en passant.
+
+    **Keepalive** : une tâche longue (mise à jour d'image : un quart d'heure)
+    sur un lien qui décroche (Wi-Fi, Tailscale) restait « en cours » jusqu'à ce
+    que le noyau abandonne le TCP — parfois jamais, le ssh local attendant un
+    pair muet. 15 s × 4 = une minute pour constater la mort et rendre la main
+    avec un code 255 lisible (vécu 14/11/2026, sucina). Sans effet sur une
+    sonde d'état, qui se termine bien avant le premier keepalive.
     """
     opts = [
         "-T",
@@ -136,6 +143,8 @@ def _ssh_opts(host: dict, batch: bool = True) -> list[str]:
         "-o", "ConnectTimeout=4",
         "-o", "ConnectionAttempts=1",
         "-o", "StrictHostKeyChecking=yes",
+        "-o", "ServerAliveInterval=15",
+        "-o", "ServerAliveCountMax=4",
         "-p", str(host["port"]),
     ]
     if batch:

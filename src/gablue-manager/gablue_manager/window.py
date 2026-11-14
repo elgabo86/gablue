@@ -2097,6 +2097,7 @@ class MainWindow(QMainWindow):
             host, f"Tout mettre à jour — {display_name(host)}",
             "Image, Flatpaks, gwine, applications et Homebrew.",
             remote_updates.update_chain(pending, states), root=True,
+            progress_mode="busy",
         )
 
     def update_remote_apps(self, host: dict) -> None:
@@ -2138,6 +2139,7 @@ class MainWindow(QMainWindow):
         self._run_remote_script(
             host, f"Mise à jour des applications — {display_name(host)}",
             names + ".", remote_updates.apps_chain(pending, states),
+            progress_mode="busy",
         )
 
     def update_remote_gablue(self, host: dict) -> None:
@@ -2234,8 +2236,15 @@ class MainWindow(QMainWindow):
                            script: str, root: bool = False,
                            ok_if_disconnect: bool = False,
                            hint_from_output=None,
-                           close_on_success: bool = False) -> None:
-        """Exécute un script distant, en demandant le mot de passe sudo si besoin."""
+                           close_on_success: bool = False,
+                           progress_mode: str = "auto") -> None:
+        """Exécute un script distant, en demandant le mot de passe sudo si besoin.
+
+        `progress_mode="busy"` pour une chaîne de mise à jour : le script publie
+        ses étapes et, pour l'image, le JSONL de bootc, donc la fenêtre montre
+        une barre et un libellé au lieu d'un journal muet pendant vingt minutes
+        (`tasks.RemoteTaskDialog`).
+        """
         password = ""
         if root and not remote_sudo_nopasswd(host):
             password = ask_remote_password(self, host)
@@ -2247,6 +2256,7 @@ class MainWindow(QMainWindow):
             password=password, ok_if_disconnect=ok_if_disconnect,
             hint_from_output=hint_from_output,
             close_on_success=close_on_success,
+            progress_mode=progress_mode,
         )
         # Une action distante peut changer l'état des mises à jour : les
         # compteurs connus de cette carte sont oubliés, jamais devinés.

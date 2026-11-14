@@ -1925,8 +1925,12 @@ class RemoteUpdatesTest(unittest.TestCase):
             self.assertIn(command, chain)
         # Gablue n'installe qu'en système : aucune mise à jour du compte.
         self.assertNotIn("--user", chain)
-        # Sans application en retard, aucune section applications.
-        self.assertNotIn("Applications", chain)
+        # Sans application en retard, aucune section applications : l'étape
+        # s'annonce quand même (la barre du poste a un nombre d'étapes fixe),
+        # mais rien n'est lancé.
+        self.assertNotIn("== Applications ==", chain)
+        self.assertNotIn("xenia-install", chain)
+        self.assertIn("Applications : à jour", chain)
 
     def test_update_chain_apps(self):
         states = {
