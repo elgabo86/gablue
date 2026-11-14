@@ -38,6 +38,7 @@ from .dialogs.ryzen import RyzenDialog
 from .dialogs.secureboot import SecureBootDialog
 from .dialogs.services import ServicesDialog
 from .dialogs.tailscale import TailscaleDialog
+from .dialogs.share import ShareDialog
 from .dialogs.thermal import ThermalDialog
 from .dialogs.updates import AutoUpdatesDialog
 from .dialogs.variant import VariantDialog
@@ -372,6 +373,7 @@ class MainWindow(QMainWindow):
         self.local_config.tailscale_requested.connect(
             self.open_local_tailscale
         )
+        self.local_config.share_requested.connect(self.open_local_share)
         self.local_config.wifi_powersave_requested.connect(
             self.open_local_wifi_powersave
         )
@@ -2762,6 +2764,9 @@ class MainWindow(QMainWindow):
 
     def open_local_tailscale(self) -> None:
         TailscaleDialog(self).exec()
+
+    def open_local_share(self) -> None:
+        ShareDialog(self).exec()
 
     def open_remote_tailscale(self, host_id: str) -> None:
         host = self._host(host_id)

@@ -24,9 +24,9 @@ Deux processus, séparés pour la RAM :
   (500 Kio → 2 Mio, hash identique), extraction tar, collision `(1)`.
 - **M3 (livré)** : file persistante (`~/.local/state/gablue-share/queue.json`),
   rattachement automatique au poste retrouvé, reprise, mode permanent
-  (`systemd --user`) avec bascule depuis la GUI.
-- **M4** : image (build Rust en étape dédiée, unités systemd, firewalld, icône),
-  entrée dans gablue-manager.
+  (`systemd --user`) avec bascule depuis la GUI — et entrée « Réseau ▸ Partage
+  local… » dans gablue-manager (permanence + ouverture de l'app).
+- **M4** : image (build Rust en étape dédiée, unités systemd, firewalld, icône).
 
 ## Paquet (GUI)
 

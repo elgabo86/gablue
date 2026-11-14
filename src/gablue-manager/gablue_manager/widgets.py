@@ -1248,6 +1248,7 @@ class LocalConfigMenu(QMenu):
     gwine_requested = Signal()
     booster_requested = Signal()
     tailscale_requested = Signal()
+    share_requested = Signal()
     wifi_powersave_requested = Signal()
     sshd_requested = Signal()
     avahi_requested = Signal()
@@ -1288,6 +1289,7 @@ class LocalConfigMenu(QMenu):
         network_menu.addAction(
             "Veille Wi-Fi…", self.wifi_powersave_requested.emit
         )
+        network_menu.addAction("Partage local…", self.share_requested.emit)
         network_menu.addSeparator()
         # Même état que le panneau « Accès à ce poste » : le libellé dit le
         # geste, jamais une case à cocher qui se désynchronise.
