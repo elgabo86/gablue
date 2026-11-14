@@ -85,7 +85,8 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── gablue-isomount.c              # Programme principal (UDisks2 DBus, Dolphin)
 │   │   └── Makefile                       # Compilation
 │   ├── gablue-manager/                     # Sources de Gablue Manager (Python modulaire)
-│   │   ├── AGENTS.md                       # Paquet, dialogues, privilèges
+│   │   ├── AGENTS.md                       # Paquet, build, modes CLI, conventions + index
+│   │   ├── AGENTS-{hosts,updates,local,apps,tray,ui}.md   # Sous-docs par domaine
 │   │   ├── gablue-manager                  # Lanceur /usr/bin (sys.path + main)
 │   │   └── gablue_manager/                 # Paquet : app, window, dialogs/, local, ssh…
 │   ├── gwine-launcher/                     # Sources du lanceur gwine (Bash modulaire)
@@ -252,7 +253,7 @@ son propre AGENTS.md de sous-dossier + pointeur dans l'index ci-dessous.
 | ISO live / installateur | `installer/AGENTS.md` | modifier `installer/` ou `local-build/` |
 | Lanceur gwine (CLI, structure, build) | `src/gwine-launcher/AGENTS.md` | modifier `gwine`, `build.sh` ou `completions/` |
 | gwine — modules `lib/` (architecture, composants, overlays, shims) | `src/gwine-launcher/lib/AGENTS.md` | modifier un fichier de `src/gwine-launcher/lib/` |
-| Gablue Manager (GUI, paquet `gablue_manager`) | `src/gablue-manager/AGENTS.md` | modifier `src/gablue-manager/` ou un dialogue |
+| Gablue Manager (GUI, paquet `gablue_manager`) | `src/gablue-manager/AGENTS.md`, puis le sous-doc du domaine (`AGENTS-hosts`, `updates`, `local`, `apps`, `tray`, `ui`) | modifier `src/gablue-manager/` ou un dialogue — l'index de la colonne « À lire AVANT de… » est dans ce fichier |
 | TV Gablue (tvqt, paquet `gablue_tv`) | `src/tvqt/AGENTS.md` | modifier `src/tvqt/` ou une vue |
 | Installateur APK (paquet `gablue_apk_installer`) | `src/gablue-apk-installer/AGENTS.md` | modifier `src/gablue-apk-installer/` |
 | Firmware DualSense / Edge (`gablue-dualsense`) | `src/gablue-dualsense/AGENTS.md` | modifier `dualsense-ctl.c`, le script `/usr/bin/gablue-dualsense` ou la détection de famille |
