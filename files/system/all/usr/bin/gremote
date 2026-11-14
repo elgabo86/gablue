@@ -12,6 +12,12 @@
 # VIRTUELLE (hors écran, sans VT ni DRM) : plusieurs comptes peuvent travailler
 # en parallèle et l'écran physique n'est pas pris.
 #
+# Si l'hôte a une session graphique mais AUCUN écran (moniteur éteint, lien DP
+# coupé), ou si l'écran disparaît en cours de connexion, KRdp n'a rien à
+# capturer : gremote demande alors un écran VIRTUEL à KWin (--virtual-monitor, à
+# la taille de l'écran disparu) et réannonce la poignée de main, le client
+# relançant son client RDP sans intervention.
+#
 # Usage :
 #   gremote utilisateur@hôte
 #   gremote --no-start utilisateur@hôte    # échouer si aucune session
@@ -66,7 +72,10 @@ Usage :
 Expose la session Plasma de l'hôte dans une fenêtre : image et entrée par RDP,
 son par un tunnel PipeWire, le tout dans SSH. Aucun port n'est exposé sur le
 réseau et le mot de passe RDP est éphémère. Si l'hôte n'a pas de session pour ce
-compte, gremote en crée une VIRTUELLE (hors écran, sans VT ni DRM).
+compte, gremote en crée une VIRTUELLE (hors écran, sans VT ni DRM). Si la session
+n'a plus aucun écran (moniteur éteint ou débranché), ou si son écran disparaît en
+cours de connexion, gremote demande un écran VIRTUEL à KWin et reprend le flux
+tout seul (la fenêtre se rouvre en quelques secondes).
 
 Options :
   -p, --port N   port SSH de l'hôte (défaut : ~/.ssh/config, sinon 22)
@@ -144,6 +153,100 @@ output_names() {
             printf '%s\n' "${BASH_REMATCH[1]}"
         fi
     done
+}
+
+# Géométrie de la première sortie (wl_output) : « largeur hauteur échelle ».
+# Sert à créer un écran VIRTUEL de la même taille que l'écran qui a disparu, pour
+# que le bureau ne soit pas redessiné dans une autre résolution.
+output_geometry() {
+    local line inout=0 w="" h="" s=1
+    while IFS= read -r line; do
+        case "$line" in
+            "interface: "*)
+                [ "$inout" -eq 1 ] && [ -n "$w" ] && break
+                if [[ "$line" == *"'wl_output'"* ]]; then inout=1; else inout=0; fi
+                continue
+                ;;
+        esac
+        [ "$inout" -eq 1 ] || continue
+        if [ -z "$w" ] && [[ "$line" =~ width:\ ([0-9]+)\ px,\ height:\ ([0-9]+)\ px ]]; then
+            w="${BASH_REMATCH[1]}"
+            h="${BASH_REMATCH[2]}"
+        fi
+        if [[ "$line" =~ scale:\ ([0-9.]+) ]]; then
+            s="${BASH_REMATCH[1]}"
+        fi
+    done
+    [ -n "$w" ] && [ -n "$h" ] || return 1
+    printf '%s %s %s\n' "$w" "$h" "$s"
+}
+
+# Taille LOGIQUE du plus grand écran du poste, en pixels de fenêtre
+# (« largeur hauteur »). Sert à ouvrir une fenêtre RDP qui tient à l'écran.
+# wayland-info donne la taille du MODE (pixels physiques) et l'échelle : une
+# fenêtre se mesure en pixels logiques, d'où la division.
+screen_size() {
+    local line inout=0 w="" h="" s=1 bw=0 bh=0
+    arreter() {
+        local lw lh
+        [ -n "$w" ] && [ -n "$h" ] || return 0
+        lw="$(awk -v v="$w" -v s="$s" 'BEGIN { printf "%d", v / (s > 0 ? s : 1) }')"
+        lh="$(awk -v v="$h" -v s="$s" 'BEGIN { printf "%d", v / (s > 0 ? s : 1) }')"
+        if [ $((lw * lh)) -gt $((bw * bh)) ]; then bw="$lw"; bh="$lh"; fi
+    }
+    while IFS= read -r line; do
+        case "$line" in
+            "interface: "*)
+                arreter
+                if [[ "$line" == *"'wl_output'"* ]]; then
+                    inout=1; w=""; h=""; s=1
+                else
+                    inout=0
+                fi
+                continue
+                ;;
+        esac
+        [ "$inout" -eq 1 ] || continue
+        if [ -z "$w" ] && [[ "$line" =~ width:\ ([0-9]+)\ px,\ height:\ ([0-9]+)\ px ]]; then
+            w="${BASH_REMATCH[1]}"
+            h="${BASH_REMATCH[2]}"
+        fi
+        if [[ "$line" =~ scale:\ ([0-9.]+) ]]; then
+            s="${BASH_REMATCH[1]}"
+        fi
+    done
+    arreter
+    [ "$bw" -gt 0 ] && [ "$bh" -gt 0 ] || return 1
+    printf '%d %d\n' "$bw" "$bh"
+}
+
+# Taille INITIALE de la fenêtre RDP pour un bureau distant « <L>x<H> » : le
+# ratio du distant, jamais plus grand que 80 % de l'écran local. Un 1080p sur un
+# poste 1280x720 ouvre donc une fenêtre plus petite, au bon ratio, et non une
+# fenêtre débordante ; un bureau qui tient déjà garde sa taille (1:1, net).
+window_size_for() {
+    local size="$1" w h sw sh maxw maxh fw fh f
+    case "$size" in
+        [0-9]*x[0-9]*) ;;
+        *) return 1 ;;
+    esac
+    w="${size%x*}"
+    h="${size#*x}"
+    [ "$w" -gt 0 ] && [ "$h" -gt 0 ] || return 1
+    command -v wayland-info >/dev/null 2>&1 || return 1
+    read -r sw sh < <(timeout 5 wayland-info 2>/dev/null | screen_size) || return 1
+    [ -n "${sw:-}" ] && [ -n "${sh:-}" ] || return 1
+    maxw=$((sw * 8 / 10))
+    maxh=$((sh * 8 / 10))
+    [ "$maxw" -gt 0 ] && [ "$maxh" -gt 0 ] || return 1
+    if [ "$w" -gt "$maxw" ] || [ "$h" -gt "$maxh" ]; then
+        fw=$((maxw * 1000 / w))
+        fh=$((maxh * 1000 / h))
+        if [ "$fw" -lt "$fh" ]; then f="$fw"; else f="$fh"; fi
+        w=$((w * f / 1000))
+        h=$((h * f / 1000))
+    fi
+    printf '%dx%d\n' "$w" "$h"
 }
 
 # =============================================================================
@@ -395,23 +498,35 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     export XDG_RUNTIME_DIR="$run_dir"
     export DBUS_SESSION_BUS_ADDRESS="unix:path=${run_dir}/bus"
 
-    # Sans sortie (wl_output), KRdp diffuse du noir sans la moindre erreur.
-    # Mieux vaut refuser que livrer une fenêtre noire qui laisse croire à un bug
-    # du client.
+    # Sorties (wl_output) de la session. Une session PHYSIQUE dont le moniteur
+    # s'éteint ou se débranche perd sa seule sortie : KWin la détruit et KRdp
+    # n'a plus rien à encoder (« target not found », écran noir). On ne refuse
+    # donc plus : KWin sait créer un écran VIRTUEL à la demande
+    # (`--virtual-monitor`) et le bureau y est rendu. Vérifié le 14/11/2026 sur
+    # une session à zéro sortie (tous les connecteurs disconnected) : sortie
+    # `Virtual-1920x1080@1` créée à la demande, bureau capturé normalement.
+    output_count=0
     virtual_output=0
+    capture_w=1920
+    capture_h=1080
+    capture_scale=1
     if command -v wayland-info >/dev/null 2>&1; then
         _globals="$(timeout 5 wayland-info 2>/dev/null || true)"
-        case "$_globals" in
-            *"interface: 'wl_output'"*) ;;
-            *) die "le compositeur ${compositor} n'a aucune sortie (VT inactive ?) — corrige avec : systemctl restart gremote-session@${USER}" ;;
-        esac
         # Sortie « Virtual-N » = backend virtuel de KWin (voir output_names).
         _names="$(printf '%s\n' "$_globals" | output_names || true)"
         while IFS= read -r _name; do
+            [ -n "$_name" ] || continue
+            output_count=$((output_count + 1))
             case "$_name" in
                 Virtual*) virtual_output=1 ;;
             esac
         done <<<"$_names"
+        if [ "$output_count" -gt 0 ]; then
+            _geom="$(printf '%s\n' "$_globals" | output_geometry 2>/dev/null || true)"
+            if [ -n "$_geom" ]; then
+                read -r capture_w capture_h capture_scale <<<"$_geom"
+            fi
+        fi
     fi
 
     # Type de session, transmis au client dans la ligne de poignée de main.
@@ -433,21 +548,38 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
         session_kind=physical
     fi
 
+    # Aucune sortie du tout (écran éteint/débranché, lien DP coupé) : la session
+    # n'a rien à capturer, on la sert via un écran VIRTUEL à la taille qu'avait
+    # l'écran. Annoncée VIRTUELLE au client : suivre la fenêtre ne touche alors
+    # aucun moniteur réel.
+    force_virtual=0
+    if [ "$output_count" -eq 0 ]; then
+        force_virtual=1
+        session_kind=virtual
+    fi
+
     # Qualité d'encodage pour krdpserver. C'est ICI que « auto » se tranche : le
     # serveur est le seul à connaître le type de session avant de démarrer RDP.
     # Qualité par défaut (75) = borne haute en adaptatif ; adaptive-quality est
     # le défaut de krdpserver mais on l'écrit, une configuration du poste peut
     # l'avoir coupé.
-    rdp_quality_args=()
-    if [ -n "$QUALITY" ]; then
-        rdp_quality_args+=(--quality "$QUALITY")
-    fi
-    if [ "$QUALITY_MODE" = "adaptive" ] ||
-        { [ "$QUALITY_MODE" = "auto" ] && [ "$session_kind" = "physical" ]; }; then
-        rdp_quality_args+=(--adaptive-quality)
-    else
-        rdp_quality_args+=(--static-quality)
-    fi
+    # Recalculée à chaque démarrage de krdpserver : une session PHYSIQUE passe
+    # en VIRTUELLE si son écran disparaît en cours de route, et le virtuel ne
+    # doit pas s'adapter au débit (image stable, résolution qui suit la fenêtre).
+    quality_args_for() {
+        local kind="$1"
+        rdp_quality_args=()
+        if [ -n "$QUALITY" ]; then
+            rdp_quality_args+=(--quality "$QUALITY")
+        fi
+        if [ "$QUALITY_MODE" = "adaptive" ] ||
+            { [ "$QUALITY_MODE" = "auto" ] && [ "$kind" = "physical" ]; }; then
+            rdp_quality_args+=(--adaptive-quality)
+        else
+            rdp_quality_args+=(--static-quality)
+        fi
+    }
+    quality_args_for "$session_kind"
     # L'appelant a pu hériter d'un PULSE_SERVER : ici on veut le démon LOCAL,
     # sinon le puits tunnel se créerait sur le poste client.
     unset DISPLAY PULSE_SERVER PIPEWIRE_REMOTE
@@ -507,6 +639,56 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
         [ -n "$local_sink" ] &&
             pactl set-default-sink "$local_sink" >/dev/null 2>&1 || true
     }
+    # KWin enregistre l'écran virtuel comme une sortie à part entière
+    # (« Virtual-<W>x<H>@<échelle> ») et les dispositions qui la référencent.
+    # Au retour de l'écran physique, cette géométrie mémorisée peut replacer le
+    # bureau dans l'écran virtuel (« bureau mal placé », vu le 14/11/2026). On
+    # attend que KWin ait détruit la sortie — sinon sa propre sauvegarde
+    # réécrirait l'entrée qu'on vient de retirer — puis on retire ces traces.
+    forget_virtual_outputs() {
+        local i
+        for i in $(seq 1 30); do
+            wayland-info 2>/dev/null | grep -q 'name: Virtual-' || break
+            sleep 0.1
+        done
+        python3 - <<'PY' 2>/dev/null || true
+import json
+import os
+
+path = os.path.expanduser("~/.config/kwinoutputconfig.json")
+try:
+    data = json.load(open(path))
+except (OSError, ValueError):
+    raise SystemExit(0)
+outputs = next((b["data"] for b in data if b.get("name") == "outputs"), None)
+setups = next((b["data"] for b in data if b.get("name") == "setups"), None)
+if outputs is None or setups is None:
+    raise SystemExit(0)
+virtual = [i for i, o in enumerate(outputs)
+           if (o.get("connectorName") or "").startswith("Virtual-")]
+if not virtual:
+    raise SystemExit(0)
+# Une disposition qui contient l'écran virtuel n'a de sens que pendant la
+# session : on la retire, et on réindexe les autres.
+kept = []
+for setup in setups:
+    entries = setup.get("outputs", [])
+    if any(e.get("outputIndex") in virtual for e in entries):
+        continue
+    for e in entries:
+        index = e.get("outputIndex")
+        if isinstance(index, int):
+            e["outputIndex"] = index - sum(1 for v in virtual if v < index)
+    kept.append(setup)
+setups[:] = kept
+outputs[:] = [o for i, o in enumerate(outputs) if i not in virtual]
+tmp = path + ".tmp"
+with open(tmp, "w") as fh:
+    json.dump(data, fh, indent=4)
+    fh.write("\n")
+os.replace(tmp, path)
+PY
+    }
     cleanup_rdp() {
         # Ne décharger que si cet identifiant désigne ENCORE notre puits : PipeWire
         # réattribue les identifiants de module (536870916 observé deux fois), donc
@@ -524,6 +706,7 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
             [ "$(pactl get-default-sink 2>/dev/null)" = "$sink_name" ]; then
             pactl set-default-sink "$prev_sink" >/dev/null 2>&1 || true
         fi
+        forget_virtual_outputs
     }
     if command -v pactl >/dev/null 2>&1; then
         # Le défaut AVANT tout, sinon on mémoriserait le puits orphelin qu'on
@@ -642,32 +825,103 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
         sleep 0.1
     done
 
-    krdpserver --address 127.0.0.1 --port "$rdp_listen_port" \
-        --username "${GREMOTE_RDP_USER:-$USER}" --password "$rdp_pass" \
-        --mode "$rdp_mode" --plasma \
-        "${rdp_quality_args[@]}" \
-        --certificate "$cert_dir/cert.pem" \
-        --certificate-key "$cert_dir/key.pem" &
-    srv_pid=$!
-    trap 'kill "$srv_pid" 2>/dev/null || true; cleanup_rdp' EXIT INT TERM
+    launch_rdp() {
+        local extra=() up=0
+        [ "$force_virtual" -eq 1 ] &&
+            extra=(--virtual-monitor "${capture_w}x${capture_h}@${capture_scale}")
+        krdpserver --address 127.0.0.1 --port "$rdp_listen_port" \
+            --username "${GREMOTE_RDP_USER:-$USER}" --password "$rdp_pass" \
+            --mode "$rdp_mode" --plasma \
+            "${rdp_quality_args[@]}" ${extra[@]+"${extra[@]}"} \
+            --certificate "$cert_dir/cert.pem" \
+            --certificate-key "$cert_dir/key.pem" &
+        srv_pid=$!
+        trap 'kill "$srv_pid" 2>/dev/null || true; cleanup_rdp' EXIT INT TERM
 
-    # Poignée de main : le client attend cette ligne avant de lancer son client
-    # RDP. Un test de port côté client ne prouve RIEN : un -L ssh accepte la
-    # connexion TCP puis échoue en « channel 2: open failed: Connection refused »
-    # quand le distant n'écoute pas encore (vécu 02/11/2026).
-    up=0
-    for _ in $(seq 1 150); do
-        if (exec 3<>/dev/tcp/127.0.0.1/"$rdp_listen_port") 2>/dev/null; then
-            up=1
-            break
-        fi
-        kill -0 "$srv_pid" 2>/dev/null || break
-        sleep 0.2
+        # Poignée de main : le client attend cette ligne avant de lancer son
+        # client RDP. Un test de port côté client ne prouve RIEN : un -L ssh
+        # accepte la connexion TCP puis échoue en « channel 2: open failed:
+        # Connection refused » quand le distant n'écoute pas encore (vécu
+        # 02/11/2026).
+        for _ in $(seq 1 150); do
+            if (exec 3<>/dev/tcp/127.0.0.1/"$rdp_listen_port") 2>/dev/null; then
+                up=1
+                break
+            fi
+            kill -0 "$srv_pid" 2>/dev/null || break
+            sleep 0.2
+        done
+        [ "$up" -eq 1 ] ||
+            die "krdpserver n'écoute pas sur 127.0.0.1:${rdp_listen_port} (port déjà pris par un autre service ?)"
+        printf 'GREMOTE-RDP-READY %s %s %sx%s\n' \
+            "$rdp_listen_port" "$session_kind" "$capture_w" "$capture_h"
+    }
+
+    # Nombre de connecteurs dont le LIEN est établi. Un écran éteint en DPMS
+    # garde son lien : la sortie reste et le flux continue. Un moniteur éteint
+    # (coupure secteur) ou débranché le perd, et c'est ce cas qui fait
+    # disparaître la sortie de KWin.
+    connected_connectors() {
+        local n=0 f
+        for f in /sys/class/drm/card*-*/status; do
+            [ -f "$f" ] || continue
+            [ "$(cat "$f" 2>/dev/null)" = connected ] && n=$((n + 1))
+        done
+        printf '%d\n' "$n"
+    }
+
+    # La session SSH qui a lancé ce --serve a-t-elle disparu ? sshd reparente
+    # alors le processus à PID 1. krdpserver, lui, ne s'arrête PAS quand le
+    # client part (il attend une nouvelle connexion) : sans ce contrôle, le
+    # --serve reste bloqué sur son wait et le serveur écoute indéfiniment avec
+    # un mot de passe périmé (orphelins constatés le 14/11/2026, parent PID 1).
+    ssh_session_gone() {
+        [ "$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')" = 1 ]
+    }
+
+    launch_rdp
+
+    # Surveillance, pendant toute la connexion : si le poste perd son écran, la
+    # sortie disparaît et le flux KRdp meurt avec elle. On relance alors RDP sur
+    # un écran virtuel et on réannonce la poignée de main ; le client relance
+    # son client RDP sur le même port avec le même mot de passe (quelques
+    # secondes de reprise, sans reconnexion manuelle).
+    while kill -0 "$srv_pid" 2>/dev/null; do
+        # Cadence serrée : la lecture de /sys est gratuite, et c'est ce délai qui
+        # décide du temps de reprise côté client.
+        sleep 0.5
+        # Tunnel mort sans fermeture propre (gremote tué, machine endormie) :
+        # plus personne ne nous demandera de partir, on nettoie nous-mêmes.
+        ssh_session_gone && break
+        [ "$force_virtual" -eq 0 ] || continue
+        [ "$(connected_connectors)" -eq 0 ] || continue
+        # Tous les connecteurs sont muets : confirmer que KWin n'a plus aucune
+        # sortie (lien absent ≠ sortie détruite).
+        _now="$(timeout 5 wayland-info 2>/dev/null || true)"
+        case "$_now" in
+            *"interface: 'wl_output'"*) continue ;;
+        esac
+        printf "gremote : l'écran du poste a disparu — bascule sur un écran virtuel\n" >&2
+        # Marqueur pour le client : sans lui, une fermeture de fenêtre et une
+        # perte d'écran sont indiscernables côté client (les deux font sortir
+        # sdl-freerdp en 131) et il attendrait pour rien.
+        printf 'GREMOTE-RDP-SWITCH\n'
+        force_virtual=1
+        session_kind=virtual
+        quality_args_for "$session_kind"
+        kill "$srv_pid" 2>/dev/null || true
+        wait "$srv_pid" 2>/dev/null || true
+        for _ in $(seq 1 50); do
+            (exec 3<>/dev/tcp/127.0.0.1/"$rdp_listen_port") 2>/dev/null || break
+            sleep 0.1
+        done
+        launch_rdp
     done
-    [ "$up" -eq 1 ] ||
-        die "krdpserver n'écoute pas sur 127.0.0.1:${rdp_listen_port} (port déjà pris par un autre service ?)"
-    printf 'GREMOTE-RDP-READY %s %s\n' "$rdp_listen_port" "$session_kind"
-    wait "$srv_pid"
+    # Sortie normale (le serveur s'est arrêté) comme sortie par orphelin : on
+    # s'assure qu'aucun krdpserver ne reste (le trap de sortie retire ensuite les
+    # traces d'écran virtuel de la configuration de KWin).
+    kill "$srv_pid" 2>/dev/null || true
+    wait "$srv_pid" 2>/dev/null || true
     exit 0
 fi
 
@@ -863,6 +1117,12 @@ if [ "$RDP" -eq 1 ]; then
     # interactive, réseau) → physique : un bureau entier en petit vaut mieux
     # qu'un bureau coupé.
     rdp_kind="$(awk '/^GREMOTE-RDP-READY/ { print $3; exit }' "$rdp_log" 2>/dev/null || true)"
+    # Taille du bureau distant (4e champ). Sert de taille INITIALE de fenêtre en
+    # session physique : sans elle, sdl-freerdp ouvre une fenêtre à sa taille par
+    # défaut et y met le bureau à l'échelle (+smart-sizing), donc une fenêtre ni
+    # à la bonne taille ni au bon ratio à l'ouverture (vu le 14/11/2026). Absent
+    # d'un hôte plus ancien : on n'ajoute alors aucune taille.
+    rdp_size="$(awk '/^GREMOTE-RDP-READY/ { print $4; exit }' "$rdp_log" 2>/dev/null || true)"
     case "$rdp_kind" in
         physical|virtual) ;;
         *)
@@ -896,24 +1156,79 @@ if [ "$RDP" -eq 1 ]; then
     # working on this », FreeRDP 3.32.2) au profit du client SDL3.
     # Le type est toujours connu ici (annoncé, sinon demandé à l'hôte).
     rdp_client=""
-    rdp_args=()
     if command -v sdl-freerdp >/dev/null 2>&1; then
         rdp_client=sdl-freerdp
-        rdp_args+=(+clipboard)
-        if [ "$rdp_kind" = "virtual" ]; then
-            rdp_args+=(+dynamic-resolution)
-        fi
     fi
 
-    if [ "$rdp_kind" = "virtual" ]; then
-        session_label="virtuelle"
-    else
-        session_label="physique"
-    fi
+    session_label() {
+        case "$1" in
+            virtual) printf 'virtuelle' ;;
+            *) printf 'physique' ;;
+        esac
+    }
+
+    # Options du client selon le type annoncé : une session VIRTUELLE suit la
+    # fenêtre (+dynamic-resolution), une PHYSIQUE garde la résolution du poste.
+    client_args_for() {
+        rdp_args=(+clipboard)
+        if [ "$1" = "virtual" ]; then
+            # Le bureau distant suit la fenêtre (+dynamic-resolution) : rien de
+            # physique à respecter.
+            rdp_args+=(+dynamic-resolution)
+        else
+            # Session PHYSIQUE : la résolution du poste ne doit pas bouger, donc
+            # pas de +dynamic-resolution — mais la FENÊTRE reste redimensionnable,
+            # l'image est mise à l'échelle côté client (+smart-sizing, sdl-freerdp
+            # 3.33). Sans ça la fenêtre est figée à la taille de l'écran distant.
+            # La taille INITIALE est celle du bureau distant, mais RÉDUITE s'il
+            # ne tient pas dans 80 % de l'écran local (ratio conservé) : ouvrir
+            # un 1080p en pleine taille sur un écran 720p serait absurde. Le
+            # redimensionnement n'agit qu'ensuite, côté client.
+            rdp_args+=(+smart-sizing)
+            if [ -n "${rdp_size:-}" ] && _win="$(window_size_for "$rdp_size")"; then
+                rdp_args+=("/size:${_win}")
+            fi
+        fi
+        return 0
+    }
+
+    launch_rdp_client() {
+        client_args_for "$1"
+        printf '%s\n' "$rdp_pass" |
+            "$rdp_client" /v:127.0.0.1:"$RDP_PORT" /u:"$rdp_user" \
+                /cert:ignore /from-stdin:force "${rdp_args[@]}" &
+        rdp_pid=$!
+    }
+
+    ready_count() {
+        grep -c '^GREMOTE-RDP-READY' "$rdp_log" 2>/dev/null || true
+    }
+
+    switch_count() {
+        grep -c '^GREMOTE-RDP-SWITCH' "$rdp_log" 2>/dev/null || true
+    }
+
+    # Le serveur réannonce une poignée de main quand il bascule sur un écran
+    # virtuel (écran du poste disparu en cours de connexion) : on reprend le type
+    # annoncé avant de relancer le client.
+    adopt_ready() {
+        local kind size
+        kind="$(awk '/^GREMOTE-RDP-READY/ { k = $3 } END { print k }' "$rdp_log" 2>/dev/null || true)"
+        size="$(awk '/^GREMOTE-RDP-READY/ { s = $4 } END { print s }' "$rdp_log" 2>/dev/null || true)"
+        case "$kind" in
+            physical|virtual) rdp_kind="$kind" ;;
+        esac
+        case "$size" in
+            [0-9]*x[0-9]*) rdp_size="$size" ;;
+        esac
+        printf 'gremote : reprise de la session (%s)\n' "$(session_label "$rdp_kind")" >&2
+    }
+
+    client_args_for "$rdp_kind"
 
     if [ "$RDP_LAUNCH" -eq 1 ] && [ -n "$rdp_client" ]; then
         printf 'gremote : RDP tunnelisé sur 127.0.0.1:%s (utilisateur %s, session %s, client %s)\n' \
-            "$RDP_PORT" "$rdp_user" "$session_label" "$rdp_client"
+            "$RDP_PORT" "$rdp_user" "$(session_label "$rdp_kind")" "$rdp_client"
         # Pas de /network:<type> explicite : TOUT type explicite (lan, wan,
         # broadband, modem) fait cesser le client d'annoncer le pipeline
         # graphique exigé par KRdp, qui répond alors par un DEACTIVATE_ALL
@@ -932,11 +1247,54 @@ if [ "$RDP" -eq 1 ]; then
         # sort alors en 131. Sans ce `|| true`, `set -e` propageait 131 et une
         # GUI le lisait comme un plantage (vécu 04/11/2026 : dialogue d'erreur
         # à chaque fermeture d'une session pourtant réussie).
-        printf '%s\n' "$rdp_pass" |
-            "$rdp_client" /v:127.0.0.1:"$RDP_PORT" /u:"$rdp_user" \
-                /cert:ignore /from-stdin:force "${rdp_args[@]}" &
-        rdp_pid=$!
-        wait "$rdp_pid" || true
+        launch_rdp_client "$rdp_kind"
+        seen="$(ready_count)"
+        while :; do
+            if [ "$(ready_count)" -gt "${seen:-0}" ]; then
+                seen="$(ready_count)"
+                adopt_ready
+                kill "$rdp_pid" 2>/dev/null || true
+                wait "$rdp_pid" 2>/dev/null || true
+                launch_rdp_client "$rdp_kind"
+                continue
+            fi
+            if ! kill -0 "$rdp_pid" 2>/dev/null; then
+                wait "$rdp_pid" 2>/dev/null || true
+                # Le client est sorti : soit on a fermé la fenêtre, soit le flux
+                # est tombé. Les deux font sortir sdl-freerdp en 131, donc seul
+                # GREMOTE-RDP-SWITCH tranche. Une session déjà VIRTUELLE ne peut
+                # plus basculer (le serveur y a cessé de surveiller l'écran) :
+                # aucun temps d'attente, on sort aussitôt. Une session PHYSIQUE
+                # attend ~0,6 s — la cadence de surveillance du serveur — le
+                # temps qu'il publie la bascule ; sans elle, on sort aussi.
+                seen_switch="$(switch_count)"
+                grace=6
+                [ "$rdp_kind" = "physical" ] || grace=0
+                for _ in $(seq 1 "$grace"); do
+                    [ "$(ready_count)" -gt "${seen:-0}" ] && break
+                    [ "$(switch_count)" -gt "${seen_switch:-0}" ] && break
+                    kill -0 "$ssh_pid" 2>/dev/null || break
+                    sleep 0.1
+                done
+                if [ "$(ready_count)" -le "${seen:-0}" ] &&
+                    [ "$(switch_count)" -gt "${seen_switch:-0}" ]; then
+                    # Bascule annoncée : attendre le nouvel écouteur.
+                    for _ in $(seq 1 100); do
+                        [ "$(ready_count)" -gt "${seen:-0}" ] && break
+                        kill -0 "$ssh_pid" 2>/dev/null || break
+                        sleep 0.1
+                    done
+                fi
+                if [ "$(ready_count)" -gt "${seen:-0}" ]; then
+                    seen="$(ready_count)"
+                    adopt_ready
+                    launch_rdp_client "$rdp_kind"
+                    continue
+                fi
+                break
+            fi
+            sleep 0.2
+        done
     else
         # --no-launch (ou aucun client installé) : la commande affichée est
         # EXACTEMENT celle qui aurait été lancée, client et options compris.
