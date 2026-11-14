@@ -133,7 +133,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - `dnf5 install cargo rust` **dans l'étape jetée** : la toolchain (~300 Mo) n'entre jamais dans l'image, l'étape finale ne reçoit que `/out/gablue-shared` par `COPY --from=share-build`
 - `cargo build --release --locked --manifest-path /build/Cargo.toml` ; `Cargo.lock` est dans le dépôt, donc pas de résolution surprise
 - **Même image de base que l'étape finale** (`quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}`) et non une `fedora:XX` : mêmes blobs partagés et même glibc que le runtime — une image distincte risquait un décalage silencieux de glibc
-- **Caches montés** : `/root/.cargo` ET `/build/target` (sinon chaque build recompile tout `tiny_http`/`serde_json`), plus `/var/cache` et `/var/log`
+- **Caches montés** : `/cargo` (`CARGO_HOME`), `/build/target` (sinon chaque build recompile tout `tiny_http`/`serde_json`), plus `/var/cache` et `/var/log`. **Jamais sous `/root`** : dans une image ostree `/root` est un lien vers `var/roothome`, absent de l'image, et le cache mount échoue au build (`stat /root: no such file or directory`, vu en CI le 14/11/2026 — le build rootless local, lui, créait le dossier et masquait le problème)
 - Le Containerfile copie **fichier par fichier** (`Cargo.toml`, `Cargo.lock`, `src/`) : `COPY src/gablue-share/daemon` embarquerait `target/` (270 Mo). `.containerignore` à la racine exclut aussi `target`, `__pycache__` et `.git` du contexte envoyé au démon de build
 - Mesure : binaire ~1,5 Mo, RSS 3,0 Mo au repos (voir `src/gablue-share/AGENTS.md`)
 

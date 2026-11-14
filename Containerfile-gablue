@@ -37,6 +37,10 @@ FROM ghcr.io/ublue-os/brew:latest@sha256:974ce5e4d6d5fceb6151910957515a42c0eefce
 # le binaire. Même image de base que l'étape finale : mêmes blobs partagés et
 # même glibc que le runtime (une fedora:XX distincte risquait un décalage).
 FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION} AS share-build
+# CARGO_HOME hors de /root : dans une image ostree /root est un lien vers
+# var/roothome, absent de l'image, et un cache monté sous /root/.cargo échoue
+# au build ("stat /root: no such file or directory", vu en CI le 14/11/2026).
+ENV CARGO_HOME=/cargo
 # Copies explicites : le target/ local (centaines de Mo) ne doit jamais entrer
 # dans le contexte ni dans la couche.
 COPY src/gablue-share/daemon/Cargo.toml /build/Cargo.toml
@@ -44,7 +48,7 @@ COPY src/gablue-share/daemon/Cargo.lock /build/Cargo.lock
 COPY src/gablue-share/daemon/src /build/src
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
-    --mount=type=cache,dst=/root/.cargo \
+    --mount=type=cache,dst=/cargo \
     --mount=type=cache,dst=/build/target \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build-share-daemon
