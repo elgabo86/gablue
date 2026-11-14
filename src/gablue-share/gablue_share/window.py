@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import api, config
+from . import api, config, service
 from .constants import APP_NAME, PORT, download_dir
 from .daemon import Daemon
 from .discovery import Discovery, discovery_available
@@ -79,6 +80,7 @@ class SharePanel(QFrame):
     """Liste éditable des dossiers partagés — c'est elle qui est permanente."""
 
     changed = Signal()
+    permanent_changed = Signal(bool)
 
     def __init__(self, document: dict, parent=None):
         super().__init__(parent)
@@ -102,6 +104,15 @@ class SharePanel(QFrame):
         add.setObjectName("primary")
         add.clicked.connect(self.add_folder)
         layout.addWidget(add)
+
+        self.permanent = QCheckBox("Permanent (démarre avec la session)")
+        self.permanent.setToolTip(
+            "Le partage reste actif quand Gablue Share est fermé, et reprend au "
+            "prochain démarrage de la session."
+        )
+        self.permanent.setChecked(service.enabled())
+        self.permanent.toggled.connect(self.permanent_changed.emit)
+        layout.addWidget(self.permanent)
 
         self.addresses = label("", "hint")
         layout.addWidget(self.addresses)
@@ -510,6 +521,9 @@ class TransferRow(QFrame):
         top.addWidget(self.title, 1)
         self.percent = label("", "hint")
         top.addWidget(self.percent)
+        self.retry = QPushButton("Relancer")
+        self.retry.setObjectName("flat")
+        top.addWidget(self.retry)
         self.open = QPushButton("Ouvrir")
         self.open.setObjectName("flat")
         self.open.clicked.connect(self._open_folder)
@@ -535,9 +549,13 @@ class TransferRow(QFrame):
         self.subtitle.setText(job.subtitle())
         self.open.setVisible(job.state == "terminé")
         self.cancel.setVisible(job.state in ("en attente", "en cours"))
+        self.retry.setVisible(job.retryable() or job.waiting())
         if job.state == "terminé":
             self.bar.setVisible(False)
             self.percent.setText("Terminé")
+        elif job.waiting():
+            self.bar.setVisible(False)
+            self.percent.setText("En attente")
         elif job.state in ("échec", "annulé"):
             self.bar.setVisible(False)
             self.percent.setText("Échec" if job.state == "échec" else "Annulé")
@@ -579,6 +597,7 @@ class TransferPanel(QFrame):
             if row is None:
                 row = TransferRow(job)
                 row.cancel.clicked.connect(lambda _=False, item=job: self.downloads.cancel(item))
+                row.retry.clicked.connect(lambda _=False, item=job: self.downloads.retry(item))
                 self._rows[id(job)] = row
                 self.body.addWidget(row)
             row.update_job(job)
@@ -625,11 +644,12 @@ class MainWindow(QMainWindow):
 
         # câblage
         self.shares.changed.connect(self._shares_changed)
+        self.shares.permanent_changed.connect(self._permanent_changed)
         self.peers.open_peer.connect(self._open_peer)
         self.peers.refresh_requested.connect(self.discovery.refresh_now)
         self.browser.closed.connect(lambda: self.stack.setCurrentWidget(self.peers))
         self.browser.download_requested.connect(self._download)
-        self.discovery.peers_changed.connect(self.peers.set_peers)
+        self.discovery.peers_changed.connect(self._peers_changed)
         self.downloads.changed.connect(self._downloads_changed)
 
         ok, message = self.daemon.start() if autostart else (True, "")
@@ -639,6 +659,7 @@ class MainWindow(QMainWindow):
             )
         elif autostart:
             self.discovery.start()
+        self._downloads_changed()
 
     # --- partages -------------------------------------------------------
     def _shares_changed(self) -> None:
@@ -651,9 +672,34 @@ class MainWindow(QMainWindow):
             self.discovery.start()
 
     # --- postes ---------------------------------------------------------
+    def _peers_changed(self, peers) -> None:
+        self.peers.set_peers(peers)
+        # C'est ici que la file se rattache : un poste qui revient relance ses
+        # transferts en attente, sans intervention.
+        self.downloads.sync_peers(peers)
+
     def _open_peer(self, peer) -> None:
         self.browser.open(peer)
         self.stack.setCurrentWidget(self.browser)
+
+    # --- permanence -----------------------------------------------------
+    def _permanent_changed(self, wanted: bool) -> None:
+        if wanted:
+            # Le démon de la GUI laisse la place à l'unité systemd.
+            self.daemon.stop()
+            ok, message = service.enable()
+            if not ok:
+                self.daemon.start()
+        else:
+            ok, message = service.disable()
+            if ok:
+                ok, message = self.daemon.start()
+        if not ok:
+            QMessageBox.warning(self, APP_NAME, message or "Opération impossible.")
+            self.shares.permanent.blockSignals(True)
+            self.shares.permanent.setChecked(not wanted)
+            self.shares.permanent.blockSignals(False)
+            self.shares._refresh_addresses()
 
     # --- transferts -----------------------------------------------------
     def _download(self, peer, share, path: str, is_dir: bool, choose: bool) -> None:

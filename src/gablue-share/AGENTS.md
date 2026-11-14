@@ -22,9 +22,11 @@ Deux processus, séparés pour la RAM :
   découverte LAN/tailnet, navigation, téléchargement fichier + dossier).
   Vérifié en headless : capture réelle de la fenêtre, reprise d'un `.part`
   (500 Kio → 2 Mio, hash identique), extraction tar, collision `(1)`.
-- **M3** : file persistante (reprise après fermeture, rattachement par
-  `peer_id`), bascule permanente, gablue-manager.
-- **M4** : image (build Rust en étape dédiée, unités systemd, firewalld, icône).
+- **M3 (livré)** : file persistante (`~/.local/state/gablue-share/queue.json`),
+  rattachement automatique au poste retrouvé, reprise, mode permanent
+  (`systemd --user`) avec bascule depuis la GUI.
+- **M4** : image (build Rust en étape dédiée, unités systemd, firewalld, icône),
+  entrée dans gablue-manager.
 
 ## Paquet (GUI)
 
@@ -100,29 +102,41 @@ Invariants :
 - Le port par défaut (47823) est **fixe** : la sonde Tailscale ne peut pas
   découvrir un port dynamique.
 
-## File de téléchargement (M2 partiel, M3 pour la persistance)
+## File de téléchargement (livrée en M3)
 
-Déjà en place (M2) : un transfert à la fois, `.part` dans le dossier de
-destination, reprise `HEAD` → ETag → `Range` + `If-Range` (200 = fichier
-changé, on repart de zéro), annulation coopérative, dossier en tar.
-
-Reste à faire (M3) : la file survit à la fermeture de l'app et se rattache
-seule au poste retrouvé.
-
-- La file vivra dans la GUI (`~/.local/state/gablue-share/queue.json`,
-  écriture atomique), pas dans le démon : fermer la GUI arrête les transferts,
-  le démon continue de servir si la permanence est active.
+- La file vit dans la GUI (`~/.local/state/gablue-share/queue.json`, écriture
+  atomique, sauvegarde à 800 ms au plus), pas dans le démon : fermer la GUI
+  arrête les transferts, le démon continue de servir si la permanence est
+  active.
 - Un élément est identifié par `(peer_id, share_id, chemin relatif)`, **jamais
   par une adresse** : au redémarrage, la découverte retrouve le poste (LAN ou
   Tailscale, l'adresse a pu changer) et la reprise repart seule.
 - Reprise : `HEAD` pour l'ETag → même ETag = `GET Range: bytes=<taille .part>-`
   avec `If-Range` ; 200 = le fichier a changé, on repart de zéro ; 416 = il a
   rétréci, idem.
-- États : `en attente du poste` (hors ligne : on garde, on ne supprime jamais),
-  `en attente du partage` (partage retiré), `en pause` (choix user), `en
-  cours`, `terminé`, `échec` (3 essais, 2/5/15 s).
-- Le `.part` (`.nom.<etag8>.part`) reste dans le dossier de destination ; les
-  orphelins de plus de 7 jours sont nettoyés au démarrage.
+- États : `en attente du poste` (hors ligne : l'élément reste, il n'est jamais
+  supprimé et repart quand le poste revient), `en attente du partage` (partage
+  retiré), `en attente` (prêt), `en cours`, `terminé`, `échec` (« Relancer »),
+  `annulé` (disparaît du fichier). Au chargement, un élément `terminé` est
+  oublié (la file ne garde que du travail à faire), un élément `en cours`
+  devient `en attente du poste`.
+- Le `.part` (`.nom.<etag8>.part`) reste dans le dossier de destination ;
+  les orphelins de plus de 7 jours sont à nettoyer (pas encore fait).
+
+## Permanence (M3)
+
+- Vérifié : `systemd-analyze --user verify` accepte l'unité générée.
+- La vérité est `systemctl --user is-enabled gablue-share.service`, jamais un
+  champ du JSON : sinon la case ment dès qu'on touche aux unités à la main.
+- Cocher : la GUI arrête son démon éphémère puis `enable --now` ; décocher :
+  `disable --now` puis la GUI reprend un démon enfant. Si un service tourne
+  déjà, la GUI l'adopte (`Daemon.external`) et ne le tue jamais.
+- `ensure_unit()` écrit l'unité dans `~/.config/systemd/user/` si l'image ne la
+  fournit pas (transition avant M4) ; l'image la livrera dans
+  `/usr/lib/systemd/user/`.
+- L'unité est un service **utilisateur** : elle démarre avec la session, pas au
+  boot. Pour un poste sans session graphique, `loginctl enable-linger` serait
+  nécessaire — hors périmètre.
 
 ## Build et développement
 

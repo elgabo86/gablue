@@ -8,7 +8,7 @@ import os
 import subprocess
 import time
 
-from . import api, config
+from . import api, config, service
 from .constants import CONFIG_PATH, PORT, daemon_binary
 
 LOCAL_URL = f"http://127.0.0.1:{PORT}"
@@ -38,6 +38,20 @@ class Daemon:
                 self.external = True  # permanence ou autre instance : on ne possède pas
                 return True, ""
             return False, f"Le port {PORT} est occupé par un autre programme."
+
+        # Permanence activée mais service arrêté : c'est lui qui doit servir,
+        # pas un enfant de la GUI.
+        if service.enabled():
+            ok, message = service.start()
+            if not ok:
+                return False, message
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                if self.info() is not None:
+                    self.external = True
+                    return True, ""
+                time.sleep(0.1)
+            return False, "Le service permanent n'a pas répondu."
 
         binary = daemon_binary()
         if not binary:
