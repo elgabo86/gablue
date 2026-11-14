@@ -249,6 +249,44 @@ window_size_for() {
     printf '%dx%d\n' "$w" "$h"
 }
 
+# Taille de l'écran que KWin a MÉMORISÉE, quand aucun n'est connecté (moniteur
+# éteint ou débranché). Sans ça, un 21:9 éteint serait diffusé en 16:9 : le
+# bureau change de forme au moment où il passe en virtuel (vu le 14/11/2026).
+# Lit la plus grande sortie non virtuelle de kwinoutputconfig.json.
+remembered_geometry() {
+    python3 - <<'PY' 2>/dev/null || true
+import json
+import os
+
+try:
+    data = json.load(open(os.path.expanduser("~/.config/kwinoutputconfig.json")))
+except (OSError, ValueError):
+    raise SystemExit(0)
+outputs = next((b["data"] for b in data if b.get("name") == "outputs"), [])
+best = None
+for out in outputs:
+    if (out.get("connectorName") or "").startswith("Virtual-"):
+        continue
+    if out.get("enabled") is False:
+        continue
+    mode = out.get("mode") or {}
+    basic = mode.get("basic") or mode.get("cvt") or mode.get("userDefined") or {}
+    width = basic.get("width") or basic.get("hdisplay")
+    height = basic.get("height") or basic.get("vdisplay")
+    if not width or not height:
+        continue
+    try:
+        scale = float(out.get("scale") or 1)
+    except (TypeError, ValueError):
+        scale = 1.0
+    area = (width / scale) * (height / scale)
+    if best is None or area > best[0]:
+        best = (area, int(width / scale), int(height / scale), scale)
+if best is not None:
+    print("%d %d %g" % (best[1], best[2], best[3]))
+PY
+}
+
 # =============================================================================
 # SECTION 3 : ARGUMENTS
 # =============================================================================
@@ -506,6 +544,7 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
     # une session à zéro sortie (tous les connecteurs disconnected) : sortie
     # `Virtual-1920x1080@1` créée à la demande, bureau capturé normalement.
     output_count=0
+    physical_count=0
     virtual_output=0
     capture_w=1920
     capture_h=1080
@@ -519,13 +558,30 @@ if [ "$SERVE" -eq 1 ] && [ "$RDP" -eq 1 ]; then
             output_count=$((output_count + 1))
             case "$_name" in
                 Virtual*) virtual_output=1 ;;
+                *) physical_count=$((physical_count + 1)) ;;
             esac
         done <<<"$_names"
         if [ "$output_count" -gt 0 ]; then
             _geom="$(printf '%s\n' "$_globals" | output_geometry 2>/dev/null || true)"
-            if [ -n "$_geom" ]; then
-                read -r capture_w capture_h capture_scale <<<"$_geom"
-            fi
+        else
+            # Aucun écran : on reprend la taille que KWin a mémorisée pour lui,
+            # plutôt que 1920x1080 en dur (ratio faux sur un écran non 16:9).
+            _geom="$(remembered_geometry || true)"
+        fi
+        if [ -n "${_geom:-}" ]; then
+            read -r capture_w capture_h capture_scale <<<"$_geom"
+        fi
+        # Aucune sortie PHYSIQUE, mais au moins une sortie virtuelle : session
+        # sans écran créée par gremote, dont KWin ouvre la sortie du backend
+        # `--virtual` en 1280x800 (16:10) — un format peu présentable. On annonce
+        # donc du 16:9 ; comme la sortie est virtuelle, le client peut la
+        # redimensionner (+dynamic-resolution), le bureau distant suit la fenêtre
+        # et prend le format demandé (demande du 14/11/2026 : « ratio par défaut
+        # en 16/9 » quand il n'y a aucun écran physique).
+        if [ "$physical_count" -eq 0 ] && [ "$output_count" -gt 0 ]; then
+            capture_w=1920
+            capture_h=1080
+            capture_scale=1
         fi
     fi
 
@@ -1173,21 +1229,24 @@ if [ "$RDP" -eq 1 ]; then
         rdp_args=(+clipboard)
         if [ "$1" = "virtual" ]; then
             # Le bureau distant suit la fenêtre (+dynamic-resolution) : rien de
-            # physique à respecter.
+            # physique à respecter. La taille INITIALE, elle, vient quand même
+            # du format du bureau (voir plus bas) — sans elle le client ouvre sa
+            # fenêtre par défaut, souvent 4:3, et le bureau distant prend cette
+            # forme : la session virtuelle n'avait plus le ratio de l'écran
+            # qu'elle remplace (vu le 14/11/2026).
             rdp_args+=(+dynamic-resolution)
         else
             # Session PHYSIQUE : la résolution du poste ne doit pas bouger, donc
             # pas de +dynamic-resolution — mais la FENÊTRE reste redimensionnable,
             # l'image est mise à l'échelle côté client (+smart-sizing, sdl-freerdp
             # 3.33). Sans ça la fenêtre est figée à la taille de l'écran distant.
-            # La taille INITIALE est celle du bureau distant, mais RÉDUITE s'il
-            # ne tient pas dans 80 % de l'écran local (ratio conservé) : ouvrir
-            # un 1080p en pleine taille sur un écran 720p serait absurde. Le
-            # redimensionnement n'agit qu'ensuite, côté client.
+            # Le redimensionnement n'agit qu'ensuite, côté client.
             rdp_args+=(+smart-sizing)
-            if [ -n "${rdp_size:-}" ] && _win="$(window_size_for "$rdp_size")"; then
-                rdp_args+=("/size:${_win}")
-            fi
+        fi
+        # Taille INITIALE de la fenêtre, dans les deux cas : le format du bureau
+        # distant, réduit s'il ne tient pas dans 80 % de l'écran local.
+        if [ -n "${rdp_size:-}" ] && _win="$(window_size_for "$rdp_size")"; then
+            rdp_args+=("/size:${_win}")
         fi
         return 0
     }
