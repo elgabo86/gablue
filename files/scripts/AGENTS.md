@@ -98,7 +98,9 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 
 **build-c** (après pypi) :
 - Compile `/src/gamepadshortcuts` (gamepadshortcuts + gamepadshortcuts-mouse + kbdnav, même Makefile), `/src/ds2xbox`, `/src/gablue-dualsense` (`gablue-dualsense-ctl`, hidapi), `/src/gablue-isomount`
-- `make -C <dir> install DESTDIR=` ; sources nettoyées après (`rm -rf /src/<dir>`) ; `dbus-devel` désinstallé après (inutile en image finale)
+- `make -C <dir> install DESTDIR=` ; sources nettoyées après (`rm -rf /src/<dir>`)
+- `gcc`/`binutils`/`glibc-devel` viennent de l'image de base (`cpuid-fault` compile un module avant, sur toutes les variantes) et **restent dans l'image finale** : les retirer libère ~45 Mo compressés mais supprime `gcc`/`cc` du poste (brew depuis source, extensions pip, modules noyau à la main) — décision du 14/11/2026. `hidapi-devel`/`dbus-devel` non plus ne sont pas retirés (même raison : cohérence d'un poste où on compile)
+- **`pkgconf-pkg-config` est intouchable** : `kmod` (donc `systemd-udev`) exige `/usr/bin/pkg-config` ; l'ajouter à une liste de retrait fait échouer la transaction dnf (vérifié 14/11/2026). `binutils` non plus (`supermin` → `libguestfs`)
 
 **build-gwine** (après build-c) :
 - Assemble le standalone depuis `/src/gwine-launcher/` : `build.sh` concatène les ~60 fichiers `lib/`, embarque les shims overlayfs (`composefs_statfs_shim.so` 32/64 bits, base64), installe `/usr/bin/gwine` + completions bash/zsh ; sources nettoyées

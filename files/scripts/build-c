@@ -10,7 +10,13 @@ set -eoux pipefail
 # COMPILATION DES SOURCES C
 # =============================================================================
 
-# Dépendances de compilation (supprimées après build)
+# Dépendances de compilation. gcc/binutils/glibc-devel sont DÉJÀ dans l'image :
+# cpuid-fault compile un module noyau avant cette étape, donc l'install est un
+# no-op idempotent. Elles restent dans l'image finale, assumé : les retirer
+# libère ~45 Mo compressés (gcc + en-têtes) mais supprime `gcc`/`cc` du poste
+# (brew depuis source, extensions pip, modules noyau à la main) — décision du
+# 14/11/2026. Ne jamais ajouter pkgconf-pkg-config à une liste de retrait :
+# kmod (donc systemd-udev) exige /usr/bin/pkg-config, la transaction échoue.
 dnf5 -y install gcc dbus-devel hidapi-devel pkgconf-pkg-config
 
 # Fonction de build securisee : compile et verifie le binaire final
@@ -56,7 +62,7 @@ build_and_verify "/src/gablue-dualsense" "gablue-dualsense-ctl" "gablue-dualsens
 build_and_verify "/src/gablue-isomount" "gablue-isomount" "gablue-isomount"
 
 # Compilation du hook composefs-fix (correction espace libre Dolphin)
-# Necessite gcc, compile AVANT de supprimer le compilateur
+# Necessite gcc, présent dans l'image (voir l'install ci-dessus)
 if [ -d /src/composefs-fix ]; then
     make -C /src/composefs-fix install
     rm -rf /src/composefs-fix
