@@ -36,6 +36,7 @@
 Drop-ins dans `*.service.d/`, appliqués à l'échelle du système (priorité plus faible que `~/.config/systemd/user/`, donc un drop-in utilisateur de même nom écrase le nôtre — laisser le même nom de fichier pour que le retrait côté utilisateur soit transparent).
 
 - **plasma-dolphin.service.d/gablue-composefs-fix.conf** : réinjecte `LD_PRELOAD` du composefs-fix quand Dolphin est lancé par activation D-Bus (voir § composefs de `files/scripts/AGENTS.md`)
+- **gablue-share.service** : démon de partage en **mode permanent** (opt-in, livré désactivé ; réglé depuis Gablue Share ou gablue-manager). Démarre avec la session : pour un poste sans session graphique, `loginctl enable-linger` serait nécessaire — hors périmètre. Contrat → `src/gablue-share/AGENTS.md`
 - **plasma-foreground-booster.service.d/10-after-plasmashell.conf** : `After=plasma-plasmashell.service`, correctif upstream kcgroups 0.2 absent du paquet Terra 0.1-3. Sans lui le booster démarre en parallèle du compositeur, Wayland n'existe pas encore, Qt ne trouve aucun plugin de plateforme et **abort** (coredump à chaque login, service relancé ensuite par `Restart=on-failure`). Après le bump Terra vers 0.2 le fichier devient un doublon inoffensif, à retirer. `plasmashell` plutôt que `plasma-kwin_wayland` : en `Type=dbus`, son « started » prouve un démarrage réel, alors que KWin en `Type=simple` peut être lancé sans avoir créé le socket
 
 ## Scripts utilisateur (/usr/bin)
@@ -163,6 +164,33 @@ quand l'icône n'est pas encore installée (lancement depuis le dépôt).
 
 Contrat complet (paquet, dialogues, privilèges, comportement) →
 `src/gablue-manager/AGENTS.md`.
+
+### Gablue Share (`/usr/bin/gablue-share` + `/usr/libexec/gablue-shared`)
+
+GUI de partage de dossiers sur le LAN et le tailnet : le code vit dans
+`src/gablue-share/` (paquet `gablue_share` installé en `/usr/lib/gablue-share/`
+par `files/scripts/build-share`), le démon Rust `gablue-shared` (~3 Mo de RSS)
+est compilé par l'étape `share-build` du Containerfile et posé en
+`/usr/libexec/`. Entrée de menu `usr/share/applications/gablue-share.desktop`
+(catégorie **Network**) et icône
+`usr/share/icons/hicolor/scalable/apps/gablue-share.svg` (carré bleu Gablue,
+deux dossiers et une flèche).
+
+Trois fichiers accompagnent l'application, tous chargés de la même vérité :
+
+- `usr/lib/systemd/user/gablue-share.service` : mode **permanent** (le partage
+  survit à la fermeture de l'app, redémarre avec la session). Livré **non
+  activé** : c'est un opt-in depuis la GUI ou depuis gablue-manager, et
+  `systemctl --user is-enabled` reste la seule vérité (jamais un champ JSON).
+- `usr/lib/firewalld/services/gablue-share.xml` : ouverture de `47823/tcp` ;
+  l'ajout à la zone par défaut est fait par `post-install`
+  (`firewall-offline-cmd`, voir `files/scripts/AGENTS.md`). Le tailnet n'en a
+  pas besoin : `tailscale0` est en zone `trusted`.
+- `usr/share/applications/gablue-share.desktop` : lance le seul binaire
+  `gablue-share`, qui démarre le démon s'il n'y en a pas.
+
+Contrat complet (protocole, découverte, file de téléchargement, invariants) →
+`src/gablue-share/AGENTS.md`.
 
 ### Widget panel synthetic-quota (/usr/share/plasma/plasmoids)
 

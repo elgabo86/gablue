@@ -32,9 +32,25 @@ COPY files/system/nvidia-common /
 # Digest épinglé, à bumper ponctuellement vers le dernier build de :latest
 FROM ghcr.io/ublue-os/brew:latest@sha256:974ce5e4d6d5fceb6151910957515a42c0eefced4ea386fdfadb0fbad84499a5 AS brew
 
+# Étape intermédiaire : compilation du démon Gablue Share (Rust).
+# La toolchain (rust + cargo, ~300 Mo) reste ici ; l'étape finale ne reçoit que
+# le binaire. Même image de base que l'étape finale : mêmes blobs partagés et
+# même glibc que le runtime (une fedora:XX distincte risquait un décalage).
+FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION} AS share-build
+# Copies explicites : le target/ local (centaines de Mo) ne doit jamais entrer
+# dans le contexte ni dans la couche.
+COPY src/gablue-share/daemon/Cargo.toml /build/Cargo.toml
+COPY src/gablue-share/daemon/Cargo.lock /build/Cargo.lock
+COPY src/gablue-share/daemon/src /build/src
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=cache,dst=/root/.cargo \
+    --mount=type=cache,dst=/build/target \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build-share-daemon
+
 # Image de base pour la construction finale
 FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}
-
 # Redéfinition des arguments après le FROM pour les rendre disponibles
 ARG VARIANT
 ARG SOURCE_IMAGE
@@ -50,6 +66,9 @@ COPY src/gablue-dualsense /src/gablue-dualsense
 COPY src/gablue-isomount /src/gablue-isomount
 COPY src/gwine-launcher /src/gwine-launcher
 COPY src/gablue-manager /src/gablue-manager
+# Gablue Share : paquet + lanceur seulement (jamais daemon/target/, centaines de Mo)
+COPY src/gablue-share/gablue_share /src/gablue-share/gablue_share
+COPY src/gablue-share/gablue-share /src/gablue-share/gablue-share
 COPY src/tvqt /src/tvqt
 COPY src/gablue-apk-installer /src/gablue-apk-installer
 COPY src/lgplaunch /src/lgplaunch
@@ -167,6 +186,15 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=tmpfs,dst=/tmp \
     /ctx/build-manager && \
+    /ctx/cleanup
+
+# Gablue Share : démon Rust (copié depuis l'étape de build) + GUI Python
+COPY --from=share-build /out/gablue-shared /usr/libexec/gablue-shared
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/build-share && \
     /ctx/cleanup
 
 # Gablue TV : paquet Python dans /usr/lib/tvqt + lanceur /usr/bin/tvqt

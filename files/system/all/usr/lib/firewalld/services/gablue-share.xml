@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <short>Gablue Share</short>
+  <description>Partage de dossiers Gablue sur le réseau local, en lecture seule. Le port n'est utile que sur le LAN : l'interface Tailscale est déjà en zone trusted.</description>
+  <port protocol="tcp" port="47823"/>
+</service>

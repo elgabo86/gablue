@@ -1,0 +1,11 @@
+[Unit]
+Description=Gablue Share — partage de dossiers (réseau local et tailnet)
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/gablue-shared --config %h/.config/gablue/share.json
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

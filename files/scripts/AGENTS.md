@@ -94,7 +94,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - `terminaltexteffects` via `uv` (appelé après rpm)
 - **Conflit site-packages** : un RPM peut poser un fichier/symlink à n'importe quel niveau de `/usr/local/lib/pythonX.Y/site-packages/` (transition majeure Python) → `uv pip install` échoue (`File exists, os error 17`) ; le script remonte la hiérarchie, supprime ce qui n'est pas un répertoire, `mkdir -p` avant install. `X.Y` est déduit du Python de l'image (`python3 -c`), jamais codé en dur : un chemin figé visait 3.14 et serait resté muet sur 3.15 en fc45
 
-### build-c / build-gwine / build-manager / build-tvqt / build-apk-installer / build-lgplaunch — Compilation des sources
+### build-c / build-gwine / build-manager / build-tvqt / build-apk-installer / build-lgplaunch / build-share-daemon / build-share — Compilation des sources
 
 **build-c** (après pypi) :
 - Compile `/src/gamepadshortcuts` (gamepadshortcuts + gamepadshortcuts-mouse + kbdnav, même Makefile), `/src/ds2xbox`, `/src/gablue-dualsense` (`gablue-dualsense-ctl`, hidapi), `/src/gablue-isomount`
@@ -129,9 +129,24 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - Assemblage = simple concat : **toute modif de `lib/` exige un rebuild d'image** ; ne pas éditer le standalone
 - Architecture interne → `src/lgplaunch/AGENTS.md`
 
+**build-share-daemon** (étape `share-build`, avant l'image finale) :
+- `dnf5 install cargo rust` **dans l'étape jetée** : la toolchain (~300 Mo) n'entre jamais dans l'image, l'étape finale ne reçoit que `/out/gablue-shared` par `COPY --from=share-build`
+- `cargo build --release --locked --manifest-path /build/Cargo.toml` ; `Cargo.lock` est dans le dépôt, donc pas de résolution surprise
+- **Même image de base que l'étape finale** (`quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}`) et non une `fedora:XX` : mêmes blobs partagés et même glibc que le runtime — une image distincte risquait un décalage silencieux de glibc
+- **Caches montés** : `/root/.cargo` ET `/build/target` (sinon chaque build recompile tout `tiny_http`/`serde_json`), plus `/var/cache` et `/var/log`
+- Le Containerfile copie **fichier par fichier** (`Cargo.toml`, `Cargo.lock`, `src/`) : `COPY src/gablue-share/daemon` embarquerait `target/` (270 Mo). `.containerignore` à la racine exclut aussi `target`, `__pycache__` et `.git` du contexte envoyé au démon de build
+- Mesure : binaire ~1,5 Mo, RSS 3,0 Mo au repos (voir `src/gablue-share/AGENTS.md`)
+
+**build-share** (après build-manager, comme les autres paquets Python) :
+- Vérifie que `/usr/libexec/gablue-shared` existe (`COPY --from` fait avant le RUN) : sans lui, échec immédiat plutôt qu'une GUI qui prétendrait ne pas trouver son démon
+- Installe `/src/gablue-share/gablue_share/` dans `/usr/lib/gablue-share/` + le lanceur `src/gablue-share/gablue-share` en `/usr/bin/gablue-share` (755) ; sources nettoyées
+- Mêmes règles que build-manager : pas de `.pyc` dans l'image, rebuild obligatoire (le lanceur ne lit que `/usr/lib/gablue-share`)
+- Le Containerfile ne copie que le paquet, le lanceur et `AGENTS.md` (jamais `daemon/target/`)
+- Contrat complet → `src/gablue-share/AGENTS.md`
+
 ### post-install
 
-- Permissions +x, setcap gamescope, modules SELinux (.te → .pp), binaires externes (retroplayer via `releases/latest/download` — `Cache-Control: no-store`, le 504 mis en cache de GitHub cassait tout le build —, zxtune), branding os-release, config système (tuned, bluetooth, pipewire, timers), désactivation dépôts, nettoyage .desktop, config DX (iptables, NetworkManager), MIME par défaut (Windows.desktop, LGP.desktop), chmod konsole-run (wrapper servicemenu Konsole → files/system/AGENTS.md § konsole-run), chmod des helpers et scripts utilisateur livrés 644 (`gablue-gamepad`, `gablue-clean`, `gablue-btrfs-compress`, `gablue-nvme-thermal`, `gablue-grub`, `gablue-bootnext`, `gablue-secureboot`, `gablue-ryzenadj`)
+- Permissions +x, setcap gamescope, modules SELinux (.te → .pp), binaires externes (retroplayer via `releases/latest/download` — `Cache-Control: no-store`, le 504 mis en cache de GitHub cassait tout le build —, zxtune), branding os-release, config système (tuned, bluetooth, pipewire, timers), **ouverture firewalld du partage local** (`firewall-offline-cmd --zone=FedoraWorkstation --add-service=gablue-share`, gardé par l'existence du binaire et du fichier service ; `firewall-cmd` n'a pas de démon dans le conteneur). Effet de bord assumé : la zone est recopiée en entier dans `/etc/firewalld/zones/`, qui prime ensuite sur celle du paquet — une évolution upstream de la zone par défaut ne s'appliquera donc plus (vérifié en conteneur `fedora:45` le 14/11/2026 : XML accepté, service ajouté), désactivation dépôts, nettoyage .desktop, config DX (iptables, NetworkManager), MIME par défaut (Windows.desktop, LGP.desktop), chmod konsole-run (wrapper servicemenu Konsole → files/system/AGENTS.md § konsole-run), chmod des helpers et scripts utilisateur livrés 644 (`gablue-gamepad`, `gablue-clean`, `gablue-btrfs-compress`, `gablue-nvme-thermal`, `gablue-grub`, `gablue-bootnext`, `gablue-secureboot`, `gablue-ryzenadj`)
 - **Maj auto** : `AutomaticUpdatePolicy=stage` dans `/etc/rpm-ostreed.conf` (copié depuis ublue-os-update-services) + timers flatpak/rpm-ostree samedi 04:00 (`RandomizedDelaySec=10m`, posé **dans `[Timer]`** : écrit après `[Install]`, systemd jette la clé en silence — `RandomizedDelayUSec=0` constaté le 07/11/2026). **Livrés désactivés** par `files/scripts/systemd` (`systemctl disable`, `--global disable` pour `flatpak-user-update.timer`) : les mises à jour automatiques sont un opt-in depuis Gablue Manager (helper `gablue-auto-update`, domaines et rythme)
 - **Brew, horaires** : `brew-update.timer` samedi **03:30**, `brew-upgrade.timer` samedi **04:00** (`RandomizedDelaySec=5m`), plus drop-in `/etc/systemd/system/brew-upgrade.service.d/10-after-update.conf` (`After=brew-update.service`). Les deux tiraient à 04:00:00 : le `brew update` concurrent réécrivait `vendor/bundle` (bindata 3.0.0 → 3.0.1) pendant l'installation de `libnghttp2` → `cannot load such file …/bindata-3.0.0/lib/bindata.rb`, unité en échec et 5 paquets en retard (vécu 07/11/2026, sucina). Le décalage ne suffit pas si l'update déborde, d'où l'ordre explicite ; les déclencheurs hérités (`OnBootSec`/`OnUnitInactiveSec`) sont supprimés avant réécriture car `OnCalendar` est une **liste** (sinon deux calendriers cumulés)
 - **Linuxbrew** : `/home/linuxbrew/.linuxbrew/bin` au secure_path sudo

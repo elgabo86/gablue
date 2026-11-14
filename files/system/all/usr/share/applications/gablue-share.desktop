@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Gablue Share
+Comment=Partage de dossiers sur le réseau local et le tailnet
+Exec=gablue-share
+Icon=gablue-share
+Categories=Network;FileTransfer;
+Terminal=false
+StartupNotify=true

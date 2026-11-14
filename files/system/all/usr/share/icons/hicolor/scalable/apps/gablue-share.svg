@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="gablue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a86d8"/>
+      <stop offset="1" stop-color="#24549a"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="12" width="232" height="232" rx="52" fill="url(#gablue)"/>
+  <!-- deux dossiers, une flèche : ce qui part vers l'autre poste -->
+  <rect x="56" y="76" width="60" height="104" rx="14" fill="#ffffff"/>
+  <rect x="140" y="84" width="60" height="104" rx="14" fill="#ffffff" opacity="0.88"/>
+  <path d="M122 116 L136 128 L122 140" fill="none" stroke="#ffffff"
+        stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

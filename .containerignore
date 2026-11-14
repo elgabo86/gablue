@@ -1,0 +1,11 @@
+# Contexte de build (buildah/podman build ... .)
+#
+# Le dépôt est envoyé au démon de build à chaque invocation : tout ce qui n'est
+# pas nécessaire aux COPY doit être exclu.
+# - .git : ~46 Mo, jamais lu par le Containerfile
+# - src/gablue-share/daemon/target : build Cargo local (~270 Mo), recompilé dans
+#   l'étape share-build
+# - __pycache__ : liés au Python de la machine de dev, jamais installés
+.git
+src/gablue-share/daemon/target
+__pycache__

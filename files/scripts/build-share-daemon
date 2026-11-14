@@ -1,0 +1,21 @@
+#!/usr/bin/bash
+
+# Compilation du démon Gablue Share (Rust) dans l'étape "share-build"
+# Le binaire est déposé dans /out : l'étape finale le copie par COPY --from,
+# donc la toolchain Rust (rust + cargo, ~300 Mo) n'entre jamais dans l'image.
+
+set -eoux pipefail
+
+# Dépendances de compilation : uniquement dans cette étape, jetée après.
+# gcc explicite : c'est le linker des binaires Rust, et rien ne garantit qu'une
+# future base image le porte encore (il reste dans l'image finale aujourd'hui,
+# mais cette étape ne doit pas en dépendre).
+dnf5 -y install cargo rust gcc
+
+# --locked : Cargo.lock est dans le dépôt, la résolution ne bouge pas.
+# Le projet est copié dans /build par le Containerfile.
+cargo build --release --locked --manifest-path /build/Cargo.toml
+
+install -Dm755 /build/target/release/gablue-shared /out/gablue-shared
+
+echo "gablue-shared compilé : $(stat -c %s /out/gablue-shared) octets"

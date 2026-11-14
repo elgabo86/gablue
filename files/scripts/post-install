@@ -202,6 +202,19 @@ if [ "$SOURCE_IMAGE" == "kinoite" ] && [ -e /usr/bin/qdbus-qt6 ]; then
 fi
 
 # =============================================================================
+# OUVERTURE FIREWALLD (PARTAGE LOCAL GABLUE SHARE)
+# =============================================================================
+
+# Le démon gablue-shared écoute sur 47823/tcp ; sans cette ouverture, les autres
+# postes du LAN sont bloqués (le tailnet passe par tailscale0, en zone trusted).
+# firewall-cmd ne fonctionne pas dans le conteneur de build (pas de démon) :
+# firewall-offline-cmd écrit directement /etc/firewalld et le runtime du poste
+# le prend en compte au démarrage de firewalld.
+if command -v firewall-offline-cmd >/dev/null 2>&1 && [ -f /usr/lib/firewalld/services/gablue-share.xml ]; then
+    firewall-offline-cmd --zone=FedoraWorkstation --add-service=gablue-share
+fi
+
+# =============================================================================
 # CONFIGURATION PIPEWIRE (LATENCE AUDIO)
 # =============================================================================
 

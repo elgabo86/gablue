@@ -1,0 +1,38 @@
+#!/usr/bin/bash
+
+# Installation de Gablue Share (GUI Python) et vérification du démon Rust
+# Le démon est compilé dans l'étape "share-build" et copié par COPY --from :
+# ce script ne fait que poser le paquet et le lanceur, comme build-manager.
+
+set -eoux pipefail
+
+SRC_DIR="/src/gablue-share"
+
+if [ ! -d "$SRC_DIR/gablue_share" ]; then
+    echo "ERREUR FATALE : sources gablue-share absentes dans $SRC_DIR"
+    exit 1
+fi
+
+if [ ! -x /usr/libexec/gablue-shared ]; then
+    echo "ERREUR FATALE : démon gablue-shared absent (COPY --from share-build)"
+    exit 1
+fi
+
+# =============================================================================
+# INSTALLATION
+# =============================================================================
+
+install -d /usr/lib/gablue-share
+cp -a "$SRC_DIR/gablue_share" /usr/lib/gablue-share/
+install -Dm755 "$SRC_DIR/gablue-share" /usr/bin/gablue-share
+
+# =============================================================================
+# NETTOYAGE
+# =============================================================================
+
+# Aucun .pyc dans l'image : liés au Python du build, pas à celui du poste
+# (et /usr est en lecture seule sur composefs).
+find /usr/lib/gablue-share -name '__pycache__' -type d -prune -exec rm -rf {} +
+
+rm -rf "$SRC_DIR"
+rmdir /src 2>/dev/null || true
