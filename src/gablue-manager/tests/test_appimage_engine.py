@@ -786,5 +786,88 @@ class CliTest(unittest.TestCase):
         self.assertIn("application inconnue", error.getvalue())
 
 
+class DownloadCommandTest(unittest.TestCase):
+    """`gablue-apps download` : le téléchargeur générique des scripts bash.
+
+    Sert à `/usr/libexec/gablue-fetch` (ES-DE, OpenCode Desktop) : les tests
+    couvrent le fichier livré, l'absence de `.part` restant, et la progression
+    publiée — sans réseau, un serveur local suffit.
+    """
+
+    def setUp(self):
+        import threading
+        from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.payload = (b"gablue" * 4096) + b"fin"
+        (self.dir / "payload.bin").write_bytes(self.payload)
+
+        directory = str(self.dir)
+
+        class Handler(SimpleHTTPRequestHandler):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, directory=directory, **kwargs)
+
+            def log_message(self, *args):     # silence du serveur de test
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def test_downloads_and_publishes_percent(self):
+        dest = self.dir / "out" / "esde.appimage"
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "stdout", out), \
+                mock.patch.object(sys, "stderr", err):
+            code = engine.main([
+                "download", f"{self.base}/payload.bin", str(dest),
+                "--label", "ES-DE",
+            ])
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertEqual(dest.read_bytes(), self.payload)
+        self.assertFalse(dest.with_name(dest.name + ".part").exists())
+        emissions = [
+            line for line in out.getvalue().splitlines()
+            if line.startswith("::gablue:")
+        ]
+        self.assertTrue(any(line.startswith("::gablue:busy ES-DE")
+                            for line in emissions))
+        self.assertTrue(any(line.startswith("::gablue:percent 100.0 ES-DE")
+                            for line in emissions))
+
+    def test_failure_leaves_no_file(self):
+        dest = self.dir / "out" / "absent.bin"
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(engine, "ATTEMPTS", 1), \
+                mock.patch.object(sys, "stdout", out), \
+                mock.patch.object(sys, "stderr", err):
+            code = engine.main([
+                "download", f"{self.base}/absent.bin", str(dest),
+            ])
+        self.assertEqual(code, 1)
+        self.assertFalse(dest.exists())
+        self.assertIn("Erreur", err.getvalue())
+
+    def test_existing_destination_is_kept(self):
+        # Le moteur ne redemande pas une release déjà téléchargée ; c'est
+        # `gablue-fetch` qui efface avant (nom de fichier fixe = pas de reprise
+        # entre deux versions).
+        dest = self.dir / "already.bin"
+        dest.write_bytes(self.payload)
+        out = io.StringIO()
+        with mock.patch.object(sys, "stdout", out):
+            code = engine.main([
+                "download", f"{self.base}/payload.bin", str(dest),
+            ])
+        self.assertEqual(code, 0)
+        self.assertEqual(dest.read_bytes(), self.payload)
+        self.assertIn("déjà téléchargé", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

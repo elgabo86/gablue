@@ -1,0 +1,37 @@
+#!/bin/bash
+
+# gablue-progress — progression d'un script bash vers Gablue Manager.
+#
+# Les scripts restés en bash (`esde-install`, `opencode2-install`) publient les
+# mêmes marqueurs que le moteur `gablue-apps` : le dialogue de tâche les retire
+# du journal et en tire le libellé et la barre, en local comme à distance.
+#
+# Aucune écriture quand la sortie est un terminal : une jauge machine n'y
+# apprend rien à l'humain (le moteur applique la même règle).
+#
+# Usage :
+#   gablue-progress step <n> <total> <libellé>
+#   gablue-progress busy <libellé>
+#   gablue-progress percent <0-100> <libellé>
+#   gablue-progress done [libellé]
+
+set -u
+
+[ -t 1 ] && exit 0
+
+verb="${1:-}"
+shift || true
+
+case "$verb" in
+    step)
+        n="${1:-0}"; total="${2:-0}"; label="${3:-}"
+        printf '::gablue:step %s %s %s\n' "$n" "$total" "$label"
+        ;;
+    busy)    printf '::gablue:busy %s\n' "${1:-}" ;;
+    percent) printf '::gablue:percent %s %s\n' "${1:-0}" "${2:-}" ;;
+    done)    printf '::gablue:done %s\n' "${1:-}" ;;
+    *)
+        echo "Usage : gablue-progress step|busy|percent|done …" >&2
+        exit 2
+        ;;
+esac

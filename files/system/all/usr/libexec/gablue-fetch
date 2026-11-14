@@ -1,20 +1,22 @@
 #!/bin/bash
 
-# Téléchargement d'une AppImage, avec tentatives et anti-cale.
+# Téléchargement d'une AppImage, avec tentatives, anti-cale et progression.
 #
-# Pendant bash de la politique du moteur `gablue-apps` (voir /usr/libexec/
-# gablue-apps) pour les scripts qui gardent leur propre téléchargement.
-# Constaté le 09/11/2026 : la même URL GitHub a été servie à 1,1 s puis à 59,7 s
-# selon la connexion, et une connexion morte ne rendait plus rien — `curl` sans
-# ces bornes attend indéfiniment et l'installation paraît gelée à 0 %.
+# Enveloppe du moteur `/usr/libexec/gablue-apps download` : les scripts restés
+# en bash (esde-install, opencode2-install) gardent leur propre logique, mais
+# il n'y a plus **deux** téléchargeurs. C'est ce qui donne un pourcentage réel
+# à l'AppImage d'ES-DE et à celle d'OpenCode Desktop (~245 Mio) : `curl` n'a
+# jamais su le fournir (fenêtres figées à « 0 % » constatées les 08/11 et
+# 09/11/2026), alors que le moteur lit les octets et publie `::gablue:percent`.
 #
-# Pas de reprise (`--continue-at`) ici : la destination a un nom fixe, une
-# reprise pourrait coller un morceau d'une version à une autre. Le moteur s'en
-# charge, avec un dossier de cache par release.
+# Pas de reprise entre deux exécutions : la destination a un nom fixe, une
+# reprise pourrait coller un morceau d'une version à une autre. On la retire
+# donc avant de télécharger (la reprise *dans* un même run, elle, existe dans le
+# moteur). Le moteur range ses partiels à côté de la destination.
 #
 # Usage : gablue-fetch <url> <destination> [libellé]
 
-set -e
+set -eu
 
 URL="$1"
 DEST="$2"
@@ -26,9 +28,7 @@ if [ -z "$URL" ] || [ -z "$DEST" ]; then
 fi
 
 mkdir -p "$(dirname "$DEST")"
+rm -f "$DEST" "$DEST.part"
 echo "Téléchargement de $LABEL..."
 
-exec curl --fail --location --show-error \
-    --retry 4 --retry-delay 2 --retry-all-errors \
-    --connect-timeout 15 --speed-limit 200000 --speed-time 30 \
-    --output "$DEST" "$URL"
+exec /usr/libexec/gablue-apps download "$URL" "$DEST" --label "$LABEL"

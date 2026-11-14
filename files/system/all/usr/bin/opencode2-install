@@ -43,6 +43,15 @@ if [ "$FORCE" = 1 ]; then
     echo "! Mode --force : vérifications de MAJ ignorées, réinstallation complète."
 fi
 
+# Progression vers Gablue Manager : les marqueurs `::gablue:` deviennent la
+# barre et le libellé de la tâche (local et distant) ; muet sur un terminal.
+# Chemin absolu : /usr/libexec n'est pas dans le PATH (vécu 10/11/2026).
+gprogress() {
+    if [ -x /usr/libexec/gablue-progress ]; then
+        /usr/libexec/gablue-progress "$@" || true
+    fi
+}
+
 # Posé à 1 quand le MCP Lightpanda est installé/mis à jour ou que son entrée
 # est créée dans opencode.json : étend la condition de redémarrage du service
 # de fond en fin de script
@@ -57,6 +66,7 @@ if [ -z "$BREW" ] && [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
 fi
 
 # --- Étape 1 : désinstaller OpenCode 1 (V1) si existant ---
+gprogress busy "Étape 1/5 — nettoyage des anciennes installations"
 # Nom npm historique de la V1 : `opencode-ai` (pas de paquet scoped
 # @opencode-ai/opencode — vérifié 404 sur le registre). Sans la bonne
 # désinstallation, le bin-link `opencode` de la V1 dans le préfixe npm
@@ -255,6 +265,7 @@ if [ "$FORCE" = 0 ] && command -v npm &>/dev/null && npm list -g --depth=0 "$NPM
 fi
 
 # --- Étape 3 : installer npm via Homebrew si absent ---
+gprogress busy "Étape 2/5 — OpenCode CLI (npm)"
 if command -v npm &>/dev/null; then
     echo "✓ npm déjà installé ($(npm --version))."
 else
@@ -307,6 +318,7 @@ if [ "$FORCE" = 0 ] && command -v npm &>/dev/null && npm list -g --depth=0 "$NPM
     echo "✓ OpenCode CLI $CLI_VERSION_BEFORE déjà à jour (npm)."
     CLI_VERSION_AFTER="$CLI_VERSION_BEFORE"
 else
+    gprogress busy "Installation d'OpenCode 2 via npm"
     echo "=== OpenCode 2 : installation/mise à jour via npm ==="
     echo "Installation de $NPM_PACKAGE via npm..."
     # --allow-scripts : exécute le postinstall officiel (npm récent le bloque par défaut)
@@ -336,6 +348,7 @@ if [ "$(readlink -f "$LOCAL_BIN/opencode" 2>/dev/null)" != "$(readlink -f "$NPM_
 fi
 
 # --- Étape 5bis : MCP Lightpanda (@lightpanda/browser) ---
+gprogress busy "Étape 3/5 — MCP Lightpanda"
 # Référencé par opencode.json (serveur local « lightpanda »). Paquet npm global :
 # wrapper JS seul — depuis la 1.6.0, plus de postinstall (« Do not download
 # binary on installation ») : le binaire (build nightly, ~180 Mo, checksum
@@ -352,6 +365,7 @@ if [ "$FORCE" = 0 ] && npm list -g --depth=0 @lightpanda/browser &>/dev/null \
     && [ -x "$HOME/.cache/lightpanda-node/lightpanda" ]; then
     echo "✓ MCP Lightpanda $CUR_LP déjà à jour."
 else
+    gprogress busy "Installation du MCP Lightpanda via npm"
     echo "Installation du MCP Lightpanda (@lightpanda/browser) via npm..."
     # @latest explicite : sans spec, npm réinstalle la version déjà présente
     # au lieu de mettre à jour (cf. commentaire Étape 4)
@@ -368,6 +382,7 @@ else
     fi
     LP_CLI="$(npm prefix -g 2>/dev/null)/bin/lightpanda"
     if [ -x "$LP_CLI" ]; then
+        gprogress busy "Téléchargement du binaire Lightpanda (~180 Mo)"
         echo "Téléchargement du binaire nightly Lightpanda (~180 Mo)..."
         "$LP_CLI" install \
             || echo "! Téléchargement du binaire Lightpanda échoué (réseau ?) — le MCP sera muet."
@@ -475,6 +490,7 @@ patch_desktop_entry() {
     fi
 }
 
+gprogress busy "Étape 4/5 — OpenCode Desktop (AppImage)"
 echo "=== OpenCode Desktop : vérification de la dernière version ==="
 # Version cible : extraite de la redirection du lien stable, fallback version npm
 LATEST_VERSION="$(curl -sIL -o /dev/null -w '%{url_effective}' --max-time 30 "$STABLE_URL" 2>/dev/null \
@@ -550,6 +566,7 @@ else
     fi
 
     echo "Intégration de l'AppImage avec GearLever..."
+    gprogress busy "Intégration d'OpenCode Desktop dans GearLever"
     yes | flatpak run it.mijorus.gearlever --integrate "$CACHE_FILE" 2>/dev/null || true
 
     # Re-détection de l'entrée .desktop APRÈS l'intégration : le fallback
@@ -578,6 +595,7 @@ else
     rmdir --ignore-fail-on-non-empty "$CACHE_DIR" 2>/dev/null || true
 fi
 
+gprogress busy "Étape 5/5 — menu, associations et service de fond"
 # --- Étape 7 : entrée « Ouvrir avec OpenCode » pour les dossiers dans Dolphin ---
 # Wrapper : ouvre le dossier directement dans la GUI, comme si l'utilisateur
 # venait de le sélectionner. Le desktop ne consomme pas les deep-links en 2.0.16

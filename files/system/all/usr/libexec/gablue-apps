@@ -767,6 +767,29 @@ def probe(app: dict) -> dict:
     return resolve(app)
 
 
+def download_command(args) -> int:
+    """`download` : URL → fichier, avec la progression du moteur.
+
+    Sert aux scripts de l'image qui gardent leur propre téléchargement
+    (`/usr/libexec/gablue-fetch`) : une seule politique réseau, et une vraie
+    barre au lieu d'un `curl` muet — l'AppImage d'OpenCode Desktop (~245 Mio) et
+    celle d'ES-DE avancent enfin à l'octet près, en local comme sur un poste
+    distant.
+    """
+    dest = Path(args.dest).expanduser()
+    reporter = Reporter(args.label or dest.name)
+    reporter.busy()
+    try:
+        size = download(args.url, dest, reporter)
+    except DownloadError as exc:
+        reporter.finish()
+        print(f"Erreur : {exc}", file=sys.stderr, flush=True)
+        return 1
+    reporter.finish()
+    _say(f"  {dest.name} téléchargé ({_mib(size)} Mio).")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="gablue-apps",
@@ -789,7 +812,19 @@ def main(argv: list[str] | None = None) -> int:
                                 help="accepté pour compatibilité "
                                      "(le moteur ne pose jamais de question)")
 
+    download_parser = commands.add_parser(
+        "download",
+        help="télécharger un fichier quelconque (progression comprise)")
+    download_parser.add_argument("url")
+    download_parser.add_argument("dest")
+    download_parser.add_argument("--label", default="",
+                                 help="libellé de la barre et du journal")
+
     args = parser.parse_args(argv)
+    # `download` ne touche pas au catalogue : un script peut s'en servir même
+    # quand apps.toml est absent (test, image en cours de construction).
+    if args.command == "download":
+        return download_command(args)
     try:
         catalog = load_catalog()
         if args.command == "list":

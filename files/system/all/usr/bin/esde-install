@@ -65,9 +65,19 @@ note() {
     fi
 }
 
+# Progression vers Gablue Manager : les marqueurs `::gablue:` deviennent la
+# barre et le libellé de la tâche (local et distant) ; muet sur un terminal.
+# Chemin absolu : /usr/libexec n'est pas dans le PATH (vécu 10/11/2026).
+gprogress() {
+    if [ -x /usr/libexec/gablue-progress ]; then
+        /usr/libexec/gablue-progress "$@" || true
+    fi
+}
+
 # Copier les fichiers Gablue (custom_systems + lanceurs Tools)
 # Appelée que ES-DE soit réinstallé ou déjà présent (réinstallation refusée)
 copy_gablue_files() {
+    gprogress busy "Copie de la configuration Gablue (custom_systems, Tools)"
     # Copier le dossier custom_systems dans ~/ES-DE/
     if [ -d "/usr/share/ublue-os/gablue/esde/custom_systems" ]; then
         echo "Copie du dossier custom_systems vers ~/ES-DE/..."
@@ -184,6 +194,7 @@ fi
 API_URL="https://gitlab.com/api/v4/projects/es-de%2Femulationstation-de/releases"
 
 # Récupérer le lien de ES-DE_x64.AppImage
+gprogress busy "Recherche de la dernière version d'ES-DE"
 echo "Récupération du lien de téléchargement..."
 DOWNLOAD_URL=$(curl -s --retry 3 "$API_URL" | jq -r '.[0].assets.links[] | select(.name == "ES-DE_x64.AppImage") | .url')
 
@@ -244,6 +255,7 @@ if [ "$AUTO" = 0 ]; then
 fi
 
 # Installer avec Gearlever
+gprogress busy "Intégration d'ES-DE dans GearLever"
 echo "Intégration de ES-DE avec Gearlever..."
 echo y | flatpak run it.mijorus.gearlever --integrate "$FILENAME" 2>/dev/null
 INTEGRATE_EXIT=$?

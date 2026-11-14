@@ -214,13 +214,25 @@ patch `.desktop`, nettoyage du cache, `kbuildsycoca6`.
   avec un **pourcentage réel** — ce que `curl` ne savait pas donner (fenêtres
   figées à « 0 % » constatées le 08/11 et le 09/11/2026). Sur un terminal, aucun
   marqueur : une jauge `\r` lisible.
-- `gablue-fetch <url> <dest> [libellé]` : même politique réseau en bash pour les
-  scripts restés tels quels ; **sans reprise** (destination au nom fixe, une
-  reprise collerait deux builds) — la reprise n'existe que dans le moteur, grâce
-  au dossier de cache par tag. Les appelants l'invoquent par **chemin absolu**
-  `/usr/libexec/gablue-fetch` : `/usr/libexec` n'est pas dans le `PATH` de
-  l'utilisateur (vécu 10/11/2026 : « gablue-fetch: commande introuvable » cassait
-  `opencode2-install` et `esde-install`).
+- `gablue-progress step|busy|percent|done …` (`/usr/libexec`, 14/11/2026) : le
+  même protocole pour les **scripts restés en bash** — `esde-install` annonce
+  ses phases (recherche de version, intégration GearLever, copie de config) et
+  `opencode2-install` ses cinq phases (nettoyage, CLI npm, MCP Lightpanda,
+  Desktop, menu/associations) ; toutes en `busy`, compteur « Étape 2/5 » dans
+  le libellé — le verbe `step` est déjà pris par la liste d'applications du
+  dialogue, et deux compteurs sur un même flux faisaient reculer la barre
+  (banc du 14/11/2026). Muet quand
+  la sortie est un terminal, comme le moteur ; appel par **chemin absolu**.
+- `gablue-fetch <url> <dest> [libellé]` : **enveloppe du moteur**
+  (`gablue-apps download`) depuis le 14/11/2026 — un seul téléchargeur, donc un
+  vrai pourcentage pour l'AppImage d'ES-DE et celle d'OpenCode Desktop (~245
+  Mio) : `curl` n'en donne aucun hors terminal. Elle efface la destination
+  avant de télécharger (**pas de reprise entre deux versions**, le nom de
+  fichier est fixe ; la reprise *dans* un run est celle du moteur). Les
+  appelants l'invoquent par **chemin absolu** `/usr/libexec/gablue-fetch` :
+  `/usr/libexec` n'est pas dans le `PATH` de l'utilisateur (vécu 10/11/2026 :
+  « gablue-fetch: commande introuvable » cassait `opencode2-install` et
+  `esde-install`).
 - Vécu 09/11/2026 : la même URL d'asset GitHub a été servie à 1,1 s (38 Mio/s)
   puis à 59,7 s (2,3 Mio/s) selon la connexion, et une connexion morte ne
   rendait plus rien — `curl` sans borne attend indéfiniment. Le moteur rend la
