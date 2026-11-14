@@ -1,0 +1,159 @@
+//! Configuration du démon : `~/.config/gablue/share.json`.
+//!
+//! Le fichier est écrit par la GUI, le démon ne fait que le lire (aucune
+//! écriture, aucun état). Un partage dont le dossier a disparu (disque non
+//! monté) est ignoré avec un message, jamais fatal : le reste continue de
+//! servir.
+
+use serde_json::Value;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+/// Port par défaut, fixe : la sonde Tailscale des pairs doit le connaître.
+pub const DEFAULT_PORT: u16 = 47823;
+
+#[derive(Clone, Debug)]
+pub struct Share {
+    pub id: String,
+    pub name: String,
+    /// Chemin tel que déclaré dans la configuration.
+    pub path: PathBuf,
+    /// Chemin canonique : borne de tous les accès (anti-symlink sortant).
+    pub root: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub peer_id: String,
+    pub name: String,
+    pub port: u16,
+    pub shares: Vec<Share>,
+}
+
+impl Config {
+    pub fn share(&self, id: &str) -> Option<&Share> {
+        self.shares.iter().find(|s| s.id == id)
+    }
+}
+
+/// Chemin de la configuration, aligné sur le reste de Gablue.
+pub fn default_path() -> PathBuf {
+    let base = match std::env::var("XDG_CONFIG_HOME") {
+        Ok(v) if !v.is_empty() => PathBuf::from(v),
+        _ => {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            PathBuf::from(home).join(".config")
+        }
+    };
+    base.join("gablue").join("share.json")
+}
+
+/// Charge et valide la configuration. Erreur = message lisible par l'humain.
+pub fn load(path: &Path) -> Result<Config, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("configuration illisible ({}) : {e}", path.display()))?;
+    let doc: Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("configuration invalide ({}) : {e}", path.display()))?;
+
+    let peer_id = doc
+        .get("peer_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(machine_id);
+    let name = doc
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(hostname);
+    let port = doc
+        .get("port")
+        .and_then(Value::as_u64)
+        .filter(|p| (1..=65535).contains(p))
+        .unwrap_or(DEFAULT_PORT as u64) as u16;
+
+    let mut shares: Vec<Share> = Vec::new();
+    for (index, item) in doc
+        .get("shares")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+        .iter()
+        .enumerate()
+    {
+        let declared = item.get("path").and_then(Value::as_str).unwrap_or("").trim();
+        if declared.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(declared);
+        let root = match path.canonicalize() {
+            Ok(root) if root.is_dir() => root,
+            _ => {
+                eprintln!("partage ignoré (absent ou pas un dossier) : {declared}");
+                continue;
+            }
+        };
+        let mut id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("s{}", index + 1));
+        if shares.iter().any(|s| s.id == id) {
+            id = format!("{id}-{}", index + 1);
+        }
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                root.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| id.clone())
+            });
+        shares.push(Share {
+            id,
+            name,
+            path,
+            root,
+        });
+    }
+
+    Ok(Config {
+        peer_id,
+        name,
+        port,
+        shares,
+    })
+}
+
+/// Identifiant stable du poste : `/etc/machine-id`, repli horodatage.
+fn machine_id() -> String {
+    if let Ok(raw) = fs::read_to_string("/etc/machine-id") {
+        let id = raw.trim();
+        if !id.is_empty() {
+            return id.to_string();
+        }
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{now:x}")
+}
+
+fn hostname() -> String {
+    if let Ok(raw) = fs::read_to_string("/etc/hostname") {
+        let name = raw.trim();
+        if !name.is_empty() {
+            return name.to_string();
+        }
+    }
+    std::env::var("HOSTNAME").unwrap_or_else(|_| "gablue".to_string())
+}

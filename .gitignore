@@ -10,6 +10,9 @@ src/gamepadshortcuts/gamepadshortcuts
 src/gablue-isomount/gablue-isomount
 src/gablue-dualsense/gablue-dualsense-ctl
 
+# Démon Gablue Share (Rust) : artefacts de compilation
+src/gablue-share/daemon/target/
+
 # Contenu extra local pour les builds ISO (copié dans /extra du live, non versionné)
 /installer/extra/*
 !/installer/extra/.gitkeep

@@ -88,6 +88,9 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── AGENTS.md                       # Paquet, dialogues, privilèges
 │   │   ├── gablue-manager                  # Lanceur /usr/bin (sys.path + main)
 │   │   └── gablue_manager/                 # Paquet : app, window, dialogs/, local, ssh…
+│   ├── gablue-share/                       # Partage de dossiers LAN/Tailscale
+│   │   ├── AGENTS.md                       # Protocole, découverte, invariants
+│   │   └── daemon/                         # Démon Rust `gablue-shared` (src/, tests/)
 │   ├── gwine-launcher/                     # Sources du lanceur gwine (Bash modulaire)
 │   │   ├── AGENTS.md                        # Contrat du lanceur (CLI, structure, build)
 │   │   ├── gwine                           # Script point d'entrée
@@ -254,6 +257,7 @@ son propre AGENTS.md de sous-dossier + pointeur dans l'index ci-dessous.
 | gwine — modules `lib/` (architecture, composants, overlays, shims) | `src/gwine-launcher/lib/AGENTS.md` | modifier un fichier de `src/gwine-launcher/lib/` |
 | Gablue Manager (GUI, paquet `gablue_manager`) | `src/gablue-manager/AGENTS.md` | modifier `src/gablue-manager/` ou un dialogue |
 | TV Gablue (tvqt, paquet `gablue_tv`) | `src/tvqt/AGENTS.md` | modifier `src/tvqt/` ou une vue |
+| Partage de fichiers (démon Rust `gablue-shared`) | `src/gablue-share/AGENTS.md` | modifier `src/gablue-share/` |
 | Installateur APK (paquet `gablue_apk_installer`) | `src/gablue-apk-installer/AGENTS.md` | modifier `src/gablue-apk-installer/` |
 | Firmware DualSense / Edge (`gablue-dualsense`) | `src/gablue-dualsense/AGENTS.md` | modifier `dualsense-ctl.c`, le script `/usr/bin/gablue-dualsense` ou la détection de famille |
 | lgplaunch (modules Bash `lib/`) | `src/lgplaunch/AGENTS.md` | modifier `src/lgplaunch/` |
