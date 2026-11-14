@@ -6,8 +6,14 @@ on:
     paths-ignore:
       - "**.md"
       - "**.txt"
+  # Hebdomadaire, le vendredi : la build est publiée avant le timer
+  # `rpm-ostreed-automatic` du samedi 04:00 côté poste, donc l'image reçue a
+  # moins de 24 h. Les mises à jour urgentes (kernel, Mesa, NVIDIA) passent par
+  # un tag de commit ou workflow_dispatch, comme chez Bazzite (cron hebdo +
+  # déclenchement à la demande). Un échec planifié est rejoué une fois par
+  # retry-gablue-builds.yml.
   schedule:
-    - cron: "00 02 * * *"
+    - cron: "0 2 * * 5"
   push:
     branches:
       - main
@@ -16,6 +22,16 @@ on:
       - "**.md"
       - "**.txt"
   workflow_dispatch:
+  # Appelée par retry-gablue-builds.yml (filet de sécurité) : un
+  # workflow_dispatch émis avec GITHUB_TOKEN ne déclencherait rien, la
+  # récursion étant bloquée par GitHub. `inputs.retry` distingue cet appel des
+  # déclencheurs normaux (vrai uniquement via workflow_call).
+  workflow_call:
+    inputs:
+      retry:
+        description: "Rejeu déclenché par retry-gablue-builds.yml"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,6 +45,7 @@ jobs:
       group: build-gablue-images-main-${{ github.ref }}
       cancel-in-progress: true
     if: |
+      inputs.retry ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
@@ -50,6 +67,7 @@ jobs:
       group: build-gablue-images-nvidia-${{ github.ref }}
       cancel-in-progress: true
     if: |
+      inputs.retry ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
@@ -74,6 +92,7 @@ jobs:
       group: build-gablue-images-nvidia-open-${{ github.ref }}
       cancel-in-progress: true
     if: |
+      inputs.retry ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
@@ -96,6 +115,7 @@ jobs:
       group: build-gablue-images-dx-${{ github.ref }}
       cancel-in-progress: true
     if: |
+      inputs.retry ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
@@ -116,6 +136,7 @@ jobs:
       group: build-gablue-images-nvidia-open-dx-${{ github.ref }}
       cancel-in-progress: true
     if: |
+      inputs.retry ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||

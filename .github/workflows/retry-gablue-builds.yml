@@ -1,0 +1,71 @@
+# Filet de sécurité des builds planifiées : un run raté est rejoué **une fois**,
+# tout de suite, en appelant le workflow concerné devenu réutilisable
+# (`workflow_call` dans gablue-builds.yml et build-gablue-live-isos.yml, avec
+# l'entrée `retry: true`).
+#
+# - Images : le vendredi 02:00 UTC (`build-gablue-images`).
+# - ISO : tous les 5 jours (`build-gablue-live-isos`) — plus critique que les
+#   images : la release `latest-live-iso` ne porte que les checksums, les ISO
+#   vivent sur BuzzHeavier dont les fichiers libres expirent en 8 jours (page
+#   tarifs) : un build raté laisse un lien mort en moins de dix jours.
+#
+# Pourquoi `workflow_call` et pas `gh run rerun` / `workflow_dispatch` : un
+# événement émis avec le `GITHUB_TOKEN` d'un workflow ne déclenche aucun autre
+# workflow (récursion bloquée par GitHub). Appeler le workflow dans le même run
+# ne dépend d'aucun jeton supplémentaire (PAT, GitHub App).
+#
+# Portée volontairement étroite — seule une exécution PLANIFIÉE sur `main`, à
+# sa PREMIÈRE tentative, déclenche un rejeu :
+# - un push tagué qui échoue est vu tout de suite par l'utilisateur, pas besoin
+#   de rejouer ;
+# - un « Re-run » manuel (`run_attempt` > 1) est déjà une décision humaine.
+#
+# Pas de boucle possible : ce workflow ne réagit qu'aux runs des deux workflows
+# ci-dessus, et son propre nom est différent. Un échec déterministe coûte donc
+# une seconde salve (5 images, ou 5 ISOs), puis plus rien jusqu'au créneau
+# suivant.
+
+name: retry-gablue-builds
+
+on:
+  workflow_run:
+    workflows: ["build-gablue-images", "build-gablue-live-isos"]
+    types: [completed]
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+  actions: read
+
+concurrency:
+  group: retry-gablue-builds
+  cancel-in-progress: false
+
+jobs:
+  images:
+    name: Rejouer la build d'images planifiée
+    if: >-
+      github.event.workflow_run.name == 'build-gablue-images' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'schedule' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.run_attempt == 1
+    uses: ./.github/workflows/gablue-builds.yml
+    with:
+      retry: true
+    secrets: inherit
+
+  iso:
+    name: Rejouer la build des ISOs planifiée
+    if: >-
+      github.event.workflow_run.name == 'build-gablue-live-isos' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'schedule' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.run_attempt == 1
+    uses: ./.github/workflows/build-gablue-live-isos.yml
+    with:
+      retry: true
+    secrets: inherit

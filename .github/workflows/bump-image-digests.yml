@@ -2,8 +2,9 @@ name: bump-image-digests
 
 # Bump hebdo des images pinnées par digest (mini-ubot maison, équivalent du bot
 # Bazzite ubot-7274) — ouvre / met à jour une PR au lieu de committer directement.
-# Le merge ne déclenche pas de build : la build schedule quotidienne (02:00 UTC)
-# ingère le nouveau digest.
+# Le merge ne déclenche pas de build : la build planifiée du vendredi (02:00 UTC)
+# ingère le nouveau digest — merger la PR en fin de semaine pour qu'elle parte
+# dans la build du soir.
 
 on:
   schedule:
@@ -130,7 +131,7 @@ jobs:
               printf '%s' "${BUMP_SUMMARY}"
               echo ""
               echo "L'ouverture de cette PR déclenche les builds des 5 variantes (validation)."
-              echo "Le merge ne déclenche pas de build : la build schedule quotidienne (02:00 UTC) ingère le nouveau digest."
+              echo "Le merge ne déclenche pas de build : la build planifiée du vendredi (02:00 UTC) ingère le nouveau digest (merger la PR en fin de semaine)."
             } > "${RUNNER_TEMP}/pr_body.md"
             gh pr create \
               --title "chore(deps): bump pinned image digests" \

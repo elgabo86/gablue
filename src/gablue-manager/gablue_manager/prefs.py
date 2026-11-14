@@ -28,7 +28,7 @@ DEFAULTS = {
     "check_brew": True,
     "check_gwine": True,
     "check_apps": True,
-    "check_interval": 120,          # minutes, 2 h
+    "check_interval": 1440,         # minutes, 24 h (l'image sort 1×/semaine)
 }
 
 # Bornes des préférences numériques : 5 min (pas de martèlement réseau) à

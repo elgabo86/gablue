@@ -44,7 +44,7 @@ Le projet construit 6 variantes distinctes :
 **Images de test (branche `test`)** :
 - Les anciennes variantes `-test` (gablue-main-test, gablue-nvidia-open-test) avec OpenGamepadUI sont **obsolètes** — les Containerfiles et scripts `-test` restent dans le dépôt pour référence mais ne sont plus buildés
 - La nouvelle approche utilise une **branche `test`** : pousser des modifs sur `refs/heads/test` déclenche le build de `gablue-main-test` et `gablue-nvidia-open-test` (packages GHCR séparés, tag `latest`) — les modifs sont testées sur les packages `-test` sans toucher aux packages stables
-- Le schedule quotidien ne build que `main` → `latest` n'est jamais pollué par les modifs de test
+- Le schedule hebdomadaire (vendredi) ne build que `main` → `latest` n'est jamais pollué par les modifs de test
 - `update-readme` est exclu sur la branche `test` (pour ne pas écraser le README avec des versions de test)
 - Seules 2 variantes sont buildées sur `test` : `gablue-main-test` et `gablue-nvidia-open-test` (les autres jobs restreignent leur condition à `github.ref == 'refs/heads/main'`)
 - Côté client : `rpm-ostree rebase ostree-unverified-registry:ghcr.io/elgabo86/gablue-main-test:latest` pour tester, puis `gablue-main:latest` pour revenir
@@ -174,7 +174,7 @@ Les tags dans les messages de commit déclenchent les builds :
 | `[dx]` | gablue-main-dx |
 | ~~`[test]`~~ | ~~gablue-main-test, gablue-nvidia-open-test~~ (désactivé — utiliser la branche `test`, voir ci-dessous) |
 
-**Branche `test`** : un push sur `refs/heads/test` déclenche `build-main` et `build-nvidia-open` qui construisent les packages séparés `gablue-main-test` et `gablue-nvidia-open-test` (tag `latest`). Aucun tag de commit nécessaire — n'importe quel push sur la branche `test` déclenche le build. Le schedule ne build que `main` → `latest` n'est jamais pollué.
+**Branche `test`** : un push sur `refs/heads/test` déclenche `build-main` et `build-nvidia-open` qui construisent les packages séparés `gablue-main-test` et `gablue-nvidia-open-test` (tag `latest`). Aucun tag de commit nécessaire — n'importe quel push sur la branche `test` déclenche le build. Le schedule (hebdomadaire, vendredi 02:00 UTC) ne build que `main` → `latest` n'est jamais pollué.
 
 **Exemples** :
 ```bash

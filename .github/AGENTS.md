@@ -8,7 +8,9 @@
 
 ## gablue-builds.yml
 
-Workflow principal. Déclencheurs : push sur main avec tags (`[main]`, `[nvidia]`, `[dx]`, `[all]`, `[all-iso]`), PRs, schedule quotidien (02:00 UTC), workflow_dispatch.
+Workflow principal. Déclencheurs : push sur main avec tags (`[main]`, `[nvidia]`, `[dx]`, `[all]`, `[all-iso]`), PRs, **schedule hebdomadaire (vendredi 02:00 UTC)**, workflow_dispatch, et `workflow_call` (appelé par `retry-gablue-builds.yml`, le filet de sécurité).
+
+**Cadence : hebdomadaire, pas quotidienne** (modifié le 14/11/2026). Le poste reçoit ses mises à jour par `rpm-ostreed-automatic` **le samedi 04:00** (opt-in, `files/scripts/AGENTS.md`) : une build quotidienne produisait 7 images pour en livrer une, maintenait en permanence une image « en attente » (notification du tray à chaque ouverture de session) et ne laissait que 7 jours d'historique de rollback dans `clean-gablue-images`. La build du vendredi sort donc avant le timer du samedi, et une mise à jour urgente (kernel, Mesa, NVIDIA) passe par un tag de commit ou `workflow_dispatch` — modèle Bazzite (cron hebdo + déclenchement à la demande, cf. leur `build.yml` `cron: "40 4 * * 1"`).
 
 - `paths-ignore` : `.md`/`.txt` ne déclenchent pas de build (les changements `.github/**` déclenchent bien si le tag est présent — jobs filtrés par tag de commit)
 - `concurrency` cancel-in-progress : un commit tagué annule la build en cours → pour committer une modif de workflow sans annuler, utiliser `[skip ci]`
@@ -16,6 +18,15 @@ Workflow principal. Déclencheurs : push sur main avec tags (`[main]`, `[nvidia]
 
 **Jobs** : `build-main`, `build-nvidia` (kernel_type=ogc-lts, nvidia_flavor=nvidia-lts), `build-nvidia-open`, `build-dx` (DX_MODE=true), `build-nvidia-open-dx` (DX_MODE + nvidia-open — restreint à `main`, jamais sur branche `test`), `update-readme`
 - `update-readme` : tableau de versions du README depuis les artifacts `versions-*` (needs sur les 5 builds, ignoré sur PR et branche `test`). Download via `gh run download` wrappé `nick-fields/retry@v4` (**10×30 s ≈ 4 min 30 s** — tolère le 404 transitoire de l'API artifacts ET les 503 « Egress is over the account limit », incident de stockage GitHub qui dure des minutes : la fenêtre 6×15 s (~90 s) a fait échouer un run dont les 5 builds étaient verts, run 39912731811 du 23/10/2026 ; `on_retry_command: rm -rf versions-data` évite qu'un JSON partiel d'une tentative précédente valide la vérification suivante) ; présence des 5 JSON vérifiée explicitement avec `exit 1` (gh CLI peut retourner 0 malgré un 503 partiel) → le retry se déclenche. Commit `[skip ci]` + push résilient : boucle 5 tentatives avec `git pull --rebase --autostash` entre chaque (absorbe les commits concurrents pendant les ~50 min de build) ; échec du 5e → `exit 1` (pas de succès silencieux)
+
+## retry-gablue-builds.yml
+
+Filet de sécurité des builds planifiées : un échec du **run planifié** est rejoué **une fois**, immédiatement. Couvre les **deux** workflows — `build-gablue-images` (vendredi) et `build-gablue-live-isos` (`*/5`) ; l'ISO est même le cas le plus critique, un build raté laissant un lien BuzzHeavier mort en moins de dix jours.
+
+- **Déclencheur** : `workflow_run` (type `completed`) sur `build-gablue-images` **et** `build-gablue-live-isos` ; chaque job n'appelle son workflow que si `workflow_run.name` désigne le sien, `conclusion == 'failure'`, `event == 'schedule'`, `head_branch == 'main'` et `run_attempt == 1`. Un push tagué raté est vu tout de suite, un « Re-run » manuel est déjà une décision humaine — ni l'un ni l'autre n'est rejoué.
+- **Mécanique** : `uses: ./.github/workflows/<workflow>.yml` avec `retry: true` — les deux workflows sont devenus réutilisables (`workflow_call` + input booléen `retry`, défaut `false`) et leurs conditions de job commencent par `inputs.retry ||`. **NE PAS** utiliser `event_name == 'workflow_run'` pour les distinguer : `build-gablue-live-isos` a déjà un déclencheur `workflow_run` légitime (chaînage `[all-iso]`), le test serait ambigu → d'où l'input explicite. **NE PAS** remplacer par `gh run rerun` ni par `workflow_dispatch` : un événement émis avec le `GITHUB_TOKEN` d'un workflow n'en déclenche aucun autre (récursion bloquée par GitHub), il faudrait un PAT ou une GitHub App à maintenir.
+- **Pas de boucle** : le workflow ne réagit qu'aux runs des deux workflows nommés et porte un autre nom ; un appel réutilisable ne crée pas de run séparé. Un échec déterministe coûte donc une seconde salve (5 images, ou 5 ISOs), puis plus rien jusqu'au créneau suivant (le rejeu n'arrive qu'une fois).
+- `permissions:` doit couvrir celles des jobs appelés (`contents: write` pour `update-readme`/release ISO, `packages: write`, `id-token: write`, `attestations: write` pour l'ISO, `actions: read`) : un workflow appelé ne peut pas élever au-delà des permissions de l'appelant.
 
 ## reusable-gablue-image.yml
 
@@ -51,7 +62,7 @@ Workflow réutilisable de build d'une image. **Inputs** : `image_name`/`image_de
 
 ## build-gablue-live-isos.yml
 
-Build des **ISOs live** Plasma complet (tous les 5 jours). Déclencheurs : schedule, workflow_dispatch, push `[iso]`, **`workflow_run`** en fin du workflow d'images — ne construit l'ISO que si l'amont a été déclenché par un push (`workflow_run.event == 'push'`), réussi (`conclusion == 'success'`) et le message contient `[all-iso]` → images `:latest` publiées avant les ISOs ; checkout sur `workflow_run.head_sha`.
+Build des **ISOs live** Plasma complet (tous les 5 jours, 06:00 UTC). **La cadence vient de la rétention BuzzHeavier, pas de la fraîcheur du payload** : la release GitHub `latest-live-iso` ne porte que les `-CHECKSUM`, les ISO ne vivent que sur BuzzHeavier, dont les fichiers libres expirent après 8 jours de base (+2 jours par téléchargement, 60 j max — page tarifs ; la page d'aide annonce 15/+3/45 : les deux sources officielles se contredisent, constaté le 14/11/2026). En hebdomadaire il ne resterait qu'un jour de marge avant que le lien de la release ne meure, et un build raté le tuerait — d'où le `*/5` **conservé** alors que la build d'images est passée en hebdo. Conséquence assumée : une ISO peut embarquer une image vieille de 5 jours (c'est un support live/installation), et `[iso]` ou `workflow_dispatch` en reconstruit une fraîche à la demande. Déclencheurs : schedule, workflow_dispatch, push `[iso]`, **`workflow_call`** (`retry: true`, filet de sécurité), **`workflow_run`** en fin du workflow d'images — ne construit l'ISO que si l'amont a été déclenché par un push (`workflow_run.event == 'push'`), réussi (`conclusion == 'success'`) et le message contient `[all-iso]` → images `:latest` publiées avant les ISOs ; checkout sur `workflow_run.head_sha`.
 
 - **Concurrency ISO** : groupe `build-gablue-live-isos-${{ github.run_id }}-iso` avec `github.run_id` (pas `github.ref`) — chaque run ISO unique ; sinon un `workflow_run` déclenché par un échec annulerait un `workflow_dispatch` ISO en cours (même groupe, ses jobs skipped de toute façon)
 - **Titanoboa** : installateur bootc générant un squashfs live ; `build_iso.sh` de l'image Titanoboa (`quay.io/fedora/fedora:latest`) patché via `installer/titanoboa_build_iso.sh` (bind-mounté, sans `-all-root` — préserve l'UID 1000 du préfixe Wine)
@@ -64,7 +75,7 @@ Build des **ISOs live** Plasma complet (tous les 5 jours). Déclencheurs : sched
 
 ## clean-gablue-images.yml
 
-Nettoyage hebdomadaire (dimanche) : images > 90 jours supprimées ; conservation des 7 dernières taggées + 7 dernières non-taggées. Packages : gablue-main, gablue-nvidia, gablue-nvidia-open, gablue-main-dx, gablue-nvidia-open-dx, gablue-main-test, gablue-nvidia-open-test
+Nettoyage hebdomadaire (dimanche) : images > 90 jours supprimées ; conservation des 7 dernières taggées + 7 dernières non-taggées (avec la build hebdomadaire, ces 7 tags couvrent ~7 semaines de rollback). Packages : gablue-main, gablue-nvidia, gablue-nvidia-open, gablue-main-dx, gablue-nvidia-open-dx, gablue-main-test, gablue-nvidia-open-test
 
 ## bump-image-digests.yml
 
@@ -75,7 +86,7 @@ Bump hebdo des images pinnées par digest — mini-ubot maison, équivalent du b
 - **Mécanique** : `skopeo inspect` (retry 3×10 s, timeouts ghcr.io transitoires) → **normalisation du préfixe `sha256:`** (`{{.Digest}}` l'inclut selon la version de skopeo — sans strip, faux positif hebdo et sed corrompu `@sha256:sha256:…`) → comparaison au pin extrait par grep → `sed` si différent. Tout à jour → job sans effet
 - **PR** : branche `chore/bump-digests-<date>` (ou réutilise la branche d'une PR bump ouverte, détectée par préfixe) ; la branche est TOUJOURS main + 1 commit — force-push assumé qui supersede le contenu précédent, jamais de conflit de rebase. Force-push sûr : namespace `chore/bump-digests-*` réservé au bot, unique écrivain (concurrency)
 - **Validation** : l'ouverture de la PR déclenche les builds des 5 variantes (event `pull_request`) → merge sur CI verte
-- **Merge sans build** : commit/PR sans tag de build → rien au merge ; la build schedule quotidienne (02:00 UTC) ingère le nouveau digest. Push avec `GITHUB_TOKEN` ne déclenche de toute façon jamais de workflow (récursion bloquée par GitHub)
+- **Merge sans build** : commit/PR sans tag de build → rien au merge ; la build planifiée du **vendredi** ingère le nouveau digest — merger la PR en fin de semaine pour qu'elle parte dans la build du soir (sinon jusqu'à une semaine de dérive). Push avec `GITHUB_TOKEN` ne déclenche de toute façon jamais de workflow (récursion bloquée par GitHub)
 - **Identité** : `github-actions[bot]` (comme update-readme) ; permissions `contents: write` + `pull-requests: write` ; checkout pinné par SHA (convention repo)
 - **Prérequis dépôt** : Settings → Actions → General → Workflow permissions → **« Allow GitHub Actions to create and approve pull requests »** DOIT être coché (réglage `can_approve_pull_request_reviews`). Sinon `gh pr create` échoue : `GraphQL: GitHub Actions is not permitted to create or approve pull requests` (réglage indépendant des `permissions:` du workflow). Réglable par API : `gh api -X PUT repos/elgabo86/gablue/actions/permissions/workflow -F can_approve_pull_request_reviews=true`
 - **Branche orpheline** : un run interrompu entre le `git push` et le `gh pr create` laisse une branche `chore/bump-digests-*` sans PR ; le step tombe alors en fallback sur `git ls-remote` pour la réutiliser (sinon nouvelle branche datée à chaque run, anciennes qui traînent)

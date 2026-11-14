@@ -1463,7 +1463,7 @@ class PrefsTest(unittest.TestCase):
                 self.assertTrue(prefs.tray_enabled())
                 self.assertTrue(prefs.checks_enabled())
                 self.assertEqual(
-                    prefs.check_interval_seconds(), 120 * 60
+                    prefs.check_interval_seconds(), 1440 * 60
                 )
                 prefs.set_tray_enabled(False)
                 self.assertFalse(prefs.tray_enabled())

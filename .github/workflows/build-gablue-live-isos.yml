@@ -8,8 +8,23 @@ permissions:
 
 on:
   workflow_dispatch:
+  # Appelée par retry-gablue-builds.yml pour rejouer une ISO ratée (même
+  # mécanisme que pour la build d'images : un workflow_dispatch émis avec
+  # GITHUB_TOKEN ne déclencherait rien).
+  workflow_call:
+    inputs:
+      retry:
+        description: "Rejeu déclenché par retry-gablue-builds.yml"
+        type: boolean
+        default: false
+  # Tous les 5 jours à 06:00 UTC : la cadence est pilotée par la rétention
+  # BuzzHeavier (8 j de base + 2 j par téléchargement, 60 j max — page tarifs ;
+  # 15/+3/45 sur la page d'aide), pas par la fraîcheur du payload : la release
+  # GitHub ne porte que les CHECKSUMS, les ISO vivent uniquement sur
+  # BuzzHeavier. Une cadence hebdomadaire laisserait 1 j de marge avant
+  # expiration du lien, et un build raté le tuerait.
   schedule:
-    - cron: "0 6 */5 * *"  # Tous les 5 jours à 06:00 UTC
+    - cron: "0 6 */5 * *"
   push:
     branches:
       - main
@@ -38,6 +53,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 180
     if: |
+      inputs.retry ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && contains(github.event.head_commit.message, '[iso]')) ||
