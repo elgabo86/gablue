@@ -2652,19 +2652,32 @@ def nvme_thermal_script(
 RYZENADJ_MIN_TEMP, RYZENADJ_MAX_TEMP = 45, 110
 
 
-def ryzen_cpu() -> bool:
-    """Le CPU est-il un AMD Ryzen (seul cas où ryzenadj agit) ?"""
-    try:
-        info = Path("/proc/cpuinfo").read_text(
-            encoding="utf-8", errors="replace"
-        )
-    except OSError:
-        return False
-    return "AuthenticAMD" in info and "Ryzen" in info
+def ryzen_cpu(info: str | None = None) -> bool:
+    """Le CPU est-il un AMD ? (ryzenadj ne parle qu'aux SMU AMD.)
+
+    Le libellé de `/proc/cpuinfo` ne dit pas toujours « Ryzen » : un
+    échantillon d'ingénierie s'annonce « AMD Eng Sample: 100-000001322-50_Y »
+    (gen1, Hawk Point, constaté 15/11/2026) — exiger le mot « Ryzen » masquait
+    l'option sur ce poste alors que `ryzenadj -i` y lit la table du SMU. Le
+    fabricant, lui, est fiable ; c'est le helper qui tranche le support réel.
+    `info` permet de tester la reconnaissance sans lire la machine.
+    """
+    if info is None:
+        try:
+            info = Path("/proc/cpuinfo").read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            return False
+    return "AuthenticAMD" in info
 
 
 def ryzenadj_available() -> bool:
-    """Un CPU Ryzen et l'outil ryzenadj : la limite a un sens sur ce poste."""
+    """Un CPU AMD et l'outil ryzenadj : la limite a un sens sur ce poste.
+
+    Le support réel se lit ensuite dans le helper (`supported`) : sur un AMD
+    sans table PM lisible, le dialogue le dit au lieu de cacher l'entrée.
+    """
     return Path(RYZENADJ_BINARY).is_file() and ryzen_cpu()
 
 

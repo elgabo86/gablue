@@ -8,12 +8,17 @@ démarrage, avant l'ouverture de session. Tout passe par le helper
 
 Le dialogue n'est proposé que sur un poste où `ryzenadj` et un CPU Ryzen sont
 présents ; la limite est locale, un poste distant n'en a pas.
+
+Le seuil se choisit d'un **curseur** d'un °C à l'autre (45…110) : c'est un
+réglage continu, et les anciens presets 85/90/95 ne couvraient pas la valeur
+qu'on veut poser (« ryzenadj -f 70 »). Le repère 85/95 reste écrit sous la
+piste, il ne bloque rien.
 """
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
-    QPushButton, QSpinBox, QVBoxLayout,
+    QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
+    QPushButton, QSlider, QVBoxLayout,
 )
 
 from ..local import (
@@ -23,13 +28,9 @@ from ..local import (
 from ..tasks import LocalTaskDialog, start_task
 from ..uiutil import fit_dialog_height
 
-# Presets courants : 85 °C garde de la marge sous le throttle des X3D,
-# 95 °C privilégie les performances. « Personnalisé » ouvre les bornes 45…110.
-PRESETS = (
-    (85, "85 °C (silencieux)"),
-    (90, "90 °C"),
-    (95, "95 °C (performances)"),
-)
+# Valeur proposée quand aucune limite n'est posée : 85 °C garde de la marge
+# sous le throttle des X3D, sans brider les CPU qui montent plus haut.
+DEFAULT_LIMIT = 85
 
 
 def state_text(state: dict) -> str:
@@ -48,8 +49,13 @@ def state_text(state: dict) -> str:
     )
 
 
+def value_text(limit: int) -> str:
+    """Valeur affichée au-dessus de la piste."""
+    return f"{limit} °C"
+
+
 class RyzenDialog(QDialog):
-    """Case « limiter » + seuil, un seul « Appliquer »."""
+    """Case « limiter » + curseur du seuil, un seul « Appliquer »."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -84,7 +90,7 @@ class RyzenDialog(QDialog):
         card = QFrame(self)
         card.setObjectName("hostCard")
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(16, 12, 16, 12)
+        card_layout.setContentsMargins(16, 12, 16, 14)
         card_layout.setSpacing(6)
 
         self.enable = QCheckBox("Limiter la température Tctl", card)
@@ -100,19 +106,42 @@ class RyzenDialog(QDialog):
         detail.setWordWrap(True)
         card_layout.addWidget(detail)
 
-        controls = QHBoxLayout()
-        controls.setSpacing(8)
-        self.combo = QComboBox(card)
-        for value, label in PRESETS:
-            self.combo.addItem(label, value)
-        self.combo.addItem("Personnalisé", None)
-        self.spin = QSpinBox(card)
-        self.spin.setRange(RYZENADJ_MIN_TEMP, RYZENADJ_MAX_TEMP)
-        self.spin.setSuffix(" °C Tctl")
-        controls.addWidget(self.combo)
-        controls.addWidget(self.spin)
-        controls.addStretch(1)
-        card_layout.addLayout(controls)
+        # Valeur courante en grand, au-dessus de la piste : c'est le chiffre
+        # qu'on cherche en faisant glisser, il se lit sans viser une case.
+        self.value_label = QLabel(card)
+        self.value_label.setObjectName("sliderValue")
+        self.value_label.setAlignment(Qt.AlignCenter)
+        card_layout.addWidget(self.value_label)
+
+        self.slider = QSlider(Qt.Horizontal, card)
+        self.slider.setObjectName("ryzenSlider")
+        self.slider.setRange(RYZENADJ_MIN_TEMP, RYZENADJ_MAX_TEMP)
+        self.slider.setSingleStep(1)
+        self.slider.setPageStep(5)
+        self.slider.setAccessibleName("Limite de température Tctl en degrés")
+        card_layout.addWidget(self.slider)
+
+        scale = QHBoxLayout()
+        scale.setSpacing(0)
+        low = QLabel(f"{RYZENADJ_MIN_TEMP} °C", card)
+        low.setObjectName("sliderScale")
+        high = QLabel(f"{RYZENADJ_MAX_TEMP} °C", card)
+        high.setObjectName("sliderScale")
+        high.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        scale.addWidget(low)
+        scale.addStretch(1)
+        scale.addWidget(high)
+        card_layout.addLayout(scale)
+
+        guide = QLabel(
+            "Repères : 85 °C garde de la marge sous le throttle des X3D · "
+            "95 °C privilégie les performances.",
+            card,
+        )
+        guide.setObjectName("hostDetail")
+        guide.setWordWrap(True)
+        card_layout.addWidget(guide)
+
         root_layout.addWidget(card, 1)
 
         buttons = QHBoxLayout()
@@ -137,8 +166,7 @@ class RyzenDialog(QDialog):
         self.initial: int | None = None
 
         self.enable.toggled.connect(self._enable_changed)
-        self.combo.currentIndexChanged.connect(self._preset_chosen)
-        self.spin.valueChanged.connect(self._spin_changed)
+        self.slider.valueChanged.connect(self._value_changed)
 
         self.refresh()
         fit_dialog_height(self, 700)
@@ -149,22 +177,18 @@ class RyzenDialog(QDialog):
         self.initial = self.state.get("limit")
         self.state_label.setText(state_text(self.state))
 
-        if self.initial is None:
-            value = PRESETS[0][0]
-        else:
-            value = self.initial
-        self.spin.blockSignals(True)
-        self.spin.setValue(value)
-        self.spin.blockSignals(False)
-        self._select_matching(value)
+        value = DEFAULT_LIMIT if self.initial is None else self.initial
+        self.slider.blockSignals(True)
+        self.slider.setValue(value)
+        self.slider.blockSignals(False)
+        self.value_label.setText(value_text(value))
 
         ok = bool(self.state.get("supported"))
         self.enable.blockSignals(True)
         self.enable.setChecked(self.initial is not None)
         self.enable.blockSignals(False)
         self.enable.setEnabled(ok)
-        self.combo.setEnabled(ok and self.enable.isChecked())
-        self.spin.setEnabled(ok and self.enable.isChecked())
+        self.slider.setEnabled(ok and self.enable.isChecked())
 
         if not ryzenadj_helper_available():
             self.hint_label.setText(
@@ -176,43 +200,25 @@ class RyzenDialog(QDialog):
             )
         elif not self.state.get("supported"):
             self.hint_label.setText(
-                "ryzenadj ne répond pas sur ce CPU — limite non réglable."
+                "Limite non réglable sur ce poste : ryzenadj absent ou CPU "
+                "non géré par une image antérieure."
             )
         self._update_apply()
 
-    def _select_matching(self, value: int) -> None:
-        for index in range(self.combo.count()):
-            if self.combo.itemData(index) == value:
-                self.combo.setCurrentIndex(index)
-                return
-        self.combo.setCurrentIndex(self.combo.count() - 1)   # « Personnalisé »
-
     def _enable_changed(self, checked: bool) -> None:
         ok = bool(self.state.get("supported"))
-        self.combo.setEnabled(ok and checked)
-        self.spin.setEnabled(ok and checked)
+        self.slider.setEnabled(ok and checked)
         self._update_apply()
 
-    def _preset_chosen(self, _index: int) -> None:
-        value = self.combo.currentData()
-        if value is None:
-            return
-        self.spin.blockSignals(True)
-        self.spin.setValue(int(value))
-        self.spin.blockSignals(False)
-        self._update_apply()
-
-    def _spin_changed(self, value: int) -> None:
-        self.combo.blockSignals(True)
-        self._select_matching(value)
-        self.combo.blockSignals(False)
+    def _value_changed(self, value: int) -> None:
+        self.value_label.setText(value_text(value))
         self._update_apply()
 
     # -- sélection ----------------------------------------------------------
     def selection(self) -> int | None:
         if not self.enable.isChecked():
             return None
-        return self.spin.value()
+        return self.slider.value()
 
     def changed(self) -> dict:
         """`{}` sans changement, sinon `{"limit": n | None}`."""

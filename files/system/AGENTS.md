@@ -342,6 +342,10 @@ l'unité) et `off` (retire la configuration et l'unité) ; `apply` n'est appelé
 `gablue-ryzenadj.service` (oneshot, `ConditionPathExists=/etc/gablue/ryzenadj.conf`, démarré
 par `enable --now` à la première pose) — ryzenadj perd sa limite au reboot, l'unité la
 réapplique avant toute session, ce que l'autostart de `limitw --save` ne garantit pas.
+Le CPU est reconnu au **fabricant** (`AuthenticAMD`), pas au mot « Ryzen » : l'échantillon
+d'ingénierie de gen1 annonce « AMD Eng Sample » et refusait la limite (constaté 15/11/2026,
+`ryzenadj -i` y lit pourtant la table du SMU) ; un `-f` refusé par le matériel remonte dans le
+journal de la tâche, jamais masqué.
 Aucun de ces helpers n'accepte d'argument
 libre sans revérification : c'est la contrepartie du NOPASSWD. Scripts stockés 644, `+x` posé
 par post-install.

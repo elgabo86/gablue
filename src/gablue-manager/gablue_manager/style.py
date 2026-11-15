@@ -25,6 +25,10 @@ QLabel#error { color: #e5484d; font-size: 12px; }
 QLabel#ok { color: @online@; font-size: 12px; font-weight: 600; }
 QLabel#warn { color: @auth@; font-size: 12px; font-weight: 600; }
 QLabel#hint { color: @dim@; font-size: 11px; }
+/* Curseur de réglage (limite de température CPU) : la valeur courante en
+   grand, les bornes en petit sous la piste. */
+QLabel#sliderValue { font-size: 28px; font-weight: 700; }
+QLabel#sliderScale { color: @dim@; font-size: 11px; }
 QLabel#recommend {
     background: @onlineSoft@;
     color: @online@;
@@ -260,6 +264,35 @@ QComboBox QAbstractItemView {
     border-radius: 8px;
     selection-background-color: @accent@;
     selection-color: @onAccent@;
+}
+
+/* Curseur : piste arrondie, partie remplie à l'accent, poignée ronde plus
+   large que la piste (marges négatives obligatoires, sinon Qt la rogne à la
+   hauteur du sillon). */
+QSlider#ryzenSlider { min-height: 26px; }
+QSlider#ryzenSlider::groove:horizontal {
+    background: @barTrack@;
+    border: none;
+    border-radius: 4px;
+    height: 8px;
+}
+QSlider#ryzenSlider::sub-page:horizontal {
+    background: @accentSoft@;
+    border-radius: 4px;
+}
+QSlider#ryzenSlider::add-page:horizontal { background: transparent; }
+QSlider#ryzenSlider::handle:horizontal {
+    background: @accent@;
+    border: none;
+    width: 20px;
+    height: 20px;
+    margin: -6px 0;
+    border-radius: 10px;
+}
+QSlider#ryzenSlider::handle:horizontal:hover { background: @accentHover@; }
+QSlider#ryzenSlider::handle:horizontal:disabled,
+QSlider#ryzenSlider::sub-page:horizontal:disabled {
+    background: @scrollHandle@;
 }
 
 QPlainTextEdit {

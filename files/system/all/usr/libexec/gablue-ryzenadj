@@ -50,19 +50,27 @@ def run(argv: list[str], timeout: int = 20) -> tuple[int, str]:
     return result.returncode, (result.stdout or "") + (result.stderr or "")
 
 
-def on_ryzen() -> bool:
-    """Le CPU est-il un AMD Ryzen ? (ryzenadj ne fonctionne que là.)"""
+def on_amd() -> bool:
+    """Le CPU est-il un AMD ? (ryzenadj ne parle qu'aux SMU AMD.)
+
+    `/proc/cpuinfo` ne dit pas toujours « Ryzen » : un échantillon
+    d'ingénierie s'annonce « AMD Eng Sample: 100-000001322-50_Y » (gen1,
+    Hawk Point, constaté 15/11/2026), et exiger le mot « Ryzen » refusait la
+    limite sur ce poste alors que `ryzenadj -i` y lit la table du SMU. Le
+    fabricant est fiable ; le reste, c'est ryzenadj qui le dit (échec de "-f"
+    remonté dans le journal de la tâche, jamais masqué).
+    """
     try:
         info = Path("/proc/cpuinfo").read_text(
             encoding="utf-8", errors="replace"
         )
     except OSError:
         return False
-    return "AuthenticAMD" in info and "Ryzen" in info
+    return "AuthenticAMD" in info
 
 
 def supported() -> bool:
-    return Path(RYZENADJ).is_file() and on_ryzen()
+    return Path(RYZENADJ).is_file() and on_amd()
 
 
 def read_limit() -> int | None:

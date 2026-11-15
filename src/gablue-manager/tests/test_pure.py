@@ -674,6 +674,24 @@ class SystemTest(unittest.TestCase):
         self.assertEqual(module.parse_test_key(127, ""), "unknown")
         self.assertEqual(module.key_state("/inexistant.der"), "missing")
 
+    def test_ryzen_cpu_detection(self):
+        """Reconnaissance du CPU : le fabricant, pas le mot « Ryzen ».
+
+        Un échantillon d'ingénierie (gen1, Hawk Point, 15/11/2026) s'annonce
+        « AMD Eng Sample » et l'option avait disparu du menu.
+        """
+        self.assertTrue(local.ryzen_cpu(
+            "vendor_id\t: AuthenticAMD\n"
+            "model name\t: AMD Eng Sample: 100-000001322-50_Y\n"
+        ))
+        self.assertTrue(local.ryzen_cpu(
+            "vendor_id\t: AuthenticAMD\nmodel name\t: AMD Ryzen 7 5800X3D\n"
+        ))
+        self.assertFalse(local.ryzen_cpu(
+            "vendor_id\t: GenuineIntel\nmodel name\t: Intel(R) Core(TM) i5\n"
+        ))
+        self.assertFalse(local.ryzen_cpu(""))
+
     def test_ryzen_limit(self):
         """Limite Tctl : état JSON tolérant et script d'un seul geste."""
         status = local.parse_ryzenadj_status(json.dumps({
