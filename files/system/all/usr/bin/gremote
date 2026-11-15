@@ -745,7 +745,41 @@ with open(tmp, "w") as fh:
 os.replace(tmp, path)
 PY
     }
+    # Chromium (tout Electron : VacuumTube, FreeTube…) MET EN PAUSE ce qu'il
+    # joue quand le puits qu'il utilise est DÉTRUIT : décharger le nôtre sous
+    # ses pieds arrêtait la vidéo au moment où le son revenait au poste
+    # (mesuré 15/11/2026 sur Chromium 143, piste de test identique à gremote :
+    # `pos` figée et `paused=true` juste après l'unload, alors que le même
+    # puits laissé en place mais privé de son socket ne casse rien — c'est le
+    # retrait du nœud, pas la mort du tunnel, qui coupe la lecture). On déplace
+    # donc les flux vers le puits local AVANT de retirer le nôtre : le serveur
+    # les rebranche, l'application ne voit aucun nœud disparaître sous elle.
+    # Le déplacement est côté serveur, donc invisible pour le client Pulse
+    # comme pour PipeWire (aucun flux recréé).
+    move_streams_to_local() {
+        local idx dst i
+        idx="$(pactl list short sinks 2>/dev/null |
+            awk -v n="$sink_name" '$2 == n { print $1; exit }')"
+        [ -n "$idx" ] || return 0
+        # Destination : l'ancien défaut s'il existe encore, sinon le premier
+        # puits LOCAL — jamais un gremote-* (celui d'un pair, ou le nôtre).
+        dst="$prev_sink"
+        if [ -z "$dst" ] ||
+            ! pactl list short sinks 2>/dev/null |
+                awk -v n="$dst" '$2 == n { found = 1 } END { exit !found }'; then
+            dst="$(pactl list short sinks 2>/dev/null |
+                awk '$2 !~ /^gremote-/ { print $2; exit }')"
+        fi
+        [ -n "$dst" ] || return 0
+        pactl list short sink-inputs 2>/dev/null |
+            awk -v s="$idx" '$2 == s { print $1 }' |
+            while read -r i; do
+                pactl move-sink-input "$i" "$dst" >/dev/null 2>&1 || true
+            done
+    }
     cleanup_rdp() {
+        # AVANT tout retrait : sortir les flux de notre puits (voir ci-dessus).
+        move_streams_to_local
         # Ne décharger que si cet identifiant désigne ENCORE notre puits : PipeWire
         # réattribue les identifiants de module (536870916 observé deux fois), donc
         # un `unload-module` tardif supprimait le puits d'une connexion PLUS RÉCENTE
