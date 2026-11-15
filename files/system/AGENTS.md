@@ -106,13 +106,17 @@ Wrapper qui ouvre le dossier directement dans OpenCode Desktop. Mécanisme rétr
 
 ### konsole-run — action « Lancer dans Konsole » (Dolphin)
 
-Wrapper `usr/bin/konsole-run` + service menu `usr/share/kio/servicemenus/konsolerun.desktop` qui REMPLACE celui du paquet konsole (même nom de fichier, le COPY files/system/all écrase ; MimeType étendu à `application/x-shellscript` — l'original ne couvre que `x-executable`) :
+Wrapper `usr/bin/konsole-run` + service menu qui REMPLACE celui du paquet konsole (MimeType étendu à `application/x-shellscript` — l'original ne couvre que `x-executable`). Sa source vit **hors** des chemins possédés par un paquet (`usr/share/ublue-os/gablue/kio/konsolerun.desktop`) et `post-install` la repose en `/usr/share/kio/servicemenus/` : posée au `COPY files/system/all`, elle était écrasée par rpm, le `dnf5 upgrade` de `files/scripts/rpm` tournant **après** ce COPY (vécu 15/11/2026 : konsole 26.08.3 a réinstallé sa version, l'action retombait sur le `--hold` natif — ni en-tête, ni shell final) :
 
 - Affiche chemin + nom au lancement, exécution DIRECTE (shebang respecté), shell interactif à la fin (`exec bash`) — le `--hold` natif laissait une session morte non saisissable
 - Script sans +x : `+x` ajouté le temps de l'exécution puis permissions restaurées à l'identique (trap EXIT/INT/TERM/HUP — survit à Ctrl+C/fermeture de fenêtre ; bits spéciaux inclus via `stat -c %a`) ; chmod impossible → erreur claire, rien n'est exécuté
-- chmod +x posé par post-install (convention repo)
+- chmod +x posé par post-install (convention repo) ; `finalize` revérifie que l'override n'a pas été re-écrasé (`cmp` source ↔ cible, build en échec sinon)
 - **Double-clic NON couvert** : KIO (`OpenUrlJob::handleScripts`, ex-KRun) exécute les +x en direct sans consulter l'association MIME ; 3 issues codées en dur (`kiorc` `[Executable scripts] behaviourOnLaunch` = execute/alwaysAsk/open) — aucune ne lance Konsole. Vérifié test bac à sable + code KIO 10/2026
 - Validé local 10/2026 (perms 644 → 755 pendant → 644 après, interruption restaurée) avant intégration
+
+### Règle udev ThinkPad (`/usr/lib/udev/rules.d/99-thinkpad-thresholds-udev.rules`)
+
+Même mécanisme d'override que § konsole-run : source en `usr/share/ublue-os/gablue/udev/`, reposée par `post-install`, revérifiée par `finalize`. Elle garde les `chmod` des seuils de charge derrière `ENV{POWER_CHARGE_*_THRESHOLD}!=""` (commit `36678410`, « fix battery error for non compatible thresholds ») : sans ces gardes, un portable dont le firmware n'expose pas ces attributs déclenche des `RUN+=chmod` en erreur. Le fichier appartient au paquet `ublue-os-udev-rules` → réinstallé par le `dnf5 install` des paquets ublue (0.10 le 15/11/2026), d'où la repose.
 
 ### Binaire gamepadshortcuts (/usr/bin)
 

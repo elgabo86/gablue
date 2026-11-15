@@ -64,3 +64,24 @@ rm -rf \
 test -f /usr/etc/containers/policy.json && \
     mv /usr/etc/containers/policy.json /etc/containers/policy.json || true
 rm -rf /usr/etc
+
+# =============================================================================
+# GARDE-FOU : OVERRIDES /usr NON ÉCRASÉS PAR UN PAQUET
+# =============================================================================
+
+# `files/scripts/rpm` fait un `dnf5 upgrade` APRÈS `COPY files/system/all /` et rpm
+# réécrit alors les fichiers de ses paquets (konsole 26.08.3 a effacé le
+# servicemenu konsolerun.desktop, ublue-os-udev-rules 0.10 la règle udev ThinkPad —
+# constaté 15/11/2026). Les overrides concernés sont reposés par `post-install` ;
+# ce contrôle refuse de livrer une image où la repose aurait été perdue (paquet
+# réinstallé plus tard, chemin déplacé, source supprimée).
+while read -r source cible; do
+    [ -n "$source" ] || continue
+    if ! cmp -s "$source" "$cible"; then
+        echo "ERREUR : override perdu — ${cible} diffère de ${source}" >&2
+        exit 1
+    fi
+done <<'OVERRIDES'
+/usr/share/ublue-os/gablue/kio/konsolerun.desktop /usr/share/kio/servicemenus/konsolerun.desktop
+/usr/share/ublue-os/gablue/udev/99-thinkpad-thresholds-udev.rules /usr/lib/udev/rules.d/99-thinkpad-thresholds-udev.rules
+OVERRIDES

@@ -431,3 +431,21 @@ for mime in application/x-cd-image application/x-iso9660-image \
             application/x-raw-disk-image-xz-compressed; do
     xdg-mime default gablue-open-iso.desktop "$mime" || true
 done && unset -v mime
+
+# =============================================================================
+# OVERRIDES /usr REPOSÉS APRÈS LES DNF
+# =============================================================================
+
+# `files/scripts/rpm` met à jour les paquets Fedora APRÈS `COPY files/system/all /` :
+# rpm réécrit alors les fichiers de ses paquets et efface tout override posé au
+# COPY. Constaté 15/11/2026 : konsole 26.08.3 (monté par le `dnf5 upgrade`) a
+# remis son propre servicemenu `konsolerun.desktop` — l'action « Lancer dans
+# Konsole » repassait au `--hold` natif, sans en-tête ni shell final ; même piège
+# pour la règle udev ThinkPad, réinstallée avec ublue-os-udev-rules 0.10 (perte
+# des gardes ENV, chmod sur des seuils absents). Les sources vivent donc hors des
+# chemins possédés par un paquet et sont reposées ici, en dernier. `finalize`
+# revérifie chaque paire (cmp) et fait échouer le build sinon.
+install -Dm644 /usr/share/ublue-os/gablue/kio/konsolerun.desktop \
+    /usr/share/kio/servicemenus/konsolerun.desktop
+install -Dm644 /usr/share/ublue-os/gablue/udev/99-thinkpad-thresholds-udev.rules \
+    /usr/lib/udev/rules.d/99-thinkpad-thresholds-udev.rules
