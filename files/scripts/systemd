@@ -76,3 +76,9 @@ systemctl enable cec-active-source.timer
 # Mémoire et CPU : activation des services dmemcg-booster
 systemctl enable dmemcg-booster-system.service
 systemctl --global enable dmemcg-booster-user.service
+
+# Raccourcis manette : service utilisateur de session (remplace l'autostart XDG
+# gablue-gamepadshortcuts.desktop, qui n'était déjà qu'un wrapper de boucle bash
+# autour du binaire). `--global` = activé pour tous les comptes sans redémarrage
+# du gestionnaire utilisateur ; `gablue-gamepad off` le neutralise par masque.
+systemctl --global enable gablue-gamepadshortcuts.service

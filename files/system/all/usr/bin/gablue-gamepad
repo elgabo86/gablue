@@ -1,47 +1,72 @@
 #!/usr/bin/bash
 
-# gablue-gamepad — raccourcis manette Gablue (autostart de session)
+# gablue-gamepad — raccourcis manette Gablue (service utilisateur systemd)
 #
-# Les raccourcis sont livrés par l'image et lancés à l'ouverture de session par
-# `/etc/xdg/autostart/gablue-gamepadshortcuts.desktop`. `off` les coupe de deux
-# façons, parce qu'aucune ne suffit seule :
-#   - un masque d'autostart utilisateur (`~/.config/autostart`, Hidden=true :
-#     mécanisme standard XDG, celui qu'utilise le panneau Plasma) → ils ne
-#     reviendront pas à la prochaine session ;
-#   - arrêt de l'instance en cours (lanceur + binaire) → ils s'arrêtent tout de
+# Les raccourcis sont un service **utilisateur** livré par l'image et activé
+# globalement (`graphical-session.target.wants`, posé au build par
+# `files/scripts/systemd`) : il démarre avec la session graphique — même point
+# que l'autostart XDG qu'il remplace (`After=graphical-session.target`) — et
+# systemd le relance seul quand il meurt (`Restart=always`). Plus de boucle bash
+# qui reforkait un `sleep 1` par seconde pour surveiller le binaire.
+#
+# `off` le coupe de deux façons, parce qu'aucune ne suffit seule :
+#   - un masque utilisateur (`systemctl --user mask`, `~/.config/systemd/user` :
+#     il l'emporte sur l'activation globale livrée par l'image) → il ne
+#     reviendra pas à la prochaine session ;
+#   - arrêt immédiat (`stop`), plus celui d'une instance lancée hors systemd
+#     (reste d'une image antérieure, lancement manuel) → tout s'arrête tout de
 #     suite, sans attendre une déconnexion.
-# `on` fait l'inverse et relance immédiatement.
+# `on` fait l'inverse et démarre immédiatement.
 #
-# Aucun privilège : l'autostart est dans le dossier de l'utilisateur et les
-# processus arrêtés sont les siens. Le masque ne modifie jamais l'image.
+# Aucun privilège : le masque et le lien d'activation vivent dans le dossier de
+# l'utilisateur, les processus arrêtés sont les siens. L'image n'est jamais
+# modifiée.
 #
 # Usage : gablue-gamepad on|off|status
 #   status : 0 = actifs, 1 = désactivés
 
 set -eu
 
-AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
-OVERRIDE="$AUTOSTART_DIR/gablue-gamepadshortcuts.desktop"
-LAUNCHER="/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/launchgamepadshortcuts"
+UNIT="gablue-gamepadshortcuts.service"
 BINARY="/usr/bin/gamepadshortcuts"
+
+# Ancien mécanisme (images <= 20261115) : masque d'autostart XDG. Migré une
+# seule fois — une case décochée avant la mise à jour doit le rester.
+LEGACY_OVERRIDE="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/gablue-gamepadshortcuts.desktop"
 
 usage() {
     echo "Usage : gablue-gamepad on|off|status" >&2
     exit 2
 }
 
-# Actifs = pas de masque Hidden=true (l'image fournit l'entrée d'autostart).
+# Actifs = pas de masque utilisateur (l'image active le service pour tous).
 enabled() {
-    [ -f "$OVERRIDE" ] || return 0
-    ! grep -Eiq '^[[:space:]]*Hidden[[:space:]]*=[[:space:]]*true[[:space:]]*$' "$OVERRIDE"
+    case "$(systemctl --user is-enabled "$UNIT" 2>/dev/null || true)" in
+        enabled*) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
-# PIDs (utilisateur courant) du lanceur et du binaire. Le lanceur est un
-# script bash : son `comm` est tronqué à 15 caractères, donc on lit la ligne
-# de commande complète de chaque processus et on exige les chemins exacts.
+# Migration du masque d'autostart XDG : `Hidden=true` devient un masque
+# systemd. Le fichier n'est retiré qu'une fois le masque posé — un `mask` qui
+# échoue (pas de gestionnaire utilisateur) laisse la trace pour la fois d'après.
+migrate_legacy() {
+    [ -f "$LEGACY_OVERRIDE" ] || return 0
+    if grep -Eiq '^[[:space:]]*Hidden[[:space:]]*=[[:space:]]*true[[:space:]]*$' \
+            "$LEGACY_OVERRIDE"; then
+        systemctl --user mask --now "$UNIT" || return 0
+        rm -f "$LEGACY_OVERRIDE"
+        echo "Raccourcis manette désactivés (masque d'autostart migré)."
+        return 0
+    fi
+    rm -f "$LEGACY_OVERRIDE"
+}
+
+# Instances hors systemd (reste d'une image antérieure, lancement manuel) : PIDs
+# de l'utilisateur dont la ligne de commande porte le chemin EXACT du binaire.
 # Aucun `pkill -f` : le motif pourrait désigner un shell lançateur.
-running_pids() {
-    local dir pid uid own cmd
+stray_pids() {
+    local dir pid uid own
     uid=$(id -u)
     for dir in /proc/[0-9]*; do
         pid=${dir#/proc/}
@@ -49,61 +74,38 @@ running_pids() {
         own=$(sed -n 's/^Uid:[[:space:]]*\([0-9]*\).*/\1/p' \
               "$dir/status" 2>/dev/null || true)
         [ "$own" = "$uid" ] || continue
-        cmd=$(tr '\0' ' ' < "$dir/cmdline" 2>/dev/null || true)
-        case " $cmd " in
-            *" $LAUNCHER "*|*" $BINARY "*) printf '%s\n' "$pid" ;;
+        case " $(tr '\0' ' ' < "$dir/cmdline" 2>/dev/null || true) " in
+            *" $BINARY "*) printf '%s\n' "$pid" ;;
         esac
     done
 }
 
-stop_running() {
-    local pids pid attempt
-    pids=$(running_pids || true)
+stop_strays() {
+    local pids pid
+    pids=$(stray_pids || true)
     [ -n "$pids" ] || return 0
-    echo "Arrêt des raccourcis manette (PID : $(echo $pids))…"
+    echo "Instance hors systemd arrêtée (PID : $(echo "$pids"))."
     for pid in $pids; do
         kill "$pid" 2>/dev/null || true
     done
-    # Le lanceur relance le binaire toutes les secondes : on laisse un court
-    # instant aux deux pour sortir, puis on force.
-    for attempt in 1 2 3 4 5 6 7 8 9 10; do
-        pids=$(running_pids || true)
-        [ -n "$pids" ] && { sleep 0.2; continue; }
-        return 0
-    done
-    echo "Arrêt forcé."
-    for pid in $pids; do
-        kill -9 "$pid" 2>/dev/null || true
-    done
-}
-
-start_running() {
-    if [ -n "$(running_pids || true)" ]; then
-        echo "Raccourcis manette déjà actifs."
-        return 0
-    fi
-    setsid "$LAUNCHER" </dev/null >/dev/null 2>&1 &
-    echo "Raccourcis manette lancés."
 }
 
 case "${1:-}" in
     on)
-        rm -f "$OVERRIDE"
-        start_running
+        migrate_legacy
+        systemctl --user unmask "$UNIT" >/dev/null 2>&1 || true
+        systemctl --user enable "$UNIT" >/dev/null 2>&1 || true
+        systemctl --user start "$UNIT"
+        echo "Raccourcis manette lancés."
         ;;
     off)
-        mkdir -p "$AUTOSTART_DIR"
-        cat > "$OVERRIDE" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Gablue Gamepad Shortcuts (désactivés)
-Comment=Masque posé par Gablue Manager — retirer ce fichier réactive les raccourcis
-Hidden=true
-EOF
-        chmod 644 "$OVERRIDE"
-        stop_running
+        migrate_legacy
+        systemctl --user stop "$UNIT" 2>/dev/null || true
+        systemctl --user mask "$UNIT"
+        stop_strays
         ;;
     status)
+        migrate_legacy
         if enabled; then
             echo "enabled"
             exit 0

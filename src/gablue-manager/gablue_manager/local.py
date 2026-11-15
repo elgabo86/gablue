@@ -3119,7 +3119,8 @@ def system_apply_script(changes: dict[str, bool]) -> str:
             f"{ATUIN_HELPER} " + ("on" if changes["atuin"] else "off")
         ]))
     if "gamepad" in changes:
-        # Autostart de session : fichiers de l'utilisateur, aucun privilège.
+        # Service utilisateur de session : fichiers de l'utilisateur, aucun
+        # privilège.
         steps.append(("Raccourcis manette", [
             f"{GAMEPAD_HELPER} " + ("on" if changes["gamepad"] else "off")
         ]))
