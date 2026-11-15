@@ -1,0 +1,312 @@
+# Build ISO live, en workflow réutilisable : `build-gablue-live-isos.yml`
+# l'appelle pour le build normal puis, le cas échéant, pour le rejeu d'une
+# build planifiée ratée. Il ne porte AUCUNE condition de déclenchement : le
+# filtrage appartient à l'appelant, sinon un job sauté à l'intérieur d'un
+# workflow appelé ne remonte pas de façon fiable comme `skipped` au job
+# appelant (et `create-release` croirait à un build réussi).
+name: Reusable Build Live ISO
+on:
+  workflow_call:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  packages: write
+  actions: read
+
+# `env` d'un workflow n'est PAS hérité par un workflow appelé : le nom en
+# minuscules du propriétaire (étiquettes ghcr.io) se calcule ici.
+env:
+  REPO_OWNER: ${{ github.repository_owner }}
+
+jobs:
+  build-live-iso:
+    name: Build Live ISO
+    runs-on: ubuntu-26.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        image_name:
+          - gablue-main
+          - gablue-main-dx
+          - gablue-nvidia
+          - gablue-nvidia-open
+          - gablue-nvidia-open-dx
+
+    steps:
+      - name: Afficher l'espace disque initial
+        run: sudo df -h
+
+      - name: Libérer l'espace disque (Ubuntu)
+        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6 # v10
+        # extra-squeeze = équivalent du tool-cache:true de jlumbroso/free-disk-space
+        # (supprime en plus /opt/hostedtoolcache et /usr/share/miniconda, ~6G)
+        # (aligné Bazzite 7ecb26a1)
+        with:
+          extra-squeeze: "true"
+
+      # Checkout avant le montage BTRFS : la composite action locale
+      # ./.github/actions/mount-btrfs-storage exige que le dépôt soit présent.
+      - name: Checkout du dépôt
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      # Le loopback BTRFS compressé absorbe le payload ISO (image de base +
+      # flatpaks + préfixe Wine, ~60G+ logiques). Sans lui, le disque ext4 du
+      # runner (~118G) sature au commit.
+      - name: Monter stockage BTRFS compressé pour podman
+        uses: ./.github/actions/mount-btrfs-storage
+        with:
+          target-dir: /var/lib/containers
+
+      # CRITIQUE : par défaut podman copie le layer diff du commit dans
+      # /var/tmp (image_copy_tmp_dir), SUR LE DISQUE HÔTE, hors du loopback.
+      # Cette copie (~30G non compressés) saturait le disque hôte, ce qui
+      # affamait le fichier loopback sparse → erreurs I/O → BTRFS forcé en
+      # read-only (les "corruptions" observées n'étaient que ça). On redirige
+      # le tmp de copie vers le loopback compressé via un drop-in
+      # containers.conf.d (chemin explicite plutôt que la valeur spéciale
+      # "storage", à la résolution buggy — podman#28211).
+      - name: Rediriger le tmp de copie d'images vers le loopback BTRFS
+        run: |
+          sudo mkdir -p /var/lib/containers/image-copy-tmp /etc/containers/containers.conf.d
+          sudo tee /etc/containers/containers.conf.d/99-gablue-image-copy-tmp.conf <<'EOF'
+          [engine]
+          image_copy_tmp_dir = "/var/lib/containers/image-copy-tmp"
+          EOF
+          sudo podman info | grep -i imageCopyTmpDir
+
+      - name: Start timer
+        run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Obtenir le nom en minuscules du propriétaire
+        id: repo_owner_case
+        run: echo "lowercase=${REPO_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Déterminer le tag de l'image
+        id: generate-tag
+        shell: bash
+        run: |
+          TAG="latest"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Build de l'image container payload
+        shell: bash
+        run: |
+          BASE_IMAGE="ghcr.io/${{ steps.repo_owner_case.outputs.lowercase }}/${{ matrix.image_name }}:${{ steps.generate-tag.outputs.tag }}"
+          INSTALL_IMAGE_PAYLOAD="ghcr.io/${{ steps.repo_owner_case.outputs.lowercase }}/${{ matrix.image_name }}:${{ steps.generate-tag.outputs.tag }}"
+          # Répertoire tmp sur le loopback BTRFS (créé par le drop-in containers.conf.d)
+          IMAGE_COPY_TMP="/var/lib/containers/image-copy-tmp"
+          build_log="$(mktemp)"
+          for attempt in 1 2 3; do
+            echo "::group::Tentative de build payload $attempt/3"
+            # TMPDIR redirigé dans le loopback : podman build écrit aussi des
+            # temporaires hors image_copy_tmp_dir (aligné Bazzite 7ecb26a1)
+            if sudo env TMPDIR="$IMAGE_COPY_TMP" podman build \
+              --cap-add sys_admin \
+              --security-opt label=disable \
+              --build-arg BASE_IMAGE="$BASE_IMAGE" \
+              --build-arg INSTALL_IMAGE_PAYLOAD="$INSTALL_IMAGE_PAYLOAD" \
+              -t localhost/payload:latest installer/ 2>&1 | tee "$build_log"; then
+              echo "::endgroup::"
+              echo "Build payload réussi à la tentative $attempt"
+              exit 0
+            fi
+            echo "::endgroup::"
+            # Saturation disque = erreur non récupérable : chaque tentative reconstruit
+            # une image identique → même échec au commit. Idem si le loopback BTRFS est
+            # passé read-only (disque hôte saturé → I/O errors) : le storage est mort.
+            # On s'arrête sans retry pour ne pas gaspiller ~30 min par tentative.
+            if grep -qE "no space left on device|read-only file system|disk I/O error" "$build_log"; then
+              echo "::error::Espace disque insuffisant ou storage read-only lors du build payload — arrêt sans retry"
+              exit 1
+            fi
+            echo "Échec build payload tentative $attempt — nettoyage avant retry..."
+            sudo podman system prune -f --volumes || true
+            sudo podman rmi localhost/payload:latest 2>/dev/null || true
+            sudo df -h /
+          done
+          echo "::error::Échec du build payload après 3 tentatives"
+          exit 1
+
+      - name: Afficher l'espace disque après build payload
+        if: always()
+        run: |
+          sudo df -h
+          sudo du -sh /var/tmp/btrfs_loopbacks/*.img 2>/dev/null || true
+
+      - name: Générer l'ISO Live
+        id: build
+        shell: bash
+        run: |
+          ISO_OUTPUT_DIR="${{ github.workspace }}/iso-output"
+          mkdir -p "$ISO_OUTPUT_DIR"
+
+          # Pré-pull de l'image Titanoboa avec retry : quay.io peut subir des
+          # timeouts réseau transitoires (cf. run 30193960415 attempt 1 où les
+          # 3 retries internes de podman ont tous timeout → job ISO échoué).
+          # On pull d'abord ; le podman run utilise ensuite le cache local.
+          TITANOBOA_IMAGE="quay.io/fedora/fedora:latest"
+          for attempt in 1 2 3 4 5; do
+            if sudo podman pull "$TITANOBOA_IMAGE"; then
+              echo "Pull Titanoboa réussi à la tentative $attempt"
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::Échec du pull Titanoboa après 5 tentatives"
+              exit 1
+            fi
+            echo "Échec pull Titanoboa tentative $attempt — retry dans 15s..."
+            sleep 15
+          done
+
+          # Podman run avec notre build_iso.sh patché (sans -all-root)
+          # pour préserver les UID 1000 du préfixe Wine dans le squashfs
+          ISO_LABEL="GABLUE_LIVE"
+          sudo podman run --rm \
+            --cap-add sys_admin --security-opt label=disable \
+            -v "${{ github.workspace }}/installer/titanoboa_build_iso.sh:/src/build_iso.sh:ro" \
+            --mount type=image,source=localhost/payload:latest,dst=/rootfs \
+            -v "$ISO_OUTPUT_DIR:/output" \
+            "$TITANOBOA_IMAGE" /src/build_iso.sh
+
+          # L'ISO est nommée selon le label iso.yaml → GABLUE_LIVE.iso
+          ISO_DEST="${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso"
+          mv "$ISO_OUTPUT_DIR/${ISO_LABEL}.iso" "$ISO_DEST"
+          sudo chown "$(id -u):$(id -g)" "$ISO_DEST"
+          echo "iso-dest=$ISO_DEST" >> $GITHUB_OUTPUT
+
+      - name: Préparer le répertoire d'upload
+        id: upload-directory
+        shell: bash
+        run: |
+          ISO_UPLOAD_DIR=${{ github.workspace }}/upload
+          ISO_PATH=${{ steps.build.outputs.iso-dest }}
+          ISO_NAME=$(basename ${ISO_PATH})
+          mkdir -p ${ISO_UPLOAD_DIR}
+          mv ${ISO_PATH} ${ISO_UPLOAD_DIR}
+          (cd ${ISO_UPLOAD_DIR} && sha256sum ${ISO_NAME} | tee ${ISO_NAME}-CHECKSUM)
+          echo "iso-upload-dir=${ISO_UPLOAD_DIR}" >> $GITHUB_OUTPUT
+
+      - name: Signature Cosign de l'ISO
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: "v2.6.1"
+      - run: |
+          cosign sign-blob \
+            --yes \
+            --bundle "${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso-cosign.bundle" \
+            "${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso"
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+
+      - name: Attestation de provenance du build
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: ${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso
+
+      - name: Collect ISO build metrics
+        id: metrics
+        shell: bash
+        run: |
+          IMG_NAME="${{ matrix.image_name }}"
+          BUILD_TIME=$(( $(date +%s) - BUILD_START ))
+          TIMESTAMP="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          ISO_PATH="${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso"
+
+          # Taille ISO
+          ISO_SIZE=$(du -h "$ISO_PATH" 2>/dev/null | awk '{print $1}' || echo "N/A")
+          ISO_SIZE_B=$(stat -c%s "$ISO_PATH" 2>/dev/null || echo "0")
+
+          # Espace disque
+          ROOT_FREE=$(df -h / | awk 'NR==2{print $4}')
+          ROOT_USED=$(df -h / | awk 'NR==2{print $3}')
+          ROOT_SIZE=$(df -h / | awk 'NR==2{print $2}')
+          ROOT_PCT=$(df -h / | awk 'NR==2{print $5}')
+          MNT_FREE=$(df -h /mnt 2>/dev/null | awk 'NR==2{print $4}' || echo "N/A")
+          PODMAN_FREE=$(df -h /var/lib/containers 2>/dev/null | awk 'NR==2{print $4}' || echo "N/A")
+
+          # JSON
+          METRICS_FILE="${IMG_NAME}-iso-metrics.json"
+          jq -n \
+            --arg image "$IMG_NAME" \
+            --arg timestamp "$TIMESTAMP" \
+            --arg build_time "$BUILD_TIME" \
+            --arg iso_size "$ISO_SIZE" \
+            --arg iso_size_bytes "$ISO_SIZE_B" \
+            --arg root_free "$ROOT_FREE" \
+            --arg root_used "$ROOT_USED" \
+            --arg root_size "$ROOT_SIZE" \
+            --arg root_pct "$ROOT_PCT" \
+            --arg mnt_free "$MNT_FREE" \
+            --arg podman_free "$PODMAN_FREE" \
+            '{
+              image: $image,
+              type: "iso",
+              timestamp: $timestamp,
+              build_time_s: $build_time,
+              iso: { size: $iso_size, size_bytes: $iso_size_bytes },
+              disk: {
+                root: { size: $root_size, used: $root_used, free: $root_free, pct: $root_pct },
+                mnt: { free: $mnt_free },
+                podman_storage: { free: $podman_free }
+              }
+            }' > "$METRICS_FILE"
+
+          # Step summary
+          {
+            echo "## 📊 ISO metrics — ${IMG_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Timestamp | ${TIMESTAMP} |"
+            echo "| Build time | ${BUILD_TIME}s |"
+            echo "| ISO size | ${ISO_SIZE} |"
+            echo ""
+            echo "### Disk space"
+            echo ""
+            echo "| Mount point | Size | Used | Free | % |"
+            echo "|-------------|------|------|------|---|"
+            echo "| / | ${ROOT_SIZE} | ${ROOT_USED} | ${ROOT_FREE} | ${ROOT_PCT} |"
+            echo "| /mnt | - | - | ${MNT_FREE} | - |"
+            echo "| /var/lib/containers | - | - | ${PODMAN_FREE} | - |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          cat "$METRICS_FILE"
+
+      - name: Upload ISO metrics
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: metrics-${{ matrix.image_name }}-iso
+          path: ${{ matrix.image_name }}-iso-metrics.json
+          retention-days: 90
+          overwrite: true
+
+      - name: Upload de l'ISO vers BuzzHeavier
+        id: upload
+        shell: bash
+        run: |
+          ISO_PATH="${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso"
+          ISO_NAME="${{ matrix.image_name }}"
+          RESPONSE=$(curl -s -T "$ISO_PATH" "https://w.buzzheavier.com/$(basename "$ISO_PATH")")
+          ID=$(echo "$RESPONSE" | jq -r '.data.id')
+          LINK="https://buzzheavier.com/$ID"
+          echo "$LINK" > "${ISO_NAME}-live-link.txt"
+
+      - name: Upload artifact lien
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ matrix.image_name }}-live-link
+          path: ${{ matrix.image_name }}-live-link.txt
+          overwrite: true
+
+      - name: Upload artifact checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ matrix.image_name }}-live-checksum
+          path: ${{ steps.upload-directory.outputs.iso-upload-dir }}/${{ matrix.image_name }}-${{ steps.generate-tag.outputs.tag }}-live-amd64.iso-CHECKSUM
+          overwrite: true
+

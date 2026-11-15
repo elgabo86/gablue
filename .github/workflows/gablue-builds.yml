@@ -10,8 +10,8 @@ on:
   # `rpm-ostreed-automatic` du samedi 04:00 côté poste, donc l'image reçue a
   # moins de 24 h. Les mises à jour urgentes (kernel, Mesa, NVIDIA) passent par
   # un tag de commit ou workflow_dispatch, comme chez Bazzite (cron hebdo +
-  # déclenchement à la demande). Un échec planifié est rejoué une fois par
-  # retry-gablue-builds.yml.
+  # déclenchement à la demande). Un échec planifié est rejoué une fois, dans
+  # le même run, par le job `retry` ci-dessous.
   schedule:
     - cron: "0 2 * * 5"
   push:
@@ -22,16 +22,6 @@ on:
       - "**.md"
       - "**.txt"
   workflow_dispatch:
-  # Appelée par retry-gablue-builds.yml (filet de sécurité) : un
-  # workflow_dispatch émis avec GITHUB_TOKEN ne déclencherait rien, la
-  # récursion étant bloquée par GitHub. `inputs.retry` distingue cet appel des
-  # déclencheurs normaux (vrai uniquement via workflow_call).
-  workflow_call:
-    inputs:
-      retry:
-        description: "Rejeu déclenché par retry-gablue-builds.yml"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -45,7 +35,6 @@ jobs:
       group: build-gablue-images-main-${{ github.ref }}
       cancel-in-progress: true
     if: |
-      inputs.retry ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
@@ -67,7 +56,6 @@ jobs:
       group: build-gablue-images-nvidia-${{ github.ref }}
       cancel-in-progress: true
     if: |
-      inputs.retry ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
@@ -92,7 +80,6 @@ jobs:
       group: build-gablue-images-nvidia-open-${{ github.ref }}
       cancel-in-progress: true
     if: |
-      inputs.retry ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
@@ -115,7 +102,6 @@ jobs:
       group: build-gablue-images-dx-${{ github.ref }}
       cancel-in-progress: true
     if: |
-      inputs.retry ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
@@ -136,7 +122,6 @@ jobs:
       group: build-gablue-images-nvidia-open-dx-${{ github.ref }}
       cancel-in-progress: true
     if: |
-      inputs.retry ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
@@ -152,11 +137,108 @@ jobs:
       kernel_type: "ogc"
       nvidia_flavor: "nvidia-open"
 
+  # Filet de sécurité des builds planifiées : un échec du run planifié est
+  # rejoué **une fois**, comme un job de ce run et non plus dans un workflow
+  # séparé. Un `workflow_run` se déclenche à CHAQUE fin de run surveillé —
+  # annulé, sauté, manuel compris — donc il créait un run fantôme
+  # « retry-gablue-builds » (conclusion `skipped`, 1 s) à chaque push, voire
+  # plusieurs par push quand une build annulée par `cancel-in-progress`
+  # finissait à son tour. Le rejeu garde la mécanique éprouvée : appel direct
+  # du workflow réutilisable, jamais `workflow_dispatch` (un événement émis
+  # avec GITHUB_TOKEN ne déclencherait rien, récursion bloquée par GitHub) ni
+  # PAT (aucun jeton supplémentaire à gérer).
+  #
+  # Portée volontairement étroite, identique à l'ancien workflow : seule une
+  # exécution PLANIFIÉE, à sa PREMIÈRE tentative, rejoue — un push tagué qui
+  # échoue se voit tout de suite, et un « Re-run » manuel (`run_attempt` > 1)
+  # est déjà une décision humaine. Un échec déterministe coûte donc une
+  # seconde salve (5 images, en parallèle), puis plus rien jusqu'au créneau
+  # suivant.
+  #
+  # Les cinq variantes sont rejouées ensemble, comme avant : le rejeu reste
+  # une simple seconde salve, sans état à propager entre jobs. Groupe de
+  # concurrence à part, sans annulation : un rejeu ne doit ni s'annuler
+  # lui-même, ni tuer la build d'un push plus récent.
+  retry:
+    name: Rejouer ${{ matrix.image_name }}
+    needs: [build-main, build-nvidia, build-nvidia-open, build-dx, build-nvidia-open-dx]
+    if: failure() && github.event_name == 'schedule' && github.run_attempt == 1
+    concurrency:
+      group: build-gablue-retry-${{ matrix.image_name }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        # Noms des variantes de `main`, écrits en dur : le rejeu ne part que
+        # d'un run PLANIFIÉ, qui ne s'exécute que sur la branche par défaut —
+        # les variantes `-test` des jobs de build (ternaire sur `github.ref`)
+        # n'ont donc pas à être rejouées ici.
+        include:
+          - image_name: "gablue-main"
+            image_desc: "Gablue main image"
+            image_variant: "main"
+            source_image: "kinoite"
+            fedora_version: "45"
+            kernel_type: "ogc"
+            nvidia_flavor: ""
+          - image_name: "gablue-nvidia"
+            image_desc: "Gablue nvidia image"
+            image_variant: "nvidia"
+            source_image: "kinoite"
+            fedora_version: "45"
+            # Kernel OGC LTS : Bazzite paire le driver NVIDIA LTS closed avec
+            # le kernel ogc-lts (voir build-nvidia ci-dessus)
+            kernel_type: "ogc-lts"
+            nvidia_flavor: "nvidia-lts"
+          - image_name: "gablue-nvidia-open"
+            image_desc: "Gablue nvidia-open image"
+            image_variant: "nvidia-open"
+            source_image: "kinoite"
+            fedora_version: "45"
+            kernel_type: "ogc"
+            nvidia_flavor: "nvidia-open"
+          - image_name: "gablue-main-dx"
+            image_desc: "Gablue main-dx image (développement avec virtualisation)"
+            image_variant: "main"
+            source_image: "kinoite"
+            fedora_version: "45"
+            kernel_type: "ogc"
+            nvidia_flavor: ""
+          - image_name: "gablue-nvidia-open-dx"
+            image_desc: "Gablue nvidia-open-dx image (développement avec virtualisation)"
+            image_variant: "nvidia-open"
+            source_image: "kinoite"
+            fedora_version: "45"
+            kernel_type: "ogc"
+            nvidia_flavor: "nvidia-open"
+    uses: ./.github/workflows/reusable-gablue-image.yml
+    secrets: inherit
+    with:
+      image_name: ${{ matrix.image_name }}
+      image_desc: ${{ matrix.image_desc }}
+      image_variant: ${{ matrix.image_variant }}
+      source_image: ${{ matrix.source_image }}
+      fedora_version: ${{ matrix.fedora_version }}
+      kernel_type: ${{ matrix.kernel_type }}
+      nvidia_flavor: ${{ matrix.nvidia_flavor }}
+
   update-readme:
     name: Update README versions
     runs-on: ubuntu-26.04
-    needs: [build-main, build-nvidia, build-nvidia-open, build-dx, build-nvidia-open-dx]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [build-main, build-nvidia, build-nvidia-open, build-dx, build-nvidia-open-dx, retry]
+    # `always()` : un run planifié sauvé par le job `retry` porte encore le
+    # `needs` en échec de la première salve — sans lui, le tableau de versions
+    # du README ne serait jamais mis à jour sur ces runs. Le rejeu refait les
+    # cinq variantes, donc son succès suffit à garantir les cinq artifacts.
+    if: >-
+      always() && !cancelled() &&
+      github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
+      (needs.retry.result == 'success' ||
+       (needs.build-main.result == 'success' &&
+        needs.build-nvidia.result == 'success' &&
+        needs.build-nvidia-open.result == 'success' &&
+        needs.build-dx.result == 'success' &&
+        needs.build-nvidia-open-dx.result == 'success'))
     permissions:
       contents: write
       actions: read

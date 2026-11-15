@@ -491,6 +491,10 @@ jobs:
           name: versions-${{ inputs.image_name }}
           path: ${{ inputs.image_name }}.json
           retention-days: 7
+          # Le rejeu d'une build planifiée republie le même nom dans le MÊME
+          # run : sans écrasement, la seconde salve échouerait sur « artifact
+          # already exists » alors que son image est construite.
+          overwrite: true
 
       # Vérification SecureBoot : les kmods doivent être signés avec la clé Gablue
       - name: SecureBoot check
@@ -827,3 +831,6 @@ jobs:
           name: metrics-${{ inputs.image_name }}
           path: ${{ inputs.image_name }}-metrics.json
           retention-days: 90
+          # Le rejeu d'une build planifiée republie le même nom dans le MÊME
+          # run (voir le job `retry` de gablue-builds.yml)
+          overwrite: true
