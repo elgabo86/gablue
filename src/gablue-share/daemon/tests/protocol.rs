@@ -81,6 +81,8 @@ fn boot(root: std::path::PathBuf, shares: String) -> Fixture {
         port: Some(0),
         threads: 2,
         allow_nonlocal: false,
+        launcher: None,
+        tray: false, // aucune icône sur le bureau pendant `cargo test`
     };
     std::thread::spawn(move || {
         let _ = run(config, options, Some(tx));
@@ -149,6 +151,11 @@ fn info_lists_the_peer_and_its_shares() {
     assert!(text.contains("\"peer_id\":\"test-peer\""), "{text}");
     assert!(text.contains("\"id\":\"s1\""), "{text}");
     assert!(text.contains("Données"), "{text}");
+    // Le compte qui sert : c'est lui qui distingue deux utilisateurs du même
+    // poste (même `peer_id`, même port).
+    use std::os::unix::fs::MetadataExt;
+    let own = std::fs::metadata(&fixture.root).unwrap().uid();
+    assert!(text.contains(&format!("\"uid\":{own}")), "{text}");
 }
 
 #[test]

@@ -315,7 +315,13 @@ INFO_FIELDS = (
 # dernière rangée à moitié vide, d'où un trou sous « Démarrage »).
 EXTRA_FIELDS = (
     ("secure_boot", "Secure Boot"),
+    # « Partage de fichiers » : renseigné seulement si ce poste partage
+    # quelque chose (voir `local.share_state_label`).
+    ("shares", "Partage de fichiers"),
 )
+
+#: Champs qui n'apparaissent que sur certaines configurations.
+OPTIONAL_FIELDS = frozenset({"shares"})
 
 class InfoPanel(QFrame):
     """Résumé matériel et système de la machine courante, en deux colonnes."""
@@ -396,6 +402,10 @@ class InfoPanel(QFrame):
         left_layout.setSpacing(10)
         for key, label in EXTRA_FIELDS:
             left_layout.addLayout(self._field_cell(key, label))
+        # Un champ facultatif masqué ne doit pas laisser d'étiquette en l'air :
+        # libellé et valeur disparaissent ensemble.
+        for key in OPTIONAL_FIELDS:
+            self._set_field_visible(key, False)
 
         self._disks_block = QWidget(self._left_block)
         disks_layout = QVBoxLayout(self._disks_block)
@@ -451,6 +461,20 @@ class InfoPanel(QFrame):
             label = self._values.get(key)
             if label is not None and text:
                 label.setText(str(text))
+
+    def _set_field_visible(self, key: str, visible: bool) -> None:
+        for widget in (self._labels.get(key), self._values.get(key)):
+            if widget is not None:
+                widget.setVisible(visible)
+
+    def set_optional(self, key: str, text: str) -> None:
+        """Champ facultatif : affiché seulement quand il a quelque chose à dire."""
+        value = self._values.get(key)
+        if value is None:
+            return
+        présent = bool(str(text).strip())
+        value.setText(str(text) if présent else "—")
+        self._set_field_visible(key, présent)
 
     def set_label(self, key: str, text: str) -> None:
         """Renomme un champ (« Modèle » → « Carte mère » selon la machine)."""

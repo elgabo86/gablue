@@ -1014,6 +1014,7 @@ class MainWindow(QMainWindow):
         values.pop("disks", None)
         temperatures = values.pop("temperatures", "")
         vram = values.pop("vram", "")
+        shares = values.pop("shares", "")
         # Le nom Vulkan (VBIOS) est plus précis que celui du die : il est lu
         # hors thread GUI au démarrage et conservé pour toutes les passes.
         if self._gpu_name:
@@ -1028,6 +1029,8 @@ class MainWindow(QMainWindow):
             self.info_panel.set_label("model", model_label)
         self.info_panel.set_disks(disk_rows())
         self.info_panel.set_temperatures(temperatures)
+        # Ligne présente seulement si ce poste partage quelque chose.
+        self.info_panel.set_optional("shares", shares)
 
     def _load_hardware(self) -> None:
         """Charge barrettes et nom Vulkan du GPU hors thread GUI."""

@@ -146,16 +146,30 @@ class Job:
         return job
 
 
-def unique_target(directory: Path, name: str, is_dir: bool) -> Path:
-    """Jamais d'écrasement silencieux : `nom (1).ext` pour un fichier."""
+def unique_target(
+    directory: Path, name: str, is_dir: bool, reserved: set[str] | None = None
+) -> Path:
+    """Jamais d'écrasement silencieux : `nom (1).ext` pour un fichier.
+
+    `reserved` contient les destinations déjà prises par des transferts en
+    attente : deux fichiers de même nom venus de deux partages étaient sinon
+    envoyés vers **le même chemin**, la place étant calculée avant que le
+    premier n'existe sur disque (vécu 15/11/2026 : deux « rapport.pdf »
+    téléchargés en lot, un seul fichier à l'arrivée).
+    """
+    pris = set(reserved or ())
+
+    def libre(candidate: Path) -> bool:
+        return candidate.name not in pris and (is_dir or not candidate.exists())
+
     candidate = directory / name
-    if is_dir or not candidate.exists():
+    if libre(candidate):
         return candidate
     stem, suffix = os.path.splitext(name)
     index = 1
     while True:
         candidate = directory / f"{stem} ({index}){suffix}"
-        if not candidate.exists():
+        if libre(candidate):
             return candidate
         index += 1
 
@@ -417,6 +431,17 @@ class Downloads(QObject):
 
     # --- file -----------------------------------------------------------
     def enqueue(self, job: Job) -> None:
+        # Un nom déjà réservé par un transfert en attente ne doit pas être
+        # réutilisé : le calcul « nom (1) » se fait ici, pas après coup.
+        if not job.is_dir:
+            reserved = {
+                autre.dest.name
+                for autre in self.jobs
+                if autre.dest.parent == job.dest.parent
+                and autre.state not in ("terminé", "échec", "annulé")
+            }
+            if job.dest.name in reserved:
+                job.dest = unique_target(job.dest.parent, job.dest.name, False, reserved)
         job.state = "en attente" if job.peer else WAITING_PEER
         self.jobs.append(job)
         self._prune()

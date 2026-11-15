@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 APP_NAME = "Gablue Share"
@@ -21,12 +22,31 @@ STATE_DIR = (
     Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
     / "gablue-share"
 )
+#: Petit canal entre l'icône de notification et la fenêtre : demander à la
+#: fenêtre de se montrer, ou de se fermer proprement. Dans le répertoire
+#: d'exécution (purgé à la déconnexion), avec l'uid dans le nom faute de
+#: `XDG_RUNTIME_DIR` — deux comptes ne doivent pas se marcher dessus.
+RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / f"gablue-share-{os.getuid()}"
+CONTROL_SOCKET = RUNTIME_DIR / "control.sock"
 
 # Vitesses et délais
 PROBE_TIMEOUT = 0.6
 PROBE_INTERVAL = 30.0
 EXPIRE_CYCLES = 3
 LIST_TIMEOUT = 15.0
+
+
+def launcher() -> str | None:
+    """Le lanceur `gablue-share` — dépôt ou image.
+
+    L'icône de notification (dans le démon) s'en sert pour « Ouvrir Gablue
+    Share » : elle reçoit ce chemin à la naissance du démon, sinon elle retombe
+    sur `/usr/bin/gablue-share`.
+    """
+    candidate = Path(sys.argv[0]).resolve()
+    if candidate.name == APP_ID and candidate.exists():
+        return str(candidate)
+    return shutil.which(APP_ID)
 
 
 def daemon_binary() -> str | None:

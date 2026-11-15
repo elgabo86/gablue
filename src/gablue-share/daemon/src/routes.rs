@@ -159,6 +159,11 @@ fn api_info(cfg: &Config) -> Response<Body> {
         .available()
         .map(|share| json!({ "id": share.id, "name": share.name }))
         .collect();
+    // `uid` : à quel compte système appartient ce démon. Le port est fixe et
+    // `peer_id` est le machine-id, donc deux comptes d'un même poste se
+    // ressemblent trait pour trait — sans ce champ, la GUI du second prendrait
+    // le démon de l'autre pour le sien et n'aurait aucun moyen de le dire.
+    let uid = unsafe { libc::getuid() };
     json_response(
         200,
         &json!({
@@ -166,6 +171,7 @@ fn api_info(cfg: &Config) -> Response<Body> {
             "peer_id": cfg.peer_id,
             "name": cfg.name,
             "port": cfg.port,
+            "uid": uid,
             "shares": shares,
         }),
     )
@@ -522,7 +528,7 @@ fn help(cfg: &Config) -> Response<Body> {
     }
     text.push_str(
         "\nRoutes :\n\
-         \x20 GET /api/info                        état du poste et partages\n\
+         \x20 GET /api/info                        état du poste et partages (avec l'uid qui le sert)\n\
          \x20 GET /api/list/<partage>?path=&limit=  contenu d'un dossier (JSON)\n\
          \x20 GET /f/<partage>/<chemin>            fichier (Range/ETag)\n\
          \x20 GET /a/<partage>/<chemin>            dossier en tar\n",

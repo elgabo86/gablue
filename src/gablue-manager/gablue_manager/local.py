@@ -1362,6 +1362,8 @@ def hardware_summary(sata: list[tuple] | None = None,
         "depuis " + format_uptime(time.time() - boot) if boot > 0 else ""
     )
     values["secure_boot"] = secure_boot_label(secure_boot_state())
+    # Ligne conditionnelle : absente d'elle-même quand rien n'est partagé.
+    values["shares"] = share_state_label()
     return {key: value for key, value in values.items() if value}
 
 
@@ -2897,6 +2899,45 @@ def secure_boot_state() -> str:
     if code == 127:
         return "unknown"
     return parse_secure_boot(text, True)
+
+
+#: Fichier de Gablue Share et unité systemd qui porte le partage permanent.
+SHARE_CONFIG = Path.home() / ".config" / "gablue" / "share.json"
+SHARE_UNIT = "gablue-share.service"
+#: systemd matérialise `loginctl enable-linger` par un fichier : le lire évite
+#: un sous-processus de plus à chaque passe.
+LINGER_DIR = Path("/var/lib/systemd/linger")
+
+
+def share_state_label() -> str:
+    """Partages de ce poste et leur durée de vie ; **vide s'il n'y a rien**.
+
+    Même vérité que le dialogue « Partage local » : le fichier de Gablue Share
+    dit ce qui est partagé, systemd dit si le service tourne sans la fenêtre, et
+    `/var/lib/systemd/linger/<utilisateur>` dit s'il démarre dès le boot. Rien
+    à partager → aucun texte : la ligne n'a pas à apparaître sur un poste qui ne
+    partage pas (demandé le 15/11/2026).
+    """
+    try:
+        document = json.loads(SHARE_CONFIG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    shares = document.get("shares") if isinstance(document, dict) else None
+    count = len(shares) if isinstance(shares, list) else 0
+    if count <= 0:
+        return ""
+    accord = "s" if count > 1 else ""
+    dossiers = f"{count} dossier{accord}"
+    code, _ = _run(["systemctl", "--user", "is-enabled", SHARE_UNIT], 5)
+    if code != 0:
+        return f"{dossiers} · non permanent, seulement application ouverte"
+    try:
+        user = Path.home().name or os.environ.get("USER", "")
+    except (OSError, RuntimeError):
+        user = os.environ.get("USER", "")
+    if user and (LINGER_DIR / user).exists():
+        return f"{dossiers} · permanent, dès le démarrage du poste"
+    return f"{dossiers} · permanent, à l'ouverture de session"
 
 
 def secure_boot_label(state: str) -> str:

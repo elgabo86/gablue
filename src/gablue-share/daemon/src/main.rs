@@ -1,21 +1,23 @@
 //! Lanceur du démon : `gablue-shared [--config FICHIER] [--host ADRESSE]
-//! [--port PORT] [--parent-pid PID] [--threads N] [--allow-nonlocal]`.
+//! [--port PORT] [--launcher CHEMIN] [--threads N] [--allow-nonlocal]
+//! [--no-tray]`.
 //!
-//! `--parent-pid` : le démon s'arrête dès que ce processus disparaît — c'est
-//! le mode éphémère, la GUI le lance et le laisse mourir avec elle, crash
-//! compris. Sans cette option (unité systemd), il tourne jusqu'à SIGTERM.
+//! Le démon **survit à la fenêtre** : la GUI le lance détaché, le retrouve au
+//! lancement suivant par `/api/info`, et il ne s'arrête qu'à l'extinction, à la
+//! déconnexion, ou quand le dernier dossier partagé est retiré. `--parent-pid`
+//! est encore accepté (GUI plus ancienne que lui) mais n'a plus d'effet.
 
 use gablue_shared::{config, Options};
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::path::PathBuf;
 
 fn main() {
     let mut config_path: Option<PathBuf> = None;
     let mut host = "0.0.0.0".to_string();
     let mut port: Option<u16> = None;
     let mut threads = 4usize;
-    let mut parent: Option<u32> = None;
+    let mut launcher: Option<String> = None;
     let mut allow_nonlocal = false;
+    let mut tray = true;
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut index = 0;
@@ -37,13 +39,14 @@ fn main() {
             "--threads" => {
                 threads = value(1).parse().unwrap_or(4).max(1);
             }
+            "--launcher" => launcher = Some(value(1)),
+            // Ancienne option : le démon survit désormais à la fenêtre, on
+            // l'accepte pour ne pas casser une GUI plus ancienne que lui.
             "--parent-pid" => {
-                parent = Some(value(1).parse().unwrap_or_else(|_| {
-                    eprintln!("gablue-shared : pid invalide « {} »", value(1));
-                    std::process::exit(2)
-                }))
+                let _ = value(1);
             }
             "--allow-nonlocal" => allow_nonlocal = true,
+            "--no-tray" => tray = false,
             "-h" | "--help" => {
                 print_help();
                 return;
@@ -56,16 +59,14 @@ fn main() {
         index += done_extra(&args[index]);
     }
 
-    if let Some(pid) = parent {
-        watch_parent(pid);
-    }
-
     let path = config_path.unwrap_or_else(config::default_path);
     let options = Options {
         host,
         port,
         threads,
         allow_nonlocal,
+        launcher,
+        tray,
     };
     if let Err(err) = gablue_shared::run(path, options, None) {
         eprintln!("gablue-shared : {err}");
@@ -76,7 +77,7 @@ fn main() {
 /// Nombre d'arguments consommés en plus du drapeau.
 fn done_extra(flag: &str) -> usize {
     match flag {
-        "--allow-nonlocal" | "-h" | "--help" => 1,
+        "--allow-nonlocal" | "--no-tray" | "-h" | "--help" => 1,
         _ => 2,
     }
 }
@@ -84,17 +85,6 @@ fn done_extra(flag: &str) -> usize {
 fn usage_error(flag: &str) -> ! {
     eprintln!("gablue-shared : valeur manquante après « {flag} »");
     std::process::exit(2)
-}
-
-/// Mode éphémère : sans GUI, plus de partage.
-fn watch_parent(pid: u32) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(1));
-        if !Path::new(&format!("/proc/{pid}")).exists() {
-            eprintln!("gablue-shared : le processus {pid} a disparu, arrêt");
-            std::process::exit(0);
-        }
-    });
 }
 
 fn print_help() {
@@ -107,6 +97,8 @@ Options :
   --config FICHIER   configuration (défaut : ~/.config/gablue/share.json)
   --host ADRESSE     adresse d'écoute (défaut : 0.0.0.0 ; « :: » pour IPv6)
   --port PORT        port explicite (défaut : celui de la configuration)
+  --launcher CHEMIN  lanceur de la GUI (« Ouvrir Gablue Share » depuis l'icône)
+  --no-tray          pas d'icône de notification (tests)
   --threads N        connexions servies en parallèle (défaut : 4)
   --parent-pid PID   s'arrête quand ce processus disparaît (mode éphémère)
   --allow-nonlocal   accepte toute adresse (tests seulement)

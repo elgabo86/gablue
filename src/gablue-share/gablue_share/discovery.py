@@ -29,6 +29,10 @@ class Peer:
         self.peer_id = peer_id
         self.name = name
         self.port = port
+        #: Vrai pour le pseudo-poste qui désigne **ce** poste : ses partages
+        #: apparaissent dans la même liste que ceux des autres, servis par le
+        #: démon local. Sert au libellé (« Ce poste ») et au tri.
+        self.local = False
         self.shares: list[dict] = []
         self.addrs: dict[str, str] = {}  # hôte -> "lan" | "tailscale"
         #: Adresse qui a réellement répondu à la dernière sonde. Le LAN reste
@@ -108,6 +112,7 @@ class Discovery(QObject):
         self._peers: dict[str, Peer] = {}
         self._dirty = False
         self._stop = threading.Event()
+        self._cycle_lock = threading.Lock()
         self._avahi: subprocess.Popen | None = None
         self.active = False
         self._local_id = config.machine_id()
@@ -286,9 +291,23 @@ class Discovery(QObject):
 
     def _probe_loop(self) -> None:
         while not self._stop.is_set():
+            self._cycle()
+            self._stop.wait(PROBE_INTERVAL)
+
+    def _cycle(self) -> None:
+        """Une passe de découverte — jamais deux à la fois.
+
+        Le rescan rapide (liste vide, toutes les 5 s) peut demander une passe
+        pendant que celle de 30 s tourne encore : sans ce verrou, deux vagues de
+        sondes partaient en parallèle sur les mêmes adresses.
+        """
+        if not self._cycle_lock.acquire(blocking=False):
+            return
+        try:
             self._probe_cycle()
             self._expire()
-            self._stop.wait(PROBE_INTERVAL)
+        finally:
+            self._cycle_lock.release()
 
     def _probe_cycle(self) -> None:
         # 1. Postes déjà connus (LAN et tailnet) : vivants ? partages à jour ?
@@ -382,12 +401,11 @@ class Discovery(QObject):
                         self._dirty = True
 
     def refresh_now(self) -> None:
-        """Bouton « Actualiser » : une passe immédiate, sans attendre 30 s."""
+        """Bouton « Actualiser » (et rescan rapide) : une passe sans attendre."""
         threading.Thread(target=self._refresh_cycle, daemon=True).start()
 
     def _refresh_cycle(self) -> None:
-        self._probe_cycle()
-        self._expire()
+        self._cycle()
         self._emit_if_dirty()
 
     def peers(self) -> list[Peer]:

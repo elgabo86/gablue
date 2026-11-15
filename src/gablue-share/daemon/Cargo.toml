@@ -8,6 +8,9 @@ description = "Démon de partage de fichiers Gablue (LAN et Tailscale, lecture s
 tiny_http = "0.12"
 serde_json = "1"
 libc = "0.2"
+# Icône de zone de notification : StatusNotifierItem par DBus, sans toolkit.
+# `async-io` plutôt que tokio : un exécuteur minimal, pas un runtime complet.
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 
 [profile.release]
 opt-level = 2
