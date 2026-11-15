@@ -213,23 +213,39 @@ const MOUNT_ROOTS: [&str; 3] = ["/mnt", "/media", "/run/media"];
 /// Un disque externe débranché ne répond plus ; sous udisks le dossier de
 /// montage (`/run/media/<user>/<label>`) disparaît avec lui, donc `is_dir`
 /// suffit. Reste le point de montage manuel (`/mnt/sauvegarde` dans fstab) :
-/// le dossier reste là, vide, sur le système de fichiers racine. On le reconnaît
-/// à son périphérique, identique à celui de son parent.
+/// le dossier reste là, vide, **sur le système de fichiers de la racine de
+/// montage**. On le reconnaît à ce périphérique-là — jamais à celui du parent
+/// direct : un sous-dossier d'un disque monté a le même périphérique que son
+/// parent et passait pour un point de montage vide (vécu 15/11/2026, disque
+/// partagé à `t5/home00/…/Games/linux`).
 pub fn is_available(path: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-
     let meta = match fs::metadata(path) {
         Ok(meta) if meta.is_dir() => meta,
         _ => return false,
     };
-    if MOUNT_ROOTS.iter().any(|root| path.starts_with(root)) {
-        if let Some(parent) = path.parent().and_then(|parent| fs::metadata(parent).ok()) {
-            if parent.dev() == meta.dev() {
-                return false; // point de montage vide : rien n'est monté dessus
-            }
-        }
+    use std::os::unix::fs::MetadataExt;
+    !masked_by_mount_root(path, meta.dev())
+}
+
+/// Racine de montage dont `path` dépend (`None` : hors `/mnt`, `/media`,
+/// `/run/media`, ou la racine elle-même). Comparaison par composants
+/// (`/mntfoo` n'est pas sous `/mnt`), comme `Path::starts_with`.
+fn mount_root_of(path: &Path) -> Option<&'static Path> {
+    MOUNT_ROOTS
+        .iter()
+        .map(Path::new)
+        .find(|root| path != *root && path.starts_with(root))
+}
+
+/// Le dossier vit-il sur le système de fichiers de la racine de montage, à
+/// périphérique `dev` ? C'est la définition d'un point de montage vide.
+fn masked_by_mount_root(path: &Path, dev: u64) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    match mount_root_of(path).and_then(|root| fs::metadata(root).ok()) {
+        Some(anchor) => anchor.dev() == dev,
+        None => false,
     }
-    true
 }
 
 /// Chemin de la configuration, aligné sur le reste de Gablue.
@@ -379,4 +395,112 @@ fn hostname() -> String {
         }
     }
     std::env::var("HOSTNAME").unwrap_or_else(|_| "gablue".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+
+    #[test]
+    fn mount_root_is_matched_by_component_and_never_itself() {
+        assert_eq!(
+            mount_root_of(Path::new("/run/media/gab/t5/home00/x")),
+            Some(Path::new("/run/media"))
+        );
+        assert_eq!(mount_root_of(Path::new("/media/gab/x")), Some(Path::new("/media")));
+        assert_eq!(mount_root_of(Path::new("/mnt/sauvegarde")), Some(Path::new("/mnt")));
+        // `/mntfoo` n'est pas sous `/mnt` ; la racine elle-même n'est pas un
+        // partage de disque ; `/var/hdd1` est hors du test.
+        assert!(mount_root_of(Path::new("/mntfoo/x")).is_none());
+        assert!(mount_root_of(Path::new("/mnt")).is_none());
+        assert!(mount_root_of(Path::new("/var/hdd1/windows/games")).is_none());
+    }
+
+    /// Un point de montage fstab laissé vide vit sur le périphérique de la
+    /// racine de montage : c'est ce qui le distingue d'un dossier de disque.
+    #[test]
+    fn a_folder_sharing_its_mount_root_device_is_masked() {
+        let dev = match fs::metadata("/run/media") {
+            Ok(meta) => meta.dev(),
+            Err(_) => return, // environnement sans /run/media : rien à comparer
+        };
+        let vide = Path::new("/run/media/gab/sauvegarde/photos");
+        assert!(masked_by_mount_root(vide, dev));
+        assert!(!masked_by_mount_root(vide, dev + 1));
+        // Hors racines de montage : jamais masqué, quel que soit le périphérique.
+        assert!(!masked_by_mount_root(Path::new("/var/hdd1/x"), dev));
+    }
+
+    /// Régression du 15/11/2026 : un sous-dossier d'un disque monté partage le
+    /// périphérique de son parent. Comparer au parent le faisait passer pour un
+    /// point de montage vide, donc pour un disque débranché (partage
+    /// `/run/media/gab/t5/home00/…/Games/linux` ni annoncé ni servi).
+    #[test]
+    fn a_deep_folder_on_a_mounted_disk_is_available() {
+        let Some(disk) = mounted_disk_with_a_deep_folder() else {
+            return; // aucun disque externe monté : cas non reproductible ici
+        };
+        assert!(is_available(&disk), "le montage est disponible : {}", disk.display());
+        let sub = deep_folder_on_a_mounted_disk()
+            .expect("un sous-dossier partageant le périphérique de son parent");
+        assert!(is_available(&sub), "sous-dossier d'un disque monté : {}", sub.display());
+    }
+
+    /// Premier point de montage sous `/mnt`, `/media` ou `/run/media` (le disque
+    /// du poste, s'il est branché).
+    fn mounted_disk_with_a_deep_folder() -> Option<PathBuf> {
+        let table = fs::read_to_string("/proc/self/mountinfo").ok()?;
+        table
+            .lines()
+            .filter_map(|line| line.split_whitespace().nth(4))
+            .map(unescape_mountinfo)
+            .map(PathBuf::from)
+            .find(|target| mount_root_of(target).is_some() && is_available(target))
+    }
+
+    /// Dossier situé **sous** un montage et partageant le périphérique de son
+    /// parent — exactement ce que l'ancienne règle prenait pour un point de
+    /// montage vide. Trois niveaux au plus (un sous-volume btrfs a son propre
+    /// périphérique, il faut parfois descendre d'un cran de plus).
+    fn deep_folder_on_a_mounted_disk() -> Option<PathBuf> {
+        use std::os::unix::fs::MetadataExt;
+
+        let disk = mounted_disk_with_a_deep_folder()?;
+        let mut level: Vec<PathBuf> = vec![disk];
+        for _ in 0..3 {
+            let mut next = Vec::new();
+            for parent in level {
+                let parent_dev = match fs::metadata(&parent) {
+                    Ok(meta) => meta.dev(),
+                    Err(_) => continue,
+                };
+                let entries = match fs::read_dir(&parent) {
+                    Ok(entries) => entries,
+                    Err(_) => continue, // dossier illisible : on ne teste pas dessus
+                };
+                for entry in entries.filter_map(Result::ok) {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    match fs::metadata(&path) {
+                        Ok(meta) if meta.dev() == parent_dev => return Some(path),
+                        Ok(_) => next.push(path),
+                        Err(_) => {}
+                    }
+                }
+            }
+            level = next;
+        }
+        None
+    }
+
+    /// `/proc/self/mountinfo` échappe les espaces (`\040`) et compagnie.
+    fn unescape_mountinfo(raw: &str) -> String {
+        raw.replace("\\040", " ")
+            .replace("\\011", "\t")
+            .replace("\\012", "\n")
+            .replace("\\134", "\\")
+    }
 }

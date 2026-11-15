@@ -115,6 +115,17 @@ Deux processus, séparés pour la RAM :
   parcours des deux côtés, budget réglable par `ms` côté démon, et le bandeau
   nomme le partage qui rend une liste incomplète.
 
+- **M7.1 (15/11/2026)** : **un disque externe partagé par un sous-dossier
+  redevient un partage valide**. La règle de disponibilité comparait le
+  périphérique du dossier à celui de son **parent direct** (pour repérer un point
+  de montage fstab laissé vide) : tout sous-dossier d'un disque monté
+  (`/run/media/gab/t5/home00/…/Games/linux`) partage donc celui de son parent et
+  passait pour « disque débranché » — ni annoncé, ni servi, dans la GUI comme
+  dans le démon. La comparaison porte désormais sur la **racine de montage**
+  (`/mnt`, `/media`, `/run/media`), des deux côtés (`daemon/src/config.rs`,
+  `gablue_share/config.py`), avec trois tests unitaires dont un sur le vrai
+  disque monté.
+
 ## Cycle de vie
 
 | Situation | Démon | Visible des autres |

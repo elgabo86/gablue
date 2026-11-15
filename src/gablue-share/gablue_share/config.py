@@ -311,9 +311,12 @@ def share_available(path: str) -> bool:
 
     Miroir de `config::is_available` côté démon, qui fait foi pour le réseau :
     un disque externe débranché n'existe plus (udisks retire son point de
-    montage), et un point de montage manuel laissé vide se reconnaît à son
-    périphérique, identique à celui de son parent. Sert seulement à l'affichage
-    du panneau — la décision de servir ou d'annoncer appartient au démon.
+    montage), et un point de montage manuel laissé vide vit sur le système de
+    fichiers de la **racine** de montage (`/mnt`, `/media`, `/run/media`) : on
+    compare donc à elle, jamais au parent direct — un sous-dossier d'un disque
+    monté a le même périphérique que son parent et passait pour un point de
+    montage vide (vécu 15/11/2026). Sert seulement à l'affichage du panneau —
+    la décision de servir ou d'annoncer appartient au démon.
     """
     candidate = Path(path)
     try:
@@ -323,14 +326,16 @@ def share_available(path: str) -> bool:
     if not stat.S_ISDIR(status.st_mode):
         return False
     # Comparaison par composants (`/mntfoo` n'est pas sous `/mnt`), comme
-    # `Path::starts_with` côté démon.
-    if any(candidate.is_relative_to(root) for root in MOUNT_ROOTS):
+    # `Path::starts_with` côté démon ; la racine elle-même n'est pas un partage
+    # de disque, elle ne passe pas par ce test.
+    for root in MOUNT_ROOTS:
+        if candidate == Path(root) or not candidate.is_relative_to(root):
+            continue
         try:
-            parent = candidate.parent.stat()
+            anchor = Path(root).stat()
         except OSError:
             return True
-        if parent.st_dev == status.st_dev:
-            return False  # rien n'est monté sur ce dossier vide
+        return status.st_dev != anchor.st_dev  # même périphérique = rien dessus
     return True
 
 

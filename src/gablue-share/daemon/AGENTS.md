@@ -162,8 +162,14 @@ Format écrit par la GUI (`gablue_share/config.py`), lu par le démon ici.
   (`404 « partage indisponible »`). Le démon re-vérifie la présence de chaque
   dossier toutes les 3 s (un `stat`), donc un disque remonté réapparaît sans
   intervention. Règle de disponibilité : `is_dir` +, sous `/mnt`, `/media`,
-  `/run/media`, un périphérique différent de celui du parent (point de montage
-  laissé vide). La GUI reflète l'état (« Disque débranché ») sans décider.
+  `/run/media`, un périphérique différent de celui de la **racine de montage**
+  — c'est le périphérique d'un point de montage fstab laissé vide. Comparer au
+  **parent direct** était faux : un sous-dossier d'un disque monté
+  (`/run/media/gab/t5/home00/…/Games/linux`) partage celui de son parent et
+  passait pour débranché, donc ni annoncé ni servi (vécu 15/11/2026 ; trois
+  tests unitaires dans `config.rs`, même règle miroitée dans
+  `gablue_share/config.py`). La GUI reflète l'état (« Disque débranché ») sans
+  décider.
 - **Un seul partage par dossier** : deux écritures du même chemin sont refusées ;
   l'identifiant étant dérivé du chemin, deux entrées identiques seraient de
   toute façon le même partage.
