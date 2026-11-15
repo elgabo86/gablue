@@ -81,6 +81,22 @@ fn split_url(url: &str) -> (&str, &str) {
     }
 }
 
+/// En-tête portant l'empreinte du mot de passe d'un partage verrouillé.
+///
+/// Le client ne transmet **jamais** le mot de passe : il envoie la valeur
+/// dérivée (`pbkdf2` avec le sel publié), que le démon compare à celle qu'il
+/// garde. Rejouer cet en-tête ouvre le partage tant que le mot de passe n'a pas
+/// changé — sans TLS sur le réseau local, un mot de passe en clair serait de
+/// toute façon lisible par la même oreille indiscrète.
+const KEY_HEADER: &str = "X-Gablue-Key";
+
+fn key_header(req: &Request) -> Option<String> {
+    req.headers()
+        .iter()
+        .find(|header| header.field.equiv(KEY_HEADER))
+        .map(|header| header.value.as_str().to_string())
+}
+
 fn query_param(query: &str, key: &str) -> Option<String> {
     for pair in query.split('&') {
         let (name, value) = match pair.split_once('=') {
@@ -116,15 +132,16 @@ pub fn handle(req: &Request, cfg: &Config) -> Response<Body> {
         None => help(cfg),
         Some("api") => match segments.get(1).map(String::as_str) {
             Some("info") if segments.len() == 2 => api_info(cfg),
+            Some("auth") if segments.len() == 3 => api_auth(req, cfg, &segments[2]),
             Some("list") if segments.len() == 3 => api_list(req, cfg, &segments[2], query, head),
-            Some("find") if segments.len() == 3 => api_find(cfg, &segments[2], query),
-            Some("size") if segments.len() == 3 => api_size(cfg, &segments[2], query),
+            Some("find") if segments.len() == 3 => api_find(req, cfg, &segments[2], query),
+            Some("size") if segments.len() == 3 => api_size(req, cfg, &segments[2], query),
             _ => error(404, "route inconnue"),
         },
         Some("f") if segments.len() >= 3 => {
             serve_file(req, cfg, &segments[1], &segments[2..], head)
         }
-        Some("a") if segments.len() >= 2 => serve_tar(cfg, &segments[1], &segments[2..], query),
+        Some("a") if segments.len() >= 2 => serve_tar(req, cfg, &segments[1], &segments[2..], query),
         _ => error(404, "route inconnue"),
     }
 }
@@ -139,6 +156,30 @@ fn share_or_404<'a>(cfg: &'a Config, id: &str) -> Result<&'a Share, Response<Bod
         Some(share) => Ok(share),
         None => Err(error(404, "partage inconnu")),
     }
+}
+
+/// Réponse 401 : le partage existe, mais il demande son mot de passe.
+fn locked_error(message: &str) -> Response<Body> {
+    let mut response = error(401, message);
+    // Un 401 doit annoncer son schéma ; le client de Gablue Share, lui, envoie
+    // l'empreinte sans attendre cette invite.
+    response.add_header(h("WWW-Authenticate", "Gablue-Share"));
+    response
+}
+
+/// Comme `share_or_404`, mais exige l'empreinte du partage quand il est
+/// protégé. Appliqué à **toutes** les routes qui livrent quelque chose (liste,
+/// recherche, taille, fichier, archive) : une seule oubliée serait une porte.
+fn share_or_denied<'a>(
+    req: &Request,
+    cfg: &'a Config,
+    id: &str,
+) -> Result<&'a Share, Response<Body>> {
+    let share = share_or_404(cfg, id)?;
+    if !share.accepts(key_header(req).as_deref()) {
+        return Err(locked_error("mot de passe requis pour ce partage"));
+    }
+    Ok(share)
 }
 
 /// Vue d'un partage : ce qu'il accepte de montrer (réglé par celui qui partage).
@@ -157,7 +198,27 @@ fn beyond_root(share: &Share, segments: &[String]) -> bool {
 fn api_info(cfg: &Config) -> Response<Body> {
     let shares: Vec<Value> = cfg
         .available()
-        .map(|share| json!({ "id": share.id, "name": share.name }))
+        .map(|share| {
+            // `locked` voyage dès l'annonce : la GUI sait qu'il faudra un mot de
+            // passe avant même d'ouvrir le partage, et la recherche globale
+            // l'écarte tant qu'il n'est pas déverrouillé.
+            let mut item = json!({
+                "id": share.id,
+                "name": share.name,
+                "locked": share.locked(),
+            });
+            if let Some(password) = &share.password {
+                // Sel et itérations sont publics : sans eux le client ne peut
+                // pas recalculer l'empreinte. `hash` reste ici, jamais dehors.
+                item["salt"] = json!(password.salt);
+                item["rounds"] = json!(password.rounds);
+                // Jeton de version : il change avec le mot de passe, et c'est
+                // tout ce qu'un client mémorise pour savoir qu'il doit le
+                // redemander (l'empreinte, elle, ne dit rien de l'ancien).
+                item["revision"] = json!(password.revision);
+            }
+            item
+        })
         .collect();
     // `uid` : à quel compte système appartient ce démon. Le port est fixe et
     // `peer_id` est le machine-id, donc deux comptes d'un même poste se
@@ -177,8 +238,24 @@ fn api_info(cfg: &Config) -> Response<Body> {
     )
 }
 
-fn api_list(req: &Request, cfg: &Config, share_id: &str, query: &str, head: bool) -> Response<Body> {
+/// Le mot de passe fourni ouvre-t-il ce partage ?
+///
+/// Sert à la GUI pour vérifier une saisie **avant** d'ouvrir quoi que ce soit :
+/// un mauvais mot de passe se dit dans la boîte de dialogue, pas par une liste
+/// vide ou une erreur de navigation.
+fn api_auth(req: &Request, cfg: &Config, share_id: &str) -> Response<Body> {
     let share = match share_or_404(cfg, share_id) {
+        Ok(share) => share,
+        Err(response) => return response,
+    };
+    if !share.accepts(key_header(req).as_deref()) {
+        return locked_error("mot de passe incorrect");
+    }
+    json_response(200, &json!({ "share": share.id, "locked": share.locked() }))
+}
+
+fn api_list(req: &Request, cfg: &Config, share_id: &str, query: &str, head: bool) -> Response<Body> {
+    let share = match share_or_denied(req, cfg, share_id) {
         Ok(share) => share,
         Err(response) => return response,
     };
@@ -275,8 +352,8 @@ fn api_list(req: &Request, cfg: &Config, share_id: &str, query: &str, head: bool
 /// Budget de temps fixe : c'est ce qui garantit qu'un partage de 200 000
 /// fichiers ne bloque pas le serveur. `truncated` dit au client que le résultat
 /// est partiel, `scanned` lui donne une idée du coût.
-fn api_find(cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
-    let share = match share_or_404(cfg, share_id) {
+fn api_find(req: &Request, cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
+    let share = match share_or_denied(req, cfg, share_id) {
         Ok(share) => share,
         Err(response) => return response,
     };
@@ -321,8 +398,8 @@ fn api_find(cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
 /// Coûteux sur un arbre géant, donc jamais calculée pour tout un listing —
 /// seulement quand l'utilisateur désigne un dossier. `complete: false` signifie
 /// « au moins » : les chiffres sont un minorant.
-fn api_size(cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
-    let share = match share_or_404(cfg, share_id) {
+fn api_size(req: &Request, cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
+    let share = match share_or_denied(req, cfg, share_id) {
         Ok(share) => share,
         Err(response) => return response,
     };
@@ -356,7 +433,7 @@ fn api_size(cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
 }
 
 fn serve_file(req: &Request, cfg: &Config, share_id: &str, rel: &[String], head: bool) -> Response<Body> {
-    let share = match share_or_404(cfg, share_id) {
+    let share = match share_or_denied(req, cfg, share_id) {
         Ok(share) => share,
         Err(response) => return response,
     };
@@ -481,8 +558,8 @@ fn safe_archive_name(raw: &str) -> Option<String> {
     Some(name.to_string())
 }
 
-fn serve_tar(cfg: &Config, share_id: &str, rel: &[String], query: &str) -> Response<Body> {
-    let share = match share_or_404(cfg, share_id) {
+fn serve_tar(req: &Request, cfg: &Config, share_id: &str, rel: &[String], query: &str) -> Response<Body> {
+    let share = match share_or_denied(req, cfg, share_id) {
         Ok(share) => share,
         Err(response) => return response,
     };
@@ -524,14 +601,25 @@ fn help(cfg: &Config) -> Response<Body> {
         text.push_str("  (aucun)\n");
     }
     for share in &cfg.shares {
-        text.push_str(&format!("  /{}/  {}\n", share.id, share.name));
+        // Dire qu'un partage est verrouillé évite de croire à une panne quand
+        // `curl` reçoit un 401.
+        let verrou = if share.locked() {
+            "  (mot de passe requis)"
+        } else {
+            ""
+        };
+        text.push_str(&format!("  /{}/  {}{verrou}\n", share.id, share.name));
     }
     text.push_str(
         "\nRoutes :\n\
          \x20 GET /api/info                        état du poste et partages (avec l'uid qui le sert)\n\
+         \x20 GET /api/auth/<partage>              vérifie le mot de passe (en-tête X-Gablue-Key)\n\
          \x20 GET /api/list/<partage>?path=&limit=  contenu d'un dossier (JSON)\n\
          \x20 GET /f/<partage>/<chemin>            fichier (Range/ETag)\n\
-         \x20 GET /a/<partage>/<chemin>            dossier en tar\n",
+         \x20 GET /a/<partage>/<chemin>            dossier en tar\n\
+         \nUn partage protégé exige l'en-tête X-Gablue-Key sur toutes les routes\n\
+         qui livrent quelque chose : l'empreinte pbkdf2 du mot de passe avec le\n\
+         sel publié par /api/info (le mot de passe lui-même ne circule jamais).\n",
     );
     text_response(200, text)
 }

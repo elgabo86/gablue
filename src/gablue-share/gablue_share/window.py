@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -28,7 +29,10 @@ from PySide6.QtGui import (
 )
 from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -51,11 +55,12 @@ from PySide6.QtWidgets import (
 )
 
 from . import api, config, service
+from .access import Access
 from .constants import APP_NAME, CONTROL_SOCKET, RUNTIME_DIR, download_dir
-from .daemon import Daemon
+from .daemon import Daemon, MINE
 from .discovery import Discovery, discovery_available
 from .downloads import Downloads, Job, unique_target
-from .util import human_date, human_eta, human_size, human_speed, notify
+from .util import human_date, human_eta, human_size, human_speed, notify, reveal
 
 
 # ---------------------------------------------------------------------------
@@ -69,12 +74,229 @@ def label(text: str, name: str = "") -> QLabel:
     return widget
 
 
+class RefreshButton(QPushButton):
+    """Bouton d'actualisation qui dit qu'il travaille, puis qu'il a fini.
+
+    Sans retour, cliquer « Actualiser » ne se distinguait pas d'un clic dans le
+    vide : la liste met quelques centaines de millisecondes à revenir et rien ne
+    bougeait entre-temps (demandé le 15/11/2026). Il passe donc
+    « Actualisation… » (désactivé), puis « ✓ Actualisé » un instant.
+    """
+
+    def __init__(self, text: str = "Actualiser", parent=None):
+        super().__init__(text, parent)
+        self._label = text
+        self._busy = False
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._reset)
+
+    def start(self) -> None:
+        self._busy = True
+        self._timer.stop()
+        self.setEnabled(False)
+        self.setText("Actualisation…")
+
+    def finish(self) -> None:
+        """Requête terminée : « ✓ Actualisé » si le clic était manuel."""
+        if not self._busy:
+            return
+        self._busy = False
+        self.setEnabled(True)
+        self.setText("✓ Actualisé")
+        self._timer.start(1600)
+
+    def idle(self) -> None:
+        """Fin sans succès (erreur) : le bouton redevient disponible."""
+        self._busy = False
+        self._timer.stop()
+        self.setEnabled(True)
+        self.setText(self._label)
+
+    def _reset(self) -> None:
+        self.setText(self._label)
+
+
+class AuthLoader(QThread):
+    """Vérifie un mot de passe (`/api/auth`) sans figer la boîte de dialogue."""
+
+    done = Signal(bool, str)  # accepté, message d'erreur
+
+    def __init__(self, base: str, share_id: str, key: str, parent=None):
+        super().__init__(parent)
+        self.base = base
+        self.share_id = share_id
+        self.key = key
+
+    def run(self) -> None:
+        try:
+            self.done.emit(api.verify(self.base, self.share_id, self.key), "")
+        except api.ApiError as error:
+            self.done.emit(False, str(error))
+
+
+class PasswordDialog(QDialog):
+    """Mot de passe d'un partage **distant**, vérifié avant d'ouvrir.
+
+    La vérification passe par `/api/auth` dans un fil : la boîte reste vivante,
+    et un mauvais mot de passe se dit ici plutôt que par une liste vide ou un
+    « poste injoignable » trompeur.
+    """
+
+    def __init__(self, peer, share: dict, base: str, stale: bool = False, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Partage protégé")
+        self.setModal(True)
+        self.base = base
+        self.share_id = str(share.get("id", ""))
+        self.revision = str(share.get("revision") or "")
+        self.salt = str(share.get("salt") or "")
+        self.rounds = share.get("rounds") or config.PASSWORD_ROUNDS
+        self.name = str(share.get("name") or self.share_id)
+        self.key = ""  # empreinte retenue, si la boîte est acceptée
+        self._loader: AuthLoader | None = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.setSpacing(10)
+        layout.addWidget(label(f"« {self.name} » sur {peer.name}", "section"))
+        layout.addWidget(
+            label(
+                "Ce partage demande un mot de passe : une fois saisi, il reste "
+                "ouvert jusqu'à la fermeture de Gablue Share.",
+                "hint",
+            )
+        )
+        if stale:
+            layout.addWidget(
+                label(
+                    "Le mot de passe de ce partage a changé depuis la dernière "
+                    "fois : saisissez le nouveau.",
+                    "alert",
+                )
+            )
+        self.field = QLineEdit()
+        self.field.setEchoMode(QLineEdit.Password)
+        self.field.setPlaceholderText("Mot de passe")
+        self.field.returnPressed.connect(self.accept)
+        layout.addWidget(self.field)
+        self.remember = QCheckBox("Se souvenir de ce mot de passe sur ce poste")
+        self.remember.setToolTip(
+            "Le partage se déverrouillera tout seul à sa prochaine découverte.\n"
+            "Sans cette case, l'accès ne dure que jusqu'à la fermeture."
+        )
+        layout.addWidget(self.remember)
+        self.message = label("", "hint")
+        layout.addWidget(self.message)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        self.accept_button = self.buttons.button(QDialogButtonBox.Ok)
+        self.accept_button.setText("Déverrouiller")
+        layout.addWidget(self.buttons)
+        self.field.setFocus()
+
+    def accept(self) -> None:  # noqa: N802 (API Qt)
+        password = self.field.text()
+        if not password:
+            self.message.setText("Saisissez le mot de passe.")
+            return
+        if self._loader is not None:
+            return  # vérification déjà en cours
+        self.key = config.password_key(password, self.salt, self.rounds)
+        self._set_busy(True)
+        loader = AuthLoader(self.base, self.share_id, self.key, self)
+        loader.done.connect(self._verified)
+        self._loader = loader
+        loader.start()
+
+    def _set_busy(self, busy: bool) -> None:
+        self.accept_button.setEnabled(not busy)
+        self.field.setEnabled(not busy)
+        if busy:
+            self.message.setText("Vérification…")
+
+    def _verified(self, accepted: bool, error: str) -> None:
+        self._loader = None
+        self._set_busy(False)
+        if accepted:
+            super().accept()
+            return
+        self.message.setText(error or "Mot de passe incorrect.")
+        self.field.selectAll()
+        self.field.setFocus()
+
+
+class NewPasswordDialog(QDialog):
+    """Pose (ou retire) le mot de passe d'un de **ses** partages."""
+
+    def __init__(self, name: str, locked: bool, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Mot de passe du partage")
+        self.setModal(True)
+        self.removed = False
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.setSpacing(8)
+        layout.addWidget(label(f"« {name} »", "section"))
+        layout.addWidget(
+            label(
+                "Le mot de passe sera demandé une fois par poste : tant qu'il "
+                "n'est pas saisi, le partage reste invisible pour ce poste.\n"
+                "Laisser vide ne suffit pas à le retirer : utilisez le bouton "
+                "« Retirer le mot de passe ».",
+                "hint",
+            )
+        )
+        self.first = QLineEdit()
+        self.first.setEchoMode(QLineEdit.Password)
+        self.first.setPlaceholderText("Mot de passe")
+        layout.addWidget(self.first)
+        self.second = QLineEdit()
+        self.second.setEchoMode(QLineEdit.Password)
+        self.second.setPlaceholderText("Confirmation")
+        self.second.returnPressed.connect(self.accept)
+        layout.addWidget(self.second)
+        self.message = label("", "hint")
+        layout.addWidget(self.message)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        if locked:
+            remove = self.buttons.addButton(
+                "Retirer le mot de passe", QDialogButtonBox.DestructiveRole
+            )
+            remove.clicked.connect(self._remove)
+        self.buttons.button(QDialogButtonBox.Ok).setText(
+            "Modifier" if locked else "Protéger"
+        )
+        layout.addWidget(self.buttons)
+        self.first.setFocus()
+
+    def _remove(self) -> None:
+        self.removed = True
+        QDialog.accept(self)
+
+    def accept(self) -> None:  # noqa: N802 (API Qt)
+        if self.first.text() != self.second.text():
+            self.message.setText("Les deux saisies diffèrent.")
+            self.second.selectAll()
+            self.second.setFocus()
+            return
+        if not self.first.text():
+            self.message.setText("Saisissez un mot de passe.")
+            self.first.setFocus()
+            return
+        super().accept()
+
+
 # ---------------------------------------------------------------------------
 # Colonne gauche : les dossiers partagés (persistants, sur disque)
 # ---------------------------------------------------------------------------
 class ShareRow(QFrame):
     remove_requested = Signal(str)
     rename_requested = Signal(str)
+    password_requested = Signal(str)
     option_changed = Signal(str, str, bool)  # partage, option, valeur
 
     def __init__(self, share: dict, available: bool, parent=None):
@@ -103,7 +325,9 @@ class ShareRow(QFrame):
         )
         texts.addWidget(path)
         options = label(self._options_text(), "hint")
-        options.setWordWrap(False)
+        # Repli autorisé : la ligne s'allonge (« · mot de passe ») et le tiroir
+        # ne fait que 340 px — sans repli, la fin disparaissait.
+        options.setWordWrap(True)
         texts.addWidget(options)
         layout.addLayout(texts, 1)
         button = QPushButton("✕")
@@ -121,11 +345,18 @@ class ShareRow(QFrame):
             if self.share.get("recursive", True)
             else "racine seulement"
         )
-        return f"{caches} · {sous}"
+        morceaux = [caches, sous]
+        if config.share_locked(self.share):
+            morceaux.append("mot de passe")
+        return " · ".join(morceaux)
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802 (API Qt)
         menu = QMenu(self)
         rename = menu.addAction("Renommer…")
+        protege = config.share_locked(self.share)
+        password = menu.addAction(
+            "Modifier le mot de passe…" if protege else "Protéger par un mot de passe…"
+        )
         menu.addSeparator()
         hidden = menu.addAction("Afficher les fichiers cachés")
         hidden.setCheckable(True)
@@ -147,6 +378,8 @@ class ShareRow(QFrame):
         identifiant = self.share.get("id", "")
         if chosen is rename:
             self.rename_requested.emit(identifiant)
+        elif chosen is password:
+            self.password_requested.emit(identifiant)
         elif chosen is hidden:
             self.option_changed.emit(identifiant, "hidden", hidden.isChecked())
         elif chosen is recursive:
@@ -161,11 +394,14 @@ class SharePanel(QFrame):
     changed = Signal()
     mode_changed = Signal(str)
     visibility_changed = Signal(str)
+    serving_changed = Signal(bool)
 
     def __init__(self, document: dict, parent=None):
         super().__init__(parent)
         self.document = document
         self._known_availability: list[bool] = []
+        #: Le démon sert-il en ce moment ? (constaté par `probe`, jamais deviné)
+        self._running = True
         # Message d'un autre compte qui occupe le poste ("" = rien à signaler).
         self._blocked_message = ""
         self.setObjectName("panel")
@@ -229,6 +465,19 @@ class SharePanel(QFrame):
         visibilite.addWidget(self.visibility, 1)
         layout.addLayout(visibilite)
 
+        # Le serveur lui-même : sans lui, rien n'est annoncé ni servi, même
+        # avec des dossiers déclarés. Il vit sa vie (détaché) ; ce bouton en
+        # dispose, et l'état suit `share.json` (`serving`).
+        self.serving = QPushButton("Arrêter le partage")
+        self.serving.setObjectName("chip")
+        self.serving.setToolTip(
+            "Arrêter le serveur : les autres postes ne voient plus rien, "
+            "l'icône disparaît, et le partage ne revient pas en rouvrant "
+            "Gablue Share."
+        )
+        self.serving.clicked.connect(self._toggle_serving)
+        layout.addWidget(self.serving)
+
         self.reload()
 
     # --- liste ----------------------------------------------------------
@@ -252,6 +501,7 @@ class SharePanel(QFrame):
             row = ShareRow(share, available)
             row.remove_requested.connect(self.remove_share)
             row.rename_requested.connect(self.rename_share)
+            row.password_requested.connect(self.set_password)
             row.option_changed.connect(self.change_option)
             self.rows.addWidget(row)
         index = self.visibility.findData(config.visibility(self.document))
@@ -261,6 +511,8 @@ class SharePanel(QFrame):
             self.visibility.blockSignals(False)
         present = sum(1 for available in availability if available)
         missing = len(shares) - present
+        # L'état du serveur d'abord : « 1 dossier partagé, visible sur… » quand
+        # le serveur est arrêté serait un mensonge (rien n'est annoncé).
         if self._blocked_message:
             # Dire « 1 dossier partagé, visible sur… » alors qu'un autre compte
             # occupe le poste serait faux : rien n'est servi.
@@ -272,6 +524,12 @@ class SharePanel(QFrame):
         elif not shares:
             self.status.setText(
                 "Aucun dossier partagé. Ajoutez un dossier pour commencer."
+            )
+        elif not config.serving(self.document):
+            self.status.setText(
+                f"Partage arrêté — {len(shares)} dossier"
+                f"{'s' if len(shares) > 1 else ''} déclaré"
+                f"{'s' if len(shares) > 1 else ''}, rien n'est annoncé ni servi."
             )
         elif present == 0:
             self.status.setText(
@@ -290,6 +548,7 @@ class SharePanel(QFrame):
                 f"{present} dossier{'s' if present > 1 else ''} partagé"
                 f"{'s' if present > 1 else ''} — {ou}{suffix}."
             )
+        self._update_serving_button()
 
     def refresh_availability(self) -> None:
         """Un disque branché/débranché change la liste, pas le fichier de config."""
@@ -311,6 +570,38 @@ class SharePanel(QFrame):
         self.add_button.setToolTip(message)
         self._blocked_message = message
         self.reload()
+
+    # --- serveur --------------------------------------------------------
+    def set_running(self, running: bool) -> None:
+        """Le démon répond-il ? (lu par la fenêtre, jamais décidé ici)"""
+        if running == self._running:
+            return
+        self._running = running
+        self._update_serving_button()
+
+    def _update_serving_button(self) -> None:
+        # Le bouton dit ce qu'il fera : arrêter un serveur qui tourne, en
+        # (re)démarrer un qui ne répond pas, ou relancer un partage arrêté.
+        if not config.serving(self.document):
+            texte = "Lancer le partage"
+            aide = "Relancer le serveur et son annonce, avec les dossiers déclarés."
+        elif not self._running:
+            texte = "Démarrer le partage"
+            aide = "Le serveur ne répond pas : le (re)démarrer avec ces dossiers."
+        else:
+            texte = "Arrêter le partage"
+            aide = (
+                "Arrêter le serveur : les autres postes ne voient plus rien, "
+                "l'icône disparaît, et le partage ne revient pas en rouvrant "
+                "Gablue Share."
+            )
+        self.serving.setText(texte)
+        self.serving.setEnabled(bool(self.document.get("shares")) and not self._blocked_message)
+        self.serving.setToolTip(aide)
+
+    def _toggle_serving(self) -> None:
+        en_marche = config.serving(self.document) and self._running
+        self.serving_changed.emit(not en_marche)
 
     def _mode_changed(self, index: int) -> None:
         mode = self.permanent.itemData(index)
@@ -383,6 +674,30 @@ class SharePanel(QFrame):
         self.reload()
         self.changed.emit()
 
+    def set_password(self, share_id: str) -> None:
+        """Protège un partage (ou retire son mot de passe).
+
+        Le démon relit `share.json` à chaud (~3 s) : le verrou prend effet sans
+        redémarrer ni couper un transfert en cours.
+        """
+        entry = next(
+            (share for share in self.document.get("shares", []) if share.get("id") == share_id),
+            None,
+        )
+        if entry is None:
+            return
+        locked = config.share_locked(entry)
+        dialog = NewPasswordDialog(entry.get("name", "Partage"), locked, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        password = "" if dialog.removed else dialog.first.text()
+        ok, message = config.set_share_password(self.document, share_id, password)
+        if not ok:
+            QMessageBox.warning(self, APP_NAME, message)
+            return
+        self.reload()
+        self.changed.emit()
+
     def change_option(self, share_id: str, key: str, value: bool) -> None:
         """Le démon relit le fichier à chaud (~3 s) : rien à redémarrer."""
         ok, message = config.set_share_option(self.document, share_id, key, value)
@@ -411,10 +726,11 @@ class RemoteShareRow(QFrame):
 
     opened = Signal(object, object)  # poste, partage
 
-    def __init__(self, peer, share: dict, parent=None):
+    def __init__(self, peer, share: dict, access=None, parent=None):
         super().__init__(parent)
         self.peer = peer
         self.share = share
+        self.access = access
         self.setObjectName("card")
         self.setCursor(Qt.PointingHandCursor)
         layout = QHBoxLayout(self)
@@ -422,15 +738,28 @@ class RemoteShareRow(QFrame):
         layout.setSpacing(12)
         texts = QVBoxLayout()
         texts.setSpacing(3)
-        texts.addWidget(label(share.get("name") or share.get("id", "Partage"), "section"))
+        nom = share.get("name") or share.get("id", "Partage")
+        # Le cadenas se voit avant le clic : on sait qu'il faudra un mot de
+        # passe, on ne le découvre pas au milieu de la navigation.
+        texts.addWidget(label(f"🔒 {nom}" if share.get("locked") else nom, "section"))
         texts.addWidget(label(self._origine(), "muted"))
         layout.addLayout(texts, 1)
         layout.addWidget(label("Ouvrir ›", "hint"))
+        if share.get("locked"):
+            self.setToolTip(
+                "Partage protégé : le mot de passe sera demandé à l'ouverture."
+            )
 
     def _origine(self) -> str:
         if getattr(self.peer, "local", False):
             return "Ce poste"
-        return f"{self.peer.name} · {self.peer.label()}"
+        base = f"{self.peer.name} · {self.peer.label()}"
+        if not self.share.get("locked"):
+            return base
+        ouverte = self.access is not None and self.access.has(
+            self.peer.peer_id, str(self.share.get("id", ""))
+        )
+        return f"{base} · {'déverrouillé' if ouverte else 'mot de passe requis'}"
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (API Qt)
         self.opened.emit(self.peer, self.share)
@@ -453,7 +782,7 @@ class GlobalSearchLoader(QThread):
     def __init__(self, token: int, targets, query: str, parent=None):
         super().__init__(parent)
         self.token = token
-        self.targets = list(targets)  # [(poste, partage)]
+        self.targets = list(targets)  # [(poste, partage, empreinte du mot de passe)]
         self.query = query
 
     def run(self) -> None:
@@ -461,13 +790,19 @@ class GlobalSearchLoader(QThread):
         truncated = False
         with ThreadPoolExecutor(max_workers=self.MAX_PARALLELE) as pool:
             futures = {}
-            for peer, share in self.targets:
+            for peer, share, key in self.targets:
                 base = peer.base_url()
                 if not base:
                     continue
                 futures[
                     pool.submit(
-                        api.find, base, str(share.get("id", "")), self.query, "", self.PAR_PARTAGE
+                        api.find,
+                        base,
+                        str(share.get("id", "")),
+                        self.query,
+                        "",
+                        self.PAR_PARTAGE,
+                        key,
                     )
                 ] = (peer, share)
             for future in as_completed(futures):
@@ -515,13 +850,13 @@ class ResultsSizeLoader(QThread):
     def __init__(self, token: int, jobs, parent=None):
         super().__init__(parent)
         self.token = token
-        self.jobs = list(jobs)  # [(peer_id, base, share_id, path)]
+        self.jobs = list(jobs)  # [(peer_id, base, share_id, path, clé)]
 
     def run(self) -> None:
         with ThreadPoolExecutor(max_workers=self.MAX_PARALLELE) as pool:
             futures = {}
-            for peer_id, base, share_id, path in self.jobs:
-                futures[pool.submit(api.folder_size, base, share_id, path)] = (
+            for peer_id, base, share_id, path, key in self.jobs:
+                futures[pool.submit(api.folder_size, base, share_id, path, key)] = (
                     peer_id,
                     share_id,
                     path,
@@ -662,8 +997,9 @@ class PeerPage(QWidget):
 
     COLONNES = ["Nom", "Dossier", "Partage", "Poste", "Taille"]
 
-    def __init__(self, parent=None):
+    def __init__(self, access=None, parent=None):
         super().__init__(parent)
+        self.access = access
         self.targets: list[tuple[object, dict]] = []
         self._token = 0
         self._loader: GlobalSearchLoader | None = None
@@ -678,8 +1014,8 @@ class PeerPage(QWidget):
         header = QHBoxLayout()
         self.title = label("Partages trouvés", "title")
         header.addWidget(self.title, 1)
-        self.refresh = QPushButton("Actualiser")
-        self.refresh.clicked.connect(self.refresh_requested.emit)
+        self.refresh = RefreshButton()
+        self.refresh.clicked.connect(self._refresh_now)
         header.addWidget(self.refresh)
         layout.addLayout(header)
 
@@ -804,7 +1140,7 @@ class PeerPage(QWidget):
         else:
             self._show_list()
             for peer, share in entries:
-                row = RemoteShareRow(peer, share)
+                row = RemoteShareRow(peer, share, self.access)
                 row.opened.connect(self.open_share.emit)
                 self.rows.addWidget(row)
         self.rows.addStretch(1)
@@ -819,6 +1155,15 @@ class PeerPage(QWidget):
         # partages (un poste qui arrive pendant qu'on tape).
         if self.search.text().strip():
             self._run_search()
+
+    # --- actualisation --------------------------------------------------
+    def _refresh_now(self) -> None:
+        self.refresh.start()
+        self.refresh_requested.emit()
+
+    def refresh_done(self) -> None:
+        """La passe de découverte est finie : le bouton peut le dire."""
+        self.refresh.finish()
 
     # --- écrans ---------------------------------------------------------
     def _show_empty(self) -> None:
@@ -858,6 +1203,30 @@ class PeerPage(QWidget):
             f"{postes} poste{'s' if postes > 1 else ''}"
         )
 
+    def _searchable(self) -> list[tuple[object, dict, str]]:
+        """Partages interrogés : un partage verrouillé non ouvert est écarté.
+
+        La recherche globale ne peut pas demander un mot de passe pour chaque
+        partage qu'elle croise ; elle prend ceux qui sont ouverts (ou libres) et
+        le dit quand elle en laisse un de côté.
+        """
+        targets = []
+        for peer, share in self.targets:
+            identifiant = str(share.get("id", ""))
+            key = self.access.key(peer.peer_id, identifiant) if self.access else ""
+            if share.get("locked") and not key:
+                continue
+            targets.append((peer, share, key))
+        return targets
+
+    def _locked_ignored(self) -> int:
+        return sum(
+            1
+            for peer, share in self.targets
+            if share.get("locked")
+            and not (self.access and self.access.has(peer.peer_id, str(share.get("id", ""))))
+        )
+
     def _run_search(self) -> None:
         query = self.search.text().strip()
         if not query:
@@ -870,12 +1239,25 @@ class PeerPage(QWidget):
         self.scroll.hide()
         self.results.show()
         self._token += 1
-        postes = len({peer.peer_id for peer, _ in self.targets})
-        self.hint.setText(
-            f"Recherche de « {query} » dans {len(self.targets)} partage(s) "
-            f"de {postes} poste(s)…"
+        targets = self._searchable()
+        ignores = self._locked_ignored()
+        postes = len({peer.peer_id for peer, _, _ in targets})
+        suite = (
+            f" — {ignores} partage(s) verrouillé(s) écarté(s), déverrouillez-les pour les inclure"
+            if ignores
+            else ""
         )
-        loader = GlobalSearchLoader(self._token, self.targets, query, self)
+        if not targets:
+            self.hint.setText(
+                f"Aucun partage interrogé pour « {query} »{suite}."
+            )
+            self.results.setRowCount(0)
+            return
+        self.hint.setText(
+            f"Recherche de « {query} » dans {len(targets)} partage(s) "
+            f"de {postes} poste(s)…{suite}"
+        )
+        loader = GlobalSearchLoader(self._token, targets, query, self)
         loader.done.connect(self._search_done)
         self._loader = loader
         loader.start()
@@ -946,7 +1328,9 @@ class PeerPage(QWidget):
             base = row["peer"].base_url()
             if not base:
                 continue
-            jobs.append((row["peer"].peer_id, base, str(row["share"].get("id", "")), row.get("path", "")))
+            share_id = str(row["share"].get("id", ""))
+            key = self.access.key(row["peer"].peer_id, share_id) if self.access else ""
+            jobs.append((row["peer"].peer_id, base, share_id, row.get("path", ""), key))
         if not jobs:
             return
         loader = ResultsSizeLoader(self._token, jobs, self)
@@ -1034,8 +1418,11 @@ class PeerPage(QWidget):
 class ListLoader(QThread):
     loaded = Signal(int, dict, str)
     failed = Signal(int, str)
+    auth = Signal(int)  # le partage demande (ou redemande) son mot de passe
 
-    def __init__(self, token, base, share_id, path, offset, limit, sort, descending, parent=None):
+    def __init__(
+        self, token, base, share_id, path, offset, limit, sort, descending, key="", parent=None
+    ):
         super().__init__(parent)
         self.token = token
         self.base = base
@@ -1045,13 +1432,23 @@ class ListLoader(QThread):
         self.limit = limit
         self.sort = sort
         self.descending = descending
+        self.key = key
 
     def run(self) -> None:
         try:
             payload, tag = api.list_dir(
-                self.base, self.share_id, self.path, self.offset, self.limit, self.sort, self.descending
+                self.base,
+                self.share_id,
+                self.path,
+                self.offset,
+                self.limit,
+                self.sort,
+                self.descending,
+                self.key,
             )
             self.loaded.emit(self.token, payload, tag)
+        except api.AuthRequired:
+            self.auth.emit(self.token)
         except api.ApiError as error:
             self.failed.emit(self.token, str(error))
 
@@ -1060,18 +1457,28 @@ class TagLoader(QThread):
     """Sonde d'une requête : « ce dossier a-t-il bougé ? » (HEAD conditionnel)."""
 
     done = Signal(int, str, str)  # token, empreinte (vide = inchangé), erreur
+    auth = Signal(int)
 
-    def __init__(self, token: int, base: str, share_id: str, path: str, etag: str, parent=None):
+    def __init__(
+        self, token: int, base: str, share_id: str, path: str, etag: str, key="", parent=None
+    ):
         super().__init__(parent)
         self.token = token
         self.base = base
         self.share_id = share_id
         self.path = path
         self.etag = etag
+        self.key = key
 
     def run(self) -> None:
         try:
-            self.done.emit(self.token, api.list_tag(self.base, self.share_id, self.path, self.etag), "")
+            self.done.emit(
+                self.token,
+                api.list_tag(self.base, self.share_id, self.path, self.etag, self.key),
+                "",
+            )
+        except api.AuthRequired:
+            self.auth.emit(self.token)
         except api.ApiError as error:
             self.done.emit(self.token, "", str(error))
 
@@ -1081,18 +1488,27 @@ class SearchLoader(QThread):
 
     found = Signal(int, dict)
     failed = Signal(int, str)
+    auth = Signal(int)
 
-    def __init__(self, token: int, base: str, share_id: str, query: str, path: str, parent=None):
+    def __init__(
+        self, token: int, base: str, share_id: str, query: str, path: str, key="", parent=None
+    ):
         super().__init__(parent)
         self.token = token
         self.base = base
         self.share_id = share_id
         self.query = query
         self.path = path
+        self.key = key
 
     def run(self) -> None:
         try:
-            self.found.emit(self.token, api.find(self.base, self.share_id, self.query, self.path))
+            self.found.emit(
+                self.token,
+                api.find(self.base, self.share_id, self.query, self.path, key=self.key),
+            )
+        except api.AuthRequired:
+            self.auth.emit(self.token)
         except api.ApiError as error:
             self.failed.emit(self.token, str(error))
 
@@ -1102,16 +1518,24 @@ class SizeLoader(QThread):
 
     done = Signal(str, str, dict)  # partage, chemin, réponse
     failed = Signal(str, str)
+    auth = Signal()
 
-    def __init__(self, base: str, share_id: str, path: str, parent=None):
+    def __init__(self, base: str, share_id: str, path: str, key="", parent=None):
         super().__init__(parent)
         self.base = base
         self.share_id = share_id
         self.path = path
+        self.key = key
 
     def run(self) -> None:
         try:
-            self.done.emit(self.share_id, self.path, api.folder_size(self.base, self.share_id, self.path))
+            self.done.emit(
+                self.share_id,
+                self.path,
+                api.folder_size(self.base, self.share_id, self.path, self.key),
+            )
+        except api.AuthRequired:
+            self.auth.emit()
         except api.ApiError:
             self.failed.emit(self.share_id, self.path)
 
@@ -1124,9 +1548,11 @@ PAGE = 500
 class BrowserPage(QWidget):
     download_requested = Signal(object, object, str, bool, bool)  # peer, partage, chemin, dossier, choisir
     closed = Signal()
+    locked = Signal(object, object)  # poste, partage : mot de passe à redemander
 
-    def __init__(self, parent=None):
+    def __init__(self, access=None, parent=None):
         super().__init__(parent)
+        self.access = access
         self.peer = None
         self.share = None
         self.payload: dict = {}
@@ -1170,9 +1596,9 @@ class BrowserPage(QWidget):
         self.shares.setMinimumWidth(180)
         self.shares.currentIndexChanged.connect(self._share_changed)
         header.addWidget(self.shares)
-        refresh = QPushButton("Actualiser")
-        refresh.clicked.connect(lambda: self.load(self.path))
-        header.addWidget(refresh)
+        self.refresh = RefreshButton()
+        self.refresh.clicked.connect(self._refresh_now)
+        header.addWidget(self.refresh)
         layout.addLayout(header)
 
         search_row = QHBoxLayout()
@@ -1194,6 +1620,11 @@ class BrowserPage(QWidget):
         chemin.addWidget(self.up)
         self.breadcrumb = label("/", "hint")
         chemin.addWidget(self.breadcrumb, 1)
+        # « actualisé à » : la liste se rafraîchit toute seule (sonde ETag), et
+        # sans cette ligne on ne sait pas si ce qu'on regarde vient d'être relu
+        # ou date de dix minutes (demandé le 15/11/2026).
+        self.updated = label("", "hint")
+        chemin.addWidget(self.updated)
         layout.addLayout(chemin)
 
         self.table = QTableWidget(0, 4)
@@ -1313,6 +1744,20 @@ class BrowserPage(QWidget):
             self.search.clear()
             self.load("")
 
+    # --- actualisation --------------------------------------------------
+    def _key(self) -> str:
+        """Empreinte du mot de passe de ce partage (vide s'il est ouvert)."""
+        if self.access is None or self.share is None or self.peer is None:
+            return ""
+        return self.access.key(self.peer.peer_id, str(self.share.get("id", "")))
+
+    def _refresh_now(self) -> None:
+        self.refresh.start()
+        self.load(self.path)
+
+    def _mark_updated(self) -> None:
+        self.updated.setText("actualisé à " + time.strftime("%H:%M:%S"))
+
     # --- fraîcheur ------------------------------------------------------
     def showEvent(self, event) -> None:  # noqa: N802 (API Qt)
         super().showEvent(event)
@@ -1339,9 +1784,11 @@ class BrowserPage(QWidget):
             self.share.get("id", ""),
             self.path,
             self._etag,
+            self._key(),
             self,
         )
         tagger.done.connect(self._tag_ready)
+        tagger.auth.connect(self._auth_required)
         self._tagger = tagger
         tagger.start()
 
@@ -1385,10 +1832,12 @@ class BrowserPage(QWidget):
             PAGE,
             self._sort,
             self._desc,
+            self._key(),
             self,
         )
         loader.loaded.connect(self._page_loaded)
         loader.failed.connect(self._failed)
+        loader.auth.connect(self._auth_required)
         self._loader = loader
         loader.start()
 
@@ -1418,6 +1867,8 @@ class BrowserPage(QWidget):
             self._truncated = False  # garde-fou : plus rien à demander
         self._update_breadcrumb()
         self._selection_changed()
+        self.refresh.finish()
+        self._mark_updated()
 
     def _update_breadcrumb(self) -> None:
         base = "/" + self.path if self.path else "/"
@@ -1454,10 +1905,26 @@ class BrowserPage(QWidget):
 
     def _failed(self, token: int, message: str) -> None:
         self._loading = False
+        self.refresh.idle()
         if token != self._token:
             return
         self.table.setRowCount(0)
         self.selection.setText(f"Impossible de lire ce dossier : {message}")
+
+    def _auth_required(self, *_args) -> None:
+        """Le partage refuse l'empreinte : la fenêtre redemande le mot de passe.
+
+        Arrive quand le mot de passe a changé côté source pendant qu'on
+        regardait : le jeton de version de la prochaine annonce le dira aussi,
+        mais l'utilisateur n'a pas à attendre trente secondes devant une liste
+        figée.
+        """
+        self._loading = False
+        self._tagging = False
+        self._size_loader = None
+        self.refresh.idle()
+        if self.peer is not None and self.share is not None:
+            self.locked.emit(self.peer, self.share)
 
     # --- tri ------------------------------------------------------------
     def _header_clicked(self, index: int) -> None:
@@ -1493,10 +1960,17 @@ class BrowserPage(QWidget):
         self._token += 1
         self._searching = True
         loader = SearchLoader(
-            self._token, self.peer.base_url(), self.share.get("id", ""), text, self.path, self
+            self._token,
+            self.peer.base_url(),
+            self.share.get("id", ""),
+            text,
+            self.path,
+            self._key(),
+            self,
         )
         loader.found.connect(self._search_done)
         loader.failed.connect(self._failed)
+        loader.auth.connect(self._auth_required)
         self._search_loader = loader
         loader.start()
 
@@ -1512,6 +1986,7 @@ class BrowserPage(QWidget):
         self.selection.setText(
             f"Recherche « {payload.get('query', '')} » : {len(entries)} résultat(s){suffix}."
         )
+        self._mark_updated()
         self.breadcrumb.setText(
             f"/{self.path + '  ' if self.path else ''}recherche dans tout le partage"
         )
@@ -1593,9 +2068,10 @@ class BrowserPage(QWidget):
                 f"{human_size(known['bytes'])}{suffix}"
             )
             return
-        loader = SizeLoader(self.peer.base_url(), key[0], key[1], self)
+        loader = SizeLoader(self.peer.base_url(), key[0], key[1], self._key(), self)
         loader.done.connect(self._size_ready)
         loader.failed.connect(lambda *_: None)
+        loader.auth.connect(self._auth_required)
         self._size_loader = loader
         loader.start()
 
@@ -1692,6 +2168,15 @@ class TransferRow(QFrame):
         layout.addWidget(self.bar)
 
     def _open_folder(self) -> None:
+        """Ouvre Dolphin **sur** le téléchargement, élément sélectionné.
+
+        `reveal` réinjecte le hook composefs de l'image : un Dolphin lancé par
+        l'application ne passe pas par le `.desktop` patché et afficherait 0 o
+        d'espace libre sur l'overlay composefs de `/`. Sans Dolphin, on retombe
+        sur `xdg-open`, dont le `.desktop` porte déjà le hook.
+        """
+        if reveal(self.job.dest):
+            return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.job.dest.parent)))
 
     def update_job(self, job: Job) -> None:
@@ -1858,9 +2343,12 @@ class MainWindow(QMainWindow):
         # est fixe : un seul démon par machine, tous comptes confondus).
         self._blocked = ""
         self._blocked_warned = False
+        #: Le démon répond-il ? (constaté par `probe`, jamais deviné)
+        self._running = True
+        self.access = Access(self)
         self.daemon = Daemon()
         self.discovery = Discovery(self)
-        self.downloads = Downloads(self)
+        self.downloads = Downloads(self.access, self)
 
         central = QWidget()
         root = QVBoxLayout(central)
@@ -1888,8 +2376,8 @@ class MainWindow(QMainWindow):
 
         # Deux pages : les partages trouvés, et la navigation chez l'un d'eux.
         self.stack = QStackedWidget()
-        self.peers = PeerPage()
-        self.browser = BrowserPage()
+        self.peers = PeerPage(self.access)
+        self.browser = BrowserPage(self.access)
         self.stack.addWidget(self.peers)
         self.stack.addWidget(self.browser)
         root.addWidget(self.stack, 1)
@@ -1941,20 +2429,26 @@ class MainWindow(QMainWindow):
         self.shares.changed.connect(self._shares_changed)
         self.shares.mode_changed.connect(self._mode_changed)
         self.shares.visibility_changed.connect(self._visibility_changed)
+        self.shares.serving_changed.connect(self._serving_changed)
         self.peers.open_share.connect(self._open_share)
 
         self.peers.refresh_requested.connect(self.discovery.refresh_now)
         self.peers.open_result.connect(self._open_result)
         self.peers.download_requested.connect(self._download)
         self.browser.closed.connect(self._browser_closed)
+        self.browser.locked.connect(self._browser_locked)
         self.browser.download_requested.connect(self._download)
         self.discovery.peers_changed.connect(self._peers_changed)
+        self.discovery.refresh_done.connect(self.peers.refresh_done)
+        self.access.changed.connect(self._access_changed)
+        self.access.password_changed.connect(self._password_changed)
         self.downloads.changed.connect(self._downloads_changed)
         self.downloads.finished.connect(self._download_finished)
 
         # Première image de la liste (mes partages y figurent déjà) : sans cela
         # l'accueil restait vide jusqu'au premier événement de découverte.
         self._refresh_share_lists()
+        self._refresh_serving_state()
 
         if autostart:
             # La découverte ne dépend pas de notre démon : on voit les partages
@@ -1984,12 +2478,20 @@ class MainWindow(QMainWindow):
         if not (self.document.get("shares") or []):
             self.daemon.stop()
             self._set_blocked("")
+            self._refresh_serving_state()
+            return False
+        if not config.serving(self.document):
+            # Partage arrêté depuis la fenêtre : on ne relance rien. Le démon en
+            # cours lit la même valeur et sort de lui-même (≤ 3 s).
+            self._set_blocked("")
+            self._refresh_serving_state()
             return False
         ok, message = self.daemon.start()
         if ok:
             self._set_blocked("")
             if not self.discovery.active:
                 self.discovery.start()
+            self._refresh_serving_state()
             return True
         if self.daemon.kind in ("other", "foreign"):
             # Ce poste est déjà pris : « partager » ici ne servirait à rien.
@@ -1998,7 +2500,49 @@ class MainWindow(QMainWindow):
             self.shares.status.setText(
                 f"{self.shares.status.text()}\n\nLe démon n'a pas démarré : {message}"
             )
+        self._refresh_serving_state()
         return False
+
+    def _refresh_serving_state(self) -> None:
+        """Recale le bouton du tiroir et le titre sur le serveur réellement là."""
+        kind, _message = self.daemon.probe()
+        self.daemon.kind = kind
+        self._running = kind == MINE
+        self.shares.set_running(self._running)
+        self._update_shares_button()
+
+    def _serving_changed(self, on: bool) -> None:
+        """« Arrêter le partage » / « Lancer le partage » depuis le tiroir.
+
+        L'intention est écrite dans `share.json` (`serving`) : c'est elle que le
+        démon relit, donc la fenêtre, le service permanent et un démon détaché
+        d'une session précédente ne peuvent pas se contredire. Un partage
+        arrêté ne revient pas en rouvrant l'application.
+        """
+        ok, message = config.set_serving(self.document, on)
+        if not ok:
+            QMessageBox.warning(self, APP_NAME, message)
+            self.shares.reload()
+            return
+        self.document = config.load()
+        self.shares.document = self.document
+        self.shares.reload()
+        if on:
+            if not self._start_daemon() and not self._blocked:
+                QMessageBox.warning(self, APP_NAME, self.shares.status.text())
+            else:
+                notify("Gablue Share", "Le partage est de nouveau annoncé sur le réseau.")
+        else:
+            stopped, error = self.daemon.stop()
+            if not stopped:
+                QMessageBox.warning(self, APP_NAME, error)
+            else:
+                notify(
+                    "Gablue Share",
+                    "Le partage est arrêté : les autres postes ne le voient plus.",
+                )
+        self._refresh_serving_state()
+        self._refresh_share_lists()
 
     def _set_blocked(self, message: str) -> None:
         """État « ce poste est déjà partagé par un autre compte »."""
@@ -2074,6 +2618,9 @@ class MainWindow(QMainWindow):
         connecter comme ailleurs (demandé le 15/11/2026).
         """
         peers = list(self._remote_peers)
+        # Les verrous d'abord : `set_peers` et la recherche lisent l'état des
+        # accès (cadenas, partages écartés), et `sync` peut en périmer un.
+        self.access.sync(peers)
         self.peers.set_peers(peers)
         self._update_shares_button()
         # C'est ici que la file se rattache : un poste qui revient relance ses
@@ -2084,13 +2631,22 @@ class MainWindow(QMainWindow):
         self.browser.sync_peer(peers)
 
     def _update_shares_button(self) -> None:
-        """Le bouton dit l'état : un poste pris par un autre compte se voit là."""
+        """Le bouton dit l'état : poste pris, ou partage arrêté, se voient là."""
         nombre = len(self.document.get("shares", []))
         texte = f"☰ Mes partages ({nombre})"
         if self._blocked:
             texte += " — partage indisponible"
+        elif not config.serving(self.document):
+            texte += " — partage arrêté"
         self.shares_button.setText(texte)
-        self.shares_button.setToolTip(self._blocked or "Ce que ce poste partage")
+        self.shares_button.setToolTip(
+            self._blocked
+            or (
+                "Partage arrêté : rien n'est annoncé (voir le tiroir)"
+                if not config.serving(self.document)
+                else "Ce que ce poste partage"
+            )
+        )
 
     def _visibility_changed(self, value: str) -> None:
         """Le démon relit le fichier tout seul (mtime, ~3 s) : rien à redémarrer."""
@@ -2119,6 +2675,8 @@ class MainWindow(QMainWindow):
         if self._blocked:
             self._start_daemon()
             self._refresh_share_lists()
+        # Le bouton du tiroir suit le serveur (un arrêt met ≤ 3 s à se voir).
+        self._refresh_serving_state()
 
     # --- tiroir « Mes partages » ---------------------------------------
     DRAWER_MARGIN = 12
@@ -2185,13 +2743,69 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.browser)
 
     def _open_share(self, peer, share) -> None:
+        if not self._unlocked(peer, share) and not self._ask_password(peer, share):
+            return
         self.browser.open(peer, share)
         self._enter_browser()
 
     def _open_result(self, peer, share, path: str) -> None:
         """Résultat de la recherche globale : on ouvre le dossier qui le contient."""
+        if not self._unlocked(peer, share) and not self._ask_password(peer, share):
+            return
         self.browser.open(peer, share, path)
         self._enter_browser()
+
+    # --- mots de passe des partages des autres --------------------------
+    def _unlocked(self, peer, share) -> bool:
+        if not share.get("locked"):
+            return True
+        return bool(self.access.key(peer.peer_id, str(share.get("id", ""))))
+
+    def _ask_password(self, peer, share) -> bool:
+        """Demande le mot de passe, le vérifie, et retient l'accès si accepté."""
+        base = peer.base_url()
+        if not base:
+            QMessageBox.warning(self, APP_NAME, "Poste injoignable pour l'instant.")
+            return False
+        identifiant = str(share.get("id", ""))
+        dialog = PasswordDialog(
+            peer,
+            share,
+            base,
+            self.access.stale(peer.peer_id, identifiant),
+            self,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return False
+        self.access.unlock(
+            peer.peer_id,
+            identifiant,
+            dialog.key,
+            str(share.get("revision") or ""),
+            dialog.remember.isChecked(),
+        )
+        return True
+
+    def _browser_locked(self, peer, share) -> None:
+        """Le partage affiché refuse l'empreinte (mot de passe changé)."""
+        identifiant = str(share.get("id", ""))
+        self.access.forget(peer.peer_id, identifiant, announce=True)
+        if not self._ask_password(peer, share):
+            self._browser_closed()
+            return
+        self.browser.load(self.browser.path)
+
+    def _access_changed(self) -> None:
+        """Un mot de passe vient d'être saisi (ou oublié) : tout se recale."""
+        self._refresh_share_lists()
+        self.downloads.retry_locked()
+
+    def _password_changed(self, peer_name: str, share_name: str) -> None:
+        """Le mot de passe a changé côté source : le dire, puis le redemander."""
+        notify(
+            "Mot de passe modifié",
+            f"« {share_name} » sur {peer_name} demande un nouveau mot de passe.",
+        )
 
     # --- permanence -----------------------------------------------------
     def _mode_changed(self, mode: str) -> None:

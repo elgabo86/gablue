@@ -12,6 +12,103 @@ use std::path::{Path, PathBuf};
 /// Port par défaut, fixe : la sonde Tailscale des pairs doit le connaître.
 pub const DEFAULT_PORT: u16 = 47823;
 
+/// Mot de passe d'un partage, écrit par la GUI et **jamais** dérivé ici.
+///
+/// Le démon ne connaît que l'empreinte finale : la GUI dérive
+/// `pbkdf2_hmac(sha256, mot de passe, sel, itérations)` et le client recalcule
+/// la même valeur à partir du sel publié. Vérifier coûte donc une comparaison
+/// de chaînes, sans dépendance cryptographique côté serveur — le seul composant
+/// exposé au réseau n'a aucune clé à manipuler.
+#[derive(Clone, Debug)]
+pub struct Password {
+    /// Empreinte attendue, en hexadécimal minuscule. Jamais publiée.
+    pub hash: String,
+    /// Sel de la dérivation, publié dans `/api/info` (il n'est pas secret).
+    pub salt: String,
+    /// Nombre d'itérations de la dérivation, publié lui aussi.
+    pub rounds: u32,
+    /// Jeton aléatoire régénéré à chaque changement de mot de passe : le client
+    /// le compare à celui qu'il a mémorisé pour savoir qu'il doit redemander.
+    pub revision: String,
+}
+
+impl Password {
+    /// L'empreinte fournie ouvre-t-elle ce partage ?
+    ///
+    /// Comparaison à temps constant sur les octets, et sur la longueur : une
+    /// réponse plus rapide sur le premier caractère faux dirait combien de
+    /// caractères sont justes.
+    pub fn accepts(&self, provided: Option<&str>) -> bool {
+        let candidate = match provided {
+            Some(value) => value.trim(),
+            None => return false,
+        };
+        let expected = self.hash.as_bytes();
+        let given = candidate.as_bytes();
+        // `usize` : un `u8` tronquerait la différence de longueur (un en-tête de
+        // 320 octets retomberait sur 0) et la comparaison ne porterait plus que
+        // sur le préfixe.
+        let mut difference = expected.len() ^ given.len();
+        for (index, byte) in expected.iter().enumerate() {
+            difference |= usize::from(byte ^ given.get(index).copied().unwrap_or(0));
+        }
+        difference == 0 && !candidate.is_empty()
+    }
+}
+
+fn is_hex(value: &str) -> bool {
+    !value.is_empty() && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Lit un bloc `password` de `share.json`. Illisible = verrouillé quand même
+/// (refus fermé) : un mot de passe mal écrit ne doit pas ouvrir le partage.
+fn parse_password(value: &Value) -> Option<Password> {
+    let text = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .map(|raw| raw.trim().to_ascii_lowercase())
+            .unwrap_or_default()
+    };
+    let hash = text("hash");
+    let salt = text("salt");
+    if !is_hex(&hash) || !is_hex(&salt) {
+        let revision = if is_hex(&hash) && hash.len() >= 12 {
+            hash[..12].to_string()
+        } else {
+            "illisible".to_string()
+        };
+        eprintln!("partage : mot de passe illisible, il reste verrouillé");
+        return Some(Password {
+            hash: "!".to_string(), // aucune empreinte valide ne peut l'égaler
+            salt,
+            rounds: 1,
+            revision,
+        });
+    }
+    let revision = {
+        let declared = text("revision");
+        if is_hex(&declared) {
+            declared
+        } else {
+            // Fichier d'une version antérieure : l'empreinte change avec le mot
+            // de passe, donc elle fait un jeton de version honnête.
+            hash[..12].to_string()
+        }
+    };
+    let rounds = value
+        .get("rounds")
+        .and_then(Value::as_u64)
+        .unwrap_or(200_000)
+        .clamp(1, 5_000_000) as u32;
+    Some(Password {
+        hash,
+        salt,
+        rounds,
+        revision,
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct Share {
     pub id: String,
@@ -30,6 +127,22 @@ pub struct Share {
     /// partage sont listés, servis et trouvables ; les sous-dossiers restent
     /// téléchargeables via l'archive du partage entier.
     pub recursive: bool,
+    /// Mot de passe exigé pour ce partage (aucun = ouvert à qui l'adresse).
+    pub password: Option<Password>,
+}
+
+impl Share {
+    pub fn locked(&self) -> bool {
+        self.password.is_some()
+    }
+
+    /// Le partage répond-il à cette empreinte ? (ouvert = toujours oui)
+    pub fn accepts(&self, provided: Option<&str>) -> bool {
+        match &self.password {
+            Some(password) => password.accepts(provided),
+            None => true,
+        }
+    }
 }
 
 /// Qui peut atteindre ce poste. Choix de la machine, pas du partage.
@@ -72,6 +185,11 @@ pub struct Config {
     pub name: String,
     pub port: u16,
     pub visibility: Visibility,
+    /// Le serveur doit-il servir ? `false` = partage arrêté depuis la GUI, le
+    /// démon sort (et ne démarre pas au lancement suivant) tant que le fichier
+    /// ne dit pas l'inverse. La GUI et le service permanent lisent la même
+    /// vérité : un partage arrêté ne revient pas parce qu'on rouvre la fenêtre.
+    pub serving: bool,
     pub shares: Vec<Share>,
 }
 
@@ -158,6 +276,10 @@ pub fn load(path: &Path) -> Result<Config, String> {
             .and_then(Value::as_str)
             .unwrap_or("both"),
     );
+    let serving = doc
+        .get("serving")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
 
     let mut shares: Vec<Share> = Vec::new();
     for (index, item) in doc
@@ -220,6 +342,7 @@ pub fn load(path: &Path) -> Result<Config, String> {
                 .get("recursive")
                 .and_then(Value::as_bool)
                 .unwrap_or(true),
+            password: item.get("password").and_then(parse_password),
         });
     }
 
@@ -228,6 +351,7 @@ pub fn load(path: &Path) -> Result<Config, String> {
         name,
         port,
         visibility,
+        serving,
         shares,
     })
 }

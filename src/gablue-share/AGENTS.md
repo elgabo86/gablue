@@ -2,8 +2,10 @@
 
 Partage de dossiers entre postes Gablue, sur le réseau local **et** le tailnet :
 chaque poste sert en lecture seule ce qu'il déclare, les autres voient les
-postes apparaître seuls et y prennent ce qu'ils veulent. Aucune
-authentification, aucun compte : la seule barrière est l'adresse.
+postes apparaître seuls et y prennent ce qu'ils veulent. Aucun compte : la
+barrière par défaut est l'adresse, et un partage peut demander **un mot de
+passe** (facultatif, propre à chaque partage, retenu par le client ou
+redemandé à chaque session).
 
 Deux processus, séparés pour la RAM :
 
@@ -16,8 +18,8 @@ Deux processus, séparés pour la RAM :
 
 | Domaine | Document | À lire AVANT de… |
 |---|---|---|
-| Démon Rust : protocole HTTP, invariants, fraîcheur/recherche/tailles, visibilité, partages et options côté serveur, cycle du serveur, icône de notification | `daemon/AGENTS.md` | modifier `daemon/src/` ou `daemon/tests/protocol.rs` |
-| GUI Python : découverte et navigation, démon vu de la GUI, second compte, style, file de transfert, fermeture, permanence | `gablue_share/AGENTS.md` | modifier `gablue_share/` |
+| Démon Rust : protocole HTTP, invariants, fraîcheur/recherche/tailles, visibilité, partages, options et mots de passe côté serveur, cycle du serveur, icône de notification | `daemon/AGENTS.md` | modifier `daemon/src/` ou `daemon/tests/protocol.rs` |
+| GUI Python : découverte et navigation, mots de passe des partages, démon vu de la GUI (dont arrêt/lancement), second compte, style, file de transfert, fermeture, permanence | `gablue_share/AGENTS.md` | modifier `gablue_share/` |
 | Vue d'ensemble, cycle de vie, build, décisions | ce fichier | — |
 
 ## État
@@ -25,7 +27,7 @@ Deux processus, séparés pour la RAM :
 - **M1 (livré)** : démon HTTP, `/api/info`, `/api/list`, `/f/` (Range/ETag),
   `/a/` (tar), filtre d'adresses, rechargement à chaud, annonce mDNS.
   `--parent-pid` est encore accepté mais sans effet depuis M5.3 (démon détaché).
-  `cargo test` : 38 tests (11 unitaires + 27 d'intégration, vrai serveur, vrai
+  `cargo test` : 29 tests d'intégration + 11 unitaires (vrai serveur, vrai
   système de fichiers, vrais sockets).
 - **M2 (livré)** : GUI PySide6 (liste des dossiers partagés persistante,
   découverte LAN/tailnet, navigation, téléchargement fichier + dossier).
@@ -61,8 +63,8 @@ Deux processus, séparés pour la RAM :
   `both|lan|tailscale` appliquée par le démon.
 - **M5.2 (15/11/2026)** : deux options **par partage**, appliquées côté démon —
   `hidden` (cachés masqués par défaut ; une archive les emporte quand même) et
-  `recursive` (faux = seuls les fichiers de la racine sont proposés). 27 tests
-  d'intégration + 11 unitaires.
+  `recursive` (faux = seuls les fichiers de la racine sont proposés), toutes deux
+  couvertes par les tests d'intégration.
 - **M5.3 (15/11/2026)** : **icône et serveur ne font qu'un**. Le tray Python
   (`--tray`, `QLockFile`, sonde, autostart) est supprimé : l'icône est portée
   par le démon (`ksni`), donc elle coûte quelques kilo-octets au lieu de ~50 Mo
@@ -83,6 +85,20 @@ Deux processus, séparés pour la RAM :
   étiquette « Réseau local », `active_addr` = 192.168.1.110. Au passage les
   adresses sont classées avec `ipaddress` (plages du tailnet, privé/lien-local/
   ULA) : l'IPv6 publique qu'Avahi annonce n'est plus sondée pour un 403.
+- **M6 (15/11/2026)** : **mot de passe par partage**, facultatif et appliqué par
+  le démon sur toutes les routes qui livrent quelque chose (`401` sans
+  l'empreinte). Le client le demande une fois, l'accès dure jusqu'à la fermeture
+  de Gablue Share — ou pour toujours s'il coche « Se souvenir de ce mot de
+  passe » (fichier 0600, déverrouillage automatique à la découverte). Un mot de
+  passe changé côté source est signalé et redemandé (`revision` publiée ; le
+  mot de passe et son empreinte ne quittent jamais la machine qui partage).
+  La recherche globale n'interroge que les partages ouverts. **Arrêt et
+  lancement du serveur depuis le tiroir** (`serving` dans `share.json`, la même
+  vérité pour la GUI, le démon et l'unité systemd : un partage arrêté ne revient
+  pas en rouvrant la fenêtre). **L'actualisation se voit** (« Actualisation… »
+  puis « ✓ Actualisé », heure du dernier rafraîchissement). « Ouvrir » après un
+  téléchargement ouvre Dolphin **sur** l'élément (`--select`) avec le hook
+  composefs de l'image.
 
 ## Cycle de vie
 
@@ -92,6 +108,7 @@ Deux processus, séparés pour la RAM :
 | GUI fermée, pas de permanence | **tourne toujours**, jusqu'à l'extinction | oui |
 | GUI fermée, « Avec la session » | pareil ; l'unité `systemd --user` prend le relais à la session suivante | oui |
 | GUI fermée, « Au démarrage du poste » | pareil ; unité + `loginctl enable-linger` au boot suivant | oui, dès le boot |
+| Partages arrêtés depuis la GUI (`serving: false`) | **s'arrête** (exit 0, icône comprise) et ne redémarre pas | non, port fermé |
 | Dernier partage retiré | **s'arrête de lui-même** (exit 0), icône comprise | non, port fermé |
 | Aucun partage déclaré au démarrage | **ne démarre pas** (ni démon, ni icône) | non |
 
@@ -111,7 +128,7 @@ Détail des deux côtés : `daemon/AGENTS.md` (« Cycle du serveur ») et
 ```bash
 cd src/gablue-share/daemon
 cargo build --release      # binaire : target/release/gablue-shared
-cargo test                 # 38 tests, aucun réseau externe
+cargo test                 # 40 tests, aucun réseau externe
 ```
 
 Développement local du démon :
@@ -169,6 +186,15 @@ les tests.
   `tailscale status` ne donnant que des adresses : écarté le 15/11/2026, le cas
   ne se présente pas et aucune authentification ne séparerait de toute façon les
   deux comptes.
+- **Le verrou est une empreinte, jamais un mot de passe en clair** : `share.json`
+  garde `pbkdf2-hmac-sha256(mot de passe, sel)` et un jeton de version ; le
+  client recalcule l'empreinte avec le sel publié et l'envoie dans
+  `X-Gablue-Key`. Le démon compare deux chaînes — aucune cryptographie dans le
+  seul composant exposé au réseau, et aucun état par requête. Le mot de passe
+  traverse donc le LAN en clair sous forme d'empreinte : sans TLS (choix de M1)
+  quiconque écoute le réseau peut la rejouer jusqu'au changement de mot de
+  passe. C'est une barrière contre l'accès opportuniste, pas contre un
+  renifleur — le tailnet, lui, chiffre déjà.
 - **L'icône vit dans le démon, pas dans la GUI ni dans un tray séparé** : zéro
   processus en plus, ~3 Ko de code, et l'icône suit exactement la vie du
   serveur. Un tray Python coûtait ~50 Mo (`gablue-manager --tray` : 114 Mo) pour

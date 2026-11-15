@@ -26,6 +26,9 @@ KEEP_FINISHED = 10
 
 WAITING_PEER = "en attente du poste"
 WAITING_SHARE = "en attente du partage"
+#: Partage protégé dont le mot de passe n'est pas (ou plus) en session : le
+#: transfert attend une saisie, il n'échoue pas pour autant.
+WAITING_LOCK = "en attente du mot de passe"
 
 
 class Cancelled(Exception):
@@ -88,6 +91,8 @@ class Job:
             return f"{source} — poste hors ligne, reprise dès qu'il revient"
         if self.state == WAITING_SHARE:
             return f"{source} — partage retiré, reprise dès qu'il réapparaît"
+        if self.state == WAITING_LOCK:
+            return f"{source} — mot de passe à saisir, reprise dès qu'il est ouvert"
         if self.state == "terminé":
             return f"{source} — {self.dest}"
         return source
@@ -98,10 +103,10 @@ class Job:
         return min(1.0, self.done / self.total)
 
     def waiting(self) -> bool:
-        return self.state in (WAITING_PEER, WAITING_SHARE)
+        return self.state in (WAITING_PEER, WAITING_SHARE, WAITING_LOCK)
 
     def retryable(self) -> bool:
-        return self.state in ("échec", WAITING_SHARE)
+        return self.state in ("échec", WAITING_SHARE, WAITING_LOCK)
 
     # --- sérialisation --------------------------------------------------
     def to_dict(self) -> dict:
@@ -202,9 +207,12 @@ class DownloadWorker(QThread):
     failed = Signal(object, str)
     waiting = Signal(object, str)
 
-    def __init__(self, job: Job, parent=None):
+    def __init__(self, job: Job, access=None, parent=None):
         super().__init__(parent)
         self.job = job
+        #: Registre des mots de passe : l'empreinte est lue au moment de servir,
+        #: jamais recopiée dans la file (elle ne doit pas y être persistée).
+        self.access = access
         #: Réponse HTTP en cours, si un transfert est actif (voir `abort()`).
         self._response = None
 
@@ -230,6 +238,10 @@ class DownloadWorker(QThread):
             # « en pause » est un arrêt voulu, pas un annulation.
             if self.job.state not in ("en pause", "annulé"):
                 self.job.state = "annulé"
+        except api.AuthRequired:
+            # Mot de passe absent ou changé : on attend une saisie, on n'échoue
+            # pas — le partage reste à faire, l'utilisateur est devant l'écran.
+            self.waiting.emit(self.job, "lock")
         except api.ApiError as error:
             message = str(error)
             if "injoignable" in message:
@@ -266,10 +278,17 @@ class DownloadWorker(QThread):
             self.job.speed = max(0.0, (self.job.done - previous_done) / elapsed)
             self.job._last_measure = (now, self.job.done)
 
+    # --- clé du partage -------------------------------------------------
+    def _key(self) -> str:
+        if self.access is None:
+            return ""
+        return self.access.key(self.job.peer_id, self.job.share_id)
+
     # --- fichier --------------------------------------------------------
     def _download_file(self) -> None:
         base = self.job.peer.base_url()
-        headers = api.head(base, self.job.share_id, self.job.path)
+        key = self._key()
+        headers = api.head(base, self.job.share_id, self.job.path, key=key)
         etag = headers.get("etag", "")
         try:
             size = int(headers.get("content-length", "0"))
@@ -294,7 +313,9 @@ class DownloadWorker(QThread):
             self.job.done = start
             self.progress.emit(self.job)
 
-        response, offset = api.open_file(base, self.job.share_id, self.job.path, start, etag)
+        response, offset = api.open_file(
+            base, self.job.share_id, self.job.path, start, etag, key=key
+        )
         self._response = response
         with response:
             mode = "ab" if offset else "wb"
@@ -340,7 +361,9 @@ class DownloadWorker(QThread):
 
         # `as=nom` : le dossier extrait porte le nom affiché dans l'app,
         # pas le nom physique du dossier côté source.
-        response = api.open_tar(base, self.job.share_id, self.job.path, self.job.name)
+        response = api.open_tar(
+            base, self.job.share_id, self.job.path, self.job.name, key=self._key()
+        )
         self._response = response
         with response:
             stream = _Counter(response, account, self.isInterruptionRequested)
@@ -357,8 +380,11 @@ class Downloads(QObject):
     changed = Signal()
     finished = Signal(object, bool)  # job, succès (notification côté fenêtre)
 
-    def __init__(self, parent=None):
+    def __init__(self, access=None, parent=None):
         super().__init__(parent)
+        #: Registre des accès : un mot de passe saisi relance les transferts en
+        #: attente, sans que l'utilisateur ait à cliquer « Relancer ».
+        self.access = access
         self.jobs: list[Job] = []
         self._worker: DownloadWorker | None = None
         self._known_peers: dict[str, object] = {}
@@ -552,7 +578,11 @@ class Downloads(QObject):
                 pass
 
     def pending(self) -> int:
-        return sum(1 for job in self.jobs if job.state in ("en attente", "en cours", WAITING_PEER, WAITING_SHARE))
+        return sum(
+            1
+            for job in self.jobs
+            if job.state in ("en attente", "en cours", WAITING_PEER, WAITING_SHARE, WAITING_LOCK)
+        )
 
     def sync_peers(self, peers) -> None:
         """La découverte vient de publier sa liste : on rattache les attentes."""
@@ -580,6 +610,30 @@ class Downloads(QObject):
             ):
                 job.state = "en attente"
                 changed = True
+            elif job.state == WAITING_LOCK and self._unlocked(job):
+                job.state = "en attente"
+                changed = True
+        if changed:
+            self._touch()
+            self._pump()
+
+    def _unlocked(self, job: Job) -> bool:
+        """Le partage de ce transfert est-il ouvert dans cette session ?"""
+        return self.access is None or self.access.has(job.peer_id, job.share_id)
+
+    def retry_locked(self) -> None:
+        """Un mot de passe vient d'être saisi : les attentes repartent."""
+        changed = False
+        for job in self.jobs:
+            if job.state == WAITING_LOCK and self._unlocked(job):
+                job.peer = self._known_peers.get(job.peer_id) or job.peer
+                if job.peer is None:
+                    job.state = WAITING_PEER
+                else:
+                    job.attempts = 0
+                    job.next_attempt = 0.0
+                    job.state = "en attente"
+                changed = True
         if changed:
             self._touch()
             self._pump()
@@ -600,7 +654,7 @@ class Downloads(QObject):
                 return
 
     def _start(self, job: Job) -> None:
-        worker = DownloadWorker(job, self)
+        worker = DownloadWorker(job, self.access, self)
         worker.progress.connect(self._on_progress)
         worker.completed.connect(self._on_completed)
         worker.failed.connect(self._on_failed)
@@ -628,6 +682,14 @@ class Downloads(QObject):
         self.finished.emit(job, False)
 
     def _on_waiting(self, job: Job, kind: str) -> None:
+        if kind == "lock":
+            # Le poste répond, c'est le partage qui est fermé : on garde le
+            # poste attaché et on n'oublie pas de réessayer.
+            job.state = WAITING_LOCK
+            job.error = "mot de passe requis"
+            job.next_attempt = time.time() + 60
+            self._touch()
+            return
         job.peer = None
         job.attempts += 1
         # 5 s, 10, 20, 40, 80, 160 puis 300 s : on réessaie de plus en plus
@@ -647,7 +709,10 @@ class Downloads(QObject):
         now = time.time()
         changed = False
         for job in self.jobs:
-            if job.state not in (WAITING_PEER, WAITING_SHARE):
+            if job.state == WAITING_LOCK:
+                if not self._unlocked(job):
+                    continue  # rien à tenter : il faut une saisie
+            elif job.state not in (WAITING_PEER, WAITING_SHARE):
                 continue
             if job.next_attempt and job.next_attempt > now:
                 continue

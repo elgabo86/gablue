@@ -8,6 +8,7 @@ le démon relit à chaud (mtime) sans redémarrer ni couper un transfert.
 import hashlib
 import json
 import os
+import secrets
 import stat
 import tempfile
 import time
@@ -15,6 +16,12 @@ import uuid
 from pathlib import Path
 
 from .constants import CONFIG_DIR, CONFIG_PATH, PORT
+
+#: Dérivation du mot de passe d'un partage. Le démon ne dérive **rien** : il
+#: compare l'empreinte reçue à celle écrite ici, donc ces réglages ne concernent
+#: que la GUI et le sel publié (`/api/info`).
+PASSWORD_ROUNDS = 200_000
+PASSWORD_SALT_BYTES = 16
 
 
 def machine_id() -> str:
@@ -44,6 +51,10 @@ def default_document() -> dict:
         "peer_id": machine_id(),
         "name": hostname(),
         "port": PORT,
+        #: `false` = partage arrêté depuis la GUI (ni serveur, ni annonce) tant
+        #: qu'on ne le relance pas. Le démon lit la même valeur : rouvrir la
+        #: fenêtre ne ressuscite pas un partage qu'on a éteint.
+        "serving": True,
         "shares": [],
     }
 
@@ -78,6 +89,7 @@ def load() -> dict:
     document.setdefault("peer_id", machine_id())
     document.setdefault("name", hostname())
     document.setdefault("port", PORT)
+    document["serving"] = serving(document)
     if not isinstance(document.get("shares"), list):
         document["shares"] = []
     cleaned = []
@@ -91,15 +103,40 @@ def load() -> dict:
         identifier = share_id(path)
         if str(entry.get("id") or "") != identifier:
             normalised = True
-        cleaned.append(
-            {
-                "id": identifier,
-                "name": str(entry.get("name") or Path(path).name or "Partage"),
-                "path": path,
-                "hidden": bool(entry.get("hidden", False)),
-                "recursive": bool(entry.get("recursive", True)),
+        propre = {
+            "id": identifier,
+            "name": str(entry.get("name") or Path(path).name or "Partage"),
+            "path": path,
+            "hidden": bool(entry.get("hidden", False)),
+            "recursive": bool(entry.get("recursive", True)),
+        }
+        # Le mot de passe traverse `load()` : le perdre ici le retirerait du
+        # partage à chaque ouverture de l'application (le démon, lui, ne le
+        # relit que sur changement du fichier — donc le verrou tomberait).
+        password = entry.get("password")
+        # Une empreinte sans sel reste un partage verrouillé (refus fermé, comme
+        # côté démon) : on ne la jette pas, sinon la GUI l'afficherait ouvert
+        # pendant que le démon refuse tout.
+        if isinstance(password, dict) and password.get("hash"):
+            hash_hex = str(password.get("hash", "")).strip().lower()
+            try:
+                rounds = int(password.get("rounds") or PASSWORD_ROUNDS)
+            except (TypeError, ValueError):
+                rounds = PASSWORD_ROUNDS
+            revision = str(password.get("revision") or "").strip().lower()
+            if not all(c in "0123456789abcdef" for c in revision) or not revision:
+                # Même règle que le démon : l'empreinte change avec le mot de
+                # passe, elle fait donc un jeton de version honnête. Sans ça, un
+                # fichier écrit à la main ferait « mot de passe changé » à
+                # chaque découverte.
+                revision = hash_hex[:12]
+            propre["password"] = {
+                "salt": str(password.get("salt", "")).strip().lower(),
+                "hash": hash_hex,
+                "rounds": rounds,
+                "revision": revision,
             }
-        )
+        cleaned.append(propre)
     document["shares"] = cleaned
     document["visibility"] = visibility(document)
     if normalised:
@@ -175,6 +212,94 @@ def set_visibility(document: dict, value: str) -> tuple[bool, str]:
             document["visibility"] = previous
         return False, f"Écriture impossible : {error}"
     return True, ""
+
+
+#: Le partage est-il en marche ? Réglé par la GUI (« Arrêter le partage »),
+#: appliqué par le démon (qui sort sur `false`) et respecté au démarrage : un
+#: partage arrêté ne revient pas parce qu'on rouvre la fenêtre ou parce que le
+#: service permanent est activé.
+def serving(document: dict) -> bool:
+    value = document.get("serving", True)
+    return value if isinstance(value, bool) else True
+
+
+def set_serving(document: dict, value: bool) -> tuple[bool, str]:
+    """Démarre ou arrête le partage. (ok, message)"""
+    previous = document.get("serving", True)
+    document["serving"] = bool(value)
+    try:
+        save(document)
+    except OSError as error:
+        document["serving"] = previous
+        return False, f"Écriture impossible : {error}"
+    return True, ""
+
+
+# --- mot de passe d'un partage ---------------------------------------------
+# Le mot de passe lui-même n'est **jamais** écrit ni transmis : `share.json`
+# garde une empreinte `pbkdf2-hmac-sha256`, le client recalcule la même à partir
+# du sel publié (`/api/info`) et l'envoie dans `X-Gablue-Key`. Le démon compare
+# deux chaînes, il ne dérive rien (aucune cryptographie dans le composant
+# exposé au réseau).
+
+
+def password_key(password: str, salt: str, rounds: int = PASSWORD_ROUNDS) -> str:
+    """Empreinte transmise au démon pour un mot de passe et un sel donnés."""
+    try:
+        material = bytes.fromhex(salt)
+    except (TypeError, ValueError):
+        material = str(salt).encode("utf-8")
+    try:
+        iterations = max(1, int(rounds))
+    except (TypeError, ValueError):
+        iterations = PASSWORD_ROUNDS
+    return hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), material, iterations
+    ).hex()
+
+
+def make_password(password: str) -> dict:
+    """Bloc `password` prêt pour `share.json` (sel et jeton de version neufs)."""
+    salt = secrets.token_hex(PASSWORD_SALT_BYTES)
+    return {
+        "salt": salt,
+        "rounds": PASSWORD_ROUNDS,
+        "hash": password_key(password, salt, PASSWORD_ROUNDS),
+        # Change à chaque mot de passe : c'est ce que le client mémorise pour
+        # dire « le mot de passe a changé, redemande-le ». L'empreinte, elle,
+        # ne dit rien à qui n'a pas l'ancien mot de passe.
+        "revision": secrets.token_hex(8),
+    }
+
+
+def share_locked(entry: dict) -> bool:
+    password = entry.get("password")
+    return isinstance(password, dict) and bool(password.get("hash"))
+
+
+def set_share_password(
+    document: dict, identifier: str, password: str
+) -> tuple[bool, str]:
+    """Pose (ou retire, si `password` est vide) le mot de passe d'un partage."""
+    for entry in document.get("shares", []):
+        if entry.get("id") != identifier:
+            continue
+        previous = entry.get("password")
+        existed = "password" in entry
+        if password:
+            entry["password"] = make_password(password)
+        else:
+            entry.pop("password", None)
+        try:
+            save(document)
+        except OSError as error:
+            if existed:
+                entry["password"] = previous
+            else:
+                entry.pop("password", None)
+            return False, f"Écriture impossible : {error}"
+        return True, ""
+    return False, "Partage introuvable."
 
 
 #: Racines où un dossier peut être un point de montage de disque externe.

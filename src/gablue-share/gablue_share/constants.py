@@ -29,6 +29,13 @@ STATE_DIR = (
 RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / f"gablue-share-{os.getuid()}"
 CONTROL_SOCKET = RUNTIME_DIR / "control.sock"
 
+#: Hook LD_PRELOAD de l'image (espace libre Dolphin sur l'overlay composefs de
+#: `/`). Le `.desktop` patché le porte déjà, mais un Dolphin lancé **par
+#: l'application** ne passe pas par lui : sans le hook, ce Dolphin (et donc
+#: toutes les fenêtres qu'il ouvre ensuite) affiche 0 o d'espace libre.
+#: Même chemin que gablue-manager (`gablue_manager/constants.py`).
+COMPOSEFS_FIX_SO = Path("/usr/lib64/gablue-composefs-fix.so")
+
 # Vitesses et délais
 PROBE_TIMEOUT = 0.6
 PROBE_INTERVAL = 30.0

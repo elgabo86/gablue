@@ -16,7 +16,8 @@ en flux), `net.rs` (filtre d'adresses), `announce.rs` (avahi), `tray.rs`
 | Route | Rôle |
 |---|---|
 | `GET /` | page texte d'aide (dépannage `curl`) |
-| `GET /api/info` | `{protocol, peer_id, name, port, uid, shares:[{id,name}]}` — **partages disponibles seulement** ; `uid` = compte système qui sert (deux comptes d'un poste partagent `peer_id` et port) |
+| `GET /api/info` | `{protocol, peer_id, name, port, uid, shares:[{id,name,locked,salt,rounds,revision}]}` — **partages disponibles seulement** ; `uid` = compte système qui sert (deux comptes d'un poste partagent `peer_id` et port) ; `salt`/`rounds`/`revision` n'apparaissent que pour un partage protégé (l'empreinte attendue, jamais) |
+| `GET /api/auth/<share>` | vérifie le mot de passe (`X-Gablue-Key`) : `200` ou `401`. Ne lit rien — la GUI valide une saisie avant d'ouvrir |
 | `HEAD|GET /api/list/<share>?path=&offset=&limit=&sort=&desc=` | `{entries, parent, truncated}` + `ETag` ; `HEAD` = empreinte seule, `304` si `If-None-Match` correspond |
 | `GET /api/find/<share>?q=&path=&limit=` | recherche récursive par nom : `{entries:[{name,path,type,size,mtime}], truncated, scanned}` |
 | `GET /api/size/<share>?path=` | taille d'un dossier : `{files, bytes, complete}` |
@@ -25,7 +26,9 @@ en flux), `net.rs` (filtre d'adresses), `announce.rs` (avahi), `tray.rs`
 
 Invariants :
 
-- **Lecture seule.** Aucun verbe d'écriture, aucun état côté serveur.
+- **Lecture seule.** Aucun verbe d'écriture, aucun état côté serveur — même
+  pour les partages protégés : l'empreinte du mot de passe accompagne chaque
+  requête (`X-Gablue-Key`), le démon n'ouvre aucune session.
 - **Toujours un `Content-Length` quand la taille est connue** :
   `Response::with_chunked_threshold(usize::MAX)` est obligatoire, sinon
   `tiny_http` bascule en chunked au-delà de 32 Kio — le `HEAD` d'un gros
@@ -82,6 +85,42 @@ Invariants :
   l'app, pas le nom physique côté source. Un `as` contenant `/`, `..` ou
   commençant par `.` est ignoré (retour au nom physique) : jamais de traversée.
 
+## Partages protégés par un mot de passe
+
+Champ `password` d'un partage dans `share.json`, écrit par la GUI
+(`gablue_share/config.py`), appliqué **ici** sur toutes les routes qui livrent
+quelque chose :
+
+```json
+"password": {"salt":"…32 hex…", "rounds":200000, "hash":"…64 hex…", "revision":"…16 hex…"}
+```
+
+- **Le mot de passe ne circule jamais et n'est jamais dérivé ici.** La GUI
+  calcule `pbkdf2-hmac-sha256(mot de passe, sel, rounds)` ; le client refait le
+  même calcul avec le sel publié par `/api/info` et envoie le résultat dans
+  `X-Gablue-Key`. Le démon **compare deux chaînes** : aucune dépendance
+  cryptographique, aucune clé à protéger dans le composant exposé au réseau.
+  Un fichier malformé reste verrouillé (`hash` impossible) : un verrou cassé
+  n'ouvre pas le partage.
+- **Comparaison à temps constant** (`Password::accepts`) : une réponse plus
+  rapide sur le premier caractère faux dirait combien sont justes.
+- **Tout est verrouillé sauf `/api/info`, `/api/auth` et `/`** : `/api/list`
+  (GET **et** `HEAD`), `/api/find`, `/api/size`, `/f/`, `/a/` répondent `401`
+  avec `WWW-Authenticate` sans l'empreinte. Une seule route oubliée serait une
+  porte : le garde est un seul helper (`share_or_denied`).
+- `/api/info` annonce `locked: true` **et** le jeton de version (`revision`,
+  régénéré à chaque changement de mot de passe) : le client sait qu'il devra
+  demander, écarte le partage de la recherche globale tant qu'il ne l'est pas,
+  et reconnaît un mot de passe changé au jeton — pas besoin de garder l'ancien.
+- **Coût : une comparaison de chaînes par requête**, aucune entrée de cache, donc
+  un mot de passe changé prend effet au rechargement à chaud (≤ 3 s), sans
+  redémarrer ni couper un transfert. Vérifié par
+  `locked_share_requires_its_password_everywhere` (vrai serveur, vrai fichier).
+- **Ce que le verrou ne protège pas** : un réseau écouté. Sans TLS (choix de
+  M1), l'empreinte d'une requête est rejouable jusqu'au changement de mot de
+  passe. C'est une barrière contre l'accès opportuniste ; Tailscale chiffre le
+  tailnet, pas le LAN.
+
 ## Visibilité : réseau local, tailnet, ou les deux
 
 - Choix **par machine** (`visibility` dans `share.json`), sélecteur dans « Mes
@@ -95,8 +134,8 @@ Invariants :
   réseau local, donc en mode tailnet on n'annonce rien du tout (annonce retirée
   si elle existait) — les autres postes trouvent le nôtre par leur sonde
   `tailscale status`. Annoncer puis refuser serait une invitation trompeuse.
-- Le filtre d'adresses reste la seule barrière (pas d'authentification) :
-  `--allow-nonlocal` demeure l'échappatoire de test/dépannage.
+- Le filtre d'adresses et le mot de passe (facultatif, par partage) sont les
+  deux barrières : `--allow-nonlocal` demeure l'échappatoire de test/dépannage.
 
 ## Partages : identité, noms, disques externes
 
@@ -148,6 +187,11 @@ ne peut pas les contourner) et relus à chaud :
 
 ## Cycle du serveur
 
+- **Partage arrêté depuis la GUI** (`serving: false` au niveau du document) :
+  `run()` sort en **0** avant d'écouter, et le rechargeur fait de même quand la
+  valeur passe à `false`. C'est la **même vérité** pour la fenêtre, le service
+  permanent et un démon détaché d'une session précédente : un partage arrêté ne
+  revient pas parce qu'on rouvre Gablue Share (demandé le 15/11/2026).
 - **Plus aucun dossier déclaré** : `run()` sort en **0** avant même d'écouter,
   et le rechargeur (3 s) fait de même quand le dernier dossier est retiré. Un
   serveur qui ne sert rien n'a ni port, ni annonce, ni icône. Filet pour un

@@ -112,6 +112,30 @@ fn fixture_view(hidden: bool, recursive: bool) -> Fixture {
     boot(root, shares)
 }
 
+/// Empreinte factice : le démon ne dérive rien, il compare. Un test peut donc
+/// déclarer n'importe quelle valeur hexadécimale et l'envoyer telle quelle.
+const KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const KEY_WRONG: &str = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
+/// Un partage protégé (s1) **et** un partage ouvert (s2) sur le même dossier :
+/// le verrou ne doit pas contaminer les voisins.
+fn fixture_locked() -> Fixture {
+    let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let root = std::env::temp_dir().join(format!(
+        "gablue-share-locked-{}-{index}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    write_tree(&root);
+    let folder = root.join("donnees").display().to_string();
+    let shares = format!(
+        r#"{{"id":"s1","name":"Données","path":"{folder}",
+              "password":{{"hash":"{KEY}","salt":"00ff","rounds":1000,"revision":"00aa11bb22cc"}}}},
+           {{"id":"s2","name":"Ouvert","path":"{folder}"}}"#
+    );
+    boot(root, shares)
+}
+
 fn raw(fixture: &Fixture, request: &str) -> (u16, String, Vec<u8>) {
     let mut stream = TcpStream::connect(fixture.addr).unwrap();
     stream
@@ -140,6 +164,116 @@ fn get(fixture: &Fixture, path: &str) -> (u16, String, Vec<u8>) {
         fixture,
         &format!("GET {path} HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n"),
     )
+}
+
+/// Requête portant l'empreinte d'un partage protégé.
+fn get_key(fixture: &Fixture, path: &str, key: &str) -> (u16, String, Vec<u8>) {
+    raw(
+        fixture,
+        &format!(
+            "GET {path} HTTP/1.1\r\nHost: test\r\nX-Gablue-Key: {key}\r\nConnection: close\r\n\r\n"
+        ),
+    )
+}
+
+fn head_key(fixture: &Fixture, path: &str, key: &str) -> (u16, String, Vec<u8>) {
+    raw(
+        fixture,
+        &format!(
+            "HEAD {path} HTTP/1.1\r\nHost: test\r\nX-Gablue-Key: {key}\r\nConnection: close\r\n\r\n"
+        ),
+    )
+}
+
+#[test]
+fn locked_share_requires_its_password_everywhere() {
+    let fixture = fixture_locked();
+    let (status, _, body) = get(&fixture, "/api/info");
+    let info = String::from_utf8_lossy(&body);
+    assert_eq!(status, 200, "{info}");
+    // L'annonce dit qu'il faudra un mot de passe, et de quel sel — jamais
+    // l'empreinte attendue.
+    assert!(info.contains("\"locked\":true"), "{info}");
+    assert!(info.contains("\"revision\":\"00aa11bb22cc\""), "{info}");
+    assert!(info.contains("\"salt\":\"00ff\""), "{info}");
+    assert!(info.contains("\"rounds\":1000"), "{info}");
+    assert!(!info.contains(KEY), "l'empreinte ne doit jamais sortir : {info}");
+
+    // Aucune route qui livre quelque chose ne passe sans l'empreinte.
+    for path in [
+        "/api/list/s1",
+        "/api/find/s1?q=a",
+        "/api/size/s1",
+        "/f/s1/a.txt",
+        "/a/s1",
+    ] {
+        let (status, _, body) = get(&fixture, path);
+        assert_eq!(status, 401, "{path} sans clé : {}", String::from_utf8_lossy(&body));
+        let (status, _, _) = get_key(&fixture, path, KEY_WRONG);
+        assert_eq!(status, 401, "{path} avec une mauvaise empreinte");
+    }
+    // La sonde de fraîcheur (`HEAD` du listing) est verrouillée elle aussi.
+    let (status, _, _) = head_key(&fixture, "/api/list/s1", "");
+    assert_eq!(status, 401);
+
+    // La bonne empreinte ouvre tout, sans état côté serveur.
+    for path in ["/api/list/s1", "/api/find/s1?q=a", "/api/size/s1", "/a/s1"] {
+        let (status, _, body) = get_key(&fixture, path, KEY);
+        assert_eq!(status, 200, "{path} : {}", String::from_utf8_lossy(&body));
+    }
+    let (status, _, body) = get_key(&fixture, "/f/s1/a.txt", KEY);
+    assert_eq!(status, 200);
+    assert_eq!(body, b"hello");
+
+    // `/api/auth` valide une saisie sans rien lire (la GUI demande le mot de
+    // passe avant d'ouvrir, pas après une liste vide).
+    assert_eq!(get_key(&fixture, "/api/auth/s1", KEY).0, 200);
+    assert_eq!(get_key(&fixture, "/api/auth/s1", KEY_WRONG).0, 401);
+
+    // Le voisin non protégé reste grand ouvert : le verrou est par partage.
+    let (status, _, body) = get(&fixture, "/api/list/s2");
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("a.txt"));
+}
+
+#[test]
+fn stopped_share_does_not_start_the_server() {
+    let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let root = std::env::temp_dir().join(format!(
+        "gablue-share-stop-{}-{index}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    write_tree(&root);
+    let config = root.join("share.json");
+    std::fs::write(
+        &config,
+        format!(
+            r#"{{"version":1,"peer_id":"test-peer","name":"poste-test","port":0,
+               "serving":false,"shares":[{{"id":"s1","name":"Données","path":"{}"}}]}}"#,
+            root.join("donnees").display()
+        ),
+    )
+    .unwrap();
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let options = Options {
+        host: "127.0.0.1".to_string(),
+        port: Some(0),
+        threads: 1,
+        allow_nonlocal: false,
+        launcher: None,
+        tray: false,
+    };
+    // Partages arrêtés depuis la GUI : le démon rend la main **avant** d'écouter,
+    // donc ni port, ni annonce, ni icône.
+    let result = run(config, options, Some(tx));
+    assert!(result.is_ok(), "{result:?}");
+    assert!(
+        rx.recv_timeout(Duration::from_millis(500)).is_err(),
+        "un partage arrêté ne doit pas ouvrir de port"
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]

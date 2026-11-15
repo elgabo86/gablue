@@ -134,6 +134,9 @@ class Discovery(QObject):
     """Registre des postes + les deux sources (mDNS, Tailscale)."""
 
     peers_changed = Signal(list)
+    #: Une passe de découverte est terminée (bouton « Actualiser » : il peut le
+    #: dire au lieu de laisser croire que le clic n'a rien fait).
+    refresh_done = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -454,8 +457,11 @@ class Discovery(QObject):
         threading.Thread(target=self._refresh_cycle, daemon=True).start()
 
     def _refresh_cycle(self) -> None:
-        self._cycle()
-        self._emit_if_dirty()
+        try:
+            self._cycle()
+            self._emit_if_dirty()
+        finally:
+            self.refresh_done.emit()
 
     def peers(self) -> list[Peer]:
         return self._snapshot()

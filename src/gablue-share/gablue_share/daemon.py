@@ -82,7 +82,12 @@ class Daemon:
 
     # --- démarrage ------------------------------------------------------
     def start(self) -> tuple[bool, str]:
-        """Démarre le démon si nécessaire. (ok, message d'erreur)"""
+        """Démarre le démon si nécessaire. (ok, message d'erreur)
+
+        L'appelant ne l'appelle pas quand le partage est arrêté (`serving:
+        false`) : `share.json` porte la même valeur, donc la fenêtre et le démon
+        ne peuvent pas se contredire.
+        """
         self.kind, self.message = self.probe()
         if self.kind == MINE:
             self.external = True  # permanence ou autre instance : on ne possède pas
@@ -144,13 +149,35 @@ class Daemon:
         return False, "Le démon n'a pas répondu."
 
     # --- arrêt ----------------------------------------------------------
-    def stop(self) -> None:
+    def stop(self) -> tuple[bool, str]:
+        """Arrête le serveur, quel qu'en soit le propriétaire. (ok, message)
+
+        Trois cas se présentent, et deux se règlent ici :
+
+        1. l'enfant de cette fenêtre → `terminate` ;
+        2. le service permanent → `systemctl --user stop` (sans le désactiver :
+           il revient à la prochaine session) ;
+        3. un démon détaché d'une session précédente, que personne ne possède →
+           il n'y a rien à lui envoyer. C'est `serving: false` dans `share.json`
+           qui le fait sortir (rechargement à chaud, ≤ 3 s), et la fenêtre
+           constate l'arrêt par `probe()`.
+
+        Ne bloque pas au-delà de la mort de l'enfant : l'état se lit ensuite.
+        """
+        kind, message = self.probe()
+        if kind in (OTHER_ACCOUNT, FOREIGN):
+            return False, message
         process = self._process
         self._process = None
-        if not process or process.poll() is not None:
-            return
-        process.terminate()
-        try:
-            process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            process.kill()
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        if service.enabled() and service.active():
+            ok, error = service.stop()
+            if not ok:
+                return False, error
+        self.external = False
+        return True, ""

@@ -13,7 +13,8 @@ une interface neuve contre un démon qui ignore les champs récents.
 | `gablue_share/config.py` | **les dossiers partagés** : `share.json`, écriture atomique, fichier corrompu mis de côté |
 | `gablue_share/daemon.py` | démarrage/arrêt du démon (détaché), adoption d'un démon déjà là, `probe()` |
 | `gablue_share/discovery.py` | registre des postes, mDNS (avahi-browse) + sonde Tailscale |
-| `gablue_share/api.py` | client HTTP du protocole (threads) |
+| `gablue_share/api.py` | client HTTP du protocole (threads), en-tête `X-Gablue-Key`, `AuthRequired`, `/api/auth` |
+| `gablue_share/access.py` | **accès aux partages protégés** : session en mémoire, empreintes mémorisées (0600), détection d'un mot de passe changé |
 | `gablue_share/downloads.py` | transfert fichier (reprise) et dossier (tar), `.part`, pause, reprise auto |
 | `gablue_share/window.py` | quatre zones : barre de l'application (tiroir « Mes partages »), liste des partages trouvés et sa recherche globale, navigateur d'un partage, file de transferts |
 | `gablue_share/service.py` | permanence : unité `systemd --user`, `loginctl enable-linger`, `MODES` |
@@ -110,6 +111,47 @@ une interface neuve contre un démon qui ignore les champs récents.
   d'une barre de défilement) et se rejoue une fois la boucle rendue quand la
   mise en page bouge encore.
 
+## Mots de passe des partages
+
+Règles demandées le 15/11/2026 : un mot de passe **par partage**, côté source ;
+le client le saisit **une fois**, l'accès tient jusqu'à la fermeture de Gablue
+Share, sauf s'il a coché « Se souvenir de ce mot de passe » — là, le partage se
+déverrouille à sa découverte suivante. Un mot de passe changé côté source est
+signalé, puis redemandé.
+
+- **Le mot de passe ne quitte pas la machine qui l'a saisi sous sa forme
+  claire** : `config.password_key` calcule `pbkdf2-hmac-sha256(mot de passe, sel,
+  itérations)` avec le sel publié dans `/api/info`, et c'est cette empreinte que
+  transportent les requêtes (`X-Gablue-Key`) et que garde `access.json`. Le
+  démon, lui, ne connaît que l'empreinte attendue (voir `../daemon/AGENTS.md`).
+- **Deux niveaux d'accès** (`Access`) : `_session` (en mémoire, meurt avec la
+  fenêtre) et `_saved` (`~/.local/state/gablue-share/access.json`, 0600,
+  écriture atomique). `unlock(..., remember=False)` efface l'entrée mémorisée :
+  décocher la case, c'est oublier.
+- **Déverrouillage automatique** : à chaque annonce (`Access.sync`, appelée par
+  `_refresh_share_lists` **avant** `set_peers`), une empreinte mémorisée dont la
+  `revision` correspond entre en session. Rien à cliquer, rien à rescanner.
+- **Mot de passe changé** : la `revision` publiée ne correspond plus → l'accès
+  (session et disque) est jeté, l'utilisateur est prévenu (`notify`), la boîte
+  de dialogue suivante le dit en toutes lettres, et la boîte à cocher « se
+  souvenir » repart décochée. Une seule annonce par version (les passes de
+  découverte sont bavardes).
+- **Un 401 est traité comme un changement, sans attendre** : `AuthRequired`
+  remonte des fils de listing, de sonde, de recherche et de taille ;
+  `BrowserPage._auth_required` oublie l'empreinte et redemande. Un transfert en
+  cours, lui, passe en « en attente du mot de passe » (voir plus bas).
+- **Recherche globale** : un partage verrouillé non ouvert est **écarté** de la
+  recherche (on ne peut pas demander un mot de passe par partage croisé) ; le
+  bandeau dit combien sont écartés. Les résultats ne portent donc que des
+  partages ouverts, dont l'empreinte est transmise à `api.find`.
+- **Côté source** : clic droit sur une ligne de « Mes partages » ▸ « Protéger par
+  un mot de passe… » (ou « Modifier… »), saisie et confirmation, plus « Retirer
+  le mot de passe ». Le démon relit le fichier (~3 s) : le verrou prend effet
+  sans redémarrage. Le résumé de la ligne ajoute « · mot de passe ».
+- **Le cadenas se voit avant le clic** : `🔒` sur la ligne et « mot de passe
+  requis » (ou « déverrouillé ») dans le sous-titre. Un partage protégé reste
+  annoncé, donc visible : c'est une invitation à saisir, pas une disparition.
+
 ## Démon vu de la GUI
 
 - **Sans aucun dossier déclaré, rien ne démarre** : `MainWindow._start_daemon`
@@ -125,6 +167,18 @@ une interface neuve contre un démon qui ignore les champs récents.
 - **`--launcher`** : la GUI transmet son propre chemin (`constants.launcher()`)
   pour que « Ouvrir Gablue Share » depuis l'icône relance la bonne installation
   (dépôt ou image).
+- **Arrêt et lancement depuis le tiroir** : bouton unique sous les réglages
+  (« Arrêter le partage » / « Lancer le partage » / « Démarrer le partage » si
+  `serving` est vrai mais que le démon ne répond pas). Il écrit `serving` dans
+  `share.json`, puis appelle `Daemon.stop()` (enfant de la fenêtre terminé,
+  service permanent arrêté, et un démon détaché d'une session précédente sort
+  de lui-même sur la valeur) ou `_start_daemon()`. L'état réel est constaté par
+  `probe()` toutes les 2 s fenêtre visible (`_refresh_serving_state`), jamais
+  deviné. Le bouton de la barre dit « — partage arrêté », le statut du tiroir
+  aussi, et `notify` confirme les deux gestes.
+- **Un partage arrêté ne revient pas en rouvrant l'application** : `serving` est
+  dans le fichier, donc `_start_daemon` s'arrête avant de lancer quoi que ce
+  soit, et le démon ne démarre pas non plus (ni l'unité au prochain boot).
 
 ## Second compte sur le poste
 
@@ -142,6 +196,22 @@ visibilité qui n'existe pas. Le message nomme le compte (`pwd.getpwuid`) ou son
 uid s'il n'existe plus. Le minuteur de disponibilité (2 s) retente : dès que
 l'autre compte ferme son application, le partage reprend et une notification le
 dit. Les fichiers de partages restent séparés par utilisateur, rien n'est perdu.
+
+## Actualisation : ce qui se voit
+
+- **Le clic « Actualiser » se voit** (demandé le 15/11/2026) : `RefreshButton`
+  passe « Actualisation… » (désactivé) puis « ✓ Actualisé » pendant 1,6 s, et
+  revient à son libellé. Sur la liste des partages trouvés, c'est `Discovery`
+  qui rend la main (`refresh_done`, émis à la fin d'une passe) ; dans un
+  partage, c'est la fin du listing (`ListLoader.loaded`).
+- **L'heure du dernier rafraîchissement reste affichée** dans la barre de
+  chemin (« actualisé à 14:32:07 »), y compris quand c'est la sonde ETag qui a
+  relu le dossier (3 s au premier plan, 10 s au second, rien si la fenêtre est
+  cachée). Sans elle, une liste automatiquement à jour ne se distinguait pas
+  d'une liste figée.
+- Un rafraîchissement réussi par la sonde ne fait **pas** clignoter le bouton
+  (seul un clic le met en état « occupé ») : un clignotement toutes les 3 s
+  serait du bruit.
 
 ## Style : ce qui se voit
 
@@ -204,6 +274,19 @@ dit. Les fichiers de partages restent séparés par utilisateur, rien n'est perd
 - **Fin de transfert** : notification de bureau (`notify-send`, silencieuse si
   absent), sauf si la fenêtre a le focus. Débit et temps restant agrégés dans
   l'en-tête du panneau.
+- **Partage protégé** : un 401 ne fait pas échouer le transfert, il le met en
+  « en attente du mot de passe » (`WAITING_LOCK`). L'empreinte n'est **pas**
+  écrite dans `queue.json` : elle est lue dans `Access` au moment d'ouvrir la
+  connexion, et une saisie relance la file (`Downloads.retry_locked`, branché sur
+  `Access.changed`). Sans « se souvenir », un transfert qui attend un mot de
+  passe au redémarrage attend une nouvelle saisie — c'est voulu.
+- **« Ouvrir » montre le fichier, pas seulement son dossier** : `util.reveal`
+  lance Dolphin avec `--select <chemin>` (le dossier parent s'ouvre, l'élément
+  est sélectionné) et **réinjecte le hook composefs** de l'image
+  (`/usr/lib64/gablue-composefs-fix.so`) — un Dolphin lancé par l'application ne
+  passe pas par le `.desktop` patché et afficherait 0 o d'espace libre sur
+  l'overlay composefs de `/` (même correctif que `gablue-manager`). Sans
+  Dolphin, repli sur `xdg-open` (dont le `.desktop` porte déjà le hook).
 
 ## Fermeture (ce qui a coûté cher)
 

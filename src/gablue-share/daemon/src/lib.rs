@@ -40,11 +40,16 @@ pub fn run(
     ready: Option<mpsc::Sender<SocketAddr>>,
 ) -> Result<(), String> {
     let initial = config::load(&config_path)?;
-    // Aucun dossier déclaré : ni écoute, ni annonce, ni icône. Le serveur ne
-    // démarre pas du tout (la GUI ne le lance déjà pas dans ce cas ; c'est le
-    // filet pour un lancement direct ou une unité systemd restée activée).
+    // Aucun dossier déclaré, ou partage arrêté depuis la GUI : ni écoute, ni
+    // annonce, ni icône. Le serveur ne démarre pas du tout (la GUI ne le lance
+    // déjà pas dans ce cas ; c'est le filet pour un lancement direct ou une
+    // unité systemd restée activée).
     if initial.shares.is_empty() {
         eprintln!("gablue-shared : aucun partage déclaré, rien à servir");
+        return Ok(());
+    }
+    if !initial.serving {
+        eprintln!("gablue-shared : partage arrêté (serving: false), rien à servir");
         return Ok(());
     }
     let state: Shared = Arc::new(RwLock::new(Arc::new(initial)));
@@ -151,6 +156,13 @@ fn spawn_reloader(path: PathBuf, state: Shared) {
                     // relancera au premier dossier ajouté.
                     if cfg.shares.is_empty() {
                         eprintln!("gablue-shared : plus aucun partage déclaré, arrêt");
+                        std::process::exit(0);
+                    }
+                    // Partage arrêté depuis la GUI (« Arrêter le partage ») :
+                    // la même vérité que le démarrage, donc rouvrir la fenêtre
+                    // ne ressuscite pas un serveur qu'on a voulu éteindre.
+                    if !cfg.serving {
+                        eprintln!("gablue-shared : partage arrêté (serving: false), sortie");
                         std::process::exit(0);
                     }
                     *state.write().unwrap_or_else(|poison| poison.into_inner()) = Arc::new(cfg);
