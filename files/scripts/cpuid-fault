@@ -50,9 +50,13 @@ fi
 
 depmod "${KVER}"
 
-# Nettoyage des artefacts de compilation
-rm -f /src/cpuid-fault/*.o /src/cpuid-fault/src/*.o \
-      /src/cpuid-fault/*.mod* /src/cpuid-fault/Module.symvers \
-      /src/cpuid-fault/modules.order
+# Nettoyage : plus rien ne lit ces sources après la copie du .ko (le module
+# est installé sous /lib/modules/<ver>/extra, signé ci-dessus, `depends:` vide),
+# et aucun fichier de l'image ne référence /src (vérifié le 15/11/2026 : zéro
+# occurrence dans /etc, /usr et /lib/modules). On retire TOUT le dossier : ne
+# nettoyer que les .o laissait les `.cmd`, l'arbre `inc/`+`src/` et le .ko
+# compilé dans l'image publiée (856 K de sources de module embarqués).
+rm -rf /src/cpuid-fault
+rmdir /src 2>/dev/null || true
 
 echo "Module cpuid_fault_emulation compilé et installé avec succès"
