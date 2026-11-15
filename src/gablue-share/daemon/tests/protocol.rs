@@ -27,13 +27,7 @@ fn fixture() -> Fixture {
 
 /// `detached` : ajoute un second partage dont le dossier n'existe pas encore,
 /// comme un disque externe débranché.
-fn fixture_with(detached: bool) -> Fixture {
-    let index = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let root = std::env::temp_dir().join(format!(
-        "gablue-share-test-{}-{index}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+fn write_tree(root: &std::path::Path) {
     std::fs::create_dir_all(root.join("donnees/sub")).unwrap();
     std::fs::write(root.join("donnees/a.txt"), b"hello").unwrap();
     std::fs::write(root.join("donnees/sub/b.bin"), vec![7u8; 700]).unwrap();
@@ -44,6 +38,16 @@ fn fixture_with(detached: bool) -> Fixture {
     std::fs::write(root.join("donnees/a+b.txt"), b"plus").unwrap();
     std::os::unix::fs::symlink("/etc/passwd", root.join("donnees/fuite")).unwrap();
     std::os::unix::fs::symlink("a.txt", root.join("donnees/lien-interne")).unwrap();
+}
+
+fn fixture_with(detached: bool) -> Fixture {
+    let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let root = std::env::temp_dir().join(format!(
+        "gablue-share-test-{}-{index}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    write_tree(&root);
 
     let config = root.join("share.json");
     let mut shares = format!(
@@ -56,6 +60,12 @@ fn fixture_with(detached: bool) -> Fixture {
             root.join("amovible").display()
         ));
     }
+    boot(root, shares)
+}
+
+/// Démarre le démon sur une arborescence déjà écrite.
+fn boot(root: std::path::PathBuf, shares: String) -> Fixture {
+    let config = root.join("share.json");
     std::fs::write(
         &config,
         format!(
@@ -79,6 +89,25 @@ fn fixture_with(detached: bool) -> Fixture {
         .recv_timeout(Duration::from_secs(10))
         .expect("le démon n'a pas démarré");
     Fixture { root, addr }
+}
+
+/// Fixture avec les deux options de vue d'un partage.
+fn fixture_view(hidden: bool, recursive: bool) -> Fixture {
+    let index = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let root = std::env::temp_dir().join(format!(
+        "gablue-share-view-{}-{index}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    write_tree(&root);
+    std::fs::create_dir_all(root.join("donnees/.cache")).unwrap();
+    std::fs::write(root.join("donnees/.cache/prive.bin"), b"prive").unwrap();
+    std::fs::write(root.join("donnees/.secret.txt"), b"secret").unwrap();
+    let shares = format!(
+        r#"{{"id":"s1","name":"Données","path":"{}","hidden":{hidden},"recursive":{recursive}}}"#,
+        root.join("donnees").display()
+    );
+    boot(root, shares)
 }
 
 fn raw(fixture: &Fixture, request: &str) -> (u16, String, Vec<u8>) {
@@ -449,6 +478,72 @@ fn spaces_and_plus_signs_survive_the_query_encoding() {
     let (status, _, body) = get(&fixture, "/api/list/s1?path=avec%20espace");
     assert_eq!(status, 200);
     assert!(String::from_utf8_lossy(&body).contains("f.txt"));
+}
+
+#[test]
+fn hidden_entries_are_masked_but_a_download_carries_them() {
+    let fixture = fixture_view(false, true);
+    let text = |path: &str| {
+        let (status, _, body) = get(&fixture, path);
+        assert_eq!(status, 200, "{path}");
+        String::from_utf8_lossy(&body).to_string()
+    };
+
+    // Listing et recherche les ignorent…
+    let listing = text("/api/list/s1?limit=100");
+    assert!(!listing.contains(".secret"), "{listing}");
+    assert!(!listing.contains(".cache"), "{listing}");
+    let found = text("/api/find/s1?q=prive");
+    assert!(!found.contains("prive.bin"), "{found}");
+
+    // …mais l'archive du dossier les emporte : télécharger un dossier le
+    // télécharge entièrement, ce n'est pas un listing.
+    let archive = text("/a/s1");
+    assert!(archive.contains(".secret.txt"), "archive sans .secret.txt");
+    assert!(archive.contains(".cache"), "archive sans .cache");
+
+    // Et `.` / `..` restent inaccessibles.
+    let (status, _, _) = get(&fixture, "/f/s1/.secret.txt");
+    assert_eq!(status, 200, "un fichier caché se télécharge directement");
+}
+
+#[test]
+fn hidden_entries_can_be_shown() {
+    let fixture = fixture_view(true, true);
+    let (status, _, body) = get(&fixture, "/api/list/s1?limit=100");
+    let listing = String::from_utf8_lossy(&body);
+    assert_eq!(status, 200, "{listing}");
+    assert!(listing.contains(".secret"), "{listing}");
+    assert!(listing.contains(".cache"), "{listing}");
+    let (_, _, body) = get(&fixture, "/api/find/s1?q=prive");
+    assert!(String::from_utf8_lossy(&body).contains("prive.bin"));
+}
+
+#[test]
+fn root_only_share_hides_subdirectories_everywhere() {
+    let fixture = fixture_view(false, false);
+    let (status, _, body) = get(&fixture, "/api/list/s1?limit=100");
+    let listing = String::from_utf8_lossy(&body).to_string();
+    assert_eq!(status, 200, "{listing}");
+    assert!(listing.contains("a.txt"), "{listing}");
+    assert!(!listing.contains("\"sub\""), "aucun sous-dossier : {listing}");
+
+    // Ni navigation, ni fichier de sous-dossier, ni recherche récursive.
+    let (status, _, _) = get(&fixture, "/api/list/s1?path=sub");
+    assert_eq!(status, 404);
+    let (status, _, _) = get(&fixture, "/f/s1/sub/b.bin");
+    assert_eq!(status, 404);
+    let (_, _, body) = get(&fixture, "/api/find/s1?q=b.bin");
+    assert!(
+        !String::from_utf8_lossy(&body).contains("sub/b.bin"),
+        "la recherche ne descend pas"
+    );
+
+    // Le partage entier reste téléchargeable, sous-dossiers compris.
+    let (status, _, body) = get(&fixture, "/a/s1");
+    assert_eq!(status, 200);
+    let archive = String::from_utf8_lossy(&body);
+    assert!(archive.contains("sub/b.bin"), "archive incomplète");
 }
 
 #[test]

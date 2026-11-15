@@ -158,7 +158,39 @@ struct Entry {
     mtime_ns: u128,
 }
 
-fn scan(root: &Path, dir: &Path) -> io::Result<Vec<Entry>> {
+/// Ce qu'un partage accepte de montrer — réglé par celui qui partage, appliqué
+/// par le démon (le client ne peut pas le contourner).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct View {
+    /// Afficher les entrées dont le nom commence par un point.
+    pub hidden: bool,
+    /// Exposer les sous-dossiers (navigation et recherche récursive). Faux =
+    /// seuls les fichiers de la racine du partage existent.
+    pub subdirs: bool,
+}
+
+impl View {
+    /// Tout montrer : c'est ce que voit un téléchargement de dossier (une
+    /// archive inclut les sous-dossiers cachés même si le listing les masque).
+    pub fn everything() -> View {
+        View {
+            hidden: true,
+            subdirs: true,
+        }
+    }
+
+    fn keeps(&self, name: &str, is_dir: bool) -> bool {
+        if !self.hidden && name.starts_with('.') {
+            return false;
+        }
+        if !self.subdirs && is_dir {
+            return false;
+        }
+        true
+    }
+}
+
+fn scan(root: &Path, dir: &Path, view: View) -> io::Result<Vec<Entry>> {
     let mut rows = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let entry = match entry {
@@ -171,6 +203,9 @@ fn scan(root: &Path, dir: &Path) -> io::Result<Vec<Entry>> {
             Err(_) => continue,
         };
         let is_dir = meta.is_dir();
+        if !view.keeps(&name, is_dir) {
+            continue;
+        }
         // Symlink sortant : invisible dans le listing et refusé en GET.
         let link = std::fs::symlink_metadata(entry.path())
             .map(|m| m.file_type().is_symlink())
@@ -194,8 +229,8 @@ fn scan(root: &Path, dir: &Path) -> io::Result<Vec<Entry>> {
 /// change de nom, de taille ou de date. Sert d'`ETag` au listing, ce qui permet
 /// à la GUI de demander « est-ce que ça a bougé ? » avec un `HEAD` de quelques
 /// octets au lieu de relire le dossier entier toutes les trois secondes.
-pub fn fingerprint(root: &Path, dir: &Path) -> io::Result<String> {
-    Ok(fingerprint_of(&scan(root, dir)?))
+pub fn fingerprint(root: &Path, dir: &Path, view: View) -> io::Result<String> {
+    Ok(fingerprint_of(&scan(root, dir, view)?))
 }
 
 /// Ordre demandé par le client (`?sort=`) ; les dossiers restent toujours en
@@ -228,8 +263,9 @@ pub fn list(
     limit: usize,
     sort: Sort,
     descending: bool,
+    view: View,
 ) -> io::Result<(Vec<Value>, bool, String)> {
-    let mut rows = scan(root, dir)?;
+    let mut rows = scan(root, dir, view)?;
     rows.sort_by(|a, b| {
         let by_kind = b.is_dir.cmp(&a.is_dir);
         if by_kind != std::cmp::Ordering::Equal {
@@ -275,6 +311,7 @@ pub fn search(
     query: &str,
     deadline: std::time::Instant,
     limit: usize,
+    view: View,
 ) -> (Vec<Value>, bool, u64) {
     let needle = query.to_lowercase();
     let mut found: Vec<(String, Value)> = Vec::new();
@@ -297,6 +334,11 @@ pub fn search(
                 Err(_) => continue,
             };
             let path = entry.path();
+            // Même vue que le listing : un partage qui masque les fichiers
+            // cachés ne les propose pas davantage par la recherche.
+            if !view.keeps(&name, meta.is_dir()) {
+                continue;
+            }
             let link = std::fs::symlink_metadata(&path)
                 .map(|m| m.file_type().is_symlink())
                 .unwrap_or(false);

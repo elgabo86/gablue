@@ -96,6 +96,8 @@ def load() -> dict:
                 "id": identifier,
                 "name": str(entry.get("name") or Path(path).name or "Partage"),
                 "path": path,
+                "hidden": bool(entry.get("hidden", False)),
+                "recursive": bool(entry.get("recursive", True)),
             }
         )
     document["shares"] = cleaned
@@ -207,6 +209,43 @@ def share_available(path: str) -> bool:
     return True
 
 
+#: Options de vue d'un partage. Le démon les applique ; la GUI les écrit.
+#: `hidden` : afficher les noms qui commencent par un point (défaut : non).
+#: `recursive` : exposer les sous-dossiers (défaut : oui).
+SHARE_OPTIONS = ("hidden", "recursive")
+
+
+def share_option(entry: dict, key: str) -> bool:
+    """Valeur courante d'une option, avec le défaut du démon."""
+    return bool(entry.get(key, key == "recursive"))
+
+
+def set_share_option(
+    document: dict, identifier: str, key: str, value: bool
+) -> tuple[bool, str]:
+    """Écrit une option de vue, en laissant le reste intact. (ok, message)"""
+    if key not in SHARE_OPTIONS:
+        return False, "Option inconnue."
+    for entry in document.get("shares", []):
+        if entry.get("id") != identifier:
+            continue
+        if share_option(entry, key) == bool(value) and key in entry:
+            return True, ""
+        previous = entry.get(key, None)
+        existed = key in entry
+        entry[key] = bool(value)
+        try:
+            save(document)
+        except OSError as error:
+            if existed:
+                entry[key] = previous
+            else:
+                entry.pop(key, None)
+            return False, f"Écriture impossible : {error}"
+        return True, ""
+    return False, "Partage introuvable."
+
+
 def rename_share(document: dict, identifier: str, name: str) -> tuple[bool, str]:
     """Renomme un partage. Nom vide → nom du dossier (règle de l'app)."""
     for entry in document.get("shares", []):
@@ -243,6 +282,8 @@ def add_share(document: dict, path: str, name: str = "") -> tuple[bool, str]:
             "id": share_id(str(resolved)),
             "name": name.strip() or resolved.name or "Partage",
             "path": str(resolved),
+            "hidden": False,  # cachés masqués par défaut
+            "recursive": True,  # sous-dossiers inclus par défaut
         }
     )
     try:

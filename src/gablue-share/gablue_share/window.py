@@ -54,6 +54,7 @@ def label(text: str, name: str = "") -> QLabel:
 class ShareRow(QFrame):
     remove_requested = Signal(str)
     rename_requested = Signal(str)
+    option_changed = Signal(str, str, bool)  # partage, option, valeur
 
     def __init__(self, share: dict, available: bool, parent=None):
         super().__init__(parent)
@@ -80,6 +81,9 @@ class ShareRow(QFrame):
             else f"{full_path}\nDossier absent : ce partage n'est ni annoncé ni servi."
         )
         texts.addWidget(path)
+        options = label(self._options_text(), "hint")
+        options.setWordWrap(False)
+        texts.addWidget(options)
         layout.addLayout(texts, 1)
         button = QPushButton("✕")
         button.setObjectName("flat")
@@ -88,15 +92,46 @@ class ShareRow(QFrame):
         button.clicked.connect(lambda: self.remove_requested.emit(share.get("id", "")))
         layout.addWidget(button)
 
+    def _options_text(self) -> str:
+        """Ce que les autres postes verront, en deux mots."""
+        caches = "cachés affichés" if self.share.get("hidden") else "cachés masqués"
+        sous = (
+            "sous-dossiers inclus"
+            if self.share.get("recursive", True)
+            else "racine seulement"
+        )
+        return f"{caches} · {sous}"
+
     def contextMenuEvent(self, event) -> None:  # noqa: N802 (API Qt)
         menu = QMenu(self)
         rename = menu.addAction("Renommer…")
+        menu.addSeparator()
+        hidden = menu.addAction("Afficher les fichiers cachés")
+        hidden.setCheckable(True)
+        hidden.setChecked(bool(self.share.get("hidden")))
+        hidden.setToolTip(
+            "Les noms qui commencent par un point.\n"
+            "Un dossier téléchargé les emporte de toute façon."
+        )
+        recursive = menu.addAction("Inclure les sous-dossiers")
+        recursive.setCheckable(True)
+        recursive.setChecked(bool(self.share.get("recursive", True)))
+        recursive.setToolTip(
+            "Décoché : seuls les fichiers de la racine du partage sont proposés.\n"
+            "Le téléchargement du partage entier reste complet."
+        )
+        menu.addSeparator()
         remove = menu.addAction("Ne plus partager")
         chosen = menu.exec(event.globalPos())
+        identifiant = self.share.get("id", "")
         if chosen is rename:
-            self.rename_requested.emit(self.share.get("id", ""))
+            self.rename_requested.emit(identifiant)
+        elif chosen is hidden:
+            self.option_changed.emit(identifiant, "hidden", hidden.isChecked())
+        elif chosen is recursive:
+            self.option_changed.emit(identifiant, "recursive", recursive.isChecked())
         elif chosen is remove:
-            self.remove_requested.emit(self.share.get("id", ""))
+            self.remove_requested.emit(identifiant)
 
 
 class SharePanel(QFrame):
@@ -178,6 +213,7 @@ class SharePanel(QFrame):
             row = ShareRow(share, available)
             row.remove_requested.connect(self.remove_share)
             row.rename_requested.connect(self.rename_share)
+            row.option_changed.connect(self.change_option)
             self.rows.addWidget(row)
         index = self.visibility.findData(config.visibility(self.document))
         if index >= 0 and index != self.visibility.currentIndex():
@@ -268,6 +304,16 @@ class SharePanel(QFrame):
         ok, message = config.rename_share(self.document, share_id, name)
         if not ok:
             QMessageBox.warning(self, APP_NAME, message)
+            return
+        self.reload()
+        self.changed.emit()
+
+    def change_option(self, share_id: str, key: str, value: bool) -> None:
+        """Le démon relit le fichier à chaud (~3 s) : rien à redémarrer."""
+        ok, message = config.set_share_option(self.document, share_id, key, value)
+        if not ok:
+            QMessageBox.warning(self, APP_NAME, message)
+            self.reload()
             return
         self.reload()
         self.changed.emit()

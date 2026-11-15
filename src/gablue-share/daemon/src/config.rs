@@ -22,6 +22,14 @@ pub struct Share {
     pub root: PathBuf,
     /// Le dossier est réellement là maintenant (disque externe monté).
     pub available: bool,
+    /// Montrer les fichiers et dossiers dont le nom commence par un point.
+    /// Faux (défaut) = ils n'apparaissent ni au listing ni à la recherche, mais
+    /// un dossier téléchargé les emporte quand même (l'archive est complète).
+    pub hidden: bool,
+    /// Exposer les sous-dossiers. Faux = seuls les fichiers de la racine du
+    /// partage sont listés, servis et trouvables ; les sous-dossiers restent
+    /// téléchargeables via l'archive du partage entier.
+    pub recursive: bool,
 }
 
 /// Qui peut atteindre ce poste. Choix de la machine, pas du partage.
@@ -204,6 +212,14 @@ pub fn load(path: &Path) -> Result<Config, String> {
             path,
             root,
             available,
+            hidden: item
+                .get("hidden")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            recursive: item
+                .get("recursive")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
         });
     }
 

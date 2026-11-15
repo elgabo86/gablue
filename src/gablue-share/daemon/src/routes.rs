@@ -141,6 +141,19 @@ fn share_or_404<'a>(cfg: &'a Config, id: &str) -> Result<&'a Share, Response<Bod
     }
 }
 
+/// Vue d'un partage : ce qu'il accepte de montrer (réglé par celui qui partage).
+fn view_of(share: &Share) -> files::View {
+    files::View {
+        hidden: share.hidden,
+        subdirs: share.recursive,
+    }
+}
+
+/// Un sous-chemin est-il hors du partage ? (partage limité à sa racine)
+fn beyond_root(share: &Share, segments: &[String]) -> bool {
+    !share.recursive && !segments.is_empty()
+}
+
 fn api_info(cfg: &Config) -> Response<Body> {
     let shares: Vec<Value> = cfg
         .available()
@@ -168,6 +181,9 @@ fn api_list(req: &Request, cfg: &Config, share_id: &str, query: &str, head: bool
         Some(segments) => segments,
         None => return error(400, "chemin invalide"),
     };
+    if beyond_root(share, &segments) {
+        return error(404, "ce partage ne contient que sa racine");
+    }
     let dir = match files::resolve(&share.root, &segments) {
         Some(path) => path,
         None => return error(404, "dossier introuvable"),
@@ -175,12 +191,13 @@ fn api_list(req: &Request, cfg: &Config, share_id: &str, query: &str, head: bool
     if !dir.is_dir() {
         return error(404, "ce n'est pas un dossier");
     }
+    let view = view_of(share);
 
     // `HEAD` = simple empreinte du dossier : la GUI demande « ça a bougé ? »
     // toutes les quelques secondes sans relire le listing (quelques centaines
     // d'octets au lieu de plusieurs centaines de Kio sur un gros dossier).
     if head {
-        let tag = match files::fingerprint(&share.root, &dir) {
+        let tag = match files::fingerprint(&share.root, &dir, view) {
             Ok(tag) => tag,
             Err(err) => return error(500, &format!("lecture impossible : {err}")),
         };
@@ -209,7 +226,8 @@ fn api_list(req: &Request, cfg: &Config, share_id: &str, query: &str, head: bool
     let sort = files::Sort::parse(&query_param(query, "sort").unwrap_or_default());
     let descending = query_param(query, "desc").map(|value| value == "1").unwrap_or(false);
 
-    let (entries, truncated, tag) = match files::list(&share.root, &dir, offset, limit, sort, descending) {
+    let (entries, truncated, tag) =
+        match files::list(&share.root, &dir, offset, limit, sort, descending, view) {
         Ok(page) => page,
         Err(err) => return error(500, &format!("lecture impossible : {err}")),
     };
@@ -265,6 +283,9 @@ fn api_find(cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
         Some(segments) => segments,
         None => return error(400, "chemin invalide"),
     };
+    if beyond_root(share, &segments) {
+        return error(404, "ce partage ne contient que sa racine");
+    }
     let start = match files::resolve(&share.root, &segments) {
         Some(path) if path.is_dir() => path,
         _ => return error(404, "dossier introuvable"),
@@ -274,7 +295,8 @@ fn api_find(cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
         .unwrap_or(200)
         .clamp(1, 1000);
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
-    let (entries, truncated, scanned) = files::search(&share.root, &start, &needle, deadline, limit);
+    let (entries, truncated, scanned) =
+        files::search(&share.root, &start, &needle, deadline, limit, view_of(share));
     json_response(
         200,
         &json!({
@@ -303,6 +325,9 @@ fn api_size(cfg: &Config, share_id: &str, query: &str) -> Response<Body> {
         Some(segments) => segments,
         None => return error(400, "chemin invalide"),
     };
+    if beyond_root(share, &segments) {
+        return error(404, "ce partage ne contient que sa racine");
+    }
     let dir = match files::resolve(&share.root, &segments) {
         Some(path) => path,
         None => return error(404, "dossier introuvable"),
@@ -329,6 +354,10 @@ fn serve_file(req: &Request, cfg: &Config, share_id: &str, rel: &[String], head:
         Ok(share) => share,
         Err(response) => return response,
     };
+    // Partage limité à sa racine : un fichier de sous-dossier n'est pas servi.
+    if !share.recursive && rel.len() > 1 {
+        return error(404, "ce partage ne contient que sa racine");
+    }
     let path = match files::resolve(&share.root, rel) {
         Some(path) => path,
         None => return error(404, "fichier introuvable"),
@@ -451,6 +480,9 @@ fn serve_tar(cfg: &Config, share_id: &str, rel: &[String], query: &str) -> Respo
         Ok(share) => share,
         Err(response) => return response,
     };
+    if !share.recursive && !rel.is_empty() {
+        return error(404, "ce partage ne contient que sa racine");
+    }
     let path = match files::resolve(&share.root, rel) {
         Some(path) => path,
         None => return error(404, "dossier introuvable"),

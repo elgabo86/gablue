@@ -50,6 +50,10 @@ Deux processus, séparés pour la RAM :
   « Nettoyer les terminés » ; plus de bouton « Tout le partage » (le clic droit
   propose « Tout sélectionner ») ; plus de port ni d'IP affichés ; visibilité
   `both|lan|tailscale` appliquée par le démon.
+- **M5.2 (15/11/2026)** : deux options **par partage**, appliquées côté démon —
+  `hidden` (cachés masqués par défaut ; une archive les emporte quand même) et
+  `recursive` (faux = seuls les fichiers de la racine sont proposés). 27 tests
+  d'intégration + 11 unitaires.
 
 ## Paquet (GUI)
 
@@ -213,6 +217,31 @@ Invariants :
 - **Un seul partage par dossier** : deux écritures du même chemin sont refusées ;
   l'identifiant étant dérivé du chemin, deux entrées identiques seraient de
   toute façon le même partage.
+
+### Options de vue d'un partage (réglées par celui qui partage)
+
+Deux champs par partage dans `share.json`, appliqués **par le démon** (le client
+ne peut pas les contourner) et relus à chaud :
+
+| Champ | Défaut | Effet |
+|---|---|---|
+| `hidden` | `false` | les noms commençant par `.` n'apparaissent ni au listing ni à la recherche |
+| `recursive` | `true` | `false` = seuls les **fichiers de la racine** du partage sont listés, servis et trouvables |
+
+- **Télécharger ≠ lister.** Une archive (`/a/`) est toujours complète : un dossier
+  téléchargé emporte ses sous-dossiers **et** ses fichiers cachés, même masqués
+  au listing. C'est le comportement demandé (15/11/2026) : on masque pour ne pas
+  encombrer la vue, pas pour amputer un téléchargement.
+- **La taille annoncée suit le téléchargement** (`/api/size`), donc elle compte
+  tout, cachés et sous-dossiers compris. Sinon « 2 fichiers · 6 Kio » à côté
+  d'une archive de 40 fichiers serait un piège.
+- `recursive: false` refuse les sous-chemins partout (`/api/list?path=`,
+  `/api/find?path=`, `/api/size?path=`, `/f/<share>/sous/fichier`, `/a/<share>/sous`
+  → `404 « ce partage ne contient que sa racine »`), et la recherche ne descend
+  pas. L'archive du partage entier reste permise, évidemment.
+- L'interface expose les deux options au clic droit sur un partage (« Afficher
+  les fichiers cachés », « Inclure les sous-dossiers ») et les résume sous le
+  chemin (« cachés masqués · sous-dossiers inclus »).
 
 ## File de téléchargement (livrée en M3)
 
