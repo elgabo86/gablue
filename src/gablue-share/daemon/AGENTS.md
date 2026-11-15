@@ -231,6 +231,17 @@ coûter quelques kilo-octets, pas une boîte à outils graphique (choix du
   par `--launcher`, détaché (`process_group(0)`), et **ramasse l'enfant**
   (un fil fait `wait()`, sinon chaque ouverture/fermeture laissait un zombie
   sous le démon — vécu 15/11/2026).
+- **Le lancement récupère l'environnement graphique du bureau**
+  (`display_environment`) : l'unité `systemd --user` peut démarrer avant la
+  session, et son environnement ne porte alors que `XDG_RUNTIME_DIR` — un Qt
+  lancé sans `WAYLAND_DISPLAY` avorte (« no Qt platform plugin could be
+  initialized », quatre plantages d'affilée en cliquant l'icône, vécu
+  15/11/2026). On relit `WAYLAND_DISPLAY`, `DISPLAY` et `XAUTHORITY` dans
+  `systemctl --user show-environment` au moment du clic, et seulement ceux qui
+  nous manquent. Vérifié : `gablue-share --check` avec le seul
+  `XDG_RUNTIME_DIR` → core dump ; avec les trois variables → fenêtre
+  construite. Pour un démon déjà lancé, `systemctl --user restart
+  gablue-share.service` suffit à lui donner l'environnement courant.
 - **Menu (clic droit)** : état (« Partage actif — N dossier(s) partagé(s) »),
   « Ouvrir »/« Fermer la fenêtre » selon la socket, « Démarrage » (les trois
   mêmes états que le tiroir, coché sur l'état réel de systemd), « Quitter le

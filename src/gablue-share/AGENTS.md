@@ -27,7 +27,7 @@ Deux processus, séparés pour la RAM :
 - **M1 (livré)** : démon HTTP, `/api/info`, `/api/list`, `/f/` (Range/ETag),
   `/a/` (tar), filtre d'adresses, rechargement à chaud, annonce mDNS.
   `--parent-pid` est encore accepté mais sans effet depuis M5.3 (démon détaché).
-  `cargo test` : 29 tests d'intégration + 11 unitaires (vrai serveur, vrai
+  `cargo test` : 29 tests d'intégration + 13 unitaires (vrai serveur, vrai
   système de fichiers, vrais sockets).
 - **M2 (livré)** : GUI PySide6 (liste des dossiers partagés persistante,
   découverte LAN/tailnet, navigation, téléchargement fichier + dossier).
@@ -128,7 +128,7 @@ Détail des deux côtés : `daemon/AGENTS.md` (« Cycle du serveur ») et
 ```bash
 cd src/gablue-share/daemon
 cargo build --release      # binaire : target/release/gablue-shared
-cargo test                 # 40 tests, aucun réseau externe
+cargo test                 # 42 tests, aucun réseau externe
 ```
 
 Développement local du démon :

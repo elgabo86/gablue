@@ -138,6 +138,47 @@ fn notify(title: &str, body: &str) {
         .spawn();
 }
 
+/// Variables d'affichage que le démon n'a pas forcément à sa naissance.
+///
+/// L'unité `systemd --user` peut démarrer **avant le bureau** : son
+/// environnement ne porte alors que `XDG_RUNTIME_DIR`, et un Qt lancé depuis
+/// l'icône avorte (« This application failed to start because no Qt platform
+/// plugin could be initialized », vécu le 15/11/2026 — quatre plantages de
+/// suite en cliquant l'icône). Plasma importe ces variables dans le
+/// gestionnaire systemd (`systemctl --user import-environment`) ; on les relit
+/// là au moment du clic, et seulement celles qui manquent chez nous.
+fn display_environment() -> Vec<(String, String)> {
+    let sortie = match Command::new("systemctl")
+        .args(["--user", "show-environment"])
+        .output()
+    {
+        Ok(sortie) if sortie.status.success() => sortie,
+        _ => return Vec::new(),
+    };
+    parse_display_environment(&String::from_utf8_lossy(&sortie.stdout))
+        .into_iter()
+        // Ce que nous avons déjà vient du même bureau : on n'écrase pas.
+        .filter(|(nom, _valeur)| std::env::var_os(nom).is_none())
+        .collect()
+}
+
+/// Lit les variables d'affichage d'une sortie de `systemctl show-environment`.
+fn parse_display_environment(texte: &str) -> Vec<(String, String)> {
+    const NOMS: [&str; 3] = ["WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY"];
+    let mut trouvees = Vec::new();
+    for ligne in texte.lines() {
+        let (nom, valeur) = match ligne.split_once('=') {
+            Some(paire) => paire,
+            None => continue,
+        };
+        if !NOMS.contains(&nom) || valeur.is_empty() {
+            continue;
+        }
+        trouvees.push((nom.to_string(), valeur.to_string()));
+    }
+    trouvees
+}
+
 /// Lance l'application, détachée de nous.
 fn spawn_gui(launcher: &Option<String>) -> bool {
     let programme = launcher
@@ -145,7 +186,11 @@ fn spawn_gui(launcher: &Option<String>) -> bool {
         .or_else(|| Some("/usr/bin/gablue-share".to_string()))
         .filter(|path| Path::new(path).exists());
     match programme.and_then(|path| {
-        Command::new(path)
+        let mut commande = Command::new(path);
+        for (nom, valeur) in display_environment() {
+            commande.env(nom, valeur);
+        }
+        commande
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -180,6 +225,12 @@ impl Partage {
             self.gui_open = false;
         } else {
             self.gui_open = spawn_gui(&self.launcher);
+            if !self.gui_open {
+                notify(
+                    "Gablue Share",
+                    "Impossible d'ouvrir la fenêtre : lanceur introuvable.",
+                );
+            }
         }
     }
 
@@ -339,5 +390,43 @@ fn surveiller(handle: Handle<Partage>, state: Shared) {
             let _ = handle.shutdown().wait();
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_display_environment;
+
+    #[test]
+    fn display_variables_are_read_from_the_manager_environment() {
+        let texte = concat!(
+            "LANG=fr_FR.UTF-8\n",
+            "WAYLAND_DISPLAY=wayland-1\n",
+            "DISPLAY=:0\n",
+            "XAUTHORITY=/run/user/1000/xauth_yhpzVs\n",
+            "HOME=/home/gab\n",
+        );
+        assert_eq!(
+            parse_display_environment(texte),
+            vec![
+                ("WAYLAND_DISPLAY".to_string(), "wayland-1".to_string()),
+                ("DISPLAY".to_string(), ":0".to_string()),
+                (
+                    "XAUTHORITY".to_string(),
+                    "/run/user/1000/xauth_yhpzVs".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_or_empty_variables_are_ignored() {
+        assert!(parse_display_environment("").is_empty());
+        assert!(parse_display_environment("sans egal\nWAYLAND_DISPLAY=\nPATH=/usr/bin\n")
+            .is_empty());
+        assert_eq!(
+            parse_display_environment("DISPLAY=:9\n"),
+            vec![("DISPLAY".to_string(), ":9".to_string())]
+        );
     }
 }
