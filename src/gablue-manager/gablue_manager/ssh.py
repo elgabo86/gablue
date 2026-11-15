@@ -15,8 +15,6 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtWidgets import QInputDialog, QLineEdit
-
 from .constants import (
     CHECK_DEADLINE, CPUID_EMU_HELPER, KNOWN_HOSTS, PASSWORD_RE, PRIVATE_KEY,
     PUBLIC_KEY, SSH, SSH_COPY_ID, SSH_DIR, SSH_KEYGEN,
@@ -680,6 +678,12 @@ def remote_sudo_prefix(password: str) -> str:
 
 def ask_remote_password(parent, host: dict) -> str | None:
     """Mot de passe sudo du poste distant ; jamais enregistré, jamais en argv."""
+    # Import local, jamais au niveau module : `ssh` est une couche basse, lue
+    # par `local` donc par tout `--tray-state`/`--check` qui n'affichera rien.
+    # QtWidgets en tête de fichier chargeait Qt entier (~27 Mo mesurés) dans
+    # ces processus sans écran (vécu 15/11/2026).
+    from PySide6.QtWidgets import QInputDialog, QLineEdit
+
     text, ok = QInputDialog.getText(
         parent, "Autorisation root",
         f"Mot de passe de « {host['user']} » sur {display_name(host)} :\n"
