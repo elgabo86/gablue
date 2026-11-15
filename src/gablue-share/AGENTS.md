@@ -7,9 +7,9 @@ authentification, aucun compte : la seule barrière est l'adresse.
 
 Deux processus, séparés pour la RAM :
 
-| Processus | Rôle | Qt | RSS mesuré (14/11/2026) |
+| Processus | Rôle | Qt | RSS mesuré (15/11/2026) |
 |---|---|---|---|
-| `gablue-shared` (`daemon/`, Rust) | sert les dossiers en HTTP, annonce le poste | non | **3,0 Mo** au repos et pendant un transfert (pic 3,0 Mo) |
+| `gablue-shared` (`daemon/`, Rust) | sert les dossiers en HTTP, annonce le poste | non | **3,2 Mo** au repos, 3,7 Mo après 50 requêtes puis stable |
 | `gablue-share` (GUI PySide6) | découverte, navigation, file de téléchargement | oui | ~70-120 Mo, seulement fenêtre ouverte |
 
 ## État
@@ -28,11 +28,15 @@ Deux processus, séparés pour la RAM :
   local… » dans gablue-manager (permanence + ouverture de l'app).
 - **M4** : image (build Rust en étape `share-build` jetée après coup, unité
   `systemd --user`, ouverture firewalld, `.desktop`, icône), installée par
-  `files/scripts/build-share`. Vérifié en conteneur le 14/11/2026 : étape
-  `share-build` verte (binaire 808 656 octets, lié à `libc`/`libgcc_s` seuls) et
-  `build-share` rejoué dans `fedora:45` (paquet + lanceur posés, sources
-  retirées, zéro `__pycache__`) ; **pas encore** de build d'image complet, donc
-  l'installation réelle reste à voir.
+  `files/scripts/build-share`. **Vérifié dans l'image publiée** le 15/11/2026
+  (run `43655829429`, les cinq variantes vertes, `gablue-main:latest`) :
+  `/usr/bin/gablue-share`, `/usr/libexec/gablue-shared` (861 904 octets,
+  `ldd` : `libc`/`libgcc_s` seuls, `--help` répond), unité `ExecStart`
+  correcte, `.desktop`, icône, service firewalld **et** son ouverture dans la
+  zone `FedoraWorkstation`. Première panne du build : un cache monté sous
+  `/root/.cargo` — dans une image ostree `/root` est un lien vers
+  `var/roothome`, absent (corrigé par `CARGO_HOME=/cargo`, voir
+  `files/scripts/AGENTS.md`).
 - **M5 (15/11/2026)** : listing à jour sans clic (ETag + `HEAD` conditionnel,
   cadence adaptative), pagination en défilant, tri serveur, recherche récursive
   bornée, taille des dossiers à la demande, téléchargement d'un partage entier,

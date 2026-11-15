@@ -135,7 +135,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - **Même image de base que l'étape finale** (`quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}`) et non une `fedora:XX` : mêmes blobs partagés et même glibc que le runtime — une image distincte risquait un décalage silencieux de glibc
 - **Caches montés** : `/cargo` (`CARGO_HOME`), `/build/target` (sinon chaque build recompile tout `tiny_http`/`serde_json`), plus `/var/cache` et `/var/log`. **Jamais sous `/root`** : dans une image ostree `/root` est un lien vers `var/roothome`, absent de l'image, et le cache mount échoue au build (`stat /root: no such file or directory`, vu en CI le 14/11/2026 — le build rootless local, lui, créait le dossier et masquait le problème)
 - Le Containerfile copie **fichier par fichier** (`Cargo.toml`, `Cargo.lock`, `src/`) : `COPY src/gablue-share/daemon` embarquerait `target/` (270 Mo). `.containerignore` à la racine exclut aussi `target`, `__pycache__` et `.git` du contexte envoyé au démon de build
-- Mesure : binaire ~1,5 Mo, RSS 3,0 Mo au repos (voir `src/gablue-share/AGENTS.md`)
+- Mesure (15/11/2026, binaire de CI) : 861 904 octets, RSS 3,2 Mo au repos et 3,7 Mo sous charge (voir `src/gablue-share/AGENTS.md`)
 
 **build-share** (après build-manager, comme les autres paquets Python) :
 - Vérifie que `/usr/libexec/gablue-shared` existe (`COPY --from` fait avant le RUN) : sans lui, échec immédiat plutôt qu'une GUI qui prétendrait ne pas trouver son démon
