@@ -58,7 +58,7 @@ Le projet construit 6 variantes distinctes :
 ├── cosign.pub                             # Clé publique pour signature
 ├── src/
 │   ├── composefs-fix/                      # Correction espace libre Dolphin sur composefs
-│   │   ├── composefs-fix.c                 # Hook LD_PRELOAD (intercepte statfs/statfs64)
+│   │   ├── composefs-fix.c                 # Hook LD_PRELOAD (intercepte statfs/statvfs)
 │   │   └── Makefile                        # Compilation (.so)
 │   ├── cpuid-fault/                         # Module kernel CPUID faulting (AMD)
 │   │   ├── inc/                            # En-têtes (vmcb_layout.h, host_state.h)
