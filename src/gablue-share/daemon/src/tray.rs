@@ -138,7 +138,7 @@ fn notify(title: &str, body: &str) {
         .spawn();
 }
 
-/// Variables d'affichage que le démon n'a pas forcément à sa naissance.
+/// Variables de session que le démon n'a pas forcément à sa naissance.
 ///
 /// L'unité `systemd --user` peut démarrer **avant le bureau** : son
 /// environnement ne porte alors que `XDG_RUNTIME_DIR`, et un Qt lancé depuis
@@ -147,7 +147,15 @@ fn notify(title: &str, body: &str) {
 /// suite en cliquant l'icône). Plasma importe ces variables dans le
 /// gestionnaire systemd (`systemctl --user import-environment`) ; on les relit
 /// là au moment du clic, et seulement celles qui manquent chez nous.
-fn display_environment() -> Vec<(String, String)> {
+///
+/// Les variables d'affichage ne suffisent pas : sans `XDG_CURRENT_DESKTOP` (ou
+/// `KDE_FULL_SESSION`), Qt ne reconnaît pas Plasma, ne charge pas
+/// `KDEPlasmaPlatformTheme` et retombe sur Fusion avec sa palette claire par
+/// défaut — la feuille de style de la GUI étant dérivée de la palette, la
+/// fenêtre s'ouvrait **blanche** depuis l'icône (vécu 15/11/2026). Le reste
+/// accompagne la même détection : type de session, `kdedefaults` dans
+/// `XDG_CONFIG_DIRS`, ICE/SM pour une session X11.
+fn session_environment() -> Vec<(String, String)> {
     let sortie = match Command::new("systemctl")
         .args(["--user", "show-environment"])
         .output()
@@ -155,16 +163,32 @@ fn display_environment() -> Vec<(String, String)> {
         Ok(sortie) if sortie.status.success() => sortie,
         _ => return Vec::new(),
     };
-    parse_display_environment(&String::from_utf8_lossy(&sortie.stdout))
+    parse_session_environment(&String::from_utf8_lossy(&sortie.stdout))
         .into_iter()
         // Ce que nous avons déjà vient du même bureau : on n'écrase pas.
         .filter(|(nom, _valeur)| std::env::var_os(nom).is_none())
         .collect()
 }
 
-/// Lit les variables d'affichage d'une sortie de `systemctl show-environment`.
-fn parse_display_environment(texte: &str) -> Vec<(String, String)> {
-    const NOMS: [&str; 3] = ["WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY"];
+/// Lit les variables de session d'une sortie de `systemctl show-environment`.
+fn parse_session_environment(texte: &str) -> Vec<(String, String)> {
+    const NOMS: [&str; 12] = [
+        // Ouvrir une fenêtre.
+        "WAYLAND_DISPLAY",
+        "DISPLAY",
+        "XAUTHORITY",
+        "ICEAUTHORITY",
+        // Identité du bureau : c'est elle qui fait charger le thème Plasma.
+        "XDG_CURRENT_DESKTOP",
+        "KDE_FULL_SESSION",
+        "KDE_SESSION_VERSION",
+        "DESKTOP_SESSION",
+        "XDG_SESSION_DESKTOP",
+        "XDG_SESSION_TYPE",
+        // Chemins de configuration (`kdedefaults`) et reconnexion Wayland.
+        "XDG_CONFIG_DIRS",
+        "QT_WAYLAND_RECONNECT",
+    ];
     let mut trouvees = Vec::new();
     for ligne in texte.lines() {
         let (nom, valeur) = match ligne.split_once('=') {
@@ -187,7 +211,7 @@ fn spawn_gui(launcher: &Option<String>) -> bool {
         .filter(|path| Path::new(path).exists());
     match programme.and_then(|path| {
         let mut commande = Command::new(path);
-        for (nom, valeur) in display_environment() {
+        for (nom, valeur) in session_environment() {
             commande.env(nom, valeur);
         }
         commande
@@ -395,10 +419,10 @@ fn surveiller(handle: Handle<Partage>, state: Shared) {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_display_environment;
+    use super::parse_session_environment;
 
     #[test]
-    fn display_variables_are_read_from_the_manager_environment() {
+    fn session_variables_are_read_from_the_manager_environment() {
         let texte = concat!(
             "LANG=fr_FR.UTF-8\n",
             "WAYLAND_DISPLAY=wayland-1\n",
@@ -407,7 +431,7 @@ mod tests {
             "HOME=/home/gab\n",
         );
         assert_eq!(
-            parse_display_environment(texte),
+            parse_session_environment(texte),
             vec![
                 ("WAYLAND_DISPLAY".to_string(), "wayland-1".to_string()),
                 ("DISPLAY".to_string(), ":0".to_string()),
@@ -419,13 +443,49 @@ mod tests {
         );
     }
 
+    /// Sans l'identité du bureau, Qt ne charge pas le thème Plasma : la palette
+    /// retombe sur celle de Fusion, claire, et la feuille de style de la GUI la
+    /// suit — fenêtre blanche ouverte depuis l'icône (vécu 15/11/2026).
+    #[test]
+    fn desktop_identity_is_forwarded_too() {
+        let texte = concat!(
+            "PATH=/usr/local/bin:/usr/bin\n",
+            "XDG_CURRENT_DESKTOP=KDE\n",
+            "KDE_FULL_SESSION=true\n",
+            "KDE_SESSION_VERSION=6\n",
+            "DESKTOP_SESSION=/usr/share/wayland-sessions/plasma.desktop\n",
+            "XDG_SESSION_DESKTOP=KDE\n",
+            "XDG_SESSION_TYPE=wayland\n",
+            "XDG_CONFIG_DIRS=/home/gab/.config/kdedefaults:/etc/xdg\n",
+            "QT_WAYLAND_RECONNECT=1\n",
+            "MAIL=/var/spool/mail/gab\n",
+        );
+        let noms: Vec<String> = parse_session_environment(texte)
+            .into_iter()
+            .map(|(nom, _valeur)| nom)
+            .collect();
+        assert_eq!(
+            noms,
+            vec![
+                "XDG_CURRENT_DESKTOP",
+                "KDE_FULL_SESSION",
+                "KDE_SESSION_VERSION",
+                "DESKTOP_SESSION",
+                "XDG_SESSION_DESKTOP",
+                "XDG_SESSION_TYPE",
+                "XDG_CONFIG_DIRS",
+                "QT_WAYLAND_RECONNECT",
+            ]
+        );
+    }
+
     #[test]
     fn unknown_or_empty_variables_are_ignored() {
-        assert!(parse_display_environment("").is_empty());
-        assert!(parse_display_environment("sans egal\nWAYLAND_DISPLAY=\nPATH=/usr/bin\n")
+        assert!(parse_session_environment("").is_empty());
+        assert!(parse_session_environment("sans egal\nWAYLAND_DISPLAY=\nPATH=/usr/bin\n")
             .is_empty());
         assert_eq!(
-            parse_display_environment("DISPLAY=:9\n"),
+            parse_session_environment("DISPLAY=:9\n"),
             vec![("DISPLAY".to_string(), ":9".to_string())]
         );
     }

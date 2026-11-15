@@ -225,6 +225,17 @@ dit. Les fichiers de partages restent séparés par utilisateur, rien n'est perd
   reste.
 - Les captures de vérification doivent appliquer `style.stylesheet()` — sans
   elle, Qt rend son style par défaut et la capture ne dit rien du rendu réel.
+- **La palette est la seule source de couleur** : tout le QSS en dérive
+  (`Window`, `Base`, `Text`, `Highlight`, `Mid`). Conséquence à connaître avant
+  de chercher un bug de feuille de style : une fenêtre **blanche** veut dire que
+  Qt n'a pas chargé le thème Plasma (style `fusion`, `Window #efefef`,
+  `Base #ffffff`), pas que le QSS a changé. C'est ce qui arrivait quand la
+  fenêtre était lancée par l'icône du démon : sans `XDG_CURRENT_DESKTOP`, Qt ne
+  reconnaît pas Plasma (vécu 15/11/2026, correctif côté `daemon/src/tray.rs`,
+  voir `../daemon/AGENTS.md`). Vérification sans écran : construire
+  `QApplication` sous `QT_QPA_PLATFORM=wayland` (jamais `offscreen`, qui ne fait
+  aucune détection de bureau et rend toujours Fusion) et lire
+  `app.style().objectName()` + `palette.color(QPalette.Base)`.
 
 ## File de téléchargement (livrée en M3)
 

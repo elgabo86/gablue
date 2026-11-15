@@ -231,17 +231,28 @@ coûter quelques kilo-octets, pas une boîte à outils graphique (choix du
   par `--launcher`, détaché (`process_group(0)`), et **ramasse l'enfant**
   (un fil fait `wait()`, sinon chaque ouverture/fermeture laissait un zombie
   sous le démon — vécu 15/11/2026).
-- **Le lancement récupère l'environnement graphique du bureau**
-  (`display_environment`) : l'unité `systemd --user` peut démarrer avant la
+- **Le lancement récupère l'environnement de session du bureau**
+  (`session_environment`) : l'unité `systemd --user` peut démarrer avant la
   session, et son environnement ne porte alors que `XDG_RUNTIME_DIR` — un Qt
   lancé sans `WAYLAND_DISPLAY` avorte (« no Qt platform plugin could be
   initialized », quatre plantages d'affilée en cliquant l'icône, vécu
-  15/11/2026). On relit `WAYLAND_DISPLAY`, `DISPLAY` et `XAUTHORITY` dans
-  `systemctl --user show-environment` au moment du clic, et seulement ceux qui
-  nous manquent. Vérifié : `gablue-share --check` avec le seul
-  `XDG_RUNTIME_DIR` → core dump ; avec les trois variables → fenêtre
-  construite. Pour un démon déjà lancé, `systemctl --user restart
-  gablue-share.service` suffit à lui donner l'environnement courant.
+  15/11/2026). On relit `WAYLAND_DISPLAY`, `DISPLAY`, `XAUTHORITY` et
+  `ICEAUTHORITY` (ouvrir une fenêtre), puis l'identité du bureau
+  (`XDG_CURRENT_DESKTOP`, `KDE_FULL_SESSION`, `KDE_SESSION_VERSION`,
+  `DESKTOP_SESSION`, `XDG_SESSION_DESKTOP`, `XDG_SESSION_TYPE`), plus
+  `XDG_CONFIG_DIRS` (qui porte `kdedefaults`) et `QT_WAYLAND_RECONNECT`, dans
+  `systemctl --user show-environment` au moment du clic — et seulement ceux qui
+  nous manquent. Les trois variables d'affichage ne suffisaient pas : sans
+  l'identité du bureau, Qt ne charge pas `KDEPlasmaPlatformTheme` et retombe sur
+  Fusion avec sa palette claire — la feuille de style de la GUI étant dérivée
+  de la palette, **la fenêtre ouverte depuis l'icône était blanche** (vécu
+  15/11/2026, mesuré : Fusion `#efefef`/`#ffffff` contre Breeze
+  `#202326`/`#141618` pour les mêmes 12 variables). Vérifié : `gablue-share
+  --check` avec le seul `XDG_RUNTIME_DIR` → core dump ; avec le jeu complet →
+  fenêtre construite, style `breeze`. Pour un démon déjà lancé,
+  `systemctl --user restart gablue-share.service` suffit à lui donner
+  l'environnement courant — mais le binaire de l'image, lui, ne change qu'avec
+  une image reconstruite.
 - **Menu (clic droit)** : état (« Partage actif — N dossier(s) partagé(s) »),
   « Ouvrir »/« Fermer la fenêtre » selon la socket, « Démarrage » (les trois
   mêmes états que le tiroir, coché sur l'état réel de systemd), « Quitter le

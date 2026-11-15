@@ -27,7 +27,7 @@ Deux processus, séparés pour la RAM :
 - **M1 (livré)** : démon HTTP, `/api/info`, `/api/list`, `/f/` (Range/ETag),
   `/a/` (tar), filtre d'adresses, rechargement à chaud, annonce mDNS.
   `--parent-pid` est encore accepté mais sans effet depuis M5.3 (démon détaché).
-  `cargo test` : 29 tests d'intégration + 13 unitaires (vrai serveur, vrai
+  `cargo test` : 29 tests d'intégration + 14 unitaires (vrai serveur, vrai
   système de fichiers, vrais sockets).
 - **M2 (livré)** : GUI PySide6 (liste des dossiers partagés persistante,
   découverte LAN/tailnet, navigation, téléchargement fichier + dossier).
@@ -98,7 +98,9 @@ Deux processus, séparés pour la RAM :
   pas en rouvrant la fenêtre). **L'actualisation se voit** (« Actualisation… »
   puis « ✓ Actualisé », heure du dernier rafraîchissement). « Ouvrir » après un
   téléchargement ouvre Dolphin **sur** l'élément (`--select`) avec le hook
-  composefs de l'image.
+  composefs de l'image. **La fenêtre ouverte depuis l'icône reprend
+  l'environnement de session du bureau** : sans l'identité du bureau, Qt
+  ignorait Plasma et l'interface sortait blanche (vécu 15/11/2026).
 
 ## Cycle de vie
 
@@ -128,7 +130,7 @@ Détail des deux côtés : `daemon/AGENTS.md` (« Cycle du serveur ») et
 ```bash
 cd src/gablue-share/daemon
 cargo build --release      # binaire : target/release/gablue-shared
-cargo test                 # 42 tests, aucun réseau externe
+cargo test                 # 43 tests, aucun réseau externe
 ```
 
 Développement local du démon :
