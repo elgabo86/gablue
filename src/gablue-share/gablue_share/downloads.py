@@ -365,6 +365,17 @@ class DownloadWorker(QThread):
             base, self.job.share_id, self.job.path, self.job.name, key=self._key()
         )
         self._response = response
+        # Longueur du flux annoncée par le démon (indicative, jamais imposée en
+        # `Content-Length`) : sans elle, un dossier de mille fichiers n'affichait
+        # qu'un compteur d'octets qui monte, pas une progression (vécu
+        # 15/11/2026). Démon antérieur à cet en-tête → 0, donc pas de fraction.
+        try:
+            self.job.total = int(response.headers.get("X-Gablue-Bytes") or 0)
+        except (TypeError, ValueError):
+            self.job.total = 0
+        self.job.done = 0
+        self.job._last_measure = (time.monotonic(), 0)
+        self.progress.emit(self.job)
         with response:
             stream = _Counter(response, account, self.isInterruptionRequested)
             # filter="data" refuse les chemins absolus et les sorties d'arbre.

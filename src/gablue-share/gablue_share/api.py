@@ -82,9 +82,16 @@ def list_url(
     return f"{base}/api/list/{urllib.parse.quote(share_id, safe='')}?{query}"
 
 
-def find_url(base: str, share_id: str, query_text: str, path: str, limit: int = 200) -> str:
-    params = urllib.parse.urlencode({"q": query_text, "path": path, "limit": limit})
-    return f"{base}/api/find/{urllib.parse.quote(share_id, safe='')}?{params}"
+def find_url(
+    base: str, share_id: str, query_text: str, path: str, limit: int = 200, budget_ms: int = 0
+) -> str:
+    params: dict[str, object] = {"q": query_text, "path": path, "limit": limit}
+    if budget_ms:
+        # Budget de parcours côté serveur : le défaut (400 ms) ne suffit pas
+        # pour fouiller tout un partage depuis sa racine.
+        params["ms"] = budget_ms
+    query = urllib.parse.urlencode(params)
+    return f"{base}/api/find/{urllib.parse.quote(share_id, safe='')}?{query}"
 
 
 def size_url(base: str, share_id: str, path: str) -> str:
@@ -153,14 +160,23 @@ def list_dir(
 
 
 def find(
-    base: str, share_id: str, query: str, path: str = "", limit: int = 200, key: str = ""
+    base: str,
+    share_id: str,
+    query: str,
+    path: str = "",
+    limit: int = 200,
+    key: str = "",
+    budget_ms: int = 0,
 ) -> dict:
-    """Recherche récursive par nom, bornée côté serveur (~400 ms).
+    """Recherche récursive par nom, bornée côté serveur (~400 ms par défaut).
 
-    `limit` borne le nombre de résultats **par partage** : la recherche globale
-    interroge plusieurs partages à la fois, elle n'a pas besoin de tout.
+    `limit` borne le nombre de résultats **par partage**, `budget_ms` le temps
+    de parcours : une recherche demandée explicitement par l'utilisateur peut
+    prendre plus que la valeur par défaut, un partage entier étant autrement
+    plus long à fouiller qu'un sous-dossier.
     """
-    with _request(find_url(base, share_id, query, path, limit), LIST_TIMEOUT, auth_headers(key)) as response:
+    url = find_url(base, share_id, query, path, limit, budget_ms)
+    with _request(url, LIST_TIMEOUT, auth_headers(key)) as response:
         return json.loads(response.read().decode("utf-8"))
 
 

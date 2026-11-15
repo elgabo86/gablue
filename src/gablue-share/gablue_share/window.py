@@ -765,19 +765,33 @@ class RemoteShareRow(QFrame):
         self.opened.emit(self.peer, self.share)
 
 
+#: Plafond de résultats d'une recherche. **La recherche globale et celle d'un
+#: partage doivent trouver les mêmes choses** : la globale demandait 60 résultats
+#: par partage là où la locale en demandait 200, donc un partage de ROMs montrait
+#: des « pokemon » que la globale ne rendait pas (vécu 15/11/2026). Le démon borne
+#: lui-même à 1000.
+SEARCH_LIMIT = 800
+
+#: Budget de parcours demandé au serveur pour une recherche, en millisecondes.
+#: Le défaut du démon (400 ms) suffit pour fouiller un sous-dossier ; scanner
+#: tout un partage depuis la racine demandait plus, sinon la recherche globale
+#: s'arrêtait avant d'atteindre le dossier cherché (même vécu).
+SEARCH_BUDGET_MS = 1500
+
+
 class GlobalSearchLoader(QThread):
     """Recherche dans **tous** les partages trouvés, en parallèle.
 
     Un seul fil pour la GUI (une frappe = un fil), mais les partages sont
     interrogés en parallèle : sur dix partages, une recherche séquentielle
-    coûterait dix fois le budget de 400 ms du serveur. Le total reste borné
-    par le nombre de partages et le plafond de résultats par partage.
+    coûterait dix fois le budget du serveur. Le total reste borné par le nombre
+    de partages et le plafond de résultats par partage.
     """
 
-    done = Signal(int, list, bool)  # token, résultats, tronqué
+    done = Signal(int, list, list)  # token, résultats, partages tronqués
 
     MAX_PARALLELE = 6
-    PAR_PARTAGE = 60
+    PAR_PARTAGE = SEARCH_LIMIT
 
     def __init__(self, token: int, targets, query: str, parent=None):
         super().__init__(parent)
@@ -787,7 +801,7 @@ class GlobalSearchLoader(QThread):
 
     def run(self) -> None:
         rows: list[dict] = []
-        truncated = False
+        partial: list[str] = []
         with ThreadPoolExecutor(max_workers=self.MAX_PARALLELE) as pool:
             futures = {}
             for peer, share, key in self.targets:
@@ -803,6 +817,7 @@ class GlobalSearchLoader(QThread):
                         "",
                         self.PAR_PARTAGE,
                         key,
+                        budget_ms=SEARCH_BUDGET_MS,
                     )
                 ] = (peer, share)
             for future in as_completed(futures):
@@ -816,7 +831,11 @@ class GlobalSearchLoader(QThread):
                 except Exception:  # noqa: BLE001 (recherche : jamais bloquante)
                     continue
                 if payload.get("truncated"):
-                    truncated = True
+                    # Nommé, jamais silencieux : c'est ce partage-là qui rend
+                    # une liste incomplète, pas forcément toute la recherche.
+                    nom = share.get("name") or str(share.get("id", "?"))
+                    if nom not in partial:
+                        partial.append(nom)
                 for entry in payload.get("entries", []):
                     rows.append(
                         {
@@ -831,19 +850,20 @@ class GlobalSearchLoader(QThread):
                     )
         rows.sort(key=lambda row: (row["name"].lower(), row["path"].lower()))
         if not self.isInterruptionRequested():
-            self.done.emit(self.token, rows, truncated)
+            self.done.emit(self.token, rows, partial)
 
 
-class ResultsSizeLoader(QThread):
-    """Taille des dossiers apparus dans les résultats, à la demande.
+class FolderSizeLoader(QThread):
+    """Tailles de dossiers, demandées à la demande (jamais pour tout un listing).
 
     Chaque taille est un parcours **borné à 600 ms côté serveur** : sans limite
-    de concurrence, une recherche qui remonte trente dossiers lancerait trente
+    de concurrence, une liste qui montre trente dossiers lancerait trente
     parcours simultanés chez le poste d'en face. Trois à la fois, et on
-    s'arrête dès qu'une nouvelle recherche prend la main.
+    s'arrête dès qu'une nouvelle liste prend la main.
     """
 
     ready = Signal(int, str, str, str, dict)  # token, poste, partage, chemin, réponse
+    failed = Signal(int, str, str, str)  # token, poste, partage, chemin (sans réponse)
 
     MAX_PARALLELE = 3
 
@@ -868,6 +888,9 @@ class ResultsSizeLoader(QThread):
                 try:
                     payload = future.result()
                 except Exception:  # noqa: BLE001 (une taille manquante n'est pas une erreur)
+                    # Signaler l'échec évite de redemander indéfiniment un
+                    # dossier disparu ou refusé.
+                    self.failed.emit(self.token, peer_id, share_id, path)
                     continue
                 self.ready.emit(self.token, peer_id, share_id, path, payload)
 
@@ -1005,7 +1028,7 @@ class PeerPage(QWidget):
         self._loader: GlobalSearchLoader | None = None
         #: Tailles déjà calculées, par (poste, partage, chemin).
         self._sizes: dict[tuple[str, str, str], dict] = {}
-        self._size_loader: ResultsSizeLoader | None = None
+        self._size_loader: FolderSizeLoader | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
@@ -1262,7 +1285,7 @@ class PeerPage(QWidget):
         self._loader = loader
         loader.start()
 
-    def _search_done(self, token: int, rows: list, truncated: bool) -> None:
+    def _search_done(self, token: int, rows: list, partial: list) -> None:
         if token != self._token:
             return  # une frappe plus récente a pris la main
         self.results.setRowCount(0)
@@ -1288,7 +1311,13 @@ class PeerPage(QWidget):
         self._request_sizes()
         self.columns.fit()
         partages = len({(row["peer"].peer_id, row["share"].get("id")) for row in rows})
-        suffixe = " (résultats partiels : affinez la recherche)" if truncated else ""
+        # Un partage qui rend une liste incomplète est nommé : « résultats
+        # partiels » tout court laissait croire que tout était là (vécu
+        # 15/11/2026, des ROMs manquaient sans le dire).
+        suffixe = ""
+        if partial:
+            noms = ", ".join(partial[:3]) + ("…" if len(partial) > 3 else "")
+            suffixe = f" (résultats partiels pour {noms} : affinez la recherche)"
         if not rows:
             self.hint.setText(f"Aucun résultat pour « {self.search.text().strip()} »{suffixe}.")
         else:
@@ -1333,7 +1362,7 @@ class PeerPage(QWidget):
             jobs.append((row["peer"].peer_id, base, share_id, row.get("path", ""), key))
         if not jobs:
             return
-        loader = ResultsSizeLoader(self._token, jobs, self)
+        loader = FolderSizeLoader(self._token, jobs, self)
         loader.ready.connect(self._size_ready)
         self._size_loader = loader
         loader.start()
@@ -1505,39 +1534,20 @@ class SearchLoader(QThread):
         try:
             self.found.emit(
                 self.token,
-                api.find(self.base, self.share_id, self.query, self.path, key=self.key),
+                api.find(
+                    self.base,
+                    self.share_id,
+                    self.query,
+                    self.path,
+                    SEARCH_LIMIT,
+                    self.key,
+                    SEARCH_BUDGET_MS,
+                ),
             )
         except api.AuthRequired:
             self.auth.emit(self.token)
         except api.ApiError as error:
             self.failed.emit(self.token, str(error))
-
-
-class SizeLoader(QThread):
-    """Taille d'un dossier, à la demande (jamais pour tout un listing)."""
-
-    done = Signal(str, str, dict)  # partage, chemin, réponse
-    failed = Signal(str, str)
-    auth = Signal()
-
-    def __init__(self, base: str, share_id: str, path: str, key="", parent=None):
-        super().__init__(parent)
-        self.base = base
-        self.share_id = share_id
-        self.path = path
-        self.key = key
-
-    def run(self) -> None:
-        try:
-            self.done.emit(
-                self.share_id,
-                self.path,
-                api.folder_size(self.base, self.share_id, self.path, self.key),
-            )
-        except api.AuthRequired:
-            self.auth.emit()
-        except api.ApiError:
-            self.failed.emit(self.share_id, self.path)
 
 
 #: Taille d'une page de listing. Le serveur borne à 5000 ; 500 tient largement
@@ -1572,8 +1582,21 @@ class BrowserPage(QWidget):
         self._tagger: TagLoader | None = None
         self._tagging = False
         self._search_loader: SearchLoader | None = None
-        self._size_loader: SizeLoader | None = None
+        self._size_loader: FolderSizeLoader | None = None
+        #: Tailles connues, par (partage, chemin) : un dossier n'est calculé
+        #: qu'une fois par session, même en revenant dessus.
         self._sizes: dict[tuple[str, str], dict] = {}
+        #: Demandes en cours / déjà échouées : ni doublon, ni boucle sur un
+        #: dossier que la source refuse de mesurer.
+        self._size_pending: set[tuple[str, str]] = set()
+        self._sizes_failed: set[tuple[str, str]] = set()
+        # Les tailles suivent le défilement : on ne mesure que ce qui est
+        # visible, sinon un partage de trois cents dossiers déclenchait trois
+        # cents parcours chez le poste d'en face à la simple ouverture.
+        self._size_timer = QTimer(self)
+        self._size_timer.setSingleShot(True)
+        self._size_timer.setInterval(180)
+        self._size_timer.timeout.connect(self._request_sizes)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
@@ -1652,6 +1675,7 @@ class BrowserPage(QWidget):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._context_menu)
         self.table.verticalScrollBar().valueChanged.connect(self._maybe_more)
+        self.table.verticalScrollBar().valueChanged.connect(lambda _value: self._size_timer.start())
         layout.addWidget(self.table, 1)
         self.columns = ColumnFitter(self.table, self)
 
@@ -1817,6 +1841,13 @@ class BrowserPage(QWidget):
         self.columns.fit()
         self._token += 1
         self._etag = ""
+        # Nouvelle liste : les demandes de taille encore en vol ne concernent
+        # plus ces lignes, et un dossier qui avait échoué mérite un nouvel
+        # essai (le disque a pu revenir).
+        self._size_pending.clear()
+        self._sizes_failed.clear()
+        if self._size_loader is not None:
+            self._size_loader.requestInterruption()
         self._fetch()
 
     def _fetch(self) -> None:
@@ -1896,12 +1927,23 @@ class BrowserPage(QWidget):
             self.table.setItem(row, 2, QTableWidgetItem(self._size_text(entry)))
             self.table.setItem(row, 3, QTableWidgetItem(human_date(entry.get("mtime", 0))))
         self.columns.fit()
+        self._request_sizes()
+
+    def _size_key(self, entry: dict) -> tuple[str, str]:
+        return (str(self.share.get("id", "")) if self.share else "", entry.get("path", ""))
 
     def _size_text(self, entry: dict) -> str:
         if entry.get("type") != "dir":
             return human_size(entry.get("size", 0))
-        known = self._sizes.get((self.share.get("id", "") if self.share else "", entry.get("path", "")))
-        return human_size(known["bytes"]) + ("+" if known and not known.get("complete", True) else "") if known else ""
+        known = self._sizes.get(self._size_key(entry))
+        if known is not None:
+            texte = human_size(known.get("bytes", 0))
+            if not known.get("complete", True):
+                texte += "+"  # minorant : calcul borné dans le temps
+            return texte
+        if self._size_key(entry) in self._size_pending:
+            return "…"  # la taille est en route
+        return ""
 
     def _failed(self, token: int, message: str) -> None:
         self._loading = False
@@ -1921,7 +1963,11 @@ class BrowserPage(QWidget):
         """
         self._loading = False
         self._tagging = False
-        self._size_loader = None
+        # Le tireur de tailles n'échoue pas les unes après les autres sur un
+        # 401 : on l'arrête, la prochaine liste repartira une fois le mot de
+        # passe saisi.
+        if self._size_loader is not None:
+            self._size_loader.requestInterruption()
         self.refresh.idle()
         if self.peer is not None and self.share is not None:
             self.locked.emit(self.peer, self.share)
@@ -2045,8 +2091,16 @@ class BrowserPage(QWidget):
         if len(entries) == 1:
             entry = entries[0]
             if entry.get("type") == "dir":
-                self.selection.setText(f"{entry.get('name', '')} · dossier")
-                self._request_size(entry)
+                known = self._sizes.get(self._size_key(entry))
+                if known is None:
+                    self.selection.setText(f"{entry.get('name', '')} · dossier")
+                    self._request_sizes()
+                else:
+                    suffix = " (au moins)" if not known.get("complete", True) else ""
+                    self.selection.setText(
+                        f"{entry.get('name', '')} · {known.get('files', 0)} fichier(s) · "
+                        f"{human_size(known.get('bytes', 0))}{suffix}"
+                    )
             else:
                 self.selection.setText(
                     f"{entry.get('name', '')} · {human_size(entry.get('size', 0))}"
@@ -2056,38 +2110,91 @@ class BrowserPage(QWidget):
             total = sum(entry.get("size", 0) for entry in files)
             self.selection.setText(f"{len(entries)} éléments · {human_size(total)}")
 
-    def _request_size(self, entry: dict) -> None:
-        if not self.share or self._size_loader is not None:
+    # --- taille des dossiers ---------------------------------------------
+    def _visible_rows(self) -> range:
+        """Lignes à l'écran, plus six de marge : le reste attend le défilement."""
+        derniere = self.table.rowCount() - 1
+        if derniere < 0:
+            return range(0)
+        premier = self.table.rowAt(0)
+        dernier = self.table.rowAt(self.table.viewport().height() - 1)
+        premier = 0 if premier < 0 else premier
+        if dernier < 0:
+            dernier = min(derniere, premier + 24)
+        return range(premier, min(derniere + 6, derniere) + 1)
+
+    def _request_sizes(self) -> None:
+        """Demande la taille des dossiers affichés, sans y entrer.
+
+        Chaque taille est un parcours **borné** côté source (600 ms, `+` quand
+        le calcul est tronqué) : un dossier s'affichait sans sa taille, il
+        fallait y entrer puis le sélectionner pour la connaître (vécu
+        15/11/2026). Trois parcours à la fois, seulement pour les lignes
+        visibles, et un dossier n'est calculé qu'une fois par session.
+        """
+        if self._size_loader is not None or not self.peer or not self.share:
             return
-        key = (self.share.get("id", ""), entry.get("path", ""))
-        if key in self._sizes:
-            known = self._sizes[key]
-            suffix = " (au moins)" if not known.get("complete", True) else ""
-            self.selection.setText(
-                f"{entry.get('name', '')} · {known['files']} fichier(s) · "
-                f"{human_size(known['bytes'])}{suffix}"
-            )
+        share_id = str(self.share.get("id", ""))
+        base = self.peer.base_url()
+        jobs: list[tuple] = []
+        for row in self._visible_rows():
+            item = self.table.item(row, 0)
+            entry = item.data(Qt.UserRole) if item else None
+            if not entry or entry.get("type") != "dir":
+                continue
+            key = self._size_key(entry)
+            if key in self._sizes or key in self._size_pending or key in self._sizes_failed:
+                continue
+            self._size_pending.add(key)
+            jobs.append((self.peer.peer_id, base, share_id, entry.get("path", ""), self._key()))
+        if not jobs:
             return
-        loader = SizeLoader(self.peer.base_url(), key[0], key[1], self._key(), self)
-        loader.done.connect(self._size_ready)
-        loader.failed.connect(lambda *_: None)
-        loader.auth.connect(self._auth_required)
+        self._refresh_size_column()
+        loader = FolderSizeLoader(self._token, jobs, self)
+        loader.ready.connect(self._size_ready)
+        loader.failed.connect(self._size_failed)
+        loader.finished.connect(self._size_done)
         self._size_loader = loader
         loader.start()
 
-    def _size_ready(self, share_id: str, path: str, payload: dict) -> None:
-        self._size_loader = None
-        self._sizes[(share_id, path)] = payload
-        # Rafraîchit la colonne Taille et le pied de page si la ligne est visible.
+    def _refresh_size_column(self) -> None:
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
             entry = item.data(Qt.UserRole) if item else None
-            if entry and entry.get("path") == path:
+            if entry and entry.get("type") == "dir":
                 self.table.setItem(row, 2, QTableWidgetItem(self._size_text(entry)))
-                break
+
+    def _size_ready(self, _token: int, peer_id: str, share_id: str, path: str, payload: dict) -> None:
+        if self.peer is not None and peer_id != self.peer.peer_id:
+            return  # réponse d'un poste qu'on ne regarde plus
+        self._sizes[(share_id, path)] = payload
+        self._size_pending.discard((share_id, path))
+        # Rafraîchit la colonne Taille et le pied de page, si la ligne est là.
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            entry = item.data(Qt.UserRole) if item else None
+            if entry and entry.get("type") == "dir" and entry.get("path") == path:
+                self.table.setItem(row, 2, QTableWidgetItem(self._size_text(entry)))
         entries = self._selected()
         if len(entries) == 1 and entries[0].get("path") == path:
             self._selection_changed()
+
+    def _size_failed(self, _token: int, peer_id: str, share_id: str, path: str) -> None:
+        """Une taille qui ne vient pas (dossier disparu, calcul refusé).
+
+        Marquée pour ce listing : ni « … » éternel, ni nouvelle demande en
+        boucle ; la prochaine liste (ou le prochain défilement) retentera.
+        """
+        if self.peer is not None and peer_id != self.peer.peer_id:
+            return
+        self._size_pending.discard((share_id, path))
+        self._sizes_failed.add((share_id, path))
+
+    def _size_done(self) -> None:
+        self._size_loader = None
+        # La liste a pu changer pendant la passe (défilement, autre page) :
+        # on redemande pour ce qui est visible maintenant.
+        self._request_sizes()
 
     # --- téléchargement -------------------------------------------------
     def _request_download(self, choose: bool) -> None:

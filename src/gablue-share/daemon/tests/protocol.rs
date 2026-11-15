@@ -567,6 +567,31 @@ fn recursive_search_finds_by_name_and_never_leaves_the_share() {
 }
 
 #[test]
+fn search_limit_and_budget_are_read_from_the_query() {
+    let fixture = fixture();
+    // Un plafond à 1 résultat : la réponse dit qu'elle est partielle, preuve
+    // que `limit` est bien appliqué (la recherche globale demandait 60 quand
+    // la recherche d'un partage en demandait 200 — d'où des résultats perdus).
+    let (status, _, body) = get(&fixture, "/api/find/s1?q=.&limit=1");
+    let text = String::from_utf8_lossy(&body);
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("\"truncated\":true"), "{text}");
+
+    // `ms` est accepté (et borné) : le client demande plus que 400 ms pour
+    // fouiller un partage entier depuis sa racine.
+    let (status, _, body) = get(&fixture, "/api/find/s1?q=b.bin&ms=1500");
+    let text = String::from_utf8_lossy(&body);
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("\"truncated\":false"), "{text}");
+
+    // Bornes : une valeur absurde ne casse pas la requête.
+    for budget in ["1", "999999", "abc"] {
+        let (status, _, body) = get(&fixture, &format!("/api/find/s1?q=B.&ms={budget}"));
+        assert_eq!(status, 200, "{budget} : {}", String::from_utf8_lossy(&body));
+    }
+}
+
+#[test]
 fn folder_size_is_bounded_and_announces_its_completeness() {
     let fixture = fixture();
     let (status, _, body) = get(&fixture, "/api/size/s1?path=sub");
@@ -710,6 +735,27 @@ fn tar_stream_contains_the_tree() {
     assert!(head.contains("application/x-tar"), "{head}");
     let text = String::from_utf8_lossy(&body);
     assert!(text.contains("sub/b.bin"), "archive sans b.bin");
+}
+
+#[test]
+fn tar_stream_announces_its_length() {
+    // La barre de progression du client se cale sur cet en-tête : il doit
+    // exister et désigner une longueur plausible (au moins les données).
+    let fixture = fixture();
+    let (status, head, _) = get(&fixture, "/a/s1");
+    assert_eq!(status, 200, "{head}");
+    let line = head
+        .lines()
+        .find(|line| line.to_ascii_lowercase().starts_with("x-gablue-bytes:"))
+        .expect("en-tête X-Gablue-Bytes absent");
+    let total: u64 = line
+        .split_once(':')
+        .and_then(|(_, value)| value.trim().parse().ok())
+        .expect("longueur illisible");
+    // 64 Kio + 700 + 5 + 6 + 5 octets de fichiers, plus en-têtes et remplissage.
+    assert!(total > 64 * 1024, "{total}");
+    // Une archive fait au moins un bloc par entrée et deux blocs de fin.
+    assert!(total % 512 == 0, "{total}");
 }
 
 #[test]

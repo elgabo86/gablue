@@ -38,13 +38,18 @@ une interface neuve contre un démon qui ignore les champs récents.
   sans répondre à un besoin réel).
 - **La recherche globale vit sur l'accueil**, sous le titre « Partages
   trouvés » : elle interroge tous les partages trouvés en parallèle (6 fils,
-  `limit` 60 par partage, 300 ms après la dernière frappe) et chaque résultat
-  porte son partage, son poste et son dossier. Double clic = on ouvre le dossier
-  qui le contient ; sélection multiple et clic droit permettent de
-  **télécharger directement** depuis les résultats, et la colonne « Taille » des
-  dossiers se remplit à la demande (`…` puis la valeur, `+` si le calcul est
-  tronqué). Une recherche en cours est rejouée quand la liste des partages
-  change.
+  **800 résultats et 1,5 s de parcours par partage** — les mêmes valeurs que la
+  recherche dans un partage, sinon la globale « perdait » des fichiers que la
+  locale trouvait : 60 résultats pour plus de 60 ROMs « pokemon » dans un
+  partage, vécu 15/11/2026 ; 300 ms après la dernière frappe) et chaque résultat
+  porte son partage, son poste et son dossier. Un partage qui rend une liste
+  incomplète est **nommé** dans le bandeau (« résultats partiels pour ROMs :
+  affinez la recherche »), jamais noyé dans un « partiels » collectif. Double
+  clic = on ouvre le dossier qui le contient ; sélection multiple et clic droit
+  permettent de **télécharger directement** depuis les résultats, et la colonne
+  « Taille » des dossiers se remplit à la demande (`…` puis la valeur, `+` si le
+  calcul est tronqué). Une recherche en cours est rejouée quand la liste des
+  partages change.
 - **« Mes partages » est un tiroir** ouvert depuis la **barre de l'application**
   (bouton `☰ Mes partages (N)` en haut à gauche, hors des pages) : fermé par
   défaut, la navigation reçoit toute la largeur. Ouverture/fermeture animées
@@ -101,6 +106,16 @@ une interface neuve contre un démon qui ignore les champs récents.
   chemin** — c'est là qu'on regarde où l'on est, donc là où l'on veut remonter.
   Un seul ← pour les deux laissait croire qu'on ne pouvait pas sortir d'un
   sous-dossier (vécu 15/11/2026).
+- **La taille d'un dossier se voit avant d'y entrer** : dans la liste, la
+  colonne « Taille » des dossiers se remplit seule (`…` puis la valeur, `+` si
+  le calcul est tronqué). Elle est demandée **pour les lignes visibles**
+  seulement, au fil du défilement (180 ms de calme après un défilement), trois
+  parcours à la fois, un dossier donné une fois par session : demander toutes
+  les tailles d'un coup faisait fouiller trois cents dossiers chez le poste
+  d'en face à la simple ouverture (vécu 15/11/2026 : il fallait entrer dans le
+  dossier puis le sélectionner pour connaître sa taille). Un dossier que la
+  source refuse de mesurer est marqué pour cette liste-là : pas de « … »
+  éternel, pas de nouvelle demande en boucle ; la liste suivante retente.
 - **Colonnes réglables, « Nom » plus large** (`QHeaderView.Interactive` +
   `ColumnFitter`) : la première colonne absorbe la largeur restante, sinon la
   grille s'arrêtait à « Modifié » en laissant un vide à droite ; élargir
@@ -282,6 +297,14 @@ dit. Les fichiers de partages restent séparés par utilisateur, rien n'est perd
   seulement s'il y a au moins un transfert réussi ; il retire les lignes
   « terminé » de la liste **sans toucher aux fichiers** (`clear_finished`). Un
   échec garde sa ligne : c'est celle qu'on veut relancer.
+- **Progression d'un dossier** : l'archive n'a pas de `Content-Length`, donc le
+  démon annonce sa longueur dans **`X-Gablue-Bytes`** (`TarStream::total_bytes`,
+  exact : les entrées sont collectées avant le premier octet) et le worker
+  compare les octets du flux à ce total. Sans elle, une ligne « dossier »
+  n'affichait qu'un compteur d'octets qui monte, avec la barre à zéro (vécu
+  15/11/2026). Démon plus ancien → en-tête absent → total 0, et on retombe sur
+  le compteur. Pas de reprise sur un tar (choix de M1) : un dossier relancé
+  repart de zéro.
 - **Fin de transfert** : notification de bureau (`notify-send`, silencieuse si
   absent), sauf si la fenêtre a le focus. Débit et temps restant agrégés dans
   l'en-tête du panneau.

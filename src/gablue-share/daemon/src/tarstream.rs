@@ -50,6 +50,26 @@ impl TarStream {
             phase: Phase::Header,
         })
     }
+
+    /// Longueur exacte du flux, en octets (en-têtes, données, remplissage et
+    /// deux blocs de fin).
+    ///
+    /// Les entrées sont collectées avant le premier octet envoyé, donc ce
+    /// total est connu d'avance : le client s'en sert pour afficher une barre
+    /// de progression (en-tête `X-Gablue-Bytes`, voir `routes.rs`). Il reste
+    /// **indicatif** dans un seul cas, rare : un fichier qui disparaît entre la
+    /// collecte et sa lecture, l'archive étant alors plus courte.
+    pub fn total_bytes(&self) -> u64 {
+        let mut total = 2 * BLOCK as u64; // deux blocs de fin
+        for entry in &self.entries {
+            total += BLOCK as u64; // en-tête ustar, toujours un bloc
+            if !entry.dir {
+                let slack = (BLOCK as u64 - entry.size % BLOCK as u64) % BLOCK as u64;
+                total += entry.size + slack;
+            }
+        }
+        total
+    }
 }
 
 fn collect(
@@ -299,6 +319,21 @@ mod tests {
         assert!(data.ends_with(&[0u8; 1024]));
         let text = String::from_utf8_lossy(&data[..2048]).to_string();
         assert!(text.contains("dossier/a.txt"), "{text}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn announced_length_matches_the_stream() {
+        // `total_bytes()` est ce que le client compare à ce qu'il reçoit : une
+        // archive vide, des dossiers, un fichier de 700 octets (donc complété
+        // à 1024) et un fichier de 3 octets doivent tous tomber juste.
+        let root = sample_dir("total");
+        std::fs::create_dir_all(root.join("vide")).unwrap();
+        let mut stream = TarStream::new(&root, "dossier").unwrap();
+        let annonce = stream.total_bytes();
+        let mut data = Vec::new();
+        stream.read_to_end(&mut data).unwrap();
+        assert_eq!(data.len() as u64, annonce);
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -377,7 +377,16 @@ fn api_find(req: &Request, cfg: &Config, share_id: &str, query: &str) -> Respons
         .and_then(|value| value.parse().ok())
         .unwrap_or(200)
         .clamp(1, 1000);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
+    // Budget de parcours : 400 ms par défaut (une frappe dans un sous-dossier),
+    // mais la recherche globale fouille des partages entiers depuis la racine —
+    // à 400 ms elle s'arrêtait avant le dossier cherché et rendait une liste
+    // incomplète sans que rien ne le dise (vécu 15/11/2026, des ROMs manquaient).
+    // Borné malgré tout : une requête ne peut pas immobiliser un fil du serveur.
+    let budget = query_param(query, "ms")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(400)
+        .clamp(100, 5000);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(budget);
     let (entries, truncated, scanned) =
         files::search(&share.root, &start, &needle, deadline, limit, view_of(share));
     json_response(
@@ -581,12 +590,19 @@ fn serve_tar(req: &Request, cfg: &Config, share_id: &str, rel: &[String], query:
         Ok(stream) => stream,
         Err(err) => return error(500, &format!("archive impossible : {err}")),
     };
+    // Longueur du flux, annoncée sans être imposée en `Content-Length` : le
+    // client en tire une barre de progression (un dossier de mille fichiers
+    // ne montrait qu'un compteur d'octets qui monte). Un `Content-Length`
+    // ferait au contraire attendre le client si un fichier disparaît en cours
+    // de route ; l'en-tête est donc indicatif, le corps reste chunked.
+    let total = stream.total_bytes();
     body_response(
         200,
         vec![
             h("Content-Type", "application/x-tar"),
             h("Content-Disposition", &disposition(&format!("{name}.tar"))),
             h("Cache-Control", "no-store"),
+            h("X-Gablue-Bytes", &total.to_string()),
         ],
         Box::new(stream),
         None,

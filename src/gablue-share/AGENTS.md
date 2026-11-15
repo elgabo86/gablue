@@ -102,6 +102,19 @@ Deux processus, séparés pour la RAM :
   l'environnement de session du bureau** : sans l'identité du bureau, Qt
   ignorait Plasma et l'interface sortait blanche (vécu 15/11/2026).
 
+- **M7 (15/11/2026, après essai en vrai)** : trois manques comblés.
+  **Taille des dossiers dans la liste** — la colonne « Taille » se remplit
+  seule pour les dossiers visibles (`…` puis la valeur, `+` si le calcul est
+  tronqué), au fil du défilement, trois parcours à la fois et une fois par
+  dossier ; il fallait auparavant entrer dedans puis le sélectionner.
+  **Progression d'un téléchargement de dossier** — le démon annonce la longueur
+  de l'archive (`X-Gablue-Bytes`, `TarStream::total_bytes`) et la barre suit
+  les octets reçus, au lieu d'un compteur qui monte sans repère. **Recherche
+  globale = recherche d'un partage** — elle demandait 60 résultats par partage
+  contre 200 en local (ROMs « pokemon » manquantes) : 800 résultats et 1,5 s de
+  parcours des deux côtés, budget réglable par `ms` côté démon, et le bandeau
+  nomme le partage qui rend une liste incomplète.
+
 ## Cycle de vie
 
 | Situation | Démon | Visible des autres |
@@ -173,7 +186,10 @@ les tests.
 - **Pas de SMB/WebDAV/Syncthing** : authentification ou synchronisation, alors
   qu'on veut « tirer à la demande » sans compte.
 - **Pas de HEAD pour les dossiers** : `/a/` est un flux, sa taille n'existe pas ;
-  d'où `/api/size`, calculé à la demande et borné.
+  d'où `/api/size`, calculé à la demande et borné. La longueur de l'archive,
+  elle, est connue d'avance (`X-Gablue-Bytes`) mais reste indicative — jamais un
+  `Content-Length`, qui ferait attendre le client si un fichier disparaissait en
+  cours de route.
 - **Un champ ignoré fait un réglage mort** : la visibilité vit dans
   `share.json`, mais c'est le démon qui l'applique. Lancée depuis les sources,
   la GUI prend donc le binaire de `daemon/target/release/` avant celui de

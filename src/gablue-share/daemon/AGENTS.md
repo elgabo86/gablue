@@ -19,10 +19,10 @@ en flux), `net.rs` (filtre d'adresses), `announce.rs` (avahi), `tray.rs`
 | `GET /api/info` | `{protocol, peer_id, name, port, uid, shares:[{id,name,locked,salt,rounds,revision}]}` — **partages disponibles seulement** ; `uid` = compte système qui sert (deux comptes d'un poste partagent `peer_id` et port) ; `salt`/`rounds`/`revision` n'apparaissent que pour un partage protégé (l'empreinte attendue, jamais) |
 | `GET /api/auth/<share>` | vérifie le mot de passe (`X-Gablue-Key`) : `200` ou `401`. Ne lit rien — la GUI valide une saisie avant d'ouvrir |
 | `HEAD|GET /api/list/<share>?path=&offset=&limit=&sort=&desc=` | `{entries, parent, truncated}` + `ETag` ; `HEAD` = empreinte seule, `304` si `If-None-Match` correspond |
-| `GET /api/find/<share>?q=&path=&limit=` | recherche récursive par nom : `{entries:[{name,path,type,size,mtime}], truncated, scanned}` |
+| `GET /api/find/<share>?q=&path=&limit=&ms=` | recherche récursive par nom : `{entries:[{name,path,type,size,mtime}], truncated, scanned}` ; `ms` = budget de parcours (400 par défaut, borné à 100-5000) |
 | `GET /api/size/<share>?path=` | taille d'un dossier : `{files, bytes, complete}` |
 | `HEAD|GET /f/<share>/<chemin>` | fichier, `Range`/`If-Range`, `ETag`, `Content-Disposition` |
-| `GET /a/<share>/<chemin>?as=<nom>` | dossier en flux tar (ustar, chunked) ; `as` impose le nom du dossier dans l'archive |
+| `GET /a/<share>/<chemin>?as=<nom>` | dossier en flux tar (ustar, chunked) ; `as` impose le nom du dossier dans l'archive ; `X-Gablue-Bytes` annonce la longueur du flux (progression côté client) |
 
 Invariants :
 
@@ -34,7 +34,10 @@ Invariants :
   `tiny_http` bascule en chunked au-delà de 32 Kio — le `HEAD` d'un gros
   fichier ne dit plus sa taille et la reprise perd son point de départ
   (bug trouvé à l'intégration du 14/11/2026, test de régression dans
-  `tests/protocol.rs`). Le tar, de longueur inconnue, reste chunked.
+  `tests/protocol.rs`). Le tar reste chunked — un `Content-Length` ferait
+  attendre le client si un fichier disparaît en cours de route — mais il
+  annonce sa longueur dans `X-Gablue-Bytes` (`TarStream::total_bytes`), ce qui
+  donne au client une barre de progression pour un dossier de mille fichiers.
 - **ETag = mtime (ns) + taille.** Gratuit et stable entre deux démarrages :
   c'est ce qui rend la reprise d'un téléchargement possible après fermeture de
   l'app. Si le fichier a changé, l'ETag change et la reprise repart de zéro.
@@ -73,15 +76,20 @@ Invariants :
   (`offset`). Le serveur borne à 5000 par requête. Le tri (`sort=name|size|mtime`,
   `desc=1`) est fait **côté serveur** : trier la page affichée donnerait un
   ordre faux dès qu'il y a plusieurs pages.
-- **Recherche** (`/api/find`) : parcours récursif borné à **400 ms** et à
-  `limit` résultats ; `truncated` prévient que c'est partiel. Un partage de
-  200 000 fichiers ne peut donc pas immobiliser un fil du serveur. La GUI
-  attend 300 ms après la frappe avant d'interroger.
+- **Recherche** (`/api/find`) : parcours récursif borné en temps (**400 ms** par
+  défaut, `ms` fourni par le client jusqu'à 5 s) et à `limit` résultats (1000
+  au plus) ; `truncated` prévient que c'est partiel. Un partage de 200 000
+  fichiers ne peut donc pas immobiliser un fil du serveur. La GUI attend 300 ms
+  après la frappe avant d'interroger, demande **800 résultats et 1,5 s** — la
+  recherche globale fouille des partages entiers depuis la racine, et à 400 ms
+  elle rendait des listes incomplètes sans le dire (vécu 15/11/2026 : des ROMs
+  « pokemon » manquaient par rapport à la recherche dans le partage).
 - **Taille d'un dossier** (`/api/size`) : calcul borné à **600 ms**, jamais
-  fait pour tout un listing — seulement pour le dossier sélectionné (et mis en
-  cache côté GUI). `complete: false` = minorant assumé.
-- **Télécharger un dossier entier** : `/a/<share>` sans chemin (bouton « Tout le
-  partage ») ; `as=<nom>` fait porter au dossier extrait le nom affiché dans
+  demandé pour tout un listing d'un coup — la GUI mesure les dossiers **visibles**
+  de la liste (au fil du défilement), une fois chacun, plus le dossier désigné.
+  `complete: false` = minorant assumé (`+` à l'écran).
+- **Télécharger un dossier entier** : `/a/<share>` sans chemin (clic droit ▸
+  « Tout sélectionner ») ; `as=<nom>` fait porter au dossier extrait le nom affiché dans
   l'app, pas le nom physique côté source. Un `as` contenant `/`, `..` ou
   commençant par `.` est ignoré (retour au nom physique) : jamais de traversée.
 
