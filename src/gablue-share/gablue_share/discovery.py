@@ -31,17 +31,25 @@ class Peer:
         self.port = port
         self.shares: list[dict] = []
         self.addrs: dict[str, str] = {}  # hôte -> "lan" | "tailscale"
+        #: Adresse qui a réellement répondu à la dernière sonde. Le LAN reste
+        #: prioritaire (plus rapide qu'un détour par le tailnet), mais si le LAN
+        #: ne répond plus, on ne s'obstine pas : c'est le tailnet qui sert.
+        self.active_addr = ""
         self.last_ok = 0.0
         self.failures = 0
 
     def ordered_addrs(self) -> list[str]:
+        """LAN d'abord, puis le reste : l'ordre qui coûte le moins."""
         lan = [addr for addr, source in self.addrs.items() if source == "lan"]
         other = [addr for addr, source in self.addrs.items() if source != "lan"]
         return lan + other
 
     def base_url(self) -> str:
         addrs = self.ordered_addrs()
-        return api.peer_url(addrs[0], self.port) if addrs else ""
+        if not addrs:
+            return ""
+        host = self.active_addr if self.active_addr in addrs else addrs[0]
+        return api.peer_url(host, self.port)
 
     def label(self) -> str:
         sources = set(self.addrs.values())
@@ -250,6 +258,12 @@ class Discovery(QObject):
                 continue
             if str(payload.get("peer_id") or "") not in ("", peer_id):
                 continue
+            with self._lock:
+                peer = self._peers.get(peer_id)
+                if peer is not None:
+                    # L'adresse gagnante est retenue : c'est celle que la
+                    # navigation et les transferts utiliseront ensuite.
+                    peer.active_addr = host
             return self._apply_info(peer_id, payload)
         return False
 

@@ -99,6 +99,7 @@ def load() -> dict:
             }
         )
     document["shares"] = cleaned
+    document["visibility"] = visibility(document)
     if normalised:
         # Identifiants d'une version antérieure : on les réaligne une fois,
         # pour que le même dossier garde toujours le même identifiant.
@@ -140,6 +141,38 @@ def share_id(path: str) -> str:
 def share_key(entry: dict) -> str:
     """Chemin réel : deux écritures différentes du même dossier = un seul partage."""
     return str(Path(entry.get("path", "")).expanduser().resolve())
+
+
+#: Qui peut voir ce poste. Le démon applique la règle ; ici on ne fait que
+#: l'écrire et l'afficher.
+VISIBILITIES = {
+    "both": "Réseau local et Tailscale",
+    "lan": "Réseau local seulement",
+    "tailscale": "Tailscale seulement",
+}
+
+
+def visibility(document: dict) -> str:
+    """Visibilité courante, toujours une des clés de `VISIBILITIES`."""
+    value = str(document.get("visibility") or "both").strip().lower()
+    return value if value in VISIBILITIES else "both"
+
+
+def set_visibility(document: dict, value: str) -> tuple[bool, str]:
+    """Change la visibilité et l'écrit. (ok, message)"""
+    if value not in VISIBILITIES:
+        return False, "Visibilité inconnue."
+    previous = document.get("visibility")
+    document["visibility"] = value
+    try:
+        save(document)
+    except OSError as error:
+        if previous is None:
+            document.pop("visibility", None)
+        else:
+            document["visibility"] = previous
+        return False, f"Écriture impossible : {error}"
+    return True, ""
 
 
 #: Racines où un dossier peut être un point de montage de disque externe.

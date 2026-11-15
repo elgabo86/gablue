@@ -24,11 +24,46 @@ pub struct Share {
     pub available: bool,
 }
 
+/// Qui peut atteindre ce poste. Choix de la machine, pas du partage.
+///
+/// - `Both` (défaut) : réseau local **et** tailnet ;
+/// - `Lan` : réseau local seulement, le tailnet est refusé ;
+/// - `Tailscale` : tailnet seulement, aucune annonce mDNS (elle ne parle que
+///   sur le LAN) et les adresses du réseau local sont refusées.
+///
+/// C'est le démon qui applique la règle, à chaque requête : une GUI ne peut pas
+/// la contourner, et un poste qui change d'avis est suivi sans redémarrage
+/// (le fichier de configuration est relu à chaud).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Visibility {
+    Both,
+    Lan,
+    Tailscale,
+}
+
+impl Visibility {
+    pub fn parse(raw: &str) -> Visibility {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "lan" | "local" => Visibility::Lan,
+            "tailscale" | "tailnet" => Visibility::Tailscale,
+            _ => Visibility::Both,
+        }
+    }
+
+    /// Annonce-t-on sur le réseau local ? mDNS ne parle que sur le LAN : en
+    /// mode tailnet, publier une annonce serait au mieux inutile, au pire une
+    /// invitation que le filtre d'adresses refuserait.
+    pub fn announces(self) -> bool {
+        matches!(self, Visibility::Both | Visibility::Lan)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub peer_id: String,
     pub name: String,
     pub port: u16,
+    pub visibility: Visibility,
     pub shares: Vec<Share>,
 }
 
@@ -110,6 +145,12 @@ pub fn load(path: &Path) -> Result<Config, String> {
         .filter(|p| (1..=65535).contains(p))
         .unwrap_or(DEFAULT_PORT as u64) as u16;
 
+    let visibility = Visibility::parse(
+        doc.get("visibility")
+            .and_then(Value::as_str)
+            .unwrap_or("both"),
+    );
+
     let mut shares: Vec<Share> = Vec::new();
     for (index, item) in doc
         .get("shares")
@@ -170,6 +211,7 @@ pub fn load(path: &Path) -> Result<Config, String> {
         peer_id,
         name,
         port,
+        visibility,
         shares,
     })
 }

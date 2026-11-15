@@ -44,6 +44,12 @@ Deux processus, séparés pour la RAM :
   (partage indisponible → absent du réseau, réapparition automatique), file :
   pause/reprise, retrait qui efface le `.part`, reprise auto à attente
   croissante, notifications de fin, débit et temps restant.
+- **M5.1 (15/11/2026, après essai en vrai)** : l'accueil liste les **partages**
+  (avec leur poste) au lieu des postes ; recherche **globale** en parallèle sur
+  tous les partages ; tri par défaut sur la date de modification ; bouton
+  « Nettoyer les terminés » ; plus de bouton « Tout le partage » (le clic droit
+  propose « Tout sélectionner ») ; plus de port ni d'IP affichés ; visibilité
+  `both|lan|tailscale` appliquée par le démon.
 
 ## Paquet (GUI)
 
@@ -71,8 +77,37 @@ Sources = ce dossier, installées par `files/scripts/build-share` (paquet dans
   partage, l'annonce est retirée (le poste disparaît des listes). Côté
   Tailscale, la sonde lit `/api/info` et écarte les `shares: []`.
 - Identité = `peer_id` (machine-id), **pas** le nom d'hôte ni l'adresse : un
-  poste joignable en LAN et en Tailscale est une seule entrée, adresse LAN
-  préférée, Tailscale en secours.
+  poste joignable en LAN et en Tailscale est une seule entrée.
+- **L'écran d'accueil liste les partages, pas les postes** : une ligne par
+  partage, sous-titre « poste · Réseau local|Tailscale », clic = ouverture
+  directe de ce partage. Un écran intermédiaire « postes à proximité » obligeait
+  à deux clics pour ce qu'on cherche (un dossier), et le nom du poste reste
+  visible sur chaque ligne.
+- **Adresse** : le LAN est essayé d'abord (un aller-retour sur le réseau local
+  coûte moins qu'un détour par le tailnet), et la sonde retient l'adresse qui a
+  **réellement répondu** (`active_addr`). Sans ça, un LAN mort mais un tailnet
+  vivant faisait échouer la navigation : la sonde basculait, pas la GUI.
+- **Recherche globale** : la barre de l'écran d'accueil interroge **tous** les
+  partages trouvés en parallèle (6 fils, `limit` 60 par partage, 300 ms après la
+  dernière frappe), et chaque résultat porte son partage et son poste. Double
+  clic = on ouvre le dossier qui le contient. Une recherche en cours est rejouée
+  quand la liste des partages change.
+
+## Visibilité : réseau local, tailnet, ou les deux
+
+- Choix **par machine** (`visibility` dans `share.json`), sélecteur dans « Mes
+  partages » : `both` (défaut), `lan`, `tailscale`.
+- **C'est le démon qui applique la règle**, à chaque requête (relue à chaud, sans
+  redémarrage ni coupure de transfert) : `lan` refuse les adresses du tailnet
+  (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`), `tailscale` refuse le réseau local.
+  La boucle locale reste toujours autorisée : c'est par là que la GUI du poste
+  interroge son propre démon.
+- **Annonce mDNS seulement pour `both` et `lan`** : mDNS ne parle que sur le
+  réseau local, donc en mode tailnet on n'annonce rien du tout (annonce retirée
+  si elle existait) — les autres postes trouvent le nôtre par leur sonde
+  `tailscale status`. Annoncer puis refuser serait une invitation trompeuse.
+- Le filtre d'adresses reste la seule barrière (pas d'authentification) :
+  `--allow-nonlocal` demeure l'échappatoire de test/dépannage.
 
 ## Cycle de vie
 
@@ -139,6 +174,9 @@ Invariants :
   de 10 entrées 1 ms, 10 recherches 4 ms chacune, RSS **3,2 Mo** au repos et
   3,7 Mo après 50 requêtes (stable ensuite) — la charge des nouvelles routes
   ne laisse aucune empreinte.
+- **Tri par défaut : date de modification, la plus récente en tête**
+  (`sort=mtime&desc=1`). C'est ce qu'on cherche presque toujours ; le nom, la
+  taille et la date restent à un clic sur l'en-tête (sens inversé au second).
 - **Pagination** : `PAGE = 500` côté GUI, la suite se charge en défilant
   (`offset`). Le serveur borne à 5000 par requête. Le tri (`sort=name|size|mtime`,
   `desc=1`) est fait **côté serveur** : trier la page affichée donnerait un
@@ -206,9 +244,30 @@ Invariants :
 - **Pause / reprise** : `en pause` garde le `.part` et sort le transfert du
   worker ; « Reprendre » le remet en file. Un `.part` d'un autre ETag est
   ignoré (le fichier a changé) et laissé tel quel.
+- **Nettoyer les terminés** : bouton dans l'en-tête des transferts, visible
+  seulement s'il y a au moins un transfert réussi ; il retire les lignes
+  « terminé » de la liste **sans toucher aux fichiers** (`clear_finished`). Un
+  échec garde sa ligne : c'est celle qu'on veut relancer.
 - **Fin de transfert** : notification de bureau (`notify-send`, silencieuse si
   absent), sauf si la fenêtre a le focus. Débit et temps restant agrégés dans
   l'en-tête du panneau.
+
+## Fermeture (ce qui a coûté cher)
+
+- Fermer pendant un transfert ne doit **ni** perdre la progression **ni** faire
+  avorter le processus. Trois règles, chacune apprise à ses dépens :
+  1. `shutdown()` remet l'élément « en cours » à « en attente » (jamais
+     « annulé » : l'ancien code vidait la file et laissait un `.part` orphelin),
+     écrit le fichier puis rend la main ;
+  2. **jamais `QThread.terminate()`** : tuer un fil Python en pleine lecture
+     système fait planter le processus (SIGSEGV constaté le 15/11/2026). On
+     ferme la **réponse HTTP** en cours (`DownloadWorker.abort()`) : `read()`
+     échoue, le fil voit l'interruption et sort en quelques millisecondes ;
+  3. la sortie passe par `app._leave()` (`os._exit`) : Qt ne détruit pas un fil
+     encore vivant, ce qui l'**avorterait** (SIGABRT). La file est écrite et
+     `fsync`ée avant, et le démon est lié à la vie de la fenêtre.
+- Attente bornée à **1,5 s** : au-delà (poste muet, connexion non annulable),
+  on part quand même — la file reprendra au lancement suivant.
 
 ## Permanence (M3)
 
@@ -275,6 +334,11 @@ les tests.
   qu'on veut « tirer à la demande » sans compte.
 - **Pas de HEAD pour les dossiers** : `/a/` est un flux, sa taille n'existe pas ;
   d'où `/api/size`, calculé à la demande et borné.
+- **Un champ ignoré fait un réglage mort** : la visibilité vit dans
+  `share.json`, mais c'est le démon qui l'applique. Lancée depuis les sources,
+  la GUI prend donc le binaire de `daemon/target/release/` avant celui de
+  l'image — sinon on teste une interface neuve contre un démon qui ignore le
+  champ (vécu 15/11/2026 : l'ancien ordre préférait `/usr/libexec`).
 - **Deux comptes sur un même poste** : impossible pour l'instant — le port est
   fixe et le `peer_id` est le `machine-id`, donc le second démon ne peut pas
   écouter et la GUI affiche « port occupé ». Le rendre multi-compte demanderait

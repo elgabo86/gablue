@@ -30,15 +30,19 @@ pub fn spawn(state: Shared, port: u16) {
         let mut announced: Option<Wanted> = None;
 
         loop {
-            let (name, peer_id, shares) = {
+            let (name, peer_id, shares, announces) = {
                 let snapshot = Arc::clone(&state.read().unwrap_or_else(|p| p.into_inner()));
                 (
                     snapshot.name.clone(),
                     snapshot.peer_id.clone(),
                     snapshot.available().count(),
+                    snapshot.visibility.announces(),
                 )
             };
-            let wanted = if shares == 0 {
+            // mDNS ne parle que sur le réseau local : en visibilité « tailnet
+            // seulement », on n'annonce rien (les autres postes trouvent le
+            // nôtre par leur sonde `tailscale status`).
+            let wanted = if shares == 0 || !announces {
                 None
             } else {
                 Some(Wanted {
@@ -72,6 +76,11 @@ pub fn spawn(state: Shared, port: u16) {
                             announced = None;
                         }
                     }
+                } else if shares > 0 {
+                    eprintln!(
+                        "gablue-shared : annonce retirée (visibilité tailnet seulement)"
+                    );
+                    announced = None;
                 } else {
                     eprintln!("gablue-shared : plus aucun partage, annonce retirée");
                     announced = None;

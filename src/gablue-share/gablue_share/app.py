@@ -1,5 +1,6 @@
 """Point d'entrée de Gablue Share (GUI)."""
 
+import os
 import sys
 
 from PySide6.QtWidgets import QApplication
@@ -43,4 +44,23 @@ def main() -> int:
     # puisse démarrer même sans aucun dossier.
     config.load()
     window.show()
-    return app.exec()
+    return _leave(app, window, app.exec())
+
+
+def _leave(app: QApplication, window: MainWindow, code: int) -> int:
+    """Quitte sans laisser Qt démonter les fils de transfert.
+
+    Un transfert en cours peut être bloqué dans une connexion que rien ne peut
+    annuler (poste muet plutôt que « connexion refusée »). Qt détruirait alors
+    le `QThread` encore vivant à la sortie du processus, ce qui l'**avorte**
+    (SIGABRT, constaté le 15/11/2026). La file est déjà écrite et synchronisée
+    (`fsync`), et le démon est lié à la vie de la fenêtre : on sort directement.
+    """
+    try:
+        window.downloads.save()
+    except OSError:
+        pass  # disque plein ou chemin disparu : partir quand même
+    app.processEvents()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)

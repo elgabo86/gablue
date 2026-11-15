@@ -1,6 +1,6 @@
-"""Fenêtre principale : « Mon partage » à gauche, postes à droite, transferts en bas."""
+"""Fenêtre principale : « Mes partages » à gauche, partages trouvés à droite, transferts en bas."""
 
-import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import api, config, service
-from .constants import APP_NAME, PORT, download_dir
+from .constants import APP_NAME, download_dir
 from .daemon import Daemon
 from .discovery import Discovery, discovery_available
 from .downloads import Downloads, Job, unique_target
@@ -104,6 +104,7 @@ class SharePanel(QFrame):
 
     changed = Signal()
     permanent_changed = Signal(bool)
+    visibility_changed = Signal(str)
 
     def __init__(self, document: dict, parent=None):
         super().__init__(parent)
@@ -115,7 +116,7 @@ class SharePanel(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
-        layout.addWidget(label("Mon partage", "title"))
+        layout.addWidget(label("Mes partages", "title"))
         self.status = label("", "muted")
         layout.addWidget(self.status)
 
@@ -138,8 +139,22 @@ class SharePanel(QFrame):
         self.permanent.toggled.connect(self.permanent_changed.emit)
         layout.addWidget(self.permanent)
 
-        self.addresses = label("", "hint")
-        layout.addWidget(self.addresses)
+        visibilite = QHBoxLayout()
+        visibilite.addWidget(label("Visible sur", "hint"))
+        self.visibility = QComboBox()
+        for cle, libelle in config.VISIBILITIES.items():
+            self.visibility.addItem(libelle, cle)
+        index = self.visibility.findData(config.visibility(document))
+        self.visibility.setCurrentIndex(max(0, index))
+        self.visibility.setToolTip(
+            "Réseau local : les postes du même réseau (annonce mDNS).\n"
+            "Tailscale : le tailnet seulement, sans annonce locale.\n"
+            "Les deux : la connexion la plus rapide l'emporte."
+        )
+        self.visibility.currentIndexChanged.connect(self._visibility_changed)
+        visibilite.addWidget(self.visibility, 1)
+        layout.addLayout(visibilite)
+
         self.reload()
 
     # --- liste ----------------------------------------------------------
@@ -164,6 +179,11 @@ class SharePanel(QFrame):
             row.remove_requested.connect(self.remove_share)
             row.rename_requested.connect(self.rename_share)
             self.rows.addWidget(row)
+        index = self.visibility.findData(config.visibility(self.document))
+        if index >= 0 and index != self.visibility.currentIndex():
+            self.visibility.blockSignals(True)
+            self.visibility.setCurrentIndex(index)
+            self.visibility.blockSignals(False)
         present = sum(1 for available in availability if available)
         missing = len(shares) - present
         if not shares:
@@ -178,44 +198,32 @@ class SharePanel(QFrame):
             )
         else:
             suffix = f" — {missing} débranché(s), non annoncé(s)" if missing else ""
+            visibilite = config.visibility(self.document)
+            ou = {
+                "both": "visible sur le réseau local et le tailnet",
+                "lan": "visible sur le réseau local seulement (rien depuis le tailnet)",
+                "tailscale": "visible sur le tailnet seulement (aucune annonce locale)",
+            }[visibilite]
             self.status.setText(
                 f"{present} dossier{'s' if present > 1 else ''} partagé"
-                f"{'s' if present > 1 else ''} — visible des autres postes{suffix}."
+                f"{'s' if present > 1 else ''} — {ou}{suffix}."
             )
-        self._refresh_addresses()
 
     def refresh_availability(self) -> None:
         """Un disque branché/débranché change la liste, pas le fichier de config."""
         if self._availability() != getattr(self, "_known_availability", None):
             self.reload()
 
-    def _refresh_addresses(self) -> None:
-        addresses: list[str] = []
-        try:
-            output = subprocess.run(
-                ["ip", "-o", "-4", "addr", "show"],
-                capture_output=True,
-                text=True,
-                timeout=3,
-                check=False,
-            ).stdout
-            for line in output.splitlines():
-                parts = line.split()
-                if len(parts) < 4:
-                    continue
-                interface, address = parts[1], parts[3].split("/")[0]
-                if interface == "lo" or interface.startswith(("docker", "veth", "br-", "virbr")):
-                    continue
-                addresses.append(address)
-        except (OSError, subprocess.SubprocessError):
-            pass
-        if not addresses:
-            self.addresses.setText("")
+    def _visibility_changed(self, index: int) -> None:
+        value = self.visibility.itemData(index)
+        if not value:
             return
-        suffix = "" if self.document.get("shares") else " · rien n'est annoncé"
-        self.addresses.setText(
-            f"Port {PORT} · {', '.join(addresses)}{suffix}"
-        )
+        ok, message = config.set_visibility(self.document, value)
+        if not ok:
+            QMessageBox.warning(self, APP_NAME, message)
+            return
+        self.visibility_changed.emit(value)
+        self.reload()
 
     # --- actions --------------------------------------------------------
     def add_folder(self) -> None:
@@ -271,66 +279,175 @@ class SharePanel(QFrame):
 
 
 # ---------------------------------------------------------------------------
-# Liste des postes
+# Partages trouvés chez les autres postes
 # ---------------------------------------------------------------------------
-class PeerRow(QFrame):
-    opened = Signal(object)
+class RemoteShareRow(QFrame):
+    """Un partage d'un autre poste, avec le nom du poste qui le sert.
 
-    def __init__(self, peer, parent=None):
+    Pas d'écran intermédiaire « postes à proximité » : ce qu'on cherche, c'est
+    un dossier, pas une machine.
+    """
+
+    opened = Signal(object, object)  # poste, partage
+
+    def __init__(self, peer, share: dict, parent=None):
         super().__init__(parent)
         self.peer = peer
+        self.share = share
         self.setObjectName("card")
         self.setCursor(Qt.PointingHandCursor)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(12)
-
         texts = QVBoxLayout()
         texts.setSpacing(3)
-        texts.addWidget(label(peer.name, "section"))
-        texts.addWidget(label(peer.describe(), "muted"))
+        texts.addWidget(label(share.get("name") or share.get("id", "Partage"), "section"))
+        texts.addWidget(label(f"{peer.name} · {peer.label()}", "muted"))
         layout.addLayout(texts, 1)
-        layout.addWidget(label(peer.label(), "hint"))
+        layout.addWidget(label("Ouvrir ›", "hint"))
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (API Qt)
-        self.opened.emit(self.peer)
+        self.opened.emit(self.peer, self.share)
+
+
+class GlobalSearchLoader(QThread):
+    """Recherche dans **tous** les partages trouvés, en parallèle.
+
+    Un seul fil pour la GUI (une frappe = un fil), mais les partages sont
+    interrogés en parallèle : sur dix partages, une recherche séquentielle
+    coûterait dix fois le budget de 400 ms du serveur. Le total reste borné
+    par le nombre de partages et le plafond de résultats par partage.
+    """
+
+    done = Signal(int, list, bool)  # token, résultats, tronqué
+
+    MAX_PARALLELE = 6
+    PAR_PARTAGE = 60
+
+    def __init__(self, token: int, targets, query: str, parent=None):
+        super().__init__(parent)
+        self.token = token
+        self.targets = list(targets)  # [(poste, partage)]
+        self.query = query
+
+    def run(self) -> None:
+        rows: list[dict] = []
+        truncated = False
+        with ThreadPoolExecutor(max_workers=self.MAX_PARALLELE) as pool:
+            futures = {}
+            for peer, share in self.targets:
+                base = peer.base_url()
+                if not base:
+                    continue
+                futures[
+                    pool.submit(
+                        api.find, base, str(share.get("id", "")), self.query, "", self.PAR_PARTAGE
+                    )
+                ] = (peer, share)
+            for future in as_completed(futures):
+                if self.isInterruptionRequested():
+                    return
+                peer, share = futures[future]
+                try:
+                    payload = future.result()
+                except api.ApiError:
+                    continue  # un partage muet ne prive pas des autres
+                except Exception:  # noqa: BLE001 (recherche : jamais bloquante)
+                    continue
+                if payload.get("truncated"):
+                    truncated = True
+                for entry in payload.get("entries", []):
+                    rows.append(
+                        {
+                            "name": entry.get("name", ""),
+                            "path": entry.get("path", ""),
+                            "type": entry.get("type", "file"),
+                            "size": entry.get("size", 0),
+                            "mtime": entry.get("mtime", 0),
+                            "peer": peer,
+                            "share": share,
+                        }
+                    )
+        rows.sort(key=lambda row: (row["name"].lower(), row["path"].lower()))
+        if not self.isInterruptionRequested():
+            self.done.emit(self.token, rows, truncated)
 
 
 class PeerPage(QWidget):
-    open_peer = Signal(object)
+    open_share = Signal(object, object)  # poste, partage
+    open_result = Signal(object, object, str)  # poste, partage, chemin visé
     refresh_requested = Signal()
+
+    COLONNES = ["Nom", "Dossier", "Partage", "Poste", "Taille"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.targets: list[tuple[object, dict]] = []
+        self._token = 0
+        self._loader: GlobalSearchLoader | None = None
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(12)
 
         header = QHBoxLayout()
-        header.addWidget(label("Postes à proximité", "title"), 1)
+        header.addWidget(label("Partages trouvés", "title"), 1)
         refresh = QPushButton("Actualiser")
         refresh.clicked.connect(self.refresh_requested.emit)
         header.addWidget(refresh)
         layout.addLayout(header)
 
+        # Recherche globale : tous les partages à la fois, sans choisir un poste.
+        self.search = QLineEdit()
+        self.search.setPlaceholderText(
+            "Rechercher un fichier ou un dossier dans tous les partages…"
+        )
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._search_changed)
+        layout.addWidget(self.search)
+
         self.hint = label("", "hint")
         layout.addWidget(self.hint)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
         self.body = QWidget()
         self.rows = QVBoxLayout(self.body)
         self.rows.setContentsMargins(0, 0, 0, 0)
         self.rows.setSpacing(8)
         self.rows.addStretch(1)
-        scroll.setWidget(self.body)
-        layout.addWidget(scroll, 1)
+        self.scroll.setWidget(self.body)
+        layout.addWidget(self.scroll, 1)
+
+        self.results = QTableWidget(0, len(self.COLONNES))
+        self.results.setHorizontalHeaderLabels(self.COLONNES)
+        self.results.verticalHeader().setVisible(False)
+        self.results.setShowGrid(False)
+        self.results.setSelectionBehavior(QTableWidget.SelectRows)
+        self.results.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.results.setSortingEnabled(False)
+        entetes = self.results.horizontalHeader()
+        entetes.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        entetes.setSectionResizeMode(0, QHeaderView.Stretch)
+        for colonne in range(1, len(self.COLONNES)):
+            entetes.setSectionResizeMode(colonne, QHeaderView.ResizeToContents)
+        self.results.itemDoubleClicked.connect(self._result_activated)
+        self.results.hide()
+        layout.addWidget(self.results, 1)
+
+        # La frappe se calme (300 ms) avant d'interroger : une requête par pause,
+        # pas une par caractère.
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(300)
+        self._search_timer.timeout.connect(self._run_search)
 
         if not discovery_available():
             self.hint.setText(
                 "Ni Avahi ni Tailscale ne sont disponibles : la découverte est limitée."
             )
 
+    # --- liste des partages ---------------------------------------------
     def set_peers(self, peers) -> None:
         while self.rows.count():
             item = self.rows.takeAt(0)
@@ -341,20 +458,132 @@ class PeerPage(QWidget):
                 # ajout/retrait de partage).
                 widget.setParent(None)
                 widget.deleteLater()
-        if not peers:
+        # Un poste peut servir plusieurs dossiers : chaque partage est une
+        # entrée. Groupés par poste (puis par nom) pour garder le contexte.
+        entries = [
+            (peer, share)
+            for peer in sorted(peers, key=lambda item: item.name.lower())
+            for share in peer.shares
+        ]
+        entries.sort(key=lambda item: (item[0].name.lower(), str(item[1].get("name", "")).lower()))
+        self.targets = entries
+        if not entries:
             empty = label(
-                "Personne ne partage pour l'instant sur votre réseau local ou votre tailnet.\n"
-                "Un poste apparaît dès qu'il ouvre Gablue Share avec au moins un dossier partagé.",
+                "Aucun partage trouvé pour l'instant sur votre réseau local ou votre tailnet.\n"
+                "Un partage apparaît dès qu'un poste ouvre Gablue Share avec au moins un dossier.",
                 "muted",
             )
             empty.setAlignment(Qt.AlignCenter)
             self.rows.addWidget(empty)
         else:
-            for peer in peers:
-                row = PeerRow(peer)
-                row.opened.connect(self.open_peer.emit)
+            for peer, share in entries:
+                row = RemoteShareRow(peer, share)
+                row.opened.connect(self.open_share.emit)
                 self.rows.addWidget(row)
         self.rows.addStretch(1)
+        if entries and discovery_available():
+            postes = len({peer.peer_id for peer, _ in entries})
+            self.hint.setText(
+                f"{len(entries)} partage{'s' if len(entries) > 1 else ''} sur "
+                f"{postes} poste{'s' if postes > 1 else ''} — liste tenue à jour toute seule."
+            )
+        # La liste a bougé : une recherche en cours doit voir les nouveaux
+        # partages (un poste qui arrive pendant qu'on tape).
+        if self.search.text().strip():
+            self._run_search()
+
+    # --- recherche globale ----------------------------------------------
+    def _search_changed(self, text: str) -> None:
+        if not text.strip():
+            self._search_timer.stop()
+            self._token += 1  # invalide une réponse encore en vol
+            self.results.hide()
+            self.results.setRowCount(0)
+            self.scroll.show()
+            self.set_peers_targets()
+            return
+        self._search_timer.start()
+
+    def set_peers_targets(self) -> None:
+        """Rétablit l'en-tête de la vue « liste » après une recherche."""
+        if not self.targets:
+            return
+        postes = len({peer.peer_id for peer, _ in self.targets})
+        self.hint.setText(
+            f"{len(self.targets)} partage{'s' if len(self.targets) > 1 else ''} sur "
+            f"{postes} poste{'s' if postes > 1 else ''} — liste tenue à jour toute seule."
+        )
+
+    def _run_search(self) -> None:
+        query = self.search.text().strip()
+        if not query:
+            return
+        self.scroll.hide()
+        self.results.show()
+        if not self.targets:
+            self.results.setRowCount(0)
+            self.hint.setText("Aucun partage à interroger pour l'instant.")
+            return
+        self._token += 1
+        postes = len({peer.peer_id for peer, _ in self.targets})
+        self.hint.setText(
+            f"Recherche de « {query} » dans {len(self.targets)} partage(s) "
+            f"de {postes} poste(s)…"
+        )
+        loader = GlobalSearchLoader(self._token, self.targets, query, self)
+        loader.done.connect(self._search_done)
+        self._loader = loader
+        loader.start()
+
+    def _search_done(self, token: int, rows: list, truncated: bool) -> None:
+        if token != self._token:
+            return  # une frappe plus récente a pris la main
+        self.results.setRowCount(0)
+        for row in rows:
+            ligne = self.results.rowCount()
+            self.results.insertRow(ligne)
+            nom = QTableWidgetItem(row.get("name", ""))
+            nom.setIcon(
+                self.style().standardIcon(
+                    QStyle.SP_DirIcon if row.get("type") == "dir" else QStyle.SP_FileIcon
+                )
+            )
+            nom.setData(Qt.UserRole, row)
+            chemin = row.get("path", "")
+            dossier = chemin.rsplit("/", 1)[0] if "/" in chemin else ""
+            self.results.setItem(ligne, 0, nom)
+            self.results.setItem(ligne, 1, QTableWidgetItem(dossier))
+            self.results.setItem(
+                ligne, 2, QTableWidgetItem(str(row["share"].get("name") or row["share"].get("id", "")))
+            )
+            self.results.setItem(ligne, 3, QTableWidgetItem(row["peer"].name))
+            self.results.setItem(
+                ligne,
+                4,
+                QTableWidgetItem(
+                    human_size(row.get("size", 0)) if row.get("type") != "dir" else "dossier"
+                ),
+            )
+        partages = len({(row["peer"].peer_id, row["share"].get("id")) for row in rows})
+        suffixe = " (résultats partiels : affinez la recherche)" if truncated else ""
+        if not rows:
+            self.hint.setText(f"Aucun résultat pour « {self.search.text().strip()} »{suffixe}.")
+        else:
+            self.hint.setText(
+                f"{len(rows)} résultat{'s' if len(rows) > 1 else ''} dans "
+                f"{partages} partage{'s' if partages > 1 else ''}{suffixe}."
+            )
+
+    def _result_activated(self, item: QTableWidgetItem) -> None:
+        row = item.data(Qt.UserRole) or {}
+        if not row:
+            return
+        chemin = row.get("path", "")
+        if row.get("type") != "dir" and "/" in chemin:
+            chemin = chemin.rsplit("/", 1)[0]  # on ouvre le dossier qui le contient
+        elif row.get("type") != "dir":
+            chemin = ""
+        self.open_result.emit(row["peer"], row["share"], chemin)
 
 
 # ---------------------------------------------------------------------------
@@ -465,8 +694,11 @@ class BrowserPage(QWidget):
         self._truncated = False
         self._loading = False
         self._searching = False
-        self._sort = "name"
-        self._desc = False
+        # Tri par défaut : le plus récemment modifié en tête. C'est ce qu'on
+        # cherche neuf fois sur dix (la photo, le document qu'on vient de
+        # déposer), et le nom reste à un clic sur l'en-tête.
+        self._sort = "mtime"
+        self._desc = True
         self._etag = ""
         self._loader: ListLoader | None = None
         self._tagger: TagLoader | None = None
@@ -491,10 +723,6 @@ class BrowserPage(QWidget):
         self.shares.setMinimumWidth(180)
         self.shares.currentIndexChanged.connect(self._share_changed)
         header.addWidget(self.shares)
-        self.whole = QPushButton("Tout le partage")
-        self.whole.setToolTip("Télécharger l'intégralité de ce partage (archive)")
-        self.whole.clicked.connect(self._download_whole_share)
-        header.addWidget(self.whole)
         refresh = QPushButton("Actualiser")
         refresh.clicked.connect(lambda: self.load(self.path))
         header.addWidget(refresh)
@@ -526,6 +754,7 @@ class BrowserPage(QWidget):
         header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         header_view.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header_view.setSortIndicatorShown(True)
+        header_view.setSortIndicator(3, Qt.DescendingOrder)  # colonne « Modifié »
         header_view.sectionClicked.connect(self._header_clicked)
         self.table.setColumnHidden(1, True)
         self.table.itemDoubleClicked.connect(self._activated)
@@ -564,7 +793,7 @@ class BrowserPage(QWidget):
         self._idle_ticks = 0
 
     # --- ouverture ------------------------------------------------------
-    def open(self, peer, share: dict | None = None) -> None:
+    def open(self, peer, share: dict | None = None, path: str = "") -> None:
         self.peer = peer
         self.title.setText(peer.name)
         keep = share.get("id") if share else (self.share.get("id") if self.share else None)
@@ -572,7 +801,7 @@ class BrowserPage(QWidget):
         if self.share is None:
             return
         self.search.clear()
-        self.load("")
+        self.load(path)
 
     def _populate(self, keep_id: str | None) -> None:
         """Reconstruit la liste des partages du poste en gardant le choix fait."""
@@ -918,18 +1147,21 @@ class BrowserPage(QWidget):
                 choose,
             )
 
-    def _download_whole_share(self) -> None:
-        if self.peer and self.share:
-            self.download_requested.emit(self.peer, self.share, "", True, False)
-
     def _context_menu(self, position) -> None:
-        if not self.table.selectedItems():
-            return
+        # Le menu s'ouvre même sans sélection : « Tout sélectionner » n'aurait
+        # aucun sens s'il fallait déjà avoir sélectionné quelque chose.
         menu = QMenu(self)
+        select_all = menu.addAction("Tout sélectionner")
+        menu.addSeparator()
         download = menu.addAction("Télécharger")
         save_as = menu.addAction("Enregistrer sous…")
+        selection = bool(self.table.selectedItems())
+        download.setEnabled(selection)
+        save_as.setEnabled(selection)
         chosen = menu.exec(self.table.viewport().mapToGlobal(position))
-        if chosen is download:
+        if chosen is select_all:
+            self.table.selectAll()
+        elif chosen is download:
             self._request_download(choose=False)
         elif chosen is save_as:
             self._request_download(choose=True)
@@ -1023,8 +1255,17 @@ class TransferPanel(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 10, 16, 12)
         layout.setSpacing(0)
+        head = QHBoxLayout()
         self.header = label("Transferts", "section")
-        layout.addWidget(self.header)
+        head.addWidget(self.header, 1)
+        self.clear = QPushButton("Nettoyer les terminés")
+        self.clear.setObjectName("flat")
+        self.clear.setToolTip(
+            "Retirer de la liste les transferts réussis\n(les fichiers téléchargés restent)"
+        )
+        self.clear.clicked.connect(self.downloads.clear_finished)
+        head.addWidget(self.clear)
+        layout.addLayout(head)
         self.body = QVBoxLayout()
         self.body.setSpacing(0)
         layout.addLayout(self.body)
@@ -1043,6 +1284,8 @@ class TransferPanel(QFrame):
             if remaining:
                 titre += f" · reste {human_size(remaining)} (~{human_eta(eta)})"
         self.header.setText(titre)
+        # Le bouton n'apparaît que s'il y a quelque chose à nettoyer.
+        self.clear.setVisible(any(job.state == "terminé" for job in jobs))
         for job in jobs:
             row = self._rows.get(id(job))
             if row is None:
@@ -1110,7 +1353,9 @@ class MainWindow(QMainWindow):
         # câblage
         self.shares.changed.connect(self._shares_changed)
         self.shares.permanent_changed.connect(self._permanent_changed)
-        self.peers.open_peer.connect(self._open_peer)
+        self.shares.visibility_changed.connect(self._visibility_changed)
+        self.peers.open_share.connect(self._open_share)
+        self.peers.open_result.connect(self._open_result)
         self.peers.refresh_requested.connect(self.discovery.refresh_now)
         self.browser.closed.connect(lambda: self.stack.setCurrentWidget(self.peers))
         self.browser.download_requested.connect(self._download)
@@ -1148,13 +1393,23 @@ class MainWindow(QMainWindow):
         # (disque branché chez lui, partage renommé, ajouté, retiré).
         self.browser.sync_peer(peers)
 
+    def _visibility_changed(self, value: str) -> None:
+        """Le démon relit le fichier tout seul (mtime, ~3 s) : rien à redémarrer."""
+        self.document = config.load()
+        self.shares.document = self.document
+
     def _check_availability(self) -> None:
         if not self.isVisible() or self.isMinimized():
             return
         self.shares.refresh_availability()
 
-    def _open_peer(self, peer) -> None:
-        self.browser.open(peer)
+    def _open_share(self, peer, share) -> None:
+        self.browser.open(peer, share)
+        self.stack.setCurrentWidget(self.browser)
+
+    def _open_result(self, peer, share, path: str) -> None:
+        """Résultat de la recherche globale : on ouvre le dossier qui le contient."""
+        self.browser.open(peer, share, path)
         self.stack.setCurrentWidget(self.browser)
 
     # --- permanence -----------------------------------------------------
@@ -1174,7 +1429,6 @@ class MainWindow(QMainWindow):
             self.shares.permanent.blockSignals(True)
             self.shares.permanent.setChecked(not wanted)
             self.shares.permanent.blockSignals(False)
-            self.shares._refresh_addresses()
 
     # --- transferts -----------------------------------------------------
     def _download(self, peer, share, path: str, is_dir: bool, choose: bool) -> None:
@@ -1213,6 +1467,9 @@ class MainWindow(QMainWindow):
 
     # --- fermeture ------------------------------------------------------
     def closeEvent(self, event) -> None:  # noqa: N802 (API Qt)
+        # Ordre voulu : plus aucune découverte, le transfert en cours rend la
+        # main (sinon un QThread détruit pendant qu'il tourne fait avorter le
+        # processus), puis le démon de la GUI s'arrête.
         self.discovery.stop()
         self.downloads.shutdown()
         self.daemon.stop()

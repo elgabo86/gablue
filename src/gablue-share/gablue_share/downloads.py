@@ -191,6 +191,8 @@ class DownloadWorker(QThread):
     def __init__(self, job: Job, parent=None):
         super().__init__(parent)
         self.job = job
+        #: Réponse HTTP en cours, si un transfert est actif (voir `abort()`).
+        self._response = None
 
     def run(self) -> None:
         if self.job.peer is None:
@@ -224,6 +226,22 @@ class DownloadWorker(QThread):
                 self.failed.emit(self.job, message)
         except (OSError, tarfile.TarError) as error:
             self.failed.emit(self.job, f"{type(error).__name__} : {error}")
+
+    def abort(self) -> None:
+        """Débloque une lecture en cours en fermant sa socket.
+
+        `QThread.terminate()` est inutilisable ici : tuer un fil Python pendant
+        une lecture système fait planter le processus (SIGSEGV constaté le
+        15/11/2026). Fermer la réponse fait échouer `read()` tout de suite, et
+        le fil sort proprement en voyant la demande d'interruption.
+        """
+        response = getattr(self, "_response", None)
+        self._response = None
+        if response is not None:
+            try:
+                response.close()
+            except Exception:  # noqa: BLE001 (fermeture best-effort)
+                pass
 
     def _measure(self) -> None:
         """Débit lissé sur la fenêtre écoulée (affichage, jamais décision)."""
@@ -263,6 +281,7 @@ class DownloadWorker(QThread):
             self.progress.emit(self.job)
 
         response, offset = api.open_file(base, self.job.share_id, self.job.path, start, etag)
+        self._response = response
         with response:
             mode = "ab" if offset else "wb"
             if offset == 0:
@@ -308,6 +327,7 @@ class DownloadWorker(QThread):
         # `as=nom` : le dossier extrait porte le nom affiché dans l'app,
         # pas le nom physique du dossier côté source.
         response = api.open_tar(base, self.job.share_id, self.job.path, self.job.name)
+        self._response = response
         with response:
             stream = _Counter(response, account, self.isInterruptionRequested)
             # filter="data" refuse les chemins absolus et les sorties d'arbre.
@@ -441,6 +461,50 @@ class Downloads(QObject):
                 worker.requestInterruption()
             self._touch()
             self._pump()
+
+    def shutdown(self, timeout_ms: int = 1500) -> None:
+        """Arrête la file avant la fermeture de la fenêtre.
+
+        Un `QThread` détruit pendant qu'il tourne fait **avorter le processus**
+        (core dump) : on demande l'arrêt et on attend. Le `.part` reste sur
+        disque et l'élément redevient « en attente », donc il repart tout seul
+        au prochain lancement — même contrat que la reprise après réouverture.
+        """
+        actifs = [job for job in self.jobs if job.state == "en cours"]
+        for job in actifs:
+            # « en pause » d'abord : c'est ce qui empêche le worker d'interpréter
+            # l'interruption comme une annulation.
+            job.state = "en pause"
+        self._retry_timer.stop()
+        worker = self._worker
+        if worker is not None:
+            worker.requestInterruption()
+            # Fermer la socket débloque une lecture en cours : sans ça il
+            # faudrait attendre le timeout réseau (15 s) avant de rendre la main.
+            worker.abort()
+            # Attente courte : un transfert normal rend la main en quelques
+            # millisecondes. Si la connexion est bloquée (poste muet), tant pis :
+            # la file est écrite et la sortie du processus ne dépend plus de ce
+            # fil (voir `app._leave`).
+            worker.wait(timeout_ms)
+            self._worker = None
+        for job in actifs:
+            job.state = "en attente" if job.peer else WAITING_PEER
+            job.speed = 0.0
+        self._save_timer.stop()
+        self.save()
+
+    def clear_finished(self) -> None:
+        """Retire de la liste les transferts **réussis** (les fichiers restent).
+
+        Un échec garde sa ligne : c'est justement celle qu'on veut relancer.
+        Rien n'est effacé sur disque ici — le retrait d'un `.part` appartient à
+        `remove()`.
+        """
+        keep = [job for job in self.jobs if job.state != "terminé"]
+        if len(keep) != len(self.jobs):
+            self.jobs = keep
+            self._touch()
 
     def remove(self, job: Job) -> None:
         """Retire de la file **et** efface le `.part` laissé sur disque.
@@ -590,16 +654,3 @@ class Downloads(QObject):
         self.save()
         self._pump()
 
-    def shutdown(self) -> None:
-        """Arrêt propre à la fermeture : aucun transfert ne survit à la fenêtre."""
-        for job in self.jobs:
-            if job.state in ("en attente", "en cours"):
-                job.state = "annulé"
-        worker = self._worker
-        if worker is not None:
-            worker.requestInterruption()
-            if not worker.wait(3000):
-                worker.terminate()
-                worker.wait(1000)
-            self._worker = None
-        self.save()

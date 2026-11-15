@@ -30,13 +30,19 @@ LIST_TIMEOUT = 15.0
 
 
 def daemon_binary() -> str | None:
-    """Binaire du démon : image d'abord, puis le build de développement."""
-    for candidate in ("/usr/libexec/gablue-shared", "/usr/bin/gablue-shared"):
-        if os.path.exists(candidate):
-            return candidate
+    """Binaire du démon : le build de développement d'abord, puis l'image.
+
+    Lancée depuis les sources, la GUI doit utiliser le démon qu'elle vient de
+    compiler — sinon on teste une interface neuve contre un démon périmé, et un
+    champ ajouté (la visibilité) reste sans effet. Dans l'image, il n'y a pas
+    d'arbre `daemon/` à côté du paquet : le repli sur `/usr/libexec` est immédiat.
+    """
     dev = Path(__file__).resolve().parent.parent / "daemon" / "target" / "release" / "gablue-shared"
     if dev.exists():
         return str(dev)
+    for candidate in ("/usr/libexec/gablue-shared", "/usr/bin/gablue-shared"):
+        if os.path.exists(candidate):
+            return candidate
     return shutil.which("gablue-shared")
 
 

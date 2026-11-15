@@ -114,9 +114,13 @@ def list_dir(
         return payload, response.headers.get("ETag", "")
 
 
-def find(base: str, share_id: str, query: str, path: str = "") -> dict:
-    """Recherche récursive par nom, bornée côté serveur (~400 ms)."""
-    with _request(find_url(base, share_id, query, path), LIST_TIMEOUT) as response:
+def find(base: str, share_id: str, query: str, path: str = "", limit: int = 200) -> dict:
+    """Recherche récursive par nom, bornée côté serveur (~400 ms).
+
+    `limit` borne le nombre de résultats **par partage** : la recherche globale
+    interroge plusieurs partages à la fois, elle n'a pas besoin de tout.
+    """
+    with _request(find_url(base, share_id, query, path, limit), LIST_TIMEOUT) as response:
         return json.loads(response.read().decode("utf-8"))
 
 

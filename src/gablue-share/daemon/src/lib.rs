@@ -78,14 +78,20 @@ fn worker(server: &tiny_http::Server, state: &Shared, allow_nonlocal: bool) {
 }
 
 fn serve(request: tiny_http::Request, state: &Shared, allow_nonlocal: bool) {
+    // La visibilité est lue à chaque requête, pas au démarrage : passer de
+    // « les deux » à « tailnet seulement » prend effet immédiatement, sans
+    // redémarrer le démon ni couper un transfert.
+    let snapshot = Arc::clone(&state.read().unwrap_or_else(|poison| poison.into_inner()));
     if let Some(ip) = request.remote_addr().map(SocketAddr::ip) {
-        if !net::peer_allowed(ip, allow_nonlocal) {
-            eprintln!("gablue-shared : refus de {ip} (hors réseau local et tailnet)");
+        if !net::peer_allowed(ip, allow_nonlocal, snapshot.visibility) {
+            eprintln!(
+                "gablue-shared : refus de {ip} (visibilité « {:?} »)",
+                snapshot.visibility
+            );
             let _ = request.respond(routes::forbidden());
             return;
         }
     }
-    let snapshot = Arc::clone(&state.read().unwrap_or_else(|poison| poison.into_inner()));
     let response = routes::handle(&request, &snapshot);
     if let Err(err) = request.respond(response) {
         eprintln!("gablue-shared : réponse interrompue ({err})");
