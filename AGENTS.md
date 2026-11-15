@@ -144,7 +144,7 @@ Le projet construit 6 variantes distinctes :
 │   ├── workflows/                         # Workflows GitHub Actions
 │   │   ├── gablue-builds.yml              # Workflow principal de build (job `retry` inclus)
 │   │   ├── reusable-gablue-image.yml      # Workflow réutilisable (une image)
-│   │   ├── build-gablue-live-isos.yml     # Build des ISOs live (Titanoboa) + rejeu
+│   │   ├── build-gablue-live-isos.yml     # ISOs live : planifiée, dispatch, appels tagués
 │   │   ├── reusable-gablue-iso.yml        # Workflow réutilisable (build ISO)
 │   │   ├── clean-gablue-images.yml        # Nettoyage anciennes images
 │   │   └── bump-image-digests.yml         # Bump hebdo digests images pinnées (PR auto)

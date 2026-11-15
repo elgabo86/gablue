@@ -16,22 +16,18 @@ on:
   # expiration du lien, et un build raté le tuerait.
   schedule:
     - cron: "0 6 */5 * *"
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - "**.md"
-      - "**.txt"
-      - ".github/**"
-  # Chaînage automatique : déclenché à la fin du workflow d'images quand un push
-  # contenait le tag [all-iso] (voir condition du job build-live-iso). Garantit
-  # que les images :latest sont publiées AVANT de construire les ISOs.
-  workflow_run:
-    workflows: ["build-gablue-images"]
-    types:
-      - completed
+  # Un push tagué ne déclenche plus CE workflow : `gablue-builds.yml` l'appelle
+  # (`[iso]` seul, ou `[all-iso]` après les cinq images). C'est ce qui supprime
+  # le run ISO « skipped » créé à chaque push sur `main` : un déclencheur
+  # `push` ne peut pas filtrer sur le message de commit, seul le job le peut —
+  # donc le run existait pour rien. Ici comme appelé, `github.event` reste
+  # celui de l'appelant (`push`), d'où le job `retry` qui se garde sur
+  # `event == 'schedule'`.
+  workflow_call:
 
 concurrency:
+  # `github.run_id` rend chaque run ISO unique : deux builds (planifiée,
+  # appelée par un push, ou dispatch) ne s'annulent jamais entre elles.
   group: ${{ github.workflow }}-${{ github.run_id }}-iso
   cancel-in-progress: true
 
@@ -44,14 +40,6 @@ jobs:
     name: Build Live ISO
     uses: ./.github/workflows/reusable-gablue-iso.yml
     secrets: inherit
-    if: |
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && contains(github.event.head_commit.message, '[iso]')) ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       contains(github.event.workflow_run.head_commit.message, '[all-iso]'))
 
   # Même filet de sécurité que pour les images, et même portée : seule une
   # exécution PLANIFIÉE, à sa PREMIÈRE tentative, rejoue (un push tagué qui

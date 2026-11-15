@@ -24,9 +24,17 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # Ces permissions servent aux jobs ISO (`iso`, `iso-after-images`), qui
+  # appellent `build-gablue-live-isos.yml` : `contents: write` pour la release
+  # `latest-live-iso`, `attestations: write` pour sa provenance, `actions: read`
+  # pour les artifacts. Les builds d'images n'en ont pas besoin, mais une
+  # chaîne d'appels ne peut jamais élever les permissions au-delà de celles du
+  # run de plus haut niveau — elles doivent donc être déclarées ici.
+  contents: write
   packages: write
   id-token: write
+  attestations: write
+  actions: read
 
 jobs:
   build-main:
@@ -221,6 +229,34 @@ jobs:
       fedora_version: ${{ matrix.fedora_version }}
       kernel_type: ${{ matrix.kernel_type }}
       nvidia_flavor: ${{ matrix.nvidia_flavor }}
+
+  # ISO demandée seule (`[iso]`) : construite depuis les images « :latest »
+  # déjà publiées, sans rebuild. Remplace l'ancien déclencheur `push` du
+  # workflow ISO, qui créait un run « skipped » à chaque push sur `main` — un
+  # déclencheur ne peut pas filtrer sur le message de commit, seul le job le
+  # peut. `[all-iso]` ne contient pas la sous-chaîne `[iso]` : les deux jobs
+  # sont exclusifs par construction.
+  iso:
+    name: Build Live ISO ([iso])
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      contains(github.event.head_commit.message, '[iso]')
+    uses: ./.github/workflows/build-gablue-live-isos.yml
+    secrets: inherit
+
+  # `[all-iso]` : les cinq images d'abord, l'ISO ensuite, dans le MÊME run.
+  # Sans `always()` volontairement : un build en échec saute l'ISO, exactement
+  # comme l'ancien chaînage `workflow_run`, qui exigeait
+  # `conclusion == 'success'` — on ne livre jamais une ISO bâtie sur des images
+  # dont une a échoué.
+  iso-after-images:
+    name: Build Live ISO ([all-iso])
+    needs: [build-main, build-nvidia, build-nvidia-open, build-dx, build-nvidia-open-dx]
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      contains(github.event.head_commit.message, '[all-iso]')
+    uses: ./.github/workflows/build-gablue-live-isos.yml
+    secrets: inherit
 
   update-readme:
     name: Update README versions
