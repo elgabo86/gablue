@@ -13,6 +13,9 @@ src/gablue-dualsense/gablue-dualsense-ctl
 # Démon Gablue Share (Rust) : artefacts de compilation
 src/gablue-share/daemon/target/
 
+# Icône de barre d'état de Gablue Manager (Rust) : artefacts de compilation
+src/gablue-manager/tray/target/
+
 # Contenu extra local pour les builds ISO (copié dans /extra du live, non versionné)
 /installer/extra/*
 !/installer/extra/.gitkeep

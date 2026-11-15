@@ -1,0 +1,18 @@
+[package]
+name = "gablue-manager-tray"
+version = "0.1.0"
+edition = "2021"
+description = "Icône de barre d'état de Gablue Manager (StatusNotifierItem, sans Qt)"
+
+[dependencies]
+# StatusNotifierItem par DBus, sans toolkit : `async-io` plutôt que tokio (un
+# exécuteur minimal, pas un runtime complet), `blocking` pour l'API synchrone.
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
+serde_json = "1"
+libc = "0.2"
+
+[profile.release]
+opt-level = 2
+lto = true
+codegen-units = 1
+strip = true

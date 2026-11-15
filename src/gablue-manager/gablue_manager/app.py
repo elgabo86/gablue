@@ -30,10 +30,15 @@ et OpenCode 2 (configuration, sauvegardes et sessions conservées). Les opérati
 fenêtre : plusieurs postes peuvent être traités en même temps.
 
   --tray
-      Icône de barre d'état seule (démarrage de session). Un clic ouvre la
+      Icône de barre d'état seule (démarrage de session). Un clic bascule la
       fenêtre ; une pastille rouge signale un redémarrage requis ou une mise
-      à jour. La fenêtre n'est chargée qu'au clic : aucune sonde SSH ni
+      à jour. L'icône est un binaire Rust (`gablue-manager-tray`) : ni Qt ni
+      ce paquet ne tournent en permanence, quelques mégaoctets au lieu de
+      ~110 Mo. La fenêtre n'est chargée qu'au clic : aucune sonde SSH ni
       registre des postes avant.
+  --tray-state [--state F] [--check] [--force] [--offline]
+      État de l'icône en JSON, pour ce binaire (voir `gablue_manager/traystate.py`).
+      Mode interne : il n'ouvre rien et sort aussitôt.
 
 Modes sans fenêtre principale (utilisés par gwine) :
   --progress --title T [--subtitle T] [--auto-close-success] -- commande…
@@ -56,6 +61,55 @@ Clé locale    : ~/.ssh/id_ed25519 (créée au besoin, sans passphrase)
 
 def _has_display() -> bool:
     return bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
+
+
+def tray_binary() -> str | None:
+    """Binaire de l'icône : build du dépôt d'abord, puis image.
+
+    Même ordre que le démon de Gablue Share : lancée depuis les sources, l'app
+    doit tester l'icône du dépôt, pas celle d'une image plus ancienne.
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for candidate in (
+        os.path.join(root, "tray", "target", "release", "gablue-manager-tray"),
+        "/usr/libexec/gablue-manager-tray",
+    ):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _run_tray() -> int:
+    """Mode `--tray` : l'icône est un binaire Rust, on lui passe la main.
+
+    `execv` remplace ce processus : aucun Python ne reste en mémoire. Le
+    lanceur de CETTE version lui est transmis, sinon l'icône relancerait le
+    `gablue-manager` du PATH (image antérieure, fenêtre au lieu du mode
+    demandé — vécu 07/11/2026).
+    """
+    from . import prefs
+
+    if not prefs.tray_enabled():
+        return 0
+    binary = tray_binary()
+    if binary is None:
+        print("gablue-manager : icône de barre d'état absente "
+              "(gablue-manager-tray non compilé ni installé)", file=sys.stderr)
+        return 1
+    argv = [binary]
+    launcher = os.path.abspath(sys.argv[0])
+    if os.path.basename(launcher) != "gablue-manager":
+        # Lancée par `python -m gablue_manager` (la fenêtre relance ainsi) : le
+        # lanceur du dépôt est à côté du paquet, sinon on laisse le défaut.
+        candidate = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "gablue-manager"
+        )
+        launcher = candidate if os.path.isfile(candidate) else ""
+    if launcher:
+        argv += ["--manager", launcher]
+    os.execv(binary, argv)
+    return 1  # execv ne revient pas
+
 
 def _window_message(server, window) -> None:
     """Message d'une autre instance : `raise` la ramène, `toggle` la ferme.
@@ -91,14 +145,18 @@ def main() -> int:
     args = sys.argv[1:]
     # --help après « -- » appartient à la commande, pas à nous.
     head = args[:args.index("--")] if "--" in args else args
+    # Le mode `--tray-state` avant l'aide : c'est lui qui documente ses options.
+    if args and args[0] == "--tray-state":
+        from .traystate import main as traystate_main
+
+        return traystate_main(args[1:])
     if any(arg in ("-h", "--help") for arg in head):
         print(HELP)
         return 0
     if args == ["--tray"]:
         if not _has_display():
             return 0        # démarrage de session sans affichage : rien à faire
-        from .tray import run
-        return run()
+        return _run_tray()
     if args:
         from .cli import run
         return run(args)

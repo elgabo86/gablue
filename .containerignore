@@ -5,7 +5,10 @@
 # - .git : ~46 Mo, jamais lu par le Containerfile
 # - src/gablue-share/daemon/target : build Cargo local (~270 Mo), recompilé dans
 #   l'étape share-build
+# - src/gablue-manager/tray/target : idem pour l'icône du manager, recompilée
+#   dans l'étape manager-tray-build
 # - __pycache__ : liés au Python de la machine de dev, jamais installés
 .git
 src/gablue-share/daemon/target
+src/gablue-manager/tray/target
 __pycache__

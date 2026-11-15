@@ -160,7 +160,10 @@ Lanceur de l'application « Gablue Manager » : le code vit dans
 `usr/share/icons/hicolor/scalable/apps/gablue-manager.svg` (carré bleu Gablue,
 anneau en engrenage à 8 dents formant un G : ouverture en haut à droite et barre
 horizontale, sans rupture de silhouette) ; `QIcon.fromTheme("gablue-manager")` avec repli `network-server`
-quand l'icône n'est pas encore installée (lancement depuis le dépôt).
+quand l'icône n'est pas encore installée (lancement depuis le dépôt) ; et
+`gablue-manager-alert.svg` (même icône + disque rouge `#e01b24` sur anneau blanc
+à 34 % du côté) pour la **pastille d'alerte** de la barre d'état : l'icône Rust
+change de nom d'icône (`gablue-manager-alert`), elle ne repeint rien.
 
 Contrat complet (paquet, dialogues, privilèges, comportement) →
 `src/gablue-manager/AGENTS.md`.

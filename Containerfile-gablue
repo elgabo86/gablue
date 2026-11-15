@@ -53,6 +53,21 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build-share-daemon
 
+# Étape intermédiaire : icône de barre d'état de Gablue Manager (Rust,
+# StatusNotifierItem). Même raison d'être que ci-dessus : la toolchain reste
+# ici, l'étape finale ne reçoit qu'un binaire de ~3 Mo (l'icône Qt pèse 110 Mo).
+FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION} AS manager-tray-build
+ENV CARGO_HOME=/cargo
+COPY src/gablue-manager/tray/Cargo.toml /build/Cargo.toml
+COPY src/gablue-manager/tray/Cargo.lock /build/Cargo.lock
+COPY src/gablue-manager/tray/src /build/src
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=cache,dst=/cargo \
+    --mount=type=cache,dst=/build/target \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build-manager-tray
+
 # Image de base pour la construction finale
 FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}
 # Redéfinition des arguments après le FROM pour les rendre disponibles
@@ -69,7 +84,10 @@ COPY src/ds2xbox /src/ds2xbox
 COPY src/gablue-dualsense /src/gablue-dualsense
 COPY src/gablue-isomount /src/gablue-isomount
 COPY src/gwine-launcher /src/gwine-launcher
-COPY src/gablue-manager /src/gablue-manager
+# Copies explicites : `tray/target/` (centaines de Mo) ne doit jamais entrer
+# dans le contexte ni dans la couche, comme pour Gablue Share ci-dessous.
+COPY src/gablue-manager/gablue_manager /src/gablue-manager/gablue_manager
+COPY src/gablue-manager/gablue-manager /src/gablue-manager/gablue-manager
 # Gablue Share : paquet + lanceur seulement (jamais daemon/target/, centaines de Mo)
 COPY src/gablue-share/gablue_share /src/gablue-share/gablue_share
 COPY src/gablue-share/gablue-share /src/gablue-share/gablue-share
@@ -191,6 +209,9 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
     /ctx/build-manager && \
     /ctx/cleanup
+# Icône de barre d'état : binaire Rust compilé dans l'étape manager-tray-build
+# (aucun Qt chargé en permanence, la fenêtre n'est lancée qu'au clic)
+COPY --from=manager-tray-build /out/gablue-manager-tray /usr/libexec/gablue-manager-tray
 
 # Gablue Share : démon Rust (copié depuis l'étape de build) + GUI Python
 COPY --from=share-build /out/gablue-shared /usr/libexec/gablue-shared

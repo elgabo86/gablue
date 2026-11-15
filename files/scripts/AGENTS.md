@@ -94,7 +94,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - `terminaltexteffects` via `uv` (appelé après rpm)
 - **Conflit site-packages** : un RPM peut poser un fichier/symlink à n'importe quel niveau de `/usr/local/lib/pythonX.Y/site-packages/` (transition majeure Python) → `uv pip install` échoue (`File exists, os error 17`) ; le script remonte la hiérarchie, supprime ce qui n'est pas un répertoire, `mkdir -p` avant install. `X.Y` est déduit du Python de l'image (`python3 -c`), jamais codé en dur : un chemin figé visait 3.14 et serait resté muet sur 3.15 en fc45
 
-### build-c / build-gwine / build-manager / build-tvqt / build-apk-installer / build-lgplaunch / build-share-daemon / build-share — Compilation des sources
+### build-c / build-gwine / build-manager / build-manager-tray / build-tvqt / build-apk-installer / build-lgplaunch / build-share-daemon / build-share — Compilation des sources
 
 **build-c** (après pypi) :
 - Compile `/src/gamepadshortcuts` (gamepadshortcuts + gamepadshortcuts-mouse + kbdnav, même Makefile), `/src/ds2xbox`, `/src/gablue-dualsense` (`gablue-dualsense-ctl`, hidapi), `/src/gablue-isomount`
@@ -113,6 +113,12 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - **Pas de `.pyc` dans l'image** (`__pycache__` supprimé) : ils seraient liés au Python du build, pas à celui du poste, et `/usr` est en lecture seule sur composefs
 - Toute modif du paquet nécessite un rebuild d'image pour être effective — le lanceur ne lit que `/usr/lib/gablue-manager`
 - Architecture interne → `src/gablue-manager/AGENTS.md`
+
+**build-manager-tray** (étape `manager-tray-build`, avant l'image finale) :
+- Même schéma que `build-share-daemon` (étape jetée, toolchain hors image, `CARGO_HOME=/cargo`, caches `/cargo` + `/build/target`, `cargo build --release --locked`, copies fichier par fichier) : l'étape finale ne reçoit que `/out/gablue-manager-tray` par `COPY --from`
+- Livre `/usr/libexec/gablue-manager-tray` (~2,8 Mo), l'icône StatusNotifierItem du manager : `gablue-manager --tray` lui passe la main par `os.execv`, donc aucun Python ne reste en mémoire (icône Qt mesurée à 110 Mo, la Rust à 4 Mo)
+- Le Containerfile copie désormais `gablue_manager/` et le lanceur **séparément** (jamais `tray/target/`, ~centaines de Mo)
+- Contrat de l'icône → `src/gablue-manager/AGENTS.md`
 
 **build-tvqt** (après build-manager) :
 - Installe le paquet Python `/src/tvqt/gablue_tv/` dans `/usr/lib/tvqt/` et le lanceur `src/tvqt/tvqt` en `/usr/bin/tvqt` (755) ; sources nettoyées

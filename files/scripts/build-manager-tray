@@ -1,0 +1,18 @@
+#!/usr/bin/bash
+
+# Compilation de l'icône de barre d'état de Gablue Manager (Rust) dans l'étape
+# "manager-tray-build". Le binaire est déposé dans /out : l'étape finale le
+# copie par COPY --from, donc la toolchain Rust (~300 Mo) n'entre jamais dans
+# l'image. L'icône pèse ~3 Mo, contre 110 Mo mesurés pour l'ancienne icône Qt.
+
+set -eoux pipefail
+
+# Dépendances de compilation : uniquement dans cette étape, jetée après.
+dnf5 -y install cargo rust gcc
+
+# --locked : Cargo.lock est dans le dépôt, la résolution ne bouge pas.
+cargo build --release --locked --manifest-path /build/Cargo.toml
+
+install -Dm755 /build/target/release/gablue-manager-tray /out/gablue-manager-tray
+
+echo "gablue-manager-tray compilé : $(stat -c %s /out/gablue-manager-tray) octets"
