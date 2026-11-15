@@ -10,9 +10,9 @@ from PySide6.QtGui import (
     QColor, QIcon, QPainter, QPainterPath, QPalette, QPen,
 )
 from PySide6.QtWidgets import (
-    QButtonGroup, QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu,
-    QProgressBar, QPushButton, QSizePolicy, QTabWidget, QToolButton,
-    QVBoxLayout, QWidget,
+    QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxLayout,
+    QLabel, QMenu, QProgressBar, QPushButton, QSizePolicy, QSlider, QTabWidget,
+    QToolButton, QVBoxLayout, QWidget,
 )
 
 from .constants import (
@@ -885,6 +885,118 @@ class NoticeBar(QFrame):
         self.label.setText("")
         self.setVisible(False)
 
+class MangoHudSection(QFrame):
+    """Carte MangoHud commune aux options de gwine et de LGP.
+
+    Mêmes réglages des deux côtés (`mangohud`, `mangohud_layout`, `fps_limit`)
+    mais fichiers d'options distincts : le parent lit `values()` et le compare
+    à ce qu'il a posé avec `set_values()`. Rien n'est écrit ici, c'est le
+    lanceur qui applique (`--mangohud`, `--mangohud-layout`, `--fps-limit`) —
+    le `MangoHud.conf` du poste n'est jamais modifié.
+    """
+
+    changed = Signal()
+
+    FPS_MAX = 240
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("hostCard")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(6)
+
+        top = QHBoxLayout()
+        top.setSpacing(10)
+        title = QLabel("MangoHud", self)
+        title.setObjectName("hostName")
+        top.addWidget(title)
+        top.addStretch(1)
+        layout.addLayout(top)
+
+        detail = QLabel(
+            "Overlay des performances. La config MangoHud du poste "
+            "(~/.config/MangoHud/MangoHud.conf) n'est jamais modifiée : ces "
+            "valeurs la surchargent au lancement.",
+            self,
+        )
+        detail.setObjectName("hostDetail")
+        detail.setWordWrap(True)
+        layout.addWidget(detail)
+
+        self.enable_check = QCheckBox("Afficher l'overlay", self)
+        self.enable_check.setCursor(Qt.PointingHandCursor)
+        self.enable_check.toggled.connect(lambda _checked: self.changed.emit())
+
+        self.layout_combo = QComboBox(self)
+        self.layout_combo.addItem("Horizontal (barre)", "horizontal")
+        self.layout_combo.addItem("Rectangle (bloc)", "rectangle")
+        self.layout_combo.currentIndexChanged.connect(
+            lambda _index: self.changed.emit()
+        )
+
+        self.fps_slider = QSlider(Qt.Horizontal, self)
+        self.fps_slider.setRange(0, self.FPS_MAX)
+        self.fps_slider.setSingleStep(1)
+        self.fps_slider.setPageStep(10)
+        self.fps_slider.setTickPosition(QSlider.TicksBelow)
+        self.fps_slider.setTickInterval(60)
+        self.fps_slider.valueChanged.connect(self._update_fps_label)
+        self.fps_slider.valueChanged.connect(lambda _value: self.changed.emit())
+        self.fps_label = QLabel(self)
+        self.fps_label.setMinimumWidth(70)
+
+        check_row = QHBoxLayout()
+        check_row.setSpacing(8)
+        check_row.addWidget(self.enable_check)
+        check_row.addStretch(1)
+        layout.addLayout(check_row)
+
+        layout_row = QHBoxLayout()
+        layout_row.setSpacing(8)
+        layout_row.addWidget(QLabel("Disposition", self))
+        layout_row.addWidget(self.layout_combo)
+        layout_row.addStretch(1)
+        layout.addLayout(layout_row)
+
+        fps_row = QHBoxLayout()
+        fps_row.setSpacing(8)
+        fps_row.addWidget(QLabel("Limite fps", self))
+        fps_row.addWidget(self.fps_slider, 1)
+        fps_row.addWidget(self.fps_label)
+        layout.addLayout(fps_row)
+
+    def set_enabled(self, enabled: bool) -> None:
+        for widget in (self.enable_check, self.layout_combo, self.fps_slider):
+            widget.setEnabled(enabled)
+
+    def set_values(self, values: dict) -> None:
+        """Pose les valeurs effectives sans émettre `changed`."""
+        widgets = (self.enable_check, self.layout_combo, self.fps_slider)
+        for widget in widgets:
+            widget.blockSignals(True)
+        self.enable_check.setChecked(bool(values.get("mangohud", True)))
+        index = self.layout_combo.findData(
+            values.get("mangohud_layout") or "horizontal"
+        )
+        self.layout_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.fps_slider.setValue(int(values.get("fps_limit") or 0))
+        for widget in widgets:
+            widget.blockSignals(False)
+        self._update_fps_label()
+
+    def values(self) -> dict:
+        return {
+            "mangohud": self.enable_check.isChecked(),
+            "mangohud_layout": self.layout_combo.currentData() or "horizontal",
+            "fps_limit": self.fps_slider.value(),
+        }
+
+    def _update_fps_label(self) -> None:
+        value = self.fps_slider.value()
+        self.fps_label.setText("illimitée" if value == 0 else f"{value} fps")
+
+
 class HostCard(QFrame):
     """Une ligne graphique : état, identité, actions."""
 
@@ -903,6 +1015,7 @@ class HostCard(QFrame):
     btrfs_requested = Signal(str)
     thermal_requested = Signal(str)
     gwine_requested = Signal(str)
+    lgp_requested = Signal(str)
     booster_requested = Signal(str)
     tailscale_requested = Signal(str)
     wifi_powersave_requested = Signal(str)
@@ -1039,6 +1152,10 @@ class HostCard(QFrame):
         games_menu.addAction(
             "Options de gwine…",
             lambda: self.gwine_requested.emit(self.host["id"]),
+        )
+        games_menu.addAction(
+            "Options LGP…",
+            lambda: self.lgp_requested.emit(self.host["id"]),
         )
         games_menu.addAction(
             "Priorité au premier plan…",
@@ -1270,6 +1387,7 @@ class LocalConfigMenu(QMenu):
     bootselect_requested = Signal()
     firmware_requested = Signal()
     gwine_requested = Signal()
+    lgp_requested = Signal()
     booster_requested = Signal()
     tailscale_requested = Signal()
     share_requested = Signal()
@@ -1304,6 +1422,7 @@ class LocalConfigMenu(QMenu):
 
         games_menu = settings_menu.addMenu("Jeux")
         games_menu.addAction("Options de gwine…", self.gwine_requested.emit)
+        games_menu.addAction("Options LGP…", self.lgp_requested.emit)
         games_menu.addAction(
             "Priorité au premier plan…", self.booster_requested.emit
         )

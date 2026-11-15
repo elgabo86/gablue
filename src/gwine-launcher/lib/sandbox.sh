@@ -292,6 +292,7 @@ build_bwrap_env_vars() {
     [ -n "${MESA_SHADER_CACHE_DIR:-}" ] && bwrap_add --setenv MESA_SHADER_CACHE_DIR "$MESA_SHADER_CACHE_DIR"
     [ -n "${MANGOHUD:-}" ] && bwrap_add --setenv MANGOHUD "$MANGOHUD"
     [ -n "${MANGOHUD_DLSYM:-}" ] && bwrap_add --setenv MANGOHUD_DLSYM "$MANGOHUD_DLSYM"
+    [ -n "${MANGOHUD_CONFIG:-}" ] && bwrap_add --setenv MANGOHUD_CONFIG "$MANGOHUD_CONFIG"
     [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && bwrap_add --setenv DBUS_SESSION_BUS_ADDRESS "$DBUS_SESSION_BUS_ADDRESS"
     
     [ -n "${DXVK_NVAPIHACK:-}" ] && bwrap_add --setenv DXVK_NVAPIHACK "$DXVK_NVAPIHACK"

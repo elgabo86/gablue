@@ -31,13 +31,21 @@ launch_game() {
     local cd_dir="${work_dir:-$exe_dir}"
     
     local cmd=""
-    
+    # MangoHud : le wrapper `mangohud` (LD_PRELOAD → Vulkan ET OpenGL), pas
+    # seulement MANGOHUD=1 qui ne couvre que la couche Vulkan. MANGOHUD=0
+    # (option lgplaunch ou .env du pack) coupe l'overlay.
+    local mh=""
+    if [ "${MANGOHUD:-}" != "0" ] && [ -n "${MANGOHUD_BIN:-}" ] && \
+       [ -x "${MANGOHUD_BIN:-}" ]; then
+        mh="$MANGOHUD_BIN "
+    fi
+
     if [[ "$exe_name" == *.sh ]]; then
-        cmd="cd \"$cd_dir\" && \"$exe_path\""
+        cmd="cd \"$cd_dir\" && ${mh}\"$exe_path\""
     elif [[ "$exe_name" == *.py ]]; then
-        cmd="cd \"$cd_dir\" && /usr/bin/python3 \"$exe_path\""
+        cmd="cd \"$cd_dir\" && ${mh}/usr/bin/python3 \"$exe_path\""
     elif [[ "$exe_name" == *.AppImage ]] || [[ "$exe_name" == *.appimage ]]; then
-        cmd="cd \"$cd_dir\" && \"$exe_path\""
+        cmd="cd \"$cd_dir\" && ${mh}\"$exe_path\""
     else
         local is_elf=false
         if [ -f "$exe_path" ]; then
@@ -49,9 +57,9 @@ launch_game() {
         fi
         
         if [ "$is_elf" = true ]; then
-            cmd="cd \"$cd_dir\" && \"$exe_path\""
+            cmd="cd \"$cd_dir\" && ${mh}\"$exe_path\""
         else
-            cmd="\"$exe_path\""
+            cmd="${mh}\"$exe_path\""
         fi
     fi
     

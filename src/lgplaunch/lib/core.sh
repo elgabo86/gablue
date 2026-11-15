@@ -9,6 +9,10 @@ fullpath=""
 # --exe=<rel>     → lance directement ce chemin (relatif à la racine du pack)
 SELECT_EXE_MODE=false
 SELECT_EXE_PATH=
+# Réglages MangoHud demandés en CLI (voir lib/mangohud.sh)
+mangohud_opt=""
+mangohud_layout_opt=""
+mangohud_fps_limit_opt=""
 # Normaliser $HOME vers /var/home (chemin réel sur Silverblue/Kinoite)
 HOME_REAL="$(realpath "$HOME")"
 SAVES_SYMLINK="/tmp/lgp-saves-$UID"

@@ -196,6 +196,8 @@ fenêtre kdialog.
 ./gwine --900 ~/jeu.wgp        # Gamescope 1600x900 interne (raccourci)
 ./gwine --1080 ~/jeu.wgp       # Gamescope 1920x1080 interne (raccourci)
 ./gwine --gamescope-args "-w 1920 -h 1080 -f --mangoapp" ~/jeu.wgp  # Args gamescope personnalisés
+./gwine --mangohud off ~/jeu.wgp      # Sans overlay MangoHud
+./gwine --fps-limit 60 ~/jeu.wgp      # Limite fps MangoHud pour ce lancement
 # Fichier .gamescope : gamescope s'active automatiquement au lancement
 #   emplacements : racine du pack .wgp, ou à côté du fichier lancé (.exe/.bat)
 #   contenu = args (ex: "-f -w 1280 -h 720 --adaptive-sync --mangoapp")
@@ -208,6 +210,22 @@ fenêtre kdialog.
 ./gwine --1080                  # Définir 1080p par défaut
 ./gwine --no-gamescope          # Désactiver gamescope par défaut
 ```
+
+### Configuration MangoHud (overlay, globale)
+```bash
+./gwine --mangohud on|off              # Afficher / masquer l'overlay (défaut : on)
+./gwine --mangohud-layout horizontal|rectangle   # Barre large / bloc
+./gwine --fps-limit 60                 # Limite de fps (0 = illimitée, max 480)
+```
+
+Réglages stockés dans `~/.local/share/gwine/options` (`mangohud`,
+`mangohud_layout`, `fps_limit`) et appliqués par `apply_mangohud_settings()`
+au lancement via `MANGOHUD`/`MANGOHUD_CONFIG="read_cfg,…"` : le
+`~/.config/MangoHud/MangoHud.conf` du user n'est **jamais** modifié (et
+`--init` ne l'écrase plus, voir `lib/AGENTS.md`). Une clé jamais réglée n'est
+pas émise, donc les valeurs du fichier du user continuent de s'appliquer.
+Sous gamescope (`--mangoapp`), c'est mangoapp qui dessine : `MANGOHUD=0` posé
+par le wrapper n'est jamais écrasé, ces réglages n'y ont pas d'effet.
 
 ### Configuration xbox par défaut
 ```bash

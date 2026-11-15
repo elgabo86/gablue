@@ -54,6 +54,9 @@ show_help() {
     echo "  --900             Gamescope en 1600x900 interne (raccourci)"
     echo "  --1080            Gamescope en 1920x1080 interne (raccourci)"
     echo "  --no-gamescope    Désactiver gamescope par défaut"
+    echo "  --mangohud on|off Afficher l'overlay MangoHud (défaut : on)"
+    echo "  --mangohud-layout horizontal|rectangle   Disposition de l'overlay"
+    echo "  --fps-limit N     Limite de fps de MangoHud (0 = illimitée, max 480)"
     echo "  --kill            Forcer l'arrêt de tous les processus Gwine en cours"
     echo "  --dir             Gérer les répertoires bindés dans le sandbox (add/del/list/reset)"
     echo ""
@@ -80,6 +83,9 @@ show_help() {
     echo "  gwine --720 ~/Jeux/monjeu.wgp       # Gamescope 1280x720"
     echo "  gwine --1080                        # Définir 1080p par défaut pour les futurs lancements"
     echo "  gwine --no-gamescope                # Désactiver gamescope par défaut"
+    echo "  gwine --mangohud off                # Masquer l'overlay MangoHud"
+    echo "  gwine --mangohud-layout rectangle   # Overlay en bloc (horizontal par défaut)"
+    echo "  gwine --fps-limit 60                # Limiter à 60 fps (0 = illimitée)"
     echo "  gwine ~/Jeux/monjeu.wgp             # .gamescope (racine du pack ou à côté): gamescope auto"
     echo "  gwine --reg config.reg"
     echo "  gwine --reg add 'HKCU\Software\Wine\DllOverrides' /v ddraw /d native,builtin /f"
@@ -89,7 +95,8 @@ show_help() {
 }
 
 # Options valides reconnues par gwine
-VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--check" "--force" "--offline" "--update" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--dxvk" "--dxvk-async" "--gamescope" "--gamescope-args" "--720" "--900" "--1080" "--no-gamescope")
+VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--check" "--force" "--offline" "--update" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--dxvk" "--dxvk-async" "--gamescope" "--gamescope-args" "--720" "--900" "--1080" "--no-gamescope" "--mangohud" "--mangohud-layout" "--fps-limit"
+)
 
 # Vérifie si une option est valide
 is_valid_option() {
@@ -107,6 +114,9 @@ parse_arguments() {
     gamescope_args=""
     gamescope_off_mode=false
     gamescope_file_off=false
+    mangohud_opt=""
+    mangohud_layout_opt=""
+    mangohud_fps_limit_opt=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --help|-h)
@@ -280,6 +290,33 @@ $2"
             --no-gamescope)
                 gamescope_off_mode=true
                 shift
+                ;;
+            --mangohud)
+                if [ -n "${2:-}" ]; then
+                    mangohud_opt="$2"
+                    shift 2
+                else
+                    echo "Erreur: --mangohud nécessite 'on' ou 'off'" >&2
+                    exit 1
+                fi
+                ;;
+            --mangohud-layout)
+                if [ -n "${2:-}" ]; then
+                    mangohud_layout_opt="$2"
+                    shift 2
+                else
+                    echo "Erreur: --mangohud-layout nécessite 'horizontal' ou 'rectangle'" >&2
+                    exit 1
+                fi
+                ;;
+            --fps-limit)
+                if [ -n "${2:-}" ]; then
+                    mangohud_fps_limit_opt="$2"
+                    shift 2
+                else
+                    echo "Erreur: --fps-limit nécessite une valeur (0 = illimitée)" >&2
+                    exit 1
+                fi
                 ;;
             --kill)
                 echo "Arrêt forcé de tous les processus Gwine..."

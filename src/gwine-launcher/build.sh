@@ -15,6 +15,7 @@ LIB_FILES=(
     "lib/core.sh"
     "lib/parse-args.sh"
     "lib/xbox.sh"
+    "lib/mangohud.sh"
     "lib/runner.sh"
     "lib/dxvk-mode.sh"
     "lib/display-mode.sh"

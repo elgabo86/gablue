@@ -19,6 +19,30 @@ parse_arguments() {
                 SELECT_EXE_PATH="${1#--exe=}"
                 shift
                 ;;
+            --mangohud)
+                if [ -n "${2:-}" ]; then
+                    mangohud_opt="$2"
+                    shift 2
+                else
+                    error_exit "--mangohud nécessite 'on' ou 'off'"
+                fi
+                ;;
+            --mangohud-layout)
+                if [ -n "${2:-}" ]; then
+                    mangohud_layout_opt="$2"
+                    shift 2
+                else
+                    error_exit "--mangohud-layout nécessite 'horizontal' ou 'rectangle'"
+                fi
+                ;;
+            --fps-limit)
+                if [ -n "${2:-}" ]; then
+                    mangohud_fps_limit_opt="$2"
+                    shift 2
+                else
+                    error_exit "--fps-limit nécessite une valeur (0 = illimitée)"
+                fi
+                ;;
             *)
                 fullpath="$1"
                 shift
@@ -26,6 +50,11 @@ parse_arguments() {
         esac
     done
 
-    [ -z "$fullpath" ] && error_exit "Aucun fichier spécifié"
+    # Un réglage seul (--mangohud, --mangohud-layout, --fps-limit) est valide
+    # sans fichier : il ne fait que modifier les options globales.
+    if [ -z "$fullpath" ] && [ -z "${mangohud_opt:-}" ] && \
+       [ -z "${mangohud_layout_opt:-}" ] && [ -z "${mangohud_fps_limit_opt:-}" ]; then
+        error_exit "Aucun fichier spécifié"
+    fi
 }
 

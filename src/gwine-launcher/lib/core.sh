@@ -541,6 +541,7 @@ reset_gwine_options() {
         echo "  dxvk_mode: ${old_dxvk:-non défini} -> dxvk"
         echo "  display_mode: ${old_display:-x11} (inchangé)"
         echo "  xbox_default: ${old_xbox:-non défini} -> off"
+        echo "  mangohud: -> activé (disposition et limite lues dans MangoHud.conf)"
         changed=true
     else
         echo "  Aucune option existante, création avec les valeurs par défaut"

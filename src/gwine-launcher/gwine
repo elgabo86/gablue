@@ -17,6 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/core.sh"
 source "$SCRIPT_DIR/lib/parse-args.sh"
 source "$SCRIPT_DIR/lib/xbox.sh"
+source "$SCRIPT_DIR/lib/mangohud.sh"
 source "$SCRIPT_DIR/lib/runner.sh"
 source "$SCRIPT_DIR/lib/dxvk-mode.sh"
 source "$SCRIPT_DIR/lib/display-mode.sh"
@@ -368,7 +369,41 @@ main() {
     
     apply_xbox_default
     apply_gamescope_default
-    
+
+    # Réglages MangoHud (globaux) : posés puis conservés dans
+    # ~/.local/share/gwine/options. Sans jeu, la commande ne fait que régler.
+    if [ -n "${mangohud_opt:-}" ] || [ -n "${mangohud_layout_opt:-}" ] || \
+       [ -n "${mangohud_fps_limit_opt:-}" ]; then
+        if [ -n "${mangohud_opt:-}" ]; then
+            set_mangohud_enabled "$mangohud_opt" || exit 1
+            if [ "$mangohud_opt" = "on" ]; then
+                echo "MangoHud activé par défaut"
+            else
+                echo "MangoHud désactivé par défaut"
+            fi
+        fi
+        if [ -n "${mangohud_layout_opt:-}" ]; then
+            set_mangohud_layout "$mangohud_layout_opt" || exit 1
+            echo "Disposition MangoHud : $mangohud_layout_opt"
+        fi
+        if [ -n "${mangohud_fps_limit_opt:-}" ]; then
+            set_mangohud_fps_limit "$mangohud_fps_limit_opt" || exit 1
+            if [ "$mangohud_fps_limit_opt" = "0" ]; then
+                echo "Limite fps MangoHud : illimitée"
+            else
+                echo "Limite fps MangoHud : $mangohud_fps_limit_opt"
+            fi
+        fi
+        echo "Ce réglage s'applique à tous les prochains lancements gwine."
+        if [ -z "$fullpath" ]; then
+            exit 0
+        fi
+    fi
+
+    # Exporte MANGOHUD / MANGOHUD_CONFIG pour ce lancement (le fichier
+    # ~/.config/MangoHud/MangoHud.conf du user n'est jamais modifié).
+    apply_mangohud_settings
+
 
     if [ "$nofix_mode" = true ] && [ "$fix_mode" = true ]; then
         echo "Note: --fix ignoré car --nofix actif"

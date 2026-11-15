@@ -23,6 +23,7 @@
 lib/core.sh
 lib/parse-args.sh
 lib/xbox.sh
+lib/mangohud.sh
 lib/runner.sh
 lib/dxvk-mode.sh
 lib/display-mode.sh
@@ -51,6 +52,7 @@ lib/dir-config.sh
 - **core.sh** : Variables globales, fonctions utilitaires (find_component_dir, component_dir_complete — complétude des dossiers de composants extraits) et repli `DISPLAY=` quand ni `DISPLAY` ni `WAYLAND_DISPLAY` n'existent (SSH, service) : sans lui, Wine tente X11 et les installateurs graphiques se figent au lieu de suivre leur chemin silencieux
 - **parse-args.sh** : Analyse des arguments CLI, validation, aide (show_help)
 - **xbox.sh** : Gestion ds2xbox (émulation Xbox 360, compteur références, config par défaut) + gamescope par défaut (set/get/apply_gamescope_default)
+- **mangohud.sh** : Réglages de l'overlay MangoHud, globaux (même fichier `~/.local/share/gwine/options` : `mangohud=on|off`, `mangohud_layout=horizontal|rectangle`, `fps_limit=N`). `apply_mangohud_settings()` exporte `MANGOHUD=0` (masqué) ou `MANGOHUD_CONFIG="read_cfg,…"` au lancement ; `read_cfg` est **obligatoire** en premier, sinon MangoHud ignore le fichier de config dès que `MANGOHUD_CONFIG` est défini (`src/overlay_params.cpp`, `if (!env || read_cfg) parseConfigFile`) et le `~/.config/MangoHud/MangoHud.conf` du user serait perdu. Les valeurs de `MANGOHUD_CONFIG` sont réappliquées après le fichier, donc elles gagnent clé par clé. Une clé absente des options n'est pas émise (le fichier du user fait foi) ; `MANGOHUD=0` déjà dans l'environnement (gamescope `--mangoapp`) n'est jamais écrasé, mangoapp dessine lui-même. `horizontal` sans valeur vaut 1, `horizontal=0` remet le bloc (booléens lus par `strtol`)
 - **runner.sh** : Gestion des runners Wine/Proton
 - **dxvk-mode.sh** : Configuration DXVK standard vs GPLAsync
 - **display-mode.sh** : Gestion du mode d'affichage (Wayland natif vs X11/XWayland)
@@ -81,7 +83,7 @@ lib/dir-config.sh
   - misc.sh : OpenAL, PhysX, MSLS31, VB6 Runtime. **PhysX** : l'auto-extracteur NVIDIA (PackageLauncher NVI2) lance son `setup.exe` en enfant et attend sa fin — sans écran cet enfant reste suspendu et l'init ne rend jamais la main (`/s`, `/quiet` et `-s -noreboot` compris ; constaté gen1 par SSH, 07/11/2026). `install_physx` extrait donc la charge utile avec `7z` (l'exe embarque une archive 7z, 168 fichiers) dans `drive_c/NVIDIA/PhysX/Temp`, lance `setup.exe -s` directement (~21 s, code 0, DLL en place) puis supprime les 229 Mo extraits ; repli sur l'auto-extracteur avec `timeout` si `7z` manque. `-s` est le seul drapeau silencieux valide de NVI2
   - wmp9.sh : Windows Media Player 9 + wsh57. setup_wm.exe installe les codecs de base (wmvcore, wmp, l3codeca.acm) en 32 et 64-bit. Le pack supplémentaire wm9codecs (WM9Codecs9x.exe) est ignoré silencieusement en 64-bit car superflu.
   - main.sh : Fonction principale install_all_wincomponents
-- **wineprefix.sh** : Création/gestion du préfixe Wine, copie ICU 68 DLLs (gwine uniquement). `wineboot_init_prefix()` appelle `setup_wine_temp_symlinks()` **avant** de rendre la main : les symlink `Temp` doivent être valides avant toute installation `msiexec` (Mono/Gecko), sinon `advpack:create_tmp_ini_file Can't get temp ini file path`. `setup_wine_temp_symlinks()` répare aussi les symlinks cassés (target inexistant après nettoyage du cache `~/.cache/gwine`) qui persistent via `~/Windows/UserData` sync entre machines (Syncthing)
+- **wineprefix.sh** : Création/gestion du préfixe Wine, copie ICU 68 DLLs (gwine uniquement). `copy_mangohud_config()` **n'écrit jamais** un `~/.config/MangoHud/MangoHud.conf` existant (amorçage depuis `/usr/share/ublue-os/gablue/MangoHud.conf` seulement s'il est absent, même règle que les saves/extras WGP) : `--init` tourne à chaque changement de composant et `cp -f` effaçait limite fps, position et couleurs réglées par le user (vécu 15/11/2026). `wineboot_init_prefix()` appelle `setup_wine_temp_symlinks()` **avant** de rendre la main : les symlink `Temp` doivent être valides avant toute installation `msiexec` (Mono/Gecko), sinon `advpack:create_tmp_ini_file Can't get temp ini file path`. `setup_wine_temp_symlinks()` répare aussi les symlinks cassés (target inexistant après nettoyage du cache `~/.cache/gwine`) qui persistent via `~/Windows/UserData` sync entre machines (Syncthing)
 - **wineserver-manager.sh** : Fichier de redirection vers wineserver/*
 - **wineserver/*** : Gestion du wineserver persistant
   - init.sh : Initialisation système de locks

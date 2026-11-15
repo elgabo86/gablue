@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/core.sh"
 source "$SCRIPT_DIR/lib/overlay.sh"
 source "$SCRIPT_DIR/lib/args.sh"
+source "$SCRIPT_DIR/lib/mangohud.sh"
 source "$SCRIPT_DIR/lib/lgp.sh"
 source "$SCRIPT_DIR/lib/exe.sh"
 source "$SCRIPT_DIR/lib/saves.sh"
@@ -26,6 +27,12 @@ source "$SCRIPT_DIR/lib/modes.sh"
 
 main() {
     parse_arguments "$@"
+
+    # Réglages MangoHud (globaux) : posés puis sortie s'il n'y a pas de jeu,
+    # sinon exportés (MANGOHUD / MANGOHUD_CONFIG / MANGOHUD_BIN) pour le
+    # lancement. Fait hors du unshare : le namespace hérite de l'environnement.
+    handle_mangohud_options
+    apply_mangohud_settings
 
     # Déterminer le mode
     if [[ "$fullpath" == *.lgp ]]; then

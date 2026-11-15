@@ -164,6 +164,10 @@ ATUIN_HELPER = "/usr/bin/gablue-atuin"
 # gwine personnel dans ~/.local/bin peut être plus ancien et ignorer l'option).
 GWINE_IMAGE_BINARY = "/usr/bin/gwine"
 
+# Binaire lgplaunch de l'image : même raison (un lgplaunch personnel peut ne
+# pas connaître les options MangoHud).
+LGP_IMAGE_BINARY = "/usr/bin/lgplaunch"
+
 GAMEPAD_HELPER = "/usr/bin/gablue-gamepad"
 
 CLEAN_HELPER = "/usr/libexec/gablue-clean"

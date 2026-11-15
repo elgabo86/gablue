@@ -16,7 +16,8 @@ principe que `src/gwine-launcher/`) :
 | `build.sh` | concatène `lib/*.sh` + le code principal en `lgplaunch-standalone.sh` (bannières `# Module:`) |
 | `lib/core.sh` | variables globales (HOME réel, chemins `/tmp/lgp-*`, `--exe`), `error_exit` |
 | `lib/overlay.sh` | overlayfs kernel via `unshare -U -m` : vérification, enregistrement différé, montage/démontage, nettoyage des marqueurs |
-| `lib/args.sh` | `parse_arguments` (`--args`, `--exe`, `--exe=<rel>`, fichier) |
+| `lib/args.sh` | `parse_arguments` (`--args`, `--exe`, `--exe=<rel>`, fichier, `--mangohud`, `--mangohud-layout`, `--fps-limit`) |
+| `lib/mangohud.sh` | réglages de l'overlay MangoHud, globaux (`~/.config/lgplaunch/options`) : `handle_mangohud_options` (CLI), `apply_mangohud_settings` (`MANGOHUD`, `MANGOHUD_CONFIG`, `MANGOHUD_BIN`) |
 | `lib/lgp.sh` | montage squashfuse, démontage (instance déjà lancée, orphelins), `.launch`/`.args`, nom interne `.gamename` |
 | `lib/exe.sh` | `--exe` : validation (relatif, sans `..`), scan des exécutables, menu |
 | `lib/saves.sh` | amorçage des sauvegardes depuis `.save` vers `~/.local/share/lgp-saves` |
@@ -84,6 +85,21 @@ réécriture). Le code principal (`main`) est extrait du lanceur par
   seul le montage et son scan précèdent.
 - **Classique** : exécutable direct, `.script.sh` du dossier puis `.env`,
   arguments `--args`.
+- **MangoHud** (overlay, global) : `lib/mangohud.sh`, options dans
+  `~/.config/lgplaunch/options` (`mangohud=on|off`, `mangohud_layout`,
+  `fps_limit`), posées en CLI (`--mangohud on|off`, `--mangohud-layout
+  horizontal|rectangle`, `--fps-limit N`, 0 = illimitée). Le
+  `~/.config/MangoHud/MangoHud.conf` du user n'est **jamais** modifié : les
+  réglages partent en `MANGOHUD_CONFIG="read_cfg,…"`, ce qui les superpose au
+  fichier clé par clé. `read_cfg` est obligatoire en premier : sans lui
+  MangoHud ignore complètement le fichier dès que `MANGOHUD_CONFIG` existe
+  (détail et preuve dans `src/gwine-launcher/lib/AGENTS.md`). Une clé jamais
+  réglée n'est pas envoyée, donc le fichier du user s'applique. Le lancement
+  passe par le **wrapper `mangohud`** (`MANGOHUD_BIN`, LD_PRELOAD → Vulkan
+  **et** OpenGL), pas par `MANGOHUD=1` seul qui ne couvre que Vulkan ; un
+  `.env` du pack qui met `MANGOHUD=0` coupe l'overlay pour ce jeu. Appliqué
+  dans `main()` **avant** le `unshare` : le namespace hérite des variables,
+  `launch_game` (exécuté dedans) ne fait que préfixer la commande.
 - **Nettoyage** : `trap cleanup_lgp EXIT` (démontage FUSE, symlinks, overlays
   orphelins, marqueurs `/tmp/lgp-ko-*.pid`). `killthemall` cible les packs par
   leur mount `/tmp/lgpackmount` (pas par le nom du lanceur).

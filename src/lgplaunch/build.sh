@@ -13,6 +13,7 @@ LIB_FILES=(
     "lib/core.sh"
     "lib/overlay.sh"
     "lib/args.sh"
+    "lib/mangohud.sh"
     "lib/lgp.sh"
     "lib/exe.sh"
     "lib/saves.sh"

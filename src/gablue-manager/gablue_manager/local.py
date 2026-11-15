@@ -18,7 +18,7 @@ from .constants import (
     BROADCOM_WL_FILE, BTRFS_HELPER, CLEAN_HELPER, CMDLINE,
     CPUID_EMU_BLACKLIST,
     CPUID_EMU_CONF, CPUID_EMU_HELPER, GAMEPAD_HELPER, GRUB_HELPER,
-    GWINE_IMAGE_BINARY, HWINFO_HELPER,
+    GWINE_IMAGE_BINARY, HWINFO_HELPER, LGP_IMAGE_BINARY,
     NVME_THERMAL_HELPER, RYZENADJ_BINARY, RYZENADJ_HELPER, RYZENADJ_SERVICE,
     SECUREBOOT_HELPER,
     KARG_BT_ERTM, KARG_CLEARCPUID,
@@ -1729,18 +1729,112 @@ def gwine_options_path() -> Path:
     """Fichier d'options de gwine (`$GWINE_DIR/options`)."""
     return Path.home() / ".local/share/gwine/options"
 
-def parse_gwine_options(text: str) -> dict:
-    """Lit `dxvk_mode`, `display_mode` et `xbox_default`."""
+def lgp_options_path() -> Path:
+    """Options globales de LGP (`~/.config/lgplaunch/options`)."""
+    return Path.home() / ".config/lgplaunch/options"
+
+def lgp_binary() -> str:
+    """Chemin de lgplaunch : celui de l'image d'abord, le PATH ensuite.
+
+    Même règle que `gwine_binary` : un lgplaunch personnel plus ancien ne
+    connaît pas `--mangohud` et l'ignorerait en silence.
+    """
+    image = Path(LGP_IMAGE_BINARY)
+    if image.exists():
+        return str(image)
+    return shutil.which("lgplaunch") or "lgplaunch"
+
+def mangohud_conf_path() -> Path:
+    """Configuration MangoHud du compte (`~/.config/MangoHud`)."""
+    return Path.home() / ".config/MangoHud/MangoHud.conf"
+
+def _option_values(text: str) -> dict[str, str]:
+    """Clés `clé=valeur` d'un fichier d'options (commentaires ignorés)."""
     values: dict[str, str] = {}
     for line in text.splitlines():
         if "=" in line:
             key, _, value = line.partition("=")
             values[key.strip()] = value.strip()
+    return values
+
+def _fps_limit(value: str | None) -> int | None:
+    """Première valeur d'un `fps_limit` MangoHud, None si absente/illisible.
+
+    MangoHud stocke une liste (`0,30,60`) dont seule la première s'applique
+    au lancement ; les suivantes servent au cycle `toggle_fps_limit`.
+    """
+    if not value:
+        return None
+    first = value.split(",")[0].strip()
+    return int(first) if first.isdigit() else None
+
+def _mangohud_options(values: dict[str, str]) -> dict:
+    """Réglages MangoHud d'un fichier d'options (clés communes gwine/LGP).
+
+    `mangohud_layout` vide et `fps_limit` à None signifient « rien d'imposé »
+    par le lanceur : c'est le MangoHud.conf du user qui s'applique.
+    """
+    layout = values.get("mangohud_layout", "")
     return {
+        "mangohud": values.get("mangohud") != "off",
+        "mangohud_layout": layout if layout in ("horizontal", "rectangle") else "",
+        "fps_limit": _fps_limit(values.get("fps_limit")),
+    }
+
+def parse_gwine_options(text: str) -> dict:
+    """Lit les options de gwine (dxvk, affichage, manettes, MangoHud)."""
+    values = _option_values(text)
+    state = {
         "dxvk_async": values.get("dxvk_mode") == "dxvk-async",
         "wayland": values.get("display_mode") == "wayland",
         "xbox": values.get("xbox_default") == "on",
     }
+    state.update(_mangohud_options(values))
+    return state
+
+def parse_lgp_options(text: str) -> dict:
+    """Lit les options de LGP (pour l'instant les seules réglages MangoHud)."""
+    return _mangohud_options(_option_values(text))
+
+def mangohud_effective(state: dict) -> dict:
+    """Réglages MangoHud effectifs : option du lanceur, sinon fichier du user.
+
+    C'est ce que l'overlay appliquera au prochain lancement tant que rien
+    n'est changé : les dialogues s'en servent pour ne rien écrire quand
+    l'utilisateur n'a rien modifié.
+    """
+    layout = state.get("mangohud_layout") or ""
+    if layout not in ("horizontal", "rectangle"):
+        layout = "horizontal" if state.get("conf_horizontal") else "rectangle"
+    fps = state.get("fps_limit")
+    if fps is None:
+        fps = state.get("conf_fps_limit")
+    return {
+        "mangohud": bool(state.get("mangohud", True)),
+        "mangohud_layout": layout,
+        "fps_limit": int(fps) if fps is not None else 0,
+    }
+
+def parse_mangohud_conf(text: str) -> dict:
+    """Valeurs effectives du `MangoHud.conf` du poste.
+
+    Ce que l'overlay applique quand le lanceur n'impose rien : `fps_limit`
+    (première valeur de la liste) et le drapeau `horizontal`. Les booléens
+    MangoHud sont lus par `strtol` : une clé nue vaut 1, `horizontal=0` désactive.
+    """
+    state: dict = {"conf_fps_limit": None, "conf_horizontal": False}
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if key == "fps_limit":
+            state["conf_fps_limit"] = _fps_limit(value)
+        elif key == "horizontal":
+            state["conf_horizontal"] = value != "0"
+    return state
 
 def parse_foreground_booster(text: str) -> bool:
     """Lit `[Foreground Booster] autostart` de kcgroupsrc (absent = activé)."""

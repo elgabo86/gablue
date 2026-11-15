@@ -199,7 +199,13 @@ setup_windows_directories() {
     return 0
 }
 
-# Copie la configuration MangoHud
+# Copie la configuration MangoHud — amorçage uniquement
+#
+# Le fichier du user n'est JAMAIS réécrit : `gwine --init` tourne à chaque
+# changement de composant, et `cp -f` effaçait la limite fps, la position et
+# les couleurs réglées dans MangoJuice (vécu 15/11/2026). Même règle que les
+# saves/extras WGP : l'image propose, le user dispose. Les réglages de gwine
+# (layout, limite fps) passent par MANGOHUD_CONFIG, pas par ce fichier.
 copy_mangohud_config() {
     local MANGOHUD_CONFIG_DIR="$HOME_REAL/.config/MangoHud"
     local MANGOHUD_CONF_USER="$MANGOHUD_CONFIG_DIR/MangoHud.conf"
@@ -207,6 +213,11 @@ copy_mangohud_config() {
     
     # Créer le dossier de config
     ensure_dir "$MANGOHUD_CONFIG_DIR" "Impossible de créer le dossier $MANGOHUD_CONFIG_DIR"
+    
+    if [ -f "$MANGOHUD_CONF_USER" ]; then
+        echo "Configuration MangoHud existante conservée ($MANGOHUD_CONF_USER)"
+        return 0
+    fi
     
     # Copier la config depuis ublue-os/gablue si elle existe
     if [ -f "$MANGOHUD_CONF_SOURCE" ]; then
@@ -218,9 +229,8 @@ copy_mangohud_config() {
             return 1
         fi
     else
-        # Créer un config MangoHud par défaut si inexistant
-        if [ ! -f "$MANGOHUD_CONF_USER" ]; then
-            cat > "$MANGOHUD_CONF_USER" << 'EOF'
+        # Créer un config MangoHud par défaut (fichier absent, cf. plus haut)
+        cat > "$MANGOHUD_CONF_USER" << 'EOF'
 # MangoHud configuration
 fps_limit=0
 vsync=0
@@ -233,10 +243,7 @@ vram
 fps
 frame_timing
 EOF
-            echo "Configuration MangoHud créée dans ~/.config/MangoHud/"
-        else
-            echo "Configuration MangoHud déjà existante"
-        fi
+        echo "Configuration MangoHud créée dans ~/.config/MangoHud/"
     fi
     
     return 0
