@@ -178,7 +178,11 @@ est compilé par l'étape `share-build` du Containerfile et posé en
 `/usr/libexec/`. Entrée de menu `usr/share/applications/gablue-share.desktop`
 (catégorie **Network**) et icône
 `usr/share/icons/hicolor/scalable/apps/gablue-share.svg` (carré bleu Gablue,
-deux dossiers et une flèche).
+dossier dont le contenu part : flèche montante). Motif choisi pour la **masse
+pleine** : la même icône sert de pastille de barre d'état (`tray.rs`) et
+d'icône de notification, donc elle doit se lire à 22 px à côté de l'applet
+réseau — un motif d'ondes ou de glyphe « partage » s'y confond avec le wifi ou
+devient illisible, mesuré au rendu 16/22/32 px avant de trancher.
 
 Trois fichiers accompagnent l'application, tous chargés de la même vérité :
 

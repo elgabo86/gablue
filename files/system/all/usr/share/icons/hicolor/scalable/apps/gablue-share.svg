@@ -6,9 +6,10 @@
     </linearGradient>
   </defs>
   <rect x="12" y="12" width="232" height="232" rx="52" fill="url(#gablue)"/>
-  <!-- deux dossiers, une flèche : ce qui part vers l'autre poste -->
-  <rect x="56" y="76" width="60" height="104" rx="14" fill="#ffffff"/>
-  <rect x="140" y="84" width="60" height="104" rx="14" fill="#ffffff" opacity="0.88"/>
-  <path d="M122 116 L136 128 L122 140" fill="none" stroke="#ffffff"
-        stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- un dossier dont le contenu part : le partage sortant. Masse pleine tenue
+       jusqu'à 16 px (l'icône sert aussi de pastille de barre d'état). -->
+  <path transform="translate(74,107) scale(1.8)" fill="#ffffff"
+        d="M0 6 A6 6 0 0 1 6 0 H22 A6 6 0 0 1 26.4 1.9 L31.6 7 H54 A6 6 0 0 1 60 13 V42 A6 6 0 0 1 54 48 H6 A6 6 0 0 1 0 42 Z"/>
+  <path d="M128 103 V70 M112 86 L128 70 L144 86" fill="none" stroke="#ffffff"
+        stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
