@@ -76,6 +76,24 @@ une interface neuve contre un démon qui ignore les champs récents.
   coûte moins qu'un détour par le tailnet), et la sonde retient l'adresse qui a
   **réellement répondu** (`active_addr`). Sans ça, un LAN mort mais un tailnet
   vivant faisait échouer la navigation : la sonde basculait, pas la GUI.
+- **`avahi-browse` a besoin de `-r`** : sans lui il n'émet que les lignes `+`
+  (service vu), jamais les lignes `=` résolues — donc **jamais d'adresse**, donc
+  aucun poste n'était connu par mDNS et tous n'existaient que par la sonde
+  Tailscale (étiquette « Tailscale » alors que le poste est sur le même switch).
+  Vérifié le 15/11/2026 : `avahi-browse -pt` = 2 lignes `+`, `-rpt` = les mêmes
+  plus `192.168.1.110` en clair, en 1 s.
+- **Une sonde ne supprime le poste que si son jeu d'adresses n'a pas bougé**
+  (`_drop_if_unchanged`) : une sonde partie avec `[A]` ratait `B` appris
+  entre-temps et effaçait l'adresse LAN fraîchement annoncée ; le poste ne
+  revenait plus que par le tailnet (vécu 15/11/2026, `gen1`).
+- **Classification d'adresse réelle, pas par préfixe de chaîne** (`classify`,
+  `ipaddress`) : tailnet = `100.64.0.0/10` et `fd7a:115c:a1e0::/48`, LAN =
+  privé / lien-local / ULA **hors** tailnet, le reste (IPv6 publique, boucle
+  locale, nom d'hôte) est **ignoré**. Mêmes règles que le filtre du démon : ce
+  qu'il refuserait en 403 ne vaut pas une sonde. Avahi annonce l'IPv6 publique
+  de la box à côté de l'adresse du salon ; classée « lan » par préfixe, elle
+  était sondée à chaque cycle et aurait été essayée en premier (constaté le
+  15/11/2026).
 - **Deux gestes de navigation, deux boutons** : `←` (en-tête) revient à la page
   d'où l'on vient (la liste des partages trouvés) ; `↑ Dossier parent` remonte
   d'un cran, se désactive à la racine, et **vit au-dessus de la liste avec le

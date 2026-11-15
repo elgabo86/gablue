@@ -9,6 +9,7 @@ Identité = `peer_id` (machine-id), jamais le nom d'hôte ni l'adresse : le mêm
 poste vu en LAN et en Tailscale est une seule entrée, LAN préféré.
 """
 
+import ipaddress
 import json
 import shutil
 import subprocess
@@ -20,6 +21,34 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from . import api, config
 from .constants import EXPIRE_CYCLES, PORT, PROBE_INTERVAL, PROBE_TIMEOUT, SERVICE
+
+#: Plages du tailnet, et elles seules : `100.64.0.0/10` et le préfixe IPv6 de
+#: Tailscale. Mêmes règles que le filtre du démon (`daemon/src/net.rs`) : ce que
+#: le démon refuserait (403) ne vaut pas une sonde.
+TAILNET_V4 = ipaddress.ip_network("100.64.0.0/10")
+TAILNET_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
+
+
+def classify(host: str) -> str | None:
+    """Source d'une adresse annoncée : `"lan"`, `"tailscale"`, ou `None`.
+
+    `None` = adresse à ignorer : boucle locale (un poste annoncé sur son propre
+    loopback ne mène nulle part) ou adresse publique, que le démon refuse
+    toujours. Avahi annonce l'IPv6 publique de la box à côté de l'adresse du
+    salon ; la classer « lan » faisait une sonde perdue à chaque cycle et
+    l'aurait fait essayer en premier (constaté le 15/11/2026).
+    """
+    try:
+        ip = ipaddress.ip_address(host.split("%", 1)[0])  # zone lien-local
+    except ValueError:
+        return None
+    if ip.is_loopback:
+        return None
+    if ip in (TAILNET_V4 if ip.version == 4 else TAILNET_V6):
+        return "tailscale"
+    if ip.is_private or ip.is_link_local:
+        return "lan"
+    return None
 
 
 class Peer:
@@ -197,8 +226,12 @@ class Discovery(QObject):
     def _browse_mdns(self) -> None:
         while not self._stop.is_set():
             try:
+                # `-r` est obligatoire : sans lui avahi-browse n'émet que les
+                # lignes `+` (service vu), jamais les lignes `=` résolues — donc
+                # jamais d'adresse, donc le LAN n'existe pas pour nous et tout
+                # poste du tailnet est étiqueté « Tailscale » (vécu 15/11/2026).
                 process = subprocess.Popen(
-                    ["avahi-browse", "-pt", SERVICE],
+                    ["avahi-browse", "-rpt", SERVICE],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     text=True,
@@ -230,9 +263,11 @@ class Discovery(QObject):
             name, host = fields[3], fields[7]
             port = int(fields[8] or PORT)
             peer_id = parse_txt(fields[9]).get("peer_id", "")
-            if not peer_id or not host or host.startswith("127.") or host == "::1":
+            if not peer_id or not host:
                 return
-            source = "tailscale" if host.startswith(("100.", "fd7a:115c:a1e0")) else "lan"
+            source = classify(host)
+            if source is None:
+                return  # loopback ou publique : le démon la refuserait
             peer = self._upsert(peer_id, name, host, port, source)
             if peer.shares:
                 return  # déjà connu et sondé : rien à ajouter
@@ -278,7 +313,7 @@ class Discovery(QObject):
             addresses = peer.ordered_addrs() if peer else []
             port = peer.port if peer else PORT
         if not self._probe_addresses(peer_id, addresses, port):
-            self._drop(peer_id)
+            self._drop_if_unchanged(peer_id, addresses)
 
     def _verify_peer(self, peer_id: str) -> None:
         """Après un `-` mDNS : on confirme avant de faire disparaître le poste."""
@@ -287,7 +322,21 @@ class Discovery(QObject):
             addresses = peer.ordered_addrs() if peer else []
             port = peer.port if peer else PORT
         if not addresses or not self._probe_addresses(peer_id, addresses, port):
-            self._drop(peer_id)
+            self._drop_if_unchanged(peer_id, addresses)
+
+    def _drop_if_unchanged(self, peer_id: str, probed: list[str]) -> None:
+        """Ne retire le poste que si son jeu d'adresses n'a pas bougé.
+
+        Une sonde partie avec `[A]` ne dit rien sur `B` appris entre-temps :
+        la laisser supprimer le poste effaçait l'adresse LAN qui venait d'être
+        annoncée, et le poste ne revenait plus que par la sonde Tailscale —
+        donc étiqueté « Tailscale » (vécu 15/11/2026, poste `gen1`).
+        """
+        with self._lock:
+            peer = self._peers.get(peer_id)
+            if peer is not None and not set(peer.addrs) <= set(probed):
+                return
+        self._drop(peer_id)
 
     def _probe_loop(self) -> None:
         while not self._stop.is_set():

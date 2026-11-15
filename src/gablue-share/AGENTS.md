@@ -71,6 +71,18 @@ Deux processus, séparés pour la RAM :
   dossier déclaré, ni serveur ni icône (arrêt en 0 au démarrage comme au
   rechargement). Deuxième compte du poste : averti et empêché (`uid` dans
   `/api/info`, `Daemon.probe`). Écran vide : arc animé et rescan toutes les 5 s.
+- **M5.4 (15/11/2026) : la découverte mDNS fonctionne enfin.** `avahi-browse`
+  était lancé **sans `-r`** : il n'émettait que les événements `+` (service vu),
+  jamais les lignes `=` résolues, donc `Discovery` n'apprenait aucune adresse et
+  **tous** les postes n'existaient que par la sonde Tailscale — étiquette
+  « Tailscale » et priorité LAN morte, même sur le même switch. Deuxième cause :
+  une sonde partie avec une liste d'adresses périmée supprimait le poste et
+  effaçait l'adresse LAN apprise entre-temps (`_drop_if_unchanged`). Vérifié sur
+  le vrai réseau : `gen1` (même switch) passe de la seule adresse
+  `100.64.0.29` à `{192.168.1.110: lan, 100.64.0.29: tailscale}`,
+  étiquette « Réseau local », `active_addr` = 192.168.1.110. Au passage les
+  adresses sont classées avec `ipaddress` (plages du tailnet, privé/lien-local/
+  ULA) : l'IPv6 publique qu'Avahi annonce n'est plus sondée pour un 403.
 
 ## Cycle de vie
 
