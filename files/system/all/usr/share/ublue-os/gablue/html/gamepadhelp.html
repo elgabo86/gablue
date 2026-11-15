@@ -1,214 +1,726 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mode d'Emploi - Raccourcis Manette</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f4f4f9;
-            color: #333;
-            margin: 0;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-        }
-        h1, h2 {
-            color: #4a4a8c;
-            margin-bottom: 20px;
-        }
-        .shortcuts, .mouse-mode {
-            max-width: 800px;
-            width: 100%;
-            background-color: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-            margin-bottom: 30px;
-        }
-        .shortcut {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 15px;
-            padding: 10px;
-            border-bottom: 1px solid #eee;
-        }
-        .shortcut:last-child {
-            border-bottom: none;
-        }
-        .combo {
-            font-weight: bold;
-            color: #007bff;
-            flex: 1;
-            text-align: left;
-            display: flex;
-            align-items: center;
-        }
-        .action {
-            flex: 2;
-            text-align: left;
-            margin-left: 20px;
-        }
-        .button {
-            display: inline-block;
-            padding: 2px 6px;
-            margin: 0 3px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            background-color: #f8f8f8;
-            font-size: 1.1em;
-            font-weight: bold;
-        }
-        .ps-home {
-            background-color: #0070d2;
-            color: white;
-            border-color: #0056a7;
-        }
-        .triangle {
-            color: #007D00;
-        }
-        .circle {
-            color: #E60012;
-        }
-        .cross {
-            color: #003791;
-        }
-        .square {
-            color: #ED4C97;
-        }
-        .dpad {
-            font-size: 1.2em;
-        }
-        footer {
-            margin-top: 30px;
-            font-size: 0.8em;
-            color: #777;
-        }
-        @media (max-width: 600px) {
-            .shortcut {
-                flex-direction: column;
-                text-align: left;
-            }
-            .action {
-                margin-left: 0;
-                margin-top: 5px;
-            }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark light">
+<title>Manette — mode d'emploi · Gablue</title>
+<style>
+  /* Le mode sombre est le rendu de référence : il reste le défaut même quand
+     le navigateur ne dit rien. Le mode clair est une adaptation pour qui
+     demande un thème clair (réglage système du bureau). */
+  :root {
+    color-scheme: dark;
+    --bg: #0c1018;
+    --bg-glow: #1b2b46;
+    --bg-soft: #131a26;
+    --panel: #172030;
+    --panel-2: #1d2839;
+    --line: #26344a;
+    --line-strong: #31425c;
+    --text: #e8eef8;
+    --muted: #9aa9bf;
+    --accent: #4a8cff;
+    --accent-soft: rgba(74, 140, 255, .14);
+    --home: #0070d2;
+    --triangle: #2ecc71;
+    --circle: #ff5c6c;
+    --cross: #5d8dff;
+    --square: #ff7ac6;
+    --warn: #ffb545;
+    --warn-border: #3b4a22;
+    --warn-bg: rgba(255, 181, 69, .07);
+    --chip-bg: #202c3f;
+    --chip-border: #3a4c68;
+    --code-bg: #101825;
+    --code-text: #cfe0ff;
+    --row-hover: rgba(74, 140, 255, .05);
+    --shadow: 0 18px 40px -32px #000;
+    --radius: 14px;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      color-scheme: light;
+      --bg: #f2f5fa;
+      --bg-glow: #d9e6fa;
+      --bg-soft: #ffffff;
+      --panel: #ffffff;
+      --panel-2: #f4f7fb;
+      --line: #dbe2ec;
+      --line-strong: #c7d1de;
+      --text: #16202e;
+      --muted: #58687e;
+      --accent: #2f6fe0;
+      --accent-soft: rgba(47, 111, 224, .1);
+      --triangle: #12864a;
+      --circle: #d63a4c;
+      --cross: #2b5fd9;
+      --square: #c4408c;
+      --warn: #a86a00;
+      --warn-border: #e8cf9c;
+      --warn-bg: rgba(255, 181, 69, .16);
+      --chip-bg: #eef2f8;
+      --chip-border: #c9d4e2;
+      --code-bg: #eef2f8;
+      --code-text: #1d3f6b;
+      --row-hover: rgba(47, 111, 224, .06);
+      --shadow: 0 18px 40px -34px rgba(20, 35, 60, .5);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    padding: 32px 20px 64px;
+    background:
+      radial-gradient(1100px 520px at 50% -12%, var(--bg-glow) 0%, transparent 62%),
+      var(--bg);
+    color: var(--text);
+    font: 16px/1.55 system-ui, "Noto Sans", "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1000px; margin: 0 auto; }
+
+  /* ---------- en-tête ---------- */
+  header.hero { text-align: center; margin-bottom: 28px; }
+
+  .badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel);
+    color: var(--muted);
+    font-size: .78rem;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    margin: 14px 0 8px;
+    font-size: clamp(1.7rem, 4vw, 2.5rem);
+    line-height: 1.15;
+    letter-spacing: -.01em;
+  }
+
+  .lead { margin: 0 auto; max-width: 720px; color: var(--muted); }
+  .lead strong { color: var(--text); }
+
+  /* ---------- sommaire ---------- */
+  nav.toc {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 5px;
+    margin: 24px 0 34px;
+  }
+
+  nav.toc a {
+    padding: 5px 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--bg-soft);
+    color: var(--muted);
+    text-decoration: none;
+    font-size: .82rem;
+    transition: color .15s, border-color .15s, background .15s;
+  }
+
+  nav.toc a:hover,
+  nav.toc a:focus-visible {
+    color: var(--text);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  /* ---------- sections ---------- */
+  section { margin-bottom: 34px; }
+
+  .card {
+    background: linear-gradient(180deg, var(--panel) 0%, var(--bg-soft) 100%);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px 24px;
+    box-shadow: var(--shadow);
+  }
+
+  h2 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 6px;
+    font-size: 1.22rem;
+    letter-spacing: -.005em;
+  }
+
+  h2::before {
+    content: "";
+    width: 4px;
+    height: 1.15em;
+    border-radius: 3px;
+    background: var(--accent);
+  }
+
+  .sub { margin: 0 0 16px; color: var(--muted); font-size: .93rem; }
+
+  /* ---------- principe en trois temps ---------- */
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 14px;
+  }
+
+  .step {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+  }
+
+  .step .num {
+    display: inline-grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    margin-bottom: 8px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: .85rem;
+    font-weight: 700;
+  }
+
+  .step p { margin: 0; font-size: .93rem; color: var(--muted); }
+  .step p strong { color: var(--text); }
+
+  /* ---------- pastilles de boutons ---------- */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 30px;
+    padding: 3px 9px;
+    border: 1px solid var(--chip-border);
+    border-radius: 8px;
+    background: var(--chip-bg);
+    color: var(--text);
+    font-size: .88rem;
+    font-weight: 600;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+
+  .chip.home {
+    background: var(--home);
+    border-color: #0a86f0;
+    color: #fff;
+    font-weight: 700;
+  }
+
+  .chip.triangle { color: var(--triangle); }
+  .chip.circle   { color: var(--circle); }
+  .chip.cross    { color: var(--cross); }
+  .chip.square   { color: var(--square); }
+  .chip.stick    { border-radius: 999px; }
+
+  .plus { color: var(--muted); font-weight: 400; }
+
+  .keys { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+  /* ---------- tableaux de raccourcis ---------- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .95rem;
+  }
+
+  caption {
+    caption-side: bottom;
+    padding-top: 10px;
+    color: var(--muted);
+    font-size: .82rem;
+    text-align: left;
+  }
+
+  th, td {
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  thead th {
+    color: var(--muted);
+    font-size: .76rem;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    border-bottom-color: var(--line-strong);
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--row-hover); }
+
+  td.combo { width: 42%; }
+  td.what { color: var(--text); }
+  td.what small { display: block; margin-top: 3px; color: var(--muted); font-size: .85rem; }
+  .faint { color: var(--muted); }
+
+  .mode-tag {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 8px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: .74rem;
+    letter-spacing: .04em;
+    vertical-align: middle;
+  }
+
+  /* ---------- encadré ---------- */
+  .note {
+    display: flex;
+    gap: 12px;
+    margin-top: 16px;
+    padding: 14px 16px;
+    border: 1px solid var(--warn-border);
+    border-left: 3px solid var(--warn);
+    border-radius: 10px;
+    background: var(--warn-bg);
+    color: var(--muted);
+    font-size: .9rem;
+  }
+
+  .note strong { color: var(--text); }
+  .note .mark { color: var(--warn); font-weight: 700; }
+
+  code {
+    padding: 1px 6px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--code-bg);
+    color: var(--code-text);
+    font-family: ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace;
+    font-size: .87em;
+  }
+
+  ul.plain { margin: 12px 0 0; padding-left: 20px; color: var(--muted); font-size: .92rem; }
+  ul.plain li { margin-bottom: 7px; }
+  ul.plain li strong { color: var(--text); }
+
+  footer {
+    margin-top: 44px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: .84rem;
+    text-align: center;
+  }
+
+  /* ---------- petits écrans ---------- */
+  @media (max-width: 640px) {
+    body { padding: 22px 14px 48px; }
+    .card { padding: 18px 16px; }
+    th, td { padding: 9px 8px; }
+    td.combo { width: 50%; }
+    .chip { font-size: .82rem; padding: 2px 7px; }
+  }
+
+  /* ---------- impression ---------- */
+  @media print {
+    :root {
+      --bg: #fff; --bg-soft: #fff; --panel: #fff; --panel-2: #fff;
+      --line: #c8ced8; --text: #111; --muted: #444;
+    }
+    body { background: #fff; padding: 0; color: #111; }
+    nav.toc { display: none; }
+    .card { box-shadow: none; border-color: #c8ced8; background: #fff; }
+    .step { background: #f6f7f9; }
+    .chip { background: #f1f3f6; color: #111; border-color: #b9c1cd; }
+    .chip.home { background: #0070d2; color: #fff; }
+    .chip.triangle, .chip.circle, .chip.cross, .chip.square { color: #111; }
+    tr, .step, .note { break-inside: avoid; }
+    section { break-inside: avoid-page; }
+  }
+</style>
 </head>
 <body>
-    <h1>Mode d'Emploi : Raccourcis à la Manette</h1>
-    <div class="shortcuts">
-        <h2>Raccourcis Principaux</h2>
-        <p>Tous les raccourcis sont activés en maintenant le bouton <span class="button ps-home">Home</span> pressé, combiné avec un autre bouton ou direction.</p>
-        <div class="shortcut">
-            <span class="combo"><span class="button ps-home">Home</span> + <span class="button">Select</span></span>
-            <span class="action">Tuer tous les processus des jeux windows ou des émulateurs</span>
+<div class="wrap">
+
+  <header class="hero">
+    <span class="badge">Gablue · manettes</span>
+    <h1>Mode d'emploi des raccourcis manette</h1>
+    <p class="lead">
+      Une seule touche à retenir : <strong>Home</strong> (le bouton PS / logo Xbox).
+      Maintenez-la et appuyez sur un bouton ou une direction&nbsp;: l'action part
+      aussitôt. Rien à configurer, aucun écran à ouvrir.
+    </p>
+  </header>
+
+  <nav class="toc" aria-label="Sommaire">
+    <a href="#principe">Principe</a>
+    <a href="#combos">Home + bouton</a>
+    <a href="#croix">Home + croix</a>
+    <a href="#volume">Home + stick</a>
+    <a href="#clavier">Clavier virtuel</a>
+    <a href="#souris">Mode souris</a>
+    <a href="#menu">Menu système</a>
+    <a href="#limites">À savoir</a>
+    <a href="#depannage">Dépannage</a>
+  </nav>
+
+  <!-- ===================== principe ===================== -->
+  <section id="principe">
+    <div class="card">
+      <h2>Le principe en trois temps</h2>
+      <p class="sub">
+        Les raccourcis sont lus par le service de session <code>gablue-gamepadshortcuts.service</code>,
+        actif pour chaque compte à l'ouverture de session.
+      </p>
+      <div class="steps">
+        <div class="step">
+          <span class="num">1</span>
+          <p><strong>Maintenez <span class="chip home">Home</span></strong><br>sans le relâcher, sinon la combo n'est pas reconnue.</p>
         </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button ps-home">Home</span> + <span class="button">Start</span></span>
-            <span class="action">Ouvrir EmulationStation (ES)</span>
+        <div class="step">
+          <span class="num">2</span>
+          <p><strong>Appuyez</strong> sur le bouton ou la direction de la ligne voulue du tableau.</p>
         </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button ps-home">Home</span> + <span class="button">R3</span></span>
-            <span class="action">Activer/Désactiver le mode souris (utiliser la manette comme souris)</span>
+        <div class="step">
+          <span class="num">3</span>
+          <p><strong>Relâchez</strong> : l'action est déjà lancée. Un second appui sur le même combo
+          refait l'action (ou l'annule, quand c'est un basculement).</p>
         </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button ps-home">Home</span> + <span class="button">L3</span></span>
-            <span class="action">Activer/Désactiver le mute audio</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button ps-home">Home</span> + <span class="button triangle">△</span></span>
-            <span class="action">Lancer ou fermer Youtube en plein écran</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button ps-home">Home</span> + <span class="button circle">○</span></span>
-            <span class="action">Ouvrir le menu pour désactiver les manettes bluetooth et redémarrer ou éteindre la machine</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button ps-home">Home</span> + <span class="button dpad">←</span></span>
-            <span class="action">Prendre une capture d'écran</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button ps-home">Home</span> + <span class="button dpad">→</span></span>
-            <span class="action">Démarrer/Arrêter l'enregistrement vidéo</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button ps-home">Home</span> + <span class="button dpad">↑</span></span>
-            <span class="action">Changer la limite FPS (60/120/sans limite)</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button ps-home">Home</span> + <span class="button dpad">↓</span></span>
-            <span class="action">Afficher/Cacher MangoHud (overlay FPS) - Permet de basculer entre mode horizontal, vertical et caché</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button ps-home">Home</span> + Stick Gauche <span class="dpad">↑</span></span>
-            <span class="action">Augmenter le volume (+10%)</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button ps-home">Home</span> + Stick Gauche <span class="dpad">↓</span></span>
-            <span class="action">Diminuer le volume (-10%)</span>
-        </div>
+      </div>
+      <div class="note">
+        <span class="mark">i</span>
+        <span><strong>Home</strong> s'appelle aussi <em>PS</em>, <em>Guide</em> ou <em>bouton logo</em>
+        selon la manette&nbsp;: c'est le bouton qui allume la console. <em>Croix / Rond / Carré /
+        Triangle</em> sont les quatre boutons de droite (respectivement A / B / X / Y sur une
+        manette Xbox&nbsp;: A = Croix, B = Rond, X = Carré, Y = Triangle).</span>
+      </div>
     </div>
-    <div class="mouse-mode">
-        <h2>Mode Souris (Activé par Home + R3)</h2>
-        <p>En mode souris, la manette simule une souris et un clavier. Pour quitter le mode : <span class="button ps-home">Home</span> + <span class="button">R3</span>.</p>
-        <div class="shortcut">
-            <span class="combo">Stick Droit</span>
-            <span class="action">Déplacement de la souris</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button">R1</span></span>
-            <span class="action">Clic gauche</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button">L1</span></span>
-            <span class="action">Clic droit</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo">D-Pad <span class="dpad">← ↑ → ↓</span></span>
-            <span class="action">Touches fléchées</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button">L3</span></span>
-            <span class="action">Esc</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button">L2</span></span>
-            <span class="action">Alt gauche</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button">R2</span></span>
-            <span class="action">Shift gauche</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button">Start</span></span>
-            <span class="action">Entrée</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button">Select</span></span>
-            <span class="action">F11</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button square">□</span></span>
-            <span class="action">Backspace</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button cross">×</span></span>
-            <span class="action">Espace</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button circle">○</span></span>
-            <span class="action">Tab</span>
-        </div>
-        <div class="shortcut">
-            <span class="combo"><span class="button triangle">△</span></span>
-            <span class="action">F4</span>
-        </div>
+  </section>
+
+  <!-- ===================== Home + bouton ===================== -->
+  <section id="combos">
+    <div class="card">
+      <h2>Home + un bouton</h2>
+      <p class="sub">Les actions du quotidien : jeux, bureautique au pad, son, extinction.</p>
+      <table>
+        <thead>
+          <tr><th scope="col">Combo</th><th scope="col">Effet</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip home">Home</span><span class="plus">+</span><span class="chip">Créer&nbsp;/&nbsp;Partager</span></span></td>
+            <td class="what">Ferme tous les jeux et émulateurs en cours
+              <small>Wine/gwine (y compris les packs .wgp), Bottles, tous les émulateurs lancés
+              (Eden, Azahar, Dolphin, RetroArch, RPCS3…). Ferme aussi Gablue TV, Jellyfin et
+              VacuumTube s'ils ont été ouverts depuis ES-DE. Le service de raccourcis, lui,
+              reste actif.</small></td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip home">Home</span><span class="plus">+</span><span class="chip">Options</span></span></td>
+            <td class="what">Ouvre ES-DE (EmulationStation Desktop Edition)
+              <small>Lance <code>esde.appimage</code> s'il ne tourne pas déjà ; sinon ne fait rien
+              (pas de second lancement).</small></td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip home">Home</span><span class="plus">+</span><span class="chip square">□</span></span></td>
+            <td class="what">Active le <strong>clavier virtuel</strong> pour taper au pad
+              <small>Ouvre le clavier à l'écran et route la manette vers lui. Détail et touches
+              au <a href="#clavier">chapitre Clavier virtuel</a>.</small></td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip home">Home</span><span class="plus">+</span><span class="chip circle">○</span></span></td>
+            <td class="what">Ouvre le <strong>menu système</strong>
+              <small>Déconnecter le Bluetooth, veille, extinction, redémarrage — sans clavier.
+              Voir <a href="#menu">Menu système</a>.</small></td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip home">Home</span><span class="plus">+</span><span class="chip triangle">△</span></span></td>
+            <td class="what">YouTube plein écran : ouvre ou ferme
+              <small>Lance VacuumTube en plein écran ; si YouTube tourne déjà, il est fermé.</small></td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip home">Home</span><span class="plus">+</span><span class="chip">R3</span></span></td>
+            <td class="what">Active ou coupe le <strong>mode souris</strong>
+              <small>La manette devient pointeur + clavier. Un second appui rend la manette
+              normale. Voir <a href="#souris">Mode souris</a>.</small></td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip home">Home</span><span class="plus">+</span><span class="chip">L3</span></span></td>
+            <td class="what">Coupe / rétablit le son
+              <small>Bascule en sourdine la sortie audio par défaut (et pas seulement une
+              application).</small></td>
+          </tr>
+        </tbody>
+      </table>
     </div>
-    <footer>Page générée pour les raccourcis gamepad sur uBlue OS.</footer>
+  </section>
+
+  <!-- ===================== Home + croix ===================== -->
+  <section id="croix">
+    <div class="card">
+      <h2>Home + croix directionnelle</h2>
+      <p class="sub">Capture, vidéo et réglages d'affichage, sans quitter le jeu.</p>
+      <table>
+        <thead>
+          <tr><th scope="col">Combo</th><th scope="col">Effet</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip home">Home</span><span class="plus">+</span><span class="chip">←</span></span></td>
+            <td class="what">Capture d'écran
+              <small>Enregistrée dans <code>~/Images/Screenshots/</code>, horodatée, avec un petit
+              son de déclenchement.</small></td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip home">Home</span><span class="plus">+</span><span class="chip">→</span></span></td>
+            <td class="what">Enregistrement vidéo : démarre ou arrête
+              <small>Via <code>gpu-screen-recorder</code> (Flatpak), sans curseur et avec le son
+              du système. Un second appui arrête. Fichier
+              <code>~/Vidéos/Captures/Video_….mp4</code>, en 1080p au plus, à la cadence
+              réglée par MangoHud (60 par défaut).</small></td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip home">Home</span><span class="plus">+</span><span class="chip">↑</span></span></td>
+            <td class="what">Change la limite d'images par seconde
+              <small>Cycle&nbsp;: 60 → 90 → 120 → 165 → illimité → 60. Réglage écrit dans
+              <code>MangoHud.conf</code>, donc valable pour les jeux suivants.</small></td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip home">Home</span><span class="plus">+</span><span class="chip">↓</span></span></td>
+            <td class="what">Affiche / déplace / masque MangoHud
+              <small>Cycle&nbsp;: affiché en haut (horizontal) → affiché à droite (vertical) →
+              masqué → affiché en haut… Utile pour retrouver les FPS, la charge GPU ou la
+              température.</small></td>
+          </tr>
+        </tbody>
+        <caption>Un appui toutes les 300&nbsp;ms au maximum&nbsp;: maintenir la direction ne fait pas
+        défiler les valeurs en rafale.</caption>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================== Home + stick ===================== -->
+  <section id="volume">
+    <div class="card">
+      <h2>Home + stick gauche</h2>
+      <p class="sub">Le volume, au cran de 10&nbsp;%, sans toucher au clavier.</p>
+      <table>
+        <thead>
+          <tr><th scope="col">Combo</th><th scope="col">Effet</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip home">Home</span><span class="plus">+</span><span class="chip stick">Stick gauche ↑</span></span></td>
+            <td class="what">Monte le son de 10&nbsp;%</td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip home">Home</span><span class="plus">+</span><span class="chip stick">Stick gauche ↓</span></span></td>
+            <td class="what">Baisse le son de 10&nbsp;%</td>
+          </tr>
+        </tbody>
+        <caption>Paliers de 200&nbsp;ms&nbsp;: pousser le stick à fond fait monter ou descendre
+        régulièrement au lieu de sauter d'un coup.</caption>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================== clavier virtuel ===================== -->
+  <section id="clavier">
+    <div class="card">
+      <h2>Clavier virtuel <span class="mode-tag">Home + □</span></h2>
+      <p class="sub">
+        Pour taper dans n'importe quel champ texte (recherche, mot de passe, chat) sans
+        poser la manette. Le clavier KDE s'affiche en bas de l'écran et la manette le pilote
+        entièrement.
+      </p>
+      <table>
+        <thead>
+          <tr><th scope="col">Manette</th><th scope="col">Ce que fait la touche</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip">Croix</span><span class="plus">/</span><span class="chip stick">Stick gauche</span></span></td>
+            <td class="what">Déplace le curseur dans le clavier
+              <small>Déplacement touche par touche, répétition automatique quand on maintient.</small></td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip cross">×</span></span></td>
+            <td class="what">Valide la touche surlignée
+              <small>Appui court = Entrée. <strong>Maintien (≈ 0,6&nbsp;s)</strong> = menu des accents
+              (é, è, ç…) : les flèches choisissent, × valide, ○ ferme.</small></td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip square">□</span></span></td>
+            <td class="what">Efface le caractère à gauche (retour arrière, répétable)</td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip triangle">△</span></span></td>
+            <td class="what">Espace</td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip">L1</span><span class="plus">/</span><span class="chip">R1</span></span></td>
+            <td class="what">Change de page du clavier (majuscules, chiffres, symboles)</td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip circle">○</span></span></td>
+            <td class="what">Échap, puis ferme le clavier</td>
+          </tr>
+          <tr>
+            <td class="combo"><span class="keys"><span class="chip">Options</span></span></td>
+            <td class="what">Quitte le clavier virtuel
+              <small>Marche même quand la manette est « en attente » (voir plus bas).</small></td>
+          </tr>
+        </tbody>
+      </table>
+      <ul class="plain">
+        <li><strong>Comment sortir :</strong> <span class="chip circle">○</span> (ou fermer le clavier
+        à la souris), <span class="chip">Options</span>, ou <span class="chip home">Home</span> +
+        <span class="chip square">□</span> une seconde fois.</li>
+        <li><strong>Vers le mode souris :</strong> <span class="chip home">Home</span> +
+        <span class="chip">R3</span> ferme le clavier et passe directement au pointeur.</li>
+        <li><strong>Pendant la frappe, la manette appartient au clavier :</strong> les autres combos
+        <span class="chip home">Home</span> ne répondent plus (sauf les sorties ci-dessus). C'est
+        voulu : aucune action parasite ne part pendant que l'on tape.</li>
+        <li><strong>Champ texte absent :</strong> si le curseur n'est pas dans une zone de saisie
+        (un jeu, une vidéo), la manette est momentanément muette et reprend dès le retour dans
+        un champ.</li>
+        <li><strong>Clavier en français (AZERTY) :</strong> la disposition livrée est fr_FR.</li>
+        <li><strong>Manette débranchée :</strong> le clavier se ferme et la manette redevient
+        ordinaire. Rebranchez, puis refaites <span class="chip home">Home</span> +
+        <span class="chip square">□</span>.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ===================== mode souris ===================== -->
+  <section id="souris">
+    <div class="card">
+      <h2>Mode souris <span class="mode-tag">Home + R3</span></h2>
+      <p class="sub">
+        La manette devient un pointeur et un clavier minimal&nbsp;: de quoi installer un jeu,
+        valider un dialogue ou naviguer sur le bureau depuis le canapé. Un appui sur
+        <span class="chip home">Home</span> + <span class="chip">R3</span> rend la manette
+        normale.
+      </p>
+      <table>
+        <thead>
+          <tr><th scope="col">Manette</th><th scope="col">Envoyé à l'ordinateur</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="combo"><span class="chip stick">Stick droit</span></td>
+              <td class="what">Déplacement du pointeur <small>Accélération progressive, comme une visée à la manette.</small></td></tr>
+          <tr><td class="combo"><span class="chip">R1</span></td><td class="what">Clic gauche</td></tr>
+          <tr><td class="combo"><span class="chip">L1</span></td><td class="what">Clic droit</td></tr>
+          <tr><td class="combo"><span class="chip">Croix</span></td><td class="what">Flèches du clavier</td></tr>
+          <tr><td class="combo"><span class="chip">L2</span></td><td class="what">Alt (gauche)</td></tr>
+          <tr><td class="combo"><span class="chip">R2</span></td><td class="what">Majuscule (gauche)</td></tr>
+          <tr><td class="combo"><span class="chip">Options</span></td><td class="what">Entrée</td></tr>
+          <tr><td class="combo"><span class="chip">Créer&nbsp;/&nbsp;Partager</span></td><td class="what">F11 (plein écran)</td></tr>
+          <tr><td class="combo"><span class="chip square">□</span></td><td class="what">Retour arrière</td></tr>
+          <tr><td class="combo"><span class="chip cross">×</span></td><td class="what">Espace</td></tr>
+          <tr><td class="combo"><span class="chip circle">○</span></td><td class="what">Tabulation</td></tr>
+          <tr><td class="combo"><span class="chip triangle">△</span></td><td class="what">F4</td></tr>
+          <tr><td class="combo"><span class="chip">L3</span></td><td class="what">Échap</td></tr>
+        </tbody>
+        <caption>Un signal sonore marque l'entrée et la sortie du mode souris.</caption>
+      </table>
+      <div class="note">
+        <span class="mark">i</span>
+        <span><strong>Un seul mode à la fois.</strong> Passer au mode souris ferme le clavier
+        virtuel, et inversement&nbsp;: <span class="chip home">Home</span> +
+        <span class="chip square">□</span> remplace le pointeur par le clavier.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== menu système ===================== -->
+  <section id="menu">
+    <div class="card">
+      <h2>Menu système <span class="mode-tag">Home + ○</span></h2>
+      <p class="sub">
+        Un menu flottant, sans clavier ni souris&nbsp;: utile quand la manette est le seul
+        périphérique à portée.
+      </p>
+      <table>
+        <thead>
+          <tr><th scope="col">Manette</th><th scope="col">Action</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="combo"><span class="keys"><span class="chip">Croix ↑</span><span class="plus">/</span><span class="chip">Croix ↓</span><span class="plus">/</span><span class="chip stick">Stick gauche</span></span></td>
+              <td class="what">Change l'option surlignée</td></tr>
+          <tr><td class="combo"><span class="chip cross">×</span></td>
+              <td class="what">Valide l'option</td></tr>
+          <tr><td class="combo"><span class="chip circle">○</span></td>
+              <td class="what">Annule et ferme le menu</td></tr>
+        </tbody>
+      </table>
+      <ul class="plain">
+        <li><strong>Déconnecter Bluetooth</strong> — coupe les manettes appairées (elles restent
+        appairées, il suffit de rallumer la manette pour la reconnecter).</li>
+        <li><strong>Mettre en veille</strong> — suspend le poste immédiatement.</li>
+        <li><strong>Éteindre</strong> — demande confirmation (<span class="chip cross">×</span> oui,
+        <span class="chip circle">○</span> non).</li>
+        <li><strong>Redémarrer</strong> — demande la même confirmation.</li>
+        <li>Le menu se ferme seul après <strong>5&nbsp;s sans appui</strong>, sans rien faire.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ===================== limites ===================== -->
+  <section id="limites">
+    <div class="card">
+      <h2>À savoir</h2>
+      <ul class="plain">
+        <li><strong>Plusieurs manettes :</strong> les raccourcis répondent à la manette qui les
+        déclenche&nbsp;; le clavier virtuel et le mode souris suivent ensuite cette manette-là,
+        même si une autre est branchée.</li>
+        <li><strong>Un jeu qui lit la manette autrement</strong> (Steam, jeux SDL en mode natif)
+        continue de la recevoir pendant le clavier virtuel&nbsp;: aucune barrière du noyau ne
+        permet de la lui retirer. Quittez le jeu pour taper, ou utilisez le mode souris.</li>
+        <li><strong>Zéro réglage à faire :</strong> les raccourcis démarrent avec la session.
+        Ils peuvent être coupés (et remis) depuis <em>Gablue Manager ▸ Raccourcis manette</em>.</li>
+        <li><strong>Ils ne se déclenchent pas</strong> dans une autre session du poste&nbsp;:
+        seule la session affichée à l'écran écoute la manette.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ===================== dépannage ===================== -->
+  <section id="depannage">
+    <div class="card">
+      <h2>Si rien ne répond</h2>
+      <ul class="plain">
+        <li><strong>Vérifier l'état :</strong> <code>gablue-gamepad status</code> (dans un
+        terminal). Il indique si le service est actif ou masqué.</li>
+        <li><strong>Relancer :</strong> <code>gablue-gamepad off</code> puis
+        <code>gablue-gamepad on</code>.</li>
+        <li><strong>Manette reconnue par le système mais pas par les raccourcis&nbsp;?</strong>
+        Débranchez puis rebranchez la manette, ou éteignez-la et rallumez-la en Bluetooth&nbsp;:
+        l'écoute reprend sur la nouvelle manette.</li>
+        <li><strong>Rien ne s'affiche pour le clavier&nbsp;?</strong> Le clavier virtuel KDE doit
+        être disponible dans la session&nbsp;; c'est le cas par défaut sur Gablue.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    Gablue · raccourcis manette — page livrée avec l'image
+    (<code>/usr/share/ublue-os/gablue/html/gamepadhelp.html</code>).
+    Désactiver les raccourcis&nbsp;: <code>gablue-gamepad off</code>.
+  </footer>
+
+</div>
 </body>
 </html>

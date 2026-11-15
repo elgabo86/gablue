@@ -212,6 +212,24 @@ Contrat complet (protocole, découverte, file de téléchargement, invariants) �
 - **Plasma 6.7** : `PlasmaCore.Theme` n'existe plus (→ `Kirigami.Theme.defaultFont`) ; signal `newData` = `(sourceName, data)` (2 paramètres, pas 3) ; `Component` top-level interdits en QML (inline components dans le `PlasmoidItem`)
 - Essai local : symlink `~/.local/share/plasma/plasmoids/org.gablue.synthetic.quota` → répertoire du repo + restart `plasma-plasmashell.service`
 
+### Aide manette (`/usr/share/ublue-os/gablue/html/gamepadhelp.html`)
+
+Mode d'emploi des raccourcis manette, page HTML **autonome** (aucun fichier
+externe : elle s'ouvre par `xdg-open` depuis `usr/share/applications/gamepadhelp.desktop`,
+donc sans réseau). Thème **sombre par défaut**, variante claire par
+`@media (prefers-color-scheme: light)` — un navigateur qui n'annonce rien garde
+le sombre. Elle décrit **toutes** les combos réelles : `Home` + bouton, `Home` +
+croix, `Home` + stick (volume), clavier virtuel (`Home`+Carré), mode souris
+(`Home`+R3), menu système (`Home`+Rond) et le dépannage `gablue-gamepad`.
+
+**Source de vérité = le code**, pas la page : `gamepadshortcuts.c` (table
+`handle_combinations`/`handle_hat`/`handle_volume`), `mouse.c`, `kbdnav.c` et les
+scripts `gamepadshortcuts/` (`changefps`, `showhidemango`, `startstoprecord`…).
+Une combo ajoutée, déplacée ou un cycle changé doit être reporté ici le même
+jour (vécu 15/11/2026 : la page ignorait le clavier virtuel, le menu système et
+le cyclage du volume, et annonçait un cycle FPS 60/120/illimité alors que
+`changefps` fait 60 → 90 → 120 → 165 → illimité).
+
 ### Scripts gamepadshortcuts (/usr/share/ublue-os/gablue/scripts/gamepadshortcuts)
 
 - `menuvsr.py` (menu VR PySide6 + evdev), `decoblue` (déconnexion BT), `launchyt`, `openes` (EmulationStation), `takescreenshot`/`startstoprecord`, `changefps`/`showhidemango` (FPS / overlay MangoHud). Le lanceur `launchgamepadshortcuts` (lockfile + boucle de relance bash) est **retiré** : le binaire est lancé par l'unité `gablue-gamepadshortcuts.service` (§ Unités systemd utilisateur), désactivable par `gablue-gamepad off`
