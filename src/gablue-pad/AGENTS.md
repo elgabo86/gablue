@@ -24,7 +24,7 @@ qu'à la demande et le gate BPF n'attache son hook que pendant le menu.
 | `kwin/` | scripts KWin poussés à chaud (`wininfo.js`, `lister.js`, `fullscreen.js` ; le cyclage L2/R2 est **généré**) | `/usr/libexec/gablue-pad/kwin` |
 | `scripts/` | lancements du menu Applications (`toggle-es`, `toggle-yt`, `toggle-tv`, `toggle-jellyfin`) + `fermer-applis`, `openes` | `/usr/libexec/gablue-pad/scripts` |
 | `sounds/` | `beep.wav` (départ enregistrement/replay), `shot.wav` (capture), `clic.wav`/`noclic.wav` (mode souris) | idem |
-| `recorder.sh`, `replay.sh`, `screenshot.sh`, `vrr.sh`, `mangohud.sh`, `booster.sh` | outils appelés par l'overlay et le déclencheur (`booster.sh` : « optimiser au premier plan », ligne `PRIORITE ACTIVE` des réglages) | idem |
+| `recorder.sh`, `replay.sh`, `screenshot.sh`, `vrr.sh`, `mangohud.sh`, `booster.sh` | outils appelés par l'overlay et le déclencheur (`booster.sh` : « optimiser au premier plan », ligne `PRIORITE ACTIVE` des réglages ; `mangohud.sh` : **unique** réglage MangoHud du poste, partagé avec le dialogue « MangoHud… » de Gablue Manager) | idem |
 | `evgrab/` | bancs : `vpad` (manette virtuelle + signaux), `rdr`, `hidrev` | **non installé** |
 
 `killthemall` n'est **pas** ici : il est partagé (bouton `KillEmu.desktop`) et vit

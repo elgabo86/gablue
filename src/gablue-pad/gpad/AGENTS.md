@@ -17,8 +17,8 @@ gauche/droite**, appliquée **immédiatement** — rien à valider.
 | Section / ligne | Curseur | Effet |
 |---|---|---|
 | `SON` / `VOLUME` | 21 crans, 0..100 % | ±5 % par cran (`pactl`, sink par défaut) ; **A = muet / non muet** (le niveau est conservé) |
-| `AFFICHAGE` / `MANGOHUD` | 3 positions, `MASQUE` **à gauche** → `PAR DEFAUT` → `HORIZONTAL` | `mangohud.sh set-vue` |
-| `AFFICHAGE` / `FPS` | 7 positions, `30` → `48` → `60` → `90` → `120` → `165` → `INF` | `mangohud.sh set-fps` |
+| `AFFICHAGE` / `MANGOHUD` | 3 positions, `MASQUE` **à gauche** → `PAR DEFAUT` → `HORIZONTAL` | `mangohud.sh set-vue` — **même source que le dialogue « MangoHud… » de Gablue Manager** (`~/.config/MangoHud/MangoHud.conf`), voir plus bas |
+| `AFFICHAGE` / `FPS` | 7 positions, `30` → `48` → `60` → `90` → `120` → `165` → `INF` | `mangohud.sh set-fps` ; une limite **hors crans** (MangoJuice, dialogue « MangoHud… » de Gablue Manager) est affichée **telle quelle** et le curseur se pose sur le cran le plus proche — le premier gauche/droite repart de la vraie valeur (`refresh_mangohud` → `fps_reel`) |
 | `AFFICHAGE` / `VRR` | **interrupteur** (A) | VRR **automatique** (Adaptive Sync de KWin) sur toutes les sorties capables ↔ désactivé : `vrr.sh toggle` → `kscreen-doctor output.<nom>.vrrpolicy.automatic\|never` |
 | `REPLAY` / `DUREE REPLAY` | 5 positions, `15` → **`30`** → `60` → `120` → `300` s | passé en `REPLAY_SEC` au lancement du buffer |
 | `PERFORMANCE` / `PRIORITE ACTIVE` | **interrupteur** (A) | « optimiser au premier plan » : le booster cgroup de Plasma donne la priorité CPU/IO à la fenêtre active ↔ désactivé : `booster.sh toggle` → `autostart` dans `~/.config/kcgroupsrc` + `systemctl --user restart\|stop plasma-foreground-booster.service` |
@@ -32,6 +32,14 @@ Plus d'entrée `TOUT FERMER` ici : elle est passée dans le **menu système**
   tiennent dans les 340 px utiles et `text_fit` **tronque** (il ne réduit pas) —
   le libellé exact demandé (24 caractères) finissait en « OPTIMISER AU PREMI.. ».
   La section `PERFORMANCE` dit le domaine, la ligne dit l'effet.
+- **MangoHud n'a qu'une source** : `~/.config/MangoHud/MangoHud.conf`, réglée
+  ici ou par le dialogue « MangoHud… » de Gablue Manager (mêmes trois vues,
+  mêmes clés `no_display` / `horizontal` / `fps_limit`). Les lanceurs gwine et
+  LGP ne posent plus leurs propres clés (`mangohud`, `mangohud_layout`,
+  `fps_limit` dans leurs fichiers d'options) : en `MANGOHUD_CONFIG` elles
+  gagnaient clé par clé et masquaient donc ce réglage au lancement. Toute
+  évolution de la sémantique se fait **des deux côtés** (`mangohud.sh` ↔
+  `local.write_mangohud_conf`).
 - L'état affiché est **relu** dans `~/.config/kcgroupsrc` (`booster.sh get`,
   au démarrage et après chaque bascule), jamais un cache : la clé peut avoir
   changé depuis Gablue Manager, qui écrit la même. **Clé absente = activé**
@@ -566,6 +574,42 @@ Pourquoi : démonter la surface d'un coup laissait KWin animer la fermeture de
 la fenêtre, donc un **dézoom** sur le menu qui part (constaté, « c'est moche »).
 La fondue est la nôtre, KWin zoome une surface déjà invisible.
 
+## Entrée du panneau : attendre KWin, puis glisser (pas de fondu)
+
+KWin traite cette surface comme une **fenêtre normale** (`normalWindow=true`,
+`dock=false` mesuré par script KWin) : son animation d'ouverture s'applique donc
+**au-dessus** de notre glissement. L'effet actif par défaut est **`Scale`**
+(`/usr/share/kwin/effects/scale/metadata.json`, `EnabledByDefault=true` ;
+`Glide` et `Fade` sont désactivés), d'où l'impression de « zoom en arrivant de la
+droite ». À la fermeture rien ne se voit : notre glissement de sortie précède
+`wl_surface.destroy()`, KWin n'a plus de client à animer — l'asymétrie est
+normale, pas un bug.
+
+Séquence d'entrée, dans l'ordre :
+
+1. `opacite = 0` et attente `PAD_PANNEAU_DELAI_MS` (250 ms, `entree:
+   Option<Instant>`) : KWin anime une surface **invisible**. Le contenu est de
+   toute façon encore hors écran (`off = panel_w`), donc rien ne clignote même
+   une fois opaque.
+2. Au bout de l'attente : `opacite = 1` d'un coup, puis glissement de 200 ms
+   (`off` `panel_w` → `0`, ease-out cubic).
+
+**Pas de fondu pendant le glissement** : les deux easings étant « ease-out », le
+panneau était à 87 % de sa course à 90 ms alors qu'il n'était qu'à moitié opaque
+— on ne voyait que la fin du mouvement, d'où « il apparaît sur place » (constaté
+le 18/11/2026, après une première version qui fondait pendant le glissement).
+Le fondu ne sert qu'à l'attente, et là c'est `opacite = 0` qui le fait.
+
+`appliquer_opacite()` s'applique donc **au panneau aussi** : la garde
+`if !self.side` qui l'en excluait datait du temps où il ne fondait pas (le fondu
+était alors un no-op silencieux — mesuré : pixel identique avec ou sans).
+
+Mesuré (captures `spectacle`, attente 2500 ms + glissement 4000 ms pour avoir le
+temps de capturer) : pendant l'attente, colonne du panneau = fond
+`srgb(35,38,39)` (rien de visible) ; mi-glissement, `x=2100` fond, `x=2250` et
+`x=2400` panneau **opaque** `srgb(23,29,38)` (aucune translucidité, et le bord
+gauche progresse bien de droite à gauche).
+
 ## Fermeture automatique par inactivité (10 s)
 
 Panneau latéral **et** menu système se ferment après **10 s** sans **entrée
@@ -628,6 +672,7 @@ nettoyer à la main.
 | `GPAD_TRIGGER_PID` | pid de `gpad-trigger` à prévenir sur Home maintenu |
 | `PAD_STYLE` | style de démarrage (banc, sans écrire de fichier) |
 | `PAD_FONDU_MS` | durée du fondu du menu système (défaut 140 ms ; banc : ralentir pour le mesurer) |
+| `PAD_PANNEAU_DELAI_MS` | attente avant le glissement d'entrée du panneau (défaut 250 ms : le temps de l'animation `Scale` de KWin ; banc) |
 | `PAD_NO_KWIN`, `PAD_ICONE_TEST` | banc : sans KWin, test de résolution d'icône |
 | `KWIN_SCRIPTS` | dossier des scripts KWin (`kwin/`) |
 
@@ -638,7 +683,7 @@ nettoyer à la main.
 | glissement de sortie | bordure mesurée x=2118 → 2383 (repart à droite) ; marges layer-shell ignorées par KWin → décalage du **dessin** |
 | volume dans la liste | 50 → 60 → 55 %, confirmé par `pactl` |
 | A sur VOLUME | `MUTE true` puis `MUTE false` (niveau conservé) |
-| FPS dans la liste | cran gauche → `fps=165` écrit dans le fichier de test |
+| FPS dans la liste | cran gauche → `fps=165` écrit dans le fichier de test ; fichier à `fps_limit=144` (hors crans) → droite `FPS_IDX 5 (165)`, gauche `FPS_IDX 4 (120)` depuis la vraie valeur, jamais depuis un cran par défaut |
 | MangoHud dans la liste | cran droite → `vue=horizontal`, cran gauche → `vue=masque` |
 | style | `--style truc` → `STYLE RETRO (retro) police=bitmap` ; `A` sur `STYLE` → `STYLE MODERNE (moderne) police=ttf` + fichier + bascule à chaud |
 | vrr | `A` sur `VRR` → `VRR desactive` puis `kscreen-doctor -o` montre `Vrr: Never` sur chaque sortie ; second `A` → `Vrr: Automatic` (mesuré, `vrr=auto`) |

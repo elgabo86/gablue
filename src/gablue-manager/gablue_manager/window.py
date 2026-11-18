@@ -30,10 +30,10 @@ from .dialogs.btrfs import BtrfsDialog
 from .dialogs.clean import CleanDialog
 from .dialogs.grub import GrubDialog
 from .dialogs.gwine import GwineOptionsDialog
+from .dialogs.mangohud import MangoHudDialog
 from .dialogs.host import CandidateDialog, HostDialog
 from .dialogs.kernel import LocalSettingsDialog, RemoteSettingsDialog
 from .dialogs.key import KeyInstallDialog
-from .dialogs.lgp import LgpOptionsDialog
 from .dialogs.prefs import PrefsDialog
 from .dialogs.ryzen import RyzenDialog
 from .dialogs.secureboot import SecureBootDialog
@@ -368,7 +368,9 @@ class MainWindow(QMainWindow):
         self.local_config.gwine_requested.connect(
             self.open_local_gwine_options
         )
-        self.local_config.lgp_requested.connect(self.open_local_lgp_options)
+        self.local_config.mangohud_requested.connect(
+            self.open_local_mangohud
+        )
         self.local_config.booster_requested.connect(
             self.open_local_foreground_booster
         )
@@ -611,7 +613,7 @@ class MainWindow(QMainWindow):
         card.btrfs_requested.connect(self.open_remote_btrfs)
         card.thermal_requested.connect(self.open_remote_thermal)
         card.gwine_requested.connect(self.open_remote_gwine_options)
-        card.lgp_requested.connect(self.open_remote_lgp_options)
+        card.mangohud_requested.connect(self.open_remote_mangohud)
         card.booster_requested.connect(self.open_remote_foreground_booster)
         card.tailscale_requested.connect(self.open_remote_tailscale)
         card.wifi_powersave_requested.connect(self.open_remote_wifi_powersave)
@@ -2759,14 +2761,14 @@ class MainWindow(QMainWindow):
             return
         GwineOptionsDialog(self, host).exec()
 
-    def open_local_lgp_options(self) -> None:
-        LgpOptionsDialog(self).exec()
+    def open_local_mangohud(self) -> None:
+        MangoHudDialog(self).exec()
 
-    def open_remote_lgp_options(self, host_id: str) -> None:
+    def open_remote_mangohud(self, host_id: str) -> None:
         host = self._host(host_id)
         if host is None:
             return
-        LgpOptionsDialog(self, host).exec()
+        MangoHudDialog(self, host).exec()
 
     def open_local_foreground_booster(self) -> None:
         ForegroundBoosterDialog(self).exec()

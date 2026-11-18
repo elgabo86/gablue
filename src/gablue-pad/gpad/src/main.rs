@@ -905,6 +905,12 @@ struct App {
     fondu: Option<Fondu>,
     opacite: f32,
     /// durée du fondu du menu système (banc : `PAD_FONDU_MS`)
+    /// attente avant de lancer le glissement d'entrée : KWin anime l'ouverture
+    /// de cette surface pendant ce temps, et deux mouvements simultanés se
+    /// cumulent (le panneau semblait se poser sur place)
+    panneau_delai_ms: u64,
+    /// instant où l'entrée visible doit commencer (attente du délai ci-dessus)
+    entree: Option<Instant>,
     fondu_ms: u64,
     closing: bool,
     slid_in: bool,
@@ -1002,6 +1008,9 @@ struct App {
     abs_x: (i32, i32),
     abs_y: (i32, i32),
     fps_idx: usize,
+    /// limite fps hors crans (posée à la main ou par Gablue Manager) : affichée
+    /// telle quelle, sinon le curseur afficherait un cran qui n'est pas le vrai
+    fps_reel: Option<i32>,
     mh_idx: usize,
     /// position dans REPR_OPTS (30 s par défaut)
     repr_idx: usize,
@@ -1176,6 +1185,8 @@ impl App {
             fondu: None,
             opacite: 1.0,
             fondu_ms: 320,
+            panneau_delai_ms: 250,
+            entree: None,
             closing: false,
             slid_in: false,
             size: (0, 0),
@@ -1232,6 +1243,7 @@ impl App {
             abs_x: (-32768, 32767),
             abs_y: (-32768, 32767),
             fps_idx: 0,
+            fps_reel: None,
             mh_idx: 0,
             repr_idx: 1,
             vol: 50,
@@ -1677,12 +1689,26 @@ impl App {
             Entree::Volume => self.set_vol(self.vol + 5 * sens),
             Entree::Fps => {
                 let max = FPS_OPTS.len() as i32 - 1;
-                let i = (self.fps_idx as i32 + sens).clamp(0, max) as usize;
-                if i == self.fps_idx {
+                // Valeur hors crans : on part de la vraie valeur et on va au
+                // premier cran au-delà (ou en deçà), pas un saut depuis un
+                // cran qui n'était pas le vrai.
+                let i = match self.fps_reel {
+                    Some(reel) if sens > 0 => FPS_OPTS
+                        .iter()
+                        .position(|(_, x)| *x > reel)
+                        .unwrap_or(max as usize),
+                    Some(reel) => FPS_OPTS
+                        .iter()
+                        .rposition(|(_, x)| *x < reel && *x != 0)
+                        .unwrap_or(0),
+                    None => (self.fps_idx as i32 + sens).clamp(0, max) as usize,
+                };
+                if self.fps_reel.is_none() && i == self.fps_idx {
                     self.status = format!("FPS: {}", FPS_OPTS[i].0);
                     return;
                 }
                 self.fps_idx = i;
+                self.fps_reel = None;
                 let v = FPS_OPTS[i].1;
                 self.status = run_script_args("MANGOHUD", &["set-fps", &v.to_string()]);
                 println!("FPS_IDX {} ({})", i, v);
@@ -2096,9 +2122,27 @@ impl App {
                 for l in t.lines() {
                     if let Some(v) = l.strip_prefix("fps=") {
                         if let Ok(f) = v.trim().parse::<i32>() {
-                            if let Some(i) = FPS_OPTS.iter().position(|(_, x)| *x == f) {
-                                self.fps_idx = i;
-                            }
+                            // Hors crans (MangoJuice, dialogue « MangoHud… » de
+                            // Gablue Manager) : la valeur est gardée pour
+                            // l'affichage et le curseur se pose sur le cran le
+                            // plus proche — muet, il annonçait « 60 » pour un
+                            // fichier à 144.
+                            self.fps_reel = if FPS_OPTS.iter().any(|(_, x)| *x == f) {
+                                None
+                            } else {
+                                Some(f)
+                            };
+                            self.fps_idx = FPS_OPTS
+                                .iter()
+                                .position(|(_, x)| *x == f)
+                                .unwrap_or_else(|| {
+                                    FPS_OPTS
+                                        .iter()
+                                        .enumerate()
+                                        .min_by_key(|(_, (_, x))| (x - f).abs())
+                                        .map(|(i, _)| i)
+                                        .unwrap_or(0)
+                                });
                         }
                     }
                     if let Some(v) = l.strip_prefix("vue=") {
@@ -2650,6 +2694,9 @@ impl App {
         }
         self.closing = true;
         if self.side {
+            // fermé pendant l'attente d'entrée : rien n'est encore visible,
+            // inutile de lancer le glissement d'entrée ensuite
+            self.entree = None;
             // sortie : le panneau repart vers la DROITE, hors de l'écran
             self.slide(0, self.panel_w, 140);
         } else {
@@ -3112,8 +3159,19 @@ impl App {
                 }
                 Entree::Fps => {
                     cv.text_fit(px0 + pad + 36, y, "FPS", 3, color, inner - 36);
-                    let v = FPS_OPTS[self.fps_idx].0;
-                    let v = if v == "SANS LIMITE" { "INF" } else { v };
+                    // La valeur réelle passe avant le cran : le curseur se pose
+                    // sur le cran le plus proche, le chiffre dit la vérité.
+                    let txt;
+                    let v = match self.fps_reel {
+                        Some(f) => {
+                            txt = f.to_string();
+                            &txt
+                        }
+                        None => {
+                            let v = FPS_OPTS[self.fps_idx].0;
+                            if v == "SANS LIMITE" { "INF" } else { v }
+                        }
+                    };
                     self.valeur_droite(&mut cv, px0 + pad + inner, y, v, 2, color);
                     self.curseur_ligne(&mut cv, px0 + pad + 36, y + 40, inner - 36,
                                        FPS_OPTS.len(), self.fps_idx, sel);
@@ -3389,12 +3447,12 @@ impl App {
             }
         }
 
-        // fondu : on applique l'opacité courante à tout le tampon (menu
-        // système seulement — le panneau latéral, lui, glisse)
-        let op = self.opacite;
-        if !self.side {
-            cv.appliquer_opacite(op);
-        }
+        // fondu : opacité courante appliquée à tout le tampon — menu système,
+        // et aussi entrée du panneau latéral (il glisse **et** remonte : c'est
+        // ce qui masque l'animation d'ouverture de KWin). Le panneau n'était
+        // pas concerné tant qu'il ne fondait pas ; la garde `!self.side` faisait
+        // donc un fondu fantôme.
+        cv.appliquer_opacite(self.opacite);
 
         if let Some(surface) = &self.wl_surface {
             surface.attach(Some(&buf.buffer), 0, 0);
@@ -4632,6 +4690,12 @@ fn main() {
     if let Some(v) = std::env::var("PAD_FONDU_MS").ok().and_then(|v| v.parse().ok()) {
         app.fondu_ms = v; // banc : ralentir le fondu pour le mesurer
     }
+    if let Some(v) = std::env::var("PAD_PANNEAU_DELAI_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        app.panneau_delai_ms = v; // banc : régler l'attente de l'animation KWin
+    }
     app.side = !fullscreen && !app.console;
     app.panel_w = arg_value(&args, "--width")
         .and_then(|v| v.parse::<i32>().ok())
@@ -4925,7 +4989,11 @@ fn main() {
             },
         ];
         // timeout court pendant l'animation : ~120 Hz pour un glissement fluide
-        let timeout_ms = if app.anim.is_some() || app.pdep.is_some() || app.fondu.is_some() {
+        let timeout_ms = if app.anim.is_some()
+            || app.pdep.is_some()
+            || app.fondu.is_some()
+            || app.entree.is_some()
+        {
             8
         } else {
             100
@@ -4950,8 +5018,23 @@ fn main() {
         if app.configured && !app.slid_in {
             app.slid_in = true;
             if app.side {
-                app.slide(app.panel_w, 0, 180);
-                println!("SLIDE IN");
+                // KWin anime l'ouverture de cette surface comme celle d'une
+                // fenêtre normale (Window Aperture / Glide, ~250 ms). Deux
+                // mouvements simultanés se CUMULENT : avec notre glissement
+                // par-dessus, le panneau arrivait à sa place en ~100 ms et
+                // semblait « se poser sur place » (constaté 18/11/2026) ; sans
+                // notre glissement, c'est l'animation de KWin qu'on voyait
+                // (« ça zoome »). On reste donc transparent le temps de son
+                // animation, PUIS on fait la nôtre — même remède que la
+                // fermeture du menu système (faire animer une surface
+                // invisible), mais l'entrée visible est bien un glissement.
+                app.opacite = 0.0;
+                app.entree =
+                    Some(Instant::now() + Duration::from_millis(app.panneau_delai_ms));
+                println!(
+                    "SLIDE IN (attente {} ms puis glissement 200 ms)",
+                    app.panneau_delai_ms
+                );
             } else {
                 app.opacite = 0.0;
                 app.fondu = Some(Fondu {
@@ -4964,6 +5047,21 @@ fn main() {
                     vers: 1.0,
                 });
                 println!("FONDU IN");
+            }
+        }
+        if let Some(t) = app.entree {
+            if Instant::now() >= t {
+                app.entree = None;
+                // Opaque d'un coup : à cet instant le contenu est encore
+                // entièrement HORS écran (off = panel_w), donc rien ne
+                // clignote — et le glissement qui suit est vu en entier. Un
+                // fondu ici mangeait le mouvement : les deux easings étant
+                // « ease-out », le panneau était à 87 % de sa course à 90 ms
+                // alors qu'il n'était qu'à moitié opaque (« il apparaît sur
+                // place », constaté 18/11/2026).
+                app.opacite = 1.0;
+                app.fondu = None;
+                app.slide(app.panel_w, 0, 200);
             }
         }
         if app.anim.is_some() {

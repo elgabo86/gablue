@@ -2203,25 +2203,19 @@ class GwineTest(unittest.TestCase):
     def test_options(self):
         state = local.parse_gwine_options(
             "dxvk_mode=dxvk-async\ndisplay_mode=wayland\nxbox_default=on\n"
+            # Clés MangoHud héritées : plus lues, elles masquaient le fichier
+            # du compte au lancement (MANGOHUD_CONFIG gagne clé par clé).
             "mangohud=off\nmangohud_layout=rectangle\nfps_limit=60\n"
         )
         self.assertEqual(
             state,
-            {
-                "dxvk_async": True, "wayland": True, "xbox": True,
-                "mangohud": False, "mangohud_layout": "rectangle",
-                "fps_limit": 60,
-            },
+            {"dxvk_async": True, "wayland": True, "xbox": True},
         )
 
     def test_defaults(self):
-        state = local.parse_gwine_options("")
         self.assertEqual(
-            state,
-            {
-                "dxvk_async": False, "wayland": False, "xbox": False,
-                "mangohud": True, "mangohud_layout": "", "fps_limit": None,
-            },
+            local.parse_gwine_options(""),
+            {"dxvk_async": False, "wayland": False, "xbox": False},
         )
 
     def test_mangohud_conf(self):
@@ -2232,64 +2226,100 @@ class GwineTest(unittest.TestCase):
             "fps_color=cc0000,ffaa7f,92e79a\n"
         )
         self.assertEqual(
-            state, {"conf_fps_limit": 0, "conf_horizontal": True}
+            state,
+            {"conf_fps_limit": 0, "conf_horizontal": True,
+             "conf_no_display": False},
         )
         state = local.parse_mangohud_conf("horizontal=0\nfps_limit=144\n")
         self.assertEqual(
-            state, {"conf_fps_limit": 144, "conf_horizontal": False}
+            state,
+            {"conf_fps_limit": 144, "conf_horizontal": False,
+             "conf_no_display": False},
         )
         self.assertEqual(
             local.parse_mangohud_conf(""),
-            {"conf_fps_limit": None, "conf_horizontal": False},
+            {"conf_fps_limit": None, "conf_horizontal": False,
+             "conf_no_display": False},
         )
         # Valeur illisible : pas de limite, rien d'inventé.
         self.assertIsNone(
             local.parse_mangohud_conf("fps_limit=abc")["conf_fps_limit"]
         )
 
-    def test_lgp_options(self):
-        # Mêmes clés que gwine, fichier distinct (~/.config/lgplaunch/options).
+    def test_mangohud_state(self):
         self.assertEqual(
-            local.parse_lgp_options("mangohud=off\nmangohud_layout=rectangle\n"),
-            {"mangohud": False, "mangohud_layout": "rectangle",
-             "fps_limit": None},
+            local.mangohud_state("horizontal\nfps_limit=0,30,60\n"),
+            {"vue": "horizontal", "fps_limit": 0},
         )
         self.assertEqual(
-            local.parse_lgp_options("fps_limit=165\nmangohud_layout=bloc\n"),
-            {"mangohud": True, "mangohud_layout": "", "fps_limit": 165},
+            local.mangohud_state("no_display\nfps_limit=144\n"),
+            {"vue": "masque", "fps_limit": 144},
         )
+        # Aucune des deux clés : disposition par défaut du fichier.
         self.assertEqual(
-            local.parse_lgp_options(""),
-            {"mangohud": True, "mangohud_layout": "", "fps_limit": None},
+            local.mangohud_state("round_corners=7\n"),
+            {"vue": "defaut", "fps_limit": 0},
+        )
+        # Une clé à 0 ne masque rien (strtol de MangoHud).
+        self.assertEqual(
+            local.mangohud_state("no_display=0\nhorizontal=0\n")["vue"],
+            "defaut",
         )
 
-    def test_mangohud_effective(self):
-        # Rien de réglé côté lanceur : le fichier du user fait foi.
-        self.assertEqual(
-            local.mangohud_effective(
-                {"mangohud": True, "mangohud_layout": "", "fps_limit": None,
-                 "conf_fps_limit": 45, "conf_horizontal": True}
-            ),
-            {"mangohud": True, "mangohud_layout": "horizontal",
-             "fps_limit": 45},
+    def test_write_mangohud_conf(self):
+        # Le reste du fichier est conservé : couleurs, commentaires, ordre.
+        text = (
+            "# PRO MangoJuice #\n"
+            "gpu_stats\n"
+            "background_color=000000\n"
+            "fps_limit=60\n"
+            "show_fps_limit\n"
+            "horizontal\n"
         )
-        # L'option du lanceur gagne.
+        out = local.write_mangohud_conf(text, "masque", 0)
+        self.assertIn("# PRO MangoJuice #", out)
+        self.assertIn("background_color=000000", out)
+        self.assertIn("gpu_stats", out)
+        self.assertIn("no_display", out.splitlines())
+        self.assertNotIn("horizontal", out.splitlines())
+        self.assertNotIn("fps_limit=60", out)
+        self.assertNotIn("show_fps_limit", out.splitlines())
+        # Une deuxième passe ne bouge plus rien (idempotent).
+        self.assertEqual(local.write_mangohud_conf(out, "masque", 0), out)
+
+        out = local.write_mangohud_conf(out, "horizontal", 144)
+        self.assertIn("horizontal", out.splitlines())
+        self.assertNotIn("no_display", out.splitlines())
+        self.assertIn("fps_limit=144", out)
+        self.assertIn("show_fps_limit", out.splitlines())
+        self.assertIn("fps_limit_method=late", out.splitlines())
+        # Une seule ligne par clé, même si le fichier en portait plusieurs.
+        self.assertEqual(out.count("fps_limit=144"), 1)
+
+        out = local.write_mangohud_conf(out, "defaut", 0)
+        self.assertNotIn("horizontal", out.splitlines())
+        self.assertNotIn("no_display", out.splitlines())
+        self.assertNotIn("fps_limit=144", out)
+        # Fichier vide : le nouvel état suffit.
         self.assertEqual(
-            local.mangohud_effective(
-                {"mangohud": False, "mangohud_layout": "rectangle",
-                 "fps_limit": 0, "conf_fps_limit": 45,
-                 "conf_horizontal": True}
-            ),
-            {"mangohud": False, "mangohud_layout": "rectangle", "fps_limit": 0},
+            local.write_mangohud_conf("", "horizontal", 0),
+            "horizontal\n",
         )
-        # Aucun fichier MangoHud.conf : ni disposition ni limite inventées.
+        with self.assertRaises(ValueError):
+            local.write_mangohud_conf("", "n-importe-quoi", 0)
+
+    def test_strip_mangohud_options(self):
+        # Clés héritées des options de lanceur : retirées, le reste reste.
         self.assertEqual(
-            local.mangohud_effective(
-                {"mangohud": True, "mangohud_layout": "", "fps_limit": None,
-                 "conf_fps_limit": None, "conf_horizontal": False}
+            local.strip_mangohud_options(
+                "dxvk_mode=dxvk\nmangohud=off\nfps_limit=60\n"
+                "mangohud_layout=rectangle\n"
             ),
-            {"mangohud": True, "mangohud_layout": "rectangle", "fps_limit": 0},
+            "dxvk_mode=dxvk\n",
         )
+        self.assertEqual(local.strip_mangohud_options("mangohud=off\n"), "")
+        self.assertEqual(local.strip_mangohud_options("dxvk_mode=dxvk\n"),
+                         "dxvk_mode=dxvk\n")
 
     def test_booster(self):
         self.assertTrue(local.parse_foreground_booster(""))

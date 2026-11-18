@@ -1,4 +1,4 @@
-"""Options de gwine : DXVK, affichage, manettes, MangoHud.
+"""Options de gwine : DXVK, affichage, manettes.
 """
 
 import shutil
@@ -11,15 +11,11 @@ from PySide6.QtWidgets import (
 )
 
 from ..constants import _which
-from ..local import (
-    gwine_binary, gwine_options_path, mangohud_conf_path, mangohud_effective,
-    parse_gwine_options, parse_mangohud_conf,
-)
+from ..local import gwine_binary, gwine_options_path, parse_gwine_options
 from ..ssh import ssh_capture
 from ..tasks import LocalTaskDialog, RemoteTaskDialog, start_task
 from ..uiutil import recommendation_badge, set_recommendation
 from ..util import address_text, display_name
-from ..widgets import MangoHudSection
 
 GWINE_DISPLAYS = (
     ("x11", "X11 (XWayland)"),
@@ -45,10 +41,10 @@ class GwineOptionsDialog(QDialog):
     Trois réglages persistants de `~/.local/share/gwine/options` : le DXVK
     asynchrone (GPLAsync), le mode d'affichage (X11 par défaut, Wayland natif
     expérimental) et l'émulation Xbox 360 des manettes Sony (ds2xbox, tout ou
-    rien : toutes les manettes Sony), plus les réglages de l'overlay MangoHud
-    (affichage, disposition, limite fps) — ceux-ci ne modifient jamais le
-    `~/.config/MangoHud/MangoHud.conf` du poste, gwine les surcharge au
-    lancement (`MANGOHUD_CONFIG`). « Appliquer » passe par gwine lui-même —
+    rien : toutes les manettes Sony). MangoHud n'est plus ici : il vit dans le
+    dialogue `mangohud.py`, un seul réglage pour tous les lanceurs, écrit dans
+    `~/.config/MangoHud/MangoHud.conf` (des clés MangoHud dans les options de
+    gwine masquaient ce fichier au lancement). « Appliquer » passe par gwine lui-même —
     il garde le fichier au bon format et réinstalle les DLL DXVK du préfixe —
     donc le réglage vaut dès le prochain lancement. Un poste distant est lu et
     modifié par SSH.
@@ -126,10 +122,6 @@ class GwineOptionsDialog(QDialog):
             "Les manettes Sony passent en Xbox 360 pour les jeux XInput.",
         )
 
-        self.mangohud = MangoHudSection(self)
-        self.mangohud.changed.connect(self._update_apply)
-        self.rows_layout.addWidget(self.mangohud)
-
         buttons = QHBoxLayout()
         buttons.setSpacing(10)
         self.hint_label = QLabel(self)
@@ -187,27 +179,19 @@ class GwineOptionsDialog(QDialog):
             code, output = ssh_capture(
                 self.host,
                 "cat ~/.local/share/gwine/options 2>/dev/null; echo '---'; "
-                "command -v gwine || true; echo '---'; "
-                "cat ~/.config/MangoHud/MangoHud.conf 2>/dev/null || true",
+                "command -v gwine || true",
             )
             if code != 0:
                 return {"ok": False}
-            config, _, rest = output.partition("---")
-            binary, _, mangohud_conf = rest.partition("---")
+            config, _, binary = output.partition("---")
             state = parse_gwine_options(config)
-            state.update(parse_mangohud_conf(mangohud_conf))
             state["installed"] = bool(binary.strip())
         else:
             try:
                 text = gwine_options_path().read_text(encoding="utf-8")
             except OSError:
                 text = ""
-            try:
-                mangohud_conf = mangohud_conf_path().read_text(encoding="utf-8")
-            except OSError:
-                mangohud_conf = ""
             state = parse_gwine_options(text)
-            state.update(parse_mangohud_conf(mangohud_conf))
             state["installed"] = (
                 shutil.which("gwine") is not None
                 or Path("/usr/bin/gwine").exists()
@@ -227,8 +211,6 @@ class GwineOptionsDialog(QDialog):
             }
             if installed else {}
         )
-        if installed:
-            self.initial.update(mangohud_effective(self.state))
         for check in (self.dxvk_check, self.xbox_check):
             check.blockSignals(True)
             check.setChecked(False)
@@ -238,13 +220,6 @@ class GwineOptionsDialog(QDialog):
         self.display_combo.setCurrentIndex(0)
         self.display_combo.blockSignals(False)
         self.display_combo.setEnabled(installed)
-        self.mangohud.set_enabled(installed)
-        self.mangohud.set_values(
-            {
-                key: self.initial.get(key)
-                for key in ("mangohud", "mangohud_layout", "fps_limit")
-            }
-        )
         if installed:
             self.dxvk_check.blockSignals(True)
             self.dxvk_check.setChecked(self.initial["dxvk_async"])
@@ -263,20 +238,17 @@ class GwineOptionsDialog(QDialog):
         combo.blockSignals(False)
 
     def desired(self) -> dict:
-        values = {
+        return {
             "dxvk_async": self.dxvk_check.isChecked(),
             "wayland": (self.display_combo.currentData() or "x11") == "wayland",
             "xbox": self.xbox_check.isChecked(),
         }
-        values.update(self.mangohud.values())
-        return values
 
     def changed(self) -> dict:
         """Ce qui diffère de la configuration actuelle de gwine."""
         desired = self.desired()
         changes = {}
-        for key in ("dxvk_async", "wayland", "xbox", "mangohud",
-                    "mangohud_layout", "fps_limit"):
+        for key in ("dxvk_async", "wayland", "xbox"):
             if desired[key] != self.initial.get(key):
                 changes[key] = desired[key]
         return changes
@@ -322,12 +294,6 @@ class GwineOptionsDialog(QDialog):
             args.append("--wayland" if changes["wayland"] else "--x11")
         if "xbox" in changes:
             args.append("--xbox-on" if changes["xbox"] else "--xbox-off")
-        if "mangohud" in changes:
-            args.append("--mangohud on" if changes["mangohud"] else "--mangohud off")
-        if "mangohud_layout" in changes:
-            args.append(f"--mangohud-layout {changes['mangohud_layout']}")
-        if "fps_limit" in changes:
-            args.append(f"--fps-limit {changes['fps_limit']}")
         return args
 
     def describe(self, changes: dict) -> str:
@@ -347,22 +313,6 @@ class GwineOptionsDialog(QDialog):
             labels.append(
                 "Manettes Sony en Xbox 360 : "
                 + ("activé" if changes["xbox"] else "désactivé")
-            )
-        if "mangohud" in changes:
-            labels.append(
-                "MangoHud : " + ("affiché" if changes["mangohud"] else "masqué")
-            )
-        if "mangohud_layout" in changes:
-            labels.append(
-                "Disposition MangoHud : "
-                + ("horizontale" if changes["mangohud_layout"] == "horizontal"
-                   else "rectangle")
-            )
-        if "fps_limit" in changes:
-            value = changes["fps_limit"]
-            labels.append(
-                "Limite fps : "
-                + ("illimitée" if value == 0 else f"{value} fps")
             )
         return "\n".join(f"• {label}" for label in labels)
 

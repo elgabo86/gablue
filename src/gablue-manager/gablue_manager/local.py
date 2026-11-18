@@ -18,7 +18,7 @@ from .constants import (
     BROADCOM_WL_FILE, BTRFS_HELPER, CLEAN_HELPER, CMDLINE,
     CPUID_EMU_BLACKLIST,
     CPUID_EMU_CONF, CPUID_EMU_HELPER, GRUB_HELPER,
-    GWINE_IMAGE_BINARY, HWINFO_HELPER, LGP_IMAGE_BINARY,
+    GWINE_IMAGE_BINARY, HWINFO_HELPER,
     NVME_THERMAL_HELPER, PAD_HELPER, RYZENADJ_BINARY, RYZENADJ_HELPER,
     RYZENADJ_SERVICE,
     SECUREBOOT_HELPER,
@@ -1734,17 +1734,6 @@ def lgp_options_path() -> Path:
     """Options globales de LGP (`~/.config/lgplaunch/options`)."""
     return Path.home() / ".config/lgplaunch/options"
 
-def lgp_binary() -> str:
-    """Chemin de lgplaunch : celui de l'image d'abord, le PATH ensuite.
-
-    Même règle que `gwine_binary` : un lgplaunch personnel plus ancien ne
-    connaît pas `--mangohud` et l'ignorerait en silence.
-    """
-    image = Path(LGP_IMAGE_BINARY)
-    if image.exists():
-        return str(image)
-    return shutil.which("lgplaunch") or "lgplaunch"
-
 def mangohud_conf_path() -> Path:
     """Configuration MangoHud du compte (`~/.config/MangoHud`)."""
     return Path.home() / ".config/MangoHud/MangoHud.conf"
@@ -1769,52 +1758,106 @@ def _fps_limit(value: str | None) -> int | None:
     first = value.split(",")[0].strip()
     return int(first) if first.isdigit() else None
 
-def _mangohud_options(values: dict[str, str]) -> dict:
-    """Réglages MangoHud d'un fichier d'options (clés communes gwine/LGP).
-
-    `mangohud_layout` vide et `fps_limit` à None signifient « rien d'imposé »
-    par le lanceur : c'est le MangoHud.conf du user qui s'applique.
-    """
-    layout = values.get("mangohud_layout", "")
-    return {
-        "mangohud": values.get("mangohud") != "off",
-        "mangohud_layout": layout if layout in ("horizontal", "rectangle") else "",
-        "fps_limit": _fps_limit(values.get("fps_limit")),
-    }
-
 def parse_gwine_options(text: str) -> dict:
-    """Lit les options de gwine (dxvk, affichage, manettes, MangoHud)."""
+    """Lit les options de gwine (dxvk, affichage, manettes)."""
     values = _option_values(text)
-    state = {
+    return {
         "dxvk_async": values.get("dxvk_mode") == "dxvk-async",
         "wayland": values.get("display_mode") == "wayland",
         "xbox": values.get("xbox_default") == "on",
     }
-    state.update(_mangohud_options(values))
-    return state
 
-def parse_lgp_options(text: str) -> dict:
-    """Lit les options de LGP (pour l'instant les seules réglages MangoHud)."""
-    return _mangohud_options(_option_values(text))
+# Clés MangoHud que les lanceurs savaient imposer dans leurs propres options
+# (`~/.local/share/gwine/options`, `~/.config/lgplaunch/options`) : elles
+# partaient en `MANGOHUD_CONFIG` au lancement et **gagnaient clé par clé** sur
+# le fichier du compte, donc deux réglages pour la même chose dont un masquait
+# l'autre sans le dire. Elles ne sont plus écrites (ni lues) et sont retirées
+# des fichiers où elles traînent : `MANGOHUD_LEGACY_KEYS`.
+MANGOHUD_LEGACY_KEYS = ("mangohud", "mangohud_layout", "fps_limit")
 
-def mangohud_effective(state: dict) -> dict:
-    """Réglages MangoHud effectifs : option du lanceur, sinon fichier du user.
+# Vues de l'overlay, dans l'ordre du curseur de l'overlay (page RÉGLAGES).
+MANGOHUD_VIEWS = ("masque", "defaut", "horizontal")
 
-    C'est ce que l'overlay appliquera au prochain lancement tant que rien
-    n'est changé : les dialogues s'en servent pour ne rien écrire quand
-    l'utilisateur n'a rien modifié.
+def mangohud_state(text: str) -> dict:
+    """État MangoHud du compte, tel que l'overlay le lit (`vue`, `fps_limit`).
+
+    La vue est exclusive, comme `mangohud.sh set-vue` : `no_display` masque,
+    `horizontal` met la barre, aucune des deux laisse la disposition par
+    défaut. Une clé à `0` compte comme absente.
     """
-    layout = state.get("mangohud_layout") or ""
-    if layout not in ("horizontal", "rectangle"):
-        layout = "horizontal" if state.get("conf_horizontal") else "rectangle"
-    fps = state.get("fps_limit")
-    if fps is None:
-        fps = state.get("conf_fps_limit")
+    flags = parse_mangohud_conf(text)
+    if flags["conf_no_display"]:
+        vue = "masque"
+    elif flags["conf_horizontal"]:
+        vue = "horizontal"
+    else:
+        vue = "defaut"
     return {
-        "mangohud": bool(state.get("mangohud", True)),
-        "mangohud_layout": layout,
-        "fps_limit": int(fps) if fps is not None else 0,
+        "vue": vue,
+        "fps_limit": int(flags["conf_fps_limit"] or 0),
     }
+
+def _conf_key(line: str) -> str:
+    """Clé d'une ligne de `MangoHud.conf` (clé nue ou `clé=valeur`)."""
+    body = line.split("#", 1)[0].strip()
+    return body.partition("=")[0].strip() if body else ""
+
+def write_mangohud_conf(text: str, vue: str, fps_limit: int) -> str:
+    """Nouveau contenu de `MangoHud.conf` pour cet état.
+
+    **Même sémantique que `mangohud.sh` de gablue-pad** (`set-vue`, `set-fps`),
+    sans quoi les deux portes d'entrée divergeraient : la vue est exclusive
+    (`masque` pose `no_display` et retire `horizontal`, `horizontal` l'inverse,
+    `defaut` retire les deux), une limite non nulle pose `fps_limit=N` avec
+    `show_fps_limit` et `fps_limit_method=late`, une limite nulle les retire.
+    Tout le reste du fichier — couleurs, autres clés, commentaires, ordre — est
+    conservé : c'est la configuration du compte, pas la nôtre.
+    """
+    if vue not in MANGOHUD_VIEWS:
+        raise ValueError(f"vue inconnue: {vue}")
+    drop: set[str] = set()
+    forced: dict[str, str | None] = {}
+    if vue == "masque":
+        drop.add("horizontal")
+        forced["no_display"] = None
+    elif vue == "horizontal":
+        drop.add("no_display")
+        forced["horizontal"] = None
+    else:
+        drop.update(("no_display", "horizontal"))
+    if fps_limit and fps_limit > 0:
+        forced["fps_limit"] = str(int(fps_limit))
+        forced["show_fps_limit"] = None
+        forced["fps_limit_method"] = "late"
+    else:
+        drop.update(("fps_limit", "show_fps_limit"))
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for line in text.splitlines():
+        key = _conf_key(line)
+        if key in drop:
+            continue
+        if key in forced:
+            if key in seen:
+                continue
+            seen.add(key)
+            value = forced[key]
+            out.append(key if value is None else f"{key}={value}")
+            continue
+        out.append(line)
+    for key, value in forced.items():
+        if key not in seen:
+            out.append(key if value is None else f"{key}={value}")
+    return "\n".join(out).rstrip("\n") + "\n"
+
+def strip_mangohud_options(text: str) -> str:
+    """Fichier d'options de lanceur sans les clés MangoHud héritées."""
+    kept = [
+        line for line in text.splitlines()
+        if line.partition("=")[0].strip() not in MANGOHUD_LEGACY_KEYS
+    ]
+    return "\n".join(kept).rstrip("\n") + "\n" if kept else ""
 
 def parse_mangohud_conf(text: str) -> dict:
     """Valeurs effectives du `MangoHud.conf` du poste.
@@ -1823,7 +1866,11 @@ def parse_mangohud_conf(text: str) -> dict:
     (première valeur de la liste) et le drapeau `horizontal`. Les booléens
     MangoHud sont lus par `strtol` : une clé nue vaut 1, `horizontal=0` désactive.
     """
-    state: dict = {"conf_fps_limit": None, "conf_horizontal": False}
+    state: dict = {
+        "conf_fps_limit": None,
+        "conf_horizontal": False,
+        "conf_no_display": False,
+    }
     for line in text.splitlines():
         line = line.split("#", 1)[0].strip()
         if not line:
@@ -1835,6 +1882,8 @@ def parse_mangohud_conf(text: str) -> dict:
             state["conf_fps_limit"] = _fps_limit(value)
         elif key == "horizontal":
             state["conf_horizontal"] = value != "0"
+        elif key == "no_display":
+            state["conf_no_display"] = value != "0"
     return state
 
 def parse_foreground_booster(text: str) -> bool:
