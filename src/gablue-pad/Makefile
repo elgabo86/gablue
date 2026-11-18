@@ -1,0 +1,49 @@
+# Makefile - binaires C et installation de gablue-pad.
+#
+# Le Rust (gpad) et le BPF (gpad-gate) ne se compilent PAS ici : ils ont chacun
+# leur étape dans le Containerfile (toolchains lourdes, jamais dans l'image
+# finale). `make install` installe l'arborescence de données et les binaires C.
+CC      = gcc
+CFLAGS  = -Wall -Wextra -O2 -std=c11 -D_GNU_SOURCE
+PREFIX ?= /usr
+BINDIR  = $(DESTDIR)$(PREFIX)/bin
+LIBEXEC = $(DESTDIR)$(PREFIX)/libexec/gablue-pad
+
+# arborescence copiée telle quelle : les scripts résolvent `sounds/`, `scripts/`
+# et `kwin/` par rapport à leur propre dossier, comme au banc.
+DATA = recorder.sh screenshot.sh replay.sh vrr.sh mangohud.sh \
+       scripts sounds kwin
+
+BINS = gpad-trigger gpad-kbd gpad-mouse gpad-inhibit gpad-rumble
+
+all: $(BINS)
+
+gpad-trigger: trigger/gpad-trigger.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+gpad-kbd: kbd/gpad-kbd.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+gpad-mouse: mouse/gpad-mouse.c
+	$(CC) $(CFLAGS) -o $@ $< -lm
+
+gpad-inhibit: inhibit/gpad-inhibit.c
+	$(CC) $(CFLAGS) -o $@ $< $(shell pkg-config --cflags --libs dbus-1 2>/dev/null)
+
+gpad-rumble: rumble/gpad-rumble.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+install: all
+	install -d $(BINDIR) $(LIBEXEC) $(LIBEXEC)/gate
+	install -m 755 $(BINS) $(BINDIR)/
+	cp -a $(DATA) $(LIBEXEC)/
+	install -m 755 gate/padnodes.sh $(LIBEXEC)/gate/
+	chmod 755 $(LIBEXEC)/*.sh $(LIBEXEC)/gate/padnodes.sh
+	chmod 755 $(LIBEXEC)/scripts/*
+	rm -f $(LIBEXEC)/kwin/AGENTS.md
+	chmod 644 $(LIBEXEC)/sounds/* $(LIBEXEC)/kwin/*.js
+
+clean:
+	rm -f $(BINS)
+
+.PHONY: all install clean

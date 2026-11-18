@@ -1,0 +1,21 @@
+[Unit]
+Description=Gablue Pad — gate BPF (coupe les manettes pendant le menu)
+After=local-fs.target
+Before=graphical-session.target
+
+[Service]
+Type=exec
+# Le programme BPF est chargé ici (root) mais ATTACHÉ seulement entre `open`
+# et `close` : hors menu, aucun hook dans le noyau, coût nul. La liste des
+# cibles et le socket sont posés par l'utilisateur à chaque ouverture
+# (`target`/`clear`), donc un démon qui vit depuis le boot ne garde aucun dev_t
+# périmé après une reconnexion de manette.
+RuntimeDirectory=gablue-pad
+RuntimeDirectoryMode=0755
+ExecStart=/usr/libexec/gablue-pad/gpad-gate --socket /run/gablue-pad/gate.sock --timeout 0
+Restart=always
+RestartSec=2
+TimeoutStopSec=2
+
+[Install]
+WantedBy=multi-user.target

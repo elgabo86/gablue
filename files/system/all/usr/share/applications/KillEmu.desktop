@@ -1,7 +1,7 @@
 [Desktop Entry]
 Categories=Utility;
 Comment=Kill All Emulation Apps
-Exec=/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/killthemall
+Exec=/usr/share/ublue-os/gablue/scripts/killthemall
 GenericName=Kill All Emulation Apps
 Icon=org.gnome.Games
 MimeType=

@@ -1,0 +1,16 @@
+#!/usr/bin/bash
+# toggle-es - ouvre / ferme EmulationStation (ES-DE).
+# Même détection que l'ancien openes (appimage dans ~/AppImages).
+set -uo pipefail
+
+# binaire surchargeable pour les tests (le vrai pèse 120 Mo)
+ESDE=${ESDE:-$HOME/AppImages/esde.appimage}
+
+# Jamais de fermeture ici : le menu Applications ne doit pas tuer une appli
+# ouverte (il l'active). Si elle tourne déjà, on ne fait rien.
+if pgrep -u "$USER" -f '(^|/)esde\.appimage( |$)' > /dev/null 2>&1; then
+    echo "ES-DE deja ouverte"
+else
+    "$ESDE" > /dev/null 2>&1 &
+    echo "ES-DE lancee"
+fi

@@ -67,12 +67,14 @@ Le projet construit 6 variantes distinctes :
 │   ├── ds2xbox/                           # Sources C du convertisseur DualSense → Xbox
 │   │   ├── ds2xbox.c                      # Programme principal (evdev, uinput)
 │   │   └── Makefile                       # Compilation
-│   ├── gamepadshortcuts/                  # Sources C du gestionnaire de raccourcis manette
-│   │   ├── gamepadshortcuts.c             # Programme principal (inotify VT, evdev)
-│   │   ├── mouse.c                        # Emulation souris/clavier via manette (evdev, uinput)
-│   │   ├── kbdnav.c                       # Pont manette -> clavier virtuel (evdev grab, uinput, D-Bus KWin)
-│   │   ├── AGENTS.md                      # Architecture interne (souris + kbdnav)
-│   │   └── Makefile                       # Compilation (3 binaires)
+│   ├── gablue-pad/                        # Overlay manette (remplace gamepadshortcuts)
+│   │   ├── gpad/                          # Overlay Wayland (Rust, layer-shell, shm)
+│   │   ├── trigger/                       # Déclencheur Home / combos / menu système (C)
+│   │   ├── gate/                          # Gate BPF LSM + démon root (coupe les manettes)
+│   │   ├── kbd/ mouse/ inhibit/ rumble/   # Clavier virtuel, souris, inhibition écran, vibration
+│   │   ├── kwin/ scripts/ sounds/         # Scripts KWin, lancements du menu, sons
+│   │   ├── AGENTS.md                      # Contrat, services, options, installation
+│   │   └── Makefile                       # Compilation C + installation des données
 │   ├── gablue-apk-installer/               # Installateur APK (Python modulaire)
 │   │   ├── AGENTS.md                        # Paquet, appareils, installation
 │   │   ├── gablue-apk-installer            # Lanceur /usr/bin (sys.path + main)
@@ -263,7 +265,7 @@ son propre AGENTS.md de sous-dossier + pointeur dans l'index ci-dessous.
 | Installateur APK (paquet `gablue_apk_installer`) | `src/gablue-apk-installer/AGENTS.md` | modifier `src/gablue-apk-installer/` |
 | Firmware DualSense / Edge (`gablue-dualsense`) | `src/gablue-dualsense/AGENTS.md` | modifier `dualsense-ctl.c`, le script `/usr/bin/gablue-dualsense` ou la détection de famille |
 | lgplaunch (modules Bash `lib/`) | `src/lgplaunch/AGENTS.md` | modifier `src/lgplaunch/` |
-| Manette (gamepadshortcuts, mouse, kbdnav) | `src/gamepadshortcuts/AGENTS.md` | modifier `src/gamepadshortcuts/` |
+| Manette : overlay, déclencheur, gate BPF, options | `src/gablue-pad/AGENTS.md` | modifier `src/gablue-pad/`, un geste, une unité ou un réglage du pad |
 
 Changements suivant la racine :
 - Ajout d'une nouvelle variante d'image

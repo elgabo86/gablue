@@ -1,0 +1,17 @@
+#!/usr/bin/bash
+# toggle-tv - ouvre / ferme Gablue TV (tvqt).
+set -uo pipefail
+
+# binaire surchargeable pour les tests (jamais lancer la vraie app au banc)
+TVQT=${TVQT:-/usr/bin/tvqt}
+
+# `tvqt` est un lanceur Python : le processus s'appelle « python3 », donc
+# `pgrep -x tvqt` ne le voit pas. On cherche le script sur la ligne de commande.
+# Jamais de fermeture ici : le menu Applications active une appli ouverte.
+if pgrep -u "$USER" -f 'python[0-9.]* [^ ]*/tvqt( |$)' > /dev/null 2>&1; then
+    echo "Gablue TV deja ouverte"
+else
+    # tvqt ne passe en plein écran que sur demande (--fullscreen)
+    "$TVQT" --fullscreen > /dev/null 2>&1 &
+    echo "Gablue TV lancee"
+fi

@@ -1,0 +1,39 @@
+#!/usr/bin/bash
+# fermer-applis - ferme les applications du menu Applications :
+#   EmulationStation (ES-DE), YouTube (VacuumTube), Gablue TV (tvqt), Jellyfin.
+#
+# Distinct de killthemall : celui-ci vise les jeux Windows/Wine et les
+# émulateurs, et il ne touche pas à ces applis. « TOUT FERMER » du menu console
+# appelle les deux.
+set -uo pipefail
+
+ESDE=${ESDE:-$HOME/AppImages/esde.appimage}
+TVQT=${TVQT:-/usr/bin/tvqt}
+FLATPAK=${FLATPAK:-flatpak}
+
+# Motifs PRÉCIS : `pkill -f` matche aussi un shell qui se contente de citer le
+# nom du fichier (vécu : un test du script a tué son propre shell). Le point est
+# échappé (esde\.appimage) et Gablue TV doit être lancé par python — un shell
+# n'a pas « python… » en premier mot.
+PAT_ESDE='(^|/)esde\.appimage( |$)'
+PAT_TV='python[0-9.]* [^ ]*/tvqt( |$)'
+
+n=0
+if pgrep -u "$USER" -f "$PAT_ESDE" > /dev/null 2>&1; then
+    pkill -u "$USER" -f "$PAT_ESDE"
+    echo "ES-DE ferme"
+    n=$((n + 1))
+fi
+if pgrep -u "$USER" -f "$PAT_TV" > /dev/null 2>&1; then
+    pkill -u "$USER" -f "$PAT_TV"
+    echo "Gablue TV ferme"
+    n=$((n + 1))
+fi
+for app in rocks.shy.VacuumTube org.jellyfin.JellyfinDesktop; do
+    if "$FLATPAK" ps 2>/dev/null | grep -q "$app"; then
+        "$FLATPAK" kill "$app"
+        echo "$app ferme"
+        n=$((n + 1))
+    fi
+done
+echo "applis fermees : $n"

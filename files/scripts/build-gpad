@@ -1,0 +1,16 @@
+#!/usr/bin/bash
+
+# Compilation de l'overlay manette (Rust) dans l'étape "gpad-build". Le binaire
+# est déposé dans /out : l'étape finale le copie par COPY --from, donc la
+# toolchain Rust (~300 Mo) n'entre jamais dans l'image.
+
+set -eoux pipefail
+
+dnf5 -y install cargo rust gcc
+
+# --locked : Cargo.lock est dans le dépôt, la résolution ne bouge pas.
+cargo build --release --locked --manifest-path /build/Cargo.toml
+
+install -Dm755 /build/target/release/gpad /out/gpad
+
+echo "gpad compilé : $(stat -c %s /out/gpad) octets"

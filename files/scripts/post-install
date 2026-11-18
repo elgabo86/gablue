@@ -36,12 +36,12 @@ chmod +x /usr/libexec/gablue-apps
 chmod +x /usr/libexec/gablue-fetch
 chmod +x /usr/libexec/gablue-wifi-powersave
 chmod +x /usr/bin/gablue-atuin
-chmod +x /usr/bin/gablue-gamepad
+chmod +x /usr/bin/gablue-pad
 chmod +x /usr/bin/gablue-dualsense
 chmod +x /usr/bin/lgp-thumbnailer
 chmod +x /usr/bin/wgp-thumbnailer
 chmod +x /usr/bin/ds2xbox
-chmod +x /usr/bin/gamepadshortcuts
+chmod +x /usr/bin/gpad
 chmod +x /usr/bin/tvqt
 chmod +x /usr/bin/wallpaper-import
 
@@ -75,7 +75,9 @@ chmod +x /usr/libexec/gablue-dx-groups
 # Rendre exécutables les scripts supplémentaires Gablue
 chmod +x /usr/share/ublue-os/gablue/scripts/*.sh
 chmod +x /usr/share/ublue-os/gablue/scripts/*.py
-chmod +x /usr/share/ublue-os/gablue/scripts/gamepadshortcuts/*
+chmod +x /usr/share/ublue-os/gablue/scripts/killthemall \
+    /usr/share/ublue-os/gablue/scripts/changefps \
+    /usr/share/ublue-os/gablue/scripts/showhidemango
 
 # =============================================================================
 # CAPACITÉS SYSTÈME (CAPABILITIES)

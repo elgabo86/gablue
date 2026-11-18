@@ -1,0 +1,14 @@
+#!/usr/bin/bash
+# toggle-yt - ouvre / ferme YouTube (flatpak VacuumTube).
+# Reprend exactement launchyt (importé de l'ancienne install), pour que le
+# combo Home+triangle et le menu Applications fassent la même chose.
+set -uo pipefail
+
+# Jamais de fermeture ici : le menu Applications ne doit pas tuer une appli
+# ouverte (il l'active). Si elle tourne déjà, on ne fait rien.
+if flatpak ps 2>/dev/null | grep -q "rocks.shy.VacuumTube"; then
+    echo "YouTube deja ouverte"
+else
+    flatpak run rocks.shy.VacuumTube --fullscreen > /dev/null 2>&1 &
+    echo "YouTube lancee"
+fi

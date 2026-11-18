@@ -1,0 +1,12 @@
+[package]
+name = "gpad"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fontdue = "0.9.5"
+libc = "0.2.191"
+png = "0.18.1"
+wayland-client = "0.31.15"
+wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
+zbus = { version = "5.19", default-features = false, features = ["blocking-api", "async-io"] }

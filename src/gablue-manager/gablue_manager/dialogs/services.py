@@ -3,18 +3,16 @@
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton,
-    QVBoxLayout,
+    QApplication, QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
+    QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from ..local import (
-    docker_available, gamepad_available, local_variant, parse_gablue_progress,
+    docker_available, local_variant, pad_available, parse_gablue_progress,
     services_choices, services_helpers_available, system_apply_script,
 )
 from ..tasks import LocalTaskDialog, start_task
-from ..uiutil import (
-    fit_dialog_height, recommendation_badge, set_recommendation,
-)
+from ..uiutil import recommendation_badge, set_recommendation
 
 # Libellé de la case, puis description affichée dessous.
 CHOICE_LABELS = {
@@ -38,10 +36,17 @@ CHOICE_LABELS = {
         "Historique atuin",
         "Historique commun à vos terminaux. Ctrl-R pour l'ouvrir.",
     ),
-    "gamepad": (
+    "pad_menu": (
+        "Menu Home",
+        "Home ouvre le panneau de jeu et le menu système.",
+    ),
+    "pad_shortcuts": (
         "Raccourcis manette",
-        "Captures, menu de jeu et enregistrement depuis la manette, à "
-        "l'ouverture de session. Effet immédiat.",
+        "Captures, enregistrement et clavier virtuel depuis la manette.",
+    ),
+    "pad_inhibit": (
+        "Blocage de la veille",
+        "L'écran ne se verrouille pas tant qu'une manette est connectée.",
     ),
 }
 
@@ -52,7 +57,13 @@ CHOICE_STATE = {
     "low_latency": {True: "activée", False: "désactivée"},
     "broadcom_wl": {True: "activé", False: "désactivé"},
     "atuin": {True: "activée", False: "désactivée — historique conservé"},
-    "gamepad": {True: "activés", False: "désactivés"},
+    "pad_menu": {True: "le menu : activé", False: "le menu : désactivé"},
+    "pad_shortcuts": {
+        True: "les raccourcis : activés", False: "les raccourcis : désactivés",
+    },
+    "pad_inhibit": {
+        True: "la veille bloquée", False: "la veille autorisée",
+    },
 }
 
 # Valeur recommandée pour la machine : les réglages de confort Gablue allumés.
@@ -74,7 +85,7 @@ class ServicesDialog(QDialog):
 
     ROWS = (
         "displaylink", "docker", "low_latency", "broadcom_wl", "atuin",
-        "gamepad",
+        "pad_menu", "pad_shortcuts", "pad_inhibit",
     )
 
     def __init__(self, parent=None):
@@ -100,9 +111,18 @@ class ServicesDialog(QDialog):
         note.setWordWrap(True)
         root_layout.addWidget(note)
 
-        self.rows_layout = QVBoxLayout()
+        self.rows_widget = QWidget(self)
+        self.rows_layout = QVBoxLayout(self.rows_widget)
+        self.rows_layout.setContentsMargins(0, 0, 0, 0)
         self.rows_layout.setSpacing(8)
-        root_layout.addLayout(self.rows_layout, 1)
+        # Défilement : huit rangées mesuraient 739 px de haut, ça ne tient pas
+        # sur un écran 720p (Steam Deck exceptée, 800 px). Le dialogue garde sa
+        # hauteur naturelle quand le contenu est plus court que l'écran.
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setWidget(self.rows_widget)
+        root_layout.addWidget(self.scroll, 1)
         self.frames: dict[str, QFrame] = {}
         self.checks: dict[str, QCheckBox] = {}
         self.recommendations: dict[str, QLabel] = {}
@@ -132,7 +152,32 @@ class ServicesDialog(QDialog):
         self.state: dict = {"ok": False}
         self.initial: dict[str, bool] = {}
         self.refresh()
-        fit_dialog_height(self, 680)
+        self._fit_rows()
+
+    # -- présentation -------------------------------------------------------
+    def _fit_rows(self) -> None:
+        """Hauteur des cartes, plafonnée à l'écran (le reste défile).
+
+        `fit_dialog_height` ne convient pas ici : dans une zone défilante, la
+        hauteur naturelle est celle du contenu, pas celle du QScrollArea. On
+        mesure donc le contenu serré (`minimumSizeHint`) et on retire du
+        `sizeHint` du dialogue le mou que les cartes s'octroient quand la zone
+        défilante est plus haute qu'elles — sinon le dialogue s'étire de ~100 px
+        par rapport à la version sans défilement.
+        """
+        self.rows_widget.adjustSize()
+        content = self.rows_widget.minimumSizeHint().height()
+        screen = QApplication.primaryScreen()
+        available = screen.availableGeometry().height() if screen else 900
+        # ~134 px de marges, titre, note et boutons mesurés à 680 de large ; on
+        # laisse de la respiration, sinon un écran 800 px (Steam Deck) affiche
+        # une barre de défilement pour 18 px de trop.
+        limit = max(240, available - 190)
+        self.scroll.setMinimumHeight(min(content, limit))
+        slack = max(0, self.rows_widget.sizeHint().height() - content)
+        self.resize(
+            680, min(self.sizeHint().height() - slack, available - 40)
+        )
 
     # -- construction -------------------------------------------------------
     def _add_row(self, key: str) -> None:
@@ -171,11 +216,11 @@ class ServicesDialog(QDialog):
     def refresh(self) -> None:
         helpers = services_helpers_available()
         variant = local_variant()
-        gamepad = gamepad_available()
+        pad = pad_available()
         self.state = {
             "ok": helpers,
             "variant": variant,
-            "gamepad": gamepad,
+            "pad": pad,
             "choices": services_choices() if helpers else {},
         }
         choices = self.state["choices"]
@@ -187,10 +232,12 @@ class ServicesDialog(QDialog):
             check.blockSignals(True)
             check.setChecked(bool(choices.get(key)))
             check.blockSignals(False)
-            # Le helper des raccourcis manette a son propre contrôle : absent
-            # (image antérieure), la case est grisée sans condamner le reste.
-            check.setEnabled(helpers and (key != "gamepad" or gamepad))
-            if key == "gamepad" and helpers and not gamepad:
+            # Le helper du pad a son propre contrôle : absent (image
+            # antérieure), les trois cases sont grisées ensemble sans
+            # condamner le reste.
+            is_pad = key.startswith("pad_")
+            check.setEnabled(helpers and (not is_pad or pad))
+            if is_pad and helpers and not pad:
                 check.setToolTip(
                     "Helper absent de cette image — reconstruction requise."
                 )

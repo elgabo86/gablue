@@ -168,7 +168,7 @@ GWINE_IMAGE_BINARY = "/usr/bin/gwine"
 # pas connaître les options MangoHud).
 LGP_IMAGE_BINARY = "/usr/bin/lgplaunch"
 
-GAMEPAD_HELPER = "/usr/bin/gablue-gamepad"
+PAD_HELPER = "/usr/bin/gablue-pad"
 
 CLEAN_HELPER = "/usr/libexec/gablue-clean"
 

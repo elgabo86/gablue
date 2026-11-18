@@ -77,8 +77,12 @@ systemctl enable cec-active-source.timer
 systemctl enable dmemcg-booster-system.service
 systemctl --global enable dmemcg-booster-user.service
 
-# Raccourcis manette : service utilisateur de session (remplace l'autostart XDG
-# gablue-gamepadshortcuts.desktop, qui n'était déjà qu'un wrapper de boucle bash
-# autour du binaire). `--global` = activé pour tous les comptes sans redémarrage
-# du gestionnaire utilisateur ; `gablue-gamepad off` le neutralise par masque.
-systemctl --global enable gablue-gamepadshortcuts.service
+# Pad Gablue : deux unités, deux niveaux.
+#  - `gablue-pad-gate.service` (système, root) charge le programme BPF une fois
+#    et n'attache le hook que pendant le menu ; il doit vivre avant la session.
+#  - `gablue-pad.service` (utilisateur, session) : Home, combos, menu système.
+#    `--global` = activé pour tous les comptes sans redémarrage du gestionnaire
+#    utilisateur ; `gablue-pad off` le neutralise par masque, et les trois
+#    options (menu / raccourcis / veille) se coupent séparément.
+systemctl enable gablue-pad-gate.service
+systemctl --global enable gablue-pad.service

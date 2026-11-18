@@ -68,6 +68,30 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build-manager-tray
 
+# Étape intermédiaire : overlay manette (Rust). Même raison d'être que les deux
+# précédentes : la toolchain reste ici, l'étape finale ne reçoit que `gpad`.
+FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION} AS gpad-build
+ENV CARGO_HOME=/cargo
+COPY src/gablue-pad/gpad/Cargo.toml /build/Cargo.toml
+COPY src/gablue-pad/gpad/Cargo.lock /build/Cargo.lock
+COPY src/gablue-pad/gpad/src /build/src
+COPY src/gablue-pad/gpad/assets /build/assets
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=cache,dst=/cargo \
+    --mount=type=cache,dst=/build/target \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build-gpad
+
+# Étape intermédiaire : gate BPF (clang + libbpf). L'étape finale garde libbpf
+# au runtime (petit paquet), pas la chaîne de compilation.
+FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION} AS gpad-gate-build
+COPY src/gablue-pad/gate /w
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build-gpad-gate
+
 # Image de base pour la construction finale
 FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION}
 # Redéfinition des arguments après le FROM pour les rendre disponibles
@@ -79,7 +103,21 @@ ARG KERNEL_VERSION
 ARG IMAGE_DATE
 
 # Copie des sources pour compilation et assemblage
-COPY src/gamepadshortcuts /src/gamepadshortcuts
+# gablue-pad : copies explicites, composant par composant. `gpad/` (Rust) arrive
+# par COPY --from=gpad-build, `gpad/target/` (centaines de Mo) et les bancs
+# `evgrab/` ne doivent jamais entrer dans le contexte ni dans la couche.
+COPY src/gablue-pad/Makefile /src/gablue-pad/Makefile
+COPY src/gablue-pad/trigger /src/gablue-pad/trigger
+COPY src/gablue-pad/kbd /src/gablue-pad/kbd
+COPY src/gablue-pad/mouse /src/gablue-pad/mouse
+COPY src/gablue-pad/inhibit /src/gablue-pad/inhibit
+COPY src/gablue-pad/rumble /src/gablue-pad/rumble
+COPY src/gablue-pad/gate /src/gablue-pad/gate
+COPY src/gablue-pad/kwin /src/gablue-pad/kwin
+COPY src/gablue-pad/scripts /src/gablue-pad/scripts
+COPY src/gablue-pad/sounds /src/gablue-pad/sounds
+COPY src/gablue-pad/recorder.sh src/gablue-pad/replay.sh src/gablue-pad/screenshot.sh \
+     src/gablue-pad/vrr.sh src/gablue-pad/mangohud.sh /src/gablue-pad/
 COPY src/ds2xbox /src/ds2xbox
 COPY src/gablue-dualsense /src/gablue-dualsense
 COPY src/gablue-isomount /src/gablue-isomount
@@ -193,6 +231,11 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
     /ctx/build-c && \
     /ctx/cleanup
+
+# Overlay (Rust, étape gpad-build) et gate BPF (étape gpad-gate-build).
+# Le démon cherche `gpad-gate.bpf.o` à côté de son binaire : même dossier.
+COPY --from=gpad-build /out/gpad /usr/bin/gpad
+COPY --from=gpad-gate-build /out/gpad-gate /out/gpad-gate.bpf.o /usr/libexec/gablue-pad/
 
 # Assemblage du script gwine standalone
 RUN --mount=type=cache,dst=/var/cache \

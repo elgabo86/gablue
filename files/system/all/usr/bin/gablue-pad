@@ -1,0 +1,132 @@
+#!/usr/bin/bash
+
+# gablue-pad — options du pad Gablue (overlay manette) côté utilisateur.
+#
+#   gablue-pad on|off|status                 service complet (masque systemd)
+#   gablue-pad menu      on|off|status       Home ouvre le panneau / menu système
+#   gablue-pad shortcuts on|off|status       combos Home+bouton et Home+D-pad
+#   gablue-pad inhibit   on|off|status       pas de veille tant qu'une manette est là
+#
+# Pourquoi trois options séparées : le service tourne en permanence (il lit les
+# manettes et tient le gate), mais chacune de ses trois fonctions se coupe
+# indépendamment — c'est ce que Gablue Manager expose. `off` reste le coupe-circuit
+# complet (masque utilisateur, il l'emporte sur l'activation de l'image).
+#
+# Les options vivent dans ~/.config/gablue/gpad-options (`clé=valeur`, absente
+# = on) que `gpad-trigger` relit sur SIGHUP : aucun privilège, effet immédiat,
+# y compris si le service n'a pas été relancé depuis la session.
+#
+# Usage : gablue-pad <on|off|status|<option> on|off|status>
+
+set -eu
+
+UNIT="gablue-pad.service"
+OLD_UNIT="gablue-gamepadshortcuts.service"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/gablue/gpad-options"
+
+usage() {
+    echo "Usage : gablue-pad on|off|status" >&2
+    echo "        gablue-pad menu|shortcuts|inhibit on|off|status" >&2
+    exit 2
+}
+
+# état du service (activation), pas de son exécution
+enabled() {
+    case "$(systemctl --user is-enabled "$UNIT" 2>/dev/null || true)" in
+        enabled*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Migration unique : un masque posé sur l'ancien service (images <= 20261118)
+# doit continuer de couper le nouveau. On ne le fait qu'une fois, en marquant
+# le fichier d'options.
+migrate_old_mask() {
+    [[ -f "$CONF" ]] && return 0
+    if systemctl --user is-enabled "$OLD_UNIT" 2>/dev/null | grep -q '^masked'; then
+        systemctl --user mask "$UNIT" >/dev/null 2>&1 || true
+        echo "menu=off" > "$CONF"
+        echo "shortcuts=off" >> "$CONF"
+        echo "inhibit=off" >> "$CONF"
+        echo "Raccourcis manette de l'ancienne image : désactivés (masque migré)."
+    fi
+}
+
+# clé présente dans le fichier ? (sinon on = défaut de l'image)
+lire() {
+    local cle=$1 v
+    [[ -f "$CONF" ]] || { echo on; return 0; }
+    v=$(sed -n "s/^${cle}=//p" "$CONF" | tail -1)
+    [[ -n "$v" ]] && echo "$v" || echo on
+}
+
+ecrire() {
+    local cle=$1 val=$2 tmp
+    mkdir -p "$(dirname "$CONF")"
+    tmp=$(mktemp "$CONF.XXXXXX")
+    [[ -f "$CONF" ]] && grep -v "^${cle}=" "$CONF" > "$tmp" || true
+    echo "${cle}=${val}" >> "$tmp"
+    sort -o "$tmp" "$tmp"
+    mv "$tmp" "$CONF"
+}
+
+# Le service relit le fichier sur SIGHUP ; s'il ne tourne pas, rien à faire
+# (il lira le fichier à son prochain démarrage).
+recharger() {
+    systemctl --user kill --signal=HUP --kill-whom=main "$UNIT" >/dev/null 2>&1 || true
+}
+
+option() {
+    local cle=$1 action=${2:-status}
+    case "$action" in
+        on)
+            ecrire "$cle" on
+            recharger
+            echo "$cle : activé"
+            ;;
+        off)
+            ecrire "$cle" off
+            recharger
+            echo "$cle : désactivé"
+            ;;
+        status)
+            if [[ "$(lire "$cle")" == on ]]; then
+                echo on
+                return 0
+            fi
+            echo off
+            return 1
+            ;;
+        *) usage ;;
+    esac
+}
+
+migrate_old_mask
+
+case "${1:-}" in
+    on)
+        systemctl --user unmask "$UNIT" >/dev/null 2>&1 || true
+        systemctl --user enable "$UNIT" >/dev/null 2>&1 || true
+        systemctl --user start "$UNIT"
+        echo "Pad Gablue lancé."
+        ;;
+    off)
+        systemctl --user stop "$UNIT" 2>/dev/null || true
+        systemctl --user mask "$UNIT"
+        echo "Pad Gablue arrêté (masqué pour les prochaines sessions)."
+        ;;
+    status)
+        if enabled; then
+            echo enabled
+            exit 0
+        fi
+        echo disabled
+        exit 1
+        ;;
+    menu|shortcuts|inhibit)
+        option "$1" "${2:-status}"
+        ;;
+    *)
+        usage
+        ;;
+esac

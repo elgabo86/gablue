@@ -17,9 +17,10 @@ from .constants import (
     AVAHI_SERVICE_FILE, BOOTSELECT_HELPER, BREW_BINARY, BROADCOM_HELPER,
     BROADCOM_WL_FILE, BTRFS_HELPER, CLEAN_HELPER, CMDLINE,
     CPUID_EMU_BLACKLIST,
-    CPUID_EMU_CONF, CPUID_EMU_HELPER, GAMEPAD_HELPER, GRUB_HELPER,
+    CPUID_EMU_CONF, CPUID_EMU_HELPER, GRUB_HELPER,
     GWINE_IMAGE_BINARY, HWINFO_HELPER, LGP_IMAGE_BINARY,
-    NVME_THERMAL_HELPER, RYZENADJ_BINARY, RYZENADJ_HELPER, RYZENADJ_SERVICE,
+    NVME_THERMAL_HELPER, PAD_HELPER, RYZENADJ_BINARY, RYZENADJ_HELPER,
+    RYZENADJ_SERVICE,
     SECUREBOOT_HELPER,
     KARG_BT_ERTM, KARG_CLEARCPUID,
     KARG_HDMI21, KARG_HELPER, KARG_MITIGATIONS_OFF, LOW_LATENCY_FILE,
@@ -2195,16 +2196,20 @@ def atuin_available() -> bool:
     return Path(ATUIN_HELPER).is_file()
 
 
-def gamepad_available() -> bool:
-    """Le helper des raccourcis manette est-il installé (image à jour) ?"""
-    return Path(GAMEPAD_HELPER).is_file()
+def pad_available() -> bool:
+    """Le helper des options manette est-il installé (image à jour) ?"""
+    return Path(PAD_HELPER).is_file()
 
 
-def gamepad_active() -> bool:
-    """Les raccourcis manette Gablue sont-ils configurés pour démarrer ?"""
+def pad_option_active(option: str) -> bool:
+    """L'option manette `option` (menu, shortcuts, inhibit) est-elle active ?
+
+    `gablue-pad <option> status` sort 0 quand elle est active, 1 sinon —
+    l'absence de la clé dans `~/.config/gablue/gpad-options` vaut « on ».
+    """
     try:
         result = subprocess.run(
-            [GAMEPAD_HELPER, "status"], capture_output=True, text=True,
+            [PAD_HELPER, option, "status"], capture_output=True, text=True,
             timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -3183,21 +3188,24 @@ def rebase_helper_available() -> bool:
 
 
 def services_choices() -> dict:
-    """État des bascules : services, couche Vulkan, Wi-Fi, atuin."""
+    """État des bascules : services, couche Vulkan, Wi-Fi, atuin, pad."""
+    pad = pad_available()
     return {
         "displaylink": service_enabled("displaylink.service"),
         "docker": service_enabled("docker.service"),
         "low_latency": LOW_LATENCY_FILE.is_file(),
         "broadcom_wl": BROADCOM_WL_FILE.is_file(),
         "atuin": atuin_active(),
-        "gamepad": gamepad_active() if gamepad_available() else False,
+        "pad_menu": pad_option_active("menu") if pad else False,
+        "pad_shortcuts": pad_option_active("shortcuts") if pad else False,
+        "pad_inhibit": pad_option_active("inhibit") if pad else False,
     }
 
 
 def system_apply_script(changes: dict[str, bool]) -> str:
     """Script d'application : un helper par domaine, en un seul passage.
 
-    Un seul « Appliquer » peut toucher six domaines ; `_steps_script` publie
+    Un seul « Appliquer » peut toucher huit domaines ; `_steps_script` publie
     leur avancement pour la barre du dialogue.
     """
     steps: list[tuple[str, list[str]]] = []
@@ -3225,12 +3233,18 @@ def system_apply_script(changes: dict[str, bool]) -> str:
         steps.append(("Historique atuin", [
             f"{ATUIN_HELPER} " + ("on" if changes["atuin"] else "off")
         ]))
-    if "gamepad" in changes:
-        # Service utilisateur de session : fichiers de l'utilisateur, aucun
-        # privilège.
-        steps.append(("Raccourcis manette", [
-            f"{GAMEPAD_HELPER} " + ("on" if changes["gamepad"] else "off")
-        ]))
+    # Options du pad (service utilisateur de session) : fichiers de
+    # l'utilisateur, aucun privilège, effet immédiat.
+    for key, option, label in (
+        ("pad_menu", "menu", "Menu Home"),
+        ("pad_shortcuts", "shortcuts", "Raccourcis manette"),
+        ("pad_inhibit", "inhibit", "Blocage de la veille"),
+    ):
+        if key in changes:
+            steps.append((label, [
+                f"{PAD_HELPER} {option} "
+                + ("on" if changes[key] else "off")
+            ]))
     return _steps_script(steps)
 
 

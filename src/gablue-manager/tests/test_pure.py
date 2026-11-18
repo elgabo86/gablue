@@ -482,11 +482,59 @@ class SystemTest(unittest.TestCase):
                 else:
                     os.environ["HOME"] = previous
 
-    def test_gamepad_script(self):
-        script = local.system_apply_script({"gamepad": False})
-        self.assertIn("/usr/bin/gablue-gamepad off", script)
-        # Autostart de session : fichiers de l'utilisateur, jamais de sudo.
+    def test_pad_script(self):
+        # Les trois options du pad sont indépendantes : chacune sa commande.
+        script = local.system_apply_script({
+            "pad_menu": False,
+            "pad_shortcuts": False,
+            "pad_inhibit": False,
+        })
+        self.assertIn("/usr/bin/gablue-pad menu off", script)
+        self.assertIn("/usr/bin/gablue-pad shortcuts off", script)
+        self.assertIn("/usr/bin/gablue-pad inhibit off", script)
+        # Service utilisateur de session : fichiers de l'utilisateur, jamais
+        # de sudo.
         self.assertNotIn("sudo", script)
+
+        # Une seule case modifiée : une seule étape, les deux autres intactes.
+        single = local.system_apply_script({"pad_inhibit": True})
+        self.assertIn("/usr/bin/gablue-pad inhibit on", single)
+        self.assertNotIn("gablue-pad menu", single)
+        self.assertNotIn("gablue-pad shortcuts", single)
+        self.assertIn("'::gablue:step 1 1 Blocage de la veille'", single)
+
+    def test_services_choices_pad(self):
+        import unittest.mock as mock
+        with mock.patch.object(
+            local, "pad_available", lambda: True
+        ), mock.patch.object(
+            local, "pad_option_active",
+            lambda option: option == "shortcuts",
+        ), mock.patch.object(
+            local, "service_enabled", lambda _unit: False
+        ), mock.patch.object(
+            local, "atuin_active", lambda: False
+        ):
+            choices = local.services_choices()
+        self.assertTrue(choices["pad_shortcuts"])
+        self.assertFalse(choices["pad_menu"])
+        self.assertFalse(choices["pad_inhibit"])
+        # Helper absent : les trois options tombent à False, sans commande.
+        with mock.patch.object(
+            local, "pad_available", lambda: False
+        ), mock.patch.object(
+            local, "pad_option_active",
+            lambda _option: self.fail("helper absent : rien à interroger"),
+        ), mock.patch.object(
+            local, "service_enabled", lambda _unit: False
+        ), mock.patch.object(
+            local, "atuin_active", lambda: False
+        ):
+            absent = local.services_choices()
+        self.assertFalse(
+            absent["pad_menu"] or absent["pad_shortcuts"]
+            or absent["pad_inhibit"]
+        )
 
     def test_clean_script_all_domains(self):
         import tempfile

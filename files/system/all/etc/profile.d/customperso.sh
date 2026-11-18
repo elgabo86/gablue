@@ -31,7 +31,7 @@ watchdir() { local dir="${1:-$PWD}"; inotifywait -m "$dir" -r -e modify,create,d
 
 alias tp="trash-put"
 
-alias changefps="/usr/share/ublue-os/gablue/scripts/gamepadshortcuts/changefps"
+alias changefps="/usr/share/ublue-os/gablue/scripts/changefps"
 
 # Ignore duplicate
 HISTCONTROL=ignoredups

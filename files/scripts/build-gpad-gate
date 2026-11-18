@@ -1,0 +1,26 @@
+#!/usr/bin/bash
+
+# Compilation du gate BPF (C + objet BPF) dans l'étape "gpad-gate-build".
+# clang/llvm/libbpf-devel restent ici : l'étape finale ne reçoit que le binaire
+# (~40 Ko) et son objet BPF (~6 Ko). L'hôte Kinoite est immuable, il n'a ni
+# clang ni les en-têtes BPF — c'est cette étape qui remplace le `podman run`
+# manuel du banc.
+#
+# `vmlinux.h` est ÉPINGLÉ dans le dépôt (gate/vmlinux.h, dump BTF du noyau OGC).
+# Ne pas le régénérer ici : `/sys/kernel/btf/vmlinux` d'un conteneur est le
+# noyau de la machine de build, pas celui de l'image (layout d'inode différent
+# = décalage de i_rdev, silencieux).
+
+set -eoux pipefail
+
+dnf5 -y install clang llvm libbpf-devel bpftool elfutils-libelf-devel zlib-devel
+
+cd /w
+clang -O2 -g -target bpf -D__TARGET_ARCH_x86 -c gpad-gate.bpf.c -o gpad-gate.bpf.o
+llvm-strip -g gpad-gate.bpf.o
+clang -O2 -g -Wall -o gpad-gate gpad-gate.c -lbpf -lelf -lz
+
+install -Dm755 gpad-gate /out/gpad-gate
+install -Dm644 gpad-gate.bpf.o /out/gpad-gate.bpf.o
+
+echo "gpad-gate compilé : $(stat -c %s /out/gpad-gate) octets"

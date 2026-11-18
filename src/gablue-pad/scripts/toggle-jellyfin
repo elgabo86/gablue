@@ -1,0 +1,17 @@
+#!/usr/bin/bash
+# toggle-jellyfin - ouvre / ferme Jellyfin (client flatpak).
+set -uo pipefail
+
+if ! flatpak list --app --columns=application 2>/dev/null | grep -q org.jellyfin.JellyfinDesktop; then
+    echo "Jellyfin non installe"
+    exit 1
+fi
+
+# Jamais de fermeture ici : le menu Applications ne doit pas tuer une appli
+# ouverte (il l'active). Si elle tourne déjà, on ne fait rien.
+if flatpak ps 2>/dev/null | grep -q "org.jellyfin.JellyfinDesktop"; then
+    echo "Jellyfin deja ouverte"
+else
+    flatpak run org.jellyfin.JellyfinDesktop --fullscreen > /dev/null 2>&1 &
+    echo "Jellyfin lancee"
+fi
