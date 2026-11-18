@@ -17,6 +17,21 @@ depuis le boot (`gablue-pad-gate.service`, `--timeout 0`) et `padnodes.sh` donne
 | `open` / `close` | attache / détache le hook (coût nul tant qu'il est détaché) |
 | `status` / `quit` | état (cibles, exemptions, refus) / sortie |
 
+**Aucune réponse sur la socket** : les comptes rendus (`STATUS`, `ADD`, `GATE
+open`…) partent sur la sortie du démon, donc dans journald. Un client qui
+attend un `recv()` attend indéfiniment — c'est un protocole de commande, pas
+d'appel.
+
+**Plusieurs clients à la fois** (`MAX_CLIENTS` 8, `CLIENT_IDLE` 2 s) : la
+première version servait un seul client et ne relisait la socket d'écoute que
+lorsqu'il n'y en avait aucun. Un client qui se connectait sans envoyer sa
+commande (ou qui restait ouvert) bloquait donc le démon, la file du noyau se
+remplissait et les clients **suivants** restaient plantés dans `connect()` :
+l'overlay se figeait, `EVIOCGRAB` en main, et Home ne répondait plus (vécu
+18/11/2026, diagnostiqué en connectant un client muet sur le démon en service).
+L'écoute est désormais relue à **chaque tour**, une connexion est fermée après
+sa commande et une connexion muette est libérée au bout de 2 s.
+
 Le socket est en 0666 : sur un poste personnel, tout compte de la session doit
 pouvoir ouvrir/fermer la gate (aucune escalade de privilège, un autre compte
 local pourrait seulement couper les lectures d'une manette).

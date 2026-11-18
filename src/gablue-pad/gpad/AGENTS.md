@@ -389,7 +389,11 @@ sans ouvrir la liste.
 Filtre = celui d'une barre des tâches : `normalWindow && !skipTaskbar && resourceClass`.
 Sans lui, `plasmashell`, `xwaylandvideobridge` et le panneau lui-même
 (`resourceClass=gpad`) apparaissent dans la liste ; **le même filtre**
-sert au cyclage L2/R2 (sinon « précédente » tombe sur le bureau).
+sert au cyclage L2/R2 (sinon « précédente » tombe sur le bureau) **et à la
+fenêtre active de l'en-tête** (`wininfo.js`) : le pont vidéo XWayland
+(`xwaylandvideobridge`, `normalWindow` mais `skipTaskbar`) prend le focus au
+login et, sans ce filtre, le panneau s'ouvrait sur la page FENÊTRE du pont au
+lieu de la page APPLICATIONS (vécu 18/11/2026).
 
 **Cyclage L2/R2** (`cycler_fenetre`) : script KWin **généré** à chaque appui
 (`CYCLE_JS`), ancré sur l'**UUID** de la fenêtre active (poussé par `wininfo.js`)
@@ -567,6 +571,22 @@ Mesuré : `--idle 4`, stick poussé à t=3,5 s → toujours ouvert à t=5,5 s
 Pourquoi : un panneau laissé ouvert tient `EVIOCGRAB` — le jeu ne reçoit plus
 rien — et le menu système masque l'écran. Mesuré au banc : `--idle 5` →
 `CLOSE (inactivite 5s)` puis sortie propre.
+
+## Gate : commandes bornées
+
+`gate_cmd()` ouvre **une connexion par commande** (`clear`, `target`, `open`,
+`close`) et n'attend aucune réponse : le démon répond sur sa sortie, jamais sur
+la socket. Le `connect` est **borné à 500 ms** (thread + `recv_timeout`) : sur
+une file d'attente saturée, `UnixStream::connect` attend indéfiniment, et
+l'overlay restait figé — surface déjà retirée, mais `EVIOCGRAB` en main — si
+bien que Home ne répondait plus du tout (vécu 18/11/2026, démon bloqué par un
+client muet). Une commande perdue vaut mieux que ça : le démon est idempotent
+(`clear` + `target`s reposés à chaque ouverture).
+
+Sans `close` (overlay tué au SIGKILL, OOM), le hook du gate reste attaché : la
+manette ne parle plus aux jeux jusqu'à la prochaine ouverture du panneau, dont
+la séquence `clear` → `target` → `open` → `close` rétablit l'état. Rien à
+nettoyer à la main.
 
 ## Ligne de commande et variables d'environnement
 

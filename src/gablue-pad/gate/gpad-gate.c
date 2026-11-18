@@ -41,6 +41,9 @@
 
 #define MAX_TARGETS 8
 #define MAX_EXEMPT 4
+/* Connexions simultanées servies, et délai d'abandon d'un client muet. */
+#define MAX_CLIENTS 8
+#define CLIENT_IDLE 2
 
 #define CFG_NTARGET 0
 #define CFG_EXEMPT 1
@@ -149,6 +152,41 @@ static void do_close(void)
     fflush(stdout);
 }
 
+/* Traite une commande (stdin ou socket) ; rend 1 sur `quit`. */
+static int traiter(char *buf, struct bpf_program *prog)
+{
+    if (!strncmp(buf, "target ", 7)) {
+        __u64 dev = kernel_dev(buf + 7);
+        if (!dev)
+            printf("ERROR pas un device: %s\n", buf + 7);
+        else
+            add_target(dev, buf + 7);
+    } else if (!strcmp(buf, "clear")) {
+        clear_targets();
+    } else if (!strncmp(buf, "exempt ", 7)) {
+        __u64 pid = strtoull(buf + 7, NULL, 10);
+        if (g_nexempt < MAX_EXEMPT) {
+            set_u64(g_cfg, CFG_EXEMPT + g_nexempt, pid);
+            g_nexempt++;
+            printf("EXEMPT %llu\n", (unsigned long long)pid);
+        } else {
+            printf("ERROR trop d'exemptions\n");
+        }
+    } else if (!strcmp(buf, "open")) {
+        do_open(prog);
+    } else if (!strcmp(buf, "close")) {
+        do_close();
+    } else if (!strcmp(buf, "status")) {
+        status();
+    } else if (!strcmp(buf, "quit")) {
+        return 1;
+    } else {
+        printf("ERROR commande inconnue\n");
+    }
+    fflush(stdout);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     const char *sockpath = NULL;
@@ -228,7 +266,18 @@ int main(int argc, char **argv)
         fflush(stdout);
     }
 
-    int client = -1, stdin_open = 1;
+    /* Un emplacement par client, avec un délai d'abandon : un client qui se
+     * connecte sans envoyer sa commande bloquait le démon, qui ne relisait plus
+     * la socket d'écoute. La file du noyau se remplissait alors et les clients
+     * SUIVANTS restaient plantés dans connect() — l'overlay se figeait, manette
+     * grabée en main, et Home ne répondait plus (vécu 18/11/2026). */
+    struct client {
+        int fd;
+        time_t vu;
+    } cl[MAX_CLIENTS];
+    for (int i = 0; i < MAX_CLIENTS; i++)
+        cl[i].fd = -1;
+    int stdin_open = 1;
     time_t last = time(NULL);
 
     while (!stop) {
@@ -236,71 +285,87 @@ int main(int argc, char **argv)
             printf("TIMEOUT (auto-arrêt)\n");
             break;
         }
-        struct pollfd p[2] = {
-            {.fd = stdin_open ? STDIN_FILENO : -1, .events = POLLIN},
-            {.fd = (client >= 0) ? client : srv, .events = POLLIN},
-        };
-        if (poll(p, 2, 200) <= 0)
-            continue;
 
-        int fd = -1;
-        if (p[0].revents & POLLIN) {
-            fd = STDIN_FILENO;
-        } else if (p[1].revents & POLLIN) {
-            if (client < 0) {
-                client = accept4(srv, NULL, NULL, SOCK_CLOEXEC);
-                last = time(NULL);
-                continue;
+        struct pollfd p[2 + MAX_CLIENTS];
+        int nfd = 0;
+        p[nfd++] = (struct pollfd){.fd = stdin_open ? STDIN_FILENO : -1, .events = POLLIN};
+        p[nfd++] = (struct pollfd){.fd = srv, .events = POLLIN};
+        for (int i = 0; i < MAX_CLIENTS; i++)
+            if (cl[i].fd >= 0)
+                p[nfd++] = (struct pollfd){.fd = cl[i].fd, .events = POLLIN};
+
+        int pret = poll(p, (nfds_t)nfd, 200);
+        time_t now = time(NULL);
+
+        /* Connexion muette (client mort avant d'envoyer) : on libère. */
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (cl[i].fd >= 0 && now - cl[i].vu > CLIENT_IDLE) {
+                close(cl[i].fd);
+                cl[i].fd = -1;
             }
-            fd = client;
         }
-        if (fd < 0)
+        if (pret <= 0)
             continue;
 
-        char buf[256] = {0};
-        ssize_t n = read(fd, buf, sizeof buf - 1);
-        if (n <= 0) {
-            if (fd == STDIN_FILENO) {
+        int quitter = 0;
+        if (p[0].revents & (POLLIN | POLLHUP)) {
+            char buf[256] = {0};
+            ssize_t n = read(STDIN_FILENO, buf, sizeof buf - 1);
+            if (n <= 0) {
                 stdin_open = 0;
             } else {
-                close(client);
-                client = -1;
+                last = now;
+                buf[strcspn(buf, "\n")] = 0;
+                quitter = traiter(buf, prog);
             }
-            continue;
         }
-        last = time(NULL);
-        buf[strcspn(buf, "\n")] = 0;
-
-        if (!strncmp(buf, "target ", 7)) {
-            __u64 dev = kernel_dev(buf + 7);
-            if (!dev)
-                printf("ERROR pas un device: %s\n", buf + 7);
-            else
-                add_target(dev, buf + 7);
-        } else if (!strcmp(buf, "clear")) {
-            clear_targets();
-        } else if (!strncmp(buf, "exempt ", 7)) {
-            __u64 pid = strtoull(buf + 7, NULL, 10);
-            if (g_nexempt < MAX_EXEMPT) {
-                set_u64(g_cfg, CFG_EXEMPT + g_nexempt, pid);
-                g_nexempt++;
-                printf("EXEMPT %llu\n", (unsigned long long)pid);
-            } else {
-                printf("ERROR trop d'exemptions\n");
-            }
-        } else if (!strcmp(buf, "open")) {
-            do_open(prog);
-        } else if (!strcmp(buf, "close")) {
-            do_close();
-        } else if (!strcmp(buf, "status")) {
-            status();
-        } else if (!strcmp(buf, "quit")) {
+        if (quitter)
             break;
-        } else {
-            printf("ERROR commande inconnue\n");
+
+        /* L'écoute est relue À CHAQUE tour, même avec des clients en cours. */
+        if (p[1].revents & POLLIN) {
+            int c = accept4(srv, NULL, NULL, SOCK_CLOEXEC);
+            if (c >= 0) {
+                int libre = -1;
+                for (int i = 0; i < MAX_CLIENTS && libre < 0; i++)
+                    if (cl[i].fd < 0)
+                        libre = i;
+                if (libre < 0) {
+                    printf("ERROR trop de clients simultanés\n");
+                    close(c);
+                } else {
+                    cl[libre].fd = c;
+                    cl[libre].vu = now;
+                }
+            }
         }
-        fflush(stdout);
+
+        for (int i = 2; i < nfd && !quitter; i++) {
+            if (!(p[i].revents & (POLLIN | POLLHUP | POLLERR)))
+                continue;
+            for (int j = 0; j < MAX_CLIENTS; j++) {
+                if (cl[j].fd < 0 || cl[j].fd != p[i].fd)
+                    continue;
+                char buf[256] = {0};
+                ssize_t n = read(cl[j].fd, buf, sizeof buf - 1);
+                if (n > 0) {
+                    last = now;
+                    buf[strcspn(buf, "\n")] = 0;
+                    quitter = traiter(buf, prog);
+                }
+                /* Protocole : une commande par connexion (le client rouvre). */
+                close(cl[j].fd);
+                cl[j].fd = -1;
+                break;
+            }
+        }
+        if (quitter)
+            break;
     }
+
+    for (int i = 0; i < MAX_CLIENTS; i++)
+        if (cl[i].fd >= 0)
+            close(cl[i].fd);
 
     do_close();
     if (srv >= 0) {

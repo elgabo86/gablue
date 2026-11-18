@@ -14,7 +14,13 @@ function gabluePush() {
     // tuer le script avant la création du QTimer
     try {
     var w = workspace.activeWindow;
-    if (!w) {
+    // MÊME filtre que la liste des fenêtres (`lister.js`) : ce qui n'est pas
+    // une vraie fenêtre pour une barre des tâches n'est pas une « fenêtre
+    // active » non plus. Sans lui, le pont vidéo XWayland (`skipTaskbar`,
+    // normalWindow) volait le focus au login et le panneau s'ouvrait sur sa
+    // page FENÊTRE au lieu de la page APPLICATIONS (vécu 18/11/2026) ;
+    // plasmashell et le panneau lui-même passaient aussi.
+    if (!w || w.deleted || !w.normalWindow || w.skipTaskbar || !w.resourceClass) {
         callDBus(gablueBus, "/win", "org.gablue.Win", "Info",
                  "", "", 0, "", false, "");
         return;
@@ -41,5 +47,7 @@ workspace.windowActivated.connect(gabluePush);
 // 300 ms suffisent : le panneau relit l'état une fois par seconde.
 var gablueTimer = new QTimer();
 gablueTimer.interval = 300;
-gablueTimer.timeout.connect(function() { console.info("WININFO tick"); gabluePush(); });
+// Pas de console.info ici : le timer battait 3 lignes par seconde dans le
+// journal du compositeur, pour rien.
+gablueTimer.timeout.connect(gabluePush);
 gablueTimer.start();

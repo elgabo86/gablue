@@ -4497,20 +4497,30 @@ fn nettoyer_scripts_temp() {
     }
 }
 
+/// Délai maximum d'une commande au démon de gate.
+const GATE_TIMEOUT: Duration = Duration::from_millis(500);
+
 /// Envoie une commande au démon gpad-gate. Une connexion par commande : le démon
 /// traite un message par connexion, et ça survit à un redémarrage du démon.
 /// Échec silencieux (socket absente) : l'overlay doit rester utilisable seul.
+///
+/// Le `connect` est borné à `GATE_TIMEOUT` : sur une file d'attente saturée
+/// (démon bloqué par un client muet), `UnixStream::connect` attend
+/// indéfiniment. L'overlay restait alors figé avec le grab evdev en main, la
+/// surface retirée, et Home ne répondait plus du tout (vécu 18/11/2026) : une
+/// commande perdue vaut mieux qu'un panneau qui ne se ferme jamais.
 fn gate_cmd(sock: &str, msg: &str) -> bool {
     use std::os::unix::net::UnixStream;
-    match UnixStream::connect(sock) {
-        Ok(mut s) => {
-            let mut buf = String::with_capacity(msg.len() + 1);
-            buf.push_str(msg);
-            buf.push('\n');
-            s.write_all(buf.as_bytes()).is_ok()
-        }
-        Err(_) => false,
-    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (sock, ligne) = (sock.to_string(), format!("{msg}\n"));
+    std::thread::spawn(move || {
+        let ok = match UnixStream::connect(&sock) {
+            Ok(mut s) => s.write_all(ligne.as_bytes()).is_ok(),
+            Err(_) => false,
+        };
+        let _ = tx.send(ok);
+    });
+    rx.recv_timeout(GATE_TIMEOUT).unwrap_or(false)
 }
 
 fn main() {
