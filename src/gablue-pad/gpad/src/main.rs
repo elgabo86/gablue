@@ -737,6 +737,9 @@ enum Entree {
     Groupe(&'static str),
     /// style visuel (NU / DECK / BREEZE), appliqué à chaud
     Style,
+    /// optimiser au premier plan : booster cgroup de Plasma (priorité CPU à la
+    /// fenêtre active), basculé par A
+    Booster,
 }
 
 /// Pages du panneau : accueil (actions + fenêtre active), réglages (tous les
@@ -765,6 +768,11 @@ impl Entree {
             Entree::Autre(_) => "FENETRE",
             Entree::Groupe(t) => t,
             Entree::Style => "STYLE",
+            // « priorité à la fenêtre active » : le libellé exact demandé
+            // (« optimiser au premier plan », 24 caractères) déborderait à
+            // l'échelle 3 (18 caractères tiennent), d'où ce libellé court —
+            // la section PERFORMANCE dit le domaine.
+            Entree::Booster => "PRIORITE ACTIVE",
         }
     }
     /// ligne de réglage (curseur) plutôt qu'une action ponctuelle
@@ -931,6 +939,8 @@ struct App {
     replay_active: bool,
     /// VRR automatique actif sur les sorties capables (`vrr.sh get`)
     vrr_on: bool,
+    /// booster « premier plan » de Plasma actif (`booster.sh get`)
+    booster_on: bool,
     /// page d'ouverture déjà choisie (une seule fois)
     page_initiale: bool,
     /// `--focus` (Home+bas) impose sa ligne : on ne la déplace pas
@@ -1147,6 +1157,8 @@ impl App {
                 Entree::Action("VRR"),
                 Entree::Groupe("REPLAY"),
                 Entree::Duree,
+                Entree::Groupe("PERFORMANCE"),
+                Entree::Booster,
                 Entree::Groupe("INTERFACE"),
                 Entree::Style,
             ],
@@ -1186,6 +1198,7 @@ impl App {
             mouse_active: false,
             replay_active: false,
             vrr_on: false,
+            booster_on: false,
             page_initiale: false,
             focus_impose: false,
             depart: Instant::now(),
@@ -1695,6 +1708,7 @@ impl App {
             }
             // réglé par A (interrupteur), pas par gauche/droite
             Entree::Style => self.basculer_style(),
+            Entree::Booster => self.basculer_booster(),
             Entree::Action(_)
             | Entree::Appli(_)
             | Entree::Fenetre
@@ -2051,6 +2065,29 @@ impl App {
         }
     }
 
+    /// Lit l'état du booster « premier plan » (`booster.sh get` :
+    /// `booster=on|off`). La clé absente de `kcgroupsrc` vaut **on** (défaut de
+    /// Plasma, et c'est ainsi que Gablue Manager la lit).
+    fn refresh_booster(&mut self) {
+        if let Ok(p) = std::env::var("BOOSTER") {
+            if let Ok(o) = std::process::Command::new(&p).arg("get").output() {
+                let t = String::from_utf8_lossy(&o.stdout);
+                self.booster_on = t.trim() == "booster=on";
+            }
+        }
+    }
+
+    /// Bascule le booster. Pas de relecture en boucle : le script écrit la clé
+    /// et relance/arrête le service utilisateur, on relit son verdict.
+    fn basculer_booster(&mut self) {
+        self.status = run_script_args("BOOSTER", &["toggle"]);
+        self.refresh_booster();
+        println!(
+            "BOOSTER {}",
+            if self.booster_on { "actif" } else { "inactif" }
+        );
+    }
+
     /// Lit les réglages MangoHud pour positionner les vues sur l'état réel.
     fn refresh_mangohud(&mut self) {
         if let Ok(p) = std::env::var("MANGOHUD") {
@@ -2278,6 +2315,7 @@ impl App {
             Entree::Duree => self.status = "DUREE REPLAY: GAUCHE/DROITE".to_string(),
             Entree::Mango => self.regler(1),
             Entree::Style => self.basculer_style(),
+            Entree::Booster => self.basculer_booster(),
             Entree::Appli(nom) => {
                 // Appui répété pendant que l'appli démarre : elle n'est pas
                 // encore visible par `pgrep`, donc le script la relancerait.
@@ -3102,6 +3140,19 @@ impl App {
                         self.style_idx == 1,
                         false,
                     );
+                }
+                Entree::Booster => {
+                    // « optimiser au premier plan » : l'interrupteur lit l'état
+                    // écrit dans kcgroupsrc (absent = activé), pas un cache
+                    cv.text_fit(
+                        px0 + pad + 36,
+                        y,
+                        "PRIORITE ACTIVE",
+                        3,
+                        color,
+                        inner - 36 - 52,
+                    );
+                    self.interrupteur(&mut cv, px0 + pad + inner, y, self.booster_on, false);
                 }
             }
             y += h;
@@ -4761,6 +4812,7 @@ fn main() {
     app.refresh_mangohud();
     app.refresh_volume();
     app.refresh_vrr();
+    app.refresh_booster();
     // `--focus` (Home+bas) impose sa ligne : ne pas la déplacer ensuite
     let mut focus_force = false;
     if let Some(f) = arg_value(&args, "--focus") {

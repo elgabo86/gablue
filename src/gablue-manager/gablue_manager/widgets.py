@@ -1158,7 +1158,7 @@ class HostCard(QFrame):
             lambda: self.lgp_requested.emit(self.host["id"]),
         )
         games_menu.addAction(
-            "Priorité au premier plan…",
+            "Optimiser au premier plan…",
             lambda: self.booster_requested.emit(self.host["id"]),
         )
         network_menu = settings_menu.addMenu("Réseau")
@@ -1424,7 +1424,7 @@ class LocalConfigMenu(QMenu):
         games_menu.addAction("Options de gwine…", self.gwine_requested.emit)
         games_menu.addAction("Options LGP…", self.lgp_requested.emit)
         games_menu.addAction(
-            "Priorité au premier plan…", self.booster_requested.emit
+            "Optimiser au premier plan…", self.booster_requested.emit
         )
 
         network_menu = settings_menu.addMenu("Réseau")

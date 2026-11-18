@@ -1,4 +1,4 @@
-"""Priorité au premier plan de Plasma.
+"""Optimiser au premier plan : priorité CPU à l'application active.
 """
 
 from PySide6.QtCore import Qt
@@ -17,7 +17,7 @@ from ..uiutil import (
 from ..util import address_text, display_name
 
 class ForegroundBoosterDialog(QDialog):
-    """Priorité au premier plan de Plasma (ex-`ujust foreground-booster-*`).
+    """Optimiser au premier plan (ex-`ujust foreground-booster-*`).
 
     Une case, appliquée tout de suite : `kwriteconfig6` écrit `autostart` dans
     `~/.config/kcgroupsrc` (réglage persistant, relu à chaque ouverture de
@@ -30,7 +30,7 @@ class ForegroundBoosterDialog(QDialog):
         self.host = dict(host or {})
         remote = bool(self.host)
         self.setWindowTitle(
-            "Priorité au premier plan"
+            "Optimiser au premier plan"
             + (f" — {display_name(self.host)}" if remote else "")
         )
         self.setModal(True)
@@ -40,7 +40,7 @@ class ForegroundBoosterDialog(QDialog):
         root_layout.setContentsMargins(24, 22, 24, 20)
         root_layout.setSpacing(10)
 
-        heading = QLabel("Priorité au premier plan", self)
+        heading = QLabel("Optimiser au premier plan", self)
         heading.setObjectName("title")
         root_layout.addWidget(heading)
 
@@ -64,7 +64,7 @@ class ForegroundBoosterDialog(QDialog):
         frame_layout.setSpacing(6)
         top = QHBoxLayout()
         top.setSpacing(8)
-        self.check = QCheckBox("Booster l'application au premier plan", frame)
+        self.check = QCheckBox("Optimiser l'application au premier plan", frame)
         self.check.setCursor(Qt.PointingHandCursor)
         self.check.toggled.connect(self._update_apply)
         top.addWidget(self.check)
@@ -73,8 +73,8 @@ class ForegroundBoosterDialog(QDialog):
         top.addStretch(1)
         frame_layout.addLayout(top)
         detail = QLabel(
-            "Priorité à la fenêtre active. À couper si vous compilez ou "
-            "encodez en arrière-plan.",
+            "La fenêtre active passe prioritaire sur les tâches de fond. À "
+            "couper si vous compilez ou encodez en arrière-plan.",
             frame,
         )
         detail.setObjectName("hostDetail")
@@ -174,9 +174,9 @@ class ForegroundBoosterDialog(QDialog):
             return
         enabled = self.check.isChecked()
         answer = QMessageBox.question(
-            self, "Priorité au premier plan",
-            ("Activer le boost du premier plan ?" if enabled
-             else "Désactiver le boost du premier plan ?") + "\n\n"
+            self, "Optimiser au premier plan",
+            ("Activer l'optimisation au premier plan ?" if enabled
+             else "Désactiver l'optimisation au premier plan ?") + "\n\n"
             + ("La fenêtre active passe prioritaire." if enabled else
                "Les tâches de fond retrouvent leur part."),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
@@ -194,7 +194,7 @@ class ForegroundBoosterDialog(QDialog):
         )
         if self.host:
             dialog = RemoteTaskDialog(
-                self, host=self.host, title="Priorité au premier plan",
+                self, host=self.host, title="Optimiser au premier plan",
                 subtitle="Effet immédiat en session locale.",
                 command=script,
                 progress_mode="busy",
@@ -202,7 +202,7 @@ class ForegroundBoosterDialog(QDialog):
             )
         else:
             dialog = LocalTaskDialog(
-                self, title="Priorité au premier plan",
+                self, title="Optimiser au premier plan",
                 subtitle="Effet immédiat.",
                 argv=[_which("bash"), "-c", script],
                 progress_mode="busy",

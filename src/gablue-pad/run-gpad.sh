@@ -68,7 +68,7 @@ echo
 NODE_ARG=()
 [[ -n "${PAD_NODE:-}" ]] && NODE_ARG=("$PAD_NODE")
 RECORDER="$HERE/recorder.sh" SCREENSHOT="$HERE/screenshot.sh" \
-    MANGOHUD="$HERE/mangohud.sh" VRR="$HERE/vrr.sh" KILLTHEMALL="${KILLTHEMALL:-$HERE/../../files/system/all/usr/share/ublue-os/gablue/scripts/killthemall}" FERMERAPPLIS="$HERE/scripts/fermer-applis" \
+    MANGOHUD="$HERE/mangohud.sh" VRR="$HERE/vrr.sh" BOOSTER="$HERE/booster.sh" KILLTHEMALL="${KILLTHEMALL:-$HERE/../../files/system/all/usr/share/ublue-os/gablue/scripts/killthemall}" FERMERAPPLIS="$HERE/scripts/fermer-applis" \
     SCRIPTS="$HERE/scripts" MOUSE="$HERE/mouse/gpad-mouse" \
     KBDNAV="$HERE/kbd/gpad-kbd" REPLAY="$HERE/replay.sh" INHIBIT="$HERE/inhibit/gpad-inhibit" \
     RUMBLE="$HERE/rumble/gpad-rumble" "$TRIGGER" "${NODE_ARG[@]}" "$OVERLAY" --gate "$SOCK" "${OA[@]}" "$@" &

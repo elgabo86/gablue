@@ -21,10 +21,21 @@ gauche/droite**, appliquée **immédiatement** — rien à valider.
 | `AFFICHAGE` / `FPS` | 7 positions, `30` → `48` → `60` → `90` → `120` → `165` → `INF` | `mangohud.sh set-fps` |
 | `AFFICHAGE` / `VRR` | **interrupteur** (A) | VRR **automatique** (Adaptive Sync de KWin) sur toutes les sorties capables ↔ désactivé : `vrr.sh toggle` → `kscreen-doctor output.<nom>.vrrpolicy.automatic\|never` |
 | `REPLAY` / `DUREE REPLAY` | 5 positions, `15` → **`30`** → `60` → `120` → `300` s | passé en `REPLAY_SEC` au lancement du buffer |
+| `PERFORMANCE` / `PRIORITE ACTIVE` | **interrupteur** (A) | « optimiser au premier plan » : le booster cgroup de Plasma donne la priorité CPU/IO à la fenêtre active ↔ désactivé : `booster.sh toggle` → `autostart` dans `~/.config/kcgroupsrc` + `systemctl --user restart\|stop plasma-foreground-booster.service` |
 | `INTERFACE` / `STYLE RETRO` / `STYLE MODERNE` | **interrupteur** (A) | le libellé porte le style courant (OFF = retro, ON = moderne), appliqué **à chaud** + écrit dans `~/.config/gablue/gpad-style` |
 
 Plus d'entrée `TOUT FERMER` ici : elle est passée dans le **menu système**
 (Home maintenu), avec les autres actions qui ne se réparent pas.
+
+- La ligne s'appelle **`PRIORITE ACTIVE`**, pas « optimiser au premier plan » :
+  à l'échelle 3 la police bitmap avance de 6 × échelle, donc **18 caractères**
+  tiennent dans les 340 px utiles et `text_fit` **tronque** (il ne réduit pas) —
+  le libellé exact demandé (24 caractères) finissait en « OPTIMISER AU PREMI.. ».
+  La section `PERFORMANCE` dit le domaine, la ligne dit l'effet.
+- L'état affiché est **relu** dans `~/.config/kcgroupsrc` (`booster.sh get`,
+  au démarrage et après chaque bascule), jamais un cache : la clé peut avoir
+  changé depuis Gablue Manager, qui écrit la même. **Clé absente = activé**
+  (défaut de Plasma, et la lecture de Gablue Manager dit pareil).
 
 - Chaque ligne de réglage est plus haute (86 px au lieu de 46) : nom à gauche,
   valeur à droite, **curseur** dessous. Toutes les valeurs sont au **même corps**
@@ -117,6 +128,7 @@ AFFICHAGE  MANGOHUD
            FPS
            VRR
 REPLAY     DUREE REPLAY
+PERFORMANCE PRIORITE ACTIVE
 INTERFACE  STYLE RETRO / STYLE MODERNE
 ```
 
@@ -608,7 +620,7 @@ nettoyer à la main.
 
 | Variable | Rôle |
 |---|---|
-| `RECORDER`, `SCREENSHOT`, `MANGOHUD`, `REPLAY`, `RUMBLE` | outils remplacés par des stubs |
+| `RECORDER`, `SCREENSHOT`, `MANGOHUD`, `VRR`, `BOOSTER`, `REPLAY`, `RUMBLE` | outils remplacés par des stubs |
 | `KILLTHEMALL`, `FERMERAPPLIS`, `SCRIPTS`, `MOUSE`, `KBDNAV` | idem pour les actions et combos |
 | `REBOOT`, `POWEROFF`, `BLUETOOTHCTL` | commandes système remplacées (le banc n'éteint jamais la machine) |
 | `PAD_NODE` | manette qui a déclenché (transmise au replay et à `rumble`) |
@@ -631,3 +643,4 @@ nettoyer à la main.
 | style | `--style truc` → `STYLE RETRO (retro) police=bitmap` ; `A` sur `STYLE` → `STYLE MODERNE (moderne) police=ttf` + fichier + bascule à chaud |
 | vrr | `A` sur `VRR` → `VRR desactive` puis `kscreen-doctor -o` montre `Vrr: Never` sur chaque sortie ; second `A` → `Vrr: Automatic` (mesuré, `vrr=auto`) |
 | glyphes | `GLYPHES 11 (xbox)` au premier dessin MODERNE ; manette Sony → `(ps)` |
+| booster | page REGLAGES, 5 « bas » depuis `VOLUME` (sections sautées) → `SELECT PRIORITE ACTIVE` ; `A` → `BOOSTER actif` puis `BOOSTER inactif`, avec `kwriteconfig6 … autostart true\|false` + `systemctl --user restart\|stop plasma-foreground-booster.service` (HOME et `systemctl` factices) |

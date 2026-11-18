@@ -51,7 +51,7 @@ for b in gpad-kbd gpad-mouse gpad-inhibit gpad-rumble; do
         exit 1
     fi
 done
-if [ ! -x "/usr/libexec/gablue-pad/recorder.sh" ] || [ ! -d "/usr/libexec/gablue-pad/kwin" ]; then
+if [ ! -x "/usr/libexec/gablue-pad/recorder.sh" ] || [ ! -x "/usr/libexec/gablue-pad/booster.sh" ] || [ ! -d "/usr/libexec/gablue-pad/kwin" ]; then
     echo "ERREUR FATALE : donnees de gablue-pad absentes de /usr/libexec/gablue-pad" >&2
     exit 1
 fi

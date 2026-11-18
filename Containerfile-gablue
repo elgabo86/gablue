@@ -117,7 +117,7 @@ COPY src/gablue-pad/kwin /src/gablue-pad/kwin
 COPY src/gablue-pad/scripts /src/gablue-pad/scripts
 COPY src/gablue-pad/sounds /src/gablue-pad/sounds
 COPY src/gablue-pad/recorder.sh src/gablue-pad/replay.sh src/gablue-pad/screenshot.sh \
-     src/gablue-pad/vrr.sh src/gablue-pad/mangohud.sh /src/gablue-pad/
+     src/gablue-pad/vrr.sh src/gablue-pad/mangohud.sh src/gablue-pad/booster.sh /src/gablue-pad/
 COPY src/ds2xbox /src/ds2xbox
 COPY src/gablue-dualsense /src/gablue-dualsense
 COPY src/gablue-isomount /src/gablue-isomount
