@@ -249,6 +249,44 @@ EOF
     return 0
 }
 
+# Déclare un chemin « ignoré » dans la folder Syncthing qui contient un symlink gwine.
+# Pourquoi : Syncthing refuse de créer un fichier dont un parent est un symlink
+# ("checking parent dirs: traverses symlink"). ~/Windows/UserData étant synchronisé,
+# tout fichier indexé par une AUTRE machine sous Temp devient une erreur de pull
+# définitive, relancée en boucle (vécu 19/11/2026 : load 444 sur 12 cœurs et ~100 %
+# de CPU en continu, 203 .sync-conflict-* bloqués sous AppData/Local/Temp).
+#
+# Détection : on remonte depuis le chemin jusqu'au marqueur `.stfolder` de la folder
+# (aucun effet si Syncthing n'est pas là, et le motif reste relatif à la racine
+# réelle, même si la folder est enracinée au-dessus de UserData).
+# Propagation : `.stignore` est lui-même synchronisé, donc l'ignore arrive sur toutes
+# les machines — d'où le nom d'utilisateur remplacé par `*` (bdc, gab…).
+# Aucune suppression : volontairement SANS le préfixe (?d), un chemin ignoré n'est
+# ni supprimé ni remplacé localement — le seul risque serait de toucher une save.
+gwine_syncthing_ignore() {
+    local path="$1"
+    local dir root rel line file
+    dir=$(realpath -- "$(dirname -- "$path")" 2>/dev/null) || return 0
+    root="$dir"
+    while [ "$root" != "/" ] && [ ! -d "$root/.stfolder" ]; do
+        root=$(dirname -- "$root")
+    done
+    [ -d "$root/.stfolder" ] || return 0
+
+    rel="${dir#"$root"/}/$(basename -- "$path")"
+    rel="${rel#/}"
+    line=$(printf '%s\n' "$rel" | sed "s#\(^\|/\)$(whoami)#\1*#")
+    file="$root/.stignore"
+
+    if [ -f "$file" ] && grep -qxF -- "$line" "$file"; then
+        return 0
+    fi
+    if printf '%s\n' "$line" >>"$file" 2>/dev/null; then
+        echo "Syncthing: '$line' ignoré ($file)"
+    fi
+    return 0
+}
+
 # Configure le registre Wine pour rediriger TEMP/TMP vers un chemin Windows standard
 # Les vieux installateurs ne gèrent pas bien les chemins Z:\ (comme 3DMark2000)
 setup_wine_temp_symlinks() {
@@ -278,6 +316,10 @@ setup_wine_temp_symlinks() {
             ln -sfn "$CACHE_DIR/temp" "$temp_path"
             echo "Symlink Temp créé: $temp_path -> $CACHE_DIR/temp"
         fi
+        # Ce symlink est dans une arborescence synchronisée : le déclarer ignoré
+        # côté Syncthing, sinon toute entrée indexée ailleurs sous Temp reste une
+        # erreur de pull permanente (cf. gwine_syncthing_ignore).
+        gwine_syncthing_ignore "$temp_path"
     done
 }
 
