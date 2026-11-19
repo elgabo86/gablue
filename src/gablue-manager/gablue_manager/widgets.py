@@ -1275,6 +1275,7 @@ class LocalConfigMenu(QMenu):
     firmware_requested = Signal()
     gwine_requested = Signal()
     mangohud_requested = Signal()
+    glauncher_requested = Signal()
     booster_requested = Signal()
     tailscale_requested = Signal()
     share_requested = Signal()
@@ -1308,6 +1309,9 @@ class LocalConfigMenu(QMenu):
 
 
         games_menu = settings_menu.addMenu("Jeux")
+        games_menu.addAction(
+            "Lanceur de jeux…", self.glauncher_requested.emit
+        )
         games_menu.addAction("Options de gwine…", self.gwine_requested.emit)
         games_menu.addAction("MangoHud…", self.mangohud_requested.emit)
         games_menu.addAction(

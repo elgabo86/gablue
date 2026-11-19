@@ -16,7 +16,13 @@ set -uo pipefail
 
 HERE="$(dirname "$(readlink -f "$0")")"
 GATE_DIR="$HERE/gate"
-OVERLAY="$HERE/gpad/target/release/gpad"
+# Cargo écrit HORS du dépôt (config cargo globale : ~/.cache/opencode) : le
+# chemin de l'overlay se demande à cargo au lieu d'être supposé.
+cible_cargo() {
+    ( cd "$1" && cargo metadata --format-version 1 --no-deps 2>/dev/null |
+        python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])' )
+}
+OVERLAY="$(cible_cargo "$HERE/gpad")/release/gpad"
 TRIGGER="$HERE/trigger/gpad-trigger"
 SOCK=/tmp/opencode/gpad-gate.sock
 LOG=/tmp/opencode/gpad-gate.log

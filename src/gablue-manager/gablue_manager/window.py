@@ -28,6 +28,7 @@ from .dialogs.booster import ForegroundBoosterDialog
 from .dialogs.boot import BootDialog
 from .dialogs.btrfs import BtrfsDialog
 from .dialogs.clean import CleanDialog
+from .dialogs.glauncher import GlauncherDialog
 from .dialogs.grub import GrubDialog
 from .dialogs.gwine import GwineOptionsDialog
 from .dialogs.mangohud import MangoHudDialog
@@ -365,6 +366,9 @@ class MainWindow(QMainWindow):
         self.local_config.secureboot_requested.connect(self.open_secureboot)
         self.local_config.bootselect_requested.connect(self.open_boot_select)
         self.local_config.firmware_requested.connect(self.reboot_firmware)
+        self.local_config.glauncher_requested.connect(
+            self.open_local_glauncher
+        )
         self.local_config.gwine_requested.connect(
             self.open_local_gwine_options
         )
@@ -2751,6 +2755,9 @@ class MainWindow(QMainWindow):
              "--firmware-setup"],
             "Redémarrer dans le BIOS",
         )
+
+    def open_local_glauncher(self) -> None:
+        GlauncherDialog(self).exec()
 
     def open_local_gwine_options(self) -> None:
         GwineOptionsDialog(self).exec()

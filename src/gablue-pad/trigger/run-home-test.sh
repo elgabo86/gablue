@@ -8,7 +8,13 @@ set -uo pipefail
 
 HERE="$(dirname "$(readlink -f "$0")")"
 EVG="$HERE/../evgrab"
-OVERLAY="$HERE/../gpad/target/release/gpad"
+# Cargo écrit HORS du dépôt (config cargo globale : ~/.cache/opencode) : le
+# chemin de l'overlay se demande à cargo au lieu d'être supposé.
+cible_cargo() {
+    ( cd "$1" && cargo metadata --format-version 1 --no-deps 2>/dev/null |
+        python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])' )
+}
+OVERLAY="$(cible_cargo "$HERE/../gpad")/release/gpad"
 LOG=/tmp/opencode/home-test.log
 LOG_OV=/tmp/opencode/home-test-overlay.log
 : > "$LOG"; : > "$LOG_OV"

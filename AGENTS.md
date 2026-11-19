@@ -90,6 +90,10 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── AGENTS.md                       # Paquet, dialogues, privilèges
 │   │   ├── gablue-manager                  # Lanceur /usr/bin (sys.path + main)
 │   │   └── gablue_manager/                 # Paquet : app, window, dialogs/, local, ssh…
+│   ├── glauncher/                          # Lanceur de jeux (Rust, iced)
+│   │   ├── AGENTS.md                       # Contrat : vues, manette, cache, KWin
+│   │   ├── src/                            # app, library, covers, gamepad, kwin…
+│   │   └── assets/                         # Visuels embarqués (include_bytes!)
 │   ├── gablue-share/                       # Partage de dossiers LAN/Tailscale
 │   │   ├── AGENTS.md                       # Protocole, découverte, invariants
 │   │   ├── gablue_share/                   # GUI PySide6 (découverte, navigation, transferts)

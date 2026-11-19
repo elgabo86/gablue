@@ -153,9 +153,15 @@ Détail des deux côtés : `daemon/AGENTS.md` (« Cycle du serveur ») et
 
 ```bash
 cd src/gablue-share/daemon
-cargo build --release      # binaire : target/release/gablue-shared
+cargo build --release      # binaire dans le target-dir de cargo, HORS du dépôt
 cargo test                 # 43 tests, aucun réseau externe
 ```
+
+Le `target-dir` vient de la config cargo **globale** du poste
+(`~/.cargo/config.toml` → `~/.cache/opencode/cargo-target`) : les dépôts perso
+vivent dans `~/Syncthing` et un `target/` release y pesait des gigaoctets
+(2,4 Go pour ce démon, retour 18/11). `cargo metadata --format-version 1
+--no-deps` donne le chemin exact, `CARGO_TARGET_DIR` reste prioritaire.
 
 Développement local du démon :
 
@@ -164,7 +170,9 @@ mkdir -p /tmp/opencode/partage && echo hello > /tmp/opencode/partage/a.txt
 cat > /tmp/opencode/share.json <<EOF
 {"peer_id":"dev","name":"dev","port":47823,"shares":[{"id":"s1","name":"Essai","path":"/tmp/opencode/partage"}]}
 EOF
-./target/release/gablue-shared --config /tmp/opencode/share.json --host 127.0.0.1
+# binaire : $(cd daemon && cargo metadata --format-version 1 --no-deps \
+#   | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')/release/gablue-shared
+"$BIN" --config /tmp/opencode/share.json --host 127.0.0.1
 curl -s localhost:47823/api/info
 curl -s -r 1-3 localhost:47823/f/s1/a.txt      # 206
 curl -s localhost:47823/a/s1 | tar -tf -        # archive du dossier

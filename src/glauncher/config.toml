@@ -1,0 +1,64 @@
+# Configuration de glauncher.
+#
+# Emplacement : --config, $GLAUNCHER_CONFIG, ./config.toml (dev), sinon
+# ~/.config/glauncher/config.toml. Toutes les clés sont optionnelles.
+
+# Plein écran (le mode normal sur Gablue). --windowed force la fenêtre.
+fullscreen = true
+
+# Nombre MAXIMAL de colonnes de la grille : la grille s'étale pour remplir la
+# largeur de la fenêtre (moins de colonnes si elle est étroite).
+columns = 5
+
+# Largeur MINIMALE d'une vignette, en pixels (monter à 300+ sur une TV 4K).
+# C'est aussi la taille de départ : +/− (ou L2/R2) l'ajustent en direct.
+cell_size = 220
+
+# Affichage de départ : "grid" (vignettes), "list" (lignes avec icône à
+# gauche) ou "mosaic" (covers collées, façon Switch Online).
+# Bascule en cours d'exécution : touche V / Tab, ou Y (Xbox) / Triangle (PS).
+view = "grid"
+
+# Dossiers scannés récursivement (profondeur 4), affichés sans extension.
+# Ils sont SURVEILLÉS : un paquet ajouté ou supprimé apparaît/disparaît sans
+# relancer le launcher.
+game_dirs = [
+  "~/Windows/Games",
+  "~/Games",
+  "/run/media/gab/t5/home00/gab/Games",
+]
+
+# Où chercher l'icône d'un jeu. L'icône posée à côté du paquet est toujours
+# tentée d'abord (`<nom du paquet>.png`), puis `<slug>.png` dans ces dossiers
+# (`Skyward Odyssey.wgp` → `skyward-odyssey.png`).
+icon_dirs = [
+  "~/.local/share/glauncher/icons",
+  "~/.local/share/icons",
+]
+
+# Profondeur maximale du parcours (0 = illimitée). 3 couvre
+# `Games/<catégorie>/<jeu>.wgp` ; au-delà, ce sont les données des jeux.
+scan_depth = 3
+
+# Dossiers ignorés par leur nom exact : préfixes Wine, données de jeu
+# (170 000 fichiers sur un disque externe sinon).
+scan_skip = [
+  "Prefixes", "drive_c", "dosdevices", "Content", "Saved",
+  "Config", "Engine", "Binaries", "node_modules",
+]
+
+# Racine du cache : `icons/` (icônes de paquets) et `covers/` (SteamGridDB).
+# Rien n'est JAMAIS écrit dans les dossiers de jeux : ils peuvent être en
+# lecture seule (disque externe).
+cache_dir = "~/.local/share/glauncher"
+
+# Télécharge les covers manquantes à la volée depuis SteamGridDB.
+covers = true
+
+# Clé API SteamGridDB v2, facultative : sans clé, l'API publique du site est
+# utilisée (aucun compte). Peut aussi venir de $SGDB_API_KEY.
+steamgriddb_key = ""
+
+# Commandes de lancement, le chemin du paquet est passé en argument.
+launch_wgp = "gwine"
+launch_lgp = "lgplaunch"

@@ -25,7 +25,7 @@ Sources = ce dossier (`src/gablue-manager/`), installées par
 | `gablue_manager/util.py` | cible ssh, nom affiché, URL KIO, commande Dolphin (hook composefs réinjecté), normalisation MAC, options ssh communes |
 | `gablue_manager/hosts.py` | registre `ssh-hosts.json`, recherche sur le réseau local, adresses du poste |
 | `gablue_manager/ssh.py` | empreintes d'hôte, copie de clé, exécution distante, sudo distant |
-| `gablue_manager/local.py` | état/commandes de la machine (sshd, avahi, kargs, CPUID, services, variante, atuin, gwine, booster, Tailscale), lecture des options des lanceurs et de `MangoHud.conf` (`parse_gwine_options`, `parse_mangohud_conf`, `mangohud_state`, `write_mangohud_conf`, `strip_mangohud_options`) |
+| `gablue_manager/local.py` | état/commandes de la machine (sshd, avahi, kargs, CPUID, services, variante, atuin, gwine, booster, Tailscale), lecture des options des lanceurs et de `MangoHud.conf` (`parse_gwine_options`, `parse_mangohud_conf`, `mangohud_state`, `write_mangohud_conf`, `strip_mangohud_options`) ; réglages du lanceur de jeux (`glauncher_config_path`, `parse_glauncher_config`, `write_glauncher_config`) |
 | `gablue_manager/updates.py` | mises à jour disponibles (image, Flatpaks, Homebrew, gwine, applications) : sondes, analyse, résumés |
 | `gablue_manager/remote_updates.py` | mises à jour d'un **poste distant**, à la demande : script SSH balisé, analyse (`parse_check`, domaine applications compris), chaîne « tout mettre à jour » (`update_chain(pending, states)`, section `apps_section`). **Marqueurs émis par `printf '\n::gablue:…\n'`** (idem `##…` d'`apps.REMOTE_STATE_SCRIPT`) : `rpm-ostree status --json` ne finit pas par un saut de ligne, un `echo` collait `::gablue:image-check` au `}` du JSON — section perdue, `json.loads` raté, image « vérification impossible » sur tous les postes distants (vécu 09/11/2026) |
 | `gablue_manager/remote_hardware.py` | résumé matériel d'un **poste distant** en une connexion SSH (script balisé `::gablue:*`, analyse réutilisant `local`) |
@@ -35,7 +35,7 @@ Sources = ce dossier (`src/gablue-manager/`), installées par
 | `gablue_manager/uiutil.py` | `restyle_label`, `fit_dialog_height`, `recommendation_badge` |
 | `gablue_manager/tasks.py` | `start_task`, dialogues de tâche locale/distante (non modaux), séquence globale (`SequentialTaskDialog`), **lot parallèle sur plusieurs postes** (`RemoteBatchDialog`), lien d'enregistrement (`_AuthLinkRow`) |
 | `gablue_manager/widgets.py` | `BusyProgressBar`, `StatusDot`, `HostCard`, `LocalConfigMenu`, `InfoPanel`, `UpdatesPanel`, `AccessPanel`, `NoticeBar` |
-| `gablue_manager/dialogs/` | un fichier par dialogue (`host`, `key`, `kernel`, `grub`, `secureboot`, `services`, `variant`, `btrfs`, `thermal`, `ryzen`, `clean`, `stversions`, `gwine`, `mangohud`, `booster`, `tailscale`, `share`, `wifi`, `apps`, `updates`, `prefs`) |
+| `gablue_manager/dialogs/` | un fichier par dialogue (`host`, `key`, `kernel`, `grub`, `secureboot`, `services`, `variant`, `btrfs`, `thermal`, `ryzen`, `clean`, `stversions`, `gwine`, `glauncher`, `mangohud`, `booster`, `tailscale`, `share`, `wifi`, `apps`, `updates`, `prefs`) |
 | `gablue_manager/window.py` | `MainWindow` |
 | `tests/` | tests unitaires stdlib des fonctions pures |
 

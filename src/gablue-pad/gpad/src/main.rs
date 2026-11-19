@@ -1056,6 +1056,7 @@ struct App {
 /// icône. Vaut mieux que le nom du menu, qui n'a aucun rapport.
 fn desktop_appli(nom: &str) -> &'static str {
     match nom {
+        "GLAUNCHER" => "glauncher",
         "EMULATIONSTATION" => "esde",
         "YOUTUBE" => "rocks.shy.VacuumTube",
         "GABLUE TV" => "gablue-tv",
@@ -1069,6 +1070,7 @@ fn desktop_appli(nom: &str) -> &'static str {
 /// d'activation possible : son script est toujours lancé.
 fn motifs_appli(nom: &str) -> &'static [&'static str] {
     match nom {
+        "GLAUNCHER" => &["glauncher"],
         "EMULATIONSTATION" => &["esde", "es-de", "emulationstation"],
         "YOUTUBE" => &["vacuumtube"],
         "GABLUE TV" => &["tvqt", "gablue_tv", "gablue-tv"],
@@ -2385,6 +2387,7 @@ impl App {
                     return;
                 }
                 let script = match nom {
+                    "GLAUNCHER" => "toggle-glauncher",
                     "EMULATIONSTATION" => "toggle-es",
                     "YOUTUBE" => "toggle-yt",
                     "GABLUE TV" => "toggle-tv",
@@ -4843,6 +4846,7 @@ fn main() {
     app.applis = vec![
         // l'en-tête de fenêtre est présent sur cette page aussi
         Entree::Fenetre,
+        Entree::Appli("GLAUNCHER"),
         Entree::Appli("EMULATIONSTATION"),
         Entree::Appli("YOUTUBE"),
         Entree::Appli("GABLUE TV"),

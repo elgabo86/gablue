@@ -10,6 +10,7 @@ import shlex
 import shutil
 import subprocess
 import time
+import tomllib
 from pathlib import Path
 
 from .constants import (
@@ -1850,6 +1851,119 @@ def write_mangohud_conf(text: str, vue: str, fps_limit: int) -> str:
         if key not in seen:
             out.append(key if value is None else f"{key}={value}")
     return "\n".join(out).rstrip("\n") + "\n"
+
+# --- glauncher (lanceur de jeux) -----------------------------------------
+
+def glauncher_config_path() -> Path:
+    """Configuration de glauncher (`$XDG_CONFIG_HOME/glauncher/config.toml`).
+
+    Le launcher essaie `--config`, `$GLAUNCHER_CONFIG`, `./config.toml` puis ce
+    fichier : c'est le seul qu'une session normale utilise. Il appartient au
+    compte (le launcher ne l'écrit jamais lui-même, il ne garde que son état
+    d'interface dans son cache).
+    """
+    base = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+    return base / "glauncher" / "config.toml"
+
+# Réglages que le manager écrit, avec leur valeur par défaut : miroir de
+# `Config::default()` dans `src/glauncher/src/config.rs`. Une clé absente du
+# fichier vaut ce défaut côté Rust (`serde(default)`) ; le manager lit donc les
+# valeurs effectives, pas seulement celles qui sont écrites.
+GLAUNCHER_DEFAULTS = {
+    "fullscreen": True,
+    "covers": True,
+    "steamgriddb_key": "",
+    "game_dirs": ["~/Windows/Games", "~/Games"],
+}
+
+def parse_glauncher_config(text: str) -> dict:
+    """Réglages de glauncher lus dans son `config.toml`.
+
+    Fichier partiel accepté (les clés manquantes prennent leur défaut) ; un
+    fichier illisible donne aussi les défauts — c'est ce que fait le launcher,
+    qui ignore une config invalide plutôt que de refuser de démarrer.
+    """
+    values = {key: list(value) if isinstance(value, list) else value
+              for key, value in GLAUNCHER_DEFAULTS.items()}
+    try:
+        data = tomllib.loads(text)
+    except (tomllib.TOMLDecodeError, ValueError):
+        return values
+    for key, default in GLAUNCHER_DEFAULTS.items():
+        if key not in data:
+            continue
+        value = data[key]
+        if isinstance(default, bool):
+            if isinstance(value, bool):
+                values[key] = value
+        elif isinstance(default, list):
+            if isinstance(value, list):
+                values[key] = [str(item) for item in value]
+        elif isinstance(value, str):
+            values[key] = value
+    return values
+
+def _toml_value(value) -> str:
+    """Valeur TOML sur une ligne (le fichier de glauncher est plat)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    text = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+def _assignment_key(line: str) -> str | None:
+    """Clé d'une ligne `clé = valeur`, `None` pour un commentaire ou du bruit."""
+    stripped = line.strip()
+    if not stripped or stripped.startswith(("#", "[")):
+        return None
+    match = re.match(r"([A-Za-z_][A-Za-z0-9_-]*)\s*=", line)
+    return match.group(1) if match else None
+
+def _brackets_open(text: str) -> bool:
+    """Vrai tant qu'un tableau TOML n'est pas refermé (valeur multi-lignes)."""
+    return text.count("[") > text.count("]")
+
+def write_glauncher_config(text: str, values: dict) -> str:
+    """Nouveau contenu de `config.toml` avec ces réglages.
+
+    Seules les clés de `values` changent : commentaires, ordre et clés inconnues
+    du fichier du compte sont conservés, et une clé absente est ajoutée à la fin
+    des clés de tête (avant toute section `[table]`). Même philosophie que
+    `write_mangohud_conf` : c'est la configuration du compte, pas la nôtre.
+    """
+    lines = text.splitlines()
+    pending = dict(values)
+    output: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        index += 1
+        key = _assignment_key(line)
+        if key is None or key not in pending:
+            output.append(line)
+            continue
+        # une valeur peut tenir sur plusieurs lignes (tableau) : on avale
+        # jusqu'à ce que les crochets soient équilibrés, en comptant sur
+        # l'ensemble du bloc et non sur la dernière ligne lue
+        block = line
+        while _brackets_open(block) and index < len(lines):
+            block = f"{block}\n{lines[index]}"
+            index += 1
+        output.append(f"{key} = {_toml_value(pending.pop(key))}")
+    if pending:
+        insert_at = len(output)
+        for position, line in enumerate(output):
+            if line.lstrip().startswith("["):
+                insert_at = position
+                break
+        new = [f"{key} = {_toml_value(value)}" for key, value in pending.items()]
+        if insert_at and output[insert_at - 1].strip():
+            new.insert(0, "")
+        output[insert_at:insert_at] = new
+    return "\n".join(output).rstrip("\n") + "\n"
 
 def strip_mangohud_options(text: str) -> str:
     """Fichier d'options de lanceur sans les clés MangoHud héritées."""

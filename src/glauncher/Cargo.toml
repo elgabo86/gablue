@@ -1,0 +1,47 @@
+[package]
+name = "glauncher"
+version = "0.1.0"
+edition = "2024"
+description = "Launcher de jeux pour Gablue : lance les .wgp et .lgp avec leur icône, plein écran, pilotable à la manette"
+license = "MIT"
+
+[dependencies]
+iced = { version = "0.14", features = ["image", "advanced"] }
+evdev = "0.13"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+notify = "8"
+rusqlite = { version = "0.43", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+ureq = "3"
+
+[profile.release]
+lto = "thin"
+strip = true
+opt-level = 2
+
+# En debug, décoder une image est ~90× plus lent qu'en optimisé (mesuré
+# 47 ms contre 0,53 ms pour une miniature) : une grille mettait plusieurs
+# secondes à se remplir avec `cargo run` ou `./test.sh`. On optimise donc
+# UNIQUEMENT les caisses de décodage/encodage d'images, pas l'application.
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.image-webp]
+opt-level = 3
+
+[profile.dev.package.png]
+opt-level = 3
+
+[profile.dev.package.fdeflate]
+opt-level = 3
+
+[profile.dev.package.flate2]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3

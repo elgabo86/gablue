@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <g stroke-linejoin="round" stroke-linecap="round">
+    <!-- contour sombre : l'étoile reste lisible sur une cover claire -->
+    <path d="M 60.00 12.00 L 75.28 44.97 L 111.36 49.31 L 84.73 74.03 L 91.74 109.69 L 60.00 92.00 L 28.26 109.69 L 35.27 74.03 L 8.64 49.31 L 44.72 44.97 Z" fill="#ffd93b" stroke="#2a2005" stroke-width="14"/>
+    <!-- les pointes arrondies, même jaune par-dessus -->
+    <path d="M 60.00 12.00 L 75.28 44.97 L 111.36 49.31 L 84.73 74.03 L 91.74 109.69 L 60.00 92.00 L 28.26 109.69 L 35.27 74.03 L 8.64 49.31 L 44.72 44.97 Z" fill="#ffd93b" stroke="#ffd93b" stroke-width="7"/>
+    <!-- deux yeux : traits épais à bouts ronds, inclinés vers l'extérieur -->
+    <g stroke="#241a00" stroke-width="12.0">
+      <line x1="46.0" y1="49.5" x2="46.0" y2="66.5" transform="rotate(-6 46.0 58.0)"/>
+      <line x1="74.0" y1="49.5" x2="74.0" y2="66.5" transform="rotate(6 74.0 58.0)"/>
+    </g>
+  </g>
+</svg>

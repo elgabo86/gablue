@@ -1,0 +1,17 @@
+#!/usr/bin/bash
+# toggle-glauncher - lance le launcher de jeux (glauncher).
+set -uo pipefail
+
+# binaire surchargeable pour les tests (jamais lancer le vrai launcher au banc)
+GLAUNCHER=${GLAUNCHER:-/usr/bin/glauncher}
+
+# Jamais de fermeture ici : le menu Applications active une appli ouverte, il
+# ne la tue pas. Si elle tourne déjà, on ne fait rien.
+if pgrep -u "$USER" -x glauncher > /dev/null 2>&1; then
+    echo "glauncher deja lance"
+else
+    # plein écran par défaut (config.toml) ; le jeu lancé est mis en plein
+    # écran par KWin depuis le launcher lui-même
+    "$GLAUNCHER" > /dev/null 2>&1 &
+    echo "glauncher lance"
+fi

@@ -22,7 +22,7 @@ qu'à la demande et le gate BPF n'attache son hook que pendant le menu.
 | `inhibit/` | inhibition de l'écran tant qu'une manette est connectée | `/usr/bin/gpad-inhibit` |
 | `rumble/` | impulsion FF_RUMBLE (confirmation de sauvegarde de replay) | `/usr/bin/gpad-rumble` |
 | `kwin/` | scripts KWin poussés à chaud (`wininfo.js`, `lister.js`, `fullscreen.js` ; le cyclage L2/R2 est **généré**) | `/usr/libexec/gablue-pad/kwin` |
-| `scripts/` | lancements du menu Applications (`toggle-es`, `toggle-yt`, `toggle-tv`, `toggle-jellyfin`) + `fermer-applis`, `openes` | `/usr/libexec/gablue-pad/scripts` |
+| `scripts/` | lancements du menu Applications (`toggle-glauncher`, `toggle-es`, `toggle-yt`, `toggle-tv`, `toggle-jellyfin`) + `fermer-applis`, `openes` | `/usr/libexec/gablue-pad/scripts` |
 | `sounds/` | `beep.wav` (départ enregistrement/replay), `shot.wav` (capture), `clic.wav`/`noclic.wav` (mode souris) | idem |
 | `recorder.sh`, `replay.sh`, `screenshot.sh`, `vrr.sh`, `mangohud.sh`, `booster.sh` | outils appelés par l'overlay et le déclencheur (`booster.sh` : « optimiser au premier plan », ligne `PRIORITE ACTIVE` des réglages ; `mangohud.sh` : **unique** réglage MangoHud du poste, partagé avec le dialogue « MangoHud… » de Gablue Manager) | idem |
 | `evgrab/` | bancs : `vpad` (manette virtuelle + signaux), `rdr`, `hidrev` | **non installé** |

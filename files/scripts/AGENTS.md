@@ -94,7 +94,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - `terminaltexteffects` via `uv` (appelé après rpm)
 - **Conflit site-packages** : un RPM peut poser un fichier/symlink à n'importe quel niveau de `/usr/local/lib/pythonX.Y/site-packages/` (transition majeure Python) → `uv pip install` échoue (`File exists, os error 17`) ; le script remonte la hiérarchie, supprime ce qui n'est pas un répertoire, `mkdir -p` avant install. `X.Y` est déduit du Python de l'image (`python3 -c`), jamais codé en dur : un chemin figé visait 3.14 et serait resté muet sur 3.15 en fc45
 
-### build-c / build-gwine / build-manager / build-manager-tray / build-tvqt / build-apk-installer / build-lgplaunch / build-share-daemon / build-share — Compilation des sources
+### build-c / build-gwine / build-manager / build-manager-tray / build-glauncher / build-tvqt / build-apk-installer / build-lgplaunch / build-share-daemon / build-share — Compilation des sources
 
 **build-c** (après pypi) :
 - Compile `/src/gablue-pad` (`make install` : gpad-trigger, gpad-kbd, gpad-mouse, gpad-inhibit, gpad-rumble + l'arborescence de données dans `/usr/libexec/gablue-pad`), `/src/ds2xbox`, `/src/gablue-dualsense` (`gablue-dualsense-ctl`, hidapi), `/src/gablue-isomount`
@@ -119,6 +119,13 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - Livre `/usr/libexec/gablue-manager-tray` (~2,8 Mo), l'icône StatusNotifierItem du manager : `gablue-manager --tray` lui passe la main par `os.execv`, donc aucun Python ne reste en mémoire (icône Qt mesurée à 110 Mo, la Rust à 4 Mo)
 - Le Containerfile copie désormais `gablue_manager/` et le lanceur **séparément** (jamais `tray/target/`, ~centaines de Mo)
 - Contrat de l'icône → `src/gablue-manager/AGENTS.md`
+
+**build-glauncher** (étape `glauncher-build`, avant l'image finale) :
+- Même schéma que `build-manager-tray` / `build-gpad` (étape jetée, `CARGO_HOME=/cargo`, caches `/cargo` + `/build/target`, `cargo build --release --locked`) : l'étape finale ne reçoit que `/out/glauncher` par `COPY --from=glauncher-build /out/glauncher /usr/bin/glauncher`
+- `dnf5 install cargo rust gcc` dans l'étape jetée ; `rusqlite` est en mode `bundled` (SQLite C voyage dans la caisse)
+- **`assets/` doit être copié avec les sources** : glyphes de manette, étoile des favoris, icône et cover d'exemple sont embarqués par `include_bytes!` — sans lui, la compilation échoue
+- Le launcher finit en `/usr/bin/glauncher` (binaire iced ~25 Mo) ; `.desktop` et icône viennent de `files/system/all/usr/share/{applications,icons/hicolor/scalable/apps}`
+- Contrat de l'application → `src/glauncher/AGENTS.md`
 
 **build-tvqt** (après build-manager) :
 - Installe le paquet Python `/src/tvqt/gablue_tv/` dans `/usr/lib/tvqt/` et le lanceur `src/tvqt/tvqt` en `/usr/bin/tvqt` (755) ; sources nettoyées

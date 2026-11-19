@@ -3304,6 +3304,64 @@ class ImageDetailTest(unittest.TestCase):
         self.assertEqual(text, "actuelle 20261106 · mise à jour en attente")
 
 
+class GlauncherConfigTest(unittest.TestCase):
+    """config.toml de glauncher : lecture tolérante, écriture conservatrice."""
+
+    def test_defaults_sans_fichier(self):
+        state = local.parse_glauncher_config("")
+        self.assertTrue(state["fullscreen"])
+        self.assertTrue(state["covers"])
+        self.assertEqual(state["steamgriddb_key"], "")
+        self.assertEqual(
+            state["game_dirs"], local.GLAUNCHER_DEFAULTS["game_dirs"]
+        )
+
+    def test_fichier_partiel_complete_les_defauts(self):
+        state = local.parse_glauncher_config('covers = false\ncolumns = 6\n')
+        self.assertFalse(state["covers"])
+        self.assertTrue(state["fullscreen"], "clé absente = défaut de glauncher")
+        self.assertEqual(state["game_dirs"], ["~/Windows/Games", "~/Games"])
+
+    def test_fichier_illisible_donne_les_defauts(self):
+        # le launcher ignore une config invalide ; le manager lit la même chose
+        state = local.parse_glauncher_config("fullscreen = oui\n")
+        self.assertTrue(state["fullscreen"])
+
+    def test_ecriture_conserve_commentaires_et_cles_inconnues(self):
+        text = (
+            "# mon fichier\n"
+            "columns = 6\n"
+            "fullscreen = true\n"
+            "game_dirs = [\n  \"~/A\",\n  \"~/B\",\n]\n"
+        )
+        out = local.write_glauncher_config(
+            text, {"game_dirs": ["~/C"], "fullscreen": False}
+        )
+        self.assertIn("# mon fichier", out)
+        self.assertIn("columns = 6", out, "clé inconnue du manager conservée")
+        self.assertIn('game_dirs = ["~/C"]', out)
+        self.assertIn("fullscreen = false", out)
+        self.assertNotIn("~/A", out, "l'ancien tableau multi-lignes a disparu")
+        self.assertNotIn("~/B", out)
+        self.assertEqual(local.parse_glauncher_config(out)["game_dirs"], ["~/C"])
+
+    def test_ecriture_ajoute_les_cles_absentes_avant_les_sections(self):
+        out = local.write_glauncher_config(
+            "columns = 5\n\n[autre]\nx = 1\n",
+            {"steamgriddb_key": 'a"b'},
+        )
+        self.assertLess(out.index("steamgriddb_key"), out.index("[autre]"))
+        self.assertIn('steamgriddb_key = "a\\"b"', out)
+        # le TOML produit reste lisible
+        self.assertEqual(
+            local.parse_glauncher_config(out)["steamgriddb_key"], 'a"b'
+        )
+
+    def test_ecriture_vide_creer_le_contenu(self):
+        out = local.write_glauncher_config("", {"game_dirs": ["~/Jeux"]})
+        self.assertEqual(out, 'game_dirs = ["~/Jeux"]\n')
+
+
 
 if __name__ == "__main__":
     unittest.main()

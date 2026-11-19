@@ -7,8 +7,11 @@
 #   l'étape share-build
 # - src/gablue-manager/tray/target : idem pour l'icône du manager, recompilée
 #   dans l'étape manager-tray-build
+# - src/glauncher/target : idem pour le launcher de jeux (compilation release
+#   ~11 Go), recompilé dans l'étape glauncher-build
 # - __pycache__ : liés au Python de la machine de dev, jamais installés
 .git
 src/gablue-share/daemon/target
 src/gablue-manager/tray/target
+src/glauncher/target
 __pycache__

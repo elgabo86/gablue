@@ -83,6 +83,23 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build-gpad
 
+# Étape intermédiaire : launcher de jeux (Rust, iced). Même raison d'être que
+# les précédentes : la toolchain reste ici, l'étape finale ne reçoit que le
+# binaire. `assets/` est copié avec les sources : glyphes de manette, étoile des
+# favoris, icône et cover d'exemple sont embarqués par `include_bytes!`.
+FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION} AS glauncher-build
+ENV CARGO_HOME=/cargo
+COPY src/glauncher/Cargo.toml /build/Cargo.toml
+COPY src/glauncher/Cargo.lock /build/Cargo.lock
+COPY src/glauncher/src /build/src
+COPY src/glauncher/assets /build/assets
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=cache,dst=/cargo \
+    --mount=type=cache,dst=/build/target \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build-glauncher
+
 # Étape intermédiaire : gate BPF (clang + libbpf). L'étape finale garde libbpf
 # au runtime (petit paquet), pas la chaîne de compilation.
 FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION} AS gpad-gate-build
@@ -236,6 +253,10 @@ RUN --mount=type=cache,dst=/var/cache \
 # Le démon cherche `gpad-gate.bpf.o` à côté de son binaire : même dossier.
 COPY --from=gpad-build /out/gpad /usr/bin/gpad
 COPY --from=gpad-gate-build /out/gpad-gate /out/gpad-gate.bpf.o /usr/libexec/gablue-pad/
+
+# Launcher de jeux (binaire Rust de l'étape glauncher-build) ; `.desktop` et
+# icône arrivent avec `files/system/all`.
+COPY --from=glauncher-build /out/glauncher /usr/bin/glauncher
 
 # Assemblage du script gwine standalone
 RUN --mount=type=cache,dst=/var/cache \

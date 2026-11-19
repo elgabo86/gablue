@@ -163,6 +163,7 @@ ni surbrillance.
 
 | Ligne | Fenêtre reconnue (class/desktop) | Lancement (si absente) |
 |---|---|---|
+| `GLAUNCHER` | `glauncher` | `scripts/toggle-glauncher` → `/usr/bin/glauncher` (plein écran par défaut) |
 | `EMULATIONSTATION` | `esde`, `es-de`, `emulationstation` | `scripts/toggle-es` → `~/AppImages/esde.appimage` (plein écran par nature) |
 | `YOUTUBE` | `vacuumtube` | `scripts/toggle-yt` → `flatpak run … --fullscreen` |
 | `GABLUE TV` | `tvqt`, `gablue_tv`, `gablue-tv` | `scripts/toggle-tv` → `/usr/bin/tvqt --fullscreen` |

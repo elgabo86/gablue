@@ -1,0 +1,21 @@
+#!/usr/bin/bash
+
+# Compilation du launcher de jeux glauncher (Rust, iced) dans l'étape
+# "glauncher-build". Le binaire est déposé dans /out : l'étape finale le copie
+# par COPY --from, donc la toolchain Rust (~300 Mo) n'entre jamais dans l'image.
+
+set -eoux pipefail
+
+# Dépendances de compilation : uniquement dans cette étape, jetée après.
+# gcc explicite : c'est le linker des binaires Rust, et `rusqlite` est compilé
+# en mode `bundled` (le SQLite C voyage dans la caisse).
+dnf5 -y install cargo rust gcc
+
+# --locked : Cargo.lock est dans le dépôt, la résolution ne bouge pas.
+# Le projet est copié dans /build par le Containerfile, `assets/` compris
+# (visuels embarqués par include_bytes!, absents = échec de compilation).
+cargo build --release --locked --manifest-path /build/Cargo.toml
+
+install -Dm755 /build/target/release/glauncher /out/glauncher
+
+echo "glauncher compilé : $(stat -c %s /out/glauncher) octets"

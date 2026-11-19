@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Lanceur de jeux
+Comment=Lance les paquets .wgp (gwine) et .lgp (lgplaunch), plein écran, à la manette
+Exec=glauncher
+Icon=glauncher
+Categories=Game;
+Keywords[fr_CH]=launcher;lanceur;jeu;game;manette;glauncher;wgp;lgp;
+Keywords=launcher;lanceur;jeu;game;manette;glauncher;wgp;lgp;
+Terminal=false
+StartupNotify=true
+StartupWMClass=glauncher
