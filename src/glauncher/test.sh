@@ -21,7 +21,14 @@ cd "$(dirname "$0")"
 
 # Toujours la version optimisée : décoder une image en debug est ~90× plus
 # lent (47 ms contre 0,53 ms par miniature), la grille mettait 8 s à se remplir.
-BIN=target/release/glauncher
+#
+# Cargo écrit HORS du dépôt (`.cargo/config.toml` : `target/` pesait 11 Go dans
+# ~/Syncthing), donc le chemin du binaire se demande à cargo au lieu d'être
+# supposé — `CARGO_TARGET_DIR` reste prioritaire si on le pose.
+BIN="$(
+    cargo metadata --format-version 1 --no-deps 2>/dev/null |
+        python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])'
+)/release/glauncher"
 CACHE="${XDG_DATA_HOME:-$HOME/.local/share}/glauncher"
 LOGS=/tmp/opencode/glauncher-tests
 
