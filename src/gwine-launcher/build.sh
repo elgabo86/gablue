@@ -48,6 +48,7 @@ LIB_FILES=(
     "lib/wineserver/server.sh"
     "lib/wineserver/cleanup.sh"
     "lib/sandbox.sh"
+    "lib/running.sh"
     "lib/wgp/core.sh"
     "lib/wgp/mount.sh"
     "lib/wgp/overlay.sh"

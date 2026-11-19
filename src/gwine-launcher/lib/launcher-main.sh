@@ -289,7 +289,23 @@ launch_wine_game() {
     else
         echo "PID processus jeu: détection automatique (plusieurs processus .exe possibles)"
     fi
-    
+
+    # Overlay manette : nom et icône du PAQUET pendant la partie (la fenêtre
+    # d'un jeu Wine porte le nom et l'icône de l'exe). L'ancre est `bwrap` (ou
+    # le vineloader sans sandbox) : gpad descend son arbre et, pour la fenêtre
+    # reparentée à systemd, compare les sessions. Le logo manquant est demandé
+    # à glauncher en fond (écriture dans son cache, jamais par l'overlay).
+    local running_paquet="${wgp_file:-}"
+    local running_nom="$display_name"
+    if [ -n "$running_paquet" ]; then
+        running_nom="$(basename "$running_paquet")"
+        running_nom="${running_nom%.wgp}"
+    else
+        running_nom="${running_nom%.exe}"
+    fi
+    running_publish "$running_nom" "$running_paquet" "${GWINE_GAME_PID:-$$}" "$$"
+    running_fetch_art "$running_paquet"
+
     echo "Attente de la fin du jeu..."
     local wait_count=0
     local still_running=true
@@ -332,6 +348,9 @@ launch_wine_game() {
             echo "Jeu terminé"
         fi
     done
+
+    # plus de jeu : l'overlay ne doit plus afficher ce paquet
+    running_clear
     
     # Fermer gamescope si détecté (gamescope ne se ferme pas automatiquement à la fin du jeu)
     if [ -n "$GWINE_GAMESCOPE_PIDS" ]; then

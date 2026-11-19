@@ -81,6 +81,7 @@ src/gwine-launcher/
 │   │   └── setup.sh             # Configuration environnement Wine
 │   ├── launcher-main.sh     # Lancement effectif des jeux (launch_wine_game)
 │   ├── sandbox.sh           # Sandboxing avec bubblewrap
+│   ├── running.sh           # Jeu en cours publié pour l'overlay manette (gpad)
 │   ├── composefs_statfs_shim.c  # Source C du shim overlayfs statfs
 │   ├── composefs_statfs_shim.so # Shim 64-bit compilé
 │   ├── composefs_statfs_shim32.so # Shim 32-bit compilé

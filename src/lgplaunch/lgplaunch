@@ -19,6 +19,7 @@ source "$SCRIPT_DIR/lib/temp.sh"
 source "$SCRIPT_DIR/lib/symlinks.sh"
 source "$SCRIPT_DIR/lib/env.sh"
 source "$SCRIPT_DIR/lib/launch.sh"
+source "$SCRIPT_DIR/lib/running.sh"
 source "$SCRIPT_DIR/lib/modes.sh"
 
 #======================================

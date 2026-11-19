@@ -38,6 +38,7 @@ run_lgp_mode() {
 
     # Exporter les variables globales utilisées par les fonctions
     export _LGP_MODE MOUNT_DIR MOUNT_BASE LGPACK_NAME GAME_INTERNAL_NAME \
+           LGPACK_FILE fullpath \
            SAVES_SYMLINK SAVES_REAL EXTRA_BASE EXTRA_DIR EXTRA_SYMLINK EXTRA_REAL \
            TEMP_SYMLINK TEMP_REAL \
            args FULL_EXE_PATH REAL_EXE_PATH HOME_REAL SELECT_EXE_MODE \

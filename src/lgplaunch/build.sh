@@ -23,6 +23,7 @@ LIB_FILES=(
     "lib/symlinks.sh"
     "lib/env.sh"
     "lib/launch.sh"
+    "lib/running.sh"
     "lib/modes.sh"
 )
 

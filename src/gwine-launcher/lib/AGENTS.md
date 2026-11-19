@@ -39,6 +39,7 @@ lib/cache/cachepack.sh
 lib/wineprefix.sh
 lib/wineserver-manager.sh # -> charge wineserver/*
 lib/sandbox.sh
+lib/running.sh
 lib/wgp.sh                # -> charge wgp/*
 lib/launcher.sh           # -> charge launcher-utils/* + launcher-main.sh
 lib/mode-init.sh          # -> charge modes/*
@@ -116,8 +117,9 @@ lib/dir-config.sh
   - paths.sh : Utilitaires de chemins (transliterate, create_temp_path)
   - conflict.sh : Vérification conflits d'instance
   - setup.sh : Configuration environnement Wine
-- **launcher-main.sh** : Lancement effectif des jeux avec Wine (launch_wine_game), détection gamescope dans l'arbre parent, kill mangoapp+gamescope à la fermeture
+- **launcher-main.sh** : Lancement effectif des jeux avec Wine (launch_wine_game), détection gamescope dans l'arbre parent, kill mangoapp+gamescope à la fermeture. Publie le jeu à l'overlay juste avant l'attente (`running_publish`, nom = nom du `.wgp`) et retire la publication à la fin (`running_clear`)
 - **sandbox.sh** : Configuration bubblewrap pour le sandboxing
+- **running.sh** : Jeu en cours publié pour l'overlay manette (`gpad`). `running_publish <nom> <paquet|""> <pid…>` écrit `$XDG_RUNTIME_DIR/gablue/running.txt` (repli `/tmp/gablue-<uid>`, écriture `.part` + renommage) avec `nom=`, `paquet=` (le `.wgp`) et `pids=` (`$GWINE_GAME_PID`, qui est `bwrap` ou le vineloader, plus `$$`) ; `running_clear` ne retire le fichier que s'il porte encore **nos** PID (deux jeux en parallèle). `gpad` relie la fenêtre active à ces PID (exact, descendant, ou **session** — Wine reparente ses processus à systemd mais garde la session de `bwrap --new-session`) et affiche le nom et l'icône du **paquet** au lieu de ceux de l'exe. `running_fetch_art <paquet>` lance `glauncher --art` **détaché** (setsid) : le logo et l'icône manquants sont téléchargés par le launcher, dans son cache, en PNG — jamais par l'overlay, qui les voit apparaître à sa relecture d'une seconde. Même module côté lgplaunch (`src/lgplaunch/lib/running.sh`, publication par `$$`, le jeu tournant en avant-plan)
 - **mode-init.sh** : Fichier de redirection vers modes/*
 - **modes/*** : Modules d'initialisation du préfixe
   - init-main.sh : init_prefix_only, init_wineprefix. **Init headless** : la phase 2 (`init_prefix_only`) force `DISPLAY=` et `WAYLAND_DISPLAY=` pour tous les installateurs — chacun ouvrait sinon sa fenêtre X11/Wayland et volait le focus du bureau pendant la mise à jour (vécu 07/11/2026). Aucun installateur n'a besoin d'afficher, la progression reste sur stdout et dans la fenêtre de Gablue Manager (autre processus, écran intact) ; `--init` étant un processus dédié, rien n'est restauré. `gui_available()` devient donc faux pendant cette phase : aucun appel `ui_confirm`/`ui_choose` ne s'y trouve, ne pas en ajouter sans rouvrir l'écran

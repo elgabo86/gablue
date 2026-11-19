@@ -64,7 +64,15 @@ launch_game() {
     fi
     
     [ -n "$game_args" ] && cmd="$cmd $game_args"
-    
+
+    # Overlay manette : nom et icône du PAQUET pendant la partie. Le jeu tourne
+    # en avant-plan sous ce processus (directement, ou via le `bash -c` de
+    # l'overlay kernel) : publier `$$` suffit, gpad descend l'arbre. Le logo
+    # manquant est demandé à glauncher en fond (il écrit dans son cache, jamais
+    # l'overlay).
+    running_publish "$display_name" "${LGPACK_FILE:-}" "$$"
+    running_fetch_art "${LGPACK_FILE:-}"
+
     if [ "${_LGP_MODE:-false}" = "true" ]; then
         local kernel_cmd
         kernel_cmd="$(_lgp_kernel_overlay_mount_script)"
@@ -79,6 +87,8 @@ launch_game() {
     fi
     
     echo "Jeu terminé avec le code: $game_exit"
+    # plus de jeu : l'overlay ne doit plus afficher ce paquet
+    running_clear
     return $game_exit
 }
 
