@@ -46,6 +46,37 @@ absolus et le déclencheur les prend en priorité (`chemins_env()`) :
 `PADNODES`, `GPAD_GATE`, `KILLTHEMALL` (script partagé hors du dossier du
 service).
 
+## Overlay résident : Home instantané
+
+`gpad-trigger` lance l'overlay **une fois** au démarrage (si `menu` est actif),
+en `--resident --ipc <socket>` ; les ouvertures passent ensuite par ce socket
+Unix, plus par un `exec` :
+
+- socket `$XDG_RUNTIME_DIR/gablue/gpad-<pid du trigger>.sock` (repli
+  `/tmp/gablue-<uid>`) : **un par déclencheur**, le banc peut cohabiter avec le
+  service ;
+- `open <node> <cibles js/hidraw…>` : node à grabber **et** cibles du gate,
+  reposées à chaque ouverture — les `dev_t` changent à la reconnexion d'une
+  manette, un résident les garderait périmées (le démon du gate est idempotent) ;
+- le résident est prêt quand son socket apparaît ; le déclencheur l'attend
+  (pas de 10 ms, plafond 3 s) avant sa boucle, pour que le premier Home soit
+  déjà instantané ;
+- résident mort (`SIGCHLD` le récolte) ou socket injoignable : `launch()`
+  classique (exec), comportement d'avant, aucun trou de service ;
+- **relance différée** : un résident mort (Wayland pas encore prêt au démarrage
+  du service, par ex.) est retenté **une fois par minute** — un échec bloque le
+  déclencheur jusqu'à 3 s, inutile de marteler ;
+- **`PR_SET_PDEATHSIG(SIGTERM)`** dans l'enfant : le résident ne survit pas au
+  déclencheur, sinon chaque redémarrage du service (`Restart=always`) laisserait
+  un `gpad` fantôme avec sa surface Wayland et son socket ;
+- menu système (`--console`) et vues `--focus` restent des overlays jetables :
+  ils ne passent pas par le résident.
+
+Mesuré de bout en bout au banc (vpad → trigger → IPC → tampon) : Home relâché →
+`IPC open` traité en **0,4 ms**, premier tampon Wayland **11,5 ms** plus tard,
+panneau en place ~200 ms (glissement 200 ms, inchangé), au lieu de ~470 ms avec
+l'exec.
+
 ## Options (Gablue Manager)
 
 `~/.config/gablue/gpad-options`, une ligne `clé=valeur`, **absente = on** :
@@ -98,8 +129,11 @@ centré** (520×360) qui ne contient que des actions définitives.
   L'overlay vérifie le maintien **à chaque tour de boucle** (`surveiller_home`,
   seuil `HOME_LONG_MS` = 1,2 s, identique à `gpad-trigger`) ; au seuil il envoie
   **SIGUSR1** au pid de `gpad-trigger` (reçu en `GPAD_TRIGGER_PID`), affiche
-  `HOME MAINTENU -> menu systeme`, puis **se ferme**. `gpad-trigger` reçoit le
-  signal, **attend sa sortie** (pad rendu) et lance `--console`. Mesuré :
+  `HOME MAINTENU -> menu systeme`, puis **se ferme**. En **résident**, le
+  signal part de `cacher()` **après** la fermeture (grab rendu) : le
+  déclencheur n'a plus à attendre de sortie de processus. En jetable,
+  `gpad-trigger` reçoit le signal, **attend sa sortie** (pad rendu) et lance
+  `--console`. Mesuré :
   `HOME MAINTENU -> menu systeme` + `[gpad-trigger] demande de menu systeme
   (overlay)` + `SIGNAL -> fermeture` + `CONSOLE items=3`.
 - **Bug de boucle corrigé (17/11/2026)** : `gpad-trigger` faisait

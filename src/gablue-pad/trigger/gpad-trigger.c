@@ -25,6 +25,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -32,6 +36,15 @@
 #define MAXPADS 8
 
 static pid_t child = -1;
+/* Overlay résident : lancé une fois, ouvert/fermé par le socket `ipc_path`.
+ * `child` reste réservé aux overlays jetables (console, focus) et sert de
+ * garde « un seul overlay à la fois » pour ceux-là. */
+static pid_t resident = -1;
+static char ipc_path[256];
+/* Résident mort (il ne peut plus répondre) : on retentera son démarrage une
+ * fois laissée passer une minute, le temps que Wayland soit prêt par ex. */
+static volatile sig_atomic_t resident_dead;
+static long resident_retry_at;
 static volatile sig_atomic_t need_rescan;
 /* Menu système demandé par l'overlay : il tient le grab, donc il est seul à
  * voir Home maintenu, et nous le signale par SIGUSR1. */
@@ -78,6 +91,13 @@ static void on_chld(int s)
     if (child > 0 && waitpid(child, &st, WNOHANG) == child) {
         fprintf(stderr, "[gpad-trigger] overlay terminé (status %d)\n", st);
         child = -1;
+    }
+    if (resident > 0 && waitpid(resident, &st, WNOHANG) == resident) {
+        fprintf(stderr,
+                "[gpad-trigger] overlay resident terminé (status %d) : "
+                "ouverture par exec\n", st);
+        resident = -1;
+        resident_dead = 1;
     }
     if (inhibitor > 0 && waitpid(inhibitor, &st, WNOHANG) == inhibitor) {
         inhibitor = -1;
@@ -321,6 +341,110 @@ static void launch_vue(char **argv, int argc, int first_free, const char *node,
     fflush(stderr);
 }
 
+/* --- overlay résident (ouverture instantanée) -----------------------------
+ * Le panneau est lancé UNE fois : sa surface reste mappée, transparente et
+ * hors écran, donc KWin ne rejoue pas son animation d'ouverture à chaque Home
+ * et il n'y a plus d'exec à payer. Le déclencheur envoie `open <node>
+ * <cibles…>` sur un socket Unix ; l'overlay fait le reste.
+ *
+ * Socket par déclencheur (`gpad-<pid>.sock`) : le banc peut tourner à côté du
+ * service sans lui voler ses commandes. */
+static void ipc_path_init(void)
+{
+    const char *rt = getenv("XDG_RUNTIME_DIR");
+    char base[200];
+    if (rt && *rt)
+        snprintf(base, sizeof base, "%s/gablue", rt);
+    else
+        snprintf(base, sizeof base, "/tmp/gablue-%d", (int)getuid());
+    mkdir(base, 0700);
+    snprintf(ipc_path, sizeof ipc_path, "%s/gpad-%d.sock", base, (int)getpid());
+}
+
+static void resident_start(char **argv, int argc, int first_free)
+{
+    ipc_path_init();
+    unlink(ipc_path);
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork overlay resident");
+        return;
+    }
+    if (pid == 0) {
+        /* Le résident ne doit pas survivre au déclencheur : sinon chaque
+         * redémarrage du service (Restart=always) laisserait un gpad fantôme
+         * avec sa surface Wayland et son socket. */
+        prctl(PR_SET_PDEATHSIG, SIGTERM);
+        char **args = calloc((size_t)(argc - first_free) + 8, sizeof *args);
+        int n = 0;
+        for (int i = first_free; i < argc; i++)
+            args[n++] = argv[i];
+        if (gate_sock[0]) {
+            args[n++] = "--gate";
+            args[n++] = gate_sock;
+        }
+        args[n++] = "--resident";
+        args[n++] = "--ipc";
+        args[n++] = ipc_path;
+        args[n] = NULL;
+        setenv("GPAD_TRIGGER_PID", own_pid, 1);
+        execv(args[0], args);
+        perror("execv overlay resident");
+        _exit(127);
+    }
+    resident = pid;
+    /* le socket est créé après wayland + premier configure : on attend son
+     * apparition (10 ms de pas, 3 s de plafond) pour que le premier Home soit
+     * déjà instantané */
+    for (int i = 0; i < 300; i++) {
+        if (access(ipc_path, F_OK) == 0) {
+            fprintf(stderr,
+                    "[gpad-trigger] overlay resident pret (pid %d, ipc %s)\n",
+                    pid, ipc_path);
+            fflush(stderr);
+            return;
+        }
+        struct timespec ts = {0, 10 * 1000 * 1000};
+        nanosleep(&ts, NULL);
+    }
+    fprintf(stderr,
+            "[gpad-trigger] overlay resident muet (pid %d) : ouverture par exec\n",
+            pid);
+    fflush(stderr);
+}
+
+/* Demande l'ouverture au résident ; 0 = pas de résident joignable (l'appelant
+ * retombe sur l'exec classique). */
+static int overlay_open_remote(const char *node)
+{
+    if (resident <= 0 || !ipc_path[0] || !node || !*node)
+        return 0;
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0)
+        return 0;
+    struct sockaddr_un sa = {0};
+    sa.sun_family = AF_UNIX;
+    if (strlen(ipc_path) >= sizeof sa.sun_path) {
+        close(fd);
+        return 0;
+    }
+    memcpy(sa.sun_path, ipc_path, strlen(ipc_path) + 1);
+    if (connect(fd, (struct sockaddr *)&sa, sizeof sa) < 0) {
+        close(fd);
+        return 0;
+    }
+    char msg[512];
+    int len = snprintf(msg, sizeof msg, "open %s", node);
+    for (int i = 0; i < n_gate && len > 0 && len < (int)sizeof msg - 70; i++)
+        len += snprintf(msg + len, sizeof msg - (size_t)len, " %s", gate_nodes[i]);
+    if (len < 0 || len >= (int)sizeof msg - 1)
+        len = (int)strlen(msg);
+    msg[len++] = '\n';
+    ssize_t w = write(fd, msg, (size_t)len);
+    close(fd);
+    return w == len;
+}
+
 /* --- combos Home + D-pad ---------------------------------------------------
  * Home seul ouvre le panneau au relâchement ; Home maintenu = menu système ;
  * Home+gauche = sauvegarde du replay si le mode
@@ -546,6 +670,9 @@ int main(int argc, char **argv)
     chemins_env();
     lire_options();
     inventaire_nodes();
+    /* Home doit être instantané : le panneau démarre une fois, maintenant. */
+    if (opt_menu)
+        resident_start(argv, argc, first_free);
     printf("OVERLAY=%s\nRECORDER=%s\nSCREENSHOT=%s\nGATE=%s\n", argv[first_free],
            g_recorder, g_screenshot, gate_sock[0] ? gate_sock : "(aucun)");
     fflush(stdout);
@@ -567,6 +694,25 @@ int main(int argc, char **argv)
     int announced = 0;
 
     for (;;) {
+        /* Un résident mort (Wayland pas encore prêt au démarrage du service,
+         * par ex.) laisserait tous les Home suivants en exec : on retente,
+         * une fois par minute, plutôt que de marteler — un échec bloque le
+         * déclencheur jusqu'à 3 s (attente du socket). */
+        if (resident_dead && resident <= 0) {
+            struct timespec nm;
+            clock_gettime(CLOCK_MONOTONIC, &nm);
+            long nowm = (long)nm.tv_sec * 1000L + nm.tv_nsec / 1000000L;
+            if (resident_retry_at == 0) {
+                resident_retry_at = nowm + 60000L;
+            } else if (nowm >= resident_retry_at) {
+                resident_retry_at = 0;
+                resident_dead = 0;
+                fprintf(stderr, "[gpad-trigger] relance de l'overlay resident\n");
+                fflush(stderr);
+                resident_start(argv, argc, first_free);
+            }
+        }
+
         /* (re)scan périodique : nouvelles manettes, reconnexions */
         time_t now = time(NULL);
         if (nf == 0 || need_rescan || now - last_scan >= 2) {
@@ -658,9 +804,12 @@ int main(int argc, char **argv)
                         snprintf(home_node, sizeof home_node, "%s", paths[i]);
                     } else {
                         home_down = 0;
-                        /* relâché sans combo : on ouvre tout de suite */
+                        /* relâché sans combo : on ouvre tout de suite. Le
+                         * résident répond en ~1 ms (aucun exec, aucune
+                         * animation KWin) ; sans lui, l'exec classique. */
                         if (opt_menu && !combo_done && child < 0) {
-                            launch(argv, argc, first_free, home_node);
+                            if (!overlay_open_remote(home_node))
+                                launch(argv, argc, first_free, home_node);
                             combo_done = 1;
                         }
                     }

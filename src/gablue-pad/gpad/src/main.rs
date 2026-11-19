@@ -17,8 +17,9 @@
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::sync::{Arc, Mutex};
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
+use std::os::unix::net::UnixListener;
 use std::time::{Duration, Instant};
 
 use wayland_client::protocol::{
@@ -942,6 +943,33 @@ struct App {
     fondu_ms: u64,
     closing: bool,
     slid_in: bool,
+    /// Mode résident (`--resident`) : le processus survit entre deux
+    /// ouvertures. La surface reste mappée, transparente et hors écran, donc
+    /// KWin ne l'anime plus à chaque ouverture (son animation d'ouverture n'a
+    /// lieu qu'au map) et il n'y a plus d'`exec` à payer.
+    resident: bool,
+    /// panneau réellement à l'écran (faux au démarrage résident et entre deux
+    /// ouvertures) : tout ce qui lit `/proc`, le gate ou la fenêtre active est
+    /// coupé tant qu'il est faux.
+    visible: bool,
+    /// SIGTERM reçu : on sort après la fermeture, même en résident (sinon le
+    /// processus resterait à l'écoute et systemd finirait par le tuer).
+    quitter: bool,
+    /// écoute des commandes du déclencheur (`--ipc <socket>`) : `open <node>
+    /// <cibles…>`, `close`.
+    ipc: Option<UnixListener>,
+    /// chemin du socket (retiré à la sortie : pas de fichier mort à chaque
+    /// redémarrage du service).
+    ipc_path: Option<String>,
+    /// chemin demandé par `--ipc`, écouté seulement une fois la surface prête.
+    ipc_attente: Option<String>,
+    /// menu système demandé pendant que Home était maintenu : on prévient le
+    /// déclencheur **après** avoir rendu la manette, sinon il lance la console
+    /// alors que notre `EVIOCGRAB` tient encore le node.
+    voir_console: bool,
+    /// relecture des réglages (volume, VRR, MangoHud, booster) demandée après
+    /// la première image, pour ne pas retarder l'ouverture.
+    a_rafraichir: bool,
     size: (i32, i32),
     shm: Option<wl_shm::WlShm>,
     // double buffering : dessine uniquement dans un buffer rendu par le compositeur
@@ -1245,10 +1273,21 @@ impl App {
             fondu: None,
             opacite: 1.0,
             fondu_ms: 320,
-            panneau_delai_ms: 250,
+            // Durée de l'animation d'ouverture de KWin (effet Scale :
+            // `animationTime(200)`, défaut 200 ms), pas 250 : on restait
+            // invisible 50 ms de trop (mesuré 19/11/2026).
+            panneau_delai_ms: 200,
             entree: None,
             closing: false,
             slid_in: false,
+            resident: false,
+            visible: true,
+            quitter: false,
+            ipc: None,
+            ipc_path: None,
+            ipc_attente: None,
+            voir_console: false,
+            a_rafraichir: false,
             size: (0, 0),
             shm: None,
             buffers: Vec::new(),
@@ -1440,6 +1479,14 @@ impl App {
         self.home_console = true;
         self.dirty = true;
         println!("HOME MAINTENU -> menu systeme");
+        if self.resident {
+            // en résident, le processus ne meurt pas : c'est `cacher()` qui
+            // prévient le déclencheur, une fois le grab rendu (sinon la
+            // console se lance sur un node encore grabé).
+            self.voir_console = true;
+            self.request_close();
+            return;
+        }
         match self.declencheur {
             Some(p) if p > 1 => {
                 self.status = "MENU SYSTEME".to_string();
@@ -2750,7 +2797,7 @@ impl App {
     /// Ferme le panneau (ou le menu système) si la manette n'a pas bougé depuis
     /// `inactivite`. Appelée à chaque tour de boucle.
     fn surveiller_inactivite(&mut self) {
-        if self.inactivite.is_zero() || self.closing {
+        if self.inactivite.is_zero() || self.closing || !self.visible {
             return;
         }
         if self.derniere_activite.elapsed() >= self.inactivite {
@@ -2764,7 +2811,7 @@ impl App {
     }
 
     fn request_close(&mut self) {
-        if self.closing {
+        if self.closing || !self.visible {
             return;
         }
         self.closing = true;
@@ -2784,6 +2831,193 @@ impl App {
                 de: self.opacite,
                 vers: 0.0,
             });
+        }
+    }
+
+    /* ---------- mode résident (--resident) ---------- */
+
+    /// Crée le socket d'écoute une fois la surface prête (premier `configure`).
+    /// Le déclencheur attend son apparition : elle vaut donc « panneau prêt »,
+    /// et aucune commande ne peut arriver avant que la surface ait une taille.
+    fn demarrer_ipc(&mut self) {
+        let Some(chemin) = self.ipc_attente.take() else {
+            return;
+        };
+        let _ = std::fs::remove_file(&chemin);
+        match UnixListener::bind(&chemin) {
+            Ok(l) => {
+                let _ = l.set_nonblocking(true);
+                self.ipc = Some(l);
+                self.ipc_path = Some(chemin.clone());
+                println!("IPC {chemin}");
+            }
+            Err(e) => eprintln!("ipc: bind {chemin}: {e}"),
+        }
+    }
+
+    /// Ouvre le panneau demandé par le déclencheur : manette du node, cibles du
+    /// gate, état neuf, **glissement immédiat**. La surface est mappée depuis
+    /// le démarrage (transparente, hors écran) : KWin ne rejoue pas son
+    /// animation d'ouverture (elle n'a lieu qu'au map), donc aucune attente.
+    fn ouvrir(&mut self, node: &str, cibles: &[String]) {
+        if self.visible {
+            return;
+        }
+        if !node.is_empty() {
+            self.detecter_manette(node);
+            self.grab_pad(node);
+        }
+        if let Some(gs) = self.gate_sock.clone() {
+            // les dev_t changent à chaque reconnexion : on repose la liste à
+            // chaque ouverture (le démon est idempotent)
+            gate_cmd(&gs, "clear");
+            let mut ok = 0;
+            for t in cibles {
+                if gate_cmd(&gs, &format!("target {t}")) {
+                    ok += 1;
+                }
+            }
+            self.gate_nodes = ok;
+            if gate_cmd(&gs, "open") {
+                self.gate_on = true;
+                println!("GATE open");
+            }
+        }
+        // même point de départ qu'un processus fraîchement lancé
+        self.visible = true;
+        self.closing = false;
+        self.slid_in = true; // pas d'attente : la surface est déjà mappée
+        self.entree = None;
+        self.anim = None;
+        self.fondu = None;
+        self.opacite = 1.0;
+        self.off = self.panel_w;
+        self.page = Page::Accueil;
+        self.selected = 0;
+        self.fen_top = 0;
+        self.page_initiale = false;
+        self.depart = Instant::now();
+        // le panneau a pu rester caché des minutes : sans ce reset, la passe
+        // d'inactivité (10 s) le refermerait aussitôt ouvert
+        self.derniere_activite = Instant::now();
+        self.arme = None;
+        self.combo_apres = None;
+        self.home_down = false;
+        self.home_console = false;
+        self.voir_console = false;
+        self.status.clear();
+        self.dirty = true;
+        // les réglages (pactl, scripts) sont relus APRÈS la première image
+        self.a_rafraichir = true;
+        self.slide(self.panel_w, 0, 200);
+        println!("OPEN {node}");
+    }
+
+    /// Referme sans quitter : surface transparente et hors écran, manette
+    /// rendue, gate fermé. Le processus reste à l'écoute de `--ipc`.
+    fn cacher(&mut self) {
+        self.visible = false;
+        self.closing = false;
+        self.slid_in = true;
+        self.anim = None;
+        self.entree = None;
+        self.fondu = None;
+        self.opacite = 0.0;
+        self.off = self.panel_w;
+        self.arme = None;
+        self.home_down = false;
+        self.home_console = false;
+        self.release_pad();
+        if let Some(gs) = self.gate_sock.clone() {
+            if self.gate_on {
+                gate_cmd(&gs, "close");
+                self.gate_on = false;
+                println!("GATE closed");
+            }
+        }
+        self.dirty = true;
+        println!("HIDDEN");
+        // le panneau est hors écran : les actions différées peuvent partir
+        self.executer_apres();
+        if self.voir_console {
+            self.voir_console = false;
+            if let Some(p) = self.declencheur {
+                if p > 1 {
+                    unsafe { libc::kill(p, libc::SIGUSR1) };
+                }
+            }
+        }
+    }
+
+    /// Lit les commandes du déclencheur (`open <node> <cibles…>`, `close`).
+    fn lire_ipc(&mut self) {
+        // l'écoute sort de `self` le temps de la lecture : les commandes
+        // appellent des méthodes `&mut self`
+        let Some(listener) = self.ipc.take() else {
+            return;
+        };
+        loop {
+            let (mut flux, _) = match listener.accept() {
+                Ok(v) => v,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(e) => {
+                    eprintln!("ipc: accept: {e}");
+                    break;
+                }
+            };
+            // le déclencheur écrit puis ferme : une lecture suffit
+            let _ = flux.set_read_timeout(Some(Duration::from_millis(200)));
+            let mut brut = [0u8; 1024];
+            let n = flux.read(&mut brut).unwrap_or(0);
+            let ligne = String::from_utf8_lossy(&brut[..n]).trim().to_string();
+            if ligne.is_empty() {
+                continue;
+            }
+            println!("IPC {ligne}");
+            let mut mots = ligne.split_whitespace();
+            match mots.next() {
+                Some("open") => {
+                    let node = mots.next().unwrap_or("").to_string();
+                    let cibles: Vec<String> = mots.map(str::to_string).collect();
+                    self.ouvrir(&node, &cibles);
+                }
+                Some("close") => self.request_close(),
+                _ => {}
+            }
+        }
+        self.ipc = Some(listener);
+    }
+
+    /// Action différée (enregistrement, capture, clavier, replay, extinction) :
+    /// elle part seulement panneau retiré, sinon elle se filmerait dedans.
+    fn executer_apres(&mut self) {
+        let Some(a) = self.combo_apres.take() else {
+            return;
+        };
+        println!("FENETRE RETIREE -> action differee");
+        match a {
+            Apres::Record => lancer_script("RECORDER", &["toggle"]),
+            Apres::Capture => lancer_script("SCREENSHOT", &[]),
+            Apres::Clavier => {
+                let node = self.combo_node.clone().unwrap_or_default();
+                lancer_script("KBDNAV", &[&node])
+            }
+            Apres::Replay => {
+                let node = self.combo_node.clone().unwrap_or_default();
+                lancer_script_env("REPLAY", &["save"], &[("PAD_NODE", &node)]);
+            }
+            Apres::ReplayToggle => {
+                let node = self.combo_node.clone().unwrap_or_default();
+                lancer_script_env("REPLAY", &["toggle"], &[("PAD_NODE", &node)]);
+            }
+            Apres::Reboot => lancer_systeme("REBOOT", "reboot"),
+            Apres::Eteindre => lancer_systeme("POWEROFF", "poweroff"),
+            Apres::ToutFermer => {
+                // jeux Windows/émulateurs (killthemall) PUIS les applis du
+                // menu Applications : c'est ce que « tout fermer » veut dire
+                lancer_script("KILLTHEMALL", &[]);
+                lancer_script("FERMERAPPLIS", &[]);
+            }
         }
     }
 
@@ -5227,6 +5461,21 @@ fn main() {
     app.bus = format!("org.gablue.Win.p{}", std::process::id());
     app.inst = std::process::id().to_string();
 
+    // Mode résident : la surface est mappée une seule fois (transparente, hors
+    // écran) et le déclencheur ouvre/ferme par `--ipc`. Plus d'`exec` ni
+    // d'animation KWin à chaque Home (vécu 19/11/2026 : ~470 ms perçus).
+    // Le socket n'est créé qu'au premier `configure` (`demarrer_ipc`) : son
+    // existence signifie donc « panneau prêt », et un `open` ne peut pas
+    // arriver sur une surface qui n'a pas encore de taille.
+    app.resident = args.iter().any(|a| a == "--resident");
+    app.visible = !app.resident;
+    if app.resident {
+        match arg_value(&args, "--ipc") {
+            Some(chemin) => app.ipc_attente = Some(chemin),
+            None => eprintln!("--resident sans --ipc : aucune commande possible"),
+        }
+    }
+
     // style : --style > PAD_STYLE (banc) > fichier (choix fait dans REGLAGES)
     // > **MODERNE** (défaut). Un nom inconnu retombe sur RETRO, jamais d'échec.
     let style_nom = arg_value(&args, "--style")
@@ -5235,13 +5484,6 @@ fn main() {
         .unwrap_or_else(|| "moderne".to_string());
     app.style_idx = style_normalise(&style_nom);
     app.th = theme_pour(app.style_idx);
-    app.police = if app.style_idx == 1 { charger_police() } else { None };
-    println!(
-        "STYLE {} ({}) police={}",
-        STYLE_OPTS[app.style_idx],
-        STYLE_KEYS[app.style_idx],
-        if app.police.is_some() { "ttf" } else { "bitmap" }
-    );
 
     let compositor: wl_compositor::WlCompositor =
         globals.bind(&qh, 4..=6, ()).expect("wl_compositor");
@@ -5317,11 +5559,23 @@ fn main() {
     app.wl_surface = Some(surface);
     app.layer = Some(layer);
 
+    // La police ne sert qu'au premier dessin (après le `configure`) : la
+    // charger ici laisse KWin préparer la surface en parallèle — ~15 ms
+    // mesurés de gagnés avant que le panneau puisse paraître.
+    app.police = if app.style_idx == 1 { charger_police() } else { None };
+    println!(
+        "STYLE {} ({}) police={}",
+        STYLE_OPTS[app.style_idx],
+        STYLE_KEYS[app.style_idx],
+        if app.police.is_some() { "ttf" } else { "bitmap" }
+    );
+
     if let Ok(seat) = globals.bind::<wl_seat::WlSeat, _, _>(&qh, 1..=9, ()) {
         let _kb = seat.get_keyboard(&qh, ());
     }
 
-    let pad = if args.iter().any(|a| a == "--no-grab") {
+    // résident : aucune manette au démarrage, le node arrive avec `open`
+    let pad = if app.resident || args.iter().any(|a| a == "--no-grab") {
         None
     } else {
         arg_value(&args, "--grab").or_else(find_pad_event)
@@ -5329,7 +5583,7 @@ fn main() {
     if let Some(p) = pad {
         app.detecter_manette(&p);
         app.grab_pad(&p);
-    } else {
+    } else if !app.resident {
         eprintln!("aucune manette trouvée (aucun grab)");
     }
 
@@ -5392,23 +5646,30 @@ fn main() {
     }
 
     if let Some(gs) = arg_value(&args, "--gate") {
-        let targets = arg_values(&args, "--gate-target");
-        // liste repartie de zéro : le démon peut tourner depuis le boot, et
-        // les dev_t changent à chaque reconnexion (sinon les emplacements de
-        // cibles s'épuisent au fil des sessions).
-        gate_cmd(&gs, "clear");
-        let mut ok = 0;
-        for t in &targets {
-            if gate_cmd(&gs, &format!("target {t}")) {
-                ok += 1;
-            } else {
-                eprintln!("gate: cible ignorée {t}");
+        if app.resident {
+            // les cibles arrivent avec chaque `open` (les dev_t changent à
+            // chaque reconnexion) : rien à poser maintenant
+            println!("GATE socket={gs} (resident)");
+            app.gate_sock = Some(gs);
+        } else {
+            let targets = arg_values(&args, "--gate-target");
+            // liste repartie de zéro : le démon peut tourner depuis le boot, et
+            // les dev_t changent à chaque reconnexion (sinon les emplacements de
+            // cibles s'épuisent au fil des sessions).
+            gate_cmd(&gs, "clear");
+            let mut ok = 0;
+            for t in &targets {
+                if gate_cmd(&gs, &format!("target {t}")) {
+                    ok += 1;
+                } else {
+                    eprintln!("gate: cible ignorée {t}");
+                }
             }
+            println!("GATE socket={gs} cibles={ok}/{}", targets.len());
+            app.gate_sock = Some(gs);
+            app.gate_nodes = ok;
+            app.dirty = true;
         }
-        println!("GATE socket={gs} cibles={ok}/{}", targets.len());
-        app.gate_sock = Some(gs);
-        app.gate_nodes = ok;
-        app.dirty = true;
     }
 
     // SIGTERM/SIGINT (gpad-trigger, Ctrl-C, session) : on ferme proprement, donc
@@ -5522,7 +5783,15 @@ fn main() {
         if ARRET_DEMANDE.load(std::sync::atomic::Ordering::Relaxed) {
             println!("SIGNAL -> fermeture");
             ARRET_DEMANDE.store(false, std::sync::atomic::Ordering::Relaxed);
-            app.request_close();
+            // SIGTERM = quitter, même en résident (sinon le service systemd
+            // attendrait son TimeoutStopSec puis SIGKILL). Caché : sortie
+            // immédiate ; visible : glissement de sortie puis sortie.
+            app.quitter = true;
+            if app.visible {
+                app.request_close();
+            } else {
+                app.running = false;
+            }
         }
         if let Some(d) = auto_close {
             if start.elapsed() > d {
@@ -5553,9 +5822,11 @@ fn main() {
         }
         let _ = conn.flush();
 
-        // multiplexage : fd manette + fd wayland, jamais de roundtrip bloquant
+        // multiplexage : fd manette + fd wayland + socket du déclencheur,
+        // jamais de roundtrip bloquant
         let guard = conn.prepare_read();
         let pad_fd = app.pad.as_ref().map(|f| f.as_raw_fd());
+        let ipc_fd = app.ipc.as_ref().map(|l| l.as_raw_fd());
         let mut fds = [
             libc::pollfd {
                 fd: pad_fd.unwrap_or(-1),
@@ -5567,9 +5838,19 @@ fn main() {
                 events: libc::POLLIN,
                 revents: 0,
             },
+            libc::pollfd {
+                fd: ipc_fd.unwrap_or(-1),
+                events: libc::POLLIN,
+                revents: 0,
+            },
         ];
-        // timeout court pendant l'animation : ~120 Hz pour un glissement fluide
-        let timeout_ms = if app.anim.is_some()
+        // timeout court pendant l'animation : ~120 Hz pour un glissement fluide.
+        // Résident caché : rien à relire, on dort presque — mais 1 s, pas -1 :
+        // `signal()` installe SA_RESTART, donc `poll(-1)` serait REPRIS après
+        // SIGTERM et le processus ne sortirait jamais (mesuré).
+        let timeout_ms = if app.resident && !app.visible {
+            1000
+        } else if app.anim.is_some()
             || app.pdep.is_some()
             || app.fondu.is_some()
             || app.entree.is_some()
@@ -5578,10 +5859,13 @@ fn main() {
         } else {
             100
         };
-        unsafe { libc::poll(fds.as_mut_ptr(), 2, timeout_ms) };
+        unsafe { libc::poll(fds.as_mut_ptr(), 3, timeout_ms) };
 
         if fds[0].revents & libc::POLLIN != 0 {
             app.pump_pad();
+        }
+        if fds[2].revents & libc::POLLIN != 0 {
+            app.lire_ipc();
         }
         // maintien de Home : vérifié à chaque tour (poll 100 ms au repos)
         app.surveiller_home();
@@ -5591,15 +5875,37 @@ fn main() {
                 let _ = g.read();
             }
         }
+        // Traiter TOUT DE SUITE les événements lus : le `dispatch_pending` de
+        // tête de boucle passe après le `poll` suivant, donc le tout premier
+        // `configure` n'était vu qu'au tour d'après — 100 ms de `poll` au
+        // repos entre les deux, mesurées au banc (configure à 57 ms, entrée
+        // traitée à 160 ms). Le panneau les voit maintenant à ~60 ms.
+        if let Err(e) = queue.dispatch_pending(&mut app) {
+            eprintln!("dispatch (frais): {e}");
+            break;
+        }
         // glissement / fondu d'entrée, une seule fois, dès que la surface est
         // configurée — et AVANT la première image, sinon le fondu serait déjà
         // terminé quand le menu paraît (wayland + script KWin + icônes prennent
         // bien plus que 160 ms : constaté, « ça ne fait pas la fondue »)
         if app.configured && !app.slid_in {
             app.slid_in = true;
-            if app.side {
+            if app.resident {
+                // Première (et unique) mise à l'écran : transparente et hors
+                // écran. KWin anime cette ouverture une fois, invisible ; les
+                // `open` suivants ne remappent rien et n'attendent donc plus
+                // son animation.
+                app.opacite = 0.0;
+                app.off = app.panel_w;
+                app.dirty = true;
+                app.demarrer_ipc();
+                println!(
+                    "RESIDENT pret ({})",
+                    if app.ipc.is_some() { "ipc" } else { "sans ipc" }
+                );
+            } else if app.side {
                 // KWin anime l'ouverture de cette surface comme celle d'une
-                // fenêtre normale (Window Aperture / Glide, ~250 ms). Deux
+                // fenêtre normale (effet Scale, `animationTime(200)`). Deux
                 // mouvements simultanés se CUMULENT : avec notre glissement
                 // par-dessus, le panneau arrivait à sa place en ~100 ms et
                 // semblait « se poser sur place » (constaté 18/11/2026) ; sans
@@ -5650,26 +5956,35 @@ fn main() {
         app.tick_page();
         app.tick_fondu();
         if app.closing && app.anim.is_none() && app.fondu.is_none() {
-            app.running = false;
+            if app.resident && !app.quitter {
+                // on ne quitte pas : surface hors écran et transparente,
+                // manette rendue, à l'écoute de la prochaine commande
+                app.cacher();
+            } else {
+                app.running = false;
+            }
         }
 
         // fenêtre active : relue à chaque tour (poll 100 ms) pour que le nom
-        // reste juste même si le panneau est ouvert longtemps
+        // reste juste même si le panneau est ouvert longtemps — inutile tant
+        // que le panneau résident est caché
         let mut fenetre_changee = false;
-        if let Some(st) = &app.win_etat {
-            if let Ok(p) = st.lock() {
-                if p.info != app.win {
-                    app.win = p.info.clone();
-                    app.dirty = true;
-                    fenetre_changee = true;
-                    println!(
-                        "WIN pid={} fs={} uuid={} {} | {}",
-                        app.win.pid,
-                        app.win.fullscreen,
-                        app.win.uuid,
-                        app.win.caption,
-                        app.win.class
-                    );
+        if app.visible {
+            if let Some(st) = &app.win_etat {
+                if let Ok(p) = st.lock() {
+                    if p.info != app.win {
+                        app.win = p.info.clone();
+                        app.dirty = true;
+                        fenetre_changee = true;
+                        println!(
+                            "WIN pid={} fs={} uuid={} {} | {}",
+                            app.win.pid,
+                            app.win.fullscreen,
+                            app.win.uuid,
+                            app.win.caption,
+                            app.win.class
+                        );
+                    }
                 }
             }
         }
@@ -5703,7 +6018,7 @@ fn main() {
             }
         }
 
-        if app.last_scan.elapsed() > Duration::from_millis(1000) {
+        if app.visible && app.last_scan.elapsed() > Duration::from_millis(1000) {
             app.refresh_recorder();
             // ces états changent hors du panneau : sans `dirty`, l'affichage
             // garde l'ancienne valeur (le mode replay restait « ARRET »
@@ -5739,6 +6054,18 @@ fn main() {
             app.draw();
             let _ = conn.flush();
         }
+        // Réglages relus APRÈS la première image : `pactl` et les scripts
+        // prennent quelques dizaines de ms, qu'on ne veut pas payer avant que
+        // le panneau paraisse. Le redessin qui suit est invisible (même
+        // contenu, valeurs à jour).
+        if app.a_rafraichir && app.visible {
+            app.a_rafraichir = false;
+            app.refresh_mangohud();
+            app.refresh_volume();
+            app.refresh_vrr();
+            app.refresh_booster();
+            app.dirty = true;
+        }
     }
 
     app.release_pad();
@@ -5752,6 +6079,11 @@ fn main() {
     if let Some(gs) = app.gate_sock.clone() {
         gate_cmd(&gs, "close");
         println!("GATE closed");
+    }
+    // socket du déclencheur : on ne laisse pas de fichier mort dans
+    // $XDG_RUNTIME_DIR (chaque redémarrage du service en créerait un)
+    if let Some(p) = app.ipc_path.take() {
+        let _ = std::fs::remove_file(&p);
     }
     for b in app.buffers.drain(..) {
         unsafe { libc::munmap(b.ptr as *mut libc::c_void, b.len) };
@@ -5767,33 +6099,8 @@ fn main() {
 
     // Combinaison demandée depuis le panneau : on agit SEULEMENT maintenant,
     // surface détruite — sinon le menu se filmerait dans l'enregistrement.
-    if let Some(a) = app.combo_apres.take() {
-        println!("FENETRE RETIREE -> action differee");
-        match a {
-            Apres::Record => lancer_script("RECORDER", &["toggle"]),
-            Apres::Capture => lancer_script("SCREENSHOT", &[]),
-            Apres::Clavier => {
-                let node = app.combo_node.clone().unwrap_or_default();
-                lancer_script("KBDNAV", &[&node])
-            }
-            Apres::Replay => {
-                let node = app.combo_node.clone().unwrap_or_default();
-                lancer_script_env("REPLAY", &["save"], &[("PAD_NODE", &node)]);
-            }
-            Apres::ReplayToggle => {
-                let node = app.combo_node.clone().unwrap_or_default();
-                lancer_script_env("REPLAY", &["toggle"], &[("PAD_NODE", &node)]);
-            }
-            Apres::Reboot => lancer_systeme("REBOOT", "reboot"),
-            Apres::Eteindre => lancer_systeme("POWEROFF", "poweroff"),
-            Apres::ToutFermer => {
-                // jeux Windows/émulateurs (killthemall) PUIS les applis du
-                // menu Applications : c'est ce que « tout fermer » veut dire
-                lancer_script("KILLTHEMALL", &[]);
-                lancer_script("FERMERAPPLIS", &[]);
-            }
-        }
-    }
+    // (En résident, c'est `cacher()` qui s'en charge, à la fermeture.)
+    app.executer_apres();
 
     println!("GPAD_DOWN");
 }

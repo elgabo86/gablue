@@ -2,8 +2,15 @@
 
 **But** : remplacer `gamepadshortcuts` et ses scripts par un overlay unique,
 piloté à la manette, qui coupe réellement les manettes pendant le menu. Le
-service tourne en permanence (lecture evdev, sans grabbe), l'overlay ne s'ouvre
-qu'à la demande et le gate BPF n'attache son hook que pendant le menu.
+service tourne en permanence (lecture evdev, sans grabbe), l'overlay est
+**lancé une fois puis résident** (`--resident --ipc`, ouverture par socket) et
+le gate BPF n'attache son hook que pendant le menu.
+
+Home est perçu **instantanément** parce que la surface reste mappée,
+transparente et hors écran entre deux ouvertures : plus d'`exec`, plus
+d'animation KWin à attendre. Mesuré : premier tampon 6 ms, panneau en place
+~206 ms (contre ~470 ms par ouverture avec exec). Détail →
+`gpad/AGENTS.md` (mode résident) et `trigger/AGENTS.md` (IPC).
 
 **Deux binaires visibles** : `gpad` (l'overlay, Rust + layer-shell) et
 `gpad-trigger` (le déclencheur, C). Tout le reste vit dans
@@ -38,8 +45,10 @@ dans `/usr/share/ublue-os/gablue/scripts/killthemall`, exporté au service par
   fois, socket `/run/gablue-pad/gate.sock`, `--timeout 0` (démon de session).
   Le hook n'est attaché qu'entre `open` et `close` : hors menu, coût nul.
 - `gablue-pad.service` (**utilisateur**, session) : `gpad-trigger /usr/bin/gpad`,
-  environne tout le reste (chemins, sons, gate, kwin). Activé pour tous les
-  comptes par l'image (`systemctl --global enable`).
+  environne tout le reste (chemins, sons, gate, kwin). Le déclencheur lance
+  l'overlay **une fois** en résident et l'ouvre par le socket
+  `$XDG_RUNTIME_DIR/gablue/gpad-<pid>.sock`. Activé pour tous les comptes par
+  l'image (`systemctl --global enable`).
 - `gablue-login-theme.service` (**utilisateur**, greeter, `Type=oneshot`) :
   `login-bridge.sh theme`, **`Before=plasma-login-kwin_wayland.service`** — le
   KWin du greeter lit le `kdeglobals` de `plasmalogin` à son démarrage, donc le

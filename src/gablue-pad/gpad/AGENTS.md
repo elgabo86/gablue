@@ -680,12 +680,21 @@ droite ». À la fermeture rien ne se voit : notre glissement de sortie précèd
 `wl_surface.destroy()`, KWin n'a plus de client à animer — l'asymétrie est
 normale, pas un bug.
 
-Séquence d'entrée, dans l'ordre :
+Séquence d'entrée d'un overlay **jetable** (exec) — en `--resident`, l'étape 1
+n'existe pas : la surface est déjà mappée (voir plus bas) :
 
-1. `opacite = 0` et attente `PAD_PANNEAU_DELAI_MS` (250 ms, `entree:
-   Option<Instant>`) : KWin anime une surface **invisible**. Le contenu est de
-   toute façon encore hors écran (`off = panel_w`), donc rien ne clignote même
-   une fois opaque.
+1. `opacite = 0` et attente `PAD_PANNEAU_DELAI_MS` (200 ms — la durée
+   `animationTime(200)` de l'effet `Scale`, pas 250 : on restait invisible
+   50 ms de trop, mesuré 19/11/2026), `entree: Option<Instant>` : KWin anime
+   une surface **invisible**. Le contenu est de toute façon encore hors écran
+   (`off = panel_w`), donc rien ne clignote même une fois opaque.
+   Le décompte part du **premier `configure`**, qui est traité à l'instant où
+   il est lu : sans le `dispatch_pending` frais après `g.read()`, le
+   `configure` n'était vu qu'au tour suivant, après un `poll` de 100 ms au
+   repos — mesuré à 57 ms d'arrivée, entrée traitée à 160 ms (vécu 19/11/2026).
+   Latence mesurée depuis le `exec` : `configure` 53 ms, premier tampon
+   (transparent) 57 ms, révélation 269 ms, panneau en place ~469 ms — contre
+   415 / 615 ms avant ces deux corrections.
 2. Au bout de l'attente : `opacite = 1` d'un coup, puis glissement de 200 ms
    (`off` `panel_w` → `0`, ease-out cubic).
 
@@ -704,6 +713,49 @@ temps de capturer) : pendant l'attente, colonne du panneau = fond
 `srgb(35,38,39)` (rien de visible) ; mi-glissement, `x=2100` fond, `x=2250` et
 `x=2400` panneau **opaque** `srgb(23,29,38)` (aucune translucidité, et le bord
 gauche progresse bien de droite à gauche).
+
+## Mode résident (`--resident --ipc <socket>`)
+
+Le service ne lance **plus** un overlay par appui : `gpad-trigger` démarre
+`gpad` une fois, en résident, et lui envoie `open <node> <cibles…>` / `close`
+sur un socket Unix (`lire_ipc`). Tout l'état d'ouverture est refait par
+`ouvrir()` : manette du node grabée, cibles du gate reposées puis `open`, page
+remise sur `ACCUEIL`, curseur en tête, `depart`/`derniere_activite` réinitialisés
+(sinon la passe d'inactivité de 10 s refermait le panneau aussitôt ouvert), puis
+glissement `panel_w → 0` sur 200 ms.
+
+- **La surface reste mappée**, transparente (`opacite = 0`) et hors écran
+  (`off = panel_w`) entre deux ouvertures : KWin n'anime l'ouverture **qu'au
+  map**, donc plus d'attente de son effet `Scale` ni d'`exec` à payer. C'est le
+  gain principal : mesuré **6 ms** entre la commande et le premier tampon
+  (**11,5 ms** depuis le relâchement de Home, bout en bout au banc), panneau en
+  place ~205 ms (contre ~470 ms par ouverture avec exec).
+- **Fenêtre invisible mais jamais détruite** : la fenêtre layer-shell n'apparaît
+  pas dans `workspace.windowList()` de KWin (vérifié le 19/11/2026) — ni barre
+  des tâches, ni liste FENÊTRES.
+- **Caché = presque mort** : pas de manette, gate refermé, aucun scan `/proc` ni
+  lecture de `running.txt`, aucun dessin ; `poll` à **1 s** (pas `-1` :
+  `signal()` installe `SA_RESTART`, un `poll(-1)` serait repris après SIGTERM et
+  le processus ne sortirait jamais — mesuré). SIGTERM met `quitter = true` :
+  sortie après la fermeture, même en résident (sinon systemd attendrait son
+  `TimeoutStopSec`).
+- **Le script KWin `wininfo.js` reste chargé** entre deux ouvertures (son
+  QTimer pousse la fenêtre active toutes les 300 ms) : à l'ouverture, le nom,
+  la page et le logo du jeu sont **déjà** justes, sans rechargement D-Bus ni
+  attente du premier `Info`. Coût : 3 push/s, négligeable.
+- En résident, `request_close()` ne quitte pas : il glisse hors écran puis
+  `cacher()` rend la manette, ferme le gate et exécute l'action différée
+  (`executer_apres`, replay/capture/clavier) — panneau déjà hors écran.
+- `--resident` : aucune manette au démarrage (le node arrive avec `open`), gate
+  et cibles posés à chaque ouverture, `--seconds`/SIGTERM restent des sorties.
+  Le socket `--ipc` est créé au **premier `configure`** (`demarrer_ipc`) : son
+  existence signifie « panneau prêt », et aucun `open` ne peut tomber sur une
+  surface sans taille. Il est retiré à la sortie (pas de fichier mort à chaque
+  redémarrage du service).
+- La police TTF est chargée **après le premier `commit`** Wayland (elle ne sert
+  qu'au premier dessin) : ~15 ms de parsing recouverts par la réponse de KWin.
+  Les réglages (`pactl`, VRR, MangoHud, booster) sont relus **après la première
+  image** (`a_rafraichir`), jamais avant.
 
 ## Fermeture automatique par inactivité (10 s)
 
@@ -751,6 +803,8 @@ nettoyer à la main.
 | `--width N` | largeur du panneau latéral (480 par défaut) |
 | `--slide-ms N` | durée du glissement (0 = 180 ms entrée / 140 ms sortie) |
 | `--console` | mode **menu système** : surface plein écran assombrie + cadre centré, sans KWin, sans nom de menu ni en-tête (voir `trigger/AGENTS.md`) |
+| `--resident` | survit entre deux ouvertures (surface mappée transparente hors écran) ; `open`/`close` arrivent par `--ipc` |
+| `--ipc <socket>` | socket de commande du déclencheur (`open <node> <cibles…>`, `close`) |
 | `--fullscreen` | surface plein écran (banc) |
 | `--focus fps\|mango\|volume` | ouvre sur `REGLAGES`, curseur sur la ligne |
 | `--style retro\|moderne` | style visuel (prioritaire sur `PAD_STYLE` et le fichier) |
@@ -767,7 +821,7 @@ nettoyer à la main.
 | `GPAD_TRIGGER_PID` | pid de `gpad-trigger` à prévenir sur Home maintenu |
 | `PAD_STYLE` | style de démarrage (banc, sans écrire de fichier) |
 | `PAD_FONDU_MS` | durée du fondu du menu système (défaut 140 ms ; banc : ralentir pour le mesurer) |
-| `PAD_PANNEAU_DELAI_MS` | attente avant le glissement d'entrée du panneau (défaut 250 ms : le temps de l'animation `Scale` de KWin ; banc) |
+| `PAD_PANNEAU_DELAI_MS` | attente avant le glissement d'entrée du panneau (défaut 200 ms : `animationTime(200)` de l'effet `Scale` de KWin ; banc) |
 | `PAD_NO_KWIN`, `PAD_ICONE_TEST` | banc : sans KWin, test de résolution d'icône |
 | `KWIN_SCRIPTS` | dossier des scripts KWin (`kwin/`) |
 
