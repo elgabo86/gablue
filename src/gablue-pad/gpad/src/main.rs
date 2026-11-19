@@ -2384,6 +2384,11 @@ impl App {
                         format!("{nom}: ACTIVATION KO")
                     };
                     println!("APPLI {nom} active uuid={} ok={ok}", f.uuid);
+                    // le panneau a fait son travail : il se retire, il ne
+                    // reste pas par-dessus l'appli qu'on vient de choisir
+                    if ok {
+                        self.request_close();
+                    }
                     return;
                 }
                 let script = match nom {
@@ -2394,11 +2399,15 @@ impl App {
                     "JELLYFIN" => "toggle-jellyfin",
                     _ => "",
                 };
-                self.status = if script.is_empty() {
-                    format!("{nom}: RIEN A FAIRE")
+                if script.is_empty() {
+                    self.status = format!("{nom}: RIEN A FAIRE");
                 } else {
-                    lancer_appli(script)
-                };
+                    self.status = lancer_appli(script);
+                    // choix fait : l'overlay se ferme tout de suite, l'appli
+                    // démarre derrière (constaté : il restait affiché par-dessus
+                    // le jeu lancé)
+                    self.request_close();
+                }
             }
             // un séparateur n'agit pas (il n'est pas sélectionnable)
             Entree::Groupe(_) => {}

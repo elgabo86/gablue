@@ -175,7 +175,12 @@ ni surbrillance.
   Fenêtres, sans changer de page), cherche une fenêtre dont la class ou le
   desktopFileName contient un motif de `motifs_appli`, puis active son UUID
   (`activer_par_uuid`, le script KWin de la page Fenêtres). Statut `YOUTUBE:
-  ACTIVE`, on reste sur la page Applications.
+  ACTIVE`.
+- **Le panneau se ferme dès qu'on a choisi une appli** (`request_close` après
+  l'activation comme après le lancement) : c'est un menu de lancement, il n'a
+  rien à rester par-dessus le jeu ou l'appli qu'on vient d'ouvrir. Une entrée
+  sans script (`RIEN A FAIRE`) le laisse ouvert — rien n'a été lancé. Un appui
+  ignoré (même appli dans les 2,5 s) ne le ferme pas non plus.
 - Le script `toggle-*` n'est appelé que si **aucune** fenêtre ne correspond
   (appli pas encore démarrée, ou KWin injoignable) : détaché, le panneau ne se
   fige pas, statut `YOUTUBE: LANCEMENT`. Les scripts **ne tuent plus rien** :
