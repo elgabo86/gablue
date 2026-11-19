@@ -8,7 +8,8 @@ vignettes, favoris, temps de jeu) vit dans son cache et se change au clavier ou
 - les dossiers où chercher les paquets `.wgp` / `.lgp` (il n'y a pas de
   sélection de dossier dans une interface plein écran pilotée à la manette) ;
 - le plein écran au démarrage ;
-- le téléchargement des visuels SteamGridDB et la clé API facultative.
+- la clé API SteamGridDB, facultative, que les **prochains scans** utilisent
+  pour retrouver les visuels.
 """
 
 from pathlib import Path
@@ -121,7 +122,7 @@ class GlauncherDialog(QDialog):
         start_layout.setSpacing(6)
 
         self.fullscreen_check = QCheckBox(
-            "Ouvrir en plein écran (le mode normal sur Gablue)", start_frame
+            "Ouvrir les jeux en plein écran", start_frame
         )
         self.fullscreen_check.setCursor(Qt.PointingHandCursor)
         self.fullscreen_check.toggled.connect(self._update_apply)
@@ -135,26 +136,26 @@ class GlauncherDialog(QDialog):
         art_layout.setContentsMargins(16, 12, 16, 12)
         art_layout.setSpacing(6)
 
-        self.covers_check = QCheckBox(
-            "Télécharger les visuels manquants (SteamGridDB)", art_frame
+        self.key_check = QCheckBox(
+            "Activer une clé API SteamGridDB pour les prochains scans", art_frame
         )
-        self.covers_check.setCursor(Qt.PointingHandCursor)
-        self.covers_check.toggled.connect(self._update_apply)
-        art_layout.addWidget(self.covers_check)
+        self.key_check.setCursor(Qt.PointingHandCursor)
+        self.key_check.toggled.connect(self._update_apply)
+        art_layout.addWidget(self.key_check)
 
         key_row = QHBoxLayout()
         key_row.setSpacing(8)
         key_row.addWidget(QLabel("Clé API v2", art_frame))
         self.key_edit = QLineEdit(art_frame)
-        self.key_edit.setPlaceholderText("facultative — API publique sans compte")
+        self.key_edit.setPlaceholderText("colle la clé fournie par SteamGridDB")
         self.key_edit.textChanged.connect(self._update_apply)
         key_row.addWidget(self.key_edit, 1)
         art_layout.addLayout(key_row)
 
         art_detail = QLabel(
-            "Sans clé, l'API publique de SteamGridDB suffit : les visuels déjà "
-            "présents ne sont jamais redemandés. « --update » télécharge tout "
-            "d'un coup.",
+            "Sans clé, l'API publique de SteamGridDB suffit. Avec une clé, "
+            "chaque scan des dossiers de jeux l'utilise ; les visuels déjà en "
+            "cache ne sont jamais redemandés.",
             art_frame,
         )
         art_detail.setObjectName("hostDetail")
@@ -199,22 +200,23 @@ class GlauncherDialog(QDialog):
         except OSError:
             self.text = ""
         state = parse_glauncher_config(self.text)
+        key = str(state["steamgriddb_key"])
         self.initial = {
             "game_dirs": list(state["game_dirs"]),
             "fullscreen": bool(state["fullscreen"]),
-            "covers": bool(state["covers"]),
-            "steamgriddb_key": str(state["steamgriddb_key"]),
+            "use_key": bool(key.strip()),
+            "steamgriddb_key": key,
         }
 
         self.dirs_list.clear()
         for directory in self.initial["game_dirs"]:
             self._add_item(directory)
 
-        widgets = (self.fullscreen_check, self.covers_check, self.key_edit)
+        widgets = (self.fullscreen_check, self.key_check, self.key_edit)
         for widget in widgets:
             widget.blockSignals(True)
         self.fullscreen_check.setChecked(self.initial["fullscreen"])
-        self.covers_check.setChecked(self.initial["covers"])
+        self.key_check.setChecked(self.initial["use_key"])
         self.key_edit.setText(self.initial["steamgriddb_key"])
         for widget in widgets:
             widget.blockSignals(False)
@@ -236,17 +238,22 @@ class GlauncherDialog(QDialog):
         ]
 
     def desired(self) -> dict:
+        use_key = self.key_check.isChecked()
         return {
             "game_dirs": self.directories(),
             "fullscreen": self.fullscreen_check.isChecked(),
-            "covers": self.covers_check.isChecked(),
-            "steamgriddb_key": self.key_edit.text().strip(),
+            "use_key": use_key,
+            # clé vidée quand la case est décochée : le launcher retombe sur
+            # l'API publique au prochain scan
+            "steamgriddb_key": self.key_edit.text().strip() if use_key else "",
         }
 
     def changed(self) -> bool:
         return self.desired() != self.initial
 
     def _update_apply(self) -> None:
+        # le champ n'a de sens qu'avec la case : grisé, il ne se saisit pas
+        self.key_edit.setEnabled(self.key_check.isChecked())
         dirty = self.changed()
         empty = not self.directories()
         self.apply_button.setEnabled(dirty and not empty)
@@ -284,7 +291,11 @@ class GlauncherDialog(QDialog):
         values = self.desired()
         if not values["game_dirs"]:
             return
-        text = write_glauncher_config(self.text, values)
+        # `use_key` est un état d'interface : il ne doit JAMAIS partir dans
+        # `config.toml` (le launcher refuse les clés inconnues), il ne décide
+        # que du contenu de `steamgriddb_key`
+        settings = {key: value for key, value in values.items() if key != "use_key"}
+        text = write_glauncher_config(self.text, settings)
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.path.write_text(text, encoding="utf-8")
