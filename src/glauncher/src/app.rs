@@ -262,7 +262,11 @@ pub enum Message {
     OpenPicker(covers::ArtKind),
     ClosePicker,
     PickerNav(Nav),
-    PickerSelect(usize),
+    /// Clic sur une vignette : elle est **choisie** (le menu se referme tout de
+    /// suite, le téléchargement finit en fond), là où le clavier/manette
+    /// sélectionnent puis valident. Un simple clic ne laisse donc pas le menu
+    /// ouvert sur une case seulement mise en évidence.
+    PickerChoose(usize),
     PickerPick,
     Choices { slug: String, kind: covers::ArtKind, choices: Vec<covers::Choice> },
     /// Vignette d'une proposition, par son `url` (l'ordre des propositions ne
@@ -957,11 +961,11 @@ impl App {
                 }
                 Task::none()
             }
-            Message::PickerSelect(index) => {
+            Message::PickerChoose(index) => {
                 if let Some(picker) = self.picker.as_mut() {
                     picker.index = index;
                 }
-                Task::none()
+                Task::done(Message::PickerPick)
             }
             Message::PickerPick => {
                 let Some(picker) = self.picker.as_ref() else {
@@ -2709,7 +2713,7 @@ impl App {
                     .padding(6)
                     .style(move |_| card_style(selected));
 
-                current = current.push(mouse_area(cell).on_press(Message::PickerSelect(index)));
+                current = current.push(mouse_area(cell).on_press(Message::PickerChoose(index)));
                 in_row += 1;
                 if in_row == PICKER_COLUMNS {
                     rows = rows.push(std::mem::replace(&mut current, Row::new().spacing(12)));

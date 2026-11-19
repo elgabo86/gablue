@@ -328,7 +328,10 @@ leurs icônes, pour l'interface.
   du type (grid 148×222, héros/logo 208×117, icône 120×120) ; Entrée/A
   enregistre **et referme le menu tout de suite** (le téléchargement continue en
   fond, pied de page « application de l'image… » ; `picked` garde la trace du
-  choix pour le remplacement d'icône). Le menu s'ouvre **tout de suite** : la
+  choix pour le remplacement d'icône). Un **clic** sur une vignette vaut ce
+  choix immédiatement (`Message::PickerChoose` → `PickerPick`) : avant, il ne
+  faisait que mettre la case en évidence et le menu restait ouvert, alors que le
+  reste de l'interface valide au premier clic (signalé 19/11). Le menu s'ouvre **tout de suite** : la
   liste des propositions arrive vide de vignettes (`CoverEvent::Choices`) et une
   case de la bonne taille est dessinée pour chacune ; chaque vignette
   téléchargée la remplit aussitôt (`CoverEvent::Choice`, identifiée par son
