@@ -46,6 +46,7 @@ cargo run -- --windowed --simulate 5 --dir demo-games   # test rapide (idem ./te
 cargo test                  # tests unitaires (slug, extensions, troncature)
 cargo build --release
 glauncher --art "$HOME/Windows/Games/Jeu.wgp"   # logo + icône d'un paquet (overlay manette)
+glauncher --shrink          # allège le cache existant (une passe après coup)
 ```
 
 `--simulate` remplace la commande de lancement par un `sleep N` : on teste
@@ -291,6 +292,18 @@ leurs icônes, pour l'interface.
   `src/gablue-pad/gpad/AGENTS.md`). Le fichier est réécrit quand la liste des
   PID change (Wine forke), en écriture atomique, et retiré à la fin du jeu s'il
   est encore le nôtre.
+- **Poids du cache `assets/` : tout visuel est réécrit à une taille cible**
+  (`covers::cible`, appliquée par `save` et par `--art`). SteamGridDB sert les
+  héros en **3840×1240** (jusqu'à 12 Mo) et les grilles en 1024×1536 : cibles =
+  héros **1920 px de large en JPEG q88**, grilles **600×900 en JPEG**, logos
+  **1000 px en PNG**, icônes **256 px en PNG** (PNG obligatoire pour les deux
+  derniers : l'overlay `gpad` ne décode que le PNG, et il faut l'alpha). Mesuré
+  le 19/11 sur un cache réel : **438 Mo → 110 Mo** (411 fichiers réécrits,
+  405 Mo → 77 Mo), en 15 s. Un fichier déjà au format et à la taille cibles
+  n'est **jamais** réécrit (un JPEG ré-encodé perdrait de la qualité à chaque
+  passe) — les dimensions se lisent dans l'en-tête (`ImageReader::into_dimensions`),
+  pas en décodant l'image. `--shrink` applique la même règle au cache existant
+  et supprime la vignette des grilles converties (elle est refaite).
 - **`--art <paquet>` : les visuels d'un SEUL paquet, pour gwine/lgplaunch.**
   Lancé en fond par les deux lanceurs quand un `.wgp`/`.lgp` n'est pas passé par
   le launcher, il écrit dans le cache le logo et l'icône **manquants**

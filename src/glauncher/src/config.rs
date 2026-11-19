@@ -335,6 +335,8 @@ pub struct Options {
     pub list: bool,
     /// Récupère le logo et l'icône d'UN paquet (overlay manette), puis sort.
     pub art: Option<PathBuf>,
+    /// Ramène tout le cache `assets/` au format et à la taille cibles, puis sort.
+    pub shrink: bool,
     /// Ouvre le menu « choisir une image » au démarrage (crochet de test).
     pub picker: bool,
     /// Liste les périphériques d'entrée et leurs axes, puis sort.
@@ -362,6 +364,8 @@ Usage : glauncher [options]
   --list               liste numérotée des jeux (pour --play), puis quitte
   --art <paquet>       récupère le logo et l'icône d'un seul paquet pour
                        l'overlay manette (PNG dans le cache), puis quitte
+  --shrink             allège le cache (héros 1920 px en JPEG, grilles
+                       600x900, logos 1000 px, icônes 256 px), puis quitte
   --picker             ouvre le menu de choix d'image au démarrage
   --pads               liste les manettes et leurs axes (diagnostic), puis quitte
   --help               cette aide
@@ -437,6 +441,7 @@ impl Options {
                 "--reindex" => opts.reindex = true,
                 "--update" => opts.update = true,
                 "--list" => opts.list = true,
+                "--shrink" => opts.shrink = true,
                 "--art" => {
                     opts.art = Some(PathBuf::from(
                         args.get(index).ok_or("--art attend un paquet (.wgp/.lgp)")?,

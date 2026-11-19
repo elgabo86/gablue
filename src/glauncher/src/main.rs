@@ -179,6 +179,25 @@ fn art(config: &config::Config, pack: &std::path::Path) -> iced::Result {
     Ok(())
 }
 
+/// `--shrink` : ramène **tout le cache** au format et à la taille cibles.
+///
+/// Une passe unique après coup : les visuels déjà là (héros de 12 Mo,
+/// grilles 1024×1536) pèsent des centaines de Mo dans le dossier partagé par
+/// Syncthing, alors qu'ils s'affichent dans une bande de 1280 px et des
+/// vignettes de 300. Les téléchargements suivants sont normalisés d'office
+/// (`covers::save`) ; un fichier déjà bon n'est jamais réécrit.
+fn shrink(config: &config::Config) -> iced::Result {
+    let mut report = |line: String| println!("{line}");
+    let totals = covers::shrink_assets(&config.assets_dir(), &config.thumb_dir(), &mut report);
+    println!(
+        "{} fichier(s) réécrit(s) : {:.1} Mo → {:.1} Mo",
+        totals.rewritten,
+        totals.before as f64 / (1024.0 * 1024.0),
+        totals.after as f64 / (1024.0 * 1024.0)
+    );
+    Ok(())
+}
+
 fn main() -> iced::Result {
     start();
     let options = match config::Options::parse(std::env::args().skip(1).collect()) {
@@ -210,6 +229,9 @@ fn main() -> iced::Result {
     }
     if let Some(pack) = &options.art {
         return art(&config, pack);
+    }
+    if options.shrink {
+        return shrink(&config);
     }
     if options.pads {
         gamepad::describe();

@@ -436,6 +436,9 @@ lui-même prend le **nom du paquet** et **son icône**.
   `pack-icons/<slug>.png`. **PNG seulement** (l'overlay ne décode pas le
   JPEG) : `glauncher --art <paquet>`, lancé en fond par gwine/lgplaunch juste
   après la publication, convertit et écrit ce qui manque dans son cache. Le
+  launcher normalise tout le cache (héros et grilles en JPEG 1920 / 600×900,
+  logos 1000 px et icônes 256 px en PNG) : un logo du cache ne dépasse donc
+  jamais ~1 Mo, et l'overlay n'a pas à redimensionner pour ses 96 px. Le
   visuel apparaît donc **tout seul**, une seconde après son téléchargement,
   sans que le lanceur republie quoi que ce soit.
 - **L'overlay ne télécharge rien et n'invente aucun visuel** : chemin absent du

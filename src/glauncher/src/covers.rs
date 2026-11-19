@@ -257,7 +257,7 @@ where
                             std::thread::sleep(THROTTLE);
                             match fetched {
                                 Ok(Some((url, bytes, ext))) => {
-                                    let path = save(&dir, &marks, &slug, ext, &bytes, None);
+                                    let path = save(kind, &dir, &marks, &slug, ext, &bytes, None);
                                     eprintln!(
                                         "glauncher : {} SGDB « {name} » → {}",
                                         kind.label(),
@@ -344,7 +344,7 @@ where
                             Ok(bytes) => {
                                 let dir = cache.join(kind.dir());
                                 let marks = marks.join(kind.dir());
-                                let path = save(&dir, &marks, &slug, &ext, &bytes, Some(&url));
+                                let path = save(kind, &dir, &marks, &slug, &ext, &bytes, Some(&url));
                                 eprintln!(
                                     "glauncher : {} choisi → {}",
                                     kind.label(),
@@ -437,7 +437,7 @@ where
             }
             match client.top(name, kind) {
                 Ok(Some((url, bytes, ext))) => {
-                    let path = save(&dir, &marks, slug, ext, &bytes, None);
+                    let path = save(kind, &dir, &marks, slug, ext, &bytes, None);
                     let _ = url;
                     totals.downloaded += 1;
                     report(format!("{} « {name} » → {}", kind.label(), path.display()));
@@ -462,14 +462,85 @@ where
 /// l'en-tête) et l'icône (à la place de celle de la fenêtre).
 pub const OVERLAY_KINDS: [ArtKind; 2] = [ArtKind::Logo, ArtKind::Icon];
 
+/// Format et dimensions **cibles** d'un visuel du cache.
+///
+/// SteamGridDB sert du très lourd : un héros fait 3840×1240 et pèse jusqu'à
+/// **12 Mo** (mesuré 19/11 sur 103 héros = 205 Mo), une grille 1024×1536. Or
+/// une bande de héros fait la largeur du launcher (1280, 1920 au plus) et une
+/// vignette 300 px. D'où : héros et grilles en **JPEG** (opaques, la qualité 88
+/// est invisible à ces tailles), logo et icône en **PNG** — l'overlay `gpad` ne
+/// décode que le PNG, et il faut l'alpha.
+fn cible(kind: ArtKind) -> (&'static str, Option<u32>, Option<u32>) {
+    match kind {
+        ArtKind::Grid => ("jpg", Some(600), Some(900)),
+        ArtKind::Hero => ("jpg", Some(1920), None),
+        ArtKind::Logo => ("png", Some(1000), None),
+        ArtKind::Icon => ("png", Some(256), Some(256)),
+    }
+}
+
+/// Ré-encode un visuel au format et à la taille cibles (ratio conservé par
+/// ajustement dans la boîte). `None` si l'image n'est pas décodable : l'appelant
+/// garde alors l'original, jamais de perte.
+fn normaliser(kind: ArtKind, bytes: &[u8]) -> Option<(Vec<u8>, &'static str)> {
+    let (ext, max_w, max_h) = cible(kind);
+    let image = image::load_from_memory(bytes).ok()?;
+    let (largeur, hauteur) = (image.width(), image.height());
+    let mut echelle = 1.0f64;
+    if let Some(max) = max_w.filter(|max| largeur > *max) {
+        echelle = echelle.min(max as f64 / largeur as f64);
+    }
+    if let Some(max) = max_h.filter(|max| hauteur > *max) {
+        echelle = echelle.min(max as f64 / hauteur as f64);
+    }
+    let image = if echelle < 1.0 {
+        let largeur = ((largeur as f64 * echelle).round() as u32).max(1);
+        let hauteur = ((hauteur as f64 * echelle).round() as u32).max(1);
+        image.resize(largeur, hauteur, image::imageops::FilterType::Lanczos3)
+    } else {
+        image
+    };
+
+    let mut out = std::io::Cursor::new(Vec::new());
+    if ext == "jpg" {
+        let rgb = image.to_rgb8();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 88)
+            .encode_image(&rgb)
+            .ok()?;
+    } else {
+        image.write_to(&mut out, image::ImageFormat::Png).ok()?;
+    }
+    Some((out.into_inner(), ext))
+}
+
+/// Visuel déjà au format et à la taille cibles — on ne réécrit pas : un JPEG
+/// ré-encodé à chaque passe perdrait de la qualité pour rien. Seules les
+/// dimensions sont lues (en-tête), pas l'image entière.
+fn deja_bon(kind: ArtKind, dir: &Path, slug: &str) -> bool {
+    let (ext, max_w, max_h) = cible(kind);
+    let Ok(bytes) = std::fs::read(dir.join(format!("{slug}.{ext}"))) else {
+        return false;
+    };
+    let dimensions = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|lecteur| lecteur.into_dimensions().ok());
+    match dimensions {
+        Some((largeur, hauteur)) => {
+            max_w.is_none_or(|max| largeur <= max) && max_h.is_none_or(|max| hauteur <= max)
+        }
+        None => false,
+    }
+}
+
 /// Télécharge les visuels **manquants d'un seul paquet** (`--art <paquet>`,
 /// lancé en fond par gwine/lgplaunch au démarrage du jeu).
 ///
-/// Toujours en **PNG**, même si SteamGridDB rend un JPEG ou un WebP : l'overlay
-/// manette ne décode que le PNG (`lire_png`), et un logo en JPEG serait un
-/// piège muet. L'icône du paquet (`.icon.png` du squashfs) passe devant celle
-/// de SteamGridDB, comme dans le launcher. Un visuel déjà là n'est jamais
-/// redemandé ; un « introuvable » récent n'est pas réessayé.
+/// L'icône du paquet (`.icon.png` du squashfs) passe devant celle de
+/// SteamGridDB, comme dans le launcher. Un visuel déjà au bon format n'est
+/// jamais redemandé ; un « introuvable » récent n'est pas réessayé. Tout est
+/// ramené au format de l'overlay (PNG pour logo et icône) et à une taille
+/// raisonnable (voir [`cible`]).
 pub fn fetch_game<F>(
     assets: &Path,
     marks_root: &Path,
@@ -489,22 +560,26 @@ where
     for kind in OVERLAY_KINDS {
         let dir = assets.join(kind.dir());
         let marks = marks_root.join(kind.dir());
-        // déjà en PNG : rien à faire (c'est le seul format que l'overlay lit)
-        if dir.join(format!("{slug}.png")).is_file() {
+        // déjà au bon format et à la bonne taille : rien à faire
+        if deja_bon(kind, &dir, slug) {
             totals.skipped += 1;
             continue;
         }
-        // un autre format traîne : on le convertit, l'overlay ne le verrait pas
+        // un visuel existe en un autre format (ou trop grand) : on le réécrit
         if let Some(autre) = cached(&dir, slug)
             && let Ok(bytes) = std::fs::read(&autre)
-            && let Some(png) = en_png(&bytes)
+            && normaliser(kind, &bytes).is_some()
         {
-            write_atomic(&dir.join(format!("{slug}.png")), &png);
+            let ext = autre
+                .extension()
+                .map(|ext| ext.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let path = save(kind, &dir, &marks, slug, &ext, &bytes, None);
             totals.downloaded += 1;
             report(format!(
-                "{} « {name} » converti en PNG → {}",
+                "{} « {name} » mis au format de l'overlay → {}",
                 kind.label(),
-                dir.join(format!("{slug}.png")).display()
+                path.display()
             ));
             continue;
         }
@@ -531,16 +606,13 @@ where
             continue;
         }
         match client.top(name, kind) {
-            Ok(Some((_url, bytes, _ext))) => {
-                let png = match en_png(&bytes) {
-                    Some(png) => png,
-                    None => {
-                        totals.failed += 1;
-                        report(format!("{} « {name} » : image illisible", kind.label()));
-                        continue;
-                    }
-                };
-                let path = save(&dir, &marks, slug, "png", &png, None);
+            Ok(Some((_url, bytes, ext))) => {
+                if normaliser(kind, &bytes).is_none() {
+                    totals.failed += 1;
+                    report(format!("{} « {name} » : image illisible", kind.label()));
+                    continue;
+                }
+                let path = save(kind, &dir, &marks, slug, ext, &bytes, None);
                 totals.downloaded += 1;
                 report(format!("{} « {name} » → {}", kind.label(), path.display()));
             }
@@ -559,12 +631,92 @@ where
     totals
 }
 
-/// Ré-encode une image (fichier du cache ou octets téléchargés) en PNG.
-fn en_png(bytes: &[u8]) -> Option<Vec<u8>> {
-    let image = image::load_from_memory(bytes).ok()?;
-    let mut out = std::io::Cursor::new(Vec::new());
-    image.write_to(&mut out, image::ImageFormat::Png).ok()?;
-    Some(out.into_inner())
+/// Bilan d'un `--shrink`.
+#[derive(Debug, Default)]
+pub struct ShrinkReport {
+    /// fichiers réécrits (format ou taille)
+    pub rewritten: usize,
+    /// octets avant / après
+    pub before: u64,
+    pub after: u64,
+}
+
+/// Ramène **tout le cache** `assets/` au format et à la taille de [`cible`]
+/// (`--shrink`). Une passe unique : les téléchargements suivants sont déjà
+/// normalisés, et un fichier déjà bon n'est jamais réécrit (pas de perte JPEG).
+pub fn shrink_assets<F>(assets: &Path, thumbs: &Path, report: &mut F) -> ShrinkReport
+where
+    F: FnMut(String),
+{
+    let mut totals = ShrinkReport::default();
+
+    for kind in ArtKind::ALL {
+        let dir = assets.join(kind.dir());
+        let Ok(entrees) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let (mut faits, mut avant, mut apres) = (0usize, 0u64, 0u64);
+        for entree in entrees.flatten() {
+            let chemin = entree.path();
+            let Some(slug) = chemin
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().to_string())
+            else {
+                continue;
+            };
+            let Some(ext) = chemin.extension().map(|ext| ext.to_string_lossy().to_string())
+            else {
+                continue;
+            };
+            if !IMAGE_EXT.contains(&ext.to_ascii_lowercase().as_str()) {
+                continue;
+            }
+            if deja_bon(kind, &dir, &slug) {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(&chemin) else {
+                continue;
+            };
+            let Some((normalisees, nouvelle)) = normaliser(kind, &bytes) else {
+                continue;
+            };
+            let destination = dir.join(format!("{slug}.{nouvelle}"));
+            write_atomic(&destination, &normalisees);
+            if destination != chemin {
+                let _ = std::fs::remove_file(&chemin);
+            }
+            // la vignette est dérivée de la grille : elle sera refaite
+            if kind == ArtKind::Grid {
+                for autre in IMAGE_EXT {
+                    let _ = std::fs::remove_file(thumbs.join(format!("{slug}.{autre}")));
+                }
+            }
+            faits += 1;
+            avant += bytes.len() as u64;
+            apres += normalisees.len() as u64;
+        }
+        if faits > 0 {
+            report(format!(
+                "{} : {faits} réécrit(s), {} → {}",
+                kind.label(),
+                poids(avant),
+                poids(apres)
+            ));
+        }
+        totals.rewritten += faits;
+        totals.before += avant;
+        totals.after += apres;
+    }
+    totals
+}
+
+/// Taille lisible (Mo, Ko).
+fn poids(octets: u64) -> String {
+    if octets >= 1024 * 1024 {
+        format!("{:.1} Mo", octets as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.0} Ko", octets as f64 / 1024.0)
+    }
 }
 
 /// Visuel en cache pour un jeu (png, jpg ou webp).
@@ -598,8 +750,13 @@ pub fn recently_missed(marks: &Path, slug: &str) -> bool {
 }
 
 /// Écrit un visuel dans le cache. `url` non nul = choix de l'utilisateur : le
-/// marqueur `.choice` est posé et les autres formats du même jeu sont retirés.
+/// marqueur `.choice` est posé. L'image est ramenée au format et à la taille de
+/// [`cible`] (un héros de 12 Mo ne sert à rien dans une bande de 1280 px) ; si
+/// elle n'est pas décodable, elle est écrite telle quelle. Les autres formats du
+/// même jeu sont retirés : un seul fichier fait foi, c'est aussi ce que voit
+/// l'autre machine via Syncthing.
 fn save(
+    kind: ArtKind,
     dir: &Path,
     marks: &Path,
     slug: &str,
@@ -608,18 +765,20 @@ fn save(
     url: Option<&str>,
 ) -> PathBuf {
     let _ = std::fs::create_dir_all(dir);
-    if url.is_some() {
-        for other in IMAGE_EXT {
-            if other != ext {
-                let _ = std::fs::remove_file(dir.join(format!("{slug}.{other}")));
-            }
+    let (bytes, ext) = match normaliser(kind, bytes) {
+        Some((normalisees, cible)) => (normalisees, cible),
+        None => (bytes.to_vec(), ext),
+    };
+    for other in IMAGE_EXT {
+        if other != ext {
+            let _ = std::fs::remove_file(dir.join(format!("{slug}.{other}")));
         }
     }
     let path = dir.join(format!("{slug}.{ext}"));
     // Écriture ATOMIQUE (`.part` puis rename) : le dossier `assets/` peut être
     // synchronisé (Syncthing) entre plusieurs machines, et un fichier à moitié
     // écrit se propagerait tel quel.
-    write_atomic(&path, bytes);
+    write_atomic(&path, &bytes);
     if let Some(url) = url {
         let _ = std::fs::create_dir_all(marks);
         write_atomic(&marks.join(format!("{slug}.choice")), url.as_bytes());
@@ -1018,6 +1177,50 @@ mod tests {
     }
 
     #[test]
+    fn normalisation_allege_et_respecte_le_format() {
+        // une image bruitée, comme une vraie bannière : le PNG est lourd
+        let (largeur, hauteur) = (2560u32, 830u32);
+        let mut graine = 12345u32;
+        let pixels: Vec<u8> = (0..largeur * hauteur)
+            .flat_map(|_| {
+                graine = graine.wrapping_mul(1664525).wrapping_add(1013904223);
+                let v = (graine >> 16) as u8;
+                [v, v.wrapping_add(40), v.wrapping_add(90), 255]
+            })
+            .collect();
+        let image = image::RgbaImage::from_raw(largeur, hauteur, pixels).unwrap();
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let brut = png.into_inner();
+
+        // héros : JPEG 1920 de large, plusieurs fois plus léger
+        let (heros, ext) = normaliser(ArtKind::Hero, &brut).expect("décodable");
+        assert_eq!(ext, "jpg", "un héros est opaque : JPEG, pas PNG");
+        let dimensions = image::load_from_memory(&heros).unwrap();
+        assert_eq!(dimensions.width(), 1920, "largeur bornée à l'écran");
+        assert!(heros.len() < brut.len() / 4, "{} vs {}", heros.len(), brut.len());
+
+        // logo : PNG conservé (alpha, l'overlay ne décode que ça), 1000 px
+        let (logo, ext) = normaliser(ArtKind::Logo, &brut).unwrap();
+        assert_eq!(ext, "png");
+        let logo = image::load_from_memory(&logo).unwrap();
+        assert!(
+            (990..=1000).contains(&logo.width()),
+            "largeur bornée à 1000 px : {}",
+            logo.width()
+        );
+
+        // icône : boîte 256×256, ratio conservé, PNG
+        let (icone, ext) = normaliser(ArtKind::Icon, &brut).unwrap();
+        assert_eq!(ext, "png");
+        let icone = image::load_from_memory(&icone).unwrap();
+        assert!(icone.width() <= 256 && icone.height() <= 256);
+        assert_eq!(icone.width() as f32 / icone.height() as f32, 2560.0 / 830.0);
+    }
+
+    #[test]
     fn encodage_du_terme() {
         assert_eq!(urlencode("A Hat in Time"), "A+Hat+in+Time");
         assert_eq!(urlencode("Beyond Good & Evil"), "Beyond+Good+%26+Evil");
@@ -1034,7 +1237,9 @@ mod tests {
         std::fs::create_dir_all(&marks).unwrap();
         std::fs::write(marks.join("jeu.miss"), b"").unwrap();
         #[allow(clippy::needless_borrow)]
+        // octets illisibles : le fichier est écrit tel quel, sans normalisation
         let path = save(
+            ArtKind::Logo,
             &dir,
             &marks,
             "jeu",
