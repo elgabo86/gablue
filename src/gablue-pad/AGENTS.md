@@ -93,6 +93,17 @@ Détail des gestes et des pages : `gpad/AGENTS.md`.
 overlay) avec les mêmes variables d'environnement que le service ; `vpad` sert
 de manette virtuelle (signaux : `evgrab/AGENTS.md`). Le banc garde les chemins
 relatifs au binaire, l'image passe les chemins absolus par l'environnement.
+`./test-logo.sh` est le banc du **logo du jeu** : il publie un `running.txt`
+factice dans le cache de glauncher (fenêtre du terminal + un logo du cache, ou
+`--pid` d'un vrai jeu), ou suit la publication réelle (`--jeu`) — celle de
+glauncher **ou** celle de gwine/lgplaunch, qui écrivent `nom=` / `paquet=` /
+`pids=` dans `$XDG_RUNTIME_DIR/gablue/running.txt`. Il ouvre l'overlay **sans
+grab** pendant 12 s (`--duree`) avec
+`KWIN_SCRIPTS` — sans cette variable `chemin_kwin` ne trouve pas `wininfo.js`
+depuis le binaire du cache cargo, donc aucune fenêtre active — et remet le
+fichier d'origine à la sortie, jamais celui d'un jeu en cours (`--force` seul
+l'autorise). `--reel` compile les deux binaires et donne la marche à suivre
+avec un vrai jeu.
 
 ## Documentation par domaine
 

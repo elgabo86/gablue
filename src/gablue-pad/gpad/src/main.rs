@@ -295,15 +295,21 @@ impl<'a> Canvas<'a> {
     /// mélangé au fond). Pas de lissage bilinéaire : le panneau assume le
     /// rendu net.
     fn icone(&mut self, x: i32, y: i32, taille: i32, ic: &Icone) {
-        if ic.w <= 0 || ic.h <= 0 || taille <= 0 {
+        self.image(x, y, taille, taille, ic);
+    }
+
+    /// Idem, à une taille libre : le logo d'un jeu garde son ratio (le caller
+    /// calcule `tw`/`th`), une icône carrée passe par [`Canvas::icone`].
+    fn image(&mut self, x: i32, y: i32, tw: i32, th: i32, ic: &Icone) {
+        if ic.w <= 0 || ic.h <= 0 || tw <= 0 || th <= 0 {
             return;
         }
-        for dy in 0..taille {
-            let sy0 = dy * ic.h / taille;
-            let sy1 = ((dy + 1) * ic.h / taille).max(sy0 + 1).min(ic.h);
-            for dx in 0..taille {
-                let sx0 = dx * ic.w / taille;
-                let sx1 = ((dx + 1) * ic.w / taille).max(sx0 + 1).min(ic.w);
+        for dy in 0..th {
+            let sy0 = dy * ic.h / th;
+            let sy1 = ((dy + 1) * ic.h / th).max(sy0 + 1).min(ic.h);
+            for dx in 0..tw {
+                let sx0 = dx * ic.w / tw;
+                let sx1 = ((dx + 1) * ic.w / tw).max(sx0 + 1).min(ic.w);
                 let (mut r, mut g, mut b, mut a, mut n) = (0u32, 0u32, 0u32, 0u32, 0u32);
                 for sy in sy0..sy1 {
                     for sx in sx0..sx1 {
@@ -392,6 +398,28 @@ impl<'a> Canvas<'a> {
         }
         out.push('.');
         self.text(x, y, &out, scale, color);
+    }
+
+    /// Texte qui **rétrécit** au lieu d'être tronqué : on descend l'échelle
+    /// (3 → 2) tant que ça ne tient pas dans `max_w`, puis `text_fit` tronque
+    /// en dernier recours. La légende de la fenêtre active (souvent un titre
+    /// de jeu) dépassait 21 caractères à l'échelle 3 et finissait en « … » ;
+    /// le nom du paquet publié par glauncher est encore plus long.
+    fn text_reduit(
+        &mut self,
+        x: i32,
+        y: i32,
+        s: &str,
+        scale_max: i32,
+        scale_min: i32,
+        color: u32,
+        max_w: i32,
+    ) {
+        let mut scale = scale_max.max(scale_min);
+        while scale > scale_min && self.largeur(s, scale) > max_w {
+            scale -= 1;
+        }
+        self.text_fit(x, y, s, scale, color, max_w);
     }
 
     /// Texte : bitmap 5×7 (RETRO) ou police vectorielle (MODERNE).
@@ -943,6 +971,13 @@ struct App {
     mouse_active: bool,
     /// buffer de replay actif (gpu-screen-recorder lancé avec -r)
     replay_active: bool,
+    /// limite d'attente après une bascule de replay : `replay.sh start` joue le
+    /// bip puis lance le flatpak (et attend jusqu'à 4 s), `stop` envoie SIGINT
+    /// et attend la sortie. Tant qu'elle n'est pas passée, la passe d'état
+    /// d'une seconde ne contredit pas le choix de l'utilisateur — sans ça la
+    /// ligne repassait « ARRET » le temps du démarrage avant de revenir
+    /// « ACTIF » (constaté).
+    replay_attente: Option<Instant>,
     /// VRR automatique actif sur les sorties capables (`vrr.sh get`)
     vrr_on: bool,
     /// booster « premier plan » de Plasma actif (`booster.sh get`)
@@ -970,6 +1005,13 @@ struct App {
     icone: Option<Icone>,
     /// identité (desktop|class) pour laquelle l'icône a été cherchée
     icone_cle: String,
+    /// jeu publié par glauncher (`<cache>/running.txt`) : slug et PID du jeu
+    jeu: Option<JeuActif>,
+    /// logo du jeu actif, lu dans le cache de glauncher (jamais inventé :
+    /// fichier absent = pas de bandeau)
+    logo: Option<Icone>,
+    /// chemin du logo chargé : évite de relire l'image à chaque tour
+    logo_cle: String,
     /// vue « menu système » (Home maintenu) : petit panneau centré, pas de
     /// réglages — le drapeau CLI reste `--console`
     console: bool,
@@ -1099,15 +1141,31 @@ fn descendants(racine: i32) -> Vec<i32> {
     let mut out = Vec::new();
     let mut pile = vec![racine];
     while let Some(pid) = pile.pop() {
-        let chemin = format!("/proc/{pid}/task/{pid}/children");
-        let Ok(txt) = std::fs::read_to_string(&chemin) else {
+        // **Tous les threads** du processus : un fork part souvent d'un thread
+        // (WebEngine d'une appli flatpak, Wine), et `/proc/<pid>/task/<pid>/
+        // children` ne liste que les enfants du thread principal — le
+        // sous-processus cherché restait invisible.
+        let dossier = format!("/proc/{pid}/task");
+        let Ok(taches) = std::fs::read_dir(&dossier) else {
             continue;
         };
-        for tok in txt.split_whitespace() {
-            if let Ok(c) = tok.parse::<i32>() {
-                out.push(c);
-                pile.push(c);
+        let mut enfants = Vec::new();
+        for tache in taches.flatten() {
+            let chemin = std::path::Path::new(&dossier)
+                .join(tache.file_name())
+                .join("children");
+            let Ok(txt) = std::fs::read_to_string(chemin) else {
+                continue;
+            };
+            for tok in txt.split_whitespace() {
+                if let Ok(c) = tok.parse::<i32>() {
+                    enfants.push(c);
+                }
             }
+        }
+        for c in enfants {
+            out.push(c);
+            pile.push(c);
         }
     }
     out
@@ -1210,6 +1268,7 @@ impl App {
             combo_node: None,
             mouse_active: false,
             replay_active: false,
+            replay_attente: None,
             vrr_on: false,
             booster_on: false,
             page_initiale: false,
@@ -1223,6 +1282,9 @@ impl App {
             rec_secs: 0,
             icone: None,
             icone_cle: String::new(),
+            jeu: None,
+            logo: None,
+            logo_cle: String::new(),
             console: false,
             derniere_appli: None,
             bus: String::new(),
@@ -2482,6 +2544,7 @@ impl App {
                         );
                     }
                     self.replay_active = !self.replay_active;
+                    self.replay_attente = Some(Instant::now() + Duration::from_secs(6));
                     println!("REPLAY {}", if self.replay_active { "start" } else { "stop" });
                 }
                 // replay actif : les deux sont exclusifs, la ligne devient la
@@ -2797,13 +2860,134 @@ impl App {
         cv.text_fit(x_droite - w, y, s, scale, color, w + 6);
     }
 
+    /// Taille du logo rendu : `(largeur, hauteur)`, ratio conservé, hauteur
+    /// plafonnée à [`LOGO_MAX_H`], largeur bornée à la largeur utile du
+    /// panneau. `(0, 0)` sans logo (aucun jeu glauncher actif, visuel absent).
+    fn logo_taille(&self, inner: i32) -> (i32, i32) {
+        let Some(ic) = &self.logo else {
+            return (0, 0);
+        };
+        if self.console || ic.w <= 0 || ic.h <= 0 || inner <= 0 {
+            return (0, 0);
+        }
+        let th = LOGO_MAX_H.min(inner * ic.h / ic.w).max(1);
+        let tw = (th * ic.w / ic.h).min(inner).max(1);
+        (tw, th)
+    }
+
+    /// Décalage vertical de l'en-tête et de la liste quand le logo est affiché.
+    /// `fen_visibles` en a besoin hors du dessin (le canevas emprunte `self`).
+    ///
+    /// L'en-tête démarre normalement à 50 px du bord haut. Avec le logo, il
+    /// part de `MARGE + logo + MARGE` : le décalage vaut donc
+    /// `th + 2×MARGE − 50`, ce qui donne **le même air avant et après** l'image.
+    ///
+    /// Le bandeau n'est réservé que si la page tient encore : une page pleine
+    /// (REGLAGES avec ses sept lignes hautes) n'a pas la place, et pousser sa
+    /// dernière ligne hors du panneau serait pire que de cacher le logo. La
+    /// page FENETRES défile, elle s'adapte d'elle-même (`fen_visibles`).
+    fn decalage_logo(&self) -> i32 {
+        let (w, h) = self.size;
+        let pw = if self.side {
+            w as i32
+        } else {
+            760.min(w as i32 - 80)
+        };
+        let (_, th) = self.logo_taille(pw - 52);
+        if th == 0 {
+            return 0;
+        }
+        // sous 18 px de haut, l'image n'a plus d'air à elle : rien à afficher
+        let bande = th + 2 * LOGO_MARGE - 50;
+        if bande <= 0 {
+            return 0;
+        }
+        if self.page == Page::Fenetres {
+            return bande;
+        }
+        let ph = if self.side {
+            h as i32
+        } else {
+            640.min(h as i32 - 120)
+        };
+        let place = (ph - 90) - 180 - self.hauteur_contenu();
+        if place >= bande { bande } else { 0 }
+    }
+
+    /// Hauteur cumulée des lignes de la page courante (mêmes hauteurs que le
+    /// dessin : séparateur 52, réglage 86, ligne 46, en-tête 0).
+    fn hauteur_contenu(&self) -> i32 {
+        self.liste()
+            .iter()
+            .map(|e| match e {
+                Entree::Fenetre => 0,
+                Entree::Groupe(_) => 52,
+                _ if e.reglage() => 86,
+                _ => 46,
+            })
+            .sum()
+    }
+
     /// Nombre de lignes visibles sur la page « fenêtres » (lignes de 46 px).
     fn fen_visibles(&self) -> usize {
         let (_, h) = self.size;
         let ph = if self.side { h as i32 } else { 640.min(h as i32 - 120) };
         // 180 = départ de liste (sous l'en-tête et le titre de page),
-        // 90 = pied + marges
-        (((ph - 90) - 180) / 46).max(1) as usize
+        // 90 = pied + marges ; le bandeau du logo décale tout d'autant
+        (((ph - 90) - (180 + self.decalage_logo())) / 46).max(1) as usize
+    }
+
+    /// Jeu dont la fenêtre est active (`None` sinon) : la seule source du nom,
+    /// de l'icône et du logo affichés en haut du panneau.
+    fn jeu_actif(&self) -> Option<&JeuActif> {
+        self.jeu.as_ref()
+    }
+
+    /// Relit les publications des lanceurs et met à jour le logo (bandeau
+    /// au-dessus de l'en-tête) **et** l'icône de l'en-tête. Aucun visuel
+    /// inventé : chemin absent du fichier ou image illisible = rien de changé.
+    fn rafraichir_jeu(&mut self) {
+        self.jeu = jeu_de(&lire_jeux_actifs(), self.win.pid);
+
+        // logo du jeu : c'est lui qui décale la mise en page
+        let cle_logo = self
+            .jeu_actif()
+            .map(|jeu| jeu.logo.clone())
+            .unwrap_or_default();
+        if cle_logo != self.logo_cle {
+            self.logo_cle = cle_logo.clone();
+            self.logo = if cle_logo.is_empty() {
+                None
+            } else {
+                lire_png(std::path::Path::new(&cle_logo))
+            };
+            self.dirty = true;
+            match (&self.jeu, &self.logo) {
+                (Some(jeu), Some(_)) => println!("LOGO {} ({})", cle_logo, jeu.slug),
+                _ => println!("LOGO aucun"),
+            }
+        }
+
+        // icône de l'en-tête : celle du paquet quand un jeu tourne (la fenêtre
+        // d'un jeu Wine n'en porte qu'une d'exécutable), celle de la fenêtre
+        // sinon. La clé évite de refaire la résolution à chaque tour.
+        let cle_icone = match self.jeu_actif() {
+            Some(jeu) if !jeu.icone.is_empty() => format!("jeu:{}", jeu.icone),
+            _ => format!("{}|{}", self.win.desktop, self.win.class),
+        };
+        if cle_icone != self.icone_cle {
+            self.icone_cle = cle_icone;
+            self.icone = match self.icone_cle.strip_prefix("jeu:") {
+                Some(chemin) => lire_png(std::path::Path::new(chemin)),
+                None => charger_icone(&self.win.desktop, &self.win.class, &self.win.caption),
+            };
+            self.dirty = true;
+            println!(
+                "ICONE {} ({})",
+                if self.icone.is_some() { "trouvee" } else { "aucune" },
+                self.icone_cle
+            );
+        }
     }
 
     /// Recale le défilement pour que la sélection soit toujours visible.
@@ -3301,6 +3485,21 @@ impl App {
         // aucun titre : le menu système n'affiche que ses lignes, le panneau
         // latéral garde seulement l'indicateur de page
 
+        // Logo du jeu lancé par glauncher, AU-DESSUS de l'en-tête de fenêtre.
+        // Affiché seulement quand l'overlay l'a réellement chargé (le launcher
+        // ne publie le chemin que pour un visuel présent dans son cache) et que
+        // la page a la place : il décale alors l'en-tête, le titre et la liste.
+        let dh = self.decalage_logo();
+        if dh > 0 {
+            let (lw, lh) = self.logo_taille(inner);
+            if let Some(ic) = &self.logo {
+                // même air au-dessus qu'en dessous (l'en-tête commence à
+                // `dh + 50`, soit `MARGE + logo + MARGE`)
+                cv.image(px0 + (pw - lw) / 2, py0 + LOGO_MARGE, lw, lh, ic);
+            }
+        }
+        let haut = py0 + dh;
+
         // fenêtre/game actif : ce sur quoi « plein écran » et « tuer » agissent
         // (l'en-tête est lui-même une entrée : A ouvre la liste des fenêtres)
         if !self.console {
@@ -3308,7 +3507,7 @@ impl App {
             // même surbrillance que les lignes, même règle de lisibilité
             let (c_cap, c_cls) = (th.sur(th.txt, entete_sel), th.sur(th.dim, entete_sel));
             if entete_sel {
-                let (sx, sy, sw, sh) = (px0 + pad - 8, py0 + 50, inner + 16, 64);
+                let (sx, sy, sw, sh) = (px0 + pad - 8, haut + 50, inner + 16, 64);
                 cv.rrect_v(sx, sy, sw, sh, th.rayon_sel, th.sel_haut, th.sel_bas);
                 if th.barre > 0 {
                     cv.rect(sx, sy + 3, th.barre, sh - 6, th.accent);
@@ -3316,20 +3515,30 @@ impl App {
             }
             let (cap, cls) = if self.win.caption.is_empty() {
                 ("AUCUNE FENETRE".to_string(), String::new())
+            } else if let Some(jeu) = self.jeu_actif() {
+                if jeu.nom.is_empty() {
+                    (self.win.caption.clone(), self.win.class.clone())
+                } else {
+                    // nom du paquet ; sa classe d'appli (souvent `steam_proton`
+                    // pour un jeu Wine) n'apprend rien, donc pas de 2e ligne
+                    (jeu.nom.clone(), String::new())
+                }
             } else {
                 (self.win.caption.clone(), self.win.class.clone())
             };
             let decal = if let Some(ic) = &self.icone {
-                cv.icone(px0 + pad, py0 + 56, 34, ic);
+                cv.icone(px0 + pad, haut + 56, 34, ic);
                 44
             } else {
                 0
             };
-            cv.text_fit(px0 + pad + decal, py0 + 62, &cap, 3, c_cap, inner - decal);
+            // légende : elle rétrécit (3 → 2) plutôt que d'être coupée — un nom
+            // de paquet long ne tient pas à l'échelle 3
+            cv.text_reduit(px0 + pad + decal, haut + 62, &cap, 3, 2, c_cap, inner - decal);
             if !cls.is_empty() {
                 // classe de l'appli : sa propre ligne, détachée du nom (elle le
                 // collait au bord de la pastille en MODERNE)
-                cv.text_fit(px0 + pad + decal, py0 + 94, &cls, 2, c_cls, inner - decal);
+                cv.text_fit(px0 + pad + decal, haut + 94, &cls, 2, c_cls, inner - decal);
             }
         }
 
@@ -3338,7 +3547,7 @@ impl App {
             self.nom_menu(
                 &mut cv,
                 px0 + pw / 2,
-                py0 + 134,
+                haut + 134,
                 px0 + pad,
                 px0 + pad + inner,
             );
@@ -3347,7 +3556,11 @@ impl App {
         // 146 et non 124 : l'en-tête (nom + classe) garde une vraie respiration
         // avant le premier choix, sinon on ne distingue pas « la fenêtre » des
         // actions (constaté à l'usage)
-        let y_liste = if self.console { py0 + 62 } else { py0 + 180 };
+        let y_liste = if self.console {
+            py0 + 62
+        } else {
+            haut + 180
+        };
         // Changement de page : le contenu glisse horizontalement (l'ancienne
         // sort, la nouvelle entre), l'en-tête de fenêtre ne bouge pas.
         if let Some((ancienne, nouvelle, t0, sens)) = self.pdep {
@@ -3951,6 +4164,277 @@ fn arg_values(args: &[String], flag: &str) -> Vec<String> {
 
 /* ================= fenêtre active (script KWin -> D-Bus) ================= */
 
+/// Jeu en cours, publié par un lanceur tant que la partie dure.
+///
+/// Deux fichiers, même format :
+/// - `<cache de glauncher>/running.txt` : écrit par glauncher, avec `slug=`,
+///   `nom=`, `pids=` et les chemins `logo=` / `icone=` **déjà résolus** ;
+/// - `<dossier d'exécution>/gablue/running.txt` : écrit par gwine/lgplaunch
+///   quand le paquet est lancé **sans** le launcher, avec `nom=`, `paquet=`
+///   (chemin du `.wgp`/`.lgp`) et `pids=`.
+///
+/// C'est le **lien** entre la fenêtre active et le jeu : l'overlay ne devine
+/// rien (ni classe de fenêtre, ni nom d'exécutable). Le nom et l'icône viennent
+/// du **paquet** : la fenêtre d'un jeu `gwine`/`lgplaunch` porte le titre du
+/// binaire et l'icône de l'exécutable, pas celles du `.wgp`/`.lgp`.
+#[derive(Default, Clone, PartialEq)]
+struct JeuActif {
+    slug: String,
+    /// nom affiché du paquet (nom du fichier sans extension)
+    nom: String,
+    pids: Vec<i32>,
+    /// chemin absolu du logo (vide = visuel absent du cache : pas de bandeau)
+    logo: String,
+    /// chemin absolu de l'icône du paquet (vide = rien à substituer)
+    icone: String,
+}
+
+/// Cache de glauncher (`GLAUNCHER_CACHE` au banc).
+///
+/// Le launcher lit le sien dans `config.toml` : l'overlay suit la même clé
+/// (`cache_dir`, top-level) au lieu de supposer `~/.local/share`, sinon un
+/// cache déplacé rendrait le logo invisible sans rien dire. Le défaut de
+/// l'image reste `~/.local/share/glauncher`.
+fn cache_glauncher() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("GLAUNCHER_CACHE") {
+        return std::path::PathBuf::from(dir);
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let xdg = std::env::var("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from(&home).join(".config"));
+    if let Ok(txt) = std::fs::read_to_string(xdg.join("glauncher").join("config.toml")) {
+        for ligne in txt.lines() {
+            let Some(reste) = ligne.trim().strip_prefix("cache_dir") else {
+                continue;
+            };
+            let Some(valeur) = reste.trim().strip_prefix('=') else {
+                continue;
+            };
+            let valeur = valeur.trim().trim_matches('"').trim();
+            if !valeur.is_empty() {
+                return match valeur.strip_prefix("~/") {
+                    Some(reste) => std::path::PathBuf::from(&home).join(reste),
+                    None => std::path::PathBuf::from(valeur),
+                };
+            }
+        }
+    }
+    std::path::PathBuf::from(home).join(".local/share/glauncher")
+}
+
+/// Dossier où `gwine` et `lgplaunch` publient leur partie : celui de
+/// l'exécution de session, exactement comme les deux scripts le calculent
+/// (`$XDG_RUNTIME_DIR/gablue`, repli `/tmp/gablue-<uid>`).
+fn dossier_lanceurs() -> std::path::PathBuf {
+    match std::env::var_os("XDG_RUNTIME_DIR").filter(|dir| !dir.is_empty()) {
+        Some(dir) => std::path::PathBuf::from(dir).join("gablue"),
+        // SAFETY : geteuid ne peut pas échouer
+        None => std::path::PathBuf::from(format!("/tmp/gablue-{}", unsafe {
+            libc::geteuid()
+        })),
+    }
+}
+
+/// Les deux publications possibles, la plus riche d'abord (glauncher résout
+/// lui-même logo et icône ; gwine/lgplaunch ne publient que le paquet).
+fn fichiers_jeu() -> [std::path::PathBuf; 2] {
+    [
+        cache_glauncher().join("running.txt"),
+        dossier_lanceurs().join("running.txt"),
+    ]
+}
+
+/// Jeux publiés en ce moment (ceux dont au moins un PID vit encore).
+fn lire_jeux_actifs() -> Vec<JeuActif> {
+    let cache = cache_glauncher();
+    fichiers_jeu()
+        .iter()
+        .filter_map(|chemin| lire_jeu(chemin, &cache))
+        .collect()
+}
+
+/// Lit un `running.txt` ; `None` si absent, vide, ou si aucun PID publié
+/// n'existe encore (fichier laissé par un lanceur tué en pleine partie).
+fn lire_jeu(chemin: &std::path::Path, cache: &std::path::Path) -> Option<JeuActif> {
+    let texte = std::fs::read_to_string(chemin).ok()?;
+    let mut jeu = JeuActif::default();
+    let mut paquet = String::new();
+    for ligne in texte.lines() {
+        let Some((cle, valeur)) = ligne.split_once('=') else {
+            continue;
+        };
+        match cle.trim() {
+            "slug" => jeu.slug = valeur.trim().to_string(),
+            "nom" => jeu.nom = valeur.trim().to_string(),
+            "logo" => jeu.logo = valeur.trim().to_string(),
+            "icone" => jeu.icone = valeur.trim().to_string(),
+            "paquet" => paquet = valeur.trim().to_string(),
+            "pids" => {
+                jeu.pids = valeur
+                    .split(',')
+                    .filter_map(|p| p.trim().parse::<i32>().ok())
+                    .collect()
+            }
+            _ => {}
+        }
+    }
+    // un PID mort ne désigne plus un jeu : le fichier d'une session tuée
+    // (SIGKILL du launcher) ne doit pas faire apparaître un logo au hasard
+    jeu.pids
+        .retain(|pid| *pid > 1 && std::path::Path::new(&format!("/proc/{pid}")).exists());
+    if jeu.pids.is_empty() {
+        return None;
+    }
+    // gwine/lgplaunch publient le PAQUET : il donne le slug, donc les visuels
+    // du cache. Relus à chaque passe (une fois par seconde) : un logo
+    // téléchargé après le lancement par `glauncher --art` apparaît de
+    // lui-même, sans que le lanceur ait à republier quoi que ce soit.
+    // Sans paquet (gwine lancé sur un `.exe` seul), le nom publié sert de
+    // base : l'en-tête montre au moins le nom du programme, sans visuel.
+    let origine = if paquet.is_empty() {
+        jeu.nom.clone()
+    } else {
+        nom_paquet(&paquet)
+    };
+    if jeu.slug.is_empty() {
+        jeu.slug = slugify(&origine);
+    }
+    if jeu.nom.is_empty() {
+        jeu.nom = origine;
+    }
+    if jeu.logo.is_empty() {
+        jeu.logo = visuel_png(cache, "logos", &jeu.slug);
+    }
+    if jeu.icone.is_empty() {
+        jeu.icone = icone_png(cache, &jeu.slug);
+    }
+    if jeu.nom.is_empty() {
+        return None;
+    }
+    Some(jeu)
+}
+
+/// Nom d'un paquet : nom de fichier sans l'extension (`.wgp`, `.lgp`).
+fn nom_paquet(chemin: &str) -> String {
+    std::path::Path::new(chemin)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_default()
+}
+
+/// Même règle que `library::slugify` du launcher (c'est le nom de fichier des
+/// visuels dans le cache : les deux doivent tomber d'accord).
+fn slugify(nom: &str) -> String {
+    let mut slug = String::with_capacity(nom.len());
+    for ch in nom.chars() {
+        if ch.is_alphanumeric() {
+            slug.extend(ch.to_lowercase());
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    slug.trim_matches('-').to_string()
+}
+
+/// `<cache>/assets/<type>/<slug>.png` s'il existe. **PNG seulement** :
+/// l'overlay ne décode que ça, les autres formats du cache sont convertis par
+/// `glauncher --art`.
+fn visuel_png(cache: &std::path::Path, genre: &str, slug: &str) -> String {
+    if slug.is_empty() {
+        return String::new();
+    }
+    let chemin = cache
+        .join("assets")
+        .join(genre)
+        .join(format!("{slug}.png"));
+    if chemin.is_file() {
+        chemin.display().to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Icône du paquet, même ordre que le launcher : **`assets/icons/<slug>.png`
+/// d'abord** (icône SteamGridDB, y compris celle choisie à la main — le dossier
+/// `assets/` est partagé entre postes, un choix fait ailleurs doit gagner), puis
+/// l'icône extraite du paquet (`pack-icons/`).
+fn icone_png(cache: &std::path::Path, slug: &str) -> String {
+    if slug.is_empty() {
+        return String::new();
+    }
+    let essais = [
+        cache.join("assets/icons").join(format!("{slug}.png")),
+        cache.join("pack-icons").join(format!("{slug}.png")),
+    ];
+    essais
+        .into_iter()
+        .find(|chemin| chemin.is_file())
+        .map(|chemin| chemin.display().to_string())
+        .unwrap_or_default()
+}
+
+/// Session POSIX d'un processus (champ `session` de `/proc/<pid>/stat`).
+fn session_of(pid: i32) -> Option<i32> {
+    if pid < 1 {
+        return None;
+    }
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // `pid (comm) état ppid pgrp session …` : `comm` peut contenir des espaces
+    // et des parenthèses, d'où la découpe après la dernière
+    let reste = stat.rsplit_once(')').map(|(_, reste)| reste)?;
+    let mut champs = reste.split_whitespace();
+    champs.next()?; // état
+    champs.next()?; // ppid
+    champs.next()?; // pgrp
+    champs.next()?.parse().ok()
+}
+
+/// Le jeu auquel appartient cette fenêtre, s'il y en a un.
+///
+/// Trois liens, du plus sûr au plus large :
+/// 1. le PID de la fenêtre est publié tel quel ;
+/// 2. il descend d'un PID publié (jeu natif, jeu dans son sandbox) ;
+/// 3. il est dans la **même session** qu'un descendant publié : Wine reparente
+///    ses processus à systemd, la fenêtre n'est donc plus dans l'arbre, mais
+///    elle garde la session créée par `bwrap --new-session`.
+///
+/// La session de gpad est exclue du lien 3 : un paquet lancé depuis un
+/// terminal est dans la session du bureau, et toutes les fenêtres matcheraient
+/// (le lien 2 suffit alors, le jeu étant sous ce processus).
+fn jeu_de(jeux: &[JeuActif], pid: i32) -> Option<JeuActif> {
+    if pid < 1 {
+        return None;
+    }
+    for jeu in jeux {
+        if jeu.pids.contains(&pid) {
+            return Some(jeu.clone());
+        }
+    }
+    let ma_session = session_of(std::process::id() as i32);
+    for jeu in jeux {
+        let mut arbre: Vec<i32> = Vec::new();
+        for racine in &jeu.pids {
+            arbre.extend(descendants(*racine));
+        }
+        if arbre.contains(&pid) {
+            return Some(jeu.clone());
+        }
+        let Some(session) = session_of(pid) else {
+            continue;
+        };
+        if Some(session) == ma_session {
+            continue;
+        }
+        let mut sessions: Vec<Option<i32>> = jeu.pids.iter().map(|p| session_of(*p)).collect();
+        sessions.extend(arbre.iter().map(|p| session_of(*p)));
+        if sessions.contains(&Some(session)) {
+            return Some(jeu.clone());
+        }
+    }
+    None
+}
+
 /// Fenêtre active telle que KWin la voit, poussée par `kwin/wininfo.js`.
 #[derive(Default, Clone, PartialEq)]
 struct WinInfo {
@@ -4192,6 +4676,16 @@ struct Icone {
     h: i32,
     px: Vec<u8>,
 }
+
+/// Hauteur maximale du logo d'un jeu au-dessus de l'en-tête (px). Au-delà, le
+/// bandeau mangerait la liste : un logo SteamGridDB est une image large, sa
+/// hauteur utile tient largement dans 96 px sur un panneau de 480.
+const LOGO_MAX_H: i32 = 96;
+
+/// Espace **identique** au-dessus et au-dessous du logo (demandé le 19/11 :
+/// le premier jet laissait 10 px en haut et 60 en bas, l'écart venant des 50 px
+/// de marge fixe de l'en-tête, d'où le calcul de `decalage_logo`).
+const LOGO_MARGE: i32 = 16;
 
 /// Cherche `<name>.{png,svg}` dans les thèmes/tailles usuels. Deux dispositions
 /// coexistent : `hicolor/48x48/apps/x` et `breeze/apps/48/x`.
@@ -5088,11 +5582,13 @@ fn main() {
 
         // fenêtre active : relue à chaque tour (poll 100 ms) pour que le nom
         // reste juste même si le panneau est ouvert longtemps
+        let mut fenetre_changee = false;
         if let Some(st) = &app.win_etat {
             if let Ok(p) = st.lock() {
                 if p.info != app.win {
                     app.win = p.info.clone();
                     app.dirty = true;
+                    fenetre_changee = true;
                     println!(
                         "WIN pid={} fs={} uuid={} {} | {}",
                         app.win.pid,
@@ -5101,15 +5597,12 @@ fn main() {
                         app.win.caption,
                         app.win.class
                     );
-                    let cle = format!("{}|{}", app.win.desktop, app.win.class);
-                    if cle != app.icone_cle {
-                        app.icone_cle = cle;
-                        app.icone =
-                            charger_icone(&app.win.desktop, &app.win.class, &app.win.caption);
-                        println!("ICONE {}", if app.icone.is_some() { "trouvee" } else { "aucune" });
-                    }
                 }
             }
+        }
+        // jeu lancé par glauncher : logo, nom et icône suivent la fenêtre active
+        if fenetre_changee {
+            app.rafraichir_jeu();
         }
         // Page d'ouverture, décidée **une fois** que l'info de fenêtre est
         // arrivée (D-Bus, donc après le démarrage) ou après une grâce de
@@ -5148,10 +5641,25 @@ fn main() {
                 app.dirty = true;
             }
             let replay = replay_actif();
+            // le script démarre/arrête en quelques dixièmes de seconde (bip,
+            // flatpak, SIGINT) : tant que l'état demandé n'est pas arrivé, la
+            // passe ne le contredit pas, sinon la ligne affichait « ARRET »
+            // une demi-seconde avant de repasser « ACTIF »
+            let attente = app
+                .replay_attente
+                .is_some_and(|limite| Instant::now() < limite);
             if replay != app.replay_active {
-                app.replay_active = replay;
-                app.dirty = true;
+                if !attente {
+                    app.replay_active = replay;
+                    app.replay_attente = None;
+                    app.dirty = true;
+                }
+            } else {
+                app.replay_attente = None;
             }
+            // le visuel du jeu peut arriver dans le cache après le lancement :
+            // relu ici, une fois par seconde, comme les autres états hors pad
+            app.rafraichir_jeu();
             app.last_scan = Instant::now();
         }
         if app.dirty {
@@ -5215,4 +5723,267 @@ fn main() {
     }
 
     println!("GPAD_DOWN");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Dossier jetable par test (aucune variable d'environnement touchée : les
+    /// tests peuvent tourner en parallèle).
+    fn bac(nom: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("gpad-{nom}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn pid_mort() -> i32 {
+        let mut enfant = std::process::Command::new("/bin/true").spawn().unwrap();
+        let pid = enfant.id() as i32;
+        enfant.wait().unwrap();
+        pid
+    }
+
+    /// Contrat de `running.txt` : le slug, les PID vivants seulement, et le
+    /// chemin du logo tel qu'il est publié. Un PID mort (launcher tué en pleine
+    /// partie) ne doit jamais désigner un jeu.
+    #[test]
+    fn running_txt_lu_et_pid_mort_ecarte() {
+        let dir = bac("running");
+        let fichier = dir.join("running.txt");
+        let moi = std::process::id() as i32;
+        let mort = pid_mort();
+
+        std::fs::write(
+            &fichier,
+            format!(
+                "slug=celeste\nnom=Celeste\npids={moi},{mort}\nlogo=/tmp/x.png\nicone=/tmp/i.png\n"
+            ),
+        )
+        .unwrap();
+        let jeu = lire_jeu(&fichier, &dir).expect("fichier lisible");
+        assert_eq!(jeu.slug, "celeste");
+        assert_eq!(jeu.nom, "Celeste", "nom affiché du paquet");
+        assert_eq!(jeu.pids, vec![moi], "un PID mort est écarté");
+        assert_eq!(jeu.logo, "/tmp/x.png");
+        assert_eq!(jeu.icone, "/tmp/i.png", "icône du paquet, pas de la fenêtre");
+
+        std::fs::write(&fichier, format!("slug=hades\npids={mort}\n")).unwrap();
+        assert!(
+            lire_jeu(&fichier, &dir).is_none(),
+            "aucun PID vivant = pas de jeu, donc pas de logo"
+        );
+
+        std::fs::remove_file(&fichier).unwrap();
+        assert!(lire_jeu(&fichier, &dir).is_none(), "fichier absent = pas de jeu");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// gwine/lgplaunch ne publient que le paquet (`nom=` + `paquet=` + `pids=`) :
+    /// le slug en vient, et les visuels sont retrouvés dans le cache — y compris
+    /// quand ils arrivent **après** le lancement (`glauncher --art` en fond), la
+    /// publication n'étant relue qu'une fois par seconde.
+    #[test]
+    fn paquet_publie_donne_slug_et_visuels() {
+        let dir = bac("paquet");
+        let fichier = dir.join("running.txt");
+        let moi = std::process::id() as i32;
+        std::fs::write(
+            &fichier,
+            format!(
+                "nom=Croc 2 Kingdom of the Gobbos\n\
+                 paquet=/home/gab/Windows/Games/Croc 2 Kingdom of the Gobbos.wgp\n\
+                 pids={moi}\n"
+            ),
+        )
+        .unwrap();
+
+        let jeu = lire_jeu(&fichier, &dir).expect("fichier lisible");
+        assert_eq!(jeu.slug, "croc-2-kingdom-of-the-gobbos", "slug du paquet");
+        assert_eq!(jeu.nom, "Croc 2 Kingdom of the Gobbos");
+        assert_eq!(jeu.logo, "", "visuel absent du cache = aucun logo");
+        assert_eq!(jeu.icone, "");
+
+        // le téléchargement arrive dans le cache : la relecture le voit
+        std::fs::create_dir_all(dir.join("assets/logos")).unwrap();
+        std::fs::write(
+            dir.join("assets/logos/croc-2-kingdom-of-the-gobbos.png"),
+            b"png",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("pack-icons")).unwrap();
+        std::fs::write(
+            dir.join("pack-icons/croc-2-kingdom-of-the-gobbos.png"),
+            b"png",
+        )
+        .unwrap();
+        let jeu = lire_jeu(&fichier, &dir).expect("fichier lisible");
+        assert!(
+            jeu.logo.ends_with("assets/logos/croc-2-kingdom-of-the-gobbos.png"),
+            "logo: {}",
+            jeu.logo
+        );
+        assert!(
+            jeu.icone.ends_with("pack-icons/croc-2-kingdom-of-the-gobbos.png"),
+            "icône: {}",
+            jeu.icone
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Le nom d'un paquet suit la même règle que le launcher (sinon les visuels
+    /// du cache ne seraient jamais retrouvés).
+    #[test]
+    fn slug_identique_au_launcher() {
+        assert_eq!(slugify("Skyward Odyssey"), "skyward-odyssey");
+        assert_eq!(slugify("  Conker's BFD!! "), "conker-s-bfd");
+        assert_eq!(slugify("Pokémon Écarlate"), "pokémon-écarlate");
+        assert_eq!(
+            nom_paquet("/home/gab/Windows/Games/Croc 2 Kingdom of the Gobbos.wgp"),
+            "Croc 2 Kingdom of the Gobbos"
+        );
+    }
+
+    /// Le lien par descendance : la fenêtre d'un jeu natif est un enfant du
+    /// lanceur publié. Un processus étranger ne doit pas matcher.
+    #[test]
+    fn fenetre_descendante_du_lanceur() {
+        let mut enfant = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let jeu = JeuActif {
+            slug: "celeste".to_string(),
+            nom: "Celeste".to_string(),
+            pids: vec![std::process::id() as i32],
+            ..JeuActif::default()
+        };
+        let trouve = jeu_de(&[jeu.clone()], enfant.id() as i32).expect("descendant publié");
+        assert_eq!(trouve.slug, "celeste");
+
+        let inconnu = JeuActif {
+            pids: vec![pid_mort()],
+            ..JeuActif::default()
+        };
+        assert!(
+            jeu_de(&[inconnu], enfant.id() as i32).is_none(),
+            "un PID qui n'est ni publié ni descendant ne désigne aucun jeu"
+        );
+        let _ = enfant.kill();
+        let _ = enfant.wait();
+    }
+
+    /// Les deux publications sont lues, et la fenêtre active retrouve **son**
+    /// jeu par le PID : la publication dont le PID est mort (launcher tué) est
+    /// écartée, et les visuels viennent du paquet.
+    #[test]
+    fn deux_publications_et_lien_par_pid() {
+        let cache = bac("sources-cache");
+        let runtime = bac("sources-rt");
+        let lanceurs = runtime.join("gablue");
+        std::fs::create_dir_all(&lanceurs).unwrap();
+
+        // glauncher : un jeu qui n'est plus là
+        std::fs::write(
+            cache.join("running.txt"),
+            format!("slug=autre\nnom=Autre\npids={}\n", pid_mort()),
+        )
+        .unwrap();
+
+        // gwine/lgplaunch : le paquet, avec le PID d'un vrai processus fils
+        let mut enfant = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        std::fs::write(
+            lanceurs.join("running.txt"),
+            format!(
+                "nom=Croc 2 Kingdom of the Gobbos\n\
+                 paquet=/home/gab/Windows/Games/Croc 2 Kingdom of the Gobbos.wgp\n\
+                 pids={}\n",
+                enfant.id()
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(cache.join("assets/logos")).unwrap();
+        std::fs::write(
+            cache.join("assets/logos/croc-2-kingdom-of-the-gobbos.png"),
+            b"png",
+        )
+        .unwrap();
+
+        // SAFETY : seuls ce test lit ces deux variables (les autres passent le
+        // cache en argument)
+        unsafe {
+            std::env::set_var("GLAUNCHER_CACHE", &cache);
+            std::env::set_var("XDG_RUNTIME_DIR", &runtime);
+        }
+        let jeux = lire_jeux_actifs();
+        assert_eq!(jeux.len(), 1, "la publication au PID mort est écartée");
+        let jeu = jeu_de(&jeux, enfant.id() as i32).expect("enfant publié");
+        assert_eq!(jeu.slug, "croc-2-kingdom-of-the-gobbos");
+        assert!(
+            jeu.logo.ends_with("assets/logos/croc-2-kingdom-of-the-gobbos.png"),
+            "logo: {}",
+            jeu.logo
+        );
+        assert!(
+            jeu_de(&jeux, std::process::id() as i32).is_none(),
+            "la fenêtre d'une autre application n'est pas ce jeu"
+        );
+        unsafe {
+            std::env::remove_var("GLAUNCHER_CACHE");
+            std::env::remove_var("XDG_RUNTIME_DIR");
+        }
+
+        let _ = enfant.kill();
+        let _ = enfant.wait();
+        let _ = std::fs::remove_dir_all(&cache);
+        let _ = std::fs::remove_dir_all(&runtime);
+    }
+
+    /// gwine lancé sur un `.exe` seul ne publie pas de paquet : le nom sert de
+    /// base, l'overlay montre le nom du programme et cherche son icône dans le
+    /// cache (rien d'inventé si elle n'y est pas).
+    #[test]
+    fn exe_seul_sans_paquet() {
+        let dir = bac("exe-seul");
+        let fichier = dir.join("running.txt");
+        let moi = std::process::id() as i32;
+        std::fs::write(
+            &fichier,
+            format!("nom=Croc2\npids={moi}\n"),
+        )
+        .unwrap();
+        let jeu = lire_jeu(&fichier, &dir).expect("nom publié");
+        assert_eq!(jeu.slug, "croc2");
+        assert_eq!(jeu.nom, "Croc2");
+        assert_eq!(jeu.logo, "", "aucun visuel inventé");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// La session se lit dans `/proc/<pid>/stat` : c'est le repli qui rattache
+    /// une fenêtre Wine reparentée à systemd au sandbox qui l'a lancée.
+    #[test]
+    fn session_lue_dans_proc() {
+        let moi = std::process::id() as i32;
+        let session = session_of(moi).expect("session du processus courant");
+        assert!(session > 0, "session {session}");
+        assert_eq!(session_of(1), Some(1), "systemd ouvre la session 1");
+
+        let mut enfant = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        assert_eq!(
+            session_of(enfant.id() as i32),
+            Some(session),
+            "un enfant direct reste dans notre session"
+        );
+        let _ = enfant.kill();
+        let _ = enfant.wait();
+    }
 }

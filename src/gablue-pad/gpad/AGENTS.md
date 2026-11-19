@@ -373,13 +373,16 @@ un fond qu'il fallait assombrir/éclaircir sans fin).
 Bouger dans la liste (ou changer de page) **désarme** : on ne ferme jamais par
 inadvertance après avoir navigué. Le panneau ne se ferme pas après le kill.
 
-**L'arbre, pas le seul pid** (`descendants()` lit
-`/proc/<pid>/task/<pid>/children` en profondeur) : un `kill` du pid de la
-fenêtre laissait ses enfants **reparentés à systemd**, donc vivants — un
-émulateur lancé par ES-DE (enfant du frontend), les sous-processus d'une
-AppImage, le `QtWebEngineProcess` d'une appli flatpak. Les enfants sont tués
-**avant** le parent, sinon le parent meurt d'abord et les orphelins échappent au
-kill. Mesuré :
+**L'arbre, pas le seul pid** (`descendants()` lit en profondeur les
+`children` de **tous les threads** de chaque processus, `/proc/<pid>/task/*/children`) :
+un `kill` du pid de la fenêtre laissait ses enfants **reparentés à systemd**,
+donc vivants — un émulateur lancé par ES-DE (enfant du frontend), les
+sous-processus d'une AppImage, le `QtWebEngineProcess` d'une appli flatpak. Le
+thread principal seul ne suffit pas : WebEngine et Wine forment leurs enfants
+depuis un thread de travail, invisibles dans `/proc/<pid>/task/<pid>/children`
+(fallait le constater : le lien jeu ↔ fenêtre échouait sur le banc). Les enfants
+sont tués **avant** le parent, sinon le parent meurt d'abord et les orphelins
+échappent au kill. Mesuré :
 
 | Cible | Avant | Après |
 |---|---|---|
@@ -401,6 +404,71 @@ possible ici :
   `scripts/killthemall` (tuer le démon d'abord laisse le jeu figé sur des
   lectures FUSE mortes) ;
 - pas de scan global de `/proc` : uniquement l'arbre du pid de la fenêtre.
+
+## Logo, nom et icône du jeu lancé (glauncher, gwine, lgplaunch)
+
+Quand la fenêtre active est celle d'un jeu lancé, le **logo du jeu** (visuel
+SteamGridDB) s'affiche **au-dessus de l'en-tête de fenêtre**, dans une bande
+pleine largeur ; l'en-tête, le titre de page et la liste descendent d'autant
+(`logo_taille` → `decalage_logo`, répercuté dans `fen_visibles`). L'en-tête
+lui-même prend le **nom du paquet** et **son icône**.
+
+- **Deux publications, même format** (`lire_jeux_actifs`) : le cache de
+  glauncher (`<cache>/running.txt` : `slug=`, `nom=`, `pids=`, `logo=`,
+  `icone=`) et le dossier d'exécution de la session
+  (`$XDG_RUNTIME_DIR/gablue/running.txt`, repli `/tmp/gablue-<uid>`), où
+  **gwine et lgplaunch** publient `nom=`, `paquet=` (chemin du `.wgp`/`.lgp`) et
+  `pids=`. Les deux sont lues à chaque passe ; le jeu dont **aucun PID ne vit**
+  est écarté (lanceur tué en pleine partie).
+- **Le lien fenêtre ↔ jeu est le PID, jamais la classe** : `wininfo.js` pousse
+  le PID de la fenêtre active. Trois liens, du plus sûr au plus large : PID
+  publié tel quel ; PID **descendant** d'un PID publié (jeu natif, ou jeu dans
+  son `bwrap`) ; même **session** qu'un descendant publié — Wine reparente ses
+  processus à systemd, la fenêtre n'est plus dans l'arbre mais garde la session
+  de `bwrap --new-session`. La session de gpad est **exclue** de ce troisième
+  lien : un paquet lancé depuis un terminal est dans la session du bureau, et
+  toutes les fenêtres matcheraient (le lien par descendance suffit alors).
+- **`paquet=` donne le slug**, donc les visuels du cache, résolus à chaque
+  lecture (une fois par seconde) : `slugify` est la règle exacte du launcher
+  (`library::slugify`, accents conservés). Logo :
+  `assets/logos/<slug>.png` ; icône : `assets/icons/<slug>.png` d'abord (une
+  icône choisie y arrive, et le dossier est partagé entre postes), puis
+  `pack-icons/<slug>.png`. **PNG seulement** (l'overlay ne décode pas le
+  JPEG) : `glauncher --art <paquet>`, lancé en fond par gwine/lgplaunch juste
+  après la publication, convertit et écrit ce qui manque dans son cache. Le
+  visuel apparaît donc **tout seul**, une seconde après son téléchargement,
+  sans que le lanceur republie quoi que ce soit.
+- **L'overlay ne télécharge rien et n'invente aucun visuel** : chemin absent du
+  fichier, visuel absent du cache, image illisible = pas de bandeau, pas
+  d'icône substituée.
+- Le **cache** est celui de glauncher : `GLAUNCHER_CACHE` (banc), sinon
+  `cache_dir` de `~/.config/glauncher/config.toml`, sinon
+  `~/.local/share/glauncher`.
+- **Nom et icône de l'en-tête viennent du paquet**, pas de la fenêtre : une
+  fenêtre de jeu `gwine`/`lgplaunch` porte le titre du binaire et l'icône de
+  l'exécutable. Quand `nom=` est publié, il remplace la légende KWin et la
+  **ligne de classe disparaît** (`steam_proton` n'apprend rien) ; `icone=`
+  remplace la résolution d'icône habituelle. Sans ces clés (image antérieure),
+  l'en-tête retombe sur la fenêtre, comme avant.
+- **Relu** au changement de fenêtre et une fois par seconde (le visuel peut
+  arriver dans le cache après le lancement) ; journal `LOGO <chemin> (<slug>)`
+  ou `LOGO aucun`.
+- Hauteur plafonnée à `LOGO_MAX_H` (96 px), largeur bornée au panneau, ratio
+  conservé (blit `Canvas::image`, même moyenne de boîte que les icônes).
+  **Air identique au-dessus et au-dessous** (`LOGO_MARGE`, 16 px) : l'en-tête
+  part de `MARGE + logo + MARGE`, donc le décalage vaut
+  `th + 2×MARGE − 50` — la marge fixe de 50 px de l'en-tête était la cause d'un
+  écart de 10 px en haut contre 60 en bas (vécu 19/11). Sous 18 px de haut,
+  l'image n'a plus d'air à elle : rien n'est affiché. En **menu système**
+  (`--console`), jamais.
+- **La bande n'est réservée que si la page tient** : `decalage_logo` compare la
+  bande à la place restante (`hauteur_contenu`, mêmes hauteurs que le dessin).
+  Une page pleine — RÉGLAGES et ses sept lignes hautes — la masque plutôt que
+  de pousser sa dernière ligne hors du panneau ; la page FENÊTRES défile, elle
+  garde le bandeau et s'ajuste (`fen_visibles`).
+- Banc sans jeu : `../test-logo.sh` (fenêtre du terminal + un logo du cache ;
+  `--jeu` suit la publication réelle — celle de glauncher **ou** celle de
+  gwine/lgplaunch).
 
 ## Liste des fenêtres (menu `CHOISIR FENETRE`)
 
@@ -493,6 +561,13 @@ tuer ; en cas de doute, relire `SELECT …` dans le journal avant de conclure.
   panneau ouvert (`Apres::ReplayToggle` → `FENETRE RETIREE -> action differee`
   → `replay.sh toggle`). Fermer d'abord évite de filmer le panneau, et le bip
   de départ part avant le buffer (voir ci-dessous).
+- **A sur `REPLAY` ne se contredit pas pendant le démarrage** : `replay_active`
+  est posé tout de suite, et la passe d'état d'une seconde (qui relit les
+  processus) ne le corrige **pas** pendant les 6 s qui suivent la bascule
+  (`replay_attente`). `replay.sh start` met ~1,2 s (bip + pause + flatpak) et
+  `stop` attend la sortie : sans cette fenêtre, la ligne repassait « ARRET »
+  une demi-seconde avant de revenir « ACTIF » (constaté 19/11). Passé le délai,
+  ou dès que l'état réel concorde, c'est de nouveau lui qui fait foi.
 - **Replay : bip de départ, puis silence.** `replay.sh start` joue
   `sounds/beep.wav` (le bip historique de l'enregistrement) **et attend**
   `BIP_PAUSE` (0,35 s) **avant** de lancer gpu-screen-recorder : le monitor du
