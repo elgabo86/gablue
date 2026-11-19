@@ -145,6 +145,14 @@ pub enum CoverEvent {
         kind: ArtKind,
         choices: Vec<Choice>,
     },
+    /// Vignette prête pour UNE proposition du menu (identifiée par son `url`) :
+    /// les cases sont affichées vides, puis remplies au fur et à mesure.
+    Choice {
+        slug: String,
+        kind: ArtKind,
+        url: String,
+        thumb: Vec<u8>,
+    },
     /// Icône extraite du paquet (voie locale, distincte des icônes SGDB).
     Icon { slug: String, bytes: Vec<u8> },
 }
@@ -299,23 +307,44 @@ where
                     // --- menu « choisir une image » ---
                     Query::Choices { slug, name, kind } => match client.choices(&name, kind) {
                         Ok(candidates) => {
-                            let total = candidates.len();
+                            let premiers: Vec<Candidate> =
+                                candidates.into_iter().take(MAX_CHOICES).collect();
                             eprintln!(
-                                "glauncher : {total} {} proposé(s) pour « {name} », vignettes en cours",
+                                "glauncher : {} {} proposé(s) pour « {name} », vignettes en cours",
+                                premiers.len(),
                                 kind.label().to_lowercase()
                             );
-                            let mut choices = Vec::new();
-                            for candidate in candidates.into_iter().take(MAX_CHOICES) {
-                                if let Ok(thumb) = http_get(&candidate.thumb, &[]) {
-                                    choices.push(Choice {
-                                        url: candidate.url,
+                            // Le menu s'ouvre TOUT DE SUITE, avec une case par
+                            // proposition et sans vignette : elles se
+                            // téléchargent une à une (un aller-retour chacune)
+                            // et remplacent leur case dès qu'elles arrivent. Le
+                            // menu attendait avant tout le lot — plusieurs
+                            // secondes devant une grille vide (signalé 19/11).
+                            emit(CoverEvent::Choices {
+                                slug: slug.clone(),
+                                kind,
+                                choices: premiers
+                                    .iter()
+                                    .map(|candidate| Choice {
+                                        url: candidate.url.clone(),
                                         ext: candidate.ext.to_string(),
+                                        thumb: Vec::new(),
+                                    })
+                                    .collect(),
+                            });
+                            let mut pretes = 0;
+                            for candidate in premiers {
+                                if let Ok(thumb) = http_get(&candidate.thumb, &[]) {
+                                    pretes += 1;
+                                    emit(CoverEvent::Choice {
+                                        slug: slug.clone(),
+                                        kind,
+                                        url: candidate.url,
                                         thumb,
                                     });
                                 }
                             }
-                            eprintln!("glauncher : {} vignette(s) prête(s)", choices.len());
-                            emit(CoverEvent::Choices { slug, kind, choices });
+                            eprintln!("glauncher : {pretes} vignette(s) prête(s)");
                         }
                         Err(error) => {
                             eprintln!("glauncher : choix « {name} » : {error}");

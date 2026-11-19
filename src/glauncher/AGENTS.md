@@ -328,9 +328,15 @@ leurs icônes, pour l'interface.
   du type (grid 148×222, héros/logo 208×117, icône 120×120) ; Entrée/A
   enregistre **et referme le menu tout de suite** (le téléchargement continue en
   fond, pied de page « application de l'image… » ; `picked` garde la trace du
-  choix pour le remplacement d'icône). Les vignettes sont décodées **une seule
-  fois** (`Picker::thumbs`) : un `Handle::from_bytes` construit dans la vue
-  faisait redécoder les 24 PNG à chaque rendu — menu poussif et images qui
+  choix pour le remplacement d'icône). Le menu s'ouvre **tout de suite** : la
+  liste des propositions arrive vide de vignettes (`CoverEvent::Choices`) et une
+  case de la bonne taille est dessinée pour chacune ; chaque vignette
+  téléchargée la remplit aussitôt (`CoverEvent::Choice`, identifiée par son
+  `url`). Avant, le worker téléchargeait les douze vignettes **avant** d'émettre
+  quoi que ce soit : plusieurs secondes devant un menu vide (signalé 19/11).
+  Les vignettes sont décodées **une seule fois** (`Picker::thumbs`, un
+  `Option<Handle>` par proposition) : un `Handle::from_bytes` construit dans la
+  vue faisait redécoder les 24 PNG à chaque rendu — menu poussif et images qui
   clignotent (constaté 18/11). **Grilles : portrait seulement** (`candidates(assets, kind)` écarte
   les carrés et les formats larges) — le type `grid` de l'API publique mélange
   600×900, 512×512, 1024×1024 et 920×430, d'où l'impression de « pas que des

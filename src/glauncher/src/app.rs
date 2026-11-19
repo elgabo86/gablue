@@ -158,6 +158,17 @@ fn cover_message(event: covers::CoverEvent) -> Message {
             kind,
             choices,
         },
+        covers::CoverEvent::Choice {
+            slug,
+            kind,
+            url,
+            thumb,
+        } => Message::Choice {
+            slug,
+            kind,
+            url,
+            thumb,
+        },
         covers::CoverEvent::Icon { slug, bytes } => Message::Icon { slug, bytes },
     }
 }
@@ -254,6 +265,9 @@ pub enum Message {
     PickerSelect(usize),
     PickerPick,
     Choices { slug: String, kind: covers::ArtKind, choices: Vec<covers::Choice> },
+    /// Vignette d'une proposition, par son `url` (l'ordre des propositions ne
+    /// bouge pas, mais l'URL est le seul identifiant stable).
+    Choice { slug: String, kind: covers::ArtKind, url: String, thumb: Vec<u8> },
     /// Page d'un jeu : héros, logo et actions (jouer, changer les visuels).
     OpenPage(usize),
     ClosePage,
@@ -325,11 +339,12 @@ struct Picker {
     loading: bool,
     error: Option<String>,
     choices: Vec<covers::Choice>,
-    /// Vignettes prêtes à afficher, dans le même ordre que `choices`.
-    /// Construites UNE fois : `image::Handle::from_bytes` dans la vue créait un
-    /// handle neuf à chaque image, donc iced_wgpu redécodait les 24 PNG à
-    /// chaque rendu — images qui clignotent et menu poussif (constaté 18/11).
-    thumbs: Vec<image::Handle>,
+    /// Vignettes prêtes à afficher, dans le même ordre que `choices` ;
+    /// `None` = pas encore téléchargée (la case reste vide). Construites UNE
+    /// fois : `image::Handle::from_bytes` dans la vue créait un handle neuf à
+    /// chaque image, donc iced_wgpu redécodait les 24 PNG à chaque rendu —
+    /// images qui clignotent et menu poussif (constaté 18/11).
+    thumbs: Vec<Option<image::Handle>>,
 }
 
 /// Actions de la page d'un jeu. Les quatre visuels sont réunis derrière un
@@ -845,7 +860,10 @@ impl App {
                     .unwrap_or_else(|| name.clone());
                 let thumbs = choices
                     .iter()
-                    .map(|choice| image::Handle::from_bytes(choice.thumb.clone()))
+                    .map(|choice| {
+                        (!choice.thumb.is_empty())
+                            .then(|| image::Handle::from_bytes(choice.thumb.clone()))
+                    })
                     .collect();
                 self.picker = Some(Picker {
                     slug: slug.clone(),
@@ -992,14 +1010,34 @@ impl App {
                     // la 1re proposition est le « top » : on garde l'éventuelle
                     // icône du paquet en tête pour l'icône
                     let keep = std::mem::take(&mut picker.choices);
-                    picker.loading = false;
                     picker.choices = keep.into_iter().chain(choices).collect();
-                    picker.thumbs = picker
-                        .choices
-                        .iter()
-                        .map(|choice| image::Handle::from_bytes(choice.thumb.clone()))
-                        .collect();
+                    // une case par proposition, vide : les vignettes arrivent
+                    // ensuite, une par message
+                    picker.thumbs.resize(picker.choices.len(), None);
+                    for (index, choice) in picker.choices.iter().enumerate() {
+                        if picker.thumbs[index].is_none() && !choice.thumb.is_empty() {
+                            picker.thumbs[index] =
+                                Some(image::Handle::from_bytes(choice.thumb.clone()));
+                        }
+                    }
+                    picker.loading = false;
                     picker.index = 0;
+                }
+                Task::none()
+            }
+            Message::Choice {
+                slug,
+                kind,
+                url,
+                thumb,
+            } => {
+                if let Some(picker) = self.picker.as_mut()
+                    && picker.slug == slug
+                    && picker.kind == kind
+                    && let Some(index) = picker.choices.iter().position(|choice| choice.url == url)
+                    && let Some(slot) = picker.thumbs.get_mut(index)
+                {
+                    *slot = Some(image::Handle::from_bytes(thumb));
                 }
                 Task::none()
             }
@@ -2651,7 +2689,11 @@ impl App {
 
             for index in 0..picker.choices.len() {
                 let selected = index == picker.index;
-                let thumb: Element<'_, Message> = match picker.thumbs.get(index) {
+                let thumb: Element<'_, Message> = match picker
+                    .thumbs
+                    .get(index)
+                    .and_then(|vignette| vignette.as_ref())
+                {
                     Some(handle) => image(handle.clone())
                         .width(Length::Fixed(tw))
                         .height(Length::Fixed(th))
