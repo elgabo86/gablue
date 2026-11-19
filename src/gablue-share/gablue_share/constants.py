@@ -1,5 +1,6 @@
 """Chemins, constantes et localisation du binaire du démon."""
 
+import json
 import os
 import shutil
 import subprocess
@@ -56,6 +57,37 @@ def launcher() -> str | None:
     return shutil.which(APP_ID)
 
 
+#: Nom du binaire produit par `daemon/`.
+DAEMON_NAME = "gablue-shared"
+
+
+def _cargo_release(daemon_dir: Path) -> Path | None:
+    """Binaire release du démon **là où cargo l'a écrit**, s'il existe.
+
+    Le `target-dir` n'est plus forcément dans le dépôt : la config cargo globale
+    du poste l'envoie dans `~/.cache/opencode` (un `target/` release pesait
+    2,4 Go dans `~/Syncthing`, synchronisé entre machines), et
+    `CARGO_TARGET_DIR` peut le déplacer encore. On demande donc son chemin à
+    cargo au lieu de supposer `daemon/target/release` — sinon la GUI de dev
+    retombait silencieusement sur le démon de l'image.
+    """
+    if not (daemon_dir / "Cargo.toml").is_file():
+        return None
+    try:
+        result = subprocess.run(
+            ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+            cwd=daemon_dir,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        target = Path(json.loads(result.stdout)["target_directory"])
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        return None
+    candidate = target / "release" / DAEMON_NAME
+    return candidate if candidate.is_file() else None
+
+
 def daemon_binary() -> str | None:
     """Binaire du démon : le build de développement d'abord, puis l'image.
 
@@ -64,13 +96,19 @@ def daemon_binary() -> str | None:
     champ ajouté (la visibilité) reste sans effet. Dans l'image, il n'y a pas
     d'arbre `daemon/` à côté du paquet : le repli sur `/usr/libexec` est immédiat.
     """
-    dev = Path(__file__).resolve().parent.parent / "daemon" / "target" / "release" / "gablue-shared"
-    if dev.exists():
+    daemon_dir = Path(__file__).resolve().parent.parent / "daemon"
+    # 1. là où cargo l'a mis (target-dir de la config globale, CARGO_TARGET_DIR…)
+    dev = _cargo_release(daemon_dir)
+    # 2. l'ancien emplacement, si quelqu'un compile encore dans le dépôt
+    if dev is None:
+        legacy = daemon_dir / "target" / "release" / DAEMON_NAME
+        dev = legacy if legacy.is_file() else None
+    if dev is not None:
         return str(dev)
     for candidate in ("/usr/libexec/gablue-shared", "/usr/bin/gablue-shared"):
         if os.path.exists(candidate):
             return candidate
-    return shutil.which("gablue-shared")
+    return shutil.which(DAEMON_NAME)
 
 
 def download_dir() -> Path:

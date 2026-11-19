@@ -211,8 +211,11 @@ les tests.
   cours de route.
 - **Un champ ignoré fait un réglage mort** : la visibilité vit dans
   `share.json`, mais c'est le démon qui l'applique. Lancée depuis les sources,
-  la GUI prend donc le binaire de `daemon/target/release/` avant celui de
-  l'image — sinon on teste une interface neuve contre un démon qui ignore le
+  la GUI prend donc le binaire de développement avant celui de
+  l'image (`constants.daemon_binary` : `cargo metadata` donne le `target-dir`
+  réel, qui n'est plus dans le dépôt depuis que la config cargo globale l'envoie
+  dans `~/.cache/opencode`) — sinon on teste une interface neuve contre un
+  démon qui ignore le
   champ (vécu 15/11/2026 : l'ancien ordre préférait `/usr/libexec`).
 - **Deux comptes sur un même poste** : un seul partage à la fois, par
   construction — port fixe, `peer_id` = machine-id. Le second compte est averti

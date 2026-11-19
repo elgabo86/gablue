@@ -3,8 +3,10 @@
 PySide6, ~70-120 Mo **seulement fenêtre ouverte** : elle ne sert rien et ne
 survit pas à sa fermeture. Le serveur (démon Rust, voir `../daemon/AGENTS.md`)
 est un autre processus, qui lui survit. Lancée depuis les sources, elle prend
-le binaire de `daemon/target/release/` avant celui de l'image — sinon on teste
-une interface neuve contre un démon qui ignore les champs récents.
+le binaire de développement avant celui de l'image (`constants.daemon_binary`,
+qui demande son `target-dir` à `cargo metadata` : il vit dans
+`~/.cache/opencode`, plus dans le dépôt) — sinon on teste une interface neuve
+contre un démon qui ignore les champs récents.
 
 | Fichier | Rôle |
 |---|---|
