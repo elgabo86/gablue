@@ -1874,7 +1874,9 @@ GLAUNCHER_DEFAULTS = {
     "fullscreen": True,
     "covers": True,
     "steamgriddb_key": "",
-    "game_dirs": ["~/Windows/Games", "~/Games"],
+    # Aucun dossier par défaut (miroir de `Config::default()`) : rien n'est
+    # scanné tant que l'utilisateur n'en a pas choisi un.
+    "game_dirs": [],
 }
 
 def parse_glauncher_config(text: str) -> dict:

@@ -76,7 +76,10 @@ impl Default for Config {
             columns: 5,
             cell_size: 220,
             view: ViewMode::default(),
-            game_dirs: vec!["~/Windows/Games".into(), "~/Games".into()],
+            // Aucun dossier par défaut : le launcher ne scanne QUE ce que
+            // `config.toml` nomme. Liste vide = aucune bibliothèque, et c'est
+            // voulu (le manager écrit les dossiers choisis par l'utilisateur).
+            game_dirs: Vec::new(),
             scan_depth: 3,
             scan_skip: vec![
                 "Prefixes".into(),

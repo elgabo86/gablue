@@ -3320,7 +3320,9 @@ class GlauncherConfigTest(unittest.TestCase):
         state = local.parse_glauncher_config('covers = false\ncolumns = 6\n')
         self.assertFalse(state["covers"])
         self.assertTrue(state["fullscreen"], "clé absente = défaut de glauncher")
-        self.assertEqual(state["game_dirs"], ["~/Windows/Games", "~/Games"])
+        self.assertEqual(
+            state["game_dirs"], [], "aucun dossier de jeux par défaut"
+        )
 
     def test_fichier_illisible_donne_les_defauts(self):
         # le launcher ignore une config invalide ; le manager lit la même chose

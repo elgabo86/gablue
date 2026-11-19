@@ -134,6 +134,11 @@ leurs icônes, pour l'interface.
 - **Écriture atomique** : `covers::save` écrit `<fichier>.part` puis renomme
   (`write_atomic`), et les marqueurs aussi. Un dossier `assets/` synchronisé
   ne doit jamais propager une image à moitié écrite.
+- **Aucun dossier de jeux par défaut** : `Config::default()` laisse
+  `game_dirs` **vide** (idem `GLAUNCHER_DEFAULTS` côté Gablue Manager) — le
+  launcher ne scanne que les chemins écrits dans `config.toml`, jamais
+  `~/Games` ou `~/Windows/Games` de sa propre initiative. Liste vide =
+  bibliothèque vide (demandé, 19/11/2026).
 - **Dossiers de jeux** : `game_dirs` vit dans `config.toml` et le launcher se
   contente de le lire. Pas de sélection de dossiers dans l'interface iced et
   aucune écriture de cette config : le **choix des dossiers `.wgp`/`.lgp` se

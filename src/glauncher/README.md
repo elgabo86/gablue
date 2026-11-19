@@ -27,10 +27,12 @@ Options : `--config <fichier>`, `--dir <dossier>` (répétable), `--columns <n>`
 
 ## Dossiers scannés
 
-Dans `config.toml` (ou `~/.config/glauncher/config.toml`) :
+Dans `config.toml` (ou `~/.config/glauncher/config.toml`). **Aucun dossier
+n'est scanné par défaut** : la liste doit être écrite (Gablue Manager →
+Lanceur de jeux le fait pour toi) ; une liste vide ne montre aucun jeu.
 
 ```toml
-game_dirs = ["~/Windows/Games", "~/Games"]
+game_dirs = ["~/Games", "/run/media/gab/t5/home00/gab/Games"]
 ```
 
 Ils sont **surveillés** : un paquet ajouté ou supprimé met la liste à jour tout
