@@ -41,21 +41,27 @@ build_and_verify() {
 }
 
 # gablue-pad : declencheur Home, clavier virtuel, mode souris, inhibition ecran,
-# vibration. L'overlay Rust (gpad) et le gate BPF sont compiles dans leurs propres
+# vibration, pointeur de l'ecran de connexion (gpad-login). L'overlay Rust (gpad)
+# et le gate BPF sont compiles dans leurs propres
 # etapes du Containerfile (toolchains lourdes, jamais dans l'image finale) ; le
-# Makefile installe aussi l'arborescence de donnees (scripts, sons, kwin).
+# Makefile installe aussi l'arborescence de donnees (scripts, sons, kwin) et le
+# pont du greeter (login-bridge.sh).
 build_and_verify "/src/gablue-pad" "gpad-trigger" "gablue-pad"
-for b in gpad-kbd gpad-mouse gpad-inhibit gpad-rumble; do
+for b in gpad-kbd gpad-mouse gpad-inhibit gpad-rumble gpad-login; do
     if [ ! -f "/usr/bin/$b" ]; then
         echo "ERREUR FATALE : binaire '$b' absent apres compilation de gablue-pad" >&2
         exit 1
     fi
 done
+if [ ! -x "/usr/libexec/gablue-pad/login-bridge.sh" ]; then
+    echo "ERREUR FATALE : /usr/libexec/gablue-pad/login-bridge.sh absent" >&2
+    exit 1
+fi
 if [ ! -x "/usr/libexec/gablue-pad/recorder.sh" ] || [ ! -x "/usr/libexec/gablue-pad/booster.sh" ] || [ ! -d "/usr/libexec/gablue-pad/kwin" ]; then
     echo "ERREUR FATALE : donnees de gablue-pad absentes de /usr/libexec/gablue-pad" >&2
     exit 1
 fi
-echo "OK : gablue-pad (5 binaires + scripts/sons/kwin)"
+echo "OK : gablue-pad (6 binaires + scripts/sons/kwin)"
 
 build_and_verify "/src/ds2xbox" "ds2xbox" "ds2xbox"
 build_and_verify "/src/gablue-dualsense" "gablue-dualsense-ctl" "gablue-dualsense"

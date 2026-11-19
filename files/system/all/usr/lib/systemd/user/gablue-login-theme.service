@@ -1,0 +1,17 @@
+[Unit]
+Description=Gablue — écran de connexion : thème sombre
+Documentation=file:///usr/libexec/gablue-pad/login-bridge.sh
+# AVANT le KWin du greeter : il lit le `kdeglobals` du compte plasmalogin au
+# démarrage, écrire après laisserait l'écran clair un tour de plus. Le
+# `WantedBy` ne cible que la cible du greeter, donc l'unité ne démarre jamais
+# dans une session utilisateur.
+Before=plasma-login-kwin_wayland.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/gablue-pad/login-bridge.sh theme
+RemainAfterExit=yes
+TimeoutStartSec=10
+
+[Install]
+WantedBy=plasma-login-wayland.target

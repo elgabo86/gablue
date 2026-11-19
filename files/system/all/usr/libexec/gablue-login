@@ -1,0 +1,72 @@
+#!/usr/bin/bash
+
+# gablue-login — réglages de l'écran de connexion (pont manette, thème sombre).
+#
+#   gablue-login status              lecture SEULE, sans privilège
+#   gablue-login pad on|off          pont manette (défaut : on)
+#   gablue-login dark on|off         écran de connexion sombre (défaut : off)
+#
+# Le réglage vit dans /etc/gablue/login.conf (0644, lisible par le compte du
+# greeter) et n'est lu qu'au démarrage du greeter : il prend effet à la
+# prochaine déconnexion (ou au prochain démarrage), jamais en cours de session
+# — l'application du thème se fait côté greeter, sans privilège, par
+# /usr/libexec/gablue-pad/login-bridge.sh.
+
+set -uo pipefail
+
+CONF=/etc/gablue/login.conf
+DEF_PAD=on
+DEF_DARK=off
+
+conf_get() {
+    local v
+    v=$(sed -n "s/^$1=//p" "$CONF" 2>/dev/null | tail -1)
+    [ -n "$v" ] && printf '%s' "$v" || printf '%s' "$2"
+}
+
+conf_set() {  # clé valeur
+    mkdir -p "$(dirname "$CONF")"
+    if [ -f "$CONF" ] && grep -q "^$1=" "$CONF"; then
+        sed -i "s/^$1=.*/$1=$2/" "$CONF"
+    else
+        printf '%s=%s\n' "$1" "$2" >>"$CONF"
+    fi
+    chmod 644 "$CONF"
+}
+
+action=${1:-status}
+value=${2:-}
+
+case "$action" in
+status)
+    printf 'pad=%s\ndark=%s\n' "$(conf_get pad "$DEF_PAD")" \
+                                 "$(conf_get dark "$DEF_DARK")"
+    ;;
+pad|dark)
+    case "$value" in
+    on|off) ;;
+    *)
+        echo "usage : $0 $action on|off" >&2
+        exit 2
+        ;;
+    esac
+    if [ "$(id -u)" != 0 ]; then
+        echo "$0 $action : root requis" >&2
+        exit 1
+    fi
+    if [ "$action" = pad ] && [ ! -x /usr/bin/gpad-login ]; then
+        echo "gpad-login absent : pont manette impossible sur cette image" >&2
+        exit 1
+    fi
+    if [ "$action" = dark ] && [ ! -r /usr/share/gablue/plasmalogin-kdeglobals-dark ]; then
+        echo "thème sombre absent : /usr/share/gablue/plasmalogin-kdeglobals-dark" >&2
+        exit 1
+    fi
+    conf_set "$action" "$value"
+    printf '%s=%s\n' "$action" "$(conf_get "$action" "$value")"
+    ;;
+*)
+    echo "usage : $0 [status|pad on|off|dark on|off]" >&2
+    exit 2
+    ;;
+esac

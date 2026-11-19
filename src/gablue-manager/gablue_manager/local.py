@@ -24,8 +24,9 @@ from .constants import (
     RYZENADJ_SERVICE,
     SECUREBOOT_HELPER,
     KARG_BT_ERTM, KARG_CLEARCPUID,
-    KARG_HDMI21, KARG_HELPER, KARG_MITIGATIONS_OFF, LOW_LATENCY_FILE,
-    LOW_LATENCY_HELPER, OS_RELEASE, REBASE_HELPER, SERVICE_HELPER,
+    KARG_HDMI21, KARG_HELPER, KARG_MITIGATIONS_OFF, LOGIN_HELPER,
+    LOW_LATENCY_FILE, LOW_LATENCY_HELPER, OS_RELEASE, REBASE_HELPER,
+    SERVICE_HELPER,
     TAILSCALE_HELPER, WIFI_POWERSAVE_HELPER, _which,
 )
 from .ssh import ssh_capture
@@ -2378,6 +2379,55 @@ def pad_option_active(option: str) -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
+
+
+# --- Écran de connexion (pont manette, thème sombre) ------------------------
+
+
+def login_screen_available() -> bool:
+    """Le helper `gablue-login` est-il installé (image à jour) ?"""
+    return Path(LOGIN_HELPER).is_file()
+
+
+def login_screen_state() -> dict:
+    """`pad` / `dark` de `/etc/gablue/login.conf`, lu sans privilège.
+
+    `gablue-login status` sort 0 et deux lignes `clé=valeur` ; le fichier est
+    en 0644. Les défauts (pad=on, dark=off) sont ceux du helper : une clé
+    absente ne doit pas être lue comme « off ».
+    """
+    state = {"available": login_screen_available(), "pad": True, "dark": False}
+    if not state["available"]:
+        return state
+    try:
+        result = subprocess.run(
+            [LOGIN_HELPER, "status"], capture_output=True, text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return state
+    if result.returncode != 0:
+        return state
+    for line in result.stdout.splitlines():
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if key == "pad" and value in ("on", "off"):
+            state["pad"] = value == "on"
+        elif key == "dark" and value in ("on", "off"):
+            state["dark"] = value == "on"
+    return state
+
+
+def login_screen_apply_script(pad: bool, dark: bool) -> str:
+    """Commandes `sudo -n` du helper : les deux réglages, idempotents.
+
+    Le réglage n'agit qu'au démarrage du greeter : il prend effet à la
+    prochaine déconnexion, jamais dans la session en cours.
+    """
+    return (
+        f"sudo -n {LOGIN_HELPER} pad {'on' if pad else 'off'}\n"
+        f"sudo -n {LOGIN_HELPER} dark {'on' if dark else 'off'}\n"
+    )
 
 
 def services_helpers_available() -> bool:

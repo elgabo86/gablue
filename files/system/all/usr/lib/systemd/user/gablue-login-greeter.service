@@ -1,0 +1,20 @@
+[Unit]
+Description=Gablue — écran de connexion : pont manette
+Documentation=file:///usr/libexec/gablue-pad/login-bridge.sh
+# Comme le KWin du greeter : la cible n'existe que dans la session de
+# plasmalogin, donc l'unité ne démarre jamais dans une session utilisateur.
+After=plasma-login-kwin_wayland.service
+PartOf=plasma-login-wayland.target
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/gablue-pad/login-bridge.sh pad
+TimeoutStopSec=5
+# Le pont boucle : une mort inattendue doit repartir seule, comme
+# gablue-pad.service. Les sorties volontaires (garde UID, verrou, pad=off)
+# rendent 0 et ne déclenchent donc aucun redémarrage.
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=plasma-login-wayland.target

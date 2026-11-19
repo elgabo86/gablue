@@ -35,6 +35,7 @@ chmod +x /usr/bin/opencode2-remove
 chmod +x /usr/libexec/gablue-apps
 chmod +x /usr/libexec/gablue-fetch
 chmod +x /usr/libexec/gablue-wifi-powersave
+chmod +x /usr/libexec/gablue-login
 chmod +x /usr/bin/gablue-atuin
 chmod +x /usr/bin/gablue-pad
 chmod +x /usr/bin/gablue-dualsense

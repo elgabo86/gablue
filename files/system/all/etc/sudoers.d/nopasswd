@@ -26,3 +26,4 @@
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-secureboot status, /usr/libexec/gablue-secureboot enroll
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-ryzenadj status, /usr/libexec/gablue-ryzenadj set *, /usr/libexec/gablue-ryzenadj off
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/systemctl reboot --firmware-setup
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/gablue-login status, /usr/libexec/gablue-login pad on, /usr/libexec/gablue-login pad off, /usr/libexec/gablue-login dark on, /usr/libexec/gablue-login dark off

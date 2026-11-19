@@ -35,6 +35,7 @@ from .dialogs.mangohud import MangoHudDialog
 from .dialogs.host import CandidateDialog, HostDialog
 from .dialogs.kernel import LocalSettingsDialog, RemoteSettingsDialog
 from .dialogs.key import KeyInstallDialog
+from .dialogs.login_screen import LoginScreenDialog
 from .dialogs.prefs import PrefsDialog
 from .dialogs.ryzen import RyzenDialog
 from .dialogs.secureboot import SecureBootDialog
@@ -377,6 +378,9 @@ class MainWindow(QMainWindow):
         )
         self.local_config.booster_requested.connect(
             self.open_local_foreground_booster
+        )
+        self.local_config.login_screen_requested.connect(
+            self.open_local_login_screen
         )
         self.local_config.tailscale_requested.connect(
             self.open_local_tailscale
@@ -2785,6 +2789,9 @@ class MainWindow(QMainWindow):
         if host is None:
             return
         ForegroundBoosterDialog(self, host).exec()
+
+    def open_local_login_screen(self) -> None:
+        LoginScreenDialog(self).exec()
 
     def open_local_tailscale(self) -> None:
         TailscaleDialog(self).exec()

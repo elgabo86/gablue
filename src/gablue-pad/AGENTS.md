@@ -19,6 +19,7 @@ qu'à la demande et le gate BPF n'attache son hook que pendant le menu.
 | `gate/` | démon root + programme BPF LSM qui coupe les lectures `hidraw`/`js` pendant le menu, et `padnodes.sh` (inventaire js/hidraw par périphérique physique) | `/usr/libexec/gablue-pad/gpad-gate` (+ `.bpf.o`, `gate/padnodes.sh`) |
 | `kbd/` | clavier virtuel KWin (Home+carré) | `/usr/bin/gpad-kbd` |
 | `mouse/` | mode souris/clavier (Home+R3) | `/usr/bin/gpad-mouse` |
+| `login/` | écran de connexion : pointeur manette (`gpad-login`) et pont du greeter (`login-bridge.sh` : thème sombre, clavier visuel affiché seulement si une manette est présente) | `/usr/bin/gpad-login`, `/usr/libexec/gablue-pad/login-bridge.sh` |
 | `inhibit/` | inhibition de l'écran tant qu'une manette est connectée | `/usr/bin/gpad-inhibit` |
 | `rumble/` | impulsion FF_RUMBLE (confirmation de sauvegarde de replay) | `/usr/bin/gpad-rumble` |
 | `kwin/` | scripts KWin poussés à chaud (`wininfo.js`, `lister.js`, `fullscreen.js` ; le cyclage L2/R2 est **généré**) | `/usr/libexec/gablue-pad/kwin` |
@@ -39,6 +40,38 @@ dans `/usr/share/ublue-os/gablue/scripts/killthemall`, exporté au service par
 - `gablue-pad.service` (**utilisateur**, session) : `gpad-trigger /usr/bin/gpad`,
   environne tout le reste (chemins, sons, gate, kwin). Activé pour tous les
   comptes par l'image (`systemctl --global enable`).
+- `gablue-login-theme.service` (**utilisateur**, greeter, `Type=oneshot`) :
+  `login-bridge.sh theme`, **`Before=plasma-login-kwin_wayland.service`** — le
+  KWin du greeter lit le `kdeglobals` de `plasmalogin` à son démarrage, donc le
+  thème doit être écrit avant lui (aucun `pkill plasma-keyboard` : rien ne
+  garantit que KWin relance l'input method, la seule voie sûre est d'écrire
+  avant). `WantedBy=plasma-login-wayland.target`, `RemainAfterExit=yes`.
+- `gablue-login-greeter.service` (**utilisateur**, greeter, après KWin) :
+  `login-bridge.sh pad`, `WantedBy=plasma-login-wayland.target`, donc les deux
+  unités ne démarrent **jamais** dans une session utilisateur. Le pont lit
+  `/etc/gablue/login.conf` (`pad=on|off`, `dark=on|off`) et n'ouvre le clavier
+  visuel que **tant qu'une manette est présente** : fermeture franche
+  `mode 0 → 1` (`kwinrc` persiste le mode, ne jamais le laisser à `2`),
+  ouverture `mode 2` + `forceActivate` dès qu'un evdev `ID_INPUT_JOYSTICK=1`
+  apparaît, refermeture quand elle part. Aucun privilège : tout se passe dans la
+  session du greeter, ce qui évite les franchissements SELinux. Un verrou
+  `flock` (dans `$XDG_RUNTIME_DIR`) empêche deux ponts de tourner ensemble —
+  deux `gpad-login` donneraient deux pointeurs virtuels, donc un mouvement
+  doublé.
+- Pointeur (`gpad-login`) : stick gauche **ou** droit (le plus écarté gagne),
+  **même courbe que `gpad-mouse`** (zone morte 0,08, 2 → 12, accumulateur
+  sub-pixel, 120 Hz), X/Croix ou R1 = clic gauche, Carré = Retour arrière,
+  Start = Entrée ; la manette n'est pas grabée et le périphérique virtuel est
+  détruit à la sortie (`SIGTERM`/`SIGINT`).
+
+Validé sur gen1 le 19/11/2026 (plasma-login-manager 6.8.3, Plasma 6.8) :
+`theme` **finit** avant que `plasma-login-kwin_wayland.service` ne démarre
+(journal : `Finished gablue-login-theme` puis `Starting …kwin_wayland`), le
+clavier visuel s'ouvre et se referme au branchement/débranchement de la manette
+(`mode i 2 … visible=true`), `VirtualKeyboardMode` reste à `1`, aucun AVC
+SELinux, aucun processus laissé derrière au logout. À revérifier après une
+montée de version de plasmalogin (le mécanisme `Before=` + `kdeglobals` n'est
+pas un contrat public).
 
 Le démon ne garde aucune cible périmée : l'overlay envoie `clear` puis `target`
 pour chaque node js/hidraw à chaque ouverture (les `dev_t` changent à la
@@ -76,7 +109,7 @@ Détail des gestes et des pages : `gpad/AGENTS.md`.
 ## Build
 
 - Binaires C : `make` dans ce dossier (`gpad-trigger`, `gpad-kbd`, `gpad-mouse`,
-  `gpad-inhibit`, `gpad-rumble`) ; `make install DESTDIR=…` pose aussi
+  `gpad-inhibit`, `gpad-rumble`, `gpad-login`) ; `make install DESTDIR=…` pose aussi
   l'arborescence de données dans `/usr/libexec/gablue-pad` (les scripts y
   résolvent `sounds/`, `scripts/` et `kwin/` par rapport à leur propre dossier).
 - Overlay Rust : étape `gpad-build` du `Containerfile-gablue`

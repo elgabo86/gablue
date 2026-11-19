@@ -165,6 +165,7 @@ ATUIN_HELPER = "/usr/bin/gablue-atuin"
 GWINE_IMAGE_BINARY = "/usr/bin/gwine"
 
 PAD_HELPER = "/usr/bin/gablue-pad"
+LOGIN_HELPER = "/usr/libexec/gablue-login"
 
 CLEAN_HELPER = "/usr/libexec/gablue-clean"
 

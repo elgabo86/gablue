@@ -1277,6 +1277,7 @@ class LocalConfigMenu(QMenu):
     mangohud_requested = Signal()
     glauncher_requested = Signal()
     booster_requested = Signal()
+    login_screen_requested = Signal()
     tailscale_requested = Signal()
     share_requested = Signal()
     wifi_powersave_requested = Signal()
@@ -1298,6 +1299,9 @@ class LocalConfigMenu(QMenu):
         )
         settings_menu.addAction(
             "Variante de l'image…", self.variant_requested.emit
+        )
+        settings_menu.addAction(
+            "Écran de connexion…", self.login_screen_requested.emit
         )
 
         # Tout ce qui se règle vit dans « Réglages », comme sur une carte de

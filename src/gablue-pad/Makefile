@@ -14,7 +14,7 @@ LIBEXEC = $(DESTDIR)$(PREFIX)/libexec/gablue-pad
 DATA = recorder.sh screenshot.sh replay.sh vrr.sh mangohud.sh booster.sh \
        scripts sounds kwin
 
-BINS = gpad-trigger gpad-kbd gpad-mouse gpad-inhibit gpad-rumble
+BINS = gpad-trigger gpad-kbd gpad-mouse gpad-inhibit gpad-rumble gpad-login
 
 all: $(BINS)
 
@@ -33,10 +33,16 @@ gpad-inhibit: inhibit/gpad-inhibit.c
 gpad-rumble: rumble/gpad-rumble.c
 	$(CC) $(CFLAGS) -o $@ $<
 
+# Écran de connexion : pointeur manette (même courbe que gpad-mouse, les deux
+# sticks, X/R1 = clic, Carré = retour arrière, Start = Entrée).
+gpad-login: login/gpad-login.c
+	$(CC) $(CFLAGS) -o $@ $< -lm
+
 install: all
 	install -d $(BINDIR) $(LIBEXEC) $(LIBEXEC)/gate
 	install -m 755 $(BINS) $(BINDIR)/
 	cp -a $(DATA) $(LIBEXEC)/
+	install -m 755 login/login-bridge.sh $(LIBEXEC)/login-bridge.sh
 	install -m 755 gate/padnodes.sh $(LIBEXEC)/gate/
 	chmod 755 $(LIBEXEC)/*.sh $(LIBEXEC)/gate/padnodes.sh
 	chmod 755 $(LIBEXEC)/scripts/*

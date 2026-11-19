@@ -86,3 +86,8 @@ systemctl --global enable dmemcg-booster-user.service
 #    options (menu / raccourcis / veille) se coupent séparément.
 systemctl enable gablue-pad-gate.service
 systemctl --global enable gablue-pad.service
+# Écran de connexion : thème sombre (écrit AVANT le KWin du greeter, qui lit
+# le kdeglobals à son démarrage) + pont manette (après KWin). Les deux unités
+# vivent dans la session de plasmalogin : leur WantedBy ne cible que là.
+systemctl --global enable gablue-login-theme.service
+systemctl --global enable gablue-login-greeter.service
