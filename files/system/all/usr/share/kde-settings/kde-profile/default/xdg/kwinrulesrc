@@ -212,6 +212,14 @@ wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
+[glauncher-vrr]
+Description=Désactiver VRR pour Glauncher
+wmclass=glauncher
+wmclasscomplete=false
+wmclassmatch=1
+adaptivesync=false
+adaptivesyncrule=2
+
 [jellyfin-vrr]
 Description=Désactiver VRR pour Jellyfin Desktop
 wmclass=org.jellyfin.JellyfinDesktop
