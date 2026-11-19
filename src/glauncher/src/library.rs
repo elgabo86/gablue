@@ -139,12 +139,7 @@ pub fn from_rows(
         // AUCUN accès au dossier du paquet ici (voir `icon_cached`) : le
         // voisinage est lu au second plan par `assets::spawn`
         let artwork = cache.entry(slug.clone()).or_insert_with(|| Artwork {
-            icon: icon_cached(
-                &slug,
-                &icons_cache,
-                &config.pack_icon_dir(),
-                &config.marks_dir("icons"),
-            ),
+            icon: icon_cached(&slug, &icons_cache, &config.pack_icon_dir()),
             cover: art_for(&covers_dir, &slug),
             hero: art_for(&heroes_dir, &slug),
             logo: art_for(&logos_dir, &slug),
@@ -492,29 +487,19 @@ fn mtime_of(meta: &std::fs::Metadata) -> i64 {
 /// puis les `icon_dirs`, puis le cache. Toute icône trouvée est copiée dans le
 /// cache (elle survit à la disparition du jeu).
 /// Icône disponible **sans toucher aux dossiers de jeux** : choix de
-/// l'utilisateur, icône extraite du paquet (`icons/pack/`), icône SteamGridDB.
+///
+/// Ordre : **`assets/icons/` d'abord** (icône SteamGridDB, y compris celle
+/// choisie à la main — elle est **partagée** par Syncthing entre postes, donc
+/// un choix fait ailleurs doit gagner), puis l'icône extraite du paquet
+/// (`pack-icons/`, propre à la machine). Les deux ne coexistent que si
+/// quelqu'un a choisi une icône : un scan ne télécharge une icône SteamGridDB
+/// que si le paquet n'en contient pas (`icon_near_pack` d'abord).
 ///
 /// C'est la seule lecture d'icône faite au démarrage : le voisinage du paquet
 /// vit souvent sur un disque externe, et 666 paquets × 6 `stat` réveillaient un
 /// disque endormi (plusieurs secondes avant la première image).
-fn icon_cached(
-    slug: &str,
-    icons_cache: &Path,
-    pack_dir: &Path,
-    marks: &Path,
-) -> Option<image::Handle> {
-    // 1. l'utilisateur a explicitement choisi une icône SteamGridDB : elle gagne
-    if let Some(path) = covers::chosen(icons_cache, marks, slug)
-        && let Ok(bytes) = std::fs::read(path)
-    {
-        return Some(image::Handle::from_bytes(bytes));
-    }
-
-    // 2. icône déjà extraite du paquet (cache local) ou icône SteamGridDB
-    if let Some(handle) = art_for(pack_dir, slug) {
-        return Some(handle);
-    }
-    art_for(icons_cache, slug)
+fn icon_cached(slug: &str, icons_cache: &Path, pack_dir: &Path) -> Option<image::Handle> {
+    art_for(icons_cache, slug).or_else(|| art_for(pack_dir, slug))
 }
 
 /// Icône posée **à côté du paquet** : `<nom>.png`, `icons/<slug>.png` ou

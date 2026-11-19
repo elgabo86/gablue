@@ -163,11 +163,11 @@ fn cover_message(event: covers::CoverEvent) -> Message {
 }
 
 /// Lance le jeu et attend sa fin, puis renvoie le résultat par le bus.
-fn spawn_launch(name: String, command: launch::Launch, cache: PathBuf) {
+fn spawn_launch(name: String, command: launch::Launch, cache: PathBuf, slug: String) {
     let _ = std::thread::Builder::new()
         .name(format!("glauncher-run:{name}"))
         .spawn(move || {
-            let result = launch::run(&command, &cache);
+            let result = launch::run(&command, &cache, &slug, &name);
             post(Message::Launched { name, result });
         });
 }
@@ -1394,8 +1394,13 @@ impl App {
                 started.elapsed().as_millis()
             );
             // le chrono du temps de jeu part au lancement EFFECTIF du jeu
-            self.play_started = self.pending_slug.take().map(|slug| (slug, std::time::Instant::now()));
-            spawn_launch(name, command, self.config.cache_dir());
+            let slug = self.pending_slug.take().unwrap_or_default();
+            self.play_started = if slug.is_empty() {
+                None
+            } else {
+                Some((slug.clone(), std::time::Instant::now()))
+            };
+            spawn_launch(name, command, self.config.cache_dir(), slug);
         }
 
         if (self.scroll - self.scroll_target).abs() > 0.5 {
@@ -2247,78 +2252,97 @@ impl App {
                 .min(self.viewport.1 * 0.45)
                 .max(160.0)
         };
+        // Moitié basse (cover, détails, pastilles) : elle prend la hauteur
+        // RESTANTE sous la bande héros, au lieu de dimensions figées — la
+        // demander plus grande ne servait à rien tant qu'elle restait calée sur
+        // des pixels constants, trop petits sur un écran 1080p (retour 19/11).
+        let band_h = if game.hero.is_some() {
+            band_height(width)
+        } else {
+            0.0
+        };
+        let dispo = (self.viewport.1 - band_h).max(300.0);
+        let cover_h = (dispo * 0.72).clamp(300.0, 520.0);
+        let cover_w = cover_h * 205.0 / 308.0;
+        // tout le bloc suit la cover : textes, pastilles et espacements
+        let ech = (cover_h / 308.0).clamp(1.0, 1.7);
         // Pas de héros : aucune bande n'est réservée, et le bloc du bas se
         // centre sur toute la page — une bande grise vide en haut avec le
         // contenu collé en dessous faisait pauvre (retour 18/11).
         let band: Option<Element<'_, Message>> = game.hero.as_ref().map(|handle| {
             image(handle.clone())
                 .width(Length::Fixed(width))
-                .height(Length::Fixed(band_height(width)))
+                .height(Length::Fixed(band_h))
                 .content_fit(ContentFit::Cover)
                 .into()
         });
 
         let logo: Element<'_, Message> = match &game.logo {
             Some(handle) => image(handle.clone())
-                .width(Length::Fixed(450.0))
-                .height(Length::Fixed(155.0))
+                .width(Length::Fixed(450.0 * ech))
+                .height(Length::Fixed(155.0 * ech))
                 .content_fit(ContentFit::Contain)
                 .into(),
-            None => text(short(&game.name, 46)).size(36).color(TEXT).into(),
+            None => text(short(&game.name, 46))
+                .size(36.0 * ech)
+                .color(TEXT)
+                .into(),
         };
 
         let cover: Element<'_, Message> = match &game.cover {
             Some(handle) => image(handle.clone())
-                .width(Length::Fixed(205.0))
-                .height(Length::Fixed(308.0))
+                .width(Length::Fixed(cover_w))
+                .height(Length::Fixed(cover_h))
                 .content_fit(ContentFit::Contain)
                 .into(),
-            None => sample_art(&self.sample, &game.name, game.icon.as_ref(), 205.0, 308.0),
+            None => sample_art(&self.sample, &game.name, game.icon.as_ref(), cover_w, cover_h),
         };
 
         let details = column![
             logo,
-            text(short(&game.name, 60)).size(25).color(TEXT),
-            text(game.path.display().to_string()).size(14).color(MUTED),
+            text(short(&game.name, 60)).size(25.0 * ech).color(TEXT),
+            text(game.path.display().to_string())
+                .size(14.0 * ech)
+                .color(MUTED),
             text(format!(
                 "Temps de jeu : {}   ·   {}",
                 playtime::format(self.playtime.get(&game.slug).copied()),
                 self.art_status(page.index)
             ))
-            .size(14)
+            .size(14.0 * ech)
             .color(MUTED),
         ]
-        .spacing(10)
+        .spacing(10.0 * ech)
         .align_x(Alignment::Center);
 
         let favorite = self.favorites.contains(&game.slug);
-        let mut actions = Row::new().spacing(14).align_y(Alignment::Center);
+        let mut actions = Row::new().spacing(14.0 * ech).align_y(Alignment::Center);
         for (index, action) in PAGE_ACTIONS.iter().enumerate() {
             let selected = index == page.action;
             // l'étoile montre l'état : pleine = favori, atténuée = à marquer
             let inside: Element<'_, Message> = match action {
                 PageAction::Favorite => row![
-                    self.star_icon(18.0, if favorite { 1.0 } else { 0.35 }),
-                    text("Favori").size(18).color(if selected {
+                    self.star_icon(18.0 * ech, if favorite { 1.0 } else { 0.35 }),
+                    text("Favori").size(18.0 * ech).color(if selected {
                         Color::BLACK
                     } else {
                         TEXT
                     }),
                 ]
-                .spacing(7)
+                .spacing(7.0 * ech)
                 .align_y(Alignment::Center)
                 .into(),
                 PageAction::Images => text("Images ▸")
-                    .size(18)
+                    .size(18.0 * ech)
                     .color(if selected { Color::BLACK } else { TEXT })
                     .into(),
                 other => text(other.label())
-                    .size(18)
+                    .size(18.0 * ech)
                     .color(if selected { Color::BLACK } else { TEXT })
                     .into(),
             };
             let pill = container(inside)
-                .padding([13.0, 24.0])
+                .padding([13.0 * ech, 24.0 * ech])
                 .style(move |_| action_style(selected));
 
             actions = actions.push(mouse_area(pill).on_press(Message::PageChoose(index)));
@@ -2329,34 +2353,36 @@ impl App {
         // texte)
         let help: Element<'_, Message> = if self.pad_hints() {
             row![
-                text("← → action").size(14).color(MUTED),
+                text("← → action").size(14.0 * ech).color(MUTED),
                 hint(self.glyphs.confirm.clone(), "Valider"),
                 hint(self.glyphs.back.clone(), "Retour"),
                 hint(self.glyphs.view.clone(), "Visuels"),
             ]
-            .spacing(18)
+            .spacing(18.0 * ech)
             .align_y(Alignment::Center)
             .into()
         } else {
             text("← → action   ·   Entrée valider   ·   Échap retour   ·   I visuels   ·   F favori")
-                .size(14)
+                .size(14.0 * ech)
                 .color(MUTED)
                 .into()
         };
 
         let body = container(
             column![
-                row![cover, column![details, actions].spacing(20).align_x(Alignment::Center)]
-                    .spacing(30)
-                    .align_y(Alignment::Center),
+                row![cover, column![details, actions]
+                    .spacing(20.0 * ech)
+                    .align_x(Alignment::Center)]
+                .spacing(30.0 * ech)
+                .align_y(Alignment::Center),
                 help,
             ]
-            .spacing(30)
+            .spacing(30.0 * ech)
             .align_x(Alignment::Center),
         )
         .width(Fill)
         .height(Fill)
-        .padding(20)
+        .padding(20.0 * ech)
         .center_x(Fill)
         .center_y(Fill);
 

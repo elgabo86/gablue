@@ -45,6 +45,7 @@ cargo run -- --windowed --simulate 5 --dir demo-games   # test rapide (idem ./te
 ./test.sh index cold        # chrono du scan à froid puis à chaud
 cargo test                  # tests unitaires (slug, extensions, troncature)
 cargo build --release
+glauncher --art "$HOME/Windows/Games/Jeu.wgp"   # logo + icône d'un paquet (overlay manette)
 ```
 
 `--simulate` remplace la commande de lancement par un `sleep N` : on teste
@@ -272,6 +273,33 @@ leurs icônes, pour l'interface.
   retour, ou image choisie) `resume_covers` relance la couverture de la vue
   courante. Un seul worker suffit donc, la seconde file dédiée au menu a
   disparu.
+- **Page d'un jeu : moitié basse dimensionnée par l'écran.** La cover prend
+  **72 % de la hauteur restante** sous la bande héros (bornée 300 à 520 px), et
+  tout le bloc (logo, nom, chemin, temps de jeu, pastilles, marges, aide) suit
+  le même facteur (`ech = cover_h / 308`, 1 à 1,7). Avant, ces dimensions
+  étaient des pixels figés (205×308) : « encore trop petit » en 1080p (retour
+  19/11). Sans héros, la bande ne réserve rien et le bloc se centre sur toute la
+  page.
+- **Jeu en cours publié pour l'overlay manette** : tant qu'un jeu tourne,
+  `<cache>/running.txt` porte `slug=`, `nom=` (nom affiché du paquet), `pids=`,
+  puis `logo=` et `icone=` — chemins absolus, **seulement s'ils existent**
+  (`assets/logos/<slug>.png` ; icône : `assets/icons/<slug>.png` d'abord —
+  c'est là qu'arrive une icône choisie, et `assets/` est partagé par Syncthing
+  entre postes —, puis l'icône extraite du paquet, en PNG). C'est ce que lit `gpad` pour afficher le logo du jeu
+  au-dessus de l'en-tête et remplacer le nom/icône de la fenêtre : le lien est
+  le **PID** de la fenêtre active, jamais sa classe (détail →
+  `src/gablue-pad/gpad/AGENTS.md`). Le fichier est réécrit quand la liste des
+  PID change (Wine forke), en écriture atomique, et retiré à la fin du jeu s'il
+  est encore le nôtre.
+- **`--art <paquet>` : les visuels d'un SEUL paquet, pour gwine/lgplaunch.**
+  Lancé en fond par les deux lanceurs quand un `.wgp`/`.lgp` n'est pas passé par
+  le launcher, il écrit dans le cache le logo et l'icône **manquants**
+  (`covers::fetch_game`) : icône du paquet (`.icon.png` du squashfs) avant celle
+  de SteamGridDB, un visuel déjà là n'est jamais redemandé, un `.miss` récent
+  n'est pas réessayé, et tout est **ré-encodé en PNG** — `gpad` ne décode que le
+  PNG, un logo en JPEG du cache serait invisible. Pas de fenêtre, pas d'index,
+  pas de scan : deux requêtes au plus. `gpad` relit le cache une fois par
+  seconde, donc le logo apparaît tout seul après le téléchargement.
 - **Page d'un jeu** : un clic sur une vignette déjà sélectionnée, ou Entrée/A,
   l'ouvre : héros en bande (largeur **explicite**, `ContentFit::Cover`), logo,
   cover, nom, chemin, état des visuels (`✓` / `…`) et trois pastilles —
@@ -296,7 +324,11 @@ leurs icônes, pour l'interface.
   grilles » dans le menu (constaté 18/11) ; si rien ne reste en portrait, tout
   est rendu plutôt que d'afficher un menu vide. L'image choisie est écrite dans `assets/<type>/`, un
   `<slug>.choice` garde l'URL ; comme un visuel présent n'est plus redemandé,
-  **le choix est permanent**. Pour les icônes, l'icône du paquet est proposée
+  **le choix est permanent**. Une image choisie et le marqueur vivent dans deux
+  dossiers différents : le **fichier** dans `assets/` (partagé entre postes, donc
+  un choix fait ailleurs gagne, y compris pour les icônes puisque
+  `assets/icons/` passe avant `pack-icons/`), le marqueur `.choice` dans
+  `marks/` (propre à la machine : `.miss` ne doit jamais être synchronisé). Pour les icônes, l'icône du paquet est proposée
   **en tête** du menu (`file://`), donc sélectionnable même après un choix
   distant.
 - **Nom de recherche** : dans le menu d'images, « Changer le nom » ouvre un

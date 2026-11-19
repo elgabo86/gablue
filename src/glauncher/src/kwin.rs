@@ -22,7 +22,7 @@
 //! réaction à l'activation d'une fenêtre.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -41,11 +41,14 @@ static RELOAD: AtomicUsize = AtomicUsize::new(0);
 static CURRENT: Mutex<Option<String>> = Mutex::new(None);
 
 /// Surveille le jeu `root_pid` et force le plein écran de ses fenêtres.
+/// Publie aussi le jeu en cours pour l'overlay manette (voir [`running_body`]).
 /// Renvoie le drapeau d'arrêt (armé par l'appelant quand le jeu se termine).
-pub fn watch(root_pid: u32, cache: &Path) -> Arc<AtomicBool> {
+pub fn watch(root_pid: u32, cache: &Path, slug: &str, nom: &str) -> Arc<AtomicBool> {
     let stop = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&stop);
     let cache = cache.to_path_buf();
+    let slug = slug.to_string();
+    let nom = nom.to_string();
 
     let _ = std::thread::Builder::new()
         .name("glauncher-kwin".into())
@@ -57,6 +60,7 @@ pub fn watch(root_pid: u32, cache: &Path) -> Arc<AtomicBool> {
 
             let mut applied: Vec<u32> = Vec::new();
             let mut waited = 0u64;
+            let mut published = String::new();
 
             while !flag.load(Ordering::Relaxed) {
                 // On ne recharge que si un **nouveau client d'affichage**
@@ -66,6 +70,9 @@ pub fn watch(root_pid: u32, cache: &Path) -> Arc<AtomicBool> {
                 // état vierge et **réimposait le plein écran que l'utilisateur
                 // venait de retirer** (constaté 18/11).
                 let pids = game_pids(root_pid);
+                // le jeu en cours (slug + PID) pour l'overlay manette : le
+                // fichier ne bouge qu'avec la liste des PID (Wine forke)
+                publier(&cache, &slug, &nom, &pids, &mut published);
                 let nouveau_client = pids
                     .iter()
                     .filter(|pid| !applied.contains(pid))
@@ -102,9 +109,92 @@ pub fn watch(root_pid: u32, cache: &Path) -> Arc<AtomicBool> {
             }
 
             release();
+
+            // le jeu est fini : l'overlay ne doit plus afficher son logo. Le
+            // fichier n'est retiré que s'il est encore le nôtre (deux
+            // launchers peuvent tourner en parallèle).
+            let chemin = running_path(&cache);
+            if std::fs::read_to_string(&chemin).ok().as_deref() == Some(published.as_str()) {
+                let _ = std::fs::remove_file(&chemin);
+            }
         });
 
     stop
+}
+
+/// Fichier publiant le jeu en cours pour l'overlay manette (`gpad`) :
+/// `<cache>/running.txt`.
+pub fn running_path(cache: &Path) -> PathBuf {
+    cache.join("running.txt")
+}
+
+/// Contenu de `running.txt` : le slug et le **nom affiché** du jeu, ses PID, le
+/// chemin absolu de son logo et celui de son icône quand ces visuels existent
+/// dans le cache.
+///
+/// L'overlay compare le PID de la fenêtre active à cette liste : c'est le seul
+/// lien entre une fenêtre et un jeu, la classe d'une fenêtre Wine ne disant
+/// rien du paquet lancé. Nom et icône voyagent avec, parce que la fenêtre d'un
+/// jeu `gwine`/`lgplaunch` ne les porte pas : son titre est celui du binaire et
+/// son icône celle de l'exécutable, pas celles du `.wgp`/`.lgp`.
+fn running_body(cache: &Path, slug: &str, nom: &str, pids: &[u32]) -> String {
+    let mut texte = format!("slug={slug}\nnom={nom}\n");
+    texte.push_str("pids=");
+    for (i, pid) in pids.iter().enumerate() {
+        if i > 0 {
+            texte.push(',');
+        }
+        texte.push_str(&pid.to_string());
+    }
+    texte.push('\n');
+    if let Some(logo) = visuel(cache, "logos", slug) {
+        texte.push_str(&format!("logo={}\n", logo.display()));
+    }
+    if let Some(icone) = icone_jeu(cache, slug) {
+        texte.push_str(&format!("icone={}\n", icone.display()));
+    }
+    texte
+}
+
+/// `<cache>/assets/<type>/<slug>.png` s'il existe. Les visuels SteamGridDB
+/// sont des PNG ; les autres extensions ne sont pas publiées, l'overlay ne
+/// décode que le PNG (`lire_png`) et une icône JPEG serait un piège muet.
+fn visuel(cache: &Path, genre: &str, slug: &str) -> Option<PathBuf> {
+    let chemin = cache
+        .join("assets")
+        .join(genre)
+        .join(format!("{slug}.png"));
+    chemin.is_file().then_some(chemin)
+}
+
+/// Icône du jeu, dans le même ordre que le launcher (`library::icon_cached`) :
+/// icône SteamGridDB de `assets/icons/` — celle qu'on a choisie y est, et le
+/// dossier est partagé entre postes —, puis icône extraite du paquet. Toutes en
+/// PNG (l'overlay ne décode que ça).
+fn icone_jeu(cache: &Path, slug: &str) -> Option<PathBuf> {
+    let mut essais = Vec::new();
+    essais.push(cache.join("assets/icons").join(format!("{slug}.png")));
+    essais.push(cache.join("pack-icons").join(format!("{slug}.png")));
+    essais.into_iter().find(|chemin| chemin.is_file())
+}
+
+/// Écrit `running.txt` si son contenu change (écriture atomique `.part` +
+/// renommage, comme le reste du cache).
+fn publier(cache: &Path, slug: &str, nom: &str, pids: &[u32], published: &mut String) {
+    let contenu = running_body(cache, slug, nom, pids);
+    if contenu == *published {
+        return;
+    }
+    let chemin = running_path(cache);
+    let mut tmp = chemin.as_os_str().to_owned();
+    tmp.push(".part");
+    let tmp = PathBuf::from(tmp);
+    if std::fs::write(&tmp, &contenu).is_ok() {
+        let _ = std::fs::rename(&tmp, &chemin);
+        *published = contenu;
+    } else {
+        let _ = std::fs::remove_file(&tmp);
+    }
 }
 
 /// Décharge le script (le jeu est terminé).
@@ -495,6 +585,43 @@ mod tests {
         // PID 1 ne mappe ni libX11 ni libwayland-client : il ne doit pas
         // déclencher de relève du script
         assert!(!super::owns_display(1));
+    }
+
+    #[test]
+    fn running_publie_slug_pid_et_logo() {
+        let dir = std::env::temp_dir().join(format!("glauncher-running-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets/logos")).unwrap();
+        std::fs::create_dir_all(dir.join("pack-icons")).unwrap();
+
+        let corps = running_body(&dir, "celeste", "Celeste", &[12, 34]);
+        assert!(corps.contains("slug=celeste\n"));
+        assert!(corps.contains("nom=Celeste\n"), "nom affiché du paquet");
+        assert!(corps.contains("pids=12,34\n"));
+        assert!(
+            !corps.contains("logo="),
+            "visuel absent du cache = aucun chemin publié"
+        );
+        assert!(!corps.contains("icone="));
+
+        std::fs::write(dir.join("assets/logos/celeste.png"), b"x").unwrap();
+        std::fs::write(dir.join("pack-icons/celeste.png"), b"x").unwrap();
+        let corps = running_body(&dir, "celeste", "Celeste", &[12]);
+        assert!(corps.contains("logo="), "le logo en cache est publié");
+        assert!(corps.contains("celeste.png"));
+        assert!(
+            corps.contains("pack-icons/celeste.png"),
+            "l'icône du paquet est publiée"
+        );
+        assert!(running_path(&dir).ends_with("running.txt"));
+
+        // une icône JPEG ne part pas : l'overlay ne décode que le PNG
+        std::fs::remove_file(dir.join("pack-icons/celeste.png")).unwrap();
+        std::fs::write(dir.join("pack-icons/celeste.jpg"), b"x").unwrap();
+        let corps = running_body(&dir, "celeste", "Celeste", &[12]);
+        assert!(!corps.contains("icone="), "PNG seulement");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

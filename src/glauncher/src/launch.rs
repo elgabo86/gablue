@@ -53,10 +53,12 @@ pub fn build(config: &Config, game: &Game) -> Launch {
 ///
 /// Le jeu est mis en plein écran par KWin dès que sa fenêtre apparaît (voir
 /// [`crate::kwin`]) : beaucoup de jeux `gwine` / `lgplaunch` s'ouvrent sinon
-/// dans une fenêtre 1280×720 au milieu du bureau.
+/// dans une fenêtre 1280×720 au milieu du bureau. La même surveillance publie
+/// le jeu en cours (`running.txt`) pour l'overlay manette, qui y lit le slug et
+/// les PID du jeu (et le logo s'il est en cache).
 ///
 /// Bloquant : à appeler depuis une tâche iced, jamais depuis l'UI.
-pub fn run(launch: &Launch, cache: &Path) -> Result<i32, String> {
+pub fn run(launch: &Launch, cache: &Path, slug: &str, nom: &str) -> Result<i32, String> {
     eprintln!("glauncher : lancement de {}", launch.describe());
 
     let mut child = std::process::Command::new(&launch.program)
@@ -65,7 +67,7 @@ pub fn run(launch: &Launch, cache: &Path) -> Result<i32, String> {
         .spawn()
         .map_err(|err| format!("lancement impossible ({}) : {err}", launch.program))?;
 
-    let kwin_stop = kwin::watch(child.id(), cache);
+    let kwin_stop = kwin::watch(child.id(), cache, slug, nom);
 
     let status = child
         .wait()

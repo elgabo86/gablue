@@ -458,6 +458,115 @@ where
     totals
 }
 
+/// Visuels dont l'overlay manette a besoin : le logo (bandeau au-dessus de
+/// l'en-tête) et l'icône (à la place de celle de la fenêtre).
+pub const OVERLAY_KINDS: [ArtKind; 2] = [ArtKind::Logo, ArtKind::Icon];
+
+/// Télécharge les visuels **manquants d'un seul paquet** (`--art <paquet>`,
+/// lancé en fond par gwine/lgplaunch au démarrage du jeu).
+///
+/// Toujours en **PNG**, même si SteamGridDB rend un JPEG ou un WebP : l'overlay
+/// manette ne décode que le PNG (`lire_png`), et un logo en JPEG serait un
+/// piège muet. L'icône du paquet (`.icon.png` du squashfs) passe devant celle
+/// de SteamGridDB, comme dans le launcher. Un visuel déjà là n'est jamais
+/// redemandé ; un « introuvable » récent n'est pas réessayé.
+pub fn fetch_game<F>(
+    assets: &Path,
+    marks_root: &Path,
+    pack_icons: &Path,
+    api_key: Option<String>,
+    slug: &str,
+    name: &str,
+    pack: &Path,
+    report: &mut F,
+) -> UpdateReport
+where
+    F: FnMut(String),
+{
+    let mut client = Client::new(api_key);
+    let mut totals = UpdateReport::default();
+
+    for kind in OVERLAY_KINDS {
+        let dir = assets.join(kind.dir());
+        let marks = marks_root.join(kind.dir());
+        // déjà en PNG : rien à faire (c'est le seul format que l'overlay lit)
+        if dir.join(format!("{slug}.png")).is_file() {
+            totals.skipped += 1;
+            continue;
+        }
+        // un autre format traîne : on le convertit, l'overlay ne le verrait pas
+        if let Some(autre) = cached(&dir, slug)
+            && let Ok(bytes) = std::fs::read(&autre)
+            && let Some(png) = en_png(&bytes)
+        {
+            write_atomic(&dir.join(format!("{slug}.png")), &png);
+            totals.downloaded += 1;
+            report(format!(
+                "{} « {name} » converti en PNG → {}",
+                kind.label(),
+                dir.join(format!("{slug}.png")).display()
+            ));
+            continue;
+        }
+        if kind == ArtKind::Icon {
+            // l'icône choisie par l'utilisateur gagne, puis celle du paquet
+            if chosen(&dir, &marks, slug).is_some() {
+                totals.skipped += 1;
+                continue;
+            }
+            if pack_icons.join(format!("{slug}.png")).is_file() {
+                totals.skipped += 1;
+                continue;
+            }
+            if let Some(bytes) = pack_icon(pack) {
+                let _ = std::fs::create_dir_all(pack_icons);
+                write_atomic(&pack_icons.join(format!("{slug}.png")), &bytes);
+                totals.downloaded += 1;
+                report(format!("Icône « {name} » extraite du paquet"));
+                continue;
+            }
+        }
+        if recently_missed(&marks, slug) {
+            totals.skipped += 1;
+            continue;
+        }
+        match client.top(name, kind) {
+            Ok(Some((_url, bytes, _ext))) => {
+                let png = match en_png(&bytes) {
+                    Some(png) => png,
+                    None => {
+                        totals.failed += 1;
+                        report(format!("{} « {name} » : image illisible", kind.label()));
+                        continue;
+                    }
+                };
+                let path = save(&dir, &marks, slug, "png", &png, None);
+                totals.downloaded += 1;
+                report(format!("{} « {name} » → {}", kind.label(), path.display()));
+            }
+            Ok(None) => {
+                mark_missing(&dir, &marks, slug);
+                totals.missing += 1;
+                report(format!("{} « {name} » introuvable", kind.label()));
+            }
+            Err(error) => {
+                totals.failed += 1;
+                report(format!("{} « {name} » : {error}", kind.label()));
+            }
+        }
+        std::thread::sleep(THROTTLE);
+    }
+    totals
+}
+
+/// Ré-encode une image (fichier du cache ou octets téléchargés) en PNG.
+fn en_png(bytes: &[u8]) -> Option<Vec<u8>> {
+    let image = image::load_from_memory(bytes).ok()?;
+    let mut out = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut out, image::ImageFormat::Png).ok()?;
+    Some(out.into_inner())
+}
+
 /// Visuel en cache pour un jeu (png, jpg ou webp).
 pub fn cached(dir: &Path, slug: &str) -> Option<PathBuf> {
     IMAGE_EXT

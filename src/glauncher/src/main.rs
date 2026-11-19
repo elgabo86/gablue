@@ -146,6 +146,39 @@ fn list(config: &config::Config) -> iced::Result {
     Ok(())
 }
 
+/// `--art <paquet>` : récupère le logo et l'icône **d'un seul paquet** pour
+/// l'overlay manette, puis sort.
+///
+/// Lancé en fond par gwine/lgplaunch au démarrage du jeu, quand le paquet n'est
+/// pas passé par le launcher : gpad n'a alors ni logo (bandeau) ni icône
+/// (en-tête) pour un jeu qui n'a jamais été scanné. Le téléchargement se fait
+/// **ici**, jamais dans l'overlay ; gpad relit le cache et le visuel apparaît
+/// dès qu'il est écrit.
+fn art(config: &config::Config, pack: &std::path::Path) -> iced::Result {
+    let Some(stem) = pack.file_stem().map(|stem| stem.to_string_lossy().to_string()) else {
+        eprintln!("glauncher : --art attend un paquet (.wgp/.lgp)");
+        std::process::exit(2);
+    };
+    let slug = library::slugify(&stem);
+    config.migrate_cache();
+    let mut report = |line: String| eprintln!("glauncher : {line}");
+    let totals = covers::fetch_game(
+        &config.assets_dir(),
+        &config.cache_dir().join("marks"),
+        &config.pack_icon_dir(),
+        config.steamgriddb_key(),
+        &slug,
+        &stem,
+        pack,
+        &mut report,
+    );
+    eprintln!(
+        "glauncher : {slug} — {} téléchargé(s), {} introuvable(s), {} erreur(s), {} déjà là",
+        totals.downloaded, totals.missing, totals.failed, totals.skipped
+    );
+    Ok(())
+}
+
 fn main() -> iced::Result {
     start();
     let options = match config::Options::parse(std::env::args().skip(1).collect()) {
@@ -174,6 +207,9 @@ fn main() -> iced::Result {
     }
     if options.list {
         return list(&config);
+    }
+    if let Some(pack) = &options.art {
+        return art(&config, pack);
     }
     if options.pads {
         gamepad::describe();

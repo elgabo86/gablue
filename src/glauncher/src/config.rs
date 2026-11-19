@@ -333,6 +333,8 @@ pub struct Options {
     pub update: bool,
     /// Liste numérotée des jeux indexés, puis sort.
     pub list: bool,
+    /// Récupère le logo et l'icône d'UN paquet (overlay manette), puis sort.
+    pub art: Option<PathBuf>,
     /// Ouvre le menu « choisir une image » au démarrage (crochet de test).
     pub picker: bool,
     /// Liste les périphériques d'entrée et leurs axes, puis sort.
@@ -358,6 +360,8 @@ Usage : glauncher [options]
   --update             télécharge les visuels manquants (covers, héros,
                        logos, icônes) de TOUS les jeux, puis quitte
   --list               liste numérotée des jeux (pour --play), puis quitte
+  --art <paquet>       récupère le logo et l'icône d'un seul paquet pour
+                       l'overlay manette (PNG dans le cache), puis quitte
   --picker             ouvre le menu de choix d'image au démarrage
   --pads               liste les manettes et leurs axes (diagnostic), puis quitte
   --help               cette aide
@@ -433,6 +437,12 @@ impl Options {
                 "--reindex" => opts.reindex = true,
                 "--update" => opts.update = true,
                 "--list" => opts.list = true,
+                "--art" => {
+                    opts.art = Some(PathBuf::from(
+                        args.get(index).ok_or("--art attend un paquet (.wgp/.lgp)")?,
+                    ));
+                    index += 1;
+                }
                 "--picker" => opts.picker = true,
                 "--pads" => opts.pads = true,
                 "--help" | "-h" => opts.help = true,
