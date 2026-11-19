@@ -421,13 +421,24 @@ lui-même prend le **nom du paquet** et **son icône**.
   `pids=`. Les deux sont lues à chaque passe ; le jeu dont **aucun PID ne vit**
   est écarté (lanceur tué en pleine partie).
 - **Le lien fenêtre ↔ jeu est le PID, jamais la classe** : `wininfo.js` pousse
-  le PID de la fenêtre active. Trois liens, du plus sûr au plus large : PID
+  le PID de la fenêtre active. Quatre liens, du plus sûr au plus large : PID
   publié tel quel ; PID **descendant** d'un PID publié (jeu natif, ou jeu dans
-  son `bwrap`) ; même **session** qu'un descendant publié — Wine reparente ses
+  son `bwrap`) ; **environnement** du processus — `GWINE_WGP_FILE` (gwine) ou
+  `LGPACK_FILE` (lgplaunch) nomme le paquet lancé, et ce chemin doit être celui
+  publié (ou un argument de la cmdline d'un PID publié quand seul glauncher
+  publie) ; même **session** qu'un descendant publié — Wine reparente ses
   processus à systemd, la fenêtre n'est plus dans l'arbre mais garde la session
-  de `bwrap --new-session`. La session de gpad est **exclue** de ce troisième
+  de `bwrap --new-session`. La session de gpad est **exclue** de ce quatrième
   lien : un paquet lancé depuis un terminal est dans la session du bureau, et
   toutes les fenêtres matcheraient (le lien par descendance suffit alors).
+- **Les jeux à launcher interne (Steam, Unity) exigent le lien par
+  environnement** : leurs processus sont reparentés à systemd **et** prennent
+  chacun leur propre session (le `setsid` du wineserver), donc ni l'arbre ni la
+  session ne les rattachent au PID publié. Vécu Sonic Superstars 19/11/2026 :
+  `pids=30751,30498` (bwrap, gwine), fenêtre `pid=30813` (`SonicSuperstars.exe`,
+  ppid=systemd, session 30813) → aucun lien, pas de logo ; l'environnement de
+  `30813` portait `GWINE_WGP_FILE=/run/media/.../Sonic Superstars.wgp`. Un jeu
+  ne peut donc pas être reconnu par la seule classe (`steam_proton`).
 - **`paquet=` donne le slug**, donc les visuels du cache, résolus à chaque
   lecture (une fois par seconde) : `slugify` est la règle exacte du launcher
   (`library::slugify`, accents conservés). Logo :

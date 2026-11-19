@@ -4182,6 +4182,9 @@ struct JeuActif {
     slug: String,
     /// nom affiché du paquet (nom du fichier sans extension)
     nom: String,
+    /// chemin du `.wgp`/`.lgp` (vide quand seul glauncher publie : le lien par
+    /// environnement s'appuie alors sur la cmdline du PID publié)
+    paquet: String,
     pids: Vec<i32>,
     /// chemin absolu du logo (vide = visuel absent du cache : pas de bandeau)
     logo: String,
@@ -4297,6 +4300,7 @@ fn lire_jeu(chemin: &std::path::Path, cache: &std::path::Path) -> Option<JeuActi
     } else {
         nom_paquet(&paquet)
     };
+    jeu.paquet = paquet;
     if jeu.slug.is_empty() {
         jeu.slug = slugify(&origine);
     }
@@ -4390,18 +4394,76 @@ fn session_of(pid: i32) -> Option<i32> {
     champs.next()?.parse().ok()
 }
 
+/// Variables que gwine et lgplaunch laissent dans l'environnement du jeu, avec
+/// le chemin du paquet lancé. C'est la seule trace qui survit à tous les
+/// `fork`/`exec` d'un jeu.
+const ENV_PAQUET: [&str; 2] = ["GWINE_WGP_FILE", "LGPACK_FILE"];
+
+/// Chemin de paquet lu dans un environnement `KEY=valeur\0…` (vide = aucune
+/// des deux variables, ou valeur vide).
+fn paquet_dans_environ(brut: &[u8]) -> Option<String> {
+    for entree in brut.split(|octet| *octet == 0) {
+        let Ok(texte) = std::str::from_utf8(entree) else {
+            continue;
+        };
+        for cle in ENV_PAQUET {
+            if let Some(valeur) = texte
+                .strip_prefix(cle)
+                .and_then(|reste| reste.strip_prefix('='))
+            {
+                let valeur = valeur.trim();
+                if !valeur.is_empty() {
+                    return Some(valeur.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Paquet annoncé par l'environnement d'un processus (`None` si illisible ou
+/// sans marqueur).
+fn paquet_du_processus(pid: i32) -> Option<String> {
+    if pid < 1 {
+        return None;
+    }
+    let brut = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
+    paquet_dans_environ(&brut)
+}
+
+/// Vrai si le chemin est un **argument entier** de la cmdline du processus.
+/// Comparaison d'arguments, jamais de sous-chaîne : deux jeux peuvent partager
+/// un préfixe de chemin.
+fn cmdline_contient(pid: i32, chemin: &str) -> bool {
+    if pid < 1 {
+        return false;
+    }
+    std::fs::read(format!("/proc/{pid}/cmdline"))
+        .map(|brut| {
+            brut.split(|octet| *octet == 0)
+                .any(|arg| arg == chemin.as_bytes())
+        })
+        .unwrap_or(false)
+}
+
 /// Le jeu auquel appartient cette fenêtre, s'il y en a un.
 ///
-/// Trois liens, du plus sûr au plus large :
+/// Quatre liens, du plus sûr au plus large :
 /// 1. le PID de la fenêtre est publié tel quel ;
 /// 2. il descend d'un PID publié (jeu natif, jeu dans son sandbox) ;
-/// 3. il est dans la **même session** qu'un descendant publié : Wine reparente
+/// 3. l'**environnement** du processus nomme le paquet (`GWINE_WGP_FILE`,
+///    `LGPACK_FILE`) et ce chemin est celui publié — ou un argument de la
+///    cmdline d'un PID publié (cas où seul glauncher publie) ;
+/// 4. il est dans la **même session** qu'un descendant publié : Wine reparente
 ///    ses processus à systemd, la fenêtre n'est donc plus dans l'arbre, mais
 ///    elle garde la session créée par `bwrap --new-session`.
 ///
-/// La session de gpad est exclue du lien 3 : un paquet lancé depuis un
-/// terminal est dans la session du bureau, et toutes les fenêtres matcheraient
-/// (le lien 2 suffit alors, le jeu étant sous ce processus).
+/// Le lien 3 est celui qui sauve les jeux à launcher interne (Steam, Unity) :
+/// leurs processus sont reparentés à systemd **et** prennent chacun leur propre
+/// session (setsid du wineserver), donc ni l'arbre ni la session ne les
+/// rattachent (vécu Sonic Superstars 19/11/2026). La session de gpad est
+/// exclue du lien 4 : un paquet lancé depuis un terminal est dans la session
+/// du bureau, et toutes les fenêtres matcheraient.
 fn jeu_de(jeux: &[JeuActif], pid: i32) -> Option<JeuActif> {
     if pid < 1 {
         return None;
@@ -4412,6 +4474,7 @@ fn jeu_de(jeux: &[JeuActif], pid: i32) -> Option<JeuActif> {
         }
     }
     let ma_session = session_of(std::process::id() as i32);
+    let paquet_fenetre = paquet_du_processus(pid);
     for jeu in jeux {
         let mut arbre: Vec<i32> = Vec::new();
         for racine in &jeu.pids {
@@ -4419,6 +4482,16 @@ fn jeu_de(jeux: &[JeuActif], pid: i32) -> Option<JeuActif> {
         }
         if arbre.contains(&pid) {
             return Some(jeu.clone());
+        }
+        if let Some(paquet) = &paquet_fenetre {
+            let meme_paquet = if jeu.paquet.is_empty() {
+                jeu.pids.iter().any(|p| cmdline_contient(*p, paquet))
+            } else {
+                jeu.paquet == *paquet
+            };
+            if meme_paquet {
+                return Some(jeu.clone());
+            }
         }
         let Some(session) = session_of(pid) else {
             continue;
@@ -5765,6 +5838,7 @@ mod tests {
         let jeu = lire_jeu(&fichier, &dir).expect("fichier lisible");
         assert_eq!(jeu.slug, "celeste");
         assert_eq!(jeu.nom, "Celeste", "nom affiché du paquet");
+        assert_eq!(jeu.paquet, "", "glauncher ne publie pas de paquet");
         assert_eq!(jeu.pids, vec![moi], "un PID mort est écarté");
         assert_eq!(jeu.logo, "/tmp/x.png");
         assert_eq!(jeu.icone, "/tmp/i.png", "icône du paquet, pas de la fenêtre");
@@ -5779,6 +5853,33 @@ mod tests {
         assert!(lire_jeu(&fichier, &dir).is_none(), "fichier absent = pas de jeu");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Le lien par environnement : les lanceurs nomment le paquet dans
+    /// l'environnement du jeu, seule trace qui survit au reparentage à systemd
+    /// et au `setsid` des jeux à launcher interne (Sonic Superstars).
+    #[test]
+    fn paquet_lu_dans_environ() {
+        let brut = b"PATH=/usr/bin\0GWINE_WGP_FILE=/jeux/Sonic Superstars.wgp\0HOME=/home/x\0";
+        assert_eq!(
+            paquet_dans_environ(brut).as_deref(),
+            Some("/jeux/Sonic Superstars.wgp")
+        );
+        assert_eq!(
+            paquet_dans_environ(b"LGPACK_FILE=/jeux/Zelda.lgp\0").as_deref(),
+            Some("/jeux/Zelda.lgp"),
+            "lgplaunch exporte LGPACK_FILE"
+        );
+        assert_eq!(
+            paquet_dans_environ(b"GWINE_WGP_FILE=\0LGPACK_FILE=\0"),
+            None,
+            "une valeur vide ne désigne aucun paquet"
+        );
+        assert_eq!(
+            paquet_dans_environ(b"GWINE_WGP_FILEX=/x\0"),
+            None,
+            "la clé se compare entière, pas par préfixe"
+        );
     }
 
     /// gwine/lgplaunch ne publient que le paquet (`nom=` + `paquet=` + `pids=`) :
@@ -5803,6 +5904,11 @@ mod tests {
         let jeu = lire_jeu(&fichier, &dir).expect("fichier lisible");
         assert_eq!(jeu.slug, "croc-2-kingdom-of-the-gobbos", "slug du paquet");
         assert_eq!(jeu.nom, "Croc 2 Kingdom of the Gobbos");
+        assert_eq!(
+            jeu.paquet,
+            "/home/gab/Windows/Games/Croc 2 Kingdom of the Gobbos.wgp",
+            "le paquet est gardé pour le lien par environnement"
+        );
         assert_eq!(jeu.logo, "", "visuel absent du cache = aucun logo");
         assert_eq!(jeu.icone, "");
 

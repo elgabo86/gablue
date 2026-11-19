@@ -34,7 +34,13 @@ run_lgp_mode() {
         _lgp_is_executable select_exe_from_lgp load_env_files load_env_file \
         has_saves has_extras has_temps \
         error_exit cleanup_lgp launch_game \
+        running_dir running_file running_publish running_clear running_fetch_art \
         2>/dev/null
+    # running_* : `launch_game` est importé tel quel dans le `bash` du unshare
+    # ci-dessous, mais une fonction exportée n'emporte pas celles qu'elle
+    # appelle. Sans ces cinq-là, la publication du jeu échouait en silence
+    # (« running_publish : commande introuvable ») : ni nom, ni icône, ni logo
+    # dans l'overlay pendant une partie .lgp (constaté 19/11/2026).
 
     # Exporter les variables globales utilisées par les fonctions
     export _LGP_MODE MOUNT_DIR MOUNT_BASE LGPACK_NAME GAME_INTERNAL_NAME \
