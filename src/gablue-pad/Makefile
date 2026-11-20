@@ -14,15 +14,12 @@ LIBEXEC = $(DESTDIR)$(PREFIX)/libexec/gablue-pad
 DATA = recorder.sh screenshot.sh replay.sh vrr.sh mangohud.sh booster.sh \
        scripts sounds kwin
 
-BINS = gpad-trigger gpad-kbd gpad-mouse gpad-inhibit gpad-rumble gpad-login \
+BINS = gpad-trigger gpad-mouse gpad-inhibit gpad-rumble gpad-login \
        gpad-shot
 
 all: $(BINS)
 
 gpad-trigger: trigger/gpad-trigger.c
-	$(CC) $(CFLAGS) -o $@ $<
-
-gpad-kbd: kbd/gpad-kbd.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 gpad-mouse: mouse/gpad-mouse.c

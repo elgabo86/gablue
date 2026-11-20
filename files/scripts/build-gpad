@@ -6,7 +6,10 @@
 
 set -eoux pipefail
 
-dnf5 -y install cargo rust gcc
+# xkbcommon-devel : en-tête/symlink de link pour la crate `xkbcommon` (table
+# du clavier virtuel dérivée du keymap de la session). Le runtime de l'image
+# fournit déjà libxkbcommon.so.0 (dépendance de KWin).
+dnf5 -y install cargo rust gcc xkbcommon-devel
 
 # --locked : Cargo.lock est dans le dépôt, la résolution ne bouge pas.
 cargo build --release --locked --manifest-path /build/Cargo.toml

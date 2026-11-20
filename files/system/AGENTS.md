@@ -12,7 +12,6 @@
 
 - **distrobox/distrobox.conf** : Configuration Distrobox
 - **firewalld/zones/nm-shared.xml** : Zone firewall partagée
-- **xdg/plasmakeyboardrc** : Presets clavier virtuel KDE (navigation clavier requise par gpad-kbd, layout fr_FR, clavier centré)
 - **xdg/autostart/gablue-manager-tray.desktop** : lance `gablue-manager --tray` à l'ouverture de session — icône de barre d'état seule, la fenêtre n'est chargée qu'au clic. `NoDisplay=true`, `OnlyShowIn=KDE;`, `X-KDE-autostart-after=panel`. Le mode tray relit `~/.config/gablue/preferences.json` et sort si l'utilisateur a coupé l'icône dans Gablue Manager : l'autostart n'est jamais modifié
 - **profile.d/customperso.sh** : Alias et personnalisations shell
 - **security/limits.d/memlock.conf** : Limites mémoire
@@ -125,8 +124,9 @@ Même mécanisme d'override que § konsole-run : source en `usr/share/ublue-os/g
 
 L'ancien `gamepadshortcuts` (et son `kbdnav`) est **supprimé** : remplacé par le
 projet `src/gablue-pad/` — overlay Wayland `gpad`, déclencheur `gpad-trigger`,
-gate BPF, plus `gpad-mouse` (Home+R3), `gpad-kbd` (Home+carré, presets
-`/etc/xdg/plasmakeyboardrc` = `keyboardNavigationEnabled`, `fr_FR`), `gpad-inhibit`
+gate BPF, plus `gpad-mouse` (Home+R3), le clavier virtuel de l'overlay
+(Home+carré, table dérivée du keymap X11 — plus de presets
+`/etc/xdg/plasmakeyboardrc`), `gpad-inhibit`
 et `gpad-rumble`, `gpad-shot` (capture d'écran directe par KWin, sans
 Spectacle). Gestes, options, services et architecture →
 `src/gablue-pad/AGENTS.md` et ses sous-docs.

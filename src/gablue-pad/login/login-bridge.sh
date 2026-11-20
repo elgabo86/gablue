@@ -128,7 +128,7 @@ done
 vkm() { busctl --user set-property org.kde.KWin /VirtualKeyboard \
             org.kde.kwin.VirtualKeyboard mode i "$1"; }
 # Fermeture franche : Never(0) puis Touch-and-Tablet(1) ; sans le 0, un
-# panneau déjà mappé reste visible (même mécanique que gpad-kbd).
+# panneau déjà mappé reste visible (même mécanique que l'overlay manette).
 hide_osk() { vkm 0; vkm 1; }
 show_osk() { vkm 2 && busctl --user call org.kde.KWin /VirtualKeyboard \
                             org.kde.kwin.VirtualKeyboard forceActivate; }

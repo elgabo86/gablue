@@ -37,10 +37,14 @@ overlays sur les mêmes appuis et la manette est grabée par une autre instance.
 - **Un `gpad-trigger` par scénario** : il survit à son overlay (il attend le Home
   suivant) — sans le tuer, deux scénarios écrivent dans le même journal et
   plusieurs overlays se disputent le grab (`EBUSY`).
-- **Tester clavier/souris avec des stubs** (`MOUSE`/`KBDNAV`), jamais les
-  binaires réels : `gpad-mouse` grabbe la manette et déplace le pointeur, et
-  `gpad-kbd` ouvre le clavier KWin. Le `comm` d'un stub doit être le nom attendu
-  (binaire, pas script) pour que la détection d'état fonctionne.
+- **Tester souris avec un stub** (`MOUSE`), jamais le binaire réel :
+  `gpad-mouse` grabbe la manette et déplace le pointeur. Le `comm` du stub doit
+  être le nom attendu (binaire, pas script) pour que la détection d'état
+  fonctionne.
+- **Le clavier virtuel ne se teste PAS en direct chez l'utilisateur** : il
+  grabbe une manette et affiche une surface plein écran sur son bureau. Passer
+  `--clavier <node de vpad>` (jamais `--grab`, qui prend la première manette
+  venue — donc la vraie), et jamais pendant qu'il travaille.
 - **Restaurer le son après un test de volume/muet** : relire `pactl` avant,
   remettre volume **et** mute à l'état initial (un test a déjà laissé la sortie
   muette en silence).

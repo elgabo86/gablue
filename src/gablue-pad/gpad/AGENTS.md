@@ -207,27 +207,80 @@ ni surbrillance.
   `vacuumtube` ramenée au premier plan) ; sans fenêtre → `APPLI …/toggle-tv` ;
   icônes : `ICONE appli … -> trouvee` pour les quatre.
 
-## Clavier virtuel et mode souris
+## Clavier virtuel
 
-Les deux grabent la manette : le panneau doit donc disparaître **avant** leur
-lancement, sinon ils en héritent le grab ou le disputent. Même mécanique que la
-combinaison d'enregistrement : `combo_apres` est exécuté après
-`wl_surface.destroy()` + `release_pad()` + `close` du gate.
+Le clavier vit **dans le résident** (`src/clavier.rs`), pas dans un second
+binaire : il garde le grab déjà tenu, donc aucun transfert de manette, aucun
+`exec`, aucune animation KWin — et il se ferme sans quitter le processus. Il
+s'ouvre par l'IPC (`kbd <node>`) ou par `--clavier <node>` (repli du
+déclencheur : un seul usage, puis sortie, sinon chaque appui laisserait un
+overlay orphelin).
 
-| Entrée | Comportement |
+- **Surface dédiée plein écran**, transparente, `keyboard_interactivity =
+  None` + région d'entrée vide : le focus reste à la fenêtre active et la
+  souris traverse. Le panneau est dessiné **à sa position dans le tampon** (les
+  marges négatives de layer-shell sont ignorées par KWin) : le déplacer ne
+  remappe rien.
+- **Frappe par clavier uinput** (`gablue-clavier`, créé au premier usage —
+  350 ms d'enregistrement, gardé toute la session) : le noyau livre les touches
+  à la fenêtre active comme un clavier USB. KWin n'implémente pas
+  `zwp_virtual_keyboard_v1`, d'où ce chemin. Toujours envoyer le `SYN_REPORT`
+  du **relâchement**, même sans modificateur : sans lui la touche reste
+  enfoncée côté noyau et KWin la répète (10 Entrées pour un appui, constaté).
+- **Table dérivée du keymap XKB** de la session (`xkbcommon`, `kxkbrc`, puis
+  `GPAD_CLAVIER_LAYOUT`/`GPAD_CLAVIER_VARIANT` pour le banc) : 4 niveaux
+  affichés, accents morts marqués, `code evdev = keycode XKB − 8`. Aucune table
+  en dur, donc ch-DE marche sans code.
+- **Un rectangle effacé par tampon** avant redessin (la position qu'il portait)
+  + dommage de l'union ancienne/nouvelle : les deux tampons alternent, sans ça
+  l'ancienne position reste visible en fantôme. Ne pas remplir tout le tampon :
+  à 2560×1440 c'est 14 Mo par image, et le clavier se déplace à 60 Hz.
+- Position mémorisée dans `~/.config/gablue/gpad-clavier` (écrite à la
+  fermeture), bornée à l'écran à chaque ouverture.
+
+| Geste | Effet |
 |---|---|
-| `CLAVIER VIRTUEL` | ferme le panneau, puis `gpad-kbd <node>` (le node est mémorisé avant le relâchement du grab) — il **grabbe**, il ne peut pas cohabiter |
-| `MODE SOURIS` | lance/arrête `gpad-mouse` **sans toucher au panneau** : il ne grabbe pas, il lit le node en partage. Tant que le panneau est ouvert, notre `EVIOCGRAB` le rend muet ; il reprend à la fermeture. |
+| D-pad / stick gauche | curseur entre les touches (400 ms puis 110 ms) |
+| Stick droit | déplacer le clavier (courbe `gpad-mouse` : zone morte 0,08, 2→12 px/frame) |
+| Croix | taper la touche (400 ms puis 80 ms) |
+| Carré | retour arrière (répétition) |
+| Triangle | espace (répétition) |
+| Rond | fermer le clavier |
+| L1 / R1 | curseur de texte ← / → (répétition tenue) |
+| **L2** | **Maj maintenue** → L2+L1/R1 = **sélection** |
+| R2 | Entrée |
+| L3 | Maj collante ; R3 | Ctrl collant ; SELECT | AltGr collante |
+| START | Tab |
 
-La ligne `MODE SOURIS` affiche `ACTIF` (vert) ou `ARRET` à droite, relu une
-fois par seconde en scannant `/proc/<pid>/comm` (aucun fork).
+Disposition calquée sur les OSK console (Steam Deck : `X` = backspace, `Y` =
+espace, `L2` = Maj, `R2` = Entrée ; PS5 : croix tape, carré efface, triangle
+espace, rond ferme, **L1/R1 = curseur de texte**, L2 = Maj). Aucune combinaison
+ne demande de tenir un petit bouton : la sélection est **index gauche (L2) +
+index droit (L1/R1)**, les pouces restent sur le D-pad et les boutons. Un chord
+« Select tenu + D-pad » a été écarté : Select est sous le pouce déjà posé sur
+le D-pad.
 
-Mesuré : `SELECT CLAVIER VIRTUEL` → `FENETRE RETIREE` → `KBDNAV_STUB
-node=/dev/input/event13`. `SELECT MODE SOURIS` → `MOUSE START gpad-mouse`,
+Mesuré (banc vpad, `--clavier` sur la manette virtuelle) : `KBD OPEN` →
+`KBD ch/fr ecran=2560x1440 pos=(926,993)` → deux pas + Croix tapent `a` puis
+`s` dans une fenêtre Qt, Rond → `HIDDEN` et le processus sort (code 0).
+
+Piège mesuré : `norme_axe` **borne** à −1..1. Un périphérique qui annonce une
+plage étroite (`0..1`) et envoie 32767 donnait `mag ≈ 32766`, la courbe
+quadratique explosait et un seul événement produisait un déplacement de 2 Gpx
+(`attempt to add with overflow`). Ne jamais retirer ces bornes.
+
+## Mode souris
+
+`MODE SOURIS` lance/arrête `gpad-mouse` **sans toucher au panneau** : il ne
+grabbe pas, il lit le node en partage. Tant que le panneau est ouvert, notre
+`EVIOCGRAB` le rend muet ; il reprend à la fermeture. La ligne affiche `ACTIF`
+(vert) ou `ARRET`, relue une fois par seconde en scannant `/proc/<pid>/comm`
+(aucun fork).
+
+Mesuré : `SELECT MODE SOURIS` → `MOUSE START gpad-mouse`,
 `gpad-mouse` = 1 processus, **aucun `GPAD_DOWN`** (le panneau reste) ; un
-second A → `MOUSE STOP gpad-mouse (1)`, panneau toujours ouvert ; la ligne
-affiche `ACTIF` entre les deux. Home+R3 et Home+carré depuis `gpad-trigger` →
-`COMBO Home+R3` / `COMBO Home+carre`.
+second A → `MOUSE STOP gpad-mouse (1)`, panneau toujours ouvert. Home+R3 et
+Home+carré depuis `gpad-trigger` → `COMBO Home+R3` / `COMBO Home+carre`.
 
 ## Stick : un pas par poussée (hystérésis + délai)
 
@@ -567,8 +620,9 @@ et la fenêtre cible meurt (test sur `ffplay`, jamais sur une appli de l'user).
 - Police du panneau : 5x7, **le `?` n'existait pas** (glyphe ajouté à `glyph()`).
 
 Navigation : la liste **boucle** (bas depuis la dernière ligne revient à la
-première) — pendant un test, un « bas » de trop a relancé `gpad-kbd` au lieu de
-tuer ; en cas de doute, relire `SELECT …` dans le journal avant de conclure.
+première) — pendant un test, un « bas » de trop a relancé le clavier virtuel au
+lieu de tuer ; en cas de doute, relire `SELECT …` dans le journal avant de
+conclure.
 
 ## Une seule ligne pour les deux modes exclusifs
 
@@ -742,8 +796,8 @@ gauche progresse bien de droite à gauche).
 ## Mode résident (`--resident --ipc <socket>`)
 
 Le service ne lance **plus** un overlay par appui : `gpad-trigger` démarre
-`gpad` une fois, en résident, et lui envoie `open <node> <cibles…>` / `close`
-sur un socket Unix (`lire_ipc`). Tout l'état d'ouverture est refait par
+`gpad` une fois, en résident, et lui envoie `open <node> <cibles…>`,
+`kbd <node>` ou `close` sur un socket Unix (`lire_ipc`). Tout l'état d'ouverture est refait par
 `ouvrir()` : manette du node grabée, cibles du gate reposées puis `open`, page
 remise sur `ACCUEIL`, curseur en tête, `depart`/`derniere_activite` réinitialisés
 (sinon la passe d'inactivité de 10 s refermait le panneau aussitôt ouvert), puis
@@ -836,17 +890,19 @@ nettoyer à la main.
 | `--slide-ms N` | durée du glissement (0 = 180 ms entrée / 140 ms sortie) |
 | `--console` | mode **menu système** : surface plein écran assombrie + cadre centré, sans KWin, sans nom de menu ni en-tête (voir `trigger/AGENTS.md`) |
 | `--resident` | survit entre deux ouvertures (surface mappée transparente hors écran) ; `open`/`close` arrivent par `--ipc` |
-| `--ipc <socket>` | socket de commande du déclencheur (`open <node> <cibles…>`, `close`) |
+| `--ipc <socket>` | socket de commande du déclencheur (`open <node> <cibles…>`, `kbd <node>`, `close`) |
 | `--fullscreen` | surface plein écran (banc) |
 | `--focus fps\|mango\|volume` | ouvre sur `REGLAGES`, curseur sur la ligne |
 | `--style retro\|moderne` | style visuel (prioritaire sur `PAD_STYLE` et le fichier) |
 | `--test-margin N` | marge layer-shell positive (banc) |
 | `--no-kwin` | n'installe pas le script d'info de fenêtre |
+| `--clavier <node>` | ouvre **directement le clavier virtuel** sur ce node, puis sort à la fermeture (repli du déclencheur, banc) |
 
 | Variable | Rôle |
 |---|---|
 | `RECORDER`, `SCREENSHOT`, `MANGOHUD`, `VRR`, `BOOSTER`, `REPLAY`, `RUMBLE` | outils remplacés par des stubs |
-| `KILLTHEMALL`, `FERMERAPPLIS`, `SCRIPTS`, `MOUSE`, `KBDNAV` | idem pour les actions et combos |
+| `KILLTHEMALL`, `FERMERAPPLIS`, `SCRIPTS`, `MOUSE` | idem pour les actions et combos |
+| `GPAD_CLAVIER_LAYOUT`, `GPAD_CLAVIER_VARIANT` | forcent la disposition du clavier (banc, sans toucher `kxkbrc`) |
 | `REBOOT`, `POWEROFF`, `BLUETOOTHCTL` | commandes système remplacées (le banc n'éteint jamais la machine) |
 | `PAD_NODE` | manette qui a déclenché (transmise au replay et à `rumble`) |
 | `PAD_SONY`, `PAD_BT_MAC` | forcent famille / transport (banc, manette virtuelle) |

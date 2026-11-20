@@ -97,7 +97,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 ### build-c / build-gwine / build-manager / build-manager-tray / build-glauncher / build-retroplayer / build-vgmstream / build-tvqt / build-apk-installer / build-lgplaunch / build-share-daemon / build-share — Compilation des sources
 
 **build-c** (après pypi) :
-- Compile `/src/gablue-pad` (`make install` : gpad-trigger, gpad-kbd, gpad-mouse, gpad-inhibit, gpad-rumble, gpad-login, gpad-shot + l'arborescence de données dans `/usr/libexec/gablue-pad`, dont `login-bridge.sh`), `/src/ds2xbox`, `/src/gablue-dualsense` (`gablue-dualsense-ctl`, hidapi), `/src/gablue-isomount`
+- Compile `/src/gablue-pad` (`make install` : gpad-trigger, gpad-mouse, gpad-inhibit, gpad-rumble, gpad-login, gpad-shot + l'arborescence de données dans `/usr/libexec/gablue-pad`, dont `login-bridge.sh`), `/src/ds2xbox`, `/src/gablue-dualsense` (`gablue-dualsense-ctl`, hidapi), `/src/gablue-isomount`
 - `gpad-shot` (capture d'écran) lie `libdbus` (comme `gpad-inhibit`) et `zlib` : `zlib-devel` est ajouté à la liste dnf pour ça seul — contrat → `src/gablue-pad/AGENTS.md`
 - `make -C <dir> install DESTDIR=` ; sources nettoyées après (`rm -rf /src/<dir>`)
 - `gcc`/`binutils`/`glibc-devel` viennent de l'image de base (`cpuid-fault` compile un module avant, sur toutes les variantes) et **restent dans l'image finale** : les retirer libère ~45 Mo compressés mais supprime `gcc`/`cc` du poste (brew depuis source, extensions pip, modules noyau à la main) — décision du 14/11/2026. `hidapi-devel`/`dbus-devel` non plus ne sont pas retirés (même raison : cohérence d'un poste où on compile)

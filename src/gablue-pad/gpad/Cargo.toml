@@ -9,4 +9,6 @@ libc = "0.2.191"
 png = "0.18.1"
 wayland-client = "0.31.15"
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
+# table du clavier virtuel : niveaux dérivés du keymap XKB de la session
+xkbcommon = "0.8.0"
 zbus = { version = "5.19", default-features = false, features = ["blocking-api", "async-io"] }

@@ -118,17 +118,16 @@ bin_local() {
     fi
 }
 MOUSE="$(bin_local gpad-mouse mouse)"
-KBDNAV="$(bin_local gpad-kbd kbd)"
 INHIBIT="$(bin_local gpad-inhibit inhibit)"
 RUMBLE="$(bin_local gpad-rumble rumble)"
-for b in "$MOUSE" "$KBDNAV" "$INHIBIT" "$RUMBLE"; do
+for b in "$MOUSE" "$INHIBIT" "$RUMBLE"; do
     [[ -x "$b" ]] || echo "note : $b absent (make) — le geste correspondant échouera"
 done
 
 RECORDER="$HERE/recorder.sh" SCREENSHOT="$HERE/screenshot.sh" \
     MANGOHUD="$HERE/mangohud.sh" VRR="$HERE/vrr.sh" BOOSTER="$HERE/booster.sh" KILLTHEMALL="${KILLTHEMALL:-$HERE/../../files/system/all/usr/share/ublue-os/gablue/scripts/killthemall}" FERMERAPPLIS="$HERE/scripts/fermer-applis" \
     SCRIPTS="$HERE/scripts" MOUSE="$MOUSE" \
-    KBDNAV="$KBDNAV" REPLAY="$HERE/replay.sh" INHIBIT="$INHIBIT" \
+    REPLAY="$HERE/replay.sh" INHIBIT="$INHIBIT" \
     RUMBLE="$RUMBLE" "$TRIGGER" "${NODE_ARG[@]}" "$OVERLAY" --gate "$SOCK" "${OA[@]}" "$@" &
 PW=$!
 wait $PW

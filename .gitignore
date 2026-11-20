@@ -8,7 +8,6 @@ src/lgplaunch/lgplaunch-standalone.sh
 src/ds2xbox/ds2xbox
 src/gablue-pad/gpad/target/
 src/gablue-pad/gpad-trigger
-src/gablue-pad/gpad-kbd
 src/gablue-pad/gpad-mouse
 src/gablue-pad/gpad-inhibit
 src/gablue-pad/gpad-rumble

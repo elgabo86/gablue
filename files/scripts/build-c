@@ -48,7 +48,7 @@ build_and_verify() {
 # Makefile installe aussi l'arborescence de donnees (scripts, sons, kwin) et le
 # pont du greeter (login-bridge.sh).
 build_and_verify "/src/gablue-pad" "gpad-trigger" "gablue-pad"
-for b in gpad-kbd gpad-mouse gpad-inhibit gpad-rumble gpad-login gpad-shot; do
+for b in gpad-mouse gpad-inhibit gpad-rumble gpad-login gpad-shot; do
     if [ ! -f "/usr/bin/$b" ]; then
         echo "ERREUR FATALE : binaire '$b' absent apres compilation de gablue-pad" >&2
         exit 1

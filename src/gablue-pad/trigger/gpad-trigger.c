@@ -341,6 +341,34 @@ static void launch_vue(char **argv, int argc, int first_free, const char *node,
     fflush(stderr);
 }
 
+/* Clavier virtuel sans résident : un overlay dédié qui quitte à la fermeture
+ * (sans cela chaque appui laisserait un processus et une surface). */
+static void launch_clavier(char **argv, int argc, int first_free, const char *node)
+{
+    child = fork();
+    if (child < 0) {
+        perror("fork");
+        return;
+    }
+    if (child == 0) {
+        char **args = calloc((size_t)(argc - first_free) + 8 + 2 * (size_t)n_gate,
+                             sizeof *args);
+        int n = 0;
+        for (int i = first_free; i < argc; i++)
+            args[n++] = argv[i];
+        args_gate(args, &n);
+        setenv("GPAD_TRIGGER_PID", own_pid, 1);
+        args[n++] = "--clavier";
+        args[n++] = (char *)node;
+        args[n] = NULL;
+        execv(args[0], args);
+        perror("execv overlay (clavier)");
+        _exit(127);
+    }
+    fprintf(stderr, "[gpad-trigger] Home+carre -> clavier virtuel pid %d\n", child);
+    fflush(stderr);
+}
+
 /* --- overlay résident (ouverture instantanée) -----------------------------
  * Le panneau est lancé UNE fois : sa surface reste mappée, transparente et
  * hors écran, donc KWin ne rejoue pas son animation d'ouverture à chaque Home
@@ -413,11 +441,11 @@ static void resident_start(char **argv, int argc, int first_free)
     fflush(stderr);
 }
 
-/* Demande l'ouverture au résident ; 0 = pas de résident joignable (l'appelant
- * retombe sur l'exec classique). */
-static int overlay_open_remote(const char *node)
+/* Envoie une ligne de commande au résident ; 0 = pas de résident joignable
+ * (l'appelant retombe sur l'exec classique). */
+static int overlay_send(const char *ligne)
 {
-    if (resident <= 0 || !ipc_path[0] || !node || !*node)
+    if (resident <= 0 || !ipc_path[0] || !ligne || !*ligne)
         return 0;
     int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0)
@@ -433,16 +461,36 @@ static int overlay_open_remote(const char *node)
         close(fd);
         return 0;
     }
+    size_t len = strlen(ligne);
+    ssize_t w = write(fd, ligne, len);
+    close(fd);
+    return w == (ssize_t)len;
+}
+
+static int overlay_open_remote(const char *node)
+{
+    if (!node || !*node)
+        return 0;
     char msg[512];
     int len = snprintf(msg, sizeof msg, "open %s", node);
     for (int i = 0; i < n_gate && len > 0 && len < (int)sizeof msg - 70; i++)
         len += snprintf(msg + len, sizeof msg - (size_t)len, " %s", gate_nodes[i]);
-    if (len < 0 || len >= (int)sizeof msg - 1)
+    if (len < 0 || len >= (int)sizeof msg - 2)
         len = (int)strlen(msg);
     msg[len++] = '\n';
-    ssize_t w = write(fd, msg, (size_t)len);
-    close(fd);
-    return w == len;
+    msg[len] = 0;
+    return overlay_send(msg);
+}
+
+/* Clavier virtuel : c'est le MÊME résident qui le montre, avec le grab qu'il
+ * tient déjà — aucun transfert de manette, aucune animation de fenêtre. */
+static int overlay_kbd_remote(const char *node)
+{
+    if (!node || !*node)
+        return 0;
+    char msg[512];
+    snprintf(msg, sizeof msg, "kbd %s\n", node);
+    return overlay_send(msg);
 }
 
 /* --- combos Home + D-pad ---------------------------------------------------
@@ -460,7 +508,6 @@ static char g_recorder[512] = "../recorder.sh";
 static char g_screenshot[512] = "../screenshot.sh";
 static char g_scripts[512] = "../scripts";
 static char g_mouse[512] = "../mouse/gpad-mouse";
-static char g_pad_kbd[512] = "../kbd/gpad-kbd";
 static char g_replay[512] = "../replay.sh";
 static char home_node[64];
 static int home_down;
@@ -571,15 +618,15 @@ static void do_mouse(void)
     run_cmd(cmd);
 }
 
-/* Home+carré : clavier virtuel (gpad-kbd grabbe la manette). */
-static void do_pad_kbd(const char *node)
+/* Home+carré : clavier virtuel. Le résident le montre (même grab, aucune
+ * animation), sinon un overlay dédié. */
+static void do_pad_kbd(char **argv, int argc, int first_free, const char *node)
 {
-    char cmd[800];
     fprintf(stderr, "[gpad-trigger] COMBO Home+carre -> clavier virtuel\n");
     fflush(stderr);
-    snprintf(cmd, sizeof cmd, "setsid '%s' '%s' > /dev/null 2>&1 < /dev/null &", g_pad_kbd,
-             node ? node : "");
-    run_cmd(cmd);
+    if (overlay_kbd_remote(node))
+        return;
+    launch_clavier(argv, argc, first_free, node);
 }
 
 static void init_recorder_path(void)
@@ -597,7 +644,6 @@ static void init_recorder_path(void)
         snprintf(g_scripts, sizeof g_scripts, "%s/../scripts", exe);
         snprintf(g_inhibit, sizeof g_inhibit, "%s/../inhibit/pad-inhibit", exe);
         snprintf(g_mouse, sizeof g_mouse, "%s/../mouse/gpad-mouse", exe);
-        snprintf(g_pad_kbd, sizeof g_pad_kbd, "%s/../kbd/gpad-kbd", exe);
         snprintf(g_replay, sizeof g_replay, "%s/../replay.sh", exe);
         snprintf(g_padnodes, sizeof g_padnodes, "%s/../gate/padnodes.sh", exe);
     }
@@ -614,7 +660,6 @@ static void chemins_env(void)
     if ((v = getenv("SCRIPTS")) && *v)    snprintf(g_scripts, sizeof g_scripts, "%s", v);
     if ((v = getenv("INHIBIT")) && *v)    snprintf(g_inhibit, sizeof g_inhibit, "%s", v);
     if ((v = getenv("MOUSE")) && *v)      snprintf(g_mouse, sizeof g_mouse, "%s", v);
-    if ((v = getenv("KBDNAV")) && *v)     snprintf(g_pad_kbd, sizeof g_pad_kbd, "%s", v);
     if ((v = getenv("REPLAY")) && *v)     snprintf(g_replay, sizeof g_replay, "%s", v);
     if ((v = getenv("PADNODES")) && *v)   snprintf(g_padnodes, sizeof g_padnodes, "%s", v);
     if ((v = getenv("GPAD_GATE")) && *v) {
@@ -826,7 +871,7 @@ int main(int argc, char **argv)
                         else if (ev.code == BTN_START)
                             do_script("START", "openes");
                         else if (ev.code == BTN_WEST)
-                            do_pad_kbd(home_node);
+                            do_pad_kbd(argv, argc, first_free, home_node);
                         else
                             do_mouse();
                     }

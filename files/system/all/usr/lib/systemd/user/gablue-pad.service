@@ -20,7 +20,6 @@ Environment=MANGOHUD=/usr/libexec/gablue-pad/mangohud.sh
 Environment=BOOSTER=/usr/libexec/gablue-pad/booster.sh
 Environment=SCRIPTS=/usr/libexec/gablue-pad/scripts
 Environment=MOUSE=/usr/bin/gpad-mouse
-Environment=KBDNAV=/usr/bin/gpad-kbd
 Environment=INHIBIT=/usr/bin/gpad-inhibit
 Environment=RUMBLE=/usr/bin/gpad-rumble
 Environment=PADNODES=/usr/libexec/gablue-pad/gate/padnodes.sh

@@ -20,11 +20,10 @@ d'animation KWin à attendre. Mesuré : premier tampon 6 ms, panneau en place
 
 | Chemin | Rôle | Installé en |
 |---|---|---|
-| `gpad/` | overlay (Rust, wayland-client brut + layer-shell + shm) : panneau latéral droit, menu système, réglages intégrés, deux habillages RETRO / MODERNE | `/usr/bin/gpad` |
+| `gpad/` | overlay (Rust, wayland-client brut + layer-shell + shm) : panneau latéral droit, menu système, réglages intégrés, **clavier virtuel** (Home+carré), deux habillages RETRO / MODERNE | `/usr/bin/gpad` |
 | `gpad/assets/` | embarqués dans le binaire : `NotoSans-Regular.ttf`, `glyphes/{ps,xbox}/` | — (dans le binaire) |
 | `trigger/` | déclencheur : Home → overlay, combos, menu système, rescan des manettes, inhibition d'écran | `/usr/bin/gpad-trigger` |
 | `gate/` | démon root + programme BPF LSM qui coupe les lectures `hidraw`/`js` pendant le menu, et `padnodes.sh` (inventaire js/hidraw par périphérique physique) | `/usr/libexec/gablue-pad/gpad-gate` (+ `.bpf.o`, `gate/padnodes.sh`) |
-| `kbd/` | clavier virtuel KWin (Home+carré) | `/usr/bin/gpad-kbd` |
 | `mouse/` | mode souris/clavier (Home+R3) | `/usr/bin/gpad-mouse` |
 | `login/` | écran de connexion : pointeur manette (`gpad-login`) et pont du greeter (`login-bridge.sh` : thème sombre, clavier visuel affiché seulement si une manette est présente) | `/usr/bin/gpad-login`, `/usr/libexec/gablue-pad/login-bridge.sh` |
 | `inhibit/` | inhibition de l'écran tant qu'une manette est connectée | `/usr/bin/gpad-inhibit` |
@@ -161,12 +160,13 @@ Trois pièges payés, à ne pas réintroduire :
 
 ## Build
 
-- Binaires C : `make` dans ce dossier (`gpad-trigger`, `gpad-kbd`, `gpad-mouse`,
+- Binaires C : `make` dans ce dossier (`gpad-trigger`, `gpad-mouse`,
   `gpad-inhibit`, `gpad-rumble`, `gpad-login`, `gpad-shot`) ; `make install DESTDIR=…` pose aussi
   l'arborescence de données dans `/usr/libexec/gablue-pad` (les scripts y
   résolvent `sounds/`, `scripts/` et `kwin/` par rapport à leur propre dossier).
 - Overlay Rust : étape `gpad-build` du `Containerfile-gablue`
-  (`files/scripts/build-gpad`), binaire récupéré par `COPY --from`.
+  (`files/scripts/build-gpad`, qui installe `xkbcommon-devel` pour la crate
+  `xkbcommon` du clavier), binaire récupéré par `COPY --from`.
 - Gate BPF : étape `gpad-gate-build` (`files/scripts/build-gpad-gate`),
   `vmlinux.h` **épinglé** dans `gate/` (dump BTF du noyau OGC : ne jamais le
   régénérer depuis la machine de build, le layout d'inode différerait).

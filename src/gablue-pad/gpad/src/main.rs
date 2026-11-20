@@ -32,6 +32,8 @@ use wayland_client::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
+mod clavier;
+
 /* ============================ police 5x7 ============================ */
 
 /// Chaque glyphe = 5 colonnes de 7 bits (bit 0 = haut).
@@ -450,6 +452,34 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    /// Texte tel quel, sans la casse de phrase de [`joli`] : le clavier
+    /// virtuel affiche des symboles et des libellés composés (« L2+L1/R1 »)
+    /// que la casse de phrase abîmerait.
+    fn text_brut(&mut self, x: i32, y: i32, s: &str, scale: i32, color: u32) {
+        if let Some(f) = self.police {
+            self.text_ttf(f, x, y, s, scale, color);
+            return;
+        }
+        let mut cx = x;
+        for ch in s.chars() {
+            let g = glyph(ch);
+            for (col, bits) in g.iter().enumerate() {
+                for row in 0..7 {
+                    if bits & (1 << row) != 0 {
+                        self.rect(
+                            cx + col as i32 * scale,
+                            y + row as i32 * scale,
+                            scale,
+                            scale,
+                            color,
+                        );
+                    }
+                }
+            }
+            cx += 6 * scale;
+        }
+    }
+
     /// Texte vectoriel, anticrénelé. `9 px × scale` par cran : la hauteur de
     /// capitale tombe autour de `7 × scale`, comme la bitmap, donc toutes les
     /// mises en page existantes tiennent sans retouche.
@@ -822,8 +852,6 @@ impl Entree {
 enum Apres {
     Record,
     Capture,
-    /// clavier virtuel : idem (pont EVIOCGRAB + clavier KWin)
-    Clavier,
     /// sauvegarde du replay : après fermeture, pour ne pas se filmer
     Replay,
     /// bascule du mode replay (Home+haut) : après fermeture, pour que le bip
@@ -871,6 +899,12 @@ const BTN_TL: u16 = 0x136;
 const BTN_TR: u16 = 0x137;
 const BTN_TL2: u16 = 0x138;
 const BTN_TR2: u16 = 0x139;
+const BTN_SELECT: u16 = 0x13a;
+const BTN_START: u16 = 0x13b;
+const BTN_THUMBL: u16 = 0x13d;
+const BTN_THUMBR: u16 = 0x13e;
+const ABS_RX: u16 = 0x03;
+const ABS_RY: u16 = 0x04;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -993,7 +1027,7 @@ struct App {
     home_at: Instant,
     /// action à lancer APRÈS la fermeture (le panneau ne doit pas être capturé)
     combo_apres: Option<Apres>,
-    /// node de la manette à passer à gpad-kbd (relâché au grab, donc mémorisé)
+    /// node de la manette mémorisé avant un relâchement du grab (replay)
     combo_node: Option<String>,
     /// mode souris actif (processus `gpad-mouse` vivant)
     mouse_active: bool,
@@ -1077,6 +1111,9 @@ struct App {
     /// plage réelle des axes du stick (EVIOCGABS) : les seuils en dépendent
     abs_x: (i32, i32),
     abs_y: (i32, i32),
+    /// sticks droits : déplacement du clavier virtuel
+    abs_rx: (i32, i32),
+    abs_ry: (i32, i32),
     fps_idx: usize,
     /// limite fps hors crans (posée à la main ou par Gablue Manager) : affichée
     /// telle quelle, sinon le curseur afficherait un cran qui n'est pas le vrai
@@ -1114,6 +1151,25 @@ struct App {
     kwin_retry_plugin: Option<String>,
     /// fermeture automatique après inactivité manette (0 = jamais)
     inactivite: Duration,
+    /* ---------- clavier virtuel (commandes `kbd` de l'IPC) ---------- */
+    /// handles wayland, gardés pour créer la surface du clavier à la demande
+    compositor: Option<wl_compositor::WlCompositor>,
+    layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
+    /// table + sélection + injection : reste alloué après fermeture (le
+    /// clavier uinput est créé une fois par session)
+    clavier: Option<clavier::Clavier>,
+    kbd_surface: Option<wl_surface::WlSurface>,
+    kbd_layer: Option<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1>,
+    kbd_buffers: Vec<ShmBuffer>,
+    kbd_free: Vec<usize>,
+    kbd_size: (i32, i32),
+    kbd_configured: bool,
+    kbd_dirty: bool,
+    /// rectangle du panneau dessiné dans chaque tampon : les deux alternent,
+    /// effacer « sa » position évite un fantôme à l'ancien emplacement
+    kbd_last: [(i32, i32, i32, i32); 2],
+    /// le clavier est ouvert (la manette pilote les touches, pas le menu)
+    kbd_ouvert: bool,
     ///Horodatage du dernier pas fait au **stick** : un stick qui repasse vite
     /// le seuil ne doit pas produire deux pas (sauts de 2-3 lignes, constaté)
     derniere_nav: Instant,
@@ -1352,6 +1408,8 @@ impl App {
             stick_y_latched: false,
             abs_x: (-32768, 32767),
             abs_y: (-32768, 32767),
+            abs_rx: (-32768, 32767),
+            abs_ry: (-32768, 32767),
             fps_idx: 0,
             fps_reel: None,
             mh_idx: 0,
@@ -1370,6 +1428,18 @@ impl App {
             kwin_retry_at: None,
             kwin_retry_plugin: None,
             inactivite: Duration::from_secs(10),
+            compositor: None,
+            layer_shell: None,
+            clavier: None,
+            kbd_surface: None,
+            kbd_layer: None,
+            kbd_buffers: Vec::new(),
+            kbd_free: Vec::new(),
+            kbd_size: (0, 0),
+            kbd_configured: false,
+            kbd_dirty: false,
+            kbd_last: [(0, 0, 0, 0); 2],
+            kbd_ouvert: false,
             derniere_activite: Instant::now(),
             derniere_nav: Instant::now() - Duration::from_secs(1),
             style_idx: 0,
@@ -1427,7 +1497,7 @@ impl App {
             resolution: i32,
         }
         const EVIOCGABS: libc::c_ulong = 0x8018_4540; // _IOR('E', 0x40+abs, input_absinfo)
-        for (code, slot) in [(0u32, true), (1u32, false)] {
+        for code in 0u32..4 {
             let mut ai = AbsInfo {
                 value: 0,
                 minimum: 0,
@@ -1444,10 +1514,12 @@ impl App {
                 )
             };
             if rc == 0 && ai.maximum > ai.minimum {
-                if slot {
-                    self.abs_x = (ai.minimum, ai.maximum);
-                } else {
-                    self.abs_y = (ai.minimum, ai.maximum);
+                let plage = (ai.minimum, ai.maximum);
+                match code {
+                    0 => self.abs_x = plage,
+                    1 => self.abs_y = plage,
+                    3 => self.abs_rx = plage,
+                    _ => self.abs_ry = plage,
                 }
             }
         }
@@ -1515,6 +1587,10 @@ impl App {
         let Some(raw_fd) = self.pad.as_ref().map(|f| f.as_raw_fd()) else {
             return;
         };
+        // fermeture demandée depuis la boucle : on rend la manette APRÈS
+        // l'avoir fini de lire (fermer libère le fd qu'on lit — le numéro
+        // serait réutilisé et la lecture suivante lirait un autre objet)
+        let mut fermer_apres = false;
         loop {
             let mut ev: InputEvent = unsafe { std::mem::zeroed() };
             let n = unsafe {
@@ -1562,8 +1638,59 @@ impl App {
                     self.home_down = false;
                     if self.home_at.elapsed() < Duration::from_millis(600) {
                         println!("CLOSE (Home)");
+                        if self.kbd_ouvert {
+                            fermer_apres = true;
+                            break;
+                        }
                         self.request_close();
                     }
+                }
+                continue;
+            }
+
+            // Clavier virtuel : la manette pilote les touches, plus le menu.
+            // Home garde son rôle (appui court = fermer, maintenu = menu
+            // système), il est traité juste au-dessus.
+            if self.kbd_ouvert {
+                let change = match (ev.type_, ev.code, ev.value) {
+                    (EV_SYN, _, _) => false,
+                    (EV_KEY, code, v) if v == 0 || v == 1 => {
+                        let fermer = self
+                            .clavier
+                            .as_mut()
+                            .is_some_and(|c| c.touche(code, v == 1));
+                        if fermer {
+                            fermer_apres = true;
+                            break;
+                        }
+                        true
+                    }
+                    (EV_ABS, ABS_HAT0X, v) => {
+                        self.clavier.as_mut().is_some_and(|c| c.hat(0, v))
+                    }
+                    (EV_ABS, ABS_HAT0Y, v) => {
+                        self.clavier.as_mut().is_some_and(|c| c.hat(1, v))
+                    }
+                    (EV_ABS, ABS_X, v) => {
+                        let n = norme_axe(v, self.abs_x);
+                        self.clavier.as_mut().is_some_and(|c| c.stick_gauche(0, n))
+                    }
+                    (EV_ABS, ABS_Y, v) => {
+                        let n = norme_axe(v, self.abs_y);
+                        self.clavier.as_mut().is_some_and(|c| c.stick_gauche(1, n))
+                    }
+                    (EV_ABS, ABS_RX, v) => {
+                        let n = norme_axe(v, self.abs_rx);
+                        self.clavier.as_mut().is_some_and(|c| c.stick_droit(0, n))
+                    }
+                    (EV_ABS, ABS_RY, v) => {
+                        let n = norme_axe(v, self.abs_ry);
+                        self.clavier.as_mut().is_some_and(|c| c.stick_droit(1, n))
+                    }
+                    _ => false,
+                };
+                if change {
+                    self.kbd_dirty = true;
                 }
                 continue;
             }
@@ -1652,7 +1779,6 @@ impl App {
                     self.status = match apres {
                         Apres::Record => "COMBO: REC APRES FERMETURE",
                         Apres::Capture => "COMBO: CAPTURE APRES FERMETURE",
-                        Apres::Clavier => "COMBO: CLAVIER APRES FERMETURE",
                         Apres::Replay => "COMBO: REPLAY APRES FERMETURE",
                         Apres::ReplayToggle => "COMBO: REPLAY BASCULE",
                         // jamais posés par un combo (menu console seulement)
@@ -1674,6 +1800,9 @@ impl App {
                 }
                 self.apply(a);
             }
+        }
+        if fermer_apres {
+            self.request_close();
         }
     }
 
@@ -1838,14 +1967,303 @@ impl App {
         }
     }
 
-    /// CLAVIER VIRTUEL : pont gpad-kbd (grab evdev + clavier virtuel KWin).
-    /// Il grabbe la manette : le panneau doit disparaître avant.
+    /// CLAVIER VIRTUEL (depuis le panneau) : on garde la manette **et** le
+    /// grab, on efface le panneau et on passe directement au clavier — aucun
+    /// exec, aucun transfert de grab.
     fn clavier_virtuel(&mut self) {
-        self.combo_node = self.pad_path.clone();
-        self.combo_apres = Some(Apres::Clavier);
-        self.status = "CLAVIER VIRTUEL: DEMARRAGE".to_string();
-        println!("KBDNAV START");
-        self.request_close();
+        println!("CLAVIER (depuis le panneau)");
+        let node = self.pad_path.clone().unwrap_or_default();
+        self.ouvrir_clavier(&node);
+    }
+
+    /* ---------- clavier virtuel (surface dédiée) ---------- */
+
+    /// Ouvre le clavier : grab de la manette (si elle n'est pas déjà tenue) et
+    /// surface plein écran transparente. La table est construite au premier
+    /// `configure` (elle a besoin de la taille de l'écran).
+    fn ouvrir_clavier(&mut self, node: &str) {
+        if self.kbd_ouvert {
+            return;
+        }
+        if self.visible {
+            // panneau ouvert : on l'efface sans animation — la manette reste
+            // tenue, c'est le même processus et le même grab
+            self.visible = false;
+            self.closing = false;
+            self.slid_in = true;
+            self.anim = None;
+            self.entree = None;
+            self.fondu = None;
+            self.opacite = 0.0;
+            self.off = self.panel_w;
+            self.dirty = true;
+        }
+        if !node.is_empty() && self.pad.is_none() {
+            self.detecter_manette(node);
+            self.grab_pad(node);
+        }
+        if self.pad.is_none() {
+            eprintln!("clavier : aucune manette");
+            return;
+        }
+        if let Some(c) = &mut self.clavier {
+            c.relacher();
+        }
+        self.kbd_ouvert = true;
+        self.closing = false;
+        self.derniere_activite = Instant::now();
+        self.creer_surface_clavier();
+        if self.kbd_configured {
+            self.pret_clavier();
+        }
+        println!("KBD OPEN {node}");
+        let _ = std::io::stdout().flush();
+    }
+
+    /// Surface overlay **plein écran**, transparente : le panneau se dessine
+    /// à sa position dans le tampon, ce qui permet de le déplacer sans
+    /// remapper quoi que ce soit (les marges négatives de layer-shell sont
+    /// ignorées par KWin).
+    fn creer_surface_clavier(&mut self) {
+        if self.kbd_surface.is_some() {
+            return;
+        }
+        let (Some(compositor), Some(layer_shell)) =
+            (self.compositor.clone(), self.layer_shell.clone())
+        else {
+            eprintln!("clavier : compositeur wayland absent");
+            return;
+        };
+        let surface = compositor.create_surface(&self.qh, KbdSurf);
+        let layer = layer_shell.get_layer_surface(
+            &surface,
+            None,
+            zwlr_layer_shell_v1::Layer::Overlay,
+            "gpad-clavier".to_string(),
+            &self.qh,
+            KbdSurf,
+        );
+        layer.set_anchor(
+            zwlr_layer_surface_v1::Anchor::Top
+                | zwlr_layer_surface_v1::Anchor::Bottom
+                | zwlr_layer_surface_v1::Anchor::Left
+                | zwlr_layer_surface_v1::Anchor::Right,
+        );
+        layer.set_size(0, 0); // 0 = toute la surface disponible
+        layer.set_exclusive_zone(-1);
+        // jamais le focus clavier : la frappe va à la fenêtre active
+        layer.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
+        let region = compositor.create_region(&self.qh, ());
+        surface.set_input_region(Some(&region)); // la souris traverse
+        region.destroy();
+        surface.commit();
+        self.kbd_surface = Some(surface);
+        self.kbd_layer = Some(layer);
+        self.kbd_configured = false;
+    }
+
+    fn detruire_surface_clavier(&mut self) {
+        if let Some(l) = self.kbd_layer.take() {
+            l.destroy();
+        }
+        if let Some(s) = self.kbd_surface.take() {
+            s.destroy();
+        }
+        for b in self.kbd_buffers.drain(..) {
+            unsafe { libc::munmap(b.ptr as *mut libc::c_void, b.len) };
+            b.buffer.destroy();
+        }
+        self.kbd_free.clear();
+    }
+
+    fn alloc_kbd_buffers(&mut self) {
+        let Some(shm) = self.shm.clone() else { return };
+        let (w, h) = self.kbd_size;
+        if w <= 0 || h <= 0 {
+            return;
+        }
+        for b in self.kbd_buffers.drain(..) {
+            unsafe { libc::munmap(b.ptr as *mut libc::c_void, b.len) };
+            b.buffer.destroy();
+        }
+        self.kbd_free.clear();
+        self.kbd_last = [(0, 0, 0, 0); 2];
+        let stride = w * 4;
+        let len = (stride * h) as usize;
+        let max = 64 << 20;
+        for idx in 0..2usize {
+            let name = c"gpad-clavier-shm";
+            let fd = unsafe { libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC) };
+            if fd < 0 {
+                eprintln!("memfd_create: {}", std::io::Error::last_os_error());
+                return;
+            }
+            if len > max || unsafe { libc::ftruncate(fd, len as i64) } < 0 {
+                eprintln!("ftruncate: {}", std::io::Error::last_os_error());
+                unsafe { libc::close(fd) };
+                return;
+            }
+            let ptr = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    len,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_SHARED,
+                    fd,
+                    0,
+                )
+            };
+            if ptr == libc::MAP_FAILED {
+                eprintln!("mmap: {}", std::io::Error::last_os_error());
+                unsafe { libc::close(fd) };
+                return;
+            }
+            let pool =
+                shm.create_pool(unsafe { BorrowedFd::borrow_raw(fd) }, len as i32, &self.qh, ());
+            let buffer = pool.create_buffer(
+                0,
+                w,
+                h,
+                stride,
+                wayland_client::protocol::wl_shm::Format::Argb8888,
+                &self.qh,
+                KbdBuf(idx),
+            );
+            pool.destroy();
+            unsafe { libc::close(fd) };
+            self.kbd_buffers.push(ShmBuffer {
+                buffer,
+                ptr: ptr as *mut u8,
+                len,
+            });
+            self.kbd_free.push(idx);
+        }
+        self.kbd_dirty = true;
+    }
+
+    /// Construit (ou replace) le clavier une fois la taille d'écran connue.
+    fn pret_clavier(&mut self) {
+        if !self.kbd_ouvert {
+            return;
+        }
+        let (lw, lh) = self.kbd_size;
+        if lw <= 0 || lh <= 0 {
+            return;
+        }
+        let ecran = (lw, lh);
+        if let Some(c) = &mut self.clavier {
+            // rouvert : on garde l'injection (le clavier noyau coûte 350 ms)
+            c.ecran(ecran);
+            if let Some((x, y)) = lire_pos_clavier() {
+                c.placer(x, y);
+            }
+            println!("KBD repris pos={:?}", c.position());
+        } else {
+            let (layout, variant) = clavier::layout_session();
+            let rangees = match clavier::charger(&layout, &variant) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("clavier : {e}");
+                    self.fermer_clavier();
+                    return;
+                }
+            };
+            let mut c = clavier::Clavier::neuf(rangees, &layout, &variant, ecran);
+            c.preparer_injection();
+            if let Some((x, y)) = lire_pos_clavier() {
+                c.placer(x, y);
+            }
+            println!(
+                "KBD {layout}/{variant} ecran={lw}x{lh} pos={:?}",
+                c.position()
+            );
+            self.clavier = Some(c);
+        }
+        self.kbd_dirty = true;
+    }
+
+    fn draw_clavier(&mut self) {
+        // `kbd_dirty` n'est ARMÉ qu'une fois l'image envoyée : sans tampon
+        // libre on revient au tour suivant (sinon la frame serait perdue)
+        if !self.kbd_configured || self.kbd_buffers.is_empty() {
+            return;
+        }
+        let Some(idx) = self.kbd_free.pop() else { return };
+        let (w, h) = self.kbd_size;
+        let (ptr, len) = {
+            let b = &self.kbd_buffers[idx];
+            (b.ptr, b.len)
+        };
+        let buffer = self.kbd_buffers[idx].buffer.clone();
+        let pixels =
+            unsafe { std::slice::from_raw_parts_mut(ptr as *mut u32, len / 4) };
+        let neuf = self
+            .clavier
+            .as_ref()
+            .map(|c| c.panneau())
+            .unwrap_or((0, 0, 0, 0));
+        // surface plein écran : on n'efface QUE la position que ce tampon
+        // portait (les deux alternent), sinon on laisserait un fantôme
+        let ancien = self.kbd_last[idx];
+        if ancien.2 > 0 && ancien.3 > 0 {
+            effacer_rect(pixels, w, h, ancien);
+        }
+        if let Some(c) = &self.clavier {
+            let mut cv = Canvas {
+                px: pixels,
+                w: w as usize,
+                h: h as usize,
+                police: self.police.as_ref(),
+                ox: 0,
+                clip: None,
+            };
+            c.dessiner(&mut cv);
+        }
+        self.kbd_last[idx] = neuf;
+        let zone = union_rect(ancien, neuf, w, h);
+        if let Some(surface) = &self.kbd_surface {
+            surface.attach(Some(&buffer), 0, 0);
+            surface.damage_buffer(zone.0, zone.1, zone.2, zone.3);
+            surface.commit();
+        }
+        self.kbd_dirty = false;
+    }
+
+    fn tick_clavier(&mut self) {
+        if !self.kbd_ouvert {
+            return;
+        }
+        let Some(c) = &mut self.clavier else { return };
+        if c.tick() {
+            self.kbd_dirty = true;
+        }
+    }
+
+    fn clavier_anime(&self) -> bool {
+        self.kbd_ouvert && self.clavier.as_ref().is_some_and(|c| c.anime())
+    }
+
+    /// Ferme le clavier : touches relâchées, position mémorisée, surface
+    /// détruite (aucune surface plein écran ne reste posée sur le bureau),
+    /// manette rendue.
+    fn fermer_clavier(&mut self) {
+        if !self.kbd_ouvert {
+            return;
+        }
+        self.kbd_ouvert = false;
+        self.kbd_dirty = false;
+        if let Some(c) = &mut self.clavier {
+            c.relacher();
+            let (x, y) = c.position();
+            ecrire_pos_clavier(x, y);
+        }
+        self.detruire_surface_clavier();
+        self.cacher();
+        // lancé par `--clavier` (repli du déclencheur) : un seul usage par
+        // processus, sinon chaque appui laisserait un overlay orphelin
+        if !self.resident {
+            self.running = false;
+        }
     }
 
     fn apply(&mut self, a: Action) {
@@ -2881,6 +3299,12 @@ impl App {
     }
 
     fn request_close(&mut self) {
+        // clavier virtuel : pas d'animation, pas de glissement de panneau —
+        // on détruit sa surface et on rend la manette
+        if self.kbd_ouvert {
+            self.fermer_clavier();
+            return;
+        }
         if self.closing || !self.visible {
             return;
         }
@@ -2930,7 +3354,9 @@ impl App {
     /// le démarrage (transparente, hors écran) : KWin ne rejoue pas son
     /// animation d'ouverture (elle n'a lieu qu'au map), donc aucune attente.
     fn ouvrir(&mut self, node: &str, cibles: &[String]) {
-        if self.visible {
+        // clavier ouvert : il tient la manette, un `open` ne doit pas poser le
+        // panneau par-dessus (les deux surfaces se superposeraient)
+        if self.visible || self.kbd_ouvert {
             return;
         }
         if !node.is_empty() {
@@ -3052,6 +3478,12 @@ impl App {
                     self.ouvrir(&node, &cibles);
                 }
                 Some("close") => self.request_close(),
+                // clavier virtuel : `kbd <node>` (le résident tient déjà la
+                // manette et garde son grab, aucun transfert de processus)
+                Some("kbd") => {
+                    let node = mots.next().unwrap_or("").to_string();
+                    self.ouvrir_clavier(&node);
+                }
                 _ => {}
             }
         }
@@ -3068,10 +3500,6 @@ impl App {
         match a {
             Apres::Record => lancer_script("RECORDER", &["toggle"]),
             Apres::Capture => lancer_script("SCREENSHOT", &[]),
-            Apres::Clavier => {
-                let node = self.combo_node.clone().unwrap_or_default();
-                lancer_script("KBDNAV", &[&node])
-            }
             Apres::Replay => {
                 let node = self.combo_node.clone().unwrap_or_default();
                 lancer_script_env("REPLAY", &["save"], &[("PAD_NODE", &node)]);
@@ -4052,6 +4480,82 @@ impl Dispatch<wl_buffer::WlBuffer, usize> for App {
     }
 }
 
+/// Objets wayland du **clavier virtuel** : une seconde surface overlay, avec
+/// ses propres tampons, distincte de celle du panneau — les données typées
+/// permettent de distinguer les deux dans les `Dispatch`.
+struct KbdSurf;
+
+struct KbdBuf(usize);
+
+impl Dispatch<wl_surface::WlSurface, KbdSurf> for App {
+    fn event(
+        _: &mut Self,
+        _: &wl_surface::WlSurface,
+        _: wl_surface::Event,
+        _: &KbdSurf,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, KbdSurf> for App {
+    fn event(
+        state: &mut Self,
+        layer: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        event: zwlr_layer_surface_v1::Event,
+        _: &KbdSurf,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwlr_layer_surface_v1::Event::Configure {
+                serial,
+                width,
+                height,
+            } => {
+                layer.ack_configure(serial);
+                let taille = (width as i32, height as i32);
+                if taille != state.kbd_size || state.kbd_buffers.is_empty() {
+                    state.kbd_size = taille;
+                    state.alloc_kbd_buffers();
+                }
+                if taille.0 > 0 && taille.1 > 0 {
+                    if !state.kbd_configured {
+                        state.kbd_configured = true;
+                        state.pret_clavier();
+                    } else if let Some(c) = &mut state.clavier {
+                        // écran redimensionné : on borne la position, sans la
+                        // relire du fichier (elle a pu bouger depuis)
+                        c.ecran(taille);
+                    }
+                    state.kbd_dirty = true;
+                }
+            }
+            zwlr_layer_surface_v1::Event::Closed => state.fermer_clavier(),
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_buffer::WlBuffer, KbdBuf> for App {
+    fn event(
+        state: &mut Self,
+        _: &wl_buffer::WlBuffer,
+        event: wl_buffer::Event,
+        data: &KbdBuf,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_buffer::Event::Release = event {
+            state.kbd_free.push(data.0);
+            if state.kbd_dirty {
+                state.draw_clavier();
+            }
+        }
+    }
+}
+
 impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
     fn event(
         state: &mut Self,
@@ -4412,7 +4916,7 @@ fn replay_actif() -> bool {
     false
 }
 
-/// Nom de processus d'un binaire configuré par variable (MOUSE, KBDNAV…).
+/// Nom de processus d'un binaire configuré par variable (MOUSE, RUMBLE…).
 fn nom_binaire(var: &str, defaut: &str) -> String {
     std::env::var(var)
         .ok()
@@ -5254,6 +5758,64 @@ const ACCENTS: [(&str, &str); 22] = [
     ("retro", "Retro"),
 ];
 
+/// Efface un rectangle du tampon (`(x, y, w, h)`), borné à la surface.
+fn effacer_rect(px: &mut [u32], w: i32, h: i32, r: (i32, i32, i32, i32)) {
+    let x0 = r.0.max(0).min(w);
+    let y0 = r.1.max(0).min(h);
+    let x1 = (r.0 + r.2).max(0).min(w);
+    let y1 = (r.1 + r.3).max(0).min(h);
+    for y in y0..y1 {
+        let debut = (y * w + x0) as usize;
+        let fin = (y * w + x1) as usize;
+        px[debut..fin].fill(0);
+    }
+}
+
+/// Plus petit rectangle couvrant les deux, borné à la surface.
+fn union_rect(
+    a: (i32, i32, i32, i32),
+    b: (i32, i32, i32, i32),
+    w: i32,
+    h: i32,
+) -> (i32, i32, i32, i32) {
+    let x0 = a.0.min(b.0).max(0).min(w);
+    let y0 = a.1.min(b.1).max(0).min(h);
+    let x1 = (a.0 + a.2).max(b.0 + b.2).max(0).min(w);
+    let y1 = (a.1 + a.3).max(b.1 + b.3).max(0).min(h);
+    (x0, y0, (x1 - x0).max(0), (y1 - y0).max(0))
+}
+
+/// Axe evdev → −1..1 (0 au centre), d'après la plage réelle du périphérique.
+/// **Borné** : un périphérique peut annoncer une plage étroite (`0..1`) et
+/// envoyer bien au-delà ; sans borne, un seul événement produisait un
+/// déplacement de 2 Gpx (débordement constaté sur la manette de banc).
+fn norme_axe(v: i32, plage: (i32, i32)) -> f64 {
+    let (mn, mx) = plage;
+    let demi = ((mx - mn) / 2).max(1) as f64;
+    ((v as f64 - (mn as f64 + demi)) / demi).clamp(-1.0, 1.0)
+}
+
+/// Position mémorisée du clavier (`~/.config/gablue/gpad-clavier`), en pixels
+/// écran : déplacé au stick droit, il doit revenir au même endroit.
+fn pos_clavier_fichier() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".config/gablue/gpad-clavier"))
+}
+
+fn lire_pos_clavier() -> Option<(i32, i32)> {
+    let txt = std::fs::read_to_string(pos_clavier_fichier()?).ok()?;
+    let mut mots = txt.split_whitespace();
+    Some((mots.next()?.parse().ok()?, mots.next()?.parse().ok()?))
+}
+
+fn ecrire_pos_clavier(x: i32, y: i32) {
+    let Some(p) = pos_clavier_fichier() else { return };
+    if let Some(d) = p.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let _ = std::fs::write(p, format!("{x} {y}\n"));
+}
+
 /// Libellé lisible pour le style MODERNE : « CHOISIR FENETRE » → « Choisir
 /// fenêtre ». Ne touche QUE nos libellés (entièrement en capitales) : les
 /// légendes de fenêtres, les noms d'applis et les valeurs gardent leur casse.
@@ -5602,6 +6164,8 @@ fn main() {
         .bind(&qh, 1..=4, ())
         .expect("zwlr_layer_shell_v1");
     app.shm = Some(shm);
+    app.compositor = Some(compositor.clone());
+    app.layer_shell = Some(layer_shell.clone());
 
     let surface = compositor.create_surface(&qh, ());
     let layer = layer_shell.get_layer_surface(
@@ -5684,8 +6248,12 @@ fn main() {
         let _kb = seat.get_keyboard(&qh, ());
     }
 
-    // résident : aucune manette au démarrage, le node arrive avec `open`
-    let pad = if app.resident || args.iter().any(|a| a == "--no-grab") {
+    // résident : aucune manette au démarrage, le node arrive avec `open`.
+    // `--clavier` non plus : il grabbe SON node, pas la première manette venue
+    // (sinon un banc volerait la manette de l'utilisateur).
+    let pad = if app.resident
+        || args.iter().any(|a| a == "--no-grab" || a == "--clavier")
+    {
         None
     } else {
         arg_value(&args, "--grab").or_else(find_pad_event)
@@ -5695,6 +6263,20 @@ fn main() {
         app.grab_pad(&p);
     } else if !app.resident {
         eprintln!("aucune manette trouvée (aucun grab)");
+    }
+
+    // Clavier virtuel direct : banc, ou repli du déclencheur quand aucun
+    // résident n'écoute. Un seul usage par processus (il quitte à la
+    // fermeture), sinon chaque appui laisserait un overlay orphelin.
+    if let Some(node) = arg_value(&args, "--clavier") {
+        app.visible = false;
+        app.ouvrir_clavier(&node);
+        if !app.kbd_ouvert {
+            // sans manette, ne pas rester avec une surface morte : le
+            // déclencheur relancerait un overlay par appui
+            eprintln!("clavier : ouverture impossible, sortie");
+            std::process::exit(1);
+        }
     }
 
     // Gate BPF : on déclare les nodes à couper, puis on l'ouvrira à l'affichage.
@@ -5961,7 +6543,11 @@ fn main() {
         // Résident caché : rien à relire, on dort presque — mais 1 s, pas -1 :
         // `signal()` installe SA_RESTART, donc `poll(-1)` serait REPRIS après
         // SIGTERM et le processus ne sortirait jamais (mesuré).
-        let timeout_ms = if app.resident && !app.visible {
+        let timeout_ms = if app.kbd_ouvert {
+            // répétition armée : 8 ms ; sinon 100 ms (les sticks réveillent
+            // le `poll` d'eux-mêmes, inutile de tourner à vide)
+            if app.clavier_anime() { 8 } else { 100 }
+        } else if app.resident && !app.visible {
             1000
         } else if app.anim.is_some()
             || app.pdep.is_some()
@@ -5983,6 +6569,7 @@ fn main() {
         // maintien de Home : vérifié à chaque tour (poll 100 ms au repos)
         app.surveiller_home();
         app.surveiller_inactivite();
+        app.tick_clavier();
         if let Some(g) = guard {
             if fds[1].revents != 0 {
                 let _ = g.read();
@@ -6003,19 +6590,22 @@ fn main() {
         // bien plus que 160 ms : constaté, « ça ne fait pas la fondue »)
         if app.configured && !app.slid_in {
             app.slid_in = true;
-            if app.resident {
+            if app.resident || app.kbd_ouvert {
                 // Première (et unique) mise à l'écran : transparente et hors
                 // écran. KWin anime cette ouverture une fois, invisible ; les
                 // `open` suivants ne remappent rien et n'attendent donc plus
-                // son animation.
+                // son animation. Le clavier a sa propre surface : le panneau
+                // ne doit jamais apparaître au démarrage.
                 app.opacite = 0.0;
                 app.off = app.panel_w;
                 app.dirty = true;
-                app.demarrer_ipc();
-                println!(
-                    "RESIDENT pret ({})",
-                    if app.ipc.is_some() { "ipc" } else { "sans ipc" }
-                );
+                if app.resident {
+                    app.demarrer_ipc();
+                    println!(
+                        "RESIDENT pret ({})",
+                        if app.ipc.is_some() { "ipc" } else { "sans ipc" }
+                    );
+                }
             } else if app.side {
                 // KWin anime l'ouverture de cette surface comme celle d'une
                 // fenêtre normale (effet Scale, `animationTime(200)`). Deux
@@ -6177,6 +6767,11 @@ fn main() {
         }
         if app.dirty {
             app.draw();
+            let _ = conn.flush();
+        }
+        // clavier virtuel : surface et tampons distincts du panneau
+        if app.kbd_dirty {
+            app.draw_clavier();
             let _ = conn.flush();
         }
         // Réglages relus APRÈS la première image : `pactl` et les scripts

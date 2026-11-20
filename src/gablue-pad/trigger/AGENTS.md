@@ -42,9 +42,8 @@ seul lecteur : `gablue-pad.service` (l'ancien service manette est supprimé).
 Le banc résout tout par rapport au binaire (`../recorder.sh`,
 `../gate/padnodes.sh`…). Dans l'image, l'unité utilisateur exporte des chemins
 absolus et le déclencheur les prend en priorité (`chemins_env()`) :
-`RECORDER`, `SCREENSHOT`, `SCRIPTS`, `INHIBIT`, `MOUSE`, `KBDNAV`, `REPLAY`,
-`PADNODES`, `GPAD_GATE`, `KILLTHEMALL` (script partagé hors du dossier du
-service).
+`RECORDER`, `SCREENSHOT`, `SCRIPTS`, `INHIBIT`, `MOUSE`, `REPLAY`, `PADNODES`,
+`GPAD_GATE`, `KILLTHEMALL` (script partagé hors du dossier du service).
 
 ## Overlay résident : Home instantané
 
@@ -55,6 +54,10 @@ Unix, plus par un `exec` :
 - socket `$XDG_RUNTIME_DIR/gablue/gpad-<pid du trigger>.sock` (repli
   `/tmp/gablue-<uid>`) : **un par déclencheur**, le banc peut cohabiter avec le
   service ;
+- `kbd <node>` : ouvre le clavier virtuel sur ce node (Home+carré) — c'est le
+  **même** résident et le **même** grab, aucun transfert ; sans résident
+  joignable, le déclencheur lance un overlay dédié `--clavier <node>` qui sort
+  à la fermeture (sinon chaque appui laisserait un processus et sa surface) ;
 - `open <node> <cibles js/hidraw…>` : node à grabber **et** cibles du gate,
   reposées à chaque ouverture — les `dev_t` changent à la reconnexion d'une
   manette, un résident les garderait périmées (le démon du gate est idempotent) ;
