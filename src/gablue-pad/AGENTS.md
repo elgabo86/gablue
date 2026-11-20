@@ -29,10 +29,11 @@ d'animation KWin à attendre. Mesuré : premier tampon 6 ms, panneau en place
 | `login/` | écran de connexion : pointeur manette (`gpad-login`) et pont du greeter (`login-bridge.sh` : thème sombre, clavier visuel affiché seulement si une manette est présente) | `/usr/bin/gpad-login`, `/usr/libexec/gablue-pad/login-bridge.sh` |
 | `inhibit/` | inhibition de l'écran tant qu'une manette est connectée | `/usr/bin/gpad-inhibit` |
 | `rumble/` | impulsion FF_RUMBLE (confirmation de sauvegarde de replay) | `/usr/bin/gpad-rumble` |
+| `shot/` | capture d'écran par appel direct à KWin (`ScreenShot2`, sans pointeur, ~40 ms) | `/usr/bin/gpad-shot` |
 | `kwin/` | scripts KWin poussés à chaud (`wininfo.js`, `lister.js`, `fullscreen.js` ; le cyclage L2/R2 est **généré**) | `/usr/libexec/gablue-pad/kwin` |
 | `scripts/` | lancements du menu Applications (`toggle-glauncher`, `toggle-es`, `toggle-yt`, `toggle-tv`, `toggle-jellyfin`) + `fermer-applis`, `openes` | `/usr/libexec/gablue-pad/scripts` |
 | `sounds/` | `beep.wav` (départ enregistrement/replay), `shot.wav` (capture), `clic.wav`/`noclic.wav` (mode souris) | idem |
-| `recorder.sh`, `replay.sh`, `screenshot.sh`, `vrr.sh`, `mangohud.sh`, `booster.sh` | outils appelés par l'overlay et le déclencheur (`booster.sh` : « optimiser au premier plan », ligne `PRIORITE ACTIVE` des réglages ; `mangohud.sh` : **unique** réglage MangoHud du poste, partagé avec le dialogue « MangoHud… » de Gablue Manager) | idem |
+| `recorder.sh`, `replay.sh`, `screenshot.sh`, `vrr.sh`, `mangohud.sh`, `booster.sh` | outils appelés par l'overlay et le déclencheur (`screenshot.sh` : son d'abord puis `gpad-shot`, repli spectacle — voir « Capture d'écran » ; `booster.sh` : « optimiser au premier plan », ligne `PRIORITE ACTIVE` des réglages ; `mangohud.sh` : **unique** réglage MangoHud du poste, partagé avec le dialogue « MangoHud… » de Gablue Manager) | idem |
 | `evgrab/` | bancs : `vpad` (manette virtuelle + signaux), `rdr`, `hidrev` | **non installé** |
 
 `killthemall` n'est **pas** ici : il est partagé (bouton `KillEmu.desktop`) et vit
@@ -115,10 +116,53 @@ l'emporte sur l'activation de l'image) ; un masque posé sur l'ancien service
 Pas de Home+triangle (retiré) : YouTube s'ouvre par la page Applications.
 Détail des gestes et des pages : `gpad/AGENTS.md`.
 
+## Capture d'écran (`gpad-shot`)
+
+Home + droite → `screenshot.sh` → `gpad-shot` : appel direct à
+`org.kde.KWin.ScreenShot2` + écriture PNG, sans Spectacle. Mesuré sur cette
+machine (2560×1440, Plasma 6.8.3) : **~40 ms** (`dbus 4-10`, transfert `4`,
+PNG `18`) contre **~350 ms** pour `spectacle -f -b -n -o` (client Qt + son
+unité systemd + deflate plus coûteux). Aucun paquet nouveau au runtime :
+`libdbus` (déjà là pour `gpad-inhibit`) et `zlib` (`zlib-devel` au build).
+
+- **Le pointeur n'est jamais dans l'image** : `include-cursor: false` est
+  envoyé explicitement. Vérifié en A/B sur deux captures consécutives : la
+  seule différence entre `true` et `false` est un blob de **14×21 px** au
+  pointeur (1,6·10⁻⁵ des pixels), tout le reste est identique au bit près.
+- **Un écran, pas le bureau** : `CaptureActiveScreen` (celui de la fenêtre
+  active, donc du jeu), repli `CaptureWorkspace` quand il n'y a aucune fenêtre
+  active. `native-resolution: true`, comme Spectacle — la résolution physique
+  est conservée sur un écran HiDPI.
+- **Parité mesurée** avec Spectacle sur captures quasi simultanées :
+  **PSNR 55,6 dB** (écarts = horloge et animations), fichiers comparables
+  (1,0-1,3 Mo contre 0,99-1,4 Mo : filtre 0 + deflate niveau 1, ~4× plus
+  rapide à encoder pour ~30 % de volume en plus).
+- **Le son part avant la capture** (`setsid ffplay … &` puis capture) : le
+  déclencheur est entendu en ~60 ms. Avant, il arrivait après la capture et le
+  démarrage de `ffplay` (~0,4 s en tout).
+- **Repli** : `gpad-shot` absent ou en échec (compositeur non-KWin, interface
+  disparue) → `spectacle -f -b -n -o`, vérifié au banc avec
+  `GPAD_SHOT=/bin/false`. `GPAD_SHOT` est exporté par l'unité, prioritaire ;
+  au banc le binaire est trouvé à côté du script.
+
+Trois pièges payés, à ne pas réintroduire :
+
+- **interblocage du tube** : KWin écrit la frame **entière** dans le tube
+  *avant* de répondre ; le tube fait 64 Kio, donc sans lecteur concurrent les
+  deux côtés se bloquent (constaté : appel muet, aucun message) ;
+- **l'EOF du tube n'est pas fiable** (la bibliothèque D-Bus garde une extrémité
+  ouverte : sous Gio, `read` bloquait à vie après les 14,7 Mo) → on s'arrête sur
+  `stride × height` annoncés dans la réponse, avec un délai de garde (5 s pour
+  l'appel D-Bus, 10 s pour la frame) ;
+- **`format` est un `QImage::Format`** : 16 = `RGBX8888` (octets R,V,B,X),
+  4/5 = ARGB32/BGRA, 13 = RGB888. Traiter 16 comme du BGRA échange rouge et
+  bleu — et une frame tronquée doit faire échouer la commande, jamais produire
+  un PNG partiel (un prototype Python sans contrôle de taille l'a fait).
+
 ## Build
 
 - Binaires C : `make` dans ce dossier (`gpad-trigger`, `gpad-kbd`, `gpad-mouse`,
-  `gpad-inhibit`, `gpad-rumble`, `gpad-login`) ; `make install DESTDIR=…` pose aussi
+  `gpad-inhibit`, `gpad-rumble`, `gpad-login`, `gpad-shot`) ; `make install DESTDIR=…` pose aussi
   l'arborescence de données dans `/usr/libexec/gablue-pad` (les scripts y
   résolvent `sounds/`, `scripts/` et `kwin/` par rapport à leur propre dossier).
 - Overlay Rust : étape `gpad-build` du `Containerfile-gablue`

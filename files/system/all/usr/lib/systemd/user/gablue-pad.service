@@ -13,6 +13,7 @@ ExecStart=/usr/bin/gpad-trigger /usr/bin/gpad
 # sinon `clic.wav` est cherché dans le dossier courant.
 Environment=RECORDER=/usr/libexec/gablue-pad/recorder.sh
 Environment=SCREENSHOT=/usr/libexec/gablue-pad/screenshot.sh
+Environment=GPAD_SHOT=/usr/bin/gpad-shot
 Environment=REPLAY=/usr/libexec/gablue-pad/replay.sh
 Environment=VRR=/usr/libexec/gablue-pad/vrr.sh
 Environment=MANGOHUD=/usr/libexec/gablue-pad/mangohud.sh

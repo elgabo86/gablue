@@ -127,7 +127,8 @@ L'ancien `gamepadshortcuts` (et son `kbdnav`) est **supprimé** : remplacé par 
 projet `src/gablue-pad/` — overlay Wayland `gpad`, déclencheur `gpad-trigger`,
 gate BPF, plus `gpad-mouse` (Home+R3), `gpad-kbd` (Home+carré, presets
 `/etc/xdg/plasmakeyboardrc` = `keyboardNavigationEnabled`, `fr_FR`), `gpad-inhibit`
-et `gpad-rumble`. Gestes, options, services et architecture →
+et `gpad-rumble`, `gpad-shot` (capture d'écran directe par KWin, sans
+Spectacle). Gestes, options, services et architecture →
 `src/gablue-pad/AGENTS.md` et ses sous-docs.
 
 ### Binaire gablue-isomount (/usr/bin)

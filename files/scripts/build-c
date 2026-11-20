@@ -17,7 +17,7 @@ set -eoux pipefail
 # (brew depuis source, extensions pip, modules noyau à la main) — décision du
 # 14/11/2026. Ne jamais ajouter pkgconf-pkg-config à une liste de retrait :
 # kmod (donc systemd-udev) exige /usr/bin/pkg-config, la transaction échoue.
-dnf5 -y install gcc dbus-devel hidapi-devel pkgconf-pkg-config
+dnf5 -y install gcc dbus-devel hidapi-devel zlib-devel pkgconf-pkg-config
 
 # Fonction de build securisee : compile et verifie le binaire final
 build_and_verify() {
@@ -41,13 +41,14 @@ build_and_verify() {
 }
 
 # gablue-pad : declencheur Home, clavier virtuel, mode souris, inhibition ecran,
-# vibration, pointeur de l'ecran de connexion (gpad-login). L'overlay Rust (gpad)
+# vibration, pointeur de l'ecran de connexion (gpad-login), capture d'ecran
+# (gpad-shot : appel direct a KWin ScreenShot2, libdbus + zlib). L'overlay Rust (gpad)
 # et le gate BPF sont compiles dans leurs propres
 # etapes du Containerfile (toolchains lourdes, jamais dans l'image finale) ; le
 # Makefile installe aussi l'arborescence de donnees (scripts, sons, kwin) et le
 # pont du greeter (login-bridge.sh).
 build_and_verify "/src/gablue-pad" "gpad-trigger" "gablue-pad"
-for b in gpad-kbd gpad-mouse gpad-inhibit gpad-rumble gpad-login; do
+for b in gpad-kbd gpad-mouse gpad-inhibit gpad-rumble gpad-login gpad-shot; do
     if [ ! -f "/usr/bin/$b" ]; then
         echo "ERREUR FATALE : binaire '$b' absent apres compilation de gablue-pad" >&2
         exit 1
@@ -57,11 +58,11 @@ if [ ! -x "/usr/libexec/gablue-pad/login-bridge.sh" ]; then
     echo "ERREUR FATALE : /usr/libexec/gablue-pad/login-bridge.sh absent" >&2
     exit 1
 fi
-if [ ! -x "/usr/libexec/gablue-pad/recorder.sh" ] || [ ! -x "/usr/libexec/gablue-pad/booster.sh" ] || [ ! -d "/usr/libexec/gablue-pad/kwin" ]; then
+if [ ! -x "/usr/libexec/gablue-pad/recorder.sh" ] || [ ! -x "/usr/libexec/gablue-pad/booster.sh" ] || [ ! -x "/usr/libexec/gablue-pad/screenshot.sh" ] || [ ! -d "/usr/libexec/gablue-pad/kwin" ]; then
     echo "ERREUR FATALE : donnees de gablue-pad absentes de /usr/libexec/gablue-pad" >&2
     exit 1
 fi
-echo "OK : gablue-pad (6 binaires + scripts/sons/kwin)"
+echo "OK : gablue-pad (7 binaires + scripts/sons/kwin)"
 
 build_and_verify "/src/ds2xbox" "ds2xbox" "ds2xbox"
 build_and_verify "/src/gablue-dualsense" "gablue-dualsense-ctl" "gablue-dualsense"

@@ -103,7 +103,7 @@ ouvre le panneau **au relâchement**.
 | Combo | Effet |
 |---|---|
 | Home + gauche | sauvegarde du buffer de replay s'il tourne, sinon bascule de l'**enregistrement** (`replay.sh status` fait foi, jamais un état local) |
-| Home + droite | capture d'écran (`screenshot.sh`) |
+| Home + droite | capture d'écran (`screenshot.sh` → `gpad-shot`, son joué d'abord : ~40 ms de capture) |
 | Home + haut | **bascule du mode replay** (`replay.sh toggle`, en arrière-plan : le bip de départ + 0,35 s de silence + démarrage prennent ~1,2 s, et `gpad-trigger` doit rester à l'écoute du retour de Home) |
 | Home + bas | ouvre le panneau directement sur la ligne **FPS** |
 

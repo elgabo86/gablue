@@ -484,7 +484,9 @@ static void run_cmd(const char *cmd)
     }
     if (p > 0) {
         int st;
-        waitpid(p, &st, 0); /* recorder/spectacle rendent la main tout de suite */
+        /* recorder/screenshot rendent la main tout de suite : son détaché,
+         * capture ~40 ms (gpad-shot), repli spectacle seulement en échec */
+        waitpid(p, &st, 0);
     }
 }
 
