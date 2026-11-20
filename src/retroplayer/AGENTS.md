@@ -176,8 +176,8 @@ et le nombre de tours en quelques centaines de ms.
 Fait : base + recherche (par nom/console/année/tags), tri (nom, console, date), filtre par
 console, mise à jour joshw.info, téléchargement/extraction avec cache listé et supprimable
 (onglet « Téléchargés »), pistes `.m3u`, lecture (pause/seek/position), boucle format + A/B
-en base, détection de la boucle PSF dans le rendu, fondu de sortie en lecture simple, export
-MP3/FLAC taggé, repli `vgmstream-cli` (.txtp/.vgmstream), icône.
+en base, détection de la boucle PSF dans le rendu, cache audio en RAM, export MP3/FLAC
+taggé, repli `vgmstream-cli` (.txtp/.fsb/.bfstm/.btsnd/.at3…), icône.
 
 À faire : export « intro + N boucles + fondu », lecture des `.psf2`/`.ss2` non couverts,
 repli quand `zxtune123` est absent (message clair au lieu d'une piste muette).
