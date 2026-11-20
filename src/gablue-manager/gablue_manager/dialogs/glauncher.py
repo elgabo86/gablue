@@ -9,7 +9,7 @@ vignettes, favoris, temps de jeu) vit dans son cache et se change au clavier ou
   sélection de dossier dans une interface plein écran pilotée à la manette) ;
 - le plein écran au démarrage ;
 - la musique de fond du lanceur (piste embarquée, bouclée, coupée le temps
-  d'une partie) ;
+  d'une partie) et son volume ;
 - la clé API SteamGridDB, facultative, que les **prochains scans** utilisent
   pour retrouver les visuels.
 """
@@ -19,7 +19,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
+    QListWidget, QListWidgetItem, QPushButton, QSlider, QVBoxLayout,
 )
 
 from ..local import (
@@ -135,6 +135,23 @@ class GlauncherDialog(QDialog):
         self.music_check.toggled.connect(self._update_apply)
         start_layout.addWidget(self.music_check)
 
+        # Volume de la musique : un fond sonore, réglable sans recompiler ni
+        # toucher au fichier de configuration à la main.
+        volume_row = QHBoxLayout()
+        volume_row.setSpacing(10)
+        volume_row.addWidget(QLabel("Volume", start_frame))
+        self.volume_slider = QSlider(Qt.Horizontal, start_frame)
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setSingleStep(5)
+        self.volume_slider.setPageStep(10)
+        self.volume_slider.setCursor(Qt.PointingHandCursor)
+        self.volume_slider.valueChanged.connect(self._volume_changed)
+        volume_row.addWidget(self.volume_slider, 1)
+        self.volume_label = QLabel("60 %", start_frame)
+        self.volume_label.setMinimumWidth(52)
+        volume_row.addWidget(self.volume_label)
+        start_layout.addLayout(volume_row)
+
         start_detail = QLabel(
             "La musique du lanceur s'efface en fondu quand un jeu démarre et "
             "revient en fondu au retour du jeu. Elle est coupée pendant une "
@@ -208,7 +225,7 @@ class GlauncherDialog(QDialog):
         root.addLayout(buttons)
 
         self.reload()
-        fit_dialog_height(self, 660)
+        fit_dialog_height(self, 700)
 
     # -- état ---------------------------------------------------------------
     def reload(self) -> None:
@@ -222,6 +239,7 @@ class GlauncherDialog(QDialog):
             "game_dirs": list(state["game_dirs"]),
             "fullscreen": bool(state["fullscreen"]),
             "music": bool(state["music"]),
+            "music_volume": int(state["music_volume"]),
             "use_key": bool(key.strip()),
             "steamgriddb_key": key,
         }
@@ -230,11 +248,16 @@ class GlauncherDialog(QDialog):
         for directory in self.initial["game_dirs"]:
             self._add_item(directory)
 
-        widgets = (self.fullscreen_check, self.music_check, self.key_check, self.key_edit)
+        widgets = (
+            self.fullscreen_check, self.music_check, self.volume_slider,
+            self.key_check, self.key_edit,
+        )
         for widget in widgets:
             widget.blockSignals(True)
         self.fullscreen_check.setChecked(self.initial["fullscreen"])
         self.music_check.setChecked(self.initial["music"])
+        self.volume_slider.setValue(max(0, min(100, self.initial["music_volume"])))
+        self.volume_label.setText(f"{self.volume_slider.value()} %")
         self.key_check.setChecked(self.initial["use_key"])
         self.key_edit.setText(self.initial["steamgriddb_key"])
         for widget in widgets:
@@ -262,6 +285,7 @@ class GlauncherDialog(QDialog):
             "game_dirs": self.directories(),
             "fullscreen": self.fullscreen_check.isChecked(),
             "music": self.music_check.isChecked(),
+            "music_volume": self.volume_slider.value(),
             "use_key": use_key,
             # clé vidée quand la case est décochée : le launcher retombe sur
             # l'API publique au prochain scan
@@ -271,9 +295,17 @@ class GlauncherDialog(QDialog):
     def changed(self) -> bool:
         return self.desired() != self.initial
 
+    def _volume_changed(self, value: int) -> None:
+        self.volume_label.setText(f"{value} %")
+        self._update_apply()
+
     def _update_apply(self) -> None:
         # le champ n'a de sens qu'avec la case : grisé, il ne se saisit pas
         self.key_edit.setEnabled(self.key_check.isChecked())
+        # idem pour le volume : sans musique, il n'a rien à régler
+        music = self.music_check.isChecked()
+        self.volume_slider.setEnabled(music)
+        self.volume_label.setEnabled(music)
         dirty = self.changed()
         empty = not self.directories()
         self.apply_button.setEnabled(dirty and not empty)

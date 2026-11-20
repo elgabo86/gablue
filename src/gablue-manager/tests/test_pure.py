@@ -3333,6 +3333,28 @@ class GlauncherConfigTest(unittest.TestCase):
         self.assertIn("columns = 6", out, "le reste du fichier est conservé")
         self.assertFalse(local.parse_glauncher_config(out)["music"])
 
+    def test_volume_musique_lu_et_ecrit(self):
+        # défaut mirroir de `music::DEFAULT_VOLUME` côté Rust
+        self.assertEqual(local.parse_glauncher_config("")["music_volume"], 60)
+        self.assertEqual(
+            local.parse_glauncher_config("music_volume = 35\n")["music_volume"], 35
+        )
+        # une valeur non entière retombe sur le défaut, comme une clé absente
+        self.assertEqual(
+            local.parse_glauncher_config('music_volume = "fort"\n')["music_volume"],
+            60,
+        )
+        out = local.write_glauncher_config(
+            "music = true\nmusic_volume = 70\n", {"music_volume": 45}
+        )
+        self.assertIn("music_volume = 45", out)
+        self.assertIn("music = true", out, "le reste du fichier est conservé")
+        self.assertEqual(local.parse_glauncher_config(out)["music_volume"], 45)
+        # une clé absente est ajoutée sans casser le TOML
+        out = local.write_glauncher_config("columns = 6\n", {"music_volume": 0})
+        self.assertIn("music_volume = 0", out)
+        self.assertEqual(local.parse_glauncher_config(out)["music_volume"], 0)
+
     def test_fichier_illisible_donne_les_defauts(self):
         # le launcher ignore une config invalide ; le manager lit la même chose
         state = local.parse_glauncher_config("fullscreen = oui\n")

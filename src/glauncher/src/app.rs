@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use iced::futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use iced::futures::sink::SinkExt;
 use iced::futures::{Stream, StreamExt};
+use iced::advanced::text::Wrapping;
 use iced::keyboard::key::Named;
 use iced::widget::operation;
 use iced::widget::scrollable::AbsoluteOffset;
@@ -16,7 +17,7 @@ use iced::widget::{
 };
 use iced::{
     Alignment, Background, Border, Color, ContentFit, Element, Fill, Font, Length, Padding, Point,
-    Rectangle, Shadow, Size, Subscription, Task, Theme, Vector, keyboard, window,
+    Rectangle, Shadow, Size, Subscription, Task, Theme, Vector, border, keyboard, window,
 };
 
 use crate::config::{Config, ViewMode};
@@ -27,10 +28,12 @@ use crate::gamepad::{PadButton, PadEvent, PadKind};
 use crate::index::{Index, Refresh};
 use crate::launch;
 use crate::library::{self, ArtworkCache, Game};
+use crate::marquee;
 use crate::music;
 use crate::playtime;
 use crate::pose::Pose;
 use crate::sparkles;
+use crate::spinner;
 use crate::state::{self, SortBy};
 use crate::thumbs;
 
@@ -54,6 +57,9 @@ const GAP: f32 = 20.0;
 /// Rayon des coins d'une vignette (partagé avec le canvas, qui redessine le
 /// cadre de sélection grossi).
 const CARD_RADIUS: f32 = 14.0;
+/// Rayon des coins de la cover elle-même : juste cassé, pour que le visuel
+/// ressemble à une boîte posée et non à un rectangle brut (demandé le 20/11).
+const ART_RADIUS: f32 = 5.0;
 /// Marge verticale autour de la liste (la verticale de `PAGE_PADDING_X`).
 /// Les deux servent aussi à situer la vignette sélectionnée, d'où le partage
 /// avec `selection_center`.
@@ -97,6 +103,9 @@ const COLUMNS_MIN: usize = 3;
 const COLUMNS_MAX: usize = 12;
 /// Durée du fondu au noir (secondes) — « doucement ».
 const FADE_SECONDS: f32 = 0.9;
+/// Roue de chargement : taille (px) et vitesse de rotation (rad/s).
+const SPIN_SIZE: f32 = 22.0;
+const SPIN_SPEED: f32 = 6.0;
 /// Durée du fondu de la page : montée vers le fond, bascule, descente. Deux
 /// rampes, parce que sauter au noir d'un coup puis en ressortir se lit comme un
 /// éclair (jugé « trop agressif » le 20/11) — le fondu enchaîné par le fond,
@@ -359,6 +368,9 @@ pub enum Message {
     Tick,
     /// Une image de la poussière d'étoiles (minuteur de `sparkles`).
     Sparkle,
+    /// Un téléchargement commence (le worker de visuels réveille l'interface,
+    /// sinon la roue de chargement n'apparaîtrait qu'une fois la requête finie).
+    Activity,
     ToggleView,
     /// Retour (clic droit, comme Échap/B) : referme menu, page, prompt.
     Back,
@@ -366,8 +378,10 @@ pub enum Message {
     ViewMenu,
     ViewMenuNav(i32),
     ViewMenuChoose(usize),
-    /// Carré / X : A→Z ou date de modification (jamais dans les favoris).
-    ToggleSort,
+    /// Menu « tri » (carré / X, `T`) : A→Z, récents, favoris.
+    SortMenu,
+    SortMenuNav(i32),
+    SortMenuChoose(usize),
     ToggleFullscreen,
     Quit,
     Nothing,
@@ -441,13 +455,9 @@ enum PageStep {
 /// Ordre du menu « Images » : le même que les types de visuels.
 const ART_MENU: [covers::ArtKind; 4] = covers::ArtKind::ALL;
 
-/// Les quatre vues, dans l'ordre du menu « type de liste ».
-const VIEWS: [ViewMode; 4] = [
-    ViewMode::Grid,
-    ViewMode::List,
-    ViewMode::Mosaic,
-    ViewMode::Favorites,
-];
+/// Les vues, dans l'ordre du menu « type de liste ». Les favoris ne sont pas
+/// une vue mais un tri (`state::SortBy::Favorites`).
+const VIEWS: [ViewMode; 3] = [ViewMode::Grid, ViewMode::List, ViewMode::Mosaic];
 
 /// Nom affiché d'une vue (menu « type de liste »).
 fn view_label(view: ViewMode) -> &'static str {
@@ -455,7 +465,6 @@ fn view_label(view: ViewMode) -> &'static str {
         ViewMode::Grid => "Grille",
         ViewMode::List => "Liste",
         ViewMode::Mosaic => "Mosaïque",
-        ViewMode::Favorites => "Favoris",
     }
 }
 
@@ -480,6 +489,8 @@ pub struct App {
     sort: SortBy,
     /// Menu « type de liste » (triangle / Y) : index choisi.
     view_menu: Option<usize>,
+    /// Menu « tri » (carré / X, `T`) : index choisi dans `SortBy::ALL`.
+    sort_menu: Option<usize>,
     status: Option<(String, bool)>,
     notice: Option<String>,
     pad: Option<PadKind>,
@@ -584,6 +595,12 @@ pub struct App {
     star: image::Handle,
     /// Horodatage de la dernière image (animations indépendantes du framerate).
     last_tick: std::time::Instant,
+    /// Rotation de la roue de chargement (radians).
+    spin: f32,
+    /// Titre sélectionné qui défile : temps écoulé depuis la sélection (s) et
+    /// slug du jeu concerné, pour repartir de zéro sur un autre titre.
+    title_elapsed: f32,
+    title_game: Option<String>,
     /// Poussière d'étoiles du fond (particules scintillantes, `sparkles = true`).
     sparkles: sparkles::Sparkles,
 }
@@ -619,6 +636,9 @@ impl App {
         let thumbs = thumbs::spawn(config.thumb_dir(), |event| match event {
             thumbs::ThumbEvent::Ready { slug, bytes } => post(Message::Thumb { slug, bytes }),
         });
+        // l'interface est réveillée au début de chaque téléchargement (roue de
+        // chargement) — sans ça elle ne redessinerait qu'à la fin de la requête
+        covers::wake_with(|| post(Message::Activity));
         let assets = assets::spawn(config.icon_dirs(), config.pack_icon_dir(), |event| {
             match event {
                 assets::Event::Icon { slug, icon } => post(Message::LocalIcon { slug, icon }),
@@ -692,10 +712,14 @@ impl App {
             playtime: playtime::load(&playtime_path),
             sort: saved.sort,
             view_menu: None,
+            sort_menu: None,
             scroll_id: Id::unique(),
             scroll: 0.0,
             scroll_target: 0.0,
             last_tick: std::time::Instant::now(),
+            spin: 0.0,
+            title_elapsed: 0.0,
+            title_game: None,
             picker: None,
             picked: None,
             rename: None,
@@ -762,6 +786,7 @@ impl App {
                 && self.fade < 0.999
                 && self.page.is_none()
                 && self.view_menu.is_none()
+                && self.sort_menu.is_none()
                 && self.art_menu.is_none()
                 && self.picker.is_none()
                 && self.rename.is_none()
@@ -790,6 +815,47 @@ impl App {
             || (self.scroll - self.scroll_target).abs() > 0.5
             || self.page_assets_animating()
             || self.to_launch.is_some()
+            || self.title_scrolls()
+            || self.loading()
+    }
+
+    /// Téléchargements en cours (ou tout juste finis) : la roue de chargement
+    /// est visible et doit tourner. Lue aussi par `animating`, sinon plus
+    /// aucune image ne serait demandée au moteur et la roue resterait figée.
+    fn loading(&self) -> bool {
+        covers::busy()
+    }
+
+    /// Le titre de la vignette sélectionnée défile-t-il ? (nom plus long que ce
+    /// qui tient dans la vignette). Sert à demander des images au moteur — au
+    /// repos, aucun défilement, donc aucune dépense.
+    fn title_scrolls(&self) -> bool {
+        if !self.active
+            || self.page.is_some()
+            || !matches!(self.config.view, ViewMode::Grid)
+            || self.view_menu.is_some()
+            || self.sort_menu.is_some()
+            || self.art_menu.is_some()
+            || self.picker.is_some()
+            || self.rename.is_some()
+        {
+            return false;
+        }
+        let Some(game) = self.games.get(self.selected) else {
+            return false;
+        };
+        game.name.chars().count() > self.title_budget()
+    }
+
+    /// Nombre de caractères qui tiennent dans une vignette. Volontairement
+    /// **pessimiste** (0,62 em par caractère, marges déduites) : mieux vaut
+    /// animer un titre qui tenait (le `Marquee` le centre alors, sans
+    /// défilement) que laisser figé un titre qui déborde en pixels.
+    fn title_budget(&self) -> usize {
+        let (cell, _, _) = self.metrics();
+        let size = if cell >= 220.0 { 17.0 } else { 15.5 };
+        let available = (cell - 2.0 * self.cell_inset() - 2.0 * PADDING).max(40.0);
+        (available / (size * 0.62)) as usize
     }
 
     /// Le jeu de la page ouverte, s'il y en a une.
@@ -1283,7 +1349,12 @@ impl App {
                 self.art_menu = None;
                 self.update_scroll_target();
                 // le héros de la page est prioritaire sur les visuels de fond
+                // et la file de fond s'arrête : ce qu'on regarde est la page,
+                // pas la liste qu'elle recouvre (`resume_covers` à la fermeture)
                 self.request_page_assets(index);
+                if let Some(queue) = self.covers.as_ref() {
+                    queue.pause(true);
+                }
                 Task::none()
             }
             Message::ClosePage => {
@@ -1372,7 +1443,7 @@ impl App {
                     // `columns` colonnes le zoom ne changeait rien du tout
                     // (constaté 18/11 : +/− sans effet). Le levier réel est le
                     // nombre de colonnes : un cran = une colonne.
-                    ViewMode::Grid | ViewMode::Favorites | ViewMode::List => {
+                    ViewMode::Grid | ViewMode::List => {
                         self.config.columns = zoom_columns(self.config.columns, step);
                         // `cell_size` n'est qu'une largeur MINIMALE : la fixer
                         // sur la largeur affichée rendait `fitted` égal au
@@ -1392,12 +1463,8 @@ impl App {
                 Task::none()
             }
             Message::ToggleView => {
-                let before = self.config.view;
                 self.config.view = self.config.view.flipped();
                 self.remember();
-                if before == ViewMode::Favorites || self.config.view == ViewMode::Favorites {
-                    self.apply_filter();
-                }
                 self.scroll = 0.0;
                 self.update_scroll_target();
                 self.request_visible_covers();
@@ -1456,15 +1523,26 @@ impl App {
                     AbsoluteOffset { x: 0.0, y: 0.0 },
                 )
             }
-            Message::ToggleSort => {
-                if self.config.view == ViewMode::Favorites {
-                    self.status = Some(("tri indisponible dans les favoris".into(), false));
+            Message::SortMenu => {
+                if self.running.is_some() {
                     return Task::none();
                 }
-                self.sort = match self.sort {
-                    SortBy::Name => SortBy::Modified,
-                    SortBy::Modified => SortBy::Name,
+                self.sort_menu = Some(self.sort.index());
+                Task::none()
+            }
+            Message::SortMenuNav(delta) => {
+                if let Some(choice) = self.sort_menu.as_mut() {
+                    let last = SortBy::ALL.len() - 1;
+                    *choice = (*choice as i32 + delta).clamp(0, last as i32) as usize;
+                }
+                Task::none()
+            }
+            Message::SortMenuChoose(index) => {
+                self.sort_menu = None;
+                let Some(&sort) = SortBy::ALL.get(index) else {
+                    return Task::none();
                 };
+                self.sort = sort;
                 self.remember();
                 self.apply_filter();
                 // Trier remet en DÉBUT de liste (demandé le 20/11) : c'est le
@@ -1497,6 +1575,10 @@ impl App {
                     self.view_menu = None;
                     return Task::none();
                 }
+                if self.sort_menu.is_some() {
+                    self.sort_menu = None;
+                    return Task::none();
+                }
                 if self.page.is_some() {
                     return Task::done(Message::ClosePage);
                 }
@@ -1527,6 +1609,10 @@ impl App {
                 self.sparkles.advance();
                 Task::none()
             }
+            // réveil du worker de téléchargements : ce message n'a d'autre but
+            // que de faire reconstruire la vue et démarrer les images (la roue
+            // de chargement apparaît ainsi au DÉBUT de la requête)
+            Message::Activity => Task::none(),
             Message::Quit => iced::exit(),
             Message::Nothing => Task::none(),
         }
@@ -1539,7 +1625,7 @@ impl App {
             return Task::none();
         }
         let step = match self.config.view {
-            ViewMode::Grid | ViewMode::Favorites | ViewMode::Mosaic => self.metrics().2,
+            ViewMode::Grid | ViewMode::Mosaic => self.metrics().2,
             ViewMode::List => 1,
         };
         let last = self.games.len() - 1;
@@ -1613,6 +1699,23 @@ impl App {
             .clamp(0.001, 0.05);
         self.last_tick = now;
 
+        // roue de chargement : elle tourne tant qu'un téléchargement court ou
+        // vient de finir
+        if self.loading() {
+            self.spin = (self.spin + dt * SPIN_SPEED) % std::f32::consts::TAU;
+        }
+
+        // titre trop long : son horloge repart de zéro quand la sélection
+        // change, pour qu'on relise le nom depuis le début
+        if self.title_scrolls() {
+            let slug = self.games.get(self.selected).map(|game| game.slug.clone());
+            if slug != self.title_game {
+                self.title_game = slug;
+                self.title_elapsed = 0.0;
+            }
+            self.title_elapsed += dt;
+        }
+
         // l'invite « appuie encore sur retour » expire avec la fenêtre
         if self.quit_hint
             && self
@@ -1663,6 +1766,8 @@ impl App {
                     self.page_hero = 0.0;
                     self.page_logo = 0.0;
                     self.page_cover = 0.0;
+                    // de retour sur la liste : les covers de fond reprennent
+                    self.resume_covers();
                 }
             }
             // on ressort du fond sur le nouvel écran
@@ -1735,7 +1840,7 @@ impl App {
     /// Grille et favoris seulement.
     fn slot_rect(&self, index: usize) -> Option<(Rectangle, Rectangle)> {
         self.games.get(index)?;
-        if !matches!(self.config.view, ViewMode::Grid | ViewMode::Favorites) {
+        if !matches!(self.config.view, ViewMode::Grid) {
             return None;
         }
         let (cell, art_width, columns) = self.metrics();
@@ -1762,11 +1867,30 @@ impl App {
     /// doit grossir avec la vignette — donc la carte laisse sa bordure
     /// transparente : deux cadres se superposeraient pendant la respiration.
     fn canvas_frame(&self) -> bool {
-        self.config.sparkles && matches!(self.config.view, ViewMode::Grid | ViewMode::Favorites)
+        self.config.sparkles && matches!(self.config.view, ViewMode::Grid)
     }
 
-    /// La vignette sélectionnée confiée au canvas : il redessine son cadre
-    /// d'accent et sa cover grossis ensemble, sans toucher à la mise en page.
+    /// Facteur de respiration de la vignette sélectionnée (`1.0` au repos).
+    /// Calculé une seule fois par image et partagé par la carte (`Pose`) et par
+    /// le cadre du canvas, qui doivent grossir **exactement** ensemble.
+    fn breath_factor(&self) -> f32 {
+        if !self.canvas_frame() || self.returning {
+            return 1.0;
+        }
+        let Some((_, art)) = self.slot_rect(self.selected) else {
+            return 1.0;
+        };
+        // une respiration qui mord le pied de page reste moche : la vignette
+        // se pose alors sans bouger. Sous le voile du lancement, elle s'arrête
+        // aussi (la cover ne « flotte » pas dans un écran noir).
+        let pulse = art.y >= PAGE_PADDING_Y - 0.5
+            && art.y + art.height <= self.viewport.1 - FOOTER_BAND
+            && self.fade <= sparkles::VEIL_CLEAR;
+        sparkles::breath_factor(self.sparkles.time(), pulse)
+    }
+
+    /// La vignette sélectionnée confiée au canvas : il ne redessine que son
+    /// cadre d'accent, à l'échelle de la carte.
     fn breathing(&self) -> Option<sparkles::Breath> {
         // Pendant le retour d'un jeu, les vignettes glissent depuis les bords
         // (`comeback`) : le canvas ne peut pas les suivre, il s'efface pour
@@ -1775,29 +1899,15 @@ impl App {
         if !self.canvas_frame() || self.returning {
             return None;
         }
-        let game = self.games.get(self.selected)?;
+        self.games.get(self.selected)?;
         let (card, art) = self.slot_rect(self.selected)?;
-        // le canvas n'est pas découpé par la zone défilante : il découpe à la
-        // même bande, mais une respiration qui mord le pied de page reste
-        // moche — le cadre se pose alors sans bouger
-        let pulse = art.y >= PAGE_PADDING_Y - 0.5
-            && art.y + art.height <= self.viewport.1 - FOOTER_BAND;
-        let (_, art_width, _) = self.metrics();
-        let cover = self.cover_handle(game, art_width);
-        let star = self
-            .favorites
-            .contains(&game.slug)
-            .then(|| self.star.clone());
         Some(sparkles::Breath {
             card,
             art,
             radius: CARD_RADIUS,
             frame_color: ACCENT,
             frame_width: FOCUS_BORDER,
-            owns_art: cover.is_some(),
-            cover,
-            star,
-            pulse,
+            factor: self.breath_factor(),
         })
     }
 
@@ -1808,7 +1918,7 @@ impl App {
     fn comeback(&self, index: usize) -> Option<(f32, f32)> {
         if !self.returning
             || self.fade <= 0.001
-            || !matches!(self.config.view, ViewMode::Grid | ViewMode::Favorites)
+            || !matches!(self.config.view, ViewMode::Grid)
         {
             return None;
         }
@@ -1831,7 +1941,7 @@ impl App {
     fn update_scroll_target(&mut self) {
         let columns = self.metrics().2;
         let (row, row_height) = match self.config.view {
-            ViewMode::Grid | ViewMode::Favorites | ViewMode::Mosaic => {
+            ViewMode::Grid | ViewMode::Mosaic => {
                 (self.selected / columns, self.slot_height() + self.gap())
             }
             ViewMode::List => (self.selected, self.list_row_height() + 8.0),
@@ -1864,11 +1974,7 @@ impl App {
             &refresh.changed,
         );
         self.games = self.all_games.clone();
-        if self.config.view == ViewMode::Favorites {
-            self.apply_filter();
-        } else {
-            self.sort_games();
-        }
+        self.apply_filter();
         self.selected = previous
             .and_then(|path| self.games.iter().position(|game| game.path == path))
             .unwrap_or_else(|| self.selected.min(self.games.len().saturating_sub(1)));
@@ -1890,12 +1996,23 @@ impl App {
         }
     }
 
-    /// Le menu d'image est refermé : les covers de fond reprennent.
+    /// La page est refermée (ou le menu d'image) : les covers de fond
+    /// reprennent. Rien à faire tant qu'un des deux reste ouvert : la file de
+    /// fond doit rester muette, sinon la roue de chargement tournerait pour des
+    /// covers qu'on ne regarde pas (demandé le 20/11).
     fn resume_covers(&mut self) {
+        if self.page.is_some() || self.picker.is_some() {
+            return;
+        }
         if let Some(queue) = self.covers.clone() {
+            // `pause(true)` vide la file de fond : ses demandes redeviennent
+            // demandables, sinon ces jeux restaient marqués « demandés » pour
+            // toute la session et ne recevaient plus jamais leurs visuels.
+            for cle in std::mem::take(&mut self.visible_covers) {
+                self.art_requested.remove(&cle);
+            }
             queue.pause(false);
         }
-        self.visible_covers.clear();
         self.request_visible_covers();
     }
 
@@ -1913,7 +2030,7 @@ impl App {
     /// Hauteur d'une rangée, espacement compris (grille ou liste).
     fn row_span(&self) -> f32 {
         match self.config.view {
-            ViewMode::Grid | ViewMode::Favorites | ViewMode::Mosaic => {
+            ViewMode::Grid | ViewMode::Mosaic => {
                 self.slot_height() + self.gap()
             }
             ViewMode::List => self.list_row_height() + 8.0,
@@ -1923,7 +2040,7 @@ impl App {
     /// Nombre de jeux d'une page (L1/R1, Page↑/↓).
     fn page_size(&self) -> usize {
         match self.config.view {
-            ViewMode::Grid | ViewMode::Favorites | ViewMode::Mosaic => self.rows_visible() * self.metrics().2,
+            ViewMode::Grid | ViewMode::Mosaic => self.rows_visible() * self.metrics().2,
             ViewMode::List => self.rows_visible(),
         }
     }
@@ -1940,7 +2057,7 @@ impl App {
         let first = (self.scroll / self.row_span()).floor().max(0.0) as usize;
         let rows = self.rows_visible();
         match self.config.view {
-            ViewMode::Grid | ViewMode::Favorites | ViewMode::Mosaic => {
+            ViewMode::Grid | ViewMode::Mosaic => {
                 let columns = self.metrics().2;
                 visible_items(self.scroll, self.row_span(), rows, columns, len)
             }
@@ -2184,7 +2301,7 @@ impl App {
             },
             false,
         ));
-        if self.config.view == ViewMode::Favorites {
+        if self.sort == SortBy::Favorites {
             // le jeu quitte la liste des favoris sous les yeux
             self.apply_filter();
             self.update_scroll_target();
@@ -2205,22 +2322,20 @@ impl App {
         );
     }
 
-    /// Ordre de la bibliothèque : A→Z (défaut) ou paquets récents d'abord.
-    /// Les favoris gardent l'ordre alphabétique (retour 18/11).
+    /// Ordre de la bibliothèque : A→Z (défaut), paquets récents d'abord, ou
+    /// liste des favoris (alphabétique, retour 18/11).
     fn sort_games(&mut self) {
-        if self.config.view == ViewMode::Favorites {
-            self.games.sort_by_cached_key(|game| game.name.to_lowercase());
-            return;
-        }
         match self.sort {
-            SortBy::Name => self.games.sort_by_cached_key(|game| game.name.to_lowercase()),
+            SortBy::Name | SortBy::Favorites => {
+                self.games.sort_by_cached_key(|game| game.name.to_lowercase())
+            }
             SortBy::Modified => self.games.sort_by_key(|game| std::cmp::Reverse(game.mtime)),
         }
     }
 
     fn apply_filter(&mut self) {
         let current = self.games.get(self.selected).map(|game| game.slug.clone());
-        self.games = if self.config.view == ViewMode::Favorites {
+        self.games = if self.sort == SortBy::Favorites {
             let favorites = &self.favorites;
             self.all_games
                 .iter()
@@ -2313,6 +2428,22 @@ impl App {
             };
         }
 
+        // menu « tri » (T) : haut/bas puis Entrée
+        if let Some(choice) = self.sort_menu {
+            return match &key {
+                keyboard::Key::Named(Named::Escape) => {
+                    self.sort_menu = None;
+                    Task::none()
+                }
+                keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
+                    Task::done(Message::SortMenuChoose(choice))
+                }
+                keyboard::Key::Named(Named::ArrowDown) => Task::done(Message::SortMenuNav(1)),
+                keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::SortMenuNav(-1)),
+                _ => Task::none(),
+            };
+        }
+
         // menu « quel visuel changer » : haut/bas puis Entrée
         if self.art_menu.is_some() {
             return match &key {
@@ -2379,7 +2510,7 @@ impl App {
                 "s" | "j" => return self.navigate(Nav::Down),
                 "w" | "k" => return self.navigate(Nav::Up),
                 "v" => return Task::done(Message::ToggleView),
-                "t" => return Task::done(Message::ToggleSort),
+                "t" => return Task::done(Message::SortMenu),
                 "c" => return Task::done(Message::OpenPicker(covers::ArtKind::Grid)),
                 "+" | "=" | "＋" => return Task::done(Message::Zoom(1)),
                 "-" | "_" | "−" | "–" | "‐" => return Task::done(Message::Zoom(-1)),
@@ -2456,6 +2587,19 @@ impl App {
                         _ => Task::none(),
                     };
                 }
+                // menu « tri » (carré / X)
+                if let Some(choice) = self.sort_menu {
+                    return match button {
+                        PadButton::Confirm => Task::done(Message::SortMenuChoose(choice)),
+                        PadButton::Back => {
+                            self.sort_menu = None;
+                            Task::none()
+                        }
+                        PadButton::Up => Task::done(Message::SortMenuNav(-1)),
+                        PadButton::Down => Task::done(Message::SortMenuNav(1)),
+                        _ => Task::none(),
+                    };
+                }
                 if self.art_menu.is_some() {
                     return match button {
                         PadButton::Confirm => Task::done(Message::ArtMenuPick),
@@ -2489,8 +2633,8 @@ impl App {
                     // triangle / Y : le MENU des types de liste (le cycle
                     // rapide reste au clavier, V/Tab)
                     PadButton::View => Task::done(Message::ViewMenu),
-                    // carré / X : A→Z ou récents d'abord
-                    PadButton::Menu => Task::done(Message::ToggleSort),
+                    // carré / X : le MENU du tri (A→Z, récents, favoris)
+                    PadButton::Menu => Task::done(Message::SortMenu),
                     PadButton::Confirm => Task::done(Message::OpenPage(self.selected)),
                     // « retour » ne quitte pas du premier coup : deux appuis
                     // rapprochés (1,5 s) sont nécessaires, pour ne pas
@@ -2614,6 +2758,9 @@ impl App {
         if self.view_menu.is_some() {
             menus = stack![menus, self.view_menu_view()].into();
         }
+        if self.sort_menu.is_some() {
+            menus = stack![menus, self.sort_menu_view()].into();
+        }
         if self.art_menu.is_some() {
             menus = stack![menus, self.art_menu_view()].into();
         }
@@ -2625,6 +2772,30 @@ impl App {
         }
         view = stack![view, menus].into();
 
+        // Roue de chargement : emplacement TOUJOURS présent (jamais un enfant
+        // conditionnel de la pile racine : un changement de forme recrée le
+        // sous-arbre, donc la zone défilante, et la liste remonte — constaté
+        // 20/11). Le canvas ne dessine rien hors téléchargement.
+        view = stack![
+            view,
+            container(spinner::view::<Message>(
+                self.spin,
+                SPIN_SIZE,
+                self.loading()
+            ))
+            .width(Fill)
+            .height(Fill)
+            .align_x(Alignment::End)
+            .align_y(Alignment::Start)
+            .padding(Padding {
+                top: 10.0,
+                right: 12.0,
+                bottom: 0.0,
+                left: 0.0,
+            })
+        ]
+        .into();
+
         // clic droit = retour, partout : les couches du dessus n'ont pas de
         // gestion du bouton droit, l'évènement remonte donc jusqu'ici
         mouse_area(view).on_right_press(Message::Back).into()
@@ -2633,14 +2804,14 @@ impl App {
     /// Liste des jeux (grille, liste ou mosaïque) avec en-tête et pied.
     fn launcher_view(&self) -> Element<'_, Message> {
         let content: Element<'_, Message> = if self.games.is_empty() {
-            if self.config.view == ViewMode::Favorites {
+            if self.sort == SortBy::Favorites {
                 self.favorites_empty()
             } else {
                 self.empty_state()
             }
         } else {
             match self.config.view {
-                ViewMode::Grid | ViewMode::Favorites | ViewMode::Mosaic => scrollable(self.grid())
+                ViewMode::Grid | ViewMode::Mosaic => scrollable(self.grid())
                     .id(self.scroll_id.clone())
                     .height(Fill)
                     .on_scroll(|viewport| Message::Scrolled(viewport.absolute_offset().y))
@@ -2993,6 +3164,57 @@ impl App {
             .into()
     }
 
+    /// Menu « tri » (carré / X, `T`) : A→Z, récents, favoris — la même
+    /// présentation que le menu des vues, le tri courant coché.
+    fn sort_menu_view(&self) -> Element<'_, Message> {
+        let Some(choice) = self.sort_menu else {
+            return Row::new().into();
+        };
+
+        let mut rows = Column::new().spacing(6);
+        for (index, sort) in SortBy::ALL.iter().enumerate() {
+            let selected = index == choice;
+            let current = *sort == self.sort;
+            let line = container(
+                row![
+                    text(sort.label())
+                        .size(18)
+                        .width(Fill)
+                        .color(if selected { Color::BLACK } else { TEXT }),
+                    text(if current { "✓" } else { "" })
+                        .size(14)
+                        .color(if selected { Color::BLACK } else { MUTED }),
+                ]
+                .align_y(Alignment::Center),
+            )
+            .width(Fill)
+            .padding([9.0, 14.0])
+            .style(move |_| action_style(selected));
+
+            rows = rows.push(mouse_area(line).on_press(Message::SortMenuChoose(index)));
+        }
+
+        let panel = container(column![text("Tri").size(18).color(TEXT), rows].spacing(12))
+            .padding(18)
+            .width(Length::Fixed(300.0))
+            .style(|_| picker_panel_style());
+
+        container(panel)
+            .width(Fill)
+            .height(Fill)
+            .padding(24)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.6,
+                    ..Color::BLACK
+                })),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
     fn art_menu_view(&self) -> Element<'_, Message> {
         let Some(choice) = self.art_menu else {
             return Row::new().into();
@@ -3284,7 +3506,6 @@ impl App {
             ViewMode::Grid => "Grille",
             ViewMode::List => "Liste",
             ViewMode::Mosaic => "Mosaïque",
-            ViewMode::Favorites => "Favoris",
         }
     }
 
@@ -3317,20 +3538,19 @@ impl App {
         let selected = index == self.selected;
         let (cell, art_width, _) = self.metrics();
         let art_height = art_width * ART_RATIO;
-        // Le canvas redessine la cover ET la tranche de la sélection (elles
-        // doivent respirer ensemble) : la carte garde son image (elle est peinte
-        // une seconde fois par le canvas, au même endroit — une image opaque
-        // superposée ne se voit pas) mais lui laisse la tranche et l'étoile,
-        // sinon elles seraient peintes deux fois et fonceraient. Garder l'image
-        // dans la carte évite qu'elle manque à la toute première image, avant
-        // que le canvas n'ait sa propre allocation (constaté 20/11).
-        let canvas_art = self.canvas_frame() && selected && game.cover.is_some() && !self.returning;
 
+        // La carte peint TOUT son visuel (cover, tranche, étoile) : c'est elle
+        // que la respiration grossit, d'un bloc, via `Pose` — le canvas ne
+        // redessine que le cadre d'accent, par-dessus. Une vignette sans cover
+        // (sample + icône) ne savait pas être rejouée par le canvas, d'où
+        // l'ancienne répartition ; elle n'a plus lieu d'être.
         let art: Element<'_, Message> = match self.cover_handle(game, art_width) {
             Some(handle) => image(handle)
                 .width(Length::Fixed(art_width))
                 .height(Length::Fixed(art_height))
                 .content_fit(ContentFit::Contain)
+                // coins cassés : une boîte posée, pas un rectangle brut
+                .border_radius(ART_RADIUS)
                 .into(),
             None => sample_art(
                 &self.sample,
@@ -3340,7 +3560,7 @@ impl App {
                 art_height,
             ),
         };
-        let art: Element<'_, Message> = if self.favorites.contains(&game.slug) && !canvas_art {
+        let art: Element<'_, Message> = if self.favorites.contains(&game.slug) {
             // étoile discrète en haut à droite de la cover
             let badge = container(self.star_icon(19.0, 1.0))
                 .width(Fill)
@@ -3353,11 +3573,10 @@ impl App {
             art
         };
         // Tranche du boîtier : bande sombre au bord gauche de la cover et arête
-        // claire, superposées (aucune mise en page refaite). Le canvas redessine
-        // exactement la même chose quand la respiration grossit la vignette,
-        // d'où les constantes partagées dans `sparkles`. Hauteurs FIXES : un
-        // `Fill` dans un `stack` prendrait la place offerte et la rangée
-        // dépasserait `row_height`, donc le repère du canvas dériverait.
+        // claire, superposées (aucune mise en page refaite). Elle suit les
+        // coins arrondis de la cover à gauche, sinon son angle carré dépasserait
+        // du visuel. Hauteurs FIXES : un `Fill` dans un `stack` prendrait la
+        // place offerte et la rangée dépasserait `row_height`.
         let spine_width = sparkles::spine_width(art_width);
         let spine_edge = container(Row::new())
             .width(Length::Fixed(1.0))
@@ -3372,23 +3591,41 @@ impl App {
             .align_x(Alignment::End)
             .style(|_| container::Style {
                 background: Some(Background::Color(sparkles::SPINE_FILL)),
+                border: Border {
+                    radius: border::Radius {
+                        top_left: ART_RADIUS,
+                        bottom_left: ART_RADIUS,
+                        ..border::Radius::default()
+                    },
+                    ..Border::default()
+                },
                 ..container::Style::default()
             });
-        let art: Element<'_, Message> = if canvas_art {
-            // le canvas peint la tranche avec la cover (scaled)
-            art
-        } else {
-            stack![art, spine].into()
-        };
+        let art: Element<'_, Message> = stack![art, spine].into();
 
-        let body = column![
-            art,
-            text(short(&game.name, (cell / 11.0) as usize))
-                .size(if cell >= 220.0 { 17.0 } else { 15.5 })
-                .color(if selected { TEXT } else { MUTED }),
-        ]
-        .spacing(6)
-        .align_x(Alignment::Center);
+        // Titre : la sélection fait défiler son nom s'il ne tient pas (lecture
+        // complète, sans élargir la vignette ni animer toute la grille) ; les
+        // autres restent tronqués avec une ellipse.
+        let title_size = if cell >= 220.0 { 17.0 } else { 15.5 };
+        let title: Element<'_, Message> = if selected {
+            marquee::Marquee::new(
+                text(game.name.as_str())
+                    .size(title_size)
+                    .color(TEXT)
+                    .wrapping(Wrapping::None)
+                    .width(Length::Shrink),
+            )
+            .elapsed(self.title_elapsed)
+            .into()
+        } else {
+            text(short(&game.name, self.title_budget()))
+                .size(title_size)
+                .color(MUTED)
+                .into()
+        };
+        let body = column![art, title]
+            .spacing(6)
+            .align_x(Alignment::Center);
 
         // Le canvas dessine le cadre de la vignette sélectionnée (il doit
         // grossir avec elle) : la carte garde l'épaisseur pour la mise en page
@@ -3410,13 +3647,21 @@ impl App {
         // dézoomant (`Pose` applique une vraie transformation au rendu — titre
         // compris — sans toucher à la mise en page). Au repos, aucune
         // transformation : le widget se dessine normalement.
-        match self.comeback(index) {
-            Some((scale, dx)) => Pose::new(card)
+        if let Some((scale, dx)) = self.comeback(index) {
+            return Pose::new(card)
                 .scale(scale)
                 .offset(Vector::new(dx, 0.0))
-                .into(),
-            None => card,
+                .into();
         }
+        // Respiration : la vignette ENTIÈRE grossit d'un bloc — fond bleu de
+        // sélection, cover, tranche, étoile et titre — donc le halo de
+        // sélection suit enfin l'image (constaté 20/11). Le cadre d'accent est
+        // peint par le canvas à la même échelle, par-dessus.
+        let factor = if selected { self.breath_factor() } else { 1.0 };
+        if (factor - 1.0).abs() > 0.0001 {
+            return Pose::new(card).scale(factor).into();
+        }
+        card
     }
 
     /// Vignette de mosaïque : cover pleine, collée aux voisines, sans nom.
@@ -3597,7 +3842,7 @@ impl App {
                 text("Ouvre un jeu (Entrée ou A), puis appuie sur ☆ Favori.")
                     .size(14)
                     .color(MUTED),
-                text("V / Y font défiler grille → liste → mosaïque → favoris.")
+                text("Le tri Favoris (menu T, ou Carré/X) ne montre qu'eux.")
                     .size(14)
                     .color(MUTED),
             ]
@@ -3688,43 +3933,66 @@ impl App {
         // une pastille discrète plutôt qu'une ligne grise noyée dans le pied de
         // page (demandé le 20/11). Pas de compte de jeux ni de progression des
         // covers : le pied de page ne doit porter aucune statistique.
-        let sort: Element<'_, Message> = match self.config.view {
-            ViewMode::Favorites => Row::new().into(),
-            _ => container(
-                row![
-                    text("TRI").size(11).font(HELP_FONT).color(MUTED),
-                    text(self.sort.label()).size(15).font(HELP_FONT).color(TEXT),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            )
-            .padding(Padding {
-                top: 5.0,
-                right: 12.0,
-                bottom: 5.0,
-                left: 12.0,
-            })
-            .style(|_| container::Style {
-                background: Some(Background::Color(CELL_BG)),
-                border: Border {
-                    color: ACCENT,
-                    width: 1.0,
-                    radius: 11.0.into(),
-                },
-                ..container::Style::default()
-            })
-            .into(),
-        };
+        let sort: Element<'_, Message> = container(
+            row![
+                text("TRI").size(11).font(HELP_FONT).color(MUTED),
+                text(self.sort.label()).size(15).font(HELP_FONT).color(TEXT),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .padding(Padding {
+            top: 5.0,
+            right: 12.0,
+            bottom: 5.0,
+            left: 12.0,
+        })
+        .style(|_| container::Style {
+            background: Some(Background::Color(CELL_BG)),
+            border: Border {
+                color: ACCENT,
+                width: 1.0,
+                radius: 11.0.into(),
+            },
+            ..container::Style::default()
+        })
+        .into();
 
-        // Nom du jeu sélectionné, à droite : c'est l'information principale du
-        // pied de page, d'autant que les noms sont masqués en mosaïque.
-        let name: Element<'_, Message> = self
-            .games
-            .get(self.selected)
-            .map(|game| text(short(&game.name, 48)).size(17).color(TEXT).into())
-            .unwrap_or_else(|| Row::new().into());
+        // Total de la bibliothèque, tout à droite : une pastille discrète, la
+        // seule statistique du pied de page (demandée le 20/11). En favoris,
+        // c'est le nombre de favoris — c'est la liste affichée. Le nom du jeu
+        // n'est plus répété ici (la vignette sélectionnée le porte, et il
+        // encombrait le pied de page — demandé le 20/11).
+        let total: Element<'_, Message> = container(
+            text(match self.sort {
+                SortBy::Favorites if self.games.len() > 1 => {
+                    format!("{} favoris", self.games.len())
+                }
+                SortBy::Favorites => format!("{} favori", self.games.len()),
+                _ => plural(self.games.len()),
+            })
+            .size(13)
+            .font(HELP_FONT)
+            .color(MUTED),
+        )
+        .padding(Padding {
+            top: 4.0,
+            right: 11.0,
+            bottom: 4.0,
+            left: 11.0,
+        })
+        .style(|_| container::Style {
+            background: Some(Background::Color(CELL_BG)),
+            border: Border {
+                color: CELL_BORDER,
+                width: 1.0,
+                radius: 9.0.into(),
+            },
+            ..container::Style::default()
+        })
+        .into();
 
-        // Aide des touches au CENTRE, tri à gauche, message et nom à droite :
+        // Aide des touches au CENTRE, tri à gauche, message et total à droite :
         // deux couches, parce qu'une `Row` ne sait pas centrer dans la fenêtre
         // quand les blocs des côtés n'ont pas la même largeur. Un `Stack` prend
         // sa hauteur sur son PREMIER enfant : c'est la pastille de tri (plus
@@ -3737,7 +4005,7 @@ impl App {
             .align_x(Alignment::Center)
             .center_y(Fill);
         let sides = container(
-            row![sort, Row::new().width(Fill), status, name]
+            row![sort, Row::new().width(Fill), status, total]
                 .spacing(16)
                 .align_y(Alignment::Center),
         )

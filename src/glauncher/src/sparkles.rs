@@ -81,14 +81,10 @@ pub struct Sparkles {
     time: f32,
 }
 
-/// Vignette sélectionnée : le canvas redessine **la vignette entière** — cadre
-/// d'accent et cover grossis ensemble autour du même centre, donc le cadre
-/// respire avec l'image au lieu de rester figé pendant que la cover grossit
-/// dedans.
-///
-/// Le cadre est **toujours** dessiné par le canvas (la vignette laisse sa
-/// bordure transparente, voir `App::canvas_frame`) : sinon deux cadres se
-/// superposeraient pendant le zoom.
+/// Sélection qui respire : la **vignette entière** (fond bleu, cover, tranche,
+/// étoile et titre) est grossie par la carte elle-même (`Pose`), et le canvas
+/// ne fait que redessiner le cadre d'accent autour de la cover, à la même
+/// échelle et autour du même centre.
 #[derive(Clone)]
 pub struct Breath {
     /// Vignette entière (cadre, marge interne, cover, titre).
@@ -100,30 +96,18 @@ pub struct Breath {
     /// Couleur et épaisseur du cadre de sélection.
     pub frame_color: Color,
     pub frame_width: f32,
-    /// Visuel affiché (miniature ou cover pleine, selon la largeur). Absent
-    /// quand la vignette montre le sample « sans cover » : le canvas ne
-    /// redessine alors que le cadre.
-    pub cover: Option<Handle>,
-    /// Étoile des favoris, si le jeu en a une : le canvas la redessine
-    /// par-dessus, sinon elle serait recouverte par la cover grossie.
-    pub star: Option<Handle>,
-    /// Le canvas peint-il la cover ET la tranche de cette vignette ? Vrai
-    /// quand la carte lui laisse l'image (elle doit respirer) : dans ce cas le
-    /// canvas est le SEUL peintre, à tous les facteurs — sinon l'image
-    /// réapparaîtrait d'un coup au minimum de la respiration.
-    pub owns_art: bool,
-    /// La vignette bouge-t-elle ? Faux quand elle mord sur le pied de page :
-    /// le cadre reste posé à sa place, sans respiration.
-    pub pulse: bool,
+    /// Facteur d'échelle courant (1.0 = repos). Il est calculé une seule fois
+    /// par image, dans `App::breathing`, pour que la carte et le cadre du
+    /// canvas bougent EXACTEMENT ensemble.
+    pub factor: f32,
 }
 
 /// Respiration de la vignette sélectionnée : période (s) et amplitude (2,8 %).
 const BREATH_PERIOD: f32 = 4.0;
 const BREATH_AMPLITUDE: f32 = 0.028;
-/// Étoile des favoris posée sur la vignette (même taille et même marge que
-/// dans la carte, sinon elle saute quand la respiration la reprend).
-const STAR_SIZE: f32 = 19.0;
-const STAR_MARGIN: f32 = 6.0;
+/// Rayon du cadre d'accent, plus court que celui de la carte : le rectangle
+/// qu'il entoure est plus petit (la cover seule).
+const FRAME_RADIUS_RATIO: f32 = 0.72;
 
 /// Tranche du boîtier : bande sombre au bord gauche de la cover (le boîtier vu
 /// de face mais légèrement de côté), avec un trait clair sur son arête.
@@ -147,6 +131,12 @@ impl Sparkles {
             sprite: Handle::from_bytes(SPRITE),
             time: 0.0,
         }
+    }
+
+    /// Temps écoulé depuis le lancement (s) : la carte s'en sert pour respirer
+    /// au même rythme que le canvas, sans attendre une image de particules.
+    pub fn time(&self) -> f32 {
+        self.time
     }
 
     /// Avance le temps d'une image du minuteur.
@@ -204,29 +194,28 @@ impl Program<Message> for Field {
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let started = std::time::Instant::now();
-        // Deux géométries, parce qu'iced dessine **tous les tracés avant toutes
-        // les images** à l'intérieur d'une même géométrie : la cover (image)
-        // doit passer SOUS la tranche et le cadre (tracés), sinon le boîtier
-        // perd son arête pendant tout le zoom (constaté 20/11). Les particules
-        // restent dans la seconde, donc devant le cadre.
-        let mut images = Frame::new(renderer, bounds.size());
+        // Une seule géométrie : la respiration est peinte par la carte
+        // elle-même (`Pose`), le canvas ne porte que le cadre d'accent et les
+        // particules. Dans une géométrie, iced dessine **tous les tracés avant
+        // toutes les images** : le cadre (tracé) passe donc sous les particules
+        // (images), ce qui est l'ordre voulu.
         let mut frame = Frame::new(renderer, bounds.size());
         if bounds.width <= 1.0 || bounds.height <= 1.0 {
-            return vec![images.into_geometry(), frame.into_geometry()];
+            return vec![frame.into_geometry()];
         }
 
         let width = bounds.width;
         let height = bounds.height;
         let scale = (height / 1080.0).clamp(0.62, 1.7);
 
-        // Vignette sélectionnée : cadre ET cover grossis ensemble, comme un
-        // boîtier qu'on approche. Sous les particules, qui passent devant.
-        // Le cadre est dessiné même sous le voile du lancement (sinon la
-        // sélection disparaîtrait pendant les 0,9 s du fondu) : c'est la
-        // respiration seule qui s'arrête.
+        // Vignette sélectionnée : son facteur de respiration est déjà calculé
+        // par la carte (`App::breathing`) ; le canvas ne fait que redessiner
+        // le cadre d'accent autour de la cover, à la même échelle. Le cadre est
+        // dessiné même sous le voile du lancement (sinon la sélection
+        // disparaîtrait pendant les 0,9 s du fondu) : c'est la respiration
+        // seule qui s'arrête.
         if let Some(breath) = &self.breath {
-            let factor = breath_factor(self.time, breath.pulse && veil_clear(self.fade));
-            draw_breath(&mut images, &mut frame, breath, factor, bounds);
+            draw_breath(&mut frame, breath, bounds);
         }
 
         let count = ((width * height) / (1920.0 * 1080.0) * 132.0).clamp(40.0, 150.0);
@@ -288,14 +277,16 @@ impl Program<Message> for Field {
             report(started.elapsed().as_nanos() as u64);
         }
 
-        vec![images.into_geometry(), frame.into_geometry()]
+        vec![frame.into_geometry()]
     }
 }
 
 /// Facteur de respiration : `1.0` au repos, jusqu'à `1 + BREATH_AMPLITUDE` au
 /// sommet, sur `BREATH_PERIOD` secondes — un aller-retour lent et continu
 /// (départ et arrivée à `1.0`, donc aucun saut en reprenant la vignette).
-fn breath_factor(time: f32, pulse: bool) -> f32 {
+/// `App` s'en sert pour la carte (`Pose`) ET pour le cadre du canvas, avec le
+/// même temps : les deux bougent donc exactement ensemble.
+pub fn breath_factor(time: f32, pulse: bool) -> f32 {
     if !pulse {
         return 1.0;
     }
@@ -303,34 +294,15 @@ fn breath_factor(time: f32, pulse: bool) -> f32 {
     1.0 + BREATH_AMPLITUDE * (0.5 - 0.5 * phase.cos())
 }
 
-/// Dessine la vignette sélectionnée grossie de `factor` autour de son centre :
-/// cover, tranche du boîtier, étoile des favoris et **cadre d'accent** — le
-/// tout d'un seul bloc, pour que le cadre respire avec l'image.
+/// Dessine le **cadre d'accent** autour de la cover, grossi de `factor` autour
+/// du centre de la vignette — exactement la transformation que la carte
+/// applique elle-même (`Pose`), donc le cadre reste collé à l'image qui respire.
 ///
-/// Réparti sur les deux couches de la géométrie : `images` porte la cover et
-/// l'étoile, `shapes` la tranche et le cadre (voir `Field::draw`).
-fn draw_breath(
-    images: &mut Frame,
-    shapes: &mut Frame,
-    breath: &Breath,
-    factor: f32,
-    bounds: Rectangle,
-) {
-    let card = breath.card;
-    let middle = Point::new(card.x + card.width * 0.5, card.y + card.height * 0.5);
-    let scaled = |rect: Rectangle| -> Rectangle {
-        let center = Point::new(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
-        let width = rect.width * factor;
-        let height = rect.height * factor;
-        Rectangle::new(
-            Point::new(
-                middle.x + (center.x - middle.x) * factor - width * 0.5,
-                middle.y + (center.y - middle.y) * factor - height * 0.5,
-            ),
-            Size::new(width, height),
-        )
-    };
-
+/// Seul le cadre vient du canvas : le fond bleu, la cover, la tranche, l'étoile
+/// et le titre sont grossis par la carte, ce qui laisse le cadre au-dessus de
+/// l'image (une géométrie dessinée après l'arbre). Le cadre entoure la cover,
+/// pas le titre (demandé le 20/11).
+fn draw_breath(shapes: &mut Frame, breath: &Breath, bounds: Rectangle) {
     // Le canvas couvre toute la fenêtre alors que la liste est découpée par sa
     // zone défilante : on découpe nous-mêmes à la même bande, sinon le cadre
     // d'une vignette sortie de la liste (ou glissée sous le pied de page)
@@ -340,51 +312,23 @@ fn draw_breath(
         return;
     }
 
-    let card = scaled(breath.card);
-    let art = scaled(breath.art);
-    // Quand la carte laisse son image au canvas (`owns_art`), il la peint à
-    // TOUS les facteurs, y compris au repos : c'est la seule façon d'éviter
-    // qu'elle réapparaisse d'un coup au minimum de la respiration (constaté
-    // 20/11). Sinon (vignette sans cover : sample + icône, que le canvas ne
-    // sait pas dessiner) la carte garde son image et le canvas ne rejoue que
-    // la tranche, pendant le zoom seulement — la peindre deux fois la
-    // foncerait, `SPINE_FILL` étant à 30 % d'alpha.
-    let zoomed = factor > 1.0005;
-    images.with_clip(band, |layer| {
-        if (breath.owns_art || zoomed)
-            && let Some(cover) = &breath.cover
-            && let Some(clip) = intersect(band, card)
-        {
-            layer.with_clip(clip, |inner| {
-                // `snap(false)` explicite : le quad doit glisser en continu,
-                // pas sauter d'un pixel entier à chaque image (ce que faisait
-                // un raccord au pixel près, d'où l'effet d'escalier).
-                inner.draw_image(art, Image::new(cover.clone()).snap(false));
-            });
-        }
-        if let Some(star) = &breath.star {
-            let size = STAR_SIZE * factor;
-            let x = art.x + art.width - STAR_MARGIN * factor - size;
-            let y = art.y + STAR_MARGIN * factor;
-            draw_sprite(
-                layer,
-                star,
-                x + size * 0.5,
-                y + size * 0.5,
-                size,
-                1.0,
-                0.0,
-            );
-        }
-    });
+    let factor = breath.factor;
+    let middle = breath.card.center();
+    let art = breath.art;
+    let center = art.center();
+    let art = Rectangle::new(
+        Point::new(
+            middle.x + (center.x - middle.x) * factor - art.width * factor * 0.5,
+            middle.y + (center.y - middle.y) * factor - art.height * factor * 0.5,
+        ),
+        Size::new(art.width * factor, art.height * factor),
+    );
+
     shapes.with_clip(band, |layer| {
-        if breath.owns_art || zoomed {
-            draw_spine(layer, art);
-        }
         let path = Path::rounded_rectangle(
-            card.position(),
-            card.size(),
-            (breath.radius * factor).into(),
+            art.position(),
+            art.size(),
+            (breath.radius * FRAME_RADIUS_RATIO * factor).into(),
         );
         layer.stroke(
             &path,
@@ -406,33 +350,6 @@ fn list_band(bounds: Rectangle) -> Rectangle {
     )
 }
 
-/// Tranche du boîtier : bande sombre au bord gauche de la cover, arête claire
-/// sur son bord droit. Dessinée par la vignette (`App::card`) et rejouée ici à
-/// l'identique quand la respiration redessine la cover par-dessus.
-fn draw_spine(frame: &mut Frame, art: Rectangle) {
-    let width = spine_width(art.width);
-    frame.fill_rectangle(
-        art.position(),
-        Size::new(width, art.height),
-        SPINE_FILL,
-    );
-    frame.fill_rectangle(
-        Point::new(art.x + width - 1.0, art.y),
-        Size::new(1.0, art.height),
-        SPINE_EDGE,
-    );
-}
-
-/// Intersection de deux rectangles (le clip du canvas ne s'intersecte pas tout
-/// seul : `with_clip` imbriqué remplace le précédent).
-fn intersect(a: Rectangle, b: Rectangle) -> Option<Rectangle> {
-    let x = a.x.max(b.x);
-    let y = a.y.max(b.y);
-    let right = (a.x + a.width).min(b.x + b.width);
-    let bottom = (a.y + a.height).min(b.y + b.height);
-    (right > x && bottom > y).then(|| Rectangle::new(Point::new(x, y), Size::new(right - x, bottom - y)))
-}
-
 /// Pose le sprite `size × size` centré sur `(x, y)`.
 fn draw_sprite(frame: &mut Frame, sprite: &Handle, x: f32, y: f32, size: f32, alpha: f32, rotation: f32) {
     if alpha < 0.006 || size <= 0.0 {
@@ -450,11 +367,10 @@ fn draw_sprite(frame: &mut Frame, sprite: &Handle, x: f32, y: f32, size: f32, al
     );
 }
 
-/// Pas de respiration pendant le voile du lancement : la cover ne doit pas
-/// « flotter » dans un écran noir.
-fn veil_clear(fade: f32) -> bool {
-    fade <= 0.02
-}
+/// Opacité du voile en dessous de laquelle la respiration peut tourner : au
+/// lancement, la cover ne doit pas « flotter » dans un écran noir. Partagé avec
+/// `App::breath_factor`, qui décide de la pause.
+pub const VEIL_CLEAR: f32 = 0.02;
 
 /// Journal du coût de dessin, une ligne toutes les 100 images (≈ 5 s).
 fn report(nanos: u64) {
@@ -588,17 +504,6 @@ mod tests {
             .map(|step| breath_factor(step as f32 * BREATH_PERIOD / 200.0, true))
             .fold(1.0, f32::max);
         assert!((top - (1.0 + BREATH_AMPLITUDE)).abs() < 0.001, "sommet : {top}");
-    }
-
-    #[test]
-    fn l_intersection_ne_depasse_pas_les_rectangles() {
-        let a = Rectangle::new(Point::new(0.0, 18.0), Size::new(1920.0, 900.0));
-        let b = Rectangle::new(Point::new(100.0, 800.0), Size::new(200.0, 300.0));
-        let hit = intersect(a, b).expect("les deux rectangles se recouvrent");
-        assert_eq!(hit.y, 800.0);
-        assert_eq!(hit.height, 118.0);
-        let away = Rectangle::new(Point::new(100.0, 2000.0), Size::new(10.0, 10.0));
-        assert!(intersect(a, away).is_none());
     }
 
     #[test]

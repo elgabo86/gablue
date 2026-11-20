@@ -15,20 +15,16 @@ pub enum ViewMode {
     List,
     /// Mosaïque façon Switch Online : covers collées, sans nom.
     Mosaic,
-    /// Liste des favoris (même grille, filtrée sur les jeux marqués ★).
-    Favorites,
 }
 
 impl ViewMode {
-    /// Disposition suivante (V / Tab / Y) : grille → liste → mosaïque →
-    /// favoris. Les favoris sont ainsi atteignables sans touche
-    /// supplémentaire, à la manette comme au clavier.
+    /// Disposition suivante (V / Tab / Y) : grille → liste → mosaïque.
+    /// Les favoris ne sont pas une disposition mais un tri (menu `T`).
     pub fn flipped(self) -> Self {
         match self {
             ViewMode::Grid => ViewMode::List,
             ViewMode::List => ViewMode::Mosaic,
-            ViewMode::Mosaic => ViewMode::Favorites,
-            ViewMode::Favorites => ViewMode::Grid,
+            ViewMode::Mosaic => ViewMode::Grid,
         }
     }
 }

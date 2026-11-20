@@ -1874,8 +1874,10 @@ GLAUNCHER_DEFAULTS = {
     "fullscreen": True,
     "covers": True,
     # Musique de fond du launcher (piste embarquée, jouée par mpv en boucle,
-    # coupée pendant une partie). Défaut de `Config::default()`.
+    # coupée pendant une partie) et son volume, en pourcentage. Défauts de
+    # `Config::default()` / `music::DEFAULT_VOLUME`.
     "music": True,
+    "music_volume": 60,
     "steamgriddb_key": "",
     # Aucun dossier par défaut (miroir de `Config::default()`) : rien n'est
     # scanné tant que l'utilisateur n'en a pas choisi un.
@@ -1905,6 +1907,10 @@ def parse_glauncher_config(text: str) -> dict:
         elif isinstance(default, list):
             if isinstance(value, list):
                 values[key] = [str(item) for item in value]
+        elif isinstance(default, int):
+            # `bool` est un `int` en Python : il est traité au-dessus
+            if isinstance(value, int) and not isinstance(value, bool):
+                values[key] = value
         elif isinstance(value, str):
             values[key] = value
     return values

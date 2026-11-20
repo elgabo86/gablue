@@ -39,11 +39,12 @@ Ils sont **surveillés** : un paquet ajouté ou supprimé met la liste à jour t
 seul, sans relancer le launcher — il n'y a donc pas de bouton « Rafraîchir ».
 Le nombre de jeux s'affiche en bas, avec les commandes.
 
-Quatre vues, en cycle avec V / Tab ou Y : **grille** (`view = "grid"`),
-**liste** avec vignette et grand aperçu (`"list"`), **mosaïque** façon Switch
-Online (`"mosaic"`) et **favoris**. Le **dernier type de vue et le dernier tri**
-sont retenus d'une session à l'autre (`<cache>/state.txt`) ; `view` dans
-`config.toml` ne sert que de valeur par défaut au premier lancement. La vignette sélectionnée porte un cadre
+Trois vues, en cycle avec V / Tab ou Y : **grille** (`view = "grid"`),
+**liste** avec vignette et grand aperçu (`"list"`) et **mosaïque** façon Switch
+Online (`"mosaic"`). Le **tri** se choisit dans son propre menu (`T` ou
+Carré/X) : **A→Z**, **Récents** ou **Favoris**. Le **dernier type de vue et le
+dernier tri** sont retenus d'une session à l'autre (`<cache>/state.txt`) ;
+`view` dans `config.toml` ne sert que de valeur par défaut au premier lancement. La vignette sélectionnée porte un cadre
 d'accent et un fond teinté, en grille comme en liste ; la **roulette** de la
 souris fait défiler librement (le défilement manuel devient la position de
 référence, la liste ne se recale pas sur la sélection). La navigation au
@@ -64,8 +65,7 @@ changent depuis un seul bouton : `Images ▸` propose Grid / Héros / Logo / Ic�
 
 L'étoile marque le jeu comme favori (fichier
 `~/.local/share/glauncher/favorites.txt`, un slug par ligne). Les vignettes des
-favoris portent une étoile et la vue **Favoris** (3ᵉ bascule de V) ne montre
-qu'eux.
+favoris portent une étoile ; le tri **Favoris** (menu `T`) ne montre qu'eux.
 
 Le démarrage n'ouvre **aucun paquet** : noms et chemins viennent de l'index,
 les visuels du cache local, et le voisinage des paquets (icônes posées à côté,
@@ -180,10 +180,16 @@ minuteur (20 images par seconde) est coupé dès que la scène n'est pas visible
 `canvas` transparent dont les particules sont des fonctions pures du temps —
 aucune position stockée, aucune allocation par image.
 
-La vignette sélectionnée **respire** : le cadre d'accent et la cover grossissent
-ensemble de 0 à 2,8 % (période de 4 s), sans rien déplacer autour. Chaque cover
-porte une fine tranche sombre et une ombre portée : la vignette se lit comme un
-boîtier posé.
+Le titre de la vignette sélectionnée défile quand il ne tient pas dans la
+vignette (pause, descente jusqu'au dernier caractère, pause, retour) ; les
+autres restent tronqués. Une petite **roue de chargement** apparaît dans le coin
+haut droit pendant les téléchargements de visuels, et seulement là.
+
+La vignette sélectionnée **respire** : la vignette entière — fond de sélection,
+cover, tranche, étoile et titre — grossit de 0 à 2,8 % (période de 4 s), sans
+rien déplacer autour ; le cadre d'accent, lui, entoure la cover seule et suit
+le même mouvement. Chaque cover a les coins légèrement cassés, porte une fine
+tranche sombre et une ombre portée : la vignette se lit comme un boîtier posé.
 
 Au lancement d'un jeu, l'hyperespace (les particules filent vers l'extérieur)
 s'accompagne d'une **plongée de la page** : elle grossit de 6 % comme si on
@@ -195,9 +201,10 @@ descente) et les visuels qui arrivent après coup (héros, logo, cover)
 apparaissent en fondu.
 
 Le pied de page porte l'aide des touches en **Lato** (police embarquée, plus
-ronde que la sans-serif système), une pastille de tri lisible à gauche et le nom
-du jeu à droite — aucune statistique. `T` (ou Carré/X) change le tri **et
-ramène en début de liste**.
+ronde que la sans-serif système), une pastille de tri lisible à gauche et le
+total de la bibliothèque en pastille à droite (le nombre de favoris en tri
+Favoris). `T` (ou Carré/X) ouvre le menu du tri — A→Z, Récents, Favoris — et un
+changement de tri **ramène en début de liste**.
 
 Réglages : `sparkles = false` dans `config.toml` coupe tout, et
 `GLAUNCHER_FX_MS=80` (16 à 200) ralentit le minuteur sans recompiler
@@ -210,9 +217,9 @@ Réglages : `sparkles = false` dans `config.toml` coupe tout, et
 | naviguer    | flèches / WASD  | croix + stick gauche |
 | changer de page | Page↑ / Page↓ | L1 / R1          |
 | ouvrir le jeu | Entrée / Espace  | A (Xbox) / ✕ (PS)       |
-| grille/liste/mosaïque/favoris | V / Tab | Y (Xbox) / Triangle (PS) |
+| grille/liste/mosaïque | V / Tab | Y (Xbox) / Triangle (PS) |
 | choisir l'image | C           | Select / Share          |
-| rafraîchir  | R                  | X (Xbox) / Carré (PS)   |
+| menu du tri | T                | X (Xbox) / Carré (PS)   |
 | plein écran | F / F11            | —                       |
 | quitter     | Échap / Q          | retour ×2 (1,5 s)        |
 
@@ -246,6 +253,6 @@ bas réapparaissait entre l'écran noir et le jeu.
 
 ## État
 
-Grille, liste, mosaïque, favoris, page de jeu (héros / logo / grid / icône),
+Grille, liste, mosaïque, tri (dont favoris), page de jeu (héros / logo / grid / icône),
 lancement plein écran, manettes, surveillance des dossiers. Suite prévue :
 recherche, dernier jeu lancé, pointeur masqué pendant un jeu.

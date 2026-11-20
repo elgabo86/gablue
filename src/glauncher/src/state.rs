@@ -20,29 +20,43 @@ pub enum SortBy {
     Name,
     /// Paquets modifiés le plus récemment d'abord.
     Modified,
+    /// Seuls les jeux marqués ★, dans l'ordre alphabétique.
+    Favorites,
 }
 
 impl SortBy {
+    /// Les tris du menu, dans l'ordre d'affichage.
+    pub const ALL: [SortBy; 3] = [SortBy::Name, SortBy::Modified, SortBy::Favorites];
+
     /// Nom court, tel qu'écrit dans le fichier d'état.
     fn key(self) -> &'static str {
         match self {
             SortBy::Name => "nom",
             SortBy::Modified => "recents",
+            SortBy::Favorites => "favoris",
         }
     }
 
-    /// Libellé du pied de page : l'ordre courant doit se voir sans menu.
+    /// Libellé du menu et du pied de page : l'ordre courant doit se voir sans
+    /// ouvrir le menu.
     pub fn label(self) -> &'static str {
         match self {
             SortBy::Name => "A→Z",
             SortBy::Modified => "Récents",
+            SortBy::Favorites => "Favoris",
         }
+    }
+
+    /// Position dans `ALL` (menu « tri »).
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|&sort| sort == self).unwrap_or(0)
     }
 
     fn parse(value: &str) -> Option<Self> {
         match value.trim() {
             "nom" => Some(SortBy::Name),
             "recents" => Some(SortBy::Modified),
+            "favoris" => Some(SortBy::Favorites),
             _ => None,
         }
     }
@@ -55,7 +69,6 @@ impl ViewMode {
             ViewMode::Grid => "grille",
             ViewMode::List => "liste",
             ViewMode::Mosaic => "mosaique",
-            ViewMode::Favorites => "favoris",
         }
     }
 
@@ -64,7 +77,6 @@ impl ViewMode {
             "grille" => Some(ViewMode::Grid),
             "liste" => Some(ViewMode::List),
             "mosaique" => Some(ViewMode::Mosaic),
-            "favoris" => Some(ViewMode::Favorites),
             _ => None,
         }
     }
@@ -145,6 +157,20 @@ mod tests {
         };
         save(&path, state);
         assert_eq!(load(&path), state);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn le_tri_favoris_survit() {
+        let path = bac_sable("favoris");
+        save(
+            &path,
+            State {
+                view: Some(ViewMode::Grid),
+                sort: SortBy::Favorites,
+            },
+        );
+        assert_eq!(load(&path).sort, SortBy::Favorites);
         let _ = std::fs::remove_file(&path);
     }
 

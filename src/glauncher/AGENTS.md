@@ -81,7 +81,12 @@ leurs icônes, pour l'interface.
 - `src/music.rs` — musique de fond : `mpv` en tâche de fond, fondu par IPC
 - `src/sparkles.rs` — poussière d'étoiles du fond (`canvas`, minuteur 20 Hz)
 - `src/pose.rs` — `Pose` : échelle + décalage d'un élément au rendu (plongée de
-  la page, retour des vignettes), sans surcouche ni mise en page
+  la page, retour des vignettes, respiration de la sélection), sans surcouche
+  ni mise en page
+- `src/marquee.rs` — `Marquee` : titre recadré qui défile quand il ne tient pas
+  (largeur naturelle, pause/aller/pause/retour)
+- `src/spinner.rs` — roue de chargement du coin haut droit, dessinée au `canvas`,
+  visible seulement pendant les téléchargements (`covers::busy`)
 - `src/app.rs` — état, messages, bus interne, vue iced (grille + écran noir)
 - `src/state.rs` — type de vue et tri retenus (`<cache>/state.txt`)
 - `assets/glyphs/{xbox,playstation}/*.png` — glyphes Xelu (CC0), embarqués
@@ -103,7 +108,7 @@ leurs icônes, pour l'interface.
 - **Affichage** : `view = "grid"` (vignettes + nom), `"list"` (lignes, icône à
   gauche, grand aperçu à droite) ou `"mosaic"` (covers collées, sans nom, façon
   Switch Online) ; bascule V/Tab ou `BTN_NORTH` (Y/Triangle) sans relancer,
-  dans l'ordre grille → liste → mosaïque → favoris. En liste, haut/bas avancent de 1,
+  dans l'ordre grille → liste → mosaïque. En liste, haut/bas avancent de 1,
   dans les deux grilles d'une rangée (`metrics().2`).
 - **Remplissage** : la grille occupe toute la largeur de la fenêtre.
   `columns` = nombre MAXIMAL de colonnes, `cell_size` = largeur MINIMALE d'une
@@ -128,9 +133,8 @@ leurs icônes, pour l'interface.
 - **Sélection très visible** : cadre d'accent de 4 px (`FOCUS_BORDER`) **plus**
   fond teinté, sur les vignettes de la grille comme sur les lignes de liste — le
   fond seul se perdait parmi 666 vignettes (retour 18/11 « la sélection n'est
-  pas assez visible »). En mosaïque (noms masqués, le nom du jeu sélectionné passe dans le pied
-  de page, où il reste visible même quand un message occupe la droite) : cadre
-  d'accent de 6 px **plus** un voile d'accent à 22 % posés **au-dessus** de la
+  pas assez visible »). En mosaïque (noms masqués, la sélection se lit au
+  cadre) : cadre d'accent de 6 px **plus** un voile d'accent à 22 % posés **au-dessus** de la
   cover, aux dimensions explicites. Un cadre dessiné par le conteneur passait
   derrière l'image, et un `Fill` dans un `stack` se réduisait à zéro (retour
   18/11 : « on ne voit pas ce qui est sélectionné »).
@@ -456,12 +460,55 @@ leurs icônes, pour l'interface.
   noirs, contour sombre pour rester lisible sur une cover claire — dessinée pour
   être affichée en **14 à 16 px**, donc formes épaisses : les yeux se réduisent à
   une tache sombre à cette taille, c'est le contour et le jaune qui portent la
-  lecture. `V`/Y ajoute une 4e vue **Favoris** : la même grille, filtrée,
-  en-tête « N favoris », liste vide expliquée.
+  lecture. Les favoris sont un **tri** (`T`/Carré, menu « Tri » → Favoris) :
+  la même grille, filtrée, en-tête « N favoris » et liste vide expliquée.
+  Ce n'est plus une vue (retirée du menu des vues le 20/11).
 - **Animations** : fondu au noir de 0,9 s avant le lancement (le jeu démarre
   quand l'écran est noir), retour en fondu à la fin du jeu ; défilement animé
   vers la sélection. Tout est piloté au temps (dt), pas par image, et
   l'abonnement `window::frames()` n'existe que pendant une animation.
+- **Titre trop long = défilement** : la vignette sélectionnée affiche le nom
+  **entier** et le fait défiler quand il ne tient pas (pause au début, descente
+  jusqu'au dernier caractère, pause, retour ; 34 px/s). Les autres vignettes
+  restent tronquées avec une ellipse (`short`) : animer toute la grille
+  coûterait une mise en forme de texte par vignette et par image. Le widget
+  `Marquee` (`src/marquee.rs`) met le texte en page à sa largeur **naturelle**
+  (limite infinie) puis le recadre (`with_layer`) : un titre long ne peut ni
+  élargir la vignette ni empiéter sur la voisine. L'horloge (`title_elapsed`)
+  vient de `App::tick` et repart à zéro quand la sélection change ; elle ne
+  tourne que si le nom dépasse le budget de caractères de la vignette
+  (`App::title_budget`, volontairement pessimiste), donc aucune image demandée
+  au repos. Sous la respiration,
+  le recadrage suit la transformation de `Pose` (`push_clip` multiplie par la
+  transformation courante).
+- **Roue de chargement** : `src/spinner.rs`, neuf points sur un cercle dans le
+  coin **haut droit** (aucun contrôle n'y vit, grille comme page), visible
+  seulement pendant un téléchargement de visuels. Trois pièges, tous
+  constatés le 20/11 :
+  - **emplacement permanent** dans la pile racine de `view` : un enfant
+    conditionnel y recrée le sous-arbre, donc la zone défilante, et la liste
+    remonte en haut à chaque téléchargement. Le canvas est toujours là,
+    `visible` ne décide que du dessin ;
+  - **coordonnées RELATIVES** dans un `canvas` : `Canvas::draw` translate déjà
+    le renderer de `bounds.x/y` avant d'appeler `Program::draw`. Dessiner à
+    `bounds.center()` (position absolue) place la figure deux fois trop loin,
+    donc hors de l'écran — la roue ne s'affichait jamais pour cette raison
+    (constaté 20/11). Utiliser `bounds.width/height * 0.5`, comme
+    `sparkles` ;
+  - **réveil explicite** : le worker de visuels appelle `covers::wake_with` au
+    DÉBUT de chaque requête (`Message::Activity`), sinon l'interface ne se
+    redessine qu'à la fin du téléchargement et la roue n'apparaît jamais —
+    `covers::busy()` (compteur de requêtes + fenêtre de 700 ms après la
+    dernière) ne suffit pas à lui seul, faute de message pour relancer la vue.
+  `animating()` la prend en compte : sans ça, plus aucune image ne serait
+  demandée et la roue resterait figée. La roue ne reflète que ce qu'on regarde :
+  **la file de fond est en pause tant qu'une page est ouverte** (`OpenPage` →
+  `queue.pause(true)`, fermeture → `resume_covers`), sinon elle tournait pour
+  les covers de la liste qu'on ne voyait plus (constaté 20/11). Les visuels de
+  la page passent par la file `urgent`, que la pause ne touche pas.
+  `resume_covers` rend demandables les clés jetées par la pause (`visible_covers`
+  → `art_requested`), sinon ces jeux restaient marqués « demandés » pour toute
+  la session (le même piège existait en refermant le menu d'images).
 - **Poussière d'étoiles** (`sparkles = true`, défaut) : `src/sparkles.rs`, un
   `canvas` transparent posé **au-dessus de la liste et sous la page**. Les
   particules sont des **fonctions pures du temps** (graine par numéro, aucun
@@ -492,8 +539,10 @@ leurs icônes, pour l'interface.
   `Transformation` au rendu (texte ré-rasterisé à la taille voulue), sans
   toucher à la mise en page ; à l'échelle 1 le widget se dessine normalement.
   Un **agrandissement** et non un recul : un contenu qui rétrécit laissait voir
-  son bord au milieu du noir (jugé moche le 20/11). Échelle **quantifiée à
-  0,5 %** : le texte est re-rasterisé à chaque nouvelle taille.
+  son bord au milieu du noir (jugé moche le 20/11). Échelle **continue** :
+  une quantification à 0,5 % donnait 12 paliers, donc des à-coups de quelques
+  pixels (jugé saccadé le 20/11). Le texte est re-rasterisé à chaque taille —
+  net, mais coûteux : ne pas l'étendre à d'autres éléments.
 - **Retour d'un jeu** : chaque vignette revient **de son côté de l'écran**,
   en dézoomant, titre compris (`App::comeback` + `Pose` par carte).
   `RETURN_SPREAD` règle la distance parcourue (55 % de la largeur),
@@ -503,8 +552,17 @@ leurs icônes, pour l'interface.
   sans ça, l'ultime image où la carte cesse d'être transformée sautait de
   quelques pixels. Armé par `Message::Launched`, désarmé à `fade = 0` — jamais au
   démarrage du launcher. Pendant le retour, le canvas **s'efface**
-  (`breathing()` rend `None`) et chaque carte peint sa propre cover, sinon la
-  sélection resterait figée pendant que les autres arrivent.
+  (`breathing()` rend `None`) : la carte revient déjà transformée, un cadre
+  resté à la position de repos suivrait mal.
+- **Forme de l'arbre constante à la racine** : ne JAMAIS ajouter ni retirer un
+  enfant conditionnel de la pile racine (`view`) pendant l'usage. Un changement
+  de forme (même un `stack![…, extra]` ajouté par-dessus) fait RECRÉER le
+  sous-arbre, donc la zone défilante : la liste remonte tout en haut, et la
+  première interaction restaure la position (`scroll_to`), ce qui se lit comme
+  un saut puis un retour (constaté 20/11 avec une roue de chargement affichée
+  pendant les téléchargements — retirée pour ça). La page, elle, entre et sort
+  de l'arbre à dessein, mais **seulement au sommet du fondu** (`pending_page`),
+  quand aucun état de défilement ne compte plus.
 - **`Pose`, pas `iced::widget::float`** : `float` transforme son contenu mais le
   dessine en **surcouche**, donc au-dessus de toute la pile — voile noir
   compris : les vignettes seraient visibles pendant l'écran noir et la page
@@ -512,39 +570,41 @@ leurs icônes, pour l'interface.
   20/11). `Pose` est le même enrobage (mêmes dimensions, même `layout`) mais
   applique la transformation **dans l'arbre**, avec `Renderer::with_transformation` :
   ordre des couches conservé et découpage de la zone défilante respecté.
-- **Respiration de la sélection (cadre compris)** : la vignette sélectionnée
-  est redessinée par le canvas 0 à 2,8 % plus grande (période 4 s) **d'un seul
-  bloc** — cadre d'accent, cover, tranche et étoile des favoris grossissent
-  ensemble autour du même centre, comme un boîtier qu'on approche. Le canvas est
-  le **SEUL peintre** de cette vignette (`Breath::owns_art`) : la carte garde la
-  place de l'image mais ne la dessine plus, et le canvas la peint à **tous** les
-  facteurs. Deux copies qui se remplaçaient faisaient réapparaître la cover d'un
-  coup au minimum de la respiration (constaté 20/11). Même logique pour le
-  cadre, peint par le canvas et transparent dans la carte.
-  Aucune mise en page n'est refaite (tout est dessiné dans le `canvas`).
-  L'étoile est redessinée par-dessus, sinon la cover grossie la recouvrirait.
-  Ne pas redécouper au rectangle de l'image : c'était le bug du 20/11, la cover
-  non zoomée restait visible aux bords et le zoom « sortait » de son cadre. Le
-  canvas n'étant pas découpé par la zone défilante, il découpe lui-même à la
-  bande de la liste (`PAGE_PADDING_Y` → `FOOTER_BAND`) et la respiration
-  s'arrête (`Breath::pulse`) pour une vignette qui mord sur le pied de page.
+- **Respiration de la sélection (vignette entière)** : la carte sélectionnée
+  est **grossie par elle-même** de 0 à 2,8 % (période 4 s) via `Pose` : fond
+  bleu de sélection, cover, tranche, étoile et titre bougent d'un seul bloc,
+  autour du centre de la vignette, sans refaire la mise en page. Le canvas
+  (`sparkles::draw_breath`) ne peint plus que le **cadre d'accent** autour de
+  la cover, à la même échelle et avec le même facteur (`App::breath_factor`,
+  calculé une fois par image, partagé par la carte et le canvas) — c'est ce qui
+  garde le cadre au-dessus de l'image et collé à elle. Le fond bleu restait
+  figé tant que seul le canvas bougeait (constaté 20/11), et la cover
+  réapparaissait d'un coup au minimum quand deux peintres se relayaient.
+  Conséquences : la carte peint **tout** son visuel (plus de `owns_art`, plus
+  de cover/tranche/étoile rejouées par le canvas, plus de vignette sans cover à
+  traiter à part) et le canvas n'a plus qu'**une géométrie** — le cadre étant
+  un tracé, il passe sous les particules (images), ordre voulu. Le cadre
+  entoure la cover seule, pas le titre (demandé le 20/11). La respiration
+  s'arrête pour une vignette qui mord sur le pied de page ou sous le voile du
+  lancement (`VEIL_CLEAR`).
   **Pas de gerbe d'étincelles** au changement de jeu : essayée puis retirée le
   20/11 (jugée « nulle » à l'usage) — ne pas la réintroduire sans demande.
-- **Deux géométries dans le canvas** : iced dessine, **dans une même géométrie,
-  tous les tracés (fills, strokes) avant toutes les images**. La tranche du
-  boîtier et le cadre sont des tracés, la cover redessinée est une image :
-  dans une seule géométrie, la cover passait donc **par-dessus** la tranche et
-  le boîtier perdait son arête pendant tout le zoom (constaté 20/11). `draw`
-  rend donc `vec![images (cover, étoile), tracés + particules]` — ne pas les
-  réunir à nouveau. Corollaire : tout nouvel élément à poser **sur** une image
-  doit aller dans la seconde géométrie, en tracé.
-- **Tranche et ombre du boîtier** : toute vignette de grille (et de favoris)
+- **Coins arrondis de la cover** : `ART_RADIUS` (5 px), appliqué à l'image
+  (`border_radius`) et aux coins gauches de la tranche (sinon son angle carré
+  dépasserait du visuel) : la cover se lit comme une boîte posée.
+- **Ordre des tracés et des images dans le canvas** : iced dessine, **dans
+  une même géométrie, tous les tracés (fills, strokes) avant toutes les
+  images**. Le canvas ne porte que le cadre (tracé) et les particules
+  (images) : les particules passent donc devant le cadre, ce qui est l'ordre
+  voulu. Un élément à poser **sur** une image du canvas doit rester en tracé.
+  (Quand le canvas redessinait la cover, il fallait deux géométries ; ce n'est
+  plus le cas depuis que la carte respire elle-même.)
+- **Tranche et ombre du boîtier** : toute vignette de grille (favoris compris)
   porte une bande sombre au bord gauche de sa cover (`sparkles::SPINE_FILL`,
   `spine_width`) plus une arête claire, et une ombre portée (`card_style`) :
   la cover se lit comme un boîtier posé, pas comme une image plate. Superposées
-  en `stack`, donc aucune mise en page modifiée ; le canvas rejoue la tranche à
-  l'identique quand la respiration redessine la cover (constantes partagées,
-  sinon elle sauterait). Mosaïque exclue (covers collées) et liste exclue
+  en `stack`, donc aucune mise en page modifiée, et respirent avec la carte
+  (elles sont dedans). Mosaïque exclue (covers collées) et liste exclue
   (vignette trop petite).
 - **Espacement** : `GAP` (20 px) règle à la fois l'écart entre colonnes et
   entre rangées ; en mosaïque il vaut 0.
@@ -564,7 +624,7 @@ leurs icônes, pour l'interface.
   1,5 s (`QUIT_WINDOW`) : le premier affiche « appuie encore sur retour pour
   quitter » et n'agit pas, une autre action annule l'invite — pas d'éjection
   sur une pression malheureuse en jouant ; dans le menu d'image il annule.
-  `BTN_NORTH` bascule grille → liste → mosaïque → favoris, `BTN_WEST`/`BTN_START`
+  `BTN_NORTH` bascule grille → liste → mosaïque, `BTN_WEST`/`BTN_START`
   rafraîchit, `BTN_TL`/`BTN_TR` (L1/R1) changent de page, `BTN_SELECT` ouvre le
   menu d'image sur la liste. Sur la page : `BTN_NORTH` ouvre les visuels,
   `BTN_SELECT` bascule l'étoile. Glyphes Xbox ou
@@ -586,28 +646,32 @@ leurs icônes, pour l'interface.
   l'ouverture de la page). La page est enveloppée d'un `mouse_area` qui avale
   clic et molette, sinon ils atteignent les vignettes restées dessous.
 - **Vue et tri retenus** : le dernier type de vue et le dernier ordre de tri
-  sont écrits dans `<cache>/state.txt` (`vue=grille|liste|mosaique|favoris`,
-  `tri=nom|recents`, `.part` + renommage) à chaque changement — `V`, menu
-  « Type de liste » et `T` compris. `view` de `config.toml` ne sert plus que de
+  sont écrits dans `<cache>/state.txt` (`vue=grille|liste|mosaique`,
+  `tri=nom|recents|favoris`, `.part` + renommage) à chaque changement — `V`,
+  menu « Type de liste » et menu « Tri » compris. `view` de `config.toml` ne sert plus que de
   valeur par défaut au tout premier lancement : le launcher n'écrit **jamais**
   `config.toml`, qui appartient à `gablue-manager`.
 - **Rien à rafraîchir à la main** : le veilleur inotify met la liste à jour,
   donc plus de touche `R` ni de bouton Start/Menu « Rafraîchir » (retour 18/11).
-- **Pied de page** : l'aide des touches est **centrée**, le tri à gauche et le
-  **nom du jeu sélectionné à droite** (en clair, 17 px), avec le message d'état
-  juste avant lui. Le tri est une **pastille** (bordure d'accent, « TRI » + libellé
+- **Pied de page** : l'aide des touches est **centrée**, le tri à gauche, et à
+  droite le message d'état puis le **total de la bibliothèque** en pastille (le
+  nombre de favoris quand le tri est Favoris : c'est la liste affichée). Le nom du jeu
+  n'y est **pas** répété (la vignette sélectionnée le porte déjà ; demandé le
+  20/11). Le tri est une **pastille** (bordure d'accent, « TRI » + libellé
   en 15 px) parce qu'une ligne grise se perdait dans le pied de page — et
-  **`T` remet en début de liste** (sélection 0, défilement 0 posé et non animé) :
-  sans ça on triait sans jamais voir le nouvel ordre, la liste restant là où elle
-  était. Deux couches superposées (`stack![côtés, aides centrées]`)
+  **changer de tri remet en début de liste** (sélection 0, défilement 0 posé et
+  non animé) : sans ça on triait sans jamais voir le nouvel ordre, la liste
+  restant là où elle était. `T` (ou Carré/X) ouvre le **menu « Tri »** — A→Z,
+  Récents, Favoris — construit comme le menu des vues (`sort_menu_view`, tri
+  courant coché). Deux couches superposées (`stack![côtés, aides centrées]`)
   parce qu'une `Row` ne sait pas centrer dans la fenêtre quand les blocs des
   côtés n'ont pas la même largeur ; un `Stack` prenant sa hauteur sur son
   PREMIER enfant, c'est la rangée des côtés (pastille de tri, plus haute que le
   texte d'aide au clavier) qui la donne — l'aide est centrée verticalement
   (`center_y(Fill)`). Dans l'autre ordre, la pastille dépassait sous sa bordure
-  en mode clavier (constaté 20/11). **Aucune statistique** dans le pied de page :
-  ni compte de jeux, ni progression des covers (« covers 12/540 » montrait un
-  nombre de covers sur l'interface principale, retiré le 20/11). L'aide est en
+  en mode clavier (constaté 20/11). La **seule** statistique est le total de la
+  bibliothèque (demandé le 20/11 en bas à droite) ; la progression des covers
+  (« covers 12/540 ») était du bruit, retirée le 20/11. L'aide est en
   **Lato embarquée** (`app::HELP_FONT`, `assets/fonts/Lato-Regular.ttf`, OFL) :
   la sans-serif système change d'un poste à l'autre. Le titre « glauncher » a
   disparu de son côté (l'en-tête n'existe plus). Le libellé de tri est

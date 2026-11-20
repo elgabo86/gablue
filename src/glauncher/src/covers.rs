@@ -20,7 +20,8 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use serde_json::{Value, json};
@@ -1130,6 +1131,66 @@ fn parse_json(body: &str) -> Result<Value, String> {
 /// suspendus derrière (constaté 18/11 sur une session SGDB restée pendue).
 const TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Téléchargements : nombre de requêtes en cours, instant de la dernière
+/// activité (début ou fin de requête), et réveil de l'interface. La roue de
+/// chargement (`spinner`) lit `busy()` ; `wake()` est indispensable, sinon
+/// l'interface ne redessinerait qu'à la FIN de la requête — donc n'afficherait
+/// la roue que lorsque le téléchargement est déjà terminé (constaté 20/11).
+static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+/// Durée pendant laquelle la roue reste affichée après la dernière activité :
+/// plus longue que le délai entre deux requêtes du worker (250 ms), sinon elle
+/// clignoterait à chaque téléchargement.
+const BUSY_WINDOW: Duration = Duration::from_millis(700);
+
+static WAKE: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+
+/// Branche le réveil de l'interface (appelé par `App::boot`).
+pub fn wake_with(wake: impl Fn() + Send + Sync + 'static) {
+    let _ = WAKE.set(Box::new(wake));
+}
+
+fn wake() {
+    if let Some(wake) = WAKE.get() {
+        wake();
+    }
+}
+
+fn touch() {
+    if let Ok(mut at) = LAST.lock() {
+        *at = Some(std::time::Instant::now());
+    }
+}
+
+/// Un téléchargement est-il en cours, ou vient-il de finir ?
+pub fn busy() -> bool {
+    if IN_FLIGHT.load(Ordering::Relaxed) > 0 {
+        return true;
+    }
+    let last = LAST.lock().ok().and_then(|at| *at);
+    last.is_some_and(|at| at.elapsed() < BUSY_WINDOW)
+}
+
+/// Garde du compteur : décrémente à la sortie, y compris sur `?` ou panique,
+/// sinon une requête ratée laisserait la roue tourner pour toujours.
+struct Busy;
+
+impl Busy {
+    fn new() -> Self {
+        IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
+        touch();
+        wake();
+        Self
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+        touch();
+    }
+}
+
 /// Client HTTP partagé, avec délais.
 fn agent() -> &'static ureq::Agent {
     static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
@@ -1143,6 +1204,7 @@ fn agent() -> &'static ureq::Agent {
 }
 
 fn http_get(url: &str, headers: &[(&str, &str)]) -> Result<Vec<u8>, String> {
+    let _busy = Busy::new();
     let mut request = agent().get(url).header("User-Agent", AGENT);
     for (name, value) in headers {
         request = request.header(*name, *value);
@@ -1162,6 +1224,7 @@ fn http_get_text(url: &str, headers: &[(&str, &str)]) -> Result<String, String> 
 }
 
 fn http_post(url: &str, headers: &[(&str, &str)], body: &str) -> Result<String, String> {
+    let _busy = Busy::new();
     let mut request = agent().post(url).header("User-Agent", AGENT);
     for (name, value) in headers {
         request = request.header(*name, *value);

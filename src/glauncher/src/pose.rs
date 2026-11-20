@@ -8,8 +8,10 @@
 //! `Transformation` au rendu, dans l'arbre normal : l'ordre des couches est
 //! conservé et le découpage de la zone défilante s'applique.
 //!
-//! Sert à deux choses : la plongée de la page au lancement d'un jeu et le
-//! retour des vignettes depuis les bords (`App::comeback`).
+//! Sert à trois choses : la plongée de la page au lancement d'un jeu, le
+//! retour des vignettes depuis les bords (`App::comeback`) et la respiration
+//! de la vignette sélectionnée (fond, cover, tranche, étoile et titre grossis
+//! d'un bloc, le canvas ne peignant que le cadre d'accent par-dessus).
 
 use iced::advanced::widget::{Tree, Widget, tree};
 use iced::advanced::{Clipboard, Layout, Shell, layout, renderer};
