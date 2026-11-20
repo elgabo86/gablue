@@ -19,10 +19,6 @@ pub fn archives_dir() -> PathBuf {
     cache_root().join("archives")
 }
 
-pub fn decoded_dir() -> PathBuf {
-    cache_root().join("decoded")
-}
-
 pub fn hash_path(path: &Path, extra: u64) -> String {
     let mut h = DefaultHasher::new();
     path.canonicalize()

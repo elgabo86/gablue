@@ -125,6 +125,8 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── AGENTS.md                      # Détail des scripts de build (copr → cpuid-fault)
 │   │   ├── build-c                       # Compilation sources C
 │   │   ├── build-gwine                    # Assemblage script gwine standalone
+│   │   ├── build-retroplayer              # Compilation Rust du lecteur (étape jetée)
+│   │   ├── build-vgmstream                # vgmstream-cli épinglé (sets .txtp/.fsb)
 │   │   ├── cleanup                        # Nettoyage intermédiaire
 │   │   ├── copr                           # Configuration dépôts COPR
 │   │   ├── cpuid-fault                    # Compilation module kernel CPUID faulting

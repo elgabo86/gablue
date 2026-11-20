@@ -117,6 +117,15 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build-retroplayer
 
+# Étape intermédiaire : vgmstream-cli, décodeur des sets `.txtp`/`.fsb`/`.bfstm`
+# de joshw.info que zxtune ne lit pas. Pas de paquet Fedora : compilation depuis
+# une archive épinglée (empreinte vérifiée dans le script).
+FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION} AS vgmstream-build
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build-vgmstream
+
 # Étape intermédiaire : gate BPF (clang + libbpf). L'étape finale garde libbpf
 # au runtime (petit paquet), pas la chaîne de compilation.
 FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION} AS gpad-gate-build
@@ -279,6 +288,11 @@ COPY --from=glauncher-build /out/glauncher /usr/bin/glauncher
 # RetroPlayer (binaire Rust de l'étape retroplayer-build) ; `.desktop` et icône
 # arrivent avec `files/system/all`.
 COPY --from=retroplayer-build /out/retroplayer /usr/bin/retroplayer
+
+# vgmstream-cli : décodeur des conteneurs PS1/PS2/PS3/Switch/Wii U
+# (`.txtp`, `.fsb`, `.bfstm`, `.btsnd`…) que zxtune ne lit pas. Les libs
+# runtime (`libvorbis`, `mpg123-libs`) sont celles de l'image.
+COPY --from=vgmstream-build /out/vgmstream-cli /usr/bin/vgmstream-cli
 
 # Assemblage du script gwine standalone
 RUN --mount=type=cache,dst=/var/cache \

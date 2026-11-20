@@ -22,9 +22,6 @@ struct LoopSource {
     rate: u32,
     pos: usize,
     shared: Arc<Shared>,
-    /// Fondu de sortie (échantillons) quand on ne boucle pas : le rendu PSF
-    /// n'a plus de fondu (il est retiré pour la boucle), la fin serait sèche.
-    fade: usize,
     /// Fondu croisé à la jonction de boucle (échantillons) : la période
     /// détectée peut être à quelques millisecondes près, et le rendu PSF n'est
     /// pas toujours identique d'un tour à l'autre → sans lui, la couture
@@ -78,15 +75,9 @@ impl Iterator for LoopSource {
         if self.pos >= self.data.len() {
             return None;
         }
-        let mut v = self.data[self.pos];
+        let v = self.data[self.pos];
         self.pos += 1;
         self.shared.pos.store(self.pos as u64, Ordering::Relaxed);
-        if !looping && self.fade > 0 {
-            let left = self.data.len() - self.pos;
-            if left < self.fade {
-                v *= left as f32 / self.fade as f32;
-            }
-        }
         Some(v)
     }
 }
@@ -123,8 +114,6 @@ pub struct Player {
     /// Échantillons de la piste courante : permet de relancer une source
     /// (rodio jette la précédente quand elle atteint la fin).
     pcm: Option<Arc<Vec<f32>>>,
-    /// Durée du fondu de sortie en lecture simple (secondes).
-    fade: f64,
 }
 
 impl Player {
@@ -147,7 +136,6 @@ impl Player {
             volume: 1.0,
             paused: false,
             pcm: None,
-            fade: 0.0,
         })
     }
 
@@ -167,9 +155,6 @@ impl Player {
         self.window = window;
         self.looping = looping;
         self.paused = false;
-        // le rendu de lecture n'a pas de fondu (il est retiré pour que la
-        // boucle ne le rejoue pas) : on l'applique nous-mêmes en fin de piste
-        self.fade = (total * 0.1).clamp(1.0, 3.0);
 
         let to_samples = |s: f64| {
             let frames = (s * rate as f64).round() as u64;
@@ -210,7 +195,6 @@ impl Player {
             rate: self.rate,
             pos: (secs.max(0.0) * fps).round() as usize,
             shared: self.shared.clone(),
-            fade: (self.fade * fps).round() as usize,
             xfade: ((0.002 * fps).round() as usize / self.channels as usize)
                 * self.channels as usize,
         });
@@ -357,7 +341,6 @@ mod tests {
             rate: 1000,
             pos: 0,
             shared: shared(0, 500),
-            fade: 0,
             xfade: 10,
         };
         let mut prev = 0.0f32;
@@ -373,25 +356,5 @@ mod tests {
         assert!(max_jump < 0.2, "saut maximal {max_jump}");
         let p = src.shared.pos.load(Ordering::Relaxed);
         assert!(p >= 0 && p < 500, "position hors fenêtre : {p}");
-    }
-
-    #[test]
-    fn fondu_de_sortie_hors_boucle() {
-        let data: Arc<Vec<f32>> = Arc::new(vec![1.0; 1000]);
-        let mut sh = Arc::new(Shared::default());
-        Arc::get_mut(&mut sh).unwrap().looping.store(false, Ordering::Relaxed);
-        let mut src = LoopSource {
-            data,
-            channels: 1,
-            rate: 1000,
-            pos: 0,
-            shared: sh,
-            fade: 100,
-            xfade: 10,
-        };
-        let vals: Vec<f32> = src.by_ref().collect();
-        assert_eq!(vals.len(), 1000);
-        assert!(vals[0] > 0.99);
-        assert!(vals[999] < 0.02, "fin non fondue : {}", vals[999]);
     }
 }

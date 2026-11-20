@@ -2,13 +2,14 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{bail, Context, Result};
 
 use crate::model::Track;
-use crate::util::{decoded_dir, is_vgm_file};
+use crate::util::is_vgm_file;
 
+#[derive(Clone)]
 pub struct Decoded {
     pub pcm: Arc<Vec<f32>>,
     pub channels: u16,
@@ -20,78 +21,153 @@ pub struct Decoded {
     pub window_passes: Option<u32>,
 }
 
-/// Décode une piste en WAV via `zxtune123 --wav`, avec cache disque.
+/// Décode une piste (zxtune ou vgmstream), avec cache **en mémoire**.
+///
+/// Rien n'est gardé sur le disque : le rendu passe par un fichier temporaire
+/// dans `/dev/shm` (RAM) aussitôt relu et supprimé, et les échantillons restent
+/// en mémoire pour les relectures (plafond `RETROPLAYER_RAM_MB`, 512 Mo par
+/// défaut). Un cache disque d'un WAV par piste jouée remplissait 1,7 Go pour
+/// 47 pistes (vécu 20/11) pour un gain nul : rejouer une piste redécode en
+/// ~1 s, et l'analyse de boucle reste, elle, dans l'entrée mémoire.
 pub fn decode(zxtune: &Path, track: &Track) -> Result<Decoded> {
-    let cache = decoded_dir();
-    std::fs::create_dir_all(&cache)?;
-    // formats que zxtune ne lit pas (.txtp, .vgmstream…) : vgmstream donne en
-    // plus les points de boucle exacts du format
+    let key = crate::util::hash_path(&track.file, track.subsong as u64);
+    if let Some(d) = ram_get(&key) {
+        return Ok(d);
+    }
+    let d = decode_uncached(zxtune, track)?;
+    ram_put(key, d.clone());
+    Ok(d)
+}
+
+/// Dossier de rendu en RAM : zxtune et vgmstream n'écrivent que dans un
+/// fichier, mais il ne doit rien rester sur le disque.
+fn scratch_dir() -> PathBuf {
+    let base = if Path::new("/dev/shm").is_dir() {
+        PathBuf::from("/dev/shm")
+    } else {
+        std::env::temp_dir()
+    };
+    let dir = base.join(format!("retroplayer-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// Supprime le WAV de rendu **et** le dossier s'il est vide : rien ne doit
+/// rester dans `/dev/shm`, pas même un dossier vide par processus.
+fn scratch_cleanup(wav: &Path) {
+    let _ = std::fs::remove_file(wav);
+    if let Some(dir) = wav.parent() {
+        let _ = std::fs::remove_dir(dir);
+    }
+}
+
+/// Nom de fichier de rendu unique (le worker décode une piste à la fois, mais
+/// deux rendus dans le même processus ne doivent pas se marcher dessus).
+fn scratch_name(tag: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    scratch_dir().join(format!("{tag}-{n}.wav"))
+}
+
+/// Cache mémoire des pistes décodées, LRU, plafonné en octets de PCM.
+const RAM_CAP_MB: usize = 512;
+
+static RAM: OnceLock<Mutex<Vec<(String, Decoded)>>> = OnceLock::new();
+
+fn ram() -> &'static Mutex<Vec<(String, Decoded)>> {
+    RAM.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn ram_cap() -> usize {
+    std::env::var("RETROPLAYER_RAM_MB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(RAM_CAP_MB)
+        * 1024
+        * 1024
+}
+
+fn ram_get(key: &str) -> Option<Decoded> {
+    let mut list = ram().lock().ok()?;
+    let pos = list.iter().position(|(k, _)| k == key)?;
+    let entry = list.remove(pos);
+    let d = entry.1.clone();
+    list.push(entry); // le plus récent en fin de liste
+    Some(d)
+}
+
+fn ram_put(key: String, d: Decoded) {
+    let Ok(mut list) = ram().lock() else {
+        return;
+    };
+    list.retain(|(k, _)| k != &key);
+    list.push((key, d));
+    let cap = ram_cap();
+    while list.len() > 1 {
+        let bytes: usize = list.iter().map(|(_, d)| d.pcm.len() * 4).sum();
+        if bytes <= cap {
+            break;
+        }
+        list.remove(0);
+    }
+}
+
+/// Vide le cache mémoire (archive supprimée : ses pistes n'existent plus).
+pub fn clear_ram_cache() {
+    if let Ok(mut list) = ram().lock() {
+        list.clear();
+    }
+}
+
+fn decode_uncached(zxtune: &Path, track: &Track) -> Result<Decoded> {
+    // formats que zxtune ne lit pas (.txtp, .fsb, .bfstm…) : vgmstream donne en
+    // plus les points de boucle exacts du format. S'il échoue (codec absent de
+    // la compilation, conteneur exotique), on retombe sur zxtune : mieux vaut
+    // une piste qui joue qu'un message d'erreur.
     if crate::vgmstream::handles(&track.file) {
         if let Some(bin) = crate::vgmstream::binary() {
-            return decode_vgmstream(&bin, track, &cache);
+            match decode_vgmstream(&bin, track) {
+                Ok(d) => return Ok(d),
+                Err(e) => eprintln!("vgmstream : {e:#} — repli sur zxtune"),
+            }
         }
     }
     // un PSF qui déclare un fondu est rendu depuis une copie `fade=0` : le
     // fondu tombe dans la durée rendue et reviendrait à chaque tour de boucle
     let no_fade = crate::psf::no_fade_copy(&track.file);
-    let base = crate::util::hash_path(&track.file, track.subsong as u64);
-    let key = if no_fade.is_some() {
-        format!("{base}-nofade")
+    // zxtune n'écrit rien si l'extension de sortie n'est pas audio
+    let wav = scratch_name("play");
+    let _ = std::fs::remove_file(&wav);
+    let source = no_fade.clone().unwrap_or_else(|| track.file.clone());
+    let target = if track.subsong > 1 {
+        format!("{}?#{}", source.display(), track.subsong)
     } else {
-        base.clone()
+        source.display().to_string()
     };
-    let wav = cache.join(format!("{key}.wav"));
-    if no_fade.is_some() {
-        // le rendu sans fondu est le seul que la lecture utilise : l'ancien
-        // WAV avec fondu (rendu avant cette règle) n'est plus atteignable
-        let plain = cache.join(format!("{base}.wav"));
-        if plain.exists() {
-            let _ = std::fs::remove_file(&plain);
-            let _ = std::fs::remove_file(cache.join(format!("{base}.loop")));
-        }
+    let stderr = run_zxtune(
+        zxtune,
+        &[
+            "--wav",
+            &format!("filename={}", wav.display()),
+            "--quiet",
+            &target,
+        ],
+    )?;
+    if let Some(copy) = &no_fade {
+        let _ = std::fs::remove_file(copy);
     }
-    // période de boucle détectée pour ce rendu (évite 250 ms d'analyse à
-    // chaque lecture) : fichier à côté du WAV, invalidé avec lui
-    let side = cache.join(format!("{key}.loop"));
-
     if !wav.exists() {
-        // zxtune n'écrit rien si l'extension de sortie n'est pas audio
-        let part = cache.join(format!("{key}.part.wav"));
-        let _ = std::fs::remove_file(&part);
-        let source = no_fade.clone().unwrap_or_else(|| track.file.clone());
-        let target = if track.subsong > 1 {
-            format!("{}?#{}", source.display(), track.subsong)
-        } else {
-            source.display().to_string()
-        };
-        let stderr = run_zxtune(
-            zxtune,
-            &[
-                "--wav",
-                &format!("filename={}", part.display()),
-                "--quiet",
-                &target,
-            ],
-        )?;
-        if let Some(copy) = &no_fade {
-            let _ = std::fs::remove_file(copy);
-        }
-        if !part.exists() {
-            bail!(
-                "zxtune n'a pas produit de WAV pour {} : {}",
-                track.file.display(),
-                stderr.trim()
-            );
-        }
-        std::fs::rename(&part, &wav)?;
-        let _ = std::fs::remove_file(&side);
+        bail!(
+            "zxtune n'a pas produit de WAV pour {} : {}",
+            track.file.display(),
+            stderr.trim()
+        );
     }
-
-    // cache plafonné : on marque la piste comme jouée à l'instant et on évince
-    // les plus anciennes au-delà du plafond (RETROPLAYER_CACHE_MB)
-    touch_cache(&cache, &key);
-
-    let (pcm, channels, rate) = read_wav(&wav)?;
+    let read = read_wav(&wav);
+    scratch_cleanup(&wav); // le PCM est en mémoire, le fichier part
+    let (pcm, channels, rate) = read?;
     let total = pcm.len() as f64 / (channels as f64 * rate as f64);
     // PSF : `length` vaut N tours entiers de la séquence (zxtune rend la boucle
     // plusieurs fois), donc boucler sur la durée du tag rejoue la même partie.
@@ -100,12 +176,8 @@ pub fn decode(zxtune: &Path, track: &Track) -> Result<Decoded> {
     let (window, window_passes) = if is_vgm_file(&track.file) {
         (vgm_window(&track.file, total).ok().flatten(), None)
     } else if crate::psf::length_fade(&track.file).is_some() {
-        let found = read_loop_cache(&side).unwrap_or_else(|| {
-            let found = crate::loopdetect::detect(&pcm, channels, rate, total)
-                .map(|e| (e.start, e.start + e.period, e.passes));
-            write_loop_cache(&side, found);
-            found
-        });
+        let found = crate::loopdetect::detect(&pcm, channels, rate, total)
+            .map(|e| (e.start, e.start + e.period, e.passes));
         match found {
             Some((start, end, passes)) => (Some((start, end)), Some(passes)),
             None => (None, None),
@@ -123,161 +195,14 @@ pub fn decode(zxtune: &Path, track: &Track) -> Result<Decoded> {
     })
 }
 
-/// Période de boucle mémorisée pour un rendu : `None` = rien de mémorisé,
-/// `Some(None)` = déjà analysé, aucune répétition trouvée.
-/// Version du format de cache de boucle : une analyse produite par un ancien
-/// détecteur ne doit pas être réutilisée.
-const LOOP_CACHE_VERSION: u32 = 4;
-
-fn read_loop_cache(path: &Path) -> Option<Option<(f64, f64, u32)>> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let mut tokens = text.split_whitespace();
-    if tokens.next()?.parse::<u32>().ok()? != LOOP_CACHE_VERSION {
-        return None;
-    }
-    let nums: Vec<f64> = tokens.filter_map(|v| v.parse().ok()).collect();
-    match nums.as_slice() {
-        [start, period, passes] if *start >= 0.0 && *period > 1.0 && *passes >= 2.0 => {
-            Some(Some((*start, start + period, *passes as u32)))
-        }
-        _ => Some(None),
-    }
-}
-
-fn write_loop_cache(path: &Path, value: Option<(f64, f64, u32)>) {
-    let text = match value {
-        Some((start, end, passes)) => {
-            format!("{LOOP_CACHE_VERSION} {start:.6} {:.6} {passes}\n", end - start)
-        }
-        None => format!("{LOOP_CACHE_VERSION} 0 0 0\n"),
-    };
-    let _ = std::fs::write(path, text);
-}
-
-
-/// Plafond du cache audio, en Mo (variable `RETROPLAYER_CACHE_MB`).
-const CACHE_CAP_MB: u64 = 1536;
-
-fn cache_cap() -> u64 {
-    std::env::var("RETROPLAYER_CACHE_MB")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(CACHE_CAP_MB)
-        * 1024
-        * 1024
-}
-
-fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-/// Un WAV décodé par piste jouée : sans plafond, une collection entière de PSF
-/// remplit le disque (constaté 1,7 Go pour 47 pistes, 20/11). On tient un index
-/// `clé<TAB>dernière lecture` et on jette les pistes les moins récemment jouées.
-fn touch_cache(cache: &Path, key: &str) {
-    let index = cache.join("index");
-    let mut used: Vec<(String, u64)> = std::fs::read_to_string(&index)
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| {
-            let (k, t) = l.split_once('\t')?;
-            Some((k.to_string(), t.parse().ok()?))
-        })
-        .collect();
-    let now = now_secs();
-    match used.iter_mut().find(|(k, _)| k == key) {
-        Some(e) => e.1 = now,
-        None => used.push((key.to_string(), now)),
-    }
-
-    // fichiers présents, taille totale et date de dernière lecture
-    let mut files: Vec<(u64, PathBuf, u64)> = Vec::new(); // (dernière lecture, chemin, taille)
-    let mut total = 0u64;
-    if let Ok(dir) = std::fs::read_dir(cache) {
-        for entry in dir.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("wav") {
-                continue;
-            }
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            // rendu en cours d'écriture
-            if stem.ends_with(".part") {
-                continue;
-            }
-            let Ok(meta) = entry.metadata() else { continue };
-            total += meta.len();
-            let last = used
-                .iter()
-                .find(|(k, _)| k == stem)
-                .map(|(_, t)| *t)
-                .unwrap_or(0);
-            files.push((last, path, meta.len()));
-        }
-    }
-
-    let cap = cache_cap();
-    if total > cap {
-        files.sort_by_key(|(t, _, _)| *t);
-        for (_, path, size) in files {
-            if total <= cap {
-                break;
-            }
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            if stem == key {
-                continue;
-            }
-            if std::fs::remove_file(&path).is_ok() {
-                total = total.saturating_sub(size);
-                let _ = std::fs::remove_file(cache.join(format!("{stem}.loop")));
-                used.retain(|(k, _)| k != stem);
-            }
-        }
-    }
-
-    // l'index ne garde que ce qui est encore en cache
-    let mut live: Vec<String> = Vec::new();
-    if let Ok(dir) = std::fs::read_dir(cache) {
-        for entry in dir.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("wav") {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    live.push(stem.to_string());
-                }
-            }
-        }
-    }
-    used.retain(|(k, _)| live.contains(k));
-    let mut text = String::new();
-    for (k, t) in &used {
-        text.push_str(&format!("{k}\t{t}\n"));
-    }
-    let _ = std::fs::write(&index, text);
-}
-
 /// Décodage par vgmstream (un tour, sans fondu) + boucle du format.
-fn decode_vgmstream(bin: &Path, track: &Track, cache: &Path) -> Result<Decoded> {
-    let info = crate::vgmstream::info(bin, &track.file)?;
-    let key = format!(
-        "{}-vgm",
-        crate::util::hash_path(&track.file, track.subsong as u64)
-    );
-    let wav = cache.join(format!("{key}.wav"));
-    if !wav.exists() {
-        let part = cache.join(format!("{key}.part.wav"));
-        crate::vgmstream::decode(bin, &track.file, &part)?;
-        std::fs::rename(&part, &wav)?;
-        let _ = std::fs::remove_file(cache.join(format!("{key}.loop")));
-    }
-    touch_cache(cache, &key);
-    let (pcm, channels, rate) = read_wav(&wav)?;
+fn decode_vgmstream(bin: &Path, track: &Track) -> Result<Decoded> {
+    let info = crate::vgmstream::info(bin, &track.file, track.subsong)?;
+    let wav = scratch_name("vgm");
+    crate::vgmstream::decode(bin, &track.file, &wav, track.subsong)?;
+    let read = read_wav(&wav);
+    scratch_cleanup(&wav);
+    let (pcm, channels, rate) = read?;
     let total = pcm.len() as f64 / (channels as f64 * rate as f64);
     // le format ne donne pas toujours de boucle : on regarde dans le rendu
     // (un tour unique a été décodé, donc pas de détection de plusieurs tours)
@@ -314,19 +239,17 @@ pub fn probe(zxtune: &Path, track: &Track) -> Result<Probe> {
     // formats hors zxtune : vgmstream annonce durée et boucle directement
     if crate::vgmstream::handles(&track.file) {
         if let Some(bin) = crate::vgmstream::binary() {
-            let info = crate::vgmstream::info(&bin, &track.file)?;
-            return Ok(Probe {
-                total: info.total(),
-                window: info.window(),
-                title: None,
-                author: None,
-            });
+            if let Ok(info) = crate::vgmstream::info(&bin, &track.file, track.subsong) {
+                return Ok(Probe {
+                    total: info.total(),
+                    window: info.window(),
+                    title: None,
+                    author: None,
+                });
+            }
         }
     }
-    let dir = decoded_dir().join("probe");
-    std::fs::create_dir_all(&dir)?;
-    let key = crate::util::hash_path(&track.file, track.subsong as u64);
-    let wav = dir.join(format!("{key}-{}.wav", std::process::id()));
+    let wav = scratch_name("probe");
     let _ = std::fs::remove_file(&wav);
     let target = if track.subsong > 1 {
         format!("{}?#{}", track.file.display(), track.subsong)
@@ -384,7 +307,7 @@ pub fn probe(zxtune: &Path, track: &Track) -> Result<Probe> {
     }
     let _ = child.kill();
     let _ = child.wait();
-    let _ = std::fs::remove_file(&wav);
+    scratch_cleanup(&wav);
 
     if probe.total <= 0.0 {
         bail!(
@@ -471,12 +394,50 @@ fn vgm_window(path: &Path, total: f64) -> Result<Option<(f64, f64)>> {
     Ok(Some((start, end)))
 }
 
-/// Chemin du WAV en cache pour une piste (utile pour l'export/les tests).
-pub fn cached_wav(track: &Track) -> PathBuf {
-    let key = crate::util::hash_path(&track.file, track.subsong as u64);
-    let nofade = decoded_dir().join(format!("{key}-nofade.wav"));
-    if nofade.exists() {
-        return nofade;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fake(samples: usize) -> Decoded {
+        Decoded {
+            pcm: Arc::new(vec![0.0; samples]),
+            channels: 2,
+            rate: 44100,
+            total: 0.0,
+            window: None,
+            window_passes: None,
+        }
     }
-    decoded_dir().join(format!("{key}.wav"))
+
+    /// Le cache mémoire doit rester borné et oublier d'abord la piste la moins
+    /// récemment jouée (JPEG des 512 Mo : 4 pistes de 6 min, 20/11).
+    #[test]
+    fn cache_memoire_borne_et_lru() {
+        std::env::set_var("RETROPLAYER_RAM_MB", "1"); // 1 Mo : 250 000 f32
+        ram().lock().unwrap().clear();
+
+        ram_put("a".into(), fake(1000));
+        ram_put("b".into(), fake(1000));
+        assert_eq!(ram().lock().unwrap().len(), 2);
+
+        // rejouer « a » le rend le plus récent
+        assert!(ram_get("a").is_some());
+        {
+            let list = ram().lock().unwrap();
+            assert_eq!(list.last().unwrap().0, "a");
+            assert_eq!(list.first().unwrap().0, "b");
+        }
+
+        // deux grosses entrées de 800 Ko : la seconde pousse le total au-delà
+        // du plafond, on évince par ordre d'ancienneté (b, puis a, puis c)
+        ram_put("c".into(), fake(200_000));
+        ram_put("d".into(), fake(200_000));
+        assert!(ram_get("b").is_none(), "la plus ancienne doit partir d'abord");
+        assert!(ram_get("a").is_none());
+        assert!(ram_get("c").is_none());
+        assert!(ram_get("d").is_some(), "la piste en cours ne s'évince jamais");
+
+        clear_ram_cache();
+        assert_eq!(ram().lock().unwrap().len(), 0);
+    }
 }

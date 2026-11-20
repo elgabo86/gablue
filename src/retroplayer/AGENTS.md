@@ -24,6 +24,9 @@ jeu » est tenue par notre source audio (pas par zxtune).
   (128×128, embarquée), `assets/icon-512.png` et `assets/icon.svg`, **plus la copie
   installée** dans `files/system/.../scalable/apps/` — une seule source, jamais
   deux dessins à garder synchro. Relancer le script après toute retouche.
+- Décodeur de secours : étape `vgmstream-build` →
+  `COPY --from=vgmstream-build /out/vgmstream-cli /usr/bin/vgmstream-cli`
+  (`vgmstream.rs` le trouve par PATH).
 - Runtime : `zxtune` (sonde de durée) **et** `zxtune123` (décodage) sont installés
   par `files/scripts/post-install` ; ne pas ré-exclure `zxtune123` du tarball comme
   le faisait l'ancienne version Go.
@@ -67,8 +70,9 @@ et le nombre de tours en quelques centaines de ms.
   `CentralPanel::show(ui, ..)`.
 - Le dossier `folder` de la base est la source de l'URL (`a`…`z`, `0-9`, `zzz_*`) ;
   recalculer la première lettre casse les entrées `zzz_*` (bug de la version Go).
-- Cache : `~/.cache/retroplayer/{retroplayer.db,archives/<id>,decoded,bin}` — compatible
-  avec la base de l'ancienne version (mêmes tables `files`).
+- Cache : `~/.cache/retroplayer/{retroplayer.db,archives/<id>,bin}` — compatible avec la
+  base de l'ancienne version (mêmes tables `files`). Les échantillons décodés ne vont
+  pas sur le disque : cache mémoire (`RETROPLAYER_RAM_MB`, 512 Mo par défaut).
 - `archives/<id>/.complete` contient `CACHE_VERSION` : l'incrémenter quand l'analyse des
   pistes change, sinon les caches existants gardent un index périmé **sans retélécharger**
   (vécu 19/11 : titres « Title Theme,0:01:55.087 » figés dans la base).
@@ -101,15 +105,26 @@ et le nombre de tours en quelques centaines de ms.
   de la piste : zxtune rend 3 min fixes pour un NSF de 1:55, et la barre suit le cycle
   pour que le curseur warp au point de reprise. Le libellé rappelle la durée totale de
   la piste quand le rendu contient plusieurs tours.
-- Cache audio (`~/.cache/retroplayer/decoded`) : un WAV par piste jouée, plafonné à
-  1,5 Go (`RETROPLAYER_CACHE_MB`), index `decoded/index` (`clé<TAB>dernière lecture`) et
-  éviction des pistes les moins récemment jouées (WAV + `.loop`). Sans plafond :
-  1,7 Go pour 47 pistes (vécu 20/11). Le WAV avec fondu d'un PSF est supprimé dès que
-  la variante `-nofade` existe (inatteignable).
-- Formats que zxtune ne lit pas (`.txtp`, `.vgmstream`, `.ss2`…) : repli sur
-  `vgmstream-cli` (`vgmstream.rs`) — métadonnées `-I` (durée, points de boucle exacts),
-  décodage `-l 1 -f 0` (un tour, sans fondu). Binaire : `VGMSTREAM`, cache `bin/`, PATH,
-  brew.
+- Cache audio **en mémoire seulement** (`decode.rs`) : le rendu passe par un WAV
+  temporaire dans `/dev/shm` aussitôt relu puis supprimé (fichier *et* dossier), et les
+  échantillons restent en RAM pour les relectures — LRU plafonné à 512 Mo de PCM
+  (`RETROPLAYER_RAM_MB`), analyse de boucle comprise dans l'entrée. Aucun WAV ne
+  persiste : l'ancien cache disque montait à 1,7 Go pour 47 pistes (vécu 20/11) pour un
+  gain nul. Supprimer une archive vide le cache mémoire (`decode::clear_ram_cache`).
+- Formats que zxtune ne lit pas (`.txtp`, `.fsb`, `.bfstm`, `.btsnd`, `.hca`, `.at3`,
+  `.at9`, `.xma`…) : repli sur `vgmstream-cli` (`vgmstream.rs`) — métadonnées `-I`
+  (durée, points de boucle du format), décodage `-l 1 -f 0` (un tour, sans fondu),
+  sous-piste `-s N`. `.vag` et `.mp3` restent à zxtune (reconnus, mesuré sur un set PS3
+  `psf3.joshw.info`). Si vgmstream échoue (codec absent, conteneur exotique), `decode`
+  **retombe sur zxtune** au lieu d'afficher une erreur.
+- `loopingInfo` de `-I` est un sous-objet `{"start":N,"end":M}` (pas `loopStart`) : le
+  lire à part, sinon la boucle du fichier est perdue (vécu 20/11, `.btsnd` Wii U).
+- Build image : `files/scripts/build-vgmstream` (étape `vgmstream-build`), version
+  r2168 épinglée + sha256. `USE_VORBIS` et `USE_MPEG` **indispensables** : les banques
+  FSB5 des sets Switch/Wii U sont du Vorbis (39/207 fichiers lisibles sans, 207/207
+  avec). `USE_FFMPEG=OFF` : les libs de l'image viennent de negativo17, `ffmpeg-devel`
+  de Fedora donnerait un autre soname → binaire qui ne charge pas. Prix : Opus dans un
+  FSB5 ne passe pas.
 - PSF : `length` n'est **pas** la période de boucle, c'est N tours de la séquence
   (`loopdetect` : autocorrélation de l'enveloppe RMS, candidats `total/N`, affinage
   audio). Boucler sur `length` rejouait la même partie deux fois (vécu 20/11, Ape
@@ -138,12 +153,12 @@ et le nombre de tours en quelques centaines de ms.
 - Le score d'un décalage est la **fraction** des positions où le contenu se répète
   (enveloppe RMS, fenêtres 2 s, balayage à 50 ms — une grille de 0,25 s rate le pic
   d'une période courte, vécu « Stage Select »). Un décalage qui revient des dizaines
-  de fois (`total / P > 8`) est un motif, pas la boucle, et est écarté. Cache de
-  l'analyse : `decoded/<clé>.loop` versionné (`LOOP_CACHE_VERSION`, à incrémenter dès
-  que le détecteur change).
-- Fondu de sortie en lecture simple : le rendu n'a plus de fondu (retiré pour la
-  boucle), donc `Player` applique un fondu linéaire de `clamp(total*0,1 ; 1 s ; 3 s)`
-  sur les derniers échantillons quand la boucle est OFF (`LoopSource.fade`).
+  de fois (`total / P > 8`) est un motif, pas la boucle, et est écarté. L'analyse est
+  refaite à chaque décodage (elle vit dans l'entrée du cache mémoire) : pas de fichier
+  annexe à versionner.
+- **Pas** de fondu de sortie : une piste se termine net (demande utilisateur, 20/11). Le
+  rendu de lecture n'a pas de fondu (retiré pour la boucle), donc la fin est sèche et
+  c'est voulu — ne pas réintroduire de `fade` de sortie dans `LoopSource`.
 - Fondu croisé de couture en boucle : **2 ms**, rampe en cosinus (`LoopSource.xfade`).
   Plus long (10 ms) = on mélange la fin de phrase et l'attaque suivante → flam audible
   (« quelques ms de décalage », vécu 20/11) ; plus court = la marche de la couture

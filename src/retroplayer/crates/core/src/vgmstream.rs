@@ -7,9 +7,16 @@ use std::process::{Command, Stdio};
 use anyhow::{bail, Context, Result};
 
 /// Extensions qu'on confie à vgmstream (zxtune ne les décode pas).
+///
+/// Volontairement **absents** : `.vag` et `.mp3`, que zxtune joue déjà très bien
+/// (mesuré 20/11 sur un set PS3 `psf3.joshw.info` : VAG et MP3 reconnus par
+/// `zxtune123`) — inutile de payer un sous-processus de plus.
+/// `.fsb` (FMOD, sets Switch/WiiU/PC) et `.btsnd`/`.bfwav` (Wii U) sont des
+/// conteneurs de morceaux entiers : vgmstream est le seul à les lire.
 const EXTENSIONS: &[&str] = &[
-    "txtp", "vgmstream", "ss2", "ss", "adx", "brstm", "bcstm", "bfstm", "hca", "at3", "xma",
-    "aa3", "oma", "opu", "sli", "kns", "dcs", "wsi", "wavm",
+    "txtp", "vgmstream", "ss2", "ss", "adx", "brstm", "bcstm", "bfstm", "bfwav", "bfstp",
+    "btsnd", "fsb", "hca", "at3", "at9", "xma", "xma2", "binka", "aa3", "oma", "opu", "sli",
+    "kns", "dcs", "wsi", "wavm",
 ];
 
 pub fn handles(path: &Path) -> bool {
@@ -71,6 +78,22 @@ impl Info {
     }
 }
 
+/// Bornes de boucle annoncées par vgmstream (0, 0 quand il n'y en a pas).
+fn loop_points(text: &str) -> (u64, u64) {
+    let Some(i) = text.find("\"loopingInfo\"") else {
+        return (0, 0);
+    };
+    let rest = &text[i..];
+    let block = match rest.find('}') {
+        Some(end) => &rest[..end],
+        None => rest,
+    };
+    (
+        field(block, "start").unwrap_or(0),
+        field(block, "end").unwrap_or(0),
+    )
+}
+
 fn field(text: &str, key: &str) -> Option<u64> {
     let pat = format!("\"{key}\":");
     let start = text.find(&pat)? + pat.len();
@@ -84,9 +107,13 @@ fn field(text: &str, key: &str) -> Option<u64> {
 }
 
 /// Interroge vgmstream sans décoder (`-I` : métadonnées en JSON).
-pub fn info(bin: &Path, path: &Path) -> Result<Info> {
-    let out = Command::new(bin)
-        .arg("-I")
+pub fn info(bin: &Path, path: &Path, subsong: u32) -> Result<Info> {
+    let mut cmd = Command::new(bin);
+    cmd.arg("-I");
+    if subsong > 1 {
+        cmd.arg("-s").arg(subsong.to_string());
+    }
+    let out = cmd
         .arg(path)
         .stdin(Stdio::null())
         .output()
@@ -104,8 +131,10 @@ pub fn info(bin: &Path, path: &Path) -> Result<Info> {
     let samples = field(&text, "numberOfSamples")
         .or_else(|| field(&text, "playSamples"))
         .context("nombre d'échantillons absent")?;
-    let loop_start = field(&text, "loopStart").unwrap_or(0);
-    let loop_end = field(&text, "loopEnd").unwrap_or(0);
+    // `loopingInfo` est un sous-objet (`{"start":N,"end":M}`) ou `null` ; les
+    // clés sont `start`/`end`, pas `loopStart`/`loopEnd` (vérifié 20/11 sur un
+    // `.btsnd` Wii U : la boucle était purement et simplement perdue).
+    let (loop_start, loop_end) = loop_points(&text);
     Ok(Info {
         rate,
         channels,
@@ -117,16 +146,19 @@ pub fn info(bin: &Path, path: &Path) -> Result<Info> {
 
 /// Décode un tour (intro comprise) sans fondu : le fondu est appliqué à la
 /// lecture, et un rendu contenant N tours ferait réentendre la même partie.
-pub fn decode(bin: &Path, path: &Path, out: &Path) -> Result<()> {
+pub fn decode(bin: &Path, path: &Path, out: &Path, subsong: u32) -> Result<()> {
     let out = if out.exists() {
         std::fs::remove_file(out)?;
         out.to_path_buf()
     } else {
         out.to_path_buf()
     };
-    let res = Command::new(bin)
-        .arg("-o")
-        .arg(&out)
+    let mut cmd = Command::new(bin);
+    cmd.arg("-o").arg(&out);
+    if subsong > 1 {
+        cmd.arg("-s").arg(subsong.to_string());
+    }
+    let res = cmd
         .arg("-l")
         .arg("1")
         .arg("-f")

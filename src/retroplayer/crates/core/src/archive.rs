@@ -265,24 +265,12 @@ pub fn cached(db: &Db) -> Result<Vec<Cached>> {
 pub fn delete_cached(entry_id: i64, db: &Db) -> Result<u64> {
     let dir = archives_dir().join(entry_id.to_string());
     let bytes = dir_size(&dir).unwrap_or(0);
-    let base = dir.join("x");
-    // les deux variantes (avec et sans fondu) portent des clés différentes
-    let wavs: Vec<PathBuf> = db
-        .load_tracks(entry_id, &base)
-        .unwrap_or_default()
-        .iter()
-        .flat_map(|t| {
-            let key = crate::util::hash_path(&t.file, t.subsong as u64);
-            let dir = crate::util::decoded_dir();
-            [dir.join(format!("{key}.wav")), dir.join(format!("{key}-nofade.wav"))]
-        })
-        .collect();
     if dir.exists() {
         fs::remove_dir_all(&dir)?;
     }
-    for w in wavs {
-        let _ = fs::remove_file(w);
-    }
+    // les échantillons décodés vivent en mémoire : ils n'ont plus de raison
+    // d'y rester une fois l'archive supprimée
+    crate::decode::clear_ram_cache();
     db.forget_tracks(entry_id)?;
     Ok(bytes)
 }

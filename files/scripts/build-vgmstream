@@ -1,0 +1,48 @@
+#!/usr/bin/bash
+
+# Compilation de vgmstream-cli (décodeur des sets PS1/PS2/PS3/Switch/Wii U
+# `.txtp`, `.fsb`, `.bfstm`, `.btsnd`… de joshw.info) dans l'étape
+# "vgmstream-build". Le binaire est déposé dans /out : l'étape finale le copie
+# par COPY --from, donc cmake/gcc n'entrent jamais dans l'image.
+
+set -eoux pipefail
+
+# cmake + compilateur (étape jetée) et les deux décodeurs externes utiles :
+#   - Vorbis : les sets Switch/Wii U sont des banques FSB5 « custom Vorbis »
+#     (mesuré 20/11 : 39 fichiers lisibles sur 207 sans libvorbis, 207 sur 207
+#     avec) ;
+#   - MPEG (mpg123) : MP3 dans un conteneur FSB5/AT3/OMA.
+# Les libs runtime (`libvorbis`, `mpg123-libs`) sont déjà dans l'image.
+dnf5 -y install cmake gcc make libvorbis-devel mpg123-devel
+
+# Version épinglée + empreinte : pas de paquet Fedora pour vgmstream, l'archive
+# vient de GitHub, donc on vérifie ce qu'on télécharge.
+VGM_VERSION="r2168"
+VGM_SHA256="6390ac616c4a248616f1b9bf6352fe949fcf2350a84844ba9416feac94f02225"
+VGM_URL="https://github.com/vgmstream/vgmstream/archive/refs/tags/${VGM_VERSION}.tar.gz"
+
+mkdir -p /w
+curl -fsSL "$VGM_URL" -o /w/vgmstream.tar.gz
+echo "${VGM_SHA256}  /w/vgmstream.tar.gz" | sha256sum -c -
+tar -xzf /w/vgmstream.tar.gz -C /w --strip-components=1
+
+# FFmpeg reste OFF volontairement : les libs de l'image viennent d'un autre
+# dépôt (negativo17) que ce que `ffmpeg-devel` de Fedora produirait → soname
+# différent entre compilation et runtime, binaire qui ne charge pas. Le prix
+# est l'Opus dans un FSB5, format rare dans ce catalogue.
+# `vgmstream123` et le plugin Audacious sont des lecteurs/plugins inutiles ici
+# (le plugin réclame en plus audacious et gtk au configure).
+cmake -S /w -B /w/build -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_CLI=ON \
+    -DBUILD_V123=OFF \
+    -DBUILD_AUDACIOUS=OFF \
+    -DUSE_MPEG=ON \
+    -DUSE_VORBIS=ON \
+    -DUSE_FFMPEG=OFF \
+    -DUSE_SPEEX=OFF \
+    -DUSE_CELT=OFF
+cmake --build /w/build -j"$(nproc)"
+
+install -Dm755 /w/build/cli/vgmstream-cli /out/vgmstream-cli
+
+echo "vgmstream-cli ${VGM_VERSION} compilé : $(stat -c %s /out/vgmstream-cli) octets"

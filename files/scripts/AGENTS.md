@@ -94,7 +94,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - `terminaltexteffects` via `uv` (appelé après rpm)
 - **Conflit site-packages** : un RPM peut poser un fichier/symlink à n'importe quel niveau de `/usr/local/lib/pythonX.Y/site-packages/` (transition majeure Python) → `uv pip install` échoue (`File exists, os error 17`) ; le script remonte la hiérarchie, supprime ce qui n'est pas un répertoire, `mkdir -p` avant install. `X.Y` est déduit du Python de l'image (`python3 -c`), jamais codé en dur : un chemin figé visait 3.14 et serait resté muet sur 3.15 en fc45
 
-### build-c / build-gwine / build-manager / build-manager-tray / build-glauncher / build-retroplayer / build-tvqt / build-apk-installer / build-lgplaunch / build-share-daemon / build-share — Compilation des sources
+### build-c / build-gwine / build-manager / build-manager-tray / build-glauncher / build-retroplayer / build-vgmstream / build-tvqt / build-apk-installer / build-lgplaunch / build-share-daemon / build-share — Compilation des sources
 
 **build-c** (après pypi) :
 - Compile `/src/gablue-pad` (`make install` : gpad-trigger, gpad-kbd, gpad-mouse, gpad-inhibit, gpad-rumble, gpad-login + l'arborescence de données dans `/usr/libexec/gablue-pad`, dont `login-bridge.sh`), `/src/ds2xbox`, `/src/gablue-dualsense` (`gablue-dualsense-ctl`, hidapi), `/src/gablue-isomount`
@@ -133,6 +133,13 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 - **`assets/` doit être copié avec les sources** : l'icône est embarquée par `include_bytes!`
 - `.desktop` et icône viennent de `files/system/all/usr/share/{applications,icons/hicolor/scalable/apps}` ; l'app_id Wayland est fixé dans `main.rs` (sinon KWin affiche l'icône générique)
 - Contrat de l'application → `src/retroplayer/AGENTS.md`
+
+**build-vgmstream** (étape `vgmstream-build`, avant l'image finale) :
+- Pas de paquet Fedora : télécharge l'archive du tag `r2168` depuis GitHub, **vérifie son sha256** puis compile (cmake, étape jetée) → `/out/vgmstream-cli`, copié en `/usr/bin/vgmstream-cli`
+- `USE_VORBIS=ON` + `USE_MPEG=ON` obligatoires : les banques FSB5 des sets Switch/Wii U sont du Vorbis (mesuré 20/11 : 39/207 fichiers lisibles sans libvorbis, 207/207 avec) ; mpg123 pour le MP3 en conteneur
+- `USE_FFMPEG=OFF` : les libs runtime de l'image viennent de negativo17, un `ffmpeg-devel` Fedora donnerait un soname différent → binaire qui ne charge pas. Prix : Opus dans un FSB5
+- Binaire ~2,9 Mo, n'ajoute aucune lib (libvorbis/mpg123-libs sont déjà dans l'image)
+- Détail et contrat → `src/retroplayer/AGENTS.md`
 
 **build-tvqt** (après build-manager) :
 - Installe le paquet Python `/src/tvqt/gablue_tv/` dans `/usr/lib/tvqt/` et le lanceur `src/tvqt/tvqt` en `/usr/bin/tvqt` (755) ; sources nettoyées

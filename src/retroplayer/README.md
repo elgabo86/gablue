@@ -25,6 +25,8 @@ par l'étape `retroplayer-build` du `Containerfile-gablue` et installé en
 ## Dépendances
 
 - `zxtune123` (17 Mo, pas de Qt) : `~/.cache/retroplayer/bin/zxtune123` ou `$ZXTUNE`.
+- `vgmstream-cli` (fourni par l'image) pour les conteneurs que zxtune ne lit pas :
+  `.txtp`, `.fsb`, `.bfstm`, `.btsnd`, `.hca`, `.at3`… (`$VGMSTREAM` pour en imposer un).
 - Pour compiler : `cargo` + les en-têtes ALSA (fournis par `brew install alsa-lib`,
   utilisés seulement à la compilation ; la libALSA du système est liée).
 
@@ -47,7 +49,8 @@ par l'étape `retroplayer-build` du `Containerfile-gablue` et installé en
 
 - `retroplayer.db` — base (partagée avec l'ancienne version) + tables `tracks` et `loops` ;
 - `archives/<id>/x` — archives extraites (conservées : rejouer ne re-télécharge pas) ;
-- `decoded/<hash>.wav` — WAV décodés (cache de lecture) ;
+- rien pour l'audio : les pistes décodées restent en mémoire (LRU, 512 Mo), un WAV
+  temporaire sert de tampon dans `/dev/shm` puis disparaît ;
 - `bin/zxtune123` — décodeur.
 
 ## Notes techniques
