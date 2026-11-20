@@ -21,16 +21,30 @@ système au-delà de `unsquashfs` (icône dans un `.wgp`), `qdbus6`/`qdbus` (ple
   (catégorie `Game`, `StartupWMClass=glauncher`) ; icône :
   `files/system/all/usr/share/icons/hicolor/scalable/apps/glauncher.svg`
   (copie de `assets/glauncher.svg`).
+- **Fenêtre** : `window::Settings` dans `main.rs` porte
+  `platform_specific.application_id = "glauncher"` (app_id Wayland = nom du
+  `.desktop` : sans lui KWin ne rattache pas la fenêtre et affiche l'icône
+  générique Wayland, constaté 20/11) et `decorations: true` **en permanence**.
+  Ne jamais conditionner les décorations au plein écran : sous Wayland
+  (xdg-decoration) elles sont négociées **à la création** — winit demande du
+  client-side quand `decorations` est faux, et `window::toggle_decorations` ne
+  peut plus rien négocier ensuite → sortir du plein écran rendait une fenêtre
+  sans barre de titre (20/11). En plein écran KWin n'en dessine pas, donc le
+  drapeau fixe convient aux deux modes ; `Message::ToggleFullscreen` ne fait
+  que changer de `window::Mode`.
 - Réglages : le launcher lit `~/.config/glauncher/config.toml` et ne l'écrit
   **jamais** ; Gablue Manager (`dialogs/glauncher.py`) écrit les dossiers de
-  jeux, le plein écran et SteamGridDB. Vue, tri et taille des vignettes se
-  règlent dans le launcher et vivent dans son cache (`state.txt`).
+  jeux, le plein écran, la musique de fond et SteamGridDB. Vue, tri et taille
+  des vignettes se règlent dans le launcher et vivent dans son cache
+  (`state.txt`).
 - Menu de l'overlay manette (`gablue-pad`) : entrée `GLAUNCHER`, au-dessus
   d'EmulationStation, via `scripts/toggle-glauncher`.
-- Compilation locale : le `target-dir` vient de la config cargo globale
-  (`~/.cargo/config.toml` → `~/.cache/opencode/cargo-target`), **jamais** un
-  `target/` dans le dépôt (`~/Syncthing`, 11 Go synchronisés — retour 18/11).
-  `test.sh` demande le chemin à `cargo metadata`.
+- Compilation locale : le `target-dir` vient de `~/.cargo/config.toml`
+  (`~/.cache/opencode/cargo-target`), **doublé** par le `.cargo/config.toml` du
+  dépôt (même valeur, versionnée : un poste où la config globale manque garde
+  la sortie hors de `~/Syncthing`). **Jamais** de `target/` dans le dépôt
+  (2,6 Go synchronisés constatés le 20/11 — garde-fou `.stignore` à la racine
+  du dossier Syncthing). `test.sh` demande le chemin à `cargo metadata`.
 
 ## Commandes
 
@@ -64,6 +78,7 @@ leurs icônes, pour l'interface.
 - `src/watch.rs` — surveillance inotify : rafale → chemins touchés
 - `src/gamepad.rs` — manettes via `evdev`, boutons normalisés (`BTN_SOUTH`…)
 - `src/launch.rs` — construit la commande, lance le jeu, attend sa fin
+- `src/music.rs` — musique de fond : `mpv` en tâche de fond, fondu par IPC
 - `src/app.rs` — état, messages, bus interne, vue iced (grille + écran noir)
 - `src/state.rs` — type de vue et tri retenus (`<cache>/state.txt`)
 - `assets/glyphs/{xbox,playstation}/*.png` — glyphes Xelu (CC0), embarqués
@@ -160,6 +175,36 @@ leurs icônes, pour l'interface.
   --nocapture`.
 - **Lancement** : `launch_wgp`/`launch_lgp` + chemin du paquet en argument.
   `GLAUNCHER_LAUNCH_CMD` remplace toute la commande (tests).
+- **Musique de fond** (`music = true`, défaut) : piste **embarquée**
+  (`assets/music/menu.opus`) — 22 Mo de WAV source → **1,6 Mo** en Opus 96 kb/s,
+  préparée une fois par
+  `ffmpeg -t 115.289 -af "afade=t=out:st=115.281:d=0.008" -i src.wav
+  -c:a libopus -b:a 96k -vbr on -compression_level 10 -application audio
+  -map_metadata -1` (coupe la queue morte de l'export Suno, pose la garde
+  anti-clic, jette le commentaire « made with suno studio »). Recopiée dans
+  `<cache>/music/` (mpv a besoin d'un fichier *cherchable* pour boucler) puis
+  lue par `mpv --no-config --no-video --ab-loop-a=… --ab-loop-b=…
+  --gapless-audio=yes`, volume piloté par sa socket IPC (`set_property volume`) :
+  c'est le seul moyen d'avoir un vrai fondu, une `--volume` en ligne de commande
+  étant figée.
+  Fondu d'entrée 1,2 s, sortie 0,9 s **pendant le voile noir** du lancement ;
+  `mpv` est **arrêté** (pas mis en pause) pendant une partie et relancé au
+  retour. Mesuré : ~2 à 3 % d'un cœur, ~85 Mo (`pw-play` ferait 1 % sans fondu).
+  **Boucle** : `--ab-loop-a=0.133 --ab-loop-b=115.289`, soit la première note →
+  fin de la **48ᵉ mesure** (le morceau est calé sur 100 BPM, mesure de 2,4 s, et
+  ses 48 mesures font 115,2 s) : intro jouée en entier au démarrage, puis chaque
+  tour repart sur la première note, **sans mélange ni décalage**. Écarté le
+  20/11, chiffres à l'appui : replier la fin sur le début (2 s) faisait démarrer
+  la musique sur son dénouement ; boucler le fichier tel quel collait **170 ms
+  de silence** par tour (fin à −67 dB + 128 ms de silence avant l'attaque) —
+  c'est la « petite coupure » signalée. Le fichier embarqué est la piste d'origine
+  dont on a seulement retiré la queue morte de l'export (51 ms) avec 8 ms de
+  fondu de garde : saut de bouclage 173/32768, aucune plage silencieuse aux
+  jonctions sur une capture de la sortie réelle. `--gapless-audio=yes` reste
+  indispensable (sinon 31 ms de blanc par tour, réouverture de la sortie audio).
+  `libc` + `PR_SET_PDEATHSIG` (dans `pre_exec`) : un launcher qui meurt, même
+  par plantage, ne laisse pas une musique orpheline. Le réglage s'écrit dans
+  Gablue Manager → Lanceur de jeux (case « Jouer une musique de fond »).
 - **Plein écran du jeu (KWin)** : `kwin::watch` suit les PID du jeu et force
   l'attribut `fullScreen` de KWin sur leurs fenêtres **normales** via un script
   KWin chargé par D-Bus (`org.kde.kwin.Scripting`, `qdbus6` puis `qdbus`) :

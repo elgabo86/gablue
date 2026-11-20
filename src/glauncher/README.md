@@ -141,6 +141,30 @@ Un paquet supprimé sort de la liste tout seul. Un dossier injoignable (disque
 externe débranché) est signalé « dossier introuvable » mais reste dans la
 config : ses jeux réapparaissent dès que le disque est remonté.
 
+## Musique de fond
+
+Le launcher joue une musique en boucle : une piste **embarquée** dans le
+binaire (`assets/music/menu.opus`, Opus 96 kb/s, 1,6 Mo), recopiée une fois
+dans le cache puis lue par `mpv` (`--no-config --no-video --ab-loop-a=0.133
+--ab-loop-b=115.289 --gapless-audio=yes`). Elle monte en fondu au démarrage, **s'efface pendant le
+voile noir** du lancement (0,9 s) et revient en fondu au retour du jeu — donc
+jamais par-dessus une partie, et `mpv` est arrêté, pas mis en pause.
+
+La boucle est **musicale, pas un raccord** : la piste est calée sur 100 BPM
+(mesure de 2,4 s) et fait exactement 48 mesures ; `mpv` boucle de la première
+note (0,133 s) à la fin de la 48ᵉ mesure (115,289 s). L'intro est donc jouée en
+entier au démarrage, puis chaque tour repart sur la première note — rien n'est
+mélangé ni décalé, et le morceau n'est pas coupé au milieu d'une phrase. Seule
+retouche du fichier : la queue morte de l'export Suno (51 ms à −67 dB) est
+retirée, avec 8 ms de fondu de garde anti-clic. `--gapless-audio=yes` garde la
+sortie audio ouverte entre deux tours (sans lui : 31 ms de blanc par
+bouclage) ; vérifié sur la sortie réelle, aucune plage silencieuse aux
+jonctions. Coût : ~2 à 3 % d'un cœur et ~85 Mo résidents, mesurés.
+
+Coupée par `music = false` dans `config.toml` (case « Jouer une musique de
+fond » de Gablue Manager → Lanceur de jeux) ; sans `mpv`, le launcher reste
+simplement muet.
+
 ## Contrôles
 
 | Action      | Clavier         | Manette              |

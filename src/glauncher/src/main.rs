@@ -9,6 +9,7 @@ mod gamepad;
 mod index;
 mod kwin;
 mod launch;
+mod music;
 mod playtime;
 mod state;
 mod library;
@@ -241,7 +242,20 @@ fn main() -> iced::Result {
     let window = window::Settings {
         size: iced::Size::new(1280.0, 720.0),
         fullscreen: config.fullscreen,
-        decorations: !config.fullscreen,
+        // TOUJOURS décorées, même en plein écran : sous Wayland les
+        // décorations sont négociées à la création (winit demande client-side
+        // quand `decorations` est faux, et `toggle_decorations` ne peut plus
+        // rien y changer) → sortir du plein écran rendait une fenêtre sans
+        // barre de titre (20/11). En plein écran KWin n'en dessine pas de
+        // toute façon.
+        decorations: true,
+        platform_specific: iced::window::settings::PlatformSpecific {
+            // app_id Wayland = nom du `.desktop` : sans lui, KWin ne rattache
+            // pas la fenêtre à `glauncher.desktop` et affiche l'icône générique
+            // Wayland (constaté 20/11).
+            application_id: "glauncher".into(),
+            ..Default::default()
+        },
         ..window::Settings::default()
     };
 

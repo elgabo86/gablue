@@ -27,6 +27,7 @@ use crate::gamepad::{PadButton, PadEvent, PadKind};
 use crate::index::{Index, Refresh};
 use crate::launch;
 use crate::library::{self, ArtworkCache, Game};
+use crate::music;
 use crate::playtime;
 use crate::state::{self, SortBy};
 use crate::thumbs;
@@ -467,6 +468,8 @@ pub struct App {
     fade_target: f32,
     /// Lancement à effectuer dès que l'écran est noir (nom, commande, début du fondu).
     to_launch: Option<(String, launch::Launch, std::time::Instant)>,
+    /// Musique de fond (`music = false` dans la config, ou `mpv` absent : aucune).
+    music: Option<music::Music>,
     /// Défilement animé vers la sélection.
     scroll_id: Id,
     scroll: f32,
@@ -596,6 +599,7 @@ impl App {
             fade: 1.0,
             fade_target: 0.0,
             to_launch: None,
+            music: None,
             pending_slug: None,
             play_started: None,
             playtime: playtime::load(&playtime_path),
@@ -620,6 +624,11 @@ impl App {
             star: image::Handle::from_bytes(STAR),
         };
         app.apply_filter();
+        // musique de fond : lecture par `mpv` dans un fil à part, l'UI
+        // n'attend rien (et sans `mpv` le launcher reste simplement muet)
+        if app.config.music {
+            app.music = music::Music::start(&app.config.cache_dir());
+        }
         app.request_visible_covers();
         app.sweep_thumbs();
         app.sweep_icons();
@@ -1074,6 +1083,10 @@ impl App {
                     }
                 }
                 self.fade_target = 0.0;
+                // retour au launcher : la musique revient en fondu
+                if let Some(music) = &self.music {
+                    music.resume();
+                }
                 // on revient dans la liste des jeux, pas dans la page du jeu
                 self.page = None;
                 self.status = match result {
@@ -1322,6 +1335,13 @@ impl App {
                 } else {
                     window::Mode::Windowed
                 };
+                // Les décorations ne se touchent JAMAIS ici : sous Wayland
+                // (xdg-decoration) elles sont négociées à la création de la
+                // fenêtre, `toggle_decorations` n'a aucun effet ensuite, et
+                // sortir du plein écran laissait une fenêtre sans barre de
+                // titre (signalé puis confirmé le 20/11). La fenêtre est donc
+                // toujours créée décorée — KWin n'affiche pas de barre en
+                // plein écran — donc paramètre fixe dans `main.rs`.
                 match self.window {
                     Some(id) => window::set_mode(id, mode).map(|()| Message::Nothing),
                     None => Task::none(),
@@ -1387,6 +1407,11 @@ impl App {
         // le jeu démarre quand le fondu au noir est terminé (voir tick)
         self.to_launch = Some((game.name.clone(), command, std::time::Instant::now()));
         self.fade_target = 1.0;
+        // la musique s'efface pendant ce même voile noir : le jeu n'a pas de
+        // musique par-dessus son propre son
+        if let Some(music) = &self.music {
+            music.fade_out();
+        }
         if std::env::var_os("GLAUNCHER_PAD_DEBUG").is_some() {
             eprintln!(
                 "glauncher : départ jeu — sélection {} / défilement {:.0}",

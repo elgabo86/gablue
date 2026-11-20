@@ -58,6 +58,10 @@ pub struct Config {
     pub cache_dir: String,
     /// Télécharge les covers manquantes (SteamGridDB) à la volée.
     pub covers: bool,
+    /// Musique de fond du launcher (piste embarquée, jouée par `mpv` en
+    /// boucle) : elle s'efface en fondu au lancement d'un jeu et revient au
+    /// retour. Coupée pendant une partie, dans tous les cas.
+    pub music: bool,
     /// Clé API SteamGridDB v2 (facultative ; sinon API publique sans compte).
     pub steamgriddb_key: String,
     /// Commande de lancement des paquets Windows.
@@ -98,6 +102,7 @@ impl Default for Config {
             ],
             cache_dir: "~/.local/share/glauncher".into(),
             covers: true,
+            music: true,
             steamgriddb_key: String::new(),
             launch_wgp: "gwine".into(),
             launch_lgp: "lgplaunch".into(),
