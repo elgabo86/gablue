@@ -27,9 +27,10 @@ jeu » est tenue par notre source audio (pas par zxtune).
 - Décodeur de secours : étape `vgmstream-build` →
   `COPY --from=vgmstream-build /out/vgmstream-cli /usr/bin/vgmstream-cli`
   (`vgmstream.rs` le trouve par PATH).
-- Runtime : `zxtune` (sonde de durée) **et** `zxtune123` (décodage) sont installés
-  par `files/scripts/post-install` ; ne pas ré-exclure `zxtune123` du tarball comme
-  le faisait l'ancienne version Go.
+- Runtime : `zxtune123` (décodage WAV de RetroPlayer) est installé par
+  `files/scripts/post-install` ; le tarball ZXTune apporte aussi `zxtune-qt`
+  (GUI Qt) et son entrée de bureau, **exclus** du démontage tar — ne pas
+  ré-exclure `zxtune123` comme le faisait l'ancienne version Go.
 
 ## Layout
 
