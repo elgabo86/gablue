@@ -112,6 +112,12 @@ const SPIN_SPEED: f32 = 6.0;
 /// lui, ne fait aucun saut : l'ancien écran s'efface, le nouveau émerge.
 const PAGE_FADE_RISE: f32 = 0.12;
 const PAGE_FADE_FALL: f32 = 0.20;
+/// Bascule de LISTE (vue, tri, filtre d'année) : le même fondu enchaîné, plus
+/// court et sans aller au noir complet — on ne change pas d'écran, on
+/// réordonne le même. Le contenu change au sommet, quand on ne le voit plus.
+const SWAP_RISE: f32 = 0.12;
+const SWAP_FALL: f32 = 0.18;
+const SWAP_PEAK: f32 = 0.92;
 /// Apparition d'un visuel de la page (héros, logo, cover) arrivé après coup.
 const PAGE_ASSET_SECONDS: f32 = 0.30;
 /// Plongée au lancement d'un jeu : la page grossit de 6 % pendant que le voile
@@ -459,6 +465,15 @@ enum PageStep {
     Close,
 }
 
+/// Bascule de liste à faire au sommet de `swap_fade` (vue, tri, année) : le
+/// contenu change quand le fond le cache, donc aucun saut visible.
+#[derive(Clone, Copy)]
+enum Swap {
+    View(ViewMode),
+    Sort(SortBy),
+    Year(Option<u32>),
+}
+
 /// Ordre du menu « Images » : le même que les types de visuels.
 const ART_MENU: [covers::ArtKind; 4] = covers::ArtKind::ALL;
 
@@ -567,6 +582,10 @@ pub struct App {
     /// La page attend son basculement : le noir doit être complet avant qu'elle
     /// entre ou sorte de l'arbre (`PageStep::Open` / `PageStep::Close`).
     pending_page: Option<PageStep>,
+    /// Bascule de liste en cours (vue, tri, filtre) : opacité du fond et cible.
+    swap_fade: f32,
+    swap_fade_target: f32,
+    pending_swap: Option<Swap>,
     /// Progression de la bande héros de la page (0 = rien, 1 = posée) : quand
     /// le héros arrive après l'ouverture, la bande grandit et l'image apparaît
     /// en fondu au lieu de faire sauter le bloc du bas.
@@ -724,6 +743,9 @@ impl App {
             page_fade: 0.0,
             page_fade_target: 0.0,
             pending_page: None,
+            swap_fade: 0.0,
+            swap_fade_target: 0.0,
+            pending_swap: None,
             page_hero: 0.0,
             page_logo: 0.0,
             page_cover: 0.0,
@@ -841,6 +863,7 @@ impl App {
     fn animating(&self) -> bool {
         (self.fade - self.fade_target).abs() > 0.001
             || (self.page_fade - self.page_fade_target).abs() > 0.001
+            || (self.swap_fade - self.swap_fade_target).abs() > 0.001
             || (self.scroll - self.scroll_target).abs() > 0.5
             || self.page_assets_animating()
             || self.to_launch.is_some()
@@ -1506,11 +1529,15 @@ impl App {
                 Task::none()
             }
             Message::ToggleView => {
-                self.config.view = self.config.view.flipped();
-                self.remember();
-                self.scroll = 0.0;
-                self.update_scroll_target();
-                self.request_visible_covers();
+                // bascule de liste : le changement se fait au sommet du fondu.
+                // La vue courante ne change qu'au sommet, donc un appui répété
+                // doit repartir de la bascule DÉJÀ en attente (sinon deux V
+                // rapprochés ne feraient qu'une seule bascule).
+                let next = match self.pending_swap {
+                    Some(Swap::View(view)) => view.flipped(),
+                    _ => self.config.view.flipped(),
+                };
+                self.begin_swap(Swap::View(next));
                 Task::none()
             }
             Message::Changed(paths) => {
@@ -1554,17 +1581,8 @@ impl App {
                 let Some(&view) = VIEWS.get(index) else {
                     return Task::none();
                 };
-                self.config.view = view;
-                self.remember();
-                self.apply_filter();
-                self.scroll = 0.0;
-                self.scroll_target = 0.0;
-                self.visible_covers.clear();
-                self.request_visible_covers();
-                operation::scroll_to(
-                    self.scroll_id.clone(),
-                    AbsoluteOffset { x: 0.0, y: 0.0 },
-                )
+                self.begin_swap(Swap::View(view));
+                Task::none()
             }
             Message::SortMenu => {
                 if self.running.is_some() {
@@ -1588,22 +1606,8 @@ impl App {
                     self.year_menu = Some(year_index(self.year_filter, self.known_years()));
                     return Task::none();
                 };
-                self.sort = sort;
-                self.remember();
-                self.apply_filter();
-                // Trier remet en DÉBUT de liste (demandé le 20/11) : c'est le
-                // seul moyen de voir le nouvel ordre depuis le haut. On pose la
-                // position réelle en même temps que la cible, sinon l'animation
-                // de défilement partirait de l'ancienne place.
-                self.selected = 0;
-                self.scroll = 0.0;
-                self.scroll_target = 0.0;
-                self.visible_covers.clear();
-                self.request_visible_covers();
-                operation::scroll_to(
-                    self.scroll_id.clone(),
-                    AbsoluteOffset { x: 0.0, y: 0.0 },
-                )
+                self.begin_swap(Swap::Sort(sort));
+                Task::none()
             }
             Message::YearMenuNav(delta) => {
                 let last = self.known_years().len();
@@ -1614,24 +1618,13 @@ impl App {
             }
             Message::YearMenuChoose(index) => {
                 self.year_menu = None;
-                self.year_filter = if index == 0 {
+                let year = if index == 0 {
                     None
                 } else {
                     self.known_years().get(index - 1).copied()
                 };
-                self.remember();
-                self.apply_filter();
-                // même règle que le tri : on repart du haut, sinon le filtre
-                // s'applique sans qu'on voie le résultat
-                self.selected = 0;
-                self.scroll = 0.0;
-                self.scroll_target = 0.0;
-                self.visible_covers.clear();
-                self.request_visible_covers();
-                operation::scroll_to(
-                    self.scroll_id.clone(),
-                    AbsoluteOffset { x: 0.0, y: 0.0 },
-                )
+                self.begin_swap(Swap::Year(year));
+                Task::none()
             }
             Message::Back => {
                 // même priorité qu'Échap : le plus profond d'abord
@@ -1883,6 +1876,23 @@ impl App {
                 Some((slug.clone(), std::time::Instant::now()))
             };
             spawn_launch(name, command, self.config.cache_dir(), slug);
+        }
+
+        // Bascule de liste : montée vers le fond, échange au sommet, descente.
+        if (self.swap_fade - self.swap_fade_target).abs() > 0.001 {
+            let rising = self.swap_fade < self.swap_fade_target;
+            let step = dt / if rising { SWAP_RISE } else { SWAP_FALL };
+            self.swap_fade = if rising {
+                (self.swap_fade + step).min(self.swap_fade_target)
+            } else {
+                (self.swap_fade - step).max(self.swap_fade_target)
+            };
+        }
+        if self.swap_fade >= SWAP_PEAK - 0.001
+            && let Some(swap) = self.pending_swap.take()
+        {
+            tasks.push(self.apply_swap(swap));
+            self.swap_fade_target = 0.0;
         }
 
         if (self.scroll - self.scroll_target).abs() > 0.5 {
@@ -2451,6 +2461,50 @@ impl App {
             .count()
     }
 
+    /// Prépare une bascule de liste : le changement sera appliqué au sommet du
+    /// fondu (`tick`). Rien ne bouge tout de suite.
+    fn begin_swap(&mut self, swap: Swap) {
+        self.pending_swap = Some(swap);
+        self.swap_fade_target = SWAP_PEAK;
+    }
+
+    /// Applique la bascule demandée, une fois le fond atteint.
+    fn apply_swap(&mut self, swap: Swap) -> Task<Message> {
+        match swap {
+            // une vue ne filtre pas : la vignette courante est conservée, on
+            // la recadre simplement dans la nouvelle disposition
+            Swap::View(view) => {
+                self.config.view = view;
+                self.remember();
+                self.apply_filter();
+                self.scroll = 0.0;
+                self.update_scroll_target();
+                self.request_visible_covers();
+                return Task::none();
+            }
+            // tri et filtre d'année remettent en DÉBUT de liste (demandé le
+            // 20/11) : seul moyen de voir le résultat depuis le haut
+            Swap::Sort(sort) => {
+                self.sort = sort;
+                self.remember();
+                self.apply_filter();
+            }
+            Swap::Year(year) => {
+                self.year_filter = year;
+                self.remember();
+                self.apply_filter();
+            }
+        }
+        self.selected = 0;
+        self.scroll = 0.0;
+        self.scroll_target = 0.0;
+        self.request_visible_covers();
+        operation::scroll_to(
+            self.scroll_id.clone(),
+            AbsoluteOffset { x: 0.0, y: 0.0 },
+        )
+    }
+
     fn apply_filter(&mut self) {
         let current = self.games.get(self.selected).map(|game| game.slug.clone());
         let favorites = self.sort == SortBy::Favorites;
@@ -2470,12 +2524,6 @@ impl App {
             .unwrap_or(0)
             .min(self.games.len().saturating_sub(1));
         self.update_scroll_target();
-    }
-
-    /// Premier dossier configuré injoignable (disque externe débranché…).
-    /// Le dossier reste dans la config : ses jeux reviennent quand il réapparaît.
-    fn missing_dir(&self) -> Option<std::path::PathBuf> {
-        self.config.game_dirs().into_iter().find(|dir| !dir.is_dir())
     }
 
     fn on_key(&mut self, event: keyboard::Event) -> Task<Message> {
@@ -2879,10 +2927,11 @@ impl App {
         // la page : lancer un jeu depuis une page doit virer au noir comme
         // depuis la grille, et l'arbre doit garder la même forme d'un rendu à
         // l'autre (un changement de forme recrée la zone défilante, donc la
-        // position). Il porte deux fondus : celui du lancement (`fade`) et
-        // celui de la page (`page_fade`, ouverture et fermeture) — jamais
-        // ensemble, donc le plus opaque des deux suffit.
-        let veil_opacity = self.fade.max(self.page_fade);
+        // position). Il porte trois fondus : celui du lancement (`fade`),
+        // celui de la page (`page_fade`, ouverture et fermeture) et celui
+        // d'une bascule de liste (`swap_fade`) — jamais ensemble, donc le plus
+        // opaque des trois suffit.
+        let veil_opacity = self.fade.max(self.page_fade).max(self.swap_fade);
         let veil = container(Row::new())
             .width(Fill)
             .height(Fill)
@@ -4202,14 +4251,6 @@ impl App {
                 .size(14)
                 .color(if *error { DANGER } else { MUTED })
                 .into()
-        } else if let Some(dir) = self.missing_dir() {
-            text(format!(
-                "dossier introuvable : {} (disque débranché ?)",
-                dir.display()
-            ))
-            .size(14)
-            .color(MUTED)
-            .into()
         } else if let Some(notice) = &self.notice {
             text(notice.clone()).size(14).color(ACCENT).into()
         } else {

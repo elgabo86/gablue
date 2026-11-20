@@ -29,7 +29,7 @@
 //! silencieuse aux jonctions, et le saut de bouclage vaut 173/32768 grâce aux
 //! 8 ms de fondu de garde en fin de piste.
 
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -44,8 +44,13 @@ const TRACK_FILE: &str = "menu.opus";
 /// reste derrière un jeu et derrière une vidéo. Réglable dans Gablue Manager
 /// (`music_volume` dans `config.toml`).
 pub const DEFAULT_VOLUME: u8 = 60;
-/// Fondu d'entrée : au démarrage et au retour d'une partie.
+/// Fondu d'entrée au démarrage : la musique s'installe.
 const FADE_IN_MS: u64 = 1200;
+/// Fondu d'entrée au **retour d'une partie** : plus court, et surtout la piste
+/// reprend **là où elle s'était tue** (position relevée à l'arrêt) — on ne
+/// redémarre pas le morceau. Demande du 20/11 : « un mini fade pour ne pas
+/// brusquer son arrivée ».
+const FADE_IN_RESUME_MS: u64 = 500;
 /// Fondu de sortie : la durée du voile noir du lancement (`FADE_SECONDS` dans
 /// `app.rs`), pour que la musique s'éteigne pendant que l'écran s'assombrit.
 const FADE_OUT_MS: u64 = 900;
@@ -137,13 +142,18 @@ fn write_track(cache: &Path) -> Option<PathBuf> {
 fn runner(track: PathBuf, commands: std::sync::mpsc::Receiver<Order>, volume: u8) {
     // le volume vient de la configuration (0 à 100) : au-delà, `mpv` sature
     let volume = volume.min(100) as f32;
-    // deux rampes : montée plus douce que la descente
-    let in_step = volume / (FADE_IN_MS as f32 / STEP_MS as f32);
+    // deux rampes : montée plus douce que la descente (`in_step` est recalculé
+    // au démarrage et à chaque reprise, qui a son propre fondu)
+    let mut in_step = volume / (FADE_IN_MS as f32 / STEP_MS as f32);
     let out_step = volume / (FADE_OUT_MS as f32 / STEP_MS as f32);
     let mut player: Option<Player> = None;
     let mut round = 0;
     let mut level = 0.0f32;
     let mut target = 0.0f32;
+    // Position de la piste au moment où on l'a coupée (partie lancée). `mpv`
+    // est arrêté, pas mis en pause : c'est elle qui permet de reprendre au
+    // même endroit au retour.
+    let mut resume_at: Option<f32> = None;
 
     loop {
         let order = commands.recv_timeout(Duration::from_millis(STEP_MS));
@@ -158,7 +168,12 @@ fn runner(track: PathBuf, commands: std::sync::mpsc::Receiver<Order>, volume: u8
                 if player.is_none() {
                     round += 1;
                     match Player::open(&track, round) {
-                        Some(opened) => {
+                        Some(mut opened) => {
+                            // retour de partie : on se replace là où la piste
+                            // s'était arrêtée, avant que le son ne remonte
+                            if let Some(position) = resume_at {
+                                opened.seek(position);
+                            }
                             player = Some(opened);
                             level = 0.0;
                         }
@@ -167,6 +182,13 @@ fn runner(track: PathBuf, commands: std::sync::mpsc::Receiver<Order>, volume: u8
                         None => return,
                     }
                 }
+                // une reprise ne remonte pas du silence : elle est déjà là
+                let fade_in = if resume_at.is_some() {
+                    FADE_IN_RESUME_MS
+                } else {
+                    FADE_IN_MS
+                };
+                in_step = volume / (fade_in as f32 / STEP_MS as f32);
                 target = volume;
             }
             Ok(Order::Stop) => target = 0.0,
@@ -180,8 +202,13 @@ fn runner(track: PathBuf, commands: std::sync::mpsc::Receiver<Order>, volume: u8
         }
         if (level - target).abs() <= 0.05 {
             if target == 0.0 {
-                // fondu de sortie terminé : `mpv` rend la main (et sa mémoire)
+                // fondu de sortie terminé : on note où en est la piste, puis
+                // `mpv` rend la main (et sa mémoire)
                 if let Some(mut done) = player.take() {
+                    resume_at = done.position().or(resume_at);
+                    if std::env::var_os("GLAUNCHER_MUSIC_DEBUG").is_some() {
+                        eprintln!("glauncher : musique — arrêt à {resume_at:?} s");
+                    }
                     done.quit();
                 }
             }
@@ -286,6 +313,57 @@ impl Player {
             let _ = writeln!(
                 stream,
                 "{{\"command\":[\"set_property\",\"volume\",{level:.1}]}}"
+            );
+        }
+    }
+
+    /// Position courante de lecture (secondes), demandée par IPC. Budget très
+    /// court : `mpv` répond en une milliseconde ; au-delà, une musique qui
+    /// traîne continuerait par-dessus le jeu.
+    fn position(&mut self) -> Option<f32> {
+        let stream = self.stream.as_ref()?;
+        stream
+            .set_read_timeout(Some(Duration::from_millis(120)))
+            .ok()?;
+        {
+            let mut writer = stream;
+            writeln!(
+                writer,
+                "{{\"command\":[\"get_property\",\"time-pos\"],\"request_id\":7}}"
+            )
+            .ok()?;
+        }
+        let mut reader = std::io::BufReader::new(stream);
+        let mut line = String::new();
+        for _ in 0..8 {
+            line.clear();
+            if reader.read_line(&mut line).ok()? == 0 {
+                return None;
+            }
+            // d'autres messages peuvent précéder la réponse : on ne garde que
+            // celle qui porte notre numéro de requête
+            let Some(at) = line.find("\"request_id\":7") else {
+                continue;
+            };
+            let _ = at;
+            let start = line.find("\"data\":")? + "\"data\":".len();
+            let rest = line[start..].trim_start();
+            let end = rest
+                .find(|c: char| c == ',' || c == '}')
+                .unwrap_or(rest.len());
+            let value: f32 = rest[..end].trim().parse().ok()?;
+            return value.is_finite().then_some(value);
+        }
+        None
+    }
+
+    /// Replace la lecture à `position` secondes (retour de partie). Envoyé
+    /// pendant que le volume est encore à 0 : le saut ne s'entend pas.
+    fn seek(&mut self, position: f32) {
+        if let Some(stream) = self.stream.as_mut() {
+            let _ = writeln!(
+                stream,
+                "{{\"command\":[\"seek\",{position:.3},\"absolute\"]}}"
             );
         }
     }

@@ -151,8 +151,9 @@ leurs icônes, pour l'interface.
 - **Disparition** : un paquet absent (ou un dossier injoignable) sort de la
   liste au rescan. Le dossier, lui, reste dans la config — un disque externe
   débranché revient avec ses jeux dès qu'il est remonté (le veilleur re-teste
-  les dossiers toutes les 2 s) ; le pied de page affiche « dossier
-  introuvable » entre-temps.
+  les dossiers toutes les 2 s). **Rien ne le signale dans l'interface**
+  (demandé le 20/11 : un « dossier introuvable » en pied de page, c'était
+  moche) : la liste est simplement plus courte, sans message ni trou.
 - **Assets** : `~/.local/share/glauncher/assets/` ne contient **que** des
   images SteamGridDB (`grids/`, `heroes/`, `logos/`, `icons/`) : c'est le
   dossier **partageable** (Syncthing entre machines). Tout le reste est sorti
@@ -210,7 +211,15 @@ leurs icônes, pour l'interface.
   Lancement de jeux ; `0` ne lance pas `mpv` du tout.
   Fondu d'entrée 1,2 s, sortie 0,9 s **pendant le voile noir** du lancement ;
   `mpv` est **arrêté** (pas mis en pause) pendant une partie et relancé au
-  retour. Mesuré : ~2 à 3 % d'un cœur, ~85 Mo (`pw-play` ferait 1 % sans fondu).
+  retour. **La reprise repart de la position quittée** : juste avant de rendre
+  la main, la position est demandée à `mpv` par IPC (`get_property time-pos`,
+  budget 120 ms / 8 lignes — elle répond en ~1 ms, et une réponse qui traîne
+  ferait jouer la musique par-dessus le jeu) et le `mpv` suivant reçoit un
+  `seek <position> absolute` **pendant que le volume est encore à 0**, donc
+  sans saut audible ; fondu d'entrée court (`FADE_IN_RESUME_MS`, 0,5 s) pour
+  ne pas brusquer son arrivée (demandé le 20/11). Le morceau ne repart donc
+  jamais de son intro à chaque retour. Mesuré : ~2 à 3 % d'un cœur, ~85 Mo
+  (`pw-play` ferait 1 % sans fondu).
   **Boucle** : `--ab-loop-a=0.133 --ab-loop-b=115.289`, soit la première note →
   fin de la **48ᵉ mesure** (le morceau est calé sur 100 BPM, mesure de 2,4 s, et
   ses 48 mesures font 115,2 s) : intro jouée en entier au démarrage, puis chaque
@@ -279,6 +288,15 @@ leurs icônes, pour l'interface.
   constaté 18/11 : plus aucun plein écran). Le nom porte le PID du launcher, le
   nom courant est noté dans `<cache>/kwin-fullscreen.name`, et `drop_stale_script`
   décharge celui de la session précédente.
+- **Bascule de liste (vue, tri, filtre d'année)** : même principe que la page,
+  en plus court — voile monté à **92 %** (`SWAP_PEAK`, `SWAP_RISE` 0,12 s,
+  `SWAP_FALL` 0,18 s), le contenu est réordonné **au sommet** (`begin_swap` /
+  `pending_swap` / `apply_swap`) quand il n'est plus lisible, puis le voile
+  redescend. Jamais de noir complet : on ne change pas d'écran, on réordonne
+  le même. Tri et filtre remettent la sélection et le défilement au début
+  (`apply_swap`), la vue conserve la vignette courante. Tout passe par lui —
+  `V`, menu « Type de liste », menu « Tri », menu « Année » —, sinon le
+  changement apparaîtrait d'un coup.
 - **Fondu de la page d'un jeu** : fondu **enchaîné par le fond**, pas un
   passage au noir (jugé « trop agressif » le 20/11 — ça sautait au noir puis
   ressortait, sans montée). Deux rampes : montée `PAGE_FADE_RISE` (0,12 s),

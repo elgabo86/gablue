@@ -39,6 +39,9 @@ Ils sont **surveillés** : un paquet ajouté ou supprimé met la liste à jour t
 seul, sans relancer le launcher — il n'y a donc pas de bouton « Rafraîchir ».
 Le nombre de jeux s'affiche en bas, avec les commandes.
 
+Changer de vue ou de tri, ou filtrer par année, se fait en fondu : l'écran
+s'assombrit, la liste change d'ordre et réapparaît. Rien ne saute.
+
 Le menu **Tri** (`T` ou Carré/X) filtre aussi par **année de sortie** : chaque
 année connue y apparaît avec son nombre de jeux. Les années sont mémorisées dans
 `assets/years.txt` (dossier partagé, comme les visuels) et `glauncher --update`
@@ -148,8 +151,8 @@ images SteamGridDB.
 ## Jeux et disques qui disparaissent
 
 Un paquet supprimé sort de la liste tout seul. Un dossier injoignable (disque
-externe débranché) est signalé « dossier introuvable » mais reste dans la
-config : ses jeux réapparaissent dès que le disque est remonté.
+externe débranché) reste dans la config, sans message : ses jeux réapparaissent
+dès que le disque est remonté.
 
 ## Musique de fond
 
@@ -158,7 +161,9 @@ binaire (`assets/music/menu.opus`, Opus 96 kb/s, 1,6 Mo), recopiée une fois
 dans le cache puis lue par `mpv` (`--no-config --no-video --ab-loop-a=0.133
 --ab-loop-b=115.289 --gapless-audio=yes`). Elle monte en fondu au démarrage, **s'efface pendant le
 voile noir** du lancement (0,9 s) et revient en fondu au retour du jeu — donc
-jamais par-dessus une partie, et `mpv` est arrêté, pas mis en pause.
+jamais par-dessus une partie, et `mpv` est arrêté, pas mis en pause. Au retour,
+elle **reprend là où elle s'était tue**, avec un fondu court : le morceau ne
+repart pas de son introduction.
 
 La boucle est **musicale, pas un raccord** : la piste est calée sur 100 BPM
 (mesure de 2,4 s) et fait exactement 48 mesures ; `mpv` boucle de la première
