@@ -70,7 +70,17 @@ launch_game() {
     # l'overlay kernel) : publier `$$` suffit, gpad descend l'arbre. Le logo
     # manquant est demandé à glauncher en fond (il écrit dans son cache, jamais
     # l'overlay).
-    running_publish "$display_name" "${LGPACK_FILE:-}" "$$"
+    #
+    # Nom publié : celui du FICHIER de pack (sans `.lgp`), comme gwine — le nom
+    # interne (`.gamename`, « projectmidas ») est technique et ne dit rien à
+    # l'utilisateur. En mode classique (exécutable seul) LGPACK_FILE est vide :
+    # on garde le nom de l'exécutable.
+    local running_nom="$display_name"
+    if [ "${_LGP_MODE:-false}" = "true" ] && [ -n "${LGPACK_FILE:-}" ]; then
+        running_nom="$(basename "$LGPACK_FILE")"
+        running_nom="${running_nom%.lgp}"
+    fi
+    running_publish "$running_nom" "${LGPACK_FILE:-}" "$$"
     running_fetch_art "${LGPACK_FILE:-}"
 
     if [ "${_LGP_MODE:-false}" = "true" ]; then

@@ -1716,6 +1716,17 @@ impl App {
             .position(|e| matches!(e, Entree::Fenetre))
     }
 
+    /// Une fenêtre active est-elle annoncée ? Le script KWin envoie une info
+    /// **entièrement vide** quand il rejette la fenêtre active (pas de
+    /// `normalWindow`, `skipTaskbar`…), pas une fenêtre réelle sans titre :
+    /// Project Midas (titre SDL vide, classe `ProjectMidas`) passait donc pour
+    /// « aucune fenêtre » — l'overlay annonçait « AUCUNE FENETRE » et s'ouvrait
+    /// sur APPLICATIONS alors que le jeu tournait au premier plan (constaté
+    /// 20/11/2026).
+    fn a_fenetre(&self) -> bool {
+        fenetre_annoncee(&self.win.caption, &self.win.class)
+    }
+
     /// Premier index sélectionnable qui n'est **pas** l'en-tête : une page
     /// s'ouvre sur son contenu, l'en-tête reste atteignable par le haut.
     fn premier_action(&self) -> usize {
@@ -1969,7 +1980,7 @@ impl App {
         self.page = self.fen_retour;
         self.selected = self.premier_action();
         self.status = if ok {
-            format!("ACTIVE: {}", f.caption)
+            format!("ACTIVE: {}", f.titre())
         } else {
             "ACTIVER: ECHEC KWIN".to_string()
         };
@@ -2524,7 +2535,7 @@ impl App {
             // basculer son plein écran (sur toutes les pages)
             // sans fenêtre active, la boîte n'aurait rien à fermer : on va
             // directement chercher une fenêtre
-            Entree::Fenetre if self.win.caption.is_empty() => {
+            Entree::Fenetre if !self.a_fenetre() => {
                 self.status = "AUCUNE FENETRE: CHOISIR".to_string();
                 println!("SELECT FENETRE (aucune)");
                 self.charger_fenetres();
@@ -3560,7 +3571,7 @@ impl App {
                 Entree::Autre(idx) => {
                     let (titre, actif, cle) = match self.fenetres.get(idx) {
                         Some(f) => (
-                            f.caption.clone(),
+                            f.titre().to_string(),
                             f.active,
                             format!("{}|{}", f.desktop, f.class),
                         ),
@@ -3747,16 +3758,16 @@ impl App {
                     cv.rect(sx, sy + 3, th.barre, sh - 6, th.accent);
                 }
             }
-            let (cap, cls) = if self.win.caption.is_empty() {
+            let (cap, cls) = if let Some(jeu) = self.jeu_actif().filter(|jeu| !jeu.nom.is_empty()) {
+                // le paquet publié nomme la fenêtre : sa classe d'appli
+                // (souvent `steam_proton` pour un jeu Wine, ou le nom du
+                // binaire) n'apprend rien, donc pas de 2e ligne
+                (jeu.nom.clone(), String::new())
+            } else if !self.a_fenetre() {
                 ("AUCUNE FENETRE".to_string(), String::new())
-            } else if let Some(jeu) = self.jeu_actif() {
-                if jeu.nom.is_empty() {
-                    (self.win.caption.clone(), self.win.class.clone())
-                } else {
-                    // nom du paquet ; sa classe d'appli (souvent `steam_proton`
-                    // pour un jeu Wine) n'apprend rien, donc pas de 2e ligne
-                    (jeu.nom.clone(), String::new())
-                }
+            } else if self.win.caption.is_empty() {
+                // fenêtre sans titre : sa classe est la seule identité
+                (self.win.class.clone(), String::new())
             } else {
                 (self.win.caption.clone(), self.win.class.clone())
             };
@@ -4742,6 +4753,16 @@ fn jeu_de(jeux: &[JeuActif], pid: i32) -> Option<JeuActif> {
     None
 }
 
+/// Une info KWin annonce-t-elle une **vraie** fenêtre ? Le script envoie une
+/// info entièrement vide quand il rejette la fenêtre active (pas de
+/// `normalWindow`, `skipTaskbar`…) ; une fenêtre réelle peut n'avoir **aucun
+/// titre** (Project Midas : titre SDL vide) et n'est alors identifiable que par
+/// sa classe. Tester le titre seul faisait passer un jeu au premier plan pour
+/// « aucune fenêtre ».
+fn fenetre_annoncee(caption: &str, class: &str) -> bool {
+    !(caption.is_empty() && class.is_empty())
+}
+
 /// Fenêtre active telle que KWin la voit, poussée par `kwin/wininfo.js`.
 #[derive(Default, Clone, PartialEq)]
 struct WinInfo {
@@ -4767,6 +4788,19 @@ struct Fenetre {
     /// UUID KWin (`internalId`) : sert à réactiver la bonne fenêtre
     uuid: String,
     active: bool,
+}
+
+impl Fenetre {
+    /// Nom affichable : le titre, ou la classe quand la fenêtre n'en a pas
+    /// (Project Midas envoie un titre vide) — une ligne sans texte serait
+    /// inutilisable dans la page FENETRES et dans le statut d'activation.
+    fn titre(&self) -> &str {
+        if self.caption.is_empty() {
+            &self.class
+        } else {
+            &self.caption
+        }
+    }
 }
 
 /// Ce que le script KWin pousse : la fenêtre active et, sur demande, la liste.
@@ -6005,7 +6039,7 @@ fn main() {
             if recu || app.depart.elapsed() >= Duration::from_millis(600) {
                 app.page_initiale = true;
                 if !app.console && !app.focus_impose {
-                    if app.win.caption.is_empty() {
+                    if !app.a_fenetre() {
                         app.page = Page::Applis;
                         app.selected = app.premier_action();
                         app.status = "MENU: APPLICATIONS".to_string();
@@ -6123,6 +6157,31 @@ mod tests {
         let pid = enfant.id() as i32;
         enfant.wait().unwrap();
         pid
+    }
+
+    /// Une fenêtre réelle sans titre (Project Midas) n'est pas « aucune
+    /// fenêtre » : l'info KWin n'est vide que quand le script rejette la
+    /// fenêtre active. Sans ça, l'overlay annonçait « AUCUNE FENETRE » et
+    /// s'ouvrait sur APPLICATIONS pendant une partie de .lgp.
+    #[test]
+    fn fenetre_sans_titre_n_est_pas_absente() {
+        assert!(!fenetre_annoncee("", ""), "script KWin : aucun candidat");
+        assert!(fenetre_annoncee("", "ProjectMidas"), "titre vide, classe présente");
+        assert!(fenetre_annoncee("Celeste", ""), "titre seul (classe vide)");
+        assert!(fenetre_annoncee("Celeste", "steam_proton"));
+
+        let sans_titre = Fenetre {
+            caption: String::new(),
+            class: "ProjectMidas".to_string(),
+            ..Fenetre::default()
+        };
+        assert_eq!(sans_titre.titre(), "ProjectMidas", "la classe sert de nom");
+        let titree = Fenetre {
+            caption: "Conker BFD: Reloaded".to_string(),
+            class: "ConkerBFDReloaded".to_string(),
+            ..Fenetre::default()
+        };
+        assert_eq!(titree.titre(), "Conker BFD: Reloaded");
     }
 
     /// Contrat de `running.txt` : le slug, les PID vivants seulement, et le

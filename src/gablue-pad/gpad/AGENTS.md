@@ -143,11 +143,13 @@ INTERFACE  STYLE RETRO / STYLE MODERNE
 L'en-tête est le **premier élément de chaque page** (`Entree::Fenetre`) : il est
 donc sélectionnable partout. **À l'ouverture, le curseur est sur la fenêtre
 active** (`index_entete()`) — c'est ce qu'on regarde en premier, et `A` y ouvre
-la page `FENÊTRE` (demandé). **Sans fenêtre active** (`caption` vide), le
-panneau ouvre **`APPLICATIONS`** avec son premier élément : la page ACTIONS
-n'aurait aucune cible (demandé). Une page atteinte par **L1/R1** s'ouvre, elle,
-sur son **contenu** (`premier_action()`) ; `--focus` (Home+bas) garde la ligne
-qu'il impose (`focus_impose`).
+la page `FENÊTRE` (demandé). **Sans fenêtre active** (info KWin entièrement
+vide : titre **et** classe), le panneau ouvre **`APPLICATIONS`** avec son
+premier élément : la page ACTIONS n'aurait aucune cible (demandé). Une fenêtre
+sans titre mais avec sa classe (Project Midas) reste une fenêtre : elle garde
+ses actions, et la classe sert de nom. Une page atteinte par **L1/R1** s'ouvre,
+elle, sur son **contenu** (`premier_action()`) ; `--focus` (Home+bas) garde la
+ligne qu'il impose (`focus_impose`).
 
 Le choix se fait **dans la boucle**, pas au démarrage : l'info de fenêtre arrive
 par D-Bus ~100 ms après le lancement, et décider plus tôt ouvrait
@@ -350,8 +352,11 @@ que voulu (les aplats sombres du panneau, eux, ne bougent quasi pas).
 
 ## Fenêtre active : en-tête et page FENETRE
 
-En haut du panneau : **icône + légende + classe** de la fenêtre active. Cet
-en-tête est une entrée comme les autres (`Entree::Fenetre`), présente en tête de
+En haut du panneau : **icône + légende + classe** de la fenêtre active. Quand un
+jeu publié est rattaché à la fenêtre, la légende est son **nom de paquet** et la
+classe disparaît (elle n'apprend rien) ; une fenêtre **sans titre** affiche sa
+classe (Project Midas). Cet en-tête est une entrée comme les autres
+(`Entree::Fenetre`), présente en tête de
 **chaque** page ; **aucun filet de séparation** sous lui (retiré : il coupait le
 panneau en deux pour rien). Sa **classe** (nom d'appli) a sa propre ligne sous
 le nom, le **titre de page** vient encore dessous, et la liste des choix commence
@@ -377,8 +382,11 @@ un fond qu'il fallait assombrir/éclaircir sans fin).
 - La page n'est **pas** dans le cycle L1/R1 : on en sort par `B`.
 - `CAPTURE ECRAN`, `REPLAY`… restent sur la page ACTIONS : cette page ne contient
   que les actions de la fenêtre (et le choix d'une autre).
-- **Aucune fenêtre active** (`caption` vide) : A sur l'en-tête ouvre
-  **directement la liste** (`SELECT FENETRE (aucune)`) — il n'y a rien à fermer.
+- **Aucune fenêtre active** (info KWin entièrement vide, `a_fenetre()`) : A sur
+  l'en-tête ouvre **directement la liste** (`SELECT FENETRE (aucune)`) — il n'y
+  a rien à fermer. Un titre vide **avec** une classe n'est pas « aucune
+  fenêtre » : la page FENETRE s'ouvre normalement (vécu Project Midas .lgp,
+  20/11/2026).
 - Dans le **menu système**, l'aide du bas est **centrée** dans le cadre (alignée
   à gauche sous un menu centré, ça se voyait) ; le panneau latéral, lui, montre
   le **titre de page** sous l'en-tête.
