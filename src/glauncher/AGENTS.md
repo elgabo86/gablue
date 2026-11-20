@@ -93,6 +93,8 @@ leurs icônes, pour l'interface.
   (largeur naturelle, pause/aller/pause/retour)
 - `src/spinner.rs` — roue de chargement du coin haut droit, dessinée au `canvas`,
   visible seulement pendant les téléchargements (`covers::busy`)
+- `src/cursor.rs` — `Idle` : cache le pointeur quand il n'a pas bougé (enveloppe
+  d'interaction au-dessus de toute la vue) + relève qui donne l'heure au repos
 - `src/app.rs` — état, messages, bus interne, vue iced (grille + écran noir)
 - `src/state.rs` — type de vue et tri retenus (`<cache>/state.txt`)
 - `assets/glyphs/{xbox,playstation}/*.png` — glyphes Xelu (CC0), embarqués
@@ -836,6 +838,40 @@ leurs icônes, pour l'interface.
   le focus (`window::Event::Focused/Unfocused`). La manette est lue sur
   `/dev/input` directement : sans cette garde, un appui pendant qu'on joue ou
   qu'on travaille ailleurs pilotait le launcher.
+- **Pointeur caché au repos** (demandé le 20/11) : `src/cursor.rs` enveloppe
+  toute la vue (`cursor::Idle`, au-dessus du `mouse_area` du clic droit, donc
+  au-dessus de toutes les couches) et rend `mouse::Interaction::Hidden` quand la
+  souris n'a pas servi depuis `IDLE` (2 s) — c'est le **seul** chemin de iced
+  pour cacher le pointeur : `iced_winit::Window::update_mouse` traduit `Hidden`
+  en `set_cursor_visible(false)` et **rétablit le curseur du thème** (avec la
+  bonne forme : main sur une pastille, etc.) dès qu'une autre interaction est
+  rendue. Le pointeur est **caché dès l'ouverture** (`last: Option<Instant>`,
+  `None` au départ) : une fenêtre qui apparaît sous un pointeur immobile ne doit
+  pas montrer de flèche, d'où `CursorEntered` volontairement **ignoré** —
+  seuls un déplacement (position différente de la dernière vue), un clic ou un
+  cran de molette le réveillent. Trois pièges (constatés à la lecture puis
+  mesurés le 20/11) :
+  (1) l'interaction n'est calculée que pendant une **passe de mise à jour**,
+  jamais au repos : sans message l'horloge ne tourne pas, d'où la relève
+  `cursor::TICK` (250 ms, fil endormi + `Message::Nothing`, **aucune image**
+  demandée) armée par `App::subscription` seulement si la fenêtre a le focus et
+  que ni animation ni poussière d'étoiles ne redessinent déjà ;
+  (2) `set_cursor_visible` n'est appelé que quand l'interaction **change** :
+  l'horodatage doit repasser par une interaction visible au moindre mouvement,
+  sinon le pointeur resterait caché après une sortie/ré-entrée de la souris
+  (winit réapplique l'état caché à l'entrée, `reload_cursor_style`) ;
+  (3) **KWin envoie un mouvement synthétique** quand une surface apparaît sous
+  le pointeur (`CursorMoved` à +66 ms à l'ouverture d'un plein écran, mesuré
+  par la trace) : le compter comme un geste rallumait la flèche 2 s à chaque
+  ouverture — « je vois le curseur 2 secondes avant qu'il disparaisse ». La
+  **première** position vue depuis une entrée n'est donc qu'une référence,
+  seul un **changement** de position (ou un clic/molette) réveille.
+  `GLAUNCHER_CURSOR_DEBUG=1` trace chaque évènement et chaque bascule,
+  horodatés : c'est ainsi que le piège (3) a été trouvé, et le moyen de
+  revérifier ce que le compositeur envoie sans deviner.
+  Vérifié à l'écran (captures `include_cursor`) : pas de flèche à l'ouverture
+  sous le pointeur (ni pendant les 2 s qui suivent), flèche de retour au
+  premier vrai déplacement, disparue ~2 s après.
 - **Aides dynamiques** : les glyphes du pied de page et des menus suivent le
   **dernier périphérique utilisé** (`Input::Keyboard` / `Input::Pad`), pas la
   simple présence d'une manette : reprendre le clavier fait réapparaître les
@@ -867,4 +903,5 @@ leurs icônes, pour l'interface.
    -cat`) ; reste le repli icône d'`.exe` pour les `.wgp` sans `.icon.png`
    (squashfuse + `exeiconextract.py`, comme `create-game-shortcut.sh`).
 2. Filtrer/rechercher, dernier jeu lancé (les favoris sont faits).
-3. Masquer le pointeur et empêcher la mise en veille pendant un jeu.
+3. Empêcher la mise en veille pendant un jeu (le pointeur, lui, est masqué au
+   repos dans le launcher ; pendant une partie c'est le jeu qui gère le sien).

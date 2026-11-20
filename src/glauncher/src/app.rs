@@ -23,6 +23,7 @@ use iced::{
 use crate::assets;
 use crate::config::{Config, ViewMode};
 use crate::covers;
+use crate::cursor;
 use crate::dialog;
 use crate::favorites;
 use crate::gamepad::{PadButton, PadEvent, PadKind};
@@ -965,6 +966,9 @@ impl App {
         if app.config.sparkles {
             sparkles::spawn_ticker();
         }
+        // pointeur : la relève existe toujours (fil endormi), elle ne réveille
+        // l'UI que quand `subscription` l'arme
+        cursor::spawn_ticker();
         app.request_visible_covers();
         app.sweep_thumbs();
         app.sweep_icons();
@@ -1000,21 +1004,21 @@ impl App {
         // reconstruit déjà la vue à 60 Hz pour le fondu, et l'« hyperespace »
         // n'est piloté que par `fade` (les particules ne dérivent pas pendant
         // ces 0,9 s) — d'où `to_launch` dans la condition.
-        sparkles::set_running(
-            self.config.sparkles
-                && self.active
-                && self.fade < 0.999
-                && self.view_menu.is_none()
-                && self.sort_menu.is_none()
-                && self.year_menu.is_none()
-                && self.art_menu.is_none()
-                && self.picker.is_none()
-                && self.identify.is_none()
-                && self.identify_menu.is_none()
-                && self.replace.is_none()
-                && self.date.is_none()
-                && self.to_launch.is_none(),
-        );
+        let sparkles_running = self.config.sparkles
+            && self.active
+            && self.fade < 0.999
+            && self.view_menu.is_none()
+            && self.sort_menu.is_none()
+            && self.year_menu.is_none()
+            && self.art_menu.is_none()
+            && self.picker.is_none()
+            && self.identify.is_none()
+            && self.identify_menu.is_none()
+            && self.replace.is_none()
+            && self.date.is_none()
+            && self.to_launch.is_none();
+        sparkles::set_running(sparkles_running);
+        let animating = self.animating();
         let mut subscriptions = vec![
             keyboard::listen().map(Message::Key),
             window::events().map(|(_id, event)| match event {
@@ -1025,7 +1029,13 @@ impl App {
             }),
             Subscription::run(bus_stream),
         ];
-        if self.animating() {
+        // Pointeur au repos : iced ne recalcule l'interaction (`Hidden`) que
+        // pendant une passe de mise à jour, jamais tout seul — sans relève, le
+        // pointeur ne se cacherait qu'au prochain évènement (voir `cursor`).
+        // La relève ne demande aucune image : elle ne sert qu'à donner l'heure,
+        // donc elle n'est armée que si rien d'autre ne redessine déjà.
+        cursor::set_ticking(self.active && !animating && !sparkles_running);
+        if animating {
             subscriptions.push(window::frames().map(|_| Message::Tick));
         }
         Subscription::batch(subscriptions)
@@ -3690,8 +3700,12 @@ impl App {
         .into();
 
         // clic droit = retour, partout : les couches du dessus n'ont pas de
-        // gestion du bouton droit, l'évènement remonte donc jusqu'ici
-        mouse_area(view).on_right_press(Message::Back).into()
+        // gestion du bouton droit, l'évènement remonte donc jusqu'ici.
+        // L'enveloppe `cursor::Idle` est AU-DESSUS de tout : elle cache le
+        // pointeur immobile quelle que soit la couche affichée, et n'a aucune
+        // influence sur la mise en page.
+        let view = mouse_area(view).on_right_press(Message::Back);
+        cursor::Idle::new(view).into()
     }
 
     /// Liste des jeux (grille, liste ou mosaïque) avec en-tête et pied.

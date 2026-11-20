@@ -4,6 +4,7 @@ mod app;
 mod assets;
 mod config;
 mod covers;
+mod cursor;
 mod dialog;
 mod favorites;
 mod gamepad;
