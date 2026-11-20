@@ -304,6 +304,19 @@ Géométrie et chrome, communs aux deux styles :
   hauteur de capitale tombe sur les 7 × échelle du bitmap, donc toutes les mises
   en page existantes tiennent). Licence **Apache 2.0** →
   `assets/LICENSE-NotoSans.txt`.
+- **Sous-ensemble embarqué** : l'asset n'est pas la Noto Sans complète mais
+  **1580 glyphes** (112 Ko au lieu de 607) — latin + étendu, grec, cyrillique,
+  ponctuation, devises, flèches/formes. `fontdue` parse **tout** le fichier au
+  chargement, glyphes inutilisés compris : mesuré 20/11/2026, tas ~10 Mo pour
+  la police complète contre ~2 Mo pour ce sous-ensemble, soit RSS du résident
+  **13 Mo au lieu de 19** — rendu identique (A/B sur capture : 9 pixels
+  différents sur 518 000, le bord du panneau). Les symboles `→ ↔ ✕ ○`
+  employés dans les libellés sont **déjà absents** de la police complète
+  (glyphes PNG Xelu pour les boutons) : rien perdu.
+  Régénération (fonttools hors image, l'asset est commité ; sortie dans un
+  fichier temporaire puis remplacement, jamais entrée = sortie) :
+  `uvx --from fonttools pyftsubset assets/NotoSans-Regular.ttf --output-file=/tmp/NotoSans-subset.ttf --unicodes="U+0000-024F,U+02B0-02FF,U+0300-036F,U+0370-03FF,U+0400-04FF,U+1E00-1EFF,U+2000-206F,U+20A0-20CF,U+2100-214F,U+2190-21FF,U+2200-22FF,U+2500-25FF,U+2713-2718" --layout-features='' --no-hinting --desubroutinize`
+  puis `mv /tmp/NotoSans-subset.ttf assets/NotoSans-Regular.ttf`.
 - **Casse de phrase** (`joli()`) : la source est en capitales ASCII ; en MODERNE
   chaque libellé devient « Choisir fenêtre » avec ses accents (`ACCENTS`), les
   sigles restent en capitales (`SIGLES` : FPS, TV, HUD, REC…). Ne touche **que**
