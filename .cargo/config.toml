@@ -1,0 +1,10 @@
+# Sortie de build HORS du dépôt : il est synchronisé par Syncthing, et un
+# `target/` y partait en entier (2,6 Go constatés le 20/11). Le binaire atterrit
+# dans ~/.cache/opencode/cargo-target (BTRFS zstd), commun à tous les projets
+# Rust de la machine — même valeur que ~/.cargo/config.toml, pour que le dépôt
+# soit correct même sur un poste où cette config manque.
+#
+# Rien à faire côté code : les scripts de build demandent le chemin à
+# `cargo metadata` (voir `src/glauncher/test.sh`).
+[build]
+target-dir = "/var/home/gab/.cache/opencode/cargo-target"
