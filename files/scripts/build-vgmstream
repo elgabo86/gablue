@@ -13,7 +13,12 @@ set -eoux pipefail
 #     avec) ;
 #   - MPEG (mpg123) : MP3 dans un conteneur FSB5/AT3/OMA.
 # Les libs runtime (`libvorbis`, `mpg123-libs`) sont déjà dans l'image.
-dnf5 -y install cmake gcc make libvorbis-devel mpg123-devel
+#
+# `gcc-c++` est obligatoire : le CMakeLists de vgmstream active C **et** C++
+# (ligne `enable_language`), et `gcc` seul fait échouer le configure avec
+# « No CMAKE_CXX_COMPILER could be found » (build CI du 20/11). `pkgconf-pkg-config`
+# fournit `pkg-config`, sans quoi la détection de `vorbis` échoue aussi.
+dnf5 -y install cmake gcc gcc-c++ make libvorbis-devel mpg123-devel pkgconf-pkg-config
 
 # Version épinglée + empreinte : pas de paquet Fedora pour vgmstream, l'archive
 # vient de GitHub, donc on vérifie ce qu'on télécharge.
