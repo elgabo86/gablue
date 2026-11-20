@@ -8,6 +8,8 @@ vignettes, favoris, temps de jeu) vit dans son cache et se change au clavier ou
 - les dossiers où chercher les paquets `.wgp` / `.lgp` (il n'y a pas de
   sélection de dossier dans une interface plein écran pilotée à la manette) ;
 - le plein écran au démarrage ;
+- la musique de fond du lanceur (piste embarquée, bouclée, coupée le temps
+  d'une partie) ;
 - la clé API SteamGridDB, facultative, que les **prochains scans** utilisent
   pour retrouver les visuels.
 """
@@ -127,6 +129,21 @@ class GlauncherDialog(QDialog):
         self.fullscreen_check.setCursor(Qt.PointingHandCursor)
         self.fullscreen_check.toggled.connect(self._update_apply)
         start_layout.addWidget(self.fullscreen_check)
+
+        self.music_check = QCheckBox("Jouer une musique de fond", start_frame)
+        self.music_check.setCursor(Qt.PointingHandCursor)
+        self.music_check.toggled.connect(self._update_apply)
+        start_layout.addWidget(self.music_check)
+
+        start_detail = QLabel(
+            "La musique du lanceur s'efface en fondu quand un jeu démarre et "
+            "revient en fondu au retour du jeu. Elle est coupée pendant une "
+            "partie.",
+            start_frame,
+        )
+        start_detail.setObjectName("hostDetail")
+        start_detail.setWordWrap(True)
+        start_layout.addWidget(start_detail)
         root.addWidget(start_frame)
 
         # -- visuels ----------------------------------------------------------
@@ -204,6 +221,7 @@ class GlauncherDialog(QDialog):
         self.initial = {
             "game_dirs": list(state["game_dirs"]),
             "fullscreen": bool(state["fullscreen"]),
+            "music": bool(state["music"]),
             "use_key": bool(key.strip()),
             "steamgriddb_key": key,
         }
@@ -212,10 +230,11 @@ class GlauncherDialog(QDialog):
         for directory in self.initial["game_dirs"]:
             self._add_item(directory)
 
-        widgets = (self.fullscreen_check, self.key_check, self.key_edit)
+        widgets = (self.fullscreen_check, self.music_check, self.key_check, self.key_edit)
         for widget in widgets:
             widget.blockSignals(True)
         self.fullscreen_check.setChecked(self.initial["fullscreen"])
+        self.music_check.setChecked(self.initial["music"])
         self.key_check.setChecked(self.initial["use_key"])
         self.key_edit.setText(self.initial["steamgriddb_key"])
         for widget in widgets:
@@ -242,6 +261,7 @@ class GlauncherDialog(QDialog):
         return {
             "game_dirs": self.directories(),
             "fullscreen": self.fullscreen_check.isChecked(),
+            "music": self.music_check.isChecked(),
             "use_key": use_key,
             # clé vidée quand la case est décochée : le launcher retombe sur
             # l'API publique au prochain scan

@@ -3311,6 +3311,7 @@ class GlauncherConfigTest(unittest.TestCase):
         state = local.parse_glauncher_config("")
         self.assertTrue(state["fullscreen"])
         self.assertTrue(state["covers"])
+        self.assertTrue(state["music"], "musique de fond allumée par défaut")
         self.assertEqual(state["steamgriddb_key"], "")
         self.assertEqual(
             state["game_dirs"], local.GLAUNCHER_DEFAULTS["game_dirs"]
@@ -3323,6 +3324,14 @@ class GlauncherConfigTest(unittest.TestCase):
         self.assertEqual(
             state["game_dirs"], [], "aucun dossier de jeux par défaut"
         )
+
+    def test_musique_desactivable(self):
+        # réglage écrit par le dialogue « Lanceur de jeux »
+        self.assertFalse(local.parse_glauncher_config("music = false\n")["music"])
+        out = local.write_glauncher_config("columns = 6\n", {"music": False})
+        self.assertIn("music = false", out)
+        self.assertIn("columns = 6", out, "le reste du fichier est conservé")
+        self.assertFalse(local.parse_glauncher_config(out)["music"])
 
     def test_fichier_illisible_donne_les_defauts(self):
         # le launcher ignore une config invalide ; le manager lit la même chose

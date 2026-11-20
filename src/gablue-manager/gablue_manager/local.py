@@ -1873,6 +1873,9 @@ def glauncher_config_path() -> Path:
 GLAUNCHER_DEFAULTS = {
     "fullscreen": True,
     "covers": True,
+    # Musique de fond du launcher (piste embarquée, jouée par mpv en boucle,
+    # coupée pendant une partie). Défaut de `Config::default()`.
+    "music": True,
     "steamgriddb_key": "",
     # Aucun dossier par défaut (miroir de `Config::default()`) : rien n'est
     # scanné tant que l'utilisateur n'en a pas choisi un.
