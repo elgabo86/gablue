@@ -78,7 +78,23 @@ adaptivesyncrule=2
 
 [vlc-vrr]
 Description=Désactiver VRR pour VLC
+wmclass=vlc
+wmclasscomplete=false
+wmclassmatch=1
+adaptivesync=false
+adaptivesyncrule=2
+
+[vlc-wayland-vrr]
+Description=Désactiver VRR pour VLC (Wayland)
 wmclass=org.videolan.VLC
+wmclasscomplete=false
+wmclassmatch=1
+adaptivesync=false
+adaptivesyncrule=2
+
+[dolphin-vrr]
+Description=Désactiver VRR pour Dolphin
+wmclass=org.kde.dolphin
 wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
@@ -110,7 +126,15 @@ adaptivesyncrule=2
 
 [vacuumtube-vrr]
 Description=Désactiver VRR pour VacuumTube
-wmclass=vacuumtube
+wmclass=rocks.shy.VacuumTube
+wmclasscomplete=false
+wmclassmatch=1
+adaptivesync=false
+adaptivesyncrule=2
+
+[moonlight-vrr]
+Description=Désactiver VRR pour Moonlight
+wmclass=com.moonlight_stream.Moonlight
 wmclasscomplete=false
 wmclassmatch=1
 adaptivesync=false
@@ -196,14 +220,6 @@ wmclassmatch=1
 adaptivesync=false
 adaptivesyncrule=2
 
-[cool-retro-term-vrr]
-Description=Désactiver VRR pour Cool-Retro-Term
-wmclass=cool-retro-term
-wmclasscomplete=false
-wmclassmatch=1
-adaptivesync=false
-adaptivesyncrule=2
-
 [gablue-tv-vrr]
 Description=Désactiver VRR pour Gablue TV
 wmclass=gablue-tv
@@ -238,6 +254,14 @@ adaptivesyncrule=2
 
 [rustdesk-vrr]
 Description=Désactiver VRR pour RustDesk
+wmclass=Rustdesk
+wmclasscomplete=false
+wmclassmatch=1
+adaptivesync=false
+adaptivesyncrule=2
+
+[rustdesk-wayland-vrr]
+Description=Désactiver VRR pour RustDesk (Wayland)
 wmclass=com.rustdesk.RustDesk
 wmclasscomplete=false
 wmclassmatch=1
@@ -262,7 +286,7 @@ adaptivesyncrule=2
 
 [qemu-vrr]
 Description=Désactiver VRR pour QEMU
-wmclass=qemu-system-
+wmclass=qemu
 wmclasscomplete=false
 wmclassmatch=3
 adaptivesync=false
