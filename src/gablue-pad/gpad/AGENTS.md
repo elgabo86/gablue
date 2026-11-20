@@ -221,6 +221,14 @@ overlay orphelin).
   fenêtre active et la souris traverse. Elle est ancrée en haut à gauche et
   **déplacée par marges layer-shell** : KWin ne réagit qu'à `marginsChanged`
   (`scheduleRearrange`), sans configure et sans renvoyer de tampon.
+- **`set_margin` prend `(top, right, bottom, left)`** — pas l'ordre du CSS. Se
+  tromper donne un panneau collé au bord gauche qui ne bouge qu'en vertical
+  (la valeur de X part dans la marge haute), et ça ressemble à un bug de
+  compositeur : vérifier l'ordre avant tout le reste.
+- **Un déplacement par image du compositeur** (`wl_surface.frame` → `Done`) :
+  la manette émet 60 à 250 fois par seconde, on n'envoie qu'une marge par
+  image. Repli si le compositeur ne rend pas la main (3 frames de suite sans
+  `Done` → cadence évènementielle), jamais de panneau figé.
 - **Ne JAMAIS élargir cette surface à l'écran** en dessinant le panneau dedans
   (première version, à ne pas refaire) : à chaque nouveau tampon KWin fait
   `im.convertTo()` sur **toute l'image** (`GLTexture::update`) — 3,7 M pixels

@@ -1170,6 +1170,17 @@ struct App {
     kbd_size: (i32, i32),
     kbd_configured: bool,
     kbd_dirty: bool,
+    /// un déplacement attend son `flush` (sinon la marge reste dans le tampon
+    /// d'envoi jusqu'au prochain évènement)
+    kbd_bouge: bool,
+    /// `wl_surface.frame` en cours (callback, instant de la demande) : un seul
+    /// déplacement envoyé par image du compositeur
+    kbd_frame: Option<(wl_callback::WlCallback, Instant)>,
+    /// une position plus récente attend la fin de l'image en cours
+    kbd_pos_attente: bool,
+    /// frames consécutives jamais rendues : au-delà de 3 on repasse en
+    /// cadence évènementielle (jamais de clavier qui répond au ralenti)
+    kbd_sans_frame: u8,
     /// le clavier est ouvert (la manette pilote les touches, pas le menu)
     kbd_ouvert: bool,
     ///Horodatage du dernier pas fait au **stick** : un stick qui repasse vite
@@ -1441,6 +1452,10 @@ impl App {
             kbd_size: (0, 0),
             kbd_configured: false,
             kbd_dirty: false,
+            kbd_bouge: false,
+            kbd_frame: None,
+            kbd_pos_attente: false,
+            kbd_sans_frame: 0,
             kbd_ouvert: false,
             derniere_activite: Instant::now(),
             derniere_nav: Instant::now() - Duration::from_secs(1),
@@ -2094,7 +2109,8 @@ impl App {
         };
         layer.set_anchor(zwlr_layer_surface_v1::Anchor::Top | zwlr_layer_surface_v1::Anchor::Left);
         layer.set_size(pw as u32, ph as u32);
-        layer.set_margin(x.max(0), y.max(0), 0, 0);
+        // ordre du protocole : top, right, bottom, left (pas celui du CSS)
+        layer.set_margin(y.max(0), 0, 0, x.max(0));
         surface.commit();
         self.kbd_configured = false;
         println!("KBD surface {pw}x{ph} pos=({x},{y})");
@@ -2102,15 +2118,38 @@ impl App {
 
     /// Déplacement : seules les marges changent, donc **aucun tampon n'est
     /// renvoyé** (KWin repose l'item, sans reconvertir d'image).
+    ///
+    /// Cadencé par `wl_surface.frame` : au plus un envoi par image affichée.
+    /// Sans ça, la manette émet 60 à 250 fois par seconde et KWin ré-arrange
+    /// plus vite qu'il ne dessine — le mouvement paraît irrégulier. Si le
+    /// compositeur ne rend pas la main (surface sans frame), on n'attend pas :
+    /// au-delà de 100 ms on déplace quand même (jamais de clavier figé).
     fn placer_surface_clavier(&mut self) {
+        if let Some((_, depuis)) = &self.kbd_frame {
+            if depuis.elapsed() < Duration::from_millis(100) {
+                self.kbd_pos_attente = true;
+                return;
+            }
+            // wl_callback n'a pas de requête destroy : on l'abandonne, le
+            // compositeur le détruit en rendant la main
+            self.kbd_frame = None;
+            self.kbd_sans_frame = self.kbd_sans_frame.saturating_add(1);
+        }
         let Some(c) = &self.clavier else { return };
         let (x, y) = c.position();
         let (Some(layer), Some(surface)) = (self.kbd_layer.as_ref(), self.kbd_surface.as_ref())
         else {
             return;
         };
-        layer.set_margin(x.max(0), y.max(0), 0, 0);
+        // ordre du protocole : top, right, bottom, left (pas celui du CSS)
+        layer.set_margin(y.max(0), 0, 0, x.max(0));
         surface.commit();
+        self.kbd_bouge = true;
+        self.kbd_pos_attente = false;
+        if self.kbd_sans_frame < 3 {
+            let cb = surface.frame(&self.qh, KbdFrame);
+            self.kbd_frame = Some((cb, Instant::now()));
+        }
     }
 
     fn detruire_surface_clavier(&mut self) {
@@ -2125,6 +2164,8 @@ impl App {
             b.buffer.destroy();
         }
         self.kbd_free.clear();
+        self.kbd_frame = None;
+        self.kbd_pos_attente = false;
         // la sonde plein écran sera refaite : l'écran a pu changer de taille
         self.kbd_ecran = (0, 0);
         self.kbd_size = (0, 0);
@@ -4588,6 +4629,27 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, KbdSurf> for App {
     }
 }
 
+struct KbdFrame;
+
+impl Dispatch<wl_callback::WlCallback, KbdFrame> for App {
+    fn event(
+        state: &mut Self,
+        _: &wl_callback::WlCallback,
+        event: wl_callback::Event,
+        _: &KbdFrame,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { .. } = event {
+            state.kbd_frame = None;
+            state.kbd_sans_frame = 0;
+            if state.kbd_pos_attente {
+                state.placer_surface_clavier();
+            }
+        }
+    }
+}
+
 impl Dispatch<wl_buffer::WlBuffer, KbdBuf> for App {
     fn event(
         state: &mut Self,
@@ -6844,6 +6906,10 @@ fn main() {
         if app.dirty {
             app.draw();
             let _ = conn.flush();
+        }
+        if app.kbd_bouge {
+            let _ = conn.flush();
+            app.kbd_bouge = false;
         }
         // clavier virtuel : surface et tampons distincts du panneau
         if app.kbd_dirty {
