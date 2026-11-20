@@ -4,11 +4,13 @@ mod app;
 mod assets;
 mod config;
 mod covers;
+mod dialog;
 mod favorites;
 mod gamepad;
 mod index;
 mod kwin;
 mod launch;
+mod library;
 mod marquee;
 mod music;
 mod playtime;
@@ -16,7 +18,6 @@ mod pose;
 mod sparkles;
 mod spinner;
 mod state;
-mod library;
 mod thumbs;
 mod watch;
 
@@ -30,10 +31,7 @@ pub fn start() {
 
 pub fn stamp(what: &str) {
     let elapsed = START.get().map(|start| start.elapsed()).unwrap_or_default();
-    eprintln!(
-        "glauncher : {what} en {} ms",
-        elapsed.as_millis()
-    );
+    eprintln!("glauncher : {what} en {} ms", elapsed.as_millis());
 }
 
 static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
@@ -184,7 +182,10 @@ fn list(config: &config::Config) -> iced::Result {
 /// **ici**, jamais dans l'overlay ; gpad relit le cache et le visuel apparaît
 /// dès qu'il est écrit.
 fn art(config: &config::Config, pack: &std::path::Path) -> iced::Result {
-    let Some(stem) = pack.file_stem().map(|stem| stem.to_string_lossy().to_string()) else {
+    let Some(stem) = pack
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+    else {
         eprintln!("glauncher : --art attend un paquet (.wgp/.lgp)");
         std::process::exit(2);
     };

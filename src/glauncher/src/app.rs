@@ -1,14 +1,14 @@
 //! État, messages et interface du launcher.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::time::Duration;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
+use iced::advanced::text::Wrapping;
 use iced::futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use iced::futures::sink::SinkExt;
 use iced::futures::{Stream, StreamExt};
-use iced::advanced::text::Wrapping;
 use iced::keyboard::key::Named;
 use iced::widget::operation;
 use iced::widget::scrollable::AbsoluteOffset;
@@ -20,9 +20,10 @@ use iced::{
     Rectangle, Shadow, Size, Subscription, Task, Theme, Vector, border, keyboard, window,
 };
 
-use crate::config::{Config, ViewMode};
 use crate::assets;
+use crate::config::{Config, ViewMode};
 use crate::covers;
+use crate::dialog;
 use crate::favorites;
 use crate::gamepad::{PadButton, PadEvent, PadKind};
 use crate::index::{Index, Refresh};
@@ -175,7 +176,13 @@ impl Glyphs {
     fn for_kind(kind: PadKind) -> Self {
         let (confirm, back, view, zoom_in, zoom_out) = match kind {
             PadKind::Playstation => (PS_CONFIRM, PS_BACK, PS_VIEW, PS_ZOOM_IN, PS_ZOOM_OUT),
-            _ => (XBOX_CONFIRM, XBOX_BACK, XBOX_VIEW, XBOX_ZOOM_IN, XBOX_ZOOM_OUT),
+            _ => (
+                XBOX_CONFIRM,
+                XBOX_BACK,
+                XBOX_VIEW,
+                XBOX_ZOOM_IN,
+                XBOX_ZOOM_OUT,
+            ),
         };
         Self {
             confirm: image::Handle::from_bytes(confirm),
@@ -235,6 +242,15 @@ fn cover_message(event: covers::CoverEvent) -> Message {
             thumb,
         },
         covers::CoverEvent::Icon { slug, bytes } => Message::Icon { slug, bytes },
+        covers::CoverEvent::Games {
+            slug,
+            query,
+            result,
+        } => Message::IdentifyResults {
+            slug,
+            query,
+            result,
+        },
         covers::CoverEvent::Year { slug, year } => Message::Year { slug, year },
     }
 }
@@ -257,9 +273,7 @@ fn spawn_refresh(config: Config, index: Arc<Mutex<Option<Index>>>, changed: Vec<
         .spawn(move || {
             let started = std::time::Instant::now();
             let result = (|| -> Result<Refresh, String> {
-                let mut guard = index
-                    .lock()
-                    .map_err(|_| "index verrouillé".to_string())?;
+                let mut guard = index.lock().map_err(|_| "index verrouillé".to_string())?;
                 let Some(index) = guard.as_mut() else {
                     return Err("index indisponible".into());
                 };
@@ -274,10 +288,7 @@ fn spawn_refresh(config: Config, index: Arc<Mutex<Option<Index>>>, changed: Vec<
                 };
                 Ok(Refresh { rows, changed })
             })();
-            eprintln!(
-                "glauncher : index en {} ms",
-                started.elapsed().as_millis()
-            );
+            eprintln!("glauncher : index en {} ms", started.elapsed().as_millis());
             post(Message::Refreshed(result));
         });
 }
@@ -316,14 +327,31 @@ pub enum Message {
     Pad(PadEvent),
     CardClicked(usize),
     /// Visuel SteamGridDB (grid, héros, logo, icône) ; `bytes: None` = introuvable.
-    Art { slug: String, kind: covers::ArtKind, bytes: Option<Vec<u8>> },
+    Art {
+        slug: String,
+        kind: covers::ArtKind,
+        bytes: Option<Vec<u8>>,
+    },
     /// Icône extraite du paquet (`.icon.png` dans le squashfs).
-    Icon { slug: String, bytes: Vec<u8> },
+    Icon {
+        slug: String,
+        bytes: Vec<u8>,
+    },
     /// Miniature 320 px d'une cover (worker de miniatures).
-    Thumb { slug: String, bytes: Vec<u8> },
+    Thumb {
+        slug: String,
+        bytes: Vec<u8>,
+    },
     /// Icône cherchée à côté du paquet (worker d'assets, disque externe).
-    LocalIcon { slug: String, icon: Option<image::Handle> },
-    ArtFailed { slug: String, kind: covers::ArtKind, error: String },
+    LocalIcon {
+        slug: String,
+        icon: Option<image::Handle>,
+    },
+    ArtFailed {
+        slug: String,
+        kind: covers::ArtKind,
+        error: String,
+    },
     /// Menu « choisir une image » pour un type de visuel.
     OpenPicker(covers::ArtKind),
     ClosePicker,
@@ -334,10 +362,32 @@ pub enum Message {
     /// ouvert sur une case seulement mise en évidence.
     PickerChoose(usize),
     PickerPick,
-    Choices { slug: String, kind: covers::ArtKind, choices: Vec<covers::Choice> },
+    /// Choisit une image perso (fichier local) : ouvre le sélecteur système
+    /// dans un fil à part, la réponse arrive en `FileChosen`.
+    PickerFile,
+    FileChosen {
+        slug: String,
+        kind: covers::ArtKind,
+        path: Option<PathBuf>,
+    },
+    /// « Ce jeu a déjà des visuels : les remplacer ? » (posée après une
+    /// identification) : droite/gauche puis valider, « Non » sélectionné.
+    ReplaceNav(i32),
+    ReplaceChoose(usize),
+    ReplacePick,
+    Choices {
+        slug: String,
+        kind: covers::ArtKind,
+        choices: Vec<covers::Choice>,
+    },
     /// Vignette d'une proposition, par son `url` (l'ordre des propositions ne
     /// bouge pas, mais l'URL est le seul identifiant stable).
-    Choice { slug: String, kind: covers::ArtKind, url: String, thumb: Vec<u8> },
+    Choice {
+        slug: String,
+        kind: covers::ArtKind,
+        url: String,
+        thumb: Vec<u8>,
+    },
     /// Page d'un jeu : héros, logo et actions (jouer, changer les visuels).
     OpenPage(usize),
     ClosePage,
@@ -348,30 +398,57 @@ pub enum Message {
     /// Sélectionne puis exécute l'action n (clic sur une pastille).
     PageChoose(usize),
     /// Ajoute ou retire le jeu des favoris (étoile de la page).
-    /// Modifie le nom envoyé à SteamGridDB (jeu mal reconnu).
-    RenameOpen,
-    RenameInput(String),
-    RenameSubmit,
-    RenameCancel,
-    /// Menu « quel visuel changer » de la page (Grid / Héros / Logo / Icône).
-    ArtMenu,
+    /// Identifie le jeu chez SteamGridDB (menu d'images) : nom recherché,
+    /// puis choix dans la liste des jeux proposés.
+    IdentifyOpen,
+    IdentifyInput(String),
+    IdentifySubmit,
+    IdentifyCancel,
+    /// Jeux proposés par l'autocomplete (ou l'erreur réseau).
+    IdentifyResults {
+        slug: String,
+        query: String,
+        result: Result<Vec<covers::FoundGame>, String>,
+    },
+    IdentifyNav(i32),
+    /// Choisit le jeu n de la liste (clic).
+    IdentifyChoose(usize),
+    IdentifyPick,
+    IdentifyClose,
+    /// Menu « Options » de la page (visuels, identification, date), ouvert par
+    /// la pastille de la page : aucun message pour l'ouvrir à distance.
     ArtMenuNav(i32),
-    /// Choisit le visuel n du menu (clic).
+    /// Choisit l'entrée n du menu (clic).
     ArtMenuChoose(usize),
     ArtMenuPick,
     ArtMenuClose,
+    /// Prompt « date de sortie » : saisie manuelle de l'année.
+    DateOpen,
+    DateInput(String),
+    DateSubmit,
+    DateCancel,
+    /// Demande la date à SteamGridDB (jeu identifié en priorité).
+    DateRefresh,
     /// Taille des vignettes : +1 plus grandes, -1 plus petites.
     Zoom(i32),
     /// Fenêtre active (focus) : sans focus, ni clavier ni manette n'agissent.
     Active(bool),
-    /// Position réelle du défilement (molette, glisser, `scroll_to`).
-    Scrolled(f32),
+    /// Position réelle du défilement (molette, glisser, `scroll_to`) et
+    /// maximum que le `scrollable` d'iced autorise pour le contenu courant
+    /// (`content - viewport`) : viser au-delà ne déplace rien de plus.
+    Scrolled {
+        offset: f32,
+        max: f32,
+    },
     Play(usize),
     /// Chemins modifiés signalés par le veilleur.
     Changed(Vec<PathBuf>),
     /// Liste à jour après réindexation (fond).
     Refreshed(Result<Refresh, String>),
-    Launched { name: String, result: Result<i32, String> },
+    Launched {
+        name: String,
+        result: Result<i32, String>,
+    },
     Tick,
     /// Une image de la poussière d'étoiles (minuteur de `sparkles`).
     Sparkle,
@@ -380,7 +457,10 @@ pub enum Message {
     Activity,
     /// Année de sortie apprise par le worker pour ce jeu (`None` : SGDB n'en
     /// donne pas, c'est noté pour ne plus redemander).
-    Year { slug: String, year: Option<u32> },
+    Year {
+        slug: String,
+        year: Option<u32>,
+    },
     ToggleView,
     /// Retour (clic droit, comme Échap/B) : referme menu, page, prompt.
     Back,
@@ -430,23 +510,52 @@ struct Picker {
     thumbs: Vec<Option<image::Handle>>,
 }
 
-/// Actions de la page d'un jeu. Les quatre visuels sont réunis derrière un
-/// seul bouton « Images » : la page garde trois pastilles au lieu de cinq.
+/// Menu d'identification : les jeux proposés par l'autocomplete de
+/// SteamGridDB pour un nom donné. Choisir une ligne écrit l'identification
+/// dans `assets/identities.txt` (partagée par Syncthing) et redemande les
+/// quatre visuels du jeu choisi, en fond.
+struct IdentifyMenu {
+    slug: String,
+    /// Nom envoyé à SteamGridDB (modifiable, souvent l'édition en trop).
+    query: String,
+    index: usize,
+    loading: bool,
+    error: Option<String>,
+    games: Vec<covers::FoundGame>,
+    /// Identification actuelle du paquet (coche la ligne correspondante).
+    current: Option<u64>,
+}
+
+/// Question posée après une identification quand le paquet a **déjà** des
+/// visuels : les remplacer par ceux du jeu choisi, ou les garder ?
+///
+/// Le jeu et le nom SteamGridDB déjà retenus sont conservés ici, parce qu'ils
+/// ne servent qu'à lancer le téléchargement si l'utilisateur dit oui.
+struct Replace {
+    slug: String,
+    game: covers::FoundGame,
+    /// 0 = « Non, garder » (choix par défaut), 1 = « Oui, remplacer ».
+    index: usize,
+}
+
+/// Selon le cas : « Jouer », « Favori » ou « Options » (les quatre visuels,
+/// l'identification du jeu et sa date sont réunis derrière ce seul bouton :
+/// « Images » ne décrivait plus ce qu'on y trouve).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PageAction {
     Play,
     Favorite,
-    Images,
+    Options,
 }
 
-const PAGE_ACTIONS: [PageAction; 3] = [PageAction::Play, PageAction::Favorite, PageAction::Images];
+const PAGE_ACTIONS: [PageAction; 3] = [PageAction::Play, PageAction::Favorite, PageAction::Options];
 
 impl PageAction {
     fn label(self) -> &'static str {
         match self {
             PageAction::Play => "Jouer",
             PageAction::Favorite => "Favori",
-            PageAction::Images => "Images",
+            PageAction::Options => "Options",
         }
     }
 }
@@ -474,8 +583,24 @@ enum Swap {
     Year(Option<u32>),
 }
 
-/// Ordre du menu « Images » : le même que les types de visuels.
-const ART_MENU: [covers::ArtKind; 4] = covers::ArtKind::ALL;
+/// Ordre du menu « Options » de la page : les quatre types de visuels, puis
+/// l'identification du jeu et sa date de sortie. Le menu reste la seule porte
+/// d'entrée de tout ce qui touche aux visuels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArtMenuEntry {
+    Kind(covers::ArtKind),
+    Identify,
+    Date,
+}
+
+const ART_MENU: [ArtMenuEntry; 6] = [
+    ArtMenuEntry::Kind(covers::ArtKind::Grid),
+    ArtMenuEntry::Kind(covers::ArtKind::Hero),
+    ArtMenuEntry::Kind(covers::ArtKind::Logo),
+    ArtMenuEntry::Kind(covers::ArtKind::Icon),
+    ArtMenuEntry::Identify,
+    ArtMenuEntry::Date,
+];
 
 /// Les vues, dans l'ordre du menu « type de liste ». Les favoris ne sont pas
 /// une vue mais un tri (`state::SortBy::Favorites`).
@@ -511,10 +636,14 @@ pub struct App {
     running: Option<String>,
     /// Slug du jeu lancé, pour le temps de jeu (rempli au lancement effectif).
     pending_slug: Option<String>,
-    /// Départ du chrono du jeu en cours (slug, instant).
-    play_started: Option<(String, std::time::Instant)>,
+    /// Format du jeu en cours de lancement (fichier du temps de jeu).
+    pending_kind: Option<library::Kind>,
+    /// Départ du chrono du jeu en cours (slug, format, instant).
+    play_started: Option<(String, library::Kind, std::time::Instant)>,
     /// Temps de jeu cumulé, par slug.
     playtime: std::collections::HashMap<String, u64>,
+    /// Fichiers du temps de jeu, dans les dossiers de sauvegardes.
+    playtime_paths: playtime::Paths,
     /// Années de sortie connues, par slug (`None` = regardé, SGDB n'en donne
     /// pas). Chargées depuis `assets/years.txt`, le fichier partagé.
     years: BTreeMap<String, Option<u32>>,
@@ -605,21 +734,37 @@ pub struct App {
     scroll_id: Id,
     scroll: f32,
     scroll_target: f32,
+    /// Maximum de défilement du contenu courant, tel que le `scrollable` d'iced
+    /// le rapporte (`content - viewport`). `0` = pas encore connu : sans lui,
+    /// `scroll_drawn` ne borne rien. Voir `scroll_drawn` pour la raison d'être.
+    scroll_max: f32,
     /// Menu « choisir une image » pour le jeu sélectionné.
     picker: Option<Picker>,
     /// Image choisie dont le téléchargement est en cours : le menu se referme
     /// tout de suite (il ne doit pas rester ouvert pendant le réseau).
     picked: Option<(String, covers::ArtKind)>,
-    /// Prompt « nom de recherche » (texte en cours de frappe).
-    rename: Option<String>,
-    /// Noms corrigés pour la session : changer le grid d'un jeu mal reconnu ne
-    /// doit pas obliger à re-corriger pour le héros ou le logo.
-    search_names: HashMap<String, String>,
+    /// Prompt « nom de recherche » de l'identification (texte en cours de
+    /// frappe).
+    identify: Option<String>,
+    /// Menu d'identification : jeux proposés par SteamGridDB.
+    identify_menu: Option<IdentifyMenu>,
+    /// Jeu identifié qui a **déjà** des visuels : question « les remplacer ? »
+    /// avant de les effacer (par défaut sur « Non »).
+    replace: Option<Replace>,
+    /// Identifications retenues, par jeu (`assets/identities.txt`, partagé
+    /// par Syncthing) : id SteamGridDB exact, pour que ce jeu ne retombe pas
+    /// sur le premier résultat de l'autocomplete.
+    identities: BTreeMap<String, covers::Identity>,
+    /// Prompt « date de sortie » (année tapée à la main).
+    date: Option<String>,
+    /// L'utilisateur a demandé la date à SteamGridDB pour ce slug : le
+    /// résultat est annoncé dans le pied de page.
+    asked_year: Option<String>,
     /// Identifiant du champ de saisie, pour lui donner le focus.
-    rename_id: Id,
+    input_id: Id,
     /// Page du jeu (héros, logo, actions) ; `None` = liste des jeux.
     page: Option<Page>,
-    /// Menu « quel visuel changer » de la page : index dans `ART_MENU`.
+    /// Menu « Options » de la page : index dans `ART_MENU`.
     art_menu: Option<usize>,
     /// Slugs marqués ★ (fichier `favorites.txt`).
     favorites: HashSet<String>,
@@ -681,16 +826,16 @@ impl App {
         // l'interface est réveillée au début de chaque téléchargement (roue de
         // chargement) — sans ça elle ne redessinerait qu'à la fin de la requête
         covers::wake_with(|| post(Message::Activity));
-        let assets = assets::spawn(config.icon_dirs(), config.pack_icon_dir(), |event| {
-            match event {
+        let assets = assets::spawn(
+            config.icon_dirs(),
+            config.pack_icon_dir(),
+            |event| match event {
                 assets::Event::Icon { slug, icon } => post(Message::LocalIcon { slug, icon }),
-            }
-        });
+            },
+        );
 
         // index persistant : la liste s'affiche sans relire les 540 dossiers
-        let index = Arc::new(Mutex::new(
-            Index::open(&config.index_path()).ok(),
-        ));
+        let index = Arc::new(Mutex::new(Index::open(&config.index_path()).ok()));
         let mut artwork = ArtworkCache::new();
         let rows = index
             .lock()
@@ -699,7 +844,20 @@ impl App {
             .unwrap_or_default();
         let all_games = library::from_rows(&config, &rows, &mut artwork, &[]);
         let favorites = favorites::load(&config.favorites_path());
-        let playtime_path = config.playtime_path();
+        // temps de jeu : avec les sauvegardes (lgp-saves / LocalSavesWGP).
+        // L'ancien fichier du cache est rangé ici, une fois la liste connue,
+        // pour que le format de chaque jeu soit connu.
+        let playtime_paths = playtime::Paths {
+            lgp: config.playtime_path(library::Kind::Lgp.as_str()),
+            wgp: config.playtime_path(library::Kind::Wgp.as_str()),
+            legacy: config.legacy_playtime_path(),
+        };
+        let playtime_games: Vec<(String, &'static str)> = all_games
+            .iter()
+            .map(|game| (game.slug.clone(), game.kind.as_str()))
+            .collect();
+        playtime::migrate(&playtime_paths, &playtime_games);
+        let playtime = playtime::load(&playtime_paths);
         let fullscreen = config.fullscreen;
         // dernier type de vue et dernier tri choisis : ils survivent à la
         // fermeture (le fichier d'état est dans le cache, jamais dans
@@ -753,8 +911,10 @@ impl App {
             to_launch: None,
             music: None,
             pending_slug: None,
+            pending_kind: None,
             play_started: None,
-            playtime: playtime::load(&playtime_path),
+            playtime,
+            playtime_paths,
             years: BTreeMap::new(),
             sort: saved.sort,
             view_menu: None,
@@ -764,15 +924,20 @@ impl App {
             scroll_id: Id::unique(),
             scroll: 0.0,
             scroll_target: 0.0,
+            scroll_max: 0.0,
             last_tick: std::time::Instant::now(),
             spin: 0.0,
             title_elapsed: 0.0,
             title_game: None,
             picker: None,
             picked: None,
-            rename: None,
-            search_names: HashMap::new(),
-            rename_id: Id::unique(),
+            identify: None,
+            identify_menu: None,
+            replace: None,
+            identities: BTreeMap::new(),
+            date: None,
+            asked_year: None,
+            input_id: Id::unique(),
             page: None,
             art_menu: None,
             favorites,
@@ -785,6 +950,9 @@ impl App {
         };
         // années déjà connues (fichier partagé dans `assets/`)
         app.years = covers::load_years(&covers::years_path(&app.config.assets_dir()));
+        // identifications partagées (même dossier Syncthing que les visuels)
+        app.identities =
+            covers::load_identities(&covers::identities_path(&app.config.assets_dir()));
         app.apply_filter();
         // musique de fond : lecture par `mpv` dans un fil à part, l'UI
         // n'attend rien (et sans `mpv` le launcher reste simplement muet)
@@ -825,7 +993,9 @@ impl App {
         // Poussière d'étoiles : elle ne tourne que si elle est réellement
         // visible. C'est le SEUL poste de dépense de l'animation (une image
         // à 20 Hz), donc on le coupe dès que l'écran est occupé autrement :
-        // fenêtre sans focus, page de jeu, menu, prompt, écran noir.
+        // fenêtre sans focus, menu, prompt, écran noir. La page d'un jeu GARDE
+        // les étoiles (demandé le 20/11) : elles y sont dessinées au-dessus du
+        // contenu, comme sur la liste.
         // Le fondu du lancement n'a pas besoin de ce minuteur : `window::frames`
         // reconstruit déjà la vue à 60 Hz pour le fondu, et l'« hyperespace »
         // n'est piloté que par `fade` (les particules ne dérivent pas pendant
@@ -834,13 +1004,15 @@ impl App {
             self.config.sparkles
                 && self.active
                 && self.fade < 0.999
-                && self.page.is_none()
                 && self.view_menu.is_none()
                 && self.sort_menu.is_none()
                 && self.year_menu.is_none()
                 && self.art_menu.is_none()
                 && self.picker.is_none()
-                && self.rename.is_none()
+                && self.identify.is_none()
+                && self.identify_menu.is_none()
+                && self.replace.is_none()
+                && self.date.is_none()
                 && self.to_launch.is_none(),
         );
         let mut subscriptions = vec![
@@ -890,7 +1062,9 @@ impl App {
             || self.year_menu.is_some()
             || self.art_menu.is_some()
             || self.picker.is_some()
-            || self.rename.is_some()
+            || self.identify.is_some()
+            || self.identify_menu.is_some()
+            || self.date.is_some()
         {
             return false;
         }
@@ -916,6 +1090,144 @@ impl App {
         self.page
             .as_ref()
             .and_then(|page| self.games.get(page.index))
+    }
+
+    /// Jeu concerné par les menus : celui de la page ouverte, celui du menu
+    /// d'images, sinon la sélection de la liste.
+    fn current_slug(&self) -> Option<String> {
+        self.page_game()
+            .map(|game| game.slug.clone())
+            .or_else(|| self.picker.as_ref().map(|picker| picker.slug.clone()))
+            .or_else(|| self.games.get(self.selected).map(|game| game.slug.clone()))
+    }
+
+    /// Nom et id SteamGridDB d'un jeu : l'identification partagée fait foi,
+    /// sinon le nom du paquet (comportement historique).
+    fn who(&self, slug: &str, name: &str) -> (String, Option<u64>) {
+        match self.identities.get(slug) {
+            Some(identity) if !identity.name.is_empty() => {
+                (identity.name.clone(), Some(identity.id))
+            }
+            Some(identity) => (name.to_string(), Some(identity.id)),
+            None => (name.to_string(), None),
+        }
+    }
+
+    /// Retient l'identification choisie dans la liste, écrit le fichier
+    /// partagé (`assets/identities.txt`), puis met les visuels à jour — en
+    /// demandant d'abord quand le paquet en a déjà (voir [`Replace`]).
+    fn apply_identity(&mut self, slug: &str, game: covers::FoundGame) {
+        let same = self
+            .identities
+            .get(slug)
+            .is_some_and(|identity| identity.id == game.id);
+        let mut identities = self.identities.clone();
+        identities.insert(
+            slug.to_string(),
+            covers::Identity {
+                id: game.id,
+                name: game.name.clone(),
+            },
+        );
+        covers::save_identities(
+            &covers::identities_path(&self.config.assets_dir()),
+            &identities,
+        );
+        self.identities = identities;
+        // le jeu identifié apporte sa date (ou « pas de date »)
+        self.remember_year(slug, game.year);
+
+        // les menus se referment : on revient à la page (ou à la liste)
+        self.identify = None;
+        self.identify_menu = None;
+        self.picker = None;
+        self.art_menu = None;
+
+        // Même jeu que l'identification courante : les visuels en cache sont
+        // déjà les bons, et peuvent avoir été choisis à la main — on ne les
+        // efface pas (un choix par erreur ne doit pas détruire le travail).
+        if same {
+            self.status = Some((format!("déjà identifié : {}", game.name), false));
+            self.resume_covers();
+            return;
+        }
+
+        // Le paquet a DÉJÀ des visuels (SteamGridDB ou choisis à la main) :
+        // on demande avant de les remplacer. Les effacer d'office jetait le
+        // travail de l'utilisateur (demandé le 20/11), d'où « Non » par défaut.
+        if covers::has_art(&self.config.assets_dir(), slug) {
+            self.pause_covers();
+            self.replace = Some(Replace {
+                slug: slug.to_string(),
+                game,
+                index: 0,
+            });
+            return;
+        }
+
+        self.replace_art(slug, &game);
+    }
+
+    /// Efface les visuels de l'ancien jeu et redemande les quatre types du jeu
+    /// identifié, en fond. Appelé quand le paquet n'avait aucune image, ou
+    /// après un « Oui, remplacer ».
+    fn replace_art(&mut self, slug: &str, game: &covers::FoundGame) {
+        // Les visuels en cache sont ceux de l'ANCIEN jeu : les garder ferait
+        // garder la cover, le logo et la date de « Hoobadventure » sur
+        // « Marsupilami 2 ». Le fichier partagé et les marqueurs de la machine
+        // sont retirés, puis tout est redemandé.
+        covers::forget(
+            &self.config.assets_dir(),
+            &self.config.cache_dir().join("marks"),
+            slug,
+        );
+        self.forget_local_art(slug);
+        self.picked = None;
+        if let Some(index) = self.games.iter().position(|game| game.slug == slug) {
+            // même sélection que la page : les quatre types, dans l'urgence.
+            // Les apparitions repartent de zéro : le nouveau héros grandit sa
+            // bande au lieu de la faire sauter d'un coup.
+            self.reset_page_assets(index);
+            self.request_page_assets(index);
+        } else {
+            self.send_cover_query(covers::Query::Auto {
+                slug: slug.to_string(),
+                name: game.name.clone(),
+                id: Some(game.id),
+                kinds: covers::ArtKind::ALL.to_vec(),
+            });
+        }
+        self.status = Some((format!("identifié : {}", game.name), false));
+        self.resume_covers();
+    }
+
+    /// Efface les visuels en mémoire d'un jeu (l'icône extraite du paquet,
+    /// elle, est correcte par définition : on la relit du cache).
+    fn forget_local_art(&mut self, slug: &str) {
+        self.art_requested.retain(|(known, _)| known != slug);
+        self.cover_failed.remove(slug);
+        self.thumb_requested.remove(slug);
+        self.icon_requests.remove(slug);
+        let icon = std::fs::read(self.config.pack_icon_dir().join(format!("{slug}.png")))
+            .ok()
+            .map(image::Handle::from_bytes);
+        for game in self.games.iter_mut().chain(self.all_games.iter_mut()) {
+            if game.slug != slug {
+                continue;
+            }
+            game.cover = None;
+            game.hero = None;
+            game.logo = None;
+            game.thumb = None;
+            game.icon = icon.clone();
+        }
+        if let Some(art) = self.artwork.get_mut(slug) {
+            art.cover = None;
+            art.hero = None;
+            art.logo = None;
+            art.thumb = None;
+            art.icon = icon;
+        }
     }
 
     /// Recale les trois apparitions sur ce que le jeu a déjà : présent = déjà
@@ -1032,6 +1344,14 @@ impl App {
             }
             Message::Year { slug, year } => {
                 self.remember_year(&slug, year);
+                // demandé depuis le prompt « date » : on annonce le résultat
+                if self.asked_year.as_deref() == Some(slug.as_str()) {
+                    self.asked_year = None;
+                    self.status = Some(match year {
+                        Some(year) => (format!("date de sortie : {year}"), false),
+                        None => ("SteamGridDB ne donne pas de date".to_string(), true),
+                    });
+                }
                 Task::none()
             }
             Message::Icon { slug, bytes } => {
@@ -1132,11 +1452,9 @@ impl App {
                     }
                 }
 
-                let query = self
-                    .search_names
-                    .get(&slug)
-                    .cloned()
-                    .unwrap_or_else(|| name.clone());
+                // nom et id réellement envoyés à SteamGridDB : l'identification
+                // du jeu fait foi, sinon le nom du paquet
+                let (query, id) = self.who(&slug, &name);
                 let thumbs = choices
                     .iter()
                     .map(|choice| {
@@ -1147,7 +1465,7 @@ impl App {
                 self.picker = Some(Picker {
                     slug: slug.clone(),
                     name: name.clone(),
-                    query,
+                    query: query.clone(),
                     kind,
                     index: 0,
                     loading: true,
@@ -1156,64 +1474,233 @@ impl App {
                     thumbs,
                 });
                 // le menu d'image a la priorité : plus de visuels de fond
-                if let Some(queue) = self.covers.as_ref() {
-                    queue.pause(true);
-                }
-                self.send_cover_query(covers::Query::Choices { slug, name, kind });
-                Task::none()
-            }
-            Message::RenameOpen => {
-                let Some(picker) = self.picker.as_ref() else {
-                    return Task::none();
-                };
-                self.rename = Some(picker.query.clone());
-                // présélection : taper remplace directement le nom proposé
-                Task::batch([
-                    operation::focus(self.rename_id.clone()),
-                    operation::select_all(self.rename_id.clone()),
-                ])
-            }
-            Message::RenameInput(text) => {
-                if self.rename.is_some() {
-                    self.rename = Some(text);
-                }
-                Task::none()
-            }
-            Message::RenameCancel => {
-                self.rename = None;
-                Task::none()
-            }
-            Message::RenameSubmit => {
-                let Some(query) = self.rename.take() else {
-                    return Task::none();
-                };
-                let query = query.trim().to_string();
-                // un nom vide ne relancerait la même recherche : on garde l'ancien
-                if query.is_empty() {
-                    return Task::none();
-                }
-                let Some(picker) = self.picker.as_mut() else {
-                    return Task::none();
-                };
-                let (slug, kind) = (picker.slug.clone(), picker.kind);
-                picker.query = query.clone();
-                self.search_names.insert(slug.clone(), query.clone());
-                picker.choices.clear();
-                picker.thumbs.clear();
-                picker.error = None;
-                picker.loading = true;
-                picker.index = 0;
-                eprintln!("glauncher : recherche « {query} » pour {slug}");
+                self.pause_covers();
                 self.send_cover_query(covers::Query::Choices {
                     slug,
                     name: query,
+                    id,
                     kind,
                 });
                 Task::none()
             }
+            Message::IdentifyOpen => {
+                // préremplit avec l'identification courante (ou le nom exact
+                // du jeu identifié), sinon le nom du paquet
+                let Some(slug) = self.current_slug() else {
+                    return Task::none();
+                };
+                // préremplit avec la recherche en cours (correction du nom),
+                // sinon l'identification courante, sinon le nom du paquet
+                let current = self
+                    .identify_menu
+                    .as_ref()
+                    .filter(|menu| menu.slug == slug)
+                    .map(|menu| menu.query.clone())
+                    .or_else(|| {
+                        self.identities
+                            .get(&slug)
+                            .map(|identity| identity.name.clone())
+                            .filter(|name| !name.is_empty())
+                    });
+                let name = current.unwrap_or_else(|| {
+                    self.games
+                        .get(self.selected)
+                        .map(|game| game.name.clone())
+                        .unwrap_or_default()
+                });
+                self.identify = Some(name);
+                // le menu des visuels laisse la place au prompt
+                self.art_menu = None;
+                // présélection : taper remplace directement le nom proposé
+                Task::batch([
+                    operation::focus(self.input_id.clone()),
+                    operation::select_all(self.input_id.clone()),
+                ])
+            }
+            Message::IdentifyInput(text) => {
+                if self.identify.is_some() {
+                    self.identify = Some(text);
+                }
+                Task::none()
+            }
+            Message::IdentifyCancel => {
+                self.identify = None;
+                Task::none()
+            }
+            Message::IdentifySubmit => {
+                let Some(query) = self.identify.take() else {
+                    return Task::none();
+                };
+                let query = query.trim().to_string();
+                // un nom vide ne donnerait rien : on ne relance pas
+                if query.is_empty() {
+                    return Task::none();
+                }
+                let Some(slug) = self.current_slug() else {
+                    return Task::none();
+                };
+                let current = self.identities.get(&slug).map(|identity| identity.id);
+                self.identify_menu = Some(IdentifyMenu {
+                    slug: slug.clone(),
+                    query: query.clone(),
+                    index: 0,
+                    loading: true,
+                    error: None,
+                    games: Vec::new(),
+                    current,
+                });
+                // aucune cover de fond pendant qu'on regarde la liste
+                self.pause_covers();
+                eprintln!("glauncher : identification, recherche « {query} » pour {slug}");
+                self.send_cover_query(covers::Query::Search { slug, name: query });
+                Task::none()
+            }
+            Message::IdentifyResults {
+                slug,
+                query,
+                result,
+            } => {
+                if let Some(menu) = self.identify_menu.as_mut()
+                    && menu.slug == slug
+                    && menu.query == query
+                {
+                    menu.loading = false;
+                    match result {
+                        Ok(games) => {
+                            // le jeu déjà identifié est sélectionné d'office
+                            menu.index = menu
+                                .current
+                                .and_then(|id| games.iter().position(|game| game.id == id))
+                                .unwrap_or(0);
+                            menu.games = games;
+                            menu.error = None;
+                            eprintln!(
+                                "glauncher : {} jeu(x) proposé(s) pour « {query} »",
+                                menu.games.len()
+                            );
+                        }
+                        Err(error) => menu.error = Some(error),
+                    }
+                }
+                Task::none()
+            }
+            Message::IdentifyNav(delta) => {
+                if let Some(menu) = self.identify_menu.as_mut()
+                    && !menu.games.is_empty()
+                {
+                    let last = menu.games.len() - 1;
+                    menu.index = (menu.index as i32 + delta).clamp(0, last as i32) as usize;
+                }
+                Task::none()
+            }
+            Message::IdentifyChoose(index) => {
+                if let Some(menu) = self.identify_menu.as_mut() {
+                    menu.index = index.min(menu.games.len().saturating_sub(1));
+                }
+                Task::done(Message::IdentifyPick)
+            }
+            Message::IdentifyPick => {
+                let Some(menu) = self.identify_menu.as_ref() else {
+                    return Task::none();
+                };
+                // erreur réseau ou liste vide : A relance la recherche
+                if let Some(error) = menu.error.clone() {
+                    let (slug, query) = (menu.slug.clone(), menu.query.clone());
+                    if let Some(menu) = self.identify_menu.as_mut() {
+                        menu.error = Some(error);
+                        menu.loading = true;
+                    }
+                    self.send_cover_query(covers::Query::Search { slug, name: query });
+                    return Task::none();
+                }
+                let Some(game) = menu.games.get(menu.index).cloned() else {
+                    return Task::none();
+                };
+                let slug = menu.slug.clone();
+                self.apply_identity(&slug, game);
+                Task::none()
+            }
+            Message::IdentifyClose => {
+                self.identify = None;
+                self.identify_menu = None;
+                Task::none()
+            }
+            Message::DateOpen => {
+                let Some(slug) = self.current_slug() else {
+                    return Task::none();
+                };
+                // préremplit avec l'année connue : corriger une date fausse
+                // n'oblige pas à tout retaper
+                self.date = Some(
+                    self.year_of(&slug)
+                        .map(|year| year.to_string())
+                        .unwrap_or_default(),
+                );
+                self.art_menu = None;
+                Task::batch([
+                    operation::focus(self.input_id.clone()),
+                    operation::select_all(self.input_id.clone()),
+                ])
+            }
+            Message::DateInput(text) => {
+                if self.date.is_some() {
+                    self.date = Some(text);
+                }
+                Task::none()
+            }
+            Message::DateCancel => {
+                self.date = None;
+                Task::none()
+            }
+            Message::DateSubmit => {
+                let Some(value) = self.date.take() else {
+                    return Task::none();
+                };
+                let Some(slug) = self.current_slug() else {
+                    return Task::none();
+                };
+                let value = value.trim().to_string();
+                // vide = on ne sait pas / on ne veut pas de date pour ce jeu
+                if value.is_empty() {
+                    self.remember_year(&slug, None);
+                    self.status = Some(("date de sortie effacée".to_string(), false));
+                    return Task::none();
+                }
+                match value.parse::<u32>() {
+                    Ok(year) if (1950..=2100).contains(&year) => {
+                        self.remember_year(&slug, Some(year));
+                        self.status = Some((format!("date de sortie : {year}"), false));
+                    }
+                    _ => {
+                        self.status = Some(("année invalide (1950 à 2100)".to_string(), true));
+                        // on garde le prompt ouvert pour corriger
+                        self.date = Some(value);
+                    }
+                }
+                Task::none()
+            }
+            Message::DateRefresh => {
+                self.date = None;
+                let Some(slug) = self.current_slug() else {
+                    return Task::none();
+                };
+                let Some(name) = self
+                    .page_game()
+                    .or_else(|| self.games.get(self.selected))
+                    .map(|game| game.name.clone())
+                else {
+                    return Task::none();
+                };
+                let (name, id) = self.who(&slug, &name);
+                self.asked_year = Some(slug.clone());
+                self.status = Some(("recherche de la date…".to_string(), false));
+                self.send_cover_query(covers::Query::Year { slug, name, id });
+                Task::none()
+            }
             Message::ClosePicker => {
                 let was_open = self.picker.take().is_some();
-                self.rename = None;
+                self.identify = None;
+                self.identify_menu = None;
                 if was_open {
                     self.resume_covers();
                 }
@@ -1248,12 +1735,21 @@ impl App {
                 };
                 // en cas d'échec, A relance la recherche d'images
                 if let Some(error) = picker.error.clone() {
-                    let (slug, name, kind) = (picker.slug.clone(), picker.name.clone(), picker.kind);
+                    let (slug, name, kind) =
+                        (picker.slug.clone(), picker.name.clone(), picker.kind);
+                    // le nom envoyé est celui qui a servi pour ce menu : le nom
+                    // du jeu identifié s'il y en a un
+                    let (name, id) = self.who(&slug, &name);
                     if let Some(picker) = self.picker.as_mut() {
                         picker.error = Some(error);
                         picker.loading = true;
                     }
-                    self.send_cover_query(covers::Query::Choices { slug, name, kind });
+                    self.send_cover_query(covers::Query::Choices {
+                        slug,
+                        name,
+                        id,
+                        kind,
+                    });
                     return Task::none();
                 }
                 let Some(choice) = picker.choices.get(picker.index) else {
@@ -1275,6 +1771,83 @@ impl App {
                 self.picked = Some((slug, kind));
                 self.status = Some(("application de l'image…".to_string(), false));
                 self.resume_covers();
+                Task::none()
+            }
+            Message::PickerFile => {
+                let Some(picker) = self.picker.as_ref() else {
+                    return Task::none();
+                };
+                let (slug, kind) = (picker.slug.clone(), picker.kind);
+                let depart = crate::config::home_dir();
+                let titre = format!("Choisir {}", kind.label());
+                // dialogue système dans un VRAI fil (il reste ouvert tant que
+                // l'utilisateur navigue) ; le résultat revient par un canal,
+                // donc aucun fil de l'UI n'est occupé
+                let (tx, rx) = iced::futures::channel::oneshot::channel();
+                let lance = std::thread::Builder::new()
+                    .name("glauncher-dialogue".into())
+                    .spawn(move || {
+                        let _ = tx.send(dialog::choisir_image(&depart, &titre));
+                    });
+                if lance.is_err() {
+                    self.status = Some(("dialogue d'image indisponible".to_string(), true));
+                    return Task::none();
+                }
+                Task::perform(async move { rx.await.ok().flatten() }, move |path| {
+                    Message::FileChosen {
+                        slug: slug.clone(),
+                        kind,
+                        path,
+                    }
+                })
+            }
+            Message::FileChosen { slug, kind, path } => {
+                // annulé : le menu d'images reste ouvert, rien ne change
+                let Some(path) = path else {
+                    return Task::none();
+                };
+                eprintln!(
+                    "glauncher : image perso pour {slug} ({}) : {}",
+                    kind.label(),
+                    path.display()
+                );
+                // même sortie qu'un choix SteamGridDB : le menu se referme, le
+                // fichier est adapté puis écrit par le worker
+                self.picker = None;
+                self.picked = Some((slug.clone(), kind));
+                self.status = Some(("application de l'image…".to_string(), false));
+                self.resume_covers();
+                self.send_cover_query(covers::Query::UseFile { slug, kind, path });
+                Task::none()
+            }
+            Message::ReplaceNav(delta) => {
+                if let Some(replace) = self.replace.as_mut() {
+                    replace.index = (replace.index as i32 + delta).clamp(0, 1) as usize;
+                }
+                Task::none()
+            }
+            Message::ReplaceChoose(index) => {
+                if let Some(replace) = self.replace.as_mut() {
+                    replace.index = index.min(1);
+                }
+                Task::done(Message::ReplacePick)
+            }
+            Message::ReplacePick => {
+                let Some(replace) = self.replace.take() else {
+                    return Task::none();
+                };
+                if replace.index == 0 {
+                    // « Non » (défaut) : les visuels déjà là restent, y compris
+                    // ceux choisis à la main — les écraser sans demander est
+                    // exactement ce qu'on veut éviter
+                    self.status = Some((
+                        format!("visuels conservés pour {}", replace.game.name),
+                        false,
+                    ));
+                    self.resume_covers();
+                    return Task::none();
+                }
+                self.replace_art(&replace.slug, &replace.game);
                 Task::none()
             }
             Message::Choices {
@@ -1337,13 +1910,14 @@ impl App {
                 self.running = None;
                 // temps de jeu : on ignore les lancements avortés (moins de 5 s,
                 // un binaire qui ne démarre pas ne compte pas comme une partie)
-                if let Some((slug, started)) = self.play_started.take() {
+                if let Some((slug, kind, started)) = self.play_started.take() {
                     let seconds = started.elapsed().as_secs();
                     if seconds >= 5 {
                         playtime::add(
-                            &self.config.playtime_path(),
+                            &self.playtime_paths,
                             &mut self.playtime,
                             &slug,
+                            kind.as_str(),
                             seconds,
                         );
                     }
@@ -1407,18 +1981,20 @@ impl App {
                 self.update_scroll_target();
                 // le héros de la page est prioritaire sur les visuels de fond
                 // et la file de fond s'arrête : ce qu'on regarde est la page,
-                // pas la liste qu'elle recouvre (`resume_covers` à la fermeture)
+                // pas la liste qu'elle recouvre (`resume_covers` à la fermeture).
+                // La pause libère d'abord les demandes abandonnées, puis la
+                // page réclame ce qui lui manque (y compris ce que la file de
+                // fond venait de lâcher).
+                self.pause_covers();
                 self.request_page_assets(index);
-                if let Some(queue) = self.covers.as_ref() {
-                    queue.pause(true);
-                }
                 // année de sortie : une simple requête d'autocomplete, et
                 // seulement si on ne la connaît pas — des visuels déjà en cache
-                // ne l'apprennent pas
+                // ne l'apprennent pas. Un jeu identifié demande SA date.
                 if let Some(game) = self.games.get(index) {
                     let (slug, name) = (game.slug.clone(), game.name.clone());
+                    let (name, id) = self.who(&slug, &name);
                     if !self.years.contains_key(&slug) {
-                        self.send_cover_query(covers::Query::Year { slug, name });
+                        self.send_cover_query(covers::Query::Year { slug, name, id });
                     }
                 }
                 Task::none()
@@ -1448,10 +2024,6 @@ impl App {
                 self.page_act()
             }
             Message::PageAct => self.page_act(),
-            Message::ArtMenu => {
-                self.art_menu = Some(0);
-                Task::none()
-            }
             Message::ArtMenuNav(delta) => {
                 if let Some(choice) = self.art_menu.as_mut() {
                     let last = ART_MENU.len() - 1;
@@ -1467,16 +2039,23 @@ impl App {
                 let Some(choice) = self.art_menu.take() else {
                     return Task::none();
                 };
-                let Some(kind) = ART_MENU.get(choice).copied() else {
+                let Some(entry) = ART_MENU.get(choice).copied() else {
                     return Task::none();
                 };
-                Task::done(Message::OpenPicker(kind))
+                match entry {
+                    ArtMenuEntry::Kind(kind) => Task::done(Message::OpenPicker(kind)),
+                    ArtMenuEntry::Identify => Task::done(Message::IdentifyOpen),
+                    ArtMenuEntry::Date => Task::done(Message::DateOpen),
+                }
             }
             Message::ArtMenuClose => {
                 self.art_menu = None;
                 Task::none()
             }
-            Message::Scrolled(offset) => {
+            Message::Scrolled { offset, max } => {
+                // le maximum du contenu que iced vient de dessiner, pour
+                // `scroll_drawn`
+                self.scroll_max = max;
                 // on suit le défilement réel : la position survit au retour
                 // d'un jeu et sert à demander les covers visibles
                 if (self.scroll - offset).abs() > 0.5 {
@@ -1628,12 +2207,22 @@ impl App {
             }
             Message::Back => {
                 // même priorité qu'Échap : le plus profond d'abord
-                if self.rename.is_some() {
-                    self.rename = None;
+                if self.date.is_some() {
+                    self.date = None;
                     return Task::none();
+                }
+                if self.identify.is_some() {
+                    self.identify = None;
+                    return Task::none();
+                }
+                if self.identify_menu.is_some() {
+                    return Task::done(Message::IdentifyClose);
                 }
                 if self.picker.is_some() {
                     return Task::done(Message::ClosePicker);
+                }
+                if self.replace.is_some() {
+                    return Task::done(Message::ReplaceChoose(0));
                 }
                 if self.art_menu.is_some() {
                     return Task::done(Message::ArtMenuClose);
@@ -1740,6 +2329,7 @@ impl App {
         let command = launch::build(&self.config, &game);
         self.running = Some(game.name.clone());
         self.pending_slug = Some(game.slug.clone());
+        self.pending_kind = Some(game.kind);
         self.status = None;
         // le jeu démarre quand le fondu au noir est terminé (voir tick)
         self.to_launch = Some((game.name.clone(), command, std::time::Instant::now()));
@@ -1788,11 +2378,7 @@ impl App {
         }
 
         // l'invite « appuie encore sur retour » expire avec la fenêtre
-        if self.quit_hint
-            && self
-                .back_press
-                .is_none_or(|at| at.elapsed() >= QUIT_WINDOW)
-        {
+        if self.quit_hint && self.back_press.is_none_or(|at| at.elapsed() >= QUIT_WINDOW) {
             self.quit_hint = false;
             self.back_press = None;
         }
@@ -1816,7 +2402,12 @@ impl App {
         // contrairement à un passage au noir instantané, jugé trop agressif.
         if (self.page_fade - self.page_fade_target).abs() > 0.001 {
             let rising = self.page_fade < self.page_fade_target;
-            let step = dt / if rising { PAGE_FADE_RISE } else { PAGE_FADE_FALL };
+            let step = dt
+                / if rising {
+                    PAGE_FADE_RISE
+                } else {
+                    PAGE_FADE_FALL
+                };
             self.page_fade = if rising {
                 (self.page_fade + step).min(self.page_fade_target)
             } else {
@@ -1870,10 +2461,15 @@ impl App {
             );
             // le chrono du temps de jeu part au lancement EFFECTIF du jeu
             let slug = self.pending_slug.take().unwrap_or_default();
+            let kind = self.pending_kind.take();
             self.play_started = if slug.is_empty() {
                 None
             } else {
-                Some((slug.clone(), std::time::Instant::now()))
+                Some((
+                    slug.clone(),
+                    kind.unwrap_or(library::Kind::Wgp),
+                    std::time::Instant::now(),
+                ))
             };
             spawn_launch(name, command, self.config.cache_dir(), slug);
         }
@@ -1893,6 +2489,14 @@ impl App {
         {
             tasks.push(self.apply_swap(swap));
             self.swap_fade_target = 0.0;
+        }
+
+        // iced borne le défilement au maximum du contenu : viser au-delà ne
+        // dessine rien de plus. Sans ce bornage, la dernière rangée laissait
+        // `scroll`/`scroll_target` en avance de ~une demi-rangée sur le dessin.
+        if self.scroll_max > 0.0 {
+            self.scroll_target = self.scroll_target.min(self.scroll_max);
+            self.scroll = self.scroll.min(self.scroll_max);
         }
 
         if (self.scroll - self.scroll_target).abs() > 0.5 {
@@ -1922,6 +2526,13 @@ impl App {
         Task::batch(tasks)
     }
 
+    /// Défilement tel que le `scrollable` va le **dessiner** (voir
+    /// [`scroll_drawn`]) : c'est lui qui positionne vignettes, cadre d'accent
+    /// et particules.
+    fn scroll_drawn(&self) -> f32 {
+        scroll_drawn(self.scroll, self.scroll_max)
+    }
+
     /// Rectangles de la case `index` (cadre compris) et de son image, en
     /// pixels de la fenêtre. Repose sur la même géométrie que
     /// `update_scroll_target` (marges, colonnes, pas de rangée, défilement).
@@ -1940,7 +2551,7 @@ impl App {
         let card = Rectangle::new(
             Point::new(
                 PAGE_PADDING_X + column * (cell + gap) + inset,
-                PAGE_PADDING_Y + row * (self.slot_height() + gap) + inset - self.scroll,
+                PAGE_PADDING_Y + row * (self.slot_height() + gap) + inset - self.scroll_drawn(),
             ),
             Size::new(cell - 2.0 * inset, self.row_height()),
         );
@@ -2004,10 +2615,7 @@ impl App {
     /// du bord partent de plus loin et se posent plus tard que celles du
     /// centre. `None` quand il n'y a rien à animer (hors retour, autre vue).
     fn comeback(&self, index: usize) -> Option<(f32, f32)> {
-        if !self.returning
-            || self.fade <= 0.001
-            || !matches!(self.config.view, ViewMode::Grid)
-        {
+        if !self.returning || self.fade <= 0.001 || !matches!(self.config.view, ViewMode::Grid) {
             return None;
         }
         let (cell, _, columns) = self.metrics();
@@ -2088,6 +2696,19 @@ impl App {
     /// reprennent. Rien à faire tant qu'un des deux reste ouvert : la file de
     /// fond doit rester muette, sinon la roue de chargement tournerait pour des
     /// covers qu'on ne regarde pas (demandé le 20/11).
+    /// Suspend les visuels de fond (page ou menu d'image ouvert) et libère les
+    /// demandes abandonnées par la file vidée : sans ça, ces jeux restaient
+    /// marqués « demandés » pour toute la session et ne recevaient plus jamais
+    /// leurs visuels (constaté 18/11).
+    fn pause_covers(&mut self) {
+        if let Some(queue) = self.covers.as_ref() {
+            queue.pause(true);
+        }
+        for cle in std::mem::take(&mut self.visible_covers) {
+            self.art_requested.remove(&cle);
+        }
+    }
+
     fn resume_covers(&mut self) {
         if self.page.is_some() || self.picker.is_some() {
             return;
@@ -2118,9 +2739,7 @@ impl App {
     /// Hauteur d'une rangée, espacement compris (grille ou liste).
     fn row_span(&self) -> f32 {
         match self.config.view {
-            ViewMode::Grid | ViewMode::Mosaic => {
-                self.slot_height() + self.gap()
-            }
+            ViewMode::Grid | ViewMode::Mosaic => self.slot_height() + self.gap(),
             ViewMode::List => self.list_row_height() + 8.0,
         }
     }
@@ -2142,12 +2761,12 @@ impl App {
         if len == 0 {
             return 0..0;
         }
-        let first = (self.scroll / self.row_span()).floor().max(0.0) as usize;
+        let first = (self.scroll_drawn() / self.row_span()).floor().max(0.0) as usize;
         let rows = self.rows_visible();
         match self.config.view {
             ViewMode::Grid | ViewMode::Mosaic => {
                 let columns = self.metrics().2;
-                visible_items(self.scroll, self.row_span(), rows, columns, len)
+                visible_items(self.scroll_drawn(), self.row_span(), rows, columns, len)
             }
             ViewMode::List => first.saturating_sub(1)..(first + rows + 1).min(len),
         }
@@ -2204,12 +2823,7 @@ impl App {
     /// SteamGridDB. `urgent` = demande pour la page ouverte (le héros doit
     /// arriver tout de suite) ; `tout` = la page, qui affiche les quatre types
     /// (grille, liste et mosaïque n'en montrent que deux : cover et icône).
-    fn missing_assets(
-        &mut self,
-        index: usize,
-        urgent: bool,
-        tout: bool,
-    ) -> Option<covers::Query> {
+    fn missing_assets(&mut self, index: usize, urgent: bool, tout: bool) -> Option<covers::Query> {
         let queue = self.covers.clone()?;
         let game = self.games.get(index)?;
 
@@ -2241,6 +2855,9 @@ impl App {
             &DEUX_TYPES
         };
         let mut kinds = Vec::new();
+        // l'identification du jeu fait foi : c'est SON id qui part chez
+        // SteamGridDB, sinon le premier résultat de la recherche par nom
+        let (name, id) = self.who(&game.slug, &game.name);
         for &kind in demande {
             let present = match kind {
                 covers::ArtKind::Grid => game.cover.is_some(),
@@ -2253,10 +2870,11 @@ impl App {
             if kind == covers::ArtKind::Icon && !self.icon_scanned.contains(&game.slug) {
                 continue;
             }
-            // une demande de page ignore la file de fond : c'est elle qui
-            // doit se voir tout de suite
+            // une demande déjà en vol (ou faite pour un autre affichage) n'est
+            // pas renvoyée : la fermeture d'un menu ou d'une page libère les
+            // demandes abandonnées (`pause_covers`/`resume_covers`)
             if present
-                || (!tout && self.art_requested.contains(&(game.slug.clone(), kind)))
+                || self.art_requested.contains(&(game.slug.clone(), kind))
                 || covers::recently_missed(&self.config.marks_dir(kind.dir()), &game.slug)
             {
                 continue;
@@ -2272,7 +2890,8 @@ impl App {
         }
         Some(covers::Query::Auto {
             slug: game.slug.clone(),
-            name: game.name.clone(),
+            name,
+            id,
             kinds,
         })
     }
@@ -2384,7 +3003,7 @@ impl App {
                 self.toggle_favorite(index);
                 Task::none()
             }
-            PageAction::Images => {
+            PageAction::Options => {
                 self.art_menu = Some(0);
                 Task::none()
             }
@@ -2432,9 +3051,9 @@ impl App {
     /// liste des favoris (alphabétique, retour 18/11).
     fn sort_games(&mut self) {
         match self.sort {
-            SortBy::Name | SortBy::Favorites => {
-                self.games.sort_by_cached_key(|game| game.name.to_lowercase())
-            }
+            SortBy::Name | SortBy::Favorites => self
+                .games
+                .sort_by_cached_key(|game| game.name.to_lowercase()),
             SortBy::Modified => self.games.sort_by_key(|game| std::cmp::Reverse(game.mtime)),
         }
     }
@@ -2499,10 +3118,7 @@ impl App {
         self.scroll = 0.0;
         self.scroll_target = 0.0;
         self.request_visible_covers();
-        operation::scroll_to(
-            self.scroll_id.clone(),
-            AbsoluteOffset { x: 0.0, y: 0.0 },
-        )
+        operation::scroll_to(self.scroll_id.clone(), AbsoluteOffset { x: 0.0, y: 0.0 })
     }
 
     fn apply_filter(&mut self) {
@@ -2546,14 +3162,44 @@ impl App {
             self.input = Input::Keyboard;
         }
 
-        // prompt « nom de recherche » : le champ de saisie prend les touches,
-        // on n'intercepte que l'annulation (Entrée passe par `on_submit`)
-        if self.rename.is_some() {
+        // prompt « nom de recherche » (identification) : le champ de saisie
+        // prend les touches, on n'intercepte que l'annulation (Entrée passe par
+        // `on_submit`)
+        if self.identify.is_some() {
             return match event {
                 keyboard::Event::KeyPressed {
                     key: keyboard::Key::Named(Named::Escape),
                     ..
-                } => Task::done(Message::RenameCancel),
+                } => Task::done(Message::IdentifyCancel),
+                _ => Task::none(),
+            };
+        }
+        // prompt « date de sortie »
+        if self.date.is_some() {
+            return match event {
+                keyboard::Event::KeyPressed {
+                    key: keyboard::Key::Named(Named::Escape),
+                    ..
+                } => Task::done(Message::DateCancel),
+                _ => Task::none(),
+            };
+        }
+        // liste des jeux proposés (identification)
+        if self.identify_menu.is_some() {
+            let keyboard::Event::KeyPressed { key, .. } = event else {
+                return Task::none();
+            };
+            return match key {
+                keyboard::Key::Named(Named::Escape) => Task::done(Message::IdentifyClose),
+                keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
+                    Task::done(Message::IdentifyPick)
+                }
+                keyboard::Key::Named(Named::ArrowDown) => Task::done(Message::IdentifyNav(1)),
+                keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::IdentifyNav(-1)),
+                // « r » : corriger le nom recherché
+                keyboard::Key::Character(ch) if ch.as_ref() == "r" => {
+                    Task::done(Message::IdentifyOpen)
+                }
                 _ => Task::none(),
             };
         }
@@ -2566,12 +3212,38 @@ impl App {
                 keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
                     Task::done(Message::PickerPick)
                 }
-                keyboard::Key::Named(Named::ArrowRight) => Task::done(Message::PickerNav(Nav::Next)),
+                keyboard::Key::Named(Named::ArrowRight) => {
+                    Task::done(Message::PickerNav(Nav::Next))
+                }
                 keyboard::Key::Named(Named::ArrowLeft) => Task::done(Message::PickerNav(Nav::Prev)),
                 keyboard::Key::Named(Named::ArrowDown) => Task::done(Message::PickerNav(Nav::Down)),
                 keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::PickerNav(Nav::Up)),
-                keyboard::Key::Named(Named::PageDown) => Task::done(Message::PickerNav(Nav::PageDown)),
+                keyboard::Key::Named(Named::PageDown) => {
+                    Task::done(Message::PickerNav(Nav::PageDown))
+                }
                 keyboard::Key::Named(Named::PageUp) => Task::done(Message::PickerNav(Nav::PageUp)),
+                // « f » : une image perso (fichier local) au lieu de la liste
+                keyboard::Key::Character(ch) if ch.as_ref() == "f" => {
+                    Task::done(Message::PickerFile)
+                }
+                _ => Task::none(),
+            };
+        }
+        // « remplacer les visuels ? » : « Non » est sélectionné, donc Entrée
+        // garde tout ; Échap fait la même chose
+        if self.replace.is_some() {
+            let keyboard::Event::KeyPressed { key, .. } = event else {
+                return Task::none();
+            };
+            return match key {
+                keyboard::Key::Named(Named::Escape) => Task::done(Message::ReplaceChoose(0)),
+                keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
+                    Task::done(Message::ReplacePick)
+                }
+                keyboard::Key::Named(Named::ArrowLeft) | keyboard::Key::Named(Named::Tab) => {
+                    Task::done(Message::ReplaceNav(-1))
+                }
+                keyboard::Key::Named(Named::ArrowRight) => Task::done(Message::ReplaceNav(1)),
                 _ => Task::none(),
             };
         }
@@ -2627,7 +3299,7 @@ impl App {
             };
         }
 
-        // menu « quel visuel changer » : haut/bas puis Entrée
+        // menu « Options » de la page : haut/bas puis Entrée
         if self.art_menu.is_some() {
             return match &key {
                 keyboard::Key::Named(Named::Escape) => Task::done(Message::ArtMenuClose),
@@ -2636,18 +3308,13 @@ impl App {
                 }
                 keyboard::Key::Named(Named::ArrowDown) => Task::done(Message::ArtMenuNav(1)),
                 keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::ArtMenuNav(-1)),
-                keyboard::Key::Character(ch) => match ch.as_ref() {
-                    "g" => Task::done(Message::ArtMenuChoose(0)),
-                    "h" => Task::done(Message::ArtMenuChoose(1)),
-                    "l" => Task::done(Message::ArtMenuChoose(2)),
-                    "i" => Task::done(Message::ArtMenuChoose(3)),
-                    _ => Task::none(),
-                },
                 _ => Task::none(),
             };
         }
 
-        // page d'un jeu : gauche/droite choisissent l'action, Entrée valide
+        // page d'un jeu : gauche/droite choisissent l'action, Entrée valide.
+        // Aucun raccourci pour les visuels, l'identification ou la date : tout
+        // passe par le bouton « Options ▸ » de la page (demandé le 20/11).
         if self.page.is_some() {
             return match &key {
                 keyboard::Key::Named(Named::Escape) => Task::done(Message::ClosePage),
@@ -2659,12 +3326,6 @@ impl App {
                 keyboard::Key::Character(ch) => match ch.as_ref() {
                     "j" => Task::done(Message::PageChoose(0)),
                     "f" => Task::done(Message::PageChoose(1)),
-                    "i" => Task::done(Message::PageChoose(2)),
-                    // raccourcis directs vers un type de visuel
-                    "g" => Task::done(Message::OpenPicker(covers::ArtKind::Grid)),
-                    "h" => Task::done(Message::OpenPicker(covers::ArtKind::Hero)),
-                    "l" => Task::done(Message::OpenPicker(covers::ArtKind::Logo)),
-                    "c" => Task::done(Message::OpenPicker(covers::ArtKind::Icon)),
                     _ => Task::none(),
                 },
                 _ => Task::none(),
@@ -2694,7 +3355,6 @@ impl App {
                 "w" | "k" => return self.navigate(Nav::Up),
                 "v" => return Task::done(Message::ToggleView),
                 "t" => return Task::done(Message::SortMenu),
-                "c" => return Task::done(Message::OpenPicker(covers::ArtKind::Grid)),
                 "+" | "=" | "＋" => return Task::done(Message::Zoom(1)),
                 "-" | "_" | "−" | "–" | "‐" => return Task::done(Message::Zoom(-1)),
                 "f" => return Task::done(Message::ToggleFullscreen),
@@ -2744,6 +3404,27 @@ impl App {
                     self.back_press = None;
                     self.quit_hint = false;
                 }
+                if self.identify.is_some() || self.date.is_some() {
+                    // le prompt demande un clavier : la manette ne peut
+                    // qu'annuler (clavier virtuel plus tard)
+                    return match button {
+                        PadButton::Back => Task::done(if self.date.is_some() {
+                            Message::DateCancel
+                        } else {
+                            Message::IdentifyCancel
+                        }),
+                        _ => Task::none(),
+                    };
+                }
+                if self.identify_menu.is_some() {
+                    return match button {
+                        PadButton::Confirm => Task::done(Message::IdentifyPick),
+                        PadButton::Back => Task::done(Message::IdentifyClose),
+                        PadButton::Up => Task::done(Message::IdentifyNav(-1)),
+                        PadButton::Down => Task::done(Message::IdentifyNav(1)),
+                        _ => Task::none(),
+                    };
+                }
                 if self.picker.is_some() {
                     return match button {
                         PadButton::Confirm => Task::done(Message::PickerPick),
@@ -2757,7 +3438,7 @@ impl App {
                         _ => Task::none(),
                     };
                 }
-                // menu « quel visuel changer » de la page
+                // menu « type de liste »
                 if let Some(choice) = self.view_menu {
                     return match button {
                         PadButton::Confirm => Task::done(Message::ViewMenuChoose(choice)),
@@ -2805,15 +3486,25 @@ impl App {
                         _ => Task::none(),
                     };
                 }
-                // page d'un jeu : croix gauche/droite entre les actions
+                // « remplacer les visuels ? » : A valide le choix courant
+                // (« Non » à l'ouverture), B garde les visuels
+                if self.replace.is_some() {
+                    return match button {
+                        PadButton::Confirm => Task::done(Message::ReplacePick),
+                        PadButton::Back => Task::done(Message::ReplaceChoose(0)),
+                        PadButton::Left => Task::done(Message::ReplaceNav(-1)),
+                        PadButton::Right => Task::done(Message::ReplaceNav(1)),
+                        _ => Task::none(),
+                    };
+                }
+                // page d'un jeu : croix gauche/droite entre les actions ; les
+                // visuels et l'identification passent par « Options ▸ »
                 if self.page.is_some() {
                     return match button {
                         PadButton::Confirm => Task::done(Message::PageAct),
                         PadButton::Back => Task::done(Message::ClosePage),
                         PadButton::Left => Task::done(Message::PageNav(-1)),
                         PadButton::Right => Task::done(Message::PageNav(1)),
-                        // Y : les quatre visuels
-                        PadButton::View => Task::done(Message::ArtMenu),
                         _ => Task::none(),
                     };
                 }
@@ -2836,10 +3527,7 @@ impl App {
                     // rapprochés (1,5 s) sont nécessaires, pour ne pas
                     // s'éjecter sur une pression malheureuse en jouant.
                     PadButton::Back => {
-                        if self
-                            .back_press
-                            .is_some_and(|at| at.elapsed() < QUIT_WINDOW)
-                        {
+                        if self.back_press.is_some_and(|at| at.elapsed() < QUIT_WINDOW) {
                             Task::done(Message::Quit)
                         } else {
                             self.back_press = Some(std::time::Instant::now());
@@ -2872,11 +3560,13 @@ impl App {
         let mut view: Element<'_, Message> = self.launcher_view();
 
         // Poussière d'étoiles : couche transparente AU-DESSUS de la liste (elle
-        // flotte donc devant les vignettes) mais SOUS la page, qui est opaque
-        // — c'est aussi pourquoi le minuteur s'arrête page ouverte.
-        let dust: Element<'_, Message> = if self.config.sparkles {
+        // flotte donc devant les vignettes). Quand la page d'un jeu est
+        // ouverte, elle est opaque et recouvre cette couche : c'est la copie
+        // `page_dust` ci-dessous qui prend le relais, au-dessus de la page.
+        // Une seule des deux est dessinée à la fois.
+        let dust: Element<'_, Message> = if self.config.sparkles && self.page.is_none() {
             self.sparkles
-                .view(self.scroll, self.fade, self.breathing())
+                .view(self.scroll_drawn(), self.fade, self.breathing())
         } else {
             container(Row::new()).width(Fill).height(Fill).into()
         };
@@ -2898,9 +3588,7 @@ impl App {
                 // sautait visiblement (jugé saccadé le 20/11) — le texte est
                 // ré-rasterisé à chaque nouvelle taille, mais c'est le prix
                 // d'un mouvement continu.
-                Pose::new(page)
-                    .scale(1.0 + PAGE_DIVE * self.fade)
-                    .into()
+                Pose::new(page).scale(1.0 + PAGE_DIVE * self.fade).into()
             } else {
                 page.into()
             }
@@ -2909,19 +3597,18 @@ impl App {
         };
         view = stack![view, page_layer].into();
 
-        // Hyperespace devant la PAGE d'un jeu : on lance un jeu depuis sa page
-        // (« Jouer »), et la page est opaque au-dessus de la poussière. Sans
-        // cette couche, les particules filant vers les bords n'étaient visibles
-        // que depuis la grille — donc jamais (constaté 20/11). Elle redessine
-        // les mêmes particules AU-DESSUS de la page et SOUS le voile, et
-        // n'existe que pendant le fondu du lancement.
-        let warp: Element<'_, Message> =
-            if self.config.sparkles && self.page.is_some() && self.fade > 0.001 {
-                self.sparkles.view(self.scroll, self.fade, None)
-            } else {
-                container(Row::new()).width(Fill).height(Fill).into()
-            };
-        view = stack![view, warp].into();
+        // Poussière AU-DESSUS de la page d'un jeu (demandé le 20/11) : la page
+        // est opaque et recouvre la couche `dust`, donc elle a sa propre copie
+        // des mêmes particules. C'est aussi cette couche qui porte
+        // l'« hyperespace » du lancement (particules filant vers les bords) :
+        // on lance un jeu depuis sa page, et sans elle l'effet ne se voyait que
+        // depuis la grille — donc jamais (constaté 20/11).
+        let page_dust: Element<'_, Message> = if self.config.sparkles && self.page.is_some() {
+            self.sparkles.view(self.scroll_drawn(), self.fade, None)
+        } else {
+            container(Row::new()).width(Fill).height(Fill).into()
+        };
+        view = stack![view, page_dust].into();
 
         // Le voile noir du fondu existe MÊME à opacité nulle, et il passe APRÈS
         // la page : lancer un jeu depuis une page doit virer au noir comme
@@ -2948,10 +3635,7 @@ impl App {
         // La couche de BASE doit remplir la fenêtre : `Stack` prend sa taille
         // sur son premier enfant, une couche vide réduisait les menus à zéro
         // (constaté 18/11 : menus invisibles).
-        let mut menus: Element<'_, Message> = container(Row::new())
-            .width(Fill)
-            .height(Fill)
-            .into();
+        let mut menus: Element<'_, Message> = container(Row::new()).width(Fill).height(Fill).into();
         if self.view_menu.is_some() {
             menus = stack![menus, self.view_menu_view()].into();
         }
@@ -2967,8 +3651,17 @@ impl App {
         if self.picker.is_some() {
             menus = stack![menus, self.picker_view()].into();
         }
-        if self.rename.is_some() {
-            menus = stack![menus, self.rename_view()].into();
+        if self.identify_menu.is_some() {
+            menus = stack![menus, self.identify_menu_view()].into();
+        }
+        if self.identify.is_some() {
+            menus = stack![menus, self.identify_view()].into();
+        }
+        if self.replace.is_some() {
+            menus = stack![menus, self.replace_view()].into();
+        }
+        if self.date.is_some() {
+            menus = stack![menus, self.date_view()].into();
         }
         view = stack![view, menus].into();
 
@@ -3016,14 +3709,21 @@ impl App {
                 ViewMode::Grid | ViewMode::Mosaic => scrollable(self.grid())
                     .id(self.scroll_id.clone())
                     .height(Fill)
-                    .on_scroll(|viewport| Message::Scrolled(viewport.absolute_offset().y))
+                    .on_scroll(|viewport| Message::Scrolled {
+                        offset: viewport.absolute_offset().y,
+                        max: (viewport.content_bounds().height - viewport.bounds().height).max(0.0),
+                    })
                     .into(),
                 ViewMode::List => row![
                     scrollable(self.list())
                         .id(self.scroll_id.clone())
                         .height(Fill)
                         .width(Length::FillPortion(3))
-                        .on_scroll(|viewport| Message::Scrolled(viewport.absolute_offset().y)),
+                        .on_scroll(|viewport| Message::Scrolled {
+                            offset: viewport.absolute_offset().y,
+                            max: (viewport.content_bounds().height - viewport.bounds().height)
+                                .max(0.0),
+                        }),
                     container(self.preview())
                         .width(Length::FillPortion(2))
                         .height(Fill),
@@ -3130,7 +3830,13 @@ impl App {
                 // cover arrivée après l'ouverture : elle monte en fondu
                 .opacity(ease_reveal(self.page_cover))
                 .into(),
-            None => sample_art(&self.sample, &game.name, game.icon.as_ref(), cover_w, cover_h),
+            None => sample_art(
+                &self.sample,
+                &game.name,
+                game.icon.as_ref(),
+                cover_w,
+                cover_h,
+            ),
         };
 
         // année de sortie (SteamGridDB) quand on la connaît, puis le temps de
@@ -3145,7 +3851,11 @@ impl App {
         // année de sortie juste sous le titre (c'est une information du jeu) ;
         // le temps de jeu reste en dessous, c'est une information du joueur
         if let Some(year) = self.year_of(&game.slug) {
-            details = details.push(text(format!("Sorti en {year}")).size(14.0 * ech).color(MUTED));
+            details = details.push(
+                text(format!("Sorti en {year}"))
+                    .size(14.0 * ech)
+                    .color(MUTED),
+            );
         }
         details = details.push(
             text(format!("Temps de jeu : {played}"))
@@ -3170,7 +3880,7 @@ impl App {
                 .spacing(7.0 * ech)
                 .align_y(Alignment::Center)
                 .into(),
-                PageAction::Images => text("Images ▸")
+                PageAction::Options => text("Options ▸")
                     .size(18.0 * ech)
                     .color(if selected { Color::BLACK } else { TEXT })
                     .into(),
@@ -3191,16 +3901,14 @@ impl App {
         // texte)
         let help: Element<'_, Message> = if self.pad_hints() {
             row![
-                text("← → action").size(14.0 * ech).color(MUTED),
                 hint(self.glyphs.confirm.clone(), "Valider"),
                 hint(self.glyphs.back.clone(), "Retour"),
-                hint(self.glyphs.view.clone(), "Visuels"),
             ]
             .spacing(18.0 * ech)
             .align_y(Alignment::Center)
             .into()
         } else {
-            text("← → action   ·   Entrée valider   ·   Échap retour   ·   I visuels   ·   F favori")
+            text("Entrée valider   ·   Échap retour   ·   J jouer   ·   F favori")
                 .size(14.0 * ech)
                 .color(MUTED)
                 .into()
@@ -3208,9 +3916,12 @@ impl App {
 
         let body = container(
             column![
-                row![cover, column![details, actions]
-                    .spacing(20.0 * ech)
-                    .align_x(Alignment::Center)]
+                row![
+                    cover,
+                    column![details, actions]
+                        .spacing(20.0 * ech)
+                        .align_x(Alignment::Center)
+                ]
                 .spacing(30.0 * ech)
                 .align_y(Alignment::Center),
                 help,
@@ -3231,13 +3942,13 @@ impl App {
         page_body = page_body.push(body);
 
         container(page_body)
-        .width(Fill)
-        .height(Fill)
-        .style(|_| container::Style {
-            background: Some(Background::Color(BG)),
-            ..container::Style::default()
-        })
-        .into()
+            .width(Fill)
+            .height(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(BG)),
+                ..container::Style::default()
+            })
+            .into()
     }
 
     /// Faut-il afficher les glyphes de manette ? Seulement si une manette est
@@ -3269,29 +3980,31 @@ impl App {
             .into()
     }
 
-    /// Prompt « nom de recherche » : champ pré-rempli avec le nom envoyé à
-    /// SteamGridDB, Entrée relance la recherche (Échap annule).
-    fn rename_view(&self) -> Element<'_, Message> {
-        let Some(value) = self.rename.as_ref() else {
+    /// Prompt d'identification : le nom à chercher chez SteamGridDB, puis la
+    /// liste des jeux proposés (`identify_menu_view`).
+    fn identify_view(&self) -> Element<'_, Message> {
+        let Some(value) = self.identify.as_ref() else {
             return Row::new().into();
         };
 
         let panel = container(
             column![
-                text("Nom de recherche").size(18).color(TEXT),
+                text("Identifier le jeu").size(18).color(TEXT),
                 text(
-                    "SteamGridDB ne trouve rien ? Corrige le nom du jeu : \
-                     souvent une édition, une année ou une plateforme en trop."
+                    "Cherche le nom exact du jeu chez SteamGridDB, puis choisis-le \
+                     dans la liste. Le premier résultat peut être un autre épisode : \
+                     c'est ce choix qui fixe les visuels et la date, et il est \
+                     partagé avec les autres postes."
                 )
                 .size(14)
                 .color(MUTED),
                 text_input("Nom du jeu sur SteamGridDB", value)
-                    .id(self.rename_id.clone())
-                    .on_input(Message::RenameInput)
-                    .on_submit(Message::RenameSubmit)
+                    .id(self.input_id.clone())
+                    .on_input(Message::IdentifyInput)
+                    .on_submit(Message::IdentifySubmit)
                     .padding(10)
                     .size(18)
-                    .style(rename_input_style),
+                    .style(input_style),
                 text("Entrée : chercher   ·   Échap : annuler")
                     .size(14)
                     .color(MUTED),
@@ -3299,7 +4012,7 @@ impl App {
             .spacing(12),
         )
         .padding(18)
-        .width(Length::Fixed(540.0))
+        .width(Length::Fixed(600.0))
         .style(|_| picker_panel_style());
 
         container(panel)
@@ -3318,8 +4031,247 @@ impl App {
             .into()
     }
 
-    /// Menu « quel visuel changer » : les quatre types réunis derrière une
-    /// seule pastille « Images » de la page.
+    /// Question posée après une identification : « ce paquet a déjà des
+    /// visuels, on les remplace ? ». « Non » est sélectionné par défaut : un
+    /// appui malheureux ne détruit pas des images choisies à la main.
+    fn replace_view(&self) -> Element<'_, Message> {
+        let Some(replace) = &self.replace else {
+            return Row::new().into();
+        };
+        // nom du paquet (l'ancien libellé), pour que la question soit lisible
+        let ancien = self
+            .games
+            .iter()
+            .find(|game| game.slug == replace.slug)
+            .map(|game| game.name.clone())
+            .unwrap_or_else(|| replace.slug.clone());
+
+        let mut actions = Row::new().spacing(12).align_y(Alignment::Center);
+        for (index, label) in ["Non, garder", "Oui, remplacer"].into_iter().enumerate() {
+            let selected = index == replace.index;
+            let bouton =
+                container(
+                    text(label)
+                        .size(16)
+                        .color(if selected { Color::BLACK } else { TEXT }),
+                )
+                .padding([9.0, 18.0])
+                .style(move |_| action_style(selected));
+            actions = actions.push(mouse_area(bouton).on_press(Message::ReplaceChoose(index)));
+        }
+
+        let help: Element<'_, Message> = if self.pad_hints() {
+            row![
+                hint(self.glyphs.confirm.clone(), "Valider"),
+                hint(self.glyphs.back.clone(), "Garder"),
+            ]
+            .spacing(18)
+            .align_y(Alignment::Center)
+            .into()
+        } else {
+            text("← → choisir   ·   Entrée : valider   ·   Échap : garder")
+                .size(14)
+                .color(MUTED)
+                .into()
+        };
+
+        let panel = container(
+            column![
+                text("Remplacer les visuels ?").size(18).color(TEXT),
+                text(format!(
+                    "« {ancien} » a déjà des visuels. Télécharger ceux de « {} » \
+                     à la place ? Les images actuelles seront effacées.",
+                    replace.game.name
+                ))
+                .size(14)
+                .color(MUTED),
+                actions,
+                help,
+            ]
+            .spacing(14),
+        )
+        .padding(20)
+        .width(Length::Fixed(640.0))
+        .style(|_| picker_panel_style());
+
+        container(panel)
+            .width(Fill)
+            .height(Fill)
+            .padding(24)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.78,
+                    ..Color::BLACK
+                })),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    /// Liste des jeux proposés par l'autocomplete : une ligne par jeu, avec
+    /// son année, le jeu déjà identifié coché. Entrée (ou un clic) retient le
+    /// choix et lance le téléchargement des visuels en fond.
+    fn identify_menu_view(&self) -> Element<'_, Message> {
+        let Some(menu) = &self.identify_menu else {
+            return Row::new().into();
+        };
+
+        let body: Element<'_, Message> = if menu.loading {
+            text("recherche sur SteamGridDB…")
+                .size(14)
+                .color(MUTED)
+                .into()
+        } else if let Some(error) = &menu.error {
+            text(error.clone()).size(14).color(DANGER).into()
+        } else if menu.games.is_empty() {
+            text(
+                "aucun jeu trouvé — corrige le nom (R) : le jeu n'est peut-être \
+                 tout simplement pas dans SteamGridDB",
+            )
+            .size(14)
+            .color(MUTED)
+            .into()
+        } else {
+            let mut rows = Column::new().spacing(6);
+            for (index, game) in menu.games.iter().enumerate() {
+                let selected = index == menu.index;
+                let current = Some(game.id) == menu.current;
+                let label = match game.year {
+                    Some(year) => format!("{}  ·  {year}", game.name),
+                    None => game.name.clone(),
+                };
+                let line = container(
+                    row![
+                        text(label).size(17).width(Fill).color(if selected {
+                            Color::BLACK
+                        } else {
+                            TEXT
+                        }),
+                        text(if current { "✓" } else { "" })
+                            .size(14)
+                            .color(if selected { Color::BLACK } else { MUTED }),
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .width(Fill)
+                .padding([9.0, 14.0])
+                .style(move |_| action_style(selected));
+
+                rows = rows.push(mouse_area(line).on_press(Message::IdentifyChoose(index)));
+            }
+            scrollable(rows).height(Length::Fixed(320.0)).into()
+        };
+
+        let help: Element<'_, Message> = if self.pad_hints() {
+            row![
+                hint(self.glyphs.confirm.clone(), "Identifier"),
+                hint(self.glyphs.back.clone(), "Annuler"),
+            ]
+            .spacing(18)
+            .align_y(Alignment::Center)
+            .into()
+        } else {
+            text("Entrée : identifier ce jeu   ·   R : corriger le nom   ·   Échap : annuler")
+                .size(14)
+                .color(MUTED)
+                .into()
+        };
+
+        let panel = container(
+            column![
+                text(format!("Quel jeu est « {} » ?", menu.query))
+                    .size(18)
+                    .color(TEXT),
+                body,
+                help,
+            ]
+            .spacing(14),
+        )
+        .padding(20)
+        .width(Length::Fixed(700.0))
+        .style(|_| picker_panel_style());
+
+        container(panel)
+            .width(Fill)
+            .height(Fill)
+            .padding(24)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.78,
+                    ..Color::BLACK
+                })),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    /// Prompt « date de sortie » : l'année tapée à la main (jeu absent de
+    /// SteamGridDB), ou la demande à SteamGridDB.
+    fn date_view(&self) -> Element<'_, Message> {
+        let Some(value) = self.date.as_ref() else {
+            return Row::new().into();
+        };
+
+        let refresh = mouse_area(
+            container(text("Demander à SteamGridDB").size(14).color(TEXT))
+                .padding([5.0, 12.0])
+                .style(|_| action_style(false)),
+        )
+        .on_press(Message::DateRefresh);
+
+        let panel = container(
+            column![
+                text("Date de sortie").size(18).color(TEXT),
+                text(
+                    "Tape l'année (1950 à 2100), ou laisse vide pour effacer la \
+                     date. « Demander à SteamGridDB » la relit depuis le jeu \
+                     identifié ou le nom du paquet."
+                )
+                .size(14)
+                .color(MUTED),
+                text_input("1998", value)
+                    .id(self.input_id.clone())
+                    .on_input(Message::DateInput)
+                    .on_submit(Message::DateSubmit)
+                    .padding(10)
+                    .size(18)
+                    .style(input_style),
+                row![
+                    text("Entrée : enregistrer   ·   Échap : annuler")
+                        .size(14)
+                        .color(MUTED)
+                        .width(Fill),
+                    refresh,
+                ]
+                .align_y(Alignment::Center),
+            ]
+            .spacing(12),
+        )
+        .padding(18)
+        .width(Length::Fixed(560.0))
+        .style(|_| picker_panel_style());
+
+        container(panel)
+            .width(Fill)
+            .height(Fill)
+            .padding(24)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.72,
+                    ..Color::BLACK
+                })),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    /// Menu « Options » de la page (visuels, identification, date).
     /// Menu « type de liste » (triangle / Y) : les quatre vues, la courante ✓.
     fn view_menu_view(&self) -> Element<'_, Message> {
         let Some(choice) = self.view_menu else {
@@ -3349,13 +4301,11 @@ impl App {
             rows = rows.push(mouse_area(line).on_press(Message::ViewMenuChoose(index)));
         }
 
-        let panel = container(
-            column![text("Type de liste").size(18).color(TEXT), rows]
-            .spacing(12),
-        )
-        .padding(18)
-        .width(Length::Fixed(300.0))
-        .style(|_| picker_panel_style());
+        let panel =
+            container(column![text("Type de liste").size(18).color(TEXT), rows].spacing(12))
+                .padding(18)
+                .width(Length::Fixed(300.0))
+                .style(|_| picker_panel_style());
 
         container(panel)
             .width(Fill)
@@ -3386,10 +4336,11 @@ impl App {
             let current = *sort == self.sort;
             let line = container(
                 row![
-                    text(sort.label())
-                        .size(18)
-                        .width(Fill)
-                        .color(if selected { Color::BLACK } else { TEXT }),
+                    text(sort.label()).size(18).width(Fill).color(if selected {
+                        Color::BLACK
+                    } else {
+                        TEXT
+                    }),
                     text(if current { "✓" } else { "" })
                         .size(14)
                         .color(if selected { Color::BLACK } else { MUTED }),
@@ -3411,10 +4362,11 @@ impl App {
         };
         let year_line = container(
             row![
-                text("Année")
-                    .size(18)
-                    .width(Fill)
-                    .color(if year_selected { Color::BLACK } else { TEXT }),
+                text("Année").size(18).width(Fill).color(if year_selected {
+                    Color::BLACK
+                } else {
+                    TEXT
+                }),
                 text(year_label)
                     .size(14)
                     .color(if year_selected { Color::BLACK } else { MUTED }),
@@ -3424,7 +4376,8 @@ impl App {
         .width(Fill)
         .padding([9.0, 14.0])
         .style(move |_| action_style(year_selected));
-        rows = rows.push(mouse_area(year_line).on_press(Message::SortMenuChoose(SortBy::ALL.len())));
+        rows =
+            rows.push(mouse_area(year_line).on_press(Message::SortMenuChoose(SortBy::ALL.len())));
 
         let panel = container(column![text("Tri").size(18).color(TEXT), rows].spacing(12))
             .padding(18)
@@ -3465,9 +4418,13 @@ impl App {
                     .size(18)
                     .width(Fill)
                     .color(if all_selected { Color::BLACK } else { TEXT }),
-                text(if self.year_filter.is_none() { "✓" } else { "" })
-                    .size(14)
-                    .color(if all_selected { Color::BLACK } else { MUTED }),
+                text(if self.year_filter.is_none() {
+                    "✓"
+                } else {
+                    ""
+                })
+                .size(14)
+                .color(if all_selected { Color::BLACK } else { MUTED }),
             ]
             .align_y(Alignment::Center),
         )
@@ -3548,17 +4505,40 @@ impl App {
             game.logo.is_some(),
             game.icon.is_some(),
         ];
+        let identity = self.identities.get(&game.slug);
+        let year = self.year_of(&game.slug);
 
         let mut rows = Column::new().spacing(6);
-        for (index, kind) in ART_MENU.iter().enumerate() {
+        for (index, entry) in ART_MENU.iter().enumerate() {
             let selected = index == choice;
+            let (label, mark) = match entry {
+                ArtMenuEntry::Kind(kind) => {
+                    let slot = covers::ArtKind::ALL
+                        .iter()
+                        .position(|known| known == kind)
+                        .unwrap_or(0);
+                    (
+                        kind.label().to_string(),
+                        if marks[slot] { "✓" } else { "…" }.to_string(),
+                    )
+                }
+                ArtMenuEntry::Identify => (
+                    "Identifier le jeu…".to_string(),
+                    if identity.is_some() { "✓" } else { "" }.to_string(),
+                ),
+                ArtMenuEntry::Date => (
+                    "Date de sortie…".to_string(),
+                    year.map(|year| year.to_string()).unwrap_or_default(),
+                ),
+            };
             let line = container(
                 row![
-                    text(kind.label())
-                        .size(18)
-                        .width(Fill)
-                        .color(if selected { Color::BLACK } else { TEXT }),
-                    text(if marks[index] { "✓" } else { "…" })
+                    text(label).size(18).width(Fill).color(if selected {
+                        Color::BLACK
+                    } else {
+                        TEXT
+                    }),
+                    text(mark)
                         .size(14)
                         .color(if selected { Color::BLACK } else { MUTED }),
                 ]
@@ -3571,17 +4551,28 @@ impl App {
             rows = rows.push(mouse_area(line).on_press(Message::ArtMenuChoose(index)));
         }
 
+        // ce que SteamGridDB croit que ce jeu est : la cause des mauvaises
+        // covers, icônes et dates (constaté 20/11 : « Marsupilami 2 » tombait
+        // sur « Hoobadventure »)
+        let believed = match identity {
+            Some(identity) if !identity.name.is_empty() => {
+                format!("Identifié : {}", short(&identity.name, 40))
+            }
+            _ => "Identification : automatique (premier résultat)".to_string(),
+        };
+
         let panel = container(
             column![
-                text(format!("Visuels de « {} »", short(&game.name, 38)))
+                text(format!("Options de « {} »", short(&game.name, 38)))
                     .size(18)
                     .color(TEXT),
+                text(believed).size(12).color(MUTED),
                 rows,
             ]
             .spacing(12),
         )
         .padding(18)
-        .width(Length::Fixed(360.0))
+        .width(Length::Fixed(380.0))
         .style(|_| picker_panel_style());
 
         container(panel)
@@ -3678,23 +4669,33 @@ impl App {
             .align_y(Alignment::Center)
             .into()
         } else {
-            text("Entrée : utiliser cette image   ·   Échap : annuler")
+            text("Entrée : utiliser cette image   ·   F : choisir un fichier   ·   Échap : annuler")
                 .size(14)
                 .color(MUTED)
                 .into()
         };
 
-        // le jeu peut être mal nommé côté SteamGridDB : le nom envoyé se corrige
-        let rename = row![
+        // le jeu peut être mal reconnu côté SteamGridDB : on l'identifie (nom
+        // recherché, puis choix dans la liste), ce qui vaut pour tous les types.
+        // « Choisir un fichier… » prend une image perso à la place (adaptée au
+        // ratio du type par le worker) : rien n'oblige à passer par SGDB.
+        let barre = row![
             text(format!("Recherche : « {} »", picker.query))
                 .size(14)
-                .color(MUTED),
+                .color(MUTED)
+                .width(Fill),
             mouse_area(
-                container(text("Changer le nom").size(14).color(TEXT))
+                container(text("Identifier le jeu").size(14).color(TEXT))
                     .padding([5.0, 12.0])
                     .style(|_| action_style(false)),
             )
-            .on_press(Message::RenameOpen),
+            .on_press(Message::IdentifyOpen),
+            mouse_area(
+                container(text("Choisir un fichier…").size(14).color(TEXT))
+                    .padding([5.0, 12.0])
+                    .style(|_| action_style(false)),
+            )
+            .on_press(Message::PickerFile),
         ]
         .spacing(10)
         .align_y(Alignment::Center);
@@ -3705,7 +4706,7 @@ impl App {
                     .size(18)
                     .color(TEXT),
                 body,
-                rename,
+                barre,
                 help,
             ]
             .spacing(14),
@@ -3729,7 +4730,6 @@ impl App {
             })
             .into()
     }
-
 
     fn grid(&self) -> Column<'_, Message> {
         let columns = self.metrics().2;
@@ -3779,12 +4779,7 @@ impl App {
                 ViewMode::Mosaic => MOSAIC_SCALE,
                 _ => 1.0,
             };
-        let (cell, _, columns) = grid_metrics(
-            self.viewport.0,
-            min_cell,
-            max_columns,
-            self.gap(),
-        );
+        let (cell, _, columns) = grid_metrics(self.viewport.0, min_cell, max_columns, self.gap());
         // en mosaïque la cover occupe TOUTE la vignette (aucune marge interne)
         let art = match self.config.view {
             ViewMode::Mosaic => cell,
@@ -3940,9 +4935,7 @@ impl App {
                 .color(MUTED)
                 .into()
         };
-        let body = column![art, title]
-            .spacing(6)
-            .align_x(Alignment::Center);
+        let body = column![art, title].spacing(6).align_x(Alignment::Center);
 
         // Le canvas dessine le cadre de la vignette sélectionnée (il doit
         // grossir avec elle) : la carte garde l'épaisseur pour la mise en page
@@ -4046,7 +5039,9 @@ impl App {
         let tile = container(tile)
             .width(Length::Fixed(cell))
             .height(Length::Fixed(cell * ART_RATIO));
-        mouse_area(tile).on_press(Message::CardClicked(index)).into()
+        mouse_area(tile)
+            .on_press(Message::CardClicked(index))
+            .into()
     }
 
     /// Disposition en lignes : vignette à gauche, nom à droite.
@@ -4059,24 +5054,15 @@ impl App {
 
             // en liste, c'est l'ICÔNE DU PAQUET qui identifie le jeu ;
             // la cover ne sert que de repli, puis le sample
-            let art: Element<'_, Message> = match game
-                .icon
-                .clone()
-                .or_else(|| self.cover_handle(game, thumb))
-            {
-                Some(handle) => image(handle)
-                    .width(Length::Fixed(thumb))
-                    .height(Length::Fixed(thumb))
-                    .content_fit(ContentFit::Contain)
-                    .into(),
-                None => sample_art(
-                    &self.sample,
-                    &game.name,
-                    game.icon.as_ref(),
-                    thumb,
-                    thumb,
-                ),
-            };
+            let art: Element<'_, Message> =
+                match game.icon.clone().or_else(|| self.cover_handle(game, thumb)) {
+                    Some(handle) => image(handle)
+                        .width(Length::Fixed(thumb))
+                        .height(Length::Fixed(thumb))
+                        .content_fit(ContentFit::Contain)
+                        .into(),
+                    None => sample_art(&self.sample, &game.name, game.icon.as_ref(), thumb, thumb),
+                };
 
             let star: Element<'_, Message> = if self.favorites.contains(&game.slug) {
                 self.star_icon(17.0, 1.0)
@@ -4128,27 +5114,29 @@ impl App {
 
         let caption = column![
             text(short(&game.name, 42)).size(22).color(TEXT),
-            text(game.path.display().to_string())
-                .size(13)
-                .color(MUTED),
+            text(game.path.display().to_string()).size(13).color(MUTED),
         ]
         .spacing(4)
         .align_x(Alignment::Center);
 
-        container(column![picture, caption].spacing(14).align_x(Alignment::Center))
-            .width(Fill)
-            .height(Fill)
-            .padding(18)
-            .style(|_| container::Style {
-                background: Some(Background::Color(CELL_BG)),
-                border: Border {
-                    color: CELL_BORDER,
-                    width: 1.0,
-                    radius: 18.0.into(),
-                },
-                ..container::Style::default()
-            })
-            .into()
+        container(
+            column![picture, caption]
+                .spacing(14)
+                .align_x(Alignment::Center),
+        )
+        .width(Fill)
+        .height(Fill)
+        .padding(18)
+        .style(|_| container::Style {
+            background: Some(Background::Color(CELL_BG)),
+            border: Border {
+                color: CELL_BORDER,
+                width: 1.0,
+                radius: 18.0.into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
     }
 
     /// Vue « favoris » sans aucun favori : on explique comment en poser un.
@@ -4157,9 +5145,15 @@ impl App {
     fn year_empty(&self, year: u32) -> Element<'_, Message> {
         container(
             column![
-                text(format!("Aucun jeu sorti en {year}")).size(22).color(TEXT),
-                text("Le menu Tri (T) → Année remet toutes les années.").size(14).color(MUTED),
-                text("L'année d'un jeu s'apprend en ouvrant sa page.").size(14).color(MUTED),
+                text(format!("Aucun jeu sorti en {year}"))
+                    .size(22)
+                    .color(TEXT),
+                text("Le menu Tri (T) → Année remet toutes les années.")
+                    .size(14)
+                    .color(MUTED),
+                text("L'année d'un jeu s'apprend en ouvrant sa page.")
+                    .size(14)
+                    .color(MUTED),
             ]
             .spacing(8),
         )
@@ -4234,7 +5228,7 @@ impl App {
             .spacing(18)
             .align_y(Alignment::Center)
             .into(),
-            false => text("←↑→↓ naviguer   ·   Entrée ouvrir   ·   V vue   ·   C image   ·   +/− taille   ·   T tri   ·   F plein écran   ·   Échap quitter")
+            false => text("←↑→↓ naviguer   ·   Entrée ouvrir   ·   V vue   ·   +/− taille   ·   T tri   ·   F plein écran   ·   Échap quitter")
                 .size(15)
                 .font(HELP_FONT)
                 .color(MUTED)
@@ -4345,12 +5339,27 @@ impl App {
         .width(Fill);
 
         container(stack![sides, hints_centered])
-            .padding(Padding { top: 14.0, right: 4.0, bottom: 0.0, left: 4.0 })
+            .padding(Padding {
+                top: 14.0,
+                right: 4.0,
+                bottom: 0.0,
+                left: 4.0,
+            })
             .into()
     }
 }
 
 // --- petits helpers ---------------------------------------------------------
+
+/// Défilement réellement dessiné : iced borne l'offset demandé au maximum du
+/// contenu (`content - viewport`), donc viser au-delà ne déplace rien de plus.
+/// La cible de l'animation (`scroll`) et le centrage de la dernière rangée
+/// dépassent ce maximum : placer les vignettes ou le cadre d'accent depuis elle
+/// les décalait d'une demi-rangée (constaté 20/11 : au retour d'un jeu, le cadre
+/// de sélection tombait entre deux jeux).
+fn scroll_drawn(scroll: f32, max: f32) -> f32 {
+    if max > 0.0 { scroll.min(max) } else { scroll }
+}
 
 /// Défilement après une image d'animation : glissement doux pour un
 /// déplacement d'une rangée (flèches), **saut direct** quand le but est loin
@@ -4448,7 +5457,9 @@ fn usable_width(window_width: f32) -> f32 {
 
 fn hint(glyph: image::Handle, label: &'static str) -> Element<'static, Message> {
     row![
-        image(glyph).width(Length::Fixed(26.0)).height(Length::Fixed(26.0)),
+        image(glyph)
+            .width(Length::Fixed(26.0))
+            .height(Length::Fixed(26.0)),
         text(label).size(15).font(HELP_FONT).color(MUTED),
     ]
     .spacing(6)
@@ -4489,7 +5500,10 @@ fn sample_layer<'a>(
             .into(),
         None => text(initial(name))
             .size((width * 0.30).min(96.0))
-            .color(Color { a: 0.55, ..Color::WHITE })
+            .color(Color {
+                a: 0.55,
+                ..Color::WHITE
+            })
             .into(),
     };
 
@@ -4498,7 +5512,10 @@ fn sample_layer<'a>(
     let max = ((width / (size * 0.58)) as usize).max(6);
     let label = text(short(name, max))
         .size(size)
-        .color(Color { a: 0.85, ..Color::WHITE })
+        .color(Color {
+            a: 0.85,
+            ..Color::WHITE
+        })
         .align_x(Alignment::Center);
 
     let overlay = container(column![emblem, label].spacing(8).align_x(Alignment::Center))
@@ -4581,9 +5598,9 @@ fn card_style(selected: bool, canvas_frame: bool) -> container::Style {
     }
 }
 
-/// Champ de saisie du prompt « nom de recherche » : mêmes couleurs que le
+/// Champ de saisie des prompts (identification, date) : mêmes couleurs que le
 /// panneau, bordure d'accent quand il a le focus.
-fn rename_input_style(_theme: &Theme, status: text_input::Status) -> text_input::Style {
+fn input_style(_theme: &Theme, status: text_input::Status) -> text_input::Style {
     let border = match status {
         text_input::Status::Focused { .. } => ACCENT,
         _ => CELL_BORDER,
@@ -4668,6 +5685,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn le_dernier_ecran_ne_decale_pas_le_cadre() {
+        // le centrage de la dernière rangée vise au-delà du maximum du
+        // contenu : iced dessine le maximum, donc le placement doit suivre le
+        // maximum, sinon cadre et vignettes se décalent (constaté 20/11 :
+        // « au retour d'un jeu la sélection est entre deux jeux »)
+        assert_eq!(scroll_drawn(5_686.0, 5_334.0), 5_334.0);
+        // au milieu de la liste, rien n'est borné
+        assert_eq!(scroll_drawn(1_200.0, 5_334.0), 1_200.0);
+        // maximum encore inconnu (première image) : on garde la position
+        assert_eq!(scroll_drawn(120.0, 0.0), 120.0);
+    }
+
+    #[test]
     fn rangée_partielle_comprise_dans_la_plage() {
         // 3 rangées pleines + la 4e partielle doivent être demandées
         assert_eq!(visible_items(0.0, 300.0, 3, 5, 100), 0..20);
@@ -4700,7 +5730,10 @@ mod tests {
         // fenêtre étroite : bornée par la largeur, jamais plus que demandé
         let cell = cell_for_columns(1280.0, 6, GAP) as f32;
         let (_, _, rendered) = grid_metrics(1280.0, cell, 6, GAP);
-        assert!(rendered <= 6 && rendered >= 5, "6 demandées, {rendered} rendues");
+        assert!(
+            rendered <= 6 && rendered >= 5,
+            "6 demandées, {rendered} rendues"
+        );
     }
 
     #[test]

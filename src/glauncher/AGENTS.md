@@ -74,10 +74,16 @@ leurs icônes, pour l'interface.
 - `src/config.rs` — config TOML, recherche du fichier, options CLI
 - `src/library.rs` — parcours parallèle des dossiers, icône/cover, `slugify`
 - `src/index.rs` — index SQLite des paquets et des dossiers (mtime)
-- `src/covers.rs` — worker SteamGridDB (API publique ou clé v2)
+- `src/covers.rs` — worker SteamGridDB (API publique ou clé v2), identification
+  des jeux (`identities.txt`), années (`years.txt`)
+- `src/dialog.rs` — sélecteur de fichiers du système pour les images perso
+  (`kdialog`, puis `zenity`), lancé hors de l'UI
 - `src/watch.rs` — surveillance inotify : rafale → chemins touchés
 - `src/gamepad.rs` — manettes via `evdev`, boutons normalisés (`BTN_SOUTH`…)
 - `src/launch.rs` — construit la commande, lance le jeu, attend sa fin
+- `src/playtime.rs` — temps de jeu cumulé, dans les dossiers de sauvegardes
+  (`lgp-saves/glauncher/`, `LocalSavesWGP/glauncher/`), migration de l'ancien
+  fichier du cache
 - `src/music.rs` — musique de fond : `mpv` en tâche de fond, fondu par IPC
 - `src/sparkles.rs` — poussière d'étoiles du fond (`canvas`, minuteur 20 Hz)
 - `src/pose.rs` — `Pose` : échelle + décalage d'un élément au rendu (plongée de
@@ -154,9 +160,17 @@ leurs icônes, pour l'interface.
   les dossiers toutes les 2 s). **Rien ne le signale dans l'interface**
   (demandé le 20/11 : un « dossier introuvable » en pied de page, c'était
   moche) : la liste est simplement plus courte, sans message ni trou.
-- **Assets** : `~/.local/share/glauncher/assets/` ne contient **que** des
-  images SteamGridDB (`grids/`, `heroes/`, `logos/`, `icons/`) : c'est le
-  dossier **partageable** (Syncthing entre machines). Tout le reste est sorti
+  Le veilleur mémorise **device + inode** de chaque dossier surveillé : un
+  disque monté sur un point de montage qui existait déjà (dossier vide) garde
+  le même chemin mais change d'inode, et la watch inotify de l'ancien inode ne
+  reçoit plus rien. Un inode différent = watch reposée et dossier réindexé
+  (constaté 20/11 : « si je branche le disque, rien ne se recharge »).
+- **Assets** : `~/.local/share/glauncher/assets/` contient les visuels
+  SteamGridDB (`grids/`, `heroes/`, `logos/`, `icons/`) **et deux fichiers
+  texte volontairement partagés** : `years.txt` (années de sortie) et
+  `identities.txt` (jeu SteamGridDB choisi pour chaque paquet) : c'est le
+  dossier **partageable** (Syncthing entre machines et entre amis), donc les
+  visuels, les dates ET l'identification suivent. Tout le reste est sorti
   du dossier au démarrage par `Config::migrate_cache` — miniatures
   (`<cache>/thumbs/`), icônes de paquets (`<cache>/pack-icons/`) et marqueurs
   (`<cache>/marks/<type>/` pour `.miss` et `.choice`). Pourquoi : les
@@ -165,7 +179,8 @@ leurs icônes, pour l'interface.
   jours chez l'autre. `migrate_cache` range aussi l'ancienne disposition
   (`covers/`, `icons/` à la racine du cache) — sans ça les covers déjà choisies
   seraient perdues. Rien n'est jamais supprimé : un visuel survit à la
-  disparition du jeu comme du dossier.
+  disparition du jeu comme du dossier (seul `covers::forget`, après une
+  réidentification, retire les visuels d'un jeu).
 - **Écriture atomique** : `covers::save` écrit `<fichier>.part` puis renomme
   (`write_atomic`), et les marqueurs aussi. Un dossier `assets/` synchronisé
   ne doit jamais propager une image à moitié écrite.
@@ -195,6 +210,21 @@ leurs icônes, pour l'interface.
   --nocapture`.
 - **Lancement** : `launch_wgp`/`launch_lgp` + chemin du paquet en argument.
   `GLAUNCHER_LAUNCH_CMD` remplace toute la commande (tests).
+- **Temps de jeu** (`src/playtime.rs`) : écrit **avec les sauvegardes**, pas
+  dans le cache du launcher — `~/.local/share/lgp-saves/glauncher/playtime.txt`
+  pour les `.lgp` (même racine que `lgplaunch`, ici un lien Syncthing) et
+  `~/Windows/UserData/<user>/LocalSavesWGP/glauncher/playtime.txt` pour les
+  `.wgp` (même racine que `gwine`). Pourquoi un dossier dédié et non le dossier
+  du jeu : la clé de sauvegarde d'un paquet est son `GAMENAME` interne (skill
+  `pack`), que le launcher ne connaît pas sans ouvrir le squashfs. Une ligne
+  `slug<TAB>secondes` par jeu, écriture atomique ; le temps suit donc les
+  sauvegardes au lieu de disparaître avec le cache. Un jeu n'écrit que dans le
+  fichier de son format. L'ancien `<cache>/playtime.txt` est **migré au
+  démarrage** (le format de chaque slug est alors connu) ; les jeux absents de
+  la liste y restent et seront rangés quand ils reviendront, rien n'est perdu.
+  À la lecture, le plus grand total gagne entre les fichiers (format changé,
+  fichier recopié) : additionner compterait deux fois une partie. Un lancement
+  de moins de 5 s ne compte pas.
 - **Musique de fond** (`music = true`, défaut) : piste **embarquée**
   (`assets/music/menu.opus`) — 22 Mo de WAV source → **1,6 Mo** en Opus 96 kb/s,
   préparée une fois par
@@ -213,13 +243,20 @@ leurs icônes, pour l'interface.
   `mpv` est **arrêté** (pas mis en pause) pendant une partie et relancé au
   retour. **La reprise repart de la position quittée** : juste avant de rendre
   la main, la position est demandée à `mpv` par IPC (`get_property time-pos`,
-  budget 120 ms / 8 lignes — elle répond en ~1 ms, et une réponse qui traîne
-  ferait jouer la musique par-dessus le jeu) et le `mpv` suivant reçoit un
-  `seek <position> absolute` **pendant que le volume est encore à 0**, donc
-  sans saut audible ; fondu d'entrée court (`FADE_IN_RESUME_MS`, 0,5 s) pour
-  ne pas brusquer son arrivée (demandé le 20/11). Le morceau ne repart donc
-  jamais de son intro à chaque retour. Mesuré : ~2 à 3 % d'un cœur, ~85 Mo
-  (`pw-play` ferait 1 % sans fondu).
+  budget 120 ms — elle répond en ~1 ms, et une réponse qui traîne ferait jouer
+  la musique par-dessus le jeu) et le `mpv` suivant reçoit **`--start=<position>`
+  dans sa ligne de commande**, donc il démarre directement là, volume encore à
+  0 ; fondu d'entrée court (`FADE_IN_RESUME_MS`, 0,5 s) pour ne pas brusquer son
+  arrivée (demandé le 20/11). Le morceau ne repart donc jamais de son intro à
+  chaque retour. **Deux pièges mesurés le 20/11** (symptôme : « la musique
+  rejoue depuis le début ») : (1) lire un nombre FIXE de lignes IPC ne suffit
+  pas — chaque `set_property volume` d'un fondu reçoit sa réponse
+  (`request_id:0`), un fondu de sortie en laisse ~30 devant celle du `time-pos`,
+  donc il faut lire **jusqu'à la réponse** dans la limite du budget ; (2) un
+  `seek` par IPC juste après la connexion est **refusé** (`error running
+  command` : le fichier n'est pas encore chargé, `file-loaded` arrive après),
+  d'où la position passée en argument de `mpv` plutôt qu'en `seek`.
+  Mesuré : ~2 à 3 % d'un cœur, ~85 Mo (`pw-play` ferait 1 % sans fondu).
   **Boucle** : `--ab-loop-a=0.133 --ab-loop-b=115.289`, soit la première note →
   fin de la **48ᵉ mesure** (le morceau est calé sur 100 BPM, mesure de 2,4 s, et
   ses 48 mesures font 115,2 s) : intro jouée en entier au démarrage, puis chaque
@@ -385,14 +422,21 @@ leurs icônes, pour l'interface.
   (`data[0].release_date`, secondes Unix) des deux API. Requête **dédiée**
   (`Query::Year`, file `urgent`) à l'ouverture de la page quand le slug est
   absent de la table : un jeu dont les visuels sont déjà en cache ne fait sinon
-  aucune requête, donc n'aurait jamais son année.
+  aucune requête, donc n'aurait jamais son année. Avec une identification, la
+  date vient de la **fiche du jeu choisi** (`/api/v2/games/id/<id>` ou
+  `/api/public/game/<id>`), pas du premier résultat.
   **Mémoire : `assets/years.txt`** — le dossier partagé (Syncthing), donc les
   années suivent les visuels chez un autre poste. `slug=1998` par ligne, trié ;
   `slug=` note « regardé, SGDB n'en donne pas », et **rien n'est jamais
-  redemandé** (ni par l'interface, ni par `--update`). Écriture atomique en
+  redemandé** (ni par l'interface, ni par `--update`), sauf demande explicite
+  « Demander à SteamGridDB » du prompt de date. Écriture atomique en
   **fusion** (`covers::save_years` relit le disque avant d'écrire) : le mode
   `--update` et l'interface peuvent écrire en même temps. Une erreur réseau,
   elle, ne note rien (la question pourra être reposée).
+  **Date à la main** : `Options ▸` → `Date de sortie…` ouvre un prompt
+  pré-rempli (année connue), Entrée enregistre (1950-2100), vide efface la
+  date, et « Demander à SteamGridDB » relance la requête. C'est le recours
+  quand le jeu n'est pas dans SteamGridDB du tout (le cas de « Marsupilami 2 »).
   `--update` apprend les années de tous les jeux qui en manquent (une requête
   + 250 ms chacun, comptées dans `UpdateReport::years`) ; `--date` (avec
   `--update` ou seul) ne fait que ça, sans visuel (`covers::update_years`).
@@ -451,16 +495,21 @@ leurs icônes, pour l'interface.
 - **Page d'un jeu** : un clic sur une vignette déjà sélectionnée, ou Entrée/A,
   l'ouvre : héros en bande (largeur **explicite**, `ContentFit::Cover`), logo,
   cover, nom, **année de sortie** (sous le titre) et temps de jeu, puis trois
-  pastilles — `Jouer`, `☆ Favori`, `Images ▸`. **Ni chemin du paquet, ni état des visuels** (`Grid ✓ · Héros …`) :
+  pastilles — `Jouer`, `☆ Favori`, `Options ▸` (renommée le 20/11 : le menu ne
+  contient plus seulement des images). **Ni chemin du paquet, ni état des visuels** (`Grid ✓ · Héros …`) :
   retiré le 20/11, la page doit rester une affiche, pas une fiche technique.
   Échap/B referme et rend la liste avec la
   sélection et le défilement intacts. **Sans héros, aucune bande n'est
   réservée** : le bloc du bas se centre sur la page (une bande grise vide
   faisait pauvre, retour 18/11). La page vient **par-dessus la liste** dans une
   couche de profondeur **constante** (voir « Couche d'affichage »).
-- **Visuels réunis** : `Images ▸` (ou `I` sur la page) ouvre un menu de quatre
-  choix (Grid, Héros, Logo, Icône — `✓` = déjà là) qui mène au menu d'images du
-  type choisi. Raccourcis directs sur la page : `G`/`H`/`L`/`C`. Le menu d'image
+- **Options réunies** : `Options ▸` ouvre un menu de **six** lignes — Grid,
+  Héros, Logo, Icône (`✓` = déjà là), `Identifier le jeu…` et `Date de
+  sortie…` (année connue en bout de ligne). Une ligne mène au menu d'images du
+  type choisi. **Aucun raccourci** n'ouvre ce menu depuis la liste, ni depuis la
+  page (retiré le 20/11 : `C` sur la liste, puis `I`/`G`/`H`/`L`/`C`/`R`/`D` et
+  les boutons manette Y/X sur la page) : le bouton de la page est le seul
+  chemin. Le menu d'image
   propose les candidats SGDB **dans l'ordre du top**, vignettes aux proportions
   du type (grid 148×222, héros/logo 208×117, icône 120×120) ; Entrée/A
   enregistre **et referme le menu tout de suite** (le téléchargement continue en
@@ -490,13 +539,43 @@ leurs icônes, pour l'interface.
   `marks/` (propre à la machine : `.miss` ne doit jamais être synchronisé). Pour les icônes, l'icône du paquet est proposée
   **en tête** du menu (`file://`), donc sélectionnable même après un choix
   distant.
-- **Nom de recherche** : dans le menu d'images, « Changer le nom » ouvre un
-  prompt pré-rempli **et présélectionné** (taper remplace) avec le nom envoyé à
-  SteamGridDB — c'est souvent l'édition ou la plateforme en trop qui fait
-  échouer la recherche. Entrée relance la recherche du seul type courant,
-  Échap annule ; le nom corrigé est retenu pour la **session** (le héros ou le
-  logo suivants l'utilisent). Clavier seulement pour l'instant : à la manette,
-  il faudra un clavier virtuel.
+- **Image perso** : « Choisir un fichier… » (bouton du menu d'images, ou `F`)
+  ouvre le sélecteur du système (`src/dialog.rs` : `kdialog` puis `zenity`,
+  lancé dans un fil à part — le dialogue reste ouvert tant qu'on navigue, l'UI
+  ne gèle pas) et prend une image locale à la place de SteamGridDB. Elle est
+  **adaptée au type** avant écriture (`covers::adapter`, pas `normaliser`) :
+  recadrée au centre et remplie exactement — grid 600×900, héros 1920×620,
+  icône 256×256 — parce qu'une photo 16:9 posée en cover laisserait deux bandes
+  dans la vignette. Le **logo** n'est jamais recadré (un logo rogné perd son
+  texte) : seulement réduit à 1000 px de large, ratio conservé. L'image écrite
+  reçoit un marqueur `.choice` avec son `file://` : elle fait foi et n'est
+  jamais remplacée automatiquement. Formats acceptés : ceux que le décodeur
+  connaît (png, jpg, webp) ; une image illisible est annoncée en pied de page
+  et ne touche pas au visuel en place.
+- **Identification d'un jeu** : « Identifier le jeu… » (menu `Options ▸`, ou
+  le bouton du même nom dans le menu d'images) ouvre un prompt pré-rempli
+  **et présélectionné** avec l'identification courante ou le nom du paquet.
+  Entrée cherche, puis une **liste** des jeux que SteamGridDB propose (nom et
+  année) s'ouvre : Entrée/A retient le jeu, `R` corrige le nom, Échap annule.
+  C'est la réponse au jeu mal reconnu : « Marsupilami 2 Salsa Palombia » tombait
+  sur « Marsupilami: Hoobadventure », d'où une cover, une icône et une date
+  d'un autre jeu (constaté 20/11). Le choix est écrit dans
+  **`assets/identities.txt`** (`slug=<id>TAB<nom>`, fusion à l'écriture,
+  temporaire + renommage) : c'est le dossier **partagé par Syncthing**, donc
+  les copains et les autres postes téléchargent les visuels du MÊME jeu. Les
+  requêtes `Auto`/`Choices`/`Year` portent alors l'`id` et court-circuitent la
+  recherche par nom (y compris `--update`, `--date` et `--art`). Choisir une
+  identification **oublie les visuels de l'ancien jeu** (`covers::forget` :
+  fichiers des quatre types, `.choice` et `.miss` de la machine, handles en
+  mémoire, miniature) puis redemande les quatre en fond ; l'icône du paquet,
+  correcte par définition, est relue du cache. **Mais si le paquet a déjà des
+  visuels, on demande d'abord** (`covers::has_art` → question « Remplacer les
+  visuels ? », « Non, garder » sélectionné par défaut) : les écraser d'office
+  jetait des images choisies à la main (demandé le 20/11). « Oui » appelle
+  `replace_art` (l'oubli + la redemande ci-dessus) ; « Non » garde tout et
+  l'identification est quand même retenue. Clavier seulement pour
+  l'instant : à la manette, il faudra un clavier virtuel (la manette ne peut
+  qu'annuler le prompt).
 - **Favoris** : `F` sur la page (ou View/Share) bascule l'étoile. Les slugs sont
   écrits dans `<cache>/favorites.txt` (trié, un par ligne, écriture
   temporaire + rename) — c'est la seule mémoire, un jeu momentanément absent
@@ -556,8 +635,11 @@ leurs icônes, pour l'interface.
   → `art_requested`), sinon ces jeux restaient marqués « demandés » pour toute
   la session (le même piège existait en refermant le menu d'images).
 - **Poussière d'étoiles** (`sparkles = true`, défaut) : `src/sparkles.rs`, un
-  `canvas` transparent posé **au-dessus de la liste et sous la page**. Les
-  particules sont des **fonctions pures du temps** (graine par numéro, aucun
+  `canvas` transparent posé **au-dessus de la liste**. La page d'un jeu est
+  opaque : elle a sa **propre copie** des particules (`page_dust`, au-dessus de
+  la page et sous le voile/menus, demandé le 20/11 — les étoiles bougent sur la
+  page comme dans la liste). Une seule des deux copies est dessinée à la fois.
+  Les particules sont des **fonctions pures du temps** (graine par numéro, aucun
   état stocké, aucune allocation par image) : poussière fine, étoiles
   moyennes, grands halos pâles, dérive + scintillement `sin³`, parallaxe au
   défilement (10-18 %). **Coût = la fréquence** : dans iced tout message
@@ -565,8 +647,9 @@ leurs icônes, pour l'interface.
   redessin partiel), donc un minuteur propre à **20 Hz** (`FRAME_MS`) envoyé
   par le bus, et **coupé** (`sparkles::set_running`, recalculé à chaque
   `subscription()`) dès que la scène ne peut pas être vue : fenêtre sans
-  focus, page, menu, prompt, écran noir (`fade >= 0.999`), et pendant un
-  lancement (`to_launch`). Ne jamais le brancher sur `window::frames()` :
+  focus, menu, prompt, écran noir (`fade >= 0.999`), et pendant un
+  lancement (`to_launch`). La page ouverte ne coupe plus le minuteur (c'est un
+  écran regardé). Ne jamais le brancher sur `window::frames()` :
   60 Hz inutiles. Réglages sans recompiler : `GLAUNCHER_FX_MS` (16-200,
   intervalle) et `GLAUNCHER_FX_DEBUG=1` (ms par image) ; `sparkles = false`
   coupe tout (aucun fil lancé).
@@ -576,9 +659,10 @@ leurs icônes, pour l'interface.
   ramène au retour du jeu. Il est **piloté par `fade` seul**, donc il avance à
   la cadence du fondu (`window::frames`, 60 Hz) sans le minuteur des
   particules. On lance les jeux depuis leur **page** (« Jouer ») : la page est
-  opaque au-dessus de la poussière, d'où la couche `warp` — une seconde copie
-  des particules **au-dessus de la page et sous le voile**, présente seulement
-  pendant le fondu. Sans elle l'effet ne se voyait jamais (constaté 20/11).
+  opaque au-dessus de la poussière, d'où la couche `page_dust` — une seconde
+  copie des particules **au-dessus de la page et sous le voile**, qui porte
+  aussi les étoiles au repos et les fait filer pendant le fondu. Sans elle
+  l'effet ne se voyait jamais (constaté 20/11).
 - **Plongée de la page au lancement** : en plus de l'hyperespace, la page
   ouverte **grossit** de 6 % (`PAGE_DIVE`) pendant que le voile monte, comme si
   on entrait dans l'écran. `Pose` (`src/pose.rs`) applique une vraie
@@ -671,9 +755,13 @@ leurs icônes, pour l'interface.
   quitter » et n'agit pas, une autre action annule l'invite — pas d'éjection
   sur une pression malheureuse en jouant ; dans le menu d'image il annule.
   `BTN_NORTH` bascule grille → liste → mosaïque, `BTN_WEST`/`BTN_START`
-  rafraîchit, `BTN_TL`/`BTN_TR` (L1/R1) changent de page, `BTN_SELECT` ouvre le
-  menu d'image sur la liste. Sur la page : `BTN_NORTH` ouvre les visuels,
-  `BTN_SELECT` bascule l'étoile. Glyphes Xbox ou
+  ouvre le menu du tri. **Aucun raccourci n'ouvre les visuels depuis la
+  liste** : ils se changent uniquement depuis la page d'un jeu, et sur la page
+  seuls la croix gauche/droite, A et B agissent (« Options ▸ » est une
+  pastille comme les autres). Dans les menus qui suivent (images, identification,
+  « remplacer les visuels ? »), A valide le choix courant et B l'annule —
+  « Choisir un fichier… » reste au clavier/souris, un sélecteur de fichiers
+  n'a pas de sens à la croix. Glyphes Xbox ou
   PlayStation selon le vendor (`0x045e` / `0x054c`).
 - **Roulette de la souris** : tout défilement reçu devient la **cible**
   (`scroll_target = offset`) et arrête l'animation. Nos propres défilements
@@ -682,6 +770,20 @@ leurs icônes, pour l'interface.
   est forcément un geste de l'utilisateur. Comparer les SENS (pour « laisser
   l'animation continuer si elle va dans le même sens ») mangeait des crans de
   molette et produisait des remontées saccadées (constaté 18/11).
+- **Défilement borné par iced — placer avec `scroll_drawn()`** : le
+  `scrollable` d'iced borne l'offset demandé à `content - viewport`, donc viser
+  au-delà ne dessine rien de plus. `Message::Scrolled` porte les deux valeurs
+  (`offset` dessiné et `max` autorisé) ; `scroll_max` les retient et `tick()`
+  borne `scroll`/`scroll_target` dessus. Toute position à l'écran (vignettes,
+  cadre d'accent du canvas, plage de covers visibles, parallaxe des particules)
+  se calcule depuis **`scroll_drawn()`** (le `scroll` cible borné), jamais
+  depuis `scroll` seul : le centrage de la **dernière rangée** vise au-delà du
+  maximum, et le cadre tombait alors **une demi-rangée au-dessus de la
+  vignette** — visible au retour d'un jeu, quand `returning` cesse de masquer
+  le cadre (constaté 20/11 : « la sélection est entre deux jeux »). Le défaut
+  durait parce qu'iced ne réémet `Scrolled` que si l'offset change : borné au
+  maximum avant ET après le lancement, il n'émettait rien et `scroll` restait
+  en avance pour toute la session.
 - **Couche d'affichage de profondeur constante** : `stack![liste, poussière,
   page, hyperespace, voile, menus]` **toujours** six enfants (un `Row` vide
   tient la place d'une couche fermée ou inutile). iced apparie les états des

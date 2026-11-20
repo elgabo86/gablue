@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::library;
+
 /// Disposition de la bibliothèque.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -119,8 +121,8 @@ impl Default for Config {
 impl Config {
     /// Lit un fichier TOML ; les clés absentes gardent leur valeur par défaut.
     pub fn load(path: &Path) -> Result<Self, String> {
-        let raw = std::fs::read_to_string(path)
-            .map_err(|err| format!("{} : {err}", path.display()))?;
+        let raw =
+            std::fs::read_to_string(path).map_err(|err| format!("{} : {err}", path.display()))?;
         toml::from_str(&raw).map_err(|err| format!("{} : {err}", path.display()))
     }
 
@@ -190,16 +192,56 @@ impl Config {
         self.cache_dir().join("favorites.txt")
     }
 
-    /// Temps de jeu cumulé par jeu (`slug<TAB>secondes`).
-    pub fn playtime_path(&self) -> PathBuf {
+    /// Ancien emplacement du temps de jeu (`<cache>/playtime.txt`) : il est
+    /// **migré** au démarrage vers les dossiers de sauvegardes (voir
+    /// [`Config::playtime_path`]). Conservé pour les jeux momentanément
+    /// absents de la liste (disque débranché).
+    pub fn legacy_playtime_path(&self) -> PathBuf {
         self.cache_dir().join("playtime.txt")
+    }
+
+    /// Temps de jeu cumulé par jeu (`slug<TAB>secondes`), dans un dossier
+    /// dédié **aux côtés des sauvegardes** : `lgp-saves/glauncher/playtime.txt`
+    /// pour les `.lgp` (même racine que `lgplaunch`, souvent synchronisée) et
+    /// `LocalSavesWGP/glauncher/playtime.txt` pour les `.wgp` (même racine que
+    /// `gwine`). Le temps suit donc les sauvegardes au lieu de vivre dans le
+    /// cache du launcher, qui peut être vidé.
+    pub fn playtime_path(&self, kind: &str) -> PathBuf {
+        let root = if kind == library::Kind::Lgp.as_str() {
+            self.lgp_saves_dir()
+        } else {
+            self.wgp_saves_dir()
+        };
+        root.join("glauncher").join("playtime.txt")
+    }
+
+    /// Racine des sauvegardes `.lgp` (`~/.local/share/lgp-saves`, la même que
+    /// `lgplaunch` ; sur cette machine c'est un lien vers Syncthing).
+    pub fn lgp_saves_dir(&self) -> PathBuf {
+        home_dir().join(".local/share/lgp-saves")
+    }
+
+    /// Racine des sauvegardes `.wgp` (`~/Windows/UserData/<user>/
+    /// LocalSavesWGP`, la même que `gwine`).
+    pub fn wgp_saves_dir(&self) -> PathBuf {
+        let home = home_dir();
+        let user = std::env::var("USER")
+            .ok()
+            .filter(|user| !user.is_empty())
+            .or_else(|| {
+                home.file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+            })
+            .unwrap_or_default();
+        home.join("Windows/UserData")
+            .join(user)
+            .join("LocalSavesWGP")
     }
 
     /// Dernier type de vue et dernier tri choisis (`clé=valeur`).
     pub fn state_path(&self) -> PathBuf {
         self.cache_dir().join("state.txt")
     }
-
 
     /// Racine de TOUS les visuels téléchargés ou extraits : `assets/` regroupe
     /// grilles, héros, logos et icônes sous `~/.local/share/glauncher`.
@@ -290,7 +332,9 @@ impl Config {
         if !self.steamgriddb_key.trim().is_empty() {
             return Some(self.steamgriddb_key.clone());
         }
-        std::env::var("SGDB_API_KEY").ok().filter(|key| !key.trim().is_empty())
+        std::env::var("SGDB_API_KEY")
+            .ok()
+            .filter(|key| !key.trim().is_empty())
     }
 }
 
@@ -317,6 +361,13 @@ fn move_tree(from: &std::path::Path, to: &std::path::Path) {
         }
     }
     let _ = std::fs::remove_dir(from);
+}
+
+/// Dossier personnel (même source que `~` dans les chemins de config).
+pub fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default()
 }
 
 /// Remplace un `~` initial par le dossier personnel.
@@ -408,8 +459,9 @@ impl Options {
                     index += 1;
                 }
                 "--dir" => {
-                    opts.dirs
-                        .push(PathBuf::from(args.get(index).ok_or("--dir attend un dossier")?));
+                    opts.dirs.push(PathBuf::from(
+                        args.get(index).ok_or("--dir attend un dossier")?,
+                    ));
                     index += 1;
                 }
                 "--columns" => {
@@ -463,7 +515,8 @@ impl Options {
                 "--shrink" => opts.shrink = true,
                 "--art" => {
                     opts.art = Some(PathBuf::from(
-                        args.get(index).ok_or("--art attend un paquet (.wgp/.lgp)")?,
+                        args.get(index)
+                            .ok_or("--art attend un paquet (.wgp/.lgp)")?,
                     ));
                     index += 1;
                 }
@@ -493,7 +546,11 @@ pub fn resolve(opts: &Options) -> (Config, Option<String>) {
         config.fullscreen = false;
     }
     if !opts.dirs.is_empty() {
-        config.game_dirs = opts.dirs.iter().map(|dir| dir.display().to_string()).collect();
+        config.game_dirs = opts
+            .dirs
+            .iter()
+            .map(|dir| dir.display().to_string())
+            .collect();
     }
     if let Some(columns) = opts.columns {
         config.columns = columns;

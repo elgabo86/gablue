@@ -167,13 +167,11 @@ fn runner(track: PathBuf, commands: std::sync::mpsc::Receiver<Order>, volume: u8
             Ok(Order::Play) => {
                 if player.is_none() {
                     round += 1;
-                    match Player::open(&track, round) {
-                        Some(mut opened) => {
-                            // retour de partie : on se replace là où la piste
-                            // s'était arrêtée, avant que le son ne remonte
-                            if let Some(position) = resume_at {
-                                opened.seek(position);
-                            }
+                    // retour de partie : `mpv` démarre DIRECTEMENT à la position
+                    // relevée à l'arrêt (voir `Player::open`) — un `seek` envoyé
+                    // après coup est refusé, le fichier n'est pas encore chargé
+                    match Player::open(&track, round, resume_at) {
+                        Some(opened) => {
                             player = Some(opened);
                             level = 0.0;
                         }
@@ -239,7 +237,12 @@ struct Player {
 
 impl Player {
     /// Lance `mpv` muet, bouclé sur la piste, et attend sa socket IPC.
-    fn open(track: &Path, round: u32) -> Option<Self> {
+    ///
+    /// `start` non nul = reprise après une partie : la position part dans la
+    /// **ligne de commande** (`--start`). Un `seek` par IPC envoyé juste après
+    /// la connexion est rejeté (`error running command`, le fichier n'est pas
+    /// encore chargé — mesuré 20/11), et la musique repartait du début.
+    fn open(track: &Path, round: u32, start: Option<f32>) -> Option<Self> {
         let socket = std::env::temp_dir().join(format!(
             "glauncher-music-{}-{round}.sock",
             std::process::id()
@@ -266,7 +269,11 @@ impl Player {
             // ~1 % de cœur de moins, et il n'y a de toute façon rien d'autre
             // à faire du fichier pendant la lecture
             .arg("--demuxer-thread=no")
-            .arg(format!("--input-ipc-server={}", socket.display()))
+            .arg(format!("--input-ipc-server={}", socket.display()));
+        if let Some(position) = start {
+            command.arg(format!("--start={position:.3}"));
+        }
+        command
             .arg(track)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -290,13 +297,11 @@ impl Player {
         };
         // la socket apparaît ~30 ms après le lancement ; au-delà d'une seconde,
         // `mpv` a échoué (périphérique audio absent) : la musique se tait
-        let stream = (0..50).find_map(|_| {
-            match UnixStream::connect(&socket) {
-                Ok(stream) => Some(stream),
-                Err(_) => {
-                    std::thread::sleep(Duration::from_millis(20));
-                    None
-                }
+        let stream = (0..50).find_map(|_| match UnixStream::connect(&socket) {
+            Ok(stream) => Some(stream),
+            Err(_) => {
+                std::thread::sleep(Duration::from_millis(20));
+                None
             }
         });
         if stream.is_none() {
@@ -321,51 +326,14 @@ impl Player {
     /// court : `mpv` répond en une milliseconde ; au-delà, une musique qui
     /// traîne continuerait par-dessus le jeu.
     fn position(&mut self) -> Option<f32> {
-        let stream = self.stream.as_ref()?;
-        stream
-            .set_read_timeout(Some(Duration::from_millis(120)))
-            .ok()?;
-        {
-            let mut writer = stream;
-            writeln!(
-                writer,
-                "{{\"command\":[\"get_property\",\"time-pos\"],\"request_id\":7}}"
-            )
-            .ok()?;
-        }
-        let mut reader = std::io::BufReader::new(stream);
-        let mut line = String::new();
-        for _ in 0..8 {
-            line.clear();
-            if reader.read_line(&mut line).ok()? == 0 {
-                return None;
-            }
-            // d'autres messages peuvent précéder la réponse : on ne garde que
-            // celle qui porte notre numéro de requête
-            let Some(at) = line.find("\"request_id\":7") else {
-                continue;
-            };
-            let _ = at;
-            let start = line.find("\"data\":")? + "\"data\":".len();
-            let rest = line[start..].trim_start();
-            let end = rest
-                .find(|c: char| c == ',' || c == '}')
-                .unwrap_or(rest.len());
-            let value: f32 = rest[..end].trim().parse().ok()?;
-            return value.is_finite().then_some(value);
-        }
-        None
-    }
-
-    /// Replace la lecture à `position` secondes (retour de partie). Envoyé
-    /// pendant que le volume est encore à 0 : le saut ne s'entend pas.
-    fn seek(&mut self, position: f32) {
-        if let Some(stream) = self.stream.as_mut() {
-            let _ = writeln!(
-                stream,
-                "{{\"command\":[\"seek\",{position:.3},\"absolute\"]}}"
-            );
-        }
+        let stream = self.stream.as_mut()?;
+        stream.set_read_timeout(Some(POSITION_BUDGET)).ok()?;
+        writeln!(
+            stream,
+            "{{\"command\":[\"get_property\",\"time-pos\"],\"request_id\":7}}"
+        )
+        .ok()?;
+        position_among(stream, POSITION_BUDGET)
     }
 
     /// Arrête `mpv` proprement et attend sa sortie (pas de zombie).
@@ -381,5 +349,91 @@ impl Drop for Player {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+/// Budget de lecture de la position : au-delà, une musique qui traîne
+/// continuerait par-dessus le jeu.
+const POSITION_BUDGET: Duration = Duration::from_millis(120);
+
+/// Lit la réponse au `get_property time-pos` parmi les messages en attente.
+///
+/// Il faut lire **toutes** les réponses en attente, pas seulement les
+/// premières : chaque `set_property volume` d'un fondu reçoit la sienne
+/// (`request_id:0`), et un fondu de sortie en laisse une trentaine devant la
+/// nôtre. S'arrêter au 8ᵉ message rendait la position introuvable, donc la
+/// musique repartait du début au retour d'une partie (mesuré 20/11 : 30
+/// réponses de volume précédaient celle du `time-pos`).
+fn position_among(stream: &UnixStream, budget: Duration) -> Option<f32> {
+    let deadline = std::time::Instant::now() + budget;
+    let mut reader = std::io::BufReader::new(stream);
+    let mut line = String::new();
+    while std::time::Instant::now() < deadline {
+        line.clear();
+        if reader.read_line(&mut line).ok()? == 0 {
+            return None;
+        }
+        // d'autres messages peuvent précéder la réponse : on ne garde que
+        // celle qui porte notre numéro de requête
+        if !line.contains("\"request_id\":7") {
+            continue;
+        }
+        let start = line.find("\"data\":")? + "\"data\":".len();
+        let rest = line[start..].trim_start();
+        let end = rest
+            .find(|c: char| c == ',' || c == '}')
+            .unwrap_or(rest.len());
+        let value: f32 = rest[..end].trim().parse().ok()?;
+        return value.is_finite().then_some(value);
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Le fondu de sortie laisse une réponse par pas de volume devant celle du
+    /// `time-pos` : la position doit être trouvée derrière elles, sinon la
+    /// musique repart du début au retour d'une partie (constaté 20/11).
+    #[test]
+    fn la_position_se_trouve_derriere_les_reponses_de_volume() {
+        let (mut client, mut mpv) = UnixStream::pair().unwrap();
+        let writer = std::thread::spawn(move || {
+            for _ in 0..30 {
+                let _ = writeln!(mpv, "{{\"request_id\":0,\"error\":\"success\"}}");
+            }
+            let _ = writeln!(
+                mpv,
+                "{{\"data\":42.5,\"request_id\":7,\"error\":\"success\"}}"
+            );
+        });
+        client
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        assert_eq!(
+            position_among(&client, Duration::from_millis(500)),
+            Some(42.5)
+        );
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn une_position_indisponible_ne_bloque_pas() {
+        // au tout début du chargement, `mpv` répond « property unavailable »
+        let (mut client, mut mpv) = UnixStream::pair().unwrap();
+        let writer = std::thread::spawn(move || {
+            let _ = writeln!(
+                mpv,
+                "{{\"request_id\":7,\"error\":\"property unavailable\"}}"
+            );
+            // le fil reste ouvert : la lecture doit rendre la main au budget
+            std::thread::sleep(Duration::from_millis(400));
+        });
+        client
+            .set_read_timeout(Some(Duration::from_millis(400)))
+            .unwrap();
+        assert_eq!(position_among(&client, Duration::from_millis(120)), None);
+        writer.join().unwrap();
     }
 }

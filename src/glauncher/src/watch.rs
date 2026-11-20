@@ -4,7 +4,8 @@
 //! entièrement, ce qui reste très bon marché (un `.wgp` de 30 Go ne pèse rien
 //! dans un scan, seuls les noms de fichiers sont lus).
 
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
@@ -47,7 +48,7 @@ where
         }
     };
 
-    let mut watched: HashSet<PathBuf> = HashSet::new();
+    let mut watched: HashMap<PathBuf, (u64, u64)> = HashMap::new();
     reconcile(&mut watcher, &dirs, &mut watched);
 
     loop {
@@ -83,20 +84,38 @@ where
 /// Réaligne les watches sur l'état réel des dossiers.
 /// Renvoie les dossiers à réindexer : ceux qui ont disparu et ceux qui
 /// viennent de réapparaître (disque externe rebranché).
+///
+/// L'identité (device + inode) est mémorisée : une watch inotify posée sur un
+/// dossier **reste collée à l'ancien inode** quand un disque est monté
+/// par-dessus (le point de montage existait déjà, vide). Le dossier est
+/// toujours là, donc l'ancienne version ne le re-surveillait jamais et aucun
+/// évènement n'arrivait : le disque branché ne chargeait pas ses jeux. Un
+/// inode différent = on repose la watch et on réindexe.
 fn reconcile(
     watcher: &mut impl Watcher,
     dirs: &[PathBuf],
-    watched: &mut HashSet<PathBuf>,
+    watched: &mut HashMap<PathBuf, (u64, u64)>,
 ) -> Vec<PathBuf> {
     let mut touched = Vec::new();
 
-    watched.retain(|dir| {
-        if dir.is_dir() {
+    watched.retain(|dir, identity| {
+        let Some(current) = identity_of(dir) else {
+            let _ = watcher.unwatch(dir);
+            eprintln!(
+                "glauncher : {} a disparu, jeux retirés de la liste",
+                dir.display()
+            );
+            touched.push(dir.clone());
+            return false;
+        };
+        if current == *identity {
             return true;
         }
+        // même chemin, autre inode : un disque a été monté par-dessus (ou le
+        // dossier a été remplacé). La watch de l'ancien inode ne sert plus.
         let _ = watcher.unwatch(dir);
         eprintln!(
-            "glauncher : {} a disparu, jeux retirés de la liste",
+            "glauncher : {} a été remplacé (disque monté ?), rechargement des jeux",
             dir.display()
         );
         touched.push(dir.clone());
@@ -104,12 +123,15 @@ fn reconcile(
     });
 
     for dir in dirs {
-        if watched.contains(dir) || !dir.is_dir() {
+        if watched.contains_key(dir) {
             continue;
         }
+        let Some(identity) = identity_of(dir) else {
+            continue;
+        };
         match watcher.watch(dir, RecursiveMode::Recursive) {
             Ok(()) => {
-                watched.insert(dir.clone());
+                watched.insert(dir.clone(), identity);
                 // (re)surveillé : on réindexe ce dossier
                 touched.push(dir.clone());
             }
@@ -118,7 +140,7 @@ fn reconcile(
                 // échouer la pose récursive : on se rabat sur le 1er niveau
                 match watcher.watch(dir, RecursiveMode::NonRecursive) {
                     Ok(()) => {
-                        watched.insert(dir.clone());
+                        watched.insert(dir.clone(), identity);
                         touched.push(dir.clone());
                         eprintln!(
                             "glauncher : {} surveillé au 1er niveau seulement ({err})",
@@ -138,9 +160,70 @@ fn reconcile(
     touched
 }
 
+/// Identité du dossier (device + inode) : ce qui change quand un système de
+/// fichiers est monté par-dessus un point de montage existant.
+fn identity_of(path: &std::path::Path) -> Option<(u64, u64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_dir() {
+        return None;
+    }
+    Some((meta.dev(), meta.ino()))
+}
+
 fn interesting(kind: &EventKind) -> bool {
     matches!(
         kind,
         EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(_) | EventKind::Any
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn un_dossier_qui_apparait_ou_change_d_inode_est_signale() {
+        let base = std::env::temp_dir().join(format!("glauncher-watch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = base.join("jeux");
+
+        let mut watcher = notify::recommended_watcher(|_: notify::Result<Event>| {}).unwrap();
+        let mut watched = HashMap::new();
+
+        // absent au démarrage : rien à surveiller
+        assert!(reconcile(&mut watcher, &[dir.clone()], &mut watched).is_empty());
+
+        // le disque apparaît : signalé et surveillé
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(
+            reconcile(&mut watcher, &[dir.clone()], &mut watched),
+            [dir.clone()]
+        );
+        assert!(watched.contains_key(&dir));
+
+        // inchangé : aucun travail
+        assert!(reconcile(&mut watcher, &[dir.clone()], &mut watched).is_empty());
+
+        // même chemin, nouvel inode (disque monté sur un point de montage) :
+        // l'ancienne watch inotify ne verrait plus rien, on repose et on
+        // signale
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(
+            reconcile(&mut watcher, &[dir.clone()], &mut watched),
+            [dir.clone()]
+        );
+        assert!(watched.contains_key(&dir));
+
+        // disque débranché : signalé, watch retirée
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            reconcile(&mut watcher, &[dir.clone()], &mut watched),
+            [dir.clone()]
+        );
+        assert!(!watched.contains_key(&dir));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
