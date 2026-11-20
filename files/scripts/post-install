@@ -137,13 +137,8 @@ fi
 # INSTALLATION DES BINAIRES EXTERNES
 # =============================================================================
 
-# Installation de RetroPlayer (TUI lecteur de musiques rétro)
-# Téléchargement du binaire depuis la dernière release GitHub.
-# `Cache-Control: no-store` : GitHub a servi un 504 instantané (mis en cache
-# par un intermédiaire) sur ces URL `/releases/latest` le 09/11/2026 — sans cet
-# en-tête le build entier tombait pour une panne réseau passagère.
-curl -fsSL -H 'Cache-Control: no-store' https://github.com/elgabo86/retroplayer/releases/latest/download/retroplayer -o /usr/bin/retroplayer
-chmod +x /usr/bin/retroplayer
+# RetroPlayer n'est plus téléchargé ici : binaire compilé depuis `src/retroplayer`
+# (étape `retroplayer-build` du Containerfile) puis `COPY --from`.
 
 # Installation de ZXTune (lecteur de musique tracker/chiptune)
 # Détection dynamique de la dernière révision publiant un build Linux x86_64
@@ -160,8 +155,9 @@ if [ -z "$ZXTUNE_REV" ]; then
     exit 1
 fi
 echo "Installation de ZXTune ${ZXTUNE_REV}"
-# Exclusion des binaires non nécessaires
-curl -fsSL "https://storage.zxtune.ru/builds/public/${ZXTUNE_REV}/linux/x86_64/zxtune_${ZXTUNE_REV}_linux_x86_64.tar.gz" | tar -xzf - -C / --exclude=./usr/bin/zxtune123 --exclude=./usr/bin/xtractor
+# `zxtune123` est gardé : c'est lui que RetroPlayer lance pour décoder en WAV
+# (l'ancien TUI Go s'en passait ; sans lui la GUI ne joue rien).
+curl -fsSL "https://storage.zxtune.ru/builds/public/${ZXTUNE_REV}/linux/x86_64/zxtune_${ZXTUNE_REV}_linux_x86_64.tar.gz" | tar -xzf - -C / --exclude=./usr/bin/xtractor
 
 # =============================================================================
 # BRANDING GABLUE

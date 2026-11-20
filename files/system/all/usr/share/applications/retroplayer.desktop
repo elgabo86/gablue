@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=RetroPlayer
+Comment=Écoute des bandes-son de jeux rétro (joshw.info), boucle « comme dans le jeu »
+Exec=retroplayer
+Icon=retroplayer
+Categories=AudioVideo;Audio;Player;
+Keywords[fr_CH]=chiptune;vgm;psf;musique;bande-son;jeu;retro;boucle;retroplayer;
+Keywords=chiptune;vgm;psf;music;soundtrack;game;retro;loop;retroplayer;
+Terminal=false
+StartupNotify=true
+StartupWMClass=retroplayer

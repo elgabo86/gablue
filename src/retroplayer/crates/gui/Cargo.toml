@@ -1,0 +1,10 @@
+[package]
+name = "retroplayer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+retroplayer-core = { path = "../core" }
+eframe = { version = "0.37", default-features = false, features = ["glow", "x11", "default_fonts"] }
+anyhow = "1"

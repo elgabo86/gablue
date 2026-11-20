@@ -1,0 +1,16 @@
+[package]
+name = "retroplayer-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1"
+regex = "1"
+rusqlite = { version = "0.43", features = ["bundled"] }
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+sevenz-rust2 = "0.25"
+hound = "3.5"
+flate2 = "1"
+lofty = "0.25"
+rodio = { version = "0.20", default-features = false }

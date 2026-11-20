@@ -100,6 +100,23 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build-glauncher
 
+# Étape intermédiaire : lecteur de musiques rétro RetroPlayer (Rust, egui).
+# Même raison d'être que les précédentes : la toolchain reste ici, l'étape
+# finale ne reçoit que le binaire. `assets/` est copié (icône embarquée par
+# `include_bytes!`) ; les en-têtes ALSA de `cpal` sont installés par le script.
+FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION} AS retroplayer-build
+ENV CARGO_HOME=/cargo
+COPY src/retroplayer/Cargo.toml /build/Cargo.toml
+COPY src/retroplayer/Cargo.lock /build/Cargo.lock
+COPY src/retroplayer/crates /build/crates
+COPY src/retroplayer/assets /build/assets
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=cache,dst=/cargo \
+    --mount=type=cache,dst=/build/target \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build-retroplayer
+
 # Étape intermédiaire : gate BPF (clang + libbpf). L'étape finale garde libbpf
 # au runtime (petit paquet), pas la chaîne de compilation.
 FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION} AS gpad-gate-build
@@ -258,6 +275,10 @@ COPY --from=gpad-gate-build /out/gpad-gate /out/gpad-gate.bpf.o /usr/libexec/gab
 # Launcher de jeux (binaire Rust de l'étape glauncher-build) ; `.desktop` et
 # icône arrivent avec `files/system/all`.
 COPY --from=glauncher-build /out/glauncher /usr/bin/glauncher
+
+# RetroPlayer (binaire Rust de l'étape retroplayer-build) ; `.desktop` et icône
+# arrivent avec `files/system/all`.
+COPY --from=retroplayer-build /out/retroplayer /usr/bin/retroplayer
 
 # Assemblage du script gwine standalone
 RUN --mount=type=cache,dst=/var/cache \

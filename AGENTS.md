@@ -105,6 +105,11 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── completions/                    # Completions bash et zsh
 │   │   └── lib/                            # Bibliothèques modulaires (~60 fichiers)
 │   │       └── AGENTS.md                    # Architecture, modules, points techniques
+│   ├── retroplayer/                        # Lecteur de musiques rétro (Rust, egui)
+│   │   ├── AGENTS.md                       # Contrat : boucle PSF, cache, icône, build image
+│   │   ├── crates/core/                   # Base SQLite, joshw.info, décodage, boucle, export
+│   │   ├── crates/gui/                    # Binaire `retroplayer` (egui/eframe)
+│   │   └── assets/                         # Icône (make-icon.py → .rgba/.png/.svg)
 │   ├── lgplaunch/                          # Sources de lgplaunch (Bash modulaire)
 │   │   ├── AGENTS.md                        # Modules, montage LGP, overlays
 │   │   ├── lgplaunch                       # Lanceur de développement (source lib/)
@@ -238,7 +243,7 @@ git push origin test
 - **Fedora Kinoite** : https://fedoraproject.org/kinoite/
 - **Terra** : https://github.com/terrapkg
 - **Documentation uBlue** : https://docs.universal-blue.org/
-- **RetroPlayer** : https://github.com/elgabo86/retroplayer
+- **RetroPlayer** : `src/retroplayer/` (dépôt standalone supprimé le 20/11/2026)
 
 ## Architecture documentaire (AGENTS.md)
 
@@ -269,6 +274,7 @@ son propre AGENTS.md de sous-dossier + pointeur dans l'index ci-dessous.
 | Installateur APK (paquet `gablue_apk_installer`) | `src/gablue-apk-installer/AGENTS.md` | modifier `src/gablue-apk-installer/` |
 | Firmware DualSense / Edge (`gablue-dualsense`) | `src/gablue-dualsense/AGENTS.md` | modifier `dualsense-ctl.c`, le script `/usr/bin/gablue-dualsense` ou la détection de famille |
 | lgplaunch (modules Bash `lib/`) | `src/lgplaunch/AGENTS.md` | modifier `src/lgplaunch/` |
+| RetroPlayer (GUI Rust, boucle, cache, icône, `.desktop`) | `src/retroplayer/AGENTS.md` | modifier `src/retroplayer/` ou son installation |
 | Manette : overlay, déclencheur, gate BPF, options | `src/gablue-pad/AGENTS.md` | modifier `src/gablue-pad/`, un geste, une unité ou un réglage du pad |
 
 Changements suivant la racine :
