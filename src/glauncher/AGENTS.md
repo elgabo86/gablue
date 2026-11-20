@@ -80,6 +80,8 @@ leurs icônes, pour l'interface.
 - `src/launch.rs` — construit la commande, lance le jeu, attend sa fin
 - `src/music.rs` — musique de fond : `mpv` en tâche de fond, fondu par IPC
 - `src/sparkles.rs` — poussière d'étoiles du fond (`canvas`, minuteur 20 Hz)
+- `src/pose.rs` — `Pose` : échelle + décalage d'un élément au rendu (plongée de
+  la page, retour des vignettes), sans surcouche ni mise en page
 - `src/app.rs` — état, messages, bus interne, vue iced (grille + écran noir)
 - `src/state.rs` — type de vue et tri retenus (`<cache>/state.txt`)
 - `assets/glyphs/{xbox,playstation}/*.png` — glyphes Xelu (CC0), embarqués
@@ -115,6 +117,14 @@ leurs icônes, pour l'interface.
   affichée plafonnait `fitted` au nombre de colonnes courant, donc le zoom
   arrière ne pouvait plus jamais en rajouter (constaté 18/11 : colonnes 5 → 6 en
   mémoire, 4 à l'écran, « je ne peux toujours pas dézoomer »).
+- **Marge de droite et taille des boîtes** : `usable_width()` retire la marge
+  gauche et une marge droite plus large (`SCROLLBAR_GUTTER`), parce que la
+  barre de défilement d'iced est une surimpression qui ne réserve aucune place —
+  sans elle, la colonne de droite passait dessous (constaté 20/11). `CARD_INSET`
+  (9 px) est une marge **transparente** entre la case et la boîte visible : la
+  vignette rétrécit et l'air entre les boîtes augmente sans changer le nombre de
+  colonnes. Tout ce qui situe une vignette utilise le pas de rangée
+  `slot_height()` (boîte + ses deux marges) et non `row_height()`.
 - **Sélection très visible** : cadre d'accent de 4 px (`FOCUS_BORDER`) **plus**
   fond teinté, sur les vignettes de la grille comme sur les lignes de liste — le
   fond seul se perdait parmi 666 vignettes (retour 18/11 « la sélection n'est
@@ -191,7 +201,9 @@ leurs icônes, pour l'interface.
   lue par `mpv --no-config --no-video --ab-loop-a=… --ab-loop-b=…
   --gapless-audio=yes`, volume piloté par sa socket IPC (`set_property volume`) :
   c'est le seul moyen d'avoir un vrai fondu, une `--volume` en ligne de commande
-  étant figée.
+  étant figée. **Volume** : `music_volume` (0 à 100, défaut 60 —
+  `music::DEFAULT_VOLUME`), réglé par le curseur « Volume » de Gablue Manager →
+  Lancement de jeux ; `0` ne lance pas `mpv` du tout.
   Fondu d'entrée 1,2 s, sortie 0,9 s **pendant le voile noir** du lancement ;
   `mpv` est **arrêté** (pas mis en pause) pendant une partie et relancé au
   retour. Mesuré : ~2 à 3 % d'un cœur, ~85 Mo (`pw-play` ferait 1 % sans fondu).
@@ -263,6 +275,24 @@ leurs icônes, pour l'interface.
   constaté 18/11 : plus aucun plein écran). Le nom porte le PID du launcher, le
   nom courant est noté dans `<cache>/kwin-fullscreen.name`, et `drop_stale_script`
   décharge celui de la session précédente.
+- **Fondu de la page d'un jeu** : fondu **enchaîné par le fond**, pas un
+  passage au noir (jugé « trop agressif » le 20/11 — ça sautait au noir puis
+  ressortait, sans montée). Deux rampes : montée `PAGE_FADE_RISE` (0,12 s),
+  bascule au sommet, descente `PAGE_FADE_FALL` (0,20 s). La page n'entre ou ne
+  sort de l'arbre **qu'au sommet** (`pending_page: PageStep::Open/Close`), quand
+  le fond est opaque : aucun changement d'écran ne se voit. Même voile que le
+  fondu du lancement (`veil_opacity = max(fade, page_fade)`), donc aucun enfant
+  de plus dans la pile. Le minuteur des particules reste coupé (page ouverte),
+  c'est le fondu lui-même qui demande les images (`animating`).
+- **Visuels arrivés en retard sur une page ouverte** (héros, logo, cover) : un
+  compteur par visuel (`page_hero`, `page_logo`, `page_cover`, 0,30 s —
+  `PAGE_ASSET_SECONDS`), remis à 1 à l'ouverture si l'image est déjà là
+  (`reset_page_assets`), sinon il monte quand elle arrive (`advance_asset`).
+  Le héros fait grandir la bande de 0 à sa hauteur **et** apparaît en fondu ;
+  logo et cover n'ont pas de place à réserver, seule leur opacité monte
+  (`ease_reveal`, décélération quadratique). La place réservée suit la même
+  progression, donc les tailles (`dispo`/`cover_h`/`ech`) se compriment
+  doucement — mise en page par image assumée, 0,30 s, une seule page.
 - **Fondu** : la fenêtre s'ouvre noire et apparaît en fondu (`fade = 1` au
   démarrage, cible 0). Au lancement, un voile noir monte en 0,9 s **par-dessus
   le launcher** (ne jamais court-circuiter la vue sur `running`, sinon le
@@ -331,7 +361,7 @@ leurs icônes, pour l'interface.
   disparu.
 - **Page d'un jeu : moitié basse dimensionnée par l'écran.** La cover prend
   **72 % de la hauteur restante** sous la bande héros (bornée 300 à 520 px), et
-  tout le bloc (logo, nom, chemin, temps de jeu, pastilles, marges, aide) suit
+  tout le bloc (logo, nom, temps de jeu, pastilles, marges, aide) suit
   le même facteur (`ech = cover_h / 308`, 1 à 1,7). Avant, ces dimensions
   étaient des pixels figés (205×308) : « encore trop petit » en 1080p (retour
   19/11). Sans héros, la bande ne réserve rien et le bloc se centre sur toute la
@@ -370,8 +400,10 @@ leurs icônes, pour l'interface.
   seconde, donc le logo apparaît tout seul après le téléchargement.
 - **Page d'un jeu** : un clic sur une vignette déjà sélectionnée, ou Entrée/A,
   l'ouvre : héros en bande (largeur **explicite**, `ContentFit::Cover`), logo,
-  cover, nom, chemin, état des visuels (`✓` / `…`) et trois pastilles —
-  `Jouer`, `☆ Favori`, `Images ▸`. Échap/B referme et rend la liste avec la
+  cover, nom, temps de jeu et trois pastilles — `Jouer`, `☆ Favori`,
+  `Images ▸`. **Ni chemin du paquet, ni état des visuels** (`Grid ✓ · Héros …`) :
+  retiré le 20/11, la page doit rester une affiche, pas une fiche technique.
+  Échap/B referme et rend la liste avec la
   sélection et le défilement intacts. **Sans héros, aucune bande n'est
   réservée** : le bloc du bas se centre sur la page (une bande grise vide
   faisait pauvre, retour 18/11). La page vient **par-dessus la liste** dans une
@@ -440,10 +472,84 @@ leurs icônes, pour l'interface.
   redessin partiel), donc un minuteur propre à **20 Hz** (`FRAME_MS`) envoyé
   par le bus, et **coupé** (`sparkles::set_running`, recalculé à chaque
   `subscription()`) dès que la scène ne peut pas être vue : fenêtre sans
-  focus, page, menu, prompt, voile de lancement. Ne jamais le brancher sur
-  `window::frames()` : 60 Hz inutiles. Réglages sans recompiler :
-  `GLAUNCHER_FX_MS` (16-200, intervalle) et `GLAUNCHER_FX_DEBUG=1` (ms par
-  image) ; `sparkles = false` coupe tout (aucun fil lancé).
+  focus, page, menu, prompt, écran noir (`fade >= 0.999`), et pendant un
+  lancement (`to_launch`). Ne jamais le brancher sur `window::frames()` :
+  60 Hz inutiles. Réglages sans recompiler : `GLAUNCHER_FX_MS` (16-200,
+  intervalle) et `GLAUNCHER_FX_DEBUG=1` (ms par image) ; `sparkles = false`
+  coupe tout (aucun fil lancé).
+- **Hyperespace au lancement** : pendant le voile noir (0,9 s), chaque
+  particule est poussée vers l'extérieur depuis le centre (`fade²`, traînée
+  `95 px`, opacité `1 + 2.8 × fade`) et le même calcul joué à l'envers les
+  ramène au retour du jeu. Il est **piloté par `fade` seul**, donc il avance à
+  la cadence du fondu (`window::frames`, 60 Hz) sans le minuteur des
+  particules. On lance les jeux depuis leur **page** (« Jouer ») : la page est
+  opaque au-dessus de la poussière, d'où la couche `warp` — une seconde copie
+  des particules **au-dessus de la page et sous le voile**, présente seulement
+  pendant le fondu. Sans elle l'effet ne se voyait jamais (constaté 20/11).
+- **Plongée de la page au lancement** : en plus de l'hyperespace, la page
+  ouverte **grossit** de 6 % (`PAGE_DIVE`) pendant que le voile monte, comme si
+  on entrait dans l'écran. `Pose` (`src/pose.rs`) applique une vraie
+  `Transformation` au rendu (texte ré-rasterisé à la taille voulue), sans
+  toucher à la mise en page ; à l'échelle 1 le widget se dessine normalement.
+  Un **agrandissement** et non un recul : un contenu qui rétrécit laissait voir
+  son bord au milieu du noir (jugé moche le 20/11). Échelle **quantifiée à
+  0,5 %** : le texte est re-rasterisé à chaque nouvelle taille.
+- **Retour d'un jeu** : chaque vignette revient **de son côté de l'écran**,
+  en dézoomant, titre compris (`App::comeback` + `Pose` par carte).
+  `RETURN_SPREAD` règle la distance parcourue (55 % de la largeur),
+  `RETURN_ZOOM` le grossissement de départ (10 %), `RETURN_STAGGER` le retard
+  des vignettes du centre (45 %) : les bords partent de plus loin et se posent
+  les derniers. `RETURN_END` (15 %) les fait se poser **avant** la fin du fondu :
+  sans ça, l'ultime image où la carte cesse d'être transformée sautait de
+  quelques pixels. Armé par `Message::Launched`, désarmé à `fade = 0` — jamais au
+  démarrage du launcher. Pendant le retour, le canvas **s'efface**
+  (`breathing()` rend `None`) et chaque carte peint sa propre cover, sinon la
+  sélection resterait figée pendant que les autres arrivent.
+- **`Pose`, pas `iced::widget::float`** : `float` transforme son contenu mais le
+  dessine en **surcouche**, donc au-dessus de toute la pile — voile noir
+  compris : les vignettes seraient visibles pendant l'écran noir et la page
+  resterait affichée par-dessus le fondu (constaté à la lecture d'`iced_runtime`,
+  20/11). `Pose` est le même enrobage (mêmes dimensions, même `layout`) mais
+  applique la transformation **dans l'arbre**, avec `Renderer::with_transformation` :
+  ordre des couches conservé et découpage de la zone défilante respecté.
+- **Respiration de la sélection (cadre compris)** : la vignette sélectionnée
+  est redessinée par le canvas 0 à 2,8 % plus grande (période 4 s) **d'un seul
+  bloc** — cadre d'accent, cover, tranche et étoile des favoris grossissent
+  ensemble autour du même centre, comme un boîtier qu'on approche. Le canvas est
+  le **SEUL peintre** de cette vignette (`Breath::owns_art`) : la carte garde la
+  place de l'image mais ne la dessine plus, et le canvas la peint à **tous** les
+  facteurs. Deux copies qui se remplaçaient faisaient réapparaître la cover d'un
+  coup au minimum de la respiration (constaté 20/11). Même logique pour le
+  cadre, peint par le canvas et transparent dans la carte.
+  Aucune mise en page n'est refaite (tout est dessiné dans le `canvas`).
+  L'étoile est redessinée par-dessus, sinon la cover grossie la recouvrirait.
+  Ne pas redécouper au rectangle de l'image : c'était le bug du 20/11, la cover
+  non zoomée restait visible aux bords et le zoom « sortait » de son cadre. Le
+  canvas n'étant pas découpé par la zone défilante, il découpe lui-même à la
+  bande de la liste (`PAGE_PADDING_Y` → `FOOTER_BAND`) et la respiration
+  s'arrête (`Breath::pulse`) pour une vignette qui mord sur le pied de page.
+  **Pas de gerbe d'étincelles** au changement de jeu : essayée puis retirée le
+  20/11 (jugée « nulle » à l'usage) — ne pas la réintroduire sans demande.
+- **Deux géométries dans le canvas** : iced dessine, **dans une même géométrie,
+  tous les tracés (fills, strokes) avant toutes les images**. La tranche du
+  boîtier et le cadre sont des tracés, la cover redessinée est une image :
+  dans une seule géométrie, la cover passait donc **par-dessus** la tranche et
+  le boîtier perdait son arête pendant tout le zoom (constaté 20/11). `draw`
+  rend donc `vec![images (cover, étoile), tracés + particules]` — ne pas les
+  réunir à nouveau. Corollaire : tout nouvel élément à poser **sur** une image
+  doit aller dans la seconde géométrie, en tracé.
+- **Tranche et ombre du boîtier** : toute vignette de grille (et de favoris)
+  porte une bande sombre au bord gauche de sa cover (`sparkles::SPINE_FILL`,
+  `spine_width`) plus une arête claire, et une ombre portée (`card_style`) :
+  la cover se lit comme un boîtier posé, pas comme une image plate. Superposées
+  en `stack`, donc aucune mise en page modifiée ; le canvas rejoue la tranche à
+  l'identique quand la respiration redessine la cover (constantes partagées,
+  sinon elle sauterait). Mosaïque exclue (covers collées) et liste exclue
+  (vignette trop petite).
+- **Espacement** : `GAP` (20 px) règle à la fois l'écart entre colonnes et
+  entre rangées ; en mosaïque il vaut 0.
+- **Idées d'ambiance** (halo, aurore, parallaxe, teintes, ce qui est écarté
+  et pourquoi) : `src/IDEES.md`.
 - **Manette** : lecture directe de `/dev/input/event*` (permissions uaccess de
   logind, comme Steam), jamais de grab — le jeu garde sa manette. Lecture
   non bloquante (8 ms) pour pouvoir RÉPÉTER pendant qu'un stick est maintenu.
@@ -470,9 +576,10 @@ leurs icônes, pour l'interface.
   est forcément un geste de l'utilisateur. Comparer les SENS (pour « laisser
   l'animation continuer si elle va dans le même sens ») mangeait des crans de
   molette et produisait des remontées saccadées (constaté 18/11).
-- **Couche d'affichage de profondeur constante** : `stack![liste, page, voile,
-  menus]` **toujours** quatre enfants (un `Row` vide tient la place d'une page
-  ou d'un menu fermé). iced apparie les états des enfants d'un `stack` par
+- **Couche d'affichage de profondeur constante** : `stack![liste, poussière,
+  page, hyperespace, voile, menus]` **toujours** six enfants (un `Row` vide
+  tient la place d'une couche fermée ou inutile). iced apparie les états des
+  enfants d'un `stack` par
   position : ajouter la page au milieu de la pile recréait la zone défilante,
   et le retour depuis une page ramenait la grille tout en haut, le moindre
   déplacement la re-situant sur le jeu sélectionné (mesuré 18/11 : offset 0 à
@@ -486,8 +593,29 @@ leurs icônes, pour l'interface.
   `config.toml`, qui appartient à `gablue-manager`.
 - **Rien à rafraîchir à la main** : le veilleur inotify met la liste à jour,
   donc plus de touche `R` ni de bouton Start/Menu « Rafraîchir » (retour 18/11).
-  Le pied de page porte le compte de jeux (le titre « glauncher » a disparu de
-  l'en-tête, qui n'existe plus).
+- **Pied de page** : l'aide des touches est **centrée**, le tri à gauche et le
+  **nom du jeu sélectionné à droite** (en clair, 17 px), avec le message d'état
+  juste avant lui. Le tri est une **pastille** (bordure d'accent, « TRI » + libellé
+  en 15 px) parce qu'une ligne grise se perdait dans le pied de page — et
+  **`T` remet en début de liste** (sélection 0, défilement 0 posé et non animé) :
+  sans ça on triait sans jamais voir le nouvel ordre, la liste restant là où elle
+  était. Deux couches superposées (`stack![côtés, aides centrées]`)
+  parce qu'une `Row` ne sait pas centrer dans la fenêtre quand les blocs des
+  côtés n'ont pas la même largeur ; un `Stack` prenant sa hauteur sur son
+  PREMIER enfant, c'est la rangée des côtés (pastille de tri, plus haute que le
+  texte d'aide au clavier) qui la donne — l'aide est centrée verticalement
+  (`center_y(Fill)`). Dans l'autre ordre, la pastille dépassait sous sa bordure
+  en mode clavier (constaté 20/11). **Aucune statistique** dans le pied de page :
+  ni compte de jeux, ni progression des covers (« covers 12/540 » montrait un
+  nombre de covers sur l'interface principale, retiré le 20/11). L'aide est en
+  **Lato embarquée** (`app::HELP_FONT`, `assets/fonts/Lato-Regular.ttf`, OFL) :
+  la sans-serif système change d'un poste à l'autre. Le titre « glauncher » a
+  disparu de son côté (l'en-tête n'existe plus). Le libellé de tri est
+  « **Récents** » (majuscule, demandé le 20/11).
+- **Touches MAINTENUES ignorées au clavier** : le noyau répète `KeyPressed`
+  (auto-repeat X11/Wayland) ; sans garde, un `T` un peu long basculait le tri
+  deux fois (constaté 20/11). La navigation clavier n'a jamais été répétée, donc
+  `repeat: true` est simplement ignoré (`on_key`).
 - **Manette : répétition des boutons** maintenus (croix et L1/R1) — délai
   350 ms puis toutes les 130 ms, exactement comme le stick (`repeats`). Sans
   ça, maintenir R1 ne faisait qu'une page. Valider/retour/menu ne se répètent

@@ -51,9 +51,13 @@ clavier ou à la manette, elle, fait défiler vers la sélection de façon anim�
 
 ## Page d'un jeu et favoris
 
-Entrée (ou A) ouvre la page du jeu sélectionné : héros en bande, logo, cover et
-trois pastilles — **Jouer**, **☆ Favori**, **Images ▸**. Sans héros
-téléchargé, la bande disparaît et le bloc se centre sur la page. Échap/B
+Entrée (ou A) ouvre la page du jeu sélectionné : héros en bande, logo, cover, nom
+et temps de jeu, puis trois pastilles — **Jouer**, **☆ Favori**, **Images ▸**
+(ni chemin du paquet, ni état des visuels : la page est une affiche). Elle
+apparaît en fondu ; sans héros téléchargé, la bande ne réserve rien et le bloc
+se centre sur
+la page — quand l'image arrive, la bande grandit et se pose en fondu au lieu de
+faire sauter le contenu. Échap/B
 referme en gardant la sélection **et** la position de défilement. Les quatre visuels se
 changent depuis un seul bouton : `Images ▸` propose Grid / Héros / Logo / Icône
 (avec `✓` pour ceux déjà présents), puis le menu d'images du type choisi.
@@ -162,8 +166,9 @@ bouclage) ; vérifié sur la sortie réelle, aucune plage silencieuse aux
 jonctions. Coût : ~2 à 3 % d'un cœur et ~85 Mo résidents, mesurés.
 
 Coupée par `music = false` dans `config.toml` (case « Jouer une musique de
-fond » de Gablue Manager → Lanceur de jeux) ; sans `mpv`, le launcher reste
-simplement muet.
+fond » de Gablue Manager → Lanceur de jeux), et son volume se règle au curseur
+« Volume » à côté (`music_volume`, 0 à 100, 60 par défaut ; 0 = muet et aucun
+`mpv` lancé). Sans `mpv`, le launcher reste simplement muet.
 
 ## Poussière d'étoiles
 
@@ -174,6 +179,25 @@ minuteur (20 images par seconde) est coupé dès que la scène n'est pas visible
 (fenêtre sans focus, page de jeu, menu, prompt) ; chaque image est un
 `canvas` transparent dont les particules sont des fonctions pures du temps —
 aucune position stockée, aucune allocation par image.
+
+La vignette sélectionnée **respire** : le cadre d'accent et la cover grossissent
+ensemble de 0 à 2,8 % (période de 4 s), sans rien déplacer autour. Chaque cover
+porte une fine tranche sombre et une ombre portée : la vignette se lit comme un
+boîtier posé.
+
+Au lancement d'un jeu, l'hyperespace (les particules filent vers l'extérieur)
+s'accompagne d'une **plongée de la page** : elle grossit de 6 % comme si on
+entrait dans l'écran, pendant que le voile monte. Au retour, chaque vignette
+revient **de son côté de l'écran** en dézoomant (**titre compris**), les
+vignettes du bord partant de plus loin et se posant les dernières. Les pages de
+jeu, elles, s'enchaînent par un **fondu par le fond** (montée courte, bascule,
+descente) et les visuels qui arrivent après coup (héros, logo, cover)
+apparaissent en fondu.
+
+Le pied de page porte l'aide des touches en **Lato** (police embarquée, plus
+ronde que la sans-serif système), une pastille de tri lisible à gauche et le nom
+du jeu à droite — aucune statistique. `T` (ou Carré/X) change le tri **et
+ramène en début de liste**.
 
 Réglages : `sparkles = false` dans `config.toml` coupe tout, et
 `GLAUNCHER_FX_MS=80` (16 à 200) ralentit le minuteur sans recompiler

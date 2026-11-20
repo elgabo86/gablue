@@ -62,6 +62,9 @@ pub struct Config {
     /// boucle) : elle s'efface en fondu au lancement d'un jeu et revient au
     /// retour. Coupée pendant une partie, dans tous les cas.
     pub music: bool,
+    /// Volume de la musique de fond, en pourcentage (0 = muet, 100 = maximum).
+    /// Réglé dans Gablue Manager → Lanceur de jeux.
+    pub music_volume: u8,
     /// Poussière d'étoiles du fond (particules scintillantes, façon PS3) :
     /// animée à 20 Hz seulement quand le launcher est à l'écran, coupée
     /// autrement (voir `src/sparkles.rs`).
@@ -107,6 +110,7 @@ impl Default for Config {
             cache_dir: "~/.local/share/glauncher".into(),
             covers: true,
             music: true,
+            music_volume: crate::music::DEFAULT_VOLUME,
             sparkles: true,
             steamgriddb_key: String::new(),
             launch_wgp: "gwine".into(),

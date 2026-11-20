@@ -40,9 +40,10 @@ use std::time::Duration;
 const TRACK: &[u8] = include_bytes!("../assets/music/menu.opus");
 const TRACK_FILE: &str = "menu.opus";
 
-/// Volume de lecture, en pourcentage : c'est un fond sonore, il reste loin
-/// derrière un jeu et derrière une vidéo.
-const VOLUME: f32 = 45.0;
+/// Volume de lecture par défaut, en pourcentage : c'est un fond sonore, il
+/// reste derrière un jeu et derrière une vidéo. Réglable dans Gablue Manager
+/// (`music_volume` dans `config.toml`).
+pub const DEFAULT_VOLUME: u8 = 60;
 /// Fondu d'entrée : au démarrage et au retour d'une partie.
 const FADE_IN_MS: u64 = 1200;
 /// Fondu de sortie : la durée du voile noir du lancement (`FADE_SECONDS` dans
@@ -85,12 +86,12 @@ impl Music {
     /// Démarre la musique. `None` quand la piste ne peut pas être écrite :
     /// le launcher continue sans musique. `mpv` absent est vu par le fil de
     /// lecture (il ne démarre rien et le dit une fois).
-    pub fn start(cache: &Path) -> Option<Self> {
+    pub fn start(cache: &Path, volume: u8) -> Option<Self> {
         let track = write_track(cache)?;
         let (commands, receiver) = std::sync::mpsc::channel();
         std::thread::Builder::new()
             .name("glauncher-music".into())
-            .spawn(move || runner(track, receiver))
+            .spawn(move || runner(track, receiver, volume))
             .ok()?;
         let music = Self { commands };
         music.resume();
@@ -133,10 +134,12 @@ fn write_track(cache: &Path) -> Option<PathBuf> {
 ///
 /// Le fil meurt quand `Music` est lâchée ; il tue alors `mpv` (et `mpv` reçoit
 /// en plus `SIGTERM` si le launcher disparaît sans lâcher proprement).
-fn runner(track: PathBuf, commands: std::sync::mpsc::Receiver<Order>) {
+fn runner(track: PathBuf, commands: std::sync::mpsc::Receiver<Order>, volume: u8) {
+    // le volume vient de la configuration (0 à 100) : au-delà, `mpv` sature
+    let volume = volume.min(100) as f32;
     // deux rampes : montée plus douce que la descente
-    let in_step = VOLUME / (FADE_IN_MS as f32 / STEP_MS as f32);
-    let out_step = VOLUME / (FADE_OUT_MS as f32 / STEP_MS as f32);
+    let in_step = volume / (FADE_IN_MS as f32 / STEP_MS as f32);
+    let out_step = volume / (FADE_OUT_MS as f32 / STEP_MS as f32);
     let mut player: Option<Player> = None;
     let mut round = 0;
     let mut level = 0.0f32;
@@ -164,7 +167,7 @@ fn runner(track: PathBuf, commands: std::sync::mpsc::Receiver<Order>) {
                         None => return,
                     }
                 }
-                target = VOLUME;
+                target = volume;
             }
             Ok(Order::Stop) => target = 0.0,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}

@@ -35,7 +35,7 @@ impl SortBy {
     pub fn label(self) -> &'static str {
         match self {
             SortBy::Name => "A→Z",
-            SortBy::Modified => "récents",
+            SortBy::Modified => "Récents",
         }
     }
 

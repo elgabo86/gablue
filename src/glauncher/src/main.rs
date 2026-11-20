@@ -11,6 +11,7 @@ mod kwin;
 mod launch;
 mod music;
 mod playtime;
+mod pose;
 mod sparkles;
 mod state;
 mod library;
@@ -268,6 +269,9 @@ fn main() -> iced::Result {
     .title("glauncher")
     .subscription(app::App::subscription)
     .theme(app::App::theme)
+    // Police de l'aide du pied de page (`app::HELP_FONT`) : embarquée pour ne
+    // pas dépendre de ce qui est installé chez l'utilisateur.
+    .font(&include_bytes!("../assets/fonts/Lato-Regular.ttf")[..])
     .window(window)
     .antialiasing(true)
     .run()

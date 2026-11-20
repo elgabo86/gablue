@@ -1,5 +1,7 @@
 //! Poussière d'étoiles posée sur l'interface, façon fond de PS3 : quelques
-//! dizaines de particules qui dérivent lentement et scintillent.
+//! dizaines de particules qui dérivent lentement et scintillent, plus la
+//! vignette sélectionnée qui respire — **cadre compris**, comme un boîtier
+//! qu'on approche.
 //!
 //! **Coût** — c'est la contrainte, donc tout est fait pour qu'il soit nul au
 //! repos et faible en marche :
@@ -20,11 +22,11 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use iced::widget::canvas::{Canvas, Frame, Geometry, Image, Program};
+use iced::widget::canvas::{Canvas, Frame, Geometry, Image, Path, Program, Stroke};
 use iced::widget::image::Handle;
-use iced::{Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
+use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
 
-use crate::app::Message;
+use crate::app::{FOOTER_BAND, Message, PAGE_PADDING_Y};
 
 const SPRITE: &[u8] = include_bytes!("../assets/sparkle.png");
 
@@ -79,6 +81,66 @@ pub struct Sparkles {
     time: f32,
 }
 
+/// Vignette sélectionnée : le canvas redessine **la vignette entière** — cadre
+/// d'accent et cover grossis ensemble autour du même centre, donc le cadre
+/// respire avec l'image au lieu de rester figé pendant que la cover grossit
+/// dedans.
+///
+/// Le cadre est **toujours** dessiné par le canvas (la vignette laisse sa
+/// bordure transparente, voir `App::canvas_frame`) : sinon deux cadres se
+/// superposeraient pendant le zoom.
+#[derive(Clone)]
+pub struct Breath {
+    /// Vignette entière (cadre, marge interne, cover, titre).
+    pub card: Rectangle,
+    /// Rectangle de l'image dans la fenêtre.
+    pub art: Rectangle,
+    /// Rayon des coins de la vignette.
+    pub radius: f32,
+    /// Couleur et épaisseur du cadre de sélection.
+    pub frame_color: Color,
+    pub frame_width: f32,
+    /// Visuel affiché (miniature ou cover pleine, selon la largeur). Absent
+    /// quand la vignette montre le sample « sans cover » : le canvas ne
+    /// redessine alors que le cadre.
+    pub cover: Option<Handle>,
+    /// Étoile des favoris, si le jeu en a une : le canvas la redessine
+    /// par-dessus, sinon elle serait recouverte par la cover grossie.
+    pub star: Option<Handle>,
+    /// Le canvas peint-il la cover ET la tranche de cette vignette ? Vrai
+    /// quand la carte lui laisse l'image (elle doit respirer) : dans ce cas le
+    /// canvas est le SEUL peintre, à tous les facteurs — sinon l'image
+    /// réapparaîtrait d'un coup au minimum de la respiration.
+    pub owns_art: bool,
+    /// La vignette bouge-t-elle ? Faux quand elle mord sur le pied de page :
+    /// le cadre reste posé à sa place, sans respiration.
+    pub pulse: bool,
+}
+
+/// Respiration de la vignette sélectionnée : période (s) et amplitude (2,8 %).
+const BREATH_PERIOD: f32 = 4.0;
+const BREATH_AMPLITUDE: f32 = 0.028;
+/// Étoile des favoris posée sur la vignette (même taille et même marge que
+/// dans la carte, sinon elle saute quand la respiration la reprend).
+const STAR_SIZE: f32 = 19.0;
+const STAR_MARGIN: f32 = 6.0;
+
+/// Tranche du boîtier : bande sombre au bord gauche de la cover (le boîtier vu
+/// de face mais légèrement de côté), avec un trait clair sur son arête.
+const SPINE_RATIO: f32 = 0.045;
+const SPINE_MIN: f32 = 3.0;
+const SPINE_MAX: f32 = 11.0;
+/// Fond de la tranche et arête claire. La vignette (`App::card`) et le canvas
+/// doivent utiliser EXACTEMENT les mêmes valeurs, sinon la tranche saute quand
+/// la respiration redessine la cover : d'où ces constantes partagées.
+pub const SPINE_FILL: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.30);
+pub const SPINE_EDGE: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.09);
+
+/// Largeur de la tranche pour une cover de `art_width` pixels de large.
+pub fn spine_width(art_width: f32) -> f32 {
+    (art_width * SPINE_RATIO).clamp(SPINE_MIN, SPINE_MAX)
+}
+
 impl Sparkles {
     pub fn new() -> Self {
         Self {
@@ -89,7 +151,8 @@ impl Sparkles {
 
     /// Avance le temps d'une image du minuteur.
     pub fn advance(&mut self) {
-        self.time += interval_ms() as f32 / 1000.0;
+        let dt = interval_ms() as f32 / 1000.0;
+        self.time += dt;
         // bornée : après une heure la précision de f32 sur des sinus se dégrade
         if self.time > 3600.0 {
             self.time -= 3600.0;
@@ -97,15 +160,22 @@ impl Sparkles {
     }
 
     /// Couche transparente à poser au-dessus de l'interface. `fade` est
-    /// l'opacité du voile noir du lancement : les particules s'éteignent avec
-    /// lui, `scroll` fait glisser la poussière plus lentement que la grille
-    /// (parallaxe).
-    pub fn view(&self, scroll: f32, fade: f32) -> Element<'_, Message> {
+    /// l'opacité du voile noir du lancement : les particules foncent vers les
+    /// bords (« hyperespace ») et s'éteignent sous le voile, `scroll` fait
+    /// glisser la poussière plus lentement que la grille (parallaxe).
+    /// `breath` est la vignette sélectionnée, qui respire (cadre compris).
+    pub fn view(
+        &self,
+        scroll: f32,
+        fade: f32,
+        breath: Option<Breath>,
+    ) -> Element<'_, Message> {
         Canvas::new(Field {
             sprite: self.sprite.clone(),
             time: self.time,
             scroll,
             fade,
+            breath,
         })
         .width(Length::Fill)
         .height(Length::Fill)
@@ -119,6 +189,7 @@ struct Field {
     time: f32,
     scroll: f32,
     fade: f32,
+    breath: Option<Breath>,
 }
 
 impl Program<Message> for Field {
@@ -133,31 +204,82 @@ impl Program<Message> for Field {
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let started = std::time::Instant::now();
+        // Deux géométries, parce qu'iced dessine **tous les tracés avant toutes
+        // les images** à l'intérieur d'une même géométrie : la cover (image)
+        // doit passer SOUS la tranche et le cadre (tracés), sinon le boîtier
+        // perd son arête pendant tout le zoom (constaté 20/11). Les particules
+        // restent dans la seconde, donc devant le cadre.
+        let mut images = Frame::new(renderer, bounds.size());
         let mut frame = Frame::new(renderer, bounds.size());
+        if bounds.width <= 1.0 || bounds.height <= 1.0 {
+            return vec![images.into_geometry(), frame.into_geometry()];
+        }
 
-        // Le voile noir du lancement éteint tout : inutile de dessiner.
-        let light = (1.0 - self.fade).clamp(0.0, 1.0);
-        if light > 0.01 && bounds.width > 1.0 && bounds.height > 1.0 {
-            let width = bounds.width;
-            let height = bounds.height;
-            let count = ((width * height) / (1920.0 * 1080.0) * 132.0).clamp(40.0, 150.0);
-            let scale = (height / 1080.0).clamp(0.62, 1.7);
+        let width = bounds.width;
+        let height = bounds.height;
+        let scale = (height / 1080.0).clamp(0.62, 1.7);
 
-            for i in 0..count as u32 {
-                let fleck = fleck(i, self.time, width, height, self.scroll, scale, light);
-                if fleck.alpha < 0.006 {
+        // Vignette sélectionnée : cadre ET cover grossis ensemble, comme un
+        // boîtier qu'on approche. Sous les particules, qui passent devant.
+        // Le cadre est dessiné même sous le voile du lancement (sinon la
+        // sélection disparaîtrait pendant les 0,9 s du fondu) : c'est la
+        // respiration seule qui s'arrête.
+        if let Some(breath) = &self.breath {
+            let factor = breath_factor(self.time, breath.pulse && veil_clear(self.fade));
+            draw_breath(&mut images, &mut frame, breath, factor, bounds);
+        }
+
+        let count = ((width * height) / (1920.0 * 1080.0) * 132.0).clamp(40.0, 150.0);
+        // Voile du lancement : les particules foncent vers les bords et
+        // s'étirent en traînée. C'est le voile noir, AU-DESSUS de cette
+        // couche, qui les éteint — inutile de baisser leur opacité en plus.
+        let warp = self.fade.clamp(0.0, 1.0);
+        let (center_x, center_y) = (width * 0.5, height * 0.5);
+
+        for i in 0..count as u32 {
+            let fleck = fleck(i, self.time, width, height, self.scroll, scale);
+            if fleck.alpha < 0.006 {
+                continue;
+            }
+            let (mut x, mut y) = (fleck.x, fleck.y);
+            let mut direction = (0.0, 0.0);
+            let mut copies = 1;
+            if warp > 0.02 {
+                // poussée radiale depuis le centre : accélère avec le fondu
+                let (dx, dy) = (x - center_x, y - center_y);
+                let length = (dx * dx + dy * dy).sqrt().max(1.0);
+                direction = (dx / length, dy / length);
+                let push = warp * warp * width.max(height) * (0.40 + 0.40 * hash(i, 31));
+                x += direction.0 * push;
+                y += direction.1 * push;
+                copies = 3;
+            }
+            for copy in 0..copies {
+                let trail = copy as f32;
+                // le voile noir passe AU-DESSUS : sans ce coup de pouce, la
+                // poussée ne se voit que pendant les 300 premières ms
+                let boost = 1.0 + 2.8 * warp;
+                let alpha = (fleck.alpha
+                    * boost
+                    * match copy {
+                        0 => 1.0,
+                        1 => 0.45,
+                        _ => 0.18,
+                    })
+                .min(1.0);
+                if alpha < 0.006 {
                     continue;
                 }
-                let size = fleck.size;
-                let bounds = Rectangle::new(
-                    Point::new(fleck.x - size * 0.5, fleck.y - size * 0.5),
-                    Size::new(size, size),
-                );
-                frame.draw_image(
-                    bounds,
-                    Image::new(self.sprite.clone())
-                        .opacity(fleck.alpha)
-                        .rotation(fleck.rot),
+                let size = fleck.size * (1.0 - 0.12 * trail);
+                let offset = warp * warp * 95.0 * scale * trail;
+                draw_sprite(
+                    &mut frame,
+                    &self.sprite,
+                    x - direction.0 * offset,
+                    y - direction.1 * offset,
+                    size,
+                    alpha,
+                    fleck.rot,
                 );
             }
         }
@@ -166,8 +288,172 @@ impl Program<Message> for Field {
             report(started.elapsed().as_nanos() as u64);
         }
 
-        vec![frame.into_geometry()]
+        vec![images.into_geometry(), frame.into_geometry()]
     }
+}
+
+/// Facteur de respiration : `1.0` au repos, jusqu'à `1 + BREATH_AMPLITUDE` au
+/// sommet, sur `BREATH_PERIOD` secondes — un aller-retour lent et continu
+/// (départ et arrivée à `1.0`, donc aucun saut en reprenant la vignette).
+fn breath_factor(time: f32, pulse: bool) -> f32 {
+    if !pulse {
+        return 1.0;
+    }
+    let phase = time / BREATH_PERIOD * std::f32::consts::TAU;
+    1.0 + BREATH_AMPLITUDE * (0.5 - 0.5 * phase.cos())
+}
+
+/// Dessine la vignette sélectionnée grossie de `factor` autour de son centre :
+/// cover, tranche du boîtier, étoile des favoris et **cadre d'accent** — le
+/// tout d'un seul bloc, pour que le cadre respire avec l'image.
+///
+/// Réparti sur les deux couches de la géométrie : `images` porte la cover et
+/// l'étoile, `shapes` la tranche et le cadre (voir `Field::draw`).
+fn draw_breath(
+    images: &mut Frame,
+    shapes: &mut Frame,
+    breath: &Breath,
+    factor: f32,
+    bounds: Rectangle,
+) {
+    let card = breath.card;
+    let middle = Point::new(card.x + card.width * 0.5, card.y + card.height * 0.5);
+    let scaled = |rect: Rectangle| -> Rectangle {
+        let center = Point::new(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+        let width = rect.width * factor;
+        let height = rect.height * factor;
+        Rectangle::new(
+            Point::new(
+                middle.x + (center.x - middle.x) * factor - width * 0.5,
+                middle.y + (center.y - middle.y) * factor - height * 0.5,
+            ),
+            Size::new(width, height),
+        )
+    };
+
+    // Le canvas couvre toute la fenêtre alors que la liste est découpée par sa
+    // zone défilante : on découpe nous-mêmes à la même bande, sinon le cadre
+    // d'une vignette sortie de la liste (ou glissée sous le pied de page)
+    // resterait dessiné par-dessus la marge.
+    let band = list_band(bounds);
+    if band.height <= 1.0 {
+        return;
+    }
+
+    let card = scaled(breath.card);
+    let art = scaled(breath.art);
+    // Quand la carte laisse son image au canvas (`owns_art`), il la peint à
+    // TOUS les facteurs, y compris au repos : c'est la seule façon d'éviter
+    // qu'elle réapparaisse d'un coup au minimum de la respiration (constaté
+    // 20/11). Sinon (vignette sans cover : sample + icône, que le canvas ne
+    // sait pas dessiner) la carte garde son image et le canvas ne rejoue que
+    // la tranche, pendant le zoom seulement — la peindre deux fois la
+    // foncerait, `SPINE_FILL` étant à 30 % d'alpha.
+    let zoomed = factor > 1.0005;
+    images.with_clip(band, |layer| {
+        if (breath.owns_art || zoomed)
+            && let Some(cover) = &breath.cover
+            && let Some(clip) = intersect(band, card)
+        {
+            layer.with_clip(clip, |inner| {
+                // `snap(false)` explicite : le quad doit glisser en continu,
+                // pas sauter d'un pixel entier à chaque image (ce que faisait
+                // un raccord au pixel près, d'où l'effet d'escalier).
+                inner.draw_image(art, Image::new(cover.clone()).snap(false));
+            });
+        }
+        if let Some(star) = &breath.star {
+            let size = STAR_SIZE * factor;
+            let x = art.x + art.width - STAR_MARGIN * factor - size;
+            let y = art.y + STAR_MARGIN * factor;
+            draw_sprite(
+                layer,
+                star,
+                x + size * 0.5,
+                y + size * 0.5,
+                size,
+                1.0,
+                0.0,
+            );
+        }
+    });
+    shapes.with_clip(band, |layer| {
+        if breath.owns_art || zoomed {
+            draw_spine(layer, art);
+        }
+        let path = Path::rounded_rectangle(
+            card.position(),
+            card.size(),
+            (breath.radius * factor).into(),
+        );
+        layer.stroke(
+            &path,
+            Stroke::default()
+                .with_color(breath.frame_color)
+                .with_width(breath.frame_width),
+        );
+    });
+}
+
+/// Bande occupée par la liste : le canvas, lui, couvre toute la fenêtre.
+fn list_band(bounds: Rectangle) -> Rectangle {
+    Rectangle::new(
+        Point::new(0.0, PAGE_PADDING_Y),
+        Size::new(
+            bounds.width,
+            (bounds.height - PAGE_PADDING_Y - FOOTER_BAND).max(0.0),
+        ),
+    )
+}
+
+/// Tranche du boîtier : bande sombre au bord gauche de la cover, arête claire
+/// sur son bord droit. Dessinée par la vignette (`App::card`) et rejouée ici à
+/// l'identique quand la respiration redessine la cover par-dessus.
+fn draw_spine(frame: &mut Frame, art: Rectangle) {
+    let width = spine_width(art.width);
+    frame.fill_rectangle(
+        art.position(),
+        Size::new(width, art.height),
+        SPINE_FILL,
+    );
+    frame.fill_rectangle(
+        Point::new(art.x + width - 1.0, art.y),
+        Size::new(1.0, art.height),
+        SPINE_EDGE,
+    );
+}
+
+/// Intersection de deux rectangles (le clip du canvas ne s'intersecte pas tout
+/// seul : `with_clip` imbriqué remplace le précédent).
+fn intersect(a: Rectangle, b: Rectangle) -> Option<Rectangle> {
+    let x = a.x.max(b.x);
+    let y = a.y.max(b.y);
+    let right = (a.x + a.width).min(b.x + b.width);
+    let bottom = (a.y + a.height).min(b.y + b.height);
+    (right > x && bottom > y).then(|| Rectangle::new(Point::new(x, y), Size::new(right - x, bottom - y)))
+}
+
+/// Pose le sprite `size × size` centré sur `(x, y)`.
+fn draw_sprite(frame: &mut Frame, sprite: &Handle, x: f32, y: f32, size: f32, alpha: f32, rotation: f32) {
+    if alpha < 0.006 || size <= 0.0 {
+        return;
+    }
+    let bounds = Rectangle::new(
+        Point::new(x - size * 0.5, y - size * 0.5),
+        Size::new(size, size),
+    );
+    frame.draw_image(
+        bounds,
+        Image::new(sprite.clone())
+            .opacity(alpha)
+            .rotation(rotation),
+    );
+}
+
+/// Pas de respiration pendant le voile du lancement : la cover ne doit pas
+/// « flotter » dans un écran noir.
+fn veil_clear(fade: f32) -> bool {
+    fade <= 0.02
 }
 
 /// Journal du coût de dessin, une ligne toutes les 100 images (≈ 5 s).
@@ -194,7 +480,7 @@ struct Fleck {
 /// Paramètres d'une particule, calculés à partir de son seul numéro : pas de
 /// tableau à parcourir, pas d'allocation, et un rendu identique d'une image à
 /// l'autre (donc un scintillement continu, sans saut).
-fn fleck(i: u32, t: f32, width: f32, height: f32, scroll: f32, scale: f32, light: f32) -> Fleck {
+fn fleck(i: u32, t: f32, width: f32, height: f32, scroll: f32, scale: f32) -> Fleck {
     // Trois familles : poussière fine (nombreuse), étoiles moyennes, et
     // quelques grands halos très pâles qui donnent l'air scintillant.
     let family = hash(i, 11);
@@ -228,7 +514,7 @@ fn fleck(i: u32, t: f32, width: f32, height: f32, scroll: f32, scale: f32, light
 
     // Scintillement : sinus élevé au cube → de longs creux et de brefs éclats.
     let pulse = 0.5 + 0.5 * (t * twinkle * std::f32::consts::TAU + phase).sin();
-    let alpha = base_alpha * (0.32 + 0.68 * pulse * pulse * pulse) * light;
+    let alpha = base_alpha * (0.32 + 0.68 * pulse * pulse * pulse);
 
     Fleck {
         x,
@@ -274,7 +560,7 @@ mod tests {
         let (width, height) = (1920.0, 1080.0);
         for i in 0..130 {
             for step in 0..600 {
-                let f = fleck(i, step as f32 * 0.05, width, height, 400.0, 1.0, 1.0);
+                let f = fleck(i, step as f32 * 0.05, width, height, 400.0, 1.0);
                 assert!(f.x >= 0.0 && f.x <= width, "x hors cadre : {}", f.x);
                 assert!(f.y >= 0.0 && f.y <= height, "y hors cadre : {}", f.y);
                 assert!(f.alpha >= 0.0 && f.alpha <= 1.0, "alpha : {}", f.alpha);
@@ -284,21 +570,45 @@ mod tests {
     }
 
     #[test]
-    fn le_voile_eteint_les_particules() {
-        for i in 0..130 {
-            let f = fleck(i, 12.0, 1920.0, 1080.0, 0.0, 1.0, 0.0);
-            assert_eq!(f.alpha, 0.0);
+    fn la_respiration_reste_dans_ses_bornes() {
+        // facteur 1.0 au repos, jamais au-delà de l'amplitude, et continu
+        assert_eq!(breath_factor(1.234, false), 1.0);
+        assert_eq!(breath_factor(0.0, true), 1.0);
+        let mut previous = 1.0;
+        for step in 0..400 {
+            let factor = breath_factor(step as f32 * 0.05, true);
+            assert!(factor >= 1.0, "facteur : {factor}");
+            assert!(factor <= 1.0 + BREATH_AMPLITUDE + f32::EPSILON, "facteur : {factor}");
+            // pas de saut d'une image à l'autre (0,05 s d'écart)
+            assert!((factor - previous).abs() < 0.005, "saut : {previous} → {factor}");
+            previous = factor;
         }
+        // la respiration atteint bien son sommet sur une période
+        let top = (0..200)
+            .map(|step| breath_factor(step as f32 * BREATH_PERIOD / 200.0, true))
+            .fold(1.0, f32::max);
+        assert!((top - (1.0 + BREATH_AMPLITUDE)).abs() < 0.001, "sommet : {top}");
+    }
+
+    #[test]
+    fn l_intersection_ne_depasse_pas_les_rectangles() {
+        let a = Rectangle::new(Point::new(0.0, 18.0), Size::new(1920.0, 900.0));
+        let b = Rectangle::new(Point::new(100.0, 800.0), Size::new(200.0, 300.0));
+        let hit = intersect(a, b).expect("les deux rectangles se recouvrent");
+        assert_eq!(hit.y, 800.0);
+        assert_eq!(hit.height, 118.0);
+        let away = Rectangle::new(Point::new(100.0, 2000.0), Size::new(10.0, 10.0));
+        assert!(intersect(a, away).is_none());
     }
 
     #[test]
     fn la_poussiere_bouge_et_scintille() {
         // une particule bouge entre deux instants, et son opacité varie
-        let a = fleck(7, 0.0, 1920.0, 1080.0, 0.0, 1.0, 1.0);
-        let b = fleck(7, 4.0, 1920.0, 1080.0, 0.0, 1.0, 1.0);
+        let a = fleck(7, 0.0, 1920.0, 1080.0, 0.0, 1.0);
+        let b = fleck(7, 4.0, 1920.0, 1080.0, 0.0, 1.0);
         assert!((a.x - b.x).abs() > 1.0 || (a.y - b.y).abs() > 1.0);
         let alphas: Vec<f32> = (0..400)
-            .map(|s| fleck(7, s as f32 * 0.05, 1920.0, 1080.0, 0.0, 1.0, 1.0).alpha)
+            .map(|s| fleck(7, s as f32 * 0.05, 1920.0, 1080.0, 0.0, 1.0).alpha)
             .collect();
         let low = alphas.iter().cloned().fold(f32::MAX, f32::min);
         let high = alphas.iter().cloned().fold(0.0, f32::max);

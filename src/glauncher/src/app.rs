@@ -15,8 +15,8 @@ use iced::widget::{
     Column, Id, Row, column, container, image, mouse_area, row, scrollable, stack, text, text_input,
 };
 use iced::{
-    Alignment, Background, Border, Color, ContentFit, Element, Fill, Length, Padding, Subscription,
-    Task, Theme, keyboard, window,
+    Alignment, Background, Border, Color, ContentFit, Element, Fill, Font, Length, Padding, Point,
+    Rectangle, Shadow, Size, Subscription, Task, Theme, Vector, keyboard, window,
 };
 
 use crate::config::{Config, ViewMode};
@@ -29,6 +29,7 @@ use crate::launch;
 use crate::library::{self, ArtworkCache, Game};
 use crate::music;
 use crate::playtime;
+use crate::pose::Pose;
 use crate::sparkles;
 use crate::state::{self, SortBy};
 use crate::thumbs;
@@ -49,12 +50,31 @@ const FOCUS_BORDER: f32 = 4.0;
 const DEUX_TYPES: [covers::ArtKind; 2] = [covers::ArtKind::Grid, covers::ArtKind::Icon];
 const CELL_BORDER: Color = Color::from_rgb(0.14, 0.16, 0.21);
 
-const GAP: f32 = 14.0;
+const GAP: f32 = 20.0;
+/// Rayon des coins d'une vignette (partagé avec le canvas, qui redessine le
+/// cadre de sélection grossi).
+const CARD_RADIUS: f32 = 14.0;
+/// Marge verticale autour de la liste (la verticale de `PAGE_PADDING_X`).
+/// Les deux servent aussi à situer la vignette sélectionnée, d'où le partage
+/// avec `selection_center`.
+pub(crate) const PAGE_PADDING_Y: f32 = 18.0;
+/// Bande du pied de page : le canvas des particules n'est pas découpé par la
+/// zone défilante, donc il découpe lui-même à cette bande.
+pub(crate) const FOOTER_BAND: f32 = 56.0;
 /// Colonnes du menu de choix d'image.
 const PICKER_COLUMNS: usize = 5;
 const PADDING: f32 = 12.0;
-/// Marge horizontale du launcher (padding `[18, 26]` de la vue).
+/// Marge horizontale du launcher (padding de la vue), à gauche. À droite on
+/// ajoute `SCROLLBAR_GUTTER` : la barre de défilement d'iced est une
+/// surimpression, elle ne réserve aucune place — sans cette marge, la colonne
+/// de droite passait dessous (constaté 20/11).
 const PAGE_PADDING_X: f32 = 26.0;
+const SCROLLBAR_GUTTER: f32 = 16.0;
+const PAGE_PADDING_X_RIGHT: f32 = PAGE_PADDING_X + SCROLLBAR_GUTTER;
+/// Marge entre le bord de la case (la place réservée dans la grille) et la
+/// boîte visible : la vignette rétrécit d'autant et l'air entre les boîtes
+/// augmente, sans toucher au nombre de colonnes (demandé, 20/11).
+const CARD_INSET: f32 = 9.0;
 /// Ratio hauteur/largeur d'une cover (600×900) : les vignettes ont la forme des
 /// vraies covers, sample compris.
 const ART_RATIO: f32 = 1.5;
@@ -77,6 +97,29 @@ const COLUMNS_MIN: usize = 3;
 const COLUMNS_MAX: usize = 12;
 /// Durée du fondu au noir (secondes) — « doucement ».
 const FADE_SECONDS: f32 = 0.9;
+/// Durée du fondu de la page : montée vers le fond, bascule, descente. Deux
+/// rampes, parce que sauter au noir d'un coup puis en ressortir se lit comme un
+/// éclair (jugé « trop agressif » le 20/11) — le fondu enchaîné par le fond,
+/// lui, ne fait aucun saut : l'ancien écran s'efface, le nouveau émerge.
+const PAGE_FADE_RISE: f32 = 0.12;
+const PAGE_FADE_FALL: f32 = 0.20;
+/// Apparition d'un visuel de la page (héros, logo, cover) arrivé après coup.
+const PAGE_ASSET_SECONDS: f32 = 0.30;
+/// Plongée au lancement d'un jeu : la page grossit de 6 % pendant que le voile
+/// monte, comme si on entrait dans l'écran. Un **agrandissement** (et non un
+/// recul) parce qu'un contenu qui rétrécit laissait voir son bord au milieu du
+/// noir (jugé moche le 20/11) — agrandir ne découvre jamais rien.
+const PAGE_DIVE: f32 = 0.06;
+/// Retour d'un jeu : chaque vignette revient de son côté de l'écran
+/// (`RETURN_SPREAD` = part de la largeur parcourue) en dézoomant
+/// (`RETURN_ZOOM` de marge) et avec un temps de retard qui dépend de sa
+/// distance au centre (`RETURN_STAGGER`). `RETURN_END` laisse les vignettes se
+/// poser AVANT la fin du fondu : sans ça, l'ultime image où la carte cesse
+/// d'être transformée sautait de quelques pixels.
+const RETURN_SPREAD: f32 = 0.55;
+const RETURN_ZOOM: f32 = 0.10;
+const RETURN_STAGGER: f32 = 0.45;
+const RETURN_END: f32 = 0.15;
 /// Constante de temps du défilement animé (secondes).
 const SCROLL_TAU: f32 = 0.10;
 
@@ -85,6 +128,11 @@ const COVER_SAMPLE: &[u8] = include_bytes!("../assets/cover-sample.png");
 /// Étoile des favoris : un PNG embarqué plutôt que le caractère `★`, qui
 /// tombait sur un glyphe de repli minuscule (illisible sur une vignette).
 const STAR: &[u8] = include_bytes!("../assets/star.png");
+
+/// Police de l'aide (pied de page) : Lato, embarquée dans le binaire. La
+/// sans-serif système change d'un poste à l'autre ; celle-ci est plus ronde et
+/// se lit mieux en petit sur fond sombre.
+pub(crate) const HELP_FONT: Font = Font::with_name("Lato");
 
 // --- glyphes ----------------------------------------------------------------
 
@@ -382,6 +430,14 @@ struct Page {
     action: usize,
 }
 
+/// Basculement de page à faire au sommet du fondu (le fond est alors opaque,
+/// donc le changement d'écran ne se voit pas).
+#[derive(Clone, Copy)]
+enum PageStep {
+    Open(usize),
+    Close,
+}
+
 /// Ordre du menu « Images » : le même que les types de visuels.
 const ART_MENU: [covers::ArtKind; 4] = covers::ArtKind::ALL;
 
@@ -469,6 +525,25 @@ pub struct App {
     /// Opacité de l'écran noir (0 = launcher, 1 = noir complet).
     fade: f32,
     fade_target: f32,
+    /// Fondu propre à la page d'un jeu : elle apparaît depuis le noir et y
+    /// retourne quand on la ferme (1 = noir). Séparé de `fade` pour ne pas
+    /// interférer avec le fondu du lancement.
+    page_fade: f32,
+    page_fade_target: f32,
+    /// La page attend son basculement : le noir doit être complet avant qu'elle
+    /// entre ou sorte de l'arbre (`PageStep::Open` / `PageStep::Close`).
+    pending_page: Option<PageStep>,
+    /// Progression de la bande héros de la page (0 = rien, 1 = posée) : quand
+    /// le héros arrive après l'ouverture, la bande grandit et l'image apparaît
+    /// en fondu au lieu de faire sauter le bloc du bas.
+    page_hero: f32,
+    /// Même chose pour le logo et la cover, qui n'ont pas de place à réserver :
+    /// seule leur opacité monte (`page_view`).
+    page_logo: f32,
+    page_cover: f32,
+    /// Retour de partie en cours : le voile du lancement s'éclaircit et chaque
+    /// vignette revient de son côté de l'écran en dézoomant (`comeback`).
+    returning: bool,
     /// Lancement à effectuer dès que l'écran est noir (nom, commande, début du fondu).
     to_launch: Option<(String, launch::Launch, std::time::Instant)>,
     /// Musique de fond (`music = false` dans la config, ou `mpv` absent : aucune).
@@ -603,6 +678,13 @@ impl App {
             // on ouvre sur du noir et on laisse la fenêtre apparaître en fondu
             fade: 1.0,
             fade_target: 0.0,
+            page_fade: 0.0,
+            page_fade_target: 0.0,
+            pending_page: None,
+            page_hero: 0.0,
+            page_logo: 0.0,
+            page_cover: 0.0,
+            returning: false,
             to_launch: None,
             music: None,
             pending_slug: None,
@@ -632,8 +714,9 @@ impl App {
         app.apply_filter();
         // musique de fond : lecture par `mpv` dans un fil à part, l'UI
         // n'attend rien (et sans `mpv` le launcher reste simplement muet)
-        if app.config.music {
-            app.music = music::Music::start(&app.config.cache_dir());
+        // volume 0 = muet : inutile de lancer `mpv` pour rien
+        if app.config.music && app.config.music_volume > 0 {
+            app.music = music::Music::start(&app.config.cache_dir(), app.config.music_volume);
         }
         // poussière d'étoiles : le minuteur n'existe pas si c'est coupé, donc
         // aucune image n'est demandée au moteur pour rien
@@ -668,11 +751,15 @@ impl App {
         // Poussière d'étoiles : elle ne tourne que si elle est réellement
         // visible. C'est le SEUL poste de dépense de l'animation (une image
         // à 20 Hz), donc on le coupe dès que l'écran est occupé autrement :
-        // fenêtre sans focus, page de jeu, menu, prompt, voile de lancement.
+        // fenêtre sans focus, page de jeu, menu, prompt, écran noir.
+        // Le fondu du lancement n'a pas besoin de ce minuteur : `window::frames`
+        // reconstruit déjà la vue à 60 Hz pour le fondu, et l'« hyperespace »
+        // n'est piloté que par `fade` (les particules ne dérivent pas pendant
+        // ces 0,9 s) — d'où `to_launch` dans la condition.
         sparkles::set_running(
             self.config.sparkles
                 && self.active
-                && self.fade <= 0.001
+                && self.fade < 0.999
                 && self.page.is_none()
                 && self.view_menu.is_none()
                 && self.art_menu.is_none()
@@ -699,8 +786,38 @@ impl App {
     /// Une animation tourne-t-elle ? (sinon aucun abonnement aux images)
     fn animating(&self) -> bool {
         (self.fade - self.fade_target).abs() > 0.001
+            || (self.page_fade - self.page_fade_target).abs() > 0.001
             || (self.scroll - self.scroll_target).abs() > 0.5
+            || self.page_assets_animating()
             || self.to_launch.is_some()
+    }
+
+    /// Le jeu de la page ouverte, s'il y en a une.
+    fn page_game(&self) -> Option<&Game> {
+        self.page
+            .as_ref()
+            .and_then(|page| self.games.get(page.index))
+    }
+
+    /// Recale les trois apparitions sur ce que le jeu a déjà : présent = déjà
+    /// là (pas d'animation), absent = 0 et ça montera quand l'image arrivera.
+    fn reset_page_assets(&mut self, index: usize) {
+        let game = self.games.get(index);
+        let present = |asset: Option<&image::Handle>| if asset.is_some() { 1.0 } else { 0.0 };
+        self.page_hero = present(game.and_then(|game| game.hero.as_ref()));
+        self.page_logo = present(game.and_then(|game| game.logo.as_ref()));
+        self.page_cover = present(game.and_then(|game| game.cover.as_ref()));
+    }
+
+    /// Un visuel de la page est-il en train d'apparaître ? (sans ça, aucune
+    /// image n'est demandée au moteur et le fondu ne progresserait pas)
+    fn page_assets_animating(&self) -> bool {
+        let Some(game) = self.page_game() else {
+            return false;
+        };
+        (self.page_hero < 1.0 && game.hero.is_some())
+            || (self.page_logo < 1.0 && game.logo.is_some())
+            || (self.page_cover < 1.0 && game.cover.is_some())
     }
 
     pub fn theme(&self) -> Theme {
@@ -1109,12 +1226,23 @@ impl App {
                     }
                 }
                 self.fade_target = 0.0;
+                // les vignettes reviennent des bords pendant que le voile
+                // s'éclaircit
+                self.returning = true;
                 // retour au launcher : la musique revient en fondu
                 if let Some(music) = &self.music {
                     music.resume();
                 }
                 // on revient dans la liste des jeux, pas dans la page du jeu
                 self.page = None;
+                // aucune bascule de page en attente : c'est le voile du
+                // lancement (`fade`) qui fait le fondu de retour
+                self.pending_page = None;
+                self.page_fade = 0.0;
+                self.page_fade_target = 0.0;
+                self.page_hero = 0.0;
+                self.page_logo = 0.0;
+                self.page_cover = 0.0;
                 self.status = match result {
                     Ok(0) => None,
                     Ok(code) => Some((format!("{name} : code de sortie {code}"), true)),
@@ -1147,7 +1275,11 @@ impl App {
                     return Task::none();
                 };
                 self.selected = index;
-                self.page = Some(Page { index, action: 0 });
+                // La bascule se fait au sommet du fondu (voir `tick`) : la page
+                // n'entre pas dans l'arbre tout de suite, sinon le changement
+                // d'écran se verrait à travers un fond à peine opaque.
+                self.pending_page = Some(PageStep::Open(index));
+                self.page_fade_target = 1.0;
                 self.art_menu = None;
                 self.update_scroll_target();
                 // le héros de la page est prioritaire sur les visuels de fond
@@ -1155,7 +1287,12 @@ impl App {
                 Task::none()
             }
             Message::ClosePage => {
-                self.page = None;
+                // même chose dans l'autre sens : la page sort au sommet du
+                // fondu, on ne la retire pas à l'aveugle
+                if self.page.is_some() {
+                    self.pending_page = Some(PageStep::Close);
+                    self.page_fade_target = 1.0;
+                }
                 self.art_menu = None;
                 Task::none()
             }
@@ -1330,8 +1467,19 @@ impl App {
                 };
                 self.remember();
                 self.apply_filter();
+                // Trier remet en DÉBUT de liste (demandé le 20/11) : c'est le
+                // seul moyen de voir le nouvel ordre depuis le haut. On pose la
+                // position réelle en même temps que la cible, sinon l'animation
+                // de défilement partirait de l'ancienne place.
+                self.selected = 0;
+                self.scroll = 0.0;
+                self.scroll_target = 0.0;
+                self.visible_covers.clear();
                 self.request_visible_covers();
-                Task::none()
+                operation::scroll_to(
+                    self.scroll_id.clone(),
+                    AbsoluteOffset { x: 0.0, y: 0.0 },
+                )
             }
             Message::Back => {
                 // même priorité qu'Échap : le plus profond d'abord
@@ -1483,6 +1631,58 @@ impl App {
                 (self.fade - step).max(self.fade_target)
             };
         }
+        // voile entièrement retiré : les covers ont fini de se reposer
+        if self.returning && self.fade <= 0.001 {
+            self.returning = false;
+        }
+
+        // Fondu enchaîné de la page : on monte vers le fond, on bascule au
+        // sommet (le fond est alors opaque, le changement d'écran ne se voit
+        // pas), puis on redescend sur le nouveau contenu. Aucun saut —
+        // contrairement à un passage au noir instantané, jugé trop agressif.
+        if (self.page_fade - self.page_fade_target).abs() > 0.001 {
+            let rising = self.page_fade < self.page_fade_target;
+            let step = dt / if rising { PAGE_FADE_RISE } else { PAGE_FADE_FALL };
+            self.page_fade = if rising {
+                (self.page_fade + step).min(self.page_fade_target)
+            } else {
+                (self.page_fade - step).max(self.page_fade_target)
+            };
+        }
+        if self.page_fade >= 0.999
+            && let Some(step) = self.pending_page.take()
+        {
+            match step {
+                PageStep::Open(index) => {
+                    self.page = Some(Page { index, action: 0 });
+                    self.reset_page_assets(index);
+                }
+                PageStep::Close => {
+                    self.page = None;
+                    self.art_menu = None;
+                    self.page_hero = 0.0;
+                    self.page_logo = 0.0;
+                    self.page_cover = 0.0;
+                }
+            }
+            // on ressort du fond sur le nouvel écran
+            self.page_fade_target = 0.0;
+        }
+
+        // Visuels arrivés après l'ouverture de leur page : la bande du héros
+        // grandit, le logo et la cover montent en opacité.
+        let assets = self.page_game().map(|game| {
+            (
+                game.hero.is_some(),
+                game.logo.is_some(),
+                game.cover.is_some(),
+            )
+        });
+        if let Some((hero, logo, cover)) = assets {
+            advance_asset(&mut self.page_hero, hero, dt);
+            advance_asset(&mut self.page_logo, logo, dt);
+            advance_asset(&mut self.page_cover, cover, dt);
+        }
 
         // écran noir atteint : on lance le jeu
         if self.fade >= 0.999
@@ -1529,12 +1729,110 @@ impl App {
         Task::batch(tasks)
     }
 
+    /// Rectangles de la case `index` (cadre compris) et de son image, en
+    /// pixels de la fenêtre. Repose sur la même géométrie que
+    /// `update_scroll_target` (marges, colonnes, pas de rangée, défilement).
+    /// Grille et favoris seulement.
+    fn slot_rect(&self, index: usize) -> Option<(Rectangle, Rectangle)> {
+        self.games.get(index)?;
+        if !matches!(self.config.view, ViewMode::Grid | ViewMode::Favorites) {
+            return None;
+        }
+        let (cell, art_width, columns) = self.metrics();
+        let gap = self.gap();
+        let inset = self.cell_inset();
+        let columns = columns.max(1);
+        let column = (index % columns) as f32;
+        let row = (index / columns) as f32;
+        let card = Rectangle::new(
+            Point::new(
+                PAGE_PADDING_X + column * (cell + gap) + inset,
+                PAGE_PADDING_Y + row * (self.slot_height() + gap) + inset - self.scroll,
+            ),
+            Size::new(cell - 2.0 * inset, self.row_height()),
+        );
+        let art = Rectangle::new(
+            Point::new(card.x + PADDING, card.y + PADDING),
+            Size::new(art_width, art_width * ART_RATIO),
+        );
+        Some((card, art))
+    }
+
+    /// Le canvas des particules dessine lui-même le cadre de sélection — il
+    /// doit grossir avec la vignette — donc la carte laisse sa bordure
+    /// transparente : deux cadres se superposeraient pendant la respiration.
+    fn canvas_frame(&self) -> bool {
+        self.config.sparkles && matches!(self.config.view, ViewMode::Grid | ViewMode::Favorites)
+    }
+
+    /// La vignette sélectionnée confiée au canvas : il redessine son cadre
+    /// d'accent et sa cover grossis ensemble, sans toucher à la mise en page.
+    fn breathing(&self) -> Option<sparkles::Breath> {
+        // Pendant le retour d'un jeu, les vignettes glissent depuis les bords
+        // (`comeback`) : le canvas ne peut pas les suivre, il s'efface pour
+        // laisser la carte peindre la sienne, sinon la sélection resterait
+        // figée pendant que les autres arrivent.
+        if !self.canvas_frame() || self.returning {
+            return None;
+        }
+        let game = self.games.get(self.selected)?;
+        let (card, art) = self.slot_rect(self.selected)?;
+        // le canvas n'est pas découpé par la zone défilante : il découpe à la
+        // même bande, mais une respiration qui mord le pied de page reste
+        // moche — le cadre se pose alors sans bouger
+        let pulse = art.y >= PAGE_PADDING_Y - 0.5
+            && art.y + art.height <= self.viewport.1 - FOOTER_BAND;
+        let (_, art_width, _) = self.metrics();
+        let cover = self.cover_handle(game, art_width);
+        let star = self
+            .favorites
+            .contains(&game.slug)
+            .then(|| self.star.clone());
+        Some(sparkles::Breath {
+            card,
+            art,
+            radius: CARD_RADIUS,
+            frame_color: ACCENT,
+            frame_width: FOCUS_BORDER,
+            owns_art: cover.is_some(),
+            cover,
+            star,
+            pulse,
+        })
+    }
+
+    /// Retour de jeu : décalage horizontal et échelle de la vignette `index`,
+    /// pour qu'elle revienne de son côté de l'écran en dézoomant. Les vignettes
+    /// du bord partent de plus loin et se posent plus tard que celles du
+    /// centre. `None` quand il n'y a rien à animer (hors retour, autre vue).
+    fn comeback(&self, index: usize) -> Option<(f32, f32)> {
+        if !self.returning
+            || self.fade <= 0.001
+            || !matches!(self.config.view, ViewMode::Grid | ViewMode::Favorites)
+        {
+            return None;
+        }
+        let (cell, _, columns) = self.metrics();
+        let columns = columns.max(1);
+        let column = (index % columns) as f32;
+        let center = (columns as f32 - 1.0) * 0.5;
+        // 0 au centre, 1 sur les colonnes du bord
+        let away = (column - center).abs() / center.max(0.5);
+        let dir = if column < center { -1.0 } else { 1.0 };
+        let delay = RETURN_STAGGER * (1.0 - away);
+        let span = (1.0 - RETURN_END - delay).max(0.01);
+        let progress = ((self.fade - RETURN_END - delay) / span).clamp(0.0, 1.0);
+        let remaining = ease_reveal(progress);
+        let travel = (self.viewport.0 * RETURN_SPREAD + cell) * (0.55 + 0.45 * away);
+        Some((1.0 + RETURN_ZOOM * remaining, dir * travel * remaining))
+    }
+
     /// Position de défilement qui garde la sélection à l'écran (centrée).
     fn update_scroll_target(&mut self) {
         let columns = self.metrics().2;
         let (row, row_height) = match self.config.view {
             ViewMode::Grid | ViewMode::Favorites | ViewMode::Mosaic => {
-                (self.selected / columns, self.row_height() + self.gap())
+                (self.selected / columns, self.slot_height() + self.gap())
             }
             ViewMode::List => (self.selected, self.list_row_height() + 8.0),
         };
@@ -1615,7 +1913,9 @@ impl App {
     /// Hauteur d'une rangée, espacement compris (grille ou liste).
     fn row_span(&self) -> f32 {
         match self.config.view {
-            ViewMode::Grid | ViewMode::Favorites | ViewMode::Mosaic => self.row_height() + self.gap(),
+            ViewMode::Grid | ViewMode::Favorites | ViewMode::Mosaic => {
+                self.slot_height() + self.gap()
+            }
             ViewMode::List => self.list_row_height() + 8.0,
         }
     }
@@ -1938,18 +2238,6 @@ impl App {
         self.update_scroll_target();
     }
 
-    /// « covers 12/540 » tant qu'il en manque (téléchargement en cours).
-    fn cover_progress(&self) -> Option<String> {
-        if !self.config.covers {
-            return None;
-        }
-        let missing = self.games.iter().filter(|game| game.cover.is_none()).count();
-        if missing == 0 || missing == self.games.len() {
-            return None;
-        }
-        Some(format!("covers {}/{}", self.games.len() - missing, self.games.len()))
-    }
-
     /// Premier dossier configuré injoignable (disque externe débranché…).
     /// Le dossier reste dans la config : ses jeux reviennent quand il réapparaît.
     fn missing_dir(&self) -> Option<std::path::PathBuf> {
@@ -1960,6 +2248,14 @@ impl App {
         // Wayland route déjà le clavier vers la fenêtre active ; la garde
         // couvre les événements en retard et le cas « jeu lancé ».
         if !self.active || self.running.is_some() {
+            return Task::none();
+        }
+        // Une touche MAINTENUE ne doit pas rejouer son action : le noyau répète
+        // `KeyPressed` (auto-repeat X11/Wayland), et un `T` appuyé un peu trop
+        // longtemps basculait le tri deux fois (constaté 20/11). La navigation
+        // n'a jamais été répétée au clavier, donc ignorer les répétitions ne
+        // change rien d'autre.
+        if matches!(event, keyboard::Event::KeyPressed { repeat: true, .. }) {
             return Task::none();
         }
         // une touche pressée : les aides repassent en langage clavier, menus
@@ -2239,7 +2535,8 @@ impl App {
         // flotte donc devant les vignettes) mais SOUS la page, qui est opaque
         // — c'est aussi pourquoi le minuteur s'arrête page ouverte.
         let dust: Element<'_, Message> = if self.config.sparkles {
-            self.sparkles.view(self.scroll, self.fade)
+            self.sparkles
+                .view(self.scroll, self.fade, self.breathing())
         } else {
             container(Row::new()).width(Fill).height(Fill).into()
         };
@@ -2248,26 +2545,58 @@ impl App {
         let page_layer: Element<'_, Message> = if self.page.is_some() {
             // la page doit intercepter clic et molette, sinon ils atteignent
             // les vignettes de la grille restée dessous
-            mouse_area(self.page_view())
+            let page = mouse_area(self.page_view())
                 .on_press(Message::Nothing)
-                .on_scroll(|_| Message::Nothing)
-                .into()
+                .on_scroll(|_| Message::Nothing);
+            // Lancement d'un jeu : la page plonge vers l'écran (agrandissement)
+            // pendant que le voile monte. `Pose` applique une vraie
+            // transformation au rendu (l'échelle reste à 1 au repos, donc rien
+            // ne change hors du fondu) et l'effet ne touche pas à la mise en
+            // page.
+            if self.fade > 0.001 {
+                // échelle CONTINUE : quantifiée par pas de 0,5 %, la plongée
+                // sautait visiblement (jugé saccadé le 20/11) — le texte est
+                // ré-rasterisé à chaque nouvelle taille, mais c'est le prix
+                // d'un mouvement continu.
+                Pose::new(page)
+                    .scale(1.0 + PAGE_DIVE * self.fade)
+                    .into()
+            } else {
+                page.into()
+            }
         } else {
             container(Row::new()).width(Fill).height(Fill).into()
         };
         view = stack![view, page_layer].into();
 
+        // Hyperespace devant la PAGE d'un jeu : on lance un jeu depuis sa page
+        // (« Jouer »), et la page est opaque au-dessus de la poussière. Sans
+        // cette couche, les particules filant vers les bords n'étaient visibles
+        // que depuis la grille — donc jamais (constaté 20/11). Elle redessine
+        // les mêmes particules AU-DESSUS de la page et SOUS le voile, et
+        // n'existe que pendant le fondu du lancement.
+        let warp: Element<'_, Message> =
+            if self.config.sparkles && self.page.is_some() && self.fade > 0.001 {
+                self.sparkles.view(self.scroll, self.fade, None)
+            } else {
+                container(Row::new()).width(Fill).height(Fill).into()
+            };
+        view = stack![view, warp].into();
+
         // Le voile noir du fondu existe MÊME à opacité nulle, et il passe APRÈS
         // la page : lancer un jeu depuis une page doit virer au noir comme
         // depuis la grille, et l'arbre doit garder la même forme d'un rendu à
         // l'autre (un changement de forme recrée la zone défilante, donc la
-        // position).
+        // position). Il porte deux fondus : celui du lancement (`fade`) et
+        // celui de la page (`page_fade`, ouverture et fermeture) — jamais
+        // ensemble, donc le plus opaque des deux suffit.
+        let veil_opacity = self.fade.max(self.page_fade);
         let veil = container(Row::new())
             .width(Fill)
             .height(Fill)
             .style(move |_| container::Style {
                 background: Some(Background::Color(Color {
-                    a: self.fade,
+                    a: veil_opacity,
                     ..Color::BLACK
                 })),
                 ..container::Style::default()
@@ -2335,7 +2664,14 @@ impl App {
         container(column![content, footer].spacing(0))
             .width(Fill)
             .height(Fill)
-            .padding([18.0, 26.0])
+            // marge de droite plus large : la barre de défilement d'iced est
+            // dessinée par-dessus le contenu, elle ne réserve aucune place
+            .padding(Padding {
+                top: PAGE_PADDING_Y,
+                right: PAGE_PADDING_X_RIGHT,
+                bottom: PAGE_PADDING_Y,
+                left: PAGE_PADDING_X,
+            })
             .style(|_| container::Style {
                 background: Some(Background::Color(BG)),
                 ..container::Style::default()
@@ -2371,7 +2707,13 @@ impl App {
         } else {
             0.0
         };
-        let dispo = (self.viewport.1 - band_h).max(300.0);
+        // Bande héros : elle grandit de 0 à sa hauteur quand l'image arrive
+        // après l'ouverture (`page_hero`), et l'image apparaît en fondu —
+        // décélération quadratique, pour que ça se pose au lieu de claquer.
+        // La place réservée suit la même progression, donc la moitié basse se
+        // comprime et glisse vers le bas au lieu de sauter d'un coup.
+        let reveal = 1.0 - (1.0 - self.page_hero).powi(2);
+        let dispo = (self.viewport.1 - band_h * reveal).max(300.0);
         let cover_h = (dispo * 0.72).clamp(300.0, 520.0);
         let cover_w = cover_h * 205.0 / 308.0;
         // tout le bloc suit la cover : textes, pastilles et espacements
@@ -2380,11 +2722,17 @@ impl App {
         // centre sur toute la page — une bande grise vide en haut avec le
         // contenu collé en dessous faisait pauvre (retour 18/11).
         let band: Option<Element<'_, Message>> = game.hero.as_ref().map(|handle| {
-            image(handle.clone())
-                .width(Length::Fixed(width))
-                .height(Length::Fixed(band_h))
-                .content_fit(ContentFit::Cover)
-                .into()
+            container(
+                image(handle.clone())
+                    .width(Length::Fixed(width))
+                    .height(Length::Fixed(band_h))
+                    .content_fit(ContentFit::Cover)
+                    .opacity(reveal),
+            )
+            .width(Length::Fixed(width))
+            .height(Length::Fixed(band_h * reveal))
+            .clip(true)
+            .into()
         });
 
         let logo: Element<'_, Message> = match &game.logo {
@@ -2392,6 +2740,8 @@ impl App {
                 .width(Length::Fixed(450.0 * ech))
                 .height(Length::Fixed(155.0 * ech))
                 .content_fit(ContentFit::Contain)
+                // logo arrivé après l'ouverture : il monte en fondu
+                .opacity(ease_reveal(self.page_logo))
                 .into(),
             None => text(short(&game.name, 46))
                 .size(36.0 * ech)
@@ -2404,6 +2754,8 @@ impl App {
                 .width(Length::Fixed(cover_w))
                 .height(Length::Fixed(cover_h))
                 .content_fit(ContentFit::Contain)
+                // cover arrivée après l'ouverture : elle monte en fondu
+                .opacity(ease_reveal(self.page_cover))
                 .into(),
             None => sample_art(&self.sample, &game.name, game.icon.as_ref(), cover_w, cover_h),
         };
@@ -2411,13 +2763,9 @@ impl App {
         let details = column![
             logo,
             text(short(&game.name, 60)).size(25.0 * ech).color(TEXT),
-            text(game.path.display().to_string())
-                .size(14.0 * ech)
-                .color(MUTED),
             text(format!(
-                "Temps de jeu : {}   ·   {}",
-                playtime::format(self.playtime.get(&game.slug).copied()),
-                self.art_status(page.index)
+                "Temps de jeu : {}",
+                playtime::format(self.playtime.get(&game.slug).copied())
             ))
             .size(14.0 * ech)
             .color(MUTED),
@@ -2510,21 +2858,6 @@ impl App {
             ..container::Style::default()
         })
         .into()
-    }
-
-    /// « Grid ✓ · Héros … » : ce qui est déjà là pour ce jeu.
-    fn art_status(&self, index: usize) -> String {
-        let Some(game) = self.games.get(index) else {
-            return String::new();
-        };
-        let mark = |present: bool| if present { "✓" } else { "…" };
-        format!(
-            "Grid {}   ·   Héros {}   ·   Logo {}   ·   Icône {}",
-            mark(game.cover.is_some()),
-            mark(game.hero.is_some()),
-            mark(game.logo.is_some()),
-            mark(game.icon.is_some())
-        )
     }
 
     /// Faut-il afficher les glyphes de manette ? Seulement si une manette est
@@ -2779,7 +3112,7 @@ impl App {
                 };
                 let cell = container(thumb)
                     .padding(6)
-                    .style(move |_| card_style(selected));
+                    .style(move |_| card_style(selected, false));
 
                 current = current.push(mouse_area(cell).on_press(Message::PickerChoose(index)));
                 in_row += 1;
@@ -2869,7 +3202,12 @@ impl App {
         for (index, game) in self.games.iter().enumerate() {
             current = current.push(match self.config.view {
                 ViewMode::Mosaic => self.mosaic_card(game, index),
-                _ => self.card(game, index),
+                // la boîte visible est plus petite que sa case : la marge
+                // autour est transparente, donc l'air entre les vignettes
+                // augmente sans changer le nombre de colonnes
+                _ => container(self.card(game, index))
+                    .padding(self.cell_inset())
+                    .into(),
             });
             in_row += 1;
             if in_row == columns {
@@ -2911,9 +3249,25 @@ impl App {
         // en mosaïque la cover occupe TOUTE la vignette (aucune marge interne)
         let art = match self.config.view {
             ViewMode::Mosaic => cell,
-            _ => cell - 2.0 * PADDING,
+            _ => cell - 2.0 * (PADDING + CARD_INSET),
         };
         (cell, art, columns)
+    }
+
+    /// Marge entre la case et la boîte visible (nulle en mosaïque, les covers
+    /// se touchent).
+    fn cell_inset(&self) -> f32 {
+        match self.config.view {
+            ViewMode::Mosaic => 0.0,
+            _ => CARD_INSET,
+        }
+    }
+
+    /// Pas vertical d'une rangée *sans* l'espacement : la boîte visible plus
+    /// ses marges. C'est ce pas (et non la hauteur de la boîte) qui règle le
+    /// défilement et le repère de la vignette sélectionnée.
+    fn slot_height(&self) -> f32 {
+        self.row_height() + 2.0 * self.cell_inset()
     }
 
     /// Espacement entre vignettes : nul en mosaïque, les covers se touchent.
@@ -2963,6 +3317,14 @@ impl App {
         let selected = index == self.selected;
         let (cell, art_width, _) = self.metrics();
         let art_height = art_width * ART_RATIO;
+        // Le canvas redessine la cover ET la tranche de la sélection (elles
+        // doivent respirer ensemble) : la carte garde son image (elle est peinte
+        // une seconde fois par le canvas, au même endroit — une image opaque
+        // superposée ne se voit pas) mais lui laisse la tranche et l'étoile,
+        // sinon elles seraient peintes deux fois et fonceraient. Garder l'image
+        // dans la carte évite qu'elle manque à la toute première image, avant
+        // que le canvas n'ait sa propre allocation (constaté 20/11).
+        let canvas_art = self.canvas_frame() && selected && game.cover.is_some() && !self.returning;
 
         let art: Element<'_, Message> = match self.cover_handle(game, art_width) {
             Some(handle) => image(handle)
@@ -2978,7 +3340,7 @@ impl App {
                 art_height,
             ),
         };
-        let art: Element<'_, Message> = if self.favorites.contains(&game.slug) {
+        let art: Element<'_, Message> = if self.favorites.contains(&game.slug) && !canvas_art {
             // étoile discrète en haut à droite de la cover
             let badge = container(self.star_icon(19.0, 1.0))
                 .width(Fill)
@@ -2990,6 +3352,34 @@ impl App {
         } else {
             art
         };
+        // Tranche du boîtier : bande sombre au bord gauche de la cover et arête
+        // claire, superposées (aucune mise en page refaite). Le canvas redessine
+        // exactement la même chose quand la respiration grossit la vignette,
+        // d'où les constantes partagées dans `sparkles`. Hauteurs FIXES : un
+        // `Fill` dans un `stack` prendrait la place offerte et la rangée
+        // dépasserait `row_height`, donc le repère du canvas dériverait.
+        let spine_width = sparkles::spine_width(art_width);
+        let spine_edge = container(Row::new())
+            .width(Length::Fixed(1.0))
+            .height(Length::Fixed(art_height))
+            .style(|_| container::Style {
+                background: Some(Background::Color(sparkles::SPINE_EDGE)),
+                ..container::Style::default()
+            });
+        let spine = container(spine_edge)
+            .width(Length::Fixed(spine_width))
+            .height(Length::Fixed(art_height))
+            .align_x(Alignment::End)
+            .style(|_| container::Style {
+                background: Some(Background::Color(sparkles::SPINE_FILL)),
+                ..container::Style::default()
+            });
+        let art: Element<'_, Message> = if canvas_art {
+            // le canvas peint la tranche avec la cover (scaled)
+            art
+        } else {
+            stack![art, spine].into()
+        };
 
         let body = column![
             art,
@@ -3000,12 +3390,33 @@ impl App {
         .spacing(6)
         .align_x(Alignment::Center);
 
+        // Le canvas dessine le cadre de la vignette sélectionnée (il doit
+        // grossir avec elle) : la carte garde l'épaisseur pour la mise en page
+        // mais la peint en transparent.
+        let canvas_frame = self.canvas_frame() && selected && !self.returning;
         let cell = container(body)
-            .width(Length::Fixed(cell))
+            .width(Length::Fixed(cell - 2.0 * self.cell_inset()))
+            // hauteur IMPOSÉE par le calcul de défilement (`row_height`) : sans
+            // ça la hauteur réelle (celle du texte de titre) divergeait de
+            // quelques pixels et le cadre du canvas dérivait de rangée en rangée
+            .height(Length::Fixed(self.row_height()))
             .padding(PADDING)
-            .style(move |_| card_style(selected));
+            .style(move |_| card_style(selected, canvas_frame));
 
-        mouse_area(cell).on_press(Message::CardClicked(index)).into()
+        let card: Element<'_, Message> = mouse_area(cell)
+            .on_press(Message::CardClicked(index))
+            .into();
+        // Retour de jeu : la vignette revient de son côté de l'écran en
+        // dézoomant (`Pose` applique une vraie transformation au rendu — titre
+        // compris — sans toucher à la mise en page). Au repos, aucune
+        // transformation : le widget se dessine normalement.
+        match self.comeback(index) {
+            Some((scale, dx)) => Pose::new(card)
+                .scale(scale)
+                .offset(Vector::new(dx, 0.0))
+                .into(),
+            None => card,
+        }
     }
 
     /// Vignette de mosaïque : cover pleine, collée aux voisines, sans nom.
@@ -3243,7 +3654,8 @@ impl App {
             .align_y(Alignment::Center)
             .into(),
             false => text("←↑→↓ naviguer   ·   Entrée ouvrir   ·   V vue   ·   C image   ·   +/− taille   ·   T tri   ·   F plein écran   ·   Échap quitter")
-                .size(14)
+                .size(15)
+                .font(HELP_FONT)
                 .color(MUTED)
                 .into(),
         };
@@ -3268,48 +3680,72 @@ impl App {
             .into()
         } else if let Some(notice) = &self.notice {
             text(notice.clone()).size(14).color(ACCENT).into()
-        } else if let Some(progress) = self.cover_progress() {
-            text(progress).size(14).color(MUTED).into()
         } else {
             Row::new().into()
         };
 
-        // noms masqués en mosaïque : celui du jeu sélectionné vit dans le pied
-        // de page, et il doit rester visible même quand un message (mode test,
-        // couvertures en cours…) occupe la place à droite
-        let selection: Element<'_, Message> = if self.config.view == ViewMode::Mosaic {
-            self.games
-                .get(self.selected)
-                .map(|game| text(game.name.clone()).size(14).color(TEXT).into())
-                .unwrap_or_else(|| Row::new().into())
-        } else {
-            Row::new().into()
+        // L'ordre de tri reste visible sans ouvrir de menu, et il doit se voir :
+        // une pastille discrète plutôt qu'une ligne grise noyée dans le pied de
+        // page (demandé le 20/11). Pas de compte de jeux ni de progression des
+        // covers : le pied de page ne doit porter aucune statistique.
+        let sort: Element<'_, Message> = match self.config.view {
+            ViewMode::Favorites => Row::new().into(),
+            _ => container(
+                row![
+                    text("TRI").size(11).font(HELP_FONT).color(MUTED),
+                    text(self.sort.label()).size(15).font(HELP_FONT).color(TEXT),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding(Padding {
+                top: 5.0,
+                right: 12.0,
+                bottom: 5.0,
+                left: 12.0,
+            })
+            .style(|_| container::Style {
+                background: Some(Background::Color(CELL_BG)),
+                border: Border {
+                    color: ACCENT,
+                    width: 1.0,
+                    radius: 11.0.into(),
+                },
+                ..container::Style::default()
+            })
+            .into(),
         };
 
-        // le titre et le compte de jeux vivent ici, avec les commandes : la
-        // vue y gagne toute la hauteur de l'en-tête
-        // compte + ordre courant : le tri doit se voir sans ouvrir de menu
-        let count_label = match self.config.view {
-            ViewMode::Favorites => format!(
-                "{} favori{}",
-                self.games.len(),
-                if self.games.len() > 1 { "s" } else { "" }
-            ),
-            _ => format!(
-                "{} · {}",
-                plural(self.games.len()),
-                self.sort.label()
-            ),
-        };
-        let count: Element<'_, Message> = text(count_label).size(14).color(MUTED).into();
+        // Nom du jeu sélectionné, à droite : c'est l'information principale du
+        // pied de page, d'autant que les noms sont masqués en mosaïque.
+        let name: Element<'_, Message> = self
+            .games
+            .get(self.selected)
+            .map(|game| text(short(&game.name, 48)).size(17).color(TEXT).into())
+            .unwrap_or_else(|| Row::new().into());
 
-        container(
-            row![hints, count, Row::new().width(Fill), selection, status]
+        // Aide des touches au CENTRE, tri à gauche, message et nom à droite :
+        // deux couches, parce qu'une `Row` ne sait pas centrer dans la fenêtre
+        // quand les blocs des côtés n'ont pas la même largeur. Un `Stack` prend
+        // sa hauteur sur son PREMIER enfant : c'est la pastille de tri (plus
+        // haute que le texte d'aide au clavier) qui donne la hauteur, sinon la
+        // pastille dépassait sous sa bordure (constaté 20/11). Les deux couches
+        // sont centrées verticalement.
+        let hints_centered = container(hints)
+            .width(Fill)
+            .height(Fill)
+            .align_x(Alignment::Center)
+            .center_y(Fill);
+        let sides = container(
+            row![sort, Row::new().width(Fill), status, name]
                 .spacing(16)
                 .align_y(Alignment::Center),
         )
-        .padding(Padding { top: 16.0, right: 4.0, bottom: 0.0, left: 4.0 })
-        .into()
+        .width(Fill);
+
+        container(stack![sides, hints_centered])
+            .padding(Padding { top: 14.0, right: 4.0, bottom: 0.0, left: 4.0 })
+            .into()
     }
 }
 
@@ -3328,13 +3764,29 @@ fn ease_or_snap(scroll: f32, target: f32, span: f32, dt: f32) -> f32 {
     scroll + (target - scroll) * ease
 }
 
+/// Avance l'apparition d'un visuel de la page (héros, logo, cover) quand il est
+/// enfin là. Absent : la progression ne bouge pas (elle vaut 0 et repartira de
+/// là quand l'image arrivera).
+fn advance_asset(progress: &mut f32, present: bool, dt: f32) {
+    if present && *progress < 1.0 {
+        *progress = (*progress + dt / PAGE_ASSET_SECONDS).min(1.0);
+    }
+}
+
+/// Décélération de l'apparition : vive au début, elle se pose à la fin (une
+/// rampe linéaire donne l'impression que l'image « claque »).
+fn ease_reveal(progress: f32) -> f32 {
+    let progress = progress.clamp(0.0, 1.0);
+    1.0 - (1.0 - progress).powi(2)
+}
+
 /// Largeur minimale de vignette qui produit **exactement** `columns` colonnes
 /// dans une grille étalée sur toute la largeur : c'est l'inverse de
 /// `grid_metrics`, nécessaire au zoom arrière (`cell_size` ne peut pas être
 /// laissé sur la largeur affichée, sinon le nombre de colonnes plafonne).
 fn cell_for_columns(window_width: f32, columns: usize, gap: f32) -> u32 {
     let columns = columns.max(1) as f32;
-    let usable = (window_width - 2.0 * PAGE_PADDING_X).max(CELL_MIN);
+    let usable = usable_width(window_width).max(CELL_MIN);
     let cell = ((usable - (columns - 1.0) * gap) / columns).floor();
     cell.clamp(CELL_MIN, CELL_MAX).round() as u32
 }
@@ -3375,7 +3827,7 @@ fn grid_metrics(
 ) -> (f32, f32, usize) {
     let min_cell = min_cell.max(80.0);
     let max_columns = max_columns.max(1) as f32;
-    let usable = (window_width - 2.0 * PAGE_PADDING_X).max(min_cell);
+    let usable = usable_width(window_width).max(min_cell);
 
     // combien de vignettes tiennent à la largeur minimale…
     let fitted = ((usable + gap) / (min_cell + gap)).floor().max(1.0);
@@ -3387,10 +3839,16 @@ fn grid_metrics(
     (cell, cell - 2.0 * PADDING, columns as usize)
 }
 
+/// Largeur utile de la grille : la fenêtre moins les deux marges (celle de
+/// droite réserve la place de la barre de défilement).
+fn usable_width(window_width: f32) -> f32 {
+    (window_width - PAGE_PADDING_X - PAGE_PADDING_X_RIGHT).max(1.0)
+}
+
 fn hint(glyph: image::Handle, label: &'static str) -> Element<'static, Message> {
     row![
         image(glyph).width(Length::Fixed(26.0)).height(Length::Fixed(26.0)),
-        text(label).size(14).color(MUTED),
+        text(label).size(15).font(HELP_FONT).color(MUTED),
     ]
     .spacing(6)
     .align_y(Alignment::Center)
@@ -3491,8 +3949,11 @@ fn initial(name: &str) -> String {
         .to_string()
 }
 
-/// Vignette de grille : aucun cadre. La sélection se voit au fond teinté.
-fn card_style(selected: bool) -> container::Style {
+/// Vignette de grille : fond teinté, ombre portée (la cover se décolle du fond
+/// comme un boîtier posé) et cadre d'accent. Quand `canvas_frame` est vrai,
+/// c'est le canvas des particules qui peint le cadre (il doit grossir avec la
+/// vignette) : la carte garde l'épaisseur pour la mise en page, en transparent.
+fn card_style(selected: bool, canvas_frame: bool) -> container::Style {
     container::Style {
         background: Some(Background::Color(if selected {
             CELL_BG_SELECTED
@@ -3502,9 +3963,18 @@ fn card_style(selected: bool) -> container::Style {
         // le fond teinté seul ne suffisait pas : sur 666 vignettes on perdait
         // de vue laquelle était sélectionnée (retour 18/11)
         border: Border {
-            color: if selected { ACCENT } else { Color::TRANSPARENT },
+            color: if selected && !canvas_frame {
+                ACCENT
+            } else {
+                Color::TRANSPARENT
+            },
             width: if selected { FOCUS_BORDER } else { 0.0 },
-            radius: 14.0.into(),
+            radius: CARD_RADIUS.into(),
+        },
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, if selected { 0.55 } else { 0.38 }),
+            offset: Vector::new(0.0, if selected { 8.0 } else { 6.0 }),
+            blur_radius: if selected { 20.0 } else { 14.0 },
         },
         ..container::Style::default()
     }
@@ -3655,14 +4125,14 @@ mod tests {
         assert_eq!(columns, 5);
         assert!(large > cell, "les vignettes grandissent avec la fenêtre");
         let filled = large * 5.0 + GAP * 4.0;
-        assert!(filled <= 2560.0 - 2.0 * PAGE_PADDING_X);
-        assert!(filled >= 2560.0 - 2.0 * PAGE_PADDING_X - 5.0, "aucun vide à droite");
+        assert!(filled <= usable_width(2560.0));
+        assert!(filled >= usable_width(2560.0) - 5.0, "aucun vide à droite");
 
         // fenêtre étroite : moins de colonnes, jamais de débordement
         let (_, _, columns) = grid_metrics(700.0, 220.0, 5, GAP);
         assert_eq!(columns, 2);
         let (cell, _, _) = grid_metrics(700.0, 220.0, 5, GAP);
-        assert!(cell * 2.0 + GAP <= 700.0 - 2.0 * PAGE_PADDING_X);
+        assert!(cell * 2.0 + GAP <= usable_width(700.0));
     }
 
     #[test]
@@ -3670,7 +4140,7 @@ mod tests {
         // espacement nul : les colonnes collées remplissent exactement la largeur
         let (cell, _, columns) = grid_metrics(1280.0, 220.0, 8, 0.0);
         assert_eq!(columns, 5);
-        assert!((cell * columns as f32 - (1280.0 - 2.0 * PAGE_PADDING_X)).abs() <= 5.0);
+        assert!((cell * columns as f32 - usable_width(1280.0)).abs() <= 5.0);
     }
 
     #[test]
