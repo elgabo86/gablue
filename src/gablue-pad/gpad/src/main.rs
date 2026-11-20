@@ -4955,6 +4955,17 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
         .and_then(|i| args.get(i + 1).cloned())
 }
 
+/// Option dont la valeur est facultative (`--clavier` seul = manette
+/// détectée). `Some(None)` = option présente sans valeur, `None` = absente.
+/// Sans ça, `--clavier` suivi d'une autre option prenait `--gate` pour un node.
+fn arg_optionnel(args: &[String], flag: &str) -> Option<Option<String>> {
+    let i = args.iter().position(|a| a == flag)?;
+    match args.get(i + 1) {
+        Some(v) if !v.starts_with("--") => Some(Some(v.clone())),
+        _ => Some(None),
+    }
+}
+
 /// toutes les occurrences d'une option répétable (ex. --gate-target)
 fn arg_values(args: &[String], flag: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -6261,20 +6272,24 @@ fn main() {
     if let Some(p) = pad {
         app.detecter_manette(&p);
         app.grab_pad(&p);
-    } else if !app.resident {
+    } else if !app.resident && args.iter().all(|a| a != "--clavier") {
         eprintln!("aucune manette trouvée (aucun grab)");
     }
 
-    // Clavier virtuel direct : banc, ou repli du déclencheur quand aucun
-    // résident n'écoute. Un seul usage par processus (il quitte à la
-    // fermeture), sinon chaque appui laisserait un overlay orphelin.
-    if let Some(node) = arg_value(&args, "--clavier") {
+    // Clavier virtuel direct : `--clavier` seul prend la manette détectée,
+    // `--clavier /dev/input/eventN` impose le node (banc, ou plusieurs
+    // manettes). Un seul usage par processus (il quitte à la fermeture).
+    if let Some(node) = arg_optionnel(&args, "--clavier") {
+        let node = node
+            .or_else(find_pad_event)
+            .unwrap_or_else(|| {
+                eprintln!("clavier : aucune manette (donner un node : --clavier /dev/input/eventN)");
+                std::process::exit(1);
+            });
         app.visible = false;
         app.ouvrir_clavier(&node);
         if !app.kbd_ouvert {
-            // sans manette, ne pas rester avec une surface morte : le
-            // déclencheur relancerait un overlay par appui
-            eprintln!("clavier : ouverture impossible, sortie");
+            eprintln!("clavier : ouverture impossible sur {node}, sortie");
             std::process::exit(1);
         }
     }

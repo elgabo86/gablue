@@ -896,7 +896,7 @@ nettoyer à la main.
 | `--style retro\|moderne` | style visuel (prioritaire sur `PAD_STYLE` et le fichier) |
 | `--test-margin N` | marge layer-shell positive (banc) |
 | `--no-kwin` | n'installe pas le script d'info de fenêtre |
-| `--clavier <node>` | ouvre **directement le clavier virtuel** sur ce node, puis sort à la fermeture (repli du déclencheur, banc) |
+| `--clavier [node]` | ouvre **directement le clavier virtuel**, puis sort à la fermeture (repli du déclencheur, banc). Sans node : la manette détectée ; sans aucune manette : sortie code 1 |
 
 | Variable | Rôle |
 |---|---|
