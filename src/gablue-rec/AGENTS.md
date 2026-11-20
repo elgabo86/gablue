@@ -7,7 +7,8 @@ une **socket d'état** pour l'overlay. Il remplace le flatpak
 deviner l'état, `SIGINT` sur le mauvais PID, interdiction d'écrire dans `/tmp`,
 deux binaires exclusifs à arbitrer à la main.
 
-**Statut** (20/11/2026) : **v1 complète, non commitée**. Cœur validé au banc —
+**Statut** (21/11/2026) : **v1 en place** (commits `74f14d12` puis `25f4a2b5`,
+build `[all]`). Cœur validé au banc —
 enregistrement à froid et à chaud, replay (anneau + sauvegarde), H.264/H.265/10
 bits, audio du monitor, 120/144/240 fps, socket complète, sortie propre, fichiers
 décodés de bout en bout (vidéo **et** audio) sans une erreur. Branché : étape
