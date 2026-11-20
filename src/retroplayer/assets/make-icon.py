@@ -190,7 +190,10 @@ def main():
     img = render()
 
     img.resize((512, 512), Image.LANCZOS).save(here / "icon-512.png")
-    img.resize((128, 128), Image.LANCZOS).save(here / "icon.rgba")
+    # RGBA brute, pas un PNG : `include_bytes!` + `egui::IconData` attendent
+    # 128×128×4 octets tels quels (un `.save()` PIL écrirait un en-tête PNG,
+    # l'icône de fenêtre deviendrait du bruit — vécu 20/11).
+    (here / "icon.rgba").write_bytes(img.resize((128, 128), Image.LANCZOS).tobytes())
 
     text = svg()
     (here / "icon.svg").write_text(text)
