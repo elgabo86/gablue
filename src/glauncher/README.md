@@ -165,6 +165,20 @@ Coupée par `music = false` dans `config.toml` (case « Jouer une musique de
 fond » de Gablue Manager → Lanceur de jeux) ; sans `mpv`, le launcher reste
 simplement muet.
 
+## Poussière d'étoiles
+
+Le fond est vivant : une poussière scintillante dérive devant les vignettes
+(façon fond de PS3), 130 particules environ, trois familles (poussière fine,
+étoiles moyennes, grands halos pâles). Elle **ne coûte rien au repos** : le
+minuteur (20 images par seconde) est coupé dès que la scène n'est pas visible
+(fenêtre sans focus, page de jeu, menu, prompt) ; chaque image est un
+`canvas` transparent dont les particules sont des fonctions pures du temps —
+aucune position stockée, aucune allocation par image.
+
+Réglages : `sparkles = false` dans `config.toml` coupe tout, et
+`GLAUNCHER_FX_MS=80` (16 à 200) ralentit le minuteur sans recompiler
+(`GLAUNCHER_FX_DEBUG=1` journalise les ms par image).
+
 ## Contrôles
 
 | Action      | Clavier         | Manette              |

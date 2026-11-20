@@ -62,6 +62,10 @@ pub struct Config {
     /// boucle) : elle s'efface en fondu au lancement d'un jeu et revient au
     /// retour. Coupée pendant une partie, dans tous les cas.
     pub music: bool,
+    /// Poussière d'étoiles du fond (particules scintillantes, façon PS3) :
+    /// animée à 20 Hz seulement quand le launcher est à l'écran, coupée
+    /// autrement (voir `src/sparkles.rs`).
+    pub sparkles: bool,
     /// Clé API SteamGridDB v2 (facultative ; sinon API publique sans compte).
     pub steamgriddb_key: String,
     /// Commande de lancement des paquets Windows.
@@ -103,6 +107,7 @@ impl Default for Config {
             cache_dir: "~/.local/share/glauncher".into(),
             covers: true,
             music: true,
+            sparkles: true,
             steamgriddb_key: String::new(),
             launch_wgp: "gwine".into(),
             launch_lgp: "lgplaunch".into(),

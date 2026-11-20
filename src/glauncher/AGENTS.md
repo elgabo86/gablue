@@ -79,6 +79,7 @@ leurs icônes, pour l'interface.
 - `src/gamepad.rs` — manettes via `evdev`, boutons normalisés (`BTN_SOUTH`…)
 - `src/launch.rs` — construit la commande, lance le jeu, attend sa fin
 - `src/music.rs` — musique de fond : `mpv` en tâche de fond, fondu par IPC
+- `src/sparkles.rs` — poussière d'étoiles du fond (`canvas`, minuteur 20 Hz)
 - `src/app.rs` — état, messages, bus interne, vue iced (grille + écran noir)
 - `src/state.rs` — type de vue et tri retenus (`<cache>/state.txt`)
 - `assets/glyphs/{xbox,playstation}/*.png` — glyphes Xelu (CC0), embarqués
@@ -88,6 +89,10 @@ leurs icônes, pour l'interface.
   un **G** et une épée à 45° détachée par un liseré du fond. Le SVG est la source,
   le PNG sert aux `.desktop` et aux barres des tâches.
 - `assets/star.svg` + `star.png` (128) — étoile des favoris, embarquée.
+- `assets/sparkle.png` (128) — étoile de la poussière du fond : halo, cœur et
+  quatre branches, blanc, uniquement de l'alpha (la teinte vient de l'opacité).
+  Générée une fois (gaussiennes + branches, cf. l'historique du 20/11) ; la
+  refaire n'a d'intérêt que pour changer la forme du scintillement.
 
 ## Contrats
 
@@ -425,6 +430,20 @@ leurs icônes, pour l'interface.
   quand l'écran est noir), retour en fondu à la fin du jeu ; défilement animé
   vers la sélection. Tout est piloté au temps (dt), pas par image, et
   l'abonnement `window::frames()` n'existe que pendant une animation.
+- **Poussière d'étoiles** (`sparkles = true`, défaut) : `src/sparkles.rs`, un
+  `canvas` transparent posé **au-dessus de la liste et sous la page**. Les
+  particules sont des **fonctions pures du temps** (graine par numéro, aucun
+  état stocké, aucune allocation par image) : poussière fine, étoiles
+  moyennes, grands halos pâles, dérive + scintillement `sin³`, parallaxe au
+  défilement (10-18 %). **Coût = la fréquence** : dans iced tout message
+  provoque une reconstruction de la vue *et* une image complète (pas de
+  redessin partiel), donc un minuteur propre à **20 Hz** (`FRAME_MS`) envoyé
+  par le bus, et **coupé** (`sparkles::set_running`, recalculé à chaque
+  `subscription()`) dès que la scène ne peut pas être vue : fenêtre sans
+  focus, page, menu, prompt, voile de lancement. Ne jamais le brancher sur
+  `window::frames()` : 60 Hz inutiles. Réglages sans recompiler :
+  `GLAUNCHER_FX_MS` (16-200, intervalle) et `GLAUNCHER_FX_DEBUG=1` (ms par
+  image) ; `sparkles = false` coupe tout (aucun fil lancé).
 - **Manette** : lecture directe de `/dev/input/event*` (permissions uaccess de
   logind, comme Steam), jamais de grab — le jeu garde sa manette. Lecture
   non bloquante (8 ms) pour pouvoir RÉPÉTER pendant qu'un stick est maintenu.

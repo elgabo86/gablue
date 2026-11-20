@@ -6,7 +6,7 @@ description = "Launcher de jeux pour Gablue : lance les .wgp et .lgp avec leur i
 license = "MIT"
 
 [dependencies]
-iced = { version = "0.14", features = ["image", "advanced"] }
+iced = { version = "0.14", features = ["image", "advanced", "canvas"] }
 evdev = "0.13"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 notify = "8"

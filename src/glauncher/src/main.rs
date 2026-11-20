@@ -11,6 +11,7 @@ mod kwin;
 mod launch;
 mod music;
 mod playtime;
+mod sparkles;
 mod state;
 mod library;
 mod thumbs;

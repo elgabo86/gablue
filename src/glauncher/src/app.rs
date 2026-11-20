@@ -29,6 +29,7 @@ use crate::launch;
 use crate::library::{self, ArtworkCache, Game};
 use crate::music;
 use crate::playtime;
+use crate::sparkles;
 use crate::state::{self, SortBy};
 use crate::thumbs;
 
@@ -128,7 +129,7 @@ impl Glyphs {
 static BUS: OnceLock<UnboundedSender<Message>> = OnceLock::new();
 static BUS_RX: Mutex<Option<UnboundedReceiver<Message>>> = Mutex::new(None);
 
-fn post(message: Message) {
+pub(crate) fn post(message: Message) {
     if let Some(bus) = BUS.get() {
         let _ = bus.unbounded_send(message);
     }
@@ -308,6 +309,8 @@ pub enum Message {
     Refreshed(Result<Refresh, String>),
     Launched { name: String, result: Result<i32, String> },
     Tick,
+    /// Une image de la poussière d'étoiles (minuteur de `sparkles`).
+    Sparkle,
     ToggleView,
     /// Retour (clic droit, comme Échap/B) : referme menu, page, prompt.
     Back,
@@ -506,6 +509,8 @@ pub struct App {
     star: image::Handle,
     /// Horodatage de la dernière image (animations indépendantes du framerate).
     last_tick: std::time::Instant,
+    /// Poussière d'étoiles du fond (particules scintillantes, `sparkles = true`).
+    sparkles: sparkles::Sparkles,
 }
 
 impl App {
@@ -622,12 +627,18 @@ impl App {
             input: Input::Keyboard,
             sample: image::Handle::from_bytes(COVER_SAMPLE),
             star: image::Handle::from_bytes(STAR),
+            sparkles: sparkles::Sparkles::new(),
         };
         app.apply_filter();
         // musique de fond : lecture par `mpv` dans un fil à part, l'UI
         // n'attend rien (et sans `mpv` le launcher reste simplement muet)
         if app.config.music {
             app.music = music::Music::start(&app.config.cache_dir());
+        }
+        // poussière d'étoiles : le minuteur n'existe pas si c'est coupé, donc
+        // aucune image n'est demandée au moteur pour rien
+        if app.config.sparkles {
+            sparkles::spawn_ticker();
         }
         app.request_visible_covers();
         app.sweep_thumbs();
@@ -654,6 +665,21 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
+        // Poussière d'étoiles : elle ne tourne que si elle est réellement
+        // visible. C'est le SEUL poste de dépense de l'animation (une image
+        // à 20 Hz), donc on le coupe dès que l'écran est occupé autrement :
+        // fenêtre sans focus, page de jeu, menu, prompt, voile de lancement.
+        sparkles::set_running(
+            self.config.sparkles
+                && self.active
+                && self.fade <= 0.001
+                && self.page.is_none()
+                && self.view_menu.is_none()
+                && self.art_menu.is_none()
+                && self.picker.is_none()
+                && self.rename.is_none()
+                && self.to_launch.is_none(),
+        );
         let mut subscriptions = vec![
             keyboard::listen().map(Message::Key),
             window::events().map(|(_id, event)| match event {
@@ -1346,6 +1372,12 @@ impl App {
                     Some(id) => window::set_mode(id, mode).map(|()| Message::Nothing),
                     None => Task::none(),
                 }
+            }
+            // une image de la poussière d'étoiles : le temps seul avance, les
+            // positions se recalculent dans `draw` (aucun état à balayer)
+            Message::Sparkle => {
+                self.sparkles.advance();
+                Task::none()
             }
             Message::Quit => iced::exit(),
             Message::Nothing => Task::none(),
@@ -2195,12 +2227,23 @@ impl App {
         // remplacer l'arbre recréait la zone défilante, donc le retour depuis
         // une page ramenait la grille tout en haut (constaté 18/11), et le
         // moindre déplacement la re-situait sur le jeu sélectionné.
-        // Le nombre de couches est CONSTANT (liste, page, voile, menus) : iced
-        // apparie les états des enfants d'un `stack` par position, donc ajouter
-        // une couche au milieu faisait perdre à la grille son état de
-        // défilement — le retour depuis une page ramenait tout en haut
-        // (mesuré 18/11 : offset 0 au moment même de l'ouverture de la page).
+        // Le nombre de couches est CONSTANT (liste, poussière, page, voile,
+        // menus) : iced apparie les états des enfants d'un `stack` par
+        // position, donc ajouter une couche au milieu faisait perdre à la
+        // grille son état de défilement — le retour depuis une page ramenait
+        // tout en haut (mesuré 18/11 : offset 0 au moment même de l'ouverture
+        // de la page).
         let mut view: Element<'_, Message> = self.launcher_view();
+
+        // Poussière d'étoiles : couche transparente AU-DESSUS de la liste (elle
+        // flotte donc devant les vignettes) mais SOUS la page, qui est opaque
+        // — c'est aussi pourquoi le minuteur s'arrête page ouverte.
+        let dust: Element<'_, Message> = if self.config.sparkles {
+            self.sparkles.view(self.scroll, self.fade)
+        } else {
+            container(Row::new()).width(Fill).height(Fill).into()
+        };
+        view = stack![view, dust].into();
 
         let page_layer: Element<'_, Message> = if self.page.is_some() {
             // la page doit intercepter clic et molette, sinon ils atteignent
