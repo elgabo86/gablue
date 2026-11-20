@@ -72,5 +72,12 @@ leurs pas (`CYCLE -1`/`CYCLE 1`, 0 échec).
   neuf (la preuve est l'état, pas le code de retour D-Bus).
 - Un appel D-Bus raté depuis un script peut arrêter le script **avant** la
   création de son `QTimer` : `gabluePush` est sous `try/catch`.
+- **`/tmp/opencode` est en tmpfs : le dossier n'existe pas au démarrage.**
+  `script_instance()` le crée avant d'écrire (`create_dir_all`) et journalise
+  l'échec ; sans ça l'écriture échouait en silence, le service D-Bus
+  `org.gablue.Win.p<pid>` tournait sans jamais recevoir d'`Info`, et le
+  panneau affichait ACTIONS ~600 ms puis APPLICATIONS (grâce de `page_initiale`)
+  avec un en-tête toujours vide — vécu gen1 20/11/2026, `/tmp/opencode`
+  n'apparaissait qu'au premier `lister.js`.
 - Le service doit posséder son nom **avant** le chargement du script
   (`request_name` dans le thread appelant, pas dans le thread de service).

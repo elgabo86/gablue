@@ -155,7 +155,11 @@ Le choix se fait **dans la boucle**, pas au démarrage : l'info de fenêtre arri
 par D-Bus ~100 ms après le lancement, et décider plus tôt ouvrait
 `APPLICATIONS` alors qu'une fenêtre était active (constaté). `page_initiale`
 passe à vrai au premier `Info` reçu (`recu`) ou après une grâce de **600 ms**
-(garantit un panneau utilisable même sans KWin).
+(garantit un panneau utilisable même sans KWin). En **résident**, pas de
+grâce : le script pousse depuis le démarrage de la session, attendre ne
+servirait qu'à montrer la page ACTIONS par défaut pendant que le panneau est
+déjà visible, puis à basculer sèchement sur APPLIS (vécu gen1 20/11/2026,
+script `wininfo` jamais chargé).
 Ordre retenu : la fenêtre active d'abord, puis ses actions, puis la session
 (manette en main) ; réglages en dernier (on les change une fois). Un séparateur
 fait 52 px (titre 2×, filet de 1 px jusqu'au bord), il ne reçoit ni curseur `>`
@@ -764,6 +768,13 @@ glissement `panel_w → 0` sur 200 ms.
   QTimer pousse la fenêtre active toutes les 300 ms) : à l'ouverture, le nom,
   la page et le logo du jeu sont **déjà** justes, sans rechargement D-Bus ni
   attente du premier `Info`. Coût : 3 push/s, négligeable.
+- **Relancé s'il est muet** : tant que le script ne pousse plus (aucun `Info`
+  depuis **3 s** — il en envoie un toutes les 300 ms), le résident **caché**
+  recharge `wininfo.js` une fois par minute (KWin redémarré, chargement initial
+  raté). La tentative précédente est déchargée avant la suivante (pas
+  d'empilement de scripts dans KWin). C'est la **fraîcheur** du dernier `Info`
+  qui fait foi : `recu` reste vrai à vie. Sans ça le panneau restait aveugle
+  jusqu'à la fin de la session : en-tête vide, page d'ouverture APPLICATIONS.
 - En résident, `request_close()` ne quitte pas : il glisse hors écran puis
   `cacher()` rend la manette, ferme le gate et exécute l'action différée
   (`executer_apres`, replay/capture/clavier) — panneau déjà hors écran.

@@ -1105,6 +1105,13 @@ struct App {
     off: i32,
     /// changement de page en cours : (ancienne, nouvelle, départ, sens)
     pdep: Option<(Page, Page, Instant, i32)>,
+    /// prochaine tentative de (re)chargement de `wininfo.js` alors que le
+    /// résident est caché et n'a encore reçu aucun `Info` (KWin redémarré, ou
+    /// script jamais chargé). `None` = jamais tenté.
+    kwin_retry_at: Option<Instant>,
+    /// plugin de la dernière tentative de relance de `wininfo.js` : déchargé
+    /// avant la suivante, sinon un KWin muet accumulerait un script/minute.
+    kwin_retry_plugin: Option<String>,
     /// fermeture automatique après inactivité manette (0 = jamais)
     inactivite: Duration,
     ///Horodatage du dernier pas fait au **stick** : un stick qui repasse vite
@@ -1360,6 +1367,8 @@ impl App {
             slide_ms: 0,
             off: 0,
             pdep: None,
+            kwin_retry_at: None,
+            kwin_retry_plugin: None,
             inactivite: Duration::from_secs(10),
             derniere_activite: Instant::now(),
             derniere_nav: Instant::now() - Duration::from_secs(1),
@@ -1725,6 +1734,56 @@ impl App {
     /// 20/11/2026).
     fn a_fenetre(&self) -> bool {
         fenetre_annoncee(&self.win.caption, &self.win.class)
+    }
+
+    /// Un `Info` de KWin est-il déjà arrivé dans cette instance ? Distinct de
+    /// « une fenêtre est active » : une info **vide** prouve aussi que le
+    /// script tourne.
+    fn recu_info(&self) -> bool {
+        self.win_etat
+            .as_ref()
+            .and_then(|st| st.lock().ok().map(|p| p.recu))
+            .unwrap_or(false)
+    }
+
+    /// Le script KWin pousse-t-il **encore** ? Il envoie un `Info` toutes les
+    /// 300 ms : plusieurs secondes de silence signifient « script parti »
+    /// (KWin redémarré), alors que `recu` reste vrai pour toujours.
+    fn info_fraiche(&self) -> bool {
+        self.win_etat
+            .as_ref()
+            .and_then(|st| st.lock().ok())
+            .and_then(|p| p.dernier)
+            .is_some_and(|t| t.elapsed() < Duration::from_secs(3))
+    }
+
+    /// (Re)charge `wininfo.js` dans KWin alors qu'aucun `Info` n'est jamais
+    /// arrivé (script non chargé au démarrage, KWin redémarré). Appelé
+    /// **panneau caché**, une fois par minute : sans lui, le résident restait
+    /// aveugle pour toute la session — plus de nom de fenêtre ni de logo, et
+    /// la page d'ouverture retombait sur APPLICATIONS.
+    fn relancer_wininfo(&mut self) {
+        let Some(chemin) = script_instance("wininfo.js", &self.bus) else {
+            return;
+        };
+        // une tentative précédente restée muette ne doit pas s'empiler dans
+        // KWin : un script par minute pendant des jours, non merci
+        let ancien = self.kwin_retry_plugin.take();
+        let plugin = self.nom_plugin("wininfo");
+        let ok = match self.kbus.as_ref() {
+            Some(kbus) => {
+                if let Some(a) = &ancien {
+                    let _ = kbus.decharger(a);
+                }
+                kbus.demarrer_wininfo(&chemin, &plugin)
+            }
+            None => return,
+        };
+        if ok {
+            self.kwin_retry_plugin = Some(plugin.clone());
+            self.plugins.push(plugin);
+        }
+        println!("KWIN info={} (relance)", if ok { "active" } else { "refusee" });
     }
 
     /// Premier index sélectionnable qui n'est **pas** l'en-tête : une page
@@ -4812,6 +4871,9 @@ struct Partage {
     fin: usize,
     /// au moins un `Info` reçu (preuve que le script KWin tourne vraiment)
     recu: bool,
+    /// instant du dernier `Info` : le script pousse toutes les 300 ms, donc
+    /// plusieurs secondes de silence = script déchargé (KWin redémarré)
+    dernier: Option<Instant>,
 }
 
 struct WinPartage(Arc<Mutex<Partage>>);
@@ -4835,6 +4897,7 @@ impl WinPartage {
             p.info.fullscreen = fullscreen;
             p.info.uuid = uuid.to_string();
             p.recu = true;
+            p.dernier = Some(Instant::now());
         }
     }
 
@@ -5415,7 +5478,20 @@ fn script_instance(nom: &str, bus: &str) -> Option<String> {
         nom.trim_end_matches(".js"),
         std::process::id()
     );
-    std::fs::write(&dest, txt.replace("__BUS__", bus)).ok()?;
+    // Le dossier est en tmpfs, donc absent après chaque démarrage : sans le
+    // créer, l'écriture échouait **en silence** et le service D-Bus restait
+    // sans le moindre `Info` (aucune fenêtre connue, et le panneau tombait
+    // dans la grâce de 600 ms en montrant ACTIONS avant APPLICATIONS —
+    // vécu gen1 20/11/2026, `/tmp/opencode` né seulement au premier
+    // `lister.js`).
+    if let Err(e) = std::fs::create_dir_all("/tmp/opencode") {
+        eprintln!("scripts KWin: /tmp/opencode inaccessible: {e}");
+        return None;
+    }
+    if let Err(e) = std::fs::write(&dest, txt.replace("__BUS__", bus)) {
+        eprintln!("scripts KWin: ecriture {dest}: {e}");
+        return None;
+    }
     Some(dest)
 }
 
@@ -5783,6 +5859,9 @@ fn main() {
     // décider ici ouvrait `APPLICATIONS` alors qu'une fenêtre était active.
     app.focus_impose = focus_force;
     app.depart = Instant::now();
+    // le bloc d'info de fenêtre vient de tenter son chargement : une minute
+    // avant de réessayer depuis la boucle (résident caché)
+    app.kwin_retry_at = Some(Instant::now() + Duration::from_secs(60));
 
     if app.console {
         // menu système (`--console`) : que des actions irréversibles
@@ -6026,17 +6105,29 @@ fn main() {
         if fenetre_changee {
             app.rafraichir_jeu();
         }
+        // Résident caché sans le moindre `Info` reçu : on retente le script,
+        // une fois par minute. KWin redémarré ou premier chargement raté
+        // laissait sinon le panneau aveugle (en-tête vide, page d'ouverture
+        // APPLICATIONS) jusqu'à la fin de la session. Caché, ça ne se voit pas.
+        if app.resident && !app.visible && !app.info_fraiche() {
+            let due = app.kwin_retry_at.map_or(true, |t| Instant::now() >= t);
+            if due {
+                app.kwin_retry_at = Some(Instant::now() + Duration::from_secs(60));
+                app.relancer_wininfo();
+            }
+        }
         // Page d'ouverture, décidée **une fois** que l'info de fenêtre est
         // arrivée (D-Bus, donc après le démarrage) ou après une grâce de
         // 600 ms : fenêtre active -> ACTIONS avec le curseur sur son nom ;
         // aucune fenêtre -> APPLICATIONS, la page ACTIONS n'aurait aucune cible.
+        // En résident, pas de grâce : le script pousse depuis le démarrage de
+        // la session, attendre ne servirait qu'à montrer la page ACTIONS par
+        // défaut (le panneau est déjà visible) avant de basculer.
         if !app.page_initiale && app.configured {
-            let recu = app
-                .win_etat
-                .as_ref()
-                .and_then(|st| st.lock().ok().map(|p| p.recu))
-                .unwrap_or(false);
-            if recu || app.depart.elapsed() >= Duration::from_millis(600) {
+            let decide = app.recu_info()
+                || app.resident
+                || app.depart.elapsed() >= Duration::from_millis(600);
+            if decide {
                 app.page_initiale = true;
                 if !app.console && !app.focus_impose {
                     if !app.a_fenetre() {
