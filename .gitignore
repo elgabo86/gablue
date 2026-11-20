@@ -12,6 +12,7 @@ src/gablue-pad/gpad-kbd
 src/gablue-pad/gpad-mouse
 src/gablue-pad/gpad-inhibit
 src/gablue-pad/gpad-rumble
+src/gablue-pad/gpad-login
 src/gablue-isomount/gablue-isomount
 src/gablue-dualsense/gablue-dualsense-ctl
 

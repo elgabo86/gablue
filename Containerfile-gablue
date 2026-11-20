@@ -129,6 +129,7 @@ COPY src/gablue-pad/kbd /src/gablue-pad/kbd
 COPY src/gablue-pad/mouse /src/gablue-pad/mouse
 COPY src/gablue-pad/inhibit /src/gablue-pad/inhibit
 COPY src/gablue-pad/rumble /src/gablue-pad/rumble
+COPY src/gablue-pad/login /src/gablue-pad/login
 COPY src/gablue-pad/gate /src/gablue-pad/gate
 COPY src/gablue-pad/kwin /src/gablue-pad/kwin
 COPY src/gablue-pad/scripts /src/gablue-pad/scripts
