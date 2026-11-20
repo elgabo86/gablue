@@ -216,11 +216,19 @@ s'ouvre par l'IPC (`kbd <node>`) ou par `--clavier <node>` (repli du
 déclencheur : un seul usage, puis sortie, sinon chaque appui laisserait un
 overlay orphelin).
 
-- **Surface dédiée plein écran**, transparente, `keyboard_interactivity =
-  None` + région d'entrée vide : le focus reste à la fenêtre active et la
-  souris traverse. Le panneau est dessiné **à sa position dans le tampon** (les
-  marges négatives de layer-shell sont ignorées par KWin) : le déplacer ne
-  remappe rien.
+- **Surface dédiée à la taille du panneau**, transparente,
+  `keyboard_interactivity = None` + région d'entrée vide : le focus reste à la
+  fenêtre active et la souris traverse. Elle est ancrée en haut à gauche et
+  **déplacée par marges layer-shell** : KWin ne réagit qu'à `marginsChanged`
+  (`scheduleRearrange`), sans configure et sans renvoyer de tampon.
+- **Ne JAMAIS élargir cette surface à l'écran** en dessinant le panneau dedans
+  (première version, à ne pas refaire) : à chaque nouveau tampon KWin fait
+  `im.convertTo()` sur **toute l'image** (`GLTexture::update`) — 3,7 M pixels
+  par image en 1440p, d'où un déplacement qui saccade. Le dessin du panneau
+  coûte 0,31 ms (`--bench-clavier`), le coût était donc bien côté compositeur.
+  Une surface pleine taille n'a qu'un intérêt : apprendre la taille **logique**
+  de l'écran (sonde au premier `configure`, puis on rétrécit) — c'est ce qui
+  évite de supposer un facteur d'échelle.
 - **Frappe par clavier uinput** (`gablue-clavier`, créé au premier usage —
   350 ms d'enregistrement, gardé toute la session) : le noyau livre les touches
   à la fenêtre active comme un clavier USB. KWin n'implémente pas
@@ -231,10 +239,9 @@ overlay orphelin).
   `GPAD_CLAVIER_LAYOUT`/`GPAD_CLAVIER_VARIANT` pour le banc) : 4 niveaux
   affichés, accents morts marqués, `code evdev = keycode XKB − 8`. Aucune table
   en dur, donc ch-DE marche sans code.
-- **Un rectangle effacé par tampon** avant redessin (la position qu'il portait)
-  + dommage de l'union ancienne/nouvelle : les deux tampons alternent, sans ça
-  l'ancienne position reste visible en fantôme. Ne pas remplir tout le tampon :
-  à 2560×1440 c'est 14 Mo par image, et le clavier se déplace à 60 Hz.
+- **Tampon = panneau** (707×367) : on repeint entièrement à chaque image
+  (~0,3 ms), et un déplacement ne redessine **rien** (seules les marges
+  changent, le tampon n'est pas renvoyé).
 - Position mémorisée dans `~/.config/gablue/gpad-clavier` (écrite à la
   fermeture), bornée à l'écran à chaque ouverture.
 
@@ -897,6 +904,7 @@ nettoyer à la main.
 | `--test-margin N` | marge layer-shell positive (banc) |
 | `--no-kwin` | n'installe pas le script d'info de fenêtre |
 | `--clavier [node]` | ouvre **directement le clavier virtuel**, puis sort à la fermeture (repli du déclencheur, banc). Sans node : la manette détectée ; sans aucune manette : sortie code 1 |
+| `--bench-clavier` | mesure le coût d'une image du clavier (aucun Wayland, aucune fenêtre, aucun grab) : `BENCH panneau … ms` |
 
 | Variable | Rôle |
 |---|---|

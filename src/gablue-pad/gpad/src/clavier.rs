@@ -591,13 +591,11 @@ impl Etat {
             .unwrap_or_default()
     }
 
-    /// Position (x, y) et taille du panneau, pour la persistance.
-    pub fn panneau(&self) -> (i32, i32, i32, i32) {
-        (self.x, self.y, self.largeur, self.hauteur)
-    }
-
-    pub fn dessiner(&self, cv: &mut Canvas) {
-        let (px, py) = (self.x, self.y);
+    /// Dessine le panneau à `(ox, oy)` **dans le tampon** : la surface a
+    /// exactement la taille du panneau (position écran = marges layer-shell),
+    /// donc on dessine à l'origine et `x`/`y` ne servent qu'à la placer.
+    pub fn dessiner(&self, cv: &mut Canvas, ox: i32, oy: i32) {
+        let (px, py) = (ox, oy);
         let (lw, lh) = (self.largeur, self.hauteur);
 
         // cadre + fond translucide
@@ -826,11 +824,6 @@ impl Clavier {
         (self.etat.x, self.etat.y)
     }
 
-    /// Rectangle occupé par le panneau (x, y, largeur, hauteur).
-    pub fn panneau(&self) -> (i32, i32, i32, i32) {
-        self.etat.panneau()
-    }
-
     pub fn placer(&mut self, x: i32, y: i32) {
         self.etat.x = x;
         self.etat.y = y;
@@ -838,7 +831,12 @@ impl Clavier {
     }
 
     pub fn dessiner(&self, cv: &mut Canvas) {
-        self.etat.dessiner(cv);
+        self.etat.dessiner(cv, 0, 0);
+    }
+
+    /// Taille du panneau (= taille de la surface et des tampons).
+    pub fn taille(&self) -> (i32, i32) {
+        (self.etat.largeur, self.etat.hauteur)
     }
 
     fn taper(&mut self) {

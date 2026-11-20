@@ -1162,12 +1162,14 @@ struct App {
     kbd_layer: Option<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1>,
     kbd_buffers: Vec<ShmBuffer>,
     kbd_free: Vec<usize>,
+    /// taille logique de l'écran, apprise par une sonde plein écran (une seule
+    /// fois) : c'est elle qui borne la position du panneau
+    kbd_ecran: (i32, i32),
+    /// `kbd_size` = taille du tampon = taille du panneau (jamais l'écran :
+    /// KWin reconvertit toute l'image à chaque tampon, 14 Mo en 1440p)
     kbd_size: (i32, i32),
     kbd_configured: bool,
     kbd_dirty: bool,
-    /// rectangle du panneau dessiné dans chaque tampon : les deux alternent,
-    /// effacer « sa » position évite un fantôme à l'ancien emplacement
-    kbd_last: [(i32, i32, i32, i32); 2],
     /// le clavier est ouvert (la manette pilote les touches, pas le menu)
     kbd_ouvert: bool,
     ///Horodatage du dernier pas fait au **stick** : un stick qui repasse vite
@@ -1435,10 +1437,10 @@ impl App {
             kbd_layer: None,
             kbd_buffers: Vec::new(),
             kbd_free: Vec::new(),
+            kbd_ecran: (0, 0),
             kbd_size: (0, 0),
             kbd_configured: false,
             kbd_dirty: false,
-            kbd_last: [(0, 0, 0, 0); 2],
             kbd_ouvert: false,
             derniere_activite: Instant::now(),
             derniere_nav: Instant::now() - Duration::from_secs(1),
@@ -1652,6 +1654,8 @@ impl App {
             // Home garde son rôle (appui court = fermer, maintenu = menu
             // système), il est traité juste au-dessus.
             if self.kbd_ouvert {
+                // déplacement : les marges de la surface, pas le tampon
+                let mut bouge = false;
                 let change = match (ev.type_, ev.code, ev.value) {
                     (EV_SYN, _, _) => false,
                     (EV_KEY, code, v) if v == 0 || v == 1 => {
@@ -1681,16 +1685,21 @@ impl App {
                     }
                     (EV_ABS, ABS_RX, v) => {
                         let n = norme_axe(v, self.abs_rx);
-                        self.clavier.as_mut().is_some_and(|c| c.stick_droit(0, n))
+                        bouge = self.clavier.as_mut().is_some_and(|c| c.stick_droit(0, n));
+                        false
                     }
                     (EV_ABS, ABS_RY, v) => {
                         let n = norme_axe(v, self.abs_ry);
-                        self.clavier.as_mut().is_some_and(|c| c.stick_droit(1, n))
+                        bouge = self.clavier.as_mut().is_some_and(|c| c.stick_droit(1, n));
+                        false
                     }
                     _ => false,
                 };
                 if change {
                     self.kbd_dirty = true;
+                }
+                if bouge {
+                    self.placer_surface_clavier();
                 }
                 continue;
             }
@@ -2020,10 +2029,18 @@ impl App {
         let _ = std::io::stdout().flush();
     }
 
-    /// Surface overlay **plein écran**, transparente : le panneau se dessine
-    /// à sa position dans le tampon, ce qui permet de le déplacer sans
-    /// remapper quoi que ce soit (les marges négatives de layer-shell sont
-    /// ignorées par KWin).
+    /// Surface overlay **de la taille du panneau**, transparente. Le premier
+    /// `configure` est demandé plein écran uniquement pour apprendre la taille
+    /// logique de l'écran ; on rétrécit ensuite à la taille du panneau et on le
+    /// déplace par **marges layer-shell** (ancré en haut à gauche, donc marges
+    /// positives — KWin n'ignore que les négatives).
+    ///
+    /// Pourquoi pas une surface plein écran avec le panneau dessiné dedans : à
+    /// chaque nouveau tampon KWin fait `im.convertTo()` sur **toute l'image**
+    /// (`GLTexture::update`) — 3,7 M pixels par image en 1440p, mesuré comme
+    /// la cause des saccades du déplacement ; un tampon de la taille du panneau
+    /// fait 14 fois moins de travail, et un déplacement ne change même pas de
+    /// tampon.
     fn creer_surface_clavier(&mut self) {
         if self.kbd_surface.is_some() {
             return;
@@ -2062,6 +2079,40 @@ impl App {
         self.kbd_configured = false;
     }
 
+    /// Phase 2 : la surface passe de « plein écran de sonde » à la taille du
+    /// panneau, ancrée en haut à gauche, posée à la position mémorisée.
+    fn reduire_surface_clavier(&mut self) {
+        let Some(c) = &self.clavier else { return };
+        let (pw, ph) = c.taille();
+        if pw <= 0 || ph <= 0 {
+            return;
+        }
+        let (x, y) = c.position();
+        let (Some(layer), Some(surface)) = (self.kbd_layer.as_ref(), self.kbd_surface.as_ref())
+        else {
+            return;
+        };
+        layer.set_anchor(zwlr_layer_surface_v1::Anchor::Top | zwlr_layer_surface_v1::Anchor::Left);
+        layer.set_size(pw as u32, ph as u32);
+        layer.set_margin(x.max(0), y.max(0), 0, 0);
+        surface.commit();
+        self.kbd_configured = false;
+        println!("KBD surface {pw}x{ph} pos=({x},{y})");
+    }
+
+    /// Déplacement : seules les marges changent, donc **aucun tampon n'est
+    /// renvoyé** (KWin repose l'item, sans reconvertir d'image).
+    fn placer_surface_clavier(&mut self) {
+        let Some(c) = &self.clavier else { return };
+        let (x, y) = c.position();
+        let (Some(layer), Some(surface)) = (self.kbd_layer.as_ref(), self.kbd_surface.as_ref())
+        else {
+            return;
+        };
+        layer.set_margin(x.max(0), y.max(0), 0, 0);
+        surface.commit();
+    }
+
     fn detruire_surface_clavier(&mut self) {
         if let Some(l) = self.kbd_layer.take() {
             l.destroy();
@@ -2074,6 +2125,9 @@ impl App {
             b.buffer.destroy();
         }
         self.kbd_free.clear();
+        // la sonde plein écran sera refaite : l'écran a pu changer de taille
+        self.kbd_ecran = (0, 0);
+        self.kbd_size = (0, 0);
     }
 
     fn alloc_kbd_buffers(&mut self) {
@@ -2087,7 +2141,6 @@ impl App {
             b.buffer.destroy();
         }
         self.kbd_free.clear();
-        self.kbd_last = [(0, 0, 0, 0); 2];
         let stride = w * 4;
         let len = (stride * h) as usize;
         let max = 64 << 20;
@@ -2146,11 +2199,11 @@ impl App {
         if !self.kbd_ouvert {
             return;
         }
-        let (lw, lh) = self.kbd_size;
+        let ecran = self.kbd_ecran;
+        let (lw, lh) = ecran;
         if lw <= 0 || lh <= 0 {
             return;
         }
-        let ecran = (lw, lh);
         if let Some(c) = &mut self.clavier {
             // rouvert : on garde l'injection (le clavier noyau coûte 350 ms)
             c.ecran(ecran);
@@ -2197,17 +2250,9 @@ impl App {
         let buffer = self.kbd_buffers[idx].buffer.clone();
         let pixels =
             unsafe { std::slice::from_raw_parts_mut(ptr as *mut u32, len / 4) };
-        let neuf = self
-            .clavier
-            .as_ref()
-            .map(|c| c.panneau())
-            .unwrap_or((0, 0, 0, 0));
-        // surface plein écran : on n'efface QUE la position que ce tampon
-        // portait (les deux alternent), sinon on laisserait un fantôme
-        let ancien = self.kbd_last[idx];
-        if ancien.2 > 0 && ancien.3 > 0 {
-            effacer_rect(pixels, w, h, ancien);
-        }
+        // le tampon EST le panneau : tout repeindre coûte ~0,3 ms et rend le
+        // déplacement gratuit (il ne change pas de tampon du tout)
+        pixels.fill(0);
         if let Some(c) = &self.clavier {
             let mut cv = Canvas {
                 px: pixels,
@@ -2219,11 +2264,9 @@ impl App {
             };
             c.dessiner(&mut cv);
         }
-        self.kbd_last[idx] = neuf;
-        let zone = union_rect(ancien, neuf, w, h);
         if let Some(surface) = &self.kbd_surface {
             surface.attach(Some(&buffer), 0, 0);
-            surface.damage_buffer(zone.0, zone.1, zone.2, zone.3);
+            surface.damage_buffer(0, 0, w, h);
             surface.commit();
         }
         self.kbd_dirty = false;
@@ -4516,21 +4559,28 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, KbdSurf> for App {
             } => {
                 layer.ack_configure(serial);
                 let taille = (width as i32, height as i32);
+                if taille.0 <= 0 || taille.1 <= 0 {
+                    return;
+                }
+                if state.kbd_ecran == (0, 0) {
+                    // phase 1 : sonde plein écran -> taille logique de l'écran
+                    state.kbd_ecran = taille;
+                    state.pret_clavier();
+                    state.reduire_surface_clavier();
+                    return;
+                }
+                // phase 2 : la surface a la taille du panneau
                 if taille != state.kbd_size || state.kbd_buffers.is_empty() {
                     state.kbd_size = taille;
                     state.alloc_kbd_buffers();
                 }
-                if taille.0 > 0 && taille.1 > 0 {
-                    if !state.kbd_configured {
-                        state.kbd_configured = true;
-                        state.pret_clavier();
-                    } else if let Some(c) = &mut state.clavier {
-                        // écran redimensionné : on borne la position, sans la
-                        // relire du fichier (elle a pu bouger depuis)
-                        c.ecran(taille);
-                    }
-                    state.kbd_dirty = true;
+                if !state.kbd_configured {
+                    state.kbd_configured = true;
+                } else if let Some(c) = &mut state.clavier {
+                    // écran redimensionné : on borne la position
+                    c.ecran(state.kbd_ecran);
                 }
+                state.kbd_dirty = true;
             }
             zwlr_layer_surface_v1::Event::Closed => state.fermer_clavier(),
             _ => {}
@@ -5769,33 +5819,6 @@ const ACCENTS: [(&str, &str); 22] = [
     ("retro", "Retro"),
 ];
 
-/// Efface un rectangle du tampon (`(x, y, w, h)`), borné à la surface.
-fn effacer_rect(px: &mut [u32], w: i32, h: i32, r: (i32, i32, i32, i32)) {
-    let x0 = r.0.max(0).min(w);
-    let y0 = r.1.max(0).min(h);
-    let x1 = (r.0 + r.2).max(0).min(w);
-    let y1 = (r.1 + r.3).max(0).min(h);
-    for y in y0..y1 {
-        let debut = (y * w + x0) as usize;
-        let fin = (y * w + x1) as usize;
-        px[debut..fin].fill(0);
-    }
-}
-
-/// Plus petit rectangle couvrant les deux, borné à la surface.
-fn union_rect(
-    a: (i32, i32, i32, i32),
-    b: (i32, i32, i32, i32),
-    w: i32,
-    h: i32,
-) -> (i32, i32, i32, i32) {
-    let x0 = a.0.min(b.0).max(0).min(w);
-    let y0 = a.1.min(b.1).max(0).min(h);
-    let x1 = (a.0 + a.2).max(b.0 + b.2).max(0).min(w);
-    let y1 = (a.1 + a.3).max(b.1 + b.3).max(0).min(h);
-    (x0, y0, (x1 - x0).max(0), (y1 - y0).max(0))
-}
-
 /// Axe evdev → −1..1 (0 au centre), d'après la plage réelle du périphérique.
 /// **Borné** : un périphérique peut annoncer une plage étroite (`0..1`) et
 /// envoyer bien au-delà ; sans borne, un seul événement produisait un
@@ -6130,6 +6153,44 @@ fn gate_cmd(sock: &str, msg: &str) -> bool {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+
+    // Banc de rendu du clavier : aucun Wayland, aucune fenêtre, aucun grab —
+    // mesure le coût d'une image (c'est lui qui fait saccader le déplacement).
+    if args.iter().any(|a| a == "--bench-clavier") {
+        let (layout, variant) = clavier::layout_session();
+        let rangees = clavier::charger(&layout, &variant).expect("keymap");
+        let c = clavier::Clavier::neuf(rangees, &layout, &variant, (2560, 1440));
+        let police = charger_police();
+        let (pw, ph) = c.taille();
+        let (w, h) = (pw as usize, ph as usize);
+        let mut px = vec![0u32; w * h];
+        let n = 40;
+        let t = Instant::now();
+        for _ in 0..n {
+            let mut cv = Canvas {
+                px: &mut px,
+                w,
+                h,
+                police: police.as_ref(),
+                ox: 0,
+                clip: None,
+            };
+            cv.px.fill(0);
+            c.dessiner(&mut cv);
+        }
+        let dessin = t.elapsed().as_secs_f64() * 1000.0 / n as f64;
+        let t = Instant::now();
+        for _ in 0..n {
+            px.fill(0);
+        }
+        let vide = t.elapsed().as_secs_f64() * 1000.0 / n as f64;
+        println!(
+            "BENCH panneau {:.2} ms | surface videe {:.2} ms | {pw}x{ph} dans {w}x{h}",
+            dessin, vide
+        );
+        return;
+    }
+
     let auto_close: Option<Duration> = arg_value(&args, "--seconds")
         .and_then(|s| s.parse::<u64>().ok())
         .map(Duration::from_secs);
