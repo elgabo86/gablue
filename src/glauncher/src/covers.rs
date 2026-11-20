@@ -18,7 +18,7 @@
 //! Tout est écrit dans le cache (`<cache>/covers`, `heroes`, `logos`, `icons`),
 //! jamais dans les dossiers de jeux : les sources restent en lecture seule.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -112,6 +112,10 @@ pub enum Query {
     /// Extrait l'icône du paquet lui-même (`.icon.png` à la racine du squashfs,
     /// comme le fait `create-game-shortcut.sh` de Gablue).
     Icon { slug: String, pack: PathBuf },
+    /// Année de sortie du jeu (page d'un jeu) : une seule requête
+    /// d'autocomplete, indépendante des visuels — sans ça, un jeu dont toutes
+    /// les images sont déjà en cache n'aurait jamais son année.
+    Year { slug: String, name: String },
 }
 
 /// Visuel du « top » : URL d'origine, octets et extension.
@@ -156,6 +160,9 @@ pub enum CoverEvent {
     },
     /// Icône extraite du paquet (voie locale, distincte des icônes SGDB).
     Icon { slug: String, bytes: Vec<u8> },
+    /// Année de sortie trouvée pour ce jeu (`None` = SteamGridDB n'en donne
+    /// pas : c'est noté, on ne redemandera plus).
+    Year { slug: String, year: Option<u32> },
 }
 
 /// Travail en attente du worker, réparti en deux voies.
@@ -393,6 +400,21 @@ where
                         }
                     }
 
+                    // --- année de sortie (page d'un jeu) ---
+                    Query::Year { slug, name } => match client.release_year(&name) {
+                        Ok(year) => {
+                            if year.is_none() {
+                                eprintln!("glauncher : année de « {name} » inconnue");
+                            }
+                            emit(CoverEvent::Year { slug, year });
+                        }
+                        // erreur réseau : on ne note RIEN, la question pourra
+                        // être reposée (contrairement à « SGDB n'a pas de date »)
+                        Err(error) => {
+                            eprintln!("glauncher : année « {name} » : {error}")
+                        }
+                    },
+
                     // --- icône du paquet ---
                     Query::Icon { slug, pack } => match pack_icon(&pack) {
                         Some(bytes) => {
@@ -423,6 +445,127 @@ pub struct UpdateReport {
     pub missing: usize,
     pub failed: usize,
     pub skipped: usize,
+    /// Années de sortie apprises (une requête par jeu, une seule fois).
+    pub years: usize,
+}
+
+/// Fichier des années de sortie, dans `assets/` : c'est le dossier partagé
+/// (Syncthing), donc les années suivent les visuels chez un autre poste.
+///
+/// Format : `slug=1998` par ligne, trié par slug ; `slug=` veut dire
+/// « regardé, SteamGridDB ne donne pas de date » — une année connue n'est
+/// **jamais** redemandée, ni par l'interface ni par `--update`.
+pub fn years_path(assets: &Path) -> PathBuf {
+    assets.join("years.txt")
+}
+
+/// Lit `years.txt` (un fichier absent ou illisible donne une table vide).
+pub fn load_years(path: &Path) -> BTreeMap<String, Option<u32>> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return BTreeMap::new();
+    };
+    let mut years = BTreeMap::new();
+    for line in text.lines() {
+        let Some((slug, value)) = line.split_once('=') else {
+            continue;
+        };
+        let slug = slug.trim();
+        if slug.is_empty() {
+            continue;
+        }
+        let value = value.trim();
+        years.insert(
+            slug.to_string(),
+            if value.is_empty() {
+                None
+            } else {
+                value.parse::<u32>().ok()
+            },
+        );
+    }
+    years
+}
+
+/// Écrit `years.txt` (temporaire + renommage), en **fusionnant** ce qui est
+/// déjà sur le disque : `--update` et l'interface peuvent écrire tous les deux.
+pub fn save_years(path: &Path, years: &BTreeMap<String, Option<u32>>) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut all = load_years(path);
+    for (slug, year) in years {
+        all.insert(slug.clone(), *year);
+    }
+    let mut text = String::new();
+    for (slug, year) in &all {
+        match year {
+            Some(year) => text.push_str(&format!("{slug}={year}\n")),
+            None => text.push_str(&format!("{slug}=\n")),
+        }
+    }
+    write_atomic(path, text.as_bytes());
+}
+
+/// Apprend l'année d'un jeu si elle manque, et l'écrit tout de suite (arrêt
+/// brutal = rien de perdu). Rend `true` si une requête a eu lieu : l'appelant
+/// gère l'attente entre deux requêtes.
+fn learn_year<F>(
+    client: &mut Client,
+    path: &Path,
+    years: &mut BTreeMap<String, Option<u32>>,
+    slug: &str,
+    name: &str,
+    totals: &mut UpdateReport,
+    report: &mut F,
+) -> bool
+where
+    F: FnMut(String),
+{
+    if years.contains_key(slug) {
+        return false;
+    }
+    match client.release_year(name) {
+        Ok(year) => {
+            years.insert(slug.to_string(), year);
+            totals.years += 1;
+            save_years(path, years);
+            report(match year {
+                Some(year) => format!("année « {name} » → {year}"),
+                None => format!("année « {name} » inconnue"),
+            });
+        }
+        Err(error) => {
+            totals.failed += 1;
+            report(format!("année « {name} » : {error}"));
+        }
+    }
+    true
+}
+
+/// `--date` : n'apprend que les années de sortie manquantes, sans toucher aux
+/// visuels. Une requête par jeu inconnu, 250 ms entre deux.
+pub fn update_years<F>(
+    assets: &Path,
+    api_key: Option<String>,
+    games: &[(String, String)],
+    report: &mut F,
+) -> UpdateReport
+where
+    F: FnMut(String),
+{
+    let mut client = Client::new(api_key);
+    let mut totals = UpdateReport::default();
+    let path = years_path(assets);
+    let mut years = load_years(&path);
+
+    for (slug, name) in games {
+        if !learn_year(&mut client, &path, &mut years, slug, name, &mut totals, report) {
+            totals.skipped += 1;
+            continue;
+        }
+        std::thread::sleep(THROTTLE);
+    }
+    totals
 }
 
 /// Télécharge ce qui manque pour TOUS les jeux listés (mode `--update`).
@@ -443,8 +586,23 @@ where
 {
     let mut client = Client::new(api_key);
     let mut totals = UpdateReport::default();
+    // années déjà connues (fichier partagé) : une seule requête par jeu
+    let years_file = years_path(assets);
+    let mut years = load_years(&years_file);
 
     for (slug, name, pack) in games {
+        // --- année de sortie : une requête, puis plus jamais ---
+        if learn_year(
+            &mut client,
+            &years_file,
+            &mut years,
+            slug,
+            name,
+            &mut totals,
+            report,
+        ) {
+            std::thread::sleep(THROTTLE);
+        }
         for kind in ArtKind::ALL {
             let dir = assets.join(kind.dir());
             let marks = marks_root.join(kind.dir());
@@ -997,6 +1155,31 @@ impl Client {
         Ok(self.cookie.as_deref().unwrap_or_default())
     }
 
+    /// Année de sortie du premier résultat de l'autocomplete, dans l'API en
+    /// service (clé ou publique). Une seule requête, sans visuels.
+    fn release_year(&mut self, name: &str) -> Result<Option<u32>, String> {
+        let term = urlencode(name);
+        match self.key.clone() {
+            Some(key) => {
+                let auth = format!("Bearer {key}");
+                let url = format!("{BASE}/api/v2/search/autocomplete/{term}");
+                let body = http_get_text(&url, &[("Authorization", auth.as_str())])?;
+                Ok(first_game_year(&parse_json(&body)?))
+            }
+            None => {
+                let cookie = self.visitor_cookie()?.to_string();
+                let headers = [
+                    ("Cookie", cookie.as_str()),
+                    ("X-Requested-With", "XMLHttpRequest"),
+                    ("Referer", BASE),
+                ];
+                let url = format!("{BASE}/api/public/search/autocomplete?term={term}");
+                let body = http_get_text(&url, &headers)?;
+                Ok(first_game_year(&parse_json(&body)?))
+            }
+        }
+    }
+
     // --- API v2 officielle (clé) ---
 
     fn candidates_official(
@@ -1035,6 +1218,36 @@ impl Client {
 /// Identifiant du premier jeu de l'autocomplete (`data[0]`).
 fn first_game(json: &Value) -> Option<u64> {
     json["data"].as_array()?.first()?.get("id")?.as_u64()
+}
+
+/// Année de sortie du premier jeu de l'autocomplete (`data[0].release_date`,
+/// en secondes Unix). SteamGridDB la donne dans les deux API (publique comme
+/// v2) ; absente ou nulle pour quelques entrées, d'où `None`.
+fn first_game_year(json: &Value) -> Option<u32> {
+    let date = json["data"].as_array()?.first()?.get("release_date")?.as_u64()?;
+    year_from_unix(date)
+}
+
+/// Année civile d'un horodatage Unix. Petite boucle depuis 1970 (quelques
+/// dizaines de tours) plutôt qu'une dépendance de calendrier : c'est une
+/// conversion de date, pas un besoin d'arithmétique complète.
+fn year_from_unix(seconds: u64) -> Option<u32> {
+    // une date codée 0 (ou dans les premières heures de 1970) veut dire
+    // « pas de date » chez SGDB, pas le 1er janvier 1970
+    if seconds < 86_400 {
+        return None;
+    }
+    let mut days = (seconds / 86_400) as i64;
+    let mut year = 1970u32;
+    loop {
+        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+        let length = if leap { 366 } else { 365 };
+        if days < length {
+            return Some(year);
+        }
+        days -= length;
+        year += 1;
+    }
 }
 
 /// Candidats **dans l'ordre renvoyé** (celui du « top ») : on ne réordonne
@@ -1376,6 +1589,64 @@ mod tests {
         assert_eq!(ArtKind::Hero.dir(), "heroes");
         assert_eq!(ArtKind::Logo.dir(), "logos");
         assert_eq!(ArtKind::Icon.dir(), "icons");
+    }
+
+    #[test]
+    fn les_annees_font_un_aller_retour_et_fusionnent() {
+        let dir = std::env::temp_dir().join(format!("glauncher-years-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("years.txt");
+
+        let mut years = BTreeMap::new();
+        years.insert("wario-land-4".to_string(), Some(2001));
+        years.insert("inconnu".to_string(), None);
+        save_years(&path, &years);
+
+        let relu = load_years(&path);
+        assert_eq!(relu.get("wario-land-4"), Some(&Some(2001)));
+        assert_eq!(relu.get("inconnu"), Some(&None), "« pas de date » est noté");
+
+        // une autre source (--update, autre poste) ne perd pas l'existant
+        let mut autres = BTreeMap::new();
+        autres.insert("zelda".to_string(), Some(1998));
+        save_years(&path, &autres);
+        let relu = load_years(&path);
+        assert_eq!(relu.len(), 3);
+        assert_eq!(relu.get("zelda"), Some(&Some(1998)));
+        assert_eq!(relu.get("wario-land-4"), Some(&Some(2001)));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn l_annee_vient_de_la_date_de_sortie() {
+        // Wario Land II (1998), Wario Land 3 (2001), Wario Land: Shake It! (2008)
+        assert_eq!(year_from_unix(889_401_600), Some(1998));
+        assert_eq!(year_from_unix(998_352_000), Some(2001));
+        assert_eq!(year_from_unix(1_216_857_600), Some(2008));
+        // au réveillon : c'est le jour qui décide, pas l'approximation
+        assert_eq!(year_from_unix(946_684_799), Some(1999)); // 31/12/1999 23:59:59
+        assert_eq!(year_from_unix(946_684_800), Some(2000)); // 01/01/2000 00:00
+        // 29 février d'une année bissextile
+        assert_eq!(year_from_unix(951_782_400), Some(2000)); // 29/02/2000
+        // pas de date
+        assert_eq!(year_from_unix(0), None);
+        assert_eq!(year_from_unix(86_399), None);
+    }
+
+    /// Sonde réseau (ignorée) : l'année vient bien de l'autocomplete.
+    #[test]
+    #[ignore]
+    fn annee_reseau() {
+        let mut client = Client::new(std::env::var("SGDB_API_KEY").ok());
+        for (name, annee) in [("Wario Land 4", 2001), ("Wario Land II", 1998)] {
+            let year = client
+                .release_year(name)
+                .unwrap_or_else(|err| panic!("{name} : {err}"));
+            eprintln!("{name} : {year:?}");
+            assert_eq!(year, Some(annee), "{name}");
+        }
     }
 
     /// Sonde réseau (ignorée) : le top doit être proposé pour chaque type.

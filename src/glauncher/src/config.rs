@@ -200,6 +200,7 @@ impl Config {
         self.cache_dir().join("state.txt")
     }
 
+
     /// Racine de TOUS les visuels téléchargés ou extraits : `assets/` regroupe
     /// grilles, héros, logos et icônes sous `~/.local/share/glauncher`.
     pub fn assets_dir(&self) -> PathBuf {
@@ -344,6 +345,8 @@ pub struct Options {
     pub reindex: bool,
     /// Télécharge les visuels manquants de tous les jeux, puis sort.
     pub update: bool,
+    /// Avec `--update` (ou seul) : n'apprend que les années de sortie.
+    pub dates: bool,
     /// Liste numérotée des jeux indexés, puis sort.
     pub list: bool,
     /// Récupère le logo et l'icône d'UN paquet (overlay manette), puis sort.
@@ -374,6 +377,8 @@ Usage : glauncher [options]
   --reindex            reconstruit l'index des dossiers puis quitte
   --update             télécharge les visuels manquants (covers, héros,
                        logos, icônes) de TOUS les jeux, puis quitte
+  --date               n'apprend que les années de sortie manquantes
+                       (avec --update, ou seul), puis quitte
   --list               liste numérotée des jeux (pour --play), puis quitte
   --art <paquet>       récupère le logo et l'icône d'un seul paquet pour
                        l'overlay manette (PNG dans le cache), puis quitte
@@ -453,6 +458,7 @@ impl Options {
                 "--no-covers" => opts.no_covers = true,
                 "--reindex" => opts.reindex = true,
                 "--update" => opts.update = true,
+                "--date" => opts.dates = true,
                 "--list" => opts.list = true,
                 "--shrink" => opts.shrink = true,
                 "--art" => {

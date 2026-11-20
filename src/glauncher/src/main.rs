@@ -64,11 +64,12 @@ fn reindex(config: &config::Config) -> iced::Result {
     Ok(())
 }
 
-/// `--update` : télécharge les visuels manquants de tous les jeux indexés.
+/// `--update` (et `--date`) : complète ce qui manque pour tous les jeux
+/// indexés — visuels, ou seulement les années de sortie.
 ///
 /// Utile pour amorcer un cache neuf (ou celui d'une autre machine via le
 /// dossier `assets/` partagé) sans parcourir la bibliothèque à la main.
-fn update(config: &config::Config) -> iced::Result {
+fn update(config: &config::Config, dates_only: bool) -> iced::Result {
     let index = match index::Index::open(&config.index_path()) {
         Ok(index) => index,
         Err(err) => {
@@ -90,6 +91,29 @@ fn update(config: &config::Config) -> iced::Result {
         .map(|row| (row.slug(), row.name.clone(), row.path.clone()))
         .collect();
     eprintln!("glauncher : {} jeux à compléter…", games.len());
+
+    // `--date` : uniquement les années, aucun visuel
+    if dates_only {
+        let noms: Vec<(String, String)> = games
+            .iter()
+            .map(|(slug, name, _)| (slug.clone(), name.clone()))
+            .collect();
+        let mut report = |line: String| println!("{line}");
+        let totals = covers::update_years(
+            &config.assets_dir(),
+            config.steamgriddb_key(),
+            &noms,
+            &mut report,
+        );
+        println!(
+            "{} année(s) apprise(s), {} déjà connues, {} erreur(s) — {}",
+            totals.years,
+            totals.skipped,
+            totals.failed,
+            covers::years_path(&config.assets_dir()).display()
+        );
+        return Ok(());
+    }
 
     let marks = config.cache_dir().join("marks");
     let mut report = |line: String| println!("{line}");
@@ -115,8 +139,8 @@ fn update(config: &config::Config) -> iced::Result {
     }
 
     println!(
-        "{} téléchargés, {} introuvables, {} erreurs, {} déjà là — {thumbs} miniatures",
-        totals.downloaded, totals.missing, totals.failed, totals.skipped
+        "{} téléchargés, {} introuvables, {} erreurs, {} déjà là, {} années — {thumbs} miniatures",
+        totals.downloaded, totals.missing, totals.failed, totals.skipped, totals.years
     );
     Ok(())
 }
@@ -226,8 +250,8 @@ fn main() -> iced::Result {
     if options.reindex {
         return reindex(&config);
     }
-    if options.update {
-        return update(&config);
+    if options.update || options.dates {
+        return update(&config, options.dates);
     }
     if options.list {
         return list(&config);

@@ -363,6 +363,34 @@ leurs icônes, pour l'interface.
   retour, ou image choisie) `resume_covers` relance la couverture de la vue
   courante. Un seul worker suffit donc, la seconde file dédiée au menu a
   disparu.
+- **Année de sortie** : SteamGridDB la donne dans l'autocomplete
+  (`data[0].release_date`, secondes Unix) des deux API. Requête **dédiée**
+  (`Query::Year`, file `urgent`) à l'ouverture de la page quand le slug est
+  absent de la table : un jeu dont les visuels sont déjà en cache ne fait sinon
+  aucune requête, donc n'aurait jamais son année.
+  **Mémoire : `assets/years.txt`** — le dossier partagé (Syncthing), donc les
+  années suivent les visuels chez un autre poste. `slug=1998` par ligne, trié ;
+  `slug=` note « regardé, SGDB n'en donne pas », et **rien n'est jamais
+  redemandé** (ni par l'interface, ni par `--update`). Écriture atomique en
+  **fusion** (`covers::save_years` relit le disque avant d'écrire) : le mode
+  `--update` et l'interface peuvent écrire en même temps. Une erreur réseau,
+  elle, ne note rien (la question pourra être reposée).
+  `--update` apprend les années de tous les jeux qui en manquent (une requête
+  + 250 ms chacun, comptées dans `UpdateReport::years`) ; `--date` (avec
+  `--update` ou seul) ne fait que ça, sans visuel (`covers::update_years`).
+  Affichage : « Sorti en 1998 » **sous le titre** (information du jeu), le
+  temps de jeu restant en dessous (information du joueur) — les mettre sur la
+  même ligne faisait bizarre (demandé le 20/11).
+  La conversion horodatage → année est une petite boucle depuis 1970
+  (`year_from_unix`, testée aux réveillons et au 29 février) ; une date `0`
+  vaut « inconnue », pas 1970.
+- **Filtre d'année** : dernière ligne du menu « Tri » (`T`/Carré), qui ouvre le
+  menu « Année » — une ligne par année **connue**, avec son nombre de jeux, plus
+  « Toutes les années ». Le filtre se combine avec le tri et les favoris
+  (`apply_filter`), se retient dans `state.txt` (`annee=1998`) et s'affiche
+  dans la pastille de tri (« TRI A→Z · 1998 »). Il ne peut porter que sur les
+  jeux dont l'année est connue : leur nombre grandit avec les pages ouvertes et
+  les `--update`.
 - **Page d'un jeu : moitié basse dimensionnée par l'écran.** La cover prend
   **72 % de la hauteur restante** sous la bande héros (bornée 300 à 520 px), et
   tout le bloc (logo, nom, temps de jeu, pastilles, marges, aide) suit
@@ -404,8 +432,8 @@ leurs icônes, pour l'interface.
   seconde, donc le logo apparaît tout seul après le téléchargement.
 - **Page d'un jeu** : un clic sur une vignette déjà sélectionnée, ou Entrée/A,
   l'ouvre : héros en bande (largeur **explicite**, `ContentFit::Cover`), logo,
-  cover, nom, temps de jeu et trois pastilles — `Jouer`, `☆ Favori`,
-  `Images ▸`. **Ni chemin du paquet, ni état des visuels** (`Grid ✓ · Héros …`) :
+  cover, nom, **année de sortie** (sous le titre) et temps de jeu, puis trois
+  pastilles — `Jouer`, `☆ Favori`, `Images ▸`. **Ni chemin du paquet, ni état des visuels** (`Grid ✓ · Héros …`) :
   retiré le 20/11, la page doit rester une affiche, pas une fiche technique.
   Échap/B referme et rend la liste avec la
   sélection et le défilement intacts. **Sans héros, aucune bande n'est

@@ -1,6 +1,6 @@
 //! État, messages et interface du launcher.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -229,6 +229,7 @@ fn cover_message(event: covers::CoverEvent) -> Message {
             thumb,
         },
         covers::CoverEvent::Icon { slug, bytes } => Message::Icon { slug, bytes },
+        covers::CoverEvent::Year { slug, year } => Message::Year { slug, year },
     }
 }
 
@@ -371,6 +372,9 @@ pub enum Message {
     /// Un téléchargement commence (le worker de visuels réveille l'interface,
     /// sinon la roue de chargement n'apparaîtrait qu'une fois la requête finie).
     Activity,
+    /// Année de sortie apprise par le worker pour ce jeu (`None` : SGDB n'en
+    /// donne pas, c'est noté pour ne plus redemander).
+    Year { slug: String, year: Option<u32> },
     ToggleView,
     /// Retour (clic droit, comme Échap/B) : referme menu, page, prompt.
     Back,
@@ -382,6 +386,9 @@ pub enum Message {
     SortMenu,
     SortMenuNav(i32),
     SortMenuChoose(usize),
+    /// Menu « année » (filtre), ouvert depuis la ligne « Année » du tri.
+    YearMenuNav(i32),
+    YearMenuChoose(usize),
     ToggleFullscreen,
     Quit,
     Nothing,
@@ -473,6 +480,14 @@ fn view_index(view: ViewMode) -> usize {
     VIEWS.iter().position(|&v| v == view).unwrap_or(0)
 }
 
+/// Position dans le menu « année » : 0 = toutes les années, puis la liste
+/// (déjà triée, la plus récente d'abord).
+fn year_index(filter: Option<u32>, years: Vec<u32>) -> usize {
+    filter
+        .and_then(|year| years.iter().position(|&known| known == year))
+        .map_or(0, |position| position + 1)
+}
+
 pub struct App {
     config: Config,
     games: Vec<Game>,
@@ -485,12 +500,20 @@ pub struct App {
     play_started: Option<(String, std::time::Instant)>,
     /// Temps de jeu cumulé, par slug.
     playtime: std::collections::HashMap<String, u64>,
+    /// Années de sortie connues, par slug (`None` = regardé, SGDB n'en donne
+    /// pas). Chargées depuis `assets/years.txt`, le fichier partagé.
+    years: BTreeMap<String, Option<u32>>,
     /// Ordre de la bibliothèque (A→Z par défaut).
     sort: SortBy,
     /// Menu « type de liste » (triangle / Y) : index choisi.
     view_menu: Option<usize>,
-    /// Menu « tri » (carré / X, `T`) : index choisi dans `SortBy::ALL`.
+    /// Menu « tri » (carré / X, `T`) : index choisi dans `SortBy::ALL`, plus
+    /// une dernière ligne « Année » qui ouvre `year_menu`.
     sort_menu: Option<usize>,
+    /// Menu « année » (filtre sur la date de sortie) : index choisi, 0 = toutes.
+    year_menu: Option<usize>,
+    /// Filtre d'année actif (None = toutes les années).
+    year_filter: Option<u32>,
     status: Option<(String, bool)>,
     notice: Option<String>,
     pad: Option<PadKind>,
@@ -710,9 +733,12 @@ impl App {
             pending_slug: None,
             play_started: None,
             playtime: playtime::load(&playtime_path),
+            years: BTreeMap::new(),
             sort: saved.sort,
             view_menu: None,
             sort_menu: None,
+            year_menu: None,
+            year_filter: saved.year,
             scroll_id: Id::unique(),
             scroll: 0.0,
             scroll_target: 0.0,
@@ -735,6 +761,8 @@ impl App {
             star: image::Handle::from_bytes(STAR),
             sparkles: sparkles::Sparkles::new(),
         };
+        // années déjà connues (fichier partagé dans `assets/`)
+        app.years = covers::load_years(&covers::years_path(&app.config.assets_dir()));
         app.apply_filter();
         // musique de fond : lecture par `mpv` dans un fil à part, l'UI
         // n'attend rien (et sans `mpv` le launcher reste simplement muet)
@@ -787,6 +815,7 @@ impl App {
                 && self.page.is_none()
                 && self.view_menu.is_none()
                 && self.sort_menu.is_none()
+                && self.year_menu.is_none()
                 && self.art_menu.is_none()
                 && self.picker.is_none()
                 && self.rename.is_none()
@@ -835,6 +864,7 @@ impl App {
             || !matches!(self.config.view, ViewMode::Grid)
             || self.view_menu.is_some()
             || self.sort_menu.is_some()
+            || self.year_menu.is_some()
             || self.art_menu.is_some()
             || self.picker.is_some()
             || self.rename.is_some()
@@ -975,6 +1005,10 @@ impl App {
                     self.picked = None;
                     self.status = None;
                 }
+                Task::none()
+            }
+            Message::Year { slug, year } => {
+                self.remember_year(&slug, year);
                 Task::none()
             }
             Message::Icon { slug, bytes } => {
@@ -1355,6 +1389,15 @@ impl App {
                 if let Some(queue) = self.covers.as_ref() {
                     queue.pause(true);
                 }
+                // année de sortie : une simple requête d'autocomplete, et
+                // seulement si on ne la connaît pas — des visuels déjà en cache
+                // ne l'apprennent pas
+                if let Some(game) = self.games.get(index) {
+                    let (slug, name) = (game.slug.clone(), game.name.clone());
+                    if !self.years.contains_key(&slug) {
+                        self.send_cover_query(covers::Query::Year { slug, name });
+                    }
+                }
                 Task::none()
             }
             Message::ClosePage => {
@@ -1532,7 +1575,8 @@ impl App {
             }
             Message::SortMenuNav(delta) => {
                 if let Some(choice) = self.sort_menu.as_mut() {
-                    let last = SortBy::ALL.len() - 1;
+                    // `SortBy::ALL` puis la ligne « Année »
+                    let last = SortBy::ALL.len();
                     *choice = (*choice as i32 + delta).clamp(0, last as i32) as usize;
                 }
                 Task::none()
@@ -1540,6 +1584,8 @@ impl App {
             Message::SortMenuChoose(index) => {
                 self.sort_menu = None;
                 let Some(&sort) = SortBy::ALL.get(index) else {
+                    // dernière ligne du menu : le filtre d'année
+                    self.year_menu = Some(year_index(self.year_filter, self.known_years()));
                     return Task::none();
                 };
                 self.sort = sort;
@@ -1549,6 +1595,34 @@ impl App {
                 // seul moyen de voir le nouvel ordre depuis le haut. On pose la
                 // position réelle en même temps que la cible, sinon l'animation
                 // de défilement partirait de l'ancienne place.
+                self.selected = 0;
+                self.scroll = 0.0;
+                self.scroll_target = 0.0;
+                self.visible_covers.clear();
+                self.request_visible_covers();
+                operation::scroll_to(
+                    self.scroll_id.clone(),
+                    AbsoluteOffset { x: 0.0, y: 0.0 },
+                )
+            }
+            Message::YearMenuNav(delta) => {
+                let last = self.known_years().len();
+                if let Some(choice) = self.year_menu.as_mut() {
+                    *choice = (*choice as i32 + delta).clamp(0, last as i32) as usize;
+                }
+                Task::none()
+            }
+            Message::YearMenuChoose(index) => {
+                self.year_menu = None;
+                self.year_filter = if index == 0 {
+                    None
+                } else {
+                    self.known_years().get(index - 1).copied()
+                };
+                self.remember();
+                self.apply_filter();
+                // même règle que le tri : on repart du haut, sinon le filtre
+                // s'applique sans qu'on voie le résultat
                 self.selected = 0;
                 self.scroll = 0.0;
                 self.scroll_target = 0.0;
@@ -1573,6 +1647,10 @@ impl App {
                 }
                 if self.view_menu.is_some() {
                     self.view_menu = None;
+                    return Task::none();
+                }
+                if self.year_menu.is_some() {
+                    self.year_menu = None;
                     return Task::none();
                 }
                 if self.sort_menu.is_some() {
@@ -2261,6 +2339,23 @@ impl App {
         }
     }
 
+    /// Année de sortie du jeu, si on la connaît (la table est chargée une
+    /// fois au démarrage ; `None` = inconnue ou « SGDB n'en donne pas »).
+    fn year_of(&self, slug: &str) -> Option<u32> {
+        self.years.get(slug).copied().flatten()
+    }
+
+    /// Retient l'année apprise et l'écrit dans `assets/years.txt` (fusionné
+    /// avec ce qui est déjà sur le disque : `--update` peut écrire en même
+    /// temps).
+    fn remember_year(&mut self, slug: &str, year: Option<u32>) {
+        if self.years.get(slug) == Some(&year) {
+            return;
+        }
+        self.years.insert(slug.to_string(), year);
+        covers::save_years(&covers::years_path(&self.config.assets_dir()), &self.years);
+    }
+
     /// Exécute l'action choisie sur la page (jouer, étoile, menu des visuels).
     fn page_act(&mut self) -> Task<Message> {
         let Some(page) = self.page.as_ref() else {
@@ -2318,6 +2413,7 @@ impl App {
             state::State {
                 view: Some(self.config.view),
                 sort: self.sort,
+                year: self.year_filter,
             },
         );
     }
@@ -2333,18 +2429,41 @@ impl App {
         }
     }
 
+    /// Années présentes dans la bibliothèque, les plus récentes d'abord.
+    /// Seuls les jeux dont l'année est **connue** comptent.
+    fn known_years(&self) -> Vec<u32> {
+        let mut years: Vec<u32> = self
+            .all_games
+            .iter()
+            .filter_map(|game| self.year_of(&game.slug))
+            .collect();
+        years.sort_unstable();
+        years.dedup();
+        years.reverse();
+        years
+    }
+
+    /// Nombre de jeux de la bibliothèque sortis cette année-là.
+    fn year_count(&self, year: u32) -> usize {
+        self.all_games
+            .iter()
+            .filter(|game| self.year_of(&game.slug) == Some(year))
+            .count()
+    }
+
     fn apply_filter(&mut self) {
         let current = self.games.get(self.selected).map(|game| game.slug.clone());
-        self.games = if self.sort == SortBy::Favorites {
-            let favorites = &self.favorites;
-            self.all_games
-                .iter()
-                .filter(|game| favorites.contains(&game.slug))
-                .cloned()
-                .collect()
-        } else {
-            self.all_games.clone()
-        };
+        let favorites = self.sort == SortBy::Favorites;
+        let year = self.year_filter;
+        self.games = self
+            .all_games
+            .iter()
+            .filter(|game| !favorites || self.favorites.contains(&game.slug))
+            // filtre d'année : seuls les jeux dont la date est connue peuvent
+            // y répondre (elle s'apprend page par page)
+            .filter(|game| year.is_none_or(|year| self.year_of(&game.slug) == Some(year)))
+            .cloned()
+            .collect();
         self.sort_games();
         self.selected = current
             .and_then(|slug| self.games.iter().position(|game| game.slug == slug))
@@ -2440,6 +2559,22 @@ impl App {
                 }
                 keyboard::Key::Named(Named::ArrowDown) => Task::done(Message::SortMenuNav(1)),
                 keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::SortMenuNav(-1)),
+                _ => Task::none(),
+            };
+        }
+
+        // menu « année » (filtre) : haut/bas puis Entrée
+        if let Some(choice) = self.year_menu {
+            return match &key {
+                keyboard::Key::Named(Named::Escape) => {
+                    self.year_menu = None;
+                    Task::none()
+                }
+                keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
+                    Task::done(Message::YearMenuChoose(choice))
+                }
+                keyboard::Key::Named(Named::ArrowDown) => Task::done(Message::YearMenuNav(1)),
+                keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::YearMenuNav(-1)),
                 _ => Task::none(),
             };
         }
@@ -2597,6 +2732,19 @@ impl App {
                         }
                         PadButton::Up => Task::done(Message::SortMenuNav(-1)),
                         PadButton::Down => Task::done(Message::SortMenuNav(1)),
+                        _ => Task::none(),
+                    };
+                }
+                // menu « année » (filtre)
+                if let Some(choice) = self.year_menu {
+                    return match button {
+                        PadButton::Confirm => Task::done(Message::YearMenuChoose(choice)),
+                        PadButton::Back => {
+                            self.year_menu = None;
+                            Task::none()
+                        }
+                        PadButton::Up => Task::done(Message::YearMenuNav(-1)),
+                        PadButton::Down => Task::done(Message::YearMenuNav(1)),
                         _ => Task::none(),
                     };
                 }
@@ -2761,6 +2909,9 @@ impl App {
         if self.sort_menu.is_some() {
             menus = stack![menus, self.sort_menu_view()].into();
         }
+        if self.year_menu.is_some() {
+            menus = stack![menus, self.year_menu_view()].into();
+        }
         if self.art_menu.is_some() {
             menus = stack![menus, self.art_menu_view()].into();
         }
@@ -2806,6 +2957,8 @@ impl App {
         let content: Element<'_, Message> = if self.games.is_empty() {
             if self.sort == SortBy::Favorites {
                 self.favorites_empty()
+            } else if let Some(year) = self.year_filter {
+                self.year_empty(year)
             } else {
                 self.empty_state()
             }
@@ -2931,18 +3084,25 @@ impl App {
             None => sample_art(&self.sample, &game.name, game.icon.as_ref(), cover_w, cover_h),
         };
 
-        let details = column![
+        // année de sortie (SteamGridDB) quand on la connaît, puis le temps de
+        // jeu : les deux se lisent sur la même ligne, discrète
+        let played = playtime::format(self.playtime.get(&game.slug).copied());
+        let mut details = column![
             logo,
             text(short(&game.name, 60)).size(25.0 * ech).color(TEXT),
-            text(format!(
-                "Temps de jeu : {}",
-                playtime::format(self.playtime.get(&game.slug).copied())
-            ))
-            .size(14.0 * ech)
-            .color(MUTED),
         ]
         .spacing(10.0 * ech)
         .align_x(Alignment::Center);
+        // année de sortie juste sous le titre (c'est une information du jeu) ;
+        // le temps de jeu reste en dessous, c'est une information du joueur
+        if let Some(year) = self.year_of(&game.slug) {
+            details = details.push(text(format!("Sorti en {year}")).size(14.0 * ech).color(MUTED));
+        }
+        details = details.push(
+            text(format!("Temps de jeu : {played}"))
+                .size(14.0 * ech)
+                .color(MUTED),
+        );
 
         let favorite = self.favorites.contains(&game.slug);
         let mut actions = Row::new().spacing(14.0 * ech).align_y(Alignment::Center);
@@ -3194,10 +3354,118 @@ impl App {
             rows = rows.push(mouse_area(line).on_press(Message::SortMenuChoose(index)));
         }
 
+        // dernière ligne : le filtre d'année, qui ouvre son propre menu
+        let year_selected = choice == SortBy::ALL.len();
+        let year_label = match self.year_filter {
+            Some(year) => format!("{year}  ▸"),
+            None => "toutes  ▸".to_string(),
+        };
+        let year_line = container(
+            row![
+                text("Année")
+                    .size(18)
+                    .width(Fill)
+                    .color(if year_selected { Color::BLACK } else { TEXT }),
+                text(year_label)
+                    .size(14)
+                    .color(if year_selected { Color::BLACK } else { MUTED }),
+            ]
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .padding([9.0, 14.0])
+        .style(move |_| action_style(year_selected));
+        rows = rows.push(mouse_area(year_line).on_press(Message::SortMenuChoose(SortBy::ALL.len())));
+
         let panel = container(column![text("Tri").size(18).color(TEXT), rows].spacing(12))
             .padding(18)
             .width(Length::Fixed(300.0))
             .style(|_| picker_panel_style());
+
+        container(panel)
+            .width(Fill)
+            .height(Fill)
+            .padding(24)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.6,
+                    ..Color::BLACK
+                })),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    /// Menu « Année » : filtre la bibliothèque sur la date de sortie. Les
+    /// années proposées sont celles **connues** (elles s'apprennent à
+    /// l'ouverture de la page d'un jeu), avec le nombre de jeux concernés.
+    fn year_menu_view(&self) -> Element<'_, Message> {
+        let Some(choice) = self.year_menu else {
+            return Row::new().into();
+        };
+        let years = self.known_years();
+
+        let mut rows = Column::new().spacing(6);
+        // « toutes » d'abord
+        let all_selected = choice == 0;
+        let line = container(
+            row![
+                text("Toutes les années")
+                    .size(18)
+                    .width(Fill)
+                    .color(if all_selected { Color::BLACK } else { TEXT }),
+                text(if self.year_filter.is_none() { "✓" } else { "" })
+                    .size(14)
+                    .color(if all_selected { Color::BLACK } else { MUTED }),
+            ]
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .padding([9.0, 14.0])
+        .style(move |_| action_style(all_selected));
+        rows = rows.push(mouse_area(line).on_press(Message::YearMenuChoose(0)));
+
+        for (position, year) in years.iter().enumerate() {
+            let selected = choice == position + 1;
+            let current = self.year_filter == Some(*year);
+            let line = container(
+                row![
+                    text(format!("{year}"))
+                        .size(18)
+                        .width(Fill)
+                        .color(if selected { Color::BLACK } else { TEXT }),
+                    text(format!(
+                        "{}{}",
+                        self.year_count(*year),
+                        if current { " ✓" } else { "" }
+                    ))
+                    .size(14)
+                    .color(if selected { Color::BLACK } else { MUTED }),
+                ]
+                .align_y(Alignment::Center),
+            )
+            .width(Fill)
+            .padding([9.0, 14.0])
+            .style(move |_| action_style(selected));
+
+            rows = rows.push(mouse_area(line).on_press(Message::YearMenuChoose(position + 1)));
+        }
+
+        let panel = container(
+            column![
+                text("Année de sortie").size(18).color(TEXT),
+                rows,
+                text("Les années s'apprennent en ouvrant la page d'un jeu.")
+                    .size(12)
+                    .color(MUTED),
+            ]
+            .spacing(12),
+        )
+        .padding(18)
+        .width(Length::Fixed(320.0))
+        .style(|_| picker_panel_style());
 
         container(panel)
             .width(Fill)
@@ -3835,6 +4103,25 @@ impl App {
     }
 
     /// Vue « favoris » sans aucun favori : on explique comment en poser un.
+    /// Aucun jeu pour l'année filtrée : le dire, sinon l'écran « aucun jeu »
+    /// laisse croire que la bibliothèque est vide.
+    fn year_empty(&self, year: u32) -> Element<'_, Message> {
+        container(
+            column![
+                text(format!("Aucun jeu sorti en {year}")).size(22).color(TEXT),
+                text("Le menu Tri (T) → Année remet toutes les années.").size(14).color(MUTED),
+                text("L'année d'un jeu s'apprend en ouvrant sa page.").size(14).color(MUTED),
+            ]
+            .spacing(8),
+        )
+        .width(Fill)
+        .height(Fill)
+        .padding(24)
+        .center_x(Fill)
+        .center_y(Fill)
+        .into()
+    }
+
     fn favorites_empty(&self) -> Element<'_, Message> {
         container(
             column![
@@ -3933,10 +4220,15 @@ impl App {
         // une pastille discrète plutôt qu'une ligne grise noyée dans le pied de
         // page (demandé le 20/11). Pas de compte de jeux ni de progression des
         // covers : le pied de page ne doit porter aucune statistique.
+        // le tri ET le filtre d'année se lisent dans la même pastille
+        let tri = match self.year_filter {
+            Some(year) => format!("{} · {year}", self.sort.label()),
+            None => self.sort.label().to_string(),
+        };
         let sort: Element<'_, Message> = container(
             row![
                 text("TRI").size(11).font(HELP_FONT).color(MUTED),
-                text(self.sort.label()).size(15).font(HELP_FONT).color(TEXT),
+                text(tri).size(15).font(HELP_FONT).color(TEXT),
             ]
             .spacing(8)
             .align_y(Alignment::Center),

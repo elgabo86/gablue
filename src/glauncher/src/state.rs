@@ -87,6 +87,8 @@ impl ViewMode {
 pub struct State {
     pub view: Option<ViewMode>,
     pub sort: SortBy,
+    /// Filtre d'année actif (`None` = toutes).
+    pub year: Option<u32>,
 }
 
 /// Lit le fichier d'état. Absent ou illisible → valeurs par défaut (aucune
@@ -107,6 +109,7 @@ pub fn load(path: &Path) -> State {
                     state.sort = sort;
                 }
             }
+            "annee" => state.year = value.trim().parse().ok(),
             _ => {}
         }
     }
@@ -123,6 +126,9 @@ pub fn save(path: &Path, state: State) {
         text.push_str(&format!("vue={}\n", view.key()));
     }
     text.push_str(&format!("tri={}\n", state.sort.key()));
+    if let Some(year) = state.year {
+        text.push_str(&format!("annee={year}\n"));
+    }
 
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".part");
@@ -154,6 +160,7 @@ mod tests {
         state = State {
             view: Some(ViewMode::Mosaic),
             sort: SortBy::Modified,
+            year: Some(1994),
         };
         save(&path, state);
         assert_eq!(load(&path), state);
@@ -168,6 +175,7 @@ mod tests {
             State {
                 view: Some(ViewMode::Grid),
                 sort: SortBy::Favorites,
+                year: None,
             },
         );
         assert_eq!(load(&path).sort, SortBy::Favorites);

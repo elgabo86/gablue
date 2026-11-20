@@ -39,6 +39,12 @@ Ils sont **surveillés** : un paquet ajouté ou supprimé met la liste à jour t
 seul, sans relancer le launcher — il n'y a donc pas de bouton « Rafraîchir ».
 Le nombre de jeux s'affiche en bas, avec les commandes.
 
+Le menu **Tri** (`T` ou Carré/X) filtre aussi par **année de sortie** : chaque
+année connue y apparaît avec son nombre de jeux. Les années sont mémorisées dans
+`assets/years.txt` (dossier partagé, comme les visuels) et `glauncher --update`
+les apprend pour toute la bibliothèque — `glauncher --update --date` (ou
+`--date` seul) ne fait que ça, sans retélécharger un visuel.
+
 Trois vues, en cycle avec V / Tab ou Y : **grille** (`view = "grid"`),
 **liste** avec vignette et grand aperçu (`"list"`) et **mosaïque** façon Switch
 Online (`"mosaic"`). Le **tri** se choisit dans son propre menu (`T` ou
@@ -52,8 +58,8 @@ clavier ou à la manette, elle, fait défiler vers la sélection de façon anim�
 
 ## Page d'un jeu et favoris
 
-Entrée (ou A) ouvre la page du jeu sélectionné : héros en bande, logo, cover, nom
-et temps de jeu, puis trois pastilles — **Jouer**, **☆ Favori**, **Images ▸**
+Entrée (ou A) ouvre la page du jeu sélectionné : héros en bande, logo, cover, nom,
+**année de sortie** (sous le titre, SteamGridDB) et temps de jeu, puis trois pastilles — **Jouer**, **☆ Favori**, **Images ▸**
 (ni chemin du paquet, ni état des visuels : la page est une affiche). Elle
 apparaît en fondu ; sans héros téléchargé, la bande ne réserve rien et le bloc
 se centre sur
