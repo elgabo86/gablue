@@ -225,10 +225,13 @@ overlay orphelin).
   tromper donne un panneau collé au bord gauche qui ne bouge qu'en vertical
   (la valeur de X part dans la marge haute), et ça ressemble à un bug de
   compositeur : vérifier l'ordre avant tout le reste.
-- **Un déplacement par image du compositeur** (`wl_surface.frame` → `Done`) :
-  la manette émet 60 à 250 fois par seconde, on n'envoie qu'une marge par
-  image. Repli si le compositeur ne rend pas la main (3 frames de suite sans
-  `Done` → cadence évènementielle), jamais de panneau figé.
+- **Le déplacement se calcule par TOUR DE BOUCLE (8 ms pendant qu'on pousse),
+  jamais à l'arrivée d'un évènement.** Une manette Bluetooth n'émet que ~25
+  rapports par seconde : en bougeant sur évènement, le panneau avançait par
+  bonds de 25 pas/s (« on dirait du 25 fps », constaté). Le `poll` passe à 8 ms
+  dès que le stick sort de la zone morte (`Clavier::mouvement_actif`), et
+  `bouger()` intègre le `dt` réel — c'est exactement ce que faisait le
+  prototype, fluide.
 - **Ne JAMAIS élargir cette surface à l'écran** en dessinant le panneau dedans
   (première version, à ne pas refaire) : à chaque nouveau tampon KWin fait
   `im.convertTo()` sur **toute l'image** (`GLTexture::update`) — 3,7 M pixels

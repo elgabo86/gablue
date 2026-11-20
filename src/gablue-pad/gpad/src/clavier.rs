@@ -1021,14 +1021,28 @@ impl Clavier {
         }
     }
 
-    /// Stick droit : déplacement du panneau, courbe `gpad-mouse`. `axe` 0 = X,
-    /// 1 = Y. `true` si le panneau a bougé (il faut redessiner).
-    pub fn stick_droit(&mut self, axe: u8, v: f64) -> bool {
+    /// Stick droit : on ne fait que MÉMORISER l'axe (0 = X, 1 = Y). Le
+    /// déplacement se calcule dans `bouger()`, appelée à chaque tour de boucle
+    /// — jamais à l'arrivée d'un évènement : une manette Bluetooth n'émet que
+    /// ~25 rapports par seconde, et le panneau avancerait par bonds de 25 pas
+    /// par seconde (« on dirait du 25 fps », constaté).
+    pub fn regler_droite(&mut self, axe: u8, v: f64) {
         if axe == 0 {
             self.rx = v;
         } else {
             self.ry = v;
         }
+    }
+
+    /// Le stick droit est-il hors de la zone morte (le `poll` doit alors
+    /// descendre à 8 ms) ?
+    pub fn mouvement_actif(&self) -> bool {
+        (self.rx * self.rx + self.ry * self.ry).sqrt() >= ZONE_MORTE
+    }
+
+    /// Déplacement du panneau pour ce tour, courbe `gpad-mouse`. `true` si le
+    /// panneau a bougé.
+    pub fn bouger(&mut self) -> bool {
         let (nx, ny) = (self.rx, self.ry);
         let mag = (nx * nx + ny * ny).sqrt();
         if mag < ZONE_MORTE {

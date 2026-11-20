@@ -1173,14 +1173,6 @@ struct App {
     /// un déplacement attend son `flush` (sinon la marge reste dans le tampon
     /// d'envoi jusqu'au prochain évènement)
     kbd_bouge: bool,
-    /// `wl_surface.frame` en cours (callback, instant de la demande) : un seul
-    /// déplacement envoyé par image du compositeur
-    kbd_frame: Option<(wl_callback::WlCallback, Instant)>,
-    /// une position plus récente attend la fin de l'image en cours
-    kbd_pos_attente: bool,
-    /// frames consécutives jamais rendues : au-delà de 3 on repasse en
-    /// cadence évènementielle (jamais de clavier qui répond au ralenti)
-    kbd_sans_frame: u8,
     /// le clavier est ouvert (la manette pilote les touches, pas le menu)
     kbd_ouvert: bool,
     ///Horodatage du dernier pas fait au **stick** : un stick qui repasse vite
@@ -1453,9 +1445,6 @@ impl App {
             kbd_configured: false,
             kbd_dirty: false,
             kbd_bouge: false,
-            kbd_frame: None,
-            kbd_pos_attente: false,
-            kbd_sans_frame: 0,
             kbd_ouvert: false,
             derniere_activite: Instant::now(),
             derniere_nav: Instant::now() - Duration::from_secs(1),
@@ -1669,8 +1658,6 @@ impl App {
             // Home garde son rôle (appui court = fermer, maintenu = menu
             // système), il est traité juste au-dessus.
             if self.kbd_ouvert {
-                // déplacement : les marges de la surface, pas le tampon
-                let mut bouge = false;
                 let change = match (ev.type_, ev.code, ev.value) {
                     (EV_SYN, _, _) => false,
                     (EV_KEY, code, v) if v == 0 || v == 1 => {
@@ -1700,21 +1687,22 @@ impl App {
                     }
                     (EV_ABS, ABS_RX, v) => {
                         let n = norme_axe(v, self.abs_rx);
-                        bouge = self.clavier.as_mut().is_some_and(|c| c.stick_droit(0, n));
+                        if let Some(c) = &mut self.clavier {
+                            c.regler_droite(0, n);
+                        }
                         false
                     }
                     (EV_ABS, ABS_RY, v) => {
                         let n = norme_axe(v, self.abs_ry);
-                        bouge = self.clavier.as_mut().is_some_and(|c| c.stick_droit(1, n));
+                        if let Some(c) = &mut self.clavier {
+                            c.regler_droite(1, n);
+                        }
                         false
                     }
                     _ => false,
                 };
                 if change {
                     self.kbd_dirty = true;
-                }
-                if bouge {
-                    self.placer_surface_clavier();
                 }
                 continue;
             }
@@ -2125,16 +2113,6 @@ impl App {
     /// compositeur ne rend pas la main (surface sans frame), on n'attend pas :
     /// au-delà de 100 ms on déplace quand même (jamais de clavier figé).
     fn placer_surface_clavier(&mut self) {
-        if let Some((_, depuis)) = &self.kbd_frame {
-            if depuis.elapsed() < Duration::from_millis(100) {
-                self.kbd_pos_attente = true;
-                return;
-            }
-            // wl_callback n'a pas de requête destroy : on l'abandonne, le
-            // compositeur le détruit en rendant la main
-            self.kbd_frame = None;
-            self.kbd_sans_frame = self.kbd_sans_frame.saturating_add(1);
-        }
         let Some(c) = &self.clavier else { return };
         let (x, y) = c.position();
         let (Some(layer), Some(surface)) = (self.kbd_layer.as_ref(), self.kbd_surface.as_ref())
@@ -2145,11 +2123,6 @@ impl App {
         layer.set_margin(y.max(0), 0, 0, x.max(0));
         surface.commit();
         self.kbd_bouge = true;
-        self.kbd_pos_attente = false;
-        if self.kbd_sans_frame < 3 {
-            let cb = surface.frame(&self.qh, KbdFrame);
-            self.kbd_frame = Some((cb, Instant::now()));
-        }
     }
 
     fn detruire_surface_clavier(&mut self) {
@@ -2164,8 +2137,6 @@ impl App {
             b.buffer.destroy();
         }
         self.kbd_free.clear();
-        self.kbd_frame = None;
-        self.kbd_pos_attente = false;
         // la sonde plein écran sera refaite : l'écran a pu changer de taille
         self.kbd_ecran = (0, 0);
         self.kbd_size = (0, 0);
@@ -2317,14 +2288,28 @@ impl App {
         if !self.kbd_ouvert {
             return;
         }
-        let Some(c) = &mut self.clavier else { return };
-        if c.tick() {
+        let (bouge, change) = {
+            let Some(c) = &mut self.clavier else { return };
+            (c.bouger(), c.tick())
+        };
+        if change {
             self.kbd_dirty = true;
+        }
+        if bouge {
+            self.placer_surface_clavier();
         }
     }
 
     fn clavier_anime(&self) -> bool {
         self.kbd_ouvert && self.clavier.as_ref().is_some_and(|c| c.anime())
+    }
+
+    fn clavier_bouge(&self) -> bool {
+        self.kbd_ouvert
+            && self
+                .clavier
+                .as_ref()
+                .is_some_and(|c| c.mouvement_actif())
     }
 
     /// Ferme le clavier : touches relâchées, position mémorisée, surface
@@ -4629,27 +4614,6 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, KbdSurf> for App {
     }
 }
 
-struct KbdFrame;
-
-impl Dispatch<wl_callback::WlCallback, KbdFrame> for App {
-    fn event(
-        state: &mut Self,
-        _: &wl_callback::WlCallback,
-        event: wl_callback::Event,
-        _: &KbdFrame,
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let wl_callback::Event::Done { .. } = event {
-            state.kbd_frame = None;
-            state.kbd_sans_frame = 0;
-            if state.kbd_pos_attente {
-                state.placer_surface_clavier();
-            }
-        }
-    }
-}
-
 impl Dispatch<wl_buffer::WlBuffer, KbdBuf> for App {
     fn event(
         state: &mut Self,
@@ -6682,9 +6646,9 @@ fn main() {
         // `signal()` installe SA_RESTART, donc `poll(-1)` serait REPRIS après
         // SIGTERM et le processus ne sortirait jamais (mesuré).
         let timeout_ms = if app.kbd_ouvert {
-            // répétition armée : 8 ms ; sinon 100 ms (les sticks réveillent
-            // le `poll` d'eux-mêmes, inutile de tourner à vide)
-            if app.clavier_anime() { 8 } else { 100 }
+            // répétition ou déplacement en cours : 8 ms (le mouvement est
+            // calculé par tour, pas à l'arrivée des évènements) ; sinon 100 ms
+            if app.clavier_anime() || app.clavier_bouge() { 8 } else { 100 }
         } else if app.resident && !app.visible {
             1000
         } else if app.anim.is_some()
