@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="tuile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff5a5f"/>
+      <stop offset="0.55" stop-color="#e01b24"/>
+      <stop offset="1" stop-color="#8f0c14"/>
+    </linearGradient>
+    <radialGradient id="lustre" cx="0.5" cy="0.26" r="0.62">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- Tuile rouge : même géométrie que les autres icônes Gablue (12,12 232×232,
+       coins 52), mais rouge — « ça enregistre » sans légende. Le rouge étant
+       déjà la tuile, le bouton REC est inversé : disque blanc + pastille rouge,
+       la seule forme qui reste nette à 16-22 px dans la barre d'état. -->
+  <rect x="12" y="12" width="232" height="232" rx="52" fill="url(#tuile)"/>
+  <rect x="12" y="12" width="232" height="232" rx="52" fill="url(#lustre)"/>
+  <circle cx="128" cy="128" r="70" fill="#ffffff"/>
+  <circle cx="128" cy="128" r="36" fill="#e01b24"/>
+</svg>

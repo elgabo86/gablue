@@ -31,6 +31,7 @@ from .dialogs.clean import CleanDialog
 from .dialogs.glauncher import GlauncherDialog
 from .dialogs.grub import GrubDialog
 from .dialogs.gwine import GwineOptionsDialog
+from .dialogs.capture import CaptureDialog
 from .dialogs.mangohud import MangoHudDialog
 from .dialogs.host import CandidateDialog, HostDialog
 from .dialogs.kernel import LocalSettingsDialog, RemoteSettingsDialog
@@ -376,6 +377,7 @@ class MainWindow(QMainWindow):
         self.local_config.mangohud_requested.connect(
             self.open_local_mangohud
         )
+        self.local_config.capture_requested.connect(self.open_local_capture)
         self.local_config.booster_requested.connect(
             self.open_local_foreground_booster
         )
@@ -2774,6 +2776,9 @@ class MainWindow(QMainWindow):
 
     def open_local_mangohud(self) -> None:
         MangoHudDialog(self).exec()
+
+    def open_local_capture(self) -> None:
+        CaptureDialog(self).exec()
 
     def open_remote_mangohud(self, host_id: str) -> None:
         host = self._host(host_id)

@@ -3,6 +3,7 @@ Tailscale).
 """
 
 import configparser
+import glob
 import json
 import os
 import re
@@ -3603,3 +3604,121 @@ def parse_gablue_progress(line: str) -> dict:
             "percent": 100.0,
         }
     return {}
+
+
+# --- enregistreur / replay (gpad-rec, src/gablue-rec) ----------------------
+
+#: Défauts **du démon** (`gpad-rec.c`, `config_defaut`) : le Manager les
+#: reflète, il ne les invente pas. H.264 1080p qualité 3 : le fichier s'ouvre
+#: partout (Windows sans extension HEVC affiche un écran noir).
+RECORDER_DEFAULTS: dict[str, str] = {
+    "codec": "h264",
+    "qualite": "3",
+    "resolution": "source",
+    "fps": "60",
+    "curseur": "masque",
+    "replay_sec": "30",
+    "auto_replay": "0",
+    "audio": "1",
+}
+
+
+def recorder_conf_path() -> Path:
+    """Réglages de `gpad-rec`, partagés avec l'overlay manette."""
+    return Path.home() / ".config/gablue/recorder.conf"
+
+
+def parse_recorder_conf(text: str) -> dict[str, str]:
+    """Clés effectives de `recorder.conf` (défauts compris, inconnues gardées)."""
+    values = dict(RECORDER_DEFAULTS)
+    for line in text.splitlines():
+        body = line.strip()
+        if not body or body.startswith("#") or "=" not in body:
+            continue
+        key, _, value = body.partition("=")
+        values[key.strip()] = value.strip()
+    return values
+
+
+def write_recorder_conf(text: str, values: dict[str, str]) -> str:
+    """Nouveau contenu de `recorder.conf` avec ces clés changées.
+
+    Comme pour MangoHud : le fichier appartient au compte. Clés inconnues,
+    commentaires et ordre sont conservés ; une clé absente est ajoutée à la
+    fin. Même sémantique que l'écriture de l'overlay (`capture.rs`).
+    """
+    reste = {k: str(v) for k, v in values.items()}
+    out: list[str] = []
+    for line in text.splitlines():
+        body = line.strip()
+        if not body or body.startswith("#") or "=" not in body:
+            out.append(line)
+            continue
+        key = body.partition("=")[0].strip()
+        if key in reste:
+            out.append(f"{key}={reste.pop(key)}")
+        else:
+            out.append(line)
+    if not out:
+        out.append("# réglages de gpad-rec (écrit par Gablue Manager)")
+    for key, value in reste.items():
+        out.append(f"{key}={value}")
+    return "\n".join(out) + "\n"
+
+
+#: Débit de base en Mbit/s à 1080p60 en H.264, par niveau de qualité
+#: (table du démon : `debit_du_niveau`). Le niveau 5 est en CQP : variable.
+RECORDER_BITRATE: dict[str, float] = {"1": 3.0, "2": 6.0, "3": 10.0, "4": 16.0, "5": 14.5}
+
+
+def _screen_mode() -> tuple[int, int] | None:
+    """Résolution du premier écran branché (première ligne de `modes`).
+
+    Le mode DRM est la seule source sans dépendance : la même valeur que celle
+    que le démon capture quand `resolution=source`.
+    """
+    for chemin in sorted(glob.glob("/sys/class/drm/card*-*/modes")):
+        try:
+            with open(chemin) as f:
+                ligne = f.readline().strip()
+        except OSError:
+            continue
+        largeur, _, hauteur = ligne.partition("x")
+        if largeur.isdigit() and hauteur.isdigit():
+            taille = (int(largeur), int(hauteur))
+            if taille[0] >= 640 and taille[1] >= 480:
+                return taille
+    return None
+
+
+def recorder_estimate(values: dict[str, str]) -> tuple[float, float]:
+    """`(Go par heure, Mo pour 30 s)` estimés pour ces réglages.
+
+    Même modèle que `gpad-rec` : base 1080p60 H.264, mise à l'échelle par
+    pixels et par fps, HEVC 28 % plus léger. Le mode `flips` (sans plafond)
+    dépend du jeu : on l'estime à 90 fps, la mesure faite sur cette machine.
+    """
+    qualite = str(values.get("qualite", "3"))
+    mbit = RECORDER_BITRATE.get(qualite, 10.0)
+    # le VBR tient ~82 % de sa cible (mesuré 8,1 Mbit/s pour une cible de 10)
+    if qualite != "5":
+        mbit *= 0.82
+    if values.get("codec") == "h265":
+        mbit *= 0.72
+    reso = str(values.get("resolution", "source"))
+    taille = None
+    if reso == "source":
+        # sans taille explicite le démon encode à la résolution du scanout :
+        # estimer sur 1080p sous-estimait de ~78 % sur un écran 1440p
+        taille = _screen_mode()
+    elif "x" in reso:
+        try:
+            taille = tuple(int(part) for part in reso.split("x", 1))
+        except ValueError:
+            taille = None
+    if taille:
+        mbit *= (taille[0] * taille[1]) / (1920 * 1080)
+    fps = str(values.get("fps", "60"))
+    cadence = 90.0 if fps == "flips" else float(fps or 60)
+    mbit *= cadence / 60.0
+    return mbit * 3600 / 8 / 1024, mbit * 30 / 8

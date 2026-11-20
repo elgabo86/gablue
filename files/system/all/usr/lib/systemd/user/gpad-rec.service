@@ -1,0 +1,22 @@
+[Unit]
+Description=Gablue Rec (enregistreur / replay d'écran, socket de contrôle)
+Documentation=file:///usr/share/ublue-os/gablue/AGENTS.md
+# Session graphique : le démon ouvre /dev/dri et le monitor audio du compte.
+# Il ne sert QUE la socket ; il capture seulement sur demande (enregistrement,
+# replay, ou replay automatique d'un jeu LGP/WGP) et libère le moteur au repos.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/gpad-rec --daemon
+# `gpad-rec` porte une file capability (cap_sys_admin+p, posée par l'image)
+# pour drmModeGetFB2 : pas de root, pas de démon privilégié, le drapeau n'est
+# monté que le temps de l'appel.
+Restart=on-failure
+RestartSec=2
+# Arrêt propre : finalise un enregistrement en cours (moov) avant de sortir.
+TimeoutStopSec=15
+
+[Install]
+WantedBy=graphical-session.target

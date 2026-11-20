@@ -43,6 +43,12 @@ chmod +x /usr/bin/lgp-thumbnailer
 chmod +x /usr/bin/wgp-thumbnailer
 chmod +x /usr/bin/ds2xbox
 chmod +x /usr/bin/gpad
+chmod +x /usr/bin/grec
+# Enregistreur : drmModeGetFB2 (capture KMS) exige CAP_SYS_ADMIN sur un FB
+# qu'on n'a pas créé. Motif Sunshine : la file capability est posée sur CE
+# binaire seulement, et le drapeau n'est monté en EFFECTIVE que le temps de
+# l'appel (voir src/gablue-rec/AGENTS.md). Jamais de root, jamais ffmpeg.
+setcap cap_sys_admin+p /usr/bin/gpad-rec
 chmod +x /usr/bin/tvqt
 chmod +x /usr/bin/wallpaper-import
 

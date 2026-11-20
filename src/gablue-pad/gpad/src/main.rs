@@ -32,6 +32,7 @@ use wayland_client::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
+mod capture;
 mod clavier;
 
 /* ============================ police 5x7 ============================ */
@@ -799,6 +800,14 @@ enum Entree {
     /// optimiser au premier plan : booster cgroup de Plasma (priorité CPU à la
     /// fenêtre active), basculé par A
     Booster,
+    // --- capture (réglages de `gpad-rec`, fichier recorder.conf) ---
+    Codec,
+    Qualite,
+    Reso,
+    FpsRec,
+    Curseur,
+    /// démarre le replay seul quand un jeu LGP/WGP est lancé (désactivé par défaut)
+    AutoReplay,
 }
 
 /// Pages du panneau : accueil (actions + fenêtre active), réglages (tous les
@@ -832,14 +841,40 @@ impl Entree {
             // l'échelle 3 (18 caractères tiennent), d'où ce libellé court —
             // la section PERFORMANCE dit le domaine.
             Entree::Booster => "PRIORITE ACTIVE",
+            Entree::Codec => "CODEC",
+            Entree::Qualite => "QUALITE",
+            Entree::Reso => "RESOLUTION",
+            Entree::FpsRec => "FPS REC",
+            Entree::Curseur => "CURSEUR",
+            Entree::AutoReplay => "REPLAY AUTO",
         }
     }
     /// ligne de réglage (curseur) plutôt qu'une action ponctuelle
     fn reglage(self) -> bool {
         matches!(
             self,
-            Entree::Volume | Entree::Mango | Entree::Fps | Entree::Duree
+            Entree::Volume
+                | Entree::Mango
+                | Entree::Fps
+                | Entree::Duree
+                | Entree::Codec
+                | Entree::Qualite
+                | Entree::Reso
+                | Entree::FpsRec
+                | Entree::Curseur
+                | Entree::AutoReplay
         )
+    }
+    /// Hauteur de la ligne : les réglages à curseur respirent (86), les
+    /// énumérations tiennent sur une seule ligne (46) — la page RÉGLAGES a
+    /// doublé de taille, c'est ce qui la garde lisible.
+    fn hauteur(self) -> i32 {
+        match self {
+            Entree::Fenetre => 0,
+            Entree::Groupe(_) => 52,
+            Entree::Volume | Entree::Mango | Entree::Fps | Entree::Duree => 86,
+            _ => 46,
+        }
     }
     /// le curseur peut s'y poser (tout sauf un séparateur)
     fn selectionnable(self) -> bool {
@@ -950,6 +985,10 @@ struct App {
     accueil: Vec<Entree>,
     /// page RÉGLAGES : sections (titre + filet) et lignes de réglage
     reglages: Vec<Entree>,
+    /// réglages de capture (recorder.conf partagé avec gpad-rec)
+    cap: capture::Conf,
+    /// première ligne affichée de la page RÉGLAGES (défilement)
+    reg_top: usize,
     /// page applications (L1/R1)
     applis: Vec<Entree>,
     page: Page,
@@ -1135,8 +1174,12 @@ struct App {
     gate_on: bool,
     /// durée du glissement en ms ; 0 = défauts (180 entrée / 140 sortie)
     slide_ms: u64,
-    /// enregistreur actif (lu sur le fichier d'état de recorder.sh)
+    /// enregistreur actif (état publié par la socket de `gpad-rec`)
     rec_active: bool,
+    /// fichier de l'enregistrement en cours (donné par le démon)
+    rec_fichier: String,
+    /// un réglage écrit attend la fin de l'enregistrement pour s'appliquer
+    rec_pending: bool,
     /// décalage horizontal du panneau en pixels : les marges layer-shell
     /// négatives sont ignorées par KWin (mesuré), donc on décale le DESSIN.
     off: i32,
@@ -1322,11 +1365,20 @@ impl App {
                 Entree::Action("VRR"),
                 Entree::Groupe("REPLAY"),
                 Entree::Duree,
+                Entree::AutoReplay,
+                Entree::Groupe("CAPTURE"),
+                Entree::Qualite,
+                Entree::Codec,
+                Entree::Reso,
+                Entree::FpsRec,
+                Entree::Curseur,
                 Entree::Groupe("PERFORMANCE"),
                 Entree::Booster,
                 Entree::Groupe("INTERFACE"),
                 Entree::Style,
             ],
+            cap: capture::Conf::lire(),
+            reg_top: 0,
             applis: Vec::new(),
             page: Page::Accueil,
             selected: 0,
@@ -1453,6 +1505,8 @@ impl App {
             police: None,
             glyphes: Vec::new(),
             rec_active: false,
+            rec_fichier: String::new(),
+            rec_pending: false,
         }
     }
 
@@ -2398,8 +2452,17 @@ impl App {
                 let i = (self.repr_idx as i32 + sens).clamp(0, max) as usize;
                 self.repr_idx = i;
                 self.status = format!("DUREE REPLAY: {}s", REPR_OPTS[i].1);
+                // la durée du buffer appartient au démon : même fichier
+                self.cap.set("replay_sec", &REPR_OPTS[i].1.to_string());
+                self.cap.ecrire();
                 println!("REPR_IDX {} ({})", i, REPR_OPTS[i].1);
             }
+            Entree::Codec => self.cap_cycle("codec", &capture::CODECS, sens),
+            Entree::Qualite => self.cap_cycle("qualite", &capture::QUALITES, sens),
+            Entree::Reso => self.cap_cycle("resolution", &capture::RESOS, sens),
+            Entree::FpsRec => self.cap_cycle("fps", &capture::FPS, sens),
+            Entree::Curseur => self.cap_cycle("curseur", &capture::CURSEURS, sens),
+            Entree::AutoReplay => self.cap_bascule("auto_replay"),
             // réglé par A (interrupteur), pas par gauche/droite
             Entree::Style => self.basculer_style(),
             Entree::Booster => self.basculer_booster(),
@@ -2409,6 +2472,43 @@ impl App {
             | Entree::Autre(_)
             | Entree::Groupe(_) => {}
         }
+    }
+
+    /// Cycle une clé de `recorder.conf` : écrit le fichier et réveille le
+    /// démon (il relit à chaud, aucun redémarrage).
+    fn cap_cycle(&mut self, cle: &str, table: &[(&str, &str)], sens: i32) {
+        let i = capture::idx(&self.cap, cle, table) as i32;
+        let j = (i + sens).clamp(0, table.len() as i32 - 1) as usize;
+        self.cap.set(cle, table[j].1);
+        self.cap.ecrire();
+        self.status = format!("{}: {}", cle.to_uppercase(), table[j].0);
+        println!("CAP {}={}", cle, table[j].1);
+    }
+
+    fn cap_bascule(&mut self, cle: &str) {
+        let v = if self.cap.get(cle) == Some("1") { "0" } else { "1" };
+        self.cap.set(cle, v);
+        self.cap.ecrire();
+        self.status = format!("{}: {}", cle.to_uppercase(), if v == "1" { "OUI" } else { "NON" });
+        println!("CAP {}={}", cle, v);
+    }
+
+    fn auto_replay(&self) -> bool {
+        self.cap.get("auto_replay") == Some("1")
+    }
+
+    /// Ligne de réglage compacte : libellé à gauche, valeur à droite.
+    fn ligne_valeur(&self, cv: &mut Canvas, x: i32, pad: i32, inner: i32, y: i32,
+                    titre: &str, val: &str, color: u32) {
+        cv.text_fit(x + pad + 36, y, titre, 3, color, inner - 36 - 150);
+        self.valeur_droite(cv, x + pad + inner, y, val, 2, color);
+    }
+
+    /// Pixels disponibles pour la liste de la page courante.
+    fn liste_budget(&self) -> i32 {
+        let (_, h) = self.size;
+        let ph = if self.side { h as i32 } else { 640.min(h as i32 - 120) };
+        (ph - 90) - 180 - self.decalage_logo()
     }
 
     /// Nom de plugin KWin unique pour un script jetable.
@@ -2836,10 +2936,12 @@ impl App {
             match a {
                 Action::Left => {
                     self.regler(-1);
+                    self.ajuster_defilement();
                     return;
                 }
                 Action::Right => {
                     self.regler(1);
+                    self.ajuster_defilement();
                     return;
                 }
                 _ => {}
@@ -2861,10 +2963,12 @@ impl App {
             }
             Action::Up => {
                 self.selected = self.pas_selectable(self.selected, -1);
+                self.ajuster_defilement();
                 println!("NAV UP {}", self.selected);
             }
             Action::Down => {
                 self.selected = self.pas_selectable(self.selected, 1);
+                self.ajuster_defilement();
                 println!("NAV DOWN {}", self.selected);
             }
             Action::Left | Action::Right => {
@@ -3025,6 +3129,12 @@ impl App {
             Entree::Volume => self.toggle_mute(),
             Entree::Fps => self.status = "FPS: GAUCHE/DROITE".to_string(),
             Entree::Duree => self.status = "DUREE REPLAY: GAUCHE/DROITE".to_string(),
+            Entree::Codec
+            | Entree::Qualite
+            | Entree::Reso
+            | Entree::FpsRec
+            | Entree::Curseur
+            | Entree::AutoReplay => self.status = "GAUCHE/DROITE POUR REGLER".to_string(),
             Entree::Mango => self.regler(1),
             Entree::Style => self.basculer_style(),
             Entree::Booster => self.basculer_booster(),
@@ -3219,30 +3329,57 @@ impl App {
         }
     }
 
-    /// Début de l'enregistrement en cours, écrit par `recorder.sh`
-    /// (`start=<epoch>` dans le fichier d'état).
-    fn rec_debut() -> Option<u64> {
-        let txt = std::fs::read_to_string("/tmp/opencode/recorder.state").ok()?;
-        txt.lines()
-            .find_map(|l| l.strip_prefix("start="))
-            .and_then(|v| v.trim().parse::<u64>().ok())
-    }
-
-    /// recorder.sh tient un fichier d'état : présence = enregistrement en cours.
+    /// État de l'enregistreur, lu sur la socket de `gpad-rec` (plus de
+    /// `pgrep`, plus de fichier d'état : le démon est la seule vérité).
     fn refresh_recorder(&mut self) {
-        // Le FICHIER d'état peut survivre à un arrêt brutal (killall pendant un
-        // test) : c'est le processus qui fait foi. Un enregistrement est un
-        // gpu-screen-recorder SANS -r (le replay en a un).
-        let etat = std::path::Path::new("/tmp/opencode/recorder.state").exists()
-            && processus_actif("gpu-screen-recorder")
-            && !replay_actif();
-        if etat != self.rec_active {
-            self.rec_active = etat;
+        let etat = capture::etat();
+        let rec = etat.as_ref().is_some_and(|e| e.recording);
+        if rec != self.rec_active {
+            self.rec_active = rec;
+            // à l'ouverture du panneau pendant une capture, on nomme le fichier
+            if rec && let Some(e) = etat.as_ref() {
+                let nom = std::path::Path::new(&e.file)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if !nom.is_empty() {
+                    self.status = format!("REC: {nom}");
+                }
+            }
             self.dirty = true;
         }
-        // compteur : la source est le `start=` du recorder (juste même si le
-        // panneau a été fermé/rouvert pendant l'enregistrement)
-        self.rec_start = if etat { Self::rec_debut() } else { None };
+        self.rec_fichier = etat.as_ref().map(|e| e.file.clone()).unwrap_or_default();
+        // réglage en attente : le démon garde la config jusqu'à la fermeture du
+        // mp4 (changer le codec au milieu finaliserait le fichier en cours)
+        let attente = etat.as_ref().is_some_and(|e| e.pending);
+        if attente != self.rec_pending {
+            self.rec_pending = attente;
+            self.status = if attente {
+                "REGLAGE: APPLIQUE APRES L'ENREGISTREMENT".to_string()
+            } else {
+                "REGLAGE: APPLIQUE".to_string()
+            };
+            self.dirty = true;
+        }
+        // durée du buffer : le démon fait foi (le déclencheur peut la changer)
+        if let Some(s) = etat.as_ref().map(|e| e.replay_sec)
+            && let Some(i) = REPR_OPTS.iter().position(|(_, v)| *v as i32 == s)
+            && i != self.repr_idx
+        {
+            self.repr_idx = i;
+            self.dirty = true;
+        }
+        // compteur : le démon donne l'âge de l'enregistrement (juste même si le
+        // panneau a été fermé/rouvert pendant la capture)
+        self.rec_start = etat
+            .as_ref()
+            .filter(|e| e.recording && e.t >= 1.0)
+            .and_then(|e| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|d| d.as_secs().saturating_sub(e.t as u64))
+            });
         let secs = match self.rec_start {
             Some(t0) => std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -3718,15 +3855,7 @@ impl App {
     /// Hauteur cumulée des lignes de la page courante (mêmes hauteurs que le
     /// dessin : séparateur 52, réglage 86, ligne 46, en-tête 0).
     fn hauteur_contenu(&self) -> i32 {
-        self.liste()
-            .iter()
-            .map(|e| match e {
-                Entree::Fenetre => 0,
-                Entree::Groupe(_) => 52,
-                _ if e.reglage() => 86,
-                _ => 46,
-            })
-            .sum()
+        self.liste().iter().map(|e| e.hauteur()).sum()
     }
 
     /// Nombre de lignes visibles sur la page « fenêtres » (lignes de 46 px).
@@ -3794,7 +3923,31 @@ impl App {
     /// Recale le défilement pour que la sélection soit toujours visible.
     /// Appelé avant le dessin (le canevas emprunte `self.px` : on ne peut plus
     /// toucher à `self` ensuite).
+    ///
+    /// Deux pages défilent : FENETRES (lignes de hauteur fixe) et REGLAGES,
+    /// dont les lignes n'ont plus la même hauteur (curseurs 86 px, énumérations
+    /// 46 px) — on cumule donc les hauteurs réelles, et on ne retire que les
+    /// lignes entièrement sorties en haut.
     fn ajuster_defilement(&mut self) {
+        if self.page == Page::Reglages {
+            self.fen_top = 0;
+            let budget = self.liste_budget().max(46);
+            let hauteurs: Vec<i32> = self.liste().iter().map(|e| e.hauteur()).collect();
+            let mut top = self.reg_top.min(self.selected);
+            loop {
+                let mut y = 0;
+                for h in &hauteurs[top..=self.selected.min(hauteurs.len() - 1)] {
+                    y += *h;
+                }
+                if y <= budget || top >= self.selected {
+                    break;
+                }
+                top += 1;
+            }
+            self.reg_top = top;
+            return;
+        }
+        self.reg_top = 0;
         if self.page != Page::Fenetres {
             self.fen_top = 0;
             return;
@@ -3962,6 +4115,15 @@ impl App {
         let mut y = y0;
         // page fenêtres : fenêtre glissante, toutes ses lignes font 46 px
         let visibles = self.fen_visibles();
+        // page RÉGLAGES : hauteur des lignes déjà sorties en haut. Le test de
+        // fin de fenêtre doit s'en retirer — sinon, défilé, il compte deux fois
+        // ces lignes et coupe la liste trop tôt (mesuré : les trois dernières
+        // sections disparaissaient dès que la page défilait).
+        let dessus: i32 = if self.page == Page::Reglages {
+            self.liste().iter().take(self.reg_top).map(|e| e.hauteur()).sum()
+        } else {
+            0
+        };
         for (i, e) in self.liste().iter().enumerate() {
             if self.page == Page::Fenetres && i < self.fen_top {
                 continue;
@@ -3971,13 +4133,16 @@ impl App {
             }
             // une ligne de réglage est plus haute : le curseur vit dessous
             // l'en-tête (Entree::Fenetre) est dessiné plus haut : hauteur nulle
-            let h = match e {
-                Entree::Fenetre => 0,
-                // un séparateur respire : titre + filet, puis un peu d'air
-                Entree::Groupe(_) => 52,
-                _ if e.reglage() => 86,
-                _ => 46,
-            };
+            let h = e.hauteur();
+            // page RÉGLAGES : fenêtre glissante (elle ne tient plus à l'écran
+            // depuis l'ajout de la section CAPTURE)
+            if self.page == Page::Reglages && i < self.reg_top {
+                y += h;
+                continue;
+            }
+            if self.page == Page::Reglages && y - y0 - dessus > self.liste_budget() {
+                break;
+            }
             // l'en-tête a déjà son propre surlignage (hauteur nulle ici)
             if matches!(e, Entree::Fenetre) {
                 y += h;
@@ -4154,6 +4319,25 @@ impl App {
                     self.curseur_ligne(&mut cv, px0 + pad + 36, y + 40, inner - 36,
                                        REPR_OPTS.len(), self.repr_idx, sel);
                 }
+                Entree::Qualite => self.ligne_valeur(
+                    &mut cv, px0, pad, inner, y, "QUALITE",
+                    capture::libelle(&self.cap, "qualite", &capture::QUALITES), color),
+                Entree::Codec => self.ligne_valeur(
+                    &mut cv, px0, pad, inner, y, "CODEC",
+                    capture::libelle(&self.cap, "codec", &capture::CODECS), color),
+                Entree::Reso => self.ligne_valeur(
+                    &mut cv, px0, pad, inner, y, "RESOLUTION",
+                    capture::libelle(&self.cap, "resolution", &capture::RESOS), color),
+                Entree::FpsRec => self.ligne_valeur(
+                    &mut cv, px0, pad, inner, y, "FPS REC",
+                    capture::libelle(&self.cap, "fps", &capture::FPS), color),
+                Entree::Curseur => self.ligne_valeur(
+                    &mut cv, px0, pad, inner, y, "CURSEUR",
+                    capture::libelle(&self.cap, "curseur", &capture::CURSEURS), color),
+                Entree::AutoReplay => {
+                    cv.text_fit(px0 + pad + 36, y, "REPLAY AUTO", 3, color, inner - 36 - 60);
+                    self.interrupteur(&mut cv, px0 + pad + inner, y, self.auto_replay(), false);
+                }
                 Entree::Fps => {
                     cv.text_fit(px0 + pad + 36, y, "FPS", 3, color, inner - 36);
                     // La valeur réelle passe avant le cran : le curseur se pose
@@ -4211,6 +4395,25 @@ impl App {
                 }
             }
             y += h;
+        }
+
+        // Indicateur de défilement : la page RÉGLAGES ne tient plus à l'écran
+        // (section CAPTURE). Un rail fin au bord droit et un curseur de la
+        // taille de la fenêtre visible : on sait qu'il y a une suite, et où
+        // l'on est. Muet quand tout tient.
+        if self.page == Page::Reglages {
+            let hauteurs: Vec<i32> = self.liste().iter().map(|e| e.hauteur()).collect();
+            let total: i32 = hauteurs.iter().sum();
+            let budget = self.liste_budget().max(46);
+            if total > budget + 4 {
+                let x = px0 + pad + inner + 4;
+                let piste = budget - 12;
+                let hh = (piste * budget / total).max(22).min(piste);
+                let course = (piste - hh).max(1);
+                let pos = (course as f32 * dessus as f32 / (total - budget).max(1) as f32) as i32;
+                cv.rrect(x, y0 + 6, 3, piste, 1, 0x30ffffff);
+                cv.rrect(x, y0 + 6 + pos.clamp(0, course), 3, hh, 1, th.accent);
+            }
         }
     }
 
@@ -4962,34 +5165,6 @@ fn arreter_processus(nom: &str) -> usize {
         }
     }
     n
-}
-
-/// Un buffer de replay tourne-t-il ? Le binaire s'appelle `gpu-screen-recorder`
-/// dans les deux cas (replay ET enregistrement) : c'est l'option `-r <sec>`
-/// qui distingue le replay, et le binaire n'accepte qu'une instance.
-fn replay_actif() -> bool {
-    let Ok(dir) = std::fs::read_dir("/proc") else { return false };
-    for e in dir.flatten() {
-        let p = e.path();
-        let est_pid = p
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
-            .unwrap_or(false);
-        if !est_pid {
-            continue;
-        }
-        let Ok(raw) = std::fs::read(p.join("cmdline")) else { continue };
-        let args: Vec<&[u8]> = raw.split(|b| *b == 0).collect();
-        let est_gsr = args
-            .first()
-            .map(|a| a.ends_with(b"gpu-screen-recorder"))
-            .unwrap_or(false);
-        if est_gsr && args.iter().any(|a| *a == b"-r") {
-            return true;
-        }
-    }
-    false
 }
 
 /// Nom de processus d'un binaire configuré par variable (MOUSE, RUMBLE…).
@@ -6520,6 +6695,8 @@ fn main() {
             "fps" => Some(Entree::Fps),
             "mango" => Some(Entree::Mango),
             "volume" => Some(Entree::Volume),
+            // section CAPTURE (enregistreur / replay) : banc visuel
+            "capture" => Some(Entree::Qualite),
             _ => None,
         };
         if let Some(c) = cible {
@@ -6845,7 +7022,7 @@ fn main() {
                 app.mouse_active = souris;
                 app.dirty = true;
             }
-            let replay = replay_actif();
+            let replay = capture::etat().is_some_and(|e| e.replay);
             // le script démarre/arrête en quelques dixièmes de seconde (bip,
             // flatpak, SIGINT) : tant que l'état demandé n'est pas arrivé, la
             // passe ne le contredit pas, sinon la ligne affichait « ARRET »

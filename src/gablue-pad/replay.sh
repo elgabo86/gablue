@@ -1,50 +1,71 @@
 #!/usr/bin/bash
-# replay.sh - buffer de replay de l'écran (gpu-screen-recorder -r).
+# replay.sh - buffer de replay de l'écran (gpad-rec, piloté par sa socket).
 #
 #   ./replay.sh start | stop | save | toggle | status
 #
-#   start   démarre un buffer de REPLAY_SEC secondes (défaut 30), qui tourne
-#           en continu sans écrire de fichier
-#   save    sauvegarde le buffer -> Replay_<date>.mp4 dans le dossier de sortie
+#   start   démarre le buffer (durée = REPLAY_SEC ou `replay_sec` de la config)
+#   save    sauvegarde le buffer -> Replay_<date>.mp4, retour haptique seul
 #   stop    arrête le buffer (rien n'est sauvegardé)
-#   toggle  start si arrêté, stop sinon
-#   status  "actif <sec>s" ou "inactif"
+#   status  "actif 30s" ou "inactif"
 #
-# Pourquoi ces précautions (mesuré sur cette machine) :
-#  - le binaire tourne dans un flatpak : signaler le LANCEUR `flatpak run` ne
-#    fait rien, il faut lire le binaire DANS le bac à sable -> killall ;
-#  - jamais `pgrep -f gpu-screen-recorder` : le motif matche le shell appelant ;
-#  - le bac à sable n'écrit pas dans /tmp -> sortie sous $HOME.
+# Plus de pgrep/killall : le démon tient l'état, la socket le dit. Le geste
+# reste identique (Home+gauche, ou la ligne REPLAY du panneau).
 set -uo pipefail
 
-APP=com.dec05eba.gpu_screen_recorder
-# gpu-screen-recorder ÉCRIT le chemin du replay sauvegardé sur stdout
-# (documenté) : plus fiable que de guetter un fichier — le mtime du fichier est
-# celui du début du buffer, et la sauvegarde peut dépasser l'attente.
-LOG=/tmp/opencode/replay.log
+HERE="$(dirname "$(readlink -f "$0")")"
+REC=${GPAD_REC:-/usr/bin/gpad-rec}
+RT=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+SOCK=${GPAD_REC_SOCK:-$RT/gablue/gpad-rec.sock}
+# Journal du démon lancé à la volée (banc, test) : dans le dossier d'exécution,
+# jamais dans un /tmp qui n'existe pas sur un poste installé.
+LOG=${GPAD_REC_LOG:-$RT/gablue/gpad-rec.log}
+SEC=${REPLAY_SEC:-}
 # Retour haptique de confirmation : la vibration ne passe ni par l'écran ni par
 # l'audio, donc elle ne peut PAS se retrouver dans le clip. PAD_NODE = manette
 # qui a déclenché (vide ou "-" = détection automatique).
-RUMBLE=${RUMBLE:-$(dirname "$(readlink -f "$0")")/rumble/rumble}
-OUTDIR=${RECORD_DIR:-$HOME/Vidéos/Captures}
-SEC=${REPLAY_SEC:-30}
-RES=${RECORD_RES:-1920x1080}
-FPS=${REPLAY_FPS:-60}
-AUDIO=${REPLAY_AUDIO-default_output}
+RUMBLE=${RUMBLE:-$HERE/rumble/rumble}
 
-# le binaire (cmdline commençant par son nom), jamais le shell appelant
-en_cours() { pgrep -f '^gpu-screen-recorder ' > /dev/null 2>&1; }
-# le nôtre : un buffer de replay porte forcément -r <secondes>
-replay_actif() { pgrep -f '^gpu-screen-recorder .*-r [0-9]+' > /dev/null 2>&1; }
+sock() {
+    timeout 20 python3 - "$SOCK" "$1" <<'PY'
+import socket, sys
+# pas de démon = pas une erreur : l'appelant décide (il le démarre, ou il dit
+# « inactif »). Une trace Python sur stderr à chaque status serait du bruit.
+try:
+    s = socket.socket(socket.AF_UNIX)
+    s.settimeout(15)
+    s.connect(sys.argv[1])
+except OSError:
+    sys.exit(1)
+s.sendall(sys.argv[2].encode() + b"\n")
+print(s.makefile().readline().strip())
+PY
+}
 
-# Bip de départ : celui de l'enregistrement (`sounds/beep.wav`), joué AVANT le
-# lancement du buffer. Il faut donc un silence entre les deux : le monitor du
-# sink garde la queue du son quelques centaines de ms, et le buffer qui démarre
-# aussitôt l'enregistrerait (le bip se retrouverait dans chaque replay).
-BIP=${BIP_SON:-$(dirname "$(readlink -f "$0")")/sounds/beep.wav}
+champ() { sed -n "s/.*\"$2\":\"\{0,1\}\([^\",}]*\).*/\1/p" <<< "$1"; }
+bool_oui() { [[ "$1" == true ]]; }
+
+daemon_vivant() { [[ -S "$SOCK" ]] || return 1; local r; r=$(sock '{"cmd":"status"}') || return 1; [[ "$r" == *'"ok":true'* ]]; }
+
+assure_daemon() {
+    daemon_vivant && return 0
+    [[ -x "$REC" ]] || { echo "ECHEC: $REC absent (enregistreur non installé)"; return 1; }
+    mkdir -p "$(dirname "$SOCK")"
+    setsid "$REC" --daemon --socket "$SOCK" > "$LOG" 2>&1 < /dev/null &
+    for _ in $(seq 1 50); do
+        daemon_vivant && return 0
+        sleep 0.1
+    done
+    echo "ECHEC: le démon gpad-rec n'a pas démarré (voir $LOG)"
+    return 1
+}
+
+BIP=${BIP_SON:-$HERE/sounds/beep.wav}
 BIP_PAUSE=${BIP_PAUSE:-0.35}
-
 bip_depart() {
+    # `GPAD_SANS_BIP=1` : démarrage silencieux (commande `grec`, entrée de
+    # menu). Le bip n'a de sens que manette en main, quand on ne voit pas
+    # l'écran — et il s'entendrait dans l'enregistrement.
+    [[ "${GPAD_SANS_BIP:-0}" == 1 ]] && return 0
     [[ -f "$BIP" ]] || return 0
     command -v ffplay > /dev/null || return 0
     ffplay -nodisp -autoexit -loglevel quiet "$BIP" > /dev/null 2>&1
@@ -52,80 +73,42 @@ bip_depart() {
 }
 
 start() {
-    if replay_actif; then
-        echo "replay déjà actif (${SEC}s)"
-        return 0
-    fi
-    if en_cours; then
-        echo "ECHEC: un enregistrement est déjà en cours"
-        return 1
-    fi
-    mkdir -p "$OUTDIR"
-    # le son d'abord, le buffer ensuite (voir `bip_depart`) : l'ordre inverse
-    # filmerait le bip
+    assure_daemon || return 1
+    local r; r=$(sock '{"cmd":"status"}')
+    bool_oui "$(champ "$r" replay)" && { echo "replay déjà actif ($(champ "$r" replay_sec)s)"; return 0; }
+    bool_oui "$(champ "$r" recording)" && { echo "ECHEC: un enregistrement est déjà en cours"; return 1; }
     bip_depart
-    # -c mp4 ET -o <dossier> sont exigés en mode replay : gpu-screen-recorder
-    # écrit alors Replay_<date>.mp4 DANS ce dossier (un chemin de fichier
-    # créerait un dossier portant ce nom — mesuré).
-    local args=(-cursor no -w screen -s "$RES" -f "$FPS" -c mp4
-                -r "$SEC" -restart-replay-on-save yes -o "$OUTDIR")
-    [[ -n "$AUDIO" ]] && args+=(-a "$AUDIO")
-
-    # journal tronqué : `save` y lit le chemin écrit par le binaire
-    : > "$LOG"
-    setsid flatpak run --command=gpu-screen-recorder "$APP" "${args[@]}" \
-        > "$LOG" 2>&1 < /dev/null &
-    for _ in $(seq 1 40); do
-        replay_actif && break
-        sleep 0.1
-    done
-    if replay_actif; then
-        echo "replay actif : ${SEC}s"
+    local cmd='{"cmd":"replay.start"}'
+    [[ -n "$SEC" ]] && cmd="{\"cmd\":\"replay.start\",\"sec\":$SEC}"
+    r=$(sock "$cmd")
+    if bool_oui "$(champ "$r" replay)"; then
+        echo "replay actif : $(champ "$r" replay_sec)s"
     else
-        echo "ECHEC: le replay n'a pas démarré (voir /tmp/opencode/replay.log)"
+        echo "ECHEC: le replay n'a pas démarré (voir $LOG)"
         return 1
     fi
 }
 
 save() {
-    if ! replay_actif; then
-        echo "ECHEC: replay inactif"
-        return 1
-    fi
-    # lignes déjà présentes : seules les NOUVELLES nous intéressent
-    local avant; avant=$(wc -l < "$LOG" 2>/dev/null || echo 0)
-    # SIGUSR1 = sauvegarde du buffer (le binaire, pas le lanceur flatpak)
-    killall -USR1 gpu-screen-recorder 2>/dev/null || true
-
-    local f=""
-    for _ in $(seq 1 50); do
-        f=$(tail -n +$((avant + 1)) "$LOG" 2>/dev/null \
-            | grep -oE '/[^[:space:]]*Replay_[^[:space:]]*\.mp4' | tail -1)
-        [[ -n "$f" ]] && break
-        sleep 0.1
-    done
-    if [[ -n "$f" ]]; then
+    local r; r=$(sock '{"cmd":"status"}') || { echo "ECHEC: démon arrêté"; return 1; }
+    bool_oui "$(champ "$r" replay)" || { echo "ECHEC: replay inactif"; return 1; }
+    r=$(sock '{"cmd":"replay.save"}')
+    local f; f=$(champ "$r" file)
+    if bool_oui "$(champ "$r" ok)" && [[ -n "$f" ]]; then
         # Seul retour : la vibration. Aucune notification, aucun son — tout ce
-        # qui s'affiche ou se joue peut atterrir dans un clip (l'écran dans le
-        # suivant, le son dans le buffer courant).
+        # qui s'affiche ou se joue peut atterrir dans un clip.
         [[ -x "$RUMBLE" ]] && "$RUMBLE" "${PAD_NODE:--}" 140 60
         echo "replay sauvegardé : $f"
     else
-        echo "ECHEC: aucun fichier écrit"
+        echo "ECHEC: sauvegarde refusée ($(champ "$r" err))"
         return 1
     fi
 }
 
 stop() {
-    if ! replay_actif; then
-        echo "replay déjà arrêté"
-        return 0
-    fi
-    killall -SIGINT gpu-screen-recorder 2>/dev/null || true
-    for _ in $(seq 1 30); do
-        replay_actif || break
-        sleep 0.1
-    done
+    local r; r=$(sock '{"cmd":"status"}') || { echo "replay déjà arrêté"; return 0; }
+    bool_oui "$(champ "$r" replay)" || { echo "replay déjà arrêté"; return 0; }
+    sock '{"cmd":"replay.stop"}' > /dev/null
     echo "replay arrêté"
 }
 
@@ -133,7 +116,11 @@ case "${1:-status}" in
     start)  start ;;
     save)   save ;;
     stop)   stop ;;
-    toggle) if replay_actif; then stop; else start; fi ;;
-    status) if replay_actif; then echo "actif ${SEC}s"; else echo "inactif"; fi ;;
+    toggle)
+        r=$(sock '{"cmd":"status"}' 2>/dev/null) || r=""
+        if bool_oui "$(champ "$r" replay)"; then stop; else start; fi ;;
+    status)
+        r=$(sock '{"cmd":"status"}' 2>/dev/null) || { echo "inactif"; exit 0; }
+        if bool_oui "$(champ "$r" replay)"; then echo "actif $(champ "$r" replay_sec)s"; else echo "inactif"; fi ;;
     *) echo "usage: $0 start|stop|save|toggle|status"; exit 2 ;;
 esac

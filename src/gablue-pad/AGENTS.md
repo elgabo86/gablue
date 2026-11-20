@@ -31,8 +31,8 @@ d'animation KWin à attendre. Mesuré : premier tampon 6 ms, panneau en place
 | `shot/` | capture d'écran par appel direct à KWin (`ScreenShot2`, sans pointeur, ~40 ms) | `/usr/bin/gpad-shot` |
 | `kwin/` | scripts KWin poussés à chaud (`wininfo.js`, `lister.js`, `fullscreen.js` ; le cyclage L2/R2 est **généré**) | `/usr/libexec/gablue-pad/kwin` |
 | `scripts/` | lancements du menu Applications (`toggle-glauncher`, `toggle-es`, `toggle-yt`, `toggle-tv`, `toggle-jellyfin`) + `fermer-applis`, `openes` | `/usr/libexec/gablue-pad/scripts` |
-| `sounds/` | `beep.wav` (départ enregistrement/replay), `shot.wav` (capture), `clic.wav`/`noclic.wav` (mode souris) | idem |
-| `recorder.sh`, `replay.sh`, `screenshot.sh`, `vrr.sh`, `mangohud.sh`, `booster.sh` | outils appelés par l'overlay et le déclencheur (`screenshot.sh` : son d'abord puis `gpad-shot`, repli spectacle — voir « Capture d'écran » ; `booster.sh` : « optimiser au premier plan », ligne `PRIORITE ACTIVE` des réglages ; `mangohud.sh` : **unique** réglage MangoHud du poste, partagé avec le dialogue « MangoHud… » de Gablue Manager) | idem |
+| `sounds/` | `beep.wav` (départ enregistrement/replay, **sauté** avec `GPAD_SANS_BIP=1` : `grec`, `.desktop`, replay automatique), `shot.wav` (capture), `clic.wav`/`noclic.wav` (mode souris) | idem |
+| `recorder.sh`, `replay.sh`, `screenshot.sh`, `vrr.sh`, `mangohud.sh`, `booster.sh` | outils appelés par l'overlay et le déclencheur (`recorder.sh`/`replay.sh` sont de purs **clients de la socket** de `gpad-rec` : plus aucun `pgrep`/`killall`/fichier d'état, l'état vient de `status`) (`screenshot.sh` : son d'abord puis `gpad-shot`, repli spectacle — voir « Capture d'écran » ; `booster.sh` : « optimiser au premier plan », ligne `PRIORITE ACTIVE` des réglages ; `mangohud.sh` : **unique** réglage MangoHud du poste, partagé avec le dialogue « MangoHud… » de Gablue Manager) | idem |
 | `evgrab/` | bancs : `vpad` (manette virtuelle + signaux), `rdr`, `hidrev` | **non installé** |
 
 `killthemall` n'est **pas** ici : il est partagé (bouton `KillEmu.desktop`) et vit
@@ -114,6 +114,34 @@ l'emporte sur l'activation de l'image) ; un masque posé sur l'ancien service
 
 Pas de Home+triangle (retiré) : YouTube s'ouvre par la page Applications.
 Détail des gestes et des pages : `gpad/AGENTS.md`.
+
+## Enregistreur et replay
+
+L'overlay est un **client de la socket** de `gpad-rec` (`capture::etat()`) : il
+n'imagine jamais l'état, il lit `recording`/`replay`/`pending` au moment de
+dessiner. Trois lignes d'action (page ACTIONS) et une section de réglages :
+
+| Page | Ligne | Effet |
+|---|---|---|
+| ACTIONS | `ENREGISTRER UNE VIDEO` | `recorder.sh start`/`stop` (bascule, même ligne quand ça tourne) |
+| ACTIONS | `REPLAY` | `replay.sh start`/`save`/`stop` selon l'état |
+| RÉGLAGES | `CAPTURE` | Qualité, Codec, Résolution, FPS REC, Curseur |
+| RÉGLAGES | `REPLAY AUTO` | interrupteur `auto_replay` (défaut **off**), écrit `recorder.conf` |
+
+- **Défauts choisis pour que le fichier s'ouvre partout** : H.264 (compatibilité
+  seule), résolution `SOURCE` (natif), qualité 3, 60 fps, curseur masqué —
+  même si H.265 pèse 28 % de moins. `720P`/`1080P`/`1440P` sont des crans
+  explicites pour un envoi léger (détail et barème →
+  `../gablue-rec/AGENTS.md`).
+- **Pas de bouton « Partager »** : le geste existant (Home+gauche, ou la ligne
+  du menu quand le buffer tourne) sauve le replay. Pas de notification à la
+  sauvegarde (elle entrerait dans le clip suivant), le rumble suffit.
+- **Pas de bip** quand le replay démarre tout seul (`GPAD_SANS_BIP=1` posé par
+  `grec`/le lancement automatique) : le son ne confirme qu'un geste manette.
+- **Lignes compactes + défilement** : la page RÉGLAGES a maintenant sept lignes
+  hautes ; `hauteur()` les resserre et `reg_top` fait défiler avec une barre de
+  position quand ça dépasse (~sous 1200 px de haut, vu avec
+  `GPAD_TEST_BUDGET`). La sélection reste visible en défilant.
 
 ## Capture d'écran (`gpad-shot`)
 

@@ -83,6 +83,17 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build-gpad
 
+# Étape intermédiaire : enregistreur / replay d'écran (C, capture KMS + VAAPI).
+# Les en-têtes de développement ffmpeg/libdrm/libcap restent ici : l'image
+# finale ne reçoit que le binaire (~50 Ko). La file capability est posée par
+# post-install (COPY --from la perdrait).
+FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION} AS gablue-rec-build
+COPY src/gablue-rec /build
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build-rec
+
 # Étape intermédiaire : launcher de jeux (Rust, iced). Même raison d'être que
 # les précédentes : la toolchain reste ici, l'étape finale ne reçoit que le
 # binaire. `assets/` est copié avec les sources : glyphes de manette, étoile des
@@ -278,6 +289,8 @@ RUN --mount=type=cache,dst=/var/cache \
 
 # Overlay (Rust, étape gpad-build) et gate BPF (étape gpad-gate-build).
 # Le démon cherche `gpad-gate.bpf.o` à côté de son binaire : même dossier.
+COPY --from=gablue-rec-build /out/usr/bin/gpad-rec /usr/bin/gpad-rec
+COPY src/gablue-rec/grec /usr/bin/grec
 COPY --from=gpad-build /out/gpad /usr/bin/gpad
 COPY --from=gpad-gate-build /out/gpad-gate /out/gpad-gate.bpf.o /usr/libexec/gablue-pad/
 

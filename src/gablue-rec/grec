@@ -1,0 +1,70 @@
+#!/usr/bin/bash
+# grec - enregistreur d'écran de Gablue, sans la manette.
+#
+#   grec                 bascule : démarre, ou arrête si un enregistrement tourne
+#   grec start | stop    démarrage / arrêt explicite
+#   grec status          état (enregistrement, replay, fichier en cours)
+#   grec save            sauvegarde le buffer de replay (Replay_<date>.mp4)
+#   grec replay start    démarre / arrête le buffer
+#   grec replay stop
+#   grec replay status
+#   grec dir             ouvre le dossier des captures dans Dolphin
+#
+# C'est la MÊME chaîne que l'overlay et le déclencheur : `recorder.sh` et
+# `replay.sh` de gablue-pad, qui parlent à la socket de `gpad-rec`. Aucun état
+# propre ici, donc pas de risque de divergence (deux « qui enregistre ? »).
+#
+# Pendant un enregistrement, l'icône de Gablue Manager passe au rouge dans la
+# barre d'état : un clic dessus arrête la capture. Aucune bulle de notification
+# n'est affichée — elle se retrouverait dans le clip suivant.
+set -uo pipefail
+
+# Aucun bip : lancé au clavier ou depuis le menu, on voit l'écran (le son de
+# démarrage ne sert qu'à la manette). L'icône du tray passe au rouge, c'est le
+# retour visuel.
+export GPAD_SANS_BIP=1
+
+HERE="$(dirname "$(readlink -f "$0")")"
+# Image : les scripts du pad sont dans /usr/libexec/gablue-pad. Banc : ils sont
+# à côté de ce fichier, ou dans le dépôt (`GPAD_PAD_DIR`).
+DIR=${GPAD_PAD_DIR:-/usr/libexec/gablue-pad}
+[[ -x "$DIR/recorder.sh" ]] || DIR="$HERE"
+REC="$DIR/recorder.sh"
+REP="$DIR/replay.sh"
+
+usage() {
+    sed -n '2,/^set /p' "$0" | sed -e 's/^# \{0,1\}//' -e '/^set /d'
+}
+
+# Dossier des captures : la clé `dossier` de recorder.conf fait foi (même
+# fichier que l'overlay et Gablue Manager), sinon le défaut du démon.
+dossier() {
+    local conf="${XDG_CONFIG_HOME:-$HOME/.config}/gablue/recorder.conf"
+    local d=""
+    [[ -f "$conf" ]] && d=$(sed -n 's/^dossier=//p' "$conf" | tail -1)
+    printf '%s\n' "${d:-$HOME/Vidéos/Captures}"
+}
+
+[[ -x "$REC" ]] || { echo "ECHEC: $REC absent" >&2; exit 1; }
+
+case "${1:-toggle}" in
+    start|stop|toggle) exec "$REC" "$@" ;;
+    status)
+        # les deux états d'un coup, plus l'application des réglages
+        "$REC" status
+        printf 'replay : %s\n' "$("$REP" status)"
+        printf 'réglage : %s\n' "$("$REC" pending)"
+        ;;
+    save) exec "$REP" save ;;
+    replay) shift; exec "$REP" "${1:-status}" ;;
+    dir)
+        d="$(dossier)"
+        mkdir -p "$d" 2>/dev/null || true
+        setsid dolphin "$d" </dev/null >/dev/null 2>&1 &
+        echo "$d" ;;
+    -h|--help|help) usage ;;
+    *)
+        echo "option inconnue : $1" >&2
+        echo "usage : grec [start|stop|toggle|status|save|replay start|stop|status|dir]" >&2
+        exit 2 ;;
+esac

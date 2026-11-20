@@ -20,13 +20,23 @@ gauche/droite**, appliquée **immédiatement** — rien à valider.
 | `AFFICHAGE` / `MANGOHUD` | 3 positions, `MASQUE` **à gauche** → `PAR DEFAUT` → `HORIZONTAL` | `mangohud.sh set-vue` — **même source que le dialogue « MangoHud… » de Gablue Manager** (`~/.config/MangoHud/MangoHud.conf`), voir plus bas |
 | `AFFICHAGE` / `FPS` | 7 positions, `30` → `48` → `60` → `90` → `120` → `165` → `INF` | `mangohud.sh set-fps` ; une limite **hors crans** (MangoJuice, dialogue « MangoHud… » de Gablue Manager) est affichée **telle quelle** et le curseur se pose sur le cran le plus proche — le premier gauche/droite repart de la vraie valeur (`refresh_mangohud` → `fps_reel`) |
 | `AFFICHAGE` / `VRR` | **interrupteur** (A) | VRR **automatique** (Adaptive Sync de KWin) sur toutes les sorties capables ↔ désactivé : `vrr.sh toggle` → `kscreen-doctor output.<nom>.vrrpolicy.automatic\|never` |
-| `REPLAY` / `DUREE REPLAY` | 5 positions, `15` → **`30`** → `60` → `120` → `300` s | passé en `REPLAY_SEC` au lancement du buffer |
+| `CAPTURE` / `QUALITE` | 5 positions, 1..5 (**3**) | `qualite` dans `recorder.conf` (barème des débits : `../../gablue-rec/AGENTS.md`) |
+| `CAPTURE` / `CODEC` | 2 positions, **`H.264`** → `H.265` | `codec` ; H.264 par défaut **pour que le fichier s'ouvre partout** |
+| `CAPTURE` / `RESOLUTION` | 4 positions, `720P` → `1080P` → `1440P` → **`SOURCE`** | `resolution` (`1280x720`, `1920x1080`, `2560x1440`, `source`) ; `SOURCE` par défaut (natif), les tailles fixes servent au partage léger |
+| `CAPTURE` / `FPS REC` | 4 positions, **`60`** → `120` → `144` → `FLIPS` | `fps` (plafond d'émission ; `flips` = taux réel des flips) |
+| `CAPTURE` / `CURSEUR` | 2 positions, **`MASQUE`** → `AFFICHE` | `curseur` (affiché = v2, non implémenté) |
+| `REPLAY` / `DUREE REPLAY` | 5 positions, `15` → **`30`** → `60` → `120` → `300` s | `replay_sec` dans `recorder.conf` (le démon relit le fichier seul) |
+| `REPLAY` / `REPLAY AUTO` | **interrupteur** (A) | `auto_replay` (défaut **off**) : démarre le buffer dès qu'un `.lgp`/`.wgp` tourne |
 | `PERFORMANCE` / `PRIORITE ACTIVE` | **interrupteur** (A) | « optimiser au premier plan » : le booster cgroup de Plasma donne la priorité CPU/IO à la fenêtre active ↔ désactivé : `booster.sh toggle` → `autostart` dans `~/.config/kcgroupsrc` + `systemctl --user restart\|stop plasma-foreground-booster.service` |
 | `INTERFACE` / `STYLE RETRO` / `STYLE MODERNE` | **interrupteur** (A) | le libellé porte le style courant (OFF = retro, ON = moderne), appliqué **à chaud** + écrit dans `~/.config/gablue/gpad-style` |
 
 Plus d'entrée `TOUT FERMER` ici : elle est passée dans le **menu système**
 (Home maintenu), avec les autres actions qui ne se réparent pas.
 
+- Les lignes `CAPTURE` et `REPLAY` écrivent `~/.config/gablue/recorder.conf` :
+  le démon en **surveille le `mtime`** (poll 500 ms), donc aucune socket à
+  connaître, aucun `reload` à envoyer. Un changement de codec pendant un
+  enregistrement est **différé** (`pending` dans `status`, l'overlay l'affiche).
 - La ligne s'appelle **`PRIORITE ACTIVE`**, pas « optimiser au premier plan » :
   à l'échelle 3 la police bitmap avance de 6 × échelle, donc **18 caractères**
   tiennent dans les 340 px utiles et `text_fit` **tronque** (il ne réduit pas) —
@@ -135,10 +145,21 @@ SON        VOLUME
 AFFICHAGE  MANGOHUD
            FPS
            VRR
+CAPTURE    QUALITE
+           CODEC
+           RESOLUTION
+           FPS REC
+           CURSEUR
 REPLAY     DUREE REPLAY
+           REPLAY AUTO
 PERFORMANCE PRIORITE ACTIVE
 INTERFACE  STYLE RETRO / STYLE MODERNE
 ```
+
+**Treize lignes hautes** ne tiennent pas sur un écran 1080p : les rangées sont
+**resserrées** (`hauteur()`) et la page **défile** (`reg_top` + barre de
+position à droite) dès que le contenu dépasse. En 1440p elle tient sans
+défilement ; le cas court se vérifie avec `GPAD_TEST_BUDGET`.
 
 L'en-tête est le **premier élément de chaque page** (`Entree::Fenetre`) : il est
 donc sélectionnable partout. **À l'ouverture, le curseur est sur la fenêtre

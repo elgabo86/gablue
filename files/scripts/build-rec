@@ -1,0 +1,20 @@
+#!/usr/bin/bash
+
+# Compilation de l'enregistreur / replay (gpad-rec) dans l'étape
+# "gablue-rec-build". Les en-têtes de développement (ffmpeg-devel,
+# libdrm-devel, libcap-devel) restent dans cette étape : l'image finale ne
+# reçoit qu'un binaire de ~50 Ko, plus la commande `grec`.
+#
+# Capture KMS -> import VAAPI -> h264_vaapi/hevc_vaapi -> mp4 et anneau de
+# segments TS pour le replay. Contrat complet : src/gablue-rec/AGENTS.md.
+
+set -eoux pipefail
+
+dnf5 -y install gcc make pkgconf-pkg-config \
+    ffmpeg-devel libdrm-devel libcap-devel
+
+make -C /build install DESTDIR=/out
+
+# La file capability n'est PAS posée ici : l'étape finale la pose
+# (`setcap cap_sys_admin+p`), sinon `COPY --from` la perdrait.
+echo "gpad-rec compilé : $(stat -c %s /out/usr/bin/gpad-rec) octets"

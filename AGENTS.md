@@ -75,6 +75,10 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── kwin/ scripts/ sounds/         # Scripts KWin, lancements du menu, sons
 │   │   ├── AGENTS.md                      # Contrat, services, options, installation
 │   │   └── Makefile                       # Compilation C + installation des données
+│   ├── gablue-rec/                         # Enregistreur / replay écran (KMS + VAAPI)
+│   │   ├── AGENTS.md                       # Contrat : config, socket, pièges, mesures
+│   │   ├── gpad-rec.c                      # Capture KMS + encodage VAAPI + anneau replay
+│   │   └── banc/                           # Client de socket pour le banc
 │   ├── gablue-apk-installer/               # Installateur APK (Python modulaire)
 │   │   ├── AGENTS.md                        # Paquet, appareils, installation
 │   │   ├── gablue-apk-installer            # Lanceur /usr/bin (sys.path + main)
@@ -278,6 +282,7 @@ son propre AGENTS.md de sous-dossier + pointeur dans l'index ci-dessous.
 | lgplaunch (modules Bash `lib/`) | `src/lgplaunch/AGENTS.md` | modifier `src/lgplaunch/` |
 | RetroPlayer (GUI Rust, boucle, cache, icône, `.desktop`) | `src/retroplayer/AGENTS.md` | modifier `src/retroplayer/` ou son installation |
 | Manette : overlay, déclencheur, gate BPF, options | `src/gablue-pad/AGENTS.md` | modifier `src/gablue-pad/`, un geste, une unité ou un réglage du pad |
+| Enregistreur / replay écran (KMS + VAAPI, socket d'état) | `src/gablue-rec/AGENTS.md` | modifier `src/gablue-rec/`, brancher capture/replay dans l'overlay ou toucher aux privilèges DRM |
 
 Changements suivant la racine :
 - Ajout d'une nouvelle variante d'image

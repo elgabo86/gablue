@@ -20,7 +20,7 @@
 //! (celle de `instance.py`, au même chemin : Qt la met dans le dossier
 //! temporaire) : `quit`, `reload`, `updates`, `state:<json>`.
 
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -111,9 +111,44 @@ fn display_from(document: &serde_json::Value) -> Display {
     }
 }
 
+// --- enregistreur (gpad-rec, src/gablue-rec) -------------------------------
+
+/// Socket de contrôle du démon d'enregistrement (même chemin que l'overlay).
+fn rec_socket() -> Option<PathBuf> {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")?;
+    Some(Path::new(&runtime).join("gablue/gpad-rec.sock"))
+}
+
+/// Une commande, une réponse (JSON sur une ligne). `None` : démon absent —
+/// ce n'est pas une erreur, il ne tourne que pendant une capturé ou un replay.
+fn rec_cmd(commande: &str) -> Option<String> {
+    let mut stream = UnixStream::connect(rec_socket()?).ok()?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(400)))
+        .ok()?;
+    stream.write_all(commande.as_bytes()).ok()?;
+    stream.write_all(b"\n").ok()?;
+    let mut ligne = String::new();
+    BufReader::new(stream).read_line(&mut ligne).ok()?;
+    Some(ligne)
+}
+
+/// Enregistrement en cours ? La pastille rouge de l'icône en dépend.
+fn rec_active() -> bool {
+    rec_cmd("{\"cmd\":\"status\"}").is_some_and(|r| r.contains("\"recording\":true"))
+}
+
+/// Arrêt de l'enregistrement (clic sur l'icône). Le démon finalise le mp4
+/// avant de répondre : au retour, le fichier est complet.
+fn rec_stop() {
+    rec_cmd("{\"cmd\":\"record.stop\"}");
+}
+
 // --- icône -----------------------------------------------------------------
 
 struct Tray {
+    /// enregistrement en cours : icône rouge, clic = arrêt
+    recording: Arc<Mutex<bool>>,
     display: Arc<Mutex<Display>>,
     checking: Arc<Mutex<bool>>,
     manager: PathBuf,
@@ -154,6 +189,10 @@ impl Icone for Tray {
     }
 
     fn icon_name(&self) -> String {
+        // l'enregistrement prime : c'est un état en cours, pas une nouvelle
+        if self.recording.lock().map(|r| *r).unwrap_or(false) {
+            return "gablue-record".into();
+        }
         let alert = self.display.lock().map(|d| d.alert).unwrap_or(false);
         if alert {
             "gablue-manager-alert".into()
@@ -167,14 +206,28 @@ impl Icone for Tray {
             Ok(display) => display.clone(),
             Err(poison) => poison.into_inner().clone(),
         };
-        let title = "Gablue Manager".to_string();
-        let description = if display.tooltip.len() > 1 {
+        let recording = self.recording.lock().map(|r| *r).unwrap_or(false);
+        let title = if recording {
+            "Enregistrement en cours".to_string()
+        } else {
+            "Gablue Manager".to_string()
+        };
+        let mut description = if display.tooltip.len() > 1 {
             display.tooltip[1..].join("\n")
         } else {
             String::new()
         };
+        if recording {
+            description = if description.is_empty() {
+                "Cliquer pour arrêter".to_string()
+            } else {
+                format!("Cliquer pour arrêter\n{description}")
+            };
+        }
         ToolTip {
-            icon_name: if display.alert {
+            icon_name: if recording {
+                "gablue-record".into()
+            } else if display.alert {
                 "gablue-manager-alert".into()
             } else {
                 "gablue-manager".into()
@@ -186,6 +239,17 @@ impl Icone for Tray {
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
+        // pendant un enregistrement, le clic l'arrête : c'est le geste utile
+        // (même sans ouvrir la fenêtre), et le fichier est finalisé avant
+        // que l'infobulle ne change.
+        let recording = self.recording.lock().map(|r| *r).unwrap_or(false);
+        if recording {
+            rec_stop();
+            if let Ok(mut guard) = self.recording.lock() {
+                *guard = false;
+            }
+            return;
+        }
         self.toggle_manager();
     }
 
@@ -195,12 +259,30 @@ impl Icone for Tray {
             Ok(display) => display.clone(),
             Err(poison) => poison.into_inner().clone(),
         };
-        let mut items: Vec<MenuItem<Self>> = vec![StandardItem {
+        let recording = self.recording.lock().map(|r| *r).unwrap_or(false);
+        let mut items: Vec<MenuItem<Self>> = Vec::new();
+        if recording {
+            items.push(
+                StandardItem {
+                    label: "Arrêter l'enregistrement".into(),
+                    activate: Box::new(|tray: &mut Self| {
+                        rec_stop();
+                        if let Ok(mut guard) = tray.recording.lock() {
+                            *guard = false;
+                        }
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+            items.push(MenuItem::Separator);
+        }
+        items.push(StandardItem {
             label: "Ouvrir Gablue Manager".into(),
             activate: Box::new(|tray: &mut Self| tray.open_manager()),
             ..Default::default()
         }
-        .into()];
+        .into());
 
         // Sections : un intitulé non cliquable, puis une ligne par élément —
         // même lecture que le menu Qt (qui n'a pas d'en-tête de section en
@@ -456,7 +538,12 @@ fn refresh(handle: &Handle<Tray>, document: &serde_json::Value) {
     });
 }
 
-fn schedule(handle: Arc<Handle<Tray>>, options: Options, receiver: std::sync::mpsc::Receiver<Request>) {
+fn schedule(
+    handle: Arc<Handle<Tray>>,
+    options: Options,
+    receiver: std::sync::mpsc::Receiver<Request>,
+    recording: Arc<Mutex<bool>>,
+) {
     let mut next_light = Instant::now();
     let mut next_check: Option<Instant> = Some(Instant::now());
     let mut forced = false;
@@ -487,6 +574,22 @@ fn schedule(handle: Arc<Handle<Tray>>, options: Options, receiver: std::sync::mp
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
+        }
+
+        // Enregistrement : interrogé à chaque tour (≤ 1 s). La socket répond
+        // en quelques dixièmes de milliseconde quand le démon tourne, et
+        // échoue immédiatement quand il est absent — pas de sonde coûteuse.
+        let rec = rec_active();
+        let rec_change = recording
+            .lock()
+            .map(|mut guard| {
+                let change = *guard != rec;
+                *guard = rec;
+                change
+            })
+            .unwrap_or(false);
+        if rec_change {
+            handle.update(|_tray| true);
         }
 
         if next_check.is_some_and(|check| check <= Instant::now()) {
@@ -632,7 +735,9 @@ fn main() {
 
     let display = Arc::new(Mutex::new(Display::default()));
     let checking = Arc::new(Mutex::new(false));
+    let recording = Arc::new(Mutex::new(false));
     let trayeur = Tray {
+        recording: Arc::clone(&recording),
         display: Arc::clone(&display),
         checking,
         manager: manager.clone(),
@@ -652,6 +757,6 @@ fn main() {
     // Premier affichage tout de suite (état léger), puis sondes : l'icône
     // apparaît avant le réseau, qui peut prendre une dizaine de secondes.
     let options = Options { manager, state };
-    schedule(Arc::clone(&handle), options, receiver);
+    schedule(Arc::clone(&handle), options, receiver, recording);
     let _ = handle.shutdown().wait();
 }
