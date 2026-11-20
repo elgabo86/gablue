@@ -11,7 +11,16 @@
 set -eoux pipefail
 
 dnf5 -y install gcc make pkgconf-pkg-config \
-    ffmpeg-devel libdrm-devel libcap-devel
+    libdrm-devel libcap-devel pulseaudio-libs-devel
+
+# ffmpeg-devel vient de fedora-multimedia (negativo17), la MÊME source que le
+# `ffmpeg` de l'image : s'en tenir aux dépôts de base lierait le binaire à
+# d'autres sonames (libavcodec.so.62 au lieu de .63) et `COPY --from` le
+# laisserait sans bibliothèques à l'exécution. L'étape finale n'a que la
+# version multimedia, on la résout donc ici.
+dnf5 -y config-manager addrepo --overwrite \
+    --from-repofile=https://negativo17.org/repos/fedora-multimedia.repo
+dnf5 -y install --enable-repo='*fedora-multimedia*' --allowerasing ffmpeg-devel
 
 make -C /build install DESTDIR=/out
 

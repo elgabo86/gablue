@@ -107,7 +107,10 @@ l'emporte sur l'activation de l'image) ; un masque posé sur l'ancien service
 |---|---|
 | Home (appui court) | ouvre le panneau **au relâchement** ; le jeu a reçu l'appui |
 | Home maintenu ~1,2 s | **menu système** centré (Tout fermer / Déconnecter / Redémarrer / Éteindre) |
-| Home + gauche / droite / haut / bas | replay ou enregistrement / capture / bascule replay / panneau sur la ligne FPS |
+| Home + gauche | bascule l'**enregistrement** (indépendant du replay) |
+| Home + droite | capture d'écran |
+| Home + haut | **replay** : démarre le buffer, ou **sauvegarde** s'il tourne |
+| Home + bas | **arrête** le replay ; buffer arrêté → ouvre le panneau sur la ligne FPS |
 | Home + SELECT / START / carré / R3 | `killthemall` / `openes` / clavier virtuel / mode souris |
 | **L2 / R2** | fenêtre active précédente / suivante (ordre d'écran, ancré sur l'UUID) |
 | **L1 / R1** | page précédente / suivante (contenu qui glisse, en-tête fixe) |
@@ -124,7 +127,8 @@ dessiner. Trois lignes d'action (page ACTIONS) et une section de réglages :
 | Page | Ligne | Effet |
 |---|---|---|
 | ACTIONS | `ENREGISTRER UNE VIDEO` | `recorder.sh start`/`stop` (bascule, même ligne quand ça tourne) |
-| ACTIONS | `REPLAY` | `replay.sh start`/`save`/`stop` selon l'état |
+| ACTIONS | `REPLAY` | interrupteur du buffer (`replay.sh start`/`stop`), usable pendant une capture |
+| ACTIONS | `SAUVER REPLAY` | `replay.sh save`, grisé (`INACTIF`) si le buffer est arrêté |
 | RÉGLAGES | `CAPTURE` | Qualité, Codec, Résolution, FPS REC, Curseur |
 | RÉGLAGES | `REPLAY AUTO` | interrupteur `auto_replay` (défaut **off**), écrit `recorder.conf` |
 
@@ -133,9 +137,10 @@ dessiner. Trois lignes d'action (page ACTIONS) et une section de réglages :
   même si H.265 pèse 28 % de moins. `720P`/`1080P`/`1440P` sont des crans
   explicites pour un envoi léger (détail et barème →
   `../gablue-rec/AGENTS.md`).
-- **Pas de bouton « Partager »** : le geste existant (Home+gauche, ou la ligne
-  du menu quand le buffer tourne) sauve le replay. Pas de notification à la
-  sauvegarde (elle entrerait dans le clip suivant), le rumble suffit.
+- **Pas de bouton « Partager »** : Home+haut sauve le replay quand le buffer
+  tourne (sinon il le démarre), ou la ligne `SAUVER REPLAY` du panneau. Pas de
+  notification à la sauvegarde (elle entrerait dans le clip suivant), le rumble
+  suffit.
 - **Pas de bip** quand le replay démarre tout seul (`GPAD_SANS_BIP=1` posé par
   `grec`/le lancement automatique) : le son ne confirme qu'un geste manette.
 - **Lignes compactes + défilement** : la page RÉGLAGES a maintenant sept lignes

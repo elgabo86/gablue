@@ -134,6 +134,7 @@ FENETRE ACTIVE (icône + légende + classe ; A = page FERMER / PLEIN ECRAN / CHO
 ENREGISTRER UNE VIDEO
 CAPTURE ECRAN
 REPLAY
+SAUVER REPLAY
 MODE SOURIS
 CLAVIER VIRTUEL
 ```
@@ -663,69 +664,46 @@ première) — pendant un test, un « bas » de trop a relancé le clavier virtu
 lieu de tuer ; en cas de doute, relire `SELECT …` dans le journal avant de
 conclure.
 
-## Une seule ligne pour les deux modes exclusifs
+## Enregistrement et replay : deux pistes indépendantes
 
-- **Replay actif** → la ligne `ENREGISTRER UNE VIDEO` devient **`SAUVER REPLAY`** (en
-  vert) : mêmes touches, même place, et l'enregistrement n'est pas proposé
-  puisque les deux sont exclusifs.
-- **Enregistrement en cours** → la ligne `REPLAY` est **grisée**
-  (`BLOQUE (REC)`), et le libellé devient `STOP ENREGISTRER` avec un
-  **compteur `MM:SS`** à droite (`H:MM:SS` au-delà de l'heure).
-- **A sur `REPLAY` pendant une capture est refusé** (`REPLAY: BLOQUE (REC)`,
-  journal `REPLAY refuse (enregistrement en cours)`). Sans ce garde, A
-  activait le buffer, la ligne `ENREGISTRER UNE VIDEO` passait en `SAUVER REPLAY` alors
-  qu'un enregistrement tournait encore : deux modes à la fois (constaté à
-  l'usage, 17/11/2026). L'exclusivité est donc tenue dans **les deux sens**.
+Un seul pipeline encode, deux muxeurs écrivent : l'anneau TS du replay et le
+mp4. Les deux tournent donc **ensemble** (vérifié : `replay.start` puis
+`record.start`, puis `save` → deux fichiers décodés), et l'exclusivité héritée
+de gpu-screen-recorder (deux processus, deux encodeurs) n'a plus lieu d'être.
+
+| Ligne (page ACTIONS) | Ce qu'elle fait |
+|---|---|
+| `ENREGISTRER UNE VIDEO` | bascule l'enregistrement, un seul sens ; pendant la capture le libellé devient `STOP ENREGISTRER` avec un compteur `MM:SS` (`H:MM:SS` au-delà de l'heure) |
+| `REPLAY` | interrupteur du buffer, **manipulable pendant une capture** : c'est le seul chemin du panneau pour arrêter le replay |
+| `SAUVER REPLAY` | sauvegarde les N dernières secondes ; la valeur à droite dit la profondeur du buffer (`30s`), ou `INACTIF` (grisé) buffer arrêté — A répond alors `REPLAY: INACTIF` |
+
 - **`ENREGISTRER UNE VIDEO` ferme le panneau AVANT de filmer** : au démarrage,
   `combo_apres = Apres::Record` + `request_close()`, le recorder n'est lancé
   qu'après `FENETRE RETIREE -> action differee` — sinon le panneau se filme
-  lui-même (même règle que Home+gauche). À l'**arrêt**, le panneau reste
-  (rien ne se filme plus, et l'état `STOP → ARRET` sert de retour visuel).
-  Mesuré : `ENREGISTRER UNE VIDEO -> fermeture puis record` → `GPAD_DOWN` →
-  `RECORDER toggle` ; en arrêt, `SELECT ENREGISTRER UNE VIDEO` → stub appelé, panneau
-  toujours ouvert.
-- Le compteur vient du `start=<epoch>` écrit par `recorder.sh` dans
-  `/tmp/opencode/recorder.state` : il reste juste même si le panneau est fermé
-  puis rouvert pendant l'enregistrement.
-- **Home+gauche** suit la même règle : si le replay tourne, il sauvegarde
-  (`gpad-trigger` teste `replay.sh status`), sinon il bascule l'enregistrement.
-- **Home+haut** = bascule du mode replay, panneau fermé (`gpad-trigger`) **et**
-  panneau ouvert (`Apres::ReplayToggle` → `FENETRE RETIREE -> action differee`
-  → `replay.sh toggle`). Fermer d'abord évite de filmer le panneau, et le bip
-  de départ part avant le buffer (voir ci-dessous).
+  lui-même. À l'**arrêt**, le panneau reste (rien ne se filme plus).
+- **Tout l'état vient de la socket** (`capture::etat()` : `recording`, `replay`,
+  `pending`, `t`) : le compteur est le `t` du démon, plus aucun fichier d'état
+  ni `pgrep`/`comm` tronqué à 15 octets (l'ancien monde gpu-screen-recorder).
+- **Combos, panneau ouvert** : mêmes gestes que panneau fermé, exécutés après
+  retrait de la surface — `Home+gauche` = enregistrement (`Apres::Record`),
+  `Home+haut` = replay (`Apres::ReplayStart` s'il est arrêté, `Apres::Replay`
+  sauvegarde s'il tourne), `Home+bas` = arrêt du buffer
+  (`Apres::ReplayStop`), `Home+droite` = capture.
 - **A sur `REPLAY` ne se contredit pas pendant le démarrage** : `replay_active`
-  est posé tout de suite, et la passe d'état d'une seconde (qui relit les
-  processus) ne le corrige **pas** pendant les 6 s qui suivent la bascule
-  (`replay_attente`). `replay.sh start` met ~1,2 s (bip + pause + flatpak) et
-  `stop` attend la sortie : sans cette fenêtre, la ligne repassait « ARRET »
-  une demi-seconde avant de revenir « ACTIF » (constaté 19/11). Passé le délai,
-  ou dès que l'état réel concorde, c'est de nouveau lui qui fait foi.
+  est posé tout de suite, et la passe d'état d'une seconde ne le corrige **pas**
+  pendant les 6 s qui suivent la bascule (`replay_attente`). `replay.sh start`
+  prend ~1,2 s (bip + pause + attente du démon) : sans cette fenêtre, la ligne
+  repassait « ARRET » une demi-seconde avant de revenir « ACTIF ».
 - **Replay : bip de départ, puis silence.** `replay.sh start` joue
-  `sounds/beep.wav` (le bip historique de l'enregistrement) **et attend**
-  `BIP_PAUSE` (0,35 s) **avant** de lancer gpu-screen-recorder : le monitor du
-  sink garde la queue du son quelques centaines de ms, un buffer lancé aussitôt
-  l'enregistrerait. Mesuré : `time ./replay.sh start` ≈ 1,2 s (0,67 s de bip +
-  0,35 s de pause + démarrage). L'**arrêt** et la **sauvegarde** restent muets :
-  un son de fin partirait dans le buffer encore ouvert (l'arrêt joue après le
-  `killall`, donc plus rien ne l'enregistre — silence conservé par choix, c'est
-  la vibration seule qui confirme une sauvegarde).
-- **L'enregistrement a le même bip de départ**, avec le même schéma :
-  `recorder.sh start` joue `sounds/beep.wav`, puis attend `BIP_PAUSE` (0,35 s)
-  avant de lancer l'encodeur (les bips avaient été supprimés justement parce
-  que le bip partait dans le fichier — l'ordre règle ça). Vérifié sur un clip
-  de test : `beep.wav` culmine à −0,9 dB, la première seconde du fichier à
-  −7,8 dB → **le bip n'est pas dedans**. L'**arrêt** reste muet
-  (`stop.wav` inutilisé) : la notification donne le chemin et le son de fin
-  n'aurait plus rien à enregistrer, autant ne pas l'ajouter.
-
-**`comm` est tronqué à 15 octets par le noyau** : comparer `comm` au nom entier
-ne matche jamais un binaire plus long — `gpu-screen-recorder` devient
-`gpu-screen-reco`, d'où un enregistrement jamais détecté. `processus_actif()`
-compare donc le nom tronqué à 15 (constaté 16/11/2026).
-
-Ligne `ENREGISTRER UNE VIDEO` : c'est le **processus** qui fait foi (état + `gpu-screen-recorder`
-sans `-r`), pas le fichier d'état — un `killall` de test laissait sinon
-`STOP ENREGISTREMENT` affiché alors que rien ne tournait.
+  `sounds/beep.wav` **et attend** `BIP_PAUSE` (0,35 s) **avant** de lancer le
+  buffer : le monitor du sink garde la queue du son quelques centaines de ms,
+  un buffer lancé aussitôt l'enregistrerait. L'**arrêt** et la **sauvegarde**
+  restent muets (un son de fin partirait dans le buffer encore ouvert) : c'est
+  le rumble qui confirme.
+- **L'enregistrement a le même bip de départ**, dans le même ordre : bip, pause,
+  puis encodeur — vérifié sur un clip (`beep.wav` culmine à −0,9 dB, la première
+  seconde du fichier à −7,8 dB, donc **le bip n'est pas dedans**). `grec`, le
+  `.desktop` et le replay automatique le sautent (`GPAD_SANS_BIP=1`).
 
 ## Combos depuis le panneau ouvert, et glyphes Sony
 

@@ -103,8 +103,8 @@ Conséquence assumée : à 1440p natif, 30 s pèsent **~55 Mo** (6,4 Go/h en q3 
 60 fps) au lieu de ~31 Mo en 1080p. Le poids est le seul prix — la
 compatibilité ne dépend que du codec.
 
-**Un seul geste pour sauver un replay** — celui d'avant (Home+gauche quand le
-buffer tourne, ou la ligne du menu). Pas de bouton « Partager », pas de
+**Un seul geste pour sauver un replay** — Home+haut quand le buffer tourne
+(sinon il le démarre), ou la ligne `SAUVER REPLAY` du panneau. Pas de bouton « Partager », pas de
 destination à choisir : la sauvegarde écrit un clip prêt à envoyer. Le mp4 est
 écrit avec `+faststart` (moov en tête) pour que Discord/WhatsApp l'affichent
 sans attendre la fin du téléchargement.
@@ -311,10 +311,18 @@ rename) pour que l'overlay n'ait plus à lire un journal ; `pending` dit qu'un
 proprement (finalise l'enregistrement, libère DRM et VAAPI).
 
 `grec` est le client de cette socket pour le clavier et le `.desktop` :
-`grec` (bascule), `start`, `stop`, `status`, `save`, `replay`, `dir`. Il est
-**silencieux** (`GPAD_SANS_BIP=1`) et suit `GPAD_REC_SOCK`/`GPAD_REC` pour le
-banc. Entrée de menu : `usr/share/applications/gablue-record.desktop`
-(`Exec=grec toggle`).
+
+- **`grec` seul = au premier plan** : il démarre (ou rejoint l'enregistrement en
+  cours), affiche `REC 00:12 — Ctrl-C pour arrêter` quand la sortie est un
+  terminal, et **Ctrl-C arrête en finalisant le mp4** (le `stop` de la socket ne
+  rend la main qu'après le moov ; un second Ctrl-C ne coupe pas la
+  finalisation). Code de sortie 130.
+- `grec toggle` = démarrage/arrêt sans rester attaché : c'est ce que lance
+  l'entrée de menu (`Exec=grec toggle`, sans terminal).
+- `start`, `stop`, `status`, `save`, `replay start|stop|status`, `dir`.
+
+Il est **silencieux** (`GPAD_SANS_BIP=1`) et suit `GPAD_REC_SOCK`/`GPAD_REC`
+pour le banc.
 
 ## Build et banc
 

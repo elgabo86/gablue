@@ -495,10 +495,9 @@ static int overlay_kbd_remote(const char *node)
 
 /* --- combos Home + D-pad ---------------------------------------------------
  * Home seul ouvre le panneau au relâchement ; Home maintenu = menu système ;
- * Home+gauche = sauvegarde du replay si le mode
- * replay est actif, sinon bascule de l'enregistrement ; Home+droite =
- * capture d'écran. Même logique que gamepadshortcuts, mais le HOME seul est
- * à nous. */
+ * Home+gauche = bascule de l'enregistrement ; Home+droite = capture d'écran ;
+ * Home+haut = replay (démarre, ou sauvegarde s'il tourne) ; Home+bas = arrête
+ * le replay, sinon ouvre le panneau sur la ligne FPS. */
 /* Home tenu = menu système (comme une vraie console) ; appui court = panneau
  * latéral, ouvert au relâchement. Aucune fenêtre de grâce : puisqu'un maintien
  * n'ouvre plus rien de suite, un combo n'a plus de course avec le panneau. */
@@ -537,19 +536,63 @@ static void run_cmd(const char *cmd)
     }
 }
 
-/* Home+gauche : une seule gâchette pour deux modes exclusifs. Si le buffer de
- * replay tourne, on sauvegarde ; sinon on bascule l'enregistrement. Le test se
- * fait sur `replay.sh status` (le « actif Ns »), pas sur un état local : le
- * mode peut avoir été activé depuis le panneau ou en ligne de commande. */
+/* État de l'enregistreur, lu sur SA socket (aucun fork, ~1 ms) : 1 si le champ
+ * JSON `cle` vaut true. Démon absent = 0.
+ *
+ * Pourquoi pas `replay.sh status | grep actif` : « inactif » contient
+ * « actif », donc le test était toujours vrai — Home+gauche sauvegardait au
+ * lieu d'enregistrer. */
+static int rec_etat(const char *cle)
+{
+    const char *sock = getenv("GPAD_REC_SOCK");
+    const char *rt = getenv("XDG_RUNTIME_DIR");
+    char chemin[400];
+    if (sock && *sock)
+        snprintf(chemin, sizeof chemin, "%s", sock);
+    else
+        snprintf(chemin, sizeof chemin, "%s/gablue/gpad-rec.sock",
+                 rt && *rt ? rt : "/run/user/1000");
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0)
+        return 0;
+    struct sockaddr_un sa = {0};
+    sa.sun_family = AF_UNIX;
+    if (strlen(chemin) >= sizeof sa.sun_path) {
+        close(fd);
+        return 0;
+    }
+    memcpy(sa.sun_path, chemin, strlen(chemin) + 1);
+    if (connect(fd, (struct sockaddr *)&sa, sizeof sa) < 0) {
+        close(fd);
+        return 0;
+    }
+    const char *q = "{\"cmd\":\"status\"}\n";
+    if (write(fd, q, strlen(q)) != (ssize_t)strlen(q)) {
+        close(fd);
+        return 0;
+    }
+    char buf[768] = {0};
+    ssize_t n = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (n <= 0)
+        return 0;
+    char motif[64];
+    snprintf(motif, sizeof motif, "\"%s\":true", cle);
+    return strstr(buf, motif) != NULL;
+}
+
+/* Home+gauche : l'enregistrement, une seule chose. Le buffer de replay est
+ * indépendant (un seul pipeline encode, l'anneau TS et le mp4 écrivent côte à
+ * côte) : il continue de tourner si on enregistre. Détaché, parce que le bip
+ * de départ prend ~0,7 s et que le déclencheur doit rester à l'écoute. */
 static void do_record(void)
 {
-    char cmd[900];
-    snprintf(cmd, sizeof cmd,
-             "if '%s' status 2>/dev/null | grep -q actif; then "
-             "PAD_NODE='%s' '%s' save; else '%s' toggle; fi",
-             g_replay, home_node, g_replay, g_recorder);
-    fprintf(stderr, "[gpad-trigger] COMBO Home+gauche -> replay (si actif) / enregistrement\n");
+    char cmd[700];
+    fprintf(stderr, "[gpad-trigger] COMBO Home+gauche -> enregistrement (bascule)\n");
     fflush(stderr);
+    snprintf(cmd, sizeof cmd,
+             "setsid env PAD_NODE='%s' '%s' toggle > /dev/null 2>&1 < /dev/null &",
+             home_node, g_recorder);
     run_cmd(cmd);
 }
 
@@ -562,20 +605,37 @@ static void do_shot(void)
     run_cmd(cmd);
 }
 
-/* Home+haut : bascule du mode replay (buffer). Même bip de départ que celui de
- * l'enregistrement (`sounds/beep.wav`), joué par `replay.sh` AVANT le lancement
- * du buffer — sinon le bip se retrouve dans le replay. Le script prend ~1 s
- * (bip + pause + attente du buffer) : on le laisse en arrière-plan pour que
- * gpad-trigger reste à l'écoute pendant ce temps. */
-static void do_replay_toggle(void)
+/* Home+haut : « je veux un clip ». Buffer arrêté → on le démarre ; buffer qui
+ * tourne → on sauvegarde les N dernières secondes. Le script prend ~1 s (bip +
+ * pause + démarrage) : laissé en arrière-plan pour que gpad-trigger reste à
+ * l'écoute. */
+static void do_replay_haut(void)
 {
+    int actif = rec_etat("replay");
     char cmd[800];
-    fprintf(stderr, "[gpad-trigger] COMBO Home+haut -> replay (bascule)\n");
+    fprintf(stderr, "[gpad-trigger] COMBO Home+haut -> replay (%s)\n",
+            actif ? "sauvegarde" : "demarrage");
     fflush(stderr);
     snprintf(cmd, sizeof cmd,
-             "setsid env PAD_NODE='%s' '%s' toggle > /dev/null 2>&1 < /dev/null &",
+             "setsid env PAD_NODE='%s' '%s' %s > /dev/null 2>&1 < /dev/null &",
+             home_node, g_replay, actif ? "save" : "start");
+    run_cmd(cmd);
+}
+
+/* Home+bas : arrête le buffer s'il tourne (1), sinon rien (0 : l'appelant
+ * ouvre le panneau sur la ligne FPS, geste d'origine — aucune fonction perdue). */
+static int do_replay_bas(void)
+{
+    if (!rec_etat("replay"))
+        return 0;
+    char cmd[700];
+    fprintf(stderr, "[gpad-trigger] COMBO Home+bas -> arret du replay\n");
+    fflush(stderr);
+    snprintf(cmd, sizeof cmd,
+             "setsid env PAD_NODE='%s' '%s' stop > /dev/null 2>&1 < /dev/null &",
              home_node, g_replay);
     run_cmd(cmd);
+    return 1;
 }
 
 /* Raccourcis de l'ancien gamepadshortcuts, mêmes gestes : Home+SELECT =
@@ -884,15 +944,14 @@ int main(int argc, char **argv)
                         combo_done = 1;
                     }
                 } else if (ev.type == EV_ABS && ev.code == ABS_HAT0Y && ev.value != 0) {
-                    /* Home+haut = bascule du mode replay ; Home+bas = ouvrir le
-                     * panneau sur la ligne FPS. La sauvegarde du replay reste
-                     * sur Home+gauche (une gâchette pour les deux modes
-                     * exclusifs : sauver un clip / enregistrer). */
+                    /* Home+haut = replay (démarre, ou sauvegarde s'il tourne) ;
+                     * Home+bas = arrête le buffer — et, s'il ne tourne pas,
+                     * ouvre le panneau sur la ligne FPS (geste d'origine). */
                     if (opt_shortcuts && home_down && !combo_done && child < 0) {
                         combo_done = 1;
                         if (ev.value < 0) {
-                            do_replay_toggle();
-                        } else {
+                            do_replay_haut();
+                        } else if (!do_replay_bas()) {
                             fprintf(stderr, "[gpad-trigger] COMBO Home+bas -> ligne fps\n");
                             fflush(stderr);
                             launch_vue(argv, argc, first_free, home_node, "fps");

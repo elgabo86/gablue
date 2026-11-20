@@ -889,9 +889,12 @@ enum Apres {
     Capture,
     /// sauvegarde du replay : après fermeture, pour ne pas se filmer
     Replay,
-    /// bascule du mode replay (Home+haut) : après fermeture, pour que le bip
-    /// de départ ne soit ni filmé par le buffer ni masqué par le panneau
-    ReplayToggle,
+    /// Home+haut : démarre le buffer s'il est arrêté, sauvegarde le replay
+    /// s'il tourne — après fermeture, pour ne pas se filmer.
+    ReplayStart,
+    /// Home+bas : arrête le buffer (le replay n'est plus exclusif de
+    /// l'enregistrement : il se pilote comme une seconde piste).
+    ReplayStop,
     /// menu console : redémarrer / éteindre (le panneau doit avoir disparu)
     Reboot,
     Eteindre,
@@ -1349,6 +1352,7 @@ impl App {
                 Entree::Action("ENREGISTRER UNE VIDEO"),
                 Entree::Action("CAPTURE ECRAN"),
                 Entree::Action("REPLAY"),
+                Entree::Action("SAUVER REPLAY"),
                 Entree::Action("MODE SOURIS"),
                 Entree::Action("CLAVIER VIRTUEL"),
             ],
@@ -1828,25 +1832,28 @@ impl App {
             };
             if let Some(a) = act {
                 // Home + direction = combo : on ferme d'abord, on agit ensuite
-                // (sinon le panneau se filme dans la capture/le clip).
-                // Home+gauche = sauver le replay SI le mode replay est actif,
-                // sinon basculer l'enregistrement : une seule gâchette pour
-                // les deux, elles sont exclusives. Home+haut = bascule du mode
-                // replay (même geste que panneau fermé, vu par gpad-trigger).
-                if self.home_down && matches!(a, Action::Left | Action::Right | Action::Up) {
+                // (sinon le panneau se filme dans la capture/le clip). Mêmes
+                // gestes que panneau fermé (gpad-trigger) : gauche =
+                // enregistrement, haut = replay (démarrer, ou sauver s'il
+                // tourne), bas = arrêter le buffer, droite = capture.
+                if self.home_down
+                    && matches!(a, Action::Left | Action::Right | Action::Up | Action::Down)
+                {
                     self.home_down = false;
-                    let apres = match (a, self.replay_active) {
-                        (Action::Up, _) => Apres::ReplayToggle,
-                        (Action::Left, true) => Apres::Replay,
-                        (Action::Left, false) => Apres::Record,
-                        _ => Apres::Capture,
+                    let apres = match a {
+                        Action::Left => Apres::Record,
+                        Action::Right => Apres::Capture,
+                        Action::Up if self.replay_active => Apres::Replay,
+                        Action::Up => Apres::ReplayStart,
+                        _ => Apres::ReplayStop,
                     };
                     self.combo_apres = Some(apres);
                     self.status = match apres {
                         Apres::Record => "COMBO: REC APRES FERMETURE",
                         Apres::Capture => "COMBO: CAPTURE APRES FERMETURE",
                         Apres::Replay => "COMBO: REPLAY APRES FERMETURE",
-                        Apres::ReplayToggle => "COMBO: REPLAY BASCULE",
+                        Apres::ReplayStart => "COMBO: REPLAY DEMARRAGE",
+                        Apres::ReplayStop => "COMBO: REPLAY ARRET",
                         // jamais posés par un combo (menu console seulement)
                         Apres::Reboot => "COMBO: REBOOT",
                         Apres::Eteindre => "COMBO: EXTINCTION",
@@ -1858,6 +1865,7 @@ impl App {
                         match a {
                             Action::Left => "Home+gauche",
                             Action::Up => "Home+haut",
+                            Action::Down => "Home+bas",
                             _ => "Home+droite",
                         }
                     );
@@ -3234,15 +3242,9 @@ impl App {
                     println!("VRR {}", if self.vrr_on { "auto" } else { "desactive" });
                 }
                 "REPLAY" => {
-                    // Les deux modes sont exclusifs : activer le buffer pendant
-                    // un enregistrement le transformait en « SAUVER REPLAY »
-                    // alors qu'une capture tournait encore (deux modes à la
-                    // fois, illisible). La ligne est grisée, on refuse aussi A.
-                    if self.rec_active {
-                        self.status = "REPLAY: BLOQUE (REC)".to_string();
-                        println!("REPLAY refuse (enregistrement en cours)");
-                        return;
-                    }
+                    // Indépendant de l'enregistrement : un seul pipeline encode,
+                    // l'anneau TS et le mp4 écrivent côte à côte. On démarre ou
+                    // on arrête le buffer même pendant une capture.
                     self.status = if self.replay_active {
                         "REPLAY: ARRET".to_string()
                     } else {
@@ -3261,13 +3263,18 @@ impl App {
                     self.replay_attente = Some(Instant::now() + Duration::from_secs(6));
                     println!("REPLAY {}", if self.replay_active { "start" } else { "stop" });
                 }
-                // replay actif : les deux sont exclusifs, la ligne devient la
-                // sauvegarde du replay (même place dans le menu)
-                "ENREGISTRER UNE VIDEO" if self.replay_active => {
+                "SAUVER REPLAY" => {
+                    // le buffer doit tourner : la ligne le dit (INACTIF) plutôt
+                    // que de disparaître, on garde une place stable dans le menu
+                    if !self.replay_active {
+                        self.status = "REPLAY: INACTIF".to_string();
+                        println!("SAUVER REPLAY refuse (buffer arrete)");
+                        return;
+                    }
                     let node = self.pad_path.clone().unwrap_or_default();
                     lancer_script_env("REPLAY", &["save"], &[("PAD_NODE", &node)]);
                     self.status = "REPLAY: SAUVEGARDE".to_string();
-                    println!("REPLAY save (ligne enregistrement)");
+                    println!("REPLAY save (ligne sauver)");
                 }
                 "ENREGISTRER UNE VIDEO" => match std::env::var("RECORDER") {
                     Ok(r) if std::path::Path::new(&r).exists() => {
@@ -3710,9 +3717,13 @@ impl App {
                 let node = self.combo_node.clone().unwrap_or_default();
                 lancer_script_env("REPLAY", &["save"], &[("PAD_NODE", &node)]);
             }
-            Apres::ReplayToggle => {
+            Apres::ReplayStart => {
                 let node = self.combo_node.clone().unwrap_or_default();
-                lancer_script_env("REPLAY", &["toggle"], &[("PAD_NODE", &node)]);
+                lancer_script_env("REPLAY", &["start"], &[("PAD_NODE", &node)]);
+            }
+            Apres::ReplayStop => {
+                let node = self.combo_node.clone().unwrap_or_default();
+                lancer_script_env("REPLAY", &["stop"], &[("PAD_NODE", &node)]);
             }
             Apres::Reboot => lancer_systeme("REBOOT", "reboot"),
             Apres::Eteindre => lancer_systeme("POWEROFF", "poweroff"),
@@ -4172,20 +4183,28 @@ impl App {
                 // inatteignable : l'en-tête est sauté plus haut
                 Entree::Fenetre => {}
                 Entree::Action("REPLAY") => {
-                    // enregistrement et replay sont exclusifs : la ligne est
-                    // grisée pendant un enregistrement
-                    let c_txt = if self.rec_active { cc_dim } else { color };
-                    cv.text_fit(px0 + pad + 36, y, "REPLAY", 3, c_txt, inner - 36 - 52);
-                    if self.rec_active {
-                        self.valeur_droite(&mut cv, px0 + pad + inner, y, "BLOQUE (REC)", 2, cc_dim);
-                    } else {
-                        self.interrupteur(
-                            &mut cv,
-                            px0 + pad + inner,
-                            y,
-                            self.replay_active,
-                            false,
+                    // indépendant de l'enregistrement : l'interrupteur reste
+                    // manipulable pendant une capture (c'est le seul chemin
+                    // pour arrêter le buffer depuis le panneau).
+                    cv.text_fit(px0 + pad + 36, y, "REPLAY", 3, color, inner - 36 - 52);
+                    self.interrupteur(
+                        &mut cv,
+                        px0 + pad + inner,
+                        y,
+                        self.replay_active,
+                        false,
+                    );
+                }
+                Entree::Action("SAUVER REPLAY") => {
+                    let c_txt = if self.replay_active { color } else { cc_dim };
+                    cv.text_fit(px0 + pad + 36, y, "SAUVER REPLAY", 3, c_txt, inner - 36 - 90);
+                    if self.replay_active {
+                        self.valeur_droite(
+                            &mut cv, px0 + pad + inner, y,
+                            &format!("{}s", REPR_OPTS[self.repr_idx].1), 2, cc_ok,
                         );
+                    } else {
+                        self.valeur_droite(&mut cv, px0 + pad + inner, y, "INACTIF", 2, cc_dim);
                     }
                 }
                 Entree::Action("PLEIN ECRAN") => {
@@ -4224,22 +4243,16 @@ impl App {
                     self.interrupteur(&mut cv, px0 + pad + inner, y, self.vrr_on, false);
                 }
                 Entree::Action(nom) => {
-                    // l'entrée d'enregistrement dit ce qu'elle FERA ; en mode
-                    // replay elle devient la sauvegarde du replay (même place,
-                    // les deux modes sont exclusifs)
-                    let (label, c_txt) = if nom == "ENREGISTRER UNE VIDEO" {
-                        if self.replay_active {
-                            ("SAUVER REPLAY", cc_ok)
-                        } else if self.rec_active {
-                            ("STOP ENREGISTRER", color)
-                        } else {
-                            (nom, color)
-                        }
+                    // l'entrée d'enregistrement n'a qu'un sens (le buffer de
+                    // replay tourne à côté s'il est lancé : sa sauvegarde a sa
+                    // propre ligne, plus haut)
+                    let (label, c_txt) = if nom == "ENREGISTRER UNE VIDEO" && self.rec_active {
+                        ("STOP ENREGISTRER", color)
                     } else {
                         (nom, color)
                     };
                     // place pour le compteur à droite pendant l'enregistrement
-                    let max = if nom == "ENREGISTRER UNE VIDEO" && self.rec_active && !self.replay_active {
+                    let max = if nom == "ENREGISTRER UNE VIDEO" && self.rec_active {
                         inner - 36 - 72
                     } else {
                         inner - 36
@@ -4256,7 +4269,7 @@ impl App {
                     if arme {
                         self.dessiner_hint_ok(&mut cv, px0 + pad + inner, y, cc_warn);
                     }
-                    if nom == "ENREGISTRER UNE VIDEO" && self.rec_active && !self.replay_active {
+                    if nom == "ENREGISTRER UNE VIDEO" && self.rec_active {
                         self.valeur_droite(
                             &mut cv,
                             px0 + pad + inner,
@@ -6065,6 +6078,7 @@ fn joli(s: &str) -> String {
         "STOP ENREGISTRER" => return "Arrêter la vidéo".to_string(),
         "SAUVER REPLAY" => return "Sauver le replay".to_string(),
         "BLOQUE (REC)" => return "Bloqué (REC)".to_string(),
+        "INACTIF" => return "Inactif".to_string(),
         _ => {}
     }
     let mut out = String::with_capacity(s.len());

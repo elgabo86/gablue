@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Enregistrer l'écran
-Comment=Démarre ou arrête un enregistrement — sans la manette (grec)
+Comment=Démarre ou arrête un enregistrement — sans la manette (grec toggle)
 Exec=grec toggle
 TryExec=grec
 Icon=gablue-record

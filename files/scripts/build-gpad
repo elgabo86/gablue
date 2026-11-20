@@ -6,10 +6,12 @@
 
 set -eoux pipefail
 
-# xkbcommon-devel : en-tête/symlink de link pour la crate `xkbcommon` (table
+# libxkbcommon-devel : en-tête/symlink de link pour la crate `xkbcommon` (table
 # du clavier virtuel dérivée du keymap de la session). Le runtime de l'image
-# fournit déjà libxkbcommon.so.0 (dépendance de KWin).
-dnf5 -y install cargo rust gcc xkbcommon-devel
+# fournit déjà libxkbcommon.so.0 (dépendance de KWin). Le nom exact est
+# `libxkbcommon-devel` : `xkbcommon-devel` n'existe pas et faisait échouer
+# l'étape (« No match for argument »), build GH du 20/11/2026.
+dnf5 -y install cargo rust gcc libxkbcommon-devel
 
 # --locked : Cargo.lock est dans le dépôt, la résolution ne bouge pas.
 cargo build --release --locked --manifest-path /build/Cargo.toml

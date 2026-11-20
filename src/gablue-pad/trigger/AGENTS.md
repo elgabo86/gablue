@@ -105,12 +105,17 @@ ouvre le panneau **au relâchement**.
 
 | Combo | Effet |
 |---|---|
-| Home + gauche | sauvegarde du buffer de replay s'il tourne, sinon bascule de l'**enregistrement** (`replay.sh status` fait foi, jamais un état local) |
+| Home + gauche | bascule l'**enregistrement** (`recorder.sh toggle`) — le buffer de replay est indépendant, il continue de tourner |
 | Home + droite | capture d'écran (`screenshot.sh` → `gpad-shot`, son joué d'abord : ~40 ms de capture) |
-| Home + haut | **bascule du mode replay** (`replay.sh toggle`, en arrière-plan : le bip de départ + 0,35 s de silence + démarrage prennent ~1,2 s, et `gpad-trigger` doit rester à l'écoute du retour de Home) |
-| Home + bas | ouvre le panneau directement sur la ligne **FPS** |
+| Home + haut | **replay** : démarre le buffer s'il est arrêté, **sauvegarde** s'il tourne (`replay.sh start`/`save`) — en arrière-plan, le bip + 0,35 s de silence + démarrage prennent ~1,2 s et le déclencheur doit rester à l'écoute du retour de Home |
+| Home + bas | **arrête** le replay s'il tourne (`replay.sh stop`) ; sinon ouvre le panneau sur la ligne **FPS** (geste d'origine, aucune fonction perdue) |
 
 `PAD_NODE` est transmis pour que la vibration parte sur la bonne manette.
+
+L'état du buffer est lu **sur la socket du démon** (`rec_etat` : un
+`{"cmd":"status"}` d'une ligne, ~1 ms), pas avec `replay.sh status | grep
+actif` : « **inactif** » contient « actif », donc ce test était toujours vrai et
+Home+gauche sauvegardait au lieu d'enregistrer.
 
 ## Menu système (Home maintenu ~1,2 s)
 
