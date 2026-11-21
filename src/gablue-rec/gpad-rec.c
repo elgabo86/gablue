@@ -24,6 +24,9 @@
 
 #include <pulse/error.h>
 #include <pulse/simple.h>
+#include <sys/mman.h>
+#include <va/va.h>
+#include <libavutil/hwcontext_vaapi.h>
 #include <sys/capability.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -145,6 +148,7 @@ static void config_finalise(struct config *c)
 struct capture {
     int card;
     uint32_t plane;
+    uint32_t crtc;            /* CRTC de la plane capturée (cherche le curseur) */
     int w, h;
     uint32_t fourcc;
     uint64_t modifier;
@@ -198,6 +202,10 @@ static int capture_ouvre(struct capture *c, const char *card)
     c->card = open(card, O_RDWR | O_CLOEXEC);
     if (c->card < 0) { logx("open %s: %s", card, strerror(errno)); return -1; }
     drmSetClientCap(c->card, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
+    /* SANS le cap atomic, libdrm ne rend PAS les propriétés atomiques de plane
+     * (FB_ID, CRTC_X/CRTC_Y, CRTC_W/H) : la position du curseur devient
+     * illisible alors que la plane est bien active (constaté 21/11/2026). */
+    drmSetClientCap(c->card, DRM_CLIENT_CAP_ATOMIC, 1);
 
     drmModePlaneRes *res = drmModeGetPlaneResources(c->card);
     if (!res) { logx("GetPlaneResources: %s", strerror(errno)); return -1; }
@@ -213,6 +221,7 @@ static int capture_ouvre(struct capture *c, const char *card)
     drmModePlane *pl = drmModeGetPlane(c->card, c->plane);
     drmModeFB2 *fb = fb2_privilegie(c, pl->fb_id);
     if (pl && pl->crtc_id) {
+        c->crtc = pl->crtc_id;
         drmModeCrtc *cr = drmModeGetCrtc(c->card, pl->crtc_id);
         if (cr) {
             c->refresh = cr->mode_valid ? cr->mode.vrefresh : 0;
@@ -318,9 +327,34 @@ static int capture_frame(struct capture *c, AVFrame **out)
 
 /* -------------------------------------------------------------------- état */
 
+/* Le curseur DRM vit sur une plane SÉPARÉE : il n'est jamais dans le
+ * framebuffer capturé. « Afficher » = le relire et le mélanger dans la surface
+ * NV12 que l'encodeur va consommer.
+ *
+ * Pourquoi pas `overlay_vaapi` (le plan initial) : ce filtre n'évalue `x`/`y`
+ * qu'à la configuration de son entrée (FFmpeg 9), un curseur qui bouge ne suit
+ * donc pas. `vaGetImage`+`vaPutImage` corrompait toute la frame (blit NV12 sur
+ * surface tuilée), `vaDeriveImage` + écriture du seul rectangle fonctionne et
+ * ne copie rien. */
+struct curseur {
+    uint32_t plane;          /* plane DRM de type CURSOR (0 = pas encore cherchée) */
+    uint32_t fb;             /* dernier framebuffer d'image lu */
+    uint8_t *pixels;         /* ARGB mappé (dumb buffer) */
+    size_t pixels_len;
+    int pitch, w, h;
+    int opaque;              /* XRGB8888 : alpha implicite à 255 */
+    /* ids des propriétés atomiques de la plane : en mode atomique,
+     * `drmModeGetPlane` renvoie crtc_x/y = 0 (la position ne vit que dans les
+     * propriétés CRTC_X/CRTC_Y) — mesuré le 21/11/2026, curseur collé en 0,0 */
+    uint32_t prop_fb, prop_x, prop_y, prop_w, prop_h;
+    int64_t dernier_essai;   /* recherche de la plane (1/s max) */
+    int echec_logge;         /* VAAPI ou le mapping a refusé : on n'insiste plus */
+};
+
 struct etat {
     struct config cfg;
     struct capture cap;
+    struct curseur cur;
 
     pthread_mutex_t verrou;
     volatile int arret;
@@ -398,6 +432,290 @@ static void horodate(char *dst, size_t n)
     struct tm tm;
     localtime_r(&t, &tm);
     strftime(dst, n, "%Y-%m-%d_%H-%M-%S", &tm);
+}
+
+/* ------------------------------------------------------------------ curseur */
+
+/* Plane DRM de type CURSOR pour notre CRTC (0 = aucune pour l'instant).
+ *
+ * Deux cas : la plane est active sur le CRTC (`crtc_id`) ou elle est libre
+ * (`crtc_id` 0) — KWin la détache quand le pointeur sort/est masqué, et une
+ * plane libre reste utilisable si `possible_crtcs` couvre notre CRTC. Chercher
+ * seulement `crtc_id == crtc` ratait la plane au démarrage (constaté
+ * 21/11/2026), et le cache la gardait « introuvable » pour toute la session. */
+static uint32_t curseur_plane_trouve(int card, uint32_t crtc)
+{
+    drmModeRes *res = drmModeGetResources(card);
+    int idx = -1;
+    for (int i = 0; res && i < res->count_crtcs; i++)
+        if (res->crtcs[i] == crtc)
+            idx = i;
+    drmModeFreeResources(res);
+
+    drmModePlaneRes *pr = drmModeGetPlaneResources(card);
+    if (!pr)
+        return 0;
+    uint32_t actif = 0, libre = 0;
+    for (uint32_t i = 0; i < pr->count_planes && !actif; i++) {
+        drmModePlane *pl = drmModeGetPlane(card, pr->planes[i]);
+        if (!pl)
+            continue;
+        uint32_t id = pl->plane_id, cid = pl->crtc_id, possibles = pl->possible_crtcs;
+        drmModeFreePlane(pl);
+        drmModeObjectProperties *props =
+            drmModeObjectGetProperties(card, id, DRM_MODE_OBJECT_PLANE);
+        if (!props)
+            continue;
+        int type = -1;
+        for (uint32_t j = 0; j < props->count_props; j++) {
+            drmModePropertyRes *p = drmModeGetProperty(card, props->props[j]);
+            if (p) {
+                if (!strcmp(p->name, "type"))
+                    type = (int)props->prop_values[j];
+                drmModeFreeProperty(p);
+            }
+        }
+        drmModeFreeObjectProperties(props);
+        if (type != DRM_PLANE_TYPE_CURSOR)
+            continue;
+        if (cid == crtc)
+            actif = id;
+        else if (!libre && idx >= 0 && (possibles & (1u << idx)))
+            libre = id;
+    }
+    drmModeFreePlaneResources(pr);
+    return actif ? actif : libre;
+}
+
+/* Ids des propriétés utiles d'une plane (0 = absente). */
+static void curseur_props(int card, struct curseur *cu, uint32_t plane)
+{
+    cu->prop_fb = cu->prop_x = cu->prop_y = cu->prop_w = cu->prop_h = 0;
+    drmModeObjectProperties *pr = drmModeObjectGetProperties(card, plane, DRM_MODE_OBJECT_PLANE);
+    if (!pr) {
+        logx("curseur: propriétés de la plane %u illisibles", plane);
+        return;
+    }
+    for (uint32_t j = 0; j < pr->count_props; j++) {
+        drmModePropertyRes *p = drmModeGetProperty(card, pr->props[j]);
+        if (!p)
+            continue;
+        if (!strcmp(p->name, "FB_ID")) cu->prop_fb = p->prop_id;
+        else if (!strcmp(p->name, "CRTC_X")) cu->prop_x = p->prop_id;
+        else if (!strcmp(p->name, "CRTC_Y")) cu->prop_y = p->prop_id;
+        else if (!strcmp(p->name, "CRTC_W")) cu->prop_w = p->prop_id;
+        else if (!strcmp(p->name, "CRTC_H")) cu->prop_h = p->prop_id;
+        drmModeFreeProperty(p);
+    }
+    drmModeFreeObjectProperties(pr);
+}
+
+/* Pixels ARGB du curseur : relus seulement quand l'image change (le
+ * framebuffer du curseur est réutilisé, seule son image et sa position
+ * bougent). KWin le crée en dumb buffer, donc mappable ; un buffer GBM
+ * renverrait une erreur, on le dit une fois et on laisse le curseur masqué. */
+static void curseur_charge(struct capture *c, struct curseur *cu, uint32_t fb_id)
+{
+    if (cu->pixels) {
+        munmap(cu->pixels, cu->pixels_len);
+        cu->pixels = NULL;
+        cu->pixels_len = 0;
+    }
+    cu->fb = fb_id;
+    drmModeFB2 *fb = fb2_privilegie(c, fb_id);
+    if (!fb)
+        return;
+    uint32_t format = fb->pixel_format;
+    int argb = format == DRM_FORMAT_ARGB8888;
+    int xrgb = format == DRM_FORMAT_XRGB8888;
+    uint32_t handle = fb->handles[0];
+    int w = (int)fb->width, h = (int)fb->height;
+    uint64_t modif = (fb->flags & DRM_MODE_FB_MODIFIERS) ? fb->modifier : DRM_FORMAT_MOD_LINEAR;
+    drmModeFreeFB2(fb);
+    if (!argb && !xrgb) {
+        logx("curseur: format 0x%08x non géré (ARGB8888 attendu)", format);
+        cu->echec_logge = 1;
+        return;
+    }
+    if (modif != DRM_FORMAT_MOD_LINEAR) {
+        /* un buffer tuilé ne se lit pas comme un tableau de pixels */
+        logx("curseur: framebuffer tuilé (modifier 0x%llx) : masqué", (unsigned long long)modif);
+        cu->echec_logge = 1;
+        return;
+    }
+    /* Dumb buffer : le noyau donne un offset pour mmap. Le pitch n'est pas
+     * exposé pour un buffer déjà créé ; pour un curseur il vaut width*4
+     * (largeurs 64/128/256, toutes alignées). */
+    uint64_t offset = 0;
+    if (drmModeMapDumbBuffer(c->card, handle, &offset) != 0) {
+        logx("curseur: plane non mappable (pas un dumb buffer) : masqué");
+        cu->echec_logge = 1;
+        return;
+    }
+    size_t len = (size_t)w * 4 * (size_t)h;
+    void *ptr = mmap(NULL, len, PROT_READ, MAP_SHARED, c->card, (off_t)offset);
+    if (ptr == MAP_FAILED) {
+        logx("curseur: mmap du dumb buffer: %s", strerror(errno));
+        cu->echec_logge = 1;
+        return;
+    }
+    cu->pixels = ptr;
+    cu->pitch = w * 4;
+    /* ARGB : px[3] = 0 veut dire TRANSPARENT (le curseur dessine sa forme) ;
+     * XRGB n'a pas d'alpha du tout, tout est opaque. */
+    cu->opaque = xrgb;
+    cu->w = w;
+    cu->h = h;
+    cu->pixels_len = len;
+}
+
+/* RGB -> YUV BT.709 limité, l'espace de l'encodage HD. */
+static inline void rgb_vers_yuv(int r, int g, int b, int *y, int *u, int *v)
+{
+    *y = (int)(16.0 + (219.0 / 255.0) * (0.2126 * r + 0.7152 * g + 0.0722 * b) + 0.5);
+    *u = (int)(128.0 + (224.0 / 255.0) * (-0.1146 * r - 0.3854 * g + 0.5 * b) + 0.5);
+    *v = (int)(128.0 + (224.0 / 255.0) * (0.5 * r - 0.4542 * g - 0.0458 * b) + 0.5);
+}
+
+/* Mélange le curseur dans la surface que l'encodeur va lire. Ne fait rien si
+ * le réglage est « masqué », si le curseur n'est pas visible, ou si le pilote a
+ * déjà refusé une fois (on ne spamme pas le journal à 60 Hz). */
+static void curseur_melange(struct etat *e, AVFrame *vf)
+{
+    struct curseur *cu = &e->cur;
+    if (!e->cfg.curseur || cu->echec_logge || !vf->hw_frames_ctx)
+        return;
+    AVHWFramesContext *fc = (AVHWFramesContext *)vf->hw_frames_ctx->data;
+    if (!fc || fc->format != AV_PIX_FMT_VAAPI || !fc->device_ctx)
+        return;
+    if (fc->sw_format != AV_PIX_FMT_NV12) {
+        /* 10 bits (p010) : Layout différent, non traité — le dire une fois. */
+        logx("curseur: surface %d non gérée (NV12 seulement)", (int)fc->sw_format);
+        cu->echec_logge = 1;
+        return;
+    }
+    if (!cu->plane) {
+        /* une fois par seconde au plus : la plane peut apparaître/disparaître
+         * (KWin détache le curseur), ce n'est pas une erreur définitive */
+        int64_t t = maintenant_us();
+        if (cu->dernier_essai && t - cu->dernier_essai < 1000000)
+            return;
+        cu->dernier_essai = t;
+        cu->plane = curseur_plane_trouve(e->cap.card, e->cap.crtc);
+        if (!cu->plane)
+            return;
+        curseur_props(e->cap.card, cu, cu->plane);
+        logx("curseur: plane %u (crtc %u)", cu->plane, e->cap.crtc);
+    }
+    if (!cu->prop_fb)
+        curseur_props(e->cap.card, cu, cu->plane);
+    drmModeObjectProperties *pr =
+        drmModeObjectGetProperties(e->cap.card, cu->plane, DRM_MODE_OBJECT_PLANE);
+    if (!pr)
+        return;
+    uint32_t fb = 0;
+    int cx = 0, cy = 0, cw = 0, ch = 0;
+    for (uint32_t j = 0; j < pr->count_props; j++) {
+        uint32_t id = pr->props[j];
+        uint64_t v = pr->prop_values[j];
+        if (id == cu->prop_fb) fb = (uint32_t)v;
+        else if (id == cu->prop_x) cx = (int)(int32_t)v;
+        else if (id == cu->prop_y) cy = (int)(int32_t)v;
+        else if (id == cu->prop_w) cw = (int)v;
+        else if (id == cu->prop_h) ch = (int)v;
+    }
+    drmModeFreeObjectProperties(pr);
+    if (!fb)
+        return;
+    /* la taille du curseur est celle de son framebuffer : drmModePlane n'expose
+     * pas crtc_w/h (API atomique seulement), et KWin ne met pas le curseur à
+     * l'échelle par cette plane. */
+    if (fb != cu->fb) {
+        curseur_charge(&e->cap, cu, fb);
+        if (!cu->pixels)
+            return;
+    }
+    if (cw <= 0 || ch <= 0) {
+        cw = cu->w;
+        ch = cu->h;
+    }
+    if (cw <= 0 || ch <= 0)
+        return;
+
+    /* position dans la surface encodée (la capture peut être réduite) */
+    double kx = (double)e->cfg.res_w / e->cap.w;
+    double ky = (double)e->cfg.res_h / e->cap.h;
+    int dx = (int)(cx * kx), dy = (int)(cy * ky);
+    int dw = (int)(cw * kx + 0.5), dh = (int)(ch * ky + 0.5);
+    if (dw <= 0 || dh <= 0)
+        return;
+    int x0 = dx < 0 ? 0 : dx;
+    int y0 = dy < 0 ? 0 : dy;
+    int x1 = dx + dw > e->cfg.res_w ? e->cfg.res_w : dx + dw;
+    int y1 = dy + dh > e->cfg.res_h ? e->cfg.res_h : dy + dh;
+    if (x1 <= x0 || y1 <= y0)
+        return;
+    int iw = x1 - x0, ih = y1 - y0;
+
+    AVVAAPIDeviceContext *dev = fc->device_ctx->hwctx;
+    VADisplay dpy = dev->display;
+    /* AV_PIX_FMT_VAAPI : l'identifiant de surface vit dans data[3] */
+    VASurfaceID sid = (VASurfaceID)(uintptr_t)vf->data[3];
+    if (sid == VA_INVALID_SURFACE)
+        return;
+
+    /* `vaDeriveImage` donne la surface TELLE QUELLE (pitch et offsets réels) :
+     * on n'écrit que le rectangle du curseur. `vaGetImage`+`vaPutImage`
+     * corrompait toute la frame sur surface tuilée (mesuré 21/11/2026 : blit
+     * NV12 mal recomposé, vert sur toute l'image). */
+    VAImage img;
+    if (vaDeriveImage(dpy, sid, &img) != VA_STATUS_SUCCESS) {
+        logx("curseur: vaDeriveImage refusé : masqué");
+        cu->echec_logge = 1;
+        return;
+    }
+    if (img.format.fourcc != VA_FOURCC_NV12) {
+        logx("curseur: image dérivée 0x%08x non gérée", img.format.fourcc);
+        vaDestroyImage(dpy, img.image_id);
+        cu->echec_logge = 1;
+        return;
+    }
+    void *base = NULL;
+    if (vaMapBuffer(dpy, img.buf, &base) != VA_STATUS_SUCCESS || !base) {
+        vaDestroyImage(dpy, img.image_id);
+        logx("curseur: vaMapBuffer refusé : masqué");
+        cu->echec_logge = 1;
+        return;
+    }
+    uint8_t *yp = (uint8_t *)base + img.offsets[0];
+    uint8_t *uvp = (uint8_t *)base + img.offsets[1];
+    int pitch_y = (int)img.pitches[0], pitch_uv = (int)img.pitches[1];
+    /* coin haut-gauche du curseur visible, en coordonnées source */
+    int sx0 = x0 - dx, sy0 = y0 - dy;
+    for (int j = 0; j < ih; j++) {
+        int sy = ((sy0 + j) * cu->h) / dh;
+        const uint8_t *src = cu->pixels + (size_t)sy * cu->pitch;
+        uint8_t *ligne = yp + (size_t)(y0 + j) * pitch_y + (size_t)x0;
+        uint8_t *ligne_uv = uvp + (size_t)((y0 + j) / 2) * pitch_uv + (size_t)(x0 / 2) * 2;
+        for (int i = 0; i < iw; i++) {
+            int sx = ((sx0 + i) * cu->w) / dw;
+            const uint8_t *px = src + (size_t)sx * 4;
+            int b = px[0], g = px[1], r = px[2], a = cu->opaque ? 255 : px[3];
+            if (a == 0)
+                continue;
+            int ys, us, vs;
+            rgb_vers_yuv(r, g, b, &ys, &us, &vs);
+            int oy = ligne[i];
+            ligne[i] = (uint8_t)((ys * a + oy * (255 - a) + 127) / 255);
+            if ((i & 1) == 0) {
+                int o = (i / 2) * 2;
+                ligne_uv[o] = (uint8_t)((us * a + ligne_uv[o] * (255 - a) + 127) / 255);
+                ligne_uv[o + 1] = (uint8_t)((vs * a + ligne_uv[o + 1] * (255 - a) + 127) / 255);
+            }
+        }
+    }
+    vaUnmapBuffer(dpy, img.buf);
+    vaDestroyImage(dpy, img.image_id);
 }
 
 /* ---------------------------------------------------------------- encodeur */
@@ -1090,6 +1408,7 @@ static void *thread_video(void *arg)
 
         r = av_buffersink_get_frame(e->sink, vf);
         if (r < 0) { usleep(300); continue; }
+        curseur_melange(e, vf);
 
         if (!e->enc_ouvert) {
             if (encodeur_ouvre(e, vf) < 0) { e->arret = 1; break; }

@@ -76,9 +76,20 @@ poll plane.fb_id (500 µs)                       ← pas de minuteur : la vérit
   fabriqué, jamais de beat contre le 165 Hz de l'écran.
 - Mesuré (1440p natif, HEVC) : **120,1 / 144,1 / 240,1 fps** tenus, CPU 3-5 % ;
   le plafond n'est ni le GPU ni le CPU.
-- **Le curseur n'est pas dans le scanout** (plane séparée) : masqué par défaut,
-  exactement comme le `-cursor no` actuel. « Afficher » = lire la plane curseur
-  et la mélanger sur GPU (`overlay_vaapi`), ce n'est **pas** fait en v1.
+- **Le curseur n'est pas dans le scanout** (plane séparée) : masqué par défaut.
+  « Afficher » lit la plane `DRM_PLANE_TYPE_CURSOR` et mélange son ARGB dans la
+  surface NV12 que l'encodeur va lire (`vaDeriveImage` + écriture du seul
+  rectangle, ~64×64). Trois pièges, tous mesurés le 21/11/2026 :
+  1. `overlay_vaapi` ne convient pas — il n'évalue `x`/`y` qu'à la configuration
+     de son entrée, un curseur qui bouge ne suit pas ;
+  2. en mode atomique `drmModeGetPlane` renvoie `crtc_x/y = 0` : la position vit
+     dans les propriétés `CRTC_X`/`CRTC_Y`, **et libdrm ne les rend pas sans
+     `DRM_CLIENT_CAP_ATOMIC`** (d'où un curseur collé en 0,0 puis invisible) ;
+  3. `vaGetImage`+`vaPutImage` sur le rectangle corrompt **toute** la frame
+     (blit NV12 sur surface tuilée) ; `vaDeriveImage` + `vaMapBuffer` écrit
+     directement au bon pitch/offset.
+  L'alpha est celui du framebuffer ARGB (0 = transparent) ; un `XRGB8888` est
+  opaque. Coût négligeable (curseur 64×64, pas de copie plein écran).
 - Audio : **monitor du sink** seulement (pas d'audio par application), capturé
   par **`parec`** (un processus par session, tube lu avec `poll`) et non par le
   décodeur `pulse` d'FFmpeg — cf. pièges. Un flux de **lecture muet** maintient
@@ -243,7 +254,7 @@ Les variables d'environnement (`RECORD_DIR`, `RECORD_RES`, `RECORD_FPS`,
 | `qualite` | `3` | 1-5, voir table ci-dessous |
 | `fps` | `60` | plafond d'émission : `60`, `120`, `144`, ou `flips` (aucun plafond, VFR réel) |
 | `replay_sec` | `30` | profondeur du buffer |
-| `curseur` | `masque` | `masque` ou `affiche` (affiche = v2, cf. plus haut) |
+| `curseur` | `masque` | `masque` ou `affiche` (mélangé dans la surface, cf. plus haut) |
 | `dix_bits` | `0` | `1` = HEVC Main10 (P010), inutile en H.264 |
 | `resolution` | `source` | `source` (natif, barème sur la taille réelle), ou une taille en `LxH` : `1280x720`, `1920x1080`, `2560x1440` |
 | `audio` | `default_output` | `default_output` ou `none` |

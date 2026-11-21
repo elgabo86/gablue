@@ -86,7 +86,6 @@ class CaptureDialog(QDialog):
         self.reso = self._combo(video, "Résolution", RESOLUTIONS)
         self.fps = self._combo(video, "Images par seconde", FPS)
         self.curseur = self._combo(video, "Curseur", CURSEURS)
-        self.curseur.setEnabled(False)  # v1 : le curseur n'est pas capturé
         for combo in (self.codec, self.qualite, self.reso, self.fps):
             combo.currentIndexChanged.connect(self._update_estimate)
 

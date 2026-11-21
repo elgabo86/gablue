@@ -11,7 +11,7 @@
 set -eoux pipefail
 
 dnf5 -y install gcc make pkgconf-pkg-config \
-    libdrm-devel libcap-devel pulseaudio-libs-devel
+    libdrm-devel libcap-devel pulseaudio-libs-devel libva-devel
 
 # ffmpeg-devel vient de fedora-multimedia (negativo17), la MÊME source que le
 # `ffmpeg` de l'image : s'en tenir aux dépôts de base lierait le binaire à

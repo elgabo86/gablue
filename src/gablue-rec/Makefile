@@ -1,5 +1,7 @@
 CC      ?= cc
-PKGS     = libavformat libavcodec libavfilter libavutil libavdevice libswresample libdrm libpulse-simple
+# libva : mélange du curseur dans la surface de l'encodeur (vaGetImage/
+# vaPutImage sur le rectangle du curseur, voir AGENTS.md)
+PKGS     = libavformat libavcodec libavfilter libavutil libavdevice libswresample libdrm libpulse-simple libva
 CFLAGS  ?= -O2 -Wall -Wextra
 LIBS     = -lcap -lpthread $(shell pkg-config --libs libpulse-simple)
 DESTDIR ?=
