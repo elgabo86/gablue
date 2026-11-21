@@ -275,6 +275,20 @@ overlay orphelin).
 - **Tampon = panneau** (707×367) : on repeint entièrement à chaque image
   (~0,3 ms), et un déplacement ne redessine **rien** (seules les marges
   changent, le tampon n'est pas renvoyé).
+- **Retour visuel de frappe** (`Etat::presse`, `PRESSE_DUREE` 120 ms) : la
+  touche frappée s'allume en **aplat d'accent + liseré clair** et s'éteint
+  seule. Il en fallait un : Croix tape la touche **sélectionnée**, donc la
+  frappe ne changeait rien à l'écran (l'état « sélection » était déjà là).
+  Les touches spéciales suivent (Carré → `RETOUR`, Triangle → `ESPACE`, R2 →
+  `ENTREE`, START → `TAB`) ; 120 ms couvre la répétition (80 ms), donc une
+  touche tenue reste allumée tant qu'elle tape. **L1/R1 n'ont pas de case** :
+  c'est le rappel `L1/R1 CURSEUR TEXTE` du pied qui s'allume, en **pastille
+  d'accent** (texte sombre), seul retour possible — l'effet, lui, est dans la
+  fenêtre active. `tick()` redessine tant que le flash vit (puis une dernière
+  fois pour l'éteindre) et `anime()` maintient le `poll` à 8 ms : à 100 ms, une
+  touche allumée 120 ms s'éteindrait jusqu'à 200 ms plus tard. Mesuré au banc
+  (`--bench-clavier`, dump PPM contre un rendu sans frappe) : 1 964 pixels
+  changent pour une touche (la seule concernée), 664 pour la pastille L1/R1.
 - Position mémorisée dans `~/.config/gablue/gpad-clavier` (écrite à la
   fermeture), bornée à l'écran à chaque ouverture.
 

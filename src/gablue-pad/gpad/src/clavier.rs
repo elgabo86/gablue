@@ -54,6 +54,11 @@ const REPETE_DELAI: Duration = Duration::from_millis(400);
 const REPETE_PERIODE: Duration = Duration::from_millis(80);
 const REPETE_NAV: Duration = Duration::from_millis(110);
 
+/// Retour visuel d'une touche frappée : la touche s'allume en accent pendant
+/// ce délai. Couvre la répétition (80 ms) sans clignoter, donc une touche
+/// tenue reste allumée tant qu'elle tape.
+const PRESSE_DUREE: Duration = Duration::from_millis(120);
+
 /* ------------------------------- uinput -------------------------------- */
 
 pub const CTRL: u16 = 29;
@@ -472,6 +477,13 @@ pub struct Etat {
     /// Maj maintenue (L2) : n'affecte que l'affichage, la touche est déjà
     /// enfoncée dans le clavier virtuel.
     pub maj_tenue: bool,
+    /// Touche qui vient d'être frappée et l'instant du coup : seule source du
+    /// retour visuel (la sélection, elle, est sous le curseur, donc une touche
+    /// frappée par Croix serait invisible sans ça).
+    pub presse: Option<(Genre, Instant)>,
+    /// Idem pour L1/R1, qui n'ont pas de case à allumer : c'est le rappel
+    /// `L1/R1 CURSEUR TEXTE` du pied de panneau qui répond.
+    pub pied_presse: Option<Instant>,
     pub x: i32,
     pub y: i32,
     pub largeur: i32,
@@ -535,6 +547,8 @@ impl Etat {
             altgr: false,
             ctrl: false,
             maj_tenue: false,
+            presse: None,
+            pied_presse: None,
             x: (ecran.0 - largeur) / 2,
             y: ecran.1 - hauteur - 80,
             largeur,
@@ -558,6 +572,26 @@ impl Etat {
 
     fn case_courante(&self) -> &Case {
         &self.rangees[self.r][self.c]
+    }
+
+    /// Allume la touche frappée. Sans elle on ne voyait rien : la touche tapée
+    /// est celle qui porte le curseur, donc elle l'était déjà « en surbrillance ».
+    fn marquer_presse(&mut self, genre: Genre) {
+        self.presse = Some((genre, Instant::now()));
+    }
+
+    /// Cette touche vient-elle d'être frappée (fenêtre de [`PRESSE_DUREE`]) ?
+    fn presse(&self, genre: Genre) -> bool {
+        matches!(self.presse, Some((g, t)) if g == genre && t.elapsed() < PRESSE_DUREE)
+    }
+
+    /// Allume `L1/R1 CURSEUR TEXTE` : les gâchettes n'ont pas de case.
+    fn marquer_pied(&mut self) {
+        self.pied_presse = Some(Instant::now());
+    }
+
+    fn pied_actif(&self) -> bool {
+        matches!(self.pied_presse, Some(t) if t.elapsed() < PRESSE_DUREE)
     }
 
     fn niveau(&self) -> usize {
@@ -639,7 +673,18 @@ impl Etat {
         let ligne2 = "L1/R1 CURSEUR TEXTE   L2 MAJ (L2+L1/R1: SELECTION)   L3 MAJ COLLEE   SELECT ALTGR   R3 CTRL   STICK D: DEPLACER";
         let y_pied = py + lh - FOOTER + 1;
         cv.text_brut(px + PAD, y_pied, ligne1, 1, DIM);
-        cv.text_brut(px + PAD, y_pied + 13, ligne2, 1, DIM);
+        // `L1/R1` s'allume à chaque appui (seul retour possible : la gâchette
+        // n'a pas de case, l'effet est dans la fenêtre active)
+        let x2 = px + PAD;
+        if self.pied_actif() {
+            let tete = "L1/R1";
+            let w2 = cv.largeur(tete, 1) + 8;
+            cv.rrect(x2 - 4, y_pied + 11, w2, 11, 5, ACCENT);
+            cv.text_brut(x2, y_pied + 13, tete, 1, SEL_TXT);
+            cv.text_brut(x2 + w2 - 4, y_pied + 13, &ligne2[tete.len()..], 1, DIM);
+        } else {
+            cv.text_brut(x2, y_pied + 13, ligne2, 1, DIM);
+        }
     }
 
     fn dessiner_case(&self, cv: &mut Canvas, k: &Case, x: i32, y: i32, sel: bool) {
@@ -650,14 +695,20 @@ impl Etat {
             Genre::Ctrl => self.ctrl,
             _ => false,
         };
-        cv.rrect(x, y, w, h, 10, if sel { SEL } else { CLE_BORD });
+        // Frappe : liseré clair + aplat d'accent. Le liseré clair la distingue
+        // de la sélection (elle aussi claire) quand la touche est sous le
+        // curseur — c'est le cas normal, Croix tape la touche sélectionnée.
+        let presse = self.presse(k.genre);
+        cv.rrect(x, y, w, h, 10, if sel || presse { SEL } else { CLE_BORD });
         cv.rrect(
             x + 1,
             y + 1,
             w - 2,
             h - 2,
             9,
-            if sel {
+            if presse {
+                ACCENT
+            } else if sel {
                 SEL
             } else if actif {
                 ACCENT
@@ -665,7 +716,11 @@ impl Etat {
                 CLE
             },
         );
-        let (c_txt, c_dim) = if sel { (SEL_TXT, SEL_DIM) } else { (TXT, DIM) };
+        let (c_txt, c_dim) = if sel || presse {
+            (SEL_TXT, SEL_DIM)
+        } else {
+            (TXT, DIM)
+        };
 
         match k.genre {
             Genre::Physique(_) => {
@@ -686,7 +741,7 @@ impl Etat {
                         yy + 1,
                         3,
                         3,
-                        if sel { SEL_TXT } else { ACCENT },
+                        if sel || presse { SEL_TXT } else { ACCENT },
                     );
                 }
                 // couches secondaires : Maj en haut à droite, AltGr en bas à
@@ -842,6 +897,7 @@ impl Clavier {
     fn taper(&mut self) {
         let genre = self.etat.case_courante().genre;
         let (maj, altgr, ctrl) = (self.etat.maj, self.etat.altgr, self.etat.ctrl);
+        self.etat.marquer_presse(genre);
         match genre {
             Genre::Physique(code) => {
                 if let Some(inj) = &self.inj {
@@ -856,6 +912,9 @@ impl Clavier {
     }
 
     fn speciale(&mut self, genre: Genre) {
+        // le retour visuel ne dépend pas du clavier uinput : il s'affiche même
+        // si la frappe est indisponible
+        self.etat.marquer_presse(genre);
         let Some(inj) = &self.inj else { return };
         let code = match genre {
             Genre::Espace => SPACE,
@@ -870,6 +929,7 @@ impl Clavier {
     /// L1/R1 : curseur de texte (Ctrl collant = mot par mot ; L2 tenue ajoute
     /// Maj côté noyau, donc sélection — deux index, aucun pouce déplacé).
     fn curseur(&mut self, sens: i32) {
+        self.etat.marquer_pied();
         let Some(inj) = &self.inj else { return };
         let code = if sens < 0 { LEFT } else { RIGHT };
         let mods: Vec<u16> = if self.etat.ctrl { vec![CTRL] } else { Vec::new() };
@@ -1078,6 +1138,20 @@ impl Clavier {
     pub fn tick(&mut self) -> bool {
         let maintenant = Instant::now();
         let mut change = false;
+        // frappe : on redessine tant que le flash vit, puis une dernière fois
+        // pour l'éteindre (sinon la touche restait allumée à l'écran)
+        if let Some((_, t)) = self.etat.presse {
+            if t.elapsed() >= PRESSE_DUREE {
+                self.etat.presse = None;
+            }
+            change = true;
+        }
+        if let Some(t) = self.etat.pied_presse {
+            if t.elapsed() >= PRESSE_DUREE {
+                self.etat.pied_presse = None;
+            }
+            change = true;
+        }
         if self.rep_nav.echeance() {
             let dir = match self.nav_hat {
                 (-1, 0) => Some((-1, 0)),
@@ -1131,7 +1205,11 @@ impl Clavier {
 
     /// Une répétition est-elle armée (le `poll` doit alors descendre à 8 ms) ?
     pub fn anime(&self) -> bool {
-        self.rep_nav.proche()
+        // le flash de frappe aussi : à 100 ms de `poll`, une touche allumée
+        // 120 ms s'éteindrait jusqu'à 200 ms plus tard
+        self.etat.presse.is_some()
+            || self.etat.pied_presse.is_some()
+            || self.rep_nav.proche()
             || self.rep_stick.proche()
             || self.rep_croix.proche()
             || self.rep_carre.proche()
@@ -1146,6 +1224,8 @@ impl Clavier {
             inj.tout_relacher();
         }
         self.etat.maj_tenue = false;
+        self.etat.presse = None;
+        self.etat.pied_presse = None;
         self.croix = false;
         self.carre = false;
         self.triangle = false;
