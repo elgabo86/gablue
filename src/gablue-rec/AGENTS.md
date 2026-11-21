@@ -105,10 +105,20 @@ Conséquence assumée : à 1440p natif, 30 s pèsent **~55 Mo** (6,4 Go/h en q3 
 compatibilité ne dépend que du codec.
 
 **Un seul geste pour sauver un replay** — Home+haut quand le buffer tourne
-(sinon il le démarre), ou la ligne `SAUVER REPLAY` du panneau. Pas de bouton « Partager », pas de
+(sinon il le démarre), ou la ligne `SAUVER REPLAY` du panneau, présente
+seulement quand le buffer tourne. Pas de bouton « Partager », pas de
 destination à choisir : la sauvegarde écrit un clip prêt à envoyer. Le mp4 est
 écrit avec `+faststart` (moov en tête) pour que Discord/WhatsApp l'affichent
 sans attendre la fin du téléchargement.
+
+**Sons de fin.** L'arrêt d'un enregistrement joue `stop.wav` **après** la
+finalisation du mp4, et l'arrêt du replay le joue **après** `replay.stop` : dans
+les deux cas le son ne peut pas entrer dans ce qu'on vient d'arrêter. La
+vibration reste le signe de la sauvegarde d'un replay, jamais un arrêt (demandé
+le 21/11/2026 : elle prêtait à confusion). Le pipeline étant unique, deux
+muxeurs, le replay **peut démarrer pendant un enregistrement** : plus aucun
+script ne refuse (`replay.sh start` le faisait encore, reste de l'exclusivité
+héritée de gpu-screen-recorder).
 
 **Silencieux quand personne n'a appuyé sur un bouton.** Le replay automatique
 (ouverture d'un `.lgp`/`.wgp`), `grec` et le `.desktop` ne font **aucun bruit**

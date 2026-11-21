@@ -103,6 +103,17 @@ Tous ne partent que si **Home est tenu** et qu'aucun panneau n'est ouvert
 (`child < 0`) : un combo posé sur un appui simple n'a pas de sens, et Home seul
 ouvre le panneau **au relâchement**.
 
+**Deux lecteurs, un seul exécutant** : quand le panneau est ouvert, le résident
+tient le grab et voit le combo le premier ; il le relâche, et ce déclencheur
+relit les **mêmes** appuis — l'action partait donc deux fois (double bip au
+démarrage du replay, bascule d'enregistrement annulée dans la seconde,
+constaté le 21/11/2026 : deux `replay.sh start` à la même seconde). Chaque combo
+prend d'abord un **jeton** (`$XDG_RUNTIME_DIR/gablue/gpad-combo`, créé en
+`O_EXCL`, fenêtre 400 ms) : le premier qui le pose agit, l'autre se tait. Avant
+d'agir, `panneau_ferme()` interroge le résident (`state` → `open`/`closed`),
+envoie `close` si besoin et attend que la surface soit retirée — le panneau ne
+se filme jamais dans le clip.
+
 | Combo | Effet |
 |---|---|
 | Home + gauche | bascule l'**enregistrement** (`recorder.sh toggle`) — le buffer de replay est indépendant, il continue de tourner |
@@ -111,6 +122,13 @@ ouvre le panneau **au relâchement**.
 | Home + bas | **arrête** le replay s'il tourne (`replay.sh stop`) ; sinon ouvre le panneau sur la ligne **FPS** (geste d'origine, aucune fonction perdue) |
 
 `PAD_NODE` est transmis pour que la vibration parte sur la bonne manette.
+
+**Sons** : départ = `beep.wav` (enregistrement et replay), arrêt =
+`stop.wav` (enregistrement finalisé, ou buffer de replay déjà coupé — le son
+n'entre donc ni dans le mp4 ni dans l'anneau). La **vibration** reste réservée à
+la sauvegarde d'un replay : l'utiliser aussi pour l'arrêt d'un enregistrement
+était ambigu (demandé le 21/11/2026). `GPAD_SANS_BIP=1` (commande `grec`, entrée
+de menu, replay automatique) coupe les deux sons.
 
 L'état du buffer est lu **sur la socket du démon** (`rec_etat` : un
 `{"cmd":"status"}` d'une ligne, ~1 ms), pas avec `replay.sh status | grep

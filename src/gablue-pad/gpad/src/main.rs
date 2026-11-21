@@ -882,6 +882,44 @@ impl Entree {
     }
 }
 
+/// Jeton d'arbitrage des combos Home+direction.
+///
+/// Quand le panneau est ouvert, l'overlay tient le grab : c'est lui qui voit
+/// le combo, puis il le relâche. Le déclencheur, qui lit le même node sans
+/// grab, relit alors les mêmes appuis et rejouait l'action — double bip au
+/// démarrage du replay, bascule d'enregistrement annulée dans la seconde
+/// (constaté le 21/11/2026 : deux `replay.sh start` à la même seconde).
+/// Le premier des deux à poser le jeton agit ; l'autre se tait. Au-delà de
+/// 400 ms, c'est un nouvel appui : le jeton est repris.
+fn combo_jeton() -> bool {
+    let rt = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
+    let chemin = format!("{rt}/gablue/gpad-combo");
+    for _ in 0..2 {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&chemin)
+        {
+            Ok(mut f) => {
+                let _ = f.write_all(format!("{}\n", std::process::id()).as_bytes());
+                return true;
+            }
+            Err(_) => {
+                let frais = std::fs::metadata(&chemin)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.elapsed().ok())
+                    .is_some_and(|d| d.as_millis() < 400);
+                if frais {
+                    return false;
+                }
+                let _ = std::fs::remove_file(&chemin);
+            }
+        }
+    }
+    true
+}
+
 /// Ce qu'on lance une fois le panneau retiré.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Apres {
@@ -1352,7 +1390,6 @@ impl App {
                 Entree::Action("ENREGISTRER UNE VIDEO"),
                 Entree::Action("CAPTURE ECRAN"),
                 Entree::Action("REPLAY"),
-                Entree::Action("SAUVER REPLAY"),
                 Entree::Action("MODE SOURIS"),
                 Entree::Action("CLAVIER VIRTUEL"),
             ],
@@ -1840,6 +1877,10 @@ impl App {
                     && matches!(a, Action::Left | Action::Right | Action::Up | Action::Down)
                 {
                     self.home_down = false;
+                    if !combo_jeton() {
+                        println!("COMBO ignore (traite par le declencheur)");
+                        continue;
+                    }
                     let apres = match a {
                         Action::Left => Apres::Record,
                         Action::Right => Apres::Capture,
@@ -1888,6 +1929,28 @@ impl App {
             Page::Applis => &self.applis,
             Page::Fenetre => &self.fen_menu,
             Page::Fenetres => &self.fen_items,
+        }
+    }
+
+    /// Page ACCUEIL reconstruite : `SAUVER REPLAY` n'y figure que si le buffer
+    /// tourne (demandé le 21/11/2026 — une ligne grisée « INACTIF » n'apprend
+    /// rien). Appelée à chaque changement de `replay_active`, curseur ramené
+    /// dans les bornes si la ligne qu'il visait a disparu.
+    fn maj_accueil(&mut self) {
+        let mut v = vec![
+            Entree::Fenetre,
+            Entree::Action("ENREGISTRER UNE VIDEO"),
+            Entree::Action("CAPTURE ECRAN"),
+            Entree::Action("REPLAY"),
+        ];
+        if self.replay_active {
+            v.push(Entree::Action("SAUVER REPLAY"));
+        }
+        v.push(Entree::Action("MODE SOURIS"));
+        v.push(Entree::Action("CLAVIER VIRTUEL"));
+        self.accueil = v;
+        if self.selected >= self.accueil.len() {
+            self.selected = self.accueil.len().saturating_sub(1);
         }
     }
 
@@ -3260,6 +3323,7 @@ impl App {
                         );
                     }
                     self.replay_active = !self.replay_active;
+                    self.maj_accueil();
                     self.replay_attente = Some(Instant::now() + Duration::from_secs(6));
                     println!("REPLAY {}", if self.replay_active { "start" } else { "stop" });
                 }
@@ -3691,6 +3755,12 @@ impl App {
                     self.ouvrir(&node, &cibles);
                 }
                 Some("close") => self.request_close(),
+                // le déclencheur demande si le panneau est ouvert avant de
+                // fermer/agir (il ne peut pas le savoir autrement)
+                Some("state") => {
+                    let etat = if self.visible { "open" } else { "closed" };
+                    let _ = flux.write_all(format!("{etat}\n").as_bytes());
+                }
                 // clavier virtuel : `kbd <node>` (le résident tient déjà la
                 // manette et garde son grab, aucun transfert de processus)
                 Some("kbd") => {
@@ -7047,6 +7117,7 @@ fn main() {
             if replay != app.replay_active {
                 if !attente {
                     app.replay_active = replay;
+                    app.maj_accueil();
                     app.replay_attente = None;
                     app.dirty = true;
                 }

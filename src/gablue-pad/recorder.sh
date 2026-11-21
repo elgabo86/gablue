@@ -21,10 +21,17 @@ LOG=${GPAD_REC_LOG:-$RT/gablue/gpad-rec.log}
 
 # Aucune notification à l'écran : le buffer de replay tourne pendant
 # l'enregistrement, une bulle « sauvegardé » se retrouverait DANS le clip
-# suivant. Le retour est haptique (la vibration ne passe ni par l'écran ni par
-# l'audio, donc jamais capturée).
-RUMBLE=${RUMBLE:-$(dirname "$(readlink -f "$0")")/rumble/rumble}
-retour() { [[ -x "$RUMBLE" ]] && "$RUMBLE" - 140 60 || true; }
+# suivant. Le retour de fin est SONORE (`stop.wav`), pas haptique : la
+# vibration est le signe de la sauvegarde d'un replay, l'utiliser aussi pour
+# l'arrêt d'un enregistrement était ambigu (constaté le 21/11/2026). Le son
+# part après la finalisation du mp4, donc jamais dans le fichier.
+SON_FIN=${SON_FIN:-$(dirname "$(readlink -f "$0")")/sounds/stop.wav}
+son_fin() {
+    [[ "${GPAD_SANS_BIP:-0}" == 1 ]] && return 0
+    [[ -f "$SON_FIN" ]] || return 0
+    command -v ffplay > /dev/null || return 0
+    ffplay -nodisp -autoexit -loglevel quiet "$SON_FIN" > /dev/null 2>&1
+}
 
 # Une ligne JSON par message, réponse sur la même connexion.
 sock() {
@@ -117,7 +124,7 @@ stop() {
     if [[ -n "$f" ]] && command -v ffprobe > /dev/null; then
         d=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$f" 2>/dev/null)
         echo "enregistré : $f (${d:-?} s, $(du -h "$f" 2>/dev/null | cut -f1))"
-        retour
+        son_fin
     else
         echo "enregistrement arrêté, fichier: ${f:-?} (non vérifié)"
     fi

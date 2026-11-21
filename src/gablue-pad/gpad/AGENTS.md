@@ -689,7 +689,7 @@ de gpu-screen-recorder (deux processus, deux encodeurs) n'a plus lieu d'être.
 |---|---|
 | `ENREGISTRER UNE VIDEO` | bascule l'enregistrement, un seul sens ; pendant la capture le libellé devient `STOP ENREGISTRER` avec un compteur `MM:SS` (`H:MM:SS` au-delà de l'heure) |
 | `REPLAY` | interrupteur du buffer, **manipulable pendant une capture** : c'est le seul chemin du panneau pour arrêter le replay |
-| `SAUVER REPLAY` | sauvegarde les N dernières secondes ; la valeur à droite dit la profondeur du buffer (`30s`), ou `INACTIF` (grisé) buffer arrêté — A répond alors `REPLAY: INACTIF` |
+| `SAUVER REPLAY` | sauvegarde les N dernières secondes ; la valeur à droite dit la profondeur du buffer (`30s`). **La ligne est absente quand le buffer est arrêté** (demandé le 21/11/2026 : une ligne grisée « INACTIF » n'apprend rien), la page ACCUEIL est reconstruite à chaque changement de `replay_active` (`maj_accueil`, curseur ramené dans les bornes) |
 
 - **`ENREGISTRER UNE VIDEO` ferme le panneau AVANT de filmer** : au démarrage,
   `combo_apres = Apres::Record` + `request_close()`, le recorder n'est lancé

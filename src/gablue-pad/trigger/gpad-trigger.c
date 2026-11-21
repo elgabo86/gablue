@@ -467,6 +467,91 @@ static int overlay_send(const char *ligne)
     return w == (ssize_t)len;
 }
 
+/* Le panneau est-il ouvert ? `state` au résident : « open » ou « closed ».
+ * Pas de résident joignable = fermé (repli exec, rien à fermer). */
+static int overlay_est_ouvert(void)
+{
+    if (resident <= 0 || !ipc_path[0])
+        return 0;
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0)
+        return 0;
+    struct sockaddr_un sa = {0};
+    sa.sun_family = AF_UNIX;
+    if (strlen(ipc_path) >= sizeof sa.sun_path) {
+        close(fd);
+        return 0;
+    }
+    memcpy(sa.sun_path, ipc_path, strlen(ipc_path) + 1);
+    if (connect(fd, (struct sockaddr *)&sa, sizeof sa) < 0) {
+        close(fd);
+        return 0;
+    }
+    struct timeval tv = {0, 200 * 1000};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    static const char q[] = "state\n";
+    int ouvert = 0;
+    if (write(fd, q, sizeof q - 1) == (ssize_t)(sizeof q - 1)) {
+        char buf[32] = {0};
+        ssize_t n = read(fd, buf, sizeof buf - 1);
+        ouvert = n > 0 && strncmp(buf, "open", 4) == 0;
+    }
+    close(fd);
+    return ouvert;
+}
+
+/* Home+combo pendant que le panneau est ouvert : le fermer d'abord, sinon il
+ * se filme dans la capture/le clip. Le résident répond `closed` une fois la
+ * surface retirée ; plafond 1,2 s (un panneau qui ne répond pas ne bloque pas
+ * le combo indéfiniment). */
+static void panneau_ferme(void)
+{
+    if (!overlay_est_ouvert())
+        return;
+    overlay_send("close\n");
+    for (int i = 0; i < 120; i++) {
+        if (!overlay_est_ouvert())
+            return;
+        struct timespec ts = {0, 10 * 1000 * 1000};
+        nanosleep(&ts, NULL);
+    }
+}
+
+/* Arbitrage avec l'overlay (même jeton côté Rust) : quand le panneau est
+ * ouvert, il tient le grab et voit le combo le premier ; il le relâche, et
+ * nous relisons les MÊMES appuis — sans jeton, l'action partait deux fois
+ * (double bip au démarrage du replay, bascule d'enregistrement annulée dans
+ * la seconde, constaté le 21/11/2026). Premier à poser le jeton = seul à agir ;
+ * au-delà de 400 ms c'est un nouvel appui, le jeton est repris. */
+static int combo_jeton(void)
+{
+    const char *rt = getenv("XDG_RUNTIME_DIR");
+    char p[400];
+    snprintf(p, sizeof p, "%s/gablue/gpad-combo",
+             rt && *rt ? rt : "/run/user/1000");
+    for (int essai = 0; essai < 2; essai++) {
+        int fd = open(p, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        if (fd >= 0) {
+            dprintf(fd, "%d\n", (int)getpid());
+            close(fd);
+            return 1;
+        }
+        if (errno != EEXIST)
+            return 1;
+        struct stat st;
+        if (stat(p, &st) == 0) {
+            struct timespec n;
+            clock_gettime(CLOCK_REALTIME, &n);
+            long age = (n.tv_sec - st.st_mtim.tv_sec) * 1000L
+                       + (n.tv_nsec - st.st_mtim.tv_nsec) / 1000000L;
+            if (age >= 0 && age < 400)
+                return 0;
+        }
+        unlink(p);
+    }
+    return 1;
+}
+
 static int overlay_open_remote(const char *node)
 {
     if (!node || !*node)
@@ -587,6 +672,7 @@ static int rec_etat(const char *cle)
  * de départ prend ~0,7 s et que le déclencheur doit rester à l'écoute. */
 static void do_record(void)
 {
+    panneau_ferme();
     char cmd[700];
     fprintf(stderr, "[gpad-trigger] COMBO Home+gauche -> enregistrement (bascule)\n");
     fflush(stderr);
@@ -598,6 +684,7 @@ static void do_record(void)
 
 static void do_shot(void)
 {
+    panneau_ferme();
     fprintf(stderr, "[gpad-trigger] COMBO Home+droite -> capture\n");
     fflush(stderr);
     char cmd[600];
@@ -611,6 +698,7 @@ static void do_shot(void)
  * l'écoute. */
 static void do_replay_haut(void)
 {
+    panneau_ferme();
     int actif = rec_etat("replay");
     char cmd[800];
     fprintf(stderr, "[gpad-trigger] COMBO Home+haut -> replay (%s)\n",
@@ -937,11 +1025,17 @@ int main(int argc, char **argv)
                     }
                 } else if (ev.type == EV_ABS && ev.code == ABS_HAT0X && ev.value != 0) {
                     if (opt_shortcuts && home_down && !combo_done && child < 0) {
-                        if (ev.value < 0)
-                            do_record();
-                        else
-                            do_shot();
                         combo_done = 1;
+                        if (!combo_jeton()) {
+                            fprintf(stderr,
+                                    "[gpad-trigger] combo gauche/droite ignore"
+                                    " (deja traite par le panneau)\n");
+                            fflush(stderr);
+                        } else if (ev.value < 0) {
+                            do_record();
+                        } else {
+                            do_shot();
+                        }
                     }
                 } else if (ev.type == EV_ABS && ev.code == ABS_HAT0Y && ev.value != 0) {
                     /* Home+haut = replay (démarre, ou sauvegarde s'il tourne) ;
@@ -949,12 +1043,21 @@ int main(int argc, char **argv)
                      * ouvre le panneau sur la ligne FPS (geste d'origine). */
                     if (opt_shortcuts && home_down && !combo_done && child < 0) {
                         combo_done = 1;
-                        if (ev.value < 0) {
-                            do_replay_haut();
-                        } else if (!do_replay_bas()) {
-                            fprintf(stderr, "[gpad-trigger] COMBO Home+bas -> ligne fps\n");
+                        if (!combo_jeton()) {
+                            fprintf(stderr,
+                                    "[gpad-trigger] combo haut/bas ignore"
+                                    " (deja traite par le panneau)\n");
                             fflush(stderr);
-                            launch_vue(argv, argc, first_free, home_node, "fps");
+                        } else if (ev.value < 0) {
+                            do_replay_haut();
+                        } else {
+                            panneau_ferme();
+                            if (!do_replay_bas()) {
+                                fprintf(stderr,
+                                        "[gpad-trigger] COMBO Home+bas -> ligne fps\n");
+                                fflush(stderr);
+                                launch_vue(argv, argc, first_free, home_node, "fps");
+                            }
                         }
                     }
                 }

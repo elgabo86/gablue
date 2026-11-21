@@ -59,6 +59,14 @@ assure_daemon() {
     return 1
 }
 
+SON_FIN=${SON_FIN:-$HERE/sounds/stop.wav}
+son_fin() {
+    [[ "${GPAD_SANS_BIP:-0}" == 1 ]] && return 0
+    [[ -f "$SON_FIN" ]] || return 0
+    command -v ffplay > /dev/null || return 0
+    ffplay -nodisp -autoexit -loglevel quiet "$SON_FIN" > /dev/null 2>&1
+}
+
 BIP=${BIP_SON:-$HERE/sounds/beep.wav}
 BIP_PAUSE=${BIP_PAUSE:-0.35}
 bip_depart() {
@@ -76,7 +84,6 @@ start() {
     assure_daemon || return 1
     local r; r=$(sock '{"cmd":"status"}')
     bool_oui "$(champ "$r" replay)" && { echo "replay déjà actif ($(champ "$r" replay_sec)s)"; return 0; }
-    bool_oui "$(champ "$r" recording)" && { echo "ECHEC: un enregistrement est déjà en cours"; return 1; }
     bip_depart
     local cmd='{"cmd":"replay.start"}'
     [[ -n "$SEC" ]] && cmd="{\"cmd\":\"replay.start\",\"sec\":$SEC}"
@@ -109,6 +116,8 @@ stop() {
     local r; r=$(sock '{"cmd":"status"}') || { echo "replay déjà arrêté"; return 0; }
     bool_oui "$(champ "$r" replay)" || { echo "replay déjà arrêté"; return 0; }
     sock '{"cmd":"replay.stop"}' > /dev/null
+    # le buffer est coupé : le son de fin ne peut plus y entrer
+    son_fin
     echo "replay arrêté"
 }
 
