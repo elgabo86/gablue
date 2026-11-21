@@ -18,6 +18,7 @@
 - **Tiers** : Tailscale, Negativo17
 - **Terra (FyraLabs)** : terra-release, terra-release-extras, terra-release-mesa
   - Exclusion `terra-glfw*` : Conflicts cross-arch → casse l'install de `mangohud.i686` (glfw doit rester Fedora)
+  - Exclusion `zlib-devel*` (11/2026) : terra-extras publie zlib 1.4 sous ce nom, en `Conflicts` avec `zlib-ng-compat` (fedora) ; sans exclusion, tout `dnf5 install zlib-devel` échoue (build-c, 5 images). Les scripts demandent `zlib-ng-compat-devel` explicitement
   - Exclusion `waydroid*` (09/2026) : `waydroid-nvidia` (terra-extras) Provides `libvirglrenderer.so.1` + Obsoletes `waydroid` — avec Terra priority 3, dnf5 l'utiliserait dans la transaction virtualisation DX (`qemu-device-display-*-gl`) : fork waydroid complet + lxc + `waydroid-container.service` activé, virglrenderer Fedora évincé (DX uniquement ; exclusion → retombe sur virglrenderer Fedora, validé conteneur)
 
 Exclusions importantes :
@@ -98,7 +99,7 @@ Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-wel
 
 **build-c** (après pypi) :
 - Compile `/src/gablue-pad` (`make install` : gpad-trigger, gpad-mouse, gpad-inhibit, gpad-rumble, gpad-login, gpad-shot + l'arborescence de données dans `/usr/libexec/gablue-pad`, dont `login-bridge.sh`), `/src/ds2xbox`, `/src/gablue-dualsense` (`gablue-dualsense-ctl`, hidapi), `/src/gablue-isomount`
-- `gpad-shot` (capture d'écran) lie `libdbus` (comme `gpad-inhibit`) et `zlib` : `zlib-devel` est ajouté à la liste dnf pour ça seul — contrat → `src/gablue-pad/AGENTS.md`
+- `gpad-shot` (capture d'écran) lie `libdbus` (comme `gpad-inhibit`) et `zlib` : `zlib-ng-compat-devel` est ajouté à la liste dnf pour ça seul — contrat → `src/gablue-pad/AGENTS.md`. **Ne jamais demander `zlib-devel`** : ce nom virtuel résout chez terra-extras (priority 3) vers un vrai zlib 1.4 en conflit avec `zlib-ng-compat`, déjà installé → transaction refusée (5 images rouges, 21/11/2026) ; le nom fedora est explicite et le dépôt terra l'exclut aussi (`copr`)
 - `make -C <dir> install DESTDIR=` ; sources nettoyées après (`rm -rf /src/<dir>`)
 - `gcc`/`binutils`/`glibc-devel` viennent de l'image de base (`cpuid-fault` compile un module avant, sur toutes les variantes) et **restent dans l'image finale** : les retirer libère ~45 Mo compressés mais supprime `gcc`/`cc` du poste (brew depuis source, extensions pip, modules noyau à la main) — décision du 14/11/2026. `hidapi-devel`/`dbus-devel` non plus ne sont pas retirés (même raison : cohérence d'un poste où on compile)
 - **`pkgconf-pkg-config` est intouchable** : `kmod` (donc `systemd-udev`) exige `/usr/bin/pkg-config` ; l'ajouter à une liste de retrait fait échouer la transaction dnf (vérifié 14/11/2026). `binutils` non plus (`supermin` → `libguestfs`)

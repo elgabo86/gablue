@@ -17,7 +17,14 @@ set -eoux pipefail
 # (brew depuis source, extensions pip, modules noyau à la main) — décision du
 # 14/11/2026. Ne jamais ajouter pkgconf-pkg-config à une liste de retrait :
 # kmod (donc systemd-udev) exige /usr/bin/pkg-config, la transaction échoue.
-dnf5 -y install gcc dbus-devel hidapi-devel zlib-devel pkgconf-pkg-config
+# zlib-ng-compat-devel, pas zlib-devel : sur fc45 `zlib-devel` n'est qu'un nom
+# virtuel fourni par zlib-ng-compat-devel, mais terra-extras publie désormais un
+# vrai zlib-devel (zlib 1.4) déclaré en conflit avec zlib-ng-compat déjà présent.
+# Terra étant en priority 3, dnf5 le choisit et refuse la transaction
+# (« conflicting requests », build du 21/11/2026 : 5 images, gpad-shot ne
+# compilait plus). Le nom explicite résout toujours vers fedora, terra ou pas ;
+# l'exclusion `zlib-devel*` est aussi posée côté dépôts (files/scripts/copr).
+dnf5 -y install gcc dbus-devel hidapi-devel zlib-ng-compat-devel pkgconf-pkg-config
 
 # Fonction de build securisee : compile et verifie le binaire final
 build_and_verify() {

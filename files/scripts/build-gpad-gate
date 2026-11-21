@@ -13,7 +13,9 @@
 
 set -eoux pipefail
 
-dnf5 -y install clang llvm libbpf-devel bpftool elfutils-libelf-devel zlib-devel
+# zlib-ng-compat-devel : même raison que build-c (le zlib-devel de terra-extras
+# entre en conflit avec zlib-ng-compat de fedora) ; libbpf-devel veut zlib.
+dnf5 -y install clang llvm libbpf-devel bpftool elfutils-libelf-devel zlib-ng-compat-devel
 
 cd /w
 clang -O2 -g -target bpf -D__TARGET_ARCH_x86 -c gpad-gate.bpf.c -o gpad-gate.bpf.o
