@@ -71,11 +71,35 @@ poll plane.fb_id (500 µs)                       ← pas de minuteur : la vérit
 
 - **Un seul pipeline**, deux sorties. Enregistrement et replay ne sont **plus
   exclusifs** : l'anneau tourne et le fichier s'ouvre/ferme à côté.
-- **Les fps sont le taux réel des flips** (VFR). Le réglage `fps` n'est qu'un
-  **plafond** d'émission (on jette les flips au-delà) : jamais de doublon
-  fabriqué, jamais de beat contre le 165 Hz de l'écran.
-- Mesuré (1440p natif, HEVC) : **120,1 / 144,1 / 240,1 fps** tenus, CPU 3-5 % ;
-  le plafond n'est ni le GPU ni le CPU.
+- **`fps=AUTO` (défaut) = `flips`** : une frame par changement de scanout, la
+  cadence réelle de l'écran (mesuré 165,0 fps sur un 165 Hz), aucune image
+  dupliquée. Les valeurs fixes (`60`, `120`, `144`) bornent la cadence : la
+  boucle émet alors sur une **grille fixe** (échéance absolue, `clock_nanosleep`
+  `TIMER_ABSTIME`) et ré-encode la dernière image si l'écran n'a pas bougé —
+  une frame identique en trop coûte un P-frame quasi vide, une frame sautée se
+  voit. Le mode borné donne des fichiers ~3× plus légers.
+- **Trois pièges de cadence**, mesurés le 21/11/2026 (1440p comme 720p — donc
+  ni le GPU ni la résolution) :
+  1. `FB_ID` **n'est pas un compteur de frames** : le compositeur recycle 2-3
+     buffers, l'id revient sur une frame pourtant neuve. S'en servir comme
+     « l'écran a changé » faisait attendre le flip suivant (55 fps au lieu de
+     60).
+  2. Échéance **absolue sur grille fixe**, pas « dernière émission + période » :
+     le coût d'une frame (capture, filtre, encodage) s'ajoutait à chaque
+     période (59,4 fps au lieu de 60).
+  3. Le **PTS vient de la grille**, pas de l'horloge : `n x 1 s / fps` donne
+     16666 puis 16667 us. Un PTS pris à l'heure réelle (même au bon endroit)
+     laissait chaque réveil tardif creuser un trou de 5 ms — 59,97 fps sur 13 s.
+     Corollaire : l'origine du fichier (`rec_off_us`) se prend sur la première
+     frame clé **écrite**, sinon celle-ci tombe avant l'origine calculée à
+     l'horloge et se fait jeter.
+  4. Le mp4 ne doit **pas** être ouvert avant que l'avcC/hvcC soit connu (il
+     vient du premier IDR, l'encodeur VAAPI émet SPS/PPS in-band) : ouvrir plus
+     tôt écrit une entête VIDE (`avcC` de 8 octets) et le fichier est illisible
+     (« missing picture in access unit »).
+- Mesuré après correction : **60,000 fps** sur 20 s (deltas PTS uniquement
+  16666/16667 us, zéro outlier), 30,000 en plafond 30, 120,000 en plafond 120,
+  165,0 en `flips`. CPU 3-5 %, le plafond n'est ni le GPU ni le CPU.
 - **Le curseur n'est pas dans le scanout** (plane séparée) : masqué par défaut.
   « Afficher » lit la plane `DRM_PLANE_TYPE_CURSOR` et mélange son ARGB dans la
   surface NV12 que l'encodeur va lire (`vaDeriveImage` + écriture du seul
@@ -90,6 +114,10 @@ poll plane.fb_id (500 µs)                       ← pas de minuteur : la vérit
      directement au bon pitch/offset.
   L'alpha est celui du framebuffer ARGB (0 = transparent) ; un `XRGB8888` est
   opaque. Coût négligeable (curseur 64×64, pas de copie plein écran).
+  Attention : il y a **quatre** planes de type CURSOR et KWin change de plane
+  (et la détache quand l'écran est inactif) — garder une plane inactive en
+  cache fait lire une position périmée (curseur absent ou au mauvais endroit) :
+  on la ré-résout dès que son `FB_ID` retombe à 0, borné à 4 fois par seconde.
 - Audio : **monitor du sink** seulement (pas d'audio par application), capturé
   par **`parec`** (un processus par session, tube lu avec `poll`) et non par le
   décodeur `pulse` d'FFmpeg — cf. pièges. Un flux de **lecture muet** maintient
@@ -252,7 +280,7 @@ Les variables d'environnement (`RECORD_DIR`, `RECORD_RES`, `RECORD_FPS`,
 |---|---|---|
 | `codec` | `h264` | `h264` (High, compatible partout) ou `h265` (HEVC Main) |
 | `qualite` | `3` | 1-5, voir table ci-dessous |
-| `fps` | `60` | plafond d'émission : `60`, `120`, `144`, ou `flips` (aucun plafond, VFR réel) |
+| `fps` | `flips` | `flips` = AUTO, une frame par changement de scanout (défaut) ; `60`, `120`, `144`… = cadence fixe bornée |
 | `replay_sec` | `30` | profondeur du buffer |
 | `curseur` | `masque` | `masque` ou `affiche` (mélangé dans la surface, cf. plus haut) |
 | `dix_bits` | `0` | `1` = HEVC Main10 (P010), inutile en H.264 |

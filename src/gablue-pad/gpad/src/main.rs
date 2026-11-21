@@ -830,7 +830,7 @@ impl Entree {
             Entree::Action(n) | Entree::Appli(n) => n,
             Entree::Volume => "VOLUME",
             Entree::Mango => "MANGOHUD",
-            Entree::Fps => "FPS",
+            Entree::Fps => "FPS MAX",
             Entree::Duree => "DUREE REPLAY",
             Entree::Fenetre => "FENETRE ACTIVE",
             Entree::Autre(_) => "FENETRE",
@@ -844,7 +844,7 @@ impl Entree {
             Entree::Codec => "CODEC",
             Entree::Qualite => "QUALITE",
             Entree::Reso => "RESOLUTION",
-            Entree::FpsRec => "FPS REC",
+            Entree::FpsRec => "FPS",
             Entree::Curseur => "CURSEUR",
             Entree::AutoReplay => "REPLAY AUTO",
         }
@@ -872,7 +872,14 @@ impl Entree {
         match self {
             Entree::Fenetre => 0,
             Entree::Groupe(_) => 52,
-            Entree::Volume | Entree::Mango | Entree::Fps | Entree::Duree => 86,
+            Entree::Volume
+            | Entree::Mango
+            | Entree::Fps
+            | Entree::Duree
+            | Entree::Qualite
+            | Entree::Codec
+            | Entree::Reso
+            | Entree::FpsRec => 86,
             _ => 46,
         }
     }
@@ -2569,17 +2576,28 @@ impl App {
     }
 
     /// Ligne de réglage compacte : libellé à gauche, valeur à droite.
-    fn ligne_valeur(&self, cv: &mut Canvas, x: i32, pad: i32, inner: i32, y: i32,
-                    titre: &str, val: &str, color: u32) {
-        cv.text_fit(x + pad + 36, y, titre, 3, color, inner - 36 - 150);
+    /// Ligne de réglage « à crans » : titre, valeur courante à droite, et le
+    /// slider gradué dessous — le langage de VOLUME / FPS / DURÉE REPLAY.
+    /// Les énumérations de CAPTURE s'y alignent, sinon la section jure avec
+    /// le reste du panneau.
+    fn ligne_gradee(&self, cv: &mut Canvas, x: i32, pad: i32, inner: i32, y: i32,
+                    titre: &str, color: u32, val: &str, nb: usize, idx: usize, sel: bool) {
+        cv.text_fit(x + pad + 36, y, titre, 3, color, inner - 36);
         self.valeur_droite(cv, x + pad + inner, y, val, 2, color);
+        self.curseur_ligne(cv, x + pad + 36, y + 40, inner - 36, nb, idx, sel);
     }
 
     /// Pixels disponibles pour la liste de la page courante.
     fn liste_budget(&self) -> i32 {
         let (_, h) = self.size;
         let ph = if self.side { h as i32 } else { 640.min(h as i32 - 120) };
-        (ph - 90) - 180 - self.decalage_logo()
+        // mêmes repères que `draw()` : la liste commence à 180 px (+ logo) et
+        // l'aide du bas commence à `ph - pied`. Le budget s'arrête 12 px avant.
+        // Avant, un 90/180 approximatif laissait les dernières lignes — 86 px
+        // pour un réglage à curseur — déborder SOUS les commandes.
+        let haut = 180 + self.decalage_logo();
+        let pied = if self.console { 74 } else { 114 };
+        (ph - pied - 8 - haut).max(46)
     }
 
     /// Nom de plugin KWin unique pour un script jetable.
@@ -4217,11 +4235,15 @@ impl App {
             let h = e.hauteur();
             // page RÉGLAGES : fenêtre glissante (elle ne tient plus à l'écran
             // depuis l'ajout de la section CAPTURE)
+            // Lignes sorties en haut : elles ne doivent PAS avancer `y`.
+            // Les compter faisait démarrer la fenêtre visible à `y0 + dessus`
+            // au lieu de `y0` (mesuré 21/11/2026 : la dernière ligne passait
+            // sous l'aide et sous les pastilles, et le test de fin ne pouvait
+            // plus se déclencher).
             if self.page == Page::Reglages && i < self.reg_top {
-                y += h;
                 continue;
             }
-            if self.page == Page::Reglages && y - y0 - dessus > self.liste_budget() {
+            if self.page == Page::Reglages && y - y0 + h > self.liste_budget() {
                 break;
             }
             // l'en-tête a déjà son propre surlignage (hauteur nulle ici)
@@ -4402,27 +4424,44 @@ impl App {
                     self.curseur_ligne(&mut cv, px0 + pad + 36, y + 40, inner - 36,
                                        REPR_OPTS.len(), self.repr_idx, sel);
                 }
-                Entree::Qualite => self.ligne_valeur(
-                    &mut cv, px0, pad, inner, y, "QUALITE",
-                    capture::libelle(&self.cap, "qualite", &capture::QUALITES), color),
-                Entree::Codec => self.ligne_valeur(
-                    &mut cv, px0, pad, inner, y, "CODEC",
-                    capture::libelle(&self.cap, "codec", &capture::CODECS), color),
-                Entree::Reso => self.ligne_valeur(
-                    &mut cv, px0, pad, inner, y, "RESOLUTION",
-                    capture::libelle(&self.cap, "resolution", &capture::RESOS), color),
-                Entree::FpsRec => self.ligne_valeur(
-                    &mut cv, px0, pad, inner, y, "FPS REC",
-                    capture::libelle(&self.cap, "fps", &capture::FPS), color),
-                Entree::Curseur => self.ligne_valeur(
-                    &mut cv, px0, pad, inner, y, "CURSEUR",
-                    capture::libelle(&self.cap, "curseur", &capture::CURSEURS), color),
+                Entree::Qualite => self.ligne_gradee(
+                    &mut cv, px0, pad, inner, y, "QUALITE", color,
+                    capture::libelle(&self.cap, "qualite", &capture::QUALITES),
+                    capture::QUALITES.len(),
+                    capture::idx(&self.cap, "qualite", &capture::QUALITES), sel),
+                Entree::Codec => self.ligne_gradee(
+                    &mut cv, px0, pad, inner, y, "CODEC", color,
+                    capture::libelle(&self.cap, "codec", &capture::CODECS),
+                    capture::CODECS.len(),
+                    capture::idx(&self.cap, "codec", &capture::CODECS), sel),
+                Entree::Reso => self.ligne_gradee(
+                    &mut cv, px0, pad, inner, y, "RESOLUTION", color,
+                    capture::libelle(&self.cap, "resolution", &capture::RESOS),
+                    capture::RESOS.len(),
+                    capture::idx(&self.cap, "resolution", &capture::RESOS), sel),
+                Entree::FpsRec => self.ligne_gradee(
+                    &mut cv, px0, pad, inner, y, "FPS", color,
+                    capture::libelle(&self.cap, "fps", &capture::FPS),
+                    capture::FPS.len(),
+                    capture::idx(&self.cap, "fps", &capture::FPS), sel),
+                Entree::Curseur => {
+                    // un interrupteur, comme VRR / REPLAY AUTO / PRIORITÉ :
+                    // deux états, et le libellé du cran actif reste lisible
+                    // au-dessus du rail
+                    cv.text_fit(px0 + pad + 36, y, "CURSEUR", 3, color, inner - 36 - 60);
+                    self.interrupteur(
+                        &mut cv, px0 + pad + inner, y,
+                        capture::idx(&self.cap, "curseur", &capture::CURSEURS) == 1,
+                        false);
+                }
                 Entree::AutoReplay => {
                     cv.text_fit(px0 + pad + 36, y, "REPLAY AUTO", 3, color, inner - 36 - 60);
                     self.interrupteur(&mut cv, px0 + pad + inner, y, self.auto_replay(), false);
                 }
                 Entree::Fps => {
-                    cv.text_fit(px0 + pad + 36, y, "FPS", 3, color, inner - 36);
+                    // limite MangoHud : « MAX » la distingue de la cadence
+                    // d'enregistrement (section CAPTURE), qui s'appelle FPS
+                    cv.text_fit(px0 + pad + 36, y, "FPS MAX", 3, color, inner - 36);
                     // La valeur réelle passe avant le cran : le curseur se pose
                     // sur le cran le plus proche, le chiffre dit la vérité.
                     let txt;
@@ -4489,7 +4528,9 @@ impl App {
             let total: i32 = hauteurs.iter().sum();
             let budget = self.liste_budget().max(46);
             if total > budget + 4 {
-                let x = px0 + pad + inner + 4;
+                // 12 px : la surbrillance de sélection s'arrête à `+8`
+                // (inner + 16 depuis pad - 8), la barre ne doit pas la toucher
+                let x = px0 + pad + inner + 12;
                 let piste = budget - 12;
                 let hh = (piste * budget / total).max(22).min(piste);
                 let course = (piste - hh).max(1);
@@ -4676,13 +4717,13 @@ impl App {
 
         // suivi de page : entre la liste et l'aide du bas
         if !self.console {
-            self.points_pages(&mut cv, px0 + pw / 2, py0 + ph - 66);
+            self.points_pages(&mut cv, px0 + pw / 2, py0 + ph - 54);
         }
 
         // bas du panneau : juste les commandes, pas de journal technique
         // le pied laisse la place à la barre des tâches (panneau plein écran) ;
         // dans le menu système le cadre est court, l'aide reste près du bas
-        let sy = py0 + ph - if self.console { 74 } else { 124 };
+        let sy = py0 + ph - if self.console { 74 } else { 114 };
         // MODERNE : vrais glyphes de manette (Xelu), deux lignes courtes —
         // une ligne unique avec cinq glyphes serait illisible à cette largeur.
         if self.style_idx == 1 && !self.glyphes.is_empty() {
@@ -6781,6 +6822,8 @@ fn main() {
             "volume" => Some(Entree::Volume),
             // section CAPTURE (enregistreur / replay) : banc visuel
             "capture" => Some(Entree::Qualite),
+            // dernière ligne de la page : vérifie le bas de liste (défilement)
+            "fin" => Some(Entree::Style),
             _ => None,
         };
         if let Some(c) = cible {

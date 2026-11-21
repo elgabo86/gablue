@@ -92,7 +92,7 @@ static void config_defaut(struct config *c)
     c->res_w = 0;
     c->res_h = 0;
     c->qualite = 3;
-    c->plafond = 60;          /* 60 = défaut lisible partout ; "flips" en option */
+    c->plafond = 0;           /* 0 = flips (AUTO) : cadence réelle de l'écran */
     c->replay_sec = 30;
     c->audio = 1;
     snprintf(c->dossier, sizeof c->dossier, "%s/Vidéos/Captures", getenv("HOME") ?: ".");
@@ -598,7 +598,7 @@ static void curseur_melange(struct etat *e, AVFrame *vf)
         /* une fois par seconde au plus : la plane peut apparaître/disparaître
          * (KWin détache le curseur), ce n'est pas une erreur définitive */
         int64_t t = maintenant_us();
-        if (cu->dernier_essai && t - cu->dernier_essai < 1000000)
+        if (cu->dernier_essai && t - cu->dernier_essai < 250000)
             return;
         cu->dernier_essai = t;
         cu->plane = curseur_plane_trouve(e->cap.card, e->cap.crtc);
@@ -625,8 +625,14 @@ static void curseur_melange(struct etat *e, AVFrame *vf)
         else if (id == cu->prop_h) ch = (int)v;
     }
     drmModeFreeObjectProperties(pr);
-    if (!fb)
+    if (!fb) {
+        /* Plane inactive : KWin en change (il y en a quatre de type CURSOR) ou
+         * détache le curseur. Garder l'ancienne en cache faisait lire la
+         * position d'une frame périmée — curseur absent ou au mauvais endroit.
+         * La re-résolution est bornée à 4 par seconde. */
+        cu->plane = 0;
         return;
+    }
     /* la taille du curseur est celle de son framebuffer : drmModePlane n'expose
      * pas crtc_w/h (API atomique seulement), et KWin ne met pas le curseur à
      * l'échelle par cette plane. */
@@ -838,6 +844,11 @@ static void mux_ouvre_mp4(struct etat *e)
         snprintf(e->rec_fichier, sizeof e->rec_fichier, "%s/Video_%s.mp4", e->cfg.dossier, horo);
     snprintf(e->rec_part, sizeof e->rec_part, "%s.part", e->rec_fichier);
 
+    /* L'avcC/hvcC est tiré du premier IDR (l'encodeur VAAPI émet SPS/PPS
+     * in-band). Ouvrir avant de l'avoir écrit une entête VIDE : le fichier
+     * devient illisible (« missing picture in access unit », avcC de 8 octets).
+     * On réessaie simplement à la frame suivante. */
+    if (!e->extradata_size) return;
     if (avformat_alloc_output_context2(&e->mux, NULL, "mp4", e->rec_part) < 0) {
         erreur(e, "contexte mp4"); return;
     }
@@ -1174,6 +1185,11 @@ static void sortie_paquet(struct etat *e, AVPacket *pkt, int video, AVRational t
         if (e->attendre_idr) {
             if (!(pkt->flags & AV_PKT_FLAG_KEY)) return;
             e->attendre_idr = 0;
+            /* Le fichier DÉMARRE à cette frame : avec un PTS de grille, une
+             * origine prise à l'horloge murale tombait après elle et la
+             * première image clé était jetée (fichier sans avcC). */
+            if (e->rec_actif && e->mux && pkt->pts != AV_NOPTS_VALUE)
+                e->rec_off_us = av_rescale_q(pkt->pts, tb, (AVRational){ 1, 1000000 });
         }
     }
     pthread_mutex_lock(&e->verrou);
@@ -1332,6 +1348,8 @@ static void *thread_video(void *arg)
     struct etat *e = arg;
     uint32_t dernier_fb = 0;
     int64_t dernier_emit = 0;
+    int64_t grille = 0;          /* échéance de cadence (grille fixe) */
+    int64_t nb_pts = 0;          /* index de la frame dans la grille (PTS) */
     AVFrame *vf = av_frame_alloc();
 
     while (!e->arret) {
@@ -1381,6 +1399,7 @@ static void *thread_video(void *arg)
             pthread_mutex_unlock(&e->verrou);
             dernier_fb = 0;
             dernier_emit = 0;
+            grille = 0;
             /* 30 ms : un démon de session ne doit pas réveiller le CPU 500 fois
              * par seconde pour ne rien faire */
             usleep(30000);
@@ -1389,20 +1408,55 @@ static void *thread_video(void *arg)
 
         uint32_t fb = capture_fb_courant(&e->cap);
         if (!fb) { usleep(500); continue; }
-        if (fb == dernier_fb) { usleep(300); continue; }
-        if (e->cfg.plafond && t - dernier_emit < 1000000LL / e->cfg.plafond) {
+
+        /* Deux régimes de cadence.
+         *
+         * Plafonné (défaut) : cadence FIXE, à l'échéance absolue. Surtout pas
+         * de test « FB_ID a changé » : le compositeur recycle 2-3 buffers, donc
+         * l'id revient sur une frame pourtant neuve → le démon croyait que rien
+         * n'avait bougé et attendait le flip suivant (1,5 ms perdus par frame,
+         * 55 fps au lieu de 60 ; mesuré 21/11/2026 en 1440p comme en 720p).
+         * Une frame identique en trop coûte un P-frame quasi vide, alors qu'une
+         * frame sautée se voit.
+         *
+         * `fps=flips` (VFR) : on émet à chaque changement de scanout, au mieux
+         * — l'id recyclé y fait perdre quelques frames, d'où le défaut CFR. */
+        if (e->cfg.plafond) {
+            int64_t echeance = dernier_emit + 1000000LL / e->cfg.plafond;
+            if (grille) echeance = grille;
+            if (t < echeance) {
+                /* échéance ABSOLUE : une boucle `usleep(300)` cumulait son
+                 * retard de réveil à chaque frame */
+                struct timespec ts = { (time_t)(echeance / 1000000),
+                                       (long)(echeance % 1000000) * 1000 };
+                clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL);
+                continue;
+            }
+        } else if (fb == dernier_fb) {
             usleep(300);
             continue;
         }
 
+        /* Instant RÉEL de la capture. Pas `t` (haut de boucle) : entre les deux
+         * il y a l'attente du framebuffer et le sommeil de plafond, jusqu'à
+         * 15 ms — le PTS traînait donc ce retard et le fichier sortait à
+         * 51-55 fps alors que les captures étaient à 60 (mesuré 21/11/2026). */
+        int64_t t1 = maintenant_us();
         AVFrame *f = NULL;
         int r = capture_frame(&e->cap, &f);
         if (r < 0) { e->arret = 1; break; }
         if (r > 0) { usleep(500); continue; }
 
         if (!e->graphe && graphe_ouvre(e) < 0) { e->arret = 1; break; }
-        if (!e->t0) e->t0 = t;
-        f->pts = t - e->t0;
+        if (!e->t0) { e->t0 = t1; nb_pts = 0; }
+        /* PTS de la GRILLE, pas de l'horloge : (n x 1 s / fps) donne 16666 puis
+         * 16667 us et une cadence exacte. Avec l'horloge réelle, un réveil
+         * tardif de 5 ms faisait tomber un 30 s à 59,97 fps. Le décalage de
+         * contenu correspondant reste sous la milliseconde. */
+        int64_t pts = e->cfg.plafond
+            ? (nb_pts * 1000000LL) / e->cfg.plafond
+            : t1 - e->t0;
+        f->pts = pts;
         if (av_buffersrc_add_frame_flags(e->src, f, 0) < 0) { av_frame_free(&f); continue; }
         av_frame_free(&f);
 
@@ -1416,7 +1470,7 @@ static void *thread_video(void *arg)
              * Les sorties ne peuvent s'ouvrir qu'APRÈS, sinon l'entête mp4
              * part sans hvcC (fichier illisible). */
             AVFrame *a = av_frame_clone(vf);
-            a->pts = t - e->t0;
+            a->pts = pts;   /* même index de grille que la frame courante */
             a->pict_type = AV_PICTURE_TYPE_I;
             e->forcer_idr = 0;
             if (avcodec_send_frame(e->enc, a) == 0) {
@@ -1445,6 +1499,7 @@ static void *thread_video(void *arg)
             av_frame_unref(vf);
             dernier_fb = fb;
             dernier_emit = t;
+            nb_pts++;
             continue;
         }
         /* démarrage à chaud : sortie demandée après l'ouverture de l'encodeur */
@@ -1453,10 +1508,11 @@ static void *thread_video(void *arg)
         if (e->replay_demande && !e->replay_actif) ring_ouvre(e);
         pthread_mutex_unlock(&e->verrou);
 
-        vf->pts = t - e->t0;
+        vf->pts = pts;
         if (e->forcer_idr) { vf->pict_type = AV_PICTURE_TYPE_I; e->forcer_idr = 0; }
         if (avcodec_send_frame(e->enc, vf) < 0) { av_frame_unref(vf); continue; }
         av_frame_unref(vf);
+        nb_pts++;
 
         AVPacket *pkt = av_packet_alloc();
         while (avcodec_receive_packet(e->enc, pkt) == 0) {
@@ -1466,7 +1522,20 @@ static void *thread_video(void *arg)
         }
         av_packet_free(&pkt);
         dernier_fb = fb;
-        dernier_emit = t;
+        /* Pas `t` (haut de boucle) : le traitement entre les deux comptait comme
+         * du temps de frame et décalait l'échéance suivante.
+         * `grille` = cadence sur une grille fixe, pas « dernière émission +
+         * période » : le coût d'une frame (capture, filtre, encodage) se
+         * rajoutait à chaque période (60 rendait 59,4 fps). Si on a pris du
+         * retard au-delà d'une période entière, on recale au lieu de rattraper
+         * en rafale. */
+        int64_t em = maintenant_us();
+        if (e->cfg.plafond) {
+            int64_t periode = 1000000LL / e->cfg.plafond;
+            grille = grille ? grille + periode : em + periode;
+            if (grille < em) grille = em + periode;
+        }
+        dernier_emit = em;
 
         /* purge de l'anneau une fois par seconde environ */
         static int64_t dernier_purge;

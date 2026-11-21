@@ -144,12 +144,12 @@ CLAVIER VIRTUEL
 ```
 SON        VOLUME
 AFFICHAGE  MANGOHUD
-           FPS
+           FPS MAX
            VRR
 CAPTURE    QUALITE
            CODEC
            RESOLUTION
-           FPS REC
+           FPS
            CURSEUR
 REPLAY     DUREE REPLAY
            REPLAY AUTO
@@ -157,10 +157,25 @@ PERFORMANCE PRIORITE ACTIVE
 INTERFACE  STYLE RETRO / STYLE MODERNE
 ```
 
-**Treize lignes hautes** ne tiennent pas sur un écran 1080p : les rangées sont
-**resserrées** (`hauteur()`) et la page **défile** (`reg_top` + barre de
-position à droite) dès que le contenu dépasse. En 1440p elle tient sans
-défilement ; le cas court se vérifie avec `GPAD_TEST_BUDGET`.
+**Un réglage = un vrai contrôle, jamais du texte nu** : les énumérations
+(`QUALITE`, `CODEC`, `RESOLUTION`, `FPS` de CAPTURE, comme `VOLUME`/`FPS`/
+`DUREE`)
+prennent la **valeur à droite + le curseur gradué dessous** (ligne de 86 px), et
+le **`CURSEUR` est un interrupteur** comme `VRR`, `REPLAY AUTO`, `PRIORITE`,
+`STYLE` (ligne de 46 px). `FPS` (capture) liste **AUTO en tête** (valeur par
+défaut, `flips`), puis les cadences bornées croissantes. Toute ligne de CAPTURE en simple libellé/valeur jure
+avec le reste du panneau.
+
+Avec ces lignes hautes, la page **défile même en 1440p** (`reg_top` + barre de
+position à droite). `liste_budget()` se déduit du **haut réel de l'aide du bas**
+(pas d'un 90/180 approximatif) et une ligne n'est dessinée que si elle tient
+**entièrement** : sinon les dernières lignes passaient sous les commandes
+(« Naviguer / Menu / Fenêtre », constaté 21/11/2026 avec les sliders de CAPTURE).
+Corollaire : les lignes sorties en haut (`i < reg_top`) ne doivent **pas**
+avancer `y` — les compter faisait démarrer la fenêtre visible à `y0 + dessus`
+au lieu de `y0`, la dernière option finissait derrière l'aide et les pastilles,
+et le test de fin ne pouvait plus se déclencher. Le cas court (1080p) se vérifie
+avec `GPAD_TEST_BUDGET`, le bas de liste avec `--focus fin`.
 
 L'en-tête est le **premier élément de chaque page** (`Entree::Fenetre`) : il est
 donc sélectionnable partout. **À l'ouverture, le curseur est sur la fenêtre

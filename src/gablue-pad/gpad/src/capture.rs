@@ -27,8 +27,10 @@ pub const RESOS: [(&str, &str); 4] = [
     ("1440P", "2560x1440"),
     ("SOURCE", "source"),
 ];
-/// Plafond d'émission ; `AUTO` suit les flips (VFR réel, plus lourd).
-pub const FPS: [(&str, &str); 4] = [("60", "60"), ("120", "120"), ("144", "144"), ("AUTO", "flips")];
+/// Cadence d'émission ; `AUTO` suit les flips (VFR réel) et c'est le défaut :
+/// chaque image affichée est capturée, aucune n'est sautée ni dupliquée. Les
+/// valeurs fixes bornent la cadence (fichiers plus légers).
+pub const FPS: [(&str, &str); 4] = [("AUTO", "flips"), ("60", "60"), ("120", "120"), ("144", "144")];
 pub const CURSEURS: [(&str, &str); 2] = [("MASQUE", "masque"), ("AFFICHE", "affiche")];
 
 fn defauts() -> Vec<(String, String)> {
@@ -36,7 +38,7 @@ fn defauts() -> Vec<(String, String)> {
         ("codec", "h264"),
         ("qualite", "3"),
         ("resolution", "source"),
-        ("fps", "60"),
+        ("fps", "flips"),
         ("curseur", "masque"),
         ("replay_sec", "30"),
         ("auto_replay", "0"),
