@@ -193,12 +193,19 @@ Trois pièges payés, à ne pas réintroduire :
 
 ## Build
 
+- **Tout répertoire compilé par le `Makefile` doit avoir son `COPY` dans le
+  `Containerfile-gablue`** (copies explicites composant par composant : `gpad/`
+  arrive par `COPY --from=gpad-build`, `evgrab/` ne doit jamais entrer).
+  Deux builds ont cassé sur cet oubli : `kbd/` supprimé sans retirer son `COPY`
+  (21/11/2026), puis `shot/` ajouté sans `COPY` — `make: *** No rule to make
+  target 'shot/gpad-shot.c'`, cinq images rouges. Dans `build-c`, ce message
+  signifie une source absente de la couche, jamais un défaut du `Makefile`.
 - Binaires C : `make` dans ce dossier (`gpad-trigger`, `gpad-mouse`,
   `gpad-inhibit`, `gpad-rumble`, `gpad-login`, `gpad-shot`) ; `make install DESTDIR=…` pose aussi
   l'arborescence de données dans `/usr/libexec/gablue-pad` (les scripts y
   résolvent `sounds/`, `scripts/` et `kwin/` par rapport à leur propre dossier).
 - Overlay Rust : étape `gpad-build` du `Containerfile-gablue`
-  (`files/scripts/build-gpad`, qui installe `xkbcommon-devel` pour la crate
+  (`files/scripts/build-gpad`, qui installe `libxkbcommon-devel` pour la crate
   `xkbcommon` du clavier), binaire récupéré par `COPY --from`.
 - Gate BPF : étape `gpad-gate-build` (`files/scripts/build-gpad-gate`),
   `vmlinux.h` **épinglé** dans `gate/` (dump BTF du noyau OGC : ne jamais le
