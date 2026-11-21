@@ -9,6 +9,13 @@
 //   Carré .................. Retour arrière
 //   Start .................. Entrée
 //
+// À chaque vrai mouvement (stick hors zone morte, D-pad, appui de touche, ou
+// pointeur qui avance), SIGUSR1 est envoyé au parent — mais uniquement si
+// GPAD_LOGIN_NOTIFY_PID vaut bien son PID. C'est ce signal qui ouvre le clavier
+// visuel du greeter (jamais le simple branchement) et qui le rouvre après sa
+// fermeture pour inactivité. Lancé à la main (variable absente), il ne signale
+// personne.
+//
 // La manette n'est PAS grabée. Sortie nette : SIGTERM/SIGINT détruit le
 // périphérique virtuel.
 #define _POSIX_C_SOURCE 200809L
@@ -88,6 +95,44 @@ static void axis_read(int fd, int code, struct axis *a) {
     a->value = a->info.value;
 }
 
+/* Notification « la manette est utilisée », par SIGUSR1 au parent.
+ * GPAD_LOGIN_NOTIFY_PID doit valoir le PID du parent : sans elle (lancement à
+ * la main) on ne signale rien, et si le parent a changé (orphelin) non plus —
+ * on ne risque donc pas de tuer un processus qui aurait récupéré le PID.
+ *
+ * Plusieurs signaux, pas un seul : le pont referme le clavier après une
+ * inactivité, et le moindre mouvement doit le rouvrir. Débit limité à
+ * 2 signaux/s — un stick maintenu déplace le pointeur en continu, sans quoi
+ * le réveil du shell à 120 Hz serait du gâchis pur. */
+static char notify_pid[32];
+static double last_notify;          /* CLOCK_MONOTONIC, 0 = jamais */
+#define NOTIFY_MIN_INTERVAL 0.5
+
+static void notify_input(void) {
+    if (!notify_pid[0]) return;
+    double now = now_seconds();
+    if (last_notify > 0.0 && now - last_notify < NOTIFY_MIN_INTERVAL) return;
+    last_notify = now;
+    pid_t parent = getppid();
+    if (parent <= 1 || (long)parent != atol(notify_pid)) return;
+    if (kill(parent, SIGUSR1) < 0)
+        fprintf(stderr, "[WARN] notification du pont (pid %ld) : %s\n",
+                (long)parent, strerror(errno));
+}
+
+/* Amplitude du stick le plus écarté, comme la boucle de pointeur : sert à
+ * ignorer l'état initial relu à l'ouverture (manette au repos). */
+static double stick_raw_mag(const struct axis *lx, const struct axis *ly,
+                            const struct axis *rx, const struct axis *ry) {
+    double lnx = lx->present ? normalize_axis(lx->value, lx->info.minimum, lx->info.maximum) : 0.0;
+    double lny = ly->present ? normalize_axis(ly->value, ly->info.minimum, ly->info.maximum) : 0.0;
+    double rnx = rx->present ? normalize_axis(rx->value, rx->info.minimum, rx->info.maximum) : 0.0;
+    double rny = ry->present ? normalize_axis(ry->value, ry->info.minimum, ry->info.maximum) : 0.0;
+    double lmag = sqrt(lnx * lnx + lny * lny);
+    double rmag = sqrt(rnx * rnx + rny * rny);
+    return (lmag >= rmag) ? lmag : rmag;
+}
+
 static int uinput_create(void) {
     int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
     if (fd < 0) { perror("[ERREUR] open /dev/uinput"); return -1; }
@@ -146,6 +191,9 @@ int main(void) {
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
 
+    const char *env_pid = getenv("GPAD_LOGIN_NOTIFY_PID");
+    if (env_pid) snprintf(notify_pid, sizeof notify_pid, "%s", env_pid);
+
     char path[512];
     bool has_right = false;
     int pad = find_pad(path, sizeof path, &has_right);
@@ -195,6 +243,17 @@ int main(void) {
                 else if (ev.code == BTN_START) code = KEY_ENTER;
                 if (code) { emit(EV_KEY, code, ev.value); sync_ev(); }
             }
+
+            if (ev.type == EV_KEY && ev.value == 1) {
+                notify_input();                   // appui : la manette est tenue
+            } else if (ev.type == EV_ABS) {
+                bool hat = (ev.code == ABS_HAT0X || ev.code == ABS_HAT0Y);
+                // Stick : il doit SORTIR de la zone morte — l'état relu à
+                // l'ouverture (repos) ne déclenche donc pas le clavier.
+                if (hat ? ev.value != 0
+                        : stick_raw_mag(&lx, &ly, &rx, &ry) >= DEAD_ZONE)
+                    notify_input();
+            }
         }
 
         double current = now_seconds();
@@ -230,7 +289,9 @@ int main(void) {
             carry_y -= iy;
             if (ix) emit(EV_REL, REL_X, ix);
             if (iy) emit(EV_REL, REL_Y, iy);
-            if (ix || iy) sync_ev();
+            /* Le pointeur avance : le stick est maintenu, même sans nouvel
+             * événement evdev — c'est de l'activité pour le pont. */
+            if (ix || iy) { sync_ev(); notify_input(); }
         }
     }
 

@@ -25,7 +25,7 @@ d'animation KWin à attendre. Mesuré : premier tampon 6 ms, panneau en place
 | `trigger/` | déclencheur : Home → overlay, combos, menu système, rescan des manettes, inhibition d'écran | `/usr/bin/gpad-trigger` |
 | `gate/` | démon root + programme BPF LSM qui coupe les lectures `hidraw`/`js` pendant le menu, et `padnodes.sh` (inventaire js/hidraw par périphérique physique) | `/usr/libexec/gablue-pad/gpad-gate` (+ `.bpf.o`, `gate/padnodes.sh`) |
 | `mouse/` | mode souris/clavier (Home+R3) | `/usr/bin/gpad-mouse` |
-| `login/` | écran de connexion : pointeur manette (`gpad-login`) et pont du greeter (`login-bridge.sh` : thème sombre, clavier visuel affiché seulement si une manette est présente) | `/usr/bin/gpad-login`, `/usr/libexec/gablue-pad/login-bridge.sh` |
+| `login/` | écran de connexion : pointeur manette (`gpad-login`) et pont du greeter (`login-bridge.sh` : thème sombre, clavier visuel ouvert **au premier mouvement** d'une manette, jamais à son simple branchement) | `/usr/bin/gpad-login`, `/usr/libexec/gablue-pad/login-bridge.sh` |
 | `inhibit/` | inhibition de l'écran tant qu'une manette est connectée | `/usr/bin/gpad-inhibit` |
 | `rumble/` | impulsion FF_RUMBLE (confirmation de sauvegarde de replay) | `/usr/bin/gpad-rumble` |
 | `shot/` | capture d'écran par appel direct à KWin (`ScreenShot2`, sans pointeur, ~40 ms) | `/usr/bin/gpad-shot` |
@@ -59,11 +59,29 @@ dans `/usr/share/ublue-os/gablue/scripts/killthemall`, exporté au service par
   `login-bridge.sh pad`, `WantedBy=plasma-login-wayland.target`, donc les deux
   unités ne démarrent **jamais** dans une session utilisateur. Le pont lit
   `/etc/gablue/login.conf` (`pad=on|off`, `dark=on|off`) et n'ouvre le clavier
-  visuel que **tant qu'une manette est présente** : fermeture franche
-  `mode 0 → 1` (`kwinrc` persiste le mode, ne jamais le laisser à `2`),
-  ouverture `mode 2` + `forceActivate` dès qu'un evdev `ID_INPUT_JOYSTICK=1`
-  apparaît, refermeture quand elle part. Aucun privilège : tout se passe dans la
-  session du greeter, ce qui évite les franchissements SELinux. Un verrou
+  visuel qu'**au premier vrai mouvement d'une manette** — jamais au simple
+  branchement, qui affichait le clavier à l'arrivée sur l'écran de connexion
+  (demande de l'utilisateur, 21/11/2026). Deux mécanismes distincts : la
+  présence (evdev `ID_INPUT_JOYSTICK=1`, sondée 1×/s) ne sert qu'à lancer
+  `gpad-login` ; le **mouvement** vient de `gpad-login` lui-même, seul lecteur
+  des événements, qui envoie **SIGUSR1** au pont à chaque activité (appui de
+  touche, stick hors zone morte, pointeur qui avance), avec un débit limité à
+  2 signaux/s — un stick maintenu déplacerait sinon le pointeur sans nouvel
+  événement evdev. Le pont exporte son PID (`GPAD_LOGIN_NOTIFY_PID`) et
+  `gpad-login` ne signale que si ce PID est bien celui de son parent : lancé à
+  la main, il ne signale personne, et un orphelin ne peut pas tuer un processus
+  qui aurait récupéré le numéro. Signal plutôt que FIFO : aucun objet nouveau à
+  créer dans le domaine SELinux du greeter (`mkfifo` = classe `fifo`, pas
+  couverte par une règle `file`), et pas de sémantique EOF à gérer.
+  **Clavier refermé après 10 s sans mouvement** (`OSK_IDLE`, compteur
+  `$SECONDS`) et rouvert au geste suivant — sinon il restait affiché en
+  permanence. Déclencheurs d'ouverture : appui de
+  touche (`EV_KEY` valeur 1), stick **hors zone morte** (un état relu à
+  l'ouverture, manette au repos, ne suffit donc pas), D-pad (`ABS_HAT0*` ≠ 0).
+  Ouverture `mode 2` + `forceActivate`, fermeture franche `mode 0 → 1` quand la
+  manette part (`kwinrc` persiste le mode, ne jamais le laisser à `2`). Aucun
+  privilège : tout se passe dans la session du greeter, ce qui évite les
+  franchissements SELinux. Un verrou
   `flock` (dans `$XDG_RUNTIME_DIR`) empêche deux ponts de tourner ensemble —
   deux `gpad-login` donneraient deux pointeurs virtuels, donc un mouvement
   doublé.
@@ -75,12 +93,25 @@ dans `/usr/share/ublue-os/gablue/scripts/killthemall`, exporté au service par
 
 Validé sur gen1 le 19/11/2026 (plasma-login-manager 6.8.3, Plasma 6.8) :
 `theme` **finit** avant que `plasma-login-kwin_wayland.service` ne démarre
-(journal : `Finished gablue-login-theme` puis `Starting …kwin_wayland`), le
-clavier visuel s'ouvre et se referme au branchement/débranchement de la manette
-(`mode i 2 … visible=true`), `VirtualKeyboardMode` reste à `1`, aucun AVC
-SELinux, aucun processus laissé derrière au logout. À revérifier après une
-montée de version de plasmalogin (le mécanisme `Before=` + `kdeglobals` n'est
-pas un contrat public).
+(journal : `Finished gablue-login-theme` puis `Starting …kwin_wayland`),
+`VirtualKeyboardMode` reste à `1` après fermeture, aucun AVC SELinux, aucun
+processus laissé derrière au logout. À revérifier après une montée de version
+de plasmalogin (le mécanisme `Before=` + `kdeglobals` n'est pas un contrat
+public).
+
+Le déclenchement du clavier visuel par le **premier mouvement** (21/11/2026) est
+validé au banc seulement — `gpad-login` et le pont réels, manette virtuelle
+`vpad`, `busctl`/`udevadm` en stubs : rien au repos ni au branchement, SIGUSR1
+au stick comme à l'appui de touche, aucun signal sans `GPAD_LOGIN_NOTIFY_PID`,
+`mode i 2` + `forceActivate`, maintien pendant une activité régulière,
+**fermeture à 10 s sans mouvement puis réouverture au geste suivant**, `mode 0 →
+1` au débranchement, `gpad-login` arrêté à la sortie. **Reste à vérifier sur
+l'écran de connexion réel** : que KWin du greeter ouvre bien le clavier sur le
+signal avec la manette physique (un SIGUSR1 séparé interrompt le `sleep 1` du
+pont, donc aucune latence ajoutée), et qu'aucun état relu à l'ouverture
+(certaines manettes renvoient leur état complet à l'`open`) ne déclenche
+l'ouverture sans mouvement (banc : `evgrab/` + copie coupant `emit()`, jamais de
+pointeur réel).
 
 Le démon ne garde aucune cible périmée : l'overlay envoie `clear` puis `target`
 pour chaque node js/hidraw à chaque ouverture (les `dev_t` changent à la

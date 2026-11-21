@@ -4,8 +4,10 @@ Deux réglages de l'écran de connexion (greeter Plasma Login), écrits dans
 `/etc/gablue/login.conf` par `/usr/libexec/gablue-login` :
 
 - « Manette » : le pont tourne dans la session du greeter et n'affiche le
-  clavier visuel que tant qu'une manette est présente ; le pointeur suit les
-  deux sticks, X/R1 clique, Carré efface, Start valide.
+  clavier visuel qu'au premier mouvement d'une manette (jamais au simple
+  branchement), le referme après 10 s sans mouvement et le rouvre au geste
+  suivant ; le pointeur suit les deux sticks, X/R1 clique, Carré efface,
+  Start valide.
 - « Sombre » : le greeter lit son propre `kdeglobals` (Breeze Dark) ; sans
   réglage, il reste clair.
 
@@ -69,10 +71,12 @@ class LoginScreenDialog(QDialog):
         self.pad_check.toggled.connect(self._update_apply)
         frame_layout.addWidget(self.pad_check)
         pad_detail = QLabel(
-            "Le clavier visuel s'ouvre dès qu'une manette est présente : "
-            "sticks = pointeur, X ou R1 = clic, Carré = retour arrière, "
-            "Start = Entrée. Sans manette, rien ne change : un clic souris "
-            "n'ouvre pas de clavier.",
+            "Le clavier visuel s'ouvre au premier mouvement de la manette, pas "
+            "simplement parce qu'elle est branchée ; il se referme après 10 s "
+            "sans mouvement et le geste suivant le rouvre. Sticks = pointeur, "
+            "X ou R1 = clic, Carré = retour arrière, Start = Entrée. Sans "
+            "manette, rien ne change : un clic de souris n'ouvre pas de "
+            "clavier.",
             frame,
         )
         pad_detail.setObjectName("hostDetail")

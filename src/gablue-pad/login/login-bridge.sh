@@ -20,8 +20,11 @@
 #   pad=on|off    pont manette (pointeur + clavier visuel) — défaut on
 #   dark=on|off   écran de connexion sombre            — défaut off
 #
-# Le clavier visuel n'apparaît QUE tant qu'une manette est présente : sans
-# manette, mode « Touch and Tablet » et un clic souris n'ouvre rien.
+# Le clavier visuel ne s'ouvre QU'au premier mouvement d'une manette (stick
+# hors zone morte, D-pad ou appui de touche) : une manette simplement branchée
+# ne l'affiche pas. Il se referme après 10 s sans mouvement (ou quand la
+# manette part) et le geste suivant le rouvre ; c'est gpad-login — le seul à
+# voir les événements — qui prévient, par SIGUSR1.
 set -u
 
 mode=${1:-all}
@@ -145,25 +148,78 @@ if [ "$(conf_get pad on)" != on ]; then
     log "pont manette désactivé (pad=off) — clavier visuel fermé"
     exit 0
 fi
-log "pont manette actif — clavier visuel fermé tant qu'aucune manette"
+
+# Notification « la manette est utilisée » : gpad-login envoie SIGUSR1 à chaque
+# activité (appui, stick hors zone morte, pointeur qui avance). Il ne le fait
+# que si GPAD_LOGIN_NOTIFY_PID vaut bien le PID de son parent : lancé à la
+# main, il ne signale personne. Ce signal ouvre le clavier et, plus tard,
+# repousse sa fermeture pour inactivité.
+moved=0
+trap 'moved=1' USR1
+export GPAD_LOGIN_NOTIFY_PID=$$
+
+gpid=
+cleanup() {
+    [ -n "$gpid" ] && kill "$gpid" 2>/dev/null
+}
+trap cleanup EXIT
+trap 'exit 0' TERM INT
+
+log "pont manette actif — clavier visuel fermé jusqu'au premier mouvement de la manette"
 
 state=hidden
+last=0                 # $SECONDS du dernier mouvement vu (SECONDS = 1 s)
+OSK_IDLE=10            # clavier refermé après 10 s sans mouvement
 while :; do
     if pad_present; then
-        if [ "$state" = hidden ]; then
-            show_osk
-            state=shown
-            log "manette vue → clavier visuel affiché"
-            log "  état : $(busctl --user get-property org.kde.KWin /VirtualKeyboard \
-                org.kde.kwin.VirtualKeyboard mode available active visible 2>&1 \
-                | tr '\n' ' ')"
+        # Le pointeur suit la manette dès qu'elle est là (il ne fait rien
+        # tant qu'on n'y touche pas) ; c'est lui qui notifie le mouvement.
+        if [ -n "$gpid" ] && ! kill -0 "$gpid" 2>/dev/null; then
+            wait "$gpid" 2>/dev/null
+            gpid=
         fi
-        /usr/bin/gpad-login
-        log "gpad-login terminé (rc=$?)"
-    elif [ "$state" = shown ]; then
-        hide_osk
-        state=hidden
-        log "plus de manette → clavier visuel fermé"
+        if [ -z "$gpid" ]; then
+            /usr/bin/gpad-login &
+            gpid=$!
+            log "manette vue → pointeur manette (clavier visuel au premier mouvement)"
+        fi
+
+        # SIGUSR1 interrompt le sleep ci-dessous : le clavier s'ouvre aussitôt.
+        # gpad-login renotifie à chaque activité (appui, stick, pointeur qui
+        # avance), donc ce même signal rouvre un clavier refermé.
+        if [ "$moved" = 1 ]; then
+            moved=0
+            last=$SECONDS
+            if [ "$state" = hidden ]; then
+                show_osk
+                state=shown
+                log "mouvement manette → clavier visuel affiché"
+                log "  état : $(busctl --user get-property org.kde.KWin /VirtualKeyboard \
+                    org.kde.kwin.VirtualKeyboard mode available active visible 2>&1 \
+                    | tr '\n' ' ')"
+            fi
+        fi
+    else
+        # Un mouvement signalé juste avant le débranchement ne doit pas
+        # ouvrir le clavier sur un écran sans manette.
+        moved=0
+        if [ -n "$gpid" ]; then
+            kill "$gpid" 2>/dev/null
+            wait "$gpid" 2>/dev/null
+            gpid=
+        fi
+    fi
+
+    if [ "$state" = shown ]; then
+        if [ -z "$gpid" ]; then
+            hide_osk
+            state=hidden
+            log "plus de manette → clavier visuel fermé"
+        elif [ "$((SECONDS - last))" -ge "$OSK_IDLE" ]; then
+            hide_osk
+            state=hidden
+            log "$OSK_IDLE s sans mouvement → clavier visuel fermé"
+        fi
     fi
     sleep 1
 done
