@@ -212,6 +212,29 @@ git commit -m "test: experimental feature"
 git push origin test
 ```
 
+## Plusieurs sessions en parallèle
+
+**Le dépôt est partagé par plusieurs sessions (et par des éditions à la main)
+en même temps : l'arbre de travail peut contenir du travail d'autrui, modifié
+ET non suivi.** Un commit est public et déclenche un build `[all]` de 5 images
+avec ce qu'il contient — y glisser du code inachevé d'une autre session casse
+le build pour tout le monde (vécu 21/11/2026 : `git add -A` a embarqué du
+retroplayer en cours).
+
+- **Jamais `git add -A`, `git add .`, `git commit -a`, `git commit --all`** :
+  indexer uniquement les chemins de la tâche, explicitement
+  (`git add files/scripts/build-c src/gablue-pad/...`).
+- **Avant chaque commit, `git status --short`** : tout fichier qu'on n'a pas
+  touché soi-même appartient à une autre session et reste hors du commit
+  (fichiers suivis modifiés comme nouveaux fichiers non suivis).
+- **Après le commit, `git show --stat HEAD`** : la liste doit correspondre
+  exactement à la tâche ; vérifier aussi avant un `push`.
+- Si un commit déjà poussé contient du travail étranger : le corriger
+  **immédiatement** (`git reset --soft HEAD~1`, re-commit des seuls chemins de
+  la tâche, `--force-with-lease`) et le signaler ; annuler le run déclenché.
+- **Ne jamais** `git stash`, `git checkout --`, `git restore` ni `git clean`
+  sur des chemins qu'on n'a pas soi-même modifiés.
+
 ## Sécurité
 
 ### Clés et signatures
