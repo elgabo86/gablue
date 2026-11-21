@@ -92,7 +92,15 @@ start() {
     local r; r=$(sock '{"cmd":"status"}') || { assure_daemon || return 1; r=$(sock '{"cmd":"status"}'); }
     [[ "$(champ "$r" recording)" == true ]] && { echo "déjà en cours : $(champ "$r" file)"; return 0; }
     bip_depart
-    r=$(sock '{"cmd":"record.start"}')
+    # Curseur de CETTE capture (`GPAD_REC_CURSEUR=affiche|masque`), posé par
+    # `grec --sans-curseur` : le démon le lit dans le message, recorder.conf
+    # n'est pas modifié et le réglage ne survit pas à l'arrêt.
+    local msg='{"cmd":"record.start"'
+    case "${GPAD_REC_CURSEUR:-}" in
+        affiche|masque) msg+=',"curseur":"'"$GPAD_REC_CURSEUR"'"' ;;
+    esac
+    msg+='}'
+    r=$(sock "$msg")
     sleep 0.4
     r=$(sock '{"cmd":"status"}')
     if [[ "$(champ "$r" recording)" == true ]]; then

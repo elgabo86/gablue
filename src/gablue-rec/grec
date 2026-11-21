@@ -4,12 +4,18 @@
 #   grec                 enregistre AU PREMIER PLAN : Ctrl-C arrête et finalise
 #   grec toggle          démarre / arrête sans rester attaché (menu, script)
 #   grec start | stop    démarrage / arrêt explicite
-#   grec status          état (enregistrement, replay, fichier en cours)
+#   grec status          état (enregistrement, replay, curseur, fichier)
 #   grec save            sauvegarde le buffer de replay (Replay_<date>.mp4)
 #   grec replay start    démarre / arrête le buffer
 #   grec replay stop
 #   grec replay status
 #   grec dir             ouvre le dossier des captures dans Dolphin
+#
+#   grec --mouse         curseur dans la capture
+#   grec --nomouse       sans curseur (défaut : recorder.conf)
+#
+#   --mouse/--nomouse valent pour CET enregistrement et n'écrivent rien : le
+#   réglage permanent est l'interrupteur de l'overlay / Gablue Manager.
 #
 # C'est la MÊME chaîne que l'overlay et le déclencheur : `recorder.sh` et
 # `replay.sh` de gablue-pad, qui parlent à la socket de `gpad-rec`. Aucun état
@@ -76,6 +82,38 @@ chrono() {
     else printf '%02d:%02d' "$m" "$sec"; fi
 }
 
+conf_curseur() {
+    local conf cur=""
+    conf="${XDG_CONFIG_HOME:-$HOME/.config}/gablue/recorder.conf"
+    [[ -f "$conf" ]] && cur=$(sed -n 's/^curseur=//p' "$conf" | tail -1)
+    printf '%s\n' "${cur:-masque}"
+}
+
+# Une requête JSON, une réponse (vide si le démon n'est pas là).
+sock() {
+    timeout 10 python3 - "$SOCK" "$1" <<'PY' 2>/dev/null
+import socket, sys
+try:
+    s = socket.socket(socket.AF_UNIX)
+    s.settimeout(8)
+    s.connect(sys.argv[1])
+except OSError:
+    sys.exit(1)
+s.sendall(sys.argv[2].encode() + b'\n')
+print(s.makefile().readline().strip())
+PY
+}
+
+# Curseur : `curseur_session` dans le démon, JAMAIS recorder.conf. Le réglage de
+# session vaut pour l'enregistrement en cours et les suivants, puis disparaît à
+# l'arrêt (le démon retombe sur le fichier). Le réglage permanent reste
+# l'interrupteur de l'overlay / Gablue Manager.
+curseur_etat() {
+    local r
+    r=$(sock '{"cmd":"status"}') && [[ -n "$r" ]] || { conf_curseur; return 0; }
+    champ "$r" curseur | sed 's/^$/'"$(conf_curseur)"'/'
+}
+
 # Enregistrement au premier plan : démarre (ou rejoint l'enregistrement en
 # cours) et attend. Ctrl-C passe par `recorder.sh stop`, qui ne rend la main
 # qu'une fois le mp4 finalisé (moov écrit) : on ne perd rien à l'arrêt.
@@ -109,6 +147,19 @@ suivre() {
     printf 'enregistrement terminé : %s\n' "${fichier:-?}"
 }
 
+# Options valables pour la capture lancée par CETTE commande : elles partent
+# dans le message `record.start` (le démon les applique à la session) et ne
+# passent jamais par recorder.conf.
+while [[ "${1:-}" == -* ]]; do
+    case "$1" in
+        --mouse) export GPAD_REC_CURSEUR=affiche ;;
+        --nomouse) export GPAD_REC_CURSEUR=masque ;;
+        -h|--help|help) usage; exit 0 ;;
+        *) echo "option inconnue : $1" >&2; exit 2 ;;
+    esac
+    shift
+done
+
 case "${1:-}" in
     "") suivre ;;
     start|stop|toggle) exec "$REC" "$@" ;;
@@ -117,6 +168,7 @@ case "${1:-}" in
         "$REC" status
         printf 'replay : %s\n' "$("$REP" status)"
         printf 'réglage : %s\n' "$("$REC" pending)"
+        printf 'curseur : %s\n' "$(curseur_etat)"
         ;;
     save) exec "$REP" save ;;
     replay) shift; exec "$REP" "${1:-status}" ;;
@@ -128,6 +180,6 @@ case "${1:-}" in
     -h|--help|help) usage ;;
     *)
         echo "option inconnue : $1" >&2
-        echo "usage : grec [start|stop|toggle|status|save|replay start|stop|status|dir]" >&2
+        echo "usage : grec [--mouse|--nomouse] [start|stop|toggle|status|save|replay start|stop|status|dir]" >&2
         exit 2 ;;
 esac

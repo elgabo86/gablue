@@ -74,7 +74,7 @@ struct config {
     int qualite;
     int plafond;              /* 0 = flips (VFR réel), sinon plafond d'émission */
     int replay_sec;
-    int curseur;              /* v2 : mélange de la plane curseur */
+    int curseur;              /* mélange de la plane curseur (recorder.conf) */
     int dix_bits;
     int res_w, res_h;         /* 0 = résolution source */
     int audio;
@@ -387,6 +387,10 @@ struct etat {
      * mesuré 9,4 s de durée pour 5 s capturées). UNE seule origine pour les
      * deux flux — un recalage par flux décalait l'audio de la latence de son
      * tampon (~0,9 s constaté). */
+    /* Curseur de la capture EN COURS seulement (`record.start` avec
+     * `"curseur":"affiche"|"masque"`) : -1 = suit recorder.conf. Évite
+     * d'écrire un réglage persistant pour une seule vidéo. */
+    int curseur_session;
     int64_t rec_off_us;
     /* Correction d'origine de la piste audio (échelle t0), posée au premier
      * paquet de la session : l'encodeur garde une chronologie cumulative (ses
@@ -583,7 +587,8 @@ static inline void rgb_vers_yuv(int r, int g, int b, int *y, int *u, int *v)
 static void curseur_melange(struct etat *e, AVFrame *vf)
 {
     struct curseur *cu = &e->cur;
-    if (!e->cfg.curseur || cu->echec_logge || !vf->hw_frames_ctx)
+    int curseur_on = e->curseur_session >= 0 ? e->curseur_session : e->cfg.curseur;
+    if (!curseur_on || cu->echec_logge || !vf->hw_frames_ctx)
         return;
     AVHWFramesContext *fc = (AVHWFramesContext *)vf->hw_frames_ctx->data;
     if (!fc || fc->format != AV_PIX_FMT_VAAPI || !fc->device_ctx)
@@ -1796,10 +1801,12 @@ static void statut_json(struct etat *e, char *b, size_t n)
     snprintf(b, n,
              "{\"ok\":true,\"recording\":%s,\"replay\":%s,\"replay_sec\":%d,"
              "\"ring\":%.1f,\"file\":\"%s\",\"t\":%.1f,\"frames\":%" PRId64 ","
-             "\"pending\":%s,\"err\":%s}",
+             "\"pending\":%s,\"curseur\":\"%s\",\"err\":%s}",
              e->rec_demande ? "true" : "false", e->replay_demande ? "true" : "false",
              e->cfg.replay_sec, e->ring_sec, e->rec_actif ? e->rec_fichier : "", t, e->frames,
              e->reload_demande ? "true" : "false",
+             (e->curseur_session >= 0 ? e->curseur_session : e->cfg.curseur)
+                 ? "affiche" : "masque",
              e->erreur[0] ? "\"\"" : "null");
 }
 
@@ -1847,12 +1854,23 @@ static void *thread_ctl(void *arg)
             statut_json(e, js, sizeof js);
             repondre(fd, "%s", js);
         } else if (!strcmp(cmd, "record.start")) {
+            /* `curseur` optionnel : vaut pour CETTE capture, sans écrire dans
+             * recorder.conf (l'interrupteur de l'overlay, lui, est persistant).
+             * Absent = on garde le choix de session déjà posé par la commande
+             * `curseur` (`grec curseur masque` avant de démarrer). */
+            char *pc = strstr(ligne, "\"curseur\"");
+            if (pc && (pc = strchr(pc, ':'))) {
+                if (strstr(pc, "affiche")) e->curseur_session = 1;
+                else if (strstr(pc, "masque")) e->curseur_session = 0;
+                else e->curseur_session = -1;   /* "auto" = recorder.conf */
+            }
             e->rec_fichier[0] = 0;
             e->rec_demande = 1;
             statut_json(e, js, sizeof js);
             repondre(fd, "%s", js);
         } else if (!strcmp(cmd, "record.stop")) {
             e->rec_demande = 0;
+            e->curseur_session = -1;
             /* répondre seulement quand le mp4 est fermé (moov écrit) : les
              * scripts relisent le fichier juste après, ils doivent le trouver
              * complet. Borne : un encodeur bloqué ne fige pas l'appelant. */
@@ -1913,6 +1931,7 @@ int main(int argc, char **argv)
 {
     static struct etat e;
     memset(&e, 0, sizeof e);
+    e.curseur_session = -1;
     config_defaut(&e.cfg);
     config_lit_fichier(&e.cfg);
 

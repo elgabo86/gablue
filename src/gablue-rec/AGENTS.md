@@ -16,7 +16,7 @@ d'image `gablue-rec-build` (`files/scripts/build-rec`), `setcap` posé par
 `post-install`, service utilisateur `gpad-rec.service` activé globalement,
 réglages dans l'overlay (`CAPTURE`, `REPLAY AUTO`) et dans Gablue Manager, icône
 rouge d'enregistrement dans le tray, commande `grec` + `.desktop`. Reste : le
-curseur affiché (v2), le portail fenêtre (v2), les variantes NVIDIA.
+portail fenêtre (v2), les variantes NVIDIA.
 
 ## Pourquoi pas ffmpeg + `kmsgrab`
 
@@ -343,15 +343,21 @@ synchrone. Remplace **tout** `pgrep`/`killall`/fichier d'état.
 
 ```jsonc
 // client → serveur
-{"cmd":"status"}            {"cmd":"record.start"}   {"cmd":"record.stop"}
+{"cmd":"status"}            {"cmd":"record.start","curseur":"masque"}
+{"cmd":"record.stop"}
 {"cmd":"replay.start"}      {"cmd":"replay.save"}    {"cmd":"replay.stop"}
 {"cmd":"reload"}            {"cmd":"quit"}
 
 // serveur → client
 {"ok":true,"recording":false,"replay":true,"replay_sec":30,"ring":18,
  "file":"…/Video_2026-11-20_22-31-04.mp4","t":12.3,"pending":false,
- "frames":40,"err":null}
+ "curseur":"masque","frames":40,"err":null}
 ```
+
+`record.start` accepte `curseur` : c'est un réglage **de session**, jamais
+écrit dans `recorder.conf`, qui retombe au fichier à `record.stop` — `grec
+--nomouse` s'en sert. Le client qui veut du permanent écrit `recorder.conf`
+(mtime surveillé) et le démon le fait suivre.
 
 Règles : `record.start`/`replay.start` sont **idempotents** (déjà actif = `ok`
 avec l'état courant) ; `record.stop` est **synchrone** (répond après la
@@ -370,6 +376,12 @@ proprement (finalise l'enregistrement, libère DRM et VAAPI).
 - `grec toggle` = démarrage/arrêt sans rester attaché : c'est ce que lance
   l'entrée de menu (`Exec=grec toggle`, sans terminal).
 - `start`, `stop`, `status`, `save`, `replay start|stop|status`, `dir`.
+- `grec --nomouse` / `grec --mouse` = curseur de **cet** enregistrement : le
+  drapeau part dans `record.start` (`"curseur":"masque"|"affiche"`, transmis par
+  `GPAD_REC_CURSEUR` à `recorder.sh`) et le démon le garde dans
+  `curseur_session` — `recorder.conf` n'est **jamais écrit**, et le réglage
+  retombe sur le fichier à `record.stop`. Le réglage **permanent** reste
+  l'interrupteur de l'overlay / Gablue Manager, qui écrit `recorder.conf`.
 
 Il est **silencieux** (`GPAD_SANS_BIP=1`) et suit `GPAD_REC_SOCK`/`GPAD_REC`
 pour le banc.
