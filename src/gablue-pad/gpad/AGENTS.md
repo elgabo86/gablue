@@ -368,6 +368,29 @@ arme/réarme à chaque échantillon → **sauts de deux ou trois lignes « parfo
 Mesuré au banc : deux impulsions de stick à 50 ms d'écart → **un** seul pas
 (`NAV DOWN` une fois) ; à 400 ms → deux pas.
 
+## Bouton : une pression physique = une frappe
+
+Un bouton qui rebondit (membrane usée) ou un rapport dupliqué du pilote livre
+deux `EV_KEY … 1` pour **une** pression. Sur l'en-tête de fenêtre, le premier
+ouvre la page `FENÊTRE` et le second **arme** `FERMER` : la confirmation était
+déjà à l'écran sans qu'on ait rien décidé (constaté à l'usage, 21/11/2026).
+`frappe_nouvelle()` (tout `EV_KEY` de la boucle evdev, clavier virtuel exclu)
+jette donc :
+
+- un appui qui n'est pas précédé du **relâchement du même bouton** (rapport
+  dupliqué : `DejaTenue`) ;
+- un second appui à moins de `FRAPPE_MIN_MS` (**80 ms**) du précédent (rebond :
+  `Rebond`).
+
+Le relâchement est **toujours** retenu, et la valeur `2` (autorépétition)
+traverse : la table d'actions l'ignore déjà. Un vrai double appui humain fait
+≥ 100 ms, un rebond < 25 ms — ne pas élargir la fenêtre sans mesure, elle
+avalerait une confirmation faite vite. Journal : `FRAPPE ignoree (code 0x130
+DejaTenue|Rebond)` ; l'état est remis à neuf à chaque `open` (un bouton resté
+tenu à la fermeture n'amorce rien et ne fait pas jeter le premier appui).
+Vérifié par `cargo test une_pression_physique` (les deux rejets, un vrai double
+appui, et l'indépendance entre deux boutons).
+
 ## Rendu : styles RETRO et MODERNE
 
 Tout est dessiné à la main dans un buffer shm (pas de toolkit). **Aucune couleur

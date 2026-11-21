@@ -978,6 +978,15 @@ const BTN_MODE: u16 = 0x13c;
 /// au-delà, le panneau latéral demande le menu système et se ferme ; en deçà,
 /// un appui court ferme simplement le panneau (au relâchement).
 const HOME_LONG_MS: u64 = 1200;
+
+/// Deux appuis d'un **même bouton** plus rapprochés que ça sont une seule
+/// frappe. Une membrane qui rebondit (Croix usée) ou un rapport dupliqué du
+/// pilote livrait deux `EV_KEY … 1` pour une pression : sur l'en-tête, le
+/// premier ouvre la page FENÊTRE et le second **armait** `FERMER`, si bien que
+/// la confirmation était déjà à l'écran (constaté à l'usage). Un vrai double
+/// appui humain est ≥ 100 ms, un rebond < 25 ms : 80 ms sépare les deux.
+const FRAPPE_MIN_MS: u64 = 80;
+
 const BTN_TL: u16 = 0x136;
 const BTN_TR: u16 = 0x137;
 const BTN_TL2: u16 = 0x138;
@@ -1195,6 +1204,11 @@ struct App {
     fen_menu: Vec<Entree>,
     stick_x_latched: bool,
     stick_y_latched: bool,
+    /// état physique des boutons d'action, par code `EV_KEY` : un appui ne
+    /// compte qu'après le relâchement du même bouton (voir `FRAPPE_MIN_MS`)
+    touches_tenues: [bool; 0x140],
+    /// (code, instant) de la dernière frappe retenue : jette le rebond
+    derniere_frappe: Option<(u16, Instant)>,
     /// plage réelle des axes du stick (EVIOCGABS) : les seuils en dépendent
     abs_x: (i32, i32),
     abs_y: (i32, i32),
@@ -1305,6 +1319,60 @@ fn motifs_appli(nom: &str) -> &'static [&'static str] {
         "GABLUE TV" => &["tvqt", "gablue_tv", "gablue-tv"],
         "JELLYFIN" => &["jellyfin"],
         _ => &[],
+    }
+}
+
+/// Ce qu'un événement bouton devient : une frappe neuve (agir), ou la raison
+/// pour laquelle c'est la **même** pression physique que la précédente.
+#[derive(Debug, PartialEq, Eq)]
+enum Frappe {
+    Neuve,
+    /// `value 1` sans relâchement entre les deux : rapport dupliqué
+    DejaTenue,
+    /// deux impulsions trop rapprochées : rebond de membrane
+    Rebond,
+}
+
+/// Une frappe d'action est-elle neuve ? `tenues` et `derniere` portent l'état
+/// d'un événement à l'autre (voir `App::touches_tenues`).
+///
+/// Un appui ne compte qu'**après le relâchement** du même bouton, et jamais
+/// deux fois d'affilée en moins de `FRAPPE_MIN_MS`. Les relâchements (`value 0`)
+/// passent toujours, de même que les valeurs qui ne sont pas des appuis
+/// (`value 2`, l'autorépétition, déjà ignorée par la table d'actions).
+fn frappe_nouvelle(
+    tenues: &mut [bool; 0x140],
+    derniere: &mut Option<(u16, Instant)>,
+    code: u16,
+    valeur: i32,
+    quand: Instant,
+) -> Frappe {
+    let i = code as usize;
+    if i >= tenues.len() {
+        return Frappe::Neuve;
+    }
+    match valeur {
+        1 => {
+            let tenu = tenues[i];
+            tenues[i] = true;
+            let rebond = derniere.is_some_and(|(c, t)| {
+                c == code
+                    && quand.saturating_duration_since(t) < Duration::from_millis(FRAPPE_MIN_MS)
+            });
+            if tenu {
+                Frappe::DejaTenue
+            } else if rebond {
+                Frappe::Rebond
+            } else {
+                *derniere = Some((code, quand));
+                Frappe::Neuve
+            }
+        }
+        0 => {
+            tenues[i] = false;
+            Frappe::Neuve
+        }
+        _ => Frappe::Neuve,
     }
 }
 
@@ -1511,6 +1579,8 @@ impl App {
             ],
             stick_x_latched: false,
             stick_y_latched: false,
+            touches_tenues: [false; 0x140],
+            derniere_frappe: None,
             abs_x: (-32768, 32767),
             abs_y: (-32768, 32767),
             abs_rx: (-32768, 32767),
@@ -1807,6 +1877,29 @@ impl App {
                     self.kbd_dirty = true;
                 }
                 continue;
+            }
+
+            // Une frappe = un appui **après** relâchement, et jamais deux
+            // d'affilée en moins de `FRAPPE_MIN_MS`. Un second `value 1` sans
+            // `value 0` entre les deux est un rapport dupliqué, pas une
+            // pression ; deux impulsions à 20 ms sont un rebond de membrane.
+            // Sans cette garde, un appui unique sur l'en-tête ouvrait la page
+            // FENÊTRE **et** armait FERMER (confirmation déjà affichée).
+            // Le relâchement est toujours retenu, même quand l'appui est jeté.
+            if ev.type_ == EV_KEY {
+                match frappe_nouvelle(
+                    &mut self.touches_tenues,
+                    &mut self.derniere_frappe,
+                    ev.code,
+                    ev.value,
+                    Instant::now(),
+                ) {
+                    Frappe::Neuve => {}
+                    rejet => {
+                        println!("FRAPPE ignoree (code 0x{:x} {rejet:?})", ev.code);
+                        continue;
+                    }
+                }
             }
 
             let act = match (ev.type_, ev.code, ev.value) {
@@ -3692,6 +3785,11 @@ impl App {
         // d'inactivité (10 s) le refermerait aussitôt ouvert
         self.derniere_activite = Instant::now();
         self.arme = None;
+        // boutons : état neuf. Un bouton resté enfoncé à la fermeture (son
+        // relâchement est parti au jeu) ne doit pas faire jeter le premier
+        // appui de cette ouverture, ni hériter du rebond de la précédente
+        self.touches_tenues = [false; 0x140];
+        self.derniere_frappe = None;
         self.combo_apres = None;
         self.home_down = false;
         self.home_console = false;
@@ -7554,5 +7652,60 @@ mod tests {
         );
         let _ = enfant.kill();
         let _ = enfant.wait();
+    }
+
+    /// Une seule pression physique = une seule frappe : un rapport dupliqué
+    /// (deux `value 1` sans relâchement) et un rebond de membrane (deux
+    /// impulsions à quelques ms) sont jetés, un vrai double appui passe.
+    /// Sans ça, un appui sur l'en-tête ouvrait la page FENÊTRE puis armait
+    /// FERMER du même geste (confirmation déjà affichée, constaté à l'usage).
+    #[test]
+    fn une_pression_physique_une_seule_frappe() {
+        let (mut tenues, mut derniere) = ([false; 0x140], None);
+        let t0 = Instant::now();
+        let sud = BTN_SOUTH;
+
+        // appui simple : accepté
+        assert_eq!(
+            frappe_nouvelle(&mut tenues, &mut derniere, sud, 1, t0),
+            Frappe::Neuve
+        );
+        // rapport dupliqué, sans relâchement : jeté
+        assert_eq!(
+            frappe_nouvelle(&mut tenues, &mut derniere, sud, 1, t0),
+            Frappe::DejaTenue
+        );
+        // relâchement : toujours retenu
+        assert_eq!(
+            frappe_nouvelle(&mut tenues, &mut derniere, sud, 0, t0),
+            Frappe::Neuve
+        );
+        // rebond : 20 ms après, jeté (et le relâchement qui suit est retenu)
+        let t1 = t0 + Duration::from_millis(20);
+        assert_eq!(
+            frappe_nouvelle(&mut tenues, &mut derniere, sud, 1, t1),
+            Frappe::Rebond
+        );
+        assert_eq!(
+            frappe_nouvelle(&mut tenues, &mut derniere, sud, 0, t1),
+            Frappe::Neuve
+        );
+        // vrai double appui (au-delà de la fenêtre) : accepté
+        let t2 = t0 + Duration::from_millis(FRAPPE_MIN_MS + 20);
+        assert_eq!(
+            frappe_nouvelle(&mut tenues, &mut derniere, sud, 1, t2),
+            Frappe::Neuve
+        );
+        // un AUTRE bouton n'est pas concerné par la fenêtre du premier
+        let t3 = t0 + Duration::from_millis(FRAPPE_MIN_MS / 2);
+        assert_eq!(
+            frappe_nouvelle(&mut tenues, &mut derniere, BTN_EAST, 1, t3),
+            Frappe::Neuve
+        );
+        // l'autorépétition (`value 2`) n'est jamais une frappe à jeter ici
+        assert_eq!(
+            frappe_nouvelle(&mut tenues, &mut derniere, sud, 2, t3),
+            Frappe::Neuve
+        );
     }
 }
